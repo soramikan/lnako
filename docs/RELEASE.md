@@ -1,6 +1,14 @@
 # 配布物
 
-> この文書は配布フェーズの設計・検証手順です。v0.1.0が初回の配布リリースです。
+この文書は0.1.0の配布契約と保守者向けのリリース手順です。インストールと使い方は[使い始める](GETTING_STARTED.md)を参照してください。
+
+## リリース準備の現状（2026年9月9日）
+
+- バージョンは`0.1.0`で統一済みです。正式GitHub Releaseと`v0.1.0`タグの公開は、下記の最終条件を満たしてから行います。
+- `af137cf`の[手動Release検証 34246134617](https://github.com/soramikan/lnako/actions/runs/34246134617)は成功しています。手動検証の成功は正式公開や最終CI 54/54の代わりにはなりません。
+- 同commitの[CI 34246129120](https://github.com/soramikan/lnako/actions/runs/34246129120)は失敗しており、修正後の全job成功と現行canonical attestationの追跡が公開前に必要です。
+- 全6アーカイブへ利用案内`GETTING_STARTED.md`、保証範囲`COMPATIBILITY.md`、非対応・後続Issue一覧`TODO.md`を同梱します。生成・検査スクリプトで欠落を拒否します。
+- macOSの導入案内は[Homebrew tap](https://github.com/soramikan/homebrew-tap)を先頭に掲載します。
 
 ## v0.1.0リリース手順
 
@@ -22,21 +30,22 @@ manifest入力を変更するどの後続commitでも、tag push前に同じ再a
 
 ```sh
 node tools/setup_llvm.mjs
-zig build -Doptimize=ReleaseSafe
+node tools/setup_quickjs.mjs
+zig build -Doptimize=ReleaseSafe -Dcompat-js=true
 node tools/create_distribution.mjs \
-  --version 1.0.0 \
+  --version 0.1.0 \
   --variant standard \
   --output /absolute/path/dist-standard
 node tools/create_distribution.mjs \
-  --version 1.0.0 \
+  --version 0.1.0 \
   --variant full \
   --llvm-dir "$LNAKO_LLVM_DIR" \
   --require-llvm \
   --output /absolute/path/dist-full
 node tools/check_distribution.mjs \
-  --archive /absolute/path/dist-standard/lnako-1.0.0-macos-arm64.tar.gz
+  --archive /absolute/path/dist-standard/lnako-0.1.0-macos-arm64.tar.gz
 node tools/check_distribution.mjs \
-  --archive /absolute/path/dist-full/lnako-1.0.0-macos-arm64-full.tar.gz
+  --archive /absolute/path/dist-full/lnako-0.1.0-macos-arm64-full.tar.gz
 ```
 
 クロスtargetを作る場合は、そのtarget用の`lnako`実行ファイルと`liblnako_runtime.a`または`lnako_runtime.lib`を`--binary`と`--runtime`で明示します。配布targetは`macos-arm64`、`linux-x64`、`windows-x64`です。生成物の`manifest.json`にはvariant、target、source commit、dirty状態、固定toolchain、各payloadのSHA-256を記録します。full版では、macOSのLLVM C API共有ライブラリが`@rpath`でlibc++／libc++abi／libunwindを参照するため、配布物へ`libc++.1.dylib`、`libc++abi.1.dylib`、`libunwind.1.dylib`も同梱します。
@@ -57,7 +66,7 @@ node tools/check_distribution.mjs \
 Release workflowはstandard/full両版でDeveloper ID Application署名と公証を必須にします。
 タグpush・手動実行の両方で実施し、資格情報不足、署名不正、公証がAccepted以外、
 Gatekeeper検証失敗のいずれかなら配布assetのuploadへ進みません。手動実行では公開しません。
-実証明書での成功実績は、資格情報設定後の手動Release workflowで確認してください。
+上記の手動Release検証で署名・公証を含む配布経路は成功済みです。以後の候補でも同じ検証を通します。
 
 GitHub Environment `release-signing` に次のSecretsを登録します。EnvironmentはmacOS jobだけが使用します。
 

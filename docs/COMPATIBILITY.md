@@ -59,7 +59,7 @@
 
 ### CIの一時artifact
 
-直前のmanifestに対応するCI run `34121804812`（commit `1c096a13fdd41fc6e60d2dddddae7001604e6571`、54/54 job成功）が生成したcatalog artifactは `verified: 527`、`trace-confirmed-unattested: 0`、`unverified: 0` でした。このrunのattestationは3 OSのdispatch証拠・native AOT aggregate・canonical証拠17件を同一Sigstore bundleのsubjectとして署名しており、snapshotは `attestations/34121804812/` に履歴として残しています。現行manifestに対応する新しいrunのsnapshotを追跡した時点でcanonicalも同じ状態へ戻ります。
+過去のmanifestに対応するCI run `34121804812`（commit `1c096a13fdd41fc6e60d2dddddae7001604e6571`、54/54 job成功）が生成したcatalog artifactは `verified: 527`、`trace-confirmed-unattested: 0`、`unverified: 0` でした。このrunのattestationは3 OSのdispatch証拠・native AOT aggregate・canonical証拠17件を同一Sigstore bundleのsubjectとして署名しており、snapshotは `attestations/34121804812/` に履歴として残しています。現行manifestに対応する新しいrunのsnapshotを追跡した時点でcanonicalも同じ状態へ戻ります。
 
 一時artifactの値は、実行環境・署名・artifactの保存期間に依存します。追跡対象のcanonical `evidence.json` は、追跡された現行snapshotと現行source manifestの一致が確認できた場合にのみ `verified` を保持します。
 

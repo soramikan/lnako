@@ -1,0 +1,2593 @@
+{
+  "schema_version": 2,
+  "project": "lnako",
+  "version": "0.1.0",
+  "git_commit": "5dcf585f4db394206fb5480ef6b184d3138c6daf",
+  "git_dirty": false,
+  "generated_at_unix_ms": 1788882427724,
+  "target": {
+    "os": "macos",
+    "arch": "aarch64"
+  },
+  "hardware": {
+    "cpu_model": "Apple M1 (Virtual)",
+    "cpu_logical_count": 3,
+    "total_memory_bytes": 7516192768,
+    "os_release": "24.6.0"
+  },
+  "toolchain": {
+    "cnako": "v3.7.24",
+    "gonako": "gonako v3.6.0 (darwin/arm64)",
+    "python": "Python 3.14.7",
+    "c": "clang version 22.1.8 (https://github.com/llvm/llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1)",
+    "rust": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "lnako": "lnako 0.1.0",
+    "zig": "0.16.0",
+    "llvm": null
+  },
+  "suite_name": "lnako-benchmark-diagnostics",
+  "suite": "benchmarks/suites/diagnostics.json",
+  "suite_sha256": "23c79fd277962a75c579ef966d7a95ac37ba13a033b1b1333177136caa798a31",
+  "runtime_support": {},
+  "optimization": "O2",
+  "profile": "smoke",
+  "iterations": 3,
+  "warmup": 1,
+  "timeout_ms": 120000,
+  "selected_runtimes": [
+    "lnako",
+    "cnako"
+  ],
+  "runtime_selection_explicit": true,
+  "runtimes": {
+    "cnako": {
+      "command": "/Users/runner/work/_temp/cnako3",
+      "version": "v3.7.24",
+      "available": true,
+      "selected": true,
+      "group": "nadesiko-implementation"
+    },
+    "gonako": {
+      "command": "/Users/runner/work/lnako/lnako/.cache/benchmark-gonako/gonako-3.8.1-darwin-arm64/gonako",
+      "version": "gonako v3.6.0 (darwin/arm64)",
+      "available": true,
+      "selected": false,
+      "group": "nadesiko-implementation"
+    },
+    "python": {
+      "command": "python3",
+      "version": "Python 3.14.7",
+      "available": true,
+      "selected": false,
+      "group": "cross-language-reference"
+    },
+    "c": {
+      "command": "clang",
+      "version": "clang version 22.1.8 (https://github.com/llvm/llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1)",
+      "available": true,
+      "selected": false,
+      "group": "cross-language-reference"
+    },
+    "rust": {
+      "command": "rustc",
+      "version": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+      "available": true,
+      "selected": false,
+      "group": "cross-language-reference"
+    },
+    "lnako": {
+      "command": "/Users/runner/work/lnako/lnako/zig-out/bin/lnako",
+      "version": "lnako 0.1.0",
+      "available": true,
+      "selected": true,
+      "group": "nadesiko-implementation"
+    }
+  },
+  "comparison_groups": {
+    "nadesiko-implementation": [
+      "cnako",
+      "gonako",
+      "lnako"
+    ],
+    "cross-language-reference": [
+      "python",
+      "c",
+      "rust"
+    ]
+  },
+  "warnings": [
+    {
+      "case": "local-load-store",
+      "runtime": "cnako",
+      "mode": "run",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 122628458
+    },
+    {
+      "case": "local-load-store",
+      "runtime": "lnako",
+      "mode": "interpreter",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 27458125
+    },
+    {
+      "case": "local-load-store",
+      "runtime": "lnako",
+      "mode": "aot_run",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 6246292
+    },
+    {
+      "case": "global-load-store",
+      "runtime": "cnako",
+      "mode": "run",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 131858667
+    },
+    {
+      "case": "global-load-store",
+      "runtime": "lnako",
+      "mode": "aot_run",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 6913083
+    },
+    {
+      "case": "direct-call-empty",
+      "runtime": "cnako",
+      "mode": "run",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 167744334
+    },
+    {
+      "case": "direct-call-empty",
+      "runtime": "lnako",
+      "mode": "aot_run",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 9878542
+    },
+    {
+      "case": "captured-call-empty",
+      "runtime": "cnako",
+      "mode": "run",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 191860708
+    },
+    {
+      "case": "captured-call-empty",
+      "runtime": "lnako",
+      "mode": "interpreter",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 197554458
+    },
+    {
+      "case": "captured-call-empty",
+      "runtime": "lnako",
+      "mode": "aot_run",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 10766333
+    },
+    {
+      "case": "array-read-only",
+      "runtime": "cnako",
+      "mode": "run",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 140072084
+    },
+    {
+      "case": "array-read-only",
+      "runtime": "lnako",
+      "mode": "aot_run",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 19306750
+    },
+    {
+      "case": "array-write-only",
+      "runtime": "cnako",
+      "mode": "run",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 162990875
+    },
+    {
+      "case": "array-write-only",
+      "runtime": "lnako",
+      "mode": "aot_run",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 20051375
+    },
+    {
+      "case": "dict-small",
+      "runtime": "cnako",
+      "mode": "run",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 135640958
+    },
+    {
+      "case": "dict-small",
+      "runtime": "lnako",
+      "mode": "aot_run",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 23315875
+    },
+    {
+      "case": "dict-large-read",
+      "runtime": "lnako",
+      "mode": "aot_run",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 19327416
+    },
+    {
+      "case": "string-copy-fixed",
+      "runtime": "lnako",
+      "mode": "aot_run",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 69280959
+    },
+    {
+      "case": "gc-short-lived",
+      "runtime": "cnako",
+      "mode": "run",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 148129917
+    },
+    {
+      "case": "gc-short-lived",
+      "runtime": "lnako",
+      "mode": "interpreter",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 23779750
+    },
+    {
+      "case": "gc-short-lived",
+      "runtime": "lnako",
+      "mode": "aot_run",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 4805000
+    },
+    {
+      "case": "gc-long-lived",
+      "runtime": "cnako",
+      "mode": "run",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 143859000
+    },
+    {
+      "case": "gc-long-lived",
+      "runtime": "lnako",
+      "mode": "interpreter",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 45452458
+    },
+    {
+      "case": "gc-long-lived",
+      "runtime": "lnako",
+      "mode": "aot_run",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 5061458
+    },
+    {
+      "case": "numeric-function-call",
+      "runtime": "cnako",
+      "mode": "run",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 158262666
+    },
+    {
+      "case": "numeric-function-call",
+      "runtime": "lnako",
+      "mode": "interpreter",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 188606041
+    },
+    {
+      "case": "numeric-function-call",
+      "runtime": "lnako",
+      "mode": "aot_run",
+      "reason": "steady_state_batch_under_200ms",
+      "median_ns": 10468958
+    }
+  ],
+  "failures": [],
+  "status": "success",
+  "cases": [
+    {
+      "id": "local-load-store",
+      "category": "diagnostics",
+      "kind": "micro",
+      "description": "関数内のlocal Valueを反復してload/storeする経路を測る",
+      "measurement": "steady_state",
+      "profiles": [
+        "smoke",
+        "normal",
+        "full"
+      ],
+      "tags": [
+        "diagnostics",
+        "local",
+        "load",
+        "store",
+        "runtime-input",
+        "portable"
+      ],
+      "source": "benchmarks/cases/diagnostics/local-load-store/source.nako3",
+      "source_hashes": {
+        "cnako": "7f48399052a0bf2d93be620956819347a16b85367548ef012182b96826402d7a",
+        "lnako": "7f48399052a0bf2d93be620956819347a16b85367548ef012182b96826402d7a"
+      },
+      "sources": {
+        "cnako": "benchmarks/cases/diagnostics/local-load-store/source.nako3",
+        "lnako": "benchmarks/cases/diagnostics/local-load-store/source.nako3"
+      },
+      "runtime_support": {},
+      "input": {
+        "args": [
+          "100000"
+        ]
+      },
+      "expected_stdout": "300000\n",
+      "measurements": [
+        {
+          "runtime": "cnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            122628458,
+            118001625,
+            131460959
+          ],
+          "count": 3,
+          "min_ns": 118001625,
+          "p25_ns": 120315042,
+          "median_ns": 122628458,
+          "p75_ns": 127044709,
+          "max_ns": 131460959,
+          "iqr_ns": 6729667,
+          "mad_ns": 4626833,
+          "mean_ns": 124030347.33333333,
+          "stddev_ns": 5583451.0360573195,
+          "cv": 0.04501681367586366
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "interpreter",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            24134792,
+            27458125,
+            28937459
+          ],
+          "count": 3,
+          "min_ns": 24134792,
+          "p25_ns": 25796459,
+          "median_ns": 27458125,
+          "p75_ns": 28197792,
+          "max_ns": 28937459,
+          "iqr_ns": 2401333,
+          "mad_ns": 1479334,
+          "mean_ns": 26843458.666666668,
+          "stddev_ns": 2008276.8076508334,
+          "cv": 0.0748143833694816
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "compile",
+          "mode": "compile",
+          "timing_scope": "process_wall",
+          "correctness_checked": true,
+          "executable_path": "/var/folders/bl/vzjcvbz95c3dk19cb0fw46180000gn/T/lnako-comparison-QyHi8u/local-load-store/lnako-aot",
+          "executable_size_bytes": 504576,
+          "warnings": [],
+          "samples_ns": [
+            152907084,
+            146379709,
+            129489792
+          ],
+          "count": 3,
+          "min_ns": 129489792,
+          "p25_ns": 137934751,
+          "median_ns": 146379709,
+          "p75_ns": 149643397,
+          "max_ns": 152907084,
+          "iqr_ns": 11708646,
+          "mad_ns": 6527375,
+          "mean_ns": 142925528.33333334,
+          "stddev_ns": 9867147.99091059,
+          "cv": 0.0690369880452585
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "aot_run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": 504576,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            6432000,
+            5780875,
+            6246292
+          ],
+          "count": 3,
+          "min_ns": 5780875,
+          "p25_ns": 6013584,
+          "median_ns": 6246292,
+          "p75_ns": 6339146,
+          "max_ns": 6432000,
+          "iqr_ns": 325562,
+          "mad_ns": 185708,
+          "mean_ns": 6153055.666666667,
+          "stddev_ns": 273874.3042545045,
+          "cv": 0.044510291973820566
+        }
+      ],
+      "runtime_status": {
+        "cnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        },
+        "gonako": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "nadesiko-implementation"
+        },
+        "python": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "c": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "rust": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "lnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        }
+      }
+    },
+    {
+      "id": "global-load-store",
+      "category": "diagnostics",
+      "kind": "micro",
+      "description": "module globalの反復load/store経路を測る",
+      "measurement": "steady_state",
+      "profiles": [
+        "smoke",
+        "normal",
+        "full"
+      ],
+      "tags": [
+        "diagnostics",
+        "global",
+        "load",
+        "store",
+        "runtime-input",
+        "portable"
+      ],
+      "source": "benchmarks/cases/diagnostics/global-load-store/source.nako3",
+      "source_hashes": {
+        "cnako": "eec484658f9e952880168c843198fd726429b1b676e0b04cf68f03f5c70a6403",
+        "lnako": "eec484658f9e952880168c843198fd726429b1b676e0b04cf68f03f5c70a6403"
+      },
+      "sources": {
+        "cnako": "benchmarks/cases/diagnostics/global-load-store/source.nako3",
+        "lnako": "benchmarks/cases/diagnostics/global-load-store/source.nako3"
+      },
+      "runtime_support": {},
+      "input": {
+        "args": [
+          "100000"
+        ]
+      },
+      "expected_stdout": "300000\n",
+      "measurements": [
+        {
+          "runtime": "cnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            131858667,
+            120044542,
+            136691334
+          ],
+          "count": 3,
+          "min_ns": 120044542,
+          "p25_ns": 125951605,
+          "median_ns": 131858667,
+          "p75_ns": 134275001,
+          "max_ns": 136691334,
+          "iqr_ns": 8323396,
+          "mad_ns": 4832667,
+          "mean_ns": 129531514.33333333,
+          "stddev_ns": 6992407.81721129,
+          "cv": 0.05398229035767461
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "interpreter",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [],
+          "samples_ns": [
+            304257250,
+            296663458,
+            281066834
+          ],
+          "count": 3,
+          "min_ns": 281066834,
+          "p25_ns": 288865146,
+          "median_ns": 296663458,
+          "p75_ns": 300460354,
+          "max_ns": 304257250,
+          "iqr_ns": 11595208,
+          "mad_ns": 7593792,
+          "mean_ns": 293995847.3333333,
+          "stddev_ns": 9653529.874781532,
+          "cv": 0.03283559942204331
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "compile",
+          "mode": "compile",
+          "timing_scope": "process_wall",
+          "correctness_checked": true,
+          "executable_path": "/var/folders/bl/vzjcvbz95c3dk19cb0fw46180000gn/T/lnako-comparison-QyHi8u/global-load-store/lnako-aot",
+          "executable_size_bytes": 504304,
+          "warnings": [],
+          "samples_ns": [
+            135918833,
+            153402708,
+            144304584
+          ],
+          "count": 3,
+          "min_ns": 135918833,
+          "p25_ns": 140111709,
+          "median_ns": 144304584,
+          "p75_ns": 148853646,
+          "max_ns": 153402708,
+          "iqr_ns": 8741937,
+          "mad_ns": 8385751,
+          "mean_ns": 144542041.66666666,
+          "stddev_ns": 7139736.730043591,
+          "cv": 0.04939557133493923
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "aot_run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": 504304,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            6913083,
+            8777042,
+            6753500
+          ],
+          "count": 3,
+          "min_ns": 6753500,
+          "p25_ns": 6833292,
+          "median_ns": 6913083,
+          "p75_ns": 7845063,
+          "max_ns": 8777042,
+          "iqr_ns": 1011771,
+          "mad_ns": 159583,
+          "mean_ns": 7481208.333333333,
+          "stddev_ns": 918605.9555008097,
+          "cv": 0.12278844734317336
+        }
+      ],
+      "runtime_status": {
+        "cnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        },
+        "gonako": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "nadesiko-implementation"
+        },
+        "python": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "c": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "rust": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "lnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        }
+      }
+    },
+    {
+      "id": "direct-call-empty",
+      "category": "diagnostics",
+      "kind": "micro",
+      "description": "captureを持たない引数なし利用者関数の直接callを測る",
+      "measurement": "steady_state",
+      "profiles": [
+        "smoke",
+        "normal",
+        "full"
+      ],
+      "tags": [
+        "diagnostics",
+        "function",
+        "direct-call",
+        "runtime-input",
+        "portable"
+      ],
+      "source": "benchmarks/cases/diagnostics/direct-call-empty/source.nako3",
+      "source_hashes": {
+        "cnako": "ac1faa18d5b5e9feb674359ba4f0088f31b703daee9ed3346572dd3fbafc4b95",
+        "lnako": "ac1faa18d5b5e9feb674359ba4f0088f31b703daee9ed3346572dd3fbafc4b95"
+      },
+      "sources": {
+        "cnako": "benchmarks/cases/diagnostics/direct-call-empty/source.nako3",
+        "lnako": "benchmarks/cases/diagnostics/direct-call-empty/source.nako3"
+      },
+      "runtime_support": {},
+      "input": {
+        "args": [
+          "100000"
+        ]
+      },
+      "expected_stdout": "700000\n",
+      "measurements": [
+        {
+          "runtime": "cnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            163318917,
+            167744334,
+            173628584
+          ],
+          "count": 3,
+          "min_ns": 163318917,
+          "p25_ns": 165531626,
+          "median_ns": 167744334,
+          "p75_ns": 170686459,
+          "max_ns": 173628584,
+          "iqr_ns": 5154833,
+          "mad_ns": 4425417,
+          "mean_ns": 168230611.66666666,
+          "stddev_ns": 4222926.148975087,
+          "cv": 0.02510200793505063
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "interpreter",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [],
+          "samples_ns": [
+            289693291,
+            300359167,
+            296491542
+          ],
+          "count": 3,
+          "min_ns": 289693291,
+          "p25_ns": 293092417,
+          "median_ns": 296491542,
+          "p75_ns": 298425355,
+          "max_ns": 300359167,
+          "iqr_ns": 5332938,
+          "mad_ns": 3867625,
+          "mean_ns": 295514666.6666667,
+          "stddev_ns": 4408774.718256032,
+          "cv": 0.014918970919399484
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "compile",
+          "mode": "compile",
+          "timing_scope": "process_wall",
+          "correctness_checked": true,
+          "executable_path": "/var/folders/bl/vzjcvbz95c3dk19cb0fw46180000gn/T/lnako-comparison-QyHi8u/direct-call-empty/lnako-aot",
+          "executable_size_bytes": 504496,
+          "warnings": [],
+          "samples_ns": [
+            170729375,
+            176640333,
+            158003333
+          ],
+          "count": 3,
+          "min_ns": 158003333,
+          "p25_ns": 164366354,
+          "median_ns": 170729375,
+          "p75_ns": 173684854,
+          "max_ns": 176640333,
+          "iqr_ns": 9318500,
+          "mad_ns": 5910958,
+          "mean_ns": 168457680.33333334,
+          "stddev_ns": 7776241.1546934135,
+          "cv": 0.04616139281572845
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "aot_run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": 504496,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            11776541,
+            9601084,
+            9878542
+          ],
+          "count": 3,
+          "min_ns": 9601084,
+          "p25_ns": 9739813,
+          "median_ns": 9878542,
+          "p75_ns": 10827542,
+          "max_ns": 11776541,
+          "iqr_ns": 1087729,
+          "mad_ns": 277458,
+          "mean_ns": 10418722.333333334,
+          "stddev_ns": 966781.3900092525,
+          "cv": 0.09279270135803143
+        }
+      ],
+      "runtime_status": {
+        "cnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        },
+        "gonako": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "nadesiko-implementation"
+        },
+        "python": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "c": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "rust": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "lnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        }
+      }
+    },
+    {
+      "id": "captured-call-empty",
+      "category": "diagnostics",
+      "kind": "micro",
+      "description": "値を1つ捕捉した引数なしclosureのcallを測る",
+      "measurement": "steady_state",
+      "profiles": [
+        "smoke",
+        "normal",
+        "full"
+      ],
+      "tags": [
+        "diagnostics",
+        "function",
+        "closure",
+        "capture",
+        "runtime-input",
+        "portable"
+      ],
+      "source": "benchmarks/cases/diagnostics/captured-call-empty/source.nako3",
+      "source_hashes": {
+        "cnako": "56eff07dcd6729101887cfd7fc40c46f01f9b2df4585e0be03c8a1aa2bba85f5",
+        "lnako": "56eff07dcd6729101887cfd7fc40c46f01f9b2df4585e0be03c8a1aa2bba85f5"
+      },
+      "sources": {
+        "cnako": "benchmarks/cases/diagnostics/captured-call-empty/source.nako3",
+        "lnako": "benchmarks/cases/diagnostics/captured-call-empty/source.nako3"
+      },
+      "runtime_support": {},
+      "input": {
+        "args": [
+          "100000"
+        ]
+      },
+      "expected_stdout": "700000\n",
+      "measurements": [
+        {
+          "runtime": "cnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            196841250,
+            181919000,
+            191860708
+          ],
+          "count": 3,
+          "min_ns": 181919000,
+          "p25_ns": 186889854,
+          "median_ns": 191860708,
+          "p75_ns": 194350979,
+          "max_ns": 196841250,
+          "iqr_ns": 7461125,
+          "mad_ns": 4980542,
+          "mean_ns": 190206986,
+          "stddev_ns": 6203197.218939493,
+          "cv": 0.032612877946236386
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "interpreter",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            197554458,
+            203015125,
+            184487167
+          ],
+          "count": 3,
+          "min_ns": 184487167,
+          "p25_ns": 191020813,
+          "median_ns": 197554458,
+          "p75_ns": 200284792,
+          "max_ns": 203015125,
+          "iqr_ns": 9263979,
+          "mad_ns": 5460667,
+          "mean_ns": 195018916.66666666,
+          "stddev_ns": 7773589.231160525,
+          "cv": 0.03986069333185469
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "compile",
+          "mode": "compile",
+          "timing_scope": "process_wall",
+          "correctness_checked": true,
+          "executable_path": "/var/folders/bl/vzjcvbz95c3dk19cb0fw46180000gn/T/lnako-comparison-QyHi8u/captured-call-empty/lnako-aot",
+          "executable_size_bytes": 504848,
+          "warnings": [],
+          "samples_ns": [
+            180777625,
+            140906875,
+            157356292
+          ],
+          "count": 3,
+          "min_ns": 140906875,
+          "p25_ns": 149131584,
+          "median_ns": 157356292,
+          "p75_ns": 169066959,
+          "max_ns": 180777625,
+          "iqr_ns": 19935375,
+          "mad_ns": 16449417,
+          "mean_ns": 159680264,
+          "stddev_ns": 16359906.494908277,
+          "cv": 0.10245415485352828
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "aot_run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": 504848,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            6972750,
+            12466875,
+            10766333
+          ],
+          "count": 3,
+          "min_ns": 6972750,
+          "p25_ns": 8869542,
+          "median_ns": 10766333,
+          "p75_ns": 11616604,
+          "max_ns": 12466875,
+          "iqr_ns": 2747062,
+          "mad_ns": 1700542,
+          "mean_ns": 10068652.666666666,
+          "stddev_ns": 2296580.1770671005,
+          "cv": 0.22809210458417847
+        }
+      ],
+      "runtime_status": {
+        "cnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        },
+        "gonako": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "nadesiko-implementation"
+        },
+        "python": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "c": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "rust": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "lnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        }
+      }
+    },
+    {
+      "id": "array-read-only",
+      "category": "diagnostics",
+      "kind": "micro",
+      "description": "固定配列を構築した後のindexed readだけを反復して測る",
+      "measurement": "steady_state",
+      "profiles": [
+        "smoke",
+        "normal",
+        "full"
+      ],
+      "tags": [
+        "diagnostics",
+        "array",
+        "read",
+        "index",
+        "runtime-input",
+        "portable"
+      ],
+      "source": "benchmarks/cases/diagnostics/array-read-only/source.nako3",
+      "source_hashes": {
+        "cnako": "c1d5f60d241893ab517fd7972a347840e073e5d594377a5c834a20ac88d0fec9",
+        "lnako": "c1d5f60d241893ab517fd7972a347840e073e5d594377a5c834a20ac88d0fec9"
+      },
+      "sources": {
+        "cnako": "benchmarks/cases/diagnostics/array-read-only/source.nako3",
+        "lnako": "benchmarks/cases/diagnostics/array-read-only/source.nako3"
+      },
+      "runtime_support": {},
+      "input": {
+        "args": [
+          "64000"
+        ]
+      },
+      "expected_stdout": "2080000\n",
+      "measurements": [
+        {
+          "runtime": "cnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            136612041,
+            146098125,
+            140072084
+          ],
+          "count": 3,
+          "min_ns": 136612041,
+          "p25_ns": 138342063,
+          "median_ns": 140072084,
+          "p75_ns": 143085105,
+          "max_ns": 146098125,
+          "iqr_ns": 4743042,
+          "mad_ns": 3460043,
+          "mean_ns": 140927416.66666666,
+          "stddev_ns": 3919620.9758737586,
+          "cv": 0.027813047798532876
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "interpreter",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [],
+          "samples_ns": [
+            576590334,
+            735944917,
+            763250834
+          ],
+          "count": 3,
+          "min_ns": 576590334,
+          "p25_ns": 656267626,
+          "median_ns": 735944917,
+          "p75_ns": 749597876,
+          "max_ns": 763250834,
+          "iqr_ns": 93330250,
+          "mad_ns": 27305917,
+          "mean_ns": 691928695,
+          "stddev_ns": 82314868.70315902,
+          "cv": 0.11896438072012466
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "compile",
+          "mode": "compile",
+          "timing_scope": "process_wall",
+          "correctness_checked": true,
+          "executable_path": "/var/folders/bl/vzjcvbz95c3dk19cb0fw46180000gn/T/lnako-comparison-QyHi8u/array-read-only/lnako-aot",
+          "executable_size_bytes": 554336,
+          "warnings": [],
+          "samples_ns": [
+            184345291,
+            187076584,
+            206989209
+          ],
+          "count": 3,
+          "min_ns": 184345291,
+          "p25_ns": 185710938,
+          "median_ns": 187076584,
+          "p75_ns": 197032897,
+          "max_ns": 206989209,
+          "iqr_ns": 11321959,
+          "mad_ns": 2731293,
+          "mean_ns": 192803694.66666666,
+          "stddev_ns": 10092459.33156256,
+          "cv": 0.0523457776522963
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "aot_run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": 554336,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            21819625,
+            16190958,
+            19306750
+          ],
+          "count": 3,
+          "min_ns": 16190958,
+          "p25_ns": 17748854,
+          "median_ns": 19306750,
+          "p75_ns": 20563188,
+          "max_ns": 21819625,
+          "iqr_ns": 2814334,
+          "mad_ns": 2512875,
+          "mean_ns": 19105777.666666668,
+          "stddev_ns": 2302283.715255548,
+          "cv": 0.1205019630931998
+        }
+      ],
+      "runtime_status": {
+        "cnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        },
+        "gonako": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "nadesiko-implementation"
+        },
+        "python": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "c": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "rust": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "lnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        }
+      }
+    },
+    {
+      "id": "array-write-only",
+      "category": "diagnostics",
+      "kind": "micro",
+      "description": "固定配列へのindexed writeだけを反復して測る",
+      "measurement": "steady_state",
+      "profiles": [
+        "smoke",
+        "normal",
+        "full"
+      ],
+      "tags": [
+        "diagnostics",
+        "array",
+        "write",
+        "index",
+        "runtime-input",
+        "portable"
+      ],
+      "source": "benchmarks/cases/diagnostics/array-write-only/source.nako3",
+      "source_hashes": {
+        "cnako": "881bd1ceccbe9bdc7ea22bc066a5f6c260b3dc8730d7e797fdf4e0f9779eb152",
+        "lnako": "881bd1ceccbe9bdc7ea22bc066a5f6c260b3dc8730d7e797fdf4e0f9779eb152"
+      },
+      "sources": {
+        "cnako": "benchmarks/cases/diagnostics/array-write-only/source.nako3",
+        "lnako": "benchmarks/cases/diagnostics/array-write-only/source.nako3"
+      },
+      "runtime_support": {},
+      "input": {
+        "args": [
+          "64000"
+        ]
+      },
+      "expected_stdout": "2080\n",
+      "measurements": [
+        {
+          "runtime": "cnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            162990875,
+            157191084,
+            163308167
+          ],
+          "count": 3,
+          "min_ns": 157191084,
+          "p25_ns": 160090980,
+          "median_ns": 162990875,
+          "p75_ns": 163149521,
+          "max_ns": 163308167,
+          "iqr_ns": 3058541,
+          "mad_ns": 317292,
+          "mean_ns": 161163375.33333334,
+          "stddev_ns": 2811819.3850212987,
+          "cv": 0.017447012258248053
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "interpreter",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [],
+          "samples_ns": [
+            499760250,
+            537148875,
+            456294500
+          ],
+          "count": 3,
+          "min_ns": 456294500,
+          "p25_ns": 478027375,
+          "median_ns": 499760250,
+          "p75_ns": 518454563,
+          "max_ns": 537148875,
+          "iqr_ns": 40427188,
+          "mad_ns": 37388625,
+          "mean_ns": 497734541.6666667,
+          "stddev_ns": 33039724.674488015,
+          "cv": 0.06638021256040283
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "compile",
+          "mode": "compile",
+          "timing_scope": "process_wall",
+          "correctness_checked": true,
+          "executable_path": "/var/folders/bl/vzjcvbz95c3dk19cb0fw46180000gn/T/lnako-comparison-QyHi8u/array-write-only/lnako-aot",
+          "executable_size_bytes": 570928,
+          "warnings": [],
+          "samples_ns": [
+            231963500,
+            194085959,
+            187848667
+          ],
+          "count": 3,
+          "min_ns": 187848667,
+          "p25_ns": 190967313,
+          "median_ns": 194085959,
+          "p75_ns": 213024730,
+          "max_ns": 231963500,
+          "iqr_ns": 22057417,
+          "mad_ns": 6237292,
+          "mean_ns": 204632708.66666666,
+          "stddev_ns": 19492820.371493574,
+          "cv": 0.09525759835025253
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "aot_run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": 570928,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            10882958,
+            24042833,
+            20051375
+          ],
+          "count": 3,
+          "min_ns": 10882958,
+          "p25_ns": 15467167,
+          "median_ns": 20051375,
+          "p75_ns": 22047104,
+          "max_ns": 24042833,
+          "iqr_ns": 6579937,
+          "mad_ns": 3991458,
+          "mean_ns": 18325722,
+          "stddev_ns": 5509324.593282011,
+          "cv": 0.30063342624547135
+        }
+      ],
+      "runtime_status": {
+        "cnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        },
+        "gonako": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "nadesiko-implementation"
+        },
+        "python": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "c": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "rust": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "lnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        }
+      }
+    },
+    {
+      "id": "dict-small",
+      "category": "diagnostics",
+      "kind": "micro",
+      "description": "4 entryの小さなdictionaryに対するread/writeを測る",
+      "measurement": "steady_state",
+      "profiles": [
+        "smoke",
+        "normal",
+        "full"
+      ],
+      "tags": [
+        "diagnostics",
+        "dictionary",
+        "small",
+        "read",
+        "write",
+        "runtime-input",
+        "portable"
+      ],
+      "source": "benchmarks/cases/diagnostics/dict-small/source.nako3",
+      "source_hashes": {
+        "cnako": "43e33b0971b1d3aec28cf4ff9fe2cac1813be1cd5f32e787abdc343781c07cb4",
+        "lnako": "43e33b0971b1d3aec28cf4ff9fe2cac1813be1cd5f32e787abdc343781c07cb4"
+      },
+      "sources": {
+        "cnako": "benchmarks/cases/diagnostics/dict-small/source.nako3",
+        "lnako": "benchmarks/cases/diagnostics/dict-small/source.nako3"
+      },
+      "runtime_support": {},
+      "input": {
+        "args": [
+          "100000"
+        ]
+      },
+      "expected_stdout": "100000\n",
+      "measurements": [
+        {
+          "runtime": "cnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            143800791,
+            133045667,
+            135640958
+          ],
+          "count": 3,
+          "min_ns": 133045667,
+          "p25_ns": 134343313,
+          "median_ns": 135640958,
+          "p75_ns": 139720875,
+          "max_ns": 143800791,
+          "iqr_ns": 5377562,
+          "mad_ns": 2595291,
+          "mean_ns": 137495805.33333334,
+          "stddev_ns": 4582467.8239513645,
+          "cv": 0.03332805544752447
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "interpreter",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [],
+          "samples_ns": [
+            214159250,
+            223135417,
+            236556291
+          ],
+          "count": 3,
+          "min_ns": 214159250,
+          "p25_ns": 218647334,
+          "median_ns": 223135417,
+          "p75_ns": 229845854,
+          "max_ns": 236556291,
+          "iqr_ns": 11198520,
+          "mad_ns": 8976167,
+          "mean_ns": 224616986,
+          "stddev_ns": 9203374.251336336,
+          "cv": 0.04097363434186734
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "compile",
+          "mode": "compile",
+          "timing_scope": "process_wall",
+          "correctness_checked": true,
+          "executable_path": "/var/folders/bl/vzjcvbz95c3dk19cb0fw46180000gn/T/lnako-comparison-QyHi8u/dict-small/lnako-aot",
+          "executable_size_bytes": 521072,
+          "warnings": [],
+          "samples_ns": [
+            223404708,
+            232133416,
+            232224083
+          ],
+          "count": 3,
+          "min_ns": 223404708,
+          "p25_ns": 227769062,
+          "median_ns": 232133416,
+          "p75_ns": 232178750,
+          "max_ns": 232224083,
+          "iqr_ns": 4409688,
+          "mad_ns": 90667,
+          "mean_ns": 229254069,
+          "stddev_ns": 4136288.449601728,
+          "cv": 0.018042377470742856
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "aot_run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": 521072,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            23315875,
+            19090041,
+            37232375
+          ],
+          "count": 3,
+          "min_ns": 19090041,
+          "p25_ns": 21202958,
+          "median_ns": 23315875,
+          "p75_ns": 30274125,
+          "max_ns": 37232375,
+          "iqr_ns": 9071167,
+          "mad_ns": 4225834,
+          "mean_ns": 26546097,
+          "stddev_ns": 7750777.22420369,
+          "cv": 0.2919742674112767
+        }
+      ],
+      "runtime_status": {
+        "cnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        },
+        "gonako": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "nadesiko-implementation"
+        },
+        "python": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "c": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "rust": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "lnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        }
+      }
+    },
+    {
+      "id": "dict-large-read",
+      "category": "diagnostics",
+      "kind": "micro",
+      "description": "256 entryのdictionaryから反復して読み出す経路を測る",
+      "measurement": "steady_state",
+      "profiles": [
+        "smoke",
+        "normal",
+        "full"
+      ],
+      "tags": [
+        "diagnostics",
+        "dictionary",
+        "large",
+        "read",
+        "runtime-input",
+        "portable"
+      ],
+      "source": "benchmarks/cases/diagnostics/dict-large-read/source.nako3",
+      "source_hashes": {
+        "cnako": "a882154838b0694ea8b0cb36973b7047e6ba41baaa4abdf6fc0fc5b0186834f7",
+        "lnako": "a882154838b0694ea8b0cb36973b7047e6ba41baaa4abdf6fc0fc5b0186834f7"
+      },
+      "sources": {
+        "cnako": "benchmarks/cases/diagnostics/dict-large-read/source.nako3",
+        "lnako": "benchmarks/cases/diagnostics/dict-large-read/source.nako3"
+      },
+      "runtime_support": {},
+      "input": {
+        "args": [
+          "64000"
+        ]
+      },
+      "expected_stdout": "8224000\n",
+      "measurements": [
+        {
+          "runtime": "cnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [],
+          "samples_ns": [
+            212816333,
+            202890333,
+            185953625
+          ],
+          "count": 3,
+          "min_ns": 185953625,
+          "p25_ns": 194421979,
+          "median_ns": 202890333,
+          "p75_ns": 207853333,
+          "max_ns": 212816333,
+          "iqr_ns": 13431354,
+          "mad_ns": 9926000,
+          "mean_ns": 200553430.33333334,
+          "stddev_ns": 11090449.519847285,
+          "cv": 0.05529922625314466
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "interpreter",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [],
+          "samples_ns": [
+            788998458,
+            794101500,
+            718550375
+          ],
+          "count": 3,
+          "min_ns": 718550375,
+          "p25_ns": 753774417,
+          "median_ns": 788998458,
+          "p75_ns": 791549979,
+          "max_ns": 794101500,
+          "iqr_ns": 37775562,
+          "mad_ns": 5103042,
+          "mean_ns": 767216777.6666666,
+          "stddev_ns": 34475346.94820872,
+          "cv": 0.04493560093023312
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "compile",
+          "mode": "compile",
+          "timing_scope": "process_wall",
+          "correctness_checked": true,
+          "executable_path": "/var/folders/bl/vzjcvbz95c3dk19cb0fw46180000gn/T/lnako-comparison-QyHi8u/dict-large-read/lnako-aot",
+          "executable_size_bytes": 571216,
+          "warnings": [],
+          "samples_ns": [
+            196801292,
+            240191750,
+            212334417
+          ],
+          "count": 3,
+          "min_ns": 196801292,
+          "p25_ns": 204567855,
+          "median_ns": 212334417,
+          "p75_ns": 226263084,
+          "max_ns": 240191750,
+          "iqr_ns": 21695229,
+          "mad_ns": 15533125,
+          "mean_ns": 216442486.33333334,
+          "stddev_ns": 17950675.690124616,
+          "cv": 0.08293508356062583
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "aot_run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": 571216,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            18971333,
+            21279083,
+            19327416
+          ],
+          "count": 3,
+          "min_ns": 18971333,
+          "p25_ns": 19149375,
+          "median_ns": 19327416,
+          "p75_ns": 20303250,
+          "max_ns": 21279083,
+          "iqr_ns": 1153875,
+          "mad_ns": 356083,
+          "mean_ns": 19859277.333333332,
+          "stddev_ns": 1014424.261686182,
+          "cv": 0.05108062315960987
+        }
+      ],
+      "runtime_status": {
+        "cnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        },
+        "gonako": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "nadesiko-implementation"
+        },
+        "python": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "c": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "rust": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "lnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        }
+      }
+    },
+    {
+      "id": "string-copy-fixed",
+      "category": "diagnostics",
+      "kind": "micro",
+      "description": "長さを固定したimmutable copy-on-concatを反復して測る",
+      "measurement": "steady_state",
+      "profiles": [
+        "smoke",
+        "normal",
+        "full"
+      ],
+      "tags": [
+        "diagnostics",
+        "string",
+        "concat",
+        "immutable",
+        "allocation",
+        "runtime-input",
+        "portable"
+      ],
+      "source": "benchmarks/cases/diagnostics/string-copy-fixed/source.nako3",
+      "source_hashes": {
+        "cnako": "0cf3aec8c8856a1e1c4b5a7dd89ad14425504b95139afd8c1fd56a17a0c6c8da",
+        "lnako": "0cf3aec8c8856a1e1c4b5a7dd89ad14425504b95139afd8c1fd56a17a0c6c8da"
+      },
+      "sources": {
+        "cnako": "benchmarks/cases/diagnostics/string-copy-fixed/source.nako3",
+        "lnako": "benchmarks/cases/diagnostics/string-copy-fixed/source.nako3"
+      },
+      "runtime_support": {},
+      "input": {
+        "args": [
+          "100000"
+        ]
+      },
+      "expected_stdout": "1000000\n",
+      "measurements": [
+        {
+          "runtime": "cnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [],
+          "samples_ns": [
+            211775792,
+            169868667,
+            207974750
+          ],
+          "count": 3,
+          "min_ns": 169868667,
+          "p25_ns": 188921709,
+          "median_ns": 207974750,
+          "p75_ns": 209875271,
+          "max_ns": 211775792,
+          "iqr_ns": 20953562,
+          "mad_ns": 3801042,
+          "mean_ns": 196539736.33333334,
+          "stddev_ns": 18923027.1469982,
+          "cv": 0.09628092262678402
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "interpreter",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [],
+          "samples_ns": [
+            268348084,
+            250562625,
+            256277416
+          ],
+          "count": 3,
+          "min_ns": 250562625,
+          "p25_ns": 253420021,
+          "median_ns": 256277416,
+          "p75_ns": 262312750,
+          "max_ns": 268348084,
+          "iqr_ns": 8892729,
+          "mad_ns": 5714791,
+          "mean_ns": 258396041.66666666,
+          "stddev_ns": 7413819.033703855,
+          "cv": 0.02869168964773753
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "compile",
+          "mode": "compile",
+          "timing_scope": "process_wall",
+          "correctness_checked": true,
+          "executable_path": "/var/folders/bl/vzjcvbz95c3dk19cb0fw46180000gn/T/lnako-comparison-QyHi8u/string-copy-fixed/lnako-aot",
+          "executable_size_bytes": 504784,
+          "warnings": [],
+          "samples_ns": [
+            185093042,
+            183053083,
+            181914542
+          ],
+          "count": 3,
+          "min_ns": 181914542,
+          "p25_ns": 182483813,
+          "median_ns": 183053083,
+          "p75_ns": 184073063,
+          "max_ns": 185093042,
+          "iqr_ns": 1589250,
+          "mad_ns": 1138541,
+          "mean_ns": 183353555.66666666,
+          "stddev_ns": 1314896.3026440104,
+          "cv": 0.007171370622528136
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "aot_run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": 504784,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            50117375,
+            69280959,
+            79821084
+          ],
+          "count": 3,
+          "min_ns": 50117375,
+          "p25_ns": 59699167,
+          "median_ns": 69280959,
+          "p75_ns": 74551022,
+          "max_ns": 79821084,
+          "iqr_ns": 14851855,
+          "mad_ns": 10540125,
+          "mean_ns": 66406472.666666664,
+          "stddev_ns": 12295651.964537717,
+          "cv": 0.1851574322620155
+        }
+      ],
+      "runtime_status": {
+        "cnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        },
+        "gonako": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "nadesiko-implementation"
+        },
+        "python": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "c": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "rust": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "lnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        }
+      }
+    },
+    {
+      "id": "gc-short-lived",
+      "category": "diagnostics",
+      "kind": "allocation",
+      "description": "各反復の配列を次の反復で置き換え、short-lived allocationとGCを測る",
+      "measurement": "steady_state",
+      "profiles": [
+        "smoke",
+        "normal",
+        "full"
+      ],
+      "tags": [
+        "diagnostics",
+        "gc",
+        "allocation",
+        "short-lived",
+        "runtime-input",
+        "portable"
+      ],
+      "source": "benchmarks/cases/diagnostics/gc-short-lived/source.nako3",
+      "source_hashes": {
+        "cnako": "9ae6ee06873dcc3f4b82cf3591e428754686f471e8793350427954188e1f9036",
+        "lnako": "9ae6ee06873dcc3f4b82cf3591e428754686f471e8793350427954188e1f9036"
+      },
+      "sources": {
+        "cnako": "benchmarks/cases/diagnostics/gc-short-lived/source.nako3",
+        "lnako": "benchmarks/cases/diagnostics/gc-short-lived/source.nako3"
+      },
+      "runtime_support": {},
+      "input": {
+        "args": [
+          "4000"
+        ]
+      },
+      "expected_stdout": "8006000\n",
+      "measurements": [
+        {
+          "runtime": "cnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            150442833,
+            134575083,
+            148129917
+          ],
+          "count": 3,
+          "min_ns": 134575083,
+          "p25_ns": 141352500,
+          "median_ns": 148129917,
+          "p75_ns": 149286375,
+          "max_ns": 150442833,
+          "iqr_ns": 7933875,
+          "mad_ns": 2312916,
+          "mean_ns": 144382611,
+          "stddev_ns": 6998957.027484024,
+          "cv": 0.04847506897824437
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "interpreter",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            23779750,
+            34258459,
+            22972709
+          ],
+          "count": 3,
+          "min_ns": 22972709,
+          "p25_ns": 23376230,
+          "median_ns": 23779750,
+          "p75_ns": 29019105,
+          "max_ns": 34258459,
+          "iqr_ns": 5642875,
+          "mad_ns": 807041,
+          "mean_ns": 27003639.333333332,
+          "stddev_ns": 5140501.602684984,
+          "cv": 0.19036328915634498
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "compile",
+          "mode": "compile",
+          "timing_scope": "process_wall",
+          "correctness_checked": true,
+          "executable_path": "/var/folders/bl/vzjcvbz95c3dk19cb0fw46180000gn/T/lnako-comparison-QyHi8u/gc-short-lived/lnako-aot",
+          "executable_size_bytes": 504464,
+          "warnings": [],
+          "samples_ns": [
+            124980500,
+            126237584,
+            128111458
+          ],
+          "count": 3,
+          "min_ns": 124980500,
+          "p25_ns": 125609042,
+          "median_ns": 126237584,
+          "p75_ns": 127174521,
+          "max_ns": 128111458,
+          "iqr_ns": 1565479,
+          "mad_ns": 1257084,
+          "mean_ns": 126443180.66666667,
+          "stddev_ns": 1286449.1158350916,
+          "cv": 0.010174128087037508
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "aot_run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": 504464,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            4805000,
+            4794750,
+            5787625
+          ],
+          "count": 3,
+          "min_ns": 4794750,
+          "p25_ns": 4799875,
+          "median_ns": 4805000,
+          "p75_ns": 5296313,
+          "max_ns": 5787625,
+          "iqr_ns": 496438,
+          "mad_ns": 10250,
+          "mean_ns": 5129125,
+          "stddev_ns": 465648.61796924367,
+          "cv": 0.09078519590948625
+        }
+      ],
+      "runtime_status": {
+        "cnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        },
+        "gonako": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "nadesiko-implementation"
+        },
+        "python": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "c": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "rust": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "lnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        }
+      }
+    },
+    {
+      "id": "gc-long-lived",
+      "category": "diagnostics",
+      "kind": "allocation",
+      "description": "nested arrayを保持したまま走査し、long-lived rootとGCを測る",
+      "measurement": "steady_state",
+      "profiles": [
+        "smoke",
+        "normal",
+        "full"
+      ],
+      "tags": [
+        "diagnostics",
+        "gc",
+        "allocation",
+        "long-lived",
+        "root",
+        "runtime-input",
+        "portable"
+      ],
+      "source": "benchmarks/cases/diagnostics/gc-long-lived/source.nako3",
+      "source_hashes": {
+        "cnako": "2a219867118e3950366ac14eaa849fe4c372be760689815e8294d2a89a44e144",
+        "lnako": "2a219867118e3950366ac14eaa849fe4c372be760689815e8294d2a89a44e144"
+      },
+      "sources": {
+        "cnako": "benchmarks/cases/diagnostics/gc-long-lived/source.nako3",
+        "lnako": "benchmarks/cases/diagnostics/gc-long-lived/source.nako3"
+      },
+      "runtime_support": {},
+      "input": {
+        "args": [
+          "2000"
+        ]
+      },
+      "expected_stdout": "2001000\n",
+      "measurements": [
+        {
+          "runtime": "cnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            123941625,
+            143859000,
+            160743709
+          ],
+          "count": 3,
+          "min_ns": 123941625,
+          "p25_ns": 133900313,
+          "median_ns": 143859000,
+          "p75_ns": 152301355,
+          "max_ns": 160743709,
+          "iqr_ns": 18401042,
+          "mad_ns": 16884709,
+          "mean_ns": 142848111.33333334,
+          "stddev_ns": 15041382.219465079,
+          "cv": 0.10529633244058999
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "interpreter",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            45452458,
+            39163000,
+            49820750
+          ],
+          "count": 3,
+          "min_ns": 39163000,
+          "p25_ns": 42307729,
+          "median_ns": 45452458,
+          "p75_ns": 47636604,
+          "max_ns": 49820750,
+          "iqr_ns": 5328875,
+          "mad_ns": 4368292,
+          "mean_ns": 44812069.333333336,
+          "stddev_ns": 4374508.124648327,
+          "cv": 0.09761897162366392
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "compile",
+          "mode": "compile",
+          "timing_scope": "process_wall",
+          "correctness_checked": true,
+          "executable_path": "/var/folders/bl/vzjcvbz95c3dk19cb0fw46180000gn/T/lnako-comparison-QyHi8u/gc-long-lived/lnako-aot",
+          "executable_size_bytes": 504704,
+          "warnings": [],
+          "samples_ns": [
+            188096750,
+            193081959,
+            179888292
+          ],
+          "count": 3,
+          "min_ns": 179888292,
+          "p25_ns": 183992521,
+          "median_ns": 188096750,
+          "p75_ns": 190589355,
+          "max_ns": 193081959,
+          "iqr_ns": 6596834,
+          "mad_ns": 4985209,
+          "mean_ns": 187022333.66666666,
+          "stddev_ns": 5439607.220484602,
+          "cv": 0.029085334964217238
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "aot_run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": 504704,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            6088917,
+            5061458,
+            4736416
+          ],
+          "count": 3,
+          "min_ns": 4736416,
+          "p25_ns": 4898937,
+          "median_ns": 5061458,
+          "p75_ns": 5575188,
+          "max_ns": 6088917,
+          "iqr_ns": 676251,
+          "mad_ns": 325042,
+          "mean_ns": 5295597,
+          "stddev_ns": 576443.4301478912,
+          "cv": 0.10885334177579811
+        }
+      ],
+      "runtime_status": {
+        "cnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        },
+        "gonako": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "nadesiko-implementation"
+        },
+        "python": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "c": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "rust": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "lnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        }
+      }
+    },
+    {
+      "id": "numeric-function-call",
+      "category": "diagnostics",
+      "kind": "micro",
+      "description": "2引数のnumeric functionを反復して呼び、数値計算callを測る",
+      "measurement": "steady_state",
+      "profiles": [
+        "smoke",
+        "normal",
+        "full"
+      ],
+      "tags": [
+        "diagnostics",
+        "numeric",
+        "function",
+        "call",
+        "runtime-input",
+        "portable"
+      ],
+      "source": "benchmarks/cases/diagnostics/numeric-function-call/source.nako3",
+      "source_hashes": {
+        "cnako": "b6e0c71b0c5cb5b4905693c2246eab7923003ce9d6189acc86520d6e46a94d38",
+        "lnako": "b6e0c71b0c5cb5b4905693c2246eab7923003ce9d6189acc86520d6e46a94d38"
+      },
+      "sources": {
+        "cnako": "benchmarks/cases/diagnostics/numeric-function-call/source.nako3",
+        "lnako": "benchmarks/cases/diagnostics/numeric-function-call/source.nako3"
+      },
+      "runtime_support": {},
+      "input": {
+        "args": [
+          "50000"
+        ]
+      },
+      "expected_stdout": "6250275000\n",
+      "measurements": [
+        {
+          "runtime": "cnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            193229667,
+            147893291,
+            158262666
+          ],
+          "count": 3,
+          "min_ns": 147893291,
+          "p25_ns": 153077979,
+          "median_ns": 158262666,
+          "p75_ns": 175746167,
+          "max_ns": 193229667,
+          "iqr_ns": 22668188,
+          "mad_ns": 10369375,
+          "mean_ns": 166461874.66666666,
+          "stddev_ns": 19395308.95642896,
+          "cv": 0.11651502180464626
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "interpreter",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": null,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            188606041,
+            161579416,
+            209628250
+          ],
+          "count": 3,
+          "min_ns": 161579416,
+          "p25_ns": 175092729,
+          "median_ns": 188606041,
+          "p75_ns": 199117146,
+          "max_ns": 209628250,
+          "iqr_ns": 24024417,
+          "mad_ns": 21022209,
+          "mean_ns": 186604569,
+          "stddev_ns": 19666842.31246384,
+          "cv": 0.10539314454012023
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "compile",
+          "mode": "compile",
+          "timing_scope": "process_wall",
+          "correctness_checked": true,
+          "executable_path": "/var/folders/bl/vzjcvbz95c3dk19cb0fw46180000gn/T/lnako-comparison-QyHi8u/numeric-function-call/lnako-aot",
+          "executable_size_bytes": 504608,
+          "warnings": [],
+          "samples_ns": [
+            162681291,
+            137725666,
+            136066417
+          ],
+          "count": 3,
+          "min_ns": 136066417,
+          "p25_ns": 136896042,
+          "median_ns": 137725666,
+          "p75_ns": 150203479,
+          "max_ns": 162681291,
+          "iqr_ns": 13307437,
+          "mad_ns": 1659249,
+          "mean_ns": 145491124.66666666,
+          "stddev_ns": 12174143.11116667,
+          "cv": 0.08367619082647643
+        },
+        {
+          "runtime": "lnako",
+          "group": "nadesiko-implementation",
+          "measurement": "steady_state",
+          "mode": "aot_run",
+          "timing_scope": "process_batched_wall",
+          "correctness_checked": true,
+          "executable_size_bytes": 504608,
+          "warnings": [
+            "process-batched wall median is under 200ms; treat the result as startup-sensitive"
+          ],
+          "samples_ns": [
+            10468958,
+            10298209,
+            10712416
+          ],
+          "count": 3,
+          "min_ns": 10298209,
+          "p25_ns": 10383584,
+          "median_ns": 10468958,
+          "p75_ns": 10590687,
+          "max_ns": 10712416,
+          "iqr_ns": 207103,
+          "mad_ns": 170749,
+          "mean_ns": 10493194.333333334,
+          "stddev_ns": 169965.50552456878,
+          "cv": 0.016197689676311987
+        }
+      ],
+      "runtime_status": {
+        "cnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        },
+        "gonako": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "nadesiko-implementation"
+        },
+        "python": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "c": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "rust": {
+          "selected": false,
+          "available": true,
+          "status": "skipped",
+          "reason": "not_selected",
+          "group": "cross-language-reference"
+        },
+        "lnako": {
+          "selected": true,
+          "available": true,
+          "status": "measured",
+          "reason": null,
+          "group": "nadesiko-implementation"
+        }
+      }
+    }
+  ]
+}

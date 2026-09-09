@@ -133,7 +133,7 @@ async function copyPayload(stagingRoot, binary, runtime, llvm, spec) {
   await copyPayloadFile(resolve(root, "THIRD_PARTY_NOTICES.md"), resolve(stagingRoot, "THIRD_PARTY_NOTICES.md"), false);
   await copyPayloadFile(resolve(root, "include/lnako_plugin_v1.h"), resolve(stagingRoot, "include/lnako_plugin_v1.h"), false);
   await copyPayloadFile(resolve(root, "compat/v3.7.24/UPSTREAM_LICENSE"), resolve(stagingRoot, "compat/v3.7.24/UPSTREAM_LICENSE"), false);
-  for (const document of ["ARCHITECTURE.md", "DEVELOPMENT.md", "NATIVE_PLUGIN_ABI.md", "COMPATIBILITY_EVIDENCE.md", "COMPATIBILITY_QUIRKS.md"]) {
+  for (const document of ["GETTING_STARTED.md", "COMPATIBILITY.md", "TODO.md", "ARCHITECTURE.md", "DEVELOPMENT.md", "NATIVE_PLUGIN_ABI.md", "COMPATIBILITY_EVIDENCE.md", "COMPATIBILITY_QUIRKS.md"]) {
     await copyPayloadFile(resolve(root, "docs", document), resolve(stagingRoot, "docs", document), false);
   }
   if (llvm !== null) await copyPinnedLlvm(stagingRoot, llvm, spec);

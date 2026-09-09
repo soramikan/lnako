@@ -127,7 +127,15 @@ function validateSbom(sbom, prefix, entries) {
   }
 }
 
+function validateReleaseDocuments(prefix, entries) {
+  for (const name of ["GETTING_STARTED.md", "COMPATIBILITY.md", "TODO.md"]) {
+    const bytes = requireEntry(entries, `${prefix}docs/${name}`);
+    if (bytes.toString("utf8").trim().length === 0) throw new Error(`配布契約文書が空です: ${name}`);
+  }
+}
+
 function validateArchiveContents(manifest, sbom, prefix, entries) {
+  validateReleaseDocuments(prefix, entries);
   const expectedArchiveEntries = new Set([`${prefix}manifest.json`, `${prefix}sbom.spdx.json`]);
   for (const file of manifest.files) expectedArchiveEntries.add(`${prefix}${file.path}`);
   if (entries.size !== expectedArchiveEntries.size) throw new Error("アーカイブにmanifest外のentryがあります");
@@ -366,7 +374,19 @@ async function selfTest() {
       if (result.status !== 0) throw new Error(`配布self-test生成に失敗しました(${target}): ${result.stderr}`);
       const extension = target === "windows-x64" ? "zip" : "tar.gz";
       const archive = resolve(output, `lnako-9.9.9-test-${target}.${extension}`);
-      await verifyDistribution(archive);
+      const verified = await verifyDistribution(archive);
+      const prefix = `lnako-9.9.9-test-${target}/`;
+      for (const document of ["GETTING_STARTED.md", "COMPATIBILITY.md", "TODO.md"]) {
+        for (const empty of [false, true]) {
+          const entries = new Map(verified.entries);
+          const key = `${prefix}docs/${document}`;
+          if (empty) entries.set(key, Buffer.from(" \n"));
+          else entries.delete(key);
+          let rejected = false;
+          try { validateReleaseDocuments(prefix, entries); } catch { rejected = true; }
+          if (!rejected) throw new Error(`配布文書の欠落・空欄を拒否しません: ${document}`);
+        }
+      }
       archives.push(archive);
     }
     const tarArchive = archives.find((archive) => archive.endsWith(".tar.gz"));

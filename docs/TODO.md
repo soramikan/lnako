@@ -8,11 +8,10 @@
 
 | 項目 | 状態 | 完了条件 |
 | --- | --- | --- |
-| AOT⇔動的InterpreterブリッジのGC root安全性 | [#2](https://github.com/soramikan/lnako/issues/2) | 例外・OOMを含む全push/popを例外安全にし、GC stress / failure injectionを通す |
 | リリース文書・配布契約の整合 | [#13](https://github.com/soramikan/lnako/issues/13) | 本書、互換性文書、RELEASE、配布archive、versionを0.1.0向けに一致させる |
 | version・release workflow・canonical attestation | [PR #1](https://github.com/soramikan/lnako/pull/1) | 最終sourceでCI 54/54、`verified: 527`、署名済みannotated `v0.1.0` tag、release asset検証を通す |
 
-上記を満たす前に`v0.1.0`タグを作成しません。#2の修正はsource manifest入力を変更するため、修正後の最終sourceに対してcanonical attestationを取り直します。
+[#2](https://github.com/soramikan/lnako/issues/2)（AOT⇔動的InterpreterブリッジのGC root安全性）は解消済み・closedです。#13の利用者向け導線・保証範囲・文書同梱は整備済みですが、最終候補のCI・canonical attestation・公開確認は引き続き必要です。上記の完了条件を満たす前に`v0.1.0`タグを作成しません。
 
 ## 0.1.0で明示的に非対応とする境界
 
@@ -34,7 +33,7 @@
 
 ## 0.1.0をブロックしない継続課題
 
-- 性能: AOTは現行3 OSでsteady-state 17/17ケースcnakoより高速ですが、gonakoに対しては`string-concat`が未達です。Interpreterの全般性能とWindowsのAOT実行ファイルサイズも改善余地があります。継続管理は [#12](https://github.com/soramikan/lnako/issues/12)。
+- 性能: 最新のリリース候補測定は[ベンチマーク結果](benchmarks/RESULTS.md)を参照してください。Interpreterの性能、文字列処理、WindowsのAOT実行ファイルサイズなどの継続管理は [#12](https://github.com/soramikan/lnako/issues/12)。
 - upstream bug候補・route差の再追跡は [#10](https://github.com/soramikan/lnako/issues/10)。0.1.0では固定v3.7.24のoracleと意図的制限を維持します。
 - AOT native pluginの静的同梱は [#11](https://github.com/soramikan/lnako/issues/11)。現行dynamic ABIとAOTからの遅延ロードは別機能として対応済みです。
 

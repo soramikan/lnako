@@ -130,3 +130,7 @@ if (distribution.indexOf("await signPayload(stagingRoot") > distribution.indexOf
     !distribution.includes('resolve(stagingRoot, "bin", spec.executable), resolve(stagingRoot, "lib", spec.runtimeLibrary)')) {
   throw new Error("署名後のpayloadからmanifestを生成してください");
 }
+
+for (const document of ["GETTING_STARTED.md", "COMPATIBILITY.md", "TODO.md"]) {
+  if (!distribution.includes(`"${document}"`)) throw new Error(`配布契約文書を同梱してください: ${document}`);
+}
