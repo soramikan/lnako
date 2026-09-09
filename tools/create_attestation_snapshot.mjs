@@ -207,12 +207,14 @@ function ensureGitIdentity() {
     const result = spawnSync("git", ["config", "user.name"], { cwd: root, encoding: "utf8" });
     if (result.status !== 0 || !result.stdout.trim()) {
       process.env.GIT_AUTHOR_NAME = "github-actions[bot]";
+      process.env.GIT_COMMITTER_NAME = "github-actions[bot]";
     }
   }
   if (!process.env.GIT_AUTHOR_EMAIL) {
     const result = spawnSync("git", ["config", "user.email"], { cwd: root, encoding: "utf8" });
     if (result.status !== 0 || !result.stdout.trim()) {
       process.env.GIT_AUTHOR_EMAIL = "github-actions[bot]@users.noreply.github.com";
+      process.env.GIT_COMMITTER_EMAIL = "github-actions[bot]@users.noreply.github.com";
     }
   }
 }
