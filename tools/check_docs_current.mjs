@@ -34,6 +34,16 @@ function requireText(text, needle, label) {
   if (!text.includes(needle)) fail(`${label}に必要な記述がありません: ${needle}`);
 }
 
+function requireTableValue(text, label, marker, value) {
+  const markerStart = `<!-- attestation:${marker} -->`;
+  const markerEnd = `<!-- /attestation:${marker} -->`;
+  const plain = `| \`${label}\` | ${value} |`;
+  const marked = `| \`${label}\` | ${markerStart}${value}${markerEnd} |`;
+  if (!text.includes(plain) && !text.includes(marked)) {
+    fail(`${label}の表記述がありません: ${plain} または ${marked}`);
+  }
+}
+
 async function assertExists(relativePath) {
   try {
     await access(resolve(root, relativePath));
@@ -70,9 +80,10 @@ const expectedVerified = currentAttestationExists ? 527 : 0;
 for (const [name, expected] of [["verified", expectedVerified], ["trace-confirmed-unattested", 527 - expectedVerified], ["unverified", 0]]) {
   if (evidenceStates?.[name] !== expected) fail(`evidence.jsonの${name} stateが不一致です`);
 }
-requireText(await read("docs/COMPATIBILITY.md"), `| \`verified\` | ${evidenceStates.verified} |`, "COMPATIBILITY.md");
-requireText(await read("docs/COMPATIBILITY.md"), `| \`trace-confirmed-unattested\` | ${evidenceStates["trace-confirmed-unattested"]} |`, "COMPATIBILITY.md");
-requireText(await read("docs/COMPATIBILITY.md"), `| \`unverified\` | ${evidenceStates.unverified} |`, "COMPATIBILITY.md");
+const compatibilityText = await read("docs/COMPATIBILITY.md");
+requireTableValue(compatibilityText, "verified", "verified", evidenceStates.verified);
+requireTableValue(compatibilityText, "trace-confirmed-unattested", "trace", evidenceStates["trace-confirmed-unattested"]);
+requireTableValue(compatibilityText, "unverified", "unverified", evidenceStates.unverified);
 
 const fixtureInventory = evidence.fixtureInventory;
 if (fixtureInventory?.total !== 420 || fixtureInventory?.nativeAot !== 318 || fixtureInventory?.interpreter !== 112 || fixtureInventory?.compatJs !== 9) {
