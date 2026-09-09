@@ -354,6 +354,7 @@ async function main() {
     }
 
     ensureGitIdentity();
+  } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
 
