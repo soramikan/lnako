@@ -51,7 +51,7 @@
     "commands": ["起動時"],
     "files": {
       "child-slow.mjs": "import { existsSync } from 'node:fs';\nconst deadline = Date.now() + 8000;\nconst poll = setInterval(() => {\n  if (existsSync('child-fast-completed.marker') || Date.now() > deadline) {\n    clearInterval(poll);\n    setTimeout(() => process.stdout.write('SLOW'), 600);\n  }\n}, 25);",
-      "child-fast.mjs": "import { writeFileSync } from 'node:fs';\nwriteFileSync('child-fast-completed.marker', 'done');\nprocess.stdout.write('FAST');"
+      "child-fast.mjs": "import { writeFileSync } from 'node:fs';\nprocess.stdout.write('FAST', () => {\n  writeFileSync('child-fast-completed.marker', 'done');\n});"
     },
     "source": "C=[]\nF=関数(S)それは配列追加(C,S);ここまで\nFで\"node child-slow.mjs\"を起動時\nFで\"node child-fast.mjs\"を起動時\n3秒待\nJSON変換(C)を表示\n"
   },
