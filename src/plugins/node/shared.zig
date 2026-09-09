@@ -139,6 +139,7 @@ pub const Context = struct {
     pollOperationFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, token: u64) anyerror!?CommandResult = null,
     readStdinFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator) anyerror![]u8 = null,
     readStdinLineFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator) anyerror![]u8 = null,
+    isStdinTtyFn: ?*const fn (context: *anyopaque) bool = null,
     createTemporaryDirectoryFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, prefix: []const u8) anyerror![]u8 = null,
     openExternalFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, target: []const u8, reveal: bool) anyerror!void = null,
     writeStdoutFn: ?*const fn (context: *anyopaque, bytes: []const u8) anyerror!void = null,

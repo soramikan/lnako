@@ -546,15 +546,33 @@ fn aotStdinIsTty(runtime: *Runtime) bool {
 pub fn aotReadStdinLine(runtime: *Runtime) ![]u8 {
     var line: std.ArrayList(u8) = .empty;
     defer line.deinit(runtime.allocator);
+    var pending_cr = false;
+    const limit = 64 * 1024 * 1024;
     while (true) {
+        if (line.items.len >= limit) return error.StreamTooLong;
         var byte: [1]u8 = undefined;
         const n = std.Io.File.stdin().readStreaming(aotRuntimeIo(runtime), &.{&byte}) catch |err| switch (err) {
-            error.EndOfStream => break,
+            error.EndOfStream => {
+                if (pending_cr) try line.append(runtime.allocator, '\r');
+                break;
+            },
             else => return err,
         };
-        if (n == 0) break;
-        if (byte[0] == '\n') break;
-        if (byte[0] != '\r') try line.append(runtime.allocator, byte[0]);
+        if (n == 0) {
+            if (pending_cr) try line.append(runtime.allocator, '\r');
+            break;
+        }
+        if (byte[0] == '\n') {
+            if (pending_cr) {
+                // 行末のCRはLFと共に破棄
+            } else if (line.items.len > 0 and line.items[line.items.len - 1] == '\r') {
+                line.items.len -= 1;
+            }
+            break;
+        }
+        if (pending_cr) try line.append(runtime.allocator, '\r');
+        pending_cr = byte[0] == '\r';
+        if (!pending_cr) try line.append(runtime.allocator, byte[0]);
     }
     return runtime.allocator.dupe(u8, line.items);
 }
