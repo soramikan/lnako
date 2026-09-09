@@ -1,0 +1,78 @@
+name: Update attestation snapshot
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: Successful main CI workflow run ID containing attest-dispatch-evidence
+        required: true
+      create-pr:
+        description: Create a pull request with the updated attestation
+        default: true
+        type: boolean
+
+permissions: {}
+
+jobs:
+  update:
+    if: (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Resolve attested run metadata
+        id: metadata
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            echo "run-id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+            echo "run-attempt=${{ github.event.workflow_run.run_attempt }}" >> "$GITHUB_OUTPUT"
+            echo "head-sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+            echo "head-branch=${{ github.event.workflow_run.head_branch }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "run-id=${{ github.event.inputs.run-id }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check run is from main
+        if: steps.metadata.outputs.head-branch != '' && steps.metadata.outputs.head-branch != 'main'
+        run: |
+          echo "Run is not from main: ${{ steps.metadata.outputs.head-branch }}"
+          exit 1
+
+      - name: Checkout target source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ steps.metadata.outputs.head-sha }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v4.0.2
+        with:
+          node-version: 24
+
+      - name: Create attestation snapshot and PR
+        run: |
+          set -euo pipefail
+          args=(
+            "--run-id" "${{ steps.metadata.outputs.run-id }}"
+            "--branch" "attestation/run-${{ steps.metadata.outputs.run-id }}"
+            "--base" "main"
+          )
+          if [[ "${{ steps.metadata.outputs.run-attempt }}" != "" ]]; then
+            args+=("--attempt" "${{ steps.metadata.outputs.run-attempt }}")
+          fi
+          if [[ "${{ steps.metadata.outputs.head-sha }}" != "" ]]; then
+            args+=("--commit" "${{ steps.metadata.outputs.head-sha }}")
+          fi
+          if [[ "${{ github.event.inputs.create-pr }}" == "false" ]]; then
+            args+=("--no-pr")
+          fi
+          node tools/create_attestation_snapshot.mjs "${args[@]}"
