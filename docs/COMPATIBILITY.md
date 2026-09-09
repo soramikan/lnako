@@ -54,7 +54,7 @@
 | `unverified` | <!-- attestation:unverified -->0<!-- /attestation:unverified --> |
 
 <!-- attestation:description-start -->
-これは、全527 entryの実行証拠が追跡された現行attestation snapshot（`attestations/current.json` → `attestations/34396220275/`）で署名済みであることを示します。`verified` は、`attestations/current.json` が指す現行snapshotのsource manifest（`240004aaf937e2bc7a06057718e6072823549a613a7712a98863d407c0637ab4`）と現行ソースが一致し、かつcanonical証拠ファイルのdigestが署名subjectに含まれる場合にのみ維持される状態です。sourceに変更を加えた場合、過去snapshotの `verified: 527` を流用せず、mainマージ後の新しいCI attestationを再取得して `current.json` を更新します。
+これは、全527 entryの実行証拠が追跡された現行attestation snapshot（`attestations/current.json` → `attestations/34402208204/`）で署名済みであることを示します。`verified` は、`attestations/current.json` が指す現行snapshotのsource manifest（`240004aaf937e2bc7a06057718e6072823549a613a7712a98863d407c0637ab4`）と現行ソースが一致し、かつcanonical証拠ファイルのdigestが署名subjectに含まれる場合にのみ維持される状態です。sourceに変更を加えた場合、過去snapshotの `verified: 527` を流用せず、mainマージ後の新しいCI attestationを再取得して `current.json` を更新します。
 <!-- attestation:description-end -->
 
 0.1.1の最終sourceでコードを変更した場合は、過去snapshotの527件をそのままリリース証拠として流用しません。最終source manifestに対してCIとattestationを取り直し、release preflightの `sync_compat_evidence.mjs --check` と `check_tracked_dispatch_attestation.mjs` を通過させます。
@@ -62,7 +62,7 @@
 <!-- attestation:artifacts-start -->
 ### CIの一時artifact
 
-現行manifestに対応するCI run `34396220275`（commit `361256beecaed45db2cae2d98a59769ea2994e7b`、54/54 job成功）が生成したcatalog artifactは `verified: 527`、`trace-confirmed-unattested: 0`、`unverified: 0` です。このrunのattestationは3 OSのdispatch証拠・native AOT aggregate・canonical証拠17件を同一Sigstore bundleのsubjectとして署名しており、snapshotは `attestations/34396220275/` に追跡しています。前manifest用のsnapshot `attestations/34305071458/`（run `34305071458`）と `attestations/34121804812/`（run `34121804812`）、`attestations/34113932297/`（run `34113932297`）は履歴として残しています。
+現行manifestに対応するCI run `34402208204`（commit `fb015179478169cf4a595094766d4b9582d2925b`、54/54 job成功）が生成したcatalog artifactは `verified: 527`、`trace-confirmed-unattested: 0`、`unverified: 0` です。このrunのattestationは3 OSのdispatch証拠・native AOT aggregate・canonical証拠17件を同一Sigstore bundleのsubjectとして署名しており、snapshotは `attestations/34402208204/` に追跡しています。前manifest用のsnapshot `attestations/34305071458/`（run `34305071458`）と `attestations/34121804812/`（run `34121804812`）、`attestations/34113932297/`（run `34113932297`）は履歴として残しています。
 
 一時artifactの値は、実行環境・署名・artifactの保存期間に依存します。追跡対象のcanonical `evidence.json` は、追跡された現行snapshotと現行source manifestの一致が確認できた場合にのみ `verified` を保持します。
 <!-- attestation:artifacts-end -->
