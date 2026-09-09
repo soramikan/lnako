@@ -119,12 +119,24 @@ async function downloadArtifact(runId, repo, name, directory) {
 }
 
 async function findSingleFile(dir) {
-  const entries = readdirSync(dir, { withFileTypes: true });
-  const files = entries.filter((entry) => entry.isFile());
-  if (files.length !== 1) {
-    throw new Error(`${dir} に想定外のファイル数があります: ${files.length}`);
+  const allFiles = listFilesSync(dir);
+  if (allFiles.length !== 1) {
+    throw new Error(`${dir} に想定外のファイル数があります: ${allFiles.length}`);
   }
-  return resolve(dir, files[0].name);
+  return allFiles[0];
+}
+
+function listFilesSync(dir) {
+  const files = [];
+  const walk = (base) => {
+    for (const entry of readdirSync(base, { withFileTypes: true })) {
+      const full = resolve(base, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile()) files.push(full);
+    }
+  };
+  walk(dir);
+  return files;
 }
 
 async function isSigstoreBundle(path) {
@@ -232,7 +244,7 @@ async function main() {
       await cp(source, target);
     }
 
-    const catalogFiles = (await readdir(tempCatalog)).map((name) => resolve(tempCatalog, name));
+    const catalogFiles = listFilesSync(tempCatalog);
     const files = new Map();
     for (const path of catalogFiles) {
       if (await isSigstoreBundle(path)) {
@@ -249,7 +261,7 @@ async function main() {
     if (!files.has("nativeAotAttestation")) throw new Error("catalog artifactにnative-aot-attestation.jsonがありません");
     if (!files.has("catalogEvidence")) throw new Error("catalog artifactにcatalog-evidence-verified.jsonがありません");
 
-    const aotFiles = (await readdir(tempAot)).map((name) => resolve(tempAot, name));
+    const aotFiles = listFilesSync(tempAot);
     const aotAggregateSource = aotFiles.find((path) => path.endsWith("native-aot-aggregate-evidence.json"));
     if (!aotAggregateSource) throw new Error("native AOT aggregate artifactに集約証拠ファイルがありません");
     files.set("nativeAotAggregate", aotAggregateSource);
