@@ -16,6 +16,7 @@ pub const CommandResult = shared.CommandResult;
 pub const State = shared.State;
 pub const Effects = shared.Effects;
 pub const Context = shared.Context;
+pub const readLineFromFile = shared.readLineFromFile;
 
 pub const call = call_mod.call;
 pub const install = call_mod.install;
