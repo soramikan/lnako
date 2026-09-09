@@ -66,7 +66,7 @@ jobs:
         if: steps.metadata.outputs.head-branch != ''
         run: |
           set -euo pipefail
-          workflow_name=$(gh run view "${{ steps.metadata.outputs.run-id }}" --repo "${{ github.repository }}" --json workflowName | node -e 'console.log(JSON.parse(process.argv[1]).workflowName)')
+          workflow_name=$(gh run view "${{ steps.metadata.outputs.run-id }}" --repo "${{ github.repository }}" --json workflowName | node -e 'console.log(JSON.parse(require("fs").readFileSync(0, "utf8")).workflowName)')
           if [[ "$workflow_name" != "CI" ]]; then
             echo "Run is not from CI workflow: $workflow_name"
             exit 1
