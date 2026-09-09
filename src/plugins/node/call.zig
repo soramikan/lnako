@@ -304,3 +304,92 @@ test "尋は1行を標準入力から読み取る" {
     defer std.testing.allocator.free(utf8);
     try std.testing.expectEqualStrings("太郎", utf8);
 }
+
+test "尋はTTYと判定されたときプロンプトを出力して1行を読み取る" {
+    const TestHost = struct {
+        var prompt_seen: std.ArrayList(u8) = .empty;
+
+        fn cwd(_: *anyopaque, allocator: std.mem.Allocator) ![]u8 {
+            return allocator.dupe(u8, "/work/project");
+        }
+
+        fn isStdinTty(_: *anyopaque) bool {
+            return true;
+        }
+
+        fn readLine(_: *anyopaque, allocator: std.mem.Allocator) ![]u8 {
+            return allocator.dupe(u8, "花子");
+        }
+
+        fn write(_: *anyopaque, bytes: []const u8) !void {
+            try prompt_seen.appendSlice(std.testing.allocator, bytes);
+        }
+    };
+    var host = TestHost{};
+    TestHost.prompt_seen.clearRetainingCapacity();
+    defer TestHost.prompt_seen.deinit(std.testing.allocator);
+    var runtime = shared.Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = shared.State{};
+    defer state.deinit(std.testing.allocator);
+    const context = shared.Context{
+        .context = &host,
+        .cwdFn = TestHost.cwd,
+        .isStdinTtyFn = TestHost.isStdinTty,
+        .readStdinLineFn = TestHost.readLine,
+        .writeStdoutFn = TestHost.write,
+    };
+    const prompt = try runtime.stringUtf8("名前は？");
+    const result = (try call(&runtime, &state, context, null, "尋", &.{prompt})).?;
+    const utf8 = try result.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(utf8);
+    try std.testing.expectEqualStrings("名前は？", TestHost.prompt_seen.items);
+    try std.testing.expectEqualStrings("花子", utf8);
+}
+
+test "尋は複数回呼ばれると順に異なる行を読み取る" {
+    const TestHost = struct {
+        var index: usize = 0;
+        const lines = [_][]const u8{ "一郎", "二郎" };
+
+        fn cwd(_: *anyopaque, allocator: std.mem.Allocator) ![]u8 {
+            return allocator.dupe(u8, "/work/project");
+        }
+
+        fn isStdinTty(_: *anyopaque) bool {
+            return true;
+        }
+
+        fn readLine(_: *anyopaque, allocator: std.mem.Allocator) ![]u8 {
+            const i = index;
+            index += 1;
+            return allocator.dupe(u8, lines[i]);
+        }
+
+        fn write(_: *anyopaque, bytes: []const u8) !void {
+            _ = bytes;
+        }
+    };
+    var host = TestHost{};
+    TestHost.index = 0;
+    var runtime = shared.Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = shared.State{};
+    defer state.deinit(std.testing.allocator);
+    const context = shared.Context{
+        .context = &host,
+        .cwdFn = TestHost.cwd,
+        .isStdinTtyFn = TestHost.isStdinTty,
+        .readStdinLineFn = TestHost.readLine,
+        .writeStdoutFn = TestHost.write,
+    };
+    const prompt = try runtime.stringUtf8("名前は？");
+    const result1 = (try call(&runtime, &state, context, null, "尋", &.{prompt})).?;
+    const utf1 = try result1.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(utf1);
+    try std.testing.expectEqualStrings("一郎", utf1);
+    const result2 = (try call(&runtime, &state, context, null, "尋", &.{prompt})).?;
+    const utf2 = try result2.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(utf2);
+    try std.testing.expectEqualStrings("二郎", utf2);
+}
