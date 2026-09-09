@@ -724,49 +724,7 @@ pub const CliHost = struct {
     const max_stdin_line_bytes = 64 * 1024 * 1024;
 
     pub fn readLineFromFile(io: std.Io, file: std.Io.File, allocator: std.mem.Allocator, limit: usize) ![]u8 {
-        var line: std.ArrayList(u8) = .empty;
-        defer line.deinit(allocator);
-        var pending_cr = false;
-        while (true) {
-            var byte: [1]u8 = undefined;
-            const n = file.readStreaming(io, &.{&byte}) catch |err| switch (err) {
-                error.EndOfStream => {
-                    if (pending_cr) {
-                        if (line.items.len >= limit) return error.StreamTooLong;
-                        try line.append(allocator, '\r');
-                    }
-                    break;
-                },
-                else => return err,
-            };
-            if (n == 0) {
-                if (pending_cr) {
-                    if (line.items.len >= limit) return error.StreamTooLong;
-                    try line.append(allocator, '\r');
-                }
-                break;
-            }
-            if (byte[0] == '\n') {
-                if (pending_cr) {
-                    // 行末のCRはLFと共に破棄
-                } else if (line.items.len > 0 and line.items[line.items.len - 1] == '\r') {
-                    line.items.len -= 1;
-                }
-                break;
-            }
-            if (pending_cr) {
-                if (line.items.len >= limit) return error.StreamTooLong;
-                try line.append(allocator, '\r');
-                pending_cr = false;
-            }
-            if (byte[0] == '\r') {
-                pending_cr = true;
-            } else {
-                if (line.items.len >= limit) return error.StreamTooLong;
-                try line.append(allocator, byte[0]);
-            }
-        }
-        return allocator.dupe(u8, line.items);
+        return lnako.plugins.node.readLineFromFile(io, file, allocator, limit);
     }
 
     fn readStdinLine(context: *anyopaque, allocator: std.mem.Allocator) ![]u8 {
