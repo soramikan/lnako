@@ -32,7 +32,9 @@ test("sign every Mach-O dependency before lnako; only lnako gets the plugin enti
     await signPayload(directory, { identity: "fixture", keychain: "temporary", execute, platform: "darwin" });
     const signing = calls.filter((args) => args.includes("--sign"));
     assert.deepEqual(signing.map((args) => relative(directory, args.at(-1)).replaceAll("\\", "/")), ["llvm/lib/libLLVM-C.dylib", "llvm/bin/clang", "bin/lnako"]);
-    assert(signing.every((args) => args.includes("--timestamp") && args.includes("--keychain") && !args.includes("--deep")));
+    // codesignへ--keychainを渡すとidentity解決に失敗するため渡さない。
+    // 一時keychainはsetup側でuser search listへ登録済みという前提で検査する。
+    assert(signing.every((args) => args.includes("--timestamp") && !args.includes("--keychain") && !args.includes("--deep")));
     assert(!signing[0].includes("--options"));
     assert(signing[1].includes("runtime"));
     assert(!signing[1].includes("--entitlements"));
