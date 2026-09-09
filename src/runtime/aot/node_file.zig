@@ -539,15 +539,48 @@ pub fn nodeStdinCallbackBuiltin(runtime: *Runtime, target: *Value, arguments: []
     return .{};
 }
 
+fn aotStdinIsTty(runtime: *Runtime) bool {
+    return std.Io.File.stdin().isTty(aotRuntimeIo(runtime)) catch false;
+}
+
+pub fn aotReadStdinLine(runtime: *Runtime) ![]u8 {
+    var line: std.ArrayList(u8) = .empty;
+    defer line.deinit(runtime.allocator);
+    while (true) {
+        var byte: [1]u8 = undefined;
+        const n = std.Io.File.stdin().readStreaming(aotRuntimeIo(runtime), &.{&byte}) catch |err| switch (err) {
+            error.EndOfStream => break,
+            else => return err,
+        };
+        if (n == 0) break;
+        if (byte[0] == '\n') break;
+        if (byte[0] != '\r') try line.append(runtime.allocator, byte[0]);
+    }
+    return runtime.allocator.dupe(u8, line.items);
+}
+
 pub fn nodeStdinLineBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
-    _ = try ensureAotStdin(runtime);
     const prompt_value = if (arguments.len > 0) arguments[0] else Value{};
     const prompt = try valueUtf8LossyAlloc(runtime, prompt_value);
     defer runtime.allocator.free(prompt);
-    writeBytes(prompt, false);
 
-    const raw_line = nextAotStdinLine(runtime);
-    const text = try runtimeUtf8StringLossy(runtime, raw_line);
+    var stdout_buffer: [4096]u8 = undefined;
+    var file_writer = std.Io.File.Writer.init(std.Io.File.stdout(), aotRuntimeIo(runtime), &stdout_buffer);
+    try file_writer.interface.writeAll(prompt);
+    try file_writer.interface.flush();
+
+    var line: []const u8 = "";
+    var owned: ?[]u8 = null;
+    if (runtime.stdin_bytes == null and aotStdinIsTty(runtime)) {
+        owned = try aotReadStdinLine(runtime);
+        line = owned.?;
+    } else {
+        _ = try ensureAotStdin(runtime);
+        line = nextAotStdinLine(runtime);
+    }
+    defer if (owned) |bytes| runtime.allocator.free(bytes);
+
+    const text = try runtimeUtf8StringLossy(runtime, line);
     if (command == .node_stdin_character) return text;
     const number = try valueToNumberRuntime(runtime, text);
     return if (std.math.isNan(number)) text else numberValue(number);

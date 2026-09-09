@@ -119,6 +119,7 @@ pub const CliHost = struct {
             .startArchiveFn = startArchive,
             .pollOperationFn = pollOperation,
             .readStdinFn = readStdin,
+            .readStdinLineFn = readStdinLine,
             .createTemporaryDirectoryFn = createTemporaryDirectory,
             .openExternalFn = openExternal,
             .writeStdoutFn = write,
@@ -712,6 +713,23 @@ pub const CliHost = struct {
         var buffer: [4096]u8 = undefined;
         var reader = std.Io.File.stdin().readerStreaming(self.io, &buffer);
         return reader.interface.allocRemaining(allocator, .limited(64 * 1024 * 1024));
+    }
+
+    fn readStdinLine(context: *anyopaque, allocator: std.mem.Allocator) ![]u8 {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        var line: std.ArrayList(u8) = .empty;
+        defer line.deinit(allocator);
+        while (true) {
+            var byte: [1]u8 = undefined;
+            const n = std.Io.File.stdin().readStreaming(self.io, &.{&byte}) catch |err| switch (err) {
+                error.EndOfStream => break,
+                else => return err,
+            };
+            if (n == 0) break;
+            if (byte[0] == '\n') break;
+            if (byte[0] != '\r') try line.append(allocator, byte[0]);
+        }
+        return allocator.dupe(u8, line.items);
     }
 
     fn createTemporaryDirectory(context: *anyopaque, allocator: std.mem.Allocator, prefix: []const u8) ![]u8 {

@@ -138,6 +138,7 @@ pub const Context = struct {
     startArchiveFn: ?*const fn (context: *anyopaque, operation: ArchiveOperation, source: []const u8, destination: []const u8, external_tool: ?[]const u8) anyerror!u64 = null,
     pollOperationFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, token: u64) anyerror!?CommandResult = null,
     readStdinFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator) anyerror![]u8 = null,
+    readStdinLineFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator) anyerror![]u8 = null,
     createTemporaryDirectoryFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, prefix: []const u8) anyerror![]u8 = null,
     openExternalFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, target: []const u8, reveal: bool) anyerror!void = null,
     writeStdoutFn: ?*const fn (context: *anyopaque, bytes: []const u8) anyerror!void = null,
