@@ -211,7 +211,7 @@ pub fn aotFunctionToDynamicValue(state: *DynamicInterpreterState, value: Value) 
     bridge.* = .{ .owner = state.owner, .state = state, .value = value };
     errdefer state.owner.allocator.destroy(bridge);
     try state.owner.dynamic_function_bridges.append(state.owner.allocator, bridge);
-    errdefer removeAotFunctionBridge(state.owner, bridge);
+    errdefer _ = state.owner.dynamic_function_bridges.pop();
     return state.value_runtime.createExternalFunction(
         dynamic_name.string,
         function.arity,
@@ -276,8 +276,8 @@ pub fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror
             for (value.object().?.payload.array.items) |item| _ = try result.array.push(try aotToDynamicValue(state, item));
             for (value.object().?.array_properties.entries.items) |property| {
                 var key = try aotToDynamicValue(state, property.key);
-                var item = try aotToDynamicValue(state, property.value);
                 try roots.protect(&key);
+                var item = try aotToDynamicValue(state, property.value);
                 try roots.protect(&item);
                 if (key != .string) return error.DynamicValueUnsupported;
                 try result.array.setProperty(key.string, item);
@@ -294,8 +294,8 @@ pub fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror
             try roots.protect(&result);
             for (value.object().?.payload.dictionary.entries.items) |entry| {
                 var key = try aotToDynamicValue(state, entry.key);
-                var item = try aotToDynamicValue(state, entry.value);
                 try roots.protect(&key);
+                var item = try aotToDynamicValue(state, entry.value);
                 try roots.protect(&item);
                 if (key != .string) return error.DynamicValueUnsupported;
                 try result.dictionary.set(key.string, item);
@@ -336,12 +336,12 @@ pub fn dynamicToAotValue(state: *DynamicInterpreterState, value: dynamic_value.V
                 var converted_key = try owner.createString(property.key.units);
                 var key_roots = RootFrame{};
                 owner.pushRoots(&key_roots, @ptrCast(&converted_key), 1);
+                defer owner.popRoots(&key_roots);
                 var converted_item = try dynamicToAotValue(state, property.value);
                 var item_roots = RootFrame{};
                 owner.pushRoots(&item_roots, @ptrCast(&converted_item), 1);
+                defer owner.popRoots(&item_roots);
                 try owner.setDictionary(&result.object().?.array_properties, converted_key, converted_item);
-                owner.popRoots(&item_roots);
-                owner.popRoots(&key_roots);
             }
             break :blk result;
         },
@@ -358,12 +358,12 @@ pub fn dynamicToAotValue(state: *DynamicInterpreterState, value: dynamic_value.V
                 var converted_key = try owner.createString(key.units);
                 var key_roots = RootFrame{};
                 owner.pushRoots(&key_roots, @ptrCast(&converted_key), 1);
+                defer owner.popRoots(&key_roots);
                 var converted_item = try dynamicToAotValue(state, item);
                 var item_roots = RootFrame{};
                 owner.pushRoots(&item_roots, @ptrCast(&converted_item), 1);
+                defer owner.popRoots(&item_roots);
                 try owner.setDictionary(&result.object().?.payload.dictionary, converted_key, converted_item);
-                owner.popRoots(&item_roots);
-                owner.popRoots(&key_roots);
             }
             break :blk result;
         },

@@ -29,6 +29,13 @@ pub export fn lnako_aot_unary(out: *state.Value, value: *const state.Value, opco
     };
 }
 
+/// ECMAScript `**`の特例を含む純粋f64の累乗ABI。数値確定のLLVM生成経路が
+/// `llvm.pow.f64`ではなくこれを呼び、指数NaN・±0・底NaN・|底|==1の無限指数を
+/// generic演算と同一に処理する。
+pub export fn lnako_aot_pow_f64(base: f64, exponent: f64) callconv(.c) f64 {
+    return shared.number_mod.pow(base, exponent);
+}
+
 pub export fn lnako_aot_arithmetic(out: *state.Value, left: *const state.Value, right: *const state.Value, opcode: u8) callconv(.c) void {
     out.* = .{};
     const runtime = if (state.active_runtime) |*active| active else return;

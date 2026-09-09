@@ -30,11 +30,11 @@
 
 | execution evidence | entry |
 | --- | ---: |
-| `verified` | 527 |
-| `trace-confirmed-unattested` | 0 |
+| `verified` | 0 |
+| `trace-confirmed-unattested` | 527 |
 | `unverified` | 0 |
 
-fixture coverageは `paired: 523`、`compat-js-only: 4`、その他の状態は0です。fixture inventoryは合計417件、native AOT 315件、Interpreter 112件、QuickJS 9件です。inventoryの分類は重複するため、数値を足してfixture総数にしません。
+fixture coverageは `paired: 523`、`compat-js-only: 4`、その他の状態は0です。fixture inventoryは合計420件、native AOT 318件、Interpreter 112件、QuickJS 9件です。inventoryの分類は重複するため、数値を足してfixture総数にしません。
 
 ## dispatch証拠
 
@@ -56,7 +56,7 @@ CIの `attest-dispatch-evidence` jobは、`actions/attest@v4.2.2` のSigstore bu
 
 昇格がcanonical `evidence.json`へ反映されるのは、追跡された現行snapshotが存在するときだけです。`attestations/current.json` が最新runのsnapshotディレクトリ（`attestations/<run>/`）を指し、その `sourceManifestSha256` が現行source manifestと一致する場合に限り、`--check`／`--generate` がそのattestationを自動適用します。manifestが変わるコード変更ではpointerが陳腐化し、一致する新しいsnapshotを追跡するまでverifiedは維持されません。過去runのsnapshotを現在HEADの証拠へ自動転記しない方針は維持します。
 
-現行の追跡snapshotはCI run `34121804812`（commit `1c096a13fdd41fc6e60d2dddddae7001604e6571`、attempt 1、54/54 job成功）で、3 OSのdispatch証拠とnative AOT aggregateとcanonical証拠17件を同一bundleで署名しました。このattestationでcanonical `evidence.json` は `verified: 527`、`trace-confirmed-unattested: 0`、`unverified: 0` です。前manifest用のsnapshot `attestations/34113932297/`（run `34113932297`）は履歴として残しています。
+直前のmanifestに対応する追跡snapshotはCI run `34121804812`（commit `1c096a13fdd41fc6e60d2dddddae7001604e6571`、attempt 1、54/54 job成功）で、3 OSのdispatch証拠とnative AOT aggregateとcanonical証拠17件を同一bundleで署名し、`verified: 527` を達成しました。ただしmanifest入力の変更（v0.1.0リリース向けのversion更新）で現行manifestと一致しなくなったため、`current.json` は取り外し、canonicalは `verified: 0` / `trace-confirmed-unattested: 527` へ戻ります。新しいCI runのsnapshotを `attestations/<run>/` へ追跡して `current.json` を更新すれば同じ状態へ戻ります。前々manifest用のsnapshot `attestations/34113932297/`（run `34113932297`）も履歴として残しています。
 
 Release workflow（tag push）はpreflightで `attestations/current.json` の存在・`sync_compat_evidence.mjs --check`（source manifest一致＋証拠再生成の一致）・`check_tracked_dispatch_attestation.mjs`（追跡snapshotの公式 `gh attestation verify` と `verified: 527`）を要求します。canonicalが全527件verifiedでないtag pushはbuild/publishに進めず、GitHub Releaseを作成できません（手動 `workflow_dispatch` の検証実行は対象外）。
 

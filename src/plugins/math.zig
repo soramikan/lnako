@@ -1,5 +1,6 @@
 const std = @import("std");
 const value_mod = @import("../runtime/value.zig");
+const number_mod = @import("../runtime/number.zig");
 const common = @import("system/common.zig");
 
 pub const Value = value_mod.Value;
@@ -111,10 +112,7 @@ fn decimalRound(runtime: *Runtime, source: Value, digits_value: Value, mode: Dec
 }
 
 fn jsRound(value: f64) f64 {
-    if (!std.math.isFinite(value) or value == 0) return value;
-    const result = @floor(value + 0.5);
-    if (result == 0 and value < 0) return -0.0;
-    return result;
+    return number_mod.roundHalfPositive(value);
 }
 
 fn number(value: f64) Value {
@@ -138,6 +136,11 @@ test "三角・対数・丸め・固定乱数を計算する" {
     try std.testing.expectApproxEqAbs(@as(f64, 1), (try call(&runtime, "SIN", &.{.{ .number = @as(f64, std.math.pi) / 2 }}, context)).?.number, 1e-14);
     try std.testing.expectEqual(@as(f64, -1), (try call(&runtime, "ROUND", &.{.{ .number = -1.5 }}, context)).?.number);
     try std.testing.expectEqual(@as(f64, 2), (try call(&runtime, "乱数範囲", &.{ .{ .number = 1 }, .{ .number = 3 } }, context)).?.number);
+    // binary64の中間丸めで誤る境界を公式へ揃える。
+    try std.testing.expectEqual(@as(f64, 0), (try call(&runtime, "ROUND", &.{.{ .number = 0.49999999999999994 }}, context)).?.number);
+    try std.testing.expectEqual(@as(f64, 4503599627370497), (try call(&runtime, "ROUND", &.{.{ .number = 4503599627370497 }}, context)).?.number);
+    try std.testing.expectEqual(@as(f64, 4503599627370497), (try call(&runtime, "四捨五入", &.{.{ .number = 4503599627370497 }}, context)).?.number);
+    try std.testing.expectEqual(@as(f64, 4503599627370497), (try call(&runtime, "小数点四捨五入", &.{ .{ .number = 4503599627370497 }, .{ .number = 0 } }, context)).?.number);
 }
 
 const FixedRandom = struct {

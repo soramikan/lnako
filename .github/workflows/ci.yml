@@ -105,6 +105,8 @@ jobs:
           set -euo pipefail
           node tools/check_ci_workflow.mjs
           node tools/check_release_workflow.mjs
+          # Mock notarization IDs must not be written to the real job summary.
+          GITHUB_STEP_SUMMARY= node --test tools/macos_signing.test.mjs
           node tools/check_dispatch_attestation_security.mjs
           node tools/check_tracked_dispatch_attestation.mjs --offline
           node tools/check_tracked_dispatch_attestation_security.mjs
@@ -119,6 +121,9 @@ jobs:
       - name: Distribution package self-test
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node tools/check_distribution.mjs --self-test
+      - name: Zig package isolation check
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
+        run: node tools/check_package_isolation.mjs
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: matrix.suite != 'compat-aot'
         with:
@@ -216,6 +221,13 @@ jobs:
       - name: Benchmark runner tests
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node --test tools/benchmark_runner_test.mjs tools/setup_benchmark_gonako_test.mjs tools/pre_push_hook_test.mjs
+      - name: Toolchain command check
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
+        shell: bash
+        run: |
+          set -euo pipefail
+          zig build
+          node tools/check_toolchain_command.mjs
       - name: Test QuickJS build
         if: matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'
         run: zig build -Dcompat-js=true test --test-timeout 5m

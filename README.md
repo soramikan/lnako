@@ -1,99 +1,84 @@
 # lnako
 
-`lnako` は、なでしこ3 v3.7.24互換を目指す、Zig＋LLVM製のネイティブコンパイラです。通常モードではJavaScriptランタイムを使わず、なでしこソースを独自IRからLLVMへ変換して実行ファイルを生成します。
+`lnako` は、なでしこ3の日本語プログラムを実行し、ネイティブ実行ファイルにも変換できるCLIです。なでしこ3 v3.7.24を互換基準とし、macOS arm64・Linux x86_64 GNU・Windows x86_64 MSVCに対応します。製品バージョンは `0.1.0` です。
 
-現在の製品バージョンは `0.0.0-dev` です。互換性の正本は、実装コードの印象やfixtureの数ではなく、[`compat/`](compat/) の機械可読データと検証結果です。
+## インストール
+
+### macOS：Homebrew
+
+[Homebrew tap](https://github.com/soramikan/homebrew-tap)からインストールできます。
+
+```sh
+brew tap soramikan/tap
+brew install lnako
+lnako --version
+```
+
+対応するbottleがあればビルド済みバイナリを利用し、それ以外はソースからビルドします。`lnako run`はインストール直後から使えます。
+
+### Linux・Windows／アーカイブからの導入
+
+[GitHub Releases](https://github.com/soramikan/lnako/releases)から対象OSのアーカイブを取得し、ディレクトリ構造を保って展開して`bin`をPATHへ追加します。macOS/Linuxは`tar.gz`、Windowsは`zip`です。
+
+| 配布版 | 用途 |
+| --- | --- |
+| standard | 小さな構成で始める。実行ファイルの生成にはLLVM/LLDを追加導入 |
+| full（ファイル名末尾が`-full`） | LLVM/LLDを同梱。追加のダウンロードなしで実行ファイルを生成 |
+
+チェックサム確認・OS別手順は[使い始める](docs/GETTING_STARTED.md)を参照してください。
+
+## 使ってみる
+
+`hello.nako3`を次の内容で保存します。
+
+```nako3
+「こんにちは」と表示する。
+```
+
+```sh
+lnako run hello.nako3            # そのまま実行
+lnako check hello.nako3          # 構文・意味をチェック
+lnako toolchain install          # Homebrew/standard版でAOTを使う場合に一度実行
+lnako build hello.nako3 -o hello -O2
+./hello                         # Windowsでは .\hello.exe
+```
+
+Windowsの生成先は`-o hello.exe`にします。生成した通常の実行ファイルには、実行時のlnako・Zig・Node.js・LLVMのインストールは不要です。OSの標準ライブラリや使用する外部プラグインなどは必要です。
+
+JavaScript固有命令を使う場合は`lnako run hello.nako3 --compat-js`のように明示します。配布版にはQuickJSを同梱していますが、通常実行には使いません。詳しくは[互換モード](docs/compatibility/COMPAT_JS.md)を参照してください。
 
 ## 対応範囲
 
-標準cnako 527 entryの現行分類は、`native` 523、明示的な `compat-js` 4、`blocked` 0です。これは実装分類であり、全entryの純LLVM AOT実行や3 OS attestationの完了を意味しません。
-
-実行証拠の読み方、canonical台帳とCI artifactの違いは [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) にまとめています。公式処理系の説明だけでは分かりにくい挙動や、バグの可能性がある挙動は [`docs/COMPATIBILITY_QUIRKS.md`](docs/COMPATIBILITY_QUIRKS.md) から領域別に参照できます。
-
-正式検証環境はmacOS 15 arm64、Ubuntu 24.04 x86_64 GNU、Windows 2025 x86_64 MSVCです。
-
-## 必要なツール
-
-| ツール | 固定版 | 用途 |
-| --- | --- | --- |
-| Zig | 0.16.0 | コンパイラ・ランタイム・テスト |
-| LLVM / LLD | 22.1.8（ベースライン）; 21.x–23.x 実行時対応 | LLVM IR生成・最適化・リンク |
-| Node.js | 24.15.0 | 公式処理系との差分テストのみ |
-| QuickJS | 2026-06-04 | 明示的な `--compat-js` 経路のみ |
-
-Zig、LLVM、LLD、Node.jsを通常の生成物へ組み込むことはありません。固定toolchainの取得と検証は開発環境・CI向けです。
-
-## ビルドと実行
-
-```sh
-zig build
-zig build test
-zig build run -- --help
-
-zig build run -- check program.nako3
-zig build run -- run program.nako3
-zig build run -- test tests/
-zig build run -- build program.nako3 -o program -O2
-```
-
-LLVM/LLDの場所を明示する場合は `LNAKO_LLVM_DIR` または `LNAKO_LLVM_LIBRARY` を使います。詳細なセットアップと検証順序は [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) を参照してください。
-
-## QuickJS互換モード
-
-JavaScript固有の4命令は通常モードへ混入させず、明示的な互換モードだけで実行します。
-
-```sh
-node tools/setup_quickjs.mjs
-zig build -Dcompat-js=true
-zig build -Dcompat-js=true test
-zig build -Dcompat-js=true run -- run program.nako3 --compat-js
-```
-
-QuickJS経路の範囲と証拠は [`docs/compatibility/COMPAT_JS.md`](docs/compatibility/COMPAT_JS.md) にあります。
-
-CLIは`build`、`run`、`check`、`test`、`compat report`、`benchmark`に対応します。詳細は`lnako --help`と[開発手順](docs/DEVELOPMENT.md)を参照してください。
+標準cnako 527 entryの実装分類は`native` 523、`compat-js` 4、`blocked` 0です。ブラウザ専用・拡張命令は対象外で、全入力やNode/ECMAScriptの全挙動を保証するものではありません。[互換性と保証範囲](docs/COMPATIBILITY.md)、[未対応境界・後続課題](docs/TODO.md)、[公式処理系との挙動差](docs/COMPATIBILITY_QUIRKS.md)を確認してください。件数と検証状態の正本は[`compat/`](compat/)です。
 
 ## 性能比較
 
-起動、言語コア、数値計算、データ構造、文字列、GC、複合処理から代表9ケースを掲載します。改善余地が残るstring-concatも含めています。コンパイル時間は別表です。
+2026年9月9日（日本時間）の[リリース候補比較CI](https://github.com/soramikan/lnako/actions/runs/34246129122)、測定commit `5dcf585`の結果です。以下はLinuxの代表9ケースで、warmup 1回・測定3回の中央値（ms）。lnakoはReleaseSafe、AOTはO2です。
 
-測定対象は `02457ac`、2026年9月7日の[3 OS比較CI](https://github.com/soramikan/lnako/actions/runs/34093414459)です。warmup 3回・測定10回の中央値をmsで示します。小さいほど短時間です。lnakoはReleaseSafeビルド、AOTはO2です。
+cnako・gonako・lnakoを正式比較とします。gonakoは3.8.1配布版をハッシュ固定し、自己表示は3.6.0です。cnako比は「cnakoの中央値 ÷ lnakoの中央値」で、例えば4倍は所要時間が約1/4、1倍未満はcnakoより遅いことを表します。丸め前の値から計算しています。
 
-cnako・gonako・lnakoを正式比較とします。gonakoは3.8.1配布版をハッシュ固定し、自己表示は3.6.0です。以下はLinux CIの代表表です。Windows・macOSを含む全結果は[詳細結果](docs/benchmarks/RESULTS.md)に掲載しています。
+| 分野 | ケース | cnako 3.7.24 | gonako | lnako Interpreter | cnako比 | lnako AOT | cnako比 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 起動 | `startup-hello` | 106.54 | 6.61 | 2.49 | 42.77倍 | 1.79 | 59.68倍 |
+| 関数呼出し | `function-call` | 169.74 | 116.86 | 310.44 | 0.55倍 | 33.02 | 5.14倍 |
+| 浮動小数点 | `nbody` | 158.66 | 47.09 | 391.49 | 0.41倍 | 15.05 | 10.54倍 |
+| 辞書検索 | `hash-lookup` | 142.23 | 72.51 | 481.68 | 0.30倍 | 50.36 | 2.82倍 |
+| 文字列連結 | `string-concat` | 117.76 | 22.75 | 56.51 | 2.08倍 | 28.21 | 4.17倍 |
+| Unicode | `unicode-scan` | 128.67 | 58.46 | 337.20 | 0.38倍 | 29.53 | 4.36倍 |
+| メモリ・GC | `binary-trees` | 163.48 | 51.74 | 48.76 | 3.35倍 | 17.20 | 9.51倍 |
+| 単語集計 | `word-count` | 125.37 | 37.12 | 251.92 | 0.50倍 | 15.20 | 8.25倍 |
+| JSON変換 | `json-transform` | 128.48 | 22.97 | 67.21 | 1.91倍 | 7.12 | 18.03倍 |
 
-| 分野 | ケース | cnako 3.7.24 | gonako | lnako Interpreter | lnako AOT |
-| --- | --- | ---: | ---: | ---: | ---: |
-| 起動 | `startup-hello` | 107.44 | 6.40 | 2.05 | 1.72 |
-| 関数呼出し | `function-call` | 172.14 | 115.27 | 319.98 | 32.42 |
-| 浮動小数点 | `nbody` | 157.98 | 47.52 | 397.93 | 15.00 |
-| 辞書検索 | `hash-lookup` | 142.47 | 72.37 | 498.49 | 48.68 |
-| 文字列連結 | `string-concat` | 115.47 | 22.42 | 57.50 | 28.80 |
-| Unicode | `unicode-scan` | 131.16 | 59.09 | 339.71 | 31.36 |
-| メモリ・GC | `binary-trees` | 160.93 | 51.33 | 49.29 | 16.98 |
-| 単語集計 | `word-count` | 129.80 | 37.40 | 250.90 | 15.69 |
-| JSON変換 | `json-transform` | 128.60 | 22.16 | 69.04 | 7.13 |
+起動・終了とケース内の初期化を含む時間で、AOTの事前コンパイルは含みません。短時間の測定は共有CIの負荷に左右されます。コンパイル時間、全19ケース・3 OSの結果、生サンプル、C/Rustの参考値は[詳細結果](docs/benchmarks/RESULTS.md)に分けて掲載しています。
 
-### コンパイル時間
+## 開発者向け
 
-実行時間と分けて、`compile-stress-medium` のネイティブ実行ファイル生成時間を示します。
+lnako自体をソースからビルド・変更する場合は[開発・検証手順](docs/DEVELOPMENT.md)を参照してください。Zig 0.16.0、LLVM/LLD 22.1.8、oracle用Node.js 24.15.0、互換モード用QuickJS 2026-06-04を使用します。公式TypeScriptは製品ランタイムへ組み込みません。
 
-| ケース | Linux x86_64 | Windows x86_64 | macOS arm64 |
-| --- | ---: | ---: | ---: |
-| `compile-stress-medium` | 443.40 | 623.21 | 387.22 |
-
-実行表はprocessの起動・終了を含み、AOTの事前コンパイル時間は含みません。200 ms未満の値は起動時間やrunner負荷の影響を受けやすく、純粋な処理kernelの速度ではありません。配列・辞書の構築など、ケース内のsetupも含みます。
-
-正式20ケースと追加診断12ケース、測定条件・生サンプル・C/Rustの参考値は[詳細結果](docs/benchmarks/RESULTS.md)を参照してください。C/Rustは別言語の参考比較で、正式比較とは分けています。[再測定の手順](benchmarks/README.md)も掲載しています。
-
-## 開発者向けドキュメント
-
-- [アーキテクチャ](docs/ARCHITECTURE.md): コンパイル経路、ランタイム、AOT、QuickJSの責務
-- [開発・検証手順](docs/DEVELOPMENT.md): 固定toolchain、fixture、差分検証、コミット方針
-- [CI](docs/CI.md): 54-job構成、macOSの5枠制限、artifact、失敗確認
-- [互換性概要](docs/COMPATIBILITY.md): 分類、証拠、3 OS attestationの読み方
-- [互換性証拠](docs/COMPATIBILITY_EVIDENCE.md): canonical JSONと証拠状態の定義
-- [ネイティブプラグインABI](docs/NATIVE_PLUGIN_ABI.md): `lnako_plugin_v1` の公開契約
+- [アーキテクチャ](docs/ARCHITECTURE.md)・[ネイティブプラグインABI](docs/NATIVE_PLUGIN_ABI.md)
+- [CIと検証](docs/CI.md)・[互換性証拠](docs/COMPATIBILITY_EVIDENCE.md)
+- [配布とリリース手順](docs/RELEASE.md)・[ベンチマーク再測定](benchmarks/README.md)
 
 ## ライセンス
 
-MIT License。互換テストで参照するなでしこ3もMIT Licenseです。第三者依存関係は [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) に記録しています。
+MIT License。互換テストで参照するなでしこ3もMIT Licenseです。第三者依存関係は[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)に記録しています。

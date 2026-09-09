@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { signPayload } from "./macos_signing.mjs";
 
 const crcTable = Uint32Array.from({ length: 256 }, (_, index) => {
   let value = index;
@@ -33,6 +34,8 @@ function parseArguments(arguments_) {
     llvm: null,
     target: hostTarget(),
     requireLlvm: false,
+    variant: "standard",
+    signMacos: false,
   };
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index];
@@ -51,8 +54,13 @@ function parseArguments(arguments_) {
     } else if (argument === "--target") {
       parsed.target = nextValue(arguments_, ++index, argument);
       if (!targetSpec(parsed.target)) throw new Error(`正式対象外の配布targetです: ${parsed.target}`);
+    } else if (argument === "--sign-macos") {
+      parsed.signMacos = true;
     } else if (argument === "--require-llvm") {
       parsed.requireLlvm = true;
+    } else if (argument === "--variant") {
+      parsed.variant = nextValue(arguments_, ++index, argument);
+      if (parsed.variant !== "standard" && parsed.variant !== "full") throw new Error(`配布variantが不正です: ${parsed.variant}`);
     } else {
       throw new Error(`未知の引数です: ${argument}\n\n${usage()}`);
     }
@@ -66,14 +74,19 @@ function parseArguments(arguments_) {
 
 async function createDistribution(options_) {
   const spec = targetSpec(options_.target);
+  if (options_.signMacos && (spec.platform !== "darwin" || process.platform !== "darwin")) throw new Error("--sign-macos requires a macOS target and host");
   const binary = options_.binary ?? defaultBinary(spec);
   const runtime = options_.runtime ?? defaultRuntime(spec);
   await requireFile(binary, "lnako実行ファイル");
   await requireFile(runtime, "AOTランタイム静的ライブラリ");
+  // standard版はLLVMを同梱しない。full版はLLVM/LLDをllvm/へ同梱する。
+  if (options_.variant === "full" && options_.llvm === null) throw new Error("full版には--llvm-dirが必要です");
+  if (options_.variant === "standard" && options_.llvm !== null) throw new Error("standard版では--llvm-dirを指定できません");
   if (options_.requireLlvm && options_.llvm === null) throw new Error("release配布には--llvm-dirが必要です");
   if (options_.llvm !== null) await requireDirectory(options_.llvm, "LLVM/LLD配布ルート");
 
-  const baseName = `lnako-${options_.version}-${spec.archiveTarget}`;
+  const suffix = options_.variant === "full" ? "-full" : "";
+  const baseName = `lnako-${options_.version}-${spec.archiveTarget}${suffix}`;
   const stagingParent = resolve(options_.output, `.staging-${baseName}-${process.pid}`);
   const stagingRoot = resolve(stagingParent, baseName);
   await rm(stagingParent, { recursive: true, force: true });
@@ -81,8 +94,11 @@ async function createDistribution(options_) {
 
   try {
     await copyPayload(stagingRoot, binary, runtime, options_.llvm, spec);
+    if (options_.signMacos) await signPayload(stagingRoot, {
+      identity: process.env.LNAKO_SIGNING_IDENTITY, keychain: process.env.LNAKO_SIGNING_KEYCHAIN,
+    });
     const payloadFiles = await collectFiles(stagingRoot);
-    const manifest = createManifest(options_, spec, binary, runtime, payloadFiles, await gitState());
+    const manifest = createManifest(options_, spec, resolve(stagingRoot, "bin", spec.executable), resolve(stagingRoot, "lib", spec.runtimeLibrary), payloadFiles, await gitState());
     await writeJson(resolve(stagingRoot, "manifest.json"), manifest);
     const manifestFiles = await collectFiles(stagingRoot);
     const sbom = createSbom(options_, spec, manifestFiles, manifest);
@@ -117,7 +133,7 @@ async function copyPayload(stagingRoot, binary, runtime, llvm, spec) {
   await copyPayloadFile(resolve(root, "THIRD_PARTY_NOTICES.md"), resolve(stagingRoot, "THIRD_PARTY_NOTICES.md"), false);
   await copyPayloadFile(resolve(root, "include/lnako_plugin_v1.h"), resolve(stagingRoot, "include/lnako_plugin_v1.h"), false);
   await copyPayloadFile(resolve(root, "compat/v3.7.24/UPSTREAM_LICENSE"), resolve(stagingRoot, "compat/v3.7.24/UPSTREAM_LICENSE"), false);
-  for (const document of ["ARCHITECTURE.md", "DEVELOPMENT.md", "NATIVE_PLUGIN_ABI.md", "COMPATIBILITY_EVIDENCE.md", "COMPATIBILITY_QUIRKS.md"]) {
+  for (const document of ["GETTING_STARTED.md", "COMPATIBILITY.md", "TODO.md", "ARCHITECTURE.md", "DEVELOPMENT.md", "NATIVE_PLUGIN_ABI.md", "COMPATIBILITY_EVIDENCE.md", "COMPATIBILITY_QUIRKS.md"]) {
     await copyPayloadFile(resolve(root, "docs", document), resolve(stagingRoot, "docs", document), false);
   }
   if (llvm !== null) await copyPinnedLlvm(stagingRoot, llvm, spec);
@@ -143,6 +159,7 @@ function createManifest(options_, spec, binary, runtime, payloadFiles, git) {
     schema: "lnako.distribution-manifest.v1",
     name: "lnako",
     version: options_.version,
+    variant: options_.variant,
     target: spec.archiveTarget,
     platform: spec.platform,
     arch: spec.arch,
@@ -157,7 +174,7 @@ function createManifest(options_, spec, binary, runtime, payloadFiles, git) {
       zig: "0.16.0",
       llvm: "22.1.8",
       quickjs: "2026-06-04",
-      compatJsIncluded: false,
+      compatJsIncluded: true,
     },
     toolchain: {
       included: options_.llvm !== null,
@@ -177,6 +194,7 @@ function createManifest(options_, spec, binary, runtime, payloadFiles, git) {
 function createSbom(options_, spec, files, manifest) {
   const packages = [
     sbomPackage("SPDXRef-Package-lnako", "lnako", options_.version, "MIT", "pkg:github/soramikan/lnako@" + options_.version),
+    sbomPackage("SPDXRef-Package-QuickJS", "QuickJS", "2026-06-04", "MIT", "pkg:generic/quickjs@2026-06-04"),
   ];
   if (options_.llvm !== null) {
     packages.push(sbomPackage("SPDXRef-Package-LLVM", "LLVM/LLD", "22.1.8", "Apache-2.0 WITH LLVM-exception", "pkg:generic/llvm@22.1.8"));
@@ -190,6 +208,8 @@ function createSbom(options_, spec, files, manifest) {
   }));
   const relationships = [
     { spdxElementId: "SPDXRef-DOCUMENT", relationshipType: "DESCRIBES", relatedSpdxElement: "SPDXRef-Package-lnako" },
+    // QuickJSはbin/lnakoへ静的リンクされ、AOT生成物には利用時のみ同梱される。
+    { spdxElementId: "SPDXRef-Package-lnako", relationshipType: "STATICALLY_LINKED_TO", relatedSpdxElement: "SPDXRef-Package-QuickJS" },
     ...fileRecords.map((file) => ({ spdxElementId: "SPDXRef-Package-lnako", relationshipType: "CONTAINS", relatedSpdxElement: file.SPDXID })),
   ];
   if (options_.llvm !== null) relationships.push({ spdxElementId: "SPDXRef-DOCUMENT", relationshipType: "DESCRIBES", relatedSpdxElement: "SPDXRef-Package-LLVM" });
@@ -197,13 +217,13 @@ function createSbom(options_, spec, files, manifest) {
     spdxVersion: "SPDX-2.3",
     dataLicense: "CC0-1.0",
     SPDXID: "SPDXRef-DOCUMENT",
-    name: `lnako-${options_.version}-${spec.archiveTarget}`,
-    documentNamespace: `https://github.com/soramikan/lnako/spdx/${options_.version}/${spec.archiveTarget}`,
+    name: `lnako-${options_.version}-${spec.archiveTarget}${options_.variant === "full" ? "-full" : ""}`,
+    documentNamespace: `https://github.com/soramikan/lnako/spdx/${options_.version}/${spec.archiveTarget}${options_.variant === "full" ? "-full" : ""}`,
     creationInfo: {
       created: "1970-01-01T00:00:00Z",
       creators: ["Tool: lnako distribution builder"],
     },
-    documentComment: "This SBOM describes the files in the lnako distribution archive. Nadesiko 3, Node.js, and QuickJS are test or optional compatibility inputs and are not shipped in the normal archive.",
+    documentComment: "This SBOM describes the files in the lnako distribution archive. QuickJS is statically linked into the lnako executable for the explicit --compat-js mode; it is not present in the AOT runtime library or in generated artifacts unless they are built with --compat-js. Nadesiko 3 and Node.js are test or compatibility oracle inputs and are not shipped.",
     packages,
     files: fileRecords,
     relationships,
@@ -489,7 +509,9 @@ function usage() {
   --output <absolute-path>  出力ディレクトリ（既定: dist）
   --binary <absolute-path>  lnako実行ファイル
   --runtime <absolute-path> AOTランタイム静的ライブラリ
-  --llvm-dir <absolute-path> 同梱するLLVM/LLD配布ルート
+  --llvm-dir <absolute-path> 同梱するLLVM/LLD配布ルート（full版のみ）
+  --sign-macos               配布用コピーをDeveloper ID署名してからhashを生成する
   --require-llvm             LLVM/LLD同梱を必須にする
+  --variant <variant>        standard（既定、LLVM非同梱）/ full（LLVM同梱、--llvm-dir必須）
 `;
 }

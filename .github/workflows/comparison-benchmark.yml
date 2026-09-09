@@ -149,7 +149,8 @@ jobs:
           fi
           clang_path="$LNAKO_LLVM_DIR/bin/clang"
           if [ "${RUNNER_OS:-}" = "Windows" ]; then clang_path="${clang_path}.exe"; fi
-          node tools/run_comparison_benchmark.mjs "${baseline_args[@]}" \
+          # macOSのbash 3.2ではset -u下の空配列展開がunbound variableになる。
+          node tools/run_comparison_benchmark.mjs ${baseline_args[@]+"${baseline_args[@]}"} \
             --suite benchmarks/suites/v2.json \
             --profile "$BENCHMARK_PROFILE" \
             --runtimes lnako,cnako,gonako,c,rust \

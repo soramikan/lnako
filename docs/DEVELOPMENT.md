@@ -22,7 +22,26 @@ node tools/setup_quickjs.mjs
 node tools/setup_oracle.mjs
 ```
 
-toolchainは `toolchain.lock.json` のarchiveとSHA-256を検証します。手動配置したLLVMを使う場合は `LNAKO_LLVM_DIR` または `LNAKO_LLVM_LIBRARY` を指定します。
+toolchainは `toolchain.lock.json` のarchiveとSHA-256を検証します。手動配置したLLVMを使う場合は `lnako build --llvm-dir <path>`（最優先）または `LNAKO_LLVM_DIR`、`LNAKO_LLVM_LIBRARY` を指定します。エンドユーザー向けの管理toolchainは `lnako toolchain status|dir|install|update|remove` を参照してください。
+
+## コンパイラのビルドと実行
+
+```sh
+zig build
+zig build run -- --help
+zig build run -- run program.nako3
+zig build run -- build program.nako3 -o program -O2
+```
+
+QuickJSを有効にした配布相当のコンパイラは、セットアップ後に次のように構築します。
+
+```sh
+zig build -Doptimize=ReleaseSafe -Dcompat-js=true
+zig build -Dcompat-js=true test
+zig build -Dcompat-js=true run -- run program.nako3 --compat-js
+```
+
+ビルド済みlnakoの利用方法は[使い始める](GETTING_STARTED.md)、配布アーカイブの生成は[リリース手順](RELEASE.md)を参照してください。
 
 ## 基本の検証順序
 

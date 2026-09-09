@@ -5,6 +5,7 @@ const environment = @import("../environment.zig");
 const counters = @import("../counters.zig");
 const allocator_telemetry = @import("../allocator_telemetry.zig");
 const dictionary_module = @import("dictionary.zig");
+const http_ingress = @import("../../http_ingress.zig");
 const byte_storage = @import("byte_storage.zig");
 const csv_state = @import("csv_state.zig");
 const async_types = @import("async_types.zig");
@@ -538,6 +539,7 @@ pub const Runtime = struct {
     stdin_offset: usize = 0,
     http_server_state: AotHttpServerState = .{},
     http_server: ?std.Io.net.Server = null,
+    http_ingress: ?*http_ingress.Engine = null,
     http_connection: ?std.Io.net.Stream = null,
     http_head_request: bool = false,
     held_http_connections: std.ArrayList(std.Io.net.Stream) = .empty,
@@ -581,6 +583,7 @@ pub const Runtime = struct {
         self.global_trace.deinit();
         self.literal_trace.deinit();
         const io = std.Io.Threaded.global_single_threaded.io();
+        aot_state.aotHttpIngressStop(self);
         if (self.http_connection) |*stream| stream.close(io);
         for (self.held_http_connections.items) |*stream| stream.close(io);
         self.held_http_connections.deinit(self.allocator);

@@ -164,9 +164,10 @@ const Loader = struct {
                 try self.importDiagnostic(import_node, path, "取り込み先を読み込めません");
                 return err;
             };
-        errdefer self.backing_allocator.free(source);
+        var registered = false;
+        errdefer if (!registered) self.backing_allocator.free(source);
         const module = try self.backing_allocator.create(LoadedModule);
-        errdefer self.backing_allocator.destroy(module);
+        errdefer if (!registered) self.backing_allocator.destroy(module);
         const name = try analyzer.moduleName(self.allocator, path);
         module.* = .{
             .index = @intCast(self.modules.items.len),
@@ -178,6 +179,9 @@ const Loader = struct {
             .parsed = null,
         };
         try self.modules.append(self.allocator, module);
+        // The graph owns both allocations from here, including modules whose
+        // parsing fails. The outer loader (or returned graph) cleans them up.
+        registered = true;
 
         if (kind == .native_plugin) {
             module.state = .loaded;
@@ -189,7 +193,8 @@ const Loader = struct {
             const requested_imports = try collectJavaScriptImports(self.allocator, source);
             for (requested_imports) |requested| {
                 if (!std.fs.path.isAbsolute(requested) and !std.mem.startsWith(u8, requested, ".")) continue;
-                const resolved = resolveImport(self.allocator, path, requested) catch {
+                const resolved = resolveImport(self.allocator, path, requested) catch |err| {
+                    if (err == error.OutOfMemory) return err;
                     try self.importDiagnostic(import_node, path, "JavaScriptの相対取り込みパスが不正です");
                     continue;
                 };
@@ -201,7 +206,10 @@ const Loader = struct {
                 if (existing) |index| {
                     cyclic = self.modules.items[index].state == .loading;
                 } else {
-                    target = self.loadOne(resolved, import_node) catch null;
+                    target = self.loadOne(resolved, import_node) catch |err| switch (err) {
+                        error.OutOfMemory => return err,
+                        else => null,
+                    };
                 }
                 try imports.append(self.allocator, .{
                     .requested = try self.allocator.dupe(u8, requested),
@@ -224,7 +232,8 @@ const Loader = struct {
             try collectImports(root, &import_nodes, self.allocator);
             var imports: std.ArrayList(Import) = .empty;
             for (import_nodes.items) |node| {
-                const resolved = resolveImport(self.allocator, path, node.value) catch {
+                const resolved = resolveImport(self.allocator, path, node.value) catch |err| {
+                    if (err == error.OutOfMemory) return err;
                     try self.importDiagnostic(node, path, "相対取り込みパスが不正です");
                     continue;
                 };
@@ -234,7 +243,10 @@ const Loader = struct {
                 if (existing) |index| {
                     cyclic = self.modules.items[index].state == .loading;
                 } else {
-                    target = self.loadOne(resolved, node) catch null;
+                    target = self.loadOne(resolved, node) catch |err| switch (err) {
+                        error.OutOfMemory => return err,
+                        else => null,
+                    };
                 }
                 try imports.append(self.allocator, .{
                     .requested = try self.allocator.dupe(u8, node.value),
@@ -411,6 +423,32 @@ const MemoryProvider = struct {
         return error.FileNotFound;
     }
 };
+
+fn checkInvalidModuleCleanup(allocator: std.mem.Allocator, imported: bool) !void {
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「invalid.nako3」を取り込む\n!「invalid.nako3」を取り込む\n" },
+        .{ .suffix = "invalid.nako3", .source = "\xff\xff\xff" },
+    } };
+    var graph = load(allocator, if (imported) "main.nako3" else "invalid.nako3", memory.sourceProvider(), .{}) catch |err| {
+        if (err == error.InvalidUtf8 and !imported) return;
+        return err;
+    };
+    defer graph.deinit();
+    try std.testing.expect(imported);
+    try std.testing.expect(!graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
+    try std.testing.expect(graph.modules[1].parsed == null);
+}
+
+test "不正UTF8のentryと取り込み先を一度だけ解放する" {
+    try checkInvalidModuleCleanup(std.testing.allocator, false);
+    try checkInvalidModuleCleanup(std.testing.allocator, true);
+}
+
+test "モジュール読込み失敗の全割り当て境界で所有権を保持する" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkInvalidModuleCleanup, .{false});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkInvalidModuleCleanup, .{true});
+}
 
 test "相対取り込みを再帰ロードし重複と循環を抑止する" {
     var memory = MemoryProvider{ .files = &.{

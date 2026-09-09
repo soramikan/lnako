@@ -44,6 +44,30 @@ pub fn parseFloatPrefix(allocator: std.mem.Allocator, source: []const u16) !f64 
     return std.fmt.parseFloat(f64, ascii) catch std.math.nan(f64);
 }
 
+/// ECMAScriptのMath.round相当（同位は+∞側）。`floor(value + 0.5)` は中間の
+/// 加算で先にbinary64丸めが起きるため、整数部分と小数部分を分けて0.5と
+/// 正確に比較する。NaN・±Infinity・±0は保持し、(-0.5, 0]の結果は負のゼロを維持する。
+pub fn roundHalfPositive(value: f64) f64 {
+    if (!std.math.isFinite(value) or value == 0) return value;
+    const lower = @floor(value);
+    const fraction = value - lower;
+    const result = if (fraction >= 0.5) lower + 1 else lower;
+    if (result == 0) return if (std.math.signbit(value)) -0.0 else 0.0;
+    return result;
+}
+
+/// ECMAScript `Number::exponentiate`（`**`演算子・`べき乗`命令）の特例を含む累乗。
+/// 判定順を仕様に合わせる: 指数がNaNならNaN、指数が±0なら1（`NaN**0`も1）、
+/// 底がNaNならNaN、|底|が1で指数が±InfinityならNaN。残りの±0・±Infinityの
+/// 底、負の底の非整数指数はbinary64のpowが仕様通り処理する。
+pub fn pow(base: f64, exponent: f64) f64 {
+    if (std.math.isNan(exponent)) return std.math.nan(f64);
+    if (exponent == 0) return 1;
+    if (std.math.isNan(base)) return std.math.nan(f64);
+    if (@abs(base) == 1 and std.math.isInf(exponent)) return std.math.nan(f64);
+    return std.math.pow(f64, base, exponent);
+}
+
 pub fn parseIntPrefix(source: []const u16, radix_value: ?f64) f64 {
     const units = string_mod.trimWhitespace(source);
     if (units.len == 0) return std.math.nan(f64);
@@ -68,16 +92,49 @@ pub fn parseIntPrefix(source: []const u16, radix_value: ?f64) f64 {
         index += 2;
     }
     if (radix == 0) radix = 10;
-    var result: f64 = 0;
+    // 桁をf64で逐次蓄積すると各stepでbinary64丸めが起き、公式の一度だけの
+    // 丸めと一致しない。u1024で正確に蓄積し、最後にnearest/ties-to-evenで
+    // 一度だけ丸める。u1024はbinary64の有限範囲全体を覆う。
+    var magnitude: u1024 = 0;
+    var overflowed = false;
     var digits: usize = 0;
     while (index < units.len) : (index += 1) {
         const digit = digitValue(units[index]) orelse break;
         if (digit >= radix) break;
-        result = result * @as(f64, @floatFromInt(radix)) + @as(f64, @floatFromInt(digit));
+        if (!overflowed) {
+            if (magnitude > (std.math.maxInt(u1024) - @as(u1024, digit)) / radix) {
+                overflowed = true;
+            } else {
+                magnitude = magnitude * radix + digit;
+            }
+        }
         digits += 1;
     }
     if (digits == 0) return std.math.nan(f64);
+    const result: f64 = if (overflowed) std.math.inf(f64) else integerMagnitudeToF64(magnitude);
     return if (negative) -result else result;
+}
+
+/// 正確な整数の絶対値をbinary64のnearest/ties-to-evenで一度だけ丸める。
+/// `@floatFromInt(u1024)` はこのLLVM環境で未対応のため、上位53bitへの
+/// 切出し＋half/sticky判定＋2のべき乗算で組み立てる。
+fn integerMagnitudeToF64(magnitude: u1024) f64 {
+    if (magnitude == 0) return 0;
+    const bit_count = 1024 - @clz(magnitude);
+    if (bit_count <= 53) return @floatFromInt(@as(u64, @truncate(magnitude)));
+    var shift: u10 = @intCast(bit_count - 53);
+    var top: u64 = @truncate(magnitude >> shift);
+    const remainder = magnitude & ((@as(u1024, 1) << shift) - 1);
+    const half = @as(u1024, 1) << @as(u10, @intCast(shift - 1));
+    if (remainder > half or (remainder == half and (top & 1) == 1)) {
+        top += 1;
+        if (top == (@as(u64, 1) << 53)) {
+            top >>= 1;
+            shift += 1;
+        }
+    }
+    const mantissa: f64 = @floatFromInt(top);
+    return mantissa * std.math.pow(f64, 2, @floatFromInt(shift));
 }
 
 pub fn integerToRadixAlloc(allocator: std.mem.Allocator, number: f64, radix: u8) ![]u8 {
@@ -209,4 +266,101 @@ test "RGBは各parseInt結果の16進表現から末尾2文字を取る" {
     const wrapped = try rgbAlloc(std.testing.allocator, .{ 256, 257, 15 });
     defer std.testing.allocator.free(wrapped);
     try std.testing.expectEqualStrings("#00010f", wrapped);
+}
+
+fn testUnits(comptime text: []const u8) [text.len]u16 {
+    var units: [text.len]u16 = undefined;
+    for (text, 0..) |character, index| units[index] = character;
+    return units;
+}
+
+test "roundHalfPositiveはbinary64の中間丸めを避け境界を保つ" {
+    // 0.5直前の最大有限値は切り捨て側のまま（floor(value+0.5)では1になる）。
+    try std.testing.expectEqual(@as(f64, 0), roundHalfPositive(0.49999999999999994));
+    try std.testing.expectEqual(@as(f64, 0), roundHalfPositive(-0.49999999999999994));
+    // 0.5以降と同位は+∞側へ。
+    try std.testing.expectEqual(@as(f64, 1), roundHalfPositive(0.5));
+    try std.testing.expectEqual(@as(f64, 2), roundHalfPositive(1.5));
+    try std.testing.expectEqual(@as(f64, 3), roundHalfPositive(2.5));
+    try std.testing.expectEqual(@as(f64, -1), roundHalfPositive(-0.6));
+    try std.testing.expectEqual(@as(f64, -1), roundHalfPositive(-1.5));
+    try std.testing.expectEqual(@as(f64, -2), roundHalfPositive(-2.5));
+    // (-0.5, 0)と負のsubnormalは負のゼロを維持する。
+    try std.testing.expect(std.math.signbit(roundHalfPositive(-0.4)));
+    try std.testing.expect(std.math.signbit(roundHalfPositive(-0.5)));
+    try std.testing.expect(std.math.signbit(roundHalfPositive(-5e-324)));
+    try std.testing.expect(!std.math.signbit(roundHalfPositive(0.4)));
+    try std.testing.expect(!std.math.signbit(roundHalfPositive(0)));
+    try std.testing.expect(std.math.signbit(roundHalfPositive(-0.0)));
+    // 安全整数範囲内の正確な整数は変更しない（floor(value+0.5)では+1される）。
+    try std.testing.expectEqual(@as(f64, 4503599627370497), roundHalfPositive(4503599627370497));
+    try std.testing.expectEqual(@as(f64, -4503599627370497), roundHalfPositive(-4503599627370497));
+    try std.testing.expectEqual(@as(f64, 4503599627370496), roundHalfPositive(4503599627370495.5));
+    // subnormal・最大有限値・非有限を保持する。
+    try std.testing.expectEqual(@as(f64, 0), roundHalfPositive(5e-324));
+    try std.testing.expectEqual(@as(f64, 1.7976931348623157e308), roundHalfPositive(1.7976931348623157e308));
+    try std.testing.expectEqual(std.math.inf(f64), roundHalfPositive(std.math.inf(f64)));
+    try std.testing.expectEqual(-std.math.inf(f64), roundHalfPositive(-std.math.inf(f64)));
+    try std.testing.expect(std.math.isNan(roundHalfPositive(std.math.nan(f64))));
+}
+
+test "parseIntPrefixは整数文字列を一度だけbinary64へ丸める" {
+    const expect_bits = struct {
+        fn call(expected: u64, source: []const u16, radix: ?f64) !void {
+            try std.testing.expectEqual(expected, @as(u64, @bitCast(parseIntPrefix(source, radix))));
+        }
+    }.call;
+    // f64逐次蓄積では0x43a9000000000000になるが、一度だけ丸めると0x...01。
+    try expect_bits(0x43a9000000000001, &testUnits("900719925474099267"), null);
+    try expect_bits(0xc3a9000000000001, &testUnits("-900719925474099267"), null);
+    // 2^53直前・tieの偶数側。
+    try expect_bits(0x4340000000000000, &testUnits("9007199254740993"), null);
+    try expect_bits(0x4340000000000002, &testUnits("9007199254740995"), null);
+    // 16進・36進の長い文字列。
+    try expect_bits(0x43b234567890abce, &testUnits("0x1234567890abcdef"), null);
+    try expect_bits(0x466517168a4523fd, &testUnits("zzzzzzzzzzzzzzzzzzzz"), 36);
+    // 有限最大値の境界と、超過時のInfinity。
+    try expect_bits(0x7fefffffffffffff, &testUnits("17976931348623157" ++ "0" ** 292), null);
+    try expect_bits(0x7ff0000000000000, &testUnits("2" ++ "0" ** 308), null);
+    try expect_bits(0x7ff0000000000000, &testUnits("f" ** 400), 16);
+    // 任意長の先頭ゼロ・末尾無効文字・負のゼロを維持する。
+    try expect_bits(0x43a9000000000001, &testUnits("0000000000900719925474099267tail"), null);
+    try expect_bits(0x8000000000000000, &testUnits("  -0abc"), null);
+    try std.testing.expect(std.math.isNan(parseIntPrefix(&testUnits("xyz"), null)));
+}
+
+test "powはECMAScript累乗のNaN・無限大・±0特例を再現する" {
+    const inf = std.math.inf(f64);
+    const nan = std.math.nan(f64);
+    const expect_bits = struct {
+        fn call(expected: u64, base: f64, exponent: f64) !void {
+            try std.testing.expectEqual(expected, @as(u64, @bitCast(pow(base, exponent))));
+        }
+    }.call;
+    // 指数NaNはNaN。指数±0は底がNaN・±Infinityでも1。
+    try std.testing.expect(std.math.isNan(pow(1, nan)));
+    try std.testing.expect(std.math.isNan(pow(2, nan)));
+    try std.testing.expect(std.math.isNan(pow(nan, nan)));
+    try expect_bits(0x3ff0000000000000, nan, 0);
+    try expect_bits(0x3ff0000000000000, inf, -0.0);
+    try expect_bits(0x3ff0000000000000, -inf, 0);
+    // 底NaNはNaN。|底|==1で指数±InfinityはNaN。
+    try std.testing.expect(std.math.isNan(pow(nan, 2)));
+    try std.testing.expect(std.math.isNan(pow(1, inf)));
+    try std.testing.expect(std.math.isNan(pow(1, -inf)));
+    try std.testing.expect(std.math.isNan(pow(-1, inf)));
+    // ±0・±Infinityの底は奇数/偶数/負指数の符号をpowへ正しく委ねる。
+    try expect_bits(0x7ff0000000000000, 0, -1);
+    try expect_bits(0xfff0000000000000, -0.0, -3);
+    try expect_bits(0x7ff0000000000000, -0.0, -2);
+    try expect_bits(0x8000000000000000, -0.0, 3);
+    try expect_bits(0x0000000000000000, inf, -1);
+    try expect_bits(0x8000000000000000, -inf, -3);
+    try expect_bits(0x0000000000000000, -inf, -2);
+    try expect_bits(0x7ff0000000000000, inf, 2);
+    // 負の底の非整数指数はNaN、整数指数は有限のまま。
+    try std.testing.expect(std.math.isNan(pow(-4, 0.5)));
+    try expect_bits(0xc020000000000000, -2, 3);
+    try expect_bits(0x4090000000000000, 2, 10);
+    try expect_bits(0x4000000000000000, 0.5, -1);
 }

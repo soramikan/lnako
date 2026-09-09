@@ -15,25 +15,28 @@ if (entries.some((entry) => entry.isDirectory())) throw new Error("Release asset
 const archives = entries
   .filter((entry) => entry.isFile())
   .map((entry) => entry.name)
-  .map((name) => /^(lnako-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)-(macos-arm64|linux-x64|windows-x64)\.(tar\.gz|zip))$/.exec(name))
+  .map((name) => /^(lnako-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)-(macos-arm64|linux-x64|windows-x64)(-full)?\.(tar\.gz|zip))$/.exec(name))
   .filter((match) => match !== null)
-  .map((match) => ({ archive: match[1], version: match[2], target: match[3], extension: match[4] }));
-if (archives.length !== targetSpecifications.size) throw new Error(`Release archiveは3 targetが必要です: ${archives.length}/${targetSpecifications.size}`);
+  .map((match) => ({ archive: match[1], version: match[2], target: match[3], variant: match[4] === "-full" ? "full" : "standard", extension: match[5] }));
+if (archives.length !== targetSpecifications.size * 2) throw new Error(`Release archiveは3 target×2 variantが必要です: ${archives.length}/${targetSpecifications.size * 2}`);
 
 const versions = new Set();
 const targets = new Set();
+const targetVariants = new Set();
 for (const item of archives) {
   const specification = targetSpecifications.get(item.target);
-  if (specification === undefined || specification.extension !== item.extension || targets.has(item.target)) throw new Error(`Release archiveのtargetまたは拡張子が不正です: ${item.archive}`);
+  const variantKey = `${item.target}-${item.variant}`;
+  if (specification === undefined || specification.extension !== item.extension || targetVariants.has(variantKey)) throw new Error(`Release archiveのtargetまたは拡張子が不正です: ${item.archive}`);
   versions.add(item.version);
   targets.add(item.target);
+  targetVariants.add(variantKey);
   if (!(await isFile(join(options.directory, item.archive)))) throw new Error(`archiveが見つかりません: ${item.archive}`);
   const sbom = `${item.archive.slice(0, -item.extension.length - 1)}.spdx.json`;
   if (!(await isFile(join(options.directory, sbom)))) throw new Error(`SBOMが見つかりません: ${sbom}`);
   if (!(await isFile(join(options.directory, `${item.archive}.sha256`)))) throw new Error(`archive checksum sidecarが見つかりません: ${item.archive}`);
   verifyDistribution(join(options.directory, item.archive));
 }
-if (targets.size !== targetSpecifications.size || versions.size !== 1) throw new Error("Release archiveのtargetまたはversionが揃っていません");
+if (targets.size !== targetSpecifications.size || targetVariants.size !== targetSpecifications.size * 2 || versions.size !== 1) throw new Error("Release archiveのtarget・variantまたはversionが揃っていません");
 const version = [...versions][0];
 if (options.version !== null && options.version !== version) throw new Error(`Release versionが一致しません: ${options.version}/${version}`);
 
@@ -52,8 +55,8 @@ for (const item of archives) {
   const sidecar = await readFile(join(options.directory, `${item.archive}.sha256`), "utf8");
   if (sidecar !== `${archiveDigest}  ${item.archive}\n`) throw new Error(`archive SHA-256 sidecarが一致しません: ${item.archive}`);
 }
-if (checksums.size !== required.size || [...required].some((name) => !checksums.has(name))) throw new Error("SHA256SUMSが3 targetのarchive／SBOMだけを正確に列挙していません");
-console.log(`Release asset検証: ${version} / macos-arm64・linux-x64・windows-x64 / archive・checksum・SPDX SBOM成功`);
+if (checksums.size !== required.size || [...required].some((name) => !checksums.has(name))) throw new Error("SHA256SUMSが3 target×2 variantのarchive／SBOMだけを正確に列挙していません");
+console.log(`Release asset検証: ${version} / macos-arm64・linux-x64・windows-x64 × standard・full / archive・checksum・SPDX SBOM成功`);
 
 function parseArguments(arguments_) {
   const parsed = { directory: null, version: null };

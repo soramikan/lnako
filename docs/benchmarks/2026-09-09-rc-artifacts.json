@@ -1,0 +1,68 @@
+{
+  "schema": "lnako.performance-record-index.v1",
+  "measured_commit": "5dcf585f4db394206fb5480ef6b184d3138c6daf",
+  "candidate_commit": "af137cf299b01a318cb84339b6f9097be01e372e",
+  "comparison_ci_url": "https://github.com/soramikan/lnako/actions/runs/34246129122",
+  "records": [
+    {
+      "target": "linux-x64",
+      "kind": "comparison",
+      "file": "2026-09-09-rc-linux-x64-comparison.json",
+      "sha256": "5cf72185ecb96a1814d3c76a71dd5ee3e3dd9b6f6e9b8a84726c47b73ea7aaad",
+      "case_count": 19,
+      "measurement_count": 107,
+      "source_artifact": "comparison-benchmark-linux-x64",
+      "source_file": "benchmark-linux-x64.json"
+    },
+    {
+      "target": "linux-x64",
+      "kind": "diagnostics",
+      "file": "2026-09-09-rc-linux-x64-diagnostics.json",
+      "sha256": "bbb012ed26e0bd3178a57484609cbabe14b53d6b023899d3b4719f48636cb3cb",
+      "case_count": 12,
+      "measurement_count": 48,
+      "source_artifact": "diagnostics-benchmark-linux-x64",
+      "source_file": "diagnostics-linux-x64.json"
+    },
+    {
+      "target": "windows-x64",
+      "kind": "comparison",
+      "file": "2026-09-09-rc-windows-x64-comparison.json",
+      "sha256": "ca3bd356086c28eea1f2e7eb93f91728f48edca799d18166e009040b712af174",
+      "case_count": 19,
+      "measurement_count": 107,
+      "source_artifact": "comparison-benchmark-windows-x64",
+      "source_file": "benchmark-windows-x64.json"
+    },
+    {
+      "target": "windows-x64",
+      "kind": "diagnostics",
+      "file": "2026-09-09-rc-windows-x64-diagnostics.json",
+      "sha256": "9df33cf8beb284cb7f47344e0fb8335e97c35192f328407602480a63a2fd6a7d",
+      "case_count": 12,
+      "measurement_count": 48,
+      "source_artifact": "diagnostics-benchmark-windows-x64",
+      "source_file": "diagnostics-windows-x64.json"
+    },
+    {
+      "target": "macos-arm64",
+      "kind": "comparison",
+      "file": "2026-09-09-rc-macos-arm64-comparison.json",
+      "sha256": "cdfd641acce5b2c661271acb26bc16e025980a4c71854bf50ff188e3eb986dcf",
+      "case_count": 19,
+      "measurement_count": 107,
+      "source_artifact": "comparison-benchmark-macos-arm64",
+      "source_file": "benchmark-macos-arm64.json"
+    },
+    {
+      "target": "macos-arm64",
+      "kind": "diagnostics",
+      "file": "2026-09-09-rc-macos-arm64-diagnostics.json",
+      "sha256": "0536e357759004334f9e0805fc9b7b15c70934328be97ed83ee29124a26326c1",
+      "case_count": 12,
+      "measurement_count": 48,
+      "source_artifact": "diagnostics-benchmark-macos-arm64",
+      "source_file": "diagnostics-macos-arm64.json"
+    }
+  ]
+}

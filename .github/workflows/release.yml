@@ -66,7 +66,8 @@ jobs:
             fi
             echo "同じsource commitのCI全job成功を確認: run=$ci_run_id jobs=$ci_job_count/$CI_EXPECTED_JOB_COUNT"
           else
-            version="$RELEASE_VERSION_INPUT"
+            # 手動入力はtag形式のv接頭辞も許容して正規化する。
+            version="${RELEASE_VERSION_INPUT#v}"
           fi
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
             echo "versionがsemver形式ではありません: $version" >&2
@@ -105,6 +106,7 @@ jobs:
         include:
           - target: macos-arm64
             os: macos-15
+            environment: release-signing
             executable: lnako
             runtime: liblnako_runtime.a
             extension: tar.gz
@@ -119,7 +121,8 @@ jobs:
             runtime: lnako_runtime.lib
             extension: zip
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    environment: ${{ matrix.environment }}
+    timeout-minutes: 120
     env:
       LNAKO_VERSION: ${{ needs.preflight.outputs.version }}
     steps:
@@ -138,8 +141,9 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/toolchains
-          key: release-toolchains-llvm-22.1.8-${{ matrix.target }}-v2-minimal
+          key: release-toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ matrix.target }}-v3-minimal
           restore-keys: |
+            release-toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ matrix.target }}-v2
             release-toolchains-llvm-22.1.8-${{ matrix.target }}-v1
       - name: Set up pinned LLVM and LLD
         shell: bash
@@ -147,17 +151,56 @@ jobs:
       - name: Prune LLVM toolchain cache
         shell: bash
         run: node tools/prune_llvm_toolchain.mjs
+      - name: Set up pinned QuickJS
+        shell: bash
+        run: node tools/setup_quickjs.mjs
       - name: Clear generated install outputs
         shell: bash
         run: rm -rf -- zig-out
       - name: Build ReleaseSafe compiler and AOT runtime
         shell: bash
-        run: zig build -Doptimize=ReleaseSafe
+        run: zig build -Doptimize=ReleaseSafe -Dcompat-js=true
       - name: Verify compiler version
         shell: bash
         run: |
           actual="$(./zig-out/bin/${{ matrix.executable }} --version | tr -d '\r\n')"
           test "$actual" = "lnako $LNAKO_VERSION"
+      - name: Verify bundled QuickJS packaging boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          ext=""
+          if [[ "${{ matrix.executable }}" == "lnako.exe" ]]; then ext=".exe"; fi
+          # 配布コンパイラはQuickJSを静的同梱し、--compat-jsがそのまま動作する。
+          ./zig-out/bin/${{ matrix.executable }} run tests/fixtures/compat-js-basic.nako3 --compat-js > /dev/null
+          # compat-js指定の生成物にだけQuickJSを含める。
+          ./zig-out/bin/${{ matrix.executable }} build tests/fixtures/compat-js-basic.nako3 --compat-js -o "$RUNNER_TEMP/lnako-compat-smoke$ext"
+          "$RUNNER_TEMP/lnako-compat-smoke$ext" > /dev/null
+          grep -aq "unexpected token in expression" "$RUNNER_TEMP/lnako-compat-smoke$ext"
+          # 通常AOT生成物とAOT runtimeライブラリにはQuickJSを含めない。
+          printf '1+2を表示\n' > "$RUNNER_TEMP/plain.nako3"
+          ./zig-out/bin/${{ matrix.executable }} build "$RUNNER_TEMP/plain.nako3" -o "$RUNNER_TEMP/lnako-native-smoke$ext"
+          [[ "$("$RUNNER_TEMP/lnako-native-smoke$ext")" == "3" ]]
+          ! grep -aq "unexpected token in expression" "$RUNNER_TEMP/lnako-native-smoke$ext"
+          ! grep -aq "unexpected token in expression" zig-out/lib/${{ matrix.runtime }}
+      - name: Verify toolchain command manages LLVM
+        shell: bash
+        run: |
+          set -euo pipefail
+          ext=""
+          if [[ "${{ matrix.executable }}" == "lnako.exe" ]]; then ext=".exe"; fi
+          export LNAKO_TOOLCHAIN_DIR="$RUNNER_TEMP/lnako-toolchains"
+          # status/dirが管理dirを表示する。
+          ./zig-out/bin/${{ matrix.executable }} toolchain status
+          [[ "$(./zig-out/bin/${{ matrix.executable }} toolchain dir)" == "$LNAKO_TOOLCHAIN_DIR" ]]
+          # 既存LLVMを管理dirへ登録し、LNAKO_LLVM_DIRなしでAOTビルドできる。
+          ./zig-out/bin/${{ matrix.executable }} toolchain install --from-dir "$LNAKO_LLVM_DIR"
+          env -u LNAKO_LLVM_DIR -u LNAKO_LLVM_LIBRARY ./zig-out/bin/${{ matrix.executable }} toolchain status
+          printf '3*4を表示\n' > "$RUNNER_TEMP/managed.nako3"
+          env -u LNAKO_LLVM_DIR -u LNAKO_LLVM_LIBRARY ./zig-out/bin/${{ matrix.executable }} build "$RUNNER_TEMP/managed.nako3" -o "$RUNNER_TEMP/lnako-managed-smoke$ext"
+          [[ "$("$RUNNER_TEMP/lnako-managed-smoke$ext")" == "12" ]]
+          ./zig-out/bin/${{ matrix.executable }} toolchain remove
+          env -u LNAKO_LLVM_DIR -u LNAKO_LLVM_LIBRARY ./zig-out/bin/${{ matrix.executable }} toolchain status
       - name: Run benchmark for this target
         env:
           LNAKO_BENCHMARK_COMMIT: ${{ github.sha }}
@@ -174,30 +217,83 @@ jobs:
           node tools/check_benchmark_result.mjs \
             --json "$RUNNER_TEMP/benchmark-${{ matrix.target }}.json" \
             --markdown "$RUNNER_TEMP/benchmark-${{ matrix.target }}.md"
-      - name: Create distribution archive
+      - name: Prepare macOS signing keychain
+        if: matrix.target == 'macos-arm64'
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: node tools/macos_signing.mjs setup
+      - name: Create distribution archives
         shell: bash
         run: |
-          node tools/create_distribution.mjs \
+          set -euo pipefail
+          signing_args=()
+          if [[ "${{ matrix.target }}" == "macos-arm64" ]]; then signing_args+=(--sign-macos); fi
+          # standard版はLLVMを同梱しない。ユーザーは`lnako toolchain install`で
+          # pin済みLLVMを導入するか、LNAKO_LLVM_DIRで既存LLVMを指定する。
+          node tools/create_distribution.mjs "${signing_args[@]}" \
             --version "$LNAKO_VERSION" \
             --target "${{ matrix.target }}" \
-            --output "$RUNNER_TEMP/dist" \
+            --variant standard \
+            --output "$RUNNER_TEMP/dist-standard" \
+            --binary "$GITHUB_WORKSPACE/zig-out/bin/${{ matrix.executable }}" \
+            --runtime "$GITHUB_WORKSPACE/zig-out/lib/${{ matrix.runtime }}"
+          # full版はLLVM/LLDをllvm/へ同梱し、導入直後からオフラインで`lnako build`できる。
+          node tools/create_distribution.mjs "${signing_args[@]}" \
+            --version "$LNAKO_VERSION" \
+            --target "${{ matrix.target }}" \
+            --variant full \
+            --output "$RUNNER_TEMP/dist-full" \
             --binary "$GITHUB_WORKSPACE/zig-out/bin/${{ matrix.executable }}" \
             --runtime "$GITHUB_WORKSPACE/zig-out/lib/${{ matrix.runtime }}" \
             --llvm-dir "$LNAKO_LLVM_DIR" \
             --require-llvm
-      - name: Verify distribution archive
+      - name: Verify distribution archives
         shell: bash
         run: |
           node tools/check_distribution.mjs \
-            --archive "$RUNNER_TEMP/dist/lnako-${LNAKO_VERSION}-${{ matrix.target }}.${{ matrix.extension }}"
+            --archive "$RUNNER_TEMP/dist-standard/lnako-${LNAKO_VERSION}-${{ matrix.target }}.${{ matrix.extension }}"
+          node tools/check_distribution.mjs \
+            --archive "$RUNNER_TEMP/dist-full/lnako-${LNAKO_VERSION}-${{ matrix.target }}-full.${{ matrix.extension }}"
+      - name: Notarize and assess signed macOS distributions
+        if: matrix.target == 'macos-arm64'
+        env:
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: >-
+          node tools/macos_signing.mjs notarize
+          "${{ runner.temp }}/dist-standard/lnako-${{ needs.preflight.outputs.version }}-macos-arm64.tar.gz"
+          "${{ runner.temp }}/dist-full/lnako-${{ needs.preflight.outputs.version }}-macos-arm64-full.tar.gz"
+      - name: Preserve macOS notarization logs
+        if: always() && matrix.target == 'macos-arm64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-notarization-logs
+          path: ${{ runner.temp }}/*.notary-log.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Remove macOS signing credentials
+        if: always() && matrix.target == 'macos-arm64'
+        run: node tools/macos_signing.mjs cleanup
+      - name: Stage release assets
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/release-assets-${{ matrix.target }}"
+          cp "$RUNNER_TEMP"/dist-standard/lnako-${{ needs.preflight.outputs.version }}-${{ matrix.target }}.* \
+             "$RUNNER_TEMP"/dist-full/lnako-${{ needs.preflight.outputs.version }}-${{ matrix.target }}-full.* \
+             "$RUNNER_TEMP/benchmark-${{ matrix.target }}.json" \
+             "$RUNNER_TEMP/benchmark-${{ matrix.target }}.md" \
+             "$RUNNER_TEMP/release-assets-${{ matrix.target }}/"
       - name: Upload target release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: lnako-release-${{ matrix.target }}
-          path: |
-            ${{ runner.temp }}/dist/lnako-${{ needs.preflight.outputs.version }}-${{ matrix.target }}.*
-            ${{ runner.temp }}/benchmark-${{ matrix.target }}.json
-            ${{ runner.temp }}/benchmark-${{ matrix.target }}.md
+          # upload-artifactは複数directoryを指定すると共通祖先基準で階層を保持する。
+          # dist/等のサブディレクトリ混入を防ぐため、単一の平坦なdirectoryのみを対象にする。
+          path: ${{ runner.temp }}/release-assets-${{ matrix.target }}/*
           if-no-files-found: error
           retention-days: 30
 

@@ -12,6 +12,11 @@ const crcTable = Uint32Array.from({ length: 256 }, (_, index) => {
 });
 
 const root = resolve(import.meta.dirname, "..");
+// 実QuickJSだけが持つparser診断文字列と公開ABIシンボル（同梱境界検査用）。
+// 文字列literalは全OSの配布バイナリに残る。シンボル名はELF/Mach-Oの
+// 文字列表には残るが、MSVC PEではPDB側へ分離されるためpresence判定には使えない。
+const QUICKJS_STRING_MARKERS = ["unexpected token in expression"];
+const QUICKJS_SYMBOL_MARKERS = ["JS_NewRuntime"];
 const arguments_ = process.argv.slice(2);
 if (arguments_.includes("--self-test")) {
   if (arguments_.length !== 1) throw new Error("usage: node tools/check_distribution.mjs --self-test");
@@ -58,19 +63,23 @@ async function verifyDistribution(archivePath) {
   if (!Buffer.from(sbomBytes).equals(externalSbom)) throw new Error("外部SBOMとアーカイブ内SBOMが一致しません");
   const manifest = parseJson(manifestBytes, "manifest.json");
   const sbom = parseJson(sbomBytes, "sbom.spdx.json");
-  validateManifest(manifest, prefix, entries);
+  validateManifest(manifest, prefix, entries, baseName);
   validateSbom(sbom, prefix, entries);
   validateArchiveContents(manifest, sbom, prefix, entries);
   return { manifest, sbom, entries };
 }
 
-function validateManifest(manifest, prefix, entries) {
+function validateManifest(manifest, prefix, entries, baseName) {
   if (manifest.schema !== "lnako.distribution-manifest.v1" || manifest.name !== "lnako" || typeof manifest.version !== "string" || typeof manifest.target !== "string") {
     throw new Error("配布manifestのschemaまたは識別子が不正です");
   }
+  const expectedVariant = baseName.endsWith("-full") ? "full" : "standard";
+  if (manifest.variant !== expectedVariant) throw new Error(`配布manifestのvariantがアーカイブ名と一致しません: ${manifest.variant}/${baseName}`);
   if (!manifest.source || !/^[0-9a-f]{40}$/.test(manifest.source.commit) || typeof manifest.source.dirty !== "boolean") throw new Error("配布manifestのsourceが不正です");
-  if (!manifest.build || manifest.build.zig !== "0.16.0" || manifest.build.llvm !== "22.1.8" || manifest.build.compatJsIncluded !== false) throw new Error("配布manifestの固定toolchain情報が不正です");
+  if (!manifest.build || manifest.build.zig !== "0.16.0" || manifest.build.llvm !== "22.1.8" || manifest.build.compatJsIncluded !== true) throw new Error("配布manifestの固定toolchain情報が不正です");
   if (!manifest.toolchain || typeof manifest.toolchain.included !== "boolean" || !Array.isArray(manifest.toolchain.files)) throw new Error("配布manifestのtoolchainが不正です");
+  if (manifest.variant === "full" && manifest.toolchain.included !== true) throw new Error("full版のmanifestでtoolchain.includedがtrueではありません");
+  if (manifest.variant === "standard" && manifest.toolchain.included !== false) throw new Error("standard版のmanifestでtoolchain.includedがfalseではありません");
   const binary = validateManifestArtifact(manifest.artifacts?.binary, prefix, entries, "binary");
   const runtime = validateManifestArtifact(manifest.artifacts?.runtime, prefix, entries, "runtime");
   if (manifest.executable !== binary.path || manifest.runtimeLibrary !== runtime.path || manifest.sbom !== "sbom.spdx.json") throw new Error("配布manifestのartifactまたはSBOM pathが一致しません");
@@ -118,7 +127,15 @@ function validateSbom(sbom, prefix, entries) {
   }
 }
 
+function validateReleaseDocuments(prefix, entries) {
+  for (const name of ["GETTING_STARTED.md", "COMPATIBILITY.md", "TODO.md"]) {
+    const bytes = requireEntry(entries, `${prefix}docs/${name}`);
+    if (bytes.toString("utf8").trim().length === 0) throw new Error(`配布契約文書が空です: ${name}`);
+  }
+}
+
 function validateArchiveContents(manifest, sbom, prefix, entries) {
+  validateReleaseDocuments(prefix, entries);
   const expectedArchiveEntries = new Set([`${prefix}manifest.json`, `${prefix}sbom.spdx.json`]);
   for (const file of manifest.files) expectedArchiveEntries.add(`${prefix}${file.path}`);
   if (entries.size !== expectedArchiveEntries.size) throw new Error("アーカイブにmanifest外のentryがあります");
@@ -135,6 +152,33 @@ function validateArchiveContents(manifest, sbom, prefix, entries) {
   }
   if (actualSbomFiles.size !== expectedSbomFiles.size) throw new Error("SBOMのfile一覧がアーカイブと一致しません");
   for (const name of expectedSbomFiles) if (!actualSbomFiles.has(name)) throw new Error(`SBOMに対応するfileがありません: ${name}`);
+
+  verifyQuickJsBoundary(manifest, sbom, prefix, entries);
+}
+
+// QuickJSの静的同梱境界をアーカイブ内容で検査する。実QuickJSだけが持つ
+// parser診断文字列と公開ABIシンボルをmarkerとして、配布コンパイラには
+// 含まれ、AOT runtimeライブラリには含まれないことを確認する（AOT生成物へは
+// --compat-js利用時のみ同梱される設計の退行防止）。
+function verifyQuickJsBoundary(manifest, sbom, prefix, entries) {
+  if (manifest.build?.compatJsIncluded !== true) throw new Error("配布manifestのcompatJsIncludedがtrueではありません");
+  const binary = requireEntry(entries, `${prefix}${manifest.executable}`);
+  const runtime = requireEntry(entries, `${prefix}${manifest.runtimeLibrary}`);
+  const presenceMarkers = manifest.platform === "win32"
+    ? QUICKJS_STRING_MARKERS
+    : [...QUICKJS_STRING_MARKERS, ...QUICKJS_SYMBOL_MARKERS];
+  for (const marker of presenceMarkers) {
+    if (!Buffer.from(binary).includes(marker)) throw new Error(`配布コンパイラにQuickJS markerがありません: ${marker}`);
+  }
+  for (const marker of [...QUICKJS_STRING_MARKERS, ...QUICKJS_SYMBOL_MARKERS]) {
+    if (Buffer.from(runtime).includes(marker)) throw new Error(`AOT runtimeライブラリにQuickJS markerが混入しています: ${marker}`);
+  }
+  const packages = Array.isArray(sbom.packages) ? sbom.packages : [];
+  const quickjsPackage = packages.find((entry) => entry.name === "QuickJS" && entry.versionInfo === "2026-06-04" && entry.licenseConcluded === "MIT");
+  if (!quickjsPackage) throw new Error("SBOMにQuickJS packageがありません");
+  const linked = (sbom.relationships ?? []).some((relation) =>
+    relation.spdxElementId === "SPDXRef-Package-lnako" && relation.relationshipType === "STATICALLY_LINKED_TO" && relation.relatedSpdxElement === quickjsPackage.SPDXID);
+  if (!linked) throw new Error("SBOMにlnako→QuickJSのSTATICALLY_LINKED_TO関係がありません");
 }
 
 function parseTarGz(bytes) {
@@ -316,8 +360,8 @@ async function selfTest() {
   try {
     const binary = resolve(temporary, "fake-lnako");
     const runtime = resolve(temporary, "fake-runtime.a");
-    await writeFile(binary, "fake executable\n");
-    await writeFile(runtime, "fake runtime\n");
+    await writeFile(binary, `fake executable ${[...QUICKJS_STRING_MARKERS, ...QUICKJS_SYMBOL_MARKERS].join(" ")}\n`);
+    await writeFile(runtime, "fake runtime without quickjs\n");
     const output = resolve(temporary, "dist");
     const targets = [...new Set([hostTarget(), "linux-x64", "windows-x64"])];
     const archives = [];
@@ -330,7 +374,19 @@ async function selfTest() {
       if (result.status !== 0) throw new Error(`配布self-test生成に失敗しました(${target}): ${result.stderr}`);
       const extension = target === "windows-x64" ? "zip" : "tar.gz";
       const archive = resolve(output, `lnako-9.9.9-test-${target}.${extension}`);
-      await verifyDistribution(archive);
+      const verified = await verifyDistribution(archive);
+      const prefix = `lnako-9.9.9-test-${target}/`;
+      for (const document of ["GETTING_STARTED.md", "COMPATIBILITY.md", "TODO.md"]) {
+        for (const empty of [false, true]) {
+          const entries = new Map(verified.entries);
+          const key = `${prefix}docs/${document}`;
+          if (empty) entries.set(key, Buffer.from(" \n"));
+          else entries.delete(key);
+          let rejected = false;
+          try { validateReleaseDocuments(prefix, entries); } catch { rejected = true; }
+          if (!rejected) throw new Error(`配布文書の欠落・空欄を拒否しません: ${document}`);
+        }
+      }
       archives.push(archive);
     }
     const tarArchive = archives.find((archive) => archive.endsWith(".tar.gz"));

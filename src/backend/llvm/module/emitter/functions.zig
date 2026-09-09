@@ -278,7 +278,7 @@ fn writeTypedBinary(emitter: *Emitter, function: ir.Function, instruction: ir.In
         defer emitter.allocator.free(right);
         const opcode = arithmeticOpcode(instruction.operator) orelse return error.UnsupportedBinaryOperator;
         if (std.mem.eql(u8, opcode, "pow")) {
-            try emitter.output.writer.print("  %typed.v{d} = call double @llvm.pow.f64(double {s}, double {s})", .{ result, left, right });
+            try emitter.output.writer.print("  %typed.v{d} = call double @lnako_aot_pow_f64(double {s}, double {s})", .{ result, left, right });
         } else if (std.mem.eql(u8, opcode, "divfloor")) {
             try emitter.output.writer.print("  %typed.divfloor.{d} = fdiv double {s}, {s}", .{ result, left, right });
             try emitter.debugSuffix(instruction.span, scope);

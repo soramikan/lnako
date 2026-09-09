@@ -5,6 +5,7 @@ const optimizer = @import("../../ir/optimizer.zig");
 const verifier = @import("../../ir/verifier.zig");
 const api_mod = @import("api.zig");
 const module_mod = @import("module.zig");
+const toolchain_manager = @import("../../toolchain/manager.zig");
 
 pub const Optimization = enum { o0, o1, o2, o3 };
 pub const Emit = enum { llvm_ir, object, executable };
@@ -19,6 +20,7 @@ pub const Options = struct {
     output_path: []const u8,
     llvm_root: ?[]const u8 = null,
     llvm_library: ?[]const u8 = null,
+    environment: ?*const std.process.Environ.Map = null,
     runtime_library: ?[]const u8 = null,
     compile_manifest_path: ?[]const u8 = null,
     global_manifest_path: ?[]const u8 = null,
@@ -30,9 +32,17 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
     var timer = PhaseTimer.init(io, options.trace);
     var packaged_llvm_root: ?[]u8 = null;
     defer if (packaged_llvm_root) |path| allocator.free(path);
+    var managed_llvm_root: ?[]u8 = null;
+    defer if (managed_llvm_root) |path| allocator.free(path);
+    // 解決順: LNAKO_LLVM_DIR → 同梱llvm/（full版）→ 管理toolchain → システム。
     const llvm_root: ?[]const u8 = if (options.llvm_root) |root| root else blk: {
         packaged_llvm_root = try findPackagedLlvmRoot(allocator, io);
-        break :blk if (packaged_llvm_root) |root| root else null;
+        if (packaged_llvm_root) |root| break :blk root;
+        if (options.environment) |environ| {
+            managed_llvm_root = toolchain_manager.findManagedLlvmRoot(allocator, io, environ);
+            if (managed_llvm_root) |root| break :blk root;
+        }
+        break :blk null;
     };
     var manifest_entry_count: ?usize = null;
     var manifest_created = false;
@@ -119,6 +129,7 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
             api_mod.max_supported_version.major,
             @errorName(failure),
         });
+        try diagnostics.writeAll("LLVMが見つかりません。`lnako toolchain install` でpin済みLLVMを導入するか、LNAKO_LLVM_DIRで既存のLLVMを指定してください\n");
         return failure;
     };
     defer api.close();

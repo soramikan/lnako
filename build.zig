@@ -7,6 +7,7 @@ pub fn build(b: *std.Build) void {
     const build_options = b.addOptions();
     build_options.addOption(bool, "quickjs_enabled", compat_js);
     build_options.addOption([]const u8, "compat_summary_json", @embedFile("compat/v3.7.24/summary.json"));
+    build_options.addOption([]const u8, "toolchain_lock_json", @embedFile("toolchain.lock.json"));
 
     const unicode_case = b.createModule(.{
         .root_source_file = b.path("src/generated/unicode_case.zig"),
@@ -65,7 +66,13 @@ pub fn build(b: *std.Build) void {
         .strip = true,
         .link_libc = true,
     });
-    aot_module.addOptions("build_options", build_options);
+    // AOTランタイムは常にQuickJS stubをリンクする。compat-jsフラグを共有すると
+    // quickjs_enabled=trueになりstub呼出しが実行時失敗へ化けるため、AOT側は
+    // 常に無効化したoptionsを渡す（実QuickJSはnative生成物に含めない）。
+    const aot_build_options = b.addOptions();
+    aot_build_options.addOption(bool, "quickjs_enabled", false);
+    aot_build_options.addOption([]const u8, "compat_summary_json", @embedFile("compat/v3.7.24/summary.json"));
+    aot_module.addOptions("build_options", aot_build_options);
     aot_module.addImport("unicode_case", unicode_case);
     aot_module.addImport("unicode_properties", unicode_properties);
     aot_module.addImport("regexp", regexp);

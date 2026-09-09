@@ -798,7 +798,7 @@ pub fn arithmetic(runtime: *Runtime, operator: Arithmetic, left: Value, right: V
         .multiply => left_number * right_number,
         .divide => left_number / right_number,
         .remainder => @rem(left_number, right_number),
-        .power => std.math.pow(f64, left_number, right_number),
+        .power => number_mod.pow(left_number, right_number),
         .integer_divide => @floor(left_number / right_number),
         .bit_and => @floatFromInt(toInt32(left_number) & toInt32(right_number)),
         .bit_or => @floatFromInt(toInt32(left_number) | toInt32(right_number)),

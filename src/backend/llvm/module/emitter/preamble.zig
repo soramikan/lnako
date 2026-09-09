@@ -128,6 +128,7 @@ pub fn emitPreamble(emitter: *Emitter) !void {
             "declare void @lnako_aot_literal_site(i64)\n" ++
             "declare i32 @printf(ptr, ...)\n" ++
             "declare i32 @puts(ptr)\n" ++
+            "declare double @lnako_aot_pow_f64(double, double)\n" ++
             "declare double @llvm.pow.f64(double, double)\n" ++
             "declare double @llvm.floor.f64(double)\n\n" ++
             "@.lnako.fmt.text.inline = private unnamed_addr constant [3 x i8] c\"%s\\00\"\n" ++
