@@ -23,25 +23,25 @@
       "officialSource": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "50a632291161f722ae4d16be91f84e3809697513b72ccdcaed85cff9731198ed",
+        "stdoutSha256": "7afb02bd002b6508fa79742e31cbf0b4d042fb800e8007e047a3604b7fb4dedb",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "officialGenerated": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "50a632291161f722ae4d16be91f84e3809697513b72ccdcaed85cff9731198ed",
+        "stdoutSha256": "7afb02bd002b6508fa79742e31cbf0b4d042fb800e8007e047a3604b7fb4dedb",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoRun": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "50a632291161f722ae4d16be91f84e3809697513b72ccdcaed85cff9731198ed",
+        "stdoutSha256": "7afb02bd002b6508fa79742e31cbf0b4d042fb800e8007e047a3604b7fb4dedb",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoNativeO0": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "50a632291161f722ae4d16be91f84e3809697513b72ccdcaed85cff9731198ed",
+        "stdoutSha256": "7afb02bd002b6508fa79742e31cbf0b4d042fb800e8007e047a3604b7fb4dedb",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       }
     }
@@ -63,12 +63,12 @@
     },
     "lnako": {
       "binarySha256": "b741472c44d32a7c97766291369dedba7657b429015f5da53bab0ad238aeb62f",
-      "sourceManifestSha256": "a07c627a54040143a949320da07f753e7d33f6af08d9918edaeedd15dad71fb6"
+      "sourceManifestSha256": "16db14dd3363f1ed4a71f9cdeb375e6c861d55665d371d7e55bdecc49533507b"
     },
     "raw": {
       "interpreterTraceSha256": "eac3005960be0c3748df5f16df3b5e8cb5cb0b1db2fad03f8844ef3ef51791f6",
       "aotTraceSha256": "1bf262db987d3e91326a9a8abff274f16568b22448729be4adb1880c81a2a9f9",
-      "compileManifestSha256": "a758755a0d8918be99adbc36767546eb987784410b81cec34870eddf17cd54ec"
+      "compileManifestSha256": "c6b0079d0e63a8c68f17b8f5100de103478dd3c3c57a9a6c7bf1aad242e20a9e"
     }
   },
   "trace": {
