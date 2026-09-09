@@ -543,23 +543,27 @@ fn aotStdinIsTty(runtime: *Runtime) bool {
     return std.Io.File.stdin().isTty(aotRuntimeIo(runtime)) catch false;
 }
 
-pub fn aotReadStdinLine(runtime: *Runtime) ![]u8 {
+pub fn readLineFromFile(io: std.Io, file: std.Io.File, allocator: std.mem.Allocator, limit: usize) ![]u8 {
     var line: std.ArrayList(u8) = .empty;
-    defer line.deinit(runtime.allocator);
+    defer line.deinit(allocator);
     var pending_cr = false;
-    const limit = 64 * 1024 * 1024;
     while (true) {
-        if (line.items.len >= limit) return error.StreamTooLong;
         var byte: [1]u8 = undefined;
-        const n = std.Io.File.stdin().readStreaming(aotRuntimeIo(runtime), &.{&byte}) catch |err| switch (err) {
+        const n = file.readStreaming(io, &.{&byte}) catch |err| switch (err) {
             error.EndOfStream => {
-                if (pending_cr) try line.append(runtime.allocator, '\r');
+                if (pending_cr) {
+                    if (line.items.len >= limit) return error.StreamTooLong;
+                    try line.append(allocator, '\r');
+                }
                 break;
             },
             else => return err,
         };
         if (n == 0) {
-            if (pending_cr) try line.append(runtime.allocator, '\r');
+            if (pending_cr) {
+                if (line.items.len >= limit) return error.StreamTooLong;
+                try line.append(allocator, '\r');
+            }
             break;
         }
         if (byte[0] == '\n') {
@@ -570,11 +574,25 @@ pub fn aotReadStdinLine(runtime: *Runtime) ![]u8 {
             }
             break;
         }
-        if (pending_cr) try line.append(runtime.allocator, '\r');
-        pending_cr = byte[0] == '\r';
-        if (!pending_cr) try line.append(runtime.allocator, byte[0]);
+        if (pending_cr) {
+            if (line.items.len >= limit) return error.StreamTooLong;
+            try line.append(allocator, '\r');
+            pending_cr = false;
+        }
+        if (byte[0] == '\r') {
+            pending_cr = true;
+        } else {
+            if (line.items.len >= limit) return error.StreamTooLong;
+            try line.append(allocator, byte[0]);
+        }
     }
-    return runtime.allocator.dupe(u8, line.items);
+    return allocator.dupe(u8, line.items);
+}
+
+const max_stdin_line_bytes = 64 * 1024 * 1024;
+
+pub fn aotReadStdinLine(runtime: *Runtime) ![]u8 {
+    return readLineFromFile(aotRuntimeIo(runtime), std.Io.File.stdin(), runtime.allocator, max_stdin_line_bytes);
 }
 
 pub fn nodeStdinLineBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
@@ -611,4 +629,27 @@ pub fn nodeStdinAllBuiltin(runtime: *Runtime) !Value {
 
 pub fn nodeStdinValueBuiltin(runtime: *Runtime, bytes: []const u8) !Value {
     return runtimeUtf8StringLossy(runtime, bytes);
+}
+
+fn expectAotReadLine(input: []const u8, limit: usize, expected: []const u8) !void {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "line.txt", .data = input });
+    const file = try tmp.dir.openFile(std.testing.io, "line.txt", .{});
+    defer file.close(std.testing.io);
+    const line = try readLineFromFile(std.testing.io, file, std.testing.allocator, limit);
+    defer std.testing.allocator.free(line);
+    try std.testing.expectEqualStrings(expected, line);
+}
+
+test "readLineFromFileはEOF直前のCRを保持する" {
+    try expectAotReadLine("abc\r", 1024, "abc\r");
+}
+
+test "readLineFromFileは行内CRを保持しCRLFは正規化する" {
+    try expectAotReadLine("a\rX\r\n", 1024, "a\rX");
+}
+
+test "readLineFromFileはlimitちょうどのEOF終端を許容する" {
+    try expectAotReadLine("abc", 3, "abc");
 }
