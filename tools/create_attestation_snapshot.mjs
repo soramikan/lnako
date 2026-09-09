@@ -148,24 +148,41 @@ const snapshotFiles = {
   bundle: "sigstore-bundle.json",
 };
 
+function replaceInline(text, startMarker, endMarker, replacement) {
+  const pattern = new RegExp(`${escapeRegExp(startMarker)}[\\s\\S]*?${escapeRegExp(endMarker)}`, "g");
+  const matches = text.match(pattern);
+  if (!matches || matches.length === 0) {
+    throw new Error(`マーカー ${startMarker} ... ${endMarker} が見つかりません`);
+  }
+  return text.replace(pattern, `${startMarker}${replacement}${endMarker}`);
+}
+
+function replaceRange(text, startMarker, endMarker, replacement) {
+  const pattern = new RegExp(`${escapeRegExp(startMarker)}[\\s\\S]*?${escapeRegExp(endMarker)}`, "g");
+  const matches = text.match(pattern);
+  if (!matches || matches.length === 0) {
+    throw new Error(`マーカー ${startMarker} ... ${endMarker} が見つかりません`);
+  }
+  return text.replace(pattern, `${startMarker}\n${replacement}\n${endMarker}`);
+}
+
+function escapeRegExp(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 async function updateCompatibilityDocs(runId, commit, sourceManifestSha256) {
   const path = resolve(root, "docs", "COMPATIBILITY.md");
   let text = await readFile(path, "utf8");
 
-  text = text.replace(
-    /\| `verified` \| \d+ \|\n\| `trace-confirmed-unattested` \| \d+ \|\n\| `unverified` \| \d+ \|/,
-    "| `verified` | 527 |\n| `trace-confirmed-unattested` | 0 |\n| `unverified` | 0 |",
-  );
+  text = replaceInline(text, "<!-- attestation:verified -->", "<!-- /attestation:verified -->", "527");
+  text = replaceInline(text, "<!-- attestation:trace -->", "<!-- /attestation:trace -->", "0");
+  text = replaceInline(text, "<!-- attestation:unverified -->", "<!-- /attestation:unverified -->", "0");
 
-  text = text.replace(
-    /これは、全527 entryの実行証拠がtrace確認済みであることを示しますが、現行source manifestに対する署名付きattestation snapshotはまだ追跡されていません。`verified` は、`attestations\/current\.json` が指す現行snapshotのsource manifestと現行ソースが一致し、かつcanonical証拠ファイルのdigestが署名subjectに含まれる場合にのみ `527` となります。sourceに変更を加えた場合、過去snapshotの `verified: 527` を流用せず、mainマージ後のCI attestationを再取得して `current\.json` を更新します。/,
-    `これは、全527 entryの実行証拠が追跡された現行attestation snapshot（\`attestations/current.json\` → \`attestations/${runId}/\`）で署名済みであることを示します。\`verified\` は、\`attestations/current.json\` が指す現行snapshotのsource manifest（\`${sourceManifestSha256}\`）と現行ソースが一致し、かつcanonical証拠ファイルのdigestが署名subjectに含まれる場合にのみ維持される状態です。sourceに変更を加えた場合、過去snapshotの \`verified: 527\` を流用せず、mainマージ後の新しいCI attestationを再取得して \`current.json\` を更新します。`,
-  );
+  const newDescription = `これは、全527 entryの実行証拠が追跡された現行attestation snapshot（\`attestations/current.json\` → \`attestations/${runId}/\`）で署名済みであることを示します。\`verified\` は、\`attestations/current.json\` が指す現行snapshotのsource manifest（\`${sourceManifestSha256}\`）と現行ソースが一致し、かつcanonical証拠ファイルのdigestが署名subjectに含まれる場合にのみ維持される状態です。sourceに変更を加えた場合、過去snapshotの \`verified: 527\` を流用せず、mainマージ後の新しいCI attestationを再取得して \`current.json\` を更新します。`;
+  text = replaceRange(text, "<!-- attestation:description-start -->", "<!-- attestation:description-end -->", newDescription);
 
-  text = text.replace(
-    /### CIの一時artifact\n\n現行source manifestに対しては、mainマージ後のCI runでattestationを取得し、\`attestations\/current\.json\` を更新する予定です。現時点ではcanonical \`evidence\.json\` は \`verified: 0\` \/ \`trace-confirmed-unattested: 527\` \/ \`unverified: 0\` の未署名追跡状態です。前回追跡されたsnapshot \`attestations\/[^`]+\`（run \`[^`]+\`、commit \`[^`]+\`、54\/54 job成功）は \`verified: 527\` を示す歴史的参照です。さらに前のsnapshot \`attestations\/34121804812\/\`（run \`34121804812\`）と \`attestations\/34113932297\/\`（run \`34113932297\`）も履歴として残しています。/,
-    `### CIの一時artifact\n\n現行manifestに対応するCI run \`${runId}\`（commit \`${commit}\`、54/54 job成功）が生成したcatalog artifactは \`verified: 527\`、\`trace-confirmed-unattested: 0\`、\`unverified: 0\` です。このrunのattestationは3 OSのdispatch証拠・native AOT aggregate・canonical証拠17件を同一Sigstore bundleのsubjectとして署名しており、snapshotは \`attestations/${runId}/\` に追跡しています。前manifest用のsnapshot \`attestations/34305071458/\`（run \`34305071458\`）と \`attestations/34121804812/\`（run \`34121804812\`）、\`attestations/34113932297/\`（run \`34113932297\`）は履歴として残しています。`,
-  );
+  const newArtifacts = `### CIの一時artifact\n\n現行manifestに対応するCI run \`${runId}\`（commit \`${commit}\`、54/54 job成功）が生成したcatalog artifactは \`verified: 527\`、\`trace-confirmed-unattested: 0\`、\`unverified: 0\` です。このrunのattestationは3 OSのdispatch証拠・native AOT aggregate・canonical証拠17件を同一Sigstore bundleのsubjectとして署名しており、snapshotは \`attestations/${runId}/\` に追跡しています。前manifest用のsnapshot \`attestations/34305071458/\`（run \`34305071458\`）と \`attestations/34121804812/\`（run \`34121804812\`）、\`attestations/34113932297/\`（run \`34113932297\`）は履歴として残しています。\n\n一時artifactの値は、実行環境・署名・artifactの保存期間に依存します。追跡対象のcanonical \`evidence.json\` は、追跡された現行snapshotと現行source manifestの一致が確認できた場合にのみ \`verified\` を保持します。`;
+  text = replaceRange(text, "<!-- attestation:artifacts-start -->", "<!-- attestation:artifacts-end -->", newArtifacts);
 
   await writeFile(path, text);
 }

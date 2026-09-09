@@ -1,6 +1,6 @@
 .{
     .name = .lnako,
-    .version = "0.1.0",
+    .version = "0.1.1",
     .fingerprint = 0x530882d315a61e55,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{},
