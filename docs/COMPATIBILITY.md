@@ -49,17 +49,17 @@
 
 | state | entry |
 | --- | ---: |
-| `verified` | 527 |
-| `trace-confirmed-unattested` | 0 |
+| `verified` | 0 |
+| `trace-confirmed-unattested` | 527 |
 | `unverified` | 0 |
 
-これは、全527 entryの実行証拠が追跡された現行attestation snapshotで署名済みであることを示します。`verified` は、追跡された現行attestation snapshot（`attestations/current.json` → `attestations/34305071458/`）が現行source manifestと一致し、かつentryのproofを裏付ける証拠ファイルのdigestが署名subjectに含まれる場合にのみ維持される状態です。
+これは、全527 entryの実行証拠がtrace確認済みであることを示しますが、現行source manifestに対する署名付きattestation snapshotはまだ追跡されていません。`verified` は、`attestations/current.json` が指す現行snapshotのsource manifestと現行ソースが一致し、かつcanonical証拠ファイルのdigestが署名subjectに含まれる場合にのみ `527` となります。sourceに変更を加えた場合、過去snapshotの `verified: 527` を流用せず、mainマージ後のCI attestationを再取得して `current.json` を更新します。
 
 0.1.0の最終sourceでコードを変更した場合は、過去snapshotの527件をそのままリリース証拠として流用しません。最終source manifestに対してCIとattestationを取り直し、release preflightの `sync_compat_evidence.mjs --check` と `check_tracked_dispatch_attestation.mjs` を通過させます。
 
 ### CIの一時artifact
 
-現行manifestに対応するCI run `34305071458`（commit `7bf51dde236c46f5aeac52f26fb49733ced78132`、54/54 job成功）が生成したcatalog artifactは `verified: 527`、`trace-confirmed-unattested: 0`、`unverified: 0` です。このrunのattestationは3 OSのdispatch証拠・native AOT aggregate・canonical証拠17件を同一Sigstore bundleのsubjectとして署名しており、snapshotは `attestations/34305071458/` に追跡しています。前manifest用のsnapshot `attestations/34121804812/`（run `34121804812`）と `attestations/34113932297/`（run `34113932297`）は履歴として残しています。
+現行source manifestに対しては、mainマージ後のCI runでattestationを取得し、`attestations/current.json` を更新する予定です。現時点ではcanonical `evidence.json` は `verified: 0` / `trace-confirmed-unattested: 527` / `unverified: 0` の未署名追跡状態です。前回追跡されたsnapshot `attestations/34305071458/`（run `34305071458`、commit `7bf51dde236c46f5aeac52f26fb49733ced78132`、54/54 job成功）は `verified: 527` を示す歴史的参照です。さらに前のsnapshot `attestations/34121804812/`（run `34121804812`）と `attestations/34113932297/`（run `34113932297`）も履歴として残しています。
 
 一時artifactの値は、実行環境・署名・artifactの保存期間に依存します。追跡対象のcanonical `evidence.json` は、追跡された現行snapshotと現行source manifestの一致が確認できた場合にのみ `verified` を保持します。
 
