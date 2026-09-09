@@ -202,6 +202,21 @@ async function updateCompatibilityDocs(runId, commit, sourceManifestSha256) {
   await writeFile(path, text);
 }
 
+function ensureGitIdentity() {
+  if (!process.env.GIT_AUTHOR_NAME) {
+    const result = spawnSync("git", ["config", "user.name"], { cwd: root, encoding: "utf8" });
+    if (result.status !== 0 || !result.stdout.trim()) {
+      process.env.GIT_AUTHOR_NAME = "github-actions[bot]";
+    }
+  }
+  if (!process.env.GIT_AUTHOR_EMAIL) {
+    const result = spawnSync("git", ["config", "user.email"], { cwd: root, encoding: "utf8" });
+    if (result.status !== 0 || !result.stdout.trim()) {
+      process.env.GIT_AUTHOR_EMAIL = "github-actions[bot]@users.noreply.github.com";
+    }
+  }
+}
+
 async function main() {
   const options = parseArguments();
 
@@ -337,7 +352,8 @@ async function main() {
       run("check docs current", "node", [resolve(root, "tools", "check_docs_current.mjs")]);
       run("sync compat evidence --check", "node", [resolve(root, "tools", "sync_compat_evidence.mjs"), "--check"]);
     }
-  } finally {
+
+    ensureGitIdentity();
     await rm(tempRoot, { recursive: true, force: true });
   }
 
