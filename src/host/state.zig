@@ -721,24 +721,29 @@ pub const CliHost = struct {
         return std.Io.File.stdin().isTty(self.io) catch false;
     }
 
-    fn readStdinLine(context: *anyopaque, allocator: std.mem.Allocator) ![]u8 {
-        const self: *CliHost = @ptrCast(@alignCast(context));
+    const max_stdin_line_bytes = 64 * 1024 * 1024;
+
+    pub fn readLineFromFile(io: std.Io, file: std.Io.File, allocator: std.mem.Allocator, limit: usize) ![]u8 {
         var line: std.ArrayList(u8) = .empty;
         defer line.deinit(allocator);
         var pending_cr = false;
-        const limit = 64 * 1024 * 1024;
         while (true) {
-            if (line.items.len >= limit) return error.StreamTooLong;
             var byte: [1]u8 = undefined;
-            const n = std.Io.File.stdin().readStreaming(self.io, &.{&byte}) catch |err| switch (err) {
+            const n = file.readStreaming(io, &.{&byte}) catch |err| switch (err) {
                 error.EndOfStream => {
-                    if (pending_cr) try line.append(allocator, '\r');
+                    if (pending_cr) {
+                        if (line.items.len >= limit) return error.StreamTooLong;
+                        try line.append(allocator, '\r');
+                    }
                     break;
                 },
                 else => return err,
             };
             if (n == 0) {
-                if (pending_cr) try line.append(allocator, '\r');
+                if (pending_cr) {
+                    if (line.items.len >= limit) return error.StreamTooLong;
+                    try line.append(allocator, '\r');
+                }
                 break;
             }
             if (byte[0] == '\n') {
@@ -749,11 +754,24 @@ pub const CliHost = struct {
                 }
                 break;
             }
-            if (pending_cr) try line.append(allocator, '\r');
-            pending_cr = byte[0] == '\r';
-            if (!pending_cr) try line.append(allocator, byte[0]);
+            if (pending_cr) {
+                if (line.items.len >= limit) return error.StreamTooLong;
+                try line.append(allocator, '\r');
+                pending_cr = false;
+            }
+            if (byte[0] == '\r') {
+                pending_cr = true;
+            } else {
+                if (line.items.len >= limit) return error.StreamTooLong;
+                try line.append(allocator, byte[0]);
+            }
         }
         return allocator.dupe(u8, line.items);
+    }
+
+    fn readStdinLine(context: *anyopaque, allocator: std.mem.Allocator) ![]u8 {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return readLineFromFile(self.io, std.Io.File.stdin(), allocator, max_stdin_line_bytes);
     }
 
     fn createTemporaryDirectory(context: *anyopaque, allocator: std.mem.Allocator, prefix: []const u8) ![]u8 {
@@ -1130,4 +1148,64 @@ test "静的パス解決は成功、404、index、ディレクトリの全経路
         try std.testing.expect((try CliHost.resolveHttpServerStaticPath(&cli_host, std.testing.allocator, root, &empty_components)) == null);
         try std.testing.expect((try CliHost.resolveHttpServerStaticPath(&cli_host, std.testing.allocator, root, &missing_components)) == null);
     }
+}
+
+fn expectReadLine(input: []const u8, limit: usize, expected: []const u8) !void {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "line.txt", .data = input });
+    const file = try tmp.dir.openFile(std.testing.io, "line.txt", .{});
+    defer file.close(std.testing.io);
+    const line = try CliHost.readLineFromFile(std.testing.io, file, std.testing.allocator, limit);
+    defer std.testing.allocator.free(line);
+    try std.testing.expectEqualStrings(expected, line);
+}
+
+fn expectReadLineError(input: []const u8, limit: usize, expected_error: anyerror) !void {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "line.txt", .data = input });
+    const file = try tmp.dir.openFile(std.testing.io, "line.txt", .{});
+    defer file.close(std.testing.io);
+    try std.testing.expectError(expected_error, CliHost.readLineFromFile(std.testing.io, file, std.testing.allocator, limit));
+}
+
+test "readLineFromFileはLFで終端する" {
+    try expectReadLine("abc\n", 1024, "abc");
+}
+
+test "readLineFromFileはCRLFを正規化する" {
+    try expectReadLine("abc\r\n", 1024, "abc");
+}
+
+test "readLineFromFileは行内CRを保持する" {
+    try expectReadLine("abc\rX\r\n", 1024, "abc\rX");
+}
+
+test "readLineFromFileはちょうどlimitでLF終端を許容する" {
+    try expectReadLine("abc\n", 3, "abc");
+}
+
+test "readLineFromFileはちょうどlimitでEOF終端を許容する" {
+    try expectReadLine("abc", 3, "abc");
+}
+
+test "readLineFromFileは末尾CRをEOFに保持する" {
+    try expectReadLine("ab\r", 3, "ab\r");
+}
+
+test "readLineFromFileはlimit超過を拒否する" {
+    try expectReadLineError("abcd\n", 3, error.StreamTooLong);
+}
+
+test "readLineFromFileはlimitちょうどのCRLFを許容する" {
+    try expectReadLine("a\r\n", 2, "a");
+}
+
+test "readLineFromFileはEOF直前のCRLFを空行として扱う" {
+    try expectReadLine("\r\n", 1024, "");
+}
+
+test "readLineFromFileは空の入力行を返す" {
+    try expectReadLine("\n", 1024, "");
 }
