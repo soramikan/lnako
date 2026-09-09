@@ -1,0 +1,114 @@
+{
+  "schema": "lnako.canonical-attestation.v1",
+  "workflowRun": "34305071458",
+  "workflowAttempt": 1,
+  "targetCommit": "7bf51dde236c46f5aeac52f26fb49733ced78132",
+  "sourceRef": "refs/heads/main",
+  "workflow": "soramikan/lnako/.github/workflows/ci.yml",
+  "sourceManifestSha256": "0bd3387caffbc25a0b3fe713f6676b347ec87a48b5f7e7a94e4a5df4b8acce1d",
+  "attestation": "dispatch-attestation.json",
+  "bundle": "sigstore-bundle.json",
+  "nativeAotAttestation": "native-aot-attestation.json",
+  "nativeAotAggregate": "native-aot-aggregate-evidence.json",
+  "catalogEvidence": "catalog-evidence-verified.json",
+  "dispatchEvidence": [
+    {
+      "platform": "darwin",
+      "arch": "arm64",
+      "runner": "macos-15",
+      "path": "dispatch/dispatch-evidence-macos-15.json",
+      "sha256": "f52d5787dd2599ea9e44758ba077821f40c97b60af7c2308e8da0a494ccc5081"
+    },
+    {
+      "platform": "linux",
+      "arch": "x64",
+      "runner": "ubuntu-24.04",
+      "path": "dispatch/dispatch-evidence-ubuntu-24.04.json",
+      "sha256": "93c2d21396b0937fd4b6383da974be2a4fac0949b7e292ce2570e994aceb9503"
+    },
+    {
+      "platform": "win32",
+      "arch": "x64",
+      "runner": "windows-2025",
+      "path": "dispatch/dispatch-evidence-windows-2025.json",
+      "sha256": "4f34304cccc2645934d0f8c47721de85c9516e2c081671898a8a8fa16465b083"
+    }
+  ],
+  "trackedEvidence": [
+    {
+      "path": "compat/v3.7.24/compat-js-evidence.json",
+      "sha256": "2ded013e2e6119be5fa6d70e7e3d7b0cf2057ce7b2a83e9b0228d7b4b9a55da7"
+    },
+    {
+      "path": "compat/v3.7.24/directory-binding-evidence.json",
+      "sha256": "1e88d975fbe618531e1c47f37b3d5d21aa863f7f7ddcf60b116bc9b2328238ca"
+    },
+    {
+      "path": "compat/v3.7.24/dispatch-coverage-evidence.json",
+      "sha256": "1f112d8339724d64225a2a45205c29444c79cebb06f3acf023209c529b8fe39e"
+    },
+    {
+      "path": "compat/v3.7.24/dispatch-evidence.json",
+      "sha256": "21e89d8f498c8c6d1aa3bd1a6ded12afef306b5c8d01b1f316a82e2c58f76d65"
+    },
+    {
+      "path": "compat/v3.7.24/expected-exit-evidence.json",
+      "sha256": "0b19701a7a7e2f4c280eb487155b45d27725137d0251684a5e3918d8761201a2"
+    },
+    {
+      "path": "compat/v3.7.24/global-binding-evidence.json",
+      "sha256": "6f1861592aab729ef60a38282185da586a65f441e58fcf3b469a081e3e38264b"
+    },
+    {
+      "path": "compat/v3.7.24/static-array-constant-evidence.json",
+      "sha256": "9dbe52a626528c65cf8e9fcd8c03a6d65346e6990e9ad4d3a803d9ae1db17379"
+    },
+    {
+      "path": "compat/v3.7.24/static-caniuse-agents-constant-evidence.json",
+      "sha256": "385368a62c49fc69f5821d5faaed5f5dd9c1063175943dcf0b86ecd87495978f"
+    },
+    {
+      "path": "compat/v3.7.24/static-constant-evidence.json",
+      "sha256": "fb16afe886372036a8fd5de6e573e4b437f660153d414a7eadc0ddba7c4994d6"
+    },
+    {
+      "path": "compat/v3.7.24/static-datetime-era-constant-evidence.json",
+      "sha256": "fd22714533ad83485fc79c0d5529f62a141bafa3096e9acd633d07a297848853"
+    },
+    {
+      "path": "compat/v3.7.24/static-datetime-plugin-era-constant-evidence.json",
+      "sha256": "caef1a346cfe8da8268d0faf5e3edcec3b3e179bc4a0dc93c138407f6cb5ddff"
+    },
+    {
+      "path": "compat/v3.7.24/static-node-archive-constant-evidence.json",
+      "sha256": "1d060a8a5590713acc1bdcb8707389deb6dd5d0b99326068947072c2684226a1"
+    },
+    {
+      "path": "compat/v3.7.24/static-node-command-line-constant-evidence.json",
+      "sha256": "6f938d636026c352079d9e296adfc2e9bffb725131d762cb30709da540dd1bff"
+    },
+    {
+      "path": "compat/v3.7.24/static-node-http-initial-constant-evidence.json",
+      "sha256": "0ef416e341e122f39da4a867f742fa9abb49b3a23b08de8977bd0cdd20f354ab"
+    },
+    {
+      "path": "compat/v3.7.24/static-node-mother-path-constant-evidence.json",
+      "sha256": "762908d55a37416f578febe44f2aff67f56226cbe4bc9c17f84a8a13ae443496"
+    },
+    {
+      "path": "compat/v3.7.24/static-promise-reject-constant-evidence.json",
+      "sha256": "4e20a4ea250837f461963f5ae53a3b77c81ab3eeaa4d98de49bcc2df2eeaadd5"
+    },
+    {
+      "path": "compat/v3.7.24/static-string-constant-evidence.json",
+      "sha256": "e3f325b9de66bb5b887a5f3841ab4ee30fff21c420aa8ed3f80321192b1c595b"
+    }
+  ],
+  "artifactSha256": {
+    "dispatch-attestation.json": "9403e7c3fcc765b500442922e14885b029f10319ef4f5a8721c9d12fe9ac4907",
+    "sigstore-bundle.json": "f0732c8588e0dedc2ddcaae72aada1a1251076445080c2c5502ceb12cd313db0",
+    "native-aot-attestation.json": "10d8bbd1c1222c3d7b43d1e5395027ee63fd25d8828d4ad84009ccee96e2fda6",
+    "native-aot-aggregate-evidence.json": "f547c8a341e276342879b5a4a8ef6dbd4bcd42bdc3928c934da8740f5922671e",
+    "catalog-evidence-verified.json": "3808da764e349a0d373753e4e2c821b20bf89b7ca9e054b0022b4b5fef8e571a"
+  }
+}
