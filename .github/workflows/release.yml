@@ -43,11 +43,14 @@ jobs:
               exit 1
             fi
             version="${GITHUB_REF_NAME#v}"
-            if [[ "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" != "tag" ]]; then
+            # actions/checkoutはtag refをcommitへ解決するため、annotated tagの
+            # 判定はローカルrefではなくGitHub APIのtag参照で行う。
+            tag_ref_type="$(gh api "repos/${GITHUB_REPOSITORY}/git/refs/tags/${GITHUB_REF_NAME}" --jq '.object.type')"
+            if [[ "$tag_ref_type" != "tag" ]]; then
               echo "Release tagはannotated tagでなければなりません" >&2
               exit 1
             fi
-            tag_object="$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{tag}")"
+            tag_object="$(gh api "repos/${GITHUB_REPOSITORY}/git/refs/tags/${GITHUB_REF_NAME}" --jq '.object.sha')"
             verified="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object}" --jq '.verification.verified')"
             if [[ "$verified" != "true" ]]; then
               echo "GitHubがRelease tagの署名を検証できません: $GITHUB_REF_NAME" >&2

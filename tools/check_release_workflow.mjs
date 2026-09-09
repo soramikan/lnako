@@ -56,7 +56,11 @@ if (!workflow.includes('"$ci_job_count" -ne "$CI_EXPECTED_JOB_COUNT"') ||
     !workflow.includes('"$ci_non_success_jobs" -ne 0')) {
   throw new Error("Release workflowがCIの全job成功を要求していません");
 }
-if (!workflow.includes("git cat-file -t") || !workflow.includes("verification.verified")) {
+// actions/checkoutはtag refをcommitへ解決するため、annotated tagの判定は
+// GitHub APIのtag参照（object.type == "tag"）で行い、署名検証はgit tag
+// objectのverification.verifiedを確認する。
+if (!workflow.includes("git/refs/tags/") || !workflow.includes("object.type") ||
+    !workflow.includes("git/tags/") || !workflow.includes("verification.verified")) {
   throw new Error("tag Releaseでannotated signed tagを検証していません");
 }
 const preflightBlock = workflow.match(/  preflight:[\s\S]*?(?=\n  build:)/)?.[0];
