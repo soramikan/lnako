@@ -715,6 +715,11 @@ pub fn installLlvm(allocator: std.mem.Allocator, io: std.Io, environ: *const std
     defer allocator.free(staging_inner);
     try std.Io.Dir.cwd().createDirPath(io, staging_inner);
 
+    // 新しいtreeはstaging内の`pending`で完成させてから既存targetと交換する。
+    // コピー・libLLVM-C準備・prune・marker書込みの途中失敗で既存環境を破壊しない。
+    const pending = try std.fmt.allocPrint(allocator, "{s}/pending", .{staging});
+    defer allocator.free(pending);
+
     var marker_source: []const u8 = "download";
     var marker_sha256: ?[]const u8 = null;
     defer if (marker_sha256) |value| allocator.free(value);
@@ -724,8 +729,7 @@ pub fn installLlvm(allocator: std.mem.Allocator, io: std.Io, environ: *const std
         const clang_rel = try std.fmt.allocPrint(allocator, "bin/{s}", .{clangFileName()});
         defer allocator.free(clang_rel);
         if (!fileExists(io, source_dir, clang_rel)) return error.ToolchainSourceInvalid;
-        std.Io.Dir.cwd().deleteTree(io, target) catch {};
-        try copyTree(allocator, io, source_dir, target);
+        try copyTree(allocator, io, source_dir, pending);
     } else {
         const archive_path: []const u8 = if (options.archive_path) |path| blk: {
             marker_source = "archive";
@@ -750,16 +754,15 @@ pub fn installLlvm(allocator: std.mem.Allocator, io: std.Io, environ: *const std
         defer allocator.free(inner_root_name);
         const extracted = try std.fs.path.join(allocator, &.{ staging_inner, inner_root_name });
         defer allocator.free(extracted);
-        std.Io.Dir.cwd().deleteTree(io, target) catch {};
-        try std.Io.Dir.renameAbsolute(extracted, target, io);
+        try std.Io.Dir.renameAbsolute(extracted, pending, io);
     }
 
-    try ensureLlvmCLibrary(allocator, io, target, stderr);
+    try ensureLlvmCLibrary(allocator, io, pending, stderr);
 
     // libLLVM-C構築後にAOT最小構成へ縮小する（llvm-config/clang++/静的libはここで削除）。
     if (options.from_dir == null) {
         try stdout.print("toolchain: AOT最小構成へ縮小しています\n", .{});
-        try pruneLlvmTree(allocator, io, target);
+        try pruneLlvmTree(allocator, io, pending);
     }
 
     const sha_field: []const u8 = if (marker_sha256) |value| blk: {
@@ -774,9 +777,36 @@ pub fn installLlvm(allocator: std.mem.Allocator, io: std.Io, environ: *const std
         marker_source,
     });
     defer allocator.free(marker_json);
-    const marker_path = try std.fs.path.join(allocator, &.{ target, marker_file_name });
+    const marker_path = try std.fs.path.join(allocator, &.{ pending, marker_file_name });
     defer allocator.free(marker_path);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = marker_path, .data = marker_json });
+
+    // 交換前に必須fileが揃っていることを確認し、不完全なtreeで既存環境を破壊しない。
+    {
+        const clang_rel = try std.fmt.allocPrint(allocator, "bin/{s}", .{clangFileName()});
+        defer allocator.free(clang_rel);
+        const lld_rel = try std.fmt.allocPrint(allocator, "bin/{s}", .{lldFileName()});
+        defer allocator.free(lld_rel);
+        for ([_][]const u8{ clang_rel, lld_rel, marker_file_name }) |relative| {
+            if (!fileExists(io, pending, relative)) return error.ToolchainSourceInvalid;
+        }
+        if (!llvmLibraryPresent(io, pending)) return error.ToolchainLlvmLibraryMissing;
+    }
+
+    // 既存targetはbackup名へ退避し、検証済みのpendingをtargetへ昇格する。
+    // 昇格に失敗した場合は既存環境をbackupから復元する。
+    const backup = try std.fmt.allocPrint(allocator, "{s}/.llvm-backup-{d}", .{ root, std.Io.Clock.real.now(io).nanoseconds });
+    defer allocator.free(backup);
+    defer std.Io.Dir.cwd().deleteTree(io, backup) catch {};
+    if (dirExists(io, target)) {
+        try std.Io.Dir.renameAbsolute(target, backup, io);
+    }
+    std.Io.Dir.renameAbsolute(pending, target, io) catch |err| {
+        if (dirExists(io, backup)) std.Io.Dir.renameAbsolute(backup, target, io) catch {};
+        return err;
+    };
+    std.Io.Dir.cwd().deleteTree(io, backup) catch {};
+
     try stdout.print("toolchain: LLVM {s} を導入しました: {s}\n", .{ lock.version, target });
     return .{ .root = target, .already_present = false };
 }
@@ -936,4 +966,64 @@ test "install --from-dirが管理LLVMを登録しfindManagedLlvmRootが解決す
     var remove_writer = std.Io.Writer.fixed(&remove_out);
     try removeLlvm(std.testing.allocator, std.testing.io, &map, &remove_writer);
     try std.testing.expect(findManagedLlvmRoot(std.testing.allocator, std.testing.io, &map) == null);
+}
+
+test "install --forceの準備失敗でも既存の管理LLVMを保持する" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const base = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base);
+    var map = std.process.Environ.Map.init(std.testing.allocator);
+    defer map.deinit();
+    const toolchains = try std.fs.path.join(std.testing.allocator, &.{ base, "managed" });
+    defer std.testing.allocator.free(toolchains);
+    try map.put("LNAKO_TOOLCHAIN_DIR", toolchains);
+
+    // 完全なsourceを一度導入する。
+    const good = try std.fs.path.join(std.testing.allocator, &.{ base, "good-llvm" });
+    defer std.testing.allocator.free(good);
+    for ([_][]const u8{ "bin", "lib" }) |sub| {
+        const dir = try std.fs.path.join(std.testing.allocator, &.{ good, sub });
+        defer std.testing.allocator.free(dir);
+        try std.Io.Dir.cwd().createDirPath(std.testing.io, dir);
+    }
+    const good_clang = try std.fmt.allocPrint(std.testing.allocator, "bin/{s}", .{clangFileName()});
+    defer std.testing.allocator.free(good_clang);
+    const good_lld = try std.fmt.allocPrint(std.testing.allocator, "bin/{s}", .{lldFileName()});
+    defer std.testing.allocator.free(good_lld);
+    for ([_][]const u8{ good_clang, good_lld, llvm_library_candidates[0] }) |relative| {
+        const path = try std.fs.path.join(std.testing.allocator, &.{ good, relative });
+        defer std.testing.allocator.free(path);
+        try std.Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = path, .data = "fake" });
+    }
+    var out_buffer: [4096]u8 = undefined;
+    var stdout = std.Io.Writer.fixed(&out_buffer);
+    var err_buffer: [1024]u8 = undefined;
+    var stderr = std.Io.Writer.fixed(&err_buffer);
+    const first = try installLlvm(std.testing.allocator, std.testing.io, &map, .{ .from_dir = good }, &stdout, &stderr);
+    defer std.testing.allocator.free(first.root);
+    const first_managed = findManagedLlvmRoot(std.testing.allocator, std.testing.io, &map);
+    defer if (first_managed) |value| std.testing.allocator.free(value);
+    try std.testing.expect(first_managed != null);
+
+    // libLLVM-Cを欠くsourceでの強制更新は準備段階で失敗し、既存環境を保持する。
+    const broken = try std.fs.path.join(std.testing.allocator, &.{ base, "broken-llvm" });
+    defer std.testing.allocator.free(broken);
+    const broken_bin = try std.fs.path.join(std.testing.allocator, &.{ broken, "bin" });
+    defer std.testing.allocator.free(broken_bin);
+    try std.Io.Dir.cwd().createDirPath(std.testing.io, broken_bin);
+    const broken_clang = try std.fs.path.join(std.testing.allocator, &.{ broken_bin, clangFileName() });
+    defer std.testing.allocator.free(broken_clang);
+    try std.Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = broken_clang, .data = "fake" });
+    try std.testing.expectError(
+        error.ToolchainLlvmLibraryMissing,
+        installLlvm(std.testing.allocator, std.testing.io, &map, .{ .from_dir = broken, .force = true }, &stdout, &stderr),
+    );
+    const managed = findManagedLlvmRoot(std.testing.allocator, std.testing.io, &map);
+    defer if (managed) |value| std.testing.allocator.free(value);
+    try std.testing.expect(managed != null);
+    const marker = readMarker(std.testing.allocator, std.testing.io, managed.?);
+    defer if (marker) |value| freeMarker(std.testing.allocator, value);
+    try std.testing.expect(marker != null);
+    try std.testing.expectEqualStrings("22.1.8", marker.?.version);
 }

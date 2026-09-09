@@ -49,7 +49,10 @@ pub const ChunkedBody = struct {
     too_large: bool,
 };
 
-const header_line_buffer_bytes = 8 * 1024;
+// `Limits.max_header_bytes`（合計64KB）の範囲内なら単一行も読み切れるよう、
+// 行bufferは合計上限と同じ大きさにする。8KBなど合計より小さい固定領域だと、
+// 大きなCookieを持つ正当な要求が合計上限の確認前にStreamTooLongで切断される。
+const header_line_buffer_bytes = 64 * 1024;
 
 const Worker = struct {
     engine: *Engine,
@@ -74,6 +77,9 @@ pub const Engine = struct {
     queue: std.ArrayList(Request) = .empty,
     workers: std.ArrayList(*Worker) = .empty,
     stopping: bool = false,
+    /// 回復不能な受付エラーでacceptorが終了したことを示す。待機中のnext()を
+    /// 解除するためにqueue_updatedへ通知され、以後のnext()はnullを返す。
+    accept_failed: bool = false,
     started: bool = false,
     accept_thread: ?std.Thread = null,
     watchdog_thread: ?std.Thread = null,
@@ -113,6 +119,7 @@ pub const Engine = struct {
             return;
         }
         engine.stopping = false;
+        engine.accept_failed = false;
         engine.started = true;
         engine.accept_thread = std.Thread.spawn(.{}, acceptMain, .{engine}) catch |err| {
             engine.started = false;
@@ -138,7 +145,7 @@ pub const Engine = struct {
         defer engine.unlock();
         while (true) {
             if (engine.queue.items.len > 0) return engine.queue.orderedRemove(0);
-            if (engine.stopping) return null;
+            if (engine.stopping or engine.accept_failed) return null;
             engine.queue_updated.waitUncancelable(engine.io(), &engine.mutex);
         }
     }
@@ -237,12 +244,43 @@ pub const Engine = struct {
     }
 };
 
+/// 回復不能な受付エラーでacceptorが終了する経路。mutex下で失敗を記録し、
+/// queue_updatedへ通知して待機中の`next()`を必ず解除する。
+/// 通常のstop経路（stopping設定済み）では記録しない。
+fn noteAcceptFailure(engine: *Engine) void {
+    const io = engine.io();
+    engine.lock();
+    defer engine.unlock();
+    if (engine.stopping) return;
+    engine.accept_failed = true;
+    engine.queue_updated.broadcast(io);
+}
+
 fn acceptMain(engine: *Engine) void {
     const io = engine.io();
     while (true) {
         const stream = engine.server.accept(io) catch |err| switch (err) {
+            // リモート都合の受付失敗は即座に再試行する。
             error.ConnectionAborted => continue,
-            else => return,
+            // fd・memory枯渇など一時的な受付エラーは短い間隔を置いて再試行し、
+            // acceptorスレッドだけが終了する事態を避ける。
+            error.ProcessFdQuotaExceeded,
+            error.SystemFdQuotaExceeded,
+            error.SystemResources,
+            error.NetworkDown,
+            error.WouldBlock,
+            error.BlockedByFirewall,
+            error.ProtocolFailure,
+            => {
+                std.Io.sleep(io, .fromMilliseconds(10), .awake) catch {};
+                continue;
+            },
+            // 回復不能な受付エラー（listen socketのshutdownや予期しない失敗）では
+            // 失敗を記録して待機中のnext()を解除してから終了する。
+            else => {
+                noteAcceptFailure(engine);
+                return;
+            },
         };
         engine.lock();
         if (engine.stopping) {
@@ -680,4 +718,69 @@ test "受信engineのstopはqueue内socketを一度だけ閉じてworkerを回�
     // stopでqueue内socketは一度だけcloseされ、client側は切断を観測する。
     try ingressTestExpectClosed(queued, io);
     try ingressTestExpectClosed(inflight, io);
+}
+
+test "受信engineは単一行が8KBを超えるheaderを合計上限内で受理する" {
+    const io = std.testing.io;
+    const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+    var server = try address.listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+    const engine = try Engine.create(std.testing.allocator, &server, .{});
+    defer {
+        engine.stop();
+        engine.destroy();
+    }
+    try engine.start();
+    const port = server.socket.address.getPort();
+
+    // 単一header行が8KBを超えても合計上限（64KB）以内なら受理する。
+    const value = try std.testing.allocator.alloc(u8, 16 * 1024);
+    defer std.testing.allocator.free(value);
+    @memset(value, 'a');
+    const head = try std.fmt.allocPrint(std.testing.allocator, "GET /big HTTP/1.1\r\nX-Big: {s}\r\n\r\n", .{value});
+    defer std.testing.allocator.free(head);
+    var client = try ingressTestSend(io, port, head, true);
+    defer client.close(io);
+    var request = engine.next() orelse return error.Unexpected;
+    defer request.deinit();
+    if (request.stream) |*stream| stream.close(io);
+    try std.testing.expectEqualStrings("/big", request.target);
+}
+
+test "受信engineは受付失敗通知で待機中のnextを解除する" {
+    const io = std.testing.io;
+    const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+    var server = try address.listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+    const engine = try Engine.create(std.testing.allocator, &server, .{});
+    defer {
+        engine.stop();
+        engine.destroy();
+    }
+    try engine.start();
+
+    var received: ?Request = undefined;
+    var completed: std.atomic.Value(bool) = .init(false);
+    const waiter = try std.Thread.spawn(.{}, struct {
+        fn run(target: *Engine, out: *?Request, flag: *std.atomic.Value(bool)) void {
+            out.* = target.next();
+            flag.store(true, .release);
+        }
+    }.run, .{ engine, &received, &completed });
+
+    // 回復不能な受付エラーでacceptorが終了した経路を再現する。
+    noteAcceptFailure(engine);
+
+    // 通知されない実装へ退行してもhangさせないよう、期限付きで待つ。
+    var waited_ms: u64 = 0;
+    while (!completed.load(.acquire) and waited_ms < 2000) : (waited_ms += 10) {
+        std.Io.sleep(io, .fromMilliseconds(10), .awake) catch return error.Unexpected;
+    }
+    if (!completed.load(.acquire)) {
+        engine.stop();
+        waiter.join();
+        return error.Timeout;
+    }
+    waiter.join();
+    try std.testing.expect(received == null);
 }
