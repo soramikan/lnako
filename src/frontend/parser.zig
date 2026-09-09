@@ -534,15 +534,22 @@ const Parser = struct {
             }
 
             if (chained_calls.items.len > 0 and self.at(.identifier)) {
-                const command = self.advance();
-                const call = try self.makeCommandCall(command, try arguments.toOwnedSlice(self.allocator));
-                try chained_calls.append(self.allocator, call);
-                if (isSequenceJosi(command.josi)) {
-                    arguments = .empty;
-                    try arguments.append(self.allocator, try self.implicitIt(command));
-                    continue;
+                // 連文の続きが引数（「に」「を」「へ」等）で始まる場合、
+                // その識別子を命令と誤認せず、下のparseExpression経由で引数として処理する。
+                const token = self.peek();
+                if (token.josi.len > 0 and !isSequenceJosi(token.josi) and !isImplicitCallbackJosi(token.josi)) {
+                    // fall through to parseExpression.
+                } else {
+                    const command = self.advance();
+                    const call = try self.makeCommandCall(command, try arguments.toOwnedSlice(self.allocator));
+                    try chained_calls.append(self.allocator, call);
+                    if (isSequenceJosi(command.josi)) {
+                        arguments = .empty;
+                        try arguments.append(self.allocator, try self.implicitIt(command));
+                        continue;
+                    }
+                    return self.makeNodeWithChildren(.block, start, try chained_calls.toOwnedSlice(self.allocator));
                 }
-                return self.makeNodeWithChildren(.block, start, try chained_calls.toOwnedSlice(self.allocator));
             }
 
             const expression = try self.parseExpression(0);
@@ -569,20 +576,47 @@ const Parser = struct {
                 const command = self.advance();
                 if (std.mem.eql(u8, command.value, "実行速度優先") or std.mem.eql(u8, command.value, "パフォーマンスモニタ適用")) {
                     const option = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try self.nop(start);
+                    if (chained_calls.items.len > 0) {
+                        const statement = try self.parseScopedMode(start, command, option);
+                        try chained_calls.append(self.allocator, statement);
+                        return self.makeNodeWithChildren(.block, start, try chained_calls.toOwnedSlice(self.allocator));
+                    }
                     return self.parseScopedMode(start, command, option);
                 }
                 if (std.mem.eql(u8, command.value, "条件分岐")) {
                     const condition = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else return self.fail(.invalid_control_statement, "『条件分岐』の値が必要です", command);
+                    if (chained_calls.items.len > 0) {
+                        const statement = try self.parseSwitch(start, condition);
+                        try chained_calls.append(self.allocator, statement);
+                        return self.makeNodeWithChildren(.block, start, try chained_calls.toOwnedSlice(self.allocator));
+                    }
                     return self.parseSwitch(start, condition);
                 }
-                if (try self.parseJapaneseCommand(start, command, arguments.items)) |statement| return statement;
-                if (isImplicitCallbackJosi(command.josi)) return self.parseImplicitCallbackCall(command, arguments.items);
+                if (try self.parseJapaneseCommand(start, command, arguments.items)) |statement| {
+                    if (chained_calls.items.len > 0) {
+                        try chained_calls.append(self.allocator, statement);
+                        return self.makeNodeWithChildren(.block, start, try chained_calls.toOwnedSlice(self.allocator));
+                    }
+                    return statement;
+                }
+                if (isImplicitCallbackJosi(command.josi)) {
+                    const statement = try self.parseImplicitCallbackCall(command, arguments.items);
+                    if (chained_calls.items.len > 0) {
+                        try chained_calls.append(self.allocator, statement);
+                        return self.makeNodeWithChildren(.block, start, try chained_calls.toOwnedSlice(self.allocator));
+                    }
+                    return statement;
+                }
                 const call = try self.makeCommandCall(command, try arguments.toOwnedSlice(self.allocator));
                 if (isSequenceJosi(command.josi)) {
                     try chained_calls.append(self.allocator, call);
                     arguments = .empty;
                     try arguments.append(self.allocator, try self.implicitIt(command));
                     continue;
+                }
+                if (chained_calls.items.len > 0) {
+                    try chained_calls.append(self.allocator, call);
+                    return self.makeNodeWithChildren(.block, start, try chained_calls.toOwnedSlice(self.allocator));
                 }
                 return call;
             }
@@ -639,26 +673,82 @@ const Parser = struct {
         const is_define = std.mem.eql(u8, command.value, "定");
         const is_increment = std.mem.eql(u8, command.value, "増") or std.mem.eql(u8, command.value, "減");
         if (!is_assign and !is_define and !is_increment) return null;
-        if (arguments.len < 2 or arguments[0].kind != .word) return self.fail(.invalid_assignment, "代入先と値の指定が必要です", command);
-        const target = arguments[0];
-        const value = arguments[1];
+
+        if (arguments.len == 0) return self.fail(.invalid_assignment, "代入先と値の指定が必要です", command);
+
+        var target_index: ?usize = null;
+        var value_index: ?usize = null;
+        var increment_amount_index: ?usize = null;
+        for (arguments, 0..) |arg, i| {
+            if (arg.kind != .word and arg.kind != .array_reference and arg.kind != .property_reference and
+                arg.kind != .number and arg.kind != .string and arg.kind != .string_template and
+                arg.kind != .boolean and arg.kind != .null_value)
+            {
+                return self.fail(.invalid_assignment, "代入先または値は変数・リテラルである必要があります", command);
+            }
+            if (isTargetJosi(arg.josi)) {
+                if (target_index == null) target_index = i;
+            } else if (isValueJosi(arg.josi)) {
+                if (value_index == null) value_index = i;
+            } else if (is_increment and arg.kind == .number) {
+                if (increment_amount_index == null) increment_amount_index = i;
+            }
+        }
+
         if (is_assign or is_define) {
+            var target: *ast.Node = undefined;
+            var value: *ast.Node = undefined;
+            if (target_index) |ti| {
+                target = arguments[ti];
+                if (target.kind != .word and target.kind != .array_reference and target.kind != .property_reference)
+                    return self.fail(.invalid_assignment, "代入先は変数・配列・プロパティである必要があります", command);
+                value = if (value_index) |vi| arguments[vi] else if (value_index == null and arguments.len > 1 and ti != 0) arguments[0] else try self.implicitIt(command);
+            } else if (value_index) |vi| {
+                value = arguments[vi];
+                target = if (vi == 0) try self.implicitIt(command) else arguments[0];
+                if (target.kind != .word and target.kind != .array_reference and target.kind != .property_reference)
+                    return self.fail(.invalid_assignment, "代入先は変数・配列・プロパティである必要があります", command);
+            } else {
+                target = arguments[0];
+                if (target.kind != .word and target.kind != .array_reference and target.kind != .property_reference)
+                    return self.fail(.invalid_assignment, "代入先は変数・配列・プロパティである必要があります", command);
+                value = if (arguments.len > 1) arguments[1] else try self.implicitIt(command);
+            }
             const result = try self.makeNodeWithChildren(if (is_define) .variable_definition else .assignment, start, try self.copyChildren(&.{value}));
-            result.name = target.value;
+            result.name = if (target.kind == .word) target.value else target.name;
             result.josi = "";
             return result;
         }
-        var amount = value;
+
+        const ti = target_index orelse value_index orelse 0;
+        if (arguments[ti].kind != .word) return self.fail(.invalid_assignment, "増減の対象は変数である必要があります", command);
+        var other_arg: ?usize = null;
+        for (arguments, 0..) |arg, i| {
+            if (i == ti) continue;
+            if (other_arg == null) other_arg = i;
+            _ = arg;
+        }
+        var amount: *ast.Node = undefined;
+        if (increment_amount_index) |ai| {
+            amount = arguments[ai];
+        } else if (other_arg) |oi| {
+            amount = arguments[oi];
+        } else {
+            const one = try self.makeNode(.number, command);
+            one.value = "1";
+            one.number_value = 1;
+            amount = one;
+        }
         if (std.mem.eql(u8, command.value, "減")) {
             const minus_one = try self.makeNode(.number, command);
             minus_one.value = "-1";
             minus_one.number_value = -1;
-            amount = try self.makeNodeWithChildren(.binary_operator, command, try self.copyChildren(&.{ value, minus_one }));
+            amount = try self.makeNodeWithChildren(.binary_operator, command, try self.copyChildren(&.{ amount, minus_one }));
             amount.operator = "*";
             amount.josi = "";
         }
         const result = try self.makeNodeWithChildren(.increment, start, try self.copyChildren(&.{amount}));
-        result.name = target.value;
+        result.name = arguments[ti].value;
         result.josi = "";
         return result;
     }
@@ -1307,6 +1397,14 @@ fn isSequenceJosi(josi: []const u8) bool {
     return false;
 }
 
+fn isTargetJosi(josi: []const u8) bool {
+    return std.mem.eql(u8, josi, "に") or std.mem.eql(u8, josi, "へ");
+}
+
+fn isValueJosi(josi: []const u8) bool {
+    return std.mem.eql(u8, josi, "を") or std.mem.eql(u8, josi, "から");
+}
+
 fn isImplicitCallbackJosi(josi: []const u8) bool {
     return std.mem.eql(u8, josi, "には");
 }
@@ -1688,4 +1786,70 @@ test "公式同様に廃止された非同期構文を診断付き空文とし�
         try std.testing.expect(result.root.?.children.len >= 2);
         try std.testing.expectEqual(ast.Kind.function_call, result.root.?.children[result.root.?.children.len - 2].kind);
     }
+}
+
+test "連文の結果を和文代入で受ける" {
+    var result = try parse(std.testing.allocator, "「名前は？」と尋ねて名前に代入。\n", "ask.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const block = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.block, block.kind);
+    try std.testing.expectEqual(@as(usize, 2), block.children.len);
+    try std.testing.expectEqual(ast.Kind.function_call, block.children[0].kind);
+    try std.testing.expectEqualStrings("尋", block.children[0].name);
+    try std.testing.expectEqual(ast.Kind.assignment, block.children[1].kind);
+    try std.testing.expectEqualStrings("名前", block.children[1].name);
+    try std.testing.expectEqual(ast.Kind.word, block.children[1].children[0].kind);
+    try std.testing.expectEqualStrings("それ", block.children[1].children[0].value);
+}
+
+test "連文の結果を値を先に指定して和文代入" {
+    var result = try parse(std.testing.allocator, "Aを計算してBに代入。\n", "calc-assign.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const block = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.block, block.kind);
+    try std.testing.expectEqual(ast.Kind.assignment, block.children[1].kind);
+    try std.testing.expectEqualStrings("B", block.children[1].name);
+    try std.testing.expectEqual(ast.Kind.word, block.children[1].children[0].kind);
+    try std.testing.expectEqualStrings("それ", block.children[1].children[0].value);
+}
+
+test "値を先に指定した和文代入" {
+    var result = try parse(std.testing.allocator, "1をAに代入。\n", "assign-value-first.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const assignment = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.assignment, assignment.kind);
+    try std.testing.expectEqualStrings("A", assignment.name);
+    try std.testing.expectEqual(ast.Kind.number, assignment.children[0].kind);
+    try std.testing.expectEqualStrings("1", assignment.children[0].value);
+}
+
+test "単独の和文代入" {
+    var result = try parse(std.testing.allocator, "Aに代入。\n", "assign-lone.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const assignment = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.assignment, assignment.kind);
+    try std.testing.expectEqualStrings("A", assignment.name);
+    try std.testing.expectEqual(ast.Kind.word, assignment.children[0].kind);
+    try std.testing.expectEqualStrings("それ", assignment.children[0].value);
+}
+
+test "連文で後続の命令に引数を渡す" {
+    var result = try parse(std.testing.allocator, "1を表示して2を表示。\n", "chain-display.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const block = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.block, block.kind);
+    try std.testing.expectEqual(@as(usize, 2), block.children.len);
+    try std.testing.expectEqual(ast.Kind.function_call, block.children[0].kind);
+    try std.testing.expectEqualStrings("表示", block.children[0].name);
+    try std.testing.expectEqual(ast.Kind.number, block.children[0].children[0].kind);
+    try std.testing.expectEqualStrings("1", block.children[0].children[0].value);
+    try std.testing.expectEqual(ast.Kind.function_call, block.children[1].kind);
+    try std.testing.expectEqualStrings("表示", block.children[1].name);
+    try std.testing.expectEqual(ast.Kind.number, block.children[1].children[1].kind);
+    try std.testing.expectEqualStrings("2", block.children[1].children[1].value);
 }

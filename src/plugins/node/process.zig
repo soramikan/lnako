@@ -63,13 +63,23 @@ pub fn callProcess(runtime: *Runtime, state: *State, context: Context, effects: 
     }
     if (std.mem.eql(u8, name, "コンソールクリア")) return @as(?Value, .undefined);
     if (std.mem.eql(u8, name, "尋") or std.mem.eql(u8, name, "文字尋") or std.mem.eql(u8, name, "標準入力全取得")) {
-        try ensureStdin(runtime.allocator(), state, context);
-        if (std.mem.eql(u8, name, "標準入力全取得")) return @as(?Value, try runtime.stringUtf8(state.stdin_bytes.?));
+        if (std.mem.eql(u8, name, "標準入力全取得")) {
+            try ensureStdin(runtime.allocator(), state, context);
+            return @as(?Value, try runtime.stringUtf8(state.stdin_bytes.?));
+        }
         const prompt = try valueUtf8(runtime, source);
         defer runtime.allocator().free(prompt);
         try context.writeStdout(prompt);
-        const line = nextStdinLine(state);
-        var text = try runtime.stringUtf8(line);
+        var text: Value = undefined;
+        if (context.readStdinLineFn) |function| {
+            const line = try function(context.context, runtime.allocator());
+            defer runtime.allocator().free(line);
+            text = try runtime.stringUtf8(line);
+        } else {
+            try ensureStdin(runtime.allocator(), state, context);
+            const line = nextStdinLine(state);
+            text = try runtime.stringUtf8(line);
+        }
         if (std.mem.eql(u8, name, "文字尋")) return @as(?Value, text);
         var roots = runtime.rootFrame();
         defer roots.deinit();

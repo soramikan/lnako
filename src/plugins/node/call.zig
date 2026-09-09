@@ -270,3 +270,37 @@ test "一時フォルダの空指定はテンポラリパス自体を接頭辞�
     defer std.testing.allocator.free(result_utf8);
     try std.testing.expectEqualStrings("/tmp/lnako-testABC123", result_utf8);
 }
+
+test "尋は1行を標準入力から読み取る" {
+    const TestHost = struct {
+        var line: []const u8 = "太郎";
+
+        fn cwd(_: *anyopaque, allocator: std.mem.Allocator) ![]u8 {
+            return allocator.dupe(u8, "/work/project");
+        }
+
+        fn readLine(_: *anyopaque, allocator: std.mem.Allocator) ![]u8 {
+            return allocator.dupe(u8, line);
+        }
+
+        fn write(_: *anyopaque, bytes: []const u8) !void {
+            _ = bytes;
+        }
+    };
+    var host = TestHost{};
+    var runtime = shared.Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = shared.State{};
+    defer state.deinit(std.testing.allocator);
+    const context = shared.Context{
+        .context = &host,
+        .cwdFn = TestHost.cwd,
+        .readStdinLineFn = TestHost.readLine,
+        .writeStdoutFn = TestHost.write,
+    };
+    const prompt = try runtime.stringUtf8("名前は？");
+    const result = (try call(&runtime, &state, context, null, "尋", &.{prompt})).?;
+    const utf8 = try result.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(utf8);
+    try std.testing.expectEqualStrings("太郎", utf8);
+}
