@@ -71,7 +71,14 @@ pub fn callProcess(runtime: *Runtime, state: *State, context: Context, effects: 
         defer runtime.allocator().free(prompt);
         try context.writeStdout(prompt);
         var text: Value = undefined;
-        if (context.readStdinLineFn) |function| {
+        const use_line_reader = blk: {
+            if (context.isStdinTtyFn) |isTty| {
+                if (!isTty(context.context)) break :blk false;
+            }
+            break :blk context.readStdinLineFn != null;
+        };
+        if (use_line_reader) {
+            const function = context.readStdinLineFn.?;
             const line = try function(context.context, runtime.allocator());
             defer runtime.allocator().free(line);
             text = try runtime.stringUtf8(line);
@@ -132,4 +139,14 @@ pub fn nextStdinLine(state: *State) []const u8 {
     state.stdin_offset = if (end < bytes.len) end + 1 else end;
     if (end > start and bytes[end - 1] == '\r') end -= 1;
     return bytes[start..end];
+}
+
+test "nextStdinLineはCRLFと途中のCRを正規化する" {
+    var state = shared.State{};
+    defer state.deinit(std.testing.allocator);
+    state.stdin_bytes = try std.testing.allocator.dupe(u8, "abc\rX\r\n41\nrest\n");
+    try std.testing.expectEqualStrings("abc\rX", nextStdinLine(&state));
+    try std.testing.expectEqualStrings("41", nextStdinLine(&state));
+    try std.testing.expectEqualStrings("rest", nextStdinLine(&state));
+    try std.testing.expectEqualStrings("", nextStdinLine(&state));
 }

@@ -570,6 +570,12 @@ const Parser = struct {
                 {
                     continue;
                 }
+                // 配列添字・プロパティ・@参照の直後に助詞が続く場合、識別子は命令名ではなく値として続行する。
+                // 例: `1をA[0]に代入`, `1をA$fooに代入`。
+                const next_kind = self.peekAhead(1).kind;
+                if (next_kind == .left_bracket or next_kind == .at or next_kind == .property) {
+                    continue;
+                }
                 if ((self.identifierValue("増") or self.identifierValue("減")) and self.peekAhead(1).kind == .keyword_repeat) {
                     return self.parseFor(start, arguments.items);
                 }
@@ -680,12 +686,6 @@ const Parser = struct {
         var value_index: ?usize = null;
         var increment_amount_index: ?usize = null;
         for (arguments, 0..) |arg, i| {
-            if (arg.kind != .word and arg.kind != .array_reference and arg.kind != .property_reference and
-                arg.kind != .number and arg.kind != .string and arg.kind != .string_template and
-                arg.kind != .boolean and arg.kind != .null_value)
-            {
-                return self.fail(.invalid_assignment, "代入先または値は変数・リテラルである必要があります", command);
-            }
             if (isTargetJosi(arg.josi)) {
                 if (target_index == null) target_index = i;
             } else if (isValueJosi(arg.josi)) {
@@ -714,8 +714,24 @@ const Parser = struct {
                     return self.fail(.invalid_assignment, "代入先は変数・配列・プロパティである必要があります", command);
                 value = if (arguments.len > 1) arguments[1] else try self.implicitIt(command);
             }
-            const result = try self.makeNodeWithChildren(if (is_define) .variable_definition else .assignment, start, try self.copyChildren(&.{value}));
-            result.name = if (target.kind == .word) target.value else target.name;
+
+            const kind: ast.Kind = if (is_define and target.kind == .word)
+                .variable_definition
+            else switch (target.kind) {
+                .array_reference => .array_assignment,
+                .property_reference => .property_assignment,
+                else => .assignment,
+            };
+            const target_children = if (target.kind == .array_reference or target.kind == .property_reference)
+                try self.assignmentPath(target)
+            else
+                target.children;
+            const children = if (target_children.len == 0)
+                try self.copyChildren(&.{value})
+            else
+                try self.prepend(value, target_children);
+            const result = try self.makeNodeWithChildren(kind, start, children);
+            result.name = if (target.kind == .word) target.value else if (target.name.len > 0) target.name else target.value;
             result.josi = "";
             return result;
         }
@@ -1852,4 +1868,40 @@ test "連文で後続の命令に引数を渡す" {
     try std.testing.expectEqualStrings("表示", block.children[1].name);
     try std.testing.expectEqual(ast.Kind.number, block.children[1].children[1].kind);
     try std.testing.expectEqualStrings("2", block.children[1].children[1].value);
+}
+
+test "和文代入で配列要素を更新する" {
+    var result = try parse(std.testing.allocator, "1をA[0]に代入。\n", "array-assign.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const assignment = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.array_assignment, assignment.kind);
+    try std.testing.expectEqualStrings("A", assignment.name);
+    try std.testing.expectEqual(ast.Kind.number, assignment.children[0].kind);
+    try std.testing.expectEqualStrings("1", assignment.children[0].value);
+    try std.testing.expectEqual(ast.Kind.number, assignment.children[1].kind);
+    try std.testing.expectEqualStrings("0", assignment.children[1].value);
+}
+
+test "和文代入でプロパティを更新する" {
+    var result = try parse(std.testing.allocator, "1をA$fooに代入。\n", "property-assign.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const assignment = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.property_assignment, assignment.kind);
+    try std.testing.expectEqualStrings("A", assignment.name);
+    try std.testing.expectEqual(ast.Kind.number, assignment.children[0].kind);
+    try std.testing.expectEqualStrings("1", assignment.children[0].value);
+    try std.testing.expectEqual(ast.Kind.string, assignment.children[1].kind);
+    try std.testing.expectEqualStrings("foo", assignment.children[1].value);
+}
+
+test "和文代入の値に式を許容する" {
+    var result = try parse(std.testing.allocator, "(1+2)をAに代入。\n", "expr-assign.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const assignment = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.assignment, assignment.kind);
+    try std.testing.expectEqualStrings("A", assignment.name);
+    try std.testing.expectEqual(ast.Kind.binary_operator, assignment.children[0].kind);
 }
