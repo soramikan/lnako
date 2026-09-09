@@ -682,13 +682,17 @@ const Parser = struct {
 
         if (arguments.len == 0) return self.fail(.invalid_assignment, "代入先と値の指定が必要です", command);
 
+        // 「に代入」は「に」が代入先、「を」が値。「に定める」は「を」が定義対象、「に」が値。
+
         var target_index: ?usize = null;
         var value_index: ?usize = null;
         var increment_amount_index: ?usize = null;
         for (arguments, 0..) |arg, i| {
-            if (isTargetJosi(arg.josi)) {
+            const arg_is_target = if (is_define) isValueJosi(arg.josi) else isTargetJosi(arg.josi);
+            const arg_is_value = if (is_define) isTargetJosi(arg.josi) else isValueJosi(arg.josi);
+            if (arg_is_target) {
                 if (target_index == null) target_index = i;
-            } else if (isValueJosi(arg.josi)) {
+            } else if (arg_is_value) {
                 if (value_index == null) value_index = i;
             } else if (is_increment and arg.kind == .number) {
                 if (increment_amount_index == null) increment_amount_index = i;
