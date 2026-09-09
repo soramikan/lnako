@@ -23,7 +23,7 @@ lnako --version
 | 配布版 | 用途 |
 | --- | --- |
 | standard | 小さな構成で始める。実行ファイルの生成にはLLVM/LLDを追加導入 |
-| full（ファイル名末尾が`-full`） | LLVM/LLD同梱。追加downloadなしで実行ファイルを生成 |
+| full（ファイル名末尾が`-full`） | LLVM/LLDを同梱。追加のダウンロードなしで実行ファイルを生成 |
 
 チェックサム確認・OS別手順は[使い始める](docs/GETTING_STARTED.md)を参照してください。
 
@@ -55,7 +55,7 @@ JavaScript固有命令を使う場合は`lnako run hello.nako3 --compat-js`の�
 
 2026年9月9日（日本時間）の[リリース候補比較CI](https://github.com/soramikan/lnako/actions/runs/34246129122)、測定commit `5dcf585`の結果です。以下はLinuxの代表9ケースで、warmup 1回・測定3回の中央値（ms）。lnakoはReleaseSafe、AOTはO2です。
 
-cnako・gonako・lnakoを正式比較とします。gonakoは3.8.1配布版をハッシュ固定し、自己表示は3.6.0です。**cnako比は「cnakoの中央値 ÷ lnakoの中央値」**で、例えば4倍は所要時間が約1/4、1倍未満はcnakoより遅いことを表します。丸め前の値から計算しています。
+cnako・gonako・lnakoを正式比較とします。gonakoは3.8.1配布版をハッシュ固定し、自己表示は3.6.0です。cnako比は「cnakoの中央値 ÷ lnakoの中央値」で、例えば4倍は所要時間が約1/4、1倍未満はcnakoより遅いことを表します。丸め前の値から計算しています。
 
 | 分野 | ケース | cnako 3.7.24 | gonako | lnako Interpreter | cnako比 | lnako AOT | cnako比 |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
