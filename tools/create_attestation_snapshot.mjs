@@ -95,7 +95,7 @@ async function fetchRunMetadata(runId, repo) {
   const result = run("gh run view", "gh", [
     "run", "view", runId,
     "--repo", repo,
-    "--json", "headSha,attemptNumber,conclusion,headBranch,workflowName",
+    "--json", "headSha,attempt,conclusion,headBranch,workflowName",
   ]);
   const info = JSON.parse(result.stdout);
   if (info.conclusion !== "success") {
@@ -104,9 +104,12 @@ async function fetchRunMetadata(runId, repo) {
   if (info.headBranch !== "main") {
     throw new Error(`run ${runId} は main branch のものではありません: ${info.headBranch}`);
   }
+  if (info.workflowName !== "CI") {
+    throw new Error(`run ${runId} は CI workflow ではありません: ${info.workflowName}`);
+  }
   return {
     commit: info.headSha,
-    attempt: String(info.attemptNumber),
+    attempt: String(info.attempt),
   };
 }
 

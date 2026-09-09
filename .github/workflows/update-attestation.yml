@@ -39,7 +39,7 @@ jobs:
             echo "head-branch=${{ github.event.workflow_run.head_branch }}" >> "$GITHUB_OUTPUT"
           else
             run_id="${{ github.event.inputs.run-id }}"
-            info=$(gh run view "$run_id" --repo "${{ github.repository }}" --json headSha,attemptNumber,conclusion,headBranch,workflowName)
+            info=$(gh run view "$run_id" --repo "${{ github.repository }}" --json headSha,attempt,conclusion,headBranch,workflowName)
             conclusion=$(node -e 'console.log(JSON.parse(process.argv[1]).conclusion)' "$info")
             head_branch=$(node -e 'console.log(JSON.parse(process.argv[1]).headBranch)' "$info")
             if [[ "$conclusion" != "success" ]]; then
@@ -51,7 +51,7 @@ jobs:
               exit 1
             fi
             echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
-            echo "run-attempt=$(node -e 'console.log(JSON.parse(process.argv[1]).attemptNumber)' "$info")" >> "$GITHUB_OUTPUT"
+            echo "run-attempt=$(node -e 'console.log(JSON.parse(process.argv[1]).attempt)' "$info")" >> "$GITHUB_OUTPUT"
             echo "head-sha=$(node -e 'console.log(JSON.parse(process.argv[1]).headSha)' "$info")" >> "$GITHUB_OUTPUT"
             echo "head-branch=$head_branch" >> "$GITHUB_OUTPUT"
           fi
