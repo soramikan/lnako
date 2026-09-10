@@ -1,6 +1,11 @@
 # lnako
 
-`lnako` は、なでしこ3の日本語プログラムを実行し、ネイティブ実行ファイルにも変換できるCLIです。なでしこ3 v3.7.24を互換基準とし、macOS arm64・Linux x86_64 GNU・Windows x86_64 MSVCに対応します。製品バージョンは `0.1.0` です。
+[![CI](https://img.shields.io/github/actions/workflow/status/soramikan/lnako/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/soramikan/lnako/actions/workflows/ci.yml)
+[![バージョン](https://img.shields.io/github/v/release/soramikan/lnako?style=flat-square&label=%E3%83%90%E3%83%BC%E3%82%B8%E3%83%A7%E3%83%B3)](https://github.com/soramikan/lnako/releases)
+[![なでしこ3バージョン](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsoramikan%2Flnako%2Fmain%2Fcompat%2Fv3.7.24%2Fsummary.json&query=%24.baseline.tag&style=flat-square&label=%E3%81%AA%E3%81%A7%E3%81%97%E3%81%933%E3%83%90%E3%83%BC%E3%82%B8%E3%83%A7%E3%83%B3)](https://github.com/soramikan/lnako/blob/main/compat/v3.7.24/summary.json)
+[![ライセンス](https://img.shields.io/github/license/soramikan/lnako?style=flat-square&label=%E3%83%A9%E3%82%A4%E3%82%BB%E3%83%B3%E3%82%B9)](https://github.com/soramikan/lnako/blob/main/LICENSE)
+
+`lnako` は、なでしこ3の日本語プログラムを実行し、ネイティブ実行ファイルにも変換できるCLIです。なでしこ3を互換基準とし、macOS arm64・Linux x86_64 GNU・Windows x86_64 MSVCに対応します。
 
 ## インストール
 
@@ -55,9 +60,9 @@ JavaScript固有命令を使う場合は`lnako run hello.nako3 --compat-js`の�
 
 2026年9月9日（日本時間）の[リリース候補比較CI](https://github.com/soramikan/lnako/actions/runs/34246129122)、測定commit `5dcf585`の結果です。以下はLinuxの代表9ケースで、warmup 1回・測定3回の中央値（ms）。lnakoはReleaseSafe、AOTはO2です。
 
-cnako・gonako・lnakoを正式比較とします。gonakoは3.8.1配布版をハッシュ固定し、自己表示は3.6.0です。cnako比は「cnakoの中央値 ÷ lnakoの中央値」で、例えば4倍は所要時間が約1/4、1倍未満はcnakoより遅いことを表します。丸め前の値から計算しています。
+cnako・gonako・lnakoを正式比較とします。対象バージョンやハッシュは[詳細結果](docs/benchmarks/RESULTS.md)に記録しています。cnako比は「cnakoの中央値 ÷ lnakoの中央値」で、例えば4倍は所要時間が約1/4、1倍未満はcnakoより遅いことを表します。丸め前の値から計算しています。
 
-| 分野 | ケース | cnako 3.7.24 | gonako | lnako Interpreter | cnako比 | lnako AOT | cnako比 |
+| 分野 | ケース | cnako | gonako | lnako Interpreter | cnako比 | lnako AOT | cnako比 |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | 起動 | `startup-hello` | 106.54 | 6.61 | 2.49 | 42.77倍 | 1.79 | 59.68倍 |
 | 関数呼出し | `function-call` | 169.74 | 116.86 | 310.44 | 0.55倍 | 33.02 | 5.14倍 |
