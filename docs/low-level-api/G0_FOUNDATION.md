@@ -27,7 +27,7 @@
 固定規則:
 
 - 内容は生のoctet列である。UTF-8検証、NUL終端、文字コード変換をしない。
-- 空（0 byte）は正当な値である。ストリーム読込で0 byteを返したときはEOFとする。
+- 空（0 byte）は正当な値である。ストリーム読込で0 byteを返したときはEOFとする。要求より短いが1 byte以上の読込は部分読込であり、EOFではない。
 - String（UTF-16）とBytesは区別する。Bytesを要求する引数へStringを暗黙変換しない。
 - Uint8Array / ArrayBuffer kind を低レイヤーI/Oの生成結果にしない。受け取り側がBytes（Buffer kind）以外を見たときは型エラー（portable code `EINVAL`）とする。
 - 生成時は入力を複製する。呼び出し元スライスの寿命に依存しない。
@@ -72,8 +72,9 @@ Handleの種別（file / directory / hash 等）はtable側の属性であり、
 公開変換（入力）:
 
 - Numberは、有限かつ整数であり、絶対値が2^53-1以下のときだけ受け付ける（ECMAScriptの安全整数）。
-- それより大きい整数はBigIntで渡す。
-- NaN、±Infinity、非整数Number、範囲外BigInt、Stringからの暗黙変換は拒否し `EINVAL` とする。
+- それより大きい整数はBigIntで渡す。内部へ取り込むときは符号付きを `i128`、大きさを `u128` として範囲検査する。
+- `i64` に収まらない位置、`u64` に収まらない大きさは拒否する。
+- NaN、±Infinity、非整数Number、範囲外BigInt、Stringからの暗黙変換は拒否する。これらの失敗の portable code は `EINVAL` である。Zig正本の `Error.InvalidOffset` / `InvalidSize` / `InvalidTimestamp` も同じく `EINVAL` へ写す。
 - 大きさに負数は使えない。
 
 公開変換（出力）:
@@ -87,12 +88,12 @@ cnako対応は Node の `number | bigint` 位置引数と同じ規則にする�
 
 低レイヤーが扱うファイル時刻は、既存の`今`/`今日`（Asia/Tokyo表示）とは別契約である。
 
-- 内部正本は Unix epoch（UTC）からの符号付きナノ秒 `i64` とする。
+- 内部正本は Unix epoch（UTC）からの符号付きナノ秒 `i128` とする。Windows FILETIME（1601年起点）を含む実用的なファイル時刻を、i64ナノ秒の1678〜2262年制限へ落とさない。
 - 公開する高精度フィールド（`mtimeNs` 等）は常にBigIntナノ秒とする。小さい値でもNumberに落とさない。
 - 既存`ファイル情報取得`の `mtimeMs` / `ctimeMs` / `atimeMs` は維持する。これらはミリ秒Numberであり、低レイヤー詳細APIの正本ではない。
-- 取得できない時刻は `0` ではなく `null` とする。`0` は1970-01-01T00:00:00Zを意味する。
+- 取得できない時刻の内部型は `?TimeNs`、公開値は `null` とする。`0` は1970-01-01T00:00:00Zを意味する。
 - Dateオブジェクトは導入しない。
-- OSが粗い精度しか返さない場合は、その精度をナノ秒へ整数倍する。存在しない桁を捏造しない。
+- OSが秒またはマイクロ秒など粗い精度しか返さない場合は、その整数をナノ秒へ整数倍する。存在しない桁を捏造しない。
 
 cnako対応は Node `fs.Stats` の `mtimeNs`（BigInt）と `mtimeMs`（Number）に合わせる。
 
@@ -115,7 +116,7 @@ cnako対応は Node `fs.Stats` の `mtimeNs`（BigInt）と `mtimeMs`（Number�
 固定規則:
 
 - 互換判定と分岐は `code`（必要なら `operation` / `capability`）を使う。`message` はOSやlocaleで変動するためoracleに使わない。
-- 例外として投げたとき、既存の`エラーメッセージ`には `message` を入れる。
+- 例外として投げたとき、既存の`エラーメッセージ`には `message` を入れる。捕捉した値を文字列化した場合も `message` と一致させる。
 - 構造化エラーは新規の低レイヤー命令にだけ適用する。527命令の既存文字列例外は維持する。
 - InterpreterとAOTで `code` は一致させる。`nativeCode` と `message` はOS差を許す。
 
@@ -154,7 +155,7 @@ cnako対応は Node `fs.Stats` の `mtimeNs`（BigInt）と `mtimeMs`（Number�
 ## 命令命名規則
 
 - 第一名は日本語の動詞またはする名詞とする。英語名を第一名にしない。
-- 標準cnako 527件の表示名と衝突させない。既存の`開`/`読`/`バイナリ読`/`保存`/`ファイル情報取得`等は置き換えない。
+- 標準cnako 527件の表示名と衝突させない。既存の`開`/`読`/`バイナリ読`/`保存`/`ファイル情報取得`等は置き換えない。Zig正本の予約名配列は衝突禁止の例示であり、527件の全集は `builtin_catalog` を正本とする。
 - 助詞と引数順は命令契約の一部である。実行時dispatchは既存どおり名前で行う。
 - 新規命令は `plugin_lowlevel` に登録し、`plugin_node` / `plugin_system` の同名解決を壊さない。
 - `portable_core` と `posix_extension` は公式なでしこ3へ提案可能な名にする（`lnako`接頭辞を付けない）。

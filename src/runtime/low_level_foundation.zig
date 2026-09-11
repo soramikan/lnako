@@ -2,8 +2,10 @@ const std = @import("std");
 
 pub const max_safe_integer: i64 = 9007199254740991;
 pub const min_safe_integer: i64 = -9007199254740991;
-pub const ns_per_ms: i64 = 1_000_000;
-pub const ns_per_s: i64 = 1_000_000_000;
+pub const ns_per_us: i128 = 1_000;
+pub const ns_per_ms: i128 = 1_000_000;
+pub const ns_per_s: i128 = 1_000_000_000;
+pub const unix_epoch_filetime_100ns: i128 = 116444736000000000;
 
 pub const plugin_namespace = "plugin_lowlevel";
 pub const bytes_plugin_kind: u32 = 6;
@@ -104,12 +106,14 @@ pub fn sizeFromNumber(number: f64) Error!u64 {
     return @intFromFloat(number);
 }
 
-pub fn offsetFromBigInt(value: i64) i64 {
-    return value;
+pub fn offsetFromSigned(value: i128) Error!i64 {
+    if (value < std.math.minInt(i64) or value > std.math.maxInt(i64)) return error.InvalidOffset;
+    return @intCast(value);
 }
 
-pub fn sizeFromBigInt(value: u64) u64 {
-    return value;
+pub fn sizeFromUnsigned(value: u128) Error!u64 {
+    if (value > std.math.maxInt(u64)) return error.InvalidSize;
+    return @intCast(value);
 }
 
 pub fn publicOffset(value: i64) PublicInteger {
@@ -122,16 +126,29 @@ pub fn publicSize(value: u64) PublicInteger {
     return .bigint;
 }
 
-pub const TimeNs = i64;
+pub const TimeNs = i128;
+pub const OptionalTimeNs = ?TimeNs;
 
 pub fn timeNsFromUnixMsNumber(number: f64) Error!TimeNs {
     if (!isSafeInteger(number)) return error.InvalidTimestamp;
-    const ms: i64 = @intFromFloat(number);
-    return std.math.mul(i64, ms, ns_per_ms) catch error.InvalidTimestamp;
+    const ms: i128 = @intFromFloat(number);
+    return ms * ns_per_ms;
 }
 
-pub fn timeNsFromUnixNs(value: i64) TimeNs {
+pub fn timeNsFromUnixNs(value: i128) TimeNs {
     return value;
+}
+
+pub fn timeNsFromUnixMicroseconds(value: i64) TimeNs {
+    return @as(i128, value) * ns_per_us;
+}
+
+pub fn timeNsFromUnixSeconds(value: i64) TimeNs {
+    return @as(i128, value) * ns_per_s;
+}
+
+pub fn timeNsFromWindowsFileTime(filetime_100ns: u64) TimeNs {
+    return @as(i128, filetime_100ns) * 100 - unix_epoch_filetime_100ns * 100;
 }
 
 pub fn publicTimeNs(_: TimeNs) PublicInteger {
@@ -141,12 +158,15 @@ pub fn publicTimeNs(_: TimeNs) PublicInteger {
 pub fn timeMsNumber(ns: TimeNs) Error!f64 {
     const ms = @divTrunc(ns, ns_per_ms);
     if (ms < min_safe_integer or ms > max_safe_integer) return error.InvalidTimestamp;
-    return @floatFromInt(ms);
+    return @floatFromInt(@as(i64, @intCast(ms)));
 }
 
 pub const missing_timestamp_is_null = true;
 pub const zero_timestamp_is_unix_epoch = true;
 pub const file_time_epoch_is_utc = true;
+pub const zero_byte_read_is_eof = true;
+pub const partial_read_is_not_eof = true;
+pub const error_string_equals_message = true;
 
 pub const PortableErrorCode = enum {
     ENOENT,
@@ -178,6 +198,12 @@ pub const PortableErrorCode = enum {
         return null;
     }
 };
+
+pub fn portableCodeFor(failure: Error) PortableErrorCode {
+    return switch (failure) {
+        error.InvalidOffset, error.InvalidSize, error.InvalidTimestamp => .EINVAL,
+    };
+}
 
 pub const error_object_keys = struct {
     pub const code = "code";
@@ -317,6 +343,7 @@ pub const naming = struct {
     pub const stderr_prefix = "標準エラー出力";
 };
 
+pub const reserved_standard_command_names_are_examples = true;
 pub const reserved_standard_command_names = [_][]const u8{
     "開",
     "読",
@@ -387,19 +414,30 @@ test "安全整数を超えるoffsetとsizeは公開時にBigIntへ上げる" {
     try std.testing.expectEqual(PublicInteger.bigint, publicOffset(min_safe_integer - 1));
     try std.testing.expectEqual(PublicInteger.number, publicSize(@as(u64, @intCast(max_safe_integer))));
     try std.testing.expectEqual(PublicInteger.bigint, publicSize(@as(u64, @intCast(max_safe_integer)) + 1));
-    try std.testing.expectEqual(@as(i64, std.math.maxInt(i64)), offsetFromBigInt(std.math.maxInt(i64)));
-    try std.testing.expectEqual(@as(u64, std.math.maxInt(u64)), sizeFromBigInt(std.math.maxInt(u64)));
+    try std.testing.expectEqual(@as(i64, std.math.maxInt(i64)), try offsetFromSigned(std.math.maxInt(i64)));
+    try std.testing.expectEqual(@as(u64, std.math.maxInt(u64)), try sizeFromUnsigned(std.math.maxInt(u64)));
+    try std.testing.expectError(error.InvalidOffset, offsetFromSigned(@as(i128, std.math.maxInt(i64)) + 1));
+    try std.testing.expectError(error.InvalidOffset, offsetFromSigned(@as(i128, std.math.minInt(i64)) - 1));
+    try std.testing.expectError(error.InvalidSize, sizeFromUnsigned(@as(u128, std.math.maxInt(u64)) + 1));
 }
 
 test "timestampのナノ秒公開は常にBigIntで、欠損はnull、0はepoch" {
+    const missing: OptionalTimeNs = null;
     try std.testing.expectEqual(PublicInteger.bigint, publicTimeNs(0));
     try std.testing.expectEqual(PublicInteger.bigint, publicTimeNs(1));
     try std.testing.expectEqual(@as(TimeNs, 1_000_000_000), try timeNsFromUnixMsNumber(1000));
+    try std.testing.expectEqual(@as(TimeNs, @as(i128, max_safe_integer) * ns_per_ms), try timeNsFromUnixMsNumber(@floatFromInt(max_safe_integer)));
     try std.testing.expectEqual(@as(f64, 1000), try timeMsNumber(1_000_000_000));
     try std.testing.expectError(error.InvalidTimestamp, timeNsFromUnixMsNumber(1.5));
+    try std.testing.expectEqual(@as(TimeNs, 2_000_000_000), timeNsFromUnixSeconds(2));
+    try std.testing.expectEqual(@as(TimeNs, 2_000_000), timeNsFromUnixMicroseconds(2_000));
+    try std.testing.expectEqual(@as(TimeNs, -11644473600000000000), timeNsFromWindowsFileTime(0));
+    try std.testing.expect(missing == null);
     try std.testing.expect(missing_timestamp_is_null);
     try std.testing.expect(zero_timestamp_is_unix_epoch);
     try std.testing.expect(file_time_epoch_is_utc);
+    try std.testing.expect(zero_byte_read_is_eof);
+    try std.testing.expect(partial_read_is_not_eof);
 }
 
 test "portable error codeは初期集合を改名せず、ENOTSUPとEBADFを含む" {
@@ -411,6 +449,10 @@ test "portable error codeは初期集合を改名せず、ENOTSUPとEBADFを含�
     try std.testing.expectEqual(PortableErrorCode.ENOTSUP, unsupported_error_code);
     try std.testing.expectEqual(PortableErrorCode.EBADF, invalid_handle_error_code);
     try std.testing.expectEqual(@as(usize, 17), std.meta.tags(PortableErrorCode).len);
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, portableCodeFor(error.InvalidOffset));
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, portableCodeFor(error.InvalidSize));
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, portableCodeFor(error.InvalidTimestamp));
+    try std.testing.expect(error_string_equals_message);
 }
 
 test "構造化エラーのキーはNode SystemErrorへ写せる" {
@@ -468,6 +510,7 @@ test "BytesとHandleの公開型契約を固定する" {
 
 test "新規命令は527件と衝突せずplugin_lowlevelへ登録する" {
     try std.testing.expectEqualStrings("plugin_lowlevel", plugin_namespace);
+    try std.testing.expect(reserved_standard_command_names_are_examples);
     try std.testing.expect(naming.must_not_collide_with_standard_cnako);
     try std.testing.expect(naming.primary_language_is_japanese);
     try std.testing.expect(naming.ascii_primary_names_forbidden);
