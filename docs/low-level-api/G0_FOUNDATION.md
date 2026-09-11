@@ -126,7 +126,7 @@ cnako対応は Node `fs.Stats` の `mtimeNs`（BigInt）と `mtimeMs`（Number�
 
 `ENOTSUP` はcapability不足に使う。未知コマンドは既存どおり `UnknownCommand` であり、portable code集合に含めない。
 
-実装は [`src/runtime/structured_error.zig`](../../src/runtime/structured_error.zig) を正本とする。native errno / Zig error から portable code への分類、`nativeCode` の保持、Node SystemError形式の `message` 組み立てを提供し、Interpreter と AOT は同じ関数を共有する。例外値（辞書）への変換は [`structured_error_value.zig`](../../src/runtime/structured_error_value.zig)（Interpreter）と [`aot/structured_error_value.zig`](../../src/runtime/aot/structured_error_value.zig)（AOT）が担い、OS固有のnative差分があっても `code` は両経路で一致する。
+実装は [`src/runtime/structured_error.zig`](../../src/runtime/structured_error.zig) を正本とする。native errno / Zig error から portable code への分類、`nativeCode` の保持、Node SystemError形式の `message` 組み立てを提供し、Interpreter と AOT は同じ関数を共有する。例外値（辞書）への変換は [`structured_error_value.zig`](../../src/runtime/structured_error_value.zig)（Interpreter）と [`aot/structured_error_value.zig`](../../src/runtime/aot/structured_error_value.zig)（AOT）が担い、OS固有のnative差分があっても `code` は両経路で一致する。公開辞書は偽造できない内部種別で識別し、捕捉時の`エラーメッセージ`と文字列化は `message` を返す。OSパスの公開値は表示用UTF-8であり、WindowsではWTF-8をlossy変換し、POSIXでは不正UTF-8を置換する。
 
 ## capability表現
 

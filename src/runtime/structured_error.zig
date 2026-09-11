@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const foundation = @import("low_level_foundation.zig");
+const string_mod = @import("string.zig");
 
 pub const PortableErrorCode = foundation.PortableErrorCode;
 pub const Capability = foundation.Capability;
@@ -131,6 +132,15 @@ pub fn descriptionFor(code: PortableErrorCode) []const u8 {
         .EBADF => "bad file descriptor",
         .ENOTSUP => "operation not supported",
     };
+}
+
+pub fn displayPathAlloc(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    if (comptime builtin.os.tag == .windows) {
+        return std.unicode.wtf8ToUtf8LossyAlloc(allocator, path);
+    }
+    var text = try string_mod.String.fromUtf8Lossy(allocator, path);
+    defer text.deinit();
+    return text.toUtf8Lossy(allocator);
 }
 
 pub fn formatMessage(
@@ -413,4 +423,12 @@ test "messageはNode SystemError形式で組み立てる" {
     const operation_only = try formatMessage(allocator, .EACCES, "open", null, null);
     defer allocator.free(operation_only);
     try std.testing.expectEqualStrings("EACCES: permission denied, open", operation_only);
+}
+
+test "displayPathAllocは不正UTF-8を置換する" {
+    const allocator = std.testing.allocator;
+    const display = try displayPathAlloc(allocator, &.{ 'a', 0xff, 'b' });
+    defer allocator.free(display);
+    try std.testing.expect(std.mem.indexOfScalar(u8, display, 0xff) == null);
+    try std.testing.expect(display.len > 0);
 }

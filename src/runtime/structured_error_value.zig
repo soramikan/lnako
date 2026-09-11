@@ -13,7 +13,7 @@ pub fn buildValue(runtime: *Runtime, error_value: StructuredError) !Value {
     var roots = runtime.rootFrame();
     defer roots.deinit();
 
-    var dictionary = try runtime.createDictionary();
+    var dictionary = try runtime.createDictionaryKind(.structured_error);
     try roots.protect(&dictionary);
 
     try setString(runtime, dictionary, keys.code, error_value.code.name());
@@ -24,16 +24,21 @@ pub fn buildValue(runtime: *Runtime, error_value: StructuredError) !Value {
         try setNull(runtime, dictionary, keys.native_code);
     }
 
+    const path = try displayPath(runtime, error_value.path);
+    defer if (path) |owned| runtime.allocator().free(owned);
+    const path2 = try displayPath(runtime, error_value.path2);
+    defer if (path2) |owned| runtime.allocator().free(owned);
+
     try setOptionalString(runtime, dictionary, keys.operation, error_value.operation);
-    try setOptionalString(runtime, dictionary, keys.path, error_value.path);
-    try setOptionalString(runtime, dictionary, keys.path2, error_value.path2);
+    try setOptionalString(runtime, dictionary, keys.path, path);
+    try setOptionalString(runtime, dictionary, keys.path2, path2);
 
     const message = try structured_error.formatMessage(
         runtime.allocator(),
         error_value.code,
         error_value.operation,
-        error_value.path,
-        error_value.path2,
+        path,
+        path2,
     );
     defer runtime.allocator().free(message);
     try setString(runtime, dictionary, keys.message, message);
@@ -45,6 +50,11 @@ pub fn buildValue(runtime: *Runtime, error_value: StructuredError) !Value {
     }
 
     return dictionary;
+}
+
+fn displayPath(runtime: *Runtime, path: ?[]const u8) !?[]u8 {
+    const raw = path orelse return null;
+    return try structured_error.displayPathAlloc(runtime.allocator(), raw);
 }
 
 fn setOptionalString(runtime: *Runtime, dictionary: Value, key: []const u8, text: ?[]const u8) !void {
@@ -136,4 +146,59 @@ test "欠損フィールドはnullで公開し、直前エラーを持ち越さ�
     const first_code = try first_value.dictionary.get(first_code_key.string).?.string.toUtf8Lossy(std.testing.allocator);
     defer std.testing.allocator.free(first_code);
     try std.testing.expectEqualStrings("EXDEV", first_code);
+}
+
+test "構造化エラーの文字列化はmessageであり通常辞書は誤認しない" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+
+    const error_value = structured_error.classifyNative(.NOENT, "open", "/missing", null, null).?;
+    var value = try buildValue(&runtime, error_value);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&value);
+
+    try std.testing.expectEqual(value_mod.DictionaryKind.structured_error, value.dictionary.kind);
+    var rendered = try runtime.valueToString(value);
+    try roots.protect(&rendered);
+    const text = try rendered.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("ENOENT: no such file or directory, open '/missing'", text);
+
+    const catch_message = value.dictionary.structuredErrorMessage().?;
+    const catch_text = try catch_message.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(catch_text);
+    try std.testing.expectEqualStrings(text, catch_text);
+
+    var forged = try runtime.createDictionary();
+    try roots.protect(&forged);
+    const message_key = try runtime.stringUtf8(keys.message);
+    const forged_message = try runtime.stringUtf8("forged");
+    try forged.dictionary.set(message_key.string, forged_message);
+    var forged_rendered = try runtime.valueToString(forged);
+    try roots.protect(&forged_rendered);
+    const forged_text = try forged_rendered.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(forged_text);
+    try std.testing.expectEqualStrings("[object Object]", forged_text);
+}
+
+test "非UTF-8パスでも構造化エラー値を生成できる" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+
+    const raw_path = [_]u8{ 'a', 0xff, 'b' };
+    const error_value = structured_error.classifyNative(.NOENT, "open", &raw_path, null, null).?;
+    var value = try buildValue(&runtime, error_value);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&value);
+
+    const path_key = try runtime.stringUtf8(keys.path);
+    const path_text = try value.dictionary.get(path_key.string).?.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(path_text);
+    try std.testing.expect(std.mem.indexOfScalar(u8, path_text, 0xff) == null);
+
+    var rendered = try runtime.valueToString(value);
+    try roots.protect(&rendered);
+    try std.testing.expect(rendered == .string);
 }

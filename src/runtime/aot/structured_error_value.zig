@@ -37,22 +37,27 @@ pub fn buildValue(runtime: *Runtime, error_value: StructuredError) !Value {
         roots[3] = numberValue(@floatFromInt(native));
     }
 
+    const path = try displayPath(runtime, error_value.path);
+    defer if (path) |owned| runtime.allocator.free(owned);
+    const path2 = try displayPath(runtime, error_value.path2);
+    defer if (path2) |owned| runtime.allocator.free(owned);
+
     if (error_value.operation) |operation| {
         roots[5] = try runtimeUtf8String(runtime, operation);
     }
-    if (error_value.path) |path| {
-        roots[7] = try runtimeUtf8String(runtime, path);
+    if (path) |text| {
+        roots[7] = try runtimeUtf8String(runtime, text);
     }
-    if (error_value.path2) |path2| {
-        roots[9] = try runtimeUtf8String(runtime, path2);
+    if (path2) |text| {
+        roots[9] = try runtimeUtf8String(runtime, text);
     }
 
     const message = try structured_error.formatMessage(
         runtime.allocator,
         error_value.code,
         error_value.operation,
-        error_value.path,
-        error_value.path2,
+        path,
+        path2,
     );
     defer runtime.allocator.free(message);
     roots[11] = try runtimeUtf8String(runtime, message);
@@ -61,7 +66,14 @@ pub fn buildValue(runtime: *Runtime, error_value: StructuredError) !Value {
         roots[13] = try runtimeUtf8String(runtime, capability.id());
     }
 
-    return runtime.createDictionary(&roots);
+    const dictionary = try runtime.createDictionary(&roots);
+    if (dictionary.object()) |object| object.structured_error = true;
+    return dictionary;
+}
+
+fn displayPath(runtime: *Runtime, path: ?[]const u8) !?[]u8 {
+    const raw = path orelse return null;
+    return try structured_error.displayPathAlloc(runtime.allocator, raw);
 }
 
 test "AOTの構造化エラー値はInterpreterと同じcodeを公開する" {
@@ -92,6 +104,58 @@ test "AOTの構造化エラー値はInterpreterと同じcodeを公開する" {
 
     const capability_value = aot_state.dictionaryProperty(value, &.{ 'c', 'a', 'p', 'a', 'b', 'i', 'l', 'i', 't', 'y' });
     try std.testing.expectEqual(@intFromEnum(Tag.null_value), capability_value.tag);
+
+    try std.testing.expect(value.object().?.structured_error);
+    const rendered_units = try aot_state.valueUtf16Alloc(&runtime, value);
+    defer runtime.allocator.free(rendered_units);
+    const rendered = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, rendered_units);
+    defer std.testing.allocator.free(rendered);
+    try std.testing.expectEqualStrings(
+        "EXDEV: cross-device link not permitted, rename '/src' -> '/dst'",
+        rendered,
+    );
+}
+
+test "AOTの通常辞書はmessageキーがあっても構造化エラーにならない" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+
+    var pairs = [_]Value{
+        aot_state.staticStringValue("message"),
+        try aot_state.runtimeUtf8String(&runtime, "forged"),
+    };
+    const forged = try runtime.createDictionary(&pairs);
+    var roots = [_]Value{forged};
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    try std.testing.expect(!forged.object().?.structured_error);
+    const units = try aot_state.valueUtf16Alloc(&runtime, forged);
+    defer runtime.allocator.free(units);
+    const text = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, units);
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("[object Object]", text);
+}
+
+test "AOTは非UTF-8パスでも構造化エラー値を生成できる" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+
+    const raw_path = [_]u8{ 'a', 0xff, 'b' };
+    const error_value = structured_error.classifyNative(.NOENT, "open", &raw_path, null, null).?;
+    const value = try buildValue(&runtime, error_value);
+    var roots = [_]Value{value};
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    try expectDictionaryText(&runtime, value, &.{ 'p', 'a', 't', 'h' }, "a\u{FFFD}b");
+    const units = try aot_state.valueUtf16Alloc(&runtime, value);
+    defer runtime.allocator.free(units);
+    const text = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, units);
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.indexOfScalar(u8, text, 0xff) == null);
 }
 
 fn expectDictionaryText(runtime: *Runtime, dictionary: Value, key: []const u16, expected: []const u8) !void {

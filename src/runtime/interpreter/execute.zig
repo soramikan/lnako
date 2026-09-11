@@ -256,7 +256,7 @@ pub fn executeFunction(self: *Interpreter, function: *const ir.Function, argumen
                         }
                     }
                     self.runtime.clearFailureMessage();
-                    try self.setGlobal("エラーメッセージ", self.exception_value);
+                    try bindErrorMessage(self, self.exception_value);
                     self.exception_value = .undefined;
                     exceptional_target = handler;
                     break;
@@ -285,7 +285,7 @@ pub fn executeFunction(self: *Interpreter, function: *const ir.Function, argumen
                 const thrown = frame.values[throw_value.value];
                 self.exception_value = if (throw_value.coerce_to_error_message) try self.errorMessageValue(thrown) else thrown;
                 if (frame.handlers.pop() orelse throw_value.target) |handler| {
-                    try self.setGlobal("エラーメッセージ", self.exception_value);
+                    try bindErrorMessage(self, self.exception_value);
                     self.exception_value = .undefined;
                     predecessor = current_block;
                     current_block = handler;
@@ -295,6 +295,11 @@ pub fn executeFunction(self: *Interpreter, function: *const ir.Function, argumen
             .unreachable_terminator => return error.ReachedUnreachable,
         }
     }
+}
+
+fn bindErrorMessage(self: *Interpreter, value: Value) !void {
+    const message = if (value == .dictionary) value.dictionary.structuredErrorMessage() orelse value else value;
+    try self.setGlobal("エラーメッセージ", message);
 }
 
 pub fn errorMessageValue(self: *Interpreter, value: Value) !Value {

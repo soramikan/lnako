@@ -465,6 +465,7 @@ pub const Object = struct {
     array_properties: AotDictionary = .{},
     array_presence: std.ArrayList(bool) = .empty,
     toml_temporal: ?AotTomlTemporal = null,
+    structured_error: bool = false,
     payload: Payload,
 };
 
