@@ -126,6 +126,8 @@ cnako対応は Node `fs.Stats` の `mtimeNs`（BigInt）と `mtimeMs`（Number�
 
 `ENOTSUP` はcapability不足に使う。未知コマンドは既存どおり `UnknownCommand` であり、portable code集合に含めない。
 
+実装は [`src/runtime/structured_error.zig`](../../src/runtime/structured_error.zig) を正本とする。native errno / Zig error から portable code への分類、`nativeCode` の保持、Node SystemError形式の `message` 組み立てを提供し、Interpreter と AOT は同じ関数を共有する。例外値（辞書）への変換は [`structured_error_value.zig`](../../src/runtime/structured_error_value.zig)（Interpreter）と [`aot/structured_error_value.zig`](../../src/runtime/aot/structured_error_value.zig)（AOT）が担い、OS固有のnative差分があっても `code` は両経路で一致する。
+
 ## capability表現
 
 命令の登録有無をOSごとに変えない。同じ命令を全OS・全lnako経路へ登録し、対応状況はcapability照会と構造化エラーで機械判定する。

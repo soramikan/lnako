@@ -211,6 +211,7 @@ const runtimeFailure = state.runtimeFailure;
 
 test {
     _ = @import("telemetry_test.zig");
+    _ = @import("structured_error_value.zig");
 }
 const valueToPrimitive = state.valueToPrimitive;
 const valueUtf16Alloc = state.valueUtf16Alloc;
