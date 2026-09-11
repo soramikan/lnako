@@ -34,6 +34,7 @@ pub const runtime = struct {
     pub const aot_builtin = @import("runtime/aot_builtin.zig");
     pub const system_constant = @import("runtime/system_constant.zig");
     pub const error_message = @import("runtime/error_message.zig");
+    pub const low_level_foundation = @import("runtime/low_level_foundation.zig");
     pub const string = @import("runtime/string.zig");
     pub const bigint = @import("runtime/bigint.zig");
     pub const number = @import("runtime/number.zig");
@@ -154,6 +155,7 @@ test {
     std.testing.refAllDecls(runtime.aot_builtin);
     std.testing.refAllDecls(runtime.system_constant);
     std.testing.refAllDecls(runtime.error_message);
+    std.testing.refAllDecls(runtime.low_level_foundation);
     std.testing.refAllDecls(runtime.string);
     std.testing.refAllDecls(runtime.bigint);
     std.testing.refAllDecls(runtime.number);
