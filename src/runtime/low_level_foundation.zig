@@ -156,9 +156,9 @@ pub fn publicTimeNs(_: TimeNs) PublicInteger {
 }
 
 pub fn timeMsNumber(ns: TimeNs) Error!f64 {
-    const ms = @divTrunc(ns, ns_per_ms);
-    if (ms < min_safe_integer or ms > max_safe_integer) return error.InvalidTimestamp;
-    return @floatFromInt(@as(i64, @intCast(ms)));
+    const ms = @as(f64, @floatFromInt(ns)) / @as(f64, @floatFromInt(ns_per_ms));
+    if (!std.math.isFinite(ms)) return error.InvalidTimestamp;
+    return ms;
 }
 
 pub const missing_timestamp_is_null = true;
@@ -354,7 +354,7 @@ pub const reserved_standard_command_names = [_][]const u8{
     "システム関数存在",
 };
 
-pub fn isReservedStandardCommandName(name: []const u8) bool {
+pub fn isExampleReservedStandardCommandName(name: []const u8) bool {
     for (reserved_standard_command_names) |reserved| {
         if (std.mem.eql(u8, name, reserved)) return true;
     }
@@ -428,6 +428,7 @@ test "timestampのナノ秒公開は常にBigIntで、欠損はnull、0はepoch"
     try std.testing.expectEqual(@as(TimeNs, 1_000_000_000), try timeNsFromUnixMsNumber(1000));
     try std.testing.expectEqual(@as(TimeNs, @as(i128, max_safe_integer) * ns_per_ms), try timeNsFromUnixMsNumber(@floatFromInt(max_safe_integer)));
     try std.testing.expectEqual(@as(f64, 1000), try timeMsNumber(1_000_000_000));
+    try std.testing.expectEqual(@as(f64, 1.5), try timeMsNumber(1_500_000));
     try std.testing.expectError(error.InvalidTimestamp, timeNsFromUnixMsNumber(1.5));
     try std.testing.expectEqual(@as(TimeNs, 2_000_000_000), timeNsFromUnixSeconds(2));
     try std.testing.expectEqual(@as(TimeNs, 2_000_000), timeNsFromUnixMicroseconds(2_000));
@@ -514,9 +515,9 @@ test "新規命令は527件と衝突せずplugin_lowlevelへ登録する" {
     try std.testing.expect(naming.must_not_collide_with_standard_cnako);
     try std.testing.expect(naming.primary_language_is_japanese);
     try std.testing.expect(naming.ascii_primary_names_forbidden);
-    try std.testing.expect(isReservedStandardCommandName("開"));
-    try std.testing.expect(isReservedStandardCommandName("バイナリ読"));
-    try std.testing.expect(!isReservedStandardCommandName(capability_supported_command));
+    try std.testing.expect(isExampleReservedStandardCommandName("開"));
+    try std.testing.expect(isExampleReservedStandardCommandName("バイナリ読"));
+    try std.testing.expect(!isExampleReservedStandardCommandName(capability_supported_command));
     try std.testing.expect(std.mem.startsWith(u8, capability_supported_command, naming.meta_prefix));
 }
 
