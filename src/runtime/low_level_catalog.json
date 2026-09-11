@@ -1,0 +1,2030 @@
+{
+  "schema": "lnako.low-level-catalog.v1",
+  "baseline": {
+    "nadesiko3": "3.7.24",
+    "nadesiko3Commit": "aa18c7e640523938c680958fe731418cc6f7a58f",
+    "g0Foundation": "G0_FOUNDATION.md"
+  },
+  "issue": 37,
+  "generatedForIssues": [
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    37
+  ],
+  "commandCount": 61,
+  "capabilityCount": 33,
+  "commands": [
+    {
+      "id": "ll-file-open",
+      "name": "ファイル開く",
+      "issue": 27,
+      "particles": "PATHをMODEで/PATHを",
+      "minArgs": 1,
+      "maxArgs": 2,
+      "returns": "handle",
+      "capability": "stream_file_io",
+      "errors": [
+        "ENOENT",
+        "EACCES",
+        "EISDIR",
+        "EINVAL",
+        "EMFILE",
+        "ENFILE",
+        "ENOTSUP"
+      ],
+      "notes": "MODEは省略時は読み込み専用。O_RDONLY/O_WRONLY/O_RDWR/O_CREAT/O_TRUNC/O_APPENDのビット和。EOFは0 byte read",
+      "paramTypes": {
+        "PATH": "string",
+        "MODE": "openMode"
+      }
+    },
+    {
+      "id": "ll-file-close",
+      "name": "ファイル閉じる",
+      "issue": 27,
+      "particles": "HANDLEを/HANDLEの",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "void",
+      "capability": "stream_file_io",
+      "errors": [
+        "EBADF"
+      ],
+      "notes": "二重closeはEBADF。close後の操作はEBADF"
+    },
+    {
+      "id": "ll-file-read",
+      "name": "ファイルバイト読む",
+      "issue": 27,
+      "particles": "HANDLEをSIZEで/HANDLEからSIZEを",
+      "minArgs": 2,
+      "maxArgs": 2,
+      "returns": "bytes",
+      "capability": "stream_file_io",
+      "errors": [
+        "EBADF",
+        "EINVAL",
+        "ENOTSUP"
+      ],
+      "notes": "0 byteを返したらEOF。partial readはEOFではない。現在位置から読む"
+    },
+    {
+      "id": "ll-file-write",
+      "name": "ファイルバイト書く",
+      "issue": 27,
+      "particles": "HANDLEをBYTESで/HANDLEへBYTESを",
+      "minArgs": 2,
+      "maxArgs": 2,
+      "returns": "number",
+      "capability": "stream_file_io",
+      "errors": [
+        "EBADF",
+        "EINVAL",
+        "ENOSPC",
+        "EPIPE",
+        "ENOTSUP"
+      ],
+      "notes": "戻り値は実際に書いたbyte数"
+    },
+    {
+      "id": "ll-file-sync",
+      "name": "ファイル同期",
+      "issue": 27,
+      "particles": "HANDLEを/HANDLEの",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "void",
+      "capability": "stream_file_io",
+      "errors": [
+        "EBADF",
+        "EINVAL"
+      ],
+      "notes": "fsync相当"
+    },
+    {
+      "id": "ll-file-truncate-handle",
+      "name": "ファイル切詰",
+      "issue": 27,
+      "particles": "HANDLEをSIZEで/HANDLEをSIZEに",
+      "minArgs": 2,
+      "maxArgs": 2,
+      "returns": "void",
+      "capability": "truncate",
+      "errors": [
+        "EBADF",
+        "EINVAL",
+        "ENOSPC",
+        "ENOTSUP"
+      ],
+      "notes": "ftruncate相当。SIZEはu64"
+    },
+    {
+      "id": "ll-file-seek",
+      "name": "ファイル位置変更",
+      "issue": 27,
+      "particles": "HANDLEをOFFSETでWHENCEを/HANDLEをOFFSETで",
+      "minArgs": 2,
+      "maxArgs": 3,
+      "returns": "offset",
+      "capability": "stream_file_io",
+      "errors": [
+        "EBADF",
+        "EINVAL",
+        "ENOTSUP"
+      ],
+      "notes": "WHENCEは開始/現在/終端。OFFSETはi64。戻り値は新位置"
+    },
+    {
+      "id": "ll-file-tell",
+      "name": "ファイル位置取得",
+      "issue": 27,
+      "particles": "HANDLEを/HANDLEの",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "offset",
+      "capability": "stream_file_io",
+      "errors": [
+        "EBADF"
+      ],
+      "notes": "現在位置をoffsetとして返す"
+    },
+    {
+      "id": "ll-file-pread",
+      "name": "ファイル位置指定読込",
+      "issue": 27,
+      "particles": "HANDLEをOFFSETからSIZEを/HANDLEからOFFSETにSIZEを",
+      "minArgs": 3,
+      "maxArgs": 3,
+      "returns": "bytes",
+      "capability": "stream_file_io",
+      "errors": [
+        "EBADF",
+        "EINVAL",
+        "ENOTSUP"
+      ],
+      "notes": "pread相当。現在位置を動かさない"
+    },
+    {
+      "id": "ll-file-pwrite",
+      "name": "ファイル位置指定書込",
+      "issue": 27,
+      "particles": "HANDLEへOFFSETにBYTESを/HANDLEをOFFSETからBYTESで",
+      "minArgs": 3,
+      "maxArgs": 3,
+      "returns": "number",
+      "capability": "stream_file_io",
+      "errors": [
+        "EBADF",
+        "EINVAL",
+        "ENOSPC",
+        "ENOTSUP"
+      ],
+      "notes": "pwrite相当。戻り値は書いたbyte数"
+    },
+    {
+      "id": "ll-stdin-read",
+      "name": "標準入力バイト読む",
+      "issue": 28,
+      "particles": "SIZEを/SIZEで",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "bytes",
+      "capability": "raw_stdio",
+      "errors": [
+        "EINVAL",
+        "EPIPE"
+      ],
+      "notes": "0 byteはEOF。既存のテキスト系stdin命令と同じsource of truth"
+    },
+    {
+      "id": "ll-stdout-write",
+      "name": "標準出力バイト書く",
+      "issue": 28,
+      "particles": "BYTESを/BYTESで",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "number",
+      "capability": "raw_stdio",
+      "errors": [
+        "EINVAL",
+        "EPIPE",
+        "ENOSPC"
+      ],
+      "notes": "表示と別経路のraw bytes"
+    },
+    {
+      "id": "ll-stderr-write",
+      "name": "標準エラー出力バイト書く",
+      "issue": 28,
+      "particles": "BYTESを/BYTESで",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "number",
+      "capability": "raw_stdio",
+      "errors": [
+        "EINVAL",
+        "EPIPE",
+        "ENOSPC"
+      ],
+      "notes": "stdoutと混線しない"
+    },
+    {
+      "id": "ll-stdout-sync",
+      "name": "標準出力同期",
+      "issue": 28,
+      "particles": "",
+      "minArgs": 0,
+      "maxArgs": 0,
+      "returns": "void",
+      "capability": "raw_stdio",
+      "errors": [
+        "EPIPE",
+        "EINVAL"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "ll-stderr-sync",
+      "name": "標準エラー出力同期",
+      "issue": 28,
+      "particles": "",
+      "minArgs": 0,
+      "maxArgs": 0,
+      "returns": "void",
+      "capability": "raw_stdio",
+      "errors": [
+        "EPIPE",
+        "EINVAL"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "ll-file-stat",
+      "name": "ファイル詳細情報取得",
+      "issue": 29,
+      "particles": "PATHを/PATHの/PATHから",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "stat",
+      "capability": "stat",
+      "errors": [
+        "ENOENT",
+        "EACCES",
+        "ENOTDIR",
+        "ELOOP",
+        "EINVAL"
+      ],
+      "notes": "stat。symlinkは追跡する。整数はナノ秒BigIntで返す"
+    },
+    {
+      "id": "ll-file-lstat",
+      "name": "シンボリックリンク情報取得",
+      "issue": 29,
+      "particles": "PATHを/PATHの/PATHから",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "stat",
+      "capability": "lstat",
+      "errors": [
+        "ENOENT",
+        "EACCES",
+        "ENOTDIR",
+        "ELOOP",
+        "EINVAL"
+      ],
+      "notes": "lstat。symlink自身の情報"
+    },
+    {
+      "id": "ll-symlink-create",
+      "name": "シンボリックリンク作成",
+      "issue": 29,
+      "particles": "TARGETをLINKへ/LINKにTARGETを",
+      "minArgs": 2,
+      "maxArgs": 2,
+      "returns": "void",
+      "capability": "symlink",
+      "errors": [
+        "EEXIST",
+        "ENOENT",
+        "EACCES",
+        "ENOTDIR",
+        "EPERM",
+        "ENOTSUP"
+      ],
+      "notes": "Windowsはfile/directory/junction差を命令仕様で吸収。junction作成はtarget種別の自動判定"
+    },
+    {
+      "id": "ll-symlink-read",
+      "name": "シンボリックリンク先取得",
+      "issue": 29,
+      "particles": "PATHを/PATHの",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "string",
+      "capability": "readlink",
+      "errors": [
+        "EINVAL",
+        "ENOENT",
+        "EACCES",
+        "ELOOP",
+        "ENOTSUP"
+      ],
+      "notes": "readlink。対象がsymlinkでない場合はEINVAL"
+    },
+    {
+      "id": "ll-hardlink-create",
+      "name": "ハードリンク作成",
+      "issue": 29,
+      "particles": "TARGETをLINKへ/LINKにTARGETを",
+      "minArgs": 2,
+      "maxArgs": 2,
+      "returns": "void",
+      "capability": "hardlink",
+      "errors": [
+        "EEXIST",
+        "ENOENT",
+        "EXDEV",
+        "EPERM",
+        "ENOTSUP"
+      ],
+      "notes": "link"
+    },
+    {
+      "id": "ll-path-realpath",
+      "name": "実体パス取得",
+      "issue": 29,
+      "particles": "PATHを/PATHの",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "string",
+      "capability": "realpath",
+      "errors": [
+        "ENOENT",
+        "EACCES",
+        "ELOOP",
+        "ENOTDIR"
+      ],
+      "notes": "realpath。絶対パスを返す"
+    },
+    {
+      "id": "ll-path-rename",
+      "name": "パス名変更",
+      "issue": 29,
+      "particles": "SRCをDSTへ/DSTにSRCを",
+      "minArgs": 2,
+      "maxArgs": 2,
+      "returns": "void",
+      "capability": "rename",
+      "errors": [
+        "ENOENT",
+        "EEXIST",
+        "EACCES",
+        "EXDEV",
+        "ENOTEMPTY",
+        "EISDIR",
+        "ENOTDIR",
+        "ENOTSUP"
+      ],
+      "notes": "EXDEVを呼び出し側が識別できる"
+    },
+    {
+      "id": "ll-path-unlink",
+      "name": "ファイルリンク削除",
+      "issue": 29,
+      "particles": "PATHを/PATHの",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "void",
+      "capability": "unlink",
+      "errors": [
+        "ENOENT",
+        "EACCES",
+        "EPERM",
+        "EISDIR",
+        "ENOTDIR",
+        "ENOTSUP"
+      ],
+      "notes": "unlink。ファイル・symlinkを対象にし、ディレクトリはEISDIR"
+    },
+    {
+      "id": "ll-path-rmdir",
+      "name": "空フォルダ削除",
+      "issue": 29,
+      "particles": "PATHを/PATHの",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "void",
+      "capability": "rmdir",
+      "errors": [
+        "ENOENT",
+        "ENOTDIR",
+        "EACCES",
+        "ENOTEMPTY",
+        "EPERM",
+        "ENOTSUP"
+      ],
+      "notes": "空でない場合はENOTEMPTY"
+    },
+    {
+      "id": "ll-file-truncate-path",
+      "name": "ファイルサイズ変更",
+      "issue": 31,
+      "particles": "PATHをSIZEで/PATHをSIZEに",
+      "minArgs": 2,
+      "maxArgs": 2,
+      "returns": "void",
+      "capability": "truncate",
+      "errors": [
+        "ENOENT",
+        "EACCES",
+        "EISDIR",
+        "ENOSPC",
+        "EINVAL",
+        "ENOTSUP"
+      ],
+      "notes": "truncate。grow/shrink/zero-size"
+    },
+    {
+      "id": "ll-file-utime-path",
+      "name": "ファイル時刻設定",
+      "issue": 31,
+      "particles": "PATHをATIMEからMTIMEまで/PATHをATIMEとMTIMEで",
+      "minArgs": 3,
+      "maxArgs": 3,
+      "returns": "void",
+      "capability": "utime",
+      "errors": [
+        "ENOENT",
+        "EACCES",
+        "EINVAL",
+        "EPERM",
+        "ENOTSUP"
+      ],
+      "notes": "utimes。ATIME/MTIMEはナノ秒BigInt。nullで既存値維持、nowで現在時刻"
+    },
+    {
+      "id": "ll-file-utime-handle",
+      "name": "ファイル時刻設定済",
+      "issue": 31,
+      "particles": "HANDLEをATIMEからMTIMEまで/HANDLEをATIMEとMTIMEで",
+      "minArgs": 3,
+      "maxArgs": 3,
+      "returns": "void",
+      "capability": "utime",
+      "errors": [
+        "EBADF",
+        "EINVAL",
+        "EPERM",
+        "ENOTSUP"
+      ],
+      "notes": "futimes相当"
+    },
+    {
+      "id": "ll-hash-create",
+      "name": "ハッシュ開始",
+      "issue": 32,
+      "particles": "ALGORITHMで/ALGORITHMを",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "handle",
+      "capability": "incremental_hash",
+      "errors": [
+        "EINVAL",
+        "ENOTSUP"
+      ],
+      "notes": "アルゴリズム名は既存ハッシュ値計算と同じ正規化"
+    },
+    {
+      "id": "ll-hash-update",
+      "name": "ハッシュ追加",
+      "issue": 32,
+      "particles": "HANDLEをBYTESで/HANDLEへBYTESを",
+      "minArgs": 2,
+      "maxArgs": 2,
+      "returns": "void",
+      "capability": "incremental_hash",
+      "errors": [
+        "EBADF",
+        "EINVAL"
+      ],
+      "notes": "bytesを無変換でupdate"
+    },
+    {
+      "id": "ll-hash-digest",
+      "name": "ハッシュ完了",
+      "issue": 32,
+      "particles": "HANDLEをENCODINGで/HANDLEを",
+      "minArgs": 1,
+      "maxArgs": 2,
+      "returns": "hashDigest",
+      "capability": "incremental_hash",
+      "errors": [
+        "EBADF",
+        "EINVAL",
+        "ENOTSUP"
+      ],
+      "notes": "ENCODING省略時はraw bytes、hex指定でhex文字列。完了後は破棄"
+    },
+    {
+      "id": "ll-hash-discard",
+      "name": "ハッシュ破棄",
+      "issue": 32,
+      "particles": "HANDLEを/HANDLEの",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "void",
+      "capability": "incremental_hash",
+      "errors": [
+        "EBADF"
+      ],
+      "notes": "二重破棄はEBADF"
+    },
+    {
+      "id": "ll-dir-open",
+      "name": "ディレクトリ開く",
+      "issue": 33,
+      "particles": "PATHを/PATHの",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "handle",
+      "capability": "dir_iterator",
+      "errors": [
+        "ENOENT",
+        "ENOTDIR",
+        "EACCES",
+        "EMFILE",
+        "ENFILE",
+        "ENOTSUP"
+      ],
+      "notes": "handle型を正本にする"
+    },
+    {
+      "id": "ll-dir-next",
+      "name": "ディレクトリ次取得",
+      "issue": 33,
+      "particles": "HANDLEを/HANDLEの",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "dirEntry",
+      "capability": "dir_iterator",
+      "errors": [
+        "EBADF",
+        "EINVAL",
+        "ENOTSUP"
+      ],
+      "notes": "nameとtypeを返す。EOFはnull。.と..を含めない"
+    },
+    {
+      "id": "ll-dir-close",
+      "name": "ディレクトリ閉じる",
+      "issue": 33,
+      "particles": "HANDLEを/HANDLEの",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "void",
+      "capability": "dir_iterator",
+      "errors": [
+        "EBADF"
+      ],
+      "notes": "early closeを許可。二重closeはEBADF"
+    },
+    {
+      "id": "ll-dir-foreach",
+      "name": "ディレクトリ列挙時",
+      "issue": 33,
+      "particles": "PATHをCALLBACKで/PATHのCALLBACKを",
+      "minArgs": 2,
+      "maxArgs": 2,
+      "returns": "void",
+      "capability": "dir_iterator",
+      "errors": [
+        "ENOENT",
+        "ENOTDIR",
+        "EACCES",
+        "ENOTSUP"
+      ],
+      "notes": "糖衣。正本はhandle型"
+    },
+    {
+      "id": "ll-file-chmod",
+      "name": "ファイル権限設定",
+      "issue": 34,
+      "particles": "PATHをMODEで/PATHをMODEに",
+      "minArgs": 2,
+      "maxArgs": 2,
+      "returns": "void",
+      "capability": "chmod",
+      "errors": [
+        "ENOENT",
+        "EACCES",
+        "EPERM",
+        "EINVAL",
+        "ENOTSUP"
+      ],
+      "notes": "数値modeのみ。symbolic modeはCore Utilities側"
+    },
+    {
+      "id": "ll-file-chown",
+      "name": "ファイル所有者設定",
+      "issue": 34,
+      "particles": "PATHをUIDとGIDで/PATHをUIDにGIDを",
+      "minArgs": 3,
+      "maxArgs": 3,
+      "returns": "void",
+      "capability": "chown",
+      "errors": [
+        "ENOENT",
+        "EACCES",
+        "EPERM",
+        "EINVAL",
+        "ENOTSUP"
+      ],
+      "notes": "chown。-1で無変更"
+    },
+    {
+      "id": "ll-symlink-chown",
+      "name": "シンボリックリンク所有者設定",
+      "issue": 34,
+      "particles": "PATHをUIDとGIDで/PATHをUIDにGIDを",
+      "minArgs": 3,
+      "maxArgs": 3,
+      "returns": "void",
+      "capability": "chown",
+      "errors": [
+        "ENOENT",
+        "EACCES",
+        "EPERM",
+        "EINVAL",
+        "ENOTSUP"
+      ],
+      "notes": "lchown相当"
+    },
+    {
+      "id": "ll-file-access",
+      "name": "ファイルアクセス可能",
+      "issue": 34,
+      "particles": "PATHをMODEで/PATHがMODEで",
+      "minArgs": 2,
+      "maxArgs": 2,
+      "returns": "boolean",
+      "capability": "access",
+      "errors": [
+        "EINVAL",
+        "ENOTSUP"
+      ],
+      "notes": "OSのeffective access semantics。拒否はfalseで返す",
+      "paramTypes": {
+        "PATH": "string",
+        "MODE": "accessMode"
+      }
+    },
+    {
+      "id": "ll-uid-get",
+      "name": "UID取得",
+      "issue": 34,
+      "particles": "",
+      "minArgs": 0,
+      "maxArgs": 0,
+      "returns": "uid",
+      "capability": "uid_gid",
+      "errors": [
+        "ENOTSUP"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "ll-euid-get",
+      "name": "EUID取得",
+      "issue": 34,
+      "particles": "",
+      "minArgs": 0,
+      "maxArgs": 0,
+      "returns": "uid",
+      "capability": "uid_gid",
+      "errors": [
+        "ENOTSUP"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "ll-gid-get",
+      "name": "GID取得",
+      "issue": 34,
+      "particles": "",
+      "minArgs": 0,
+      "maxArgs": 0,
+      "returns": "gid",
+      "capability": "uid_gid",
+      "errors": [
+        "ENOTSUP"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "ll-egid-get",
+      "name": "EGID取得",
+      "issue": 34,
+      "particles": "",
+      "minArgs": 0,
+      "maxArgs": 0,
+      "returns": "gid",
+      "capability": "uid_gid",
+      "errors": [
+        "ENOTSUP"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "ll-groups-get",
+      "name": "所属グループID一覧取得",
+      "issue": 34,
+      "particles": "",
+      "minArgs": 0,
+      "maxArgs": 0,
+      "returns": "array",
+      "capability": "uid_gid",
+      "errors": [
+        "ENOTSUP"
+      ],
+      "notes": "Numberの配列"
+    },
+    {
+      "id": "ll-umask-set",
+      "name": "UMASK変更",
+      "issue": 34,
+      "particles": "MODEで/MODEを",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "number",
+      "capability": "uid_gid",
+      "errors": [
+        "ENOTSUP"
+      ],
+      "notes": "戻り値は旧umask"
+    },
+    {
+      "id": "ll-process-spawn",
+      "name": "プロセス起動",
+      "issue": 35,
+      "particles": "ARGVをOPTIONSで/ARGVを",
+      "minArgs": 1,
+      "maxArgs": 2,
+      "returns": "handle",
+      "capability": "argv_spawn",
+      "errors": [
+        "ENOENT",
+        "EACCES",
+        "EPERM",
+        "EINVAL",
+        "ENOTSUP"
+      ],
+      "notes": "shell stringを介さない。OPTIONSにcwd/env/stdio/detached"
+    },
+    {
+      "id": "ll-process-wait",
+      "name": "プロセス待機",
+      "issue": 35,
+      "particles": "HANDLEを/HANDLEの",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "waitResult",
+      "capability": "argv_spawn",
+      "errors": [
+        "EBADF",
+        "EINVAL"
+      ],
+      "notes": "exitCodeとsignalを構造化して返す"
+    },
+    {
+      "id": "ll-pid-get",
+      "name": "プロセスID取得",
+      "issue": 35,
+      "particles": "",
+      "minArgs": 0,
+      "maxArgs": 0,
+      "returns": "pid",
+      "capability": "argv_spawn",
+      "errors": [],
+      "notes": "pidはu32。実行時0は不正で発生しない"
+    },
+    {
+      "id": "ll-ppid-get",
+      "name": "親プロセスID取得",
+      "issue": 35,
+      "particles": "",
+      "minArgs": 0,
+      "maxArgs": 0,
+      "returns": "pid",
+      "capability": "argv_spawn",
+      "errors": [
+        "ENOTSUP"
+      ],
+      "notes": ""
+    },
+    {
+      "id": "ll-signal-send",
+      "name": "シグナル送信",
+      "issue": 35,
+      "particles": "PIDにSIGNALを/PIDへSIGNALで",
+      "minArgs": 2,
+      "maxArgs": 2,
+      "returns": "void",
+      "capability": "signal",
+      "errors": [
+        "EINVAL",
+        "EPERM",
+        "ENOTSUP"
+      ],
+      "notes": "Windowsは対応信号が限られる。非対応のsignal番号はENOTSUP"
+    },
+    {
+      "id": "ll-process-priority-get",
+      "name": "プロセス優先度取得",
+      "issue": 35,
+      "particles": "PIDを/PIDの",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "number",
+      "capability": "priority",
+      "errors": [
+        "EINVAL",
+        "ENOTSUP"
+      ],
+      "notes": "優先度（niceness等）の現在値を返す"
+    },
+    {
+      "id": "ll-process-priority-set",
+      "name": "プロセス優先度設定",
+      "issue": 35,
+      "particles": "PIDをVALUEで/PIDをVALUEに",
+      "minArgs": 2,
+      "maxArgs": 2,
+      "returns": "void",
+      "capability": "priority",
+      "errors": [
+        "EINVAL",
+        "EPERM",
+        "ENOTSUP"
+      ],
+      "notes": "優先度（niceness等）を設定する"
+    },
+    {
+      "id": "ll-tty-isatty",
+      "name": "端末判定",
+      "issue": 35,
+      "particles": "STREAMを/STREAMで",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "boolean",
+      "capability": "tty_isatty",
+      "errors": [
+        "EINVAL"
+      ],
+      "notes": "STREAMは標準入力/標準出力/標準エラー出力"
+    },
+    {
+      "id": "ll-tty-size",
+      "name": "端末サイズ取得",
+      "issue": 35,
+      "particles": "STREAMを/STREAMで",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "ttySize",
+      "capability": "tty_isatty",
+      "errors": [
+        "EINVAL",
+        "ENOTSUP"
+      ],
+      "notes": "rowsとcolumns"
+    },
+    {
+      "id": "ll-statfs",
+      "name": "ファイルシステム情報取得",
+      "issue": 36,
+      "particles": "PATHを/PATHの",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "fsInfo",
+      "capability": "statfs",
+      "errors": [
+        "ENOENT",
+        "EACCES",
+        "ENOTDIR",
+        "EINVAL",
+        "ENOTSUP"
+      ],
+      "notes": "blockSize/blocks/free/available/files/freeFiles/filesystemType/filesystemId。OS固有フィールドはoptional"
+    },
+    {
+      "id": "ll-reflink",
+      "name": "ファイルクローン",
+      "issue": 36,
+      "particles": "SRCをDSTへMODEで/SRCをDSTに",
+      "minArgs": 2,
+      "maxArgs": 3,
+      "returns": "void",
+      "capability": "reflink",
+      "errors": [
+        "ENOENT",
+        "EEXIST",
+        "EACCES",
+        "EXDEV",
+        "ENOTSUP"
+      ],
+      "notes": "reflink/CoW。非対応FSはENOTSUP"
+    },
+    {
+      "id": "ll-seek-data",
+      "name": "ファイルデータ領域検索",
+      "issue": 36,
+      "particles": "HANDLEをOFFSETで/HANDLEをOFFSETから",
+      "minArgs": 2,
+      "maxArgs": 2,
+      "returns": "offset",
+      "capability": "seek_data",
+      "errors": [
+        "EBADF",
+        "EINVAL",
+        "ENOTSUP"
+      ],
+      "notes": "SEEK_DATA相当"
+    },
+    {
+      "id": "ll-seek-hole",
+      "name": "ファイル空洞領域検索",
+      "issue": 36,
+      "particles": "HANDLEをOFFSETで/HANDLEをOFFSETから",
+      "minArgs": 2,
+      "maxArgs": 2,
+      "returns": "offset",
+      "capability": "seek_hole",
+      "errors": [
+        "EBADF",
+        "EINVAL",
+        "ENOTSUP"
+      ],
+      "notes": "SEEK_HOLE相当"
+    },
+    {
+      "id": "ll-fallocate",
+      "name": "ファイル領域確保",
+      "issue": 36,
+      "particles": "HANDLEをOFFSETにSIZEで/HANDLEをOFFSETとSIZEで",
+      "minArgs": 3,
+      "maxArgs": 3,
+      "returns": "void",
+      "capability": "fallocate",
+      "errors": [
+        "EBADF",
+        "EINVAL",
+        "ENOSPC",
+        "ENOTSUP"
+      ],
+      "notes": "fallocate相当"
+    },
+    {
+      "id": "ll-capability-supported",
+      "name": "低レイヤー機能対応判定",
+      "issue": 37,
+      "particles": "NAMEの/NAMEを",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "boolean",
+      "capability": null,
+      "errors": [],
+      "notes": "未知NAMEはfalse。命令は全OS・全経路に登録する"
+    },
+    {
+      "id": "ll-capability-list",
+      "name": "低レイヤー機能一覧取得",
+      "issue": 37,
+      "particles": "",
+      "minArgs": 0,
+      "maxArgs": 0,
+      "returns": "array",
+      "capability": null,
+      "errors": [],
+      "notes": "既知capability IDの文字列の配列"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "stream_file_io",
+      "class": "portable_core",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": true
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "raw_stdio",
+      "class": "portable_core",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": true
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "stat",
+      "class": "portable_core",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": true
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "lstat",
+      "class": "portable_core",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": true
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "symlink",
+      "class": "portable_core",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": true
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "readlink",
+      "class": "portable_core",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": true
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "realpath",
+      "class": "portable_core",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": true
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "rename",
+      "class": "portable_core",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": true
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "unlink",
+      "class": "portable_core",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": true
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "rmdir",
+      "class": "portable_core",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": true
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "truncate",
+      "class": "portable_core",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": true
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "utime",
+      "class": "portable_core",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": true
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "incremental_hash",
+      "class": "portable_core",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": true
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "dir_iterator",
+      "class": "portable_core",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": true
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "argv_spawn",
+      "class": "portable_core",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": true
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "signal",
+      "class": "portable_core",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": true
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "tty_isatty",
+      "class": "portable_core",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": true
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "hardlink",
+      "class": "portable_core",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": true
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "chmod",
+      "class": "posix_extension",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": false
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "chown",
+      "class": "posix_extension",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": false
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "access",
+      "class": "posix_extension",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": false
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "uid_gid",
+      "class": "posix_extension",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": false
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "priority",
+      "class": "posix_extension",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": false
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "statfs",
+      "class": "posix_extension",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": false
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": true
+      }
+    },
+    {
+      "id": "reflink",
+      "class": "posix_extension",
+      "os": {
+        "linux": "conditional",
+        "macos": "conditional",
+        "windows": "conditional"
+      },
+      "runtimes": {
+        "lnako_interpreter": "conditional",
+        "lnako_aot": "conditional",
+        "cnako_node": "conditional"
+      }
+    },
+    {
+      "id": "seek_data",
+      "class": "lnako_native",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": false
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": false
+      }
+    },
+    {
+      "id": "seek_hole",
+      "class": "lnako_native",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": false
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": false
+      }
+    },
+    {
+      "id": "fallocate",
+      "class": "lnako_native",
+      "os": {
+        "linux": true,
+        "macos": "conditional",
+        "windows": false
+      },
+      "runtimes": {
+        "lnako_interpreter": "conditional",
+        "lnako_aot": "conditional",
+        "cnako_node": false
+      }
+    },
+    {
+      "id": "termios",
+      "class": "lnako_native",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": false
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": false
+      }
+    },
+    {
+      "id": "nss",
+      "class": "lnako_native",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": false
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": false
+      }
+    },
+    {
+      "id": "acl",
+      "class": "lnako_native",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": false
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": false
+      }
+    },
+    {
+      "id": "xattr",
+      "class": "lnako_native",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": false
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": false
+      }
+    },
+    {
+      "id": "selinux",
+      "class": "lnako_native",
+      "os": {
+        "linux": true,
+        "macos": false,
+        "windows": false
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": false
+      }
+    }
+  ],
+  "types": {
+    "bytes": "既存のBytes（Buffer kind）。octet列を無変換で保持",
+    "handle": "G0のHandleIdに基づく不透明オブジェクト。Number/BigInt/OS fdではない",
+    "offset": "位置。安全整数ならNumber、超過はBigInt。内部はi64",
+    "size": "大きさ。安全整数ならNumber、超過はBigInt。内部はu64",
+    "timestamp": "ナノ秒。公開はBigInt。内部はi128。欠損はnull",
+    "mode": "数値権限mode。0〜0o7777。u32",
+    "pid": "プロセスID。u32",
+    "signal": "POSIX信号番号。u32",
+    "stream": "標準入力/標準出力/標準エラー出力の識別子。string",
+    "stat": "ファイル詳細情報の辞書。整数はナノ秒BigInt",
+    "dirEntry": "ディレクトリentryの辞書。nameとtype",
+    "waitResult": "プロセス終了の辞書。exitCodeとsignal",
+    "ttySize": "端末サイズの辞書。rowsとcolumns",
+    "fsInfo": "ファイルシステム情報の辞書",
+    "void": "戻り値なし",
+    "null": "null値。EOFなど",
+    "number": "binary64。安全整数の範囲で整数を扱う",
+    "string": "UTF-16文字列",
+    "boolean": "真偽値",
+    "array": "配列",
+    "dictionary": "辞書",
+    "uid": "ユーザーID。u32。numberで公開",
+    "gid": "グループID。u32。numberで公開",
+    "whence": "seek基準。開始/現在/終端。string",
+    "openMode": "ファイル開くのO_*ビット和。u32",
+    "accessMode": "access検査のF_OK/R_OK/W_OK/X_OKビット和。u32",
+    "argv": "文字列の配列。shell解釈しない",
+    "processOptions": "プロセス起動のOPTIONS辞書。cwd/env/stdio/detached",
+    "hashAlgorithm": "ハッシュアルゴリズム名。string。既存ハッシュ値計算と同一正規化",
+    "hashEncoding": "ハッシュ出力encoding。raw/hex。string",
+    "hashDigest": "ハッシュdigest。rawはbytes、hexはstring（ENCODING依存）",
+    "function": "関数（CALLBACK）"
+  },
+  "coreUtilities": [
+    {
+      "utility": "cat",
+      "capabilities": [
+        "raw_stdio",
+        "stream_file_io"
+      ],
+      "commands": [
+        "ll-stdin-read",
+        "ll-stdout-write",
+        "ll-file-open",
+        "ll-file-read",
+        "ll-file-close"
+      ]
+    },
+    {
+      "utility": "tee",
+      "capabilities": [
+        "raw_stdio",
+        "stream_file_io"
+      ],
+      "commands": [
+        "ll-file-open",
+        "ll-file-read",
+        "ll-file-write",
+        "ll-file-sync",
+        "ll-stdout-write",
+        "ll-file-close"
+      ]
+    },
+    {
+      "utility": "dd",
+      "capabilities": [
+        "stream_file_io"
+      ],
+      "commands": [
+        "ll-file-open",
+        "ll-file-read",
+        "ll-file-write",
+        "ll-file-close",
+        "ll-file-seek",
+        "ll-file-tell"
+      ]
+    },
+    {
+      "utility": "md5sum",
+      "capabilities": [
+        "incremental_hash",
+        "stream_file_io",
+        "raw_stdio"
+      ],
+      "commands": [
+        "ll-hash-create",
+        "ll-hash-update",
+        "ll-hash-digest",
+        "ll-hash-discard",
+        "ll-file-open",
+        "ll-file-read",
+        "ll-file-close",
+        "ll-stdin-read"
+      ]
+    },
+    {
+      "utility": "sha*sum",
+      "capabilities": [
+        "incremental_hash",
+        "stream_file_io",
+        "raw_stdio"
+      ],
+      "commands": [
+        "ll-hash-create",
+        "ll-hash-update",
+        "ll-hash-digest",
+        "ll-hash-discard",
+        "ll-file-open",
+        "ll-file-read",
+        "ll-file-close",
+        "ll-stdin-read"
+      ]
+    },
+    {
+      "utility": "ls",
+      "capabilities": [
+        "dir_iterator",
+        "lstat"
+      ],
+      "commands": [
+        "ll-dir-open",
+        "ll-dir-next",
+        "ll-dir-close",
+        "ll-file-lstat"
+      ]
+    },
+    {
+      "utility": "du",
+      "capabilities": [
+        "dir_iterator",
+        "lstat",
+        "stat"
+      ],
+      "commands": [
+        "ll-dir-open",
+        "ll-dir-next",
+        "ll-dir-close",
+        "ll-file-lstat",
+        "ll-file-stat"
+      ]
+    },
+    {
+      "utility": "rm -r",
+      "capabilities": [
+        "dir_iterator",
+        "unlink",
+        "rmdir"
+      ],
+      "commands": [
+        "ll-dir-open",
+        "ll-dir-next",
+        "ll-dir-close",
+        "ll-path-unlink",
+        "ll-path-rmdir"
+      ]
+    },
+    {
+      "utility": "cp -r",
+      "capabilities": [
+        "stream_file_io",
+        "stat",
+        "dir_iterator",
+        "realpath",
+        "readlink"
+      ],
+      "commands": [
+        "ll-file-open",
+        "ll-file-read",
+        "ll-file-write",
+        "ll-file-close",
+        "ll-file-stat",
+        "ll-dir-open",
+        "ll-dir-next",
+        "ll-dir-close",
+        "ll-path-realpath",
+        "ll-symlink-read"
+      ]
+    },
+    {
+      "utility": "cp -p/-a",
+      "capabilities": [
+        "utime",
+        "chmod",
+        "chown",
+        "stat"
+      ],
+      "commands": [
+        "ll-file-utime-path",
+        "ll-file-chmod",
+        "ll-file-chown",
+        "ll-file-stat"
+      ]
+    },
+    {
+      "utility": "touch",
+      "capabilities": [
+        "utime",
+        "truncate"
+      ],
+      "commands": [
+        "ll-file-utime-path",
+        "ll-file-truncate-path"
+      ]
+    },
+    {
+      "utility": "truncate",
+      "capabilities": [
+        "truncate"
+      ],
+      "commands": [
+        "ll-file-truncate-path",
+        "ll-file-truncate-handle"
+      ]
+    },
+    {
+      "utility": "install",
+      "capabilities": [
+        "chmod",
+        "chown",
+        "utime",
+        "truncate",
+        "stream_file_io"
+      ],
+      "commands": [
+        "ll-file-chmod",
+        "ll-file-chown",
+        "ll-file-utime-path",
+        "ll-file-truncate-path",
+        "ll-file-open",
+        "ll-file-write",
+        "ll-file-close"
+      ]
+    },
+    {
+      "utility": "df",
+      "capabilities": [
+        "statfs"
+      ],
+      "commands": [
+        "ll-statfs"
+      ]
+    },
+    {
+      "utility": "stat",
+      "capabilities": [
+        "stat",
+        "lstat"
+      ],
+      "commands": [
+        "ll-file-stat",
+        "ll-file-lstat"
+      ]
+    },
+    {
+      "utility": "stat -f",
+      "capabilities": [
+        "statfs"
+      ],
+      "commands": [
+        "ll-statfs"
+      ]
+    },
+    {
+      "utility": "cp --reflink",
+      "capabilities": [
+        "reflink"
+      ],
+      "commands": [
+        "ll-reflink"
+      ]
+    },
+    {
+      "utility": "cp --sparse",
+      "capabilities": [
+        "seek_data",
+        "seek_hole",
+        "stream_file_io"
+      ],
+      "commands": [
+        "ll-seek-data",
+        "ll-seek-hole",
+        "ll-file-open",
+        "ll-file-read",
+        "ll-file-write",
+        "ll-file-close"
+      ]
+    },
+    {
+      "utility": "env",
+      "capabilities": [
+        "argv_spawn"
+      ],
+      "commands": [
+        "ll-process-spawn",
+        "ll-process-wait",
+        "ll-pid-get"
+      ]
+    },
+    {
+      "utility": "timeout",
+      "capabilities": [
+        "argv_spawn",
+        "signal"
+      ],
+      "commands": [
+        "ll-process-spawn",
+        "ll-process-wait",
+        "ll-signal-send"
+      ]
+    },
+    {
+      "utility": "nice",
+      "capabilities": [
+        "priority"
+      ],
+      "commands": [
+        "ll-process-priority-get",
+        "ll-process-priority-set"
+      ]
+    },
+    {
+      "utility": "nohup",
+      "capabilities": [
+        "argv_spawn",
+        "signal"
+      ],
+      "commands": [
+        "ll-process-spawn",
+        "ll-signal-send"
+      ]
+    },
+    {
+      "utility": "kill",
+      "capabilities": [
+        "signal"
+      ],
+      "commands": [
+        "ll-signal-send",
+        "ll-pid-get"
+      ]
+    },
+    {
+      "utility": "tty",
+      "capabilities": [
+        "tty_isatty"
+      ],
+      "commands": [
+        "ll-tty-isatty",
+        "ll-tty-size"
+      ]
+    },
+    {
+      "utility": "stty",
+      "capabilities": [
+        "tty_isatty",
+        "termios"
+      ],
+      "commands": [
+        "ll-tty-size"
+      ]
+    },
+    {
+      "utility": "id",
+      "capabilities": [
+        "uid_gid"
+      ],
+      "commands": [
+        "ll-uid-get",
+        "ll-gid-get",
+        "ll-euid-get",
+        "ll-egid-get",
+        "ll-groups-get"
+      ]
+    },
+    {
+      "utility": "groups",
+      "capabilities": [
+        "uid_gid"
+      ],
+      "commands": [
+        "ll-groups-get"
+      ]
+    },
+    {
+      "utility": "whoami",
+      "capabilities": [
+        "uid_gid"
+      ],
+      "commands": [
+        "ll-uid-get",
+        "ll-groups-get"
+      ]
+    },
+    {
+      "utility": "test -rwx",
+      "capabilities": [
+        "access",
+        "stat"
+      ],
+      "commands": [
+        "ll-file-access",
+        "ll-file-stat"
+      ]
+    },
+    {
+      "utility": "ln",
+      "capabilities": [
+        "symlink",
+        "hardlink",
+        "unlink"
+      ],
+      "commands": [
+        "ll-symlink-create",
+        "ll-hardlink-create",
+        "ll-path-unlink"
+      ]
+    },
+    {
+      "utility": "readlink",
+      "capabilities": [
+        "readlink"
+      ],
+      "commands": [
+        "ll-symlink-read"
+      ]
+    },
+    {
+      "utility": "realpath",
+      "capabilities": [
+        "realpath"
+      ],
+      "commands": [
+        "ll-path-realpath"
+      ]
+    },
+    {
+      "utility": "mv",
+      "capabilities": [
+        "rename"
+      ],
+      "commands": [
+        "ll-path-rename"
+      ]
+    },
+    {
+      "utility": "rm",
+      "capabilities": [
+        "unlink"
+      ],
+      "commands": [
+        "ll-path-unlink"
+      ]
+    },
+    {
+      "utility": "rmdir",
+      "capabilities": [
+        "rmdir"
+      ],
+      "commands": [
+        "ll-path-rmdir"
+      ]
+    }
+  ],
+  "parameterTypes": {
+    "PATH": "string",
+    "SRC": "string",
+    "DST": "string",
+    "TARGET": "string",
+    "LINK": "string",
+    "HANDLE": "handle",
+    "BYTES": "bytes",
+    "SIZE": "size",
+    "OFFSET": "offset",
+    "WHENCE": "whence",
+    "MODE": "mode",
+    "ARGV": "argv",
+    "OPTIONS": "processOptions",
+    "ALGORITHM": "hashAlgorithm",
+    "ENCODING": "hashEncoding",
+    "UID": "uid",
+    "GID": "gid",
+    "SIGNAL": "signal",
+    "VALUE": "number",
+    "STREAM": "stream",
+    "ATIME": "timestamp",
+    "MTIME": "timestamp",
+    "CALLBACK": "function",
+    "PID": "pid",
+    "NAME": "string"
+  },
+  "typeSchemas": {
+    "stat": {
+      "fields": {
+        "kind": "string",
+        "size": "size",
+        "mode": "mode",
+        "uid": "uid",
+        "gid": "gid",
+        "dev": "number",
+        "rdev": "number",
+        "inode": "number",
+        "nlink": "number",
+        "blockSize": "number",
+        "blocks": "number",
+        "atimeNs": "timestamp",
+        "mtimeNs": "timestamp",
+        "ctimeNs": "timestamp",
+        "birthtimeNs": "timestamp"
+      },
+      "note": "取得できない時刻はnull。時刻はナノ秒BigInt"
+    },
+    "dirEntry": {
+      "fields": {
+        "name": "string",
+        "type": "string"
+      },
+      "note": "typeはfile/directory/symlink/other/unknown。EOFはnull"
+    },
+    "waitResult": {
+      "fields": {
+        "exitCode": "number",
+        "signal": "signal"
+      },
+      "note": "signalは正常終了時null"
+    },
+    "ttySize": {
+      "fields": {
+        "rows": "number",
+        "columns": "number"
+      },
+      "note": ""
+    },
+    "fsInfo": {
+      "fields": {
+        "blockSize": "number",
+        "blocks": "number",
+        "free": "number",
+        "available": "number",
+        "files": "number",
+        "freeFiles": "number",
+        "filesystemType": "string",
+        "filesystemId": "string"
+      },
+      "note": "OS固有フィールドはoptional"
+    }
+  },
+  "matrixRule": "supported = os[os] && runtimes[runtime]。falseが優先（どちらかがfalseならfalse）。両方がtrue/conditionalのときだけconditionalで環境依存になり、不成立はENOTSUP。"
+}

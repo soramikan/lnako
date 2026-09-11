@@ -38,6 +38,7 @@ pub const HandleKind = enum {
     file,
     directory,
     hash,
+    process,
 };
 
 pub const HandleId = packed struct(u64) {
@@ -248,6 +249,7 @@ pub const Capability = enum {
     argv_spawn,
     signal,
     tty_isatty,
+    hardlink,
     chmod,
     chown,
     access,
@@ -294,6 +296,7 @@ pub const Capability = enum {
             .argv_spawn,
             .signal,
             .tty_isatty,
+            .hardlink,
             => .portable_core,
             .chmod,
             .chown,
