@@ -9,6 +9,7 @@ const number_mod = shared.number_mod;
 const string_mod = shared.string_mod;
 const system_constant = shared.system_constant;
 const builtin_catalog = shared.builtin_catalog;
+const low_level_foundation = @import("../low_level_foundation.zig");
 const Runtime = aot_state.Runtime;
 const Value = aot_state.Value;
 const Tag = aot_state.Tag;
@@ -65,6 +66,9 @@ pub fn systemFunctionExistsBuiltin(runtime: *Runtime, values: []const Value) !Va
     for (builtin_catalog.default_names) |candidate| {
         if (std.mem.eql(u8, text, candidate)) return .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 };
     }
+    for (low_level_foundation.extension_command_names) |candidate| {
+        if (std.mem.eql(u8, text, candidate)) return .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 };
+    }
     return .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
 }
 
@@ -98,6 +102,19 @@ pub fn utf16FailureMessageUtf8Alloc(allocator: std.mem.Allocator, units: []const
 
 pub fn pendingExceptionMessageUtf8Alloc(runtime: *Runtime) anyerror![]u8 {
     if (!runtime.has_pending_exception) return error.NoPendingException;
+    if (runtime.pending_exception.tag == @intFromEnum(Tag.dictionary)) {
+        if (runtime.pending_exception.object()) |object| {
+            for (object.payload.dictionary.entries.items) |entry| {
+                const key = try valueUtf8LossyAlloc(runtime, entry.key);
+                defer runtime.allocator.free(key);
+                if (std.mem.eql(u8, key, "message")) {
+                    const message_units = try valueUtf16Alloc(runtime, entry.value);
+                    defer runtime.allocator.free(message_units);
+                    return utf16FailureMessageUtf8Alloc(runtime.allocator, message_units);
+                }
+            }
+        }
+    }
     const units = try valueUtf16Alloc(runtime, runtime.pending_exception);
     defer runtime.allocator.free(units);
     return utf16FailureMessageUtf8Alloc(runtime.allocator, units);

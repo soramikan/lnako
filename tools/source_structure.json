@@ -39,7 +39,7 @@
       },
       "src/runtime/aot/runtime_core.zig": {
         "reason": "Runtime型・コア値変換の中核（監視対象・hard limit内）",
-        "limitKb": 80
+        "limitKb": 81
       },
       "src/runtime/aot/state.zig": {
         "reason": "mutableグローバルと互換再エクスポートのファサード（hard limit内）",

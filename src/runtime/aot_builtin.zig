@@ -389,6 +389,16 @@ pub const Command = enum(u16) {
     system_end,
     system_path_basename,
     system_path_dirname,
+    // Issue #27の低レイヤーストリームI/O。G0でplugin_lowlevelへ登録した命令。
+    // 既存opcodeの安定性を保つため常に末尾へ追加する。
+    low_level_file_open,
+    low_level_file_close,
+    low_level_file_read_bytes,
+    low_level_file_write_bytes,
+    low_level_file_sync,
+    low_level_file_truncate,
+    low_level_capability_supported,
+    low_level_capability_list,
 };
 
 /// `エラー発生` is lowered to an IR throw terminator, not to the generic
@@ -859,6 +869,14 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "ファイル上書移動")) return .node_file_move_overwrite;
     if (std.mem.eql(u8, name, "ファイル削除")) return .node_file_delete;
     if (std.mem.eql(u8, name, "コンソールクリア")) return .node_console_clear;
+    if (std.mem.eql(u8, name, "ファイル開") or std.mem.eql(u8, name, "ファイル開く")) return .low_level_file_open;
+    if (std.mem.eql(u8, name, "ファイル閉") or std.mem.eql(u8, name, "ファイル閉じる")) return .low_level_file_close;
+    if (std.mem.eql(u8, name, "ファイルバイト読") or std.mem.eql(u8, name, "ファイルバイト読む")) return .low_level_file_read_bytes;
+    if (std.mem.eql(u8, name, "ファイルバイト書") or std.mem.eql(u8, name, "ファイルバイト書く")) return .low_level_file_write_bytes;
+    if (std.mem.eql(u8, name, "ファイル同期")) return .low_level_file_sync;
+    if (std.mem.eql(u8, name, "ファイル切詰")) return .low_level_file_truncate;
+    if (std.mem.eql(u8, name, "低レイヤー機能対応判定")) return .low_level_capability_supported;
+    if (std.mem.eql(u8, name, "低レイヤー機能一覧取得")) return .low_level_capability_list;
     return null;
 }
 

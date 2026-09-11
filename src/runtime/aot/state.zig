@@ -168,6 +168,11 @@ pub const nodeStdinValueBuiltin = node_file_module.nodeStdinValueBuiltin;
 pub const ensureAotStdin = node_file_module.ensureAotStdin;
 pub const aotFileCopyMoveWithIo = node_file_module.aotFileCopyMoveWithIo;
 
+const low_level_module = @import("low_level.zig");
+pub const lowLevelFileBuiltin = low_level_module.lowLevelFileBuiltin;
+pub const lowLevelCapabilitySupportedBuiltin = low_level_module.lowLevelCapabilitySupportedBuiltin;
+pub const lowLevelCapabilityListBuiltin = low_level_module.lowLevelCapabilityListBuiltin;
+
 const node_http_module = @import("node_http.zig");
 
 pub const nodePostDataBuiltin = node_http_module.nodePostDataBuiltin;

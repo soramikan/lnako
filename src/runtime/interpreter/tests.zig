@@ -9,6 +9,9 @@ const lower_ssa = @import("../../ir/lower_ssa.zig");
 const verifier = @import("../../ir/verifier.zig");
 const ir = @import("../../ir/nako_ir.zig");
 const plugin_node = @import("../../plugins/node.zig");
+const plugin_lowlevel = @import("../../plugins/lowlevel.zig");
+const low_level_foundation = @import("../low_level_foundation.zig");
+const low_level_io = @import("../low_level_io.zig");
 const prepared = @import("prepared.zig");
 
 const Interpreter = istate.Interpreter;
@@ -1382,4 +1385,131 @@ test "Interpreterのtrace未設定時はemitがロックを取得しない" {
     try std.testing.expectEqual(@as(u64, 0), global.lock_attempts);
     try std.testing.expectEqual(@as(u64, 0), literal.lock_attempts);
     try std.testing.expectEqual(@as(u64, 0), compat.lock_attempts);
+}
+
+const LowLevelTestHost = struct {
+    table: low_level_io.FileHandleTable,
+    io: std.Io,
+
+    fn init(allocator: std.mem.Allocator) LowLevelTestHost {
+        return .{ .table = low_level_io.FileHandleTable.init(allocator), .io = std.testing.io };
+    }
+
+    fn deinit(self: *LowLevelTestHost) void {
+        self.table.deinit(self.io);
+    }
+
+    fn openFile(pointer: *anyopaque, path: []const u8, mode: low_level_foundation.OpenMode, exclusive: bool) anyerror!u64 {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        return (try self.table.open(self.io, .{ .path = path, .mode = mode, .exclusive = exclusive })).raw();
+    }
+
+    fn closeFile(pointer: *anyopaque, raw: u64) anyerror!void {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        const removed = self.table.remove(low_level_foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+        removed.file.close(self.io);
+    }
+
+    fn readFileBytes(pointer: *anyopaque, raw: u64, buffer: []u8) anyerror!usize {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        const entry = self.table.find(low_level_foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+        return low_level_io.readAtCurrent(self.io, entry.file, buffer);
+    }
+
+    fn writeFileBytes(pointer: *anyopaque, raw: u64, bytes: []const u8) anyerror!usize {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        const entry = self.table.find(low_level_foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+        return low_level_io.writeAtCurrent(self.io, entry.file, bytes);
+    }
+
+    fn syncFile(pointer: *anyopaque, raw: u64) anyerror!void {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        const entry = self.table.find(low_level_foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+        return low_level_io.sync(self.io, entry.file);
+    }
+
+    fn truncateFile(pointer: *anyopaque, raw: u64, size: u64) anyerror!void {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        const entry = self.table.find(low_level_foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+        return low_level_io.setLength(self.io, entry.file, size);
+    }
+
+    fn context(self: *LowLevelTestHost) plugin_lowlevel.Context {
+        return .{
+            .context = self,
+            .openFileFn = openFile,
+            .closeFileFn = closeFile,
+            .readFileBytesFn = readFileBytes,
+            .writeFileBytesFn = writeFileBytes,
+            .syncFileFn = syncFile,
+            .truncateFileFn = truncateFile,
+        };
+    }
+};
+
+test "Interpreter低レイヤーはNUL/不正UTF-8を含むバイナリをchunked copyで一致させる" {
+    const allocator = std.testing.allocator;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(directory);
+    const source_path = try std.fs.path.join(allocator, &.{ directory, "input.bin" });
+    defer allocator.free(source_path);
+    const output_path = try std.fs.path.join(allocator, &.{ directory, "output.bin" });
+    defer allocator.free(output_path);
+
+    const fixture_size: usize = 200 * 1024;
+    const fixture = try allocator.alloc(u8, fixture_size);
+    defer allocator.free(fixture);
+    for (fixture, 0..) |*byte, index| {
+        byte.* = switch (index % 5) {
+            0 => 0,
+            1 => 0x80 + @as(u8, @truncate(index & 0x7f)),
+            2 => 0xff,
+            3 => 0xc3,
+            else => @truncate(index *% 31),
+        };
+    }
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "input.bin", .data = fixture });
+
+    const source = try std.fmt.allocPrint(allocator,
+        \\H=ファイル開("{s}","rb")
+        \\O=ファイル開("{s}","wb")
+        \\1の間、繰り返す
+        \\B=ファイルバイト読(H,65536)
+        \\もし、要素数(B)=0ならば、抜ける
+        \\ファイルバイト書(O,B)
+        \\ここまで
+        \\ファイル閉(H)
+        \\エラー監視
+        \\ファイル閉(H)
+        \\エラーならば
+        \\エラーメッセージ["code"]を表示
+        \\ここまで
+        \\ファイル閉(O)
+        \\
+    , .{ source_path, output_path });
+    defer allocator.free(source);
+
+    var fixture_compiled = try compileForTest(allocator, source);
+    defer fixture_compiled.ir_program.deinit();
+    defer fixture_compiled.hir_program.deinit();
+    defer fixture_compiled.analyzed.deinit();
+    defer fixture_compiled.parsed.deinit();
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = allocator };
+    defer host.deinit();
+    var low_host = LowLevelTestHost.init(allocator);
+    defer low_host.deinit();
+    var runtime_host = host.host();
+    runtime_host.lowlevel_context = low_host.context();
+    var interpreter = Interpreter.init(allocator, &runtime, fixture_compiled.ir_program, runtime_host);
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+
+    const output = try temporary.dir.readFileAlloc(std.testing.io, "output.bin", allocator, .limited(fixture_size + 16));
+    defer allocator.free(output);
+    try std.testing.expectEqualSlices(u8, fixture, output);
+    try std.testing.expect(std.mem.indexOf(u8, host.written(), "EBADF") != null);
 }

@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("../frontend/ast.zig");
 const diagnostic = @import("../frontend/diagnostic.zig");
 const builtin_catalog = @import("builtin_catalog.zig");
+const low_level_foundation = @import("../runtime/low_level_foundation.zig");
 
 pub const ScopeId = u32;
 pub const SymbolId = u32;
@@ -140,6 +141,7 @@ const Analyzer = struct {
 
     fn loadBuiltins(self: *Analyzer) !void {
         for (builtin_catalog.names) |name| try self.builtins.put(self.allocator, name, {});
+        for (low_level_foundation.extension_command_names) |name| try self.builtins.put(self.allocator, name, {});
         for ([_][]const u8{ "それ", "対象", "対象キー", "回数", "エラー内容" }) |name| try self.builtins.put(self.allocator, name, {});
     }
 
