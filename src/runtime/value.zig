@@ -312,7 +312,9 @@ pub const Dictionary = struct {
         if (self.kind != .structured_error) return null;
         const message_key = [_]u16{ 'm', 'e', 's', 's', 'a', 'g', 'e' };
         for (self.keys(), self.values()) |key, value| {
-            if (std.mem.eql(u16, key.units, &message_key)) return value;
+            if (std.mem.eql(u16, key.units, &message_key)) {
+                return if (value == .string) value else null;
+            }
         }
         return null;
     }

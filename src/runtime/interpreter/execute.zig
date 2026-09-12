@@ -298,8 +298,15 @@ pub fn executeFunction(self: *Interpreter, function: *const ir.Function, argumen
 }
 
 fn bindErrorMessage(self: *Interpreter, value: Value) !void {
-    const message = if (value == .dictionary) value.dictionary.structuredErrorMessage() orelse value else value;
-    try self.setGlobal("エラーメッセージ", message);
+    if (value == .dictionary and value.dictionary.kind == .structured_error) {
+        var message = value.dictionary.structuredErrorMessage() orelse try self.runtime.valueToString(value);
+        var roots = self.runtime.rootFrame();
+        defer roots.deinit();
+        try roots.protect(&message);
+        try self.setGlobal("エラーメッセージ", message);
+        return;
+    }
+    try self.setGlobal("エラーメッセージ", value);
 }
 
 pub fn errorMessageValue(self: *Interpreter, value: Value) !Value {

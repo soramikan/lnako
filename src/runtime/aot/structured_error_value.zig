@@ -158,6 +158,28 @@ test "AOTは非UTF-8パスでも構造化エラー値を生成できる" {
     try std.testing.expect(std.mem.indexOfScalar(u8, text, 0xff) == null);
 }
 
+test "AOTはmessageを非文字列にしても文字列化は止まらない" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+
+    const error_value = structured_error.classifyNative(.NOENT, "open", "/missing", null, null).?;
+    var roots = [_]Value{
+        try buildValue(&runtime, error_value),
+        aot_state.staticStringValue("message"),
+        numberValue(1),
+    };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    try runtime.setDictionary(&roots[0].object().?.payload.dictionary, roots[1], roots[2]);
+    const units = try aot_state.valueUtf16Alloc(&runtime, roots[0]);
+    defer runtime.allocator.free(units);
+    const text = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, units);
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("[object Object]", text);
+}
+
 fn expectDictionaryText(runtime: *Runtime, dictionary: Value, key: []const u16, expected: []const u8) !void {
     const property = aot_state.dictionaryProperty(dictionary, key);
     const units = try aot_state.valueUtf16Alloc(runtime, property);

@@ -152,11 +152,13 @@ pub export fn lnako_aot_exception_take(out: *state.Value) callconv(.c) void {
 fn structuredErrorCatchMessage(value: state.Value) state.Value {
     const object = value.object() orelse return value;
     if (value.tag != @intFromEnum(state.Tag.dictionary) or !object.structured_error) return value;
-    const message = state.dictionaryOwnProperty(value, &.{ 'm', 'e', 's', 's', 'a', 'g', 'e' }) orelse return value;
+    const message = state.dictionaryOwnProperty(value, &.{ 'm', 'e', 's', 's', 'a', 'g', 'e' }) orelse {
+        return state.staticStringValue("[object Object]");
+    };
     if (message.tag == @intFromEnum(state.Tag.utf16_string) or message.tag == @intFromEnum(state.Tag.static_utf8_string)) {
         return message;
     }
-    return value;
+    return state.staticStringValue("[object Object]");
 }
 
 pub export fn lnako_aot_exception_abort() callconv(.c) noreturn {
