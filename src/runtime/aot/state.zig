@@ -172,6 +172,7 @@ const low_level_module = @import("low_level.zig");
 pub const lowLevelFileBuiltin = low_level_module.lowLevelFileBuiltin;
 pub const lowLevelCapabilitySupportedBuiltin = low_level_module.lowLevelCapabilitySupportedBuiltin;
 pub const lowLevelCapabilityListBuiltin = low_level_module.lowLevelCapabilityListBuiltin;
+pub const handleIdFor = low_level_module.handleIdFor;
 
 const node_http_module = @import("node_http.zig");
 

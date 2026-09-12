@@ -302,9 +302,9 @@ pub const CliHost = struct {
         return &self.low_level_handles.?;
     }
 
-    fn lowLevelOpenFile(context: *anyopaque, path: []const u8, mode: lnako.runtime.low_level_foundation.OpenMode, exclusive: bool) anyerror!u64 {
+    fn lowLevelOpenFile(context: *anyopaque, path: []const u8, mode: lnako.runtime.low_level_foundation.OpenMode, exclusive: bool, sync: bool) anyerror!u64 {
         const self: *CliHost = @ptrCast(@alignCast(context));
-        const id = try self.lowLevelTable().open(self.io, .{ .path = path, .mode = mode, .exclusive = exclusive });
+        const id = try self.lowLevelTable().open(self.io, .{ .path = path, .mode = mode, .exclusive = exclusive, .sync = sync });
         return id.raw();
     }
 

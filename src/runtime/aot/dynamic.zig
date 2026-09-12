@@ -2,6 +2,7 @@ const std = @import("std");
 const aot_state = @import("state.zig");
 const shared = @import("shared.zig");
 const low_level = @import("low_level.zig");
+const plugin_lowlevel = @import("../../plugins/lowlevel.zig");
 
 const aot_builtin = shared.aot_builtin;
 const dynamic_ir = shared.dynamic_ir;
@@ -287,6 +288,14 @@ pub fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror
             return result;
         },
         .dictionary => {
+            if (low_level.handleIdFor(owner, value)) |id| {
+                var result = try state.value_runtime.createDictionary();
+                var roots = state.value_runtime.rootFrame();
+                defer roots.deinit();
+                try roots.protect(&result);
+                try plugin_lowlevel.rememberHandle(&state.interpreter.lowlevel_state, state.value_runtime.allocator(), result, id);
+                return result;
+            }
             if (value.object().?.toml_temporal) |temporal| {
                 return state.value_runtime.createTomlTemporal(temporal.kind, temporal.json_text, temporal.toml_text);
             }
@@ -348,6 +357,14 @@ pub fn dynamicToAotValue(state: *DynamicInterpreterState, value: dynamic_value.V
             break :blk result;
         },
         .dictionary => |dictionary| blk: {
+            if (plugin_lowlevel.lookupHandle(&state.interpreter.lowlevel_state, value)) |id| {
+                var result = try owner.createDictionary(&.{});
+                var result_roots = RootFrame{};
+                owner.pushRoots(&result_roots, @ptrCast(&result), 1);
+                defer owner.popRoots(&result_roots);
+                try low_level.rememberHandle(owner, result, id);
+                break :blk result;
+            }
             if (dictionary.kind == .toml_temporal) {
                 const temporal = dictionary.toml_temporal orelse return error.DynamicValueUnsupported;
                 break :blk owner.createTomlTemporal(temporal.kind, temporal.json_text, temporal.toml_text);

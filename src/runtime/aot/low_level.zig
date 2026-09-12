@@ -46,9 +46,9 @@ pub fn pluginContext(runtime: *Runtime) plugin_lowlevel.Context {
     };
 }
 
-fn pluginOpenFile(context: *anyopaque, path: []const u8, mode: foundation.OpenMode, exclusive: bool) anyerror!u64 {
+fn pluginOpenFile(context: *anyopaque, path: []const u8, mode: foundation.OpenMode, exclusive: bool, sync: bool) anyerror!u64 {
     const runtime: *Runtime = @ptrCast(@alignCast(context));
-    return (try table(runtime).open(io(runtime), .{ .path = path, .mode = mode, .exclusive = exclusive })).raw();
+    return (try table(runtime).open(io(runtime), .{ .path = path, .mode = mode, .exclusive = exclusive, .sync = sync })).raw();
 }
 
 fn pluginCloseFile(context: *anyopaque, raw: u64) anyerror!void {
@@ -80,6 +80,15 @@ fn pluginTruncateFile(context: *anyopaque, raw: u64, size: u64) anyerror!void {
     const runtime: *Runtime = @ptrCast(@alignCast(context));
     const entry = table(runtime).find(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
     return low_level_io.setLength(io(runtime), entry.file, size);
+}
+
+pub fn handleIdFor(runtime: *Runtime, value: Value) ?foundation.HandleId {
+    return findHandleId(runtime, value);
+}
+
+pub fn rememberHandle(runtime: *Runtime, value: Value, id: foundation.HandleId) !void {
+    const object = value.object() orelse return error.InvalidHandle;
+    try runtime.low_level_handle_ids.put(runtime.allocator, @intFromPtr(object), id.raw());
 }
 
 /// ハンドル値（AOT辞書）の同一性から `HandleId` を探す。偽造辞書や
@@ -122,6 +131,7 @@ fn openBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
         .path = path,
         .mode = parsed.mode,
         .exclusive = parsed.exclusive,
+        .sync = parsed.sync,
     }) catch |failure| {
         return throwIo(runtime, failure, foundation.stream_operations.open, path);
     };
@@ -458,7 +468,7 @@ test "AOT pluginContextはRuntimeのハンドル表へ開く" {
     defer std.testing.allocator.free(path);
 
     const context = pluginContext(&runtime);
-    const raw = try context.openFile(path, .write_create_truncate, false);
+    const raw = try context.openFile(path, .write_create_truncate, false, false);
     try std.testing.expectEqual(@as(usize, 2), try context.writeFileBytes(raw, "ok"));
     try context.closeFile(raw);
     try std.testing.expectEqual(@as(usize, 0), runtime.low_level_handles.?.len());

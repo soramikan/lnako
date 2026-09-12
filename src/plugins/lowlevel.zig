@@ -39,16 +39,16 @@ pub const State = struct {
 /// 公開しない。
 pub const Context = struct {
     context: *anyopaque,
-    openFileFn: ?*const fn (context: *anyopaque, path: []const u8, mode: foundation.OpenMode, exclusive: bool) anyerror!u64 = null,
+    openFileFn: ?*const fn (context: *anyopaque, path: []const u8, mode: foundation.OpenMode, exclusive: bool, sync: bool) anyerror!u64 = null,
     closeFileFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
     readFileBytesFn: ?*const fn (context: *anyopaque, raw: u64, buffer: []u8) anyerror!usize = null,
     writeFileBytesFn: ?*const fn (context: *anyopaque, raw: u64, bytes: []const u8) anyerror!usize = null,
     syncFileFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
     truncateFileFn: ?*const fn (context: *anyopaque, raw: u64, size: u64) anyerror!void = null,
 
-    pub fn openFile(self: Context, path: []const u8, mode: foundation.OpenMode, exclusive: bool) !u64 {
+    pub fn openFile(self: Context, path: []const u8, mode: foundation.OpenMode, exclusive: bool, sync: bool) !u64 {
         const function = self.openFileFn orelse return error.LowLevelIoUnavailable;
-        return function(self.context, path, mode, exclusive);
+        return function(self.context, path, mode, exclusive, sync);
     }
 
     pub fn closeFile(self: Context, raw: u64) !void {
@@ -170,7 +170,7 @@ fn openFile(runtime: *Runtime, state: *State, context: Context, effects: Effects
     const parsed = foundation.parseOpenMode(mode_text orelse "r") catch {
         return throwStructured(runtime, effects, .EINVAL, foundation.stream_operations.open, path, null, "開くmodeが不正です");
     };
-    const raw = context.openFile(path, parsed.mode, parsed.exclusive) catch |failure| {
+    const raw = context.openFile(path, parsed.mode, parsed.exclusive, parsed.sync) catch |failure| {
         return throwIo(runtime, effects, failure, foundation.stream_operations.open, path);
     };
     errdefer context.closeFile(raw) catch {};
@@ -179,9 +179,7 @@ fn openFile(runtime: *Runtime, state: *State, context: Context, effects: Effects
     var roots = runtime.rootFrame();
     defer roots.deinit();
     try roots.protect(&handle);
-    try state.handle_ids.put(state.memory(runtime.allocator()), @intFromPtr(handle.dictionary), id);
-    errdefer _ = state.handle_ids.remove(@intFromPtr(handle.dictionary));
-    try state.handle_values.append(state.memory(runtime.allocator()), handle);
+    try rememberHandle(state, runtime.allocator(), handle, id);
     return handle;
 }
 
@@ -261,9 +259,17 @@ fn truncateFile(runtime: *Runtime, state: *State, context: Context, effects: Eff
     return .undefined;
 }
 
-fn lookupHandle(state: *State, value: Value) ?foundation.HandleId {
+pub fn lookupHandle(state: *State, value: Value) ?foundation.HandleId {
     if (value != .dictionary) return null;
     return state.handle_ids.get(@intFromPtr(value.dictionary));
+}
+
+pub fn rememberHandle(state: *State, allocator: std.mem.Allocator, value: Value, id: foundation.HandleId) !void {
+    if (value != .dictionary) return error.InvalidHandle;
+    const memory = state.memory(allocator);
+    try state.handle_ids.put(memory, @intFromPtr(value.dictionary), id);
+    errdefer _ = state.handle_ids.remove(@intFromPtr(value.dictionary));
+    try state.handle_values.append(memory, value);
 }
 
 fn forgetHandle(state: *State, value: Value) void {

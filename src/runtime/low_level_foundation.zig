@@ -482,6 +482,7 @@ pub const InvalidModeError = error{InvalidMode};
 pub const ParsedOpenMode = struct {
     mode: OpenMode,
     exclusive: bool = false,
+    sync: bool = false,
 };
 
 /// Node.js `fs.open` の文字列flagsを `OpenMode` へ写す。`r`/`r+`/`w`/`w+`/
@@ -495,6 +496,8 @@ pub fn parseOpenMode(text: []const u8) InvalidModeError!ParsedOpenMode {
     var seen_a = false;
     var plus = false;
     var exclusive = false;
+    var binary = false;
+    var sync = false;
     for (text) |character| switch (character) {
         'r' => {
             if (seen_r or seen_w or seen_a) return error.InvalidMode;
@@ -516,8 +519,17 @@ pub fn parseOpenMode(text: []const u8) InvalidModeError!ParsedOpenMode {
             if (exclusive) return error.InvalidMode;
             exclusive = true;
         },
-        'b', 's' => {},
-        else => return error.InvalidMode,
+        'b' => {
+            if (binary) return error.InvalidMode;
+            binary = true;
+        },
+        's' => {
+            if (sync) return error.InvalidMode;
+            sync = true;
+        },
+        else => {
+            return error.InvalidMode;
+        },
     };
     const mode: OpenMode = if (seen_r)
         (if (plus) .read_write else .read)
@@ -528,7 +540,7 @@ pub fn parseOpenMode(text: []const u8) InvalidModeError!ParsedOpenMode {
     else
         return error.InvalidMode;
     if (exclusive and !mode.creates()) return error.InvalidMode;
-    return .{ .mode = mode, .exclusive = exclusive };
+    return .{ .mode = mode, .exclusive = exclusive, .sync = sync };
 }
 
 pub fn openModeFromNodeFlags(text: []const u8) InvalidModeError!OpenMode {
@@ -747,6 +759,10 @@ test "Nodeの文字列flagsはOpenModeへ写り、不正modeはInvalidModeにな
     try std.testing.expectEqual(OpenMode.write_read_create_truncate, try openModeFromNodeFlags("w+x"));
     try std.testing.expectEqual(OpenMode.write_create_truncate, try openModeFromNodeFlags("xw"));
     try std.testing.expect((try parseOpenMode("wx+")).exclusive);
+    try std.testing.expect((try parseOpenMode("w+bs")).sync);
+    try std.testing.expect((try parseOpenMode("rs")).sync);
+    try std.testing.expectError(error.InvalidMode, openModeFromNodeFlags("rbb"));
+    try std.testing.expectError(error.InvalidMode, openModeFromNodeFlags("ssw"));
     try std.testing.expectError(error.InvalidMode, openModeFromNodeFlags(""));
     try std.testing.expectError(error.InvalidMode, openModeFromNodeFlags("x"));
     try std.testing.expectError(error.InvalidMode, openModeFromNodeFlags("rx"));

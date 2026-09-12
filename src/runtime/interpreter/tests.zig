@@ -1399,9 +1399,9 @@ const LowLevelTestHost = struct {
         self.table.deinit(self.io);
     }
 
-    fn openFile(pointer: *anyopaque, path: []const u8, mode: low_level_foundation.OpenMode, exclusive: bool) anyerror!u64 {
+    fn openFile(pointer: *anyopaque, path: []const u8, mode: low_level_foundation.OpenMode, exclusive: bool, sync: bool) anyerror!u64 {
         const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
-        return (try self.table.open(self.io, .{ .path = path, .mode = mode, .exclusive = exclusive })).raw();
+        return (try self.table.open(self.io, .{ .path = path, .mode = mode, .exclusive = exclusive, .sync = sync })).raw();
     }
 
     fn closeFile(pointer: *anyopaque, raw: u64) anyerror!void {

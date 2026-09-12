@@ -7307,3 +7307,43 @@ test "AOT低レイヤーはNUL/不正UTF-8を含むバイナリをchunked copy�
     Sha256.hash(output, &output_digest, .{});
     try std.testing.expectEqualSlices(u8, &source_digest, &output_digest);
 }
+
+test "AOT動的変換は低レイヤーハンドルのHandleIdを引き継ぐ" {
+    const plugin_lowlevel = @import("../../plugins/lowlevel.zig");
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    const dynamic_state = try DynamicInterpreterState.init(std.testing.allocator, active);
+    active.dynamic_state = dynamic_state;
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const path = try std.fs.path.join(std.testing.allocator, &.{ directory, "handle-bridge.txt" });
+    defer std.testing.allocator.free(path);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "handle-bridge.txt", .data = "ok" });
+
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+    roots[0] = try runtimeUtf8String(active, path);
+    roots[1] = try runtimeUtf8String(active, "r");
+    const handle = try state.lowLevelFileBuiltin(active, .low_level_file_open, &.{ roots[0], roots[1] });
+    const original = state.handleIdFor(active, handle).?;
+
+    var dynamic_roots = dynamic_state.value_runtime.rootFrame();
+    defer dynamic_roots.deinit();
+    var dynamic_handle = try aotToDynamicValue(dynamic_state, handle);
+    try dynamic_roots.protect(&dynamic_handle);
+    try std.testing.expectEqual(original, plugin_lowlevel.lookupHandle(&dynamic_state.interpreter.lowlevel_state, dynamic_handle).?);
+
+    const recovered = try dynamicToAotValue(dynamic_state, dynamic_handle);
+    try std.testing.expectEqual(original, state.handleIdFor(active, recovered).?);
+}

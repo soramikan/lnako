@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const foundation = @import("low_level_foundation.zig");
 
 /// Issue #27のストリームI/Oが使う実OSハンドル表。OSのファイル記述子や
@@ -85,8 +86,10 @@ pub const FileHandleTable = struct {
     pub fn open(self: *FileHandleTable, io: std.Io, options: OpenOptions) OpenError!foundation.HandleId {
         const file = try openFile(io, options);
         errdefer file.close(io);
+        const os_append = options.mode.isAppend() and applyPosixOpenFlag(file, "APPEND");
+        if (options.sync and !applyPosixOpenFlag(file, "SYNC")) return error.LowLevelIoUnavailable;
         const id = try self.insert(file);
-        self.find(id).?.append = options.mode.isAppend();
+        self.find(id).?.append = options.mode.isAppend() and !os_append;
         return id;
     }
 };
@@ -95,6 +98,7 @@ pub const OpenOptions = struct {
     path: []const u8,
     mode: foundation.OpenMode,
     exclusive: bool = false,
+    sync: bool = false,
 };
 
 pub const OpenError = anyerror;
@@ -118,27 +122,27 @@ fn openFile(io: std.Io, options: OpenOptions) OpenError!std.Io.File {
             .truncate = true,
             .exclusive = options.exclusive,
         }),
-        .append_create => {
-            const file = try std.Io.Dir.cwd().createFile(io, options.path, .{
-                .read = false,
-                .truncate = false,
-                .exclusive = options.exclusive,
-            });
-            errdefer file.close(io);
-            try seekToEnd(io, file);
-            return file;
-        },
-        .append_read_create => {
-            const file = try std.Io.Dir.cwd().createFile(io, options.path, .{
-                .read = true,
-                .truncate = false,
-                .exclusive = options.exclusive,
-            });
-            errdefer file.close(io);
-            try seekToEnd(io, file);
-            return file;
-        },
+        .append_create => return std.Io.Dir.cwd().createFile(io, options.path, .{
+            .read = false,
+            .truncate = false,
+            .exclusive = options.exclusive,
+        }),
+        .append_read_create => return std.Io.Dir.cwd().createFile(io, options.path, .{
+            .read = true,
+            .truncate = false,
+            .exclusive = options.exclusive,
+        }),
     }
+}
+
+fn applyPosixOpenFlag(file: std.Io.File, comptime field: []const u8) bool {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return false;
+    if (!@hasField(std.posix.O, field)) return false;
+    const get_rc = std.posix.system.fcntl(file.handle, std.posix.F.GETFL, @as(usize, 0));
+    if (std.posix.errno(get_rc) != .SUCCESS) return false;
+    var flags: usize = @intCast(get_rc);
+    flags |= @as(usize, 1) << @bitOffsetOf(std.posix.O, field);
+    return std.posix.errno(std.posix.system.fcntl(file.handle, std.posix.F.SETFL, flags)) == .SUCCESS;
 }
 
 fn seekToEnd(io: std.Io, file: std.Io.File) !void {
@@ -264,6 +268,51 @@ test "ハンドル表のappendは既存内容の末尾へ書く" {
     var buffer: [8]u8 = undefined;
     const read = try readAtCurrent(std.testing.io, table.find(reader_id).?.file, &buffer);
     try std.testing.expectEqualSlices(u8, "abcd", buffer[0..read]);
+}
+
+test "a+は開いた直後に先頭から読め、append書込みは末尾へ足す" {
+    var table = FileHandleTable.init(std.testing.allocator);
+    defer table.deinit(std.testing.io);
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const path = try std.fs.path.join(std.testing.allocator, &.{ directory, "append-read.txt" });
+    defer std.testing.allocator.free(path);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "append-read.txt", .data = "abc" });
+
+    const id = try table.open(std.testing.io, .{ .path = path, .mode = .append_read_create });
+    const entry = table.find(id).?;
+    var buffer: [8]u8 = undefined;
+    const read = try readAtCurrent(std.testing.io, entry.file, &buffer);
+    try std.testing.expectEqualSlices(u8, "abc", buffer[0..read]);
+    try std.testing.expectEqual(@as(usize, 1), try writeHandle(std.testing.io, entry, "X"));
+
+    const reader_id = try table.open(std.testing.io, .{ .path = path, .mode = .read });
+    const second = try readAtCurrent(std.testing.io, table.find(reader_id).?.file, &buffer);
+    try std.testing.expectEqualSlices(u8, "abcX", buffer[0..second]);
+}
+
+test "二つのappendハンドルは順に末尾へ書く" {
+    var table = FileHandleTable.init(std.testing.allocator);
+    defer table.deinit(std.testing.io);
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const path = try std.fs.path.join(std.testing.allocator, &.{ directory, "append-two.txt" });
+    defer std.testing.allocator.free(path);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "append-two.txt", .data = "abc" });
+
+    const first = try table.open(std.testing.io, .{ .path = path, .mode = .append_create });
+    const second = try table.open(std.testing.io, .{ .path = path, .mode = .append_create });
+    try std.testing.expectEqual(@as(usize, 1), try writeHandle(std.testing.io, table.find(first).?, "X"));
+    try std.testing.expectEqual(@as(usize, 1), try writeHandle(std.testing.io, table.find(second).?, "Y"));
+
+    const reader_id = try table.open(std.testing.io, .{ .path = path, .mode = .read });
+    var buffer: [8]u8 = undefined;
+    const read = try readAtCurrent(std.testing.io, table.find(reader_id).?.file, &buffer);
+    try std.testing.expectEqualSlices(u8, "abcXY", buffer[0..read]);
 }
 
 test "appendモードは切詰め後も末尾へ書く" {
