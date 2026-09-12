@@ -576,6 +576,7 @@ pub const Runtime = struct {
     standard_property_cache: std.ArrayList(StandardPropertyCacheEntry) = .empty,
     low_level_handles: ?low_level_io.FileHandleTable = null,
     low_level_handle_ids: std.AutoHashMapUnmanaged(usize, u64) = .empty,
+    low_level_handle_by_id: std.AutoHashMapUnmanaged(u64, usize) = .empty,
     /// Canonical storage for emitted string literals.  `lnako_aot_string_literal`
     /// fills each slot once so every use of the same literal shares one string
     /// object; the list also keeps the cached strings reachable for GC.
@@ -606,6 +607,7 @@ pub const Runtime = struct {
         if (self.process_io_initialized) self.process_io.deinit();
         if (self.low_level_handles) |*table| table.deinit(io);
         self.low_level_handle_ids.deinit(self.allocator);
+        self.low_level_handle_by_id.deinit(self.allocator);
         if (self.dynamic_deinit) |deinit_dynamic| deinit_dynamic(self);
         for (self.dynamic_promise_bridges.items) |bridge| self.allocator.destroy(bridge);
         self.dynamic_promise_bridges.deinit(self.allocator);

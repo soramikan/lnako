@@ -7346,4 +7346,9 @@ test "AOT動的変換は低レイヤーハンドルのHandleIdを引き継ぐ" {
 
     const recovered = try dynamicToAotValue(dynamic_state, dynamic_handle);
     try std.testing.expectEqual(original, state.handleIdFor(active, recovered).?);
+    try std.testing.expectEqual(handle.payload, recovered.payload);
+
+    var again = try aotToDynamicValue(dynamic_state, handle);
+    try dynamic_roots.protect(&again);
+    try std.testing.expectEqual(@intFromPtr(dynamic_handle.dictionary), @intFromPtr(again.dictionary));
 }

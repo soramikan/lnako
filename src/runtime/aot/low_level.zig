@@ -86,9 +86,23 @@ pub fn handleIdFor(runtime: *Runtime, value: Value) ?foundation.HandleId {
     return findHandleId(runtime, value);
 }
 
+pub fn handleValueForId(runtime: *Runtime, id: foundation.HandleId) ?Value {
+    const pointer = runtime.low_level_handle_by_id.get(id.raw()) orelse return null;
+    return .{ .tag = @intFromEnum(Tag.dictionary), .payload = pointer };
+}
+
 pub fn rememberHandle(runtime: *Runtime, value: Value, id: foundation.HandleId) !void {
     const object = value.object() orelse return error.InvalidHandle;
-    try runtime.low_level_handle_ids.put(runtime.allocator, @intFromPtr(object), id.raw());
+    const pointer = @intFromPtr(object);
+    try runtime.low_level_handle_ids.put(runtime.allocator, pointer, id.raw());
+    errdefer _ = runtime.low_level_handle_ids.remove(pointer);
+    try runtime.low_level_handle_by_id.put(runtime.allocator, id.raw(), pointer);
+}
+
+pub fn forgetHandleId(runtime: *Runtime, id: foundation.HandleId) void {
+    if (runtime.low_level_handle_by_id.fetchRemove(id.raw())) |entry| {
+        _ = runtime.low_level_handle_ids.remove(entry.value);
+    }
 }
 
 /// ハンドル値（AOT辞書）の同一性から `HandleId` を探す。偽造辞書や
@@ -100,8 +114,7 @@ fn findHandleId(runtime: *Runtime, value: Value) ?foundation.HandleId {
 }
 
 fn forgetHandle(runtime: *Runtime, value: Value) void {
-    const object = value.object() orelse return;
-    _ = runtime.low_level_handle_ids.remove(@intFromPtr(object));
+    if (findHandleId(runtime, value)) |id| forgetHandleId(runtime, id);
 }
 
 fn fileFor(runtime: *Runtime, value: Value) ?*low_level_io.OpenHandle {
@@ -110,8 +123,7 @@ fn fileFor(runtime: *Runtime, value: Value) ?*low_level_io.OpenHandle {
 }
 
 fn openBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
-    if (arguments.len < 1) return error.InvalidArgumentCount;
-    if (!isString(arguments[0])) {
+    if (arguments.len < 1 or !isString(arguments[0])) {
         return throwStructured(runtime, .EINVAL, foundation.stream_operations.open, null, null, "pathは文字列である必要があります");
     }
     const path = try valueUtf8LossyAlloc(runtime, arguments[0]);
@@ -142,13 +154,14 @@ fn openBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     var roots = RootFrame{};
     runtime.pushRoots(&roots, @ptrCast(&handle), 1);
     defer runtime.popRoots(&roots);
-    const key = @intFromPtr(handle.object().?);
-    try runtime.low_level_handle_ids.put(runtime.allocator, key, id.raw());
+    try rememberHandle(runtime, handle, id);
     return handle;
 }
 
 fn closeBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
-    if (arguments.len < 1) return error.InvalidArgumentCount;
+    if (arguments.len < 1) {
+        return throwStructured(runtime, .EBADF, foundation.stream_operations.close, null, null, "無効なハンドルです");
+    }
     const id = findHandleId(runtime, arguments[0]) orelse {
         return throwStructured(runtime, .EBADF, foundation.stream_operations.close, null, null, "無効なハンドルです");
     };
@@ -161,7 +174,9 @@ fn closeBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
 }
 
 fn readBytesBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
-    if (arguments.len < 1) return error.InvalidArgumentCount;
+    if (arguments.len < 1) {
+        return throwStructured(runtime, .EBADF, foundation.stream_operations.read, null, null, "無効なハンドルです");
+    }
     const entry = fileFor(runtime, arguments[0]) orelse {
         return throwStructured(runtime, .EBADF, foundation.stream_operations.read, null, null, "無効なハンドルです");
     };
@@ -186,7 +201,12 @@ fn readBytesBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
 }
 
 fn writeBytesBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
-    if (arguments.len < 2) return error.InvalidArgumentCount;
+    if (arguments.len < 1) {
+        return throwStructured(runtime, .EBADF, foundation.stream_operations.write, null, null, "無効なハンドルです");
+    }
+    if (arguments.len < 2) {
+        return throwStructured(runtime, .EINVAL, foundation.stream_operations.write, null, null, "書き込む値はBytesである必要があります");
+    }
     const entry = fileFor(runtime, arguments[0]) orelse {
         return throwStructured(runtime, .EBADF, foundation.stream_operations.write, null, null, "無効なハンドルです");
     };
@@ -200,7 +220,9 @@ fn writeBytesBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
 }
 
 fn syncBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
-    if (arguments.len < 1) return error.InvalidArgumentCount;
+    if (arguments.len < 1) {
+        return throwStructured(runtime, .EBADF, foundation.stream_operations.fsync, null, null, "無効なハンドルです");
+    }
     const entry = fileFor(runtime, arguments[0]) orelse {
         return throwStructured(runtime, .EBADF, foundation.stream_operations.fsync, null, null, "無効なハンドルです");
     };
@@ -211,7 +233,12 @@ fn syncBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
 }
 
 fn truncateBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
-    if (arguments.len < 2) return error.InvalidArgumentCount;
+    if (arguments.len < 1) {
+        return throwStructured(runtime, .EBADF, foundation.stream_operations.ftruncate, null, null, "無効なハンドルです");
+    }
+    if (arguments.len < 2) {
+        return throwStructured(runtime, .EINVAL, foundation.stream_operations.ftruncate, null, null, "切詰める大きさが不正です");
+    }
     const entry = fileFor(runtime, arguments[0]) orelse {
         return throwStructured(runtime, .EBADF, foundation.stream_operations.ftruncate, null, null, "無効なハンドルです");
     };
@@ -238,7 +265,7 @@ pub fn lowLevelFileBuiltin(runtime: *Runtime, command: aot_builtin.Command, argu
 
 pub fn lowLevelCapabilitySupportedBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     _ = runtime;
-    if (arguments.len < 1) return error.InvalidArgumentCount;
+    if (arguments.len < 1) return .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
     const supported = capabilitySupported(arguments[0]);
     return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(supported) };
 }
@@ -415,6 +442,14 @@ test "AOT低レイヤーはread/write/truncate/closeをハンドル同一性で�
     try std.testing.expect(runtime.low_level_handles.?.len() == 0);
     try std.testing.expectError(error.NakoException, closeBuiltin(&runtime, &.{handle}));
     try std.testing.expectError(error.NakoException, writeBytesBuiltin(&runtime, &.{ handle, roots[1] }));
+}
+
+test "AOT低レイヤーの引数なしopenはEINVAL、機能対応判定はfalse" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    try std.testing.expectError(error.NakoException, openBuiltin(&runtime, &.{}));
+    const supported = try lowLevelCapabilitySupportedBuiltin(&runtime, &.{});
+    try std.testing.expectEqual(@as(u64, 0), supported.payload);
 }
 
 test "AOT低レイヤーは非文字列のpathとmodeをEINVALにする" {

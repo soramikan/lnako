@@ -86,10 +86,8 @@ pub const FileHandleTable = struct {
     pub fn open(self: *FileHandleTable, io: std.Io, options: OpenOptions) OpenError!foundation.HandleId {
         const file = try openFile(io, options);
         errdefer file.close(io);
-        const os_append = options.mode.isAppend() and applyPosixOpenFlag(file, "APPEND");
-        if (options.sync and !applyPosixOpenFlag(file, "SYNC")) return error.LowLevelIoUnavailable;
         const id = try self.insert(file);
-        self.find(id).?.append = options.mode.isAppend() and !os_append;
+        self.find(id).?.append = options.mode.isAppend() and !posixOpenUsed(options);
         return id;
     }
 };
@@ -108,41 +106,76 @@ pub const SyncError = anyerror;
 pub const SetLengthError = anyerror;
 pub const CloseError = anyerror;
 
+fn posixOpenUsed(options: OpenOptions) bool {
+    return switch (builtin.os.tag) {
+        .windows, .wasi => false,
+        else => options.mode.isAppend() or options.sync,
+    };
+}
+
 fn openFile(io: std.Io, options: OpenOptions) OpenError!std.Io.File {
-    switch (options.mode) {
-        .read => return std.Io.Dir.cwd().openFile(io, options.path, .{ .mode = .read_only }),
-        .read_write => return std.Io.Dir.cwd().openFile(io, options.path, .{ .mode = .read_write }),
-        .write_create_truncate => return std.Io.Dir.cwd().createFile(io, options.path, .{
+    if (posixOpenUsed(options)) return openPosix(io, options);
+    if (options.sync) return error.LowLevelIoUnavailable;
+    return switch (options.mode) {
+        .read => std.Io.Dir.cwd().openFile(io, options.path, .{ .mode = .read_only }),
+        .read_write => std.Io.Dir.cwd().openFile(io, options.path, .{ .mode = .read_write }),
+        .write_create_truncate => std.Io.Dir.cwd().createFile(io, options.path, .{
             .read = false,
             .truncate = true,
             .exclusive = options.exclusive,
         }),
-        .write_read_create_truncate => return std.Io.Dir.cwd().createFile(io, options.path, .{
+        .write_read_create_truncate => std.Io.Dir.cwd().createFile(io, options.path, .{
             .read = true,
             .truncate = true,
             .exclusive = options.exclusive,
         }),
-        .append_create => return std.Io.Dir.cwd().createFile(io, options.path, .{
+        .append_create => std.Io.Dir.cwd().createFile(io, options.path, .{
             .read = false,
             .truncate = false,
             .exclusive = options.exclusive,
         }),
-        .append_read_create => return std.Io.Dir.cwd().createFile(io, options.path, .{
+        .append_read_create => std.Io.Dir.cwd().createFile(io, options.path, .{
             .read = true,
             .truncate = false,
             .exclusive = options.exclusive,
         }),
+    };
+}
+
+fn openPosix(io: std.Io, options: OpenOptions) OpenError!std.Io.File {
+    switch (builtin.os.tag) {
+        .windows, .wasi => return error.LowLevelIoUnavailable,
+        else => {
+            var flags: std.posix.O = .{
+                .ACCMODE = switch (options.mode) {
+                    .read => .RDONLY,
+                    .write_create_truncate, .append_create => .WRONLY,
+                    .read_write, .write_read_create_truncate, .append_read_create => .RDWR,
+                },
+                .CREAT = options.mode.creates(),
+                .TRUNC = options.mode.isTruncate(),
+                .EXCL = options.exclusive,
+            };
+            if (@hasField(std.posix.O, "CLOEXEC")) flags.CLOEXEC = true;
+            if (@hasField(std.posix.O, "LARGEFILE")) flags.LARGEFILE = true;
+            if (options.mode.isAppend()) flags.APPEND = true;
+            if (options.sync) flags.SYNC = true;
+            const fd = try std.posix.openat(std.Io.Dir.cwd().handle, options.path, flags, 0o666);
+            const file = std.Io.File{ .handle = fd, .flags = .{ .nonblocking = false } };
+            errdefer file.close(io);
+            if (options.mode.isAppend() and !posixFlagIsSet(file, "APPEND")) return error.LowLevelIoUnavailable;
+            if (options.sync and !posixFlagIsSet(file, "SYNC")) return error.LowLevelIoUnavailable;
+            return file;
+        },
     }
 }
 
-fn applyPosixOpenFlag(file: std.Io.File, comptime field: []const u8) bool {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return false;
+fn posixFlagIsSet(file: std.Io.File, comptime field: []const u8) bool {
     if (!@hasField(std.posix.O, field)) return false;
     const get_rc = std.posix.system.fcntl(file.handle, std.posix.F.GETFL, @as(usize, 0));
     if (std.posix.errno(get_rc) != .SUCCESS) return false;
-    var flags: usize = @intCast(get_rc);
-    flags |= @as(usize, 1) << @bitOffsetOf(std.posix.O, field);
-    return std.posix.errno(std.posix.system.fcntl(file.handle, std.posix.F.SETFL, flags)) == .SUCCESS;
+    const flags: usize = @intCast(get_rc);
+    return flags & (@as(usize, 1) << @bitOffsetOf(std.posix.O, field)) != 0;
 }
 
 fn seekToEnd(io: std.Io, file: std.Io.File) !void {
@@ -313,6 +346,10 @@ test "二つのappendハンドルは順に末尾へ書く" {
     var buffer: [8]u8 = undefined;
     const read = try readAtCurrent(std.testing.io, table.find(reader_id).?.file, &buffer);
     try std.testing.expectEqualSlices(u8, "abcXY", buffer[0..read]);
+    if (builtin.os.tag != .windows and builtin.os.tag != .wasi) {
+        try std.testing.expect(!table.find(first).?.append);
+        try std.testing.expect(!table.find(second).?.append);
+    }
 }
 
 test "appendモードは切詰め後も末尾へ書く" {

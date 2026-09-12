@@ -289,6 +289,7 @@ pub fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror
         },
         .dictionary => {
             if (low_level.handleIdFor(owner, value)) |id| {
+                if (plugin_lowlevel.handleForId(&state.interpreter.lowlevel_state, id)) |existing| return existing;
                 var result = try state.value_runtime.createDictionary();
                 var roots = state.value_runtime.rootFrame();
                 defer roots.deinit();
@@ -358,6 +359,7 @@ pub fn dynamicToAotValue(state: *DynamicInterpreterState, value: dynamic_value.V
         },
         .dictionary => |dictionary| blk: {
             if (plugin_lowlevel.lookupHandle(&state.interpreter.lowlevel_state, value)) |id| {
+                if (low_level.handleValueForId(owner, id)) |existing| break :blk existing;
                 var result = try owner.createDictionary(&.{});
                 var result_roots = RootFrame{};
                 owner.pushRoots(&result_roots, @ptrCast(&result), 1);

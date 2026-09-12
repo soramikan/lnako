@@ -14,11 +14,13 @@ pub const Dictionary = value_mod.Dictionary;
 pub const State = struct {
     allocator: ?std.mem.Allocator = null,
     handle_ids: std.AutoHashMapUnmanaged(usize, foundation.HandleId) = .empty,
+    handle_by_id: std.AutoHashMapUnmanaged(u64, Value) = .empty,
     handle_values: std.ArrayList(Value) = .empty,
 
     pub fn deinit(self: *State, allocator: std.mem.Allocator) void {
         const actual = self.allocator orelse allocator;
         self.handle_ids.deinit(actual);
+        self.handle_by_id.deinit(actual);
         self.handle_values.deinit(actual);
         self.* = undefined;
     }
@@ -264,21 +266,39 @@ pub fn lookupHandle(state: *State, value: Value) ?foundation.HandleId {
     return state.handle_ids.get(@intFromPtr(value.dictionary));
 }
 
+pub fn handleForId(state: *State, id: foundation.HandleId) ?Value {
+    return state.handle_by_id.get(id.raw());
+}
+
 pub fn rememberHandle(state: *State, allocator: std.mem.Allocator, value: Value, id: foundation.HandleId) !void {
     if (value != .dictionary) return error.InvalidHandle;
     const memory = state.memory(allocator);
     try state.handle_ids.put(memory, @intFromPtr(value.dictionary), id);
     errdefer _ = state.handle_ids.remove(@intFromPtr(value.dictionary));
+    try state.handle_by_id.put(memory, id.raw(), value);
+    errdefer _ = state.handle_by_id.remove(id.raw());
     try state.handle_values.append(memory, value);
 }
 
 fn forgetHandle(state: *State, value: Value) void {
-    _ = state.handle_ids.remove(@intFromPtr(value.dictionary));
-    for (state.handle_values.items, 0..) |candidate, index| {
-        if (candidate == .dictionary and candidate.dictionary == value.dictionary) {
-            _ = state.handle_values.swapRemove(index);
-            break;
+    if (lookupHandle(state, value)) |id| forgetHandleId(state, id);
+}
+
+pub fn forgetHandleId(state: *State, id: foundation.HandleId) void {
+    _ = state.handle_by_id.remove(id.raw());
+    var index: usize = 0;
+    while (index < state.handle_values.items.len) {
+        const candidate = state.handle_values.items[index];
+        if (candidate == .dictionary) {
+            if (state.handle_ids.get(@intFromPtr(candidate.dictionary))) |mapped| {
+                if (mapped.index == id.index and mapped.generation == id.generation) {
+                    _ = state.handle_ids.remove(@intFromPtr(candidate.dictionary));
+                    _ = state.handle_values.swapRemove(index);
+                    continue;
+                }
+            }
         }
+        index += 1;
     }
 }
 
