@@ -136,7 +136,7 @@ pub fn descriptionFor(code: PortableErrorCode) []const u8 {
 
 pub fn displayPathAlloc(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     if (comptime builtin.os.tag == .windows) {
-        return std.unicode.wtf8ToUtf8LossyAlloc(allocator, path);
+        if (std.unicode.wtf8ToUtf8LossyAlloc(allocator, path)) |display| return display else |_| {}
     }
     var text = try string_mod.String.fromUtf8Lossy(allocator, path);
     defer text.deinit();

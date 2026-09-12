@@ -49,12 +49,12 @@
 
 | state | entry |
 | --- | ---: |
-| `verified` | <!-- attestation:verified -->527<!-- /attestation:verified --> |
-| `trace-confirmed-unattested` | <!-- attestation:trace -->0<!-- /attestation:trace --> |
+| `verified` | <!-- attestation:verified -->0<!-- /attestation:verified --> |
+| `trace-confirmed-unattested` | <!-- attestation:trace -->527<!-- /attestation:trace --> |
 | `unverified` | <!-- attestation:unverified -->0<!-- /attestation:unverified --> |
 
 <!-- attestation:description-start -->
-これは、全527 entryの実行証拠が追跡された現行attestation snapshot（`attestations/current.json` → `attestations/34402208204/`）で署名済みであることを示します。`verified` は、`attestations/current.json` が指す現行snapshotのsource manifest（`240004aaf937e2bc7a06057718e6072823549a613a7712a98863d407c0637ab4`）と現行ソースが一致し、かつcanonical証拠ファイルのdigestが署名subjectに含まれる場合にのみ維持される状態です。sourceに変更を加えた場合、過去snapshotの `verified: 527` を流用せず、mainマージ後の新しいCI attestationを再取得して `current.json` を更新します。
+現行sourceは追跡中のattestation snapshotとsource manifestが一致しないため、`attestations/current.json` は置かず canonical `evidence.json` は `trace-confirmed-unattested: 527` です。過去snapshotの `verified: 527` は流用しません。mainマージ後の新しいCI attestationを再取得して `current.json` を更新します。
 <!-- attestation:description-end -->
 
 0.1.1の最終sourceでコードを変更した場合は、過去snapshotの527件をそのままリリース証拠として流用しません。最終source manifestに対してCIとattestationを取り直し、release preflightの `sync_compat_evidence.mjs --check` と `check_tracked_dispatch_attestation.mjs` を通過させます。

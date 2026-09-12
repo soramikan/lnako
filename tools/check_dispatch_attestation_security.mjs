@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { platformIndependentOfficialComparison } from "./dispatch_evidence_semantics.mjs";
 import { trackedAttestationSubjects } from "./lib/evidence/attested_files.mjs";
+import { computeSourceManifestSha256Sync } from "./lib/evidence/manifest.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const temporary = await mkdtemp(join(tmpdir(), "lnako-attestation-security-"));
@@ -14,6 +15,7 @@ try {
   evidence.attestation = null;
   evidence.provenance.lnako.commit = commit;
   evidence.provenance.lnako.dirty = false;
+  evidence.provenance.lnako.sourceManifestSha256 = computeSourceManifestSha256Sync(root).sha256;
 
   const evidencePath = resolve(temporary, "dispatch-evidence.json");
   const evidenceBytes = Buffer.from(`${JSON.stringify(evidence, null, 2)}\n`, "utf8");
