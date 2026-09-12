@@ -94,7 +94,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .namespace_pop and command != .timer_wait and command != .timer_stop_all and command != .promise_all and command != .async_noop and command != .node_console_clear and command != .node_file_process_stop and command != .system_debug_breakpoint_wait and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .line_image_notify_discontinued and command != .node_exit and command != .system_end and command != .node_hash_names and command != .node_random_uuid and command != .node_stdin_all and command != .node_stdin_line and command != .node_stdin_character and command != .node_network_ipv4 and command != .node_network_ipv6 and command != .system_hatena_configure and command != .system_nadesiko and command != .system_nadesiko_continue) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .namespace_pop and command != .timer_wait and command != .timer_stop_all and command != .promise_all and command != .async_noop and command != .node_console_clear and command != .node_file_process_stop and command != .system_debug_breakpoint_wait and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .line_image_notify_discontinued and command != .node_exit and command != .system_end and command != .node_hash_names and command != .node_random_uuid and command != .node_stdin_all and command != .node_stdin_line and command != .node_stdin_character and command != .node_network_ipv4 and command != .node_network_ipv6 and command != .system_hatena_configure and command != .system_nadesiko and command != .system_nadesiko_continue and command != .low_level_capability_list and command != .low_level_capability_supported and command != .low_level_file_open and command != .low_level_file_close and command != .low_level_file_read_bytes and command != .low_level_file_write_bytes and command != .low_level_file_sync and command != .low_level_file_truncate) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -434,6 +434,27 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = state.nodeFileSaveBuiltin(runtime, actual) catch |failure| {
                 runtime.setFailure(failure);
+                return;
+            };
+        },
+        .low_level_file_open, .low_level_file_close, .low_level_file_read_bytes, .low_level_file_write_bytes, .low_level_file_sync, .low_level_file_truncate => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = state.lowLevelFileBuiltin(runtime, command, actual) catch |failure| {
+                if (!runtime.has_pending_exception) runtime.setFailure(failure);
+                return;
+            };
+        },
+        .low_level_capability_supported => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = state.lowLevelCapabilitySupportedBuiltin(runtime, actual) catch |failure| {
+                if (!runtime.has_pending_exception) runtime.setFailure(failure);
+                return;
+            };
+        },
+        .low_level_capability_list => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = state.lowLevelCapabilityListBuiltin(runtime, actual) catch |failure| {
+                if (!runtime.has_pending_exception) runtime.setFailure(failure);
                 return;
             };
         },

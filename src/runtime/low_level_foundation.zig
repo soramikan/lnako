@@ -319,6 +319,17 @@ pub const Capability = enum {
     }
 };
 
+/// このlnakoランタイムが実際に提供するcapability。既知でも未実装のものは
+/// `低レイヤー機能対応判定` でfalse、実行時は `ENOTSUP` になる。G0の
+/// `低レイヤー機能一覧取得` は真偽ではなく既知IDの全集を返すため、ここには
+/// 含めない。
+pub fn capabilityImplemented(capability: Capability) bool {
+    return switch (capability) {
+        .stream_file_io, .truncate => true,
+        else => false,
+    };
+}
+
 pub const RuntimeKind = enum {
     lnako_interpreter,
     lnako_aot,
@@ -373,6 +384,227 @@ pub const CommonContract = struct {
     pub const cnako_may_omit_lnako_native = true;
     pub const no_javascript_in_default_lnako_runtime = true;
 };
+
+/// Issue #27のストリームI/O命令名。Interpreter / AOT / 拡張builtin登録が
+/// 共通で参照する正本である。既存527命令と衝突しない名前を固定する。
+/// なでしこの字句解析は動詞の送り仮名を落とすため、dispatch名は語幹
+/// （`ファイル開` 等）になる。利用者が書く `ファイル開く` 等は同じ命令へ
+/// 正規化される。`user_forms` は動的文字列実行の互換用である。
+pub const stream_commands = struct {
+    pub const open = "ファイル開";
+    pub const close = "ファイル閉";
+    pub const read_bytes = "ファイルバイト読";
+    pub const write_bytes = "ファイルバイト書";
+    pub const sync = "ファイル同期";
+    pub const truncate = "ファイル切詰";
+
+    pub const open_user = "ファイル開く";
+    pub const close_user = "ファイル閉じる";
+    pub const read_bytes_user = "ファイルバイト読む";
+    pub const write_bytes_user = "ファイルバイト書く";
+};
+
+/// 標準cnako 527件の外にある低レイヤー命令名。`builtin_catalog.names` は
+/// 公式527件と同期して生成されるため変更せず、解析器のbuiltin解決だけに
+/// 追加する。`低レイヤー機能対応判定` / `低レイヤー機能一覧取得` も含む。
+pub const CommandArity = struct {
+    min: u8,
+    max: u8,
+    operation: []const u8,
+};
+
+pub fn commandArity(name: []const u8) ?CommandArity {
+    if (std.mem.eql(u8, name, stream_commands.open) or std.mem.eql(u8, name, stream_commands.open_user)) {
+        return .{ .min = 1, .max = 2, .operation = stream_operations.open };
+    }
+    if (std.mem.eql(u8, name, stream_commands.close) or std.mem.eql(u8, name, stream_commands.close_user)) {
+        return .{ .min = 1, .max = 1, .operation = stream_operations.close };
+    }
+    if (std.mem.eql(u8, name, stream_commands.read_bytes) or std.mem.eql(u8, name, stream_commands.read_bytes_user)) {
+        return .{ .min = 2, .max = 2, .operation = stream_operations.read };
+    }
+    if (std.mem.eql(u8, name, stream_commands.write_bytes) or std.mem.eql(u8, name, stream_commands.write_bytes_user)) {
+        return .{ .min = 2, .max = 2, .operation = stream_operations.write };
+    }
+    if (std.mem.eql(u8, name, stream_commands.sync)) {
+        return .{ .min = 1, .max = 1, .operation = stream_operations.fsync };
+    }
+    if (std.mem.eql(u8, name, stream_commands.truncate)) {
+        return .{ .min = 2, .max = 2, .operation = stream_operations.ftruncate };
+    }
+    if (std.mem.eql(u8, name, capability_supported_command)) {
+        return .{ .min = 1, .max = 1, .operation = "capability" };
+    }
+    if (std.mem.eql(u8, name, capability_list_command)) {
+        return .{ .min = 0, .max = 0, .operation = "capability" };
+    }
+    return null;
+}
+
+pub const extension_command_names = [_][]const u8{
+    stream_commands.open,
+    stream_commands.close,
+    stream_commands.read_bytes,
+    stream_commands.write_bytes,
+    stream_commands.sync,
+    stream_commands.truncate,
+    stream_commands.open_user,
+    stream_commands.close_user,
+    stream_commands.read_bytes_user,
+    stream_commands.write_bytes_user,
+    capability_supported_command,
+    capability_list_command,
+};
+
+/// 低レイヤー命令が失敗したときに返す構造化エラーの操作名（ASCII）。
+/// NodeのSystemError `syscall` 相当。エラー辞書の `operation` へ入れる。
+pub const stream_operations = struct {
+    pub const open = "open";
+    pub const close = "close";
+    pub const read = "read";
+    pub const write = "write";
+    pub const fsync = "fsync";
+    pub const ftruncate = "ftruncate";
+};
+
+/// 開くときのアクセス様式。`ファイル開く` のmode引数から決まる。
+/// 位置（read/write/append）と生成・切詰の有無だけを固定し、
+/// OS固有のO_APPEND等の表現は実装側へ委ねる。
+pub const OpenMode = enum {
+    read,
+    read_write,
+    write_create_truncate,
+    write_read_create_truncate,
+    append_create,
+    append_read_create,
+
+    pub fn isRead(self: OpenMode) bool {
+        return switch (self) {
+            .read, .read_write, .write_read_create_truncate, .append_read_create => true,
+            else => false,
+        };
+    }
+
+    pub fn isWrite(self: OpenMode) bool {
+        return switch (self) {
+            .read_write, .write_create_truncate, .write_read_create_truncate, .append_create, .append_read_create => true,
+            else => false,
+        };
+    }
+
+    pub fn isAppend(self: OpenMode) bool {
+        return switch (self) {
+            .append_create, .append_read_create => true,
+            else => false,
+        };
+    }
+
+    pub fn isTruncate(self: OpenMode) bool {
+        return switch (self) {
+            .write_create_truncate, .write_read_create_truncate => true,
+            else => false,
+        };
+    }
+
+    pub fn creates(self: OpenMode) bool {
+        return switch (self) {
+            .write_create_truncate, .write_read_create_truncate, .append_create, .append_read_create => true,
+            else => false,
+        };
+    }
+};
+
+pub const InvalidModeError = error{InvalidMode};
+
+pub const ParsedOpenMode = struct {
+    mode: OpenMode,
+    exclusive: bool = false,
+    sync: bool = false,
+};
+
+/// Node.js `fs.open` の文字列flagsを `OpenMode` へ写す。`r`/`r+`/`w`/`w+`/
+/// `a`/`a+` に修飾子 `b`/`x`/`s` を組み合わせられる。`x` は生成系のmodeでのみ
+/// 有効であり、未知の文字や `x` の不正使用は `error.InvalidMode` にする。
+/// 数値flags（`O_RDONLY`等）はG0で未凍結のため受け付けない。
+pub fn parseOpenMode(text: []const u8) InvalidModeError!ParsedOpenMode {
+    if (text.len == 0) return error.InvalidMode;
+    var seen_r = false;
+    var seen_w = false;
+    var seen_a = false;
+    var plus = false;
+    var exclusive = false;
+    var binary = false;
+    var sync = false;
+    for (text) |character| switch (character) {
+        'r' => {
+            if (seen_r or seen_w or seen_a) return error.InvalidMode;
+            seen_r = true;
+        },
+        'w' => {
+            if (seen_r or seen_w or seen_a) return error.InvalidMode;
+            seen_w = true;
+        },
+        'a' => {
+            if (seen_r or seen_w or seen_a) return error.InvalidMode;
+            seen_a = true;
+        },
+        '+' => {
+            if (plus) return error.InvalidMode;
+            plus = true;
+        },
+        'x' => {
+            if (exclusive) return error.InvalidMode;
+            exclusive = true;
+        },
+        'b' => {
+            if (binary) return error.InvalidMode;
+            binary = true;
+        },
+        's' => {
+            if (sync) return error.InvalidMode;
+            sync = true;
+        },
+        else => {
+            return error.InvalidMode;
+        },
+    };
+    const mode: OpenMode = if (seen_r)
+        (if (plus) .read_write else .read)
+    else if (seen_w)
+        (if (plus) .write_read_create_truncate else .write_create_truncate)
+    else if (seen_a)
+        (if (plus) .append_read_create else .append_create)
+    else
+        return error.InvalidMode;
+    if (exclusive and !mode.creates()) return error.InvalidMode;
+    return .{ .mode = mode, .exclusive = exclusive, .sync = sync };
+}
+
+pub fn openModeFromNodeFlags(text: []const u8) InvalidModeError!OpenMode {
+    return (try parseOpenMode(text)).mode;
+}
+
+/// 低レイヤー命令の失敗をportable codeへ写す。写せない失敗は `null` を返し、
+/// 呼び出し側が既定値（`EINVAL` または `ENOTSUP`）へ丸める。native codeは
+/// この関数では追跡せず、公開エラー辞書では `null` を許容する。
+pub fn portableCodeForFailure(failure: anyerror) ?PortableErrorCode {
+    return switch (failure) {
+        error.FileNotFound, error.NotFound => .ENOENT,
+        error.AccessDenied, error.PermissionDenied => .EACCES,
+        error.SymLinkLoop => .ELOOP,
+        error.IsDir => .EISDIR,
+        error.NotDir => .ENOTDIR,
+        error.PathAlreadyExists, error.AlreadyExists => .EEXIST,
+        error.ReadOnlyFileSystem => .EROFS,
+        error.NoSpaceLeft, error.DiskQuota, error.FileTooBig => .ENOSPC,
+        error.ProcessFdQuotaExceeded => .EMFILE,
+        error.SystemFdQuotaExceeded => .ENFILE,
+        error.NotOpenForReading, error.NotOpenForWriting, error.BadFileDescriptor => .EBADF,
+        error.BrokenPipe => .EPIPE,
+        error.LowLevelIoUnavailable => .ENOTSUP,
+        else => null,
+    };
+}
 
 test "HandleIdはindexを下位32bit、generationを上位32bitに置く" {
     const id = HandleId{ .index = 1, .generation = 2 };
@@ -473,6 +705,9 @@ test "構造化エラーのキーはNode SystemErrorへ写せる" {
 
 test "capability識別子はsnake_caseで分類が閉じている" {
     try std.testing.expectEqual(CapabilityClass.portable_core, Capability.stream_file_io.class());
+    try std.testing.expect(capabilityImplemented(.stream_file_io));
+    try std.testing.expect(capabilityImplemented(.truncate));
+    try std.testing.expect(!capabilityImplemented(.termios));
     try std.testing.expectEqual(CapabilityClass.posix_extension, Capability.chmod.class());
     try std.testing.expectEqual(CapabilityClass.lnako_native, Capability.seek_data.class());
     try std.testing.expectEqual(Capability.statfs, Capability.fromId("statfs").?);
@@ -534,4 +769,72 @@ test "InterpreterとAOTは同一OSで一致し、cnakoはnative拡張を省略�
     try std.testing.expect(CommonContract.no_javascript_in_default_lnako_runtime);
     try std.testing.expectEqual(RuntimeKind.lnako_interpreter, .lnako_interpreter);
     try std.testing.expectEqual(OsKind.macos, .macos);
+}
+
+test "ストリームI/O命令名はファイル接頭辞を持ち既存527件と衝突しない" {
+    try std.testing.expect(std.mem.startsWith(u8, stream_commands.open, naming.file_prefix));
+    try std.testing.expect(std.mem.startsWith(u8, stream_commands.read_bytes, naming.file_prefix));
+    try std.testing.expect(!isExampleReservedStandardCommandName(stream_commands.open));
+    try std.testing.expect(!isExampleReservedStandardCommandName(stream_commands.close));
+    try std.testing.expect(!isExampleReservedStandardCommandName(stream_commands.read_bytes));
+    try std.testing.expect(!isExampleReservedStandardCommandName(stream_commands.write_bytes));
+    try std.testing.expect(!isExampleReservedStandardCommandName(stream_commands.sync));
+    try std.testing.expect(!isExampleReservedStandardCommandName(stream_commands.truncate));
+    try std.testing.expectEqualStrings("open", stream_operations.open);
+    try std.testing.expectEqualStrings("ftruncate", stream_operations.ftruncate);
+    try std.testing.expectEqual(@as(u8, 1), commandArity(stream_commands.close).?.max);
+    try std.testing.expectEqual(@as(u8, 2), commandArity(stream_commands.open).?.max);
+    try std.testing.expectEqual(@as(u8, 0), commandArity(capability_list_command).?.max);
+}
+
+test "Nodeの文字列flagsはOpenModeへ写り、不正modeはInvalidModeになる" {
+    try std.testing.expectEqual(OpenMode.read, try openModeFromNodeFlags("r"));
+    try std.testing.expectEqual(OpenMode.read_write, try openModeFromNodeFlags("r+"));
+    try std.testing.expectEqual(OpenMode.write_create_truncate, try openModeFromNodeFlags("w"));
+    try std.testing.expectEqual(OpenMode.write_read_create_truncate, try openModeFromNodeFlags("w+"));
+    try std.testing.expectEqual(OpenMode.append_create, try openModeFromNodeFlags("a"));
+    try std.testing.expectEqual(OpenMode.append_read_create, try openModeFromNodeFlags("a+"));
+    try std.testing.expectEqual(OpenMode.read, try openModeFromNodeFlags("rb"));
+    try std.testing.expectEqual(OpenMode.write_read_create_truncate, try openModeFromNodeFlags("w+b"));
+    try std.testing.expectEqual(OpenMode.write_read_create_truncate, try openModeFromNodeFlags("w+bs"));
+    try std.testing.expectEqual(OpenMode.write_create_truncate, try openModeFromNodeFlags("wx"));
+    try std.testing.expectEqual(OpenMode.read_write, try openModeFromNodeFlags("rb+"));
+    try std.testing.expectEqual(OpenMode.write_read_create_truncate, try openModeFromNodeFlags("w+x"));
+    try std.testing.expectEqual(OpenMode.write_create_truncate, try openModeFromNodeFlags("xw"));
+    try std.testing.expect((try parseOpenMode("wx+")).exclusive);
+    try std.testing.expect((try parseOpenMode("w+bs")).sync);
+    try std.testing.expect((try parseOpenMode("rs")).sync);
+    try std.testing.expectError(error.InvalidMode, openModeFromNodeFlags("rbb"));
+    try std.testing.expectError(error.InvalidMode, openModeFromNodeFlags("ssw"));
+    try std.testing.expectError(error.InvalidMode, openModeFromNodeFlags(""));
+    try std.testing.expectError(error.InvalidMode, openModeFromNodeFlags("x"));
+    try std.testing.expectError(error.InvalidMode, openModeFromNodeFlags("rx"));
+    try std.testing.expectError(error.InvalidMode, openModeFromNodeFlags("r+x"));
+    try std.testing.expectError(error.InvalidMode, openModeFromNodeFlags("q"));
+    try std.testing.expectError(error.InvalidMode, openModeFromNodeFlags("rq"));
+    try std.testing.expect(OpenMode.read.isRead());
+    try std.testing.expect(OpenMode.read_write.isWrite());
+    try std.testing.expect(OpenMode.append_create.isAppend());
+    try std.testing.expect(OpenMode.write_create_truncate.isTruncate());
+    try std.testing.expect(OpenMode.write_read_create_truncate.creates());
+    try std.testing.expect(!OpenMode.read.creates());
+    try std.testing.expect(!OpenMode.read_write.creates());
+}
+
+test "portableCodeForFailureはI/O失敗をportable codeへ写す" {
+    try std.testing.expectEqual(PortableErrorCode.ENOENT, portableCodeForFailure(error.FileNotFound).?);
+    try std.testing.expectEqual(PortableErrorCode.EACCES, portableCodeForFailure(error.AccessDenied).?);
+    try std.testing.expectEqual(PortableErrorCode.EACCES, portableCodeForFailure(error.PermissionDenied).?);
+    try std.testing.expectEqual(PortableErrorCode.EISDIR, portableCodeForFailure(error.IsDir).?);
+    try std.testing.expectEqual(PortableErrorCode.ENOTDIR, portableCodeForFailure(error.NotDir).?);
+    try std.testing.expectEqual(PortableErrorCode.EEXIST, portableCodeForFailure(error.PathAlreadyExists).?);
+    try std.testing.expectEqual(PortableErrorCode.EROFS, portableCodeForFailure(error.ReadOnlyFileSystem).?);
+    try std.testing.expectEqual(PortableErrorCode.ENOSPC, portableCodeForFailure(error.NoSpaceLeft).?);
+    try std.testing.expectEqual(PortableErrorCode.EMFILE, portableCodeForFailure(error.ProcessFdQuotaExceeded).?);
+    try std.testing.expectEqual(PortableErrorCode.ENFILE, portableCodeForFailure(error.SystemFdQuotaExceeded).?);
+    try std.testing.expectEqual(PortableErrorCode.ELOOP, portableCodeForFailure(error.SymLinkLoop).?);
+    try std.testing.expectEqual(PortableErrorCode.EBADF, portableCodeForFailure(error.NotOpenForReading).?);
+    try std.testing.expectEqual(PortableErrorCode.EBADF, portableCodeForFailure(error.NotOpenForWriting).?);
+    try std.testing.expectEqual(PortableErrorCode.EPIPE, portableCodeForFailure(error.BrokenPipe).?);
+    try std.testing.expect(portableCodeForFailure(error.OutOfMemory) == null);
 }

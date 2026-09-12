@@ -35,6 +35,7 @@ pub const runtime = struct {
     pub const system_constant = @import("runtime/system_constant.zig");
     pub const error_message = @import("runtime/error_message.zig");
     pub const low_level_foundation = @import("runtime/low_level_foundation.zig");
+    pub const low_level_io = @import("runtime/low_level_io.zig");
     pub const low_level_catalog = @import("runtime/low_level_catalog.zig");
     pub const string = @import("runtime/string.zig");
     pub const bigint = @import("runtime/bigint.zig");
@@ -63,6 +64,7 @@ pub const plugins = struct {
     pub const caniuse = @import("plugins/caniuse.zig");
     pub const kansuji = @import("plugins/kansuji.zig");
     pub const native = @import("plugins/native.zig");
+    pub const lowlevel = @import("plugins/lowlevel.zig");
 };
 
 pub const backend = struct {
@@ -157,6 +159,7 @@ test {
     std.testing.refAllDecls(runtime.system_constant);
     std.testing.refAllDecls(runtime.error_message);
     std.testing.refAllDecls(runtime.low_level_foundation);
+    std.testing.refAllDecls(runtime.low_level_io);
     std.testing.refAllDecls(runtime.low_level_catalog);
     std.testing.refAllDecls(runtime.string);
     std.testing.refAllDecls(runtime.bigint);
@@ -179,6 +182,7 @@ test {
     std.testing.refAllDecls(plugins.caniuse);
     std.testing.refAllDecls(plugins.kansuji);
     std.testing.refAllDecls(plugins.native);
+    std.testing.refAllDecls(plugins.lowlevel);
     std.testing.refAllDecls(backend.llvm.api);
     std.testing.refAllDecls(backend.llvm.module);
     std.testing.refAllDecls(backend.llvm.compiler);

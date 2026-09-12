@@ -30,7 +30,7 @@
 
 ## 値とメモリ
 
-ランタイムの文字列はUTF-16 code unitを保持し、Windowsのwide argvやunpaired surrogateも同じ表現で扱います。数値はbinary64、整数範囲を超える値はBigIntとして区別します。配列はholeとown propertyを区別し、辞書は挿入順を保持します。低レイヤー命令が共有するBytes、Handle ID、64-bit offset、timestamp、portable error、capabilityの契約は [G0 Foundation API](low-level-api/G0_FOUNDATION.md) を正本とし、命令名・助詞・引数順・戻り値・エラー契約とOS別/実行経路別matrix、Core Utilities逆引きは [低レイヤーAPIカタログ](low-level-api/catalog.json) を正本とします。capabilityの計画matrixは [CAPABILITY_MATRIX.md](low-level-api/CAPABILITY_MATRIX.md) を参照してください。
+ランタイムの文字列はUTF-16 code unitを保持し、Windowsのwide argvやunpaired surrogateも同じ表現で扱います。数値はbinary64、整数範囲を超える値はBigIntとして区別します。配列はholeとown propertyを区別し、辞書は挿入順を保持します。低レイヤー命令が共有するBytes、Handle ID、64-bit offset、timestamp、portable error、capabilityの契約は [G0 Foundation API](low-level-api/G0_FOUNDATION.md) を正本とし、命令名・助詞・引数順・戻り値・エラー契約とOS別/実行経路別matrix、Core Utilities逆引きは [低レイヤーAPIカタログ](low-level-api/catalog.json) を正本とします。capabilityの計画matrixは [CAPABILITY_MATRIX.md](low-level-api/CAPABILITY_MATRIX.md) を参照してください。バイナリ対応のストリームI/Oとハンドル管理は [Stream I/O API](low-level-api/STREAM_IO.md) に実装契約を固定します。
 
 ヒープ値は型付きrootを使うmark-and-sweep GCで管理します。Interpreterの一時値、AOTの生成値、Promiseやtimerの保留callbackがrootから外れるタイミングを追跡し、workerからGC値を直接参照しない設計にします。
 

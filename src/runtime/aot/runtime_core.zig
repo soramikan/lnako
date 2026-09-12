@@ -9,6 +9,7 @@ const http_ingress = @import("../../http_ingress.zig");
 const byte_storage = @import("byte_storage.zig");
 const csv_state = @import("csv_state.zig");
 const async_types = @import("async_types.zig");
+const low_level_io = @import("../low_level_io.zig");
 
 const builtin = shared.builtin;
 const aot_builtin = shared.aot_builtin;
@@ -570,9 +571,13 @@ pub const Runtime = struct {
     // 埋め込みinterpreterと全pluginを静的参照し、dead-stripできなくなる。
     dynamic_deinit: ?*const fn (*Runtime) void = null,
     dynamic_drain: ?*const fn (*Runtime) anyerror!bool = null,
+    dynamic_forget_handle: ?*const fn (*Runtime, u64) void = null,
     dynamic_promise_bridges: std.ArrayList(*DynamicPromiseBridge) = .empty,
     dynamic_function_bridges: std.ArrayList(*AotFunctionBridge) = .empty,
     standard_property_cache: std.ArrayList(StandardPropertyCacheEntry) = .empty,
+    low_level_handles: ?low_level_io.FileHandleTable = null,
+    low_level_handle_ids: std.AutoHashMapUnmanaged(usize, u64) = .empty,
+    low_level_handle_by_id: std.AutoHashMapUnmanaged(u64, usize) = .empty,
     /// Canonical storage for emitted string literals.  `lnako_aot_string_literal`
     /// fills each slot once so every use of the same literal shares one string
     /// object; the list also keeps the cached strings reachable for GC.
@@ -601,6 +606,9 @@ pub const Runtime = struct {
         while (self.process_tasks.pop()) |task| task.deinit(self.allocator, true);
         self.process_tasks.deinit(self.allocator);
         if (self.process_io_initialized) self.process_io.deinit();
+        if (self.low_level_handles) |*table| table.deinit(io);
+        self.low_level_handle_ids.deinit(self.allocator);
+        self.low_level_handle_by_id.deinit(self.allocator);
         if (self.dynamic_deinit) |deinit_dynamic| deinit_dynamic(self);
         for (self.dynamic_promise_bridges.items) |bridge| self.allocator.destroy(bridge);
         self.dynamic_promise_bridges.deinit(self.allocator);
@@ -1068,6 +1076,10 @@ pub const Runtime = struct {
         for (self.process_tasks.items) |task| self.markValue(task.callback);
         for (self.standard_property_cache.items) |entry| self.markValue(entry.value);
         for (self.literal_values.items) |value| self.markValue(value);
+        var low_level_handles = self.low_level_handle_ids.iterator();
+        while (low_level_handles.next()) |entry| {
+            self.markValue(.{ .tag = @intFromEnum(Tag.dictionary), .payload = entry.key_ptr.* });
+        }
         while (self.grey) |object| {
             self.grey = object.grey_next;
             object.grey_next = null;

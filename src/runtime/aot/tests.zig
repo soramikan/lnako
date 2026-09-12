@@ -7239,3 +7239,120 @@ test "AOT ObjectはGC回収で解放され次の生成に影響しない" {
     try std.testing.expectEqual(@as(usize, 2), runtime.object_count);
     try std.testing.expect(runtime.counters.object_high_water >= 2);
 }
+
+test "AOT低レイヤーはNUL/不正UTF-8を含むバイナリをchunked copyでSHA-256一致させる" {
+    const Sha256 = std.crypto.hash.sha2.Sha256;
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const source_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "input.bin" });
+    defer std.testing.allocator.free(source_path);
+    const output_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "output.bin" });
+    defer std.testing.allocator.free(output_path);
+
+    const fixture_size: usize = 256 * 1024;
+    const fixture = try std.testing.allocator.alloc(u8, fixture_size);
+    defer std.testing.allocator.free(fixture);
+    var seed: u64 = 0x1234_5678_9abc_def0;
+    for (fixture, 0..) |*byte, index| {
+        seed ^= seed >> 12;
+        seed ^= seed << 25;
+        seed ^= seed >> 27;
+        seed = seed *% 0x2545f4914f6cdd1d;
+        byte.* = switch (index % 4) {
+            0 => 0,
+            1 => 0x80 + @as(u8, @truncate(index & 0x7f)),
+            2 => 0xff,
+            else => @truncate(seed),
+        };
+    }
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "input.bin", .data = fixture });
+
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtimeUtf8String(&runtime, source_path);
+    roots[1] = try runtimeUtf8String(&runtime, "rb");
+    roots[2] = try runtimeUtf8String(&runtime, output_path);
+    roots[3] = try runtimeUtf8String(&runtime, "wb");
+    const in_handle = try state.lowLevelFileBuiltin(&runtime, .low_level_file_open, &.{ roots[0], roots[1] });
+    const out_handle = try state.lowLevelFileBuiltin(&runtime, .low_level_file_open, &.{ roots[2], roots[3] });
+    roots[4] = in_handle;
+    roots[5] = out_handle;
+
+    var copied: usize = 0;
+    while (true) {
+        const request = numberValue(@floatFromInt(@min(64 * 1024, fixture_size - copied)));
+        roots[0] = try state.lowLevelFileBuiltin(&runtime, .low_level_file_read_bytes, &.{ in_handle, request });
+        const chunk = roots[0].object().?.payload.byte_buffer.bytes;
+        if (chunk.len == 0) break;
+        _ = try state.lowLevelFileBuiltin(&runtime, .low_level_file_write_bytes, &.{ out_handle, roots[0] });
+        copied += chunk.len;
+        if (copied >= fixture_size) break;
+    }
+    try std.testing.expectEqual(fixture_size, copied);
+    _ = try state.lowLevelFileBuiltin(&runtime, .low_level_file_close, &.{in_handle});
+    _ = try state.lowLevelFileBuiltin(&runtime, .low_level_file_close, &.{out_handle});
+
+    const output = try temporary.dir.readFileAlloc(std.testing.io, "output.bin", std.testing.allocator, .limited(fixture_size + 16));
+    defer std.testing.allocator.free(output);
+    var source_digest: [32]u8 = undefined;
+    var output_digest: [32]u8 = undefined;
+    Sha256.hash(fixture, &source_digest, .{});
+    Sha256.hash(output, &output_digest, .{});
+    try std.testing.expectEqualSlices(u8, &source_digest, &output_digest);
+}
+
+test "AOT動的変換は低レイヤーハンドルのHandleIdを引き継ぐ" {
+    const plugin_lowlevel = @import("../../plugins/lowlevel.zig");
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    const dynamic_state = try DynamicInterpreterState.init(std.testing.allocator, active);
+    active.dynamic_state = dynamic_state;
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const path = try std.fs.path.join(std.testing.allocator, &.{ directory, "handle-bridge.txt" });
+    defer std.testing.allocator.free(path);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "handle-bridge.txt", .data = "ok" });
+
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+    roots[0] = try runtimeUtf8String(active, path);
+    roots[1] = try runtimeUtf8String(active, "r");
+    const handle = try state.lowLevelFileBuiltin(active, .low_level_file_open, &.{ roots[0], roots[1] });
+    const original = state.handleIdFor(active, handle).?;
+
+    var dynamic_roots = dynamic_state.value_runtime.rootFrame();
+    defer dynamic_roots.deinit();
+    var dynamic_handle = try aotToDynamicValue(dynamic_state, handle);
+    try dynamic_roots.protect(&dynamic_handle);
+    try std.testing.expectEqual(original, plugin_lowlevel.lookupHandle(&dynamic_state.interpreter.lowlevel_state, dynamic_handle).?);
+
+    const recovered = try dynamicToAotValue(dynamic_state, dynamic_handle);
+    try std.testing.expectEqual(original, state.handleIdFor(active, recovered).?);
+    try std.testing.expectEqual(handle.payload, recovered.payload);
+
+    var again = try aotToDynamicValue(dynamic_state, handle);
+    try dynamic_roots.protect(&again);
+    try std.testing.expectEqual(@intFromPtr(dynamic_handle.dictionary), @intFromPtr(again.dictionary));
+
+    _ = try state.lowLevelFileBuiltin(active, .low_level_file_close, &.{handle});
+    try std.testing.expectEqual(@as(usize, 0), dynamic_state.interpreter.lowlevel_state.handle_values.items.len);
+    try std.testing.expectEqual(@as(u32, 0), active.low_level_handle_ids.size);
+}
