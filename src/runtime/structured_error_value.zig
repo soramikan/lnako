@@ -224,3 +224,26 @@ test "構造化エラーのmessageを非文字列にしても文字列化は止�
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings("[object Object]", text);
 }
+
+test "構造化エラーのtoStringが非関数でも既定文字列化は止まらない" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+
+    const error_value = structured_error.classifyNative(.NOENT, "open", "/missing", null, null).?;
+    var value = try buildValue(&runtime, error_value);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&value);
+
+    const message_key = try runtime.stringUtf8(keys.message);
+    try value.dictionary.set(message_key.string, .{ .number = 1 });
+    const to_string_key = try runtime.stringUtf8("toString");
+    try value.dictionary.set(to_string_key.string, .{ .number = 1 });
+
+    var rendered = try runtime.valueToStringDefault(value);
+    try roots.protect(&rendered);
+    try std.testing.expect(rendered == .string);
+    const text = try rendered.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("[object Object]", text);
+}

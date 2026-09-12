@@ -299,7 +299,7 @@ pub fn executeFunction(self: *Interpreter, function: *const ir.Function, argumen
 
 fn bindErrorMessage(self: *Interpreter, value: Value) !void {
     if (value == .dictionary and value.dictionary.kind == .structured_error) {
-        var message = value.dictionary.structuredErrorMessage() orelse try self.runtime.valueToString(value);
+        var message = value.dictionary.structuredErrorMessage() orelse try self.runtime.valueToStringDefault(value);
         var roots = self.runtime.rootFrame();
         defer roots.deinit();
         try roots.protect(&message);
