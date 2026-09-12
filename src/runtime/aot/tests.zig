@@ -208,9 +208,12 @@ const utf16FailureMessageUtf8Alloc = state.utf16FailureMessageUtf8Alloc;
 const validateFillDimensions = state.validateFillDimensions;
 const valueToNumber = state.valueToNumber;
 const runtimeFailure = state.runtimeFailure;
+const structured_error = shared.structured_error;
+const structured_error_value = @import("structured_error_value.zig");
 
 test {
     _ = @import("telemetry_test.zig");
+    _ = structured_error_value;
 }
 const valueToPrimitive = state.valueToPrimitive;
 const valueUtf16Alloc = state.valueUtf16Alloc;
@@ -6331,6 +6334,62 @@ test "AOT→動的ブリッジはGC stress下でも変換済みkeyと値をroot�
     const stored = converted_dictionary.dictionary.get(lookup_key.string) orelse return error.TestUnexpectedResult;
     try std.testing.expect(stored == .array);
     try std.testing.expectEqual(@as(f64, 7), stored.array.items.items[0].number);
+}
+
+test "動的実行境界は構造化エラー種別とmessage契約を往復する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    const aot_state = try DynamicInterpreterState.init(std.testing.allocator, active);
+    active.dynamic_state = aot_state;
+
+    const error_value = structured_error.classifyNative(.NOENT, "open", "/missing", null, null).?;
+    var roots = [_]Value{try structured_error_value.buildValue(active, error_value)};
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+
+    const expected = "ENOENT: no such file or directory, open '/missing'";
+    const before_units = try valueUtf16Alloc(active, roots[0]);
+    defer active.allocator.free(before_units);
+    const before_text = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, before_units);
+    defer std.testing.allocator.free(before_text);
+    try std.testing.expectEqualStrings(expected, before_text);
+
+    var dynamic_roots = aot_state.value_runtime.rootFrame();
+    defer dynamic_roots.deinit();
+    var converted = try aotToDynamicValue(aot_state, roots[0]);
+    try dynamic_roots.protect(&converted);
+    try std.testing.expectEqual(shared.dynamic_value.DictionaryKind.structured_error, converted.dictionary.kind);
+    var converted_text_value = try aot_state.value_runtime.valueToString(converted);
+    try dynamic_roots.protect(&converted_text_value);
+    const converted_text = try converted_text_value.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(converted_text);
+    try std.testing.expectEqualStrings(expected, converted_text);
+
+    roots[0] = try dynamicToAotValue(aot_state, converted);
+    try std.testing.expect(roots[0].object().?.structured_error);
+    const recovered_units = try valueUtf16Alloc(active, roots[0]);
+    defer active.allocator.free(recovered_units);
+    const recovered_text = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, recovered_units);
+    defer std.testing.allocator.free(recovered_text);
+    try std.testing.expectEqualStrings(expected, recovered_text);
+
+    var forged_pairs = [_]Value{
+        staticStringValue("message"),
+        try runtimeUtf8String(active, "forged"),
+    };
+    roots[0] = try active.createDictionary(&forged_pairs);
+    var forged = try aotToDynamicValue(aot_state, roots[0]);
+    try dynamic_roots.protect(&forged);
+    try std.testing.expectEqual(shared.dynamic_value.DictionaryKind.ordinary, forged.dictionary.kind);
+    roots[0] = try dynamicToAotValue(aot_state, forged);
+    try std.testing.expect(!roots[0].object().?.structured_error);
 }
 
 test "動的→AOTブリッジは変換・辞書追加の失敗後にroot chainを復元する" {

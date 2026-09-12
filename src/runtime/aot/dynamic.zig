@@ -302,7 +302,8 @@ pub fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror
             if (value.object().?.toml_temporal) |temporal| {
                 return state.value_runtime.createTomlTemporal(temporal.kind, temporal.json_text, temporal.toml_text);
             }
-            var result = try state.value_runtime.createDictionary();
+            const kind: dynamic_value.DictionaryKind = if (value.object().?.structured_error) .structured_error else .ordinary;
+            var result = try state.value_runtime.createDictionaryKind(kind);
             var roots = state.value_runtime.rootFrame();
             defer roots.deinit();
             try roots.protect(&result);
@@ -388,6 +389,7 @@ pub fn dynamicToAotValue(state: *DynamicInterpreterState, value: dynamic_value.V
                 defer owner.popRoots(&item_roots);
                 try owner.setDictionary(&result.object().?.payload.dictionary, converted_key, converted_item);
             }
+            if (dictionary.kind == .structured_error) result.object().?.structured_error = true;
             break :blk result;
         },
         .function => error.DynamicValueUnsupported,

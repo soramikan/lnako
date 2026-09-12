@@ -243,7 +243,7 @@ const StringKeyContext = struct {
 
 const DictionaryMap = std.ArrayHashMapUnmanaged(*String, Value, StringKeyContext, true);
 
-pub const DictionaryKind = enum { ordinary, http_response, toml_temporal };
+pub const DictionaryKind = enum { ordinary, http_response, toml_temporal, structured_error };
 
 pub const TomlTemporal = struct {
     allocator: std.mem.Allocator,
@@ -306,6 +306,17 @@ pub const Dictionary = struct {
 
     pub fn values(self: Dictionary) []Value {
         return self.map.values();
+    }
+
+    pub fn structuredErrorMessage(self: Dictionary) ?Value {
+        if (self.kind != .structured_error) return null;
+        const message_key = [_]u16{ 'm', 'e', 's', 's', 'a', 'g', 'e' };
+        for (self.keys(), self.values()) |key, value| {
+            if (std.mem.eql(u16, key.units, &message_key)) {
+                return if (value == .string) value else null;
+            }
+        }
+        return null;
     }
 };
 
@@ -1242,7 +1253,10 @@ pub const Runtime = struct {
                 .array_buffer => self.stringUtf8("[object ArrayBuffer]"),
             },
             .array => |array| self.arrayToString(array),
-            .dictionary => |dictionary| self.stringUtf8(if (dictionary.kind == .http_response) "[object Response]" else "[object Object]"),
+            .dictionary => |dictionary| blk: {
+                if (dictionary.structuredErrorMessage()) |message| break :blk message;
+                break :blk self.stringUtf8(if (dictionary.kind == .http_response) "[object Response]" else "[object Object]");
+            },
             .function => |function| blk: {
                 const name = try function.name.toUtf8Lossy(self.allocator());
                 defer self.allocator().free(name);

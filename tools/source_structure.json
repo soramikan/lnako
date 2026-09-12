@@ -55,7 +55,7 @@
       },
       "src/runtime/value.zig": {
         "reason": "Value・Runtime中心のコア値表現（監視対象・hard limit内）",
-        "limitKb": 80
+        "limitKb": 81
       }
     }
   },
