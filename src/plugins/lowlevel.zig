@@ -216,7 +216,7 @@ fn readBytes(runtime: *Runtime, state: *State, context: Context, effects: Effect
             return throwIo(runtime, effects, failure, foundation.stream_operations.read, null);
         };
         output.shrinkRetainingCapacity(start + read);
-        if (read == 0) break;
+        if (read == 0 or read < chunk_length) break;
         remaining -= read;
     }
     return runtime.createBytes(output.items);
@@ -361,7 +361,10 @@ fn throwStructured(
     capability: ?[]const u8,
     message: []const u8,
 ) anyerror {
-    const dictionary = buildError(runtime, code, operation, path, capability, message) catch |failure| return failure;
+    var dictionary = buildError(runtime, code, operation, path, capability, message) catch |failure| return failure;
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    roots.protect(&dictionary) catch |failure| return failure;
     runtime.setFailureMessage(message) catch |failure| return failure;
     effects.throw(dictionary) catch |failure| return failure;
     return error.NakoException;
@@ -477,4 +480,57 @@ test "openは非文字列のpathとmodeをEINVALにする" {
     const mode_text = try shared.valueUtf8(&runtime, mode_code);
     defer runtime.allocator().free(mode_text);
     try std.testing.expectEqualStrings("EINVAL", mode_text);
+}
+
+test "throwStructuredはGC stress下でもエラー辞書を保持する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, emptyContext(), effects, "ファイル閉", &.{.{ .number = 1 }}));
+    try std.testing.expect(thrown == .dictionary);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&thrown);
+    const code = shared.dictionaryGetAscii(thrown.dictionary, foundation.error_object_keys.code) orelse return error.TestExpectedEqual;
+    const text = try shared.valueUtf8(&runtime, code);
+    defer runtime.allocator().free(text);
+    try std.testing.expectEqualStrings("EBADF", text);
+}
+
+const ShortReadHost = struct {
+    calls: usize = 0,
+
+    fn read(pointer: *anyopaque, raw: u64, buffer: []u8) anyerror!usize {
+        const self: *ShortReadHost = @ptrCast(@alignCast(pointer));
+        _ = raw;
+        self.calls += 1;
+        if (self.calls > 1) return error.WouldBlock;
+        const n = @min(buffer.len, 3);
+        @memcpy(buffer[0..n], "abc"[0..n]);
+        return n;
+    }
+};
+
+test "部分読込は要求chunk未満で打ち切る" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var handle = try runtime.createDictionary();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&handle);
+    try rememberHandle(&state, runtime.allocator(), handle, .{ .index = 1, .generation = 1 });
+    var host = ShortReadHost{};
+    const context = Context{ .context = @ptrCast(&host), .readFileBytesFn = ShortReadHost.read };
+    var result = (try call(&runtime, &state, context, effects, "ファイルバイト読", &.{ handle, .{ .number = 65536 } })) orelse return error.TestExpectedEqual;
+    try roots.protect(&result);
+    try std.testing.expectEqual(@as(usize, 1), host.calls);
+    try std.testing.expectEqualSlices(u8, "abc", try bytesArgument(&runtime, result));
 }

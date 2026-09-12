@@ -571,6 +571,7 @@ pub const Runtime = struct {
     // 埋め込みinterpreterと全pluginを静的参照し、dead-stripできなくなる。
     dynamic_deinit: ?*const fn (*Runtime) void = null,
     dynamic_drain: ?*const fn (*Runtime) anyerror!bool = null,
+    dynamic_forget_handle: ?*const fn (*Runtime, u64) void = null,
     dynamic_promise_bridges: std.ArrayList(*DynamicPromiseBridge) = .empty,
     dynamic_function_bridges: std.ArrayList(*AotFunctionBridge) = .empty,
     standard_property_cache: std.ArrayList(StandardPropertyCacheEntry) = .empty,

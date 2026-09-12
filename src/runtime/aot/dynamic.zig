@@ -3,6 +3,7 @@ const aot_state = @import("state.zig");
 const shared = @import("shared.zig");
 const low_level = @import("low_level.zig");
 const plugin_lowlevel = @import("../../plugins/lowlevel.zig");
+const foundation = @import("../low_level_foundation.zig");
 
 const aot_builtin = shared.aot_builtin;
 const dynamic_ir = shared.dynamic_ir;
@@ -132,6 +133,7 @@ pub const DynamicInterpreterState = struct {
         // 解放とnative plugin drainはここで間接呼び出しとして登録する。
         owner.dynamic_deinit = deinitDynamicState;
         owner.dynamic_drain = drainNativePluginTasks;
+        owner.dynamic_forget_handle = forgetDynamicHandle;
         return state;
     }
 
@@ -436,6 +438,12 @@ fn deinitDynamicState(runtime: *Runtime) void {
     runtime.dynamic_state = null;
     runtime.dynamic_deinit = null;
     runtime.dynamic_drain = null;
+    runtime.dynamic_forget_handle = null;
+}
+
+fn forgetDynamicHandle(runtime: *Runtime, raw: u64) void {
+    const state = runtime.dynamic_state orelse return;
+    plugin_lowlevel.forgetHandleId(&state.interpreter.lowlevel_state, foundation.HandleId.fromRaw(raw));
 }
 
 // runtime.dynamic_drain 経由でのみ呼ばれる。drain_events など常時到達する

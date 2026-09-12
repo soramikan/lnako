@@ -42,6 +42,7 @@ Node.js `fs.open` の文字列flagsを写す。`r`/`r+`/`w`/`w+`/`a`/`a+` に修
 - `ファイルバイト読む` は現在位置から最大SIZEバイトを読み、結果をBytesで返す。
   読み込みが0 byteのときをEOFとし、空Bytes（0 byte）を返す。SIZEを超えない範囲の部分読込はEOFではない。
   64KiB単位でchunked readし、要求サイズの巨大な先行確保をしない。
+  OS readが要求chunk未満を返した時点でその部分結果を返し、続きを待たない。
 - `ファイルバイト書く` はBytes（`ByteKind.buffer`）だけを受け付ける。String、`Uint8Array`、`ArrayBuffer` kindは暗黙変換せず `EINVAL`。
   実際に書いたバイト数を返す（Number、安全整数を超える場合はBigInt）。
 - BytesはNUL、0x80〜0xff、不正UTF-8を無変換でround-tripする。

@@ -56,6 +56,7 @@ fn pluginCloseFile(context: *anyopaque, raw: u64) anyerror!void {
     const id = foundation.HandleId.fromRaw(raw);
     const removed = table(runtime).remove(id) orelse return error.BadFileDescriptor;
     removed.file.close(io(runtime));
+    forgetHandleId(runtime, id);
 }
 
 fn pluginReadFileBytes(context: *anyopaque, raw: u64, buffer: []u8) anyerror!usize {
@@ -169,7 +170,8 @@ fn closeBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
         return throwStructured(runtime, .EBADF, foundation.stream_operations.close, null, null, "無効なハンドルです");
     };
     removed.file.close(io(runtime));
-    forgetHandle(runtime, arguments[0]);
+    forgetHandleId(runtime, id);
+    if (runtime.dynamic_forget_handle) |forget| forget(runtime, id.raw());
     return .{};
 }
 
@@ -194,7 +196,7 @@ fn readBytesBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
             return throwIo(runtime, failure, foundation.stream_operations.read, null);
         };
         output.shrinkRetainingCapacity(start + read);
-        if (read == 0) break;
+        if (read == 0 or read < chunk_length) break;
         remaining -= read;
     }
     return runtime.createBytes(output.items);
@@ -370,7 +372,10 @@ fn throwStructured(
     capability: ?[]const u8,
     message: []const u8,
 ) anyerror {
-    const dictionary = buildError(runtime, code, operation, path, capability, message) catch |failure| return failure;
+    var dictionary = buildError(runtime, code, operation, path, capability, message) catch |failure| return failure;
+    var roots = RootFrame{};
+    runtime.pushRoots(&roots, @ptrCast(&dictionary), 1);
+    defer runtime.popRoots(&roots);
     runtime.setException(dictionary);
     return error.NakoException;
 }
