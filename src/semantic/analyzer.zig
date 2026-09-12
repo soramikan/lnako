@@ -242,6 +242,22 @@ const Analyzer = struct {
                         );
                         try self.addDiagnostic(.invalid_argument_count, node.span, self.modules.items[module_index].path, message);
                     }
+                } else if (low_level_foundation.commandArity(name)) |spec| {
+                    if (node.children.len < spec.min or node.children.len > spec.max) {
+                        const message = if (spec.min == spec.max)
+                            try std.fmt.allocPrint(
+                                self.allocator,
+                                "関数『{s}』で引数{d}個が指定されましたが、{d}個の引数を指定してください。",
+                                .{ name, node.children.len, spec.min },
+                            )
+                        else
+                            try std.fmt.allocPrint(
+                                self.allocator,
+                                "関数『{s}』で引数{d}個が指定されましたが、{d}個以上{d}個以下の引数を指定してください。",
+                                .{ name, node.children.len, spec.min, spec.max },
+                            );
+                        try self.addDiagnostic(.invalid_argument_count, node.span, self.modules.items[module_index].path, message);
+                    }
                 }
             }
             try self.bind(node, .builtin, name, name, null);
@@ -475,6 +491,20 @@ test "標準組み込み命令のC形式引数個数を診断し可変引数と�
     try std.testing.expectEqualStrings("関数『切取』で引数1個が指定されましたが、2個の引数を指定してください。", messages[0]);
     try std.testing.expectEqualStrings("関数『切取』で引数3個が指定されましたが、2個の引数を指定してください。", messages[1]);
     try std.testing.expectEqualStrings("関数『今』で引数1個が指定されましたが、0個の引数を指定してください。", messages[2]);
+}
+
+test "低レイヤー命令のC形式引数個数を診断する" {
+    const parser = @import("../frontend/parser.zig");
+    const source = "ファイル閉(1,2)\nファイル開(\"a\",\"r\",\"x\")\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "low-level-arity.nako3");
+    defer parsed.deinit();
+    var program = try analyze(std.testing.allocator, parsed.root.?, "low-level-arity.nako3");
+    defer program.deinit();
+    var count: usize = 0;
+    for (program.diagnostics) |item| {
+        if (item.code == .invalid_argument_count) count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), count);
 }
 
 test "裸の名前付き関数は1引数以下だけ暗黙呼び出しとして解決する" {

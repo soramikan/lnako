@@ -77,6 +77,14 @@ pub const Context = struct {
         const function = self.truncateFileFn orelse return error.LowLevelIoUnavailable;
         return function(self.context, raw, size);
     }
+
+    pub fn hasStreamFileIo(self: Context) bool {
+        return self.openFileFn != null and self.closeFileFn != null and self.readFileBytesFn != null and self.writeFileBytesFn != null and self.syncFileFn != null;
+    }
+
+    pub fn hasTruncate(self: Context) bool {
+        return self.truncateFileFn != null;
+    }
 };
 
 var unused_context_host: u8 = 0;
@@ -106,6 +114,11 @@ pub fn call(
     name: []const u8,
     arguments: []const Value,
 ) !?Value {
+    if (foundation.commandArity(name)) |spec| {
+        if (arguments.len > spec.max) {
+            return throwStructured(runtime, effects, .EINVAL, spec.operation, null, null, "引数の数が不正です");
+        }
+    }
     if (std.mem.eql(u8, name, foundation.capability_supported_command)) {
         return @as(?Value, .{ .boolean = capabilitySupported(arguments, context) });
     }
@@ -137,7 +150,8 @@ fn capabilitySupported(arguments: []const Value, context: Context) bool {
     const capability = foundation.Capability.fromId(buffer[0..length]) orelse return false;
     if (!foundation.capabilityImplemented(capability)) return false;
     return switch (capability) {
-        .stream_file_io => context.openFileFn != null,
+        .stream_file_io => context.hasStreamFileIo(),
+        .truncate => context.hasTruncate(),
         else => false,
     };
 }
@@ -348,7 +362,10 @@ fn buildError(
 
 fn throwIo(runtime: *Runtime, effects: Effects, failure: anyerror, operation: []const u8, path: ?[]const u8) anyerror {
     const code = foundation.portableCodeForFailure(failure) orelse .EINVAL;
-    const capability = if (code == .ENOTSUP) foundation.Capability.stream_file_io.id() else null;
+    const capability = if (code == .ENOTSUP)
+        (if (std.mem.eql(u8, operation, foundation.stream_operations.ftruncate)) foundation.Capability.truncate.id() else foundation.Capability.stream_file_io.id())
+    else
+        null;
     return throwStructured(runtime, effects, code, operation, path, capability, failureMessage(failure));
 }
 
@@ -533,4 +550,42 @@ test "部分読込は要求chunk未満で打ち切る" {
     try roots.protect(&result);
     try std.testing.expectEqual(@as(usize, 1), host.calls);
     try std.testing.expectEqualSlices(u8, "abc", try bytesArgument(&runtime, result));
+}
+
+test "余分な引数はEINVALで、openだけのホストはstream_file_io非対応" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var handle = try runtime.createDictionary();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&handle);
+    try rememberHandle(&state, runtime.allocator(), handle, .{ .index = 1, .generation = 1 });
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, emptyContext(), effects, "ファイル閉", &.{ handle, .{ .number = 1 } }));
+    try roots.protect(&thrown);
+    const code = shared.dictionaryGetAscii(thrown.dictionary, foundation.error_object_keys.code) orelse return error.TestExpectedEqual;
+    const text = try shared.valueUtf8(&runtime, code);
+    defer runtime.allocator().free(text);
+    try std.testing.expectEqualStrings("EINVAL", text);
+
+    var name = try runtime.stringUtf8("stream_file_io");
+    try roots.protect(&name);
+    const supported = (try call(&runtime, &state, emptyContext(), effects, foundation.capability_supported_command, &.{name})) orelse return error.TestExpectedEqual;
+    try std.testing.expect(supported == .boolean and !supported.boolean);
+
+    var truncate_name = try runtime.stringUtf8("truncate");
+    try roots.protect(&truncate_name);
+    const truncate_full = Context{
+        .context = @ptrCast(&unused_context_host),
+        .truncateFileFn = struct {
+            fn dummy(_: *anyopaque, _: u64, _: u64) anyerror!void {
+                return;
+            }
+        }.dummy,
+    };
+    const truncate_supported = (try call(&runtime, &state, truncate_full, effects, foundation.capability_supported_command, &.{truncate_name})) orelse return error.TestExpectedEqual;
+    try std.testing.expect(truncate_supported == .boolean and truncate_supported.boolean);
 }

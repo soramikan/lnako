@@ -14,7 +14,7 @@
 | `ファイルバイト読む(HANDLE, SIZE)` | Handle、SIZE: Number/BigInt | Bytes（0 byteはEOF） | `stream_file_io` | `read` |
 | `ファイルバイト書く(HANDLE, BYTES)` | Handle、BYTES: Bytes（Buffer kind） | Number/BigInt（書込バイト数） | `stream_file_io` | `write` |
 | `ファイル同期(HANDLE)` | Handle | undefined | `stream_file_io` | `fsync` |
-| `ファイル切詰(HANDLE, SIZE)` | Handle、SIZE: Number/BigInt | undefined | `stream_file_io` | `ftruncate` |
+| `ファイル切詰(HANDLE, SIZE)` | Handle、SIZE: Number/BigInt | undefined | `truncate` | `ftruncate` |
 
 字句解析は動詞の送り仮名を落とすため、dispatch名は語幹（`ファイル開` 等）になる。
 利用者が書く `ファイル開く`/`ファイル閉じる`/`ファイルバイト読む`/`ファイルバイト書く` は同一命令へ正規化される。
@@ -23,6 +23,7 @@
 ## Handle
 
 - OSのfdや`std.Io.File`はなでしこ値として公開しない。Handleは `TYPEOF` が `"object"` の不透明オブジェクト（辞書）である。
+- 明示的な `ファイル閉じる` が必要である。GCはハンドルを自動closeせず、Runtime終了時に残ハンドルを閉じる。
 - 同一性はオブジェクトのポインタで判定し、`Runtime/Host` のhandle tableと対応付ける。
   同じ形の辞書を手作りしてもtableに載らないため無効になる（G0の`HandleContract`）。
 - `HandleId` は `index: u32`（bit 0〜31）と `generation: u32`（bit 32〜63）の組。closeしてもindexのgenerationは保持し、
@@ -61,7 +62,8 @@ Node.js `fs.open` の文字列flagsを写す。`r`/`r+`/`w`/`w+`/`a`/`a+` に修
 ## capability
 
 - `低レイヤー機能対応判定(NAME)`：`Capability` の既知IDと実装状況から判定する。未知IDは `false`。
-  現在は `stream_file_io` のみ実装済みで、既知だが未実装のID（`termios` 等）は `false`。
+  現在は `stream_file_io` と `truncate` が実装済みで、既知だが未実装のID（`termios` 等）は `false`。
+  `stream_file_io` は open/close/read/write/sync のホスト実装が揃っているときだけ true。`truncate` は切詰 callback があるとき true。
 - `低レイヤー機能一覧取得()`：既知IDの全集（真偽ではない）を返す。
 - 未対応操作の実行は成功値や `false` を返さず、`code=ENOTSUP` と `capability` を入れた構造化エラーを投げる。
 

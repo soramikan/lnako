@@ -325,7 +325,7 @@ pub const Capability = enum {
 /// 含めない。
 pub fn capabilityImplemented(capability: Capability) bool {
     return switch (capability) {
-        .stream_file_io => true,
+        .stream_file_io, .truncate => true,
         else => false,
     };
 }
@@ -407,6 +407,40 @@ pub const stream_commands = struct {
 /// 標準cnako 527件の外にある低レイヤー命令名。`builtin_catalog.names` は
 /// 公式527件と同期して生成されるため変更せず、解析器のbuiltin解決だけに
 /// 追加する。`低レイヤー機能対応判定` / `低レイヤー機能一覧取得` も含む。
+pub const CommandArity = struct {
+    min: u8,
+    max: u8,
+    operation: []const u8,
+};
+
+pub fn commandArity(name: []const u8) ?CommandArity {
+    if (std.mem.eql(u8, name, stream_commands.open) or std.mem.eql(u8, name, stream_commands.open_user)) {
+        return .{ .min = 1, .max = 2, .operation = stream_operations.open };
+    }
+    if (std.mem.eql(u8, name, stream_commands.close) or std.mem.eql(u8, name, stream_commands.close_user)) {
+        return .{ .min = 1, .max = 1, .operation = stream_operations.close };
+    }
+    if (std.mem.eql(u8, name, stream_commands.read_bytes) or std.mem.eql(u8, name, stream_commands.read_bytes_user)) {
+        return .{ .min = 2, .max = 2, .operation = stream_operations.read };
+    }
+    if (std.mem.eql(u8, name, stream_commands.write_bytes) or std.mem.eql(u8, name, stream_commands.write_bytes_user)) {
+        return .{ .min = 2, .max = 2, .operation = stream_operations.write };
+    }
+    if (std.mem.eql(u8, name, stream_commands.sync)) {
+        return .{ .min = 1, .max = 1, .operation = stream_operations.fsync };
+    }
+    if (std.mem.eql(u8, name, stream_commands.truncate)) {
+        return .{ .min = 2, .max = 2, .operation = stream_operations.ftruncate };
+    }
+    if (std.mem.eql(u8, name, capability_supported_command)) {
+        return .{ .min = 1, .max = 1, .operation = "capability" };
+    }
+    if (std.mem.eql(u8, name, capability_list_command)) {
+        return .{ .min = 0, .max = 0, .operation = "capability" };
+    }
+    return null;
+}
+
 pub const extension_command_names = [_][]const u8{
     stream_commands.open,
     stream_commands.close,
@@ -671,6 +705,9 @@ test "構造化エラーのキーはNode SystemErrorへ写せる" {
 
 test "capability識別子はsnake_caseで分類が閉じている" {
     try std.testing.expectEqual(CapabilityClass.portable_core, Capability.stream_file_io.class());
+    try std.testing.expect(capabilityImplemented(.stream_file_io));
+    try std.testing.expect(capabilityImplemented(.truncate));
+    try std.testing.expect(!capabilityImplemented(.termios));
     try std.testing.expectEqual(CapabilityClass.posix_extension, Capability.chmod.class());
     try std.testing.expectEqual(CapabilityClass.lnako_native, Capability.seek_data.class());
     try std.testing.expectEqual(Capability.statfs, Capability.fromId("statfs").?);
@@ -745,6 +782,9 @@ test "ストリームI/O命令名はファイル接頭辞を持ち既存527件�
     try std.testing.expect(!isExampleReservedStandardCommandName(stream_commands.truncate));
     try std.testing.expectEqualStrings("open", stream_operations.open);
     try std.testing.expectEqualStrings("ftruncate", stream_operations.ftruncate);
+    try std.testing.expectEqual(@as(u8, 1), commandArity(stream_commands.close).?.max);
+    try std.testing.expectEqual(@as(u8, 2), commandArity(stream_commands.open).?.max);
+    try std.testing.expectEqual(@as(u8, 0), commandArity(capability_list_command).?.max);
 }
 
 test "Nodeの文字列flagsはOpenModeへ写り、不正modeはInvalidModeになる" {

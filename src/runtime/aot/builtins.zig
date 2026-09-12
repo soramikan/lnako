@@ -447,13 +447,14 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         .low_level_capability_supported => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = state.lowLevelCapabilitySupportedBuiltin(runtime, actual) catch |failure| {
-                runtime.setFailure(failure);
+                if (!runtime.has_pending_exception) runtime.setFailure(failure);
                 return;
             };
         },
         .low_level_capability_list => {
-            out.* = state.lowLevelCapabilityListBuiltin(runtime) catch |failure| {
-                runtime.setFailure(failure);
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = state.lowLevelCapabilityListBuiltin(runtime, actual) catch |failure| {
+                if (!runtime.has_pending_exception) runtime.setFailure(failure);
                 return;
             };
         },

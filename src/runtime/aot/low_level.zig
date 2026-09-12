@@ -253,7 +253,24 @@ fn truncateBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     return .{};
 }
 
+fn arityFor(command: aot_builtin.Command) ?foundation.CommandArity {
+    return switch (command) {
+        .low_level_file_open => foundation.commandArity(foundation.stream_commands.open),
+        .low_level_file_close => foundation.commandArity(foundation.stream_commands.close),
+        .low_level_file_read_bytes => foundation.commandArity(foundation.stream_commands.read_bytes),
+        .low_level_file_write_bytes => foundation.commandArity(foundation.stream_commands.write_bytes),
+        .low_level_file_sync => foundation.commandArity(foundation.stream_commands.sync),
+        .low_level_file_truncate => foundation.commandArity(foundation.stream_commands.truncate),
+        else => null,
+    };
+}
+
 pub fn lowLevelFileBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    if (arityFor(command)) |spec| {
+        if (arguments.len > spec.max) {
+            return throwStructured(runtime, .EINVAL, spec.operation, null, null, "引数の数が不正です");
+        }
+    }
     return switch (command) {
         .low_level_file_open => openBuiltin(runtime, arguments),
         .low_level_file_close => closeBuiltin(runtime, arguments),
@@ -266,13 +283,18 @@ pub fn lowLevelFileBuiltin(runtime: *Runtime, command: aot_builtin.Command, argu
 }
 
 pub fn lowLevelCapabilitySupportedBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
-    _ = runtime;
+    if (arguments.len > 1) {
+        return throwStructured(runtime, .EINVAL, "capability", null, null, "引数の数が不正です");
+    }
     if (arguments.len < 1) return .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
     const supported = capabilitySupported(arguments[0]);
     return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(supported) };
 }
 
-pub fn lowLevelCapabilityListBuiltin(runtime: *Runtime) !Value {
+pub fn lowLevelCapabilityListBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    if (arguments.len > 0) {
+        return throwStructured(runtime, .EINVAL, "capability", null, null, "引数の数が不正です");
+    }
     const result = try runtime.createArray(&.{});
     var rooted = [_]Value{ result, .{} };
     var roots = RootFrame{};
@@ -360,7 +382,10 @@ fn buildError(
 
 fn throwIo(runtime: *Runtime, failure: anyerror, operation: []const u8, path: ?[]const u8) anyerror {
     const code = foundation.portableCodeForFailure(failure) orelse .EINVAL;
-    const capability = if (code == .ENOTSUP) foundation.Capability.stream_file_io.id() else null;
+    const capability = if (code == .ENOTSUP)
+        (if (std.mem.eql(u8, operation, foundation.stream_operations.ftruncate)) foundation.Capability.truncate.id() else foundation.Capability.stream_file_io.id())
+    else
+        null;
     return throwStructured(runtime, code, operation, path, capability, failureMessage(failure));
 }
 
@@ -447,6 +472,12 @@ test "AOT低レイヤーはread/write/truncate/closeをハンドル同一性で�
     try std.testing.expect(runtime.low_level_handles.?.len() == 0);
     try std.testing.expectError(error.NakoException, closeBuiltin(&runtime, &.{handle}));
     try std.testing.expectError(error.NakoException, writeBytesBuiltin(&runtime, &.{ handle, roots[1] }));
+}
+
+test "AOT低レイヤーは余分な引数をEINVALにする" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    try std.testing.expectError(error.NakoException, closeBuiltin(&runtime, &.{ numberValue(1), numberValue(2) }));
 }
 
 test "AOT低レイヤーの引数なしopenはEINVAL、機能対応判定はfalse" {
