@@ -1,0 +1,6 @@
+{
+  "schema": "lnako.low-level-cases.v1",
+  "policy": "TEST_HARNESS.md",
+  "note": "低レイヤー命令の共通oracle fixture。命令が未実装の間は空で、schemaとカタログ連携をtools/check_low_level_cases.mjsが検証する。#27〜#36の実装に伴い、ここへ比較caseを追加する。実行はtools/compare_native_oracle.mjsと同じ7経路（official source / official generated / lnako run / lnako AOT O0〜O3）を使う。",
+  "cases": []
+}

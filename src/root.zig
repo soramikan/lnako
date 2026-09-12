@@ -35,6 +35,7 @@ pub const runtime = struct {
     pub const system_constant = @import("runtime/system_constant.zig");
     pub const error_message = @import("runtime/error_message.zig");
     pub const low_level_foundation = @import("runtime/low_level_foundation.zig");
+    pub const low_level_catalog = @import("runtime/low_level_catalog.zig");
     pub const structured_error = @import("runtime/structured_error.zig");
     pub const structured_error_value = @import("runtime/structured_error_value.zig");
     pub const string = @import("runtime/string.zig");
@@ -158,6 +159,7 @@ test {
     std.testing.refAllDecls(runtime.system_constant);
     std.testing.refAllDecls(runtime.error_message);
     std.testing.refAllDecls(runtime.low_level_foundation);
+    std.testing.refAllDecls(runtime.low_level_catalog);
     std.testing.refAllDecls(runtime.structured_error);
     std.testing.refAllDecls(runtime.structured_error_value);
     std.testing.refAllDecls(runtime.string);
