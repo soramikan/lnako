@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/soramikan/lnako/package-system/schema/npkg-metadata/v1",
+  "type": "object",
+  "required": ["schemaVersion", "package"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "package": {
+      "type": "object",
+      "required": ["id", "name", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "common.schema.json#/$defs/packageId" },
+        "name": { "$ref": "common.schema.json#/$defs/packageName" },
+        "version": { "$ref": "common.schema.json#/$defs/semver" },
+        "license": { "type": "string" },
+        "description": { "type": "string" },
+        "nako-version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" }
+      }
+    },
+    "exports": {
+      "type": "array",
+      "items": { "$ref": "common.schema.json#/$defs/exportEntry" }
+    },
+    "nativePluginAbi": {
+      "type": "string",
+      "enum": ["lnako_plugin_v1"]
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "sha256"],
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string" },
+          "sha256": { "$ref": "common.schema.json#/$defs/hash" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "resolverVersion": 1,
+  "input": {
+    "manifestSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "profile": "default",
+    "features": ["default"],
+    "target": { "os": "macos", "cpu": "aarch64", "abi": "gnu" }
+  },
+  "packages": {
+    "pkg:30000000000000000000000000000000": {
+      "id": "pkg:30000000000000000000000000000000",
+      "name": "csv-tool",
+      "version": "0.2.0",
+      "source": { "type": "registry", "url": "https://registry.example.com/pkg/csv-tool" },
+      "resolvedFrom": { "type": "registry", "url": "https://registry.example.com/pkg/csv-tool" },
+      "dependencies": [],
+      "features": ["default"],
+      "artifacts": {
+        "native": { "kind": "native", "type": ".npkg", "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "url": "https://registry.example.com/pkg/csv-tool/v0.2.0/native.npkg" }
+      },
+      "npmInstances": {
+        "escape-string-regexp@5.0.0": {
+          "name": "escape-string-regexp",
+          "version": "5.0.0",
+          "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "url": "https://registry.npmjs.org/escape-string-regexp/-/5.0.0.tgz"
+        },
+        "chalk@5.0.0#cli": {
+          "name": "chalk",
+          "version": "5.0.0",
+          "context": "cli",
+          "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "url": "https://registry.npmjs.org/chalk/-/5.0.0.tgz"
+        }
+      }
+    }
+  },
+  "profiles": {
+    "default": { "os": "macos", "cpu": "aarch64", "abi": "gnu", "compat-js": false }
+  }
+}

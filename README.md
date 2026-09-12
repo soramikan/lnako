@@ -56,6 +56,8 @@ JavaScript固有命令を使う場合は`lnako run hello.nako3 --compat-js`の�
 
 標準cnako 527 entryの実装分類は`native` 523、`compat-js` 4、`blocked` 0です。ブラウザ専用・拡張命令は対象外で、全入力やNode/ECMAScriptの全挙動を保証するものではありません。[互換性と保証範囲](docs/COMPATIBILITY.md)、[未対応境界・後続課題](docs/TODO.md)、[公式処理系との挙動差](docs/COMPATIBILITY_QUIRKS.md)を確認してください。件数と検証状態の正本は[`compat/`](compat/)です。
 
+なでしこ3処理系をまたいで利用できるパッケージシステムの仕様案は [`docs/package-system/SPECIFICATION.md`](docs/package-system/SPECIFICATION.md) と [`tools/package-system/`](tools/package-system/) にあります。本仕様は lnako 先行実装用の提案であり、上流 nadesiko3 への採用を保証するものではありません。
+
 ## 性能比較
 
 2026年9月9日（日本時間）の[リリース候補比較CI](https://github.com/soramikan/lnako/actions/runs/34246129122)、測定commit `5dcf585`の結果です。以下はLinuxの代表9ケースで、warmup 1回・測定3回の中央値（ms）。lnakoはReleaseSafe、AOTはO2です。

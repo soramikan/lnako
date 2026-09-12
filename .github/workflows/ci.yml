@@ -218,6 +218,9 @@ jobs:
         # 負荷の高いWindows runnerではtestプロセスのスケジュール遅延が60秒を
         # 超えることがあるため、上限を5分へ引き上げる。
         run: zig build test --test-timeout 5m
+      - name: Package schema conformance
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
+        run: zig build package-schema-check
       - name: Benchmark runner tests
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node --test tools/benchmark_runner_test.mjs tools/setup_benchmark_gonako_test.mjs tools/pre_push_hook_test.mjs

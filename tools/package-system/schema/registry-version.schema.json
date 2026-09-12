@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/soramikan/lnako/package-system/schema/registry-version/v1",
+  "type": "object",
+  "required": ["schemaVersion", "version", "manifestHash"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "version": { "$ref": "common.schema.json#/$defs/semver" },
+    "manifestHash": { "$ref": "common.schema.json#/$defs/hash" },
+    "yanked": { "type": "boolean" },
+    "dependencies": {
+      "type": "array",
+      "items": { "$ref": "common.schema.json#/$defs/packageId" }
+    },
+    "features": { "$ref": "common.schema.json#/$defs/featureList" },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": { "$ref": "common.schema.json#/$defs/artifactRecord" }
+    }
+  }
+}

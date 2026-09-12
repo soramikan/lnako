@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "resolverVersion": 1,
+  "input": {
+    "manifestSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "profile": "default",
+    "features": ["default", "http"],
+    "target": { "os": "linux", "cpu": "x86_64", "abi": "gnu" }
+  },
+  "packages": {
+    "pkg:10000000000000000000000000000000": {
+      "id": "pkg:10000000000000000000000000000000",
+      "name": "sqlite",
+      "version": "1.2.3",
+      "source": { "type": "registry", "url": "https://registry.example.com/pkg/sqlite" },
+      "resolvedFrom": { "type": "registry", "url": "https://registry.example.com/pkg/sqlite" },
+      "dependencies": ["pkg:20000000000000000000000000000000"],
+      "features": ["default"],
+      "artifacts": {
+        "native": { "kind": "native", "type": ".npkg", "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "url": "https://registry.example.com/pkg/sqlite/v1.2.3/linux.npkg" }
+      }
+    },
+    "pkg:20000000000000000000000000000000": {
+      "id": "pkg:20000000000000000000000000000000",
+      "name": "req",
+      "version": "2.0.1",
+      "source": { "type": "registry", "url": "https://registry.example.com/pkg/req" },
+      "resolvedFrom": { "type": "registry", "url": "https://registry.example.com/pkg/req" },
+      "dependencies": [],
+      "features": ["http"],
+      "artifacts": {
+        "native": { "kind": "native", "type": ".npkg", "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "url": "https://registry.example.com/pkg/req/v2.0.1/linux.npkg" }
+      }
+    }
+  },
+  "profiles": {
+    "default": { "os": "linux", "cpu": "x86_64", "abi": "gnu", "compat-js": false }
+  }
+}

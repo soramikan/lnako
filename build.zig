@@ -252,6 +252,11 @@ pub fn build(b: *std.Build) void {
         .check = true,
     });
     fmt_step.dependOn(&fmt.step);
+
+    const package_schema_check_step = b.step("package-schema-check", "package system schema conformanceを検証する");
+    const package_schema_check_run = b.addSystemCommand(&.{ "node", "tools/check_package_schema.mjs" });
+    package_schema_check_run.step.dependOn(b.getInstallStep());
+    package_schema_check_step.dependOn(&package_schema_check_run.step);
 }
 
 fn configureQuickJs(b: *std.Build, module: *std.Build.Module, os: std.Target.Os.Tag) void {

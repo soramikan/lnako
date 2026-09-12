@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "resolverVersion": 1,
+  "input": {
+    "manifestSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "profile": "default",
+    "features": ["default"],
+    "target": { "os": "macos", "cpu": "aarch64", "abi": "gnu" }
+  },
+  "packages": {
+    "pkg:00000000000000000000000000000000": {
+      "id": "pkg:00000000000000000000000000000000",
+      "name": "test",
+      "version": "1.0.0",
+      "source": { "type": "registry", "url": "https://registry.example.com/pkg/test" },
+      "resolvedFrom": { "type": "registry", "url": "https://registry.example.com/pkg/test" },
+      "dependencies": [],
+      "features": ["default"],
+      "artifacts": {
+        "native": { "kind": "x-unknown", "type": "tar.gz", "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "url": "https://example.com/unknown" }
+      }
+    }
+  },
+  "profiles": {}
+}

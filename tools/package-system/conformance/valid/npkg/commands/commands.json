@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "commands": [
+    {
+      "name": "SQLite開く",
+      "args": ["ファイル名"],
+      "josi": ["を"],
+      "fn": "sqlite_open",
+      "variable": false,
+      "async": false,
+      "return": "object"
+    },
+    {
+      "name": "SQL実行",
+      "args": ["SQL", "DB"],
+      "josi": ["を", "で"],
+      "fn": "sqlite_exec",
+      "variable": false,
+      "async": true,
+      "return": "array"
+    }
+  ]
+}
