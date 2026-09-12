@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "package": {
+    "id": "pkg:00000000000000000000000000000000",
+    "name": "sqlite",
+    "version": "1.2.3",
+    "license": "MIT",
+    "description": "sqlite package",
+    "nako-version": "3.7.24"
+  },
+  "exports": [
+    { "name": "index.nako3", "path": "src/index.nako3" }
+  ],
+  "nativePluginAbi": "lnako_plugin_v1",
+  "files": [
+    { "path": "src/index.nako3", "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    { "path": "libsqlite.so", "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" }
+  ]
+}

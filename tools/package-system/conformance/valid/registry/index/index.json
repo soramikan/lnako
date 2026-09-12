@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "packages": [
+    {
+      "schemaVersion": 1,
+      "id": "pkg:00000000000000000000000000000000",
+      "name": "sqlite",
+      "owner": "soramikan",
+      "humanId": "@soramikan/sqlite",
+      "description": "sqlite package",
+      "license": "MIT",
+      "repository": "https://github.com/soramikan/sqlite",
+      "homepage": "https://example.com/sqlite",
+      "versions": [
+        {
+          "schemaVersion": 1,
+          "version": "1.2.3",
+          "manifestHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "yanked": false,
+          "dependencies": [],
+          "features": ["default"],
+          "artifacts": {
+            "native": { "kind": "native", "type": ".npkg", "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "url": "https://registry.example.com/pkg/sqlite/v1.2.3/linux.npkg" }
+          }
+        }
+      ]
+    }
+  ]
+}

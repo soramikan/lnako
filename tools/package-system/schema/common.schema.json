@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/soramikan/lnako/package-system/schema/common/v1",
+  "$defs": {
+    "packageId": {
+      "type": "string",
+      "pattern": "^pkg:[0-9a-f]{32}$"
+    },
+    "humanId": {
+      "type": "string",
+      "pattern": "^@[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$"
+    },
+    "packageName": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,63}$",
+      "minLength": 1
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
+    },
+    "semverRange": {
+      "type": "string"
+    },
+    "featureName": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]+$"
+    },
+    "featureList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/featureName" }
+    },
+    "osName": {
+      "type": "string"
+    },
+    "cpuName": {
+      "type": "string"
+    },
+    "abiName": {
+      "type": "string"
+    },
+    "target": {
+      "type": "object",
+      "required": ["os", "cpu", "abi"],
+      "additionalProperties": false,
+      "properties": {
+        "os": { "$ref": "#/$defs/osName" },
+        "cpu": { "$ref": "#/$defs/cpuName" },
+        "abi": { "$ref": "#/$defs/abiName" }
+      }
+    },
+    "profile": {
+      "type": "object",
+      "required": ["os", "cpu", "abi"],
+      "additionalProperties": false,
+      "properties": {
+        "os": { "$ref": "#/$defs/osName" },
+        "cpu": { "$ref": "#/$defs/cpuName" },
+        "abi": { "$ref": "#/$defs/abiName" },
+        "compat-js": { "type": "boolean" },
+        "optimize": {
+          "type": "string",
+          "enum": ["O0", "O1", "O2", "O3"]
+        }
+      }
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^(sha256-[A-Za-z0-9+/]{43}=|sha512-[A-Za-z0-9+/]{86}=|sha256:[0-9a-f]{64}|sha512:[0-9a-f]{128})$"
+    },
+    "artifactRecord": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string" },
+        "type": {
+          "type": "string",
+          "enum": ["tar.gz", ".npkg", "raw", "npm-tarball"]
+        },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "url": { "type": "string", "format": "uri" }
+      }
+    },
+    "npmInstance": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "$ref": "#/$defs/semver" },
+        "context": { "type": "string" },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "url": { "type": "string", "format": "uri" },
+        "peerDependencies": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/semverRange" }
+        }
+      }
+    },
+    "sourceRegistry": {
+      "type": "object",
+      "required": ["type", "url"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "registry" },
+        "url": { "type": "string", "format": "uri" }
+      }
+    },
+    "sourceStatic": {
+      "type": "object",
+      "required": ["type", "url"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "static" },
+        "url": { "type": "string", "format": "uri" }
+      }
+    },
+    "sourceGit": {
+      "type": "object",
+      "required": ["type", "url", "commit"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "git" },
+        "url": { "type": "string", "format": "uri" },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "path": { "type": "string" }
+      }
+    },
+    "sourceHttp": {
+      "type": "object",
+      "required": ["type", "url", "hash"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "http" },
+        "url": { "type": "string", "format": "uri" },
+        "hash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "sourcePath": {
+      "type": "object",
+      "required": ["type", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "path" },
+        "path": { "type": "string" },
+        "mutable": { "type": "boolean" }
+      }
+    },
+    "exportEntry": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "path": { "type": "string" },
+        "alias": { "type": "string" },
+        "native": { "type": "string" },
+        "esm": { "type": "string" }
+      }
+    }
+  }
+}

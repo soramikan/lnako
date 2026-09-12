@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "resolverVersion": 1,
+  "input": {
+    "manifestSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "profile": "default",
+    "features": ["default"],
+    "target": { "os": "linux", "cpu": "x86_64", "abi": "gnu" }
+  },
+  "packages": {
+    "pkg:40000000000000000000000000000000": {
+      "id": "pkg:40000000000000000000000000000000",
+      "name": "sqlite",
+      "version": "1.2.3",
+      "source": { "type": "static", "url": "https://static.example.com/pkg/sqlite" },
+      "resolvedFrom": { "type": "registry", "url": "https://registry.example.com/pkg/sqlite" },
+      "dependencies": [],
+      "features": ["default"],
+      "artifacts": {
+        "native": { "kind": "native", "type": ".npkg", "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "url": "https://registry.example.com/pkg/sqlite/v1.2.3/linux.npkg" }
+      }
+    }
+  },
+  "profiles": {
+    "default": { "os": "linux", "cpu": "x86_64", "abi": "gnu", "compat-js": false }
+  }
+}

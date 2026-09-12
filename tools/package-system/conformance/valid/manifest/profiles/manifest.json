@@ -1,0 +1,28 @@
+{
+  "package": {
+    "name": "sqlite",
+    "version": "1.2.3",
+    "license": "MIT",
+    "description": "sqlite package"
+  },
+  "features": {
+    "default": ["native"],
+    "http": ["native", "req"]
+  },
+  "dependencies": {
+    "pkg": {
+      "req": {
+        "version": "^2.0.0",
+        "features": ["http"]
+      }
+    }
+  },
+  "profiles": {
+    "default": { "os": "macos", "cpu": "aarch64", "abi": "gnu", "compat-js": false },
+    "linux": { "os": "linux", "cpu": "x86_64", "abi": "gnu", "compat-js": false },
+    "windows": { "os": "windows", "cpu": "x86_64", "abi": "msvc", "compat-js": false }
+  },
+  "exports": [
+    { "name": "index.nako3", "path": "src/index.nako3" }
+  ]
+}

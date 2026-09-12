@@ -1,0 +1,16 @@
+[package]
+name = "my-app"
+version = "0.1.0"
+license = "MIT"
+
+[dependencies.path]
+local = { path = "../local", mutable = true }
+
+[dependencies.git]
+sub = { url = "https://github.com/example/sub", commit = "abc1234", path = "src" }
+
+[dependencies.http]
+data = { url = "https://example.com/data.tar.gz", hash = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" }
+
+[profiles]
+default = { os = "linux", cpu = "x86_64", abi = "gnu", compat-js = false }

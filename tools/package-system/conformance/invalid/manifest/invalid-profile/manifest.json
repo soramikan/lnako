@@ -1,0 +1,10 @@
+{
+  "package": {
+    "name": "test",
+    "version": "1.0.0",
+    "license": "MIT"
+  },
+  "profiles": {
+    "default": { "os": "freebsd", "cpu": "x86_64", "abi": "gnu" }
+  }
+}

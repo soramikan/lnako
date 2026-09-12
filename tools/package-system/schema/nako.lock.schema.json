@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/soramikan/lnako/package-system/schema/nako.lock/v1",
+  "type": "object",
+  "required": ["schemaVersion", "resolverVersion", "input", "packages"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "resolverVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "input": {
+      "type": "object",
+      "required": ["manifestSha256", "profile", "features", "target"],
+      "additionalProperties": false,
+      "properties": {
+        "manifestSha256": { "type": "string" },
+        "profile": { "type": "string" },
+        "features": { "$ref": "common.schema.json#/$defs/featureList" },
+        "target": { "$ref": "common.schema.json#/$defs/target" }
+      }
+    },
+    "packages": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["id", "name", "version", "dependencies"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "common.schema.json#/$defs/packageId" },
+          "name": { "type": "string" },
+          "version": { "$ref": "common.schema.json#/$defs/semver" },
+          "source": {
+            "oneOf": [
+              { "$ref": "common.schema.json#/$defs/sourceRegistry" },
+              { "$ref": "common.schema.json#/$defs/sourceStatic" },
+              { "$ref": "common.schema.json#/$defs/sourceGit" },
+              { "$ref": "common.schema.json#/$defs/sourceHttp" },
+              { "$ref": "common.schema.json#/$defs/sourcePath" }
+            ]
+          },
+          "resolvedFrom": {
+            "oneOf": [
+              { "$ref": "common.schema.json#/$defs/sourceRegistry" },
+              { "$ref": "common.schema.json#/$defs/sourceStatic" },
+              { "$ref": "common.schema.json#/$defs/sourceGit" },
+              { "$ref": "common.schema.json#/$defs/sourceHttp" },
+              { "$ref": "common.schema.json#/$defs/sourcePath" }
+            ]
+          },
+          "dependencies": {
+            "type": "array",
+            "items": { "$ref": "common.schema.json#/$defs/packageId" }
+          },
+          "features": { "$ref": "common.schema.json#/$defs/featureList" },
+          "artifacts": {
+            "type": "object",
+            "additionalProperties": { "$ref": "common.schema.json#/$defs/artifactRecord" },
+            "propertyNames": { "type": "string" }
+          },
+          "npmInstances": {
+            "type": "object",
+            "additionalProperties": { "$ref": "common.schema.json#/$defs/npmInstance" }
+          }
+        }
+      },
+      "propertyNames": { "$ref": "common.schema.json#/$defs/packageId" }
+    },
+    "profiles": {
+      "type": "object",
+      "additionalProperties": { "$ref": "common.schema.json#/$defs/profile" },
+      "propertyNames": { "$ref": "common.schema.json#/$defs/featureName" }
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/soramikan/lnako/package-system/schema/commands/v1",
+  "type": "object",
+  "required": ["schemaVersion", "commands"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "args": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "josi": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "fn": { "type": "string" },
+          "variable": { "type": "boolean" },
+          "async": { "type": "boolean" },
+          "return": { "type": "string" }
+        }
+      }
+    }
+  }
+}
