@@ -2,7 +2,7 @@
 
 低レイヤー命令（Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github.com/soramikan/lnako/issues/36)）が共有する型・エラー・capability・命名・実行経路契約を固定する。機械可読な正本は [`src/runtime/low_level_foundation.zig`](../../src/runtime/low_level_foundation.zig) である。本書は人間向けの契約説明であり、Zig正本と矛盾する場合はZigを優先して修正する。
 
-この文書は命令カタログ全体・OS別matrix・Core Utilities逆引きを含まない。それらはIssue [#37](https://github.com/soramikan/lnako/issues/37)の後続作業である。既存の標準cnako 527命令の互換契約は変更しない。
+この文書は命令カタログ全体・OS別matrix・Core Utilities逆引きを含まない。それらはIssue [#37](https://github.com/soramikan/lnako/issues/37)の後続作業である。既存の標準cnako 527命令の互換契約は変更しない。命令ごとの助詞・引数・戻り値・エラー契約とOS別/実行経路別matrixは [`catalog.json`](catalog.json) を正本とし、本書の型契約はその前提である。
 
 ## 適用範囲
 
