@@ -3,6 +3,7 @@ const state = @import("state.zig");
 const shared = @import("shared.zig");
 const foundation = @import("../low_level_foundation.zig");
 const low_level_io = @import("../low_level_io.zig");
+const plugin_lowlevel = @import("../../plugins/lowlevel.zig");
 
 const aot_builtin = shared.aot_builtin;
 const BigInt = shared.BigInt;
@@ -18,6 +19,7 @@ const valueUtf8LossyAlloc = state.valueUtf8LossyAlloc;
 const runtimeUtf8String = state.runtimeUtf8String;
 const aotRuntimeIo = state.aotRuntimeIo;
 const staticUtf8 = state.staticUtf8;
+const isString = state.isString;
 
 const read_chunk_bytes: usize = 64 * 1024;
 
@@ -30,6 +32,54 @@ fn table(runtime: *Runtime) *low_level_io.FileHandleTable {
         runtime.low_level_handles = low_level_io.FileHandleTable.init(runtime.allocator);
     }
     return &runtime.low_level_handles.?;
+}
+
+pub fn pluginContext(runtime: *Runtime) plugin_lowlevel.Context {
+    return .{
+        .context = runtime,
+        .openFileFn = pluginOpenFile,
+        .closeFileFn = pluginCloseFile,
+        .readFileBytesFn = pluginReadFileBytes,
+        .writeFileBytesFn = pluginWriteFileBytes,
+        .syncFileFn = pluginSyncFile,
+        .truncateFileFn = pluginTruncateFile,
+    };
+}
+
+fn pluginOpenFile(context: *anyopaque, path: []const u8, mode: foundation.OpenMode, exclusive: bool) anyerror!u64 {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    return (try table(runtime).open(io(runtime), .{ .path = path, .mode = mode, .exclusive = exclusive })).raw();
+}
+
+fn pluginCloseFile(context: *anyopaque, raw: u64) anyerror!void {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    const id = foundation.HandleId.fromRaw(raw);
+    const removed = table(runtime).remove(id) orelse return error.BadFileDescriptor;
+    removed.file.close(io(runtime));
+}
+
+fn pluginReadFileBytes(context: *anyopaque, raw: u64, buffer: []u8) anyerror!usize {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    const entry = table(runtime).find(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+    return low_level_io.readAtCurrent(io(runtime), entry.file, buffer);
+}
+
+fn pluginWriteFileBytes(context: *anyopaque, raw: u64, bytes: []const u8) anyerror!usize {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    const entry = table(runtime).find(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+    return low_level_io.writeHandle(io(runtime), entry, bytes);
+}
+
+fn pluginSyncFile(context: *anyopaque, raw: u64) anyerror!void {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    const entry = table(runtime).find(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+    return low_level_io.sync(io(runtime), entry.file);
+}
+
+fn pluginTruncateFile(context: *anyopaque, raw: u64, size: u64) anyerror!void {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    const entry = table(runtime).find(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+    return low_level_io.setLength(io(runtime), entry.file, size);
 }
 
 /// ハンドル値（AOT辞書）の同一性から `HandleId` を探す。偽造辞書や
@@ -52,11 +102,17 @@ fn fileFor(runtime: *Runtime, value: Value) ?*low_level_io.OpenHandle {
 
 fn openBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
+    if (!isString(arguments[0])) {
+        return throwStructured(runtime, .EINVAL, foundation.stream_operations.open, null, null, "pathは文字列である必要があります");
+    }
     const path = try valueUtf8LossyAlloc(runtime, arguments[0]);
     defer runtime.allocator.free(path);
     var mode_owned: ?[]u8 = null;
     defer if (mode_owned) |owned| runtime.allocator.free(owned);
     if (arguments.len > 1 and arguments[1].tag != @intFromEnum(Tag.undefined)) {
+        if (!isString(arguments[1])) {
+            return throwStructured(runtime, .EINVAL, foundation.stream_operations.open, path, null, "modeは文字列である必要があります");
+        }
         mode_owned = try valueUtf8LossyAlloc(runtime, arguments[1]);
     }
     const parsed = foundation.parseOpenMode(mode_owned orelse "r") catch {
@@ -127,7 +183,7 @@ fn writeBytesBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     const bytes = bytesArgument(arguments[1]) catch {
         return throwStructured(runtime, .EINVAL, foundation.stream_operations.write, null, null, "書き込む値はBytesである必要があります");
     };
-    const written = low_level_io.writeAtCurrent(io(runtime), entry.file, bytes) catch |failure| {
+    const written = low_level_io.writeHandle(io(runtime), entry, bytes) catch |failure| {
         return throwIo(runtime, failure, foundation.stream_operations.write, null);
     };
     return publicSizeValue(runtime, written);
@@ -349,4 +405,65 @@ test "AOT低レイヤーはread/write/truncate/closeをハンドル同一性で�
     try std.testing.expect(runtime.low_level_handles.?.len() == 0);
     try std.testing.expectError(error.NakoException, closeBuiltin(&runtime, &.{handle}));
     try std.testing.expectError(error.NakoException, writeBytesBuiltin(&runtime, &.{ handle, roots[1] }));
+}
+
+test "AOT低レイヤーは非文字列のpathとmodeをEINVALにする" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    try std.testing.expectError(error.NakoException, openBuiltin(&runtime, &.{numberValue(1)}));
+    var roots = [_]Value{ try runtimeUtf8String(&runtime, "missing.txt"), numberValue(1) };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    try std.testing.expectError(error.NakoException, openBuiltin(&runtime, &roots));
+}
+
+test "AOT低レイヤーのappendは切詰め後も末尾へ書く" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const path = try std.fs.path.join(std.testing.allocator, &.{ directory, "aot-append.txt" });
+    defer std.testing.allocator.free(path);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "aot-append.txt", .data = "abcdef" });
+
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtimeUtf8String(&runtime, path);
+    roots[1] = try runtimeUtf8String(&runtime, "a");
+    const handle = try openBuiltin(&runtime, &.{ roots[0], roots[1] });
+    _ = try truncateBuiltin(&runtime, &.{ handle, numberValue(2) });
+    roots[2] = try runtime.createBytes("xy");
+    _ = try writeBytesBuiltin(&runtime, &.{ handle, roots[2] });
+    _ = try closeBuiltin(&runtime, &.{handle});
+
+    const output = try temporary.dir.readFileAlloc(std.testing.io, "aot-append.txt", std.testing.allocator, .limited(16));
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualSlices(u8, "abxy", output);
+}
+
+test "AOT pluginContextはRuntimeのハンドル表へ開く" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const path = try std.fs.path.join(std.testing.allocator, &.{ directory, "plugin-context.txt" });
+    defer std.testing.allocator.free(path);
+
+    const context = pluginContext(&runtime);
+    const raw = try context.openFile(path, .write_create_truncate, false);
+    try std.testing.expectEqual(@as(usize, 2), try context.writeFileBytes(raw, "ok"));
+    try context.closeFile(raw);
+    try std.testing.expectEqual(@as(usize, 0), runtime.low_level_handles.?.len());
+
+    const output = try temporary.dir.readFileAlloc(std.testing.io, "plugin-context.txt", std.testing.allocator, .limited(8));
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualSlices(u8, "ok", output);
 }

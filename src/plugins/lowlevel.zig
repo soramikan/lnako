@@ -12,13 +12,21 @@ pub const Dictionary = value_mod.Dictionary;
 /// （辞書）であり、その同一性だけをhandle tableの `HandleId` へ結びつける。
 /// 同じ形の辞書を手作りしてもこの対応表に載らないため無効になる。
 pub const State = struct {
+    allocator: ?std.mem.Allocator = null,
     handle_ids: std.AutoHashMapUnmanaged(usize, foundation.HandleId) = .empty,
     handle_values: std.ArrayList(Value) = .empty,
 
     pub fn deinit(self: *State, allocator: std.mem.Allocator) void {
-        self.handle_ids.deinit(allocator);
-        self.handle_values.deinit(allocator);
+        const actual = self.allocator orelse allocator;
+        self.handle_ids.deinit(actual);
+        self.handle_values.deinit(actual);
         self.* = undefined;
+    }
+
+    fn memory(self: *State, allocator: std.mem.Allocator) std.mem.Allocator {
+        if (self.allocator) |existing| return existing;
+        self.allocator = allocator;
+        return allocator;
     }
 
     pub fn trace(self: *State, runtime: *Runtime) !void {
@@ -144,12 +152,21 @@ fn capabilityList(runtime: *Runtime) !Value {
 }
 
 fn openFile(runtime: *Runtime, state: *State, context: Context, effects: Effects, arguments: []const Value) !Value {
-    const path = try shared.valueUtf8(runtime, common.argument(arguments, 0));
+    const path_value = common.argument(arguments, 0);
+    if (path_value != .string) {
+        return throwStructured(runtime, effects, .EINVAL, foundation.stream_operations.open, null, null, "pathは文字列である必要があります");
+    }
+    const path = try shared.valueUtf8(runtime, path_value);
     defer runtime.allocator().free(path);
     const mode_value = common.argument(arguments, 1);
     var mode_text: ?[]u8 = null;
     defer if (mode_text) |text| runtime.allocator().free(text);
-    if (mode_value != .undefined) mode_text = try shared.valueUtf8(runtime, mode_value);
+    if (mode_value != .undefined) {
+        if (mode_value != .string) {
+            return throwStructured(runtime, effects, .EINVAL, foundation.stream_operations.open, path, null, "modeは文字列である必要があります");
+        }
+        mode_text = try shared.valueUtf8(runtime, mode_value);
+    }
     const parsed = foundation.parseOpenMode(mode_text orelse "r") catch {
         return throwStructured(runtime, effects, .EINVAL, foundation.stream_operations.open, path, null, "開くmodeが不正です");
     };
@@ -162,9 +179,9 @@ fn openFile(runtime: *Runtime, state: *State, context: Context, effects: Effects
     var roots = runtime.rootFrame();
     defer roots.deinit();
     try roots.protect(&handle);
-    try state.handle_ids.put(runtime.allocator(), @intFromPtr(handle.dictionary), id);
+    try state.handle_ids.put(state.memory(runtime.allocator()), @intFromPtr(handle.dictionary), id);
     errdefer _ = state.handle_ids.remove(@intFromPtr(handle.dictionary));
-    try state.handle_values.append(runtime.allocator(), handle);
+    try state.handle_values.append(state.memory(runtime.allocator()), handle);
     return handle;
 }
 
@@ -356,8 +373,8 @@ test "Stateはhandle値の同一性だけを対応表へ載せる" {
     defer roots.deinit();
     try roots.protect(&first);
     try roots.protect(&second);
-    try state.handle_ids.put(std.testing.allocator, @intFromPtr(first.dictionary), .{ .index = 1, .generation = 1 });
-    try state.handle_values.append(std.testing.allocator, first);
+    try state.handle_ids.put(state.memory(std.testing.allocator), @intFromPtr(first.dictionary), .{ .index = 1, .generation = 1 });
+    try state.handle_values.append(state.memory(std.testing.allocator), first);
 
     try std.testing.expect(lookupHandle(&state, first) != null);
     try std.testing.expect(lookupHandle(&state, second) == null);
@@ -392,4 +409,46 @@ test "bytesArgumentはBuffer kindのBytesだけを受け付ける" {
     try roots.protect(&uint8_array);
     try std.testing.expectError(error.InvalidBytes, bytesArgument(&runtime, uint8_array));
     try std.testing.expectError(error.InvalidBytes, bytesArgument(&runtime, .{ .number = 1 }));
+}
+
+test "Stateは最初に使ったallocatorで解放する" {
+    var state = State{};
+    try state.handle_ids.put(state.memory(std.testing.allocator), 1, .{ .index = 1, .generation = 1 });
+    try state.handle_values.append(state.memory(std.testing.allocator), .undefined);
+    state.deinit(std.heap.page_allocator);
+}
+
+fn captureThrow(context: *anyopaque, value: Value) !void {
+    const captured: *Value = @ptrCast(@alignCast(context));
+    captured.* = value;
+}
+
+test "openは非文字列のpathとmodeをEINVALにする" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, emptyContext(), effects, "ファイル開", &.{.{ .number = 1 }}));
+    try std.testing.expect(thrown == .dictionary);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&thrown);
+    const path_code = shared.dictionaryGetAscii(thrown.dictionary, foundation.error_object_keys.code) orelse return error.TestExpectedEqual;
+    const path_text = try shared.valueUtf8(&runtime, path_code);
+    defer runtime.allocator().free(path_text);
+    try std.testing.expectEqualStrings("EINVAL", path_text);
+
+    var path = try runtime.stringUtf8("missing.txt");
+    try roots.protect(&path);
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, emptyContext(), effects, "ファイル開", &.{ path, .{ .number = 1 } }));
+    try std.testing.expect(thrown == .dictionary);
+    try roots.protect(&thrown);
+    const mode_code = shared.dictionaryGetAscii(thrown.dictionary, foundation.error_object_keys.code) orelse return error.TestExpectedEqual;
+    const mode_text = try shared.valueUtf8(&runtime, mode_code);
+    defer runtime.allocator().free(mode_text);
+    try std.testing.expectEqualStrings("EINVAL", mode_text);
 }

@@ -7,6 +7,7 @@ const foundation = @import("low_level_foundation.zig");
 pub const OpenHandle = struct {
     id: foundation.HandleId,
     file: std.Io.File,
+    append: bool = false,
 };
 
 /// 生成番号付きのハンドル表。closeしてもindexのgenerationを保持し、
@@ -44,7 +45,7 @@ pub const FileHandleTable = struct {
     pub fn insert(self: *FileHandleTable, file: std.Io.File) !foundation.HandleId {
         const id = try self.allocateId();
         errdefer self.free_indices.append(self.allocator, id.index) catch {};
-        try self.entries.append(self.allocator, .{ .id = id, .file = file });
+        try self.entries.append(self.allocator, .{ .id = id, .file = file, .append = false });
         return id;
     }
 
@@ -84,7 +85,9 @@ pub const FileHandleTable = struct {
     pub fn open(self: *FileHandleTable, io: std.Io, options: OpenOptions) OpenError!foundation.HandleId {
         const file = try openFile(io, options);
         errdefer file.close(io);
-        return self.insert(file);
+        const id = try self.insert(file);
+        self.find(id).?.append = options.mode.isAppend();
+        return id;
     }
 };
 
@@ -156,6 +159,11 @@ pub fn readAtCurrent(io: std.Io, file: std.Io.File, buffer: []u8) ReadError!usiz
 /// 現在位置からバイト列を書く。部分書込みの場合は実際に書いた数を返す。
 pub fn writeAtCurrent(io: std.Io, file: std.Io.File, bytes: []const u8) WriteError!usize {
     return file.writeStreaming(io, &.{}, &.{bytes}, 1);
+}
+
+pub fn writeHandle(io: std.Io, entry: *OpenHandle, bytes: []const u8) WriteError!usize {
+    if (entry.append) try seekToEnd(io, entry.file);
+    return writeAtCurrent(io, entry.file, bytes);
 }
 
 /// 全バイトを書く。ファイルでは通常1回で書けるが、末尾まで試す。
@@ -248,7 +256,7 @@ test "ハンドル表のappendは既存内容の末尾へ書く" {
     try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "append.txt", .data = "ab" });
 
     const writer_id = try table.open(std.testing.io, .{ .path = path, .mode = .append_create });
-    try std.testing.expectEqual(@as(usize, 2), try writeAtCurrent(std.testing.io, table.find(writer_id).?.file, "cd"));
+    try std.testing.expectEqual(@as(usize, 2), try writeHandle(std.testing.io, table.find(writer_id).?, "cd"));
     const removed = table.remove(writer_id).?;
     removed.file.close(std.testing.io);
 
@@ -256,4 +264,49 @@ test "ハンドル表のappendは既存内容の末尾へ書く" {
     var buffer: [8]u8 = undefined;
     const read = try readAtCurrent(std.testing.io, table.find(reader_id).?.file, &buffer);
     try std.testing.expectEqualSlices(u8, "abcd", buffer[0..read]);
+}
+
+test "appendモードは切詰め後も末尾へ書く" {
+    var table = FileHandleTable.init(std.testing.allocator);
+    defer table.deinit(std.testing.io);
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const path = try std.fs.path.join(std.testing.allocator, &.{ directory, "append-truncate.txt" });
+    defer std.testing.allocator.free(path);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "append-truncate.txt", .data = "abcdef" });
+
+    const writer_id = try table.open(std.testing.io, .{ .path = path, .mode = .append_create });
+    const entry = table.find(writer_id).?;
+    try setLength(std.testing.io, entry.file, 2);
+    try std.testing.expectEqual(@as(usize, 2), try writeHandle(std.testing.io, entry, "xy"));
+    const removed = table.remove(writer_id).?;
+    removed.file.close(std.testing.io);
+
+    const reader_id = try table.open(std.testing.io, .{ .path = path, .mode = .read });
+    var buffer: [8]u8 = undefined;
+    const read = try readAtCurrent(std.testing.io, table.find(reader_id).?.file, &buffer);
+    try std.testing.expectEqualSlices(u8, "abxy", buffer[0..read]);
+}
+
+test "空書込みは0を返しwriteAtCurrentAllは残バイトを書き切る" {
+    var table = FileHandleTable.init(std.testing.allocator);
+    defer table.deinit(std.testing.io);
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const path = try std.fs.path.join(std.testing.allocator, &.{ directory, "partial-write.txt" });
+    defer std.testing.allocator.free(path);
+
+    const id = try table.open(std.testing.io, .{ .path = path, .mode = .write_create_truncate });
+    const file = table.find(id).?.file;
+    try std.testing.expectEqual(@as(usize, 0), try writeAtCurrent(std.testing.io, file, ""));
+    try writeAtCurrentAll(std.testing.io, file, "hello");
+
+    const reader_id = try table.open(std.testing.io, .{ .path = path, .mode = .read });
+    var buffer: [8]u8 = undefined;
+    const read = try readAtCurrent(std.testing.io, table.find(reader_id).?.file, &buffer);
+    try std.testing.expectEqualSlices(u8, "hello", buffer[0..read]);
 }

@@ -1419,7 +1419,7 @@ const LowLevelTestHost = struct {
     fn writeFileBytes(pointer: *anyopaque, raw: u64, bytes: []const u8) anyerror!usize {
         const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
         const entry = self.table.find(low_level_foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
-        return low_level_io.writeAtCurrent(self.io, entry.file, bytes);
+        return low_level_io.writeHandle(self.io, entry, bytes);
     }
 
     fn syncFile(pointer: *anyopaque, raw: u64) anyerror!void {
@@ -1512,4 +1512,80 @@ test "Interpreter低レイヤーはNUL/不正UTF-8を含むバイナリをchunke
     defer allocator.free(output);
     try std.testing.expectEqualSlices(u8, fixture, output);
     try std.testing.expect(std.mem.indexOf(u8, host.written(), "EBADF") != null);
+}
+
+test "Interpreter低レイヤーは非文字列pathをEINVALにする" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\エラー監視
+        \\H=ファイル開(1,"r")
+        \\エラーならば
+        \\エラーメッセージ["code"]を表示
+        \\ここまで
+        \\
+    ;
+    var fixture_compiled = try compileForTest(allocator, source);
+    defer fixture_compiled.ir_program.deinit();
+    defer fixture_compiled.hir_program.deinit();
+    defer fixture_compiled.analyzed.deinit();
+    defer fixture_compiled.parsed.deinit();
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = allocator };
+    defer host.deinit();
+    var low_host = LowLevelTestHost.init(allocator);
+    defer low_host.deinit();
+    var runtime_host = host.host();
+    runtime_host.lowlevel_context = low_host.context();
+    var interpreter = Interpreter.init(allocator, &runtime, fixture_compiled.ir_program, runtime_host);
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expect(std.mem.indexOf(u8, host.written(), "EINVAL") != null);
+}
+
+test "Interpreter低レイヤーのappendは切詰め後も末尾へ書く" {
+    const allocator = std.testing.allocator;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(directory);
+    const source_path = try std.fs.path.join(allocator, &.{ directory, "chunk.bin" });
+    defer allocator.free(source_path);
+    const output_path = try std.fs.path.join(allocator, &.{ directory, "append.bin" });
+    defer allocator.free(output_path);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "chunk.bin", .data = "xy" });
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "append.bin", .data = "abcdef" });
+
+    const source = try std.fmt.allocPrint(allocator,
+        \\S=ファイル開("{s}","r")
+        \\B=ファイルバイト読(S,2)
+        \\ファイル閉(S)
+        \\H=ファイル開("{s}","a")
+        \\ファイル切詰(H,2)
+        \\ファイルバイト書(H,B)
+        \\ファイル閉(H)
+        \\
+    , .{ source_path, output_path });
+    defer allocator.free(source);
+
+    var fixture_compiled = try compileForTest(allocator, source);
+    defer fixture_compiled.ir_program.deinit();
+    defer fixture_compiled.hir_program.deinit();
+    defer fixture_compiled.analyzed.deinit();
+    defer fixture_compiled.parsed.deinit();
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = allocator };
+    defer host.deinit();
+    var low_host = LowLevelTestHost.init(allocator);
+    defer low_host.deinit();
+    var runtime_host = host.host();
+    runtime_host.lowlevel_context = low_host.context();
+    var interpreter = Interpreter.init(allocator, &runtime, fixture_compiled.ir_program, runtime_host);
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+
+    const output = try temporary.dir.readFileAlloc(std.testing.io, "append.bin", allocator, .limited(16));
+    defer allocator.free(output);
+    try std.testing.expectEqualSlices(u8, "abxy", output);
 }

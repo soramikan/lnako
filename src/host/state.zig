@@ -326,7 +326,7 @@ pub const CliHost = struct {
         const self: *CliHost = @ptrCast(@alignCast(context));
         const id = lnako.runtime.low_level_foundation.HandleId.fromRaw(raw);
         const entry = self.lowLevelTable().find(id) orelse return error.BadFileDescriptor;
-        return lnako.runtime.low_level_io.writeAtCurrent(self.io, entry.file, bytes);
+        return lnako.runtime.low_level_io.writeHandle(self.io, entry, bytes);
     }
 
     fn lowLevelSyncFile(context: *anyopaque, raw: u64) anyerror!void {

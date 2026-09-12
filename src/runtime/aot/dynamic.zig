@@ -1,6 +1,7 @@
 const std = @import("std");
 const aot_state = @import("state.zig");
 const shared = @import("shared.zig");
+const low_level = @import("low_level.zig");
 
 const aot_builtin = shared.aot_builtin;
 const dynamic_ir = shared.dynamic_ir;
@@ -49,6 +50,7 @@ const DynamicHostContext = struct {
             .nowMillisecondsFn = nowMilliseconds,
             .monotonicMillisecondsFn = monotonicMilliseconds,
             .randomFn = random,
+            .lowlevel_context = low_level.pluginContext(self.owner),
         };
     }
 
