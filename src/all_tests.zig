@@ -23,5 +23,12 @@ test {
     _ = @import("cli/arguments.zig");
     _ = @import("cli/commands/test.zig");
 
+    _ = @import("lnako").package.diagnostics;
+    _ = @import("lnako").package.toml;
+    _ = @import("lnako").package.semver;
+    _ = @import("lnako").package.marker;
+    _ = @import("lnako").package.features;
+    _ = @import("lnako").package.manifest;
+
     _ = @import("regexp");
 }

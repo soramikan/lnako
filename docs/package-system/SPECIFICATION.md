@@ -39,7 +39,7 @@ license = "MIT"
 
 | キー | 型 | 必須 | 説明 |
 |------|------|------|------|
-| `name` | string | yes | `[a-z][a-z0-9-]{1,63}`。 |
+| `name` | string | yes | `[a-z][a-z0-9-]{0,63}`（1文字以上）。 |
 | `version` | string | yes | SemVer 2.0.0。 |
 | `license` | string | yes | SPDX identifier または `UNLICENSED`/`Proprietary`。 |
 | `id` | string | no | `pkg:<32hex>`。未登録時は省略。 |
@@ -50,6 +50,7 @@ license = "MIT"
 | `homepage` | string | no | ホームページ URL。 |
 | `nako-version` | string | no | 想定する nadesiko3 バージョン。 |
 | `min-nako-version` | string | no | 必要な最低 nadesiko3 バージョン。 |
+| `schema-version` | integer | no | manifest schema 版。省略時は `1`（§9 / SCHEMA_VERSIONS.md 参照）。 |
 
 ### 3.3 features セクション
 
@@ -62,6 +63,13 @@ http = ["native", "req"]
 - feature 名は `[a-z][a-z0-9-]+`。
 - 値は有効化する feature 名または依存 alias の配列。
 - `default` feature は依存解決時に自動的に有効化される。
+
+#### 3.3.1 feature 展開規則
+
+- 要求された feature と（`default-features` が無効化されていなければ）`default` feature を起点に、定義済み feature を深さ優先で再帰展開する。
+- 定義の値が定義済み feature 名なら feature として展開し、依存 alias（`dependencies`/`dev-dependencies` のエントリ名または `alias`）ならその依存を有効化する。
+- 定義済み feature 名でも依存 alias でもない項目は `E028_UNKNOWN_FEATURE` 診断。
+- feature 間の循環は `E027_FEATURE_CYCLE` 診断。循環は解析時にも検査される。
 
 ### 3.4 dependencies セクション
 
@@ -104,7 +112,8 @@ npm 補助依存。同一 name/version の npm package が複数文脈で使わ�
 | `version` | string | yes | npm version range またはピン。 |
 | `context` | string | no | 文脈を表す自由な ID。省略時は package 名を文脈とする。 |
 | `features` | array<string> | no | 使用する npm package の feature（peer/optional 含む）。 |
-| `peer-dependencies` | object | no | peer 依存マップ。 |
+| `peer-dependencies` | object | no | peer 依存マップ（値は semver range）。 |
+| `optional-peers` | array<string> | no | optional として扱う peer 名。 |
 
 #### 3.4.3 `dependencies.path`
 
@@ -117,7 +126,7 @@ npm 補助依存。同一 name/version の npm package が複数文脈で使わ�
 
 #### 3.4.4 `dependencies.git` / `dependencies.http`
 
-出典を明示した取得。git は commit または tag で固定する。http は hash で固定する。
+出典を明示した取得。git は commit（`[0-9a-f]{7,40}`）で固定する。http は hash で固定する。
 
 ### 3.5 profiles セクション
 
@@ -128,9 +137,9 @@ default = { os = "macos", cpu = "aarch64", abi = "gnu", compat-js = false }
 
 | キー | 型 | 必須 | 説明 |
 |------|------|------|------|
-| `os` | string | yes | `macos`, `linux`, `windows` または正規化された名前。 |
-| `cpu` | string | yes | `aarch64`, `x86_64` など。 |
-| `abi` | string | yes | `gnu`, `msvc`, `musl` など。 |
+| `os` | string | yes | `macos`, `linux`, `windows` のいずれか。 |
+| `cpu` | string | yes | `aarch64`, `x86_64`, `arm`, `wasm32` のいずれか。 |
+| `abi` | string | yes | `gnu`, `msvc`, `musl`, `none` のいずれか。 |
 | `compat-js` | boolean | no | `true` の場合 JavaScript/ESM 実行を許可。 |
 | `optimize` | string | no | `O0` 〜 `O3`。 |
 
@@ -158,6 +167,40 @@ native = "libsqlite.dylib"
 - `native` は native plugin ファイル。
 - `esm` は ESM ファイル。`compat-js` 時のみ扱う。
 - 同じ `name` の export を重複して宣言できない。
+
+### 3.7 SemVer range 構文
+
+`version` 制約は npm(node-semver) 互換の範囲構文をとる。
+
+- 完全バージョン `1.2.3`（`=` 等価）
+- 部分バージョン `1.2`、`1`、ワイルドカード `1.2.x`/`1.x`/`*`/`x`
+- caret `^1.2.3`（`>=1.2.3 <2.0.0`）。`^0` 系は左端の非ゼロ要素を保持する（`^0.2.3` → `>=0.2.3 <0.3.0`、`^0.0.3` → `>=0.0.3 <0.0.4`、`^0.0.0` → `>=0.0.0 <0.0.1`）
+- tilde `~1.2.3`（`>=1.2.3 <1.3.0`）、`~1.2`（`>=1.2.0 <1.3.0`）、`~1`（`>=1.0.0 <2.0.0`）。`~>` は `~` と同等
+- 比較 `>`, `>=`, `<`, `<=`, `=` の空白区切り AND 結合（`> 1.2.3` のような演算子とバージョンの空白区切りも可）。ワイルドカードへの `>`/`<` は `<0.0.0-0`（空範囲）に写る
+- ハイフン範囲 `1.2.3 - 2.0.0`（上端は部分バージョンなら次位まで）
+- `||` による OR 結合。空の選択肢は `*` として扱う
+- バージョン前置の `v`（`v1.2.3`）は剥がして評価する。先頭の `=`（`=1.2.3`、`= 1.2.3`、`=v1.2.3`）は等価比較の演算子として評価する
+- バージョン位置の `=` は受理しない（`==1.2.3`、`> =1.2.3`、`1.2.3 - =2.0.0` は `E025`）。node-semver 7.x は `[v=\s]*` の前置を許容してこれらを受理するが、本仕様は npm/node-semver#691 で提案された次期メジャー仕様（`v?` のみ前置）に合わせて意図的に厳格化する
+
+評価は node-semver と同じく、prerelease 付きバージョンは同一 `(major,minor,patch)` の prerelease 比較子を含む比較子集合でのみ一致する。空文字は全バージョン一致として扱う。各数値要素は `Number.MAX_SAFE_INTEGER`（9007199254740991）以下に制限する。構文エラーは `E025_INVALID_RANGE` 診断、バージョン自体の構文エラーは `E024_INVALID_SEMVER` 診断。
+
+### 3.8 marker 式
+
+ターゲット条件（profile 選択・条件付き依存など後続 issue で導入されるフィールド）に用いる式の構文をここで正規化する。
+
+```text
+or         := and ("or" and)*
+and        := unary ("and" unary)*
+unary      := "not" unary | "(" or ")" | comparison | operand
+comparison := operand (==|!=|<|<=|>|>=|in|"not in") operand
+operand    := field | "string" | 'string' | true | false | "[" operand ("," operand)* "]"
+field      := os | cpu | abi | compat-js | optimize | version | features
+```
+
+- `os`/`cpu`/`abi`/`optimize` は文字列、`compat-js` は真偽値、`version` は SemVer、`features` は文字列リストとして評価する。
+- `in`/`not in` は右辺のリストへの membership を評価する。要素の一致判定は `==` と同じ意味論（文字列同士が SemVer として解釈できる場合は SemVer 比較）。比較不能な型同士は一致しない。
+- `version` と文字列の比較は文字列を SemVer として解釈する。型が合わない場合は評価エラー。
+- 構文エラーは `E026_INVALID_MARKER` 診断。
 
 ## 4. `nako.lock`
 
@@ -303,6 +346,19 @@ native = "libsqlite.dylib"
 | `E017_NPM_PEER_CONFLICT` | error | npm peer dependency 衝突。 |
 | `E018_INVALID_NPM_CONTEXT` | error | npm 補助依存の context ID が無効。 |
 | `E019_REQUIRED_FIELD_MISSING` | error | 必須フィールドが存在しない。 |
+| `E020_INVALID_TOML` | error | `nako.toml` の TOML 構文エラー（重複キー・重複テーブル定義を含む）。 |
+| `E021_INVALID_UTF8` | error | manifest が不正な UTF-8 を含む。 |
+| `E022_UNKNOWN_FIELD` | error | schema 未定義のフィールド。 |
+| `E023_INVALID_TYPE` | error | フィールドの型が schema と不一致。 |
+| `E024_INVALID_SEMVER` | error | SemVer として不正なバージョン文字列。 |
+| `E025_INVALID_RANGE` | error | SemVer range として不正な制約文字列。 |
+| `E026_INVALID_MARKER` | error | marker 式の構文エラー。 |
+| `E027_FEATURE_CYCLE` | error | feature 間の循環参照。 |
+| `E028_UNKNOWN_FEATURE` | error | 定義済み feature でも依存 alias でもない feature 参照。 |
+| `E029_INVALID_VALUE` | error | パターン・列挙に合わないフィールド値。 |
+| `E030_UNKNOWN_PROFILE` | error | 未定義の profile 参照。 |
+
+`nako.toml` の解析診断は `path:line:column` のソース位置と `dependencies.pkg.<name>.version` 形式のフィールドパスを保持する。
 
 ## 9. 変更規則
 
