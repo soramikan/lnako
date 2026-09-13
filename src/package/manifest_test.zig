@@ -70,6 +70,25 @@ test "妥当なmanifestを解析する" {
     try std.testing.expect(!expanded.dependency_aliases.contains("client"));
 }
 
+test "複数行文字列の改行区切りversion範囲を解析する" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[dependencies.pkg]
+        \\lib = { version = """>=1.0.0
+        \\<2.0.0""" }
+        \\
+    ;
+    var manifest = try parseOk(allocator, source);
+    defer manifest.deinit();
+    const lib = manifest.dependencies.pkg.get("lib").?;
+    try std.testing.expect(lib.version.satisfies(try semver.Version.parse("1.5.0")));
+    try std.testing.expect(!lib.version.satisfies(try semver.Version.parse("2.0.0")));
+}
+
 test "feature経由の依存aliasを展開する" {
     const allocator = std.testing.allocator;
     const source =
@@ -416,6 +435,20 @@ test "同一public-idの3者間衝突とfeature名規則を診断する" {
     ;
     try parseErrCode(allocator, adjacent, diag.E003_CONFLICTING_VERSIONS);
 
+    // `>x` は `<0.0.0-0`（空範囲）に展開されるため `*` とも共通
+    // バージョンを持たない。
+    const empty_set =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[dependencies.pkg]
+        \\a = { version = ">x", public-id = "pkg:0123456789abcdef0123456789abcdef" }
+        \\b = { version = "*", public-id = "pkg:0123456789abcdef0123456789abcdef" }
+        \\
+    ;
+    try parseErrCode(allocator, empty_set, diag.E003_CONFLICTING_VERSIONS);
+
     // 積集合パス数の上限（1024）を超えた時点で絞り込みを打ち切り
     // 「非空のまま」とみなす。破棄したパスだけが後続の制約を満たす
     // 場合でも、打ち切りによる偽の衝突を報告しない。
@@ -566,6 +599,8 @@ test "manifest適合fixtureを検証する" {
         .{ .path = "tools/package-system/conformance/invalid/manifest/conflicting-version-prerelease/nako.toml", .expected_code = diag.E003_CONFLICTING_VERSIONS },
         .{ .path = "tools/package-system/conformance/invalid/manifest/conflicting-version-empty-range/nako.toml", .expected_code = diag.E003_CONFLICTING_VERSIONS },
         .{ .path = "tools/package-system/conformance/invalid/manifest/conflicting-version-dev/nako.toml", .expected_code = diag.E003_CONFLICTING_VERSIONS },
+        .{ .path = "tools/package-system/conformance/invalid/manifest/conflicting-version-empty-set/nako.toml", .expected_code = diag.E003_CONFLICTING_VERSIONS },
+        .{ .path = "tools/package-system/conformance/invalid/manifest/trailing-newline-version/nako.toml", .expected_code = diag.E024_INVALID_SEMVER },
         .{ .path = "tools/package-system/conformance/invalid/manifest/duplicate-exports/nako.toml", .expected_code = diag.E011_DUPLICATE_EXPORT },
         .{ .path = "tools/package-system/conformance/invalid/manifest/invalid-profile/nako.toml", .expected_code = diag.E014_INVALID_PROFILE },
         .{ .path = "tools/package-system/conformance/invalid/manifest/js-without-compat-js/nako.toml", .expected_code = diag.E006_JS_IN_NORMAL_MODE },

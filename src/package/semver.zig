@@ -173,14 +173,14 @@ pub const Range = struct {
             sets.deinit(allocator);
         }
         // 空文字は node-semver と同じく全バージョン一致として扱う。
-        if (std.mem.trim(u8, text, " \t").len == 0) {
+        if (std.mem.trim(u8, text, " \t\n\r").len == 0) {
             try sets.append(allocator, &.{});
             return .{ .sets = try sets.toOwnedSlice(allocator), .text = text };
         }
         // `||` のみが OR 区切り。空の選択肢は node-semver と同じく `*` として扱う。
         var alternatives = std.mem.splitSequence(u8, text, "||");
         while (alternatives.next()) |alternative| {
-            if (std.mem.trim(u8, alternative, " \t").len == 0) {
+            if (std.mem.trim(u8, alternative, " \t\n\r").len == 0) {
                 try sets.append(allocator, &.{});
                 continue;
             }
@@ -423,7 +423,7 @@ fn expandOp(allocator: std.mem.Allocator, list: *std.ArrayList(Comparator), op_t
 fn parseSet(allocator: std.mem.Allocator, alternative: []const u8) Error![]const Comparator {
     var tokens: std.ArrayList([]const u8) = .empty;
     defer tokens.deinit(allocator);
-    var iter = std.mem.tokenizeAny(u8, alternative, " \t");
+    var iter = std.mem.tokenizeAny(u8, alternative, " \t\n\r");
     while (iter.next()) |token| try tokens.append(allocator, token);
     if (tokens.items.len == 0) return error.InvalidRange;
 
@@ -571,6 +571,22 @@ pub fn jointSetsIntersect(sets: []const []const Comparator) bool {
             u.version.major == l.version.major and u.version.minor == l.version.minor and
             u.version.patch == l.version.patch +| 1;
         if (successor_tuple and upper_prerelease_only) {
+            if (!prereleaseGated(sets, u.version)) return false;
+        }
+    }
+    if (lower == null and upper != null) {
+        const u = upper.?;
+        // 下限なしの上端 `<u` は u 未満の候補を必要とする。最小
+        // バージョン 0.0.0-0 以下の上端（`<0.0.0-0` は `>x` や `<x`
+        // の展開結果）は空。
+        const min_order = u.version.order(.{ .major = 0, .minor = 0, .patch = 0, .prerelease = "0" });
+        if (u.op == .lt and min_order != .gt) return false;
+        // 上端が (0,0,0) タプルにある場合、候補は (0,0,0) の
+        // prerelease のみ（それ未満の release は存在しない）。
+        // `<0.0.0` はゲート可能な比較子が必ずこの上端より強いため
+        // 常に空、`<=0.0.0-P` や `<0.0.0-P` はゲートを要求する。
+        const zero_tuple = u.version.major == 0 and u.version.minor == 0 and u.version.patch == 0;
+        if (zero_tuple and (u.version.prerelease.len > 0 or u.op == .lt)) {
             if (!prereleaseGated(sets, u.version)) return false;
         }
     }
@@ -884,4 +900,54 @@ test "隣接タプル間のprerelease専用区間もゲートを要求する" {
     var wide = try Range.parse(allocator, ">1.5.0 <1.5.3");
     defer wide.deinit(allocator);
     try std.testing.expect(wide.intersects(plain));
+}
+
+test "下限なしの上端のみの空範囲は非交差と判定する" {
+    const allocator = std.testing.allocator;
+    var any = try Range.parse(allocator, "*");
+    defer any.deinit(allocator);
+    // `>x` は `<0.0.0-0`（空範囲）に展開されるため `*` とも交差しない。
+    var empty_gt = try Range.parse(allocator, ">x");
+    defer empty_gt.deinit(allocator);
+    try std.testing.expect(!empty_gt.intersects(any));
+    var empty_lt = try Range.parse(allocator, "<x");
+    defer empty_lt.deinit(allocator);
+    try std.testing.expect(!empty_lt.intersects(any));
+    // `<0.0.0` の候補は (0,0,0) の prerelease のみで、ゲート可能な
+    // 比較子は必ずこの上端より強いため常に空。
+    var below_zero = try Range.parse(allocator, "<0.0.0");
+    defer below_zero.deinit(allocator);
+    try std.testing.expect(!below_zero.intersects(any));
+    // `<=0.0.0-0` の候補は 0.0.0-0 のみで、`*` は prerelease を
+    // 受理しないため非交差。同タプルのゲートを持つ集合とは交差する。
+    var floor = try Range.parse(allocator, "<=0.0.0-0");
+    defer floor.deinit(allocator);
+    try std.testing.expect(!floor.intersects(any));
+    var gated = try Range.parse(allocator, ">=0.0.0-0");
+    defer gated.deinit(allocator);
+    try std.testing.expect(floor.intersects(gated));
+    // release が候補に残る上端は非空。
+    var low_release = try Range.parse(allocator, "<1.0.0");
+    defer low_release.deinit(allocator);
+    try std.testing.expect(low_release.intersects(any));
+    var zero_release = try Range.parse(allocator, "<=0.0.0");
+    defer zero_release.deinit(allocator);
+    try std.testing.expect(zero_release.intersects(any));
+}
+
+test "改行区切りの比較子を受理する" {
+    const allocator = std.testing.allocator;
+    // TOML 複数行文字列では範囲内に改行を含められる。
+    var range = try Range.parse(allocator, ">=1.0.0\n<2.0.0");
+    defer range.deinit(allocator);
+    try std.testing.expect(range.satisfies(try Version.parse("1.5.0")));
+    try std.testing.expect(!range.satisfies(try Version.parse("2.0.0")));
+    // 前後の改行はトリムされる。
+    var padded = try Range.parse(allocator, "\n>=1.0.0\r\n");
+    defer padded.deinit(allocator);
+    try std.testing.expect(padded.satisfies(try Version.parse("9.9.9")));
+    // 改行のみの選択肢は `*` として扱う。
+    var empty_alt = try Range.parse(allocator, "1.0.0 || \n");
+    defer empty_alt.deinit(allocator);
+    try std.testing.expect(empty_alt.satisfies(try Version.parse("99.0.0")));
 }

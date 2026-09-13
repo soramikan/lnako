@@ -125,6 +125,30 @@ test("隣接tuple間のprerelease専用区間もゲートを要求する", () =>
   assert.equal(rangesIntersect(parseRange(">1.5.0 <1.5.3"), parseRange(">=1.0.0")), true);
 });
 
+test("下限なしの上端のみの空範囲は非交差と判定する", () => {
+  // `>x`/`<x` は `<0.0.0-0`（空範囲）に展開されるため `*` とも交差しない。
+  assert.equal(rangesIntersect(parseRange(">x"), parseRange("*")), false);
+  assert.equal(rangesIntersect(parseRange("<x"), parseRange("*")), false);
+  // `<0.0.0` の候補は (0,0,0) の prerelease のみで常に空。
+  assert.equal(rangesIntersect(parseRange("<0.0.0"), parseRange("*")), false);
+  // `<=0.0.0-0` ∩ `*` は prerelease ゲートを通らず非交差。
+  assert.equal(rangesIntersect(parseRange("<=0.0.0-0"), parseRange("*")), false);
+  // 同タプルのゲートを持つ集合とは交差する。
+  assert.equal(rangesIntersect(parseRange("<=0.0.0-0"), parseRange(">=0.0.0-0")), true);
+  // release が候補に残る上端は非空。
+  assert.equal(rangesIntersect(parseRange("<1.0.0"), parseRange("*")), true);
+  assert.equal(rangesIntersect(parseRange("<=0.0.0"), parseRange("*")), true);
+});
+
+test("改行区切りの比較子を受理する", () => {
+  // TOML 複数行文字列では範囲内に改行を含められる。
+  assert.deepEqual(parseRange(">=1.0.0\n<2.0.0"), parseRange(">=1.0.0 <2.0.0"));
+  // 前後の改行はトリムされる。
+  assert.deepEqual(parseRange("\n>=1.0.0\r\n"), parseRange(">=1.0.0"));
+  // 改行のみの選択肢は `*` として扱う。
+  assert.deepEqual(parseRange("1.0.0 || \n"), parseRange("1.0.0 || "));
+});
+
 test("空の || 枝は無制約として扱う", () => {
   assert.deepEqual(parseRange("2.0.0 ||"), [
     [{ op: "eq", version: { major: 2, minor: 0, patch: 0, prerelease: "" } }],

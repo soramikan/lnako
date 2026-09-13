@@ -229,7 +229,7 @@ function expandOp(list, op, rest) {
 const LONE_OPERATORS = new Set([">=", "<=", "~>", ">", "<", "=", "~", "^"]);
 
 function parseSet(alternative) {
-  const tokens = alternative.split(/[ \t]+/).filter((t) => t.length > 0);
+  const tokens = alternative.split(/[ \t\n\r]+/).filter((t) => t.length > 0);
   if (tokens.length === 0) return null;
   const list = [];
   for (let i = 0; i < tokens.length; i++) {
@@ -270,8 +270,9 @@ function expandHyphen(list, lowerText, upperText) {
 // npm(node-semver)互換の範囲を OR された AND 比較子集合へ解析する。
 // 空文字・空の `||` 選択肢は全バージョン一致（空集合）となる。
 export function parseRange(text) {
-  // Zig 側（semver.zig）と同じく空白トリムは space/tab のみ。
-  const trimTab = (s) => s.replace(/^[ \t]+|[ \t]+$/g, "");
+  // Zig 側（semver.zig）と同じく空白トリムは space/tab/改行。
+  // TOML 複数行文字列では範囲内に改行を含められる。
+  const trimTab = (s) => s.replace(/^[ \t\n\r]+|[ \t\n\r]+$/g, "");
   if (trimTab(text).length === 0) return [[]];
   const sets = [];
   for (const alternative of text.split("||")) {
@@ -380,6 +381,20 @@ export function jointSetsIntersect(sets) {
       u.version.patch === l.version.patch + 1;
     if (successorTuple && upperPrereleaseOnly && !prereleaseGated(sets, u.version)) {
       return false;
+    }
+  }
+  if (lower === null && upper !== null) {
+    const u = upper;
+    // 下限なしの上端 `<u` は u 未満の候補を必要とする。最小
+    // バージョン 0.0.0-0 以下の上端（`<0.0.0-0` は `>x` や `<x`
+    // の展開結果）は空。
+    const minOrder = compareVersion(u.version, { major: 0, minor: 0, patch: 0, prerelease: "0" });
+    if (u.op === "lt" && minOrder <= 0) return false;
+    // 上端が (0,0,0) タプルにある場合、候補は (0,0,0) の
+    // prerelease のみ（それ未満の release は存在しない）。
+    const zeroTuple = u.version.major === 0 && u.version.minor === 0 && u.version.patch === 0;
+    if (zeroTuple && (u.version.prerelease.length > 0 || u.op === "lt")) {
+      if (!prereleaseGated(sets, u.version)) return false;
     }
   }
   return true;

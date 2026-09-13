@@ -160,8 +160,12 @@ function validateSchema(value, schema, path) {
 
   if (typeof value === "string") {
     if (schema.pattern) {
-      const re = new RegExp(schema.pattern);
-      if (!re.test(value)) {
+      // マッチが入力全体を消費することを要求する。現行 schema の
+      // pattern は全て `^...$` アンカー済みで `.test` と同じ結果に
+      // なるが、pattern 定義に依存せず厳密な全文一致を保証する
+      // （Zig 側の厳密な解析と揃える）。
+      const m = new RegExp(schema.pattern).exec(value);
+      if (m === null || m.index !== 0 || m[0].length !== value.length) {
         fail("E029_INVALID_VALUE", `value "${value}" does not match pattern ${schema.pattern} at ${path}`, path);
       }
     }
@@ -327,7 +331,12 @@ export function validateManifest(manifest, fixturePath) {
   }
 
   // package.version の semver 不一致は汎用パターン失敗ではなく E024 とする。
-  if (typeof manifest.package?.version === "string" && !semverPattern.test(manifest.package.version)) {
+  // 防御的にマッチが入力全体を消費したかまで確認する。
+  const versionMatch = typeof manifest.package?.version === "string"
+    ? semverPattern.exec(manifest.package.version)
+    : null;
+  if (typeof manifest.package?.version === "string" &&
+    (versionMatch === null || versionMatch.index !== 0 || versionMatch[0].length !== manifest.package.version.length)) {
     fail("E024_INVALID_SEMVER", `invalid semver "${manifest.package.version}"`, `${fixturePath}.package.version`);
   }
   // semver 各数値要素は Number.MAX_SAFE_INTEGER 以下（Zig 側 numericPart と同じ上限）。
@@ -348,7 +357,8 @@ export function validateManifest(manifest, fixturePath) {
   // nako-version 系の数値要素は u64 範囲内（Zig 側 parsePlainVersion と同じ上限）。
   for (const key of ["nako-version", "min-nako-version"]) {
     const value = manifest.package?.[key];
-    if (typeof value === "string" && /^\d+\.\d+\.\d+$/.test(value)) {
+    const coreMatch = typeof value === "string" ? /^\d+\.\d+\.\d+$/.exec(value) : null;
+    if (coreMatch !== null && coreMatch[0].length === value.length) {
       if (value.split(".").some((part) => BigInt(part) > 18446744073709551615n)) {
         fail("E029_INVALID_VALUE", `${key} component exceeds u64 in "${value}"`, `${fixturePath}.package.${key}`);
       }
