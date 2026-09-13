@@ -47,6 +47,19 @@ const resolvedRefCache = new Map();
 const resolvingRefs = new Set();
 const semverPattern = new RegExp(schemaCache.byFile.get("common.schema.json").$defs.semver.pattern);
 
+// `format: "uri"` を検証する。RFC 3986 の絶対 URI の部分集合で、
+// scheme `[a-zA-Z][a-zA-Z0-9+.-]*:` と、空白・制御文字を含まない
+// 非空の残部を要求する（残部の文字構成までは検査しない）。
+// Zig 側 manifest.zig の `isUri` と同一の判定。
+function isUri(text) {
+  const colon = text.indexOf(":");
+  if (colon <= 0) return false;
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*$/.test(text.slice(0, colon))) return false;
+  const rest = text.slice(colon + 1);
+  if (rest.length === 0) return false;
+  return !/[\x00-\x20\x7f]/.test(rest);
+}
+
 function parseRef(ref, baseFile) {
   if (typeof ref !== "string") return { file: baseFile, fragment: "/" };
   const hashIdx = ref.indexOf("#");
@@ -168,6 +181,9 @@ function validateSchema(value, schema, path) {
       if (m === null || m.index !== 0 || m[0].length !== value.length) {
         fail("E029_INVALID_VALUE", `value "${value}" does not match pattern ${schema.pattern} at ${path}`, path);
       }
+    }
+    if (schema.format === "uri" && !isUri(value)) {
+      fail("E029_INVALID_VALUE", `invalid uri "${value}" at ${path}`, path);
     }
     if (schema.minLength !== undefined && value.length < schema.minLength) {
       fail("E029_INVALID_VALUE", `string at ${path} is too short`, path);

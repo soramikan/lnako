@@ -128,6 +128,8 @@ npm 補助依存。同一 name/version の npm package が複数文脈で使わ�
 
 出典を明示した取得。git は commit（`[0-9a-f]{7,40}`）で固定する。http は hash で固定する。
 
+`url` は `format: "uri"` の絶対 URI（`scheme:` を必須とし、空白・制御文字を含まない）とする。scp 形式の `git@host:path` は URI ではないため `ssh://git@host/path` の形式で記述する。`package.repository`・`package.homepage` も同じ形式とする。
+
 ### 3.5 profiles セクション
 
 ```toml

@@ -89,6 +89,77 @@ test "複数行文字列の改行区切りversion範囲を解析する" {
     try std.testing.expect(!lib.version.satisfies(try semver.Version.parse("2.0.0")));
 }
 
+test "既存診断を残したリストでも正常manifestを解析できる" {
+    const allocator = std.testing.allocator;
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    // 1個目の不正manifestの error が残っていても、2個目の成否は
+    // 今回追加された診断だけで決まる。
+    try std.testing.expectError(error.InvalidManifest, parse(allocator, "version = 1\n", &list));
+    const source =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+    ;
+    var manifest = try parse(allocator, source, &list);
+    defer manifest.deinit();
+    try std.testing.expectEqualStrings("a", manifest.package.name);
+}
+
+test "URIフィールドを検証する" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\repository = "https://example.com/repo"
+        \\homepage = "https://example.com"
+        \\
+    ;
+    var manifest = try parseOk(allocator, source);
+    defer manifest.deinit();
+    // repository・homepage・git url・http url の `format: "uri"` を検査する。
+    const cases = [_][]const u8{
+        \\repository = "not a uri"
+        ,
+        \\repository = "a:"
+        ,
+        \\repository = "1abc:x"
+        ,
+        \\repository = "x:y z"
+        ,
+        \\repository = ":x"
+        ,
+        \\repository = "git@github.com:a/b"
+        ,
+        \\homepage = "%%%"
+        ,
+        \\[dependencies.git.lib]
+        \\url = "not a uri"
+        \\commit = "0123456789abcdef0123456789abcdef01234567"
+        ,
+        \\[dependencies.http.lib]
+        \\url = "%%%"
+        \\hash = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        ,
+    };
+    for (cases) |case| {
+        const bad = try std.fmt.allocPrint(allocator,
+            \\[package]
+            \\name = "a"
+            \\version = "1.0.0"
+            \\license = "MIT"
+            \\{s}
+            \\
+        , .{case});
+        defer allocator.free(bad);
+        try parseErrCode(allocator, bad, diag.E029_INVALID_VALUE);
+    }
+}
+
 test "feature経由の依存aliasを展開する" {
     const allocator = std.testing.allocator;
     const source =
@@ -601,6 +672,7 @@ test "manifest適合fixtureを検証する" {
         .{ .path = "tools/package-system/conformance/invalid/manifest/conflicting-version-dev/nako.toml", .expected_code = diag.E003_CONFLICTING_VERSIONS },
         .{ .path = "tools/package-system/conformance/invalid/manifest/conflicting-version-empty-set/nako.toml", .expected_code = diag.E003_CONFLICTING_VERSIONS },
         .{ .path = "tools/package-system/conformance/invalid/manifest/trailing-newline-version/nako.toml", .expected_code = diag.E024_INVALID_SEMVER },
+        .{ .path = "tools/package-system/conformance/invalid/manifest/invalid-uri/nako.toml", .expected_code = diag.E029_INVALID_VALUE },
         .{ .path = "tools/package-system/conformance/invalid/manifest/duplicate-exports/nako.toml", .expected_code = diag.E011_DUPLICATE_EXPORT },
         .{ .path = "tools/package-system/conformance/invalid/manifest/invalid-profile/nako.toml", .expected_code = diag.E014_INVALID_PROFILE },
         .{ .path = "tools/package-system/conformance/invalid/manifest/js-without-compat-js/nako.toml", .expected_code = diag.E006_JS_IN_NORMAL_MODE },

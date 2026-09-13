@@ -215,7 +215,9 @@ pub const Error = error{ InvalidManifest, OutOfMemory };
 
 /// `nako.toml` テキストを解析し、型付き `Manifest` を返す。
 /// 構文・意味上の問題は `diagnostics` に位置付きで記録し、
-/// エラーがあれば `error.InvalidManifest` を返す。
+/// この呼出しで新たに error が追加された場合のみ
+/// `error.InvalidManifest` を返す。`diagnostics` は複数入力の
+/// 結果を集約してよく、既存の error は今回の成否に影響しない。
 /// 返された `Manifest` は `deinit` で全メモリを解放する。
 pub fn parse(allocator: std.mem.Allocator, source: []const u8, diagnostics: *diag.List) Error!Manifest {
     var manifest = switch (try toml.parse(allocator, source)) {
@@ -250,9 +252,12 @@ pub fn parse(allocator: std.mem.Allocator, source: []const u8, diagnostics: *dia
         .diagnostics = diagnostics,
         .manifest = &manifest,
     };
+    // 呼出し前から残っている error は今回の成否に数えない
+    // （診断リストが複数入力の結果を集約する場合があるため）。
+    const prior_errors = diagnostics.errorCount();
     try validator.validateRoot();
 
-    if (diagnostics.hasErrors()) return error.InvalidManifest;
+    if (diagnostics.errorCount() > prior_errors) return error.InvalidManifest;
     return manifest;
 }
 
@@ -459,8 +464,15 @@ const Validator = struct {
             package.id = id;
         }
         package.description = try self.expectString(table, "description", path);
-        package.repository = try self.expectString(table, "repository", path);
-        package.homepage = try self.expectString(table, "homepage", path);
+        for ([_][]const u8{ "repository", "homepage" }) |key| {
+            if (try self.expectString(table, key, path)) |uri| {
+                // schema は `format: "uri"` を要求する。
+                if (!isUri(uri)) {
+                    try self.report(diag.E029_INVALID_VALUE, try self.pathOf("package", key), valuePositionOfKey(table, key), "invalid uri \"{s}\"", .{uri});
+                }
+                if (std.mem.eql(u8, key, "repository")) package.repository = uri else package.homepage = uri;
+            }
+        }
         // schema は `^\d+\.\d+\.\d+$` を要求する（prerelease 不可・先頭ゼロ許容）。
         if (try self.parsePlainVersionField(table, "nako-version", path)) |version| package.nako_version = version;
         if (try self.parsePlainVersionField(table, "min-nako-version", path)) |version| package.min_nako_version = version;
@@ -712,6 +724,9 @@ const Validator = struct {
                 .position = entry.value_ptr.position,
             };
             if (try self.requireString(dep_table, "url", field_path, entry.value_ptr.position)) |url| {
+                if (!isUri(url)) {
+                    try self.report(diag.E029_INVALID_VALUE, try self.pathOf(field_path, "url"), valuePositionOfKey(dep_table, "url"), "invalid uri \"{s}\"", .{url});
+                }
                 dep.url = url;
             }
             if (try self.requireString(dep_table, "commit", field_path, entry.value_ptr.position)) |commit| {
@@ -744,6 +759,9 @@ const Validator = struct {
                 .position = entry.value_ptr.position,
             };
             if (try self.requireString(dep_table, "url", field_path, entry.value_ptr.position)) |url| {
+                if (!isUri(url)) {
+                    try self.report(diag.E029_INVALID_VALUE, try self.pathOf(field_path, "url"), valuePositionOfKey(dep_table, "url"), "invalid uri \"{s}\"", .{url});
+                }
                 dep.url = url;
             }
             if (try self.requireString(dep_table, "hash", field_path, entry.value_ptr.position)) |hash| {
@@ -1116,6 +1134,25 @@ fn isCommitId(text: []const u8) bool {
     if (text.len < 7 or text.len > 40) return false;
     for (text) |byte| {
         if (!(std.ascii.isDigit(byte) or (byte >= 'a' and byte <= 'f'))) return false;
+    }
+    return true;
+}
+
+/// `format: "uri"` を検証する。RFC 3986 の絶対 URI の部分集合で、
+/// scheme `[a-zA-Z][a-zA-Z0-9+.-]*:` と、空白・制御文字を含まない
+/// 非空の残部を要求する（残部の文字構成までは検査しない）。
+/// JS バリデータの `isUri` と同一の判定。
+fn isUri(text: []const u8) bool {
+    const colon = std.mem.indexOfScalar(u8, text, ':') orelse return false;
+    const scheme = text[0..colon];
+    if (scheme.len == 0 or !std.ascii.isAlphabetic(scheme[0])) return false;
+    for (scheme[1..]) |byte| {
+        if (!(std.ascii.isAlphanumeric(byte) or byte == '+' or byte == '-' or byte == '.')) return false;
+    }
+    const rest = text[colon + 1 ..];
+    if (rest.len == 0) return false;
+    for (rest) |byte| {
+        if (byte <= 0x20 or byte == 0x7f) return false;
     }
     return true;
 }
