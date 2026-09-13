@@ -712,3 +712,32 @@ test "manifest適合fixtureを検証する" {
         }
     }
 }
+
+test "manifest解析で確保失敗が診断へ変換されない" {
+    // 範囲解析（[dependencies.pkg]・npm短縮形・peer-dependencies の
+    // 3経路）等の確保失敗は OutOfMemory として伝播し、
+    // E025 等の診断による InvalidManifest にならない。
+    const source =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[dependencies.pkg]
+        \\lib = { version = "^1.0.0" }
+        \\[dependencies.npm]
+        \\leftpad = "^1.0.0"
+        \\express = { version = "^4.0.0", peer-dependencies = { ws = "^8" } }
+        \\
+    ;
+    var index: usize = 0;
+    while (index < 256) : (index += 1) {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = index });
+        var list = diag.List.init(failing.allocator());
+        defer list.deinit();
+        var manifest = parse(failing.allocator(), source, &list) catch |err| {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+            continue;
+        };
+        defer manifest.deinit();
+    }
+}

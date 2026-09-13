@@ -12,7 +12,8 @@ pub const Version = struct {
     build: []const u8 = "",
 
     /// `major.minor.patch[-prerelease][+build]` を厳密に解析する。
-    pub fn parse(text: []const u8) Error!Version {
+    /// 確保を行わないため error 集合は InvalidSemver のみ。
+    pub fn parse(text: []const u8) error{InvalidSemver}!Version {
         var rest = text;
         var build: []const u8 = "";
         if (std.mem.indexOfScalar(u8, rest, '+')) |plus| {
@@ -67,7 +68,7 @@ pub const Version = struct {
 /// 上限を設けることで範囲展開時の `+1` がオーバーフローしないことを保証する。
 pub const max_component: u64 = 9007199254740991;
 
-fn numericPart(text: []const u8) Error!u64 {
+fn numericPart(text: []const u8) error{InvalidSemver}!u64 {
     if (text.len == 0) return error.InvalidSemver;
     if (text.len > 1 and text[0] == '0') return error.InvalidSemver;
     for (text) |byte| {
@@ -83,7 +84,7 @@ fn isIdentChar(byte: u8) bool {
 }
 
 /// `strict_numeric` の場合、数字のみの識別子は先頭ゼロを許可しない。
-fn validateIdentifiers(text: []const u8, strict_numeric: bool) Error!void {
+fn validateIdentifiers(text: []const u8, strict_numeric: bool) error{InvalidSemver}!void {
     if (text.len == 0) return error.InvalidSemver;
     var parts = std.mem.splitScalar(u8, text, '.');
     while (parts.next()) |part| {

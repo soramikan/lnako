@@ -455,13 +455,18 @@ const Parser = struct {
         // 整数と浮動小数を先に分類し、整数として不正な表記が float に救済されないようにする。
         switch (classifyNumber(token)) {
             .integer => {
-                const integer = parseInteger(self.document.arena.allocator(), token) catch
-                    return self.fail(error.InvalidTomlInteger, "invalid integer");
+                const integer = parseInteger(self.document.arena.allocator(), token) catch |err| switch (err) {
+                    // 資源枯渇を入力エラーへ変換しない。
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => return self.fail(error.InvalidTomlInteger, "invalid integer"),
+                };
                 return .{ .integer = integer };
             },
             .float => {
-                const number = parseFloat(self.document.arena.allocator(), token) catch
-                    return self.fail(error.InvalidTomlNumber, "invalid number");
+                const number = parseFloat(self.document.arena.allocator(), token) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => return self.fail(error.InvalidTomlNumber, "invalid number"),
+                };
                 return .{ .float = number };
             },
             .invalid => return self.fail(error.InvalidTomlNumber, "invalid number"),
@@ -614,7 +619,8 @@ fn validTimeWithOffset(text: []const u8, allow_offset: bool) bool {
     const hour = std.fmt.parseInt(u32, text[0..2], 10) catch return false;
     const minute = std.fmt.parseInt(u32, text[3..5], 10) catch return false;
     const second = std.fmt.parseInt(u32, text[6..8], 10) catch return false;
-    if (hour > 23 or minute > 59 or second > 59) return false;
+    // 秒の60はRFC 3339のうるう秒としてTOML 1.0で許容される。
+    if (hour > 23 or minute > 59 or second > 60) return false;
     var i: usize = 8;
     if (i < text.len and text[i] == '.') {
         i += 1;
@@ -981,6 +987,10 @@ test "日時は構造を検証する" {
         "a = 1979-05-27 07:32:00\n",
         "a = 1979-05-27T07:32:00.999+09:00\n",
         "a = 2000-02-29\n",
+        // 秒の60はRFC 3339のうるう秒として許容する。
+        "a = 23:59:60\n",
+        "a = 1990-12-31T23:59:60Z\n",
+        "a = 1990-12-31 23:59:60+09:00\n",
     };
     for (ok_cases) |source| {
         const result = try parse(std.testing.allocator, source);
@@ -995,9 +1005,30 @@ test "日時は構造を検証する" {
         "a = 07:32:00Z\n", // local time にオフセットは付けられない
         "a = 1979-05-27T24:00:00\n", // 時の範囲外
         "a = 1900-02-29\n", // うるう年でない2/29
+        "a = 23:59:61\n", // 秒の範囲外
     };
     for (bad) |source| {
         try expectSyntaxError(source);
+    }
+}
+
+test "数値バッファ確保のOOMは構文エラーにしない" {
+    // アンダースコア除去バッファ等の確保失敗は OutOfMemory として
+    // 伝播し、invalid integer/number にならない。
+    var index: usize = 0;
+    while (index < 64) : (index += 1) {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = index });
+        const result = parse(failing.allocator(), "a = 1_000\nb = 1_0.0_5\nc = -1_0.0_5\n") catch |err| {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+            continue;
+        };
+        switch (result) {
+            .ok => |d| {
+                var doc = d;
+                defer doc.deinit();
+            },
+            .err => return error.TestUnexpectedResult,
+        }
     }
 }
 

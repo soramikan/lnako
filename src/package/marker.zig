@@ -94,7 +94,7 @@ pub const Result = union(enum) {
 };
 
 pub const Error = error{OutOfMemory};
-pub const EvalError = error{ UnknownField, TypeMismatch, InvalidVersion };
+pub const EvalError = error{ TypeMismatch, InvalidVersion };
 
 /// marker式を解析する。文法:
 ///   or  := and ("or" and)*
@@ -301,20 +301,24 @@ const Parser = struct {
         return self.fail(error.InvalidMarker, "unterminated string");
     }
 
-    fn lookaheadIs(self: *Parser, expected: std.meta.Tag(Token)) bool {
+    fn lookaheadIs(self: *Parser, expected: std.meta.Tag(Token)) ParseError!bool {
         const saved_index = self.index;
         const saved_message = self.error_message;
         defer {
             self.index = saved_index;
             self.error_message = saved_message;
         }
-        const t = self.token() catch return false;
+        const t = self.token() catch |err| switch (err) {
+            // 資源枯渇を「次のトークン不一致」に変換しない。
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return false,
+        };
         return std.meta.activeTag(t) == expected;
     }
 
     fn parseOr(self: *Parser) ParseError!*const Expr {
         var left = try self.parseAnd();
-        while (self.lookaheadIs(.kw_or)) {
+        while (try self.lookaheadIs(.kw_or)) {
             _ = try self.token();
             const right = try self.parseAnd();
             const node = try self.marker.arena.allocator().create(Expr);
@@ -326,7 +330,7 @@ const Parser = struct {
 
     fn parseAnd(self: *Parser) ParseError!*const Expr {
         var left = try self.parseUnary();
-        while (self.lookaheadIs(.kw_and)) {
+        while (try self.lookaheadIs(.kw_and)) {
             _ = try self.token();
             const right = try self.parseUnary();
             const node = try self.marker.arena.allocator().create(Expr);
@@ -553,6 +557,7 @@ fn compareResolved(a: Resolved, b: Resolved) EvalError!std.math.Order {
     }
     if (a == .string and b == .string) {
         // SemVer として解釈できる場合はSemVer比較、それ以外は文字列比較。
+        // Version.parse の error 集合は InvalidSemver のみ（確保しない）。
         const va = semver.Version.parse(a.string) catch null;
         const vb = semver.Version.parse(b.string) catch null;
         if (va != null and vb != null) return va.?.order(vb.?);
@@ -630,6 +635,26 @@ test "無効なmarker式を拒否する" {
                 return error.TestUnexpectedResult;
             },
             .err => {},
+        }
+    }
+}
+
+test "marker解析で確保失敗が構文エラーへ変換されない" {
+    // トークン複製・lookahead 等の確保失敗は OutOfMemory として
+    // 伝播し、invalid marker にならない。
+    var index: usize = 0;
+    while (index < 64) : (index += 1) {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = index });
+        const result = parse(failing.allocator(), "os == \"linux\" and version >= \"1.0\" and features in [\"a\", \"b\"]") catch |err| {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+            continue;
+        };
+        switch (result) {
+            .ok => |*m| {
+                var marker = m.*;
+                defer marker.deinit();
+            },
+            .err => return error.TestUnexpectedResult,
         }
     }
 }

@@ -449,6 +449,7 @@ const Validator = struct {
             package.name = name;
         }
         if (try self.requireString(table, "version", path, position)) |version_text| {
+            // Version.parse の error 集合は InvalidSemver のみ（確保しない）。
             package.version = semver.Version.parse(version_text) catch blk: {
                 try self.report(diag.E024_INVALID_SEMVER, "package.version", valuePositionOfKey(table, "version"), "invalid semver \"{s}\"", .{version_text});
                 break :blk .{ .major = 0, .minor = 0, .patch = 0 };
@@ -568,10 +569,14 @@ const Validator = struct {
                 return null;
             },
         };
-        return semver.Range.parse(self.arena, text) catch {
-            const field_path = try self.pathOf(path, key);
-            try self.report(diag.E025_INVALID_RANGE, field_path, value.position, "invalid version range \"{s}\" for \"{s}\"", .{ text, field_path });
-            return null;
+        return semver.Range.parse(self.arena, text) catch |err| switch (err) {
+            // 資源枯渇を入力エラーへ変換しない。
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {
+                const field_path = try self.pathOf(path, key);
+                try self.report(diag.E025_INVALID_RANGE, field_path, value.position, "invalid version range \"{s}\" for \"{s}\"", .{ text, field_path });
+                return null;
+            },
         };
     }
 
@@ -632,9 +637,12 @@ const Validator = struct {
             switch (entry.value_ptr.kind) {
                 .string => |text| {
                     dep.version_text = text;
-                    dep.version = semver.Range.parse(self.arena, text) catch blk: {
-                        try self.report(diag.E025_INVALID_RANGE, field_path, entry.value_ptr.position, "invalid version range \"{s}\" for \"{s}\"", .{ text, field_path });
-                        break :blk .{ .sets = &.{}, .text = text };
+                    dep.version = semver.Range.parse(self.arena, text) catch |err| switch (err) {
+                        error.OutOfMemory => return error.OutOfMemory,
+                        else => blk: {
+                            try self.report(diag.E025_INVALID_RANGE, field_path, entry.value_ptr.position, "invalid version range \"{s}\" for \"{s}\"", .{ text, field_path });
+                            break :blk .{ .sets = &.{}, .text = text };
+                        },
                     };
                 },
                 .table => |*dep_table| {
@@ -660,9 +668,12 @@ const Validator = struct {
                                         continue;
                                     },
                                 };
-                                const peer_range = semver.Range.parse(self.arena, peer_text) catch {
-                                    try self.report(diag.E025_INVALID_RANGE, peer_path, peer.value_ptr.position, "invalid version range \"{s}\" for \"{s}\"", .{ peer_text, peer_path });
-                                    continue;
+                                const peer_range = semver.Range.parse(self.arena, peer_text) catch |err| switch (err) {
+                                    error.OutOfMemory => return error.OutOfMemory,
+                                    else => {
+                                        try self.report(diag.E025_INVALID_RANGE, peer_path, peer.value_ptr.position, "invalid version range \"{s}\" for \"{s}\"", .{ peer_text, peer_path });
+                                        continue;
+                                    },
                                 };
                                 try dep.peer_dependencies.put(self.arena, peer.key_ptr.*, peer_range);
                             }
