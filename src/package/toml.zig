@@ -609,37 +609,98 @@ fn daysOfMonth(year: u32, month: u32) u32 {
     return days[month - 1];
 }
 
-/// `HH:MM:SS[.frac]` を検証する。`allow_offset` が真なら末尾の
+const TimeParts = struct {
+    hour: u32,
+    minute: u32,
+    second: u32,
+    /// `Z`/`±HH:MM` の分換算オフセット。オフセットなしなら null。
+    offset_minutes: ?i32,
+};
+
+/// `HH:MM:SS[.frac]` を解析する。`allow_offset` が真なら末尾の
 /// `Z`/`z`/`±HH:MM` オフセットも受理する（日付なしの local time には付けられない）。
-fn validTimeWithOffset(text: []const u8, allow_offset: bool) bool {
-    if (text.len < 8) return false;
+/// 秒の60（うるう秒）はここでは構文上のみ受理し、実在する挿入時刻との
+/// 照合は日付を持つ呼出し側で行う。
+fn parseTimeWithOffset(text: []const u8, allow_offset: bool) ?TimeParts {
+    if (text.len < 8) return null;
     if (!std.ascii.isDigit(text[0]) or !std.ascii.isDigit(text[1]) or text[2] != ':' or
         !std.ascii.isDigit(text[3]) or !std.ascii.isDigit(text[4]) or text[5] != ':' or
-        !std.ascii.isDigit(text[6]) or !std.ascii.isDigit(text[7])) return false;
-    const hour = std.fmt.parseInt(u32, text[0..2], 10) catch return false;
-    const minute = std.fmt.parseInt(u32, text[3..5], 10) catch return false;
-    const second = std.fmt.parseInt(u32, text[6..8], 10) catch return false;
-    // 秒の60はRFC 3339のうるう秒としてTOML 1.0で許容される。
-    if (hour > 23 or minute > 59 or second > 60) return false;
+        !std.ascii.isDigit(text[6]) or !std.ascii.isDigit(text[7])) return null;
+    const hour = std.fmt.parseInt(u32, text[0..2], 10) catch return null;
+    const minute = std.fmt.parseInt(u32, text[3..5], 10) catch return null;
+    const second = std.fmt.parseInt(u32, text[6..8], 10) catch return null;
+    if (hour > 23 or minute > 59 or second > 60) return null;
     var i: usize = 8;
     if (i < text.len and text[i] == '.') {
         i += 1;
         const start = i;
         while (i < text.len and std.ascii.isDigit(text[i])) i += 1;
-        if (i == start) return false;
+        if (i == start) return null;
     }
-    if (i == text.len) return true;
-    if (!allow_offset) return false;
+    if (i == text.len) return .{ .hour = hour, .minute = minute, .second = second, .offset_minutes = null };
+    if (!allow_offset) return null;
     const byte = text[i];
-    if (byte == 'Z' or byte == 'z') return i + 1 == text.len;
-    if (byte != '+' and byte != '-') return false;
+    if (byte == 'Z' or byte == 'z') {
+        if (i + 1 != text.len) return null;
+        return .{ .hour = hour, .minute = minute, .second = second, .offset_minutes = 0 };
+    }
+    if (byte != '+' and byte != '-') return null;
     const offset = text[i + 1 ..];
-    if (offset.len != 5) return false;
+    if (offset.len != 5) return null;
     if (!std.ascii.isDigit(offset[0]) or !std.ascii.isDigit(offset[1]) or offset[2] != ':' or
-        !std.ascii.isDigit(offset[3]) or !std.ascii.isDigit(offset[4])) return false;
-    const oh = std.fmt.parseInt(u32, offset[0..2], 10) catch return false;
-    const om = std.fmt.parseInt(u32, offset[3..5], 10) catch return false;
-    return oh <= 23 and om <= 59;
+        !std.ascii.isDigit(offset[3]) or !std.ascii.isDigit(offset[4])) return null;
+    const oh = std.fmt.parseInt(u32, offset[0..2], 10) catch return null;
+    const om = std.fmt.parseInt(u32, offset[3..5], 10) catch return null;
+    if (oh > 23 or om > 59) return null;
+    const magnitude: i32 = @intCast(oh * 60 + om);
+    // `-00:00` は RFC 3339 で「不明なオフセット」を意味し UTC と
+    // 等価ではない。検証不能としてオフセットなしと同じ扱いにする。
+    const offset_minutes: ?i32 = if (byte == '-' and magnitude == 0) null else if (byte == '-') -magnitude else magnitude;
+    return .{ .hour = hour, .minute = minute, .second = second, .offset_minutes = offset_minutes };
+}
+
+/// 既知の正のうるう秒が挿入された UTC 日付（秒60は常に当該日の 23:59:60Z）。
+/// IERS 公示分の27回。負のうるう秒は実施例がない。
+const leap_second_dates = [_][3]u16{
+    .{ 1972, 6, 30 },  .{ 1972, 12, 31 }, .{ 1973, 12, 31 }, .{ 1974, 12, 31 },
+    .{ 1975, 12, 31 }, .{ 1976, 12, 31 }, .{ 1977, 12, 31 }, .{ 1978, 12, 31 },
+    .{ 1979, 12, 31 }, .{ 1981, 6, 30 },  .{ 1982, 6, 30 },  .{ 1983, 6, 30 },
+    .{ 1985, 6, 30 },  .{ 1987, 12, 31 }, .{ 1989, 12, 31 }, .{ 1990, 12, 31 },
+    .{ 1992, 6, 30 },  .{ 1993, 6, 30 },  .{ 1994, 6, 30 },  .{ 1995, 12, 31 },
+    .{ 1997, 6, 30 },  .{ 1998, 12, 31 }, .{ 2005, 12, 31 }, .{ 2008, 12, 31 },
+    .{ 2012, 6, 30 },  .{ 2015, 6, 30 },  .{ 2016, 12, 31 },
+};
+
+/// グレゴリオ暦日付を通算日数へ変換する（Howard Hinnant の days_from_civil）。
+fn daysFromCivil(year: u32, month: u32, day: u32) i64 {
+    const y: i64 = if (month <= 2) @as(i64, year) - 1 else year;
+    const era = @divFloor(y, 400);
+    const yoe = y - era * 400;
+    const mp: i64 = @mod(@as(i64, month) + 9, 12);
+    const doy = @divFloor(153 * mp + 2, 5) + @as(i64, day) - 1;
+    const doe = yoe * 365 + @divFloor(yoe, 4) - @divFloor(yoe, 100) + doy;
+    return era * 146097 + doe - 719468;
+}
+
+/// オフセット付き日時の秒60を検証する。現地日時を UTC へ換算し、
+/// その瞬間が既知のうるう秒（UTC のうるう日 23:59:60）と一致する場合のみ真。
+fn isLeapSecondInstant(year: u32, month: u32, day: u32, hour: u32, minute: u32, offset_minutes: i32) bool {
+    var utc_minutes: i32 = @as(i32, @intCast(hour)) * 60 + @as(i32, @intCast(minute)) - offset_minutes;
+    var day_delta: i64 = 0;
+    while (utc_minutes < 0) {
+        utc_minutes += 1440;
+        day_delta -= 1;
+    }
+    while (utc_minutes >= 1440) {
+        utc_minutes -= 1440;
+        day_delta += 1;
+    }
+    if (utc_minutes != 1439) return false;
+    const utc_days = daysFromCivil(year, month, day) + day_delta;
+    for (leap_second_dates) |leap| {
+        if (daysFromCivil(leap[0], leap[1], leap[2]) == utc_days) return true;
+    }
+    return false;
 }
 
 /// RFC 3339 ベースの日時構造を簡易検証する。local date / local time /
@@ -653,9 +714,16 @@ fn validTemporal(token: []const u8) bool {
         if (token.len == 10) return true; // local date
         const sep = token[10];
         if (sep != 'T' and sep != 't' and sep != ' ') return false;
-        return validTimeWithOffset(token[11..], true);
+        const time = parseTimeWithOffset(token[11..], true) orelse return false;
+        // 秒60を持つ offset date-time は、UTC 換算した瞬間が実在する
+        // うるう秒挿入時刻と一致する場合のみ受理する。オフセットを持たない
+        // local date-time は換算不能のため構文上のみ受理する。
+        if (time.second == 60 and time.offset_minutes != null) {
+            return isLeapSecondInstant(year, month, day, time.hour, time.minute, time.offset_minutes.?);
+        }
+        return true;
     }
-    return validTimeWithOffset(token, false);
+    return parseTimeWithOffset(token, false) != null;
 }
 
 fn isBareKey(byte: u8) bool {
@@ -987,10 +1055,24 @@ test "日時は構造を検証する" {
         "a = 1979-05-27 07:32:00\n",
         "a = 1979-05-27T07:32:00.999+09:00\n",
         "a = 2000-02-29\n",
-        // 秒の60はRFC 3339のうるう秒として許容する。
+        // 秒の60はRFC 3339のうるう秒として許容する。offset date-time は
+        // UTC 換算した瞬間が実在する挿入時刻と一致する場合のみ受理する。
         "a = 23:59:60\n",
         "a = 1990-12-31T23:59:60Z\n",
-        "a = 1990-12-31 23:59:60+09:00\n",
+        "a = 1990-12-31T23:59:60.5Z\n",
+        "a = 2016-12-31T23:59:60Z\n",
+        // 1990-12-31T23:59:60Z と同じ瞬間の別オフセット表記。
+        "a = 1991-01-01T08:59:60+09:00\n",
+        "a = 1991-01-01 08:59:60+09:00\n",
+        "a = 1990-12-31T14:59:60-09:00\n",
+        "a = 1990-12-31T18:29:60-05:30\n",
+        "a = 1991-01-01T08:59:60.5+09:00\n", // 小数秒 + オフセット + うるう秒
+        "a = 1972-06-30T23:59:60Z\n", // 最初のうるう秒
+        "a = 1990-12-31t23:59:60z\n", // 小文字セパレータとZ
+        // オフセットのない local date-time は換算不能のため構文上のみ受理。
+        "a = 1990-12-31T23:59:60\n",
+        // `-00:00` は不明オフセット（RFC 3339）のため検証不能として受理。
+        "a = 1985-01-01T23:59:60-00:00\n",
     };
     for (ok_cases) |source| {
         const result = try parse(std.testing.allocator, source);
@@ -1006,6 +1088,11 @@ test "日時は構造を検証する" {
         "a = 1979-05-27T24:00:00\n", // 時の範囲外
         "a = 1900-02-29\n", // うるう年でない2/29
         "a = 23:59:61\n", // 秒の範囲外
+        // うるう秒ではない瞬間の秒60（offset date-time）。
+        "a = 1990-12-30T23:59:60Z\n", // うるう日でない日付
+        "a = 1990-12-31T23:59:60+09:00\n", // UTC 14:59:60 はうるう秒でない
+        "a = 1990-12-31T23:59:60-05:00\n", // UTC 翌日 04:59:60 はうるう秒でない
+        "a = 2017-12-31T23:59:60Z\n", // 直近のうるう秒は 2016-12-31
     };
     for (bad) |source| {
         try expectSyntaxError(source);
