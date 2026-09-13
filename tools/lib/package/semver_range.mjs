@@ -327,9 +327,8 @@ export function setsIntersect(a, b) {
 // 共通部分が空でないかを上下限から判定する。prerelease ゲートは併合済みの
 // 和集合ではなく構成集合毎に要求する。各構成集合は個別の依存制約に対応し、
 // prerelease 候補は全ての構成集合を個別に満たす必要があるため。
-// 近似の既知の限界: 下端が release バージョンへの `>` で共通候補が
-// 後継タプルの prerelease のみに限られる場合（`>1.5.0 <1.5.1` 等）は
-// ゲートが発火せず非交差を見逃し得る。誤検出方向には働かない。
+// 近似の既知の限界: 上下限の一方だけがある集合や、複数タプルにまたがる
+// prerelease 区間は厳密には求解しない。誤検出方向には働かない。
 export function jointSetsIntersect(sets) {
   let lower = null;
   let upper = null;
@@ -371,6 +370,15 @@ export function jointSetsIntersect(sets) {
     const sameTuple = l.version.major === u.version.major && l.version.minor === u.version.minor && l.version.patch === u.version.patch;
     const upperPrereleaseOnly = u.op === "lt" || u.version.prerelease.length > 0;
     if (l.version.prerelease.length > 0 && sameTuple && upperPrereleaseOnly && !prereleaseGated(sets, l.version)) {
+      return false;
+    }
+    // 下端が release への `>` で上端が直後のタプル（patch+1）の
+    // prerelease 区間のみを残す場合も同様にゲートする。
+    // `>1.5.0 <1.5.1` の候補は 1.5.1 の prerelease のみ。
+    const successorTuple = l.op === "gt" && l.version.prerelease.length === 0 &&
+      u.version.major === l.version.major && u.version.minor === l.version.minor &&
+      u.version.patch === l.version.patch + 1;
+    if (successorTuple && upperPrereleaseOnly && !prereleaseGated(sets, u.version)) {
       return false;
     }
   }

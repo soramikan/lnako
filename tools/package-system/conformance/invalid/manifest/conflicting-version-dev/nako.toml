@@ -1,0 +1,11 @@
+[package]
+name = "test"
+version = "1.0.0"
+license = "MIT"
+
+# 開発解決では通常依存と dev-dependencies の両方が同じ public-id に効く。
+[dependencies.pkg]
+runtime = { version = "^1.0.0", public-id = "pkg:40000000000000000000000000000000" }
+
+[dev-dependencies.pkg]
+tool = { version = "^2.0.0", public-id = "pkg:40000000000000000000000000000000" }

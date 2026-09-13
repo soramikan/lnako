@@ -879,14 +879,16 @@ const Validator = struct {
             /// 行わず「非空のまま」とみなす（見逃し方向にのみ影響する）。
             saturated: bool = false,
         };
+        // 二者間の交差だけでは全制約の共通候補の存在を保証しないため
+        // （OR 範囲で各ペアが別の選択肢で交差し得る）、public-id 毎に
+        // 積集合を保持する。各パスは依存毎に選んだ AND 比較子集合の
+        // 列で、prerelease ゲートは構成集合毎に評価する必要があるため
+        // 併合済みの平坦な集合は保持しない。開発解決では通常依存と
+        // dev-dependencies の両方が同じ public-id に効くため、
+        // 積集合はセクションをまたいで共有する。
+        var by_public_id = std.StringHashMap(JointState).init(self.scratch);
         for (self.dependencySections()) |ref| {
             const section_path = try self.pathOf(ref.section, "pkg");
-            // 二者間の交差だけでは全制約の共通候補の存在を保証しないため
-            // （OR 範囲で各ペアが別の選択肢で交差し得る）、public-id 毎に
-            // 積集合を保持する。各パスは依存毎に選んだ AND 比較子集合の
-            // 列で、prerelease ゲートは構成集合毎に評価する必要があるため
-            // 併合済みの平坦な集合は保持しない。
-            var by_public_id = std.StringHashMap(JointState).init(self.scratch);
             // 反復順を宣言順に揃えて JS バリデータと結果を一致させる。
             var ordered: std.ArrayList(*const PkgDependency) = .empty;
             var iterator = ref.group.pkg.iterator();

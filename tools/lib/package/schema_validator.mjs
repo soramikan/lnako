@@ -411,10 +411,12 @@ export function validateManifest(manifest, fixturePath) {
   // prerelease ゲートは構成集合毎に評価する必要があるため併合済みの
   // 平坦な集合は保持しない。
   const maxJointPaths = 1024;
+  // 開発解決では通常依存と dev-dependencies の両方が同じ public-id に
+  // 効くため、積集合はセクションをまたいで共有する。
+  const byPublicId = new Map();
   for (const section of ["dependencies", "dev-dependencies"]) {
     const group = manifest[section]?.pkg;
     if (!group) continue;
-    const byPublicId = new Map();
     for (const [alias, dep] of Object.entries(group)) {
       if (dep["public-id"] == null) continue;
       const publicId = dep["public-id"];

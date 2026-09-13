@@ -109,6 +109,22 @@ test("3集合の組合せではprereleaseゲートを構成集合毎に評価す
   assert.equal(jointSetsIntersect([a2, b2, c2]), false);
 });
 
+test("隣接tuple間のprerelease専用区間もゲートを要求する", () => {
+  // `>1.5.0 <1.5.1` の候補は 1.5.1 の prerelease のみ。
+  assert.equal(rangesIntersect(parseRange(">1.5.0 <1.5.1"), parseRange(">=1.0.0")), false);
+  // 自身の集合がゲート用の比較子を持たないため、相手が同tupleの
+  // prerelease 比較子を持っても非交差のまま。
+  assert.equal(rangesIntersect(parseRange(">1.5.0 <1.5.1"), parseRange(">=1.5.1-alpha")), false);
+  // 両方が 1.5.1 の prerelease 比較子を持つなら交差する。
+  assert.equal(
+    rangesIntersect(parseRange(">1.5.0 <1.5.1-alpha"), parseRange(">=1.5.1-0 <1.5.1")),
+    true,
+  );
+  // 上端に release が含まれる、または隣接tupleでなければゲートは不要。
+  assert.equal(rangesIntersect(parseRange(">1.5.0 <=1.5.1"), parseRange(">=1.0.0")), true);
+  assert.equal(rangesIntersect(parseRange(">1.5.0 <1.5.3"), parseRange(">=1.0.0")), true);
+});
+
 test("空の || 枝は無制約として扱う", () => {
   assert.deepEqual(parseRange("2.0.0 ||"), [
     [{ op: "eq", version: { major: 2, minor: 0, patch: 0, prerelease: "" } }],

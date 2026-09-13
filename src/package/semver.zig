@@ -505,9 +505,8 @@ pub fn setsIntersect(a: []const Comparator, b: []const Comparator) bool {
 /// 共通部分が空でないかを上下限から判定する。prerelease ゲートは併合済みの
 /// 和集合ではなく構成集合毎に要求する。各構成集合は個別の依存制約に対応し、
 /// prerelease 候補は全ての構成集合を個別に満たす必要があるため。
-/// 近似の既知の限界: 下端が release バージョンへの `>` で共通候補が
-/// 後継タプルの prerelease のみに限られる場合（`>1.5.0 <1.5.1` 等）は
-/// ゲートが発火せず非交差を見逃し得る。誤検出方向には働かない。
+/// 近似の既知の限界: 上下限の一方だけがある集合や、複数タプルにまたがる
+/// prerelease 区間は厳密には求解しない。誤検出方向には働かない。
 pub fn jointSetsIntersect(sets: []const []const Comparator) bool {
     var lower: ?Comparator = null;
     var upper: ?Comparator = null;
@@ -563,6 +562,16 @@ pub fn jointSetsIntersect(sets: []const []const Comparator) bool {
         const upper_prerelease_only = u.op == .lt or u.version.prerelease.len > 0;
         if (l.version.prerelease.len > 0 and same_tuple and upper_prerelease_only) {
             if (!prereleaseGated(sets, l.version)) return false;
+        }
+        // 下端が release への `>` で上端が直後のタプル（patch+1）の
+        // prerelease 区間のみを残す場合も同様にゲートする。
+        // `>1.5.0 <1.5.1` の候補は 1.5.1 の prerelease のみで、
+        // release の挟まる区間ではないため。
+        const successor_tuple = l.op == .gt and l.version.prerelease.len == 0 and
+            u.version.major == l.version.major and u.version.minor == l.version.minor and
+            u.version.patch == l.version.patch +| 1;
+        if (successor_tuple and upper_prerelease_only) {
+            if (!prereleaseGated(sets, u.version)) return false;
         }
     }
     return true;
@@ -841,4 +850,38 @@ test "prerelease専用の共通範囲は同タプルの比較子を要求する"
     var any_set = try Range.parse(allocator, "");
     defer any_set.deinit(allocator);
     try std.testing.expect(!jointSetsIntersect(&.{ any_set.sets[0], c_set.sets[0] }));
+}
+
+test "隣接タプル間のprerelease専用区間もゲートを要求する" {
+    const allocator = std.testing.allocator;
+    // `>1.5.0 <1.5.1` の候補は 1.5.1 の prerelease のみ。同タプルの
+    // prerelease 比較子を持たない集合とは交差しない。
+    var succ = try Range.parse(allocator, ">1.5.0 <1.5.1");
+    defer succ.deinit(allocator);
+    var plain = try Range.parse(allocator, ">=1.0.0");
+    defer plain.deinit(allocator);
+    try std.testing.expect(!succ.intersects(plain));
+
+    // 自身の集合がゲート用の比較子を持たないため、相手が同タプルの
+    // prerelease 比較子を持っても非交差のまま。
+    var gated = try Range.parse(allocator, ">=1.5.1-alpha");
+    defer gated.deinit(allocator);
+    try std.testing.expect(!succ.intersects(gated));
+
+    // 両方が 1.5.1 の prerelease 比較子を持つなら交差する。
+    var succ_pre = try Range.parse(allocator, ">1.5.0 <1.5.1-alpha");
+    defer succ_pre.deinit(allocator);
+    var other_pre = try Range.parse(allocator, ">=1.5.1-0 <1.5.1");
+    defer other_pre.deinit(allocator);
+    try std.testing.expect(succ_pre.intersects(other_pre));
+
+    // 上端に release が含まれるならゲートは不要。
+    var release_upper = try Range.parse(allocator, ">1.5.0 <=1.5.1");
+    defer release_upper.deinit(allocator);
+    try std.testing.expect(release_upper.intersects(plain));
+
+    // 隣接タプルでなければ release が区間内に存在しゲートは不要。
+    var wide = try Range.parse(allocator, ">1.5.0 <1.5.3");
+    defer wide.deinit(allocator);
+    try std.testing.expect(wide.intersects(plain));
 }

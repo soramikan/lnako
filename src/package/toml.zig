@@ -334,8 +334,14 @@ const Parser = struct {
                 continue;
             }
             if (!multiline and (byte == '\n' or byte == '\r')) return self.fail(error.UnterminatedTomlString, "unterminated string");
-            if (multiline and byte == '\r' and self.peekAt(1) != '\n') {
-                return self.fail(error.UnterminatedTomlString, "bare carriage return");
+            if (multiline and byte == '\r') {
+                // TOML の改行は LF または CRLF。複数行文字列の値では
+                // CRLF を LF に正規化する。
+                if (self.peekAt(1) != '\n') return self.fail(error.UnterminatedTomlString, "bare carriage return");
+                self.advance();
+                self.advance();
+                try output.append(self.document.arena.allocator(), '\n');
+                continue;
             }
             // 制御文字（tab・複数行の改行を除く）はエスケープが必要。
             if ((byte < 0x20 and byte != '\t' and byte != '\n' and byte != '\r') or byte == 0x7f) {
@@ -943,6 +949,28 @@ test "孤立したCRは改行として受理しない" {
     var doc = result.ok;
     defer doc.deinit();
     try std.testing.expectEqual(@as(i64, 2), doc.root.get("b").?.kind.integer);
+}
+
+test "複数行文字列のCRLFはLFに正規化する" {
+    // 基本文字列・リテラル文字列ともに値中の CRLF は LF になる。
+    const result = try parse(std.testing.allocator, "a = \"\"\"first\r\nsecond\"\"\"\nb = '''x\r\ny'''\n");
+    var doc = result.ok;
+    defer doc.deinit();
+    try std.testing.expectEqualStrings("first\nsecond", doc.root.get("a").?.kind.string);
+    try std.testing.expectEqualStrings("x\ny", doc.root.get("b").?.kind.string);
+    // 開始直後の CRLF は無視される。
+    const leading = try parse(std.testing.allocator, "a = \"\"\"\r\nbody\"\"\"\n");
+    var doc2 = leading.ok;
+    defer doc2.deinit();
+    try std.testing.expectEqualStrings("body", doc2.root.get("a").?.kind.string);
+    // 行継続の `\` 直後の CRLF も改行として扱う。
+    const cont = try parse(std.testing.allocator, "a = \"\"\"x\\\r\n   y\"\"\"\n");
+    var doc3 = cont.ok;
+    defer doc3.deinit();
+    try std.testing.expectEqualStrings("xy", doc3.root.get("a").?.kind.string);
+    // 複数行文字列内でも孤立した CR は拒否する。
+    try expectSyntaxError("a = \"\"\"x\ry\"\"\"\n");
+    try expectSyntaxError("a = '''x\ry'''\n");
 }
 
 test "日時は構造を検証する" {

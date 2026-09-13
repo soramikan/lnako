@@ -386,6 +386,36 @@ test "同一public-idの3者間衝突とfeature名規則を診断する" {
     ;
     try parseErrCode(allocator, empty_range, diag.E003_CONFLICTING_VERSIONS);
 
+    // 開発解決では通常依存と dev-dependencies が同じ public-id に効くため
+    // セクションをまたいだ衝突も検出する。
+    const cross_section =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[dependencies.pkg]
+        \\runtime = { version = "^1.0.0", public-id = "pkg:0123456789abcdef0123456789abcdef" }
+        \\[dev-dependencies.pkg]
+        \\test = { version = "^2.0.0", public-id = "pkg:0123456789abcdef0123456789abcdef" }
+        \\
+    ;
+    try parseErrCode(allocator, cross_section, diag.E003_CONFLICTING_VERSIONS);
+
+    // 隣接タプル間の prerelease 専用区間。`>1.5.0 <1.5.1` の候補は
+    // 1.5.1 の prerelease のみで、双方の集合にそのタプルの
+    // prerelease 比較子がないため非交差。
+    const adjacent =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[dependencies.pkg]
+        \\a = { version = ">1.5.0 <1.5.1", public-id = "pkg:0123456789abcdef0123456789abcdef" }
+        \\b = { version = ">=1.0.0", public-id = "pkg:0123456789abcdef0123456789abcdef" }
+        \\
+    ;
+    try parseErrCode(allocator, adjacent, diag.E003_CONFLICTING_VERSIONS);
+
     // 積集合パス数の上限（1024）を超えた時点で絞り込みを打ち切り
     // 「非空のまま」とみなす。破棄したパスだけが後続の制約を満たす
     // 場合でも、打ち切りによる偽の衝突を報告しない。
@@ -535,6 +565,7 @@ test "manifest適合fixtureを検証する" {
         .{ .path = "tools/package-system/conformance/invalid/manifest/conflicting-version-joint/nako.toml", .expected_code = diag.E003_CONFLICTING_VERSIONS },
         .{ .path = "tools/package-system/conformance/invalid/manifest/conflicting-version-prerelease/nako.toml", .expected_code = diag.E003_CONFLICTING_VERSIONS },
         .{ .path = "tools/package-system/conformance/invalid/manifest/conflicting-version-empty-range/nako.toml", .expected_code = diag.E003_CONFLICTING_VERSIONS },
+        .{ .path = "tools/package-system/conformance/invalid/manifest/conflicting-version-dev/nako.toml", .expected_code = diag.E003_CONFLICTING_VERSIONS },
         .{ .path = "tools/package-system/conformance/invalid/manifest/duplicate-exports/nako.toml", .expected_code = diag.E011_DUPLICATE_EXPORT },
         .{ .path = "tools/package-system/conformance/invalid/manifest/invalid-profile/nako.toml", .expected_code = diag.E014_INVALID_PROFILE },
         .{ .path = "tools/package-system/conformance/invalid/manifest/js-without-compat-js/nako.toml", .expected_code = diag.E006_JS_IN_NORMAL_MODE },

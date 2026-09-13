@@ -308,6 +308,7 @@ field      := os | cpu | abi | compat-js | optimize | version | features
 
 - 同一 Public ID に対する複数の version 制約は common 範囲を満たすように統合する。
 - 互換しない version 制約がある場合は `E003_CONFLICTING_VERSIONS` 診断。
+  - manifest 検証時の衝突判定は保守的な近似とし、偽陽性を起こさないことを優先する。1 Public ID あたり最大 1024 経路の積集合候補を保持し、上限を超えた時点で絞り込みを打ち切る。その場合は衝突を見逃す方向でのみ誤り得る。
 - feature unification: 異なる依存から要求された feature は和集合で有効化する。
 - diamond dependency: 同一 Public ID は graph 内で 1 度だけ解決する。
 - cycle: `E004_DEPENDENCY_CYCLE` 診断。
