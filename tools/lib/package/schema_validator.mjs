@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname, basename, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseRange, rangesIntersect } from "./semver_range.mjs";
+import { parseRange, jointSetsIntersect } from "./semver_range.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -405,23 +405,55 @@ export function validateManifest(manifest, fixturePath) {
     }
   }
 
+  // 二者間の交差だけでは全制約の共通候補の存在を保証しないため
+  // （OR 範囲で各ペアが別の選択肢で交差し得る）、public-id 毎に
+  // 積集合を保持する。各パスは依存毎に選んだ AND 比較子集合の列で、
+  // prerelease ゲートは構成集合毎に評価する必要があるため併合済みの
+  // 平坦な集合は保持しない。
+  const maxJointPaths = 1024;
   for (const section of ["dependencies", "dev-dependencies"]) {
     const group = manifest[section]?.pkg;
     if (!group) continue;
     const byPublicId = new Map();
     for (const [alias, dep] of Object.entries(group)) {
-      if (dep["public-id"] != null) {
-        const list = byPublicId.get(dep["public-id"]) ?? [];
-        const depRange = parseRange(dep.version);
-        for (const existing of list) {
-          const existingRange = parseRange(existing.dep.version);
-          if (depRange === null || existingRange === null || !rangesIntersect(existingRange, depRange)) {
-            fail("E003_CONFLICTING_VERSIONS", `conflicting version constraints for ${dep["public-id"]}: ${existing.dep.version} vs ${dep.version}`, `${fixturePath}.${section}.pkg.${alias}`);
+      if (dep["public-id"] == null) continue;
+      const publicId = dep["public-id"];
+      // version 欠落・不正（E019/E025 で報告済み）は無制約として扱い、
+      // 空の外積による誤診を避ける。
+      const depRange = dep.version == null ? [] : (parseRange(dep.version) ?? []);
+      if (depRange.length === 0) continue;
+      const joint = byPublicId.get(publicId);
+      // 積集合が空リストのときは新しい制約の集合をそのまま採用する。
+      if (joint === undefined || joint.paths.length === 0) {
+        byPublicId.set(publicId, {
+          paths: depRange.slice(0, maxJointPaths).map((set) => [set]),
+          // 上限超過時は以後の絞り込みを行わない。打ち切った積集合は部分
+          // 集合しか保持しないため後続の依存で空になり得るが、それは
+          // 打ち切りによる偽の衝突であり得る（見逃し方向にのみ影響する）。
+          saturated: depRange.length > maxJointPaths,
+        });
+        continue;
+      }
+      if (joint.saturated) continue;
+      const next = [];
+      let capped = false;
+      outer: for (const path of joint.paths) {
+        for (const set of depRange) {
+          const merged = [...path, set];
+          if (jointSetsIntersect(merged)) {
+            next.push(merged);
+            if (next.length >= maxJointPaths) {
+              capped = true;
+              break outer;
+            }
           }
         }
-        list.push({ alias, dep });
-        byPublicId.set(dep["public-id"], list);
       }
+      if (next.length === 0) {
+        fail("E003_CONFLICTING_VERSIONS", `conflicting version constraints for ${publicId}: "${dep.version}" leaves no common version`, `${fixturePath}.${section}.pkg.${alias}`);
+      }
+      if (capped) joint.saturated = true;
+      else joint.paths = next;
     }
   }
 

@@ -307,12 +307,34 @@ function isUpperStronger(candidate, current) {
   return ord < 0 || (ord === 0 && candidate.op === "lt" && current.op === "lte");
 }
 
+// 全構成集合がタプル (v.major, v.minor, v.patch) の prerelease 比較子を
+// 持つか。setSatisfies の prerelease ゲートと同じ条件を集合毎に課す。
+function prereleaseGated(sets, v) {
+  return sets.every((set) =>
+    set.some((c) => {
+      const other = c.version;
+      return other.prerelease.length > 0 && other.major === v.major && other.minor === v.minor && other.patch === v.patch;
+    }));
+}
+
 // 2つの AND 比較子集合の共通部分が空でないかを上下限から判定する。
-function setsIntersect(a, b) {
+// 厳密な求解ではなく近似的判定（範囲の積集合計算にも利用する）。
+export function setsIntersect(a, b) {
+  return jointSetsIntersect([a, b]);
+}
+
+// 複数の AND 比較子集合（同一 public-id の各依存が選んだ選択肢の組合せ）の
+// 共通部分が空でないかを上下限から判定する。prerelease ゲートは併合済みの
+// 和集合ではなく構成集合毎に要求する。各構成集合は個別の依存制約に対応し、
+// prerelease 候補は全ての構成集合を個別に満たす必要があるため。
+// 近似の既知の限界: 下端が release バージョンへの `>` で共通候補が
+// 後継タプルの prerelease のみに限られる場合（`>1.5.0 <1.5.1` 等）は
+// ゲートが発火せず非交差を見逃し得る。誤検出方向には働かない。
+export function jointSetsIntersect(sets) {
   let lower = null;
   let upper = null;
   let exact = null;
-  for (const set of [a, b]) {
+  for (const set of sets) {
     for (const comparator of set) {
       switch (comparator.op) {
         case "eq":
@@ -333,23 +355,24 @@ function setsIntersect(a, b) {
   if (exact !== null) {
     if (lower !== null && !opMatches(lower.op, compareVersion(exact.version, lower.version))) return false;
     if (upper !== null && !opMatches(upper.op, compareVersion(exact.version, upper.version))) return false;
-    if (exact.version.prerelease.length > 0) {
-      // prerelease 版は各集合に同タプルの prerelease 比較子を要求する。
-      const v = exact.version;
-      for (const set of [a, b]) {
-        const gated = set.some((c) => {
-          const other = c.version;
-          return other.prerelease.length > 0 && other.major === v.major && other.minor === v.minor && other.patch === v.patch;
-        });
-        if (!gated) return false;
-      }
-    }
+    // prerelease 版は各構成集合に同タプルの prerelease 比較子を要求する。
+    if (exact.version.prerelease.length > 0 && !prereleaseGated(sets, exact.version)) return false;
     return true;
   }
   if (lower !== null && upper !== null) {
-    const ord = compareVersion(lower.version, upper.version);
+    const l = lower;
+    const u = upper;
+    const ord = compareVersion(l.version, u.version);
     if (ord > 0) return false;
-    if (ord === 0) return lower.op === "gte" && upper.op === "lte";
+    if (ord === 0 && !(l.op === "gte" && u.op === "lte")) return false;
+    // 共通候補がタプル T の prerelease のみに限られる場合
+    // （下端が T の prerelease 比較子で、上端が T 自体より下か
+    // T の prerelease）、各構成集合は T の prerelease 比較子を含む必要がある。
+    const sameTuple = l.version.major === u.version.major && l.version.minor === u.version.minor && l.version.patch === u.version.patch;
+    const upperPrereleaseOnly = u.op === "lt" || u.version.prerelease.length > 0;
+    if (l.version.prerelease.length > 0 && sameTuple && upperPrereleaseOnly && !prereleaseGated(sets, l.version)) {
+      return false;
+    }
   }
   return true;
 }

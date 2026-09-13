@@ -1,0 +1,10 @@
+[package]
+name = "test"
+version = "1.0.0"
+license = "MIT"
+
+# 各ペアは交差するが三者を同時に満たすバージョンは存在しない。
+[dependencies.pkg]
+one = { version = "<2.0.0 || >=4.0.0", public-id = "pkg:10000000000000000000000000000000" }
+two = { version = ">=1.0.0 <3.0.0", public-id = "pkg:10000000000000000000000000000000" }
+three = { version = ">=2.5.0 <5.0.0", public-id = "pkg:10000000000000000000000000000000" }

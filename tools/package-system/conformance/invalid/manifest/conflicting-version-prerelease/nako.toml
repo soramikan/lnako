@@ -1,0 +1,10 @@
+[package]
+name = "test"
+version = "1.0.0"
+license = "MIT"
+
+# `>=1.5.0-alpha <1.5.0` の候補は 1.5.0 の prerelease のみ。
+# `>=1.0.0-alpha <2.0.0` は 1.5.0 タプルの prerelease 比較子を持たず交差しない。
+[dependencies.pkg]
+one = { version = ">=1.0.0-alpha <2.0.0", public-id = "pkg:20000000000000000000000000000000" }
+two = { version = ">=1.5.0-alpha <1.5.0", public-id = "pkg:20000000000000000000000000000000" }

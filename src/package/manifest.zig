@@ -863,28 +863,84 @@ const Validator = struct {
         };
     }
 
-    /// 同一 public-id の version 制約がすべて交差するか確認する。
-    /// 先出の制約との比較だけではなく全ペアを検査し、
-    /// `>=1 <3` `^1` `^2` のような3者間の衝突も検出する。
+    /// 同一 public-id の version 制約すべてを同時に満たすバージョンが
+    /// 存在するか確認する。二者間の交差判定だけでは OR 範囲を含む
+    /// 3者以上の衝突を検出できないため、public-id 毎に制約の積集合を
+    /// AND 比較子集合の OR リストとして保持する。
     fn checkConflictingVersions(self: *Validator) Error!void {
+        // 1 public-id あたりに保持する積集合パス数の上限。各依存の OR
+        // 選択肢数の積に比例して増え得るため、近似判定の消費を抑える。
+        const max_joint_paths = 1024;
+        const JointState = struct {
+            paths: std.ArrayList([]const []const semver.Comparator) = .empty,
+            /// パス数上限で絞り込みを打ち切ったか。打ち切った積集合は
+            /// 部分集合しか保持しないため後続の依存で空になり得るが、
+            /// それは打ち切りによる偽の衝突であり得る。以後の絞り込みを
+            /// 行わず「非空のまま」とみなす（見逃し方向にのみ影響する）。
+            saturated: bool = false,
+        };
         for (self.dependencySections()) |ref| {
             const section_path = try self.pathOf(ref.section, "pkg");
-            var by_public_id = std.StringHashMap(std.ArrayList(*const PkgDependency)).init(self.scratch);
+            // 二者間の交差だけでは全制約の共通候補の存在を保証しないため
+            // （OR 範囲で各ペアが別の選択肢で交差し得る）、public-id 毎に
+            // 積集合を保持する。各パスは依存毎に選んだ AND 比較子集合の
+            // 列で、prerelease ゲートは構成集合毎に評価する必要があるため
+            // 併合済みの平坦な集合は保持しない。
+            var by_public_id = std.StringHashMap(JointState).init(self.scratch);
+            // 反復順を宣言順に揃えて JS バリデータと結果を一致させる。
+            var ordered: std.ArrayList(*const PkgDependency) = .empty;
             var iterator = ref.group.pkg.iterator();
-            while (iterator.next()) |entry| {
-                const dep = entry.value_ptr;
+            while (iterator.next()) |entry| try ordered.append(self.scratch, entry.value_ptr);
+            std.mem.sort(*const PkgDependency, ordered.items, {}, struct {
+                fn lessThan(_: void, a: *const PkgDependency, b: *const PkgDependency) bool {
+                    return a.position.offset < b.position.offset;
+                }
+            }.lessThan);
+            for (ordered.items) |dep| {
                 const public_id = dep.public_id orelse continue;
+                // version 欠落・不正（E019/E025 で報告済み）は無制約として
+                // 扱い、空の外積による誤診を避ける。`version = ""` のような
+                // match-all 範囲は `sets = [[]]` で表現され通常通り参加する。
+                if (dep.version.sets.len == 0) continue;
                 const gop = try by_public_id.getOrPut(public_id);
-                if (!gop.found_existing) gop.value_ptr.* = .empty;
-                if (dep.version_text.len > 0) {
-                    for (gop.value_ptr.items) |existing| {
-                        if (existing.version_text.len > 0 and !existing.version.intersects(dep.version)) {
-                            const field_path = try self.pathOf(section_path, dep.name);
-                            try self.report(diag.E003_CONFLICTING_VERSIONS, field_path, dep.position, "conflicting version constraints for {s}: \"{s}\" vs \"{s}\"", .{ public_id, existing.version_text, dep.version_text });
+                if (!gop.found_existing) gop.value_ptr.* = .{};
+                if (gop.value_ptr.saturated) continue;
+                // 積集合が空リストのときは新しい制約の集合をそのまま採用する。
+                if (gop.value_ptr.paths.items.len == 0) {
+                    for (dep.version.sets) |set| {
+                        if (gop.value_ptr.paths.items.len >= max_joint_paths) {
+                            gop.value_ptr.saturated = true;
+                            break;
+                        }
+                        const path = try self.scratch.alloc([]const semver.Comparator, 1);
+                        path[0] = set;
+                        try gop.value_ptr.paths.append(self.scratch, path);
+                    }
+                    continue;
+                }
+                var next: std.ArrayList([]const []const semver.Comparator) = .empty;
+                var capped = false;
+                for (gop.value_ptr.paths.items) |path| {
+                    for (dep.version.sets) |set| {
+                        const merged = try std.mem.concat(self.scratch, []const semver.Comparator, &.{ path, &.{set} });
+                        if (semver.jointSetsIntersect(merged)) {
+                            try next.append(self.scratch, merged);
+                            if (next.items.len >= max_joint_paths) {
+                                capped = true;
+                                break;
+                            }
                         }
                     }
+                    if (capped) break;
                 }
-                try gop.value_ptr.append(self.scratch, dep);
+                if (next.items.len == 0) {
+                    const field_path = try self.pathOf(section_path, dep.name);
+                    try self.report(diag.E003_CONFLICTING_VERSIONS, field_path, dep.position, "conflicting version constraints for {s}: \"{s}\" leaves no common version", .{ public_id, dep.version_text });
+                } else if (capped) {
+                    gop.value_ptr.saturated = true;
+                } else {
+                    gop.value_ptr.paths = next;
+                }
             }
         }
     }
@@ -1087,428 +1143,6 @@ fn isBase64Hash(text: []const u8, digits: usize) bool {
     return true;
 }
 
-fn parseOk(allocator: std.mem.Allocator, source: []const u8) !Manifest {
-    var list = diag.List.init(allocator);
-    defer list.deinit();
-    return parse(allocator, source, &list);
-}
-
-fn parseErrCode(allocator: std.mem.Allocator, source: []const u8, code: []const u8) !void {
-    var list = diag.List.init(allocator);
-    defer list.deinit();
-    try std.testing.expectError(error.InvalidManifest, parse(allocator, source, &list));
-    try std.testing.expect(list.find(code) != null);
-}
-
-test "妥当なmanifestを解析する" {
-    const allocator = std.testing.allocator;
-    const source =
-        \\[package]
-        \\name = "http-kit"
-        \\version = "0.1.0"
-        \\license = "MIT"
-        \\
-        \\[features]
-        \\default = ["client"]
-        \\client = []
-        \\server = ["client"]
-        \\
-        \\[dependencies.pkg]
-        \\client = { version = ">=1.0.0 <2.0.0", features = ["http"], default-features = false }
-        \\
-        \\[profiles]
-        \\default = { os = "linux", cpu = "x86_64", abi = "gnu" }
-        \\
-        \\[[exports]]
-        \\name = "http-kit"
-        \\path = "src/main.nako3"
-        \\
-    ;
-    var manifest = try parseOk(allocator, source);
-    defer manifest.deinit();
-
-    try std.testing.expectEqualStrings("http-kit", manifest.package.name);
-    try std.testing.expectEqual(@as(u64, 0), manifest.package.version.major);
-    try std.testing.expectEqual(@as(u64, 1), manifest.package.version.minor);
-    try std.testing.expectEqualStrings("MIT", manifest.package.license);
-    try std.testing.expectEqual(@as(usize, 3), manifest.features.count());
-    const client = manifest.dependencies.pkg.get("client").?;
-    try std.testing.expect(!client.default_features);
-    try std.testing.expect(client.version.satisfies(try semver.Version.parse("1.5.0")));
-    try std.testing.expect(!client.version.satisfies(try semver.Version.parse("2.0.0")));
-    const profile = manifest.profiles.get("default").?;
-    try std.testing.expectEqualStrings("linux", profile.os);
-    try std.testing.expectEqual(@as(usize, 1), manifest.exports.len);
-    try std.testing.expectEqualStrings("http-kit", manifest.exports[0].name);
-
-    var list = diag.List.init(allocator);
-    defer list.deinit();
-    var expanded = try manifest.expandFeatures(allocator, &.{}, true, &list);
-    defer expanded.deinit();
-    try std.testing.expect(expanded.contains("default"));
-    try std.testing.expect(expanded.contains("client"));
-    try std.testing.expect(!expanded.contains("server"));
-    try std.testing.expect(!expanded.dependency_aliases.contains("client"));
-}
-
-test "feature経由の依存aliasを展開する" {
-    const allocator = std.testing.allocator;
-    const source =
-        \\[package]
-        \\name = "app"
-        \\version = "1.0.0"
-        \\license = "MIT"
-        \\
-        \\[features]
-        \\web = ["reqwest"]
-        \\
-        \\[dependencies.pkg]
-        \\reqwest = { version = "^1.0.0" }
-        \\
-    ;
-    var manifest = try parseOk(allocator, source);
-    defer manifest.deinit();
-
-    var list = diag.List.init(allocator);
-    defer list.deinit();
-    var expanded = try manifest.expandFeatures(allocator, &.{"web"}, false, &list);
-    defer expanded.deinit();
-    try std.testing.expect(expanded.contains("web"));
-    try std.testing.expect(expanded.dependency_aliases.contains("reqwest"));
-}
-
-test "必須フィールド欠落を診断する" {
-    const allocator = std.testing.allocator;
-    try parseErrCode(allocator, "[features]\naa = []\n", diag.E019_REQUIRED_FIELD_MISSING);
-    try parseErrCode(allocator, "[package]\nversion = \"1.0.0\"\nlicense = \"MIT\"\n", diag.E019_REQUIRED_FIELD_MISSING);
-    try parseErrCode(allocator, "[dependencies.pkg]\nreq = {}\n", diag.E019_REQUIRED_FIELD_MISSING);
-}
-
-test "TOML構文エラーとUTF-8を診断する" {
-    const allocator = std.testing.allocator;
-    try parseErrCode(allocator, "[package\nname = \"a\"\n", diag.E020_INVALID_TOML);
-    try parseErrCode(allocator, "[package]\nname = \"a\"\nname = \"b\"\n", diag.E020_INVALID_TOML);
-    try parseErrCode(allocator, "[package]\nname = \"\xff\"\n", diag.E021_INVALID_UTF8);
-}
-
-test "未知フィールドと型不一致を診断する" {
-    const allocator = std.testing.allocator;
-    try parseErrCode(allocator, "[package]\nname = \"a\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\nweird = 1\n", diag.E022_UNKNOWN_FIELD);
-    try parseErrCode(allocator, "surprise = 1\n[package]\nname = \"a\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n", diag.E022_UNKNOWN_FIELD);
-    try parseErrCode(allocator, "[package]\nname = \"a\"\nversion = \"1.0.0\"\nlicense = 3\n", diag.E023_INVALID_TYPE);
-    try parseErrCode(allocator, "package = 1\n", diag.E023_INVALID_TYPE);
-}
-
-test "無効なsemverと範囲を診断する" {
-    const allocator = std.testing.allocator;
-    try parseErrCode(allocator, "[package]\nname = \"a\"\nversion = \"1.0\"\nlicense = \"MIT\"\n", diag.E024_INVALID_SEMVER);
-    try parseErrCode(allocator, "[package]\nname = \"a\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n[dependencies.pkg]\nreq = { version = \">=\" }\n", diag.E025_INVALID_RANGE);
-}
-
-test "未知のschema versionを診断する" {
-    const allocator = std.testing.allocator;
-    try parseErrCode(allocator, "[package]\nname = \"a\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\nschema-version = 99\n", diag.E001_UNKNOWN_MANIFEST_SCHEMA);
-    // u32 範囲を超える巨大な値も E001 とする。
-    try parseErrCode(allocator, "[package]\nname = \"a\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\nschema-version = 99999999999\n", diag.E001_UNKNOWN_MANIFEST_SCHEMA);
-    // 0 は schema の minimum 違反で E029。
-    try parseErrCode(allocator, "[package]\nname = \"a\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\nschema-version = 0\n", diag.E029_INVALID_VALUE);
-}
-
-test "無効なprofileを診断する" {
-    const allocator = std.testing.allocator;
-    try parseErrCode(allocator, "[package]\nname = \"a\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n[profiles]\np = { os = " ++ "\"freebsd\"" ++ ", cpu = \"x86_64\", abi = \"gnu\" }\n", diag.E014_INVALID_PROFILE);
-    try parseErrCode(allocator, "[package]\nname = \"a\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n[profiles]\np = { os = \"linux\", cpu = \"x86_64\", abi = \"gnu\", optimize = \"O9\" }\n", diag.E029_INVALID_VALUE);
-}
-
-test "export重複とESM制約を診断する" {
-    const allocator = std.testing.allocator;
-    try parseErrCode(allocator, "[package]\nname = \"a\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n[[exports]]\nname = \"x\"\n[[exports]]\nname = \"x\"\n", diag.E011_DUPLICATE_EXPORT);
-    try parseErrCode(allocator, "[package]\nname = \"a\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n[[exports]]\nname = \"x\"\nesm = \"m.mjs\"\n", diag.E006_JS_IN_NORMAL_MODE);
-
-    // compat-js profile があれば ESM export は受理される。
-    const ok_source =
-        \\[package]
-        \\name = "a"
-        \\version = "1.0.0"
-        \\license = "MIT"
-        \\[profiles]
-        \\web = { os = "linux", cpu = "x86_64", abi = "gnu", compat-js = true }
-        \\[[exports]]
-        \\name = "x"
-        \\esm = "m.mjs"
-        \\
-    ;
-    var manifest = try parseOk(allocator, ok_source);
-    defer manifest.deinit();
-}
-
-test "同一public-idの衝突するversion制約を診断する" {
-    const allocator = std.testing.allocator;
-    const source =
-        \\[package]
-        \\name = "a"
-        \\version = "1.0.0"
-        \\license = "MIT"
-        \\[dependencies.pkg]
-        \\one = { version = ">=1.0.0 <2.0.0", public-id = "pkg:0123456789abcdef0123456789abcdef" }
-        \\two = { version = ">=2.0.0", public-id = "pkg:0123456789abcdef0123456789abcdef" }
-        \\
-    ;
-    try parseErrCode(allocator, source, diag.E003_CONFLICTING_VERSIONS);
-
-    // 交差する制約は受理する。
-    const ok_source =
-        \\[package]
-        \\name = "a"
-        \\version = "1.0.0"
-        \\license = "MIT"
-        \\[dependencies.pkg]
-        \\one = { version = ">=1.0.0 <3.0.0", public-id = "pkg:0123456789abcdef0123456789abcdef" }
-        \\two = { version = ">=2.0.0", public-id = "pkg:0123456789abcdef0123456789abcdef" }
-        \\
-    ;
-    var manifest = try parseOk(allocator, ok_source);
-    defer manifest.deinit();
-}
-
-test "feature循環を診断する" {
-    const allocator = std.testing.allocator;
-    const source =
-        \\[package]
-        \\name = "a"
-        \\version = "1.0.0"
-        \\license = "MIT"
-        \\[features]
-        \\aa = ["bb"]
-        \\bb = ["aa"]
-        \\
-    ;
-    try parseErrCode(allocator, source, diag.E027_FEATURE_CYCLE);
-}
-
-test "未知featureと未知profile参照を診断する" {
-    const allocator = std.testing.allocator;
-    const source =
-        \\[package]
-        \\name = "a"
-        \\version = "1.0.0"
-        \\license = "MIT"
-        \\[features]
-        \\web = ["missing-dep"]
-        \\
-    ;
-    try parseErrCode(allocator, source, diag.E028_UNKNOWN_FEATURE);
-
-    const bad_profile =
-        \\[package]
-        \\name = "a"
-        \\version = "1.0.0"
-        \\license = "MIT"
-        \\[dependencies.pkg]
-        \\req = { version = "^1", profile = "nope" }
-        \\
-    ;
-    try parseErrCode(allocator, bad_profile, diag.E030_UNKNOWN_PROFILE);
-}
-
-test "npm依存の文字列短縮形とテーブル形を解析する" {
-    const allocator = std.testing.allocator;
-    const source =
-        \\[package]
-        \\name = "a"
-        \\version = "1.0.0"
-        \\license = "MIT"
-        \\[dependencies.npm]
-        \\leftpad = "^1.0.0"
-        \\express = { version = "^4.0.0", context = "web", peer-dependencies = { ws = "^8" }, optional-peers = ["debug"] }
-        \\
-    ;
-    var manifest = try parseOk(allocator, source);
-    defer manifest.deinit();
-    const leftpad = manifest.dependencies.npm.get("leftpad").?;
-    try std.testing.expect(leftpad.version.satisfies(try semver.Version.parse("1.2.0")));
-    const express = manifest.dependencies.npm.get("express").?;
-    try std.testing.expectEqualStrings("web", express.context.?);
-    try std.testing.expect(express.peer_dependencies.contains("ws"));
-    try std.testing.expectEqual(@as(usize, 1), express.optional_peers.len);
-}
-
-test "alias衝突を診断する" {
-    const allocator = std.testing.allocator;
-    const source =
-        \\[package]
-        \\name = "a"
-        \\version = "1.0.0"
-        \\license = "MIT"
-        \\[dependencies.pkg]
-        \\one = { version = "^1", alias = "shared" }
-        \\two = { version = "^2", alias = "shared" }
-        \\
-    ;
-    try parseErrCode(allocator, source, diag.E012_ALIAS_COLLISION);
-
-    // alias が他の依存エントリ名と衝突しても E012。
-    const entry_collision =
-        \\[package]
-        \\name = "a"
-        \\version = "1.0.0"
-        \\license = "MIT"
-        \\[dependencies.pkg]
-        \\req = { version = "^1", alias = "other" }
-        \\other = { version = "^2" }
-        \\
-    ;
-    try parseErrCode(allocator, entry_collision, diag.E012_ALIAS_COLLISION);
-
-    // git 依存の alias も同じ名前空間で検査する。
-    const git_collision =
-        \\[package]
-        \\name = "a"
-        \\version = "1.0.0"
-        \\license = "MIT"
-        \\[dependencies.pkg]
-        \\req = { version = "^1" }
-        \\[dependencies.git]
-        \\lib = { url = "https://example.com/lib.git", commit = "0123456", alias = "req" }
-        \\
-    ;
-    try parseErrCode(allocator, git_collision, diag.E012_ALIAS_COLLISION);
-}
-
-test "同一public-idの3者間衝突とfeature名規則を診断する" {
-    const allocator = std.testing.allocator;
-    // `>=1 <3` は `^1`/`^2` のどちらとも交差するが `^1` と `^2` は互いに衝突する。
-    const three_way =
-        \\[package]
-        \\name = "a"
-        \\version = "1.0.0"
-        \\license = "MIT"
-        \\[dependencies.pkg]
-        \\one = { version = ">=1.0.0 <3.0.0", public-id = "pkg:0123456789abcdef0123456789abcdef" }
-        \\two = { version = "^1.0.0", public-id = "pkg:0123456789abcdef0123456789abcdef" }
-        \\three = { version = "^2.0.0", public-id = "pkg:0123456789abcdef0123456789abcdef" }
-        \\
-    ;
-    try parseErrCode(allocator, three_way, diag.E003_CONFLICTING_VERSIONS);
-
-    // feature 定義の項目は featureName パターンに一致しなければならない。
-    const bad_item =
-        \\[package]
-        \\name = "a"
-        \\version = "1.0.0"
-        \\license = "MIT"
-        \\[features]
-        \\web = ["!!"]
-        \\
-    ;
-    try parseErrCode(allocator, bad_item, diag.E029_INVALID_VALUE);
-
-    // nako-version は `^\d+\.\d+\.\d+$` 形式のみ受理する。
-    const bad_nako_version =
-        \\[package]
-        \\name = "a"
-        \\version = "1.0.0"
-        \\license = "MIT"
-        \\nako-version = "1.2.3-alpha"
-        \\
-    ;
-    try parseErrCode(allocator, bad_nako_version, diag.E029_INVALID_VALUE);
-    const ok_nako_version =
-        \\[package]
-        \\name = "a"
-        \\version = "1.0.0"
-        \\license = "MIT"
-        \\nako-version = "3.7.24"
-        \\min-nako-version = "3.7.0"
-        \\
-    ;
-    var manifest = try parseOk(allocator, ok_nako_version);
-    defer manifest.deinit();
-    try std.testing.expectEqual(@as(u64, 7), manifest.package.nako_version.?.minor);
-
-    // path/git/http 依存の空名も拒否する。
-    const empty_path_name =
-        \\[package]
-        \\name = "a"
-        \\version = "1.0.0"
-        \\license = "MIT"
-        \\[dependencies.path]
-        \\"" = { path = "x" }
-        \\
-    ;
-    try parseErrCode(allocator, empty_path_name, diag.E029_INVALID_VALUE);
-}
-
-/// cwd から上方向に `tools/package-system/conformance` を持つリポジトリルートを探す。
-/// `zig build test`（プロジェクトルートが cwd）でも `zig test` を
-/// サブディレクトリから直接実行しても動作する。
-fn openRepoRoot(io: std.Io) !std.Io.Dir {
-    const probe = "tools/package-system/conformance/valid/manifest/minimal/nako.toml";
-    var buffer: [256]u8 = undefined;
-    var prefix: []const u8 = ".";
-    for (0..8) |_| {
-        var candidate = try std.Io.Dir.cwd().openDir(io, prefix, .{});
-        if (candidate.openFile(io, probe, .{})) |file| {
-            file.close(io);
-            return candidate;
-        } else |_| {
-            candidate.close(io);
-        }
-        prefix = std.fmt.bufPrint(&buffer, "{s}/..", .{prefix}) catch return error.FileNotFound;
-    }
-    return error.FileNotFound;
-}
-
-// `tools/package-system/conformance` の manifest fixture を Zig 側でも検証する。
-// 期待コードは同ディレクトリの expected.json から読み取る。
-test "manifest適合fixtureを検証する" {
-    const allocator = std.testing.allocator;
-    var repo = try openRepoRoot(std.testing.io);
-    defer repo.close(std.testing.io);
-    const cases = [_]struct { path: []const u8, expected_code: ?[]const u8 }{
-        .{ .path = "tools/package-system/conformance/valid/manifest/minimal/nako.toml", .expected_code = null },
-        .{ .path = "tools/package-system/conformance/valid/manifest/features/nako.toml", .expected_code = null },
-        .{ .path = "tools/package-system/conformance/valid/manifest/npm-aux/nako.toml", .expected_code = null },
-        .{ .path = "tools/package-system/conformance/valid/manifest/path-git/nako.toml", .expected_code = null },
-        .{ .path = "tools/package-system/conformance/valid/manifest/profiles/nako.toml", .expected_code = null },
-        .{ .path = "tools/package-system/conformance/invalid/manifest/unknown-schema/nako.toml", .expected_code = diag.E001_UNKNOWN_MANIFEST_SCHEMA },
-        .{ .path = "tools/package-system/conformance/invalid/manifest/conflicting-version/nako.toml", .expected_code = diag.E003_CONFLICTING_VERSIONS },
-        .{ .path = "tools/package-system/conformance/invalid/manifest/duplicate-exports/nako.toml", .expected_code = diag.E011_DUPLICATE_EXPORT },
-        .{ .path = "tools/package-system/conformance/invalid/manifest/invalid-profile/nako.toml", .expected_code = diag.E014_INVALID_PROFILE },
-        .{ .path = "tools/package-system/conformance/invalid/manifest/js-without-compat-js/nako.toml", .expected_code = diag.E006_JS_IN_NORMAL_MODE },
-        .{ .path = "tools/package-system/conformance/invalid/manifest/missing-package/nako.toml", .expected_code = diag.E019_REQUIRED_FIELD_MISSING },
-        .{ .path = "tools/package-system/conformance/invalid/manifest/unknown-field/nako.toml", .expected_code = diag.E022_UNKNOWN_FIELD },
-        .{ .path = "tools/package-system/conformance/invalid/manifest/invalid-type/nako.toml", .expected_code = diag.E023_INVALID_TYPE },
-        .{ .path = "tools/package-system/conformance/invalid/manifest/invalid-value/nako.toml", .expected_code = diag.E029_INVALID_VALUE },
-        .{ .path = "tools/package-system/conformance/invalid/manifest/invalid-semver/nako.toml", .expected_code = diag.E024_INVALID_SEMVER },
-        .{ .path = "tools/package-system/conformance/invalid/manifest/invalid-range/nako.toml", .expected_code = diag.E025_INVALID_RANGE },
-        .{ .path = "tools/package-system/conformance/invalid/manifest/alias-collision/nako.toml", .expected_code = diag.E012_ALIAS_COLLISION },
-        .{ .path = "tools/package-system/conformance/invalid/manifest/unknown-feature/nako.toml", .expected_code = diag.E028_UNKNOWN_FEATURE },
-        .{ .path = "tools/package-system/conformance/invalid/manifest/feature-cycle/nako.toml", .expected_code = diag.E027_FEATURE_CYCLE },
-        .{ .path = "tools/package-system/conformance/invalid/manifest/unknown-profile/nako.toml", .expected_code = diag.E030_UNKNOWN_PROFILE },
-    };
-    for (cases) |case| {
-        const source = try repo.readFileAlloc(std.testing.io, case.path, allocator, .limited(1 << 20));
-        defer allocator.free(source);
-        var list = diag.List.init(allocator);
-        defer list.deinit();
-        const result = parse(allocator, source, &list);
-        if (case.expected_code) |code| {
-            try std.testing.expectError(error.InvalidManifest, result);
-            if (list.find(code) == null) {
-                std.debug.print("{s}: expected diagnostic {s}, got:", .{ case.path, code });
-                for (list.items.items) |item| std.debug.print(" {s}", .{item.code});
-                std.debug.print("\n", .{});
-                return error.TestUnexpectedResult;
-            }
-        } else {
-            var manifest = result catch |err| {
-                std.debug.print("{s}: unexpected error {s}, diagnostics:", .{ case.path, @errorName(err) });
-                for (list.items.items) |item| std.debug.print(" {s}", .{item.code});
-                std.debug.print("\n", .{});
-                return error.TestUnexpectedResult;
-            };
-            defer manifest.deinit();
-        }
-    }
+test {
+    _ = @import("manifest_test.zig");
 }

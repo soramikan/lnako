@@ -150,7 +150,9 @@ pub const Comparator = struct {
 };
 
 /// npm互換のバージョン範囲。`sets` は `||` で区切られた AND 制約集合の OR。
-/// `sets.len == 0` は全バージョンに一致する。
+/// `sets.len == 0` は全バージョンに一致する。`Range.parse` は空の `sets`
+/// を生成しないため、この値はバージョン欠落・解析失敗時の合成値のみが
+/// 取り得る（バリデータ側では「無制約」として扱う）。
 pub const Range = struct {
     sets: []const []const Comparator,
     text: []const u8,
@@ -494,11 +496,23 @@ fn setSatisfies(set: []const Comparator, version: Version) bool {
 }
 
 /// 2つの AND 比較子集合の共通部分が空でないかを上下限から判定する。
-fn setsIntersect(a: []const Comparator, b: []const Comparator) bool {
+/// 厳密な求解ではなく近似的判定（範囲の積集合計算にも利用する）。
+pub fn setsIntersect(a: []const Comparator, b: []const Comparator) bool {
+    return jointSetsIntersect(&.{ a, b });
+}
+
+/// 複数の AND 比較子集合（同一 public-id の各依存が選んだ選択肢の組合せ）の
+/// 共通部分が空でないかを上下限から判定する。prerelease ゲートは併合済みの
+/// 和集合ではなく構成集合毎に要求する。各構成集合は個別の依存制約に対応し、
+/// prerelease 候補は全ての構成集合を個別に満たす必要があるため。
+/// 近似の既知の限界: 下端が release バージョンへの `>` で共通候補が
+/// 後継タプルの prerelease のみに限られる場合（`>1.5.0 <1.5.1` 等）は
+/// ゲートが発火せず非交差を見逃し得る。誤検出方向には働かない。
+pub fn jointSetsIntersect(sets: []const []const Comparator) bool {
     var lower: ?Comparator = null;
     var upper: ?Comparator = null;
     var exact: ?Comparator = null;
-    for ([_][]const Comparator{ a, b }) |set| {
+    for (sets) |set| {
         for (set) |comparator| {
             switch (comparator.op) {
                 .eq => {
@@ -527,28 +541,48 @@ fn setsIntersect(a: []const Comparator, b: []const Comparator) bool {
             if (!u.op.matches(ord)) return false;
         }
         if (v.prerelease.len > 0) {
-            // prerelease 版は各集合に同タプルの prerelease 比較子を要求する。
+            // prerelease 版は各構成集合に同タプルの prerelease 比較子を要求する。
             // `>=1.0.0` ∩ `=2.0.0-alpha` のような衝突を取りこぼさないため。
-            for ([_][]const Comparator{ a, b }) |set| {
-                var gated = false;
-                for (set) |comparator| {
-                    const other = comparator.version;
-                    if (other.prerelease.len > 0 and other.major == v.major and other.minor == v.minor and other.patch == v.patch) {
-                        gated = true;
-                        break;
-                    }
-                }
-                if (!gated) return false;
-            }
+            if (!prereleaseGated(sets, v)) return false;
         }
         return true;
     }
     if (lower != null and upper != null) {
-        const ord = lower.?.version.order(upper.?.version);
+        const l = lower.?;
+        const u = upper.?;
+        const ord = l.version.order(u.version);
         if (ord == .gt) return false;
-        if (ord == .eq) {
-            return lower.?.op == .gte and upper.?.op == .lte;
+        if (ord == .eq and !(l.op == .gte and u.op == .lte)) return false;
+        // 共通候補がタプル T の prerelease のみに限られる場合
+        // （下端が T の prerelease 比較子で、上端が T 自体より下か
+        // T の prerelease）、各構成集合は T の prerelease 比較子を含む必要がある。
+        // `>=1.0.0-alpha <2.0.0` ∩ `>=1.5.0-alpha <1.5.0` のように
+        // 境界だけが重なる非交差を取りこぼさないため。
+        const same_tuple = l.version.major == u.version.major and
+            l.version.minor == u.version.minor and l.version.patch == u.version.patch;
+        const upper_prerelease_only = u.op == .lt or u.version.prerelease.len > 0;
+        if (l.version.prerelease.len > 0 and same_tuple and upper_prerelease_only) {
+            if (!prereleaseGated(sets, l.version)) return false;
         }
+    }
+    return true;
+}
+
+/// 全構成集合がタプル `(v.major, v.minor, v.patch)` の prerelease 比較子を
+/// 持つか。`setSatisfies` の prerelease ゲートと同じ条件を集合毎に課す。
+fn prereleaseGated(sets: []const []const Comparator, v: Version) bool {
+    for (sets) |set| {
+        var gated = false;
+        for (set) |comparator| {
+            const other = comparator.version;
+            if (other.prerelease.len > 0 and other.major == v.major and
+                other.minor == v.minor and other.patch == v.patch)
+            {
+                gated = true;
+                break;
+            }
+        }
+        if (!gated) return false;
     }
     return true;
 }
@@ -766,4 +800,45 @@ test "prerelease版の交差判定はゲートを要求する" {
     var gated = try Range.parse(allocator, ">=2.0.0-alpha");
     defer gated.deinit(allocator);
     try std.testing.expect(gated.intersects(exact_pre));
+}
+
+test "prerelease専用の共通範囲は同タプルの比較子を要求する" {
+    const allocator = std.testing.allocator;
+    // `>=1.5.0-alpha <1.5.0` の候補は 1.5.0 の prerelease のみ。
+    // `>=1.0.0-alpha <2.0.0` は同タプルの prerelease 比較子を持たないため非交差。
+    var wide = try Range.parse(allocator, ">=1.0.0-alpha <2.0.0");
+    defer wide.deinit(allocator);
+    var pre_only = try Range.parse(allocator, ">=1.5.0-alpha <1.5.0");
+    defer pre_only.deinit(allocator);
+    try std.testing.expect(!wide.intersects(pre_only));
+
+    // 片方が同タプルの prerelease 比較子を持たない場合も非交差。
+    var plain = try Range.parse(allocator, ">=1.0.0 <2.0.0");
+    defer plain.deinit(allocator);
+    try std.testing.expect(!plain.intersects(pre_only));
+
+    // 両方が 1.5.0 の prerelease 比較子を持つなら交差する。
+    var pre_overlap = try Range.parse(allocator, ">=1.5.0-beta <1.5.0");
+    defer pre_overlap.deinit(allocator);
+    try std.testing.expect(pre_only.intersects(pre_overlap));
+
+    // 共通部分に release が残るならゲートは不要。
+    var releases = try Range.parse(allocator, ">=1.5.0 <2.0.0");
+    defer releases.deinit(allocator);
+    try std.testing.expect(wide.intersects(releases));
+
+    // 3集合の組合せでは、1つの集合が持つ prerelease 比較子が他の集合の
+    // ゲートを代行しない。`>=1.0.0 <1.9.0` は 1.5.0 の prerelease 比較子を
+    // 持たないため `>=1.5.0-beta <1.5.0` の候補を受理できない。
+    var a_set = try Range.parse(allocator, ">=1.5.0-alpha <2.0.0");
+    defer a_set.deinit(allocator);
+    var b_set = try Range.parse(allocator, ">=1.0.0 <1.9.0");
+    defer b_set.deinit(allocator);
+    var c_set = try Range.parse(allocator, ">=1.5.0-beta <1.5.0");
+    defer c_set.deinit(allocator);
+    try std.testing.expect(!jointSetsIntersect(&.{ a_set.sets[0], b_set.sets[0], c_set.sets[0] }));
+    // match-all（空集合）も prerelease 比較子を持たないためゲートを通らない。
+    var any_set = try Range.parse(allocator, "");
+    defer any_set.deinit(allocator);
+    try std.testing.expect(!jointSetsIntersect(&.{ any_set.sets[0], c_set.sets[0] }));
 }

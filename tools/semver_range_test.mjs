@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { parseRange, rangesIntersect } from "./lib/package/semver_range.mjs";
+import { parseRange, rangesIntersect, jointSetsIntersect } from "./lib/package/semver_range.mjs";
 
 test("空白区切りの比較子列は後続トークンを取りこぼさない", () => {
   const sets = parseRange("> 1.2.3 <= 2.0.0");
@@ -70,6 +70,43 @@ test("バージョン位置の = を拒否する", () => {
 test("prerelease の exact は同一tupleのprerelease比較子を要求する", () => {
   assert.equal(rangesIntersect(parseRange(">=1.0.0"), parseRange("2.0.0-alpha")), false);
   assert.equal(rangesIntersect(parseRange(">=2.0.0-alpha"), parseRange("2.0.0-alpha")), true);
+});
+
+test("prerelease専用の共通範囲は同tupleの比較子を要求する", () => {
+  // `>=1.5.0-alpha <1.5.0` の候補は 1.5.0 の prerelease のみ。
+  assert.equal(
+    rangesIntersect(parseRange(">=1.0.0-alpha <2.0.0"), parseRange(">=1.5.0-alpha <1.5.0")),
+    false,
+  );
+  assert.equal(
+    rangesIntersect(parseRange(">=1.0.0 <2.0.0"), parseRange(">=1.5.0-alpha <1.5.0")),
+    false,
+  );
+  assert.equal(
+    rangesIntersect(parseRange(">=1.5.0-alpha <1.5.0"), parseRange(">=1.5.0-beta <1.5.0")),
+    true,
+  );
+  // 共通部分に release が残るならゲートは不要。
+  assert.equal(
+    rangesIntersect(parseRange(">=1.0.0-alpha <2.0.0"), parseRange(">=1.5.0 <2.0.0")),
+    true,
+  );
+});
+
+test("3集合の組合せではprereleaseゲートを構成集合毎に評価する", () => {
+  // `>=1.0.0 <1.9.0` は 1.5.0 の prerelease 比較子を持たないため、
+  // `>=1.5.0-alpha` が同タプルの比較子を持っていてもゲートを代行しない。
+  const a = parseRange(">=1.5.0-alpha <2.0.0")[0];
+  const b = parseRange(">=1.0.0 <1.9.0")[0];
+  const c = parseRange(">=1.5.0-beta <1.5.0")[0];
+  assert.equal(jointSetsIntersect([a, b, c]), false);
+  // match-all（空集合）も prerelease 比較子を持たないためゲートを通らない。
+  assert.equal(jointSetsIntersect([[], c]), false);
+  // exact 版: `=1.5.0-beta` は `>=1.0.0` では prerelease ゲートを通らない。
+  const a2 = parseRange(">=1.5.0-alpha")[0];
+  const b2 = parseRange(">=1.0.0")[0];
+  const c2 = parseRange("1.5.0-beta")[0];
+  assert.equal(jointSetsIntersect([a2, b2, c2]), false);
 });
 
 test("空の || 枝は無制約として扱う", () => {
