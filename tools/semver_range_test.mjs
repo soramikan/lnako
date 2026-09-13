@@ -161,3 +161,23 @@ test("範囲の交差判定", () => {
   assert.equal(rangesIntersect(parseRange(">=1.0.0 <2.0.0"), parseRange(">=2.0.0")), false);
   assert.equal(rangesIntersect(parseRange("1.x || >=3.0.0"), parseRange("^3.1.0")), true);
 });
+
+test("wildcard位置へのqualifier規則はnode-semverと一致する", () => {
+  // prerelease は major が数値かつ patch 位置まで記述された partial のみ。
+  for (const text of ["*-alpha", "*.*-alpha", "x-alpha", "1-alpha", "1.2-alpha", "1.x-alpha"]) {
+    assert.equal(parseRange(text), null, text);
+  }
+  // patch 位置が wildcard の prerelease は捨てて評価する。
+  assert.deepEqual(parseRange("1.2.x-alpha"), parseRange("1.2.x"));
+  assert.deepEqual(parseRange("1.x.x-alpha"), parseRange("1.x.x"));
+  // wildcard の後続位置も wildcard でなければならない。
+  for (const text of ["*.1", "*.*.5", "1.x.5", "x.2.3"]) {
+    assert.equal(parseRange(text), null, text);
+  }
+  assert.notEqual(parseRange("*.*"), null);
+  assert.notEqual(parseRange("1.x.x"), null);
+  // build メタデータは任意位置で許容する。
+  for (const text of ["1+build", "1.2+build", "*+build", "1.x+build"]) {
+    assert.notEqual(parseRange(text), null, text);
+  }
+});

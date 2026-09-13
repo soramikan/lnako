@@ -60,6 +60,74 @@ function isUri(text) {
   return !/[\x00-\x20\x7f]/.test(rest);
 }
 
+// SPDX license expression の構文（識別子・`+` 接尾・`WITH` 例外・
+// `AND`/`OR` 結合・括弧）のみ検査する。識別子が SPDX 公式一覧に
+// 登録済みかは検査しない。`UNLICENSED`/`Proprietary` も識別子として
+// 構文上受理される。Zig 側 `isLicenseExpression` と同一の判定。
+const maxLicenseDepth = 32;
+
+function isLicenseExpression(text) {
+  const pos = { i: 0 };
+  if (!licenseExpr(text, pos, 0)) return false;
+  licenseSkipWs(text, pos);
+  return pos.i === text.length;
+}
+
+function licenseSkipWs(text, pos) {
+  while (pos.i < text.length && (text[pos.i] === " " || text[pos.i] === "\t")) pos.i++;
+}
+
+function licenseToken(text, pos) {
+  licenseSkipWs(text, pos);
+  const start = pos.i;
+  while (pos.i < text.length && !" \t()".includes(text[pos.i])) pos.i++;
+  return pos.i === start ? null : text.slice(start, pos.i);
+}
+
+function isLicenseId(token, allowPlus) {
+  let t = token;
+  if (allowPlus && t.endsWith("+")) t = t.slice(0, -1);
+  if (t.length === 0) return false;
+  if (!/^[A-Za-z0-9.:-]+$/.test(t)) return false;
+  return t !== "AND" && t !== "OR" && t !== "WITH";
+}
+
+function licenseTerm(text, pos, depth) {
+  licenseSkipWs(text, pos);
+  if (pos.i < text.length && text[pos.i] === "(") {
+    if (depth >= maxLicenseDepth) return false;
+    pos.i++;
+    if (!licenseExpr(text, pos, depth + 1)) return false;
+    licenseSkipWs(text, pos);
+    if (pos.i >= text.length || text[pos.i] !== ")") return false;
+    pos.i++;
+    return true;
+  }
+  const id = licenseToken(text, pos);
+  if (id === null || !isLicenseId(id, true)) return false;
+  const save = pos.i;
+  if (licenseToken(text, pos) === "WITH") {
+    const exception = licenseToken(text, pos);
+    // 例外識別子は `+` 接尾・`:`（DocumentRef 複合形）を許容しない。
+    return exception !== null && isLicenseId(exception, false) && !exception.includes(":");
+  }
+  pos.i = save;
+  return true;
+}
+
+function licenseExpr(text, pos, depth) {
+  if (!licenseTerm(text, pos, depth)) return false;
+  while (true) {
+    const save = pos.i;
+    const op = licenseToken(text, pos);
+    if (op !== "AND" && op !== "OR") {
+      pos.i = save;
+      return true;
+    }
+    if (!licenseTerm(text, pos, depth)) return false;
+  }
+}
+
 function parseRef(ref, baseFile) {
   if (typeof ref !== "string") return { file: baseFile, fragment: "/" };
   const hashIdx = ref.indexOf("#");
@@ -370,6 +438,12 @@ export function validateManifest(manifest, fixturePath) {
     fail("E001_UNKNOWN_MANIFEST_SCHEMA", `unknown manifest schema version ${pkg["schema-version"]}`, `${fixturePath}.package.schema-version`);
   }
 
+  // package.license は SPDX expression 構文のみ検査する（Zig 側と同じ判定。
+  // 識別子が SPDX 公式一覧に登録済みかは問わない）。
+  if (typeof manifest.package?.license === "string" && !isLicenseExpression(manifest.package.license)) {
+    fail("E029_INVALID_VALUE", `invalid license expression "${manifest.package.license}"`, `${fixturePath}.package.license`);
+  }
+
   // nako-version 系の数値要素は u64 範囲内（Zig 側 parsePlainVersion と同じ上限）。
   for (const key of ["nako-version", "min-nako-version"]) {
     const value = manifest.package?.[key];
@@ -485,12 +559,13 @@ export function validateManifest(manifest, fixturePath) {
     }
   }
 
-  // 依存 alias 名前空間の衝突。セクション毎にエントリ名（全グループ）と
-  // 明示的 `alias`（pkg/git/http）を登録し、自分自身への alias は許容する。
+  // 依存 alias 名前空間の衝突。feature が参照する名前空間は両セクションで
+  // 統合されるため、エントリ名（全グループ）と明示的 `alias`（pkg/git/http）
+  // をセクションをまたいで同一マップへ登録する。自分自身への alias は許容する。
+  const seen = new Map();
   for (const section of ["dependencies", "dev-dependencies"]) {
     const group = manifest[section];
     if (!group) continue;
-    const seen = new Map();
     const claim = (name, claimInfo) => {
       const existing = seen.get(name);
       if (existing) {

@@ -41,7 +41,7 @@ license = "MIT"
 |------|------|------|------|
 | `name` | string | yes | `[a-z][a-z0-9-]{0,63}`（1文字以上）。 |
 | `version` | string | yes | SemVer 2.0.0。 |
-| `license` | string | yes | SPDX identifier または `UNLICENSED`/`Proprietary`。 |
+| `license` | string | yes | SPDX license expression または `UNLICENSED`/`Proprietary`。expression は構文のみ検査する（識別子が SPDX 公式一覧に登録済みかは問わない）。演算子は `AND`/`OR`/`WITH`（大文字）、`+` 接尾、括弧を許容する。不正値は `E029_INVALID_VALUE`。 |
 | `id` | string | no | `pkg:<32hex>`。未登録時は省略。 |
 | `description` | string | no | 人間向け説明。 |
 | `authors` | array<string> | no | 作者リスト。 |
@@ -183,6 +183,7 @@ native = "libsqlite.dylib"
 - `||` による OR 結合。空の選択肢は `*` として扱う
 - バージョン前置の `v`（`v1.2.3`）は剥がして評価する。先頭の `=`（`=1.2.3`、`= 1.2.3`、`=v1.2.3`）は等価比較の演算子として評価する
 - バージョン位置の `=` は受理しない（`==1.2.3`、`> =1.2.3`、`1.2.3 - =2.0.0` は `E025`）。node-semver 7.x は `[v=\s]*` の前置を許容してこれらを受理するが、本仕様は npm/node-semver#691 で提案された次期メジャー仕様（`v?` のみ前置）に合わせて意図的に厳格化する
+- prerelease（`-alpha` 等）は patch 位置まで記述され、かつ major が数値の partial にのみ付けられる（`*-alpha`、`1-alpha`、`1.2-alpha`、`1.x-alpha`、`*.*-alpha` は `E025`）。patch 位置が wildcard の prerelease は捨てて評価する（`1.x.x-alpha`/`1.2.x-alpha` は wildcard 範囲と同等）。全位置が wildcard の partial に付く prerelease も `E025` とする（`*.*.*-alpha`；node-semver はこれを match-all として受理するが、本仕様では拒否する）。wildcard の後続位置も wildcard でなければならない（`*.*`/`1.x.x` は許容、`*.1`/`1.x.5` は `E025`）。build メタデータ（`+build` 等）は任意位置で許容する（`1+build` は `1` と同等）
 
 評価は node-semver と同じく、prerelease 付きバージョンは同一 `(major,minor,patch)` の prerelease 比較子を含む比較子集合でのみ一致する。空文字は全バージョン一致として扱う。各数値要素は `Number.MAX_SAFE_INTEGER`（9007199254740991）以下に制限する。構文エラーは `E025_INVALID_RANGE` 診断、バージョン自体の構文エラーは `E024_INVALID_SEMVER` 診断。
 

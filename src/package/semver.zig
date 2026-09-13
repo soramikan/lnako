@@ -272,19 +272,41 @@ fn parsePartial(text: []const u8) Error!Partial {
 
     var result: Partial = .{ .major = null, .minor = null, .patch = null, .prerelease = prerelease };
     if (isWildcard(major_text)) {
-        if (minor_text != null or patch_text != null) return error.InvalidRange;
+        // node-semver と同じく wildcard の後続位置は wildcard のみ許容し
+        // （`*.*`/`x.x.x` は match-all、`*.1`/`*.*.5` は不正）、
+        // prerelease は major wildcard では常に不正（`*.*-alpha` も拒否）。
+        // build メタデータは任意位置で許容する。
+        if (minor_text) |minor| {
+            if (!isWildcard(minor)) return error.InvalidRange;
+        }
+        if (patch_text) |patch| {
+            if (!isWildcard(patch)) return error.InvalidRange;
+        }
+        if (prerelease.len > 0) return error.InvalidRange;
         return result;
     }
     result.major = try numericPart(major_text);
     if (minor_text) |minor| {
         if (isWildcard(minor)) {
-            if (patch_text != null) return error.InvalidRange;
+            // `1.x.5` は不正だが `1.x.x` は `1.x` と同等に展開する。
+            // wildcard patch に付く prerelease は捨てる（`1.x.x-alpha`）。
+            if (patch_text) |patch| {
+                if (!isWildcard(patch)) return error.InvalidRange;
+                result.prerelease = "";
+                return result;
+            }
+            if (prerelease.len > 0) return error.InvalidRange;
             return result;
         }
         result.minor = try numericPart(minor);
     }
     if (patch_text) |patch| {
-        if (isWildcard(patch)) return result;
+        // patch 位置が wildcard の場合 node-semver は prerelease を
+        // 丸ごと捨てる（`1.2.x-alpha` は `1.2.x` と同等に展開）。
+        if (isWildcard(patch)) {
+            result.prerelease = "";
+            return result;
+        }
         result.patch = try numericPart(patch);
     }
     if (prerelease.len > 0 and (result.minor == null or result.patch == null)) return error.InvalidRange;
@@ -951,4 +973,37 @@ test "改行区切りの比較子を受理する" {
     var empty_alt = try Range.parse(allocator, "1.0.0 || \n");
     defer empty_alt.deinit(allocator);
     try std.testing.expect(empty_alt.satisfies(try Version.parse("99.0.0")));
+}
+
+test "wildcard位置へのqualifier規則はnode-semverと一致する" {
+    const allocator = std.testing.allocator;
+    // prerelease は major が数値かつ patch 位置まで記述された partial にのみ
+    // 付けられる。
+    for ([_][]const u8{ "*-alpha", "*.*-alpha", "x-alpha", "1-alpha", "1.2-alpha", "1.x-alpha" }) |text| {
+        try std.testing.expectError(error.InvalidRange, Range.parse(allocator, text));
+    }
+    // patch 位置が wildcard の prerelease は捨てて評価する。
+    var dropped = try Range.parse(allocator, "1.2.x-alpha");
+    defer dropped.deinit(allocator);
+    var plain = try Range.parse(allocator, "1.2.x");
+    defer plain.deinit(allocator);
+    try std.testing.expectEqual(dropped.sets.len, plain.sets.len);
+    try std.testing.expect(dropped.satisfies(try Version.parse("1.2.5")));
+    try std.testing.expect(!dropped.satisfies(try Version.parse("1.3.0")));
+    // wildcard の後続位置も wildcard でなければならない。
+    for ([_][]const u8{ "*.1", "*.*.5", "1.x.5", "x.2.3" }) |text| {
+        try std.testing.expectError(error.InvalidRange, Range.parse(allocator, text));
+    }
+    var star_dot = try Range.parse(allocator, "*.*");
+    defer star_dot.deinit(allocator);
+    try std.testing.expect(star_dot.satisfies(try Version.parse("7.8.9")));
+    var x3 = try Range.parse(allocator, "1.x.x");
+    defer x3.deinit(allocator);
+    try std.testing.expect(x3.satisfies(try Version.parse("1.9.9")));
+    try std.testing.expect(!x3.satisfies(try Version.parse("2.0.0")));
+    // build メタデータは任意位置で許容する。
+    for ([_][]const u8{ "1+build", "1.2+build", "*+build", "1.x+build" }) |text| {
+        var range = try Range.parse(allocator, text);
+        defer range.deinit(allocator);
+    }
 }

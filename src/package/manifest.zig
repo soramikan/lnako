@@ -456,6 +456,12 @@ const Validator = struct {
             };
         }
         if (try self.requireString(table, "license", path, position)) |license| {
+            // schema は `type: string` のため値の妥当性をここで検査する。
+            // SPDX expression の構文のみを検査し、識別子が SPDX 公式一覧へ
+            // 登録済みかは問わない。
+            if (!isLicenseExpression(license)) {
+                try self.report(diag.E029_INVALID_VALUE, "package.license", valuePositionOfKey(table, "license"), "invalid license expression \"{s}\"", .{license});
+            }
             package.license = license;
         }
         if (try self.expectString(table, "id", path)) |id| {
@@ -982,11 +988,13 @@ const Validator = struct {
     const AliasClaim = struct { own_name: []const u8, kind: ClaimKind, group: DepKind };
 
     /// 依存 alias 名前空間の衝突を検出する。feature が参照する
-    /// 「エントリ名または `alias`」は同一セクション内で一意でなければならず、
-    /// 別グループのエントリ名や他の alias との重複は `E012` とする。
+    /// 「エントリ名または `alias`」の名前空間は dependencies /
+    /// dev-dependencies で統合されるため、セクションをまたぐ重複を含めて
+    /// 一意でなければならず、重複は `E012` とする。
     fn checkAliasCollisions(self: *Validator) Error!void {
+        var seen = std.StringHashMap(AliasClaim).init(self.scratch);
+        defer seen.deinit();
         for (self.dependencySections()) |ref| {
-            var seen = std.StringHashMap(AliasClaim).init(self.scratch);
             // エントリ名を先に全グループ登録し、次に明示 alias を登録する。
             var pkg_iter = ref.group.pkg.iterator();
             while (pkg_iter.next()) |entry| {
@@ -1174,6 +1182,90 @@ fn isHash(text: []const u8) bool {
     if (std.mem.startsWith(u8, text, "sha256-")) return isBase64Hash(text[7..], 43);
     if (std.mem.startsWith(u8, text, "sha512-")) return isBase64Hash(text[7..], 86);
     return false;
+}
+
+/// `package.license` を検証する。SPDX license expression の構文
+/// （識別子・`+` 接尾・`WITH` 例外・`AND`/`OR` 結合・括弧）のみ検査し、
+/// 識別子が SPDX 公式一覧に登録済みかは検査しない。
+/// `UNLICENSED`/`Proprietary` も識別子として構文上受理される。
+/// JS バリデータの `isLicenseExpression` と同一の判定。
+fn isLicenseExpression(text: []const u8) bool {
+    var i: usize = 0;
+    if (!licenseExpr(text, &i, 0)) return false;
+    licenseSkipWs(text, &i);
+    return i == text.len;
+}
+
+fn licenseSkipWs(text: []const u8, i: *usize) void {
+    while (i.* < text.len and (text[i.*] == ' ' or text[i.*] == '\t')) i.* += 1;
+}
+
+/// 空白と括弧をデリミタとする1トークンを読み進めて返す。
+fn licenseToken(text: []const u8, i: *usize) ?[]const u8 {
+    licenseSkipWs(text, i);
+    const start = i.*;
+    while (i.* < text.len and text[i.*] != ' ' and text[i.*] != '\t' and
+        text[i.*] != '(' and text[i.*] != ')') i.* += 1;
+    if (i.* == start) return null;
+    return text[start..i.*];
+}
+
+/// license-id / LicenseRef / 例外識別子。文字集合は `[A-Za-z0-9.:-]` で、
+/// `allow_plus` のとき末尾に1つだけ `+` 接尾を許容する（`WITH` の例外
+/// 識別子には `+` を許容しない）。予約語 `AND`/`OR`/`WITH` は識別子に
+/// 使えない。
+fn isLicenseId(token: []const u8, allow_plus: bool) bool {
+    var t = token;
+    if (allow_plus and t.len > 0 and t[t.len - 1] == '+') t = t[0 .. t.len - 1];
+    if (t.len == 0) return false;
+    for (t) |byte| {
+        if (!(std.ascii.isAlphanumeric(byte) or byte == '.' or byte == '-' or byte == ':')) return false;
+    }
+    return !std.mem.eql(u8, t, "AND") and !std.mem.eql(u8, t, "OR") and !std.mem.eql(u8, t, "WITH");
+}
+
+/// 括弧のネスト上限。再帰によるスタック消費を抑える（32段で十分）。
+const max_license_depth = 32;
+
+fn licenseExpr(text: []const u8, i: *usize, depth: usize) bool {
+    if (!licenseTerm(text, i, depth)) return false;
+    while (true) {
+        const save = i.*;
+        const op = licenseToken(text, i) orelse {
+            i.* = save;
+            return true;
+        };
+        if (!std.mem.eql(u8, op, "AND") and !std.mem.eql(u8, op, "OR")) {
+            i.* = save;
+            return true;
+        }
+        if (!licenseTerm(text, i, depth)) return false;
+    }
+}
+
+fn licenseTerm(text: []const u8, i: *usize, depth: usize) bool {
+    licenseSkipWs(text, i);
+    if (i.* < text.len and text[i.*] == '(') {
+        if (depth >= max_license_depth) return false;
+        i.* += 1;
+        if (!licenseExpr(text, i, depth + 1)) return false;
+        licenseSkipWs(text, i);
+        if (i.* >= text.len or text[i.*] != ')') return false;
+        i.* += 1;
+        return true;
+    }
+    const id = licenseToken(text, i) orelse return false;
+    if (!isLicenseId(id, true)) return false;
+    const save = i.*;
+    if (licenseToken(text, i)) |next| {
+        if (std.mem.eql(u8, next, "WITH")) {
+            const exception = licenseToken(text, i) orelse return false;
+            // 例外識別子は `+` 接尾・`:`（DocumentRef 複合形）を許容しない。
+            return isLicenseId(exception, false) and std.mem.indexOfScalar(u8, exception, ':') == null;
+        }
+    }
+    i.* = save;
+    return true;
 }
 
 fn isHex(text: []const u8) bool {

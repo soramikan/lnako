@@ -18,7 +18,9 @@ pub const Definitions = std.StringHashMapUnmanaged(Definition);
 
 /// 展開結果。`features` は有効化された定義済み feature、
 /// `dependency_aliases` は feature 経由で有効化された依存 alias。
-/// 両方とも `allocator` 所有。
+/// マップのバッファは `allocator` 所有だが、キーは文字列を複製せず
+/// `definitions`/`dependency_aliases` に保持された正規キーを指す。
+/// そのため結果は両入力より先に解放しなければならない。
 pub const Expanded = struct {
     features: std.StringHashMap(void),
     dependency_aliases: std.StringHashMap(void),
@@ -62,8 +64,10 @@ pub fn expand(
     for (requested) |name| {
         if (definitions.contains(name)) {
             try visit(allocator, definitions, dependency_aliases, &expanded, &visiting, offender, name);
-        } else if (dependency_aliases.contains(name)) {
-            try expanded.dependency_aliases.put(name, {});
+        } else if (dependency_aliases.getKey(name)) |key| {
+            // `requested` のスライスではなく alias 集合の正規キーを保持する
+            // （要求文字列が結果より先に解放されても参照が有効なままになる）。
+            try expanded.dependency_aliases.put(key, {});
         } else {
             if (offender) |out| out.* = name;
             return error.UnknownFeature;
@@ -95,14 +99,15 @@ fn visit(
     for (definition.items) |item| {
         if (definitions.contains(item)) {
             try visit(allocator, definitions, dependency_aliases, expanded, visiting, offender, item);
-        } else if (dependency_aliases.contains(item)) {
-            try expanded.dependency_aliases.put(item, {});
+        } else if (dependency_aliases.getKey(item)) |key| {
+            try expanded.dependency_aliases.put(key, {});
         } else {
             if (offender) |out| out.* = item;
             return error.UnknownFeature;
         }
     }
-    try expanded.features.put(name, {});
+    // `requested` 経由のスライスではなく定義側の正規名を保持する。
+    try expanded.features.put(definition.name, {});
 }
 
 /// 定義一覧に循環がないか検査する。循環があれば循環に含まれる feature 名を返す。
@@ -177,6 +182,30 @@ test "featureを展開する" {
     try std.testing.expect(expanded2.contains("native"));
     try std.testing.expect(!expanded2.contains("default"));
     try std.testing.expect(expanded2.dependency_aliases.contains("req"));
+}
+
+test "展開結果は要求文字列ではなく定義側の正規キーを保持する" {
+    const allocator = std.testing.allocator;
+    var definitions: Definitions = .empty;
+    defer definitions.deinit(allocator);
+    try definitions.put(allocator, "web", .{ .name = "web", .items = &.{"req"}, .position = .{} });
+    var aliases = std.StringHashMap(void).init(allocator);
+    defer aliases.deinit();
+    try aliases.put("req", {});
+
+    // 要求名を一時バッファへ複製し、展開後に解放しても結果が有効であること。
+    const requested = try allocator.dupe(u8, "web");
+    var expanded = try expand(allocator, &definitions, &.{requested}, false, &aliases, null);
+    allocator.free(requested);
+    defer expanded.deinit();
+    try std.testing.expect(expanded.contains("web"));
+    try std.testing.expect(expanded.dependency_aliases.contains("req"));
+
+    // 格納キーが definitions/aliases 側の正規キーを指すことを確認する。
+    const def_key = definitions.getKey("web").?;
+    const alias_key = aliases.getKey("req").?;
+    try std.testing.expectEqual(def_key.ptr, expanded.features.getKey("web").?.ptr);
+    try std.testing.expectEqual(alias_key.ptr, expanded.dependency_aliases.getKey("req").?.ptr);
 }
 
 test "feature循環を検出する" {

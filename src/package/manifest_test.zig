@@ -382,6 +382,91 @@ test "alias衝突を診断する" {
         \\
     ;
     try parseErrCode(allocator, git_collision, diag.E012_ALIAS_COLLISION);
+
+    // feature が参照する名前空間は dependencies/dev-dependencies で統合
+    // されるため、セクションをまたぐ alias・エントリ名の重複も E012。
+    const cross_section_alias =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[dependencies.pkg]
+        \\one = { version = "^1", alias = "shared" }
+        \\[dev-dependencies.pkg]
+        \\two = { version = "^2", alias = "shared" }
+        \\
+    ;
+    try parseErrCode(allocator, cross_section_alias, diag.E012_ALIAS_COLLISION);
+
+    const cross_section_entry =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[dependencies.pkg]
+        \\lib = { version = "^1" }
+        \\[dev-dependencies.pkg]
+        \\lib = { version = "^1" }
+        \\
+    ;
+    try parseErrCode(allocator, cross_section_entry, diag.E012_ALIAS_COLLISION);
+}
+
+test "license式を検証する" {
+    const allocator = std.testing.allocator;
+    const base =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "{s}"
+        \\
+    ;
+    const accepted = [_][]const u8{
+        "MIT",
+        "MIT OR Apache-2.0",
+        "(MIT OR Apache-2.0) AND GPL-3.0-only",
+        "GPL-2.0+",
+        "GPL-3.0-only WITH Classpath-exception-2.0",
+        "LicenseRef-FOO",
+        "DocumentRef-doc:LicenseRef-FOO",
+        "UNLICENSED",
+        "Proprietary",
+    };
+    for (accepted) |license| {
+        const source = try std.fmt.allocPrint(allocator, base, .{license});
+        defer allocator.free(source);
+        var manifest = try parseOk(allocator, source);
+        defer manifest.deinit();
+    }
+    const rejected = [_][]const u8{
+        "definitely not a license",
+        "MIT OR",
+        "OR MIT",
+        "MIT (Apache-2.0",
+        "MIT)",
+        "",
+        "A+B",
+        "MIT WITH",
+        "MIT AND OR X",
+        // 例外識別子に `:`（DocumentRef 複合形）は許容しない。
+        "MIT WITH A:B",
+        // `+` 接尾は例外識別子にも許容しない。
+        "MIT WITH Foo+",
+    };
+    for (rejected) |license| {
+        const source = try std.fmt.allocPrint(allocator, base, .{license});
+        defer allocator.free(source);
+        try parseErrCode(allocator, source, diag.E029_INVALID_VALUE);
+    }
+    // 括弧ネストは32段まで。
+    var deep = std.ArrayList(u8).empty;
+    defer deep.deinit(allocator);
+    for (0..33) |_| try deep.append(allocator, '(');
+    try deep.appendSlice(allocator, "MIT");
+    for (0..33) |_| try deep.append(allocator, ')');
+    const deep_source = try std.fmt.allocPrint(allocator, base, .{deep.items});
+    defer allocator.free(deep_source);
+    try parseErrCode(allocator, deep_source, diag.E029_INVALID_VALUE);
 }
 
 test "同一public-idの3者間衝突とfeature名規則を診断する" {
@@ -683,6 +768,9 @@ test "manifest適合fixtureを検証する" {
         .{ .path = "tools/package-system/conformance/invalid/manifest/invalid-semver/nako.toml", .expected_code = diag.E024_INVALID_SEMVER },
         .{ .path = "tools/package-system/conformance/invalid/manifest/invalid-range/nako.toml", .expected_code = diag.E025_INVALID_RANGE },
         .{ .path = "tools/package-system/conformance/invalid/manifest/alias-collision/nako.toml", .expected_code = diag.E012_ALIAS_COLLISION },
+        .{ .path = "tools/package-system/conformance/invalid/manifest/alias-collision-cross-section/nako.toml", .expected_code = diag.E012_ALIAS_COLLISION },
+        .{ .path = "tools/package-system/conformance/invalid/manifest/invalid-license/nako.toml", .expected_code = diag.E029_INVALID_VALUE },
+        .{ .path = "tools/package-system/conformance/invalid/manifest/wildcard-prerelease/nako.toml", .expected_code = diag.E025_INVALID_RANGE },
         .{ .path = "tools/package-system/conformance/invalid/manifest/unknown-feature/nako.toml", .expected_code = diag.E028_UNKNOWN_FEATURE },
         .{ .path = "tools/package-system/conformance/invalid/manifest/feature-cycle/nako.toml", .expected_code = diag.E027_FEATURE_CYCLE },
         .{ .path = "tools/package-system/conformance/invalid/manifest/unknown-profile/nako.toml", .expected_code = diag.E030_UNKNOWN_PROFILE },

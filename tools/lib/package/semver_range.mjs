@@ -95,21 +95,38 @@ function parsePartial(text) {
   if (parts.length > 3) return null;
   const result = { major: null, minor: null, patch: null, prerelease };
   if (isWildcard(parts[0])) {
-    if (parts.length > 1) return null;
+    // node-semver と同じく wildcard の後続位置は wildcard のみ許容し
+    // （`*.*`/`x.x.x` は match-all、`*.1`/`*.*.5` は不正）、prerelease は
+    // major wildcard では常に不正。build は任意位置で許容する。
+    if (parts.length > 1 && !isWildcard(parts[1])) return null;
+    if (parts.length > 2 && !isWildcard(parts[2])) return null;
+    if (prerelease.length > 0) return null;
     return result;
   }
   result.major = numericPart(parts[0]);
   if (result.major === null) return null;
   if (parts.length > 1) {
     if (isWildcard(parts[1])) {
-      if (parts.length > 2) return null;
+      // `1.x.5` は不正だが `1.x.x` は `1.x` と同等。wildcard patch に
+      // 付く prerelease は捨てる（`1.x.x-alpha`）。
+      if (parts.length > 2) {
+        if (!isWildcard(parts[2])) return null;
+        result.prerelease = "";
+        return result;
+      }
+      if (prerelease.length > 0) return null;
       return result;
     }
     result.minor = numericPart(parts[1]);
     if (result.minor === null) return null;
   }
   if (parts.length > 2) {
-    if (isWildcard(parts[2])) return result;
+    // patch 位置が wildcard の場合 node-semver は prerelease を捨てる
+    // （`1.2.x-alpha` は `1.2.x` と同等に展開）。
+    if (isWildcard(parts[2])) {
+      result.prerelease = "";
+      return result;
+    }
     result.patch = numericPart(parts[2]);
     if (result.patch === null) return null;
   }
