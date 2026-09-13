@@ -1,0 +1,11 @@
+[package]
+name = "test"
+version = "1.0.0"
+license = "MIT"
+
+[profiles]
+default = { os = "macos", cpu = "aarch64", abi = "gnu", compat-js = false }
+
+[[exports]]
+name = "helper"
+esm = "src/helper.mjs"

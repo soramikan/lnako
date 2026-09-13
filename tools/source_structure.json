@@ -74,6 +74,7 @@
     "cli": ["benchmark", "compiler_pipeline", "host"],
     "compiler_pipeline": [],
     "benchmark": [],
+    "package": [],
     "generated": []
   }
 }

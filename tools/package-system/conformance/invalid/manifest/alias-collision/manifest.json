@@ -1,0 +1,9 @@
+{
+  "package": { "name": "test", "version": "1.0.0", "license": "MIT" },
+  "dependencies": {
+    "pkg": {
+      "one": { "version": "^1.0.0", "alias": "shared" },
+      "two": { "version": "^2.0.0", "alias": "shared" }
+    }
+  }
+}

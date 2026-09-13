@@ -1,0 +1,5 @@
+[package]
+name = "bad-field"
+version = "1.0.0"
+license = "MIT"
+telemetry-endpoint = "https://example.com"

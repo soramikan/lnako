@@ -221,6 +221,9 @@ jobs:
       - name: Package schema conformance
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: zig build package-schema-check
+      - name: Package semver range tests
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
+        run: node --test tools/semver_range_test.mjs
       - name: Benchmark runner tests
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node --test tools/benchmark_runner_test.mjs tools/setup_benchmark_gonako_test.mjs tools/pre_push_hook_test.mjs
