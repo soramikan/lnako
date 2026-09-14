@@ -298,14 +298,9 @@ pub fn executeFunction(self: *Interpreter, function: *const ir.Function, argumen
 }
 
 fn bindErrorMessage(self: *Interpreter, value: Value) !void {
-    if (value == .dictionary and value.dictionary.kind == .structured_error) {
-        var message = value.dictionary.structuredErrorMessage() orelse try self.runtime.valueToStringDefault(value);
-        var roots = self.runtime.rootFrame();
-        defer roots.deinit();
-        try roots.protect(&message);
-        try self.setGlobal("エラーメッセージ", message);
-        return;
-    }
+    // 構造化エラーは辞書ごと束縛し、`エラーメッセージ["code"]` 等のフィールド
+    // 参照を可能にする。`エラーメッセージ` の文字列化は内部種別経由で
+    // `message` を返すため、ここでは message を取り出さない。
     try self.setGlobal("エラーメッセージ", value);
 }
 

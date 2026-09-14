@@ -199,6 +199,9 @@ pub fn writeAtCurrent(io: std.Io, file: std.Io.File, bytes: []const u8) WriteErr
 }
 
 pub fn writeHandle(io: std.Io, entry: *OpenHandle, bytes: []const u8) WriteError!usize {
+    // POSIX経路は open 時の O_APPEND で原子的に末尾へ書く。それ以外（Windows）
+    // は seek フォールバックなので、同一ファイルへの並行appendは
+    // seekとwriteの間に他の書込みが割り込みうる（非原子）。
     if (entry.append) try seekToEnd(io, entry.file);
     return writeAtCurrent(io, entry.file, bytes);
 }

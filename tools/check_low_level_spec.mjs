@@ -101,6 +101,9 @@ for (const command of catalog.commands) {
   if (command.capability !== null && !catalogCapabilityIds.has(command.capability)) {
     fail(`${command.id}が未知のcapabilityを参照しています: ${command.capability}`);
   }
+  if (typeof command.operation !== "string" || !/^[\x21-\x7e]+$/.test(command.operation)) {
+    fail(`${command.id}のoperationが不正です（空白を含まないASCII可視文字の非空文字列が必須）: ${command.operation}`);
+  }
   for (const errorCode of command.errors) {
     if (!portableErrorCodes.has(errorCode)) fail(`${command.id}が未知のerror codeを参照しています: ${errorCode}`);
   }

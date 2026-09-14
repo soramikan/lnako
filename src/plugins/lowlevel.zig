@@ -131,6 +131,14 @@ pub fn call(
     if (matches(name, foundation.stream_commands.write_bytes, foundation.stream_commands.write_bytes_user)) return @as(?Value, try writeBytes(runtime, state, context, effects, arguments));
     if (std.mem.eql(u8, name, foundation.stream_commands.sync)) return @as(?Value, try syncFile(runtime, state, context, effects, arguments));
     if (std.mem.eql(u8, name, foundation.stream_commands.truncate)) return @as(?Value, try truncateFile(runtime, state, context, effects, arguments));
+    // カタログ掲載済みだが未実装の命令は、capabilityとoperationを設定した
+    // 構造化 ENOTSUP で応答する（G0の未対応契約）。実装済み命令がここへ
+    // 到達するのはdispatch腕の書き忘れなので、開発時に検出する。
+    if (foundation.catalogCommandFor(name)) |command| {
+        std.debug.assert(!command.implemented);
+        const capability: ?[]const u8 = if (command.capability) |cap| cap.id() else null;
+        return throwStructured(runtime, effects, .ENOTSUP, command.operation, null, capability, "この低レイヤー命令はまだ実装されていません");
+    }
     return null;
 }
 
@@ -346,7 +354,7 @@ fn buildError(
     capability: ?[]const u8,
     message: []const u8,
 ) !Value {
-    var dictionary = try runtime.createDictionary();
+    var dictionary = try runtime.createDictionaryKind(.structured_error);
     var roots = runtime.rootFrame();
     defer roots.deinit();
     try roots.protect(&dictionary);
@@ -550,6 +558,45 @@ test "部分読込は要求chunk未満で打ち切る" {
     try roots.protect(&result);
     try std.testing.expectEqual(@as(usize, 1), host.calls);
     try std.testing.expectEqualSlices(u8, "abc", try bytesArgument(&runtime, result));
+}
+
+test "未実装命令はdispatch名と利用者名の両形で構造化ENOTSUPを投げる" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var arguments = [_]Value{.undefined} ** 4;
+    var covered: usize = 0;
+    for (foundation.catalog_commands) |spec| {
+        if (spec.implemented) continue;
+        covered += 1;
+        for ([2][]const u8{ spec.name, spec.user_name orelse spec.name }) |name| {
+            thrown = .undefined;
+            try std.testing.expectError(error.NakoException, call(&runtime, &state, emptyContext(), effects, name, arguments[0..spec.min]));
+            try std.testing.expect(thrown == .dictionary);
+            try roots.protect(&thrown);
+            try std.testing.expectEqual(value_mod.DictionaryKind.structured_error, thrown.dictionary.kind);
+            const code = shared.dictionaryGetAscii(thrown.dictionary, foundation.error_object_keys.code) orelse return error.TestExpectedEqual;
+            const code_text = try shared.valueUtf8(&runtime, code);
+            defer runtime.allocator().free(code_text);
+            try std.testing.expectEqualStrings("ENOTSUP", code_text);
+            const operation = shared.dictionaryGetAscii(thrown.dictionary, foundation.error_object_keys.operation) orelse return error.TestExpectedEqual;
+            const operation_text = try shared.valueUtf8(&runtime, operation);
+            defer runtime.allocator().free(operation_text);
+            try std.testing.expectEqualStrings(spec.operation, operation_text);
+            if (spec.capability) |capability| {
+                const field = shared.dictionaryGetAscii(thrown.dictionary, foundation.error_object_keys.capability) orelse return error.TestExpectedEqual;
+                const field_text = try shared.valueUtf8(&runtime, field);
+                defer runtime.allocator().free(field_text);
+                try std.testing.expectEqualStrings(capability.id(), field_text);
+            }
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 53), covered);
 }
 
 test "余分な引数はEINVALで、openだけのホストはstream_file_io非対応" {

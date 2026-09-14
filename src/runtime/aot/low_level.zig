@@ -253,20 +253,8 @@ fn truncateBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     return .{};
 }
 
-fn arityFor(command: aot_builtin.Command) ?foundation.CommandArity {
-    return switch (command) {
-        .low_level_file_open => foundation.commandArity(foundation.stream_commands.open),
-        .low_level_file_close => foundation.commandArity(foundation.stream_commands.close),
-        .low_level_file_read_bytes => foundation.commandArity(foundation.stream_commands.read_bytes),
-        .low_level_file_write_bytes => foundation.commandArity(foundation.stream_commands.write_bytes),
-        .low_level_file_sync => foundation.commandArity(foundation.stream_commands.sync),
-        .low_level_file_truncate => foundation.commandArity(foundation.stream_commands.truncate),
-        else => null,
-    };
-}
-
 pub fn lowLevelFileBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
-    if (arityFor(command)) |spec| {
+    if (aot_builtin.lowLevelCatalogCommand(command)) |spec| {
         if (arguments.len > spec.max) {
             return throwStructured(runtime, .EINVAL, spec.operation, null, null, "引数の数が不正です");
         }
@@ -278,7 +266,9 @@ pub fn lowLevelFileBuiltin(runtime: *Runtime, command: aot_builtin.Command, argu
         .low_level_file_write_bytes => writeBytesBuiltin(runtime, arguments),
         .low_level_file_sync => syncBuiltin(runtime, arguments),
         .low_level_file_truncate => truncateBuiltin(runtime, arguments),
-        else => error.UnknownCommand,
+        // dispatchは未実装命令を `lowLevelUnsupportedBuiltin` へ振り分けるため
+        // 通常は到達しない。仮に到達しても構造化エラーの契約を維持する。
+        else => lowLevelUnsupportedBuiltin(runtime, command, arguments),
     };
 }
 
@@ -289,6 +279,24 @@ pub fn lowLevelCapabilitySupportedBuiltin(runtime: *Runtime, arguments: []const 
     if (arguments.len < 1) return .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
     const supported = capabilitySupported(arguments[0]);
     return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(supported) };
+}
+
+/// カタログ掲載済みだが未実装の低レイヤー命令。カタログ定義のarityを超える
+/// 呼び出しはEINVAL、範囲内は `capability` と `operation` を持つ構造化
+/// ENOTSUP を投げる（`aot_compiles_unsupported_calls`）。min未満の呼び出しも
+/// ENOTSUP とする: 実装済み命令と異なりENOTSUPが「未実装」の通知を兼ねるため、
+/// 引数不足をEINVALへ分けると呼び出し側が未実装と引数不正を区別できなくなる
+/// （助詞呼出はコンパイル時のarity検査を通らず実行時へ到達する）。
+pub fn lowLevelUnsupportedBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    const spec = aot_builtin.lowLevelCatalogCommand(command) orelse return error.UnknownCommand;
+    // 実装済み命令がここへ到達するのはdispatch caseの配置ずれなので、
+    // 開発時に検出する（`plugins/lowlevel.zig` のフォールバックと同じ防御）。
+    std.debug.assert(!spec.implemented);
+    if (arguments.len > spec.max) {
+        return throwStructured(runtime, .EINVAL, spec.operation, null, null, "引数の数が不正です");
+    }
+    const capability: ?[]const u8 = if (spec.capability) |cap| cap.id() else null;
+    return throwStructured(runtime, .ENOTSUP, spec.operation, null, capability, "この低レイヤー命令はまだ実装されていません");
 }
 
 pub fn lowLevelCapabilityListBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
@@ -377,6 +385,9 @@ fn buildError(
     try setField(runtime, result, foundation.error_object_keys.path2, .{ .tag = @intFromEnum(Tag.null_value) });
     try setField(runtime, result, foundation.error_object_keys.message, try runtimeUtf8String(runtime, message));
     try setField(runtime, result, foundation.error_object_keys.capability, if (capability) |value| try runtimeUtf8String(runtime, value) else .{ .tag = @intFromEnum(Tag.null_value) });
+    // 構造化エラー印。`["code"]` 等のフィールド参照と、文字列化＝`message`
+    // の両方を可能にする。通常辞書の `message` キーとは区別される。
+    if (result.object()) |object| object.structured_error = true;
     return result;
 }
 

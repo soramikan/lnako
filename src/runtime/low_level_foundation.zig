@@ -413,47 +413,118 @@ pub const CommandArity = struct {
     operation: []const u8,
 };
 
-pub fn commandArity(name: []const u8) ?CommandArity {
-    if (std.mem.eql(u8, name, stream_commands.open) or std.mem.eql(u8, name, stream_commands.open_user)) {
-        return .{ .min = 1, .max = 2, .operation = stream_operations.open };
-    }
-    if (std.mem.eql(u8, name, stream_commands.close) or std.mem.eql(u8, name, stream_commands.close_user)) {
-        return .{ .min = 1, .max = 1, .operation = stream_operations.close };
-    }
-    if (std.mem.eql(u8, name, stream_commands.read_bytes) or std.mem.eql(u8, name, stream_commands.read_bytes_user)) {
-        return .{ .min = 2, .max = 2, .operation = stream_operations.read };
-    }
-    if (std.mem.eql(u8, name, stream_commands.write_bytes) or std.mem.eql(u8, name, stream_commands.write_bytes_user)) {
-        return .{ .min = 2, .max = 2, .operation = stream_operations.write };
-    }
-    if (std.mem.eql(u8, name, stream_commands.sync)) {
-        return .{ .min = 1, .max = 1, .operation = stream_operations.fsync };
-    }
-    if (std.mem.eql(u8, name, stream_commands.truncate)) {
-        return .{ .min = 2, .max = 2, .operation = stream_operations.ftruncate };
-    }
-    if (std.mem.eql(u8, name, capability_supported_command)) {
-        return .{ .min = 1, .max = 1, .operation = "capability" };
-    }
-    if (std.mem.eql(u8, name, capability_list_command)) {
-        return .{ .min = 0, .max = 0, .operation = "capability" };
+/// `docs/low-level-api/catalog.json` の命令1件に対応する実行時定義。
+/// `name` はdispatch名（字句解析が送り仮名を落とした語幹）、`user_name` は
+/// カタログ `name` の利用者向け表記（dispatch名と同じなら null）。
+/// `implemented == false` の命令は全経路へ登録されるが、実行時には
+/// `capability` と `operation` を設定した構造化 `ENOTSUP` を投げる。
+pub const CatalogCommand = struct {
+    id: []const u8,
+    name: []const u8,
+    user_name: ?[]const u8 = null,
+    min: u8,
+    max: u8,
+    operation: []const u8,
+    capability: ?Capability,
+    implemented: bool = false,
+};
+
+/// カタログ掲載61命令の実行時正本。`catalog.json` の `commands` と同じ順序で、
+/// `src/runtime/low_level_catalog.zig` のテストが id/name/arity/operation/
+/// capability の一致を埋め込みJSONへ照合する。
+pub const catalog_commands = [_]CatalogCommand{
+    .{ .id = "ll-file-open", .name = stream_commands.open, .user_name = stream_commands.open_user, .min = 1, .max = 2, .operation = stream_operations.open, .capability = .stream_file_io, .implemented = true },
+    .{ .id = "ll-file-close", .name = stream_commands.close, .user_name = stream_commands.close_user, .min = 1, .max = 1, .operation = stream_operations.close, .capability = .stream_file_io, .implemented = true },
+    .{ .id = "ll-file-read", .name = stream_commands.read_bytes, .user_name = stream_commands.read_bytes_user, .min = 2, .max = 2, .operation = stream_operations.read, .capability = .stream_file_io, .implemented = true },
+    .{ .id = "ll-file-write", .name = stream_commands.write_bytes, .user_name = stream_commands.write_bytes_user, .min = 2, .max = 2, .operation = stream_operations.write, .capability = .stream_file_io, .implemented = true },
+    .{ .id = "ll-file-sync", .name = stream_commands.sync, .min = 1, .max = 1, .operation = stream_operations.fsync, .capability = .stream_file_io, .implemented = true },
+    .{ .id = "ll-file-truncate-handle", .name = stream_commands.truncate, .min = 2, .max = 2, .operation = stream_operations.ftruncate, .capability = .truncate, .implemented = true },
+    .{ .id = "ll-file-seek", .name = "ファイル位置変更", .min = 2, .max = 3, .operation = "lseek", .capability = .stream_file_io },
+    .{ .id = "ll-file-tell", .name = "ファイル位置取得", .min = 1, .max = 1, .operation = "lseek", .capability = .stream_file_io },
+    .{ .id = "ll-file-pread", .name = "ファイル位置指定読込", .min = 3, .max = 3, .operation = "pread", .capability = .stream_file_io },
+    .{ .id = "ll-file-pwrite", .name = "ファイル位置指定書込", .min = 3, .max = 3, .operation = "pwrite", .capability = .stream_file_io },
+    .{ .id = "ll-stdin-read", .name = "標準入力バイト読", .user_name = "標準入力バイト読む", .min = 1, .max = 1, .operation = "read", .capability = .raw_stdio },
+    .{ .id = "ll-stdout-write", .name = "標準出力バイト書", .user_name = "標準出力バイト書く", .min = 1, .max = 1, .operation = "write", .capability = .raw_stdio },
+    .{ .id = "ll-stderr-write", .name = "標準エラー出力バイト書", .user_name = "標準エラー出力バイト書く", .min = 1, .max = 1, .operation = "write", .capability = .raw_stdio },
+    .{ .id = "ll-stdout-sync", .name = "標準出力同期", .min = 0, .max = 0, .operation = "fsync", .capability = .raw_stdio },
+    .{ .id = "ll-stderr-sync", .name = "標準エラー出力同期", .min = 0, .max = 0, .operation = "fsync", .capability = .raw_stdio },
+    .{ .id = "ll-file-stat", .name = "ファイル詳細情報取得", .min = 1, .max = 1, .operation = "stat", .capability = .stat },
+    .{ .id = "ll-file-lstat", .name = "シンボリックリンク情報取得", .min = 1, .max = 1, .operation = "lstat", .capability = .lstat },
+    .{ .id = "ll-symlink-create", .name = "シンボリックリンク作成", .min = 2, .max = 2, .operation = "symlink", .capability = .symlink },
+    .{ .id = "ll-symlink-read", .name = "シンボリックリンク先取得", .min = 1, .max = 1, .operation = "readlink", .capability = .readlink },
+    .{ .id = "ll-hardlink-create", .name = "ハードリンク作成", .min = 2, .max = 2, .operation = "link", .capability = .hardlink },
+    .{ .id = "ll-path-realpath", .name = "実体パス取得", .min = 1, .max = 1, .operation = "realpath", .capability = .realpath },
+    .{ .id = "ll-path-rename", .name = "パス名変更", .min = 2, .max = 2, .operation = "rename", .capability = .rename },
+    .{ .id = "ll-path-unlink", .name = "ファイルリンク削除", .min = 1, .max = 1, .operation = "unlink", .capability = .unlink },
+    .{ .id = "ll-path-rmdir", .name = "空フォルダ削除", .min = 1, .max = 1, .operation = "rmdir", .capability = .rmdir },
+    .{ .id = "ll-file-truncate-path", .name = "ファイルサイズ変更", .min = 2, .max = 2, .operation = "truncate", .capability = .truncate },
+    .{ .id = "ll-file-utime-path", .name = "ファイル時刻設定", .min = 3, .max = 3, .operation = "utime", .capability = .utime },
+    .{ .id = "ll-file-utime-handle", .name = "ファイル時刻設定済", .min = 3, .max = 3, .operation = "futime", .capability = .utime },
+    .{ .id = "ll-hash-create", .name = "ハッシュ開始", .min = 1, .max = 1, .operation = "hash", .capability = .incremental_hash },
+    .{ .id = "ll-hash-update", .name = "ハッシュ追加", .min = 2, .max = 2, .operation = "hash", .capability = .incremental_hash },
+    .{ .id = "ll-hash-digest", .name = "ハッシュ完了", .min = 1, .max = 2, .operation = "hash", .capability = .incremental_hash },
+    .{ .id = "ll-hash-discard", .name = "ハッシュ破棄", .min = 1, .max = 1, .operation = "hash", .capability = .incremental_hash },
+    .{ .id = "ll-dir-open", .name = "ディレクトリ開", .user_name = "ディレクトリ開く", .min = 1, .max = 1, .operation = "opendir", .capability = .dir_iterator },
+    .{ .id = "ll-dir-next", .name = "ディレクトリ次取得", .min = 1, .max = 1, .operation = "readdir", .capability = .dir_iterator },
+    .{ .id = "ll-dir-close", .name = "ディレクトリ閉", .user_name = "ディレクトリ閉じる", .min = 1, .max = 1, .operation = "closedir", .capability = .dir_iterator },
+    .{ .id = "ll-dir-foreach", .name = "ディレクトリ列挙時", .min = 2, .max = 2, .operation = "readdir", .capability = .dir_iterator },
+    .{ .id = "ll-file-chmod", .name = "ファイル権限設定", .min = 2, .max = 2, .operation = "chmod", .capability = .chmod },
+    .{ .id = "ll-file-chown", .name = "ファイル所有者設定", .min = 3, .max = 3, .operation = "chown", .capability = .chown },
+    .{ .id = "ll-symlink-chown", .name = "シンボリックリンク所有者設定", .min = 3, .max = 3, .operation = "lchown", .capability = .chown },
+    .{ .id = "ll-file-access", .name = "ファイルアクセス可能", .min = 2, .max = 2, .operation = "access", .capability = .access },
+    .{ .id = "ll-uid-get", .name = "UID取得", .min = 0, .max = 0, .operation = "getuid", .capability = .uid_gid },
+    .{ .id = "ll-euid-get", .name = "EUID取得", .min = 0, .max = 0, .operation = "geteuid", .capability = .uid_gid },
+    .{ .id = "ll-gid-get", .name = "GID取得", .min = 0, .max = 0, .operation = "getgid", .capability = .uid_gid },
+    .{ .id = "ll-egid-get", .name = "EGID取得", .min = 0, .max = 0, .operation = "getegid", .capability = .uid_gid },
+    .{ .id = "ll-groups-get", .name = "所属グループID一覧取得", .min = 0, .max = 0, .operation = "getgroups", .capability = .uid_gid },
+    .{ .id = "ll-umask-set", .name = "UMASK変更", .min = 1, .max = 1, .operation = "umask", .capability = .uid_gid },
+    .{ .id = "ll-process-spawn", .name = "プロセス起動", .min = 1, .max = 2, .operation = "spawn", .capability = .argv_spawn },
+    .{ .id = "ll-process-wait", .name = "プロセス待機", .min = 1, .max = 1, .operation = "wait", .capability = .argv_spawn },
+    .{ .id = "ll-pid-get", .name = "プロセスID取得", .min = 0, .max = 0, .operation = "getpid", .capability = .argv_spawn },
+    .{ .id = "ll-ppid-get", .name = "親プロセスID取得", .min = 0, .max = 0, .operation = "getppid", .capability = .argv_spawn },
+    .{ .id = "ll-signal-send", .name = "シグナル送信", .min = 2, .max = 2, .operation = "kill", .capability = .signal },
+    .{ .id = "ll-process-priority-get", .name = "プロセス優先度取得", .min = 1, .max = 1, .operation = "getpriority", .capability = .priority },
+    .{ .id = "ll-process-priority-set", .name = "プロセス優先度設定", .min = 2, .max = 2, .operation = "setpriority", .capability = .priority },
+    .{ .id = "ll-tty-isatty", .name = "端末判定", .min = 1, .max = 1, .operation = "isatty", .capability = .tty_isatty },
+    .{ .id = "ll-tty-size", .name = "端末サイズ取得", .min = 1, .max = 1, .operation = "winsize", .capability = .tty_isatty },
+    .{ .id = "ll-statfs", .name = "ファイルシステム情報取得", .min = 1, .max = 1, .operation = "statfs", .capability = .statfs },
+    .{ .id = "ll-reflink", .name = "ファイルクローン", .min = 2, .max = 3, .operation = "reflink", .capability = .reflink },
+    .{ .id = "ll-seek-data", .name = "ファイルデータ領域検索", .min = 2, .max = 2, .operation = "lseek", .capability = .seek_data },
+    .{ .id = "ll-seek-hole", .name = "ファイル空洞領域検索", .min = 2, .max = 2, .operation = "lseek", .capability = .seek_hole },
+    .{ .id = "ll-fallocate", .name = "ファイル領域確保", .min = 3, .max = 3, .operation = "fallocate", .capability = .fallocate },
+    .{ .id = "ll-capability-supported", .name = capability_supported_command, .min = 1, .max = 1, .operation = "capability", .capability = null, .implemented = true },
+    .{ .id = "ll-capability-list", .name = capability_list_command, .min = 0, .max = 0, .operation = "capability", .capability = null, .implemented = true },
+};
+
+/// dispatch名または利用者向け表記からカタログ定義を引く。`ファイル開` と
+/// `ファイル開く` のどちらでも同じ項目を返す。
+pub fn catalogCommandFor(name: []const u8) ?CatalogCommand {
+    for (catalog_commands) |command| {
+        if (std.mem.eql(u8, name, command.name)) return command;
+        if (command.user_name) |user_name| {
+            if (std.mem.eql(u8, name, user_name)) return command;
+        }
     }
     return null;
 }
 
-pub const extension_command_names = [_][]const u8{
-    stream_commands.open,
-    stream_commands.close,
-    stream_commands.read_bytes,
-    stream_commands.write_bytes,
-    stream_commands.sync,
-    stream_commands.truncate,
-    stream_commands.open_user,
-    stream_commands.close_user,
-    stream_commands.read_bytes_user,
-    stream_commands.write_bytes_user,
-    capability_supported_command,
-    capability_list_command,
+pub fn commandArity(name: []const u8) ?CommandArity {
+    const command = catalogCommandFor(name) orelse return null;
+    return .{ .min = command.min, .max = command.max, .operation = command.operation };
+}
+
+/// 解析器のbuiltin解決と `システム関数存在` が参照する拡張命令名の一覧。
+/// カタログ61命令のdispatch名と利用者向け表記を全て含む。
+pub const extension_command_names = blk: {
+    @setEvalBranchQuota(100_000);
+    var names: []const []const u8 = &.{};
+    for (catalog_commands) |command| {
+        names = names ++ @as([]const []const u8, &.{command.name});
+        if (command.user_name) |user_name| {
+            names = names ++ @as([]const []const u8, &.{user_name});
+        }
+    }
+    break :blk names;
 };
 
 /// 低レイヤー命令が失敗したときに返す構造化エラーの操作名（ASCII）。

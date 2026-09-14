@@ -116,7 +116,7 @@ cnako対応は Node `fs.Stats` の `mtimeNs`（BigInt）と `mtimeMs`（Number�
 固定規則:
 
 - 互換判定と分岐は `code`（必要なら `operation` / `capability`）を使う。`message` はOSやlocaleで変動するためoracleに使わない。
-- 例外として投げたとき、既存の`エラーメッセージ`には `message` を入れる。捕捉した値を文字列化した場合も `message` と一致させる。
+- 例外として投げたとき、既存の`エラーメッセージ`には構造化エラー辞書を入れ、`エラーメッセージ["code"]` 等のフィールド参照を可能にする。`エラーメッセージ`の文字列化は `message` と一致させる。
 - 構造化エラーは新規の低レイヤー命令にだけ適用する。527命令の既存文字列例外は維持する。
 - InterpreterとAOTで `code` は一致させる。`nativeCode` と `message` はOS差を許す。
 
@@ -126,7 +126,7 @@ cnako対応は Node `fs.Stats` の `mtimeNs`（BigInt）と `mtimeMs`（Number�
 
 `ENOTSUP` はcapability不足に使う。未知コマンドは既存どおり `UnknownCommand` であり、portable code集合に含めない。
 
-実装は [`src/runtime/structured_error.zig`](../../src/runtime/structured_error.zig) を正本とする。native errno / Zig error から portable code への分類、`nativeCode` の保持、Node SystemError形式の `message` 組み立てを提供し、Interpreter と AOT は同じ関数を共有する。例外値（辞書）への変換は [`structured_error_value.zig`](../../src/runtime/structured_error_value.zig)（Interpreter）と [`aot/structured_error_value.zig`](../../src/runtime/aot/structured_error_value.zig)（AOT）が担い、OS固有のnative差分があっても `code` は両経路で一致する。公開辞書は偽造できない内部種別で識別し、捕捉時の`エラーメッセージ`と文字列化は `message` を返す。OSパスの公開値は表示用UTF-8であり、WindowsではWTF-8をlossy変換し、POSIXでは不正UTF-8を置換する。
+実装は [`src/runtime/structured_error.zig`](../../src/runtime/structured_error.zig) を正本とする。native errno / Zig error から portable code への分類、`nativeCode` の保持、Node SystemError形式の `message` 組み立てを提供し、Interpreter と AOT は同じ関数を共有する。例外値（辞書）への変換は [`structured_error_value.zig`](../../src/runtime/structured_error_value.zig)（Interpreter）と [`aot/structured_error_value.zig`](../../src/runtime/aot/structured_error_value.zig)（AOT）が担い、OS固有のnative差分があっても `code` は両経路で一致する。公開辞書は偽造できない内部種別で識別し、捕捉時の`エラーメッセージ`には辞書を束縛し、その文字列化は `message` を返す。OSパスの公開値は表示用UTF-8であり、WindowsではWTF-8をlossy変換し、POSIXでは不正UTF-8を置換する。
 
 ## capability表現
 

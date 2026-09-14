@@ -217,6 +217,63 @@ test "助詞プレースホルダとarity・引数型がparameterTypesで覆わ�
     }
 }
 
+test "カタログ命令はfoundationの命令表とid・名前・arity・operation・capabilityが一致する" {
+    var parsed = try std.json.parseFromSlice(Value, std.testing.allocator, catalog_json, .{});
+    defer parsed.deinit();
+    const commands = parsed.value.object.get("commands").?.array.items;
+    try std.testing.expectEqual(foundation.catalog_commands.len, commands.len);
+    for (commands, 0..) |entry, index| {
+        const map = entry.object;
+        const command = foundation.catalogCommandFor(getString(map, "name")) orelse
+            return error.MissingCatalogCommand;
+        try std.testing.expectEqualStrings(getString(map, "id"), command.id);
+        // `catalog_commands` はcatalog.jsonの `commands` と同じ順序を維持する。
+        try std.testing.expectEqualStrings(command.id, foundation.catalog_commands[index].id);
+        // カタログ `name` は利用者向け表記なので、dispatch名と異なる場合は
+        // `user_name` に一致しなければならない。
+        if (command.user_name) |user_name| {
+            try std.testing.expectEqualStrings(user_name, getString(map, "name"));
+        } else {
+            try std.testing.expectEqualStrings(command.name, getString(map, "name"));
+        }
+        try std.testing.expectEqual(getInt(map, "minArgs"), @as(i64, command.min));
+        try std.testing.expectEqual(getInt(map, "maxArgs"), @as(i64, command.max));
+        try std.testing.expectEqualStrings(getString(map, "operation"), command.operation);
+        const capability_field = map.get("capability").?;
+        if (capability_field == .null) {
+            try std.testing.expect(command.capability == null);
+        } else {
+            try std.testing.expectEqualStrings(capability_field.string, command.capability.?.id());
+        }
+    }
+}
+
+test "implementedフラグは実装済み命令の既知集合と一致する" {
+    // `implemented` はdispatch本体から機械的には導出できないため、
+    // stub解除を行う変更ではdispatchのcase追加とあわせてここを更新する。
+    const implemented_ids = [_][]const u8{
+        "ll-file-open",
+        "ll-file-close",
+        "ll-file-read",
+        "ll-file-write",
+        "ll-file-sync",
+        "ll-file-truncate-handle",
+        "ll-capability-supported",
+        "ll-capability-list",
+    };
+    var count: usize = 0;
+    for (foundation.catalog_commands) |command| {
+        if (!command.implemented) continue;
+        count += 1;
+        var found = false;
+        for (implemented_ids) |id| {
+            if (std.mem.eql(u8, id, command.id)) found = true;
+        }
+        try std.testing.expect(found);
+    }
+    try std.testing.expectEqual(implemented_ids.len, count);
+}
+
 test "HandleKindはファイル・ディレクトリ・ハッシュ・プロセスを持つ" {
     try std.testing.expectEqual(@as(usize, 4), std.meta.tags(foundation.HandleKind).len);
     try std.testing.expect(std.meta.stringToEnum(foundation.HandleKind, "file") != null);

@@ -7,7 +7,7 @@ Issue [#37](https://github.com/soramikan/lnako/issues/37) の受け入れ条件�
 - 実行基盤は既存の7経路比較（`tools/compare_native_oracle.mjs`）を再利用する。経路は official source（cnako）、official generated、lnako Interpreter（`run`）、lnako AOT（O0〜O3）である。
 - 低レイヤーfixtureは [`tests/oracle/low-level-cases.json`](../../tests/oracle/low-level-cases.json) に追加する。schemaは `lnako.low-level-cases.v1` で、各caseは `id`、`source`、`oracle`（official-source / official-generated）、`commands`（カタログの命令名）、`catalogIds`（命令名→catalog ID）を持つ。
 - 低レイヤー命令は `plugin_lowlevel` に登録されるため、`compare_native_oracle.mjs` が要求する標準527命令名の `commands` とは別に、カタログ上の命令名を `commands` に使う。`catalogIds` は `ll-*` のIDを指す。
-- 現在は命令未実装のため `low-level-cases.json` は空である。`tools/check_low_level_cases.mjs` がschemaとカタログ連携（未知命令・catalogIds不一致・ID重複）をCIで検証する。#27〜#36の実装に伴いcaseを追加する。
+- 低レイヤー命令はlnako独自拡張であり公式処理系に対応命令が存在しないため、`official-source` / `official-generated` のoracleは生成できず `low-level-cases.json` は空である。`tools/check_low_level_cases.mjs` がschemaとカタログ連携（未知命令・catalogIds不一致・ID重複）をCIで検証する。InterpreterとAOTの構造化エラー・ハンドル契約は単体テストで検証し、公式と比較可能な挙動が生じた場合にのみcaseを追加する。
 - OS固有値の比較は、既存oracleの `stderrClass` / exit code と、G0の構造化エラー契約（`code` は一致、`nativeCode` / `message` は許容差）に従う。
 
 ## 比較対象

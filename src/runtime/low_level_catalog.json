@@ -31,6 +31,7 @@
       "maxArgs": 2,
       "returns": "handle",
       "capability": "stream_file_io",
+      "operation": "open",
       "errors": [
         "ENOENT",
         "EACCES",
@@ -40,7 +41,7 @@
         "ENFILE",
         "ENOTSUP"
       ],
-      "notes": "MODEは省略時は読み込み専用。O_RDONLY/O_WRONLY/O_RDWR/O_CREAT/O_TRUNC/O_APPENDのビット和。EOFは0 byte read",
+      "notes": "MODEは省略時は読み込み専用。文字列flags（r/r+/w/w+/a/a+にb/x/s修飾）。EOFは0 byte read",
       "paramTypes": {
         "PATH": "string",
         "MODE": "openMode"
@@ -55,6 +56,7 @@
       "maxArgs": 1,
       "returns": "void",
       "capability": "stream_file_io",
+      "operation": "close",
       "errors": [
         "EBADF"
       ],
@@ -69,6 +71,7 @@
       "maxArgs": 2,
       "returns": "bytes",
       "capability": "stream_file_io",
+      "operation": "read",
       "errors": [
         "EBADF",
         "EINVAL",
@@ -85,6 +88,7 @@
       "maxArgs": 2,
       "returns": "number",
       "capability": "stream_file_io",
+      "operation": "write",
       "errors": [
         "EBADF",
         "EINVAL",
@@ -103,6 +107,7 @@
       "maxArgs": 1,
       "returns": "void",
       "capability": "stream_file_io",
+      "operation": "fsync",
       "errors": [
         "EBADF",
         "EINVAL"
@@ -118,6 +123,7 @@
       "maxArgs": 2,
       "returns": "void",
       "capability": "truncate",
+      "operation": "ftruncate",
       "errors": [
         "EBADF",
         "EINVAL",
@@ -135,6 +141,7 @@
       "maxArgs": 3,
       "returns": "offset",
       "capability": "stream_file_io",
+      "operation": "lseek",
       "errors": [
         "EBADF",
         "EINVAL",
@@ -151,6 +158,7 @@
       "maxArgs": 1,
       "returns": "offset",
       "capability": "stream_file_io",
+      "operation": "lseek",
       "errors": [
         "EBADF"
       ],
@@ -165,6 +173,7 @@
       "maxArgs": 3,
       "returns": "bytes",
       "capability": "stream_file_io",
+      "operation": "pread",
       "errors": [
         "EBADF",
         "EINVAL",
@@ -181,6 +190,7 @@
       "maxArgs": 3,
       "returns": "number",
       "capability": "stream_file_io",
+      "operation": "pwrite",
       "errors": [
         "EBADF",
         "EINVAL",
@@ -198,6 +208,7 @@
       "maxArgs": 1,
       "returns": "bytes",
       "capability": "raw_stdio",
+      "operation": "read",
       "errors": [
         "EINVAL",
         "EPIPE"
@@ -213,6 +224,7 @@
       "maxArgs": 1,
       "returns": "number",
       "capability": "raw_stdio",
+      "operation": "write",
       "errors": [
         "EINVAL",
         "EPIPE",
@@ -229,6 +241,7 @@
       "maxArgs": 1,
       "returns": "number",
       "capability": "raw_stdio",
+      "operation": "write",
       "errors": [
         "EINVAL",
         "EPIPE",
@@ -245,6 +258,7 @@
       "maxArgs": 0,
       "returns": "void",
       "capability": "raw_stdio",
+      "operation": "fsync",
       "errors": [
         "EPIPE",
         "EINVAL"
@@ -260,6 +274,7 @@
       "maxArgs": 0,
       "returns": "void",
       "capability": "raw_stdio",
+      "operation": "fsync",
       "errors": [
         "EPIPE",
         "EINVAL"
@@ -275,6 +290,7 @@
       "maxArgs": 1,
       "returns": "stat",
       "capability": "stat",
+      "operation": "stat",
       "errors": [
         "ENOENT",
         "EACCES",
@@ -293,6 +309,7 @@
       "maxArgs": 1,
       "returns": "stat",
       "capability": "lstat",
+      "operation": "lstat",
       "errors": [
         "ENOENT",
         "EACCES",
@@ -311,6 +328,7 @@
       "maxArgs": 2,
       "returns": "void",
       "capability": "symlink",
+      "operation": "symlink",
       "errors": [
         "EEXIST",
         "ENOENT",
@@ -330,6 +348,7 @@
       "maxArgs": 1,
       "returns": "string",
       "capability": "readlink",
+      "operation": "readlink",
       "errors": [
         "EINVAL",
         "ENOENT",
@@ -348,6 +367,7 @@
       "maxArgs": 2,
       "returns": "void",
       "capability": "hardlink",
+      "operation": "link",
       "errors": [
         "EEXIST",
         "ENOENT",
@@ -366,6 +386,7 @@
       "maxArgs": 1,
       "returns": "string",
       "capability": "realpath",
+      "operation": "realpath",
       "errors": [
         "ENOENT",
         "EACCES",
@@ -383,6 +404,7 @@
       "maxArgs": 2,
       "returns": "void",
       "capability": "rename",
+      "operation": "rename",
       "errors": [
         "ENOENT",
         "EEXIST",
@@ -404,6 +426,7 @@
       "maxArgs": 1,
       "returns": "void",
       "capability": "unlink",
+      "operation": "unlink",
       "errors": [
         "ENOENT",
         "EACCES",
@@ -423,6 +446,7 @@
       "maxArgs": 1,
       "returns": "void",
       "capability": "rmdir",
+      "operation": "rmdir",
       "errors": [
         "ENOENT",
         "ENOTDIR",
@@ -442,6 +466,7 @@
       "maxArgs": 2,
       "returns": "void",
       "capability": "truncate",
+      "operation": "truncate",
       "errors": [
         "ENOENT",
         "EACCES",
@@ -461,6 +486,7 @@
       "maxArgs": 3,
       "returns": "void",
       "capability": "utime",
+      "operation": "utime",
       "errors": [
         "ENOENT",
         "EACCES",
@@ -479,6 +505,7 @@
       "maxArgs": 3,
       "returns": "void",
       "capability": "utime",
+      "operation": "futime",
       "errors": [
         "EBADF",
         "EINVAL",
@@ -496,6 +523,7 @@
       "maxArgs": 1,
       "returns": "handle",
       "capability": "incremental_hash",
+      "operation": "hash",
       "errors": [
         "EINVAL",
         "ENOTSUP"
@@ -511,6 +539,7 @@
       "maxArgs": 2,
       "returns": "void",
       "capability": "incremental_hash",
+      "operation": "hash",
       "errors": [
         "EBADF",
         "EINVAL"
@@ -526,6 +555,7 @@
       "maxArgs": 2,
       "returns": "hashDigest",
       "capability": "incremental_hash",
+      "operation": "hash",
       "errors": [
         "EBADF",
         "EINVAL",
@@ -542,6 +572,7 @@
       "maxArgs": 1,
       "returns": "void",
       "capability": "incremental_hash",
+      "operation": "hash",
       "errors": [
         "EBADF"
       ],
@@ -556,6 +587,7 @@
       "maxArgs": 1,
       "returns": "handle",
       "capability": "dir_iterator",
+      "operation": "opendir",
       "errors": [
         "ENOENT",
         "ENOTDIR",
@@ -575,6 +607,7 @@
       "maxArgs": 1,
       "returns": "dirEntry",
       "capability": "dir_iterator",
+      "operation": "readdir",
       "errors": [
         "EBADF",
         "EINVAL",
@@ -591,6 +624,7 @@
       "maxArgs": 1,
       "returns": "void",
       "capability": "dir_iterator",
+      "operation": "closedir",
       "errors": [
         "EBADF"
       ],
@@ -605,6 +639,7 @@
       "maxArgs": 2,
       "returns": "void",
       "capability": "dir_iterator",
+      "operation": "readdir",
       "errors": [
         "ENOENT",
         "ENOTDIR",
@@ -622,6 +657,7 @@
       "maxArgs": 2,
       "returns": "void",
       "capability": "chmod",
+      "operation": "chmod",
       "errors": [
         "ENOENT",
         "EACCES",
@@ -640,6 +676,7 @@
       "maxArgs": 3,
       "returns": "void",
       "capability": "chown",
+      "operation": "chown",
       "errors": [
         "ENOENT",
         "EACCES",
@@ -658,6 +695,7 @@
       "maxArgs": 3,
       "returns": "void",
       "capability": "chown",
+      "operation": "lchown",
       "errors": [
         "ENOENT",
         "EACCES",
@@ -676,6 +714,7 @@
       "maxArgs": 2,
       "returns": "boolean",
       "capability": "access",
+      "operation": "access",
       "errors": [
         "EINVAL",
         "ENOTSUP"
@@ -695,6 +734,7 @@
       "maxArgs": 0,
       "returns": "uid",
       "capability": "uid_gid",
+      "operation": "getuid",
       "errors": [
         "ENOTSUP"
       ],
@@ -709,6 +749,7 @@
       "maxArgs": 0,
       "returns": "uid",
       "capability": "uid_gid",
+      "operation": "geteuid",
       "errors": [
         "ENOTSUP"
       ],
@@ -723,6 +764,7 @@
       "maxArgs": 0,
       "returns": "gid",
       "capability": "uid_gid",
+      "operation": "getgid",
       "errors": [
         "ENOTSUP"
       ],
@@ -737,6 +779,7 @@
       "maxArgs": 0,
       "returns": "gid",
       "capability": "uid_gid",
+      "operation": "getegid",
       "errors": [
         "ENOTSUP"
       ],
@@ -751,6 +794,7 @@
       "maxArgs": 0,
       "returns": "array",
       "capability": "uid_gid",
+      "operation": "getgroups",
       "errors": [
         "ENOTSUP"
       ],
@@ -765,6 +809,7 @@
       "maxArgs": 1,
       "returns": "number",
       "capability": "uid_gid",
+      "operation": "umask",
       "errors": [
         "ENOTSUP"
       ],
@@ -779,6 +824,7 @@
       "maxArgs": 2,
       "returns": "handle",
       "capability": "argv_spawn",
+      "operation": "spawn",
       "errors": [
         "ENOENT",
         "EACCES",
@@ -797,6 +843,7 @@
       "maxArgs": 1,
       "returns": "waitResult",
       "capability": "argv_spawn",
+      "operation": "wait",
       "errors": [
         "EBADF",
         "EINVAL"
@@ -812,6 +859,7 @@
       "maxArgs": 0,
       "returns": "pid",
       "capability": "argv_spawn",
+      "operation": "getpid",
       "errors": [],
       "notes": "pidはu32。実行時0は不正で発生しない"
     },
@@ -824,6 +872,7 @@
       "maxArgs": 0,
       "returns": "pid",
       "capability": "argv_spawn",
+      "operation": "getppid",
       "errors": [
         "ENOTSUP"
       ],
@@ -838,6 +887,7 @@
       "maxArgs": 2,
       "returns": "void",
       "capability": "signal",
+      "operation": "kill",
       "errors": [
         "EINVAL",
         "EPERM",
@@ -854,6 +904,7 @@
       "maxArgs": 1,
       "returns": "number",
       "capability": "priority",
+      "operation": "getpriority",
       "errors": [
         "EINVAL",
         "ENOTSUP"
@@ -869,6 +920,7 @@
       "maxArgs": 2,
       "returns": "void",
       "capability": "priority",
+      "operation": "setpriority",
       "errors": [
         "EINVAL",
         "EPERM",
@@ -885,6 +937,7 @@
       "maxArgs": 1,
       "returns": "boolean",
       "capability": "tty_isatty",
+      "operation": "isatty",
       "errors": [
         "EINVAL"
       ],
@@ -899,6 +952,7 @@
       "maxArgs": 1,
       "returns": "ttySize",
       "capability": "tty_isatty",
+      "operation": "winsize",
       "errors": [
         "EINVAL",
         "ENOTSUP"
@@ -914,6 +968,7 @@
       "maxArgs": 1,
       "returns": "fsInfo",
       "capability": "statfs",
+      "operation": "statfs",
       "errors": [
         "ENOENT",
         "EACCES",
@@ -932,6 +987,7 @@
       "maxArgs": 3,
       "returns": "void",
       "capability": "reflink",
+      "operation": "reflink",
       "errors": [
         "ENOENT",
         "EEXIST",
@@ -950,6 +1006,7 @@
       "maxArgs": 2,
       "returns": "offset",
       "capability": "seek_data",
+      "operation": "lseek",
       "errors": [
         "EBADF",
         "EINVAL",
@@ -966,6 +1023,7 @@
       "maxArgs": 2,
       "returns": "offset",
       "capability": "seek_hole",
+      "operation": "lseek",
       "errors": [
         "EBADF",
         "EINVAL",
@@ -982,6 +1040,7 @@
       "maxArgs": 3,
       "returns": "void",
       "capability": "fallocate",
+      "operation": "fallocate",
       "errors": [
         "EBADF",
         "EINVAL",
@@ -999,6 +1058,7 @@
       "maxArgs": 1,
       "returns": "boolean",
       "capability": null,
+      "operation": "capability",
       "errors": [],
       "notes": "未知NAMEはfalse。命令は全OS・全経路に登録する"
     },
@@ -1011,6 +1071,7 @@
       "maxArgs": 0,
       "returns": "array",
       "capability": null,
+      "operation": "capability",
       "errors": [],
       "notes": "既知capability IDの文字列の配列"
     }
@@ -1504,7 +1565,7 @@
     "uid": "ユーザーID。u32。numberで公開",
     "gid": "グループID。u32。numberで公開",
     "whence": "seek基準。開始/現在/終端。string",
-    "openMode": "ファイル開くのO_*ビット和。u32",
+    "openMode": "ファイル開くの文字列flags。r/r+/w/w+/a/a+にb/x/s修飾（Nodeのfs.open形式）。string",
     "accessMode": "access検査のF_OK/R_OK/W_OK/X_OKビット和。u32",
     "argv": "文字列の配列。shell解釈しない",
     "processOptions": "プロセス起動のOPTIONS辞書。cwd/env/stdio/detached",

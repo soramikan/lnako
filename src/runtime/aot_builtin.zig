@@ -1,5 +1,7 @@
 const std = @import("std");
 const environment = @import("environment.zig");
+const low_level_foundation = @import("low_level_foundation.zig");
+const builtin_catalog = @import("../semantic/builtin_catalog.zig");
 
 pub const Command = enum(u16) {
     to_string,
@@ -399,6 +401,64 @@ pub const Command = enum(u16) {
     low_level_file_truncate,
     low_level_capability_supported,
     low_level_capability_list,
+    // カタログ掲載済みだが未実装の低レイヤー命令。コンパイルは成功し、
+    // 実行時に `capability` と `operation` を持つ構造化 ENOTSUP を投げる
+    // （`low_level_foundation.aot_compiles_unsupported_calls`）。
+    // `isLowLevelCommand` は末尾連続配置に依存するため、低レイヤー以外の
+    // opcodeをこの区間の後ろへ置かないこと。
+    low_level_file_seek,
+    low_level_file_tell,
+    low_level_file_pread,
+    low_level_file_pwrite,
+    low_level_stdin_read,
+    low_level_stdout_write,
+    low_level_stderr_write,
+    low_level_stdout_sync,
+    low_level_stderr_sync,
+    low_level_file_stat,
+    low_level_file_lstat,
+    low_level_symlink_create,
+    low_level_symlink_read,
+    low_level_hardlink_create,
+    low_level_path_realpath,
+    low_level_path_rename,
+    low_level_path_unlink,
+    low_level_path_rmdir,
+    low_level_file_truncate_path,
+    low_level_file_utime_path,
+    low_level_file_utime_handle,
+    low_level_hash_create,
+    low_level_hash_update,
+    low_level_hash_digest,
+    low_level_hash_discard,
+    low_level_dir_open,
+    low_level_dir_next,
+    low_level_dir_close,
+    low_level_dir_foreach,
+    low_level_file_chmod,
+    low_level_file_chown,
+    low_level_symlink_chown,
+    low_level_file_access,
+    low_level_uid_get,
+    low_level_euid_get,
+    low_level_gid_get,
+    low_level_egid_get,
+    low_level_groups_get,
+    low_level_umask_set,
+    low_level_process_spawn,
+    low_level_process_wait,
+    low_level_pid_get,
+    low_level_ppid_get,
+    low_level_signal_send,
+    low_level_process_priority_get,
+    low_level_process_priority_set,
+    low_level_tty_isatty,
+    low_level_tty_size,
+    low_level_statfs,
+    low_level_reflink,
+    low_level_seek_data,
+    low_level_seek_hole,
+    low_level_fallocate,
 };
 
 /// `エラー発生` is lowered to an IR throw terminator, not to the generic
@@ -408,6 +468,178 @@ pub const Command = enum(u16) {
 pub const throw_statement_opcode: u16 = std.math.maxInt(u16);
 pub const throw_statement_canonical_opcode = "throw_statement";
 pub const throw_statement_route = "throw";
+
+/// 低レイヤー命令のopcodeと `low_level_foundation.catalog_commands` の
+/// dispatch名の対応表。`lookup` / `dispatchRoute` / 実行時dispatchは全て
+/// この表へ揃え、実装済み・未実装（ENOTSUP stub）のどちらも同じ経路を通す。
+const LowLevelBinding = struct {
+    command: Command,
+    name: []const u8,
+};
+
+pub const low_level_bindings = [_]LowLevelBinding{
+    .{ .command = .low_level_file_open, .name = "ファイル開" },
+    .{ .command = .low_level_file_close, .name = "ファイル閉" },
+    .{ .command = .low_level_file_read_bytes, .name = "ファイルバイト読" },
+    .{ .command = .low_level_file_write_bytes, .name = "ファイルバイト書" },
+    .{ .command = .low_level_file_sync, .name = "ファイル同期" },
+    .{ .command = .low_level_file_truncate, .name = "ファイル切詰" },
+    .{ .command = .low_level_capability_supported, .name = "低レイヤー機能対応判定" },
+    .{ .command = .low_level_capability_list, .name = "低レイヤー機能一覧取得" },
+    .{ .command = .low_level_file_seek, .name = "ファイル位置変更" },
+    .{ .command = .low_level_file_tell, .name = "ファイル位置取得" },
+    .{ .command = .low_level_file_pread, .name = "ファイル位置指定読込" },
+    .{ .command = .low_level_file_pwrite, .name = "ファイル位置指定書込" },
+    .{ .command = .low_level_stdin_read, .name = "標準入力バイト読" },
+    .{ .command = .low_level_stdout_write, .name = "標準出力バイト書" },
+    .{ .command = .low_level_stderr_write, .name = "標準エラー出力バイト書" },
+    .{ .command = .low_level_stdout_sync, .name = "標準出力同期" },
+    .{ .command = .low_level_stderr_sync, .name = "標準エラー出力同期" },
+    .{ .command = .low_level_file_stat, .name = "ファイル詳細情報取得" },
+    .{ .command = .low_level_file_lstat, .name = "シンボリックリンク情報取得" },
+    .{ .command = .low_level_symlink_create, .name = "シンボリックリンク作成" },
+    .{ .command = .low_level_symlink_read, .name = "シンボリックリンク先取得" },
+    .{ .command = .low_level_hardlink_create, .name = "ハードリンク作成" },
+    .{ .command = .low_level_path_realpath, .name = "実体パス取得" },
+    .{ .command = .low_level_path_rename, .name = "パス名変更" },
+    .{ .command = .low_level_path_unlink, .name = "ファイルリンク削除" },
+    .{ .command = .low_level_path_rmdir, .name = "空フォルダ削除" },
+    .{ .command = .low_level_file_truncate_path, .name = "ファイルサイズ変更" },
+    .{ .command = .low_level_file_utime_path, .name = "ファイル時刻設定" },
+    .{ .command = .low_level_file_utime_handle, .name = "ファイル時刻設定済" },
+    .{ .command = .low_level_hash_create, .name = "ハッシュ開始" },
+    .{ .command = .low_level_hash_update, .name = "ハッシュ追加" },
+    .{ .command = .low_level_hash_digest, .name = "ハッシュ完了" },
+    .{ .command = .low_level_hash_discard, .name = "ハッシュ破棄" },
+    .{ .command = .low_level_dir_open, .name = "ディレクトリ開" },
+    .{ .command = .low_level_dir_next, .name = "ディレクトリ次取得" },
+    .{ .command = .low_level_dir_close, .name = "ディレクトリ閉" },
+    .{ .command = .low_level_dir_foreach, .name = "ディレクトリ列挙時" },
+    .{ .command = .low_level_file_chmod, .name = "ファイル権限設定" },
+    .{ .command = .low_level_file_chown, .name = "ファイル所有者設定" },
+    .{ .command = .low_level_symlink_chown, .name = "シンボリックリンク所有者設定" },
+    .{ .command = .low_level_file_access, .name = "ファイルアクセス可能" },
+    .{ .command = .low_level_uid_get, .name = "UID取得" },
+    .{ .command = .low_level_euid_get, .name = "EUID取得" },
+    .{ .command = .low_level_gid_get, .name = "GID取得" },
+    .{ .command = .low_level_egid_get, .name = "EGID取得" },
+    .{ .command = .low_level_groups_get, .name = "所属グループID一覧取得" },
+    .{ .command = .low_level_umask_set, .name = "UMASK変更" },
+    .{ .command = .low_level_process_spawn, .name = "プロセス起動" },
+    .{ .command = .low_level_process_wait, .name = "プロセス待機" },
+    .{ .command = .low_level_pid_get, .name = "プロセスID取得" },
+    .{ .command = .low_level_ppid_get, .name = "親プロセスID取得" },
+    .{ .command = .low_level_signal_send, .name = "シグナル送信" },
+    .{ .command = .low_level_process_priority_get, .name = "プロセス優先度取得" },
+    .{ .command = .low_level_process_priority_set, .name = "プロセス優先度設定" },
+    .{ .command = .low_level_tty_isatty, .name = "端末判定" },
+    .{ .command = .low_level_tty_size, .name = "端末サイズ取得" },
+    .{ .command = .low_level_statfs, .name = "ファイルシステム情報取得" },
+    .{ .command = .low_level_reflink, .name = "ファイルクローン" },
+    .{ .command = .low_level_seek_data, .name = "ファイルデータ領域検索" },
+    .{ .command = .low_level_seek_hole, .name = "ファイル空洞領域検索" },
+    .{ .command = .low_level_fallocate, .name = "ファイル領域確保" },
+};
+
+comptime {
+    @setEvalBranchQuota(500_000);
+    // `isLowLevelCommand` の範囲判定は `low_level_bindings` がカタログの
+    // 全命令を網羅し、enumの末尾へ連続配置されていることを前提にする。
+    std.debug.assert(low_level_bindings.len == low_level_foundation.catalog_commands.len);
+    for (low_level_bindings, 0..) |binding, index| {
+        const spec = low_level_foundation.catalogCommandFor(binding.name) orelse
+            @compileError("low_level_bindings にカタログ外の命令があります: " ++ binding.name);
+        if (!std.mem.eql(u8, spec.name, binding.name)) {
+            @compileError("low_level_bindings の名前はdispatch名（語幹）でなければなりません: " ++ binding.name);
+        }
+        if (@intFromEnum(binding.command) != @intFromEnum(Command.low_level_file_open) + index) {
+            @compileError("low_level_bindings の順序はenum末尾の宣言順と一致させてください: " ++ binding.name);
+        }
+    }
+    // 件数一致とあわせて逆方向も検証し、binding名の重複・カタログ命令の
+    // 欠落を検出する。あわせて `catalogCommandFor` が先勝ち線形探索のため
+    // dispatch名と利用者向け表記の解決名が全カタログで一意であることを検証する。
+    for (low_level_foundation.catalog_commands) |spec| {
+        var found = false;
+        for (low_level_bindings) |binding| {
+            if (std.mem.eql(u8, binding.name, spec.name)) found = true;
+        }
+        if (!found) {
+            @compileError("low_level_bindings にカタログ命令がありません: " ++ spec.name);
+        }
+    }
+    for (low_level_foundation.catalog_commands, 0..) |spec, index| {
+        if (spec.user_name) |user_name| {
+            if (std.mem.eql(u8, spec.name, user_name)) {
+                @compileError("user_nameはdispatch名と同じならnullにしてください: " ++ spec.name);
+            }
+        }
+        for (low_level_foundation.catalog_commands[index + 1 ..]) |other| {
+            if (std.mem.eql(u8, spec.name, other.name) or
+                (other.user_name != null and std.mem.eql(u8, spec.name, other.user_name.?)) or
+                (spec.user_name != null and std.mem.eql(u8, spec.user_name.?, other.name)) or
+                (spec.user_name != null and other.user_name != null and std.mem.eql(u8, spec.user_name.?, other.user_name.?)))
+            {
+                @compileError("カタログの解決名が重複しています: " ++ spec.name);
+            }
+        }
+    }
+    // dispatch名が標準cnako命令名や `lookup`/Interpreter早期dispatchより
+    // 先に解決される名前と衝突すると、当該低レイヤー命令が到達不能になる。
+    // `テスト実行`/`テスト等` は `default_names` にも含まれるが、早期
+    // dispatch名としても検査対象へ残す（defense in depth）。
+    // `builtin_catalog` に載らない早期dispatch名（`interpreter/plugins.zig`
+    // の `callBuiltinImpl` 冒頭の文字列比較）を追加した場合はこのリストも
+    // 更新しないと衝突を見逃す。
+    const earlier_names = [_][]const u8{ "表示する", "ASSERT", "確認", "テスト実行", "テスト等" };
+    for (low_level_bindings) |binding| {
+        const spec = low_level_foundation.catalogCommandFor(binding.name).?;
+        for ([2][]const u8{ binding.name, spec.user_name orelse binding.name }) |resolved| {
+            for (builtin_catalog.names) |standard_name| {
+                if (std.mem.eql(u8, resolved, standard_name)) {
+                    @compileError("低レイヤー命令の解決名が標準cnako命令と衝突しています: " ++ resolved);
+                }
+            }
+            for (builtin_catalog.default_names) |standard_name| {
+                if (std.mem.eql(u8, resolved, standard_name)) {
+                    @compileError("低レイヤー命令の解決名が既定plugin名と衝突しています: " ++ resolved);
+                }
+            }
+            for (earlier_names) |earlier| {
+                if (std.mem.eql(u8, resolved, earlier)) {
+                    @compileError("低レイヤー命令の解決名が早期dispatch名と衝突しています: " ++ resolved);
+                }
+            }
+        }
+    }
+    const fields = std.meta.fields(Command);
+    var low_level_count: usize = 0;
+    for (fields) |field| {
+        const low_level = std.mem.startsWith(u8, field.name, "low_level_");
+        const in_tail = field.value >= @intFromEnum(Command.low_level_file_open);
+        if (low_level != in_tail) {
+            @compileError("低レイヤーopcodeはenum末尾へ連続配置してください: " ++ field.name);
+        }
+        if (low_level) low_level_count += 1;
+    }
+    if (low_level_count != low_level_bindings.len) {
+        @compileError("enum末尾の低レイヤーopcode数と low_level_bindings の件数が一致しません");
+    }
+}
+
+/// opcodeが低レイヤー命令かどうか。enum末尾への連続配置で判定する。
+pub fn isLowLevelCommand(command: Command) bool {
+    return @intFromEnum(command) >= @intFromEnum(Command.low_level_file_open);
+}
+
+/// opcodeに対応するカタログ定義。ENOTSUP stubが `capability` /
+/// `operation` / arity をここから引く。
+pub fn lowLevelCatalogCommand(command: Command) ?low_level_foundation.CatalogCommand {
+    if (!isLowLevelCommand(command)) return null;
+    const index = @intFromEnum(command) - @intFromEnum(Command.low_level_file_open);
+    if (index >= low_level_bindings.len) return null;
+    return low_level_foundation.catalogCommandFor(low_level_bindings[index].name);
+}
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
 /// Trace consumers must therefore treat this as the canonical enum spelling,
@@ -455,6 +687,7 @@ fn isDatetimePluginCommand(command: Command) bool {
 
 fn dispatchRouteFor(command: Command, datetime_plugin_route: bool) []const u8 {
     if (datetime_plugin_route and isDatetimePluginCommand(command)) return "plugin_datetime";
+    if (isLowLevelCommand(command)) return "plugin_lowlevel";
     return switch (command) {
         .cut, .cut_range => "cut",
         .regexp_match, .regexp_extract, .regexp_replace, .regexp_split => "regexp",
@@ -481,7 +714,6 @@ fn dispatchRouteFor(command: Command, datetime_plugin_route: bool) []const u8 {
         .node_ajax_options_set => "ajax-options",
         .node_ajax_onerror_set => "ajax-onerror",
         .node_ajax_send_callback, .node_ajax_receive_callback, .node_get_send_callback, .node_post_send_callback, .node_post_form_send_callback, .node_ajax_response_promise, .node_http_response_promise, .node_get_response_promise, .node_post_response_promise, .node_post_form_response_promise, .node_ajax_content_get, .node_ajax_receive, .node_post_send, .node_post_form_send, .node_ajax_text_get, .node_ajax_json_get, .node_ajax_binary_get, .node_discord_send, .node_discord_file_send => "node-http",
-        .low_level_file_open, .low_level_file_close, .low_level_file_read_bytes, .low_level_file_write_bytes, .low_level_file_sync, .low_level_file_truncate, .low_level_capability_supported, .low_level_capability_list => "plugin_lowlevel",
         else => "builtin",
     };
 }
@@ -870,14 +1102,13 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "ファイル上書移動")) return .node_file_move_overwrite;
     if (std.mem.eql(u8, name, "ファイル削除")) return .node_file_delete;
     if (std.mem.eql(u8, name, "コンソールクリア")) return .node_console_clear;
-    if (std.mem.eql(u8, name, "ファイル開") or std.mem.eql(u8, name, "ファイル開く")) return .low_level_file_open;
-    if (std.mem.eql(u8, name, "ファイル閉") or std.mem.eql(u8, name, "ファイル閉じる")) return .low_level_file_close;
-    if (std.mem.eql(u8, name, "ファイルバイト読") or std.mem.eql(u8, name, "ファイルバイト読む")) return .low_level_file_read_bytes;
-    if (std.mem.eql(u8, name, "ファイルバイト書") or std.mem.eql(u8, name, "ファイルバイト書く")) return .low_level_file_write_bytes;
-    if (std.mem.eql(u8, name, "ファイル同期")) return .low_level_file_sync;
-    if (std.mem.eql(u8, name, "ファイル切詰")) return .low_level_file_truncate;
-    if (std.mem.eql(u8, name, "低レイヤー機能対応判定")) return .low_level_capability_supported;
-    if (std.mem.eql(u8, name, "低レイヤー機能一覧取得")) return .low_level_capability_list;
+    // 低レイヤー命令はカタログ命令表（dispatch名と利用者向け表記の両方）で
+    // 解決し、実装済みと未実装 ENOTSUP stub の区別なくopcodeを割り当てる。
+    if (low_level_foundation.catalogCommandFor(name)) |spec| {
+        for (low_level_bindings) |binding| {
+            if (std.mem.eql(u8, binding.name, spec.name)) return binding.command;
+        }
+    }
     return null;
 }
 
@@ -934,17 +1165,25 @@ test "plugin_datetime routeは旧形式pluginの27命令だけを識別する" {
 }
 
 test "低レイヤー命令はplugin_lowlevelへdispatchする" {
-    const commands = [_]Command{
-        .low_level_file_open,
-        .low_level_file_close,
-        .low_level_file_read_bytes,
-        .low_level_file_write_bytes,
-        .low_level_file_sync,
-        .low_level_file_truncate,
-        .low_level_capability_supported,
-        .low_level_capability_list,
-    };
-    for (commands) |command| try std.testing.expectEqualStrings("plugin_lowlevel", dispatchRouteFor(command, false));
+    for (std.meta.tags(Command)) |command| {
+        if (isLowLevelCommand(command)) {
+            try std.testing.expectEqualStrings("plugin_lowlevel", dispatchRouteFor(command, false));
+        }
+    }
+}
+
+test "カタログの低レイヤー命令はdispatch名と利用者向け表記の両方でlookupできる" {
+    try std.testing.expectEqual(@as(usize, 61), low_level_bindings.len);
+    for (low_level_bindings) |binding| {
+        try std.testing.expectEqual(binding.command, lookup(binding.name).?);
+        const spec = low_level_foundation.catalogCommandFor(binding.name).?;
+        if (spec.user_name) |user_name| {
+            try std.testing.expectEqual(binding.command, lookup(user_name).?);
+        }
+        const resolved = lowLevelCatalogCommand(binding.command).?;
+        try std.testing.expectEqualStrings(spec.id, resolved.id);
+        try std.testing.expectEqualStrings(spec.name, resolved.name);
+    }
 }
 
 test "同名pathと終命令はrouteごとのAOT opcodeへ分離する" {

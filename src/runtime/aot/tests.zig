@@ -7415,3 +7415,143 @@ test "AOT動的変換は低レイヤーハンドルのHandleIdを引き継ぐ" {
     try std.testing.expectEqual(@as(usize, 0), dynamic_state.interpreter.lowlevel_state.handle_values.items.len);
     try std.testing.expectEqual(@as(u32, 0), active.low_level_handle_ids.size);
 }
+
+test "AOT低レイヤーの未実装命令はcapability/operation付きの構造化ENOTSUPを投げる" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, numberValue(1) };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    // カタログ掲載だが未実装の命令はコンパイル済みopcodeから構造化
+    // ENOTSUP へdispatchし、例外値は `["code"]` 等を参照できる辞書のまま。
+    lnako_aot_builtin_call(&roots[0], @ptrCast(&roots[1]), 1, @intFromEnum(aot_builtin.Command.low_level_file_tell));
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    var taken: Value = .{};
+    lnako_aot_exception_take(&taken);
+    try std.testing.expectEqual(@intFromEnum(Tag.dictionary), taken.tag);
+    try std.testing.expect(taken.object().?.structured_error);
+    try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "ENOTSUP");
+    try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'o', 'p', 'e', 'r', 'a', 't', 'i', 'o', 'n' }), "lseek");
+    try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'a', 'p', 'a', 'b', 'i', 'l', 'i', 't', 'y' }), "stream_file_io");
+    const rendered = try valueUtf16Alloc(&state.active_runtime.?, taken);
+    defer state.active_runtime.?.allocator.free(rendered);
+    const rendered_utf8 = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, rendered);
+    defer std.testing.allocator.free(rendered_utf8);
+    try std.testing.expectEqualStrings("この低レイヤー命令はまだ実装されていません", rendered_utf8);
+
+    // カタログのarity上限を超える呼び出しはENOTSUPではなくEINVAL。
+    lnako_aot_builtin_call(&roots[0], @ptrCast(&roots[1]), 1, @intFromEnum(aot_builtin.Command.low_level_stderr_sync));
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    lnako_aot_exception_take(&taken);
+    try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "EINVAL");
+
+    // min未満の呼び出しはENOTSUPを維持する。ENOTSUPが未実装の通知を兼ねる
+    // ため、引数不足をEINVALへ分けると呼び出し側が両者を区別できない。
+    lnako_aot_builtin_call(&roots[0], null, 0, @intFromEnum(aot_builtin.Command.low_level_file_tell));
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    lnako_aot_exception_take(&taken);
+    try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "ENOTSUP");
+}
+
+test "AOT低レイヤーの実装済みフラグの命令はstubへ到達しない" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, numberValue(1), numberValue(1), numberValue(1), numberValue(1) };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    // `implemented == true` の命令が stub case に残ったままだと、実行時に
+    // 未実装通知のENOTSUPを返し続ける。dispatch経由で呼び、stub固有の
+    // messageが出ないことで配置ずれを検出する。引数は spec.min 個渡す:
+    // `capability_list`(max=0)のように上限超過でstub/実装の両経路が同じ
+    // EINVALになる命令でも、min個ならstubはENOTSUP・実装は正常系へ分かれる。
+    var taken: Value = .{};
+    for (aot_builtin.low_level_bindings) |binding| {
+        const spec = aot_builtin.lowLevelCatalogCommand(binding.command).?;
+        if (!spec.implemented) continue;
+        const argc: usize = spec.min;
+        std.debug.assert(argc <= roots.len - 1);
+        lnako_aot_builtin_call(&roots[0], if (argc > 0) @ptrCast(&roots[1]) else null, argc, @intFromEnum(binding.command));
+        if (lnako_aot_exception_pending() == 0) continue;
+        lnako_aot_exception_take(&taken);
+        const rendered = try valueUtf16Alloc(&state.active_runtime.?, taken);
+        defer state.active_runtime.?.allocator.free(rendered);
+        const rendered_utf8 = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, rendered);
+        defer std.testing.allocator.free(rendered_utf8);
+        try std.testing.expect(std.mem.indexOf(u8, rendered_utf8, "まだ実装されていません") == null);
+    }
+}
+
+test "AOT低レイヤーの未実装命令は全てstub経由でENOTSUPを返す" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, numberValue(1), numberValue(1), numberValue(1), numberValue(1) };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    // 未実装命令が誤って別case群へ列挙されるとENOTSUPにならない。
+    // dispatch経由で全53件が構造化ENOTSUPを返すことを網羅確認する。
+    var stub_count: usize = 0;
+    var taken: Value = .{};
+    for (aot_builtin.low_level_bindings) |binding| {
+        const spec = aot_builtin.lowLevelCatalogCommand(binding.command).?;
+        if (spec.implemented) continue;
+        stub_count += 1;
+        const argc: usize = spec.min;
+        std.debug.assert(argc <= roots.len - 1);
+        lnako_aot_builtin_call(&roots[0], if (argc > 0) @ptrCast(&roots[1]) else null, argc, @intFromEnum(binding.command));
+        try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+        lnako_aot_exception_take(&taken);
+        try std.testing.expectEqual(@intFromEnum(Tag.dictionary), taken.tag);
+        try std.testing.expect(taken.object().?.structured_error);
+        try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "ENOTSUP");
+    }
+    try std.testing.expectEqual(@as(usize, 53), stub_count);
+}
+
+test "AOT未捕捉例外のmessage抽出は構造化エラーだけに限る" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+
+    // 通常辞書は `message` キーを持っていても `[object Object]` と表示する。
+    var pairs = [_]Value{
+        staticStringValue("message"),
+        try runtimeUtf8String(&runtime, "秘密"),
+    };
+    var roots: RootFrame = .{};
+    runtime.pushRoots(&roots, &pairs, pairs.len);
+    defer runtime.popRoots(&roots);
+    const ordinary = try runtime.createDictionary(&pairs);
+    try std.testing.expect(!ordinary.object().?.structured_error);
+    runtime.setException(ordinary);
+    const ordinary_text = try pendingExceptionMessageUtf8Alloc(&runtime);
+    defer runtime.allocator.free(ordinary_text);
+    try std.testing.expectEqualStrings("[object Object]", ordinary_text);
+    _ = runtime.takeException();
+
+    // 構造化エラー辞書は `message` を表示する。
+    const structured = try structured_error_value.buildValue(&runtime, structured_error.classifyNative(.NOENT, "open", "/missing", null, null).?);
+    runtime.setException(structured);
+    const structured_text = try pendingExceptionMessageUtf8Alloc(&runtime);
+    defer runtime.allocator.free(structured_text);
+    try std.testing.expectEqualStrings("ENOENT: no such file or directory, open '/missing'", structured_text);
+}

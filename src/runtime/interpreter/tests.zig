@@ -1589,3 +1589,62 @@ test "Interpreter低レイヤーのappendは切詰め後も末尾へ書く" {
     defer allocator.free(output);
     try std.testing.expectEqualSlices(u8, "abxy", output);
 }
+
+test "Interpreter低レイヤーの未実装命令はcapability/operation付きの構造化ENOTSUPを投げる" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\エラー監視
+        \\ファイル位置取得(1)
+        \\エラーならば
+        \\エラーメッセージ["code"]を表示
+        \\エラーメッセージ["operation"]を表示
+        \\エラーメッセージ["capability"]を表示
+        \\エラーメッセージを表示
+        \\ここまで
+        \\
+    ;
+    var fixture_compiled = try compileForTest(allocator, source);
+    defer fixture_compiled.ir_program.deinit();
+    defer fixture_compiled.hir_program.deinit();
+    defer fixture_compiled.analyzed.deinit();
+    defer fixture_compiled.parsed.deinit();
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = allocator };
+    defer host.deinit();
+    var low_host = LowLevelTestHost.init(allocator);
+    defer low_host.deinit();
+    var runtime_host = host.host();
+    runtime_host.lowlevel_context = low_host.context();
+    var interpreter = Interpreter.init(allocator, &runtime, fixture_compiled.ir_program, runtime_host);
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    const output = host.written();
+    try std.testing.expect(std.mem.indexOf(u8, output, "ENOTSUP") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "lseek") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "stream_file_io") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "この低レイヤー命令はまだ実装されていません") != null);
+}
+
+test "Interpreter低レイヤーのカタログ命令はシステム関数存在で検出できる" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\システム関数存在("ファイル位置取得")を表示
+        \\システム関数存在("ファイル開く")を表示
+        \\システム関数存在("存在しない命令")を表示
+        \\
+    ;
+    var fixture_compiled = try compileForTest(allocator, source);
+    defer fixture_compiled.ir_program.deinit();
+    defer fixture_compiled.hir_program.deinit();
+    defer fixture_compiled.analyzed.deinit();
+    defer fixture_compiled.parsed.deinit();
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(allocator, &runtime, fixture_compiled.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("true\ntrue\nfalse\n", host.written());
+}

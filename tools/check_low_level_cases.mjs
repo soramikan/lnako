@@ -40,4 +40,4 @@ for (const entry of cases.cases) {
   }
 }
 
-console.log(`低レイヤーoracle検査: 成功 (cases=${cases.cases.length}, 未実装命令のfixtureは#27〜#36で追加する)`);
+console.log(`低レイヤーoracle検査: 成功 (cases=${cases.cases.length}, lnako独自拡張のためcnako oracleは生成不可・比較可能な挙動が生じた場合に追加)`);

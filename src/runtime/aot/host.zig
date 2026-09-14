@@ -104,13 +104,17 @@ pub fn pendingExceptionMessageUtf8Alloc(runtime: *Runtime) anyerror![]u8 {
     if (!runtime.has_pending_exception) return error.NoPendingException;
     if (runtime.pending_exception.tag == @intFromEnum(Tag.dictionary)) {
         if (runtime.pending_exception.object()) |object| {
-            for (object.payload.dictionary.entries.items) |entry| {
-                const key = try valueUtf8LossyAlloc(runtime, entry.key);
-                defer runtime.allocator.free(key);
-                if (std.mem.eql(u8, key, "message")) {
-                    const message_units = try valueUtf16Alloc(runtime, entry.value);
-                    defer runtime.allocator.free(message_units);
-                    return utf16FailureMessageUtf8Alloc(runtime.allocator, message_units);
+            // `message` フィールドの抽出は構造化エラーだけに限る。通常の
+            // 辞書は `[object Object]` 文字列化の既存経路へ流す。
+            if (object.structured_error) {
+                for (object.payload.dictionary.entries.items) |entry| {
+                    const key = try valueUtf8LossyAlloc(runtime, entry.key);
+                    defer runtime.allocator.free(key);
+                    if (std.mem.eql(u8, key, "message")) {
+                        const message_units = try valueUtf16Alloc(runtime, entry.value);
+                        defer runtime.allocator.free(message_units);
+                        return utf16FailureMessageUtf8Alloc(runtime.allocator, message_units);
+                    }
                 }
             }
         }

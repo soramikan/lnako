@@ -146,19 +146,10 @@ pub export fn lnako_aot_exception_pending() callconv(.c) c_int {
 }
 
 pub export fn lnako_aot_exception_take(out: *state.Value) callconv(.c) void {
-    out.* = if (state.active_runtime) |*runtime| structuredErrorCatchMessage(runtime.takeException()) else .{};
-}
-
-fn structuredErrorCatchMessage(value: state.Value) state.Value {
-    const object = value.object() orelse return value;
-    if (value.tag != @intFromEnum(state.Tag.dictionary) or !object.structured_error) return value;
-    const message = state.dictionaryOwnProperty(value, &.{ 'm', 'e', 's', 's', 'a', 'g', 'e' }) orelse {
-        return state.staticStringValue("[object Object]");
-    };
-    if (message.tag == @intFromEnum(state.Tag.utf16_string) or message.tag == @intFromEnum(state.Tag.static_utf8_string)) {
-        return message;
-    }
-    return state.staticStringValue("[object Object]");
+    // 構造化エラーは辞書のまま `エラーメッセージ` へ束縛し、`["code"]` 等の
+    // フィールド参照を可能にする。文字列化は `structured_error` 印経由で
+    // `message` を返すため、ここでは値をそのまま渡す。
+    out.* = if (state.active_runtime) |*runtime| runtime.takeException() else .{};
 }
 
 pub export fn lnako_aot_exception_abort() callconv(.c) noreturn {
