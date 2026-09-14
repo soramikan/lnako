@@ -14,8 +14,9 @@ const results = [];
 let passed = 0;
 let failed = 0;
 
-const defaultLnakoPath = existsSync(join(projectRoot, "zig-out", "bin", "lnako"))
-  ? join(projectRoot, "zig-out", "bin", "lnako")
+const lnakoBinary = process.platform === "win32" ? "lnako.exe" : "lnako";
+const defaultLnakoPath = existsSync(join(projectRoot, "zig-out", "bin", lnakoBinary))
+  ? join(projectRoot, "zig-out", "bin", lnakoBinary)
   : "lnako";
 
 function loadJson(file) {

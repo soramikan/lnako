@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname, basename, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseRange, jointSetsIntersect } from "./semver_range.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -44,6 +45,112 @@ function loadSchemas() {
 const schemaCache = loadSchemas();
 const resolvedRefCache = new Map();
 const resolvingRefs = new Set();
+const semverPattern = new RegExp(schemaCache.byFile.get("common.schema.json").$defs.semver.pattern);
+
+// `format: "uri"` を検証する。RFC 3986 の絶対 URI の部分集合で、
+// scheme `[a-zA-Z][a-zA-Z0-9+.-]*:` と、空白・制御文字を含まない
+// 非空の残部を要求する（残部の文字構成までは検査しない）。
+// Zig 側 manifest.zig の `isUri` と同一の判定。
+function isUri(text) {
+  const colon = text.indexOf(":");
+  if (colon <= 0) return false;
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*$/.test(text.slice(0, colon))) return false;
+  const rest = text.slice(colon + 1);
+  if (rest.length === 0) return false;
+  return !/[\x00-\x20\x7f]/.test(rest);
+}
+
+// SPDX license expression の構文（識別子・`+` 接尾・`WITH` 例外・
+// `AND`/`OR` 結合・括弧）のみ検査する。識別子が SPDX 公式一覧に
+// 登録済みかは検査しない。`UNLICENSED`/`Proprietary` も識別子として
+// 構文上受理される。Zig 側 `isLicenseExpression` と同一の判定。
+const maxLicenseDepth = 32;
+
+function isLicenseExpression(text) {
+  const pos = { i: 0 };
+  if (!licenseExpr(text, pos, 0)) return false;
+  licenseSkipWs(text, pos);
+  return pos.i === text.length;
+}
+
+function licenseSkipWs(text, pos) {
+  while (pos.i < text.length && (text[pos.i] === " " || text[pos.i] === "\t")) pos.i++;
+}
+
+function licenseToken(text, pos) {
+  licenseSkipWs(text, pos);
+  const start = pos.i;
+  while (pos.i < text.length && !" \t()".includes(text[pos.i])) pos.i++;
+  return pos.i === start ? null : text.slice(start, pos.i);
+}
+
+function isLicenseId(token, allowPlus) {
+  let t = token;
+  const hadPlus = t.endsWith("+");
+  if (allowPlus && hadPlus) t = t.slice(0, -1);
+  if (t.length === 0) return false;
+  const colon = t.indexOf(":");
+  if (colon >= 0) {
+    // コロンは `DocumentRef-<id>:LicenseRef-<id>` 複合形の区切り専用で、
+    // Ref 形には `+` 接尾を付けられない。
+    if (hadPlus) return false;
+    const doc = t.slice(0, colon);
+    const ref = t.slice(colon + 1);
+    return doc.startsWith("DocumentRef-") && ref.startsWith("LicenseRef-") &&
+      isLicenseIdPart(doc.slice("DocumentRef-".length)) &&
+      isLicenseIdPart(ref.slice("LicenseRef-".length));
+  }
+  if (!isLicenseIdPart(t)) return false;
+  if (t.startsWith("LicenseRef-")) {
+    // LicenseRef 単体は非空の idstring が必要で、`+` 接尾も付けられない。
+    if (hadPlus || t.length === "LicenseRef-".length) return false;
+  }
+  // `DocumentRef-` 接頭辞は複合形でのみ意味を持つため、単体でも
+  // 空 idstring は受理しない（非空なら通常識別子として扱う）。
+  if (t === "DocumentRef-") return false;
+  return t !== "AND" && t !== "OR" && t !== "WITH";
+}
+
+// 識別子の構成要素（`[A-Za-z0-9.-]+`、非空）。
+function isLicenseIdPart(t) {
+  return /^[A-Za-z0-9.-]+$/.test(t);
+}
+
+function licenseTerm(text, pos, depth) {
+  licenseSkipWs(text, pos);
+  if (pos.i < text.length && text[pos.i] === "(") {
+    if (depth >= maxLicenseDepth) return false;
+    pos.i++;
+    if (!licenseExpr(text, pos, depth + 1)) return false;
+    licenseSkipWs(text, pos);
+    if (pos.i >= text.length || text[pos.i] !== ")") return false;
+    pos.i++;
+    return true;
+  }
+  const id = licenseToken(text, pos);
+  if (id === null || !isLicenseId(id, true)) return false;
+  const save = pos.i;
+  if (licenseToken(text, pos) === "WITH") {
+    const exception = licenseToken(text, pos);
+    // 例外識別子は `+` 接尾・`:`（DocumentRef 複合形）を許容しない。
+    return exception !== null && isLicenseId(exception, false) && !exception.includes(":");
+  }
+  pos.i = save;
+  return true;
+}
+
+function licenseExpr(text, pos, depth) {
+  if (!licenseTerm(text, pos, depth)) return false;
+  while (true) {
+    const save = pos.i;
+    const op = licenseToken(text, pos);
+    if (op !== "AND" && op !== "OR") {
+      pos.i = save;
+      return true;
+    }
+    if (!licenseTerm(text, pos, depth)) return false;
+  }
+}
 
 function parseRef(ref, baseFile) {
   if (typeof ref !== "string") return { file: baseFile, fragment: "/" };
@@ -119,13 +226,7 @@ export function validateBySchemaFile(value, fileName, path = "") {
 
 function validateSchema(value, schema, path) {
   if (schema === true) return;
-  if (schema === false) fail("SCHEMA_ERROR", `value not allowed at ${path}`, path);
-
-  if (schema.$ref) {
-    // already dereferenced, but just in case
-    validateSchema(value, resolveRef(schema.$ref, schema.__baseFile ?? "common.schema.json"), path);
-    return;
-  }
+  if (schema === false) fail("E023_INVALID_TYPE", `value not allowed at ${path}`, path);
 
   if (schema.type) {
     const actual = Array.isArray(value) ? "array" : value === null ? "null" : typeof value;
@@ -135,60 +236,67 @@ function validateSchema(value, schema, path) {
     } else if (schema.type === "object" && actual === "object" && value !== null) {
       // ok
     } else if (!allowed.includes(actual)) {
-      fail("SCHEMA_ERROR", `expected ${schema.type}, got ${actual} at ${path}`, path);
+      fail("E023_INVALID_TYPE", `expected ${schema.type}, got ${actual} at ${path}`, path);
     }
   }
 
   if (schema.enum && !schema.enum.includes(value)) {
-    fail("SCHEMA_ERROR", `expected one of ${schema.enum.join(", ")}, got ${JSON.stringify(value)} at ${path}`, path);
+    fail("E029_INVALID_VALUE", `expected one of ${schema.enum.join(", ")}, got ${JSON.stringify(value)} at ${path}`, path);
   }
 
   if ("const" in schema && value !== schema.const) {
-    fail("SCHEMA_ERROR", `expected ${JSON.stringify(schema.const)}, got ${JSON.stringify(value)} at ${path}`, path);
+    fail("E029_INVALID_VALUE", `expected ${JSON.stringify(schema.const)}, got ${JSON.stringify(value)} at ${path}`, path);
   }
 
   if (typeof value === "number") {
     if (schema.minimum !== undefined && value < schema.minimum) {
-      fail("SCHEMA_ERROR", `${value} < minimum ${schema.minimum} at ${path}`, path);
+      fail("E029_INVALID_VALUE", `${value} < minimum ${schema.minimum} at ${path}`, path);
     }
     if (schema.maximum !== undefined && value > schema.maximum) {
-      fail("SCHEMA_ERROR", `${value} > maximum ${schema.maximum} at ${path}`, path);
+      fail("E029_INVALID_VALUE", `${value} > maximum ${schema.maximum} at ${path}`, path);
     }
     if (schema.exclusiveMinimum !== undefined && value <= schema.exclusiveMinimum) {
-      fail("SCHEMA_ERROR", `${value} <= exclusiveMinimum at ${path}`, path);
+      fail("E029_INVALID_VALUE", `${value} <= exclusiveMinimum at ${path}`, path);
     }
     if (schema.exclusiveMaximum !== undefined && value >= schema.exclusiveMaximum) {
-      fail("SCHEMA_ERROR", `${value} >= exclusiveMaximum at ${path}`, path);
+      fail("E029_INVALID_VALUE", `${value} >= exclusiveMaximum at ${path}`, path);
     }
   }
 
   if (typeof value === "string") {
     if (schema.pattern) {
-      const re = new RegExp(schema.pattern);
-      if (!re.test(value)) {
-        fail("SCHEMA_ERROR", `value "${value}" does not match pattern ${schema.pattern} at ${path}`, path);
+      // マッチが入力全体を消費することを要求する。現行 schema の
+      // pattern は全て `^...$` アンカー済みで `.test` と同じ結果に
+      // なるが、pattern 定義に依存せず厳密な全文一致を保証する
+      // （Zig 側の厳密な解析と揃える）。
+      const m = new RegExp(schema.pattern).exec(value);
+      if (m === null || m.index !== 0 || m[0].length !== value.length) {
+        fail("E029_INVALID_VALUE", `value "${value}" does not match pattern ${schema.pattern} at ${path}`, path);
       }
     }
+    if (schema.format === "uri" && !isUri(value)) {
+      fail("E029_INVALID_VALUE", `invalid uri "${value}" at ${path}`, path);
+    }
     if (schema.minLength !== undefined && value.length < schema.minLength) {
-      fail("SCHEMA_ERROR", `string at ${path} is too short`, path);
+      fail("E029_INVALID_VALUE", `string at ${path} is too short`, path);
     }
     if (schema.maxLength !== undefined && value.length > schema.maxLength) {
-      fail("SCHEMA_ERROR", `string at ${path} is too long`, path);
+      fail("E029_INVALID_VALUE", `string at ${path} is too long`, path);
     }
   }
 
   if (Array.isArray(value)) {
     if (schema.minItems !== undefined && value.length < schema.minItems) {
-      fail("SCHEMA_ERROR", `array at ${path} has too few items`, path);
+      fail("E029_INVALID_VALUE", `array at ${path} has too few items`, path);
     }
     if (schema.maxItems !== undefined && value.length > schema.maxItems) {
-      fail("SCHEMA_ERROR", `array at ${path} has too many items`, path);
+      fail("E029_INVALID_VALUE", `array at ${path} has too many items`, path);
     }
     if (schema.uniqueItems) {
       const seen = new Set();
       for (const item of value) {
         const key = JSON.stringify(item);
-        if (seen.has(key)) fail("SCHEMA_ERROR", `duplicate array item at ${path}`, path);
+        if (seen.has(key)) fail("E029_INVALID_VALUE", `duplicate array item at ${path}`, path);
         seen.add(key);
       }
     }
@@ -211,20 +319,20 @@ function validateSchema(value, schema, path) {
     if (schema.required) {
       for (const key of schema.required) {
         if (!(key in value)) {
-          fail("SCHEMA_ERROR", `missing required property "${key}" at ${path}`, path);
+          fail("E019_REQUIRED_FIELD_MISSING", `missing required property "${key}" at ${path}`, path);
         }
       }
     }
 
     if (schema.minProperties !== undefined && keys.length < schema.minProperties) {
-      fail("SCHEMA_ERROR", `object at ${path} has too few properties`, path);
+      fail("E029_INVALID_VALUE", `object at ${path} has too few properties`, path);
     }
 
     if (schema.additionalProperties === false) {
       const allowed = new Set(Object.keys(schema.properties || {}));
       for (const key of keys) {
         if (!allowed.has(key)) {
-          fail("SCHEMA_ERROR", `additional property "${key}" not allowed at ${path}`, path);
+          fail("E022_UNKNOWN_FIELD", `additional property "${key}" not allowed at ${path}`, path);
         }
       }
     } else if (typeof schema.additionalProperties === "object") {
@@ -257,18 +365,47 @@ function validateSchema(value, schema, path) {
   }
 
   if (schema.oneOf) {
-    let matched = 0;
-    let lastError = null;
-    for (const sub of schema.oneOf) {
-      try {
-        validateSchema(value, sub, path);
-        matched++;
-      } catch (e) {
-        lastError = e;
+    // 全枝が `type` を宣言する場合、値の型に適合する枝だけを評価して
+    // 枝内の診断コード（E019/E022 等）をそのまま報告する。
+    const actual = Array.isArray(value) ? "array" : value === null ? "null" : typeof value;
+    const typed = schema.oneOf.every((sub) => sub && sub.type);
+    const typeMatches = (sub) => {
+      const allowed = Array.isArray(sub.type) ? sub.type : [sub.type];
+      return allowed.includes(actual) || (actual === "number" && allowed.includes("integer") && Number.isInteger(value));
+    };
+    if (typed) {
+      const candidates = schema.oneOf.filter(typeMatches);
+      if (candidates.length === 1) {
+        validateSchema(value, candidates[0], path);
+      } else if (candidates.length === 0) {
+        fail("E023_INVALID_TYPE", `expected one of ${schema.oneOf.length} schemas at ${path}`, path);
+      } else {
+        let matched = 0;
+        for (const sub of candidates) {
+          try {
+            validateSchema(value, sub, path);
+            matched++;
+          } catch (e) {
+            // continue
+          }
+        }
+        if (matched !== 1) {
+          fail("E023_INVALID_TYPE", `expected exactly one of ${schema.oneOf.length} schemas at ${path} (matched ${matched})`, path);
+        }
       }
-    }
-    if (matched !== 1) {
-      fail("SCHEMA_ERROR", `expected exactly one of ${schema.oneOf.length} schemas at ${path} (matched ${matched})`, path);
+    } else {
+      let matched = 0;
+      for (const sub of schema.oneOf) {
+        try {
+          validateSchema(value, sub, path);
+          matched++;
+        } catch (e) {
+          // continue
+        }
+      }
+      if (matched !== 1) {
+        fail("E023_INVALID_TYPE", `expected exactly one of ${schema.oneOf.length} schemas at ${path} (matched ${matched})`, path);
+      }
     }
   }
 
@@ -283,7 +420,7 @@ function validateSchema(value, schema, path) {
         // continue
       }
     }
-    if (!matched) fail("SCHEMA_ERROR", `expected one of anyOf schemas at ${path}`, path);
+    if (!matched) fail("E023_INVALID_TYPE", `expected one of anyOf schemas at ${path}`, path);
   }
 
   if (schema.allOf) {
@@ -294,8 +431,28 @@ function validateSchema(value, schema, path) {
 }
 
 export function validateManifest(manifest, fixturePath) {
-  if (!manifest.package) {
+  if (typeof manifest !== "object" || manifest === null || Array.isArray(manifest)) {
+    fail("E023_INVALID_TYPE", `manifest root must be an object`, fixturePath);
+  }
+  if (!("package" in manifest)) {
     fail("E019_REQUIRED_FIELD_MISSING", `missing required field "package"`, fixturePath);
+  }
+
+  // package.version の semver 不一致は汎用パターン失敗ではなく E024 とする。
+  // 防御的にマッチが入力全体を消費したかまで確認する。
+  const versionMatch = typeof manifest.package?.version === "string"
+    ? semverPattern.exec(manifest.package.version)
+    : null;
+  if (typeof manifest.package?.version === "string" &&
+    (versionMatch === null || versionMatch.index !== 0 || versionMatch[0].length !== manifest.package.version.length)) {
+    fail("E024_INVALID_SEMVER", `invalid semver "${manifest.package.version}"`, `${fixturePath}.package.version`);
+  }
+  // semver 各数値要素は Number.MAX_SAFE_INTEGER 以下（Zig 側 numericPart と同じ上限）。
+  if (typeof manifest.package?.version === "string") {
+    const core = /^(\d+)\.(\d+)\.(\d+)/.exec(manifest.package.version);
+    if (core && core.slice(1).some((part) => Number(part) > Number.MAX_SAFE_INTEGER)) {
+      fail("E024_INVALID_SEMVER", `semver component exceeds Number.MAX_SAFE_INTEGER in "${manifest.package.version}"`, `${fixturePath}.package.version`);
+    }
   }
 
   validateBySchemaFile(manifest, "nako.toml.schema.json", fixturePath);
@@ -303,6 +460,23 @@ export function validateManifest(manifest, fixturePath) {
   const pkg = manifest.package;
   if (pkg && "schema-version" in pkg && !knownManifestSchemaVersions.has(pkg["schema-version"])) {
     fail("E001_UNKNOWN_MANIFEST_SCHEMA", `unknown manifest schema version ${pkg["schema-version"]}`, `${fixturePath}.package.schema-version`);
+  }
+
+  // package.license は SPDX expression 構文のみ検査する（Zig 側と同じ判定。
+  // 識別子が SPDX 公式一覧に登録済みかは問わない）。
+  if (typeof manifest.package?.license === "string" && !isLicenseExpression(manifest.package.license)) {
+    fail("E029_INVALID_VALUE", `invalid license expression "${manifest.package.license}"`, `${fixturePath}.package.license`);
+  }
+
+  // nako-version 系の数値要素は u64 範囲内（Zig 側 parsePlainVersion と同じ上限）。
+  for (const key of ["nako-version", "min-nako-version"]) {
+    const value = manifest.package?.[key];
+    const coreMatch = typeof value === "string" ? /^\d+\.\d+\.\d+$/.exec(value) : null;
+    if (coreMatch !== null && coreMatch[0].length === value.length) {
+      if (value.split(".").some((part) => BigInt(part) > 18446744073709551615n)) {
+        fail("E029_INVALID_VALUE", `${key} component exceeds u64 in "${value}"`, `${fixturePath}.package.${key}`);
+      }
+    }
   }
 
   if (manifest.profiles) {
@@ -323,22 +497,190 @@ export function validateManifest(manifest, fixturePath) {
     }
     const hasCompatJsProfile = Object.values(manifest.profiles ?? {}).some((p) => p["compat-js"] === true);
     for (const exp of manifest.exports) {
-      if (exp.esm && !hasCompatJsProfile) {
+      if (exp.esm != null && !hasCompatJsProfile) {
         fail("E006_JS_IN_NORMAL_MODE", `ESM export "${exp.name}" requires compat-js profile`, `${fixturePath}.exports`);
       }
     }
   }
 
-  if (manifest.dependencies?.pkg) {
-    const byPublicId = new Map();
-    for (const [alias, dep] of Object.entries(manifest.dependencies.pkg)) {
-      if (dep["public-id"]) {
-        const existing = byPublicId.get(dep["public-id"]);
-        if (existing && existing.version !== dep.version) {
-          fail("E003_CONFLICTING_VERSIONS", `conflicting version constraints for ${dep["public-id"]}: ${existing.version} vs ${dep.version}`, `${fixturePath}.dependencies.pkg`);
-        }
-        byPublicId.set(dep["public-id"], dep);
+  // semverRange フィールドの構文検証（schema 上は単なる string のためここで診断する）。
+  const checkRange = (text, path) => {
+    if (typeof text === "string" && parseRange(text) === null) {
+      fail("E025_INVALID_RANGE", `invalid version range "${text}" at ${path}`, path);
+    }
+  };
+  for (const section of ["dependencies", "dev-dependencies"]) {
+    const group = manifest[section];
+    if (!group) continue;
+    for (const [alias, dep] of Object.entries(group.pkg ?? {})) {
+      if (dep && typeof dep === "object") {
+        checkRange(dep.version, `${fixturePath}.${section}.pkg.${alias}.version`);
       }
+    }
+    for (const [alias, dep] of Object.entries(group.npm ?? {})) {
+      if (typeof dep === "string") {
+        checkRange(dep, `${fixturePath}.${section}.npm.${alias}`);
+      } else if (dep && typeof dep === "object") {
+        checkRange(dep.version, `${fixturePath}.${section}.npm.${alias}.version`);
+        for (const [peer, range] of Object.entries(dep["peer-dependencies"] ?? {})) {
+          checkRange(range, `${fixturePath}.${section}.npm.${alias}.peer-dependencies.${peer}`);
+        }
+      }
+    }
+  }
+
+  // 二者間の交差だけでは全制約の共通候補の存在を保証しないため
+  // （OR 範囲で各ペアが別の選択肢で交差し得る）、public-id 毎に
+  // 積集合を保持する。各パスは依存毎に選んだ AND 比較子集合の列で、
+  // prerelease ゲートは構成集合毎に評価する必要があるため併合済みの
+  // 平坦な集合は保持しない。
+  const maxJointPaths = 1024;
+  // 開発解決では通常依存と dev-dependencies の両方が同じ public-id に
+  // 効くため、積集合はセクションをまたいで共有する。
+  const byPublicId = new Map();
+  for (const section of ["dependencies", "dev-dependencies"]) {
+    const group = manifest[section]?.pkg;
+    if (!group) continue;
+    for (const [alias, dep] of Object.entries(group)) {
+      if (dep["public-id"] == null) continue;
+      const publicId = dep["public-id"];
+      // version 欠落・不正（E019/E025 で報告済み）は無制約として扱い、
+      // 空の外積による誤診を避ける。
+      const depRange = dep.version == null ? [] : (parseRange(dep.version) ?? []);
+      if (depRange.length === 0) continue;
+      const joint = byPublicId.get(publicId);
+      // 積集合が空リストのときは新しい制約の集合をそのまま採用する。
+      if (joint === undefined || joint.paths.length === 0) {
+        byPublicId.set(publicId, {
+          paths: depRange.slice(0, maxJointPaths).map((set) => [set]),
+          // 上限超過時は以後の絞り込みを行わない。打ち切った積集合は部分
+          // 集合しか保持しないため後続の依存で空になり得るが、それは
+          // 打ち切りによる偽の衝突であり得る（見逃し方向にのみ影響する）。
+          saturated: depRange.length > maxJointPaths,
+        });
+        continue;
+      }
+      if (joint.saturated) continue;
+      const next = [];
+      let capped = false;
+      outer: for (const path of joint.paths) {
+        for (const set of depRange) {
+          const merged = [...path, set];
+          if (jointSetsIntersect(merged)) {
+            next.push(merged);
+            if (next.length >= maxJointPaths) {
+              capped = true;
+              break outer;
+            }
+          }
+        }
+      }
+      if (next.length === 0) {
+        fail("E003_CONFLICTING_VERSIONS", `conflicting version constraints for ${publicId}: "${dep.version}" leaves no common version`, `${fixturePath}.${section}.pkg.${alias}`);
+      }
+      if (capped) joint.saturated = true;
+      else joint.paths = next;
+    }
+  }
+
+  // 依存 alias 名前空間の衝突。feature が参照する名前空間は両セクションで
+  // 統合されるため、エントリ名（全グループ）と明示的 `alias`（pkg/git/http）
+  // をセクションをまたいで同一マップへ登録する。自分自身への alias は許容する。
+  const seen = new Map();
+  for (const section of ["dependencies", "dev-dependencies"]) {
+    const group = manifest[section];
+    if (!group) continue;
+    const claim = (name, claimInfo) => {
+      const existing = seen.get(name);
+      if (existing) {
+        const selfAlias = claimInfo.kind === "alias" && existing.kind === "entry" &&
+          existing.group === claimInfo.group && existing.own === claimInfo.own;
+        if (!selfAlias) {
+          fail("E012_ALIAS_COLLISION", `dependency name or alias "${name}" is used by multiple dependencies`, `${fixturePath}.${section}`);
+        }
+        return;
+      }
+      seen.set(name, claimInfo);
+    };
+    for (const kind of ["pkg", "npm", "path", "git", "http"]) {
+      for (const name of Object.keys(group[kind] ?? {})) {
+        claim(name, { kind: "entry", group: kind, own: name });
+      }
+    }
+    for (const kind of ["pkg", "git", "http"]) {
+      for (const [name, dep] of Object.entries(group[kind] ?? {})) {
+        if (dep && typeof dep === "object" && typeof dep.alias === "string") {
+          claim(dep.alias, { kind: "alias", group: kind, own: name });
+        }
+      }
+    }
+  }
+
+  // 依存 `profile` 参照は定義済み profile 名でなければならない。
+  const profileNames = new Set(Object.keys(manifest.profiles ?? {}));
+  for (const section of ["dependencies", "dev-dependencies"]) {
+    for (const [alias, dep] of Object.entries(manifest[section]?.pkg ?? {})) {
+      if (dep && typeof dep === "object" && dep.profile != null && !profileNames.has(dep.profile)) {
+        fail("E030_UNKNOWN_PROFILE", `unknown profile "${dep.profile}"`, `${fixturePath}.${section}.pkg.${alias}.profile`);
+      }
+    }
+  }
+
+  // feature 定義の各項目は定義済み feature か依存 alias を指す。
+  const depAliasNames = new Set();
+  for (const section of ["dependencies", "dev-dependencies"]) {
+    const group = manifest[section];
+    if (!group) continue;
+    for (const kind of ["pkg", "npm", "path", "git", "http"]) {
+      for (const name of Object.keys(group[kind] ?? {})) depAliasNames.add(name);
+    }
+    for (const kind of ["pkg", "git", "http"]) {
+      for (const dep of Object.values(group[kind] ?? {})) {
+        if (dep && typeof dep === "object" && typeof dep.alias === "string") depAliasNames.add(dep.alias);
+      }
+    }
+  }
+  const featureDefs = manifest.features ?? {};
+  for (const [name, items] of Object.entries(featureDefs)) {
+    if (!Array.isArray(items)) continue;
+    for (const item of items) {
+      if (typeof item !== "string") continue;
+      if (!Object.hasOwn(featureDefs, item) && !depAliasNames.has(item)) {
+        fail("E028_UNKNOWN_FEATURE", `unknown feature "${item}" referenced by "${name}"`, `${fixturePath}.features.${name}`);
+      }
+    }
+  }
+
+  // feature 定義グラフの循環を反復 DFS で検出する（深い非循環連鎖でも
+  // スタックを消費しないよう明示フレームスタックを使う。Zig 側
+  // checkCyclesVisit と同一の意味論）。
+  const visited = new Set();
+  const inStack = new Set();
+  const visitCycle = (root) => {
+    if (visited.has(root)) return null;
+    inStack.add(root);
+    const frames = [{ name: root, items: Array.isArray(featureDefs[root]) ? featureDefs[root] : [], next: 0 }];
+    while (frames.length > 0) {
+      const frame = frames[frames.length - 1];
+      if (frame.next < frame.items.length) {
+        const item = frame.items[frame.next++];
+        if (!Object.hasOwn(featureDefs, item)) continue;
+        if (visited.has(item)) continue;
+        if (inStack.has(item)) return item;
+        inStack.add(item);
+        frames.push({ name: item, items: Array.isArray(featureDefs[item]) ? featureDefs[item] : [], next: 0 });
+      } else {
+        frames.pop();
+        inStack.delete(frame.name);
+        visited.add(frame.name);
+      }
+    }
+    return null;
+  };
+  for (const name of Object.keys(featureDefs)) {
+    const cycle = visitCycle(name);
+    if (cycle !== null) {
+      fail("E027_FEATURE_CYCLE", `feature cycle involving "${cycle}"`, `${fixturePath}.features.${cycle}`);
     }
   }
 }
@@ -366,7 +708,7 @@ export function validateLock(lock, fixturePath) {
       }
     }
     for (const dep of pkg.dependencies) {
-      if (!(dep in lock.packages)) {
+      if (!Object.hasOwn(lock.packages, dep)) {
         fail("E013_MISSING_PACKAGE", `dependency ${dep} not found in lock packages`, `${fixturePath}.packages.${id}.dependencies`);
       }
     }

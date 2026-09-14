@@ -75,6 +75,18 @@ pub const toolchain = struct {
     pub const manager = @import("toolchain/manager.zig");
 };
 
+/// nadesiko3 パッケージシステムのデータ解析層（Issue #44）。
+/// ランタイムの `plugins.toml` とは独立した manifest 向け TOML/SemVer/
+/// marker/feature 解析を提供する。
+pub const package = struct {
+    pub const diagnostics = @import("package/diagnostics.zig");
+    pub const toml = @import("package/toml.zig");
+    pub const semver = @import("package/semver.zig");
+    pub const marker = @import("package/marker.zig");
+    pub const features = @import("package/features.zig");
+    pub const manifest = @import("package/manifest.zig");
+};
+
 pub const Command = enum {
     build,
     run,
@@ -179,6 +191,12 @@ test {
     std.testing.refAllDecls(backend.llvm.module);
     std.testing.refAllDecls(backend.llvm.compiler);
     std.testing.refAllDecls(toolchain.manager);
+    std.testing.refAllDecls(package.diagnostics);
+    std.testing.refAllDecls(package.toml);
+    std.testing.refAllDecls(package.semver);
+    std.testing.refAllDecls(package.marker);
+    std.testing.refAllDecls(package.features);
+    std.testing.refAllDecls(package.manifest);
 }
 
 test "コマンドを解析できる" {
