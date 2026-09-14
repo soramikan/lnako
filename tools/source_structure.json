@@ -49,10 +49,6 @@
         "reason": "表・クローン等のAOT実装（監視対象・hard limit内）",
         "limitKb": 80
       },
-      "src/runtime/aot_builtin.zig": {
-        "reason": "命令カタログとcanonical opcodeの単一正本（監視対象・hard limit内）",
-        "limitKb": 80
-      },
       "src/runtime/value.zig": {
         "reason": "Value・Runtime中心のコア値表現（監視対象・hard limit内）",
         "limitKb": 81
