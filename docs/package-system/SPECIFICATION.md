@@ -26,6 +26,8 @@
 
 ## 3. `nako.toml`
 
+`nako.toml` は TOML 1.0 準拠。構文上のネスト（配列・inline テーブル）の深さは最大 256 段とし、超過は `E020_INVALID_TOML` とする（深い有効入力による再帰でスタックを枯渇させないため）。
+
 ### 3.1 必須セクション
 
 ```toml
@@ -196,7 +198,7 @@ or         := and ("or" and)*
 and        := unary ("and" unary)*
 unary      := "not" unary | "(" or ")" | comparison | operand
 comparison := operand (==|!=|<|<=|>|>=|in|"not in") operand
-operand    := field | "string" | 'string' | true | false | "[" operand ("," operand)* "]"
+operand    := field | "string" | 'string' | true | false | "[" [operand ("," operand)*] "]"
 field      := os | cpu | abi | compat-js | optimize | version | features
 ```
 
@@ -204,6 +206,7 @@ field      := os | cpu | abi | compat-js | optimize | version | features
 - `in`/`not in` は右辺のリストへの membership を評価する。要素の一致判定は `==` と同じ意味論（文字列同士が SemVer として解釈できる場合は SemVer 比較）。比較不能な型同士は一致しない。
 - `version` と文字列の比較は文字列を SemVer として解釈する。型が合わない場合は評価エラー。
 - 構文エラーは `E026_INVALID_MARKER` 診断。
+- `not` 連鎖・括弧・リストリテラルのネスト深さは最大 256 段とし、超過は `E026_INVALID_MARKER` とする（深い有効入力による再帰でスタックを枯渇させないため）。`and`/`or` の項数に上限はない。
 
 ## 4. `nako.lock`
 

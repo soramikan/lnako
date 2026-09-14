@@ -53,9 +53,12 @@ pub const Operand = union(enum) {
 
 pub const Comparison = struct { left: Operand, op: CmpOp, right: Operand };
 
+/// `or`/`and` は左偏二分木ではなく平坦な n 項リストとして保持する。
+/// 項数分の再帰で評価スタックを消費しないためであり、AST の深さは
+/// `not` ネスト（`max_marker_nesting` で上限）のみで決まる。
 pub const Expr = union(enum) {
-    or_: struct { left: *const Expr, right: *const Expr },
-    and_: struct { left: *const Expr, right: *const Expr },
+    or_: []const *const Expr,
+    and_: []const *const Expr,
     not: *const Expr,
     comparison: Comparison,
     operand: Operand,
@@ -101,7 +104,7 @@ pub const EvalError = error{ TypeMismatch, InvalidVersion };
 ///   and := unary ("and" unary)*
 ///   unary := "not" unary | "(" or ")" | comparison | operand
 ///   comparison := operand (==|!=|<|<=|>|>=|in|"not in") operand
-///   operand := field | "string" | 'string' | true | false | [operand, ...]
+///   operand := field | "string" | 'string' | true | false | "[" [operand ("," operand)*] "]"
 ///   field := os | cpu | abi | compat-js | optimize | version | features
 pub fn parse(allocator: std.mem.Allocator, text: []const u8) Error!Result {
     var marker = Marker{
@@ -152,9 +155,17 @@ const Token = union(enum) {
 
 const ParseError = error{ InvalidMarker, OutOfMemory };
 
+/// `not`/括弧/リストリテラルのネスト上限。深い有効入力による再帰で
+/// ネイティブスタックを枯渇させないため、超過時は `InvalidMarker` として
+/// 診断する。末端の atom は深度を消費しない（`not`×256 + atom は受理、
+/// `not`×257 は拒否）。AST の深さはこの上限に束縛されるため、
+/// 評価側の再帰も安全になる。
+const max_marker_nesting = 256;
+
 const Parser = struct {
     marker: *Marker,
     index: usize = 0,
+    depth: usize = 0,
     error_message: ?[]const u8 = null,
 
     fn position(self: *const Parser) Position {
@@ -317,27 +328,42 @@ const Parser = struct {
     }
 
     fn parseOr(self: *Parser) ParseError!*const Expr {
-        var left = try self.parseAnd();
+        const arena = self.marker.arena.allocator();
+        const first = try self.parseAnd();
+        var items: std.ArrayList(*const Expr) = .empty;
         while (try self.lookaheadIs(.kw_or)) {
             _ = try self.token();
-            const right = try self.parseAnd();
-            const node = try self.marker.arena.allocator().create(Expr);
-            node.* = .{ .or_ = .{ .left = left, .right = right } };
-            left = node;
+            if (items.items.len == 0) try items.append(arena, first);
+            try items.append(arena, try self.parseAnd());
         }
-        return left;
+        if (items.items.len == 0) return first;
+        const node = try arena.create(Expr);
+        node.* = .{ .or_ = try items.toOwnedSlice(arena) };
+        return node;
     }
 
     fn parseAnd(self: *Parser) ParseError!*const Expr {
-        var left = try self.parseUnary();
+        const arena = self.marker.arena.allocator();
+        const first = try self.parseUnary();
+        var items: std.ArrayList(*const Expr) = .empty;
         while (try self.lookaheadIs(.kw_and)) {
             _ = try self.token();
-            const right = try self.parseUnary();
-            const node = try self.marker.arena.allocator().create(Expr);
-            node.* = .{ .and_ = .{ .left = left, .right = right } };
-            left = node;
+            if (items.items.len == 0) try items.append(arena, first);
+            try items.append(arena, try self.parseUnary());
         }
-        return left;
+        if (items.items.len == 0) return first;
+        const node = try arena.create(Expr);
+        node.* = .{ .and_ = try items.toOwnedSlice(arena) };
+        return node;
+    }
+
+    /// 構造的ネスト（`not`・括弧・リストリテラル）を深度として計上する。
+    /// 上限到達時は depth を変更せず `InvalidMarker` を返す。
+    fn enterDepth(self: *Parser) ParseError!void {
+        if (self.depth >= max_marker_nesting) {
+            return self.fail(error.InvalidMarker, "marker expression nesting too deep");
+        }
+        self.depth += 1;
     }
 
     fn parseUnary(self: *Parser) ParseError!*const Expr {
@@ -345,12 +371,16 @@ const Parser = struct {
         const t = try self.token();
         switch (t) {
             .kw_not => {
+                try self.enterDepth();
+                defer self.depth -= 1;
                 const operand = try self.parseUnary();
                 const node = try self.marker.arena.allocator().create(Expr);
                 node.* = .{ .not = operand };
                 return node;
             },
             .lparen => {
+                try self.enterDepth();
+                defer self.depth -= 1;
                 const inner = try self.parseOr();
                 const closing = try self.token();
                 if (closing != .rparen) return self.fail(error.InvalidMarker, "expected ')'");
@@ -375,12 +405,11 @@ const Parser = struct {
                 return node;
             },
         };
+        // 右辺失敗時は index を戻さず、ネストした operand 内の実際の失敗位置を
+        // 診断位置として報告する（error_message は最初の失敗が保持される）。
         const right = self.parseOperand() catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
-            else => {
-                self.index = before_op;
-                return self.fail(error.InvalidMarker, "expected operand after comparison operator");
-            },
+            else => return self.fail(error.InvalidMarker, "expected operand after comparison operator"),
         };
         const node = try self.marker.arena.allocator().create(Expr);
         node.* = .{ .comparison = .{ .left = left, .op = op, .right = right } };
@@ -417,6 +446,9 @@ const Parser = struct {
             .kw_true => return .{ .boolean = true },
             .kw_false => return .{ .boolean = false },
             .lbracket => {
+                // リストリテラルのネストも `not`/括弧と同じ深度上限で診断する。
+                try self.enterDepth();
+                defer self.depth -= 1;
                 var items: std.ArrayList(Operand) = .empty;
                 const arena = self.marker.arena.allocator();
                 self.skipSpace();
@@ -497,10 +529,22 @@ fn resolveOperand(operand: Operand, context: Context) EvalError!Resolved {
     };
 }
 
+// AST の深さは parseUnary の `max_marker_nesting` で束縛されるため、
+// この再帰はネイティブスタックを枯渇させない。
 fn evalExpr(expr: *const Expr, context: Context) EvalError!bool {
     return switch (expr.*) {
-        .or_ => |pair| (try evalExpr(pair.left, context)) or (try evalExpr(pair.right, context)),
-        .and_ => |pair| (try evalExpr(pair.left, context)) and (try evalExpr(pair.right, context)),
+        .or_ => |items| blk: {
+            for (items) |child| {
+                if (try evalExpr(child, context)) break :blk true;
+            }
+            break :blk false;
+        },
+        .and_ => |items| blk: {
+            for (items) |child| {
+                if (!(try evalExpr(child, context))) break :blk false;
+            }
+            break :blk true;
+        },
         .not => |operand| !(try evalExpr(operand, context)),
         .operand => |operand| blk: {
             const resolved = try resolveOperand(operand, context);
@@ -636,6 +680,85 @@ test "無効なmarker式を拒否する" {
             },
             .err => {},
         }
+    }
+}
+
+test "深いmarker式はネスト上限で診断し平坦なand/orは深さを消費しない" {
+    const allocator = std.testing.allocator;
+    // `not` 連鎖が上限（256）を超える入力は InvalidMarker として診断する。
+    var deep = std.ArrayList(u8).empty;
+    defer deep.deinit(allocator);
+    for (0..257) |_| try deep.appendSlice(allocator, "not ");
+    try deep.appendSlice(allocator, "true");
+    switch (try parse(allocator, deep.items)) {
+        .ok => |*m| {
+            var marker = m.*;
+            defer marker.deinit();
+            return error.TestUnexpectedResult;
+        },
+        .err => {},
+    }
+    // 上限ちょうど（256 重）は受理・評価できる（256 は偶数なので not true → true）。
+    var boundary = std.ArrayList(u8).empty;
+    defer boundary.deinit(allocator);
+    for (0..256) |_| try boundary.appendSlice(allocator, "not ");
+    try boundary.appendSlice(allocator, "true");
+    var marker = (try parse(allocator, boundary.items)).ok;
+    defer marker.deinit();
+    try std.testing.expectEqual(true, try marker.evaluate(.{}));
+    // 括弧ネストも同じ上限: 256 段は受理、257 段は拒否。
+    var parens = std.ArrayList(u8).empty;
+    defer parens.deinit(allocator);
+    for (0..256) |_| try parens.append(allocator, '(');
+    try parens.appendSlice(allocator, "true");
+    for (0..256) |_| try parens.append(allocator, ')');
+    var paren_marker = (try parse(allocator, parens.items)).ok;
+    defer paren_marker.deinit();
+    try std.testing.expectEqual(true, try paren_marker.evaluate(.{}));
+    var deep_parens = std.ArrayList(u8).empty;
+    defer deep_parens.deinit(allocator);
+    for (0..257) |_| try deep_parens.append(allocator, '(');
+    try deep_parens.appendSlice(allocator, "true");
+    for (0..257) |_| try deep_parens.append(allocator, ')');
+    switch (try parse(allocator, deep_parens.items)) {
+        .ok => |*m| {
+            var pm = m.*;
+            defer pm.deinit();
+            return error.TestUnexpectedResult;
+        },
+        .err => {},
+    }
+    // 長い `and` 連鎖は n 項 AST で保持され、評価が項数分再帰しない。
+    var wide = std.ArrayList(u8).empty;
+    defer wide.deinit(allocator);
+    for (0..5000) |_| try wide.appendSlice(allocator, "true and ");
+    try wide.appendSlice(allocator, "true");
+    var wide_marker = (try parse(allocator, wide.items)).ok;
+    defer wide_marker.deinit();
+    try std.testing.expectEqual(true, try wide_marker.evaluate(.{}));
+    // リストリテラルのネストも同じ上限: 256 段は受理、257 段は拒否。
+    var list_ok = std.ArrayList(u8).empty;
+    defer list_ok.deinit(allocator);
+    try list_ok.appendSlice(allocator, "os in ");
+    for (0..256) |_| try list_ok.append(allocator, '[');
+    for (0..256) |_| try list_ok.append(allocator, ']');
+    var list_marker_ok = (try parse(allocator, list_ok.items)).ok;
+    defer list_marker_ok.deinit();
+    var deep_list = std.ArrayList(u8).empty;
+    defer deep_list.deinit(allocator);
+    for (0..257) |_| try deep_list.append(allocator, '[');
+    for (0..257) |_| try deep_list.append(allocator, ']');
+    var list_src = std.ArrayList(u8).empty;
+    defer list_src.deinit(allocator);
+    try list_src.appendSlice(allocator, "os in ");
+    try list_src.appendSlice(allocator, deep_list.items);
+    switch (try parse(allocator, list_src.items)) {
+        .ok => |*m| {
+            var list_marker = m.*;
+            defer list_marker.deinit();
+            return error.TestUnexpectedResult;
+        },
+        .err => {},
     }
 }
 

@@ -158,11 +158,16 @@ const ParseError = error{
     OutOfMemory,
 };
 
+/// 配列・inline テーブルのネスト上限。深い有効入力による `parseValue` の
+/// 再帰でネイティブスタックを枯渇させないため、超過時は診断する。
+const max_value_nesting = 256;
+
 const Parser = struct {
     document: *Document,
     index: usize = 0,
     line: usize = 1,
     column: usize = 1,
+    depth: usize = 0,
     error_message: ?[]const u8 = null,
 
     fn position(self: *const Parser) Position {
@@ -286,8 +291,19 @@ const Parser = struct {
         const kind: Kind = switch (byte) {
             '"' => .{ .string = try self.stringValue('"') },
             '\'' => .{ .string = try self.stringValue('\'') },
-            '[' => .{ .array = try self.parseArray() },
-            '{' => .{ .table = try self.parseInlineTable() },
+            // 配列・inline テーブルは parseValue を再帰するため深度を追跡する。
+            '[' => blk: {
+                if (self.depth >= max_value_nesting) return self.fail(error.InvalidTomlValue, "value nesting too deep");
+                self.depth += 1;
+                defer self.depth -= 1;
+                break :blk .{ .array = try self.parseArray() };
+            },
+            '{' => blk: {
+                if (self.depth >= max_value_nesting) return self.fail(error.InvalidTomlValue, "value nesting too deep");
+                self.depth += 1;
+                defer self.depth -= 1;
+                break :blk .{ .table = try self.parseInlineTable() };
+            },
             else => try self.bareValue(),
         };
         return .{ .kind = kind, .position = pos, .flags = if (byte == '{') flag_inline else 0 };
@@ -1134,4 +1150,35 @@ test "文字列とコメントの制御文字を拒否する" {
     var doc2 = escaped.ok;
     defer doc2.deinit();
     try std.testing.expectEqualStrings("x\x01y", doc2.root.get("a").?.kind.string);
+}
+
+test "値のネスト上限でスタック枯渇を防ぐ" {
+    const allocator = std.testing.allocator;
+    // 配列・inline テーブルのネストは256段まで。超過は構文エラーとして診断する。
+    var deep = std.ArrayList(u8).empty;
+    defer deep.deinit(allocator);
+    try deep.appendSlice(allocator, "a = ");
+    for (0..300) |_| try deep.append(allocator, '[');
+    for (0..300) |_| try deep.append(allocator, ']');
+    try deep.append(allocator, '\n');
+    try expectSyntaxError(deep.items);
+    var deep_inline = std.ArrayList(u8).empty;
+    defer deep_inline.deinit(allocator);
+    try deep_inline.appendSlice(allocator, "a = ");
+    for (0..300) |_| try deep_inline.appendSlice(allocator, "{b=");
+    try deep_inline.appendSlice(allocator, "1");
+    for (0..300) |_| try deep_inline.append(allocator, '}');
+    try deep_inline.append(allocator, '\n');
+    try expectSyntaxError(deep_inline.items);
+    // 上限内のネストは受理する。
+    var shallow = std.ArrayList(u8).empty;
+    defer shallow.deinit(allocator);
+    try shallow.appendSlice(allocator, "a = ");
+    for (0..200) |_| try shallow.append(allocator, '[');
+    try shallow.append(allocator, '1');
+    for (0..200) |_| try shallow.append(allocator, ']');
+    try shallow.append(allocator, '\n');
+    const result = try parse(allocator, shallow.items);
+    var doc = result.ok;
+    defer doc.deinit();
 }

@@ -627,21 +627,30 @@ export function validateManifest(manifest, fixturePath) {
     }
   }
 
-  // feature 定義グラフの循環を DFS で検出する。
+  // feature 定義グラフの循環を反復 DFS で検出する（深い非循環連鎖でも
+  // スタックを消費しないよう明示フレームスタックを使う。Zig 側
+  // checkCyclesVisit と同一の意味論）。
   const visited = new Set();
   const inStack = new Set();
-  const visitCycle = (name) => {
-    if (visited.has(name)) return null;
-    if (inStack.has(name)) return name;
-    inStack.add(name);
-    for (const item of Array.isArray(featureDefs[name]) ? featureDefs[name] : []) {
-      if (Object.hasOwn(featureDefs, item)) {
-        const found = visitCycle(item);
-        if (found !== null) return found;
+  const visitCycle = (root) => {
+    if (visited.has(root)) return null;
+    inStack.add(root);
+    const frames = [{ name: root, items: Array.isArray(featureDefs[root]) ? featureDefs[root] : [], next: 0 }];
+    while (frames.length > 0) {
+      const frame = frames[frames.length - 1];
+      if (frame.next < frame.items.length) {
+        const item = frame.items[frame.next++];
+        if (!Object.hasOwn(featureDefs, item)) continue;
+        if (visited.has(item)) continue;
+        if (inStack.has(item)) return item;
+        inStack.add(item);
+        frames.push({ name: item, items: Array.isArray(featureDefs[item]) ? featureDefs[item] : [], next: 0 });
+      } else {
+        frames.pop();
+        inStack.delete(frame.name);
+        visited.add(frame.name);
       }
     }
-    inStack.delete(name);
-    visited.add(name);
     return null;
   };
   for (const name of Object.keys(featureDefs)) {
