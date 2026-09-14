@@ -429,6 +429,8 @@ test "license式を検証する" {
         "GPL-3.0-only WITH Classpath-exception-2.0",
         "LicenseRef-FOO",
         "DocumentRef-doc:LicenseRef-FOO",
+        // `DocumentRef-` 接頭辞のみのトークンは非空なら通常識別子として受理する。
+        "DocumentRef-x",
         "UNLICENSED",
         "Proprietary",
     };
@@ -452,13 +454,41 @@ test "license式を検証する" {
         "MIT WITH A:B",
         // `+` 接尾は例外識別子にも許容しない。
         "MIT WITH Foo+",
+        // コロンは DocumentRef-<id>:LicenseRef-<id> 複合形のみ許容する。
+        "MIT:Foo",
+        "a:b:c",
+        "DocumentRef-:LicenseRef-x",
+        "DocumentRef-a:LicenseRef-",
+        "DocumentRef-a:MIT",
+        "Foo:LicenseRef-x",
+        "DocumentRef-a:LicenseRef-b:c",
+        // Ref 形には `+` 接尾を付けられず、idstring は非空必須。
+        "LicenseRef-x+",
+        "LicenseRef-",
+        "DocumentRef-",
+        "DocumentRef-a:LicenseRef-b+",
+        "+",
+        "+X",
+        "AND+",
+        "WITH+",
+        // 有効な複合形も例外識別子には使えない。
+        "MIT WITH DocumentRef-a:LicenseRef-b",
     };
     for (rejected) |license| {
         const source = try std.fmt.allocPrint(allocator, base, .{license});
         defer allocator.free(source);
         try parseErrCode(allocator, source, diag.E029_INVALID_VALUE);
     }
-    // 括弧ネストは32段まで。
+    // 括弧ネストは32段まで（32段は受理、33段は拒否）。
+    var boundary = std.ArrayList(u8).empty;
+    defer boundary.deinit(allocator);
+    for (0..32) |_| try boundary.append(allocator, '(');
+    try boundary.appendSlice(allocator, "MIT");
+    for (0..32) |_| try boundary.append(allocator, ')');
+    const boundary_source = try std.fmt.allocPrint(allocator, base, .{boundary.items});
+    defer allocator.free(boundary_source);
+    var boundary_manifest = try parseOk(allocator, boundary_source);
+    defer boundary_manifest.deinit();
     var deep = std.ArrayList(u8).empty;
     defer deep.deinit(allocator);
     for (0..33) |_| try deep.append(allocator, '(');
@@ -749,6 +779,7 @@ test "manifest適合fixtureを検証する" {
         .{ .path = "tools/package-system/conformance/valid/manifest/npm-aux/nako.toml", .expected_code = null },
         .{ .path = "tools/package-system/conformance/valid/manifest/path-git/nako.toml", .expected_code = null },
         .{ .path = "tools/package-system/conformance/valid/manifest/profiles/nako.toml", .expected_code = null },
+        .{ .path = "tools/package-system/conformance/valid/manifest/license-expression/nako.toml", .expected_code = null },
         .{ .path = "tools/package-system/conformance/invalid/manifest/unknown-schema/nako.toml", .expected_code = diag.E001_UNKNOWN_MANIFEST_SCHEMA },
         .{ .path = "tools/package-system/conformance/invalid/manifest/conflicting-version/nako.toml", .expected_code = diag.E003_CONFLICTING_VERSIONS },
         .{ .path = "tools/package-system/conformance/invalid/manifest/conflicting-version-joint/nako.toml", .expected_code = diag.E003_CONFLICTING_VERSIONS },
@@ -770,6 +801,7 @@ test "manifest適合fixtureを検証する" {
         .{ .path = "tools/package-system/conformance/invalid/manifest/alias-collision/nako.toml", .expected_code = diag.E012_ALIAS_COLLISION },
         .{ .path = "tools/package-system/conformance/invalid/manifest/alias-collision-cross-section/nako.toml", .expected_code = diag.E012_ALIAS_COLLISION },
         .{ .path = "tools/package-system/conformance/invalid/manifest/invalid-license/nako.toml", .expected_code = diag.E029_INVALID_VALUE },
+        .{ .path = "tools/package-system/conformance/invalid/manifest/invalid-license-document-ref/nako.toml", .expected_code = diag.E029_INVALID_VALUE },
         .{ .path = "tools/package-system/conformance/invalid/manifest/wildcard-prerelease/nako.toml", .expected_code = diag.E025_INVALID_RANGE },
         .{ .path = "tools/package-system/conformance/invalid/manifest/unknown-feature/nako.toml", .expected_code = diag.E028_UNKNOWN_FEATURE },
         .{ .path = "tools/package-system/conformance/invalid/manifest/feature-cycle/nako.toml", .expected_code = diag.E027_FEATURE_CYCLE },

@@ -1210,18 +1210,44 @@ fn licenseToken(text: []const u8, i: *usize) ?[]const u8 {
     return text[start..i.*];
 }
 
-/// license-id / LicenseRef / 例外識別子。文字集合は `[A-Za-z0-9.:-]` で、
+/// license-id / LicenseRef / 例外識別子。文字集合は `[A-Za-z0-9.-]` で、
 /// `allow_plus` のとき末尾に1つだけ `+` 接尾を許容する（`WITH` の例外
-/// 識別子には `+` を許容しない）。予約語 `AND`/`OR`/`WITH` は識別子に
-/// 使えない。
+/// 識別子には `+` を許容しない）。`:` を含むトークンは
+/// `DocumentRef-<id>:LicenseRef-<id>` 複合形のみ許容し、Ref 形には
+/// `+` 接尾を付けられない。予約語 `AND`/`OR`/`WITH` は識別子に使えない。
 fn isLicenseId(token: []const u8, allow_plus: bool) bool {
     var t = token;
-    if (allow_plus and t.len > 0 and t[t.len - 1] == '+') t = t[0 .. t.len - 1];
+    const had_plus = t.len > 0 and t[t.len - 1] == '+';
+    if (allow_plus and had_plus) t = t[0 .. t.len - 1];
     if (t.len == 0) return false;
-    for (t) |byte| {
-        if (!(std.ascii.isAlphanumeric(byte) or byte == '.' or byte == '-' or byte == ':')) return false;
+    if (std.mem.indexOfScalar(u8, t, ':')) |colon| {
+        // コロンは DocumentRef 複合形の区切り専用で、`+` 接尾は付けられない。
+        if (had_plus) return false;
+        const doc = t[0..colon];
+        const ref = t[colon + 1 ..];
+        return std.mem.startsWith(u8, doc, "DocumentRef-") and
+            std.mem.startsWith(u8, ref, "LicenseRef-") and
+            isLicenseIdPart(doc["DocumentRef-".len..]) and
+            isLicenseIdPart(ref["LicenseRef-".len..]);
     }
+    if (!isLicenseIdPart(t)) return false;
+    if (std.mem.startsWith(u8, t, "LicenseRef-")) {
+        // LicenseRef 単体は非空の idstring が必要で、`+` 接尾も付けられない。
+        if (had_plus or t.len == "LicenseRef-".len) return false;
+    }
+    // `DocumentRef-` 接頭辞は複合形でのみ意味を持つため、単体でも
+    // 空 idstring は受理しない（非空なら通常識別子として扱う）。
+    if (t.len == "DocumentRef-".len and std.mem.startsWith(u8, t, "DocumentRef-")) return false;
     return !std.mem.eql(u8, t, "AND") and !std.mem.eql(u8, t, "OR") and !std.mem.eql(u8, t, "WITH");
+}
+
+/// 識別子の構成要素（`[A-Za-z0-9.-]+`、非空）。
+fn isLicenseIdPart(text: []const u8) bool {
+    if (text.len == 0) return false;
+    for (text) |byte| {
+        if (!(std.ascii.isAlphanumeric(byte) or byte == '.' or byte == '-')) return false;
+    }
+    return true;
 }
 
 /// 括弧のネスト上限。再帰によるスタック消費を抑える（32段で十分）。

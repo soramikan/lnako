@@ -25,3 +25,52 @@ test("深いfeature連鎖の末尾循環を検出する", () => {
     (error) => error instanceof DiagnosticError && error.code === "E027_FEATURE_CYCLE",
   );
 });
+
+// コロンを含む license 識別子は DocumentRef-<id>:LicenseRef-<id> 複合形のみ
+// 許容する（Zig 側 isLicenseId と同一判定）。
+function licenseManifest(license) {
+  return { package: { name: "a", version: "1.0.0", license } };
+}
+
+test("license識別子のコロンはDocumentRef複合形のみ許容する", () => {
+  for (const license of [
+    "MIT",
+    "MIT OR Apache-2.0",
+    "(MIT OR Apache-2.0) AND GPL-3.0-only",
+    "GPL-2.0+",
+    "GPL-3.0-only WITH Classpath-exception-2.0",
+    "LicenseRef-FOO",
+    "DocumentRef-doc:LicenseRef-FOO",
+    "DocumentRef-x",
+    "UNLICENSED",
+    "Proprietary",
+  ]) {
+    validateManifest(licenseManifest(license), "ok.toml");
+  }
+  for (const license of [
+    "MIT:Foo",
+    "a:b:c",
+    "DocumentRef-:LicenseRef-x",
+    "DocumentRef-a:LicenseRef-",
+    "DocumentRef-a:MIT",
+    "Foo:LicenseRef-x",
+    "DocumentRef-a:LicenseRef-b:c",
+    "LicenseRef-x+",
+    "LicenseRef-",
+    "DocumentRef-",
+    "DocumentRef-a:LicenseRef-b+",
+    "+",
+    "+X",
+    "AND+",
+    "WITH+",
+    "MIT WITH A:B",
+    "MIT WITH Foo+",
+    "MIT WITH DocumentRef-a:LicenseRef-b",
+  ]) {
+    assert.throws(
+      () => validateManifest(licenseManifest(license), "bad.toml"),
+      (error) => error instanceof DiagnosticError && error.code === "E029_INVALID_VALUE",
+      `license "${license}" must be rejected`,
+    );
+  }
+});

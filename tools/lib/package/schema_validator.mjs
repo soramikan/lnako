@@ -86,10 +86,34 @@ function licenseToken(text, pos) {
 
 function isLicenseId(token, allowPlus) {
   let t = token;
-  if (allowPlus && t.endsWith("+")) t = t.slice(0, -1);
+  const hadPlus = t.endsWith("+");
+  if (allowPlus && hadPlus) t = t.slice(0, -1);
   if (t.length === 0) return false;
-  if (!/^[A-Za-z0-9.:-]+$/.test(t)) return false;
+  const colon = t.indexOf(":");
+  if (colon >= 0) {
+    // コロンは `DocumentRef-<id>:LicenseRef-<id>` 複合形の区切り専用で、
+    // Ref 形には `+` 接尾を付けられない。
+    if (hadPlus) return false;
+    const doc = t.slice(0, colon);
+    const ref = t.slice(colon + 1);
+    return doc.startsWith("DocumentRef-") && ref.startsWith("LicenseRef-") &&
+      isLicenseIdPart(doc.slice("DocumentRef-".length)) &&
+      isLicenseIdPart(ref.slice("LicenseRef-".length));
+  }
+  if (!isLicenseIdPart(t)) return false;
+  if (t.startsWith("LicenseRef-")) {
+    // LicenseRef 単体は非空の idstring が必要で、`+` 接尾も付けられない。
+    if (hadPlus || t.length === "LicenseRef-".length) return false;
+  }
+  // `DocumentRef-` 接頭辞は複合形でのみ意味を持つため、単体でも
+  // 空 idstring は受理しない（非空なら通常識別子として扱う）。
+  if (t === "DocumentRef-") return false;
   return t !== "AND" && t !== "OR" && t !== "WITH";
+}
+
+// 識別子の構成要素（`[A-Za-z0-9.-]+`、非空）。
+function isLicenseIdPart(t) {
+  return /^[A-Za-z0-9.-]+$/.test(t);
 }
 
 function licenseTerm(text, pos, depth) {

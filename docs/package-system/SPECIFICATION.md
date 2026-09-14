@@ -43,7 +43,7 @@ license = "MIT"
 |------|------|------|------|
 | `name` | string | yes | `[a-z][a-z0-9-]{0,63}`（1文字以上）。 |
 | `version` | string | yes | SemVer 2.0.0。 |
-| `license` | string | yes | SPDX license expression または `UNLICENSED`/`Proprietary`。expression は構文のみ検査する（識別子が SPDX 公式一覧に登録済みかは問わない）。演算子は `AND`/`OR`/`WITH`（大文字）、`+` 接尾、括弧を許容する。不正値は `E029_INVALID_VALUE`。 |
+| `license` | string | yes | SPDX license expression または `UNLICENSED`/`Proprietary`。expression は構文のみ検査する（識別子が SPDX 公式一覧に登録済みかは問わない）。演算子は `AND`/`OR`/`WITH`（大文字）、`+` 接尾、括弧（最大 32 段）を許容する。識別子の文字集合は `[A-Za-z0-9.-]` で、コロンは `DocumentRef-<id>:LicenseRef-<id>` 複合形の区切りとしてのみ許容する（両 `<id>` は非空）。`+` 接尾は license-id のみに適用し、`LicenseRef-` 単体・DocumentRef 複合形・`WITH` の例外識別子には付けられない。`WITH` の例外識別子には `:`（DocumentRef 複合形を含む）を許容しない。`LicenseRef-`/`DocumentRef-` 接頭辞は非空 idstring が必須（`DocumentRef-<id>` 単体は通常識別子として受理される）。演算子・識別子と括弧の間の空白は任意。不正値は `E029_INVALID_VALUE`。 |
 | `id` | string | no | `pkg:<32hex>`。未登録時は省略。 |
 | `description` | string | no | 人間向け説明。 |
 | `authors` | array<string> | no | 作者リスト。 |
