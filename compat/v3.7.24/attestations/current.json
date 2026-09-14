@@ -1,0 +1,10 @@
+{
+  "schema": "lnako.current-attestation.v1",
+  "workflowRun": "34808804418",
+  "workflowAttempt": 1,
+  "targetCommit": "c8642bf140ab8ee686c7b690a42d4f5d81ed2fb7",
+  "sourceRef": "refs/heads/main",
+  "workflow": "soramikan/lnako/.github/workflows/ci.yml",
+  "sourceManifestSha256": "aa315c5cda86c8ddde75d23fb293ba26973a6823a46a563759254665880fee2d",
+  "directory": "34808804418"
+}
