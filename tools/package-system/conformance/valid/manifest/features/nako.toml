@@ -1,0 +1,12 @@
+[package]
+name = "http-kit"
+version = "0.1.0"
+license = "MIT"
+
+[features]
+default = ["client"]
+client = []
+server = ["client"]
+
+[dependencies.pkg]
+client = { version = ">=1.0.0 <2.0.0", features = ["http"], default-features = false }

@@ -1,0 +1,11 @@
+{
+  "package": {
+    "name": "test",
+    "version": "1.0.0",
+    "license": "MIT"
+  },
+  "exports": [
+    { "name": "index.nako3", "path": "src/a.nako3" },
+    { "name": "index.nako3", "path": "src/b.nako3" }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/soramikan/lnako/package-system/schema/registry-index/v1",
+  "type": "object",
+  "required": ["schemaVersion", "packages"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "packages": {
+      "type": "array",
+      "items": { "$ref": "registry-package.schema.json" }
+    }
+  }
+}

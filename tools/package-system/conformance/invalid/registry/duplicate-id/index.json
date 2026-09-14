@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "packages": [
+    {
+      "schemaVersion": 1,
+      "id": "pkg:00000000000000000000000000000000",
+      "name": "sqlite",
+      "owner": "a",
+      "versions": []
+    },
+    {
+      "schemaVersion": 1,
+      "id": "pkg:00000000000000000000000000000000",
+      "name": "other",
+      "owner": "b",
+      "versions": []
+    }
+  ]
+}

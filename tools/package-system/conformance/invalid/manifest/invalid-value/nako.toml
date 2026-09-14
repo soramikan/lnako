@@ -1,0 +1,7 @@
+[package]
+name = "bad-value"
+version = "1.0.0"
+license = "MIT"
+
+[profiles]
+fast = { os = "linux", cpu = "x86_64", abi = "gnu", optimize = "O9" }

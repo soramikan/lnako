@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/soramikan/lnako/package-system/schema/registry-package/v1",
+  "type": "object",
+  "required": ["schemaVersion", "id", "name", "owner", "versions"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "id": { "$ref": "common.schema.json#/$defs/packageId" },
+    "name": { "$ref": "common.schema.json#/$defs/packageName" },
+    "owner": { "type": "string" },
+    "humanId": { "$ref": "common.schema.json#/$defs/humanId" },
+    "description": { "type": "string" },
+    "license": { "type": "string" },
+    "repository": { "type": "string", "format": "uri" },
+    "homepage": { "type": "string", "format": "uri" },
+    "versions": {
+      "type": "array",
+      "items": { "$ref": "registry-version.schema.json" }
+    }
+  }
+}

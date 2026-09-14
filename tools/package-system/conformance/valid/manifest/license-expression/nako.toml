@@ -1,0 +1,4 @@
+[package]
+name = "test"
+version = "1.0.0"
+license = "(MIT OR DocumentRef-doc:LicenseRef-FOO) AND GPL-3.0-only WITH Classpath-exception-2.0"

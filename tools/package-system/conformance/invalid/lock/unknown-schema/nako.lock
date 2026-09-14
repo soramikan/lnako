@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 999,
+  "resolverVersion": 1,
+  "input": {
+    "manifestSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "profile": "default",
+    "features": ["default"],
+    "target": { "os": "macos", "cpu": "aarch64", "abi": "gnu" }
+  },
+  "packages": {}
+}

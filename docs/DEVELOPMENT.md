@@ -50,6 +50,7 @@ zig build -Dcompat-js=true run -- run program.nako3 --compat-js
 ```sh
 zig build fmt-check
 zig build test --summary all
+zig build package-schema-check
 node tools/check_ci_workflow.mjs
 node tools/check_docs_current.mjs
 node tools/sync_compat.mjs --check

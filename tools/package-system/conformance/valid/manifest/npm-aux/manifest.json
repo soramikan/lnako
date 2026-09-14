@@ -1,0 +1,19 @@
+{
+  "package": {
+    "name": "csv-tool",
+    "version": "0.2.0",
+    "license": "MIT"
+  },
+  "dependencies": {
+    "npm": {
+      "escape-string-regexp": "5.0.0",
+      "chalk": {
+        "version": "^5.0.0",
+        "context": "cli"
+      }
+    }
+  },
+  "profiles": {
+    "default": { "os": "macos", "cpu": "aarch64", "abi": "gnu", "compat-js": false }
+  }
+}
