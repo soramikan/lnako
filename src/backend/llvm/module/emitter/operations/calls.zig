@@ -19,7 +19,6 @@ const DebugLocation = shared.DebugLocation;
 const arithmeticOpcode = shared.arithmeticOpcode;
 const isDisplayCall = shared.isDisplayCall;
 const isNativePluginCall = shared.isNativePluginCall;
-const isQualifiedGlobal = shared.isQualifiedGlobal;
 const lookupFunction = shared.lookupFunction;
 const shiftOpcode = shared.shiftOpcode;
 const valueType = shared.valueType;
@@ -51,10 +50,15 @@ pub fn writeCall(emitter: *Emitter, function: ir.Function, locals: []const []con
         try writeCallResult(emitter, result, instruction.span, scope);
         return;
     };
-    const callee = if (instruction.direct_callee) |callee_id|
-        if (callee_id < emitter.program.functions.len) emitter.program.functions[callee_id] else return error.InvalidDirectCallee
-    else
-        try emitter.findFunction(instruction.name);
+    const callee = if (instruction.is_module_entry and instruction.callee_module < emitter.program.module_entries.len)
+        // 同名モジュール間の名前衝突を避けるため module_entries から直接解決する
+        blk: {
+            const entry_id = emitter.program.module_entries[instruction.callee_module];
+            break :blk if (entry_id < emitter.program.functions.len) emitter.program.functions[entry_id] else return error.InvalidDirectCallee;
+        } else if (instruction.direct_callee) |callee_id|
+            if (callee_id < emitter.program.functions.len) emitter.program.functions[callee_id] else return error.InvalidDirectCallee
+        else
+            try emitter.findFunction(instruction.name);
     if (callee == null) {
         if (isNativePluginCall(emitter.program, function, instruction)) {
             try plugins_mod.writeNativePluginCall(emitter, function, instruction, scope, aggregate_count);
@@ -64,7 +68,8 @@ pub fn writeCall(emitter: *Emitter, function: ir.Function, locals: []const []con
         try writeCallResult(emitter, result, instruction.span, scope);
         return;
     }
-    if (emitter.optimized) if (callee) |resolved| {
+    const resolved = callee.?;
+    if (emitter.optimized and !instruction.is_module_entry) {
         const typed_analysis = try emitter.typedAnalysis();
         const argument_types = try emitter.allocator.alloc(ir.Type, instruction.operands.len);
         defer emitter.allocator.free(argument_types);
@@ -78,15 +83,55 @@ pub fn writeCall(emitter: *Emitter, function: ir.Function, locals: []const []con
             try writeTypedCall(emitter, function, resolved, scalar, instruction, scope);
             return;
         }
-    };
-    try emitter.output.writer.print("  %v{d} = call %lnako.Value @lnako.fn.{d}(ptr null", .{ result, callee.?.id });
+    }
+    if (instruction.is_module_entry) {
+        try writeModuleEntryCall(emitter, function, resolved, result, instruction, scope);
+    } else {
+        try emitter.output.writer.print("  %v{d} = call %lnako.Value @lnako.fn.{d}(ptr null", .{ result, resolved.id });
+        for (instruction.operands) |operand| {
+            try emitter.output.writer.writeAll(", %lnako.Value ");
+            try constants_mod.writeValueRef(emitter, function, operand);
+        }
+        try emitter.output.writer.writeByte(')');
+        try emitter.debugSuffix(instruction.span, scope);
+    }
+    try writeCallResult(emitter, result, instruction.span, scope);
+}
+
+/// 実効取り込み文からのモジュールエントリ呼び出し。公式の静的展開相当
+/// として、モジュール直下の取り込み文はその辺が存在するストリームでのみ
+/// 実行する: ベース側の辺（callee_order <= site_order）はサイト側
+/// モジュールのコピー実行中に、コピー側のみの辺（callee_order >
+/// site_order）はベース実行中に抑止し、現在の『それ』を結果にする。
+/// 関数本体内の取り込み文は制御が到達するたびに実行される。
+fn writeModuleEntryCall(emitter: *Emitter, caller: ir.Function, callee: ir.Function, result: ir.ValueId, instruction: ir.Instruction, scope: usize) !void {
+    const global_index = emitter.globalIndex("それ") orelse return error.MissingResultGlobal;
+    const in_base_stream: i64 = if (instruction.callee_order <= instruction.site_order) 1 else 0;
+    const site_toplevel: i64 = if (instruction.site_toplevel) 1 else 0;
+    try emitter.output.writer.print("  %import.guard.{d} = call i32 @lnako_aot_module_entry_begin(i64 {d}, i64 {d}, i64 {d}, i64 {d})", .{ result, instruction.site_module, instruction.callee_module, in_base_stream, site_toplevel });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %import.run.{d} = icmp ne i32 %import.guard.{d}, 0", .{ result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  br i1 %import.run.{d}, label %import.call.{d}, label %import.skip.{d}", .{ result, result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("import.call.{d}:\n", .{result});
+    try emitter.output.writer.print("  %import.value.{d} = call %lnako.Value @lnako.fn.{d}(ptr null", .{ result, callee.id });
     for (instruction.operands) |operand| {
         try emitter.output.writer.writeAll(", %lnako.Value ");
-        try constants_mod.writeValueRef(emitter, function, operand);
+        try constants_mod.writeValueRef(emitter, caller, operand);
     }
     try emitter.output.writer.writeByte(')');
     try emitter.debugSuffix(instruction.span, scope);
-    try writeCallResult(emitter, result, instruction.span, scope);
+    try emitter.output.writer.print("  call void @lnako_aot_module_entry_end(i64 {d})", .{instruction.callee_module});
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  br label %import.done.{d}\n", .{result});
+    try emitter.output.writer.print("import.skip.{d}:\n", .{result});
+    try emitter.output.writer.print("  %import.previous.{d} = load %lnako.Value, ptr @lnako.global.{d}", .{ result, global_index });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  br label %import.done.{d}\n", .{result});
+    try emitter.output.writer.print("import.done.{d}:\n", .{result});
+    try emitter.output.writer.print("  %v{d} = phi %lnako.Value [ %import.value.{d}, %import.call.{d} ], [ %import.previous.{d}, %import.skip.{d} ]", .{ result, result, result, result, result });
+    try emitter.debugSuffix(instruction.span, scope);
 }
 
 /// Emit a direct primitive call from another primitive body.  The generic

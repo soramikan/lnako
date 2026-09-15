@@ -182,6 +182,8 @@ pub fn incrementNumber(runtime: *Runtime, value: Value) f64 {
         if (trimmed.len == 0) return 0;
         return std.fmt.parseFloat(f64, trimmed) catch std.math.nan(f64);
     }
+    // 配列等のオブジェクトは公式Number()相当（toPrimitive→数値化）を経由する
+    if (isObject(value)) return valueToNumberRuntime(runtime, value) catch std.math.nan(f64);
     return valueToNumber(value);
 }
 

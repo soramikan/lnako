@@ -251,10 +251,6 @@ const ValueBufferBucket = struct {
     buffers: std.ArrayListUnmanaged([]Value) = .empty,
 };
 
-fn isQualifiedGlobal(name: []const u8) bool {
-    return std.mem.indexOf(u8, name, "__") != null;
-}
-
 pub const Interpreter = struct {
     pub const default_interrupt_budget: usize = 1024;
 
@@ -280,6 +276,13 @@ pub const Interpreter = struct {
     system_context: Value = .undefined,
     call_depth: usize = 0,
     max_call_depth: usize = 4096,
+    /// 取り込み呼び出し経由で現在実行中のモジュールエントリのコピー。
+    /// 公式は取り込み先トークンを文位置へ静的展開するため、コピー内では
+    /// 展開時にguard済みだったモジュールへの取り込み文だけが除去される。
+    /// キーはモジュールインデックス、値は同一モジュールの入れ子実行を
+    /// 許容するための参照カウント。ループ内・関数本体内の取り込みは
+    /// 制御が到達するたびに実行される（相互再帰も公式同様に再実行）。
+    active_module_entries: std.AutoHashMapUnmanaged(u32, u32) = .empty,
     /// Number of ordinary instructions allowed between interrupt polls.
     /// Calls, allocations, dynamic execution, and block entries remain
     /// explicit safepoints regardless of this budget.
@@ -434,12 +437,14 @@ pub const Interpreter = struct {
                     const instruction = entry.ir_instruction.*;
                     switch (instruction.opcode) {
                         .load_global, .store_global => entry.global_slot = try self.ensureGlobalSlot(instruction.name),
-                        .load_local, .array_set, .property_set, .increment => {
+                        .load_local, .ensure_array_var => {
                             if (entry.local_slot == prepared.no_local_slot) entry.global_slot = try self.ensureGlobalSlot(instruction.name);
                         },
                         .destructure_store => {
                             for (instruction.names, 0..) |name, index| {
-                                if (isQualifiedGlobal(name)) entry.destructure_global_slots[index] = try self.ensureGlobalSlot(name);
+                                // グローバルスロットはグローバル束縛のターゲットだけに
+                                // 割り当てる（束縛結果はnames_localが権威）。
+                                if (!ir.destructureTargetIsLocal(instruction, index)) entry.destructure_global_slots[index] = try self.ensureGlobalSlot(name);
                             }
                         },
                         .call => if (entry.call_target) |*target| switch (target.*) {
@@ -469,6 +474,7 @@ pub const Interpreter = struct {
         // deinitialize, so tear them down while all interpreter services exist.
         self.native_plugin_state.deinit();
         self.globals.deinit(self.allocator);
+        self.active_module_entries.deinit(self.allocator);
         self.global_slots.deinit(self.allocator);
         self.global_values.deinit(self.allocator);
         self.global_present.deinit(self.allocator);
@@ -1005,12 +1011,16 @@ pub const Interpreter = struct {
         return execute.getOne(self, container, key);
     }
 
-    pub fn setIndexed(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
-        return execute.setIndexed(self, frame, instruction);
+    pub fn elementSet(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
+        return execute.elementSet(self, frame, instruction);
     }
 
-    pub fn increment(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
-        return execute.increment(self, frame, instruction);
+    pub fn ensureArrayVar(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
+        return execute.ensureArrayVar(self, frame, instruction);
+    }
+
+    pub fn initArrayIndex(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
+        return execute.initArrayIndex(self, frame, instruction);
     }
 
     pub fn makeClosure(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {

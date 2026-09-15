@@ -29,7 +29,7 @@ pub fn runTestTarget(allocator: std.mem.Allocator, io: std.Io, path: []const u8,
 }
 
 pub fn runTestFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !bool {
-    var ir_program = (try compiler_pipeline.compileInput(allocator, io, path, false, stderr)) orelse return false;
+    var ir_program = (try compiler_pipeline.compileInput(allocator, io, path, .{}, stderr)) orelse return false;
     defer ir_program.deinit();
     var runtime = lnako.runtime.value.Runtime.init(allocator);
     defer runtime.deinit();

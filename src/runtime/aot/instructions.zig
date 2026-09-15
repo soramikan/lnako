@@ -87,9 +87,29 @@ pub export fn lnako_aot_concat(out: *state.Value, left: *const state.Value, righ
     };
 }
 
-pub export fn lnako_aot_increment(target: *state.Value, amount: *const state.Value) callconv(.c) void {
-    const runtime = if (state.active_runtime) |*active| active else return;
-    target.* = state.incrementValue(runtime, target.*, amount.*);
+/// 増減文の分解命令（公式convInc相当）。
+/// `typeof v === 'undefined'` の判定。純粋なタグ比較で例外は発生させない。
+pub export fn lnako_aot_is_undefined(value: *const state.Value) callconv(.c) c_int {
+    return if (value.tag == @intFromEnum(shared.Tag.undefined)) 1 else 0;
+}
+
+/// `v0 = 0` 相当: undefinedなら0、それ以外はそのまま返す。
+pub export fn lnako_aot_coalesce_or_zero(out: *state.Value, value: *const state.Value) callconv(.c) void {
+    out.* = if (value.tag == @intFromEnum(shared.Tag.undefined)) state.numberValue(0) else value.*;
+}
+
+/// `Number(v0) + Number(incValue)` 相当の数値強制つき加算。
+/// 呼び出し側は読み出し・undefined初期化・量の評価を済ませてから呼ぶ。
+pub export fn lnako_aot_increment_values(out: *state.Value, old: *const state.Value, amount: *const state.Value) callconv(.c) void {
+    const runtime = if (state.active_runtime) |*active| active else {
+        out.* = .{};
+        return;
+    };
+    var rooted = [_]state.Value{ old.*, amount.* };
+    var frame = state.RootFrame{};
+    runtime.pushRoots(&frame, &rooted, rooted.len);
+    defer runtime.popRoots(&frame);
+    out.* = state.incrementValue(runtime, rooted[0], rooted[1]);
 }
 
 pub export fn lnako_aot_index_get(out: *state.Value, container: *const state.Value, key: *const state.Value) callconv(.c) void {
@@ -99,6 +119,11 @@ pub export fn lnako_aot_index_get(out: *state.Value, container: *const state.Val
         out.* = .{};
         return;
     };
+    // 同一命令内の先行する失敗（公式では先に投げられたTypeError）を上書きしない
+    if (runtime.has_pending_exception) {
+        out.* = .{};
+        return;
+    }
     const start_epoch = runtime.failure_epoch;
     out.* = runtime.indexGet(container_value, key_value);
     runtime.recordAotEntry(&runtime.counters.aot_index_get, runtime.failure_epoch == start_epoch);
@@ -106,18 +131,73 @@ pub export fn lnako_aot_index_get(out: *state.Value, container: *const state.Val
 
 pub export fn lnako_aot_index_set(container: *const state.Value, key: *const state.Value, value: *const state.Value) callconv(.c) c_int {
     const runtime = if (state.active_runtime) |*active| active else return -1;
+    // 先行する中間読出しの失敗を最終書込みの失敗で上書きしない
+    if (runtime.has_pending_exception) return -1;
     const start_epoch = runtime.failure_epoch;
     if (container.tag == @intFromEnum(shared.Tag.undefined) or container.tag == @intFromEnum(shared.Tag.null_value)) {
         runtime.setIndexAssignmentFailure(container.*, key.*);
         runtime.recordAotEntry(&runtime.counters.aot_index_set, false);
         return -1;
     }
-    runtime.indexSet(container.*, key.*, value.*) catch {
+    runtime.indexSet(container.*, key.*, value.*) catch |failure| {
+        // ArrayLengthAssignment等の失敗はpending例外として報告する。
+        // 既にpendingな例外がある場合は先の失敗を上書きしない。
+        if (!runtime.has_pending_exception) runtime.setFailure(failure);
         runtime.recordAotEntry(&runtime.counters.aot_index_set, false);
         return -1;
     };
     runtime.recordAotEntry(&runtime.counters.aot_index_set, runtime.failure_epoch == start_epoch);
     return 0;
+}
+
+/// DNCL互換の配列自動初期化（公式convLetArrayのcheckInit相当）。
+/// 変数スロットの値が配列でなければ30要素の0配列で置き換える。
+pub export fn lnako_aot_ensure_array_var(slot: *state.Value) callconv(.c) void {
+    const runtime = if (state.active_runtime) |*active| active else return;
+    // 先行する中間読出し等の失敗を保持する
+    if (runtime.has_pending_exception) return;
+    if (slot.tag == @intFromEnum(shared.Tag.array)) return;
+    slot.* = createDnclArray(runtime) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+}
+
+/// DNCLの配列自動初期化で使う30要素の0配列を生成する。
+fn createDnclArray(runtime: *state.Runtime) !state.Value {
+    const zeros: [30]state.Value = @splat(state.numberValue(0));
+    return runtime.createArray(&zeros);
+}
+
+/// DNCL自動初期化のcheck式（公式 `tmp[..] instanceof Array` 相当）。
+/// 値のタグが配列なら1、それ以外は0を返す。例外は発生しない。
+pub export fn lnako_aot_is_array(value: *const state.Value) callconv(.c) i32 {
+    return if (value.tag == @intFromEnum(shared.Tag.array)) 1 else 0;
+}
+
+/// DNCL自動初期化のwrite-back式（公式 `tmp[..] = arrayDefCode` 相当）。
+/// container[key]へ無条件に30要素の0配列を書き込む。
+/// containerがundefined/nullならindexSet経由で公式同様
+/// 『Cannot set properties of …』で失敗する。
+pub export fn lnako_aot_init_array_index(container: *state.Value, key: *const state.Value) callconv(.c) void {
+    const runtime = if (state.active_runtime) |*active| active else return;
+    if (runtime.has_pending_exception) return;
+    if (container.tag == @intFromEnum(shared.Tag.undefined) or container.tag == @intFromEnum(shared.Tag.null_value)) {
+        runtime.setIndexAssignmentFailure(container.*, key.*);
+        return;
+    }
+    var rooted = [_]state.Value{ container.*, key.*, .{} };
+    var frame = state.RootFrame{};
+    runtime.pushRoots(&frame, &rooted, rooted.len);
+    defer runtime.popRoots(&frame);
+    rooted[2] = createDnclArray(runtime) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    runtime.indexSet(rooted[0], rooted[1], rooted[2]) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
 }
 
 pub export fn lnako_aot_destructure_get(out: *state.Value, source: *const state.Value, index: usize) callconv(.c) void {

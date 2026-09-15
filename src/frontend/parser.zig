@@ -10,11 +10,35 @@ const Kind = token_mod.Kind;
 
 pub const Error = lexer.Error || syntax_transform.Error || std.mem.Allocator.Error;
 
+/// 取り込み先モジュールが残したモードを指定位置以降の文へ適用する。
+/// 公式は取り込み先トークン列を取り込み文の位置へ結合して単一パースするため、
+/// 取り込み先内のDNCLモード文が後続の取り込み元の文にも効く。
+pub const TailMode = struct { position: usize, mode: token_mod.Mode };
+
+/// 取り込み文の位置と、その文をパースした時点のモード。
+pub const ImportMode = struct { position: usize, mode: token_mod.Mode };
+
+pub const ParseOptions = struct {
+    /// 拡張子やコマンドラインで強制される構文モード（字句変換とパーサ双方に効く）
+    forced: token_mod.Mode = .{},
+    /// 取り込み文位置のモードを継承するパーサ初期モード。
+    /// 字句変換（syntax_transform）には適用しない。公式はconvertDNCLを
+    /// ファイル単位で実行するため、取り込み元のモードが効くのはパーサフラグ
+    /// （1始まり添字・逆順・自動初期化）だけである。
+    initial: ?token_mod.Mode = null,
+    /// 各取り込み文の直後に適用する、取り込み先モジュールの終端モード。
+    tail_modes: []const TailMode = &.{},
+};
+
 pub const ParseResult = struct {
     stream: lexer.TokenStream,
     filename: []const u8,
     root: ?*ast.Node,
     diagnostics: []diagnostic.Diagnostic,
+    /// パース終了時点のモード。取り込み元へ継続するモードの計算に使う。
+    final_mode: token_mod.Mode = .{},
+    /// 各取り込み文の位置とその時点のモード（出現順）。
+    import_modes: []const ImportMode = &.{},
 
     pub fn deinit(self: *ParseResult) void {
         self.stream.deinit();
@@ -32,7 +56,14 @@ pub const ParseResult = struct {
 /// 構文エラーは Zig の error ではなく diagnostics と root=null で返す。
 /// 公式処理系が継続する廃止構文は、diagnosticを残したままrootを返す。
 pub fn parse(backing_allocator: std.mem.Allocator, source: []const u8, filename: []const u8) Error!ParseResult {
-    var stream = try lexer.tokenize(backing_allocator, source);
+    return parseWithMode(backing_allocator, source, filename, .{});
+}
+
+/// `options.forced` は拡張子やコマンドラインで強制される構文モード（.dncl、--dncl など）。
+/// `options.initial` は取り込み元から継承するパーサ初期モード、
+/// `options.tail_modes` は取り込み先の終端モードを取り込み文の直後へ適用する。
+pub fn parseWithMode(backing_allocator: std.mem.Allocator, source: []const u8, filename: []const u8, options: ParseOptions) Error!ParseResult {
+    var stream = try lexer.tokenizeWithMode(backing_allocator, source, options.forced);
     errdefer stream.deinit();
     try syntax_transform.apply(&stream);
 
@@ -42,7 +73,12 @@ pub fn parse(backing_allocator: std.mem.Allocator, source: []const u8, filename:
         .allocator = allocator,
         .tokens = stream.tokens,
         .filename = owned_filename,
-        .mode = stream.mode,
+        // 公式は DNCLモード/DNCL2モード トークンが現れた位置からモードを有効化する
+        // （yDNCLMode相当）。ディレクティブ検出による構文変換はファイル全体へ
+        // 適用済みだが、添字・自動初期化の意味づけは取り込み元から継承した
+        // モード（initial）と強制モード（forced）の両方が効いた状態で開始する。
+        .mode = orMode(options.initial orelse .{}, options.forced),
+        .tail_modes = options.tail_modes,
     };
     const root = parser.parseProgram() catch |err| switch (err) {
         error.ParseFailed => null,
@@ -54,10 +90,20 @@ pub fn parse(backing_allocator: std.mem.Allocator, source: []const u8, filename:
         .filename = owned_filename,
         .root = root,
         .diagnostics = diagnostics,
+        .final_mode = parser.mode,
+        .import_modes = try parser.import_modes.toOwnedSlice(allocator),
     };
 }
 
 const ParseFailure = error{ ParseFailed, OutOfMemory };
+
+fn orMode(a: token_mod.Mode, b: token_mod.Mode) token_mod.Mode {
+    return .{
+        .dncl = a.dncl or b.dncl,
+        .dncl2 = a.dncl2 or b.dncl2,
+        .indent = a.indent or b.indent,
+    };
+}
 
 const Stop = packed struct {
     end: bool = false,
@@ -70,6 +116,9 @@ const Parser = struct {
     tokens: []const Token,
     filename: []const u8,
     mode: token_mod.Mode,
+    tail_modes: []const TailMode = &.{},
+    tail_cursor: usize = 0,
+    import_modes: std.ArrayList(ImportMode) = .empty,
     index: usize = 0,
     delimited_expression_depth: usize = 0,
     diagnostics: std.ArrayList(diagnostic.Diagnostic) = .empty,
@@ -78,6 +127,29 @@ const Parser = struct {
         const root = try self.parseBlock(.{});
         if (!self.at(.eof)) return self.fail(.unexpected_token, "プログラム末尾に解釈できないトークンがあります", self.peek());
         return root;
+    }
+
+    /// 取り込み先モジュールの終端モードを、取り込み文の直後から適用する。
+    /// 公式は取り込み先トークンを結合して単一パースするため、取り込み先内の
+    /// DNCLモード文が後続の取り込み元の文にも効く。モードは単調に有効化される
+    /// だけなので OR 適用で足りる。取り込み文自身の解析には適用しない
+    /// （position は取り込み文の先頭なので `>` で比較する）。
+    fn applyTailModes(self: *Parser) void {
+        while (self.tail_cursor < self.tail_modes.len and
+            self.peek().span.start > self.tail_modes[self.tail_cursor].position)
+        {
+            const tail = self.tail_modes[self.tail_cursor];
+            self.mode.dncl = self.mode.dncl or tail.mode.dncl;
+            self.mode.dncl2 = self.mode.dncl2 or tail.mode.dncl2;
+            self.mode.indent = self.mode.indent or tail.mode.indent;
+            self.tail_cursor += 1;
+        }
+    }
+
+    /// 取り込み文の位置とその時点のモードを記録する。
+    /// 取り込み先はこの時点のモードを継承してパースされる（公式の結合ストリーム相当）。
+    fn recordImportMode(self: *Parser, node: *ast.Node) ParseFailure!void {
+        try self.import_modes.append(self.allocator, .{ .position = node.span.start, .mode = self.mode });
     }
 
     fn parseBlock(self: *Parser, stop: Stop) ParseFailure!*ast.Node {
@@ -93,6 +165,7 @@ const Parser = struct {
     }
 
     fn parseStatement(self: *Parser) ParseFailure!*ast.Node {
+        self.applyTailModes();
         const token = self.peek();
         if (self.isImportDirective()) return self.parseImportDirective();
         if (self.isLegacySequentialDirective()) return self.parseLegacySequentialDirective();
@@ -109,7 +182,6 @@ const Parser = struct {
             .def_test => self.parseFunctionDefinition(true),
             .keyword_let => self.parseDeclaration(false),
             .keyword_const => self.parseDeclaration(true),
-            .keyword_import => self.parseImport(),
             .question_display => self.parseDebugDisplay(),
             .keyword_here_end, .keyword_else, .keyword_error => self.fail(.unexpected_token, "対応する構文の開始がありません", token),
             else => blk: {
@@ -141,6 +213,15 @@ const Parser = struct {
 
     fn parseModeDirective(self: *Parser) ParseFailure!*ast.Node {
         const first = self.advance();
+        // 公式yDNCLMode相当: この文の位置から配列モードを有効化し、空行を返す。
+        if (first.kind == .keyword_dncl_mode) {
+            self.mode.dncl = true;
+            return self.makeNode(.eol, first);
+        }
+        if (first.kind == .keyword_dncl2_mode) {
+            self.mode.dncl2 = true;
+            return self.makeNode(.eol, first);
+        }
         if (first.kind == .not) {
             const directive = try self.require(.identifier, "『!』の後ろにモード名が必要です");
             if (std.mem.eql(u8, directive.value, "モジュール公開既定値")) {
@@ -203,6 +284,7 @@ const Parser = struct {
                 std.mem.eql(u8, next.value, "非同期モード"));
         }
         return token.kind == .keyword_mode or token.kind == .keyword_async or
+            token.kind == .keyword_dncl_mode or token.kind == .keyword_dncl2_mode or
             (token.kind == .identifier and (std.mem.eql(u8, token.value, "厳チェック") or
                 std.mem.eql(u8, token.value, "モジュール公開既定値") or
                 std.mem.eql(u8, token.value, "実行速度優先") or
@@ -356,14 +438,6 @@ const Parser = struct {
         return node;
     }
 
-    fn parseImport(self: *Parser) ParseFailure!*ast.Node {
-        const start = self.advance();
-        const path = try self.parseExpression(0);
-        const node = try self.makeNodeWithChildren(.import, start, try self.copyChildren(&.{path}));
-        node.value = path.value;
-        return node;
-    }
-
     fn isImportDirective(self: *Parser) bool {
         if (!self.at(.not) or (self.peekAhead(1).kind != .string and self.peekAhead(1).kind != .string_template)) return false;
         var offset: usize = 2;
@@ -381,6 +455,7 @@ const Parser = struct {
         const node = try self.makeNodeWithChildren(.import, start, try self.copyChildren(&.{path}));
         node.value = path.value;
         node.josi = "";
+        try self.recordImportMode(node);
         return node;
     }
 
@@ -444,7 +519,8 @@ const Parser = struct {
         const node = try self.makeNodeWithChildren(kind, start, children);
         node.name = if (target.name.len > 0) target.name else target.value;
         node.josi = "";
-        node.check_array_init = self.mode == .dncl or self.mode == .dncl2;
+        // DNCLでは未初期化変数への配列要素代入で30要素配列を自動初期化する（公式flagCheckArrayInit相当）
+        node.check_array_init = kind == .array_assignment and (self.mode.dncl or self.mode.dncl2);
         return node;
     }
 
@@ -454,19 +530,30 @@ const Parser = struct {
         while (true) {
             if (self.at(.at)) {
                 const at_token = self.advance();
-                const index = try self.parsePrimary();
+                // 公式はprop[i]形（プロパティ参照への添字適用）を受理しない
+                if (base.kind == .property_reference) return self.fail(.invalid_array_access, "配列アクセスで指定ミス", at_token);
+                const index = try self.dnclArrayIndex(try self.parsePrimary());
                 base = try self.reference(.array_reference, base, &.{index}, at_token);
                 continue;
             }
             if (self.at(.left_bracket)) {
                 const open = self.advance();
+                if (base.kind == .property_reference) return self.fail(.invalid_array_access, "配列アクセスで指定ミス", open);
+                self.delimited_expression_depth += 1;
+                defer self.delimited_expression_depth -= 1;
                 var indexes: std.ArrayList(*ast.Node) = .empty;
                 while (!self.at(.right_bracket) and !self.at(.eof)) {
-                    try indexes.append(self.allocator, try self.parseExpression(0));
+                    const index = try self.parseExpression(0);
+                    // 読み出し側と同じく、公式はfunc tokenをカンマ直前では
+                    // 値として受理しない（代入側のlet_arrayでも指定ミスになる）。
+                    if (index.kind == .word and index.josi.len == 0 and !index.grouped and self.at(.comma)) index.bare_index_word = true;
+                    try indexes.append(self.allocator, try self.dnclArrayIndex(index));
+                    // 代入側は公式のlet_array同様にカンマ区切りの次元数制限がない
                     if (!self.at(.comma)) break;
                     _ = self.advance();
                 }
                 const close = try self.require(.right_bracket, "配列添字を閉じる『]』が必要です");
+                self.dnclReverseIndexes(indexes.items);
                 base = try self.reference(.array_reference, base, try indexes.toOwnedSlice(self.allocator), open);
                 base.josi = close.josi;
                 continue;
@@ -519,15 +606,6 @@ const Parser = struct {
                 _ = self.advance();
                 const collection = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try self.nop(start);
                 return self.parseForeach(start, collection);
-            }
-            if (self.at(.keyword_import)) {
-                const command = self.advance();
-                if (arguments.items.len == 0) return self.fail(.expected_expression, "取り込み先が必要です", command);
-                const path = arguments.items[arguments.items.len - 1];
-                const node = try self.makeNodeWithChildren(.import, start, try self.copyChildren(&.{path}));
-                node.value = path.value;
-                node.josi = "";
-                return node;
             }
             if ((self.identifierValue("増") or self.identifierValue("減")) and self.peekAhead(1).kind == .keyword_repeat) {
                 return self.parseFor(start, arguments.items);
@@ -686,7 +764,6 @@ const Parser = struct {
 
         var target_index: ?usize = null;
         var value_index: ?usize = null;
-        var increment_amount_index: ?usize = null;
         for (arguments, 0..) |arg, i| {
             const arg_is_target = if (is_define) isValueJosi(arg.josi) else isTargetJosi(arg.josi);
             const arg_is_value = if (is_define) isTargetJosi(arg.josi) else isValueJosi(arg.josi);
@@ -694,8 +771,6 @@ const Parser = struct {
                 if (target_index == null) target_index = i;
             } else if (arg_is_value) {
                 if (value_index == null) value_index = i;
-            } else if (is_increment and arg.kind == .number) {
-                if (increment_amount_index == null) increment_amount_index = i;
             }
         }
 
@@ -737,22 +812,31 @@ const Parser = struct {
             const result = try self.makeNodeWithChildren(kind, start, children);
             result.name = if (target.kind == .word) target.value else if (target.name.len > 0) target.name else target.value;
             result.josi = "";
+            result.check_array_init = kind == .array_assignment and (self.mode.dncl or self.mode.dncl2);
             return result;
         }
 
-        const ti = target_index orelse value_index orelse 0;
-        if (arguments[ti].kind != .word) return self.fail(.invalid_assignment, "増減の対象は変数である必要があります", command);
-        var other_arg: ?usize = null;
+        // 公式yIncDec相当: 『を』助詞の直近引数が増減対象、『だけ』または無助詞の直近引数が増減量。
+        // 『に』『から』等の助詞対象や、定数・式・prop[i]形への増減は構文エラー。
+        var inc_target_index: ?usize = null;
+        var inc_amount_index: ?usize = null;
         for (arguments, 0..) |arg, i| {
-            if (i == ti) continue;
-            if (other_arg == null) other_arg = i;
-            _ = arg;
+            if (std.mem.eql(u8, arg.josi, "を")) {
+                inc_target_index = i;
+            } else if (std.mem.eql(u8, arg.josi, "だけ") or arg.josi.len == 0) {
+                inc_amount_index = i;
+            }
         }
+        const inc_usage = try std.fmt.allocPrint(self.allocator, "『{s}』文で定数が見当たりません。『(変数名)を(値)だけ{s}』のように使います。", .{ command.value, command.value });
+        const inc_target = if (inc_target_index) |ti|
+            arguments[ti]
+        else
+            return self.fail(.invalid_assignment, inc_usage, command);
+        if (!isIncrementTargetPath(inc_target))
+            return self.fail(.invalid_assignment, inc_usage, command);
         var amount: *ast.Node = undefined;
-        if (increment_amount_index) |ai| {
+        if (inc_amount_index) |ai| {
             amount = arguments[ai];
-        } else if (other_arg) |oi| {
-            amount = arguments[oi];
         } else {
             const one = try self.makeNode(.number, command);
             one.value = "1";
@@ -767,8 +851,17 @@ const Parser = struct {
             amount.operator = "*";
             amount.josi = "";
         }
-        const result = try self.makeNodeWithChildren(.increment, start, try self.copyChildren(&.{amount}));
-        result.name = arguments[ti].value;
+        if (inc_target.kind == .word) {
+            const result = try self.makeNodeWithChildren(.increment, start, try self.copyChildren(&.{amount}));
+            result.name = inc_target.value;
+            result.josi = "";
+            return result;
+        }
+        // A[i]をN増やす: 公式はコンテナと添字を一度だけ評価し、要素が未定義なら0に初期化する
+        const target_path = try self.assignmentPath(inc_target);
+        const children = try self.prepend(amount, target_path);
+        const result = try self.makeNodeWithChildren(.increment_indexed, start, children);
+        result.name = if (inc_target.name.len > 0) inc_target.name else inc_target.value;
         result.josi = "";
         return result;
     }
@@ -1039,22 +1132,33 @@ const Parser = struct {
             }
             if (self.at(.at)) {
                 const token = self.advance();
-                const index = try self.parsePrimary();
+                // 公式はprop[i]形（プロパティ参照への添字適用）を受理しない
+                if (value.kind == .property_reference) return self.fail(.invalid_array_access, "配列アクセスで指定ミス", token);
+                // 公式のcheckArrayIndexはレシーバの種類を問わず添字へ適用される
+                const index = try self.dnclArrayIndex(try self.parsePrimary());
                 const reference_kind: ast.Kind = if (isVariableReference(value.kind)) .array_reference else .array_value_reference;
                 value = try self.reference(reference_kind, value, &.{index}, token);
                 continue;
             }
             if (self.at(.left_bracket) and value.josi.len == 0) {
                 const open = self.advance();
+                if (value.kind == .property_reference) return self.fail(.invalid_array_access, "配列アクセスで指定ミス", open);
                 self.delimited_expression_depth += 1;
                 defer self.delimited_expression_depth -= 1;
                 var indexes: std.ArrayList(*ast.Node) = .empty;
                 while (!self.at(.right_bracket) and !self.at(.eof)) {
-                    try indexes.append(self.allocator, try self.parseExpression(0));
+                    const index = try self.parseExpression(0);
+                    // 公式のfunc tokenはカンマ直前では値として受理されない。
+                    // 関数名への解決は意味解析で行うため、ここでは裸の単語だけ記録する。
+                    if (index.kind == .word and index.josi.len == 0 and !index.grouped and self.at(.comma)) index.bare_index_word = true;
+                    try indexes.append(self.allocator, try self.dnclArrayIndex(index));
+                    if (indexes.items.len > 3) return self.fail(.invalid_array_access, "配列アクセスで指定ミス", open);
                     if (!self.at(.comma)) break;
                     _ = self.advance();
                 }
                 const close = try self.require(.right_bracket, "配列参照を閉じる『]』が必要です");
+                // 公式のcheckArrayIndex/checkArrayReverseはレシーバの種類を問わず適用される
+                self.dnclReverseIndexes(indexes.items);
                 const reference_kind: ast.Kind = if (isVariableReference(value.kind)) .array_reference else .array_value_reference;
                 value = try self.reference(reference_kind, value, try indexes.toOwnedSlice(self.allocator), open);
                 value.josi = close.josi;
@@ -1269,6 +1373,30 @@ const Parser = struct {
         return self.allocator.dupe(*ast.Node, children);
     }
 
+    /// DNCL(v1)の配列添字は1始まりなので、公式のcheckArrayIndexと同じく `添字-1` に包む。
+    /// DNCL2では0始まりのまま扱うため、そのまま返す。
+    fn dnclArrayIndex(self: *Parser, index: *ast.Node) ParseFailure!*ast.Node {
+        if (!self.mode.dncl) return index;
+        const one = try self.allocator.create(ast.Node);
+        one.* = .{ .kind = .number, .span = index.span, .end_span = index.end_span, .number_value = 1 };
+        one.value = "1";
+        const wrapped = try self.makeNode(.binary_operator, .{ .kind = .minus, .span = index.span, .lexeme = "-", .value = "-" });
+        wrapped.operator = "-";
+        wrapped.end_span = index.end_span;
+        wrapped.josi = index.josi;
+        wrapped.raw_josi = index.raw_josi;
+        wrapped.children = try self.copyChildren(&.{ index, one });
+        index.josi = "";
+        index.raw_josi = "";
+        return wrapped;
+    }
+
+    /// DNCL(v1)の多次元配列は添字が逆順になる（公式checkArrayReverse相当）。
+    fn dnclReverseIndexes(self: *Parser, indexes: []*ast.Node) void {
+        if (!self.mode.dncl or indexes.len < 2) return;
+        std.mem.reverse(*ast.Node, indexes);
+    }
+
     fn namesToArguments(self: *Parser, names: []const *ast.Node) ParseFailure![]ast.Argument {
         const result = try self.allocator.alloc(ast.Argument, names.len);
         for (names, 0..) |name, index| result[index] = .{
@@ -1456,6 +1584,21 @@ fn tokenStem(token: Token) []const u8 {
     return token.value;
 }
 
+/// 公式yIncDecの対象規則: 変数・配列参照・プロパティ参照で、最深部がword。
+/// prop[i]形（プロパティ参照への添字適用）は公式が受理しないため拒否する。
+fn isIncrementTargetPath(node: *ast.Node) bool {
+    var current = node;
+    while (true) switch (current.kind) {
+        .word => return true,
+        .property_reference => current = current.children[0],
+        .array_reference => {
+            if (current.children[0].kind == .property_reference) return false;
+            current = current.children[0];
+        },
+        else => return false,
+    };
+}
+
 fn appendAssignmentPath(path: *std.ArrayList(*ast.Node), allocator: std.mem.Allocator, node: *ast.Node) ParseFailure!void {
     if (node.kind != .array_reference and node.kind != .property_reference) {
         if (node.kind != .word) try path.append(allocator, node);
@@ -1565,7 +1708,7 @@ test "DNCLの「でないならば」を条件否定へ変換する" {
     var result = try parse(std.testing.allocator, "!DNCLモード\nもしA=1でないならば\n|B=2\nを実行する\n", "dncl-not.nako3");
     defer result.deinit();
     try std.testing.expect(result.succeeded());
-    const statement = result.root.?.children[1];
+    const statement = result.root.?.children[2];
     const condition = statement.children[0];
     try std.testing.expectEqual(ast.Kind.unary_operator, condition.kind);
     try std.testing.expectEqualStrings("not", condition.operator);
@@ -1577,7 +1720,7 @@ test "公式同様にインラインの「そうでなくもし」を入れ子�
     var result = try parse(std.testing.allocator, "!DNCL2\nもしC=0ならば:\n　1を表示\nそうでなくもし、C=1ならば:\n　2を表示\n", "dncl2-else-if.nako3");
     defer result.deinit();
     try std.testing.expect(result.succeeded());
-    const outer = result.root.?.children[1];
+    const outer = result.root.?.children[2];
     try std.testing.expectEqual(ast.Kind.if_statement, outer.kind);
     try std.testing.expectEqual(@as(usize, 1), outer.children[2].children.len);
     try std.testing.expectEqual(ast.Kind.if_statement, outer.children[2].children[0].kind);
@@ -1752,6 +1895,7 @@ test "公式同様に区切り内の負のBigInt直接指定を拒否する" {
         "HEX(-1n)\n",
         "A=[-1n]\n",
         "A={x:-1n}\n",
+        "A[-1n]=5\n",
     };
     for (rejected) |source| {
         var result = try parse(std.testing.allocator, source, "negative-bigint.nako3");

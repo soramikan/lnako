@@ -183,7 +183,6 @@ fn inferParameterLoadType(program: ir.Program, function: ir.Function, instructio
                 if (std.mem.eql(u8, name, instruction.name)) return .dynamic;
             }
         }
-        if (candidate.opcode == .increment and std.mem.eql(u8, candidate.name, instruction.name)) return .dynamic;
         if (candidate.opcode != .store_local or !std.mem.eql(u8, candidate.name, instruction.name) or candidate.operands.len == 0) continue;
         evidence.add(types[candidate.operands[0]]);
     };
@@ -441,6 +440,15 @@ fn replaceWithConstant(instruction: *ir.Instruction, constant: Constant) void {
     instruction.name = "";
     instruction.operator = "";
     instruction.names = &.{};
+    instruction.names_local = &.{};
+    instruction.local_target = false;
+    instruction.check_array_init = false;
+    instruction.is_module_entry = false;
+    instruction.site_module = 0;
+    instruction.site_order = 0;
+    instruction.callee_module = 0;
+    instruction.callee_order = 0;
+    instruction.site_toplevel = false;
     instruction.number_value = null;
     instruction.boolean_value = false;
     instruction.direct_callee = null;

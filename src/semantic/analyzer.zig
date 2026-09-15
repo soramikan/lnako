@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("../frontend/ast.zig");
 const diagnostic = @import("../frontend/diagnostic.zig");
 const builtin_catalog = @import("builtin_catalog.zig");
+const system_constant = @import("../runtime/system_constant.zig");
 
 pub const ScopeId = u32;
 pub const SymbolId = u32;
@@ -10,19 +11,49 @@ pub const ScopeKind = enum { module, function, anonymous_function };
 pub const SymbolKind = enum { variable, constant, function, test_function, parameter, loop_variable };
 pub const BindingKind = enum { declaration, reference, call, builtin };
 
+/// 実効取り込み文1件に対応する呼び出し先モジュールのエントリ名。
+/// 公式は取り込み文位置へ取り込み先トークンを展開するため、実行時にも
+/// その位置で取り込み先のトップレベルが動く必要がある。
+pub const ImportEntry = struct {
+    position: usize,
+    entry_name: []const u8,
+    /// 展開順序モデル。公式は取り込み文を取り込み先トークンのコピーで
+    /// 置き換えるため、copy-of-M 内の取り込み文は M の展開時に include
+    /// guard 済みだったモジュールへのもの（order ≤ order(M)）が除去済み。
+    /// 実行時は copy-of-M の内部でのみ到達し得る取り込み呼び出しを
+    /// callee_order <= site_order で静的に特定し、サイト側モジュールの
+    /// コピー実行中のみ抑止する。
+    site_module: u32,
+    site_order: u32,
+    callee_module: u32,
+    callee_order: u32,
+    /// 取り込み文がモジュール直下（関数本体外）にあれば真。直下の文は
+    /// ベース/コピーのどちらかのストリームにのみ存在し得るため実行時に
+    /// ストリーム判定で抑止する。関数本体内の文は公式では関数本体へ
+    /// トークンがインラインされるため到達するたびに常に実行する。
+    site_toplevel: bool = false,
+};
+
 pub const ModuleInput = struct {
     name: []const u8,
     path: []const u8,
     root: *ast.Node,
-    imports: []const []const u8 = &.{},
     allows_dynamic_commands: bool = false,
+    /// root.children と同じ長さの、結合ストリーム上の文順位。
+    /// 空ならモジュール内位置をファイル内のspan順で比較する。
+    stmt_ranks: []const usize = &.{},
+    /// 結合ストリーム上でこのモジュールの展開が始まる順位
+    /// （公式のプラグイン名設定マーカー位置）。modList順の名前解決に使う。
+    marker_rank: usize = std.math.maxInt(usize),
+    /// 実効取り込み文の位置→呼び出し先エントリ名。実行順を公式の
+    /// トークン展開に合わせるための情報。
+    import_entries: []const ImportEntry = &.{},
 };
 
 pub const Module = struct {
     name: []const u8,
     path: []const u8,
     scope: ScopeId,
-    imports: []const []const u8,
     strict: bool,
 };
 
@@ -44,6 +75,10 @@ pub const Symbol = struct {
     is_export: bool,
     is_mutable: bool,
     argument_count: usize = 0,
+    /// 宣言文が他モジュールのシンボルへ解決され、実質的に
+    /// 作られなかった暗黙宣言。公式は単一パスで名前を確定するため
+    /// 解決済みの参照からも見えない。
+    shadowed: bool = false,
 };
 
 pub const Binding = struct {
@@ -56,6 +91,8 @@ pub const Binding = struct {
     /// language builtin catalog. Such calls remain dynamic and must not be
     /// assigned a static compiler dispatch site.
     dynamic_builtin: bool = false,
+    /// 実効取り込み文から生成されたモジュールエントリ呼び出しの展開順序情報。
+    import_entry: ?ImportEntry = null,
 };
 
 pub const FunctionScope = struct {
@@ -99,14 +136,22 @@ pub fn analyzeModules(backing_allocator: std.mem.Allocator, inputs: []const Modu
     errdefer arena.deinit();
     var analyzer = Analyzer{ .allocator = arena.allocator(), .inputs = inputs };
     try analyzer.run();
+    // arenaを返却値へコピーする前に確保を済ませる。リテラル内で呼ぶと
+    // コピー後のarena状態へ確保が記録されずリークする。
+    const modules = try analyzer.modules.toOwnedSlice(analyzer.allocator);
+    const scopes = try analyzer.scopes.toOwnedSlice(analyzer.allocator);
+    const symbols = try analyzer.symbols.toOwnedSlice(analyzer.allocator);
+    const bindings = try analyzer.bindings.toOwnedSlice(analyzer.allocator);
+    const function_scopes = try analyzer.function_scopes.toOwnedSlice(analyzer.allocator);
+    const diagnostics = try analyzer.diagnostics.toOwnedSlice(analyzer.allocator);
     return .{
         .arena = arena,
-        .modules = try analyzer.modules.toOwnedSlice(analyzer.allocator),
-        .scopes = try analyzer.scopes.toOwnedSlice(analyzer.allocator),
-        .symbols = try analyzer.symbols.toOwnedSlice(analyzer.allocator),
-        .bindings = try analyzer.bindings.toOwnedSlice(analyzer.allocator),
-        .function_scopes = try analyzer.function_scopes.toOwnedSlice(analyzer.allocator),
-        .diagnostics = try analyzer.diagnostics.toOwnedSlice(analyzer.allocator),
+        .modules = modules,
+        .scopes = scopes,
+        .symbols = symbols,
+        .bindings = bindings,
+        .function_scopes = function_scopes,
+        .diagnostics = diagnostics,
     };
 }
 
@@ -120,7 +165,9 @@ const Analyzer = struct {
     function_scopes: std.ArrayList(FunctionScope) = .empty,
     diagnostics: std.ArrayList(diagnostic.Diagnostic) = .empty,
     builtins: std.StringHashMapUnmanaged(void) = .empty,
-    resolution_ambiguous: bool = false,
+    /// 公式のmodList相当: 結合ストリーム上の展開マーカー位置順に並ぶ
+    /// モジュールindexの一覧。エントリは順位0で常に先頭になる。
+    mod_list: std.ArrayList(u32) = .empty,
 
     fn run(self: *Analyzer) !void {
         try self.loadBuiltins();
@@ -130,10 +177,11 @@ const Analyzer = struct {
                 .name = try self.allocator.dupe(u8, input.name),
                 .path = try self.allocator.dupe(u8, input.path),
                 .scope = scope,
-                .imports = try dupeStrings(self.allocator, input.imports),
                 .strict = hasStrictMode(input.root),
             });
         }
+        for (self.inputs, 0..) |_, index| try self.mod_list.append(self.allocator, @intCast(index));
+        std.mem.sort(u32, self.mod_list.items, self, markerRankLess);
         for (self.inputs, 0..) |input, index| try self.predeclareBlock(input.root, @intCast(index), self.modules.items[index].scope, true);
         for (self.inputs, 0..) |input, index| try self.resolveBlock(input.root, @intCast(index), self.modules.items[index].scope);
     }
@@ -145,20 +193,26 @@ const Analyzer = struct {
 
     fn predeclareBlock(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId, recurse: bool) !void {
         if (node.kind == .function_definition or node.kind == .test_definition) {
-            _ = try self.declare(module_index, scope, node.name, if (node.kind == .test_definition) .test_function else .function, node.span, node.is_export, false, node.arguments.len);
+            _ = try self.declare(module_index, scope, node.name, if (node.kind == .test_definition) .test_function else .function, node.span, node.is_export, false, node.arguments.len, false);
             return;
         }
         if (node.kind == .anonymous_function) return;
+        // 公式はモジュール変数を既定で公開（isExportDefault=true）するため、
+        // モジュールスコープの変数はis_export=trueとする。
+        const exportable = self.scopes.items[scope].kind == .module;
         if (node.kind == .variable_definition) {
-            _ = try self.declare(module_index, scope, node.name, if (node.is_const) .constant else .variable, node.span, node.is_export, !node.is_const, 0);
+            _ = try self.declare(module_index, scope, node.name, if (node.is_const) .constant else .variable, node.span, exportable, !node.is_const, 0, true);
         } else if (node.kind == .variable_list_definition) {
-            for (node.arguments) |name| _ = try self.declare(module_index, scope, name.name, if (node.is_const) .constant else .variable, name.span, node.is_export, !node.is_const, 0);
-        } else if ((node.kind == .assignment or node.kind == .increment) and self.builtins.get(node.name) == null and
-            self.lookupAssignmentTarget(scope, node.name) == null)
+            for (node.arguments) |name| _ = try self.declare(module_index, scope, name.name, if (node.is_const) .constant else .variable, name.span, exportable, !node.is_const, 0, true);
+        } else if ((node.kind == .assignment or node.kind == .increment or
+            (node.kind == .array_assignment and node.check_array_init)) and self.builtins.get(node.name) == null and
+            !(node.check_array_init and system_constant.isConstant(node.name)) and
+            (std.mem.indexOf(u8, node.name, "__") == null or self.scopes.items[scope].kind == .module) and
+            self.lookupAssignmentTarget(scope, node.name, node.span) == null)
         {
-            _ = try self.declare(module_index, scope, node.name, .variable, node.span, true, true, 0);
+            _ = try self.declare(module_index, scope, node.name, .variable, node.span, true, true, 0, false);
         } else if (node.kind == .for_statement and node.name.len > 0 and self.lookupLexical(scope, node.name) == null) {
-            _ = try self.declare(module_index, scope, node.name, .loop_variable, node.span, false, true, 0);
+            _ = try self.declare(module_index, scope, node.name, .loop_variable, node.span, exportable, true, 0, false);
         }
         if (!recurse and node.kind == .function_definition) return;
         for (node.children) |child| try self.predeclareBlock(child, module_index, scope, recurse and node.kind != .function_definition and node.kind != .test_definition and node.kind != .anonymous_function);
@@ -170,7 +224,7 @@ const Analyzer = struct {
                 if (self.lookupLexical(scope, node.name)) |symbol| try self.bind(node, .declaration, node.name, symbol.qualified_name, symbol.id);
                 const function_scope = try self.addScope(scope, module_index, .function);
                 try self.function_scopes.append(self.allocator, .{ .node = node, .scope = function_scope });
-                for (node.arguments) |argument| _ = try self.declare(module_index, function_scope, argument.name, .parameter, argument.span, false, true, 0);
+                for (node.arguments) |argument| _ = try self.declare(module_index, function_scope, argument.name, .parameter, argument.span, false, true, 0, false);
                 for (node.children) |child| try self.predeclareBlock(child, module_index, function_scope, false);
                 for (node.children) |child| try self.resolveBlock(child, module_index, function_scope);
                 return;
@@ -178,12 +232,12 @@ const Analyzer = struct {
             .anonymous_function => {
                 const function_scope = try self.addScope(scope, module_index, .anonymous_function);
                 try self.function_scopes.append(self.allocator, .{ .node = node, .scope = function_scope });
-                for (node.arguments) |argument| _ = try self.declare(module_index, function_scope, argument.name, .parameter, argument.span, false, true, 0);
+                for (node.arguments) |argument| _ = try self.declare(module_index, function_scope, argument.name, .parameter, argument.span, false, true, 0, false);
                 for (node.children) |child| try self.predeclareBlock(child, module_index, function_scope, false);
                 for (node.children) |child| try self.resolveBlock(child, module_index, function_scope);
                 return;
             },
-            .assignment, .array_assignment, .property_assignment, .increment, .variable_definition => try self.resolveDeclaration(node, module_index, scope),
+            .assignment, .array_assignment, .property_assignment, .increment, .increment_indexed, .variable_definition => try self.resolveDeclaration(node, module_index, scope),
             .variable_list_definition => {
                 for (node.arguments) |name| if (self.lookupLexical(scope, name.name)) |symbol| {
                     try self.bind(node, .declaration, name.name, symbol.qualified_name, symbol.id);
@@ -194,15 +248,96 @@ const Analyzer = struct {
             .for_statement => if (node.name.len > 0) {
                 if (self.lookupLexical(scope, node.name)) |symbol| try self.bind(node, .declaration, node.name, symbol.qualified_name, symbol.id);
             },
+            // 実効取り込み文は取り込み先エントリへの呼び出しとして束縛する。
+            // 公式のトークン展開と同じ位置でトップレベルが実行される。
+            .import => for (self.inputs[module_index].import_entries) |entry| {
+                if (entry.position == node.span.start) {
+                    var bound_entry = entry;
+                    bound_entry.site_toplevel = self.enclosingFunctionScope(scope) == null;
+                    // entry_nameは入力側の短命アリーナの値なので複製して保持する
+                    bound_entry.entry_name = try self.allocator.dupe(u8, entry.entry_name);
+                    try self.bind(node, .call, node.name, bound_entry.entry_name, null);
+                    self.bindings.items[self.bindings.items.len - 1].import_entry = bound_entry;
+                    break;
+                }
+            },
             else => {},
         }
         for (node.children) |child| try self.resolveBlock(child, module_index, scope);
     }
 
     fn resolveDeclaration(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId) !void {
-        const symbol = self.lookupAssignmentTarget(scope, node.name) orelse self.lookupModule(module_index, node.name) orelse return;
-        if ((node.kind == .assignment or node.kind == .array_assignment or node.kind == .property_assignment or node.kind == .increment) and !symbol.is_mutable) {
-            try self.addDiagnostic(.assign_to_constant, node.span, self.modules.items[module_index].path, "定数へ再代入できません");
+        // 公式の明示宣言（変数/定数）はfindVarを使わず無条件に変数を作る
+        // （createVar相当）。事前宣言した自分自身のシンボルにそのまま束縛する。
+        if (node.kind == .variable_definition) {
+            if (self.lookupDeclSite(module_index, scope, node.name, node.span)) |symbol|
+                try self.bind(node, .declaration, node.name, symbol.qualified_name, symbol.id);
+            return;
+        }
+        // 公式findVarの書き込み側解決: ローカル→自身mod__→modList順。
+        var resolved: ?Symbol = self.lookupAssignmentTarget(scope, node.name, node.span) orelse
+            self.lookupVisibleModule(module_index, scope, node.name, node.span) orelse
+            self.resolveQualified(module_index, scope, node.name, node.span) orelse
+            self.lookupModList(module_index, scope, node.name, node.span);
+        // 公式convLetPropはコード生成順にfindVarするため、モジュールレベルでも
+        // 後続文で宣言される変数はプロパティ代入のルートに使えず
+        // 『見当たりません』になる（A$b=1 が A=0 より前に現れる場合など）。
+        // 関数本体内の位置依存は moduleSymbolVisible が関数定義位置で処理済み。
+        if (resolved) |symbol| {
+            if (node.kind == .property_assignment and
+                self.scopes.items[symbol.scope].kind == .module and
+                self.enclosingFunctionScope(scope) == null and
+                self.positionAfter(symbol.module_index, symbol.span, module_index, node.span))
+            {
+                resolved = null;
+            }
+        }
+        // 解決が他のシンボルへ向いた場合、宣言文自身の暗黙シンボルは
+        // 公式では作られないため後続の解決からも隠す。未解決なら
+        // 暗黙シンボルそのものが宣言先になる。
+        const decl_site = self.lookupDeclSite(module_index, scope, node.name, node.span);
+        if (resolved) |symbol| {
+            if (decl_site != null and decl_site.?.id != symbol.id)
+                self.symbols.items[decl_site.?.id].shadowed = true;
+        } else {
+            resolved = decl_site;
+        }
+        const symbol = resolved orelse {
+            // 公式convLetProp相当: プロパティ代入（A$b=値）のルート変数は
+            // 宣言必須で、未解決なら文法エラーになる。モジュールレベルでは
+            // 修飾名、関数内ではそのままの名前で報告される。
+            if (node.kind == .property_assignment and self.builtins.get(node.name) == null) {
+                const display = if (self.enclosingFunctionScope(scope) != null or
+                    std.mem.indexOf(u8, node.name, "__") != null)
+                    node.name
+                else
+                    try std.fmt.allocPrint(self.allocator, "{s}__{s}", .{ self.modules.items[module_index].name, node.name });
+                // 公式は表示時に main__ 接頭辞を省略する（nako_gen #1223）。
+                const shown = if (std.mem.startsWith(u8, display, "main__")) display["main__".len..] else display;
+                const message = try std.fmt.allocPrint(self.allocator, "変数『{s}』が見当たりません。", .{shown});
+                try self.addDiagnostic(.undefined_symbol, node.span, self.modules.items[module_index].path, message);
+                return;
+            }
+            // 関数本体内で修飾名（mod__A）が未解決のまま代入先になる場合、
+            // 公式は __vars の関数ローカルとして扱う。import先を含む可視な
+            // モジュールシンボルに一致しなければ関数ローカルへ宣言し、
+            // 実行時に同名グローバルへ漏れないようにする。
+            if (std.mem.indexOf(u8, node.name, "__") != null and self.builtins.get(node.name) == null and !system_constant.isConstant(node.name)) {
+                if (self.enclosingFunctionScope(scope)) |function_scope| {
+                    const symbol_id = try self.declare(module_index, function_scope, node.name, .variable, node.span, true, true, 0, false);
+                    try self.bind(node, .declaration, node.name, self.symbols.items[symbol_id].qualified_name, symbol_id);
+                }
+            }
+            return;
+        };
+        // 定数への禁止は再束縛のみ。配列要素・プロパティの書き換えは
+        // 公式と同様に定数にも許可する（JSのconst要素変更と同じ）。
+        // 公式文言: 『定数「名」は既に定義済みなので、値を代入することは
+        // できません』（main__ 接頭辞は #1223 で省略）。
+        if ((node.kind == .assignment or node.kind == .increment) and !symbol.is_mutable) {
+            const shown = if (std.mem.startsWith(u8, symbol.qualified_name, "main__")) symbol.qualified_name["main__".len..] else symbol.qualified_name;
+            const message = try std.fmt.allocPrint(self.allocator, "定数『{s}』は既に定義済みなので、値を代入することはできません。", .{shown});
+            try self.addDiagnostic(.assign_to_constant, node.span, self.modules.items[module_index].path, message);
         }
         try self.bind(node, .declaration, node.name, symbol.qualified_name, symbol.id);
     }
@@ -210,9 +345,14 @@ const Analyzer = struct {
     fn resolveReference(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId, callable: bool) !void {
         const name = if (callable) node.name else node.value;
         if (name.len == 0) return;
-        self.resolution_ambiguous = false;
-        if (self.resolveSymbol(module_index, scope, name)) |symbol| {
+        if (self.resolveSymbol(module_index, scope, name, node.span)) |symbol| {
             const implicit_call = !callable and node.kind == .word and (symbol.kind == .function or symbol.kind == .test_function);
+            // 公式はfunc tokenをカンマ直前では値として受理しないため、
+            // 読み取り側の添字で関数に解決される裸の単語は『配列アクセスで指定ミス』
+            if (node.bare_index_word and implicit_call) {
+                try self.addDiagnostic(.invalid_array_access, node.span, self.modules.items[module_index].path, "配列アクセスで指定ミス");
+                return;
+            }
             if (callable and (symbol.kind == .function or symbol.kind == .test_function) and node.children.len != symbol.argument_count) {
                 const message = try std.fmt.allocPrint(self.allocator, "関数『{s}』は引数{d}個を必要としますが、{d}個が指定されました", .{ name, symbol.argument_count, node.children.len });
                 try self.addDiagnostic(.invalid_argument_count, node.span, self.modules.items[module_index].path, message);
@@ -224,12 +364,13 @@ const Analyzer = struct {
             try self.bind(node, if (callable or implicit_call) .call else .reference, name, symbol.qualified_name, symbol.id);
             return;
         }
-        if (self.resolution_ambiguous) {
-            const message = try std.fmt.allocPrint(self.allocator, "取り込んだ複数モジュールで『{s}』が定義されています。名前空間で修飾してください", .{name});
-            try self.addDiagnostic(.ambiguous_import, node.span, self.modules.items[module_index].path, message);
-            return;
-        }
         if (self.builtins.get(name) != null) {
+            // 組み込み命令も公式のfunc token相当のため同じ規則を適用する
+            // （『改行』など命令表に無い名前は変数なので対象外）
+            if (node.bare_index_word and !callable and builtin_catalog.findArity(name) != null) {
+                try self.addDiagnostic(.invalid_array_access, node.span, self.modules.items[module_index].path, "配列アクセスで指定ミス");
+                return;
+            }
             if (node.is_c_style_call) {
                 if (builtin_catalog.findArity(name)) |spec| {
                     if (!spec.is_variable and node.children.len != spec.count) {
@@ -255,45 +396,76 @@ const Analyzer = struct {
             try self.addDiagnostic(.undefined_symbol, node.span, self.modules.items[module_index].path, message);
             return;
         }
+        // 関数本体内の未解決名は公式同様に関数ローカル（__vars）へ宣言する。
+        // システム定数名は常にグローバルの定数値を参照させるため除外する。
         const module_scope = self.modules.items[module_index].scope;
-        const symbol_id = try self.declare(module_index, module_scope, name, .variable, node.span, true, true, 0);
+        const declare_scope = if (system_constant.isConstant(name))
+            module_scope
+        else
+            self.enclosingFunctionScope(scope) orelse module_scope;
+        const symbol_id = try self.declare(module_index, declare_scope, name, .variable, node.span, true, true, 0, false);
         const symbol = self.symbols.items[symbol_id];
         try self.bind(node, if (callable) .call else .reference, name, symbol.qualified_name, symbol.id);
     }
 
-    fn resolveSymbol(self: *Analyzer, module_index: u32, scope: ScopeId, name: []const u8) ?Symbol {
-        if (std.mem.indexOf(u8, name, "__") != null) {
-            for (self.symbols.items) |symbol| if (std.mem.eql(u8, symbol.qualified_name, name)) return symbol;
-        }
+    fn resolveSymbol(self: *Analyzer, module_index: u32, scope: ScopeId, name: []const u8, use_span: ast.Span) ?Symbol {
         var current: ?ScopeId = scope;
-        while (current) |id| {
-            if (self.lookupLexical(id, name)) |symbol| return symbol;
-            current = self.scopes.items[id].parent;
-        }
-        var found: ?Symbol = null;
-        for (self.modules.items[module_index].imports) |import_name| {
-            const imported_index = self.findModule(import_name) orelse continue;
-            if (self.lookupModule(imported_index, name)) |symbol| {
-                if (!symbol.is_export) continue;
-                if (found != null and found.?.id != symbol.id) {
-                    self.resolution_ambiguous = true;
-                    return null;
-                }
-                found = symbol;
+        while (current) |id| : (current = self.scopes.items[id].parent) {
+            if (self.lookupLexical(id, name)) |symbol| {
+                if (self.scopes.items[id].kind == .module and !self.moduleSymbolVisible(scope, symbol)) continue;
+                if (self.isDeclSiteSymbol(symbol, module_index, use_span)) continue;
+                return symbol;
             }
         }
-        return found;
+        // 修飾名（mod__A）は取り込み・公開設定に関わらず全モジュールの
+        // モジュール変数に一致する（公式は __varslist[2] を修飾名キーで
+        // 共有する）。関数スコープの修飾名シンボルは上の字句探索で
+        // 祖先スコープのものだけが解決済みのため、ここでは対象外とする。
+        // 公式findVarは `__` 名を funclist 完全一致でのみ検索し、
+        // modList 検索には進まない。
+        if (std.mem.indexOf(u8, name, "__") != null) {
+            for (self.symbols.items) |symbol| {
+                if (self.scopes.items[symbol.scope].kind != .module or symbol.shadowed) continue;
+                if (!std.mem.eql(u8, symbol.qualified_name, name)) continue;
+                if (!self.moduleSymbolVisible(scope, symbol)) continue;
+                if (self.isDeclSiteSymbol(symbol, module_index, use_span)) continue;
+                return symbol;
+            }
+            return null;
+        }
+        return self.lookupModList(module_index, scope, name, use_span);
     }
 
-    fn declare(self: *Analyzer, module_index: u32, scope: ScopeId, name: []const u8, kind: SymbolKind, span: ast.Span, is_export: bool, is_mutable: bool, argument_count: usize) !SymbolId {
+    /// 公式findVarのmodList検索: 結合ストリームの展開マーカー順に各
+    /// モジュールの「mod__name」を検索し、export許可かつ使用位置で可視の
+    /// 最初の一致を返す（先勝ちで曖昧さエラーは無い）。
+    fn lookupModList(self: *Analyzer, module_index: u32, scope: ScopeId, name: []const u8, use_span: ast.Span) ?Symbol {
+        if (std.mem.indexOf(u8, name, "__") != null) return null;
+        for (self.mod_list.items) |mod_index| {
+            if (mod_index == module_index) continue;
+            if (self.lookupModule(mod_index, name)) |symbol| {
+                if (!symbol.is_export) continue;
+                if (!self.moduleSymbolVisibleAt(module_index, use_span, scope, symbol)) continue;
+                return symbol;
+            }
+        }
+        return null;
+    }
+
+    fn declare(self: *Analyzer, module_index: u32, scope: ScopeId, name: []const u8, kind: SymbolKind, span: ast.Span, is_export: bool, is_mutable: bool, argument_count: usize, explicit_def: bool) !SymbolId {
         if (self.lookupLexical(scope, name)) |existing| {
-            if (existing.kind == kind and (kind == .variable or kind == .loop_variable)) return existing.id;
+            // 代入や反復による暗黙宣言は既存変数を再利用するが、
+            // 変数/定数の明示定義は同名の再利用も公式同様に二重定義とする。
+            if (!explicit_def and existing.kind == kind and (kind == .variable or kind == .loop_variable)) return existing.id;
             const message = try std.fmt.allocPrint(self.allocator, "『{s}』は同じスコープで既に定義されています", .{name});
             try self.addDiagnostic(.duplicate_symbol, span, self.modules.items[module_index].path, message);
             return existing.id;
         }
         const id: SymbolId = @intCast(self.symbols.items.len);
-        const qualified = if (self.scopes.items[scope].kind == .module)
+        // 修飾名（mod__A）を直接書いた変数は二重修飾しない。
+        // 公式は __varslist[2] のキーをそのままの名前で持つため、
+        // 修飾名はそれ自体がグローバルキーになる。
+        const qualified = if (self.scopes.items[scope].kind == .module and std.mem.indexOf(u8, name, "__") == null)
             try std.fmt.allocPrint(self.allocator, "{s}__{s}", .{ self.modules.items[module_index].name, name })
         else
             try self.allocator.dupe(u8, name);
@@ -313,32 +485,161 @@ const Analyzer = struct {
     }
 
     fn lookupLexical(self: *Analyzer, scope: ScopeId, name: []const u8) ?Symbol {
+        const scope_kind = self.scopes.items[scope].kind;
         var index = self.symbols.items.len;
         while (index > 0) {
             index -= 1;
             const symbol = self.symbols.items[index];
-            if (symbol.scope == scope and std.mem.eql(u8, symbol.name, name)) return symbol;
+            if (symbol.scope != scope or symbol.shadowed) continue;
+            if (scope_kind == .module) {
+                // モジュールスコープの変数キーは修飾名（公式の __varslist[2] と同じ）。
+                // 「A」と「mod__A」は同じ変数なので qualified_name で一致させる。
+                if (std.mem.eql(u8, symbol.qualified_name, name)) return symbol;
+                if (std.mem.indexOf(u8, name, "__") == null and
+                    self.moduleQualifiedEql(symbol.module_index, symbol.qualified_name, name)) return symbol;
+            } else if (std.mem.eql(u8, symbol.name, name)) return symbol;
         }
         return null;
     }
 
-    fn lookupAssignmentTarget(self: *Analyzer, scope: ScopeId, name: []const u8) ?Symbol {
-        if (self.lookupLexical(scope, name)) |symbol| return symbol;
-        if (self.scopes.items[scope].kind != .anonymous_function) return null;
-        var current = self.scopes.items[scope].parent;
-        while (current) |parent| : (current = self.scopes.items[parent].parent) {
-            if (self.lookupLexical(parent, name)) |symbol| return symbol;
+    /// qualified が「{module}__{name}」の形かをアロケーション無しで判定する。
+    fn moduleQualifiedEql(self: *Analyzer, module_index: u32, qualified: []const u8, name: []const u8) bool {
+        const module_name = self.modules.items[module_index].name;
+        return qualified.len == module_name.len + 2 + name.len and
+            std.mem.startsWith(u8, qualified, module_name) and
+            std.mem.eql(u8, qualified[module_name.len .. module_name.len + 2], "__") and
+            std.mem.endsWith(u8, qualified, name);
+    }
+
+    /// 宣言文のパース時点では、その文が宣言する変数はまだ存在しない
+    /// （公式findVarは単一パスで名前を確定する）。したがって宣言文の
+    /// 位置に含まれる使用・代入からは自分自身の宣言シンボルが見えない。
+    /// 変数・定数の宣言シンボルのみ対象（関数・引数・ループ変数は除く）。
+    fn isDeclSiteSymbol(self: *Analyzer, symbol: Symbol, module_index: u32, use_span: ast.Span) bool {
+        _ = self;
+        return symbol.module_index == module_index and
+            (symbol.kind == .variable or symbol.kind == .constant) and
+            symbol.span.start <= use_span.start and use_span.end <= symbol.span.end;
+    }
+
+    /// この文自身が暗黙・明示に宣言するシンボルを返す。
+    fn lookupDeclSite(self: *Analyzer, module_index: u32, scope: ScopeId, name: []const u8, decl_span: ast.Span) ?Symbol {
+        var current: ?ScopeId = scope;
+        while (current) |id| : (current = self.scopes.items[id].parent) {
+            if (self.lookupLexical(id, name)) |symbol| {
+                if (self.isDeclSiteSymbol(symbol, module_index, decl_span)) return symbol;
+            }
         }
         return null;
+    }
+
+    /// 代入先の探索は公式scopeVar同様に外側スコープまで遡る。
+    /// 名前付き関数内でもモジュール変数への代入はグローバルを更新する。
+    /// ただし『それ』等のbuiltin名は関数ごとのローカルなので遡らない。
+    fn lookupAssignmentTarget(self: *Analyzer, scope: ScopeId, name: []const u8, use_span: ast.Span) ?Symbol {
+        const use_module = self.scopes.items[scope].module_index;
+        if (self.lookupLexical(scope, name)) |symbol| {
+            if (!self.isDeclSiteSymbol(symbol, use_module, use_span)) return symbol;
+        }
+        if (self.builtins.get(name) != null) return null;
+        var current = self.scopes.items[scope].parent;
+        while (current) |parent| : (current = self.scopes.items[parent].parent) {
+            if (self.lookupLexical(parent, name)) |symbol| {
+                if (self.scopes.items[parent].kind == .module and !self.moduleSymbolVisible(scope, symbol)) continue;
+                if (self.isDeclSiteSymbol(symbol, use_module, use_span)) continue;
+                return symbol;
+            }
+        }
+        return null;
+    }
+
+    /// 最も内側の関数スコープ（名前付き・無名）を返す。
+    fn enclosingFunctionScope(self: *Analyzer, scope: ScopeId) ?ScopeId {
+        var current: ?ScopeId = scope;
+        while (current) |id| {
+            const kind = self.scopes.items[id].kind;
+            if (kind == .function or kind == .anonymous_function) return id;
+            current = self.scopes.items[id].parent;
+        }
+        return null;
+    }
+
+    /// modList検索での可視性。公式は単一パスで名前解決するため、
+    /// 結合ストリーム上で使用位置より後に宣言されたモジュール変数は
+    /// 見えない。関数本体内では関数定義位置が使用位置になる
+    /// （関数本体のパース時点で登録済みのシンボルのみが対象）。
+    fn moduleSymbolVisibleAt(self: *Analyzer, module_index: u32, use_span: ast.Span, scope: ScopeId, symbol: Symbol) bool {
+        if (symbol.kind == .function or symbol.kind == .test_function) return true;
+        if (self.enclosingFunctionScope(scope) != null) return self.moduleSymbolVisible(scope, symbol);
+        return !self.positionAfter(symbol.module_index, symbol.span, module_index, use_span);
+    }
+
+    /// 関数本体内からモジュールスコープの変数へ解決する場合の可視性。
+    /// 公式は取り込み先を結合した単一トークン列を単一パスで生成するため、
+    /// 結合ストリーム上で関数定義より前に現れたモジュール変数のみを
+    /// 修飾名（mod__N）として拾い、後のモジュール変数は関数内から見えない
+    /// （同名は関数ローカルの __vars になる）。関数名は __varslist[1] への
+    /// 動的解決なので位置に依らない。
+    fn moduleSymbolVisible(self: *Analyzer, scope: ScopeId, symbol: Symbol) bool {
+        if (symbol.kind == .function or symbol.kind == .test_function) return true;
+        const function_scope = self.enclosingFunctionScope(scope) orelse return true;
+        for (self.function_scopes.items) |entry| {
+            if (entry.scope == function_scope) {
+                const function_module = self.scopes.items[function_scope].module_index;
+                return !self.positionAfter(symbol.module_index, symbol.span, function_module, entry.node.span);
+            }
+        }
+        return true;
+    }
+
+    /// 結合ストリーム上で a が b より後に現れるか。公式は単一パスの
+    /// コード生成なので、同一トップレベル文内（順位が同じ場合）でも
+    /// ソース位置で先後を区別する必要がある。
+    fn positionAfter(self: *Analyzer, a_module: u32, a_span: ast.Span, b_module: u32, b_span: ast.Span) bool {
+        const a_rank = self.expansionRank(a_module, a_span);
+        const b_rank = self.expansionRank(b_module, b_span);
+        if (a_rank != b_rank) return a_rank > b_rank;
+        return a_span.start > b_span.start;
+    }
+
+    /// spanを含むトップレベル文の結合ストリーム順位を返す。
+    /// stmt_ranks が無い入力（単一モジュール解析）ではファイル内位置を返す。
+    fn expansionRank(self: *Analyzer, module_index: u32, span: ast.Span) usize {
+        const input = self.inputs[module_index];
+        const children = input.root.children;
+        if (input.stmt_ranks.len == 0 or children.len == 0) return span.start;
+        var index: usize = 0;
+        while (index + 1 < children.len and children[index + 1].span.start <= span.start) index += 1;
+        return input.stmt_ranks[index];
+    }
+
+    /// 修飾名（mod__A）で直接書かれた代入先の解決。公式は修飾名そのものを
+    /// __varslist のキーとして検索するため、非修飾名の宣言（A=...）が作る
+    /// モジュールシンボルにも修飾名で一致し得る。可視性は resolveSymbol の
+    /// 位置規則に従う。
+    fn resolveQualified(self: *Analyzer, module_index: u32, scope: ScopeId, name: []const u8, use_span: ast.Span) ?Symbol {
+        if (std.mem.indexOf(u8, name, "__") == null) return null;
+        return self.resolveSymbol(module_index, scope, name, use_span);
+    }
+
+    /// lookupModule と同じだが、関数本体内では定義位置より後の
+    /// モジュール変数を除外し、宣言文自身のシンボルも除外する。
+    fn lookupVisibleModule(self: *Analyzer, module_index: u32, scope: ScopeId, name: []const u8, use_span: ast.Span) ?Symbol {
+        const symbol = self.lookupModule(module_index, name) orelse return null;
+        if (self.isDeclSiteSymbol(symbol, module_index, use_span)) return null;
+        return if (self.moduleSymbolVisible(scope, symbol)) symbol else null;
     }
 
     fn lookupModule(self: *Analyzer, module_index: u32, name: []const u8) ?Symbol {
         return self.lookupLexical(self.modules.items[module_index].scope, name);
     }
 
-    fn findModule(self: *Analyzer, name: []const u8) ?u32 {
-        for (self.modules.items, 0..) |module, index| if (std.mem.eql(u8, module.name, name)) return @intCast(index);
-        return null;
+    /// mod_list を marker_rank 昇順（同順位は入力順）に並べる比較関数。
+    fn markerRankLess(self: *Analyzer, a: u32, b: u32) bool {
+        const rank_a = self.inputs[a].marker_rank;
+        const rank_b = self.inputs[b].marker_rank;
+        if (rank_a != rank_b) return rank_a < rank_b;
+        return a < b;
     }
 
     fn addScope(self: *Analyzer, parent: ?ScopeId, module_index: u32, kind: ScopeKind) !ScopeId {
@@ -366,12 +667,6 @@ fn hasStrictMode(root: *ast.Node) bool {
     if (root.kind == .run_mode and std.mem.eql(u8, root.value, "厳しくチェック")) return true;
     for (root.children) |child| if (hasStrictMode(child)) return true;
     return false;
-}
-
-fn dupeStrings(allocator: std.mem.Allocator, values: []const []const u8) ![][]const u8 {
-    const result = try allocator.alloc([]const u8, values.len);
-    for (values, 0..) |value, index| result[index] = try allocator.dupe(u8, value);
-    return result;
 }
 
 pub fn moduleName(allocator: std.mem.Allocator, filename: []const u8) ![]u8 {
@@ -509,31 +804,29 @@ test "未定義変数への増減を暗黙のモジュール変数宣言とし�
     try std.testing.expect(declaration_bound);
 }
 
-test "同名の公開シンボルは名前空間で曖昧さを解消する" {
+test "同名の公開シンボルはmodList先勝ちで解決する" {
+    // 公式findVarはmodList（エントリ→展開順）で先に一致したモジュールを
+    // 選び、曖昧さエラーにはならない。修飾名は常にfunclist完全一致。
     const parser = @import("../frontend/parser.zig");
+    var main = try parser.parse(std.testing.allocator, "F\na__F\n", "main.nako3");
+    defer main.deinit();
     var first = try parser.parse(std.testing.allocator, "●Fとは\n1で戻る\nここまで\n", "a.nako3");
     defer first.deinit();
     var second = try parser.parse(std.testing.allocator, "●Fとは\n2で戻る\nここまで\n", "b.nako3");
     defer second.deinit();
-    var main = try parser.parse(std.testing.allocator, "F\na__F\n", "main.nako3");
-    defer main.deinit();
     var program = try analyzeModules(std.testing.allocator, &.{
-        .{ .name = "a", .path = "a.nako3", .root = first.root.? },
-        .{ .name = "b", .path = "b.nako3", .root = second.root.? },
-        .{ .name = "main", .path = "main.nako3", .root = main.root.?, .imports = &.{ "a", "b" } },
+        .{ .name = "main", .path = "main.nako3", .root = main.root.?, .marker_rank = 0 },
+        .{ .name = "a", .path = "a.nako3", .root = first.root.?, .marker_rank = 1 },
+        .{ .name = "b", .path = "b.nako3", .root = second.root.?, .marker_rank = 2 },
     });
     defer program.deinit();
-    try std.testing.expect(!program.succeeded());
-    var ambiguous_count: usize = 0;
+    try std.testing.expect(program.succeeded());
     var qualified_count: usize = 0;
-    for (program.diagnostics) |item| if (item.code == .ambiguous_import) {
-        ambiguous_count += 1;
-    };
     for (program.bindings) |binding| if (binding.kind == .call and std.mem.eql(u8, binding.resolved_name, "a__F")) {
         qualified_count += 1;
     };
-    try std.testing.expectEqual(@as(usize, 1), ambiguous_count);
-    try std.testing.expectEqual(@as(usize, 1), qualified_count);
+    // 裸名の F はmodList先勝ちで a__F に、修飾名 a__F も a__F に解決される
+    try std.testing.expectEqual(@as(usize, 2), qualified_count);
 }
 
 test "取り込んだ公開関数を非修飾名と修飾名で解決する" {
@@ -544,7 +837,7 @@ test "取り込んだ公開関数を非修飾名と修飾名で解決する" {
     defer main.deinit();
     var program = try analyzeModules(std.testing.allocator, &.{
         .{ .name = "lib", .path = "lib.nako3", .root = library.root.? },
-        .{ .name = "main", .path = "main.nako3", .root = main.root.?, .imports = &.{"lib"} },
+        .{ .name = "main", .path = "main.nako3", .root = main.root.?, .marker_rank = 1 },
     });
     defer program.deinit();
     try std.testing.expect(program.succeeded());

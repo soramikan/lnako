@@ -487,7 +487,7 @@ test "参照された文字列システム定数をGCルート登録後に初期
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.system.string.") != null);
     const push = std.mem.indexOf(u8, module.text, "call void @lnako_aot_push_roots").?;
     const initialize = std.mem.indexOf(u8, module.text, "call void @lnako_aot_string_new(ptr @lnako.global.").?;
-    const entry = std.mem.indexOf(u8, module.text, "%entry.result.0 = call").?;
+    const entry = std.mem.indexOf(u8, module.text, "%entry.result = call").?;
     try std.testing.expect(push < initialize);
     try std.testing.expect(initialize < entry);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "[4 x i16] [i16 109, i16 97, i16 105, i16 110]") != null);
@@ -531,7 +531,7 @@ test "参照された配列システム定数を独立したGCオブジェクト
     defer module.deinit(std.testing.allocator);
     const first = std.mem.indexOf(u8, module.text, "call void @lnako_aot_array_new(ptr @lnako.global.").?;
     const second = std.mem.indexOfPos(u8, module.text, first + 1, "call void @lnako_aot_array_new(ptr @lnako.global.").?;
-    const entry = std.mem.indexOf(u8, module.text, "%entry.result.0 = call").?;
+    const entry = std.mem.indexOf(u8, module.text, "%entry.result = call").?;
     try std.testing.expect(first < second);
     try std.testing.expect(second < entry);
 }
@@ -552,7 +552,7 @@ test "参照された辞書システム定数を専用AOT初期化子へ渡す" 
     var module = try generate(std.testing.allocator, program, "dictionary-constants.nako3", false);
     defer module.deinit(std.testing.allocator);
     const initialize = std.mem.indexOf(u8, module.text, "call void @lnako_aot_caniuse_agents_new(ptr @lnako.global.").?;
-    const entry = std.mem.indexOf(u8, module.text, "%entry.result.0 = call").?;
+    const entry = std.mem.indexOf(u8, module.text, "%entry.result = call").?;
     try std.testing.expect(initialize < entry);
 }
 
@@ -572,7 +572,7 @@ test "参照された元号データを専用AOT初期化子へ渡す" {
     var module = try generate(std.testing.allocator, program, "era-data.nako3", false);
     defer module.deinit(std.testing.allocator);
     const initialize = std.mem.indexOf(u8, module.text, "call void @lnako_aot_era_data_new(ptr @lnako.global.").?;
-    const entry = std.mem.indexOf(u8, module.text, "%entry.result.0 = call").?;
+    const entry = std.mem.indexOf(u8, module.text, "%entry.result = call").?;
     try std.testing.expect(initialize < entry);
 }
 

@@ -32,6 +32,7 @@ pub const Kind = enum {
     array_set,
     property_set,
     increment,
+    increment_indexed,
     if_statement,
     while_statement,
     post_test_loop,
@@ -59,11 +60,33 @@ pub const Node = struct {
     text: []const u8 = "",
     operator: []const u8 = "",
     names: []const []const u8 = &.{},
+    /// destructure_storeの各namesがローカルシンボルへ束縛されたか
+    /// （意味解析の束縛結果。namesと同じ長さ）。
+    names_local: []const bool = &.{},
     number_value: ?f64 = null,
     boolean_value: bool = false,
     /// True only when semantic analysis resolved this call to the fixed
     /// language builtin catalog. Dynamic plugin commands stay false.
     is_builtin_call: bool = false,
+    /// DNCL互換の配列要素代入で、未初期化変数へ30要素の0配列を自動初期化する。
+    check_array_init: bool = false,
+    /// 代入系ノードの対象名が意味解析でローカルシンボルへ解決された場合に真。
+    /// local slotの登録対象判定に使う（修飾名やシステム定数は含まない）。
+    local_target: bool = false,
+    /// 実効取り込み文からのモジュールエントリ呼び出しで真。公式は取り込み先
+    /// トークンを文位置へ展開するため、制御が到達するたびに実行される。
+    is_module_entry: bool = false,
+    /// 取り込み文を含むモジュールと取り込み先モジュールの展開順位。
+    /// サイト側モジュールのコピー実行中にこの呼び出しへ到達し、かつ
+    /// callee_order <= site_order なら、公式で copy 内から除去された
+    /// 取り込み文に相当するため呼び出しを抑止する。site_toplevel が
+    /// 真のときだけこの抑止判定を行い、関数本体内の取り込み呼び出しは
+    /// 公式同様に到達するたび常に実行する。
+    site_module: u32 = 0,
+    site_order: u32 = 0,
+    callee_module: u32 = 0,
+    callee_order: u32 = 0,
+    site_toplevel: bool = false,
     loop_direction: ast.LoopDirection = .automatic,
     children: []NodeId = &.{},
 };
@@ -154,12 +177,18 @@ pub fn lower(backing_allocator: std.mem.Allocator, roots: []const *ast.Node, mod
         });
     }
 
+    // arenaを返却値へコピーする前に確保を済ませる。リテラル内で呼ぶと
+    // コピー後のarena状態へ確保が記録されずリークする。
+    const modules = try lowerer.modules.toOwnedSlice(lowerer.allocator);
+    const globals = try lowerer.globals.toOwnedSlice(lowerer.allocator);
+    const functions = try lowerer.functions.toOwnedSlice(lowerer.allocator);
+    const nodes = try lowerer.nodes.toOwnedSlice(lowerer.allocator);
     return .{
         .arena = arena,
-        .modules = try lowerer.modules.toOwnedSlice(lowerer.allocator),
-        .globals = try lowerer.globals.toOwnedSlice(lowerer.allocator),
-        .functions = try lowerer.functions.toOwnedSlice(lowerer.allocator),
-        .nodes = try lowerer.nodes.toOwnedSlice(lowerer.allocator),
+        .modules = modules,
+        .globals = globals,
+        .functions = functions,
+        .nodes = nodes,
     };
 }
 
@@ -210,6 +239,26 @@ const Lowerer = struct {
     }
 
     fn lowerNode(self: *Lowerer, node: *ast.Node, module_index: u32) !NodeId {
+        // 実効取り込み文は取り込み先モジュールのエントリ呼び出しに置き換える。
+        // 公式が取り込み文位置へ取り込み先トークンを展開するのと同じ順序で
+        // トップレベルが実行される。パス式の子は評価しない。
+        if (node.kind == .import) {
+            for (self.semantic_program.bindings) |binding| if (binding.node == node and binding.kind == .call) {
+                const id = try self.addNode(.call, node.span, &.{});
+                const result = &self.nodes.items[id];
+                result.name = try self.allocator.dupe(u8, binding.resolved_name);
+                result.is_module_entry = true;
+                if (binding.import_entry) |entry| {
+                    result.site_module = entry.site_module;
+                    result.site_order = entry.site_order;
+                    result.callee_module = entry.callee_module;
+                    result.callee_order = entry.callee_order;
+                    result.site_toplevel = entry.site_toplevel;
+                }
+                return id;
+            };
+            return self.addNode(.nop, node.span, &.{});
+        }
         const implicit_function = self.implicitFunction(node);
         var child_ids = if (implicit_function) |function|
             try self.allocator.alloc(NodeId, function.argument_count)
@@ -225,7 +274,8 @@ const Lowerer = struct {
             }
         } else for (node.children, 0..) |child, index| child_ids[index] = try self.lowerNode(child, module_index);
         const kind: Kind = switch (node.kind) {
-            .nop, .eol, .import, .run_mode, .function_definition, .test_definition => .nop,
+            // .import はこの関数の先頭でcall/nopに変換済みのためここへは来ない
+            .import, .nop, .eol, .run_mode, .function_definition, .test_definition => .nop,
             .speed_mode => .speed_mode,
             .performance_monitor => .performance_monitor,
             .block, .sequence => .block,
@@ -241,6 +291,7 @@ const Lowerer = struct {
             .array_assignment => .array_set,
             .property_assignment => .property_set,
             .increment => .increment,
+            .increment_indexed => .increment_indexed,
             .array_literal => .make_array,
             .object_literal => .make_object,
             .binary_operator => .binary,
@@ -271,10 +322,12 @@ const Lowerer = struct {
         result.name = try self.resolvedName(node, fallback_name);
         result.text = try self.allocator.dupe(u8, node.value);
         result.operator = try self.allocator.dupe(u8, node.operator);
-        if (node.arguments.len > 0) result.names = try self.resolvedArgumentNames(node);
+        if (node.arguments.len > 0) try self.resolveArgumentTargets(node, result);
         result.number_value = node.number_value;
         result.boolean_value = node.number_value != null and node.number_value.? != 0;
         result.is_builtin_call = node.kind == .function_call and self.bindingIsBuiltin(node);
+        result.check_array_init = node.check_array_init;
+        result.local_target = self.bindingIsLocal(node);
         result.loop_direction = node.loop_direction;
         if (node.kind == .anonymous_function) {
             result.name = try self.allocator.dupe(u8, self.anonymous_names.get(node) orelse return error.MissingAnonymousFunction);
@@ -320,18 +373,27 @@ const Lowerer = struct {
         return null;
     }
 
-    fn resolvedArgumentNames(self: *Lowerer, node: *ast.Node) ![]const []const u8 {
-        var names = try self.allocator.alloc([]const u8, node.arguments.len);
+    /// 分解代入の各ターゲット名を解決済み名とローカル束縛フラグで埋める。
+    /// フラグは束縛シンボルのスコープ種別で決め、修飾名の有無では推測しない。
+    fn resolveArgumentTargets(self: *Lowerer, node: *ast.Node, result: *Node) !void {
+        const names = try self.allocator.alloc([]const u8, node.arguments.len);
+        const locals = try self.allocator.alloc(bool, node.arguments.len);
         for (node.arguments, 0..) |argument, index| {
             names[index] = try self.allocator.dupe(u8, argument.name);
+            locals[index] = false;
             for (self.semantic_program.bindings) |binding| {
                 if (binding.node == node and std.mem.eql(u8, binding.name, argument.name)) {
                     names[index] = try self.allocator.dupe(u8, binding.resolved_name);
+                    if (binding.symbol) |symbol_id| {
+                        const symbol = self.semantic_program.symbols[symbol_id];
+                        locals[index] = self.semantic_program.scopes[symbol.scope].kind != .module;
+                    }
                     break;
                 }
             }
         }
-        return names;
+        result.names = names;
+        result.names_local = locals;
     }
 
     fn findArgumentSymbol(self: *Lowerer, module_index: u32, argument: ast.Argument) ?semantic.SymbolId {

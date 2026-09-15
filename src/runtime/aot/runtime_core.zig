@@ -1208,6 +1208,20 @@ pub const Runtime = struct {
         self.setFailureText(message);
     }
 
+    /// 未宣言変数への添字アクセス失敗（公式の TypeError『Cannot read properties
+    /// of undefined/null (reading '<key>')』相当）。
+    pub fn setIndexReadFailure(self: *Runtime, container: ?Value, key: Value) void {
+        self.ensureAllocatorTelemetry() catch |allocation_failure| runtimeFailure(allocation_failure);
+        const key_units = valueUtf16Alloc(self, key) catch |failure| runtimeFailure(failure);
+        defer self.allocator.free(key_units);
+        const key_utf8 = std.unicode.utf16LeToUtf8Alloc(self.allocator, key_units) catch |failure| runtimeFailure(failure);
+        defer self.allocator.free(key_utf8);
+        const container_name: []const u8 = if (container != null and container.?.tag == @intFromEnum(Tag.null_value)) "null" else "undefined";
+        const message = std.fmt.allocPrint(self.allocator, "Cannot read properties of {s} (reading '{s}')", .{ container_name, key_utf8 }) catch |failure| runtimeFailure(failure);
+        defer self.allocator.free(message);
+        self.setFailureText(message);
+    }
+
     pub fn systemContext(self: *Runtime) !Value {
         if (self.system_context.tag == @intFromEnum(Tag.undefined)) self.system_context = try self.createDictionary(&.{});
         return self.system_context;
@@ -1279,6 +1293,11 @@ pub const Runtime = struct {
         if (container.tag == @intFromEnum(Tag.utf16_string)) {
             const index = valueIndex(key) orelse return .{};
             return self.stringAt(container, index);
+        }
+        // 公式はJavaScriptのまま `undefined[key]` / `null[key]` がTypeErrorになる
+        if (container.tag == @intFromEnum(Tag.undefined) or container.tag == @intFromEnum(Tag.null_value)) {
+            self.setIndexReadFailure(container, key);
+            return .{};
         }
         const object = container.object() orelse return .{};
         return switch (object.payload) {

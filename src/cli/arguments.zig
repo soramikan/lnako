@@ -7,6 +7,7 @@ pub const BuildOptions = struct {
     optimization: lnako.backend.llvm.compiler.Optimization = .o0,
     emit: lnako.backend.llvm.compiler.Emit = .executable,
     compat_js: bool = false,
+    forced_mode: lnako.frontend.token.Mode = .{},
     llvm_dir: ?[]const u8 = null,
 };
 
@@ -16,6 +17,7 @@ pub fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
     var optimization: lnako.backend.llvm.compiler.Optimization = .o0;
     var emit: lnako.backend.llvm.compiler.Emit = .executable;
     var compat_js = false;
+    var forced_mode: lnako.frontend.token.Mode = .{};
     var llvm_dir: ?[]const u8 = null;
     var index: usize = 1;
     while (index < arguments.len) : (index += 1) {
@@ -34,6 +36,10 @@ pub fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
             optimization = .o3;
         } else if (std.mem.eql(u8, argument, "--compat-js")) {
             compat_js = true;
+        } else if (std.mem.eql(u8, argument, "--dncl")) {
+            forced_mode.dncl = true;
+        } else if (std.mem.eql(u8, argument, "--dncl2")) {
+            forced_mode.dncl2 = true;
         } else if (std.mem.eql(u8, argument, "--llvm-dir")) {
             index += 1;
             if (index >= arguments.len) return error.MissingLlvmDir;
@@ -57,8 +63,19 @@ pub fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
         .optimization = optimization,
         .emit = emit,
         .compat_js = compat_js,
+        .forced_mode = forced_mode,
         .llvm_dir = llvm_dir,
     };
+}
+
+/// `--dncl`/`--dncl2` フラグから強制する構文モードを得る。
+pub fn dnclModeFromArguments(arguments: []const []const u8) lnako.frontend.token.Mode {
+    var mode: lnako.frontend.token.Mode = .{};
+    for (arguments) |argument| {
+        if (std.mem.eql(u8, argument, "--dncl")) mode.dncl = true;
+        if (std.mem.eql(u8, argument, "--dncl2")) mode.dncl2 = true;
+    }
+    return mode;
 }
 
 pub fn hasArgument(arguments: []const []const u8, expected: []const u8) bool {

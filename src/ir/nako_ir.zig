@@ -27,9 +27,34 @@ pub const Opcode = enum {
     make_object,
     array_get,
     property_get,
-    array_set,
-    property_set,
-    increment,
+    /// 解決済みコンテナへの要素代入。operands=[container, key, value]。
+    /// 公式convLet/convLetArrayはルート変数を添字・値の評価より先に束縛し、
+    /// 中間レベルはarray_getで走査するため、lowering側で添字評価と走査を
+    /// 織り交ぜてからこの命令をemitする。nameは参照しない。
+    element_set,
+    /// 増減文の分解命令（公式convInc相当）。lowering側で
+    /// 読み出し→undefined初期化→量の評価→加算→書き戻しの順にemitする。
+    /// is_undefined: operands=[value]。公式の `typeof v === 'undefined'`
+    /// 相当で、値が未定義なら真を返す。
+    is_undefined,
+    /// coalesce_or_zero: operands=[value]。undefinedなら0、それ以外は
+    /// そのまま返す（公式convIncの初期化分岐後の `v = 0` 相当）。
+    coalesce_or_zero,
+    /// increment_values: operands=[old, amount]。公式の
+    /// `Number(v0) + Number(incValue)` 相当の数値強制つき加算を返す。
+    increment_values,
+    /// DNCL互換の配列自動初期化（公式convLetArrayのcheckInit相当）。
+    /// 値・添字の評価より先に実行されるようloweringで分解してemitされる。
+    /// ensure_array_var: name=対象変数。変数が配列でなければ30要素の0配列で初期化する。
+    ensure_array_var,
+    /// is_array: operands=[value]。公式convLetArrayのcheck式
+    /// `tmp[..] instanceof Array` 相当で、値が配列なら真を返す。
+    is_array,
+    /// init_array_index: operands=[container, key]。公式convLetArrayの
+    /// write-back式 `tmp[..] = arrayDefCode` 相当で、container[key]へ
+    /// 無条件に30要素の0配列を書き込む。nullishなコンテナへの書き込みは
+    /// 公式同様『Cannot set properties of …』で失敗する。
+    init_array_index,
     make_closure,
     iterator_begin,
     iterator_next,
@@ -67,12 +92,33 @@ pub const Instruction = struct {
     /// dispatch.
     literal_site_id: ?u64 = null,
     is_builtin_call: bool = false,
+    /// DNCL互換の配列要素代入で、未初期化変数へ30要素の0配列を自動初期化する。
+    check_array_init: bool = false,
+    /// 対象名がローカルシンボルへ解決された代入系命令で真。
+    /// local slotの登録対象判定に使う。
+    local_target: bool = false,
+    /// 実効取り込み文からのモジュールエントリ呼び出しで真。
+    /// モジュール直下の取り込み文（site_toplevel）は、その辺が存在する
+    /// ストリームでのみ実行される: ベース側の辺（callee_order <=
+    /// site_order）はコピー実行中に抑止され、コピー側のみの辺
+    /// （callee_order > site_order）はベース実行中に抑止される。
+    /// 関数本体内の取り込み文は公式同様に到達するたび常に実行される。
+    is_module_entry: bool = false,
+    site_module: u32 = 0,
+    site_order: u32 = 0,
+    callee_module: u32 = 0,
+    callee_order: u32 = 0,
+    site_toplevel: bool = false,
     operands: []ValueId = &.{},
     phi_incoming: []PhiIncoming = &.{},
     name: []const u8 = "",
     text: []const u8 = "",
     operator: []const u8 = "",
     names: []const []const u8 = &.{},
+    /// destructure_storeの各namesがローカルシンボルへ束縛されたか。
+    /// loweringが意味解析の束縛結果から設定し、namesと同じ長さになる。
+    /// local_targetと同じく、修飾名の有無ではなく束縛結果を権威にする。
+    names_local: []const bool = &.{},
     number_value: ?f64 = null,
     boolean_value: bool = false,
     direct_callee: ?FunctionId = null,
@@ -80,6 +126,14 @@ pub const Instruction = struct {
     exception_target: ?BlockId = null,
     span: ast.Span,
 };
+
+/// destructure_storeのターゲット名がローカル束縛かを返す。
+/// names_localは意味解析の束縛結果を写したもの。手組みIR等で
+/// 未設定の場合は修飾名ヒューリスティックへフォールバックする。
+pub fn destructureTargetIsLocal(instruction: Instruction, index: usize) bool {
+    if (index < instruction.names_local.len) return instruction.names_local[index];
+    return index < instruction.names.len and std.mem.indexOf(u8, instruction.names[index], "__") == null;
+}
 
 pub const ConditionalBranch = struct { condition: ValueId, then_block: BlockId, else_block: BlockId };
 pub const Throw = struct {
@@ -166,6 +220,7 @@ pub const Program = struct {
                     const names = try allocator.alloc([]const u8, instruction.names.len);
                     for (instruction.names, names) |source_name, *target_name| target_name.* = try allocator.dupe(u8, source_name);
                     instruction.names = names;
+                    instruction.names_local = try allocator.dupe(bool, instruction.names_local);
                 }
                 target_block.* = source_block;
                 target_block.name = try allocator.dupe(u8, source_block.name);
@@ -185,12 +240,17 @@ pub const Program = struct {
         }
         const native_plugin_paths = try allocator.alloc([]const u8, self.native_plugin_paths.len);
         for (self.native_plugin_paths, native_plugin_paths) |source_path, *target_path| target_path.* = try allocator.dupe(u8, source_path);
+        // arenaを返却値へコピーする前に確保を済ませる。リテラル内で呼ぶと
+        // コピー後のarena状態へ確保が記録されずリークする。
+        const module_entries = try allocator.dupe(FunctionId, self.module_entries);
+        const module_names = try cloneStrings(allocator, self.module_names);
+        const module_paths = try cloneStrings(allocator, self.module_paths);
         return .{
             .arena = arena,
             .functions = functions,
-            .module_entries = try allocator.dupe(FunctionId, self.module_entries),
-            .module_names = try cloneStrings(allocator, self.module_names),
-            .module_paths = try cloneStrings(allocator, self.module_paths),
+            .module_entries = module_entries,
+            .module_names = module_names,
+            .module_paths = module_paths,
             .compat_js = self.compat_js,
             .javascript_modules = javascript_modules,
             .native_plugin_paths = native_plugin_paths,

@@ -38,6 +38,78 @@
 - 差分テストID: `compare_syntax_oracle.mjs`、`fuzz_parser_oracle.mjs`
 - TODO識別子: なし
 
+## DNCL/DNCL2モードの検出と強制
+
+- 公式実測・source根拠: `!DNCLモード`、`!DNCL2`、`💡`系ディレクティブはソース先頭から100トークン以内でのみ検出され、複数のモードディレクティブは同時に有効化されます。検出はlexerが行い、語形変換は `convertDNCL2` → `convertDNCL` → インデント構文変換 → インラインインデント変換の順で適用されます。
+- lnakoの現在動作: lexerが同じ規則で `Mode` 構造体（`dncl` / `dncl2` / `indent`の独立フラグ）へ記録し、syntax transformで同じ順序・同じ行単位アルゴリズムを適用します。公式に存在しない入口として、`.dncl`拡張子はDNCLモード(v1)、`.dncl2`拡張子はDNCL2を強制し、`--dncl` / `--dncl2`フラグはエントリモジュールへ同じモードを強制します。公式同様にv1とv2を同時有効化すると「を実行し、そうでなければ」がv2側の先取り変換で壊れるため、`.dncl`はv1のみを強制します。
+- 判定: 仕様（拡張子・フラグは公式にないlnako独自の入口）
+- 対象経路: Lexer / Parser / Interpreter / AOT
+- 差分テストID: `compare_lexer_oracle.mjs`、`compare_syntax_oracle.mjs`、`.dncl/.dncl2拡張子でDNCL系モードを強制する`、`エントリの.nako3へ--dncl/--dncl2相当のモードを強制する`
+- TODO識別子: なし
+
+## 文中の「DNCLモード」「DNCL2モード」文
+
+- 公式実測・source根拠: ディレクティブ形式以外に、単独文としての `DNCLモード` / `DNCL2モード` を公式parserは受理し、その文の位置以降だけ対応モードを有効化します（位置依存）。先頭ディレクティブはファイル全体へ作用しますが、文中のモード文はそれより前の行へは遡及しません。
+- lnakoの現在動作: lexerが先頭100トークン内のディレクティブに加えて文中のモード文をモードtokenとして出力し、parserがその文を読んだ時点で自身のモード状態を更新します。以降の文だけが新しいモードで解析されます。
+- 判定: 仕様
+- 対象経路: Parser / Interpreter / AOT
+- 差分テストID: `dncl-v1-mode-statement-positional`、`dncl2-mode-statement-positional`（`compare_interpreter_oracle.mjs`、`compare_native_oracle.mjs`）
+- TODO識別子: なし
+
+## DNCL v1の配列添字と要素代入の自動初期化
+
+- 公式実測・source根拠: `!DNCLモード`の配列添字は1始まりで、`A[1]`は内部index 0を参照し、`A[0]`は範囲外としてundefined相当になります。多次元参照は添字の並びが逆転します。`checkInit`により、宣言なしの`A[1]=5`は30要素の0配列を生成し、多次元代入の欠落した中間コンテナも同じ30要素の0配列で初期化されます。DNCL2は0始まりを維持しつつ、同じ自動初期化を持ちます。中間レベルの初期化判定は `if (!(tmp[k0]..[ki] instanceof Array)) { tmp[k0]..[ki] = 新規配列 }` で、check式とwrite-back式で同一添字式を評価し直すため、副作用のある添字式は初期化が走る各レベルで2回評価され、write-backの親がnullishなら `Cannot set properties of …` で失敗します。
+- lnakoの現在動作: parserがDNCL v1の添字を`index-1`へ変換し多次元添字を反転します。変換は変数参照だけでなく配列リテラル・括弧式などの非変数レシーバにも適用します。AST→HIR→SSA IRへ`check_array_init`フラグを伝搬し、Interpreter・AOTの両方で未宣言変数・非配列値・欠落中間コンテナへ30要素の0配列を生成します。中間レベルは`array_get`走査+`is_array`判定+条件分岐+`init_array_index` write-backへ分解され、check式とwrite-back式で添字式を公式と同じ回数だけ評価し直します。ルート変数は`ensure_array_var`直後に一度だけ束縛され、最終代入もその束縛済みコンテナへ`element_set`で書き込みます。
+- 判定: 仕様
+- 対象経路: Parser / Interpreter / AOT
+- 差分テストID: `dncl-v1-array-*`、`dncl2-array-*`（`compare_interpreter_oracle.mjs`、`compare_native_oracle.mjs`）
+- TODO識別子: なし
+
+## 1つの『[ ]』内の添字数制限
+
+- 公式実測・source根拠: 1つの括弧内のカンマ区切り添字は最大3つまでで、4つ以上は `配列アクセスで指定ミス` の構文エラーになります。`A[i][j][k][l]` のような `@`/`]`連鎖は別扱いで制限されません。読み取り側は構文エラーですが、代入側 `A[1,2,3,4]=1` は公式では構文を通り実行時エラーになります。
+- lnakoの現在動作: 読み取り側は3を超える添字を `invalid_array_access` 構文エラーとして拒否し公式と一致します。代入側は公式と同様に構文を通り、`A[1,2,3,4]=1` は `Cannot read properties of undefined (reading '1')` の実行時エラーになります（差分テストなし・実測確認）。
+- 判定: 仕様（代入側はエラー分類のみ差異）
+- 対象経路: Parser
+- 差分テストID: `parser-diagnostic-cases.json`
+- TODO識別子: なし
+
+## 配列・プロパティ要素の増減
+
+- 公式実測・source根拠: `A[i]をN増やす` / `A[i]を減らす` は要素参照を対象に取り、要素がundefinedなら0として扱います。未宣言のルート変数や欠落した中間コンテナは自動初期化されず実行時エラーになります。
+- lnakoの現在動作: loweringが `is_undefined`/`coalesce_or_zero`/`increment_values`/`element_set` の分解命令列へ展開し、Interpreter・AOTとも同じ規則で処理します。コンテナと添字は1度だけ束縛され（公式の `$nako_o1 = get(name); $nako_i1 = key` 相当）、量式は要素読み出し・undefined初期化の後に評価され、書き戻しは量評価後に束縛済みの根から再走査します。未宣言・undefined/nullなルートまたは中間レベルは `Cannot read properties of undefined/null (reading '<key>')`（公式のTypeError相当）で失敗します。
+- 判定: 仕様
+- 対象経路: Parser / Interpreter / AOT
+- 差分テストID: `dncl-v1-increment-indexed`、`dncl2-increment-indexed`、`dncl-v1-increment-indexed-undeclared`、`dncl-v1-increment-indexed-undefined`、`dncl-v1-increment-indexed-null`、`dncl-v1-increment-indexed-mid-undefined`、`dncl-v1-increment-indexed-dict`、`increment-amount-after-read`、`increment-indexed-write-retraverses`、`native-increment-amount-after-read`、`native-increment-indexed-write-retraverses`
+- TODO識別子: なし
+
+## 添字位置の裸の命令語
+
+- 公式実測・source根拠: カンマ直前の添字位置にある関数語（`A[1,表示,2]`、`A[1,f,2]`、代入側の `A[f,0]=9`）は公式のfunc token規則で値として受理されず `配列アクセスで指定ミス` の構文エラーになります。一方、最後の添字位置や式中の裸の命令語（`A[表示]`、`A[1,表示]`）は公式では0引数呼出しとして生成され、命令の副作用が実行されてから戻り値（`表示` 等はundefined）が添字値になります。`X=表示` のような戻り値なし命令の値への代入は公式では文法エラーです。
+- lnakoの現在動作: カンマ直前の裸の関数語は読み出し側・代入側の両方で `bare_index_word` として `invalid_array_access`（`配列アクセスで指定ミス`）を発行し公式と一致します。最後の添字位置ではユーザー定義関数は暗黙呼出しとして実行され公式と一致しますが、組み込み命令語はbuiltin参照としてundefined相当を返し、命令自体は実行されません。
+- 判定: 仕様（カンマ直前の診断）／既知の差異（最後の添字位置の組み込み命令語の0引数呼出し。`X=表示` の文法エラー化を含む値位置の組み込み命令語の扱いは既存の境界）
+- 対象経路: Parser / Interpreter / AOT
+- 差分テストID: `semantic-diagnostic-bare-index-word`、`semantic-diagnostic-bare-index-word-dncl`、`semantic-diagnostic-bare-index-word-assign`（`compare_semantic_diagnostics_oracle.mjs`）
+- TODO識別子: `TODO: builtin-word-value-position`
+
+## 呼出し結果への添字適用
+
+- 公式実測・source根拠: `F(A)[i]` のように括弧呼出しの直後へ続く `[i]` は、公式では呼出し結果への添字ではなく別の式文として解釈されます（`二倍([5,6])[1]を表示` は `[1]` が表示対象になり `1` を出力します）。
+- lnakoの現在動作: 呼出し結果への添字として解釈し、undefined相当を返します。通常モード・DNCLモードの両方で同じ差異です。
+- 判定: 未実装境界（DNCL固有ではないparser差異）
+- 対象経路: Parser / Interpreter / AOT
+- 差分テストID: なし
+- TODO識別子: `TODO: call-result-index-statement`
+
+## 「の」助詞の関数呼出し
+
+- 公式実測・source根拠: `Aの要素数`のように、先行値の助詞`の`が関数宣言の助詞一覧と一致すると関数呼出しになります（`要素数(A)`相当）。一致しない`Aの表示`は未解決単語の文法エラーになります。
+- lnakoの現在動作: `の`助詞を関数呼出しの引数束縛として解決しません。後続の識別子は別の引数または未解決単語として扱われ、`Aの要素数`は`undefined`相当の値になります。DNCLモードでも同じです。
+- 判定: 未実装境界（関数ごとの助詞シグネチャ照合が必要な一般機能であり、DNCL固有ではありません）
+- 対象経路: Parser / Interpreter / AOT
+- 差分テストID: なし
+- TODO識別子: `TODO: no-josi-function-call`
+
 ## 助詞付き引数の省略
 
 - 公式実測・source根拠: C風呼出しではarity不足・超過が文法エラーになりますが、助詞構文では不足引数が `undefined` として渡される命令があります。例えば結合の区切り値が未指定でも、命令自体は実行されます。

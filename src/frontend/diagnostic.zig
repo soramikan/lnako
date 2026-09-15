@@ -10,6 +10,7 @@ pub const Code = enum {
     expected_token,
     missing_block_end,
     invalid_assignment,
+    invalid_array_access,
     invalid_function_definition,
     invalid_control_statement,
     duplicate_symbol,

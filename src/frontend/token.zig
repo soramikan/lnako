@@ -29,6 +29,9 @@ pub const Kind = enum {
     keyword_error,
     keyword_async,
     keyword_mode,
+    /// 公式の 'DNCLモード'/'DNCL2モード' 型。文位置で配列モードを有効化する。
+    keyword_dncl_mode,
+    keyword_dncl2_mode,
     not,
     logical_and,
     logical_or,
@@ -67,11 +70,12 @@ pub const Kind = enum {
     colon,
 };
 
-pub const Mode = enum {
-    standard,
-    indent,
-    dncl,
-    dncl2,
+/// 有効化される構文モード。公式は `!DNCLモード`・`!DNCL2`系・`!インデント構文`系を
+/// それぞれ独立した行コメント検出として扱うため、同一ソースで同時に有効になり得る。
+pub const Mode = struct {
+    dncl: bool = false,
+    dncl2: bool = false,
+    indent: bool = false,
 };
 
 pub const Span = struct {

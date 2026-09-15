@@ -24,7 +24,7 @@ pub fn run(
             try stderr.flush();
             std.process.exit(1);
         }
-        var ir_program = (try compiler_pipeline.compileInputWithProvider(allocator, package.entry_path, true, stderr, package.sourceProvider())) orelse {
+        var ir_program = (try compiler_pipeline.compileInputWithProvider(allocator, package.entry_path, .{ .compat_js = true }, stderr, package.sourceProvider())) orelse {
             try stderr.flush();
             std.process.exit(1);
         };
@@ -91,7 +91,7 @@ pub fn run(
                 try stderr.flush();
                 std.process.exit(2);
             }
-            var ir_program = (try compiler_pipeline.compileInputTraced(allocator, io, options.input, options.compat_js, stderr, init.environ_map.get("LNAKO_LLVM_TRACE") != null)) orelse {
+            var ir_program = (try compiler_pipeline.compileInputTraced(allocator, io, options.input, .{ .compat_js = options.compat_js, .forced_mode = options.forced_mode }, stderr, init.environ_map.get("LNAKO_LLVM_TRACE") != null)) orelse {
                 try stderr.flush();
                 std.process.exit(1);
             };
@@ -131,7 +131,7 @@ pub fn run(
                 try stderr.flush();
                 std.process.exit(2);
             }
-            var ir_program = (try compiler_pipeline.compileInput(allocator, io, args[1], false, stderr)) orelse {
+            var ir_program = (try compiler_pipeline.compileInput(allocator, io, args[1], .{ .forced_mode = arguments.dnclModeFromArguments(args[2..]) }, stderr)) orelse {
                 try stderr.flush();
                 std.process.exit(1);
             };
@@ -151,7 +151,7 @@ pub fn run(
                 try stderr.flush();
                 std.process.exit(2);
             }
-            var ir_program = (try compiler_pipeline.compileInput(allocator, io, args[1], compat_js, stderr)) orelse {
+            var ir_program = (try compiler_pipeline.compileInput(allocator, io, args[1], .{ .compat_js = compat_js, .forced_mode = arguments.dnclModeFromArguments(run_options.lnako) }, stderr)) orelse {
                 try stderr.flush();
                 std.process.exit(1);
             };

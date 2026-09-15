@@ -79,6 +79,18 @@ Windowsでは`lnako build hello.nako3 -o hello.exe -O2`で生成し、`.\hello.e
 
 通常の生成物を動かす側にlnako・Zig・Node.js・LLVMは不要です。対象OSの標準ライブラリ、使用するファイル・外部ツール・動的ネイティブプラグインなどは別途必要です。別OS用の実行ファイルへの自動変換を保証するものではありません。
 
+## DNCLプログラムの実行
+
+共通テスト用語のプログラミング言語DNCLのソースをそのまま実行・コンパイルできます。ファイル内の`!DNCLモード`（DNCL）または`!DNCL2`（DNCL2）ディレクティブが検出されるほか、`.dncl` / `.dncl2`拡張子や`--dncl` / `--dncl2`フラグでもモードを強制できます。
+
+```sh
+lnako run program.dncl
+lnako build program.dncl -o program -O2
+lnako run program.nako3 --dncl2
+```
+
+配列添字などモードごとの細かい差異は[Parser・構文のquirks](compatibility/PARSER.md)を参照してください。
+
 ## JavaScript互換モード
 
 JavaScript固有の4命令が必要なプログラムでは、明示的に`--compat-js`を指定します。配布版とHomebrew版はQuickJSを同梱しています。

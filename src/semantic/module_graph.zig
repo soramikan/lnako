@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("../frontend/ast.zig");
 const diagnostic = @import("../frontend/diagnostic.zig");
 const parser = @import("../frontend/parser.zig");
+const token_mod = @import("../frontend/token.zig");
 const analyzer = @import("analyzer.zig");
 
 pub const SourceProvider = struct {
@@ -27,7 +28,11 @@ pub const FileProvider = struct {
     }
 };
 
-pub const Options = struct { compat_js: bool = false };
+pub const Options = struct {
+    compat_js: bool = false,
+    /// エントリモジュールへ強制する構文モード（--dncl / --dncl2）。
+    forced_mode: token_mod.Mode = .{},
+};
 pub const ModuleKind = enum { nako3, javascript, native_plugin };
 pub const LoadState = enum { loading, loaded };
 
@@ -37,6 +42,10 @@ pub const Import = struct {
     target: ?u32,
     span: ast.Span,
     cyclic: bool = false,
+    /// 結合ストリーム上で実際に内容を持つ辺かどうか。
+    /// 公式のinclude guard相当: 同一モジュールへの2回目以降の取り込みや
+    /// 循環取り込みは内容を持たず、モード伝搬・可視位置にも効かない。
+    effective: bool = false,
 };
 
 pub const LoadedModule = struct {
@@ -48,6 +57,28 @@ pub const LoadedModule = struct {
     source: []u8,
     parsed: ?parser.ParseResult,
     imports: []Import = &.{},
+    /// 拡張子・CLIで強制される構文モード（取り込み継承とは別系統）
+    forced_mode: token_mod.Mode = .{},
+    /// 直近のパースに使った取り込み継承モード（再パース要否の判定用）
+    parse_initial: token_mod.Mode = .{},
+    /// include guardへ登録された展開順位。公式のreplaceRequireStatementsは
+    /// 展開中のモジュールをguardへ入れるため、取り込み先のコピー内では
+    /// 自分以下の順位を持つモジュールへの取り込み文が除去される。
+    /// maxIntは一度もコピーとして展開されなかったことを表す。
+    expand_order: u32 = std.math.maxInt(u32),
+};
+
+/// 全モジュールのトップレベル文が結合ストリーム上で占める順位。
+/// 公式は取り込み文を取り込み先トークン列で置き換えて単一パースするため、
+/// 実効取り込み辺の先は取り込み文の位置へ展開される。stmt_ranks[i][k] は
+/// modules[i] の parsed.root.children[k] の結合順位。取り込み文自身や
+/// 展開対象外の文には maxInt が入る。
+pub const Expansion = struct {
+    stmt_ranks: []const []const usize = &.{},
+    /// 各モジュールの展開が始まった結合ストリーム順位。公式では各ファイルの
+    /// 展開先頭に「プラグイン名設定」マーカーが挿入され、modList はその
+    /// 出現順に並ぶ。未展開のモジュールには maxInt が入る。
+    marker_ranks: []const usize = &.{},
 };
 
 pub const ModuleGraph = struct {
@@ -56,6 +87,7 @@ pub const ModuleGraph = struct {
     modules: []*LoadedModule,
     entry: u32,
     diagnostics: []diagnostic.Diagnostic,
+    expansion: Expansion = .{},
 
     pub fn deinit(self: *ModuleGraph) void {
         for (self.modules) |module| {
@@ -79,22 +111,44 @@ pub const ModuleGraph = struct {
         var temporary = std.heap.ArenaAllocator.init(allocator);
         defer temporary.deinit();
         const temp = temporary.allocator();
+        // 取り込み辺のsite/calleeはローダindexではなく入力indexで保持する。
+        // 同名モジュール（d1/lib と d2/lib）が共に "lib__$entry" を名乗る
+        // 名前解決の衝突を避け、実行時は module_entries から直接引く。
+        const loader_to_input = try temp.alloc(u32, self.modules.len);
+        var input_count: u32 = 0;
+        for (self.modules) |module| {
+            if (module.kind != .nako3 or module.parsed == null or module.parsed.?.root == null) continue;
+            loader_to_input[module.index] = input_count;
+            input_count += 1;
+        }
         var inputs: std.ArrayList(analyzer.ModuleInput) = .empty;
         for (self.modules) |module| {
             if (module.kind != .nako3 or module.parsed == null or module.parsed.?.root == null) continue;
-            var imports: std.ArrayList([]const u8) = .empty;
+            var import_entries: std.ArrayList(analyzer.ImportEntry) = .empty;
             var allows_dynamic_commands = false;
             for (module.imports) |item| if (item.target) |target| {
                 const target_module = self.modules[target];
-                if (target_module.kind == .nako3) try imports.append(temp, target_module.name);
                 if (target_module.kind == .native_plugin) allows_dynamic_commands = true;
+                // 実効辺のみ取り込み位置での実行対象になる
+                if (item.effective and target_module.kind == .nako3) {
+                    try import_entries.append(temp, .{
+                        .position = item.span.start,
+                        .entry_name = try std.fmt.allocPrint(temp, "{s}__$entry", .{target_module.name}),
+                        .site_module = loader_to_input[module.index],
+                        .site_order = module.expand_order,
+                        .callee_module = loader_to_input[target],
+                        .callee_order = target_module.expand_order,
+                    });
+                }
             };
             try inputs.append(temp, .{
                 .name = module.name,
                 .path = module.path,
                 .root = module.parsed.?.root.?,
-                .imports = try imports.toOwnedSlice(temp),
                 .allows_dynamic_commands = allows_dynamic_commands,
+                .stmt_ranks = if (module.index < self.expansion.stmt_ranks.len) self.expansion.stmt_ranks[module.index] else &.{},
+                .marker_rank = if (module.index < self.expansion.marker_ranks.len) self.expansion.marker_ranks[module.index] else std.math.maxInt(usize),
+                .import_entries = try import_entries.toOwnedSlice(temp),
             });
         }
         return analyzer.analyzeModules(allocator, inputs.items);
@@ -112,13 +166,25 @@ pub fn load(backing_allocator: std.mem.Allocator, entry_path: []const u8, provid
     };
     errdefer loader.deinitModules();
     const normalized_entry = try normalizePath(loader.allocator, entry_path);
-    const entry = try loader.loadOne(normalized_entry, null);
+    const entry = try loader.loadOne(normalized_entry, null, null);
+    // 実効辺の決定とモード伝搬は全モジュール読み込み後に行う。
+    // 公式のreplaceRequireStatementsは取り込み文を逆順に処理し、filePath単位の
+    // include guardで最初に処理された辺だけへ内容を展開する（同一ファイルの
+    // 複数取り込みでは最後の取り込み文に内容が載る）。
+    try loader.markEffectiveEdges(entry);
+    try loader.propagateModes(entry);
+    const modules = try loader.modules.toOwnedSlice(loader.allocator);
+    const diagnostics = try loader.diagnostics.toOwnedSlice(loader.allocator);
+    // arenaを返却値へコピーする前に確保を済ませる。リテラル内で呼ぶと
+    // コピー後のarena状態へ確保が記録されずリークする。
+    const expansion = try buildExpansion(loader.allocator, modules, entry);
     return .{
         .backing_allocator = backing_allocator,
         .arena = arena,
-        .modules = try loader.modules.toOwnedSlice(loader.allocator),
+        .modules = modules,
         .entry = entry,
-        .diagnostics = try loader.diagnostics.toOwnedSlice(loader.allocator),
+        .diagnostics = diagnostics,
+        .expansion = expansion,
     };
 }
 
@@ -138,19 +204,34 @@ const Loader = struct {
         }
     }
 
-    fn loadOne(self: *Loader, path: []const u8, import_node: ?*ast.Node) anyerror!u32 {
+    /// `initial` は取り込み文位置で有効だったパーサモード（取り込み元からの継承）。
+    /// 字句変換には波及せず、添字・自動初期化の意味づけのみに効く。
+    fn loadOne(self: *Loader, path: []const u8, import_node: ?*ast.Node, initial: ?token_mod.Mode) anyerror!u32 {
         if (self.find(path)) |existing| return existing;
         const extension = std.fs.path.extension(path);
-        const kind: ModuleKind = if (std.ascii.eqlIgnoreCase(extension, ".nako3"))
+        const is_dncl = std.ascii.eqlIgnoreCase(extension, ".dncl");
+        const is_dncl2 = std.ascii.eqlIgnoreCase(extension, ".dncl2");
+        const kind: ModuleKind = if (std.ascii.eqlIgnoreCase(extension, ".nako3") or is_dncl or is_dncl2)
             .nako3
         else if (std.ascii.eqlIgnoreCase(extension, ".js") or std.ascii.eqlIgnoreCase(extension, ".mjs"))
             .javascript
         else if (isNativePluginExtension(extension))
             .native_plugin
         else {
-            try self.importDiagnostic(import_node, path, "取り込めるのは.nako3、JavaScript、ネイティブプラグインです");
+            try self.importDiagnostic(import_node, path, "取り込めるのは.nako3、.dncl、.dncl2、JavaScript、ネイティブプラグインです");
             return error.UnsupportedImport;
         };
+        // .dnclはDNCLモード(v1)、.dncl2はDNCL2を強制する。
+        // v1とv2を同時に有効化すると公式と同じく「を実行し、そうでなければ」が
+        // v2側の先取り変換で壊れるため、.dnclはv1のみに限定する。
+        var forced_mode: token_mod.Mode = .{};
+        if (is_dncl) forced_mode.dncl = true;
+        if (is_dncl2) forced_mode.dncl2 = true;
+        if (self.modules.items.len == 0) {
+            forced_mode.dncl = forced_mode.dncl or self.options.forced_mode.dncl;
+            forced_mode.dncl2 = forced_mode.dncl2 or self.options.forced_mode.dncl2;
+            forced_mode.indent = forced_mode.indent or self.options.forced_mode.indent;
+        }
         const native_builtin = kind == .javascript and isNativeBuiltinPlugin(path);
         if (kind == .javascript and !self.options.compat_js and !native_builtin) {
             try self.importDiagnostic(import_node, path, "JavaScriptの取り込みには--compat-jsが必要です");
@@ -177,6 +258,7 @@ const Loader = struct {
             .name = name,
             .source = source,
             .parsed = null,
+            .forced_mode = forced_mode,
         };
         try self.modules.append(self.allocator, module);
         // The graph owns both allocations from here, including modules whose
@@ -206,7 +288,7 @@ const Loader = struct {
                 if (existing) |index| {
                     cyclic = self.modules.items[index].state == .loading;
                 } else {
-                    target = self.loadOne(resolved, import_node) catch |err| switch (err) {
+                    target = self.loadOne(resolved, import_node, null) catch |err| switch (err) {
                         error.OutOfMemory => return err,
                         else => null,
                     };
@@ -223,30 +305,52 @@ const Loader = struct {
             module.state = .loaded;
             return module.index;
         }
-        module.parsed = parser.parse(self.backing_allocator, source, path) catch |err| {
+        // 取り込み元から継承したモード（initial）でパースし、各取り込み文
+        // 位置でのモードを得る。実効辺の決定と終端モードの反映は全モジュール
+        // 読み込み後の propagateModes が行う。
+        module.parsed = parser.parseWithMode(self.backing_allocator, source, path, .{
+            .forced = forced_mode,
+            .initial = initial,
+        }) catch |err| {
             try self.importDiagnostic(import_node, path, "取り込み先を字句解析できません");
             return err;
         };
+        module.parse_initial = initial orelse .{};
         if (module.parsed.?.root) |root| {
             var import_nodes: std.ArrayList(*ast.Node) = .empty;
             try collectImports(root, &import_nodes, self.allocator);
             var imports: std.ArrayList(Import) = .empty;
+            // 先行する取り込み先の終端モードの暫定累積（実効辺未確定のため近似値）
+            var cumulative: token_mod.Mode = .{};
             for (import_nodes.items) |node| {
                 const resolved = resolveImport(self.allocator, path, node.value) catch |err| {
                     if (err == error.OutOfMemory) return err;
                     try self.importDiagnostic(node, path, "相対取り込みパスが不正です");
                     continue;
                 };
+                var site_mode = cumulative;
+                for (module.parsed.?.import_modes) |record| {
+                    if (record.position == node.span.start) {
+                        site_mode = orMode(site_mode, record.mode);
+                        break;
+                    }
+                }
                 const existing = self.find(resolved);
                 var target: ?u32 = existing;
                 var cyclic = false;
                 if (existing) |index| {
                     cyclic = self.modules.items[index].state == .loading;
                 } else {
-                    target = self.loadOne(resolved, node) catch |err| switch (err) {
+                    target = self.loadOne(resolved, node, site_mode) catch |err| switch (err) {
                         error.OutOfMemory => return err,
                         else => null,
                     };
+                }
+                if (target) |target_index| {
+                    const target_module = self.modules.items[target_index];
+                    if (target_module.kind == .nako3 and target_module.parsed != null) {
+                        cumulative = orMode(cumulative, target_module.parsed.?.final_mode);
+                    }
                 }
                 try imports.append(self.allocator, .{
                     .requested = try self.allocator.dupe(u8, node.value),
@@ -260,6 +364,116 @@ const Loader = struct {
         }
         module.state = .loaded;
         return module.index;
+    }
+
+    /// 公式のreplaceRequireStatements相当: 各モジュールの取り込み文を逆順に
+    /// 処理し、filePath単位のガードで最初に処理された辺のみを実効辺にする。
+    /// エントリ自身はガードへ入れないため、循環取り込みでエントリの内容が
+    /// 一度だけ再展開される。
+    fn markEffectiveEdges(self: *Loader, entry: u32) !void {
+        const guarded = try self.allocator.alloc(bool, self.modules.items.len);
+        @memset(guarded, false);
+        var order_counter: u32 = 0;
+        try self.markEffectiveIn(entry, guarded, &order_counter);
+    }
+
+    fn markEffectiveIn(self: *Loader, index: u32, guarded: []bool, order_counter: *u32) !void {
+        const module = self.modules.items[index];
+        var i = module.imports.len;
+        while (i > 0) {
+            i -= 1;
+            const item = &module.imports[i];
+            const target = item.target orelse continue;
+            const target_module = self.modules.items[target];
+            if (target_module.kind != .nako3 or target_module.parsed == null) continue;
+            if (guarded[target]) continue;
+            guarded[target] = true;
+            target_module.expand_order = order_counter.*;
+            order_counter.* += 1;
+            item.effective = true;
+            try self.markEffectiveIn(target, guarded, order_counter);
+        }
+    }
+
+    /// 実効辺に沿ってパーサモードを伝搬する。取り込み文位置のモードが
+    /// 取り込み先の初期モードになり、取り込み先の終端モードが取り込み文の
+    /// 直後へ適用される（tail_modes）。モードは単調に有効化される。
+    fn propagateModes(self: *Loader, entry: u32) !void {
+        const state = try self.allocator.alloc(ModeState, self.modules.items.len);
+        @memset(state, .unvisited);
+        try self.propagateInto(entry, .{}, state);
+    }
+
+    fn propagateInto(self: *Loader, index: u32, initial: token_mod.Mode, state: []ModeState) !void {
+        if (state[index] != .unvisited) return;
+        state[index] = .visiting;
+        const module = self.modules.items[index];
+        defer state[index] = .done;
+        if (module.kind != .nako3 or module.parsed == null) return;
+
+        // 正しい初期モードで必要なら再パースし、取り込み文位置のモードを更新する
+        if (!modeEql(module.parse_initial, initial)) {
+            const reparsed = parser.parseWithMode(self.backing_allocator, module.source, module.path, .{
+                .forced = module.forced_mode,
+                .initial = initial,
+            }) catch |err| {
+                try self.importDiagnostic(null, module.path, "取り込み先を字句解析できません");
+                return err;
+            };
+            module.parsed.?.deinit();
+            module.parsed = reparsed;
+            module.parse_initial = initial;
+            try self.refreshImportSpans(module);
+        }
+
+        var cumulative: token_mod.Mode = .{};
+        var tail_modes: std.ArrayList(parser.TailMode) = .empty;
+        for (module.imports) |*item| {
+            if (!item.effective) continue;
+            const target = item.target.?;
+            var site_mode = cumulative;
+            for (module.parsed.?.import_modes) |record| {
+                if (record.position == item.span.start) {
+                    site_mode = orMode(site_mode, record.mode);
+                    break;
+                }
+            }
+            try self.propagateInto(target, site_mode, state);
+            const target_module = self.modules.items[target];
+            if (target_module.parsed) |target_parsed| {
+                cumulative = orMode(cumulative, target_parsed.final_mode);
+                try tail_modes.append(self.allocator, .{ .position = item.span.start, .mode = target_parsed.final_mode });
+            }
+        }
+        if (tail_modes.items.len > 0) {
+            const reparsed = parser.parseWithMode(self.backing_allocator, module.source, module.path, .{
+                .forced = module.forced_mode,
+                .initial = initial,
+                .tail_modes = tail_modes.items,
+            }) catch |err| {
+                try self.importDiagnostic(null, module.path, "取り込み先を字句解析できません");
+                return err;
+            };
+            module.parsed.?.deinit();
+            module.parsed = reparsed;
+            try self.refreshImportSpans(module);
+        }
+    }
+
+    /// 再パースで構文変換が文境界を動かし得るため、取り込み文のspanを
+    /// 最終ASTから順序対応で再収集する。個数が変わる構造変化では
+    /// 暫定位置との照合が破綻して実効辺が暗黙に無効化されるため、
+    /// 黙って維持せず診断を出す。
+    fn refreshImportSpans(self: *Loader, module: *LoadedModule) !void {
+        const parsed = module.parsed orelse return;
+        const root = parsed.root orelse return;
+        var import_nodes: std.ArrayList(*ast.Node) = .empty;
+        try collectImports(root, &import_nodes, self.allocator);
+        if (import_nodes.items.len != module.imports.len) {
+            try self.importDiagnostic(null, module.path, "取り込み文の位置を再パース後に特定できません");
+            return;
+        }
+        for (import_nodes.items, 0..) |node, index| module.imports[index].span = node.span;
     }
 
     fn find(self: *Loader, path: []const u8) ?u32 {
@@ -276,6 +490,76 @@ const Loader = struct {
         });
     }
 };
+
+const ModeState = enum { unvisited, visiting, done };
+
+fn orMode(a: token_mod.Mode, b: token_mod.Mode) token_mod.Mode {
+    return .{
+        .dncl = a.dncl or b.dncl,
+        .dncl2 = a.dncl2 or b.dncl2,
+        .indent = a.indent or b.indent,
+    };
+}
+
+fn modeEql(a: token_mod.Mode, b: token_mod.Mode) bool {
+    return a.dncl == b.dncl and a.dncl2 == b.dncl2 and a.indent == b.indent;
+}
+
+/// 結合ストリーム上の文順位をDFSで構築する。公式の取り込みは先勝ちの
+/// include guard付きトークン置換なので、各モジュールの内容は最初の実効
+/// 取り込み辺の位置に一度だけ展開される。文内部の取り込み文はその文の
+/// 位置に展開されるものとして近似する。
+fn buildExpansion(allocator: std.mem.Allocator, modules: []*LoadedModule, entry: u32) !Expansion {
+    const stmt_ranks = try allocator.alloc([]usize, modules.len);
+    const marker_ranks = try allocator.alloc(usize, modules.len);
+    const visited = try allocator.alloc(bool, modules.len);
+    @memset(visited, false);
+    @memset(marker_ranks, std.math.maxInt(usize));
+    for (modules, 0..) |module, index| {
+        const count: usize = if (module.kind == .nako3 and module.parsed != null and module.parsed.?.root != null)
+            module.parsed.?.root.?.children.len
+        else
+            0;
+        stmt_ranks[index] = try allocator.alloc(usize, count);
+        @memset(stmt_ranks[index], std.math.maxInt(usize));
+    }
+    var rank: usize = 0;
+    try expandModule(allocator, modules, entry, visited, stmt_ranks, marker_ranks, &rank);
+    return .{ .stmt_ranks = stmt_ranks, .marker_ranks = marker_ranks };
+}
+
+fn expandModule(allocator: std.mem.Allocator, modules: []*LoadedModule, index: u32, visited: []bool, stmt_ranks: []const []usize, marker_ranks: []usize, rank: *usize) !void {
+    if (visited[index]) return;
+    visited[index] = true;
+    // 公式は展開先頭にプラグイン名設定マーカーを挿し、modListはその出現順に並ぶ
+    marker_ranks[index] = rank.*;
+    const module = modules[index];
+    if (module.kind != .nako3 or module.parsed == null or module.parsed.?.root == null) return;
+    for (module.parsed.?.root.?.children, 0..) |child, k| {
+        if (effectiveImportTarget(module, child.span.start)) |target| {
+            try expandModule(allocator, modules, target, visited, stmt_ranks, marker_ranks, rank);
+            continue;
+        }
+        stmt_ranks[index][k] = rank.*;
+        rank.* += 1;
+        // 文内部の取り込み文は、その文の直後へ展開されるものとして扱う
+        var nested: std.ArrayList(*ast.Node) = .empty;
+        try collectImports(child, &nested, allocator);
+        for (nested.items) |node| {
+            if (effectiveImportTarget(module, node.span.start)) |target| {
+                try expandModule(allocator, modules, target, visited, stmt_ranks, marker_ranks, rank);
+            }
+        }
+    }
+}
+
+/// 指定位置の取り込み文が実効辺なら取り込み先モジュールのindexを返す。
+fn effectiveImportTarget(module: *LoadedModule, position: usize) ?u32 {
+    for (module.imports) |item| {
+        if (item.span.start == position and item.effective and item.target != null) return item.target;
+    }
+    return null;
+}
 
 fn isNativeBuiltinPlugin(path: []const u8) bool {
     const basename = std.fs.path.basename(path);
@@ -570,4 +854,45 @@ test "存在しない取り込みを位置付き診断にする" {
     try std.testing.expect(!graph.succeeded());
     try std.testing.expectEqual(@as(usize, 1), graph.diagnostics.len);
     try std.testing.expectEqual(@as(usize, 0), graph.diagnostics[0].span.line);
+}
+
+test ".dncl/.dncl2拡張子でDNCL系モードを強制する" {
+    var memory = MemoryProvider{
+        .files = &.{
+            // .dncl は DNCLモード(v1)。「を実行し、そうでなければ」が動くことを確認する
+            .{ .suffix = "main.dncl", .source = "A←3\nもしA=3ならば\n|「ok」と表示\nを実行し、そうでなければ\n|「ng」と表示\nを実行する\n" },
+            .{ .suffix = "main.dncl2", .source = "B=0\nもし(not 真)ならば:\n　B=1\nそうでなければ:\n　B=2\n" },
+            .{ .suffix = "plain.nako3", .source = "A←3\n" },
+        },
+    };
+    var dncl_graph = try load(std.testing.allocator, "main.dncl", memory.sourceProvider(), .{});
+    defer dncl_graph.deinit();
+    try std.testing.expect(dncl_graph.succeeded());
+    var dncl2_graph = try load(std.testing.allocator, "main.dncl2", memory.sourceProvider(), .{});
+    defer dncl2_graph.deinit();
+    try std.testing.expect(dncl2_graph.succeeded());
+    var plain_graph = try load(std.testing.allocator, "plain.nako3", memory.sourceProvider(), .{});
+    defer plain_graph.deinit();
+    try std.testing.expect(!plain_graph.succeeded());
+}
+
+test "エントリの.nako3へ--dncl/--dncl2相当のモードを強制する" {
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "A←3\n" },
+        .{ .suffix = "main2.nako3", .source = "B=0\nもし(not 真)ならば:\n　B=1\n" },
+    } };
+    var dncl_graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .forced_mode = .{ .dncl = true } });
+    defer dncl_graph.deinit();
+    try std.testing.expect(dncl_graph.succeeded());
+    var dncl2_graph = try load(std.testing.allocator, "main2.nako3", memory.sourceProvider(), .{ .forced_mode = .{ .dncl2 = true } });
+    defer dncl2_graph.deinit();
+    try std.testing.expect(dncl2_graph.succeeded());
+    // 強制モードはエントリのみで、取り込み先の.nako3へは波及しない
+    var imported = MemoryProvider{ .files = &.{
+        .{ .suffix = "entry.nako3", .source = "!「./lib.nako3」を取り込む\n" },
+        .{ .suffix = "lib.nako3", .source = "A←3\n" },
+    } };
+    var imported_graph = try load(std.testing.allocator, "entry.nako3", imported.sourceProvider(), .{ .forced_mode = .{ .dncl = true } });
+    defer imported_graph.deinit();
+    try std.testing.expect(!imported_graph.succeeded());
 }

@@ -2,6 +2,7 @@ const std = @import("std");
 const ir = @import("../../../ir/nako_ir.zig");
 const aot_builtin = @import("../../../runtime/aot_builtin.zig");
 const shared = @import("shared.zig");
+const system_constant = @import("../../../runtime/system_constant.zig");
 
 pub const ManifestCall = struct {
     source_name: []const u8,
@@ -256,7 +257,13 @@ pub fn writeGlobalManifest(allocator: std.mem.Allocator, io: std.Io, program: ir
     for (program.functions) |function| {
         for (function.blocks) |block| {
             for (block.instructions) |instruction| {
-                if (instruction.opcode != .load_global and instruction.opcode != .store_global) continue;
+                // ensure_array_varはlocal_target=falseのとき変数スロットへ
+                // 新規配列を書き戻すため、グローバル書き込みサイトとして記録する。
+                // システム定数名は実行時・emitterとも初期化を省略するため記録しない。
+                const is_global_write = instruction.opcode == .store_global or
+                    (instruction.opcode == .ensure_array_var and !instruction.local_target and
+                        !system_constant.isConstant(instruction.name));
+                if (instruction.opcode != .load_global and !is_global_write) continue;
                 const site_id = instruction.global_site_id orelse return error.MissingGlobalSiteId;
                 if (seen_site_ids.contains(site_id)) return error.ManifestSiteIdCollision;
                 try seen_site_ids.put(allocator, site_id, {});
