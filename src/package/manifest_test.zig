@@ -1019,12 +1019,27 @@ test "exportの実装選択契約（共通ソース優先・明示native選択�
     try std.testing.expectEqual(manifest_mod.ResolvedExportKind.native, native_lnako.kind);
     try std.testing.expectEqualStrings("libdual.dylib", native_lnako.target);
 
-    // 3. prefer_native = true でも cnako では native を選択できずエラー（E031）
-    const native_cnako = try dual_export.resolve("cnako", true, false, &list);
-    try std.testing.expect(native_cnako == null);
-    try std.testing.expect(list.find(diag.E031_UNSUPPORTED_RUNTIME) != null);
+    // 3. prefer_native = true は lnako のみ有効。cnako では共通ソース（path）が選ばれる
+    const native_cnako = (try dual_export.resolve("cnako", true, false, &list)).?;
+    try std.testing.expectEqual(manifest_mod.ResolvedExportKind.source, native_cnako.kind);
+    try std.testing.expectEqualStrings("src/dual.nako3", native_cnako.target);
 
-    // 4. native専用package: lnako ではOK、cnako ではエラー（E031）
+    // 4. native + esm ハイブリッド（pathなし）:
+    //    lnako では native が選択され、cnako では native に遮られず esm が選択される
+    const hybrid_export = manifest_mod.Export{
+        .name = "codec",
+        .native = "codec.so",
+        .esm = "codec.mjs",
+    };
+    const hybrid_lnako = (try hybrid_export.resolve("lnako", false, false, &list)).?;
+    try std.testing.expectEqual(manifest_mod.ResolvedExportKind.native, hybrid_lnako.kind);
+    try std.testing.expectEqualStrings("codec.so", hybrid_lnako.target);
+
+    const hybrid_cnako = (try hybrid_export.resolve("cnako", false, false, &list)).?;
+    try std.testing.expectEqual(manifest_mod.ResolvedExportKind.esm, hybrid_cnako.kind);
+    try std.testing.expectEqualStrings("codec.mjs", hybrid_cnako.target);
+
+    // 5. native専用package: lnako ではOK、cnako ではエラー（E031）
     const native_only = manifest_mod.Export{
         .name = "nat",
         .native = "libnat.so",
@@ -1033,8 +1048,9 @@ test "exportの実装選択契約（共通ソース優先・明示native選択�
     try std.testing.expectEqual(manifest_mod.ResolvedExportKind.native, nat_ok.kind);
     const nat_fail = try native_only.resolve("cnako", false, false, &list);
     try std.testing.expect(nat_fail == null);
+    try std.testing.expect(list.find(diag.E031_UNSUPPORTED_RUNTIME) != null);
 
-    // 5. ESM専用package: cnako ではOK、lnako 通常モードはE006、compat-js有効時はOK
+    // 6. ESM専用package: cnako ではOK、lnako 通常モードはE006、compat-js有効時はOK
     const esm_only = manifest_mod.Export{
         .name = "esm",
         .esm = "index.mjs",
@@ -1048,4 +1064,58 @@ test "exportの実装選択契約（共通ソース優先・明示native選択�
 
     const esm_lnako_compat = (try esm_only.resolve("lnako", false, true, &list)).?;
     try std.testing.expectEqual(manifest_mod.ResolvedExportKind.esm, esm_lnako_compat.kind);
+
+    // 7. 実装なしexport: E019
+    const empty_export = manifest_mod.Export{ .name = "empty" };
+    const empty_res = try empty_export.resolve("lnako", false, false, &list);
+    try std.testing.expect(empty_res == null);
+    try std.testing.expect(list.find(diag.E019_REQUIRED_FIELD_MISSING) != null);
+}
+
+test "cnako向けマニフェストでのESM exportを正常に受理する" {
+    const allocator = std.testing.allocator;
+
+    // package.runtimes = ["cnako"] の cnako 専用パッケージは compat-js なしでも ESM export を受理
+    var m1 = try parseOk(allocator,
+        \\[package]
+        \\name = "cnako-esm-pkg"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\runtimes = ["cnako"]
+        \\
+        \\[profiles.default]
+        \\os = "macos"
+        \\cpu = "aarch64"
+        \\abi = "gnu"
+        \\compat-js = false
+        \\
+        \\[[exports]]
+        \\name = "main"
+        \\esm = "main.mjs"
+        \\
+    );
+    defer m1.deinit();
+    try std.testing.expectEqual(@as(usize, 1), m1.exports.len);
+
+    // profiles に runtime = "cnako" を含む場合も ESM export を受理
+    var m2 = try parseOk(allocator,
+        \\[package]
+        \\name = "multi-runtime-pkg"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[profiles.node]
+        \\runtime = "cnako"
+        \\os = "linux"
+        \\cpu = "x86_64"
+        \\abi = "gnu"
+        \\compat-js = false
+        \\
+        \\[[exports]]
+        \\name = "main"
+        \\esm = "main.mjs"
+        \\
+    );
+    defer m2.deinit();
+    try std.testing.expectEqual(@as(usize, 1), m2.exports.len);
 }

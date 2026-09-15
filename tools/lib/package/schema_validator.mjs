@@ -501,8 +501,11 @@ export function validateManifest(manifest, fixturePath) {
       names.add(exp.name);
     }
     const hasCompatJsProfile = Object.values(manifest.profiles ?? {}).some((p) => p["compat-js"] === true);
+    const hasCnakoProfile = Object.values(manifest.profiles ?? {}).some((p) => p.runtime === "cnako");
+    const runtimes = manifest.package?.runtimes ?? [];
+    const isCnakoOnlyPackage = Array.isArray(runtimes) && runtimes.length > 0 && runtimes.includes("cnako") && !runtimes.includes("lnako");
     for (const exp of manifest.exports) {
-      if (exp.esm != null && !hasCompatJsProfile) {
+      if (exp.esm != null && !hasCompatJsProfile && !hasCnakoProfile && !isCnakoOnlyPackage) {
         fail("E006_JS_IN_NORMAL_MODE", `ESM export "${exp.name}" requires compat-js profile`, `${fixturePath}.exports`);
       }
     }
@@ -765,6 +768,25 @@ export function validateEnvironment(environment, fixturePath) {
   }
   if (environment.schemaVersion !== 1) {
     fail("E034_INVALID_ENVIRONMENT_REFERENCE", `unsupported environment schemaVersion ${environment.schemaVersion}`, `${fixturePath}.schemaVersion`);
+  }
+  const hashPattern = /^(sha256-[A-Za-z0-9+/]{43}=|sha512-[A-Za-z0-9+/]{86}=|sha256:[0-9a-f]{64}|sha512:[0-9a-f]{128}|[0-9a-f]{64})$/;
+  if (typeof environment.lockSha256 === "string" && !hashPattern.test(environment.lockSha256)) {
+    fail("E034_INVALID_ENVIRONMENT_REFERENCE", `invalid lockSha256 "${environment.lockSha256}"`, `${fixturePath}.lockSha256`);
+  }
+  if (typeof environment.runtime === "string" && !["lnako", "cnako"].includes(environment.runtime)) {
+    fail("E014_INVALID_PROFILE", `invalid runtime "${environment.runtime}"`, `${fixturePath}.runtime`);
+  }
+  if (typeof environment.profile !== "string" || environment.profile.trim().length === 0) {
+    fail("E014_INVALID_PROFILE", `invalid profile "${environment.profile}"`, `${fixturePath}.profile`);
+  }
+  if (typeof environment.packages === "object" && environment.packages !== null && !Array.isArray(environment.packages)) {
+    for (const [pkgId, pkg] of Object.entries(environment.packages)) {
+      if (typeof pkg === "object" && pkg !== null && !Array.isArray(pkg)) {
+        if (typeof pkg.path !== "string" || pkg.path.trim().length === 0) {
+          fail("E034_INVALID_ENVIRONMENT_REFERENCE", `package "${pkgId}" missing or empty path`, `${fixturePath}.packages.${pkgId}.path`);
+        }
+      }
+    }
   }
   validateBySchemaFile(environment, "environment.schema.json", fixturePath);
 }

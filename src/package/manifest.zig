@@ -159,47 +159,17 @@ pub const Export = struct {
         compat_js: bool,
         diagnostics: ?*diag.List,
     ) !?ExportResolution {
-        if (prefer_native and self.native != null) {
-            if (std.mem.eql(u8, target_runtime, "lnako")) {
-                return .{ .kind = .native, .target = self.native.? };
-            } else {
-                if (diagnostics) |d| {
-                    try d.addFmt(
-                        diag.E031_UNSUPPORTED_RUNTIME,
-                        .err,
-                        self.name,
-                        self.position,
-                        "native export \"{s}\" is not supported on runtime \"{s}\"",
-                        .{ self.name, target_runtime },
-                    );
-                }
-                return null;
-            }
+        if (prefer_native and std.mem.eql(u8, target_runtime, "lnako") and self.native != null) {
+            return .{ .kind = .native, .target = self.native.? };
         }
         if (self.path) |p| {
             return .{ .kind = .source, .target = p };
         }
-        if (self.native) |nat| {
-            if (std.mem.eql(u8, target_runtime, "lnako")) {
+        if (std.mem.eql(u8, target_runtime, "lnako")) {
+            if (self.native) |nat| {
                 return .{ .kind = .native, .target = nat };
-            } else {
-                if (diagnostics) |d| {
-                    try d.addFmt(
-                        diag.E031_UNSUPPORTED_RUNTIME,
-                        .err,
-                        self.name,
-                        self.position,
-                        "native-only export \"{s}\" is not supported on runtime \"{s}\"",
-                        .{ self.name, target_runtime },
-                    );
-                }
-                return null;
             }
-        }
-        if (self.esm) |esm_path| {
-            if (std.mem.eql(u8, target_runtime, "cnako")) {
-                return .{ .kind = .esm, .target = esm_path };
-            } else if (std.mem.eql(u8, target_runtime, "lnako")) {
+            if (self.esm) |esm_path| {
                 if (compat_js) {
                     return .{ .kind = .esm, .target = esm_path };
                 } else {
@@ -216,6 +186,46 @@ pub const Export = struct {
                     return null;
                 }
             }
+        } else if (std.mem.eql(u8, target_runtime, "cnako")) {
+            if (self.esm) |esm_path| {
+                return .{ .kind = .esm, .target = esm_path };
+            }
+            if (self.native != null) {
+                if (diagnostics) |d| {
+                    try d.addFmt(
+                        diag.E031_UNSUPPORTED_RUNTIME,
+                        .err,
+                        self.name,
+                        self.position,
+                        "native-only export \"{s}\" is not supported on runtime \"{s}\"",
+                        .{ self.name, target_runtime },
+                    );
+                }
+                return null;
+            }
+        } else {
+            if (diagnostics) |d| {
+                try d.addFmt(
+                    diag.E031_UNSUPPORTED_RUNTIME,
+                    .err,
+                    self.name,
+                    self.position,
+                    "unsupported runtime \"{s}\" for export \"{s}\"",
+                    .{ target_runtime, self.name },
+                );
+            }
+            return null;
+        }
+
+        if (diagnostics) |d| {
+            try d.addFmt(
+                diag.E019_REQUIRED_FIELD_MISSING,
+                .err,
+                self.name,
+                self.position,
+                "no target implementation (\"path\", \"native\", or \"esm\") found for export \"{s}\"",
+                .{self.name},
+            );
         }
         return null;
     }
@@ -1070,9 +1080,21 @@ const Validator = struct {
         var exports = try std.ArrayList(Export).initCapacity(self.arena, array.items.len);
         var names = std.StringHashMap(void).init(self.scratch);
         var has_compat_js = false;
+        var has_cnako_profile = false;
         var profile_iterator = self.manifest.profiles.valueIterator();
         while (profile_iterator.next()) |profile| {
             if (profile.compat_js) has_compat_js = true;
+            if (std.mem.eql(u8, profile.runtime, "cnako")) has_cnako_profile = true;
+        }
+        var is_cnako_only_package = false;
+        if (self.manifest.package.runtimes.len > 0) {
+            var has_lnako = false;
+            var has_cnako = false;
+            for (self.manifest.package.runtimes) |r| {
+                if (std.mem.eql(u8, r, "lnako")) has_lnako = true;
+                if (std.mem.eql(u8, r, "cnako")) has_cnako = true;
+            }
+            if (has_cnako and !has_lnako) is_cnako_only_package = true;
         }
         for (array.items) |*item| {
             const export_table = (try self.expectTable(item, "exports")) orelse continue;
@@ -1092,7 +1114,7 @@ const Validator = struct {
             export_entry.alias = try self.expectString(export_table, "alias", "exports");
             export_entry.native = try self.expectString(export_table, "native", "exports");
             export_entry.esm = try self.expectString(export_table, "esm", "exports");
-            if (export_entry.esm != null and !has_compat_js) {
+            if (export_entry.esm != null and !has_compat_js and !has_cnako_profile and !is_cnako_only_package) {
                 try self.report(diag.E006_JS_IN_NORMAL_MODE, "exports", item.position, "ESM export \"{s}\" requires compat-js profile", .{export_entry.name});
             }
             exports.appendAssumeCapacity(export_entry);
