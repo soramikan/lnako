@@ -1,0 +1,15 @@
+[package]
+name = "math-kit"
+version = "1.0.0"
+license = "MIT"
+runtimes = ["lnako", "cnako"]
+include = ["src/**/*.nako3", "data/**"]
+
+[package.engines]
+nako = "^3.7.24"
+cnako = ">=3.7.24"
+lnako = ">=0.1.0"
+
+[[exports]]
+name = "math-kit"
+path = "src/index.nako3"

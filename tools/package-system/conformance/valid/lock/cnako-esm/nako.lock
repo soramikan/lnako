@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "resolverVersion": 1,
+  "input": {
+    "manifestSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "profile": "default",
+    "features": ["default"],
+    "target": { "os": "linux", "cpu": "x86_64", "abi": "gnu" }
+  },
+  "packages": {
+    "pkg:00000000000000000000000000000000": {
+      "id": "pkg:00000000000000000000000000000000",
+      "name": "esm-only",
+      "version": "1.0.0",
+      "source": { "type": "registry", "url": "https://registry.example.com/pkg/esm-only" },
+      "resolvedFrom": { "type": "registry", "url": "https://registry.example.com/pkg/esm-only" },
+      "dependencies": [],
+      "features": ["default"],
+      "artifacts": {
+        "esm": { "kind": "ESM", "type": "npm-tarball", "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "url": "https://registry.example.com/pkg/esm-only/v1.0.0/index.mjs" }
+      }
+    }
+  },
+  "profiles": {
+    "default": { "runtime": "cnako", "os": "linux", "cpu": "x86_64", "abi": "gnu" }
+  }
+}

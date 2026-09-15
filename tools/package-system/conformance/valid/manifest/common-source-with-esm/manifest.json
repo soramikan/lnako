@@ -1,0 +1,13 @@
+{
+  "package": {
+    "name": "common-source-with-esm",
+    "version": "1.0.0",
+    "license": "MIT"
+  },
+  "profiles": {
+    "default": { "runtime": "lnako", "os": "macos", "cpu": "aarch64", "abi": "gnu", "compat-js": false }
+  },
+  "exports": [
+    { "name": "main", "path": "src/main.nako3", "esm": "main.mjs" }
+  ]
+}

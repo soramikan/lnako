@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "lockSha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "profile": "default",
+  "runtime": "cnako",
+  "packages": {}
+}

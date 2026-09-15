@@ -1,0 +1,11 @@
+{
+  "package": {
+    "name": "native-esm-hybrid",
+    "version": "1.0.0",
+    "license": "MIT",
+    "runtimes": ["lnako", "cnako"]
+  },
+  "exports": [
+    { "name": "codec", "native": "codec.so", "esm": "codec.mjs" }
+  ]
+}

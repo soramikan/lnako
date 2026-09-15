@@ -1,4 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, dirname, basename, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseRange, jointSetsIntersect } from "./semver_range.mjs";
@@ -11,6 +12,8 @@ const schemaDir = join(projectRoot, "tools", "package-system", "schema");
 const knownManifestSchemaVersions = new Set([1]);
 const knownLockSchemaVersions = new Set([1]);
 const knownArtifactKinds = new Set(["source", "native", "ESM"]);
+const knownProfileRuntime = new Set(["lnako", "cnako", "any", "common"]);
+const knownPackageRuntime = new Set(["lnako", "cnako"]);
 const knownProfileOs = new Set(["macos", "linux", "windows"]);
 const knownProfileCpu = new Set(["aarch64", "x86_64", "arm", "wasm32"]);
 const knownProfileAbi = new Set(["gnu", "msvc", "musl", "none"]);
@@ -481,6 +484,9 @@ export function validateManifest(manifest, fixturePath) {
 
   if (manifest.profiles) {
     for (const [name, prof] of Object.entries(manifest.profiles)) {
+      if (prof.runtime != null && !knownProfileRuntime.has(prof.runtime)) {
+        fail("E014_INVALID_PROFILE", `profile "${name}" has invalid runtime: ${prof.runtime}`, `${fixturePath}.profiles.${name}.runtime`);
+      }
       if (!knownProfileOs.has(prof.os) || !knownProfileCpu.has(prof.cpu) || !knownProfileAbi.has(prof.abi)) {
         fail("E014_INVALID_PROFILE", `profile "${name}" has invalid os/cpu/abi: ${prof.os}/${prof.cpu}/${prof.abi}`, `${fixturePath}.profiles.${name}`);
       }
@@ -496,8 +502,18 @@ export function validateManifest(manifest, fixturePath) {
       names.add(exp.name);
     }
     const hasCompatJsProfile = Object.values(manifest.profiles ?? {}).some((p) => p["compat-js"] === true);
+    const runtimes = manifest.package?.runtimes ?? [];
+    // runtimes 未指定は lnako / cnako の両対応を意味するため cnako 対応として扱う。
+    // cnako 対応パッケージは ESM を直接利用できる有効な経路を持つ。cnako profile は
+    // パッケージが cnako 対応の場合にのみ有効で、runtimes で cnako を否定している
+    // 矛盾した宣言では数えない。
+    const supportsCnako = runtimes.length === 0 || runtimes.includes("cnako");
     for (const exp of manifest.exports) {
-      if (exp.esm != null && !hasCompatJsProfile) {
+      // lnako 通常モードで ESM が選択されるのは path も native も無い場合のみ
+      // （path があれば共通ソース、native があれば native を選択）。cnako 対応
+      // または compat-js profile なら受理し、lnako 専用パッケージの通常モードに
+      // 限って E006 とする。実行時の拒否は Zig の Export.resolve が報告する。
+      if (exp.esm != null && exp.path == null && exp.native == null && !hasCompatJsProfile && !supportsCnako) {
         fail("E006_JS_IN_NORMAL_MODE", `ESM export "${exp.name}" requires compat-js profile`, `${fixturePath}.exports`);
       }
     }
@@ -509,6 +525,13 @@ export function validateManifest(manifest, fixturePath) {
       fail("E025_INVALID_RANGE", `invalid version range "${text}" at ${path}`, path);
     }
   };
+  if (manifest.package?.engines && typeof manifest.package.engines === "object") {
+    for (const [engine, range] of Object.entries(manifest.package.engines)) {
+      if (typeof range === "string") {
+        checkRange(range, `${fixturePath}.package.engines.${engine}`);
+      }
+    }
+  }
   for (const section of ["dependencies", "dev-dependencies"]) {
     const group = manifest[section];
     if (!group) continue;
@@ -692,20 +715,43 @@ export function validateLock(lock, fixturePath) {
     fail("E002_UNKNOWN_LOCK_SCHEMA", `unknown lock schema version ${lock.schemaVersion}`, `${fixturePath}.schemaVersion`);
   }
 
-  const target = lock.input?.target;
-  const targetCompatJs = target && lock.profiles?.[lock.input.profile]?.["compat-js"] === true;
+  // `input.profile` は実行条件を選ぶ参照。対応する profile が存在しない
+  // lock は runtime 条件を決定できないため、未知 profile として拒否する。
+  if (!Object.hasOwn(lock.profiles ?? {}, lock.input?.profile ?? "")) {
+    fail("E030_UNKNOWN_PROFILE", `unknown profile "${lock.input?.profile}"`, `${fixturePath}.input.profile`);
+  }
+
+  // 選択された profile の runtime と compat-js を読む。cnako は ESM を
+  // 直接扱えるため compat-js を要求せず、lnako などの通常モードのみ
+  // E006 の対象とする。未知の runtime は E014 で拒否する。
+  if (lock.profiles) {
+    for (const [name, prof] of Object.entries(lock.profiles)) {
+      if (prof.runtime != null && !knownProfileRuntime.has(prof.runtime)) {
+        fail("E014_INVALID_PROFILE", `profile "${name}" has invalid runtime: ${prof.runtime}`, `${fixturePath}.profiles.${name}.runtime`);
+      }
+    }
+  }
+  const selectedProfile = lock.profiles?.[lock.input?.profile];
+  const esmAllowed = selectedProfile?.["compat-js"] === true || selectedProfile?.runtime === "cnako";
 
   for (const [id, pkg] of Object.entries(lock.packages)) {
     if (!pkg.artifacts || Object.keys(pkg.artifacts).length === 0) {
       fail("E008_MISSING_ARTIFACT", `package ${id} has no artifacts`, `${fixturePath}.packages.${id}.artifacts`);
     }
+    const kinds = new Set();
     for (const [kind, artifact] of Object.entries(pkg.artifacts)) {
       if (!knownArtifactKinds.has(artifact.kind)) {
         fail("E007_UNKNOWN_ARTIFACT_KIND", `unknown artifact kind "${artifact.kind}" at ${fixturePath}.packages.${id}.artifacts.${kind}`, `${fixturePath}.packages.${id}.artifacts.${kind}`);
       }
-      if (artifact.kind === "ESM" && !targetCompatJs) {
-        fail("E006_JS_IN_NORMAL_MODE", `ESM artifact selected without compat-js profile`, `${fixturePath}.packages.${id}.artifacts.${kind}`);
-      }
+      kinds.add(artifact.kind);
+    }
+    // lock の artifacts は package 単位の集合で、各 kind が同じ export の
+    // 代替実装か別 export かを表さない。選択情報がない以上 ESM が未使用と
+    // 判断できないため、通常モード（compat-js 無効・cnako 非選択）の lock に
+    // ESM が一つでもあれば保守的に E006 とする。実際の選択は解決・import 時に
+    // manifest の Export.resolve が担う。
+    if (kinds.has("ESM") && !esmAllowed) {
+      fail("E006_JS_IN_NORMAL_MODE", `ESM artifact selected without compat-js profile`, `${fixturePath}.packages.${id}.artifacts`);
     }
     for (const dep of pkg.dependencies) {
       if (!Object.hasOwn(lock.packages, dep)) {
@@ -740,4 +786,89 @@ export function validateNpkgMetadata(meta, fixturePath) {
 
 export function validateNpkgCommands(commands, fixturePath) {
   validateBySchemaFile(commands, "commands.schema.json", fixturePath);
+}
+
+export function validateEnvironment(environment, fixturePath) {
+  // `.nako/environment.json` は cnako が単独で参照する外部契約であり、
+  // 欠落・破損・版不一致・lock 不一致はすべて E034 に正規化する。
+  // 内部で汎用 schema/manifest コード（E019/E023/E029 等）が発生しても、
+  // 利用側が環境参照エラーとして一貫して扱えるよう変換する。
+  try {
+    validateEnvironmentContract(environment, fixturePath);
+  } catch (error) {
+    if (error instanceof DiagnosticError) {
+      if (error.code === "E034_INVALID_ENVIRONMENT_REFERENCE") throw error;
+      // schema 定義自体の不整合（SCHEMA_ERROR）はツール側の不具合なので
+      // 環境参照エラーへ変換せず、そのまま伝播させる。
+      if (error.code === "SCHEMA_ERROR") throw error;
+      throw new DiagnosticError("E034_INVALID_ENVIRONMENT_REFERENCE", error.message, error.path);
+    }
+    throw error;
+  }
+}
+
+function validateEnvironmentContract(environment, fixturePath) {
+  if (typeof environment !== "object" || environment === null || Array.isArray(environment)) {
+    fail("E034_INVALID_ENVIRONMENT_REFERENCE", "environment must be an object", fixturePath);
+  }
+  for (const required of ["schemaVersion", "lockSha256", "profile", "runtime", "packages"]) {
+    if (!(required in environment)) {
+      fail("E034_INVALID_ENVIRONMENT_REFERENCE", `missing required field "${required}"`, `${fixturePath}.${required}`);
+    }
+  }
+  if (environment.schemaVersion !== 1) {
+    fail("E034_INVALID_ENVIRONMENT_REFERENCE", `unsupported environment schemaVersion ${environment.schemaVersion}`, `${fixturePath}.schemaVersion`);
+  }
+  const hashPattern = /^(sha256-[A-Za-z0-9+/]{43}=|sha256:[0-9a-f]{64}|[0-9a-f]{64})$/;
+  if (typeof environment.lockSha256 === "string" && !hashPattern.test(environment.lockSha256)) {
+    fail("E034_INVALID_ENVIRONMENT_REFERENCE", `invalid lockSha256 "${environment.lockSha256}"`, `${fixturePath}.lockSha256`);
+  }
+  if (typeof environment.runtime === "string" && !["lnako", "cnako"].includes(environment.runtime)) {
+    fail("E034_INVALID_ENVIRONMENT_REFERENCE", `invalid runtime "${environment.runtime}"`, `${fixturePath}.runtime`);
+  }
+  if (typeof environment.profile !== "string" || environment.profile.trim().length === 0) {
+    fail("E034_INVALID_ENVIRONMENT_REFERENCE", `invalid profile "${environment.profile}"`, `${fixturePath}.profile`);
+  }
+  if (typeof environment.packages === "object" && environment.packages !== null && !Array.isArray(environment.packages)) {
+    for (const [pkgId, pkg] of Object.entries(environment.packages)) {
+      if (typeof pkg === "object" && pkg !== null && !Array.isArray(pkg)) {
+        if (typeof pkg.path !== "string" || pkg.path.trim().length === 0) {
+          fail("E034_INVALID_ENVIRONMENT_REFERENCE", `package "${pkgId}" missing or empty path`, `${fixturePath}.packages.${pkgId}.path`);
+        }
+      }
+    }
+  }
+  validateBySchemaFile(environment, "environment.schema.json", fixturePath);
+}
+
+/// SHA-256 の各表記（SRI `sha256-<base64>=`、`sha256:<hex>`、生 `<hex>`）を
+/// 小文字 hex へ正規化する。解釈できない場合は null。
+function normalizeSha256(text) {
+  if (typeof text !== "string") return null;
+  if (text.startsWith("sha256:")) {
+    const hex = text.slice("sha256:".length);
+    return /^[0-9a-f]{64}$/.test(hex) ? hex : null;
+  }
+  if (text.startsWith("sha256-")) {
+    const base64 = text.slice("sha256-".length);
+    if (!/^[A-Za-z0-9+/]{43}=$/.test(base64)) return null;
+    const bytes = Buffer.from(base64, "base64");
+    return bytes.length === 32 ? bytes.toString("hex") : null;
+  }
+  return /^[0-9a-f]{64}$/.test(text) ? text : null;
+}
+
+/// `.nako/environment.json` の `lockSha256` が参照先 `nako.lock` の実ダイジェストと
+/// 一致することを検証する。形式・構造検証は `validateEnvironment` に委ね、
+/// ここでは lock のバイト列から算出した SHA-256 と比較する。不一致は E034。
+export function validateEnvironmentReference(environment, lockBytes, fixturePath) {
+  validateEnvironment(environment, fixturePath);
+  const expected = createHash("sha256").update(lockBytes).digest("hex");
+  const actual = normalizeSha256(environment.lockSha256);
+  if (actual === null) {
+    fail("E034_INVALID_ENVIRONMENT_REFERENCE", `invalid lockSha256 "${environment.lockSha256}"`, `${fixturePath}.lockSha256`);
+  }
+  if (actual !== expected) {
+    fail("E034_INVALID_ENVIRONMENT_REFERENCE", `lockSha256 mismatch: environment ${actual} != lock ${expected}`, `${fixturePath}.lockSha256`);
+  }
 }
