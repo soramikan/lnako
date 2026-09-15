@@ -178,7 +178,7 @@ pub fn run(
                 std.process.exit(2);
             }
             const run_options = arguments.splitRunArguments(args[2..]);
-            if (arguments.findUnknownOption(run_options.lnako, &.{ "--compat-js", "--dncl", "--dncl2" })) |unknown| {
+            if (arguments.findUnknownFlag(run_options.lnako, &.{ "--compat-js", "--dncl", "--dncl2" })) |unknown| {
                 try stderr.print("run: 不明なオプションです: {s}\n", .{unknown});
                 try stderr.flush();
                 std.process.exit(2);

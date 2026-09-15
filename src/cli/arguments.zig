@@ -98,6 +98,25 @@ pub fn findUnknownOption(arguments: []const []const u8, allowed: []const []const
     return null;
 }
 
+/// `-`で始まる不明なオプションのみを検出する。位置引数は対象外。
+/// `run`では`--`を省略した位置引数が事実上プログラム引数として
+/// `process_args`経由で参照される既存契約があるため、位置引数は拒否せず
+/// `--dncll`のようなオプション記法の誤りだけを診断する。
+pub fn findUnknownFlag(arguments: []const []const u8, allowed: []const []const u8) ?[]const u8 {
+    for (arguments) |argument| {
+        if (!std.mem.startsWith(u8, argument, "-")) continue;
+        var known = false;
+        for (allowed) |name| {
+            if (std.mem.eql(u8, argument, name)) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) return argument;
+    }
+    return null;
+}
+
 pub fn hasArgument(arguments: []const []const u8, expected: []const u8) bool {
     for (arguments) |argument| if (std.mem.eql(u8, argument, expected)) return true;
     return false;
@@ -130,6 +149,11 @@ test "不明なオプションを検出する" {
     const run_options: []const []const u8 = &.{ "--compat-js", "--dncl", "--dncl2" };
     try std.testing.expectEqual(@as(?[]const u8, null), findUnknownOption(&.{ "--compat-js", "--dncl" }, run_options));
     try std.testing.expectEqualStrings("--dncll", findUnknownOption(&.{"--dncll"}, run_options).?);
+    // findUnknownFlagは位置引数をプログラム引数として許容し、`-`始まりの
+    // 未知オプションのみ検出する（runの`--`省略形の既存契約）
+    try std.testing.expectEqual(@as(?[]const u8, null), findUnknownFlag(&.{ "12345", "--compat-js" }, run_options));
+    try std.testing.expectEqual(@as(?[]const u8, null), findUnknownFlag(&.{"benchmark-input.txt"}, run_options));
+    try std.testing.expectEqualStrings("--dncll", findUnknownFlag(&.{"--dncll"}, run_options).?);
 }
 
 test "buildの出力形式と最適化レベルを解析する" {
