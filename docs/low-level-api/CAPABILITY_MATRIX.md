@@ -2,7 +2,7 @@
 
 Issue [#37](https://github.com/soramikan/lnako/issues/37) のcapability方針に従い、命令の登録有無をOSごとに変えず、対応状況を capability で機械判定する。機械可読な正本は [`catalog.json`](catalog.json) の `capabilities` であり、本書はその解釈と計画値を示す。
 
-このmatrixは仕様上の計画値である。各OS・各実行経路での実際の成立は [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github.com/soramikan/lnako/issues/36) の実装と [`TEST_HARNESS.md`](TEST_HARNESS.md) のoracleで検証し、実測に合わせて更新する。
+`catalog.json` の各capabilityは2層のmatrixを持つ。正本の `os` / `runtimes` は**現在の実装状況**で、`low_level_foundation.zig` の `capabilityImplemented` と実行経路に一致する（未実装は全てfalse、cnako側に低レイヤー命令は存在しないため `cnako_node` は常にfalse）。`planned.os` / `planned.runtimes` と本書の表は**将来計画値**で、#27〜#36 の実装が進むにつれ正本へ反映する。実装済み2件（`stream_file_io` / `truncate`）の経路別値は実際の判定実装に一致する: InterpreterはホストがI/O関数を提供しない場合 `低レイヤー機能対応判定` がfalseを返すため `lnako_interpreter` は `conditional`、AOTは `pluginContext` が常に全関数を提供するため `lnako_aot` は `true`。
 
 ## 分類
 
@@ -112,8 +112,9 @@ supported = os[実行OS] && runtimes[実行経路]
 
 - `os` 軸と `runtimes` 軸は独立で、どちらかが `false` なら結果は `false`（false優先）。
 - 両方が `true`/`conditional` のときだけ `conditional` になり、対応環境でのみ動作する。不成立は `ENOTSUP` で返す。
-- 例: `chmod` は `os.windows=false`、`runtimes.cnako_node=true` のため、Windows上のcnakoでは `false` になる。Linux上のlnakoでは `true` になる。
-- 例: `fallocate` は `os.windows=false` のためWindowsでは常に `false`。macOSでは `conditional` になりFS・API次第で `ENOTSUP` になり得る。Linuxでは `true`。
+- 例（現在matrix）: `stream_file_io` は `lnako_aot=true` のためAOTでは常に `true`。`lnako_interpreter=conditional` のためInterpreterはホストがI/O関数を提供する環境でのみ `true`。`cnako_node=false` のためcnakoでは常に `false`。
+- 例（現在matrix）: `fallocate` は未実装のため `os`/`runtimes` が全 `false` で、全環境の照会が `false`。実装済みになった時点で `planned` の値が正本へ反映される。
+- `planned` に対して同じ結合規則を適用すると計画成立が読める。例: `chmod` の `planned` は `os.windows=false`、`runtimes.cnako_node=true` のため、計画ではWindows上のcnakoで `false`、Linux上のlnakoで `true` になる。
 
 ## 命令とcapabilityの対応
 

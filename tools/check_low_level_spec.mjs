@@ -45,43 +45,79 @@ if (JSON.stringify([...catalogCapabilityIds].sort()) !== JSON.stringify([...foun
   fail("catalog.capabilitiesのid集合がfoundationのCapability enumと一致しません");
 }
 
+// foundationのcapabilityImplementedがtrueを返すcapability集合を抽出する。
+// 正本のos/runtimesはこの実装状況と一致しなければならない。
+const implementedSwitch = /pub fn capabilityImplemented[\s\S]*?=>\s*true/.exec(foundation)?.[0];
+if (implementedSwitch === undefined) fail("capabilityImplementedの実装済みアームを抽出できません");
+const implementedCapabilityIds = new Set([...implementedSwitch.matchAll(/\.([a-z][a-z0-9_]*)/g)].map((match) => match[1]));
+
+function checkMatrix(matrix, keys, label) {
+  if (typeof matrix !== "object" || matrix === null) fail(`${label}がありません`);
+  if (JSON.stringify(Object.keys(matrix).sort()) !== JSON.stringify([...keys].sort())) {
+    fail(`${label}のキーが不正です`);
+  }
+  for (const key of keys) {
+    const value = matrix[key];
+    if (value !== true && value !== false && value !== "conditional") {
+      fail(`${label}.${key}の値が不正です: ${value}`);
+    }
+  }
+  return keys.map((key) => matrix[key]);
+}
+
+const osKeys = ["linux", "macos", "windows"];
+const runtimeKeys = ["lnako_interpreter", "lnako_aot", "cnako_node"];
 const classByCapability = new Map();
 for (const capability of catalog.capabilities) {
   if (!["portable_core", "posix_extension", "lnako_native"].includes(capability.class)) {
     fail(`${capability.id}のclassが不正です`);
   }
   classByCapability.set(capability.id, capability.class);
-  const osValues = ["linux", "macos", "windows"].map((key) => capability.os?.[key]);
-  const runtimeValues = ["lnako_interpreter", "lnako_aot", "cnako_node"].map((key) => capability.runtimes?.[key]);
-  for (const key of ["linux", "macos", "windows"]) {
-    const value = capability.os?.[key];
-    if (value !== true && value !== false && value !== "conditional") {
-      fail(`${capability.id}.os.${key}の値が不正です: ${value}`);
+  // `os`/`runtimes` は現在の実装状況、`planned` は将来計画値。class別の
+  // 成立条件は計画値へ適用し、実装状況はcapabilityImplementedと照合する。
+  const osValues = checkMatrix(capability.os, osKeys, `${capability.id}.os`);
+  const runtimeValues = checkMatrix(capability.runtimes, runtimeKeys, `${capability.id}.runtimes`);
+  const planned = capability.planned;
+  if (typeof planned !== "object" || planned === null) fail(`${capability.id}.plannedがありません`);
+  const plannedOsValues = checkMatrix(planned.os, osKeys, `${capability.id}.planned.os`);
+  const plannedRuntimeValues = checkMatrix(planned.runtimes, runtimeKeys, `${capability.id}.planned.runtimes`);
+  // 低レイヤー命令はlnako独自拡張でありcnako側に命令が存在しないため、
+  // 実装状況のcnako_nodeは常にfalse。
+  if (capability.runtimes.cnako_node !== false) {
+    fail(`${capability.id}.runtimes.cnako_nodeがfalseではありません（lnako独自拡張）`);
+  }
+  if (implementedCapabilityIds.has(capability.id)) {
+    // InterpreterはホストのI/O提供有無に依存するためtrue/conditional。
+    // AOTはpluginContextが常に全関数を提供するため恒にtrue。
+    if (capability.runtimes.lnako_interpreter === false) {
+      fail(`${capability.id}は実装済みだが、runtimes.lnako_interpreterがfalseです`);
     }
-  }
-  for (const key of ["lnako_interpreter", "lnako_aot", "cnako_node"]) {
-    const value = capability.runtimes?.[key];
-    if (value !== true && value !== false && value !== "conditional") {
-      fail(`${capability.id}.runtimes.${key}の値が不正です: ${value}`);
+    if (capability.runtimes.lnako_aot !== true) {
+      fail(`${capability.id}は実装済みだが、runtimes.lnako_aotがtrueではありません（AOTは常に提供）`);
     }
+    if (osValues.every((value) => value === false)) {
+      fail(`${capability.id}は実装済みだが、osが全てfalseです`);
+    }
+  } else if (osValues.some((value) => value !== false) || runtimeValues.some((value) => value !== false)) {
+    fail(`${capability.id}は未実装だが、osまたはruntimesにfalse以外があります`);
   }
-  if (JSON.stringify(Object.keys(capability.os).sort()) !== JSON.stringify(["linux", "macos", "windows"])) {
-    fail(`${capability.id}.osのキーが不正です`);
+  if (capability.class === "portable_core" && (plannedOsValues.some((value) => value !== true) || plannedRuntimeValues.some((value) => value !== true))) {
+    fail(`${capability.id}はportable_coreだが、plannedのosまたはruntimesにtrue以外があります`);
   }
-  if (JSON.stringify(Object.keys(capability.runtimes).sort()) !== JSON.stringify(["cnako_node", "lnako_aot", "lnako_interpreter"])) {
-    fail(`${capability.id}.runtimesのキーが不正です`);
+  if (capability.class === "lnako_native" && planned.runtimes.cnako_node !== false) {
+    fail(`${capability.id}はlnako_nativeだが、planned.runtimes.cnako_nodeがfalseではありません`);
   }
-  if (capability.class === "portable_core" && (osValues.some((value) => value !== true) || runtimeValues.some((value) => value !== true))) {
-    fail(`${capability.id}はportable_coreだが、osまたはruntimesにtrue以外があります`);
-  }
-  if (capability.class === "lnako_native" && capability.runtimes.cnako_node !== false) {
-    fail(`${capability.id}はlnako_nativeだが、cnako_nodeがfalseではありません`);
-  }
-  if (capability.class === "posix_extension" && capability.os.windows === true) {
-    fail(`${capability.id}はposix_extensionだが、os.windowsがtrueです`);
+  if (capability.class === "posix_extension" && planned.os.windows === true) {
+    fail(`${capability.id}はposix_extensionだが、planned.os.windowsがtrueです`);
   }
 }
 if (typeof catalog.matrixRule !== "string" || catalog.matrixRule.length === 0) fail("matrixRuleがありません");
+
+// catalog_commandsの `implemented = true` 集合を抽出し、JSON側の
+// `implemented` と照合する（正本は実行時の登録・dispatch実装と一致させる）。
+const implementedCommandIds = new Set(
+  [...foundation.matchAll(/\.\{[^}]*\.id = "([^"]+)"[^}]*\.implemented = true/g)].map((match) => match[1]),
+);
 
 const standardNames = new Set(standard.commands.map((command) => command.name));
 const commandIds = new Set();
@@ -100,6 +136,10 @@ for (const command of catalog.commands) {
   if (!typeSet.has(command.returns)) fail(`${command.id}のreturns型がtypesにありません: ${command.returns}`);
   if (command.capability !== null && !catalogCapabilityIds.has(command.capability)) {
     fail(`${command.id}が未知のcapabilityを参照しています: ${command.capability}`);
+  }
+  if (typeof command.implemented !== "boolean") fail(`${command.id}のimplementedがbooleanではありません`);
+  if (command.implemented !== implementedCommandIds.has(command.id)) {
+    fail(`${command.id}のimplemented(${command.implemented})がfoundationのcatalog_commandsと一致しません`);
   }
   if (typeof command.operation !== "string" || !/^[\x21-\x7e]+$/.test(command.operation)) {
     fail(`${command.id}のoperationが不正です（空白を含まないASCII可視文字の非空文字列が必須）: ${command.operation}`);

@@ -45,7 +45,8 @@
       "paramTypes": {
         "PATH": "string",
         "MODE": "openMode"
-      }
+      },
+      "implemented": true
     },
     {
       "id": "ll-file-close",
@@ -60,7 +61,8 @@
       "errors": [
         "EBADF"
       ],
-      "notes": "二重closeはEBADF。close後の操作はEBADF"
+      "notes": "二重closeはEBADF。close後の操作はEBADF",
+      "implemented": true
     },
     {
       "id": "ll-file-read",
@@ -77,7 +79,8 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "0 byteを返したらEOF。partial readはEOFではない。現在位置から読む"
+      "notes": "0 byteを返したらEOF。partial readはEOFではない。現在位置から読む",
+      "implemented": true
     },
     {
       "id": "ll-file-write",
@@ -96,7 +99,8 @@
         "EPIPE",
         "ENOTSUP"
       ],
-      "notes": "戻り値は実際に書いたbyte数"
+      "notes": "戻り値は実際に書いたbyte数",
+      "implemented": true
     },
     {
       "id": "ll-file-sync",
@@ -112,7 +116,8 @@
         "EBADF",
         "EINVAL"
       ],
-      "notes": "fsync相当"
+      "notes": "fsync相当",
+      "implemented": true
     },
     {
       "id": "ll-file-truncate-handle",
@@ -130,7 +135,8 @@
         "ENOSPC",
         "ENOTSUP"
       ],
-      "notes": "ftruncate相当。SIZEはu64"
+      "notes": "ftruncate相当。SIZEはu64",
+      "implemented": true
     },
     {
       "id": "ll-file-seek",
@@ -147,7 +153,8 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "WHENCEは開始/現在/終端。OFFSETはi64。戻り値は新位置"
+      "notes": "WHENCEは開始/現在/終端。OFFSETはi64。戻り値は新位置",
+      "implemented": false
     },
     {
       "id": "ll-file-tell",
@@ -162,7 +169,8 @@
       "errors": [
         "EBADF"
       ],
-      "notes": "現在位置をoffsetとして返す"
+      "notes": "現在位置をoffsetとして返す",
+      "implemented": false
     },
     {
       "id": "ll-file-pread",
@@ -179,7 +187,8 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "pread相当。現在位置を動かさない"
+      "notes": "pread相当。現在位置を動かさない",
+      "implemented": false
     },
     {
       "id": "ll-file-pwrite",
@@ -197,7 +206,8 @@
         "ENOSPC",
         "ENOTSUP"
       ],
-      "notes": "pwrite相当。戻り値は書いたbyte数"
+      "notes": "pwrite相当。戻り値は書いたbyte数",
+      "implemented": false
     },
     {
       "id": "ll-stdin-read",
@@ -213,7 +223,8 @@
         "EINVAL",
         "EPIPE"
       ],
-      "notes": "0 byteはEOF。既存のテキスト系stdin命令と同じsource of truth"
+      "notes": "0 byteはEOF。既存のテキスト系stdin命令と同じsource of truth",
+      "implemented": false
     },
     {
       "id": "ll-stdout-write",
@@ -230,7 +241,8 @@
         "EPIPE",
         "ENOSPC"
       ],
-      "notes": "表示と別経路のraw bytes"
+      "notes": "表示と別経路のraw bytes",
+      "implemented": false
     },
     {
       "id": "ll-stderr-write",
@@ -247,7 +259,8 @@
         "EPIPE",
         "ENOSPC"
       ],
-      "notes": "stdoutと混線しない"
+      "notes": "stdoutと混線しない",
+      "implemented": false
     },
     {
       "id": "ll-stdout-sync",
@@ -263,7 +276,8 @@
         "EPIPE",
         "EINVAL"
       ],
-      "notes": ""
+      "notes": "",
+      "implemented": false
     },
     {
       "id": "ll-stderr-sync",
@@ -279,7 +293,8 @@
         "EPIPE",
         "EINVAL"
       ],
-      "notes": ""
+      "notes": "",
+      "implemented": false
     },
     {
       "id": "ll-file-stat",
@@ -298,7 +313,8 @@
         "ELOOP",
         "EINVAL"
       ],
-      "notes": "stat。symlinkは追跡する。整数はナノ秒BigIntで返す"
+      "notes": "stat。symlinkは追跡する。整数はナノ秒BigIntで返す",
+      "implemented": false
     },
     {
       "id": "ll-file-lstat",
@@ -317,7 +333,8 @@
         "ELOOP",
         "EINVAL"
       ],
-      "notes": "lstat。symlink自身の情報"
+      "notes": "lstat。symlink自身の情報",
+      "implemented": false
     },
     {
       "id": "ll-symlink-create",
@@ -337,7 +354,8 @@
         "EPERM",
         "ENOTSUP"
       ],
-      "notes": "Windowsはfile/directory/junction差を命令仕様で吸収。junction作成はtarget種別の自動判定"
+      "notes": "Windowsはfile/directory/junction差を命令仕様で吸収。junction作成はtarget種別の自動判定",
+      "implemented": false
     },
     {
       "id": "ll-symlink-read",
@@ -356,7 +374,8 @@
         "ELOOP",
         "ENOTSUP"
       ],
-      "notes": "readlink。対象がsymlinkでない場合はEINVAL"
+      "notes": "readlink。対象がsymlinkでない場合はEINVAL",
+      "implemented": false
     },
     {
       "id": "ll-hardlink-create",
@@ -375,7 +394,8 @@
         "EPERM",
         "ENOTSUP"
       ],
-      "notes": "link"
+      "notes": "link",
+      "implemented": false
     },
     {
       "id": "ll-path-realpath",
@@ -393,7 +413,8 @@
         "ELOOP",
         "ENOTDIR"
       ],
-      "notes": "realpath。絶対パスを返す"
+      "notes": "realpath。絶対パスを返す",
+      "implemented": false
     },
     {
       "id": "ll-path-rename",
@@ -415,7 +436,8 @@
         "ENOTDIR",
         "ENOTSUP"
       ],
-      "notes": "EXDEVを呼び出し側が識別できる"
+      "notes": "EXDEVを呼び出し側が識別できる",
+      "implemented": false
     },
     {
       "id": "ll-path-unlink",
@@ -435,7 +457,8 @@
         "ENOTDIR",
         "ENOTSUP"
       ],
-      "notes": "unlink。ファイル・symlinkを対象にし、ディレクトリはEISDIR"
+      "notes": "unlink。ファイル・symlinkを対象にし、ディレクトリはEISDIR",
+      "implemented": false
     },
     {
       "id": "ll-path-rmdir",
@@ -455,7 +478,8 @@
         "EPERM",
         "ENOTSUP"
       ],
-      "notes": "空でない場合はENOTEMPTY"
+      "notes": "空でない場合はENOTEMPTY",
+      "implemented": false
     },
     {
       "id": "ll-file-truncate-path",
@@ -475,7 +499,8 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "truncate。grow/shrink/zero-size"
+      "notes": "truncate。grow/shrink/zero-size",
+      "implemented": false
     },
     {
       "id": "ll-file-utime-path",
@@ -494,7 +519,8 @@
         "EPERM",
         "ENOTSUP"
       ],
-      "notes": "utimes。ATIME/MTIMEはナノ秒BigInt。nullで既存値維持、nowで現在時刻"
+      "notes": "utimes。ATIME/MTIMEはナノ秒BigInt。nullで既存値維持、nowで現在時刻",
+      "implemented": false
     },
     {
       "id": "ll-file-utime-handle",
@@ -512,7 +538,8 @@
         "EPERM",
         "ENOTSUP"
       ],
-      "notes": "futimes相当"
+      "notes": "futimes相当",
+      "implemented": false
     },
     {
       "id": "ll-hash-create",
@@ -528,7 +555,8 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "アルゴリズム名は既存ハッシュ値計算と同じ正規化"
+      "notes": "アルゴリズム名は既存ハッシュ値計算と同じ正規化",
+      "implemented": false
     },
     {
       "id": "ll-hash-update",
@@ -544,7 +572,8 @@
         "EBADF",
         "EINVAL"
       ],
-      "notes": "bytesを無変換でupdate"
+      "notes": "bytesを無変換でupdate",
+      "implemented": false
     },
     {
       "id": "ll-hash-digest",
@@ -561,7 +590,8 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "ENCODING省略時はraw bytes、hex指定でhex文字列。完了後は破棄"
+      "notes": "ENCODING省略時はraw bytes、hex指定でhex文字列。完了後は破棄",
+      "implemented": false
     },
     {
       "id": "ll-hash-discard",
@@ -576,7 +606,8 @@
       "errors": [
         "EBADF"
       ],
-      "notes": "二重破棄はEBADF"
+      "notes": "二重破棄はEBADF",
+      "implemented": false
     },
     {
       "id": "ll-dir-open",
@@ -596,7 +627,8 @@
         "ENFILE",
         "ENOTSUP"
       ],
-      "notes": "handle型を正本にする"
+      "notes": "handle型を正本にする",
+      "implemented": false
     },
     {
       "id": "ll-dir-next",
@@ -613,7 +645,8 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "nameとtypeを返す。EOFはnull。.と..を含めない"
+      "notes": "nameとtypeを返す。EOFはnull。.と..を含めない",
+      "implemented": false
     },
     {
       "id": "ll-dir-close",
@@ -628,7 +661,8 @@
       "errors": [
         "EBADF"
       ],
-      "notes": "early closeを許可。二重closeはEBADF"
+      "notes": "early closeを許可。二重closeはEBADF",
+      "implemented": false
     },
     {
       "id": "ll-dir-foreach",
@@ -646,7 +680,8 @@
         "EACCES",
         "ENOTSUP"
       ],
-      "notes": "糖衣。正本はhandle型"
+      "notes": "糖衣。正本はhandle型",
+      "implemented": false
     },
     {
       "id": "ll-file-chmod",
@@ -665,7 +700,8 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "数値modeのみ。symbolic modeはCore Utilities側"
+      "notes": "数値modeのみ。symbolic modeはCore Utilities側",
+      "implemented": false
     },
     {
       "id": "ll-file-chown",
@@ -684,7 +720,8 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "chown。-1で無変更"
+      "notes": "chown。-1で無変更",
+      "implemented": false
     },
     {
       "id": "ll-symlink-chown",
@@ -703,7 +740,8 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "lchown相当"
+      "notes": "lchown相当",
+      "implemented": false
     },
     {
       "id": "ll-file-access",
@@ -723,7 +761,8 @@
       "paramTypes": {
         "PATH": "string",
         "MODE": "accessMode"
-      }
+      },
+      "implemented": false
     },
     {
       "id": "ll-uid-get",
@@ -738,7 +777,8 @@
       "errors": [
         "ENOTSUP"
       ],
-      "notes": ""
+      "notes": "",
+      "implemented": false
     },
     {
       "id": "ll-euid-get",
@@ -753,7 +793,8 @@
       "errors": [
         "ENOTSUP"
       ],
-      "notes": ""
+      "notes": "",
+      "implemented": false
     },
     {
       "id": "ll-gid-get",
@@ -768,7 +809,8 @@
       "errors": [
         "ENOTSUP"
       ],
-      "notes": ""
+      "notes": "",
+      "implemented": false
     },
     {
       "id": "ll-egid-get",
@@ -783,7 +825,8 @@
       "errors": [
         "ENOTSUP"
       ],
-      "notes": ""
+      "notes": "",
+      "implemented": false
     },
     {
       "id": "ll-groups-get",
@@ -798,7 +841,8 @@
       "errors": [
         "ENOTSUP"
       ],
-      "notes": "Numberの配列"
+      "notes": "Numberの配列",
+      "implemented": false
     },
     {
       "id": "ll-umask-set",
@@ -813,7 +857,8 @@
       "errors": [
         "ENOTSUP"
       ],
-      "notes": "戻り値は旧umask"
+      "notes": "戻り値は旧umask",
+      "implemented": false
     },
     {
       "id": "ll-process-spawn",
@@ -832,7 +877,8 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "shell stringを介さない。OPTIONSにcwd/env/stdio/detached"
+      "notes": "shell stringを介さない。OPTIONSにcwd/env/stdio/detached",
+      "implemented": false
     },
     {
       "id": "ll-process-wait",
@@ -848,7 +894,8 @@
         "EBADF",
         "EINVAL"
       ],
-      "notes": "exitCodeとsignalを構造化して返す"
+      "notes": "exitCodeとsignalを構造化して返す",
+      "implemented": false
     },
     {
       "id": "ll-pid-get",
@@ -861,7 +908,8 @@
       "capability": "argv_spawn",
       "operation": "getpid",
       "errors": [],
-      "notes": "pidはu32。実行時0は不正で発生しない"
+      "notes": "pidはu32。実行時0は不正で発生しない",
+      "implemented": false
     },
     {
       "id": "ll-ppid-get",
@@ -876,7 +924,8 @@
       "errors": [
         "ENOTSUP"
       ],
-      "notes": ""
+      "notes": "",
+      "implemented": false
     },
     {
       "id": "ll-signal-send",
@@ -893,7 +942,8 @@
         "EPERM",
         "ENOTSUP"
       ],
-      "notes": "Windowsは対応信号が限られる。非対応のsignal番号はENOTSUP"
+      "notes": "Windowsは対応信号が限られる。非対応のsignal番号はENOTSUP",
+      "implemented": false
     },
     {
       "id": "ll-process-priority-get",
@@ -909,7 +959,8 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "優先度（niceness等）の現在値を返す"
+      "notes": "優先度（niceness等）の現在値を返す",
+      "implemented": false
     },
     {
       "id": "ll-process-priority-set",
@@ -926,7 +977,8 @@
         "EPERM",
         "ENOTSUP"
       ],
-      "notes": "優先度（niceness等）を設定する"
+      "notes": "優先度（niceness等）を設定する",
+      "implemented": false
     },
     {
       "id": "ll-tty-isatty",
@@ -941,7 +993,8 @@
       "errors": [
         "EINVAL"
       ],
-      "notes": "STREAMは標準入力/標準出力/標準エラー出力"
+      "notes": "STREAMは標準入力/標準出力/標準エラー出力",
+      "implemented": false
     },
     {
       "id": "ll-tty-size",
@@ -957,7 +1010,8 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "rowsとcolumns"
+      "notes": "rowsとcolumns",
+      "implemented": false
     },
     {
       "id": "ll-statfs",
@@ -976,7 +1030,8 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "blockSize/blocks/free/available/files/freeFiles/filesystemType/filesystemId。OS固有フィールドはoptional"
+      "notes": "blockSize/blocks/free/available/files/freeFiles/filesystemType/filesystemId。OS固有フィールドはoptional",
+      "implemented": false
     },
     {
       "id": "ll-reflink",
@@ -995,7 +1050,8 @@
         "EXDEV",
         "ENOTSUP"
       ],
-      "notes": "reflink/CoW。非対応FSはENOTSUP"
+      "notes": "reflink/CoW。非対応FSはENOTSUP",
+      "implemented": false
     },
     {
       "id": "ll-seek-data",
@@ -1012,7 +1068,8 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "SEEK_DATA相当"
+      "notes": "SEEK_DATA相当",
+      "implemented": false
     },
     {
       "id": "ll-seek-hole",
@@ -1029,7 +1086,8 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "SEEK_HOLE相当"
+      "notes": "SEEK_HOLE相当",
+      "implemented": false
     },
     {
       "id": "ll-fallocate",
@@ -1047,7 +1105,8 @@
         "ENOSPC",
         "ENOTSUP"
       ],
-      "notes": "fallocate相当"
+      "notes": "fallocate相当",
+      "implemented": false
     },
     {
       "id": "ll-capability-supported",
@@ -1060,7 +1119,8 @@
       "capability": null,
       "operation": "capability",
       "errors": [],
-      "notes": "未知NAMEはfalse。命令は全OS・全経路に登録する"
+      "notes": "未知NAMEはfalse。命令は全OS・全経路に登録する",
+      "implemented": true
     },
     {
       "id": "ll-capability-list",
@@ -1073,7 +1133,8 @@
       "capability": null,
       "operation": "capability",
       "errors": [],
-      "notes": "既知capability IDの文字列の配列"
+      "notes": "既知capability IDの文字列の配列",
+      "implemented": true
     }
   ],
   "capabilities": [
@@ -1086,135 +1147,255 @@
         "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": true,
+        "lnako_interpreter": "conditional",
         "lnako_aot": true,
-        "cnako_node": true
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": true
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "raw_stdio",
       "class": "portable_core",
       "os": {
-        "linux": true,
-        "macos": true,
-        "windows": true
+        "linux": false,
+        "macos": false,
+        "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
-        "cnako_node": true
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": true
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "stat",
       "class": "portable_core",
       "os": {
-        "linux": true,
-        "macos": true,
-        "windows": true
+        "linux": false,
+        "macos": false,
+        "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
-        "cnako_node": true
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": true
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "lstat",
       "class": "portable_core",
       "os": {
-        "linux": true,
-        "macos": true,
-        "windows": true
+        "linux": false,
+        "macos": false,
+        "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
-        "cnako_node": true
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": true
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "symlink",
       "class": "portable_core",
       "os": {
-        "linux": true,
-        "macos": true,
-        "windows": true
+        "linux": false,
+        "macos": false,
+        "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
-        "cnako_node": true
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": true
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "readlink",
       "class": "portable_core",
       "os": {
-        "linux": true,
-        "macos": true,
-        "windows": true
+        "linux": false,
+        "macos": false,
+        "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
-        "cnako_node": true
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": true
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "realpath",
       "class": "portable_core",
       "os": {
-        "linux": true,
-        "macos": true,
-        "windows": true
+        "linux": false,
+        "macos": false,
+        "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
-        "cnako_node": true
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": true
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "rename",
       "class": "portable_core",
       "os": {
-        "linux": true,
-        "macos": true,
-        "windows": true
+        "linux": false,
+        "macos": false,
+        "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
-        "cnako_node": true
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": true
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "unlink",
       "class": "portable_core",
       "os": {
-        "linux": true,
-        "macos": true,
-        "windows": true
+        "linux": false,
+        "macos": false,
+        "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
-        "cnako_node": true
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": true
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "rmdir",
       "class": "portable_core",
       "os": {
-        "linux": true,
-        "macos": true,
-        "windows": true
+        "linux": false,
+        "macos": false,
+        "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
-        "cnako_node": true
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": true
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
@@ -1226,317 +1407,593 @@
         "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": true,
+        "lnako_interpreter": "conditional",
         "lnako_aot": true,
-        "cnako_node": true
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": true
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "utime",
       "class": "portable_core",
       "os": {
-        "linux": true,
-        "macos": true,
-        "windows": true
+        "linux": false,
+        "macos": false,
+        "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
-        "cnako_node": true
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": true
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "incremental_hash",
       "class": "portable_core",
       "os": {
-        "linux": true,
-        "macos": true,
-        "windows": true
+        "linux": false,
+        "macos": false,
+        "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
-        "cnako_node": true
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": true
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "dir_iterator",
       "class": "portable_core",
       "os": {
-        "linux": true,
-        "macos": true,
-        "windows": true
+        "linux": false,
+        "macos": false,
+        "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
-        "cnako_node": true
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": true
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "argv_spawn",
       "class": "portable_core",
       "os": {
-        "linux": true,
-        "macos": true,
-        "windows": true
+        "linux": false,
+        "macos": false,
+        "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
-        "cnako_node": true
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": true
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "signal",
       "class": "portable_core",
       "os": {
-        "linux": true,
-        "macos": true,
-        "windows": true
+        "linux": false,
+        "macos": false,
+        "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
-        "cnako_node": true
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": true
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "tty_isatty",
       "class": "portable_core",
       "os": {
-        "linux": true,
-        "macos": true,
-        "windows": true
+        "linux": false,
+        "macos": false,
+        "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
-        "cnako_node": true
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": true
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "hardlink",
       "class": "portable_core",
       "os": {
-        "linux": true,
-        "macos": true,
-        "windows": true
+        "linux": false,
+        "macos": false,
+        "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
-        "cnako_node": true
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": true
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "chmod",
       "class": "posix_extension",
       "os": {
-        "linux": true,
-        "macos": true,
+        "linux": false,
+        "macos": false,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
-        "cnako_node": true
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": false
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "chown",
       "class": "posix_extension",
       "os": {
-        "linux": true,
-        "macos": true,
+        "linux": false,
+        "macos": false,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
-        "cnako_node": true
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": false
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "access",
       "class": "posix_extension",
       "os": {
-        "linux": true,
-        "macos": true,
+        "linux": false,
+        "macos": false,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
-        "cnako_node": true
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": false
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "uid_gid",
       "class": "posix_extension",
       "os": {
-        "linux": true,
-        "macos": true,
+        "linux": false,
+        "macos": false,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
-        "cnako_node": true
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": false
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "priority",
       "class": "posix_extension",
       "os": {
-        "linux": true,
-        "macos": true,
+        "linux": false,
+        "macos": false,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
-        "cnako_node": true
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": false
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "statfs",
       "class": "posix_extension",
       "os": {
-        "linux": true,
-        "macos": true,
+        "linux": false,
+        "macos": false,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
-        "cnako_node": true
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": false
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
       }
     },
     {
       "id": "reflink",
       "class": "posix_extension",
       "os": {
-        "linux": "conditional",
-        "macos": "conditional",
-        "windows": "conditional"
+        "linux": false,
+        "macos": false,
+        "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": "conditional",
-        "lnako_aot": "conditional",
-        "cnako_node": "conditional"
+        "lnako_interpreter": false,
+        "lnako_aot": false,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": "conditional",
+          "macos": "conditional",
+          "windows": "conditional"
+        },
+        "runtimes": {
+          "lnako_interpreter": "conditional",
+          "lnako_aot": "conditional",
+          "cnako_node": "conditional"
+        }
       }
     },
     {
       "id": "seek_data",
       "class": "lnako_native",
       "os": {
-        "linux": true,
-        "macos": true,
+        "linux": false,
+        "macos": false,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
+        "lnako_interpreter": false,
+        "lnako_aot": false,
         "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": false
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": false
+        }
       }
     },
     {
       "id": "seek_hole",
       "class": "lnako_native",
       "os": {
-        "linux": true,
-        "macos": true,
+        "linux": false,
+        "macos": false,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
+        "lnako_interpreter": false,
+        "lnako_aot": false,
         "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": false
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": false
+        }
       }
     },
     {
       "id": "fallocate",
       "class": "lnako_native",
       "os": {
-        "linux": true,
-        "macos": "conditional",
+        "linux": false,
+        "macos": false,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": "conditional",
-        "lnako_aot": "conditional",
+        "lnako_interpreter": false,
+        "lnako_aot": false,
         "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": "conditional",
+          "windows": false
+        },
+        "runtimes": {
+          "lnako_interpreter": "conditional",
+          "lnako_aot": "conditional",
+          "cnako_node": false
+        }
       }
     },
     {
       "id": "termios",
       "class": "lnako_native",
       "os": {
-        "linux": true,
-        "macos": true,
+        "linux": false,
+        "macos": false,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
+        "lnako_interpreter": false,
+        "lnako_aot": false,
         "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": false
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": false
+        }
       }
     },
     {
       "id": "nss",
       "class": "lnako_native",
       "os": {
-        "linux": true,
-        "macos": true,
+        "linux": false,
+        "macos": false,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
+        "lnako_interpreter": false,
+        "lnako_aot": false,
         "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": false
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": false
+        }
       }
     },
     {
       "id": "acl",
       "class": "lnako_native",
       "os": {
-        "linux": true,
-        "macos": true,
+        "linux": false,
+        "macos": false,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
+        "lnako_interpreter": false,
+        "lnako_aot": false,
         "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": false
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": false
+        }
       }
     },
     {
       "id": "xattr",
       "class": "lnako_native",
       "os": {
-        "linux": true,
-        "macos": true,
+        "linux": false,
+        "macos": false,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
+        "lnako_interpreter": false,
+        "lnako_aot": false,
         "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": false
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": false
+        }
       }
     },
     {
       "id": "selinux",
       "class": "lnako_native",
       "os": {
-        "linux": true,
+        "linux": false,
         "macos": false,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": true,
-        "lnako_aot": true,
+        "lnako_interpreter": false,
+        "lnako_aot": false,
         "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": false,
+          "windows": false
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": false
+        }
       }
     }
   ],
@@ -2087,5 +2544,5 @@
       "note": "OS固有フィールドはoptional"
     }
   },
-  "matrixRule": "supported = os[os] && runtimes[runtime]。falseが優先（どちらかがfalseならfalse）。両方がtrue/conditionalのときだけconditionalで環境依存になり、不成立はENOTSUP。"
+  "matrixRule": "os/runtimesは現在の実装状況で、foundation.capabilityImplementedと実行経路に一致する（実装済みcapabilityでもInterpreterはホストがI/Oを提供しない場合は照会がfalseになるためlnako_interpreterはconditional。AOTはpluginContextが常に全関数を提供するためlnako_aotはtrue）。planned.os/planned.runtimesは将来計画値。成立判定は os[os] && runtimes[runtime]。falseが優先（どちらかがfalseならfalse）。両方がtrue/conditionalのときだけconditionalで環境依存になり、不成立はENOTSUP。"
 }

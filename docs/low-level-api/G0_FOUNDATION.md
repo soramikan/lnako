@@ -145,7 +145,7 @@ cnako対応は Node `fs.Stats` の `mtimeNs`（BigInt）と `mtimeMs`（Number�
 - `低レイヤー機能対応判定`（助詞 `NAMEの` / `NAMEを`）はbooleanを返す。未知のNAMEは `false` を返す。
 - `低レイヤー機能一覧取得` は既知IDの配列を返す。真偽ではなく識別子の全集である。
 
-初期IDと分類はZig正本の `Capability` を見る。真偽のOS別matrixはG0の対象外である。
+初期IDと分類はZig正本の `Capability` を見る。分類は計画上の提供形態を表し、現在の実装状況ではない。現在のOS別・実行経路別の成立は [`catalog.json`](catalog.json) の `capabilities[].os` / `runtimes` が正本であり `capabilityImplemented` と一致する。計画値は同 `planned` と [`CAPABILITY_MATRIX.md`](CAPABILITY_MATRIX.md) を参照。真偽のOS別matrixはG0の対象外である。
 
 ## unsupportedの扱い
 

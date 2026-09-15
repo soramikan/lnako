@@ -36,6 +36,7 @@ Node.js `fs.open` の文字列flagsを写す。`r`/`r+`/`w`/`w+`/`a`/`a+` に修
 各文字は高々1回。`x` は生成系（`w`/`w+`/`a`/`a+`）でのみ有効。未知の文字や重複・不正な組み合わせは `EINVAL`。
 `b` は互換用で無視する。`s` は同期open（POSIXでは open 時の `O_SYNC`、確認できない環境では `ENOTSUP`）。
 `w` 系は生成＋切詰、`a` 系は生成＋append（POSIXでは open 時の `O_APPEND` で原子的に末尾へ書く。Windowsは seek フォールバックのため、同一ファイルへの並行appendの原子性は保証しない）。`a+` の読込位置は先頭。`r` 系は既存ファイルの読み出し。
+Windowsの末尾取得は `NtQueryInformationFile(FileStandardInformation)`（GetFileSizeEx相当）を使う。`FILE_ALL_INFORMATION` を問う stat系APIは `FILE_READ_ATTRIBUTES` を要求するため、書込み専用（`w`/`a` の `+` なし）ハンドルでは `STATUS_ACCESS_DENIED` になる。
 数値flags（`O_RDONLY`等）はG0で未凍結のため受け付けない。
 
 ## 読み書き契約

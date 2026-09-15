@@ -115,6 +115,36 @@ test "カタログのcapability matrix値と分類はfoundationのenumと一致�
         for (std.meta.tags(foundation.RuntimeKind)) |kind| {
             try std.testing.expect(validMatrixValue(runtimes.get(@tagName(kind)).?));
         }
+        // `os`/`runtimes` は現在の実装状況（`capabilityImplemented` と一致）。
+        // cnako側に低レイヤー命令は存在しないため cnako_node は常にfalse。
+        try std.testing.expect(runtimes.get("cnako_node").? == .bool and !runtimes.get("cnako_node").?.bool);
+        const implemented = foundation.capabilityImplemented(enum_tag);
+        for (std.meta.tags(foundation.OsKind)) |kind| {
+            const value = os.get(@tagName(kind)).?;
+            if (!implemented) try std.testing.expect(value == .bool and !value.bool);
+        }
+        if (!implemented) {
+            for (std.meta.tags(foundation.RuntimeKind)) |kind| {
+                const value = runtimes.get(@tagName(kind)).?;
+                try std.testing.expect(value == .bool and !value.bool);
+            }
+        } else {
+            // InterpreterはホストのI/O提供有無に依存するためtrue/conditional。
+            // AOTはpluginContextが常に全関数を提供するため恒にtrue。
+            const interpreter = runtimes.get("lnako_interpreter").?;
+            try std.testing.expect(interpreter != .bool or interpreter.bool);
+            const aot = runtimes.get("lnako_aot").?;
+            try std.testing.expect(aot == .bool and aot.bool);
+        }
+        const planned = map.get("planned").?.object;
+        const planned_os = planned.get("os").?.object;
+        for (std.meta.tags(foundation.OsKind)) |kind| {
+            try std.testing.expect(validMatrixValue(planned_os.get(@tagName(kind)).?));
+        }
+        const planned_runtimes = planned.get("runtimes").?.object;
+        for (std.meta.tags(foundation.RuntimeKind)) |kind| {
+            try std.testing.expect(validMatrixValue(planned_runtimes.get(@tagName(kind)).?));
+        }
     }
     try std.testing.expectEqual(tagCount(), seen.count());
 }
@@ -245,6 +275,11 @@ test "カタログ命令はfoundationの命令表とid・名前・arity・operat
         } else {
             try std.testing.expectEqualStrings(capability_field.string, command.capability.?.id());
         }
+        // `implemented` はcatalog.jsonが利用者へ公開する実装状況であり、
+        // foundationの命令表（dispatch実装）と一致しなければならない。
+        const implemented_field = map.get("implemented").?;
+        try std.testing.expect(implemented_field == .bool);
+        try std.testing.expectEqual(command.implemented, implemented_field.bool);
     }
 }
 

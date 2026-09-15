@@ -178,8 +178,34 @@ fn posixFlagIsSet(file: std.Io.File, comptime field: []const u8) bool {
     return flags & (@as(usize, 1) << @bitOffsetOf(std.posix.O, field)) != 0;
 }
 
+/// ファイル末尾位置を返す。POSIXでは `file.length` と同じ。Windowsでは
+/// `file.length` が内部で `NtQueryInformationFile(FileAllInformation)` を使い
+/// `FILE_READ_ATTRIBUTES` を要求するため、書込み専用ハンドルでは
+/// `STATUS_ACCESS_DENIED` になる。`FileStandardInformation`（GetFileSizeEx相当）は
+/// 読み取り権限を要求しないため、書込み専用でも末尾を取得できる。
+fn endOfFile(io: std.Io, file: std.Io.File) !u64 {
+    switch (builtin.os.tag) {
+        .windows => {
+            var status_block: std.os.windows.IO_STATUS_BLOCK = undefined;
+            var info: std.os.windows.FILE.STANDARD_INFORMATION = undefined;
+            return switch (std.os.windows.ntdll.NtQueryInformationFile(
+                file.handle,
+                &status_block,
+                &info,
+                @sizeOf(std.os.windows.FILE.STANDARD_INFORMATION),
+                .Standard,
+            )) {
+                .SUCCESS => @as(u64, @bitCast(info.EndOfFile)),
+                .ACCESS_DENIED => error.AccessDenied,
+                else => |status| std.os.windows.unexpectedStatus(status),
+            };
+        },
+        else => return file.length(io),
+    }
+}
+
 fn seekToEnd(io: std.Io, file: std.Io.File) !void {
-    const end = try file.length(io);
+    const end = try endOfFile(io, file);
     var writer = file.writerStreaming(io, &.{});
     try writer.seekTo(end);
 }
@@ -279,7 +305,7 @@ test "ハンドル表はread/write/seek-end/truncateを同一モジュールで�
     try std.testing.expectEqual(@as(usize, 0), try readAtCurrent(std.testing.io, reader.*, &buffer));
 
     try setLength(std.testing.io, file.*, 3);
-    try std.testing.expectEqual(@as(u64, 3), try file.length(std.testing.io));
+    try std.testing.expectEqual(@as(u64, 3), try endOfFile(std.testing.io, file.*));
 
     try sync(std.testing.io, file.*);
 }
