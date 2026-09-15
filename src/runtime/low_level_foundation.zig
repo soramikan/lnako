@@ -90,6 +90,11 @@ pub const HandleContract = struct {
     pub const double_close_is_ebadf = true;
 };
 
+/// ハッシュhandleのindex空間の開始値。ファイルhandleは1から連番で払い出す。
+/// ファイル側の払い出しもこの値へ到達しないよう制限し、raw HandleIdが
+/// 種別を跨いで衝突しないことを双方向で保証する（Issue #32）。
+pub const hash_handle_index_base: u32 = 0x8000_0000;
+
 pub fn isSafeInteger(number: f64) bool {
     if (!std.math.isFinite(number)) return false;
     if (number != @trunc(number)) return false;

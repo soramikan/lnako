@@ -293,11 +293,10 @@ pub const Encoding = enum {
     }
 };
 
-/// ハッシュhandleのindexは、ファイルhandle（1から連番）とraw値が衝突しない
-/// よう上位bitを立てた別空間から払い出す。これにより、ハッシュhandleを
-/// ファイル命令へ、またはファイルhandleをハッシュ命令へ渡した場合は、
-/// どちらのtableにも一致が無く `EBADF` になる。
-pub const hash_handle_index_base: u32 = 0x8000_0000;
+/// ハッシュhandleのindex空間の開始値。ファイルhandle（1から連番）とraw値が
+/// 衝突しないよう上位bitを立てた別空間から払い出す。正本はfoundationに置き、
+/// ファイルhandle側の払い出しもこの値に到達しない。
+pub const hash_handle_index_base = foundation.hash_handle_index_base;
 
 pub const HashEntry = struct {
     id: foundation.HandleId,

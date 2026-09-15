@@ -56,6 +56,8 @@
 `operation`/`path`/`path2`/`message`/`capability` を持つ辞書を投げる。`operation` は
 4命令とも `hash`。`ENOTSUP` のときだけ `capability` に `incremental_hash` を入れる。
 捕捉時は `エラーメッセージ["code"]` 等で分岐できる。
+宣言するエラー集合は `catalog.json` を正本とし、`ENOTSUP` は `ハッシュ開始`（逐次非対応
+アルゴリズム）と `ハッシュ完了`（callback 欠如時の `IncrementalHashUnavailable`）に宣言する。
 
 ## ストリームとの組み合わせ
 
