@@ -258,7 +258,9 @@ const Analyzer = struct {
             _ = try self.declare(module_index, scope, node.name, .loop_variable, node.span, exportable, true, 0, false);
         }
         if (!recurse and node.kind == .function_definition) return;
-        for (node.children) |child| try self.predeclareBlock(child, module_index, scope, recurse and node.kind != .function_definition and node.kind != .test_definition and node.kind != .anonymous_function);
+        // expansion 状態は子へ引き継ぐ。制御構文の内側にある展開済み関数定義も
+        // 呼び出し元スコープへ宣言せず取り込み先モジュールの登録へ委ねる。
+        for (node.children) |child| try self.predeclareBlockEx(child, module_index, scope, recurse and node.kind != .function_definition and node.kind != .test_definition and node.kind != .anonymous_function, expansion);
     }
 
     fn resolveBlock(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId) !void {

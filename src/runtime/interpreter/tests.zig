@@ -1535,6 +1535,18 @@ test "循環取り込みで除去された辺のtailモードはコピーへ適�
     try std.testing.expectEqualStrings("M1\nL1\nM1\nM3:20\nL2\nM3:10\n", output);
 }
 
+test "関数本体内の取り込み先の制御構文内関数定義もグローバルに登録される" {
+    // 展開複製の中で制御構文の内側にある関数定義も、公式では取り込み先
+    // モジュールの関数としてグローバル登録される（呼び出し元関数の
+    // ローカル宣言にはならない）。
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "●Fとは\n　!「./lib.nako3」を取り込む\n　「F内:」&GVと表示。\nここまで。\nF。\n「後:」&GVと表示。\nLIBF。\n" },
+        .{ .suffix = "lib.nako3", .source = "もし、真ならば\n　●LIBFとは\n　　「lib内」と表示。\n　ここまで。\nここまで。\nGV=7\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("F内:7\n後:undefined\nlib内\n", output);
+}
+
 test "循環取り込みの変体内の関数定義は後勝ちで本体を置き換える" {
     // 公式はコピー内の関数定義も生成順に登録するため、コピー（DNCL＝1始まり）
     // で定義された同名関数が全呼び出しで使われる。コピー側のA[0]は1始まり
