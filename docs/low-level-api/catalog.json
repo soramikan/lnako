@@ -361,7 +361,7 @@
         "ENOTSUP",
         "EINVAL"
       ],
-      "notes": "Windowsはfile/directory symlink差をtarget種別で自動判定して吸収する。directory symlinkにはsymlink権限が必要（無い場合はEACCES/EPERMのいずれか）",
+      "notes": "Windowsはfile/directory symlink差をtarget種別で自動判定して吸収する。未作成/判定不能なtargetはfile symlinkとして作成する。directory symlinkにはsymlink権限が必要（無い場合はEACCES/EPERMのいずれか）",
       "implemented": true
     },
     {

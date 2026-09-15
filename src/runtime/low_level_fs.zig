@@ -18,8 +18,8 @@ pub const FileKind = enum {
 
 /// OSのファイルメタデータ。`stat` と `lstat` の共通表現であり、カタログ
 /// `typeSchemas.stat` の全フィールドを保持する。取得できない時刻は `null`、
-/// 概念の無いOSや取得に失敗した場合の所有者・デバイス・ブロック数は 0 にする
-/// （0はroot所有と区別できないため、uid/gidは0を「取得不可」としても扱う）。
+/// 概念の無いOS（Windowsのuid/gid/dev/rdev/blocks等）は 0 にする
+/// （Windowsでは0がroot所有と区別できない点に留意）。
 pub const Metadata = struct {
     kind: FileKind,
     size: u64,
@@ -38,35 +38,31 @@ pub const Metadata = struct {
     birthtime_ns: foundation.OptionalTimeNs = null,
 };
 
-/// `stat`（follow=true）と `lstat`（follow=false）の共通実装。まずポータブルな
-/// `std.Io.Dir.statFile` で種別・サイズ・権限・時刻を取得し、その上でOS固有の
-/// uid/gid/dev/rdev/blocks/birthtime を重ねる。OS固有値が取れない環境でも
-/// ポータブル値だけで成功する。
+/// `stat`（follow=true）と `lstat`（follow=false）の共通実装。OSごとに
+/// 1回のstat/lstat（Windowsは1ハンドルからの情報取得）で全フィールドを
+/// 組み立て、同一ファイルの一貫したスナップショットを返す。2回の取得を
+/// 合成しないため、パス差し替え時に他ファイルのフィールドが混在しない。
 ///
-/// 2回のpathベースsyscallを使うため、その間にパスが差し替わるとフィールドが
-/// 混在し得る（例: lstatでkind=symlinkなのにinodeが差し替え後の実体を指す）。
-/// これはpathベースAPI一般の性質であり、原子的なスナップショットが必要な場合は
-/// handleベースの高度API（Issue #36）を使う。
+/// - macOS/POSIX: `fstatat`（`std.c.Stat`）
+/// - Linux: `statx`
+/// - Windows: `NtQueryInformationFile(FileAllInformation)` + reparse tag
 pub fn stat(io: std.Io, path: []const u8, follow: bool) anyerror!Metadata {
-    const info = try std.Io.Dir.cwd().statFile(io, path, .{ .follow_symlinks = follow });
-    var metadata = Metadata{
-        .kind = kindFrom(info.kind),
-        .size = info.size,
-        .mode = modeBits(info.permissions),
-        .inode = @intCast(info.inode),
-        .nlink = @intCast(info.nlink),
-        .block_size = info.block_size,
-        .atime_ns = if (info.atime) |value| value.nanoseconds else null,
-        .mtime_ns = info.mtime.nanoseconds,
-        .ctime_ns = info.ctime.nanoseconds,
+    return switch (builtin.os.tag) {
+        .windows => statWindows(io, path, follow),
+        .linux => statLinux(path, follow),
+        .wasi => statWasi(io, path, follow),
+        else => statPosix(path, follow),
     };
-    applyRawExtras(io, path, follow, &metadata);
-    return metadata;
 }
 
 /// シンボリックリンクを作成する。Windowsではリンク先の種別を自動判定して
 /// file symlink / directory symlink を選ぶ。POSIXでは `is_directory` は無視される。
 /// Windowsのdirectory symlink作成にはsymlink権限が必要で、無い場合はEPERMになる。
+///
+/// Windowsはリンク種別をtargetのstat結果から決めるため、未作成のtargetや
+/// statできないtargetはfile symlinkとして作成する。後からtargetを
+/// ディレクトリとして作ってもdirectory symlinkにはならない（POSIXのような
+/// 未解決directory symlinkはWindowsのsymlinkモデルでは表現できない）。
 pub fn createSymlink(io: std.Io, target: []const u8, link: []const u8) anyerror!void {
     var flags: std.Io.Dir.SymLinkFlags = .{};
     if (builtin.os.tag == .windows) {
@@ -103,8 +99,12 @@ fn hasDrivePrefix(path: []const u8) bool {
 }
 
 /// シンボリックリンクの参照先文字列を返す。対象がsymlinkでない場合は
-/// `error.NotLink`（portable code EINVAL）になる。参照先が初期バッファより
-/// 長い場合はバッファを倍々に拡張して完全な文字列を返す（切り詰めない）。
+/// `error.NotLink`（portable code EINVAL）になる。
+///
+/// POSIXのreadlinkはバッファ不足時に切り詰めて長さを返し、Zigの一部経路は
+/// `error.NameTooLong` を返す。どちらでも完全な参照先を返すよう、返却長が
+/// バッファ長に達したらバッファを倍々に拡張して再取得する（上限到達時は
+/// `error.NameTooLong`）。切り詰めた値を正常値として返さない。
 pub fn readlink(io: std.Io, allocator: std.mem.Allocator, path: []const u8) anyerror![]u8 {
     var size: usize = std.fs.max_path_bytes;
     while (true) {
@@ -154,49 +154,61 @@ fn kindFrom(kind: std.Io.File.Kind) FileKind {
     };
 }
 
-fn modeBits(permissions: std.Io.File.Permissions) u32 {
-    return switch (builtin.os.tag) {
-        // WindowsのpermissionsはPOSIX modeではなくattributesであり、mode相当は
-        // 定義されない。既存 `ファイル情報取得` と同じく既定の読み書き可を返す。
-        .windows => 0o666,
-        .wasi => 0o666,
-        else => @intCast(permissions.toMode() & 0o7777),
-    };
-}
-
-/// OS固有フィールド（uid/gid/dev/rdev/blocks/birthtime）は `std.Io.Dir.statFile`
-/// が公開しないため、raw syscallを直接使う。std.Ioの非同期executorを介さない
-/// ブロッキング呼び出しであり、追加メタデータの取得だけに限定している。
-fn applyRawExtras(io: std.Io, path: []const u8, follow: bool, metadata: *Metadata) void {
-    switch (builtin.os.tag) {
-        .windows => applyWindowsExtras(io, path, follow, metadata),
-        .linux => applyLinuxExtras(path, follow, metadata),
-        .wasi => {},
-        else => applyPosixExtras(path, follow, metadata),
-    }
-}
-
-fn applyPosixExtras(path: []const u8, follow: bool, metadata: *Metadata) void {
-    const posix_path = std.posix.toPosixPath(path) catch return;
+/// POSIX（macOS等）の単一 `fstatat` から全フィールドを組み立てる。
+fn statPosix(path: []const u8, follow: bool) anyerror!Metadata {
+    const posix_path = try std.posix.toPosixPath(path);
     var raw: std.c.Stat = std.mem.zeroes(std.c.Stat);
     const flags: u32 = if (follow) 0 else std.c.AT.SYMLINK_NOFOLLOW;
     const result = std.c.fstatat(std.c.AT.FDCWD, &posix_path, &raw, flags);
-    if (result != 0) return;
-    metadata.uid = @intCast(raw.uid);
-    metadata.gid = @intCast(raw.gid);
-    metadata.dev = toU64(raw.dev);
-    metadata.rdev = toU64(raw.rdev);
-    metadata.inode = toU64(raw.ino);
-    metadata.nlink = toU64(raw.nlink);
-    metadata.blocks = toU64(raw.blocks);
-    metadata.mode = @as(u32, @intCast(toU64(raw.mode) & 0o7777));
+    if (result != 0) return posixErrno(std.c.errno(result));
+    var metadata = Metadata{
+        .kind = posixKind(raw.mode),
+        .size = @bitCast(raw.size),
+        .mode = @as(u32, @intCast(toU64(raw.mode) & 0o7777)),
+        .uid = @intCast(raw.uid),
+        .gid = @intCast(raw.gid),
+        .dev = toU64(raw.dev),
+        .rdev = toU64(raw.rdev),
+        .inode = toU64(raw.ino),
+        .nlink = toU64(raw.nlink),
+        .block_size = toU64(raw.blksize),
+        .blocks = toU64(raw.blocks),
+        .atime_ns = timespecNs(raw.atime()),
+        .mtime_ns = timespecNs(raw.mtime()),
+        .ctime_ns = timespecNs(raw.ctime()),
+    };
     if (comptime @hasDecl(std.c.Stat, "birthtime")) {
         metadata.birthtime_ns = timespecNs(raw.birthtime());
     }
+    return metadata;
 }
 
-fn applyLinuxExtras(path: []const u8, follow: bool, metadata: *Metadata) void {
-    const posix_path = std.posix.toPosixPath(path) catch return;
+fn posixKind(mode: std.c.mode_t) FileKind {
+    return switch (mode & std.c.S.IFMT) {
+        std.c.S.IFDIR => .directory,
+        std.c.S.IFREG => .file,
+        std.c.S.IFLNK => .symlink,
+        else => .other,
+    };
+}
+
+fn posixErrno(errno: std.c.E) anyerror {
+    return switch (errno) {
+        .ACCES => error.AccessDenied,
+        .PERM => error.PermissionDenied,
+        .NOENT => error.FileNotFound,
+        .NOTDIR => error.NotDir,
+        .LOOP => error.SymLinkLoop,
+        .NAMETOOLONG => error.NameTooLong,
+        .NOMEM => error.SystemResources,
+        .INVAL => error.InvalidArgument,
+        else => error.Unexpected,
+    };
+}
+
+/// Linuxの単一 `statx` から全フィールドを組み立てる。
+fn statLinux(path: []const u8, follow: bool) anyerror!Metadata {
+    const posix_path = try std.posix.toPosixPath(path);
     var raw: std.os.linux.Statx = std.mem.zeroes(std.os.linux.Statx);
     const flags: u32 = std.os.linux.AT.NO_AUTOMOUNT |
         (if (follow) @as(u32, 0) else std.os.linux.AT.SYMLINK_NOFOLLOW);
@@ -209,21 +221,59 @@ fn applyLinuxExtras(path: []const u8, follow: bool, metadata: *Metadata) void {
         .INO = true,
         .SIZE = true,
         .BLOCKS = true,
+        .ATIME = true,
+        .MTIME = true,
+        .CTIME = true,
         .BTIME = true,
     };
     const result = std.os.linux.statx(std.os.linux.AT.FDCWD, &posix_path, flags, mask, &raw);
-    if (std.os.linux.errno(result) != .SUCCESS) return;
-    metadata.uid = raw.uid;
-    metadata.gid = raw.gid;
-    // Linuxのstatxはmajor/minorを分けて返すため、glibcの `makedev` と同じ
-    // 符号化にまとめてPOSIXの `st_dev` 相当にする。
-    metadata.dev = linuxDevice(raw.dev_major, raw.dev_minor);
-    metadata.rdev = linuxDevice(raw.rdev_major, raw.rdev_minor);
-    metadata.inode = raw.ino;
-    metadata.nlink = raw.nlink;
-    metadata.blocks = raw.blocks;
-    metadata.mode = @as(u32, raw.mode) & 0o7777;
+    const errno = std.os.linux.errno(result);
+    if (errno != .SUCCESS) return linuxErrno(errno);
+    var metadata = Metadata{
+        .kind = linuxKind(raw.mode),
+        .size = raw.size,
+        .mode = @as(u32, raw.mode) & 0o7777,
+        .uid = raw.uid,
+        .gid = raw.gid,
+        // statxはmajor/minorを分けて返すため、glibcの `makedev` と同じ
+        // 符号化にまとめてPOSIXの `st_dev` 相当にする。
+        .dev = linuxDevice(raw.dev_major, raw.dev_minor),
+        .rdev = linuxDevice(raw.rdev_major, raw.rdev_minor),
+        .inode = raw.ino,
+        .nlink = raw.nlink,
+        .block_size = raw.blksize,
+        .blocks = raw.blocks,
+    };
+    if (raw.mask.ATIME) metadata.atime_ns = statxTimeNs(raw.atime);
+    if (raw.mask.MTIME) metadata.mtime_ns = statxTimeNs(raw.mtime);
+    if (raw.mask.CTIME) metadata.ctime_ns = statxTimeNs(raw.ctime);
     if (raw.mask.BTIME) metadata.birthtime_ns = statxTimeNs(raw.btime);
+    return metadata;
+}
+
+fn linuxKind(mode: u16) FileKind {
+    return switch (mode & std.os.linux.S.IFMT) {
+        std.os.linux.S.IFDIR => .directory,
+        std.os.linux.S.IFREG => .file,
+        std.os.linux.S.IFLNK => .symlink,
+        else => .other,
+    };
+}
+
+fn linuxErrno(errno: std.os.linux.E) anyerror {
+    return switch (errno) {
+        .ACCES => error.AccessDenied,
+        .PERM => error.PermissionDenied,
+        .NOENT => error.FileNotFound,
+        .NOTDIR => error.NotDir,
+        .LOOP => error.SymLinkLoop,
+        .NAMETOOLONG => error.NameTooLong,
+        .NOMEM => error.SystemResources,
+        .INVAL => error.InvalidArgument,
+        .NOSYS => error.Unsupported,
+        .OPNOTSUPP => error.OperationUnsupported,
+        else => error.Unexpected,
+    };
 }
 
 /// glibc `makedev(major, minor)` と同じdev_t符号化。statxが返すmajor/minorを
@@ -237,11 +287,13 @@ fn linuxDevice(major: u32, minor: u32) u64 {
         (minor64 & 0x000000ff);
 }
 
-fn applyWindowsExtras(io: std.Io, path: []const u8, follow: bool, metadata: *Metadata) void {
-    // uid/gid/dev/rdev/blocks はWindowsに存在しないため0のまま。
-    // 作成時刻だけは FILE.ALL_INFORMATION から取得する。lstat相当では
-    // follow_symlinks=false でreparse point自身のハンドルを開く。
-    const file = std.Io.Dir.cwd().openFile(io, path, .{ .follow_symlinks = follow }) catch return;
+/// Windowsの単一ハンドル（`NtQueryInformationFile(FileAllInformation)`）から
+/// 全フィールドを組み立てる。lstat相当では `follow_symlinks=false` で
+/// reparse point自身のハンドルを開き、reparse tagでsymlinkを判定する。
+/// 同一ハンドルの情報だけを使うため、パス差し替えでも混在しない。
+/// uid/gid/dev/rdev/blocks はWindowsに概念が無いため0のまま。
+fn statWindows(io: std.Io, path: []const u8, follow: bool) anyerror!Metadata {
+    const file = try std.Io.Dir.cwd().openFile(io, path, .{ .follow_symlinks = follow });
     defer file.close(io);
     var status_block: std.os.windows.IO_STATUS_BLOCK = undefined;
     var info: std.os.windows.FILE.ALL_INFORMATION = undefined;
@@ -252,10 +304,54 @@ fn applyWindowsExtras(io: std.Io, path: []const u8, follow: bool, metadata: *Met
         @sizeOf(std.os.windows.FILE.ALL_INFORMATION),
         .All,
     );
-    if (status != .SUCCESS and status != .BUFFER_OVERFLOW) return;
-    // Windows FILETIME（1601年起点・100ns単位）をUnix epochナノ秒へ変換する。
-    // 変換はG0の `timeNsFromWindowsFileTime` を正本として使う。
-    metadata.birthtime_ns = foundation.timeNsFromWindowsFileTime(@bitCast(info.BasicInformation.CreationTime));
+    if (status != .SUCCESS and status != .BUFFER_OVERFLOW) return error.Unexpected;
+    const attributes = info.BasicInformation.FileAttributes;
+    var kind: FileKind = if (attributes.DIRECTORY) .directory else .file;
+    if (attributes.REPARSE_POINT) {
+        var tag_info: std.os.windows.FILE.ATTRIBUTE_TAG_INFO = undefined;
+        const tag_status = std.os.windows.ntdll.NtQueryInformationFile(
+            file.handle,
+            &status_block,
+            &tag_info,
+            @sizeOf(std.os.windows.FILE.ATTRIBUTE_TAG_INFO),
+            .AttributeTag,
+        );
+        if (tag_status == .SUCCESS and tag_info.ReparseTag.IsSurrogate) kind = .symlink;
+    }
+    return .{
+        .kind = kind,
+        .size = @bitCast(info.StandardInformation.EndOfFile),
+        .mode = if (attributes.READONLY) 0o444 else 0o666,
+        .inode = @bitCast(info.InternalInformation.IndexNumber),
+        .nlink = info.StandardInformation.NumberOfLinks,
+        .atime_ns = fromWindowsTime(info.BasicInformation.LastAccessTime),
+        .mtime_ns = fromWindowsTime(info.BasicInformation.LastWriteTime),
+        .ctime_ns = fromWindowsTime(info.BasicInformation.ChangeTime),
+        .birthtime_ns = fromWindowsTime(info.BasicInformation.CreationTime),
+    };
+}
+
+/// Windows FILETIME（1601年起点・100ns単位）をUnix epochナノ秒へ変換する。
+/// 変換はG0の `timeNsFromWindowsFileTime` を正本として使う。
+fn fromWindowsTime(filetime: i64) foundation.TimeNs {
+    return foundation.timeNsFromWindowsFileTime(@bitCast(filetime));
+}
+
+/// wasi（非公式ターゲット）はポータブルAPIのみで構成する。uid/gid等は
+/// 取得できないため0のまま。
+fn statWasi(io: std.Io, path: []const u8, follow: bool) anyerror!Metadata {
+    const info = try std.Io.Dir.cwd().statFile(io, path, .{ .follow_symlinks = follow });
+    return .{
+        .kind = kindFrom(info.kind),
+        .size = info.size,
+        .mode = 0o666,
+        .inode = @intCast(info.inode),
+        .nlink = @intCast(info.nlink),
+        .block_size = info.block_size,
+        .atime_ns = if (info.atime) |value| value.nanoseconds else null,
+        .mtime_ns = info.mtime.nanoseconds,
+        .ctime_ns = info.ctime.nanoseconds,
+    };
 }
 
 fn timespecNs(timespec: std.c.timespec) foundation.TimeNs {
