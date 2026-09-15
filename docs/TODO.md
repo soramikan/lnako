@@ -64,6 +64,7 @@
 | `aot-native-plugin-static-bundle` | 0.1.0非対応 | #11 |
 | `compat-js-failure-diagnostic-equivalence` | optional routeの診断改善 | #8 |
 | `module-circular-import-site-mode` | 循環再展開コピーの文脈別モード変体は未実装、不一致経路は診断化 | #73 |
+| `import-function-scope-leak` | 関数内取り込み先のトップレベル変数がグローバルへ漏洩（公式は関数ローカル） | #74 |
 
 ## リリース直前チェック
 

@@ -157,6 +157,16 @@ pub const ModuleGraph = struct {
     }
 };
 
+/// パスの拡張子が強制するDNCL方言モード（.dncl→dncl、.dncl2→dncl2、大小文字無視）。
+/// CLI強制フラグとの競合検査（埋め込み実行ファイル生成時の事前検査など）に使う。
+pub fn extensionForcedMode(path: []const u8) token_mod.Mode {
+    const extension = std.fs.path.extension(path);
+    return .{
+        .dncl = std.ascii.eqlIgnoreCase(extension, ".dncl"),
+        .dncl2 = std.ascii.eqlIgnoreCase(extension, ".dncl2"),
+    };
+}
+
 pub fn load(backing_allocator: std.mem.Allocator, entry_path: []const u8, provider: SourceProvider, options: Options) !ModuleGraph {
     var arena = std.heap.ArenaAllocator.init(backing_allocator);
     errdefer arena.deinit();
@@ -212,8 +222,9 @@ const Loader = struct {
     fn loadOne(self: *Loader, path: []const u8, import_node: ?*ast.Node, initial: ?token_mod.Mode) anyerror!u32 {
         if (self.find(path)) |existing| return existing;
         const extension = std.fs.path.extension(path);
-        const is_dncl = std.ascii.eqlIgnoreCase(extension, ".dncl");
-        const is_dncl2 = std.ascii.eqlIgnoreCase(extension, ".dncl2");
+        const extension_mode = extensionForcedMode(path);
+        const is_dncl = extension_mode.dncl;
+        const is_dncl2 = extension_mode.dncl2;
         const kind: ModuleKind = if (std.ascii.eqlIgnoreCase(extension, ".nako3") or is_dncl or is_dncl2)
             .nako3
         else if (std.ascii.eqlIgnoreCase(extension, ".js") or std.ascii.eqlIgnoreCase(extension, ".mjs"))
@@ -231,6 +242,10 @@ const Loader = struct {
         if (is_dncl) forced_mode.dncl = true;
         if (is_dncl2) forced_mode.dncl2 = true;
         if (self.modules.items.len == 0) {
+            // エントリ拡張子とCLI強制フラグが反対側のDNCL方言を要求する組合せは
+            // 両方言の同時有効化になるため、--dncl+--dncl2と同じ競合として拒否する。
+            if ((is_dncl and self.options.forced_mode.dncl2) or (is_dncl2 and self.options.forced_mode.dncl))
+                return error.ConflictingDnclModes;
             forced_mode.dncl = forced_mode.dncl or self.options.forced_mode.dncl;
             forced_mode.dncl2 = forced_mode.dncl2 or self.options.forced_mode.dncl2;
             forced_mode.indent = forced_mode.indent or self.options.forced_mode.indent;
@@ -899,6 +914,25 @@ test ".dncl/.dncl2拡張子でDNCL系モードを強制する" {
     var plain_graph = try load(std.testing.allocator, "plain.nako3", memory.sourceProvider(), .{});
     defer plain_graph.deinit();
     try std.testing.expect(!plain_graph.succeeded());
+}
+
+test "エントリ拡張子と反対側のDNCL強制フラグは競合エラーにする" {
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.dncl", .source = "A←3\n" },
+        .{ .suffix = "main.dncl2", .source = "B=0\n" },
+    } };
+    // .dncl+--dncl2 / .dncl2+--dncl は両方言の同時有効化になるため拒否する
+    try std.testing.expectError(error.ConflictingDnclModes, load(std.testing.allocator, "main.dncl", memory.sourceProvider(), .{ .forced_mode = .{ .dncl2 = true } }));
+    try std.testing.expectError(error.ConflictingDnclModes, load(std.testing.allocator, "main.dncl2", memory.sourceProvider(), .{ .forced_mode = .{ .dncl = true } }));
+    // 同方向の組合せ（拡張子と同じ方言のフラグ）は引き続き受理する
+    var same = try load(std.testing.allocator, "main.dncl", memory.sourceProvider(), .{ .forced_mode = .{ .dncl = true } });
+    defer same.deinit();
+    try std.testing.expect(same.succeeded());
+    // 拡張子がないエントリへの強制フラグも従来通り受理する
+    var forced = MemoryProvider{ .files = &.{.{ .suffix = "main.nako3", .source = "A←3\n" }} };
+    var forced_graph = try load(std.testing.allocator, "main.nako3", forced.sourceProvider(), .{ .forced_mode = .{ .dncl2 = true } });
+    defer forced_graph.deinit();
+    try std.testing.expect(forced_graph.succeeded());
 }
 
 test "循環取り込みの再展開モード不一致を診断にする" {

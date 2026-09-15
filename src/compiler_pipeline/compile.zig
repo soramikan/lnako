@@ -24,6 +24,8 @@ pub fn compileInputWithProvider(allocator: std.mem.Allocator, path: []const u8, 
 
 fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8, options: InputOptions, stderr: *std.Io.Writer, source_provider: lnako.semantic.module_graph.SourceProvider, timer: ?*FrontendTimer) !?lnako.ir.nako_ir.Program {
     var graph = lnako.semantic.module_graph.load(allocator, path, source_provider, .{ .compat_js = options.compat_js, .forced_mode = options.forced_mode }) catch |err| {
+        // 拡張子と--dncl/--dncl2の方言競合はusageエラーとしてCLI層へ伝搬する。
+        if (err == error.ConflictingDnclModes) return err;
         try stderr.print("{s}: 読み込みまたは字句解析に失敗しました: {s}\n", .{ path, @errorName(err) });
         return null;
     };

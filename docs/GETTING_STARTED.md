@@ -90,6 +90,8 @@ lnako test program.dncl
 lnako run program.nako3 --dncl2
 ```
 
+`--dncl`と`--dncl2`の同時指定、および拡張子と反対側の方言フラグの組合せ（`.dncl`+`--dncl2`、`.dncl2`+`--dncl`）は両方言の同時有効化になるため、usageエラー（終了コード2）で拒否します。
+
 配列添字などモードごとの細かい差異は[Parser・構文のquirks](compatibility/PARSER.md)を参照してください。
 
 ## JavaScript互換モード

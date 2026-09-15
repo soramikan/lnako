@@ -207,8 +207,9 @@ const Lexer = struct {
                 std.mem.startsWith(u8, after, "DNCLモード") or std.mem.startsWith(u8, after, "DNCL2モード") or std.mem.startsWith(u8, after, "DNCL2"))
             {
                 // 公式は `(!|💡)(キーワード)[^\n]*` を行コメントとして字句化し、
-                // 先頭100トークン以内で行全体がキーワードと完全一致する最初のDNCL指定だけを
-                // 'DNCLモード'/'DNCL2モード' トークンへ変換する（useDNCLmode/useDNCL2mode相当）。
+                // `i > 100` 打ち切り（先頭index 0..100）の範囲で行全体がキーワードと完全一致する
+                // 最初のDNCL指定だけを 'DNCLモード'/'DNCL2モード' トークンへ変換する
+                // （useDNCLmode/useDNCL2mode相当）。
                 // インデント構文キーワードはコメントのまま残る。
                 var end = self.offset;
                 while (end < self.source.text.len and self.source.text[end] != '\n') end += 1;
@@ -800,4 +801,20 @@ test "モード指定は複数同時に有効化でき先頭100トークン以�
     var late = try tokenize(std.testing.allocator, padded_source.items);
     defer late.deinit();
     try std.testing.expect(!late.mode.dncl);
+}
+
+test "モード指定の検出境界は公式の先頭101トークンと一致する" {
+    // 公式useDNCLmode/useDNCL2modeは `i > 100` で打ち切るため、
+    // 先行トークンindex 0..100（先頭101個）までが検出対象。
+    // `# コメント\n` は 行コメント+eol の2トークンなので
+    // 50行=index 100（有効）、51行=index 102（無効）が境界。
+    for ([_]struct { lines: usize, expected: bool }{ .{ .lines = 50, .expected = true }, .{ .lines = 51, .expected = false } }) |case| {
+        var source: std.ArrayList(u8) = .empty;
+        defer source.deinit(std.testing.allocator);
+        for (0..case.lines) |_| try source.appendSlice(std.testing.allocator, "# コメント\n");
+        try source.appendSlice(std.testing.allocator, "!DNCLモード\nA←1");
+        var stream = try tokenize(std.testing.allocator, source.items);
+        defer stream.deinit();
+        try std.testing.expectEqual(case.expected, stream.mode.dncl);
+    }
 }

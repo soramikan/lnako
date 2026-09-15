@@ -24,7 +24,14 @@ pub fn run(
             try stderr.flush();
             std.process.exit(1);
         }
-        var ir_program = (try compiler_pipeline.compileInputWithProvider(allocator, package.entry_path, .{ .compat_js = true, .forced_mode = package.forced_mode }, stderr, package.sourceProvider())) orelse {
+        var ir_program = (compiler_pipeline.compileInputWithProvider(allocator, package.entry_path, .{ .compat_js = true, .forced_mode = package.forced_mode }, stderr, package.sourceProvider()) catch |err| {
+            if (err == error.ConflictingDnclModes) {
+                try stderr.writeAll("拡張子と埋め込みDNCLモードが異なるDNCL方言を要求しています\n");
+                try stderr.flush();
+                std.process.exit(1);
+            }
+            return err;
+        }) orelse {
             try stderr.flush();
             std.process.exit(1);
         };
@@ -94,6 +101,12 @@ pub fn run(
                 try stderr.flush();
                 std.process.exit(2);
             }
+            const extension_mode = lnako.semantic.module_graph.extensionForcedMode(options.input);
+            if ((extension_mode.dncl and options.forced_mode.dncl2) or (extension_mode.dncl2 and options.forced_mode.dncl)) {
+                try stderr.writeAll("build: 拡張子と--dncl/--dncl2が異なるDNCL方言を要求しています\n");
+                try stderr.flush();
+                std.process.exit(2);
+            }
             var ir_program = (try compiler_pipeline.compileInputTraced(allocator, io, options.input, .{ .compat_js = options.compat_js, .forced_mode = options.forced_mode }, stderr, init.environ_map.get("LNAKO_LLVM_TRACE") != null)) orelse {
                 try stderr.flush();
                 std.process.exit(1);
@@ -139,7 +152,14 @@ pub fn run(
                 try stderr.flush();
                 std.process.exit(2);
             };
-            var ir_program = (try compiler_pipeline.compileInput(allocator, io, args[1], .{ .forced_mode = check_mode }, stderr)) orelse {
+            var ir_program = (compiler_pipeline.compileInput(allocator, io, args[1], .{ .forced_mode = check_mode }, stderr) catch |err| {
+                if (err == error.ConflictingDnclModes) {
+                    try stderr.writeAll("check: 拡張子と--dncl/--dncl2が異なるDNCL方言を要求しています\n");
+                    try stderr.flush();
+                    std.process.exit(2);
+                }
+                return err;
+            }) orelse {
                 try stderr.flush();
                 std.process.exit(1);
             };
@@ -164,7 +184,14 @@ pub fn run(
                 try stderr.flush();
                 std.process.exit(2);
             };
-            var ir_program = (try compiler_pipeline.compileInput(allocator, io, args[1], .{ .compat_js = compat_js, .forced_mode = run_mode }, stderr)) orelse {
+            var ir_program = (compiler_pipeline.compileInput(allocator, io, args[1], .{ .compat_js = compat_js, .forced_mode = run_mode }, stderr) catch |err| {
+                if (err == error.ConflictingDnclModes) {
+                    try stderr.writeAll("run: 拡張子と--dncl/--dncl2が異なるDNCL方言を要求しています\n");
+                    try stderr.flush();
+                    std.process.exit(2);
+                }
+                return err;
+            }) orelse {
                 try stderr.flush();
                 std.process.exit(1);
             };
@@ -214,7 +241,14 @@ pub fn run(
                 try stderr.flush();
                 std.process.exit(2);
             };
-            const succeeded = try test_command.runTestTarget(allocator, io, args[1], test_mode, stdout, stderr);
+            const succeeded = test_command.runTestTarget(allocator, io, args[1], test_mode, stdout, stderr) catch |err| {
+                if (err == error.ConflictingDnclModes) {
+                    try stderr.writeAll("test: 拡張子と--dncl/--dncl2が異なるDNCL方言を要求しています\n");
+                    try stderr.flush();
+                    std.process.exit(2);
+                }
+                return err;
+            };
             if (!succeeded) {
                 try stdout.flush();
                 try stderr.flush();
