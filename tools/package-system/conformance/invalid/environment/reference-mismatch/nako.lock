@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "resolverVersion": 1,
+  "input": {
+    "manifestSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "profile": "default",
+    "features": ["default"],
+    "target": { "os": "macos", "cpu": "aarch64", "abi": "gnu" }
+  },
+  "packages": {
+    "pkg:00000000000000000000000000000000": {
+      "id": "pkg:00000000000000000000000000000000",
+      "name": "math-kit",
+      "version": "1.0.0",
+      "source": { "type": "registry", "url": "https://registry.example.com/pkg/math-kit" },
+      "resolvedFrom": { "type": "registry", "url": "https://registry.example.com/pkg/math-kit" },
+      "dependencies": [],
+      "features": ["default"],
+      "artifacts": {
+        "source": { "kind": "source", "type": "tar.gz", "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "url": "https://registry.example.com/pkg/math-kit/v1.0.0/source.tar.gz" }
+      }
+    }
+  },
+  "profiles": {
+    "default": { "os": "macos", "cpu": "aarch64", "abi": "gnu" }
+  }
+}

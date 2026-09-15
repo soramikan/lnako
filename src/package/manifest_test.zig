@@ -232,7 +232,35 @@ test "無効なprofileを診断する" {
 test "export重複とESM制約を診断する" {
     const allocator = std.testing.allocator;
     try parseErrCode(allocator, "[package]\nname = \"a\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n[[exports]]\nname = \"x\"\n[[exports]]\nname = \"x\"\n", diag.E011_DUPLICATE_EXPORT);
-    try parseErrCode(allocator, "[package]\nname = \"a\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n[[exports]]\nname = \"x\"\nesm = \"m.mjs\"\n", diag.E006_JS_IN_NORMAL_MODE);
+    try parseErrCode(allocator, "[package]\nname = \"a\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\nruntimes = [\"lnako\"]\n[[exports]]\nname = \"x\"\nesm = \"m.mjs\"\n", diag.E006_JS_IN_NORMAL_MODE);
+
+    // runtimes 未指定（両対応）または cnako を含む場合は ESM 専用 export も受理される。
+    const ok_multi_runtime =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "x"
+        \\esm = "m.mjs"
+        \\
+    ;
+    var multi_runtime = try parseOk(allocator, ok_multi_runtime);
+    defer multi_runtime.deinit();
+
+    const ok_both_runtimes =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\runtimes = ["lnako", "cnako"]
+        \\[[exports]]
+        \\name = "x"
+        \\esm = "m.mjs"
+        \\
+    ;
+    var both_runtimes = try parseOk(allocator, ok_both_runtimes);
+    defer both_runtimes.deinit();
 
     // compat-js profile があれば ESM export は受理される。
     const ok_source =
@@ -780,6 +808,15 @@ test "manifest適合fixtureを検証する" {
         .{ .path = "tools/package-system/conformance/valid/manifest/path-git/nako.toml", .expected_code = null },
         .{ .path = "tools/package-system/conformance/valid/manifest/profiles/nako.toml", .expected_code = null },
         .{ .path = "tools/package-system/conformance/valid/manifest/license-expression/nako.toml", .expected_code = null },
+        .{ .path = "tools/package-system/conformance/valid/manifest/engines-runtimes/nako.toml", .expected_code = null },
+        .{ .path = "tools/package-system/conformance/valid/manifest/prefer-native/nako.toml", .expected_code = null },
+        .{ .path = "tools/package-system/conformance/valid/manifest/profile-runtime/nako.toml", .expected_code = null },
+        .{ .path = "tools/package-system/conformance/valid/manifest/common-source-with-esm/nako.toml", .expected_code = null },
+        .{ .path = "tools/package-system/conformance/valid/manifest/native-esm-hybrid/nako.toml", .expected_code = null },
+        .{ .path = "tools/package-system/conformance/valid/manifest/esm-only-multi-runtime/nako.toml", .expected_code = null },
+        .{ .path = "tools/package-system/conformance/valid/manifest/esm-only-both-runtimes/nako.toml", .expected_code = null },
+        .{ .path = "tools/package-system/conformance/invalid/manifest/empty-runtimes/nako.toml", .expected_code = diag.E029_INVALID_VALUE },
+        .{ .path = "tools/package-system/conformance/invalid/manifest/lnako-only-cnako-profile/nako.toml", .expected_code = diag.E006_JS_IN_NORMAL_MODE },
         .{ .path = "tools/package-system/conformance/invalid/manifest/unknown-schema/nako.toml", .expected_code = diag.E001_UNKNOWN_MANIFEST_SCHEMA },
         .{ .path = "tools/package-system/conformance/invalid/manifest/conflicting-version/nako.toml", .expected_code = diag.E003_CONFLICTING_VERSIONS },
         .{ .path = "tools/package-system/conformance/invalid/manifest/conflicting-version-joint/nako.toml", .expected_code = diag.E003_CONFLICTING_VERSIONS },
@@ -791,6 +828,9 @@ test "manifest適合fixtureを検証する" {
         .{ .path = "tools/package-system/conformance/invalid/manifest/invalid-uri/nako.toml", .expected_code = diag.E029_INVALID_VALUE },
         .{ .path = "tools/package-system/conformance/invalid/manifest/duplicate-exports/nako.toml", .expected_code = diag.E011_DUPLICATE_EXPORT },
         .{ .path = "tools/package-system/conformance/invalid/manifest/invalid-profile/nako.toml", .expected_code = diag.E014_INVALID_PROFILE },
+        .{ .path = "tools/package-system/conformance/invalid/manifest/unknown-runtime/nako.toml", .expected_code = diag.E014_INVALID_PROFILE },
+        .{ .path = "tools/package-system/conformance/invalid/manifest/unknown-engine/nako.toml", .expected_code = diag.E022_UNKNOWN_FIELD },
+        .{ .path = "tools/package-system/conformance/invalid/manifest/invalid-engine-range/nako.toml", .expected_code = diag.E025_INVALID_RANGE },
         .{ .path = "tools/package-system/conformance/invalid/manifest/js-without-compat-js/nako.toml", .expected_code = diag.E006_JS_IN_NORMAL_MODE },
         .{ .path = "tools/package-system/conformance/invalid/manifest/missing-package/nako.toml", .expected_code = diag.E019_REQUIRED_FIELD_MISSING },
         .{ .path = "tools/package-system/conformance/invalid/manifest/unknown-field/nako.toml", .expected_code = diag.E022_UNKNOWN_FIELD },
@@ -860,4 +900,305 @@ test "manifest解析で確保失敗が診断へ変換されない" {
         };
         defer manifest.deinit();
     }
+}
+
+test "runtimes、engines、include、prefer-native、profile runtimeを正常に解析する" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\[package]
+        \\name = "nako3-common-kit"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\runtimes = ["lnako", "cnako"]
+        \\include = ["src/**/*.nako3", "data/*.json"]
+        \\
+        \\[package.engines]
+        \\nako = "^3.7.24"
+        \\cnako = ">=3.7.24"
+        \\lnako = ">=0.1.0"
+        \\
+        \\[dependencies.pkg]
+        \\fast-math = { version = "^2.0.0", prefer-native = true }
+        \\
+        \\[profiles.lnako-prof]
+        \\runtime = "lnako"
+        \\os = "macos"
+        \\cpu = "aarch64"
+        \\abi = "gnu"
+        \\
+        \\[profiles.cnako-prof]
+        \\runtime = "cnako"
+        \\os = "linux"
+        \\cpu = "x86_64"
+        \\abi = "none"
+        \\
+        \\[[exports]]
+        \\name = "main"
+        \\path = "src/main.nako3"
+        \\native = "libmain.dylib"
+        \\
+    ;
+    var manifest = try parseOk(allocator, source);
+    defer manifest.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), manifest.package.runtimes.len);
+    try std.testing.expectEqualStrings("lnako", manifest.package.runtimes[0]);
+    try std.testing.expectEqualStrings("cnako", manifest.package.runtimes[1]);
+
+    try std.testing.expect(manifest.package.include != null);
+    try std.testing.expectEqual(@as(usize, 2), manifest.package.include.?.len);
+
+    try std.testing.expect(manifest.package.engines.nako != null);
+    try std.testing.expect(manifest.package.engines.cnako != null);
+    try std.testing.expect(manifest.package.engines.lnako != null);
+
+    const dep = manifest.dependencies.pkg.get("fast-math").?;
+    try std.testing.expect(dep.prefer_native);
+
+    const prof_lnako = manifest.profiles.get("lnako-prof").?;
+    try std.testing.expectEqualStrings("lnako", prof_lnako.runtime);
+
+    const prof_cnako = manifest.profiles.get("cnako-prof").?;
+    try std.testing.expectEqualStrings("cnako", prof_cnako.runtime);
+
+    // checkRuntime
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    try std.testing.expect(try manifest.checkRuntime("lnako", &list, .{}));
+    try std.testing.expect(try manifest.checkRuntime("cnako", &list, .{}));
+    try std.testing.expect(!(try manifest.checkRuntime("browser", &list, .{})));
+    try std.testing.expect(list.find(diag.E031_UNSUPPORTED_RUNTIME) != null);
+
+    // runtimes 未宣言（空配列）でも未知の処理系は E031 とする。
+    var plain = try parseOk(allocator,
+        \\[package]
+        \\name = "plain"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+    );
+    defer plain.deinit();
+    var plain_list = diag.List.init(allocator);
+    defer plain_list.deinit();
+    try std.testing.expect(!(try plain.checkRuntime("browser", &plain_list, .{})));
+    try std.testing.expect(plain_list.find(diag.E031_UNSUPPORTED_RUNTIME) != null);
+    try std.testing.expect(try plain.checkRuntime("lnako", &plain_list, .{}));
+
+    // checkEngines
+    const v_nako = try semver.Version.parse("3.7.24");
+    const v_cnako = try semver.Version.parse("3.7.25");
+    const v_lnako = try semver.Version.parse("0.2.0");
+    try std.testing.expect(try manifest.checkEngines(v_nako, v_cnako, v_lnako, &list, .{}));
+
+    const v_old_cnako = try semver.Version.parse("3.6.0");
+    try std.testing.expect(!(try manifest.checkEngines(v_nako, v_old_cnako, v_lnako, &list, .{})));
+    try std.testing.expect(list.find(diag.E032_ENGINE_MISMATCH) != null);
+
+    // 判定対象バージョンが不明（null）なキーは制約を未検査として成功扱いする
+    var unknown_list = diag.List.init(allocator);
+    defer unknown_list.deinit();
+    try std.testing.expect(try manifest.checkEngines(null, null, null, &unknown_list, .{}));
+    try std.testing.expect(unknown_list.find(diag.E032_ENGINE_MISMATCH) == null);
+}
+
+test "不正なruntimeやengineフィールドを診断する" {
+    const allocator = std.testing.allocator;
+
+    // 不正なpackage.runtimes
+    try parseErrCode(allocator,
+        \\[package]
+        \\name = "pkg"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\runtimes = ["browser"]
+        \\
+    , diag.E029_INVALID_VALUE);
+
+    // 明示的な空配列は未指定と区別して拒否する
+    try parseErrCode(allocator,
+        \\[package]
+        \\name = "pkg"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\runtimes = []
+        \\
+    , diag.E029_INVALID_VALUE);
+
+    // 不正なprofile runtime
+    try parseErrCode(allocator,
+        \\[package]
+        \\name = "pkg"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[profiles.p]
+        \\runtime = "invalid-runtime"
+        \\os = "linux"
+        \\cpu = "x86_64"
+        \\abi = "gnu"
+        \\
+    , diag.E014_INVALID_PROFILE);
+
+    // 未知のengineキー
+    try parseErrCode(allocator,
+        \\[package]
+        \\name = "pkg"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[package.engines]
+        \\python = ">=3.10"
+        \\
+    , diag.E022_UNKNOWN_FIELD);
+
+    // 不正なengine range
+    try parseErrCode(allocator,
+        \\[package]
+        \\name = "pkg"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[package.engines]
+        \\nako = "not-a-semver-range"
+        \\
+    , diag.E025_INVALID_RANGE);
+}
+
+test "exportの実装選択契約（共通ソース優先・明示native選択・ESM制約）" {
+    const allocator = std.testing.allocator;
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+
+    // 1. path と native の両方がある場合: 既定では共通ソース（path）が優先
+    const dual_export = manifest_mod.Export{
+        .name = "dual",
+        .path = "src/dual.nako3",
+        .native = "libdual.dylib",
+    };
+    const def_lnako = (try dual_export.resolve("lnako", false, false, &list)).?;
+    try std.testing.expectEqual(manifest_mod.ResolvedExportKind.source, def_lnako.kind);
+    try std.testing.expectEqualStrings("src/dual.nako3", def_lnako.target);
+
+    const def_cnako = (try dual_export.resolve("cnako", false, false, &list)).?;
+    try std.testing.expectEqual(manifest_mod.ResolvedExportKind.source, def_cnako.kind);
+
+    // 2. prefer_native = true の場合: lnako では native が選択される
+    const native_lnako = (try dual_export.resolve("lnako", true, false, &list)).?;
+    try std.testing.expectEqual(manifest_mod.ResolvedExportKind.native, native_lnako.kind);
+    try std.testing.expectEqualStrings("libdual.dylib", native_lnako.target);
+
+    // 3. prefer_native = true は lnako のみ有効。cnako では共通ソース（path）が選ばれる
+    const native_cnako = (try dual_export.resolve("cnako", true, false, &list)).?;
+    try std.testing.expectEqual(manifest_mod.ResolvedExportKind.source, native_cnako.kind);
+    try std.testing.expectEqualStrings("src/dual.nako3", native_cnako.target);
+
+    // 4. native + esm ハイブリッド（pathなし）:
+    //    lnako では native が選択され、cnako では native に遮られず esm が選択される
+    const hybrid_export = manifest_mod.Export{
+        .name = "codec",
+        .native = "codec.so",
+        .esm = "codec.mjs",
+    };
+    const hybrid_lnako = (try hybrid_export.resolve("lnako", false, false, &list)).?;
+    try std.testing.expectEqual(manifest_mod.ResolvedExportKind.native, hybrid_lnako.kind);
+    try std.testing.expectEqualStrings("codec.so", hybrid_lnako.target);
+
+    const hybrid_cnako = (try hybrid_export.resolve("cnako", false, false, &list)).?;
+    try std.testing.expectEqual(manifest_mod.ResolvedExportKind.esm, hybrid_cnako.kind);
+    try std.testing.expectEqualStrings("codec.mjs", hybrid_cnako.target);
+
+    // 5. native専用package: lnako ではOK、cnako ではエラー（E031）
+    const native_only = manifest_mod.Export{
+        .name = "nat",
+        .native = "libnat.so",
+    };
+    const nat_ok = (try native_only.resolve("lnako", false, false, &list)).?;
+    try std.testing.expectEqual(manifest_mod.ResolvedExportKind.native, nat_ok.kind);
+    const nat_fail = try native_only.resolve("cnako", false, false, &list);
+    try std.testing.expect(nat_fail == null);
+    try std.testing.expect(list.find(diag.E031_UNSUPPORTED_RUNTIME) != null);
+
+    // 6. ESM専用package: cnako ではOK、lnako 通常モードはE006、compat-js有効時はOK
+    const esm_only = manifest_mod.Export{
+        .name = "esm",
+        .esm = "index.mjs",
+    };
+    const esm_cnako = (try esm_only.resolve("cnako", false, false, &list)).?;
+    try std.testing.expectEqual(manifest_mod.ResolvedExportKind.esm, esm_cnako.kind);
+
+    const esm_lnako_normal = try esm_only.resolve("lnako", false, false, &list);
+    try std.testing.expect(esm_lnako_normal == null);
+    try std.testing.expect(list.find(diag.E006_JS_IN_NORMAL_MODE) != null);
+
+    const esm_lnako_compat = (try esm_only.resolve("lnako", false, true, &list)).?;
+    try std.testing.expectEqual(manifest_mod.ResolvedExportKind.esm, esm_lnako_compat.kind);
+
+    // 7. 実装なしexport: E019
+    const empty_export = manifest_mod.Export{ .name = "empty" };
+    const empty_res = try empty_export.resolve("lnako", false, false, &list);
+    try std.testing.expect(empty_res == null);
+    try std.testing.expect(list.find(diag.E019_REQUIRED_FIELD_MISSING) != null);
+
+    // 8. 共通ソース（path）+ ESM: 通常モードでも path が選ばれ E006 にならない
+    const source_esm = manifest_mod.Export{
+        .name = "src-esm",
+        .path = "src/main.nako3",
+        .esm = "main.mjs",
+    };
+    const source_esm_lnako = (try source_esm.resolve("lnako", false, false, &list)).?;
+    try std.testing.expectEqual(manifest_mod.ResolvedExportKind.source, source_esm_lnako.kind);
+    const source_esm_cnako = (try source_esm.resolve("cnako", false, false, &list)).?;
+    try std.testing.expectEqual(manifest_mod.ResolvedExportKind.source, source_esm_cnako.kind);
+
+    // 9. 未知の処理系は path があっても E031 で拒否する
+    var unknown_list = diag.List.init(allocator);
+    defer unknown_list.deinit();
+    const unknown_res = try source_esm.resolve("browser", false, false, &unknown_list);
+    try std.testing.expect(unknown_res == null);
+    try std.testing.expect(unknown_list.find(diag.E031_UNSUPPORTED_RUNTIME) != null);
+}
+
+test "cnako向けマニフェストでのESM exportを正常に受理する" {
+    const allocator = std.testing.allocator;
+
+    // package.runtimes = ["cnako"] の cnako 専用パッケージは compat-js なしでも ESM export を受理
+    var m1 = try parseOk(allocator,
+        \\[package]
+        \\name = "cnako-esm-pkg"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\runtimes = ["cnako"]
+        \\
+        \\[profiles.default]
+        \\os = "macos"
+        \\cpu = "aarch64"
+        \\abi = "gnu"
+        \\compat-js = false
+        \\
+        \\[[exports]]
+        \\name = "main"
+        \\esm = "main.mjs"
+        \\
+    );
+    defer m1.deinit();
+    try std.testing.expectEqual(@as(usize, 1), m1.exports.len);
+
+    // profiles に runtime = "cnako" を含む場合も ESM export を受理
+    var m2 = try parseOk(allocator,
+        \\[package]
+        \\name = "multi-runtime-pkg"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[profiles.node]
+        \\runtime = "cnako"
+        \\os = "linux"
+        \\cpu = "x86_64"
+        \\abi = "gnu"
+        \\compat-js = false
+        \\
+        \\[[exports]]
+        \\name = "main"
+        \\esm = "main.mjs"
+        \\
+    );
+    defer m2.deinit();
+    try std.testing.expectEqual(@as(usize, 1), m2.exports.len);
 }

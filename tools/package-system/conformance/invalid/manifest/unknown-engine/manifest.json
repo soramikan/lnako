@@ -1,0 +1,10 @@
+{
+  "package": {
+    "name": "bad-engine-key",
+    "version": "1.0.0",
+    "license": "MIT",
+    "engines": {
+      "python": ">=3.10"
+    }
+  }
+}

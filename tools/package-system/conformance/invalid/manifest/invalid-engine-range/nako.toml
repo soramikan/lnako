@@ -1,0 +1,7 @@
+[package]
+name = "bad-engine"
+version = "1.0.0"
+license = "MIT"
+
+[package.engines]
+nako = "not-a-range"

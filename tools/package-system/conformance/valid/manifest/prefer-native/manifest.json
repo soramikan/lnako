@@ -1,0 +1,18 @@
+{
+  "package": {
+    "name": "caller",
+    "version": "1.0.0",
+    "license": "MIT"
+  },
+  "dependencies": {
+    "pkg": {
+      "fast-calc": {
+        "version": "^1.0.0",
+        "prefer-native": true
+      }
+    }
+  },
+  "exports": [
+    { "name": "caller", "path": "src/index.nako3" }
+  ]
+}

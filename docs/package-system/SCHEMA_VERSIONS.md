@@ -109,8 +109,6 @@ lock ファイルはトップレベルに `schemaVersion` と `resolverVersion` 
 
 ## 8. 今後の予定
 
-- `manifestSchemaVersion` 2: features の条件付き有効化、target matrix の追加を予定。
+- `manifestSchemaVersion` 1: Issue #69 において共通ソース優先、`package.runtimes`、`package.engines`、`package.include`、profile `runtime`、`prefer-native`、および `.nako/environment.json` 契約をインプレースで包含する仕様改訂を実施した。v1/v2 の並行運用や移行ロジックは導入せず、単一正本スキーマとして維持する。
 - `lockSchemaVersion` 2: workspace lock、複数ルート package の対応を予定。
 - `resolverVersion` 2: optional peer dependency の handling 改善を予定。
-
-これらは本 Issue では定義のみ行い、実装は #44 以降で行う。

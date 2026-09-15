@@ -1,0 +1,30 @@
+{
+  "package": {
+    "name": "poly",
+    "version": "1.0.0",
+    "license": "MIT"
+  },
+  "profiles": {
+    "lnako-dev": {
+      "runtime": "lnako",
+      "os": "macos",
+      "cpu": "aarch64",
+      "abi": "gnu"
+    },
+    "cnako-dev": {
+      "runtime": "cnako",
+      "os": "linux",
+      "cpu": "x86_64",
+      "abi": "none"
+    },
+    "common": {
+      "runtime": "any",
+      "os": "linux",
+      "cpu": "x86_64",
+      "abi": "gnu"
+    }
+  },
+  "exports": [
+    { "name": "poly", "path": "src/index.nako3" }
+  ]
+}

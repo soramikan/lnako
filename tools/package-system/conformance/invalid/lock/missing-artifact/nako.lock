@@ -18,5 +18,7 @@
       "features": ["default"]
     }
   },
-  "profiles": {}
+  "profiles": {
+    "default": { "os": "macos", "cpu": "aarch64", "abi": "gnu" }
+  }
 }
