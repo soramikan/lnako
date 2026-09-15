@@ -63,7 +63,8 @@ Windowsの末尾取得は `NtQueryInformationFile(FileStandardInformation)`（Ge
 ## capability
 
 - `低レイヤー機能対応判定(NAME)`：`Capability` の既知IDと実装状況から判定する。未知IDは `false`。
-  現在は `stream_file_io` と `truncate` が実装済みで、既知だが未実装のID（`termios` 等）は `false`。
+  現在は `stream_file_io`、`truncate`、`incremental_hash`（[HASH_IO.md](HASH_IO.md)）が実装済みで、
+  既知だが未実装のID（`termios` 等）は `false`。
   `stream_file_io` は open/close/read/write/sync のホスト実装が揃っているときだけ true。`truncate` は切詰 callback があるとき true。
 - `低レイヤー機能一覧取得()`：既知IDの全集（真偽ではない）を返す。
 - 未対応操作の実行は成功値や `false` を返さず、`code=ENOTSUP` と `capability` を入れた構造化エラーを投げる。

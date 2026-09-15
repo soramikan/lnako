@@ -7515,6 +7515,65 @@ test "AOT低レイヤーはNUL/不正UTF-8を含むバイナリをchunked copy�
     try std.testing.expectEqualSlices(u8, &source_digest, &output_digest);
 }
 
+test "AOT低レイヤーのincremental hashはファイルstreamとSHA-256一致する" {
+    const Sha256 = std.crypto.hash.sha2.Sha256;
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const path = try std.fs.path.join(std.testing.allocator, &.{ directory, "hash-stream.bin" });
+    defer std.testing.allocator.free(path);
+
+    const fixture_size: usize = 256 * 1024;
+    const fixture = try std.testing.allocator.alloc(u8, fixture_size);
+    defer std.testing.allocator.free(fixture);
+    for (fixture, 0..) |*byte, index| byte.* = @truncate(index *% 67 +% 13);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "hash-stream.bin", .data = fixture });
+
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    var expected_digest: [32]u8 = undefined;
+    Sha256.hash(fixture, &expected_digest, .{});
+    var expected_hex: [64]u8 = undefined;
+    const expected = std.fmt.bufPrint(&expected_hex, "{x}", .{expected_digest}) catch unreachable;
+
+    // 1 byte、7 byte、64KiBのいずれの供給でも同じdigestになる。
+    for ([_]usize{ 1, 7, 65536 }) |chunk_size| {
+        roots[0] = try runtimeUtf8String(&runtime, path);
+        roots[1] = try runtimeUtf8String(&runtime, "rb");
+        const in_handle = try state.lowLevelFileBuiltin(&runtime, .low_level_file_open, &.{ roots[0], roots[1] });
+        roots[2] = in_handle;
+        roots[3] = try runtimeUtf8String(&runtime, "sha256");
+        const hash_handle = try state.lowLevelHashBuiltin(&runtime, .low_level_hash_create, &.{roots[3]});
+        roots[4] = hash_handle;
+
+        var hashed: usize = 0;
+        while (true) {
+            const request = numberValue(@floatFromInt(@min(chunk_size, fixture_size - hashed)));
+            roots[0] = try state.lowLevelFileBuiltin(&runtime, .low_level_file_read_bytes, &.{ in_handle, request });
+            const chunk = roots[0].object().?.payload.byte_buffer.bytes;
+            if (chunk.len == 0) break;
+            _ = try state.lowLevelHashBuiltin(&runtime, .low_level_hash_update, &.{ hash_handle, roots[0] });
+            hashed += chunk.len;
+            if (hashed >= fixture_size) break;
+        }
+        try std.testing.expectEqual(fixture_size, hashed);
+        _ = try state.lowLevelFileBuiltin(&runtime, .low_level_file_close, &.{in_handle});
+
+        roots[5] = try runtimeUtf8String(&runtime, "hex");
+        const result = try state.lowLevelHashBuiltin(&runtime, .low_level_hash_digest, &.{ hash_handle, roots[5] });
+        const hex = try valueUtf8LossyAlloc(&runtime, result);
+        defer runtime.allocator.free(hex);
+        try std.testing.expectEqualStrings(expected, hex);
+        try std.testing.expectEqual(@as(u32, 0), runtime.low_level_handle_ids.size);
+    }
+}
+
 test "AOT動的変換は低レイヤーハンドルのHandleIdを引き継ぐ" {
     const plugin_lowlevel = @import("../../plugins/lowlevel.zig");
     var runtime = Runtime{ .allocator = std.testing.allocator };
@@ -7560,6 +7619,43 @@ test "AOT動的変換は低レイヤーハンドルのHandleIdを引き継ぐ" {
     try std.testing.expectEqual(@intFromPtr(dynamic_handle.dictionary), @intFromPtr(again.dictionary));
 
     _ = try state.lowLevelFileBuiltin(active, .low_level_file_close, &.{handle});
+    try std.testing.expectEqual(@as(usize, 0), dynamic_state.interpreter.lowlevel_state.handle_values.items.len);
+    try std.testing.expectEqual(@as(u32, 0), active.low_level_handle_ids.size);
+}
+
+test "AOT動的変換はハッシュハンドルのHandleIdを引き継ぐ" {
+    const plugin_lowlevel = @import("../../plugins/lowlevel.zig");
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    const dynamic_state = try DynamicInterpreterState.init(std.testing.allocator, active);
+    active.dynamic_state = dynamic_state;
+
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+    roots[0] = try runtimeUtf8String(active, "sha256");
+    const handle = try state.lowLevelHashBuiltin(active, .low_level_hash_create, &.{roots[0]});
+    roots[1] = handle;
+    const original = state.handleIdFor(active, handle).?;
+
+    var dynamic_roots = dynamic_state.value_runtime.rootFrame();
+    defer dynamic_roots.deinit();
+    var dynamic_handle = try aotToDynamicValue(dynamic_state, handle);
+    try dynamic_roots.protect(&dynamic_handle);
+    try std.testing.expectEqual(original, plugin_lowlevel.lookupHandle(&dynamic_state.interpreter.lowlevel_state, dynamic_handle).?);
+
+    const recovered = try dynamicToAotValue(dynamic_state, dynamic_handle);
+    try std.testing.expectEqual(original, state.handleIdFor(active, recovered).?);
+    try std.testing.expectEqual(handle.payload, recovered.payload);
+
+    _ = try state.lowLevelHashBuiltin(active, .low_level_hash_discard, &.{handle});
     try std.testing.expectEqual(@as(usize, 0), dynamic_state.interpreter.lowlevel_state.handle_values.items.len);
     try std.testing.expectEqual(@as(u32, 0), active.low_level_handle_ids.size);
 }
@@ -7687,7 +7783,7 @@ test "AOT低レイヤーの未実装命令は全てstub経由でENOTSUPを返す
     defer lnako_aot_pop_roots(&frame);
 
     // 未実装命令が誤って別case群へ列挙されるとENOTSUPにならない。
-    // dispatch経由で全53件が構造化ENOTSUPを返すことを網羅確認する。
+    // dispatch経由で全49件が構造化ENOTSUPを返すことを網羅確認する。
     var stub_count: usize = 0;
     var taken: Value = .{};
     for (aot_builtin.low_level_bindings) |binding| {
@@ -7703,7 +7799,7 @@ test "AOT低レイヤーの未実装命令は全てstub経由でENOTSUPを返す
         try std.testing.expect(taken.object().?.structured_error);
         try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "ENOTSUP");
     }
-    try std.testing.expectEqual(@as(usize, 53), stub_count);
+    try std.testing.expectEqual(@as(usize, 49), stub_count);
 }
 
 test "AOT未捕捉例外のmessage抽出は構造化エラーだけに限る" {
@@ -7732,4 +7828,34 @@ test "AOT未捕捉例外のmessage抽出は構造化エラーだけに限る" {
     const structured_text = try pendingExceptionMessageUtf8Alloc(&runtime);
     defer runtime.allocator.free(structured_text);
     try std.testing.expectEqualStrings("ENOENT: no such file or directory, open '/missing'", structured_text);
+}
+
+test "AOT低レイヤーのハッシュ完了encodingはハッシュ値計算と一致する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try state.active_runtime.?.createBytes("abc");
+    roots[1] = try runtimeUtf8String(&state.active_runtime.?, "sha256");
+    for ([_][]const u8{ "hex", "base64", "base64url", "latin1", "binary", "utf8", "utf-8" }) |encoding_name| {
+        roots[2] = try runtimeUtf8String(&state.active_runtime.?, encoding_name);
+        roots[3] = try nodeCryptoBuiltin(&state.active_runtime.?, .node_hash_value, &.{ roots[0], roots[1], roots[2] });
+        const handle = try state.lowLevelHashBuiltin(&state.active_runtime.?, .low_level_hash_create, &.{roots[1]});
+        roots[4] = handle;
+        _ = try state.lowLevelHashBuiltin(&state.active_runtime.?, .low_level_hash_update, &.{ handle, roots[0] });
+        const actual = try state.lowLevelHashBuiltin(&state.active_runtime.?, .low_level_hash_digest, &.{ handle, roots[2] });
+        const expected_text = try valueUtf8LossyAlloc(&state.active_runtime.?, roots[3]);
+        defer std.testing.allocator.free(expected_text);
+        const actual_text = try valueUtf8LossyAlloc(&state.active_runtime.?, actual);
+        defer std.testing.allocator.free(actual_text);
+        try std.testing.expectEqualStrings(expected_text, actual_text);
+    }
 }
