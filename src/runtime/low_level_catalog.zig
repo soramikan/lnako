@@ -293,6 +293,10 @@ test "implementedフラグは実装済み命令の既知集合と一致する" {
         "ll-file-write",
         "ll-file-sync",
         "ll-file-truncate-handle",
+        "ll-hash-create",
+        "ll-hash-update",
+        "ll-hash-digest",
+        "ll-hash-discard",
         "ll-capability-supported",
         "ll-capability-list",
     };
