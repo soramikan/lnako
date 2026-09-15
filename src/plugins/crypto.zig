@@ -1,5 +1,6 @@
 const std = @import("std");
 const value_mod = @import("../runtime/value.zig");
+const low_level_hash = @import("../runtime/low_level_hash.zig");
 const common = @import("system/common.zig");
 
 pub const Value = value_mod.Value;
@@ -165,54 +166,45 @@ fn calculateHash(runtime: *Runtime, arguments: []const Value) !Value {
 /// value model.  AOT uses this same implementation so every supported alias
 /// and digest length has one source of truth.
 pub fn calculateDigest(allocator: std.mem.Allocator, input: []const u8, algorithm: []const u8) ![]u8 {
-    var normalized: [96]u8 = undefined;
-    const key = normalize(algorithm, &normalized) orelse return error.UnsupportedHashAlgorithm;
+    const resolved = low_level_hash.Algorithm.fromName(algorithm) orelse return error.UnsupportedHashAlgorithm;
     var digest: std.ArrayList(u8) = .empty;
     errdefer digest.deinit(allocator);
-    if (isAny(key, &.{ "md5", "rsamd5", "md5withrsaencryption", "ssl3md5" })) {
-        try appendHash(std.crypto.hash.Md5, allocator, &digest, input);
-    } else if (std.mem.eql(u8, key, "md5sha1")) {
-        try appendHash(std.crypto.hash.Md5, allocator, &digest, input);
-        try appendHash(std.crypto.hash.Sha1, allocator, &digest, input);
-    } else if (isAny(key, &.{ "sha1", "rsasha1", "rsasha12", "sha1withrsaencryption", "ssl3sha1" })) {
-        try appendHash(std.crypto.hash.Sha1, allocator, &digest, input);
-    } else if (isAny(key, &.{ "sha224", "rsasha224", "sha224withrsaencryption" })) {
-        try appendHash(std.crypto.hash.sha2.Sha224, allocator, &digest, input);
-    } else if (isAny(key, &.{ "sha256", "rsasha256", "sha256withrsaencryption" })) {
-        try appendHash(std.crypto.hash.sha2.Sha256, allocator, &digest, input);
-    } else if (isAny(key, &.{ "sha384", "rsasha384", "sha384withrsaencryption" })) {
-        try appendHash(std.crypto.hash.sha2.Sha384, allocator, &digest, input);
-    } else if (isAny(key, &.{ "sha512", "rsasha512", "sha512withrsaencryption" })) {
-        try appendHash(std.crypto.hash.sha2.Sha512, allocator, &digest, input);
-    } else if (isAny(key, &.{ "sha512224", "rsasha512224", "sha512224withrsaencryption" })) {
-        try appendHash(std.crypto.hash.sha2.Sha512_224, allocator, &digest, input);
-    } else if (isAny(key, &.{ "sha512256", "rsasha512256", "sha512256withrsaencryption" })) {
-        try appendHash(std.crypto.hash.sha2.Sha512_256, allocator, &digest, input);
-    } else if (isAny(key, &.{ "sha3224", "rsasha3224", "idrsassapkcs1v15withsha3224" })) {
-        try appendHash(std.crypto.hash.sha3.Sha3_224, allocator, &digest, input);
-    } else if (isAny(key, &.{ "sha3256", "rsasha3256", "idrsassapkcs1v15withsha3256" })) {
-        try appendHash(std.crypto.hash.sha3.Sha3_256, allocator, &digest, input);
-    } else if (isAny(key, &.{ "sha3384", "rsasha3384", "idrsassapkcs1v15withsha3384" })) {
-        try appendHash(std.crypto.hash.sha3.Sha3_384, allocator, &digest, input);
-    } else if (isAny(key, &.{ "sha3512", "rsasha3512", "idrsassapkcs1v15withsha3512" })) {
-        try appendHash(std.crypto.hash.sha3.Sha3_512, allocator, &digest, input);
-    } else if (std.mem.eql(u8, key, "blake2b512")) {
-        try appendHash(std.crypto.hash.blake2.Blake2b512, allocator, &digest, input);
-    } else if (std.mem.eql(u8, key, "blake2s256")) {
-        try appendHash(std.crypto.hash.blake2.Blake2s256, allocator, &digest, input);
-    } else if (std.mem.eql(u8, key, "shake128")) {
-        const output = try digest.addManyAsSlice(allocator, 16);
-        std.crypto.hash.sha3.Shake128.hash(input, output, .{});
-    } else if (std.mem.eql(u8, key, "shake256")) {
-        const output = try digest.addManyAsSlice(allocator, 32);
-        std.crypto.hash.sha3.Shake256.hash(input, output, .{});
-    } else if (isAny(key, &.{ "ripemd", "ripemd160", "ripemd160withrsa", "rmd160", "rsaripemd160" })) {
-        const output = try digest.addManyAsSlice(allocator, 20);
-        ripemd160(input, output[0..20]);
-    } else if (isAny(key, &.{ "sm3", "sm3withrsaencryption", "rsasm3" })) {
-        const output = try digest.addManyAsSlice(allocator, 32);
-        sm3(input, output[0..32]);
-    } else return error.UnsupportedHashAlgorithm;
+    switch (resolved) {
+        .md5 => try appendHash(std.crypto.hash.Md5, allocator, &digest, input),
+        .md5_sha1 => {
+            try appendHash(std.crypto.hash.Md5, allocator, &digest, input);
+            try appendHash(std.crypto.hash.Sha1, allocator, &digest, input);
+        },
+        .sha1 => try appendHash(std.crypto.hash.Sha1, allocator, &digest, input),
+        .sha224 => try appendHash(std.crypto.hash.sha2.Sha224, allocator, &digest, input),
+        .sha256 => try appendHash(std.crypto.hash.sha2.Sha256, allocator, &digest, input),
+        .sha384 => try appendHash(std.crypto.hash.sha2.Sha384, allocator, &digest, input),
+        .sha512 => try appendHash(std.crypto.hash.sha2.Sha512, allocator, &digest, input),
+        .sha512_224 => try appendHash(std.crypto.hash.sha2.Sha512_224, allocator, &digest, input),
+        .sha512_256 => try appendHash(std.crypto.hash.sha2.Sha512_256, allocator, &digest, input),
+        .sha3_224 => try appendHash(std.crypto.hash.sha3.Sha3_224, allocator, &digest, input),
+        .sha3_256 => try appendHash(std.crypto.hash.sha3.Sha3_256, allocator, &digest, input),
+        .sha3_384 => try appendHash(std.crypto.hash.sha3.Sha3_384, allocator, &digest, input),
+        .sha3_512 => try appendHash(std.crypto.hash.sha3.Sha3_512, allocator, &digest, input),
+        .blake2b512 => try appendHash(std.crypto.hash.blake2.Blake2b512, allocator, &digest, input),
+        .blake2s256 => try appendHash(std.crypto.hash.blake2.Blake2s256, allocator, &digest, input),
+        .shake128 => {
+            const output = try digest.addManyAsSlice(allocator, 16);
+            std.crypto.hash.sha3.Shake128.hash(input, output, .{});
+        },
+        .shake256 => {
+            const output = try digest.addManyAsSlice(allocator, 32);
+            std.crypto.hash.sha3.Shake256.hash(input, output, .{});
+        },
+        .ripemd160 => {
+            const output = try digest.addManyAsSlice(allocator, 20);
+            ripemd160(input, output[0..20]);
+        },
+        .sm3 => {
+            const output = try digest.addManyAsSlice(allocator, 32);
+            sm3(input, output[0..32]);
+        },
+    }
     return digest.toOwnedSlice(allocator);
 }
 
@@ -230,22 +222,6 @@ fn valueBytes(runtime: *Runtime, value: Value) ![]u8 {
 fn valueUtf8(runtime: *Runtime, value: Value) ![]u8 {
     const text = try runtime.valueToString(value);
     return text.string.toUtf8Lossy(runtime.allocator());
-}
-
-fn normalize(source: []const u8, output: []u8) ?[]const u8 {
-    var length: usize = 0;
-    for (source) |byte| {
-        if (!std.ascii.isAlphanumeric(byte)) continue;
-        if (length == output.len) return null;
-        output[length] = std.ascii.toLower(byte);
-        length += 1;
-    }
-    return output[0..length];
-}
-
-fn isAny(value: []const u8, options: []const []const u8) bool {
-    for (options) |option| if (std.mem.eql(u8, value, option)) return true;
-    return false;
 }
 
 fn ripemd160(input: []const u8, output: *[20]u8) void {
@@ -409,4 +385,34 @@ test "UUIDのversionとvariantビットを固定する" {
     const random = (try call(&runtime, .{ .context = &marker, .randomBytesFn = TestRandom.fill }, "ランダム配列生成", &.{.{ .number = 4 }})).?;
     try std.testing.expectEqual(value_mod.ByteKind.uint8_array, random.bytes.kind);
     try std.testing.expectEqualSlices(u8, &.{ 0, 1, 2, 3 }, random.bytes.bytes);
+}
+
+test "ハッシュ値計算の全別名は逐次ハッシュと同じアルゴリズムへ解決する" {
+    const allocator = std.testing.allocator;
+    const input = "The quick brown fox jumps over the lazy dog";
+    var incremental_count: usize = 0;
+    var one_shot_only_count: usize = 0;
+    for (hash_names) |name| {
+        const algorithm = low_level_hash.Algorithm.fromName(name) orelse {
+            std.debug.print("未知のハッシュ別名: {s}\n", .{name});
+            return error.UnsupportedHashAlgorithm;
+        };
+        const one_shot = try calculateDigest(allocator, input, name);
+        defer allocator.free(one_shot);
+        if (!algorithm.isIncremental()) {
+            one_shot_only_count += 1;
+            try std.testing.expectEqual(algorithm.digestLength(), one_shot.len);
+            try std.testing.expectError(error.IncrementalHashUnsupported, low_level_hash.startNamed(name));
+            continue;
+        }
+        incremental_count += 1;
+        var hasher = try low_level_hash.startNamed(name);
+        var offset: usize = 0;
+        while (offset < input.len) : (offset += 5) hasher.update(input[offset..@min(input.len, offset + 5)]);
+        const streamed = try hasher.finalize(allocator);
+        defer allocator.free(streamed);
+        try std.testing.expectEqualSlices(u8, one_shot, streamed);
+    }
+    try std.testing.expect(incremental_count > 0);
+    try std.testing.expect(one_shot_only_count > 0);
 }

@@ -3,6 +3,7 @@ const state = @import("state.zig");
 const shared = @import("shared.zig");
 const foundation = @import("../low_level_foundation.zig");
 const low_level_io = @import("../low_level_io.zig");
+const low_level_hash = @import("../low_level_hash.zig");
 const plugin_lowlevel = @import("../../plugins/lowlevel.zig");
 
 const aot_builtin = shared.aot_builtin;
@@ -17,6 +18,7 @@ const numberValue = state.numberValue;
 const valueToNumber = state.valueToNumber;
 const valueUtf8LossyAlloc = state.valueUtf8LossyAlloc;
 const runtimeUtf8String = state.runtimeUtf8String;
+const runtimeUtf8StringLossy = state.runtimeUtf8StringLossy;
 const aotRuntimeIo = state.aotRuntimeIo;
 const staticUtf8 = state.staticUtf8;
 const isString = state.isString;
@@ -34,6 +36,13 @@ fn table(runtime: *Runtime) *low_level_io.FileHandleTable {
     return &runtime.low_level_handles.?;
 }
 
+fn hashTable(runtime: *Runtime) *low_level_hash.HashHandleTable {
+    if (runtime.low_level_hash_handles == null) {
+        runtime.low_level_hash_handles = low_level_hash.HashHandleTable.init(runtime.allocator);
+    }
+    return &runtime.low_level_hash_handles.?;
+}
+
 pub fn pluginContext(runtime: *Runtime) plugin_lowlevel.Context {
     return .{
         .context = runtime,
@@ -43,6 +52,10 @@ pub fn pluginContext(runtime: *Runtime) plugin_lowlevel.Context {
         .writeFileBytesFn = pluginWriteFileBytes,
         .syncFileFn = pluginSyncFile,
         .truncateFileFn = pluginTruncateFile,
+        .createHashFn = pluginCreateHash,
+        .updateHashFn = pluginUpdateHash,
+        .digestHashFn = pluginDigestHash,
+        .discardHashFn = pluginDiscardHash,
     };
 }
 
@@ -81,6 +94,33 @@ fn pluginTruncateFile(context: *anyopaque, raw: u64, size: u64) anyerror!void {
     const runtime: *Runtime = @ptrCast(@alignCast(context));
     const entry = table(runtime).find(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
     return low_level_io.setLength(io(runtime), entry.file, size);
+}
+
+fn pluginCreateHash(context: *anyopaque, algorithm: []const u8) anyerror!u64 {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    const hasher = try low_level_hash.startNamed(algorithm);
+    return (try hashTable(runtime).insert(hasher)).raw();
+}
+
+fn pluginUpdateHash(context: *anyopaque, raw: u64, bytes: []const u8) anyerror!void {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    const entry = hashTable(runtime).find(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+    entry.hasher.update(bytes);
+}
+
+fn pluginDigestHash(context: *anyopaque, raw: u64, allocator: std.mem.Allocator) anyerror![]u8 {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    const id = foundation.HandleId.fromRaw(raw);
+    var removed = hashTable(runtime).remove(id) orelse return error.BadFileDescriptor;
+    forgetHandleId(runtime, id);
+    return removed.hasher.finalize(allocator);
+}
+
+fn pluginDiscardHash(context: *anyopaque, raw: u64) anyerror!void {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    const id = foundation.HandleId.fromRaw(raw);
+    _ = hashTable(runtime).remove(id) orelse return error.BadFileDescriptor;
+    forgetHandleId(runtime, id);
 }
 
 pub fn handleIdFor(runtime: *Runtime, value: Value) ?foundation.HandleId {
@@ -251,6 +291,158 @@ fn truncateBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
         return throwIo(runtime, failure, foundation.stream_operations.ftruncate, null);
     };
     return .{};
+}
+
+fn hashCreateBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    if (arguments.len < 1 or !isString(arguments[0])) {
+        return throwStructured(runtime, .EINVAL, foundation.hash_operation, null, null, "アルゴリズム名は文字列である必要があります");
+    }
+    const algorithm = try valueUtf8LossyAlloc(runtime, arguments[0]);
+    defer runtime.allocator.free(algorithm);
+    const hasher = low_level_hash.startNamed(algorithm) catch |failure| {
+        return throwHashFailure(runtime, failure);
+    };
+    const id = try hashTable(runtime).insert(hasher);
+    errdefer _ = hashTable(runtime).remove(id);
+    var handle = try runtime.createDictionary(&.{});
+    var roots = RootFrame{};
+    runtime.pushRoots(&roots, @ptrCast(&handle), 1);
+    defer runtime.popRoots(&roots);
+    try rememberHandle(runtime, handle, id);
+    return handle;
+}
+
+fn hashUpdateBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    if (arguments.len < 1) {
+        return throwStructured(runtime, .EBADF, foundation.hash_operation, null, null, "無効なハンドルです");
+    }
+    const id = findHandleId(runtime, arguments[0]) orelse {
+        return throwStructured(runtime, .EBADF, foundation.hash_operation, null, null, "無効なハンドルです");
+    };
+    if (arguments.len < 2) {
+        return throwStructured(runtime, .EINVAL, foundation.hash_operation, null, null, "追加する値はBytesである必要があります");
+    }
+    const bytes = bytesArgument(arguments[1]) catch {
+        return throwStructured(runtime, .EINVAL, foundation.hash_operation, null, null, "追加する値はBytesである必要があります");
+    };
+    const entry = hashTable(runtime).find(id) orelse {
+        return throwStructured(runtime, .EBADF, foundation.hash_operation, null, null, "無効なハンドルです");
+    };
+    entry.hasher.update(bytes);
+    return .{};
+}
+
+fn hashDigestBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    if (arguments.len < 1) {
+        return throwStructured(runtime, .EBADF, foundation.hash_operation, null, null, "無効なハンドルです");
+    }
+    const id = findHandleId(runtime, arguments[0]) orelse {
+        return throwStructured(runtime, .EBADF, foundation.hash_operation, null, null, "無効なハンドルです");
+    };
+    var encoding: low_level_hash.Encoding = .raw;
+    if (arguments.len > 1 and arguments[1].tag != @intFromEnum(Tag.undefined) and arguments[1].tag != @intFromEnum(Tag.null_value)) {
+        if (!isString(arguments[1])) {
+            return throwStructured(runtime, .EINVAL, foundation.hash_operation, null, null, "encodingは文字列である必要があります");
+        }
+        const name = try valueUtf8LossyAlloc(runtime, arguments[1]);
+        defer runtime.allocator.free(name);
+        encoding = low_level_hash.Encoding.fromName(name) orelse {
+            return throwStructured(runtime, .EINVAL, foundation.hash_operation, null, null, "未知のencodingです");
+        };
+    }
+    var removed = hashTable(runtime).remove(id) orelse {
+        return throwStructured(runtime, .EBADF, foundation.hash_operation, null, null, "無効なハンドルです");
+    };
+    const digest = try removed.hasher.finalize(runtime.allocator);
+    defer runtime.allocator.free(digest);
+    forgetHandleId(runtime, id);
+    if (runtime.dynamic_forget_handle) |forget| forget(runtime, id.raw());
+    return encodeDigest(runtime, digest, encoding);
+}
+
+fn hashDiscardBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    if (arguments.len < 1) {
+        return throwStructured(runtime, .EBADF, foundation.hash_operation, null, null, "無効なハンドルです");
+    }
+    const id = findHandleId(runtime, arguments[0]) orelse {
+        return throwStructured(runtime, .EBADF, foundation.hash_operation, null, null, "無効なハンドルです");
+    };
+    _ = hashTable(runtime).remove(id) orelse {
+        return throwStructured(runtime, .EBADF, foundation.hash_operation, null, null, "無効なハンドルです");
+    };
+    forgetHandleId(runtime, id);
+    if (runtime.dynamic_forget_handle) |forget| forget(runtime, id.raw());
+    return .{};
+}
+
+fn encodeDigest(runtime: *Runtime, digest: []const u8, encoding: low_level_hash.Encoding) !Value {
+    switch (encoding) {
+        .raw => return runtime.createBytes(digest),
+        .hex => {
+            const result = try runtime.allocator.alloc(u8, digest.len * 2);
+            defer runtime.allocator.free(result);
+            const text = std.fmt.bufPrint(result, "{x}", .{digest}) catch unreachable;
+            return runtimeUtf8String(runtime, text);
+        },
+        .base64, .base64url => {
+            const result = try runtime.allocator.alloc(u8, std.base64.standard.Encoder.calcSize(digest.len));
+            defer runtime.allocator.free(result);
+            _ = std.base64.standard.Encoder.encode(result, digest);
+            if (encoding == .base64) return runtimeUtf8String(runtime, result);
+            for (result) |*byte| byte.* = switch (byte.*) {
+                '+' => '-',
+                '/' => '_',
+                else => byte.*,
+            };
+            var length = result.len;
+            while (length > 0 and result[length - 1] == '=') length -= 1;
+            return runtimeUtf8String(runtime, result[0..length]);
+        },
+        .latin1 => {
+            const units = try runtime.allocator.alloc(u16, digest.len);
+            defer runtime.allocator.free(units);
+            for (digest, 0..) |byte, index| units[index] = byte;
+            return runtime.createString(units);
+        },
+        .utf8 => return runtimeUtf8StringLossy(runtime, digest),
+    }
+}
+
+fn throwHashFailure(runtime: *Runtime, failure: anyerror) anyerror {
+    const code: foundation.PortableErrorCode = switch (failure) {
+        error.UnsupportedHashAlgorithm => .EINVAL,
+        error.IncrementalHashUnsupported, error.IncrementalHashUnavailable => .ENOTSUP,
+        else => foundation.portableCodeForFailure(failure) orelse .EINVAL,
+    };
+    const capability = if (code == .ENOTSUP) foundation.Capability.incremental_hash.id() else null;
+    return throwStructured(runtime, code, foundation.hash_operation, null, capability, hashFailureMessage(failure));
+}
+
+fn hashFailureMessage(failure: anyerror) []const u8 {
+    return switch (failure) {
+        error.UnsupportedHashAlgorithm => "未対応のハッシュアルゴリズムです",
+        error.IncrementalHashUnsupported => "このアルゴリズムは逐次計算に対応していません",
+        error.IncrementalHashUnavailable => "逐次ハッシュは利用できません",
+        error.BadFileDescriptor => "無効なハンドルです",
+        else => @errorName(failure),
+    };
+}
+
+/// カタログ掲載済みで実装済みのincremental hash命令。arity検査は
+/// `lowLevelFileBuiltin` と同じ契約（実装済み命令の下限未満はEINVAL）で行う。
+pub fn lowLevelHashBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    if (aot_builtin.lowLevelCatalogCommand(command)) |spec| {
+        if (arguments.len > spec.max or arguments.len < spec.min) {
+            return throwStructured(runtime, .EINVAL, spec.operation, null, null, "引数の数が不正です");
+        }
+    }
+    return switch (command) {
+        .low_level_hash_create => hashCreateBuiltin(runtime, arguments),
+        .low_level_hash_update => hashUpdateBuiltin(runtime, arguments),
+        .low_level_hash_digest => hashDigestBuiltin(runtime, arguments),
+        .low_level_hash_discard => hashDiscardBuiltin(runtime, arguments),
+        else => lowLevelUnsupportedBuiltin(runtime, command, arguments),
+    };
 }
 
 pub fn lowLevelFileBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
@@ -570,4 +762,65 @@ test "AOT pluginContextはRuntimeのハンドル表へ開く" {
     const output = try temporary.dir.readFileAlloc(std.testing.io, "plugin-context.txt", std.testing.allocator, .limited(8));
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualSlices(u8, "ok", output);
+}
+
+test "AOT低レイヤーのincremental hashは複数chunkと完了後EBADFを扱う" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtimeUtf8String(&runtime, "sha256");
+    const handle = try lowLevelHashBuiltin(&runtime, .low_level_hash_create, &.{roots[0]});
+    roots[0] = handle;
+    try std.testing.expectEqual(@as(u32, 1), runtime.low_level_handle_ids.size);
+
+    for ([_][]const u8{ "a", "b", "c" }, 0..) |part, index| {
+        roots[index + 1] = try runtime.createBytes(part);
+        _ = try lowLevelHashBuiltin(&runtime, .low_level_hash_update, &.{ handle, roots[index + 1] });
+    }
+
+    roots[4] = try runtimeUtf8String(&runtime, "hex");
+    const result = try lowLevelHashBuiltin(&runtime, .low_level_hash_digest, &.{ handle, roots[4] });
+    const hex = try valueUtf8LossyAlloc(&runtime, result);
+    defer runtime.allocator.free(hex);
+    try std.testing.expectEqualStrings("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", hex);
+
+    // 完了後はハッシュ表から外れ、追加も再完了もEBADF。
+    try std.testing.expectEqual(@as(usize, 0), runtime.low_level_hash_handles.?.len());
+    try std.testing.expectEqual(@as(u32, 0), runtime.low_level_handle_ids.size);
+    try std.testing.expectError(error.NakoException, lowLevelHashBuiltin(&runtime, .low_level_hash_update, &.{ handle, roots[1] }));
+    try std.testing.expectError(error.NakoException, lowLevelHashBuiltin(&runtime, .low_level_hash_digest, &.{handle}));
+}
+
+test "AOT低レイヤーのハッシュ破棄は二重破棄をEBADFにする" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}};
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtimeUtf8String(&runtime, "md5");
+    const handle = try lowLevelHashBuiltin(&runtime, .low_level_hash_create, &.{roots[0]});
+    roots[0] = handle;
+    _ = try lowLevelHashBuiltin(&runtime, .low_level_hash_discard, &.{handle});
+    try std.testing.expectEqual(@as(u32, 0), runtime.low_level_handle_ids.size);
+    try std.testing.expectError(error.NakoException, lowLevelHashBuiltin(&runtime, .low_level_hash_discard, &.{handle}));
+}
+
+test "AOT低レイヤーのハッシュ開始は未知をEINVAL、RIPEMDをENOTSUPにする" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}};
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtimeUtf8String(&runtime, "crc32");
+    try std.testing.expectError(error.NakoException, lowLevelHashBuiltin(&runtime, .low_level_hash_create, &.{roots[0]}));
+    roots[0] = try runtimeUtf8String(&runtime, "ripemd160");
+    try std.testing.expectError(error.NakoException, lowLevelHashBuiltin(&runtime, .low_level_hash_create, &.{roots[0]}));
 }

@@ -325,7 +325,7 @@ pub const Capability = enum {
 /// 含めない。
 pub fn capabilityImplemented(capability: Capability) bool {
     return switch (capability) {
-        .stream_file_io, .truncate => true,
+        .stream_file_io, .truncate, .incremental_hash => true,
         else => false,
     };
 }
@@ -460,10 +460,10 @@ pub const catalog_commands = [_]CatalogCommand{
     .{ .id = "ll-file-truncate-path", .name = "ファイルサイズ変更", .min = 2, .max = 2, .operation = "truncate", .capability = .truncate },
     .{ .id = "ll-file-utime-path", .name = "ファイル時刻設定", .min = 3, .max = 3, .operation = "utime", .capability = .utime },
     .{ .id = "ll-file-utime-handle", .name = "ファイル時刻設定済", .min = 3, .max = 3, .operation = "futime", .capability = .utime },
-    .{ .id = "ll-hash-create", .name = "ハッシュ開始", .min = 1, .max = 1, .operation = "hash", .capability = .incremental_hash },
-    .{ .id = "ll-hash-update", .name = "ハッシュ追加", .min = 2, .max = 2, .operation = "hash", .capability = .incremental_hash },
-    .{ .id = "ll-hash-digest", .name = "ハッシュ完了", .min = 1, .max = 2, .operation = "hash", .capability = .incremental_hash },
-    .{ .id = "ll-hash-discard", .name = "ハッシュ破棄", .min = 1, .max = 1, .operation = "hash", .capability = .incremental_hash },
+    .{ .id = "ll-hash-create", .name = "ハッシュ開始", .min = 1, .max = 1, .operation = "hash", .capability = .incremental_hash, .implemented = true },
+    .{ .id = "ll-hash-update", .name = "ハッシュ追加", .min = 2, .max = 2, .operation = "hash", .capability = .incremental_hash, .implemented = true },
+    .{ .id = "ll-hash-digest", .name = "ハッシュ完了", .min = 1, .max = 2, .operation = "hash", .capability = .incremental_hash, .implemented = true },
+    .{ .id = "ll-hash-discard", .name = "ハッシュ破棄", .min = 1, .max = 1, .operation = "hash", .capability = .incremental_hash, .implemented = true },
     .{ .id = "ll-dir-open", .name = "ディレクトリ開", .user_name = "ディレクトリ開く", .min = 1, .max = 1, .operation = "opendir", .capability = .dir_iterator },
     .{ .id = "ll-dir-next", .name = "ディレクトリ次取得", .min = 1, .max = 1, .operation = "readdir", .capability = .dir_iterator },
     .{ .id = "ll-dir-close", .name = "ディレクトリ閉", .user_name = "ディレクトリ閉じる", .min = 1, .max = 1, .operation = "closedir", .capability = .dir_iterator },
@@ -537,6 +537,10 @@ pub const stream_operations = struct {
     pub const fsync = "fsync";
     pub const ftruncate = "ftruncate";
 };
+
+/// Issue #32のincremental hash命令が失敗したときに返す構造化エラーの操作名
+/// （ASCII）。カタログの `operation` は4命令とも共通で `hash` である。
+pub const hash_operation = "hash";
 
 /// 開くときのアクセス様式。`ファイル開く` のmode引数から決まる。
 /// 位置（read/write/append）と生成・切詰の有無だけを固定し、
@@ -778,6 +782,7 @@ test "capability識別子はsnake_caseで分類が閉じている" {
     try std.testing.expectEqual(CapabilityClass.portable_core, Capability.stream_file_io.class());
     try std.testing.expect(capabilityImplemented(.stream_file_io));
     try std.testing.expect(capabilityImplemented(.truncate));
+    try std.testing.expect(capabilityImplemented(.incremental_hash));
     try std.testing.expect(!capabilityImplemented(.termios));
     try std.testing.expectEqual(CapabilityClass.posix_extension, Capability.chmod.class());
     try std.testing.expectEqual(CapabilityClass.lnako_native, Capability.seek_data.class());
@@ -856,6 +861,13 @@ test "ストリームI/O命令名はファイル接頭辞を持ち既存527件�
     try std.testing.expectEqual(@as(u8, 1), commandArity(stream_commands.close).?.max);
     try std.testing.expectEqual(@as(u8, 2), commandArity(stream_commands.open).?.max);
     try std.testing.expectEqual(@as(u8, 0), commandArity(capability_list_command).?.max);
+    try std.testing.expectEqualStrings("hash", hash_operation);
+    for ([_][]const u8{ "ハッシュ開始", "ハッシュ追加", "ハッシュ完了", "ハッシュ破棄" }) |name| {
+        const command = catalogCommandFor(name).?;
+        try std.testing.expect(command.implemented);
+        try std.testing.expectEqual(Capability.incremental_hash, command.capability.?);
+        try std.testing.expectEqualStrings(hash_operation, command.operation);
+    }
 }
 
 test "Nodeの文字列flagsはOpenModeへ写り、不正modeはInvalidModeになる" {
