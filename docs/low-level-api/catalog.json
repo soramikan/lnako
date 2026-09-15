@@ -221,10 +221,13 @@
       "operation": "read",
       "errors": [
         "EINVAL",
-        "EPIPE"
+        "EPIPE",
+        "ENOSPC",
+        "ENOTSUP",
+        "EBADF"
       ],
       "notes": "0 byteはEOF。既存のテキスト系stdin命令と同じsource of truth",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-stdout-write",
@@ -239,10 +242,12 @@
       "errors": [
         "EINVAL",
         "EPIPE",
-        "ENOSPC"
+        "ENOSPC",
+        "ENOTSUP",
+        "EBADF"
       ],
       "notes": "表示と別経路のraw bytes",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-stderr-write",
@@ -257,10 +262,12 @@
       "errors": [
         "EINVAL",
         "EPIPE",
-        "ENOSPC"
+        "ENOSPC",
+        "ENOTSUP",
+        "EBADF"
       ],
       "notes": "stdoutと混線しない",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-stdout-sync",
@@ -274,10 +281,12 @@
       "operation": "fsync",
       "errors": [
         "EPIPE",
-        "EINVAL"
+        "EINVAL",
+        "ENOTSUP",
+        "EBADF"
       ],
       "notes": "",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-stderr-sync",
@@ -291,10 +300,12 @@
       "operation": "fsync",
       "errors": [
         "EPIPE",
-        "EINVAL"
+        "EINVAL",
+        "ENOTSUP",
+        "EBADF"
       ],
       "notes": "",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-file-stat",
@@ -1168,13 +1179,13 @@
       "id": "raw_stdio",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": true,
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {

@@ -224,6 +224,147 @@ pub fn writeAtCurrent(io: std.Io, file: std.Io.File, bytes: []const u8) WriteErr
     return file.writeStreaming(io, &.{}, &.{bytes}, 1);
 }
 
+/// Issue #28のraw標準入出力が触るプロセスのstdio fd差し替え口。nullは
+/// 実プロセスの `std.Io.File.stdin()/stdout()/stderr()` を指す。
+/// 所有権は移らず、closeは差し替えた側（テスト等）が行う。
+pub const StdioFiles = struct {
+    stdin: ?std.Io.File = null,
+    stdout: ?std.Io.File = null,
+    stderr: ?std.Io.File = null,
+};
+
+/// 共有stdin sourceの1回あたりのfill/読取り上限。`標準入力バイト読む` の
+/// SIZEはこの値で切り詰められる（部分読取り契約により許容）。
+pub const stdin_fill_bytes: usize = 64 * 1024;
+
+/// stdin履歴の総量上限。旧来の `allocRemaining(.limited(64MiB))` と同じ
+/// 上限を `history` 全体へ適用し、無制限蓄積によるOOMを防ぐ。
+pub const stdin_max_history_bytes: usize = 64 * 1024 * 1024;
+
+/// Issue #28の標準入力の単一source of truth。rawバイト命令
+/// （`標準入力バイト読む`）とテキスト系命令（`尋`/`標準入力取得時`/
+/// `標準入力全取得`）が同じ `consumed` カーソルを消費する。
+/// `history` は受信した全バイトを保持し、`標準入力全取得` が消費済みを
+/// 含む全量を返すために切り詰めない（upstreamの `__stdinRaw` と同じ）。
+/// 下位readerは `read_fn` への1回の呼び出しで最大buffer.lenバイトを返し、
+/// 0はEOFを意味する。
+pub const StdinSource = struct {
+    allocator: std.mem.Allocator,
+    history: std.ArrayList(u8) = .empty,
+    consumed: usize = 0,
+    eof: bool = false,
+    read_context: *anyopaque = undefined,
+    read_fn: ?*const fn (context: *anyopaque, buffer: []u8) anyerror!usize = null,
+    /// 履歴の総量上限。`標準入力全取得` が全履歴を返す契約のため消費済み
+    /// も保持する必要があり、受信総量で制限する。超過時はfillが
+    /// `error.StreamTooLong` を返す。`initPreloaded` はcapを適用しない
+    /// （生成後にmaxを現履歴未満へ下げてはいけない）。
+    max_history_bytes: usize = stdin_max_history_bytes,
+    /// 上限超過の粘着フラグ。一度超えたら以後のfillはreaderを呼ばず即
+    /// StreamTooLongを返し、retry loopがstdinを読み捨て続けるのを防ぐ。
+    too_long: bool = false,
+
+    pub fn init(
+        allocator: std.mem.Allocator,
+        read_context: *anyopaque,
+        read_fn: ?*const fn (context: *anyopaque, buffer: []u8) anyerror!usize,
+    ) StdinSource {
+        return .{ .allocator = allocator, .read_context = read_context, .read_fn = read_fn };
+    }
+
+    /// テスト用にバイト列を事前充填したsourceを作る。read_fnを持たず、
+    /// 履歴を読み切るとEOFになる。
+    pub fn initPreloaded(allocator: std.mem.Allocator, bytes: []const u8) !StdinSource {
+        var source = StdinSource{ .allocator = allocator };
+        try source.history.appendSlice(allocator, bytes);
+        return source;
+    }
+
+    pub fn deinit(self: *StdinSource) void {
+        self.history.deinit(self.allocator);
+        self.* = undefined;
+    }
+
+    /// 履歴の末尾へ最大1チャンク読み足す。EOFまたはread_fn未設定なら
+    /// eofを立てて0を返す。返却値は今回足したバイト数。
+    fn fill(self: *StdinSource) !usize {
+        if (self.eof) return 0;
+        if (self.too_long) return error.StreamTooLong;
+        const read_fn = self.read_fn orelse {
+            self.eof = true;
+            return 0;
+        };
+        const start = self.history.items.len;
+        try self.history.resize(self.allocator, start + stdin_fill_bytes);
+        // 誤実装readerがbuffer.len超を返しても history の内部状態を壊さないよう
+        // 収容ぶんへ切り詰める。
+        const received = @min(read_fn(self.read_context, self.history.items[start..]) catch |failure| {
+            self.history.shrinkRetainingCapacity(start);
+            return failure;
+        }, stdin_fill_bytes);
+        // 上限ちょうどで終わる入力はEOFまで受理するため、超過は読み取り後に
+        // 判定する。既読ぶんと上限までの先頭は残し、超過分だけを捨てる
+        // （start自体が上限を超える設定変更は縮めず、エラー状態のまま残す）。
+        if (start + received > self.max_history_bytes) {
+            self.history.shrinkRetainingCapacity(@max(@min(start + received, self.max_history_bytes), start));
+            self.too_long = true;
+            return error.StreamTooLong;
+        }
+        self.history.shrinkRetainingCapacity(start + received);
+        if (received == 0) {
+            self.eof = true;
+            return 0;
+        }
+        return received;
+    }
+
+    /// 最大 `buffer.len` バイトを読む。履歴に残があればそこから返し、
+    /// 無ければ1回だけfillしてから返す。0はEOF、buffer.len未満の非0は
+    /// 部分読取り（呼び出し側は続きを再度呼べる）。
+    pub fn read(self: *StdinSource, buffer: []u8) !usize {
+        if (buffer.len == 0) return 0;
+        if (self.consumed >= self.history.items.len and try self.fill() == 0) return 0;
+        const count = @min(buffer.len, self.history.items.len - self.consumed);
+        @memcpy(buffer[0..count], self.history.items[self.consumed..][0..count]);
+        self.consumed += count;
+        return count;
+    }
+
+    /// `\n` 終端の1行を返す。`nextStdinLine` と同じくLF直前のCRを落とし、
+    /// EOF終端の行も末尾CRを落とす。行内のCRは保持する。EOFで残りが
+    /// 無ければ `null`。返却sliceはhistoryへの参照で、次のfill/read/
+    /// readLineで再割当てにより無効になり得るため即座に消費すること。
+    pub fn readLine(self: *StdinSource) !?[]const u8 {
+        const start = self.consumed;
+        var end = start;
+        while (true) {
+            const items = self.history.items;
+            while (end < items.len and items[end] != '\n') end += 1;
+            if (end < items.len) {
+                self.consumed = end + 1;
+                var line = items[start..end];
+                if (line.len > 0 and line[line.len - 1] == '\r') line = line[0 .. line.len - 1];
+                return line;
+            }
+            if (self.eof) {
+                if (end == start) return null;
+                self.consumed = end;
+                var line = items[start..end];
+                if (line.len > 0 and line[line.len - 1] == '\r') line = line[0 .. line.len - 1];
+                return line;
+            }
+            _ = try self.fill();
+        }
+    }
+
+    /// stdinをEOFまで読み切り、消費済みを含む全履歴を返す
+    /// （`標準入力全取得` の返却対象）。
+    pub fn drainAll(self: *StdinSource) ![]const u8 {
+        while (!self.eof) _ = try self.fill();
+        return self.history.items;
+    }
+};
+
 pub fn writeHandle(io: std.Io, entry: *OpenHandle, bytes: []const u8) WriteError!usize {
     // POSIX経路は open 時の O_APPEND で原子的に末尾へ書く。それ以外（Windows）
     // は seek フォールバックなので、同一ファイルへの並行appendは
@@ -424,4 +565,141 @@ test "空書込みは0を返しwriteAtCurrentAllは残バイトを書き切る" 
     var buffer: [8]u8 = undefined;
     const read = try readAtCurrent(std.testing.io, table.find(reader_id).?.file, &buffer);
     try std.testing.expectEqualSlices(u8, "hello", buffer[0..read]);
+}
+
+test "StdinSourceのreadは履歴とEOFを共有カーソルで返す" {
+    var source = try StdinSource.initPreloaded(std.testing.allocator, "ab\x00cd\xff");
+    defer source.deinit();
+    var buffer: [4]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 4), try source.read(&buffer));
+    try std.testing.expectEqualSlices(u8, "ab\x00c", buffer[0..4]);
+    try std.testing.expectEqual(@as(usize, 2), try source.read(&buffer));
+    try std.testing.expectEqualSlices(u8, "d\xff", buffer[0..2]);
+    try std.testing.expectEqual(@as(usize, 0), try source.read(&buffer));
+    try std.testing.expect(source.eof);
+}
+
+test "StdinSourceのreadLineはCRLF正規化とEOF終端をnextStdinLineと揃える" {
+    var source = try StdinSource.initPreloaded(std.testing.allocator, "abc\rX\r\n41\nrest\n");
+    defer source.deinit();
+    try std.testing.expectEqualStrings("abc\rX", (try source.readLine()).?);
+    try std.testing.expectEqualStrings("41", (try source.readLine()).?);
+    try std.testing.expectEqualStrings("rest", (try source.readLine()).?);
+    try std.testing.expect((try source.readLine()) == null);
+}
+
+test "StdinSourceはraw読取りと行読取りが同じカーソルを消費する" {
+    var source = try StdinSource.initPreloaded(std.testing.allocator, "ab\ncd\nef");
+    defer source.deinit();
+    var buffer: [3]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 3), try source.read(&buffer));
+    try std.testing.expectEqualSlices(u8, "ab\n", &buffer);
+    try std.testing.expectEqualStrings("cd", (try source.readLine()).?);
+    try std.testing.expectEqualStrings("ef", (try source.readLine()).?);
+    try std.testing.expect((try source.readLine()) == null);
+    try std.testing.expectEqual(@as(usize, 0), try source.read(&buffer));
+}
+
+test "StdinSourceのdrainAllは消費済みを含む全履歴を返す" {
+    var source = try StdinSource.initPreloaded(std.testing.allocator, "ab\ncd");
+    defer source.deinit();
+    try std.testing.expectEqualStrings("ab", (try source.readLine()).?);
+    try std.testing.expectEqualStrings("ab\ncd", try source.drainAll());
+}
+
+test "StdinSourceのfillはread_fnを通じて履歴へ追記する" {
+    const Feeder = struct {
+        chunks: []const []const u8,
+        index: usize = 0,
+        fn read(pointer: *anyopaque, buffer: []u8) anyerror!usize {
+            const self: *@This() = @ptrCast(@alignCast(pointer));
+            if (self.index >= self.chunks.len) return 0;
+            const chunk = self.chunks[self.index];
+            self.index += 1;
+            const count = @min(buffer.len, chunk.len);
+            @memcpy(buffer[0..count], chunk[0..count]);
+            return count;
+        }
+    };
+    var feeder = Feeder{ .chunks = &.{ "ab", "\ncd" } };
+    var source = StdinSource.init(std.testing.allocator, &feeder, Feeder.read);
+    defer source.deinit();
+    var buffer: [2]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 2), try source.read(&buffer));
+    try std.testing.expectEqualSlices(u8, "ab", &buffer);
+    try std.testing.expectEqualStrings("", (try source.readLine()).?);
+    try std.testing.expectEqualStrings("cd", (try source.readLine()).?);
+    try std.testing.expectEqualStrings("ab\ncd", try source.drainAll());
+    try std.testing.expect(source.eof);
+}
+
+test "StdinSourceのreadLineはEOF終端行の末尾CRを落とす" {
+    var source = try StdinSource.initPreloaded(std.testing.allocator, "abc\r");
+    defer source.deinit();
+    try std.testing.expectEqualStrings("abc", (try source.readLine()).?);
+    try std.testing.expect((try source.readLine()) == null);
+}
+
+test "StdinSourceの0バイトreadはEOFでもなくカーソルも進めない" {
+    var source = try StdinSource.initPreloaded(std.testing.allocator, "ab");
+    defer source.deinit();
+    try std.testing.expectEqual(@as(usize, 0), try source.read(&.{}));
+    try std.testing.expect(!source.eof);
+    try std.testing.expectEqual(@as(usize, 0), source.consumed);
+    var buffer: [2]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 2), try source.read(&buffer));
+    try std.testing.expectEqualSlices(u8, "ab", &buffer);
+}
+
+test "StdinSourceのfillは履歴上限超過でStreamTooLongを返す" {
+    const Feeder = struct {
+        chunks: []const []const u8,
+        index: usize = 0,
+        fn read(pointer: *anyopaque, buffer: []u8) anyerror!usize {
+            const self: *@This() = @ptrCast(@alignCast(pointer));
+            if (self.index >= self.chunks.len) return 0;
+            const chunk = self.chunks[self.index];
+            self.index += 1;
+            const count = @min(buffer.len, chunk.len);
+            @memcpy(buffer[0..count], chunk[0..count]);
+            return count;
+        }
+    };
+    var feeder = Feeder{ .chunks = &.{ "ab", "cdefgh", "i" } };
+    var source = StdinSource.init(std.testing.allocator, &feeder, Feeder.read);
+    defer source.deinit();
+    source.max_history_bytes = 8;
+    var buffer: [8]u8 = undefined;
+    // 上限ちょうどまでは受理する（2+6=8）。
+    try std.testing.expectEqual(@as(usize, 2), try source.read(&buffer));
+    try std.testing.expectEqualSlices(u8, "ab", buffer[0..2]);
+    try std.testing.expectEqual(@as(usize, 6), try source.read(&buffer));
+    try std.testing.expectEqualSlices(u8, "cdefgh", buffer[0..6]);
+    // 上限超過はStreamTooLong。既読ぶんは保持される。
+    try std.testing.expectError(error.StreamTooLong, source.read(&buffer));
+    try std.testing.expectEqualStrings("abcdefgh", source.history.items);
+    // 粘着: 再試行はreaderを呼ばず即StreamTooLongを返す（feederは進まない）。
+    try std.testing.expectError(error.StreamTooLong, source.read(&buffer));
+    try std.testing.expectEqual(@as(usize, 3), feeder.index);
+}
+
+test "StdinSourceは上限ちょうどの入力をEOFまで受理する" {
+    const Feeder = struct {
+        chunk: []const u8,
+        done: bool = false,
+        fn read(pointer: *anyopaque, buffer: []u8) anyerror!usize {
+            const self: *@This() = @ptrCast(@alignCast(pointer));
+            if (self.done) return 0;
+            self.done = true;
+            const count = @min(buffer.len, self.chunk.len);
+            @memcpy(buffer[0..count], self.chunk[0..count]);
+            return count;
+        }
+    };
+    var feeder = Feeder{ .chunk = "abcdefgh" };
+    var source = StdinSource.init(std.testing.allocator, &feeder, Feeder.read);
+    defer source.deinit();
+    source.max_history_bytes = 8;
+    try std.testing.expectEqualStrings("abcdefgh", try source.drainAll());
+    try std.testing.expect(source.eof);
 }

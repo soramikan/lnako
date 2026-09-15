@@ -293,6 +293,11 @@ test "implementedフラグは実装済み命令の既知集合と一致する" {
         "ll-file-write",
         "ll-file-sync",
         "ll-file-truncate-handle",
+        "ll-stdin-read",
+        "ll-stdout-write",
+        "ll-stderr-write",
+        "ll-stdout-sync",
+        "ll-stderr-sync",
         "ll-capability-supported",
         "ll-capability-list",
     };

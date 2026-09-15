@@ -63,8 +63,8 @@ Windowsの末尾取得は `NtQueryInformationFile(FileStandardInformation)`（Ge
 ## capability
 
 - `低レイヤー機能対応判定(NAME)`：`Capability` の既知IDと実装状況から判定する。未知IDは `false`。
-  現在は `stream_file_io` と `truncate` が実装済みで、既知だが未実装のID（`termios` 等）は `false`。
-  `stream_file_io` は open/close/read/write/sync のホスト実装が揃っているときだけ true。`truncate` は切詰 callback があるとき true。
+  現在は `stream_file_io` と `truncate` と `raw_stdio` が実装済みで、既知だが未実装のID（`termios` 等）は `false`。
+  `stream_file_io` は open/close/read/write/sync のホスト実装が揃っているときだけ true。`truncate` は切詰 callback があるとき true。`raw_stdio` は共有stdin source・raw出力・同期のホスト実装が揃っているときだけ true。
 - `低レイヤー機能一覧取得()`：既知IDの全集（真偽ではない）を返す。
 - 未対応操作の実行は成功値や `false` を返さず、`code=ENOTSUP` と `capability` を入れた構造化エラーを投げる。
 
@@ -84,3 +84,50 @@ Windowsの末尾取得は `NtQueryInformationFile(FileStandardInformation)`（Ge
 - Interpreter integration: `src/runtime/interpreter/tests.zig` がNUL/不正UTF-8を含むバイナリをchunked copyで一致させる
 - AOT integration: `src/runtime/aot/tests.zig` が同一fixtureをSHA-256一致まで検証する
 - 手動oracle: `lnako run` と `lnako build -O0..O3` の構造化エラーと出力が一致する
+
+## Issue #28 / Raw標準入出力とstdinサブシステム
+
+`cat`/`tee`/`head`/`wc` のような低レイヤーバイト処理を UTF-8検証・変換・NUL終端なしで行う命令群。
+機械可読な正本は `low_level_foundation.zig` の `stdio_commands` と `catalog_commands`（`ll-stdin-*` / `ll-stdout-*` / `ll-stderr-*`）である。
+
+## 命令一覧
+
+| 命令 | 引数 | 戻り値 | capability | 操作名 |
+| --- | --- | --- | --- | --- |
+| `標準入力バイト読む(SIZE)` | SIZE: Number/BigInt | Bytes（0 byteはEOF） | `raw_stdio` | `read` |
+| `標準出力バイト書く(BYTES)` | BYTES: Bytes（Buffer kind） | Number/BigInt（書込バイト数） | `raw_stdio` | `write` |
+| `標準エラー出力バイト書く(BYTES)` | BYTES: Bytes（Buffer kind） | Number/BigInt（書込バイト数） | `raw_stdio` | `write` |
+| `標準出力同期()` | なし | undefined | `raw_stdio` | `fsync` |
+| `標準エラー出力同期()` | なし | undefined | `raw_stdio` | `fsync` |
+
+## stdinの単一source of truth
+
+- `StdinSource`（`low_level_io.zig`）が履歴buffer・`consumed`カーソル・EOF状態・下位chunk readerを持つ。
+  所有はhost側（Interpreterは `CliHost`、AOTは `Runtime`）。plugin `Context` の `stdinSourceFn` /
+  `peekStdinSourceFn` を介してnode系（`尋`/`文字尋`/`標準入力取得時`/`標準入力全取得`）と
+  raw系（`標準入力バイト読む`）が同じ `consumed` カーソルを消費する。
+- `標準入力全取得` は消費済みを含む全履歴を返す（upstream `__stdinRaw` と同じ）。cursorは動かさない。
+- テキスト系命令（`尋`/`標準入力全取得`/`標準入力取得時`）の文字列化はlossy UTF-8で、
+  不正UTF-8はU+FFFDへ置き換わる（upstream Nodeの `toString` と同じ）。InterpreterとAOTで共通。
+  バイトをそのまま保存したい場合はraw系のBytesを使う。
+- TTYの `尋` は直接行readを維持するが、共有sourceが生成済みならTTYでもsource経路を使う
+  （直接readへ切り替えるとsourceにバッファ済みのバイトを置き去りにするため）。
+  source経路ではEOF（TTYの `^D` 等）は粘着し、以後の行readは即 `""` を返す。
+  これは共有cursorとupstreamのstream EOF意味論に整合する挙動である。
+- `標準入力バイト読む` の1呼出しは1fillぶん（最大64KiB）まで返す。SIZEは上限ではなく
+  「この呼出しで返す最大量」であり、部分読取りはEOFではない。0 byteの返却がEOF。
+- `SIZE=0` はPOSIXの `read(fd, buf, 0)` と同じく空Bytesを返す。EOFフラグもcursorも
+  動かさない（空Bytes自体はEOF時の0 byte返却と区別できない）。
+- `StdinSource` の履歴は全取得契約のため消費済みも保持し、受信総量64MiBを上限とする
+  （旧来のstdin slurp上限と同じ）。超過は `StreamTooLong` で、テキスト系命令は従来どおり
+  一般エラー、raw系は `ENOSPC` の構造化エラーになる。
+
+## raw出力と同期
+
+- `標準出力バイト書く`/`標準エラー出力バイト書く` はテキスト表示経路（`表示`のwriterやlibc putchar
+  バッファ）をflushしてからfdへ直接書き、実際に書けたバイト数を返す。空Bytesも合法。
+- `標準出力同期`/`標準エラー出力同期` はテキスト側をflushしてからfdを `sync` する。
+- NUL・0x80〜0xff・不正UTF-8は無変換でそのまま出入りする。
+- 引数がBuffer kindのBytesでない場合（String/`Uint8Array`/`ArrayBuffer`等）は `EINVAL`。
+- ホストがraw stdio callbackを提供しない場合は `ENOTSUP` に `capability=raw_stdio` を載せる。
+  `低レイヤー機能対応判定("raw_stdio")` はcallbackが揃っているときだけ true。

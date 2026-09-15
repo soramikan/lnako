@@ -1,6 +1,7 @@
 const std = @import("std");
 const value_mod = @import("../runtime/value.zig");
 const foundation = @import("../runtime/low_level_foundation.zig");
+const low_level_io = @import("../runtime/low_level_io.zig");
 const common = @import("system/common.zig");
 const shared = @import("node/shared.zig");
 
@@ -47,6 +48,20 @@ pub const Context = struct {
     writeFileBytesFn: ?*const fn (context: *anyopaque, raw: u64, bytes: []const u8) anyerror!usize = null,
     syncFileFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
     truncateFileFn: ?*const fn (context: *anyopaque, raw: u64, size: u64) anyerror!void = null,
+    /// Issue #28: stdinの単一source of truth。`標準入力バイト読む` と
+    /// テキスト系stdin命令（`plugin_node` 経由）が同じ `StdinSource` の
+    /// `consumed` カーソルを消費する。sourceはhost側（CliHost等）が所有し、
+    /// peekは生成せず既存を返し、stdinSourceFnは無ければ生成する。
+    /// `allocator` 引数は助言的で、実装はhost寿命のallocatorで確保すること
+    /// （呼び出し側の短命runtime allocatorでsourceを確保するとUAFになる）。
+    /// peekとstdinSourceFnはセットで提供すること（peek欠落だとTTY `尋` が
+    /// 共有sourceを見落とし直接行readへ切り替わってバイトを置き去りにする）。
+    peekStdinSourceFn: ?*const fn (context: *anyopaque) ?*low_level_io.StdinSource = null,
+    stdinSourceFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator) anyerror!*low_level_io.StdinSource = null,
+    writeStdoutBytesFn: ?*const fn (context: *anyopaque, bytes: []const u8) anyerror!usize = null,
+    writeStderrBytesFn: ?*const fn (context: *anyopaque, bytes: []const u8) anyerror!usize = null,
+    syncStdoutFn: ?*const fn (context: *anyopaque) anyerror!void = null,
+    syncStderrFn: ?*const fn (context: *anyopaque) anyerror!void = null,
 
     pub fn openFile(self: Context, path: []const u8, mode: foundation.OpenMode, exclusive: bool, sync: bool) !u64 {
         const function = self.openFileFn orelse return error.LowLevelIoUnavailable;
@@ -78,12 +93,41 @@ pub const Context = struct {
         return function(self.context, raw, size);
     }
 
+    pub fn stdinSource(self: Context, allocator: std.mem.Allocator) !*low_level_io.StdinSource {
+        const function = self.stdinSourceFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, allocator);
+    }
+
+    pub fn writeStdoutBytes(self: Context, bytes: []const u8) !usize {
+        const function = self.writeStdoutBytesFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, bytes);
+    }
+
+    pub fn writeStderrBytes(self: Context, bytes: []const u8) !usize {
+        const function = self.writeStderrBytesFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, bytes);
+    }
+
+    pub fn syncStdout(self: Context) !void {
+        const function = self.syncStdoutFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context);
+    }
+
+    pub fn syncStderr(self: Context) !void {
+        const function = self.syncStderrFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context);
+    }
+
     pub fn hasStreamFileIo(self: Context) bool {
         return self.openFileFn != null and self.closeFileFn != null and self.readFileBytesFn != null and self.writeFileBytesFn != null and self.syncFileFn != null;
     }
 
     pub fn hasTruncate(self: Context) bool {
         return self.truncateFileFn != null;
+    }
+
+    pub fn hasRawStdio(self: Context) bool {
+        return self.stdinSourceFn != null and self.peekStdinSourceFn != null and self.writeStdoutBytesFn != null and self.writeStderrBytesFn != null and self.syncStdoutFn != null and self.syncStderrFn != null;
     }
 };
 
@@ -137,6 +181,11 @@ pub fn call(
     if (matches(name, foundation.stream_commands.write_bytes, foundation.stream_commands.write_bytes_user)) return @as(?Value, try writeBytes(runtime, state, context, effects, arguments));
     if (std.mem.eql(u8, name, foundation.stream_commands.sync)) return @as(?Value, try syncFile(runtime, state, context, effects, arguments));
     if (std.mem.eql(u8, name, foundation.stream_commands.truncate)) return @as(?Value, try truncateFile(runtime, state, context, effects, arguments));
+    if (matches(name, foundation.stdio_commands.stdin_read, foundation.stdio_commands.stdin_read_user)) return @as(?Value, try stdinRead(runtime, context, effects, arguments));
+    if (matches(name, foundation.stdio_commands.stdout_write, foundation.stdio_commands.stdout_write_user)) return @as(?Value, try stdoutWrite(runtime, context, effects, arguments));
+    if (matches(name, foundation.stdio_commands.stderr_write, foundation.stdio_commands.stderr_write_user)) return @as(?Value, try stderrWrite(runtime, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.stdio_commands.stdout_sync)) return @as(?Value, try stdoutSync(runtime, context, effects));
+    if (std.mem.eql(u8, name, foundation.stdio_commands.stderr_sync)) return @as(?Value, try stderrSync(runtime, context, effects));
     // カタログ掲載済みだが未実装の命令は、capabilityとoperationを設定した
     // 構造化 ENOTSUP で応答する（G0の未対応契約）。実装済み命令がここへ
     // 到達するのはdispatch腕の書き忘れなので、開発時に検出する。
@@ -166,6 +215,7 @@ fn capabilitySupported(arguments: []const Value, context: Context) bool {
     return switch (capability) {
         .stream_file_io => context.hasStreamFileIo(),
         .truncate => context.hasTruncate(),
+        .raw_stdio => context.hasRawStdio(),
         else => false,
     };
 }
@@ -289,6 +339,61 @@ fn truncateFile(runtime: *Runtime, state: *State, context: Context, effects: Eff
     return .undefined;
 }
 
+/// `標準入力バイト読む`。共有sourceから最大SIZEバイトを1回のfillで
+/// 返す。0バイトはEOF、SIZE未満の非0は部分読取り。Buffer-kind以外の
+/// 値では読まずにEINVAL。
+fn stdinRead(runtime: *Runtime, context: Context, effects: Effects, arguments: []const Value) !Value {
+    const size = sizeArgument(runtime, common.argument(arguments, 0)) catch {
+        return throwStructured(runtime, effects, .EINVAL, "read", null, null, "読み込む大きさが不正です");
+    };
+    const source = context.stdinSource(runtime.allocator()) catch |failure| {
+        return throwIoAs(runtime, effects, failure, "read", null, .raw_stdio);
+    };
+    // 1呼出しの返却は1fillぶんまで。巨大SIZEの一括確保によるOOMを避けるため
+    // fill上限で切り詰める（部分読取りは契約上許容）。
+    const length: usize = @intCast(@min(size, low_level_io.stdin_fill_bytes));
+    const buffer = try runtime.allocator().alloc(u8, length);
+    defer runtime.allocator().free(buffer);
+    const read = source.read(buffer) catch |failure| {
+        return throwIoAs(runtime, effects, failure, "read", null, .raw_stdio);
+    };
+    return runtime.createBytes(buffer[0..read]);
+}
+
+fn stdoutWrite(runtime: *Runtime, context: Context, effects: Effects, arguments: []const Value) !Value {
+    return rawWrite(runtime, context, effects, arguments, false);
+}
+
+fn stderrWrite(runtime: *Runtime, context: Context, effects: Effects, arguments: []const Value) !Value {
+    return rawWrite(runtime, context, effects, arguments, true);
+}
+
+/// `標準出力バイト書く`/`標準エラー出力バイト書く`。Bytes値をUTF-8変換や
+/// NUL終端を挟まずfdへ直接書き、実際に書けたバイト数を返す。
+fn rawWrite(runtime: *Runtime, context: Context, effects: Effects, arguments: []const Value, to_stderr: bool) !Value {
+    const bytes = bytesArgument(runtime, common.argument(arguments, 0)) catch {
+        return throwStructured(runtime, effects, .EINVAL, "write", null, null, "書き込む値はBytesである必要があります");
+    };
+    const written = (if (to_stderr) context.writeStderrBytes(bytes) else context.writeStdoutBytes(bytes)) catch |failure| {
+        return throwIoAs(runtime, effects, failure, "write", null, .raw_stdio);
+    };
+    return publicSizeValue(runtime, written);
+}
+
+fn stdoutSync(runtime: *Runtime, context: Context, effects: Effects) !Value {
+    context.syncStdout() catch |failure| {
+        return throwIoAs(runtime, effects, failure, "fsync", null, .raw_stdio);
+    };
+    return .undefined;
+}
+
+fn stderrSync(runtime: *Runtime, context: Context, effects: Effects) !Value {
+    context.syncStderr() catch |failure| {
+        return throwIoAs(runtime, effects, failure, "fsync", null, .raw_stdio);
+    };
+    return .undefined;
+}
+
 pub fn lookupHandle(state: *State, value: Value) ?foundation.HandleId {
     if (value != .dictionary) return null;
     return state.handle_ids.get(@intFromPtr(value.dictionary));
@@ -375,12 +480,14 @@ fn buildError(
 }
 
 fn throwIo(runtime: *Runtime, effects: Effects, failure: anyerror, operation: []const u8, path: ?[]const u8) anyerror {
+    return throwIoAs(runtime, effects, failure, operation, path, if (std.mem.eql(u8, operation, foundation.stream_operations.ftruncate)) .truncate else .stream_file_io);
+}
+
+/// ENOTSUPのときだけ `capability` をエラー辞書へ載せるI/O失敗。
+/// `throwIo` のcapability判定をパラメータ化したもの。
+fn throwIoAs(runtime: *Runtime, effects: Effects, failure: anyerror, operation: []const u8, path: ?[]const u8, capability: foundation.Capability) anyerror {
     const code = foundation.portableCodeForFailure(failure) orelse .EINVAL;
-    const capability = if (code == .ENOTSUP)
-        (if (std.mem.eql(u8, operation, foundation.stream_operations.ftruncate)) foundation.Capability.truncate.id() else foundation.Capability.stream_file_io.id())
-    else
-        null;
-    return throwStructured(runtime, effects, code, operation, path, capability, failureMessage(failure));
+    return throwStructured(runtime, effects, code, operation, path, if (code == .ENOTSUP) capability.id() else null, failureMessage(failure));
 }
 
 fn throwStructured(
@@ -417,6 +524,7 @@ fn failureMessage(failure: anyerror) []const u8 {
         error.ProcessFdQuotaExceeded => "プロセスで開けるファイル数の上限に達しました",
         error.SystemFdQuotaExceeded => "システムで開けるファイル数の上限に達しました",
         error.SymLinkLoop => "シンボリックリンクがループしています",
+        error.StreamTooLong => "標準入力が上限を超えました",
         else => @errorName(failure),
     };
 }
@@ -476,6 +584,304 @@ test "Stateは最初に使ったallocatorで解放する" {
     try state.handle_ids.put(state.memory(std.testing.allocator), 1, .{ .index = 1, .generation = 1 });
     try state.handle_values.append(state.memory(std.testing.allocator), .undefined);
     state.deinit(std.heap.page_allocator);
+}
+
+/// Issue #28 raw stdioの検証用host。stdinは事前充填した共有sourceを返し、
+/// stdout/stderr書込みとsync呼出しを記録する。`write_limit` で部分書込み、
+/// `write_failure`/`sync_failure` で構造化エラーを再現する。
+const StdioTestHost = struct {
+    preloaded: []const u8 = "",
+    /// feederモード用: 設定時はinitPreloadedではなく下位reader経由で
+    /// 履歴を足すsourceを作る（履歴上限超過の試験に必要）。
+    feed_chunks: ?[]const u8 = null,
+    feed_offset: usize = 0,
+    max_history: ?usize = null,
+    source: ?low_level_io.StdinSource = null,
+    stdout: std.ArrayList(u8) = .empty,
+    stderr: std.ArrayList(u8) = .empty,
+    stdout_syncs: usize = 0,
+    stderr_syncs: usize = 0,
+    write_limit: usize = std.math.maxInt(usize),
+    write_failure: ?anyerror = null,
+    sync_failure: ?anyerror = null,
+
+    fn deinit(self: *StdioTestHost, allocator: std.mem.Allocator) void {
+        if (self.source) |*source| source.deinit();
+        self.stdout.deinit(allocator);
+        self.stderr.deinit(allocator);
+    }
+
+    fn peek(pointer: *anyopaque) ?*low_level_io.StdinSource {
+        const self: *StdioTestHost = @ptrCast(@alignCast(pointer));
+        return if (self.source) |*source| source else null;
+    }
+
+    fn feedRead(pointer: *anyopaque, buffer: []u8) anyerror!usize {
+        const self: *StdioTestHost = @ptrCast(@alignCast(pointer));
+        const remaining = self.feed_chunks.?[self.feed_offset..];
+        const count = @min(buffer.len, remaining.len);
+        @memcpy(buffer[0..count], remaining[0..count]);
+        self.feed_offset += count;
+        return count;
+    }
+
+    fn stdinSource(pointer: *anyopaque, allocator: std.mem.Allocator) anyerror!*low_level_io.StdinSource {
+        const self: *StdioTestHost = @ptrCast(@alignCast(pointer));
+        if (self.source == null) {
+            if (self.feed_chunks != null) {
+                self.source = low_level_io.StdinSource.init(allocator, self, feedRead);
+                if (self.max_history) |max| self.source.?.max_history_bytes = max;
+            } else {
+                self.source = try low_level_io.StdinSource.initPreloaded(allocator, self.preloaded);
+            }
+        }
+        return &self.source.?;
+    }
+
+    fn writeInto(list: *std.ArrayList(u8), self: *StdioTestHost, bytes: []const u8) anyerror!usize {
+        if (self.write_failure) |failure| return failure;
+        const count = @min(bytes.len, self.write_limit);
+        try list.appendSlice(std.testing.allocator, bytes[0..count]);
+        return count;
+    }
+
+    fn writeStdout(pointer: *anyopaque, bytes: []const u8) anyerror!usize {
+        const self: *StdioTestHost = @ptrCast(@alignCast(pointer));
+        return writeInto(&self.stdout, self, bytes);
+    }
+
+    fn writeStderr(pointer: *anyopaque, bytes: []const u8) anyerror!usize {
+        const self: *StdioTestHost = @ptrCast(@alignCast(pointer));
+        return writeInto(&self.stderr, self, bytes);
+    }
+
+    fn syncStdout(pointer: *anyopaque) anyerror!void {
+        const self: *StdioTestHost = @ptrCast(@alignCast(pointer));
+        if (self.sync_failure) |failure| return failure;
+        self.stdout_syncs += 1;
+    }
+
+    fn syncStderr(pointer: *anyopaque) anyerror!void {
+        const self: *StdioTestHost = @ptrCast(@alignCast(pointer));
+        if (self.sync_failure) |failure| return failure;
+        self.stderr_syncs += 1;
+    }
+
+    fn context(self: *StdioTestHost) Context {
+        return .{
+            .context = @ptrCast(self),
+            .peekStdinSourceFn = peek,
+            .stdinSourceFn = stdinSource,
+            .writeStdoutBytesFn = writeStdout,
+            .writeStderrBytesFn = writeStderr,
+            .syncStdoutFn = syncStdout,
+            .syncStderrFn = syncStderr,
+        };
+    }
+};
+
+fn expectThrownCode(runtime: *Runtime, thrown: Value, expected: []const u8) !void {
+    try std.testing.expect(thrown == .dictionary);
+    const code = shared.dictionaryGetAscii(thrown.dictionary, foundation.error_object_keys.code) orelse return error.TestExpectedEqual;
+    const text = try shared.valueUtf8(runtime, code);
+    defer runtime.allocator().free(text);
+    try std.testing.expectEqualStrings(expected, text);
+}
+
+test "標準入力バイト読むはNULと不正UTF-8を保持しEOFで空Bytesを返す" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var host = StdioTestHost{ .preloaded = "\x00\xff\x80a" ++ "\n" };
+    defer host.deinit(std.testing.allocator);
+
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var first = (try call(&runtime, &state, host.context(), effects, "標準入力バイト読む", &.{.{ .number = 5 }})) orelse return error.TestExpectedEqual;
+    try roots.protect(&first);
+    try std.testing.expectEqualSlices(u8, "\x00\xff\x80a\n", try bytesArgument(&runtime, first));
+    var second = (try call(&runtime, &state, host.context(), effects, "標準入力バイト読む", &.{.{ .number = 5 }})) orelse return error.TestExpectedEqual;
+    try roots.protect(&second);
+    try std.testing.expectEqual(@as(usize, 0), (try bytesArgument(&runtime, second)).len);
+}
+
+test "標準入力バイト読むは要求未満の部分読取りを返しsize不正をEINVALにする" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var host = StdioTestHost{ .preloaded = "abc" };
+    defer host.deinit(std.testing.allocator);
+
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var result = (try call(&runtime, &state, host.context(), effects, "標準入力バイト読む", &.{.{ .number = 16 }})) orelse return error.TestExpectedEqual;
+    try roots.protect(&result);
+    try std.testing.expectEqualSlices(u8, "abc", try bytesArgument(&runtime, result));
+
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, host.context(), effects, "標準入力バイト読む", &.{.{ .number = -1 }}));
+    try expectThrownCode(&runtime, thrown, "EINVAL");
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, host.context(), effects, "標準入力バイト読む", &.{}));
+    try expectThrownCode(&runtime, thrown, "EINVAL");
+}
+
+test "標準入力バイト読むは履歴上限超過をENOSPCの構造化エラーにする" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    // fillが1回に6バイト足し、上限4を超えてStreamTooLong→ENOSPCになる。
+    var host = StdioTestHost{ .feed_chunks = "012345", .max_history = 4 };
+    defer host.deinit(std.testing.allocator);
+
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, host.context(), effects, "標準入力バイト読む", &.{.{ .number = 8 }}));
+    try expectThrownCode(&runtime, thrown, "ENOSPC");
+}
+
+test "標準出力/標準エラー出力バイト書くはrawバイトを分けて書き実書込数を返す" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var host = StdioTestHost{};
+    defer host.deinit(std.testing.allocator);
+
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var out_bytes = try runtime.createBytes("\x00\xffout");
+    var err_bytes = try runtime.createBytes("e\x80rr");
+    try roots.protect(&out_bytes);
+    try roots.protect(&err_bytes);
+    const out_written = (try call(&runtime, &state, host.context(), effects, "標準出力バイト書く", &.{out_bytes})) orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(@as(f64, 5), out_written.number);
+    const err_written = (try call(&runtime, &state, host.context(), effects, "標準エラー出力バイト書く", &.{err_bytes})) orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(@as(f64, 4), err_written.number);
+    try std.testing.expectEqualSlices(u8, "\x00\xffout", host.stdout.items);
+    try std.testing.expectEqualSlices(u8, "e\x80rr", host.stderr.items);
+}
+
+test "標準出力バイト書くは部分書込み数を返し非BytesをEINVALにする" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var host = StdioTestHost{ .write_limit = 2 };
+    defer host.deinit(std.testing.allocator);
+
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var bytes = try runtime.createBytes("abcd");
+    try roots.protect(&bytes);
+    const written = (try call(&runtime, &state, host.context(), effects, "標準出力バイト書く", &.{bytes})) orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(@as(f64, 2), written.number);
+    try std.testing.expectEqualSlices(u8, "ab", host.stdout.items);
+
+    var text = try runtime.stringUtf8("not-bytes");
+    try roots.protect(&text);
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, host.context(), effects, "標準出力バイト書く", &.{text}));
+    try expectThrownCode(&runtime, thrown, "EINVAL");
+    thrown = .undefined;
+    var uint8 = try runtime.createUint8Array("ab");
+    try roots.protect(&uint8);
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, host.context(), effects, "標準エラー出力バイト書く", &.{uint8}));
+    try expectThrownCode(&runtime, thrown, "EINVAL");
+}
+
+test "raw stdioのI/O失敗は構造化codeを持ちhost不在はENOTSUP+raw_stdio" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var host = StdioTestHost{ .write_failure = error.BrokenPipe };
+    defer host.deinit(std.testing.allocator);
+    var bytes = try runtime.createBytes("x");
+    try roots.protect(&bytes);
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, host.context(), effects, "標準出力バイト書く", &.{bytes}));
+    try expectThrownCode(&runtime, thrown, "EPIPE");
+    thrown = .undefined;
+    host.write_failure = error.NoSpaceLeft;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, host.context(), effects, "標準エラー出力バイト書く", &.{bytes}));
+    try expectThrownCode(&runtime, thrown, "ENOSPC");
+    thrown = .undefined;
+    host.write_failure = null;
+    host.sync_failure = error.BrokenPipe;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, host.context(), effects, "標準出力同期", &.{}));
+    try expectThrownCode(&runtime, thrown, "EPIPE");
+    thrown = .undefined;
+    host.sync_failure = null;
+    _ = try call(&runtime, &state, host.context(), effects, "標準出力同期", &.{});
+    _ = try call(&runtime, &state, host.context(), effects, "標準エラー出力同期", &.{});
+    try std.testing.expectEqual(@as(usize, 1), host.stdout_syncs);
+    try std.testing.expectEqual(@as(usize, 1), host.stderr_syncs);
+
+    // hostがstdio callbackを提供しない場合はENOTSUPにcapabilityを載せる。
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, emptyContext(), effects, "標準入力バイト読む", &.{.{ .number = 1 }}));
+    try expectThrownCode(&runtime, thrown, "ENOTSUP");
+    const capability = shared.dictionaryGetAscii(thrown.dictionary, foundation.error_object_keys.capability) orelse return error.TestExpectedEqual;
+    const capability_text = try shared.valueUtf8(&runtime, capability);
+    defer runtime.allocator().free(capability_text);
+    try std.testing.expectEqualStrings("raw_stdio", capability_text);
+}
+
+test "raw stdioを提供するhostでは低レイヤー機能対応判定がtrue" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var host = StdioTestHost{};
+    defer host.deinit(std.testing.allocator);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var name = try runtime.stringUtf8("raw_stdio");
+    try roots.protect(&name);
+    const supported = (try call(&runtime, &state, host.context(), effects, foundation.capability_supported_command, &.{name})) orelse return error.TestExpectedEqual;
+    try std.testing.expect(supported == .boolean and supported.boolean);
+    const unsupported = (try call(&runtime, &state, emptyContext(), effects, foundation.capability_supported_command, &.{name})) orelse return error.TestExpectedEqual;
+    try std.testing.expect(unsupported == .boolean and !unsupported.boolean);
+}
+
+test "標準入力バイト読むとテキスト系readLineは同じconsumedカーソルを消費する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var host = StdioTestHost{ .preloaded = "ab\ncd\n" };
+    defer host.deinit(std.testing.allocator);
+
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    // raw読取りで先頭3バイト("ab\n")を消費すると、テキスト系readLineは
+    // 残りから行を返す。逆方向も同じcursorを共有する。
+    var chunk = (try call(&runtime, &state, host.context(), effects, "標準入力バイト読む", &.{.{ .number = 3 }})) orelse return error.TestExpectedEqual;
+    try roots.protect(&chunk);
+    try std.testing.expectEqualSlices(u8, "ab\n", try bytesArgument(&runtime, chunk));
+    const source = if (host.source) |*existing| existing else return error.TestExpectedEqual;
+    try std.testing.expectEqual(@as(usize, 3), source.consumed);
+    try std.testing.expectEqualStrings("cd", (try source.readLine()).?);
+    var rest = (try call(&runtime, &state, host.context(), effects, "標準入力バイト読む", &.{.{ .number = 8 }})) orelse return error.TestExpectedEqual;
+    try roots.protect(&rest);
+    try std.testing.expectEqual(@as(usize, 0), (try bytesArgument(&runtime, rest)).len);
 }
 
 fn captureThrow(context: *anyopaque, value: Value) !void {
@@ -602,7 +1008,7 @@ test "未実装命令はdispatch名と利用者名の両形で構造化ENOTSUP�
             }
         }
     }
-    try std.testing.expectEqual(@as(usize, 53), covered);
+    try std.testing.expectEqual(@as(usize, 48), covered);
 }
 
 test "実装済み命令の引数不足はEINVALで未知capability照会はfalse" {
