@@ -14,7 +14,7 @@
 | --- | --- | --- | --- | --- | --- |
 | `ハッシュ開始(ALGORITHM)` | ALGORITHM: String | Handle | `incremental_hash` | `hash` | EINVAL, ENOTSUP |
 | `ハッシュ追加(HANDLE, BYTES)` | Handle、BYTES: Bytes（Buffer kind） | undefined | `incremental_hash` | `hash` | EBADF, EINVAL |
-| `ハッシュ完了(HANDLE, ENCODING)` | Handle、ENCODING: String（省略可） | Bytes（raw）またはString（hex等） | `incremental_hash` | `hash` | EBADF, EINVAL |
+| `ハッシュ完了(HANDLE, ENCODING)` | Handle、ENCODING: String（省略可） | Bytes（raw）またはString（hex等） | `incremental_hash` | `hash` | EBADF, EINVAL, ENOTSUP |
 | `ハッシュ破棄(HANDLE)` | Handle | undefined | `incremental_hash` | `hash` | EBADF |
 
 動的文字列実行（`ナデシコ`/`実行`）の互換のため、送り仮名付きの標準命令と衝突しない
@@ -29,8 +29,9 @@
   上位bitを立てた別空間（`hash_handle_index_base`）から払い出す。ハッシュhandleを
   ファイル命令へ、またはファイルhandleをハッシュ命令へ渡すと `EBADF` になる。
 - 完了・破棄後は同じindexのgenerationを進めて再利用し、use-after-freeを誤検出しない。
-- `ハッシュ完了` はdigestを返した時点でhandleを破棄する。破棄後の追加・再完了は
-  `EBADF`、二重破棄も `EBADF`。GCはhandleを自動破棄せず、Runtime終了時に残handleを解放する。
+- `ハッシュ完了` はdigest計算を試行した時点でhandleを消費し、成功時はdigestを、失敗時も
+  同じhandleを二度使えない状態にする。破棄後の追加・再完了は `EBADF`、二重破棄も `EBADF`。
+  GCはhandleを自動破棄せず、Runtime終了時に残handleを解放する。
 
 ## アルゴリズム
 
@@ -45,7 +46,8 @@
 - `ハッシュ追加` はBytes（`ByteKind.buffer`）だけを受け付ける。String、`Uint8Array`、
   `ArrayBuffer` kindは暗黙変換せず `EINVAL`。bytesは無変換でupdateする。
 - `ハッシュ完了` のENCODINGは省略時raw bytes。`raw`/`hex`/`base64`/`base64url`/
-  `latin1`/`binary`/`utf8` を `ハッシュ値計算` と同じ意味で受け付ける。未知のencodingは
+  `latin1`/`binary`/`utf8` を受け付け、`hex` 以降は `ハッシュ値計算` と同じ意味である。
+  明示 `raw` は逐次側だけが受理する（`ハッシュ値計算` は省略時のみbytes）。未知のencodingは
   `EINVAL`。1 byte刻みと複数チャンク供給は同一digestになる。
 
 ## 構造化エラー

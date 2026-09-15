@@ -1654,6 +1654,55 @@ test "Interpreter低レイヤーのハッシュ完了後の再利用はEBADFを�
     );
 }
 
+test "Interpreter低レイヤーのハッシュとファイルhandleは取り違えをEBADFにする" {
+    const allocator = std.testing.allocator;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(directory);
+    const path = try std.fs.path.join(allocator, &.{ directory, "cross-kind.bin" });
+    defer allocator.free(path);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "cross-kind.bin", .data = "abc" });
+
+    const source = try std.fmt.allocPrint(allocator,
+        \\H=ファイル開("{s}","rb")
+        \\X=ハッシュ開始("sha256")
+        \\B=ファイルバイト読(H,3)
+        \\エラー監視
+        \\ハッシュ追加(H,B)
+        \\エラーならば
+        \\エラーメッセージ["code"]を表示
+        \\ここまで
+        \\エラー監視
+        \\ファイル閉(X)
+        \\エラーならば
+        \\エラーメッセージ["code"]を表示
+        \\ここまで
+        \\ファイル閉(H)
+        \\ハッシュ破棄(X)
+        \\
+    , .{path});
+    defer allocator.free(source);
+
+    var fixture_compiled = try compileForTest(allocator, source);
+    defer fixture_compiled.ir_program.deinit();
+    defer fixture_compiled.hir_program.deinit();
+    defer fixture_compiled.analyzed.deinit();
+    defer fixture_compiled.parsed.deinit();
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = allocator };
+    defer host.deinit();
+    var low_host = LowLevelTestHost.init(allocator);
+    defer low_host.deinit();
+    var runtime_host = host.host();
+    runtime_host.lowlevel_context = low_host.context();
+    var interpreter = Interpreter.init(allocator, &runtime, fixture_compiled.ir_program, runtime_host);
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("EBADF\nEBADF\n", host.written());
+}
+
 test "Interpreter低レイヤーは非文字列pathをEINVALにする" {
     const allocator = std.testing.allocator;
     const source =

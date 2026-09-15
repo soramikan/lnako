@@ -404,6 +404,15 @@ pub const stream_commands = struct {
     pub const write_bytes_user = "ファイルバイト書く";
 };
 
+/// Issue #32のincremental hash命令名。カタログ定義とInterpreterのdispatch、
+/// AOTのbindingが共通で参照する正本である。送り仮名を持たない語幹名を固定する。
+pub const hash_commands = struct {
+    pub const create = "ハッシュ開始";
+    pub const update = "ハッシュ追加";
+    pub const digest = "ハッシュ完了";
+    pub const discard = "ハッシュ破棄";
+};
+
 /// 標準cnako 527件の外にある低レイヤー命令名。`builtin_catalog.names` は
 /// 公式527件と同期して生成されるため変更せず、解析器のbuiltin解決だけに
 /// 追加する。`低レイヤー機能対応判定` / `低レイヤー機能一覧取得` も含む。
@@ -460,10 +469,10 @@ pub const catalog_commands = [_]CatalogCommand{
     .{ .id = "ll-file-truncate-path", .name = "ファイルサイズ変更", .min = 2, .max = 2, .operation = "truncate", .capability = .truncate },
     .{ .id = "ll-file-utime-path", .name = "ファイル時刻設定", .min = 3, .max = 3, .operation = "utime", .capability = .utime },
     .{ .id = "ll-file-utime-handle", .name = "ファイル時刻設定済", .min = 3, .max = 3, .operation = "futime", .capability = .utime },
-    .{ .id = "ll-hash-create", .name = "ハッシュ開始", .min = 1, .max = 1, .operation = "hash", .capability = .incremental_hash, .implemented = true },
-    .{ .id = "ll-hash-update", .name = "ハッシュ追加", .min = 2, .max = 2, .operation = "hash", .capability = .incremental_hash, .implemented = true },
-    .{ .id = "ll-hash-digest", .name = "ハッシュ完了", .min = 1, .max = 2, .operation = "hash", .capability = .incremental_hash, .implemented = true },
-    .{ .id = "ll-hash-discard", .name = "ハッシュ破棄", .min = 1, .max = 1, .operation = "hash", .capability = .incremental_hash, .implemented = true },
+    .{ .id = "ll-hash-create", .name = hash_commands.create, .min = 1, .max = 1, .operation = "hash", .capability = .incremental_hash, .implemented = true },
+    .{ .id = "ll-hash-update", .name = hash_commands.update, .min = 2, .max = 2, .operation = "hash", .capability = .incremental_hash, .implemented = true },
+    .{ .id = "ll-hash-digest", .name = hash_commands.digest, .min = 1, .max = 2, .operation = "hash", .capability = .incremental_hash, .implemented = true },
+    .{ .id = "ll-hash-discard", .name = hash_commands.discard, .min = 1, .max = 1, .operation = "hash", .capability = .incremental_hash, .implemented = true },
     .{ .id = "ll-dir-open", .name = "ディレクトリ開", .user_name = "ディレクトリ開く", .min = 1, .max = 1, .operation = "opendir", .capability = .dir_iterator },
     .{ .id = "ll-dir-next", .name = "ディレクトリ次取得", .min = 1, .max = 1, .operation = "readdir", .capability = .dir_iterator },
     .{ .id = "ll-dir-close", .name = "ディレクトリ閉", .user_name = "ディレクトリ閉じる", .min = 1, .max = 1, .operation = "closedir", .capability = .dir_iterator },
@@ -862,7 +871,7 @@ test "ストリームI/O命令名はファイル接頭辞を持ち既存527件�
     try std.testing.expectEqual(@as(u8, 2), commandArity(stream_commands.open).?.max);
     try std.testing.expectEqual(@as(u8, 0), commandArity(capability_list_command).?.max);
     try std.testing.expectEqualStrings("hash", hash_operation);
-    for ([_][]const u8{ "ハッシュ開始", "ハッシュ追加", "ハッシュ完了", "ハッシュ破棄" }) |name| {
+    for ([_][]const u8{ hash_commands.create, hash_commands.update, hash_commands.digest, hash_commands.discard }) |name| {
         const command = catalogCommandFor(name).?;
         try std.testing.expect(command.implemented);
         try std.testing.expectEqual(Capability.incremental_hash, command.capability.?);

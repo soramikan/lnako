@@ -1459,7 +1459,7 @@
         "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": true,
+        "lnako_interpreter": "conditional",
         "lnako_aot": true,
         "cnako_node": false
       },
@@ -2027,7 +2027,7 @@
     "argv": "文字列の配列。shell解釈しない",
     "processOptions": "プロセス起動のOPTIONS辞書。cwd/env/stdio/detached",
     "hashAlgorithm": "ハッシュアルゴリズム名。string。既存ハッシュ値計算と同一正規化",
-    "hashEncoding": "ハッシュ出力encoding。raw/hex/base64/base64url/latin1/binary/utf8。既存ハッシュ値計算と同一",
+    "hashEncoding": "ハッシュ出力encoding。省略時およびrawはbytes、hex/base64/base64url/latin1/binary/utf8は既存ハッシュ値計算と同一の文字列",
     "hashDigest": "ハッシュdigest。rawはbytes、hexはstring（ENCODING依存）",
     "function": "関数（CALLBACK）"
   },

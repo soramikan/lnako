@@ -22,6 +22,7 @@ const runtimeUtf8StringLossy = state.runtimeUtf8StringLossy;
 const aotRuntimeIo = state.aotRuntimeIo;
 const staticUtf8 = state.staticUtf8;
 const isString = state.isString;
+const dictionaryProperty = state.dictionaryProperty;
 
 const read_chunk_bytes: usize = 64 * 1024;
 
@@ -302,7 +303,9 @@ fn hashCreateBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     const hasher = low_level_hash.startNamed(algorithm) catch |failure| {
         return throwHashFailure(runtime, failure);
     };
-    const id = try hashTable(runtime).insert(hasher);
+    const id = hashTable(runtime).insert(hasher) catch |failure| {
+        return throwHashFailure(runtime, failure);
+    };
     errdefer _ = hashTable(runtime).remove(id);
     var handle = try runtime.createDictionary(&.{});
     var roots = RootFrame{};
@@ -353,10 +356,11 @@ fn hashDigestBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     var removed = hashTable(runtime).remove(id) orelse {
         return throwStructured(runtime, .EBADF, foundation.hash_operation, null, null, "無効なハンドルです");
     };
-    const digest = try removed.hasher.finalize(runtime.allocator);
-    defer runtime.allocator.free(digest);
+    // digestの成否に関わらずhandleは消費済みなので、先にidentity mappingを外す。
     forgetHandleId(runtime, id);
     if (runtime.dynamic_forget_handle) |forget| forget(runtime, id.raw());
+    const digest = try removed.hasher.finalize(runtime.allocator);
+    defer runtime.allocator.free(digest);
     return encodeDigest(runtime, digest, encoding);
 }
 
@@ -764,6 +768,18 @@ test "AOT pluginContextはRuntimeのハンドル表へ開く" {
     try std.testing.expectEqualSlices(u8, "ok", output);
 }
 
+fn pendingErrorCode(runtime: *Runtime) ![]u8 {
+    try std.testing.expect(runtime.has_pending_exception);
+    const code = dictionaryProperty(runtime.pending_exception, &.{ 'c', 'o', 'd', 'e' });
+    return valueUtf8LossyAlloc(runtime, code);
+}
+
+fn expectPendingCode(runtime: *Runtime, expected: []const u8) !void {
+    const code = try pendingErrorCode(runtime);
+    defer runtime.allocator.free(code);
+    try std.testing.expectEqualStrings(expected, code);
+}
+
 test "AOT低レイヤーのincremental hashは複数chunkと完了後EBADFを扱う" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -792,7 +808,9 @@ test "AOT低レイヤーのincremental hashは複数chunkと完了後EBADFを扱
     try std.testing.expectEqual(@as(usize, 0), runtime.low_level_hash_handles.?.len());
     try std.testing.expectEqual(@as(u32, 0), runtime.low_level_handle_ids.size);
     try std.testing.expectError(error.NakoException, lowLevelHashBuiltin(&runtime, .low_level_hash_update, &.{ handle, roots[1] }));
+    try expectPendingCode(&runtime, "EBADF");
     try std.testing.expectError(error.NakoException, lowLevelHashBuiltin(&runtime, .low_level_hash_digest, &.{handle}));
+    try expectPendingCode(&runtime, "EBADF");
 }
 
 test "AOT低レイヤーのハッシュ破棄は二重破棄をEBADFにする" {
@@ -809,6 +827,7 @@ test "AOT低レイヤーのハッシュ破棄は二重破棄をEBADFにする" {
     _ = try lowLevelHashBuiltin(&runtime, .low_level_hash_discard, &.{handle});
     try std.testing.expectEqual(@as(u32, 0), runtime.low_level_handle_ids.size);
     try std.testing.expectError(error.NakoException, lowLevelHashBuiltin(&runtime, .low_level_hash_discard, &.{handle}));
+    try expectPendingCode(&runtime, "EBADF");
 }
 
 test "AOT低レイヤーのハッシュ開始は未知をEINVAL、RIPEMDをENOTSUPにする" {
@@ -821,6 +840,15 @@ test "AOT低レイヤーのハッシュ開始は未知をEINVAL、RIPEMDをENOTS
 
     roots[0] = try runtimeUtf8String(&runtime, "crc32");
     try std.testing.expectError(error.NakoException, lowLevelHashBuiltin(&runtime, .low_level_hash_create, &.{roots[0]}));
+    try expectPendingCode(&runtime, "EINVAL");
+    const unknown_capability = dictionaryProperty(runtime.pending_exception, &.{ 'c', 'a', 'p', 'a', 'b', 'i', 'l', 'i', 't', 'y' });
+    try std.testing.expectEqual(@intFromEnum(Tag.null_value), unknown_capability.tag);
+
     roots[0] = try runtimeUtf8String(&runtime, "ripemd160");
     try std.testing.expectError(error.NakoException, lowLevelHashBuiltin(&runtime, .low_level_hash_create, &.{roots[0]}));
+    try expectPendingCode(&runtime, "ENOTSUP");
+    const capability = dictionaryProperty(runtime.pending_exception, &.{ 'c', 'a', 'p', 'a', 'b', 'i', 'l', 'i', 't', 'y' });
+    const capability_text = try valueUtf8LossyAlloc(&runtime, capability);
+    defer runtime.allocator.free(capability_text);
+    try std.testing.expectEqualStrings("incremental_hash", capability_text);
 }

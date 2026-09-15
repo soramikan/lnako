@@ -7389,38 +7389,41 @@ test "AOT低レイヤーのincremental hashはファイルstreamとSHA-256一致
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
 
-    roots[0] = try runtimeUtf8String(&runtime, path);
-    roots[1] = try runtimeUtf8String(&runtime, "rb");
-    const in_handle = try state.lowLevelFileBuiltin(&runtime, .low_level_file_open, &.{ roots[0], roots[1] });
-    roots[2] = in_handle;
-    roots[3] = try runtimeUtf8String(&runtime, "sha256");
-    const hash_handle = try state.lowLevelHashBuiltin(&runtime, .low_level_hash_create, &.{roots[3]});
-    roots[4] = hash_handle;
-
-    var hashed: usize = 0;
-    while (true) {
-        const request = numberValue(@floatFromInt(@min(64 * 1024, fixture_size - hashed)));
-        roots[0] = try state.lowLevelFileBuiltin(&runtime, .low_level_file_read_bytes, &.{ in_handle, request });
-        const chunk = roots[0].object().?.payload.byte_buffer.bytes;
-        if (chunk.len == 0) break;
-        _ = try state.lowLevelHashBuiltin(&runtime, .low_level_hash_update, &.{ hash_handle, roots[0] });
-        hashed += chunk.len;
-        if (hashed >= fixture_size) break;
-    }
-    try std.testing.expectEqual(fixture_size, hashed);
-    _ = try state.lowLevelFileBuiltin(&runtime, .low_level_file_close, &.{in_handle});
-
-    roots[5] = try runtimeUtf8String(&runtime, "hex");
-    const result = try state.lowLevelHashBuiltin(&runtime, .low_level_hash_digest, &.{ hash_handle, roots[5] });
-    const hex = try valueUtf8LossyAlloc(&runtime, result);
-    defer runtime.allocator.free(hex);
-
     var expected_digest: [32]u8 = undefined;
     Sha256.hash(fixture, &expected_digest, .{});
     var expected_hex: [64]u8 = undefined;
     const expected = std.fmt.bufPrint(&expected_hex, "{x}", .{expected_digest}) catch unreachable;
-    try std.testing.expectEqualStrings(expected, hex);
-    try std.testing.expectEqual(@as(u32, 0), runtime.low_level_handle_ids.size);
+
+    // 1 byte、7 byte、64KiBのいずれの供給でも同じdigestになる。
+    for ([_]usize{ 1, 7, 65536 }) |chunk_size| {
+        roots[0] = try runtimeUtf8String(&runtime, path);
+        roots[1] = try runtimeUtf8String(&runtime, "rb");
+        const in_handle = try state.lowLevelFileBuiltin(&runtime, .low_level_file_open, &.{ roots[0], roots[1] });
+        roots[2] = in_handle;
+        roots[3] = try runtimeUtf8String(&runtime, "sha256");
+        const hash_handle = try state.lowLevelHashBuiltin(&runtime, .low_level_hash_create, &.{roots[3]});
+        roots[4] = hash_handle;
+
+        var hashed: usize = 0;
+        while (true) {
+            const request = numberValue(@floatFromInt(@min(chunk_size, fixture_size - hashed)));
+            roots[0] = try state.lowLevelFileBuiltin(&runtime, .low_level_file_read_bytes, &.{ in_handle, request });
+            const chunk = roots[0].object().?.payload.byte_buffer.bytes;
+            if (chunk.len == 0) break;
+            _ = try state.lowLevelHashBuiltin(&runtime, .low_level_hash_update, &.{ hash_handle, roots[0] });
+            hashed += chunk.len;
+            if (hashed >= fixture_size) break;
+        }
+        try std.testing.expectEqual(fixture_size, hashed);
+        _ = try state.lowLevelFileBuiltin(&runtime, .low_level_file_close, &.{in_handle});
+
+        roots[5] = try runtimeUtf8String(&runtime, "hex");
+        const result = try state.lowLevelHashBuiltin(&runtime, .low_level_hash_digest, &.{ hash_handle, roots[5] });
+        const hex = try valueUtf8LossyAlloc(&runtime, result);
+        defer runtime.allocator.free(hex);
+        try std.testing.expectEqualStrings(expected, hex);
+        try std.testing.expectEqual(@as(u32, 0), runtime.low_level_handle_ids.size);
+    }
 }
 
 test "AOT動的変換は低レイヤーハンドルのHandleIdを引き継ぐ" {
@@ -7468,6 +7471,43 @@ test "AOT動的変換は低レイヤーハンドルのHandleIdを引き継ぐ" {
     try std.testing.expectEqual(@intFromPtr(dynamic_handle.dictionary), @intFromPtr(again.dictionary));
 
     _ = try state.lowLevelFileBuiltin(active, .low_level_file_close, &.{handle});
+    try std.testing.expectEqual(@as(usize, 0), dynamic_state.interpreter.lowlevel_state.handle_values.items.len);
+    try std.testing.expectEqual(@as(u32, 0), active.low_level_handle_ids.size);
+}
+
+test "AOT動的変換はハッシュハンドルのHandleIdを引き継ぐ" {
+    const plugin_lowlevel = @import("../../plugins/lowlevel.zig");
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    const dynamic_state = try DynamicInterpreterState.init(std.testing.allocator, active);
+    active.dynamic_state = dynamic_state;
+
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+    roots[0] = try runtimeUtf8String(active, "sha256");
+    const handle = try state.lowLevelHashBuiltin(active, .low_level_hash_create, &.{roots[0]});
+    roots[1] = handle;
+    const original = state.handleIdFor(active, handle).?;
+
+    var dynamic_roots = dynamic_state.value_runtime.rootFrame();
+    defer dynamic_roots.deinit();
+    var dynamic_handle = try aotToDynamicValue(dynamic_state, handle);
+    try dynamic_roots.protect(&dynamic_handle);
+    try std.testing.expectEqual(original, plugin_lowlevel.lookupHandle(&dynamic_state.interpreter.lowlevel_state, dynamic_handle).?);
+
+    const recovered = try dynamicToAotValue(dynamic_state, dynamic_handle);
+    try std.testing.expectEqual(original, state.handleIdFor(active, recovered).?);
+    try std.testing.expectEqual(handle.payload, recovered.payload);
+
+    _ = try state.lowLevelHashBuiltin(active, .low_level_hash_discard, &.{handle});
     try std.testing.expectEqual(@as(usize, 0), dynamic_state.interpreter.lowlevel_state.handle_values.items.len);
     try std.testing.expectEqual(@as(u32, 0), active.low_level_handle_ids.size);
 }
