@@ -1678,6 +1678,11 @@ test "Interpreter低レイヤーのハッシュとファイルhandleは取り違
         \\エラーならば
         \\エラーメッセージ["code"]を表示
         \\ここまで
+        \\エラー監視
+        \\Y=ハッシュ完了(H,"hex")
+        \\エラーならば
+        \\エラーメッセージ["code"]を表示
+        \\ここまで
         \\ファイル閉(H)
         \\ハッシュ破棄(X)
         \\
@@ -1700,7 +1705,7 @@ test "Interpreter低レイヤーのハッシュとファイルhandleは取り違
     var interpreter = Interpreter.init(allocator, &runtime, fixture_compiled.ir_program, runtime_host);
     defer interpreter.deinit();
     _ = try interpreter.run();
-    try std.testing.expectEqualStrings("EBADF\nEBADF\n", host.written());
+    try std.testing.expectEqualStrings("EBADF\nEBADF\nEBADF\n", host.written());
 }
 
 test "Interpreter低レイヤーは非文字列pathをEINVALにする" {

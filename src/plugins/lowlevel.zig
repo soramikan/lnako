@@ -375,9 +375,12 @@ fn hashDigest(runtime: *Runtime, state: *State, context: Context, effects: Effec
         };
     }
     const digest = context.digestHash(id.raw(), runtime.allocator()) catch |failure| {
-        // digestHashはentryを消費してからfinalizeする。失敗時もhandleは
-        // 消費済みなので、staleなidentity mappingを残さない。
-        forgetHandle(state, handle);
+        // digestHashはentryを見つけて消費してからfinalizeする。BadFileDescriptorは
+        // 「hash表に無い」（ファイルhandleの取り違え等）で消費していないため、
+        // 元handleのidentity mappingを消してはならない。
+        if (failure != error.BadFileDescriptor and failure != error.IncrementalHashUnavailable) {
+            forgetHandle(state, handle);
+        }
         return throwHash(runtime, effects, failure);
     };
     defer runtime.allocator().free(digest);
