@@ -505,7 +505,11 @@ export function validateManifest(manifest, fixturePath) {
     const runtimes = manifest.package?.runtimes ?? [];
     const isCnakoOnlyPackage = Array.isArray(runtimes) && runtimes.length > 0 && runtimes.includes("cnako") && !runtimes.includes("lnako");
     for (const exp of manifest.exports) {
-      if (exp.esm != null && !hasCompatJsProfile && !hasCnakoProfile && !isCnakoOnlyPackage) {
+      // lnako 通常モードで ESM が選択されるのは path も native も無い場合のみ
+      // （path があれば共通ソース、native があれば native を選択）。cnako は
+      // native 併記でも esm を選ぶが E006 の対象外。Zig の validateExports と
+      // 同じ選択規則に揃える。
+      if (exp.esm != null && exp.path == null && exp.native == null && !hasCompatJsProfile && !hasCnakoProfile && !isCnakoOnlyPackage) {
         fail("E006_JS_IN_NORMAL_MODE", `ESM export "${exp.name}" requires compat-js profile`, `${fixturePath}.exports`);
       }
     }
@@ -758,12 +762,31 @@ export function validateNpkgCommands(commands, fixturePath) {
 }
 
 export function validateEnvironment(environment, fixturePath) {
+  // `.nako/environment.json` は cnako が単独で参照する外部契約であり、
+  // 欠落・破損・版不一致・lock 不一致はすべて E034 に正規化する。
+  // 内部で汎用 schema/manifest コード（E019/E023/E029 等）が発生しても、
+  // 利用側が環境参照エラーとして一貫して扱えるよう変換する。
+  try {
+    validateEnvironmentContract(environment, fixturePath);
+  } catch (error) {
+    if (error instanceof DiagnosticError) {
+      if (error.code === "E034_INVALID_ENVIRONMENT_REFERENCE") throw error;
+      // schema 定義自体の不整合（SCHEMA_ERROR）はツール側の不具合なので
+      // 環境参照エラーへ変換せず、そのまま伝播させる。
+      if (error.code === "SCHEMA_ERROR") throw error;
+      throw new DiagnosticError("E034_INVALID_ENVIRONMENT_REFERENCE", error.message, error.path);
+    }
+    throw error;
+  }
+}
+
+function validateEnvironmentContract(environment, fixturePath) {
   if (typeof environment !== "object" || environment === null || Array.isArray(environment)) {
-    fail("E023_INVALID_TYPE", "environment must be an object", fixturePath);
+    fail("E034_INVALID_ENVIRONMENT_REFERENCE", "environment must be an object", fixturePath);
   }
   for (const required of ["schemaVersion", "lockSha256", "profile", "runtime", "packages"]) {
     if (!(required in environment)) {
-      fail("E019_REQUIRED_FIELD_MISSING", `missing required field "${required}"`, `${fixturePath}.${required}`);
+      fail("E034_INVALID_ENVIRONMENT_REFERENCE", `missing required field "${required}"`, `${fixturePath}.${required}`);
     }
   }
   if (environment.schemaVersion !== 1) {
@@ -774,10 +797,10 @@ export function validateEnvironment(environment, fixturePath) {
     fail("E034_INVALID_ENVIRONMENT_REFERENCE", `invalid lockSha256 "${environment.lockSha256}"`, `${fixturePath}.lockSha256`);
   }
   if (typeof environment.runtime === "string" && !["lnako", "cnako"].includes(environment.runtime)) {
-    fail("E014_INVALID_PROFILE", `invalid runtime "${environment.runtime}"`, `${fixturePath}.runtime`);
+    fail("E034_INVALID_ENVIRONMENT_REFERENCE", `invalid runtime "${environment.runtime}"`, `${fixturePath}.runtime`);
   }
   if (typeof environment.profile !== "string" || environment.profile.trim().length === 0) {
-    fail("E014_INVALID_PROFILE", `invalid profile "${environment.profile}"`, `${fixturePath}.profile`);
+    fail("E034_INVALID_ENVIRONMENT_REFERENCE", `invalid profile "${environment.profile}"`, `${fixturePath}.profile`);
   }
   if (typeof environment.packages === "object" && environment.packages !== null && !Array.isArray(environment.packages)) {
     for (const [pkgId, pkg] of Object.entries(environment.packages)) {

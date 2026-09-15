@@ -159,10 +159,27 @@ pub const Export = struct {
         compat_js: bool,
         diagnostics: ?*diag.List,
     ) !?ExportResolution {
-        if (prefer_native and std.mem.eql(u8, target_runtime, "lnako") and self.native != null) {
-            return .{ .kind = .native, .target = self.native.? };
+        // 対象処理系は公開契約上 lnako / cnako のみ。共通ソース（path）の
+        // 有無にかかわらず未知の処理系は E031 で拒否する。
+        if (!containsString(&known_package_runtime, target_runtime)) {
+            if (diagnostics) |d| {
+                try d.addFmt(
+                    diag.E031_UNSUPPORTED_RUNTIME,
+                    .err,
+                    self.name,
+                    self.position,
+                    "unsupported runtime \"{s}\" for export \"{s}\"",
+                    .{ target_runtime, self.name },
+                );
+            }
+            return null;
         }
         if (self.path) |p| {
+            // 共通ソースは常に利用可能。prefer-native が lnako で明示された
+            // 場合のみ native を高速化実装として優先する。
+            if (prefer_native and std.mem.eql(u8, target_runtime, "lnako") and self.native != null) {
+                return .{ .kind = .native, .target = self.native.? };
+            }
             return .{ .kind = .source, .target = p };
         }
         if (std.mem.eql(u8, target_runtime, "lnako")) {
@@ -186,7 +203,8 @@ pub const Export = struct {
                     return null;
                 }
             }
-        } else if (std.mem.eql(u8, target_runtime, "cnako")) {
+        } else {
+            // cnako は ESM を直接扱えるため、native 併記時も ESM を先に選ぶ。
             if (self.esm) |esm_path| {
                 return .{ .kind = .esm, .target = esm_path };
             }
@@ -203,18 +221,6 @@ pub const Export = struct {
                 }
                 return null;
             }
-        } else {
-            if (diagnostics) |d| {
-                try d.addFmt(
-                    diag.E031_UNSUPPORTED_RUNTIME,
-                    .err,
-                    self.name,
-                    self.position,
-                    "unsupported runtime \"{s}\" for export \"{s}\"",
-                    .{ target_runtime, self.name },
-                );
-            }
-            return null;
         }
 
         if (diagnostics) |d| {
@@ -318,8 +324,20 @@ pub const Manifest = struct {
     }
 
     /// 対象処理系（"lnako" または "cnako"）がパッケージの対応処理系（runtimes）と適合するか検証する。
-    /// 未宣言（空配列）の場合は両処理系に適合するものとみなす。
+    /// 未宣言（空配列）の場合は両処理系に適合するものとみなす。未知の処理系名は
+    /// runtimes の宣言有無にかかわらず E031 とする。
     pub fn checkRuntime(self: *const Manifest, target_runtime: []const u8, diagnostics: *diag.List, position: Position) !bool {
+        if (!containsString(&known_package_runtime, target_runtime)) {
+            try diagnostics.addFmt(
+                diag.E031_UNSUPPORTED_RUNTIME,
+                .err,
+                "package.runtimes",
+                position,
+                "unsupported runtime \"{s}\"",
+                .{target_runtime},
+            );
+            return false;
+        }
         if (self.package.runtimes.len == 0) return true;
         for (self.package.runtimes) |r| {
             if (std.mem.eql(u8, r, target_runtime)) return true;
@@ -1114,7 +1132,13 @@ const Validator = struct {
             export_entry.alias = try self.expectString(export_table, "alias", "exports");
             export_entry.native = try self.expectString(export_table, "native", "exports");
             export_entry.esm = try self.expectString(export_table, "esm", "exports");
-            if (export_entry.esm != null and !has_compat_js and !has_cnako_profile and !is_cnako_only_package) {
+            // lnako 通常モードで ESM が選択されるのは「path も native も無い」
+            // 場合のみ（path があれば共通ソース、native があれば native を選択）。
+            // cnako は native 併記でも esm を選ぶが E006 の対象外。
+            // この静的検査は resolve と同じ選択規則に揃える。
+            if (export_entry.esm != null and export_entry.path == null and export_entry.native == null and
+                !has_compat_js and !has_cnako_profile and !is_cnako_only_package)
+            {
                 try self.report(diag.E006_JS_IN_NORMAL_MODE, "exports", item.position, "ESM export \"{s}\" requires compat-js profile", .{export_entry.name});
             }
             exports.appendAssumeCapacity(export_entry);

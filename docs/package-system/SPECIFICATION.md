@@ -7,7 +7,7 @@
 - 本仕様は **lnako リポジトリ内の提案文書**であり、上流 `nadesiko3` に採用済みではない。
 - 本書は package マニフェスト、ロック、レジストリ契約、配包形式、resolver/import 契約、および検証に必要な schema と適合例を対象とする。
 - package resolver、cache、import、CLI 実装は本 Issue では行わない。これらは Issue #44 以降で実装する。
-- 既存の nadesiko3 v3.7.24 互換性証拠（`compat/v3.7.24/`）は変更せず、package 仕様の適合性証拠は `tools/package-system/conformance/` および `docs/package-system/` で別に管理する。
+- 既存の nadesiko3 v3.7.24 互換性証拠（`compat/v3.7.24/`）の互換ケースと判定は変更しない。ただし lnako のビルド成果物やソース manifest が変わる場合は、証拠中の `binarySha256`・`sourceManifestSha256`・`compileManifestSha256` 等の hash を `tools/sync_compat_evidence.mjs` で再同期する（判定結果は不変）。package 仕様の適合性証拠は `tools/package-system/conformance/` および `docs/package-system/` で別に管理する。
 
 ## 2. 用語
 
@@ -174,13 +174,14 @@ native = "libsqlite.dylib"
 - `name` は export 名。`pkg:foo/bar` 形式の subpath も許可。
 - `path` は `.nako3` ファイル。
 - `native` は native plugin ファイル。
-- `esm` は ESM ファイル。`compat-js` 時のみ扱う。
+- `esm` は ESM ファイル。`cnako` または `lnako` の `compat-js = true` 指定時のみ扱う。
 - 同じ `name` の export を重複して宣言できない。
-- **実装選択の優先契約**:
-  - `path`（共通ソース）と `native` の両方が宣言されている場合、既定では `path`（共通ソース）が優先選択される。
-  - `dependencies.pkg` で `prefer-native = true` が明示され、かつ対象処理系が `lnako` の場合のみ `native` が選択される（`cnako` では `E031_UNSUPPORTED_RUNTIME`）。
+- **実装選択の優先契約**（対象処理系は `lnako` または `cnako`。それ以外の処理系は `path` の有無にかかわらず `E031_UNSUPPORTED_RUNTIME`）:
+  - `path`（共通ソース）が宣言されている場合は常に `path` が優先選択される。`dependencies.pkg` で `prefer-native = true` が明示され、かつ対象処理系が `lnako` の場合のみ、`native` が高速化実装として優先される（`cnako` ではフラグを無視して `path` を選択する）。
+  - `path` が無く `native` と `esm` の両方が宣言されている場合、`lnako` では `native`、`cnako` では `esm` を選択する（`cnako` は ESM を直接扱えるため `compat-js` は不要）。
+  - `path` と `esm` を併記し `compat-js` が無い場合でも、`lnako` 通常モードでは `path` が選ばれるため `E006_JS_IN_NORMAL_MODE` にはならない。
   - native専用パッケージ（`native` のみ）は `lnako` でのみ解決可能（`cnako` では `E031_UNSUPPORTED_RUNTIME`）。
-  - ESM専用パッケージ（`esm` のみ）は `cnako` または `lnako` の `compat-js = true` 指定時のみ解決可能（通常lnakoでは `E006_JS_IN_NORMAL_MODE`）。
+  - ESM専用パッケージ（`path`・`native` を持たず `esm` のみ）は `cnako` または `lnako` の `compat-js = true` 指定時のみ解決可能（通常lnakoでは `E006_JS_IN_NORMAL_MODE`）。
 
 ### 3.7 SemVer range 構文
 
