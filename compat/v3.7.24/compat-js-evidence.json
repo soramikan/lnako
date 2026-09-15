@@ -226,14 +226,14 @@
           "officialSource": {
             "status": 0,
             "signal": null,
-            "stdoutSha256": "1030420a6c2b1b2ccb948c427bfacceca17305972521e5a69d3f5dc805bd9981",
+            "stdoutSha256": "4ec4062f2ea7d07c5af62bbdac7a76c646c3e80b7b60718bb17078883f8f1508",
             "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             "failed": false
           },
           "lnakoCompatJs": {
             "status": 0,
             "signal": null,
-            "stdoutSha256": "1030420a6c2b1b2ccb948c427bfacceca17305972521e5a69d3f5dc805bd9981",
+            "stdoutSha256": "4ec4062f2ea7d07c5af62bbdac7a76c646c3e80b7b60718bb17078883f8f1508",
             "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             "failed": false
           }
@@ -429,7 +429,7 @@
             "status": 0,
             "signal": null,
             "stdoutSha256": "38e0b9de817f645c4bec37c0d4a3e58baecccb040f5718dc069a72c7385a0bed",
-            "stderrSha256": "5a4ff228c9e718227ab62199c9f782141aee568912b09d38e3282de9cb7f2233",
+            "stderrSha256": "3707447dbaa7a0e05090526aed68f0fb481818c1b88c743762878bc7d5f15aff",
             "failed": true
           },
           "lnakoCompatJs": {
@@ -454,7 +454,7 @@
           "officialSource": {
             "status": 0,
             "signal": null,
-            "stdoutSha256": "609b00a6ce0ed190c11cbec4ef4ee2dc7cfe6f9f753799d1608f988869db7f97",
+            "stdoutSha256": "ea8c4c17d6996ed6ffa6d9000522a198ffe643657b869ffb940c1bb3df31e2b7",
             "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             "failed": true
           },
@@ -480,7 +480,7 @@
           "officialSource": {
             "status": 0,
             "signal": null,
-            "stdoutSha256": "ec10073b9ba79e19e740bc8ab4b7eb9bf040062a2ff03bd10a58cfc8b9b9a887",
+            "stdoutSha256": "5f0fb0df67804348935f8cd0c7d8a1db8e92f2ffc2015fe9add25ec6565eaa49",
             "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             "failed": true
           },
@@ -501,7 +501,7 @@
     "environment": {
       "platform": "darwin",
       "arch": "arm64",
-      "node": "v24.15.0"
+      "node": "v26.8.2"
     },
     "oracle": {
       "build": 4,
@@ -512,8 +512,8 @@
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
     "lnako": {
-      "binarySha256": "4f4ccbfc6c50b891e9b7a843da5c0cc04da111ddba3122460807ce7278974e79",
-      "sourceManifestSha256": "146f3664c19183341ba13ac4a96adc21fda63bed6c76527884dca05d3c21a387"
+      "binarySha256": "dd90733dee71b6a3be940934af884444222d8c73131311a0583f711107a5212b",
+      "sourceManifestSha256": "7caca3fdd23f00fdc082825d886d9ea0e58a981991b8efc1afe51a079336f0f4"
     },
     "raw": {
       "traceSha256ByCase": {
