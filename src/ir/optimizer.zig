@@ -66,9 +66,9 @@ fn markDirectCalls(allocator: std.mem.Allocator, program: *ir.Program, stats: *S
     var by_name: std.StringHashMapUnmanaged(ir.FunctionId) = .empty;
     defer by_name.deinit(allocator);
     for (program.functions) |function| {
-        const entry = try by_name.getOrPut(allocator, function.name);
-        // Preserve first-match semantics even for malformed duplicate names.
-        if (!entry.found_existing) entry.value_ptr.* = function.id;
+        // 公式はdef_funcをコード生成順で登録するため同名関数は後勝ち
+        // （循環再展開コピーの変体定義が本体を上書きする、Issue #73）。
+        try by_name.put(allocator, function.name, function.id);
     }
     for (program.functions) |*function| for (function.blocks) |*block| for (block.instructions) |*instruction| {
         if (instruction.opcode != .call or instruction.direct_callee != null) continue;
@@ -183,7 +183,6 @@ fn inferParameterLoadType(program: ir.Program, function: ir.Function, instructio
                 if (std.mem.eql(u8, name, instruction.name)) return .dynamic;
             }
         }
-        if (candidate.opcode == .increment and std.mem.eql(u8, candidate.name, instruction.name)) return .dynamic;
         if (candidate.opcode != .store_local or !std.mem.eql(u8, candidate.name, instruction.name) or candidate.operands.len == 0) continue;
         evidence.add(types[candidate.operands[0]]);
     };
@@ -441,6 +440,15 @@ fn replaceWithConstant(instruction: *ir.Instruction, constant: Constant) void {
     instruction.name = "";
     instruction.operator = "";
     instruction.names = &.{};
+    instruction.names_local = &.{};
+    instruction.local_target = false;
+    instruction.check_array_init = false;
+    instruction.is_module_entry = false;
+    instruction.site_module = 0;
+    instruction.site_order = 0;
+    instruction.callee_module = 0;
+    instruction.callee_order = 0;
+    instruction.site_toplevel = false;
     instruction.number_value = null;
     instruction.boolean_value = false;
     instruction.direct_callee = null;

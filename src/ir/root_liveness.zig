@@ -44,6 +44,9 @@ pub fn mayCollect(instruction: ir.Instruction) bool {
         .try_begin,
         .try_end,
         .exception_pending,
+        .is_array,
+        .is_undefined,
+        .coalesce_or_zero,
         => false,
         // Global trace, conversions, helpers, callbacks and dynamic execution
         // are conservatively safepoints, including unknown future opcodes.
@@ -74,6 +77,8 @@ pub fn analyze(allocator: std.mem.Allocator, function: ir.Function) !Plan {
             .const_undefined,
             .iterator_has_next,
             .exception_pending,
+            .is_array,
+            .is_undefined,
             => false,
             // Inferred types describe known call sites, not every generic ABI
             // entry. A local load/phi/call can still carry a managed value when

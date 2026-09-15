@@ -20,7 +20,6 @@ const DebugLocation = shared.DebugLocation;
 const arithmeticOpcode = shared.arithmeticOpcode;
 const isDisplayCall = shared.isDisplayCall;
 const isNativePluginCall = shared.isNativePluginCall;
-const isQualifiedGlobal = shared.isQualifiedGlobal;
 const lookupFunction = shared.lookupFunction;
 const shiftOpcode = shared.shiftOpcode;
 const valueType = shared.valueType;
@@ -467,17 +466,15 @@ pub fn writeMain(emitter: *Emitter) !void {
         if (emitter.globalIndex("FILESデータ")) |global_index| try emitter.output.writer.print("@lnako.global.{d}", .{global_index}) else try emitter.output.writer.writeAll("null");
         try emitter.output.writer.writeAll(")\n");
     }
-    var index = emitter.program.module_entries.len;
-    var call_index: usize = 0;
-    while (index > 0) {
-        index -= 1;
-        try emitter.output.writer.print("  %entry.result.{d} = call %lnako.Value @lnako.fn.{d}(ptr null)", .{ call_index, emitter.program.module_entries[index] });
+    // 取り込み先のトップレベルは取り込み文位置での呼び出しとして各関数へ
+    // 埋め込まれているため、起動時に実行するのはルートのエントリのみ。
+    if (emitter.program.module_entries.len > 0) {
+        try emitter.output.writer.print("  %entry.result = call %lnako.Value @lnako.fn.{d}(ptr null)", .{emitter.program.module_entries[0]});
         try emitter.debugSuffix(ast.emptySpan(), scope);
-        try emitter.output.writer.print("  %entry.exception.pending.{d} = call i32 @lnako_aot_exception_pending()\n", .{call_index});
-        try emitter.output.writer.print("  %entry.exception.is-pending.{d} = icmp ne i32 %entry.exception.pending.{d}, 0\n", .{ call_index, call_index });
-        try emitter.output.writer.print("  br i1 %entry.exception.is-pending.{d}, label %entry.exception.abort.{d}, label %entry.continue.{d}\n", .{ call_index, call_index, call_index });
-        try emitter.output.writer.print("entry.exception.abort.{d}:\n  call void @lnako_aot_exception_abort()\n  unreachable\nentry.continue.{d}:\n", .{ call_index, call_index });
-        call_index += 1;
+        try emitter.output.writer.writeAll("  %entry.exception.pending = call i32 @lnako_aot_exception_pending()\n");
+        try emitter.output.writer.writeAll("  %entry.exception.is-pending = icmp ne i32 %entry.exception.pending, 0\n");
+        try emitter.output.writer.writeAll("  br i1 %entry.exception.is-pending, label %entry.exception.abort, label %entry.continue\n");
+        try emitter.output.writer.writeAll("entry.exception.abort:\n  call void @lnako_aot_exception_abort()\n  unreachable\nentry.continue:\n");
     }
     if (try emitter.usesAsyncEvents()) {
         try emitter.output.writer.writeAll("  call void @lnako_aot_runtime_drain_events()\n");

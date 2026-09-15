@@ -218,15 +218,22 @@ pub const PreparedProgram = struct {
 
         for (owner.functions, 0..) |function, index| {
             const id: ir.FunctionId = @intCast(index);
-            const exact = try result.exact.getOrPut(allocator, function.name);
-            if (!exact.found_existing) exact.value_ptr.* = id;
+            // 公式はdef_funcをコード生成順で登録するため同名関数は後勝ち。
+            // 循環再展開コピーの文脈別変体も同じ名前で登録される（#73）。
+            try result.exact.put(allocator, function.name, id);
             if (std.mem.lastIndexOf(u8, function.name, "__")) |separator| {
                 const suffix = function.name[separator + 2 ..];
                 const slot = try result.suffix.getOrPut(allocator, suffix);
                 if (!slot.found_existing) {
                     slot.value_ptr.* = id;
-                } else if (slot.value_ptr.* != id) {
-                    slot.value_ptr.* = null;
+                } else if (slot.value_ptr.*) |existing| {
+                    // 完全同名の重複（循環再展開変体）は後勝ちで上書き。
+                    // 異なる修飾名の衝突だけを曖昧として解決不能にする。
+                    if (std.mem.eql(u8, owner.functions[existing].name, function.name)) {
+                        slot.value_ptr.* = id;
+                    } else {
+                        slot.value_ptr.* = null;
+                    }
                 }
             }
         }
@@ -274,9 +281,13 @@ fn prepareFunction(
     for (function.captures) |capture| try addLocal(allocator, prepared, capture, &next_slot);
     for (function.blocks) |block| for (block.instructions) |instruction| switch (instruction.opcode) {
         .load_local, .store_local => try addLocal(allocator, prepared, instruction.name, &next_slot),
-        .increment => if (!isQualifiedGlobal(instruction.name)) try addLocal(allocator, prepared, instruction.name, &next_slot),
-        .array_set, .property_set => {},
-        .destructure_store => for (instruction.names) |name| if (std.mem.indexOf(u8, name, "__") == null) try addLocal(allocator, prepared, name, &next_slot),
+        // local_target（非モジュールスコープへの束縛）は修飾名でもローカル。
+        // モジュール変数を指す修飾名は local_target=false なので除外される。
+        .ensure_array_var => if (instruction.local_target) try addLocal(allocator, prepared, instruction.name, &next_slot),
+        // 範囲繰り返し変数もlocal_targetが立てばローカルへ書き戻される。
+        .iterator_begin => if (instruction.local_target) try addLocal(allocator, prepared, instruction.name, &next_slot),
+        // 分解代入のターゲットも束縛結果（names_local）でローカルを判定する
+        .destructure_store => for (instruction.names, 0..) |name, index| if (ir.destructureTargetIsLocal(instruction, index)) try addLocal(allocator, prepared, name, &next_slot),
         else => {},
     };
     prepared.local_count = next_slot;
@@ -327,17 +338,13 @@ fn prepareFunction(
                     allocator.free(local_slots);
                     return failure;
                 };
-                for (local_slots, instruction.names) |*slot, name| slot.* = if (std.mem.indexOf(u8, name, "__") != null) no_local_slot else prepared.localSlot(name) orelse no_local_slot;
+                for (local_slots, instruction.names, 0..) |*slot, name, index| slot.* = if (ir.destructureTargetIsLocal(instruction.*, index)) prepared.localSlot(name) orelse no_local_slot else no_local_slot;
                 entry.destructure_local_slots = local_slots;
                 @memset(global_slots, no_global_slot);
                 entry.destructure_global_slots = global_slots;
             }
         }
     }
-}
-
-fn isQualifiedGlobal(name: []const u8) bool {
-    return std.mem.indexOf(u8, name, "__") != null;
 }
 
 fn isInterruptSafepoint(opcode: ir.Opcode) bool {
@@ -352,9 +359,10 @@ fn isInterruptSafepoint(opcode: ir.Opcode) bool {
         .make_object,
         .array_get,
         .property_get,
-        .array_set,
-        .property_set,
-        .increment,
+        .element_set,
+        .increment_values,
+        .ensure_array_var,
+        .init_array_index,
         .make_closure,
         .iterator_begin,
         .iterator_next,

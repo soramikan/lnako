@@ -22,6 +22,12 @@ pub const TokenStream = struct {
 pub const Error = error{ InvalidUtf8, UnexpectedCharacter, UnterminatedString, InvalidNumber } || std.mem.Allocator.Error;
 
 pub fn tokenize(backing_allocator: std.mem.Allocator, input: []const u8) Error!TokenStream {
+    return tokenizeWithMode(backing_allocator, input, .{});
+}
+
+/// `forced` は拡張子やコマンドライン引数で強制される構文モード。
+/// 先頭100トークン以内の行コメント指示による検出と合わせて有効化する。
+pub fn tokenizeWithMode(backing_allocator: std.mem.Allocator, input: []const u8, forced: Mode) Error!TokenStream {
     var arena = std.heap.ArenaAllocator.init(backing_allocator);
     errdefer arena.deinit();
     const allocator = arena.allocator();
@@ -36,34 +42,11 @@ pub fn tokenize(backing_allocator: std.mem.Allocator, input: []const u8) Error!T
         .tokens = .empty,
     };
     const tokens = try lexer.run();
-    return .{ .arena = arena, .source = normalized, .tokens = tokens, .mode = detectMode(input) };
-}
-
-pub fn detectMode(input: []const u8) Mode {
-    var lines = std.mem.splitScalar(u8, input, '\n');
-    var count: usize = 0;
-    while (lines.next()) |line| : (count += 1) {
-        if (count >= 100) break;
-        const trimmed = trimModeIndent(line);
-        if (std.mem.startsWith(u8, trimmed, "!DNCL2モード") or std.mem.startsWith(u8, trimmed, "💡DNCL2モード") or
-            std.mem.startsWith(u8, trimmed, "!DNCL2") or std.mem.startsWith(u8, trimmed, "💡DNCL2")) return .dncl2;
-        if (std.mem.startsWith(u8, trimmed, "!DNCLモード") or std.mem.startsWith(u8, trimmed, "💡DNCLモード")) return .dncl;
-        if (std.mem.startsWith(u8, trimmed, "!インデント構文") or std.mem.startsWith(u8, trimmed, "💡インデント構文") or
-            std.mem.startsWith(u8, trimmed, "!ここまでだるい") or std.mem.startsWith(u8, trimmed, "💡ここまでだるい")) return .indent;
-    }
-    return .standard;
-}
-
-fn trimModeIndent(line: []const u8) []const u8 {
-    var offset: usize = 0;
-    while (offset < line.len) {
-        if (line[offset] == ' ' or line[offset] == '\t' or line[offset] == '\r') {
-            offset += 1;
-        } else if (std.mem.startsWith(u8, line[offset..], "　") or std.mem.startsWith(u8, line[offset..], "・")) {
-            offset += "　".len;
-        } else break;
-    }
-    return line[offset..];
+    var mode = lexer.detected_mode;
+    mode.dncl = mode.dncl or forced.dncl;
+    mode.dncl2 = mode.dncl2 or forced.dncl2;
+    mode.indent = mode.indent or forced.indent;
+    return .{ .arena = arena, .source = normalized, .tokens = tokens, .mode = mode };
 }
 
 const Lexer = struct {
@@ -75,6 +58,13 @@ const Lexer = struct {
     column: usize = 1,
     indent: usize = 0,
     at_line_start: bool = true,
+    /// 公式がトークンとして数える行コメント・範囲コメント・_eolの個数。
+    /// モード検出の「先頭100トークン以内」の番号を公式と合わせるために使う。
+    skipped_tokens: usize = 0,
+    detected_mode: Mode = .{},
+    /// 公式はDNCL系ディレクティブのうち各系統の最初の1件だけをトークンへ変換する。
+    dncl_mode_emitted: bool = false,
+    dncl2_mode_emitted: bool = false,
 
     fn run(self: *Lexer) Error![]Token {
         while (self.offset < self.source.text.len) {
@@ -111,6 +101,7 @@ const Lexer = struct {
         }
         if (rest[0] == '#' or std.mem.startsWith(u8, rest, "//")) {
             while (self.offset < self.source.text.len and self.source.text[self.offset] != '\n') try self.advanceCodepoint();
+            self.skipped_tokens += 1;
             return true;
         }
         if (std.mem.startsWith(u8, rest, "/*")) {
@@ -119,6 +110,7 @@ const Lexer = struct {
                 try self.advanceCodepoint();
             }
             if (self.offset < self.source.text.len) try self.advanceBytes(2);
+            self.skipped_tokens += 1;
             return true;
         }
         return false;
@@ -151,12 +143,17 @@ const Lexer = struct {
             while (continuation_end < rest.len and (rest[continuation_end] == ' ' or rest[continuation_end] == '\t')) continuation_end += 1;
             if (continuation_end < rest.len and rest[continuation_end] == '\n') {
                 try self.advanceBytes(continuation_end + 1);
+                // 公式は_eolをトークンとして数え、継続行の先頭でインデントを数え直さない。
+                self.skipped_tokens += 1;
+                self.at_line_start = false;
                 return;
             }
         }
         if (std.mem.startsWith(u8, rest, "‰")) {
             try self.advanceBytes("‰".len);
             if (self.line > 0) self.line -= 1;
+            // 公式は dec_lineno トークンとして生成され先頭100トークンの計数に含まれる
+            self.skipped_tokens += 1;
             return;
         }
         if (std.mem.startsWith(u8, rest, "ここから")) return self.simple(.keyword_here_from, "ここから".len);
@@ -209,7 +206,38 @@ const Lexer = struct {
             if (std.mem.startsWith(u8, after, "インデント構文") or std.mem.startsWith(u8, after, "ここまでだるい") or
                 std.mem.startsWith(u8, after, "DNCLモード") or std.mem.startsWith(u8, after, "DNCL2モード") or std.mem.startsWith(u8, after, "DNCL2"))
             {
-                while (self.offset < self.source.text.len and self.source.text[self.offset] != '\n') try self.advanceCodepoint();
+                // 公式は `(!|💡)(キーワード)[^\n]*` を行コメントとして字句化し、
+                // `i > 100` 打ち切り（先頭index 0..100）の範囲で行全体がキーワードと完全一致する
+                // 最初のDNCL指定だけを 'DNCLモード'/'DNCL2モード' トークンへ変換する
+                // （useDNCLmode/useDNCL2mode相当）。
+                // インデント構文キーワードはコメントのまま残る。
+                var end = self.offset;
+                while (end < self.source.text.len and self.source.text[end] != '\n') end += 1;
+                const directive = self.source.text[self.offset..end];
+                if (self.tokens.items.len + self.skipped_tokens <= 100) {
+                    if (std.mem.eql(u8, directive, "!DNCLモード") or std.mem.eql(u8, directive, "💡DNCLモード")) {
+                        self.detected_mode.dncl = true;
+                        if (!self.dncl_mode_emitted) {
+                            self.dncl_mode_emitted = true;
+                            while (self.offset < end) try self.advanceCodepoint();
+                            return self.emit(.keyword_dncl_mode, start, end, "DNCLモード", "", "");
+                        }
+                    }
+                    if (std.mem.eql(u8, directive, "!DNCL2モード") or std.mem.eql(u8, directive, "💡DNCL2モード") or
+                        std.mem.eql(u8, directive, "!DNCL2") or std.mem.eql(u8, directive, "💡DNCL2"))
+                    {
+                        self.detected_mode.dncl2 = true;
+                        if (!self.dncl2_mode_emitted) {
+                            self.dncl2_mode_emitted = true;
+                            while (self.offset < end) try self.advanceCodepoint();
+                            return self.emit(.keyword_dncl2_mode, start, end, "DNCL2モード", "", "");
+                        }
+                    }
+                    if (std.mem.eql(u8, directive, "!インデント構文") or std.mem.eql(u8, directive, "💡インデント構文") or
+                        std.mem.eql(u8, directive, "!ここまでだるい") or std.mem.eql(u8, directive, "💡ここまでだるい")) self.detected_mode.indent = true;
+                }
+                while (self.offset < end) try self.advanceCodepoint();
+                self.skipped_tokens += 1;
                 return;
             }
             return self.simple(.not, length);
@@ -672,6 +700,8 @@ fn reservedKind(value: []const u8) ?Kind {
         .{ .text = "エラー監視", .kind = .keyword_error_guard },
         .{ .text = "エラー", .kind = .keyword_error },
         .{ .text = "非同期モード", .kind = .keyword_async },
+        .{ .text = "DNCLモード", .kind = .keyword_dncl_mode },
+        .{ .text = "DNCL2モード", .kind = .keyword_dncl2_mode },
         .{ .text = "モード設定", .kind = .keyword_mode },
         .{ .text = "関数", .kind = .def_func },
     };
@@ -735,9 +765,56 @@ test "改行とUTF-8の位置を保持する" {
     try std.testing.expectEqualStrings("B", stream.tokens[3].value);
 }
 
-test "先頭100行のモード指定を検出する" {
-    try std.testing.expectEqual(Mode.indent, detectMode("　!インデント構文\n1を表示"));
-    try std.testing.expectEqual(Mode.dncl, detectMode("💡DNCLモード\nA←1"));
-    try std.testing.expectEqual(Mode.dncl2, detectMode("!DNCL2\nA=1"));
-    try std.testing.expectEqual(Mode.standard, detectMode("1を表示"));
+test "先頭のモード指定を検出する" {
+    var indent_stream = try tokenize(std.testing.allocator, "　!インデント構文\n1を表示");
+    defer indent_stream.deinit();
+    try std.testing.expect(indent_stream.mode.indent);
+    var dncl_stream = try tokenize(std.testing.allocator, "💡DNCLモード\nA←1");
+    defer dncl_stream.deinit();
+    try std.testing.expect(dncl_stream.mode.dncl);
+    var dncl2_stream = try tokenize(std.testing.allocator, "!DNCL2\nA=1");
+    defer dncl2_stream.deinit();
+    try std.testing.expect(dncl2_stream.mode.dncl2);
+    var standard_stream = try tokenize(std.testing.allocator, "1を表示");
+    defer standard_stream.deinit();
+    try std.testing.expectEqual(Mode{}, standard_stream.mode);
+}
+
+test "モード指定は行全体がキーワードと一致した場合のみ有効になる" {
+    var trailing = try tokenize(std.testing.allocator, "!DNCLモード で始まる\nA←1");
+    defer trailing.deinit();
+    try std.testing.expect(!trailing.mode.dncl);
+    var spaced = try tokenize(std.testing.allocator, "!DNCL2 \nA=1");
+    defer spaced.deinit();
+    try std.testing.expect(!spaced.mode.dncl2);
+}
+
+test "モード指定は複数同時に有効化でき先頭100トークン以内で検出する" {
+    var both = try tokenize(std.testing.allocator, "!DNCLモード\n!DNCL2\nA=1");
+    defer both.deinit();
+    try std.testing.expect(both.mode.dncl and both.mode.dncl2);
+
+    var padded_source: std.ArrayList(u8) = .empty;
+    defer padded_source.deinit(std.testing.allocator);
+    for (0..101) |_| try padded_source.appendSlice(std.testing.allocator, "# コメント\n");
+    try padded_source.appendSlice(std.testing.allocator, "!DNCLモード\nA←1");
+    var late = try tokenize(std.testing.allocator, padded_source.items);
+    defer late.deinit();
+    try std.testing.expect(!late.mode.dncl);
+}
+
+test "モード指定の検出境界は公式の先頭101トークンと一致する" {
+    // 公式useDNCLmode/useDNCL2modeは `i > 100` で打ち切るため、
+    // 先行トークンindex 0..100（先頭101個）までが検出対象。
+    // `# コメント\n` は 行コメント+eol の2トークンなので
+    // 50行=index 100（有効）、51行=index 102（無効）が境界。
+    for ([_]struct { lines: usize, expected: bool }{ .{ .lines = 50, .expected = true }, .{ .lines = 51, .expected = false } }) |case| {
+        var source: std.ArrayList(u8) = .empty;
+        defer source.deinit(std.testing.allocator);
+        for (0..case.lines) |_| try source.appendSlice(std.testing.allocator, "# コメント\n");
+        try source.appendSlice(std.testing.allocator, "!DNCLモード\nA←1");
+        var stream = try tokenize(std.testing.allocator, source.items);
+        defer stream.deinit();
+        try std.testing.expectEqual(case.expected, stream.mode.dncl);
+    }
 }

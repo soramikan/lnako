@@ -249,7 +249,7 @@ test "カスタムソート中に元配列が短縮されても収集済み要�
     try std.testing.expectEqual(@as(f64, 3), array.array.get(2).number);
 }
 
-test "カスタムソートの小配列比較順はV8のrun検出規則を保つ" {
+test "カスタムソートの小配列比較順はV8のbinary insertion規則を保つ" {
     var runtime = Runtime.init(std.testing.allocator);
     defer runtime.deinit();
     var roots = runtime.rootFrame();
@@ -267,8 +267,8 @@ test "カスタムソートの小配列比較順はV8のrun検出規則を保つ
         .callFn = TestSortOrderContext.invoke,
     });
 
-    try std.testing.expectEqual(@as(usize, 4), context.count);
-    try std.testing.expectEqualSlices([2]f64, &.{ .{ 1, 3 }, .{ 2, 1 }, .{ 2, 3 }, .{ 2, 1 } }, context.pairs[0..context.count]);
+    try std.testing.expectEqual(@as(usize, 3), context.count);
+    try std.testing.expectEqualSlices([2]f64, &.{ .{ 1, 3 }, .{ 2, 3 }, .{ 2, 1 } }, context.pairs[0..context.count]);
     try std.testing.expectEqual(@as(f64, 1), array.array.get(0).number);
     try std.testing.expectEqual(@as(f64, 2), array.array.get(1).number);
     try std.testing.expectEqual(@as(f64, 3), array.array.get(2).number);

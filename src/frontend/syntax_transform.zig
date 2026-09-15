@@ -6,7 +6,8 @@ pub const Error = lexer_mod.Error || error{ ExplicitEndInIndentMode, Unterminate
 const Kind = token_mod.Kind;
 const Token = token_mod.Token;
 
-/// DNCL/DNCL2、明示インデント、行末コロンの順に公式パイプラインと同じ変換を適用する。
+/// 公式パイプラインと同じく convertDNCL2 → convertDNCL → インデント構文 →
+/// インラインインデントの順に変換を適用する。各モードは独立して有効化され得る。
 pub fn apply(stream: *lexer_mod.TokenStream) Error!void {
     const allocator = stream.arena.allocator();
     var tokens: std.ArrayList(Token) = .empty;
@@ -15,14 +16,11 @@ pub fn apply(stream: *lexer_mod.TokenStream) Error!void {
     }
     const eof = stream.tokens[stream.tokens.len - 1];
 
+    if (stream.mode.dncl2) try transformDncl(&tokens, allocator, true);
+    if (stream.mode.dncl) try transformDncl(&tokens, allocator, false);
     try expandStringTemplates(stream, &tokens, allocator);
-    switch (stream.mode) {
-        .dncl => try transformDncl(&tokens, allocator, false),
-        .dncl2 => try transformDncl(&tokens, allocator, true),
-        else => {},
-    }
     try expandAssignmentJosi(&tokens, allocator);
-    if (stream.mode == .indent) try transformExplicitIndent(&tokens, allocator);
+    if (stream.mode.indent) try transformExplicitIndent(&tokens, allocator);
     removeCollectionEols(&tokens);
     try transformInlineIndent(&tokens, allocator);
     try tokens.append(allocator, eof);
@@ -171,74 +169,192 @@ fn expandAssignmentJosi(tokens: *std.ArrayList(Token), allocator: std.mem.Alloca
     }
 }
 
-fn transformDncl(tokens: *std.ArrayList(Token), allocator: std.mem.Allocator, is_v2: bool) !void {
-    var at_line_start = true;
-    var i: usize = 0;
-    while (i < tokens.items.len) {
-        var token = &tokens.items[i];
-        if (token.kind == .eol) {
-            at_line_start = true;
-            i += 1;
-            continue;
-        }
-        if (at_line_start and token.kind == .pipe) {
-            _ = tokens.orderedRemove(i);
-            continue;
-        }
-        at_line_start = false;
+/// 公式 nako_from_dncl.mts / nako_from_dncl2.mts の行単位変換を再現する。
+/// 行分割は `{`/`}` のネスト中はeolで分割しない公式の splitTokens と同じ規則。
+fn transformDncl(tokens: *std.ArrayList(Token), allocator: std.mem.Allocator, comptime is_v2: bool) !void {
+    var lines: std.ArrayList(std.ArrayList(Token)) = .empty;
+    defer {
+        for (lines.items) |*line| line.deinit(allocator);
+        lines.deinit(allocator);
+    }
+    try splitTokenLines(tokens.items, &lines, allocator);
+    for (lines.items) |*line| {
+        if (line.items.len <= 1) continue;
+        if (is_v2) try transformDncl2Line(line, allocator) else try transformDncl1Line(line, allocator);
+    }
+    tokens.clearRetainingCapacity();
+    for (lines.items) |line| {
+        var index: usize = 0;
+        // DNCL(v1)は行頭の連続する'|'をコメント（＝削除対象）として扱う
+        if (!is_v2) while (index < line.items.len and line.items[index].kind == .pipe) : (index += 1) {};
+        try tokens.appendSlice(allocator, line.items[index..]);
+    }
+    applyDnclSimpleReplacements(tokens.items, is_v2);
+}
 
-        if (!is_v2 and token.kind == .keyword_repeat and std.mem.eql(u8, token.value, "繰返")) {
-            const repeat = token.*;
-            const replacement = [_]Token{ synthetic(.keyword_after_test, "後判定", repeat), repeat };
-            var line_end = i;
-            while (line_end < tokens.items.len and tokens.items[line_end].kind != .eol) line_end += 1;
-            if (line_end < tokens.items.len) line_end += 1;
-            try tokens.replaceRange(allocator, i, line_end - i, &replacement);
-            i += replacement.len;
-            continue;
+/// 公式 splitTokens と同じく、eolで分割するが `{`/`}` のネスト中は分割しない。
+/// `}` が `{` より多い場合は負になり得る点も公式の挙動に合わせる。
+fn splitTokenLines(tokens: []const Token, lines: *std.ArrayList(std.ArrayList(Token)), allocator: std.mem.Allocator) !void {
+    var line: std.ArrayList(Token) = .empty;
+    var kakko: isize = 0;
+    for (tokens) |token| {
+        try line.append(allocator, token);
+        switch (token.kind) {
+            .left_brace => kakko += 1,
+            .right_brace => kakko -= 1,
+            .eol => if (kakko == 0) {
+                try lines.append(allocator, line);
+                line = .empty;
+            },
+            else => {},
         }
+    }
+    if (line.items.len > 0) try lines.append(allocator, line);
+}
 
-        if (token.kind == .assign_arrow) {
-            token.kind = .equal;
-            token.value = "=";
-        } else if (token.kind == .divide and std.mem.startsWith(u8, token.lexeme, "÷")) {
-            token.kind = .integer_divide;
-            token.value = "÷÷";
-        } else if (token.kind == .left_brace) {
-            token.kind = .left_bracket;
-            token.value = "[";
-        } else if (token.kind == .right_brace) {
-            token.kind = .right_bracket;
-            token.value = "]";
-        } else if (token.kind == .identifier and std.mem.eql(u8, token.value, "乱数")) {
-            token.value = "乱数範囲";
-        } else if (token.kind == .identifier and std.mem.eql(u8, token.value, "表示")) {
-            token.value = "連続表示";
-        } else if (token.kind == .identifier and std.mem.eql(u8, token.value, "を実行")) {
-            token.kind = .keyword_here_end;
-            token.value = "ここまで";
-            token.josi = "";
-            token.raw_josi = "";
-        } else if (!is_v2 and token.kind == .identifier and std.mem.eql(u8, token.value, "を繰り返")) {
-            token.kind = .keyword_here_end;
-            token.value = "ここまで";
-            token.josi = "";
-            token.raw_josi = "";
-        } else if (is_v2 and token.kind == .identifier and std.mem.eql(u8, token.value, "not")) {
-            token.kind = .not;
-            token.value = "!";
-        } else if (is_v2 and token.kind == .identifier and std.mem.eql(u8, token.value, "と定義")) {
-            token.kind = .keyword_here_end;
-            token.value = "ここまで";
-        }
+/// 公式の `type:value` パターン表記に対応するマッチャー。
+const Matcher = union(enum) {
+    /// `word:値` … lnakoでは公式の'word'に相当する語由来kindをまとめて判定する
+    word: []const u8,
+    /// `word`（値不問）
+    word_any,
+    /// `word:そう` … lnakoでは「そう」が値「それ」へ正規化されるため字句で判定する
+    sou,
+    /// `*`（ワイルドカード）
+    any,
+    /// 特定のkind（値不問）
+    kind: Kind,
+    /// `kind:値`
+    kind_value: KindValue,
+    /// 候補のいずれかに一致
+    alt: []const Matcher,
+};
 
-        if (token.kind == .identifier and std.mem.eql(u8, token.value, "ない") and token_mod_isConditional(token.josi) and i > 0) {
-            tokens.items[i - 1].josi = "でなければ";
-            tokens.items[i - 1].raw_josi = token.raw_josi;
-            _ = tokens.orderedRemove(i);
-            continue;
+const KindValue = struct { kind: Kind, value: []const u8 };
+
+/// 公式でtype 'word'として生成されるトークンに対応するkindかどうか。
+/// `もし`/`違えば`/`ここまで`等は公式でも専用typeなのでwordには含めない。
+fn isWordToken(token: Token) bool {
+    return switch (token.kind) {
+        .identifier,
+        .keyword_repeat,
+        .keyword_repeat_while,
+        .keyword_repeat_count,
+        .keyword_after_test,
+        .keyword_foreach,
+        .keyword_break,
+        .keyword_continue,
+        .keyword_return,
+        .keyword_let,
+        .keyword_const,
+        .keyword_import,
+        .keyword_error_guard,
+        .keyword_error,
+        .keyword_async,
+        .keyword_mode,
+        => true,
+        .def_func => !std.mem.startsWith(u8, token.lexeme, "●"), // 「関数」はword、`●`はdef_func
+        else => false,
+    };
+}
+
+/// 公式の `word:そう`。lnakoは字句「そう」を値「それ」へ正規化するため、
+/// lexemeの先頭で区別する（「それ」は `word:そう` パターンに一致しない）。
+fn isSouWord(token: Token) bool {
+    if (!isWordToken(token)) return false;
+    if (std.mem.eql(u8, token.value, "それ") and std.mem.startsWith(u8, token.lexeme, "そう")) return true;
+    return std.mem.eql(u8, token.value, "そう");
+}
+
+/// 公式の `t.value === 'そう' || t.value === 'それ'`。
+fn isSouOrSore(token: Token) bool {
+    return isWordToken(token) and (std.mem.eql(u8, token.value, "それ") or std.mem.eql(u8, token.value, "そう"));
+}
+
+fn matchToken(token: Token, matcher: Matcher) bool {
+    return switch (matcher) {
+        .word => |value| isWordToken(token) and std.mem.eql(u8, token.value, value),
+        .word_any => isWordToken(token),
+        .sou => isSouWord(token),
+        .any => true,
+        .kind => |kind| token.kind == kind,
+        .kind_value => |kv| token.kind == kv.kind and std.mem.eql(u8, token.value, kv.value),
+        .alt => |alternatives| blk: {
+            for (alternatives) |alternative| if (matchToken(token, alternative)) break :blk true;
+            break :blk false;
+        },
+    };
+}
+
+/// 公式 findTokens と同じく、行内で最初に一致した位置を返す。
+fn findSeq(line: []const Token, matchers: []const Matcher) ?usize {
+    var index: usize = 0;
+    outer: while (index < line.len) : (index += 1) {
+        for (matchers, 0..) |matcher, offset| {
+            const at = index + offset;
+            if (at >= line.len) return null;
+            if (!matchToken(line[at], matcher)) continue :outer;
         }
-        if (token.kind == .identifier and std.mem.eql(u8, token.value, "それ") and
+        return index;
+    }
+    return null;
+}
+
+/// 公式 tokenEq と同じく、指定位置からの連続一致を確認する。
+fn matchesAt(line: []const Token, start: usize, matchers: []const Matcher) bool {
+    for (matchers, 0..) |matcher, offset| {
+        const at = start + offset;
+        if (at >= line.len) return false;
+        if (!matchToken(line[at], matcher)) return false;
+    }
+    return true;
+}
+
+fn transformDncl1Line(line: *std.ArrayList(Token), allocator: std.mem.Allocator) !void {
+    // 行頭の「繰返」は後判定繰り返し。公式は行全体を2トークンへ置き換える。
+    if (isWordValue(line.items[0], "繰返")) {
+        const repeat = line.items[0];
+        line.clearRetainingCapacity();
+        try line.append(allocator, synthetic(.keyword_after_test, "後判定", repeat));
+        try line.append(allocator, repeat);
+    }
+    // 「…になるまで(繰り返す|実行する)」→ 後判定条件ループ
+    if (findSeq(line.items, &.{ .{ .word = "なる" }, .{ .word = "繰返" } })) |index| {
+        if (index > 0) replaceAtohantei(line.items, index);
+    }
+    if (findSeq(line.items, &.{ .{ .word = "なる" }, .{ .word = "実行" } })) |index| {
+        if (index > 0) replaceAtohantei(line.items, index);
+    }
+    try convertNaiNaraba(line);
+    try mergeDisplayDirectives(line);
+    try convertSouAfterExecute(line, allocator);
+    try mergeWordLoop(line, allocator, "増", "ら", "増繰返");
+    try mergeWordLoop(line, allocator, "減", "ら", "減繰返");
+    // 「を繰り返す」→ ここまで
+    while (findSeq(line.items, &.{.{ .word = "を繰り返" }})) |index| {
+        var token = &line.items[index];
+        token.kind = .keyword_here_end;
+        token.value = "ここまで";
+        token.josi = "";
+        token.raw_josi = "";
+    }
+    // 「(変数)のすべての要素/値を値にする」→ 変数=[値]に100を掛
+    while (findSeq(line.items, &.{ .{ .word = "すべて" }, .{ .word = "要素" } })) |index| {
+        if (index < 1 or index + 2 >= line.items.len) break;
+        try replaceAllElementV1(line, allocator, index);
+    }
+    while (findSeq(line.items, &.{ .{ .word = "すべて" }, .{ .word = "値" } })) |index| {
+        if (index < 1 or index + 2 >= line.items.len) break;
+        try replaceAllElementV1(line, allocator, index);
+    }
+    try splitGrowShrinkSuffix(line, allocator);
+}
+
+fn transformDncl2Line(line: *std.ArrayList(Token), allocator: std.mem.Allocator) !void {
+    try convertNaiNaraba(line);
+    // 「そうでなければ」「そうでなく」→ 違えば（「それ」でも同じ）
+    for (line.items) |*token| {
+        if (isSouOrSore(token.*) and
             (std.mem.eql(u8, token.josi, "でなければ") or std.mem.eql(u8, token.josi, "でなく")))
         {
             token.kind = .keyword_else;
@@ -246,149 +362,194 @@ fn transformDncl(tokens: *std.ArrayList(Token), allocator: std.mem.Allocator, is
             token.josi = "";
             token.raw_josi = "";
         }
+    }
+    try convertSouAfterExecute(line, allocator);
+    // 「そう,なく」→ 違えば（「そう」の助詞が「で」の場合のみ）
+    while (findSeq(line.items, &.{ .sou, .{ .word = "なく" } })) |index| {
+        if (!std.mem.eql(u8, line.items[index].josi, "で")) break;
+        line.items[index].kind = .keyword_else;
+        line.items[index].value = "違えば";
+        line.items[index].josi = "";
+        line.items[index].raw_josi = "";
+        _ = line.orderedRemove(index + 1);
+    }
+    // 「そう,なくもし」→ 違えば,もし
+    while (findSeq(line.items, &.{ .sou, .{ .word = "なくもし" } })) |index| {
+        line.items[index].kind = .keyword_else;
+        line.items[index].value = "違えば";
+        line.items[index].josi = "";
+        line.items[index].raw_josi = "";
+        const moshi = &line.items[index + 1];
+        moshi.kind = .keyword_if;
+        moshi.value = "もし";
+        moshi.josi = "";
+        moshi.raw_josi = "";
+    }
+    try mergeWordLoop(line, allocator, "増", "ら", "増繰返");
+    try mergeWordLoop(line, allocator, "減", "ら", "減繰返");
+    try mergeWordLoop(line, allocator, "増", "ら繰り返", "増繰返");
+    try mergeWordLoop(line, allocator, "減", "ら繰り返", "減繰返");
+    try transformDncl2Arrays(line, allocator);
+    try mergeDisplayDirectives(line);
+    try splitGrowShrinkSuffix(line, allocator);
+}
 
-        if (i + 2 < tokens.items.len and token.kind == .keyword_here_end and tokens.items[i + 1].kind == .comma and
-            tokens.items[i + 2].kind == .identifier and std.mem.eql(u8, tokens.items[i + 2].value, "それ"))
-        {
-            var else_token = tokens.items[i + 2];
+/// 「もし(条件)でないならば」→「もし(条件)でなければ」。公式は行内の最初の1件のみ変換する。
+fn convertNaiNaraba(line: *std.ArrayList(Token)) !void {
+    if (findSeq(line.items, &.{.{ .word = "ない" }})) |index| {
+        if (index >= 1 and std.mem.eql(u8, line.items[index].josi, "ならば")) {
+            line.items[index - 1].josi = "でなければ";
+            line.items[index - 1].raw_josi = "でなければ";
+            _ = line.orderedRemove(index);
+        }
+    }
+}
+
+/// 「二進で表示」→「二進表示」、「改行なしで表示」→「連続無改行表示」。
+fn mergeDisplayDirectives(line: *std.ArrayList(Token)) !void {
+    while (findSeq(line.items, &.{ .{ .word = "二進" }, .{ .word = "表示" } })) |index| {
+        line.items[index].value = "二進表示";
+        line.items[index].josi = "";
+        _ = line.orderedRemove(index + 1);
+    }
+    while (findSeq(line.items, &.{ .{ .word = "改行" }, .{ .word = "表示" } })) |index| {
+        line.items[index].value = "連続無改行表示";
+        line.items[index].josi = "";
+        _ = line.orderedRemove(index + 1);
+    }
+}
+
+/// 「を実行し、そうでなければ」→「違えば」、「を実行し、そうでなくもし…」→「違えば,もし…」。
+fn convertSouAfterExecute(line: *std.ArrayList(Token), allocator: std.mem.Allocator) !void {
+    const comma: Matcher = .{ .kind_value = .{ .kind = .comma, .value = "," } };
+    while (findSeq(line.items, &.{ .{ .word = "を実行" }, comma, .sou })) |index| {
+        const sou = line.items[index + 2];
+        if (std.mem.eql(u8, sou.josi, "でなければ")) {
+            var else_token = sou;
             else_token.kind = .keyword_else;
             else_token.value = "違えば";
             else_token.josi = "";
             else_token.raw_josi = "";
-            try tokens.replaceRange(allocator, i, 3, &.{else_token});
-            token = &tokens.items[i];
-        }
-
-        if (i + 1 < tokens.items.len and token.kind == .identifier and std.mem.eql(u8, token.value, "それ") and std.mem.eql(u8, token.josi, "で")) {
-            const next = &tokens.items[i + 1];
-            if (std.mem.eql(u8, next.value, "なく")) {
-                token.kind = .keyword_else;
-                token.value = "違えば";
-                token.josi = "";
-                _ = tokens.orderedRemove(i + 1);
-            } else if (std.mem.eql(u8, next.value, "なくもし")) {
-                token.kind = .keyword_else;
-                token.value = "違えば";
-                token.josi = "";
-                next.kind = .keyword_if;
-                next.value = "もし";
-                next.josi = "";
-            }
-        }
-
-        if (i + 1 < tokens.items.len and token.kind == .identifier and
-            (std.mem.eql(u8, token.value, "増") or std.mem.eql(u8, token.value, "減")) and
-            tokens.items[i + 1].kind == .identifier and
-            (std.mem.eql(u8, tokens.items[i + 1].value, "ら") or std.mem.eql(u8, tokens.items[i + 1].value, "ら繰返") or
-                std.mem.eql(u8, tokens.items[i + 1].value, "ら繰り返")))
-        {
-            token.kind = .keyword_repeat;
-            token.value = if (std.mem.eql(u8, token.value, "増")) "増繰返" else "減繰返";
-            token.josi = "";
-            _ = tokens.orderedRemove(i + 1);
-        }
-        if (token.kind == .identifier and
-            ((token.value.len > "増".len and std.mem.endsWith(u8, token.value, "増")) or
-                (token.value.len > "減".len and std.mem.endsWith(u8, token.value, "減"))))
-        {
-            const suffix = token.value[token.value.len - "増".len ..];
-            token.value = token.value[0 .. token.value.len - "増".len];
-            token.josi = "だけ";
-            try tokens.insert(allocator, i + 1, synthetic(.identifier, suffix, token.*));
-            i += 2;
+            try line.replaceRange(allocator, index, 3, &.{else_token});
             continue;
         }
-
-        if (i + 1 < tokens.items.len and token.kind == .identifier and std.mem.eql(u8, token.value, "二進") and
-            tokens.items[i + 1].kind == .identifier and std.mem.eql(u8, tokens.items[i + 1].value, "表示"))
+        if (std.mem.eql(u8, sou.josi, "で") and index + 3 < line.items.len and
+            std.mem.startsWith(u8, line.items[index + 3].value, "なくもし"))
         {
-            token.value = "二進表示";
-            token.josi = "";
-            _ = tokens.orderedRemove(i + 1);
-        }
-        if (i + 1 < tokens.items.len and token.kind == .identifier and std.mem.eql(u8, token.value, "改行") and
-            tokens.items[i + 1].kind == .identifier and std.mem.eql(u8, tokens.items[i + 1].value, "表示"))
-        {
-            token.value = "連続無改行表示";
-            token.josi = "";
-            _ = tokens.orderedRemove(i + 1);
-        }
-        if (!is_v2 and i + 1 < tokens.items.len and token.kind == .identifier and std.mem.eql(u8, token.value, "なる") and
-            std.mem.eql(u8, token.josi, "まで") and tokens.items[i + 1].kind == .identifier and
-            (std.mem.eql(u8, tokens.items[i + 1].value, "実行") or std.mem.eql(u8, tokens.items[i + 1].value, "繰返")))
-        {
-            tokens.items[i + 1].kind = .keyword_repeat_while;
-            tokens.items[i + 1].value = "間";
-            for (tokens.items[0..i]) |*before| {
-                if (before.kind == .identifier and (std.mem.eql(u8, before.value, "を") or std.mem.eql(u8, before.value, "が"))) {
-                    before.kind = .keyword_here_end;
-                    before.value = "ここまで";
+            var else_token = sou;
+            else_token.kind = .keyword_else;
+            else_token.value = "違えば";
+            else_token.josi = "";
+            else_token.raw_josi = "";
+            try line.replaceRange(allocator, index, 3, &.{else_token});
+            const nakumosi_index = index + 1;
+            if (line.items[nakumosi_index].value.len > "なくもし".len) {
+                const suffix = line.items[nakumosi_index].value["なくもし".len..];
+                var suffix_token = synthetic(.identifier, suffix, line.items[nakumosi_index]);
+                if (std.ascii.isDigit(suffix[0])) {
+                    suffix_token.kind = .number;
+                    suffix_token.number_value = std.fmt.parseFloat(f64, suffix) catch null;
                 }
+                try line.insert(allocator, nakumosi_index + 1, suffix_token);
+                line.items[nakumosi_index].value = "なくもし";
             }
+            line.items[nakumosi_index].kind = .keyword_if;
+            line.items[nakumosi_index].value = "もし";
+            line.items[nakumosi_index].josi = "";
+            line.items[nakumosi_index].raw_josi = "";
+            continue;
         }
-        i += 1;
+        break;
     }
-    try transformDnclArrays(tokens, allocator, is_v2);
 }
 
-fn transformDnclArrays(tokens: *std.ArrayList(Token), allocator: std.mem.Allocator, is_v2: bool) !void {
-    var i: usize = 0;
-    while (i < tokens.items.len) {
-        if (is_v2 and matchValues(tokens.items, i, &.{ null, null, "すべて", null, null, "代入" }) and
-            (std.mem.eql(u8, tokens.items[i].value, "配列") or std.mem.eql(u8, tokens.items[i].value, "配列変数")) and
-            (std.mem.eql(u8, tokens.items[i + 3].value, "要素") or std.mem.eql(u8, tokens.items[i + 3].value, "値")))
-        {
-            const anchor = tokens.items[i];
-            var variable = tokens.items[i + 1];
-            var value = tokens.items[i + 4];
+/// 「(増|減)やしながら…」→ 増繰返/減繰返。語「増|減」＋指定語の連続を1語に併合する。
+fn mergeWordLoop(line: *std.ArrayList(Token), allocator: std.mem.Allocator, first: []const u8, second: []const u8, merged: []const u8) !void {
+    while (findSeq(line.items, &.{ .{ .word = first }, .{ .word = second } })) |index| {
+        var token = line.items[index];
+        token.kind = .keyword_repeat;
+        token.value = merged;
+        token.josi = "";
+        token.raw_josi = "";
+        try line.replaceRange(allocator, index, 2, &.{token});
+    }
+}
+
+/// 「…になるまで(繰り返す|実行する)」用。行内の最初の「を」「が」をここまでに、
+/// 「繰返/実行」を「間」に置き換える。
+fn replaceAtohantei(line: []Token, index: usize) void {
+    if (findSeq(line, &.{.{ .word = "を" }})) |wo| {
+        line[wo].kind = .keyword_here_end;
+        line[wo].value = "ここまで";
+    }
+    if (findSeq(line, &.{.{ .word = "が" }})) |ga| {
+        line[ga].kind = .keyword_here_end;
+        line[ga].value = "ここまで";
+    }
+    line[index + 1].kind = .keyword_repeat_while;
+    line[index + 1].value = "間";
+}
+
+/// DNCL(v1)の「(変数)のすべての(要素|値)を値にする」。
+/// 「すべて」の位置niから4トークンを「= [値]に 100を 掛」へ置き換える。
+fn replaceAllElementV1(line: *std.ArrayList(Token), allocator: std.mem.Allocator, index: usize) !void {
+    const anchor = line.items[index];
+    line.items[index - 1].josi = "";
+    line.items[index - 1].raw_josi = "";
+    var value = line.items[index + 2];
+    value.josi = "";
+    value.raw_josi = "";
+    var close = synthetic(.right_bracket, "]", anchor);
+    close.josi = "に";
+    var count = syntheticNumber(100, anchor);
+    count.josi = "を";
+    const replacement = [_]Token{
+        synthetic(.equal, "=", anchor),
+        synthetic(.left_bracket, "[", anchor),
+        value,
+        close,
+        count,
+        synthetic(.identifier, "掛", anchor),
+    };
+    try line.replaceRange(allocator, index, @min(@as(usize, 4), line.items.len - index), &replacement);
+}
+
+/// DNCL2の配列初期化3パターン。いずれも「変数 = 掛([値],30)」へ変換する。
+fn transformDncl2Arrays(line: *std.ArrayList(Token), allocator: std.mem.Allocator) !void {
+    const array_word: Matcher = .{ .alt = &.{ .{ .word = "配列" }, .{ .word = "配列変数" } } };
+    const element_word: Matcher = .{ .alt = &.{ .{ .word = "要素" }, .{ .word = "値" } } };
+    const value_token: Matcher = .{ .alt = &.{ .{ .kind = .number }, .{ .kind = .string }, .word_any } };
+    var index: usize = 0;
+    while (index < line.items.len) : (index += 1) {
+        // 「配列(変数) 変数 のすべての(要素|値)に 値 を代入する」
+        if (matchesAt(line.items, index, &.{ array_word, .word_any, .{ .word = "すべて" }, element_word, .any, .{ .word = "代入" } })) {
+            var variable = line.items[index + 1];
             variable.josi = "";
+            variable.raw_josi = "";
+            var value = line.items[index + 4];
             value.josi = "";
-            const replacement = [_]Token{
-                variable,
-                synthetic(.equal, "=", anchor),
-                synthetic(.identifier, "掛", anchor),
-                synthetic(.left_paren, "(", anchor),
-                synthetic(.left_bracket, "[", anchor),
-                value,
-                synthetic(.right_bracket, "]", anchor),
-                synthetic(.comma, ",", anchor),
-                syntheticNumber(30, anchor),
-                synthetic(.right_paren, ")", anchor),
-            };
-            try tokens.replaceRange(allocator, i, 6, &replacement);
-            i += replacement.len;
+            value.raw_josi = "";
+            try line.replaceRange(allocator, index, 6, &arrayInitReplacement(variable, value, line.items[index]));
+            index += 6; // 公式のskip相当
             continue;
         }
-        if (is_v2 and matchValues(tokens.items, i, &.{ null, "すべて", null, null, "する" }) and
-            (std.mem.eql(u8, tokens.items[i + 2].value, "要素") or std.mem.eql(u8, tokens.items[i + 2].value, "値")))
-        {
-            const anchor = tokens.items[i];
-            var variable = tokens.items[i];
-            var value = tokens.items[i + 3];
+        // 「変数 のすべての(要素|値)を 値 にする」
+        if (matchesAt(line.items, index, &.{ .word_any, .{ .word = "すべて" }, element_word, value_token, .{ .word = "する" } })) {
+            var variable = line.items[index];
             variable.josi = "";
+            variable.raw_josi = "";
+            var value = line.items[index + 3];
             value.josi = "";
-            const replacement = [_]Token{
-                variable,
-                synthetic(.equal, "=", anchor),
-                synthetic(.identifier, "掛", anchor),
-                synthetic(.left_paren, "(", anchor),
-                synthetic(.left_bracket, "[", anchor),
-                value,
-                synthetic(.right_bracket, "]", anchor),
-                synthetic(.comma, ",", anchor),
-                syntheticNumber(30, anchor),
-                synthetic(.right_paren, ")", anchor),
-            };
-            try tokens.replaceRange(allocator, i, 5, &replacement);
-            i += replacement.len;
+            value.raw_josi = "";
+            try line.replaceRange(allocator, index, 5, &arrayInitReplacement(variable, value, line.items[index]));
             continue;
         }
-        if (is_v2 and matchValues(tokens.items, i, &.{ null, null, "初期化" }) and
-            (std.mem.eql(u8, tokens.items[i].value, "配列変数") or std.mem.eql(u8, tokens.items[i].value, "配列")))
-        {
-            const anchor = tokens.items[i];
-            var variable = tokens.items[i + 1];
+        // 「配列変数 変数 を初期化する」
+        if (matchesAt(line.items, index, &.{ .{ .alt = &.{ .{ .word = "配列変数" }, .{ .word = "配列" } } }, .word_any, .{ .word = "初期化" } })) {
+            var variable = line.items[index + 1];
             variable.josi = "";
+            variable.raw_josi = "";
+            const anchor = line.items[index];
             const replacement = [_]Token{
                 variable,
                 synthetic(.equal, "=", anchor),
@@ -401,49 +562,78 @@ fn transformDnclArrays(tokens: *std.ArrayList(Token), allocator: std.mem.Allocat
                 syntheticNumber(30, anchor),
                 synthetic(.right_paren, ")", anchor),
             };
-            try tokens.replaceRange(allocator, i, 3, &replacement);
-            i += replacement.len;
+            try line.replaceRange(allocator, index, 3, &replacement);
             continue;
         }
-        if (!is_v2 and matchValues(tokens.items, i, &.{ null, "すべて", null, null })) {
-            const element = tokens.items[i + 2].value;
-            if (std.mem.eql(u8, element, "要素") or std.mem.eql(u8, element, "値")) {
-                const anchor = tokens.items[i];
-                var variable = tokens.items[i];
-                var value = tokens.items[i + 3];
-                variable.josi = "";
-                value.josi = "";
-                var close = synthetic(.right_bracket, "]", anchor);
-                close.josi = "に";
-                var count = syntheticNumber(100, anchor);
-                count.josi = "を";
-                const replacement = [_]Token{
-                    variable,
-                    synthetic(.equal, "=", anchor),
-                    synthetic(.left_bracket, "[", anchor),
-                    value,
-                    close,
-                    count,
-                    synthetic(.identifier, "掛", anchor),
-                };
-                // 公式変換は「する」がない入力でも、値の直後までを置換する。
-                // fuzzの縮小で末尾の語が消えた場合もこの境界を保つ。
-                const consumed = @min(@as(usize, 5), tokens.items.len - i);
-                try tokens.replaceRange(allocator, i, consumed, &replacement);
-                i += replacement.len;
-                continue;
-            }
-        }
-        i += 1;
     }
 }
 
-fn matchValues(tokens: []const Token, start: usize, pattern: []const ?[]const u8) bool {
-    if (start + pattern.len > tokens.len) return false;
-    for (pattern, 0..) |expected, offset| if (expected) |value| {
-        if (!std.mem.eql(u8, tokens[start + offset].value, value)) return false;
+fn arrayInitReplacement(variable: Token, value: Token, anchor: Token) [10]Token {
+    return .{
+        variable,
+        synthetic(.equal, "=", anchor),
+        synthetic(.identifier, "掛", anchor),
+        synthetic(.left_paren, "(", anchor),
+        synthetic(.left_bracket, "[", anchor),
+        value,
+        synthetic(.right_bracket, "]", anchor),
+        synthetic(.comma, ",", anchor),
+        syntheticNumber(30, anchor),
+        synthetic(.right_paren, ")", anchor),
     };
-    return true;
+}
+
+/// 「…増」「…減」で終わる2文字以上の語を「…だけ 増|減」へ分割する。
+fn splitGrowShrinkSuffix(line: *std.ArrayList(Token), allocator: std.mem.Allocator) !void {
+    var index: usize = 0;
+    while (index < line.items.len) : (index += 1) {
+        const token = &line.items[index];
+        if (isWordToken(token.*) and token.value.len > "増".len and
+            (std.mem.endsWith(u8, token.value, "増") or std.mem.endsWith(u8, token.value, "減")))
+        {
+            const suffix = token.value[token.value.len - "増".len ..];
+            token.value = token.value[0 .. token.value.len - "増".len];
+            token.josi = "だけ";
+            token.raw_josi = "だけ";
+            try line.insert(allocator, index + 1, synthetic(.identifier, suffix, token.*));
+        }
+    }
+}
+
+/// 公式 DNCL_SIMPLES の単純置換を行末尾まで全トークンへ適用する。
+fn applyDnclSimpleReplacements(tokens: []Token, is_v2: bool) void {
+    for (tokens) |*token| {
+        if (token.kind == .assign_arrow and std.mem.eql(u8, token.value, "←")) {
+            token.kind = .equal;
+            token.value = "=";
+        } else if (token.kind == .divide and std.mem.eql(u8, token.value, "÷")) {
+            token.kind = .integer_divide;
+            token.value = "÷÷";
+        } else if (token.kind == .left_brace) {
+            token.kind = .left_bracket;
+            token.value = "[";
+        } else if (token.kind == .right_brace) {
+            token.kind = .right_bracket;
+            token.value = "]";
+        } else if (is_v2 and isWordToken(token.*) and std.mem.eql(u8, token.value, "not")) {
+            token.kind = .not;
+            token.value = "!";
+        } else if (isWordToken(token.*) and std.mem.eql(u8, token.value, "乱数")) {
+            token.value = "乱数範囲";
+        } else if (isWordToken(token.*) and std.mem.eql(u8, token.value, "表示")) {
+            token.value = "連続表示";
+        } else if (!is_v2 and isWordToken(token.*) and std.mem.eql(u8, token.value, "を実行")) {
+            token.kind = .keyword_here_end;
+            token.value = "ここまで";
+        } else if (is_v2 and isWordToken(token.*) and std.mem.eql(u8, token.value, "と定義")) {
+            token.kind = .keyword_here_end;
+            token.value = "ここまで";
+        }
+    }
+}
+
+fn isWordValue(token: Token, value: []const u8) bool {
+    return isWordToken(token) and std.mem.eql(u8, token.value, value);
 }
 
 fn transformExplicitIndent(tokens: *std.ArrayList(Token), allocator: std.mem.Allocator) Error!void {
@@ -625,12 +815,6 @@ fn lastToken(tokens: []const Token) Token {
     };
 }
 
-fn token_mod_isConditional(value: []const u8) bool {
-    return std.mem.eql(u8, value, "でなければ") or std.mem.eql(u8, value, "なければ") or
-        std.mem.eql(u8, value, "ならば") or std.mem.eql(u8, value, "なら") or
-        std.mem.eql(u8, value, "たら") or std.mem.eql(u8, value, "れば");
-}
-
 test "明示インデント構文へここまでを挿入する" {
     var stream = try lexer_mod.tokenize(std.testing.allocator, "!インデント構文\nもし1=1ならば\n　　1を表示\n2を表示\n");
     defer stream.deinit();
@@ -661,7 +845,7 @@ test "DNCLの代入・整数除算・配列括弧を変換する" {
     var stream = try lexer_mod.tokenize(std.testing.allocator, "!DNCLモード\nA←{{7÷2}}\n");
     defer stream.deinit();
     try apply(&stream);
-    try std.testing.expectEqual(token_mod.Mode.dncl, stream.mode);
+    try std.testing.expect(stream.mode.dncl);
     var equal_count: usize = 0;
     var integer_divide_count: usize = 0;
     for (stream.tokens) |token| {

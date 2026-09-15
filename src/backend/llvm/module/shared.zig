@@ -33,10 +33,16 @@ pub fn hasLocalName(function: ir.Function, name: []const u8) bool {
     for (function.captures) |capture| if (std.mem.eql(u8, capture, name)) return true;
     for (function.parameters) |parameter| if (std.mem.eql(u8, parameter.name, name)) return true;
     for (function.blocks) |block| for (block.instructions) |instruction| {
-        if ((instruction.opcode == .load_local or instruction.opcode == .store_local or instruction.opcode == .increment) and
+        if ((instruction.opcode == .load_local or instruction.opcode == .store_local) and
             std.mem.eql(u8, instruction.name, name)) return true;
-        if (instruction.opcode == .destructure_store) for (instruction.names) |local_name| {
-            if (std.mem.eql(u8, local_name, name)) return true;
+        // DNCL自動初期化のローカル束縛も同名ローカルの痕跡として扱う
+        if (instruction.opcode == .ensure_array_var and instruction.local_target and
+            std.mem.eql(u8, instruction.name, name)) return true;
+        // 範囲繰り返し変数のローカル束縛も同様（iterator_nextが書き戻す）
+        if (instruction.opcode == .iterator_begin and instruction.local_target and
+            std.mem.eql(u8, instruction.name, name)) return true;
+        if (instruction.opcode == .destructure_store) for (instruction.names, 0..) |local_name, index| {
+            if (ir.destructureTargetIsLocal(instruction, index) and std.mem.eql(u8, local_name, name)) return true;
         };
     };
     return false;

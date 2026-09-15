@@ -157,17 +157,25 @@ fn aotIndexKeyMatchesUnits(key: Value, units: []const u16) bool {
 /// whole hash cluster and returns the smallest matching index, so a
 /// duplicated key resolves to the same first entry a linear scan finds.
 pub const AotDictionary = dictionary_module.make(Value, DictionaryEntry, aotIndexHash, aotIndexHashUnits, aotIndexKeyMatchesUnits, sameKey, aot_dictionary_index_threshold);
-pub const AotTomlTemporal = struct {
-    kind: toml_temporal.Kind,
-    json_text: []u8,
-    toml_text: []u8,
+pub const io_tasks = @import("io_tasks.zig");
+pub const AotTomlTemporal = io_tasks.AotTomlTemporal;
+pub const AotHttpRoute = io_tasks.AotHttpRoute;
+pub const AotHttpHeader = io_tasks.AotHttpHeader;
+const AotHttpServerState = io_tasks.AotHttpServerState;
+const AotHttpGlobals = io_tasks.AotHttpGlobals;
+pub const AotArchiveOperation = io_tasks.AotArchiveOperation;
+pub const AotArchiveTask = io_tasks.AotArchiveTask;
+pub const AotProcessMode = io_tasks.AotProcessMode;
+pub const AotCommandResult = io_tasks.AotCommandResult;
+pub const AotProcessTask = io_tasks.AotProcessTask;
+pub const AotFileTaskOperation = io_tasks.AotFileTaskOperation;
+pub const AotFileTask = io_tasks.AotFileTask;
+pub const AotClientHttpResult = io_tasks.AotClientHttpResult;
+pub const AotClientHttpMode = io_tasks.AotClientHttpMode;
+pub const AotClientHttpBodyKind = io_tasks.AotClientHttpBodyKind;
+pub const AotClientHttpTask = io_tasks.AotClientHttpTask;
 
-    pub fn deinit(self: *AotTomlTemporal, allocator: std.mem.Allocator) void {
-        allocator.free(self.json_text);
-        allocator.free(self.toml_text);
-        self.* = undefined;
-    }
-};
+pub const indexing = @import("indexing.zig");
 pub const ByteKind = byte_storage.Kind;
 const ByteStorage = byte_storage.Storage(Value);
 pub const ByteBuffer = byte_storage.Buffer(ByteStorage);
@@ -204,189 +212,6 @@ const FunctionObject = struct {
     /// is created lazily by the table property resolver and points back to
     /// the function through its own `constructor` property.
     prototype: Value = .{},
-};
-
-const AotHttpRouteKind = enum { static, callback };
-
-pub const AotHttpRoute = struct {
-    kind: AotHttpRouteKind,
-    prefix: []u8,
-    path: []u8 = &.{},
-    callback: Value = .{},
-
-    pub fn deinit(self: *AotHttpRoute, allocator: std.mem.Allocator) void {
-        allocator.free(self.prefix);
-        if (self.path.len > 0) allocator.free(self.path);
-        self.* = undefined;
-    }
-};
-
-pub const AotHttpHeader = struct {
-    name: []u8,
-    value: []u8,
-
-    pub fn deinit(self: *AotHttpHeader, allocator: std.mem.Allocator) void {
-        allocator.free(self.name);
-        allocator.free(self.value);
-        self.* = undefined;
-    }
-};
-
-const AotHttpServerState = struct {
-    routes: std.ArrayList(AotHttpRoute) = .empty,
-    response_headers: std.ArrayList(AotHttpHeader) = .empty,
-    started: bool = false,
-    request_active: bool = false,
-    response_status: u16 = 200,
-
-    pub fn deinit(self: *AotHttpServerState, allocator: std.mem.Allocator) void {
-        for (self.routes.items) |*route| route.deinit(allocator);
-        self.routes.deinit(allocator);
-        self.clearHeaders(allocator);
-        self.response_headers.deinit(allocator);
-        self.* = undefined;
-    }
-
-    pub fn clearHeaders(self: *AotHttpServerState, allocator: std.mem.Allocator) void {
-        for (self.response_headers.items) |*header| header.deinit(allocator);
-        self.response_headers.clearRetainingCapacity();
-    }
-};
-
-pub const AotArchiveOperation = enum { create, extract };
-
-pub const AotArchiveTask = struct {
-    operation: AotArchiveOperation,
-    use_external_tool: bool,
-    source: []u8,
-    destination: []u8,
-    tool_path: []u8,
-    callback: Value,
-
-    pub fn deinit(self: *AotArchiveTask, allocator: std.mem.Allocator) void {
-        allocator.free(self.source);
-        allocator.free(self.destination);
-        allocator.free(self.tool_path);
-        self.* = undefined;
-    }
-};
-
-pub const AotProcessMode = enum { command_output, output_callback };
-
-pub const AotCommandResult = struct {
-    stdout: []u8,
-    stderr: []u8,
-    exit_code: u8,
-
-    pub fn deinit(self: *AotCommandResult, allocator: std.mem.Allocator) void {
-        allocator.free(self.stdout);
-        allocator.free(self.stderr);
-        self.* = undefined;
-    }
-};
-
-pub const AotProcessTask = struct {
-    runtime: *Runtime,
-    command: []u8,
-    cwd: []u8,
-    mode: AotProcessMode,
-    callback: Value = .{},
-    thread: ?std.Thread = null,
-    complete: std.atomic.Value(bool) = .init(false),
-    completion_order: u64 = 0,
-    result: ?AotCommandResult = null,
-    failure: ?anyerror = null,
-
-    pub fn run(self: *@This()) void {
-        const result = runAotShellCommand(self.runtime, self.command, self.cwd) catch |failure| {
-            self.failure = failure;
-            self.completion_order = self.runtime.process_completion_sequence.fetchAdd(1, .monotonic);
-            self.complete.store(true, .release);
-            return;
-        };
-        self.result = result;
-        self.completion_order = self.runtime.process_completion_sequence.fetchAdd(1, .monotonic);
-        self.complete.store(true, .release);
-    }
-
-    pub fn deinit(self: *@This(), allocator: std.mem.Allocator, join: bool) void {
-        if (join) if (self.thread) |thread| thread.join();
-        if (self.result) |*result| result.deinit(allocator);
-        allocator.free(self.command);
-        allocator.free(self.cwd);
-        allocator.destroy(self);
-    }
-};
-
-pub const AotFileTaskOperation = enum { copy, move, delete };
-
-pub const AotFileTask = struct {
-    runtime: *Runtime,
-    operation: AotFileTaskOperation,
-    source: []u8,
-    destination: []u8,
-    overwrite: bool,
-    callback: Value = .{},
-    thread: ?std.Thread = null,
-    complete: std.atomic.Value(bool) = .init(false),
-    completion_order: u64 = 0,
-    failure: ?anyerror = null,
-
-    pub fn run(self: *@This()) void {
-        const io = aotRuntimeIo(self.runtime);
-        const result = switch (self.operation) {
-            .copy => aotFileCopyMoveWithIo(self.runtime, io, self.source, self.destination, self.overwrite, false),
-            .move => aotFileCopyMoveWithIo(self.runtime, io, self.source, self.destination, self.overwrite, true),
-            .delete => std.Io.Dir.cwd().deleteTree(io, self.source),
-        };
-        if (result) |_| {} else |failure| self.failure = failure;
-        self.completion_order = self.runtime.process_completion_sequence.fetchAdd(1, .monotonic);
-        self.complete.store(true, .release);
-    }
-
-    pub fn deinit(self: *@This(), allocator: std.mem.Allocator, join: bool) void {
-        if (join) if (self.thread) |thread| thread.join();
-        allocator.free(self.source);
-        allocator.free(self.destination);
-        allocator.destroy(self);
-    }
-};
-
-pub const AotClientHttpResult = struct {
-    body: []u8,
-    status: u16 = 0,
-    content_length_zero: bool = false,
-    failure: ?anyerror = null,
-
-    pub fn deinit(self: *AotClientHttpResult, allocator: std.mem.Allocator) void {
-        allocator.free(self.body);
-        self.* = undefined;
-    }
-};
-
-pub const AotClientHttpMode = enum { callback, set_target, response_promise };
-
-pub const AotClientHttpBodyKind = enum { text, json, binary };
-
-pub const AotClientHttpTask = struct {
-    result: AotClientHttpResult,
-    mode: AotClientHttpMode,
-    callback: Value = .{},
-    promise: Value = .{},
-    target: ?*Value = null,
-    onerror: ?*Value = null,
-
-    pub fn deinit(self: *AotClientHttpTask, allocator: std.mem.Allocator) void {
-        self.result.deinit(allocator);
-        self.* = undefined;
-    }
-};
-
-const AotHttpGlobals = struct {
-    method: ?*Value = null,
-    get_data: ?*Value = null,
-    post_data: ?*Value = null,
-    files_data: ?*Value = null,
 };
 
 pub const AotCsvDelimiterDefault = csv_state.DelimiterDefault;
@@ -677,7 +502,7 @@ pub const Runtime = struct {
         if (success) entry.successes +|= 1 else entry.failures +|= 1;
     }
 
-    fn syncAllocatorTelemetry(self: *Runtime) void {
+    pub fn syncAllocatorTelemetry(self: *Runtime) void {
         const telemetry = self.allocator_telemetry orelse return;
         const snapshot = telemetry.snapshot();
         self.counters.allocator_alloc_calls = snapshot.alloc_calls;
@@ -1224,6 +1049,20 @@ pub const Runtime = struct {
         self.setFailureText(message);
     }
 
+    /// 未宣言変数への添字アクセス失敗（公式の TypeError『Cannot read properties
+    /// of undefined/null (reading '<key>')』相当）。
+    pub fn setIndexReadFailure(self: *Runtime, container: ?Value, key: Value) void {
+        self.ensureAllocatorTelemetry() catch |allocation_failure| runtimeFailure(allocation_failure);
+        const key_units = valueUtf16Alloc(self, key) catch |failure| runtimeFailure(failure);
+        defer self.allocator.free(key_units);
+        const key_utf8 = std.unicode.utf16LeToUtf8Alloc(self.allocator, key_units) catch |failure| runtimeFailure(failure);
+        defer self.allocator.free(key_utf8);
+        const container_name: []const u8 = if (container != null and container.?.tag == @intFromEnum(Tag.null_value)) "null" else "undefined";
+        const message = std.fmt.allocPrint(self.allocator, "Cannot read properties of {s} (reading '{s}')", .{ container_name, key_utf8 }) catch |failure| runtimeFailure(failure);
+        defer self.allocator.free(message);
+        self.setFailureText(message);
+    }
+
     pub fn systemContext(self: *Runtime) !Value {
         if (self.system_context.tag == @intFromEnum(Tag.undefined)) self.system_context = try self.createDictionary(&.{});
         return self.system_context;
@@ -1292,419 +1131,91 @@ pub const Runtime = struct {
     }
 
     pub fn indexGet(self: *Runtime, container: Value, key: Value) Value {
-        if (container.tag == @intFromEnum(Tag.utf16_string)) {
-            const index = valueIndex(key) orelse return .{};
-            return self.stringAt(container, index);
-        }
-        const object = container.object() orelse return .{};
-        return switch (object.payload) {
-            .byte_buffer => {
-                var rooted = [_]Value{ container, key };
-                var frame = RootFrame{};
-                self.pushRoots(&frame, &rooted, rooted.len);
-                defer self.popRoots(&frame);
-                const source = rooted[0];
-                const rooted_buffer = source.object().?.payload.byte_buffer;
-                const key_units = valueUtf16Alloc(self, rooted[1]) catch |failure| {
-                    self.setFailure(failure);
-                    return .{};
-                };
-                defer self.allocator.free(key_units);
-                if (self.aotObjectOwnPropertyGetUnits(source.object().?, key_units)) |value| return value;
-                if (tablePropertyIndex(key_units) == null) {
-                    const inherited = tableInheritedProperty(self, source, .byte_buffer, key_units) catch |failure| {
-                        self.setFailure(failure);
-                        return .{};
-                    };
-                    if (inherited) |value| return value;
-                }
-                if (!aotByteBufferAllowsStandardPrototype(source)) {
-                    const index = tablePropertyIndex(key_units) orelse return .{};
-                    return if (rooted_buffer.kind == .array_buffer or index >= rooted_buffer.bytes.len)
-                        .{}
-                    else
-                        numberValue(@floatFromInt(rooted_buffer.bytes[index]));
-                }
-                if (sameKey(rooted[1], staticStringValue("length"))) {
-                    return if (rooted_buffer.kind == .array_buffer) .{} else numberValue(@floatFromInt(rooted_buffer.bytes.len));
-                }
-                if (sameKey(rooted[1], staticStringValue("buffer")) and rooted_buffer.kind != .array_buffer) {
-                    return self.createByteBufferBackingBuffer(rooted_buffer) catch |failure| {
-                        self.setFailure(failure);
-                        return .{};
-                    };
-                }
-                if (aotByteBufferScalarProperty(rooted_buffer, rooted[1])) |value| return value;
-                const index = tablePropertyIndex(key_units) orelse return .{};
-                return if (rooted_buffer.kind == .array_buffer or index >= rooted_buffer.bytes.len) .{} else numberValue(@floatFromInt(rooted_buffer.bytes[index]));
-            },
-            .array => aotArrayPropertyGet(self, object, key),
-            .dictionary => blk: {
-                var rooted = [_]Value{ container, key, .{} };
-                var dictionary_frame = RootFrame{};
-                self.pushRoots(&dictionary_frame, &rooted, rooted.len);
-                defer self.popRoots(&dictionary_frame);
-                const dictionary = &rooted[0].object().?.payload.dictionary;
-                // A string key resolves straight through the index without
-                // materializing UTF-16 units; other keys keep the text path
-                // because the prototype walk needs it either way.
-                if (isString(rooted[1])) {
-                    if (dictionary.findByKey(rooted[1])) |index| break :blk dictionary.entries.items[index].value;
-                }
-                const key_units = valueUtf16Alloc(self, rooted[1]) catch |failure| {
-                    self.setFailure(failure);
-                    break :blk .{};
-                };
-                defer self.allocator.free(key_units);
-                if (!isString(rooted[1])) {
-                    if (dictionary.findByUnits(key_units)) |index| break :blk dictionary.entries.items[index].value;
-                }
-                rooted[2] = (tableInheritedProperty(self, rooted[0], .dictionary, key_units) catch |failure| {
-                    self.setFailure(failure);
-                    break :blk .{};
-                }) orelse .{};
-                break :blk rooted[2];
-            },
-            .function => tableRowProperty(self, container, key) catch |failure| {
-                self.setFailure(failure);
-                return .{};
-            },
-            .promise => blk: {
-                var rooted = [_]Value{ container, key };
-                var promise_frame = RootFrame{};
-                self.pushRoots(&promise_frame, &rooted, rooted.len);
-                defer self.popRoots(&promise_frame);
-                const key_units = valueUtf16Alloc(self, rooted[1]) catch |failure| {
-                    self.setFailure(failure);
-                    break :blk .{};
-                };
-                defer self.allocator.free(key_units);
-                break :blk self.aotObjectOwnPropertyGetUnits(rooted[0].object().?, key_units) orelse .{};
-            },
-            else => .{},
-        };
+        return indexing.indexGet(self, container, key);
     }
 
-    pub fn destructureGet(_: *Runtime, source: Value, index: usize) Value {
-        if (source.tag == @intFromEnum(Tag.array)) {
-            const items = source.object().?.payload.array.items;
-            return if (index < items.len) items[index] else .{};
-        }
-        return if (index == 0) source else .{};
+    pub fn destructureGet(self: *Runtime, source: Value, index: usize) Value {
+        return indexing.destructureGet(self, source, index);
     }
 
     pub fn indexSet(self: *Runtime, container: Value, key: Value, value: Value) !void {
-        const object = container.object() orelse return switch (@as(Tag, @enumFromInt(container.tag))) {
-            .undefined, .null_value => error.InvalidContainer,
-            else => {},
-        };
-        switch (object.payload) {
-            .array => {
-                try aotArrayPropertySet(self, object, key, value);
-            },
-            .dictionary => |*entries| {
-                var rooted = [_]Value{ container, key, value };
-                var frame = RootFrame{};
-                self.pushRoots(&frame, &rooted, rooted.len);
-                defer self.popRoots(&frame);
-                rooted[1] = try self.propertyKey(rooted[1]);
-                var has_own_prototype_key = false;
-                if (sameKey(rooted[1], staticStringValue("__proto__"))) has_own_prototype_key = entries.findByKey(rooted[1]) != null;
-                if (!has_own_prototype_key and sameKey(rooted[1], staticStringValue("__proto__"))) {
-                    if (rooted[2].tag == @intFromEnum(Tag.null_value) or rooted[2].object() != null) {
-                        object.prototype = rooted[2];
-                    }
-                    return;
-                }
-                try self.setDictionary(entries, rooted[1], rooted[2]);
-            },
-            .byte_buffer => |*buffer| {
-                if (buffer.kind != .array_buffer) if (valueIndex(key)) |index| {
-                    const number = try valueToNumberRuntime(self, value);
-                    const byte: u8 = if (!std.math.isFinite(number) or number == 0)
-                        0
-                    else
-                        @intFromFloat(@mod(@trunc(number), 256));
-                    if (index < buffer.bytes.len) buffer.bytes[index] = byte;
-                    return;
-                };
-                const key_units = valueUtf16Alloc(self, key) catch |failure| {
-                    self.setFailure(failure);
-                    return failure;
-                };
-                defer self.allocator.free(key_units);
-                if (std.mem.eql(u16, key_units, &.{ '_', '_', 'p', 'r', 'o', 't', 'o', '_', '_' }) and
-                    self.aotObjectOwnPropertyGetUnits(object, key_units) == null)
-                {
-                    if (value.tag == @intFromEnum(Tag.null_value) or value.object() != null) object.prototype = value;
-                    return;
-                }
-                if (aotByteBufferReadOnlyProperty(buffer.kind, key_units)) return;
-                try self.setAotOwnProperty(container, object, key, value);
-            },
-            .function => try self.setAotFunctionProperty(container, object, key, value),
-            .promise => try self.setAotOwnProperty(container, object, key, value),
-            .utf16_string, .bigint, .iterator, .binding_cell => {},
-        }
+        return indexing.indexSet(self, container, key, value);
     }
 
     pub fn setAotOwnProperty(self: *Runtime, container: Value, object: *Object, key: Value, value: Value) !void {
-        var rooted = [_]Value{ container, key, value, .{} };
-        var frame = RootFrame{};
-        self.pushRoots(&frame, &rooted, rooted.len);
-        defer self.popRoots(&frame);
-        rooted[3] = try self.propertyKey(rooted[1]);
-        try self.setDictionary(&object.array_properties, rooted[3], rooted[2]);
+        return indexing.setAotOwnProperty(self, container, object, key, value);
     }
 
     pub fn setAotFunctionProperty(self: *Runtime, container: Value, object: *Object, key: Value, value: Value) !void {
-        var rooted = [_]Value{ container, key, value, .{} };
-        var frame = RootFrame{};
-        self.pushRoots(&frame, &rooted, rooted.len);
-        defer self.popRoots(&frame);
-        rooted[3] = try self.propertyKey(rooted[1]);
-        // Function.prototype's length and name are non-writable own properties.
-        // Keep writes ignored in AOT just as the interpreter does, rather than
-        // allowing an own-property shadow to change the built-in value.
-        if (sameKey(rooted[3], staticStringValue("length")) or sameKey(rooted[3], staticStringValue("name"))) return;
-        try self.setDictionary(&object.array_properties, rooted[3], rooted[2]);
+        return indexing.setAotFunctionProperty(self, container, object, key, value);
     }
 
     pub fn aotArrayPropertyGet(self: *Runtime, object: *const Object, key: Value) Value {
-        // Canonical index keys resolve without materializing the property
-        // name: numeric keys keep `key` as a plain Value and numeric strings
-        // are scanned in place instead of being re-encoded for the lookup.
-        if (aotCanonicalArrayIndex(key)) |index| {
-            if (index < object.payload.array.items.len) return object.payload.array.items[index];
-            // Out-of-range indices still consult the prototype chain, which
-            // needs the textual key.  Fall through to the general path.
-        }
-        var rooted = [_]Value{
-            .{ .tag = @intFromEnum(Tag.array), .payload = @intFromPtr(object) },
-            key,
-        };
-        var frame = RootFrame{};
-        self.pushRoots(&frame, &rooted, rooted.len);
-        defer self.popRoots(&frame);
-        const key_units = valueUtf16Alloc(self, rooted[1]) catch return .{};
-        defer self.allocator.free(key_units);
-        return self.aotArrayPropertyGetUnits(rooted[0].object().?, key_units);
+        return indexing.aotArrayPropertyGet(self, object, key);
     }
 
-    pub fn aotArrayIsPresent(_: *Runtime, object: *const Object, index: usize) bool {
-        if (object.payload.array.items.len <= index) return false;
-        return if (index < object.array_presence.items.len) object.array_presence.items[index] else true;
+    pub fn aotArrayIsPresent(self: *Runtime, object: *const Object, index: usize) bool {
+        return indexing.aotArrayIsPresent(self, object, index);
     }
 
     pub fn normalizeAotArrayPresence(self: *Runtime, object: *Object) !void {
-        if (object.array_presence.items.len >= object.payload.array.items.len) return;
-        const previous_len = object.array_presence.items.len;
-        try object.array_presence.resize(self.allocator, object.payload.array.items.len);
-        // Low-level append sites predate presence tracking; existing slots are
-        // dense values when the metadata is first synchronized.
-        @memset(object.array_presence.items[previous_len..], true);
+        return indexing.normalizeAotArrayPresence(self, object);
     }
 
     pub fn aotArraySetIndex(self: *Runtime, object: *Object, index: usize, value: Value) !void {
-        try self.normalizeAotArrayPresence(object);
-        if (index >= object.payload.array.items.len) {
-            const previous_capacity = object.payload.array.capacity;
-            const previous_len = object.payload.array.items.len;
-            try object.payload.array.resize(self.allocator, index + 1);
-            if (object.payload.array.capacity > previous_capacity) {
-                self.counters.array_grows +|= 1;
-                self.counters.array_copied_bytes +|= previous_len * @sizeOf(Value);
-            }
-            @memset(object.payload.array.items[previous_len..], .{});
-            try object.array_presence.resize(self.allocator, index + 1);
-            @memset(object.array_presence.items[previous_len..], false);
-        }
-        object.payload.array.items[index] = value;
-        object.array_presence.items[index] = true;
+        return indexing.aotArraySetIndex(self, object, index, value);
     }
 
     pub fn aotArrayDeleteIndex(self: *Runtime, object: *Object, index: usize) !bool {
-        if (index >= object.payload.array.items.len) return false;
-        try self.normalizeAotArrayPresence(object);
-        object.payload.array.items[index] = .{};
-        object.array_presence.items[index] = false;
-        return true;
+        return indexing.aotArrayDeleteIndex(self, object, index);
     }
 
     pub fn aotArrayAppend(self: *Runtime, object: *Object, value: Value) !void {
-        try self.normalizeAotArrayPresence(object);
-        const previous_capacity = object.payload.array.capacity;
-        const previous_len = object.payload.array.items.len;
-        try object.payload.array.append(self.allocator, value);
-        self.counters.array_appends +|= 1;
-        if (object.payload.array.capacity > previous_capacity) {
-            self.counters.array_grows +|= 1;
-            self.counters.array_copied_bytes +|= previous_len * @sizeOf(Value);
-        }
-        errdefer _ = object.payload.array.pop();
-        try object.array_presence.append(self.allocator, true);
+        return indexing.aotArrayAppend(self, object, value);
     }
 
     pub fn aotArrayPropertySet(self: *Runtime, object: *Object, key: Value, value: Value) !void {
-        // Canonical index keys skip property-name materialization entirely:
-        // a number Value already carries its index, and numeric strings are
-        // scanned without re-encoding.  The `length` and `__proto__` special
-        // cases below can never be produced by a canonical index.
-        if (aotCanonicalArrayIndex(key)) |index| return self.aotArraySetIndex(object, index, value);
-        var rooted = [_]Value{
-            .{ .tag = @intFromEnum(Tag.array), .payload = @intFromPtr(object) },
-            key,
-            value,
-        };
-        var frame = RootFrame{};
-        self.pushRoots(&frame, &rooted, rooted.len);
-        defer self.popRoots(&frame);
-        const key_units = try valueUtf16Alloc(self, rooted[1]);
-        defer self.allocator.free(key_units);
-        if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return error.ArrayLengthAssignment;
-        if (self.aotCanonicalArrayIndexUnits(key_units)) |index| {
-            try self.aotArraySetIndex(rooted[0].object().?, index, rooted[2]);
-            return;
-        }
-        const normalized = try self.propertyKey(rooted[1]);
-        if (std.mem.eql(u16, key_units, &.{ '_', '_', 'p', 'r', 'o', 't', 'o', '_', '_' }) and
-            self.aotArrayOwnPropertyGetUnits(rooted[0].object().?, key_units) == null)
-        {
-            if (rooted[2].tag == @intFromEnum(Tag.null_value) or rooted[2].object() != null) rooted[0].object().?.prototype = rooted[2];
-            return;
-        }
-        try self.setDictionary(&rooted[0].object().?.array_properties, normalized, rooted[2]);
+        return indexing.aotArrayPropertySet(self, object, key, value);
     }
 
     pub fn aotArrayPropertyGetUnits(self: *Runtime, object: *const Object, key_units: []const u16) Value {
-        if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return numberValue(@floatFromInt(object.payload.array.items.len));
-        if (self.aotArrayOwnPropertyGetUnits(object, key_units)) |value| return value;
-        const source = Value{ .tag = @intFromEnum(Tag.array), .payload = @intFromPtr(object) };
-        return (tableInheritedProperty(self, source, .array, key_units) catch |failure| {
-            self.setFailure(failure);
-            return .{};
-        }) orelse .{};
+        return indexing.aotArrayPropertyGetUnits(self, object, key_units);
     }
 
     pub fn aotArrayOwnPropertyGetUnits(self: *Runtime, object: *const Object, key_units: []const u16) ?Value {
-        if (self.aotCanonicalArrayIndexUnits(key_units)) |index| return if (index < object.payload.array.items.len) object.payload.array.items[index] else null;
-        return self.aotObjectOwnPropertyGetUnits(object, key_units);
+        return indexing.aotArrayOwnPropertyGetUnits(self, object, key_units);
     }
 
-    /// Resolve an own named property shared by all extensible AOT objects.
-    /// Array indices remain handled by `aotArrayOwnPropertyGetUnits` before
-    /// reaching this helper.
-    pub fn aotObjectOwnPropertyGetUnits(_: *Runtime, object: *const Object, key_units: []const u16) ?Value {
-        // Counter updates are diagnostics, not logical mutation; callers
-        // only ever supply live objects, so the const is a signature detail.
-        const properties = @constCast(&object.array_properties);
-        const index = properties.findByUnits(key_units) orelse return null;
-        return properties.entries.items[index].value;
+    pub fn aotObjectOwnPropertyGetUnits(self: *Runtime, object: *const Object, key_units: []const u16) ?Value {
+        return indexing.aotObjectOwnPropertyGetUnits(self, object, key_units);
     }
 
-    pub fn aotPropertyKeyMatchesUnits(_: *Runtime, key: Value, units: []const u16) bool {
-        return switch (@as(Tag, @enumFromInt(key.tag))) {
-            .static_utf8_string => staticUtf8EqualsUtf16(staticUtf8(key), units),
-            .utf16_string => std.mem.eql(u16, key.object().?.payload.utf16_string, units),
-            else => false,
-        };
+    pub fn aotPropertyKeyMatchesUnits(self: *Runtime, key: Value, units: []const u16) bool {
+        return indexing.aotPropertyKeyMatchesUnits(self, key, units);
     }
 
-    pub fn aotCanonicalArrayIndexUnits(_: *Runtime, units: []const u16) ?usize {
-        if (units.len == 0 or (units.len > 1 and units[0] == '0')) return null;
-        var result: usize = 0;
-        for (units) |unit| {
-            if (unit < '0' or unit > '9') return null;
-            result = std.math.mul(usize, result, 10) catch return null;
-            result = std.math.add(usize, result, unit - '0') catch return null;
-        }
-        return if (result <= 4_294_967_294) result else null;
+    pub fn aotCanonicalArrayIndexUnits(self: *Runtime, units: []const u16) ?usize {
+        return indexing.aotCanonicalArrayIndexUnits(self, units);
     }
 
-    pub fn iteratorHasNext(_: *Runtime, value: Value) bool {
-        const object = value.object() orelse return false;
-        if (object.payload != .iterator) return false;
-        const iterator = object.payload.iterator;
-        return switch (iterator.kind) {
-            .range => if (iterator.step > 0) iterator.current <= iterator.end else iterator.current >= iterator.end,
-            else => iterator.index < iterator.count,
-        };
+    pub fn iteratorHasNext(self: *Runtime, value: Value) bool {
+        return indexing.iteratorHasNext(self, value);
     }
 
     pub fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_target: ?*Value, key_target: ?*Value, range_target: ?*Value) Value {
-        const object = value.object() orelse return .{};
-        if (object.payload != .iterator) return .{};
-        const iterator = &object.payload.iterator;
-        if (!self.iteratorHasNext(value)) return .{};
-        return switch (iterator.kind) {
-            .repeat => blk: {
-                iterator.index += 1;
-                const result = numberValue(@floatFromInt(iterator.index));
-                if (repeat_target) |target| target.* = result;
-                break :blk result;
-            },
-            .range => blk: {
-                const result = numberValue(iterator.current);
-                iterator.current += iterator.step;
-                if (range_target) |target| target.* = result;
-                break :blk result;
-            },
-            .bytes => blk: {
-                const result = numberValue(@floatFromInt(iterator.source.object().?.payload.byte_buffer.bytes[iterator.index]));
-                if (key_target) |target| target.* = numberValue(@floatFromInt(iterator.index));
-                iterator.index += 1;
-                if (value_target) |target| target.* = result;
-                break :blk result;
-            },
-            .string => blk: {
-                const result = self.stringAt(iterator.source, iterator.index);
-                if (key_target) |target| target.* = numberValue(@floatFromInt(iterator.index));
-                iterator.index += 1;
-                if (value_target) |target| target.* = result;
-                break :blk result;
-            },
-            .array => blk: {
-                const result = iterator.source.object().?.payload.array.items[iterator.index];
-                if (key_target) |target| target.* = numberValue(@floatFromInt(iterator.index));
-                iterator.index += 1;
-                if (value_target) |target| target.* = result;
-                break :blk result;
-            },
-            .dictionary => blk: {
-                const entry = iterator.source.object().?.payload.dictionary.entries.items[iterator.index];
-                if (key_target) |target| target.* = entry.key;
-                iterator.index += 1;
-                if (value_target) |target| target.* = entry.value;
-                break :blk entry.value;
-            },
-        };
+        return indexing.iteratorNext(self, value, repeat_target, value_target, key_target, range_target);
     }
 
     pub fn stringAt(self: *Runtime, source: Value, index: usize) Value {
-        const object = source.object() orelse return .{};
-        if (object.payload != .utf16_string) return .{};
-        const units = object.payload.utf16_string;
-        if (index >= units.len) return .{};
-        return self.createString(units[index .. index + 1]) catch .{};
+        return indexing.stringAt(self, source, index);
     }
 
-    /// Single mutation point for ordered key/value storage.  All insert,
-    /// replace, and delete paths reach `AotDictionary`, which keeps its
-    /// lookup index consistent and preserves insertion order for
-    /// enumeration.
     pub fn setDictionary(self: *Runtime, entries: *AotDictionary, key: Value, value: Value) !void {
-        try entries.set(self.allocator, key, value);
+        return indexing.setDictionary(self, entries, key, value);
     }
 
     pub fn propertyKey(self: *Runtime, key: Value) !Value {
-        return switch (@as(Tag, @enumFromInt(key.tag))) {
-            .static_utf8_string, .utf16_string => key,
-            else => blk: {
-                const units = try valueUtf16Alloc(self, key);
-                defer self.allocator.free(units);
-                break :blk try self.createString(units);
-            },
-        };
+        return indexing.propertyKey(self, key);
     }
 
     fn aggregateAotDictionaryCounters(self: *Runtime, dict: *AotDictionary) void {
@@ -1734,61 +1245,6 @@ pub const Runtime = struct {
     }
 };
 
-test "AOT文字列はObjectとUTF-16 payloadを一体確保しGCで一体解放する" {
-    var runtime = Runtime{ .allocator = std.testing.allocator };
-    defer runtime.deinit();
-
-    const allocation = try runtime.allocString(3);
-    @memcpy(allocation.units, &[_]u16{ 'A', 0xd83d, 0xde00 });
-    var roots = [_]Value{allocation.value};
-    var frame: RootFrame = .{};
-    runtime.pushRoots(&frame, &roots, roots.len);
-    defer runtime.popRoots(&frame);
-
-    const object = allocation.value.object().?;
-    try std.testing.expect(object.inline_utf16);
-    try std.testing.expectEqual(@as(usize, @sizeOf(Object) + 3 * @sizeOf(u16)), @sizeOf(Object) + object.payload.utf16_string.len * @sizeOf(u16));
-    try std.testing.expectEqualSlices(u16, &.{ 'A', 0xd83d, 0xde00 }, object.payload.utf16_string);
-    try std.testing.expectEqual(@as(u64, 1), runtime.counters.allocations);
-    try std.testing.expectEqual(@as(u64, @sizeOf(Object) + 6), runtime.counters.allocated_bytes);
-    try std.testing.expectEqual(@as(u64, 1), runtime.counters.string_payload_allocations);
-    try std.testing.expectEqual(@as(u64, 6), runtime.counters.string_payload_bytes);
-    try std.testing.expectEqual(@as(usize, 0), runtime.collect());
-    // The string payload has no child references, but the Object itself is
-    // still visited once by the mark queue.
-    try std.testing.expectEqual(@as(u64, 1), runtime.counters.gc_scanned_objects);
-    try std.testing.expectEqual(@as(u64, @sizeOf(Object)), runtime.counters.gc_scanned_bytes);
-
-    roots[0] = .{};
-    try std.testing.expectEqual(@as(usize, 1), runtime.collect());
-}
-
-test "AOT createString copies borrowed unrooted units before collection" {
-    var runtime = Runtime{ .allocator = std.testing.allocator };
-    defer runtime.deinit();
-    const original = try runtime.createString(&.{ 'A', 0xd83d, 0xde00 });
-    runtime.next_collection = 0;
-    const copied = try runtime.createString(original.object().?.payload.utf16_string);
-    try std.testing.expectEqualSlices(u16, &.{ 'A', 0xd83d, 0xde00 }, copied.object().?.payload.utf16_string);
-    try std.testing.expectEqual(@as(usize, 1), runtime.object_count);
-    try std.testing.expectEqual(@as(u64, 1), runtime.counters.gc_collections);
-}
-
-test "AOT Runtime移動後もallocator telemetry contextを保持する" {
-    var runtime = Runtime{ .allocator = std.testing.allocator };
-    const telemetry = try allocator_telemetry.Telemetry.init(std.testing.allocator);
-    runtime.allocator_telemetry = telemetry;
-    runtime.allocator_telemetry_checked = true;
-    runtime.allocator = telemetry.allocator();
-
-    _ = try runtime.createString(&.{'A'});
-    var moved = runtime;
-    runtime = undefined;
-    _ = try moved.createString(&.{ 'B', 'C' });
-    moved.syncAllocatorTelemetry();
-
-    try std.testing.expect(moved.counters.allocator_alloc_calls > 0);
-    try std.testing.expect(moved.counters.allocator_peak_live_bytes > 0);
-    try std.testing.expect(moved.allocator.ptr == telemetry.allocator().ptr);
-    moved.deinit();
+test {
+    _ = @import("runtime_core_test.zig");
 }

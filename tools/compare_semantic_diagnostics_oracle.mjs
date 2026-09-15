@@ -28,15 +28,25 @@ for (const [index, testCase] of cases.entries()) {
   } catch (error) {
     officialError = error;
   }
+  if (!officialError) {
+    // convLetProp 等の文法エラーはコード生成段階で報告されるため、
+    // パースを通過したケースもコンパイルまで試す。
+    try {
+      new NakoCompiler().compile(source, "main.nako3");
+    } catch (error) {
+      officialError = error;
+    }
+  }
   const diagnostic = actual[index].firstDiagnostic;
   if (!officialError || actual[index].diagnosticCount === 0 || !diagnostic) {
     failures += 1;
     console.error(`引数個数診断の差分 ${id}: ${JSON.stringify(source)} official=${Boolean(officialError)} lnako=${JSON.stringify(actual[index])}`);
     continue;
   }
-  if (diagnostic.code !== "invalid_argument_count" || diagnostic.line !== officialError.line) {
+  const expectedCode = testCase.code ?? "invalid_argument_count";
+  if (diagnostic.code !== expectedCode || diagnostic.line !== officialError.line) {
     failures += 1;
-    console.error(`引数個数診断位置の差分 ${id}: officialLine=${officialError.line} lnako=${JSON.stringify(diagnostic)}`);
+    console.error(`意味診断位置の差分 ${id}: officialLine=${officialError.line} expectedCode=${expectedCode} lnako=${JSON.stringify(diagnostic)}`);
   }
   if (testCase.checkMessage) {
     const officialMessage = String(officialError.message ?? "");

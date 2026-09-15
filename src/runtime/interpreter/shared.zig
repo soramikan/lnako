@@ -401,6 +401,9 @@ pub const IteratorState = struct {
     end: f64 = 0,
     step: f64 = 1,
     variable_name: []const u8 = "",
+    // 範囲繰り返し変数の束縛先。意味解析のlocal_targetをそのまま保持し、
+    // スロットの有無では推測しない。
+    variable_local: bool = false,
 };
 
 pub const Timer = struct {
