@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "lockSha256": "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=",
+  "profile": "default",
+  "runtime": "cnako",
+  "packages": {
+    "pkg:0123456789abcdef0123456789abcdef": {
+      "name": "math-kit",
+      "version": "1.0.0",
+      "id": "pkg:0123456789abcdef0123456789abcdef",
+      "path": "deps/math-kit",
+      "exports": [
+        { "name": "index.nako3", "path": "src/index.nako3" }
+      ],
+      "commands": [
+        { "name": "足す", "args": ["A", "B"], "josi": ["を", "で"], "fn": "add" }
+      ]
+    }
+  }
+}

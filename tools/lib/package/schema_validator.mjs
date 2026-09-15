@@ -11,6 +11,8 @@ const schemaDir = join(projectRoot, "tools", "package-system", "schema");
 const knownManifestSchemaVersions = new Set([1]);
 const knownLockSchemaVersions = new Set([1]);
 const knownArtifactKinds = new Set(["source", "native", "ESM"]);
+const knownProfileRuntime = new Set(["lnako", "cnako", "any", "common"]);
+const knownPackageRuntime = new Set(["lnako", "cnako"]);
 const knownProfileOs = new Set(["macos", "linux", "windows"]);
 const knownProfileCpu = new Set(["aarch64", "x86_64", "arm", "wasm32"]);
 const knownProfileAbi = new Set(["gnu", "msvc", "musl", "none"]);
@@ -481,6 +483,9 @@ export function validateManifest(manifest, fixturePath) {
 
   if (manifest.profiles) {
     for (const [name, prof] of Object.entries(manifest.profiles)) {
+      if (prof.runtime != null && !knownProfileRuntime.has(prof.runtime)) {
+        fail("E014_INVALID_PROFILE", `profile "${name}" has invalid runtime: ${prof.runtime}`, `${fixturePath}.profiles.${name}.runtime`);
+      }
       if (!knownProfileOs.has(prof.os) || !knownProfileCpu.has(prof.cpu) || !knownProfileAbi.has(prof.abi)) {
         fail("E014_INVALID_PROFILE", `profile "${name}" has invalid os/cpu/abi: ${prof.os}/${prof.cpu}/${prof.abi}`, `${fixturePath}.profiles.${name}`);
       }
@@ -509,6 +514,13 @@ export function validateManifest(manifest, fixturePath) {
       fail("E025_INVALID_RANGE", `invalid version range "${text}" at ${path}`, path);
     }
   };
+  if (manifest.package?.engines && typeof manifest.package.engines === "object") {
+    for (const [engine, range] of Object.entries(manifest.package.engines)) {
+      if (typeof range === "string") {
+        checkRange(range, `${fixturePath}.package.engines.${engine}`);
+      }
+    }
+  }
   for (const section of ["dependencies", "dev-dependencies"]) {
     const group = manifest[section];
     if (!group) continue;
@@ -740,4 +752,19 @@ export function validateNpkgMetadata(meta, fixturePath) {
 
 export function validateNpkgCommands(commands, fixturePath) {
   validateBySchemaFile(commands, "commands.schema.json", fixturePath);
+}
+
+export function validateEnvironment(environment, fixturePath) {
+  if (typeof environment !== "object" || environment === null || Array.isArray(environment)) {
+    fail("E023_INVALID_TYPE", "environment must be an object", fixturePath);
+  }
+  for (const required of ["schemaVersion", "lockSha256", "profile", "runtime", "packages"]) {
+    if (!(required in environment)) {
+      fail("E019_REQUIRED_FIELD_MISSING", `missing required field "${required}"`, `${fixturePath}.${required}`);
+    }
+  }
+  if (environment.schemaVersion !== 1) {
+    fail("E034_INVALID_ENVIRONMENT_REFERENCE", `unsupported environment schemaVersion ${environment.schemaVersion}`, `${fixturePath}.schemaVersion`);
+  }
+  validateBySchemaFile(environment, "environment.schema.json", fixturePath);
 }

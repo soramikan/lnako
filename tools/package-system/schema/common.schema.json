@@ -49,11 +49,19 @@
         "abi": { "$ref": "#/$defs/abiName" }
       }
     },
+    "runtimeName": {
+      "type": "string"
+    },
+    "packageRuntimeName": {
+      "type": "string",
+      "enum": ["lnako", "cnako"]
+    },
     "profile": {
       "type": "object",
       "required": ["os", "cpu", "abi"],
       "additionalProperties": false,
       "properties": {
+        "runtime": { "$ref": "#/$defs/runtimeName" },
         "os": { "$ref": "#/$defs/osName" },
         "cpu": { "$ref": "#/$defs/cpuName" },
         "abi": { "$ref": "#/$defs/abiName" },

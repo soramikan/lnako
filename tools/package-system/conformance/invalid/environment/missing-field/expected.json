@@ -1,0 +1,4 @@
+{
+  "code": "E019_REQUIRED_FIELD_MISSING",
+  "messageContains": "missing required field \"lockSha256\""
+}

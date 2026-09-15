@@ -53,6 +53,9 @@ license = "MIT"
 | `nako-version` | string | no | 想定する nadesiko3 バージョン。 |
 | `min-nako-version` | string | no | 必要な最低 nadesiko3 バージョン。 |
 | `schema-version` | integer | no | manifest schema 版。省略時は `1`（§9 / SCHEMA_VERSIONS.md 参照）。 |
+| `runtimes` | array<string> | no | 対応処理系の配列。要素は `"lnako"`, `"cnako"`。未指定時は両対応とみなす。 |
+| `engines` | table | no | 言語・処理系エンジンの必要バージョン制約（SemVer range）。キーは `nako`, `cnako`, `lnako`。 |
+| `include` | array<string> | no | パッケージに同梱するファイルパスまたはglobパターンの配列。未指定時は非除外ファイルをすべて同梱。 |
 
 ### 3.3 features セクション
 
@@ -104,6 +107,7 @@ data = { url = "https://example.com/data.tar.gz", hash = "sha256-..." }
 | `profile` | string | no | 使用するプロファイル名。 |
 | `alias` | string | no | マニフェスト内 alias。 |
 | `public-id` | string | no | 解決を固定する Public ID。 |
+| `prefer-native` | boolean | no | `true` の場合、対象exportに高速化用native実装が存在すればそれを優先選択する（lnako実行時のみ有効）。 |
 
 #### 3.4.2 `dependencies.npm`
 
@@ -136,11 +140,12 @@ npm 補助依存。同一 name/version の npm package が複数文脈で使わ�
 
 ```toml
 [profiles]
-default = { os = "macos", cpu = "aarch64", abi = "gnu", compat-js = false }
+default = { runtime = "lnako", os = "macos", cpu = "aarch64", abi = "gnu", compat-js = false }
 ```
 
 | キー | 型 | 必須 | 説明 |
 |------|------|------|------|
+| `runtime` | string | no | `lnako`, `cnako`, `any`（または `common`）のいずれか。省略時は `any`。 |
 | `os` | string | yes | `macos`, `linux`, `windows` のいずれか。 |
 | `cpu` | string | yes | `aarch64`, `x86_64`, `arm`, `wasm32` のいずれか。 |
 | `abi` | string | yes | `gnu`, `msvc`, `musl`, `none` のいずれか。 |
@@ -171,6 +176,11 @@ native = "libsqlite.dylib"
 - `native` は native plugin ファイル。
 - `esm` は ESM ファイル。`compat-js` 時のみ扱う。
 - 同じ `name` の export を重複して宣言できない。
+- **実装選択の優先契約**:
+  - `path`（共通ソース）と `native` の両方が宣言されている場合、既定では `path`（共通ソース）が優先選択される。
+  - `dependencies.pkg` で `prefer-native = true` が明示され、かつ対象処理系が `lnako` の場合のみ `native` が選択される（`cnako` では `E031_UNSUPPORTED_RUNTIME`）。
+  - native専用パッケージ（`native` のみ）は `lnako` でのみ解決可能（`cnako` では `E031_UNSUPPORTED_RUNTIME`）。
+  - ESM専用パッケージ（`esm` のみ）は `cnako` または `lnako` の `compat-js = true` 指定時のみ解決可能（通常lnakoでは `E006_JS_IN_NORMAL_MODE`）。
 
 ### 3.7 SemVer range 構文
 
@@ -199,10 +209,10 @@ and        := unary ("and" unary)*
 unary      := "not" unary | "(" or ")" | comparison | operand
 comparison := operand (==|!=|<|<=|>|>=|in|"not in") operand
 operand    := field | "string" | 'string' | true | false | "[" [operand ("," operand)*] "]"
-field      := os | cpu | abi | compat-js | optimize | version | features
+field      := runtime | os | cpu | abi | compat-js | optimize | version | features
 ```
 
-- `os`/`cpu`/`abi`/`optimize` は文字列、`compat-js` は真偽値、`version` は SemVer、`features` は文字列リストとして評価する。
+- `runtime`/`os`/`cpu`/`abi`/`optimize` は文字列、`compat-js` は真偽値、`version` は SemVer、`features` は文字列リストとして評価する。
 - `in`/`not in` は右辺のリストへの membership を評価する。要素の一致判定は `==` と同じ意味論（文字列同士が SemVer として解釈できる場合は SemVer 比較）。比較不能な型同士は一致しない。
 - `version` と文字列の比較は文字列を SemVer として解釈する。型が合わない場合は評価エラー。
 - 構文エラーは `E026_INVALID_MARKER` 診断。
@@ -306,7 +316,10 @@ field      := os | cpu | abi | compat-js | optimize | version | features
 - `NAKO-PKG/commands.json`（公開 command 情報）
 - 配包されるソースファイルまたは native artifact
 
-ネイティブ package は `lnako_plugin_v1` ABI を満たす dynamic library を公開する。
+- ソースのみのパッケージ（source-only package）は、C ABI や OS 別 binary を要求せず、`.nako3` ソースと `nako.toml` のみで完結する。
+- `NAKO-PKG/commands.json` は手書きを要求せず、`.nako3` の AST（関数定義）から自動導出・生成される。
+- `package.include` により画像や辞書データ等のデータファイルを同梱でき、パッケージ内相対パスで参照する。
+- ネイティブ package は `lnako_plugin_v1` ABI を満たす dynamic library を公開する。
 
 ## 7. Resolver / Import 契約
 
@@ -328,6 +341,13 @@ field      := os | cpu | abi | compat-js | optimize | version | features
 - JavaScript/ESM artifact の import は `--compat-js` 指定時のみ許可する。
 - 通常モードで JS/ESM 依存を解決しようとした場合は `E006_JS_IN_NORMAL_MODE` 診断。
 
+### 7.3 cnako 委譲と環境参照契約
+
+- cnako は依存解決・パッケージ同期を `lnako sync --json` へ委譲できる。
+- `lnako sync --json` は解決結果を JSON で標準出力し、解決済み環境メタデータを `.nako/environment.json` に記録する。
+- cnako の `--no-sync` 実行時は lnako を起動せず、`.nako/environment.json` の `lockSha256`・`profile`・各パッケージの `path` と命令メタデータを単独で検証する。環境情報が欠落・破損・版不一致・lockハッシュ不一致の場合は `E034_INVALID_ENVIRONMENT_REFERENCE` を診断する。
+- 動的呼び出し（文字列指定による動的実行等）で静的に共用性を確認できない機能利用は未検査とし、厳格な共用検査（strict sharing check）において `E033_STRICT_SHARING_FAILED` で拒絶する。共用ライブラリの保証には両処理系での自動テスト実行を必須証拠とする。
+
 ## 8. 診断
 
 診断コードは `E###_UPPER_SNAKE` 形式とする。重大度は `error`、`warning` の2種。
@@ -347,7 +367,7 @@ field      := os | cpu | abi | compat-js | optimize | version | features
 | `E011_DUPLICATE_EXPORT` | error | export 名の重複。 |
 | `E012_ALIAS_COLLISION` | error | alias の衝突。 |
 | `E013_MISSING_PACKAGE` | error | package / version / artifact が見つからない。 |
-| `E014_INVALID_PROFILE` | error | profile の os/cpu/abi が無効。 |
+| `E014_INVALID_PROFILE` | error | profile の os/cpu/abi/runtime が無効。 |
 | `E015_NATIVE_FOR_INCOMPATIBLE_TARGET` | error | native artifact が target と互換でない。 |
 | `E016_UNLOCKED_MUTABLE_PATH` | error | locked 動作で可変 path 依存を解決しようとした。 |
 | `E017_NPM_PEER_CONFLICT` | error | npm peer dependency 衝突。 |
@@ -364,6 +384,10 @@ field      := os | cpu | abi | compat-js | optimize | version | features
 | `E028_UNKNOWN_FEATURE` | error | 定義済み feature でも依存 alias でもない feature 参照。 |
 | `E029_INVALID_VALUE` | error | パターン・列挙に合わないフィールド値。 |
 | `E030_UNKNOWN_PROFILE` | error | 未定義の profile 参照。 |
+| `E031_UNSUPPORTED_RUNTIME` | error | 要求された処理系（lnako/cnako）をパッケージがサポートしていない。 |
+| `E032_ENGINE_MISMATCH` | error | 言語・処理系バージョンが `package.engines` 要件を満たしていない。 |
+| `E033_STRICT_SHARING_FAILED` | error | 厳格共用検査において静的検証不能な動的機能利用を検出。 |
+| `E034_INVALID_ENVIRONMENT_REFERENCE` | error | `.nako/environment.json` の破損・不整合・未存在。 |
 
 `nako.toml` の解析診断は `path:line:column` のソース位置と `dependencies.pkg.<name>.version` 形式のフィールドパスを保持する。
 

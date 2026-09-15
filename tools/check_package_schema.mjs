@@ -3,7 +3,7 @@ import { join, dirname, basename, extname, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { DiagnosticError, validateManifest, validateLock, validateRegistryIndex, validateRegistryPackage, validateRegistryVersion, validateNpkgMetadata, validateNpkgCommands } from "./lib/package/schema_validator.mjs";
+import { DiagnosticError, validateManifest, validateLock, validateRegistryIndex, validateRegistryPackage, validateRegistryVersion, validateNpkgMetadata, validateNpkgCommands, validateEnvironment } from "./lib/package/schema_validator.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -62,6 +62,8 @@ function primaryFixtureFiles(dir) {
     for (const f of ["METADATA.json", "commands.json"]) {
       if (files.includes(f)) candidates.push(f);
     }
+  } else if (category === "environment") {
+    if (files.includes("environment.json")) candidates.push("environment.json");
   }
   return candidates;
 }
@@ -98,6 +100,9 @@ function validateFixtureFile(file) {
       else throw new Error(`unknown npkg fixture: ${file}`);
       break;
     }
+    case "environment":
+      validateEnvironment(value, file);
+      break;
     default:
       throw new Error(`unknown fixture category: ${category}`);
   }

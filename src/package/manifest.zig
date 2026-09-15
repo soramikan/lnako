@@ -15,10 +15,19 @@ pub const MarkerContext = marker_mod.Context;
 /// 現在受理する `nako.toml` schema version。
 pub const known_schema_version: u32 = 1;
 
+const known_profile_runtime = [_][]const u8{ "lnako", "cnako", "any", "common" };
+const known_package_runtime = [_][]const u8{ "lnako", "cnako" };
 const known_profile_os = [_][]const u8{ "macos", "linux", "windows" };
 const known_profile_cpu = [_][]const u8{ "aarch64", "x86_64", "arm", "wasm32" };
 const known_profile_abi = [_][]const u8{ "gnu", "msvc", "musl", "none" };
 const known_optimize = [_][]const u8{ "O0", "O1", "O2", "O3" };
+
+pub const Engines = struct {
+    nako: ?semver.Range = null,
+    cnako: ?semver.Range = null,
+    lnako: ?semver.Range = null,
+    position: Position = .{},
+};
 
 pub const Package = struct {
     name: []const u8,
@@ -33,6 +42,9 @@ pub const Package = struct {
     nako_version: ?semver.Version = null,
     min_nako_version: ?semver.Version = null,
     schema_version: u32 = known_schema_version,
+    runtimes: []const []const u8 = &.{},
+    engines: Engines = .{},
+    include: ?[]const []const u8 = null,
 };
 
 pub const PkgDependency = struct {
@@ -45,6 +57,7 @@ pub const PkgDependency = struct {
     profile: ?[]const u8 = null,
     alias: ?[]const u8 = null,
     public_id: ?[]const u8 = null,
+    prefer_native: bool = false,
     position: Position = .{},
 };
 
@@ -94,6 +107,7 @@ pub const DependencyGroup = struct {
 
 pub const Profile = struct {
     name: []const u8,
+    runtime: []const u8 = "any",
     os: []const u8,
     cpu: []const u8,
     abi: []const u8,
@@ -104,6 +118,7 @@ pub const Profile = struct {
     /// marker 評価コンテキストへ変換する。
     pub fn markerContext(self: *const Profile, version: ?semver.Version, features: []const []const u8) MarkerContext {
         return .{
+            .runtime = self.runtime,
             .os = self.os,
             .cpu = self.cpu,
             .abi = self.abi,
@@ -115,6 +130,17 @@ pub const Profile = struct {
     }
 };
 
+pub const ResolvedExportKind = enum {
+    source,
+    native,
+    esm,
+};
+
+pub const ExportResolution = struct {
+    kind: ResolvedExportKind,
+    target: []const u8,
+};
+
 pub const Export = struct {
     name: []const u8,
     path: ?[]const u8 = null,
@@ -122,6 +148,77 @@ pub const Export = struct {
     native: ?[]const u8 = null,
     esm: ?[]const u8 = null,
     position: Position = .{},
+
+    /// 処理系条件・ネイティブ明示選択フラグ・compat-js条件に基づいてexport実装を選択する。
+    /// 共通.nako3ソース（path）が存在する場合は既定で優先選択され、
+    /// prefer_native=true が指定された場合のみ高速化用nativeが選択される。
+    pub fn resolve(
+        self: *const Export,
+        target_runtime: []const u8,
+        prefer_native: bool,
+        compat_js: bool,
+        diagnostics: ?*diag.List,
+    ) !?ExportResolution {
+        if (prefer_native and self.native != null) {
+            if (std.mem.eql(u8, target_runtime, "lnako")) {
+                return .{ .kind = .native, .target = self.native.? };
+            } else {
+                if (diagnostics) |d| {
+                    try d.addFmt(
+                        diag.E031_UNSUPPORTED_RUNTIME,
+                        .err,
+                        self.name,
+                        self.position,
+                        "native export \"{s}\" is not supported on runtime \"{s}\"",
+                        .{ self.name, target_runtime },
+                    );
+                }
+                return null;
+            }
+        }
+        if (self.path) |p| {
+            return .{ .kind = .source, .target = p };
+        }
+        if (self.native) |nat| {
+            if (std.mem.eql(u8, target_runtime, "lnako")) {
+                return .{ .kind = .native, .target = nat };
+            } else {
+                if (diagnostics) |d| {
+                    try d.addFmt(
+                        diag.E031_UNSUPPORTED_RUNTIME,
+                        .err,
+                        self.name,
+                        self.position,
+                        "native-only export \"{s}\" is not supported on runtime \"{s}\"",
+                        .{ self.name, target_runtime },
+                    );
+                }
+                return null;
+            }
+        }
+        if (self.esm) |esm_path| {
+            if (std.mem.eql(u8, target_runtime, "cnako")) {
+                return .{ .kind = .esm, .target = esm_path };
+            } else if (std.mem.eql(u8, target_runtime, "lnako")) {
+                if (compat_js) {
+                    return .{ .kind = .esm, .target = esm_path };
+                } else {
+                    if (diagnostics) |d| {
+                        try d.addFmt(
+                            diag.E006_JS_IN_NORMAL_MODE,
+                            .err,
+                            self.name,
+                            self.position,
+                            "ESM export \"{s}\" requires --compat-js on lnako",
+                            .{self.name},
+                        );
+                    }
+                    return null;
+                }
+            }
+        }
+        return null;
+    }
 };
 
 /// 型付き manifest。`document` のアリーナが全文字列・コンテナ
@@ -208,6 +305,82 @@ pub const Manifest = struct {
                 return error.InvalidManifest;
             },
         };
+    }
+
+    /// 対象処理系（"lnako" または "cnako"）がパッケージの対応処理系（runtimes）と適合するか検証する。
+    /// 未宣言（空配列）の場合は両処理系に適合するものとみなす。
+    pub fn checkRuntime(self: *const Manifest, target_runtime: []const u8, diagnostics: *diag.List, position: Position) !bool {
+        if (self.package.runtimes.len == 0) return true;
+        for (self.package.runtimes) |r| {
+            if (std.mem.eql(u8, r, target_runtime)) return true;
+        }
+        try diagnostics.addFmt(
+            diag.E031_UNSUPPORTED_RUNTIME,
+            .err,
+            "package.runtimes",
+            position,
+            "package \"{s}\" does not support runtime \"{s}\"",
+            .{ self.package.name, target_runtime },
+        );
+        return false;
+    }
+
+    /// エンジン要件（[package.engines]）が現在の言語・処理系バージョンと適合するか検証する。
+    pub fn checkEngines(
+        self: *const Manifest,
+        nako_ver: ?semver.Version,
+        cnako_ver: ?semver.Version,
+        lnako_ver: ?semver.Version,
+        diagnostics: *diag.List,
+        position: Position,
+    ) !bool {
+        var ok = true;
+        if (self.package.engines.nako) |range| {
+            if (nako_ver) |ver| {
+                if (!range.satisfies(ver)) {
+                    try diagnostics.addFmt(
+                        diag.E032_ENGINE_MISMATCH,
+                        .err,
+                        "package.engines.nako",
+                        position,
+                        "nako version {d}.{d}.{d} does not satisfy required range \"{s}\"",
+                        .{ ver.major, ver.minor, ver.patch, range.text },
+                    );
+                    ok = false;
+                }
+            }
+        }
+        if (self.package.engines.cnako) |range| {
+            if (cnako_ver) |ver| {
+                if (!range.satisfies(ver)) {
+                    try diagnostics.addFmt(
+                        diag.E032_ENGINE_MISMATCH,
+                        .err,
+                        "package.engines.cnako",
+                        position,
+                        "cnako version {d}.{d}.{d} does not satisfy required range \"{s}\"",
+                        .{ ver.major, ver.minor, ver.patch, range.text },
+                    );
+                    ok = false;
+                }
+            }
+        }
+        if (self.package.engines.lnako) |range| {
+            if (lnako_ver) |ver| {
+                if (!range.satisfies(ver)) {
+                    try diagnostics.addFmt(
+                        diag.E032_ENGINE_MISMATCH,
+                        .err,
+                        "package.engines.lnako",
+                        position,
+                        "lnako version {d}.{d}.{d} does not satisfy required range \"{s}\"",
+                        .{ ver.major, ver.minor, ver.patch, range.text },
+                    );
+                    ok = false;
+                }
+            }
+        }
+        return ok;
     }
 };
 
@@ -433,7 +606,7 @@ const Validator = struct {
 
     fn validatePackage(self: *Validator, table: *std.StringHashMapUnmanaged(toml.Value), position: Position) Error!void {
         const path = "package";
-        const known = [_][]const u8{ "name", "version", "license", "id", "description", "authors", "keywords", "repository", "homepage", "nako-version", "min-nako-version", "schema-version" };
+        const known = [_][]const u8{ "name", "version", "license", "id", "description", "authors", "keywords", "repository", "homepage", "nako-version", "min-nako-version", "schema-version", "runtimes", "engines", "include" };
         try self.rejectUnknownFields(table, path, &known);
 
         var package = Package{
@@ -488,6 +661,35 @@ const Validator = struct {
         }
         if (table.getPtr("keywords")) |value| {
             package.keywords = try self.expectStringList(value, "package.keywords");
+        }
+        if (table.getPtr("runtimes")) |value| {
+            const runtimes = try self.expectStringList(value, "package.runtimes");
+            for (runtimes) |r| {
+                if (!containsString(&known_package_runtime, r)) {
+                    try self.report(diag.E029_INVALID_VALUE, "package.runtimes", value.position, "invalid runtime \"{s}\" in package.runtimes", .{r});
+                }
+            }
+            package.runtimes = runtimes;
+        }
+        if (table.getPtr("engines")) |value| {
+            const engines_path = "package.engines";
+            if (try self.expectTable(value, engines_path)) |engines_table| {
+                const known_engines = [_][]const u8{ "nako", "cnako", "lnako" };
+                try self.rejectUnknownFields(engines_table, engines_path, &known_engines);
+                package.engines.position = value.position;
+                if (try self.parseRangeField(engines_table, "nako", engines_path, false, value.position)) |range| {
+                    package.engines.nako = range;
+                }
+                if (try self.parseRangeField(engines_table, "cnako", engines_path, false, value.position)) |range| {
+                    package.engines.cnako = range;
+                }
+                if (try self.parseRangeField(engines_table, "lnako", engines_path, false, value.position)) |range| {
+                    package.engines.lnako = range;
+                }
+            }
+        }
+        if (table.getPtr("include")) |value| {
+            package.include = try self.expectStringList(value, "package.include");
         }
         if (table.getPtr("schema-version")) |value| {
             switch (value.kind) {
@@ -587,7 +789,7 @@ const Validator = struct {
     }
 
     fn validatePkgDeps(self: *Validator, table: *std.StringHashMapUnmanaged(toml.Value), path: []const u8, map: *std.StringHashMapUnmanaged(PkgDependency)) Error!void {
-        const known = [_][]const u8{ "version", "features", "default-features", "profile", "alias", "public-id" };
+        const known = [_][]const u8{ "version", "features", "default-features", "profile", "alias", "public-id", "prefer-native" };
         var iterator = table.iterator();
         while (iterator.next()) |entry| {
             const name = entry.key_ptr.*;
@@ -620,6 +822,9 @@ const Validator = struct {
                     try self.report(diag.E029_INVALID_VALUE, try self.pathOf(field_path, "public-id"), valuePositionOfKey(dep_table, "public-id"), "invalid public id \"{s}\"", .{public_id});
                 }
                 dep.public_id = public_id;
+            }
+            if (try self.expectBool(dep_table, "prefer-native", field_path)) |prefer_native| {
+                dep.prefer_native = prefer_native;
             }
             try map.put(self.arena, name, dep);
         }
@@ -795,7 +1000,7 @@ const Validator = struct {
     fn validateProfiles(self: *Validator, root: *std.StringHashMapUnmanaged(toml.Value)) Error!void {
         const value = root.getPtr("profiles") orelse return;
         const table = (try self.expectTable(value, "profiles")) orelse return;
-        const known = [_][]const u8{ "os", "cpu", "abi", "compat-js", "optimize" };
+        const known = [_][]const u8{ "runtime", "os", "cpu", "abi", "compat-js", "optimize" };
         var iterator = table.iterator();
         while (iterator.next()) |entry| {
             const name = entry.key_ptr.*;
@@ -812,6 +1017,12 @@ const Validator = struct {
                 .abi = "",
                 .position = entry.value_ptr.position,
             };
+            if (try self.expectString(profile_table, "runtime", field_path)) |runtime_text| {
+                if (!containsString(&known_profile_runtime, runtime_text)) {
+                    try self.report(diag.E014_INVALID_PROFILE, try self.pathOf(field_path, "runtime"), valuePositionOfKey(profile_table, "runtime"), "profile \"{s}\" has invalid runtime \"{s}\"", .{ name, runtime_text });
+                }
+                profile.runtime = runtime_text;
+            }
             const os = try self.requireString(profile_table, "os", field_path, entry.value_ptr.position);
             const cpu = try self.requireString(profile_table, "cpu", field_path, entry.value_ptr.position);
             const abi = try self.requireString(profile_table, "abi", field_path, entry.value_ptr.position);

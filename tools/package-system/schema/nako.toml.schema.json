@@ -21,7 +21,8 @@
               "default-features": { "type": "boolean" },
               "profile": { "type": "string" },
               "alias": { "type": "string" },
-              "public-id": { "$ref": "common.schema.json#/$defs/packageId" }
+              "public-id": { "$ref": "common.schema.json#/$defs/packageId" },
+              "prefer-native": { "type": "boolean" }
             }
           },
           "propertyNames": { "type": "string", "minLength": 1 }
@@ -124,6 +125,23 @@
         "schema-version": {
           "type": "integer",
           "minimum": 1
+        },
+        "runtimes": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/$defs/packageRuntimeName" }
+        },
+        "engines": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "nako": { "$ref": "common.schema.json#/$defs/semverRange" },
+            "cnako": { "$ref": "common.schema.json#/$defs/semverRange" },
+            "lnako": { "$ref": "common.schema.json#/$defs/semverRange" }
+          }
+        },
+        "include": {
+          "type": "array",
+          "items": { "type": "string" }
         }
       }
     },
