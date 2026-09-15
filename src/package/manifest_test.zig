@@ -785,6 +785,7 @@ test "manifest適合fixtureを検証する" {
         .{ .path = "tools/package-system/conformance/valid/manifest/profile-runtime/nako.toml", .expected_code = null },
         .{ .path = "tools/package-system/conformance/valid/manifest/common-source-with-esm/nako.toml", .expected_code = null },
         .{ .path = "tools/package-system/conformance/valid/manifest/native-esm-hybrid/nako.toml", .expected_code = null },
+        .{ .path = "tools/package-system/conformance/invalid/manifest/empty-runtimes/nako.toml", .expected_code = diag.E029_INVALID_VALUE },
         .{ .path = "tools/package-system/conformance/invalid/manifest/unknown-schema/nako.toml", .expected_code = diag.E001_UNKNOWN_MANIFEST_SCHEMA },
         .{ .path = "tools/package-system/conformance/invalid/manifest/conflicting-version/nako.toml", .expected_code = diag.E003_CONFLICTING_VERSIONS },
         .{ .path = "tools/package-system/conformance/invalid/manifest/conflicting-version-joint/nako.toml", .expected_code = diag.E003_CONFLICTING_VERSIONS },
@@ -961,6 +962,12 @@ test "runtimes、engines、include、prefer-native、profile runtimeを正常に
     const v_old_cnako = try semver.Version.parse("3.6.0");
     try std.testing.expect(!(try manifest.checkEngines(v_nako, v_old_cnako, v_lnako, &list, .{})));
     try std.testing.expect(list.find(diag.E032_ENGINE_MISMATCH) != null);
+
+    // 判定対象バージョンが不明（null）なキーは制約を未検査として成功扱いする
+    var unknown_list = diag.List.init(allocator);
+    defer unknown_list.deinit();
+    try std.testing.expect(try manifest.checkEngines(null, null, null, &unknown_list, .{}));
+    try std.testing.expect(unknown_list.find(diag.E032_ENGINE_MISMATCH) == null);
 }
 
 test "不正なruntimeやengineフィールドを診断する" {
@@ -973,6 +980,16 @@ test "不正なruntimeやengineフィールドを診断する" {
         \\version = "1.0.0"
         \\license = "MIT"
         \\runtimes = ["browser"]
+        \\
+    , diag.E029_INVALID_VALUE);
+
+    // 明示的な空配列は未指定と区別して拒否する
+    try parseErrCode(allocator,
+        \\[package]
+        \\name = "pkg"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\runtimes = []
         \\
     , diag.E029_INVALID_VALUE);
 

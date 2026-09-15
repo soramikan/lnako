@@ -711,8 +711,18 @@ export function validateLock(lock, fixturePath) {
     fail("E002_UNKNOWN_LOCK_SCHEMA", `unknown lock schema version ${lock.schemaVersion}`, `${fixturePath}.schemaVersion`);
   }
 
-  const target = lock.input?.target;
-  const targetCompatJs = target && lock.profiles?.[lock.input.profile]?.["compat-js"] === true;
+  // 選択された profile の runtime と compat-js を読む。cnako は ESM を
+  // 直接扱えるため compat-js を要求せず、lnako などの通常モードのみ
+  // E006 の対象とする。未知の runtime は E014 で拒否する。
+  if (lock.profiles) {
+    for (const [name, prof] of Object.entries(lock.profiles)) {
+      if (prof.runtime != null && !knownProfileRuntime.has(prof.runtime)) {
+        fail("E014_INVALID_PROFILE", `profile "${name}" has invalid runtime: ${prof.runtime}`, `${fixturePath}.profiles.${name}.runtime`);
+      }
+    }
+  }
+  const selectedProfile = lock.profiles?.[lock.input?.profile];
+  const esmAllowed = selectedProfile?.["compat-js"] === true || selectedProfile?.runtime === "cnako";
 
   for (const [id, pkg] of Object.entries(lock.packages)) {
     if (!pkg.artifacts || Object.keys(pkg.artifacts).length === 0) {
@@ -722,7 +732,7 @@ export function validateLock(lock, fixturePath) {
       if (!knownArtifactKinds.has(artifact.kind)) {
         fail("E007_UNKNOWN_ARTIFACT_KIND", `unknown artifact kind "${artifact.kind}" at ${fixturePath}.packages.${id}.artifacts.${kind}`, `${fixturePath}.packages.${id}.artifacts.${kind}`);
       }
-      if (artifact.kind === "ESM" && !targetCompatJs) {
+      if (artifact.kind === "ESM" && !esmAllowed) {
         fail("E006_JS_IN_NORMAL_MODE", `ESM artifact selected without compat-js profile`, `${fixturePath}.packages.${id}.artifacts.${kind}`);
       }
     }

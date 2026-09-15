@@ -354,6 +354,8 @@ pub const Manifest = struct {
     }
 
     /// エンジン要件（[package.engines]）が現在の言語・処理系バージョンと適合するか検証する。
+    /// 判定対象バージョンが null（不明）のキーは未検査として扱い、`E032_ENGINE_MISMATCH` を
+    /// 報告しない。制約を強制するには呼び出し側が各バージョンを提供する必要がある。
     pub fn checkEngines(
         self: *const Manifest,
         nako_ver: ?semver.Version,
@@ -691,6 +693,15 @@ const Validator = struct {
             package.keywords = try self.expectStringList(value, "package.keywords");
         }
         if (table.getPtr("runtimes")) |value| {
+            // 明示的な空配列は「対応処理系なし」を意味するため、未指定
+            // （両対応）と区別して拒否する。
+            const is_empty_array = switch (value.kind) {
+                .array => |array| array.items.len == 0,
+                else => false,
+            };
+            if (is_empty_array) {
+                try self.report(diag.E029_INVALID_VALUE, "package.runtimes", value.position, "package.runtimes must contain at least one runtime", .{});
+            }
             const runtimes = try self.expectStringList(value, "package.runtimes");
             for (runtimes) |r| {
                 if (!containsString(&known_package_runtime, r)) {

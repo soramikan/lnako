@@ -53,8 +53,8 @@ license = "MIT"
 | `nako-version` | string | no | 想定する nadesiko3 バージョン。 |
 | `min-nako-version` | string | no | 必要な最低 nadesiko3 バージョン。 |
 | `schema-version` | integer | no | manifest schema 版。省略時は `1`（§9 / SCHEMA_VERSIONS.md 参照）。 |
-| `runtimes` | array<string> | no | 対応処理系の配列。要素は `"lnako"`, `"cnako"`。未指定時は両対応とみなす。 |
-| `engines` | table | no | 言語・処理系エンジンの必要バージョン制約（SemVer range）。キーは `nako`, `cnako`, `lnako`。 |
+| `runtimes` | array<string> | no | 対応処理系の配列。要素は `"lnako"`, `"cnako"`。未指定時は両対応とみなす。明示する場合は1要素以上を要求し、空配列は `E029_INVALID_VALUE`。 |
+| `engines` | table | no | 言語・処理系エンジンの必要バージョン制約（SemVer range）。キーは `nako`, `cnako`, `lnako`。判定対象バージョンが不明なキーは未検査として扱う。 |
 | `include` | array<string> | no | パッケージに同梱するファイルパスまたはglobパターンの配列。未指定時は非除外ファイルをすべて同梱。 |
 
 ### 3.3 features セクション
@@ -285,6 +285,8 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
 | `url` | string | 取得 URL。 |
 
 未知の `kind` はエラーとする。将来の kind は schema version bump または `x-` prefix で導入する。
+
+- lock 検証では選択 profile の `runtime` を考慮し、`cnako` の場合は ESM artifact を `compat-js` なしで許容する。それ以外（`lnako` など）は `compat-js = true` を要求し、通常モードでは `E006_JS_IN_NORMAL_MODE`。profile の `runtime` が未知の場合は `E014_INVALID_PROFILE`。
 
 ## 5. レジストリ契約
 

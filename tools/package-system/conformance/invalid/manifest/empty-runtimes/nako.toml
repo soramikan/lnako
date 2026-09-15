@@ -1,0 +1,5 @@
+[package]
+name = "empty-runtimes"
+version = "1.0.0"
+license = "MIT"
+runtimes = []
