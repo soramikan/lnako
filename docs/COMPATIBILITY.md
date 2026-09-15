@@ -49,12 +49,12 @@
 
 | state | entry |
 | --- | ---: |
-| `verified` | <!-- attestation:verified -->0<!-- /attestation:verified --> |
-| `trace-confirmed-unattested` | <!-- attestation:trace -->527<!-- /attestation:trace --> |
+| `verified` | <!-- attestation:verified -->527<!-- /attestation:verified --> |
+| `trace-confirmed-unattested` | <!-- attestation:trace -->0<!-- /attestation:trace --> |
 | `unverified` | <!-- attestation:unverified -->0<!-- /attestation:unverified --> |
 
 <!-- attestation:description-start -->
-`verified` は、`attestations/current.json` が指す現行snapshotのsource manifestと現行ソースが一致し、かつcanonical証拠ファイルのdigestが署名subjectに含まれる場合にのみ維持される状態です。manifest入力の変更（パッケージmanifest解析層と低レイヤーAPIの追加）で現行manifestが変わったため、前snapshot（run `34402208204`）のattestationは現行manifestをカバーせず、新しいCI runのsnapshotを追跡するまでcanonicalはunattestedへ戻ります。過去snapshotの `verified: 527` を流用せず、mainマージ後の新しいCI attestationを再取得して `current.json` を更新します。
+これは、全527 entryの実行証拠が追跡された現行attestation snapshot（`attestations/current.json` → `attestations/34977352002/`）で署名済みであることを示します。`verified` は、`attestations/current.json` が指す現行snapshotのsource manifest（`146f3664c19183341ba13ac4a96adc21fda63bed6c76527884dca05d3c21a387`）と現行ソースが一致し、かつcanonical証拠ファイルのdigestが署名subjectに含まれる場合にのみ維持される状態です。sourceに変更を加えた場合、過去snapshotの `verified: 527` を流用せず、mainマージ後の新しいCI attestationを再取得して `current.json` を更新します。
 <!-- attestation:description-end -->
 
 0.1.1の最終sourceでコードを変更した場合は、過去snapshotの527件をそのままリリース証拠として流用しません。最終source manifestに対してCIとattestationを取り直し、release preflightの `sync_compat_evidence.mjs --check` と `check_tracked_dispatch_attestation.mjs` を通過させます。
@@ -62,7 +62,7 @@
 <!-- attestation:artifacts-start -->
 ### CIの一時artifact
 
-直前のmanifestに対応するCI run `34402208204`（commit `fb015179478169cf4a595094766d4b9582d2925b`、54/54 job成功）が生成したcatalog artifactは `verified: 527`、`trace-confirmed-unattested: 0`、`unverified: 0` でした。このrunのattestationは3 OSのdispatch証拠・native AOT aggregate・canonical証拠17件を同一Sigstore bundleのsubjectとして署名しており、snapshotは `attestations/34402208204/` に履歴として残しています。前manifest用のsnapshot `attestations/34305071458/`（run `34305071458`）と `attestations/34121804812/`（run `34121804812`）、`attestations/34113932297/`（run `34113932297`）も履歴として残しています。現行manifestに対応する新しいrunのsnapshotを追跡した時点でcanonicalも同じ状態へ戻ります。
+現行manifestに対応するCI run `34977352002`（commit `fbc09d177cc1942d34fce4d2b4f7555a15af0570`、54/54 job成功）が生成したcatalog artifactは `verified: 527`、`trace-confirmed-unattested: 0`、`unverified: 0` です。このrunのattestationは3 OSのdispatch証拠・native AOT aggregate・canonical証拠17件を同一Sigstore bundleのsubjectとして署名しており、snapshotは `attestations/34977352002/` に追跡しています。前manifest用のsnapshot `attestations/34305071458/`（run `34305071458`）と `attestations/34121804812/`（run `34121804812`）、`attestations/34113932297/`（run `34113932297`）は履歴として残しています。
 
 一時artifactの値は、実行環境・署名・artifactの保存期間に依存します。追跡対象のcanonical `evidence.json` は、追跡された現行snapshotと現行source manifestの一致が確認できた場合にのみ `verified` を保持します。
 <!-- attestation:artifacts-end -->
