@@ -57,6 +57,7 @@ pub fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
                 return error.InvalidEmitKind;
         } else return error.UnknownBuildOption;
     }
+    if (forced_mode.dncl and forced_mode.dncl2) return error.ConflictingDnclModes;
     return .{
         .input = arguments[0],
         .output = output orelse return error.MissingOutput,
@@ -69,12 +70,14 @@ pub fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
 }
 
 /// `--dncl`/`--dncl2` フラグから強制する構文モードを得る。
-pub fn dnclModeFromArguments(arguments: []const []const u8) lnako.frontend.token.Mode {
+/// 両方の指定は異なる方言の同時強制になるためエラーにする。
+pub fn dnclModeFromArguments(arguments: []const []const u8) error{ConflictingDnclModes}!lnako.frontend.token.Mode {
     var mode: lnako.frontend.token.Mode = .{};
     for (arguments) |argument| {
         if (std.mem.eql(u8, argument, "--dncl")) mode.dncl = true;
         if (std.mem.eql(u8, argument, "--dncl2")) mode.dncl2 = true;
     }
+    if (mode.dncl and mode.dncl2) return error.ConflictingDnclModes;
     return mode;
 }
 

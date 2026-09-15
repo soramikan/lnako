@@ -693,9 +693,14 @@ pub fn moduleName(allocator: std.mem.Allocator, filename: []const u8) ![]u8 {
         basename_start = index + 1;
     };
     const basename = filename[basename_start..];
-    const suffix_length: usize = if (std.mem.endsWith(u8, basename, ".nako3"))
+    // ローダーの拡張子判定（module_graph.loadOne）と同じく大文字小文字を無視する。
+    const suffix_length: usize = if (std.ascii.endsWithIgnoreCase(basename, ".nako3"))
         ".nako3".len
-    else if (std.mem.endsWith(u8, basename, ".nako"))
+    else if (std.ascii.endsWithIgnoreCase(basename, ".dncl2"))
+        ".dncl2".len
+    else if (std.ascii.endsWithIgnoreCase(basename, ".dncl"))
+        ".dncl".len
+    else if (std.ascii.endsWithIgnoreCase(basename, ".nako"))
         ".nako".len
     else
         0;
@@ -714,6 +719,20 @@ test "公式と同じファイル名をモジュール名に保つ" {
     const unrelated_extension = try moduleName(std.testing.allocator, "sample.txt");
     defer std.testing.allocator.free(unrelated_extension);
     try std.testing.expectEqualStrings("sample.txt", unrelated_extension);
+}
+
+test ".dncl/.dncl2拡張子をモジュール名から除去する" {
+    const dncl = try moduleName(std.testing.allocator, "dir/main.dncl");
+    defer std.testing.allocator.free(dncl);
+    try std.testing.expectEqualStrings("main", dncl);
+
+    const dncl2 = try moduleName(std.testing.allocator, "dir/main.dncl2");
+    defer std.testing.allocator.free(dncl2);
+    try std.testing.expectEqualStrings("main", dncl2);
+
+    const upper = try moduleName(std.testing.allocator, "dir/LIB.DNCL");
+    defer std.testing.allocator.free(upper);
+    try std.testing.expectEqualStrings("LIB", upper);
 }
 
 test "グローバル・引数・組み込み命令を解決する" {

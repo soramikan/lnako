@@ -41,7 +41,7 @@
 ## DNCL/DNCL2モードの検出と強制
 
 - 公式実測・source根拠: `!DNCLモード`、`!DNCL2`、`💡`系ディレクティブはソース先頭から100トークン以内でのみ検出され、複数のモードディレクティブは同時に有効化されます。検出はlexerが行い、語形変換は `convertDNCL2` → `convertDNCL` → インデント構文変換 → インラインインデント変換の順で適用されます。
-- lnakoの現在動作: lexerが同じ規則で `Mode` 構造体（`dncl` / `dncl2` / `indent`の独立フラグ）へ記録し、syntax transformで同じ順序・同じ行単位アルゴリズムを適用します。公式に存在しない入口として、`.dncl`拡張子はDNCLモード(v1)、`.dncl2`拡張子はDNCL2を強制し、`--dncl` / `--dncl2`フラグはエントリモジュールへ同じモードを強制します。公式同様にv1とv2を同時有効化すると「を実行し、そうでなければ」がv2側の先取り変換で壊れるため、`.dncl`はv1のみを強制します。
+- lnakoの現在動作: lexerが同じ規則で `Mode` 構造体（`dncl` / `dncl2` / `indent`の独立フラグ）へ記録し、syntax transformで同じ順序・同じ行単位アルゴリズムを適用します。公式に存在しない入口として、`.dncl`拡張子はDNCLモード(v1)、`.dncl2`拡張子はDNCL2を強制し、`--dncl` / `--dncl2`フラグはエントリモジュールへ同じモードを強制します。公式同様にv1とv2を同時有効化すると「を実行し、そうでなければ」がv2側の先取り変換で壊れるため、`.dncl`はv1のみを強制します。`--dncl`と`--dncl2`の同時指定は異なる方言の同時強制になるため、build/run/check/testの全コマンドで usage エラー（終了コード2）にします。
 - 判定: 仕様（拡張子・フラグは公式にないlnako独自の入口）
 - 対象経路: Lexer / Parser / Interpreter / AOT
 - 差分テストID: `compare_lexer_oracle.mjs`、`compare_syntax_oracle.mjs`、`.dncl/.dncl2拡張子でDNCL系モードを強制する`、`エントリの.nako3へ--dncl/--dncl2相当のモードを強制する`

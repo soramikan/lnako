@@ -46,6 +46,8 @@ pub const Import = struct {
     /// 公式のinclude guard相当: 同一モジュールへの2回目以降の取り込みや
     /// 循環取り込みは内容を持たず、モード伝搬・可視位置にも効かない。
     effective: bool = false,
+    /// propagateModesで確定した取り込み文位置のモード（循環整合診断用）
+    site_mode: token_mod.Mode = .{},
 };
 
 pub const LoadedModule = struct {
@@ -173,6 +175,7 @@ pub fn load(backing_allocator: std.mem.Allocator, entry_path: []const u8, provid
     // 複数取り込みでは最後の取り込み文に内容が載る）。
     try loader.markEffectiveEdges(entry);
     try loader.propagateModes(entry);
+    try loader.checkCircularCopyModes(entry);
     const modules = try loader.modules.toOwnedSlice(loader.allocator);
     const diagnostics = try loader.diagnostics.toOwnedSlice(loader.allocator);
     // arenaを返却値へコピーする前に確保を済ませる。リテラル内で呼ぶと
@@ -438,6 +441,7 @@ const Loader = struct {
                     break;
                 }
             }
+            item.site_mode = site_mode;
             try self.propagateInto(target, site_mode, state);
             const target_module = self.modules.items[target];
             if (target_module.parsed) |target_parsed| {
@@ -464,6 +468,23 @@ const Loader = struct {
     /// 最終ASTから順序対応で再収集する。個数が変わる構造変化では
     /// 暫定位置との照合が破綻して実効辺が暗黙に無効化されるため、
     /// 黙って維持せず診断を出す。
+    /// 循環取り込みの再展開コピーはエントリのコンパイル済み本体を共有する。
+    /// 公式はコピーを循環取り込み位置のモードで展開するが、エントリの
+    /// 終端モードと一致しない位置モードでは同一本体で表現できないため、
+    /// 誤った添字規則で実行するより明示的な診断にする。
+    /// （コピー側にだけ現れるモードbitは検出できないため残余の近似差あり）
+    fn checkCircularCopyModes(self: *Loader, entry: u32) !void {
+        const entry_module = self.modules.items[entry];
+        const entry_parsed = entry_module.parsed orelse return;
+        for (self.modules.items) |module| {
+            for (module.imports) |item| {
+                if (!item.effective or item.target != entry) continue;
+                if (modeEql(item.site_mode, entry_parsed.final_mode)) continue;
+                try self.importDiagnosticAt(item.span, module.path, "循環取り込みの再展開位置の構文モードがエントリの終端モードと一致しません");
+            }
+        }
+    }
+
     fn refreshImportSpans(self: *Loader, module: *LoadedModule) !void {
         const parsed = module.parsed orelse return;
         const root = parsed.root orelse return;
@@ -482,11 +503,15 @@ const Loader = struct {
     }
 
     fn importDiagnostic(self: *Loader, node: ?*ast.Node, file: []const u8, message: []const u8) !void {
+        try self.importDiagnosticAt(if (node) |value| value.span else null, file, message);
+    }
+
+    fn importDiagnosticAt(self: *Loader, span: ?ast.Span, file: []const u8, message: []const u8) !void {
         try self.diagnostics.append(self.allocator, .{
             .code = .invalid_import,
             .message = message,
             .file = try self.allocator.dupe(u8, file),
-            .span = if (node) |value| value.span else ast.emptySpan(),
+            .span = span orelse ast.emptySpan(),
         });
     }
 };
@@ -874,6 +899,28 @@ test ".dncl/.dncl2拡張子でDNCL系モードを強制する" {
     var plain_graph = try load(std.testing.allocator, "plain.nako3", memory.sourceProvider(), .{});
     defer plain_graph.deinit();
     try std.testing.expect(!plain_graph.succeeded());
+}
+
+test "循環取り込みの再展開モード不一致を診断にする" {
+    // 循環位置のモードがエントリ終端モードと一致する場合は再展開を許可する
+    var matching = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "A=[10,20]\n「M1」と表示\n!DNCLモード\n!「./lib.nako3」を取り込む\n「M3:」&A[1]と表示\n" },
+        .{ .suffix = "lib.nako3", .source = "「L1」と表示\n!「./main.nako3」を取り込む\n「L2」と表示\n" },
+    } };
+    var matching_graph = try load(std.testing.allocator, "main.nako3", matching.sourceProvider(), .{});
+    defer matching_graph.deinit();
+    try std.testing.expect(matching_graph.succeeded());
+
+    // 循環位置より後でモードが有効になる場合、コピーはエントリ本体と
+    // 異なるモードを要求する。同一本体で表現できないため診断にする。
+    var mismatching = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "A=[10,20]\n「M1」と表示\n!「./lib.nako3」を取り込む\n「M3:」&A[1]と表示\n" },
+        .{ .suffix = "lib.nako3", .source = "「L1」と表示\n!「./main.nako3」を取り込む\n!DNCLモード\n「L2」と表示\n" },
+    } };
+    var mismatching_graph = try load(std.testing.allocator, "main.nako3", mismatching.sourceProvider(), .{});
+    defer mismatching_graph.deinit();
+    try std.testing.expect(!mismatching_graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 1), mismatching_graph.diagnostics.len);
 }
 
 test "エントリの.nako3へ--dncl/--dncl2相当のモードを強制する" {
