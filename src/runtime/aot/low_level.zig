@@ -359,7 +359,9 @@ fn hashDigestBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     // digestの成否に関わらずhandleは消費済みなので、先にidentity mappingを外す。
     forgetHandleId(runtime, id);
     if (runtime.dynamic_forget_handle) |forget| forget(runtime, id.raw());
-    const digest = try removed.hasher.finalize(runtime.allocator);
+    const digest = removed.hasher.finalize(runtime.allocator) catch |failure| {
+        return throwHashFailure(runtime, failure);
+    };
     defer runtime.allocator.free(digest);
     return encodeDigest(runtime, digest, encoding);
 }
@@ -436,7 +438,10 @@ fn hashFailureMessage(failure: anyerror) []const u8 {
 /// `lowLevelFileBuiltin` と同じ契約（実装済み命令の下限未満はEINVAL）で行う。
 pub fn lowLevelHashBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     if (aot_builtin.lowLevelCatalogCommand(command)) |spec| {
-        if (arguments.len > spec.max or arguments.len < spec.min) {
+        if (arguments.len > spec.max) {
+            return throwStructured(runtime, .EINVAL, spec.operation, null, null, "引数の数が不正です");
+        }
+        if (spec.implemented and arguments.len < spec.min) {
             return throwStructured(runtime, .EINVAL, spec.operation, null, null, "引数の数が不正です");
         }
     }
@@ -851,4 +856,48 @@ test "AOT低レイヤーのハッシュ開始は未知をEINVAL、RIPEMDをENOTS
     const capability_text = try valueUtf8LossyAlloc(&runtime, capability);
     defer runtime.allocator.free(capability_text);
     try std.testing.expectEqualStrings("incremental_hash", capability_text);
+}
+
+test "AOT低レイヤーのハッシュとファイルhandleは取り違えをEBADFにする" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const path = try std.fs.path.join(std.testing.allocator, &.{ directory, "aot-cross-kind.bin" });
+    defer std.testing.allocator.free(path);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "aot-cross-kind.bin", .data = "abc" });
+
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtimeUtf8String(&runtime, path);
+    roots[1] = try runtimeUtf8String(&runtime, "rb");
+    const file_handle = try lowLevelFileBuiltin(&runtime, .low_level_file_open, &.{ roots[0], roots[1] });
+    roots[2] = file_handle;
+    roots[3] = try runtimeUtf8String(&runtime, "md5");
+    const hash_handle = try lowLevelHashBuiltin(&runtime, .low_level_hash_create, &.{roots[3]});
+    var hash_roots = [_]Value{ hash_handle, .{} };
+    var hash_frame: RootFrame = .{};
+    runtime.pushRoots(&hash_frame, &hash_roots, hash_roots.len);
+    defer runtime.popRoots(&hash_frame);
+    hash_roots[1] = try runtime.createBytes("x");
+
+    // ファイルhandleをハッシュ命令へ渡すとEBADF。ファイルhandleは有効なまま。
+    try std.testing.expectError(error.NakoException, lowLevelHashBuiltin(&runtime, .low_level_hash_update, &.{ file_handle, hash_roots[1] }));
+    try expectPendingCode(&runtime, "EBADF");
+    try std.testing.expectError(error.NakoException, lowLevelHashBuiltin(&runtime, .low_level_hash_digest, &.{file_handle}));
+    try expectPendingCode(&runtime, "EBADF");
+    try std.testing.expectError(error.NakoException, lowLevelHashBuiltin(&runtime, .low_level_hash_discard, &.{file_handle}));
+    try expectPendingCode(&runtime, "EBADF");
+    _ = try lowLevelFileBuiltin(&runtime, .low_level_file_close, &.{file_handle});
+
+    // ハッシュhandleをファイル命令へ渡すとEBADF。ハッシュhandleは有効なまま。
+    try std.testing.expectError(error.NakoException, lowLevelFileBuiltin(&runtime, .low_level_file_close, &.{hash_handle}));
+    try expectPendingCode(&runtime, "EBADF");
+    _ = try lowLevelHashBuiltin(&runtime, .low_level_hash_discard, &.{hash_handle});
+    try std.testing.expectEqual(@as(u32, 0), runtime.low_level_handle_ids.size);
 }

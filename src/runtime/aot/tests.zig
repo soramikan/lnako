@@ -7681,3 +7681,33 @@ test "AOT未捕捉例外のmessage抽出は構造化エラーだけに限る" {
     defer runtime.allocator.free(structured_text);
     try std.testing.expectEqualStrings("ENOENT: no such file or directory, open '/missing'", structured_text);
 }
+
+test "AOT低レイヤーのハッシュ完了encodingはハッシュ値計算と一致する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try state.active_runtime.?.createBytes("abc");
+    roots[1] = try runtimeUtf8String(&state.active_runtime.?, "sha256");
+    for ([_][]const u8{ "hex", "base64", "base64url", "latin1", "binary", "utf8", "utf-8" }) |encoding_name| {
+        roots[2] = try runtimeUtf8String(&state.active_runtime.?, encoding_name);
+        roots[3] = try nodeCryptoBuiltin(&state.active_runtime.?, .node_hash_value, &.{ roots[0], roots[1], roots[2] });
+        const handle = try state.lowLevelHashBuiltin(&state.active_runtime.?, .low_level_hash_create, &.{roots[1]});
+        roots[4] = handle;
+        _ = try state.lowLevelHashBuiltin(&state.active_runtime.?, .low_level_hash_update, &.{ handle, roots[0] });
+        const actual = try state.lowLevelHashBuiltin(&state.active_runtime.?, .low_level_hash_digest, &.{ handle, roots[2] });
+        const expected_text = try valueUtf8LossyAlloc(&state.active_runtime.?, roots[3]);
+        defer std.testing.allocator.free(expected_text);
+        const actual_text = try valueUtf8LossyAlloc(&state.active_runtime.?, actual);
+        defer std.testing.allocator.free(actual_text);
+        try std.testing.expectEqualStrings(expected_text, actual_text);
+    }
+}

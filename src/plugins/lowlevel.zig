@@ -1131,3 +1131,40 @@ test "Interpreter低レイヤーのハッシュはGC stress下でもhandleを保
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", text);
 }
+
+test "Interpreter低レイヤーのハッシュ完了encodingはハッシュ値計算と一致する" {
+    const plugin_crypto = @import("crypto.zig");
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var host = HashHost.init(std.testing.allocator);
+    defer host.deinit();
+    const context = host.context();
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var input = try runtime.createBytes("abc");
+    try roots.protect(&input);
+    var algorithm = try runtime.stringUtf8("sha256");
+    try roots.protect(&algorithm);
+    for ([_][]const u8{ "hex", "base64", "base64url", "latin1", "binary", "utf8", "utf-8" }) |encoding_name| {
+        var encoding = try runtime.stringUtf8(encoding_name);
+        try roots.protect(&encoding);
+        var expected = (try plugin_crypto.call(&runtime, null, "ハッシュ値計算", &.{ input, algorithm, encoding })).?;
+        try roots.protect(&expected);
+        const expected_text = try shared.valueUtf8(&runtime, expected);
+        defer std.testing.allocator.free(expected_text);
+
+        var handle = (try call(&runtime, &state, context, effects, "ハッシュ開始", &.{algorithm})).?;
+        try roots.protect(&handle);
+        _ = try call(&runtime, &state, context, effects, "ハッシュ追加", &.{ handle, input });
+        var actual = (try call(&runtime, &state, context, effects, "ハッシュ完了", &.{ handle, encoding })).?;
+        try roots.protect(&actual);
+        const actual_text = try shared.valueUtf8(&runtime, actual);
+        defer std.testing.allocator.free(actual_text);
+        try std.testing.expectEqualStrings(expected_text, actual_text);
+    }
+}
