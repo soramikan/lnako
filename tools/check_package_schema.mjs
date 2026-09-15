@@ -3,7 +3,7 @@ import { join, dirname, basename, extname, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { DiagnosticError, validateManifest, validateLock, validateRegistryIndex, validateRegistryPackage, validateRegistryVersion, validateNpkgMetadata, validateNpkgCommands, validateEnvironment } from "./lib/package/schema_validator.mjs";
+import { DiagnosticError, validateManifest, validateLock, validateRegistryIndex, validateRegistryPackage, validateRegistryVersion, validateNpkgMetadata, validateNpkgCommands, validateEnvironment, validateEnvironmentReference } from "./lib/package/schema_validator.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -100,9 +100,17 @@ function validateFixtureFile(file) {
       else throw new Error(`unknown npkg fixture: ${file}`);
       break;
     }
-    case "environment":
-      validateEnvironment(value, file);
+    case "environment": {
+      // 同ディレクトリに nako.lock があれば、環境参照の lockSha256 が
+      // 実 lock のダイジェストと一致するかまで検証する。
+      const lockPath = join(dirname(file), "nako.lock");
+      if (existsSync(lockPath)) {
+        validateEnvironmentReference(value, readFileSync(lockPath), file);
+      } else {
+        validateEnvironment(value, file);
+      }
       break;
+    }
     default:
       throw new Error(`unknown fixture category: ${category}`);
   }

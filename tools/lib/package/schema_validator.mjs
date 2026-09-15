@@ -1,4 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, dirname, basename, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseRange, jointSetsIntersect } from "./semver_range.mjs";
@@ -837,4 +838,36 @@ function validateEnvironmentContract(environment, fixturePath) {
     }
   }
   validateBySchemaFile(environment, "environment.schema.json", fixturePath);
+}
+
+/// SHA-256 の各表記（SRI `sha256-<base64>=`、`sha256:<hex>`、生 `<hex>`）を
+/// 小文字 hex へ正規化する。解釈できない場合は null。
+function normalizeSha256(text) {
+  if (typeof text !== "string") return null;
+  if (text.startsWith("sha256:")) {
+    const hex = text.slice("sha256:".length);
+    return /^[0-9a-f]{64}$/.test(hex) ? hex : null;
+  }
+  if (text.startsWith("sha256-")) {
+    const base64 = text.slice("sha256-".length);
+    if (!/^[A-Za-z0-9+/]{43}=$/.test(base64)) return null;
+    const bytes = Buffer.from(base64, "base64");
+    return bytes.length === 32 ? bytes.toString("hex") : null;
+  }
+  return /^[0-9a-f]{64}$/.test(text) ? text : null;
+}
+
+/// `.nako/environment.json` の `lockSha256` が参照先 `nako.lock` の実ダイジェストと
+/// 一致することを検証する。形式・構造検証は `validateEnvironment` に委ね、
+/// ここでは lock のバイト列から算出した SHA-256 と比較する。不一致は E034。
+export function validateEnvironmentReference(environment, lockBytes, fixturePath) {
+  validateEnvironment(environment, fixturePath);
+  const expected = createHash("sha256").update(lockBytes).digest("hex");
+  const actual = normalizeSha256(environment.lockSha256);
+  if (actual === null) {
+    fail("E034_INVALID_ENVIRONMENT_REFERENCE", `invalid lockSha256 "${environment.lockSha256}"`, `${fixturePath}.lockSha256`);
+  }
+  if (actual !== expected) {
+    fail("E034_INVALID_ENVIRONMENT_REFERENCE", `lockSha256 mismatch: environment ${actual} != lock ${expected}`, `${fixturePath}.lockSha256`);
+  }
 }
