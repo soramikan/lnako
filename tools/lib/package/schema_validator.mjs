@@ -502,18 +502,18 @@ export function validateManifest(manifest, fixturePath) {
       names.add(exp.name);
     }
     const hasCompatJsProfile = Object.values(manifest.profiles ?? {}).some((p) => p["compat-js"] === true);
-    const hasCnakoProfile = Object.values(manifest.profiles ?? {}).some((p) => p.runtime === "cnako");
     const runtimes = manifest.package?.runtimes ?? [];
     // runtimes 未指定は lnako / cnako の両対応を意味するため cnako 対応として扱う。
-    // cnako 対応パッケージは ESM を直接利用できる有効な経路を持つ。
+    // cnako 対応パッケージは ESM を直接利用できる有効な経路を持つ。cnako profile は
+    // パッケージが cnako 対応の場合にのみ有効で、runtimes で cnako を否定している
+    // 矛盾した宣言では数えない。
     const supportsCnako = runtimes.length === 0 || runtimes.includes("cnako");
     for (const exp of manifest.exports) {
       // lnako 通常モードで ESM が選択されるのは path も native も無い場合のみ
       // （path があれば共通ソース、native があれば native を選択）。cnako 対応
-      // （runtimes 未指定・cnako を含む・cnako/compat-js profile）なら受理し、
-      // lnako 専用パッケージの通常モードに限って E006 とする。実行時の拒否は
-      // Zig の Export.resolve が対象 runtime へ報告する。
-      if (exp.esm != null && exp.path == null && exp.native == null && !hasCompatJsProfile && !hasCnakoProfile && !supportsCnako) {
+      // または compat-js profile なら受理し、lnako 専用パッケージの通常モードに
+      // 限って E006 とする。実行時の拒否は Zig の Export.resolve が報告する。
+      if (exp.esm != null && exp.path == null && exp.native == null && !hasCompatJsProfile && !supportsCnako) {
         fail("E006_JS_IN_NORMAL_MODE", `ESM export "${exp.name}" requires compat-js profile`, `${fixturePath}.exports`);
       }
     }
@@ -745,11 +745,12 @@ export function validateLock(lock, fixturePath) {
       }
       kinds.add(artifact.kind);
     }
-    // lock の artifacts は package が提供する全 kind を記録するため、
-    // source/native が併記されていれば ESM は選択され得ない。manifest の
-    // 「ESM 専用のみ通常モードで E006」規則と揃え、ESM が唯一の kind の
-    // 場合だけ通常モード違反とする。
-    if (kinds.has("ESM") && kinds.size === 1 && !esmAllowed) {
+    // lock の artifacts は package 単位の集合で、各 kind が同じ export の
+    // 代替実装か別 export かを表さない。選択情報がない以上 ESM が未使用と
+    // 判断できないため、通常モード（compat-js 無効・cnako 非選択）の lock に
+    // ESM が一つでもあれば保守的に E006 とする。実際の選択は解決・import 時に
+    // manifest の Export.resolve が担う。
+    if (kinds.has("ESM") && !esmAllowed) {
       fail("E006_JS_IN_NORMAL_MODE", `ESM artifact selected without compat-js profile`, `${fixturePath}.packages.${id}.artifacts`);
     }
     for (const dep of pkg.dependencies) {

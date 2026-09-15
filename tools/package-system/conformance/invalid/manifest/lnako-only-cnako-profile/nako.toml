@@ -1,0 +1,15 @@
+[package]
+name = "lnako-only-cnako-profile"
+version = "1.0.0"
+license = "MIT"
+runtimes = ["lnako"]
+
+[profiles.cnako-prof]
+runtime = "cnako"
+os = "linux"
+cpu = "x86_64"
+abi = "gnu"
+
+[[exports]]
+name = "main"
+esm = "index.mjs"

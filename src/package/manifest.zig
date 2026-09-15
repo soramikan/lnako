@@ -1109,11 +1109,9 @@ const Validator = struct {
         var exports = try std.ArrayList(Export).initCapacity(self.arena, array.items.len);
         var names = std.StringHashMap(void).init(self.scratch);
         var has_compat_js = false;
-        var has_cnako_profile = false;
         var profile_iterator = self.manifest.profiles.valueIterator();
         while (profile_iterator.next()) |profile| {
             if (profile.compat_js) has_compat_js = true;
-            if (std.mem.eql(u8, profile.runtime, "cnako")) has_cnako_profile = true;
         }
         // 未指定の runtimes は lnako / cnako の両対応を意味するため cnako 対応。
         // cnako 対応パッケージは ESM を直接利用できる有効な経路を持つ。
@@ -1141,12 +1139,14 @@ const Validator = struct {
             export_entry.esm = try self.expectString(export_table, "esm", "exports");
             // lnako 通常モードで ESM が選択されるのは「path も native も無い」
             // 場合のみ（path があれば共通ソース、native があれば native を選択）。
-            // cnako 対応（runtimes 未指定・cnako を含む・cnako profile・
-            // compat-js profile）なら ESM を利用できる経路があるため受理し、
-            // lnako 専用パッケージで通常モードに限って E006 を報告する。
-            // 実行時は Export.resolve が対象 runtime へ E006 を報告する。
+            // cnako 対応（runtimes 未指定・cnako を含む）または compat-js profile
+            // なら ESM を利用できる経路があるため受理し、lnako 専用パッケージで
+            // 通常モードに限って E006 を報告する。cnako profile はパッケージが
+            // cnako 対応の場合にのみ有効な経路であり、runtimes で cnako を
+            // 否定している矛盾した宣言では数えない。実行時は Export.resolve が
+            // 対象 runtime へ E006 を報告する。
             if (export_entry.esm != null and export_entry.path == null and export_entry.native == null and
-                !has_compat_js and !has_cnako_profile and !supports_cnako)
+                !has_compat_js and !supports_cnako)
             {
                 try self.report(diag.E006_JS_IN_NORMAL_MODE, "exports", item.position, "ESM export \"{s}\" requires compat-js profile", .{export_entry.name});
             }

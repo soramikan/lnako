@@ -816,6 +816,7 @@ test "manifest適合fixtureを検証する" {
         .{ .path = "tools/package-system/conformance/valid/manifest/esm-only-multi-runtime/nako.toml", .expected_code = null },
         .{ .path = "tools/package-system/conformance/valid/manifest/esm-only-both-runtimes/nako.toml", .expected_code = null },
         .{ .path = "tools/package-system/conformance/invalid/manifest/empty-runtimes/nako.toml", .expected_code = diag.E029_INVALID_VALUE },
+        .{ .path = "tools/package-system/conformance/invalid/manifest/lnako-only-cnako-profile/nako.toml", .expected_code = diag.E006_JS_IN_NORMAL_MODE },
         .{ .path = "tools/package-system/conformance/invalid/manifest/unknown-schema/nako.toml", .expected_code = diag.E001_UNKNOWN_MANIFEST_SCHEMA },
         .{ .path = "tools/package-system/conformance/invalid/manifest/conflicting-version/nako.toml", .expected_code = diag.E003_CONFLICTING_VERSIONS },
         .{ .path = "tools/package-system/conformance/invalid/manifest/conflicting-version-joint/nako.toml", .expected_code = diag.E003_CONFLICTING_VERSIONS },

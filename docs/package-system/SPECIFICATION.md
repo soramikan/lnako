@@ -181,7 +181,7 @@ native = "libsqlite.dylib"
   - `path` が無く `native` と `esm` の両方が宣言されている場合、`lnako` では `native`、`cnako` では `esm` を選択する（`cnako` は ESM を直接扱えるため `compat-js` は不要）。
   - `path` と `esm` を併記し `compat-js` が無い場合でも、`lnako` 通常モードでは `path` が選ばれるため `E006_JS_IN_NORMAL_MODE` にはならない。
   - native専用パッケージ（`native` のみ）は `lnako` でのみ解決可能（`cnako` では `E031_UNSUPPORTED_RUNTIME`）。
-  - ESM専用パッケージ（`path`・`native` を持たず `esm` のみ）は `cnako` または `lnako` の `compat-js = true` 指定時のみ解決可能（通常lnakoでは `E006_JS_IN_NORMAL_MODE`）。静的 manifest 検証では、`runtimes` 未指定（両対応）または `cnako` を含むパッケージ、`cnako` profile、`compat-js` profile のいずれかを持つ場合は cnako 経路があるため受理し、lnako 専用パッケージの通常モードに限って `E006` を報告する。実行時の拒否は `Export.resolve` が対象 runtime へ報告する。
+  - ESM専用パッケージ（`path`・`native` を持たず `esm` のみ）は `cnako` または `lnako` の `compat-js = true` 指定時のみ解決可能（通常lnakoでは `E006_JS_IN_NORMAL_MODE`）。静的 manifest 検証では、`runtimes` 未指定（両対応）または `cnako` を含むパッケージ、あるいは `compat-js` profile を持つ場合は cnako 経路があるため受理し、lnako 専用パッケージの通常モードに限って `E006` を報告する。cnako profile はパッケージが cnako 対応の場合にのみ有効な経路であり、`runtimes` で cnako を否定している矛盾した宣言では数えない。実行時の拒否は `Export.resolve` が対象 runtime へ報告する。
 
 ### 3.7 SemVer range 構文
 
@@ -286,7 +286,7 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
 
 未知の `kind` はエラーとする。将来の kind は schema version bump または `x-` prefix で導入する。
 
-- lock 検証では選択 profile の `runtime` を考慮する。`cnako` または `compat-js = true` の場合は ESM artifact を許容し、それ以外（通常 `lnako`）で ESM が唯一の artifact kind のときだけ `E006_JS_IN_NORMAL_MODE` とする（source/native が併記されていれば共通ソース優先により ESM は選択され得ないため許容）。profile の `runtime` が未知の場合は `E014_INVALID_PROFILE`。選択された `input.profile` が `profiles` に存在しない場合は `E030_UNKNOWN_PROFILE`。
+- lock 検証では選択 profile の `runtime` を考慮する。lock の `artifacts` は package 単位の集合で選択済み実装を表さないため、`cnako` または `compat-js = true` の場合を除き、ESM artifact が一つでもあれば保守的に `E006_JS_IN_NORMAL_MODE` とする（実際の選択は解決・import 時の `Export.resolve` が担う）。profile の `runtime` が未知の場合は `E014_INVALID_PROFILE`。選択された `input.profile` が `profiles` に存在しない場合は `E030_UNKNOWN_PROFILE`。
 
 ## 5. レジストリ契約
 
