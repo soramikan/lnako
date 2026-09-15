@@ -146,6 +146,9 @@ pub export fn lnako_aot_exception_pending() callconv(.c) c_int {
 }
 
 pub export fn lnako_aot_exception_take(out: *state.Value) callconv(.c) void {
+    // 構造化エラーは辞書のまま `エラーメッセージ` へ束縛し、`["code"]` 等の
+    // フィールド参照を可能にする。文字列化は `structured_error` 印経由で
+    // `message` を返すため、ここでは値をそのまま渡す。
     out.* = if (state.active_runtime) |*runtime| runtime.takeException() else .{};
 }
 

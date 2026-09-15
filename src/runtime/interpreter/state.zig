@@ -18,6 +18,7 @@ const plugin_math = @import("../../plugins/math.zig");
 const plugin_csv = @import("../../plugins/csv.zig");
 const plugin_toml = @import("../../plugins/toml.zig");
 const plugin_node = @import("../../plugins/node.zig");
+const plugin_lowlevel = @import("../../plugins/lowlevel.zig");
 const plugin_encoding = @import("../../plugins/encoding.zig");
 const plugin_http_server = @import("../../plugins/http_server.zig");
 const plugin_markup = @import("../../plugins/markup.zig");
@@ -72,6 +73,7 @@ pub const Host = struct {
     monotonicMillisecondsFn: ?*const fn (context: *anyopaque) anyerror!f64 = null,
     randomFn: ?*const fn (context: *anyopaque) anyerror!f64 = null,
     node_context: ?plugin_node.Context = null,
+    lowlevel_context: ?plugin_lowlevel.Context = null,
     http_server_context: ?plugin_http_server.Context = null,
 
     pub fn write(self: Host, bytes: []const u8) !void {
@@ -232,6 +234,7 @@ pub fn traceRoots(context: *anyopaque, runtime: *Runtime) !void {
         .name => |name| try runtime.traceExternal(name),
     };
     try self.node_state.trace(runtime);
+    try self.lowlevel_state.trace(runtime);
     try self.http_server_state.trace(runtime);
     try self.caniuse_state.trace(runtime);
     try self.quickjs_state.trace(runtime);
@@ -293,6 +296,7 @@ pub const Interpreter = struct {
     print_pool: std.ArrayList(u8) = .empty,
     csv_state: plugin_csv.State,
     node_state: plugin_node.State = .{},
+    lowlevel_state: plugin_lowlevel.State = .{},
     http_server_state: plugin_http_server.State = .{},
     caniuse_state: plugin_caniuse.State = .{},
     quickjs_state: quickjs.State,
@@ -483,6 +487,7 @@ pub const Interpreter = struct {
         self.print_pool.deinit(self.allocator);
         self.csv_state.deinit();
         self.node_state.deinit(self.allocator);
+        self.lowlevel_state.deinit(self.allocator);
         self.http_server_state.deinit(self.allocator);
         self.quickjs_state.deinit();
         self.timers.deinit(self.allocator);
@@ -847,6 +852,10 @@ pub const Interpreter = struct {
 
     pub fn nodeEffects(self: *Interpreter) plugin_node.Effects {
         return plugins.nodeEffects(self);
+    }
+
+    pub fn lowlevelEffects(self: *Interpreter) plugin_lowlevel.Effects {
+        return plugins.lowlevelEffects(self);
     }
 
     pub fn httpServerEffects(self: *Interpreter) plugin_http_server.Effects {

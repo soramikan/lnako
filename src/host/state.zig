@@ -37,6 +37,7 @@ pub const CliHost = struct {
     compat_js_trace_file: ?std.Io.File = null,
     global_trace_file: ?std.Io.File = null,
     literal_trace_file: ?std.Io.File = null,
+    low_level_handles: ?lnako.runtime.low_level_io.FileHandleTable = null,
 
     pub fn deinit(self: *CliHost) void {
         if (self.dispatch_trace_file) |file| file.close(self.io);
@@ -54,6 +55,7 @@ pub const CliHost = struct {
         for (self.held_http_connections.items) |stream| stream.close(self.io);
         self.held_http_connections.deinit(std.heap.page_allocator);
         if (self.http_server) |*server| server.deinit(self.io);
+        if (self.low_level_handles) |*table| table.deinit(self.io);
         while (self.async_tasks.pop()) |task| destroyAsyncTask(task, true);
         self.async_tasks.deinit(std.heap.page_allocator);
         self.async_task_map.deinit();
@@ -76,6 +78,7 @@ pub const CliHost = struct {
             .monotonicMillisecondsFn = monotonicMilliseconds,
             .randomFn = random,
             .node_context = self.nodeContext(),
+            .lowlevel_context = self.lowLevelContext(),
             .http_server_context = if (self.http_server_enabled) .{
                 .context = self,
                 .startFn = startHttpServer,
@@ -289,6 +292,66 @@ pub const CliHost = struct {
             .modified_nanoseconds = stat.mtime.nanoseconds,
             .changed_nanoseconds = stat.ctime.nanoseconds,
             .accessed_nanoseconds = if (stat.atime) |time| time.nanoseconds else null,
+        };
+    }
+
+    fn lowLevelTable(self: *CliHost) *lnako.runtime.low_level_io.FileHandleTable {
+        if (self.low_level_handles == null) {
+            self.low_level_handles = lnako.runtime.low_level_io.FileHandleTable.init(std.heap.page_allocator);
+        }
+        return &self.low_level_handles.?;
+    }
+
+    fn lowLevelOpenFile(context: *anyopaque, path: []const u8, mode: lnako.runtime.low_level_foundation.OpenMode, exclusive: bool, sync: bool) anyerror!u64 {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const id = try self.lowLevelTable().open(self.io, .{ .path = path, .mode = mode, .exclusive = exclusive, .sync = sync });
+        return id.raw();
+    }
+
+    fn lowLevelCloseFile(context: *anyopaque, raw: u64) anyerror!void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const id = lnako.runtime.low_level_foundation.HandleId.fromRaw(raw);
+        const removed = self.lowLevelTable().remove(id) orelse return error.BadFileDescriptor;
+        removed.file.close(self.io);
+    }
+
+    fn lowLevelReadFileBytes(context: *anyopaque, raw: u64, buffer: []u8) anyerror!usize {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const id = lnako.runtime.low_level_foundation.HandleId.fromRaw(raw);
+        const entry = self.lowLevelTable().find(id) orelse return error.BadFileDescriptor;
+        return lnako.runtime.low_level_io.readAtCurrent(self.io, entry.file, buffer);
+    }
+
+    fn lowLevelWriteFileBytes(context: *anyopaque, raw: u64, bytes: []const u8) anyerror!usize {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const id = lnako.runtime.low_level_foundation.HandleId.fromRaw(raw);
+        const entry = self.lowLevelTable().find(id) orelse return error.BadFileDescriptor;
+        return lnako.runtime.low_level_io.writeHandle(self.io, entry, bytes);
+    }
+
+    fn lowLevelSyncFile(context: *anyopaque, raw: u64) anyerror!void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const id = lnako.runtime.low_level_foundation.HandleId.fromRaw(raw);
+        const entry = self.lowLevelTable().find(id) orelse return error.BadFileDescriptor;
+        return lnako.runtime.low_level_io.sync(self.io, entry.file);
+    }
+
+    fn lowLevelTruncateFile(context: *anyopaque, raw: u64, size: u64) anyerror!void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const id = lnako.runtime.low_level_foundation.HandleId.fromRaw(raw);
+        const entry = self.lowLevelTable().find(id) orelse return error.BadFileDescriptor;
+        return lnako.runtime.low_level_io.setLength(self.io, entry.file, size);
+    }
+
+    fn lowLevelContext(self: *CliHost) lnako.plugins.lowlevel.Context {
+        return .{
+            .context = self,
+            .openFileFn = lowLevelOpenFile,
+            .closeFileFn = lowLevelCloseFile,
+            .readFileBytesFn = lowLevelReadFileBytes,
+            .writeFileBytesFn = lowLevelWriteFileBytes,
+            .syncFileFn = lowLevelSyncFile,
+            .truncateFileFn = lowLevelTruncateFile,
         };
     }
 

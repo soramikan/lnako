@@ -54,7 +54,7 @@
 | `unverified` | <!-- attestation:unverified -->0<!-- /attestation:unverified --> |
 
 <!-- attestation:description-start -->
-`verified` は、`attestations/current.json` が指す現行snapshotのsource manifestと現行ソースが一致し、かつcanonical証拠ファイルのdigestが署名subjectに含まれる場合にのみ維持される状態です。manifest入力の変更（パッケージmanifest解析層の追加）で現行manifestが変わったため、前snapshot（run `34402208204`）のattestationは現行manifestをカバーせず、新しいCI runのsnapshotを追跡するまでcanonicalはunattestedへ戻ります。過去snapshotの `verified: 527` を流用せず、mainマージ後の新しいCI attestationを再取得して `current.json` を更新します。
+`verified` は、`attestations/current.json` が指す現行snapshotのsource manifestと現行ソースが一致し、かつcanonical証拠ファイルのdigestが署名subjectに含まれる場合にのみ維持される状態です。manifest入力の変更（パッケージmanifest解析層と低レイヤーAPIの追加）で現行manifestが変わったため、前snapshot（run `34402208204`）のattestationは現行manifestをカバーせず、新しいCI runのsnapshotを追跡するまでcanonicalはunattestedへ戻ります。過去snapshotの `verified: 527` を流用せず、mainマージ後の新しいCI attestationを再取得して `current.json` を更新します。
 <!-- attestation:description-end -->
 
 0.1.1の最終sourceでコードを変更した場合は、過去snapshotの527件をそのままリリース証拠として流用しません。最終source manifestに対してCIとattestationを取り直し、release preflightの `sync_compat_evidence.mjs --check` と `check_tracked_dispatch_attestation.mjs` を通過させます。

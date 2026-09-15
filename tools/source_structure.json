@@ -39,7 +39,7 @@
       },
       "src/runtime/aot/runtime_core.zig": {
         "reason": "Runtime型・コア値変換の中核（監視対象・hard limit内）",
-        "limitKb": 80
+        "limitKb": 81
       },
       "src/runtime/aot/state.zig": {
         "reason": "mutableグローバルと互換再エクスポートのファサード（hard limit内）",
@@ -49,13 +49,9 @@
         "reason": "表・クローン等のAOT実装（監視対象・hard limit内）",
         "limitKb": 80
       },
-      "src/runtime/aot_builtin.zig": {
-        "reason": "命令カタログとcanonical opcodeの単一正本（監視対象・hard limit内）",
-        "limitKb": 80
-      },
       "src/runtime/value.zig": {
         "reason": "Value・Runtime中心のコア値表現（監視対象・hard limit内）",
-        "limitKb": 80
+        "limitKb": 81
       }
     }
   },

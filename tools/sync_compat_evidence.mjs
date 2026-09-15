@@ -114,12 +114,11 @@ if (attestationPath === null && historicalCommit === null && dispatchEvidenceInp
   const current = await loadCurrentAttestation(root);
   if (current !== null) {
     const currentManifest = computeSourceManifestSha256Sync(root).sha256;
-    if (current.pointer.sourceManifestSha256 !== currentManifest) {
-      throw new Error("追跡中のcurrent attestationが現行source manifestと一致しません。証拠を再生成するには compat/v3.7.24/attestations/current.json を最新runのsnapshotへ更新するか削除してください");
+    if (current.pointer.sourceManifestSha256 === currentManifest) {
+      resolvedAttestationPath = current.attestationPath;
+      resolvedAttestationBundlePath = current.bundlePath;
+      attestationOffline = true;
     }
-    resolvedAttestationPath = current.attestationPath;
-    resolvedAttestationBundlePath = current.bundlePath;
-    attestationOffline = true;
   }
 }
 const suppliedAttestation = resolvedAttestationPath === null ? null : await readJson(resolvedAttestationPath);

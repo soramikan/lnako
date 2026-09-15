@@ -412,6 +412,15 @@ pub fn dictionaryToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitive
             continue;
         }
         if (std.mem.eql(u16, name, to_string_name)) {
+            if (roots[0].object()) |object| {
+                if (object.structured_error) {
+                    if (dictionaryOwnProperty(roots[0], &.{ 'm', 'e', 's', 's', 'a', 'g', 'e' })) |message| {
+                        if (message.tag == @intFromEnum(Tag.utf16_string) or message.tag == @intFromEnum(Tag.static_utf8_string)) {
+                            return message;
+                        }
+                    }
+                }
+            }
             return if (isAotHttpResponse(roots[0])) staticStringValue("[object Response]") else staticStringValue("[object Object]");
         }
     }

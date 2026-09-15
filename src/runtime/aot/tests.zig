@@ -208,9 +208,12 @@ const utf16FailureMessageUtf8Alloc = state.utf16FailureMessageUtf8Alloc;
 const validateFillDimensions = state.validateFillDimensions;
 const valueToNumber = state.valueToNumber;
 const runtimeFailure = state.runtimeFailure;
+const structured_error = shared.structured_error;
+const structured_error_value = @import("structured_error_value.zig");
 
 test {
     _ = @import("telemetry_test.zig");
+    _ = structured_error_value;
 }
 const valueToPrimitive = state.valueToPrimitive;
 const valueUtf16Alloc = state.valueUtf16Alloc;
@@ -6333,6 +6336,62 @@ test "AOT→動的ブリッジはGC stress下でも変換済みkeyと値をroot�
     try std.testing.expectEqual(@as(f64, 7), stored.array.items.items[0].number);
 }
 
+test "動的実行境界は構造化エラー種別とmessage契約を往復する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    const aot_state = try DynamicInterpreterState.init(std.testing.allocator, active);
+    active.dynamic_state = aot_state;
+
+    const error_value = structured_error.classifyNative(.NOENT, "open", "/missing", null, null).?;
+    var roots = [_]Value{try structured_error_value.buildValue(active, error_value)};
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+
+    const expected = "ENOENT: no such file or directory, open '/missing'";
+    const before_units = try valueUtf16Alloc(active, roots[0]);
+    defer active.allocator.free(before_units);
+    const before_text = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, before_units);
+    defer std.testing.allocator.free(before_text);
+    try std.testing.expectEqualStrings(expected, before_text);
+
+    var dynamic_roots = aot_state.value_runtime.rootFrame();
+    defer dynamic_roots.deinit();
+    var converted = try aotToDynamicValue(aot_state, roots[0]);
+    try dynamic_roots.protect(&converted);
+    try std.testing.expectEqual(shared.dynamic_value.DictionaryKind.structured_error, converted.dictionary.kind);
+    var converted_text_value = try aot_state.value_runtime.valueToString(converted);
+    try dynamic_roots.protect(&converted_text_value);
+    const converted_text = try converted_text_value.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(converted_text);
+    try std.testing.expectEqualStrings(expected, converted_text);
+
+    roots[0] = try dynamicToAotValue(aot_state, converted);
+    try std.testing.expect(roots[0].object().?.structured_error);
+    const recovered_units = try valueUtf16Alloc(active, roots[0]);
+    defer active.allocator.free(recovered_units);
+    const recovered_text = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, recovered_units);
+    defer std.testing.allocator.free(recovered_text);
+    try std.testing.expectEqualStrings(expected, recovered_text);
+
+    var forged_pairs = [_]Value{
+        staticStringValue("message"),
+        try runtimeUtf8String(active, "forged"),
+    };
+    roots[0] = try active.createDictionary(&forged_pairs);
+    var forged = try aotToDynamicValue(aot_state, roots[0]);
+    try dynamic_roots.protect(&forged);
+    try std.testing.expectEqual(shared.dynamic_value.DictionaryKind.ordinary, forged.dictionary.kind);
+    roots[0] = try dynamicToAotValue(aot_state, forged);
+    try std.testing.expect(!roots[0].object().?.structured_error);
+}
+
 test "動的→AOTブリッジは変換・辞書追加の失敗後にroot chainを復元する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -7238,4 +7297,291 @@ test "AOT ObjectはGC回収で解放され次の生成に影響しない" {
     try std.testing.expectEqual(@as(u64, 3), runtime.counters.allocations);
     try std.testing.expectEqual(@as(usize, 2), runtime.object_count);
     try std.testing.expect(runtime.counters.object_high_water >= 2);
+}
+
+test "AOT低レイヤーはNUL/不正UTF-8を含むバイナリをchunked copyでSHA-256一致させる" {
+    const Sha256 = std.crypto.hash.sha2.Sha256;
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const source_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "input.bin" });
+    defer std.testing.allocator.free(source_path);
+    const output_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "output.bin" });
+    defer std.testing.allocator.free(output_path);
+
+    const fixture_size: usize = 256 * 1024;
+    const fixture = try std.testing.allocator.alloc(u8, fixture_size);
+    defer std.testing.allocator.free(fixture);
+    var seed: u64 = 0x1234_5678_9abc_def0;
+    for (fixture, 0..) |*byte, index| {
+        seed ^= seed >> 12;
+        seed ^= seed << 25;
+        seed ^= seed >> 27;
+        seed = seed *% 0x2545f4914f6cdd1d;
+        byte.* = switch (index % 4) {
+            0 => 0,
+            1 => 0x80 + @as(u8, @truncate(index & 0x7f)),
+            2 => 0xff,
+            else => @truncate(seed),
+        };
+    }
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "input.bin", .data = fixture });
+
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtimeUtf8String(&runtime, source_path);
+    roots[1] = try runtimeUtf8String(&runtime, "rb");
+    roots[2] = try runtimeUtf8String(&runtime, output_path);
+    roots[3] = try runtimeUtf8String(&runtime, "wb");
+    const in_handle = try state.lowLevelFileBuiltin(&runtime, .low_level_file_open, &.{ roots[0], roots[1] });
+    const out_handle = try state.lowLevelFileBuiltin(&runtime, .low_level_file_open, &.{ roots[2], roots[3] });
+    roots[4] = in_handle;
+    roots[5] = out_handle;
+
+    var copied: usize = 0;
+    while (true) {
+        const request = numberValue(@floatFromInt(@min(64 * 1024, fixture_size - copied)));
+        roots[0] = try state.lowLevelFileBuiltin(&runtime, .low_level_file_read_bytes, &.{ in_handle, request });
+        const chunk = roots[0].object().?.payload.byte_buffer.bytes;
+        if (chunk.len == 0) break;
+        _ = try state.lowLevelFileBuiltin(&runtime, .low_level_file_write_bytes, &.{ out_handle, roots[0] });
+        copied += chunk.len;
+        if (copied >= fixture_size) break;
+    }
+    try std.testing.expectEqual(fixture_size, copied);
+    _ = try state.lowLevelFileBuiltin(&runtime, .low_level_file_close, &.{in_handle});
+    _ = try state.lowLevelFileBuiltin(&runtime, .low_level_file_close, &.{out_handle});
+
+    const output = try temporary.dir.readFileAlloc(std.testing.io, "output.bin", std.testing.allocator, .limited(fixture_size + 16));
+    defer std.testing.allocator.free(output);
+    var source_digest: [32]u8 = undefined;
+    var output_digest: [32]u8 = undefined;
+    Sha256.hash(fixture, &source_digest, .{});
+    Sha256.hash(output, &output_digest, .{});
+    try std.testing.expectEqualSlices(u8, &source_digest, &output_digest);
+}
+
+test "AOT動的変換は低レイヤーハンドルのHandleIdを引き継ぐ" {
+    const plugin_lowlevel = @import("../../plugins/lowlevel.zig");
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    const dynamic_state = try DynamicInterpreterState.init(std.testing.allocator, active);
+    active.dynamic_state = dynamic_state;
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const path = try std.fs.path.join(std.testing.allocator, &.{ directory, "handle-bridge.txt" });
+    defer std.testing.allocator.free(path);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "handle-bridge.txt", .data = "ok" });
+
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+    roots[0] = try runtimeUtf8String(active, path);
+    roots[1] = try runtimeUtf8String(active, "r");
+    const handle = try state.lowLevelFileBuiltin(active, .low_level_file_open, &.{ roots[0], roots[1] });
+    const original = state.handleIdFor(active, handle).?;
+
+    var dynamic_roots = dynamic_state.value_runtime.rootFrame();
+    defer dynamic_roots.deinit();
+    var dynamic_handle = try aotToDynamicValue(dynamic_state, handle);
+    try dynamic_roots.protect(&dynamic_handle);
+    try std.testing.expectEqual(original, plugin_lowlevel.lookupHandle(&dynamic_state.interpreter.lowlevel_state, dynamic_handle).?);
+
+    const recovered = try dynamicToAotValue(dynamic_state, dynamic_handle);
+    try std.testing.expectEqual(original, state.handleIdFor(active, recovered).?);
+    try std.testing.expectEqual(handle.payload, recovered.payload);
+
+    var again = try aotToDynamicValue(dynamic_state, handle);
+    try dynamic_roots.protect(&again);
+    try std.testing.expectEqual(@intFromPtr(dynamic_handle.dictionary), @intFromPtr(again.dictionary));
+
+    _ = try state.lowLevelFileBuiltin(active, .low_level_file_close, &.{handle});
+    try std.testing.expectEqual(@as(usize, 0), dynamic_state.interpreter.lowlevel_state.handle_values.items.len);
+    try std.testing.expectEqual(@as(u32, 0), active.low_level_handle_ids.size);
+}
+
+test "AOT低レイヤーの未実装命令はcapability/operation付きの構造化ENOTSUPを投げる" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, numberValue(1) };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    // カタログ掲載だが未実装の命令はコンパイル済みopcodeから構造化
+    // ENOTSUP へdispatchし、例外値は `["code"]` 等を参照できる辞書のまま。
+    lnako_aot_builtin_call(&roots[0], @ptrCast(&roots[1]), 1, @intFromEnum(aot_builtin.Command.low_level_file_tell));
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    var taken: Value = .{};
+    lnako_aot_exception_take(&taken);
+    try std.testing.expectEqual(@intFromEnum(Tag.dictionary), taken.tag);
+    try std.testing.expect(taken.object().?.structured_error);
+    try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "ENOTSUP");
+    try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'o', 'p', 'e', 'r', 'a', 't', 'i', 'o', 'n' }), "lseek");
+    try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'a', 'p', 'a', 'b', 'i', 'l', 'i', 't', 'y' }), "stream_file_io");
+    const rendered = try valueUtf16Alloc(&state.active_runtime.?, taken);
+    defer state.active_runtime.?.allocator.free(rendered);
+    const rendered_utf8 = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, rendered);
+    defer std.testing.allocator.free(rendered_utf8);
+    try std.testing.expectEqualStrings("この低レイヤー命令はまだ実装されていません", rendered_utf8);
+
+    // カタログのarity上限を超える呼び出しはENOTSUPではなくEINVAL。
+    lnako_aot_builtin_call(&roots[0], @ptrCast(&roots[1]), 1, @intFromEnum(aot_builtin.Command.low_level_stderr_sync));
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    lnako_aot_exception_take(&taken);
+    try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "EINVAL");
+
+    // min未満の呼び出しはENOTSUPを維持する。ENOTSUPが未実装の通知を兼ねる
+    // ため、引数不足をEINVALへ分けると呼び出し側が両者を区別できない。
+    lnako_aot_builtin_call(&roots[0], null, 0, @intFromEnum(aot_builtin.Command.low_level_file_tell));
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    lnako_aot_exception_take(&taken);
+    try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "ENOTSUP");
+}
+
+test "AOT低レイヤーの実装済み命令はmin未満でEINVALを返す" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, numberValue(1) };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    // 実装済み命令の引数不足はEBADF等ではなく引数数エラーのEINVAL。
+    // dispatch経由で呼び、isLowLevelCommandによるlen==0早期拒否の免除・
+    // switchルーティングを通ってbuiltinのminゲートへ到達する経路を検証する。
+    var taken: Value = .{};
+    lnako_aot_builtin_call(&roots[0], null, 0, @intFromEnum(aot_builtin.Command.low_level_file_close));
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    lnako_aot_exception_take(&taken);
+    try std.testing.expect(taken.object().?.structured_error);
+    try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "EINVAL");
+
+    lnako_aot_builtin_call(&roots[0], null, 0, @intFromEnum(aot_builtin.Command.low_level_capability_supported));
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    lnako_aot_exception_take(&taken);
+    try std.testing.expect(taken.object().?.structured_error);
+    try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "EINVAL");
+}
+
+test "AOT低レイヤーの実装済みフラグの命令はstubへ到達しない" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, numberValue(1), numberValue(1), numberValue(1), numberValue(1) };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    // `implemented == true` の命令が stub case に残ったままだと、実行時に
+    // 未実装通知のENOTSUPを返し続ける。dispatch経由で呼び、stub固有の
+    // messageが出ないことで配置ずれを検出する。引数は spec.min 個渡す:
+    // `capability_list`(max=0)のように上限超過でstub/実装の両経路が同じ
+    // EINVALになる命令でも、min個ならstubはENOTSUP・実装は正常系へ分かれる。
+    var taken: Value = .{};
+    for (aot_builtin.low_level_bindings) |binding| {
+        const spec = aot_builtin.lowLevelCatalogCommand(binding.command).?;
+        if (!spec.implemented) continue;
+        const argc: usize = spec.min;
+        std.debug.assert(argc <= roots.len - 1);
+        lnako_aot_builtin_call(&roots[0], if (argc > 0) @ptrCast(&roots[1]) else null, argc, @intFromEnum(binding.command));
+        if (lnako_aot_exception_pending() == 0) continue;
+        lnako_aot_exception_take(&taken);
+        const rendered = try valueUtf16Alloc(&state.active_runtime.?, taken);
+        defer state.active_runtime.?.allocator.free(rendered);
+        const rendered_utf8 = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, rendered);
+        defer std.testing.allocator.free(rendered_utf8);
+        try std.testing.expect(std.mem.indexOf(u8, rendered_utf8, "まだ実装されていません") == null);
+    }
+}
+
+test "AOT低レイヤーの未実装命令は全てstub経由でENOTSUPを返す" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, numberValue(1), numberValue(1), numberValue(1), numberValue(1) };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    // 未実装命令が誤って別case群へ列挙されるとENOTSUPにならない。
+    // dispatch経由で全53件が構造化ENOTSUPを返すことを網羅確認する。
+    var stub_count: usize = 0;
+    var taken: Value = .{};
+    for (aot_builtin.low_level_bindings) |binding| {
+        const spec = aot_builtin.lowLevelCatalogCommand(binding.command).?;
+        if (spec.implemented) continue;
+        stub_count += 1;
+        const argc: usize = spec.min;
+        std.debug.assert(argc <= roots.len - 1);
+        lnako_aot_builtin_call(&roots[0], if (argc > 0) @ptrCast(&roots[1]) else null, argc, @intFromEnum(binding.command));
+        try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+        lnako_aot_exception_take(&taken);
+        try std.testing.expectEqual(@intFromEnum(Tag.dictionary), taken.tag);
+        try std.testing.expect(taken.object().?.structured_error);
+        try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "ENOTSUP");
+    }
+    try std.testing.expectEqual(@as(usize, 53), stub_count);
+}
+
+test "AOT未捕捉例外のmessage抽出は構造化エラーだけに限る" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+
+    // 通常辞書は `message` キーを持っていても `[object Object]` と表示する。
+    var pairs = [_]Value{
+        staticStringValue("message"),
+        try runtimeUtf8String(&runtime, "秘密"),
+    };
+    var roots: RootFrame = .{};
+    runtime.pushRoots(&roots, &pairs, pairs.len);
+    defer runtime.popRoots(&roots);
+    const ordinary = try runtime.createDictionary(&pairs);
+    try std.testing.expect(!ordinary.object().?.structured_error);
+    runtime.setException(ordinary);
+    const ordinary_text = try pendingExceptionMessageUtf8Alloc(&runtime);
+    defer runtime.allocator.free(ordinary_text);
+    try std.testing.expectEqualStrings("[object Object]", ordinary_text);
+    _ = runtime.takeException();
+
+    // 構造化エラー辞書は `message` を表示する。
+    const structured = try structured_error_value.buildValue(&runtime, structured_error.classifyNative(.NOENT, "open", "/missing", null, null).?);
+    runtime.setException(structured);
+    const structured_text = try pendingExceptionMessageUtf8Alloc(&runtime);
+    defer runtime.allocator.free(structured_text);
+    try std.testing.expectEqualStrings("ENOENT: no such file or directory, open '/missing'", structured_text);
 }

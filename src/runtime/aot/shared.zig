@@ -20,6 +20,7 @@ pub const dynamic_ir = @import("../../ir/nako_ir.zig");
 pub const dynamic_interpreter = @import("../interpreter.zig");
 pub const dynamic_value = @import("../value.zig");
 pub const toml_temporal = @import("../toml_temporal.zig");
+pub const structured_error = @import("../structured_error.zig");
 
 pub const AotWindowsStdout = if (builtin.os.tag == .windows) struct {
     extern "c" fn _setmode(file_descriptor: c_int, mode: c_int) c_int;

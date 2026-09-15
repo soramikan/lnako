@@ -18,6 +18,7 @@ const plugin_math = @import("../../plugins/math.zig");
 const plugin_csv = @import("../../plugins/csv.zig");
 const plugin_toml = @import("../../plugins/toml.zig");
 const plugin_node = @import("../../plugins/node.zig");
+const plugin_lowlevel = @import("../../plugins/lowlevel.zig");
 const plugin_encoding = @import("../../plugins/encoding.zig");
 const plugin_http_server = @import("../../plugins/http_server.zig");
 const plugin_markup = @import("../../plugins/markup.zig");
@@ -26,6 +27,7 @@ const plugin_kansuji = @import("../../plugins/kansuji.zig");
 const plugin_native = @import("../../plugins/native.zig");
 const quickjs = @import("../../compat/quickjs.zig");
 const environment = @import("../environment.zig");
+const low_level_foundation = @import("../low_level_foundation.zig");
 const istate = @import("state.zig");
 const shared = @import("shared.zig");
 const prepared = @import("prepared.zig");
@@ -360,6 +362,8 @@ pub fn callBuiltinImpl(self: *Interpreter, name: []const u8, arguments: []const 
         self.setDispatchRoute("plugin_node");
         if (try plugin_node.call(self.runtime, &self.node_state, node_context, self.nodeEffects(), name, arguments)) |value| return value;
     }
+    self.setDispatchRoute("plugin_lowlevel");
+    if (try plugin_lowlevel.call(self.runtime, &self.lowlevel_state, self.host.lowlevel_context orelse plugin_lowlevel.emptyContext(), self.lowlevelEffects(), name, arguments)) |value| return value;
     if (self.host.http_server_context) |server_context| {
         self.setDispatchRoute("plugin_http_server");
         if (try plugin_http_server.call(self.runtime, &self.http_server_state, server_context, self.httpServerEffects(), name, arguments)) |value| return value;
@@ -469,6 +473,7 @@ pub fn defaultSystemNameExists(self: *Interpreter, arguments: []const Value) !bo
     const name = try string.string.toUtf8Lossy(self.allocator);
     defer self.allocator.free(name);
     for (builtin_catalog.default_names) |candidate| if (std.mem.eql(u8, name, candidate)) return true;
+    for (low_level_foundation.extension_command_names) |candidate| if (std.mem.eql(u8, name, candidate)) return true;
     return false;
 }
 
@@ -705,6 +710,19 @@ pub fn nodeEffects(self: *Interpreter) plugin_node.Effects {
         .getGlobalFn = nodeGetGlobal,
         .setGlobalFn = nodeSetGlobal,
     };
+}
+
+pub fn lowlevelEffects(self: *Interpreter) plugin_lowlevel.Effects {
+    return .{
+        .context = self,
+        .throwFn = lowlevelThrowStructured,
+    };
+}
+
+fn lowlevelThrowStructured(context: *anyopaque, value: Value) anyerror!void {
+    const self: *Interpreter = @ptrCast(@alignCast(context));
+    self.exception_value = value;
+    return error.NakoException;
 }
 
 pub fn httpServerEffects(self: *Interpreter) plugin_http_server.Effects {
