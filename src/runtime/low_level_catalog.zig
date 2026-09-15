@@ -299,6 +299,15 @@ test "implementedフラグは実装済み命令の既知集合と一致する" {
         "ll-hash-discard",
         "ll-capability-supported",
         "ll-capability-list",
+        "ll-file-stat",
+        "ll-file-lstat",
+        "ll-symlink-create",
+        "ll-symlink-read",
+        "ll-hardlink-create",
+        "ll-path-realpath",
+        "ll-path-rename",
+        "ll-path-unlink",
+        "ll-path-rmdir",
     };
     var count: usize = 0;
     for (foundation.catalog_commands) |command| {
