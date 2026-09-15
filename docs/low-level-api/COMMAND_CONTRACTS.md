@@ -85,7 +85,7 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 - `ハッシュ完了`（ll-hash-digest）助詞 `HANDLEをENCODINGで/HANDLEを`、戻り `hashDigest`、capability `incremental_hash`、エラー EBADF/EINVAL/ENOTSUP
 - `ハッシュ破棄`（ll-hash-discard）助詞 `HANDLEを/HANDLEの`、戻り `void`、capability `incremental_hash`、エラー EBADF
 
-`ENCODING` 省略時はraw bytes、`hex` 指定でhex文字列。完了後と破棄後の再操作は `EBADF`。アルゴリズム名の正規化は既存 `ハッシュ値計算` と同一。
+`ENCODING` 省略時はraw bytes、`hex` 指定でhex文字列（`base64`/`base64url`/`latin1`/`binary`/`utf8` も既存 `ハッシュ値計算` と同じ）。完了後と破棄後の再操作は `EBADF`。アルゴリズム名の正規化は既存 `ハッシュ値計算` と同一で、逐次stateを持たないRIPEMD-160/SM3は `ENOTSUP`。実装契約は [HASH_IO.md](HASH_IO.md) を参照。
 
 ### Issue 33 逐次ディレクトリ列挙
 
