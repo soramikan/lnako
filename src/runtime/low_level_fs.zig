@@ -159,8 +159,14 @@ fn statPosix(path: []const u8, follow: bool) anyerror!Metadata {
     const posix_path = try std.posix.toPosixPath(path);
     var raw: std.c.Stat = std.mem.zeroes(std.c.Stat);
     const flags: u32 = if (follow) 0 else std.c.AT.SYMLINK_NOFOLLOW;
-    const result = std.c.fstatat(std.c.AT.FDCWD, &posix_path, &raw, flags);
-    if (result != 0) return posixErrno(std.c.errno(result));
+    while (true) {
+        const result = std.c.fstatat(std.c.AT.FDCWD, &posix_path, &raw, flags);
+        if (result == 0) break;
+        const errno = std.c.errno(result);
+        // シグナル割込みは一時的なので再試行する（EINTRをEINVALにしない）。
+        if (errno == .INTR) continue;
+        return posixErrno(errno);
+    }
     var metadata = Metadata{
         .kind = posixKind(raw.mode),
         .size = @bitCast(raw.size),
@@ -229,9 +235,12 @@ fn statLinux(io: std.Io, path: []const u8, follow: bool) anyerror!Metadata {
         .CTIME = true,
         .BTIME = true,
     };
-    const result = std.os.linux.statx(std.os.linux.AT.FDCWD, &posix_path, flags, mask, &raw);
-    const errno = std.os.linux.errno(result);
-    if (errno != .SUCCESS) {
+    while (true) {
+        const result = std.os.linux.statx(std.os.linux.AT.FDCWD, &posix_path, flags, mask, &raw);
+        const errno = std.os.linux.errno(result);
+        if (errno == .SUCCESS) break;
+        // シグナル割込みは一時的なので再試行する（EINTRをEINVALにしない）。
+        if (errno == .INTR) continue;
         // statx非対応はポータブルAPIへフォールバックする。
         if (errno == .NOSYS or errno == .OPNOTSUPP) return statPortable(io, path, follow);
         return linuxErrno(errno);
