@@ -2804,6 +2804,11 @@
     "source": "A=[[\"5\"]]\nA[0]を1増やす\nA[0]を表示\nAを1増やす\nAを表示\nB={\"b\":\"5\"}\nB$bを1増やす\nB$bを表示\n"
   },
   {
+    "id": "native-increment-conversion-throw",
+    "oracle": "official-generated",
+    "source": "A={}\nA[\"valueOf\"]=関数()エラー発生(「vofail」);ここまで\nAを1増やす\n「到達した」を表示\n"
+  },
+  {
     "id": "native-dncl-v1-constant-index-target",
     "source": "!DNCLモード\nPI[1]=5\nPIを表示\nA=NULL\nA[1]=5\nA[1]を表示\nA[2]を表示\n",
     "oracle": "official-source"

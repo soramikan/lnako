@@ -63,6 +63,7 @@
 | `aot-function-string-name` | 部分対応 | #9 |
 | `aot-native-plugin-static-bundle` | 0.1.0非対応 | #11 |
 | `compat-js-failure-diagnostic-equivalence` | optional routeの診断改善 | #8 |
+| `module-circular-import-site-mode` | 循環再展開コピーの文脈別モード変体は未実装、不一致経路は診断化 | #73 |
 
 ## リリース直前チェック
 

@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 528,
-    "nativeAot": 361,
+    "total": 529,
+    "nativeAot": 362,
     "interpreter": 177,
     "compatJs": 9
   },

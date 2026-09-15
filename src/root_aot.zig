@@ -72,6 +72,12 @@ export fn lnako_aot_runtime_keepalive() void {
     _ = aot.lnako_aot_is_undefined;
     _ = aot.lnako_aot_coalesce_or_zero;
     _ = aot.lnako_aot_increment_values;
+    _ = aot.lnako_aot_ensure_array_var;
+    _ = aot.lnako_aot_init_array_index;
+    _ = aot.lnako_aot_is_array;
+    _ = aot.lnako_aot_math_unary_f64_call_site;
+    _ = aot.lnako_aot_math_unary_value_call_site;
+    _ = aot.lnako_aot_unicode_length_call_site;
     _ = aot.lnako_aot_array_new;
     _ = aot.lnako_aot_dictionary_new;
     _ = aot.lnako_aot_caniuse_agents_new;

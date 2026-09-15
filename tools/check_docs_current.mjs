@@ -86,7 +86,7 @@ requireTableValue(compatibilityText, "trace-confirmed-unattested", "trace", evid
 requireTableValue(compatibilityText, "unverified", "unverified", evidenceStates.unverified);
 
 const fixtureInventory = evidence.fixtureInventory;
-if (fixtureInventory?.total !== 528 || fixtureInventory?.nativeAot !== 361 || fixtureInventory?.interpreter !== 177 || fixtureInventory?.compatJs !== 9) {
+if (fixtureInventory?.total !== 529 || fixtureInventory?.nativeAot !== 362 || fixtureInventory?.interpreter !== 177 || fixtureInventory?.compatJs !== 9) {
   fail("evidence.jsonのfixture inventoryが不一致です");
 }
 if (dispatchCoverage.scope?.fixtureCount !== 231 || dispatchCoverage.sites?.length !== 4602 ||

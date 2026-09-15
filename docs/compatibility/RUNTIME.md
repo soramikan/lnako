@@ -126,3 +126,4 @@
 - 判定: 部分互換（不一致経路は診断化）
 - 対象経路: Interpreter / AOT
 - 差分テストID: `循環取り込みの再展開モード不一致を診断にする`（`src/semantic/module_graph.zig`）
+- TODO識別子: `TODO: module-circular-import-site-mode`

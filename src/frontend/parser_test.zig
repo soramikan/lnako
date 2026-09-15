@@ -310,6 +310,22 @@ test "相対nako3取り込みをASTに保持する" {
     try std.testing.expectEqualStrings("./lib.nako3", import_node.value);
 }
 
+test "文頭取込と後置を取り込むの両形式をimportノードにする" {
+    const cases = [_][]const u8{
+        "取込「./lib.nako3」\n",
+        "「./lib.nako3」を取り込む\n",
+    };
+    for (cases) |source| {
+        var result = try parse(std.testing.allocator, source, "main.nako3");
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+        const import_node = result.root.?.children[0];
+        try std.testing.expectEqual(ast.Kind.import, import_node.kind);
+        try std.testing.expectEqualStrings("./lib.nako3", import_node.value);
+        try std.testing.expectEqual(@as(usize, 1), result.import_modes.len);
+    }
+}
+
 test "公式同様に廃止された非同期構文を診断付き空文として継続する" {
     const cases = [_]struct { source: []const u8, message: []const u8 }{
         .{

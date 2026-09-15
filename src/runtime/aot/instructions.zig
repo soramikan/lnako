@@ -109,7 +109,12 @@ pub export fn lnako_aot_increment_values(out: *state.Value, old: *const state.Va
     var frame = state.RootFrame{};
     runtime.pushRoots(&frame, &rooted, rooted.len);
     defer runtime.popRoots(&frame);
-    out.* = state.incrementValue(runtime, rooted[0], rooted[1]);
+    out.* = state.incrementValue(runtime, rooted[0], rooted[1]) catch |failure| {
+        // ToPrimitive callbackが元の例外を設定済みの場合はそちらを保持する。
+        if (!runtime.has_pending_exception) runtime.setFailure(failure);
+        out.* = .{};
+        return;
+    };
 }
 
 pub export fn lnako_aot_index_get(out: *state.Value, container: *const state.Value, key: *const state.Value) callconv(.c) void {

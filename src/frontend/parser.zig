@@ -197,6 +197,7 @@ pub const Parser = struct {
             .def_test => self.parseFunctionDefinition(true),
             .keyword_let => self.parseDeclaration(false),
             .keyword_const => self.parseDeclaration(true),
+            .keyword_import => self.parseImport(),
             .question_display => self.parseDebugDisplay(),
             .keyword_here_end, .keyword_else, .keyword_error => self.fail(.unexpected_token, "対応する構文の開始がありません", token),
             else => blk: {
@@ -455,6 +456,16 @@ pub const Parser = struct {
         return node;
     }
 
+    /// `取込 <expr>` の文頭形式。
+    pub fn parseImport(self: *Parser) ParseFailure!*ast.Node {
+        const start = self.advance();
+        const path = try expressions.parseExpression(self, 0);
+        const node = try builder.makeNodeWithChildren(self, .import, start, try builder.copyChildren(self, &.{path}));
+        node.value = path.value;
+        try self.recordImportMode(node);
+        return node;
+    }
+
     pub fn isImportDirective(self: *Parser) bool {
         if (!self.at(.not) or (self.peekAhead(1).kind != .string and self.peekAhead(1).kind != .string_template)) return false;
         var offset: usize = 2;
@@ -625,6 +636,16 @@ pub const Parser = struct {
                 _ = self.advance();
                 const collection = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try builder.nop(self, start);
                 return self.parseForeach(start, collection);
+            }
+            if (self.at(.keyword_import)) {
+                const command = self.advance();
+                if (arguments.items.len == 0) return self.fail(.expected_expression, "取り込み先が必要です", command);
+                const path = arguments.items[arguments.items.len - 1];
+                const node = try builder.makeNodeWithChildren(self, .import, start, try builder.copyChildren(self, &.{path}));
+                node.value = path.value;
+                node.josi = "";
+                try self.recordImportMode(node);
+                return node;
             }
             if ((self.identifierValue("増") or self.identifierValue("減")) and self.peekAhead(1).kind == .keyword_repeat) {
                 return self.parseFor(start, arguments.items);

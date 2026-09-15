@@ -4038,12 +4038,12 @@ test "AOTの値をUTF-16文字列として連結する" {
 test "AOT増減は未定義・文字列・BigIntをNumberへ変換する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    const value = incrementValue(&runtime, .{}, numberValue(1));
+    const value = try incrementValue(&runtime, .{}, numberValue(1));
     try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 1))), value.payload);
     const bigint = try runtime.createBigInt("5n");
-    try std.testing.expectEqual(@as(f64, 7), incrementNumber(&runtime, bigint) + incrementNumber(&runtime, numberValue(2)));
+    try std.testing.expectEqual(@as(f64, 7), try incrementNumber(&runtime, bigint) + try incrementNumber(&runtime, numberValue(2)));
     const string = try runtime.createString(&.{'5'});
-    try std.testing.expectEqual(@as(f64, 7), incrementNumber(&runtime, string) + incrementNumber(&runtime, numberValue(2)));
+    try std.testing.expectEqual(@as(f64, 7), try incrementNumber(&runtime, string) + try incrementNumber(&runtime, numberValue(2)));
 }
 
 test "AOT増減は配列・辞書をtoPrimitive経由でNumberへ変換する" {
@@ -4057,10 +4057,39 @@ test "AOT増減は配列・辞書をtoPrimitive経由でNumberへ変換する" {
     // Number([["5"]]) -> 5（公式の暗黙変換相当）
     roots[0] = try runtime.createArray(&.{staticStringValue("5")});
     roots[1] = try runtime.createArray(&.{roots[0]});
-    const incremented = incrementValue(&runtime, roots[1], numberValue(1));
+    const incremented = try incrementValue(&runtime, roots[1], numberValue(1));
     try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 6))), incremented.payload);
     const dictionary = try runtime.createDictionary(&.{});
-    try std.testing.expect(std.math.isNan(incrementNumber(&runtime, dictionary)));
+    try std.testing.expect(std.math.isNan(try incrementNumber(&runtime, dictionary)));
+}
+
+test "AOT増減は変換callbackの失敗をNaNへ握り潰さず例外として伝搬する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    var roots = [_]Value{.{}} ** 4;
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+
+    roots[0] = try active.createDictionary(&.{});
+    roots[1] = try active.createBindingCell(numberValue(0));
+    roots[2] = try active.createFunction(testAotThrowAfterSideEffect, 0, &.{roots[1]});
+    try active.setDictionary(&roots[0].object().?.payload.dictionary, staticStringValue("valueOf"), roots[2]);
+    try std.testing.expectError(error.CallbackExecutionFailed, incrementValue(active, roots[0], numberValue(1)));
+    _ = active.takeException();
+
+    const amount = numberValue(1);
+    lnako_aot_increment_values(&roots[3], &roots[0], &amount);
+    try std.testing.expect(active.has_pending_exception);
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[3].tag)));
+    roots[3] = active.takeException();
+    try expectUtf16String(active, roots[3], "callback failure");
 }
 
 test "DNCL自動初期化と添字増減はGC圧力下でもコンテナを保護する" {
