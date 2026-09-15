@@ -55,7 +55,7 @@
     "environment": {
       "platform": "darwin",
       "arch": "arm64",
-      "node": "v24.15.0"
+      "node": "v26.8.2"
     },
     "oracle": {
       "build": 4,
@@ -66,16 +66,16 @@
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
     "lnako": {
-      "binarySha256": "1213f8c16dc92a4a36463c710d83a7226a17c32d25eb040e7548e1d4f3af7f4d",
-      "sourceManifestSha256": "57a9f09757637b0c7087cd681f4700ac4cecb501024b53215058577611df15ef"
+      "binarySha256": "3fd602cbe4609deba12015dd8b0ba5bc2d400a602db150a0aca011e8a31646fa",
+      "sourceManifestSha256": "f0f35ea3b8b92d5707595353b419ff36caa190743b0e82800086d654ca394ab2"
     },
     "raw": {
       "interpreterTraceSha256": "4cffa2464ad6f612591a35bc5240822807fb0395919b1f99d5d926c09562717b",
       "aotTraceSha256": "97b20225abc19943eab7359100c62fc7bbd8ff6ededdbc02d01185263ca50fa5",
-      "globalManifestSha256": "33e93c0a4f76669eaa155fcf14e9af0134606233bc2584cac61f7ef075bd9db0",
+      "globalManifestSha256": "d9ac1be9bf103a22a1dab5a5bd34ca4f4a27fa927f7062453cba150d576146d9",
       "literalInterpreterTraceSha256": "d1a240ca85bb6425f4ad3e15b23d56a4366b64e8631f58b1af10c96a38b65232",
       "literalAotTraceSha256": "b503b7eae644c3b3cc2fbe7504669a86aa68f5db0642b31b5d61cde895e2a1ea",
-      "literalManifestSha256": "e408fbc9bc340f9a85086e6fa291751fb53c97fbb33313c2a253ffb55b65e9fb"
+      "literalManifestSha256": "9fa5bec237a9975455381fcdc048ce02d63795626c4bca31a2c7b8c5217e7bea"
     }
   },
   "trace": {
