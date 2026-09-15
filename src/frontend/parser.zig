@@ -31,7 +31,11 @@ pub const Error = lexer.Error || syntax_transform.Error || std.mem.Allocator.Err
 pub const TailMode = struct { position: usize, mode: token_mod.Mode };
 
 /// 取り込み文の位置と、その文をパースした時点のモード。
-pub const ImportMode = struct { position: usize, mode: token_mod.Mode };
+/// mode はその時点の全モード（初期・文由来・tail適用を含む）、
+/// own_mode は tail_modes 適用を除いたモード（初期モード＋文由来の有効化のみ）。
+/// 循環取り込みコピーの再解析モードは own_mode 相当でしか再現できないため、
+/// 取り込み後に効くtailモードとの区別が必要になる。
+pub const ImportMode = struct { position: usize, mode: token_mod.Mode, own_mode: token_mod.Mode };
 
 pub const ParseOptions = struct {
     /// 拡張子やコマンドラインで強制される構文モード（字句変換とパーサ双方に効く）
@@ -93,6 +97,7 @@ pub fn parseWithMode(backing_allocator: std.mem.Allocator, source: []const u8, f
         // 適用済みだが、添字・自動初期化の意味づけは取り込み元から継承した
         // モード（initial）と強制モード（forced）の両方が効いた状態で開始する。
         .mode = orMode(options.initial orelse .{}, options.forced),
+        .own_mode = orMode(options.initial orelse .{}, options.forced),
         .tail_modes = options.tail_modes,
     };
     const root = parser.parseProgram() catch |err| switch (err) {
@@ -131,6 +136,8 @@ pub const Parser = struct {
     tokens: []const Token,
     filename: []const u8,
     mode: token_mod.Mode,
+    /// tail_modes適用を除いたモード累積（初期モード＋モード文の有効化）。
+    own_mode: token_mod.Mode,
     tail_modes: []const TailMode = &.{},
     tail_cursor: usize = 0,
     import_modes: std.ArrayList(ImportMode) = .empty,
@@ -164,7 +171,7 @@ pub const Parser = struct {
     /// 取り込み文の位置とその時点のモードを記録する。
     /// 取り込み先はこの時点のモードを継承してパースされる（公式の結合ストリーム相当）。
     pub fn recordImportMode(self: *Parser, node: *ast.Node) ParseFailure!void {
-        try self.import_modes.append(self.allocator, .{ .position = node.span.start, .mode = self.mode });
+        try self.import_modes.append(self.allocator, .{ .position = node.span.start, .mode = self.mode, .own_mode = self.own_mode });
     }
 
     pub fn parseBlock(self: *Parser, stop: Stop) ParseFailure!*ast.Node {
@@ -232,10 +239,12 @@ pub const Parser = struct {
         // 公式yDNCLMode相当: この文の位置から配列モードを有効化し、空行を返す。
         if (first.kind == .keyword_dncl_mode) {
             self.mode.dncl = true;
+            self.own_mode.dncl = true;
             return builder.makeNode(self, .eol, first);
         }
         if (first.kind == .keyword_dncl2_mode) {
             self.mode.dncl2 = true;
+            self.own_mode.dncl2 = true;
             return builder.makeNode(self, .eol, first);
         }
         if (first.kind == .not) {

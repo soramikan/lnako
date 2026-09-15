@@ -147,6 +147,11 @@ pub fn run(
                 try stderr.flush();
                 std.process.exit(2);
             }
+            if (arguments.findUnknownOption(args[2..], &.{ "--dncl", "--dncl2" })) |unknown| {
+                try stderr.print("check: 不明なオプションです: {s}\n", .{unknown});
+                try stderr.flush();
+                std.process.exit(2);
+            }
             const check_mode = arguments.dnclModeFromArguments(args[2..]) catch {
                 try stderr.writeAll("check: --dnclと--dncl2は同時に指定できません\n");
                 try stderr.flush();
@@ -173,6 +178,11 @@ pub fn run(
                 std.process.exit(2);
             }
             const run_options = arguments.splitRunArguments(args[2..]);
+            if (arguments.findUnknownOption(run_options.lnako, &.{ "--compat-js", "--dncl", "--dncl2" })) |unknown| {
+                try stderr.print("run: 不明なオプションです: {s}\n", .{unknown});
+                try stderr.flush();
+                std.process.exit(2);
+            }
             const compat_js = arguments.hasArgument(run_options.lnako, "--compat-js");
             if (compat_js and !lnako.compat.quickjs.available()) {
                 try stderr.writeAll("run: このlnakoはQuickJSなしでビルドされています。zig build -Dcompat-js=trueを使用してください\n");
@@ -233,6 +243,11 @@ pub fn run(
         .test_command => {
             if (args.len < 2) {
                 try stderr.writeAll("test: 入力ファイルまたはディレクトリを指定してください\n");
+                try stderr.flush();
+                std.process.exit(2);
+            }
+            if (arguments.findUnknownOption(args[2..], &.{ "--dncl", "--dncl2" })) |unknown| {
+                try stderr.print("test: 不明なオプションです: {s}\n", .{unknown});
                 try stderr.flush();
                 std.process.exit(2);
             }

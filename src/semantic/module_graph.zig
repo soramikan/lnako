@@ -48,6 +48,10 @@ pub const Import = struct {
     effective: bool = false,
     /// propagateModesで確定した取り込み文位置のモード（循環整合診断用）
     site_mode: token_mod.Mode = .{},
+    /// この取り込み文の直後へ適用された取り込み先の終端モード。
+    /// 循環コピーには取り込み展開が含まれないため、コピーの解析モードが
+    /// 本体側と等価か判定するために使う。
+    tail_mode: token_mod.Mode = .{},
 };
 
 pub const LoadedModule = struct {
@@ -185,7 +189,7 @@ pub fn load(backing_allocator: std.mem.Allocator, entry_path: []const u8, provid
     // 複数取り込みでは最後の取り込み文に内容が載る）。
     try loader.markEffectiveEdges(entry);
     try loader.propagateModes(entry);
-    try loader.checkCircularCopyModes(entry);
+    try loader.checkCircularCopyModes();
     const modules = try loader.modules.toOwnedSlice(loader.allocator);
     const diagnostics = try loader.diagnostics.toOwnedSlice(loader.allocator);
     // arenaを返却値へコピーする前に確保を済ませる。リテラル内で呼ぶと
@@ -461,6 +465,7 @@ const Loader = struct {
             const target_module = self.modules.items[target];
             if (target_module.parsed) |target_parsed| {
                 cumulative = orMode(cumulative, target_parsed.final_mode);
+                item.tail_mode = target_parsed.final_mode;
                 try tail_modes.append(self.allocator, .{ .position = item.span.start, .mode = target_parsed.final_mode });
             }
         }
@@ -483,19 +488,36 @@ const Loader = struct {
     /// 最終ASTから順序対応で再収集する。個数が変わる構造変化では
     /// 暫定位置との照合が破綻して実効辺が暗黙に無効化されるため、
     /// 黙って維持せず診断を出す。
-    /// 循環取り込みの再展開コピーはエントリのコンパイル済み本体を共有する。
-    /// 公式はコピーを循環取り込み位置のモードで展開するが、エントリの
-    /// 終端モードと一致しない位置モードでは同一本体で表現できないため、
-    /// 誤った添字規則で実行するより明示的な診断にする。
-    /// （コピー側にだけ現れるモードbitは検出できないため残余の近似差あり）
-    fn checkCircularCopyModes(self: *Loader, entry: u32) !void {
-        const entry_module = self.modules.items[entry];
-        const entry_parsed = entry_module.parsed orelse return;
+    /// 循環取り込みの再展開コピーは対象モジュールのコンパイル済み本体を共有する。
+    /// 公式はコピーを「循環取り込み位置のモードを初期モード」として対象の
+    /// 変換済みトークンから再解析する。コピーには取り込み展開が含まれないので、
+    /// 共有本体で再現できるのは次の両方が成り立つ場合だけである。
+    ///   (a) 循環位置のモードが対象の解析開始モード（初期＋強制）と一致
+    ///   (b) 対象へtail適用されたモードが、その取り込み位置でコピー側の
+    ///       文由来モード（own_mode）にも含まれる
+    /// 終端モード一致だけでは初期モード・tailの差を拾えないため、誤った
+    /// 添字規則で実行するより明示的な診断にする。
+    fn checkCircularCopyModes(self: *Loader) !void {
         for (self.modules.items) |module| {
             for (module.imports) |item| {
-                if (!item.effective or item.target != entry) continue;
-                if (modeEql(item.site_mode, entry_parsed.final_mode)) continue;
-                try self.importDiagnosticAt(item.span, module.path, "循環取り込みの再展開位置の構文モードがエントリの終端モードと一致しません");
+                if (!item.effective or !item.cyclic) continue;
+                const target_module = self.modules.items[item.target.?];
+                const target_parsed = target_module.parsed orelse continue;
+                const target_start = orMode(target_module.parse_initial, target_module.forced_mode);
+                if (!modeEql(item.site_mode, target_start)) {
+                    try self.importDiagnosticAt(item.span, module.path, "循環取り込みの再展開位置の構文モードが取り込み先の解析開始モードと一致しません");
+                    continue;
+                }
+                for (target_module.imports) |titem| {
+                    if (!titem.effective) continue;
+                    for (target_parsed.import_modes) |record| {
+                        if (record.position != titem.span.start) continue;
+                        if (!modeSubset(titem.tail_mode, record.own_mode)) {
+                            try self.importDiagnosticAt(item.span, module.path, "循環取り込みの再展開には取り込み先の終端モードが初期から有効な別コピーが必要です");
+                        }
+                        break;
+                    }
+                }
             }
         }
     }
@@ -543,6 +565,11 @@ fn orMode(a: token_mod.Mode, b: token_mod.Mode) token_mod.Mode {
 
 fn modeEql(a: token_mod.Mode, b: token_mod.Mode) bool {
     return a.dncl == b.dncl and a.dncl2 == b.dncl2 and a.indent == b.indent;
+}
+
+/// aのモードbitが全てbに含まれるか
+fn modeSubset(a: token_mod.Mode, b: token_mod.Mode) bool {
+    return (!a.dncl or b.dncl) and (!a.dncl2 or b.dncl2) and (!a.indent or b.indent);
 }
 
 /// 結合ストリーム上の文順位をDFSで構築する。公式の取り込みは先勝ちの
@@ -936,17 +963,29 @@ test "エントリ拡張子と反対側のDNCL強制フラグは競合エラー�
 }
 
 test "循環取り込みの再展開モード不一致を診断にする" {
-    // 循環位置のモードがエントリ終端モードと一致する場合は再展開を許可する
+    // モードを含まない通常の循環取り込みはコピーの解析モードが本体と
+    // 一致するため再展開を許可する
     var matching = MemoryProvider{ .files = &.{
-        .{ .suffix = "main.nako3", .source = "A=[10,20]\n「M1」と表示\n!DNCLモード\n!「./lib.nako3」を取り込む\n「M3:」&A[1]と表示\n" },
+        .{ .suffix = "main.nako3", .source = "「M1」と表示\n!「./lib.nako3」を取り込む\n「M2」と表示\n" },
         .{ .suffix = "lib.nako3", .source = "「L1」と表示\n!「./main.nako3」を取り込む\n「L2」と表示\n" },
     } };
     var matching_graph = try load(std.testing.allocator, "main.nako3", matching.sourceProvider(), .{});
     defer matching_graph.deinit();
     try std.testing.expect(matching_graph.succeeded());
 
-    // 循環位置より後でモードが有効になる場合、コピーはエントリ本体と
-    // 異なるモードを要求する。同一本体で表現できないため診断にする。
+    // 強制モードが開始から有効なエントリ(.dncl)へ、そのモードの位置から
+    // 循環取り込みされる場合もコピーと本体の解析モードが一致する
+    var dncl = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.dncl", .source = "「M1」と表示\n!「./lib.nako3」を取り込む\n「M2」と表示\n" },
+        .{ .suffix = "lib.nako3", .source = "「L1」と表示\n!「./main.dncl」を取り込む\n「L2」と表示\n" },
+    } };
+    var dncl_graph = try load(std.testing.allocator, "main.dncl", dncl.sourceProvider(), .{});
+    defer dncl_graph.deinit();
+    try std.testing.expect(dncl_graph.succeeded());
+
+    // 循環位置より後でモードが有効になる場合、コピーには取り込み展開が
+    // 含まれないためtailモードが欠けた解析になる。同一本体で表現できない
+    // ため診断にする。
     var mismatching = MemoryProvider{ .files = &.{
         .{ .suffix = "main.nako3", .source = "A=[10,20]\n「M1」と表示\n!「./lib.nako3」を取り込む\n「M3:」&A[1]と表示\n" },
         .{ .suffix = "lib.nako3", .source = "「L1」と表示\n!「./main.nako3」を取り込む\n!DNCLモード\n「L2」と表示\n" },
@@ -955,6 +994,18 @@ test "循環取り込みの再展開モード不一致を診断にする" {
     defer mismatching_graph.deinit();
     try std.testing.expect(!mismatching_graph.succeeded());
     try std.testing.expectEqual(@as(usize, 1), mismatching_graph.diagnostics.len);
+
+    // 循環位置のモードがエントリの終端モードと一致しても、エントリが
+    // 異なる初期モードで解析開始した場合はコピーの先行文の意味づけが
+    // 変わるため同一本体で表現できない（#73）。診断にする。
+    var diverging_initial = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "A=[10,20]\n「M1:」&A[0]と表示\nDNCLモード\n!「./lib.nako3」を取り込む\n「M3:」&A[1]と表示\n" },
+        .{ .suffix = "lib.nako3", .source = "「L1」と表示\n!「./main.nako3」を取り込む\n「L2」と表示\n" },
+    } };
+    var diverging_graph = try load(std.testing.allocator, "main.nako3", diverging_initial.sourceProvider(), .{});
+    defer diverging_graph.deinit();
+    try std.testing.expect(!diverging_graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 1), diverging_graph.diagnostics.len);
 }
 
 test "エントリの.nako3へ--dncl/--dncl2相当のモードを強制する" {

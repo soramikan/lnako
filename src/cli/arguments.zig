@@ -81,6 +81,23 @@ pub fn dnclModeFromArguments(arguments: []const []const u8) error{ConflictingDnc
     return mode;
 }
 
+/// lnako側オプションのうち許可リストに無い最初の引数を返す。
+/// `--dncl`のtypo（--dncll等）や余分な位置引数が黙って無視されないよう、
+/// 受理するオプションをコマンドごとに限定する。全て許可済みならnull。
+pub fn findUnknownOption(arguments: []const []const u8, allowed: []const []const u8) ?[]const u8 {
+    for (arguments) |argument| {
+        var known = false;
+        for (allowed) |name| {
+            if (std.mem.eql(u8, argument, name)) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) return argument;
+    }
+    return null;
+}
+
 pub fn hasArgument(arguments: []const []const u8, expected: []const u8) bool {
     for (arguments) |argument| if (std.mem.eql(u8, argument, expected)) return true;
     return false;
@@ -97,6 +114,22 @@ pub fn splitRunArguments(arguments: []const []const u8) struct { lnako: []const 
 
 pub fn lessThanString(_: void, left: []const u8, right: []const u8) bool {
     return std.mem.lessThan(u8, left, right);
+}
+
+test "不明なオプションを検出する" {
+    const dncl_options: []const []const u8 = &.{ "--dncl", "--dncl2" };
+    // --dncl のtypoは検出される
+    try std.testing.expectEqualStrings("--dncll", findUnknownOption(&.{"--dncll"}, dncl_options).?);
+    try std.testing.expectEqualStrings("--strict", findUnknownOption(&.{ "--dncl", "--strict" }, dncl_options).?);
+    // 余分な位置引数も検出される
+    try std.testing.expectEqualStrings("extra.nako3", findUnknownOption(&.{"extra.nako3"}, dncl_options).?);
+    // 許可済みオプションはnull
+    try std.testing.expectEqual(@as(?[]const u8, null), findUnknownOption(&.{ "--dncl", "--dncl2" }, dncl_options));
+    try std.testing.expectEqual(@as(?[]const u8, null), findUnknownOption(&.{}, dncl_options));
+    // run用の許可リストでは--compat-jsも受理される
+    const run_options: []const []const u8 = &.{ "--compat-js", "--dncl", "--dncl2" };
+    try std.testing.expectEqual(@as(?[]const u8, null), findUnknownOption(&.{ "--compat-js", "--dncl" }, run_options));
+    try std.testing.expectEqualStrings("--dncll", findUnknownOption(&.{"--dncll"}, run_options).?);
 }
 
 test "buildの出力形式と最適化レベルを解析する" {
