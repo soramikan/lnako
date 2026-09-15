@@ -181,7 +181,7 @@ native = "libsqlite.dylib"
   - `path` が無く `native` と `esm` の両方が宣言されている場合、`lnako` では `native`、`cnako` では `esm` を選択する（`cnako` は ESM を直接扱えるため `compat-js` は不要）。
   - `path` と `esm` を併記し `compat-js` が無い場合でも、`lnako` 通常モードでは `path` が選ばれるため `E006_JS_IN_NORMAL_MODE` にはならない。
   - native専用パッケージ（`native` のみ）は `lnako` でのみ解決可能（`cnako` では `E031_UNSUPPORTED_RUNTIME`）。
-  - ESM専用パッケージ（`path`・`native` を持たず `esm` のみ）は `cnako` または `lnako` の `compat-js = true` 指定時のみ解決可能（通常lnakoでは `E006_JS_IN_NORMAL_MODE`）。
+  - ESM専用パッケージ（`path`・`native` を持たず `esm` のみ）は `cnako` または `lnako` の `compat-js = true` 指定時のみ解決可能（通常lnakoでは `E006_JS_IN_NORMAL_MODE`）。静的 manifest 検証では、`runtimes` 未指定（両対応）または `cnako` を含むパッケージ、`cnako` profile、`compat-js` profile のいずれかを持つ場合は cnako 経路があるため受理し、lnako 専用パッケージの通常モードに限って `E006` を報告する。実行時の拒否は `Export.resolve` が対象 runtime へ報告する。
 
 ### 3.7 SemVer range 構文
 
@@ -286,7 +286,7 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
 
 未知の `kind` はエラーとする。将来の kind は schema version bump または `x-` prefix で導入する。
 
-- lock 検証では選択 profile の `runtime` を考慮する。`cnako` または `compat-js = true` の場合は ESM artifact を許容し、それ以外（通常 `lnako`）で ESM が唯一の artifact kind のときだけ `E006_JS_IN_NORMAL_MODE` とする（source/native が併記されていれば共通ソース優先により ESM は選択され得ないため許容）。profile の `runtime` が未知の場合は `E014_INVALID_PROFILE`。
+- lock 検証では選択 profile の `runtime` を考慮する。`cnako` または `compat-js = true` の場合は ESM artifact を許容し、それ以外（通常 `lnako`）で ESM が唯一の artifact kind のときだけ `E006_JS_IN_NORMAL_MODE` とする（source/native が併記されていれば共通ソース優先により ESM は選択され得ないため許容）。profile の `runtime` が未知の場合は `E014_INVALID_PROFILE`。選択された `input.profile` が `profiles` に存在しない場合は `E030_UNKNOWN_PROFILE`。
 
 ## 5. レジストリ契約
 
@@ -348,7 +348,7 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
 
 - cnako は依存解決・パッケージ同期を `lnako sync --json` へ委譲できる。
 - `lnako sync --json` は解決結果を JSON で標準出力し、解決済み環境メタデータを `.nako/environment.json` に記録する。
-- cnako の `--no-sync` 実行時は lnako を起動せず、`.nako/environment.json` の `lockSha256`・`profile`・各パッケージの `path` と命令メタデータを単独で検証する。環境情報が欠落・破損・版不一致・lockハッシュ不一致の場合は `E034_INVALID_ENVIRONMENT_REFERENCE` を診断する。
+- cnako の `--no-sync` 実行時は lnako を起動せず、`.nako/environment.json` の `lockSha256`・`profile`・各パッケージの `path` と命令メタデータを単独で検証する。環境情報が欠落・破損・版不一致・lockハッシュ不一致の場合は `E034_INVALID_ENVIRONMENT_REFERENCE` を診断する。`lockSha256` は SHA-256 表現のみを許容し、SRI 形式 `sha256-<43文字Base64>=`、`sha256:` + 64桁 hex、生 64桁 hex のいずれかとする。
 - 動的呼び出し（文字列指定による動的実行等）で静的に共用性を確認できない機能利用は未検査とし、厳格な共用検査（strict sharing check）において `E033_STRICT_SHARING_FAILED` で拒絶する。共用ライブラリの保証には両処理系での自動テスト実行を必須証拠とする。
 
 ## 8. 診断

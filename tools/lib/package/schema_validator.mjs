@@ -503,13 +503,16 @@ export function validateManifest(manifest, fixturePath) {
     const hasCompatJsProfile = Object.values(manifest.profiles ?? {}).some((p) => p["compat-js"] === true);
     const hasCnakoProfile = Object.values(manifest.profiles ?? {}).some((p) => p.runtime === "cnako");
     const runtimes = manifest.package?.runtimes ?? [];
-    const isCnakoOnlyPackage = Array.isArray(runtimes) && runtimes.length > 0 && runtimes.includes("cnako") && !runtimes.includes("lnako");
+    // runtimes 未指定は lnako / cnako の両対応を意味するため cnako 対応として扱う。
+    // cnako 対応パッケージは ESM を直接利用できる有効な経路を持つ。
+    const supportsCnako = runtimes.length === 0 || runtimes.includes("cnako");
     for (const exp of manifest.exports) {
       // lnako 通常モードで ESM が選択されるのは path も native も無い場合のみ
-      // （path があれば共通ソース、native があれば native を選択）。cnako は
-      // native 併記でも esm を選ぶが E006 の対象外。Zig の validateExports と
-      // 同じ選択規則に揃える。
-      if (exp.esm != null && exp.path == null && exp.native == null && !hasCompatJsProfile && !hasCnakoProfile && !isCnakoOnlyPackage) {
+      // （path があれば共通ソース、native があれば native を選択）。cnako 対応
+      // （runtimes 未指定・cnako を含む・cnako/compat-js profile）なら受理し、
+      // lnako 専用パッケージの通常モードに限って E006 とする。実行時の拒否は
+      // Zig の Export.resolve が対象 runtime へ報告する。
+      if (exp.esm != null && exp.path == null && exp.native == null && !hasCompatJsProfile && !hasCnakoProfile && !supportsCnako) {
         fail("E006_JS_IN_NORMAL_MODE", `ESM export "${exp.name}" requires compat-js profile`, `${fixturePath}.exports`);
       }
     }
@@ -711,6 +714,12 @@ export function validateLock(lock, fixturePath) {
     fail("E002_UNKNOWN_LOCK_SCHEMA", `unknown lock schema version ${lock.schemaVersion}`, `${fixturePath}.schemaVersion`);
   }
 
+  // `input.profile` は実行条件を選ぶ参照。対応する profile が存在しない
+  // lock は runtime 条件を決定できないため、未知 profile として拒否する。
+  if (!Object.hasOwn(lock.profiles ?? {}, lock.input?.profile ?? "")) {
+    fail("E030_UNKNOWN_PROFILE", `unknown profile "${lock.input?.profile}"`, `${fixturePath}.input.profile`);
+  }
+
   // 選択された profile の runtime と compat-js を読む。cnako は ESM を
   // 直接扱えるため compat-js を要求せず、lnako などの通常モードのみ
   // E006 の対象とする。未知の runtime は E014 で拒否する。
@@ -808,7 +817,7 @@ function validateEnvironmentContract(environment, fixturePath) {
   if (environment.schemaVersion !== 1) {
     fail("E034_INVALID_ENVIRONMENT_REFERENCE", `unsupported environment schemaVersion ${environment.schemaVersion}`, `${fixturePath}.schemaVersion`);
   }
-  const hashPattern = /^(sha256-[A-Za-z0-9+/]{43}=|sha512-[A-Za-z0-9+/]{86}=|sha256:[0-9a-f]{64}|sha512:[0-9a-f]{128}|[0-9a-f]{64})$/;
+  const hashPattern = /^(sha256-[A-Za-z0-9+/]{43}=|sha256:[0-9a-f]{64}|[0-9a-f]{64})$/;
   if (typeof environment.lockSha256 === "string" && !hashPattern.test(environment.lockSha256)) {
     fail("E034_INVALID_ENVIRONMENT_REFERENCE", `invalid lockSha256 "${environment.lockSha256}"`, `${fixturePath}.lockSha256`);
   }

@@ -1,0 +1,11 @@
+{
+  "package": {
+    "name": "esm-only-both-runtimes",
+    "version": "1.0.0",
+    "license": "MIT",
+    "runtimes": ["lnako", "cnako"]
+  },
+  "exports": [
+    { "name": "main", "esm": "index.mjs" }
+  ]
+}

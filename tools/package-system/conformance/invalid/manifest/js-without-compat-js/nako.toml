@@ -2,6 +2,7 @@
 name = "test"
 version = "1.0.0"
 license = "MIT"
+runtimes = ["lnako"]
 
 [profiles]
 default = { os = "macos", cpu = "aarch64", abi = "gnu", compat-js = false }

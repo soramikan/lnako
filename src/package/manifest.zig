@@ -1115,15 +1115,11 @@ const Validator = struct {
             if (profile.compat_js) has_compat_js = true;
             if (std.mem.eql(u8, profile.runtime, "cnako")) has_cnako_profile = true;
         }
-        var is_cnako_only_package = false;
-        if (self.manifest.package.runtimes.len > 0) {
-            var has_lnako = false;
-            var has_cnako = false;
-            for (self.manifest.package.runtimes) |r| {
-                if (std.mem.eql(u8, r, "lnako")) has_lnako = true;
-                if (std.mem.eql(u8, r, "cnako")) has_cnako = true;
-            }
-            if (has_cnako and !has_lnako) is_cnako_only_package = true;
+        // 未指定の runtimes は lnako / cnako の両対応を意味するため cnako 対応。
+        // cnako 対応パッケージは ESM を直接利用できる有効な経路を持つ。
+        var supports_cnako = self.manifest.package.runtimes.len == 0;
+        for (self.manifest.package.runtimes) |r| {
+            if (std.mem.eql(u8, r, "cnako")) supports_cnako = true;
         }
         for (array.items) |*item| {
             const export_table = (try self.expectTable(item, "exports")) orelse continue;
@@ -1145,13 +1141,12 @@ const Validator = struct {
             export_entry.esm = try self.expectString(export_table, "esm", "exports");
             // lnako 通常モードで ESM が選択されるのは「path も native も無い」
             // 場合のみ（path があれば共通ソース、native があれば native を選択）。
-            // cnako は native 併記でも esm を選ぶが E006 の対象外。
-            // この静的検査は resolve と同じ選択規則に揃える。manifest 全体の
-            // profile を集約するため、cnako または compat-js profile が一つでも
-            // あれば受理し、通常 lnako profile での実際の拒否は実行時の
-            // Export.resolve が対象 runtime へ E006 を報告して担う。
+            // cnako 対応（runtimes 未指定・cnako を含む・cnako profile・
+            // compat-js profile）なら ESM を利用できる経路があるため受理し、
+            // lnako 専用パッケージで通常モードに限って E006 を報告する。
+            // 実行時は Export.resolve が対象 runtime へ E006 を報告する。
             if (export_entry.esm != null and export_entry.path == null and export_entry.native == null and
-                !has_compat_js and !has_cnako_profile and !is_cnako_only_package)
+                !has_compat_js and !has_cnako_profile and !supports_cnako)
             {
                 try self.report(diag.E006_JS_IN_NORMAL_MODE, "exports", item.position, "ESM export \"{s}\" requires compat-js profile", .{export_entry.name});
             }

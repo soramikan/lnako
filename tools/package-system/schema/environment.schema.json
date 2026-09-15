@@ -10,7 +10,7 @@
       "const": 1
     },
     "lockSha256": {
-      "$ref": "common.schema.json#/$defs/hash"
+      "$ref": "common.schema.json#/$defs/sha256Hash"
     },
     "profile": {
       "type": "string"

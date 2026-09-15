@@ -22,6 +22,9 @@ pub const E029_INVALID_VALUE = "E029_INVALID_VALUE";
 pub const E030_UNKNOWN_PROFILE = "E030_UNKNOWN_PROFILE";
 pub const E031_UNSUPPORTED_RUNTIME = "E031_UNSUPPORTED_RUNTIME";
 pub const E032_ENGINE_MISMATCH = "E032_ENGINE_MISMATCH";
+/// 厳格共用検査（strict sharing check）用の契約コード。この検査自体は
+/// resolver・import 統合の後続フェーズで実装し、本データモデル層では
+/// コード定義のみを提供する。
 pub const E033_STRICT_SHARING_FAILED = "E033_STRICT_SHARING_FAILED";
 pub const E034_INVALID_ENVIRONMENT_REFERENCE = "E034_INVALID_ENVIRONMENT_REFERENCE";
 

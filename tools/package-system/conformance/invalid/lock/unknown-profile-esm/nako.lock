@@ -3,9 +3,9 @@
   "resolverVersion": 1,
   "input": {
     "manifestSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-    "profile": "default",
+    "profile": "release",
     "features": ["default"],
-    "target": { "os": "macos", "cpu": "aarch64", "abi": "gnu" }
+    "target": { "os": "linux", "cpu": "x86_64", "abi": "gnu" }
   },
   "packages": {
     "pkg:00000000000000000000000000000000": {
@@ -17,11 +17,11 @@
       "dependencies": [],
       "features": ["default"],
       "artifacts": {
-        "native": { "kind": "x-unknown", "type": "tar.gz", "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "url": "https://example.com/unknown" }
+        "esm": { "kind": "ESM", "type": "npm-tarball", "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "url": "https://registry.example.com/pkg/test/v1.0.0/index.mjs" }
       }
     }
   },
   "profiles": {
-    "default": { "os": "macos", "cpu": "aarch64", "abi": "gnu" }
+    "default": { "runtime": "cnako", "os": "linux", "cpu": "x86_64", "abi": "gnu" }
   }
 }

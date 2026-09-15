@@ -76,6 +76,10 @@
       "type": "string",
       "pattern": "^(sha256-[A-Za-z0-9+/]{43}=|sha512-[A-Za-z0-9+/]{86}=|sha256:[0-9a-f]{64}|sha512:[0-9a-f]{128})$"
     },
+    "sha256Hash": {
+      "type": "string",
+      "pattern": "^(sha256-[A-Za-z0-9+/]{43}=|sha256:[0-9a-f]{64}|[0-9a-f]{64})$"
+    },
     "artifactRecord": {
       "type": "object",
       "required": ["kind"],

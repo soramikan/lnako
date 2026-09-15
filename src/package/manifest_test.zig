@@ -232,7 +232,35 @@ test "無効なprofileを診断する" {
 test "export重複とESM制約を診断する" {
     const allocator = std.testing.allocator;
     try parseErrCode(allocator, "[package]\nname = \"a\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n[[exports]]\nname = \"x\"\n[[exports]]\nname = \"x\"\n", diag.E011_DUPLICATE_EXPORT);
-    try parseErrCode(allocator, "[package]\nname = \"a\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n[[exports]]\nname = \"x\"\nesm = \"m.mjs\"\n", diag.E006_JS_IN_NORMAL_MODE);
+    try parseErrCode(allocator, "[package]\nname = \"a\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\nruntimes = [\"lnako\"]\n[[exports]]\nname = \"x\"\nesm = \"m.mjs\"\n", diag.E006_JS_IN_NORMAL_MODE);
+
+    // runtimes 未指定（両対応）または cnako を含む場合は ESM 専用 export も受理される。
+    const ok_multi_runtime =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "x"
+        \\esm = "m.mjs"
+        \\
+    ;
+    var multi_runtime = try parseOk(allocator, ok_multi_runtime);
+    defer multi_runtime.deinit();
+
+    const ok_both_runtimes =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\runtimes = ["lnako", "cnako"]
+        \\[[exports]]
+        \\name = "x"
+        \\esm = "m.mjs"
+        \\
+    ;
+    var both_runtimes = try parseOk(allocator, ok_both_runtimes);
+    defer both_runtimes.deinit();
 
     // compat-js profile があれば ESM export は受理される。
     const ok_source =
@@ -785,6 +813,8 @@ test "manifest適合fixtureを検証する" {
         .{ .path = "tools/package-system/conformance/valid/manifest/profile-runtime/nako.toml", .expected_code = null },
         .{ .path = "tools/package-system/conformance/valid/manifest/common-source-with-esm/nako.toml", .expected_code = null },
         .{ .path = "tools/package-system/conformance/valid/manifest/native-esm-hybrid/nako.toml", .expected_code = null },
+        .{ .path = "tools/package-system/conformance/valid/manifest/esm-only-multi-runtime/nako.toml", .expected_code = null },
+        .{ .path = "tools/package-system/conformance/valid/manifest/esm-only-both-runtimes/nako.toml", .expected_code = null },
         .{ .path = "tools/package-system/conformance/invalid/manifest/empty-runtimes/nako.toml", .expected_code = diag.E029_INVALID_VALUE },
         .{ .path = "tools/package-system/conformance/invalid/manifest/unknown-schema/nako.toml", .expected_code = diag.E001_UNKNOWN_MANIFEST_SCHEMA },
         .{ .path = "tools/package-system/conformance/invalid/manifest/conflicting-version/nako.toml", .expected_code = diag.E003_CONFLICTING_VERSIONS },
