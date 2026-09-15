@@ -286,7 +286,7 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
 
 未知の `kind` はエラーとする。将来の kind は schema version bump または `x-` prefix で導入する。
 
-- lock 検証では選択 profile の `runtime` を考慮し、`cnako` の場合は ESM artifact を `compat-js` なしで許容する。それ以外（`lnako` など）は `compat-js = true` を要求し、通常モードでは `E006_JS_IN_NORMAL_MODE`。profile の `runtime` が未知の場合は `E014_INVALID_PROFILE`。
+- lock 検証では選択 profile の `runtime` を考慮する。`cnako` または `compat-js = true` の場合は ESM artifact を許容し、それ以外（通常 `lnako`）で ESM が唯一の artifact kind のときだけ `E006_JS_IN_NORMAL_MODE` とする（source/native が併記されていれば共通ソース優先により ESM は選択され得ないため許容）。profile の `runtime` が未知の場合は `E014_INVALID_PROFILE`。
 
 ## 5. レジストリ契約
 

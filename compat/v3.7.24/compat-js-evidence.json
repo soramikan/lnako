@@ -429,7 +429,7 @@
             "status": 0,
             "signal": null,
             "stdoutSha256": "38e0b9de817f645c4bec37c0d4a3e58baecccb040f5718dc069a72c7385a0bed",
-            "stderrSha256": "2b59084e360d402346f85b5073e9e9ace46f868d9038eaf0db502654cfa7b285",
+            "stderrSha256": "4493b0617111816b1b84591d58d38d13b68bc93e460fc8f0a9a92a2b7e4b9244",
             "failed": true
           },
           "lnakoCompatJs": {
@@ -512,8 +512,8 @@
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
     "lnako": {
-      "binarySha256": "18bd312250cdb2e52016172cb21a5723da5c4c54a8fe8291d656f0a021458be3",
-      "sourceManifestSha256": "b19d8d688f91088a93437fb749517456ade12c7ff0738618dd9f0b2e48416914"
+      "binarySha256": "f53105fe6254ea443cf5c0b62519759a6751ab10ee0bbf1276646ff35b5c7c4e",
+      "sourceManifestSha256": "87976c45d5b315a1a9842ef4e251de5fd3037506d62132ec386bb464e9707f60"
     },
     "raw": {
       "traceSha256ByCase": {

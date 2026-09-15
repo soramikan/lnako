@@ -1146,7 +1146,10 @@ const Validator = struct {
             // lnako 通常モードで ESM が選択されるのは「path も native も無い」
             // 場合のみ（path があれば共通ソース、native があれば native を選択）。
             // cnako は native 併記でも esm を選ぶが E006 の対象外。
-            // この静的検査は resolve と同じ選択規則に揃える。
+            // この静的検査は resolve と同じ選択規則に揃える。manifest 全体の
+            // profile を集約するため、cnako または compat-js profile が一つでも
+            // あれば受理し、通常 lnako profile での実際の拒否は実行時の
+            // Export.resolve が対象 runtime へ E006 を報告して担う。
             if (export_entry.esm != null and export_entry.path == null and export_entry.native == null and
                 !has_compat_js and !has_cnako_profile and !is_cnako_only_package)
             {

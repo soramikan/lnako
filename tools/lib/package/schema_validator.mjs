@@ -728,13 +728,19 @@ export function validateLock(lock, fixturePath) {
     if (!pkg.artifacts || Object.keys(pkg.artifacts).length === 0) {
       fail("E008_MISSING_ARTIFACT", `package ${id} has no artifacts`, `${fixturePath}.packages.${id}.artifacts`);
     }
+    const kinds = new Set();
     for (const [kind, artifact] of Object.entries(pkg.artifacts)) {
       if (!knownArtifactKinds.has(artifact.kind)) {
         fail("E007_UNKNOWN_ARTIFACT_KIND", `unknown artifact kind "${artifact.kind}" at ${fixturePath}.packages.${id}.artifacts.${kind}`, `${fixturePath}.packages.${id}.artifacts.${kind}`);
       }
-      if (artifact.kind === "ESM" && !esmAllowed) {
-        fail("E006_JS_IN_NORMAL_MODE", `ESM artifact selected without compat-js profile`, `${fixturePath}.packages.${id}.artifacts.${kind}`);
-      }
+      kinds.add(artifact.kind);
+    }
+    // lock の artifacts は package が提供する全 kind を記録するため、
+    // source/native が併記されていれば ESM は選択され得ない。manifest の
+    // 「ESM 専用のみ通常モードで E006」規則と揃え、ESM が唯一の kind の
+    // 場合だけ通常モード違反とする。
+    if (kinds.has("ESM") && kinds.size === 1 && !esmAllowed) {
+      fail("E006_JS_IN_NORMAL_MODE", `ESM artifact selected without compat-js profile`, `${fixturePath}.packages.${id}.artifacts`);
     }
     for (const dep of pkg.dependencies) {
       if (!Object.hasOwn(lock.packages, dep)) {
