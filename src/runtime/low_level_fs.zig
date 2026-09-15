@@ -49,8 +49,8 @@ pub const Metadata = struct {
 pub fn stat(io: std.Io, path: []const u8, follow: bool) anyerror!Metadata {
     return switch (builtin.os.tag) {
         .windows => statWindows(io, path, follow),
-        .linux => statLinux(path, follow),
-        .wasi => statWasi(io, path, follow),
+        .linux => statLinux(io, path, follow),
+        .wasi => statPortable(io, path, follow),
         else => statPosix(path, follow),
     };
 }
@@ -206,8 +206,11 @@ fn posixErrno(errno: std.c.E) anyerror {
     };
 }
 
-/// Linuxの単一 `statx` から全フィールドを組み立てる。
-fn statLinux(path: []const u8, follow: bool) anyerror!Metadata {
+/// Linuxの単一 `statx` から全フィールドを組み立てる。statx非対応環境
+/// （古いカーネルやseccomp制限）ではポータブルAPIへフォールバックする
+/// （Zig 0.16の `std.Io.Dir.statFile` もstatxベースのため、そこで取得できる
+/// フィールドに限る。uid/gid等の追加フィールドは0のまま）。
+fn statLinux(io: std.Io, path: []const u8, follow: bool) anyerror!Metadata {
     const posix_path = try std.posix.toPosixPath(path);
     var raw: std.os.linux.Statx = std.mem.zeroes(std.os.linux.Statx);
     const flags: u32 = std.os.linux.AT.NO_AUTOMOUNT |
@@ -228,7 +231,11 @@ fn statLinux(path: []const u8, follow: bool) anyerror!Metadata {
     };
     const result = std.os.linux.statx(std.os.linux.AT.FDCWD, &posix_path, flags, mask, &raw);
     const errno = std.os.linux.errno(result);
-    if (errno != .SUCCESS) return linuxErrno(errno);
+    if (errno != .SUCCESS) {
+        // statx非対応はポータブルAPIへフォールバックする。
+        if (errno == .NOSYS or errno == .OPNOTSUPP) return statPortable(io, path, follow);
+        return linuxErrno(errno);
+    }
     var metadata = Metadata{
         .kind = linuxKind(raw.mode),
         .size = raw.size,
@@ -293,7 +300,9 @@ fn linuxDevice(major: u32, minor: u32) u64 {
 /// 同一ハンドルの情報だけを使うため、パス差し替えでも混在しない。
 /// uid/gid/dev/rdev/blocks はWindowsに概念が無いため0のまま。
 fn statWindows(io: std.Io, path: []const u8, follow: bool) anyerror!Metadata {
-    const file = try std.Io.Dir.cwd().openFile(io, path, .{ .follow_symlinks = follow });
+    // `.allow_directory = true`（既定値）を明示し、ディレクトリも開けるように
+    // する。これはZigの `Dir.statFile` が内部で使うのと同じ開き方である。
+    const file = try std.Io.Dir.cwd().openFile(io, path, .{ .follow_symlinks = follow, .allow_directory = true });
     defer file.close(io);
     var status_block: std.os.windows.IO_STATUS_BLOCK = undefined;
     var info: std.os.windows.FILE.ALL_INFORMATION = undefined;
@@ -337,9 +346,9 @@ fn fromWindowsTime(filetime: i64) foundation.TimeNs {
     return foundation.timeNsFromWindowsFileTime(@bitCast(filetime));
 }
 
-/// wasi（非公式ターゲット）はポータブルAPIのみで構成する。uid/gid等は
-/// 取得できないため0のまま。
-fn statWasi(io: std.Io, path: []const u8, follow: bool) anyerror!Metadata {
+/// ポータブルAPIのみで構成するフォールバック（wasiとLinuxのstatx非対応時）。
+/// kind/size/mode/時刻のみ取得し、uid/gid/dev/rdev/blocksは0のままになる。
+fn statPortable(io: std.Io, path: []const u8, follow: bool) anyerror!Metadata {
     const info = try std.Io.Dir.cwd().statFile(io, path, .{ .follow_symlinks = follow });
     return .{
         .kind = kindFrom(info.kind),
