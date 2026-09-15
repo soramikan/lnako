@@ -119,7 +119,7 @@ pub fn usage(writer: *std.Io.Writer) !void {
         \\  lnako build <file.nako3|.dncl|.dncl2> -o <output> [-O0..-O3] [--emit exe|obj|llvm-ir] [--llvm-dir <path>]
         \\  lnako run <file.nako3|.dncl|.dncl2> [--compat-js] [--dncl] [--dncl2] -- [arguments]
         \\  lnako check <file.nako3|.dncl|.dncl2> [--dncl] [--dncl2]
-        \\  lnako test <file-or-directory>
+        \\  lnako test <file.nako3|.dncl|.dncl2|directory> [--dncl] [--dncl2]
         \\  lnako compat report
         \\  lnako benchmark
         \\  lnako toolchain <status|dir|install|update|remove>

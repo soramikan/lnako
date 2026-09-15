@@ -86,6 +86,7 @@ Windowsでは`lnako build hello.nako3 -o hello.exe -O2`で生成し、`.\hello.e
 ```sh
 lnako run program.dncl
 lnako build program.dncl -o program -O2
+lnako test program.dncl
 lnako run program.nako3 --dncl2
 ```
 

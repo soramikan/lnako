@@ -196,7 +196,7 @@ pub fn run(
                 try stderr.flush();
                 std.process.exit(2);
             }
-            const succeeded = try test_command.runTestTarget(allocator, io, args[1], stdout, stderr);
+            const succeeded = try test_command.runTestTarget(allocator, io, args[1], arguments.dnclModeFromArguments(args[2..]), stdout, stderr);
             if (!succeeded) {
                 try stdout.flush();
                 try stderr.flush();
