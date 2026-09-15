@@ -8,6 +8,21 @@ const token_mod = @import("token.zig");
 const Token = token_mod.Token;
 const Kind = token_mod.Kind;
 
+pub const helpers = @import("parser/helpers.zig");
+pub const builder = @import("parser/builder.zig");
+pub const expressions = @import("parser/expressions.zig");
+
+const isConditionalJosi = helpers.isConditionalJosi;
+const isSequenceJosi = helpers.isSequenceJosi;
+const isTargetJosi = helpers.isTargetJosi;
+const isValueJosi = helpers.isValueJosi;
+const isImplicitCallbackJosi = helpers.isImplicitCallbackJosi;
+const canStartExpression = helpers.canStartExpression;
+const tokenStem = helpers.tokenStem;
+const isIncrementTargetPath = helpers.isIncrementTargetPath;
+const emptyToken = helpers.emptyToken;
+const clearConditionalJosi = helpers.clearConditionalJosi;
+
 pub const Error = lexer.Error || syntax_transform.Error || std.mem.Allocator.Error;
 
 /// 取り込み先モジュールが残したモードを指定位置以降の文へ適用する。
@@ -95,7 +110,7 @@ pub fn parseWithMode(backing_allocator: std.mem.Allocator, source: []const u8, f
     };
 }
 
-const ParseFailure = error{ ParseFailed, OutOfMemory };
+pub const ParseFailure = error{ ParseFailed, OutOfMemory };
 
 fn orMode(a: token_mod.Mode, b: token_mod.Mode) token_mod.Mode {
     return .{
@@ -111,7 +126,7 @@ const Stop = packed struct {
     error_branch: bool = false,
 };
 
-const Parser = struct {
+pub const Parser = struct {
     allocator: std.mem.Allocator,
     tokens: []const Token,
     filename: []const u8,
@@ -123,7 +138,7 @@ const Parser = struct {
     delimited_expression_depth: usize = 0,
     diagnostics: std.ArrayList(diagnostic.Diagnostic) = .empty,
 
-    fn parseProgram(self: *Parser) ParseFailure!*ast.Node {
+    pub fn parseProgram(self: *Parser) ParseFailure!*ast.Node {
         const root = try self.parseBlock(.{});
         if (!self.at(.eof)) return self.fail(.unexpected_token, "プログラム末尾に解釈できないトークンがあります", self.peek());
         return root;
@@ -134,7 +149,7 @@ const Parser = struct {
     /// DNCLモード文が後続の取り込み元の文にも効く。モードは単調に有効化される
     /// だけなので OR 適用で足りる。取り込み文自身の解析には適用しない
     /// （position は取り込み文の先頭なので `>` で比較する）。
-    fn applyTailModes(self: *Parser) void {
+    pub fn applyTailModes(self: *Parser) void {
         while (self.tail_cursor < self.tail_modes.len and
             self.peek().span.start > self.tail_modes[self.tail_cursor].position)
         {
@@ -148,11 +163,11 @@ const Parser = struct {
 
     /// 取り込み文の位置とその時点のモードを記録する。
     /// 取り込み先はこの時点のモードを継承してパースされる（公式の結合ストリーム相当）。
-    fn recordImportMode(self: *Parser, node: *ast.Node) ParseFailure!void {
+    pub fn recordImportMode(self: *Parser, node: *ast.Node) ParseFailure!void {
         try self.import_modes.append(self.allocator, .{ .position = node.span.start, .mode = self.mode });
     }
 
-    fn parseBlock(self: *Parser, stop: Stop) ParseFailure!*ast.Node {
+    pub fn parseBlock(self: *Parser, stop: Stop) ParseFailure!*ast.Node {
         const first = self.peek();
         var children: std.ArrayList(*ast.Node) = .empty;
         while (!self.at(.eof) and !self.isStop(stop)) {
@@ -161,10 +176,10 @@ const Parser = struct {
             try children.append(self.allocator, node);
             if (self.index == before) return self.fail(.unexpected_token, "構文解析を進められません", self.peek());
         }
-        return self.makeNodeWithChildren(.block, first, try children.toOwnedSlice(self.allocator));
+        return builder.makeNodeWithChildren(self, .block, first, try children.toOwnedSlice(self.allocator));
     }
 
-    fn parseStatement(self: *Parser) ParseFailure!*ast.Node {
+    pub fn parseStatement(self: *Parser) ParseFailure!*ast.Node {
         self.applyTailModes();
         const token = self.peek();
         if (self.isImportDirective()) return self.parseImportDirective();
@@ -192,69 +207,69 @@ const Parser = struct {
         };
     }
 
-    fn parseImplicitResultAssignment(self: *Parser) ParseFailure!*ast.Node {
+    pub fn parseImplicitResultAssignment(self: *Parser) ParseFailure!*ast.Node {
         const start = self.advance();
         const value = try self.parseCallExpression();
-        const node = try self.makeNodeWithChildren(.assignment, start, try self.copyChildren(&.{value}));
+        const node = try builder.makeNodeWithChildren(self, .assignment, start, try builder.copyChildren(self, &.{value}));
         node.name = "それ";
         node.josi = "";
         return node;
     }
 
-    fn parseEol(self: *Parser) ParseFailure!*ast.Node {
+    pub fn parseEol(self: *Parser) ParseFailure!*ast.Node {
         const token = self.advance();
-        return self.makeNode(.eol, token);
+        return builder.makeNode(self, .eol, token);
     }
 
-    fn simpleStatement(self: *Parser, kind: ast.Kind) ParseFailure!*ast.Node {
+    pub fn simpleStatement(self: *Parser, kind: ast.Kind) ParseFailure!*ast.Node {
         const token = self.advance();
-        return self.makeNode(kind, token);
+        return builder.makeNode(self, kind, token);
     }
 
-    fn parseModeDirective(self: *Parser) ParseFailure!*ast.Node {
+    pub fn parseModeDirective(self: *Parser) ParseFailure!*ast.Node {
         const first = self.advance();
         // 公式yDNCLMode相当: この文の位置から配列モードを有効化し、空行を返す。
         if (first.kind == .keyword_dncl_mode) {
             self.mode.dncl = true;
-            return self.makeNode(.eol, first);
+            return builder.makeNode(self, .eol, first);
         }
         if (first.kind == .keyword_dncl2_mode) {
             self.mode.dncl2 = true;
-            return self.makeNode(.eol, first);
+            return builder.makeNode(self, .eol, first);
         }
         if (first.kind == .not) {
             const directive = try self.require(.identifier, "『!』の後ろにモード名が必要です");
             if (std.mem.eql(u8, directive.value, "モジュール公開既定値")) {
                 _ = try self.require(.equal, "モジュール公開既定値に『=』が必要です");
-                _ = try self.parseExpression(0);
-                return self.makeNode(.eol, first);
+                _ = try expressions.parseExpression(self, 0);
+                return builder.makeNode(self, .eol, first);
             }
-            const node = try self.makeNode(.run_mode, first);
+            const node = try builder.makeNode(self, .run_mode, first);
             node.value = if (std.mem.eql(u8, directive.value, "厳チェック")) "厳しくチェック" else directive.value;
             return node;
         }
-        const node = try self.makeNode(.run_mode, first);
+        const node = try builder.makeNode(self, .run_mode, first);
         node.value = first.value;
         return node;
     }
 
-    fn parseLegacySequentialDirective(self: *Parser) ParseFailure!*ast.Node {
+    pub fn parseLegacySequentialDirective(self: *Parser) ParseFailure!*ast.Node {
         const directive = self.advance();
         try self.reportLegacyDeprecation(directive, "『逐次実行』構文は廃止されました(https://nadesi.com/v3/doc/go.php?944)。");
         // 公式は廃止語句を消費した後、次のトークンを位置に持つ空文を返す。
         // 実際の改行や後続文は次のparseStatementへ渡して継続する。
-        return self.makeNode(.eol, self.peek());
+        return builder.makeNode(self, .eol, self.peek());
     }
 
-    fn parseLegacyAsyncDirective(self: *Parser) ParseFailure!*ast.Node {
+    pub fn parseLegacyAsyncDirective(self: *Parser) ParseFailure!*ast.Node {
         _ = self.advance(); // !
         _ = self.advance(); // 非同期モード
         // 公式のlogger.errorも、!非同期モードを消費した後のpeekを位置に使う。
         try self.reportLegacyDeprecation(self.peek(), "『非同期モード』構文は廃止されました(https://nadesi.com/v3/doc/go.php?1028)。");
-        return self.makeNode(.eol, self.peek());
+        return builder.makeNode(self, .eol, self.peek());
     }
 
-    fn reportLegacyDeprecation(self: *Parser, token: Token, message: []const u8) ParseFailure!void {
+    pub fn reportLegacyDeprecation(self: *Parser, token: Token, message: []const u8) ParseFailure!void {
         self.diagnostics.append(self.allocator, .{
             .severity = .error_severity,
             .code = .legacy_deprecated,
@@ -264,18 +279,18 @@ const Parser = struct {
         }) catch return error.OutOfMemory;
     }
 
-    fn isLegacySequentialDirective(self: *Parser) bool {
+    pub fn isLegacySequentialDirective(self: *Parser) bool {
         return self.peek().kind == .identifier and std.mem.eql(u8, self.peek().value, "逐次実行");
     }
 
-    fn isLegacyAsyncDirective(self: *Parser) bool {
+    pub fn isLegacyAsyncDirective(self: *Parser) bool {
         const token = self.peek();
         const next = self.peekAhead(1);
         return token.kind == .not and next.kind == .keyword_async and
             std.mem.eql(u8, next.value, "非同期モード");
     }
 
-    fn isModeDirective(self: *Parser) bool {
+    pub fn isModeDirective(self: *Parser) bool {
         const token = self.peek();
         if (token.kind == .not) {
             const next = self.peekAhead(1);
@@ -291,10 +306,10 @@ const Parser = struct {
                 std.mem.eql(u8, token.value, "パフォーマンスモニタ適用")));
     }
 
-    fn parseIf(self: *Parser) ParseFailure!*ast.Node {
+    pub fn parseIf(self: *Parser) ParseFailure!*ast.Node {
         const start = self.advance();
         self.skipCommas();
-        var condition = try self.parseExpression(0);
+        var condition = try expressions.parseExpression(self, 0);
         if (!isConditionalJosi(condition.josi) and !self.identifierValue("ならば")) {
             return self.fail(.invalid_control_statement, "『もし』文の条件末尾に『ならば』が必要です", self.peek());
         }
@@ -303,7 +318,7 @@ const Parser = struct {
         // DNCLの「Aでないならば」はsyntax_transformで同じ助詞へ正規化されるため、
         // 条件式のjosiを消す前にnotへ包む必要がある。
         if (std.mem.eql(u8, condition.josi, "でなければ")) {
-            condition = try self.unary("not", condition, self.peekPrevious());
+            condition = try builder.unary(self, "not", condition, self.peekPrevious());
         }
         clearConditionalJosi(condition);
 
@@ -314,10 +329,10 @@ const Parser = struct {
             self.skipEols();
             true_block = try self.parseBlock(.{ .end = true, .else_branch = true });
         } else {
-            true_block = try self.wrapSingle(try self.parseStatement());
+            true_block = try builder.wrapSingle(self, try self.parseStatement());
         }
 
-        var false_block = try self.emptyBlock(self.peek());
+        var false_block = try builder.emptyBlock(self, self.peek());
         if (self.at(.keyword_else)) {
             _ = self.advance();
             self.skipCommas();
@@ -330,14 +345,14 @@ const Parser = struct {
                 // これにより「そうでなくもし」を、内側のもし文だけが
                 // インライン分岐として閉じる公式のASTに合わせる。
                 multiline = false;
-                false_block = try self.wrapSingle(try self.parseStatement());
+                false_block = try builder.wrapSingle(self, try self.parseStatement());
             }
         }
         if (multiline) try self.requireEnd("『もし』文");
-        return self.makeNodeWithChildren(.if_statement, start, try self.copyChildren(&.{ condition, true_block, false_block }));
+        return builder.makeNodeWithChildren(self, .if_statement, start, try builder.copyChildren(self, &.{ condition, true_block, false_block }));
     }
 
-    fn parsePostTestLoop(self: *Parser) ParseFailure!*ast.Node {
+    pub fn parsePostTestLoop(self: *Parser) ParseFailure!*ast.Node {
         const start = self.advance();
         if (self.at(.keyword_repeat)) _ = self.advance();
         if (self.at(.keyword_here_from)) _ = self.advance();
@@ -345,18 +360,18 @@ const Parser = struct {
         const body = try self.parseBlock(.{ .end = true });
         if (self.at(.keyword_here_end)) _ = self.advance();
         self.skipCommas();
-        var condition: *ast.Node = if (self.at(.eol) or self.at(.eof)) try self.numberOne(start) else try self.parseExpression(0);
+        var condition: *ast.Node = if (self.at(.eol) or self.at(.eof)) try builder.numberOne(self, start) else try expressions.parseExpression(self, 0);
         if (self.identifierValue("なる") and (std.mem.eql(u8, self.peek().josi, "まで") or std.mem.eql(u8, self.peek().josi, "までの"))) {
             const until = self.advance();
-            condition = try self.unary("not", condition, until);
+            condition = try builder.unary(self, "not", condition, until);
             condition.josi = "";
             condition.raw_josi = "";
         }
         if (self.at(.keyword_repeat_while)) _ = self.advance();
-        return self.makeNodeWithChildren(.post_test_loop, start, try self.copyChildren(&.{ condition, body }));
+        return builder.makeNodeWithChildren(self, .post_test_loop, start, try builder.copyChildren(self, &.{ condition, body }));
     }
 
-    fn parseTryExcept(self: *Parser) ParseFailure!*ast.Node {
+    pub fn parseTryExcept(self: *Parser) ParseFailure!*ast.Node {
         const start = self.advance();
         self.skipEols();
         const body = try self.parseBlock(.{ .error_branch = true });
@@ -366,10 +381,10 @@ const Parser = struct {
         self.skipEols();
         const handler = try self.parseBlock(.{ .end = true });
         try self.requireEnd("『エラー監視』文");
-        return self.makeNodeWithChildren(.try_except, start, try self.copyChildren(&.{ body, handler }));
+        return builder.makeNodeWithChildren(self, .try_except, start, try builder.copyChildren(self, &.{ body, handler }));
     }
 
-    fn parseFunctionDefinition(self: *Parser, is_test: bool) ParseFailure!*ast.Node {
+    pub fn parseFunctionDefinition(self: *Parser, is_test: bool) ParseFailure!*ast.Node {
         const start = self.advance();
         var is_export = true;
         if (self.at(.left_brace)) {
@@ -394,16 +409,16 @@ const Parser = struct {
             const block = try self.parseBlock(.{ .end = true });
             try self.requireEnd("関数定義");
             break :blk block;
-        } else try self.wrapSingle(try self.parseStatement());
+        } else try builder.wrapSingle(self, try self.parseStatement());
 
-        const node = try self.makeNodeWithChildren(if (is_test) .test_definition else .function_definition, start, try self.copyChildren(&.{body}));
+        const node = try builder.makeNodeWithChildren(self, if (is_test) .test_definition else .function_definition, start, try builder.copyChildren(self, &.{body}));
         node.name = if (is_test) tokenStem(name_token) else name_token.value;
         node.arguments = arguments;
         node.is_export = is_export;
         return node;
     }
 
-    fn parseArguments(self: *Parser) ParseFailure![]ast.Argument {
+    pub fn parseArguments(self: *Parser) ParseFailure![]ast.Argument {
         _ = try self.require(.left_paren, "引数を始める『(』が必要です");
         var arguments: std.ArrayList(ast.Argument) = .empty;
         while (!self.at(.right_paren) and !self.at(.eof)) {
@@ -418,27 +433,29 @@ const Parser = struct {
         return arguments.toOwnedSlice(self.allocator);
     }
 
-    fn parseDeclaration(self: *Parser, is_const: bool) ParseFailure!*ast.Node {
+    pub fn parseDeclaration(self: *Parser, is_const: bool) ParseFailure!*ast.Node {
         const start = self.advance();
         if (self.at(.left_bracket)) {
-            const names = try self.parseArrayLiteral();
+            const names = try expressions.parseArrayLiteral(
+                self,
+            );
             _ = try self.require(.equal, "変数一覧の後ろに『=』が必要です");
             const value = try self.parseCallExpression();
-            const node = try self.makeNodeWithChildren(.variable_list_definition, start, try self.copyChildren(&.{value}));
-            node.arguments = try self.namesToArguments(names.children);
+            const node = try builder.makeNodeWithChildren(self, .variable_list_definition, start, try builder.copyChildren(self, &.{value}));
+            node.arguments = try builder.namesToArguments(self, names.children);
             node.is_const = is_const;
             return node;
         }
         const name = try self.require(.identifier, "変数名が必要です");
         _ = try self.require(.equal, "変数宣言に『=』が必要です");
         const value = try self.parseCallExpression();
-        const node = try self.makeNodeWithChildren(.variable_definition, start, try self.copyChildren(&.{value}));
+        const node = try builder.makeNodeWithChildren(self, .variable_definition, start, try builder.copyChildren(self, &.{value}));
         node.name = name.value;
         node.is_const = is_const;
         return node;
     }
 
-    fn isImportDirective(self: *Parser) bool {
+    pub fn isImportDirective(self: *Parser) bool {
         if (!self.at(.not) or (self.peekAhead(1).kind != .string and self.peekAhead(1).kind != .string_template)) return false;
         var offset: usize = 2;
         while (self.peekAhead(offset).kind != .eol and self.peekAhead(offset).kind != .eof) : (offset += 1) {
@@ -447,27 +464,27 @@ const Parser = struct {
         return false;
     }
 
-    fn parseImportDirective(self: *Parser) ParseFailure!*ast.Node {
+    pub fn parseImportDirective(self: *Parser) ParseFailure!*ast.Node {
         const start = self.advance();
         const path_token = self.advance();
-        const path = try self.valueNode(.string, path_token);
+        const path = try builder.valueNode(self, .string, path_token);
         _ = try self.require(.keyword_import, "取り込み文に『取り込む』が必要です");
-        const node = try self.makeNodeWithChildren(.import, start, try self.copyChildren(&.{path}));
+        const node = try builder.makeNodeWithChildren(self, .import, start, try builder.copyChildren(self, &.{path}));
         node.value = path.value;
         node.josi = "";
         try self.recordImportMode(node);
         return node;
     }
 
-    fn parseDebugDisplay(self: *Parser) ParseFailure!*ast.Node {
+    pub fn parseDebugDisplay(self: *Parser) ParseFailure!*ast.Node {
         const start = self.advance();
-        const value = try self.parseExpression(0);
-        const node = try self.makeNodeWithChildren(.function_call, start, try self.copyChildren(&.{value}));
+        const value = try expressions.parseExpression(self, 0);
+        const node = try builder.makeNodeWithChildren(self, .function_call, start, try builder.copyChildren(self, &.{value}));
         node.name = "ハテナ関数実行";
         return node;
     }
 
-    fn canStartAssignment(self: *Parser) bool {
+    pub fn canStartAssignment(self: *Parser) bool {
         var i = self.index;
         var nesting: usize = 0;
         while (i < self.tokens.len) : (i += 1) {
@@ -485,7 +502,7 @@ const Parser = struct {
         return false;
     }
 
-    fn parseAssignment(self: *Parser) ParseFailure!*ast.Node {
+    pub fn parseAssignment(self: *Parser) ParseFailure!*ast.Node {
         const start = self.peek();
         var targets: std.ArrayList(*ast.Node) = .empty;
         try targets.append(self.allocator, try self.parseLValue());
@@ -498,8 +515,8 @@ const Parser = struct {
         _ = try self.require(.equal, "代入文に『=』が必要です");
         const value = try self.parseCallExpression();
         if (targets.items.len > 1) {
-            const result = try self.makeNodeWithChildren(.variable_list_definition, start, try self.copyChildren(&.{value}));
-            result.arguments = try self.namesToArguments(targets.items);
+            const result = try builder.makeNodeWithChildren(self, .variable_list_definition, start, try builder.copyChildren(self, &.{value}));
+            result.arguments = try builder.namesToArguments(self, targets.items);
             return result;
         }
         const target = targets.items[0];
@@ -509,14 +526,14 @@ const Parser = struct {
             else => if (declaration_from_towa) .variable_definition else .assignment,
         };
         const target_children = if (target.kind == .array_reference or target.kind == .property_reference)
-            try self.assignmentPath(target)
+            try builder.assignmentPath(self, target)
         else
             target.children;
         const children = if (target_children.len == 0)
-            try self.copyChildren(&.{value})
+            try builder.copyChildren(self, &.{value})
         else
-            try self.prepend(value, target_children);
-        const node = try self.makeNodeWithChildren(kind, start, children);
+            try builder.prepend(self, value, target_children);
+        const node = try builder.makeNodeWithChildren(self, kind, start, children);
         node.name = if (target.name.len > 0) target.name else target.value;
         node.josi = "";
         // DNCLでは未初期化変数への配列要素代入で30要素配列を自動初期化する（公式flagCheckArrayInit相当）
@@ -524,16 +541,18 @@ const Parser = struct {
         return node;
     }
 
-    fn parseLValue(self: *Parser) ParseFailure!*ast.Node {
+    pub fn parseLValue(self: *Parser) ParseFailure!*ast.Node {
         const token = try self.require(.identifier, "代入先の変数名が必要です");
-        var base = try self.valueNode(.word, token);
+        var base = try builder.valueNode(self, .word, token);
         while (true) {
             if (self.at(.at)) {
                 const at_token = self.advance();
                 // 公式はprop[i]形（プロパティ参照への添字適用）を受理しない
                 if (base.kind == .property_reference) return self.fail(.invalid_array_access, "配列アクセスで指定ミス", at_token);
-                const index = try self.dnclArrayIndex(try self.parsePrimary());
-                base = try self.reference(.array_reference, base, &.{index}, at_token);
+                const index = try builder.dnclArrayIndex(self, try expressions.parsePrimary(
+                    self,
+                ));
+                base = try builder.reference(self, .array_reference, base, &.{index}, at_token);
                 continue;
             }
             if (self.at(.left_bracket)) {
@@ -543,18 +562,18 @@ const Parser = struct {
                 defer self.delimited_expression_depth -= 1;
                 var indexes: std.ArrayList(*ast.Node) = .empty;
                 while (!self.at(.right_bracket) and !self.at(.eof)) {
-                    const index = try self.parseExpression(0);
+                    const index = try expressions.parseExpression(self, 0);
                     // 読み出し側と同じく、公式はfunc tokenをカンマ直前では
                     // 値として受理しない（代入側のlet_arrayでも指定ミスになる）。
                     if (index.kind == .word and index.josi.len == 0 and !index.grouped and self.at(.comma)) index.bare_index_word = true;
-                    try indexes.append(self.allocator, try self.dnclArrayIndex(index));
+                    try indexes.append(self.allocator, try builder.dnclArrayIndex(self, index));
                     // 代入側は公式のlet_array同様にカンマ区切りの次元数制限がない
                     if (!self.at(.comma)) break;
                     _ = self.advance();
                 }
                 const close = try self.require(.right_bracket, "配列添字を閉じる『]』が必要です");
-                self.dnclReverseIndexes(indexes.items);
-                base = try self.reference(.array_reference, base, try indexes.toOwnedSlice(self.allocator), open);
+                builder.dnclReverseIndexes(self, indexes.items);
+                base = try builder.reference(self, .array_reference, base, try indexes.toOwnedSlice(self.allocator), open);
                 base.josi = close.josi;
                 continue;
             }
@@ -562,8 +581,8 @@ const Parser = struct {
                 const property_token = self.advance();
                 const name = self.advance();
                 if (name.kind != .identifier and name.kind != .string) return self.fail(.expected_name, "『$』の後ろにプロパティ名が必要です", name);
-                const property = try self.valueNode(.string, name);
-                base = try self.reference(.property_reference, base, &.{property}, property_token);
+                const property = try builder.valueNode(self, .string, name);
+                base = try builder.reference(self, .property_reference, base, &.{property}, property_token);
                 base.josi = name.josi;
                 continue;
             }
@@ -572,7 +591,7 @@ const Parser = struct {
         return base;
     }
 
-    fn parseCallOrControl(self: *Parser) ParseFailure!*ast.Node {
+    pub fn parseCallOrControl(self: *Parser) ParseFailure!*ast.Node {
         const start = self.peek();
         var arguments: std.ArrayList(*ast.Node) = .empty;
         var chained_calls: std.ArrayList(*ast.Node) = .empty;
@@ -582,12 +601,12 @@ const Parser = struct {
                 const call = try self.parseImplicitCallbackCall(command, arguments.items);
                 if (chained_calls.items.len == 0) return call;
                 try chained_calls.append(self.allocator, call);
-                return self.makeNodeWithChildren(.block, start, try chained_calls.toOwnedSlice(self.allocator));
+                return builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
             }
             if (self.at(.keyword_return)) {
                 const keyword = self.advance();
-                const value = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try self.nop(keyword);
-                const result = try self.makeNodeWithChildren(.return_statement, start, try self.copyChildren(&.{value}));
+                const value = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try builder.nop(self, keyword);
+                const result = try builder.makeNodeWithChildren(self, .return_statement, start, try builder.copyChildren(self, &.{value}));
                 result.josi = "";
                 return result;
             }
@@ -604,7 +623,7 @@ const Parser = struct {
             if (self.at(.keyword_repeat)) return self.parseFor(start, arguments.items);
             if (self.at(.keyword_foreach)) {
                 _ = self.advance();
-                const collection = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try self.nop(start);
+                const collection = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try builder.nop(self, start);
                 return self.parseForeach(start, collection);
             }
             if ((self.identifierValue("増") or self.identifierValue("減")) and self.peekAhead(1).kind == .keyword_repeat) {
@@ -626,11 +645,11 @@ const Parser = struct {
                         try arguments.append(self.allocator, try self.implicitIt(command));
                         continue;
                     }
-                    return self.makeNodeWithChildren(.block, start, try chained_calls.toOwnedSlice(self.allocator));
+                    return builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
                 }
             }
 
-            const expression = try self.parseExpression(0);
+            const expression = try expressions.parseExpression(self, 0);
             if (expression.kind == .function_call and self.isTerminator()) {
                 return expression;
             }
@@ -659,11 +678,11 @@ const Parser = struct {
                 }
                 const command = self.advance();
                 if (std.mem.eql(u8, command.value, "実行速度優先") or std.mem.eql(u8, command.value, "パフォーマンスモニタ適用")) {
-                    const option = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try self.nop(start);
+                    const option = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try builder.nop(self, start);
                     if (chained_calls.items.len > 0) {
                         const statement = try self.parseScopedMode(start, command, option);
                         try chained_calls.append(self.allocator, statement);
-                        return self.makeNodeWithChildren(.block, start, try chained_calls.toOwnedSlice(self.allocator));
+                        return builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
                     }
                     return self.parseScopedMode(start, command, option);
                 }
@@ -672,14 +691,14 @@ const Parser = struct {
                     if (chained_calls.items.len > 0) {
                         const statement = try self.parseSwitch(start, condition);
                         try chained_calls.append(self.allocator, statement);
-                        return self.makeNodeWithChildren(.block, start, try chained_calls.toOwnedSlice(self.allocator));
+                        return builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
                     }
                     return self.parseSwitch(start, condition);
                 }
                 if (try self.parseJapaneseCommand(start, command, arguments.items)) |statement| {
                     if (chained_calls.items.len > 0) {
                         try chained_calls.append(self.allocator, statement);
-                        return self.makeNodeWithChildren(.block, start, try chained_calls.toOwnedSlice(self.allocator));
+                        return builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
                     }
                     return statement;
                 }
@@ -687,7 +706,7 @@ const Parser = struct {
                     const statement = try self.parseImplicitCallbackCall(command, arguments.items);
                     if (chained_calls.items.len > 0) {
                         try chained_calls.append(self.allocator, statement);
-                        return self.makeNodeWithChildren(.block, start, try chained_calls.toOwnedSlice(self.allocator));
+                        return builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
                     }
                     return statement;
                 }
@@ -700,59 +719,59 @@ const Parser = struct {
                 }
                 if (chained_calls.items.len > 0) {
                     try chained_calls.append(self.allocator, call);
-                    return self.makeNodeWithChildren(.block, start, try chained_calls.toOwnedSlice(self.allocator));
+                    return builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
                 }
                 return call;
             }
             if (self.isTerminator()) break;
         }
 
-        if (chained_calls.items.len > 0) return self.makeNodeWithChildren(.block, start, try chained_calls.toOwnedSlice(self.allocator));
+        if (chained_calls.items.len > 0) return builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
         if (arguments.items.len == 1) {
             const value = arguments.items[0];
             if (value.kind == .word) {
-                const call = try self.makeNode(.function_call, start);
+                const call = try builder.makeNode(self, .function_call, start);
                 call.name = value.value;
                 call.josi = value.josi;
                 return call;
             }
-            const node = try self.makeNodeWithChildren(.dynamic_execute, start, try self.copyChildren(&.{value}));
+            const node = try builder.makeNodeWithChildren(self, .dynamic_execute, start, try builder.copyChildren(self, &.{value}));
             return node;
         }
         return self.fail(.unexpected_token, "命令呼び出しを構成できません", self.peek());
     }
 
-    fn makeCommandCall(self: *Parser, command: Token, arguments: []*ast.Node) ParseFailure!*ast.Node {
-        const call = try self.makeNodeWithChildren(.function_call, command, arguments);
+    pub fn makeCommandCall(self: *Parser, command: Token, arguments: []*ast.Node) ParseFailure!*ast.Node {
+        const call = try builder.makeNodeWithChildren(self, .function_call, command, arguments);
         call.name = command.value;
         call.josi = if (isSequenceJosi(command.josi)) "して" else command.josi;
         call.raw_josi = command.raw_josi;
         return call;
     }
 
-    fn parseImplicitCallbackCall(self: *Parser, command: Token, arguments: []const *ast.Node) ParseFailure!*ast.Node {
+    pub fn parseImplicitCallbackCall(self: *Parser, command: Token, arguments: []const *ast.Node) ParseFailure!*ast.Node {
         const callback_arguments: []ast.Argument = if (self.at(.left_paren)) try self.parseArguments() else &.{};
         if (self.at(.eol)) self.skipEols();
         const body = try self.parseBlock(.{ .end = true });
         try self.requireEnd("『には』コールバック");
-        const callback = try self.makeNodeWithChildren(.anonymous_function, command, try self.copyChildren(&.{body}));
+        const callback = try builder.makeNodeWithChildren(self, .anonymous_function, command, try builder.copyChildren(self, &.{body}));
         callback.arguments = callback_arguments;
         callback.josi = "";
         callback.raw_josi = "";
-        const call = try self.makeCommandCall(command, try self.prepend(callback, arguments));
+        const call = try self.makeCommandCall(command, try builder.prepend(self, callback, arguments));
         call.josi = "して";
         return call;
     }
 
-    fn implicitIt(self: *Parser, token: Token) ParseFailure!*ast.Node {
-        const result = try self.makeNode(.word, token);
+    pub fn implicitIt(self: *Parser, token: Token) ParseFailure!*ast.Node {
+        const result = try builder.makeNode(self, .word, token);
         result.value = "それ";
         result.josi = "";
         result.raw_josi = "";
         return result;
     }
 
-    fn parseJapaneseCommand(self: *Parser, start: Token, command: Token, arguments: []const *ast.Node) ParseFailure!?*ast.Node {
+    pub fn parseJapaneseCommand(self: *Parser, start: Token, command: Token, arguments: []const *ast.Node) ParseFailure!?*ast.Node {
         const is_assign = std.mem.eql(u8, command.value, "代入");
         const is_define = std.mem.eql(u8, command.value, "定");
         const is_increment = std.mem.eql(u8, command.value, "増") or std.mem.eql(u8, command.value, "減");
@@ -802,14 +821,14 @@ const Parser = struct {
                 else => .assignment,
             };
             const target_children = if (target.kind == .array_reference or target.kind == .property_reference)
-                try self.assignmentPath(target)
+                try builder.assignmentPath(self, target)
             else
                 target.children;
             const children = if (target_children.len == 0)
-                try self.copyChildren(&.{value})
+                try builder.copyChildren(self, &.{value})
             else
-                try self.prepend(value, target_children);
-            const result = try self.makeNodeWithChildren(kind, start, children);
+                try builder.prepend(self, value, target_children);
+            const result = try builder.makeNodeWithChildren(self, kind, start, children);
             result.name = if (target.kind == .word) target.value else if (target.name.len > 0) target.name else target.value;
             result.josi = "";
             result.check_array_init = kind == .array_assignment and (self.mode.dncl or self.mode.dncl2);
@@ -838,35 +857,35 @@ const Parser = struct {
         if (inc_amount_index) |ai| {
             amount = arguments[ai];
         } else {
-            const one = try self.makeNode(.number, command);
+            const one = try builder.makeNode(self, .number, command);
             one.value = "1";
             one.number_value = 1;
             amount = one;
         }
         if (std.mem.eql(u8, command.value, "減")) {
-            const minus_one = try self.makeNode(.number, command);
+            const minus_one = try builder.makeNode(self, .number, command);
             minus_one.value = "-1";
             minus_one.number_value = -1;
-            amount = try self.makeNodeWithChildren(.binary_operator, command, try self.copyChildren(&.{ amount, minus_one }));
+            amount = try builder.makeNodeWithChildren(self, .binary_operator, command, try builder.copyChildren(self, &.{ amount, minus_one }));
             amount.operator = "*";
             amount.josi = "";
         }
         if (inc_target.kind == .word) {
-            const result = try self.makeNodeWithChildren(.increment, start, try self.copyChildren(&.{amount}));
+            const result = try builder.makeNodeWithChildren(self, .increment, start, try builder.copyChildren(self, &.{amount}));
             result.name = inc_target.value;
             result.josi = "";
             return result;
         }
         // A[i]をN増やす: 公式はコンテナと添字を一度だけ評価し、要素が未定義なら0に初期化する
-        const target_path = try self.assignmentPath(inc_target);
-        const children = try self.prepend(amount, target_path);
-        const result = try self.makeNodeWithChildren(.increment_indexed, start, children);
+        const target_path = try builder.assignmentPath(self, inc_target);
+        const children = try builder.prepend(self, amount, target_path);
+        const result = try builder.makeNodeWithChildren(self, .increment_indexed, start, children);
         result.name = if (inc_target.name.len > 0) inc_target.name else inc_target.value;
         result.josi = "";
         return result;
     }
 
-    fn parseScopedMode(self: *Parser, start: Token, command: Token, option: *ast.Node) ParseFailure!*ast.Node {
+    pub fn parseScopedMode(self: *Parser, start: Token, command: Token, option: *ast.Node) ParseFailure!*ast.Node {
         const kind: ast.Kind = if (std.mem.eql(u8, command.value, "実行速度優先")) .speed_mode else .performance_monitor;
         var body: *ast.Node = undefined;
         if (self.at(.keyword_here_from)) _ = self.advance();
@@ -875,18 +894,18 @@ const Parser = struct {
             body = try self.parseBlock(.{ .end = true });
             try self.requireEnd("実行モード指定");
         } else {
-            body = try self.wrapSingle(try self.parseStatement());
+            body = try builder.wrapSingle(self, try self.parseStatement());
         }
-        const result = try self.makeNodeWithChildren(kind, start, try self.copyChildren(&.{body}));
+        const result = try builder.makeNodeWithChildren(self, kind, start, try builder.copyChildren(self, &.{body}));
         _ = option;
         result.value = "";
         result.josi = "";
         return result;
     }
 
-    fn parseSwitch(self: *Parser, start: Token, condition: *ast.Node) ParseFailure!*ast.Node {
+    pub fn parseSwitch(self: *Parser, start: Token, condition: *ast.Node) ParseFailure!*ast.Node {
         self.skipEols();
-        var default_block = try self.emptyBlock(start);
+        var default_block = try builder.emptyBlock(self, start);
         var cases: std.ArrayList(*ast.Node) = .empty;
         while (!self.at(.keyword_here_end) and !self.at(.eof)) {
             if (self.at(.keyword_else)) {
@@ -897,7 +916,7 @@ const Parser = struct {
                 self.skipEols();
                 continue;
             }
-            const case_value = try self.parseExpression(0);
+            const case_value = try expressions.parseExpression(self, 0);
             if (!isConditionalJosi(case_value.josi)) return self.fail(.invalid_control_statement, "条件分岐の値に『ならば』が必要です", self.peekPrevious());
             clearConditionalJosi(case_value);
             self.skipEols();
@@ -912,14 +931,14 @@ const Parser = struct {
         try children.append(self.allocator, condition);
         try children.append(self.allocator, default_block);
         try children.appendSlice(self.allocator, cases.items);
-        const result = try self.makeNodeWithChildren(.switch_statement, start, try children.toOwnedSlice(self.allocator));
+        const result = try builder.makeNodeWithChildren(self, .switch_statement, start, try children.toOwnedSlice(self.allocator));
         result.josi = "";
         return result;
     }
 
-    fn parseCallExpression(self: *Parser) ParseFailure!*ast.Node {
+    pub fn parseCallExpression(self: *Parser) ParseFailure!*ast.Node {
         if (self.at(.def_func)) return self.parseAnonymousFunction();
-        const value = try self.parseExpression(0);
+        const value = try expressions.parseExpression(self, 0);
         if (!self.at(.identifier) and (value.josi.len == 0 or !canStartExpression(self.peek().kind))) return value;
         var arguments: std.ArrayList(*ast.Node) = .empty;
         try arguments.append(self.allocator, value);
@@ -932,14 +951,14 @@ const Parser = struct {
         while (true) {
             if (self.at(.identifier)) {
                 if (self.peek().josi.len > 0 and self.peekAhead(1).kind == .identifier) {
-                    try arguments.append(self.allocator, try self.parseExpression(0));
+                    try arguments.append(self.allocator, try expressions.parseExpression(self, 0));
                     continue;
                 }
                 break;
             }
             if (self.isTerminator() or arguments.items[arguments.items.len - 1].josi.len == 0 or
                 !canStartExpression(self.peek().kind)) break;
-            try arguments.append(self.allocator, try self.parseExpression(0));
+            try arguments.append(self.allocator, try expressions.parseExpression(self, 0));
         }
         if (!self.at(.identifier)) {
             self.index = argument_start;
@@ -947,35 +966,35 @@ const Parser = struct {
         }
         while (self.at(.identifier)) {
             const command = self.advance();
-            const call = try self.makeNodeWithChildren(.function_call, command, try arguments.toOwnedSlice(self.allocator));
+            const call = try builder.makeNodeWithChildren(self, .function_call, command, try arguments.toOwnedSlice(self.allocator));
             call.name = command.value;
             call.josi = command.josi;
             if (!isSequenceJosi(command.josi)) return call;
             arguments = .empty;
             try arguments.append(self.allocator, call);
-            if (!self.isTerminator()) try arguments.append(self.allocator, try self.parseExpression(0));
+            if (!self.isTerminator()) try arguments.append(self.allocator, try expressions.parseExpression(self, 0));
         }
         return arguments.items[0];
     }
 
-    fn parseRepeatTimes(self: *Parser, start: Token, count: *ast.Node) ParseFailure!*ast.Node {
+    pub fn parseRepeatTimes(self: *Parser, start: Token, count: *ast.Node) ParseFailure!*ast.Node {
         if (self.at(.comma)) _ = self.advance();
         if (self.at(.keyword_repeat)) _ = self.advance();
         const body = try self.parseLoopBody("『回』繰り返し");
-        return self.makeNodeWithChildren(.repeat_times, start, try self.copyChildren(&.{ count, body }));
+        return builder.makeNodeWithChildren(self, .repeat_times, start, try builder.copyChildren(self, &.{ count, body }));
     }
 
-    fn parseWhile(self: *Parser, start: Token, condition: *ast.Node) ParseFailure!*ast.Node {
+    pub fn parseWhile(self: *Parser, start: Token, condition: *ast.Node) ParseFailure!*ast.Node {
         self.skipCommas();
         if (self.at(.keyword_repeat)) _ = self.advance();
         const body = try self.parseLoopBody("『間』繰り返し");
-        const result = try self.makeNodeWithChildren(.while_statement, start, try self.copyChildren(&.{ condition, body }));
+        const result = try builder.makeNodeWithChildren(self, .while_statement, start, try builder.copyChildren(self, &.{ condition, body }));
         result.josi = "";
         result.raw_josi = "";
         return result;
     }
 
-    fn parseFor(self: *Parser, start: Token, arguments: []const *ast.Node) ParseFailure!*ast.Node {
+    pub fn parseFor(self: *Parser, start: Token, arguments: []const *ast.Node) ParseFailure!*ast.Node {
         var direction: ast.LoopDirection = .automatic;
         if (self.identifierValue("増") or self.identifierValue("減")) {
             direction = if (self.identifierValue("増")) .up else .down;
@@ -990,9 +1009,9 @@ const Parser = struct {
             offset = 1;
         }
         if (arguments.len < offset + 2) return self.fail(.invalid_control_statement, "『繰り返す』に開始値と終了値が必要です", keyword);
-        const increment = if (arguments.len > offset + 2) arguments[offset + 2] else try self.nop(keyword);
+        const increment = if (arguments.len > offset + 2) arguments[offset + 2] else try builder.nop(self, keyword);
         const body = try self.parseLoopBody("『繰り返す』文");
-        const node = try self.makeNodeWithChildren(.for_statement, start, try self.copyChildren(&.{ arguments[offset], arguments[offset + 1], increment, body }));
+        const node = try builder.makeNodeWithChildren(self, .for_statement, start, try builder.copyChildren(self, &.{ arguments[offset], arguments[offset + 1], increment, body }));
         node.name = variable;
         node.josi = "";
         node.loop_direction = direction;
@@ -1001,15 +1020,15 @@ const Parser = struct {
         return node;
     }
 
-    fn parseForeach(self: *Parser, start: Token, collection: *ast.Node) ParseFailure!*ast.Node {
+    pub fn parseForeach(self: *Parser, start: Token, collection: *ast.Node) ParseFailure!*ast.Node {
         const body = try self.parseLoopBody("『反復』文");
-        const result = try self.makeNodeWithChildren(.foreach_statement, start, try self.copyChildren(&.{ collection, body }));
+        const result = try builder.makeNodeWithChildren(self, .foreach_statement, start, try builder.copyChildren(self, &.{ collection, body }));
         result.josi = "";
         result.raw_josi = "";
         return result;
     }
 
-    fn parseLoopBody(self: *Parser, description: []const u8) ParseFailure!*ast.Node {
+    pub fn parseLoopBody(self: *Parser, description: []const u8) ParseFailure!*ast.Node {
         self.skipCommas();
         if (self.at(.keyword_here_from)) _ = self.advance();
         if (self.at(.eol)) {
@@ -1018,403 +1037,21 @@ const Parser = struct {
             try self.requireEnd(description);
             return body;
         }
-        return self.wrapSingle(try self.parseStatement());
+        return builder.wrapSingle(self, try self.parseStatement());
     }
 
-    fn parseAnonymousFunction(self: *Parser) ParseFailure!*ast.Node {
+    pub fn parseAnonymousFunction(self: *Parser) ParseFailure!*ast.Node {
         const start = self.advance();
         const arguments: []ast.Argument = if (self.at(.left_paren)) try self.parseArguments() else &.{};
         if (self.at(.eol)) self.skipEols();
         const body = try self.parseBlock(.{ .end = true });
         try self.requireEnd("無名関数");
-        const node = try self.makeNodeWithChildren(.anonymous_function, start, try self.copyChildren(&.{body}));
+        const node = try builder.makeNodeWithChildren(self, .anonymous_function, start, try builder.copyChildren(self, &.{body}));
         node.arguments = arguments;
         return node;
     }
 
-    fn parseExpression(self: *Parser, minimum_precedence: u8) ParseFailure!*ast.Node {
-        return self.parseExpressionWithContext(minimum_precedence, false);
-    }
-
-    fn parseExpressionWithContext(self: *Parser, minimum_precedence: u8, allow_negative_number_literal: bool) ParseFailure!*ast.Node {
-        var left = try self.parseUnary(allow_negative_number_literal);
-        while (operatorInfo(self.peek().kind)) |info| {
-            if (info.precedence < minimum_precedence) break;
-            const operator_token = self.advance();
-            const next_precedence = info.precedence + @intFromBool(!info.right_associative);
-            const right = try self.parseExpressionWithContext(next_precedence, true);
-            if (operator_token.kind == .range) {
-                const range = try self.makeNodeWithChildren(.function_call, operator_token, try self.copyChildren(&.{ left, right }));
-                range.name = "範囲";
-                range.josi = right.josi;
-                left = range;
-            } else {
-                const binary = try self.makeNodeWithChildren(.binary_operator, operator_token, try self.copyChildren(&.{ left, right }));
-                binary.operator = info.name;
-                binary.josi = right.josi;
-                binary.raw_josi = right.raw_josi;
-                left = binary;
-            }
-        }
-        if (minimum_precedence == 0 and left.kind == .binary_operator) propagateOperatorJosi(left, left.josi);
-        return left;
-    }
-
-    fn parseUnary(self: *Parser, allow_negative_number_literal: bool) ParseFailure!*ast.Node {
-        if (self.at(.plus)) return self.fail(.unexpected_token, "単項『+』は使用できません", self.peek());
-        if (self.delimited_expression_depth > 0 and !allow_negative_number_literal and self.at(.minus) and self.peekAhead(1).kind == .bigint) {
-            return self.fail(.unexpected_token, "括弧・配列・辞書の内側では負のBigIntリテラルを直接使用できません", self.peek());
-        }
-        if (self.at(.not) or self.at(.minus)) {
-            const operator_token = self.advance();
-            const operand = try self.parseUnary(allow_negative_number_literal);
-            if (operator_token.kind == .minus) {
-                const can_fold_number = self.delimited_expression_depth == 0 or allow_negative_number_literal;
-                if (((operand.kind == .number and can_fold_number) or operand.kind == .bigint) and !operand.grouped) {
-                    operand.value = if (std.mem.startsWith(u8, operand.value, "-"))
-                        try self.allocator.dupe(u8, operand.value[1..])
-                    else
-                        try std.fmt.allocPrint(self.allocator, "-{s}", .{operand.value});
-                    if (operand.kind == .number) operand.number_value = -(operand.number_value orelse 0);
-                    operand.span = operator_token.span;
-                    return operand;
-                }
-                const minus_one = try self.makeNode(.number, operator_token);
-                minus_one.value = "-1";
-                minus_one.number_value = -1;
-                const binary = try self.makeNodeWithChildren(.binary_operator, operator_token, try self.copyChildren(&.{ minus_one, operand }));
-                binary.operator = "*";
-                binary.josi = operand.josi;
-                return binary;
-            }
-            return self.unary(operatorName(operator_token.kind), operand, operator_token);
-        }
-        return self.parsePostfix();
-    }
-
-    fn parsePostfix(self: *Parser) ParseFailure!*ast.Node {
-        var value = try self.parsePrimary();
-        while (true) {
-            if (self.at(.left_paren) and value.kind == .word and value.josi.len == 0) {
-                const open = self.advance();
-                self.delimited_expression_depth += 1;
-                defer self.delimited_expression_depth -= 1;
-                var arguments: std.ArrayList(*ast.Node) = .empty;
-                while (!self.at(.right_paren) and !self.at(.eof)) {
-                    try arguments.append(self.allocator, try self.parseExpression(0));
-                    if (!self.at(.comma)) break;
-                    _ = self.advance();
-                }
-                const close = try self.require(.right_paren, "C風関数呼び出しを閉じる『)』が必要です");
-                const call = try self.makeNodeWithChildren(.function_call, open, try arguments.toOwnedSlice(self.allocator));
-                call.name = value.value;
-                call.josi = close.josi;
-                call.raw_josi = close.raw_josi;
-                call.is_c_style_call = true;
-                value = call;
-                continue;
-            }
-            if (self.at(.left_paren) and value.kind == .function_call) {
-                const open = self.advance();
-                self.delimited_expression_depth += 1;
-                defer self.delimited_expression_depth -= 1;
-                var arguments: std.ArrayList(*ast.Node) = .empty;
-                try arguments.append(self.allocator, value);
-                while (!self.at(.right_paren) and !self.at(.eof)) {
-                    try arguments.append(self.allocator, try self.parseExpression(0));
-                    if (!self.at(.comma)) break;
-                    _ = self.advance();
-                }
-                const close = try self.require(.right_paren, "関数値呼び出しを閉じる『)』が必要です");
-                value = try self.makeNodeWithChildren(.call_value, open, try arguments.toOwnedSlice(self.allocator));
-                value.josi = close.josi;
-                continue;
-            }
-            if (self.at(.at)) {
-                const token = self.advance();
-                // 公式はprop[i]形（プロパティ参照への添字適用）を受理しない
-                if (value.kind == .property_reference) return self.fail(.invalid_array_access, "配列アクセスで指定ミス", token);
-                // 公式のcheckArrayIndexはレシーバの種類を問わず添字へ適用される
-                const index = try self.dnclArrayIndex(try self.parsePrimary());
-                const reference_kind: ast.Kind = if (isVariableReference(value.kind)) .array_reference else .array_value_reference;
-                value = try self.reference(reference_kind, value, &.{index}, token);
-                continue;
-            }
-            if (self.at(.left_bracket) and value.josi.len == 0) {
-                const open = self.advance();
-                if (value.kind == .property_reference) return self.fail(.invalid_array_access, "配列アクセスで指定ミス", open);
-                self.delimited_expression_depth += 1;
-                defer self.delimited_expression_depth -= 1;
-                var indexes: std.ArrayList(*ast.Node) = .empty;
-                while (!self.at(.right_bracket) and !self.at(.eof)) {
-                    const index = try self.parseExpression(0);
-                    // 公式のfunc tokenはカンマ直前では値として受理されない。
-                    // 関数名への解決は意味解析で行うため、ここでは裸の単語だけ記録する。
-                    if (index.kind == .word and index.josi.len == 0 and !index.grouped and self.at(.comma)) index.bare_index_word = true;
-                    try indexes.append(self.allocator, try self.dnclArrayIndex(index));
-                    if (indexes.items.len > 3) return self.fail(.invalid_array_access, "配列アクセスで指定ミス", open);
-                    if (!self.at(.comma)) break;
-                    _ = self.advance();
-                }
-                const close = try self.require(.right_bracket, "配列参照を閉じる『]』が必要です");
-                // 公式のcheckArrayIndex/checkArrayReverseはレシーバの種類を問わず適用される
-                self.dnclReverseIndexes(indexes.items);
-                const reference_kind: ast.Kind = if (isVariableReference(value.kind)) .array_reference else .array_value_reference;
-                value = try self.reference(reference_kind, value, try indexes.toOwnedSlice(self.allocator), open);
-                value.josi = close.josi;
-                value.raw_josi = close.raw_josi;
-                continue;
-            }
-            if (self.at(.property)) {
-                const token = self.advance();
-                const property_token = self.advance();
-                if (property_token.kind != .identifier and property_token.kind != .string) return self.fail(.expected_name, "『$』の後ろにプロパティ名が必要です", property_token);
-                const property = try self.valueNode(.string, property_token);
-                const reference_kind: ast.Kind = if (isVariableReference(value.kind)) .property_reference else .array_value_reference;
-                value = try self.reference(reference_kind, value, &.{property}, token);
-                value.josi = property_token.josi;
-                continue;
-            }
-            break;
-        }
-        return value;
-    }
-
-    fn parsePrimary(self: *Parser) ParseFailure!*ast.Node {
-        const token = self.advance();
-        return switch (token.kind) {
-            .number => self.valueNode(.number, token),
-            .bigint => self.valueNode(.bigint, token),
-            .string => self.valueNode(.string, token),
-            .string_template => self.valueNode(.string_template, token),
-            .identifier => self.parseIdentifierValue(token),
-            .function_ref => blk: {
-                const node = try self.makeNode(.function_pointer, token);
-                node.name = token.value;
-                break :blk node;
-            },
-            .left_paren => blk: {
-                self.delimited_expression_depth += 1;
-                defer self.delimited_expression_depth -= 1;
-                const value = try self.parseExpression(0);
-                if (!self.at(.right_paren)) return self.fail(.expected_token, "式を閉じる『)』が必要です", token);
-                const close = self.advance();
-                value.josi = close.josi;
-                value.raw_josi = close.raw_josi;
-                value.grouped = true;
-                break :blk value;
-            },
-            .left_bracket => self.parseArrayAfterOpen(token),
-            .left_brace => self.parseObjectAfterOpen(token),
-            .def_func => blk: {
-                self.index -= 1;
-                break :blk self.parseAnonymousFunction();
-            },
-            else => self.fail(.expected_expression, "値または式が必要です", token),
-        };
-    }
-
-    fn parseIdentifierValue(self: *Parser, token: Token) ParseFailure!*ast.Node {
-        if (std.mem.eql(u8, token.value, "真") or std.mem.eql(u8, token.value, "はい") or std.mem.eql(u8, token.value, "オン")) {
-            const node = try self.valueNode(.boolean, token);
-            node.number_value = 1;
-            return node;
-        }
-        if (std.mem.eql(u8, token.value, "偽") or std.mem.eql(u8, token.value, "いいえ") or std.mem.eql(u8, token.value, "オフ")) {
-            const node = try self.valueNode(.boolean, token);
-            node.number_value = 0;
-            return node;
-        }
-        if (std.ascii.eqlIgnoreCase(token.value, "null")) return self.valueNode(.null_value, token);
-        return self.valueNode(.word, token);
-    }
-
-    fn parseArrayLiteral(self: *Parser) ParseFailure!*ast.Node {
-        return self.parseArrayAfterOpen(self.advance());
-    }
-
-    fn parseArrayAfterOpen(self: *Parser, open: Token) ParseFailure!*ast.Node {
-        self.delimited_expression_depth += 1;
-        defer self.delimited_expression_depth -= 1;
-        var values: std.ArrayList(*ast.Node) = .empty;
-        while (!self.at(.right_bracket) and !self.at(.eof)) {
-            if (self.at(.eol) or self.at(.comma)) {
-                _ = self.advance();
-                continue;
-            }
-            try values.append(self.allocator, try self.parseExpression(0));
-            if (self.at(.comma)) _ = self.advance();
-        }
-        if (!self.at(.right_bracket)) return self.fail(.expected_token, "配列リテラルを閉じる『]』が必要です", open);
-        const close = self.advance();
-        const node = try self.makeNodeWithChildren(.array_literal, open, try values.toOwnedSlice(self.allocator));
-        node.josi = close.josi;
-        node.raw_josi = close.raw_josi;
-        return node;
-    }
-
-    fn parseObjectAfterOpen(self: *Parser, open: Token) ParseFailure!*ast.Node {
-        self.delimited_expression_depth += 1;
-        defer self.delimited_expression_depth -= 1;
-        var values: std.ArrayList(*ast.Node) = .empty;
-        while (!self.at(.right_brace) and !self.at(.eof)) {
-            if (self.at(.eol) or self.at(.comma)) {
-                _ = self.advance();
-                continue;
-            }
-            const key_token = self.advance();
-            if (key_token.kind != .identifier and key_token.kind != .string) {
-                return self.fail(.expected_name, "辞書のキーが必要です", key_token);
-            }
-            const key = try self.valueNode(.string, key_token);
-            try values.append(self.allocator, key);
-            if (self.at(.colon)) {
-                _ = self.advance();
-                try values.append(self.allocator, try self.parseExpression(0));
-            } else {
-                const value_kind: ast.Kind = if (key_token.kind == .string) .string else .word;
-                try values.append(self.allocator, try self.valueNode(value_kind, key_token));
-            }
-            if (self.at(.comma)) _ = self.advance();
-        }
-        if (!self.at(.right_brace)) return self.fail(.expected_token, "辞書リテラルを閉じる『}』が必要です", open);
-        const close = self.advance();
-        const node = try self.makeNodeWithChildren(.object_literal, open, try values.toOwnedSlice(self.allocator));
-        node.josi = close.josi;
-        node.raw_josi = close.raw_josi;
-        return node;
-    }
-
-    fn reference(self: *Parser, kind: ast.Kind, base: *ast.Node, indexes: []const *ast.Node, token: Token) ParseFailure!*ast.Node {
-        var children: std.ArrayList(*ast.Node) = .empty;
-        if (base.kind == kind) {
-            try children.appendSlice(self.allocator, base.children);
-        } else {
-            try children.append(self.allocator, base);
-        }
-        try children.appendSlice(self.allocator, indexes);
-        const node = try self.makeNodeWithChildren(kind, token, try children.toOwnedSlice(self.allocator));
-        node.name = switch (kind) {
-            .array_value_reference => if (token.kind == .property) "$" else "@",
-            else => if (base.name.len > 0) base.name else base.value,
-        };
-        node.josi = if (indexes.len > 0) indexes[indexes.len - 1].josi else base.josi;
-        return node;
-    }
-
-    fn assignmentPath(self: *Parser, target: *ast.Node) ParseFailure![]*ast.Node {
-        var path: std.ArrayList(*ast.Node) = .empty;
-        try appendAssignmentPath(&path, self.allocator, target);
-        return path.toOwnedSlice(self.allocator);
-    }
-
-    fn sequence(self: *Parser, left: *ast.Node, right: *ast.Node, token: Token) ParseFailure!*ast.Node {
-        const node = try self.makeNodeWithChildren(.sequence, token, try self.copyChildren(&.{ left, right }));
-        node.operator = "renbun";
-        node.josi = right.josi;
-        return node;
-    }
-
-    fn unary(self: *Parser, operator: []const u8, operand: *ast.Node, token: Token) ParseFailure!*ast.Node {
-        const node = try self.makeNodeWithChildren(.unary_operator, token, try self.copyChildren(&.{operand}));
-        node.operator = operator;
-        node.josi = operand.josi;
-        return node;
-    }
-
-    fn numberOne(self: *Parser, token: Token) ParseFailure!*ast.Node {
-        const node = try self.makeNode(.number, token);
-        node.value = "1";
-        node.number_value = 1;
-        return node;
-    }
-
-    fn nop(self: *Parser, token: Token) ParseFailure!*ast.Node {
-        return self.makeNode(.nop, token);
-    }
-
-    fn emptyBlock(self: *Parser, token: Token) ParseFailure!*ast.Node {
-        return self.makeNodeWithChildren(.block, token, &.{});
-    }
-
-    fn wrapSingle(self: *Parser, child: *ast.Node) ParseFailure!*ast.Node {
-        return self.makeNodeWithChildren(.block, self.peekPrevious(), try self.copyChildren(&.{child}));
-    }
-
-    fn valueNode(self: *Parser, kind: ast.Kind, token: Token) ParseFailure!*ast.Node {
-        const node = try self.makeNode(kind, token);
-        node.value = token.value;
-        node.number_value = token.number_value;
-        node.josi = token.josi;
-        node.raw_josi = token.raw_josi;
-        return node;
-    }
-
-    fn makeNode(self: *Parser, kind: ast.Kind, token: Token) ParseFailure!*ast.Node {
-        const result = try self.allocator.create(ast.Node);
-        result.* = .{
-            .kind = kind,
-            .span = token.span,
-            .end_span = self.peekPrevious().span,
-            .josi = token.josi,
-            .raw_josi = token.raw_josi,
-        };
-        return result;
-    }
-
-    fn makeNodeWithChildren(self: *Parser, kind: ast.Kind, token: Token, children: []*ast.Node) ParseFailure!*ast.Node {
-        const result = try self.makeNode(kind, token);
-        result.children = children;
-        if (children.len > 0) result.end_span = children[children.len - 1].end_span;
-        return result;
-    }
-
-    fn copyChildren(self: *Parser, children: []const *ast.Node) ParseFailure![]*ast.Node {
-        return self.allocator.dupe(*ast.Node, children);
-    }
-
-    /// DNCL(v1)の配列添字は1始まりなので、公式のcheckArrayIndexと同じく `添字-1` に包む。
-    /// DNCL2では0始まりのまま扱うため、そのまま返す。
-    fn dnclArrayIndex(self: *Parser, index: *ast.Node) ParseFailure!*ast.Node {
-        if (!self.mode.dncl) return index;
-        const one = try self.allocator.create(ast.Node);
-        one.* = .{ .kind = .number, .span = index.span, .end_span = index.end_span, .number_value = 1 };
-        one.value = "1";
-        const wrapped = try self.makeNode(.binary_operator, .{ .kind = .minus, .span = index.span, .lexeme = "-", .value = "-" });
-        wrapped.operator = "-";
-        wrapped.end_span = index.end_span;
-        wrapped.josi = index.josi;
-        wrapped.raw_josi = index.raw_josi;
-        wrapped.children = try self.copyChildren(&.{ index, one });
-        index.josi = "";
-        index.raw_josi = "";
-        return wrapped;
-    }
-
-    /// DNCL(v1)の多次元配列は添字が逆順になる（公式checkArrayReverse相当）。
-    fn dnclReverseIndexes(self: *Parser, indexes: []*ast.Node) void {
-        if (!self.mode.dncl or indexes.len < 2) return;
-        std.mem.reverse(*ast.Node, indexes);
-    }
-
-    fn namesToArguments(self: *Parser, names: []const *ast.Node) ParseFailure![]ast.Argument {
-        const result = try self.allocator.alloc(ast.Argument, names.len);
-        for (names, 0..) |name, index| result[index] = .{
-            .name = if (name.value.len > 0) name.value else name.name,
-            .josi = name.josi,
-            .span = name.span,
-        };
-        return result;
-    }
-
-    fn prepend(self: *Parser, first: *ast.Node, rest: []const *ast.Node) ParseFailure![]*ast.Node {
-        const result = try self.allocator.alloc(*ast.Node, rest.len + 1);
-        result[0] = first;
-        @memcpy(result[1..], rest);
-        return result;
-    }
-
-    fn requireEnd(self: *Parser, description: []const u8) ParseFailure!void {
+    pub fn requireEnd(self: *Parser, description: []const u8) ParseFailure!void {
         if (!self.at(.keyword_here_end)) {
             const message = try std.fmt.allocPrint(self.allocator, "{s}の末尾に『ここまで』が必要です", .{description});
             return self.fail(.missing_block_end, message, self.peek());
@@ -1422,12 +1059,12 @@ const Parser = struct {
         _ = self.advance();
     }
 
-    fn require(self: *Parser, kind: Kind, message: []const u8) ParseFailure!Token {
+    pub fn require(self: *Parser, kind: Kind, message: []const u8) ParseFailure!Token {
         if (!self.at(kind)) return self.fail(.expected_token, message, self.peek());
         return self.advance();
     }
 
-    fn fail(self: *Parser, code: diagnostic.Code, message: []const u8, token: Token) ParseFailure {
+    pub fn fail(self: *Parser, code: diagnostic.Code, message: []const u8, token: Token) ParseFailure {
         self.diagnostics.append(self.allocator, .{
             .code = code,
             .message = message,
@@ -1437,619 +1074,54 @@ const Parser = struct {
         return error.ParseFailed;
     }
 
-    fn isStop(self: *Parser, stop: Stop) bool {
+    pub fn isStop(self: *Parser, stop: Stop) bool {
         return (stop.end and self.at(.keyword_here_end)) or
             (stop.else_branch and self.at(.keyword_else)) or
             (stop.error_branch and self.at(.keyword_error));
     }
 
-    fn isTerminator(self: *Parser) bool {
+    pub fn isTerminator(self: *Parser) bool {
         return self.at(.eol) or self.at(.eof) or self.at(.right_paren) or self.at(.right_bracket) or
             self.at(.right_brace) or self.at(.keyword_here_end) or self.at(.keyword_else) or self.at(.keyword_error);
     }
 
-    fn skipEols(self: *Parser) void {
+    pub fn skipEols(self: *Parser) void {
         while (self.at(.eol)) _ = self.advance();
     }
 
-    fn skipCommas(self: *Parser) void {
+    pub fn skipCommas(self: *Parser) void {
         while (self.at(.comma)) _ = self.advance();
     }
 
-    fn identifierValue(self: *Parser, value: []const u8) bool {
+    pub fn identifierValue(self: *Parser, value: []const u8) bool {
         return self.at(.identifier) and std.mem.eql(u8, self.peek().value, value);
     }
 
-    fn at(self: *Parser, kind: Kind) bool {
+    pub fn at(self: *Parser, kind: Kind) bool {
         return self.peek().kind == kind;
     }
 
-    fn advance(self: *Parser) Token {
+    pub fn advance(self: *Parser) Token {
         const token = self.peek();
         if (self.index < self.tokens.len) self.index += 1;
         return token;
     }
 
-    fn peek(self: *Parser) Token {
+    pub fn peek(self: *Parser) Token {
         if (self.tokens.len == 0) return emptyToken();
         return self.tokens[@min(self.index, self.tokens.len - 1)];
     }
 
-    fn peekPrevious(self: *Parser) Token {
+    pub fn peekPrevious(self: *Parser) Token {
         if (self.index == 0 or self.tokens.len == 0) return self.peek();
         return self.tokens[@min(self.index - 1, self.tokens.len - 1)];
     }
 
-    fn peekAhead(self: *Parser, distance: usize) Token {
+    pub fn peekAhead(self: *Parser, distance: usize) Token {
         if (self.tokens.len == 0) return emptyToken();
         return self.tokens[@min(self.index + distance, self.tokens.len - 1)];
     }
 };
-
-const OperatorInfo = struct { precedence: u8, right_associative: bool = false, name: []const u8 };
-
-fn operatorInfo(kind: Kind) ?OperatorInfo {
-    return switch (kind) {
-        .logical_or => .{ .precedence = 10, .name = "or" },
-        .logical_and => .{ .precedence = 10, .name = "and" },
-        .equal => .{ .precedence = 20, .name = "eq" },
-        .strict_equal => .{ .precedence = 20, .name = "===" },
-        .not_equal => .{ .precedence = 20, .name = "noteq" },
-        .strict_not_equal => .{ .precedence = 20, .name = "!==" },
-        .greater => .{ .precedence = 20, .name = "gt" },
-        .greater_equal => .{ .precedence = 20, .name = "gteq" },
-        .less => .{ .precedence = 20, .name = "lt" },
-        .less_equal => .{ .precedence = 20, .name = "lteq" },
-        .range => .{ .precedence = 25, .name = "…" },
-        .bit_and => .{ .precedence = 30, .name = "&" },
-        .bit_xor => .{ .precedence = 60, .name = "**" },
-        .plus => .{ .precedence = 40, .name = "+" },
-        .minus => .{ .precedence = 40, .name = "-" },
-        .shift_left => .{ .precedence = 40, .name = "shift_l" },
-        .shift_right => .{ .precedence = 40, .name = "shift_r" },
-        .shift_right_unsigned => .{ .precedence = 40, .name = "shift_r0" },
-        .multiply => .{ .precedence = 50, .name = "*" },
-        .divide => .{ .precedence = 50, .name = "÷" },
-        .integer_divide => .{ .precedence = 50, .name = "÷÷" },
-        .modulo => .{ .precedence = 50, .name = "%" },
-        .power => .{ .precedence = 60, .name = "**" },
-        else => null,
-    };
-}
-
-fn canStartExpression(kind: Kind) bool {
-    return switch (kind) {
-        .number, .bigint, .string, .string_template, .identifier, .function_ref, .left_paren, .left_bracket, .left_brace, .not, .minus => true,
-        else => false,
-    };
-}
-
-fn operatorName(kind: Kind) []const u8 {
-    return switch (kind) {
-        .not => "not",
-        .minus => "-",
-        .plus => "+",
-        else => "",
-    };
-}
-
-fn isConditionalJosi(josi: []const u8) bool {
-    return std.mem.eql(u8, josi, "ならば") or std.mem.eql(u8, josi, "なら") or
-        std.mem.eql(u8, josi, "たら") or std.mem.eql(u8, josi, "れば") or
-        std.mem.eql(u8, josi, "でなければ") or std.mem.eql(u8, josi, "なければ");
-}
-
-fn isSequenceJosi(josi: []const u8) bool {
-    const values = [_][]const u8{ "いて", "えて", "きて", "けて", "して", "って", "にて", "みて", "めて", "ねて", "には", "んで" };
-    for (values) |value| if (std.mem.eql(u8, josi, value)) return true;
-    return false;
-}
-
-fn isTargetJosi(josi: []const u8) bool {
-    return std.mem.eql(u8, josi, "に") or std.mem.eql(u8, josi, "へ");
-}
-
-fn isValueJosi(josi: []const u8) bool {
-    return std.mem.eql(u8, josi, "を") or std.mem.eql(u8, josi, "から");
-}
-
-fn isImplicitCallbackJosi(josi: []const u8) bool {
-    return std.mem.eql(u8, josi, "には");
-}
-
-fn isVariableReference(kind: ast.Kind) bool {
-    return kind == .word or kind == .array_reference or kind == .property_reference;
-}
-
-fn clearConditionalJosi(node: *ast.Node) void {
-    node.josi = "";
-    node.raw_josi = "";
-    if (node.kind == .binary_operator or node.kind == .unary_operator) {
-        for (node.children) |child| clearConditionalJosi(child);
-    }
-}
-
-fn propagateOperatorJosi(node: *ast.Node, josi: []const u8) void {
-    // 公式の括弧式は閉じ括弧の助詞をrootへ設定するが、括弧内の
-    // 演算子・リテラルへは伝播させない。grouped rootを境界にする。
-    if (node.kind != .binary_operator or node.grouped) return;
-    node.josi = josi;
-    for (node.children) |child| if (!child.grouped) propagateOperatorJosi(child, josi);
-}
-
-fn tokenStem(token: Token) []const u8 {
-    if (token.raw_josi.len > 0 and token.lexeme.len >= token.raw_josi.len) {
-        return token.lexeme[0 .. token.lexeme.len - token.raw_josi.len];
-    }
-    return token.value;
-}
-
-/// 公式yIncDecの対象規則: 変数・配列参照・プロパティ参照で、最深部がword。
-/// prop[i]形（プロパティ参照への添字適用）は公式が受理しないため拒否する。
-fn isIncrementTargetPath(node: *ast.Node) bool {
-    var current = node;
-    while (true) switch (current.kind) {
-        .word => return true,
-        .property_reference => current = current.children[0],
-        .array_reference => {
-            if (current.children[0].kind == .property_reference) return false;
-            current = current.children[0];
-        },
-        else => return false,
-    };
-}
-
-fn appendAssignmentPath(path: *std.ArrayList(*ast.Node), allocator: std.mem.Allocator, node: *ast.Node) ParseFailure!void {
-    if (node.kind != .array_reference and node.kind != .property_reference) {
-        if (node.kind != .word) try path.append(allocator, node);
-        return;
-    }
-    for (node.children, 0..) |child, index| {
-        if (index == 0 and (child.kind == .word or child.kind == .array_reference or child.kind == .property_reference)) {
-            try appendAssignmentPath(path, allocator, child);
-        } else {
-            try path.append(allocator, child);
-        }
-    }
-}
-
-fn emptyToken() Token {
-    return .{
-        .kind = .eof,
-        .lexeme = "",
-        .value = "",
-        .span = ast.emptySpan(),
-    };
-}
-
-test "代入・演算子優先順位・命令呼び出しを構文解析する" {
-    var result = try parse(std.testing.allocator, "A=1\nB=2\nA+Bを表示\n", "main.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    try std.testing.expectEqual(ast.Kind.block, result.root.?.kind);
-    try std.testing.expectEqual(ast.Kind.assignment, result.root.?.children[0].kind);
-    const call = result.root.?.children[4];
-    try std.testing.expectEqual(ast.Kind.function_call, call.kind);
-    try std.testing.expectEqualStrings("表示", call.name);
-    try std.testing.expectEqual(ast.Kind.binary_operator, call.children[0].kind);
-    try std.testing.expectEqualStrings("+", call.children[0].operator);
-}
-
-test "C風呼び出しを助詞付き命令呼び出しと区別する" {
-    var result = try parse(std.testing.allocator, "表示(1)\nAを表示\n", "call-form.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    try std.testing.expect(result.root.?.children[0].is_c_style_call);
-    try std.testing.expect(!result.root.?.children[2].is_c_style_call);
-}
-
-test "識別子変数を途中の命令と誤認せず複数引数を構文解析する" {
-    var result = try parse(std.testing.allocator, "201でHを簡易HTTPサーバヘッダ出力\n", "http-server.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const call = result.root.?.children[0];
-    try std.testing.expectEqual(ast.Kind.function_call, call.kind);
-    try std.testing.expectEqualStrings("簡易HTTPサーバヘッダ出力", call.name);
-    try std.testing.expectEqual(@as(usize, 2), call.children.len);
-    try std.testing.expectEqual(ast.Kind.number, call.children[0].kind);
-    try std.testing.expectEqualStrings("で", call.children[0].josi);
-    try std.testing.expectEqual(ast.Kind.word, call.children[1].kind);
-    try std.testing.expectEqualStrings("H", call.children[1].value);
-    try std.testing.expectEqualStrings("を", call.children[1].josi);
-}
-
-test "助詞はを代入演算子として構文解析する" {
-    var result = try parse(std.testing.allocator, "Fはそれ\n", "assignment.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const assignment = result.root.?.children[0];
-    try std.testing.expectEqual(ast.Kind.assignment, assignment.kind);
-    try std.testing.expectEqualStrings("F", assignment.name);
-    try std.testing.expectEqual(ast.Kind.word, assignment.children[0].kind);
-    try std.testing.expectEqualStrings("それ", assignment.children[0].value);
-}
-
-test "行頭の等価比較を代入文と誤認しない" {
-    var result = try parse(std.testing.allocator, "1n==1を表示\n", "equality.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const call = result.root.?.children[0];
-    try std.testing.expectEqual(ast.Kind.function_call, call.kind);
-    try std.testing.expectEqual(ast.Kind.binary_operator, call.children[0].kind);
-    try std.testing.expectEqualStrings("eq", call.children[0].operator);
-}
-
-test "冪乗演算子を公式同様に左結合として構文解析する" {
-    var result = try parse(std.testing.allocator, "2^3^2を表示\n2**3**2を表示\n", "power.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const outer = result.root.?.children[0].children[0];
-    try std.testing.expectEqual(ast.Kind.binary_operator, outer.kind);
-    try std.testing.expectEqualStrings("**", outer.operator);
-    try std.testing.expectEqual(ast.Kind.binary_operator, outer.children[0].kind);
-    try std.testing.expectEqualStrings("**", outer.children[0].operator);
-    const stars = result.root.?.children[2].children[0];
-    try std.testing.expectEqual(ast.Kind.binary_operator, stars.children[0].kind);
-    try std.testing.expectEqualStrings("**", stars.children[0].operator);
-}
-
-test "もし文とソース位置を構文解析する" {
-    var result = try parse(std.testing.allocator, "もしA=1ならば\nB=1\n違えば\nB=2\nここまで\n", "条件.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const statement = result.root.?.children[0];
-    try std.testing.expectEqual(ast.Kind.if_statement, statement.kind);
-    try std.testing.expectEqual(@as(usize, 3), statement.children.len);
-    try std.testing.expectEqual(@as(usize, 0), statement.span.line);
-    try std.testing.expectEqual(@as(usize, 1), statement.span.column);
-}
-
-test "DNCLの「でないならば」を条件否定へ変換する" {
-    var result = try parse(std.testing.allocator, "!DNCLモード\nもしA=1でないならば\n|B=2\nを実行する\n", "dncl-not.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const statement = result.root.?.children[2];
-    const condition = statement.children[0];
-    try std.testing.expectEqual(ast.Kind.unary_operator, condition.kind);
-    try std.testing.expectEqualStrings("not", condition.operator);
-    try std.testing.expectEqual(ast.Kind.binary_operator, condition.children[0].kind);
-    try std.testing.expectEqualStrings("eq", condition.children[0].operator);
-}
-
-test "公式同様にインラインの「そうでなくもし」を入れ子の条件分岐にする" {
-    var result = try parse(std.testing.allocator, "!DNCL2\nもしC=0ならば:\n　1を表示\nそうでなくもし、C=1ならば:\n　2を表示\n", "dncl2-else-if.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const outer = result.root.?.children[2];
-    try std.testing.expectEqual(ast.Kind.if_statement, outer.kind);
-    try std.testing.expectEqual(@as(usize, 1), outer.children[2].children.len);
-    try std.testing.expectEqual(ast.Kind.if_statement, outer.children[2].children[0].kind);
-}
-
-test "もし直後の読点を許可する" {
-    var result = try parse(std.testing.allocator, "もし、A=1ならば\nB=1\nここまで\n", "条件.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    try std.testing.expectEqual(ast.Kind.if_statement, result.root.?.children[0].kind);
-}
-
-test "間と繰り返すの間の読点を許可する" {
-    var result = try parse(std.testing.allocator, "(N>0)の間、繰り返す\nN=N-1\nここまで\n", "反復.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    try std.testing.expectEqual(ast.Kind.while_statement, result.root.?.children[0].kind);
-}
-
-test "括弧付き演算子の助詞を内部式へ伝播しない" {
-    var result = try parse(std.testing.allocator, "(-1>\"\")を反復\n対象を表示\nここまで\n", "grouped-josi.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const collection = result.root.?.children[0].children[0];
-    try std.testing.expectEqual(ast.Kind.binary_operator, collection.kind);
-    try std.testing.expectEqualStrings("gt", collection.operator);
-    try std.testing.expectEqualStrings("を", collection.josi);
-    try std.testing.expectEqual(ast.Kind.binary_operator, collection.children[0].kind);
-    try std.testing.expectEqualStrings("", collection.children[0].josi);
-    try std.testing.expectEqualStrings("", collection.children[0].children[0].josi);
-}
-
-test "回だけの繰り返しは公式同様に暗黙のそれを回数へ使う" {
-    var result = try parse(std.testing.allocator, "回\nここまで\n", "implicit-repeat-count.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const repeat = result.root.?.children[0];
-    try std.testing.expectEqual(ast.Kind.repeat_times, repeat.kind);
-    try std.testing.expectEqual(ast.Kind.word, repeat.children[0].kind);
-    try std.testing.expectEqualStrings("それ", repeat.children[0].value);
-}
-
-test "それは構文を暗黙戻り値への代入として扱う" {
-    var result = try parse(std.testing.allocator, "F=関数(A)それはA+1\nここまで\n", "関数.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const function = result.root.?.children[0].children[0];
-    const assignment = function.children[0].children[0];
-    try std.testing.expectEqual(ast.Kind.assignment, assignment.kind);
-    try std.testing.expectEqualStrings("それ", assignment.name);
-}
-
-test "には構文をコールバック先頭の命令呼び出しとして扱う" {
-    var timer = try parse(std.testing.allocator, "0.01秒後には\n対象を表示\nここまで\n", "timer.nako3");
-    defer timer.deinit();
-    try std.testing.expect(timer.succeeded());
-    const timer_call = timer.root.?.children[0];
-    try std.testing.expectEqual(ast.Kind.function_call, timer_call.kind);
-    try std.testing.expectEqualStrings("秒後", timer_call.name);
-    try std.testing.expectEqualStrings("して", timer_call.josi);
-    try std.testing.expectEqual(@as(usize, 2), timer_call.children.len);
-    try std.testing.expectEqual(ast.Kind.anonymous_function, timer_call.children[0].kind);
-    try std.testing.expectEqual(ast.Kind.number, timer_call.children[1].kind);
-
-    var promise = try parse(std.testing.allocator, "動いた時には(成功,失敗)\n成功(9)\nここまで\n", "promise.nako3");
-    defer promise.deinit();
-    try std.testing.expect(promise.succeeded());
-    const promise_call = promise.root.?.children[0];
-    try std.testing.expectEqualStrings("動時", promise_call.name);
-    try std.testing.expectEqual(ast.Kind.anonymous_function, promise_call.children[0].kind);
-    try std.testing.expectEqual(@as(usize, 2), promise_call.children[0].arguments.len);
-    try std.testing.expectEqualStrings("成功", promise_call.children[0].arguments[0].name);
-    try std.testing.expectEqualStrings("失敗", promise_call.children[0].arguments[1].name);
-}
-
-test "配列・辞書・添字代入を構文解析する" {
-    var result = try parse(std.testing.allocator, "A={a:1,b:2}\nB=[[0]]\nB[0,1]=A$a\n", "collection.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    try std.testing.expectEqual(ast.Kind.object_literal, result.root.?.children[0].children[0].kind);
-    try std.testing.expectEqual(ast.Kind.array_assignment, result.root.?.children[4].kind);
-}
-
-test "辞書の引用符付き省略値を文字列として構文解析する" {
-    var result = try parse(std.testing.allocator, "A={\"a\",\"b\"}\n", "quoted-object.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const object = result.root.?.children[0].children[0];
-    try std.testing.expectEqual(ast.Kind.object_literal, object.kind);
-    try std.testing.expectEqual(ast.Kind.string, object.children[0].kind);
-    try std.testing.expectEqual(ast.Kind.string, object.children[1].kind);
-    try std.testing.expectEqual(ast.Kind.string, object.children[2].kind);
-    try std.testing.expectEqual(ast.Kind.string, object.children[3].kind);
-}
-
-test "公式同様に辞書リテラルの数値キーを拒否する" {
-    var result = try parse(std.testing.allocator, "A={1:2}\n", "numeric-key.nako3");
-    defer result.deinit();
-    try std.testing.expect(!result.succeeded());
-    try std.testing.expectEqual(diagnostic.Code.expected_name, result.diagnostics[0].code);
-    try std.testing.expectEqual(@as(usize, 0), result.diagnostics[0].span.line);
-}
-
-test "公式同様に単項プラスを拒否する" {
-    const cases = [_][]const u8{ "(+1)を表示\n", "A=1\n(+A)を表示\n", "(+\"1\")を表示\n" };
-    for (cases) |source| {
-        var result = try parse(std.testing.allocator, source, "unary-plus.nako3");
-        defer result.deinit();
-        try std.testing.expect(!result.succeeded());
-        try std.testing.expectEqual(diagnostic.Code.unexpected_token, result.diagnostics[0].code);
-        try std.testing.expectEqualStrings("単項『+』は使用できません", result.diagnostics[0].message);
-    }
-}
-
-test "変数と定数の角括弧分割宣言を構文解析する" {
-    var result = try parse(std.testing.allocator, "変数[A,B]=[1,2]\n定数[C,D]=[3,4]\n", "分割.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const variable_declaration = result.root.?.children[0];
-    const constant_declaration = result.root.?.children[2];
-    try std.testing.expectEqual(ast.Kind.variable_list_definition, variable_declaration.kind);
-    try std.testing.expectEqual(@as(usize, 2), variable_declaration.arguments.len);
-    try std.testing.expect(!variable_declaration.is_const);
-    try std.testing.expectEqual(ast.Kind.variable_list_definition, constant_declaration.kind);
-    try std.testing.expectEqual(@as(usize, 2), constant_declaration.arguments.len);
-    try std.testing.expect(constant_declaration.is_const);
-}
-
-test "公式同様に宣言なしの角括弧分割代入を拒否する" {
-    var result = try parse(std.testing.allocator, "[A,B]=[1,2]\n", "分割.nako3");
-    defer result.deinit();
-    try std.testing.expect(!result.succeeded());
-    try std.testing.expectEqual(diagnostic.Code.expected_token, result.diagnostics[0].code);
-    try std.testing.expectEqual(@as(usize, 0), result.diagnostics[0].span.line);
-}
-
-test "負のBigIntリテラルと変数への単項マイナスを区別する" {
-    var result = try parse(std.testing.allocator, "A=-5n\nB=-A\n", "bigint-minus.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const literal = result.root.?.children[0].children[0];
-    try std.testing.expectEqual(ast.Kind.bigint, literal.kind);
-    try std.testing.expectEqualStrings("-5n", literal.value);
-    const variable_negation = result.root.?.children[2].children[0];
-    try std.testing.expectEqual(ast.Kind.binary_operator, variable_negation.kind);
-    try std.testing.expectEqualStrings("*", variable_negation.operator);
-    try std.testing.expectEqualStrings("-1", variable_negation.children[0].value);
-    try std.testing.expectEqualStrings("A", variable_negation.children[1].value);
-}
-
-test "負の数値リテラルを公式と同じ単一ノードへ畳み込む" {
-    var result = try parse(std.testing.allocator, "A=-1.5\nB=A/-1\nF(1/-1)\n", "negative-number.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const literal = result.root.?.children[0].children[0];
-    try std.testing.expectEqual(ast.Kind.number, literal.kind);
-    try std.testing.expectEqualStrings("-1.5", literal.value);
-    try std.testing.expectEqual(@as(?f64, -1.5), literal.number_value);
-    const division = result.root.?.children[2].children[0];
-    try std.testing.expectEqual(ast.Kind.binary_operator, division.kind);
-    try std.testing.expectEqual(ast.Kind.number, division.children[1].kind);
-    try std.testing.expectEqualStrings("-1", division.children[1].value);
-    const c_call = result.root.?.children[4];
-    try std.testing.expectEqual(ast.Kind.function_call, c_call.kind);
-    try std.testing.expectEqual(ast.Kind.number, c_call.children[0].children[1].kind);
-    try std.testing.expectEqualStrings("-1", c_call.children[0].children[1].value);
-}
-
-test "公式同様に区切り内の負のBigInt直接指定を拒否する" {
-    const rejected = [_][]const u8{
-        "A=(-1n)\n",
-        "HEX(-1n)\n",
-        "A=[-1n]\n",
-        "A={x:-1n}\n",
-        "A[-1n]=5\n",
-    };
-    for (rejected) |source| {
-        var result = try parse(std.testing.allocator, source, "negative-bigint.nako3");
-        defer result.deinit();
-        try std.testing.expect(!result.succeeded());
-        try std.testing.expectEqual(diagnostic.Code.unexpected_token, result.diagnostics[0].code);
-        try std.testing.expectEqual(@as(usize, 0), result.diagnostics[0].span.line);
-    }
-    var workaround = try parse(std.testing.allocator, "A=-1n\nB=(0n-1n)\nC=1/-1n\nD=[1/-1n]\n", "negative-bigint.nako3");
-    defer workaround.deinit();
-    try std.testing.expect(workaround.succeeded());
-}
-
-test "閉じていないブロックを位置付き診断にする" {
-    var result = try parse(std.testing.allocator, "もし1=1ならば\nA=1\n", "broken.nako3");
-    defer result.deinit();
-    try std.testing.expect(!result.succeeded());
-    try std.testing.expectEqual(@as(usize, 1), result.diagnostics.len);
-    try std.testing.expectEqual(diagnostic.Code.missing_block_end, result.diagnostics[0].code);
-    try std.testing.expectEqualStrings("broken.nako3", result.diagnostics[0].file);
-}
-
-test "相対nako3取り込みをASTに保持する" {
-    var result = try parse(std.testing.allocator, "!「./lib.nako3」を取り込む\n", "main.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const import_node = result.root.?.children[0];
-    try std.testing.expectEqual(ast.Kind.import, import_node.kind);
-    try std.testing.expectEqualStrings("./lib.nako3", import_node.value);
-}
-
-test "公式同様に廃止された非同期構文を診断付き空文として継続する" {
-    const cases = [_]struct { source: []const u8, message: []const u8 }{
-        .{
-            .source = "逐次実行\n1を表示\n",
-            .message = "『逐次実行』構文は廃止されました(https://nadesi.com/v3/doc/go.php?944)。",
-        },
-        .{
-            .source = "!非同期モード\n1を表示\n",
-            .message = "『非同期モード』構文は廃止されました(https://nadesi.com/v3/doc/go.php?1028)。",
-        },
-    };
-    for (cases) |item| {
-        var result = try parse(std.testing.allocator, item.source, "legacy-async.nako3");
-        defer result.deinit();
-        try std.testing.expect(result.root != null);
-        try std.testing.expect(result.succeeded());
-        try std.testing.expectEqual(@as(usize, 1), result.diagnostics.len);
-        try std.testing.expectEqual(diagnostic.Code.legacy_deprecated, result.diagnostics[0].code);
-        try std.testing.expectEqual(diagnostic.Severity.error_severity, result.diagnostics[0].severity);
-        try std.testing.expectEqualStrings(item.message, result.diagnostics[0].message);
-        try std.testing.expect(result.root.?.children.len >= 2);
-        try std.testing.expectEqual(ast.Kind.function_call, result.root.?.children[result.root.?.children.len - 2].kind);
-    }
-}
-
-test "連文の結果を和文代入で受ける" {
-    var result = try parse(std.testing.allocator, "「名前は？」と尋ねて名前に代入。\n", "ask.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const block = result.root.?.children[0];
-    try std.testing.expectEqual(ast.Kind.block, block.kind);
-    try std.testing.expectEqual(@as(usize, 2), block.children.len);
-    try std.testing.expectEqual(ast.Kind.function_call, block.children[0].kind);
-    try std.testing.expectEqualStrings("尋", block.children[0].name);
-    try std.testing.expectEqual(ast.Kind.assignment, block.children[1].kind);
-    try std.testing.expectEqualStrings("名前", block.children[1].name);
-    try std.testing.expectEqual(ast.Kind.word, block.children[1].children[0].kind);
-    try std.testing.expectEqualStrings("それ", block.children[1].children[0].value);
-}
-
-test "連文の結果を値を先に指定して和文代入" {
-    var result = try parse(std.testing.allocator, "Aを計算してBに代入。\n", "calc-assign.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const block = result.root.?.children[0];
-    try std.testing.expectEqual(ast.Kind.block, block.kind);
-    try std.testing.expectEqual(ast.Kind.assignment, block.children[1].kind);
-    try std.testing.expectEqualStrings("B", block.children[1].name);
-    try std.testing.expectEqual(ast.Kind.word, block.children[1].children[0].kind);
-    try std.testing.expectEqualStrings("それ", block.children[1].children[0].value);
-}
-
-test "値を先に指定した和文代入" {
-    var result = try parse(std.testing.allocator, "1をAに代入。\n", "assign-value-first.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const assignment = result.root.?.children[0];
-    try std.testing.expectEqual(ast.Kind.assignment, assignment.kind);
-    try std.testing.expectEqualStrings("A", assignment.name);
-    try std.testing.expectEqual(ast.Kind.number, assignment.children[0].kind);
-    try std.testing.expectEqualStrings("1", assignment.children[0].value);
-}
-
-test "単独の和文代入" {
-    var result = try parse(std.testing.allocator, "Aに代入。\n", "assign-lone.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const assignment = result.root.?.children[0];
-    try std.testing.expectEqual(ast.Kind.assignment, assignment.kind);
-    try std.testing.expectEqualStrings("A", assignment.name);
-    try std.testing.expectEqual(ast.Kind.word, assignment.children[0].kind);
-    try std.testing.expectEqualStrings("それ", assignment.children[0].value);
-}
-
-test "連文で後続の命令に引数を渡す" {
-    var result = try parse(std.testing.allocator, "1を表示して2を表示。\n", "chain-display.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const block = result.root.?.children[0];
-    try std.testing.expectEqual(ast.Kind.block, block.kind);
-    try std.testing.expectEqual(@as(usize, 2), block.children.len);
-    try std.testing.expectEqual(ast.Kind.function_call, block.children[0].kind);
-    try std.testing.expectEqualStrings("表示", block.children[0].name);
-    try std.testing.expectEqual(ast.Kind.number, block.children[0].children[0].kind);
-    try std.testing.expectEqualStrings("1", block.children[0].children[0].value);
-    try std.testing.expectEqual(ast.Kind.function_call, block.children[1].kind);
-    try std.testing.expectEqualStrings("表示", block.children[1].name);
-    try std.testing.expectEqual(ast.Kind.number, block.children[1].children[1].kind);
-    try std.testing.expectEqualStrings("2", block.children[1].children[1].value);
-}
-
-test "和文代入で配列要素を更新する" {
-    var result = try parse(std.testing.allocator, "1をA[0]に代入。\n", "array-assign.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const assignment = result.root.?.children[0];
-    try std.testing.expectEqual(ast.Kind.array_assignment, assignment.kind);
-    try std.testing.expectEqualStrings("A", assignment.name);
-    try std.testing.expectEqual(ast.Kind.number, assignment.children[0].kind);
-    try std.testing.expectEqualStrings("1", assignment.children[0].value);
-    try std.testing.expectEqual(ast.Kind.number, assignment.children[1].kind);
-    try std.testing.expectEqualStrings("0", assignment.children[1].value);
-}
-
-test "和文代入でプロパティを更新する" {
-    var result = try parse(std.testing.allocator, "1をA$fooに代入。\n", "property-assign.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const assignment = result.root.?.children[0];
-    try std.testing.expectEqual(ast.Kind.property_assignment, assignment.kind);
-    try std.testing.expectEqualStrings("A", assignment.name);
-    try std.testing.expectEqual(ast.Kind.number, assignment.children[0].kind);
-    try std.testing.expectEqualStrings("1", assignment.children[0].value);
-    try std.testing.expectEqual(ast.Kind.string, assignment.children[1].kind);
-    try std.testing.expectEqualStrings("foo", assignment.children[1].value);
-}
-
-test "和文代入の値に式を許容する" {
-    var result = try parse(std.testing.allocator, "(1+2)をAに代入。\n", "expr-assign.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const assignment = result.root.?.children[0];
-    try std.testing.expectEqual(ast.Kind.assignment, assignment.kind);
-    try std.testing.expectEqualStrings("A", assignment.name);
-    try std.testing.expectEqual(ast.Kind.binary_operator, assignment.children[0].kind);
+test {
+    _ = @import("parser_test.zig");
 }
