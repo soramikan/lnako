@@ -53,7 +53,7 @@
 - lnakoの現在動作: Interpreter・AOTの `連続表示` / `連続無改行表示` で `undefined` / `null` を空文字として連結し、`表示` / `継続表示` は従来どおり `"undefined"` / `"null"` を表示します。
 - 判定: 仕様
 - 対象経路: Interpreter / AOT
-- 差分テストID: `display-many-undefined-null`、`dncl-v1-array-oor-read`（`compare_interpreter_oracle.mjs`、`compare_native_oracle.mjs`）
+- 差分テストID: `display-many-undefined-null`、`dncl-v1-array-oor-read`、`native-display-many-undefined-null`、`native-dncl-v1-array-oor-read`（`compare_interpreter_oracle.mjs`、`compare_native_oracle.mjs`）
 - TODO識別子: なし
 
 ## 正規表現のUnicodeとエラー
@@ -98,7 +98,7 @@
 - lnakoの現在動作: semantic analyzer が関数定義位置を記録し、関数スコープ内からモジュール変数への解決を「シンボル宣言位置 < 関数定義位置」で制限します。フィルタされた名前・未解決名は関数ローカルへ宣言します（システム定数は除く）。モジュールスコープの検索は qualified_name キーで行うため、ソース中に書かれた修飾名（`mod__A`）は同じ規則で `A` と同一変数へ解決され、取り込み・公開設定に関わらず全モジュールのモジュール変数へ一致します。可視シンボルに一致しない修飾名は、関数内では関数ローカル、モジュールレベルでは生名キーのグローバルへ束縛されます。裸名は公式 `findVar` の `modList` 検索と同様に「エントリ→展開マーカー位置順」の全モジュールを先勝ちで検索します（`symbol.shadowed`/`isDeclSiteSymbol` で宣言文自身のシンボルを除外し、使用位置より後の宣言を不可視にします）。これにより推移的取り込みのモジュール変数や、取り込み先コードからエントリ変数への代入も公式通り解決されます。Interpreter・AOT 共通の解決です。
 - 判定: 仕様
 - 対象経路: Interpreter / AOT
-- 差分テストID: `scope-named-fn-late-module-var`、`scope-anon-fn-late-module-var`、`dncl-v1-scope-late-module-var`、`scopequalreadlate`、`scopequalreadearly`、`scopequalwritelate`、`scopequalarraylate`、`scopequalincrlate`、`scopequaldncllate`、`scopequallocalleak`、`scopequalwriteearly`、`scopequalcrossfn`、`scopequalmodread`、`scopequalsamestmt`、`native-scopequal-same-stmt`（`compare_interpreter_oracle.mjs` / `compare_native_oracle.mjs`）、`semantic-diagnostic-property-root-later`（`compare_semantic_diagnostics_oracle.mjs`）、`取り込んだモジュールの同名シンボルは展開順の先勝ちで解決する`、`推移的に取り込んだモジュールの変数を裸名で解決する`、`取り込み先の代入はエントリの同名変数をmodList解決で上書きする`、`取り込み先の変数宣言はエントリの同名変数を上書きしない`、`取り込み先関数本体内の代入もmodList順でエントリ変数を上書きする`、`関数定義位置より後のエントリ変数は取り込み先関数から見えない`（`src/runtime/interpreter/tests.zig`）
+- 差分テストID: `scope-named-fn-late-module-var`、`scope-anon-fn-late-module-var`、`dncl-v1-scope-late-module-var`、`scopequalreadlate`、`scopequalreadearly`、`scopequalwritelate`、`scopequalarraylate`、`scopequalincrlate`、`scopequaldncllate`、`scopequallocalleak`、`scopequalwriteearly`、`scopequalcrossfn`、`scopequalmodread`、`scopequalsamestmt`、`native-scopequal-same-stmt`、`native-scopequalreadlate`、`native-scopequalreadearly`、`native-scopequalwritelate`、`native-scopequalarraylate`、`native-scopequalincrlate`、`native-scopequaldncllate`（`compare_interpreter_oracle.mjs` / `compare_native_oracle.mjs`）、`semantic-diagnostic-property-root-later`（`compare_semantic_diagnostics_oracle.mjs`）、`取り込んだモジュールの同名シンボルは展開順の先勝ちで解決する`、`推移的に取り込んだモジュールの変数を裸名で解決する`、`取り込み先の代入はエントリの同名変数をmodList解決で上書きする`、`取り込み先の変数宣言はエントリの同名変数を上書きしない`、`取り込み先関数本体内の代入もmodList順でエントリ変数を上書きする`、`関数定義位置より後のエントリ変数は取り込み先関数から見えない`（`src/runtime/interpreter/tests.zig`）
 - TODO識別子: なし
 
 ## 添字・プロパティ代入のコンテナ束縛と評価順

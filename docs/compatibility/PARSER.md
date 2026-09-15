@@ -53,7 +53,7 @@
 - lnakoの現在動作: lexerが先頭100トークン内のディレクティブに加えて文中のモード文をモードtokenとして出力し、parserがその文を読んだ時点で自身のモード状態を更新します。以降の文だけが新しいモードで解析されます。
 - 判定: 仕様
 - 対象経路: Parser / Interpreter / AOT
-- 差分テストID: `dncl-v1-mode-statement-positional`、`dncl2-mode-statement-positional`（`compare_interpreter_oracle.mjs`、`compare_native_oracle.mjs`）
+- 差分テストID: `dncl-v1-mode-statement-positional`、`dncl2-mode-statement-positional`、`native-dncl-v1-mode-statement-positional`、`native-dncl2-mode-statement-positional`（`compare_interpreter_oracle.mjs`、`compare_native_oracle.mjs`）
 - TODO識別子: なし
 
 ## DNCL v1の配列添字と要素代入の自動初期化
@@ -62,7 +62,7 @@
 - lnakoの現在動作: parserがDNCL v1の添字を`index-1`へ変換し多次元添字を反転します。変換は変数参照だけでなく配列リテラル・括弧式などの非変数レシーバにも適用します。AST→HIR→SSA IRへ`check_array_init`フラグを伝搬し、Interpreter・AOTの両方で未宣言変数・非配列値・欠落中間コンテナへ30要素の0配列を生成します。中間レベルは`array_get`走査+`is_array`判定+条件分岐+`init_array_index` write-backへ分解され、check式とwrite-back式で添字式を公式と同じ回数だけ評価し直します。ルート変数は`ensure_array_var`直後に一度だけ束縛され、最終代入もその束縛済みコンテナへ`element_set`で書き込みます。
 - 判定: 仕様
 - 対象経路: Parser / Interpreter / AOT
-- 差分テストID: `dncl-v1-array-*`、`dncl2-array-*`（`compare_interpreter_oracle.mjs`、`compare_native_oracle.mjs`）
+- 差分テストID: `dncl-v1-array-*`、`dncl2-array-*`、`native-dncl-v1-array-*`、`native-dncl2-array-*`（`compare_interpreter_oracle.mjs`、`compare_native_oracle.mjs`）
 - TODO識別子: なし
 
 ## 1つの『[ ]』内の添字数制限
@@ -80,7 +80,7 @@
 - lnakoの現在動作: loweringが `is_undefined`/`coalesce_or_zero`/`increment_values`/`element_set` の分解命令列へ展開し、Interpreter・AOTとも同じ規則で処理します。コンテナと添字は1度だけ束縛され（公式の `$nako_o1 = get(name); $nako_i1 = key` 相当）、量式は要素読み出し・undefined初期化の後に評価され、書き戻しは量評価後に束縛済みの根から再走査します。未宣言・undefined/nullなルートまたは中間レベルは `Cannot read properties of undefined/null (reading '<key>')`（公式のTypeError相当）で失敗します。
 - 判定: 仕様
 - 対象経路: Parser / Interpreter / AOT
-- 差分テストID: `dncl-v1-increment-indexed`、`dncl2-increment-indexed`、`dncl-v1-increment-indexed-undeclared`、`dncl-v1-increment-indexed-undefined`、`dncl-v1-increment-indexed-null`、`dncl-v1-increment-indexed-mid-undefined`、`dncl-v1-increment-indexed-dict`、`increment-amount-after-read`、`increment-indexed-write-retraverses`、`native-increment-amount-after-read`、`native-increment-indexed-write-retraverses`
+- 差分テストID: `dncl-v1-increment-indexed`、`dncl2-increment-indexed`、`dncl-v1-increment-indexed-undeclared`、`dncl-v1-increment-indexed-undefined`、`dncl-v1-increment-indexed-null`、`dncl-v1-increment-indexed-mid-undefined`、`dncl-v1-increment-indexed-dict`、`increment-amount-after-read`、`increment-indexed-write-retraverses`、`native-increment-amount-after-read`、`native-increment-indexed-write-retraverses`、`native-dncl-v1-increment-indexed`、`native-dncl2-increment-indexed`、`native-dncl-v1-increment-indexed-undeclared`、`native-dncl-v1-increment-indexed-undefined`、`native-dncl-v1-increment-indexed-null`、`native-dncl-v1-increment-indexed-mid-undefined`、`native-dncl-v1-increment-indexed-dict`、`native-increment-object-to-primitive`
 - TODO識別子: なし
 
 ## 添字位置の裸の命令語

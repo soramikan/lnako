@@ -2728,132 +2728,132 @@
     "source": "(1**無限大)を表示\n((-1)**無限大)を表示\n(1**非数)を表示\n(非数**0)を表示\n(0**-1)を表示\n((-0)**-3)を表示\n((-0)**-2)を表示\n(無限大**-1)を表示\n((-1*無限大)**-3)を表示\n((-4)**0.5)を表示\n(無限大**0)を表示\n(2**10)を表示\n(0.5**-1)を表示\n((-2)**3)を表示\nべき乗(1,無限大)を表示\nべき乗(非数,0)を表示\nA=1\nB=無限大\n(A**B)を表示\n●(AとBを)累乗確認とは\nA**Bで戻る\nここまで\n累乗確認(1,無限大)を表示\n累乗確認(2,10)を表示\nAWAIT実行(\"累乗確認\",[-1,-1*無限大])を表示\nAWAIT実行(\"累乗確認\",[0,-1])を表示\n"
   },
   {
-    "id": "dncl-v1-array-autoinit",
+    "id": "native-dncl-v1-array-autoinit",
     "source": "!DNCLモード\nA[1]=5\nA[0]=0\nA[1]を表示\nA[0]を表示\n",
     "oracle": "official-source"
   },
   {
-    "id": "dncl-v1-array-autoinit-multidim",
+    "id": "native-dncl-v1-array-autoinit-multidim",
     "source": "!DNCLモード\nB[1][2]=9\nB[1][2]を表示\n",
     "oracle": "official-source"
   },
   {
-    "id": "dncl-v1-loop-array",
+    "id": "native-dncl-v1-loop-array",
     "source": "!DNCLモード\nS←0\nIを1から4まで1ずつ増やしながら\n|S←S+I\nを繰り返す\nSを表示\n"
   },
   {
-    "id": "dncl2-array-autoinit",
+    "id": "native-dncl2-array-autoinit",
     "source": "!DNCL2\nA[0]=5\nA[1]=9\nA[0]を表示\nA[1]を表示\n",
     "oracle": "official-source"
   },
   {
-    "id": "dncl2-array-autoinit-multidim",
+    "id": "native-dncl2-array-autoinit-multidim",
     "source": "!DNCL2\nC[0][1]=8\nC[0][1]を表示\n",
     "oracle": "official-source"
   },
   {
-    "id": "dncl-v1-array-autoinit-3dim",
+    "id": "native-dncl-v1-array-autoinit-3dim",
     "source": "!DNCLモード\nD[1][2][3]=9\nD[1][2][3]を表示\n",
     "oracle": "official-source"
   },
   {
-    "id": "dncl2-array-autoinit-3dim",
+    "id": "native-dncl2-array-autoinit-3dim",
     "source": "!DNCL2\nD[0][1][2]=7\nD[0][1][2]を表示\n",
     "oracle": "official-source"
   },
   {
-    "id": "dncl-v1-array-oor-read",
+    "id": "native-dncl-v1-array-oor-read",
     "source": "!DNCLモード\nA[1]=5\nA[0]を表示\n",
     "oracle": "official-source"
   },
   {
-    "id": "display-many-undefined-null",
+    "id": "native-display-many-undefined-null",
     "source": "Aは[]\n連続表示(A[0],NULL,1)\nA[0]を表示\n連続無改行表示(A[0])\n「end」を表示\n"
   },
   {
-    "id": "dncl-v1-mode-statement-positional",
+    "id": "native-dncl-v1-mode-statement-positional",
     "source": "A=[1,2]\nA[0]を表示\nDNCLモード\nB[1]=5\nB[1]を表示\nA[1]を表示\n",
     "oracle": "official-source"
   },
   {
-    "id": "dncl2-mode-statement-positional",
+    "id": "native-dncl2-mode-statement-positional",
     "source": "A=[1,2]\nA[1]を表示\nDNCL2モード\nC[0]=9\nC[0]を表示\n",
     "oracle": "official-source"
   },
   {
-    "id": "dncl-v1-array-index-nonvar-receiver",
+    "id": "native-dncl-v1-array-index-nonvar-receiver",
     "source": "!DNCLモード\n[10,20,30][1]を表示\n([10,20,30])[2]を表示\n[[1,2],[3,4]][1][2]を表示\n[[1,2],[3,4]][2,1]を表示\n"
   },
   {
-    "id": "dncl-v1-increment-indexed",
+    "id": "native-dncl-v1-increment-indexed",
     "source": "!DNCLモード\nA=[1,2,3]\nA[1]を3増やす\nA[1]を表示\nA[3]を2減らす\nA[3]を表示\nB=[[1,2],[3,4]]\nB[1][2]を10増やす\nB[1][2]を表示\nD[\"x\"]=1\nD[\"x\"]を2増やす\nD[\"x\"]を表示\n",
     "oracle": "official-source"
   },
   {
-    "id": "dncl2-increment-indexed",
+    "id": "native-dncl2-increment-indexed",
     "source": "!DNCL2\nA=[1,2,3]\nA[0]を3増やす\nA[0]を表示\nA[2]を2減らす\nA[2]を表示\n"
   },
   {
-    "id": "increment-object-to-primitive",
+    "id": "native-increment-object-to-primitive",
     "source": "A=[[\"5\"]]\nA[0]を1増やす\nA[0]を表示\nAを1増やす\nAを表示\nB={\"b\":\"5\"}\nB$bを1増やす\nB$bを表示\n"
   },
   {
-    "id": "dncl-v1-constant-index-target",
+    "id": "native-dncl-v1-constant-index-target",
     "source": "!DNCLモード\nPI[1]=5\nPIを表示\nA=NULL\nA[1]=5\nA[1]を表示\nA[2]を表示\n",
     "oracle": "official-source"
   },
   {
-    "id": "dncl-v1-increment-indexed-undeclared",
+    "id": "native-dncl-v1-increment-indexed-undeclared",
     "source": "!DNCLモード\nエラー監視\nA[1]を1増やす\nエラーならば\nエラーメッセージを表示\nここまで\n",
     "oracle": "official-source"
   },
   {
-    "id": "dncl-v1-increment-indexed-undefined",
+    "id": "native-dncl-v1-increment-indexed-undefined",
     "source": "!DNCLモード\nA=undefined\nエラー監視\nA[1]を1増やす\nエラーならば\nエラーメッセージを表示\nここまで\n",
     "oracle": "official-source"
   },
   {
-    "id": "dncl-v1-increment-indexed-null",
+    "id": "native-dncl-v1-increment-indexed-null",
     "source": "!DNCLモード\nA=NULL\nエラー監視\nA[1]を1増やす\nエラーならば\nエラーメッセージを表示\nここまで\n",
     "oracle": "official-source"
   },
   {
-    "id": "dncl-v1-increment-indexed-mid-undefined",
+    "id": "native-dncl-v1-increment-indexed-mid-undefined",
     "source": "!DNCLモード\nA=[1]\nA[1][2]を1増やす\nエラー監視\nA[3][4]を1増やす\nエラーならば\nエラーメッセージを表示\nここまで\n",
     "oracle": "official-source"
   },
   {
-    "id": "dncl-v1-increment-indexed-dict",
+    "id": "native-dncl-v1-increment-indexed-dict",
     "source": "!DNCLモード\nB={}\nB[1]を1増やす\nB[1]を表示\n",
     "oracle": "official-source"
   },
   {
-    "id": "scopequalreadlate",
+    "id": "native-scopequalreadlate",
     "sourceFileName": "natscopequalreadlate.nako3",
     "source": "●Fとは\n　natscopequalreadlate__Aを表示\nここまで\nA=7\nF\n"
   },
   {
-    "id": "scopequalreadearly",
+    "id": "native-scopequalreadearly",
     "sourceFileName": "natscopequalreadearly.nako3",
     "source": "A=7\n●Fとは\n　natscopequalreadearly__Aを表示\nここまで\nF\n"
   },
   {
-    "id": "scopequalwritelate",
+    "id": "native-scopequalwritelate",
     "sourceFileName": "natscopequalwritelate.nako3",
     "source": "●Fとは\n　natscopequalwritelate__A=5\n　natscopequalwritelate__Aを表示\nここまで\nA=9\nF\nAを表示\n"
   },
   {
-    "id": "scopequalarraylate",
+    "id": "native-scopequalarraylate",
     "sourceFileName": "natscopequalarraylate.nako3",
     "source": "●Fとは\n　エラー監視\n　　natscopequalarraylate__A[1]=5\n　エラーならば\n　　エラーメッセージを表示\n　ここまで\nここまで\nA=9\nF\nAを表示\n"
   },
   {
-    "id": "scopequalincrlate",
+    "id": "native-scopequalincrlate",
     "sourceFileName": "natscopequalincrlate.nako3",
     "source": "●Fとは\n　natscopequalincrlate__Aを1増やす\n　natscopequalincrlate__Aを表示\nここまで\nA=7\nF\nAを表示\n"
   },
   {
-    "id": "scopequaldncllate",
+    "id": "native-scopequaldncllate",
     "sourceFileName": "natscopequaldncllate.nako3",
     "source": "!DNCLモード\n●Fとは\n　natscopequaldncllate__A[1]=5\n　natscopequaldncllate__A[1]を表示\nここまで\nA=9\nF\nAを表示\n",
     "oracle": "official-source"
