@@ -194,6 +194,31 @@ test "ネイティブプラグイン命令をAOT ABIへ出力する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_native_plugin_call(ptr %root.slot.") != null);
 }
 
+test "未実装の低レイヤー命令はbuiltin call siteとしてopcode付きでemitする" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "H=1\nファイル位置取得(H)を表示\n", "low-level-stub.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "low-level-stub.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "low-level-stub.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    var module = try generate(std.testing.allocator, program, "low-level-stub.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    // 未実装命令は汎用builtin ABIへopcodeを埋め込んでemitし、実行時は
+    // `lowLevelUnsupportedBuiltin` が構造化ENOTSUPを投げる。
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "lnako_aot_builtin_call_site(") != null);
+    const opcode_marker = try std.fmt.allocPrint(std.testing.allocator, "i16 {d},", .{@intFromEnum(aot_builtin.Command.low_level_file_tell)});
+    defer std.testing.allocator.free(opcode_marker);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, opcode_marker) != null);
+}
+
 test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {
     const display = manifestCall("表示", null, true).?;
     try std.testing.expectEqualStrings("表示", display.source_name);

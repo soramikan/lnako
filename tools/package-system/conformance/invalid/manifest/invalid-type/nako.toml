@@ -1,0 +1,4 @@
+[package]
+name = "bad-type"
+version = "1.0.0"
+license = 3

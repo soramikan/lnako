@@ -1,0 +1,14 @@
+{
+  "package": {
+    "name": "test",
+    "version": "1.0.0",
+    "license": "MIT"
+  },
+  "dependencies": {
+    "pkg": {
+      "one": { "version": "<2.0.0 || >=4.0.0", "public-id": "pkg:10000000000000000000000000000000" },
+      "two": { "version": ">=1.0.0 <3.0.0", "public-id": "pkg:10000000000000000000000000000000" },
+      "three": { "version": ">=2.5.0 <5.0.0", "public-id": "pkg:10000000000000000000000000000000" }
+    }
+  }
+}

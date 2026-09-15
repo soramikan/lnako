@@ -1,5 +1,7 @@
 const std = @import("std");
 const environment = @import("environment.zig");
+const low_level_foundation = @import("low_level_foundation.zig");
+const builtin_catalog = @import("../semantic/builtin_catalog.zig");
 
 pub const Command = enum(u16) {
     to_string,
@@ -389,6 +391,74 @@ pub const Command = enum(u16) {
     system_end,
     system_path_basename,
     system_path_dirname,
+    // Issue #27の低レイヤーストリームI/O。G0でplugin_lowlevelへ登録した命令。
+    // 既存opcodeの安定性を保つため常に末尾へ追加する。
+    low_level_file_open,
+    low_level_file_close,
+    low_level_file_read_bytes,
+    low_level_file_write_bytes,
+    low_level_file_sync,
+    low_level_file_truncate,
+    low_level_capability_supported,
+    low_level_capability_list,
+    // カタログ掲載済みだが未実装の低レイヤー命令。コンパイルは成功し、
+    // 実行時に `capability` と `operation` を持つ構造化 ENOTSUP を投げる
+    // （`low_level_foundation.aot_compiles_unsupported_calls`）。
+    // `isLowLevelCommand` は末尾連続配置に依存するため、低レイヤー以外の
+    // opcodeをこの区間の後ろへ置かないこと。
+    low_level_file_seek,
+    low_level_file_tell,
+    low_level_file_pread,
+    low_level_file_pwrite,
+    low_level_stdin_read,
+    low_level_stdout_write,
+    low_level_stderr_write,
+    low_level_stdout_sync,
+    low_level_stderr_sync,
+    low_level_file_stat,
+    low_level_file_lstat,
+    low_level_symlink_create,
+    low_level_symlink_read,
+    low_level_hardlink_create,
+    low_level_path_realpath,
+    low_level_path_rename,
+    low_level_path_unlink,
+    low_level_path_rmdir,
+    low_level_file_truncate_path,
+    low_level_file_utime_path,
+    low_level_file_utime_handle,
+    low_level_hash_create,
+    low_level_hash_update,
+    low_level_hash_digest,
+    low_level_hash_discard,
+    low_level_dir_open,
+    low_level_dir_next,
+    low_level_dir_close,
+    low_level_dir_foreach,
+    low_level_file_chmod,
+    low_level_file_chown,
+    low_level_symlink_chown,
+    low_level_file_access,
+    low_level_uid_get,
+    low_level_euid_get,
+    low_level_gid_get,
+    low_level_egid_get,
+    low_level_groups_get,
+    low_level_umask_set,
+    low_level_process_spawn,
+    low_level_process_wait,
+    low_level_pid_get,
+    low_level_ppid_get,
+    low_level_signal_send,
+    low_level_process_priority_get,
+    low_level_process_priority_set,
+    low_level_tty_isatty,
+    low_level_tty_size,
+    low_level_statfs,
+    low_level_reflink,
+    low_level_seek_data,
+    low_level_seek_hole,
+    low_level_fallocate,
 };
 
 /// `エラー発生` is lowered to an IR throw terminator, not to the generic
@@ -398,6 +468,178 @@ pub const Command = enum(u16) {
 pub const throw_statement_opcode: u16 = std.math.maxInt(u16);
 pub const throw_statement_canonical_opcode = "throw_statement";
 pub const throw_statement_route = "throw";
+
+/// 低レイヤー命令のopcodeと `low_level_foundation.catalog_commands` の
+/// dispatch名の対応表。`lookup` / `dispatchRoute` / 実行時dispatchは全て
+/// この表へ揃え、実装済み・未実装（ENOTSUP stub）のどちらも同じ経路を通す。
+const LowLevelBinding = struct {
+    command: Command,
+    name: []const u8,
+};
+
+pub const low_level_bindings = [_]LowLevelBinding{
+    .{ .command = .low_level_file_open, .name = "ファイル開" },
+    .{ .command = .low_level_file_close, .name = "ファイル閉" },
+    .{ .command = .low_level_file_read_bytes, .name = "ファイルバイト読" },
+    .{ .command = .low_level_file_write_bytes, .name = "ファイルバイト書" },
+    .{ .command = .low_level_file_sync, .name = "ファイル同期" },
+    .{ .command = .low_level_file_truncate, .name = "ファイル切詰" },
+    .{ .command = .low_level_capability_supported, .name = "低レイヤー機能対応判定" },
+    .{ .command = .low_level_capability_list, .name = "低レイヤー機能一覧取得" },
+    .{ .command = .low_level_file_seek, .name = "ファイル位置変更" },
+    .{ .command = .low_level_file_tell, .name = "ファイル位置取得" },
+    .{ .command = .low_level_file_pread, .name = "ファイル位置指定読込" },
+    .{ .command = .low_level_file_pwrite, .name = "ファイル位置指定書込" },
+    .{ .command = .low_level_stdin_read, .name = "標準入力バイト読" },
+    .{ .command = .low_level_stdout_write, .name = "標準出力バイト書" },
+    .{ .command = .low_level_stderr_write, .name = "標準エラー出力バイト書" },
+    .{ .command = .low_level_stdout_sync, .name = "標準出力同期" },
+    .{ .command = .low_level_stderr_sync, .name = "標準エラー出力同期" },
+    .{ .command = .low_level_file_stat, .name = "ファイル詳細情報取得" },
+    .{ .command = .low_level_file_lstat, .name = "シンボリックリンク情報取得" },
+    .{ .command = .low_level_symlink_create, .name = "シンボリックリンク作成" },
+    .{ .command = .low_level_symlink_read, .name = "シンボリックリンク先取得" },
+    .{ .command = .low_level_hardlink_create, .name = "ハードリンク作成" },
+    .{ .command = .low_level_path_realpath, .name = "実体パス取得" },
+    .{ .command = .low_level_path_rename, .name = "パス名変更" },
+    .{ .command = .low_level_path_unlink, .name = "ファイルリンク削除" },
+    .{ .command = .low_level_path_rmdir, .name = "空フォルダ削除" },
+    .{ .command = .low_level_file_truncate_path, .name = "ファイルサイズ変更" },
+    .{ .command = .low_level_file_utime_path, .name = "ファイル時刻設定" },
+    .{ .command = .low_level_file_utime_handle, .name = "ファイル時刻設定済" },
+    .{ .command = .low_level_hash_create, .name = "ハッシュ開始" },
+    .{ .command = .low_level_hash_update, .name = "ハッシュ追加" },
+    .{ .command = .low_level_hash_digest, .name = "ハッシュ完了" },
+    .{ .command = .low_level_hash_discard, .name = "ハッシュ破棄" },
+    .{ .command = .low_level_dir_open, .name = "ディレクトリ開" },
+    .{ .command = .low_level_dir_next, .name = "ディレクトリ次取得" },
+    .{ .command = .low_level_dir_close, .name = "ディレクトリ閉" },
+    .{ .command = .low_level_dir_foreach, .name = "ディレクトリ列挙時" },
+    .{ .command = .low_level_file_chmod, .name = "ファイル権限設定" },
+    .{ .command = .low_level_file_chown, .name = "ファイル所有者設定" },
+    .{ .command = .low_level_symlink_chown, .name = "シンボリックリンク所有者設定" },
+    .{ .command = .low_level_file_access, .name = "ファイルアクセス可能" },
+    .{ .command = .low_level_uid_get, .name = "UID取得" },
+    .{ .command = .low_level_euid_get, .name = "EUID取得" },
+    .{ .command = .low_level_gid_get, .name = "GID取得" },
+    .{ .command = .low_level_egid_get, .name = "EGID取得" },
+    .{ .command = .low_level_groups_get, .name = "所属グループID一覧取得" },
+    .{ .command = .low_level_umask_set, .name = "UMASK変更" },
+    .{ .command = .low_level_process_spawn, .name = "プロセス起動" },
+    .{ .command = .low_level_process_wait, .name = "プロセス待機" },
+    .{ .command = .low_level_pid_get, .name = "プロセスID取得" },
+    .{ .command = .low_level_ppid_get, .name = "親プロセスID取得" },
+    .{ .command = .low_level_signal_send, .name = "シグナル送信" },
+    .{ .command = .low_level_process_priority_get, .name = "プロセス優先度取得" },
+    .{ .command = .low_level_process_priority_set, .name = "プロセス優先度設定" },
+    .{ .command = .low_level_tty_isatty, .name = "端末判定" },
+    .{ .command = .low_level_tty_size, .name = "端末サイズ取得" },
+    .{ .command = .low_level_statfs, .name = "ファイルシステム情報取得" },
+    .{ .command = .low_level_reflink, .name = "ファイルクローン" },
+    .{ .command = .low_level_seek_data, .name = "ファイルデータ領域検索" },
+    .{ .command = .low_level_seek_hole, .name = "ファイル空洞領域検索" },
+    .{ .command = .low_level_fallocate, .name = "ファイル領域確保" },
+};
+
+comptime {
+    @setEvalBranchQuota(500_000);
+    // `isLowLevelCommand` の範囲判定は `low_level_bindings` がカタログの
+    // 全命令を網羅し、enumの末尾へ連続配置されていることを前提にする。
+    std.debug.assert(low_level_bindings.len == low_level_foundation.catalog_commands.len);
+    for (low_level_bindings, 0..) |binding, index| {
+        const spec = low_level_foundation.catalogCommandFor(binding.name) orelse
+            @compileError("low_level_bindings にカタログ外の命令があります: " ++ binding.name);
+        if (!std.mem.eql(u8, spec.name, binding.name)) {
+            @compileError("low_level_bindings の名前はdispatch名（語幹）でなければなりません: " ++ binding.name);
+        }
+        if (@intFromEnum(binding.command) != @intFromEnum(Command.low_level_file_open) + index) {
+            @compileError("low_level_bindings の順序はenum末尾の宣言順と一致させてください: " ++ binding.name);
+        }
+    }
+    // 件数一致とあわせて逆方向も検証し、binding名の重複・カタログ命令の
+    // 欠落を検出する。あわせて `catalogCommandFor` が先勝ち線形探索のため
+    // dispatch名と利用者向け表記の解決名が全カタログで一意であることを検証する。
+    for (low_level_foundation.catalog_commands) |spec| {
+        var found = false;
+        for (low_level_bindings) |binding| {
+            if (std.mem.eql(u8, binding.name, spec.name)) found = true;
+        }
+        if (!found) {
+            @compileError("low_level_bindings にカタログ命令がありません: " ++ spec.name);
+        }
+    }
+    for (low_level_foundation.catalog_commands, 0..) |spec, index| {
+        if (spec.user_name) |user_name| {
+            if (std.mem.eql(u8, spec.name, user_name)) {
+                @compileError("user_nameはdispatch名と同じならnullにしてください: " ++ spec.name);
+            }
+        }
+        for (low_level_foundation.catalog_commands[index + 1 ..]) |other| {
+            if (std.mem.eql(u8, spec.name, other.name) or
+                (other.user_name != null and std.mem.eql(u8, spec.name, other.user_name.?)) or
+                (spec.user_name != null and std.mem.eql(u8, spec.user_name.?, other.name)) or
+                (spec.user_name != null and other.user_name != null and std.mem.eql(u8, spec.user_name.?, other.user_name.?)))
+            {
+                @compileError("カタログの解決名が重複しています: " ++ spec.name);
+            }
+        }
+    }
+    // dispatch名が標準cnako命令名や `lookup`/Interpreter早期dispatchより
+    // 先に解決される名前と衝突すると、当該低レイヤー命令が到達不能になる。
+    // `テスト実行`/`テスト等` は `default_names` にも含まれるが、早期
+    // dispatch名としても検査対象へ残す（defense in depth）。
+    // `builtin_catalog` に載らない早期dispatch名（`interpreter/plugins.zig`
+    // の `callBuiltinImpl` 冒頭の文字列比較）を追加した場合はこのリストも
+    // 更新しないと衝突を見逃す。
+    const earlier_names = [_][]const u8{ "表示する", "ASSERT", "確認", "テスト実行", "テスト等" };
+    for (low_level_bindings) |binding| {
+        const spec = low_level_foundation.catalogCommandFor(binding.name).?;
+        for ([2][]const u8{ binding.name, spec.user_name orelse binding.name }) |resolved| {
+            for (builtin_catalog.names) |standard_name| {
+                if (std.mem.eql(u8, resolved, standard_name)) {
+                    @compileError("低レイヤー命令の解決名が標準cnako命令と衝突しています: " ++ resolved);
+                }
+            }
+            for (builtin_catalog.default_names) |standard_name| {
+                if (std.mem.eql(u8, resolved, standard_name)) {
+                    @compileError("低レイヤー命令の解決名が既定plugin名と衝突しています: " ++ resolved);
+                }
+            }
+            for (earlier_names) |earlier| {
+                if (std.mem.eql(u8, resolved, earlier)) {
+                    @compileError("低レイヤー命令の解決名が早期dispatch名と衝突しています: " ++ resolved);
+                }
+            }
+        }
+    }
+    const fields = std.meta.fields(Command);
+    var low_level_count: usize = 0;
+    for (fields) |field| {
+        const low_level = std.mem.startsWith(u8, field.name, "low_level_");
+        const in_tail = field.value >= @intFromEnum(Command.low_level_file_open);
+        if (low_level != in_tail) {
+            @compileError("低レイヤーopcodeはenum末尾へ連続配置してください: " ++ field.name);
+        }
+        if (low_level) low_level_count += 1;
+    }
+    if (low_level_count != low_level_bindings.len) {
+        @compileError("enum末尾の低レイヤーopcode数と low_level_bindings の件数が一致しません");
+    }
+}
+
+/// opcodeが低レイヤー命令かどうか。enum末尾への連続配置で判定する。
+pub fn isLowLevelCommand(command: Command) bool {
+    return @intFromEnum(command) >= @intFromEnum(Command.low_level_file_open);
+}
+
+/// opcodeに対応するカタログ定義。ENOTSUP stubが `capability` /
+/// `operation` / arity をここから引く。
+pub fn lowLevelCatalogCommand(command: Command) ?low_level_foundation.CatalogCommand {
+    if (!isLowLevelCommand(command)) return null;
+    const index = @intFromEnum(command) - @intFromEnum(Command.low_level_file_open);
+    if (index >= low_level_bindings.len) return null;
+    return low_level_foundation.catalogCommandFor(low_level_bindings[index].name);
+}
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
 /// Trace consumers must therefore treat this as the canonical enum spelling,
@@ -443,8 +685,9 @@ fn isDatetimePluginCommand(command: Command) bool {
     };
 }
 
-fn dispatchRouteFor(command: Command, datetime_plugin_route: bool) []const u8 {
+pub fn dispatchRouteFor(command: Command, datetime_plugin_route: bool) []const u8 {
     if (datetime_plugin_route and isDatetimePluginCommand(command)) return "plugin_datetime";
+    if (isLowLevelCommand(command)) return "plugin_lowlevel";
     return switch (command) {
         .cut, .cut_range => "cut",
         .regexp_match, .regexp_extract, .regexp_replace, .regexp_split => "regexp",
@@ -859,10 +1102,17 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "ファイル上書移動")) return .node_file_move_overwrite;
     if (std.mem.eql(u8, name, "ファイル削除")) return .node_file_delete;
     if (std.mem.eql(u8, name, "コンソールクリア")) return .node_console_clear;
+    // 低レイヤー命令はカタログ命令表（dispatch名と利用者向け表記の両方）で
+    // 解決し、実装済みと未実装 ENOTSUP stub の区別なくopcodeを割り当てる。
+    if (low_level_foundation.catalogCommandFor(name)) |spec| {
+        for (low_level_bindings) |binding| {
+            if (std.mem.eql(u8, binding.name, spec.name)) return binding.command;
+        }
+    }
     return null;
 }
 
-fn routeSpecificCommand(name: []const u8, system_route: bool) ?Command {
+pub fn routeSpecificCommand(name: []const u8, system_route: bool) ?Command {
     if (std.mem.eql(u8, name, "ファイル名抽出")) return if (system_route) .system_path_basename else .node_path_basename;
     if (std.mem.eql(u8, name, "パス抽出")) return if (system_route) .system_path_dirname else .node_path_dirname;
     if (std.mem.eql(u8, name, "終")) return if (system_route) .system_end else .node_exit;
@@ -878,433 +1128,6 @@ fn datetimePluginRouteEnabled() bool {
     return environment.valueEquals("LNAKO_PLUGIN_ROUTE", "plugin_datetime");
 }
 
-test "plugin_datetime routeは旧形式pluginの27命令だけを識別する" {
-    const datetime_commands = [_]Command{
-        .datetime_now,
-        .datetime_system_time,
-        .datetime_today,
-        .datetime_tomorrow,
-        .datetime_yesterday,
-        .datetime_current_year,
-        .datetime_next_year,
-        .datetime_last_year,
-        .datetime_current_month,
-        .datetime_next_month,
-        .datetime_previous_month,
-        .datetime_weekday,
-        .datetime_weekday_number,
-        .datetime_unix_time,
-        .datetime_date_time,
-        .datetime_era,
-        .datetime_year_difference,
-        .datetime_month_difference,
-        .datetime_day_difference,
-        .datetime_hour_difference,
-        .datetime_minute_difference,
-        .datetime_second_difference,
-        .datetime_difference,
-        .datetime_add_time,
-        .datetime_add_date,
-        .datetime_add_datetime,
-    };
-    for (datetime_commands) |command| try std.testing.expectEqualStrings("plugin_datetime", dispatchRouteFor(command, true));
-    try std.testing.expectEqualStrings("builtin", dispatchRouteFor(.datetime_now, false));
-    try std.testing.expectEqualStrings("builtin", dispatchRouteFor(.datetime_system_time_milliseconds, true));
-    try std.testing.expectEqualStrings("builtin", dispatchRouteFor(.datetime_format, true));
-    try std.testing.expectEqualStrings("builtin", dispatchRouteFor(.datetime_monotonic_milliseconds, true));
-}
-
-test "同名pathと終命令はrouteごとのAOT opcodeへ分離する" {
-    try std.testing.expectEqual(Command.node_path_basename, routeSpecificCommand("ファイル名抽出", false).?);
-    try std.testing.expectEqual(Command.node_path_dirname, routeSpecificCommand("パス抽出", false).?);
-    try std.testing.expectEqual(Command.node_exit, routeSpecificCommand("終", false).?);
-    try std.testing.expectEqual(Command.system_path_basename, routeSpecificCommand("ファイル名抽出", true).?);
-    try std.testing.expectEqual(Command.system_path_dirname, routeSpecificCommand("パス抽出", true).?);
-    try std.testing.expectEqual(Command.system_end, routeSpecificCommand("終", true).?);
-    try std.testing.expectEqual(Command.node_exit, routeSpecificCommand("終了", true).?);
-}
-
-test "AOT標準命令の正式名と別名を同じIDへ解決する" {
-    try std.testing.expectEqual(Command.to_string, lookup("文字列変換").?);
-    try std.testing.expectEqual(Command.to_string, lookup("TOSTR").?);
-    try std.testing.expectEqual(Command.type_of, lookup("変数型確認").?);
-    try std.testing.expectEqual(Command.type_of, lookup("TYPEOF").?);
-    try std.testing.expectEqual(Command.to_int, lookup("整数変換").?);
-    try std.testing.expectEqual(Command.to_int, lookup("TOINT").?);
-    try std.testing.expectEqual(Command.to_int, lookup("INT").?);
-    try std.testing.expectEqual(Command.to_float, lookup("実数変換").?);
-    try std.testing.expectEqual(Command.to_float, lookup("TOFLOAT").?);
-    try std.testing.expectEqual(Command.to_float, lookup("FLOAT").?);
-    try std.testing.expectEqual(Command.cut, lookup("切取").?);
-    try std.testing.expectEqual(Command.cut_range, lookup("範囲切取").?);
-    try std.testing.expectEqual(Command.is_nan, lookup("NAN判定").?);
-    try std.testing.expectEqual(Command.is_number_nan, lookup("非数判定").?);
-    try std.testing.expectEqual(Command.array_maximum, lookup("配列最大値").?);
-    try std.testing.expectEqual(Command.array_minimum, lookup("配列最小値").?);
-    try std.testing.expectEqual(Command.array_sum, lookup("配列合計").?);
-    try std.testing.expectEqual(Command.array_swap, lookup("配列入替").?);
-    try std.testing.expectEqual(Command.array_sequence, lookup("配列連番作成").?);
-    try std.testing.expectEqual(Command.array_fill, lookup("配列要素作成").?);
-    try std.testing.expectEqual(Command.table_sort, lookup("表ソート").?);
-    try std.testing.expectEqual(Command.table_numeric_sort, lookup("表数値ソート").?);
-    try std.testing.expectEqual(Command.radix16, lookup("HEX").?);
-    try std.testing.expectEqual(Command.radix, lookup("進数変換").?);
-    try std.testing.expectEqual(Command.radix2, lookup("二進").?);
-    try std.testing.expectEqual(Command.radix2_display, lookup("二進表示").?);
-    try std.testing.expectEqual(Command.json_decode, lookup("JSON取得").?);
-    try std.testing.expectEqual(Command.json_decode, lookup("JSONデコード").?);
-    try std.testing.expectEqual(Command.json_decode, lookup("JSON_D").?);
-    try std.testing.expectEqual(Command.system_measure_time, lookup("実行時間計測").?);
-    try std.testing.expectEqual(Command.math_sin, lookup("SIN").?);
-    try std.testing.expectEqual(Command.math_rad2deg, lookup("度変換").?);
-    try std.testing.expectEqual(Command.math_rad2deg, lookup("RAD2DEG").?);
-    try std.testing.expectEqual(Command.math_sign, lookup("符号").?);
-    try std.testing.expectEqual(Command.math_sign, lookup("SIGN").?);
-    try std.testing.expectEqual(Command.math_floor, lookup("切捨").?);
-    try std.testing.expectEqual(Command.math_floor, lookup("FLOOR").?);
-    try std.testing.expectEqual(Command.rgb, lookup("RGB").?);
-    try std.testing.expectEqual(Command.bit_or, lookup("OR").?);
-    try std.testing.expectEqual(Command.bit_and, lookup("AND").?);
-    try std.testing.expectEqual(Command.bit_xor, lookup("XOR").?);
-    try std.testing.expectEqual(Command.bit_not, lookup("NOT").?);
-    try std.testing.expectEqual(Command.shift_left, lookup("SHIFT_L").?);
-    try std.testing.expectEqual(Command.shift_right, lookup("SHIFT_R").?);
-    try std.testing.expectEqual(Command.shift_right_unsigned, lookup("SHIFT_UR").?);
-    try std.testing.expectEqual(Command.subtract, lookup("引").?);
-    try std.testing.expectEqual(Command.multiply, lookup("倍").?);
-    try std.testing.expectEqual(Command.divide, lookup("割").?);
-    try std.testing.expectEqual(Command.remainder, lookup("割余").?);
-    try std.testing.expectEqual(Command.is_even, lookup("偶数").?);
-    try std.testing.expectEqual(Command.is_odd, lookup("奇数").?);
-    try std.testing.expectEqual(Command.square, lookup("二乗").?);
-    try std.testing.expectEqual(Command.power_number, lookup("べき乗").?);
-    try std.testing.expectEqual(Command.greater_equal, lookup("以上").?);
-    try std.testing.expectEqual(Command.less_equal, lookup("以下").?);
-    try std.testing.expectEqual(Command.less, lookup("未満").?);
-    try std.testing.expectEqual(Command.greater, lookup("超").?);
-    try std.testing.expectEqual(Command.strict_equal, lookup("等").?);
-    try std.testing.expectEqual(Command.strict_not_equal, lookup("等無").?);
-    try std.testing.expectEqual(Command.in_range, lookup("範囲内").?);
-    try std.testing.expectEqual(Command.maximum, lookup("MAX").?);
-    try std.testing.expectEqual(Command.maximum, lookup("最大値").?);
-    try std.testing.expectEqual(Command.minimum, lookup("MIN").?);
-    try std.testing.expectEqual(Command.minimum, lookup("最小値").?);
-    try std.testing.expectEqual(Command.clamp, lookup("CLAMP").?);
-    try std.testing.expectEqual(Command.logical_or, lookup("論理OR").?);
-    try std.testing.expectEqual(Command.logical_and, lookup("論理AND").?);
-    try std.testing.expectEqual(Command.logical_not, lookup("論理NOT").?);
-    try std.testing.expectEqual(Command.range, lookup("範囲").?);
-    try std.testing.expectEqual(Command.empty_array, lookup("空配列").?);
-    try std.testing.expectEqual(Command.empty_dictionary, lookup("空辞書").?);
-    try std.testing.expectEqual(Command.empty_dictionary, lookup("空ハッシュ").?);
-    try std.testing.expectEqual(Command.empty_dictionary, lookup("空オブジェクト").?);
-    try std.testing.expectEqual(Command.dictionary_keys, lookup("辞書キー列挙").?);
-    try std.testing.expectEqual(Command.dictionary_remove, lookup("辞書キー削除").?);
-    try std.testing.expectEqual(Command.dictionary_has, lookup("辞書キー存在").?);
-    try std.testing.expectEqual(Command.hash_keys, lookup("ハッシュキー列挙").?);
-    try std.testing.expectEqual(Command.hash_values, lookup("ハッシュ内容列挙").?);
-    try std.testing.expectEqual(Command.hash_remove, lookup("ハッシュキー削除").?);
-    try std.testing.expectEqual(Command.hash_has, lookup("ハッシュキー存在").?);
-    try std.testing.expectEqual(Command.truth_label, lookup("真偽判定").?);
-    try std.testing.expectEqual(Command.repeat_multiply, lookup("掛").?);
-    try std.testing.expectEqual(Command.unicode_length, lookup("文字数").?);
-    try std.testing.expectEqual(Command.codepoint_find, lookup("何文字目").?);
-    try std.testing.expectEqual(Command.string_starts, lookup("文字始").?);
-    try std.testing.expectEqual(Command.string_ends, lookup("文字終").?);
-    try std.testing.expectEqual(Command.element_count, lookup("配列要素数").?);
-    try std.testing.expectEqual(Command.element_count, lookup("要素数").?);
-    try std.testing.expectEqual(Command.element_count, lookup("LEN").?);
-    try std.testing.expectEqual(Command.array_join, lookup("配列結合").?);
-    try std.testing.expectEqual(Command.array_join_only, lookup("配列只結合").?);
-    try std.testing.expectEqual(Command.array_search, lookup("配列検索").?);
-    try std.testing.expectEqual(Command.array_sort, lookup("配列ソート").?);
-    try std.testing.expectEqual(Command.array_numeric_convert, lookup("配列数値変換").?);
-    try std.testing.expectEqual(Command.array_numeric_sort, lookup("配列数値ソート").?);
-    try std.testing.expectEqual(Command.array_reverse, lookup("配列逆順").?);
-    try std.testing.expectEqual(Command.array_insert, lookup("配列挿入").?);
-    try std.testing.expectEqual(Command.array_insert_many, lookup("配列一括挿入").?);
-    try std.testing.expectEqual(Command.array_cut, lookup("配列削除").?);
-    try std.testing.expectEqual(Command.array_cut, lookup("配列切取").?);
-    try std.testing.expectEqual(Command.array_take, lookup("配列取出").?);
-    try std.testing.expectEqual(Command.array_pop, lookup("配列ポップ").?);
-    try std.testing.expectEqual(Command.array_push, lookup("配列プッシュ").?);
-    try std.testing.expectEqual(Command.array_push, lookup("配列追加").?);
-    try std.testing.expectEqual(Command.array_clone, lookup("配列複製").?);
-    try std.testing.expectEqual(Command.array_range_copy, lookup("配列範囲コピー").?);
-    try std.testing.expectEqual(Command.reference, lookup("参照").?);
-    try std.testing.expectEqual(Command.reference, lookup("配列参照").?);
-    try std.testing.expectEqual(Command.array_add, lookup("配列足").?);
-    try std.testing.expectEqual(Command.add_parsed, lookup("足").?);
-    try std.testing.expectEqual(Command.sum_parsed, lookup("合計").?);
-    try std.testing.expectEqual(Command.sequential_add, lookup("連続加算").?);
-    try std.testing.expectEqual(Command.chr, lookup("CHR").?);
-    try std.testing.expectEqual(Command.asc, lookup("ASC").?);
-    try std.testing.expectEqual(Command.string_insert, lookup("文字挿入").?);
-    try std.testing.expectEqual(Command.string_search, lookup("文字検索").?);
-    try std.testing.expectEqual(Command.append, lookup("追加").?);
-    try std.testing.expectEqual(Command.append_line, lookup("一行追加").?);
-    try std.testing.expectEqual(Command.concat_join, lookup("連結").?);
-    try std.testing.expectEqual(Command.concat_join, lookup("文字列連結").?);
-    try std.testing.expectEqual(Command.explode, lookup("文字列分解").?);
-    try std.testing.expectEqual(Command.refrain, lookup("リフレイン").?);
-    try std.testing.expectEqual(Command.occurrence_count, lookup("出現回数").?);
-    try std.testing.expectEqual(Command.occurrence, lookup("出現").?);
-    try std.testing.expectEqual(Command.substring_mid, lookup("MID").?);
-    try std.testing.expectEqual(Command.substring_mid, lookup("文字抜出").?);
-    try std.testing.expectEqual(Command.substring_left, lookup("LEFT").?);
-    try std.testing.expectEqual(Command.substring_left, lookup("文字左部分").?);
-    try std.testing.expectEqual(Command.substring_right, lookup("RIGHT").?);
-    try std.testing.expectEqual(Command.substring_right, lookup("文字右部分").?);
-    try std.testing.expectEqual(Command.split_all, lookup("区切").?);
-    try std.testing.expectEqual(Command.split_first, lookup("文字列分割").?);
-    try std.testing.expectEqual(Command.string_remove, lookup("文字削除").?);
-    try std.testing.expectEqual(Command.trim_both, lookup("トリム").?);
-    try std.testing.expectEqual(Command.trim_both, lookup("空白除去").?);
-    try std.testing.expectEqual(Command.trim_right, lookup("右トリム").?);
-    try std.testing.expectEqual(Command.trim_right, lookup("末尾空白除去").?);
-    try std.testing.expectEqual(Command.trim_left, lookup("左トリム").?);
-    try std.testing.expectEqual(Command.replace_all, lookup("置換").?);
-    try std.testing.expectEqual(Command.replace_first, lookup("単置換").?);
-    try std.testing.expectEqual(Command.regexp_match, lookup("正規表現マッチ").?);
-    try std.testing.expectEqual(Command.regexp_extract, lookup("正規表現抽出").?);
-    try std.testing.expectEqual(Command.regexp_replace, lookup("正規表現置換").?);
-    try std.testing.expectEqual(Command.regexp_split, lookup("正規表現区切").?);
-    try std.testing.expectEqual(Command.json_encode, lookup("JSON変換").?);
-    try std.testing.expectEqual(Command.json_encode, lookup("JSONエンコード").?);
-    try std.testing.expectEqual(Command.json_encode, lookup("JSON_E").?);
-    try std.testing.expectEqual(Command.json_encode_pretty, lookup("JSONエンコード整形").?);
-    try std.testing.expectEqual(Command.json_encode_pretty, lookup("JSON_ES").?);
-    try std.testing.expectEqual(Command.uppercase, lookup("大文字変換").?);
-    try std.testing.expectEqual(Command.lowercase, lookup("小文字変換").?);
-    try std.testing.expectEqual(Command.hiragana, lookup("平仮名変換").?);
-    try std.testing.expectEqual(Command.katakana, lookup("カタカナ変換").?);
-    try std.testing.expectEqual(Command.ascii_full_width, lookup("英数全角変換").?);
-    try std.testing.expectEqual(Command.ascii_half_width, lookup("英数半角変換").?);
-    try std.testing.expectEqual(Command.ascii_symbol_full_width, lookup("英数記号全角変換").?);
-    try std.testing.expectEqual(Command.ascii_symbol_half_width, lookup("英数記号半角変換").?);
-    try std.testing.expectEqual(Command.katakana_full_width, lookup("カタカナ全角変換").?);
-    try std.testing.expectEqual(Command.katakana_half_width, lookup("カタカナ半角変換").?);
-    try std.testing.expectEqual(Command.full_width, lookup("全角変換").?);
-    try std.testing.expectEqual(Command.half_width, lookup("半角変換").?);
-    try std.testing.expectEqual(Command.currency_format, lookup("通貨形式").?);
-    try std.testing.expectEqual(Command.zero_pad, lookup("ゼロ埋").?);
-    try std.testing.expectEqual(Command.space_pad, lookup("空白埋").?);
-    try std.testing.expectEqual(Command.hiragana_predicate, lookup("かなか判定").?);
-    try std.testing.expectEqual(Command.katakana_predicate, lookup("カタカナ判定").?);
-    try std.testing.expectEqual(Command.digit_predicate, lookup("数字判定").?);
-    try std.testing.expectEqual(Command.number_sequence_predicate, lookup("数列判定").?);
-    try std.testing.expectEqual(Command.math_random, lookup("乱数").?);
-    try std.testing.expectEqual(Command.math_random_range, lookup("乱数範囲").?);
-    try std.testing.expectEqual(Command.plugin_name_set, lookup("プラグイン名設定").?);
-    try std.testing.expectEqual(Command.namespace_set, lookup("名前空間設定").?);
-    try std.testing.expectEqual(Command.namespace_pop, lookup("名前空間ポップ").?);
-    try std.testing.expectEqual(Command.timer_wait, lookup("秒待").?);
-    try std.testing.expectEqual(Command.timer_wait, lookup("秒待機").?);
-    try std.testing.expectEqual(Command.timer_wait, lookup("秒逐次待機").?);
-    try std.testing.expectEqual(Command.timer_after, lookup("秒後").?);
-    try std.testing.expectEqual(Command.timer_every, lookup("秒毎").?);
-    try std.testing.expectEqual(Command.timer_every, lookup("秒タイマー開始時").?);
-    try std.testing.expectEqual(Command.timer_stop, lookup("タイマー停止").?);
-    try std.testing.expectEqual(Command.timer_stop_all, lookup("全タイマー停止").?);
-    try std.testing.expectEqual(Command.promise_create, lookup("動時").?);
-    try std.testing.expectEqual(Command.promise_success, lookup("成功時").?);
-    try std.testing.expectEqual(Command.promise_settled, lookup("処理時").?);
-    try std.testing.expectEqual(Command.promise_failure, lookup("失敗時").?);
-    try std.testing.expectEqual(Command.promise_finally, lookup("終了時").?);
-    try std.testing.expectEqual(Command.promise_all, lookup("束").?);
-    try std.testing.expectEqual(Command.node_file_open, lookup("開").?);
-    try std.testing.expectEqual(Command.node_file_read, lookup("読").?);
-    try std.testing.expectEqual(Command.node_file_binary_read, lookup("バイナリ読").?);
-    try std.testing.expectEqual(Command.node_file_save, lookup("保存").?);
-    try std.testing.expectEqual(Command.node_file_sjis_read, lookup("SJISファイル読").?);
-    try std.testing.expectEqual(Command.node_file_sjis_save, lookup("SJISファイル保存").?);
-    try std.testing.expectEqual(Command.node_file_euc_read, lookup("EUCファイル読").?);
-    try std.testing.expectEqual(Command.node_file_euc_save, lookup("EUCファイル保存").?);
-    try std.testing.expectEqual(Command.node_encoding_sjis_encode, lookup("SJIS変換").?);
-    try std.testing.expectEqual(Command.node_encoding_sjis_decode, lookup("SJIS取得").?);
-    try std.testing.expectEqual(Command.node_encoding_encode, lookup("エンコーディング変換").?);
-    try std.testing.expectEqual(Command.node_encoding_decode, lookup("エンコーディング取得").?);
-    try std.testing.expectEqual(Command.node_file_list, lookup("ファイル列挙").?);
-    try std.testing.expectEqual(Command.node_file_list_all, lookup("全ファイル列挙").?);
-    try std.testing.expectEqual(Command.node_folder_create, lookup("フォルダ作成").?);
-    try std.testing.expectEqual(Command.node_file_copy, lookup("ファイルコピー").?);
-    try std.testing.expectEqual(Command.node_file_copy_overwrite, lookup("ファイル上書コピー").?);
-    try std.testing.expectEqual(Command.node_file_move, lookup("ファイル移動").?);
-    try std.testing.expectEqual(Command.node_file_move_overwrite, lookup("ファイル上書移動").?);
-    try std.testing.expectEqual(Command.node_file_delete, lookup("ファイル削除").?);
-    try std.testing.expectEqual(Command.node_console_clear, lookup("コンソールクリア").?);
-    try std.testing.expectEqual(Command.async_noop, lookup("ASYNC").?);
-    try std.testing.expectEqual(Command.system_await_execute, lookup("AWAIT実行").?);
-    try std.testing.expectEqual(Command.system_execute, lookup("実行").?);
-    try std.testing.expectEqual(Command.system_nadesiko, lookup("ナデシコ").?);
-    try std.testing.expectEqual(Command.system_nadesiko_continue, lookup("ナデシコ続").?);
-    try std.testing.expectEqual(Command.system_debug_display, lookup("デバッグ表示").?);
-    try std.testing.expectEqual(Command.system_hatena_execute, lookup("ハテナ関数実行").?);
-    try std.testing.expectEqual(Command.system_debug_enable, lookup("__DEBUG").?);
-    try std.testing.expectEqual(Command.system_debug_breakpoint_wait, lookup("__DEBUG_BP_WAIT").?);
-    try std.testing.expectEqual(Command.node_stdin_line, lookup("尋").?);
-    try std.testing.expectEqual(Command.node_stdin_character, lookup("文字尋").?);
-    try std.testing.expectEqual(Command.node_stdin_callback, lookup("標準入力取得時").?);
-    try std.testing.expectEqual(Command.system_hatena_configure, lookup("ハテナ関数設定").?);
-    try std.testing.expectEqual(Command.node_interrupt_callback, lookup("強制終了時").?);
-    try std.testing.expectEqual(Command.http_server_start, lookup("簡易HTTPサーバ起動時").?);
-    try std.testing.expectEqual(Command.http_server_static, lookup("簡易HTTPサーバ静的パス指定").?);
-    try std.testing.expectEqual(Command.http_server_receive, lookup("簡易HTTPサーバ受信時").?);
-    try std.testing.expectEqual(Command.http_server_output, lookup("簡易HTTPサーバ出力").?);
-    try std.testing.expectEqual(Command.http_server_headers, lookup("簡易HTTPサーバヘッダ出力").?);
-    try std.testing.expectEqual(Command.http_server_redirect, lookup("簡易HTTPサーバ移動").?);
-    try std.testing.expectEqual(Command.system_global_function_names, lookup("グローバル関数一覧取得").?);
-    try std.testing.expectEqual(Command.system_function_names, lookup("システム関数一覧取得").?);
-    try std.testing.expectEqual(Command.system_function_exists, lookup("システム関数存在").?);
-    try std.testing.expectEqual(Command.plugin_names, lookup("プラグイン一覧取得").?);
-    try std.testing.expectEqual(Command.plugin_names, lookup("モジュール一覧取得").?);
-    try std.testing.expectEqual(Command.josi_names, lookup("助詞一覧取得").?);
-    try std.testing.expectEqual(Command.reserved_words, lookup("予約語一覧取得").?);
-    try std.testing.expectEqual(Command.assert_strict_equal, lookup("ASSERT等").?);
-    try std.testing.expectEqual(Command.assert_strict_equal, lookup("テスト実行").?);
-    try std.testing.expectEqual(Command.assert_strict_equal, lookup("テスト等").?);
-    try std.testing.expectEqual(Command.array_shuffle, lookup("配列シャッフル").?);
-    try std.testing.expectEqual(Command.array_custom_sort, lookup("配列カスタムソート").?);
-    try std.testing.expectEqual(Command.array_function_apply, lookup("配列関数適用").?);
-    try std.testing.expectEqual(Command.array_map, lookup("配列マップ").?);
-    try std.testing.expectEqual(Command.array_filter, lookup("配列フィルタ").?);
-    try std.testing.expectEqual(Command.line_notify_discontinued, lookup("LINE送信").?);
-    try std.testing.expectEqual(Command.line_image_notify_discontinued, lookup("LINE画像送信").?);
-    try std.testing.expectEqual(Command.node_exit, lookup("終").?);
-    try std.testing.expectEqual(Command.node_exit, lookup("終了").?);
-    try std.testing.expectEqual(Command.node_process_exit, lookup("プロセス終").?);
-    try std.testing.expectEqual(Command.node_file_exists, lookup("存在").?);
-    try std.testing.expectEqual(Command.node_folder_exists, lookup("フォルダ存在").?);
-    try std.testing.expectEqual(Command.node_home_directory, lookup("ホームディレクトリ取得").?);
-    try std.testing.expectEqual(Command.node_desktop, lookup("デスクトップ").?);
-    try std.testing.expectEqual(Command.node_documents, lookup("マイドキュメント").?);
-    try std.testing.expectEqual(Command.node_temporary_directory, lookup("テンポラリフォルダ").?);
-    try std.testing.expectEqual(Command.node_mother_path, lookup("母艦パス取得").?);
-    try std.testing.expectEqual(Command.node_temporary_directory_create, lookup("一時フォルダ作成").?);
-    try std.testing.expectEqual(Command.node_hash_names, lookup("ハッシュ関数一覧取得").?);
-    try std.testing.expectEqual(Command.node_archive_tool_path_set, lookup("圧縮解凍ツールパス変更").?);
-    try std.testing.expectEqual(Command.node_file_size, lookup("ファイルサイズ取得").?);
-    try std.testing.expectEqual(Command.node_file_info, lookup("ファイル情報取得").?);
-    try std.testing.expectEqual(Command.node_encoding_supports, lookup("文字コード変換サポート判定").?);
-    try std.testing.expectEqual(Command.node_stdin_all, lookup("標準入力全取得").?);
-    try std.testing.expectEqual(Command.node_post_data, lookup("POSTデータ生成").?);
-    try std.testing.expectEqual(Command.node_ajax_options_set, lookup("AJAXオプション設定").?);
-    try std.testing.expectEqual(Command.node_ajax_onerror_set, lookup("AJAX失敗時").?);
-    try std.testing.expectEqual(Command.node_ajax_send_callback, lookup("AJAX送信時").?);
-    try std.testing.expectEqual(Command.node_ajax_receive_callback, lookup("AJAX受信時").?);
-    try std.testing.expectEqual(Command.node_get_send_callback, lookup("GET送信時").?);
-    try std.testing.expectEqual(Command.node_post_send_callback, lookup("POST送信時").?);
-    try std.testing.expectEqual(Command.node_post_form_send_callback, lookup("POSTフォーム送信時").?);
-    try std.testing.expectEqual(Command.node_ajax_response_promise, lookup("AJAX保障送信").?);
-    try std.testing.expectEqual(Command.node_http_response_promise, lookup("HTTP保障取得").?);
-    try std.testing.expectEqual(Command.node_get_response_promise, lookup("GET保障送信").?);
-    try std.testing.expectEqual(Command.node_post_response_promise, lookup("POST保障送信").?);
-    try std.testing.expectEqual(Command.node_post_form_response_promise, lookup("POSTフォーム保障送信").?);
-    try std.testing.expectEqual(Command.node_ajax_content_get, lookup("AJAX内容取得").?);
-    try std.testing.expectEqual(Command.node_ajax_receive, lookup("AJAX受信").?);
-    try std.testing.expectEqual(Command.node_post_send, lookup("POST送信").?);
-    try std.testing.expectEqual(Command.node_post_form_send, lookup("POSTフォーム送信").?);
-    try std.testing.expectEqual(Command.node_ajax_text_get, lookup("AJAXテキスト取得").?);
-    try std.testing.expectEqual(Command.node_ajax_json_get, lookup("AJAX_JSON取得").?);
-    try std.testing.expectEqual(Command.node_ajax_binary_get, lookup("AJAXバイナリ取得").?);
-    try std.testing.expectEqual(Command.node_discord_send, lookup("DISCORD送信").?);
-    try std.testing.expectEqual(Command.node_discord_file_send, lookup("DISCORDファイル送信").?);
-    try std.testing.expectEqual(Command.node_network_ipv4, lookup("自分IPアドレス取得").?);
-    try std.testing.expectEqual(Command.node_network_ipv6, lookup("自分IPV6アドレス取得").?);
-    try std.testing.expectEqual(Command.node_hash_value, lookup("ハッシュ値計算").?);
-    try std.testing.expectEqual(Command.node_random_uuid, lookup("ランダムUUID生成").?);
-    try std.testing.expectEqual(Command.node_random_array, lookup("ランダム配列生成").?);
-    try std.testing.expectEqual(Command.datetime_now, lookup("今").?);
-    try std.testing.expectEqual(Command.datetime_system_time_milliseconds, lookup("システム時間ミリ秒").?);
-    try std.testing.expectEqual(Command.datetime_today, lookup("今日").?);
-    try std.testing.expectEqual(Command.caniuse_browsers, lookup("対応ブラウザ一覧取得").?);
-    try std.testing.expectEqual(Command.datetime_weekday, lookup("曜日").?);
-    try std.testing.expectEqual(Command.datetime_weekday_number, lookup("曜日番号取得").?);
-    try std.testing.expectEqual(Command.datetime_unix_time, lookup("UNIXTIME変換").?);
-    try std.testing.expectEqual(Command.datetime_unix_time, lookup("UNIX時間変換").?);
-    try std.testing.expectEqual(Command.datetime_date_time, lookup("日時変換").?);
-    try std.testing.expectEqual(Command.url_encode, lookup("URLエンコード").?);
-    try std.testing.expectEqual(Command.url_decode, lookup("URLデコード").?);
-    try std.testing.expectEqual(Command.url_parameters, lookup("URLパラメータ解析").?);
-    try std.testing.expectEqual(Command.base64_encode, lookup("BASE64エンコード").?);
-    try std.testing.expectEqual(Command.base64_decode, lookup("BASE64デコード").?);
-    try std.testing.expectEqual(Command.node_os, lookup("OS取得").?);
-    try std.testing.expectEqual(Command.node_architecture, lookup("OSアーキテクチャ取得").?);
-    try std.testing.expectEqual(Command.node_environment_get, lookup("環境変数取得").?);
-    try std.testing.expectEqual(Command.node_environment_list, lookup("環境変数一覧取得").?);
-    try std.testing.expectEqual(Command.node_current_directory, lookup("カレントディレクトリ取得").?);
-    try std.testing.expectEqual(Command.node_current_directory, lookup("作業フォルダ取得").?);
-    try std.testing.expectEqual(Command.node_change_directory, lookup("カレントディレクトリ変更").?);
-    try std.testing.expectEqual(Command.node_change_directory, lookup("作業フォルダ変更").?);
-    try std.testing.expectEqual(Command.node_path_basename, lookup("ファイル名抽出").?);
-    try std.testing.expectEqual(Command.node_path_dirname, lookup("パス抽出").?);
-    try std.testing.expectEqual(Command.node_path_absolute, lookup("絶対パス変換").?);
-    try std.testing.expectEqual(Command.node_path_resolve, lookup("相対パス展開").?);
-    try std.testing.expectEqual(Command.datetime_format, lookup("日時書式変換").?);
-    try std.testing.expectEqual(Command.datetime_era, lookup("和暦変換").?);
-    try std.testing.expectEqual(Command.datetime_year_difference, lookup("年数差").?);
-    try std.testing.expectEqual(Command.datetime_month_difference, lookup("月数差").?);
-    try std.testing.expectEqual(Command.datetime_day_difference, lookup("日数差").?);
-    try std.testing.expectEqual(Command.datetime_hour_difference, lookup("時間差").?);
-    try std.testing.expectEqual(Command.datetime_minute_difference, lookup("分差").?);
-    try std.testing.expectEqual(Command.datetime_second_difference, lookup("秒差").?);
-    try std.testing.expectEqual(Command.datetime_difference, lookup("日時差").?);
-    try std.testing.expectEqual(Command.datetime_add_time, lookup("時間加算").?);
-    try std.testing.expectEqual(Command.datetime_add_date, lookup("日付加算").?);
-    try std.testing.expectEqual(Command.datetime_add_datetime, lookup("日時加算").?);
-    try std.testing.expectEqual(Command.datetime_monotonic_milliseconds, lookup("時間ミリ秒取得").?);
-    try std.testing.expectEqual(Command.path_extract_extension, lookup("拡張子抽出").?);
-    try std.testing.expectEqual(Command.path_change_extension, lookup("拡張子変更").?);
-    try std.testing.expectEqual(Command.path_add_trailing_separator, lookup("終端パス追加").?);
-    try std.testing.expectEqual(Command.path_remove_trailing_separator, lookup("終端パス除去").?);
-    try std.testing.expectEqual(Command.path_delete_trailing_separator, lookup("終端パス削除").?);
-    try std.testing.expectEqual(Command.kansuji_to_kanji, lookup("漢数字").?);
-    try std.testing.expectEqual(Command.kansuji_to_arabic, lookup("算用数字").?);
-    try std.testing.expectEqual(Command.csv_parse, lookup("CSV取得").?);
-    try std.testing.expectEqual(Command.tsv_parse, lookup("TSV取得").?);
-    try std.testing.expectEqual(Command.table_csv_stringify, lookup("表CSV変換").?);
-    try std.testing.expectEqual(Command.csv_stringify, lookup("CSV変換").?);
-    try std.testing.expectEqual(Command.table_tsv_stringify, lookup("表TSV変換").?);
-    try std.testing.expectEqual(Command.tsv_stringify, lookup("TSV変換").?);
-    try std.testing.expectEqual(Command.csv_options, lookup("CSVオプション設定").?);
-    try std.testing.expectEqual(Command.toml_parse, lookup("TOML取得").?);
-    try std.testing.expectEqual(Command.toml_stringify, lookup("TOML変換").?);
-    try std.testing.expectEqual(Command.markdown_to_html, lookup("マークダウンHTML変換").?);
-    try std.testing.expectEqual(Command.html_pretty, lookup("HTML整形").?);
-    try std.testing.expectEqual(Command.deep_equal, lookup("一致").?);
-    try std.testing.expectEqual(Command.deep_not_equal, lookup("不一致").?);
-    try std.testing.expectEqual(Command.courtesy_increment, lookup("ください").?);
-    try std.testing.expectEqual(Command.courtesy_increment, lookup("お願").?);
-    try std.testing.expectEqual(Command.courtesy_increment, lookup("です").?);
-    try std.testing.expectEqual(Command.courtesy_begin, lookup("拝啓").?);
-    try std.testing.expectEqual(Command.courtesy_end, lookup("敬具").?);
-    try std.testing.expectEqual(Command.courtesy_level, lookup("礼節レベル取得").?);
-    try std.testing.expectEqual(Command.stdio_continue_display, lookup("継続表示").?);
-    try std.testing.expectEqual(Command.stdio_continue_display_many, lookup("連続無改行表示").?);
-    try std.testing.expectEqual(Command.stdio_clear_log, lookup("表示ログクリア").?);
-    try std.testing.expectEqual(Command.stdio_write_all, lookup("言").?);
-    try std.testing.expectEqual(Command.stdio_write_all, lookup("コンソール表示").?);
-    try std.testing.expectEqual(Command.node_archive_extract, lookup("解凍").?);
-    try std.testing.expectEqual(Command.node_archive_extract_callback, lookup("解凍時").?);
-    try std.testing.expectEqual(Command.node_archive_create, lookup("圧縮").?);
-    try std.testing.expectEqual(Command.node_archive_create_callback, lookup("圧縮時").?);
-    try std.testing.expectEqual(Command.node_process_run_wait, lookup("起動待機").?);
-    try std.testing.expectEqual(Command.node_process_start, lookup("起動").?);
-    try std.testing.expectEqual(Command.node_process_run, lookup("コマンド実行").?);
-    try std.testing.expectEqual(Command.node_process_run_wait_output, lookup("コマンド実行待機").?);
-    try std.testing.expectEqual(Command.node_process_start_callback, lookup("起動時").?);
-    try std.testing.expectEqual(Command.node_open_external_browser, lookup("ブラウザ起動").?);
-    try std.testing.expectEqual(Command.node_open_external_explorer, lookup("エクスプローラー起動").?);
-    try std.testing.expectEqual(Command.node_file_process_callback, lookup("ファイル処理時").?);
-    try std.testing.expectEqual(Command.node_file_process_stop, lookup("ファイル処理強制停止").?);
-    try std.testing.expectEqual(Command.node_file_copy_callback, lookup("ファイルコピー時").?);
-    try std.testing.expectEqual(Command.node_file_move_callback, lookup("ファイル移動時").?);
-    try std.testing.expectEqual(Command.node_file_delete_callback, lookup("ファイル削除時").?);
-    try std.testing.expect(lookup("未対応命令") == null);
-}
-
-test "AOTトレース名は別名ではなくcanonical opcodeを使う" {
-    try std.testing.expectEqualStrings("to_string", canonicalOpcodeName(.to_string));
-    try std.testing.expectEqualStrings("array_cut", canonicalOpcodeName(.array_cut));
-    try std.testing.expectEqualStrings("regexp_match", canonicalOpcodeName(.regexp_match));
+test {
+    _ = @import("aot_builtin_test.zig");
 }

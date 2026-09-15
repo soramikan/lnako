@@ -95,6 +95,14 @@ pub const BigInt = struct {
         return self.managed.toInt(i64);
     }
 
+    pub fn toI128(self: BigInt) !i128 {
+        return self.managed.toInt(i128);
+    }
+
+    pub fn toU128(self: BigInt) !u128 {
+        return self.managed.toInt(u128);
+    }
+
     pub fn toString(self: BigInt, allocator: std.mem.Allocator, base: u8) ![]u8 {
         return self.managed.toString(allocator, base, .lower);
     }

@@ -1,0 +1,9 @@
+[package]
+name = "test"
+version = "1.0.0"
+license = "MIT"
+
+# `>x` は `<0.0.0-0`（空範囲）に展開されるため `*` とも共通バージョンを持たない。
+[dependencies.pkg]
+a = { version = ">x", public-id = "pkg:50000000000000000000000000000000" }
+b = { version = "*", public-id = "pkg:50000000000000000000000000000000" }

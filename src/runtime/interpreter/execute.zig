@@ -254,7 +254,7 @@ pub fn executeFunction(self: *Interpreter, function: *const ir.Function, argumen
                         }
                     }
                     self.runtime.clearFailureMessage();
-                    try self.setGlobal("エラーメッセージ", self.exception_value);
+                    try bindErrorMessage(self, self.exception_value);
                     self.exception_value = .undefined;
                     exceptional_target = handler;
                     break;
@@ -283,7 +283,7 @@ pub fn executeFunction(self: *Interpreter, function: *const ir.Function, argumen
                 const thrown = frame.values[throw_value.value];
                 self.exception_value = if (throw_value.coerce_to_error_message) try self.errorMessageValue(thrown) else thrown;
                 if (frame.handlers.pop() orelse throw_value.target) |handler| {
-                    try self.setGlobal("エラーメッセージ", self.exception_value);
+                    try bindErrorMessage(self, self.exception_value);
                     self.exception_value = .undefined;
                     predecessor = current_block;
                     current_block = handler;
@@ -293,6 +293,13 @@ pub fn executeFunction(self: *Interpreter, function: *const ir.Function, argumen
             .unreachable_terminator => return error.ReachedUnreachable,
         }
     }
+}
+
+fn bindErrorMessage(self: *Interpreter, value: Value) !void {
+    // 構造化エラーは辞書ごと束縛し、`エラーメッセージ["code"]` 等のフィールド
+    // 参照を可能にする。`エラーメッセージ` の文字列化は内部種別経由で
+    // `message` を返すため、ここでは message を取り出さない。
+    try self.setGlobal("エラーメッセージ", value);
 }
 
 pub fn errorMessageValue(self: *Interpreter, value: Value) !Value {
