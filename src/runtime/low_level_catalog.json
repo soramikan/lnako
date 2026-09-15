@@ -35,6 +35,7 @@
       "errors": [
         "ENOENT",
         "EACCES",
+        "EPERM",
         "EISDIR",
         "EINVAL",
         "EMFILE",
@@ -133,7 +134,8 @@
         "EBADF",
         "EINVAL",
         "ENOSPC",
-        "ENOTSUP"
+        "ENOTSUP",
+        "EPERM"
       ],
       "notes": "ftruncate相当。SIZEはu64",
       "implemented": true
@@ -309,12 +311,14 @@
       "errors": [
         "ENOENT",
         "EACCES",
+        "EPERM",
         "ENOTDIR",
         "ELOOP",
-        "EINVAL"
+        "EINVAL",
+        "ENOTSUP"
       ],
-      "notes": "stat。symlinkは追跡する。整数はナノ秒BigIntで返す",
-      "implemented": false
+      "notes": "stat。symlinkは追跡する。sizeはsize型、時刻はナノ秒BigIntまたはnull、その他の整数はnumber",
+      "implemented": true
     },
     {
       "id": "ll-file-lstat",
@@ -329,12 +333,14 @@
       "errors": [
         "ENOENT",
         "EACCES",
+        "EPERM",
         "ENOTDIR",
         "ELOOP",
-        "EINVAL"
+        "EINVAL",
+        "ENOTSUP"
       ],
       "notes": "lstat。symlink自身の情報",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-symlink-create",
@@ -352,10 +358,11 @@
         "EACCES",
         "ENOTDIR",
         "EPERM",
-        "ENOTSUP"
+        "ENOTSUP",
+        "EINVAL"
       ],
-      "notes": "Windowsはfile/directory/junction差を命令仕様で吸収。junction作成はtarget種別の自動判定",
-      "implemented": false
+      "notes": "Windowsはfile/directory symlink差をtarget種別で自動判定して吸収する。directory symlinkにはsymlink権限が必要（無い場合はEACCES/EPERMのいずれか）",
+      "implemented": true
     },
     {
       "id": "ll-symlink-read",
@@ -371,11 +378,12 @@
         "EINVAL",
         "ENOENT",
         "EACCES",
+        "EPERM",
         "ELOOP",
         "ENOTSUP"
       ],
       "notes": "readlink。対象がsymlinkでない場合はEINVAL",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-hardlink-create",
@@ -392,10 +400,11 @@
         "ENOENT",
         "EXDEV",
         "EPERM",
-        "ENOTSUP"
+        "ENOTSUP",
+        "EINVAL"
       ],
       "notes": "link",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-path-realpath",
@@ -410,11 +419,14 @@
       "errors": [
         "ENOENT",
         "EACCES",
+        "EPERM",
         "ELOOP",
-        "ENOTDIR"
+        "ENOTDIR",
+        "EINVAL",
+        "ENOTSUP"
       ],
       "notes": "realpath。絶対パスを返す",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-path-rename",
@@ -430,14 +442,16 @@
         "ENOENT",
         "EEXIST",
         "EACCES",
+        "EPERM",
         "EXDEV",
         "ENOTEMPTY",
         "EISDIR",
         "ENOTDIR",
-        "ENOTSUP"
+        "ENOTSUP",
+        "EINVAL"
       ],
       "notes": "EXDEVを呼び出し側が識別できる",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-path-unlink",
@@ -455,10 +469,11 @@
         "EPERM",
         "EISDIR",
         "ENOTDIR",
-        "ENOTSUP"
+        "ENOTSUP",
+        "EINVAL"
       ],
       "notes": "unlink。ファイル・symlinkを対象にし、ディレクトリはEISDIR",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-path-rmdir",
@@ -476,10 +491,11 @@
         "EACCES",
         "ENOTEMPTY",
         "EPERM",
-        "ENOTSUP"
+        "ENOTSUP",
+        "EINVAL"
       ],
       "notes": "空でない場合はENOTEMPTY",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-file-truncate-path",
@@ -494,6 +510,7 @@
       "errors": [
         "ENOENT",
         "EACCES",
+        "EPERM",
         "EISDIR",
         "ENOSPC",
         "EINVAL",
@@ -623,6 +640,7 @@
         "ENOENT",
         "ENOTDIR",
         "EACCES",
+        "EPERM",
         "EMFILE",
         "ENFILE",
         "ENOTSUP"
@@ -678,6 +696,7 @@
         "ENOENT",
         "ENOTDIR",
         "EACCES",
+        "EPERM",
         "ENOTSUP"
       ],
       "notes": "糖衣。正本はhandle型",
@@ -1026,6 +1045,7 @@
       "errors": [
         "ENOENT",
         "EACCES",
+        "EPERM",
         "ENOTDIR",
         "EINVAL",
         "ENOTSUP"
@@ -1047,6 +1067,7 @@
         "ENOENT",
         "EEXIST",
         "EACCES",
+        "EPERM",
         "EXDEV",
         "ENOTSUP"
       ],
@@ -1194,13 +1215,13 @@
       "id": "stat",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": true,
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1220,13 +1241,13 @@
       "id": "lstat",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": true,
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1246,13 +1267,13 @@
       "id": "symlink",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": true,
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1272,13 +1293,13 @@
       "id": "readlink",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": true,
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1298,13 +1319,13 @@
       "id": "realpath",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": true,
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1324,13 +1345,13 @@
       "id": "rename",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": true,
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1350,13 +1371,13 @@
       "id": "unlink",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": true,
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1376,13 +1397,13 @@
       "id": "rmdir",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": true,
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1584,13 +1605,13 @@
       "id": "hardlink",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": true,
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -2007,7 +2028,7 @@
     "pid": "プロセスID。u32",
     "signal": "POSIX信号番号。u32",
     "stream": "標準入力/標準出力/標準エラー出力の識別子。string",
-    "stat": "ファイル詳細情報の辞書。整数はナノ秒BigInt",
+    "stat": "ファイル詳細情報の辞書。sizeはsize型、時刻はナノ秒BigIntまたはnull、その他の整数はnumber",
     "dirEntry": "ディレクトリentryの辞書。nameとtype",
     "waitResult": "プロセス終了の辞書。exitCodeとsignal",
     "ttySize": "端末サイズの辞書。rowsとcolumns",
@@ -2507,7 +2528,7 @@
         "ctimeNs": "timestamp",
         "birthtimeNs": "timestamp"
       },
-      "note": "取得できない時刻はnull。時刻はナノ秒BigInt"
+      "note": "取得できない時刻はnull。時刻はナノ秒BigInt。modeはpermission bits（S_IFMTを含まない）。size以外の整数はnumber（binary64のため2^53超は精度が落ち得る）。"
     },
     "dirEntry": {
       "fields": {

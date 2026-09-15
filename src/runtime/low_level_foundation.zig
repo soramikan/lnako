@@ -330,7 +330,19 @@ pub const Capability = enum {
 /// 含めない。
 pub fn capabilityImplemented(capability: Capability) bool {
     return switch (capability) {
-        .stream_file_io, .truncate, .incremental_hash => true,
+        .stream_file_io,
+        .truncate,
+        .incremental_hash,
+        .stat,
+        .lstat,
+        .symlink,
+        .readlink,
+        .hardlink,
+        .realpath,
+        .rename,
+        .unlink,
+        .rmdir,
+        => true,
         else => false,
     };
 }
@@ -418,6 +430,20 @@ pub const hash_commands = struct {
     pub const discard = "ハッシュ破棄";
 };
 
+/// Issue #29のパス操作命令名。カタログ・Interpreter dispatch・AOTが同じ
+/// 正本を参照し、名前のドリフトで静かにENOTSUP化しないようにする。
+pub const filesystem_commands = struct {
+    pub const stat = "ファイル詳細情報取得";
+    pub const lstat = "シンボリックリンク情報取得";
+    pub const symlink = "シンボリックリンク作成";
+    pub const readlink = "シンボリックリンク先取得";
+    pub const hardlink = "ハードリンク作成";
+    pub const realpath = "実体パス取得";
+    pub const rename = "パス名変更";
+    pub const unlink = "ファイルリンク削除";
+    pub const rmdir = "空フォルダ削除";
+};
+
 /// 標準cnako 527件の外にある低レイヤー命令名。`builtin_catalog.names` は
 /// 公式527件と同期して生成されるため変更せず、解析器のbuiltin解決だけに
 /// 追加する。`低レイヤー機能対応判定` / `低レイヤー機能一覧取得` も含む。
@@ -462,15 +488,15 @@ pub const catalog_commands = [_]CatalogCommand{
     .{ .id = "ll-stderr-write", .name = "標準エラー出力バイト書", .user_name = "標準エラー出力バイト書く", .min = 1, .max = 1, .operation = "write", .capability = .raw_stdio },
     .{ .id = "ll-stdout-sync", .name = "標準出力同期", .min = 0, .max = 0, .operation = "fsync", .capability = .raw_stdio },
     .{ .id = "ll-stderr-sync", .name = "標準エラー出力同期", .min = 0, .max = 0, .operation = "fsync", .capability = .raw_stdio },
-    .{ .id = "ll-file-stat", .name = "ファイル詳細情報取得", .min = 1, .max = 1, .operation = "stat", .capability = .stat },
-    .{ .id = "ll-file-lstat", .name = "シンボリックリンク情報取得", .min = 1, .max = 1, .operation = "lstat", .capability = .lstat },
-    .{ .id = "ll-symlink-create", .name = "シンボリックリンク作成", .min = 2, .max = 2, .operation = "symlink", .capability = .symlink },
-    .{ .id = "ll-symlink-read", .name = "シンボリックリンク先取得", .min = 1, .max = 1, .operation = "readlink", .capability = .readlink },
-    .{ .id = "ll-hardlink-create", .name = "ハードリンク作成", .min = 2, .max = 2, .operation = "link", .capability = .hardlink },
-    .{ .id = "ll-path-realpath", .name = "実体パス取得", .min = 1, .max = 1, .operation = "realpath", .capability = .realpath },
-    .{ .id = "ll-path-rename", .name = "パス名変更", .min = 2, .max = 2, .operation = "rename", .capability = .rename },
-    .{ .id = "ll-path-unlink", .name = "ファイルリンク削除", .min = 1, .max = 1, .operation = "unlink", .capability = .unlink },
-    .{ .id = "ll-path-rmdir", .name = "空フォルダ削除", .min = 1, .max = 1, .operation = "rmdir", .capability = .rmdir },
+    .{ .id = "ll-file-stat", .name = filesystem_commands.stat, .min = 1, .max = 1, .operation = filesystem_operations.stat, .capability = .stat, .implemented = true },
+    .{ .id = "ll-file-lstat", .name = filesystem_commands.lstat, .min = 1, .max = 1, .operation = filesystem_operations.lstat, .capability = .lstat, .implemented = true },
+    .{ .id = "ll-symlink-create", .name = filesystem_commands.symlink, .min = 2, .max = 2, .operation = filesystem_operations.symlink, .capability = .symlink, .implemented = true },
+    .{ .id = "ll-symlink-read", .name = filesystem_commands.readlink, .min = 1, .max = 1, .operation = filesystem_operations.readlink, .capability = .readlink, .implemented = true },
+    .{ .id = "ll-hardlink-create", .name = filesystem_commands.hardlink, .min = 2, .max = 2, .operation = filesystem_operations.hardlink, .capability = .hardlink, .implemented = true },
+    .{ .id = "ll-path-realpath", .name = filesystem_commands.realpath, .min = 1, .max = 1, .operation = filesystem_operations.realpath, .capability = .realpath, .implemented = true },
+    .{ .id = "ll-path-rename", .name = filesystem_commands.rename, .min = 2, .max = 2, .operation = filesystem_operations.rename, .capability = .rename, .implemented = true },
+    .{ .id = "ll-path-unlink", .name = filesystem_commands.unlink, .min = 1, .max = 1, .operation = filesystem_operations.unlink, .capability = .unlink, .implemented = true },
+    .{ .id = "ll-path-rmdir", .name = filesystem_commands.rmdir, .min = 1, .max = 1, .operation = filesystem_operations.rmdir, .capability = .rmdir, .implemented = true },
     .{ .id = "ll-file-truncate-path", .name = "ファイルサイズ変更", .min = 2, .max = 2, .operation = "truncate", .capability = .truncate },
     .{ .id = "ll-file-utime-path", .name = "ファイル時刻設定", .min = 3, .max = 3, .operation = "utime", .capability = .utime },
     .{ .id = "ll-file-utime-handle", .name = "ファイル時刻設定済", .min = 3, .max = 3, .operation = "futime", .capability = .utime },
@@ -555,6 +581,59 @@ pub const stream_operations = struct {
 /// Issue #32のincremental hash命令が失敗したときに返す構造化エラーの操作名
 /// （ASCII）。カタログの `operation` は4命令とも共通で `hash` である。
 pub const hash_operation = "hash";
+
+/// Issue #29のパス操作が失敗したときに返す構造化エラーの操作名（ASCII）。
+/// NodeのSystemError `syscall` / POSIX syscall名と揃える。
+pub const filesystem_operations = struct {
+    pub const stat = "stat";
+    pub const lstat = "lstat";
+    pub const symlink = "symlink";
+    pub const readlink = "readlink";
+    pub const hardlink = "link";
+    pub const realpath = "realpath";
+    pub const rename = "rename";
+    pub const unlink = "unlink";
+    pub const rmdir = "rmdir";
+};
+
+/// `stat`辞書のフィールド名。カタログ `typeSchemas.stat` と一致させる。
+pub const stat_field_keys = struct {
+    pub const kind = "kind";
+    pub const size = "size";
+    pub const mode = "mode";
+    pub const uid = "uid";
+    pub const gid = "gid";
+    pub const dev = "dev";
+    pub const rdev = "rdev";
+    pub const inode = "inode";
+    pub const nlink = "nlink";
+    pub const block_size = "blockSize";
+    pub const blocks = "blocks";
+    pub const atime_ns = "atimeNs";
+    pub const mtime_ns = "mtimeNs";
+    pub const ctime_ns = "ctimeNs";
+    pub const birthtime_ns = "birthtimeNs";
+};
+
+/// `stat_field_keys` の全15フィールドを列挙したもの。辞書構築の網羅テストが
+/// 参照する。カタログ `typeSchemas.stat` と同じ順序。
+pub const stat_field_key_list = [_][]const u8{
+    stat_field_keys.kind,
+    stat_field_keys.size,
+    stat_field_keys.mode,
+    stat_field_keys.uid,
+    stat_field_keys.gid,
+    stat_field_keys.dev,
+    stat_field_keys.rdev,
+    stat_field_keys.inode,
+    stat_field_keys.nlink,
+    stat_field_keys.block_size,
+    stat_field_keys.blocks,
+    stat_field_keys.atime_ns,
+    stat_field_keys.mtime_ns,
+    stat_field_keys.ctime_ns,
+    stat_field_keys.birthtime_ns,
+};
 
 /// 開くときのアクセス様式。`ファイル開く` のmode引数から決まる。
 /// 位置（read/write/append）と生成・切詰の有無だけを固定し、
@@ -679,18 +758,31 @@ pub fn openModeFromNodeFlags(text: []const u8) InvalidModeError!OpenMode {
 pub fn portableCodeForFailure(failure: anyerror) ?PortableErrorCode {
     return switch (failure) {
         error.FileNotFound, error.NotFound => .ENOENT,
-        error.AccessDenied, error.PermissionDenied => .EACCES,
+        // G0の `structured_error.portableCodeFromFailure` と揃える:
+        // EACCES（アクセス拒否）とEPERM（操作不許可）を区別する。
+        error.AccessDenied => .EACCES,
+        error.PermissionDenied => .EPERM,
         error.SymLinkLoop => .ELOOP,
         error.IsDir => .EISDIR,
         error.NotDir => .ENOTDIR,
         error.PathAlreadyExists, error.AlreadyExists => .EEXIST,
+        error.DirNotEmpty => .ENOTEMPTY,
+        error.CrossDevice => .EXDEV,
+        // readlinkの対象がsymlinkでない場合はEINVAL（Node fs.readlinkと同じ）。
+        // 不正なパス表現（WTF-8として不正等）もEINVALへ揃える。
+        error.NotLink, error.BadPathName, error.InvalidWtf8, error.InvalidArgument => .EINVAL,
         error.ReadOnlyFileSystem => .EROFS,
         error.NoSpaceLeft, error.DiskQuota, error.FileTooBig => .ENOSPC,
         error.ProcessFdQuotaExceeded => .EMFILE,
         error.SystemFdQuotaExceeded => .ENFILE,
         error.NotOpenForReading, error.NotOpenForWriting, error.BadFileDescriptor => .EBADF,
         error.BrokenPipe => .EPIPE,
-        error.LowLevelIoUnavailable => .ENOTSUP,
+        // hardlink/renameの非対応FSとWindowsの未対応reparse pointはENOTSUP。
+        // 本関数はG0正本 `structured_error.portableCodeFromFailure` の上位集合で、
+        // 低レイヤー固有のエラー名（LowLevelIoUnavailable等）もここで畳む。
+        error.LowLevelIoUnavailable, error.OperationUnsupported, error.UnsupportedReparsePointType, error.Unsupported, error.NotSupported => .ENOTSUP,
+        // リンク数上限（EMLINK相当）はportable 17種に無いためEPERMへ丸める。
+        error.LinkQuotaExceeded => .EPERM,
         else => null,
     };
 }
@@ -921,7 +1013,7 @@ test "Nodeの文字列flagsはOpenModeへ写り、不正modeはInvalidModeにな
 test "portableCodeForFailureはI/O失敗をportable codeへ写す" {
     try std.testing.expectEqual(PortableErrorCode.ENOENT, portableCodeForFailure(error.FileNotFound).?);
     try std.testing.expectEqual(PortableErrorCode.EACCES, portableCodeForFailure(error.AccessDenied).?);
-    try std.testing.expectEqual(PortableErrorCode.EACCES, portableCodeForFailure(error.PermissionDenied).?);
+    try std.testing.expectEqual(PortableErrorCode.EPERM, portableCodeForFailure(error.PermissionDenied).?);
     try std.testing.expectEqual(PortableErrorCode.EISDIR, portableCodeForFailure(error.IsDir).?);
     try std.testing.expectEqual(PortableErrorCode.ENOTDIR, portableCodeForFailure(error.NotDir).?);
     try std.testing.expectEqual(PortableErrorCode.EEXIST, portableCodeForFailure(error.PathAlreadyExists).?);
@@ -933,5 +1025,54 @@ test "portableCodeForFailureはI/O失敗をportable codeへ写す" {
     try std.testing.expectEqual(PortableErrorCode.EBADF, portableCodeForFailure(error.NotOpenForReading).?);
     try std.testing.expectEqual(PortableErrorCode.EBADF, portableCodeForFailure(error.NotOpenForWriting).?);
     try std.testing.expectEqual(PortableErrorCode.EPIPE, portableCodeForFailure(error.BrokenPipe).?);
+    try std.testing.expectEqual(PortableErrorCode.ENOTEMPTY, portableCodeForFailure(error.DirNotEmpty).?);
+    try std.testing.expectEqual(PortableErrorCode.EXDEV, portableCodeForFailure(error.CrossDevice).?);
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, portableCodeForFailure(error.NotLink).?);
+    try std.testing.expectEqual(PortableErrorCode.ENOTSUP, portableCodeForFailure(error.OperationUnsupported).?);
+    try std.testing.expectEqual(PortableErrorCode.ENOTSUP, portableCodeForFailure(error.UnsupportedReparsePointType).?);
+    try std.testing.expectEqual(PortableErrorCode.EPERM, portableCodeForFailure(error.LinkQuotaExceeded).?);
     try std.testing.expect(portableCodeForFailure(error.OutOfMemory) == null);
+}
+
+test "Issue 29の9命令は実装済みでcapabilityが有効になる" {
+    const expected_ids = [_][]const u8{
+        "ll-file-stat",
+        "ll-file-lstat",
+        "ll-symlink-create",
+        "ll-symlink-read",
+        "ll-hardlink-create",
+        "ll-path-realpath",
+        "ll-path-rename",
+        "ll-path-unlink",
+        "ll-path-rmdir",
+    };
+    const expected_capabilities = [_]Capability{
+        .stat, .lstat, .symlink, .readlink, .hardlink, .realpath, .rename, .unlink, .rmdir,
+    };
+    const expected_operations = [_][]const u8{
+        filesystem_operations.stat,
+        filesystem_operations.lstat,
+        filesystem_operations.symlink,
+        filesystem_operations.readlink,
+        filesystem_operations.hardlink,
+        filesystem_operations.realpath,
+        filesystem_operations.rename,
+        filesystem_operations.unlink,
+        filesystem_operations.rmdir,
+    };
+    for (expected_ids, 0..) |id, index| {
+        var found = false;
+        for (catalog_commands) |command| {
+            if (!std.mem.eql(u8, command.id, id)) continue;
+            found = true;
+            try std.testing.expect(command.implemented);
+            try std.testing.expectEqual(expected_capabilities[index], command.capability.?);
+            try std.testing.expectEqualStrings(expected_operations[index], command.operation);
+        }
+        try std.testing.expect(found);
+        try std.testing.expect(capabilityImplemented(expected_capabilities[index]));
+    }
+    try std.testing.expectEqualStrings("blockSize", stat_field_keys.block_size);
+    try std.testing.expectEqualStrings("birthtimeNs", stat_field_keys.birthtime_ns);
+    try std.testing.expectEqualStrings("kind", stat_field_keys.kind);
 }

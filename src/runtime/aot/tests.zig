@@ -7,6 +7,7 @@ const shared = @import("shared.zig");
 const state = @import("state.zig");
 const control_flow = @import("control_flow.zig");
 const debug = @import("debug.zig");
+const foundation = @import("../low_level_foundation.zig");
 
 pub const lnako_aot_node_mother_path_init = debug.lnako_aot_node_mother_path_init;
 pub const lnako_aot_push_roots = debug.lnako_aot_push_roots;
@@ -7069,6 +7070,42 @@ pub fn createJsonTestString(runtime: *Runtime, text: []const u8) !Value {
     return runtime.createString(units);
 }
 
+/// 低レイヤー命令をdispatch経由で呼び、構造化エラーのportable codeを検査する。
+/// `arguments` の各値は呼び出し側がrootしておくこと。
+fn expectLowLevelCode(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value, expected_code: []const u8) !void {
+    var out: Value = .{};
+    lnako_aot_builtin_call(&out, if (arguments.len > 0) arguments.ptr else null, arguments.len, @intFromEnum(command));
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    var taken: Value = .{};
+    lnako_aot_exception_take(&taken);
+    try std.testing.expectEqual(@intFromEnum(Tag.dictionary), taken.tag);
+    try std.testing.expect(taken.object().?.structured_error);
+    try expectUtf16String(runtime, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), expected_code);
+}
+
+/// 2引数低レイヤー命令の構造化エラーが `path`=第1引数、`path2`=第2引数を
+/// 持つことを検査する（Node SystemErrorの `path`/`dest` と同じ向き）。
+fn expectLowLevelPathPair(
+    runtime: *Runtime,
+    command: aot_builtin.Command,
+    arguments: []const Value,
+    expected_code: []const u8,
+    expected_operation: []const u8,
+    expected_path: []const u8,
+    expected_path2: []const u8,
+) !void {
+    var out: Value = .{};
+    lnako_aot_builtin_call(&out, if (arguments.len > 0) arguments.ptr else null, arguments.len, @intFromEnum(command));
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    var taken: Value = .{};
+    lnako_aot_exception_take(&taken);
+    try std.testing.expect(taken.object().?.structured_error);
+    try expectUtf16String(runtime, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), expected_code);
+    try expectUtf16String(runtime, dictionaryProperty(taken, &.{ 'o', 'p', 'e', 'r', 'a', 't', 'i', 'o', 'n' }), expected_operation);
+    try expectUtf16String(runtime, dictionaryProperty(taken, &.{ 'p', 'a', 't', 'h' }), expected_path);
+    try expectUtf16String(runtime, dictionaryProperty(taken, &.{ 'p', 'a', 't', 'h', '2' }), expected_path2);
+}
+
 pub fn jsonTestDictionaryGet(value: Value, key: []const u16) Value {
     return dictionaryProperty(value, key);
 }
@@ -7586,6 +7623,178 @@ test "AOT低レイヤーの実装済み命令はmin未満でEINVALを返す" {
     try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "EINVAL");
 }
 
+test "AOT低レイヤーのstatとlstatは種別とメタデータを返す" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "plain.txt", .data = "hello" });
+    const path = try std.fs.path.join(std.testing.allocator, &.{ directory, "plain.txt" });
+    defer std.testing.allocator.free(path);
+
+    var roots = [_]Value{.{}};
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+    roots[0] = try runtimeUtf8String(active, path);
+
+    const stat_value = try state.lowLevelFileBuiltin(active, .low_level_file_stat, &.{roots[0]});
+    try expectUtf16String(active, dictionaryProperty(stat_value, &.{ 'k', 'i', 'n', 'd' }), "file");
+    try std.testing.expectEqual(@as(f64, 5), valueToNumber(dictionaryProperty(stat_value, &.{ 's', 'i', 'z', 'e' })));
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(dictionaryProperty(stat_value, &.{ 'n', 'l', 'i', 'n', 'k' })));
+    try std.testing.expectEqual(@intFromEnum(Tag.bigint), dictionaryProperty(stat_value, &.{ 'm', 't', 'i', 'm', 'e', 'N', 's' }).tag);
+    try std.testing.expect(valueToNumber(dictionaryProperty(stat_value, &.{ 'm', 'o', 'd', 'e' })) > 0);
+    // カタログ typeSchemas.stat の全15フィールドが辞書に存在する。
+    inline for (foundation.stat_field_key_list) |field_name| {
+        const key = try std.unicode.utf8ToUtf16LeAlloc(active.allocator, field_name);
+        defer active.allocator.free(key);
+        try std.testing.expect(dictionaryProperty(stat_value, key).tag != @intFromEnum(Tag.undefined));
+    }
+
+    const lstat_value = try state.lowLevelFileBuiltin(active, .low_level_file_lstat, &.{roots[0]});
+    try expectUtf16String(active, dictionaryProperty(lstat_value, &.{ 'k', 'i', 'n', 'd' }), "file");
+
+    try expectLowLevelCode(active, .low_level_file_stat, &.{numberValue(1)}, "EINVAL");
+    try expectLowLevelCode(active, .low_level_file_stat, &.{}, "EINVAL");
+}
+
+test "AOT低レイヤーのsymlink/readlink/realpath/hardlink/unlinkを実行できる" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "target.txt", .data = "abc" });
+    const target_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "target.txt" });
+    defer std.testing.allocator.free(target_path);
+    const link_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "link.txt" });
+    defer std.testing.allocator.free(link_path);
+    const hard_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "hard.txt" });
+    defer std.testing.allocator.free(hard_path);
+
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+    roots[0] = try runtimeUtf8String(active, target_path);
+    roots[1] = try runtimeUtf8String(active, link_path);
+    roots[2] = try runtimeUtf8String(active, hard_path);
+
+    _ = try state.lowLevelFileBuiltin(active, .low_level_symlink_create, &.{ roots[0], roots[1] });
+    const link_stat = try state.lowLevelFileBuiltin(active, .low_level_file_lstat, &.{roots[1]});
+    try expectUtf16String(active, dictionaryProperty(link_stat, &.{ 'k', 'i', 'n', 'd' }), "symlink");
+    const followed = try state.lowLevelFileBuiltin(active, .low_level_file_stat, &.{roots[1]});
+    try expectUtf16String(active, dictionaryProperty(followed, &.{ 'k', 'i', 'n', 'd' }), "file");
+    try std.testing.expectEqual(@as(f64, 3), valueToNumber(dictionaryProperty(followed, &.{ 's', 'i', 'z', 'e' })));
+
+    const destination = try state.lowLevelFileBuiltin(active, .low_level_symlink_read, &.{roots[1]});
+    try expectUtf16String(active, destination, target_path);
+    const resolved = try state.lowLevelFileBuiltin(active, .low_level_path_realpath, &.{roots[1]});
+    try expectUtf16String(active, resolved, target_path);
+
+    _ = try state.lowLevelFileBuiltin(active, .low_level_hardlink_create, &.{ roots[0], roots[2] });
+    const hard_stat = try state.lowLevelFileBuiltin(active, .low_level_file_stat, &.{roots[2]});
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(dictionaryProperty(hard_stat, &.{ 'n', 'l', 'i', 'n', 'k' })));
+    try std.testing.expectEqual(
+        valueToNumber(dictionaryProperty(hard_stat, &.{ 'i', 'n', 'o', 'd', 'e' })),
+        valueToNumber(dictionaryProperty(try state.lowLevelFileBuiltin(active, .low_level_file_stat, &.{roots[0]}), &.{ 'i', 'n', 'o', 'd', 'e' })),
+    );
+
+    // 既存リンクへの再作成はEEXIST。path=第1引数(target)、path2=第2引数(link)。
+    try expectLowLevelPathPair(active, .low_level_symlink_create, &.{ roots[0], roots[1] }, "EEXIST", "symlink", target_path, link_path);
+    try expectLowLevelPathPair(active, .low_level_hardlink_create, &.{ roots[0], roots[2] }, "EEXIST", "link", target_path, hard_path);
+
+    _ = try state.lowLevelFileBuiltin(active, .low_level_path_unlink, &.{roots[2]});
+    _ = try state.lowLevelFileBuiltin(active, .low_level_path_unlink, &.{roots[1]});
+    _ = try state.lowLevelFileBuiltin(active, .low_level_file_stat, &.{roots[0]});
+}
+
+test "AOT低レイヤーのrename/unlink/rmdirはエラーコードを写す" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "from.txt", .data = "one" });
+    try temporary.dir.createDir(std.testing.io, "empty", .default_dir);
+    try temporary.dir.createDir(std.testing.io, "full", .default_dir);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "full/child.txt", .data = "" });
+    const from_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "from.txt" });
+    defer std.testing.allocator.free(from_path);
+    const to_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "to.txt" });
+    defer std.testing.allocator.free(to_path);
+    const empty_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "empty" });
+    defer std.testing.allocator.free(empty_path);
+    const full_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "full" });
+    defer std.testing.allocator.free(full_path);
+    const missing_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "missing.txt" });
+    defer std.testing.allocator.free(missing_path);
+
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+    roots[0] = try runtimeUtf8String(active, from_path);
+    roots[1] = try runtimeUtf8String(active, to_path);
+    roots[2] = try runtimeUtf8String(active, empty_path);
+    roots[3] = try runtimeUtf8String(active, full_path);
+    roots[4] = try runtimeUtf8String(active, missing_path);
+
+    // renameは同一FSで上書きできる。
+    _ = try state.lowLevelFileBuiltin(active, .low_level_path_rename, &.{ roots[0], roots[1] });
+    try expectLowLevelCode(active, .low_level_path_rename, &.{ roots[0], roots[1] }, "ENOENT");
+
+    // 2引数命令の構造化エラーはpath/path2に元パスと宛先を分けて入れる。
+    {
+        var out: Value = .{};
+        lnako_aot_builtin_call(&out, @ptrCast(&roots[0]), 2, @intFromEnum(aot_builtin.Command.low_level_path_rename));
+        try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+        var taken: Value = .{};
+        lnako_aot_exception_take(&taken);
+        try std.testing.expect(taken.object().?.structured_error);
+        try expectUtf16String(active, dictionaryProperty(taken, &.{ 'o', 'p', 'e', 'r', 'a', 't', 'i', 'o', 'n' }), "rename");
+        try expectUtf16String(active, dictionaryProperty(taken, &.{ 'p', 'a', 't', 'h' }), from_path);
+        try expectUtf16String(active, dictionaryProperty(taken, &.{ 'p', 'a', 't', 'h', '2' }), to_path);
+    }
+
+    // unlinkはディレクトリをEISDIR、rmdirは非空をENOTEMPTYで拒否する。
+    try expectLowLevelCode(active, .low_level_path_unlink, &.{roots[2]}, "EISDIR");
+    try expectLowLevelCode(active, .low_level_path_rmdir, &.{roots[3]}, "ENOTEMPTY");
+    try expectLowLevelCode(active, .low_level_path_unlink, &.{roots[4]}, "ENOENT");
+    _ = try state.lowLevelFileBuiltin(active, .low_level_path_rmdir, &.{roots[2]});
+
+    if (builtin.os.tag != .windows) {
+        // readlinkは非symlinkをEINVALで拒否する。
+        try expectLowLevelCode(active, .low_level_symlink_read, &.{roots[1]}, "EINVAL");
+    }
+}
+
 test "AOT低レイヤーの実装済みフラグの命令はstubへ到達しない" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -7635,7 +7844,7 @@ test "AOT低レイヤーの未実装命令は全てstub経由でENOTSUPを返す
     defer lnako_aot_pop_roots(&frame);
 
     // 未実装命令が誤って別case群へ列挙されるとENOTSUPにならない。
-    // dispatch経由で全49件が構造化ENOTSUPを返すことを網羅確認する。
+    // dispatch経由で残りの未実装命令が構造化ENOTSUPを返すことを網羅確認する。
     var stub_count: usize = 0;
     var taken: Value = .{};
     for (aot_builtin.low_level_bindings) |binding| {
@@ -7651,7 +7860,7 @@ test "AOT低レイヤーの未実装命令は全てstub経由でENOTSUPを返す
         try std.testing.expect(taken.object().?.structured_error);
         try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "ENOTSUP");
     }
-    try std.testing.expectEqual(@as(usize, 49), stub_count);
+    try std.testing.expectEqual(@as(usize, 40), stub_count);
 }
 
 test "AOT未捕捉例外のmessage抽出は構造化エラーだけに限る" {
