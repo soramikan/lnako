@@ -7460,6 +7460,36 @@ test "AOT低レイヤーの未実装命令はcapability/operation付きの構造
     try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "ENOTSUP");
 }
 
+test "AOT低レイヤーの実装済み命令はmin未満でEINVALを返す" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, numberValue(1) };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    // 実装済み命令の引数不足はEBADF等ではなく引数数エラーのEINVAL。
+    // dispatch経由で呼び、isLowLevelCommandによるlen==0早期拒否の免除・
+    // switchルーティングを通ってbuiltinのminゲートへ到達する経路を検証する。
+    var taken: Value = .{};
+    lnako_aot_builtin_call(&roots[0], null, 0, @intFromEnum(aot_builtin.Command.low_level_file_close));
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    lnako_aot_exception_take(&taken);
+    try std.testing.expect(taken.object().?.structured_error);
+    try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "EINVAL");
+
+    lnako_aot_builtin_call(&roots[0], null, 0, @intFromEnum(aot_builtin.Command.low_level_capability_supported));
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    lnako_aot_exception_take(&taken);
+    try std.testing.expect(taken.object().?.structured_error);
+    try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "EINVAL");
+}
+
 test "AOT低レイヤーの実装済みフラグの命令はstubへ到達しない" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();

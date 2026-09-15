@@ -114,8 +114,14 @@ pub fn call(
     name: []const u8,
     arguments: []const Value,
 ) !?Value {
-    if (foundation.commandArity(name)) |spec| {
+    if (foundation.catalogCommandFor(name)) |spec| {
         if (arguments.len > spec.max) {
+            return throwStructured(runtime, effects, .EINVAL, spec.operation, null, null, "引数の数が不正です");
+        }
+        // 実装済み命令の引数不足は引数数エラー。未実装命令はENOTSUPが
+        // 「未実装」の通知を兼ねるためmin未満もENOTSUPへ統一する
+        // （`aot/low_level.zig` の lowLevelUnsupportedBuiltin と同じ方針）。
+        if (spec.implemented and arguments.len < spec.min) {
             return throwStructured(runtime, effects, .EINVAL, spec.operation, null, null, "引数の数が不正です");
         }
     }
@@ -597,6 +603,40 @@ test "未実装命令はdispatch名と利用者名の両形で構造化ENOTSUP�
         }
     }
     try std.testing.expectEqual(@as(usize, 53), covered);
+}
+
+test "実装済み命令の引数不足はEINVALで未知capability照会はfalse" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, emptyContext(), effects, foundation.capability_supported_command, &.{}));
+    try std.testing.expect(thrown == .dictionary);
+    try roots.protect(&thrown);
+    const code = shared.dictionaryGetAscii(thrown.dictionary, foundation.error_object_keys.code) orelse return error.TestExpectedEqual;
+    const text = try shared.valueUtf8(&runtime, code);
+    defer runtime.allocator().free(text);
+    try std.testing.expectEqualStrings("EINVAL", text);
+
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, emptyContext(), effects, "ファイル閉", &.{}));
+    try std.testing.expect(thrown == .dictionary);
+    try roots.protect(&thrown);
+    const close_code = shared.dictionaryGetAscii(thrown.dictionary, foundation.error_object_keys.code) orelse return error.TestExpectedEqual;
+    const close_text = try shared.valueUtf8(&runtime, close_code);
+    defer runtime.allocator().free(close_text);
+    try std.testing.expectEqualStrings("EINVAL", close_text);
+
+    // 未知capability名の照会は引数数エラーではなくfalseを返す。
+    var name = try runtime.stringUtf8("unknown_capability");
+    try roots.protect(&name);
+    const supported = (try call(&runtime, &state, emptyContext(), effects, foundation.capability_supported_command, &.{name})) orelse return error.TestExpectedEqual;
+    try std.testing.expect(supported == .boolean and !supported.boolean);
 }
 
 test "余分な引数はEINVALで、openだけのホストはstream_file_io非対応" {

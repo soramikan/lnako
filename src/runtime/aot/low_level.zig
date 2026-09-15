@@ -258,6 +258,11 @@ pub fn lowLevelFileBuiltin(runtime: *Runtime, command: aot_builtin.Command, argu
         if (arguments.len > spec.max) {
             return throwStructured(runtime, .EINVAL, spec.operation, null, null, "引数の数が不正です");
         }
+        // 実装済み命令の引数不足は引数数エラー（Interpreterのcallと同じ契約）。
+        // 未実装命令はENOTSUPが「未実装」の通知を兼ねるためmin未満もENOTSUP。
+        if (spec.implemented and arguments.len < spec.min) {
+            return throwStructured(runtime, .EINVAL, spec.operation, null, null, "引数の数が不正です");
+        }
     }
     return switch (command) {
         .low_level_file_open => openBuiltin(runtime, arguments),
@@ -273,10 +278,11 @@ pub fn lowLevelFileBuiltin(runtime: *Runtime, command: aot_builtin.Command, argu
 }
 
 pub fn lowLevelCapabilitySupportedBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
-    if (arguments.len > 1) {
-        return throwStructured(runtime, .EINVAL, "capability", null, null, "引数の数が不正です");
+    const spec = aot_builtin.lowLevelCatalogCommand(.low_level_capability_supported) orelse return error.UnknownCommand;
+    // 実装済み命令の引数不足は引数数エラー（Interpreterのcallと同じ契約）。
+    if (arguments.len > spec.max or arguments.len < spec.min) {
+        return throwStructured(runtime, .EINVAL, spec.operation, null, null, "引数の数が不正です");
     }
-    if (arguments.len < 1) return .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
     const supported = capabilitySupported(arguments[0]);
     return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(supported) };
 }
@@ -491,11 +497,17 @@ test "AOT低レイヤーは余分な引数をEINVALにする" {
     try std.testing.expectError(error.NakoException, closeBuiltin(&runtime, &.{ numberValue(1), numberValue(2) }));
 }
 
-test "AOT低レイヤーの引数なしopenはEINVAL、機能対応判定はfalse" {
+test "AOT低レイヤーの引数なしopenと機能対応判定はEINVAL" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
     try std.testing.expectError(error.NakoException, openBuiltin(&runtime, &.{}));
-    const supported = try lowLevelCapabilitySupportedBuiltin(&runtime, &.{});
+    // 実装済み命令の引数不足は引数数エラー。未知capabilityの照会falseとは区別する。
+    try std.testing.expectError(error.NakoException, lowLevelCapabilitySupportedBuiltin(&runtime, &.{}));
+    var roots = [_]Value{try runtimeUtf8String(&runtime, "unknown_capability")};
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    const supported = try lowLevelCapabilitySupportedBuiltin(&runtime, &roots);
     try std.testing.expectEqual(@as(u64, 0), supported.payload);
 }
 
