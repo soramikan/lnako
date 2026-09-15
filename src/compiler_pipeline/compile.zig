@@ -51,10 +51,15 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
         return null;
     }
     var roots: std.ArrayList(*lnako.frontend.ast.Node) = .empty;
+    defer roots.deinit(allocator);
     var names: std.ArrayList([]const u8) = .empty;
+    defer names.deinit(allocator);
     var paths: std.ArrayList([]const u8) = .empty;
+    defer paths.deinit(allocator);
     var variant_roots: std.ArrayList(*lnako.frontend.ast.Node) = .empty;
+    defer variant_roots.deinit(allocator);
     var variant_counts: std.ArrayList(usize) = .empty;
+    defer variant_counts.deinit(allocator);
     for (graph.modules) |module| {
         if (module.kind != .nako3) continue;
         try roots.append(allocator, module.parsed.?.root.?);
@@ -66,6 +71,7 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
     // variant_roots.items への追加が終わってからモジュール単位の
     // 部分スライスへ切り分ける（追加中に切ると再確保でダングルする）。
     const module_variant_roots = try allocator.alloc([]const *lnako.frontend.ast.Node, roots.items.len);
+    defer allocator.free(module_variant_roots);
     var variant_offset: usize = 0;
     for (variant_counts.items, 0..) |count, index| {
         module_variant_roots[index] = variant_roots.items[variant_offset .. variant_offset + count];
