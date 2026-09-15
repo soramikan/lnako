@@ -1,0 +1,15 @@
+{
+  "package": {
+    "name": "bad-runtime",
+    "version": "1.0.0",
+    "license": "MIT"
+  },
+  "profiles": {
+    "default": {
+      "runtime": "browser",
+      "os": "macos",
+      "cpu": "aarch64",
+      "abi": "gnu"
+    }
+  }
+}

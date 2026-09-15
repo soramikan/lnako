@@ -1,0 +1,8 @@
+[package]
+name = "esm-only-multi-runtime"
+version = "1.0.0"
+license = "MIT"
+
+[[exports]]
+name = "main"
+esm = "index.mjs"
