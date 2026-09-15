@@ -164,7 +164,7 @@ test "ネイティブプラグイン命令をAOT ABIへ出力する" {
     }});
     defer analyzed.deinit();
     try std.testing.expect(analyzed.succeeded());
-    var hir_program = try hir.lower(std.testing.allocator, &.{parsed.root.?}, &.{"native-plugin"}, &.{"native-plugin.nako3"}, analyzed);
+    var hir_program = try hir.lower(std.testing.allocator, &.{parsed.root.?}, &.{"native-plugin"}, &.{"native-plugin.nako3"}, &.{&.{}}, analyzed);
     defer hir_program.deinit();
     var program = try lower.lower(std.testing.allocator, hir_program);
     defer program.deinit();

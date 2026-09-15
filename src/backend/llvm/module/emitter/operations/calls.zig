@@ -51,9 +51,16 @@ pub fn writeCall(emitter: *Emitter, function: ir.Function, locals: []const []con
         return;
     };
     const callee = if (instruction.is_module_entry and instruction.callee_module < emitter.program.module_entries.len)
-        // 同名モジュール間の名前衝突を避けるため module_entries から直接解決する
+        // 同名モジュール間の名前衝突を避けるため module_entries から直接解決する。
+        // callee_variant は循環再展開コピーの文脈別エントリ（Issue #73）を指す。
         blk: {
-            const entry_id = emitter.program.module_entries[instruction.callee_module];
+            const entry_id = if (instruction.callee_variant) |variant| id: {
+                const entries = if (instruction.callee_module < emitter.program.variant_entries.len)
+                    emitter.program.variant_entries[instruction.callee_module]
+                else
+                    &.{};
+                break :id if (variant < entries.len) entries[variant] else emitter.program.module_entries[instruction.callee_module];
+            } else emitter.program.module_entries[instruction.callee_module];
             break :blk if (entry_id < emitter.program.functions.len) emitter.program.functions[entry_id] else return error.InvalidDirectCallee;
         } else if (instruction.direct_callee) |callee_id|
             if (callee_id < emitter.program.functions.len) emitter.program.functions[callee_id] else return error.InvalidDirectCallee

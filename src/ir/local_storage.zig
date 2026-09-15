@@ -155,8 +155,12 @@ fn nameInList(names: []const []const u8, name: []const u8) bool {
 }
 
 fn findFunction(program: ir.Program, name: []const u8) ?ir.Function {
-    for (program.functions) |function| if (std.mem.eql(u8, function.name, name)) return function;
-    return null;
+    // 同名関数は生成順の後勝ち（Issue #73、`ir.Program.findFunction`と同じ規則）。
+    var found: ?ir.Function = null;
+    for (program.functions) |function| if (std.mem.eql(u8, function.name, name)) {
+        found = function;
+    };
+    return found;
 }
 
 fn dynamicObserved(function: ir.Function) bool {

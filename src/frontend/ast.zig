@@ -90,6 +90,12 @@ pub const Node = struct {
     /// C風の `命令(...)` 呼び出しだけを、助詞構文と区別する。
     is_c_style_call: bool = false,
     loop_direction: LoopDirection = .automatic,
+    /// 関数本体内の実効取り込み文だけが持つ、取り込み先トップレベル文の
+    /// 複製。公式は取り込み先トークンを取り込み文の位置へそのまま展開する
+    /// ため、関数内では取り込み先の変数・文が呼び出し元関数のローカルに
+    /// なる。module_graph が複製を接続し、意味解析は呼び出し元スコープの
+    /// まま取り込み先モジュール名で名前解決する。
+    expansion: []const *Node = &.{},
 };
 
 pub fn kindName(kind: Kind) []const u8 {

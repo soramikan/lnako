@@ -407,15 +407,22 @@ pub const Interpreter = struct {
             entry.value_ptr.* = .{};
             for (owner_program.functions, 0..) |*function, index| {
                 const id: ir.FunctionId = @intCast(index);
-                const exact_slot = try entry.value_ptr.exact.getOrPut(self.allocator, function.name);
-                if (!exact_slot.found_existing) exact_slot.value_ptr.* = id;
+                // 同名関数は生成順の後勝ち（循環取り込み変体の定義が本体を
+                // 置き換える公式挙動、Issue #73）。
+                try entry.value_ptr.exact.put(self.allocator, function.name, id);
                 if (std.mem.lastIndexOf(u8, function.name, "__")) |separator| {
                     const suffix = function.name[separator + 2 ..];
                     const slot = try entry.value_ptr.suffix.getOrPut(self.allocator, suffix);
                     if (!slot.found_existing) {
                         slot.value_ptr.* = id;
-                    } else if (slot.value_ptr.* != id) {
-                        slot.value_ptr.* = null;
+                    } else if (slot.value_ptr.*) |existing| {
+                        // 完全同名の重複（循環再展開変体）は後勝ちで上書き。
+                        // 異なる修飾名の衝突だけを曖昧として解決不能にする。
+                        if (std.mem.eql(u8, owner_program.functions[existing].name, function.name)) {
+                            slot.value_ptr.* = id;
+                        } else {
+                            slot.value_ptr.* = null;
+                        }
                     }
                 }
             }
@@ -1094,12 +1101,24 @@ pub const Interpreter = struct {
         const index = self.functionIndex(owner_program) catch {
             // An index build failure is not a program failure; fall back to
             // the previous linear scans so OOM stays the only new error.
-            for (owner_program.functions) |*function| if (std.mem.eql(u8, function.name, name)) return function;
+            var exact_match: ?*const ir.Function = null;
+            for (owner_program.functions) |*function| if (std.mem.eql(u8, function.name, name)) {
+                exact_match = function;
+            };
+            if (exact_match) |function| return function;
             var match: ?*const ir.Function = null;
             for (owner_program.functions) |*function| {
                 const separator = std.mem.lastIndexOf(u8, function.name, "__") orelse continue;
                 if (!std.mem.eql(u8, function.name[separator + 2 ..], name)) continue;
-                if (match != null) return null;
+                // 完全同名の重複（循環再展開変体）は後勝ち。異なる修飾名の
+                // 衝突は曖昧として解決不能にする（index版と同じ規則）。
+                if (match) |previous| {
+                    if (std.mem.eql(u8, previous.name, function.name)) {
+                        match = function;
+                        continue;
+                    }
+                    return null;
+                }
                 match = function;
             }
             return match;

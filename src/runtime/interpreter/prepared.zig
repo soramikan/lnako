@@ -218,15 +218,22 @@ pub const PreparedProgram = struct {
 
         for (owner.functions, 0..) |function, index| {
             const id: ir.FunctionId = @intCast(index);
-            const exact = try result.exact.getOrPut(allocator, function.name);
-            if (!exact.found_existing) exact.value_ptr.* = id;
+            // 公式はdef_funcをコード生成順で登録するため同名関数は後勝ち。
+            // 循環再展開コピーの文脈別変体も同じ名前で登録される（#73）。
+            try result.exact.put(allocator, function.name, id);
             if (std.mem.lastIndexOf(u8, function.name, "__")) |separator| {
                 const suffix = function.name[separator + 2 ..];
                 const slot = try result.suffix.getOrPut(allocator, suffix);
                 if (!slot.found_existing) {
                     slot.value_ptr.* = id;
-                } else if (slot.value_ptr.* != id) {
-                    slot.value_ptr.* = null;
+                } else if (slot.value_ptr.*) |existing| {
+                    // 完全同名の重複（循環再展開変体）は後勝ちで上書き。
+                    // 異なる修飾名の衝突だけを曖昧として解決不能にする。
+                    if (std.mem.eql(u8, owner.functions[existing].name, function.name)) {
+                        slot.value_ptr.* = id;
+                    } else {
+                        slot.value_ptr.* = null;
+                    }
                 }
             }
         }

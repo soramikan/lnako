@@ -66,9 +66,9 @@ fn markDirectCalls(allocator: std.mem.Allocator, program: *ir.Program, stats: *S
     var by_name: std.StringHashMapUnmanaged(ir.FunctionId) = .empty;
     defer by_name.deinit(allocator);
     for (program.functions) |function| {
-        const entry = try by_name.getOrPut(allocator, function.name);
-        // Preserve first-match semantics even for malformed duplicate names.
-        if (!entry.found_existing) entry.value_ptr.* = function.id;
+        // 公式はdef_funcをコード生成順で登録するため同名関数は後勝ち
+        // （循環再展開コピーの変体定義が本体を上書きする、Issue #73）。
+        try by_name.put(allocator, function.name, function.id);
     }
     for (program.functions) |*function| for (function.blocks) |*block| for (block.instructions) |*instruction| {
         if (instruction.opcode != .call or instruction.direct_callee != null) continue;

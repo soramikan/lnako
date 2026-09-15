@@ -109,6 +109,9 @@ pub const Instruction = struct {
     callee_module: u32 = 0,
     callee_order: u32 = 0,
     site_toplevel: bool = false,
+    /// 循環再展開コピーが文脈別パースを使う場合の、対象モジュール
+    /// variant_entries 内のindex（Issue #73）。
+    callee_variant: ?u32 = null,
     operands: []ValueId = &.{},
     phi_incoming: []PhiIncoming = &.{},
     name: []const u8 = "",
@@ -190,6 +193,10 @@ pub const Program = struct {
     arena: std.heap.ArenaAllocator,
     functions: []Function,
     module_entries: []FunctionId,
+    /// モジュールごとの循環再展開コピー（文脈別パース）のエントリ関数
+    /// （Issue #73）。variant_entries[m][v] が m 番モジュールの
+    /// v 番変体の関数index。
+    variant_entries: []const []const FunctionId = &.{},
     module_names: []const []const u8 = &.{},
     module_paths: []const []const u8 = &.{},
     compat_js: bool = false,
@@ -243,12 +250,16 @@ pub const Program = struct {
         // arenaを返却値へコピーする前に確保を済ませる。リテラル内で呼ぶと
         // コピー後のarena状態へ確保が記録されずリークする。
         const module_entries = try allocator.dupe(FunctionId, self.module_entries);
+        const variant_entries = try allocator.alloc([]FunctionId, self.variant_entries.len);
+        for (self.variant_entries, variant_entries) |source_entries, *target_entries|
+            target_entries.* = try allocator.dupe(FunctionId, source_entries);
         const module_names = try cloneStrings(allocator, self.module_names);
         const module_paths = try cloneStrings(allocator, self.module_paths);
         return .{
             .arena = arena,
             .functions = functions,
             .module_entries = module_entries,
+            .variant_entries = variant_entries,
             .module_names = module_names,
             .module_paths = module_paths,
             .compat_js = self.compat_js,
@@ -259,8 +270,13 @@ pub const Program = struct {
     }
 
     pub fn findFunction(self: Program, name: []const u8) ?Function {
-        for (self.functions) |function| if (std.mem.eql(u8, function.name, name)) return function;
-        return null;
+        // 同名関数は生成順の後勝ち（循環取り込み変体の定義が本体を置き換える
+        // 公式挙動、Issue #73）。
+        var found: ?Function = null;
+        for (self.functions) |function| if (std.mem.eql(u8, function.name, name)) {
+            found = function;
+        };
+        return found;
     }
 };
 

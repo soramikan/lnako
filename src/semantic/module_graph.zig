@@ -4,6 +4,7 @@ const diagnostic = @import("../frontend/diagnostic.zig");
 const parser = @import("../frontend/parser.zig");
 const token_mod = @import("../frontend/token.zig");
 const analyzer = @import("analyzer.zig");
+const variants = @import("module_graph_variants.zig");
 
 pub const SourceProvider = struct {
     context: *anyopaque,
@@ -52,6 +53,22 @@ pub const Import = struct {
     /// 循環コピーには取り込み展開が含まれないため、コピーの解析モードが
     /// 本体側と等価か判定するために使う。
     tail_mode: token_mod.Mode = .{},
+    /// 循環再展開コピーが文脈モードの別パースを要する場合の、
+    /// 対象モジュール variants 内のindex。
+    variant: ?u32 = null,
+};
+
+/// 循環取り込みの再展開コピー。公式は循環取り込み位置で有効だった
+/// モードを初期モードとして対象の変換済みトークンを再解析するため、
+/// 本体とは別のパース結果を持つ。シンボル（変数・関数）は同一ソースの
+/// 本体側と共有される。
+pub const CopyVariant = struct {
+    /// 循環取り込み位置で有効だったモードを初期モードとする再パース。
+    initial_mode: token_mod.Mode,
+    parse: parser.ParseResult,
+    /// コピー内の取り込み文の辺。本体のImportを写し、コピー文脈で必要な
+    /// 対象変体（nested variant）と有効モードを持つ。
+    imports: []Import,
 };
 
 pub const LoadedModule = struct {
@@ -72,6 +89,12 @@ pub const LoadedModule = struct {
     /// 自分以下の順位を持つモジュールへの取り込み文が除去される。
     /// maxIntは一度もコピーとして展開されなかったことを表す。
     expand_order: u32 = std.math.maxInt(u32),
+    /// このモジュールの実効取り込みサイトが関数本体内にある。
+    /// 公式では取り込み先の変数宣言が関数ローカルになるため、
+    /// モジュール変数シンボル（mod__V相当）はグローバルに存在しない。
+    expands_in_function: bool = false,
+    /// 循環再展開コピーの文脈別パース一覧（Issue #73）。
+    variants: std.ArrayListUnmanaged(CopyVariant) = .empty,
 };
 
 /// 全モジュールのトップレベル文が結合ストリーム上で占める順位。
@@ -98,6 +121,7 @@ pub const ModuleGraph = struct {
     pub fn deinit(self: *ModuleGraph) void {
         for (self.modules) |module| {
             if (module.parsed) |*parsed| parsed.deinit();
+            for (module.variants.items) |*variant| variant.parse.deinit();
             self.backing_allocator.free(module.source);
             self.backing_allocator.destroy(module);
         }
@@ -107,9 +131,12 @@ pub const ModuleGraph = struct {
 
     pub fn succeeded(self: ModuleGraph) bool {
         for (self.diagnostics) |item| if (item.severity == .error_severity) return false;
-        for (self.modules) |module| if (module.parsed) |parsed| {
-            if (!parsed.succeeded()) return false;
-        };
+        for (self.modules) |module| {
+            if (module.parsed) |parsed| {
+                if (!parsed.succeeded()) return false;
+            }
+            for (module.variants.items) |variant| if (!variant.parse.succeeded()) return false;
+        }
         return true;
     }
 
@@ -144,14 +171,40 @@ pub const ModuleGraph = struct {
                         .site_order = module.expand_order,
                         .callee_module = loader_to_input[target],
                         .callee_order = target_module.expand_order,
+                        .callee_variant = item.variant,
                     });
                 }
             };
+            var variant_inputs: std.ArrayList(analyzer.VariantInput) = .empty;
+            for (module.variants.items) |variant| {
+                const vroot = variant.parse.root orelse continue;
+                var ventries: std.ArrayList(analyzer.ImportEntry) = .empty;
+                for (variant.imports) |vitem| if (vitem.target) |target| {
+                    const target_module = self.modules[target];
+                    if (vitem.effective and target_module.kind == .nako3) {
+                        try ventries.append(temp, .{
+                            .position = vitem.span.start,
+                            .entry_name = try std.fmt.allocPrint(temp, "{s}__$entry", .{target_module.name}),
+                            .site_module = loader_to_input[module.index],
+                            .site_order = module.expand_order,
+                            .callee_module = loader_to_input[target],
+                            .callee_order = target_module.expand_order,
+                            .callee_variant = vitem.variant,
+                        });
+                    }
+                };
+                try variant_inputs.append(temp, .{
+                    .root = vroot,
+                    .import_entries = try ventries.toOwnedSlice(temp),
+                });
+            }
             try inputs.append(temp, .{
                 .name = module.name,
                 .path = module.path,
                 .root = module.parsed.?.root.?,
                 .allows_dynamic_commands = allows_dynamic_commands,
+                .expands_in_function = module.expands_in_function,
+                .variants = try variant_inputs.toOwnedSlice(temp),
                 .stmt_ranks = if (module.index < self.expansion.stmt_ranks.len) self.expansion.stmt_ranks[module.index] else &.{},
                 .marker_rank = if (module.index < self.expansion.marker_ranks.len) self.expansion.marker_ranks[module.index] else std.math.maxInt(usize),
                 .import_entries = try import_entries.toOwnedSlice(temp),
@@ -189,7 +242,8 @@ pub fn load(backing_allocator: std.mem.Allocator, entry_path: []const u8, provid
     // 複数取り込みでは最後の取り込み文に内容が載る）。
     try loader.markEffectiveEdges(entry);
     try loader.propagateModes(entry);
-    try loader.checkCircularCopyModes();
+    try variants.buildCopyVariants(&loader);
+    try variants.attachInlineExpansions(&loader, entry);
     const modules = try loader.modules.toOwnedSlice(loader.allocator);
     const diagnostics = try loader.diagnostics.toOwnedSlice(loader.allocator);
     // arenaを返却値へコピーする前に確保を済ませる。リテラル内で呼ぶと
@@ -205,7 +259,9 @@ pub fn load(backing_allocator: std.mem.Allocator, entry_path: []const u8, provid
     };
 }
 
-const Loader = struct {
+// 循環コピー変体・関数内展開の構築は module_graph_variants.zig へ分離している
+// （サイズガードレール対応）。Loaderの状態を共有するためpubで公開する。
+pub const Loader = struct {
     backing_allocator: std.mem.Allocator,
     allocator: std.mem.Allocator,
     provider: SourceProvider,
@@ -216,6 +272,7 @@ const Loader = struct {
     fn deinitModules(self: *Loader) void {
         for (self.modules.items) |module| {
             if (module.parsed) |*parsed| parsed.deinit();
+            for (module.variants.items) |*variant| variant.parse.deinit();
             self.backing_allocator.free(module.source);
             self.backing_allocator.destroy(module);
         }
@@ -488,40 +545,6 @@ const Loader = struct {
     /// 最終ASTから順序対応で再収集する。個数が変わる構造変化では
     /// 暫定位置との照合が破綻して実効辺が暗黙に無効化されるため、
     /// 黙って維持せず診断を出す。
-    /// 循環取り込みの再展開コピーは対象モジュールのコンパイル済み本体を共有する。
-    /// 公式はコピーを「循環取り込み位置のモードを初期モード」として対象の
-    /// 変換済みトークンから再解析する。コピーには取り込み展開が含まれないので、
-    /// 共有本体で再現できるのは次の両方が成り立つ場合だけである。
-    ///   (a) 循環位置のモードが対象の解析開始モード（初期＋強制）と一致
-    ///   (b) 対象へtail適用されたモードが、その取り込み位置でコピー側の
-    ///       文由来モード（own_mode）にも含まれる
-    /// 終端モード一致だけでは初期モード・tailの差を拾えないため、誤った
-    /// 添字規則で実行するより明示的な診断にする。
-    fn checkCircularCopyModes(self: *Loader) !void {
-        for (self.modules.items) |module| {
-            for (module.imports) |item| {
-                if (!item.effective or !item.cyclic) continue;
-                const target_module = self.modules.items[item.target.?];
-                const target_parsed = target_module.parsed orelse continue;
-                const target_start = orMode(target_module.parse_initial, target_module.forced_mode);
-                if (!modeEql(item.site_mode, target_start)) {
-                    try self.importDiagnosticAt(item.span, module.path, "循環取り込みの再展開位置の構文モードが取り込み先の解析開始モードと一致しません");
-                    continue;
-                }
-                for (target_module.imports) |titem| {
-                    if (!titem.effective) continue;
-                    for (target_parsed.import_modes) |record| {
-                        if (record.position != titem.span.start) continue;
-                        if (!modeSubset(titem.tail_mode, record.own_mode)) {
-                            try self.importDiagnosticAt(item.span, module.path, "循環取り込みの再展開には取り込み先の終端モードが初期から有効な別コピーが必要です");
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
     fn refreshImportSpans(self: *Loader, module: *LoadedModule) !void {
         const parsed = module.parsed orelse return;
         const root = parsed.root orelse return;
@@ -543,7 +566,7 @@ const Loader = struct {
         try self.importDiagnosticAt(if (node) |value| value.span else null, file, message);
     }
 
-    fn importDiagnosticAt(self: *Loader, span: ?ast.Span, file: []const u8, message: []const u8) !void {
+    pub fn importDiagnosticAt(self: *Loader, span: ?ast.Span, file: []const u8, message: []const u8) !void {
         try self.diagnostics.append(self.allocator, .{
             .code = .invalid_import,
             .message = message,
@@ -555,7 +578,7 @@ const Loader = struct {
 
 const ModeState = enum { unvisited, visiting, done };
 
-fn orMode(a: token_mod.Mode, b: token_mod.Mode) token_mod.Mode {
+pub fn orMode(a: token_mod.Mode, b: token_mod.Mode) token_mod.Mode {
     return .{
         .dncl = a.dncl or b.dncl,
         .dncl2 = a.dncl2 or b.dncl2,
@@ -563,7 +586,7 @@ fn orMode(a: token_mod.Mode, b: token_mod.Mode) token_mod.Mode {
     };
 }
 
-fn modeEql(a: token_mod.Mode, b: token_mod.Mode) bool {
+pub fn modeEql(a: token_mod.Mode, b: token_mod.Mode) bool {
     return a.dncl == b.dncl and a.dncl2 == b.dncl2 and a.indent == b.indent;
 }
 
@@ -962,9 +985,16 @@ test "エントリ拡張子と反対側のDNCL強制フラグは競合エラー�
     try std.testing.expect(forced_graph.succeeded());
 }
 
-test "循環取り込みの再展開モード不一致を診断にする" {
+fn variantCount(graph: *const ModuleGraph, path: []const u8) usize {
+    for (graph.modules) |module| {
+        if (std.mem.endsWith(u8, module.path, path)) return module.variants.items.len;
+    }
+    return 0;
+}
+
+test "循環取り込みの再展開は文脈のモードで別パースした変体を生成する" {
     // モードを含まない通常の循環取り込みはコピーの解析モードが本体と
-    // 一致するため再展開を許可する
+    // 一致するため変体を作らず共有本体で再展開する
     var matching = MemoryProvider{ .files = &.{
         .{ .suffix = "main.nako3", .source = "「M1」と表示\n!「./lib.nako3」を取り込む\n「M2」と表示\n" },
         .{ .suffix = "lib.nako3", .source = "「L1」と表示\n!「./main.nako3」を取り込む\n「L2」と表示\n" },
@@ -972,6 +1002,7 @@ test "循環取り込みの再展開モード不一致を診断にする" {
     var matching_graph = try load(std.testing.allocator, "main.nako3", matching.sourceProvider(), .{});
     defer matching_graph.deinit();
     try std.testing.expect(matching_graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 0), variantCount(&matching_graph, "main.nako3"));
 
     // 強制モードが開始から有効なエントリ(.dncl)へ、そのモードの位置から
     // 循環取り込みされる場合もコピーと本体の解析モードが一致する
@@ -982,30 +1013,31 @@ test "循環取り込みの再展開モード不一致を診断にする" {
     var dncl_graph = try load(std.testing.allocator, "main.dncl", dncl.sourceProvider(), .{});
     defer dncl_graph.deinit();
     try std.testing.expect(dncl_graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 0), variantCount(&dncl_graph, "main.dncl"));
 
     // 循環位置より後でモードが有効になる場合、コピーには取り込み展開が
-    // 含まれないためtailモードが欠けた解析になる。同一本体で表現できない
-    // ため診断にする。
+    // 含まれないためtailモードが欠けた解析になる。Issue #73 では共有
+    // 本体の代わりに文脈のモードで解析した変体を生成して受理する。
     var mismatching = MemoryProvider{ .files = &.{
         .{ .suffix = "main.nako3", .source = "A=[10,20]\n「M1」と表示\n!「./lib.nako3」を取り込む\n「M3:」&A[1]と表示\n" },
         .{ .suffix = "lib.nako3", .source = "「L1」と表示\n!「./main.nako3」を取り込む\n!DNCLモード\n「L2」と表示\n" },
     } };
     var mismatching_graph = try load(std.testing.allocator, "main.nako3", mismatching.sourceProvider(), .{});
     defer mismatching_graph.deinit();
-    try std.testing.expect(!mismatching_graph.succeeded());
-    try std.testing.expectEqual(@as(usize, 1), mismatching_graph.diagnostics.len);
+    try std.testing.expect(mismatching_graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 1), variantCount(&mismatching_graph, "main.nako3"));
 
-    // 循環位置のモードがエントリの終端モードと一致しても、エントリが
-    // 異なる初期モードで解析開始した場合はコピーの先行文の意味づけが
-    // 変わるため同一本体で表現できない（#73）。診断にする。
+    // 循環取り込み位置のモードがエントリの解析開始モードと異なる場合は
+    // コピーの先行文の意味づけが変わる。これも文脈のモードで解析した
+    // 変体で表現する（#73）。
     var diverging_initial = MemoryProvider{ .files = &.{
         .{ .suffix = "main.nako3", .source = "A=[10,20]\n「M1:」&A[0]と表示\nDNCLモード\n!「./lib.nako3」を取り込む\n「M3:」&A[1]と表示\n" },
-        .{ .suffix = "lib.nako3", .source = "「L1」と表示\n!「./main.nako3」を取り込む\n「L2」と表示\n" },
+        .{ .suffix = "lib.nako3", .source = "「L1」と表示\nDNCLモード\n!「./main.nako3」を取り込む\n「L2」と表示\n" },
     } };
     var diverging_graph = try load(std.testing.allocator, "main.nako3", diverging_initial.sourceProvider(), .{});
     defer diverging_graph.deinit();
-    try std.testing.expect(!diverging_graph.succeeded());
-    try std.testing.expectEqual(@as(usize, 1), diverging_graph.diagnostics.len);
+    try std.testing.expect(diverging_graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 1), variantCount(&diverging_graph, "main.nako3"));
 }
 
 test "エントリの.nako3へ--dncl/--dncl2相当のモードを強制する" {

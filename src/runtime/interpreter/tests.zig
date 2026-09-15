@@ -1387,16 +1387,34 @@ fn runModulesForTest(allocator: std.mem.Allocator, files: []const ModuleTestFile
     var roots: std.ArrayList(*ast_mod.Node) = .empty;
     var names: std.ArrayList([]const u8) = .empty;
     var paths: std.ArrayList([]const u8) = .empty;
+    var variant_roots: std.ArrayList(*ast_mod.Node) = .empty;
+    var variant_counts: std.ArrayList(usize) = .empty;
     defer roots.deinit(allocator);
     defer names.deinit(allocator);
     defer paths.deinit(allocator);
+    defer variant_roots.deinit(allocator);
+    defer variant_counts.deinit(allocator);
     for (graph.modules) |module| {
         if (module.kind != .nako3) continue;
         try roots.append(allocator, module.parsed.?.root.?);
         try names.append(allocator, module.name);
         try paths.append(allocator, module.path);
+        var variant_count: usize = 0;
+        for (module.variants.items) |variant| {
+            const variant_root = variant.parse.root orelse continue;
+            try variant_roots.append(allocator, variant_root);
+            variant_count += 1;
+        }
+        try variant_counts.append(allocator, variant_count);
     }
-    var hir_program = try hir.lower(allocator, roots.items, names.items, paths.items, analyzed);
+    const module_variant_roots = try allocator.alloc([]const *ast_mod.Node, roots.items.len);
+    defer allocator.free(module_variant_roots);
+    var variant_offset: usize = 0;
+    for (variant_counts.items, 0..) |count, index| {
+        module_variant_roots[index] = variant_roots.items[variant_offset .. variant_offset + count];
+        variant_offset += count;
+    }
+    var hir_program = try hir.lower(allocator, roots.items, names.items, paths.items, module_variant_roots, analyzed);
     defer hir_program.deinit();
     var ir_program = try lower_ssa.lower(allocator, hir_program);
     defer ir_program.deinit();
@@ -1467,6 +1485,78 @@ test "関数本体内の取り込みは入れ子の取り込みも呼び出し�
     });
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualStrings("B1\nS1\nB2\nf-end\nB1\nS1\nB2\nf-end\n", output);
+}
+
+test "関数本体内の取り込み先変数は呼び出し元のローカルになる" {
+    // 公式は取り込み先トークンを取り込み文の位置へ展開するため、関数内
+    // では取り込み先の変数宣言が呼び出し元関数のローカルになる（#74）。
+    // 呼び出し後に同じ裸名を参照してもモジュール変数は現れない。
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "●Fとは\n　!「./lib.nako3」を取り込む\n　「F内:」&GVと表示。\nここまで。\nF。\n「後:」&GVと表示。\n" },
+        .{ .suffix = "lib.nako3", .source = "「B1」と表示。\nGV=7\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("B1\nF内:7\n後:undefined\n", output);
+}
+
+test "関数本体内の取り込み先の関数はグローバルに登録される" {
+    // 変数宣言はローカル化されるが、取り込み先の関数定義は公式と同様に
+    // グローバル登録され、後から呼び出せる。その関数本体からは取り込み先
+    // モジュールの変数として解決される（関数内宣言は届かない）。
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "●Fとは\n　!「./lib.nako3」を取り込む\nここまで。\nF。\nLIBF。\n" },
+        .{ .suffix = "lib.nako3", .source = "GV=7\n●LIBFとは\n　「lib内:」&GVと表示。\nここまで。\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("lib内:undefined\n", output);
+}
+
+test "循環取り込みの再展開コピーは取り込み位置のモードで解析される" {
+    // コピーは循環取り込み位置で有効だったモード（ここではDNCL＝1始まり
+    // 添字）で再解析される（#73）。コピー内の A[0] は1始まりでは範囲外
+    // なので undefined になる。
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "A=[10,20]\n「M1:」&A[0]と表示\nDNCLモード\n!「./lib.nako3」を取り込む\n「M3:」&A[1]と表示\n" },
+        .{ .suffix = "lib.nako3", .source = "「L1」と表示\nDNCLモード\n!「./main.nako3」を取り込む\n「L2」と表示\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("M1:10\nL1\nM1:undefined\nM3:10\nL2\nM3:10\n", output);
+}
+
+test "循環取り込みで除去された辺のtailモードはコピーへ適用されない" {
+    // コピー内では取り込み先が展開済みの辺が除去されるため、本体側で
+    // その位置へ適用されていたtailモードはコピーには効かない（#73）。
+    // コピーの A[1] は0始まりのままなので 20 になる。
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "A=[10,20]\n「M1」と表示\n!「./lib.nako3」を取り込む\n「M3:」&A[1]と表示\n" },
+        .{ .suffix = "lib.nako3", .source = "「L1」と表示\n!「./main.nako3」を取り込む\n!DNCLモード\n「L2」と表示\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("M1\nL1\nM1\nM3:20\nL2\nM3:10\n", output);
+}
+
+test "循環取り込みの変体内の関数定義は後勝ちで本体を置き換える" {
+    // 公式はコピー内の関数定義も生成順に登録するため、コピー（DNCL＝1始まり）
+    // で定義された同名関数が全呼び出しで使われる。コピー側のA[0]は1始まり
+    // では範囲外なので F:undefined になる（#73）。
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "A=[10,20]\n●F\n　「F:」&A[0]と表示\nここまで\n「M1:」&A[0]と表示\nDNCLモード\n!「./lib.nako3」を取り込む\nF\n「M3:」&A[1]と表示\nF\n" },
+        .{ .suffix = "lib.nako3", .source = "「L1」と表示\n!「./main.nako3」を取り込む\n「L2」と表示\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("M1:10\nL1\nM1:undefined\nF:undefined\nM3:10\nF:undefined\nL2\nF:undefined\nM3:10\nF:undefined\n", output);
+}
+
+test "循環取り込み変体の関数定義はコピーより前の呼び出しにも効く" {
+    // 公式は関数定義を静的登録するため、変体内の同名定義がコピー実行位置
+    // より前の呼び出しにも適用される（コピーはDNCL＝1始まり）。よって
+    // コピー前の F 呼び出しも undefined を表示する（#73）。
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "A=[10,20]\n●F\n　「F:」&A[0]と表示\nここまで\nF\nDNCLモード\n!「./lib.nako3」を取り込む\nF\n" },
+        .{ .suffix = "lib.nako3", .source = "「L1」と表示\n!「./main.nako3」を取り込む\nF\nF\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("F:undefined\nL1\nF:undefined\nF:undefined\nF:undefined\nF:undefined\nF:undefined\n", output);
 }
 
 test "ループ本体内の取り込みは繰り返し毎に実行する" {

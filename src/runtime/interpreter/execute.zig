@@ -732,8 +732,15 @@ fn executeCallResolved(
     var writes_result = false;
     // モジュールエントリ呼び出しは同名モジュール間の名前衝突を避けるため、
     // 名前ではなく入力モジュールindexからmodule_entries経由で直接解決する。
+    // callee_variant は循環再展開コピーの文脈別エントリ（Issue #73）を指す。
     const result = if (instruction.is_module_entry and instruction.callee_module < frame.owner_program.module_entries.len) blk: {
-        const callee_id = frame.owner_program.module_entries[instruction.callee_module];
+        const callee_id = if (instruction.callee_variant) |variant| id: {
+            const entries = if (instruction.callee_module < frame.owner_program.variant_entries.len)
+                frame.owner_program.variant_entries[instruction.callee_module]
+            else
+                &.{};
+            break :id if (variant < entries.len) entries[variant] else frame.owner_program.module_entries[instruction.callee_module];
+        } else frame.owner_program.module_entries[instruction.callee_module];
         if (callee_id >= frame.owner_program.functions.len) return error.InvalidDirectCallee;
         writes_result = true;
         break :blk try self.executeFunction(&frame.owner_program.functions[callee_id], arguments, null, frame.owner_program);

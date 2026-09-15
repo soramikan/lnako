@@ -53,13 +53,25 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
     var roots: std.ArrayList(*lnako.frontend.ast.Node) = .empty;
     var names: std.ArrayList([]const u8) = .empty;
     var paths: std.ArrayList([]const u8) = .empty;
+    var variant_roots: std.ArrayList(*lnako.frontend.ast.Node) = .empty;
+    var variant_counts: std.ArrayList(usize) = .empty;
     for (graph.modules) |module| {
         if (module.kind != .nako3) continue;
         try roots.append(allocator, module.parsed.?.root.?);
         try names.append(allocator, module.name);
         try paths.append(allocator, module.path);
+        for (module.variants.items) |variant| try variant_roots.append(allocator, variant.parse.root.?);
+        try variant_counts.append(allocator, module.variants.items.len);
     }
-    var hir_program = try lnako.ir.hir.lower(allocator, roots.items, names.items, paths.items, program);
+    // variant_roots.items への追加が終わってからモジュール単位の
+    // 部分スライスへ切り分ける（追加中に切ると再確保でダングルする）。
+    const module_variant_roots = try allocator.alloc([]const *lnako.frontend.ast.Node, roots.items.len);
+    var variant_offset: usize = 0;
+    for (variant_counts.items, 0..) |count, index| {
+        module_variant_roots[index] = variant_roots.items[variant_offset .. variant_offset + count];
+        variant_offset += count;
+    }
+    var hir_program = try lnako.ir.hir.lower(allocator, roots.items, names.items, paths.items, module_variant_roots, program);
     defer hir_program.deinit();
     if (timer) |t| try t.phase(stderr, "AST-lowering");
     var ir_program = try lnako.ir.lower_ssa.lower(allocator, hir_program);

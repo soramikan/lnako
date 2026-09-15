@@ -16,6 +16,10 @@ pub fn runTestTarget(allocator: std.mem.Allocator, io: std.Io, path: []const u8,
     var walker = try directory.walk(allocator);
     defer walker.deinit();
     var files: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (files.items) |file| allocator.free(file);
+        files.deinit(allocator);
+    }
     while (try walker.next(io)) |entry| {
         if (entry.kind != .file) continue;
         const extension = std.fs.path.extension(entry.path);

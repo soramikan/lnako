@@ -27,7 +27,11 @@ pub fn lower(backing_allocator: std.mem.Allocator, hir_program: hir.Program) !ir
         try functions.append(allocator, lowered);
     }
     const module_entries = try allocator.alloc(ir.FunctionId, hir_program.modules.len);
-    for (hir_program.modules, 0..) |module, index| module_entries[index] = module.entry_function;
+    const variant_entries = try allocator.alloc([]ir.FunctionId, hir_program.modules.len);
+    for (hir_program.modules, 0..) |module, index| {
+        module_entries[index] = module.entry_function;
+        variant_entries[index] = try allocator.dupe(ir.FunctionId, module.variant_entries);
+    }
     const module_names = try allocator.alloc([]const u8, hir_program.modules.len);
     const module_paths = try allocator.alloc([]const u8, hir_program.modules.len);
     for (hir_program.modules, 0..) |module, index| {
@@ -41,6 +45,7 @@ pub fn lower(backing_allocator: std.mem.Allocator, hir_program: hir.Program) !ir
         .arena = arena,
         .functions = lowered_functions,
         .module_entries = module_entries,
+        .variant_entries = variant_entries,
         .module_names = module_names,
         .module_paths = module_paths,
     };
@@ -632,6 +637,7 @@ const FunctionBuilder = struct {
             .callee_module = node.callee_module,
             .callee_order = node.callee_order,
             .site_toplevel = node.site_toplevel,
+            .callee_variant = node.callee_variant,
             .span = node.span,
         });
         return value;
@@ -658,6 +664,7 @@ const FunctionBuilder = struct {
             .callee_module = node.callee_module,
             .callee_order = node.callee_order,
             .site_toplevel = node.site_toplevel,
+            .callee_variant = node.callee_variant,
             .span = node.span,
         });
     }
@@ -1109,7 +1116,7 @@ test "利用者関数名のbuiltin衝突と動的plugin命令にはsite IDを付
         .allows_dynamic_commands = true,
     }});
     defer dynamic_analyzed.deinit();
-    var dynamic_hir = try hir.lower(std.testing.allocator, &.{dynamic_parsed.root.?}, &.{"dynamic-plugin"}, &.{"dynamic-plugin.nako3"}, dynamic_analyzed);
+    var dynamic_hir = try hir.lower(std.testing.allocator, &.{dynamic_parsed.root.?}, &.{"dynamic-plugin"}, &.{"dynamic-plugin.nako3"}, &.{&.{}}, dynamic_analyzed);
     defer dynamic_hir.deinit();
     var dynamic = try lower(std.testing.allocator, dynamic_hir);
     defer dynamic.deinit();

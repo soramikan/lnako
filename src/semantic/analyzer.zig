@@ -28,6 +28,11 @@ pub const ImportEntry = struct {
     site_order: u32,
     callee_module: u32,
     callee_order: u32,
+    /// サイトが関数本体内にあり、取り込み先トップレベル文が呼び出し元
+    /// 関数のローカルスコープへインライン展開される（ast.Node.expansion）。
+    /// 循環再展開コピーが文脈別パースを使う場合の、対象モジュール
+    /// variants 内のindex（Issue #73）。
+    callee_variant: ?u32 = null,
     /// 取り込み文がモジュール直下（関数本体外）にあれば真。直下の文は
     /// ベース/コピーのどちらかのストリームにのみ存在し得るため実行時に
     /// ストリーム判定で抑止する。関数本体内の文は公式では関数本体へ
@@ -49,6 +54,20 @@ pub const ModuleInput = struct {
     /// 実効取り込み文の位置→呼び出し先エントリ名。実行順を公式の
     /// トークン展開に合わせるための情報。
     import_entries: []const ImportEntry = &.{},
+    /// このモジュールの実効取り込みサイトが関数本体内にある場合真。
+    /// 公式では取り込み先の変数宣言が関数ローカルになるため、
+    /// このモジュールの変数系モジュールシンボルはグローバルに存在しない。
+    expands_in_function: bool = false,
+    /// 循環再展開の文脈別パース（Issue #73）。同じモジュールスコープで
+    /// 解析され、変数・関数シンボルは本体と共有される。
+    variants: []const VariantInput = &.{},
+};
+
+/// 循環再展開コピーの解析対象。本体側と同じモジュールindex・
+/// モジュールスコープでresolveBlockへ渡す。
+pub const VariantInput = struct {
+    root: *ast.Node,
+    import_entries: []const ImportEntry,
 };
 
 pub const Module = struct {
@@ -169,6 +188,9 @@ const Analyzer = struct {
     /// 公式のmodList相当: 結合ストリーム上の展開マーカー位置順に並ぶ
     /// モジュールindexの一覧。エントリは順位0で常に先頭になる。
     mod_list: std.ArrayList(u32) = .empty,
+    /// resolveBlock中のルートに対応する取り込み辺一覧。変体ルートや
+    /// 関数内展開の入れ子サイトでは対象側の一覧へ切り替わる。
+    active_import_entries: []const ImportEntry = &.{},
 
     fn run(self: *Analyzer) !void {
         try self.loadBuiltins();
@@ -184,7 +206,17 @@ const Analyzer = struct {
         for (self.inputs, 0..) |_, index| try self.mod_list.append(self.allocator, @intCast(index));
         std.mem.sort(u32, self.mod_list.items, self, markerRankLess);
         for (self.inputs, 0..) |input, index| try self.predeclareBlock(input.root, @intCast(index), self.modules.items[index].scope, true);
-        for (self.inputs, 0..) |input, index| try self.resolveBlock(input.root, @intCast(index), self.modules.items[index].scope);
+        for (self.inputs, 0..) |input, index| {
+            self.active_import_entries = input.import_entries;
+            try self.resolveBlock(input.root, @intCast(index), self.modules.items[index].scope);
+            // 循環再展開コピー（変体）は同じモジュールスコープで解析し、
+            // 変数・関数シンボルを本体側と共有する（公式の再パース相当）。
+            for (input.variants) |variant| {
+                self.active_import_entries = variant.import_entries;
+                try self.resolveBlock(variant.root, @intCast(index), self.modules.items[index].scope);
+            }
+        }
+        self.active_import_entries = &.{};
     }
 
     fn loadBuiltins(self: *Analyzer) !void {
@@ -193,9 +225,18 @@ const Analyzer = struct {
         for ([_][]const u8{ "それ", "対象", "対象キー", "回数", "エラー内容" }) |name| try self.builtins.put(self.allocator, name, {});
     }
 
-    fn predeclareBlock(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId, recurse: bool) !void {
+    fn predeclareBlock(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId, recurse: bool) anyerror!void {
+        try self.predeclareBlockEx(node, module_index, scope, recurse, false);
+    }
+
+    /// expansion=true は関数内取り込みのインライン展開子。変数・定数・
+    /// 暗黙宣言は呼び出し元関数のローカルへ宣言するが、関数定義は
+    /// 取り込み先モジュールの関数として登録済みのため宣言しない
+    /// （resolveBlock側で mod__F シンボルへ束縛する）。
+    fn predeclareBlockEx(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId, recurse: bool, expansion: bool) anyerror!void {
         if (node.kind == .function_definition or node.kind == .test_definition) {
-            _ = try self.declare(module_index, scope, node.name, if (node.kind == .test_definition) .test_function else .function, node.span, node.is_export, false, node.arguments.len, false);
+            if (!expansion)
+                _ = try self.declare(module_index, scope, node.name, if (node.kind == .test_definition) .test_function else .function, node.span, node.is_export, false, node.arguments.len, false);
             return;
         }
         if (node.kind == .anonymous_function) return;
@@ -223,7 +264,23 @@ const Analyzer = struct {
     fn resolveBlock(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId) !void {
         switch (node.kind) {
             .function_definition, .test_definition => {
-                if (self.lookupLexical(scope, node.name)) |symbol| try self.bind(node, .declaration, node.name, symbol.qualified_name, symbol.id);
+                // 関数内取り込みでインライン展開された定義は呼び出し元関数の
+                // スコープ内に置かれるが、公式では関数は取り込み先モジュールの
+                // 名前でグローバル登録される。字句スコープで見つからなければ
+                // 定義側モジュールの関数シンボル（mod__F相当）へ束縛する。
+                var declared: ?Symbol = null;
+                var def_current: ?ScopeId = scope;
+                while (def_current) |id| : (def_current = self.scopes.items[id].parent) {
+                    if (self.lookupLexical(id, node.name)) |symbol| {
+                        // 他モジュールのモジュールスコープへの一致は、展開
+                        // された定義が呼び出し元側の同名関数を指さないよう除外
+                        if (self.scopes.items[id].kind == .module and symbol.module_index != module_index) continue;
+                        declared = symbol;
+                        break;
+                    }
+                }
+                declared = declared orelse self.lookupModule(module_index, node.name);
+                if (declared) |symbol| try self.bind(node, .declaration, node.name, symbol.qualified_name, symbol.id);
                 const function_scope = try self.addScope(scope, module_index, .function);
                 try self.function_scopes.append(self.allocator, .{ .node = node, .scope = function_scope });
                 for (node.arguments) |argument| _ = try self.declare(module_index, function_scope, argument.name, .parameter, argument.span, false, true, 0, false);
@@ -252,12 +309,26 @@ const Analyzer = struct {
             },
             // 実効取り込み文は取り込み先エントリへの呼び出しとして束縛する。
             // 公式のトークン展開と同じ位置でトップレベルが実行される。
-            .import => for (self.inputs[module_index].import_entries) |entry| {
+            .import => for (self.active_import_entries) |entry| {
                 if (entry.position == node.span.start) {
                     var bound_entry = entry;
                     bound_entry.site_toplevel = self.enclosingFunctionScope(scope) == null;
                     // entry_nameは入力側の短命アリーナの値なので複製して保持する
                     bound_entry.entry_name = try self.allocator.dupe(u8, entry.entry_name);
+                    if (!bound_entry.site_toplevel) {
+                        // 関数内取り込み: 公式は取り込み先トークンをこの位置へ
+                        // 展開するため、取り込み先の変数宣言・文は呼び出し元
+                        // 関数のローカルになる。呼び出し元スコープのまま
+                        // 取り込み先モジュール名（modName相当）で名前解決する。
+                        const saved_entries = self.active_import_entries;
+                        self.active_import_entries = if (entry.callee_variant) |variant_index|
+                            self.inputs[entry.callee_module].variants[variant_index].import_entries
+                        else
+                            self.inputs[entry.callee_module].import_entries;
+                        for (node.expansion) |child| try self.predeclareBlockEx(child, entry.callee_module, scope, true, true);
+                        for (node.expansion) |child| try self.resolveBlock(child, entry.callee_module, scope);
+                        self.active_import_entries = saved_entries;
+                    }
                     try self.bind(node, .call, node.name, bound_entry.entry_name, null);
                     self.bindings.items[self.bindings.items.len - 1].import_entry = bound_entry;
                     break;
@@ -426,11 +497,23 @@ const Analyzer = struct {
         try self.bind(node, if (callable) .call else .reference, name, symbol.qualified_name, symbol.id);
     }
 
+    /// 関数内取り込みで展開されるモジュールの変数系モジュールシンボルは、
+    /// 公式ではグローバル（__varslist[2]/funclist）に生成されない
+    /// （宣言が呼び出し元関数のローカルになる）ため、全ての名前解決
+    /// 経路から隠す。関数・テスト関数はグローバル登録されるため対象外。
+    fn hiddenModuleVar(self: *Analyzer, symbol: Symbol) bool {
+        return self.scopes.items[symbol.scope].kind == .module and
+            (symbol.kind == .variable or symbol.kind == .constant or symbol.kind == .loop_variable) and
+            symbol.module_index < self.inputs.len and
+            self.inputs[symbol.module_index].expands_in_function;
+    }
+
     fn resolveSymbol(self: *Analyzer, module_index: u32, scope: ScopeId, name: []const u8, use_span: ast.Span) ?Symbol {
         var current: ?ScopeId = scope;
         while (current) |id| : (current = self.scopes.items[id].parent) {
             if (self.lookupLexical(id, name)) |symbol| {
-                if (self.scopes.items[id].kind == .module and !self.moduleSymbolVisible(scope, symbol)) continue;
+                if (self.scopes.items[id].kind == .module and
+                    (!self.moduleSymbolVisible(scope, symbol) or self.hiddenModuleVar(symbol))) continue;
                 if (self.isDeclSiteSymbol(symbol, module_index, use_span)) continue;
                 return symbol;
             }
@@ -443,7 +526,7 @@ const Analyzer = struct {
         // modList 検索には進まない。
         if (std.mem.indexOf(u8, name, "__") != null) {
             for (self.symbols.items) |symbol| {
-                if (self.scopes.items[symbol.scope].kind != .module or symbol.shadowed) continue;
+                if (self.scopes.items[symbol.scope].kind != .module or symbol.shadowed or self.hiddenModuleVar(symbol)) continue;
                 if (!std.mem.eql(u8, symbol.qualified_name, name)) continue;
                 if (!self.moduleSymbolVisible(scope, symbol)) continue;
                 if (self.isDeclSiteSymbol(symbol, module_index, use_span)) continue;
@@ -563,7 +646,8 @@ const Analyzer = struct {
         var current = self.scopes.items[scope].parent;
         while (current) |parent| : (current = self.scopes.items[parent].parent) {
             if (self.lookupLexical(parent, name)) |symbol| {
-                if (self.scopes.items[parent].kind == .module and !self.moduleSymbolVisible(scope, symbol)) continue;
+                if (self.scopes.items[parent].kind == .module and
+                    (!self.moduleSymbolVisible(scope, symbol) or self.hiddenModuleVar(symbol))) continue;
                 if (self.isDeclSiteSymbol(symbol, use_module, use_span)) continue;
                 return symbol;
             }
@@ -649,7 +733,8 @@ const Analyzer = struct {
     }
 
     fn lookupModule(self: *Analyzer, module_index: u32, name: []const u8) ?Symbol {
-        return self.lookupLexical(self.modules.items[module_index].scope, name);
+        const symbol = self.lookupLexical(self.modules.items[module_index].scope, name) orelse return null;
+        return if (self.hiddenModuleVar(symbol)) null else symbol;
     }
 
     /// mod_list を marker_rank 昇順（同順位は入力順）に並べる比較関数。
