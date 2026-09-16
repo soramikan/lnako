@@ -193,9 +193,11 @@ async function updateCompatibilityDocs(runId, commit, sourceManifestSha256) {
   const path = resolve(root, "docs", "COMPATIBILITY.md");
   let text = await readFile(path, "utf8");
 
-  // canonical正本の表は常時unattested。verifiedはsnapshotの導出viewにのみ現れる。
-  text = replaceInline(text, "<!-- attestation:verified -->", "<!-- /attestation:verified -->", "0");
-  text = replaceInline(text, "<!-- attestation:trace -->", "<!-- /attestation:trace -->", "527");
+  // docs表は導出viewを表示する。このsnapshot追跡後は現行manifest一致の
+  // snapshotが存在するため、導出viewは verified:527 / trace:0 / unverified:0。
+  // canonical正本自体は常時unattestedのままである点に注意。
+  text = replaceInline(text, "<!-- attestation:verified -->", "<!-- /attestation:verified -->", "527");
+  text = replaceInline(text, "<!-- attestation:trace -->", "<!-- /attestation:trace -->", "0");
   text = replaceInline(text, "<!-- attestation:unverified -->", "<!-- /attestation:unverified -->", "0");
 
   const newDescription = `\`verified\` は正本のstateではなく、現行source manifestに一致するattestation snapshotから導出されるviewです。\`attestations/\` を走査し、\`manifest.json\` の \`sourceManifestSha256\`（\`${sourceManifestSha256}\`）が現行ソースと一致する最大workflowRunのsnapshot（\`attestations/${runId}/\`）が現行となり、canonical証拠ファイルとsource manifest宣言のdigestが署名subjectに含まれるため、導出viewでは全527 entryが \`verified\` です。sourceに変更を加えた場合、過去snapshotの導出結果を流用せず、mainマージ後の新しいCI attestation snapshotを追跡します。`;

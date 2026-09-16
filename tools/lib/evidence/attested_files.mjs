@@ -84,11 +84,10 @@ export function assertTrackedSubjects(attestation, root) {
   }
 }
 
-// 現行snapshotの解決は走査型で行い、pointerファイルは使わない。
-// attestations/<run>/manifest.json を走査し、記録されたsourceManifestSha256が
-// 現行ソースから計算した値と一致する snapshot を候補とし、workflowRun 最大の
-// ものを選択する。候補が無ければnull（現行ソースはunattested）。同じ
-// workflowRunを名乗る候補が複数あればambiguousとして拒否する。
+// 現行snapshotの解決は走査型で行い、pointerファイルは使わない。候補は
+// canonical-attestation.v2 のmanifest（sourceManifest宣言を持つ形）に限る。
+// v1以前の履歴snapshotは宣言subjectを持たず現行になり得ないため、
+// sourceManifestSha256が偶然一致しても候補へ含めずunattestedとして扱う。
 // ここでは構造とmanifest一致だけを確認し、署名・内容の完全検証は
 // check_tracked_dispatch_attestation.mjs が担う。
 export async function loadCurrentAttestation(root, attestationsRoot = resolve(root, attestationsDirectory)) {
@@ -113,7 +112,7 @@ export async function loadCurrentAttestation(root, attestationsRoot = resolve(ro
       throw new Error(`attestation manifestのJSONが不正です: ${entry.name}`);
     }
     if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) continue;
-    if (!new Set([canonicalAttestationSchema, canonicalAttestationSchemaV2]).has(manifest.schema)) continue;
+    if (manifest.schema !== canonicalAttestationSchemaV2) continue;
     if (!/^[0-9]+$/.test(manifest.workflowRun ?? "") || manifest.workflowRun !== entry.name) continue;
     if (!hashPattern.test(manifest.sourceManifestSha256 ?? "")) continue;
     if (manifest.sourceManifestSha256 !== sourceManifestSha256) continue;

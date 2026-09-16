@@ -1,5 +1,7 @@
 import { access, readdir, readFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
+import { loadCurrentAttestation, signedEvidenceDigests } from "./lib/evidence/attested_files.mjs";
+import { computeBackingDigestByProof, deriveVerifiedCatalog } from "./lib/evidence/promotion.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const currentFiles = [
@@ -80,10 +82,19 @@ for (const [name, expected] of [["native", 523], ["compat-js", 4], ["blocked", 0
 for (const [name, expected] of [["verified", 0], ["trace-confirmed-unattested", 527], ["unverified", 0]]) {
   if (evidenceStates?.[name] !== expected) fail(`evidence.jsonの${name} stateが不一致です`);
 }
+// docsの表は導出viewを表示する。現行manifestに一致するsnapshotがあればその
+// 署名digestから導出したstate（一致時は通常 verified 527）、無ければcanonicalの
+// 常時unattested状態（verified 0）を使う。
+let displayStates = evidenceStates;
+const currentAttestation = await loadCurrentAttestation(root);
+if (currentAttestation !== null) {
+  const snapshotAttestation = JSON.parse(await readFile(currentAttestation.attestationPath, "utf8"));
+  displayStates = deriveVerifiedCatalog(evidence, signedEvidenceDigests(snapshotAttestation), await computeBackingDigestByProof(root)).executionEvidenceStates;
+}
 const compatibilityText = await read("docs/COMPATIBILITY.md");
-requireTableValue(compatibilityText, "verified", "verified", evidenceStates.verified);
-requireTableValue(compatibilityText, "trace-confirmed-unattested", "trace", evidenceStates["trace-confirmed-unattested"]);
-requireTableValue(compatibilityText, "unverified", "unverified", evidenceStates.unverified);
+requireTableValue(compatibilityText, "verified", "verified", displayStates.verified);
+requireTableValue(compatibilityText, "trace-confirmed-unattested", "trace", displayStates["trace-confirmed-unattested"]);
+requireTableValue(compatibilityText, "unverified", "unverified", displayStates.unverified);
 
 const fixtureInventory = evidence.fixtureInventory;
 if (fixtureInventory?.total !== 529 || fixtureInventory?.nativeAot !== 362 || fixtureInventory?.interpreter !== 177 || fixtureInventory?.compatJs !== 9) {
@@ -151,4 +162,4 @@ for (const relativePath of ["README.md", ...(await walkMarkdown("docs"))]) {
   await assertMarkdownLinks(relativePath, await read(relativePath));
 }
 
-console.log(`現行ドキュメント検査: 成功 (standard native=${standardStatuses.native}, compat-js=${standardStatuses["compat-js"]}, evidence verified=${evidenceStates.verified}/${evidence.commandCount}, CI=54 jobs)`);
+console.log(`現行ドキュメント検査: 成功 (standard native=${standardStatuses.native}, compat-js=${standardStatuses["compat-js"]}, evidence verified=${evidenceStates.verified}/${evidence.commandCount}, docs表 verified=${displayStates.verified}, CI=54 jobs)`);

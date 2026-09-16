@@ -554,14 +554,23 @@ if (attestJob.includes("--require-current") || workflow.includes("attestations/c
 }
 if (!syncEvidence.includes('"lnako.canonical-attestation.v1"') || !syncEvidence.includes('"lnako.canonical-attestation.v2"') ||
     !syncEvidence.includes('"lnako.dispatch-attestation.v3"') || !syncEvidence.includes("attestationsDirectory") ||
-    !syncEvidence.includes("loadCurrentAttestation")) {
-  throw new Error("canonical attestation schema識別子または走査型snapshot解決が共有libにありません");
+    !syncEvidence.includes("loadCurrentAttestation") ||
+    !syncEvidence.includes("manifest.schema !== canonicalAttestationSchemaV2")) {
+  throw new Error("canonical attestation schema識別子または走査型snapshot解決（v2候補限定）が共有libにありません");
+}
+// docs表は導出viewを表示する契約: 一致snapshotがあれば導出state、無ければ
+// canonicalの常時unattested。正本evidence.json自体は常時unattested固定。
+const docsChecker = await readFile(resolve(root, "tools/check_docs_current.mjs"), "utf8");
+if (!docsChecker.includes("loadCurrentAttestation") || !docsChecker.includes("deriveVerifiedCatalog") ||
+    !docsChecker.includes("signedEvidenceDigests") || docsChecker.includes("current.json")) {
+  throw new Error("check_docs_currentが導出view表示（一致snapshot→導出state、無し→unattested）を検証していません");
 }
 const snapshotCreator = await readFile(resolve(root, "tools/create_attestation_snapshot.mjs"), "utf8");
 if (snapshotCreator.includes("current.json") || snapshotCreator.includes("currentAttestationPointer") ||
     !snapshotCreator.includes("canonicalAttestationSchemaV2") || !snapshotCreator.includes("sourceManifest: \"source-manifest.json\"") ||
     !snapshotCreator.includes("validateSourceManifestDeclarationBytes") ||
-    !snapshotCreator.includes('else if (name === sourceManifestDeclarationBasename) files.set("sourceManifest", path)')) {
+    !snapshotCreator.includes('else if (name === sourceManifestDeclarationBasename) files.set("sourceManifest", path)') ||
+    !snapshotCreator.includes('replaceInline(text, "<!-- attestation:verified -->", "<!-- /attestation:verified -->", "527")')) {
   throw new Error("snapshot作成toolがmanifest v2・宣言保存・pointer廃止へ対応していません");
 }
 

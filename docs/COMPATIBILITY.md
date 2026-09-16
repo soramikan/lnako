@@ -45,7 +45,7 @@
 
 ### 追跡対象のcanonical証拠
 
-[`compat/v3.7.24/evidence.json`](../compat/v3.7.24/evidence.json) はリポジトリに追跡する機械可読の正本です。現在の状態は次のとおりです。
+[`compat/v3.7.24/evidence.json`](../compat/v3.7.24/evidence.json) はリポジトリに追跡する機械可読の正本です。正本自体は常時unattestedで、次の表は現行attestation snapshotから導出したviewの状態です。
 
 | state | entry |
 | --- | ---: |

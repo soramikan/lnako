@@ -227,7 +227,7 @@ async function buildForgedSnapshot(attestationsRoot, options = {}) {
     "source-manifest.json": declarationSha256,
   };
   const manifest = {
-    schema: "lnako.canonical-attestation.v2",
+    schema: options.manifestSchema ?? "lnako.canonical-attestation.v2",
     workflowRun: options.workflowRun ?? forgedRun,
     workflowAttempt: 1,
     targetCommit: options.targetCommit ?? headCommit,
@@ -338,6 +338,21 @@ try {
   console.log("tracked dispatch attestation安全性検査: run名不一致snapshotを候補から除外しrequire-currentを拒否");
 } finally {
   await rm(mismatchedTemporary, { recursive: true, force: true });
+}
+
+// v1 manifestのsnapshotは、sourceManifestSha256が偶然一致しても現行候補に
+// ならない（現行解決はcanonical-attestation.v2 manifestのみを走査する）。
+const v1Temporary = await mkdtemp(join(tmpdir(), "lnako-v1-snapshot-"));
+try {
+  await buildForgedSnapshot(v1Temporary, { manifestSchema: "lnako.canonical-attestation.v1" });
+  const result = runTrackedCheck(v1Temporary);
+  if (result.status !== 0 || !`${result.stdout}\n${result.stderr}`.includes("一致するsnapshotなし")) {
+    throw new Error(`v1 manifest snapshotを無視できませんでした: ${JSON.stringify({ status: result.status, stdout: result.stdout, stderr: result.stderr })}`);
+  }
+  assertTrackedRejected(runTrackedCheck(v1Temporary, ["--require-current"]), "現行source manifestに一致するattestation snapshotがありません", "v1 manifest時のrequire-current");
+  console.log("tracked dispatch attestation安全性検査: v1 manifest snapshotを候補から除外しrequire-currentを拒否");
+} finally {
+  await rm(v1Temporary, { recursive: true, force: true });
 }
 
 function gitHead() {
