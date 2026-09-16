@@ -169,6 +169,7 @@ pub const aotFileCopyMoveWithIo = node_file_module.aotFileCopyMoveWithIo;
 
 const low_level_module = @import("low_level.zig");
 pub const lowLevelFileBuiltin = low_level_module.lowLevelFileBuiltin;
+pub const lowLevelHashBuiltin = low_level_module.lowLevelHashBuiltin;
 pub const lowLevelCapabilitySupportedBuiltin = low_level_module.lowLevelCapabilitySupportedBuiltin;
 pub const lowLevelCapabilityListBuiltin = low_level_module.lowLevelCapabilityListBuiltin;
 pub const lowLevelUnsupportedBuiltin = low_level_module.lowLevelUnsupportedBuiltin;

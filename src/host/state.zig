@@ -38,6 +38,7 @@ pub const CliHost = struct {
     global_trace_file: ?std.Io.File = null,
     literal_trace_file: ?std.Io.File = null,
     low_level_handles: ?lnako.runtime.low_level_io.FileHandleTable = null,
+    low_level_hash_handles: ?lnako.runtime.low_level_hash.HashHandleTable = null,
     /// Issue #28: テキスト系stdin命令とrawバイト命令が共有するstdinの
     /// 単一source。node.Contextとlowlevel.Contextの両方がここへ到達する。
     stdin_source: ?lnako.runtime.low_level_io.StdinSource = null,
@@ -64,6 +65,7 @@ pub const CliHost = struct {
         self.held_http_connections.deinit(std.heap.page_allocator);
         if (self.http_server) |*server| server.deinit(self.io);
         if (self.low_level_handles) |*table| table.deinit(self.io);
+        if (self.low_level_hash_handles) |*table| table.deinit();
         if (self.stdin_source) |*source| source.deinit();
         while (self.async_tasks.pop()) |task| destroyAsyncTask(task, true);
         self.async_tasks.deinit(std.heap.page_allocator);
@@ -353,6 +355,39 @@ pub const CliHost = struct {
         return lnako.runtime.low_level_io.setLength(self.io, entry.file, size);
     }
 
+    fn lowLevelHashTable(self: *CliHost) *lnako.runtime.low_level_hash.HashHandleTable {
+        if (self.low_level_hash_handles == null) {
+            self.low_level_hash_handles = lnako.runtime.low_level_hash.HashHandleTable.init(std.heap.page_allocator);
+        }
+        return &self.low_level_hash_handles.?;
+    }
+
+    fn lowLevelCreateHash(context: *anyopaque, algorithm: []const u8) anyerror!u64 {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const hasher = try lnako.runtime.low_level_hash.startNamed(algorithm);
+        return (try self.lowLevelHashTable().insert(hasher)).raw();
+    }
+
+    fn lowLevelUpdateHash(context: *anyopaque, raw: u64, bytes: []const u8) anyerror!void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const id = lnako.runtime.low_level_foundation.HandleId.fromRaw(raw);
+        const entry = self.lowLevelHashTable().find(id) orelse return error.BadFileDescriptor;
+        entry.hasher.update(bytes);
+    }
+
+    fn lowLevelDigestHash(context: *anyopaque, raw: u64, allocator: std.mem.Allocator) anyerror![]u8 {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const id = lnako.runtime.low_level_foundation.HandleId.fromRaw(raw);
+        var removed = self.lowLevelHashTable().remove(id) orelse return error.BadFileDescriptor;
+        return removed.hasher.finalize(allocator);
+    }
+
+    fn lowLevelDiscardHash(context: *anyopaque, raw: u64) anyerror!void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const id = lnako.runtime.low_level_foundation.HandleId.fromRaw(raw);
+        _ = self.lowLevelHashTable().remove(id) orelse return error.BadFileDescriptor;
+    }
+
     fn lowLevelContext(self: *CliHost) lnako.plugins.lowlevel.Context {
         return .{
             .context = self,
@@ -362,6 +397,10 @@ pub const CliHost = struct {
             .writeFileBytesFn = lowLevelWriteFileBytes,
             .syncFileFn = lowLevelSyncFile,
             .truncateFileFn = lowLevelTruncateFile,
+            .createHashFn = lowLevelCreateHash,
+            .updateHashFn = lowLevelUpdateHash,
+            .digestHashFn = lowLevelDigestHash,
+            .discardHashFn = lowLevelDiscardHash,
             .peekStdinSourceFn = peekStdinSource,
             .stdinSourceFn = stdinSource,
             .writeStdoutBytesFn = lowLevelWriteStdout,

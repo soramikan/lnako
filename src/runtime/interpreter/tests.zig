@@ -12,6 +12,7 @@ const plugin_node = @import("../../plugins/node.zig");
 const plugin_lowlevel = @import("../../plugins/lowlevel.zig");
 const low_level_foundation = @import("../low_level_foundation.zig");
 const low_level_io = @import("../low_level_io.zig");
+const low_level_hash = @import("../low_level_hash.zig");
 const prepared = @import("prepared.zig");
 
 const Interpreter = istate.Interpreter;
@@ -1389,6 +1390,7 @@ test "Interpreterのtrace未設定時はemitがロックを取得しない" {
 
 const LowLevelTestHost = struct {
     table: low_level_io.FileHandleTable,
+    hash_table: low_level_hash.HashHandleTable,
     io: std.Io,
     /// Issue #28: raw stdio検証用。stdinは事前充填した共有source、
     /// raw stdout/stderr書込みはここへ捕まえ、sync呼出しを数える。
@@ -1401,7 +1403,13 @@ const LowLevelTestHost = struct {
     stderr_syncs: usize = 0,
 
     fn init(allocator: std.mem.Allocator) LowLevelTestHost {
-        return .{ .table = low_level_io.FileHandleTable.init(allocator), .io = std.testing.io, .raw_stdout = .empty, .raw_stderr = .empty };
+        return .{
+            .table = low_level_io.FileHandleTable.init(allocator),
+            .hash_table = low_level_hash.HashHandleTable.init(allocator),
+            .io = std.testing.io,
+            .raw_stdout = .empty,
+            .raw_stderr = .empty,
+        };
     }
 
     fn deinit(self: *LowLevelTestHost) void {
@@ -1409,6 +1417,7 @@ const LowLevelTestHost = struct {
         self.raw_stdout.deinit(std.testing.allocator);
         self.raw_stderr.deinit(std.testing.allocator);
         self.table.deinit(self.io);
+        self.hash_table.deinit();
     }
 
     fn openFile(pointer: *anyopaque, path: []const u8, mode: low_level_foundation.OpenMode, exclusive: bool, sync: bool) anyerror!u64 {
@@ -1444,6 +1453,28 @@ const LowLevelTestHost = struct {
         const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
         const entry = self.table.find(low_level_foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
         return low_level_io.setLength(self.io, entry.file, size);
+    }
+
+    fn createHash(pointer: *anyopaque, algorithm: []const u8) anyerror!u64 {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        return (try self.hash_table.insert(try low_level_hash.startNamed(algorithm))).raw();
+    }
+
+    fn updateHash(pointer: *anyopaque, raw: u64, bytes: []const u8) anyerror!void {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        const entry = self.hash_table.find(low_level_foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+        entry.hasher.update(bytes);
+    }
+
+    fn digestHash(pointer: *anyopaque, raw: u64, allocator: std.mem.Allocator) anyerror![]u8 {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        var removed = self.hash_table.remove(low_level_foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+        return removed.hasher.finalize(allocator);
+    }
+
+    fn discardHash(pointer: *anyopaque, raw: u64) anyerror!void {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        _ = self.hash_table.remove(low_level_foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
     }
 
     fn peekStdinSource(pointer: *anyopaque) ?*low_level_io.StdinSource {
@@ -1503,6 +1534,10 @@ const LowLevelTestHost = struct {
             .writeFileBytesFn = writeFileBytes,
             .syncFileFn = syncFile,
             .truncateFileFn = truncateFile,
+            .createHashFn = createHash,
+            .updateHashFn = updateHash,
+            .digestHashFn = digestHash,
+            .discardHashFn = discardHash,
             .peekStdinSourceFn = peekStdinSource,
             .stdinSourceFn = stdinSource,
             .writeStdoutBytesFn = writeStdoutBytes,
@@ -1592,6 +1627,172 @@ test "Interpreter低レイヤーはNUL/不正UTF-8を含むバイナリをchunke
     defer allocator.free(output);
     try std.testing.expectEqualSlices(u8, fixture, output);
     try std.testing.expect(std.mem.indexOf(u8, host.written(), "EBADF") != null);
+}
+
+test "Interpreter低レイヤーのincremental hashはファイルstreamと一致する" {
+    const allocator = std.testing.allocator;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(directory);
+    const path = try std.fs.path.join(allocator, &.{ directory, "hash-input.bin" });
+    defer allocator.free(path);
+
+    const fixture_size: usize = 200 * 1024;
+    const fixture = try allocator.alloc(u8, fixture_size);
+    defer allocator.free(fixture);
+    for (fixture, 0..) |*byte, index| byte.* = @truncate(index *% 131 +% 7);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "hash-input.bin", .data = fixture });
+
+    var expected_digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(fixture, &expected_digest, .{});
+    var expected_hex: [64]u8 = undefined;
+    const expected = std.fmt.bufPrint(&expected_hex, "{x}", .{expected_digest}) catch unreachable;
+
+    // 1 byte、7 byte、64KiBのいずれの供給でもdigestが一致する。
+    for ([_]usize{ 1, 7, 65536 }) |chunk_size| {
+        const source = try std.fmt.allocPrint(allocator,
+            \\H=ファイル開("{s}","rb")
+            \\X=ハッシュ開始("sha256")
+            \\1の間、繰り返す
+            \\B=ファイルバイト読(H,{d})
+            \\もし、要素数(B)=0ならば、抜ける
+            \\ハッシュ追加(X,B)
+            \\ここまで
+            \\ファイル閉(H)
+            \\ハッシュ完了(X,"hex")を表示
+            \\
+        , .{ path, chunk_size });
+        defer allocator.free(source);
+
+        var fixture_compiled = try compileForTest(allocator, source);
+        defer fixture_compiled.ir_program.deinit();
+        defer fixture_compiled.hir_program.deinit();
+        defer fixture_compiled.analyzed.deinit();
+        defer fixture_compiled.parsed.deinit();
+        var runtime = Runtime.init(allocator);
+        defer runtime.deinit();
+        var host = BufferHost{ .allocator = allocator };
+        defer host.deinit();
+        var low_host = LowLevelTestHost.init(allocator);
+        defer low_host.deinit();
+        var runtime_host = host.host();
+        runtime_host.lowlevel_context = low_host.context();
+        var interpreter = Interpreter.init(allocator, &runtime, fixture_compiled.ir_program, runtime_host);
+        defer interpreter.deinit();
+        _ = try interpreter.run();
+
+        const line = try std.fmt.allocPrint(allocator, "{s}\n", .{expected});
+        defer allocator.free(line);
+        try std.testing.expectEqualStrings(line, host.written());
+    }
+}
+
+test "Interpreter低レイヤーのハッシュ完了後の再利用はEBADFを投げる" {
+    const allocator = std.testing.allocator;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(directory);
+    const path = try std.fs.path.join(allocator, &.{ directory, "digest-input.bin" });
+    defer allocator.free(path);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "digest-input.bin", .data = "abc" });
+
+    const source = try std.fmt.allocPrint(allocator,
+        \\H=ファイル開("{s}","rb")
+        \\X=ハッシュ開始("sha256")
+        \\B=ファイルバイト読(H,3)
+        \\ファイル閉(H)
+        \\ハッシュ追加(X,B)
+        \\ハッシュ完了(X,"hex")を表示
+        \\エラー監視
+        \\ハッシュ追加(X,B)
+        \\エラーならば
+        \\エラーメッセージ["code"]を表示
+        \\ここまで
+        \\
+    , .{path});
+    defer allocator.free(source);
+
+    var fixture_compiled = try compileForTest(allocator, source);
+    defer fixture_compiled.ir_program.deinit();
+    defer fixture_compiled.hir_program.deinit();
+    defer fixture_compiled.analyzed.deinit();
+    defer fixture_compiled.parsed.deinit();
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = allocator };
+    defer host.deinit();
+    var low_host = LowLevelTestHost.init(allocator);
+    defer low_host.deinit();
+    var runtime_host = host.host();
+    runtime_host.lowlevel_context = low_host.context();
+    var interpreter = Interpreter.init(allocator, &runtime, fixture_compiled.ir_program, runtime_host);
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings(
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\nEBADF\n",
+        host.written(),
+    );
+}
+
+test "Interpreter低レイヤーのハッシュとファイルhandleは取り違えをEBADFにする" {
+    const allocator = std.testing.allocator;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(directory);
+    const path = try std.fs.path.join(allocator, &.{ directory, "cross-kind.bin" });
+    defer allocator.free(path);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "cross-kind.bin", .data = "abc" });
+
+    const source = try std.fmt.allocPrint(allocator,
+        \\H=ファイル開("{s}","rb")
+        \\X=ハッシュ開始("sha256")
+        \\B=ファイルバイト読(H,3)
+        \\エラー監視
+        \\ハッシュ追加(H,B)
+        \\エラーならば
+        \\エラーメッセージ["code"]を表示
+        \\ここまで
+        \\エラー監視
+        \\ファイル閉(X)
+        \\エラーならば
+        \\エラーメッセージ["code"]を表示
+        \\ここまで
+        \\エラー監視
+        \\Y=ハッシュ完了(H,"hex")
+        \\エラーならば
+        \\エラーメッセージ["code"]を表示
+        \\ここまで
+        \\エラー監視
+        \\ハッシュ破棄(H)
+        \\エラーならば
+        \\エラーメッセージ["code"]を表示
+        \\ここまで
+        \\ファイル閉(H)
+        \\ハッシュ破棄(X)
+        \\
+    , .{path});
+    defer allocator.free(source);
+
+    var fixture_compiled = try compileForTest(allocator, source);
+    defer fixture_compiled.ir_program.deinit();
+    defer fixture_compiled.hir_program.deinit();
+    defer fixture_compiled.analyzed.deinit();
+    defer fixture_compiled.parsed.deinit();
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = allocator };
+    defer host.deinit();
+    var low_host = LowLevelTestHost.init(allocator);
+    defer low_host.deinit();
+    var runtime_host = host.host();
+    runtime_host.lowlevel_context = low_host.context();
+    var interpreter = Interpreter.init(allocator, &runtime, fixture_compiled.ir_program, runtime_host);
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("EBADF\nEBADF\nEBADF\nEBADF\n", host.written());
 }
 
 test "Interpreter低レイヤーは非文字列pathをEINVALにする" {

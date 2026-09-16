@@ -90,6 +90,11 @@ pub const HandleContract = struct {
     pub const double_close_is_ebadf = true;
 };
 
+/// ハッシュhandleのindex空間の開始値。ファイルhandleは1から連番で払い出す。
+/// ファイル側の払い出しもこの値へ到達しないよう制限し、raw HandleIdが
+/// 種別を跨いで衝突しないことを双方向で保証する（Issue #32）。
+pub const hash_handle_index_base: u32 = 0x8000_0000;
+
 pub fn isSafeInteger(number: f64) bool {
     if (!std.math.isFinite(number)) return false;
     if (number != @trunc(number)) return false;
@@ -325,7 +330,7 @@ pub const Capability = enum {
 /// 含めない。
 pub fn capabilityImplemented(capability: Capability) bool {
     return switch (capability) {
-        .stream_file_io, .truncate, .raw_stdio => true,
+        .stream_file_io, .truncate, .incremental_hash, .raw_stdio => true,
         else => false,
     };
 }
@@ -404,6 +409,15 @@ pub const stream_commands = struct {
     pub const write_bytes_user = "ファイルバイト書く";
 };
 
+/// Issue #32のincremental hash命令名。カタログ定義とInterpreterのdispatch、
+/// AOTのbindingが共通で参照する正本である。送り仮名を持たない語幹名を固定する。
+pub const hash_commands = struct {
+    pub const create = "ハッシュ開始";
+    pub const update = "ハッシュ追加";
+    pub const digest = "ハッシュ完了";
+    pub const discard = "ハッシュ破棄";
+};
+
 /// Issue #28のraw標準入出力命令名。`stream_commands` と同じくdispatch名は
 /// 送り仮名を落とした語幹で、利用者の `…読む`/`…書く` は同じ命令へ
 /// 正規化される。同期命令は送り仮名を持たない。
@@ -475,10 +489,10 @@ pub const catalog_commands = [_]CatalogCommand{
     .{ .id = "ll-file-truncate-path", .name = "ファイルサイズ変更", .min = 2, .max = 2, .operation = "truncate", .capability = .truncate },
     .{ .id = "ll-file-utime-path", .name = "ファイル時刻設定", .min = 3, .max = 3, .operation = "utime", .capability = .utime },
     .{ .id = "ll-file-utime-handle", .name = "ファイル時刻設定済", .min = 3, .max = 3, .operation = "futime", .capability = .utime },
-    .{ .id = "ll-hash-create", .name = "ハッシュ開始", .min = 1, .max = 1, .operation = "hash", .capability = .incremental_hash },
-    .{ .id = "ll-hash-update", .name = "ハッシュ追加", .min = 2, .max = 2, .operation = "hash", .capability = .incremental_hash },
-    .{ .id = "ll-hash-digest", .name = "ハッシュ完了", .min = 1, .max = 2, .operation = "hash", .capability = .incremental_hash },
-    .{ .id = "ll-hash-discard", .name = "ハッシュ破棄", .min = 1, .max = 1, .operation = "hash", .capability = .incremental_hash },
+    .{ .id = "ll-hash-create", .name = hash_commands.create, .min = 1, .max = 1, .operation = "hash", .capability = .incremental_hash, .implemented = true },
+    .{ .id = "ll-hash-update", .name = hash_commands.update, .min = 2, .max = 2, .operation = "hash", .capability = .incremental_hash, .implemented = true },
+    .{ .id = "ll-hash-digest", .name = hash_commands.digest, .min = 1, .max = 2, .operation = "hash", .capability = .incremental_hash, .implemented = true },
+    .{ .id = "ll-hash-discard", .name = hash_commands.discard, .min = 1, .max = 1, .operation = "hash", .capability = .incremental_hash, .implemented = true },
     .{ .id = "ll-dir-open", .name = "ディレクトリ開", .user_name = "ディレクトリ開く", .min = 1, .max = 1, .operation = "opendir", .capability = .dir_iterator },
     .{ .id = "ll-dir-next", .name = "ディレクトリ次取得", .min = 1, .max = 1, .operation = "readdir", .capability = .dir_iterator },
     .{ .id = "ll-dir-close", .name = "ディレクトリ閉", .user_name = "ディレクトリ閉じる", .min = 1, .max = 1, .operation = "closedir", .capability = .dir_iterator },
@@ -552,6 +566,10 @@ pub const stream_operations = struct {
     pub const fsync = "fsync";
     pub const ftruncate = "ftruncate";
 };
+
+/// Issue #32のincremental hash命令が失敗したときに返す構造化エラーの操作名
+/// （ASCII）。カタログの `operation` は4命令とも共通で `hash` である。
+pub const hash_operation = "hash";
 
 /// 開くときのアクセス様式。`ファイル開く` のmode引数から決まる。
 /// 位置（read/write/append）と生成・切詰の有無だけを固定し、
@@ -796,6 +814,7 @@ test "capability識別子はsnake_caseで分類が閉じている" {
     try std.testing.expectEqual(CapabilityClass.portable_core, Capability.stream_file_io.class());
     try std.testing.expect(capabilityImplemented(.stream_file_io));
     try std.testing.expect(capabilityImplemented(.truncate));
+    try std.testing.expect(capabilityImplemented(.incremental_hash));
     try std.testing.expect(capabilityImplemented(.raw_stdio));
     try std.testing.expect(!capabilityImplemented(.termios));
     try std.testing.expectEqual(CapabilityClass.posix_extension, Capability.chmod.class());
@@ -875,6 +894,13 @@ test "ストリームI/O命令名はファイル接頭辞を持ち既存527件�
     try std.testing.expectEqual(@as(u8, 1), commandArity(stream_commands.close).?.max);
     try std.testing.expectEqual(@as(u8, 2), commandArity(stream_commands.open).?.max);
     try std.testing.expectEqual(@as(u8, 0), commandArity(capability_list_command).?.max);
+    try std.testing.expectEqualStrings("hash", hash_operation);
+    for ([_][]const u8{ hash_commands.create, hash_commands.update, hash_commands.digest, hash_commands.discard }) |name| {
+        const command = catalogCommandFor(name).?;
+        try std.testing.expect(command.implemented);
+        try std.testing.expectEqual(Capability.incremental_hash, command.capability.?);
+        try std.testing.expectEqualStrings(hash_operation, command.operation);
+    }
 }
 
 test "Nodeの文字列flagsはOpenModeへ写り、不正modeはInvalidModeになる" {

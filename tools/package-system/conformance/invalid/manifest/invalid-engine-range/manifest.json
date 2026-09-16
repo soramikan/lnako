@@ -1,0 +1,10 @@
+{
+  "package": {
+    "name": "bad-engine",
+    "version": "1.0.0",
+    "license": "MIT",
+    "engines": {
+      "nako": "not-a-range"
+    }
+  }
+}

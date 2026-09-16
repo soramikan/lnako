@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "lockSha256": "sha256:1b74f485244b70cce2d5990de5966b5666fe5ce3b05bd756b7d3561695acac6b",
+  "profile": "default",
+  "runtime": "cnako",
+  "packages": {
+    "pkg:00000000000000000000000000000000": {
+      "name": "math-kit",
+      "version": "1.0.0",
+      "id": "pkg:00000000000000000000000000000000",
+      "path": "deps/math-kit",
+      "exports": [
+        { "name": "index.nako3", "path": "src/index.nako3" }
+      ]
+    }
+  }
+}

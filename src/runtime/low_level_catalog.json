@@ -567,7 +567,7 @@
         "ENOTSUP"
       ],
       "notes": "アルゴリズム名は既存ハッシュ値計算と同じ正規化",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-hash-update",
@@ -584,7 +584,7 @@
         "EINVAL"
       ],
       "notes": "bytesを無変換でupdate",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-hash-digest",
@@ -602,7 +602,7 @@
         "ENOTSUP"
       ],
       "notes": "ENCODING省略時はraw bytes、hex指定でhex文字列。完了後は破棄",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-hash-discard",
@@ -618,7 +618,7 @@
         "EBADF"
       ],
       "notes": "二重破棄はEBADF",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-dir-open",
@@ -1465,13 +1465,13 @@
       "id": "incremental_hash",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": true,
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -2038,7 +2038,7 @@
     "argv": "文字列の配列。shell解釈しない",
     "processOptions": "プロセス起動のOPTIONS辞書。cwd/env/stdio/detached",
     "hashAlgorithm": "ハッシュアルゴリズム名。string。既存ハッシュ値計算と同一正規化",
-    "hashEncoding": "ハッシュ出力encoding。raw/hex。string",
+    "hashEncoding": "ハッシュ出力encoding。省略時およびrawはbytes、hex/base64/base64url/latin1/binary/utf8は既存ハッシュ値計算と同一の文字列",
     "hashDigest": "ハッシュdigest。rawはbytes、hexはstring（ENCODING依存）",
     "function": "関数（CALLBACK）"
   },

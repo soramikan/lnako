@@ -10,6 +10,7 @@ const byte_storage = @import("byte_storage.zig");
 const csv_state = @import("csv_state.zig");
 const async_types = @import("async_types.zig");
 const low_level_io = @import("../low_level_io.zig");
+const low_level_hash = @import("../low_level_hash.zig");
 
 const builtin = shared.builtin;
 const aot_builtin = shared.aot_builtin;
@@ -537,9 +538,7 @@ pub const Runtime = struct {
     elapsed_milliseconds: u64 = 0,
     next_timer_id: u64 = 1,
     timer_event_count: usize = 0,
-    /// Issue #28: テキスト系（`尋`等）とrawバイト命令が共有するstdinの単一source。
     stdin_source: ?low_level_io.StdinSource = null,
-    /// テスト用のstdio差し替え口（nullは実プロセスstdio）。
     stdio_files: low_level_io.StdioFiles = .{},
     http_server_state: AotHttpServerState = .{},
     http_server: ?std.Io.net.Server = null,
@@ -579,6 +578,7 @@ pub const Runtime = struct {
     dynamic_function_bridges: std.ArrayList(*AotFunctionBridge) = .empty,
     standard_property_cache: std.ArrayList(StandardPropertyCacheEntry) = .empty,
     low_level_handles: ?low_level_io.FileHandleTable = null,
+    low_level_hash_handles: ?low_level_hash.HashHandleTable = null,
     low_level_handle_ids: std.AutoHashMapUnmanaged(usize, u64) = .empty,
     low_level_handle_by_id: std.AutoHashMapUnmanaged(u64, usize) = .empty,
     /// Canonical storage for emitted string literals.  `lnako_aot_string_literal`
@@ -610,6 +610,7 @@ pub const Runtime = struct {
         self.process_tasks.deinit(self.allocator);
         if (self.process_io_initialized) self.process_io.deinit();
         if (self.low_level_handles) |*table| table.deinit(io);
+        if (self.low_level_hash_handles) |*table| table.deinit();
         self.low_level_handle_ids.deinit(self.allocator);
         self.low_level_handle_by_id.deinit(self.allocator);
         if (self.dynamic_deinit) |deinit_dynamic| deinit_dynamic(self);

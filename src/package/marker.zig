@@ -12,6 +12,7 @@ pub const SyntaxError = struct {
 
 /// marker式が参照できるプロファイル/コンテキストフィールド。
 pub const Field = enum {
+    runtime,
     os,
     cpu,
     abi,
@@ -22,6 +23,7 @@ pub const Field = enum {
 
     pub fn name(self: Field) []const u8 {
         return switch (self) {
+            .runtime => "runtime",
             .os => "os",
             .cpu => "cpu",
             .abi => "abi",
@@ -66,6 +68,7 @@ pub const Expr = union(enum) {
 
 /// marker評価コンテキスト。OS/CPU/ABI/実行モード/バージョン/featuresを保持する。
 pub const Context = struct {
+    runtime: []const u8 = "",
     os: []const u8 = "",
     cpu: []const u8 = "",
     abi: []const u8 = "",
@@ -475,6 +478,7 @@ fn isIdentChar(byte: u8) bool {
 }
 
 fn fieldFromName(name: []const u8) ?Field {
+    if (std.mem.eql(u8, name, "runtime")) return .runtime;
     if (std.mem.eql(u8, name, "os")) return .os;
     if (std.mem.eql(u8, name, "cpu")) return .cpu;
     if (std.mem.eql(u8, name, "abi")) return .abi;
@@ -515,6 +519,7 @@ const ListView = union(enum) {
 fn resolveOperand(operand: Operand, context: Context) EvalError!Resolved {
     return switch (operand) {
         .field => |field| switch (field) {
+            .runtime => .{ .string = context.runtime },
             .os => .{ .string = context.os },
             .cpu => .{ .string = context.cpu },
             .abi => .{ .string = context.abi },
@@ -780,4 +785,22 @@ test "marker解析で確保失敗が構文エラーへ変換されない" {
             .err => return error.TestUnexpectedResult,
         }
     }
+}
+
+test "runtimeフィールドのmarker式を評価する" {
+    const allocator = std.testing.allocator;
+    var marker_lnako = (try parse(allocator, "runtime == \"lnako\"")).ok;
+    defer marker_lnako.deinit();
+
+    var marker_cnako = (try parse(allocator, "runtime in [\"cnako\", \"any\"]")).ok;
+    defer marker_cnako.deinit();
+
+    const ctx_lnako: Context = .{ .runtime = "lnako" };
+    const ctx_cnako: Context = .{ .runtime = "cnako" };
+
+    try std.testing.expectEqual(true, try marker_lnako.evaluate(ctx_lnako));
+    try std.testing.expectEqual(false, try marker_lnako.evaluate(ctx_cnako));
+
+    try std.testing.expectEqual(false, try marker_cnako.evaluate(ctx_lnako));
+    try std.testing.expectEqual(true, try marker_cnako.evaluate(ctx_cnako));
 }

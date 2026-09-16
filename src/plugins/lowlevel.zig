@@ -2,6 +2,7 @@ const std = @import("std");
 const value_mod = @import("../runtime/value.zig");
 const foundation = @import("../runtime/low_level_foundation.zig");
 const low_level_io = @import("../runtime/low_level_io.zig");
+const low_level_hash = @import("../runtime/low_level_hash.zig");
 const common = @import("system/common.zig");
 const shared = @import("node/shared.zig");
 
@@ -48,6 +49,10 @@ pub const Context = struct {
     writeFileBytesFn: ?*const fn (context: *anyopaque, raw: u64, bytes: []const u8) anyerror!usize = null,
     syncFileFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
     truncateFileFn: ?*const fn (context: *anyopaque, raw: u64, size: u64) anyerror!void = null,
+    createHashFn: ?*const fn (context: *anyopaque, algorithm: []const u8) anyerror!u64 = null,
+    updateHashFn: ?*const fn (context: *anyopaque, raw: u64, bytes: []const u8) anyerror!void = null,
+    digestHashFn: ?*const fn (context: *anyopaque, raw: u64, allocator: std.mem.Allocator) anyerror![]u8 = null,
+    discardHashFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
     /// Issue #28: stdinの単一source of truth。`標準入力バイト読む` と
     /// テキスト系stdin命令（`plugin_node` 経由）が同じ `StdinSource` の
     /// `consumed` カーソルを消費する。sourceはhost側（CliHost等）が所有し、
@@ -93,6 +98,26 @@ pub const Context = struct {
         return function(self.context, raw, size);
     }
 
+    pub fn createHash(self: Context, algorithm: []const u8) !u64 {
+        const function = self.createHashFn orelse return error.IncrementalHashUnavailable;
+        return function(self.context, algorithm);
+    }
+
+    pub fn updateHash(self: Context, raw: u64, bytes: []const u8) !void {
+        const function = self.updateHashFn orelse return error.IncrementalHashUnavailable;
+        return function(self.context, raw, bytes);
+    }
+
+    pub fn digestHash(self: Context, raw: u64, allocator: std.mem.Allocator) ![]u8 {
+        const function = self.digestHashFn orelse return error.IncrementalHashUnavailable;
+        return function(self.context, raw, allocator);
+    }
+
+    pub fn discardHash(self: Context, raw: u64) !void {
+        const function = self.discardHashFn orelse return error.IncrementalHashUnavailable;
+        return function(self.context, raw);
+    }
+
     pub fn stdinSource(self: Context, allocator: std.mem.Allocator) !*low_level_io.StdinSource {
         const function = self.stdinSourceFn orelse return error.LowLevelIoUnavailable;
         return function(self.context, allocator);
@@ -124,6 +149,10 @@ pub const Context = struct {
 
     pub fn hasTruncate(self: Context) bool {
         return self.truncateFileFn != null;
+    }
+
+    pub fn hasIncrementalHash(self: Context) bool {
+        return self.createHashFn != null and self.updateHashFn != null and self.digestHashFn != null and self.discardHashFn != null;
     }
 
     pub fn hasRawStdio(self: Context) bool {
@@ -181,6 +210,10 @@ pub fn call(
     if (matches(name, foundation.stream_commands.write_bytes, foundation.stream_commands.write_bytes_user)) return @as(?Value, try writeBytes(runtime, state, context, effects, arguments));
     if (std.mem.eql(u8, name, foundation.stream_commands.sync)) return @as(?Value, try syncFile(runtime, state, context, effects, arguments));
     if (std.mem.eql(u8, name, foundation.stream_commands.truncate)) return @as(?Value, try truncateFile(runtime, state, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.hash_commands.create)) return @as(?Value, try hashCreate(runtime, state, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.hash_commands.update)) return @as(?Value, try hashUpdate(runtime, state, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.hash_commands.digest)) return @as(?Value, try hashDigest(runtime, state, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.hash_commands.discard)) return @as(?Value, try hashDiscard(runtime, state, context, effects, arguments));
     if (matches(name, foundation.stdio_commands.stdin_read, foundation.stdio_commands.stdin_read_user)) return @as(?Value, try stdinRead(runtime, context, effects, arguments));
     if (matches(name, foundation.stdio_commands.stdout_write, foundation.stdio_commands.stdout_write_user)) return @as(?Value, try stdoutWrite(runtime, context, effects, arguments));
     if (matches(name, foundation.stdio_commands.stderr_write, foundation.stdio_commands.stderr_write_user)) return @as(?Value, try stderrWrite(runtime, context, effects, arguments));
@@ -215,6 +248,7 @@ fn capabilitySupported(arguments: []const Value, context: Context) bool {
     return switch (capability) {
         .stream_file_io => context.hasStreamFileIo(),
         .truncate => context.hasTruncate(),
+        .incremental_hash => context.hasIncrementalHash(),
         .raw_stdio => context.hasRawStdio(),
         else => false,
     };
@@ -392,6 +426,140 @@ fn stderrSync(runtime: *Runtime, context: Context, effects: Effects) !Value {
         return throwIoAs(runtime, effects, failure, "fsync", null, .raw_stdio);
     };
     return .undefined;
+}
+
+fn hashCreate(runtime: *Runtime, state: *State, context: Context, effects: Effects, arguments: []const Value) !Value {
+    const algorithm_value = common.argument(arguments, 0);
+    if (algorithm_value != .string) {
+        return throwStructured(runtime, effects, .EINVAL, foundation.hash_operation, null, null, "アルゴリズム名は文字列である必要があります");
+    }
+    const algorithm = try shared.valueUtf8(runtime, algorithm_value);
+    defer runtime.allocator().free(algorithm);
+    const raw = context.createHash(algorithm) catch |failure| {
+        return throwHash(runtime, effects, failure);
+    };
+    errdefer context.discardHash(raw) catch {};
+    const id = foundation.HandleId.fromRaw(raw);
+    var handle = try runtime.createDictionary();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&handle);
+    try rememberHandle(state, runtime.allocator(), handle, id);
+    return handle;
+}
+
+fn hashUpdate(runtime: *Runtime, state: *State, context: Context, effects: Effects, arguments: []const Value) !Value {
+    const handle = common.argument(arguments, 0);
+    const id = lookupHandle(state, handle) orelse {
+        return throwStructured(runtime, effects, .EBADF, foundation.hash_operation, null, null, "無効なハンドルです");
+    };
+    const bytes = bytesArgument(runtime, common.argument(arguments, 1)) catch {
+        return throwStructured(runtime, effects, .EINVAL, foundation.hash_operation, null, null, "追加する値はBytesである必要があります");
+    };
+    context.updateHash(id.raw(), bytes) catch |failure| {
+        return throwHash(runtime, effects, failure);
+    };
+    return .undefined;
+}
+
+fn hashDigest(runtime: *Runtime, state: *State, context: Context, effects: Effects, arguments: []const Value) !Value {
+    const handle = common.argument(arguments, 0);
+    const id = lookupHandle(state, handle) orelse {
+        return throwStructured(runtime, effects, .EBADF, foundation.hash_operation, null, null, "無効なハンドルです");
+    };
+    var encoding: low_level_hash.Encoding = .raw;
+    const encoding_value = common.argument(arguments, 1);
+    if (encoding_value != .undefined and encoding_value != .null_value) {
+        if (encoding_value != .string) {
+            return throwStructured(runtime, effects, .EINVAL, foundation.hash_operation, null, null, "encodingは文字列である必要があります");
+        }
+        const name = try shared.valueUtf8(runtime, encoding_value);
+        defer runtime.allocator().free(name);
+        encoding = low_level_hash.Encoding.fromName(name) orelse {
+            return throwStructured(runtime, effects, .EINVAL, foundation.hash_operation, null, null, "未知のencodingです");
+        };
+    }
+    const digest = context.digestHash(id.raw(), runtime.allocator()) catch |failure| {
+        // digestHashはentryを見つけて消費してからfinalizeする。BadFileDescriptorは
+        // 「hash表に無い」（ファイルhandleの取り違え等）で消費していないため、
+        // 元handleのidentity mappingを消してはならない。
+        if (failure != error.BadFileDescriptor and failure != error.IncrementalHashUnavailable) {
+            forgetHandle(state, handle);
+        }
+        return throwHash(runtime, effects, failure);
+    };
+    defer runtime.allocator().free(digest);
+    forgetHandle(state, handle);
+    return encodeDigest(runtime, digest, encoding);
+}
+
+fn hashDiscard(runtime: *Runtime, state: *State, context: Context, effects: Effects, arguments: []const Value) !Value {
+    const handle = common.argument(arguments, 0);
+    const id = lookupHandle(state, handle) orelse {
+        return throwStructured(runtime, effects, .EBADF, foundation.hash_operation, null, null, "無効なハンドルです");
+    };
+    context.discardHash(id.raw()) catch |failure| {
+        return throwHash(runtime, effects, failure);
+    };
+    forgetHandle(state, handle);
+    return .undefined;
+}
+
+fn encodeDigest(runtime: *Runtime, digest: []const u8, encoding: low_level_hash.Encoding) !Value {
+    switch (encoding) {
+        .raw => return runtime.createBytes(digest),
+        .hex => {
+            const result = try runtime.allocator().alloc(u8, digest.len * 2);
+            defer runtime.allocator().free(result);
+            const text = std.fmt.bufPrint(result, "{x}", .{digest}) catch unreachable;
+            return runtime.stringUtf8(text);
+        },
+        .base64, .base64url => {
+            const result = try runtime.allocator().alloc(u8, std.base64.standard.Encoder.calcSize(digest.len));
+            defer runtime.allocator().free(result);
+            _ = std.base64.standard.Encoder.encode(result, digest);
+            if (encoding == .base64) return runtime.stringUtf8(result);
+            for (result) |*byte| byte.* = switch (byte.*) {
+                '+' => '-',
+                '/' => '_',
+                else => byte.*,
+            };
+            var length = result.len;
+            while (length > 0 and result[length - 1] == '=') length -= 1;
+            return runtime.stringUtf8(result[0..length]);
+        },
+        .latin1 => {
+            const units = try runtime.allocator().alloc(u16, digest.len);
+            defer runtime.allocator().free(units);
+            for (digest, 0..) |byte, index| units[index] = byte;
+            return runtime.stringCodeUnits(units);
+        },
+        .utf8 => return runtime.stringUtf8Lossy(digest),
+    }
+}
+
+fn hashFailureCode(failure: anyerror) foundation.PortableErrorCode {
+    return switch (failure) {
+        error.UnsupportedHashAlgorithm => .EINVAL,
+        error.IncrementalHashUnsupported, error.IncrementalHashUnavailable => .ENOTSUP,
+        else => foundation.portableCodeForFailure(failure) orelse .EINVAL,
+    };
+}
+
+fn throwHash(runtime: *Runtime, effects: Effects, failure: anyerror) anyerror {
+    const code = hashFailureCode(failure);
+    const capability = if (code == .ENOTSUP) foundation.Capability.incremental_hash.id() else null;
+    return throwStructured(runtime, effects, code, foundation.hash_operation, null, capability, hashFailureMessage(failure));
+}
+
+fn hashFailureMessage(failure: anyerror) []const u8 {
+    return switch (failure) {
+        error.UnsupportedHashAlgorithm => "未対応のハッシュアルゴリズムです",
+        error.IncrementalHashUnsupported => "このアルゴリズムは逐次計算に対応していません",
+        error.IncrementalHashUnavailable => "逐次ハッシュは利用できません",
+        error.BadFileDescriptor => "無効なハンドルです",
+        else => @errorName(failure),
+    };
 }
 
 pub fn lookupHandle(state: *State, value: Value) ?foundation.HandleId {
@@ -1008,7 +1176,7 @@ test "未実装命令はdispatch名と利用者名の両形で構造化ENOTSUP�
             }
         }
     }
-    try std.testing.expectEqual(@as(usize, 48), covered);
+    try std.testing.expectEqual(@as(usize, 44), covered);
 }
 
 test "実装済み命令の引数不足はEINVALで未知capability照会はfalse" {
@@ -1081,4 +1249,328 @@ test "余分な引数はEINVALで、openだけのホストはstream_file_io非�
     };
     const truncate_supported = (try call(&runtime, &state, truncate_full, effects, foundation.capability_supported_command, &.{truncate_name})) orelse return error.TestExpectedEqual;
     try std.testing.expect(truncate_supported == .boolean and truncate_supported.boolean);
+}
+
+const HashHost = struct {
+    table: low_level_hash.HashHandleTable,
+
+    fn init(allocator: std.mem.Allocator) HashHost {
+        return .{ .table = low_level_hash.HashHandleTable.init(allocator) };
+    }
+
+    fn deinit(self: *HashHost) void {
+        self.table.deinit();
+    }
+
+    fn create(pointer: *anyopaque, algorithm: []const u8) anyerror!u64 {
+        const self: *HashHost = @ptrCast(@alignCast(pointer));
+        return (try self.table.insert(try low_level_hash.startNamed(algorithm))).raw();
+    }
+
+    fn update(pointer: *anyopaque, raw: u64, bytes: []const u8) anyerror!void {
+        const self: *HashHost = @ptrCast(@alignCast(pointer));
+        const entry = self.table.find(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+        entry.hasher.update(bytes);
+    }
+
+    fn digest(pointer: *anyopaque, raw: u64, allocator: std.mem.Allocator) anyerror![]u8 {
+        const self: *HashHost = @ptrCast(@alignCast(pointer));
+        var removed = self.table.remove(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+        return removed.hasher.finalize(allocator);
+    }
+
+    fn discard(pointer: *anyopaque, raw: u64) anyerror!void {
+        const self: *HashHost = @ptrCast(@alignCast(pointer));
+        _ = self.table.remove(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+    }
+
+    fn context(self: *HashHost) Context {
+        return .{
+            .context = self,
+            .createHashFn = create,
+            .updateHashFn = update,
+            .digestHashFn = digest,
+            .discardHashFn = discard,
+        };
+    }
+};
+
+fn thrownErrorCode(runtime: *Runtime, thrown: Value) ![]u8 {
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    const code = shared.dictionaryGetAscii(thrown.dictionary, foundation.error_object_keys.code) orelse return error.TestExpectedEqual;
+    return shared.valueUtf8(runtime, code);
+}
+
+test "Interpreter低レイヤーのincremental hashはchunk供給と完了後にEBADFになる" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var host = HashHost.init(std.testing.allocator);
+    defer host.deinit();
+    const context = host.context();
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var algorithm = try runtime.stringUtf8("sha256");
+    try roots.protect(&algorithm);
+    var handle = (try call(&runtime, &state, context, effects, "ハッシュ開始", &.{algorithm})).?;
+    try roots.protect(&handle);
+
+    var chunk = try runtime.createBytes("a");
+    try roots.protect(&chunk);
+    _ = try call(&runtime, &state, context, effects, "ハッシュ追加", &.{ handle, chunk });
+    chunk = try runtime.createBytes("b");
+    try roots.protect(&chunk);
+    _ = try call(&runtime, &state, context, effects, "ハッシュ追加", &.{ handle, chunk });
+    chunk = try runtime.createBytes("c");
+    try roots.protect(&chunk);
+    _ = try call(&runtime, &state, context, effects, "ハッシュ追加", &.{ handle, chunk });
+
+    var encoding = try runtime.stringUtf8("hex");
+    try roots.protect(&encoding);
+    var result = (try call(&runtime, &state, context, effects, "ハッシュ完了", &.{ handle, encoding })).?;
+    try roots.protect(&result);
+    const text = try result.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", text);
+
+    // 完了後のhandleは破棄済みで、追加も再完了もEBADF。
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ハッシュ追加", &.{ handle, chunk }));
+    const update_code = try thrownErrorCode(&runtime, thrown);
+    defer std.testing.allocator.free(update_code);
+    try std.testing.expectEqualStrings("EBADF", update_code);
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ハッシュ完了", &.{handle}));
+    const digest_code = try thrownErrorCode(&runtime, thrown);
+    defer std.testing.allocator.free(digest_code);
+    try std.testing.expectEqualStrings("EBADF", digest_code);
+}
+
+test "Interpreter低レイヤーのハッシュ破棄は二重破棄と偽造handleをEBADFにする" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var host = HashHost.init(std.testing.allocator);
+    defer host.deinit();
+    const context = host.context();
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var algorithm = try runtime.stringUtf8("md5");
+    try roots.protect(&algorithm);
+    var handle = (try call(&runtime, &state, context, effects, "ハッシュ開始", &.{algorithm})).?;
+    try roots.protect(&handle);
+    _ = try call(&runtime, &state, context, effects, "ハッシュ破棄", &.{handle});
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ハッシュ破棄", &.{handle}));
+    const discard_code = try thrownErrorCode(&runtime, thrown);
+    defer std.testing.allocator.free(discard_code);
+    try std.testing.expectEqualStrings("EBADF", discard_code);
+
+    // 同じ形の辞書を手作りしてもhandle tableに載らずEBADF。
+    var forged = try runtime.createDictionary();
+    try roots.protect(&forged);
+    var forged_bytes = try runtime.createBytes("x");
+    try roots.protect(&forged_bytes);
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ハッシュ追加", &.{ forged, forged_bytes }));
+    const forged_code = try thrownErrorCode(&runtime, thrown);
+    defer std.testing.allocator.free(forged_code);
+    try std.testing.expectEqualStrings("EBADF", forged_code);
+}
+
+test "Interpreter低レイヤーのハッシュ開始は未知をEINVAL、RIPEMDをENOTSUPにする" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var host = HashHost.init(std.testing.allocator);
+    defer host.deinit();
+    const context = host.context();
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var unknown = try runtime.stringUtf8("crc32");
+    try roots.protect(&unknown);
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ハッシュ開始", &.{unknown}));
+    const unknown_code = try thrownErrorCode(&runtime, thrown);
+    defer std.testing.allocator.free(unknown_code);
+    try std.testing.expectEqualStrings("EINVAL", unknown_code);
+
+    thrown = .undefined;
+    var ripemd = try runtime.stringUtf8("ripemd160");
+    try roots.protect(&ripemd);
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ハッシュ開始", &.{ripemd}));
+    const ripemd_code = try thrownErrorCode(&runtime, thrown);
+    defer std.testing.allocator.free(ripemd_code);
+    try std.testing.expectEqualStrings("ENOTSUP", ripemd_code);
+
+    // substring bytesはBuffer kindだけを受け付ける。
+    thrown = .undefined;
+    var algorithm = try runtime.stringUtf8("sha256");
+    try roots.protect(&algorithm);
+    var handle = (try call(&runtime, &state, context, effects, "ハッシュ開始", &.{algorithm})).?;
+    try roots.protect(&handle);
+    var uint8_array = try runtime.createUint8Array("abc");
+    try roots.protect(&uint8_array);
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ハッシュ追加", &.{ handle, uint8_array }));
+    const bytes_code = try thrownErrorCode(&runtime, thrown);
+    defer std.testing.allocator.free(bytes_code);
+    try std.testing.expectEqualStrings("EINVAL", bytes_code);
+}
+
+test "Interpreter低レイヤーのincremental_hash対応判定は全callbackでtrue" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var host = HashHost.init(std.testing.allocator);
+    defer host.deinit();
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var name = try runtime.stringUtf8("incremental_hash");
+    try roots.protect(&name);
+    const supported = (try call(&runtime, &state, host.context(), effects, foundation.capability_supported_command, &.{name})).?;
+    try std.testing.expect(supported == .boolean and supported.boolean);
+    const unsupported = (try call(&runtime, &state, emptyContext(), effects, foundation.capability_supported_command, &.{name})).?;
+    try std.testing.expect(unsupported == .boolean and !unsupported.boolean);
+}
+
+test "Interpreter低レイヤーのハッシュ完了はencoding省略でraw bytesを返す" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var host = HashHost.init(std.testing.allocator);
+    defer host.deinit();
+    const context = host.context();
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var algorithm = try runtime.stringUtf8("md5");
+    try roots.protect(&algorithm);
+    var handle = (try call(&runtime, &state, context, effects, "ハッシュ開始", &.{algorithm})).?;
+    try roots.protect(&handle);
+    var chunk = try runtime.createBytes("abc");
+    try roots.protect(&chunk);
+    _ = try call(&runtime, &state, context, effects, "ハッシュ追加", &.{ handle, chunk });
+
+    // ENCODING省略はraw bytes。
+    var raw = (try call(&runtime, &state, context, effects, "ハッシュ完了", &.{handle})).?;
+    try roots.protect(&raw);
+    try std.testing.expect(raw == .bytes);
+    var hex_buffer: [32]u8 = undefined;
+    const raw_hex = std.fmt.bufPrint(&hex_buffer, "{x}", .{raw.bytes.bytes}) catch unreachable;
+    try std.testing.expectEqualStrings("900150983cd24fb0d6963f7d28e17f72", raw_hex);
+
+    // 未知encodingはEINVAL。
+    var algorithm2 = try runtime.stringUtf8("md5");
+    try roots.protect(&algorithm2);
+    var handle2 = (try call(&runtime, &state, context, effects, "ハッシュ開始", &.{algorithm2})).?;
+    try roots.protect(&handle2);
+    var bad_encoding = try runtime.stringUtf8("base32");
+    try roots.protect(&bad_encoding);
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ハッシュ完了", &.{ handle2, bad_encoding }));
+    const encoding_code = try thrownErrorCode(&runtime, thrown);
+    defer std.testing.allocator.free(encoding_code);
+    try std.testing.expectEqualStrings("EINVAL", encoding_code);
+}
+
+test "Interpreter低レイヤーのハッシュ開始は非文字列と数値をEINVALにする" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var host = HashHost.init(std.testing.allocator);
+    defer host.deinit();
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, host.context(), effects, "ハッシュ開始", &.{.{ .number = 1 }}));
+    const code = try thrownErrorCode(&runtime, thrown);
+    defer std.testing.allocator.free(code);
+    try std.testing.expectEqualStrings("EINVAL", code);
+}
+
+test "Interpreter低レイヤーのハッシュはGC stress下でもhandleを保持する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var host = HashHost.init(std.testing.allocator);
+    defer host.deinit();
+    const context = host.context();
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var algorithm = try runtime.stringUtf8("sha256");
+    try roots.protect(&algorithm);
+    var handle = (try call(&runtime, &state, context, effects, "ハッシュ開始", &.{algorithm})).?;
+    try roots.protect(&handle);
+    var chunk = try runtime.createBytes("abc");
+    try roots.protect(&chunk);
+    _ = try call(&runtime, &state, context, effects, "ハッシュ追加", &.{ handle, chunk });
+    var encoding = try runtime.stringUtf8("hex");
+    try roots.protect(&encoding);
+    var result = (try call(&runtime, &state, context, effects, "ハッシュ完了", &.{ handle, encoding })).?;
+    try roots.protect(&result);
+    const text = try result.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", text);
+}
+
+test "Interpreter低レイヤーのハッシュ完了encodingはハッシュ値計算と一致する" {
+    const plugin_crypto = @import("crypto.zig");
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var host = HashHost.init(std.testing.allocator);
+    defer host.deinit();
+    const context = host.context();
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var input = try runtime.createBytes("abc");
+    try roots.protect(&input);
+    var algorithm = try runtime.stringUtf8("sha256");
+    try roots.protect(&algorithm);
+    for ([_][]const u8{ "hex", "base64", "base64url", "latin1", "binary", "utf8", "utf-8" }) |encoding_name| {
+        var encoding = try runtime.stringUtf8(encoding_name);
+        try roots.protect(&encoding);
+        var expected = (try plugin_crypto.call(&runtime, null, "ハッシュ値計算", &.{ input, algorithm, encoding })).?;
+        try roots.protect(&expected);
+        const expected_text = try shared.valueUtf8(&runtime, expected);
+        defer std.testing.allocator.free(expected_text);
+
+        var handle = (try call(&runtime, &state, context, effects, "ハッシュ開始", &.{algorithm})).?;
+        try roots.protect(&handle);
+        _ = try call(&runtime, &state, context, effects, "ハッシュ追加", &.{ handle, input });
+        var actual = (try call(&runtime, &state, context, effects, "ハッシュ完了", &.{ handle, encoding })).?;
+        try roots.protect(&actual);
+        const actual_text = try shared.valueUtf8(&runtime, actual);
+        defer std.testing.allocator.free(actual_text);
+        try std.testing.expectEqualStrings(expected_text, actual_text);
+    }
 }
