@@ -11,8 +11,13 @@ pub const BigIntConstant = struct { function_id: ir.FunctionId, value_id: ir.Val
 pub const DebugLocation = struct { id: usize, line: usize, column: usize, scope: usize };
 
 pub fn lookupFunction(program: ir.Program, name: []const u8) ?ir.Function {
-    for (program.functions) |function| if (std.mem.eql(u8, function.name, name)) return function;
-    return null;
+    // 同名関数は生成順の後勝ち（循環再展開変体の定義が本体を置き換える
+    // 公式挙動、Issue #73）。
+    var found: ?ir.Function = null;
+    for (program.functions) |function| if (std.mem.eql(u8, function.name, name)) {
+        found = function;
+    };
+    return found;
 }
 
 pub fn isDynamicNamedCall(function: ir.Function, name: []const u8) bool {
@@ -33,10 +38,16 @@ pub fn hasLocalName(function: ir.Function, name: []const u8) bool {
     for (function.captures) |capture| if (std.mem.eql(u8, capture, name)) return true;
     for (function.parameters) |parameter| if (std.mem.eql(u8, parameter.name, name)) return true;
     for (function.blocks) |block| for (block.instructions) |instruction| {
-        if ((instruction.opcode == .load_local or instruction.opcode == .store_local or instruction.opcode == .increment) and
+        if ((instruction.opcode == .load_local or instruction.opcode == .store_local) and
             std.mem.eql(u8, instruction.name, name)) return true;
-        if (instruction.opcode == .destructure_store) for (instruction.names) |local_name| {
-            if (std.mem.eql(u8, local_name, name)) return true;
+        // DNCL自動初期化のローカル束縛も同名ローカルの痕跡として扱う
+        if (instruction.opcode == .ensure_array_var and instruction.local_target and
+            std.mem.eql(u8, instruction.name, name)) return true;
+        // 範囲繰り返し変数のローカル束縛も同様（iterator_nextが書き戻す）
+        if (instruction.opcode == .iterator_begin and instruction.local_target and
+            std.mem.eql(u8, instruction.name, name)) return true;
+        if (instruction.opcode == .destructure_store) for (instruction.names, 0..) |local_name, index| {
+            if (ir.destructureTargetIsLocal(instruction, index) and std.mem.eql(u8, local_name, name)) return true;
         };
     };
     return false;

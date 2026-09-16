@@ -115,6 +115,8 @@ pub fn joinValuesUtf8Alloc(runtime: *Runtime, values: []const Value) ![]u8 {
     var output: std.ArrayList(u8) = .empty;
     errdefer output.deinit(runtime.allocator);
     for (values) |value| {
+        // 公式はArray.join('')相当で、undefined/null要素を空文字として連結する。
+        if (value.tag == @intFromEnum(Tag.undefined) or value.tag == @intFromEnum(Tag.null_value)) continue;
         const text = try valueUtf8LossyAlloc(runtime, value);
         defer runtime.allocator.free(text);
         try output.appendSlice(runtime.allocator, text);

@@ -117,10 +117,20 @@ pub fn collectLocalNames(allocator: std.mem.Allocator, function: ir.Function) ![
     for (function.blocks) |block| for (block.instructions) |instruction| {
         switch (instruction.opcode) {
             .load_local, .store_local => try appendName(allocator, &names, &seen, instruction.name),
-            .destructure_store => for (instruction.names) |name| {
-                if (!isQualifiedGlobal(name)) try appendName(allocator, &names, &seen, name);
+            // 分解代入のターゲットは意味解析の束縛結果（names_local）で
+            // ローカル・グローバルを分ける。修飾名の有無では推測しない。
+            .destructure_store => for (instruction.names, 0..) |name, index| {
+                if (ir.destructureTargetIsLocal(instruction, index)) try appendName(allocator, &names, &seen, name);
             },
-            .increment => if (!isQualifiedGlobal(instruction.name)) try appendName(allocator, &names, &seen, instruction.name),
+            // 増減文はloweringでload_local/store_localへ分解されるため、
+            // ここではローカル読み書き命令の名前だけを集めればよい。
+            // DNCL自動初期化は変数名でコンテナを解決するため、意味解析で
+            // ローカルシンボルへ束縛された代入先はlocal slotが必要。
+            // local_targetが立つ修飾名（関数ローカルのmod__A等）もローカル。
+            .ensure_array_var => if (instruction.local_target) try appendName(allocator, &names, &seen, instruction.name),
+            // 範囲繰り返しの変数はiterator_nextが名前で書き戻すため、
+            // ローカル束縛ならlocal slotが必要。
+            .iterator_begin => if (instruction.local_target) try appendName(allocator, &names, &seen, instruction.name),
             else => {},
         }
     };
@@ -139,18 +149,18 @@ fn appendName(
     try names.append(allocator, name);
 }
 
-fn isQualifiedGlobal(name: []const u8) bool {
-    return std.mem.indexOf(u8, name, "__") != null;
-}
-
 fn nameInList(names: []const []const u8, name: []const u8) bool {
     for (names) |candidate| if (std.mem.eql(u8, candidate, name)) return true;
     return false;
 }
 
 fn findFunction(program: ir.Program, name: []const u8) ?ir.Function {
-    for (program.functions) |function| if (std.mem.eql(u8, function.name, name)) return function;
-    return null;
+    // 同名関数は生成順の後勝ち（Issue #73、`ir.Program.findFunction`と同じ規則）。
+    var found: ?ir.Function = null;
+    for (program.functions) |function| if (std.mem.eql(u8, function.name, name)) {
+        found = function;
+    };
+    return found;
 }
 
 fn dynamicObserved(function: ir.Function) bool {
@@ -338,14 +348,14 @@ test "dynamic executionはlocalのbinding identityを保持する" {
 test "添字とpropertyのglobal代入をlocal slotへ登録しない" {
     const span = @import("../frontend/ast.zig").emptySpan();
     var instructions = [_]ir.Instruction{
-        .{ .result = null, .opcode = .array_set, .type = .void, .name = "main__A", .span = span },
-        .{ .result = null, .opcode = .property_set, .type = .void, .name = "main__B", .span = span },
-        .{ .result = null, .opcode = .increment, .type = .void, .name = "main__I", .span = span },
-        .{ .result = null, .opcode = .array_set, .type = .void, .name = "コマンドライン", .span = span },
+        .{ .result = null, .opcode = .ensure_array_var, .type = .void, .name = "main__A", .span = span },
+        .{ .result = null, .opcode = .element_set, .type = .void, .name = "main__B", .span = span },
+        .{ .result = null, .opcode = .store_global, .type = .void, .name = "main__I", .span = span },
+        .{ .result = null, .opcode = .ensure_array_var, .type = .void, .name = "コマンドライン", .span = span },
         .{ .result = null, .opcode = .store_local, .type = .void, .name = "A", .span = span },
-        .{ .result = null, .opcode = .array_set, .type = .void, .name = "A", .span = span },
+        .{ .result = null, .opcode = .element_set, .type = .void, .name = "A", .span = span },
         .{ .result = null, .opcode = .store_local, .type = .void, .name = "B", .span = span },
-        .{ .result = null, .opcode = .property_set, .type = .void, .name = "B", .span = span },
+        .{ .result = null, .opcode = .element_set, .type = .void, .name = "B", .span = span },
     };
     var blocks = [_]ir.BasicBlock{.{ .id = 0, .name = "entry", .instructions = &instructions, .terminator = .{ .return_value = null } }};
     const function: ir.Function = .{ .id = 0, .name = "test", .parameters = &.{}, .blocks = &blocks, .entry = 0, .return_type = .void, .is_async = false, .is_test = false };

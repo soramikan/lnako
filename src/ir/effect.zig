@@ -47,7 +47,26 @@ fn markInstruction(summary: *Summary, instruction: ir.Instruction) void {
             summary.may_throw = true;
             summary.may_reenter = true;
         },
-        .array_get, .property_get, .array_set, .property_set => {
+        .array_get, .property_get => {
+            summary.may_throw = true;
+            summary.may_reenter = true;
+        },
+        // element_setは辞書の新規キー挿入・拡張で確保し得る
+        .element_set => {
+            summary.may_allocate = true;
+            summary.may_throw = true;
+            summary.may_reenter = true;
+        },
+        // 増減の加算はNumber()強制でユーザフック・文字列確保を起こし得る
+        .increment_values => {
+            summary.may_allocate = true;
+            summary.may_throw = true;
+            summary.may_reenter = true;
+        },
+        // DNCL自動初期化は配列を生成し、添字の文字列化でユーザフックを
+        // 呼び得るため確保・例外・再入の全てを保守的に立てる
+        .ensure_array_var, .init_array_index => {
+            summary.may_allocate = true;
             summary.may_throw = true;
             summary.may_reenter = true;
         },
@@ -61,8 +80,12 @@ fn recordWrites(summary: *Summary, allocator: std.mem.Allocator, function: ir.Fu
     for (function.blocks) |block| for (block.instructions) |instruction| {
         switch (instruction.opcode) {
             .store_local => try summary.written_names.put(allocator, instruction.name, {}),
-            .destructure_store => for (instruction.names) |name| try summary.written_names.put(allocator, name, {}),
-            .increment => try summary.written_names.put(allocator, instruction.name, {}),
+            // ターゲットごとの束縛結果（names_local）でローカル書き込みを判定する
+            .destructure_store => for (instruction.names, 0..) |name, index| if (ir.destructureTargetIsLocal(instruction, index)) try summary.written_names.put(allocator, name, {}),
+            // ensure_array_varはローカル束縛のとき変数束縛自体へ新規配列を書き戻す
+            .ensure_array_var => if (instruction.local_target) try summary.written_names.put(allocator, instruction.name, {}),
+            // 範囲繰り返し変数はiterator_nextが束縛へ書き戻す
+            .iterator_begin => if (instruction.local_target) try summary.written_names.put(allocator, instruction.name, {}),
             else => {},
         }
     };
@@ -215,9 +238,12 @@ fn makeTestProgram(allocator: std.mem.Allocator, child_writes: bool) !ir.Program
         .is_test = false,
     }});
 
+    // arenaを返却値へコピーする前に確保を済ませる。リテラル内で呼ぶと
+    // コピー後のarena状態へ確保が記録されずリークする。
+    const functions = try a.dupe(ir.Function, &.{ parent_function[0], child_function[0] });
     return .{
         .arena = arena,
-        .functions = try a.dupe(ir.Function, &.{ parent_function[0], child_function[0] }),
+        .functions = functions,
         .module_entries = &.{},
         .module_names = &.{},
         .module_paths = &.{},

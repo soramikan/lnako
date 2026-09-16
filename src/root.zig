@@ -136,10 +136,10 @@ pub fn usage(writer: *std.Io.Writer) !void {
         \\lnako - なでしこ3ネイティブコンパイラ
         \\
         \\使い方:
-        \\  lnako build <file.nako3> -o <output> [-O0..-O3] [--emit exe|obj|llvm-ir] [--llvm-dir <path>]
-        \\  lnako run <file.nako3> [--compat-js] -- [arguments]
-        \\  lnako check <file.nako3>
-        \\  lnako test <file-or-directory>
+        \\  lnako build <file.nako3|.dncl|.dncl2> -o <output> [-O0..-O3] [--emit exe|obj|llvm-ir] [--llvm-dir <path>]
+        \\  lnako run <file.nako3|.dncl|.dncl2> [--compat-js] [--dncl] [--dncl2] -- [arguments]
+        \\  lnako check <file.nako3|.dncl|.dncl2> [--dncl] [--dncl2]
+        \\  lnako test <file.nako3|.dncl|.dncl2|directory> [--dncl] [--dncl2]
         \\  lnako compat report
         \\  lnako benchmark
         \\  lnako toolchain <status|dir|install|update|remove>
@@ -147,6 +147,9 @@ pub fn usage(writer: *std.Io.Writer) !void {
         \\共通オプション:
         \\  -h, --help       このヘルプを表示
         \\  -V, --version    バージョンを表示
+        \\  --dncl           入力をDNCLモード（!DNCLモード相当）で解釈する
+        \\  --dncl2          入力をDNCL2モード（!DNCL2相当）で解釈する
+        \\                   .dncl はDNCLモード（v1）、.dncl2 はDNCL2を自動で有効化する
         \\
     );
 }

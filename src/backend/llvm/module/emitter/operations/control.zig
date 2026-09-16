@@ -16,7 +16,6 @@ const DebugLocation = shared.DebugLocation;
 const arithmeticOpcode = shared.arithmeticOpcode;
 const isDisplayCall = shared.isDisplayCall;
 const isNativePluginCall = shared.isNativePluginCall;
-const isQualifiedGlobal = shared.isQualifiedGlobal;
 const lookupFunction = shared.lookupFunction;
 const shiftOpcode = shared.shiftOpcode;
 const valueType = shared.valueType;
@@ -81,7 +80,16 @@ pub fn writeIteratorNext(emitter: *Emitter, function: ir.Function, locals: []con
     try emitter.output.writer.writeAll(", ptr ");
     try variables_mod.writeOptionalNamedPointer(emitter, locals, "対象キー");
     try emitter.output.writer.writeAll(", ptr ");
-    try variables_mod.writeOptionalNamedPointer(emitter, locals, begin.name);
+    // ループ変数は束縛結果（local_target）で解決する。ローカル束縛なら
+    // ローカルスロット必須、グローバル束縛は他の参照がスロットを作った
+    // 場合のみ書き戻す（未参照なら書き戻し自体が不要）。
+    if (begin.local_target and begin.name.len > 0) {
+        if (context.nameIndex(locals, begin.name)) |index| {
+            try emitter.output.writer.print("%local.{d}", .{index});
+        } else return error.UnknownAssignmentContainer;
+    } else {
+        try variables_mod.writeOptionalNamedPointer(emitter, locals, begin.name);
+    }
     try emitter.output.writer.writeByte(')');
     try emitter.debugSuffix(instruction.span, scope);
     try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });

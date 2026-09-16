@@ -254,10 +254,6 @@ const ValueBufferBucket = struct {
     buffers: std.ArrayListUnmanaged([]Value) = .empty,
 };
 
-fn isQualifiedGlobal(name: []const u8) bool {
-    return std.mem.indexOf(u8, name, "__") != null;
-}
-
 pub const Interpreter = struct {
     pub const default_interrupt_budget: usize = 1024;
 
@@ -283,6 +279,13 @@ pub const Interpreter = struct {
     system_context: Value = .undefined,
     call_depth: usize = 0,
     max_call_depth: usize = 4096,
+    /// 取り込み呼び出し経由で現在実行中のモジュールエントリのコピー。
+    /// 公式は取り込み先トークンを文位置へ静的展開するため、コピー内では
+    /// 展開時にguard済みだったモジュールへの取り込み文だけが除去される。
+    /// キーはモジュールインデックス、値は同一モジュールの入れ子実行を
+    /// 許容するための参照カウント。ループ内・関数本体内の取り込みは
+    /// 制御が到達するたびに実行される（相互再帰も公式同様に再実行）。
+    active_module_entries: std.AutoHashMapUnmanaged(u32, u32) = .empty,
     /// Number of ordinary instructions allowed between interrupt polls.
     /// Calls, allocations, dynamic execution, and block entries remain
     /// explicit safepoints regardless of this budget.
@@ -404,15 +407,22 @@ pub const Interpreter = struct {
             entry.value_ptr.* = .{};
             for (owner_program.functions, 0..) |*function, index| {
                 const id: ir.FunctionId = @intCast(index);
-                const exact_slot = try entry.value_ptr.exact.getOrPut(self.allocator, function.name);
-                if (!exact_slot.found_existing) exact_slot.value_ptr.* = id;
+                // 同名関数は生成順の後勝ち（循環取り込み変体の定義が本体を
+                // 置き換える公式挙動、Issue #73）。
+                try entry.value_ptr.exact.put(self.allocator, function.name, id);
                 if (std.mem.lastIndexOf(u8, function.name, "__")) |separator| {
                     const suffix = function.name[separator + 2 ..];
                     const slot = try entry.value_ptr.suffix.getOrPut(self.allocator, suffix);
                     if (!slot.found_existing) {
                         slot.value_ptr.* = id;
-                    } else if (slot.value_ptr.* != id) {
-                        slot.value_ptr.* = null;
+                    } else if (slot.value_ptr.*) |existing| {
+                        // 完全同名の重複（循環再展開変体）は後勝ちで上書き。
+                        // 異なる修飾名の衝突だけを曖昧として解決不能にする。
+                        if (std.mem.eql(u8, owner_program.functions[existing].name, function.name)) {
+                            slot.value_ptr.* = id;
+                        } else {
+                            slot.value_ptr.* = null;
+                        }
                     }
                 }
             }
@@ -438,12 +448,14 @@ pub const Interpreter = struct {
                     const instruction = entry.ir_instruction.*;
                     switch (instruction.opcode) {
                         .load_global, .store_global => entry.global_slot = try self.ensureGlobalSlot(instruction.name),
-                        .load_local, .array_set, .property_set, .increment => {
+                        .load_local, .ensure_array_var => {
                             if (entry.local_slot == prepared.no_local_slot) entry.global_slot = try self.ensureGlobalSlot(instruction.name);
                         },
                         .destructure_store => {
                             for (instruction.names, 0..) |name, index| {
-                                if (isQualifiedGlobal(name)) entry.destructure_global_slots[index] = try self.ensureGlobalSlot(name);
+                                // グローバルスロットはグローバル束縛のターゲットだけに
+                                // 割り当てる（束縛結果はnames_localが権威）。
+                                if (!ir.destructureTargetIsLocal(instruction, index)) entry.destructure_global_slots[index] = try self.ensureGlobalSlot(name);
                             }
                         },
                         .call => if (entry.call_target) |*target| switch (target.*) {
@@ -473,6 +485,7 @@ pub const Interpreter = struct {
         // deinitialize, so tear them down while all interpreter services exist.
         self.native_plugin_state.deinit();
         self.globals.deinit(self.allocator);
+        self.active_module_entries.deinit(self.allocator);
         self.global_slots.deinit(self.allocator);
         self.global_values.deinit(self.allocator);
         self.global_present.deinit(self.allocator);
@@ -1014,12 +1027,16 @@ pub const Interpreter = struct {
         return execute.getOne(self, container, key);
     }
 
-    pub fn setIndexed(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
-        return execute.setIndexed(self, frame, instruction);
+    pub fn elementSet(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
+        return execute.elementSet(self, frame, instruction);
     }
 
-    pub fn increment(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
-        return execute.increment(self, frame, instruction);
+    pub fn ensureArrayVar(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
+        return execute.ensureArrayVar(self, frame, instruction);
+    }
+
+    pub fn initArrayIndex(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
+        return execute.initArrayIndex(self, frame, instruction);
     }
 
     pub fn makeClosure(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
@@ -1084,12 +1101,24 @@ pub const Interpreter = struct {
         const index = self.functionIndex(owner_program) catch {
             // An index build failure is not a program failure; fall back to
             // the previous linear scans so OOM stays the only new error.
-            for (owner_program.functions) |*function| if (std.mem.eql(u8, function.name, name)) return function;
+            var exact_match: ?*const ir.Function = null;
+            for (owner_program.functions) |*function| if (std.mem.eql(u8, function.name, name)) {
+                exact_match = function;
+            };
+            if (exact_match) |function| return function;
             var match: ?*const ir.Function = null;
             for (owner_program.functions) |*function| {
                 const separator = std.mem.lastIndexOf(u8, function.name, "__") orelse continue;
                 if (!std.mem.eql(u8, function.name[separator + 2 ..], name)) continue;
-                if (match != null) return null;
+                // 完全同名の重複（循環再展開変体）は後勝ち。異なる修飾名の
+                // 衝突は曖昧として解決不能にする（index版と同じ規則）。
+                if (match) |previous| {
+                    if (std.mem.eql(u8, previous.name, function.name)) {
+                        match = function;
+                        continue;
+                    }
+                    return null;
+                }
                 match = function;
             }
             return match;

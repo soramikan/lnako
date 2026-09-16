@@ -25,5 +25,26 @@
     "id": "semantic-diagnostic-builtin-arity-zero",
     "source": "今(1)\n",
     "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-bare-index-word",
+    "source": "●fとは\nそれは0\nここまで\nA=[[1,2],[3,4]]\nA[1,f,2]を表示\n",
+    "code": "invalid_array_access"
+  },
+  {
+    "id": "semantic-diagnostic-bare-index-word-dncl",
+    "source": "A=[[1,2],[3,4]]\n!DNCLモード\nA[1,表示,2]を表示\n",
+    "code": "invalid_array_access"
+  },
+  {
+    "id": "semantic-diagnostic-bare-index-word-assign",
+    "source": "●fとは\nそれは1\nここまで\nA=[[1,2],[3,4]]\nA[f,0]=9\n",
+    "code": "invalid_array_access"
+  },
+  {
+    "id": "semantic-diagnostic-property-root-later",
+    "source": "A$b=1\nA=0\n",
+    "code": "undefined_symbol",
+    "checkMessage": true
   }
 ]

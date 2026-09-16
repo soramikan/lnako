@@ -16,7 +16,6 @@ const DebugLocation = shared.DebugLocation;
 const arithmeticOpcode = shared.arithmeticOpcode;
 const isDisplayCall = shared.isDisplayCall;
 const isNativePluginCall = shared.isNativePluginCall;
-const isQualifiedGlobal = shared.isQualifiedGlobal;
 const lookupFunction = shared.lookupFunction;
 const shiftOpcode = shared.shiftOpcode;
 const valueType = shared.valueType;

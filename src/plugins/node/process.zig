@@ -2,6 +2,7 @@ const std = @import("std");
 const common = @import("../system/common.zig");
 const shared = @import("shared.zig");
 const fs = @import("filesystem.zig");
+const low_level_io = @import("../../runtime/low_level_io.zig");
 
 const Value = shared.Value;
 const Runtime = shared.Runtime;
@@ -64,14 +65,24 @@ pub fn callProcess(runtime: *Runtime, state: *State, context: Context, effects: 
     if (std.mem.eql(u8, name, "コンソールクリア")) return @as(?Value, .undefined);
     if (std.mem.eql(u8, name, "尋") or std.mem.eql(u8, name, "文字尋") or std.mem.eql(u8, name, "標準入力全取得")) {
         if (std.mem.eql(u8, name, "標準入力全取得")) {
-            try ensureStdin(runtime.allocator(), state, context);
-            return @as(?Value, try runtime.stringUtf8(state.stdin_bytes.?));
+            const source_state = try ensureStdinSource(runtime, context);
+            // 不正UTF-8をU+FFFDへ置き換えるlossy変換。AOT側とupstreamの
+            // Node（Buffer.toString相当）に揃える。
+            return @as(?Value, try runtime.stringUtf8Lossy(try source_state.drainAll()));
         }
         const prompt = try valueUtf8(runtime, source);
         defer runtime.allocator().free(prompt);
         try context.writeStdout(prompt);
         var text: Value = undefined;
+        var peeked_source: ?*low_level_io.StdinSource = null;
         const use_line_reader = blk: {
+            // raw読取り等で共有sourceが既に作られている場合は、TTYでも
+            // 直接行readへ切り替えない。切り替えるとsourceの履歴に
+            // バッファ済みの未消費バイトを置き去りにする。
+            if (context.peekStdinSourceFn) |peek| {
+                peeked_source = peek(context.context);
+                if (peeked_source != null) break :blk false;
+            }
             if (context.isStdinTtyFn) |isTty| {
                 if (!isTty(context.context)) break :blk false;
             }
@@ -81,11 +92,13 @@ pub fn callProcess(runtime: *Runtime, state: *State, context: Context, effects: 
             const function = context.readStdinLineFn.?;
             const line = try function(context.context, runtime.allocator());
             defer runtime.allocator().free(line);
-            text = try runtime.stringUtf8(line);
+            text = try runtime.stringUtf8Lossy(line);
         } else {
-            try ensureStdin(runtime.allocator(), state, context);
-            const line = nextStdinLine(state);
-            text = try runtime.stringUtf8(line);
+            // peek済みのsourceは再利用し、peekのみ提供する変則hostでも
+            // stdinSourceFn再呼出しへ落ちないようにする。
+            const source_state = peeked_source orelse try ensureStdinSource(runtime, context);
+            const line = (try source_state.readLine()) orelse "";
+            text = try runtime.stringUtf8Lossy(line);
         }
         if (std.mem.eql(u8, name, "文字尋")) return @as(?Value, text);
         var roots = runtime.rootFrame();
@@ -96,16 +109,18 @@ pub fn callProcess(runtime: *Runtime, state: *State, context: Context, effects: 
     }
     if (std.mem.eql(u8, name, "標準入力取得時")) {
         const actual_effects = effects orelse return error.CallbackExecutionUnavailable;
-        try ensureStdin(runtime.allocator(), state, context);
+        const source_state = try ensureStdinSource(runtime, context);
+        // 既存挙動を保つためEOFまで読み切ってから行ごとにcallbackする。
+        _ = try source_state.drainAll();
         var callback = try actual_effects.resolve(source);
         var roots = runtime.rootFrame();
         defer roots.deinit();
         try roots.protect(&callback);
-        while (state.stdin_offset < state.stdin_bytes.?.len) {
-            var line = try runtime.stringUtf8(nextStdinLine(state));
-            try roots.protect(&line);
-            try actual_effects.setGlobal("対象", line);
-            _ = try actual_effects.invoke(callback, &.{line});
+        while (try source_state.readLine()) |line| {
+            var line_value = try runtime.stringUtf8Lossy(line);
+            try roots.protect(&line_value);
+            try actual_effects.setGlobal("対象", line_value);
+            _ = try actual_effects.invoke(callback, &.{line_value});
         }
         return @as(?Value, .undefined);
     }
@@ -124,29 +139,11 @@ pub fn callProcess(runtime: *Runtime, state: *State, context: Context, effects: 
     return null;
 }
 
-pub fn ensureStdin(allocator: std.mem.Allocator, state: *State, context: Context) !void {
-    if (state.stdin_bytes != null) return;
-    const function = context.readStdinFn orelse return error.StandardInputUnavailable;
-    state.stdin_bytes = try function(context.context, allocator);
-}
-
-pub fn nextStdinLine(state: *State) []const u8 {
-    const bytes = state.stdin_bytes.?;
-    if (state.stdin_offset >= bytes.len) return "";
-    const start = state.stdin_offset;
-    var end = start;
-    while (end < bytes.len and bytes[end] != '\n') end += 1;
-    state.stdin_offset = if (end < bytes.len) end + 1 else end;
-    if (end > start and bytes[end - 1] == '\r') end -= 1;
-    return bytes[start..end];
-}
-
-test "nextStdinLineはCRLFと途中のCRを正規化する" {
-    var state = shared.State{};
-    defer state.deinit(std.testing.allocator);
-    state.stdin_bytes = try std.testing.allocator.dupe(u8, "abc\rX\r\n41\nrest\n");
-    try std.testing.expectEqualStrings("abc\rX", nextStdinLine(&state));
-    try std.testing.expectEqualStrings("41", nextStdinLine(&state));
-    try std.testing.expectEqualStrings("rest", nextStdinLine(&state));
-    try std.testing.expectEqualStrings("", nextStdinLine(&state));
+/// テキスト系stdin命令が使う共有sourceをhostへ問い合わせる。
+/// `標準入力バイト読む` 等のraw命令が先に作っていればそれをそのまま使い、
+/// 両系統で `consumed` カーソルと履歴が共有される（Issue #28の
+/// 「stdinの単一source of truth」要件）。
+pub fn ensureStdinSource(runtime: *Runtime, context: Context) !*low_level_io.StdinSource {
+    const function = context.stdinSourceFn orelse return error.StandardInputUnavailable;
+    return function(context.context, runtime.allocator());
 }

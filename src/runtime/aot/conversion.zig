@@ -173,21 +173,25 @@ pub fn validDecimalNumber(text: []const u8) bool {
     return index == text.len;
 }
 
-pub fn incrementNumber(runtime: *Runtime, value: Value) f64 {
+pub fn incrementNumber(runtime: *Runtime, value: Value) !f64 {
     if (value.tag == @intFromEnum(Tag.bigint)) return value.object().?.payload.bigint.toF64();
     if (isString(value)) {
-        const utf8 = stringUtf8Alloc(runtime, value) catch return std.math.nan(f64);
+        const utf8 = try stringUtf8Alloc(runtime, value);
         defer runtime.allocator.free(utf8);
         const trimmed = std.mem.trim(u8, utf8, " \t\r\n\x0b\x0c");
         if (trimmed.len == 0) return 0;
         return std.fmt.parseFloat(f64, trimmed) catch std.math.nan(f64);
     }
+    // 配列等のオブジェクトは公式Number()相当（toPrimitive→数値化）を経由する。
+    // 変換callbackの失敗は例外として伝搬し、NaNへ握り潰さない（インタープリタの
+    // operators.incrementと同じ失敗経路にする）。
+    if (isObject(value)) return valueToNumberRuntime(runtime, value);
     return valueToNumber(value);
 }
 
-pub fn incrementValue(runtime: *Runtime, old: Value, amount: Value) Value {
-    const old_number: f64 = if (old.tag == @intFromEnum(Tag.undefined)) 0 else incrementNumber(runtime, old);
-    return numberValue(old_number + incrementNumber(runtime, amount));
+pub fn incrementValue(runtime: *Runtime, old: Value, amount: Value) !Value {
+    const old_number: f64 = if (old.tag == @intFromEnum(Tag.undefined)) 0 else try incrementNumber(runtime, old);
+    return numberValue(old_number + try incrementNumber(runtime, amount));
 }
 
 pub fn isString(value: Value) bool {

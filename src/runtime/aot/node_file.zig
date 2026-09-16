@@ -34,6 +34,8 @@ const createAotPromise = state.createAotPromise;
 const resolveAotPromise = state.resolveAotPromise;
 const invokeAotCallback = state.invokeAotCallback;
 const resolveAotCallback = state.resolveAotCallback;
+const fflush = state.fflush;
+const ensureAotStdinSource = state.ensureAotStdinSource;
 
 pub fn nodeFileExistenceBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
@@ -504,36 +506,18 @@ pub fn nodeEncodingSupportsBuiltin(runtime: *Runtime, arguments: []const Value) 
     return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(encoding.supports(name)) };
 }
 
-pub fn ensureAotStdin(runtime: *Runtime) ![]const u8 {
-    if (runtime.stdin_bytes == null) {
-        var buffer: [4096]u8 = undefined;
-        var reader = std.Io.File.stdin().readerStreaming(std.Io.Threaded.global_single_threaded.io(), &buffer);
-        runtime.stdin_bytes = try reader.interface.allocRemaining(runtime.allocator, .limited(64 * 1024 * 1024));
-    }
-    return runtime.stdin_bytes.?;
-}
-
-pub fn nextAotStdinLine(runtime: *Runtime) []const u8 {
-    const bytes = runtime.stdin_bytes orelse return "";
-    if (runtime.stdin_offset >= bytes.len) return "";
-    const start = runtime.stdin_offset;
-    var end = start;
-    while (end < bytes.len and bytes[end] != '\n') end += 1;
-    runtime.stdin_offset = if (end < bytes.len) end + 1 else end;
-    if (end > start and bytes[end - 1] == '\r') end -= 1;
-    return bytes[start..end];
-}
-
 pub fn nodeStdinCallbackBuiltin(runtime: *Runtime, target: *Value, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
-    _ = try ensureAotStdin(runtime);
+    const source = try ensureAotStdinSource(runtime);
+    // 既存挙動を保つためEOFまで読み切ってから行ごとにcallbackする。
+    _ = try source.drainAll();
     var rooted = [_]Value{ arguments[0], .{} };
     var roots = RootFrame{};
     runtime.pushRoots(&roots, &rooted, rooted.len);
     defer runtime.popRoots(&roots);
     rooted[0] = try resolveAotCallback(runtime, rooted[0]);
-    while (runtime.stdin_offset < runtime.stdin_bytes.?.len) {
-        rooted[1] = try runtimeUtf8StringLossy(runtime, nextAotStdinLine(runtime));
+    while (try source.readLine()) |line| {
+        rooted[1] = try runtimeUtf8StringLossy(runtime, line);
         target.* = rooted[1];
         _ = try invokeAotCallback(runtime, rooted[0], @ptrCast(&rooted[1]), 1);
     }
@@ -541,7 +525,7 @@ pub fn nodeStdinCallbackBuiltin(runtime: *Runtime, target: *Value, arguments: []
 }
 
 fn aotStdinIsTty(runtime: *Runtime) bool {
-    return std.Io.File.stdin().isTty(aotRuntimeIo(runtime)) catch false;
+    return state.stdioStdinFile(runtime).isTty(aotRuntimeIo(runtime)) catch false;
 }
 
 pub fn readLineFromFile(io: std.Io, file: std.Io.File, allocator: std.mem.Allocator, limit: usize) ![]u8 {
@@ -551,7 +535,7 @@ pub fn readLineFromFile(io: std.Io, file: std.Io.File, allocator: std.mem.Alloca
 const max_stdin_line_bytes = 64 * 1024 * 1024;
 
 pub fn aotReadStdinLine(runtime: *Runtime) ![]u8 {
-    return readLineFromFile(aotRuntimeIo(runtime), std.Io.File.stdin(), runtime.allocator, max_stdin_line_bytes);
+    return readLineFromFile(aotRuntimeIo(runtime), state.stdioStdinFile(runtime), runtime.allocator, max_stdin_line_bytes);
 }
 
 pub fn nodeStdinLineBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
@@ -559,19 +543,25 @@ pub fn nodeStdinLineBuiltin(runtime: *Runtime, command: aot_builtin.Command, arg
     const prompt = try valueUtf8LossyAlloc(runtime, prompt_value);
     defer runtime.allocator.free(prompt);
 
+    // `stdio_files` 注入時はプロンプトの出力先が実stdoutではないため
+    // libcバッファ（putchar等）との順序づけは不要で、flushしない。
+    if (runtime.stdio_files.stdout == null) _ = fflush(null);
     var stdout_buffer: [4096]u8 = undefined;
-    var file_writer = std.Io.File.Writer.init(std.Io.File.stdout(), aotRuntimeIo(runtime), &stdout_buffer);
+    var file_writer = std.Io.File.Writer.init(state.stdioStdoutFile(runtime), aotRuntimeIo(runtime), &stdout_buffer);
     try file_writer.interface.writeAll(prompt);
     try file_writer.interface.flush();
 
     var line: []const u8 = "";
     var owned: ?[]u8 = null;
-    if (runtime.stdin_bytes == null and aotStdinIsTty(runtime)) {
+    // 共有sourceが既に存在する場合（raw読取り等）はTTYでも直接行readへ
+    // 切り替えない。切り替えるとsourceの履歴にバッファ済みの未消費
+    // バイトを置き去りにする（`plugins/node/process.zig` と同じ契約）。
+    if (runtime.stdin_source == null and aotStdinIsTty(runtime)) {
         owned = try aotReadStdinLine(runtime);
         line = owned.?;
     } else {
-        _ = try ensureAotStdin(runtime);
-        line = nextAotStdinLine(runtime);
+        const source = try ensureAotStdinSource(runtime);
+        line = (try source.readLine()) orelse "";
     }
     defer if (owned) |bytes| runtime.allocator.free(bytes);
 
@@ -582,8 +572,8 @@ pub fn nodeStdinLineBuiltin(runtime: *Runtime, command: aot_builtin.Command, arg
 }
 
 pub fn nodeStdinAllBuiltin(runtime: *Runtime) !Value {
-    const bytes = try ensureAotStdin(runtime);
-    return runtimeUtf8StringLossy(runtime, bytes);
+    const source = try ensureAotStdinSource(runtime);
+    return runtimeUtf8StringLossy(runtime, try source.drainAll());
 }
 
 pub fn nodeStdinValueBuiltin(runtime: *Runtime, bytes: []const u8) !Value {

@@ -165,7 +165,6 @@ pub const nodeStdinCallbackBuiltin = node_file_module.nodeStdinCallbackBuiltin;
 pub const nodeStdinLineBuiltin = node_file_module.nodeStdinLineBuiltin;
 pub const nodeStdinAllBuiltin = node_file_module.nodeStdinAllBuiltin;
 pub const nodeStdinValueBuiltin = node_file_module.nodeStdinValueBuiltin;
-pub const ensureAotStdin = node_file_module.ensureAotStdin;
 pub const aotFileCopyMoveWithIo = node_file_module.aotFileCopyMoveWithIo;
 
 const low_level_module = @import("low_level.zig");
@@ -175,6 +174,10 @@ pub const lowLevelCapabilitySupportedBuiltin = low_level_module.lowLevelCapabili
 pub const lowLevelCapabilityListBuiltin = low_level_module.lowLevelCapabilityListBuiltin;
 pub const lowLevelUnsupportedBuiltin = low_level_module.lowLevelUnsupportedBuiltin;
 pub const handleIdFor = low_level_module.handleIdFor;
+pub const ensureAotStdinSource = low_level_module.ensureAotStdinSource;
+pub const stdioStdinFile = low_level_module.stdioStdinFile;
+pub const stdioStdoutFile = low_level_module.stdioStdoutFile;
+pub const stdioStderrFile = low_level_module.stdioStderrFile;
 
 const node_http_module = @import("node_http.zig");
 
@@ -403,6 +406,12 @@ pub const repeatMultiplyBuiltin = host_module.repeatMultiplyBuiltin;
 
 pub var active_runtime: ?Runtime = null;
 pub var aot_interrupt_requested = std.atomic.Value(bool).init(false);
+/// 取り込み呼び出し経由で現在実行中のモジュールエントリのコピー。
+/// 公式は取り込み先トークンを文位置へ静的展開するため、コピー内では
+/// 展開時にguard済みだったモジュールへの取り込み文だけが除去される。
+/// キーはモジュールインデックス、値は同一モジュールの入れ子実行を
+/// 許容するための参照カウント。
+pub var active_module_entries: std.AutoHashMapUnmanaged(i64, u32) = .empty;
 
 const math_module = @import("math.zig");
 
@@ -742,9 +751,14 @@ pub const lnako_aot_pow_f64 = instructions_module.lnako_aot_pow_f64;
 pub const lnako_aot_compare = instructions_module.lnako_aot_compare;
 pub const lnako_aot_shift = instructions_module.lnako_aot_shift;
 pub const lnako_aot_concat = instructions_module.lnako_aot_concat;
-pub const lnako_aot_increment = instructions_module.lnako_aot_increment;
+pub const lnako_aot_is_undefined = instructions_module.lnako_aot_is_undefined;
+pub const lnako_aot_coalesce_or_zero = instructions_module.lnako_aot_coalesce_or_zero;
+pub const lnako_aot_increment_values = instructions_module.lnako_aot_increment_values;
 pub const lnako_aot_index_get = instructions_module.lnako_aot_index_get;
 pub const lnako_aot_index_set = instructions_module.lnako_aot_index_set;
+pub const lnako_aot_ensure_array_var = instructions_module.lnako_aot_ensure_array_var;
+pub const lnako_aot_is_array = instructions_module.lnako_aot_is_array;
+pub const lnako_aot_init_array_index = instructions_module.lnako_aot_init_array_index;
 pub const lnako_aot_destructure_get = instructions_module.lnako_aot_destructure_get;
 pub const lnako_aot_iterator_new = instructions_module.lnako_aot_iterator_new;
 pub const lnako_aot_iterator_has_next = instructions_module.lnako_aot_iterator_has_next;

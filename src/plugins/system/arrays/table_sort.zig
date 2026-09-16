@@ -119,65 +119,12 @@ pub fn v8SmallTableSort(
     left_cell: *Value,
     right_cell: *Value,
 ) !void {
-    // V8 uses CountAndMakeRun followed by BinaryInsertionSort for arrays
-    // shorter than 64 elements. Table sort delegates to Array.sort too, so
-    // the observable property conversion order follows the same path.
+    // Node 26のV8は64要素未満でrun検出を行わず、先頭からbinary insertion
+    // sortだけを実行する。表ソートもArray.sortへ委譲するため、観測可能な
+    // 比較・property変換順は同じ経路に従う。
     if (items.len < 2) return;
 
-    var run_length: usize = 2;
-    const first_order = try compareTableRows(
-        runtime,
-        items[1],
-        presence[1],
-        items[0],
-        presence[0],
-        column,
-        numeric,
-        left_cell,
-        right_cell,
-    );
-    if (first_order == .lt) {
-        while (run_length < items.len) : (run_length += 1) {
-            const order = try compareTableRows(
-                runtime,
-                items[run_length],
-                presence[run_length],
-                items[run_length - 1],
-                presence[run_length - 1],
-                column,
-                numeric,
-                left_cell,
-                right_cell,
-            );
-            if (order != .lt) break;
-        }
-        var left: usize = 0;
-        var right: usize = run_length - 1;
-        while (left < right) : ({
-            left += 1;
-            right -= 1;
-        }) {
-            std.mem.swap(Value, &items[left], &items[right]);
-            std.mem.swap(bool, &presence[left], &presence[right]);
-        }
-    } else {
-        while (run_length < items.len) : (run_length += 1) {
-            const order = try compareTableRows(
-                runtime,
-                items[run_length],
-                presence[run_length],
-                items[run_length - 1],
-                presence[run_length - 1],
-                column,
-                numeric,
-                left_cell,
-                right_cell,
-            );
-            if (order == .lt) break;
-        }
-    }
-
-    var start = run_length;
+    var start: usize = 1;
     while (start < items.len) : (start += 1) {
         pivot.* = items[start];
         const pivot_presence = presence[start];

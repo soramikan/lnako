@@ -68,10 +68,10 @@ pub fn v8SmallCallbackSort(
     callback: SortCallback,
     _: *value_mod.RootFrame,
 ) !void {
-    // V8 uses CountAndMakeRun followed by BinaryInsertionSort when the
-    // receiver length is below 64. Keeping this path detached from the live
-    // array preserves the collection-before-callback and resize guarantees
-    // of stableCallbackSort while matching the observable callback order.
+    // Node 26のV8は64要素未満でrun検出を行わず、先頭からbinary insertion
+    // sortだけを実行する（compare(挿入要素, 整列済み領域の中央)）。この経路を
+    // 実配列から切り離すことで、収集後コールバックとリサイズ保証を保ちつつ
+    // 観測可能なコールバック順を一致させる。
     if (items.len < 2) return;
 
     var pivot: Value = .undefined;
@@ -79,30 +79,7 @@ pub fn v8SmallCallbackSort(
     defer pivot_roots.deinit();
     try pivot_roots.protect(&pivot);
 
-    var run_length: usize = 2;
-    const first_order = try compareForSort(runtime, items[1], presence[1], items[0], presence[0], .callback, callback);
-    if (first_order == .lt) {
-        while (run_length < items.len) : (run_length += 1) {
-            const order = try compareForSort(runtime, items[run_length], presence[run_length], items[run_length - 1], presence[run_length - 1], .callback, callback);
-            if (order != .lt) break;
-        }
-        var left: usize = 0;
-        var right: usize = run_length - 1;
-        while (left < right) : ({
-            left += 1;
-            right -= 1;
-        }) {
-            std.mem.swap(Value, &items[left], &items[right]);
-            std.mem.swap(bool, &presence[left], &presence[right]);
-        }
-    } else {
-        while (run_length < items.len) : (run_length += 1) {
-            const order = try compareForSort(runtime, items[run_length], presence[run_length], items[run_length - 1], presence[run_length - 1], .callback, callback);
-            if (order == .lt) break;
-        }
-    }
-
-    var start = run_length;
+    var start: usize = 1;
     while (start < items.len) : (start += 1) {
         pivot = items[start];
         const pivot_presence = presence[start];

@@ -126,6 +126,13 @@ pub fn isEraData(name: []const u8) bool {
     return false;
 }
 
+/// システム定数名かどうか。DNCL自動初期化では定数名の変数スロットを
+/// 生成・上書きしないよう、この判定で代入先を区別する。
+pub fn isConstant(name: []const u8) bool {
+    return lookupScalar(name) != null or lookupString(name) != null or
+        isArray(name) or isDictionary(name) or isEraData(name);
+}
+
 test "v3.7.24のスカラーシステム定数を解決する" {
     try std.testing.expect(lookupScalar("true").?.boolean);
     try std.testing.expect(!lookupScalar("FALSE").?.boolean);
