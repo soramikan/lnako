@@ -22,6 +22,11 @@ pub const PackageId = union(enum) {
         version: []const u8 = "",
         /// 文脈 ID。空の場合は package 名を文脈とみなす。
         context: []const u8 = "",
+
+        /// 同値判定・hash で使う正規化済みの文脈。空なら package 名。
+        pub fn effectiveContext(self: NpmId) []const u8 {
+            return if (self.context.len == 0) self.name else self.context;
+        }
     };
 
     pub fn eql(a: PackageId, b: PackageId) bool {
@@ -45,7 +50,7 @@ pub const PackageId = union(enum) {
                 h.update("\x00");
                 h.update(npm.version);
                 h.update("\x00");
-                h.update(npm.context);
+                h.update(npm.effectiveContext());
             },
         }
         return h.final();
@@ -67,7 +72,7 @@ pub const PackageId = union(enum) {
                 if (c1 != .eq) break :blk c1;
                 const c2 = std.mem.order(u8, npm.version, b.npm.version);
                 if (c2 != .eq) break :blk c2;
-                break :blk std.mem.order(u8, npm.context, b.npm.context);
+                break :blk std.mem.order(u8, npm.effectiveContext(), b.npm.effectiveContext());
             },
         };
     }
@@ -75,14 +80,14 @@ pub const PackageId = union(enum) {
     pub fn format(p: PackageId, w: *std.Io.Writer) std.Io.Writer.Error!void {
         switch (p) {
             .pkg => |name| try w.writeAll(name),
-            .npm => |npm| try w.print("npm:{s}@{s}#{s}", .{ npm.name, npm.version, npm.context }),
+            .npm => |npm| try w.print("npm:{s}@{s}#{s}", .{ npm.name, npm.version, npm.effectiveContext() }),
         }
     }
 
     fn npmEql(a: NpmId, b: NpmId) bool {
         return std.mem.eql(u8, a.name, b.name) and
             std.mem.eql(u8, a.version, b.version) and
-            std.mem.eql(u8, a.context, b.context);
+            std.mem.eql(u8, a.effectiveContext(), b.effectiveContext());
     }
 };
 
@@ -995,6 +1000,8 @@ fn unavailableReason(source: *const manifest.Manifest, meta: VersionMeta, target
 /// engines 要件を判定する。判定対象 version が未指定のキーは
 /// `SPECIFICATION.md` §3.2 の契約どおり「未検査」として扱う
 /// （呼出し側が厳格にしたい場合は `Target` のバージョンを埋める）。
+/// `nako` は言語版として常に判定し、`cnako`/`lnako` は対象 runtime の
+/// ものだけを判定する（無関係な処理系の制約で package を拒否しない）。
 fn enginesSatisfied(source: *const manifest.Manifest, target: Target) bool {
     const engines = source.package.engines;
     if (engines.nako) |range| {
@@ -1002,14 +1009,17 @@ fn enginesSatisfied(source: *const manifest.Manifest, target: Target) bool {
             if (!range.satisfies(version)) return false;
         }
     }
-    if (engines.cnako) |range| {
-        if (target.cnako_version) |version| {
-            if (!range.satisfies(version)) return false;
+    if (std.mem.eql(u8, target.runtime, "cnako")) {
+        if (engines.cnako) |range| {
+            if (target.cnako_version) |version| {
+                if (!range.satisfies(version)) return false;
+            }
         }
-    }
-    if (engines.lnako) |range| {
-        if (target.lnako_version) |version| {
-            if (!range.satisfies(version)) return false;
+    } else if (std.mem.eql(u8, target.runtime, "lnako")) {
+        if (engines.lnako) |range| {
+            if (target.lnako_version) |version| {
+                if (!range.satisfies(version)) return false;
+            }
         }
     }
     return true;

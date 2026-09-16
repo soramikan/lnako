@@ -929,6 +929,50 @@ test "親versionごとのprereleaseゲートで有効な別版を消さない" {
     try expectVersion(nodes, "b", "1.0.0-alpha");
 }
 
+test "対象外runtimeのengines制約でpackageを拒否しない" {
+    var arena = std.heap.ArenaAllocator.init(T.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+    var m = try parseManifest(gpa,
+        \\[package]
+        \\name = "lib"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[package.engines]
+        \\cnako = ">=9.0.0"
+        \\
+        \\[[exports]]
+        \\name = "index"
+        \\path = "src/index.nako3"
+        \\
+    );
+    defer m.deinit();
+    // lnako 解決では cnako engines を評価しない。
+    const lnako_meta = try resolver.metaFromManifest(gpa, &m, .{
+        .runtime = "lnako",
+        .cnako_version = try semver.Version.parse("1.0.0"),
+    });
+    try T.expect(lnako_meta.unavailable_reason == null);
+    // cnako 解決では評価する。
+    const cnako_meta = try resolver.metaFromManifest(gpa, &m, .{
+        .runtime = "cnako",
+        .cnako_version = try semver.Version.parse("1.0.0"),
+    });
+    try T.expect(cnako_meta.unavailable_reason != null);
+}
+
+test "npm文脈IDは空contextとpackage名を同一視する" {
+    const a = PackageId{ .npm = .{ .name = "react", .version = "1.0.0", .context = "" } };
+    const b = PackageId{ .npm = .{ .name = "react", .version = "1.0.0", .context = "react" } };
+    try T.expect(a.eql(b));
+    try T.expectEqual(a.hash(), b.hash());
+    try T.expect(PackageId.order(a, b) == .eq);
+    const c = PackageId{ .npm = .{ .name = "react", .version = "1.0.0", .context = "web" } };
+    try T.expect(!a.eql(c));
+    try T.expect(PackageId.order(a, c) != .eq);
+}
+
 test "runtime不適合はunavailable理由になる" {
     var arena = std.heap.ArenaAllocator.init(T.allocator);
     defer arena.deinit();
