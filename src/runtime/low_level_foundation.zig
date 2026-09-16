@@ -350,6 +350,7 @@ pub fn capabilityImplemented(capability: Capability) bool {
         .stream_file_io,
         .truncate,
         .incremental_hash,
+        .raw_stdio,
         .stat,
         .lstat,
         .symlink,
@@ -461,6 +462,21 @@ pub const filesystem_commands = struct {
     pub const rmdir = "空フォルダ削除";
 };
 
+/// Issue #28のraw標準入出力命令名。`stream_commands` と同じくdispatch名は
+/// 送り仮名を落とした語幹で、利用者の `…読む`/`…書く` は同じ命令へ
+/// 正規化される。同期命令は送り仮名を持たない。
+pub const stdio_commands = struct {
+    pub const stdin_read = "標準入力バイト読";
+    pub const stdout_write = "標準出力バイト書";
+    pub const stderr_write = "標準エラー出力バイト書";
+    pub const stdout_sync = "標準出力同期";
+    pub const stderr_sync = "標準エラー出力同期";
+
+    pub const stdin_read_user = "標準入力バイト読む";
+    pub const stdout_write_user = "標準出力バイト書く";
+    pub const stderr_write_user = "標準エラー出力バイト書く";
+};
+
 /// 標準cnako 527件の外にある低レイヤー命令名。`builtin_catalog.names` は
 /// 公式527件と同期して生成されるため変更せず、解析器のbuiltin解決だけに
 /// 追加する。`低レイヤー機能対応判定` / `低レイヤー機能一覧取得` も含む。
@@ -500,11 +516,11 @@ pub const catalog_commands = [_]CatalogCommand{
     .{ .id = "ll-file-tell", .name = "ファイル位置取得", .min = 1, .max = 1, .operation = "lseek", .capability = .stream_file_io },
     .{ .id = "ll-file-pread", .name = "ファイル位置指定読込", .min = 3, .max = 3, .operation = "pread", .capability = .stream_file_io },
     .{ .id = "ll-file-pwrite", .name = "ファイル位置指定書込", .min = 3, .max = 3, .operation = "pwrite", .capability = .stream_file_io },
-    .{ .id = "ll-stdin-read", .name = "標準入力バイト読", .user_name = "標準入力バイト読む", .min = 1, .max = 1, .operation = "read", .capability = .raw_stdio },
-    .{ .id = "ll-stdout-write", .name = "標準出力バイト書", .user_name = "標準出力バイト書く", .min = 1, .max = 1, .operation = "write", .capability = .raw_stdio },
-    .{ .id = "ll-stderr-write", .name = "標準エラー出力バイト書", .user_name = "標準エラー出力バイト書く", .min = 1, .max = 1, .operation = "write", .capability = .raw_stdio },
-    .{ .id = "ll-stdout-sync", .name = "標準出力同期", .min = 0, .max = 0, .operation = "fsync", .capability = .raw_stdio },
-    .{ .id = "ll-stderr-sync", .name = "標準エラー出力同期", .min = 0, .max = 0, .operation = "fsync", .capability = .raw_stdio },
+    .{ .id = "ll-stdin-read", .name = stdio_commands.stdin_read, .user_name = stdio_commands.stdin_read_user, .min = 1, .max = 1, .operation = "read", .capability = .raw_stdio, .implemented = true },
+    .{ .id = "ll-stdout-write", .name = stdio_commands.stdout_write, .user_name = stdio_commands.stdout_write_user, .min = 1, .max = 1, .operation = "write", .capability = .raw_stdio, .implemented = true },
+    .{ .id = "ll-stderr-write", .name = stdio_commands.stderr_write, .user_name = stdio_commands.stderr_write_user, .min = 1, .max = 1, .operation = "write", .capability = .raw_stdio, .implemented = true },
+    .{ .id = "ll-stdout-sync", .name = stdio_commands.stdout_sync, .min = 0, .max = 0, .operation = "fsync", .capability = .raw_stdio, .implemented = true },
+    .{ .id = "ll-stderr-sync", .name = stdio_commands.stderr_sync, .min = 0, .max = 0, .operation = "fsync", .capability = .raw_stdio, .implemented = true },
     .{ .id = "ll-file-stat", .name = filesystem_commands.stat, .min = 1, .max = 1, .operation = filesystem_operations.stat, .capability = .stat, .implemented = true },
     .{ .id = "ll-file-lstat", .name = filesystem_commands.lstat, .min = 1, .max = 1, .operation = filesystem_operations.lstat, .capability = .lstat, .implemented = true },
     .{ .id = "ll-symlink-create", .name = filesystem_commands.symlink, .min = 2, .max = 2, .operation = filesystem_operations.symlink, .capability = .symlink, .implemented = true },
@@ -794,6 +810,9 @@ pub fn portableCodeForFailure(failure: anyerror) ?PortableErrorCode {
         error.SystemFdQuotaExceeded => .ENFILE,
         error.NotOpenForReading, error.NotOpenForWriting, error.BadFileDescriptor => .EBADF,
         error.BrokenPipe => .EPIPE,
+        // stdin履歴上限超過。ポータブル集合にENOMEM等が無いため、リソース
+        // 枯渇として最も近いENOSPCへ写像する。
+        error.StreamTooLong => .ENOSPC,
         // hardlink/renameの非対応FSとWindowsの未対応reparse pointはENOTSUP。
         // 本関数はG0正本 `structured_error.portableCodeFromFailure` の上位集合で、
         // 低レイヤー固有のエラー名（LowLevelIoUnavailable等）もここで畳む。
@@ -906,6 +925,7 @@ test "capability識別子はsnake_caseで分類が閉じている" {
     try std.testing.expect(capabilityImplemented(.stream_file_io));
     try std.testing.expect(capabilityImplemented(.truncate));
     try std.testing.expect(capabilityImplemented(.incremental_hash));
+    try std.testing.expect(capabilityImplemented(.raw_stdio));
     try std.testing.expect(!capabilityImplemented(.termios));
     try std.testing.expectEqual(CapabilityClass.posix_extension, Capability.chmod.class());
     try std.testing.expectEqual(CapabilityClass.lnako_native, Capability.seek_data.class());
@@ -1048,6 +1068,8 @@ test "portableCodeForFailureはI/O失敗をportable codeへ写す" {
     try std.testing.expectEqual(PortableErrorCode.ENOTSUP, portableCodeForFailure(error.OperationUnsupported).?);
     try std.testing.expectEqual(PortableErrorCode.ENOTSUP, portableCodeForFailure(error.UnsupportedReparsePointType).?);
     try std.testing.expectEqual(PortableErrorCode.EPERM, portableCodeForFailure(error.LinkQuotaExceeded).?);
+    // stdin履歴上限超過はリソース枯渇としてENOSPCへ写す。
+    try std.testing.expectEqual(PortableErrorCode.ENOSPC, portableCodeForFailure(error.StreamTooLong).?);
     try std.testing.expect(portableCodeForFailure(error.OutOfMemory) == null);
 }
 

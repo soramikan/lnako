@@ -30,8 +30,8 @@
       "limitKb": 40
     },
     "src/plugins/lowlevel.zig": {
-      "reason": "低レイヤー命令(Issue #27/#29/#32)のdispatch・Context・構造化エラー共有ヘルパー（監視対象・hard limit内）",
-      "limitKb": 95
+      "reason": "低レイヤー命令(Issue #27/#28/#29/#32)のdispatch・Context・構造化エラー共有ヘルパー（監視対象・hard limit内）",
+      "limitKb": 120
     },
       "src/runtime/aot/collection.zig": {
         "reason": "コレクション操作群の密集した共有ヘルパー（監視対象・hard limit内）",

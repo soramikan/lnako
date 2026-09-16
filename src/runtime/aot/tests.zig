@@ -188,6 +188,7 @@ const nodeProcessExitCode = state.nodeProcessExitCode;
 const nodeStdinAllBuiltin = state.nodeStdinAllBuiltin;
 const nodeStdinCallbackBuiltin = state.nodeStdinCallbackBuiltin;
 const nodeStdinLineBuiltin = state.nodeStdinLineBuiltin;
+const low_level_io = @import("../low_level_io.zig");
 const nodeStdinValueBuiltin = state.nodeStdinValueBuiltin;
 const numberValue = state.numberValue;
 const pathBuiltin = state.pathBuiltin;
@@ -1556,7 +1557,14 @@ test "AOT Node標準入力全取得はUTF-8入力を文字列にする" {
 test "AOT Node標準入力行命令は行分割と尋の数値変換を保つ" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    runtime.stdin_bytes = try runtime.allocator.dupe(u8, "abc\rX\r\n41\nrest\n");
+    runtime.stdin_source = try low_level_io.StdinSource.initPreloaded(runtime.allocator, "abc\rX\r\n41\nrest\n");
+    // `尋` はプロンプトをstdio_stdoutへ書く。実fd 1はtest runnerプロトコルの
+    // パイプなので、プロンプト出力とlibcバッファflushを退けるため注入する。
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sink = try tmp.dir.createFile(std.testing.io, "prompt.txt", .{});
+    defer sink.close(std.testing.io);
+    runtime.stdio_files.stdout = sink;
     var roots = [_]Value{ .{}, .{}, .{} };
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -1569,7 +1577,7 @@ test "AOT Node標準入力行命令は行分割と尋の数値変換を保つ" {
     try expectUtf16String(&runtime, roots[0], "abc\rX");
     try std.testing.expectEqual(@as(f64, 41), valueToNumber(roots[1]));
     try expectUtf16String(&runtime, roots[2], "abc\rX\r\n41\nrest\n");
-    try std.testing.expectEqual(@as(usize, 10), runtime.stdin_offset);
+    try std.testing.expectEqual(@as(usize, 10), runtime.stdin_source.?.consumed);
 }
 
 test "AOT Node標準入力取得時は全行を対象へ設定してコールバックへ渡す" {
@@ -1580,7 +1588,7 @@ test "AOT Node標準入力取得時は全行を対象へ設定してコールバ
         runtime = state.active_runtime.?;
         state.active_runtime = null;
     }
-    state.active_runtime.?.stdin_bytes = try state.active_runtime.?.allocator.dupe(u8, "A\r\nB\n");
+    state.active_runtime.?.stdin_source = try low_level_io.StdinSource.initPreloaded(state.active_runtime.?.allocator, "A\r\nB\n");
     var rooted = [_]Value{ .{}, .{} };
     var frame = RootFrame{};
     lnako_aot_push_roots(&frame, &rooted, rooted.len);
@@ -1590,7 +1598,7 @@ test "AOT Node標準入力取得時は全行を対象へ設定してコールバ
     const result = try nodeStdinCallbackBuiltin(&state.active_runtime.?, &rooted[1], &callback_arguments);
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(result.tag)));
     try expectUtf16String(&state.active_runtime.?, rooted[1], "B");
-    try std.testing.expectEqual(@as(usize, 5), state.active_runtime.?.stdin_offset);
+    try std.testing.expectEqual(@as(usize, 5), state.active_runtime.?.stdin_source.?.consumed);
 }
 
 test "AOT Node POSTデータ生成は辞書をURI component形式へ変換する" {
@@ -7728,7 +7736,9 @@ test "AOT低レイヤーの未実装命令はcapability/operation付きの構造
     try std.testing.expectEqualStrings("この低レイヤー命令はまだ実装されていません", rendered_utf8);
 
     // カタログのarity上限を超える呼び出しはENOTSUPではなくEINVAL。
-    lnako_aot_builtin_call(&roots[0], @ptrCast(&roots[1]), 1, @intFromEnum(aot_builtin.Command.low_level_stderr_sync));
+    // 未実装のmax=0命令でstub側の上限分岐を通す（stderr_syncはIssue #28で
+    // 実装済みになったため、ここではpid_getを使う）。
+    lnako_aot_builtin_call(&roots[0], @ptrCast(&roots[1]), 1, @intFromEnum(aot_builtin.Command.low_level_pid_get));
     try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
     lnako_aot_exception_take(&taken);
     try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "EINVAL");
@@ -8041,6 +8051,17 @@ test "AOT低レイヤーの実装済みフラグの命令はstubへ到達しな�
     // messageが出ないことで配置ずれを検出する。引数は spec.min 個渡す:
     // `capability_list`(max=0)のように上限超過でstub/実装の両経路が同じ
     // EINVALになる命令でも、min個ならstubはENOTSUP・実装は正常系へ分かれる。
+    // `low_level_stdin_read` は空sourceを事前充填して実プロセスstdinの
+    // readでブロックしないようにする（即EOFで空Bytesが返る）。
+    state.active_runtime.?.stdin_source = try low_level_io.StdinSource.initPreloaded(state.active_runtime.?.allocator, "");
+    // `low_level_stdout_sync`/`stderr_sync` 等が実プロセスのstdio fdを
+    // 触らないようファイルを注入する。実fd 1はtest runnerプロトコルの
+    // パイプであり、滞留したputchar出力のflushや直書きで壊れる。
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sink = try tmp.dir.createFile(std.testing.io, "stdio.bin", .{ .read = true });
+    defer sink.close(std.testing.io);
+    state.active_runtime.?.stdio_files = .{ .stdout = sink, .stderr = sink };
     var taken: Value = .{};
     for (aot_builtin.low_level_bindings) |binding| {
         const spec = aot_builtin.lowLevelCatalogCommand(binding.command).?;
@@ -8088,7 +8109,7 @@ test "AOT低レイヤーの未実装命令は全てstub経由でENOTSUPを返す
         try std.testing.expect(taken.object().?.structured_error);
         try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "ENOTSUP");
     }
-    try std.testing.expectEqual(@as(usize, 40), stub_count);
+    try std.testing.expectEqual(@as(usize, 35), stub_count);
 }
 
 test "AOT未捕捉例外のmessage抽出は構造化エラーだけに限る" {

@@ -39,6 +39,14 @@ pub const CliHost = struct {
     literal_trace_file: ?std.Io.File = null,
     low_level_handles: ?lnako.runtime.low_level_io.FileHandleTable = null,
     low_level_hash_handles: ?lnako.runtime.low_level_hash.HashHandleTable = null,
+    /// Issue #28: テキスト系stdin命令とrawバイト命令が共有するstdinの
+    /// 単一source。node.Contextとlowlevel.Contextの両方がここへ到達する。
+    stdin_source: ?lnako.runtime.low_level_io.StdinSource = null,
+    /// テスト用のstdio差し替え口。nullフィールドは実プロセスのstdioを指す。
+    /// raw stdio経路（raw write/sync・共有stdin sourceの下位reader）と
+    /// stdin系（`isStdinTty`/TTY直接行read）が参照する。テキスト表示
+    /// （`self.writer`/`error_writer`）は実fd固定のまま。
+    stdio_files: lnako.runtime.low_level_io.StdioFiles = .{},
 
     pub fn deinit(self: *CliHost) void {
         if (self.dispatch_trace_file) |file| file.close(self.io);
@@ -58,6 +66,7 @@ pub const CliHost = struct {
         if (self.http_server) |*server| server.deinit(self.io);
         if (self.low_level_handles) |*table| table.deinit(self.io);
         if (self.low_level_hash_handles) |*table| table.deinit();
+        if (self.stdin_source) |*source| source.deinit();
         while (self.async_tasks.pop()) |task| destroyAsyncTask(task, true);
         self.async_tasks.deinit(std.heap.page_allocator);
         self.async_task_map.deinit();
@@ -123,7 +132,8 @@ pub const CliHost = struct {
             .startFileOperationFn = startFileOperation,
             .startArchiveFn = startArchive,
             .pollOperationFn = pollOperation,
-            .readStdinFn = readStdin,
+            .peekStdinSourceFn = peekStdinSource,
+            .stdinSourceFn = stdinSource,
             .readStdinLineFn = readStdinLine,
             .isStdinTtyFn = isStdinTty,
             .createTemporaryDirectoryFn = createTemporaryDirectory,
@@ -439,7 +449,79 @@ pub const CliHost = struct {
             .renameFn = lowLevelRename,
             .unlinkFn = lowLevelUnlink,
             .rmdirFn = lowLevelRmdir,
+            .peekStdinSourceFn = peekStdinSource,
+            .stdinSourceFn = stdinSource,
+            .writeStdoutBytesFn = lowLevelWriteStdout,
+            .writeStderrBytesFn = lowLevelWriteStderr,
+            .syncStdoutFn = lowLevelSyncStdout,
+            .syncStderrFn = lowLevelSyncStderr,
         };
+    }
+
+    fn stdinFile(self: *CliHost) std.Io.File {
+        return self.stdio_files.stdin orelse std.Io.File.stdin();
+    }
+
+    fn stdoutFile(self: *CliHost) std.Io.File {
+        return self.stdio_files.stdout orelse std.Io.File.stdout();
+    }
+
+    fn stderrFile(self: *CliHost) std.Io.File {
+        return self.stdio_files.stderr orelse std.Io.File.stderr();
+    }
+
+    /// 共有stdin sourceの下位reader。1呼出しで最大buffer.lenバイトを返し、
+    /// 0はEOF。バッファリングは `StdinSource` 側だけが行う。
+    fn readStdinChunk(context: *anyopaque, buffer: []u8) anyerror!usize {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return lnako.runtime.low_level_io.readAtCurrent(self.io, self.stdinFile(), buffer);
+    }
+
+    fn peekStdinSource(context: *anyopaque) ?*lnako.runtime.low_level_io.StdinSource {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return if (self.stdin_source) |*source| source else null;
+    }
+
+    fn stdinSource(context: *anyopaque, allocator: std.mem.Allocator) anyerror!*lnako.runtime.low_level_io.StdinSource {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        _ = allocator;
+        if (self.stdin_source == null) {
+            // CliHost.deinitまで生存するため、呼び出し側runtimeではなく
+            // host自身の寿命に合うpage_allocatorを使う。
+            self.stdin_source = lnako.runtime.low_level_io.StdinSource.init(std.heap.page_allocator, self, readStdinChunk);
+        }
+        return &self.stdin_source.?;
+    }
+
+    /// rawバイト書込みは `self.writer` のバッファ済み出力より後に届くよう、
+    /// 先にテキスト側をflushしてからfdへ直接書く。
+    fn lowLevelWriteStdout(context: *anyopaque, bytes: []const u8) anyerror!usize {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        try self.writer.flush();
+        return lnako.runtime.low_level_io.writeAtCurrent(self.io, self.stdoutFile(), bytes);
+    }
+
+    /// stderr系も先に `self.writer` をflushする。AOT側の `fflush(null)` が
+    /// stdoutのlibcバッファを流すのと同じく、`表示` 出力をstderr raw書込み
+    /// より前へ順序づける。
+    fn lowLevelWriteStderr(context: *anyopaque, bytes: []const u8) anyerror!usize {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        try self.writer.flush();
+        try self.error_writer.flush();
+        return lnako.runtime.low_level_io.writeAtCurrent(self.io, self.stderrFile(), bytes);
+    }
+
+    fn lowLevelSyncStdout(context: *anyopaque) anyerror!void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        try self.writer.flush();
+        try lnako.runtime.low_level_io.sync(self.io, self.stdoutFile());
+    }
+
+    fn lowLevelSyncStderr(context: *anyopaque) anyerror!void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        try self.writer.flush();
+        try self.error_writer.flush();
+        try lnako.runtime.low_level_io.sync(self.io, self.stderrFile());
     }
 
     fn createDirectory(context: *anyopaque, path: []const u8) !void {
@@ -859,16 +941,9 @@ pub const CliHost = struct {
         return owned orelse error.AsyncCommandMissingResult;
     }
 
-    fn readStdin(context: *anyopaque, allocator: std.mem.Allocator) ![]u8 {
-        const self: *CliHost = @ptrCast(@alignCast(context));
-        var buffer: [4096]u8 = undefined;
-        var reader = std.Io.File.stdin().readerStreaming(self.io, &buffer);
-        return reader.interface.allocRemaining(allocator, .limited(64 * 1024 * 1024));
-    }
-
     fn isStdinTty(context: *anyopaque) bool {
         const self: *CliHost = @ptrCast(@alignCast(context));
-        return std.Io.File.stdin().isTty(self.io) catch false;
+        return self.stdinFile().isTty(self.io) catch false;
     }
 
     const max_stdin_line_bytes = 64 * 1024 * 1024;
@@ -879,7 +954,7 @@ pub const CliHost = struct {
 
     fn readStdinLine(context: *anyopaque, allocator: std.mem.Allocator) ![]u8 {
         const self: *CliHost = @ptrCast(@alignCast(context));
-        return readLineFromFile(self.io, std.Io.File.stdin(), allocator, max_stdin_line_bytes);
+        return readLineFromFile(self.io, self.stdinFile(), allocator, max_stdin_line_bytes);
     }
 
     fn createTemporaryDirectory(context: *anyopaque, allocator: std.mem.Allocator, prefix: []const u8) ![]u8 {

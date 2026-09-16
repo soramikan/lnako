@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const value_mod = @import("../../runtime/value.zig");
+const low_level_io = @import("../../runtime/low_level_io.zig");
 const common = @import("../system/common.zig");
 
 pub const Value = value_mod.Value;
@@ -52,8 +53,6 @@ pub const CommandResult = struct {
 };
 
 pub const State = struct {
-    stdin_bytes: ?[]u8 = null,
-    stdin_offset: usize = 0,
     requested_exit_code: ?u8 = null,
     file_process_callback: Value = .undefined,
     file_process_stop: bool = false,
@@ -62,7 +61,6 @@ pub const State = struct {
     pending_operations: std.ArrayList(PendingOperation) = .empty,
 
     pub fn deinit(self: *State, allocator: std.mem.Allocator) void {
-        if (self.stdin_bytes) |bytes| allocator.free(bytes);
         if (self.archive_tool_path) |path| allocator.free(path);
         self.pending_operations.deinit(allocator);
         self.* = undefined;
@@ -137,7 +135,16 @@ pub const Context = struct {
     startFileOperationFn: ?*const fn (context: *anyopaque, operation: FileOperation, source: []const u8, destination: ?[]const u8, overwrite: bool) anyerror!u64 = null,
     startArchiveFn: ?*const fn (context: *anyopaque, operation: ArchiveOperation, source: []const u8, destination: []const u8, external_tool: ?[]const u8) anyerror!u64 = null,
     pollOperationFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, token: u64) anyerror!?CommandResult = null,
-    readStdinFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator) anyerror![]u8 = null,
+    /// Issue #28: stdinの単一source of truth。テキスト系命令とrawバイト命令
+    /// （`plugin_lowlevel` 経由）が同じ `StdinSource` の `consumed` カーソルを
+    /// 消費する。sourceはhost側（CliHost等）が所有し、ここでは生成済みなら
+    /// それを返すだけで生成はしない。
+    peekStdinSourceFn: ?*const fn (context: *anyopaque) ?*low_level_io.StdinSource = null,
+    /// 共有stdin sourceを取得する。無ければ `read_fn` 下位reader付きで
+    /// 生成する（生成はhost側で一度だけ）。`allocator` 引数は助言的で、
+    /// 実装はhost寿命のallocatorで確保すること（呼び出し側の短命runtime
+    /// allocatorでsourceを確保するとUAFになる）。
+    stdinSourceFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator) anyerror!*low_level_io.StdinSource = null,
     readStdinLineFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator) anyerror![]u8 = null,
     isStdinTtyFn: ?*const fn (context: *anyopaque) bool = null,
     createTemporaryDirectoryFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, prefix: []const u8) anyerror![]u8 = null,

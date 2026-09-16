@@ -165,7 +165,6 @@ pub const nodeStdinCallbackBuiltin = node_file_module.nodeStdinCallbackBuiltin;
 pub const nodeStdinLineBuiltin = node_file_module.nodeStdinLineBuiltin;
 pub const nodeStdinAllBuiltin = node_file_module.nodeStdinAllBuiltin;
 pub const nodeStdinValueBuiltin = node_file_module.nodeStdinValueBuiltin;
-pub const ensureAotStdin = node_file_module.ensureAotStdin;
 pub const aotFileCopyMoveWithIo = node_file_module.aotFileCopyMoveWithIo;
 
 const low_level_module = @import("low_level.zig");
@@ -175,6 +174,10 @@ pub const lowLevelCapabilitySupportedBuiltin = low_level_module.lowLevelCapabili
 pub const lowLevelCapabilityListBuiltin = low_level_module.lowLevelCapabilityListBuiltin;
 pub const lowLevelUnsupportedBuiltin = low_level_module.lowLevelUnsupportedBuiltin;
 pub const handleIdFor = low_level_module.handleIdFor;
+pub const ensureAotStdinSource = low_level_module.ensureAotStdinSource;
+pub const stdioStdinFile = low_level_module.stdioStdinFile;
+pub const stdioStdoutFile = low_level_module.stdioStdoutFile;
+pub const stdioStderrFile = low_level_module.stdioStderrFile;
 
 const node_http_module = @import("node_http.zig");
 

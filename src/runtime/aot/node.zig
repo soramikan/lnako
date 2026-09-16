@@ -400,7 +400,6 @@ pub const nodeStdinCallbackBuiltin = node_file_module.nodeStdinCallbackBuiltin;
 pub const nodeStdinLineBuiltin = node_file_module.nodeStdinLineBuiltin;
 pub const nodeStdinAllBuiltin = node_file_module.nodeStdinAllBuiltin;
 pub const nodeStdinValueBuiltin = node_file_module.nodeStdinValueBuiltin;
-pub const ensureAotStdin = node_file_module.ensureAotStdin;
 pub const aotFileCopyMoveWithIo = node_file_module.aotFileCopyMoveWithIo;
 
 const node_http_module = @import("node_http.zig");
