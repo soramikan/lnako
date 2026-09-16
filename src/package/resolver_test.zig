@@ -908,6 +908,27 @@ test "featureがpath依存aliasを参照しても解決できる" {
     try T.expect(saw_default);
 }
 
+test "親versionごとのprereleaseゲートで有効な別版を消さない" {
+    var arena = std.heap.ArenaAllocator.init(T.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+    const mock = Mock{ .pkgs = &.{
+        .{ .name = "a", .versions = &.{
+            .{ .version = "2.0.0", .deps = &.{.{ .name = "b", .req = "*" }} },
+            .{ .version = "1.0.0", .deps = &.{.{ .name = "b", .req = ">=1.0.0-alpha" }} },
+        } },
+        .{ .name = "b", .versions = &.{.{ .version = "1.0.0-alpha" }} },
+    } };
+    const root_deps = [_]resolver.Dependency{dep(gpa, "a", "*")};
+    var res = try solve(gpa, &mock, &root_deps, .{});
+    defer res.deinit();
+    // a@2.0.0 の `*` は prerelease を許可しないが、a@1.0.0 は許可するため
+    // a@1.0.0 + b@1.0.0-alpha が選ばれる。
+    const nodes = nodesOf(&res);
+    try expectVersion(nodes, "a", "1.0.0");
+    try expectVersion(nodes, "b", "1.0.0-alpha");
+}
+
 test "runtime不適合はunavailable理由になる" {
     var arena = std.heap.ArenaAllocator.init(T.allocator);
     defer arena.deinit();

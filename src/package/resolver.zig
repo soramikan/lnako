@@ -270,10 +270,10 @@ pub const Error = error{
 /// lnako の npm 互換 range を pubgrub の区間集合へ変換する。
 ///
 /// この変換は区間のみを表し、node-semver の prerelease ゲート（候補が同一
-/// tuple の prerelease 比較子を要求する規則）は表現しない。ゲートは解決後の
-/// 検証で `Dependency.semver_range` の `semver.Range.satisfies` により適用し、
-/// 制約が許可しない prerelease は禁止して再求解する（誤った解を返さない）。
-/// prerelease の候補順は pubgrub に従い release が優先される。
+/// tuple の prerelease 比較子を要求する規則）は表現しない。ゲートは辺ごとに
+/// `applyPrereleaseGate` で、その辺の元 range が許可しない prerelease を区間
+/// から除外して表現する。prerelease の候補順は pubgrub に従い release が優先
+/// される。
 pub fn rangeFromSemver(gpa: Allocator, range: semver.Range) error{OutOfMemory}!Range {
     // `sets.len == 0` は「全 version 一致」を表すセンチネル（`semver.Range`
     // の契約）。空の AND 集合は区間 `any` に対応する。
@@ -529,7 +529,10 @@ const Adapter = struct {
         }
         var result: std.ArrayList(Solver.Dependency) = .empty;
         for (active.deps) |dep| {
-            try result.append(gpa, .{ .package = dep.id, .constraint = dep.constraint });
+            try result.append(gpa, .{
+                .package = dep.id,
+                .constraint = try applyPrereleaseGate(gpa, self.provider, dep),
+            });
         }
         return .{ .known = result.items };
     }
@@ -635,9 +638,8 @@ fn collectRequests(
 /// feature 依存が競合しても backjump できず、有効な別 version を選べない。
 /// これは安全側の失敗であり、誤った解は返さない。
 ///
-/// node-semver の prerelease ゲートは区間で表現できないため、解いた後に
-/// 全 incoming 辺の元 range で検証し、違反した prerelease を禁止して再求解
-/// する。これも誤った解を返さない方向にのみ働く。
+/// node-semver の prerelease ゲートは `applyPrereleaseGate` で辺ごとに除外し、
+/// 親 version に条件付けて PubGrub の制約として表現する。
 pub fn resolve(gpa: Allocator, provider: Provider, root_deps: []const Dependency, opts: ResolveOptions) !Resolution {
     var arena = std.heap.ArenaAllocator.init(gpa);
     errdefer arena.deinit();
@@ -656,13 +658,11 @@ pub fn resolve(gpa: Allocator, provider: Provider, root_deps: []const Dependency
     }.lt);
     var solver_root_deps: std.ArrayList(Solver.Dependency) = .empty;
     for (sorted_root) |dep| {
-        try solver_root_deps.append(a, .{ .package = dep.id, .constraint = dep.constraint });
+        try solver_root_deps.append(a, .{
+            .package = dep.id,
+            .constraint = try applyPrereleaseGate(a, provider, dep),
+        });
     }
-
-    // node-semver の prerelease ゲートは区間集合で表現できないため、解いた後
-    // に全 incoming 辺の元 range で検証する。違反した version を禁止して再求解
-    // する（安全側: 誤った解を返さない）。
-    var forbidden: std.ArrayList(Solver.ExtraConstraint) = .empty;
 
     var iteration: u32 = 0;
     while (iteration < opts.max_feature_iterations) : (iteration += 1) {
@@ -676,7 +676,7 @@ pub fn resolve(gpa: Allocator, provider: Provider, root_deps: []const Dependency
             root_id,
             root_version,
             solver_root_deps.items,
-            .{ .prefer_oldest = opts.prefer_oldest, .constraints = forbidden.items },
+            .{ .prefer_oldest = opts.prefer_oldest },
         );
         defer outcome.deinit();
         switch (outcome.result) {
@@ -710,16 +710,6 @@ pub fn resolve(gpa: Allocator, provider: Provider, root_deps: []const Dependency
                             .result = .{ .cycle = cycle },
                         };
                     }
-                    if (try findDisallowedPrerelease(a, provider, &gathered, sorted_root, selections.items)) |offender| {
-                        // 制約が許可しない prerelease を禁止して再求解する。
-                        try forbidden.append(a, .{
-                            .package = try interner.id(a, offender.package),
-                            .constraint = try Range.singleton(a, offender.version),
-                            .require = false,
-                            .reason = "prerelease is not permitted by an incoming constraint",
-                        });
-                        continue;
-                    }
                     return .{
                         .arena = arena,
                         .result = .{ .resolved = nodes },
@@ -732,47 +722,23 @@ pub fn resolve(gpa: Allocator, provider: Provider, root_deps: []const Dependency
     return error.FeatureIterationExceeded;
 }
 
-/// `dep` の元 range が `version` を node-semver の prerelease ゲート込みで
-/// 許可するか。元 range が無い場合は区間判定にフォールバックする。
-fn dependencyAllows(dep: Dependency, version: Version) bool {
-    if (dep.semver_range) |range| return range.satisfies(version.toSemver());
-    return dep.constraint.contains(version);
-}
-
-/// 選択された prerelease が incoming 辺の制約に反していないか検証し、
-/// 最初の違反を返す。
-fn findDisallowedPrerelease(
-    gpa: Allocator,
-    provider: Provider,
-    requests: *const RequestMap,
-    root_deps: []const Dependency,
-    selections: []const Selection,
-) !?Selection {
-    var selected = IdMap(Version).init(gpa);
-    for (selections) |selection| {
-        try selected.put(selection.package, selection.version);
+/// node-semver の prerelease ゲートは区間で表現できないため、辺ごとに
+/// 対象 package の prerelease 候補のうち元 range が許可しないものを区間から
+/// 除外して PubGrub へ渡す。親 version が変わればその辺の除外も変わるため、
+/// 別の親版が許可する有効解を消さない。
+fn applyPrereleaseGate(gpa: Allocator, provider: Provider, dep: Dependency) !Range {
+    const range = dep.semver_range orelse return dep.constraint;
+    const versions = provider.listVersions(gpa, dep.id) catch |err| switch (err) {
+        error.PackageNotFound => return dep.constraint,
+        else => return err,
+    };
+    var excluded: Range = .empty;
+    for (versions) |version| {
+        if (!Version.isPrerelease(version)) continue;
+        if (range.satisfies(version.toSemver())) continue;
+        excluded = try excluded.unionWith(try Range.singleton(gpa, version), gpa);
     }
-
-    for (root_deps) |dep| {
-        const version = selected.get(dep.id) orelse continue;
-        if (Version.isPrerelease(version) and !dependencyAllows(dep, version)) {
-            return .{ .package = dep.id, .version = version };
-        }
-    }
-
-    for (selections) |selection| {
-        if (selection.package.eql(root_id)) continue;
-        const meta = try provider.versionMeta(gpa, selection.package, selection.version);
-        const request = if (requests.get(selection.package)) |req| req else null;
-        const active = try activeDependencies(gpa, meta, request);
-        for (active.deps) |dep| {
-            const version = selected.get(dep.id) orelse continue;
-            if (Version.isPrerelease(version) and !dependencyAllows(dep, version)) {
-                return .{ .package = dep.id, .version = version };
-            }
-        }
-    }
-    return null;
+    return dep.constraint.difference(excluded, gpa);
 }
 
 fn buildGraph(
@@ -936,7 +902,9 @@ fn findCycle(gpa: Allocator, nodes: []const PackageNode) !?[]const PackageId {
 ///
 /// version 解決へ渡すのは `dependencies.pkg` のみ。`dependencies.npm`・
 /// `path`・`git`・`http` と dev-dependencies は取得/lock/npm resolver の別層が
-/// 担い、この関数では解決対象にしない。
+/// 担い、この関数では解決対象にしない。`dependencies.pkg.<name>.profile` も
+/// profile 選択・OS 条件の再評価を別層（lock/import）に委ね、ここでは辺の
+/// 制約として扱わない。
 pub fn metaFromManifest(gpa: Allocator, source: *const manifest.Manifest, target: Target) !VersionMeta {
     var deps: std.ArrayList(Dependency) = .empty;
     var pkg_iterator = source.dependencies.pkg.iterator();
