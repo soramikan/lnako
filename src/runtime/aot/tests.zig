@@ -7847,7 +7847,16 @@ test "AOT低レイヤーは孤立サロゲートをU+FFFDへ置換せず別フ�
     defer active.popRoots(&frame);
     roots[0] = try active.createString(units);
 
-    try std.testing.expectError(error.NakoException, state.lowLevelFileBuiltin(active, .low_level_path_unlink, &.{roots[0]}));
+    var out: Value = .{};
+    lnako_aot_builtin_call(&out, @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.low_level_path_unlink));
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    var taken: Value = .{};
+    lnako_aot_exception_take(&taken);
+    try std.testing.expect(taken.object().?.structured_error);
+    // 失敗した元のパスを識別できる（孤立サロゲートを保持）。
+    const path_units = try valueUtf16Alloc(active, dictionaryProperty(taken, &.{ 'p', 'a', 't', 'h' }));
+    defer std.testing.allocator.free(path_units);
+    try std.testing.expectEqualSlices(u16, units, path_units);
 
     // U+FFFD名のファイルは残っている。
     _ = try std.Io.Dir.cwd().statFile(std.testing.io, replacement_path, .{});

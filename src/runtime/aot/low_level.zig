@@ -791,9 +791,10 @@ fn buildError(
     try setField(runtime, result, foundation.error_object_keys.code, try runtimeUtf8String(runtime, code.name()));
     try setField(runtime, result, foundation.error_object_keys.native_code, .{ .tag = @intFromEnum(Tag.null_value) });
     try setField(runtime, result, foundation.error_object_keys.operation, try runtimeUtf8String(runtime, operation));
-    // pathはWTF-8（孤立サロゲートを含み得る）なのでlossyで文字列化する。
-    try setField(runtime, result, foundation.error_object_keys.path, if (path) |value| try runtimeUtf8StringLossy(runtime, value) else .{ .tag = @intFromEnum(Tag.null_value) });
-    try setField(runtime, result, foundation.error_object_keys.path2, if (path2) |value| try runtimeUtf8StringLossy(runtime, value) else .{ .tag = @intFromEnum(Tag.null_value) });
+    // pathはWTF-8（孤立サロゲートを含み得る）なので、入力と同じ可逆変換で
+    // 文字列化し、失敗した元のパスを呼び出し側が識別できるようにする。
+    try setField(runtime, result, foundation.error_object_keys.path, if (path) |value| try pathStringFromBytes(runtime, value) else .{ .tag = @intFromEnum(Tag.null_value) });
+    try setField(runtime, result, foundation.error_object_keys.path2, if (path2) |value| try pathStringFromBytes(runtime, value) else .{ .tag = @intFromEnum(Tag.null_value) });
     try setField(runtime, result, foundation.error_object_keys.message, try runtimeUtf8String(runtime, message));
     try setField(runtime, result, foundation.error_object_keys.capability, if (capability) |value| try runtimeUtf8String(runtime, value) else .{ .tag = @intFromEnum(Tag.null_value) });
     // 構造化エラー印。`["code"]` 等のフィールド参照と、文字列化＝`message`

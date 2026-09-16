@@ -782,9 +782,10 @@ fn buildError(
     try shared.setDictionary(runtime, dictionary.dictionary, foundation.error_object_keys.code, try runtime.stringUtf8(code.name()));
     try shared.setDictionary(runtime, dictionary.dictionary, foundation.error_object_keys.native_code, .null_value);
     try shared.setDictionary(runtime, dictionary.dictionary, foundation.error_object_keys.operation, try runtime.stringUtf8(operation));
-    // pathはWTF-8（孤立サロゲートを含み得る）なのでlossyで文字列化する。
-    try shared.setDictionary(runtime, dictionary.dictionary, foundation.error_object_keys.path, if (path) |value| try runtime.stringUtf8Lossy(value) else .null_value);
-    try shared.setDictionary(runtime, dictionary.dictionary, foundation.error_object_keys.path2, if (path2) |value| try runtime.stringUtf8Lossy(value) else .null_value);
+    // pathはWTF-8（孤立サロゲートを含み得る）なので、入力と同じ可逆変換で
+    // 文字列化し、失敗した元のパスを呼び出し側が識別できるようにする。
+    try shared.setDictionary(runtime, dictionary.dictionary, foundation.error_object_keys.path, if (path) |value| try pathStringFromBytes(runtime, value) else .null_value);
+    try shared.setDictionary(runtime, dictionary.dictionary, foundation.error_object_keys.path2, if (path2) |value| try pathStringFromBytes(runtime, value) else .null_value);
     try shared.setDictionary(runtime, dictionary.dictionary, foundation.error_object_keys.message, try runtime.stringUtf8(message));
     try shared.setDictionary(runtime, dictionary.dictionary, foundation.error_object_keys.capability, if (capability) |value| try runtime.stringUtf8(value) else .null_value);
     return dictionary;
@@ -1672,6 +1673,10 @@ test "孤立サロゲートのパスはU+FFFD名へ置換されず別ファイ�
     try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイルリンク削除", &.{path}));
     try roots.protect(&thrown);
     try expectThrownCode(&runtime, thrown, "ENOENT");
+    // 失敗した元のパスを識別できる（孤立サロゲートを保持）。
+    const error_path = shared.dictionaryGetAscii(thrown.dictionary, foundation.error_object_keys.path) orelse return error.TestExpectedEqual;
+    try std.testing.expect(error_path == .string);
+    try std.testing.expectEqualSlices(u16, units, error_path.string.units);
 
     // U+FFFD名のファイルは残っている。
     _ = try low_level_fs.stat(std.testing.io, replacement_path, true);
