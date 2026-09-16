@@ -83,6 +83,7 @@ fn versionMeta(ptr: *anyopaque, gpa: std.mem.Allocator, id: PackageId, version: 
             .features = dependency.features,
             .default_features = dependency.default_features,
             .prefer_native = dependency.prefer_native,
+            .prerelease_tuples = try resolver.gatedTuples(gpa, range),
         });
     }
     return .{
@@ -123,6 +124,7 @@ fn dep(gpa: std.mem.Allocator, name: []const u8, req: []const u8) resolver.Depen
         .id = .{ .pkg = name },
         .constraint = resolver.rangeFromSemver(gpa, range) catch unreachable,
         .name = name,
+        .prerelease_tuples = resolver.gatedTuples(gpa, range) catch unreachable,
     };
 }
 
@@ -134,6 +136,7 @@ fn nodesOf(res: *const resolver.Resolution) []const resolver.PackageNode {
     return switch (res.result) {
         .resolved => |nodes| nodes,
         .failed => std.debug.panic("expected success", .{}),
+        .cycle => std.debug.panic("expected success, got cycle", .{}),
     };
 }
 
@@ -141,6 +144,15 @@ fn messageOf(res: *const resolver.Resolution) []const u8 {
     return switch (res.result) {
         .failed => |f| f.message,
         .resolved => std.debug.panic("expected failure", .{}),
+        .cycle => std.debug.panic("expected failure, got cycle", .{}),
+    };
+}
+
+fn cycleOf(res: *const resolver.Resolution) []const resolver.PackageId {
+    return switch (res.result) {
+        .cycle => |cycle| cycle,
+        .resolved => std.debug.panic("expected cycle, got success", .{}),
+        .failed => std.debug.panic("expected cycle, got failure", .{}),
     };
 }
 
@@ -202,7 +214,7 @@ test "diamond依存は共通versionを一度だけ解決する" {
     try T.expectEqual(@as(usize, 1), count);
 }
 
-test "循環依存を解決できる" {
+test "循環依存はE004相当のcycleとして検出する" {
     var arena = std.heap.ArenaAllocator.init(T.allocator);
     defer arena.deinit();
     const gpa = arena.allocator();
@@ -219,9 +231,9 @@ test "循環依存を解決できる" {
     const root_deps = [_]resolver.Dependency{dep(gpa, "a", "*")};
     var res = try solve(gpa, &mock, &root_deps, .{});
     defer res.deinit();
-    const nodes = nodesOf(&res);
-    try expectVersion(nodes, "a", "1.0.0");
-    try expectVersion(nodes, "b", "1.0.0");
+    const cycle = cycleOf(&res);
+    try T.expect(cycle.len >= 2);
+    try T.expect(cycle[0].eql(cycle[cycle.len - 1]));
 }
 
 test "深いbacktrackで古いversionを選ぶ" {
@@ -696,6 +708,104 @@ test "prereleaseはreleaseより低優先で選択される" {
     try expectVersion(nodesOf(&pre_res), "lib", "2.0.0-alpha");
 }
 
+test "要求featureを持たない版は選択せず別版へbacktrackする" {
+    var arena = std.heap.ArenaAllocator.init(T.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+    const mock = Mock{ .pkgs = &.{
+        .{ .name = "lib", .versions = &.{
+            .{ .version = "1.0.0", .features = &.{.{ .name = "secure", .items = &.{} }} },
+            .{ .version = "2.0.0", .features = &.{} },
+        } },
+    } };
+    var root_dep = dep(gpa, "lib", "*");
+    root_dep.features = &.{"secure"};
+    const root_deps = [_]resolver.Dependency{root_dep};
+    var res = try solve(gpa, &mock, &root_deps, .{});
+    defer res.deinit();
+    // 2.0.0 は secure を持たないため unavailable となり 1.0.0 が選ばれる。
+    try expectVersion(nodesOf(&res), "lib", "1.0.0");
+}
+
+test "どの版も要求featureを提供しない場合は競合として失敗する" {
+    var arena = std.heap.ArenaAllocator.init(T.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+    const mock = Mock{ .pkgs = &.{
+        .{ .name = "lib", .versions = &.{
+            .{ .version = "1.0.0", .features = &.{} },
+            .{ .version = "2.0.0", .features = &.{} },
+        } },
+    } };
+    var root_dep = dep(gpa, "lib", "*");
+    root_dep.features = &.{"secure"};
+    const root_deps = [_]resolver.Dependency{root_dep};
+    var res = try solve(gpa, &mock, &root_deps, .{});
+    defer res.deinit();
+    const message = messageOf(&res);
+    try T.expect(std.mem.indexOf(u8, message, "version solving failed") != null);
+}
+
+test "未知のruntimeはSourceがあっても選択不能になる" {
+    var arena = std.heap.ArenaAllocator.init(T.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+    var m = try parseManifest(gpa,
+        \\[package]
+        \\name = "lib"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[[exports]]
+        \\name = "index"
+        \\path = "src/index.nako3"
+        \\
+    );
+    defer m.deinit();
+    const meta = try resolver.metaFromManifest(gpa, &m, .{ .runtime = "cnkoa" });
+    try T.expect(meta.unavailable_reason != null);
+    try T.expectEqual(Impl.none, resolver.chooseImplementation(meta, .{ .runtime = "cnkoa" }, false));
+    // 既知 runtime では共通 source が選ばれる。
+    const lnako_meta = try resolver.metaFromManifest(gpa, &m, .{ .runtime = "lnako" });
+    try T.expect(lnako_meta.unavailable_reason == null);
+}
+
+test "明示的に許可されていないprereleaseしかない場合は解決失敗する" {
+    var arena = std.heap.ArenaAllocator.init(T.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+    const mock = Mock{ .pkgs = &.{
+        .{ .name = "lib", .versions = &.{.{ .version = "1.0.0-alpha" }} },
+    } };
+    // `*` は prerelease 比較子を持たないため 1.0.0-alpha を許可しない。
+    const root_deps = [_]resolver.Dependency{dep(gpa, "lib", "*")};
+    var res = try solve(gpa, &mock, &root_deps, .{});
+    defer res.deinit();
+    const message = messageOf(&res);
+    try T.expect(std.mem.indexOf(u8, message, "version solving failed") != null);
+}
+
+test "prereleaseを許可しない制約が併存するとprereleaseは選べない" {
+    var arena = std.heap.ArenaAllocator.init(T.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+    const mock = Mock{ .pkgs = &.{
+        .{ .name = "lib", .versions = &.{
+            .{ .version = "2.0.0-alpha" },
+            .{ .version = "2.0.0" },
+        } },
+    } };
+    // `*` は prerelease を許可しないため、>=2.0.0-alpha が許可しても全体では
+    // prerelease を選べず、release の 2.0.0 が選ばれる。
+    const root_deps = [_]resolver.Dependency{
+        dep(gpa, "lib", "*"),
+        dep(gpa, "lib", ">=2.0.0-alpha"),
+    };
+    var res = try solve(gpa, &mock, &root_deps, .{});
+    defer res.deinit();
+    try expectVersion(nodesOf(&res), "lib", "2.0.0");
+}
+
 test "runtime不適合はunavailable理由になる" {
     var arena = std.heap.ArenaAllocator.init(T.allocator);
     defer arena.deinit();
@@ -974,7 +1084,9 @@ test "小規模グラフを全探索oracleと差分比較する" {
                 var range_list: std.ArrayList(semver.Range) = .empty;
                 var mock_deps: std.ArrayList(Mock.Dep) = .empty;
                 for (0..n_pkgs) |d| {
-                    if (d == p) continue;
+                    // 依存を低位 index の package に限り、oracle を DAG に保つ
+                    // （resolver は循環を E004 として失敗にする）。
+                    if (d >= p) continue;
                     if (random.float(f32) >= 0.35) continue;
                     const req_text: []const u8 = switch (random.uintLessThan(u8, 7)) {
                         0 => "*",
@@ -1057,6 +1169,10 @@ test "小規模グラフを全探索oracleと差分比較する" {
                     std.debug.print("case {d}: solver failed but oracle found a solution\n", .{case});
                     return error.TestUnexpectedResult;
                 }
+            },
+            .cycle => {
+                // 生成した graph は cycle を持たないため到達しない。
+                return error.TestUnexpectedResult;
             },
         }
     }

@@ -117,6 +117,88 @@ pub const Solver = pubgrub.Solver(PackageId, Version);
 pub const Range = Solver.R;
 pub const Selection = Solver.Selection;
 
+/// 依存制約が prerelease を明示的に許可する `(major, minor, patch)`。
+pub const Tuple = struct {
+    major: u64,
+    minor: u64,
+    patch: u64,
+
+    pub fn fromVersion(v: Version) Tuple {
+        return .{ .major = v.inner.major, .minor = v.inner.minor, .patch = v.inner.patch };
+    }
+
+    pub fn eql(a: Tuple, b: Tuple) bool {
+        return a.major == b.major and a.minor == b.minor and a.patch == b.patch;
+    }
+
+    pub fn order(a: Tuple, b: Tuple) std.math.Order {
+        if (a.major != b.major) return std.math.order(a.major, b.major);
+        if (a.minor != b.minor) return std.math.order(a.minor, b.minor);
+        return std.math.order(a.patch, b.patch);
+    }
+
+    pub fn hash(t: Tuple) u64 {
+        var h = std.hash.Wyhash.init(0);
+        h.update(std.mem.asBytes(&t.major));
+        h.update(std.mem.asBytes(&t.minor));
+        h.update(std.mem.asBytes(&t.patch));
+        return h.final();
+    }
+};
+
+/// node-semver の prerelease ゲートで許可される tuple を range から抽出する。
+/// 各 AND 集合の prerelease 比較子の tuple の和を、重複なく返す。
+pub fn gatedTuples(gpa: Allocator, range: semver.Range) error{OutOfMemory}![]const Tuple {
+    if (range.sets.len == 0) return &.{};
+    var found: std.ArrayList(Tuple) = .empty;
+    var seen = std.AutoHashMap(Tuple, void).init(gpa);
+    for (range.sets) |set| {
+        for (set) |comparator| {
+            if (comparator.version.prerelease.len == 0) continue;
+            const tuple = Tuple{
+                .major = comparator.version.major,
+                .minor = comparator.version.minor,
+                .patch = comparator.version.patch,
+            };
+            const gop = try seen.getOrPut(tuple);
+            if (!gop.found_existing) try found.append(gpa, tuple);
+        }
+    }
+    std.mem.sort(Tuple, found.items, {}, struct {
+        fn lt(_: void, a: Tuple, b: Tuple) bool {
+            return Tuple.order(a, b) == .lt;
+        }
+    }.lt);
+    return found.items;
+}
+
+fn tupleSlicesEqual(a: []const Tuple, b: []const Tuple) bool {
+    if (a.len != b.len) return false;
+    for (a, b) |x, y| {
+        if (!Tuple.eql(x, y)) return false;
+    }
+    return true;
+}
+
+/// 2 つの許可 tuple 集合の積集合（どちらも昇順・重複なし）。
+fn intersectTuples(gpa: Allocator, a: []const Tuple, b: []const Tuple) error{OutOfMemory}![]const Tuple {
+    var out: std.ArrayList(Tuple) = .empty;
+    var i: usize = 0;
+    var j: usize = 0;
+    while (i < a.len and j < b.len) {
+        switch (Tuple.order(a[i], b[j])) {
+            .lt => i += 1,
+            .gt => j += 1,
+            .eq => {
+                try out.append(gpa, a[i]);
+                i += 1;
+                j += 1;
+            },
+        }
+    }
+    return out.items;
+}
+
 /// root を表す予約 ID。TOML 文字列に NUL を含められないため衝突しない。
 pub const root_id: PackageId = .{ .pkg = "\x00root" };
 pub const root_version = Version{ .inner = .{ .major = 0, .minor = 0, .patch = 0 } };
@@ -135,6 +217,9 @@ pub const Dependency = struct {
     default_features: bool = true,
     /// true の場合、lnako 実行時に native 実装を優先選択する。
     prefer_native: bool = false,
+    /// この制約が prerelease を明示的に許可する tuple。空なら prerelease は
+    /// 選択対象にならない（node-semver の prerelease ゲート相当）。
+    prerelease_tuples: []const Tuple = &.{},
 };
 
 /// feature 定義。
@@ -234,6 +319,9 @@ pub const Resolution = struct {
     result: union(enum) {
         resolved: []const PackageNode,
         failed: Failure,
+        /// package 依存の循環。診断層は `E004_DEPENDENCY_CYCLE` へ変換する。
+        /// 先頭と末尾は同じ package（経路を閉じる）。
+        cycle: []const PackageId,
     },
 
     pub fn deinit(self: *Resolution) void {
@@ -335,6 +423,8 @@ fn IdMap(comptime Val: type) type {
 }
 
 const RequestMap = IdMap(PkgRequest);
+/// package ごとに、依存制約が明示的に許可する prerelease tuple の積集合。
+const AllowanceMap = IdMap([]const Tuple);
 
 const Expansion = struct {
     features: std.StringHashMap(void),
@@ -410,7 +500,14 @@ fn isGated(meta: VersionMeta, dep: Dependency) bool {
     return false;
 }
 
-fn expansionFor(gpa: Allocator, meta: VersionMeta, request: ?PkgRequest) !Expansion {
+/// `expansionFor` の結果。`orphans` は選択版が提供しない要求 feature 名
+/// （`default` を除く）。呼出し側は該当版を選択不能として扱う。
+const ExpansionResult = struct {
+    expansion: Expansion,
+    orphans: []const []const u8,
+};
+
+fn expansionFor(gpa: Allocator, meta: VersionMeta, request: ?PkgRequest) !ExpansionResult {
     var definitions: features_mod.Definitions = .empty;
     for (meta.features) |definition| {
         try definitions.put(gpa, definition.name, .{
@@ -426,15 +523,18 @@ fn expansionFor(gpa: Allocator, meta: VersionMeta, request: ?PkgRequest) !Expans
         if (dep.alias) |alias| try input_aliases.put(alias, {});
     }
 
-    // 要求 feature のうち、定義済み feature でも alias でもない名前は
-    // version 間で統合された要求の残骸であり得るため無視する
-    // （manifest 検証 (E028) は解析フェーズで行う）。
+    // 選択版が提供しない要求 feature は「この version では満たせない」ため
+    // 呼出し側で unavailable として扱い、PubGrub に別 version へ backtrack
+    // させる。`default` は未定義なら無効化される仕様のため対象外。
     var requested: std.ArrayList([]const u8) = .empty;
+    var orphans: std.ArrayList([]const u8) = .empty;
     if (request) |req| {
         var iterator = req.features.keyIterator();
         while (iterator.next()) |name| {
             if (definitions.contains(name.*) or input_aliases.contains(name.*)) {
                 try requested.append(gpa, name.*);
+            } else if (!std.mem.eql(u8, name.*, "default")) {
+                try orphans.append(gpa, name.*);
             }
         }
     }
@@ -453,24 +553,27 @@ fn expansionFor(gpa: Allocator, meta: VersionMeta, request: ?PkgRequest) !Expans
         error.FeatureCycle, error.UnknownFeature => return error.InvalidFeatureGraph,
     };
     return .{
-        .features = expanded.features,
-        .aliases = expanded.dependency_aliases,
+        .expansion = .{
+            .features = expanded.features,
+            .aliases = expanded.dependency_aliases,
+        },
+        .orphans = orphans.items,
     };
 }
 
 /// 有効 feature 集合を考慮した依存辺。gated 依存は有効化された alias のみ含む。
-fn activeDependencies(gpa: Allocator, meta: VersionMeta, request: ?PkgRequest) !struct { expansion: Expansion, deps: []const Dependency } {
-    const expansion = try expansionFor(gpa, meta, request);
+fn activeDependencies(gpa: Allocator, meta: VersionMeta, request: ?PkgRequest) !struct { expansion: Expansion, deps: []const Dependency, orphans: []const []const u8 } {
+    const result = try expansionFor(gpa, meta, request);
     var deps: std.ArrayList(Dependency) = .empty;
     for (meta.dependencies) |dep| {
         if (isGated(meta, dep)) {
-            const activated = expansion.aliases.contains(dep.name) or
-                (if (dep.alias) |alias| expansion.aliases.contains(alias) else false);
+            const activated = result.expansion.aliases.contains(dep.name) or
+                (if (dep.alias) |alias| result.expansion.aliases.contains(alias) else false);
             if (!activated) continue;
         }
         try deps.append(gpa, dep);
     }
-    return .{ .expansion = expansion, .deps = deps.items };
+    return .{ .expansion = result.expansion, .deps = deps.items, .orphans = result.orphans };
 }
 
 // ---------------------------------------------------------------------------
@@ -480,9 +583,28 @@ fn activeDependencies(gpa: Allocator, meta: VersionMeta, request: ?PkgRequest) !
 const Adapter = struct {
     provider: Provider,
     requests: *const RequestMap,
+    allowances: *const AllowanceMap,
 
     pub fn listVersions(self: *const Adapter, gpa: Allocator, id: PackageId) anyerror![]const Version {
-        return self.provider.listVersions(gpa, id);
+        const raw = try self.provider.listVersions(gpa, id);
+        const allow: []const Tuple = if (self.allowances.get(id)) |tuples| tuples else &.{};
+        var filtered: std.ArrayList(Version) = .empty;
+        for (raw) |version| {
+            // prerelease は制約が同一 tuple を明示的に許可する場合のみ候補に残す。
+            if (Version.isPrerelease(version)) {
+                const tuple = Tuple.fromVersion(version);
+                var permitted = false;
+                for (allow) |candidate| {
+                    if (Tuple.eql(candidate, tuple)) {
+                        permitted = true;
+                        break;
+                    }
+                }
+                if (!permitted) continue;
+            }
+            try filtered.append(gpa, version);
+        }
+        return filtered.items;
     }
 
     pub fn dependencies(self: *const Adapter, gpa: Allocator, id: PackageId, version: Version) anyerror!Solver.DepResult {
@@ -490,6 +612,11 @@ const Adapter = struct {
         if (meta.unavailable_reason) |reason| return .{ .unavailable = reason };
         const request = if (self.requests.get(id)) |req| req else null;
         const active = try activeDependencies(gpa, meta, request);
+        // この version が提供しない要求 feature がある場合、その version は
+        // 選択不能として PubGrub に別 version を探索させる。
+        if (active.orphans.len > 0) {
+            return .{ .unavailable = "requested feature is not provided by this version" };
+        }
         var result: std.ArrayList(Solver.Dependency) = .empty;
         for (active.deps) |dep| {
             try result.append(gpa, .{ .package = dep.id, .constraint = dep.constraint });
@@ -502,7 +629,19 @@ const Adapter = struct {
     }
 };
 
+/// 対象処理系として公開されている値か。`lnako`/`cnako` 以外は
+/// `Export.resolve` と同じく対象外として扱う。
+pub fn isSupportedRuntime(runtime: []const u8) bool {
+    return std.mem.eql(u8, runtime, "lnako") or std.mem.eql(u8, runtime, "cnako");
+}
+
+/// package 全体としての代表実装を選ぶ。export が複数ある場合の最終的な
+/// export 単位の選択は import 時の `Export.resolve` が再検証する
+/// （ここでは source があれば既定で source、`prefer_native` が lnako で
+/// 明示された場合のみ native）。
 pub fn chooseImplementation(meta: VersionMeta, target: Target, prefer_native: bool) Impl {
+    // 未知の処理系は実装選択の対象外。`Export.resolve` の契約に合わせる。
+    if (!isSupportedRuntime(target.runtime)) return .none;
     if (meta.has_source) {
         if (prefer_native and std.mem.eql(u8, target.runtime, "lnako") and meta.has_native) {
             return .native;
@@ -570,6 +709,48 @@ fn collectRequests(
     return requests;
 }
 
+/// 依存辺が許可する prerelease tuple を積集合で併合する。
+fn mergeAllowance(gpa: Allocator, interner: *Interner, acc: *AllowanceMap, target: PackageId, tuples: []const Tuple) !void {
+    const id = try interner.id(gpa, target);
+    const gop = try acc.getOrPut(id);
+    if (!gop.found_existing) {
+        gop.value_ptr.* = try gpa.dupe(Tuple, tuples);
+        return;
+    }
+    gop.value_ptr.* = try intersectTuples(gpa, gop.value_ptr.*, tuples);
+}
+
+/// 選択 graph の incoming 辺から package ごとの prerelease 許可 tuple を計算する。
+fn computeAllowances(
+    gpa: Allocator,
+    interner: *Interner,
+    provider: Provider,
+    current: *const RequestMap,
+    root_deps: []const Dependency,
+    selections: []const Selection,
+) !AllowanceMap {
+    var allowances = AllowanceMap.init(gpa);
+    for (root_deps) |dep| try mergeAllowance(gpa, interner, &allowances, dep.id, dep.prerelease_tuples);
+    for (selections) |selection| {
+        if (selection.package.eql(root_id)) continue;
+        const meta = try provider.versionMeta(gpa, selection.package, selection.version);
+        const request = if (current.get(selection.package)) |req| req else null;
+        const active = try activeDependencies(gpa, meta, request);
+        for (active.deps) |dep| try mergeAllowance(gpa, interner, &allowances, dep.id, dep.prerelease_tuples);
+    }
+    return allowances;
+}
+
+fn allowancesEqual(a: *const AllowanceMap, b: *const AllowanceMap) bool {
+    if (a.count() != b.count()) return false;
+    var iterator = a.iterator();
+    while (iterator.next()) |entry| {
+        const other = b.get(entry.key_ptr.*) orelse return false;
+        if (!tupleSlicesEqual(entry.value_ptr.*, other)) return false;
+    }
+    return true;
+}
+
 /// package の依存制約を解決する。
 ///
 /// 現在の feature 要求で version を解き、得た解の依存辺から feature 要求を
@@ -577,10 +758,14 @@ fn collectRequests(
 /// 選択をそのまま報告する。version 選択・競合学習・backjump・競合理由の生成は
 /// すべて `zig-pubgrub` のソルバが行う。
 ///
+/// 反復は単調増加ではない。選択 version の変化で feature 要求が減ることも
+/// あり、収束せず振動する場合がある。その場合は `max_feature_iterations` で
+/// 打ち切る（`error.FeatureIterationExceeded`）。
+///
 /// 既知の限界: feature の有無で依存先の version 選択が変わる場合、feature
 /// 要求はソルバの制約項ではないため、ある version を選んだ後に別 version の
-/// feature 依存が競合しても backjump できない。この近似は
-/// `max_feature_iterations` で打ち切られる。
+/// feature 依存が競合しても backjump できず、有効な別 version を選べない。
+/// これは安全側の失敗であり、誤った解は返さない。
 pub fn resolve(gpa: Allocator, provider: Provider, root_deps: []const Dependency, opts: ResolveOptions) !Resolution {
     var arena = std.heap.ArenaAllocator.init(gpa);
     errdefer arena.deinit();
@@ -589,6 +774,9 @@ pub fn resolve(gpa: Allocator, provider: Provider, root_deps: []const Dependency
     var interner = Interner.init(a);
     var requests = RequestMap.init(a);
     for (root_deps) |dep| try mergeDependency(a, &interner, &requests, dep);
+    // prerelease は制約が同一 tuple を明示的に許可する場合のみ候補にする。
+    var allowances = AllowanceMap.init(a);
+    for (root_deps) |dep| try mergeAllowance(a, &interner, &allowances, dep.id, dep.prerelease_tuples);
 
     // root 依存は決定的順序でソルバへ渡す。
     const sorted_root = try a.dupe(Dependency, root_deps);
@@ -604,7 +792,7 @@ pub fn resolve(gpa: Allocator, provider: Provider, root_deps: []const Dependency
 
     var iteration: u32 = 0;
     while (iteration < opts.max_feature_iterations) : (iteration += 1) {
-        const adapter = Adapter{ .provider = provider, .requests = &requests };
+        const adapter = Adapter{ .provider = provider, .requests = &requests, .allowances = &allowances };
         // ソルバ自身のアリーナは実 allocator 上に作らせ、各反復の終了時に
         // 解放する。provider が返す version 文字列は解決結果へ持ち出す前に
         // interner で複製するため、ここで solve のメモリを破棄してよい。
@@ -640,14 +828,22 @@ pub fn resolve(gpa: Allocator, provider: Provider, root_deps: []const Dependency
                     });
                 }
                 const gathered = try collectRequests(a, &interner, provider, &requests, root_deps, selections.items);
-                if (requestsEqual(&requests, &gathered)) {
+                const gathered_allowances = try computeAllowances(a, &interner, provider, &requests, root_deps, selections.items);
+                if (requestsEqual(&requests, &gathered) and allowancesEqual(&allowances, &gathered_allowances)) {
                     const nodes = try buildGraph(a, &interner, provider, &gathered, selections.items, sorted_root, opts.target);
+                    if (try findCycle(a, nodes)) |cycle| {
+                        return .{
+                            .arena = arena,
+                            .result = .{ .cycle = cycle },
+                        };
+                    }
                     return .{
                         .arena = arena,
                         .result = .{ .resolved = nodes },
                     };
                 }
                 requests = gathered;
+                allowances = gathered_allowances;
             },
         }
     }
@@ -747,6 +943,61 @@ fn filterReachable(gpa: Allocator, nodes: []const PackageNode, root_deps: []cons
     return out.items;
 }
 
+const VisitState = enum { white, gray, black };
+
+/// 依存 graph の循環を検出する。循環があれば閉じた経路
+/// (`a -> b -> ... -> a`) を返す。反復 DFS でネイティブスタックを消費しない。
+fn findCycle(gpa: Allocator, nodes: []const PackageNode) !?[]const PackageId {
+    var by_id = IdMap(usize).init(gpa);
+    for (nodes, 0..) |node, index| try by_id.put(node.id, index);
+
+    const color = try gpa.alloc(VisitState, nodes.len);
+    @memset(color, .white);
+    const parent = try gpa.alloc(?usize, nodes.len);
+    @memset(parent, null);
+
+    const Frame = struct { node: usize, next: usize };
+    var stack: std.ArrayList(Frame) = .empty;
+    for (0..nodes.len) |start| {
+        if (color[start] != .white) continue;
+        color[start] = .gray;
+        try stack.append(gpa, .{ .node = start, .next = 0 });
+        while (stack.items.len > 0) {
+            const frame = &stack.items[stack.items.len - 1];
+            if (frame.next < nodes[frame.node].dependencies.len) {
+                const dep = nodes[frame.node].dependencies[frame.next];
+                frame.next += 1;
+                const target = by_id.get(dep) orelse continue;
+                switch (color[target]) {
+                    .gray => {
+                        // 循環を parent ポインタで再構成する。
+                        var path: std.ArrayList(PackageId) = .empty;
+                        var cursor: usize = frame.node;
+                        while (true) {
+                            try path.append(gpa, nodes[cursor].id);
+                            if (cursor == target) break;
+                            cursor = parent[cursor] orelse break;
+                        }
+                        std.mem.reverse(PackageId, path.items);
+                        try path.append(gpa, nodes[target].id);
+                        return path.items;
+                    },
+                    .white => {
+                        color[target] = .gray;
+                        parent[target] = frame.node;
+                        try stack.append(gpa, .{ .node = target, .next = 0 });
+                    },
+                    .black => {},
+                }
+            } else {
+                color[frame.node] = .black;
+                _ = stack.pop();
+            }
+        }
+    }
+    return null;
+}
+
 // ---------------------------------------------------------------------------
 // manifest からの provider 補助
 // ---------------------------------------------------------------------------
@@ -757,6 +1008,10 @@ fn filterReachable(gpa: Allocator, nodes: []const PackageNode, root_deps: []cons
 /// 有無・共通ソース/native 選択を反映し、選択不能な version には理由を付ける。
 /// OS/artifact の可用性は registry 側の責務であり、provider 実装が
 /// `unavailable_reason` を上書きして表現する。
+///
+/// version 解決へ渡すのは `dependencies.pkg` のみ。`dependencies.npm`・
+/// `path`・`git`・`http` と dev-dependencies は取得/lock/npm resolver の別層が
+/// 担い、この関数では解決対象にしない。
 pub fn metaFromManifest(gpa: Allocator, source: *const manifest.Manifest, target: Target) !VersionMeta {
     var deps: std.ArrayList(Dependency) = .empty;
     var pkg_iterator = source.dependencies.pkg.iterator();
@@ -774,6 +1029,7 @@ pub fn metaFromManifest(gpa: Allocator, source: *const manifest.Manifest, target
             .features = dep.features,
             .default_features = dep.default_features,
             .prefer_native = dep.prefer_native,
+            .prerelease_tuples = try gatedTuples(gpa, dep.version),
         });
     }
 
@@ -800,6 +1056,7 @@ pub fn metaFromManifest(gpa: Allocator, source: *const manifest.Manifest, target
 }
 
 fn unavailableReason(source: *const manifest.Manifest, meta: VersionMeta, target: Target) ?[]const u8 {
+    if (!isSupportedRuntime(target.runtime)) return "unsupported runtime";
     if (source.package.runtimes.len > 0) {
         var supported = false;
         for (source.package.runtimes) |runtime| {
