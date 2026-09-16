@@ -68,10 +68,12 @@ if (!preflightBlock) throw new Error("Release workflowにpreflight jobがあり�
 const attestationGate = preflightBlock.match(/- name: Verify canonical compatibility evidence is fully attested\n[\s\S]*?(?=\n      - name:|$)/)?.[0];
 if (!attestationGate) throw new Error("Release workflowのpreflightにcanonical attestation検証stepがありません");
 if (!attestationGate.includes("if: github.event_name == 'push'") ||
-    !attestationGate.includes("attestations/current.json") ||
     !attestationGate.includes("node tools/sync_compat_evidence.mjs --check") ||
-    !attestationGate.includes("node tools/check_tracked_dispatch_attestation.mjs")) {
-  throw new Error("canonical attestation検証stepが不完全です（current pointer必須・証拠再生成check・追跡snapshotの公式gh verifyが必要）");
+    !attestationGate.includes("node tools/check_tracked_dispatch_attestation.mjs --require-current")) {
+  throw new Error("canonical attestation検証stepが不完全です（現行manifest一致snapshot必須・証拠再生成check・追跡snapshotの公式gh verifyが必要）");
+}
+if (workflow.includes("attestations/current.json") || workflow.includes("--current-pointer")) {
+  throw new Error("Release workflowに廃止されたcurrent pointer参照が残っています");
 }
 if (!workflow.includes("merge-multiple: true") || !workflow.includes("LNAKO_BENCHMARK_COMMIT")) {
   throw new Error("Release workflowのartifact集約またはbenchmark provenanceが不完全です");

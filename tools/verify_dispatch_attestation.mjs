@@ -4,7 +4,8 @@ import { spawnSync } from "node:child_process";
 import { isAbsolute, resolve } from "node:path";
 import { platformIndependentOfficialComparison } from "./dispatch_evidence_semantics.mjs";
 import { computeSourceManifestSha256 } from "./lib/evidence/manifest.mjs";
-import { trackedAttestationSubjects } from "./lib/evidence/attested_files.mjs";
+import { dispatchAttestationSchemaV3, trackedAttestationSubjects } from "./lib/evidence/attested_files.mjs";
+import { sourceManifestDeclarationBasename, validateSourceManifestDeclarationBytes } from "./lib/evidence/source_manifest.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const args = process.argv.slice(2);
@@ -19,13 +20,14 @@ const directory = absoluteOption("--directory");
 const bundle = absoluteOption("--bundle");
 const output = absoluteOption("--output");
 const catalogOutput = absoluteOption("--catalog-evidence");
+const sourceManifestDeclaration = absoluteOption("--source-manifest");
 const repository = valueFor("--repository");
 const commit = valueFor("--commit");
 const sourceRef = valueFor("--source-ref");
 const workflow = valueFor("--workflow");
-const allowed = new Set(["--directory", "--bundle", "--output", "--catalog-evidence", "--repository", "--commit", "--source-ref", "--workflow"]);
+const allowed = new Set(["--directory", "--bundle", "--output", "--catalog-evidence", "--source-manifest", "--repository", "--commit", "--source-ref", "--workflow"]);
 if (args.some((argument) => argument.startsWith("--") && !allowed.has(argument))) throw new Error("未知のオプションです");
-if (directory === null || bundle === null || output === null || repository === null || commit === null || sourceRef === null || workflow === null ||
+if (directory === null || bundle === null || output === null || sourceManifestDeclaration === null || repository === null || commit === null || sourceRef === null || workflow === null ||
     !/^[0-9a-f]{40}$/i.test(commit) || repository !== "soramikan/lnako" || workflow !== "soramikan/lnako/.github/workflows/ci.yml" ||
     sourceRef !== "refs/heads/main") {
   throw new Error("attestation検証のidentity引数が不正です");
@@ -89,8 +91,15 @@ for (const relativePath of trackedAttestationSubjects) {
   trackedSubjects.push({ path: relativePath, sha256: trackedSha256 });
   verifyWithGh(trackedPath, trackedSha256);
 }
+// source manifest宣言は {schema, commit, sourceManifestSha256} のcanonical byte列で、
+// 同一bundleの署名subjectに含まれていなければならない。ここで現行ソースから
+// 再生成した宣言とbyte一致することを確認してから署名を検証する。
+const declarationBytes = await readFile(sourceManifestDeclaration);
+validateSourceManifestDeclarationBytes(declarationBytes, commit, expectedSourceManifest);
+const declarationSha256 = sha256(declarationBytes);
+verifyWithGh(sourceManifestDeclaration, declarationSha256);
 const attestation = {
-  schema: "lnako.dispatch-attestation.v2",
+  schema: dispatchAttestationSchemaV3,
   repository,
   workflow,
   sourceRef,
@@ -100,6 +109,7 @@ const attestation = {
   bundleSha256,
   subjects,
   trackedSubjects,
+  sourceManifest: { name: sourceManifestDeclarationBasename, sha256: declarationSha256 },
 };
 await writeExclusive(output, `${JSON.stringify(attestation, null, 2)}\n`);
 

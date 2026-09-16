@@ -13,10 +13,10 @@
 ## v0.1.0リリース手順
 
 1. バージョンを `build.zig.zon` の `.version` と `src/root.zig` の `pub const version` の両方で `0.1.0` へ揃える（`lnako --version` が `lnako 0.1.0` を返すこと）。
-2. manifest入力の変更でsource manifestが変わるため、`compat/v3.7.24/attestations/current.json` は取り外し、`node tools/update_current_evidence.mjs` で証拠を現行manifestで再生成する。canonicalは常時unattested。
-3. mainへ取り込み、同じsource commitのCI runが54 job全成功するのを待つ。成功runが生成するattestation artifactを `compat/v3.7.24/attestations/<run>/` へ追跡し、`current.json` を更新する。`evidence.json` 正本はunattestedのままで、`verified: 527` はsnapshotから導出されるviewになる。
+2. manifest入力の変更でsource manifestが変わるため、過去snapshotは現行に一致しなくなる。`node tools/update_current_evidence.mjs` で証拠を現行manifestで再生成する。canonicalは常時unattested（`current.json` pointerは廃止済みで、取り外す対象も存在しない）。
+3. mainへ取り込み、同じsource commitのCI runが54 job全成功するのを待つ。成功runが生成するattestation artifactを `compat/v3.7.24/attestations/<run>/` へ追跡する（`source-manifest.json` 宣言を含む）。現行snapshotは走査型解決で自動的にこのrunになる。`evidence.json` 正本はunattestedのままで、`verified: 527` はsnapshotから導出されるviewになる。
 4. 追跡snapshotを含むcommitがmainへ入ったら、そのcommitに署名済みannotated tag `v0.1.0` を作成してpushする。
-5. Release workflowのpreflightが、tag署名・source version一致・同commitのCI 54 job全成功・canonical attestation全検証（current pointer存在・証拠再生成一致・追跡snapshotの公式 `gh attestation verify` と導出catalogの `verified: 527`）を確認してからbuild/publishへ進む。
+5. Release workflowのpreflightが、tag署名・source version一致・同commitのCI 54 job全成功・canonical attestation全検証（`--require-current` による現行source manifest一致snapshotの必須化・証拠再生成一致・追跡snapshotの公式 `gh attestation verify` と導出catalogの `verified: 527`）を確認してからbuild/publishへ進む。
 
 manifest入力を変更するどの後続commitでも、tag push前に同じ再attestation手順が必要です。
 

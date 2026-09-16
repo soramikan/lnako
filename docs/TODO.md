@@ -69,7 +69,7 @@
 1. #2と#13を完了する。
 2. `zig build fmt-check`、`zig build test`、関連oracle・native plugin・distribution self-testを実行する。
 3. 最終source commitでCI 54/54 jobを成功させる。
-4. 同じsource manifestの3 OS attestationを追跡し、`compat/v3.7.24/evidence.json`を`verified: 527`、`unverified: 0`にする。
+4. 同じsource manifestの3 OS attestationを追跡し、現行manifestに一致するsnapshotから導出されるviewを`verified: 527`、`unverified: 0`にする（canonical正本は常時`trace-confirmed-unattested`）。
 5. `lnako --version`、`build.zig.zon`、release versionを`0.1.0`へ一致させる。
 6. 署名済みannotated tag `v0.1.0`を最終commitに作成する。
 7. release workflowで3 OS archive、SHA-256、SPDX 2.3 SBOM、full benchmarkを検証してからGitHub Releaseを公開する。

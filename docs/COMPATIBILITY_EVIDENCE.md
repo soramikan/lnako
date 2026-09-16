@@ -12,7 +12,7 @@
 | [`dispatch-evidence.json`](../compat/v3.7.24/dispatch-evidence.json) | canonical fixtureの実行site、trace、公式比較 |
 | [`dispatch-coverage-evidence.json`](../compat/v3.7.24/dispatch-coverage-evidence.json) | sampled dispatch coverage |
 | [`compat-js-evidence.json`](../compat/v3.7.24/compat-js-evidence.json) | QuickJS互換モード専用証拠 |
-| [`attestations/`](../compat/v3.7.24/attestations/) | CI実行のattestation snapshot（履歴・現行）と現行pointer `current.json` |
+| [`attestations/`](../compat/v3.7.24/attestations/) | CI実行のattestation snapshot（履歴・現行）。現行の選択は走査型で、pointerファイルは持たない |
 
 ## stateの意味
 
@@ -56,15 +56,16 @@ CIの `attest-dispatch-evidence` jobは、`actions/attest@v4.2.2` のSigstore bu
 
 - macOS arm64、Linux x86_64、Windows x86_64のdispatch証拠3件
 - native AOT aggregate 1件
+- source manifest宣言 `lnako-source-manifest.json`（`lnako.source-manifest.v1`：対象commitとsource manifest SHA-256のcanonical宣言）1件
 - `compat/v3.7.24/` のcanonical証拠17件（dispatch・coverage・expected-exit・compat-js・global/directory binding・static系11件）
 
-署名対象は `dispatch-attestation.json`（schema `lnako.dispatch-attestation.v2`）の `subjects`（3 OS）と `trackedSubjects`（canonical証拠のpath＋SHA-256）に記録されます。`sync_compat_evidence.mjs` は、選択したproofを裏付ける証拠ファイルのdigestが署名subject集合に含まれるentryだけを `verified` へ昇格します。digestが署名集合に無い証拠は `trace-confirmed-unattested` のままです。
+署名対象は `dispatch-attestation.json`（schema `lnako.dispatch-attestation.v3`）の `subjects`（3 OS）・`trackedSubjects`（canonical証拠のpath＋SHA-256）・`sourceManifest`（宣言名＋SHA-256）に記録されます。宣言はcanonical byte列で、`{schema, commit, sourceManifestSha256}` のみを持ち、誰が生成しても同一byte列になります。`sync_compat_evidence.mjs` は、選択したproofを裏付ける証拠ファイルのdigestが署名subject集合に含まれるentryだけを `verified` へ昇格します。digestが署名集合に無い証拠は `trace-confirmed-unattested` のままです。
 
-canonical `evidence.json` 自体は常時 `trace-confirmed-unattested` を保持し、`verified` を正本へ書き込みません。`verified` は現行source manifestに一致する追跡snapshotから導出されるviewです。`attestations/current.json` が現行snapshotディレクトリ（`attestations/<run>/`）を指し、その `sourceManifestSha256` が現行source manifestと一致する場合、`check_tracked_dispatch_attestation.mjs` はcanonical正本と署名subject digestから導出したcatalogがsnapshotの `catalog-evidence-verified.json` とbyte一致することを要求します。manifestが変わるコード変更では一致するsnapshotが無くなり、新しいsnapshotを追跡するまで導出viewのverifiedは0です。過去runのsnapshotを現在HEADの証拠へ自動転記しない方針は維持します。
+canonical `evidence.json` 自体は常時 `trace-confirmed-unattested` を保持し、`verified` を正本へ書き込みません。`verified` は現行source manifestに一致する追跡snapshotから導出されるviewです。現行snapshotの解決は走査型で、`attestations/*/manifest.json` のうち `sourceManifestSha256` が現行source manifestと一致する最大workflowRunを選択します（`current.json` pointerは廃止済み）。選択したsnapshotについて、`check_tracked_dispatch_attestation.mjs` は `source-manifest.json` 宣言のcanonical byte一致・そのdigestが署名subject集合へ含まれること・canonical正本と署名subject digestから導出したcatalogがsnapshotの `catalog-evidence-verified.json` とbyte一致することを要求します。manifestが変わるコード変更では一致するsnapshotが無くなり（feature PRや新しいmain commitでは正常）、新しいsnapshotを追跡するまで導出viewのverifiedは0です。過去runのsnapshotを現在HEADの証拠へ自動転記しない方針は維持します。
 
-直前のmanifestに対応する追跡snapshotはCI run `34402208204`（commit `fb015179478169cf4a595094766d4b9582d2925b`、attempt 1、54/54 job成功）で、3 OSのdispatch証拠とnative AOT aggregateとcanonical証拠17件を同一bundleで署名し、導出viewとして `verified: 527` を達成しました。ただしmanifest入力の変更（パッケージmanifest解析層 `src/package/` の追加）で現行manifestと一致しなくなったため、`current.json` は取り外し、現行ソースの導出viewは `verified: 0` / `trace-confirmed-unattested: 527` です。新しいCI runのsnapshotを `attestations/<run>/` へ追跡して `current.json` を更新すれば導出viewは同じ状態へ戻ります。前manifest用のsnapshot `attestations/34305071458/`（run `34305071458`）、`attestations/34121804812/`（run `34121804812`）、`attestations/34113932297/`（run `34113932297`）は履歴として残しています。
+直前のmanifestに対応する追跡snapshotはCI run `34402208204`（commit `fb015179478169cf4a595094766d4b9582d2925b`、attempt 1、54/54 job成功）で、3 OSのdispatch証拠とnative AOT aggregateとcanonical証拠17件を同一bundleで署名し、導出viewとして `verified: 527` を達成しました。ただしmanifest入力の変更（パッケージmanifest解析層 `src/package/` の追加）で現行manifestと一致しなくなったため、現行ソースの導出viewは `verified: 0` / `trace-confirmed-unattested: 527` です。新しいCI runのsnapshotを `attestations/<run>/` へ追跡すれば、走査型解決でそのrunが現行となり、導出viewは同じ状態へ戻ります。前manifest用のsnapshot `attestations/34305071458/`（run `34305071458`）、`attestations/34121804812/`（run `34121804812`）、`attestations/34113932297/`（run `34113932297`）は履歴として残しています。
 
-Release workflow（tag push）はpreflightで `attestations/current.json` の存在・`sync_compat_evidence.mjs --check`（証拠再生成の一致）・`check_tracked_dispatch_attestation.mjs`（追跡snapshotの公式 `gh attestation verify` と導出catalogの `verified: 527`）を要求します。導出catalogが全527件verifiedでないtag pushはbuild/publishに進めず、GitHub Releaseを作成できません（手動 `workflow_dispatch` の検証実行は対象外）。
+Release workflow（tag push）はpreflightで `sync_compat_evidence.mjs --check`（証拠再生成の一致）・`check_tracked_dispatch_attestation.mjs --require-current`（現行source manifestに一致するsnapshotの存在・公式 `gh attestation verify`・導出catalogの `verified: 527`）を要求します。導出catalogが全527件verifiedでないtag pushはbuild/publishに進めず、GitHub Releaseを作成できません（手動 `workflow_dispatch` の検証実行は対象外）。`--require-current` はReleaseだけが使い、CIやfeature PRでは一致snapshotを要求しません。
 
 ## route別の扱い
 

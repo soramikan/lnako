@@ -93,12 +93,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! -f compat/v3.7.24/attestations/current.json ]]; then
-            echo "canonical attestationのcurrent pointer（attestations/current.json）が追跡されていません" >&2
-            exit 1
-          fi
           node tools/sync_compat_evidence.mjs --check
-          node tools/check_tracked_dispatch_attestation.mjs
+          # 現行source manifestに一致するattestation snapshotが必須。
+          # 一致するsnapshotが無ければReleaseを作成できない（走査型解決・pointer不使用）。
+          node tools/check_tracked_dispatch_attestation.mjs --require-current
 
   build:
     name: ${{ matrix.target }} / build benchmark distribution

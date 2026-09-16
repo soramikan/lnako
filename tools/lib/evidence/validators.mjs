@@ -6,7 +6,8 @@ import { evidenceEnv as env } from "./env.mjs";
 import { json, readJson, hashPattern, siteIdPattern, throwStatementOpcode, forbiddenEvidenceFields, runtimeFixtureFiles, dispatchEvidenceFollowUpPaths } from "./constants.mjs";
 import { validDispatchExpectationPlatforms } from "../evidence_common.mjs";
 import { computeSourceManifestSha256Sync } from "./manifest.mjs";
-import { assertTrackedSubjects, signedEvidenceDigests } from "./attested_files.mjs";
+import { assertTrackedSubjects, dispatchAttestationSchemaV2, dispatchAttestationSchemaV3, signedEvidenceDigests } from "./attested_files.mjs";
+import { sourceManifestDeclarationBasename } from "./source_manifest.mjs";
 import * as records from "./records.mjs";
 
 export function duplicateNameSet(entries) {
@@ -542,15 +543,24 @@ export function validateDispatchEvidence(evidence, lock, standard, records, inpu
 
 
 export function validateAttestation(attestation, evidence, inputSha256, inputPath, bundlePath, bundleBytes, offline = false) {
-  const isV2 = attestation?.schema === "lnako.dispatch-attestation.v2";
-  assertKnownObjectKeys(attestation, isV2
-    ? ["schema", "repository", "workflow", "sourceRef", "commit", "predicateType", "verifiedBy", "bundleSha256", "subjects", "trackedSubjects"]
-    : ["schema", "repository", "workflow", "sourceRef", "commit", "predicateType", "verifiedBy", "bundleSha256", "subjects"], "dispatch-evidence.attestation");
-  if (!new Set(["lnako.dispatch-attestation.v1", "lnako.dispatch-attestation.v2"]).has(attestation.schema) || attestation.repository !== "soramikan/lnako" ||
+  const isV2 = attestation?.schema === dispatchAttestationSchemaV2;
+  const isV3 = attestation?.schema === dispatchAttestationSchemaV3;
+  assertKnownObjectKeys(attestation, isV3
+    ? ["schema", "repository", "workflow", "sourceRef", "commit", "predicateType", "verifiedBy", "bundleSha256", "subjects", "trackedSubjects", "sourceManifest"]
+    : isV2
+      ? ["schema", "repository", "workflow", "sourceRef", "commit", "predicateType", "verifiedBy", "bundleSha256", "subjects", "trackedSubjects"]
+      : ["schema", "repository", "workflow", "sourceRef", "commit", "predicateType", "verifiedBy", "bundleSha256", "subjects"], "dispatch-evidence.attestation");
+  if (!new Set(["lnako.dispatch-attestation.v1", dispatchAttestationSchemaV2, dispatchAttestationSchemaV3]).has(attestation.schema) || attestation.repository !== "soramikan/lnako" ||
       attestation.workflow !== "soramikan/lnako/.github/workflows/ci.yml" || attestation.sourceRef !== "refs/heads/main" ||
       attestation.predicateType !== "https://slsa.dev/provenance/v1" || attestation.verifiedBy !== "gh attestation verify" ||
       !/^[0-9a-f]{40}$/i.test(attestation.commit) || !/^[0-9a-f]{64}$/.test(attestation.bundleSha256) || !Array.isArray(attestation.subjects) || bundlePath === null) {
     throw new Error("dispatch証拠のattestation identityが不正です");
+  }
+  if (isV3) {
+    assertKnownObjectKeys(attestation.sourceManifest, ["name", "sha256"], "dispatch-evidence.attestation.sourceManifest");
+    if (attestation.sourceManifest.name !== sourceManifestDeclarationBasename || !/^[0-9a-f]{64}$/.test(attestation.sourceManifest.sha256)) {
+      throw new Error("dispatch証拠のattestation sourceManifest記録が不正です");
+    }
   }
   const expectedPlatforms = new Set(["darwin-arm64", "linux-x64", "win32-x64"]);
   if (attestation.subjects.length !== expectedPlatforms.size) throw new Error("dispatch証拠のattestationが3正式OSを含みません");

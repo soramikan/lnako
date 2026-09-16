@@ -513,23 +513,56 @@ for (const required of [
 ]) {
   if (!attestJob.includes(`            ${required}\n`)) throw new Error(`attestation subject-pathに${required}がありません`);
 }
-if (!verifyAttestation.includes("lnako.dispatch-attestation.v2") || !verifyAttestation.includes("trackedSubjects") ||
-    !verifyAttestation.includes("trackedAttestationSubjects") || !verifyAttestation.includes("verifyWithGh(trackedPath, trackedSha256)")) {
-  throw new Error("dispatch attestation生成toolがcanonical証拠のtracked subjectsを検証・記録していません");
+if (!verifyAttestation.includes("dispatchAttestationSchemaV3") || !verifyAttestation.includes("trackedSubjects") ||
+    !verifyAttestation.includes("trackedAttestationSubjects") || !verifyAttestation.includes("verifyWithGh(trackedPath, trackedSha256)") ||
+    !verifyAttestation.includes("--source-manifest") || !verifyAttestation.includes("validateSourceManifestDeclarationBytes") ||
+    !verifyAttestation.includes("verifyWithGh(sourceManifestDeclaration, declarationSha256)") ||
+    !verifyAttestation.includes("sourceManifest: { name: sourceManifestDeclarationBasename, sha256: declarationSha256 }")) {
+  throw new Error("dispatch attestation生成toolがv3のtracked subjects／source manifest宣言を検証・記録していません");
+}
+// source manifest宣言は canonical byte列として共有libが生成し、CI attestation
+// jobが署名subjectへ含める。宣言生成stepはattest実行より前に必要。
+const sourceManifestLib = await readFile(resolve(root, "tools/lib/evidence/source_manifest.mjs"), "utf8");
+const emitDeclaration = await readFile(resolve(root, "tools/emit_source_manifest_declaration.mjs"), "utf8");
+if (!sourceManifestLib.includes('"lnako.source-manifest.v1"') || !sourceManifestLib.includes("sourceManifestDeclarationBytes") ||
+    !sourceManifestLib.includes("validateSourceManifestDeclarationBytes") ||
+    !emitDeclaration.includes("computeSourceManifestSha256Sync") || !emitDeclaration.includes("sourceManifestDeclarationBytes") ||
+    !attestJob.includes("node tools/emit_source_manifest_declaration.mjs") ||
+    !attestJob.includes('${{ runner.temp }}/lnako-source-manifest.json') ||
+    !attestJob.includes('--source-manifest "${{ runner.temp }}/lnako-source-manifest.json"') ||
+    attestJob.indexOf("Generate source manifest declaration") > attestJob.indexOf("Generate artifact attestation")) {
+  throw new Error("source manifest宣言の生成・署名subject・attestation検証が不完全です");
 }
 if (!syncEvidence.includes("signedEvidenceDigests") || !syncEvidence.includes("backingDigestByProof") ||
     !syncEvidence.includes("proofKeyForEvidenceDocument") || !syncEvidence.includes("deriveVerifiedCatalog") ||
     syncScript.includes("loadCurrentAttestation") || !syncScript.includes("--attestation")) {
   throw new Error("catalog証拠syncが導出verified viewまたは全証拠種別のverified昇格を実装していません");
 }
-if (!trackedAttestationChecker.includes("current.json") || !trackedAttestationChecker.includes("canonicalAttestationSchema") ||
-    !trackedAttestationChecker.includes("--current-pointer") || !trackedAttestationChecker.includes("deriveVerifiedCatalog") ||
+// 現行snapshot解決は走査型（manifest.sourceManifestSha256一致の最大workflowRun）。
+// pointerファイルは廃止し、--require-currentはReleaseのみが使う。
+if (trackedAttestationChecker.includes("current.json") || trackedAttestationChecker.includes("--current-pointer") ||
+    trackedAttestationChecker.includes("currentAttestationPointer") ||
+    !trackedAttestationChecker.includes("loadCurrentAttestation") || !trackedAttestationChecker.includes("--attestations-root") ||
+    !trackedAttestationChecker.includes("--require-current") || !trackedAttestationChecker.includes("canonicalAttestationSchemaV2") ||
+    !trackedAttestationChecker.includes("dispatchAttestationSchemaV3") || !trackedAttestationChecker.includes("validateSourceManifestDeclarationBytes") ||
+    !trackedAttestationChecker.includes("deriveVerifiedCatalog") ||
     !trackedAttestationChecker.includes("computeBackingDigestByProof") || !trackedAttestationChecker.includes("canonical catalog verified count")) {
-  throw new Error("追跡attestation checkerがcurrent snapshotの導出view検証に対応していません");
+  throw new Error("追跡attestation checkerが走査型current解決・宣言digest必須・導出view検証に対応していません");
 }
-if (!syncEvidence.includes('"lnako.canonical-attestation.v1"') || !syncEvidence.includes('"lnako.current-attestation.v1"') ||
-    !syncEvidence.includes('"lnako.dispatch-attestation.v2"')) {
-  throw new Error("canonical attestation schema識別子が共有libにありません");
+if (attestJob.includes("--require-current") || workflow.includes("attestations/current.json")) {
+  throw new Error("CIに廃止されたcurrent pointerまたはRelease専用の--require-currentが混入しています");
+}
+if (!syncEvidence.includes('"lnako.canonical-attestation.v1"') || !syncEvidence.includes('"lnako.canonical-attestation.v2"') ||
+    !syncEvidence.includes('"lnako.dispatch-attestation.v3"') || !syncEvidence.includes("attestationsDirectory") ||
+    !syncEvidence.includes("loadCurrentAttestation")) {
+  throw new Error("canonical attestation schema識別子または走査型snapshot解決が共有libにありません");
+}
+const snapshotCreator = await readFile(resolve(root, "tools/create_attestation_snapshot.mjs"), "utf8");
+if (snapshotCreator.includes("current.json") || snapshotCreator.includes("currentAttestationPointer") ||
+    !snapshotCreator.includes("canonicalAttestationSchemaV2") || !snapshotCreator.includes("sourceManifest: \"source-manifest.json\"") ||
+    !snapshotCreator.includes("validateSourceManifestDeclarationBytes") ||
+    !snapshotCreator.includes('else if (name === sourceManifestDeclarationBasename) files.set("sourceManifest", path)')) {
+  throw new Error("snapshot作成toolがmanifest v2・宣言保存・pointer廃止へ対応していません");
 }
 
 const smokeCommands = {

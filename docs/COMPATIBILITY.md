@@ -54,10 +54,10 @@
 | `unverified` | <!-- attestation:unverified -->0<!-- /attestation:unverified --> |
 
 <!-- attestation:description-start -->
-`verified` は正本のstateではなく、現行source manifestに一致するattestation snapshotから導出されるviewです。manifest入力の変更（パッケージmanifest解析層と低レイヤーAPIの追加）で現行manifestが変わったため、前snapshot（run `34402208204`）のattestationは現行manifestをカバーせず、現行ソースの導出viewは `verified: 0` です。過去snapshotの導出結果を流用せず、mainマージ後の新しいCI attestation snapshotを追跡して `current.json` を更新します。
+`verified` は正本のstateではなく、現行source manifestに一致するattestation snapshotから導出されるviewです。manifest入力の変更（パッケージmanifest解析層と低レイヤーAPIの追加）で現行manifestが変わったため、前snapshot（run `34402208204`）のattestationは現行manifestをカバーせず、現行ソースの導出viewは `verified: 0` です。過去snapshotの導出結果を流用せず、mainマージ後の新しいCI attestation snapshotを `attestations/<run>/` へ追跡します。現行snapshotの解決は走査型で、各snapshotの `manifest.json` が記録する `sourceManifestSha256` と署名subjectのsource manifest宣言digestで現行ソースへ束縛します（`current.json` pointerは廃止済みです）。
 <!-- attestation:description-end -->
 
-0.1.1の最終sourceでコードを変更した場合は、過去snapshotの527件をそのままリリース証拠として流用しません。最終source manifestに対してCIとattestationを取り直し、release preflightの `sync_compat_evidence.mjs --check` と `check_tracked_dispatch_attestation.mjs` を通過させます。
+0.1.1の最終sourceでコードを変更した場合は、過去snapshotの527件をそのままリリース証拠として流用しません。最終source manifestに対してCIとattestationを取り直し、release preflightの `sync_compat_evidence.mjs --check` と `check_tracked_dispatch_attestation.mjs --require-current` を通過させます。
 
 <!-- attestation:artifacts-start -->
 ### CIの一時artifact
