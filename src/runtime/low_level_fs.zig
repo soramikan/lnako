@@ -103,14 +103,21 @@ fn hasDrivePrefix(path: []const u8) bool {
 ///
 /// POSIXのreadlinkはバッファ不足時に切り詰めて長さを返し、Zigの一部経路は
 /// `error.NameTooLong` を返す。どちらでも完全な参照先を返すよう、返却長が
-/// バッファ長に達したらバッファを倍々に拡張して再取得する（上限到達時は
-/// `error.NameTooLong`）。切り詰めた値を正常値として返さない。
+/// バッファ長に達した場合も `error.NameTooLong` の場合もバッファを倍々に
+/// 拡張して再取得する（上限到達時は `error.NameTooLong`）。切り詰めた値を
+/// 正常値として返さない。その他の失敗はそのまま伝播する。
 pub fn readlink(io: std.Io, allocator: std.mem.Allocator, path: []const u8) anyerror![]u8 {
     var size: usize = std.fs.max_path_bytes;
     while (true) {
         const buffer = try allocator.alloc(u8, size);
         defer allocator.free(buffer);
-        const length = try std.Io.Dir.cwd().readLink(io, path, buffer);
+        const length = std.Io.Dir.cwd().readLink(io, path, buffer) catch |failure| {
+            // バッファ不足をNameTooLongで通知する経路も拡張して再試行する。
+            if (failure != error.NameTooLong) return failure;
+            if (size >= 1 << 20) return failure;
+            size *= 2;
+            continue;
+        };
         if (length < buffer.len) return allocator.dupe(u8, buffer[0..length]);
         if (size >= 1 << 20) return error.NameTooLong;
         size *= 2;
