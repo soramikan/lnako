@@ -16,7 +16,6 @@ const DebugLocation = shared.DebugLocation;
 const arithmeticOpcode = shared.arithmeticOpcode;
 const isDisplayCall = shared.isDisplayCall;
 const isNativePluginCall = shared.isNativePluginCall;
-const isQualifiedGlobal = shared.isQualifiedGlobal;
 const lookupFunction = shared.lookupFunction;
 const shiftOpcode = shared.shiftOpcode;
 const valueType = shared.valueType;
@@ -46,6 +45,8 @@ pub fn emitPreamble(emitter: *Emitter) !void {
             "declare void @lnako_aot_node_directory_constants_init(ptr, ptr, ptr)\n" ++
             "declare void @lnako_aot_node_mother_path_init(ptr, ptr, i64)\n" ++
             "declare void @lnako_aot_runtime_deinit()\n" ++
+            "declare i32 @lnako_aot_module_entry_begin(i64, i64, i64, i64)\n" ++
+            "declare void @lnako_aot_module_entry_end(i64)\n" ++
             "declare void @lnako_aot_runtime_drain_events()\n" ++
             "declare void @lnako_aot_runtime_drain_events_light()\n" ++
             "declare void @lnako_aot_push_roots(ptr, ptr, i64)\n" ++
@@ -86,13 +87,18 @@ pub fn emitPreamble(emitter: *Emitter) !void {
             "declare void @lnako_aot_compare(ptr, ptr, ptr, i8)\n" ++
             "declare void @lnako_aot_shift(ptr, ptr, ptr, i8)\n" ++
             "declare void @lnako_aot_concat(ptr, ptr, ptr)\n" ++
-            "declare void @lnako_aot_increment(ptr, ptr)\n" ++
+            "declare i32 @lnako_aot_is_undefined(ptr)\n" ++
+            "declare void @lnako_aot_coalesce_or_zero(ptr, ptr)\n" ++
+            "declare void @lnako_aot_increment_values(ptr, ptr, ptr)\n" ++
             "declare void @lnako_aot_array_new(ptr, ptr, i64)\n" ++
             "declare void @lnako_aot_dictionary_new(ptr, ptr, i64)\n" ++
             "declare void @lnako_aot_caniuse_agents_new(ptr)\n" ++
             "declare void @lnako_aot_era_data_new(ptr)\n" ++
             "declare void @lnako_aot_index_get(ptr, ptr, ptr)\n" ++
             "declare i32 @lnako_aot_index_set(ptr, ptr, ptr)\n" ++
+            "declare void @lnako_aot_ensure_array_var(ptr)\n" ++
+            "declare i32 @lnako_aot_is_array(ptr)\n" ++
+            "declare void @lnako_aot_init_array_index(ptr, ptr)\n" ++
             "declare void @lnako_aot_destructure_get(ptr, ptr, i64)\n" ++
             "declare void @lnako_aot_iterator_new(ptr, ptr, i64, i1, i8)\n" ++
             "declare i32 @lnako_aot_iterator_has_next(ptr)\n" ++
@@ -147,103 +153,113 @@ pub fn collectModuleData(emitter: *Emitter) !void {
         if (!context.isNamedGlobalFunction(function.name) or emitter.globalIndex(function.name) != null) continue;
         try emitter.appendGlobal(function.name);
     }
-    for (emitter.program.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
-        if ((instruction.opcode == .load_global or instruction.opcode == .store_global) and emitter.globalIndex(instruction.name) == null) {
-            try emitter.appendGlobal(instruction.name);
-        }
-        if (instruction.opcode == .destructure_store) for (instruction.names) |name| {
-            if (isQualifiedGlobal(name) and emitter.globalIndex(name) == null) try emitter.appendGlobal(name);
-        };
-        if (instruction.opcode == .increment and isQualifiedGlobal(instruction.name) and emitter.globalIndex(instruction.name) == null) {
-            try emitter.appendGlobal(instruction.name);
-        }
-        if (instruction.opcode == .exception_take and emitter.globalIndex("エラーメッセージ") == null) {
-            try emitter.appendGlobal("エラーメッセージ");
-        }
-        if (instruction.opcode == .call and instruction.direct_callee == null) {
-            if (isNativePluginCall(emitter.program, function, instruction) and emitter.nativePluginNameIndex(instruction.name) == null) {
-                try emitter.native_plugin_names.append(emitter.allocator, instruction.name);
+    for (emitter.program.functions) |function| {
+        // コンテナ代入系命令はローカルに解決されない名前をグローバルへ逃がす
+        // （interpreterのensureGlobalSlotフォールバック相当）。未宣言名や
+        // システム定数名（NULL・PI等のDNCL自動初期化対象）のスロットもここで
+        // 確保され、定数名には初期値が付く。
+        const locals = try emitter.localNames(function);
+        defer emitter.allocator.free(locals);
+        for (function.blocks) |block| for (block.instructions) |instruction| {
+            if ((instruction.opcode == .load_global or instruction.opcode == .store_global) and emitter.globalIndex(instruction.name) == null) {
+                try emitter.appendGlobal(instruction.name);
             }
-            // aot_builtin.lookupは全コマンド名への逐次比較なので、call命令
-            // ごとに一度だけ解決して以降の判定は解決済みのenumで行う。
-            const command = if (instruction.is_builtin_call) try emitter.builtinCommand(instruction.name) else null;
-            if (instruction.is_builtin_call and context.requiresDisplayLog(instruction.name, command) and emitter.globalIndex("表示ログ") == null) {
-                try emitter.appendGlobal("表示ログ");
-            }
-            if (command) |resolved| {
-                if (resolved == .system_debug_display or resolved == .system_hatena_execute) {
-                    const path = emitter.sourcePathForFunction(function.name);
-                    if (emitter.debugPathIndex(path) == null) try emitter.debug_paths.append(emitter.allocator, .{ .path = path });
-                }
-                if (resolved == .system_debug_breakpoint_wait) {
-                    for ([_][]const u8{ "__DEBUGブレイクポイント一覧", "__DEBUG強制待機", "__DEBUG待機フラグ", "プラグイン名" }) |name| {
-                        if (emitter.globalIndex(name) == null) try emitter.appendGlobal(name);
-                    }
-                }
-                if (resolved == .cut or resolved == .cut_range or context.isTimerCommand(resolved) or
-                    resolved == .node_stdin_callback or context.isNodeFileCallbackCommand(resolved))
-                {
-                    if (emitter.globalIndex("対象") == null) try emitter.appendGlobal("対象");
-                }
-                if (context.isPromiseCommand(resolved)) {
-                    if (emitter.globalIndex("そ") == null) try emitter.appendGlobal("そ");
-                    if (emitter.globalIndex("対象") == null) try emitter.appendGlobal("対象");
-                }
-                if (resolved == .regexp_match or resolved == .regexp_extract) {
-                    if (emitter.globalIndex("抽出文字列") == null) try emitter.appendGlobal("抽出文字列");
-                }
-                if (context.isPluginManagementCommand(resolved)) {
-                    if (emitter.globalIndex("プラグイン名") == null) try emitter.appendGlobal("プラグイン名");
-                    if (emitter.globalIndex("名前空間") == null) try emitter.appendGlobal("名前空間");
-                }
-                if (resolved == .node_archive_tool_path_set or context.isArchiveCommand(resolved)) {
-                    if (emitter.globalIndex("圧縮解凍ツールパス") == null) try emitter.appendGlobal("圧縮解凍ツールパス");
-                }
-                if (resolved == .node_ajax_options_set) {
-                    if (emitter.globalIndex("AJAXオプション") == null) try emitter.appendGlobal("AJAXオプション");
-                }
-                if (resolved == .node_ajax_onerror_set) {
-                    if (emitter.globalIndex("AJAX:ONERROR") == null) try emitter.appendGlobal("AJAX:ONERROR");
-                }
-                if (context.isNodeHttpCommand(resolved)) {
-                    for ([_][]const u8{ "AJAXオプション", "AJAX:ONERROR", "対象" }) |name| {
-                        if (emitter.globalIndex(name) == null) try emitter.appendGlobal(name);
-                    }
-                }
-                if (context.isNodeFileOperationCommand(resolved)) {
-                    if (emitter.globalIndex("ファイルコピーデフォルト動作") == null) try emitter.appendGlobal("ファイルコピーデフォルト動作");
-                }
-                if (context.isHttpServerCommand(resolved)) {
-                    for ([_][]const u8{ "HTTPメソッド", "GETデータ", "POSTデータ", "FILESデータ" }) |name| {
-                        if (emitter.globalIndex(name) == null) try emitter.appendGlobal(name);
-                    }
-                }
-            }
-        }
-        if (instruction.opcode == .const_string) {
-            const value_id = instruction.result orelse return error.InvalidStringConstant;
-            const units = try std.unicode.utf8ToUtf16LeAlloc(emitter.allocator, instruction.text);
-            emitter.strings.append(emitter.allocator, .{
-                .function_id = function.id,
-                .value_id = value_id,
-                .units = units,
-                .index = string_index,
-            }) catch |failure| {
-                emitter.allocator.free(units);
-                return failure;
+            if (instruction.opcode == .destructure_store) for (instruction.names, 0..) |name, index| {
+                if (!ir.destructureTargetIsLocal(instruction, index) and emitter.globalIndex(name) == null) try emitter.appendGlobal(name);
             };
-            string_index += 1;
-        }
-        if (instruction.opcode == .const_bigint) {
-            try emitter.bigints.append(emitter.allocator, .{
-                .function_id = function.id,
-                .value_id = instruction.result orelse return error.InvalidBigIntConstant,
-                .text = instruction.text,
-                .index = bigint_index,
-            });
-            bigint_index += 1;
-        }
-    };
+            if (instruction.opcode == .ensure_array_var and
+                !instruction.local_target and instruction.name.len > 0 and emitter.globalIndex(instruction.name) == null)
+            {
+                try emitter.appendGlobal(instruction.name);
+            }
+            if (instruction.opcode == .exception_take and emitter.globalIndex("エラーメッセージ") == null) {
+                try emitter.appendGlobal("エラーメッセージ");
+            }
+            if (instruction.opcode == .call and instruction.direct_callee == null) {
+                if (isNativePluginCall(emitter.program, function, instruction) and emitter.nativePluginNameIndex(instruction.name) == null) {
+                    try emitter.native_plugin_names.append(emitter.allocator, instruction.name);
+                }
+                // aot_builtin.lookupは全コマンド名への逐次比較なので、call命令
+                // ごとに一度だけ解決して以降の判定は解決済みのenumで行う。
+                const command = if (instruction.is_builtin_call) try emitter.builtinCommand(instruction.name) else null;
+                if (instruction.is_builtin_call and context.requiresDisplayLog(instruction.name, command) and emitter.globalIndex("表示ログ") == null) {
+                    try emitter.appendGlobal("表示ログ");
+                }
+                if (command) |resolved| {
+                    if (resolved == .system_debug_display or resolved == .system_hatena_execute) {
+                        const path = emitter.sourcePathForFunction(function.name);
+                        if (emitter.debugPathIndex(path) == null) try emitter.debug_paths.append(emitter.allocator, .{ .path = path });
+                    }
+                    if (resolved == .system_debug_breakpoint_wait) {
+                        for ([_][]const u8{ "__DEBUGブレイクポイント一覧", "__DEBUG強制待機", "__DEBUG待機フラグ", "プラグイン名" }) |name| {
+                            if (emitter.globalIndex(name) == null) try emitter.appendGlobal(name);
+                        }
+                    }
+                    if (resolved == .cut or resolved == .cut_range or context.isTimerCommand(resolved) or
+                        resolved == .node_stdin_callback or context.isNodeFileCallbackCommand(resolved))
+                    {
+                        if (emitter.globalIndex("対象") == null) try emitter.appendGlobal("対象");
+                    }
+                    if (context.isPromiseCommand(resolved)) {
+                        if (emitter.globalIndex("そ") == null) try emitter.appendGlobal("そ");
+                        if (emitter.globalIndex("対象") == null) try emitter.appendGlobal("対象");
+                    }
+                    if (resolved == .regexp_match or resolved == .regexp_extract) {
+                        if (emitter.globalIndex("抽出文字列") == null) try emitter.appendGlobal("抽出文字列");
+                    }
+                    if (context.isPluginManagementCommand(resolved)) {
+                        if (emitter.globalIndex("プラグイン名") == null) try emitter.appendGlobal("プラグイン名");
+                        if (emitter.globalIndex("名前空間") == null) try emitter.appendGlobal("名前空間");
+                    }
+                    if (resolved == .node_archive_tool_path_set or context.isArchiveCommand(resolved)) {
+                        if (emitter.globalIndex("圧縮解凍ツールパス") == null) try emitter.appendGlobal("圧縮解凍ツールパス");
+                    }
+                    if (resolved == .node_ajax_options_set) {
+                        if (emitter.globalIndex("AJAXオプション") == null) try emitter.appendGlobal("AJAXオプション");
+                    }
+                    if (resolved == .node_ajax_onerror_set) {
+                        if (emitter.globalIndex("AJAX:ONERROR") == null) try emitter.appendGlobal("AJAX:ONERROR");
+                    }
+                    if (context.isNodeHttpCommand(resolved)) {
+                        for ([_][]const u8{ "AJAXオプション", "AJAX:ONERROR", "対象" }) |name| {
+                            if (emitter.globalIndex(name) == null) try emitter.appendGlobal(name);
+                        }
+                    }
+                    if (context.isNodeFileOperationCommand(resolved)) {
+                        if (emitter.globalIndex("ファイルコピーデフォルト動作") == null) try emitter.appendGlobal("ファイルコピーデフォルト動作");
+                    }
+                    if (context.isHttpServerCommand(resolved)) {
+                        for ([_][]const u8{ "HTTPメソッド", "GETデータ", "POSTデータ", "FILESデータ" }) |name| {
+                            if (emitter.globalIndex(name) == null) try emitter.appendGlobal(name);
+                        }
+                    }
+                }
+            }
+            if (instruction.opcode == .const_string) {
+                const value_id = instruction.result orelse return error.InvalidStringConstant;
+                const units = try std.unicode.utf8ToUtf16LeAlloc(emitter.allocator, instruction.text);
+                emitter.strings.append(emitter.allocator, .{
+                    .function_id = function.id,
+                    .value_id = value_id,
+                    .units = units,
+                    .index = string_index,
+                }) catch |failure| {
+                    emitter.allocator.free(units);
+                    return failure;
+                };
+                string_index += 1;
+            }
+            if (instruction.opcode == .const_bigint) {
+                try emitter.bigints.append(emitter.allocator, .{
+                    .function_id = function.id,
+                    .value_id = instruction.result orelse return error.InvalidBigIntConstant,
+                    .text = instruction.text,
+                    .index = bigint_index,
+                });
+                bigint_index += 1;
+            }
+        };
+    }
     for (emitter.globals.items, 0..) |name, global_index| if (emitter.systemStringValue(name)) |value| {
         const units = try std.unicode.utf8ToUtf16LeAlloc(emitter.allocator, value);
         emitter.system_strings.append(emitter.allocator, .{ .global_index = global_index, .units = units }) catch |failure| {

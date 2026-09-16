@@ -7,6 +7,7 @@ pub const BuildOptions = struct {
     optimization: lnako.backend.llvm.compiler.Optimization = .o0,
     emit: lnako.backend.llvm.compiler.Emit = .executable,
     compat_js: bool = false,
+    forced_mode: lnako.frontend.token.Mode = .{},
     llvm_dir: ?[]const u8 = null,
 };
 
@@ -16,6 +17,7 @@ pub fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
     var optimization: lnako.backend.llvm.compiler.Optimization = .o0;
     var emit: lnako.backend.llvm.compiler.Emit = .executable;
     var compat_js = false;
+    var forced_mode: lnako.frontend.token.Mode = .{};
     var llvm_dir: ?[]const u8 = null;
     var index: usize = 1;
     while (index < arguments.len) : (index += 1) {
@@ -34,6 +36,10 @@ pub fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
             optimization = .o3;
         } else if (std.mem.eql(u8, argument, "--compat-js")) {
             compat_js = true;
+        } else if (std.mem.eql(u8, argument, "--dncl")) {
+            forced_mode.dncl = true;
+        } else if (std.mem.eql(u8, argument, "--dncl2")) {
+            forced_mode.dncl2 = true;
         } else if (std.mem.eql(u8, argument, "--llvm-dir")) {
             index += 1;
             if (index >= arguments.len) return error.MissingLlvmDir;
@@ -51,14 +57,64 @@ pub fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
                 return error.InvalidEmitKind;
         } else return error.UnknownBuildOption;
     }
+    if (forced_mode.dncl and forced_mode.dncl2) return error.ConflictingDnclModes;
     return .{
         .input = arguments[0],
         .output = output orelse return error.MissingOutput,
         .optimization = optimization,
         .emit = emit,
         .compat_js = compat_js,
+        .forced_mode = forced_mode,
         .llvm_dir = llvm_dir,
     };
+}
+
+/// `--dncl`/`--dncl2` フラグから強制する構文モードを得る。
+/// 両方の指定は異なる方言の同時強制になるためエラーにする。
+pub fn dnclModeFromArguments(arguments: []const []const u8) error{ConflictingDnclModes}!lnako.frontend.token.Mode {
+    var mode: lnako.frontend.token.Mode = .{};
+    for (arguments) |argument| {
+        if (std.mem.eql(u8, argument, "--dncl")) mode.dncl = true;
+        if (std.mem.eql(u8, argument, "--dncl2")) mode.dncl2 = true;
+    }
+    if (mode.dncl and mode.dncl2) return error.ConflictingDnclModes;
+    return mode;
+}
+
+/// lnako側オプションのうち許可リストに無い最初の引数を返す。
+/// `--dncl`のtypo（--dncll等）や余分な位置引数が黙って無視されないよう、
+/// 受理するオプションをコマンドごとに限定する。全て許可済みならnull。
+pub fn findUnknownOption(arguments: []const []const u8, allowed: []const []const u8) ?[]const u8 {
+    for (arguments) |argument| {
+        var known = false;
+        for (allowed) |name| {
+            if (std.mem.eql(u8, argument, name)) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) return argument;
+    }
+    return null;
+}
+
+/// `-`で始まる不明なオプションのみを検出する。位置引数は対象外。
+/// `run`では`--`を省略した位置引数が事実上プログラム引数として
+/// `process_args`経由で参照される既存契約があるため、位置引数は拒否せず
+/// `--dncll`のようなオプション記法の誤りだけを診断する。
+pub fn findUnknownFlag(arguments: []const []const u8, allowed: []const []const u8) ?[]const u8 {
+    for (arguments) |argument| {
+        if (!std.mem.startsWith(u8, argument, "-")) continue;
+        var known = false;
+        for (allowed) |name| {
+            if (std.mem.eql(u8, argument, name)) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) return argument;
+    }
+    return null;
 }
 
 pub fn hasArgument(arguments: []const []const u8, expected: []const u8) bool {
@@ -77,6 +133,27 @@ pub fn splitRunArguments(arguments: []const []const u8) struct { lnako: []const 
 
 pub fn lessThanString(_: void, left: []const u8, right: []const u8) bool {
     return std.mem.lessThan(u8, left, right);
+}
+
+test "不明なオプションを検出する" {
+    const dncl_options: []const []const u8 = &.{ "--dncl", "--dncl2" };
+    // --dncl のtypoは検出される
+    try std.testing.expectEqualStrings("--dncll", findUnknownOption(&.{"--dncll"}, dncl_options).?);
+    try std.testing.expectEqualStrings("--strict", findUnknownOption(&.{ "--dncl", "--strict" }, dncl_options).?);
+    // 余分な位置引数も検出される
+    try std.testing.expectEqualStrings("extra.nako3", findUnknownOption(&.{"extra.nako3"}, dncl_options).?);
+    // 許可済みオプションはnull
+    try std.testing.expectEqual(@as(?[]const u8, null), findUnknownOption(&.{ "--dncl", "--dncl2" }, dncl_options));
+    try std.testing.expectEqual(@as(?[]const u8, null), findUnknownOption(&.{}, dncl_options));
+    // run用の許可リストでは--compat-jsも受理される
+    const run_options: []const []const u8 = &.{ "--compat-js", "--dncl", "--dncl2" };
+    try std.testing.expectEqual(@as(?[]const u8, null), findUnknownOption(&.{ "--compat-js", "--dncl" }, run_options));
+    try std.testing.expectEqualStrings("--dncll", findUnknownOption(&.{"--dncll"}, run_options).?);
+    // findUnknownFlagは位置引数をプログラム引数として許容し、`-`始まりの
+    // 未知オプションのみ検出する（runの`--`省略形の既存契約）
+    try std.testing.expectEqual(@as(?[]const u8, null), findUnknownFlag(&.{ "12345", "--compat-js" }, run_options));
+    try std.testing.expectEqual(@as(?[]const u8, null), findUnknownFlag(&.{"benchmark-input.txt"}, run_options));
+    try std.testing.expectEqualStrings("--dncll", findUnknownFlag(&.{"--dncll"}, run_options).?);
 }
 
 test "buildの出力形式と最適化レベルを解析する" {

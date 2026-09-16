@@ -117,8 +117,41 @@ pub export fn lnako_aot_node_mother_path_init(
 
 pub export fn lnako_aot_runtime_deinit() callconv(.c) void {
     state.aot_interrupt_requested.store(false, .release);
+    state.active_module_entries.deinit(std.heap.c_allocator);
+    state.active_module_entries = .empty;
     if (state.active_runtime) |*runtime| runtime.deinit();
     state.active_runtime = null;
+}
+
+/// 実効取り込み文からのモジュールエントリ呼び出しに先立って呼ばれる
+/// 展開ガード。公式は取り込み先トークンのコピーを文位置へ展開し、
+/// モジュール直下の取り込み文はベース側（in_base_stream != 0）か
+/// コピー側のみのストリームに存在する。サイト側モジュールのコピー実行中
+/// かどうかとベース側の辺かどうかが一致するとき、その文は現在の
+/// ストリームに存在しないため0を返して抑止する。関数本体内の取り込み文
+/// （site_toplevel == 0）は到達するたび常に実行する。実行する場合は
+/// 取り込み先モジュールを参照カウントで登録して1を返す。完了時は
+/// lnako_aot_module_entry_end で取り除く。
+pub export fn lnako_aot_module_entry_begin(site_module: i64, callee_module: i64, in_base_stream: i64, site_toplevel: i64) callconv(.c) c_int {
+    const site_in_copy = state.active_module_entries.contains(site_module);
+    if (site_toplevel != 0 and site_in_copy == (in_base_stream != 0)) return 0;
+    const gop = state.active_module_entries.getOrPut(std.heap.c_allocator, callee_module) catch |failure| {
+        // ガード登録に失敗したまま実行を続けると循環取り込みが無限再帰する
+        // ため、失敗時はスキップ側（0）を返す。
+        state.runtimeFailure(failure);
+        return 0;
+    };
+    if (!gop.found_existing) gop.value_ptr.* = 0;
+    gop.value_ptr.* += 1;
+    return 1;
+}
+
+/// 展開中モジュールの呼び出し完了時に呼ばれ、参照カウントを戻す。
+pub export fn lnako_aot_module_entry_end(callee_module: i64) callconv(.c) void {
+    if (state.active_module_entries.getPtr(callee_module)) |count| {
+        count.* -= 1;
+        if (count.* == 0) _ = state.active_module_entries.remove(callee_module);
+    }
 }
 
 pub export fn lnako_aot_push_roots(frame: *state.RootFrame, values: ?[*]state.Value, len: usize) callconv(.c) void {

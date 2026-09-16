@@ -127,7 +127,10 @@ pub fn verify(backing_allocator: std.mem.Allocator, program: ir.Program) !Report
     errdefer arena.deinit();
     var checker = Checker{ .allocator = arena.allocator(), .function_count = program.functions.len };
     for (program.functions) |function| try checker.verifyFunction(function);
-    return .{ .arena = arena, .issues = try checker.issues.toOwnedSlice(checker.allocator) };
+    // arenaを返却値へコピーする前に確保を済ませる。リテラル内で呼ぶと
+    // コピー後のarena状態へ確保が記録されずリークする。
+    const issues = try checker.issues.toOwnedSlice(checker.allocator);
+    return .{ .arena = arena, .issues = issues };
 }
 
 const Checker = struct {
@@ -279,7 +282,7 @@ const Checker = struct {
 
 fn producesValue(opcode: ir.Opcode) bool {
     return switch (opcode) {
-        .store_global, .store_local, .destructure_store, .array_set, .property_set, .increment, .try_begin, .try_end, .exception_take, .speed_mode_begin, .speed_mode_end, .performance_monitor_begin, .performance_monitor_end => false,
+        .store_global, .store_local, .destructure_store, .element_set, .ensure_array_var, .init_array_index, .try_begin, .try_end, .exception_take, .speed_mode_begin, .speed_mode_end, .performance_monitor_begin, .performance_monitor_end => false,
         else => true,
     };
 }

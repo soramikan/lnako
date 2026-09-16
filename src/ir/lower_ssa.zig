@@ -1,6 +1,7 @@
 const std = @import("std");
 const hir = @import("hir.zig");
 const ir = @import("nako_ir.zig");
+const system_constant = @import("../runtime/system_constant.zig");
 
 pub fn lower(backing_allocator: std.mem.Allocator, hir_program: hir.Program) !ir.Program {
     var arena = std.heap.ArenaAllocator.init(backing_allocator);
@@ -26,17 +27,25 @@ pub fn lower(backing_allocator: std.mem.Allocator, hir_program: hir.Program) !ir
         try functions.append(allocator, lowered);
     }
     const module_entries = try allocator.alloc(ir.FunctionId, hir_program.modules.len);
-    for (hir_program.modules, 0..) |module, index| module_entries[index] = module.entry_function;
+    const variant_entries = try allocator.alloc([]ir.FunctionId, hir_program.modules.len);
+    for (hir_program.modules, 0..) |module, index| {
+        module_entries[index] = module.entry_function;
+        variant_entries[index] = try allocator.dupe(ir.FunctionId, module.variant_entries);
+    }
     const module_names = try allocator.alloc([]const u8, hir_program.modules.len);
     const module_paths = try allocator.alloc([]const u8, hir_program.modules.len);
     for (hir_program.modules, 0..) |module, index| {
         module_names[index] = try allocator.dupe(u8, module.name);
         module_paths[index] = try allocator.dupe(u8, module.path);
     }
+    // arenaを返却値へコピーする前に確保を済ませる。リテラル内で呼ぶと
+    // コピー後のarena状態へ確保が記録されずリークする。
+    const lowered_functions = try functions.toOwnedSlice(allocator);
     return .{
         .arena = arena,
-        .functions = try functions.toOwnedSlice(allocator),
+        .functions = lowered_functions,
         .module_entries = module_entries,
+        .variant_entries = variant_entries,
         .module_names = module_names,
         .module_paths = module_paths,
     };
@@ -58,7 +67,14 @@ fn assignDispatchSiteIds(function: *ir.Function) !void {
                 if (ordinal > std.math.maxInt(u32)) return error.DispatchSiteIdOverflow;
                 instruction.site_id = (@as(u64, function.id) << 32) | ordinal;
             }
-            if (instruction.opcode == .load_global or instruction.opcode == .store_global) {
+            // グローバル書き込みを行い得る名前付き命令もsite IDを付与する。
+            // ensure_array_varはlocal_target=falseのとき変数スロットへ
+            // 新規配列を書き戻すため、グローバル書き込みサイトとして記録する。
+            // システム定数名は実行時・emitterとも初期化を省略するため記録しない。
+            if (instruction.opcode == .load_global or instruction.opcode == .store_global or
+                (instruction.opcode == .ensure_array_var and !instruction.local_target and
+                    !system_constant.isConstant(instruction.name)))
+            {
                 global_ordinal += 1;
                 if (global_ordinal > std.math.maxInt(u32)) return error.GlobalSiteIdOverflow;
                 instruction.global_site_id = (@as(u64, function.id) << 32) | global_ordinal;
@@ -158,11 +174,15 @@ const FunctionBuilder = struct {
             .call_value => try self.lowerCall(.call_value, node),
             .make_array => try self.lowerVariadic(.make_array, .array, node),
             .make_object => try self.lowerVariadic(.make_object, .object, node),
-            .array_get => try self.lowerVariadic(.array_get, .dynamic, node),
-            .property_get => try self.lowerVariadic(.property_get, .dynamic, node),
-            .array_set => try self.lowerFallibleVoid(.array_set, node),
-            .property_set => try self.lowerFallibleVoid(.property_set, node),
-            .increment => try self.lowerVariadic(.increment, .void, node),
+            // 公式は undefined/null コンテナへの添字・プロパティ読み出しで
+            // 実行時TypeErrorになるため、読み取り系も例外境界を付ける
+            .array_get => try self.lowerFallible(.array_get, .dynamic, node),
+            .property_get => try self.lowerFallible(.property_get, .dynamic, node),
+            .array_set => try self.lowerIndexedSet(node),
+            .property_set => try self.lowerIndexedSet(node),
+            .increment => try self.lowerIncrement(node),
+            // 添字増減はコンテナ未宣言・null等で実行時失敗し得るため例外境界を付ける
+            .increment_indexed => try self.lowerIncrementIndexed(node),
             .if_statement => self.lowerIf(node),
             .while_statement => self.lowerWhile(node, false),
             .post_test_loop => self.lowerWhile(node, true),
@@ -219,6 +239,162 @@ const FunctionBuilder = struct {
 
     fn lowerFallibleVoid(self: *FunctionBuilder, opcode: ir.Opcode, node: hir.Node) !?ir.ValueId {
         _ = try self.lowerVariadic(opcode, .void, node);
+        try self.lowerExceptionCheck(node);
+        return null;
+    }
+
+    /// 添字・プロパティ代入（array_set/property_set相当）。公式convLet/
+    /// convLetArrayは `get(name)[k0]..[kn-1] = value` の形を生成し、
+    /// ルート変数参照を添字式の評価より先に束縛する。添字式がルート変数を
+    /// 再束縛しても代入は束縛済みコンテナへ行われるため、ここでも先に
+    /// loadして使い回す。中間レベルは公式の左辺走査と同じく、添字評価と
+    /// array_getを交互にemitする（中間読出しの失敗は後続添字・値の評価
+    /// より先に伝播する）。check_array_init付きはDNCLの自動初期化として
+    /// 『ルート初期化 → 中間レベルの添字再評価つき初期化』を先に挿入する。
+    fn lowerIndexedSet(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
+        // element_setはcontainer/key/valueの3operandを要求するため、
+        // 値または添字を欠くHIRはそのまま命令へ落とさず失敗させる
+        if (node.children.len < 2) return error.InvalidHir;
+        const key_nodes = node.children[1..];
+        if (node.check_array_init) {
+            try self.emitVoid(.ensure_array_var, &.{}, node);
+            try self.lowerExceptionCheck(node);
+        }
+        // 公式の `tmpVar = get(name)` 相当: ルート変数を1度だけ束縛する
+        const tmp = try self.emitValue(if (node.local_target) .load_local else .load_global, .dynamic, &.{}, node);
+        if (node.check_array_init) {
+            // 公式convLetArrayのcheckInitは中間レベルで
+            // `if (!(tmp[k0]..[ki] instanceof Array)) { tmp[k0]..[ki] = 新規配列 }`
+            // を生成する。check式とwrite-back式で同一添字式を評価し直すため、
+            // 副作用を持つ添字式は初期化が走るレベルで2回評価される。
+            for (0..key_nodes.len - 1) |level| {
+                // check式: tmp[k0]..[k_level] を添字評価つきで走査する
+                var container = tmp;
+                for (0..level + 1) |j| {
+                    const key = (try self.lowerNode(key_nodes[j])) orelse try self.emitUndefined(node);
+                    container = try self.emitValue(.array_get, .dynamic, &.{ container, key }, node);
+                    // チェーン途中のnullish読出し失敗を最初の文言で伝播させる
+                    try self.lowerExceptionCheck(node);
+                }
+                const is_array = try self.emitValue(.is_array, .boolean, &.{container}, node);
+                const init_block = try self.createBlock("dncl_init.writeback");
+                const merge_block = try self.createBlock("dncl_init.merge");
+                self.terminate(.{ .conditional_branch = .{ .condition = is_array, .then_block = merge_block, .else_block = init_block } });
+                // write-back式: 添字を評価し直して tmp[k0']..[k_level'] = 新規配列
+                self.current = init_block;
+                var write_container = tmp;
+                for (0..level) |j| {
+                    const key = (try self.lowerNode(key_nodes[j])) orelse try self.emitUndefined(node);
+                    write_container = try self.emitValue(.array_get, .dynamic, &.{ write_container, key }, node);
+                    try self.lowerExceptionCheck(node);
+                }
+                const write_key = (try self.lowerNode(key_nodes[level])) orelse try self.emitUndefined(node);
+                try self.emitVoid(.init_array_index, &.{ write_container, write_key }, node);
+                try self.lowerExceptionCheck(node);
+                self.terminate(.{ .branch = merge_block });
+                self.current = merge_block;
+            }
+        }
+        // 最終代入（公式のcode部相当）は添字評価と中間走査を織り交ぜ、
+        // 値は全添字の評価後に評価する。
+        // checkInit付きでは公式が `code = name` から生成するため、
+        // ルート変数を束縛し直してから走査する（初期化チェックの添字評価で
+        // ルートが再束縛された場合、公式は新しい値へ書き込む）。
+        var container = if (node.check_array_init)
+            try self.emitValue(if (node.local_target) .load_local else .load_global, .dynamic, &.{}, node)
+        else
+            tmp;
+        for (key_nodes[0 .. key_nodes.len - 1]) |key_node| {
+            const key = (try self.lowerNode(key_node)) orelse try self.emitUndefined(node);
+            container = try self.emitValue(.array_get, .dynamic, &.{ container, key }, node);
+            try self.lowerExceptionCheck(node);
+        }
+        const last_key = (try self.lowerNode(key_nodes[key_nodes.len - 1])) orelse try self.emitUndefined(node);
+        const value = (try self.lowerNode(node.children[0])) orelse try self.emitUndefined(node);
+        try self.emitVoid(.element_set, &.{ container, last_key, value }, node);
+        try self.lowerExceptionCheck(node);
+        return null;
+    }
+
+    /// 変数増減（XをN増やす）。公式convIncの変数経路:
+    /// `v0 = varGetter` → `if (typeof v0 === 'undefined') { varInitter; v0 = 0 }`
+    /// → `v0 = Number(v0) + Number(incValue)` → `varSetter`。
+    /// 増減量式は加算行に埋め込まれるため、読み出し・初期化の後に評価する。
+    fn lowerIncrement(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
+        const load_op: ir.Opcode = if (node.local_target) .load_local else .load_global;
+        const store_op: ir.Opcode = if (node.local_target) .store_local else .store_global;
+        const old = try self.emitValue(load_op, .dynamic, &.{}, node);
+        const is_undefined = try self.emitValue(.is_undefined, .boolean, &.{old}, node);
+        const init_block = try self.createBlock("increment.init");
+        const merge_block = try self.createBlock("increment.merge");
+        self.terminate(.{ .conditional_branch = .{ .condition = is_undefined, .then_block = init_block, .else_block = merge_block } });
+        self.current = init_block;
+        const init_zero = try self.emitConstNumber(0, node);
+        try self.emitVoid(store_op, &.{init_zero}, node);
+        try self.lowerExceptionCheck(node);
+        self.terminate(.{ .branch = merge_block });
+        self.current = merge_block;
+        const base = try self.emitValue(.coalesce_or_zero, .dynamic, &.{old}, node);
+        const amount = if (node.children.len > 0)
+            (try self.lowerNode(node.children[0])) orelse try self.emitConstNumber(1, node)
+        else
+            try self.emitConstNumber(1, node);
+        const updated = try self.emitValue(.increment_values, .dynamic, &.{ base, amount }, node);
+        try self.lowerExceptionCheck(node);
+        try self.emitVoid(store_op, &.{updated}, node);
+        try self.lowerExceptionCheck(node);
+        return null;
+    }
+
+    /// 添字増減（A[i]をN増やす）。公式convIncのref_array/ref_prop経路:
+    /// `o1=get(name); i1=k; …` でコンテナと添字を一度だけ束縛し、
+    /// `v0=o1[i1]…` → `if (typeof v0==='undefined') { o1[i1]…=0; v0=0 }`
+    /// → `v0=Number(v0)+Number(incValue)` → `o1[i1]…=v0` の順で評価する。
+    /// ルート変数や中間レベルの自動初期化は公式も行わない（TypeErrorになる）。
+    fn lowerIncrementIndexed(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
+        if (node.children.len < 2) return error.InvalidHir;
+        const key_nodes = node.children[1..];
+        // 公式のpreCode相当: コンテナ→添字の順に一度だけ束縛する
+        const container = try self.emitValue(if (node.local_target) .load_local else .load_global, .dynamic, &.{}, node);
+        var keys: std.ArrayList(ir.ValueId) = .empty;
+        for (key_nodes) |key_node|
+            try keys.append(self.allocator, (try self.lowerNode(key_node)) orelse try self.emitUndefined(node));
+        // varGetter相当: 束縛したコンテナ・添字で要素を読み出す
+        var deepest = container;
+        for (keys.items[0 .. keys.items.len - 1]) |key| {
+            deepest = try self.emitValue(.array_get, .dynamic, &.{ deepest, key }, node);
+            try self.lowerExceptionCheck(node);
+        }
+        const last_key = keys.items[keys.items.len - 1];
+        const old = try self.emitValue(.array_get, .dynamic, &.{ deepest, last_key }, node);
+        try self.lowerExceptionCheck(node);
+        // 公式の `if (typeof v0 === 'undefined') { varInitter; v0 = 0 }` 相当
+        const is_undefined = try self.emitValue(.is_undefined, .boolean, &.{old}, node);
+        const init_block = try self.createBlock("increment.init");
+        const merge_block = try self.createBlock("increment.merge");
+        self.terminate(.{ .conditional_branch = .{ .condition = is_undefined, .then_block = init_block, .else_block = merge_block } });
+        self.current = init_block;
+        const init_zero = try self.emitConstNumber(0, node);
+        try self.emitVoid(.element_set, &.{ deepest, last_key, init_zero }, node);
+        try self.lowerExceptionCheck(node);
+        self.terminate(.{ .branch = merge_block });
+        self.current = merge_block;
+        const base = try self.emitValue(.coalesce_or_zero, .dynamic, &.{old}, node);
+        // 公式は `Number(v0) + Number(incValue)` の行で増減量式を評価する
+        const amount = if (node.children.len > 0)
+            (try self.lowerNode(node.children[0])) orelse try self.emitConstNumber(1, node)
+        else
+            try self.emitConstNumber(1, node);
+        const updated = try self.emitValue(.increment_values, .dynamic, &.{ base, amount }, node);
+        try self.lowerExceptionCheck(node);
+        // varSetter相当: 公式は `o1[i1]…` を再評価するため、量の評価で
+        // 中間コンテナが変化した場合は新しい中間コンテナへ書き込む
+        var write_container = container;
+        for (keys.items[0 .. keys.items.len - 1]) |key| {
+            write_container = try self.emitValue(.array_get, .dynamic, &.{ write_container, key }, node);
+            try self.lowerExceptionCheck(node);
+        }
+        try self.emitVoid(.element_set, &.{ write_container, last_key, updated }, node);
         try self.lowerExceptionCheck(node);
         return null;
     }
@@ -428,6 +604,14 @@ const FunctionBuilder = struct {
         return self.emitValue(.const_undefined, .dynamic, &.{}, node);
     }
 
+    /// loweringで生成する数値リテラル（増減文の初期化0・既定量1）。
+    /// HIRノード由来でないためnumber_valueを明示的に設定する。
+    fn emitConstNumber(self: *FunctionBuilder, number: f64, node: hir.Node) !ir.ValueId {
+        const value = try self.emitValue(.const_number, .number, &.{}, node);
+        self.currentBlock().instructions.items[self.currentBlock().instructions.items.len - 1].number_value = number;
+        return value;
+    }
+
     fn emitValue(self: *FunctionBuilder, opcode: ir.Opcode, result_type: ir.Type, operands: []const ir.ValueId, node: hir.Node) !ir.ValueId {
         const value = self.next_value;
         self.next_value += 1;
@@ -440,10 +624,20 @@ const FunctionBuilder = struct {
             .text = try self.allocator.dupe(u8, node.text),
             .operator = try self.allocator.dupe(u8, node.operator),
             .names = try dupeStrings(self.allocator, node.names),
+            .names_local = try self.allocator.dupe(bool, node.names_local),
             .number_value = node.number_value,
             .boolean_value = node.boolean_value,
             .loop_direction = toLoopDirection(node.loop_direction),
             .is_builtin_call = node.is_builtin_call,
+            .check_array_init = node.check_array_init,
+            .local_target = node.local_target,
+            .is_module_entry = node.is_module_entry,
+            .site_module = node.site_module,
+            .site_order = node.site_order,
+            .callee_module = node.callee_module,
+            .callee_order = node.callee_order,
+            .site_toplevel = node.site_toplevel,
+            .callee_variant = node.callee_variant,
             .span = node.span,
         });
         return value;
@@ -459,8 +653,18 @@ const FunctionBuilder = struct {
             .text = try self.allocator.dupe(u8, node.text),
             .operator = try self.allocator.dupe(u8, node.operator),
             .names = try dupeStrings(self.allocator, node.names),
+            .names_local = try self.allocator.dupe(bool, node.names_local),
             .loop_direction = toLoopDirection(node.loop_direction),
             .is_builtin_call = node.is_builtin_call,
+            .check_array_init = node.check_array_init,
+            .local_target = node.local_target,
+            .is_module_entry = node.is_module_entry,
+            .site_module = node.site_module,
+            .site_order = node.site_order,
+            .callee_module = node.callee_module,
+            .callee_order = node.callee_order,
+            .site_toplevel = node.site_toplevel,
+            .callee_variant = node.callee_variant,
             .span = node.span,
         });
     }
@@ -665,7 +869,7 @@ test "失敗し得る添字代入の直後に例外分岐を生成する" {
     const entry = program.findFunction("assignment_exception__$entry").?;
     var saw_checked_assignment = false;
     for (entry.blocks) |block| for (block.instructions, 0..) |instruction, index| {
-        if (instruction.opcode != .array_set) continue;
+        if (instruction.opcode != .element_set) continue;
         try std.testing.expect(index + 1 < block.instructions.len);
         try std.testing.expectEqual(ir.Opcode.exception_pending, block.instructions[index + 1].opcode);
         try std.testing.expect(block.terminator == .conditional_branch);
@@ -912,7 +1116,7 @@ test "利用者関数名のbuiltin衝突と動的plugin命令にはsite IDを付
         .allows_dynamic_commands = true,
     }});
     defer dynamic_analyzed.deinit();
-    var dynamic_hir = try hir.lower(std.testing.allocator, &.{dynamic_parsed.root.?}, &.{"dynamic-plugin"}, &.{"dynamic-plugin.nako3"}, dynamic_analyzed);
+    var dynamic_hir = try hir.lower(std.testing.allocator, &.{dynamic_parsed.root.?}, &.{"dynamic-plugin"}, &.{"dynamic-plugin.nako3"}, &.{&.{}}, dynamic_analyzed);
     defer dynamic_hir.deinit();
     var dynamic = try lower(std.testing.allocator, dynamic_hir);
     defer dynamic.deinit();

@@ -122,5 +122,253 @@
   {
     "id": "timer-stop-all",
     "source": "0.001秒後には\n「NG」を表示\nここまで\n全タイマー停止\n「全停止」を表示\n"
+  },
+  {
+    "id": "dncl-v1-basic",
+    "source": "!DNCLモード\nA←3\nB←A*2\nBを表示\n"
+  },
+  {
+    "id": "dncl-v1-loop",
+    "source": "!DNCLモード\nC←0\nIを1から5まで1ずつ増やしながら\n|C←C+I\nを実行する\nCを表示\n"
+  },
+  {
+    "id": "dncl-v1-ifelse",
+    "source": "!DNCLモード\nA←5\nもしA>3ならば\n|「大」を表示\nを実行し、そうでなければ\n|「小」を表示\nを実行する\n"
+  },
+  {
+    "id": "dncl-v1-postloop",
+    "source": "!DNCLモード\nN←0\n繰り返し，\nN←N+1\nを，N>=4になるまで実行する\nNを表示\n"
+  },
+  {
+    "id": "dncl-v1-array",
+    "source": "!DNCLモード\nA←{4,5,6}\nA[1]を表示する\n"
+  },
+  {
+    "id": "dncl-v1-all-elements",
+    "source": "!DNCLモード\nAのすべての値を3にする\nA[0]を表示\nA[99]を表示\n"
+  },
+  {
+    "id": "dncl-v1-div",
+    "source": "!DNCLモード\nA←7÷2\nAを表示\n"
+  },
+  {
+    "id": "dncl2-basic",
+    "source": "!DNCL2\nA=0\nIを1から4まで1ずつ増やしながら繰り返す:\n　A=A+I\nAを表示\n"
+  },
+  {
+    "id": "dncl2-ifelse",
+    "source": "!DNCL2\nもし(not 真)ならば:\n　「no」を表示\nそうでなければ:\n　「yes」を表示\n"
+  },
+  {
+    "id": "dncl2-array-init",
+    "source": "!DNCL2\n配列変数 T を初期化する\nT[0]を表示\nT[29]を表示\n"
+  },
+  {
+    "id": "dncl2-array-fill",
+    "source": "!DNCL2\n配列 H のすべての要素に 7 を代入する\nH[29]を表示\n"
+  },
+  {
+    "id": "dncl2-soudeなく",
+    "source": "!DNCL2\nA=1\nもしA=2ならば:\n　「x」を表示\nそうでなく:\n　「y」を表示\n"
+  },
+  {
+    "id": "dncl-v1-array-autoinit",
+    "source": "!DNCLモード\nA[1]=5\nA[0]=0\nA[1]を表示\nA[0]を表示\n"
+  },
+  {
+    "id": "dncl-v1-array-autoinit-thirty",
+    "source": "!DNCLモード\nA[1]=5\nA[30]を表示\nA[1]を表示\n"
+  },
+  {
+    "id": "dncl-v1-array-autoinit-multidim",
+    "source": "!DNCLモード\nB[1][2]=9\nB[1][2]を表示\n"
+  },
+  {
+    "id": "dncl-v1-array-josi-assign",
+    "source": "!DNCLモード\nA[2]に5を代入\nA[2]を表示\n"
+  },
+  {
+    "id": "dncl-v1-array-declared",
+    "source": "!DNCLモード\nA={9,9,9}\nA[1]を表示\nA[3]=8\nA[3]を表示\n"
+  },
+  {
+    "id": "dncl2-array-autoinit",
+    "source": "!DNCL2\nA[0]=5\nA[1]=9\nA[0]を表示\nA[1]を表示\n"
+  },
+  {
+    "id": "dncl2-array-autoinit-multidim",
+    "source": "!DNCL2\nC[0][1]=8\nC[0][1]を表示\n"
+  },
+  {
+    "id": "dncl-v1-array-autoinit-3dim",
+    "source": "!DNCLモード\nD[1][2][3]=9\nD[1][2][3]を表示\n"
+  },
+  {
+    "id": "dncl2-array-autoinit-3dim",
+    "source": "!DNCL2\nD[0][1][2]=7\nD[0][1][2]を表示\n"
+  },
+  {
+    "id": "dncl-v1-array-oor-read",
+    "source": "!DNCLモード\nA[1]=5\nA[0]を表示\n"
+  },
+  {
+    "id": "dncl-v1-array-hole-read",
+    "source": "!DNCLモード\nA[1]=5\nA[100]を表示\n"
+  },
+  {
+    "id": "dncl2-array-oor-read",
+    "source": "!DNCL2\nA[0]=5\nA[9]を表示\n"
+  },
+  {
+    "id": "display-many-undefined-null",
+    "source": "Aは[]\n連続表示(A[0],NULL,1)\nA[0]を表示\n連続無改行表示(A[0])\n「end」を表示\n"
+  },
+  {
+    "id": "dncl-v1-mode-statement-positional",
+    "source": "A=[1,2]\nA[0]を表示\nDNCLモード\nB[1]=5\nB[1]を表示\nA[1]を表示\n"
+  },
+  {
+    "id": "dncl2-mode-statement-positional",
+    "source": "A=[1,2]\nA[1]を表示\nDNCL2モード\nC[0]=9\nC[0]を表示\n"
+  },
+  {
+    "id": "dncl-v1-array-index-nonvar-receiver",
+    "source": "!DNCLモード\n[10,20,30][1]を表示\n([10,20,30])[2]を表示\n[[1,2],[3,4]][1][2]を表示\n[[1,2],[3,4]][2,1]を表示\n"
+  },
+  {
+    "id": "dncl-v1-increment-indexed",
+    "source": "!DNCLモード\nA=[1,2,3]\nA[1]を3増やす\nA[1]を表示\nA[3]を2減らす\nA[3]を表示\nB=[[1,2],[3,4]]\nB[1][2]を10増やす\nB[1][2]を表示\nD[\"x\"]=1\nD[\"x\"]を2増やす\nD[\"x\"]を表示\n"
+  },
+  {
+    "id": "dncl2-increment-indexed",
+    "source": "!DNCL2\nA=[1,2,3]\nA[0]を3増やす\nA[0]を表示\nA[2]を2減らす\nA[2]を表示\n"
+  },
+  {
+    "id": "increment-object-to-primitive",
+    "source": "A=[[\"5\"]]\nA[0]を1増やす\nA[0]を表示\nAを1増やす\nAを表示\nB={\"b\":\"5\"}\nB$bを1増やす\nB$bを表示\n"
+  },
+  {
+    "id": "dncl-v1-constant-index-target",
+    "source": "!DNCLモード\nPI[1]=5\nPIを表示\nA=NULL\nA[1]=5\nA[1]を表示\nA[2]を表示\n"
+  },
+  {
+    "id": "dncl-v1-constant-index-local-param",
+    "source": "!DNCLモード\n●F(PI)とは\n　PI[1]=9\n　PI[1]を表示\n　PIを表示\nここまで\nF(0)\nPIを表示\n"
+  },
+  {
+    "id": "dncl-v1-increment-indexed-undeclared",
+    "oracle": "official-source",
+    "source": "!DNCLモード\nエラー監視\nA[1]を1増やす\nエラーならば\nエラーメッセージを表示\nここまで\n"
+  },
+  {
+    "id": "dncl-v1-increment-indexed-undefined",
+    "oracle": "official-source",
+    "source": "!DNCLモード\nA=undefined\nエラー監視\nA[1]を1増やす\nエラーならば\nエラーメッセージを表示\nここまで\n"
+  },
+  {
+    "id": "dncl-v1-increment-indexed-null",
+    "oracle": "official-source",
+    "source": "!DNCLモード\nA=NULL\nエラー監視\nA[1]を1増やす\nエラーならば\nエラーメッセージを表示\nここまで\n"
+  },
+  {
+    "id": "dncl-v1-increment-indexed-mid-undefined",
+    "oracle": "official-source",
+    "source": "!DNCLモード\nA=[1]\nA[1][2]を1増やす\nエラー監視\nA[3][4]を1増やす\nエラーならば\nエラーメッセージを表示\nここまで\n"
+  },
+  {
+    "id": "dncl-v1-increment-indexed-dict",
+    "source": "!DNCLモード\nB={}\nB[1]を1増やす\nB[1]を表示\n"
+  },
+  {
+    "id": "dncl-v1-scope-late-module-var",
+    "source": "!DNCLモード\n●確認\n　Nを表示\n　N=5\nここまで\n確認\nNを表示\nN=100\n確認\n"
+  },
+  {
+    "id": "scope-named-fn-late-module-var",
+    "source": "●確認\n　Nを表示\n　N=5\n　Nを表示\nここまで\n確認\nNを表示\nN=100\n確認\nNを表示\n"
+  },
+  {
+    "id": "scope-anon-fn-late-module-var",
+    "source": "F=関数()\n　Nを表示\n　N=5\nここまで\nF()\nNを表示\nN=100\nF()\n"
+  },
+  {
+    "id": "dncl-v1-loop-array",
+    "source": "!DNCLモード\nS←0\nIを1から4まで1ずつ増やしながら\n|S←S+I\nを繰り返す\nSを表示\n"
+  },
+  {
+    "id": "scopequalreadlate",
+    "source": "●Fとは\n　scopequalreadlate__Aを表示\nここまで\nA=7\nF\n"
+  },
+  {
+    "id": "scopequalreadearly",
+    "source": "A=7\n●Fとは\n　scopequalreadearly__Aを表示\nここまで\nF\n"
+  },
+  {
+    "id": "scopequalwritelate",
+    "source": "●Fとは\n　scopequalwritelate__A=5\n　scopequalwritelate__Aを表示\nここまで\nA=9\nF\nAを表示\n"
+  },
+  {
+    "id": "scopequalarraylate",
+    "source": "●Fとは\n　エラー監視\n　　scopequalarraylate__A[1]=5\n　エラーならば\n　　エラーメッセージを表示\n　ここまで\nここまで\nA=9\nF\nAを表示\n"
+  },
+  {
+    "id": "scopequalincrlate",
+    "source": "●Fとは\n　scopequalincrlate__Aを1増やす\n　scopequalincrlate__Aを表示\nここまで\nA=7\nF\nAを表示\n"
+  },
+  {
+    "id": "scopequaldncllate",
+    "source": "!DNCLモード\n●Fとは\n　scopequaldncllate__A[1]=5\n　scopequaldncllate__A[1]を表示\nここまで\nA=9\nF\nAを表示\n"
+  },
+  {
+    "id": "scopequallocalleak",
+    "source": "●Fとは\n　scopequallocalleak__A=1\n　scopequallocalleak__Aを表示\nここまで\nscopequallocalleak__A=0\nF\nscopequallocalleak__Aを表示\n"
+  },
+  {
+    "id": "scopequalwriteearly",
+    "source": "scopequalwriteearly__A=10\n●Fとは\n　scopequalwriteearly__A=20\nここまで\nF\nscopequalwriteearly__Aを表示\n"
+  },
+  {
+    "id": "scopequalcrossfn",
+    "source": "●Fとは\n　scopequalcrossfn__A=1\nここまで\n●Gとは\n　scopequalcrossfn__Aを表示\nここまで\nF\nG\nscopequalcrossfn__Aを表示\n"
+  },
+  {
+    "id": "scopequalmodread",
+    "source": "scopequalmodread__A=0\nscopequalmodread__Aを表示\n"
+  },
+  {
+    "id": "scopequalsamestmt",
+    "source": "もし1=1ならば\n　scopequalsamestmt__A=99\nここまで\n●Fとは\n　scopequalsamestmt__Aを表示\nここまで\nF\n"
+  },
+  {
+    "id": "dncl-v1-array-index-reeval",
+    "source": "●fとは\n「f評価」を表示\nそれは1\nここまで\n!DNCLモード\nA[1,2,f()]=99\n「---」を表示\nA[1,2,1]を表示\n"
+  },
+  {
+    "id": "array-set-container-bound-early",
+    "source": "A=[1,2]\n●fとは\nA=[10,20]\nそれは0\nここまで\nA[f()]=9\nA[0]を表示\n"
+  },
+  {
+    "id": "array-set-index-before-value",
+    "source": "A=[1,2]\n●fとは\n「F評価」を表示\nそれは0\nここまで\n●gとは\n「G評価」を表示\nそれは9\nここまで\nA[f()]=g()\nA[0]を表示\n"
+  },
+  {
+    "id": "increment-indexed-container-bound-early",
+    "source": "A=[1,2]\n●fとは\nA=[10,20]\nそれは0\nここまで\nA[f()]を5増やす\nA[0]を表示\n"
+  },
+  {
+    "id": "increment-amount-after-read",
+    "source": "X=5\nA=[1,2]\n●fとは\nX=100\nそれは6\nここまで\n●gとは\nA[0]=50\nそれは7\nここまで\nXを(f())増やす\nA[0]を(g())増やす\nXを表示\nA[0]を表示\n"
+  },
+  {
+    "id": "increment-indexed-write-retraverses",
+    "source": "A=[[1,2]]\n●fとは\nA[0]=[9]\nそれは10\nここまで\nA[0][0]を(f())増やす\nA[0][0]を表示\n"
+  },
+  {
+    "id": "destructure-qualified-name-local",
+    "source": "●Fとは\n　変数[main__A,B]=[1,2]\n　main__Aを表示\n　Bを表示\nここまで\nF\nmain__Aを表示\n"
+  },
+  {
+    "id": "loop-var-qualified-name-local",
+    "source": "●Fとは\n　main__Iを1から3まで繰り返す\n　ここまで\nここまで\nF\nmain__Iを表示\n"
   }
 ]

@@ -1,9 +1,10 @@
 const std = @import("std");
 const module_graph = @import("../semantic/module_graph.zig");
+const token_mod = @import("../frontend/token.zig");
 
 const magic = "LNAKOQJSBUNDLE1!";
 const trailer_length = @sizeOf(u64) + magic.len;
-const format_version: u32 = 1;
+const format_version: u32 = 2;
 const maximum_payload_size: u64 = 512 * 1024 * 1024;
 
 pub const SourceFile = struct {
@@ -11,11 +12,29 @@ pub const SourceFile = struct {
     source: []const u8,
 };
 
+fn packMode(mode: token_mod.Mode) u8 {
+    var packed_mode: u8 = 0;
+    if (mode.dncl) packed_mode |= 1;
+    if (mode.dncl2) packed_mode |= 2;
+    if (mode.indent) packed_mode |= 4;
+    return packed_mode;
+}
+
+fn unpackMode(packed_mode: u8) token_mod.Mode {
+    return .{
+        .dncl = packed_mode & 1 != 0,
+        .dncl2 = packed_mode & 2 != 0,
+        .indent = packed_mode & 4 != 0,
+    };
+}
+
 pub const Package = struct {
     allocator: std.mem.Allocator,
     backing: []u8,
     entry_path: []const u8,
     files: []SourceFile,
+    /// 生成時に `--dncl` 等で強制された構文モード。起動時の再コンパイルへ復元する。
+    forced_mode: token_mod.Mode = .{},
 
     pub fn deinit(self: *Package) void {
         self.allocator.free(self.files);
@@ -34,12 +53,13 @@ pub const Package = struct {
     }
 };
 
-pub fn createExecutable(allocator: std.mem.Allocator, executable: []const u8, entry_path: []const u8, files: []const SourceFile) ![]u8 {
+pub fn createExecutable(allocator: std.mem.Allocator, executable: []const u8, entry_path: []const u8, files: []const SourceFile, forced_mode: token_mod.Mode) ![]u8 {
     var output: std.ArrayList(u8) = .empty;
     errdefer output.deinit(allocator);
     try output.appendSlice(allocator, executable);
     const payload_start = output.items.len;
     try appendInteger(&output, allocator, u32, format_version);
+    try appendInteger(&output, allocator, u8, packMode(forced_mode));
     if (files.len > std.math.maxInt(u32)) return error.TooManyEmbeddedSources;
     try appendInteger(&output, allocator, u32, @intCast(files.len));
     try appendBytes(&output, allocator, entry_path);
@@ -72,6 +92,7 @@ fn parsePayload(allocator: std.mem.Allocator, payload: []u8) !Package {
     var cursor: usize = 0;
     const version = try readInteger(u32, payload, &cursor);
     if (version != format_version) return error.UnsupportedEmbeddedFormat;
+    const forced_mode = unpackMode(try readInteger(u8, payload, &cursor));
     const file_count = try readInteger(u32, payload, &cursor);
     const entry_path = try readBytes(payload, &cursor);
     const files = try allocator.alloc(SourceFile, file_count);
@@ -81,7 +102,7 @@ fn parsePayload(allocator: std.mem.Allocator, payload: []u8) !Package {
         file.source = try readBytes(payload, &cursor);
     }
     if (cursor != payload.len) return error.InvalidEmbeddedPayload;
-    return .{ .allocator = allocator, .backing = payload, .entry_path = entry_path, .files = files };
+    return .{ .allocator = allocator, .backing = payload, .entry_path = entry_path, .files = files, .forced_mode = forced_mode };
 }
 
 fn appendBytes(output: *std.ArrayList(u8), allocator: std.mem.Allocator, bytes: []const u8) !void {
@@ -114,7 +135,7 @@ test "QuickJS埋め込み実行形式を往復する" {
     const executable = try createExecutable(std.testing.allocator, "EXE", "/src/main.nako3", &.{
         .{ .path = "/src/main.nako3", .source = "!『p.mjs』を取り込む\n" },
         .{ .path = "/src/p.mjs", .source = "export default {}" },
-    });
+    }, .{ .dncl2 = true });
     defer std.testing.allocator.free(executable);
     const payload_length = std.mem.readInt(u64, executable[executable.len - trailer_length ..][0..@sizeOf(u64)], .little);
     const payload_start = executable.len - trailer_length - @as(usize, @intCast(payload_length));
@@ -124,4 +145,7 @@ test "QuickJS埋め込み実行形式を往復する" {
     try std.testing.expectEqualStrings("/src/main.nako3", package.entry_path);
     try std.testing.expectEqual(@as(usize, 2), package.files.len);
     try std.testing.expectEqualStrings("export default {}", package.files[1].source);
+    try std.testing.expect(package.forced_mode.dncl2);
+    try std.testing.expect(!package.forced_mode.dncl);
+    try std.testing.expect(!package.forced_mode.indent);
 }

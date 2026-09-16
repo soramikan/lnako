@@ -1360,6 +1360,498 @@ fn compileForTest(allocator: std.mem.Allocator, source: []const u8) !struct {
     return .{ .parsed = parsed, .analyzed = analyzed, .hir_program = hir_program, .ir_program = ir_program };
 }
 
+const module_graph = @import("../../semantic/module_graph.zig");
+const ast_mod = @import("../../frontend/ast.zig");
+
+const ModuleTestFile = struct { suffix: []const u8, source: []const u8 };
+
+const ModuleTestProvider = struct {
+    files: []const ModuleTestFile,
+
+    fn read(context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+        const self: *ModuleTestProvider = @ptrCast(@alignCast(context));
+        for (self.files) |file| if (std.mem.endsWith(u8, path, file.suffix)) return allocator.dupe(u8, file.source);
+        return error.FileNotFound;
+    }
+};
+
+/// 複数ファイルを使う取り込み実行の確認用。返す出力は allocator 所有。
+fn runModulesForTest(allocator: std.mem.Allocator, files: []const ModuleTestFile) ![]const u8 {
+    var provider = ModuleTestProvider{ .files = files };
+    var graph = try module_graph.load(allocator, "main.nako3", .{ .context = &provider, .readFn = ModuleTestProvider.read }, .{});
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    var analyzed = try graph.analyze(allocator);
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var roots: std.ArrayList(*ast_mod.Node) = .empty;
+    var names: std.ArrayList([]const u8) = .empty;
+    var paths: std.ArrayList([]const u8) = .empty;
+    var variant_roots: std.ArrayList(*ast_mod.Node) = .empty;
+    var variant_counts: std.ArrayList(usize) = .empty;
+    defer roots.deinit(allocator);
+    defer names.deinit(allocator);
+    defer paths.deinit(allocator);
+    defer variant_roots.deinit(allocator);
+    defer variant_counts.deinit(allocator);
+    for (graph.modules) |module| {
+        if (module.kind != .nako3) continue;
+        try roots.append(allocator, module.parsed.?.root.?);
+        try names.append(allocator, module.name);
+        try paths.append(allocator, module.path);
+        var variant_count: usize = 0;
+        for (module.variants.items) |variant| {
+            const variant_root = variant.parse.root orelse continue;
+            try variant_roots.append(allocator, variant_root);
+            variant_count += 1;
+        }
+        try variant_counts.append(allocator, variant_count);
+    }
+    const module_variant_roots = try allocator.alloc([]const *ast_mod.Node, roots.items.len);
+    defer allocator.free(module_variant_roots);
+    var variant_offset: usize = 0;
+    for (variant_counts.items, 0..) |count, index| {
+        module_variant_roots[index] = variant_roots.items[variant_offset .. variant_offset + count];
+        variant_offset += count;
+    }
+    var hir_program = try hir.lower(allocator, roots.items, names.items, paths.items, module_variant_roots, analyzed);
+    defer hir_program.deinit();
+    var ir_program = try lower_ssa.lower(allocator, hir_program);
+    defer ir_program.deinit();
+    var verification = try verifier.verify(allocator, ir_program);
+    defer verification.deinit();
+    try std.testing.expect(verification.succeeded());
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(allocator, &runtime, ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    return allocator.dupe(u8, host.written());
+}
+
+test "取り込み文の位置で取り込み先のトップレベルを実行する" {
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "「A1」と表示。\n!「./lib.nako3」を取り込む\n「A2」と表示。\n" },
+        .{ .suffix = "lib.nako3", .source = "「B1」と表示。\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("A1\nB1\nA2\n", output);
+}
+
+test "取り込みはネストしても取り込み文位置の実行順を保つ" {
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "「A1」と表示。\n!「./mid.nako3」を取り込む\n「A2」と表示。\n" },
+        .{ .suffix = "mid.nako3", .source = "「M1」と表示。\n!「./leaf.nako3」を取り込む\n「M2」と表示。\n" },
+        .{ .suffix = "leaf.nako3", .source = "「L1」と表示。\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("A1\nM1\nL1\nM2\nA2\n", output);
+}
+
+test "同一モジュールの重複取り込みは最後の取り込み文位置で一度だけ実行する" {
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "「A1」と表示。\n!「./lib.nako3」を取り込む\n「A2」と表示。\n!「./lib.nako3」を取り込む\n「A3」と表示。\n" },
+        .{ .suffix = "lib.nako3", .source = "「B1」と表示。\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("A1\nA2\nB1\nA3\n", output);
+}
+
+test "循環取り込みはエントリ内容を一度だけ再展開する" {
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "「A1」と表示。\n!「./lib.nako3」を取り込む\n「A2」と表示。\n" },
+        .{ .suffix = "lib.nako3", .source = "「B1」と表示。\n!「./main.nako3」を取り込む\n「B2」と表示。\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("A1\nB1\nA1\nA2\nB2\nA2\n", output);
+}
+
+test "関数本体内の取り込みは呼び出し毎に実行する" {
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "●Fとは\n　!「./lib.nako3」を取り込む\n　「f-end」と表示。\nここまで。\nF。\nF。\n" },
+        .{ .suffix = "lib.nako3", .source = "「B1」と表示。\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("B1\nf-end\nB1\nf-end\n", output);
+}
+
+test "関数本体内の取り込みは入れ子の取り込みも呼び出し毎に実行する" {
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "●Fとは\n　!「./lib.nako3」を取り込む\n　「f-end」と表示。\nここまで。\nF。\nF。\n" },
+        .{ .suffix = "lib.nako3", .source = "「B1」と表示。\n!「./sub.nako3」を取り込む\n「B2」と表示。\n" },
+        .{ .suffix = "sub.nako3", .source = "「S1」と表示。\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("B1\nS1\nB2\nf-end\nB1\nS1\nB2\nf-end\n", output);
+}
+
+test "関数内展開複製内の循環ガード済み取り込みは外側の辺で再展開しない" {
+    // 展開複製は生成時に対象モジュール自身の取り込み辺で処理済み。
+    // 外側モジュールの辺で再走査すると、循環ガードで空にした取り込み文が
+    // 位置一致で別対象として再展開されてしまう（旧実装はここで無限再帰
+    // した）。mのc向け取り込み文はガードで空のまま残り、eが余計に
+    // 実行されないことを確認する。
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "!「./b.nako3」を取り込む\nF\n「A2」と表示\n" },
+        .{ .suffix = "b.nako3", .source = "●Fとは\n　!「./c.nako3」を取り込む\nここまで\n「B2」と表示\n" },
+        .{ .suffix = "c.nako3", .source = "!「./m.nako3」を取り込む\n!「./e.nako3」を取り込む\n「C2」と表示\n" },
+        .{ .suffix = "m.nako3", .source = "!「./c.nako3」を取り込む\n「M2」と表示\n" },
+        .{ .suffix = "e.nako3", .source = "「E1」と表示\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("B2\nM2\nE1\nC2\nA2\n", output);
+}
+
+test "関数本体内の取り込み先変数は呼び出し元のローカルになる" {
+    // 公式は取り込み先トークンを取り込み文の位置へ展開するため、関数内
+    // では取り込み先の変数宣言が呼び出し元関数のローカルになる（#74）。
+    // 呼び出し後に同じ裸名を参照してもモジュール変数は現れない。
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "●Fとは\n　!「./lib.nako3」を取り込む\n　「F内:」&GVと表示。\nここまで。\nF。\n「後:」&GVと表示。\n" },
+        .{ .suffix = "lib.nako3", .source = "「B1」と表示。\nGV=7\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("B1\nF内:7\n後:undefined\n", output);
+}
+
+test "関数本体内の取り込み先の関数はグローバルに登録される" {
+    // 変数宣言はローカル化されるが、取り込み先の関数定義は公式と同様に
+    // グローバル登録され、後から呼び出せる。その関数本体からは取り込み先
+    // モジュールの変数として解決される（関数内宣言は届かない）。
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "●Fとは\n　!「./lib.nako3」を取り込む\nここまで。\nF。\nLIBF。\n" },
+        .{ .suffix = "lib.nako3", .source = "GV=7\n●LIBFとは\n　「lib内:」&GVと表示。\nここまで。\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("lib内:undefined\n", output);
+}
+
+test "循環取り込みの再展開コピーは取り込み位置のモードで解析される" {
+    // コピーは循環取り込み位置で有効だったモード（ここではDNCL＝1始まり
+    // 添字）で再解析される（#73）。コピー内の A[0] は1始まりでは範囲外
+    // なので undefined になる。
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "A=[10,20]\n「M1:」&A[0]と表示\nDNCLモード\n!「./lib.nako3」を取り込む\n「M3:」&A[1]と表示\n" },
+        .{ .suffix = "lib.nako3", .source = "「L1」と表示\nDNCLモード\n!「./main.nako3」を取り込む\n「L2」と表示\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("M1:10\nL1\nM1:undefined\nM3:10\nL2\nM3:10\n", output);
+}
+
+test "循環取り込みで除去された辺のtailモードはコピーへ適用されない" {
+    // コピー内では取り込み先が展開済みの辺が除去されるため、本体側で
+    // その位置へ適用されていたtailモードはコピーには効かない（#73）。
+    // コピーの A[1] は0始まりのままなので 20 になる。
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "A=[10,20]\n「M1」と表示\n!「./lib.nako3」を取り込む\n「M3:」&A[1]と表示\n" },
+        .{ .suffix = "lib.nako3", .source = "「L1」と表示\n!「./main.nako3」を取り込む\n!DNCLモード\n「L2」と表示\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("M1\nL1\nM1\nM3:20\nL2\nM3:10\n", output);
+}
+
+test "関数本体内の取り込み先の制御構文内関数定義もグローバルに登録される" {
+    // 展開複製の中で制御構文の内側にある関数定義も、公式では取り込み先
+    // モジュールの関数としてグローバル登録される（呼び出し元関数の
+    // ローカル宣言にはならない）。
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "●Fとは\n　!「./lib.nako3」を取り込む\n　「F内:」&GVと表示。\nここまで。\nF。\n「後:」&GVと表示。\nLIBF。\n" },
+        .{ .suffix = "lib.nako3", .source = "もし、真ならば\n　●LIBFとは\n　　「lib内」と表示。\n　ここまで。\nここまで。\nGV=7\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("F内:7\n後:undefined\nlib内\n", output);
+}
+
+test "循環取り込みの変体内の関数定義は後勝ちで本体を置き換える" {
+    // 公式はコピー内の関数定義も生成順に登録するため、コピー（DNCL＝1始まり）
+    // で定義された同名関数が全呼び出しで使われる。コピー側のA[0]は1始まり
+    // では範囲外なので F:undefined になる（#73）。
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "A=[10,20]\n●F\n　「F:」&A[0]と表示\nここまで\n「M1:」&A[0]と表示\nDNCLモード\n!「./lib.nako3」を取り込む\nF\n「M3:」&A[1]と表示\nF\n" },
+        .{ .suffix = "lib.nako3", .source = "「L1」と表示\n!「./main.nako3」を取り込む\n「L2」と表示\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("M1:10\nL1\nM1:undefined\nF:undefined\nM3:10\nF:undefined\nL2\nF:undefined\nM3:10\nF:undefined\n", output);
+}
+
+test "循環取り込み変体の関数定義はコピーより前の呼び出しにも効く" {
+    // 公式は関数定義を静的登録するため、変体内の同名定義がコピー実行位置
+    // より前の呼び出しにも適用される（コピーはDNCL＝1始まり）。よって
+    // コピー前の F 呼び出しも undefined を表示する（#73）。
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "A=[10,20]\n●F\n　「F:」&A[0]と表示\nここまで\nF\nDNCLモード\n!「./lib.nako3」を取り込む\nF\n" },
+        .{ .suffix = "lib.nako3", .source = "「L1」と表示\n!「./main.nako3」を取り込む\nF\nF\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("F:undefined\nL1\nF:undefined\nF:undefined\nF:undefined\nF:undefined\nF:undefined\n", output);
+}
+
+test "ループ本体内の取り込みは繰り返し毎に実行する" {
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "3回\n　!「./lib.nako3」を取り込む\nここまで。\n" },
+        .{ .suffix = "lib.nako3", .source = "「B1」と表示。\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("B1\nB1\nB1\n", output);
+}
+
+test "エントリの自己取り込みは一度だけ再展開する" {
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "「M1」と表示。\n!「./main.nako3」を取り込む\n「M2」と表示。\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("M1\nM1\nM2\nM2\n", output);
+}
+
+test "関数本体内の取り込み先からの呼び戻しで取り込み内容を再実行する" {
+    // 公式は取り込み先トークンを関数本体へ静的展開するため、関数が取り込み
+    // 先のコードから呼び戻されると取り込み内容も毎回実行される（実行中の
+    // モジュールエントリを無条件に抑止するガードではこのケースが終了して
+    // しまい公式と一致しない）。main__Gは修飾名なのでモジュール変数になり、
+    // 3回目で再帰が止まる。
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "G=0\n●Fとは\n　「F内」と表示。\n　!「./lib.nako3」を取り込む\nここまで。\nF。\nGを表示。\n" },
+        .{ .suffix = "lib.nako3", .source = "「lib側」と表示。\nmain__G=main__G+1\nもし、main__G<3ならば\n　main__F()\nここまで。\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("F内\nlib側\nF内\nlib側\nF内\nlib側\n3\n", output);
+}
+
+test "取り込んだモジュールの同名シンボルは展開順の先勝ちで解決する" {
+    // 公式findVarはmodList（エントリ→展開マーカー順）で最初に一致した
+    // 公開モジュールシンボルを選ぶ。曖昧さエラーにはならない。
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "!「./a.nako3」を取り込む\n!「./b.nako3」を取り込む\nFを表示\nAXを表示\n" },
+        .{ .suffix = "a.nako3", .source = "●Fとは\n「A」で戻る\nここまで\n変数 AX=1\n" },
+        .{ .suffix = "b.nako3", .source = "●Fとは\n「B」で戻る\nここまで\n変数 AX=2\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("A\n1\n", output);
+}
+
+test "推移的に取り込んだモジュールの変数を裸名で解決する" {
+    // 公式のmodListは直接importではなく展開された全モジュールを含む
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "!「./mid.nako3」を取り込む\nXを表示\n" },
+        .{ .suffix = "mid.nako3", .source = "!「./leaf.nako3」を取り込む\n" },
+        .{ .suffix = "leaf.nako3", .source = "変数 X=99\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("99\n", output);
+}
+
+test "取り込み先の代入はエントリの同名変数をmodList解決で上書きする" {
+    // 公式は代入先もfindVarで解決するため、modBの X=99 は先に展開
+    // マーカーが出たエントリの main__X へ書き込まれる。
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "X=1\n!「./mod.nako3」を取り込む\nXを表示\n" },
+        .{ .suffix = "mod.nako3", .source = "X=99\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("99\n", output);
+}
+
+test "取り込み先の変数宣言はエントリの同名変数を上書きしない" {
+    // 変数宣言はfindVarを使わずcreateVar相当で常にmodB__Xを作る。
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "変数 X=1\n!「./mod.nako3」を取り込む\nXを表示\n" },
+        .{ .suffix = "mod.nako3", .source = "変数 X=99\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("1\n", output);
+}
+
+test "取り込み先関数本体内の代入もmodList順でエントリ変数を上書きする" {
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "X=1\n!「./mod.nako3」を取り込む\nF()\nXを表示\n" },
+        .{ .suffix = "mod.nako3", .source = "●Fとは\nX=99\nここまで\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("99\n", output);
+}
+
+test "関数定義位置より後のエントリ変数は取り込み先関数から見えない" {
+    // 関数本体のパース時点では main__X が未登録のため X は関数ローカル。
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "!「./mod.nako3」を取り込む\nX=1\nG()\nXを表示\n" },
+        .{ .suffix = "mod.nako3", .source = "●Gとは\nX=99\nここまで\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("1\n", output);
+}
+
+test "DNCL自動初期化は中間添字をcheck式とwrite-back式で評価し直す" {
+    // 公式convLetArrayは `if (!(tmp[k0]..[ki] instanceof Array)) { tmp[k0]..[ki] = 新規配列 }`
+    // を生成するため、初期化が走る中間レベルの添字式はcheck・write-back・
+    // 後続レベルのcheck/write-back・最終代入で合計2×中間レベル数+1回評価される。
+    // A[1,2,f()]=99 はDNCLの逆順規則で A[f()][2][1] になるため f() は5回評価される。
+    const source = "●fとは\n「f評価」を表示\nそれは1\nここまで\n!DNCLモード\nA[1,2,f()]=99\n「---」を表示\nA[1,2,1]を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("f評価\nf評価\nf評価\nf評価\nf評価\n---\n99\n", host.written());
+}
+
+test "DNCL自動初期化のwrite-backでnullishな親は設定系TypeErrorになる" {
+    // g()はcheck時とwrite-back時で異なる添字を返し、write-backの親走査が
+    // 未初期化要素へずれ込む。公式はwrite-back式 `tmp[..]=新規配列` が
+    // 『Cannot set properties of undefined』で失敗する（読み出し系ではない）。
+    const source = "G=-1\nSEQ=[1,1,1,32,1]\n●gとは\nG=G+1\nそれはSEQ[G]\nここまで\n●hとは\nそれは0\nここまで\n!DNCLモード\nA=[9]\nA[h(),1,g(),1]=77\n「完了」を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    try std.testing.expectError(error.NakoException, interpreter.run());
+    const message_utf8 = try interpreter.exception_value.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(message_utf8);
+    try std.testing.expectEqualStrings("Cannot set properties of undefined (setting '0')", message_utf8);
+}
+
+test "添字代入はルート変数を添字・値の評価より先に束縛する" {
+    // 公式convLetは `get(name)[k0] = value` を生成し、コンテナ参照を
+    // 添字評価より先に束縛する。添字式がルート変数を再束縛しても
+    // 代入は束縛済みの古いコンテナへ行われ、値の評価は添字の後になる。
+    // 公式では A[0] は再束縛後の新しい配列を指すため 10 になる。
+    const source = "A=[1,2]\n●fとは\nA=[10,20]\nそれは0\nここまで\nA[f()]=9\nA[0]を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("10\n", host.written());
+}
+
+test "添字代入は添字式を値の評価より先に評価する" {
+    // 公式convLetは `get(name)[key] = value` で、keyの評価がvalueより先。
+    // プロパティ代入 `A["x"]=f()` でも同じく、値評価中の再束縛後ではなく
+    // 束縛済みのコンテナへ書き込む（公式では A["x"] は新しい辞書の 10）。
+    const source = "A=[1,2]\n●fとは\n「F評価」を表示\nそれは0\nここまで\n●gとは\n「G評価」を表示\nそれは9\nここまで\nA[f()]=g()\nA[0]を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("F評価\nG評価\n9\n", host.written());
+}
+
+test "添字増減はルート変数を添字評価より先に束縛する" {
+    // 公式convIncは `o1=get(name); i1=k; ...` でコンテナを添字評価より
+    // 先に束縛する。添字式がルート変数を再束縛しても増減は束縛済みの
+    // 古いコンテナへ行われる（公式では A[0] は新しい配列の 10）。
+    const source = "A=[1,2]\n●fとは\nA=[10,20]\nそれは0\nここまで\nA[f()]を5増やす\nA[0]を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("10\n", host.written());
+}
+
+test "増減量式は要素読み出し・undefined初期化の後に評価される" {
+    // 公式convIncは `v0 = varGetter` で読み出してから
+    // `Number(v0) + Number(incValue)` の行で増減量式を評価する。
+    // 量の式が対象を再代入しても加算には読み出し済みの値が使われ、
+    // 最終的な書き戻しは量の式による代入を上書きする
+    // （公式は f()でX=100・戻り値6 → Xは 5+6=11、g()でA[0]=50・戻り値7 → A[0]は 1+7=8）。
+    const source = "X=5\nA=[1,2]\n●fとは\nX=100\nそれは6\nここまで\n●gとは\nA[0]=50\nそれは7\nここまで\nXを(f())増やす\nA[0]を(g())増やす\nXを表示\nA[0]を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("11\n8\n", host.written());
+}
+
+test "添字増減の書き戻しは量の評価後に中間コンテナを再走査する" {
+    // 公式convIncのvarSetterは `o1[i1]…` を量の評価後に再評価する。
+    // 量の式が中間コンテナを差し替えた場合、書き戻しは新しい中間
+    // コンテナへ行われる（公式は A[0][0] が 11）。
+    const source = "A=[[1,2]]\n●fとは\nA[0]=[9]\nそれは10\nここまで\nA[0][0]を(f())増やす\nA[0][0]を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("11\n", host.written());
+}
+
+test "DNCL最終代入は初期化チェック後にルート変数を読み直す" {
+    // 公式convLetArrayの最終代入は `code = name` から生成するため、
+    // 初期化チェックの添字評価でルートが再束縛されると新しい値へ
+    // 書き込もうとする。A[2,f()]=7 はDNCL逆順で A[f()][2] になり、
+    // f()のA=9への再束縛後は数値の要素代入が
+    // 『Cannot set properties of undefined』で失敗する。
+    const source = "A=[[1,2],[3,4]]\n●fとは\nA=9\nそれは0\nここまで\n!DNCLモード\nA[2,f()]=7\n「完了」を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    try std.testing.expectError(error.NakoException, interpreter.run());
+    const message_utf8 = try interpreter.exception_value.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(message_utf8);
+    try std.testing.expectEqualStrings("Cannot set properties of undefined (setting '1')", message_utf8);
+}
+
 fn testInterpreterCustomString(runtime: *Runtime, _: []const Value) !Value {
     return runtime.stringUtf8("CUSTOM");
 }
