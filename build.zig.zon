@@ -3,7 +3,12 @@
     .version = "0.1.1",
     .fingerprint = 0x530882d315a61e55,
     .minimum_zig_version = "0.16.0",
-    .dependencies = .{},
+    .dependencies = .{
+        .zig_pubgrub = .{
+            .url = "https://github.com/soramikan/zig-pubgrub/archive/19c32b8867fd8fa1f02e1670c485a2c5dab18ed8.tar.gz",
+            .hash = "zig_pubgrub-0.1.0-G2CuJIl1AgD2h1wh0o7Y-S3aHVUqnbs_u8i7vYvuiIk-",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

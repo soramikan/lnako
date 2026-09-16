@@ -9,6 +9,9 @@ pub fn build(b: *std.Build) void {
     build_options.addOption([]const u8, "compat_summary_json", @embedFile("compat/v3.7.24/summary.json"));
     build_options.addOption([]const u8, "toolchain_lock_json", @embedFile("toolchain.lock.json"));
 
+    const pubgrub_dep = b.dependency("zig_pubgrub", .{ .target = target, .optimize = optimize });
+    const pubgrub = pubgrub_dep.module("pubgrub");
+
     const unicode_case = b.createModule(.{
         .root_source_file = b.path("src/generated/unicode_case.zig"),
         .target = target,
@@ -39,6 +42,7 @@ pub fn build(b: *std.Build) void {
     lnako.addImport("unicode_case", unicode_case);
     lnako.addImport("unicode_properties", unicode_properties);
     lnako.addImport("regexp", regexp);
+    lnako.addImport("pubgrub", pubgrub);
     if (compat_js) {
         configureQuickJs(b, lnako, target.result.os.tag);
     } else {
