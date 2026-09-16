@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const state = @import("state.zig");
 const shared = @import("shared.zig");
 const foundation = @import("../low_level_foundation.zig");
@@ -1207,6 +1208,8 @@ test "AOT raw stdioの書込み失敗は構造化エラーを投げる" {
     try std.testing.expectError(error.NakoException, stdioWriteBuiltin(&runtime, &.{roots[0]}, false));
     const code = try aotThrownCode(&runtime);
     defer runtime.allocator.free(code);
-    // 読取り専用fdへの書込みはNotOpenForWriting→EBADFへ写像される。
-    try std.testing.expectEqualStrings("EBADF", code);
+    // 読取り専用fdへの書込みはPOSIXではNotOpenForWriting→EBADF、Windowsでは
+    // WriteFileがERROR_ACCESS_DENIEDを返すためAccessDenied→EACCESへ写像される。
+    const expected = if (builtin.os.tag == .windows) "EACCES" else "EBADF";
+    try std.testing.expectEqualStrings(expected, code);
 }
