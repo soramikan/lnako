@@ -87,7 +87,9 @@ for (const [index, source] of cases.entries()) {
     removeRequireStatements: () => [],
   });
   const official = normalizeOfficialTokens(tokenizer.rawtokenize(source, 0, "oracle.nako3"), tokenizer);
-  const actual = actualCases[index].filter((token) => token.kind !== "eof").map(normalizeActual);
+  const actual = actualCases[index]
+    .filter((token) => token.kind !== "eof" && token.kind !== "keyword_dncl_mode" && token.kind !== "keyword_dncl2_mode")
+    .map(normalizeActual);
   if (JSON.stringify(actual) !== JSON.stringify(official)) {
     failures += 1;
     console.error(`差分: ${JSON.stringify(source)}\nofficial=${JSON.stringify(official)}\nlnako  =${JSON.stringify(actual)}`);

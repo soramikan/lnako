@@ -35,6 +35,9 @@ pub const Kind = enum {
     variable_definition,
     variable_list_definition,
     increment,
+    /// A[i]をN増やす 相当。name=対象変数、children=[増減量, 添字...]。
+    /// 公式の AstInc(name=ref_array) に相当し、kindNameは "inc" を共有する。
+    increment_indexed,
     array_literal,
     object_literal,
     binary_operator,
@@ -79,10 +82,20 @@ pub const Node = struct {
     is_export: bool = false,
     is_async: bool = false,
     check_array_init: bool = false,
+    /// 読み取り側の配列添字で、カンマの直前に現れた裸の単語。
+    /// 公式はfunc tokenをカンマ直前では値として受理しないため、
+    /// 意味解析で関数へ解決された場合は『配列アクセスで指定ミス』にする。
+    bare_index_word: bool = false,
     grouped: bool = false,
     /// C風の `命令(...)` 呼び出しだけを、助詞構文と区別する。
     is_c_style_call: bool = false,
     loop_direction: LoopDirection = .automatic,
+    /// 関数本体内の実効取り込み文だけが持つ、取り込み先トップレベル文の
+    /// 複製。公式は取り込み先トークンを取り込み文の位置へそのまま展開する
+    /// ため、関数内では取り込み先の変数・文が呼び出し元関数のローカルに
+    /// なる。module_graph が複製を接続し、意味解析は呼び出し元スコープの
+    /// まま取り込み先モジュール名で名前解決する。
+    expansion: []const *Node = &.{},
 };
 
 pub fn kindName(kind: Kind) []const u8 {
@@ -105,6 +118,7 @@ pub fn kindName(kind: Kind) []const u8 {
         .variable_definition => "def_local_var",
         .variable_list_definition => "def_local_varlist",
         .increment => "inc",
+        .increment_indexed => "inc",
         .array_literal => "json_array",
         .object_literal => "json_obj",
         .binary_operator => "op",

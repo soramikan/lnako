@@ -209,35 +209,12 @@ pub fn v8SmallArrayCallbackSort(
     result_root: *Value,
     pivot_root: *Value,
 ) !void {
-    // V8 uses CountAndMakeRun followed by BinaryInsertionSort when the
-    // receiver length is below 64. The collected AOT values stay detached
-    // from the live array until stableArrayCallbackSort commits the result.
+    // Node 26のV8は64要素未満でrun検出を行わず、先頭からbinary insertion
+    // sortだけを実行する。収集済みのAOT値はstableArrayCallbackSortが結果を
+    // 確定するまで実配列から切り離したままにする。
     if (items.len < 2) return;
 
-    var run_length: usize = 2;
-    const first_order = try compareAotCallback(runtime, callable_root.*, items[1], presence[1], items[0], presence[0], result_root);
-    if (first_order == .lt) {
-        while (run_length < items.len) : (run_length += 1) {
-            const order = try compareAotCallback(runtime, callable_root.*, items[run_length], presence[run_length], items[run_length - 1], presence[run_length - 1], result_root);
-            if (order != .lt) break;
-        }
-        var left: usize = 0;
-        var right: usize = run_length - 1;
-        while (left < right) : ({
-            left += 1;
-            right -= 1;
-        }) {
-            std.mem.swap(Value, &items[left], &items[right]);
-            std.mem.swap(bool, &presence[left], &presence[right]);
-        }
-    } else {
-        while (run_length < items.len) : (run_length += 1) {
-            const order = try compareAotCallback(runtime, callable_root.*, items[run_length], presence[run_length], items[run_length - 1], presence[run_length - 1], result_root);
-            if (order == .lt) break;
-        }
-    }
-
-    var start = run_length;
+    var start: usize = 1;
     while (start < items.len) : (start += 1) {
         pivot_root.* = items[start];
         const pivot_presence = presence[start];

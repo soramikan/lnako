@@ -651,6 +651,8 @@ pub fn joinValues(self: *Interpreter, arguments: []const Value) !Value {
     var output: std.ArrayList(u8) = .empty;
     defer output.deinit(self.allocator);
     for (arguments) |value| {
+        // 公式はArray.join('')相当で、undefined/null要素を空文字として連結する。
+        if (value == .undefined or value == .null_value) continue;
         const text = try self.runtime.valueToString(value);
         const utf8 = try text.string.toUtf8Lossy(self.allocator);
         defer self.allocator.free(utf8);

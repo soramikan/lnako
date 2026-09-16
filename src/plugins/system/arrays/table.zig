@@ -50,7 +50,7 @@ pub const tableInsertColumn = table_projection_mod.tableInsertColumn;
 pub const tableDeleteColumn = table_projection_mod.tableDeleteColumn;
 pub const tableColumnSum = table_projection_mod.tableColumnSum;
 
-test "表ソートの小配列比較順はV8のrun検出規則を保つ" {
+test "表ソートの小配列比較順はV8のbinary insertion規則を保つ" {
     var runtime = Runtime.init(std.testing.allocator);
     defer runtime.deinit();
     runtime.setGcStress(true);
@@ -77,7 +77,7 @@ test "表ソートの小配列比較順はV8のrun検出規則を保つ" {
     try roots.protect(&table);
 
     _ = try tableSort(&runtime, table, .{ .number = 0 }, false);
-    try std.testing.expectEqualStrings("ACBABCBA", context.log[0..context.count]);
+    try std.testing.expectEqualStrings("ACBCBA", context.log[0..context.count]);
     try std.testing.expectEqual(row_a.array, table.array.get(0).array);
     try std.testing.expectEqual(row_b.array, table.array.get(1).array);
     try std.testing.expectEqual(row_c.array, table.array.get(2).array);
@@ -86,7 +86,7 @@ test "表ソートの小配列比較順はV8のrun検出規則を保つ" {
     var numeric_table = try common.arrayFromValues(&runtime, &.{ row_c, row_a, row_b });
     try roots.protect(&numeric_table);
     _ = try tableSort(&runtime, numeric_table, .{ .number = 0 }, true);
-    try std.testing.expectEqualStrings("ACBABCBA", context.log[0..context.count]);
+    try std.testing.expectEqualStrings("ACBCBA", context.log[0..context.count]);
     try std.testing.expectEqual(row_a.array, numeric_table.array.get(0).array);
     try std.testing.expectEqual(row_b.array, numeric_table.array.get(1).array);
     try std.testing.expectEqual(row_c.array, numeric_table.array.get(2).array);

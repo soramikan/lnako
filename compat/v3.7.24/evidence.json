@@ -8,9 +8,9 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 420,
-    "nativeAot": 318,
-    "interpreter": 112,
+    "total": 529,
+    "nativeAot": 362,
+    "interpreter": 177,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
@@ -3327,7 +3327,7 @@
         "proofSchema": "lnako.static-constant-evidence.v2",
         "fixtureId": "native-array-system-constants",
         "siteIds": [
-          "0x0000000000000002"
+          "0x0000000000000004"
         ],
         "officialComparison": [
           "officialSource",
@@ -9068,9 +9068,11 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
+        "native-system-array-callback-order",
         "native-system-array-join-search-commands",
         "native-system-array-particle-omission",
-        "native-system-array-sparse-presence"
+        "native-system-array-sparse-presence",
+        "native-system-table-sort-callback-order"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -9084,6 +9086,9 @@
           "native-cut-commands": [
             "fixture.commands"
           ],
+          "native-system-array-callback-order": [
+            "fixture.commands"
+          ],
           "native-system-array-join-search-commands": [
             "implemented.tests"
           ],
@@ -9093,6 +9098,9 @@
           "native-system-array-sparse-presence": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-system-table-sort-callback-order": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
@@ -9387,8 +9395,10 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
+        "native-system-array-callback-order",
         "native-system-array-sort-commands",
-        "native-system-array-sparse-ordering"
+        "native-system-array-sparse-ordering",
+        "native-system-table-sort-callback-order"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -9402,12 +9412,18 @@
           "native-cut-commands": [
             "fixture.commands"
           ],
+          "native-system-array-callback-order": [
+            "fixture.commands"
+          ],
           "native-system-array-sort-commands": [
             "implemented.tests"
           ],
           "native-system-array-sparse-ordering": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-system-table-sort-callback-order": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
@@ -9992,7 +10008,9 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
-        "native-system-array-mutation-commands"
+        "native-system-array-callback-order",
+        "native-system-array-mutation-commands",
+        "native-system-table-sort-callback-order"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -10006,8 +10024,14 @@
           "native-cut-commands": [
             "fixture.commands"
           ],
+          "native-system-array-callback-order": [
+            "fixture.commands"
+          ],
           "native-system-array-mutation-commands": [
             "implemented.tests"
+          ],
+          "native-system-table-sort-callback-order": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
@@ -15999,7 +16023,7 @@
         "proofSchema": "lnako.static-constant-evidence.v2",
         "fixtureId": "native-array-system-constants",
         "siteIds": [
-          "0x0000000000000001"
+          "0x0000000000000003"
         ],
         "officialComparison": [
           "officialSource",
