@@ -546,6 +546,9 @@ test "相対targetはリンクの親ディレクトリ基準で解決する" {
 }
 
 test "ハードリンク作成はリンク数を増やし同一inodeを共有する" {
+    // WindowsはZig 0.16 stdのDir.hardLinkが未対応でENOTSUPになる
+    // （capability hardlink の os.windows はfalse。Issue #78で対応予定）。
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "target.txt", .data = "xyz" });
