@@ -212,7 +212,9 @@ pub const Provider = struct {
 pub const ResolveOptions = struct {
     target: Target = .{},
     prefer_oldest: bool = false,
-    /// feature 統合の反復上限。単調増加のみを許すため通常は数回で収束する。
+    /// feature 要求の不動点を求める反復上限。要求は選択 version の変化で
+    /// 減ることもあり収束は単調ではないため、収束しない場合はこの上限で
+    /// `error.FeatureIterationExceeded` とする。
     max_feature_iterations: u32 = 64,
 };
 
@@ -726,6 +728,10 @@ pub fn resolve(gpa: Allocator, provider: Provider, root_deps: []const Dependency
 /// 対象 package の prerelease 候補のうち元 range が許可しないものを区間から
 /// 除外して PubGrub へ渡す。親 version が変わればその辺の除外も変わるため、
 /// 別の親版が許可する有効解を消さない。
+///
+/// このため辺の制約生成時に対象 package の `listVersions` を呼ぶ。
+/// `error.PackageNotFound` は除外なしとして扱い、それ以外の provider エラーは
+/// そのまま伝搬する（取得失敗が解決失敗として表面化する）。
 fn applyPrereleaseGate(gpa: Allocator, provider: Provider, dep: Dependency) !Range {
     const range = dep.semver_range orelse return dep.constraint;
     const versions = provider.listVersions(gpa, dep.id) catch |err| switch (err) {
