@@ -35,11 +35,14 @@
       "errors": [
         "ENOENT",
         "EACCES",
+        "EPERM",
         "EISDIR",
         "EINVAL",
         "EMFILE",
         "ENFILE",
-        "ENOTSUP"
+        "ENOTSUP",
+        "EROFS",
+        "ENOSPC"
       ],
       "notes": "MODEは省略時は読み込み専用。文字列flags（r/r+/w/w+/a/a+にb/x/s修飾）。EOFは0 byte read",
       "paramTypes": {
@@ -97,7 +100,8 @@
         "EINVAL",
         "ENOSPC",
         "EPIPE",
-        "ENOTSUP"
+        "ENOTSUP",
+        "EROFS"
       ],
       "notes": "戻り値は実際に書いたbyte数",
       "implemented": true
@@ -133,7 +137,9 @@
         "EBADF",
         "EINVAL",
         "ENOSPC",
-        "ENOTSUP"
+        "ENOTSUP",
+        "EPERM",
+        "EROFS"
       ],
       "notes": "ftruncate相当。SIZEはu64",
       "implemented": true
@@ -320,12 +326,14 @@
       "errors": [
         "ENOENT",
         "EACCES",
+        "EPERM",
         "ENOTDIR",
         "ELOOP",
-        "EINVAL"
+        "EINVAL",
+        "ENOTSUP"
       ],
-      "notes": "stat。symlinkは追跡する。整数はナノ秒BigIntで返す",
-      "implemented": false
+      "notes": "stat。symlinkは追跡する。sizeはsize型、時刻はナノ秒BigIntまたはnull、その他の整数はnumber。Linuxはstatx（kernel 4.11以降）が必要で、非対応時はENOTSUP",
+      "implemented": true
     },
     {
       "id": "ll-file-lstat",
@@ -340,12 +348,14 @@
       "errors": [
         "ENOENT",
         "EACCES",
+        "EPERM",
         "ENOTDIR",
         "ELOOP",
-        "EINVAL"
+        "EINVAL",
+        "ENOTSUP"
       ],
-      "notes": "lstat。symlink自身の情報",
-      "implemented": false
+      "notes": "lstat。symlink自身の情報。Linuxはstatx（kernel 4.11以降）が必要で、非対応時はENOTSUP",
+      "implemented": true
     },
     {
       "id": "ll-symlink-create",
@@ -363,10 +373,14 @@
         "EACCES",
         "ENOTDIR",
         "EPERM",
-        "ENOTSUP"
+        "ELOOP",
+        "EROFS",
+        "ENOSPC",
+        "ENOTSUP",
+        "EINVAL"
       ],
-      "notes": "Windowsはfile/directory/junction差を命令仕様で吸収。junction作成はtarget種別の自動判定",
-      "implemented": false
+      "notes": "Windowsはfile/directory symlink差をtarget種別で自動判定して吸収する。未作成/判定不能なtargetはfile symlinkとして作成する。directory symlinkにはsymlink権限が必要（無い場合はEACCES/EPERMのいずれか）",
+      "implemented": true
     },
     {
       "id": "ll-symlink-read",
@@ -382,11 +396,13 @@
         "EINVAL",
         "ENOENT",
         "EACCES",
+        "EPERM",
+        "ENOTDIR",
         "ELOOP",
         "ENOTSUP"
       ],
-      "notes": "readlink。対象がsymlinkでない場合はEINVAL",
-      "implemented": false
+      "notes": "readlink。対象がsymlinkでない場合はEINVAL。戻り値はOSパス（WTF-8）をUTF-16へ可逆変換し、孤立サロゲートを保持する。WTF-8として不正な任意バイト列はlossy（U+FFFD）になる",
+      "implemented": true
     },
     {
       "id": "ll-hardlink-create",
@@ -401,12 +417,18 @@
       "errors": [
         "EEXIST",
         "ENOENT",
-        "EXDEV",
+        "EACCES",
         "EPERM",
-        "ENOTSUP"
+        "EXDEV",
+        "ENOTDIR",
+        "ELOOP",
+        "EROFS",
+        "ENOSPC",
+        "ENOTSUP",
+        "EINVAL"
       ],
-      "notes": "link",
-      "implemented": false
+      "notes": "link。Windowsでは未対応（常にENOTSUP）",
+      "implemented": true
     },
     {
       "id": "ll-path-realpath",
@@ -421,11 +443,14 @@
       "errors": [
         "ENOENT",
         "EACCES",
+        "EPERM",
+        "ENOTDIR",
         "ELOOP",
-        "ENOTDIR"
+        "ENOTSUP",
+        "EINVAL"
       ],
-      "notes": "realpath。絶対パスを返す",
-      "implemented": false
+      "notes": "realpath。絶対パスを返す。戻り値はOSパス（WTF-8）をUTF-16へ可逆変換し、孤立サロゲートを保持する。WTF-8として不正な任意バイト列はlossy（U+FFFD）になる",
+      "implemented": true
     },
     {
       "id": "ll-path-rename",
@@ -441,14 +466,19 @@
         "ENOENT",
         "EEXIST",
         "EACCES",
+        "EPERM",
         "EXDEV",
         "ENOTEMPTY",
         "EISDIR",
         "ENOTDIR",
-        "ENOTSUP"
+        "ELOOP",
+        "EROFS",
+        "ENOSPC",
+        "ENOTSUP",
+        "EINVAL"
       ],
       "notes": "EXDEVを呼び出し側が識別できる",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-path-unlink",
@@ -466,10 +496,13 @@
         "EPERM",
         "EISDIR",
         "ENOTDIR",
-        "ENOTSUP"
+        "ELOOP",
+        "EROFS",
+        "ENOTSUP",
+        "EINVAL"
       ],
       "notes": "unlink。ファイル・symlinkを対象にし、ディレクトリはEISDIR",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-path-rmdir",
@@ -487,10 +520,13 @@
         "EACCES",
         "ENOTEMPTY",
         "EPERM",
-        "ENOTSUP"
+        "ELOOP",
+        "EROFS",
+        "ENOTSUP",
+        "EINVAL"
       ],
       "notes": "空でない場合はENOTEMPTY",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-file-truncate-path",
@@ -505,6 +541,7 @@
       "errors": [
         "ENOENT",
         "EACCES",
+        "EPERM",
         "EISDIR",
         "ENOSPC",
         "EINVAL",
@@ -634,6 +671,7 @@
         "ENOENT",
         "ENOTDIR",
         "EACCES",
+        "EPERM",
         "EMFILE",
         "ENFILE",
         "ENOTSUP"
@@ -689,6 +727,7 @@
         "ENOENT",
         "ENOTDIR",
         "EACCES",
+        "EPERM",
         "ENOTSUP"
       ],
       "notes": "糖衣。正本はhandle型",
@@ -1037,6 +1076,7 @@
       "errors": [
         "ENOENT",
         "EACCES",
+        "EPERM",
         "ENOTDIR",
         "EINVAL",
         "ENOTSUP"
@@ -1058,6 +1098,7 @@
         "ENOENT",
         "EEXIST",
         "EACCES",
+        "EPERM",
         "EXDEV",
         "ENOTSUP"
       ],
@@ -1205,13 +1246,13 @@
       "id": "stat",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": "conditional",
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1231,13 +1272,13 @@
       "id": "lstat",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": "conditional",
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1257,13 +1298,13 @@
       "id": "symlink",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": true,
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1283,13 +1324,13 @@
       "id": "readlink",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": true,
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1309,13 +1350,13 @@
       "id": "realpath",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": true,
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1335,13 +1376,13 @@
       "id": "rename",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": true,
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1361,13 +1402,13 @@
       "id": "unlink",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": true,
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1387,13 +1428,13 @@
       "id": "rmdir",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": true,
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1595,13 +1636,13 @@
       "id": "hardlink",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
+        "linux": true,
+        "macos": true,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -2018,7 +2059,7 @@
     "pid": "プロセスID。u32",
     "signal": "POSIX信号番号。u32",
     "stream": "標準入力/標準出力/標準エラー出力の識別子。string",
-    "stat": "ファイル詳細情報の辞書。整数はナノ秒BigInt",
+    "stat": "ファイル詳細情報の辞書。sizeはsize型、時刻はナノ秒BigIntまたはnull、その他の整数はnumber",
     "dirEntry": "ディレクトリentryの辞書。nameとtype",
     "waitResult": "プロセス終了の辞書。exitCodeとsignal",
     "ttySize": "端末サイズの辞書。rowsとcolumns",
@@ -2518,7 +2559,7 @@
         "ctimeNs": "timestamp",
         "birthtimeNs": "timestamp"
       },
-      "note": "取得できない時刻はnull。時刻はナノ秒BigInt"
+      "note": "取得できない時刻はnull。時刻はナノ秒BigInt。modeはpermission bits（S_IFMTを含まない）。size以外の整数はnumber（binary64のため2^53超は精度が落ち得る）。"
     },
     "dirEntry": {
       "fields": {

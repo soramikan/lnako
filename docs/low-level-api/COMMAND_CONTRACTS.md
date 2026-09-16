@@ -32,19 +32,20 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 
 - 失敗は構造化エラー（辞書）を投げる。分岐に使うのは `code` で、`message` は使わない。
 - 有効な portable code は G0 で固定した17種のみ。本書の命令表の「エラー」はその命令が投げ得る code の上限である。
+- 入力が契約の型に合わない場合（例: pathに非文字列）は、命令表の「エラー」に関わらず全命令が `EINVAL` を投げ得る。型としては正当でもOSが拒否する未写像エラー（`NameTooLong`、`FileBusy`、`InputOutput` 等。portable 17種に無いもの）も `EINVAL` へ丸められる。
 - 0 byte read はEOF。partial read（1 byte以上）はEOFではない。
-- 二重close・close後操作・無効handleは `EBADF`。capability不足は `ENOTSUP`。
+- 二重close・close後操作・無効handleは `EBADF`。capability不足は `ENOTSUP`。Interpreterでホストが対象のI/O関数を提供しない場合も `ENOTSUP` になる（`lnako_interpreter` が `conditional` である理由）。
 
 ## 命令一覧
 
 ### Issue 27 バイナリ対応ストリームI/Oとハンドル管理
 
-- `ファイル開く`（ll-file-open）助詞 `PATHをMODEで/PATHを`、戻り `handle`、capability `stream_file_io`、エラー ENOENT/EACCES/EISDIR/EINVAL/EMFILE/ENFILE/ENOTSUP
+- `ファイル開く`（ll-file-open）助詞 `PATHをMODEで/PATHを`、戻り `handle`、capability `stream_file_io`、エラー ENOENT/EACCES/EPERM/EISDIR/EINVAL/EMFILE/ENFILE/ENOTSUP/EROFS/ENOSPC
 - `ファイル閉じる`（ll-file-close）助詞 `HANDLEを/HANDLEの`、戻り `void`、capability `stream_file_io`、エラー EBADF
 - `ファイルバイト読む`（ll-file-read）助詞 `HANDLEをSIZEで/HANDLEからSIZEを`、戻り `bytes`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOTSUP
-- `ファイルバイト書く`（ll-file-write）助詞 `HANDLEをBYTESで/HANDLEへBYTESを`、戻り `number`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOSPC/EPIPE/ENOTSUP
+- `ファイルバイト書く`（ll-file-write）助詞 `HANDLEをBYTESで/HANDLEへBYTESを`、戻り `number`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOSPC/EPIPE/ENOTSUP/EROFS
 - `ファイル同期`（ll-file-sync）助詞 `HANDLEを/HANDLEの`、戻り `void`、capability `stream_file_io`、エラー EBADF/EINVAL
-- `ファイル切詰`（ll-file-truncate-handle）助詞 `HANDLEをSIZEで/HANDLEをSIZEに`、戻り `void`、capability `truncate`、エラー EBADF/EINVAL/ENOSPC/ENOTSUP
+- `ファイル切詰`（ll-file-truncate-handle）助詞 `HANDLEをSIZEで/HANDLEをSIZEに`、戻り `void`、capability `truncate`、エラー EBADF/EINVAL/ENOSPC/ENOTSUP/EPERM/EROFS
 - `ファイル位置変更`（ll-file-seek）助詞 `HANDLEをOFFSETでWHENCEを/HANDLEをOFFSETで`、戻り `offset`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOTSUP
 - `ファイル位置取得`（ll-file-tell）助詞 `HANDLEを/HANDLEの`、戻り `offset`、capability `stream_file_io`、エラー EBADF
 - `ファイル位置指定読込`（ll-file-pread）助詞 `HANDLEをOFFSETからSIZEを/HANDLEからOFFSETにSIZEを`、戻り `bytes`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOTSUP
@@ -60,19 +61,21 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 
 ### Issue 29 stat/lstat・リンク・rename・unlink系
 
-- `ファイル詳細情報取得`（ll-file-stat）助詞 `PATHを/PATHの/PATHから`、戻り `stat`、capability `stat`、エラー ENOENT/EACCES/ENOTDIR/ELOOP/EINVAL
-- `シンボリックリンク情報取得`（ll-file-lstat）助詞 `PATHを/PATHの/PATHから`、戻り `stat`、capability `lstat`、エラー ENOENT/EACCES/ENOTDIR/ELOOP/EINVAL
-- `シンボリックリンク作成`（ll-symlink-create）助詞 `TARGETをLINKへ/LINKにTARGETを`、戻り `void`、capability `symlink`、エラー EEXIST/ENOENT/EACCES/ENOTDIR/EPERM/ENOTSUP
-- `シンボリックリンク先取得`（ll-symlink-read）助詞 `PATHを/PATHの`、戻り `string`、capability `readlink`、エラー EINVAL/ENOENT/EACCES/ELOOP/ENOTSUP
-- `ハードリンク作成`（ll-hardlink-create）助詞 `TARGETをLINKへ/LINKにTARGETを`、戻り `void`、capability `hardlink`、エラー EEXIST/ENOENT/EXDEV/EPERM/ENOTSUP
-- `実体パス取得`（ll-path-realpath）助詞 `PATHを/PATHの`、戻り `string`、capability `realpath`、エラー ENOENT/EACCES/ELOOP/ENOTDIR
-- `パス名変更`（ll-path-rename）助詞 `SRCをDSTへ/DSTにSRCを`、戻り `void`、capability `rename`、エラー ENOENT/EEXIST/EACCES/EXDEV/ENOTEMPTY/EISDIR/ENOTDIR/ENOTSUP
-- `ファイルリンク削除`（ll-path-unlink）助詞 `PATHを/PATHの`、戻り `void`、capability `unlink`、エラー ENOENT/EACCES/EPERM/EISDIR/ENOTDIR/ENOTSUP
-- `空フォルダ削除`（ll-path-rmdir）助詞 `PATHを/PATHの`、戻り `void`、capability `rmdir`、エラー ENOENT/ENOTDIR/EACCES/ENOTEMPTY/EPERM/ENOTSUP
+- `ファイル詳細情報取得`（ll-file-stat）助詞 `PATHを/PATHの/PATHから`、戻り `stat`、capability `stat`、エラー ENOENT/EACCES/EPERM/ENOTDIR/ELOOP/EINVAL/ENOTSUP
+- `シンボリックリンク情報取得`（ll-file-lstat）助詞 `PATHを/PATHの/PATHから`、戻り `stat`、capability `lstat`、エラー ENOENT/EACCES/EPERM/ENOTDIR/ELOOP/EINVAL/ENOTSUP
+- `シンボリックリンク作成`（ll-symlink-create）助詞 `TARGETをLINKへ/LINKにTARGETを`、戻り `void`、capability `symlink`、エラー EEXIST/ENOENT/EACCES/ENOTDIR/EPERM/ELOOP/EROFS/ENOSPC/ENOTSUP/EINVAL
+- `シンボリックリンク先取得`（ll-symlink-read）助詞 `PATHを/PATHの`、戻り `string`、capability `readlink`、エラー EINVAL/ENOENT/EACCES/EPERM/ENOTDIR/ELOOP/ENOTSUP
+- `ハードリンク作成`（ll-hardlink-create）助詞 `TARGETをLINKへ/LINKにTARGETを`、戻り `void`、capability `hardlink`、エラー EEXIST/ENOENT/EACCES/EPERM/EXDEV/ENOTDIR/ELOOP/EROFS/ENOSPC/ENOTSUP/EINVAL
+- `実体パス取得`（ll-path-realpath）助詞 `PATHを/PATHの`、戻り `string`、capability `realpath`、エラー ENOENT/EACCES/EPERM/ENOTDIR/ELOOP/ENOTSUP/EINVAL
+- `パス名変更`（ll-path-rename）助詞 `SRCをDSTへ/DSTにSRCを`、戻り `void`、capability `rename`、エラー ENOENT/EEXIST/EACCES/EPERM/EXDEV/ENOTEMPTY/EISDIR/ENOTDIR/ELOOP/EROFS/ENOSPC/ENOTSUP/EINVAL
+- `ファイルリンク削除`（ll-path-unlink）助詞 `PATHを/PATHの`、戻り `void`、capability `unlink`、エラー ENOENT/EACCES/EPERM/EISDIR/ENOTDIR/ELOOP/EROFS/ENOTSUP/EINVAL
+- `空フォルダ削除`（ll-path-rmdir）助詞 `PATHを/PATHの`、戻り `void`、capability `rmdir`、エラー ENOENT/ENOTDIR/EACCES/ENOTEMPTY/EPERM/ELOOP/EROFS/ENOTSUP/EINVAL
+
+`stat` の `mode` はpermission bits（0〜0o7777）で、ファイル種別ビット `S_IFMT` は含まない。Windowsでは固定値になる。`size` は安全整数ならNumber・超過はBigInt、時刻は常にナノ秒BigIntまたは `null`、その他の整数フィールドはNumberで表す。Windowsの `シンボリックリンク作成` はtarget種別からfile / directory symlinkを選び、directory symlinkはsymlink権限を必要とする（無い場合はEACCES/EPERMのいずれか）。未作成または判定不能なtargetはfile symlinkとして作成する（Windowsのsymlinkは種別が作成時に固定されるため、後からディレクトリを作ってもdirectory symlinkにはならない）。`ハードリンク作成` はWindowsでは未対応で常に `ENOTSUP` を返す（capability `hardlink` の `os.windows` はfalse）。`stat`/`lstat` はLinuxでは `statx`（kernel 4.11以降）を必要とし、非対応環境では `ENOTSUP` を返す（capabilityの `os.linux` は `conditional`）。パスの受け渡しはUTF-16→WTF-8の可逆変換（孤立サロゲートを保持）で行い、`シンボリックリンク先取得`/`実体パス取得` の戻り値もWTF-8をUTF-16へ可逆変換する。WTF-8として不正な任意バイト列（POSIXの非UTF-8名など）だけ既存のlossy変換（U+FFFD）へフォールバックする。
 
 ### Issue 31 ファイル時刻・truncate・高精度メタデータ更新
 
-- `ファイルサイズ変更`（ll-file-truncate-path）助詞 `PATHをSIZEで/PATHをSIZEに`、戻り `void`、capability `truncate`、エラー ENOENT/EACCES/EISDIR/ENOSPC/EINVAL/ENOTSUP
+- `ファイルサイズ変更`（ll-file-truncate-path）助詞 `PATHをSIZEで/PATHをSIZEに`、戻り `void`、capability `truncate`、エラー ENOENT/EACCES/EPERM/EISDIR/ENOSPC/EINVAL/ENOTSUP
 - `ファイル時刻設定`（ll-file-utime-path）助詞 `PATHをATIMEからMTIMEまで/PATHをATIMEとMTIMEで`、戻り `void`、capability `utime`、エラー ENOENT/EACCES/EINVAL/EPERM/ENOTSUP
 - `ファイル時刻設定済`（ll-file-utime-handle）助詞 `HANDLEをATIMEからMTIMEまで/HANDLEをATIMEとMTIMEで`、戻り `void`、capability `utime`、エラー EBADF/EINVAL/EPERM/ENOTSUP
 
@@ -89,10 +92,10 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 
 ### Issue 33 逐次ディレクトリ列挙
 
-- `ディレクトリ開く`（ll-dir-open）助詞 `PATHを/PATHの`、戻り `handle`、capability `dir_iterator`、エラー ENOENT/ENOTDIR/EACCES/EMFILE/ENFILE/ENOTSUP
+- `ディレクトリ開く`（ll-dir-open）助詞 `PATHを/PATHの`、戻り `handle`、capability `dir_iterator`、エラー ENOENT/ENOTDIR/EACCES/EPERM/EMFILE/ENFILE/ENOTSUP
 - `ディレクトリ次取得`（ll-dir-next）助詞 `HANDLEを/HANDLEの`、戻り `dirEntry`、capability `dir_iterator`、エラー EBADF/EINVAL/ENOTSUP
 - `ディレクトリ閉じる`（ll-dir-close）助詞 `HANDLEを/HANDLEの`、戻り `void`、capability `dir_iterator`、エラー EBADF
-- `ディレクトリ列挙時`（ll-dir-foreach）助詞 `PATHをCALLBACKで/PATHのCALLBACKを`、戻り `void`、capability `dir_iterator`、エラー ENOENT/ENOTDIR/EACCES/ENOTSUP
+- `ディレクトリ列挙時`（ll-dir-foreach）助詞 `PATHをCALLBACKで/PATHのCALLBACKを`、戻り `void`、capability `dir_iterator`、エラー ENOENT/ENOTDIR/EACCES/EPERM/ENOTSUP
 
 正本はhandle型。`. と .. は含めない。EOFは `null`。entryの `type` は file/directory/symlink/other/unknown。
 
@@ -127,8 +130,8 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 
 ### Issue 36 statfs・reflink・sparse file
 
-- `ファイルシステム情報取得`（ll-statfs）助詞 `PATHを/PATHの`、戻り `fsInfo`、capability `statfs`、エラー ENOENT/EACCES/ENOTDIR/EINVAL/ENOTSUP
-- `ファイルクローン`（ll-reflink）助詞 `SRCをDSTへMODEで/SRCをDSTに`、戻り `void`、capability `reflink`、エラー ENOENT/EEXIST/EACCES/EXDEV/ENOTSUP
+- `ファイルシステム情報取得`（ll-statfs）助詞 `PATHを/PATHの`、戻り `fsInfo`、capability `statfs`、エラー ENOENT/EACCES/EPERM/ENOTDIR/EINVAL/ENOTSUP
+- `ファイルクローン`（ll-reflink）助詞 `SRCをDSTへMODEで/SRCをDSTに`、戻り `void`、capability `reflink`、エラー ENOENT/EEXIST/EACCES/EPERM/EXDEV/ENOTSUP
 - `ファイルデータ領域検索`（ll-seek-data）助詞 `HANDLEをOFFSETで/HANDLEをOFFSETから`、戻り `offset`、capability `seek_data`、エラー EBADF/EINVAL/ENOTSUP
 - `ファイル空洞領域検索`（ll-seek-hole）助詞 `HANDLEをOFFSETで/HANDLEをOFFSETから`、戻り `offset`、capability `seek_hole`、エラー EBADF/EINVAL/ENOTSUP
 - `ファイル領域確保`（ll-fallocate）助詞 `HANDLEをOFFSETにSIZEで/HANDLEをOFFSETとSIZEで`、戻り `void`、capability `fallocate`、エラー EBADF/EINVAL/ENOSPC/ENOTSUP
