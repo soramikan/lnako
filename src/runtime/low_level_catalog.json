@@ -403,7 +403,7 @@
         "ENOTSUP",
         "EINVAL"
       ],
-      "notes": "link",
+      "notes": "link。Windowsでは未対応（常にENOTSUP）",
       "implemented": true
     },
     {
@@ -1607,7 +1607,7 @@
       "os": {
         "linux": true,
         "macos": true,
-        "windows": true
+        "windows": false
       },
       "runtimes": {
         "lnako_interpreter": "conditional",

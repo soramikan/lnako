@@ -71,7 +71,7 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 - `ファイルリンク削除`（ll-path-unlink）助詞 `PATHを/PATHの`、戻り `void`、capability `unlink`、エラー ENOENT/EACCES/EPERM/EISDIR/ENOTDIR/ENOTSUP/EINVAL
 - `空フォルダ削除`（ll-path-rmdir）助詞 `PATHを/PATHの`、戻り `void`、capability `rmdir`、エラー ENOENT/ENOTDIR/EACCES/ENOTEMPTY/EPERM/ENOTSUP/EINVAL
 
-`stat` の `mode` はpermission bits（0〜0o7777）で、ファイル種別ビット `S_IFMT` は含まない。Windowsでは固定値になる。`size` は安全整数ならNumber・超過はBigInt、時刻は常にナノ秒BigIntまたは `null`、その他の整数フィールドはNumberで表す。Windowsの `シンボリックリンク作成` はtarget種別からfile / directory symlinkを選び、directory symlinkはsymlink権限を必要とする（無い場合はEACCES/EPERMのいずれか）。未作成または判定不能なtargetはfile symlinkとして作成する（Windowsのsymlinkは種別が作成時に固定されるため、後からディレクトリを作ってもdirectory symlinkにはならない）。
+`stat` の `mode` はpermission bits（0〜0o7777）で、ファイル種別ビット `S_IFMT` は含まない。Windowsでは固定値になる。`size` は安全整数ならNumber・超過はBigInt、時刻は常にナノ秒BigIntまたは `null`、その他の整数フィールドはNumberで表す。Windowsの `シンボリックリンク作成` はtarget種別からfile / directory symlinkを選び、directory symlinkはsymlink権限を必要とする（無い場合はEACCES/EPERMのいずれか）。未作成または判定不能なtargetはfile symlinkとして作成する（Windowsのsymlinkは種別が作成時に固定されるため、後からディレクトリを作ってもdirectory symlinkにはならない）。`ハードリンク作成` はWindowsでは未対応で常に `ENOTSUP` を返す（capability `hardlink` の `os.windows` はfalse）。
 
 ### Issue 31 ファイル時刻・truncate・高精度メタデータ更新
 

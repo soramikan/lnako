@@ -49,7 +49,7 @@ pub const Metadata = struct {
 pub fn stat(io: std.Io, path: []const u8, follow: bool) anyerror!Metadata {
     return switch (builtin.os.tag) {
         .windows => statWindows(io, path, follow),
-        .linux => statLinux(io, path, follow),
+        .linux => statLinux(path, follow),
         .wasi => statPortable(io, path, follow),
         else => statPosix(path, follow),
     };
@@ -213,10 +213,11 @@ fn posixErrno(errno: std.c.E) anyerror {
 }
 
 /// Linuxの単一 `statx` から全フィールドを組み立てる。statx非対応環境
-/// （古いカーネルやseccomp制限）ではポータブルAPIへフォールバックする
-/// （Zig 0.16の `std.Io.Dir.statFile` もstatxベースのため、そこで取得できる
-/// フィールドに限る。uid/gid等の追加フィールドは0のまま）。
-fn statLinux(io: std.Io, path: []const u8, follow: bool) anyerror!Metadata {
+/// （古いカーネルやseccomp制限）はENOTSUPへ写す。Zig 0.16の
+/// `std.Io.Dir.statFile` もstatxベースで、libcの `fstatat` はLinuxでは
+/// 提供されない（`std.c.fstatat = {}` / `std.c.Stat = void`）ため、
+/// 代替経路へフォールバックしても同じ失敗になる。
+fn statLinux(path: []const u8, follow: bool) anyerror!Metadata {
     const posix_path = try std.posix.toPosixPath(path);
     var raw: std.os.linux.Statx = std.mem.zeroes(std.os.linux.Statx);
     const flags: u32 = std.os.linux.AT.NO_AUTOMOUNT |
@@ -241,8 +242,6 @@ fn statLinux(io: std.Io, path: []const u8, follow: bool) anyerror!Metadata {
         if (errno == .SUCCESS) break;
         // シグナル割込みは一時的なので再試行する（EINTRをEINVALにしない）。
         if (errno == .INTR) continue;
-        // statx非対応はポータブルAPIへフォールバックする。
-        if (errno == .NOSYS or errno == .OPNOTSUPP) return statPortable(io, path, follow);
         return linuxErrno(errno);
     }
     var metadata = Metadata{
