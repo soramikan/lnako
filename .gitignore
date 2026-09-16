@@ -9,3 +9,6 @@ benchmarks/results/*.json
 benchmarks/comparison/results/*.json
 benchmarks/comparison/results/*.md
 !benchmarks/comparison/results/.gitkeep
+
+# Zig package cache for fetched dependencies
+zig-pkg/
