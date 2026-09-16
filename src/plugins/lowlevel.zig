@@ -319,7 +319,8 @@ fn openFile(runtime: *Runtime, state: *State, context: Context, effects: Effects
     if (path_value != .string) {
         return throwStructured(runtime, effects, .EINVAL, foundation.stream_operations.open, null, null, "pathは文字列である必要があります");
     }
-    const path = try shared.valueUtf8(runtime, path_value);
+    // 孤立サロゲートを保持する可逆なWTF-8でパスを作る（fs系と同じ規則）。
+    const path = try foundation.pathBytesFromUtf16(runtime.allocator(), path_value.string.units);
     defer runtime.allocator().free(path);
     const mode_value = common.argument(arguments, 1);
     var mode_text: ?[]u8 = null;
@@ -560,7 +561,9 @@ fn requirePath(runtime: *Runtime, effects: Effects, value: Value, operation: []c
     if (value != .string) {
         return throwStructured(runtime, effects, .EINVAL, operation, null, null, "pathは文字列である必要があります");
     }
-    return shared.valueUtf8(runtime, value);
+    // lossy変換は孤立サロゲートをU+FFFDへ化けさせ、実在する同名ファイルへの
+    // 誤操作につながるため、可逆なWTF-8変換を使う（AOTのpathArgumentと同じ規則）。
+    return foundation.pathBytesFromUtf16(runtime.allocator(), value.string.units);
 }
 
 fn statPath(runtime: *Runtime, state: *State, context: Context, effects: Effects, arguments: []const Value, follow: bool) !Value {
@@ -767,8 +770,9 @@ fn buildError(
     try shared.setDictionary(runtime, dictionary.dictionary, foundation.error_object_keys.code, try runtime.stringUtf8(code.name()));
     try shared.setDictionary(runtime, dictionary.dictionary, foundation.error_object_keys.native_code, .null_value);
     try shared.setDictionary(runtime, dictionary.dictionary, foundation.error_object_keys.operation, try runtime.stringUtf8(operation));
-    try shared.setDictionary(runtime, dictionary.dictionary, foundation.error_object_keys.path, if (path) |value| try runtime.stringUtf8(value) else .null_value);
-    try shared.setDictionary(runtime, dictionary.dictionary, foundation.error_object_keys.path2, if (path2) |value| try runtime.stringUtf8(value) else .null_value);
+    // pathはWTF-8（孤立サロゲートを含み得る）なのでlossyで文字列化する。
+    try shared.setDictionary(runtime, dictionary.dictionary, foundation.error_object_keys.path, if (path) |value| try runtime.stringUtf8Lossy(value) else .null_value);
+    try shared.setDictionary(runtime, dictionary.dictionary, foundation.error_object_keys.path2, if (path2) |value| try runtime.stringUtf8Lossy(value) else .null_value);
     try shared.setDictionary(runtime, dictionary.dictionary, foundation.error_object_keys.message, try runtime.stringUtf8(message));
     try shared.setDictionary(runtime, dictionary.dictionary, foundation.error_object_keys.capability, if (capability) |value| try runtime.stringUtf8(value) else .null_value);
     return dictionary;
@@ -1621,6 +1625,44 @@ test "新規capabilityはホスト関数が無い場合ENOTSUPを返す" {
     try roots.protect(&thrown);
     try expectThrownCode(&runtime, thrown, "ENOTSUP");
     try expectThrownField(&runtime, thrown, foundation.error_object_keys.capability, "stat");
+}
+
+test "孤立サロゲートのパスはU+FFFD名へ置換されず別ファイルを削除しない" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    const context = FsTestHost.context();
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    // 置換文字U+FFFDという名前の実在ファイル。
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "\u{FFFD}", .data = "keep" });
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const replacement_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "\u{FFFD}" });
+    defer std.testing.allocator.free(replacement_path);
+
+    // "<dir>/<孤立サロゲート>" を作る。lossy変換だと"<dir>/�"になり実在ファイルを消す。
+    const units = try std.testing.allocator.alloc(u16, directory.len + 2);
+    defer std.testing.allocator.free(units);
+    for (directory, 0..) |byte, index| units[index] = byte;
+    units[directory.len] = '/';
+    units[directory.len + 1] = 0xD800;
+    var path = try runtime.stringCodeUnits(units);
+    try roots.protect(&path);
+
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイルリンク削除", &.{path}));
+    try roots.protect(&thrown);
+    try expectThrownCode(&runtime, thrown, "ENOENT");
+
+    // U+FFFD名のファイルは残っている。
+    _ = try low_level_fs.stat(std.testing.io, replacement_path, true);
 }
 
 test "低レイヤーのsymlink/lstat/hardlink/readlink/realpath/renameはContext経由で動作する" {

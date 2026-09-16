@@ -211,6 +211,15 @@ pub fn portableCodeFor(failure: Error) PortableErrorCode {
     };
 }
 
+/// なでしこ文字列（UTF-16コード単位）をOSパスへ可逆に変換する。孤立サロゲートは
+/// WTF-8として保持し、U+FFFDへ置換しない。lossy変換では孤立サロゲートが実在する
+/// U+FFFD名へ化け、rename/unlinkが別ファイルを操作し得るため、ファイルパスの
+/// 入力にはこの可逆変換を使う。Windowsのファイルパス表現（WTF-8）と一致し、
+/// POSIXでは任意バイト列として扱われる。
+pub fn pathBytesFromUtf16(allocator: std.mem.Allocator, units: []const u16) ![]u8 {
+    return std.unicode.wtf16LeToWtf8Alloc(allocator, units);
+}
+
 pub const error_object_keys = struct {
     pub const code = "code";
     pub const native_code = "nativeCode";

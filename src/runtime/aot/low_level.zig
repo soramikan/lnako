@@ -18,6 +18,7 @@ const RootFrame = state.RootFrame;
 const numberValue = state.numberValue;
 const valueToNumber = state.valueToNumber;
 const valueUtf8LossyAlloc = state.valueUtf8LossyAlloc;
+const valueUtf16Alloc = state.valueUtf16Alloc;
 const runtimeUtf8String = state.runtimeUtf8String;
 const runtimeUtf8StringLossy = state.runtimeUtf8StringLossy;
 const aotRuntimeIo = state.aotRuntimeIo;
@@ -217,7 +218,10 @@ fn openBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     if (arguments.len < 1 or !isString(arguments[0])) {
         return throwStructured(runtime, .EINVAL, foundation.stream_operations.open, null, null, "pathは文字列である必要があります");
     }
-    const path = try valueUtf8LossyAlloc(runtime, arguments[0]);
+    // 孤立サロゲートを保持する可逆なWTF-8でパスを作る（fs系と同じ規則）。
+    const path_units = try valueUtf16Alloc(runtime, arguments[0]);
+    defer runtime.allocator.free(path_units);
+    const path = try foundation.pathBytesFromUtf16(runtime.allocator, path_units);
     defer runtime.allocator.free(path);
     var mode_owned: ?[]u8 = null;
     defer if (mode_owned) |owned| runtime.allocator.free(owned);
@@ -347,7 +351,11 @@ fn pathArgument(runtime: *Runtime, value: Value, operation: []const u8) ![]u8 {
     if (!isString(value)) {
         return throwStructured(runtime, .EINVAL, operation, null, null, "pathは文字列である必要があります");
     }
-    return valueUtf8LossyAlloc(runtime, value);
+    // lossy変換は孤立サロゲートをU+FFFDへ化けさせ、実在する同名ファイルへの
+    // 誤操作につながるため、可逆なWTF-8変換を使う（InterpreterのrequirePathと同じ規則）。
+    const units = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(units);
+    return foundation.pathBytesFromUtf16(runtime.allocator, units);
 }
 
 fn statBuiltin(runtime: *Runtime, arguments: []const Value, follow: bool) !Value {
@@ -771,8 +779,9 @@ fn buildError(
     try setField(runtime, result, foundation.error_object_keys.code, try runtimeUtf8String(runtime, code.name()));
     try setField(runtime, result, foundation.error_object_keys.native_code, .{ .tag = @intFromEnum(Tag.null_value) });
     try setField(runtime, result, foundation.error_object_keys.operation, try runtimeUtf8String(runtime, operation));
-    try setField(runtime, result, foundation.error_object_keys.path, if (path) |value| try runtimeUtf8String(runtime, value) else .{ .tag = @intFromEnum(Tag.null_value) });
-    try setField(runtime, result, foundation.error_object_keys.path2, if (path2) |value| try runtimeUtf8String(runtime, value) else .{ .tag = @intFromEnum(Tag.null_value) });
+    // pathはWTF-8（孤立サロゲートを含み得る）なのでlossyで文字列化する。
+    try setField(runtime, result, foundation.error_object_keys.path, if (path) |value| try runtimeUtf8StringLossy(runtime, value) else .{ .tag = @intFromEnum(Tag.null_value) });
+    try setField(runtime, result, foundation.error_object_keys.path2, if (path2) |value| try runtimeUtf8StringLossy(runtime, value) else .{ .tag = @intFromEnum(Tag.null_value) });
     try setField(runtime, result, foundation.error_object_keys.message, try runtimeUtf8String(runtime, message));
     try setField(runtime, result, foundation.error_object_keys.capability, if (capability) |value| try runtimeUtf8String(runtime, value) else .{ .tag = @intFromEnum(Tag.null_value) });
     // 構造化エラー印。`["code"]` 等のフィールド参照と、文字列化＝`message`

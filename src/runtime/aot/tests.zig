@@ -7667,6 +7667,44 @@ test "AOT低レイヤーのstatとlstatは種別とメタデータを返す" {
     try expectLowLevelCode(active, .low_level_file_stat, &.{}, "EINVAL");
 }
 
+test "AOT低レイヤーは孤立サロゲートをU+FFFDへ置換せず別ファイルを削除しない" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    // 置換文字U+FFFDという名前の実在ファイル。
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "\u{FFFD}", .data = "keep" });
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const replacement_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "\u{FFFD}" });
+    defer std.testing.allocator.free(replacement_path);
+
+    // "<dir>/<孤立サロゲート>" を作る。lossy変換だと"<dir>/�"になり実在ファイルを消す。
+    const units = try std.testing.allocator.alloc(u16, directory.len + 2);
+    defer std.testing.allocator.free(units);
+    for (directory, 0..) |byte, index| units[index] = byte;
+    units[directory.len] = '/';
+    units[directory.len + 1] = 0xD800;
+
+    var roots = [_]Value{.{}};
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+    roots[0] = try active.createString(units);
+
+    try std.testing.expectError(error.NakoException, state.lowLevelFileBuiltin(active, .low_level_path_unlink, &.{roots[0]}));
+
+    // U+FFFD名のファイルは残っている。
+    _ = try std.Io.Dir.cwd().statFile(std.testing.io, replacement_path, .{});
+}
+
 test "AOT低レイヤーのsymlink/readlink/realpath/hardlink/unlinkを実行できる" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     var runtime = Runtime{ .allocator = std.testing.allocator };
