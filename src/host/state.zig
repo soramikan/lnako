@@ -388,6 +388,46 @@ pub const CliHost = struct {
         _ = self.lowLevelHashTable().remove(id) orelse return error.BadFileDescriptor;
     }
 
+    fn lowLevelStat(context: *anyopaque, path: []const u8, follow: bool) anyerror!lnako.runtime.low_level_fs.Metadata {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return lnako.runtime.low_level_fs.stat(self.io, path, follow);
+    }
+
+    fn lowLevelSymlink(context: *anyopaque, target: []const u8, link: []const u8) anyerror!void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return lnako.runtime.low_level_fs.createSymlink(self.io, target, link);
+    }
+
+    fn lowLevelReadlink(context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) anyerror![]u8 {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return lnako.runtime.low_level_fs.readlink(self.io, allocator, path);
+    }
+
+    fn lowLevelHardlink(context: *anyopaque, target: []const u8, link: []const u8) anyerror!void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return lnako.runtime.low_level_fs.createHardLink(self.io, target, link);
+    }
+
+    fn lowLevelRealpath(context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) anyerror![:0]u8 {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return lnako.runtime.low_level_fs.realpath(self.io, allocator, path);
+    }
+
+    fn lowLevelRename(context: *anyopaque, source: []const u8, destination: []const u8) anyerror!void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return lnako.runtime.low_level_fs.rename(self.io, source, destination);
+    }
+
+    fn lowLevelUnlink(context: *anyopaque, path: []const u8) anyerror!void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return lnako.runtime.low_level_fs.unlink(self.io, path);
+    }
+
+    fn lowLevelRmdir(context: *anyopaque, path: []const u8) anyerror!void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return lnako.runtime.low_level_fs.rmdir(self.io, path);
+    }
+
     fn lowLevelContext(self: *CliHost) lnako.plugins.lowlevel.Context {
         return .{
             .context = self,
@@ -401,6 +441,14 @@ pub const CliHost = struct {
             .updateHashFn = lowLevelUpdateHash,
             .digestHashFn = lowLevelDigestHash,
             .discardHashFn = lowLevelDiscardHash,
+            .statFn = lowLevelStat,
+            .symlinkFn = lowLevelSymlink,
+            .readlinkFn = lowLevelReadlink,
+            .hardlinkFn = lowLevelHardlink,
+            .realpathFn = lowLevelRealpath,
+            .renameFn = lowLevelRename,
+            .unlinkFn = lowLevelUnlink,
+            .rmdirFn = lowLevelRmdir,
             .peekStdinSourceFn = peekStdinSource,
             .stdinSourceFn = stdinSource,
             .writeStdoutBytesFn = lowLevelWriteStdout,

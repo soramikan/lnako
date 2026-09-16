@@ -5,6 +5,7 @@ const shared = @import("shared.zig");
 const foundation = @import("../low_level_foundation.zig");
 const low_level_io = @import("../low_level_io.zig");
 const low_level_hash = @import("../low_level_hash.zig");
+const low_level_fs = @import("../low_level_fs.zig");
 const plugin_lowlevel = @import("../../plugins/lowlevel.zig");
 
 const aot_builtin = shared.aot_builtin;
@@ -18,6 +19,7 @@ const RootFrame = state.RootFrame;
 const numberValue = state.numberValue;
 const valueToNumber = state.valueToNumber;
 const valueUtf8LossyAlloc = state.valueUtf8LossyAlloc;
+const valueUtf16Alloc = state.valueUtf16Alloc;
 const runtimeUtf8String = state.runtimeUtf8String;
 const runtimeUtf8StringLossy = state.runtimeUtf8StringLossy;
 const aotRuntimeIo = state.aotRuntimeIo;
@@ -59,6 +61,14 @@ pub fn pluginContext(runtime: *Runtime) plugin_lowlevel.Context {
         .updateHashFn = pluginUpdateHash,
         .digestHashFn = pluginDigestHash,
         .discardHashFn = pluginDiscardHash,
+        .statFn = pluginStat,
+        .symlinkFn = pluginSymlink,
+        .readlinkFn = pluginReadlink,
+        .hardlinkFn = pluginHardlink,
+        .realpathFn = pluginRealpath,
+        .renameFn = pluginRename,
+        .unlinkFn = pluginUnlink,
+        .rmdirFn = pluginRmdir,
         .peekStdinSourceFn = pluginPeekStdinSource,
         .stdinSourceFn = pluginStdinSource,
         .writeStdoutBytesFn = pluginWriteStdoutBytes,
@@ -66,6 +76,46 @@ pub fn pluginContext(runtime: *Runtime) plugin_lowlevel.Context {
         .syncStdoutFn = pluginSyncStdout,
         .syncStderrFn = pluginSyncStderr,
     };
+}
+
+fn pluginStat(context: *anyopaque, path: []const u8, follow: bool) anyerror!low_level_fs.Metadata {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    return low_level_fs.stat(io(runtime), path, follow);
+}
+
+fn pluginSymlink(context: *anyopaque, target: []const u8, link: []const u8) anyerror!void {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    return low_level_fs.createSymlink(io(runtime), target, link);
+}
+
+fn pluginReadlink(context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) anyerror![]u8 {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    return low_level_fs.readlink(io(runtime), allocator, path);
+}
+
+fn pluginHardlink(context: *anyopaque, target: []const u8, link: []const u8) anyerror!void {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    return low_level_fs.createHardLink(io(runtime), target, link);
+}
+
+fn pluginRealpath(context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) anyerror![:0]u8 {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    return low_level_fs.realpath(io(runtime), allocator, path);
+}
+
+fn pluginRename(context: *anyopaque, source: []const u8, destination: []const u8) anyerror!void {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    return low_level_fs.rename(io(runtime), source, destination);
+}
+
+fn pluginUnlink(context: *anyopaque, path: []const u8) anyerror!void {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    return low_level_fs.unlink(io(runtime), path);
+}
+
+fn pluginRmdir(context: *anyopaque, path: []const u8) anyerror!void {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    return low_level_fs.rmdir(io(runtime), path);
 }
 
 fn pluginOpenFile(context: *anyopaque, path: []const u8, mode: foundation.OpenMode, exclusive: bool, sync: bool) anyerror!u64 {
@@ -253,7 +303,10 @@ fn openBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     if (arguments.len < 1 or !isString(arguments[0])) {
         return throwStructured(runtime, .EINVAL, foundation.stream_operations.open, null, null, "pathは文字列である必要があります");
     }
-    const path = try valueUtf8LossyAlloc(runtime, arguments[0]);
+    // 孤立サロゲートを保持する可逆なWTF-8でパスを作る（fs系と同じ規則）。
+    const path_units = try valueUtf16Alloc(runtime, arguments[0]);
+    defer runtime.allocator.free(path_units);
+    const path = try foundation.pathBytesFromUtf16(runtime.allocator, path_units);
     defer runtime.allocator.free(path);
     var mode_owned: ?[]u8 = null;
     defer if (mode_owned) |owned| runtime.allocator.free(owned);
@@ -272,7 +325,7 @@ fn openBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
         .exclusive = parsed.exclusive,
         .sync = parsed.sync,
     }) catch |failure| {
-        return throwIo(runtime, failure, foundation.stream_operations.open, path);
+        return throwIo(runtime, failure, foundation.stream_operations.open, path, null, .stream_file_io);
     };
     errdefer {
         if (table(runtime).remove(id)) |removed| removed.file.close(io(runtime));
@@ -319,7 +372,7 @@ fn readBytesBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
         const start = output.items.len;
         try output.resize(allocator, start + chunk_length);
         const read = low_level_io.readAtCurrent(io(runtime), entry.file, output.items[start..]) catch |failure| {
-            return throwIo(runtime, failure, foundation.stream_operations.read, null);
+            return throwIo(runtime, failure, foundation.stream_operations.read, null, null, .stream_file_io);
         };
         output.shrinkRetainingCapacity(start + read);
         if (read == 0 or read < chunk_length) break;
@@ -342,7 +395,7 @@ fn writeBytesBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
         return throwStructured(runtime, .EINVAL, foundation.stream_operations.write, null, null, "書き込む値はBytesである必要があります");
     };
     const written = low_level_io.writeHandle(io(runtime), entry, bytes) catch |failure| {
-        return throwIo(runtime, failure, foundation.stream_operations.write, null);
+        return throwIo(runtime, failure, foundation.stream_operations.write, null, null, .stream_file_io);
     };
     return publicSizeValue(runtime, written);
 }
@@ -355,7 +408,7 @@ fn syncBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
         return throwStructured(runtime, .EBADF, foundation.stream_operations.fsync, null, null, "無効なハンドルです");
     };
     low_level_io.sync(io(runtime), entry.file) catch |failure| {
-        return throwIo(runtime, failure, foundation.stream_operations.fsync, null);
+        return throwIo(runtime, failure, foundation.stream_operations.fsync, null, null, .stream_file_io);
     };
     return .{};
 }
@@ -374,7 +427,147 @@ fn truncateBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
         return throwStructured(runtime, .EINVAL, foundation.stream_operations.ftruncate, null, null, "切詰める大きさが不正です");
     };
     low_level_io.setLength(io(runtime), entry.file, size) catch |failure| {
-        return throwIo(runtime, failure, foundation.stream_operations.ftruncate, null);
+        return throwIo(runtime, failure, foundation.stream_operations.ftruncate, null, null, .truncate);
+    };
+    return .{};
+}
+
+fn pathArgument(runtime: *Runtime, value: Value, operation: []const u8) ![]u8 {
+    if (!isString(value)) {
+        return throwStructured(runtime, .EINVAL, operation, null, null, "pathは文字列である必要があります");
+    }
+    // lossy変換は孤立サロゲートをU+FFFDへ化けさせ、実在する同名ファイルへの
+    // 誤操作につながるため、可逆なWTF-8変換を使う（InterpreterのrequirePathと同じ規則）。
+    const units = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(units);
+    return foundation.pathBytesFromUtf16(runtime.allocator, units);
+}
+
+fn statBuiltin(runtime: *Runtime, arguments: []const Value, follow: bool) !Value {
+    const operation = if (follow) foundation.filesystem_operations.stat else foundation.filesystem_operations.lstat;
+    const capability: foundation.Capability = if (follow) .stat else .lstat;
+    const path = try pathArgument(runtime, arguments[0], operation);
+    defer runtime.allocator.free(path);
+    const metadata = low_level_fs.stat(io(runtime), path, follow) catch |failure| {
+        return throwIo(runtime, failure, operation, path, null, capability);
+    };
+    return statValue(runtime, metadata);
+}
+
+fn statValue(runtime: *Runtime, metadata: low_level_fs.Metadata) !Value {
+    var result = try runtime.createDictionary(&.{});
+    var roots = RootFrame{};
+    runtime.pushRoots(&roots, @ptrCast(&result), 1);
+    defer runtime.popRoots(&roots);
+    try setField(runtime, result, foundation.stat_field_keys.kind, try runtimeUtf8String(runtime, metadata.kind.name()));
+    try setField(runtime, result, foundation.stat_field_keys.size, try publicSizeValue(runtime, metadata.size));
+    try setField(runtime, result, foundation.stat_field_keys.mode, numberValue(@floatFromInt(metadata.mode)));
+    try setField(runtime, result, foundation.stat_field_keys.uid, numberValue(@floatFromInt(metadata.uid)));
+    try setField(runtime, result, foundation.stat_field_keys.gid, numberValue(@floatFromInt(metadata.gid)));
+    try setField(runtime, result, foundation.stat_field_keys.dev, numberValue(@floatFromInt(metadata.dev)));
+    try setField(runtime, result, foundation.stat_field_keys.rdev, numberValue(@floatFromInt(metadata.rdev)));
+    try setField(runtime, result, foundation.stat_field_keys.inode, numberValue(@floatFromInt(metadata.inode)));
+    try setField(runtime, result, foundation.stat_field_keys.nlink, numberValue(@floatFromInt(metadata.nlink)));
+    try setField(runtime, result, foundation.stat_field_keys.block_size, numberValue(@floatFromInt(metadata.block_size)));
+    try setField(runtime, result, foundation.stat_field_keys.blocks, numberValue(@floatFromInt(metadata.blocks)));
+    try setField(runtime, result, foundation.stat_field_keys.atime_ns, try timeValue(runtime, metadata.atime_ns));
+    try setField(runtime, result, foundation.stat_field_keys.mtime_ns, try timeValue(runtime, metadata.mtime_ns));
+    try setField(runtime, result, foundation.stat_field_keys.ctime_ns, try timeValue(runtime, metadata.ctime_ns));
+    try setField(runtime, result, foundation.stat_field_keys.birthtime_ns, try timeValue(runtime, metadata.birthtime_ns));
+    return result;
+}
+
+fn timeValue(runtime: *Runtime, nanoseconds: foundation.OptionalTimeNs) !Value {
+    const value = nanoseconds orelse return .{ .tag = @intFromEnum(Tag.null_value) };
+    return runtime.ownBigInt(try BigInt.init(runtime.allocator, value));
+}
+
+fn symlinkBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    const operation = foundation.filesystem_operations.symlink;
+    const target = try pathArgument(runtime, arguments[0], operation);
+    defer runtime.allocator.free(target);
+    const link = try pathArgument(runtime, arguments[1], operation);
+    defer runtime.allocator.free(link);
+    low_level_fs.createSymlink(io(runtime), target, link) catch |failure| {
+        return throwIo(runtime, failure, operation, target, link, .symlink);
+    };
+    return .{};
+}
+
+fn readlinkBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    const operation = foundation.filesystem_operations.readlink;
+    const path = try pathArgument(runtime, arguments[0], operation);
+    defer runtime.allocator.free(path);
+    const destination = low_level_fs.readlink(io(runtime), runtime.allocator, path) catch |failure| {
+        return throwIo(runtime, failure, operation, path, null, .readlink);
+    };
+    defer runtime.allocator.free(destination);
+    return pathStringFromBytes(runtime, destination);
+}
+
+fn hardlinkBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    const operation = foundation.filesystem_operations.hardlink;
+    const target = try pathArgument(runtime, arguments[0], operation);
+    defer runtime.allocator.free(target);
+    const link = try pathArgument(runtime, arguments[1], operation);
+    defer runtime.allocator.free(link);
+    low_level_fs.createHardLink(io(runtime), target, link) catch |failure| {
+        return throwIo(runtime, failure, operation, target, link, .hardlink);
+    };
+    return .{};
+}
+
+fn realpathBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    const operation = foundation.filesystem_operations.realpath;
+    const path = try pathArgument(runtime, arguments[0], operation);
+    defer runtime.allocator.free(path);
+    const resolved = low_level_fs.realpath(io(runtime), runtime.allocator, path) catch |failure| {
+        return throwIo(runtime, failure, operation, path, null, .realpath);
+    };
+    defer runtime.allocator.free(resolved);
+    return pathStringFromBytes(runtime, resolved);
+}
+
+/// readlink/realpathが返すOSパス（WTF-8）を可逆になでしこ文字列へ戻す。
+/// 孤立サロゲートを保持し、WTF-8として不正な任意バイト列は既存のlossy変換へ
+/// フォールバックする。InterpreterのpathStringFromBytesと同じ規則。
+fn pathStringFromBytes(runtime: *Runtime, bytes: []const u8) !Value {
+    const units = foundation.pathUnitsFromBytes(runtime.allocator, bytes) catch |failure| {
+        if (failure != error.InvalidWtf8) return failure;
+        return runtimeUtf8StringLossy(runtime, bytes);
+    };
+    defer runtime.allocator.free(units);
+    return runtime.createString(units);
+}
+
+fn renameBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    const operation = foundation.filesystem_operations.rename;
+    const source = try pathArgument(runtime, arguments[0], operation);
+    defer runtime.allocator.free(source);
+    const destination = try pathArgument(runtime, arguments[1], operation);
+    defer runtime.allocator.free(destination);
+    low_level_fs.rename(io(runtime), source, destination) catch |failure| {
+        return throwIo(runtime, failure, operation, source, destination, .rename);
+    };
+    return .{};
+}
+
+fn unlinkBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    const operation = foundation.filesystem_operations.unlink;
+    const path = try pathArgument(runtime, arguments[0], operation);
+    defer runtime.allocator.free(path);
+    low_level_fs.unlink(io(runtime), path) catch |failure| {
+        return throwIo(runtime, failure, operation, path, null, .unlink);
+    };
+    return .{};
+}
+
+fn rmdirBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    const operation = foundation.filesystem_operations.rmdir;
+    const path = try pathArgument(runtime, arguments[0], operation);
+    defer runtime.allocator.free(path);
+    low_level_fs.rmdir(io(runtime), path) catch |failure| {
+        return throwIo(runtime, failure, operation, path, null, .rmdir);
     };
     return .{};
 }
@@ -603,6 +796,15 @@ pub fn lowLevelFileBuiltin(runtime: *Runtime, command: aot_builtin.Command, argu
         .low_level_file_write_bytes => writeBytesBuiltin(runtime, arguments),
         .low_level_file_sync => syncBuiltin(runtime, arguments),
         .low_level_file_truncate => truncateBuiltin(runtime, arguments),
+        .low_level_file_stat => statBuiltin(runtime, arguments, true),
+        .low_level_file_lstat => statBuiltin(runtime, arguments, false),
+        .low_level_symlink_create => symlinkBuiltin(runtime, arguments),
+        .low_level_symlink_read => readlinkBuiltin(runtime, arguments),
+        .low_level_hardlink_create => hardlinkBuiltin(runtime, arguments),
+        .low_level_path_realpath => realpathBuiltin(runtime, arguments),
+        .low_level_path_rename => renameBuiltin(runtime, arguments),
+        .low_level_path_unlink => unlinkBuiltin(runtime, arguments),
+        .low_level_path_rmdir => rmdirBuiltin(runtime, arguments),
         .low_level_stdin_read => stdinReadBuiltin(runtime, arguments),
         .low_level_stdout_write => stdioWriteBuiltin(runtime, arguments, false),
         .low_level_stderr_write => stdioWriteBuiltin(runtime, arguments, true),
@@ -714,6 +916,7 @@ fn buildError(
     code: foundation.PortableErrorCode,
     operation: []const u8,
     path: ?[]const u8,
+    path2: ?[]const u8,
     capability: ?[]const u8,
     message: []const u8,
 ) !Value {
@@ -724,8 +927,10 @@ fn buildError(
     try setField(runtime, result, foundation.error_object_keys.code, try runtimeUtf8String(runtime, code.name()));
     try setField(runtime, result, foundation.error_object_keys.native_code, .{ .tag = @intFromEnum(Tag.null_value) });
     try setField(runtime, result, foundation.error_object_keys.operation, try runtimeUtf8String(runtime, operation));
-    try setField(runtime, result, foundation.error_object_keys.path, if (path) |value| try runtimeUtf8String(runtime, value) else .{ .tag = @intFromEnum(Tag.null_value) });
-    try setField(runtime, result, foundation.error_object_keys.path2, .{ .tag = @intFromEnum(Tag.null_value) });
+    // pathはWTF-8（孤立サロゲートを含み得る）なので、入力と同じ可逆変換で
+    // 文字列化し、失敗した元のパスを呼び出し側が識別できるようにする。
+    try setField(runtime, result, foundation.error_object_keys.path, if (path) |value| try pathStringFromBytes(runtime, value) else .{ .tag = @intFromEnum(Tag.null_value) });
+    try setField(runtime, result, foundation.error_object_keys.path2, if (path2) |value| try pathStringFromBytes(runtime, value) else .{ .tag = @intFromEnum(Tag.null_value) });
     try setField(runtime, result, foundation.error_object_keys.message, try runtimeUtf8String(runtime, message));
     try setField(runtime, result, foundation.error_object_keys.capability, if (capability) |value| try runtimeUtf8String(runtime, value) else .{ .tag = @intFromEnum(Tag.null_value) });
     // 構造化エラー印。`["code"]` 等のフィールド参照と、文字列化＝`message`
@@ -734,16 +939,25 @@ fn buildError(
     return result;
 }
 
-fn throwIo(runtime: *Runtime, failure: anyerror, operation: []const u8, path: ?[]const u8) anyerror {
-    return throwIoAs(runtime, failure, operation, path, if (std.mem.eql(u8, operation, foundation.stream_operations.ftruncate)) .truncate else .stream_file_io);
+fn throwIo(
+    runtime: *Runtime,
+    failure: anyerror,
+    operation: []const u8,
+    path: ?[]const u8,
+    path2: ?[]const u8,
+    capability: foundation.Capability,
+) anyerror {
+    // メモリ不足はportable code（EINVAL等）へ丸めず、内部エラーとして
+    // 伝播させる。構造化エラーのcodeはOSエラーだけを表す。
+    if (failure == error.OutOfMemory) return failure;
+    const code = foundation.portableCodeForFailure(failure) orelse .EINVAL;
+    const capability_name: ?[]const u8 = if (code == .ENOTSUP) capability.id() else null;
+    return throwStructuredAt(runtime, code, operation, path, path2, capability_name, failureMessage(failure));
 }
 
-/// ENOTSUPのときだけ `capability` をエラー辞書へ載せるI/O失敗。
-/// `throwIo` のcapability判定をパラメータ化したもの（`plugins/lowlevel.zig`
-/// の `throwIoAs` と同じ契約）。
+/// path2を取らないI/O失敗の薄いラッパー（`plugins/lowlevel.zig` と同じ契約）。
 fn throwIoAs(runtime: *Runtime, failure: anyerror, operation: []const u8, path: ?[]const u8, capability: foundation.Capability) anyerror {
-    const code = foundation.portableCodeForFailure(failure) orelse .EINVAL;
-    return throwStructured(runtime, code, operation, path, if (code == .ENOTSUP) capability.id() else null, failureMessage(failure));
+    return throwIo(runtime, failure, operation, path, null, capability);
 }
 
 fn throwStructured(
@@ -754,7 +968,19 @@ fn throwStructured(
     capability: ?[]const u8,
     message: []const u8,
 ) anyerror {
-    var dictionary = buildError(runtime, code, operation, path, capability, message) catch |failure| return failure;
+    return throwStructuredAt(runtime, code, operation, path, null, capability, message);
+}
+
+fn throwStructuredAt(
+    runtime: *Runtime,
+    code: foundation.PortableErrorCode,
+    operation: []const u8,
+    path: ?[]const u8,
+    path2: ?[]const u8,
+    capability: ?[]const u8,
+    message: []const u8,
+) anyerror {
+    var dictionary = buildError(runtime, code, operation, path, path2, capability, message) catch |failure| return failure;
     var roots = RootFrame{};
     runtime.pushRoots(&roots, @ptrCast(&dictionary), 1);
     defer runtime.popRoots(&roots);
@@ -778,6 +1004,14 @@ fn failureMessage(failure: anyerror) []const u8 {
         error.ProcessFdQuotaExceeded => "プロセスで開けるファイル数の上限に達しました",
         error.SystemFdQuotaExceeded => "システムで開けるファイル数の上限に達しました",
         error.SymLinkLoop => "シンボリックリンクがループしています",
+        error.DirNotEmpty => "ディレクトリが空ではありません",
+        error.CrossDevice => "ファイルシステムをまたぐ操作です",
+        error.NotLink => "シンボリックリンクではありません",
+        error.OperationUnsupported, error.UnsupportedReparsePointType, error.Unsupported, error.NotSupported => "この操作は対応していません",
+        error.LinkQuotaExceeded => "リンク数の上限に達しました",
+        error.NameTooLong => "名前が長すぎます",
+        error.FileBusy => "ファイルが使用中です",
+        error.InputOutput => "入出力エラーです",
         error.StreamTooLong => "標準入力が上限を超えました",
         else => @errorName(failure),
     };
