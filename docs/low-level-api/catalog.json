@@ -317,7 +317,7 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "stat。symlinkは追跡する。sizeはsize型、時刻はナノ秒BigIntまたはnull、その他の整数はnumber",
+      "notes": "stat。symlinkは追跡する。sizeはsize型、時刻はナノ秒BigIntまたはnull、その他の整数はnumber。Linuxはstatx（kernel 4.11以降）が必要で、非対応時はENOTSUP",
       "implemented": true
     },
     {
@@ -339,7 +339,7 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "lstat。symlink自身の情報",
+      "notes": "lstat。symlink自身の情報。Linuxはstatx（kernel 4.11以降）が必要で、非対応時はENOTSUP",
       "implemented": true
     },
     {
@@ -1215,7 +1215,7 @@
       "id": "stat",
       "class": "portable_core",
       "os": {
-        "linux": true,
+        "linux": "conditional",
         "macos": true,
         "windows": true
       },
@@ -1241,7 +1241,7 @@
       "id": "lstat",
       "class": "portable_core",
       "os": {
-        "linux": true,
+        "linux": "conditional",
         "macos": true,
         "windows": true
       },
