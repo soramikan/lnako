@@ -83,7 +83,7 @@ fn versionMeta(ptr: *anyopaque, gpa: std.mem.Allocator, id: PackageId, version: 
             .features = dependency.features,
             .default_features = dependency.default_features,
             .prefer_native = dependency.prefer_native,
-            .prerelease_tuples = try resolver.gatedTuples(gpa, range),
+            .semver_range = range,
         });
     }
     return .{
@@ -124,7 +124,7 @@ fn dep(gpa: std.mem.Allocator, name: []const u8, req: []const u8) resolver.Depen
         .id = .{ .pkg = name },
         .constraint = resolver.rangeFromSemver(gpa, range) catch unreachable,
         .name = name,
-        .prerelease_tuples = resolver.gatedTuples(gpa, range) catch unreachable,
+        .semver_range = range,
     };
 }
 
@@ -804,6 +804,108 @@ test "prereleaseを許可しない制約が併存するとprereleaseは選べな
     var res = try solve(gpa, &mock, &root_deps, .{});
     defer res.deinit();
     try expectVersion(nodesOf(&res), "lib", "2.0.0");
+}
+
+test "推移辺が明示許可するprereleaseは解決できる" {
+    var arena = std.heap.ArenaAllocator.init(T.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+    const mock = Mock{ .pkgs = &.{
+        .{ .name = "a", .versions = &.{.{
+            .version = "1.0.0",
+            .deps = &.{.{ .name = "b", .req = ">=2.0.0-alpha <2.0.0" }},
+        }} },
+        .{ .name = "b", .versions = &.{.{ .version = "2.0.0-alpha" }} },
+    } };
+    const root_deps = [_]resolver.Dependency{dep(gpa, "a", "*")};
+    var res = try solve(gpa, &mock, &root_deps, .{});
+    defer res.deinit();
+    // 許可知識は推移辺で初めて得られるため、事前除外すると誤って失敗する。
+    try expectVersion(nodesOf(&res), "b", "2.0.0-alpha");
+}
+
+test "OR範囲の別分岐のprerelease比較子で他分岐を許可しない" {
+    var arena = std.heap.ArenaAllocator.init(T.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+    const mock = Mock{ .pkgs = &.{
+        .{ .name = "lib", .versions = &.{.{ .version = "1.0.0-alpha" }} },
+    } };
+    // `1.0.0-alpha` は第1分岐を満たさず、第2分岐に prerelease 比較子がない。
+    const root_deps = [_]resolver.Dependency{dep(gpa, "lib", ">1.0.0-z || <2.0.0")};
+    var res = try solve(gpa, &mock, &root_deps, .{});
+    defer res.deinit();
+    const message = messageOf(&res);
+    try T.expect(std.mem.indexOf(u8, message, "version solving failed") != null);
+}
+
+test "featureがpath依存aliasを参照しても解決できる" {
+    var arena = std.heap.ArenaAllocator.init(T.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+    var m = try parseManifest(gpa,
+        \\[package]
+        \\name = "lib"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[features]
+        \\default = ["local"]
+        \\
+        \\[dependencies.path]
+        \\local = { path = "../local" }
+        \\
+        \\[[exports]]
+        \\name = "index"
+        \\path = "src/index.nako3"
+        \\
+    );
+    defer m.deinit();
+
+    const ManifestMock = struct {
+        source: *const manifest.Manifest,
+        target: resolver.Target,
+
+        fn list(ptr: *anyopaque, gpa2: std.mem.Allocator, id: resolver.PackageId) anyerror![]const Version {
+            _ = ptr;
+            _ = id;
+            const out = try gpa2.alloc(Version, 1);
+            out[0] = try Version.parse("1.0.0");
+            return out;
+        }
+
+        fn meta(ptr: *anyopaque, gpa2: std.mem.Allocator, id: resolver.PackageId, version: Version) anyerror!resolver.VersionMeta {
+            _ = id;
+            _ = version;
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            return resolver.metaFromManifest(gpa2, self.source, self.target);
+        }
+
+        fn locked(ptr: *anyopaque, id: resolver.PackageId) ?Version {
+            _ = ptr;
+            _ = id;
+            return null;
+        }
+
+        const vtable = resolver.Provider.VTable{
+            .listVersions = list,
+            .versionMeta = meta,
+            .lockedVersion = locked,
+        };
+    };
+
+    var mock = ManifestMock{ .source = &m, .target = .{} };
+    const provider = resolver.Provider{ .ptr = &mock, .vtable = &ManifestMock.vtable };
+    const root_deps = [_]resolver.Dependency{dep(gpa, "lib", "*")};
+    var res = try resolver.resolve(gpa, provider, &root_deps, .{});
+    defer res.deinit();
+    try expectVersion(nodesOf(&res), "lib", "1.0.0");
+    const node = findNode(nodesOf(&res), "lib").?;
+    var saw_default = false;
+    for (node.features) |feature| {
+        if (std.mem.eql(u8, feature, "default")) saw_default = true;
+    }
+    try T.expect(saw_default);
 }
 
 test "runtime不適合はunavailable理由になる" {

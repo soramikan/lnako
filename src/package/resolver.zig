@@ -117,88 +117,6 @@ pub const Solver = pubgrub.Solver(PackageId, Version);
 pub const Range = Solver.R;
 pub const Selection = Solver.Selection;
 
-/// 依存制約が prerelease を明示的に許可する `(major, minor, patch)`。
-pub const Tuple = struct {
-    major: u64,
-    minor: u64,
-    patch: u64,
-
-    pub fn fromVersion(v: Version) Tuple {
-        return .{ .major = v.inner.major, .minor = v.inner.minor, .patch = v.inner.patch };
-    }
-
-    pub fn eql(a: Tuple, b: Tuple) bool {
-        return a.major == b.major and a.minor == b.minor and a.patch == b.patch;
-    }
-
-    pub fn order(a: Tuple, b: Tuple) std.math.Order {
-        if (a.major != b.major) return std.math.order(a.major, b.major);
-        if (a.minor != b.minor) return std.math.order(a.minor, b.minor);
-        return std.math.order(a.patch, b.patch);
-    }
-
-    pub fn hash(t: Tuple) u64 {
-        var h = std.hash.Wyhash.init(0);
-        h.update(std.mem.asBytes(&t.major));
-        h.update(std.mem.asBytes(&t.minor));
-        h.update(std.mem.asBytes(&t.patch));
-        return h.final();
-    }
-};
-
-/// node-semver の prerelease ゲートで許可される tuple を range から抽出する。
-/// 各 AND 集合の prerelease 比較子の tuple の和を、重複なく返す。
-pub fn gatedTuples(gpa: Allocator, range: semver.Range) error{OutOfMemory}![]const Tuple {
-    if (range.sets.len == 0) return &.{};
-    var found: std.ArrayList(Tuple) = .empty;
-    var seen = std.AutoHashMap(Tuple, void).init(gpa);
-    for (range.sets) |set| {
-        for (set) |comparator| {
-            if (comparator.version.prerelease.len == 0) continue;
-            const tuple = Tuple{
-                .major = comparator.version.major,
-                .minor = comparator.version.minor,
-                .patch = comparator.version.patch,
-            };
-            const gop = try seen.getOrPut(tuple);
-            if (!gop.found_existing) try found.append(gpa, tuple);
-        }
-    }
-    std.mem.sort(Tuple, found.items, {}, struct {
-        fn lt(_: void, a: Tuple, b: Tuple) bool {
-            return Tuple.order(a, b) == .lt;
-        }
-    }.lt);
-    return found.items;
-}
-
-fn tupleSlicesEqual(a: []const Tuple, b: []const Tuple) bool {
-    if (a.len != b.len) return false;
-    for (a, b) |x, y| {
-        if (!Tuple.eql(x, y)) return false;
-    }
-    return true;
-}
-
-/// 2 つの許可 tuple 集合の積集合（どちらも昇順・重複なし）。
-fn intersectTuples(gpa: Allocator, a: []const Tuple, b: []const Tuple) error{OutOfMemory}![]const Tuple {
-    var out: std.ArrayList(Tuple) = .empty;
-    var i: usize = 0;
-    var j: usize = 0;
-    while (i < a.len and j < b.len) {
-        switch (Tuple.order(a[i], b[j])) {
-            .lt => i += 1,
-            .gt => j += 1,
-            .eq => {
-                try out.append(gpa, a[i]);
-                i += 1;
-                j += 1;
-            },
-        }
-    }
-    return out.items;
-}
-
 /// root を表す予約 ID。TOML 文字列に NUL を含められないため衝突しない。
 pub const root_id: PackageId = .{ .pkg = "\x00root" };
 pub const root_version = Version{ .inner = .{ .major = 0, .minor = 0, .patch = 0 } };
@@ -217,9 +135,10 @@ pub const Dependency = struct {
     default_features: bool = true,
     /// true の場合、lnako 実行時に native 実装を優先選択する。
     prefer_native: bool = false,
-    /// この制約が prerelease を明示的に許可する tuple。空なら prerelease は
-    /// 選択対象にならない（node-semver の prerelease ゲート相当）。
-    prerelease_tuples: []const Tuple = &.{},
+    /// この依存の元になった npm 互換 range。prerelease ゲートを含む
+    /// node-semver 判定を解決後の検証で行うために保持する。null の場合は
+    /// `constraint` の区間判定にフォールバックする。
+    semver_range: ?semver.Range = null,
 };
 
 /// feature 定義。
@@ -235,6 +154,10 @@ pub const Impl = enum { none, source, native, esm };
 pub const VersionMeta = struct {
     dependencies: []const Dependency = &.{},
     features: []const FeatureDefinition = &.{},
+    /// feature 展開で alias として解決できる依存エントリ名（pkg 以外の
+    /// npm/path/git/http や dev-dependencies を含む）。version 解決の辺には
+    /// ならないが、feature 定義からの参照で未知 feature にしないために渡す。
+    feature_aliases: []const []const u8 = &.{},
     /// null なら選択可能。値がある場合は選択不能な理由（runtime/engines/OS/
     /// artifact 欠落など）。理由は競合説明の hint として表示される。
     unavailable_reason: ?[]const u8 = null,
@@ -294,6 +217,10 @@ pub const ResolveOptions = struct {
 };
 
 /// 解決済み package node。
+///
+/// `dependencies` は `dependencies.pkg` から解決した辺のみ。npm/path/git/http
+/// 依存は version 解決の対象外で、lock 生成・取得・import 層が manifest を
+/// 再評価して扱う（この node には含まれない）。
 pub const PackageNode = struct {
     id: PackageId,
     version: Version,
@@ -342,10 +269,11 @@ pub const Error = error{
 
 /// lnako の npm 互換 range を pubgrub の区間集合へ変換する。
 ///
-/// node-semver の prerelease ゲート（同一 tuple の prerelease 比較子を要求する
-/// 規則）は区間集合では表現できないため、本変換では適用しない。prerelease は
-/// pubgrub 側で常に release より低優先として扱われる。互換検証 (E025) は
-/// `semver.Range` が、解決時の候補選択は pubgrub が担う。
+/// この変換は区間のみを表し、node-semver の prerelease ゲート（候補が同一
+/// tuple の prerelease 比較子を要求する規則）は表現しない。ゲートは解決後の
+/// 検証で `Dependency.semver_range` の `semver.Range.satisfies` により適用し、
+/// 制約が許可しない prerelease は禁止して再求解する（誤った解を返さない）。
+/// prerelease の候補順は pubgrub に従い release が優先される。
 pub fn rangeFromSemver(gpa: Allocator, range: semver.Range) error{OutOfMemory}!Range {
     // `sets.len == 0` は「全 version 一致」を表すセンチネル（`semver.Range`
     // の契約）。空の AND 集合は区間 `any` に対応する。
@@ -423,8 +351,6 @@ fn IdMap(comptime Val: type) type {
 }
 
 const RequestMap = IdMap(PkgRequest);
-/// package ごとに、依存制約が明示的に許可する prerelease tuple の積集合。
-const AllowanceMap = IdMap([]const Tuple);
 
 const Expansion = struct {
     features: std.StringHashMap(void),
@@ -522,6 +448,9 @@ fn expansionFor(gpa: Allocator, meta: VersionMeta, request: ?PkgRequest) !Expans
         try input_aliases.put(dep.name, {});
         if (dep.alias) |alias| try input_aliases.put(alias, {});
     }
+    // version 解決対象外の依存（npm/path/git/http・dev）も feature の
+    // alias として解決できるようにする。
+    for (meta.feature_aliases) |alias| try input_aliases.put(alias, {});
 
     // 選択版が提供しない要求 feature は「この version では満たせない」ため
     // 呼出し側で unavailable として扱い、PubGrub に別 version へ backtrack
@@ -583,28 +512,9 @@ fn activeDependencies(gpa: Allocator, meta: VersionMeta, request: ?PkgRequest) !
 const Adapter = struct {
     provider: Provider,
     requests: *const RequestMap,
-    allowances: *const AllowanceMap,
 
     pub fn listVersions(self: *const Adapter, gpa: Allocator, id: PackageId) anyerror![]const Version {
-        const raw = try self.provider.listVersions(gpa, id);
-        const allow: []const Tuple = if (self.allowances.get(id)) |tuples| tuples else &.{};
-        var filtered: std.ArrayList(Version) = .empty;
-        for (raw) |version| {
-            // prerelease は制約が同一 tuple を明示的に許可する場合のみ候補に残す。
-            if (Version.isPrerelease(version)) {
-                const tuple = Tuple.fromVersion(version);
-                var permitted = false;
-                for (allow) |candidate| {
-                    if (Tuple.eql(candidate, tuple)) {
-                        permitted = true;
-                        break;
-                    }
-                }
-                if (!permitted) continue;
-            }
-            try filtered.append(gpa, version);
-        }
-        return filtered.items;
+        return self.provider.listVersions(gpa, id);
     }
 
     pub fn dependencies(self: *const Adapter, gpa: Allocator, id: PackageId, version: Version) anyerror!Solver.DepResult {
@@ -709,48 +619,6 @@ fn collectRequests(
     return requests;
 }
 
-/// 依存辺が許可する prerelease tuple を積集合で併合する。
-fn mergeAllowance(gpa: Allocator, interner: *Interner, acc: *AllowanceMap, target: PackageId, tuples: []const Tuple) !void {
-    const id = try interner.id(gpa, target);
-    const gop = try acc.getOrPut(id);
-    if (!gop.found_existing) {
-        gop.value_ptr.* = try gpa.dupe(Tuple, tuples);
-        return;
-    }
-    gop.value_ptr.* = try intersectTuples(gpa, gop.value_ptr.*, tuples);
-}
-
-/// 選択 graph の incoming 辺から package ごとの prerelease 許可 tuple を計算する。
-fn computeAllowances(
-    gpa: Allocator,
-    interner: *Interner,
-    provider: Provider,
-    current: *const RequestMap,
-    root_deps: []const Dependency,
-    selections: []const Selection,
-) !AllowanceMap {
-    var allowances = AllowanceMap.init(gpa);
-    for (root_deps) |dep| try mergeAllowance(gpa, interner, &allowances, dep.id, dep.prerelease_tuples);
-    for (selections) |selection| {
-        if (selection.package.eql(root_id)) continue;
-        const meta = try provider.versionMeta(gpa, selection.package, selection.version);
-        const request = if (current.get(selection.package)) |req| req else null;
-        const active = try activeDependencies(gpa, meta, request);
-        for (active.deps) |dep| try mergeAllowance(gpa, interner, &allowances, dep.id, dep.prerelease_tuples);
-    }
-    return allowances;
-}
-
-fn allowancesEqual(a: *const AllowanceMap, b: *const AllowanceMap) bool {
-    if (a.count() != b.count()) return false;
-    var iterator = a.iterator();
-    while (iterator.next()) |entry| {
-        const other = b.get(entry.key_ptr.*) orelse return false;
-        if (!tupleSlicesEqual(entry.value_ptr.*, other)) return false;
-    }
-    return true;
-}
-
 /// package の依存制約を解決する。
 ///
 /// 現在の feature 要求で version を解き、得た解の依存辺から feature 要求を
@@ -766,6 +634,10 @@ fn allowancesEqual(a: *const AllowanceMap, b: *const AllowanceMap) bool {
 /// 要求はソルバの制約項ではないため、ある version を選んだ後に別 version の
 /// feature 依存が競合しても backjump できず、有効な別 version を選べない。
 /// これは安全側の失敗であり、誤った解は返さない。
+///
+/// node-semver の prerelease ゲートは区間で表現できないため、解いた後に
+/// 全 incoming 辺の元 range で検証し、違反した prerelease を禁止して再求解
+/// する。これも誤った解を返さない方向にのみ働く。
 pub fn resolve(gpa: Allocator, provider: Provider, root_deps: []const Dependency, opts: ResolveOptions) !Resolution {
     var arena = std.heap.ArenaAllocator.init(gpa);
     errdefer arena.deinit();
@@ -774,9 +646,6 @@ pub fn resolve(gpa: Allocator, provider: Provider, root_deps: []const Dependency
     var interner = Interner.init(a);
     var requests = RequestMap.init(a);
     for (root_deps) |dep| try mergeDependency(a, &interner, &requests, dep);
-    // prerelease は制約が同一 tuple を明示的に許可する場合のみ候補にする。
-    var allowances = AllowanceMap.init(a);
-    for (root_deps) |dep| try mergeAllowance(a, &interner, &allowances, dep.id, dep.prerelease_tuples);
 
     // root 依存は決定的順序でソルバへ渡す。
     const sorted_root = try a.dupe(Dependency, root_deps);
@@ -790,9 +659,14 @@ pub fn resolve(gpa: Allocator, provider: Provider, root_deps: []const Dependency
         try solver_root_deps.append(a, .{ .package = dep.id, .constraint = dep.constraint });
     }
 
+    // node-semver の prerelease ゲートは区間集合で表現できないため、解いた後
+    // に全 incoming 辺の元 range で検証する。違反した version を禁止して再求解
+    // する（安全側: 誤った解を返さない）。
+    var forbidden: std.ArrayList(Solver.ExtraConstraint) = .empty;
+
     var iteration: u32 = 0;
     while (iteration < opts.max_feature_iterations) : (iteration += 1) {
-        const adapter = Adapter{ .provider = provider, .requests = &requests, .allowances = &allowances };
+        const adapter = Adapter{ .provider = provider, .requests = &requests };
         // ソルバ自身のアリーナは実 allocator 上に作らせ、各反復の終了時に
         // 解放する。provider が返す version 文字列は解決結果へ持ち出す前に
         // interner で複製するため、ここで solve のメモリを破棄してよい。
@@ -802,7 +676,7 @@ pub fn resolve(gpa: Allocator, provider: Provider, root_deps: []const Dependency
             root_id,
             root_version,
             solver_root_deps.items,
-            .{ .prefer_oldest = opts.prefer_oldest },
+            .{ .prefer_oldest = opts.prefer_oldest, .constraints = forbidden.items },
         );
         defer outcome.deinit();
         switch (outcome.result) {
@@ -828,8 +702,7 @@ pub fn resolve(gpa: Allocator, provider: Provider, root_deps: []const Dependency
                     });
                 }
                 const gathered = try collectRequests(a, &interner, provider, &requests, root_deps, selections.items);
-                const gathered_allowances = try computeAllowances(a, &interner, provider, &requests, root_deps, selections.items);
-                if (requestsEqual(&requests, &gathered) and allowancesEqual(&allowances, &gathered_allowances)) {
+                if (requestsEqual(&requests, &gathered)) {
                     const nodes = try buildGraph(a, &interner, provider, &gathered, selections.items, sorted_root, opts.target);
                     if (try findCycle(a, nodes)) |cycle| {
                         return .{
@@ -837,17 +710,69 @@ pub fn resolve(gpa: Allocator, provider: Provider, root_deps: []const Dependency
                             .result = .{ .cycle = cycle },
                         };
                     }
+                    if (try findDisallowedPrerelease(a, provider, &gathered, sorted_root, selections.items)) |offender| {
+                        // 制約が許可しない prerelease を禁止して再求解する。
+                        try forbidden.append(a, .{
+                            .package = try interner.id(a, offender.package),
+                            .constraint = try Range.singleton(a, offender.version),
+                            .require = false,
+                            .reason = "prerelease is not permitted by an incoming constraint",
+                        });
+                        continue;
+                    }
                     return .{
                         .arena = arena,
                         .result = .{ .resolved = nodes },
                     };
                 }
                 requests = gathered;
-                allowances = gathered_allowances;
             },
         }
     }
     return error.FeatureIterationExceeded;
+}
+
+/// `dep` の元 range が `version` を node-semver の prerelease ゲート込みで
+/// 許可するか。元 range が無い場合は区間判定にフォールバックする。
+fn dependencyAllows(dep: Dependency, version: Version) bool {
+    if (dep.semver_range) |range| return range.satisfies(version.toSemver());
+    return dep.constraint.contains(version);
+}
+
+/// 選択された prerelease が incoming 辺の制約に反していないか検証し、
+/// 最初の違反を返す。
+fn findDisallowedPrerelease(
+    gpa: Allocator,
+    provider: Provider,
+    requests: *const RequestMap,
+    root_deps: []const Dependency,
+    selections: []const Selection,
+) !?Selection {
+    var selected = IdMap(Version).init(gpa);
+    for (selections) |selection| {
+        try selected.put(selection.package, selection.version);
+    }
+
+    for (root_deps) |dep| {
+        const version = selected.get(dep.id) orelse continue;
+        if (Version.isPrerelease(version) and !dependencyAllows(dep, version)) {
+            return .{ .package = dep.id, .version = version };
+        }
+    }
+
+    for (selections) |selection| {
+        if (selection.package.eql(root_id)) continue;
+        const meta = try provider.versionMeta(gpa, selection.package, selection.version);
+        const request = if (requests.get(selection.package)) |req| req else null;
+        const active = try activeDependencies(gpa, meta, request);
+        for (active.deps) |dep| {
+            const version = selected.get(dep.id) orelse continue;
+            if (Version.isPrerelease(version) and !dependencyAllows(dep, version)) {
+                return .{ .package = dep.id, .version = version };
+            }
+        }
+    }
+    return null;
 }
 
 fn buildGraph(
@@ -1029,7 +954,7 @@ pub fn metaFromManifest(gpa: Allocator, source: *const manifest.Manifest, target
             .features = dep.features,
             .default_features = dep.default_features,
             .prefer_native = dep.prefer_native,
-            .prerelease_tuples = try gatedTuples(gpa, dep.version),
+            .semver_range = dep.version,
         });
     }
 
@@ -1042,9 +967,26 @@ pub fn metaFromManifest(gpa: Allocator, source: *const manifest.Manifest, target
         });
     }
 
+    // feature 定義は pkg 以外（npm/path/git/http・dev）の alias も参照できる。
+    // これらは version 解決の辺にはしないが、未知 feature にしないため
+    // 展開用の alias 集合として渡す。
+    var feature_aliases: std.ArrayList([]const u8) = .empty;
+    {
+        var aliases = try source.dependencyAliases(gpa);
+        defer aliases.deinit();
+        var alias_iterator = aliases.keyIterator();
+        while (alias_iterator.next()) |name| try feature_aliases.append(gpa, name.*);
+        std.mem.sort([]const u8, feature_aliases.items, {}, struct {
+            fn lt(_: void, x: []const u8, y: []const u8) bool {
+                return std.mem.order(u8, x, y) == .lt;
+            }
+        }.lt);
+    }
+
     var meta = VersionMeta{
         .dependencies = deps.items,
         .features = definitions.items,
+        .feature_aliases = feature_aliases.items,
     };
     for (source.exports) |item| {
         if (item.path != null) meta.has_source = true;
