@@ -5,6 +5,9 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
 import { computeSourceManifestSha256 } from "./lib/evidence/manifest.mjs";
+import { processOutputSha256 } from "./lib/evidence/provenance.mjs";
+import { readFixtureRecords } from "./lib/evidence/records.mjs";
+import { validateCompatJsEvidence } from "./lib/evidence/validators.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const lockPath = resolve(root, "compat/upstream.lock.json");
@@ -58,10 +61,11 @@ try {
     await writeExclusive(evidenceOutput, `${JSON.stringify(evidence, null, 2)}\n`);
     console.log(`compat-js実行証拠を生成しました: ${evidence.entries.length} entry / ${evidence.scope.caseCount}ケース`);
   } else {
+    // tracked正本はcanonical形（揮発provenanceを持たない内容クレーム）。
     const actual = JSON.parse(await readFile(evidencePath, "utf8"));
-    validateEvidence(actual, lock, catalog, cases, { allowDirty: false });
+    validateCompatJsEvidence(actual, lock, catalog, cases, await readFixtureRecords(), "canonical");
     validateLiveSites(actual, reports);
-    console.log(`compat-js実行証拠を検証しました: ${actual.entries.length} entry / ${actual.scope.caseCount}ケース（tracked artifact）`);
+    console.log(`compat-js実行証拠を検証しました: ${actual.entries.length} entry / ${actual.scope.caseCount}ケース（tracked canonical artifact）`);
   }
 } finally {
   await rm(temporary, { recursive: true, force: true });
@@ -363,7 +367,8 @@ function normalizeSuccess(result) {
 }
 
 function resultSummary(result) {
-  return { status: result.status, signal: result.signal, stdoutSha256: sha256(String(result.stdout ?? "").replaceAll("\r\n", "\n")), stderrSha256: sha256(String(result.stderr ?? "").replaceAll("\r\n", "\n")), failed: failed(result) };
+  const volatileOutputContext = { volatilePaths: [temporary, root, oracleRoot] };
+  return { status: result.status, signal: result.signal, stdoutSha256: processOutputSha256(String(result.stdout ?? ""), volatileOutputContext), stderrSha256: processOutputSha256(String(result.stderr ?? ""), volatileOutputContext), failed: failed(result) };
 }
 
 function failed(result) {

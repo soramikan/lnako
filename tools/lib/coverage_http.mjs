@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { coverageEnv as env } from "./coverage_env.mjs";
 import * as evidence_common from "./evidence_common.mjs";
+import { normalizeVolatileProcessOutput, processOutputSha256 } from "./evidence/provenance.mjs";
 import * as coverage_process from "./coverage_process.mjs";
 import * as coverage_fixtures from "./coverage_fixtures.mjs";
 import * as coverage_sites from "./coverage_sites.mjs";
@@ -121,6 +122,7 @@ export async function runHttpServerFixture(fixture, index, temporary) {
     .filter((name) => !observedCommandNames.has(name))
     .map((name) => ({ name, catalogIds: (env.catalogByName.get(name) ?? []).map((command) => command.id) }));
   const generatedAvailable = officialGenerated.responses !== null;
+  const volatileOutputContext = { volatilePaths: [temporary, env.root, env.oracleRoot] };
   return {
     report: {
       id: fixture.id,
@@ -142,10 +144,10 @@ export async function runHttpServerFixture(fixture, index, temporary) {
         officialRoutesEquivalent: generatedAvailable && JSON.stringify(officialSource.responses) === JSON.stringify(officialGenerated.responses),
         officialSourceStderrIncludes: null,
         results: Object.fromEntries([
-          ["officialSource", summarizeHttpSuite(officialSource)],
-          ["officialGenerated", summarizeHttpSuite(officialGenerated)],
-          ["lnakoRun", summarizeHttpSuite(interpreterWithoutTrace)],
-          ["lnakoNativeO0", summarizeHttpSuite(aotWithoutTrace)],
+          ["officialSource", summarizeHttpSuite(officialSource, volatileOutputContext)],
+          ["officialGenerated", summarizeHttpSuite(officialGenerated, volatileOutputContext)],
+          ["lnakoRun", summarizeHttpSuite(interpreterWithoutTrace, volatileOutputContext)],
+          ["lnakoNativeO0", summarizeHttpSuite(aotWithoutTrace, volatileOutputContext)],
         ]),
       },
       interpreter: {
@@ -299,14 +301,14 @@ export function normalizeHttpServerResponse(response) {
 }
 
 
-export function summarizeHttpSuite(result) {
+export function summarizeHttpSuite(result, volatileOutputContext = {}) {
   return {
     status: result.status,
     signal: result.signal,
-    stdoutSha256: evidence_common.sha256(evidence_common.normalizeLineEndings(result.stdout)),
-    stderrSha256: evidence_common.sha256(evidence_common.normalizeLineEndings(result.stderr)),
+    stdoutSha256: processOutputSha256(result.stdout, volatileOutputContext),
+    stderrSha256: processOutputSha256(result.stderr, volatileOutputContext),
     responseCount: result.responses === null ? 0 : result.responses.length,
-    responseSha256: result.responses === null ? null : evidence_common.sha256(JSON.stringify(result.responses)),
+    responseSha256: result.responses === null ? null : evidence_common.sha256(normalizeVolatileProcessOutput(JSON.stringify(result.responses), volatileOutputContext)),
   };
 }
 

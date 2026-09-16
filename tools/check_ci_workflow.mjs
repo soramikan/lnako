@@ -32,8 +32,27 @@ const syncEvidence = await readFile(resolve(root, "tools/sync_compat_evidence.mj
   (await readFile(resolve(root, "tools/lib/evidence/constants.mjs"), "utf8")) +
   (await readFile(resolve(root, "tools/lib/evidence/attested_files.mjs"), "utf8"));
 const verifyAttestation = await readFile(resolve(root, "tools/verify_dispatch_attestation.mjs"), "utf8");
+const evidenceFreshness = await readFile(resolve(root, "tools/check_evidence_freshness.mjs"), "utf8");
+const evidenceUpdate = await readFile(resolve(root, "tools/update_current_evidence.mjs"), "utf8") +
+  (await readFile(resolve(root, "tools/lib/evidence/generators.mjs"), "utf8"));
+const evidenceProvenance = await readFile(resolve(root, "tools/lib/evidence/provenance.mjs"), "utf8");
 if (!trackedAttestationChecker.includes("gh") || !trackedAttestationChecker.includes("--cert-oidc-issuer") || !trackedAttestationChecker.includes("--deny-self-hosted-runners") || !syncEvidence.includes("--historical-commit") || !syncEvidence.includes("canonical --output")) {
   throw new Error("tracked dispatch attestation checkerのhistorical commit／公式gh厳格検証が不完全です");
+}
+// canonical tracked evidence（揮発provenanceを持たない内容クレーム）の契約を固定する。
+if (!syncEvidence.includes('form !== "measured" && form !== "canonical"') ||
+    !syncEvidence.includes('isCanonicalEnvironment') ||
+    !evidenceProvenance.includes("canonicalizeEvidenceDocument") ||
+    !evidenceProvenance.includes("manifestContentSha256") ||
+    !evidenceProvenance.includes("processOutputSha256") ||
+    !evidenceProvenance.includes("freshnessBytes") ||
+    !evidenceFreshness.includes('from "./lib/evidence/generators.mjs"') ||
+    !evidenceFreshness.includes("freshnessBytes") ||
+    !evidenceFreshness.includes("--dispatch-evidence") ||
+    !evidenceFreshness.includes("--compat-js-evidence") ||
+    !evidenceUpdate.includes('from "./lib/evidence/generators.mjs"') ||
+    !evidenceUpdate.includes("canonicalizeEvidenceDocument")) {
+  throw new Error("canonical evidence形・揮発値正規化・共有generator・freshness checkerの実装が不完全です");
 }
 if (!verifyAttestation.includes('evidence.fixture?.id !== "native-dispatch-commands"') || verifyAttestation.includes('evidence.fixture?.id !== "native-cut-commands"')) {
   throw new Error("dispatch attestation verifierが現行dispatch fixtureを検証していません");
@@ -233,11 +252,14 @@ if (!interpreterOracleScript.includes("sanity.error?.code !== \"ENOEXEC\"") ||
   throw new Error("Interpreter差分のENOEXEC cache再構築処理がありません");
 }
 const macSupportSteps = new Map([
+  ["Build macOS normal ReleaseSafe compiler", ["matrix.suite == 'mac-host-compat'", "run: zig build -Doptimize=ReleaseSafe"]],
   ["Build macOS AOT verification compiler", ["matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat'", "run: zig build"]],
   ["macOS AOT HTTP server oracle", ["matrix.suite == 'mac-core-standard-support'", "node tools/compare_http_server_aot_oracle.mjs --no-build"]],
   ["macOS dispatch evidence audit", ["matrix.suite == 'mac-host-compat'", "node tools/check_dispatch_trace.mjs --no-build"]],
   ["macOS dispatch trace security audit", ["matrix.suite == 'mac-host-compat'", "node tools/check_dispatch_trace_security.mjs --no-build"]],
   ["Upload macOS native dispatch evidence", ["matrix.suite == 'mac-host-compat' && always()", "name: lnako-dispatch-evidence-macos-15"]],
+  ["macOS compat-js evidence audit", ["matrix.suite == 'mac-host-compat'", "node tools/check_compat_js_evidence.mjs --no-build"]],
+  ["Canonical evidence freshness", ["matrix.suite == 'mac-host-compat'", "node tools/check_evidence_freshness.mjs"]],
   ["Build macOS ReleaseSafe compiler", ["matrix.suite == 'mac-core-standard-support'", "run: zig build -Doptimize=ReleaseSafe"]],
   ["macOS normal smoke test", ["matrix.suite == 'mac-core-standard-support'", "./zig-out/bin/lnako test tests/fixtures/run-tests.nako3"]],
 ]);
@@ -249,6 +271,27 @@ for (const [name, [condition, required]] of macSupportSteps) {
   if (!block || !block.includes(`if: ${condition}`) || !block.includes(required)) {
     throw new Error(`macOS分割jobの${name}が不完全です`);
   }
+}
+// canonical freshness は正本と同じ ReleaseSafe で測るため、mac-host-compat は
+// normal ReleaseSafe → dispatch 生成 → QuickJS ReleaseSafe → compat-js 生成 →
+// freshness（残りの生成＋比較）の順でなければならない。Debug 出力は比較しない。
+const macHostCompatOrder = [
+  "      - name: Build macOS normal ReleaseSafe compiler",
+  "      - name: macOS dispatch evidence audit",
+  "      - name: Test QuickJS build",
+  "      - name: Build QuickJS compiler",
+  "      - name: macOS compat-js evidence audit",
+  "      - name: Canonical evidence freshness",
+];
+const macHostCompatPositions = macHostCompatOrder.map((marker) => testJob.indexOf(marker));
+if (macHostCompatPositions.some((position) => position < 0) ||
+    !macHostCompatPositions.every((position, index) => index === 0 || macHostCompatPositions[index - 1] < position)) {
+  throw new Error("mac-host-compatのReleaseSafe証拠生成順が不正です（normal RS→dispatch→QuickJS RS→compat-js→freshness の順である必要があります）");
+}
+const freshnessBlock = testJob.slice(testJob.indexOf("      - name: Canonical evidence freshness"));
+if (!freshnessBlock.includes('--dispatch-evidence "${{ runner.temp }}/dispatch-evidence-macos-15.json"') ||
+    !freshnessBlock.includes('--compat-js-evidence "${{ runner.temp }}/compat-js-evidence.json"')) {
+  throw new Error("Canonical evidence freshnessが既存のdispatch/compat-js生成物を転用していません");
 }
 if ((testJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 1) {
   throw new Error("macOSのdispatch evidence artifact uploadが1件ありません");
@@ -320,6 +363,21 @@ if (!dispatchEvidenceBlock.includes("node tools/check_dispatch_trace.mjs --no-bu
     !dispatchSecurityBlock.includes("node tools/check_dispatch_trace_security.mjs --no-build")) {
   throw new Error("dispatch evidence/coverageの分割監査、fixture shard、またはsecurity検査が不完全です");
 }
+// canonical正本（231件）のfreshnessはLinux dedicated shardのみが供給する。
+// Linuxのcoverage shardにだけ--include-nativeがあり、他OSには無いことを確認する。
+if (!dispatchCoverageBlock.includes("matrix.os != 'ubuntu-24.04'") || dispatchCoverageBlock.includes("--include-native")) {
+  throw new Error("Linux以外のdispatch coverage shardに--include-nativeが混入しています");
+}
+const linuxCoverageBlock = aotStep("Dispatch coverage audit (native fixtures)");
+if (!linuxCoverageBlock || !linuxCoverageBlock.includes("if: matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04'") ||
+    !linuxCoverageBlock.includes("node tools/check_dispatch_coverage.mjs --no-build --include-native") ||
+    !linuxCoverageBlock.includes("--fixture-shard-index") || !linuxCoverageBlock.includes("--fixture-shard-count") ||
+    !linuxCoverageBlock.includes("--output")) {
+  throw new Error("Linux dedicated dispatch coverage shardの--include-native監査が不完全です");
+}
+if (macCoverageBlock.includes("--include-native")) {
+  throw new Error("macOS native相乗りdispatch coverage shardは既定56件のままにしてください");
+}
 if (!httpAotScript.includes("if (!noBuild) buildLnako();") || !httpAotScript.includes("else await access(executable);")) {
   throw new Error("AOT HTTPサーバー比較のno-build実装がありません");
 }
@@ -384,7 +442,11 @@ if (!coverageVerificationJob || !coverageVerificationJob.includes("if: needs.tes
     !coverageVerificationJob.includes("node tools/check_dispatch_coverage_shards.mjs") ||
     !coverageVerificationJob.includes("--shard-count 3") ||
     !dispatchCoverageShardsScript.includes("sampled-unattested-dispatch-audit-shard") ||
-    !dispatchCoverageShardsScript.includes("assertSetEqual(union, referenceKeys") ||
+    !dispatchCoverageShardsScript.includes("assertSubset(darwinUnion, linuxUnion") ||
+    !dispatchCoverageShardsScript.includes("mergeCoverageShards") ||
+    !dispatchCoverageShardsScript.includes("freshnessBytes") ||
+    !dispatchCoverageShardsScript.includes("fixtureCount: 231") ||
+    !dispatchCoverageShardsScript.includes("fixtureCount: 56") ||
     !dispatchCoverageScript.includes("const weightedFixtures = fixtures") ||
     !dispatchCoverageScript.includes(".sort((left, right) => right.weight - left.weight || left.index - right.index)") ||
     !dispatchCoverageScript.includes("--fixture-shard-index") || !dispatchCoverageScript.includes("--fixture-shard-count")) {

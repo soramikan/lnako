@@ -36,11 +36,17 @@
 
 fixture coverageは `paired: 523`、`compat-js-only: 4`、その他の状態は0です。fixture inventoryは合計420件、native AOT 318件、Interpreter 112件、QuickJS 9件です。inventoryの分類は重複するため、数値を足してfixture総数にしません。
 
+## canonical形とmeasured形
+
+`compat/v3.7.24/` に追跡する証拠は **canonical 形** です。内容クレーム（実行site・trace hash・fixture・公式比較・oracle identity・正規化済みmanifest/出力hash）だけを持ち、揮発するprovenanceは持ちません。`provenance.lnako`（commit・binary/source manifest hash）と `provenance.environment.node` はcanonical形に含めず、`provenance.environment` はcanonical生成環境 `darwin/arm64` のみを宣言します。manifest hashはheaderの絶対 `sourcePath` を、公式比較のstdout/stderr hashは一時path・port・PID・Node版・公式生成eval関数名を正規化してから算出するため、環境や実行のたびに値が変わりません。
+
+CIやattestation検証が生成する **measured 形** は、現行環境・Node版・`lnako` provenanceを保持したままの生成artifactです。`tools/lib/evidence/validators.mjs` は `form`（`"measured"` / `"canonical"`）で2形を区別して検証します。tracked正本はcanonical形として、per-OSのattestation artifactはmeasured形として検証します。
+
 ## dispatch証拠
 
 `dispatch-evidence.json` は `lnako.dispatch-evidence.v2` です。現行artifactはmacOS arm64で生成され、Interpreter trace 944 event、AOT trace 1,888 eventを持ち、公式source・公式生成JavaScript・`lnako run`・LLVM AOT O0の比較結果を記録しています。
 
-`dispatch-coverage-evidence.json` は `lnako.dispatch-coverage.v1` の sampled auditです。228 fixture、4,516 site、unambiguousなnative entry 426（unique name 424）を記録します。これは全527 entryの純LLVM AOT実行証明ではなく、同名命令の曖昧な推定も成功証拠として扱いません。
+`dispatch-coverage-evidence.json` は `lnako.dispatch-coverage.v1` の sampled auditです。231 fixture、4,602 site、unambiguousなnative entry 426（unique name 424）を記録します。これは全527 entryの純LLVM AOT実行証明ではなく、同名命令の曖昧な推定も成功証拠として扱いません。canonical正本は `--include-native` の全件実行形で、CIではLinux dedicated shardが全件を実行してmerge結果が正本と照合されます（macOS/Windowsのshardは既定の56件部分集合です）。
 
 global binding、static literal、終了・例外、外部host、公式generated routeの差は、通常の命令siteとは別の証拠namespaceまたはfixture policyで扱います。理由を省略して成功件数だけを増やしません。
 
@@ -76,5 +82,9 @@ node tools/check_compat_report.mjs
 node tools/check_dispatch_attestation_security.mjs
 node tools/check_tracked_dispatch_attestation.mjs --offline
 ```
+
+canonical正本の更新は `node tools/update_current_evidence.mjs` で行います。全17件を staging へ measured 形で生成してcanonical化し、内容が変わったファイルだけを書き換えます（変更の無い証拠はbyteを維持するため、無関係なPR同士が証拠ファイルで衝突しません）。manifest対象のコード変更は先にstageしてから実行し、コードと証拠を同じコミットにまとめてください。
+
+正本が現行ソースと一致するかの検査は `node tools/check_evidence_freshness.mjs`（coverageを除く16件を連続生成して `freshnessBytes` で比較）と `node tools/check_dispatch_coverage_shards.mjs`（CI artifactのcoverage shardをmergeして正本と照合）です。
 
 互換性の分かりにくい仕様、公式処理系のバグ候補、意図的な制限は [`COMPATIBILITY_QUIRKS.md`](COMPATIBILITY_QUIRKS.md) に、公式結果・lnako結果・経路・差分テストID・TODO識別子を揃えて記録します。

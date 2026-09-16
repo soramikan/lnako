@@ -1,8 +1,19 @@
-import { access, copyFile, mkdtemp, mkdir, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isManifestInput } from "./lib/evidence/manifest.mjs";
+import { json } from "./lib/evidence/constants.mjs";
+import { canonicalizeEvidenceDocument } from "./lib/evidence/provenance.mjs";
+import {
+  evidenceBasenames,
+  normalGeneratorSteps,
+  compatJsGeneratorStep,
+  runToolScript,
+  buildNormalCompiler,
+  buildQuickJsCompiler,
+  assertCompilerExists,
+} from "./lib/evidence/generators.mjs";
 
 const root = resolve(fileURLToPath(import.meta.url), "..", "..");
 const compat = resolve(root, "compat/v3.7.24");
@@ -12,39 +23,7 @@ const usage = "usage: node tools/update_current_evidence.mjs [--no-build] [--hel
 const noBuild = arguments_.includes("--no-build");
 const help = arguments_.includes("--help") || arguments_.includes("-h");
 
-const evidenceFiles = [
-  { basename: "dispatch-evidence.json", canonical: resolve(compat, "dispatch-evidence.json") },
-  { basename: "dispatch-coverage-evidence.json", canonical: resolve(compat, "dispatch-coverage-evidence.json") },
-  { basename: "expected-exit-evidence.json", canonical: resolve(compat, "expected-exit-evidence.json") },
-  { basename: "compat-js-evidence.json", canonical: resolve(compat, "compat-js-evidence.json") },
-  { basename: "global-binding-evidence.json", canonical: resolve(compat, "global-binding-evidence.json") },
-  { basename: "directory-binding-evidence.json", canonical: resolve(compat, "directory-binding-evidence.json") },
-  { basename: "static-constant-evidence.json", canonical: resolve(compat, "static-constant-evidence.json") },
-  { basename: "static-string-constant-evidence.json", canonical: resolve(compat, "static-string-constant-evidence.json") },
-  { basename: "static-array-constant-evidence.json", canonical: resolve(compat, "static-array-constant-evidence.json") },
-  { basename: "static-datetime-era-constant-evidence.json", canonical: resolve(compat, "static-datetime-era-constant-evidence.json") },
-  { basename: "static-datetime-plugin-era-constant-evidence.json", canonical: resolve(compat, "static-datetime-plugin-era-constant-evidence.json") },
-  { basename: "static-node-archive-constant-evidence.json", canonical: resolve(compat, "static-node-archive-constant-evidence.json") },
-  { basename: "static-node-command-line-constant-evidence.json", canonical: resolve(compat, "static-node-command-line-constant-evidence.json") },
-  { basename: "static-node-mother-path-constant-evidence.json", canonical: resolve(compat, "static-node-mother-path-constant-evidence.json") },
-  { basename: "static-promise-reject-constant-evidence.json", canonical: resolve(compat, "static-promise-reject-constant-evidence.json") },
-  { basename: "static-caniuse-agents-constant-evidence.json", canonical: resolve(compat, "static-caniuse-agents-constant-evidence.json") },
-  { basename: "static-node-http-initial-constant-evidence.json", canonical: resolve(compat, "static-node-http-initial-constant-evidence.json") },
-];
-
-const staticFixtures = [
-  ["native-scalar-system-constants", "static-constant-evidence.json"],
-  ["native-string-system-constants", "static-string-constant-evidence.json"],
-  ["native-array-system-constants", "static-array-constant-evidence.json"],
-  ["native-datetime-era-data", "static-datetime-era-constant-evidence.json"],
-  ["native-datetime-plugin-era-data", "static-datetime-plugin-era-constant-evidence.json"],
-  ["native-node-archive-constant", "static-node-archive-constant-evidence.json"],
-  ["native-node-command-line-constants", "static-node-command-line-constant-evidence.json"],
-  ["native-node-mother-path", "static-node-mother-path-constant-evidence.json"],
-  ["native-system-promise-reject", "static-promise-reject-constant-evidence.json"],
-  ["native-caniuse-agents", "static-caniuse-agents-constant-evidence.json"],
-  ["native-node-http-initial-constants", "static-node-http-initial-constant-evidence.json"],
-];
+const evidenceFiles = evidenceBasenames.map((basename) => ({ basename, canonical: resolve(compat, basename) }));
 
 validateArguments();
 if (help) {
@@ -68,9 +47,9 @@ async function main() {
   let restoreError = null;
   try {
     if (noBuild) {
-      await assertCompilerExists("--no-buildで使用するnormal ReleaseSafe");
+      await assertCompilerExists(root, "--no-buildで使用するnormal ReleaseSafe");
     } else {
-      buildNormal();
+      buildNormalCompiler(root);
     }
 
     await runNormalEvidenceGenerators(stage);
@@ -79,18 +58,15 @@ async function main() {
     // restore as needed before invoking the build so even a partially failed
     // QuickJS build is followed by an attempt to put the normal compiler back.
     quickJsBuildStarted = true;
-    buildQuickJs();
-    runScript("check_compat_js_evidence.mjs", [
-      "--no-build",
-      "--evidence-output",
-      stagePath(stage, "compat-js-evidence.json"),
-    ]);
+    buildQuickJsCompiler(root);
+    const compatJs = compatJsGeneratorStep((basename) => stagePath(stage, basename));
+    runScript(compatJs.script, compatJs.args);
   } catch (error) {
     primaryError = error;
   } finally {
     if (quickJsBuildStarted) {
       try {
-        buildNormal();
+        buildNormalCompiler(root);
       } catch (error) {
         restoreError = error;
       }
@@ -106,10 +82,10 @@ async function main() {
   if (initialState.commit !== finalCommit) {
     throw new Error(`処理中にHEADが変化しました: ${initialState.commit} -> ${finalCommit}\n追跡済み証拠はコピーしていません。stageを診断用に保持しています: ${stage}`);
   }
-  await copyStagedEvidence(stage);
+  const { written, skipped } = await copyStagedEvidence(stage);
   runScript("sync_compat_evidence.mjs", ["--generate"]);
   runScript("check_interpreter_only_classification.mjs", ["--generate"]);
-  console.log(`互換性証拠ファイルを現行ソースで更新しました（17件、stage保持: ${stage}）`);
+  console.log(`互換性証拠ファイルを現行ソースで更新しました（canonical 更新${written}件・変更なし${skipped}件、stage保持: ${stage}）`);
 }
 
 async function createStageDirectory() {
@@ -122,89 +98,37 @@ async function runNormalEvidenceGenerators(stage) {
   // Keep dispatch and coverage adjacent and sequential. Coverage uses a
   // repository-local scratch tree on some platforms and removes it only when
   // its audit has finished.
-  runScript("check_dispatch_trace.mjs", [
-    "--no-build",
-    "--evidence-output",
-    stagePath(stage, "dispatch-evidence.json"),
-  ]);
-  runScript("check_dispatch_coverage.mjs", [
-    "--no-build",
-    "--include-native",
-    "--output",
-    stagePath(stage, "dispatch-coverage-evidence.json"),
-  ]);
-  runScript("check_node_exit_evidence.mjs", [
-    "--no-build",
-    "--output",
-    stagePath(stage, "expected-exit-evidence.json"),
-  ]);
-  runScript("check_global_binding_evidence.mjs", [
-    "--no-build",
-    "--profile",
-    "file-copy",
-    "--evidence-output",
-    stagePath(stage, "global-binding-evidence.json"),
-  ]);
-  runScript("check_global_binding_evidence.mjs", [
-    "--no-build",
-    "--profile",
-    "node-directory",
-    "--evidence-output",
-    stagePath(stage, "directory-binding-evidence.json"),
-  ]);
-  for (const [fixtureId, basename] of staticFixtures) {
-    runScript("check_static_constant_evidence.mjs", [
-      "--no-build",
-      "--fixture",
-      fixtureId,
-      "--evidence-output",
-      stagePath(stage, basename),
-    ]);
+  for (const step of normalGeneratorSteps((basename) => stagePath(stage, basename))) {
+    runToolScript(root, step.script, step.args);
   }
 }
 
+// staged measured evidence を canonical 形へ変換し、内容が変わったファイルだけを
+// 書き換える。無関係な変更で全17件が書き換わることを防ぐ。
 async function copyStagedEvidence(stage) {
+  let written = 0;
+  let skipped = 0;
   for (const { basename, canonical } of evidenceFiles) {
-    await copyFile(stagePath(stage, basename), canonical);
+    const measured = JSON.parse(await readFile(stagePath(stage, basename), "utf8"));
+    const canonicalBytes = json(canonicalizeEvidenceDocument(measured));
+    let existing = null;
+    try {
+      existing = await readFile(canonical, "utf8");
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    if (existing === canonicalBytes) {
+      skipped += 1;
+      continue;
+    }
+    await writeFile(canonical, canonicalBytes);
+    written += 1;
   }
-}
-
-async function assertCompilerExists(label) {
-  const compiler = resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
-  try {
-    await access(compiler);
-  } catch (error) {
-    throw new Error(`${label}バイナリがありません: ${compiler}`, { cause: error });
-  }
-}
-
-function buildNormal() {
-  runCommand("zig", ["build", "-Doptimize=ReleaseSafe"], "normal ReleaseSafe build");
-}
-
-function buildQuickJs() {
-  runCommand("zig", ["build", "-Doptimize=ReleaseSafe", "-Dcompat-js=true"], "QuickJS ReleaseSafe build");
+  return { written, skipped };
 }
 
 function runScript(script, args) {
-  runCommand(process.execPath, [resolve(root, "tools", script), ...args], script);
-}
-
-function runCommand(command, args, label) {
-  const environment = {
-    ...process.env,
-    ZIG_GLOBAL_CACHE_DIR: process.env.ZIG_GLOBAL_CACHE_DIR ?? resolve(root, ".zig-global-cache"),
-  };
-  const result = spawnSync(command, args, {
-    cwd: root,
-    env: environment,
-    stdio: "inherit",
-  });
-  if (result.error) throw new Error(`${label} の起動に失敗しました: ${result.error.message}`, { cause: result.error });
-  if (result.status !== 0) {
-    const signal = result.signal === null ? "" : ` signal=${result.signal}`;
-    throw new Error(`${label} が失敗しました: status=${result.status}${signal}`);
-  }
+  runToolScript(root, script, args);
 }
 
 function assertSourceTreeReady(context) {

@@ -5,6 +5,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
 import { computeSourceManifestSha256 } from "./lib/evidence/manifest.mjs";
+import { manifestContentSha256, processOutputSha256 } from "./lib/evidence/provenance.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const lockPath = resolve(root, "compat/upstream.lock.json");
@@ -339,11 +340,12 @@ function normalizeProcess(result) {
 }
 
 function summarizeProcess(result) {
+  const volatileOutputContext = { volatilePaths: [temporary, root, oracleRoot] };
   return {
     status: result.status,
     signal: result.signal,
-    stdoutSha256: sha256(normalizeLineEndings(result.stdout)),
-    stderrSha256: sha256(normalizeLineEndings(result.stderr)),
+    stdoutSha256: processOutputSha256(result.stdout, volatileOutputContext),
+    stderrSha256: processOutputSha256(result.stderr, volatileOutputContext),
   };
 }
 
@@ -470,7 +472,7 @@ async function readCompileManifest(path, sourcePath, testCase) {
     siteIds.add(entry.siteId);
     return { sourceName: entry.sourceName, canonicalOpcode: entry.canonicalOpcode, opcode: entry.opcode, route: entry.route, siteId: entry.siteId };
   });
-  return { entries: summaries, rawSha256: sha256(text) };
+  return { entries: summaries, rawSha256: manifestContentSha256(text) };
 }
 
 function validateArtifact(artifact) {

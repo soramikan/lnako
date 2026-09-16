@@ -54,8 +54,7 @@
   "provenance": {
     "environment": {
       "platform": "darwin",
-      "arch": "arm64",
-      "node": "v24.15.0"
+      "arch": "arm64"
     },
     "oracle": {
       "build": 4,
@@ -65,17 +64,13 @@
       "treeHashAlgorithm": "sha256-json-records-v3",
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
-    "lnako": {
-      "binarySha256": "2ad5056c59a34bd88385cab14ea1cbca3f651edac7776fa3aa97c6413411cc52",
-      "sourceManifestSha256": "bdda14837237af4c400482101fb0d510ee8a2c526d1c1bcdcb929d91e567af7e"
-    },
     "raw": {
       "interpreterTraceSha256": "4cffa2464ad6f612591a35bc5240822807fb0395919b1f99d5d926c09562717b",
       "aotTraceSha256": "97b20225abc19943eab7359100c62fc7bbd8ff6ededdbc02d01185263ca50fa5",
-      "globalManifestSha256": "31fbbe22ac89d4c11862b7adfd3fa5b6fdf2a827f6335933df7289eed9aafc4b",
+      "globalManifestSha256": "687f8c09e1fbd078378c478ea09bdb8d7793b9fd0e9a0644133ff75d8328bf5c",
       "literalInterpreterTraceSha256": "d1a240ca85bb6425f4ad3e15b23d56a4366b64e8631f58b1af10c96a38b65232",
       "literalAotTraceSha256": "b503b7eae644c3b3cc2fbe7504669a86aa68f5db0642b31b5d61cde895e2a1ea",
-      "literalManifestSha256": "f88bf6e73066b3d7bc1f65afcd2b4efb1c2f024c39116e092480121c87716be5"
+      "literalManifestSha256": "f3d9bcafc2675581f87bef1b4c39f9c17bc4e898ba3e915ccfa71b38cfed9b2e"
     }
   },
   "trace": {

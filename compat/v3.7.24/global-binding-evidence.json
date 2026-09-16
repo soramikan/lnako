@@ -99,8 +99,7 @@
   "provenance": {
     "environment": {
       "platform": "darwin",
-      "arch": "arm64",
-      "node": "v24.15.0"
+      "arch": "arm64"
     },
     "oracle": {
       "build": 4,
@@ -110,14 +109,10 @@
       "treeHashAlgorithm": "sha256-json-records-v3",
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
-    "lnako": {
-      "binarySha256": "2ad5056c59a34bd88385cab14ea1cbca3f651edac7776fa3aa97c6413411cc52",
-      "sourceManifestSha256": "bdda14837237af4c400482101fb0d510ee8a2c526d1c1bcdcb929d91e567af7e"
-    },
     "raw": {
       "interpreterTraceSha256": "699eaa0629ccf1fdbc9f8c9045ff30874901343ec9ad13d2c146aa90b4de4933",
       "aotTraceSha256": "c8dcd41352d8ed314224f7848b084affda8e40b2b8c9baba610497a05912f974",
-      "globalManifestSha256": "8938c4fb081a707632282f0d546d4bc0649ba401eb3909bc097cc57eafadf9ef"
+      "globalManifestSha256": "1c5f85b278e33175aa1f38c0e3d2d3d36dd9d3dfb4e28feb3d63d8350f890aff"
     }
   },
   "trace": {

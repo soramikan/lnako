@@ -136,12 +136,13 @@ if (signedDigests !== null) {
 const dispatchEvidence = suppliedAttestation === null
   ? dispatchEvidenceBase
   : { ...dispatchEvidenceBase, attestation: suppliedAttestation };
-validators.validateDispatchEvidence(dispatchEvidence, lock, standard, records, dispatchEvidenceInputSha256, dispatchEvidenceInputPath, resolvedAttestationBundlePath, attestationBundleBytes, historicalCommit, attestationOffline);
-validators.validateDispatchCoverageEvidence(dispatchCoverageEvidence, lock, standard, records, dispatchCoverageAuditScriptSha256);
-validators.validateExpectedExitEvidence(expectedExitEvidence, lock, standard, records);
-validators.validateCompatJsEvidence(compatJsEvidence, lock, standard, compatJsCases, records);
-for (const input of staticConstantEvidenceRecords) validators.validateStaticConstantEvidence(input.evidence, lock, standard, records, input);
-for (const input of globalBindingEvidenceRecords) validators.validateGlobalBindingEvidence(input.evidence, lock, standard, records, input);
+const dispatchEvidenceForm = dispatchEvidenceInputPath === dispatchEvidencePath ? "canonical" : "measured";
+validators.validateDispatchEvidence(dispatchEvidence, lock, standard, records, dispatchEvidenceInputSha256, dispatchEvidenceInputPath, resolvedAttestationBundlePath, attestationBundleBytes, historicalCommit, attestationOffline, dispatchEvidenceForm);
+validators.validateDispatchCoverageEvidence(dispatchCoverageEvidence, lock, standard, records, dispatchCoverageAuditScriptSha256, "canonical");
+validators.validateExpectedExitEvidence(expectedExitEvidence, lock, standard, records, "canonical");
+validators.validateCompatJsEvidence(compatJsEvidence, lock, standard, compatJsCases, records, "canonical");
+for (const input of staticConstantEvidenceRecords) validators.validateStaticConstantEvidence(input.evidence, lock, standard, records, input, "canonical");
+for (const input of globalBindingEvidenceRecords) validators.validateGlobalBindingEvidence(input.evidence, lock, standard, records, input, "canonical");
 const dispatchEvidenceByCatalogId = new Map();
 for (const site of dispatchEvidence.sites) {
   const sites = dispatchEvidenceByCatalogId.get(site.catalogId) ?? [];

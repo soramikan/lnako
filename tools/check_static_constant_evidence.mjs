@@ -6,6 +6,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
 import { computeSourceManifestSha256 } from "./lib/evidence/manifest.mjs";
+import { manifestContentSha256, processOutputSha256 } from "./lib/evidence/provenance.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const compiler = resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
@@ -297,6 +298,7 @@ try {
   if (new Set(entries.map((entry) => entry.catalogId)).size !== entries.length) throw new Error("静的定数のcatalog IDが重複しています");
 
   const git = await readGitState();
+  const volatileOutputContext = { volatilePaths: [temporary, root, oracleRoot] };
   const evidence = {
     schema: "lnako.static-constant-evidence.v2",
     generator: "tools/check_static_constant_evidence.mjs",
@@ -315,8 +317,8 @@ try {
       results: Object.fromEntries(Object.entries(results).map(([route, result]) => [route, {
         status: result.status,
         signal: result.signal,
-        stdoutSha256: sha256(normalizeLineEndings(result.stdout)),
-        stderrSha256: sha256(normalizeLineEndings(result.stderr)),
+        stdoutSha256: processOutputSha256(result.stdout, volatileOutputContext),
+        stderrSha256: processOutputSha256(result.stderr, volatileOutputContext),
       }])),
     },
     attestation: null,
@@ -330,10 +332,10 @@ try {
       raw: {
         interpreterTraceSha256: sha256(await readFile(interpreterTrace)),
         aotTraceSha256: sha256(await readFile(aotTrace)),
-        globalManifestSha256: sha256(await readFile(globalManifest)),
+        globalManifestSha256: manifestContentSha256(await readFile(globalManifest)),
         literalInterpreterTraceSha256: sha256(await readFile(interpreterLiteralTrace)),
         literalAotTraceSha256: sha256(await readFile(aotLiteralTrace)),
-        literalManifestSha256: sha256(await readFile(literalManifest)),
+        literalManifestSha256: manifestContentSha256(await readFile(literalManifest)),
       },
     },
     trace: {

@@ -236,22 +236,11 @@ jobs:
           set -euo pipefail
           zig build
           node tools/check_toolchain_command.mjs
-      - name: Test QuickJS build
-        if: matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'
-        run: zig build -Dcompat-js=true test --test-timeout 5m
-      - name: Build QuickJS compiler
-        if: matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'
-        run: zig build -Dcompat-js=true -Doptimize=ReleaseSafe
-      - name: Compatibility smoke test
-        if: matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'
-        shell: bash
-        run: ./zig-out/bin/lnako run tests/fixtures/compat-js-basic.nako3 --compat-js
-      - name: Build macOS AOT verification compiler
-        if: matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat'
-        run: zig build
-      - name: macOS AOT HTTP server oracle
-        if: matrix.suite == 'mac-core-standard-support'
-        run: node tools/compare_http_server_aot_oracle.mjs --no-build
+      # canonical evidence の freshness は正本生成と同じ ReleaseSafe で測る。
+      # Debug 出力は canonical と比較しない（意味内容は一致するが別契約）。
+      - name: Build macOS normal ReleaseSafe compiler
+        if: matrix.suite == 'mac-host-compat'
+        run: zig build -Doptimize=ReleaseSafe
       - name: macOS dispatch evidence audit
         if: matrix.suite == 'mac-host-compat'
         run: >
@@ -269,6 +258,35 @@ jobs:
           path: ${{ runner.temp }}/dispatch-evidence-macos-15.json
           if-no-files-found: ignore
           retention-days: 30
+      - name: Test QuickJS build
+        if: matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'
+        run: zig build -Dcompat-js=true test --test-timeout 5m
+      - name: Build QuickJS compiler
+        if: matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'
+        run: zig build -Dcompat-js=true -Doptimize=ReleaseSafe
+      - name: Compatibility smoke test
+        if: matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'
+        shell: bash
+        run: ./zig-out/bin/lnako run tests/fixtures/compat-js-basic.nako3 --compat-js
+      # compat-js 証拠は QuickJS ReleaseSafe 直後に生成する（それ以降に
+      # compare_compat_js_oracle 相当の Debug compat 再構築が走る step は挟まない）。
+      - name: macOS compat-js evidence audit
+        if: matrix.suite == 'mac-host-compat'
+        run: >
+          node tools/check_compat_js_evidence.mjs --no-build
+          --evidence-output "${{ runner.temp }}/compat-js-evidence.json"
+      - name: Canonical evidence freshness
+        if: matrix.suite == 'mac-host-compat'
+        run: >
+          node tools/check_evidence_freshness.mjs
+          --dispatch-evidence "${{ runner.temp }}/dispatch-evidence-macos-15.json"
+          --compat-js-evidence "${{ runner.temp }}/compat-js-evidence.json"
+      - name: Build macOS AOT verification compiler
+        if: matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat'
+        run: zig build
+      - name: macOS AOT HTTP server oracle
+        if: matrix.suite == 'mac-core-standard-support'
+        run: node tools/compare_http_server_aot_oracle.mjs --no-build
       - name: Build macOS ReleaseSafe compiler
         if: matrix.suite == 'mac-core-standard-support'
         run: zig build -Doptimize=ReleaseSafe
@@ -787,10 +805,19 @@ jobs:
         run: >
           node tools/check_dispatch_trace.mjs --no-build
           --evidence-output "${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json"
+      # canonical 正本（231件）の freshness は Linux dedicated shard が供給する。
+      # macOS native 相乗り・Windows support は既定の56件のまま維持する。
       - name: Dispatch coverage audit
-        if: matrix.task == 'support-dispatch-coverage'
+        if: matrix.task == 'support-dispatch-coverage' && matrix.os != 'ubuntu-24.04'
         run: >
           node tools/check_dispatch_coverage.mjs --no-build
+          --fixture-shard-index "${{ matrix.fixtureShardIndex }}"
+          --fixture-shard-count "${{ matrix.fixtureShardCount }}"
+          --output "${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}-${{ matrix.fixtureShardIndex }}.json"
+      - name: Dispatch coverage audit (native fixtures)
+        if: matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04'
+        run: >
+          node tools/check_dispatch_coverage.mjs --no-build --include-native
           --fixture-shard-index "${{ matrix.fixtureShardIndex }}"
           --fixture-shard-count "${{ matrix.fixtureShardCount }}"
           --output "${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}-${{ matrix.fixtureShardIndex }}.json"

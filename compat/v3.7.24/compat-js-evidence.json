@@ -226,14 +226,14 @@
           "officialSource": {
             "status": 0,
             "signal": null,
-            "stdoutSha256": "2649fb351f2a2638ff48095fea5a611da5a907c87fb716c1929984ef87e6e885",
+            "stdoutSha256": "f86112b88b4ab7443cee47295aca0330560d0d49cf4b92e4f0264870f22ba035",
             "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             "failed": false
           },
           "lnakoCompatJs": {
             "status": 0,
             "signal": null,
-            "stdoutSha256": "2649fb351f2a2638ff48095fea5a611da5a907c87fb716c1929984ef87e6e885",
+            "stdoutSha256": "f86112b88b4ab7443cee47295aca0330560d0d49cf4b92e4f0264870f22ba035",
             "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             "failed": false
           }
@@ -429,7 +429,7 @@
             "status": 0,
             "signal": null,
             "stdoutSha256": "38e0b9de817f645c4bec37c0d4a3e58baecccb040f5718dc069a72c7385a0bed",
-            "stderrSha256": "4376e8d3114b249d84709918b875442cd7cb08f6ee1bab78c52e51096dc69666",
+            "stderrSha256": "4190fa3783577d321402ac25557e188bb223ff834d981641b7953e7b86c16fc6",
             "failed": true
           },
           "lnakoCompatJs": {
@@ -454,7 +454,7 @@
           "officialSource": {
             "status": 0,
             "signal": null,
-            "stdoutSha256": "d73e2cf462786bc319d3007448ee8b1b1bd85572e93ddcb489f19498c2553289",
+            "stdoutSha256": "62e3f034caca67c4460e501083aaead7f5427858c85ab9ef4037d2c91fe311ed",
             "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             "failed": true
           },
@@ -480,7 +480,7 @@
           "officialSource": {
             "status": 0,
             "signal": null,
-            "stdoutSha256": "18b5df8152a9208d698719cb5f4c0850c6610dfdcde3a93b8af363efabe23a37",
+            "stdoutSha256": "7da663d33c2f71f5ed4de63e08edebcbf30a0af1f56842488df4195bb0e71409",
             "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             "failed": true
           },
@@ -500,8 +500,7 @@
   "provenance": {
     "environment": {
       "platform": "darwin",
-      "arch": "arm64",
-      "node": "v24.15.0"
+      "arch": "arm64"
     },
     "oracle": {
       "build": 4,
@@ -510,10 +509,6 @@
       "markerSha256": "e9444955298c3bb22164a219c0f342ee32301e901ec967d648cae9a25d8bf531",
       "treeHashAlgorithm": "sha256-json-records-v3",
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
-    },
-    "lnako": {
-      "binarySha256": "c51abc13bb024f2361d492043651b1630ae3c13200bb3d60773c8b2db44ccf72",
-      "sourceManifestSha256": "bdda14837237af4c400482101fb0d510ee8a2c526d1c1bcdcb929d91e567af7e"
     },
     "raw": {
       "traceSha256ByCase": {

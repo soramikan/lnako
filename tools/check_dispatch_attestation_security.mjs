@@ -10,12 +10,19 @@ import { computeSourceManifestSha256Sync } from "./lib/evidence/manifest.mjs";
 const root = resolve(import.meta.dirname, "..");
 const temporary = await mkdtemp(join(tmpdir(), "lnako-attestation-security-"));
 try {
+  // tracked正本はcanonical形（provenance.lnako・environment.nodeを持たない）。
+  // --dispatch-evidence入力はmeasured形を要求するため、ここで揮発provenanceを
+  // 復元してから偽造対象を作る。
   const evidence = JSON.parse(await readFile(resolve(root, "compat/v3.7.24/dispatch-evidence.json"), "utf8"));
   const commit = gitHead();
   evidence.attestation = null;
-  evidence.provenance.lnako.commit = commit;
-  evidence.provenance.lnako.dirty = false;
-  evidence.provenance.lnako.sourceManifestSha256 = computeSourceManifestSha256Sync(root).sha256;
+  evidence.provenance.environment.node = process.version;
+  evidence.provenance.lnako = {
+    binarySha256: "0".repeat(64),
+    sourceManifestSha256: computeSourceManifestSha256Sync(root).sha256,
+    commit,
+    dirty: false,
+  };
 
   const evidencePath = resolve(temporary, "dispatch-evidence.json");
   const evidenceBytes = Buffer.from(`${JSON.stringify(evidence, null, 2)}\n`, "utf8");

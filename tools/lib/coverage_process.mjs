@@ -3,6 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { coverageEnv as env } from "./coverage_env.mjs";
 import * as evidence_common from "./evidence_common.mjs";
+import { processOutputSha256 } from "./evidence/provenance.mjs";
 
 export async function startLoopbackServer() {
   const child = spawn(process.execPath, [resolve(env.root, "tools/oracle/http_loopback_server.mjs")], {
@@ -114,12 +115,12 @@ export function normalizeProcess(result) {
 }
 
 
-export function summarizeProcess(result) {
+export function summarizeProcess(result, volatileOutputContext = {}) {
   return {
     status: result.status,
     signal: result.signal,
-    stdoutSha256: evidence_common.sha256(evidence_common.normalizeLineEndings(result.stdout)),
-    stderrSha256: evidence_common.sha256(evidence_common.normalizeLineEndings(result.stderr)),
+    stdoutSha256: processOutputSha256(result.stdout, volatileOutputContext),
+    stderrSha256: processOutputSha256(result.stderr, volatileOutputContext),
   };
 }
 

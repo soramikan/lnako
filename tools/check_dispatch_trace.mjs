@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
 import { readDispatchFixture } from "./dispatch_fixture.mjs";
 import { computeSourceManifestSha256 } from "./lib/evidence/manifest.mjs";
+import { manifestContentSha256, processOutputSha256 } from "./lib/evidence/provenance.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const throwStatementOpcode = 0xffff;
@@ -284,7 +285,7 @@ async function readCompileManifest(path, sourcePath) {
       if (Object.hasOwn(entry, forbidden)) throw new Error(`AOT compile manifestに禁止フィールドがあります: ${forbidden}`);
     }
   }
-  Object.defineProperty(entries, "rawSha256", { value: sha256(text), enumerable: false });
+  Object.defineProperty(entries, "rawSha256", { value: manifestContentSha256(text), enumerable: false });
   return entries;
 }
 
@@ -491,6 +492,9 @@ async function writeDispatchEvidence(output, fixture, interpreterEvents, aotEven
     }
   }
   const lock = JSON.parse(await readFile(resolve(root, "compat/upstream.lock.json"), "utf8"));
+  const volatileOutputContext = {
+    volatilePaths: [temporary, root, dirname(dirname(processes.oracle.cliPath))],
+  };
   const routeResults = Object.fromEntries(Object.entries({
     officialSource: processes.officialSource,
     officialGenerated: processes.officialGenerated,
@@ -499,8 +503,8 @@ async function writeDispatchEvidence(output, fixture, interpreterEvents, aotEven
   }).map(([route, result]) => [route, {
     status: result.status,
     signal: result.signal,
-    stdoutSha256: sha256(normalizeLineEndings(result.stdout)),
-    stderrSha256: sha256(normalizeLineEndings(result.stderr)),
+    stdoutSha256: processOutputSha256(result.stdout, volatileOutputContext),
+    stderrSha256: processOutputSha256(result.stderr, volatileOutputContext),
   }]));
   const evidence = {
     schema: "lnako.dispatch-evidence.v2",
