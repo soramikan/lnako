@@ -199,8 +199,10 @@ fn attachCopyExpansions(loader: *Loader, imports: []Import, node: *ast.Node, ent
             break;
         }
     }
+    // node.expansion は copyExpansion で作成時に対象モジュール自身の辺で
+    // 処理済み。ここで外側モジュールのimportsで再走査すると、循環ガードで
+    // 空にした取り込み文が位置一致で別対象として再展開され無限再帰する。
     for (node.children) |child| try attachCopyExpansions(loader, imports, child, entry, chain);
-    for (node.expansion) |child| try attachCopyExpansions(loader, imports, child, entry, chain);
 }
 
 fn copySubtree(loader: *Loader, node: *ast.Node) anyerror!*ast.Node {

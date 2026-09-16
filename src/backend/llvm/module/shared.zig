@@ -11,8 +11,13 @@ pub const BigIntConstant = struct { function_id: ir.FunctionId, value_id: ir.Val
 pub const DebugLocation = struct { id: usize, line: usize, column: usize, scope: usize };
 
 pub fn lookupFunction(program: ir.Program, name: []const u8) ?ir.Function {
-    for (program.functions) |function| if (std.mem.eql(u8, function.name, name)) return function;
-    return null;
+    // 同名関数は生成順の後勝ち（循環再展開変体の定義が本体を置き換える
+    // 公式挙動、Issue #73）。
+    var found: ?ir.Function = null;
+    for (program.functions) |function| if (std.mem.eql(u8, function.name, name)) {
+        found = function;
+    };
+    return found;
 }
 
 pub fn isDynamicNamedCall(function: ir.Function, name: []const u8) bool {

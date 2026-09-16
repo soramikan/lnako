@@ -1487,6 +1487,23 @@ test "関数本体内の取り込みは入れ子の取り込みも呼び出し�
     try std.testing.expectEqualStrings("B1\nS1\nB2\nf-end\nB1\nS1\nB2\nf-end\n", output);
 }
 
+test "関数内展開複製内の循環ガード済み取り込みは外側の辺で再展開しない" {
+    // 展開複製は生成時に対象モジュール自身の取り込み辺で処理済み。
+    // 外側モジュールの辺で再走査すると、循環ガードで空にした取り込み文が
+    // 位置一致で別対象として再展開されてしまう（旧実装はここで無限再帰
+    // した）。mのc向け取り込み文はガードで空のまま残り、eが余計に
+    // 実行されないことを確認する。
+    const output = try runModulesForTest(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "!「./b.nako3」を取り込む\nF\n「A2」と表示\n" },
+        .{ .suffix = "b.nako3", .source = "●Fとは\n　!「./c.nako3」を取り込む\nここまで\n「B2」と表示\n" },
+        .{ .suffix = "c.nako3", .source = "!「./m.nako3」を取り込む\n!「./e.nako3」を取り込む\n「C2」と表示\n" },
+        .{ .suffix = "m.nako3", .source = "!「./c.nako3」を取り込む\n「M2」と表示\n" },
+        .{ .suffix = "e.nako3", .source = "「E1」と表示\n" },
+    });
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("B2\nM2\nE1\nC2\nA2\n", output);
+}
+
 test "関数本体内の取り込み先変数は呼び出し元のローカルになる" {
     // 公式は取り込み先トークンを取り込み文の位置へ展開するため、関数内
     // では取り込み先の変数宣言が呼び出し元関数のローカルになる（#74）。
