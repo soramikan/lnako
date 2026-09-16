@@ -75,9 +75,9 @@ for (const [name, expected] of [["native", 523], ["compat-js", 4], ["blocked", 0
   if (standardStatuses?.[name] !== expected) fail(`summary.jsonの${name}分類が不一致です`);
   requireText(currentText, `| \`${name}\` | ${expected} |`, "現行互換性文書");
 }
-const currentAttestationExists = await access(resolve(root, "compat/v3.7.24/attestations/current.json")).then(() => true).catch(() => false);
-const expectedVerified = currentAttestationExists ? 527 : 0;
-for (const [name, expected] of [["verified", expectedVerified], ["trace-confirmed-unattested", 527 - expectedVerified], ["unverified", 0]]) {
+// canonical evidence.json は常時 unattested。verified は現行 source manifestに
+// 一致するattestation snapshotから導出される view であり、正本のstateではない。
+for (const [name, expected] of [["verified", 0], ["trace-confirmed-unattested", 527], ["unverified", 0]]) {
   if (evidenceStates?.[name] !== expected) fail(`evidence.jsonの${name} stateが不一致です`);
 }
 const compatibilityText = await read("docs/COMPATIBILITY.md");

@@ -189,14 +189,15 @@ async function updateCompatibilityDocs(runId, commit, sourceManifestSha256) {
   const path = resolve(root, "docs", "COMPATIBILITY.md");
   let text = await readFile(path, "utf8");
 
-  text = replaceInline(text, "<!-- attestation:verified -->", "<!-- /attestation:verified -->", "527");
-  text = replaceInline(text, "<!-- attestation:trace -->", "<!-- /attestation:trace -->", "0");
+  // canonical正本の表は常時unattested。verifiedはsnapshotの導出viewにのみ現れる。
+  text = replaceInline(text, "<!-- attestation:verified -->", "<!-- /attestation:verified -->", "0");
+  text = replaceInline(text, "<!-- attestation:trace -->", "<!-- /attestation:trace -->", "527");
   text = replaceInline(text, "<!-- attestation:unverified -->", "<!-- /attestation:unverified -->", "0");
 
-  const newDescription = `これは、全527 entryの実行証拠が追跡された現行attestation snapshot（\`attestations/current.json\` → \`attestations/${runId}/\`）で署名済みであることを示します。\`verified\` は、\`attestations/current.json\` が指す現行snapshotのsource manifest（\`${sourceManifestSha256}\`）と現行ソースが一致し、かつcanonical証拠ファイルのdigestが署名subjectに含まれる場合にのみ維持される状態です。sourceに変更を加えた場合、過去snapshotの \`verified: 527\` を流用せず、mainマージ後の新しいCI attestationを再取得して \`current.json\` を更新します。`;
+  const newDescription = `\`verified\` は正本のstateではなく、現行source manifestに一致するattestation snapshotから導出されるviewです。\`attestations/current.json\` が指す現行snapshot（\`attestations/${runId}/\`）のsource manifest（\`${sourceManifestSha256}\`）が現行ソースと一致し、かつcanonical証拠ファイルのdigestが署名subjectに含まれるため、導出viewでは全527 entryが \`verified\` です。sourceに変更を加えた場合、過去snapshotの導出結果を流用せず、mainマージ後の新しいCI attestationを再取得して \`current.json\` を更新します。`;
   text = replaceRange(text, "<!-- attestation:description-start -->", "<!-- attestation:description-end -->", newDescription);
 
-  const newArtifacts = `### CIの一時artifact\n\n現行manifestに対応するCI run \`${runId}\`（commit \`${commit}\`、54/54 job成功）が生成したcatalog artifactは \`verified: 527\`、\`trace-confirmed-unattested: 0\`、\`unverified: 0\` です。このrunのattestationは3 OSのdispatch証拠・native AOT aggregate・canonical証拠17件を同一Sigstore bundleのsubjectとして署名しており、snapshotは \`attestations/${runId}/\` に追跡しています。前manifest用のsnapshot \`attestations/34305071458/\`（run \`34305071458\`）と \`attestations/34121804812/\`（run \`34121804812\`）、\`attestations/34113932297/\`（run \`34113932297\`）は履歴として残しています。\n\n一時artifactの値は、実行環境・署名・artifactの保存期間に依存します。追跡対象のcanonical \`evidence.json\` は、追跡された現行snapshotと現行source manifestの一致が確認できた場合にのみ \`verified\` を保持します。`;
+  const newArtifacts = `### CIの一時artifact\n\n現行manifestに対応するCI run \`${runId}\`（commit \`${commit}\`、54/54 job成功）のattestationは3 OSのdispatch証拠・native AOT aggregate・canonical証拠17件を同一Sigstore bundleのsubjectとして署名しており、snapshotは \`attestations/${runId}/\` に追跡しています。このsnapshotから導出されるcatalog viewは \`verified: 527\`、\`trace-confirmed-unattested: 0\`、\`unverified: 0\` です。前manifest用のsnapshot \`attestations/34402208204/\`（run \`34402208204\`）、\`attestations/34305071458/\`（run \`34305071458\`）、\`attestations/34121804812/\`（run \`34121804812\`）、\`attestations/34113932297/\`（run \`34113932297\`）は履歴として残しています。\n\n一時artifactの値は、実行環境・署名・artifactの保存期間に依存します。追跡対象のcanonical \`evidence.json\` は常時 \`trace-confirmed-unattested\` を保持し、\`verified\` は現行source manifestに一致するsnapshotの導出viewにのみ現れます。`;
   text = replaceRange(text, "<!-- attestation:artifacts-start -->", "<!-- attestation:artifacts-end -->", newArtifacts);
 
   await writeFile(path, text);
@@ -377,7 +378,7 @@ async function main() {
     "--base", options.base,
     "--head", options.branch,
     "--title", `chore: CI run ${options.runId} のattestation追跡`,
-    "--body", `CI \`${options.runId}\` が生成した Sigstore bundle、dispatch/native AOT attestation、canonical 証拠 snapshot を \`compat/v3.7.24/attestations/${options.runId}/\` へ追加し、\`current.json\` を更新して \`evidence.json\` を \`verified: 527\` に再生成しました。\n\n- workflow: ${options.workflow}\n- target commit: \`${targetCommit}\`\n- source manifest: \`${sourceManifest.sha256}\``,
+    "--body", `CI \`${options.runId}\` が生成した Sigstore bundle、dispatch/native AOT attestation、canonical 証拠 snapshot を \`compat/v3.7.24/attestations/${options.runId}/\` へ追加し、\`current.json\` を更新しました。canonical \`evidence.json\` は常時 unattested で、\`verified: 527\` はこのsnapshotから導出されるviewです。\n\n- workflow: ${options.workflow}\n- target commit: \`${targetCommit}\`\n- source manifest: \`${sourceManifest.sha256}\``,
   ]);
   console.log(prResult.stdout.trim());
 }

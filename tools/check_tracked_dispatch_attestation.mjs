@@ -4,7 +4,8 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { platformIndependentOfficialComparison } from "./dispatch_evidence_semantics.mjs";
 import { computeSourceManifestSha256Sync } from "./lib/evidence/manifest.mjs";
-import { canonicalAttestationSchema, currentAttestationPointerSchema, dispatchAttestationSchemaV2, trackedAttestationSubjects } from "./lib/evidence/attested_files.mjs";
+import { canonicalAttestationSchema, currentAttestationPointerSchema, dispatchAttestationSchemaV2, signedEvidenceDigests, trackedAttestationSubjects } from "./lib/evidence/attested_files.mjs";
+import { computeBackingDigestByProof, deriveVerifiedCatalog } from "./lib/evidence/promotion.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const defaultDirectory = resolve(root, "compat/v3.7.24/attestations/32983175945");
@@ -135,16 +136,17 @@ assertEqual(catalog.executionEvidenceStates?.["trace-confirmed-unattested"], 0, 
 assertEqual(catalog.executionEvidenceStates?.unverified, 523, "historical catalog unverified count");
 validateHistoricalCatalog(baseCatalog, catalog, manifestSubjects);
 
+// canonical tracked evidence.json は常時 unattested。verified 状態は
+// current snapshot の署名 digest から導出される view であり、正本へは書き戻さない。
 const currentEvidence = JSON.parse(await readFile(resolve(root, "compat/v3.7.24/evidence.json"), "utf8"));
 const currentSummary = await validateCurrentSnapshot();
+assertEqual(currentEvidence.executionEvidenceStates?.verified, 0, "canonical catalog verified count");
+assertEqual(currentEvidence.executionEvidenceStates?.["trace-confirmed-unattested"], 527, "canonical catalog unattested count");
+assertEqual(currentEvidence.executionEvidenceStates?.unverified, 0, "canonical catalog unverified count");
 if (currentSummary === null) {
-  assertEqual(currentEvidence.executionEvidenceStates?.verified, 0, "current catalog verified count");
-  console.log(`追跡dispatch attestationを検証しました: run ${expected.run} / target ${expected.commit} / 3 OS / historical verified 4（current verified 0）`);
+  console.log(`追跡dispatch attestationを検証しました: run ${expected.run} / target ${expected.commit} / 3 OS / historical verified 4（現行manifestに一致するsnapshotなし・canonical verified 0）`);
 } else {
-  assertEqual(currentEvidence.executionEvidenceStates?.verified, 527, "current catalog verified count");
-  assertEqual(currentEvidence.executionEvidenceStates?.["trace-confirmed-unattested"], 0, "current catalog unattested count");
-  assertEqual(currentEvidence.executionEvidenceStates?.unverified, 0, "current catalog unverified count");
-  console.log(`追跡dispatch attestationを検証しました: run ${expected.run} / target ${expected.commit} / 3 OS / historical verified 4、current run ${currentSummary.run} / target ${currentSummary.commit} / 527 verified`);
+  console.log(`追跡dispatch attestationを検証しました: run ${expected.run} / target ${expected.commit} / 3 OS / historical verified 4、current run ${currentSummary.run} / target ${currentSummary.commit} / 導出verified 527`);
 }
 
 async function validateCurrentSnapshot() {
@@ -303,8 +305,12 @@ async function validateCurrentSnapshot() {
   assertEqual(catalog.executionEvidenceStates?.["trace-confirmed-unattested"], 0, "current catalog unattested count");
   assertEqual(catalog.executionEvidenceStates?.unverified, 0, "current catalog unverified count");
   if (!Array.isArray(catalog.entries) || catalog.entries.length !== standardCatalog.commands.length) throw new Error("current catalog entry数がstandard catalogと一致しません");
+  // snapshot の verified catalog は、canonical evidence.json と snapshot の
+  // 署名 subject digest 集合から決定的に導出される view と byte 一致しなければ
+  // ならない。stored catalog を直接信頼しない。
   const canonicalCatalog = JSON.parse(await readFile(resolve(root, "compat/v3.7.24/evidence.json"), "utf8"));
-  if (JSON.stringify(catalog) !== JSON.stringify(canonicalCatalog)) throw new Error("current catalog evidenceがcanonical evidence.jsonと一致しません");
+  const derivedCatalog = deriveVerifiedCatalog(canonicalCatalog, signedEvidenceDigests(attestation), await computeBackingDigestByProof(root));
+  if (JSON.stringify(derivedCatalog) !== JSON.stringify(catalog)) throw new Error("current catalog evidenceがcanonical evidenceと署名digestから導出できません");
   if (!offline) {
     for (const subject of currentSubjects.values()) verifyWithGhFor(subject.path, subject.sha256, await readSnapshot(manifest.bundle), pointer.targetCommit);
     for (const [path, digest] of trackedByPath) verifyWithGhFor(resolve(root, path), digest, await readSnapshot(manifest.bundle), pointer.targetCommit);

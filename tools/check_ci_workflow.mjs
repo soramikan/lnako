@@ -26,11 +26,13 @@ const interpreterOracleScript = await readFile(resolve(root, "tools/compare_inte
 const compatJsEvidenceScript = await readFile(resolve(root, "tools/check_compat_js_evidence.mjs"), "utf8");
 const pruneLlvmToolchainScript = await readFile(resolve(root, "tools/prune_llvm_toolchain.mjs"), "utf8");
 const trackedAttestationChecker = await readFile(resolve(root, "tools/check_tracked_dispatch_attestation.mjs"), "utf8");
-const syncEvidence = await readFile(resolve(root, "tools/sync_compat_evidence.mjs"), "utf8") +
+const syncScript = await readFile(resolve(root, "tools/sync_compat_evidence.mjs"), "utf8");
+const syncEvidence = syncScript +
   (await readFile(resolve(root, "tools/lib/evidence/validators.mjs"), "utf8")) +
   (await readFile(resolve(root, "tools/lib/evidence/records.mjs"), "utf8")) +
   (await readFile(resolve(root, "tools/lib/evidence/constants.mjs"), "utf8")) +
-  (await readFile(resolve(root, "tools/lib/evidence/attested_files.mjs"), "utf8"));
+  (await readFile(resolve(root, "tools/lib/evidence/attested_files.mjs"), "utf8")) +
+  (await readFile(resolve(root, "tools/lib/evidence/promotion.mjs"), "utf8"));
 const verifyAttestation = await readFile(resolve(root, "tools/verify_dispatch_attestation.mjs"), "utf8");
 const evidenceFreshness = await readFile(resolve(root, "tools/check_evidence_freshness.mjs"), "utf8");
 const evidenceUpdate = await readFile(resolve(root, "tools/update_current_evidence.mjs"), "utf8") +
@@ -516,12 +518,14 @@ if (!verifyAttestation.includes("lnako.dispatch-attestation.v2") || !verifyAttes
   throw new Error("dispatch attestation生成toolがcanonical証拠のtracked subjectsを検証・記録していません");
 }
 if (!syncEvidence.includes("signedEvidenceDigests") || !syncEvidence.includes("backingDigestByProof") ||
-    !syncEvidence.includes("loadCurrentAttestation") || !syncEvidence.includes("current attestation")) {
-  throw new Error("catalog証拠syncがcurrent attestationの自動適用または全証拠種別のverified昇格を実装していません");
+    !syncEvidence.includes("proofKeyForEvidenceDocument") || !syncEvidence.includes("deriveVerifiedCatalog") ||
+    syncScript.includes("loadCurrentAttestation") || !syncScript.includes("--attestation")) {
+  throw new Error("catalog証拠syncが導出verified viewまたは全証拠種別のverified昇格を実装していません");
 }
 if (!trackedAttestationChecker.includes("current.json") || !trackedAttestationChecker.includes("canonicalAttestationSchema") ||
-    !trackedAttestationChecker.includes("--current-pointer") || !trackedAttestationChecker.includes("current catalog verified count")) {
-  throw new Error("追跡attestation checkerがcurrent snapshot検証に対応していません");
+    !trackedAttestationChecker.includes("--current-pointer") || !trackedAttestationChecker.includes("deriveVerifiedCatalog") ||
+    !trackedAttestationChecker.includes("computeBackingDigestByProof") || !trackedAttestationChecker.includes("canonical catalog verified count")) {
+  throw new Error("追跡attestation checkerがcurrent snapshotの導出view検証に対応していません");
 }
 if (!syncEvidence.includes('"lnako.canonical-attestation.v1"') || !syncEvidence.includes('"lnako.current-attestation.v1"') ||
     !syncEvidence.includes('"lnako.dispatch-attestation.v2"')) {
