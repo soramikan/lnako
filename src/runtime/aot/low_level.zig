@@ -417,7 +417,7 @@ fn readlinkBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
         return throwIo(runtime, failure, operation, path, null, .readlink);
     };
     defer runtime.allocator.free(destination);
-    return runtimeUtf8StringLossy(runtime, destination);
+    return pathStringFromBytes(runtime, destination);
 }
 
 fn hardlinkBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
@@ -440,7 +440,19 @@ fn realpathBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
         return throwIo(runtime, failure, operation, path, null, .realpath);
     };
     defer runtime.allocator.free(resolved);
-    return runtimeUtf8StringLossy(runtime, resolved);
+    return pathStringFromBytes(runtime, resolved);
+}
+
+/// readlink/realpathが返すOSパス（WTF-8）を可逆になでしこ文字列へ戻す。
+/// 孤立サロゲートを保持し、WTF-8として不正な任意バイト列は既存のlossy変換へ
+/// フォールバックする。InterpreterのpathStringFromBytesと同じ規則。
+fn pathStringFromBytes(runtime: *Runtime, bytes: []const u8) !Value {
+    const units = foundation.pathUnitsFromBytes(runtime.allocator, bytes) catch |failure| {
+        if (failure != error.InvalidWtf8) return failure;
+        return runtimeUtf8StringLossy(runtime, bytes);
+    };
+    defer runtime.allocator.free(units);
+    return runtime.createString(units);
 }
 
 fn renameBuiltin(runtime: *Runtime, arguments: []const Value) !Value {

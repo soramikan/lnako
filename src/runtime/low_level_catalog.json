@@ -390,7 +390,7 @@
         "ELOOP",
         "ENOTSUP"
       ],
-      "notes": "readlink。対象がsymlinkでない場合はEINVAL",
+      "notes": "readlink。対象がsymlinkでない場合はEINVAL。戻り値はOSパス（WTF-8）をUTF-16へ可逆変換し、孤立サロゲートを保持する。WTF-8として不正な任意バイト列はlossy（U+FFFD）になる",
       "implemented": true
     },
     {
@@ -438,7 +438,7 @@
         "ENOTSUP",
         "EINVAL"
       ],
-      "notes": "realpath。絶対パスを返す",
+      "notes": "realpath。絶対パスを返す。戻り値はOSパス（WTF-8）をUTF-16へ可逆変換し、孤立サロゲートを保持する。WTF-8として不正な任意バイト列はlossy（U+FFFD）になる",
       "implemented": true
     },
     {

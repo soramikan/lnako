@@ -628,7 +628,7 @@ fn readlinkPath(runtime: *Runtime, state: *State, context: Context, effects: Eff
         return throwIo(runtime, effects, failure, operation, path, null, .readlink);
     };
     defer runtime.allocator().free(destination);
-    return runtime.stringUtf8Lossy(destination);
+    return pathStringFromBytes(runtime, destination);
 }
 
 fn hardlinkPath(runtime: *Runtime, state: *State, context: Context, effects: Effects, arguments: []const Value) !Value {
@@ -653,7 +653,19 @@ fn realpathPath(runtime: *Runtime, state: *State, context: Context, effects: Eff
         return throwIo(runtime, effects, failure, operation, path, null, .realpath);
     };
     defer runtime.allocator().free(resolved);
-    return runtime.stringUtf8Lossy(resolved);
+    return pathStringFromBytes(runtime, resolved);
+}
+
+/// readlink/realpathが返すOSパス（WTF-8）を可逆になでしこ文字列へ戻す。
+/// 孤立サロゲートを保持し、WTF-8として不正な任意バイト列（POSIXの非UTF-8名など）
+/// は既存のlossy変換へフォールバックする。AOTのpathStringFromBytesと同じ規則。
+fn pathStringFromBytes(runtime: *Runtime, bytes: []const u8) !Value {
+    const units = foundation.pathUnitsFromBytes(runtime.allocator(), bytes) catch |failure| {
+        if (failure != error.InvalidWtf8) return failure;
+        return runtime.stringUtf8Lossy(bytes);
+    };
+    defer runtime.allocator().free(units);
+    return runtime.stringCodeUnits(units);
 }
 
 fn renamePath(runtime: *Runtime, state: *State, context: Context, effects: Effects, arguments: []const Value) !Value {
@@ -1663,6 +1675,39 @@ test "孤立サロゲートのパスはU+FFFD名へ置換されず別ファイ�
 
     // U+FFFD名のファイルは残っている。
     _ = try low_level_fs.stat(std.testing.io, replacement_path, true);
+}
+
+test "readlinkは孤立サロゲートを含むリンク先を可逆に返す" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    const context = FsTestHost.context();
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const link_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "surrogate-link" });
+    defer std.testing.allocator.free(link_path);
+
+    // 孤立サロゲート1個だけをtargetにする（dangling）。
+    var target = try runtime.stringCodeUnits(&[_]u16{0xD800});
+    try roots.protect(&target);
+    var link = try runtime.stringUtf8(link_path);
+    try roots.protect(&link);
+
+    _ = (try call(&runtime, &state, context, effects, "シンボリックリンク作成", &.{ target, link })) orelse return error.TestExpectedEqual;
+    var destination = (try call(&runtime, &state, context, effects, "シンボリックリンク先取得", &.{link})) orelse return error.TestExpectedEqual;
+    try roots.protect(&destination);
+    try std.testing.expect(destination == .string);
+    // lossy変換ならU+FFFDになるが、可逆変換では元の孤立サロゲートのまま。
+    try std.testing.expectEqualSlices(u16, &[_]u16{0xD800}, destination.string.units);
 }
 
 test "低レイヤーのsymlink/lstat/hardlink/readlink/realpath/renameはContext経由で動作する" {

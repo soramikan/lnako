@@ -220,6 +220,14 @@ pub fn pathBytesFromUtf16(allocator: std.mem.Allocator, units: []const u16) ![]u
     return std.unicode.wtf16LeToWtf8Alloc(allocator, units);
 }
 
+/// OSパス（WTF-8）をなでしこ文字列のUTF-16コード単位へ戻す。孤立サロゲートを
+/// 保持するため、readlink/realpathの戻り値を可逆に扱える。POSIXの任意バイト列の
+/// ようにWTF-8として不正な場合は `error.InvalidWtf8` を返し、呼び出し側が
+/// 既存のlossy変換へフォールバックする。
+pub fn pathUnitsFromBytes(allocator: std.mem.Allocator, bytes: []const u8) error{ InvalidWtf8, OutOfMemory }![]u16 {
+    return std.unicode.wtf8ToWtf16LeAlloc(allocator, bytes);
+}
+
 pub const error_object_keys = struct {
     pub const code = "code";
     pub const native_code = "nativeCode";

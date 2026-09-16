@@ -7705,6 +7705,39 @@ test "AOT低レイヤーは孤立サロゲートをU+FFFDへ置換せず別フ�
     _ = try std.Io.Dir.cwd().statFile(std.testing.io, replacement_path, .{});
 }
 
+test "AOT低レイヤーreadlinkは孤立サロゲートを含むリンク先を可逆に返す" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const link_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "surrogate-link" });
+    defer std.testing.allocator.free(link_path);
+
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+    roots[0] = try active.createString(&[_]u16{0xD800});
+    roots[1] = try runtimeUtf8String(active, link_path);
+
+    _ = try state.lowLevelFileBuiltin(active, .low_level_symlink_create, &.{ roots[0], roots[1] });
+    roots[2] = try state.lowLevelFileBuiltin(active, .low_level_symlink_read, &.{roots[1]});
+    const units = try valueUtf16Alloc(active, roots[2]);
+    defer std.testing.allocator.free(units);
+    // lossy変換ならU+FFFDになるが、可逆変換では元の孤立サロゲートのまま。
+    try std.testing.expectEqualSlices(u16, &[_]u16{0xD800}, units);
+}
+
 test "AOT低レイヤーのsymlink/readlink/realpath/hardlink/unlinkを実行できる" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     var runtime = Runtime{ .allocator = std.testing.allocator };
