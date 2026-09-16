@@ -1884,16 +1884,30 @@ const LowLevelTestHost = struct {
     table: low_level_io.FileHandleTable,
     hash_table: low_level_hash.HashHandleTable,
     io: std.Io,
+    /// Issue #28: raw stdio検証用。stdinは事前充填した共有source、
+    /// raw stdout/stderr書込みはここへ捕まえ、sync呼出しを数える。
+    /// node.Contextとlowlevel.Contextの両方がこのsourceを共有する。
+    stdin_preloaded: []const u8 = "",
+    stdin_source: ?low_level_io.StdinSource = null,
+    raw_stdout: std.ArrayList(u8) = .empty,
+    raw_stderr: std.ArrayList(u8) = .empty,
+    stdout_syncs: usize = 0,
+    stderr_syncs: usize = 0,
 
     fn init(allocator: std.mem.Allocator) LowLevelTestHost {
         return .{
             .table = low_level_io.FileHandleTable.init(allocator),
             .hash_table = low_level_hash.HashHandleTable.init(allocator),
             .io = std.testing.io,
+            .raw_stdout = .empty,
+            .raw_stderr = .empty,
         };
     }
 
     fn deinit(self: *LowLevelTestHost) void {
+        if (self.stdin_source) |*source| source.deinit();
+        self.raw_stdout.deinit(std.testing.allocator);
+        self.raw_stderr.deinit(std.testing.allocator);
         self.table.deinit(self.io);
         self.hash_table.deinit();
     }
@@ -1955,6 +1969,54 @@ const LowLevelTestHost = struct {
         _ = self.hash_table.remove(low_level_foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
     }
 
+    fn peekStdinSource(pointer: *anyopaque) ?*low_level_io.StdinSource {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        return if (self.stdin_source) |*source| source else null;
+    }
+
+    fn stdinSource(pointer: *anyopaque, allocator: std.mem.Allocator) anyerror!*low_level_io.StdinSource {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        if (self.stdin_source == null) {
+            self.stdin_source = try low_level_io.StdinSource.initPreloaded(allocator, self.stdin_preloaded);
+        }
+        return &self.stdin_source.?;
+    }
+
+    fn writeStdoutBytes(pointer: *anyopaque, bytes: []const u8) anyerror!usize {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        try self.raw_stdout.appendSlice(std.testing.allocator, bytes);
+        return bytes.len;
+    }
+
+    fn writeStderrBytes(pointer: *anyopaque, bytes: []const u8) anyerror!usize {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        try self.raw_stderr.appendSlice(std.testing.allocator, bytes);
+        return bytes.len;
+    }
+
+    fn syncStdout(pointer: *anyopaque) anyerror!void {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        self.stdout_syncs += 1;
+    }
+
+    fn syncStderr(pointer: *anyopaque) anyerror!void {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        self.stderr_syncs += 1;
+    }
+
+    fn writePrompt(pointer: *anyopaque, bytes: []const u8) anyerror!void {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        try self.raw_stdout.appendSlice(std.testing.allocator, bytes);
+    }
+
+    fn stdinIsTty(_: *anyopaque) bool {
+        return false;
+    }
+
+    fn nodeCwd(_: *anyopaque, allocator: std.mem.Allocator) anyerror![]u8 {
+        return allocator.dupe(u8, "/tmp");
+    }
+
     fn context(self: *LowLevelTestHost) plugin_lowlevel.Context {
         return .{
             .context = self,
@@ -1968,6 +2030,26 @@ const LowLevelTestHost = struct {
             .updateHashFn = updateHash,
             .digestHashFn = digestHash,
             .discardHashFn = discardHash,
+            .peekStdinSourceFn = peekStdinSource,
+            .stdinSourceFn = stdinSource,
+            .writeStdoutBytesFn = writeStdoutBytes,
+            .writeStderrBytesFn = writeStderrBytes,
+            .syncStdoutFn = syncStdout,
+            .syncStderrFn = syncStderr,
+        };
+    }
+
+    /// `尋`/`文字尋`/`標準入力取得時`/`標準入力全取得` を受けるnode側Context。
+    /// lowlevel.Contextと同じ `stdin_source` を指すため、rawバイト命令と
+    /// テキスト系命令が1つのconsumedカーソルを共有する。
+    fn nodeContext(self: *LowLevelTestHost) plugin_node.Context {
+        return .{
+            .context = self,
+            .cwdFn = nodeCwd,
+            .peekStdinSourceFn = peekStdinSource,
+            .stdinSourceFn = stdinSource,
+            .isStdinTtyFn = stdinIsTty,
+            .writeStdoutFn = writePrompt,
         };
     }
 };
@@ -2315,6 +2397,94 @@ test "Interpreter低レイヤーの未実装命令はcapability/operation付き�
     try std.testing.expect(std.mem.indexOf(u8, output, "lseek") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "stream_file_io") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "この低レイヤー命令はまだ実装されていません") != null);
+}
+
+test "Interpreter raw stdioはraw書込みを分離しテキスト系とstdin cursorを共有する" {
+    const allocator = std.testing.allocator;
+    // stdin="ab\ncd\n": raw読取りで"ab\n"を消費すると `文字尋` は共有
+    // sourceの残り"cd"を返し、`標準入力全取得` は消費済みを含む全履歴を返す。
+    const source =
+        \\B=標準入力バイト読む(3)
+        \\W=標準出力バイト書く(B)
+        \\Wを表示
+        \\L=文字尋("P>")
+        \\Lを表示
+        \\標準エラー出力バイト書く(B)
+        \\標準出力同期
+        \\標準エラー出力同期
+        \\A=標準入力全取得()
+        \\Aを表示
+        \\
+    ;
+    var fixture_compiled = try compileForTest(allocator, source);
+    defer fixture_compiled.ir_program.deinit();
+    defer fixture_compiled.hir_program.deinit();
+    defer fixture_compiled.analyzed.deinit();
+    defer fixture_compiled.parsed.deinit();
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = allocator };
+    defer host.deinit();
+    var low_host = LowLevelTestHost.init(allocator);
+    defer low_host.deinit();
+    low_host.stdin_preloaded = "ab\ncd\n";
+    var runtime_host = host.host();
+    runtime_host.lowlevel_context = low_host.context();
+    runtime_host.node_context = low_host.nodeContext();
+    var interpreter = Interpreter.init(allocator, &runtime, fixture_compiled.ir_program, runtime_host);
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+
+    // raw書込みはテキスト表示とは別経路で、実書込数が返る。プロンプト"P>"は
+    // テキスト系write経路を通るが、同じstdout宛てとしてraw書込みの後に並ぶ。
+    try std.testing.expectEqualSlices(u8, "ab\nP>", low_host.raw_stdout.items);
+    try std.testing.expectEqualSlices(u8, "ab\n", low_host.raw_stderr.items);
+    try std.testing.expectEqual(@as(usize, 1), low_host.stdout_syncs);
+    try std.testing.expectEqual(@as(usize, 1), low_host.stderr_syncs);
+    try std.testing.expectEqualStrings("3\ncd\nab\ncd\n\n", host.written());
+}
+
+test "Interpreter raw stdioは不正引数とEOFを構造化エラーと空Bytesへ写す" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\エラー監視
+        \\標準出力バイト書く("bytesではない")
+        \\エラーならば
+        \\エラーメッセージ["code"]を表示
+        \\エラーメッセージ["operation"]を表示
+        \\ここまで
+        \\B=標準入力バイト読む(8)
+        \\要素数(B)を表示
+        \\Z=標準入力バイト読む(0)
+        \\要素数(Z)を表示
+        \\エラー監視
+        \\標準入力バイト読む(-1)
+        \\エラーならば
+        \\エラーメッセージ["code"]を表示
+        \\ここまで
+        \\
+    ;
+    var fixture_compiled = try compileForTest(allocator, source);
+    defer fixture_compiled.ir_program.deinit();
+    defer fixture_compiled.hir_program.deinit();
+    defer fixture_compiled.analyzed.deinit();
+    defer fixture_compiled.parsed.deinit();
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = allocator };
+    defer host.deinit();
+    var low_host = LowLevelTestHost.init(allocator);
+    defer low_host.deinit();
+    low_host.stdin_preloaded = "";
+    var runtime_host = host.host();
+    runtime_host.lowlevel_context = low_host.context();
+    var interpreter = Interpreter.init(allocator, &runtime, fixture_compiled.ir_program, runtime_host);
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+
+    // SIZE=0はEOFとは別に「空Bytes」を返す（POSIXのread(fd,buf,0)と同じ）。
+    try std.testing.expectEqualStrings("EINVAL\nwrite\n0\n0\nEINVAL\n", host.written());
+    try std.testing.expectEqual(@as(usize, 0), low_host.raw_stdout.items.len);
 }
 
 test "Interpreter低レイヤーのカタログ命令はシステム関数存在で検出できる" {

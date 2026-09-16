@@ -363,8 +363,8 @@ pub const Runtime = struct {
     elapsed_milliseconds: u64 = 0,
     next_timer_id: u64 = 1,
     timer_event_count: usize = 0,
-    stdin_bytes: ?[]u8 = null,
-    stdin_offset: usize = 0,
+    stdin_source: ?low_level_io.StdinSource = null,
+    stdio_files: low_level_io.StdioFiles = .{},
     http_server_state: AotHttpServerState = .{},
     http_server: ?std.Io.net.Server = null,
     http_ingress: ?*http_ingress.Engine = null,
@@ -458,7 +458,7 @@ pub const Runtime = struct {
         self.promise_tasks.deinit(self.allocator);
         for (self.promise_all_states.items) |state| self.allocator.destroy(state);
         self.promise_all_states.deinit(self.allocator);
-        if (self.stdin_bytes) |bytes| self.allocator.free(bytes);
+        if (self.stdin_source) |*source| source.deinit();
         if (self.aot_source_directory) |path| self.allocator.free(path);
         self.aggregateDictionaryCounters();
         var current = self.objects;
