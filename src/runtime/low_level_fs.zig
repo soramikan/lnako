@@ -282,6 +282,10 @@ fn linuxKind(mode: u16) FileKind {
     };
 }
 
+/// Linux `statx` のerrnoをZigエラーへ写す。カタログのstat系エラー
+/// (ENOENT/EACCES/EPERM/ENOTDIR/ELOOP/EINVAL/ENOTSUP) を網羅する。statxが
+/// 返し得る残り（EFAULT/EOVERFLOW等）はportable codeに対応が無いため、
+/// 呼び出し側の `portableCodeForFailure` でEINVALへ丸める（G0の未写像エラー方針）。
 fn linuxErrno(errno: std.os.linux.E) anyerror {
     return switch (errno) {
         .ACCES => error.AccessDenied,
