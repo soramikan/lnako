@@ -1,22 +1,31 @@
 const std = @import("std");
 const lnako = @import("lnako");
 
-pub fn compileInput(allocator: std.mem.Allocator, io: std.Io, path: []const u8, compat_js: bool, stderr: *std.Io.Writer) !?lnako.ir.nako_ir.Program {
-    return compileInputTraced(allocator, io, path, compat_js, stderr, false);
+/// 入力コンパイルのオプション。`forced_mode` は .dncl/.dncl2 拡張子や
+/// --dncl/--dncl2 フラグで強制される構文モード。
+pub const InputOptions = struct {
+    compat_js: bool = false,
+    forced_mode: lnako.frontend.token.Mode = .{},
+};
+
+pub fn compileInput(allocator: std.mem.Allocator, io: std.Io, path: []const u8, options: InputOptions, stderr: *std.Io.Writer) !?lnako.ir.nako_ir.Program {
+    return compileInputTraced(allocator, io, path, options, stderr, false);
 }
 
-pub fn compileInputTraced(allocator: std.mem.Allocator, io: std.Io, path: []const u8, compat_js: bool, stderr: *std.Io.Writer, trace: bool) !?lnako.ir.nako_ir.Program {
+pub fn compileInputTraced(allocator: std.mem.Allocator, io: std.Io, path: []const u8, options: InputOptions, stderr: *std.Io.Writer, trace: bool) !?lnako.ir.nako_ir.Program {
     var file_provider = lnako.semantic.module_graph.FileProvider{ .io = io };
     var timer = FrontendTimer{ .io = io, .last = if (trace) std.Io.Timestamp.now(io, .awake).nanoseconds else 0 };
-    return compileInputWithProviderTimed(allocator, path, compat_js, stderr, file_provider.sourceProvider(), if (trace) &timer else null);
+    return compileInputWithProviderTimed(allocator, path, options, stderr, file_provider.sourceProvider(), if (trace) &timer else null);
 }
 
-pub fn compileInputWithProvider(allocator: std.mem.Allocator, path: []const u8, compat_js: bool, stderr: *std.Io.Writer, source_provider: lnako.semantic.module_graph.SourceProvider) !?lnako.ir.nako_ir.Program {
-    return compileInputWithProviderTimed(allocator, path, compat_js, stderr, source_provider, null);
+pub fn compileInputWithProvider(allocator: std.mem.Allocator, path: []const u8, options: InputOptions, stderr: *std.Io.Writer, source_provider: lnako.semantic.module_graph.SourceProvider) !?lnako.ir.nako_ir.Program {
+    return compileInputWithProviderTimed(allocator, path, options, stderr, source_provider, null);
 }
 
-fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8, compat_js: bool, stderr: *std.Io.Writer, source_provider: lnako.semantic.module_graph.SourceProvider, timer: ?*FrontendTimer) !?lnako.ir.nako_ir.Program {
-    var graph = lnako.semantic.module_graph.load(allocator, path, source_provider, .{ .compat_js = compat_js }) catch |err| {
+fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8, options: InputOptions, stderr: *std.Io.Writer, source_provider: lnako.semantic.module_graph.SourceProvider, timer: ?*FrontendTimer) !?lnako.ir.nako_ir.Program {
+    var graph = lnako.semantic.module_graph.load(allocator, path, source_provider, .{ .compat_js = options.compat_js, .forced_mode = options.forced_mode }) catch |err| {
+        // 拡張子と--dncl/--dncl2の方言競合はusageエラーとしてCLI層へ伝搬する。
+        if (err == error.ConflictingDnclModes) return err;
         try stderr.print("{s}: 読み込みまたは字句解析に失敗しました: {s}\n", .{ path, @errorName(err) });
         return null;
     };
@@ -42,21 +51,39 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
         return null;
     }
     var roots: std.ArrayList(*lnako.frontend.ast.Node) = .empty;
+    defer roots.deinit(allocator);
     var names: std.ArrayList([]const u8) = .empty;
+    defer names.deinit(allocator);
     var paths: std.ArrayList([]const u8) = .empty;
+    defer paths.deinit(allocator);
+    var variant_roots: std.ArrayList(*lnako.frontend.ast.Node) = .empty;
+    defer variant_roots.deinit(allocator);
+    var variant_counts: std.ArrayList(usize) = .empty;
+    defer variant_counts.deinit(allocator);
     for (graph.modules) |module| {
         if (module.kind != .nako3) continue;
         try roots.append(allocator, module.parsed.?.root.?);
         try names.append(allocator, module.name);
         try paths.append(allocator, module.path);
+        for (module.variants.items) |variant| try variant_roots.append(allocator, variant.parse.root.?);
+        try variant_counts.append(allocator, module.variants.items.len);
     }
-    var hir_program = try lnako.ir.hir.lower(allocator, roots.items, names.items, paths.items, program);
+    // variant_roots.items への追加が終わってからモジュール単位の
+    // 部分スライスへ切り分ける（追加中に切ると再確保でダングルする）。
+    const module_variant_roots = try allocator.alloc([]const *lnako.frontend.ast.Node, roots.items.len);
+    defer allocator.free(module_variant_roots);
+    var variant_offset: usize = 0;
+    for (variant_counts.items, 0..) |count, index| {
+        module_variant_roots[index] = variant_roots.items[variant_offset .. variant_offset + count];
+        variant_offset += count;
+    }
+    var hir_program = try lnako.ir.hir.lower(allocator, roots.items, names.items, paths.items, module_variant_roots, program);
     defer hir_program.deinit();
     if (timer) |t| try t.phase(stderr, "AST-lowering");
     var ir_program = try lnako.ir.lower_ssa.lower(allocator, hir_program);
     errdefer ir_program.deinit();
     if (timer) |t| try t.phase(stderr, "SSA-construction");
-    ir_program.compat_js = compat_js;
+    ir_program.compat_js = options.compat_js;
     var javascript_modules: std.ArrayList(lnako.ir.nako_ir.JavaScriptModule) = .empty;
     var http_server_plugin_imported = false;
     const plugin_modules = try allocator.alloc(bool, graph.modules.len);

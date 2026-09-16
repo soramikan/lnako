@@ -38,10 +38,13 @@ fn directCallee(program: ir.Program, instruction: ir.Instruction) ?ir.FunctionId
     if (instruction.direct_callee) |callee| {
         return if (callee < program.functions.len) callee else null;
     }
+    // 同名関数は生成順の後勝ち（循環再展開変体の定義が本体を置き換える
+    // 公式挙動、Issue #73）。実行時の名前解決と同じ定義を解析へ使う。
+    var found: ?ir.FunctionId = null;
     for (program.functions, 0..) |function, index| {
-        if (std.mem.eql(u8, function.name, instruction.name)) return @intCast(index);
+        if (std.mem.eql(u8, function.name, instruction.name)) found = @intCast(index);
     }
-    return null;
+    return found;
 }
 
 fn isResultName(name: []const u8) bool {
@@ -55,7 +58,10 @@ fn readsIncomingResult(program: ir.Program, instruction: ir.Instruction, summari
         // primitive hook can call user code before the assignment, and that
         // code can inspect the incoming `それ` value even when the increment
         // target has another name.
-        .increment => true,
+        .increment_values => true,
+        // DNCL自動初期化も添字の文字列化・要素書き戻しでユーザコードを
+        // 呼び得るため、呼び出し側の『それ』を落とせない
+        .ensure_array_var, .init_array_index => true,
         .call => if (directCallee(program, instruction)) |callee|
             summaries[callee].reads_result
         else
@@ -72,8 +78,7 @@ fn readsIncomingResult(program: ir.Program, instruction: ir.Instruction, summari
         .unary,
         .array_get,
         .property_get,
-        .array_set,
-        .property_set,
+        .element_set,
         .destructure_store,
         .iterator_begin,
         .iterator_next,
@@ -94,10 +99,11 @@ fn instructionMayThrow(program: ir.Program, instruction: ir.Instruction, summari
         .unary,
         .array_get,
         .property_get,
-        .array_set,
-        .property_set,
+        .element_set,
         .destructure_store,
-        .increment,
+        .increment_values,
+        .ensure_array_var,
+        .init_array_index,
         .iterator_begin,
         .iterator_next,
         .iterator_has_next,
@@ -185,7 +191,7 @@ fn canPassWithoutObservation(instruction: ir.Instruction) bool {
     return switch (instruction.opcode) {
         // These operations only move already computed SSA/local values.  They
         // do not coerce objects, invoke user code, or expose a pending result.
-        .const_number, .const_boolean, .const_null, .const_undefined, .load_local, .store_local, .phi, .exception_pending => true,
+        .const_number, .const_boolean, .const_null, .const_undefined, .load_local, .store_local, .phi, .exception_pending, .is_array, .is_undefined, .coalesce_or_zero => true,
         .load_global => !isResultName(instruction.name),
         // A plain global slot write is the overwrite itself when the name is
         // `それ`; other global writes have no user callback hook in the
@@ -379,7 +385,10 @@ fn makeProgram(allocator: std.mem.Allocator, child_reads: bool) !ir.Program {
     const parent_instructions = try a.dupe(ir.Instruction, &.{ call, overwrite_value, overwrite });
     const parent_blocks = try a.dupe(ir.BasicBlock, &.{.{ .id = 0, .name = "parent", .instructions = parent_instructions, .terminator = .{ .return_value = null } }});
     const parent = ir.Function{ .id = 0, .name = "parent", .parameters = &.{}, .blocks = parent_blocks, .entry = 0, .return_type = .void, .is_async = false, .is_test = false };
-    return .{ .arena = arena, .functions = try a.dupe(ir.Function, &.{ parent, child }), .module_entries = &.{} };
+    // arenaを返却値へコピーする前に確保を済ませる。リテラル内で呼ぶと
+    // コピー後のarena状態へ確保が記録されずリークする。
+    const functions = try a.dupe(ir.Function, &.{ parent, child });
+    return .{ .arena = arena, .functions = functions, .module_entries = &.{} };
 }
 
 test "direct call result store is removable before a proven overwrite" {
@@ -477,4 +486,65 @@ test "try handlers disable result-store omission across the handler edge" {
     var handler_plan = try plan(std.testing.allocator, program, program.functions[0], analysis);
     defer handler_plan.deinit(std.testing.allocator);
     try std.testing.expect(!handler_plan.omit_result_store[0][1]);
+}
+
+test "name resolution for duplicate callees follows runtime last-wins" {
+    // 循環再展開変体では同名関数が生成順に並び、実行時は後勝ちで解決する
+    // （Issue #73）。解析が先勝ちだと古い定義を見て、後の定義が読む
+    // 『それ』の保持を省略してしまう。
+    const span = @import("../frontend/ast.zig").emptySpan();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    const a = arena.allocator();
+
+    const read_body = try a.dupe(ir.Instruction, &.{
+        .{ .result = 0, .opcode = .load_global, .type = .dynamic, .name = "それ", .span = span },
+    });
+    const write_body = try a.dupe(ir.Instruction, &.{
+        .{ .result = 0, .opcode = .const_number, .type = .number, .number_value = 1, .span = span },
+    });
+    const dup_first = ir.Function{
+        .id = 1,
+        .name = "dup",
+        .parameters = &.{},
+        .blocks = try a.dupe(ir.BasicBlock, &.{.{ .id = 0, .name = "first", .instructions = write_body, .terminator = .{ .return_value = null } }}),
+        .entry = 0,
+        .return_type = .void,
+        .is_async = false,
+        .is_test = false,
+    };
+    const dup_last = ir.Function{
+        .id = 2,
+        .name = "dup",
+        .parameters = &.{},
+        .blocks = try a.dupe(ir.BasicBlock, &.{.{ .id = 0, .name = "last", .instructions = read_body, .terminator = .{ .return_value = null } }}),
+        .entry = 0,
+        .return_type = .void,
+        .is_async = false,
+        .is_test = false,
+    };
+    const call = ir.Instruction{ .result = 0, .opcode = .call, .type = .dynamic, .name = "dup", .span = span };
+    const overwrite_value = ir.Instruction{ .result = 1, .opcode = .const_number, .type = .number, .number_value = 3, .span = span };
+    const overwrite = ir.Instruction{ .result = null, .opcode = .store_global, .type = .void, .name = "それ", .operands = try a.dupe(ir.ValueId, &.{1}), .span = span };
+    const parent = ir.Function{
+        .id = 0,
+        .name = "parent",
+        .parameters = &.{},
+        .blocks = try a.dupe(ir.BasicBlock, &.{.{ .id = 0, .name = "parent", .instructions = try a.dupe(ir.Instruction, &.{ call, overwrite_value, overwrite }), .terminator = .{ .return_value = null } }}),
+        .entry = 0,
+        .return_type = .void,
+        .is_async = false,
+        .is_test = false,
+    };
+    const functions = try a.dupe(ir.Function, &.{ parent, dup_first, dup_last });
+    var program = ir.Program{ .arena = arena, .functions = functions, .module_entries = &.{} };
+    defer program.deinit();
+    var analysis = try analyze(std.testing.allocator, program);
+    defer analysis.deinit(std.testing.allocator);
+    try std.testing.expect(!analysis.summaries[1].reads_result);
+    try std.testing.expect(analysis.summaries[2].reads_result);
+    var parent_plan = try plan(std.testing.allocator, program, program.functions[0], analysis);
+    defer parent_plan.deinit(std.testing.allocator);
+    // 実行時に選ばれる後の定義は『それ』を読むため、呼び出し前の
+    // 結果保持を省略できない。
+    try std.testing.expect(!parent_plan.omit_result_store[0][0]);
 }

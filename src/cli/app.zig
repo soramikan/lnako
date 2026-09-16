@@ -24,7 +24,14 @@ pub fn run(
             try stderr.flush();
             std.process.exit(1);
         }
-        var ir_program = (try compiler_pipeline.compileInputWithProvider(allocator, package.entry_path, true, stderr, package.sourceProvider())) orelse {
+        var ir_program = (compiler_pipeline.compileInputWithProvider(allocator, package.entry_path, .{ .compat_js = true, .forced_mode = package.forced_mode }, stderr, package.sourceProvider()) catch |err| {
+            if (err == error.ConflictingDnclModes) {
+                try stderr.writeAll("拡張子と埋め込みDNCLモードが異なるDNCL方言を要求しています\n");
+                try stderr.flush();
+                std.process.exit(1);
+            }
+            return err;
+        }) orelse {
             try stderr.flush();
             std.process.exit(1);
         };
@@ -77,7 +84,10 @@ pub fn run(
         .version => try stdout.print("lnako {s}\n", .{lnako.version}),
         .build => {
             const options = arguments.parseBuildOptions(args[1..]) catch |err| {
-                try stderr.print("build: コマンドラインエラー: {s}\n", .{@errorName(err)});
+                if (err == error.ConflictingDnclModes)
+                    try stderr.writeAll("build: --dnclと--dncl2は同時に指定できません\n")
+                else
+                    try stderr.print("build: コマンドラインエラー: {s}\n", .{@errorName(err)});
                 try stderr.flush();
                 std.process.exit(2);
             };
@@ -91,13 +101,19 @@ pub fn run(
                 try stderr.flush();
                 std.process.exit(2);
             }
-            var ir_program = (try compiler_pipeline.compileInputTraced(allocator, io, options.input, options.compat_js, stderr, init.environ_map.get("LNAKO_LLVM_TRACE") != null)) orelse {
+            const extension_mode = lnako.semantic.module_graph.extensionForcedMode(options.input);
+            if ((extension_mode.dncl and options.forced_mode.dncl2) or (extension_mode.dncl2 and options.forced_mode.dncl)) {
+                try stderr.writeAll("build: 拡張子と--dncl/--dncl2が異なるDNCL方言を要求しています\n");
+                try stderr.flush();
+                std.process.exit(2);
+            }
+            var ir_program = (try compiler_pipeline.compileInputTraced(allocator, io, options.input, .{ .compat_js = options.compat_js, .forced_mode = options.forced_mode }, stderr, init.environ_map.get("LNAKO_LLVM_TRACE") != null)) orelse {
                 try stderr.flush();
                 std.process.exit(1);
             };
             defer ir_program.deinit();
             if (options.compat_js) {
-                compiler_pipeline.writeCompatExecutable(allocator, io, executable_path, options.input, options.output) catch |err| {
+                compiler_pipeline.writeCompatExecutable(allocator, io, executable_path, options.input, options.output, options.forced_mode) catch |err| {
                     try stderr.print("build: QuickJS互換実行ファイルの生成に失敗しました: {s}\n", .{@errorName(err)});
                     try stderr.flush();
                     std.process.exit(1);
@@ -131,7 +147,24 @@ pub fn run(
                 try stderr.flush();
                 std.process.exit(2);
             }
-            var ir_program = (try compiler_pipeline.compileInput(allocator, io, args[1], false, stderr)) orelse {
+            if (arguments.findUnknownOption(args[2..], &.{ "--dncl", "--dncl2" })) |unknown| {
+                try stderr.print("check: 不明なオプションです: {s}\n", .{unknown});
+                try stderr.flush();
+                std.process.exit(2);
+            }
+            const check_mode = arguments.dnclModeFromArguments(args[2..]) catch {
+                try stderr.writeAll("check: --dnclと--dncl2は同時に指定できません\n");
+                try stderr.flush();
+                std.process.exit(2);
+            };
+            var ir_program = (compiler_pipeline.compileInput(allocator, io, args[1], .{ .forced_mode = check_mode }, stderr) catch |err| {
+                if (err == error.ConflictingDnclModes) {
+                    try stderr.writeAll("check: 拡張子と--dncl/--dncl2が異なるDNCL方言を要求しています\n");
+                    try stderr.flush();
+                    std.process.exit(2);
+                }
+                return err;
+            }) orelse {
                 try stderr.flush();
                 std.process.exit(1);
             };
@@ -145,13 +178,30 @@ pub fn run(
                 std.process.exit(2);
             }
             const run_options = arguments.splitRunArguments(args[2..]);
+            if (arguments.findUnknownFlag(run_options.lnako, &.{ "--compat-js", "--dncl", "--dncl2" })) |unknown| {
+                try stderr.print("run: 不明なオプションです: {s}\n", .{unknown});
+                try stderr.flush();
+                std.process.exit(2);
+            }
             const compat_js = arguments.hasArgument(run_options.lnako, "--compat-js");
             if (compat_js and !lnako.compat.quickjs.available()) {
                 try stderr.writeAll("run: このlnakoはQuickJSなしでビルドされています。zig build -Dcompat-js=trueを使用してください\n");
                 try stderr.flush();
                 std.process.exit(2);
             }
-            var ir_program = (try compiler_pipeline.compileInput(allocator, io, args[1], compat_js, stderr)) orelse {
+            const run_mode = arguments.dnclModeFromArguments(run_options.lnako) catch {
+                try stderr.writeAll("run: --dnclと--dncl2は同時に指定できません\n");
+                try stderr.flush();
+                std.process.exit(2);
+            };
+            var ir_program = (compiler_pipeline.compileInput(allocator, io, args[1], .{ .compat_js = compat_js, .forced_mode = run_mode }, stderr) catch |err| {
+                if (err == error.ConflictingDnclModes) {
+                    try stderr.writeAll("run: 拡張子と--dncl/--dncl2が異なるDNCL方言を要求しています\n");
+                    try stderr.flush();
+                    std.process.exit(2);
+                }
+                return err;
+            }) orelse {
                 try stderr.flush();
                 std.process.exit(1);
             };
@@ -196,7 +246,24 @@ pub fn run(
                 try stderr.flush();
                 std.process.exit(2);
             }
-            const succeeded = try test_command.runTestTarget(allocator, io, args[1], stdout, stderr);
+            if (arguments.findUnknownOption(args[2..], &.{ "--dncl", "--dncl2" })) |unknown| {
+                try stderr.print("test: 不明なオプションです: {s}\n", .{unknown});
+                try stderr.flush();
+                std.process.exit(2);
+            }
+            const test_mode = arguments.dnclModeFromArguments(args[2..]) catch {
+                try stderr.writeAll("test: --dnclと--dncl2は同時に指定できません\n");
+                try stderr.flush();
+                std.process.exit(2);
+            };
+            const succeeded = test_command.runTestTarget(allocator, io, args[1], test_mode, stdout, stderr) catch |err| {
+                if (err == error.ConflictingDnclModes) {
+                    try stderr.writeAll("test: 拡張子と--dncl/--dncl2が異なるDNCL方言を要求しています\n");
+                    try stderr.flush();
+                    std.process.exit(2);
+                }
+                return err;
+            };
             if (!succeeded) {
                 try stdout.flush();
                 try stderr.flush();

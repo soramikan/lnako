@@ -51,6 +51,8 @@ export function buildStaticConstantEvidenceInputs(root) {
     path: resolve(root, "compat/v3.7.24/static-array-constant-evidence.json"),
     fixtureId: "native-array-system-constants",
     globalReadCount: 2,
+    globalTraceCount: 4,
+    manifestGlobalReadNames: ["抽出文字列", "抽出文字列", "__DEBUGブレイクポイント一覧", "__DEBUGブレイクポイント一覧"],
     literalNames: new Set(),
     plugin: "plugin_system",
   },

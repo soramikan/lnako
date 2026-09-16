@@ -3,6 +3,7 @@
 .zig-global-cache/
 zig-out/
 .cache/
+.tmp-lnako-*/
 benchmarks/results/*.json
 !benchmarks/results/latest.json
 !benchmarks/results/.gitkeep

@@ -16,7 +16,6 @@ const DebugLocation = shared.DebugLocation;
 const arithmeticOpcode = shared.arithmeticOpcode;
 const isDisplayCall = shared.isDisplayCall;
 const isNativePluginCall = shared.isNativePluginCall;
-const isQualifiedGlobal = shared.isQualifiedGlobal;
 const lookupFunction = shared.lookupFunction;
 const shiftOpcode = shared.shiftOpcode;
 const valueType = shared.valueType;
@@ -33,9 +32,14 @@ const functions_mod = @import("../functions.zig");
 const preamble_mod = @import("../preamble.zig");
 const declarations_mod = @import("../declarations.zig");
 
-pub fn writeAssignmentContainerPointer(emitter: *Emitter, locals: []const []const u8, name: []const u8, literal: bool) !void {
-    if (literal) return emitter.output.writer.writeAll("%runtime.scratch");
-    if (context.nameIndex(locals, name)) |index| return emitter.output.writer.print("%local.{d}", .{index});
+/// 変数束縛のポインタをemitする。local_targetは意味解析の束縛結果を
+/// そのまま使い、ローカル解決ならローカルスロット、グローバル解決なら
+/// グローバルスロットのみを対象にする（スロットの有無で推測しない）。
+pub fn writeAssignmentContainerPointer(emitter: *Emitter, locals: []const []const u8, name: []const u8, local_target: bool) !void {
+    if (local_target) {
+        if (context.nameIndex(locals, name)) |index| return emitter.output.writer.print("%local.{d}", .{index});
+        return error.UnknownAssignmentContainer;
+    }
     if (emitter.globalIndex(name)) |index| return emitter.output.writer.print("@lnako.global.{d}", .{index});
     return error.UnknownAssignmentContainer;
 }
@@ -53,10 +57,39 @@ pub fn writeRequiredNamedPointer(emitter: *Emitter, locals: []const []const u8, 
     return error.UnknownAssignmentTarget;
 }
 
-pub fn writeIncrement(emitter: *Emitter, locals: []const []const u8, instruction: ir.Instruction, scope: usize) !void {
+/// 増減文の分解命令（公式convIncの `typeof v === 'undefined'` 相当）。
+/// 純粋なタグ比較なのでpendingチェックはemitしない。
+pub fn writeIsUndefined(emitter: *Emitter, instruction: ir.Instruction, scope: usize) !void {
+    const result = instruction.result orelse return error.MissingInstructionResult;
     if (instruction.operands.len != 1) return error.InvalidIncrement;
-    try emitter.output.writer.writeAll("  call void @lnako_aot_increment(ptr ");
-    try writeRequiredNamedPointer(emitter, locals, instruction.name);
-    try emitter.output.writer.print(", ptr %root.slot.{d})", .{instruction.operands[0]});
+    try emitter.output.writer.print("  %isundef.i32.{d} = call i32 @lnako_aot_is_undefined(ptr %root.slot.{d})", .{ result, instruction.operands[0] });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %isundef.i1.{d} = icmp ne i32 %isundef.i32.{d}, 0", .{ result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %isundef.bits.{d} = zext i1 %isundef.i1.{d} to i64", .{ result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %v{d} = insertvalue %lnako.Value {{ i8 2, i64 0 }}, i64 %isundef.bits.{d}, 1", .{ result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+}
+
+/// 増減文の分解命令（公式convIncの `v0 = 0` 相当）。
+/// undefinedなら0、それ以外はそのまま返す。
+pub fn writeCoalesceOrZero(emitter: *Emitter, instruction: ir.Instruction, scope: usize) !void {
+    const result = instruction.result orelse return error.MissingInstructionResult;
+    if (instruction.operands.len != 1) return error.InvalidIncrement;
+    try emitter.output.writer.print("  call void @lnako_aot_coalesce_or_zero(ptr %root.slot.{d}, ptr %root.slot.{d})", .{ result, instruction.operands[0] });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+}
+
+/// 増減文の分解命令（公式convIncの `Number(v0) + Number(incValue)` 相当）。
+/// 呼び出し側で読み出し・undefined初期化・量の評価を済ませてからemitする。
+pub fn writeIncrementValues(emitter: *Emitter, instruction: ir.Instruction, scope: usize) !void {
+    const result = instruction.result orelse return error.MissingInstructionResult;
+    if (instruction.operands.len != 2) return error.InvalidIncrement;
+    try emitter.output.writer.print("  call void @lnako_aot_increment_values(ptr %root.slot.{d}, ptr %root.slot.{d}, ptr %root.slot.{d})", .{ result, instruction.operands[0], instruction.operands[1] });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
     try emitter.debugSuffix(instruction.span, scope);
 }

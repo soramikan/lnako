@@ -16,7 +16,6 @@ const DebugLocation = shared.DebugLocation;
 const arithmeticOpcode = shared.arithmeticOpcode;
 const isDisplayCall = shared.isDisplayCall;
 const isNativePluginCall = shared.isNativePluginCall;
-const isQualifiedGlobal = shared.isQualifiedGlobal;
 const lookupFunction = shared.lookupFunction;
 const shiftOpcode = shared.shiftOpcode;
 const valueType = shared.valueType;
@@ -42,7 +41,8 @@ pub fn writeDestructure(emitter: *Emitter, locals: []const []const u8, instructi
     if (instruction.operands.len != 1) return error.InvalidDestructure;
     for (instruction.names, 0..) |name, index| {
         try emitter.output.writer.writeAll("  call void @lnako_aot_destructure_get(ptr ");
-        try variables_mod.writeRequiredNamedPointer(emitter, locals, name);
+        // ターゲットのローカル・グローバルは束縛結果（names_local）で決める
+        try variables_mod.writeAssignmentContainerPointer(emitter, locals, name, ir.destructureTargetIsLocal(instruction, index));
         try emitter.output.writer.print(", ptr %root.slot.{d}, i64 {d})", .{ instruction.operands[0], index });
         try emitter.debugSuffix(instruction.span, scope);
     }
@@ -86,29 +86,48 @@ pub fn writeIndexGet(emitter: *Emitter, instruction: ir.Instruction, scope: usiz
     }
 }
 
-pub fn writeIndexSet(emitter: *Emitter, locals: []const []const u8, instruction: ir.Instruction, scope: usize) !void {
-    if (instruction.operands.len < 2) return error.InvalidIndexAssignment;
-    const temporary = emitter.next_metadata;
-    const literal_tag: ?u8 = if (std.mem.eql(u8, instruction.name, "NULL")) 1 else if (std.mem.eql(u8, instruction.name, "undefined")) 0 else null;
-    if (literal_tag) |tag| {
-        try emitter.output.writer.print("  store %lnako.Value {{ i8 {d}, i64 0 }}, ptr %runtime.scratch", .{tag});
-        try emitter.debugSuffix(instruction.span, scope);
-    }
-    try emitter.output.writer.print("  %set.container.{d} = load %lnako.Value, ptr ", .{temporary});
-    try variables_mod.writeAssignmentContainerPointer(emitter, locals, instruction.name, literal_tag != null);
+/// 解決済みコンテナへの要素代入。operands=[container, key, value]で、
+/// ルート変数の束縛と中間レベルの走査はlowering側でload/array_getとして
+/// 先行emitされる（公式convLet/convLetArrayの最終代入部相当）。
+/// 例外は呼び出し側のexception_pendingで拾う。
+pub fn writeElementSet(emitter: *Emitter, instruction: ir.Instruction, scope: usize) !void {
+    if (instruction.operands.len != 3) return error.InvalidIndexAssignment;
+    try emitter.output.writer.print("  call i32 @lnako_aot_index_set(ptr %root.slot.{d}, ptr %root.slot.{d}, ptr %root.slot.{d})", .{ instruction.operands[0], instruction.operands[1], instruction.operands[2] });
     try emitter.debugSuffix(instruction.span, scope);
-    for (instruction.operands[1 .. instruction.operands.len - 1], 0..) |key, index| {
-        try emitter.output.writer.writeAll("  call void @lnako_aot_index_get(ptr %runtime.scratch, ptr ");
-        if (index == 0) {
-            try variables_mod.writeAssignmentContainerPointer(emitter, locals, instruction.name, literal_tag != null);
-        } else try emitter.output.writer.writeAll("%runtime.scratch");
-        try emitter.output.writer.print(", ptr %root.slot.{d})", .{key});
-        try emitter.debugSuffix(instruction.span, scope);
-    }
-    try emitter.output.writer.print("  %set.status.{d} = call i32 @lnako_aot_index_set(ptr ", .{temporary});
-    if (instruction.operands.len == 2) {
-        try variables_mod.writeAssignmentContainerPointer(emitter, locals, instruction.name, literal_tag != null);
-    } else try emitter.output.writer.writeAll("%runtime.scratch");
-    try emitter.output.writer.print(", ptr %root.slot.{d}, ptr %root.slot.{d})", .{ instruction.operands[instruction.operands.len - 1], instruction.operands[0] });
+}
+
+/// DNCL自動初期化: 変数スロットが配列でなければ30要素の0配列を代入する
+/// （公式convLetArrayのcheckInit相当）。システム定数名は公式同様リテラル
+/// 相当に留めるためemit自体を省略するが、ローカル束縛へ解決される同名は
+/// 公式同様に初期化対象とする。
+pub fn writeEnsureArrayVar(emitter: *Emitter, locals: []const []const u8, instruction: ir.Instruction, scope: usize) !void {
+    if (!instruction.local_target and system_constant.isConstant(instruction.name)) return;
+    try emitter.output.writer.writeAll("  call void @lnako_aot_ensure_array_var(ptr ");
+    try variables_mod.writeAssignmentContainerPointer(emitter, locals, instruction.name, instruction.local_target);
+    try emitter.output.writer.writeAll(")");
+    try emitter.debugSuffix(instruction.span, scope);
+}
+
+/// DNCL自動初期化のcheck式で使う instanceof Array 相当の判定。
+/// 例外を発生させない純粋なタグ比較なのでpendingチェックはemitしない。
+pub fn writeIsArray(emitter: *Emitter, instruction: ir.Instruction, scope: usize) !void {
+    const result = instruction.result orelse return error.MissingInstructionResult;
+    if (instruction.operands.len != 1) return error.InvalidIndexReference;
+    try emitter.output.writer.print("  %isarray.i32.{d} = call i32 @lnako_aot_is_array(ptr %root.slot.{d})", .{ result, instruction.operands[0] });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %isarray.i1.{d} = icmp ne i32 %isarray.i32.{d}, 0", .{ result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %isarray.bits.{d} = zext i1 %isarray.i1.{d} to i64", .{ result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %v{d} = insertvalue %lnako.Value {{ i8 2, i64 0 }}, i64 %isarray.bits.{d}, 1", .{ result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+}
+
+/// DNCL自動初期化のwrite-back式。container[key]へ無条件に30要素の0配列を
+/// 書き込む（公式の `tmp[..] = arrayDefCode` 相当）。
+/// 例外は呼び出し側のexception_pendingで拾う。
+pub fn writeInitArrayIndex(emitter: *Emitter, instruction: ir.Instruction, scope: usize) !void {
+    if (instruction.operands.len != 2) return error.InvalidIndexAssignment;
+    try emitter.output.writer.print("  call void @lnako_aot_init_array_index(ptr %root.slot.{d}, ptr %root.slot.{d})", .{ instruction.operands[0], instruction.operands[1] });
     try emitter.debugSuffix(instruction.span, scope);
 }

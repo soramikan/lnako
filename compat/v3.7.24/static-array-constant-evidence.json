@@ -56,7 +56,7 @@
     "environment": {
       "platform": "darwin",
       "arch": "arm64",
-      "node": "v24.15.0"
+      "node": "v26.8.2"
     },
     "oracle": {
       "build": 4,
@@ -67,27 +67,27 @@
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
     "lnako": {
-      "binarySha256": "1213f8c16dc92a4a36463c710d83a7226a17c32d25eb040e7548e1d4f3af7f4d",
-      "sourceManifestSha256": "5426e21f30e8c4628b12e1652d9b5b8458bf390820ac8f5e82700fe106dc116f"
+      "binarySha256": "3b9bb9fb8ea53bed4b61a0f6381fa6ea72778578f3c62703c1160a43f50a5a1b",
+      "sourceManifestSha256": "aaac693b5a6db2c92fef6022f08bd25261db998dacb1ba07ab08259f9538f26c"
     },
     "raw": {
-      "interpreterTraceSha256": "23836c133457946f135514f0303e847b53d846b342951112c80fa87fc9705fd9",
-      "aotTraceSha256": "ed1f3e2ac6a9823221c51348f41998b82d859b464006c4ab9db940b3fca0884b",
-      "globalManifestSha256": "4355eaccd59017aeffbfc83db5d90de09cee971002904d45bc8460085bd3fc74",
+      "interpreterTraceSha256": "42434c1bc8c03adb4a737c129de6e79d3964b504d1375f1a13d34590d1afc82a",
+      "aotTraceSha256": "0a19cbcaa887312b53f00ef132735fdfbfc742c19da2438014a1fbb00f4d56f5",
+      "globalManifestSha256": "a69918e7419d03aa316427002dbdcda99811bcdf1f1aed859e36679b444f2ba8",
       "literalInterpreterTraceSha256": "d1a240ca85bb6425f4ad3e15b23d56a4366b64e8631f58b1af10c96a38b65232",
       "literalAotTraceSha256": "b503b7eae644c3b3cc2fbe7504669a86aa68f5db0642b31b5d61cde895e2a1ea",
-      "literalManifestSha256": "e8570282cda61c5b49a341a2265bbc2967658677049c3a9f9b2be4d057e2cac3"
+      "literalManifestSha256": "0df0ebcea3ddb2b34a3f03ef777563c411a653b38952317f6c0fcd7cd9ecfe18"
     }
   },
   "trace": {
     "global": {
       "interpreter": {
         "schema": 1,
-        "eventCount": 2
+        "eventCount": 4
       },
       "aot": {
         "schema": 1,
-        "eventCount": 2
+        "eventCount": 4
       }
     },
     "literal": {
@@ -107,7 +107,7 @@
       "name": "抽出文字列",
       "plugin": "plugin_system",
       "kind": "global-read",
-      "siteId": "0x0000000000000001",
+      "siteId": "0x0000000000000003",
       "runtime": {
         "interpreter": {
           "success": true,
@@ -125,7 +125,7 @@
       "name": "__DEBUGブレイクポイント一覧",
       "plugin": "plugin_system",
       "kind": "global-read",
-      "siteId": "0x0000000000000002",
+      "siteId": "0x0000000000000004",
       "runtime": {
         "interpreter": {
           "success": true,

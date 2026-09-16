@@ -139,9 +139,14 @@ const lnako_aot_function_capture = state.lnako_aot_function_capture;
 const lnako_aot_function_new = state.lnako_aot_function_new;
 const lnako_aot_function_new_named = state.lnako_aot_function_new_named;
 const lnako_aot_hatena_execute = debug.lnako_aot_hatena_execute;
-const lnako_aot_increment = state.lnako_aot_increment;
+const lnako_aot_is_undefined = state.lnako_aot_is_undefined;
+const lnako_aot_coalesce_or_zero = state.lnako_aot_coalesce_or_zero;
+const lnako_aot_increment_values = state.lnako_aot_increment_values;
 const lnako_aot_index_get = state.lnako_aot_index_get;
 const lnako_aot_index_set = state.lnako_aot_index_set;
+const lnako_aot_ensure_array_var = state.lnako_aot_ensure_array_var;
+const lnako_aot_is_array = state.lnako_aot_is_array;
+const lnako_aot_init_array_index = state.lnako_aot_init_array_index;
 const lnako_aot_node_file_callback_call = control_flow.lnako_aot_node_file_callback_call;
 const lnako_aot_node_stdin_callback_call = control_flow.lnako_aot_node_stdin_callback_call;
 const lnako_aot_print_collection = state.lnako_aot_print_collection;
@@ -293,7 +298,9 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_compare));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_shift));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_concat));
-    try std.testing.expectEqual(*const fn (*Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_increment));
+    try std.testing.expectEqual(*const fn (*const Value) callconv(.c) c_int, @TypeOf(&lnako_aot_is_undefined));
+    try std.testing.expectEqual(*const fn (*Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_coalesce_or_zero));
+    try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_increment_values));
     try std.testing.expectEqual(*const fn (*const Value, bool) callconv(.c) void, @TypeOf(&lnako_aot_print_collection));
     try std.testing.expectEqual(*const fn (*Value, ?*const Value) callconv(.c) void, @TypeOf(&lnako_aot_binding_cell_new));
     try std.testing.expectEqual(*const fn (*Value) callconv(.c) *Value, @TypeOf(&lnako_aot_binding_cell_value));
@@ -2260,6 +2267,38 @@ test "AOT index entry counters distinguish successful lookup and assignment fail
     try std.testing.expectEqual(@as(u64, 1), set_counters.failures);
 }
 
+test "AOT index_setは先行するindex_getのpending例外を上書きしない" {
+    // 公式は中間読出しのTypeErrorが先に投げられるため、最終書込みの
+    // 失敗で先発例外を上書きしない。index_get(undefined)でpendingを
+    // 立てた後のindex_set/init_array_indexは失敗しても元の例外を保持する。
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, numberValue(0), numberValue(9) };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    var result: Value = .{};
+    lnako_aot_index_get(&result, &roots[0], &roots[1]);
+    try std.testing.expect(state.active_runtime.?.has_pending_exception);
+    try expectUtf16String(&state.active_runtime.?, state.active_runtime.?.pending_exception, "Cannot read properties of undefined (reading '0')");
+    // 先行例外が残っている間は最終書込み・初期化書き戻しを実行しない
+    try std.testing.expectEqual(@as(c_int, -1), lnako_aot_index_set(&roots[0], &roots[1], &roots[2]));
+    lnako_aot_init_array_index(&roots[0], &roots[1]);
+    // ensure_array_varもスロットを上書きせず先行例外を保持する
+    var slot: Value = .{};
+    lnako_aot_ensure_array_var(&slot);
+    try std.testing.expectEqual(@intFromEnum(Tag.undefined), slot.tag);
+    try expectUtf16String(&state.active_runtime.?, state.active_runtime.?.pending_exception, "Cannot read properties of undefined (reading '0')");
+    _ = state.active_runtime.?.takeException();
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+}
+
 test "AOT何文字目はArray.from要素境界と辞書ToLengthを再現する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -4000,12 +4039,121 @@ test "AOTの値をUTF-16文字列として連結する" {
 test "AOT増減は未定義・文字列・BigIntをNumberへ変換する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    const value = incrementValue(&runtime, .{}, numberValue(1));
+    const value = try incrementValue(&runtime, .{}, numberValue(1));
     try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 1))), value.payload);
     const bigint = try runtime.createBigInt("5n");
-    try std.testing.expectEqual(@as(f64, 7), incrementNumber(&runtime, bigint) + incrementNumber(&runtime, numberValue(2)));
+    try std.testing.expectEqual(@as(f64, 7), try incrementNumber(&runtime, bigint) + try incrementNumber(&runtime, numberValue(2)));
     const string = try runtime.createString(&.{'5'});
-    try std.testing.expectEqual(@as(f64, 7), incrementNumber(&runtime, string) + incrementNumber(&runtime, numberValue(2)));
+    try std.testing.expectEqual(@as(f64, 7), try incrementNumber(&runtime, string) + try incrementNumber(&runtime, numberValue(2)));
+}
+
+test "AOT増減は配列・辞書をtoPrimitive経由でNumberへ変換する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 2;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    // Number([["5"]]) -> 5（公式の暗黙変換相当）
+    roots[0] = try runtime.createArray(&.{staticStringValue("5")});
+    roots[1] = try runtime.createArray(&.{roots[0]});
+    const incremented = try incrementValue(&runtime, roots[1], numberValue(1));
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 6))), incremented.payload);
+    const dictionary = try runtime.createDictionary(&.{});
+    try std.testing.expect(std.math.isNan(try incrementNumber(&runtime, dictionary)));
+}
+
+test "AOT増減は変換callbackの失敗をNaNへ握り潰さず例外として伝搬する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    var roots = [_]Value{.{}} ** 4;
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+
+    roots[0] = try active.createDictionary(&.{});
+    roots[1] = try active.createBindingCell(numberValue(0));
+    roots[2] = try active.createFunction(testAotThrowAfterSideEffect, 0, &.{roots[1]});
+    try active.setDictionary(&roots[0].object().?.payload.dictionary, staticStringValue("valueOf"), roots[2]);
+    try std.testing.expectError(error.CallbackExecutionFailed, incrementValue(active, roots[0], numberValue(1)));
+    _ = active.takeException();
+
+    const amount = numberValue(1);
+    lnako_aot_increment_values(&roots[3], &roots[0], &amount);
+    try std.testing.expect(active.has_pending_exception);
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[3].tag)));
+    roots[3] = active.takeException();
+    try expectUtf16String(active, roots[3], "callback failure");
+}
+
+test "DNCL自動初期化と添字増減はGC圧力下でもコンテナを保護する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    state.active_runtime.?.next_collection = 1;
+
+    var roots = [_]Value{.{}} ** 4;
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    // A[1]=5相当: 未初期化変数→30要素配列、中間レベルも配列化して書き戻す
+    lnako_aot_ensure_array_var(&roots[0]);
+    try std.testing.expectEqual(@as(u8, @intFromEnum(Tag.array)), roots[0].tag);
+    roots[1] = numberValue(1);
+    var out: Value = .{};
+    lnako_aot_index_get(&out, &roots[0], &roots[1]);
+    // 中間レベルのcheck+write-back相当: 非配列なら新規配列を書き戻す
+    if (lnako_aot_is_array(&out) == 0) {
+        lnako_aot_init_array_index(&roots[0], &roots[1]);
+        lnako_aot_index_get(&out, &roots[0], &roots[1]);
+    }
+    try std.testing.expectEqual(@as(u8, @intFromEnum(Tag.array)), out.tag);
+    var check: Value = .{};
+    lnako_aot_index_get(&check, &roots[0], &roots[1]);
+    try std.testing.expectEqual(out.object().?, check.object().?);
+
+    // A[1][2]を3増やす相当: 分解後の命令列（varGetter→undefined初期化→
+    // 量の評価→加算→varSetter）をprimitiveで再構成する
+    var mid: Value = .{};
+    lnako_aot_index_get(&mid, &roots[0], &roots[1]);
+    var two = numberValue(2);
+    var old: Value = .{};
+    lnako_aot_index_get(&old, &mid, &two);
+    // DNCL初期化配列の要素は0なので初期化分岐は通らず、coalesceは値を維持する
+    try std.testing.expectEqual(@as(c_int, 0), lnako_aot_is_undefined(&old));
+    var undef_probe: Value = .{};
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_is_undefined(&undef_probe));
+    var base: Value = .{};
+    lnako_aot_coalesce_or_zero(&base, &old);
+    var updated: Value = .{};
+    var amount = numberValue(3);
+    lnako_aot_increment_values(&updated, &base, &amount);
+    _ = lnako_aot_index_set(&mid, &two, &updated);
+    var element: Value = .{};
+    lnako_aot_index_get(&element, &mid, &two);
+    try std.testing.expectEqual(@as(f64, 3), valueToNumber(element));
+
+    // undefinedコンテナへの添字読み出しはindex_get時点で
+    // 『Cannot read properties of undefined』相当のpending例外になる
+    roots[2] = .{};
+    var read_out: Value = .{};
+    lnako_aot_index_get(&read_out, &roots[2], &two);
+    try std.testing.expect(state.active_runtime.?.has_pending_exception);
+    const message = try valueUtf16Alloc(&state.active_runtime.?, state.active_runtime.?.takeException());
+    defer std.testing.allocator.free(message);
+    try std.testing.expectEqualSlices(u16, std.unicode.utf8ToUtf16LeStringLiteral("Cannot read properties of undefined (reading '2')"), message);
 }
 
 test "回数・範囲・配列・辞書の反復状態と元コレクションを追跡する" {
@@ -4438,7 +4586,7 @@ test "AOT配列コールバックは関数値・名前解決と新配列規則�
     try std.testing.expectEqualSlices(Value, &.{ numberValue(2), numberValue(4) }, (try arrayItems(roots[10])).items);
 }
 
-test "AOTカスタムソートの小配列比較順はV8のrun検出規則を保つ" {
+test "AOTカスタムソートの小配列比較順はV8のbinary insertion規則を保つ" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
     state.active_runtime = runtime;
@@ -4458,7 +4606,7 @@ test "AOTカスタムソートの小配列比較順はV8のrun検出規則を保
     var arguments = [_]Value{ roots[1], roots[2] };
     roots[3] = try arrayCallbackBuiltin(active, .array_custom_sort, &arguments);
 
-    try std.testing.expectEqualSlices(Value, &.{ numberValue(13), numberValue(21), numberValue(23), numberValue(21) }, (try arrayItems(roots[0])).items);
+    try std.testing.expectEqualSlices(Value, &.{ numberValue(13), numberValue(23), numberValue(21) }, (try arrayItems(roots[0])).items);
     try std.testing.expectEqualSlices(Value, &.{ numberValue(1), numberValue(2), numberValue(3) }, (try arrayItems(roots[2])).items);
 }
 
