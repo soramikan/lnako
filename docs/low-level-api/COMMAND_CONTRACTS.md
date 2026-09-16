@@ -40,12 +40,12 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 
 ### Issue 27 バイナリ対応ストリームI/Oとハンドル管理
 
-- `ファイル開く`（ll-file-open）助詞 `PATHをMODEで/PATHを`、戻り `handle`、capability `stream_file_io`、エラー ENOENT/EACCES/EPERM/EISDIR/EINVAL/EMFILE/ENFILE/ENOTSUP
+- `ファイル開く`（ll-file-open）助詞 `PATHをMODEで/PATHを`、戻り `handle`、capability `stream_file_io`、エラー ENOENT/EACCES/EPERM/EISDIR/EINVAL/EMFILE/ENFILE/ENOTSUP/EROFS/ENOSPC
 - `ファイル閉じる`（ll-file-close）助詞 `HANDLEを/HANDLEの`、戻り `void`、capability `stream_file_io`、エラー EBADF
 - `ファイルバイト読む`（ll-file-read）助詞 `HANDLEをSIZEで/HANDLEからSIZEを`、戻り `bytes`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOTSUP
-- `ファイルバイト書く`（ll-file-write）助詞 `HANDLEをBYTESで/HANDLEへBYTESを`、戻り `number`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOSPC/EPIPE/ENOTSUP
+- `ファイルバイト書く`（ll-file-write）助詞 `HANDLEをBYTESで/HANDLEへBYTESを`、戻り `number`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOSPC/EPIPE/ENOTSUP/EROFS
 - `ファイル同期`（ll-file-sync）助詞 `HANDLEを/HANDLEの`、戻り `void`、capability `stream_file_io`、エラー EBADF/EINVAL
-- `ファイル切詰`（ll-file-truncate-handle）助詞 `HANDLEをSIZEで/HANDLEをSIZEに`、戻り `void`、capability `truncate`、エラー EBADF/EINVAL/ENOSPC/ENOTSUP
+- `ファイル切詰`（ll-file-truncate-handle）助詞 `HANDLEをSIZEで/HANDLEをSIZEに`、戻り `void`、capability `truncate`、エラー EBADF/EINVAL/ENOSPC/ENOTSUP/EPERM/EROFS
 - `ファイル位置変更`（ll-file-seek）助詞 `HANDLEをOFFSETでWHENCEを/HANDLEをOFFSETで`、戻り `offset`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOTSUP
 - `ファイル位置取得`（ll-file-tell）助詞 `HANDLEを/HANDLEの`、戻り `offset`、capability `stream_file_io`、エラー EBADF
 - `ファイル位置指定読込`（ll-file-pread）助詞 `HANDLEをOFFSETからSIZEを/HANDLEからOFFSETにSIZEを`、戻り `bytes`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOTSUP
@@ -63,13 +63,13 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 
 - `ファイル詳細情報取得`（ll-file-stat）助詞 `PATHを/PATHの/PATHから`、戻り `stat`、capability `stat`、エラー ENOENT/EACCES/EPERM/ENOTDIR/ELOOP/EINVAL/ENOTSUP
 - `シンボリックリンク情報取得`（ll-file-lstat）助詞 `PATHを/PATHの/PATHから`、戻り `stat`、capability `lstat`、エラー ENOENT/EACCES/EPERM/ENOTDIR/ELOOP/EINVAL/ENOTSUP
-- `シンボリックリンク作成`（ll-symlink-create）助詞 `TARGETをLINKへ/LINKにTARGETを`、戻り `void`、capability `symlink`、エラー EEXIST/ENOENT/EACCES/ENOTDIR/EPERM/ENOTSUP/EINVAL
-- `シンボリックリンク先取得`（ll-symlink-read）助詞 `PATHを/PATHの`、戻り `string`、capability `readlink`、エラー EINVAL/ENOENT/EACCES/EPERM/ELOOP/ENOTSUP
-- `ハードリンク作成`（ll-hardlink-create）助詞 `TARGETをLINKへ/LINKにTARGETを`、戻り `void`、capability `hardlink`、エラー EEXIST/ENOENT/EXDEV/EPERM/ENOTSUP/EINVAL
-- `実体パス取得`（ll-path-realpath）助詞 `PATHを/PATHの`、戻り `string`、capability `realpath`、エラー ENOENT/EACCES/EPERM/ELOOP/ENOTDIR/EINVAL/ENOTSUP
-- `パス名変更`（ll-path-rename）助詞 `SRCをDSTへ/DSTにSRCを`、戻り `void`、capability `rename`、エラー ENOENT/EEXIST/EACCES/EPERM/EXDEV/ENOTEMPTY/EISDIR/ENOTDIR/ENOTSUP/EINVAL
-- `ファイルリンク削除`（ll-path-unlink）助詞 `PATHを/PATHの`、戻り `void`、capability `unlink`、エラー ENOENT/EACCES/EPERM/EISDIR/ENOTDIR/ENOTSUP/EINVAL
-- `空フォルダ削除`（ll-path-rmdir）助詞 `PATHを/PATHの`、戻り `void`、capability `rmdir`、エラー ENOENT/ENOTDIR/EACCES/ENOTEMPTY/EPERM/ENOTSUP/EINVAL
+- `シンボリックリンク作成`（ll-symlink-create）助詞 `TARGETをLINKへ/LINKにTARGETを`、戻り `void`、capability `symlink`、エラー EEXIST/ENOENT/EACCES/ENOTDIR/EPERM/ELOOP/EROFS/ENOSPC/ENOTSUP/EINVAL
+- `シンボリックリンク先取得`（ll-symlink-read）助詞 `PATHを/PATHの`、戻り `string`、capability `readlink`、エラー EINVAL/ENOENT/EACCES/EPERM/ENOTDIR/ELOOP/ENOTSUP
+- `ハードリンク作成`（ll-hardlink-create）助詞 `TARGETをLINKへ/LINKにTARGETを`、戻り `void`、capability `hardlink`、エラー EEXIST/ENOENT/EACCES/EPERM/EXDEV/ENOTDIR/ELOOP/EROFS/ENOSPC/ENOTSUP/EINVAL
+- `実体パス取得`（ll-path-realpath）助詞 `PATHを/PATHの`、戻り `string`、capability `realpath`、エラー ENOENT/EACCES/EPERM/ENOTDIR/ELOOP/ENOTSUP/EINVAL
+- `パス名変更`（ll-path-rename）助詞 `SRCをDSTへ/DSTにSRCを`、戻り `void`、capability `rename`、エラー ENOENT/EEXIST/EACCES/EPERM/EXDEV/ENOTEMPTY/EISDIR/ENOTDIR/ELOOP/EROFS/ENOSPC/ENOTSUP/EINVAL
+- `ファイルリンク削除`（ll-path-unlink）助詞 `PATHを/PATHの`、戻り `void`、capability `unlink`、エラー ENOENT/EACCES/EPERM/EISDIR/ENOTDIR/ELOOP/EROFS/ENOTSUP/EINVAL
+- `空フォルダ削除`（ll-path-rmdir）助詞 `PATHを/PATHの`、戻り `void`、capability `rmdir`、エラー ENOENT/ENOTDIR/EACCES/ENOTEMPTY/EPERM/ELOOP/EROFS/ENOTSUP/EINVAL
 
 `stat` の `mode` はpermission bits（0〜0o7777）で、ファイル種別ビット `S_IFMT` は含まない。Windowsでは固定値になる。`size` は安全整数ならNumber・超過はBigInt、時刻は常にナノ秒BigIntまたは `null`、その他の整数フィールドはNumberで表す。Windowsの `シンボリックリンク作成` はtarget種別からfile / directory symlinkを選び、directory symlinkはsymlink権限を必要とする（無い場合はEACCES/EPERMのいずれか）。未作成または判定不能なtargetはfile symlinkとして作成する（Windowsのsymlinkは種別が作成時に固定されるため、後からディレクトリを作ってもdirectory symlinkにはならない）。`ハードリンク作成` はWindowsでは未対応で常に `ENOTSUP` を返す（capability `hardlink` の `os.windows` はfalse）。`stat`/`lstat` はLinuxでは `statx`（kernel 4.11以降）を必要とし、非対応環境では `ENOTSUP` を返す（capabilityの `os.linux` は `conditional`）。
 

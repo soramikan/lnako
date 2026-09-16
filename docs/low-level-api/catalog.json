@@ -40,7 +40,9 @@
         "EINVAL",
         "EMFILE",
         "ENFILE",
-        "ENOTSUP"
+        "ENOTSUP",
+        "EROFS",
+        "ENOSPC"
       ],
       "notes": "MODEは省略時は読み込み専用。文字列flags（r/r+/w/w+/a/a+にb/x/s修飾）。EOFは0 byte read",
       "paramTypes": {
@@ -98,7 +100,8 @@
         "EINVAL",
         "ENOSPC",
         "EPIPE",
-        "ENOTSUP"
+        "ENOTSUP",
+        "EROFS"
       ],
       "notes": "戻り値は実際に書いたbyte数",
       "implemented": true
@@ -135,7 +138,8 @@
         "EINVAL",
         "ENOSPC",
         "ENOTSUP",
-        "EPERM"
+        "EPERM",
+        "EROFS"
       ],
       "notes": "ftruncate相当。SIZEはu64",
       "implemented": true
@@ -358,6 +362,9 @@
         "EACCES",
         "ENOTDIR",
         "EPERM",
+        "ELOOP",
+        "EROFS",
+        "ENOSPC",
         "ENOTSUP",
         "EINVAL"
       ],
@@ -379,6 +386,7 @@
         "ENOENT",
         "EACCES",
         "EPERM",
+        "ENOTDIR",
         "ELOOP",
         "ENOTSUP"
       ],
@@ -398,8 +406,13 @@
       "errors": [
         "EEXIST",
         "ENOENT",
-        "EXDEV",
+        "EACCES",
         "EPERM",
+        "EXDEV",
+        "ENOTDIR",
+        "ELOOP",
+        "EROFS",
+        "ENOSPC",
         "ENOTSUP",
         "EINVAL"
       ],
@@ -420,10 +433,10 @@
         "ENOENT",
         "EACCES",
         "EPERM",
-        "ELOOP",
         "ENOTDIR",
-        "EINVAL",
-        "ENOTSUP"
+        "ELOOP",
+        "ENOTSUP",
+        "EINVAL"
       ],
       "notes": "realpath。絶対パスを返す",
       "implemented": true
@@ -447,6 +460,9 @@
         "ENOTEMPTY",
         "EISDIR",
         "ENOTDIR",
+        "ELOOP",
+        "EROFS",
+        "ENOSPC",
         "ENOTSUP",
         "EINVAL"
       ],
@@ -469,6 +485,8 @@
         "EPERM",
         "EISDIR",
         "ENOTDIR",
+        "ELOOP",
+        "EROFS",
         "ENOTSUP",
         "EINVAL"
       ],
@@ -491,6 +509,8 @@
         "EACCES",
         "ENOTEMPTY",
         "EPERM",
+        "ELOOP",
+        "EROFS",
         "ENOTSUP",
         "EINVAL"
       ],
