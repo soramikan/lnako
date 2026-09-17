@@ -63,6 +63,8 @@ const excludedManifestGlobs = [
   /^tools\/check_distribution\.mjs$/,
   /^tools\/create_distribution\.mjs$/,
   /^tools\/check_ci_workflow\.mjs$/,
+  /^tools\/create_attestation_snapshot\.mjs$/,
+  /^tools\/create_attestation_snapshot_test\.mjs$/,
   /^tools\/check_release_workflow\.mjs$/,
   /^tools\/check_aot_suite_parallel\.mjs$/,
   /^tools\/check_dispatch_coverage_shards\.mjs$/,

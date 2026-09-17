@@ -45,7 +45,7 @@ standard版やHomebrew環境では、`lnako toolchain install` を実行する�
 3. **CI全job成功の確認**：
    - mainブランチへ取り込み、CI（51 matrix job＋後段3 job、**合計54 job**）がすべて成功するのを待ちます。
 4. **CI生成attestation snapshotの追跡**：
-   - 成功したCI runのattestation artifactを `compat/v3.7.24/attestations/<run>/` へ追跡コミットします。走査型解決により、現行manifestに一致するsnapshotから `verified: 527` が導出されます。
+   - mainのCI成功後、`Update attestation snapshot` workflowが成果物を `compat/v3.7.24/attestations/<run>/` へ追跡し、`origin/main` へ直接pushします。走査型解決により、現行manifestに一致するsnapshotから `verified: 527` が導出されます。手動で行う場合は `node tools/create_attestation_snapshot.mjs --run-id <id>` です。
 5. **署名済みタグの作成とpush**：
    - 追跡snapshotを含む最終コミットに対し、GPG署名付きannotated tag（例: `git tag -s v0.2.0 -m "v0.2.0"`) を作成してpushします。
 6. **Release workflowの実行と公開**：

@@ -5,7 +5,9 @@ import { resolve } from "node:path";
 const root = resolve(import.meta.dirname, "..");
 const workflow = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
 const comparisonBenchmarkWorkflow = await readFile(resolve(root, ".github/workflows/comparison-benchmark.yml"), "utf8");
-const floatingActions = [...workflow.matchAll(/uses: ([^\s@]+)@([^\s#]+)/g)]
+const updateAttestationWorkflow = await readFile(resolve(root, ".github/workflows/update-attestation.yml"), "utf8");
+const floatingActions = [workflow, comparisonBenchmarkWorkflow, updateAttestationWorkflow]
+  .flatMap((text) => [...text.matchAll(/uses: ([^\s@]+)@([^\s#]+)/g)])
   .filter((match) => !/^[0-9a-f]{40}$/.test(match[2]))
   .map((match) => `${match[1]}@${match[2]}`);
 if (floatingActions.length > 0) throw new Error(`GitHub Actionをcommit SHAへ固定してください: ${floatingActions.join(", ")}`);
@@ -601,8 +603,24 @@ if (snapshotCreator.includes("current.json") || snapshotCreator.includes("curren
     !snapshotCreator.includes("String(derived.verified)") ||
     !snapshotCreator.includes('replaceInline(text, "<!-- attestation:verified -->"') ||
     !snapshotCreator.includes('"--snapshot"') || !snapshotCreator.includes('"--require-current"') ||
-    !snapshotCreator.includes("options.outputDirectory === undefined")) {
-  throw new Error("snapshot作成toolがmanifest v2・宣言保存・pointer廃止・導出値書込（527以外拒否）・カスタム出力先の直接検証へ対応していません");
+    !snapshotCreator.includes("options.outputDirectory === undefined") ||
+    !snapshotCreator.includes("HEAD:refs/heads/") || !snapshotCreator.includes("--no-push") ||
+    !snapshotCreator.includes("skip-tracked") || !snapshotCreator.includes("publishGeneratedSnapshot") ||
+    snapshotCreator.includes("gh pr create") || snapshotCreator.includes('["checkout", "-b"') ||
+    snapshotCreator.includes("attestation/run-")) {
+  throw new Error("snapshot作成toolがmanifest v2・宣言保存・pointer廃止・導出値書込（527以外拒否）・main直接push（PR/feature branch廃止）へ対応していません");
+}
+if (updateAttestationWorkflow.includes("pull-requests:") || updateAttestationWorkflow.includes("create-pr") ||
+    updateAttestationWorkflow.includes("--branch") || updateAttestationWorkflow.includes("--no-pr") ||
+    updateAttestationWorkflow.includes("gh pr create") || updateAttestationWorkflow.includes("attestation/run-") ||
+    !updateAttestationWorkflow.includes("contents: write") ||
+    !updateAttestationWorkflow.includes('Create attestation snapshot and push to main') ||
+    !updateAttestationWorkflow.includes('node tools/create_attestation_snapshot.mjs') ||
+    !updateAttestationWorkflow.includes('"--ref" "main"')) {
+  throw new Error("update-attestation workflowがmain直接push（PR作成権限なし）になっていません");
+}
+if (!workflow.includes("node --test tools/create_attestation_snapshot_test.mjs")) {
+  throw new Error("CIがcreate_attestation_snapshotの単体テストを実行していません");
 }
 
 const smokeCommands = {

@@ -229,6 +229,9 @@ jobs:
       - name: Benchmark runner tests
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node --test tools/benchmark_runner_test.mjs tools/setup_benchmark_gonako_test.mjs tools/pre_push_hook_test.mjs
+      - name: Attestation snapshot tool tests
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
+        run: node --test tools/create_attestation_snapshot_test.mjs
       - name: Toolchain command check
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         shell: bash

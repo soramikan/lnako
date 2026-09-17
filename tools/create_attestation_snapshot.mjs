@@ -30,6 +30,74 @@ function run(label, command, args, options = {}) {
   return result;
 }
 
+export function snapshotCommitMessage(runId) {
+  return `CI run ${runId} のattestation snapshotを追跡 (verified: 527)`;
+}
+
+export function snapshotManifestGitPath(runId) {
+  return `compat/v3.7.24/attestations/${runId}/manifest.json`;
+}
+
+function git(cwd, args) {
+  return spawnSync("git", args, { cwd, encoding: "utf8" });
+}
+
+function gitOk(cwd, args, label = `git ${args.join(" ")}`) {
+  const result = git(cwd, args);
+  if (result.error) throw new Error(`${label} の起動に失敗しました: ${result.error.message}`);
+  if (result.status !== 0) {
+    const signal = result.signal === null ? "" : ` signal=${result.signal}`;
+    throw new Error(`${label} が失敗しました: status=${result.status}${signal}\n${result.stderr ?? ""}`);
+  }
+  return result.stdout.trim();
+}
+
+export function snapshotExistsOnRef(cwd, ref, runId) {
+  return git(cwd, ["cat-file", "-e", `${ref}:${snapshotManifestGitPath(runId)}`]).status === 0;
+}
+
+export function fetchOriginRef(cwd, ref) {
+  gitOk(cwd, ["fetch", "origin", `+refs/heads/${ref}:refs/remotes/origin/${ref}`], `git fetch origin ${ref}`);
+}
+
+function defaultSourceMatchesSnapshot(cwd, runId) {
+  const manifest = JSON.parse(readFileSync(resolve(cwd, snapshotManifestGitPath(runId)), "utf8"));
+  return manifest.sourceManifestSha256 === computeSourceManifestSha256Sync(cwd).sha256;
+}
+
+export function publishGeneratedSnapshot(cwd, { runId, ref = "main", noPush = false, sourceMatches = defaultSourceMatchesSnapshot } = {}) {
+  if (noPush) return "local-only";
+  fetchOriginRef(cwd, ref);
+  const remote = `origin/${ref}`;
+  if (snapshotExistsOnRef(cwd, remote, runId)) return "skip-tracked";
+
+  gitOk(cwd, ["add", "-A"], "git add");
+  if (git(cwd, ["diff", "--cached", "--quiet"]).status === 0) return "skip-clean";
+  gitOk(cwd, ["commit", "-m", snapshotCommitMessage(runId)], "git commit");
+
+  const refspec = `HEAD:refs/heads/${ref}`;
+  const firstPush = git(cwd, ["push", "--no-verify", "origin", refspec]);
+  if (firstPush.status === 0) return "pushed";
+
+  fetchOriginRef(cwd, ref);
+  if (snapshotExistsOnRef(cwd, remote, runId)) return "skip-tracked";
+
+  const rebase = git(cwd, ["rebase", remote]);
+  if (rebase.status !== 0) {
+    git(cwd, ["rebase", "--abort"]);
+    throw new Error(`origin/${ref} へのfast-forward pushに失敗し、rebaseもできませんでした:\n${firstPush.stderr ?? ""}\n${rebase.stderr ?? ""}`);
+  }
+  if (!sourceMatches(cwd, runId)) {
+    gitOk(cwd, ["reset", "--hard", remote], `git reset --hard ${remote}`);
+    return "skip-stale-source";
+  }
+  const secondPush = git(cwd, ["push", "--no-verify", "origin", refspec]);
+  if (secondPush.status !== 0) {
+    throw new Error(`rebase後の origin/${ref} へのpushに失敗しました:\n${secondPush.stderr ?? ""}`);
+  }
+  return "pushed";
+}
+
 function currentGitCommit() {
   const result = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
   if (result.error || result.status !== 0) throw new Error("現行commitを取得できません");
@@ -38,14 +106,13 @@ function currentGitCommit() {
   return value;
 }
 
-function parseArguments() {
-  const args = process.argv.slice(2);
+export function parseArguments(args = process.argv.slice(2)) {
   if (args.includes("--help") || args.includes("-h")) {
     console.log(`usage: node tools/create_attestation_snapshot.mjs --run-id <id> [options]
 
 成功したmain CI run (attest-dispatch-evidence job含む) からartifactを取得し、
-compat/v3.7.24/attestations/<run>/ へsnapshotを追跡します。現行snapshotの解決は
-走査型（manifest.sourceManifestSha256が現行ソースと一致する最大workflowRun）であり、
+compat/v3.7.24/attestations/<run>/ へsnapshotを追跡して origin/main へ直接pushします。
+現行snapshotの解決は走査型（manifest.sourceManifestSha256が現行ソースと一致する最大workflowRun）であり、
 pointerファイルは作成しません。canonical evidence.jsonは常時unattestedのままです。
 
 options:
@@ -54,13 +121,15 @@ options:
   --workflow <workflow>      既定 soramikan/lnako/.github/workflows/ci.yml。
   --commit <sha>             run対象commit。未指定時はgh run viewで取得。
   --attempt <number>         run attempt。未指定時はgh run viewで取得。
-  --branch <name>            作成するブランチ名。未指定時は attestation/run-<id>。
-  --base <branch>            PRのbase branch。既定 main。
+  --ref <branch>             push先branch。既定 main。
   --output-dir <abs-path>    snapshot出力先。未指定時は compat/v3.7.24/attestations/<run-id>。
-  --no-pr                    PRを作成せず、ローカルcommitまで。
+  --no-push                  commit/pushせず、ローカル生成だけ行う。
   --no-verify                生成後のsync/checkを実行しません。
 `);
     process.exit(0);
+  }
+  if (args.includes("--no-pr") || args.includes("--branch") || args.includes("--base")) {
+    throw new Error("--no-pr / --branch / --base は廃止しました。snapshotはmainへ直接pushします。ローカル生成だけ行う場合は --no-push を使ってください");
   }
 
   function valueFor(name) {
@@ -87,10 +156,9 @@ options:
     workflow: valueFor("--workflow") ?? "soramikan/lnako/.github/workflows/ci.yml",
     commit: valueFor("--commit"),
     attempt: valueFor("--attempt"),
-    branch: valueFor("--branch") ?? `attestation/run-${runId}`,
-    base: valueFor("--base") ?? "main",
+    ref: valueFor("--ref") ?? "main",
     outputDirectory: absoluteFor("--output-dir"),
-    noPr: args.includes("--no-pr"),
+    noPush: args.includes("--no-push"),
     noVerify: args.includes("--no-verify"),
   };
 }
@@ -248,6 +316,14 @@ async function main() {
     throw new Error(`現行HEAD ${gitHead} がrun対象commit ${targetCommit} と一致しません。mainの最新commitで実行してください。`);
   }
 
+  if (!options.noPush) {
+    fetchOriginRef(root, options.ref);
+    if (snapshotExistsOnRef(root, `origin/${options.ref}`, options.runId)) {
+      console.log(`origin/${options.ref} は既に CI run ${options.runId} のattestation snapshotを追跡しています。`);
+      return;
+    }
+  }
+
   const sourceManifest = computeSourceManifestSha256Sync(root);
 
   const outputDirectory = options.outputDirectory ?? resolve(root, "compat", "v3.7.24", "attestations", options.runId);
@@ -377,35 +453,45 @@ async function main() {
       }
       run("sync compat evidence --check", "node", [resolve(root, "tools", "sync_compat_evidence.mjs"), "--check"]);
     }
-
-    ensureGitIdentity();
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
 
-  if (options.noPr) {
+  ensureGitIdentity();
+  const action = publishGeneratedSnapshot(root, {
+    runId: options.runId,
+    ref: options.ref,
+    noPush: options.noPush,
+  });
+  if (action === "local-only") {
     console.log(`attestation snapshotを作成しました: ${outputDirectory}`);
-    console.log("--no-pr のためブランチ/PRは作成しません。手動でcommitしてください。");
+    console.log("--no-push のためcommit/pushはしません。手動でcommitしてください。");
     return;
   }
-
-  run("git checkout -b", "git", ["checkout", "-b", options.branch]);
-  run("git add", "git", ["add", "-A"]);
-  run("git commit", "git", ["commit", "-m", `CI run ${options.runId} のattestation snapshotを追跡 (verified: 527)`]);
-  run("git push", "git", ["push", "--no-verify", "origin", options.branch]);
-
-  const prResult = run("gh pr create", "gh", [
-    "pr", "create",
-    "--repo", options.repo,
-    "--base", options.base,
-    "--head", options.branch,
-    "--title", `chore: CI run ${options.runId} のattestation追跡`,
-    "--body", `CI \`${options.runId}\` が生成した Sigstore bundle、dispatch/native AOT attestation、source manifest宣言、canonical 証拠 snapshot を \`compat/v3.7.24/attestations/${options.runId}/\` へ追加しました。現行snapshotは走査型解決（\`manifest.json\` の \`sourceManifestSha256\` が現行ソースと一致する最大workflowRun）で決まり、pointerファイルは使いません。canonical \`evidence.json\` は常時 unattested で、\`verified: 527\` はこのsnapshotから導出されるviewです。\n\n- workflow: ${options.workflow}\n- target commit: \`${targetCommit}\`\n- source manifest: \`${sourceManifest.sha256}\``,
-  ]);
-  console.log(prResult.stdout.trim());
+  if (action === "skip-tracked") {
+    console.log(`origin/${options.ref} は既に CI run ${options.runId} のattestation snapshotを追跡しています。`);
+    return;
+  }
+  if (action === "skip-clean") {
+    console.log(`追跡するsnapshot差分がありません: ${outputDirectory}`);
+    return;
+  }
+  if (action === "skip-stale-source") {
+    console.log(`origin/${options.ref} のsource manifestが変わったため、CI run ${options.runId} のsnapshotはpushしません。`);
+    return;
+  }
+  console.log(`origin/${options.ref} へ CI run ${options.runId} のattestation snapshotをpushしました。`);
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+function isDirectRun() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  return resolve(fileURLToPath(import.meta.url)) === resolve(entry);
+}
+
+if (isDirectRun()) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
