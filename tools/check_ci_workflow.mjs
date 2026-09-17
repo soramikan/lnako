@@ -547,7 +547,8 @@ if (!syncEvidence.includes("signedEvidenceDigests") || !syncEvidence.includes("b
   throw new Error("catalog証拠syncが導出verified viewまたは全証拠種別のverified昇格を実装していません");
 }
 // 現行snapshot解決は走査型（manifest.sourceManifestSha256一致の最大workflowRun）。
-// pointerファイルは廃止し、--require-currentはReleaseのみが使う。
+// pointerファイルは廃止済み。--require-currentはRelease preflightとdocs検証が
+// 使うが、CI workflow自体へは付けない（feature PRでは一致snapshot不在が正常）。
 if (trackedAttestationChecker.includes("current.json") || trackedAttestationChecker.includes("--current-pointer") ||
     trackedAttestationChecker.includes("currentAttestationPointer") ||
     !trackedAttestationChecker.includes("loadCurrentAttestation") || !trackedAttestationChecker.includes("--attestations-root") ||
@@ -558,7 +559,7 @@ if (trackedAttestationChecker.includes("current.json") || trackedAttestationChec
   throw new Error("追跡attestation checkerが走査型current解決・宣言digest必須・導出view検証に対応していません");
 }
 if (attestJob.includes("--require-current") || workflow.includes("attestations/current.json")) {
-  throw new Error("CIに廃止されたcurrent pointerまたはRelease専用の--require-currentが混入しています");
+  throw new Error("CI workflowに廃止されたcurrent pointerまたは--require-currentが混入しています");
 }
 if (!syncEvidence.includes('"lnako.canonical-attestation.v1"') || !syncEvidence.includes('"lnako.canonical-attestation.v2"') ||
     !syncEvidence.includes('"lnako.dispatch-attestation.v3"') || !syncEvidence.includes("attestationsDirectory") ||
@@ -566,22 +567,25 @@ if (!syncEvidence.includes('"lnako.canonical-attestation.v1"') || !syncEvidence.
     !syncEvidence.includes("manifest.schema !== canonicalAttestationSchemaV2")) {
   throw new Error("canonical attestation schema識別子または走査型snapshot解決（v2候補限定）が共有libにありません");
 }
-// docs表は導出viewを表示する契約: 一致snapshotがあれば導出state、無ければ
-// canonicalの常時unattested。正本evidence.json自体は常時unattested固定。
+// docs表は導出viewを表示する契約: 一致snapshotがあればoffline検証済みの署名
+// digestから導出したstate、無ければcanonicalの常時unattested。正本自体は常時
+// unattested固定。tracked checkerのoffline完全検証と条件分岐まで固定する。
 const docsChecker = await readFile(resolve(root, "tools/check_docs_current.mjs"), "utf8");
 if (!docsChecker.includes("loadCurrentAttestation") || !docsChecker.includes("deriveVerifiedCatalog") ||
     !docsChecker.includes("signedEvidenceDigests") || !docsChecker.includes("check_tracked_dispatch_attestation.mjs") ||
-    docsChecker.includes("current.json")) {
-  throw new Error("check_docs_currentが導出view表示（一致snapshot→導出state、無し→unattested）を検証していません");
+    !docsChecker.includes('"--offline"') || !docsChecker.includes('"--require-current"') ||
+    !docsChecker.includes("currentAttestation !== null") || docsChecker.includes("current.json")) {
+  throw new Error("check_docs_currentが導出view表示（一致snapshot→offline検証後の導出state、無し→unattested）を検証していません");
 }
 const snapshotCreator = await readFile(resolve(root, "tools/create_attestation_snapshot.mjs"), "utf8");
 if (snapshotCreator.includes("current.json") || snapshotCreator.includes("currentAttestationPointer") ||
     !snapshotCreator.includes("canonicalAttestationSchemaV2") || !snapshotCreator.includes("sourceManifest: \"source-manifest.json\"") ||
     !snapshotCreator.includes("validateSourceManifestDeclarationBytes") ||
     !snapshotCreator.includes('else if (name === sourceManifestDeclarationBasename) files.set("sourceManifest", path)') ||
-    !snapshotCreator.includes("deriveVerifiedCatalog") || !snapshotCreator.includes("String(derived.verified)") ||
+    !snapshotCreator.includes("deriveVerifiedCatalog") || !snapshotCreator.includes("derived.verified !== 527") ||
+    !snapshotCreator.includes("String(derived.verified)") ||
     !snapshotCreator.includes('replaceInline(text, "<!-- attestation:verified -->"')) {
-  throw new Error("snapshot作成toolがmanifest v2・宣言保存・pointer廃止へ対応していません");
+  throw new Error("snapshot作成toolがmanifest v2・宣言保存・pointer廃止・導出値書込（527以外拒否）へ対応していません");
 }
 
 const smokeCommands = {

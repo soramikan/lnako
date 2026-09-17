@@ -83,10 +83,8 @@ for (const [name, expected] of [["native", 523], ["compat-js", 4], ["blocked", 0
 for (const [name, expected] of [["verified", 0], ["trace-confirmed-unattested", 527], ["unverified", 0]]) {
   if (evidenceStates?.[name] !== expected) fail(`evidence.jsonの${name} stateが不一致です`);
 }
-// docsの表は導出viewを表示する。現行manifestに一致するsnapshotがあれば、
-// tracked checkerのoffline検証（manifest v2・v3 attestation・宣言・bundle・
-// tracked digest・導出catalog一致）を通したうえで署名digestから導出したstateを、
-// 無ければcanonicalの常時unattested状態（verified 0）を使う。
+// docsの表は導出viewを表示する。一致snapshotの導出stateはtracked checkerの
+// offline完全検証を通したものだけを信頼する。
 let displayStates = evidenceStates;
 const currentAttestation = await loadCurrentAttestation(root);
 if (currentAttestation !== null) {

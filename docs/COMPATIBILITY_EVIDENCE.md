@@ -65,7 +65,7 @@ canonical `evidence.json` 自体は常時 `trace-confirmed-unattested` を保持
 
 直前のmanifestに対応する追跡snapshotはCI run `34402208204`（commit `fb015179478169cf4a595094766d4b9582d2925b`、attempt 1、54/54 job成功）で、3 OSのdispatch証拠とnative AOT aggregateとcanonical証拠17件を同一bundleで署名し、導出viewとして `verified: 527` を達成しました。ただしmanifest入力の変更（パッケージmanifest解析層 `src/package/` の追加）で現行manifestと一致しなくなったため、現行ソースの導出viewは `verified: 0` / `trace-confirmed-unattested: 527` です。新しいCI runのsnapshotを `attestations/<run>/` へ追跡すれば、走査型解決でそのrunが現行となり、導出viewは同じ状態へ戻ります。前manifest用のsnapshot `attestations/34305071458/`（run `34305071458`）、`attestations/34121804812/`（run `34121804812`）、`attestations/34113932297/`（run `34113932297`）は履歴として残しています。
 
-Release workflow（tag push）はpreflightで `sync_compat_evidence.mjs --check`（証拠再生成の一致）・`check_tracked_dispatch_attestation.mjs --require-current`（現行source manifestに一致するsnapshotの存在・公式 `gh attestation verify`・導出catalogの `verified: 527`）を要求します。導出catalogが全527件verifiedでないtag pushはbuild/publishに進めず、GitHub Releaseを作成できません（手動 `workflow_dispatch` の検証実行は対象外）。`--require-current` はReleaseだけが使い、CIやfeature PRでは一致snapshotを要求しません。
+Release workflow（tag push）はpreflightで `sync_compat_evidence.mjs --check`（証拠再生成の一致）・`check_tracked_dispatch_attestation.mjs --require-current`（現行source manifestに一致するsnapshotの存在・公式 `gh attestation verify`・導出catalogの `verified: 527`）を要求します。導出catalogが全527件verifiedでないtag pushはbuild/publishに進めず、GitHub Releaseを作成できません（手動 `workflow_dispatch` の検証実行は対象外）。`--require-current` をゲートとして使うのはReleaseだけです（docs検証は一致snapshot存在時の内部確認に使います）。CIやfeature PRでは一致snapshotを要求しません。
 
 ## route別の扱い
 

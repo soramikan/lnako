@@ -194,9 +194,8 @@ async function updateCompatibilityDocs(runId, commit, sourceManifestSha256, disp
   const path = resolve(root, "docs", "COMPATIBILITY.md");
   let text = await readFile(path, "utf8");
 
-  // docs表は導出viewを表示する。追跡したsnapshotの署名subject digestとcanonical
-  // 正本から導出した値を書く（リテラル固定ではない）。有効なsnapshotでは
-  // verified:527 / trace:0 / unverified:0になるはずで、それ以外は拒否する。
+  // docs表は導出viewを表示する。値はリテラル固定ではなく署名subject digestと
+  // canonical正本から導出し、verified 527以外の結果は拒否する。
   const canonical = JSON.parse(await readFile(resolve(root, "compat/v3.7.24/evidence.json"), "utf8"));
   const derived = deriveVerifiedCatalog(canonical, signedEvidenceDigests(dispatchAttestation), await computeBackingDigestByProof(root)).executionEvidenceStates;
   if (derived.verified !== 527 || derived["trace-confirmed-unattested"] !== 0 || derived.unverified !== 0) {
