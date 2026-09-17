@@ -50,12 +50,12 @@ lnakoは「標準cnako 527 entryについて、追跡されたfixtureと公式v3
 
 | state | entry |
 | --- | ---: |
-| `verified` | <!-- attestation:verified -->0<!-- /attestation:verified --> |
-| `trace-confirmed-unattested` | <!-- attestation:trace -->527<!-- /attestation:trace --> |
+| `verified` | <!-- attestation:verified -->527<!-- /attestation:verified --> |
+| `trace-confirmed-unattested` | <!-- attestation:trace -->0<!-- /attestation:trace --> |
 | `unverified` | <!-- attestation:unverified -->0<!-- /attestation:unverified --> |
 
 <!-- attestation:description-start -->
-`verified` は正本のstateではなく、現行source manifestに一致するattestation snapshotから導出されるviewです。manifest入力の変更（パッケージmanifest解析層と低レイヤーAPIの追加）で現行manifestが変わったため、前snapshot（run `34402208204`）のattestationは現行manifestをカバーせず、現行ソースの導出viewは `verified: 0` です。過去snapshotの導出結果を流用せず、mainマージ後の新しいCI attestation snapshotを `attestations/<run>/` へ追跡します。現行snapshotの解決は走査型で、各snapshotの `manifest.json` が記録する `sourceManifestSha256` と署名subjectのsource manifest宣言digestで現行ソースへ束縛します（`current.json` pointerは廃止済みです）。
+`verified` は正本のstateではなく、現行source manifestに一致するattestation snapshotから導出されるviewです。`attestations/` を走査し、`manifest.json` の `sourceManifestSha256`（`af87c5b59a0d8be42f0421dd6a5903954558d452a4b31e78d5b83515a7688835`）が現行ソースと一致する最大workflowRunのsnapshot（`attestations/35236586118/`）が現行となり、canonical証拠ファイルとsource manifest宣言のdigestが署名subjectに含まれるため、導出viewでは全527 entryが `verified` です。sourceに変更を加えた場合、過去snapshotの導出結果を流用せず、mainマージ後の新しいCI attestation snapshotを追跡します。
 <!-- attestation:description-end -->
 
 0.1.1の最終sourceでコードを変更した場合は、過去snapshotの527件をそのままリリース証拠として流用しません。最終source manifestに対してCIとattestationを取り直し、release preflightの `sync_compat_evidence.mjs --check` と `check_tracked_dispatch_attestation.mjs --require-current` を通過させます。
@@ -63,7 +63,7 @@ lnakoは「標準cnako 527 entryについて、追跡されたfixtureと公式v3
 <!-- attestation:artifacts-start -->
 ### CIの一時artifact
 
-直前のmanifestに対応するCI run `34402208204`（commit `fb015179478169cf4a595094766d4b9582d2925b`、54/54 job成功）から導出されるcatalog viewは `verified: 527`、`trace-confirmed-unattested: 0`、`unverified: 0` でした。このrunのattestationは3 OSのdispatch証拠・native AOT aggregate・canonical証拠17件を同一Sigstore bundleのsubjectとして署名しており、snapshotは `attestations/34402208204/` に履歴として残しています。前manifest用のsnapshot `attestations/34305071458/`（run `34305071458`）と `attestations/34121804812/`（run `34121804812`）、`attestations/34113932297/`（run `34113932297`）も履歴として残しています。現行manifestに対応する新しいrunのsnapshotを追跡した時点で導出viewが同じ状態へ戻ります。
+現行manifestに対応するCI run `35236586118`（commit `4823fd4f1906106af844a0243024b306f1bdc4d3`、54/54 job成功）のattestationは3 OSのdispatch証拠・native AOT aggregate・source manifest宣言・canonical証拠17件を同一Sigstore bundleのsubjectとして署名しており、snapshotは `attestations/35236586118/` に追跡しています。このsnapshotから導出されるcatalog viewは `verified: 527`、`trace-confirmed-unattested: 0`、`unverified: 0` です。前manifest用のsnapshot `attestations/34402208204/`（run `34402208204`）、`attestations/34305071458/`（run `34305071458`）、`attestations/34121804812/`（run `34121804812`）、`attestations/34113932297/`（run `34113932297`）は履歴として残しています。
 
 一時artifactの値は、実行環境・署名・artifactの保存期間に依存します。追跡対象のcanonical `evidence.json` は常時 `trace-confirmed-unattested` を保持し、`verified` は現行source manifestに一致するsnapshotの導出viewにのみ現れます。
 <!-- attestation:artifacts-end -->
