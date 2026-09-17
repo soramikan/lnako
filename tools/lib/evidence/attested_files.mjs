@@ -124,13 +124,36 @@ export async function loadCurrentAttestation(root, attestationsRoot = resolve(ro
     throw new Error("現行manifestに一致するattestation snapshotのworkflowRunが重複しています");
   }
   candidates.sort((left, right) => (BigInt(left.manifest.workflowRun) > BigInt(right.manifest.workflowRun) ? -1 : 1));
-  const selected = candidates[0];
+  return snapshotHandle(candidates[0].directory, candidates[0].manifest, candidates[0].manifestPath);
+}
+
+// 指定ディレクトリを現行 snapshot として読む。走査規則（dirname === workflowRun）は
+// 適用しない。--output-dir で run ID 以外の basename へ書いた成果物を検証するため。
+export async function loadAttestationSnapshot(root, snapshotDirectory) {
+  const sourceManifestSha256 = computeSourceManifestSha256Sync(root).sha256;
+  const directory = resolve(snapshotDirectory);
+  const manifestPath = resolve(directory, "manifest.json");
+  let manifest;
+  try {
+    manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw new Error(`attestation manifestのJSONが不正です: ${directory}`);
+  }
+  if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) return null;
+  if (manifest.schema !== canonicalAttestationSchemaV2) return null;
+  if (!/^[0-9]+$/.test(manifest.workflowRun ?? "") || !hashPattern.test(manifest.sourceManifestSha256 ?? "")) return null;
+  if (manifest.sourceManifestSha256 !== sourceManifestSha256) return null;
+  return snapshotHandle(directory, manifest, manifestPath);
+}
+
+function snapshotHandle(directory, manifest, manifestPath) {
   return {
-    directory: selected.directory,
-    manifest: selected.manifest,
-    manifestPath: selected.manifestPath,
-    attestationPath: resolve(selected.directory, "dispatch-attestation.json"),
-    bundlePath: resolve(selected.directory, "sigstore-bundle.json"),
-    sourceManifestPath: resolve(selected.directory, "source-manifest.json"),
+    directory,
+    manifest,
+    manifestPath,
+    attestationPath: resolve(directory, "dispatch-attestation.json"),
+    bundlePath: resolve(directory, "sigstore-bundle.json"),
+    sourceManifestPath: resolve(directory, "source-manifest.json"),
   };
 }

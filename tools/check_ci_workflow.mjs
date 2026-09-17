@@ -48,6 +48,8 @@ if (!syncEvidence.includes('form !== "measured" && form !== "canonical"') ||
     !evidenceProvenance.includes("manifestContentSha256") ||
     !evidenceProvenance.includes("processOutputSha256") ||
     !evidenceProvenance.includes("freshnessBytes") ||
+    !evidenceProvenance.includes("$1:<col>") ||
+    !dispatchCoverageScript.includes("coverageFixtureStem") ||
     !evidenceFreshness.includes('from "./lib/evidence/generators.mjs"') ||
     !evidenceFreshness.includes("freshnessBytes") ||
     !evidenceFreshness.includes("--dispatch-evidence") ||
@@ -455,6 +457,7 @@ if (!coverageVerificationJob || !coverageVerificationJob.includes("if: needs.tes
     !dispatchCoverageShardsScript.includes("assertSubset(darwinUnion, linuxUnion") ||
     !dispatchCoverageShardsScript.includes("mergeCoverageShards") ||
     !dispatchCoverageShardsScript.includes("freshnessBytes") ||
+    !dispatchCoverageShardsScript.includes("diffLeafPaths") ||
     !dispatchCoverageShardsScript.includes("fixtureCount: 231") ||
     !dispatchCoverageShardsScript.includes("fixtureCount: 56") ||
     !dispatchCoverageScript.includes("const weightedFixtures = fixtures") ||
@@ -551,7 +554,8 @@ if (!syncEvidence.includes("signedEvidenceDigests") || !syncEvidence.includes("b
 // 使うが、CI workflow自体へは付けない（feature PRでは一致snapshot不在が正常）。
 if (trackedAttestationChecker.includes("current.json") || trackedAttestationChecker.includes("--current-pointer") ||
     trackedAttestationChecker.includes("currentAttestationPointer") ||
-    !trackedAttestationChecker.includes("loadCurrentAttestation") || !trackedAttestationChecker.includes("--attestations-root") ||
+    !trackedAttestationChecker.includes("loadCurrentAttestation") || !trackedAttestationChecker.includes("loadAttestationSnapshot") ||
+    !trackedAttestationChecker.includes("--attestations-root") || !trackedAttestationChecker.includes("--snapshot") ||
     !trackedAttestationChecker.includes("--require-current") || !trackedAttestationChecker.includes("canonicalAttestationSchemaV2") ||
     !trackedAttestationChecker.includes("dispatchAttestationSchemaV3") || !trackedAttestationChecker.includes("validateSourceManifestDeclarationBytes") ||
     !trackedAttestationChecker.includes("deriveVerifiedCatalog") ||
@@ -585,9 +589,9 @@ if (snapshotCreator.includes("current.json") || snapshotCreator.includes("curren
     !snapshotCreator.includes("deriveVerifiedCatalog") || !snapshotCreator.includes("derived.verified !== 527") ||
     !snapshotCreator.includes("String(derived.verified)") ||
     !snapshotCreator.includes('replaceInline(text, "<!-- attestation:verified -->"') ||
-    !snapshotCreator.includes('"--attestations-root"') || !snapshotCreator.includes('"--require-current"') ||
+    !snapshotCreator.includes('"--snapshot"') || !snapshotCreator.includes('"--require-current"') ||
     !snapshotCreator.includes("options.outputDirectory === undefined")) {
-  throw new Error("snapshot作成toolがmanifest v2・宣言保存・pointer廃止・導出値書込（527以外拒否）・カスタム出力先の検証へ対応していません");
+  throw new Error("snapshot作成toolがmanifest v2・宣言保存・pointer廃止・導出値書込（527以外拒否）・カスタム出力先の直接検証へ対応していません");
 }
 
 const smokeCommands = {

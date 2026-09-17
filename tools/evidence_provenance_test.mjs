@@ -78,19 +78,20 @@ test("normalizeVolatileProcessOutput は公式eval関数名のfuncIDを畳む", 
   assert.ok(normalizeVolatileProcessOutput(left).includes("__eval_nako3sync__"));
 });
 
-test("processOutputSha256 は eval 匿名位置の列差（ソース絶対パス長）を畳む", () => {
+test("processOutputSha256 は eval 匿名位置の列差（ソース絶対パス長）を畳み行番号は残す", () => {
   const shortRoot = "/Users/runner/work/lnako/lnako";
   const longRoot = "/Users/sora/Repositories/soramikan/lnako.improve-compat";
-  const stack = (root, column) =>
+  const stack = (root, line, column) =>
     "[eval] SyntaxError: Function statements require a function name\n" +
     `    at sys.__evalJS (file://${root}/.cache/oracle/nadesiko3-3.7.24/core/src/plugin_system.mjs:204:33)\n` +
-    `    at __eval_nako3sync_1789630962195_1515687614__ (eval at evalJS (file://${root}/.cache/oracle/nadesiko3-3.7.24/core/src/nako_runner.mjs:59:23), <anonymous>:59:${column})\n`;
-  const left = processOutputSha256(stack(shortRoot, 189), { volatilePaths: [shortRoot] });
-  const right = processOutputSha256(stack(longRoot, 214), { volatilePaths: [longRoot] });
+    `    at __eval_nako3sync_1789630962195_1515687614__ (eval at evalJS (file://${root}/.cache/oracle/nadesiko3-3.7.24/core/src/nako_runner.mjs:59:23), <anonymous>:${line}:${column})\n`;
+  const left = processOutputSha256(stack(shortRoot, 59, 189), { volatilePaths: [shortRoot] });
+  const right = processOutputSha256(stack(longRoot, 59, 214), { volatilePaths: [longRoot] });
   assert.equal(left, right);
-  assert.ok(normalizeVolatileProcessOutput(stack(longRoot, 214), { volatilePaths: [longRoot] }).includes("<anonymous>:<pos>"));
+  assert.ok(normalizeVolatileProcessOutput(stack(longRoot, 59, 214), { volatilePaths: [longRoot] }).includes("<anonymous>:59:<col>"));
+  assert.notEqual(processOutputSha256(stack(shortRoot, 60, 189), { volatilePaths: [shortRoot] }), left);
   assert.notEqual(
-    processOutputSha256(stack(shortRoot, 189).replace("Function statements require a function name", "Unexpected token '('"), { volatilePaths: [shortRoot] }),
+    processOutputSha256(stack(shortRoot, 59, 189).replace("Function statements require a function name", "Unexpected token '('"), { volatilePaths: [shortRoot] }),
     left,
   );
 });

@@ -11,9 +11,9 @@ import * as coverage_fixtures from "./coverage_fixtures.mjs";
 import * as coverage_sites from "./coverage_sites.mjs";
 
 export async function runHttpServerFixture(fixture, index, temporary) {
-  const fixtureDirectory = resolve(temporary, `${String(index).padStart(2, "0")}-${fixture.id}`);
+  const stem = coverage_fixtures.coverageFixtureStem(fixture);
+  const fixtureDirectory = resolve(temporary, stem);
   await mkdir(fixtureDirectory);
-  const stem = `${String(index).padStart(2, "0")}-${fixture.id}`;
   const sourceName = fixture.sourceFileName ?? `${stem}.nako3`;
   const sourceSha256 = evidence_common.sha256(fixture.source);
   const directories = {

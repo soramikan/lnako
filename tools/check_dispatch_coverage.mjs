@@ -184,9 +184,9 @@ function parseArguments() {
 }
 
 async function runFixture(fixture, index, temporary, loopbackBase) {
-  const fixtureDirectory = resolve(temporary, `${String(index).padStart(2, "0")}-${fixture.id}`);
+  const stem = coverage_fixtures.coverageFixtureStem(fixture);
+  const fixtureDirectory = resolve(temporary, stem);
   await mkdir(fixtureDirectory);
-  const stem = `${String(index).padStart(2, "0")}-${fixture.id}`;
   const isolated = coverage_fixtures.requiresIsolatedFixtureState(fixture);
   const routeDirectory = (name) => isolated ? resolve(fixtureDirectory, name) : fixtureDirectory;
   const officialSourceDirectory = routeDirectory("official-source");

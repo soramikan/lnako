@@ -4,7 +4,7 @@ import { basename, isAbsolute, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { platformIndependentOfficialComparison } from "./dispatch_evidence_semantics.mjs";
 import { computeSourceManifestSha256Sync } from "./lib/evidence/manifest.mjs";
-import { attestationsDirectory, canonicalAttestationSchemaV2, dispatchAttestationSchemaV3, loadCurrentAttestation, signedEvidenceDigests, trackedAttestationSubjects } from "./lib/evidence/attested_files.mjs";
+import { attestationsDirectory, canonicalAttestationSchemaV2, dispatchAttestationSchemaV3, loadAttestationSnapshot, loadCurrentAttestation, signedEvidenceDigests, trackedAttestationSubjects } from "./lib/evidence/attested_files.mjs";
 import { computeBackingDigestByProof, deriveVerifiedCatalog } from "./lib/evidence/promotion.mjs";
 import { sourceManifestDeclarationBasename, validateSourceManifestDeclarationBytes } from "./lib/evidence/source_manifest.mjs";
 
@@ -15,13 +15,19 @@ const offline = arguments_.includes("--offline");
 const requireCurrent = arguments_.includes("--require-current");
 const directoryIndex = arguments_.indexOf("--directory");
 const attestationsRootIndex = arguments_.indexOf("--attestations-root");
-if (arguments_.some((argument) => argument.startsWith("--") && !new Set(["--directory", "--offline", "--attestations-root", "--require-current"]).has(argument)) ||
+const snapshotIndex = arguments_.indexOf("--snapshot");
+if (arguments_.some((argument) => argument.startsWith("--") && !new Set(["--directory", "--offline", "--attestations-root", "--snapshot", "--require-current"]).has(argument)) ||
     (directoryIndex >= 0 && (arguments_[directoryIndex + 1] === undefined || arguments_[directoryIndex + 1].startsWith("--"))) ||
-    (attestationsRootIndex >= 0 && (arguments_[attestationsRootIndex + 1] === undefined || arguments_[attestationsRootIndex + 1].startsWith("--")))) {
-  throw new Error("usage: node tools/check_tracked_dispatch_attestation.mjs [--directory /absolute/path] [--attestations-root /absolute/path] [--offline] [--require-current]");
+    (attestationsRootIndex >= 0 && (arguments_[attestationsRootIndex + 1] === undefined || arguments_[attestationsRootIndex + 1].startsWith("--"))) ||
+    (snapshotIndex >= 0 && (arguments_[snapshotIndex + 1] === undefined || arguments_[snapshotIndex + 1].startsWith("--")))) {
+  throw new Error("usage: node tools/check_tracked_dispatch_attestation.mjs [--directory /absolute/path] [--attestations-root /absolute/path] [--snapshot /absolute/path] [--offline] [--require-current]");
+}
+if (snapshotIndex >= 0 && attestationsRootIndex >= 0) {
+  throw new Error("--snapshotと--attestations-rootは同時に指定できません");
 }
 const directory = directoryIndex >= 0 ? resolveAbsolute(arguments_[directoryIndex + 1], "--directory") : defaultDirectory;
 const attestationsRoot = attestationsRootIndex >= 0 ? resolveAbsolute(arguments_[attestationsRootIndex + 1], "--attestations-root") : resolve(root, attestationsDirectory);
+const snapshotDirectory = snapshotIndex >= 0 ? resolveAbsolute(arguments_[snapshotIndex + 1], "--snapshot") : null;
 
 const expected = {
   schema: "lnako.dispatch-evidence-history.v1",
@@ -152,8 +158,9 @@ if (currentSummary === null) {
 }
 
 async function validateCurrentSnapshot() {
-  // 走査型解決は共有lib側（loadCurrentAttestation）に委譲する。
-  const current = await loadCurrentAttestation(root, attestationsRoot);
+  const current = snapshotDirectory === null
+    ? await loadCurrentAttestation(root, attestationsRoot)
+    : await loadAttestationSnapshot(root, snapshotDirectory);
   if (current === null) {
     if (requireCurrent) throw new Error("現行source manifestに一致するattestation snapshotがありません");
     return null;

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mergeCoverageShards } from "./lib/coverage_merge.mjs";
+import { coverageFixtureStem } from "./lib/coverage_fixtures.mjs";
 
 const catalog = {
   commands: [
@@ -38,6 +39,18 @@ const shardDoc = (index, fixtures, { sites = [], unresolved = [], count = 2 } = 
   coverage: { unresolvedObservedSites: unresolved },
   fixtures,
   sites,
+});
+
+test("coverageFixtureStem は shard index に依存せず fixture identity から一意になる", () => {
+  const left = coverageFixtureStem({ file: "plugin-system-cases.json", id: "plugin-system-math" });
+  const right = coverageFixtureStem({ file: "plugin-system-cases.json", id: "plugin-system-math" });
+  assert.equal(left, "plugin-system-cases-plugin-system-math");
+  assert.equal(left, right);
+  assert.notEqual(
+    coverageFixtureStem({ file: "native-cases.json", id: "plugin-system-math" }),
+    left,
+  );
+  assert.throws(() => coverageFixtureStem({ file: "a/b.json", id: "x" }), /stemが不正/);
 });
 
 test("mergeCoverageShards は pool 順で fixture/unresolved を並べ coverage を再計算する", () => {

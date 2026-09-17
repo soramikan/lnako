@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { access, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { readdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { computeSourceManifestSha256Sync } from "./lib/evidence/manifest.mjs";
@@ -369,9 +369,9 @@ async function main() {
     }
 
     if (!options.noVerify) {
-      // カスタム出力先も検証対象にするため、snapshotを含む親dirを走査rootとして
-      // 指定し、作成したsnapshotが現行manifestに一致・検証済みであることを要求する。
-      run("check tracked dispatch attestation", "node", [resolve(root, "tools", "check_tracked_dispatch_attestation.mjs"), "--offline", "--require-current", "--attestations-root", dirname(outputDirectory)]);
+      // カスタム出力先は dirname === workflowRun の走査規則外になり得るため、
+      // 作成したディレクトリを直接検証する。
+      run("check tracked dispatch attestation", "node", [resolve(root, "tools", "check_tracked_dispatch_attestation.mjs"), "--offline", "--require-current", "--snapshot", outputDirectory]);
       if (options.outputDirectory === undefined) {
         run("check docs current", "node", [resolve(root, "tools", "check_docs_current.mjs")]);
       }

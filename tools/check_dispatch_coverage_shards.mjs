@@ -2,7 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { dispatchCoverageAuditSha256 } from "./lib/evidence_common.mjs";
 import { computeSourceManifestSha256 } from "./lib/evidence/manifest.mjs";
-import { freshnessBytes } from "./lib/evidence/provenance.mjs";
+import { canonicalizeEvidenceDocument, freshnessBytes, stripEnvironmentForComparison } from "./lib/evidence/provenance.mjs";
 import { coverageEnv } from "./lib/coverage_env.mjs";
 import * as coverage_fixtures from "./lib/coverage_fixtures.mjs";
 import { mergeCoverageShards } from "./lib/coverage_merge.mjs";
@@ -89,9 +89,16 @@ const merged = mergeCoverageShards(
   byPlatform.get("linux-x64").map((artifact) => artifact.document),
   { fixtureOrder, catalog },
 );
-const canonicalBytes = freshnessBytes(JSON.parse(await readFile(resolve(root, "compat/v3.7.24/dispatch-coverage-evidence.json"), "utf8")));
-if (freshnessBytes(merged) !== canonicalBytes) {
-  throw new Error("Linux dispatch coverage shardのmerge結果がcanonical正本と一致しません\nnode tools/update_current_evidence.mjs で正本を再生成し、コードと証拠を同じコミットにまとめてください。");
+const canonicalDocument = JSON.parse(await readFile(resolve(root, "compat/v3.7.24/dispatch-coverage-evidence.json"), "utf8"));
+if (freshnessBytes(merged) !== freshnessBytes(canonicalDocument)) {
+  const leaves = [];
+  diffLeafPaths(
+    stripEnvironmentForComparison(canonicalizeEvidenceDocument(canonicalDocument)),
+    stripEnvironmentForComparison(canonicalizeEvidenceDocument(merged)),
+    "",
+    leaves,
+  );
+  throw new Error(`Linux dispatch coverage shardのmerge結果がcanonical正本と一致しません: ${leaves.length === 0 ? "（差分leaf特定不可）" : leaves.join(", ")}\nnode tools/update_current_evidence.mjs で正本を再生成し、コードと証拠を同じコミットにまとめてください。`);
 }
 console.log(`dispatch coverage shard監査: 3正式OS各${expectedShardCount} shard（darwin/win32=56件、linux=231件⊃56件）を重複なく検証し、Linux mergeがcanonical正本と一致しました`);
 
@@ -215,4 +222,25 @@ function assertSubset(subset, superset, label) {
   const missing = [...subset].filter((value) => !superset.has(value));
   if (missing.length === 0) return;
   throw new Error(`${label}が不一致です: missing=${JSON.stringify(missing)}`);
+}
+
+function diffLeafPaths(left, right, path, out, limit = 8) {
+  if (out.length >= limit) return;
+  if (typeof left !== typeof right || left === null || right === null || typeof left !== "object") {
+    if (left !== right) out.push(path || "<root>");
+    return;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+      out.push(path || "<root>");
+      return;
+    }
+    for (let index = 0; index < left.length; index += 1) {
+      diffLeafPaths(left[index], right[index], `${path}[${index}]`, out, limit);
+    }
+    return;
+  }
+  for (const key of new Set([...Object.keys(left), ...Object.keys(right)])) {
+    diffLeafPaths(left[key], right[key], path === "" ? key : `${path}.${key}`, out, limit);
+  }
 }

@@ -61,8 +61,8 @@ const volatileOutputPatterns = [
   [/__eval_nako3(sync|async|async_promise)_\d+_\d+__/g, "__eval_nako3$1__"],
   [/(nadesiko3::gen::async id=")\d+_\d+/g, "$1<id>"],
   // eval 生成 JS にソース絶対パスが埋め込まれるため、<anonymous> の列番号が
-  // checkout パス長で変わる。行・列は内容クレームではない。
-  [/<anonymous>:\d+:\d+/g, "<anonymous>:<pos>"],
+  // checkout パス長で変わる。行番号は発生位置の内容クレームとして残す。
+  [/(<anonymous>:\d+):\d+/g, "$1:<col>"],
 ];
 
 // fixture/公式 runtime の出力には実行ごとに変わる値が混入し得る:

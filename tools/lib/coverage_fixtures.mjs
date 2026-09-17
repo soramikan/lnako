@@ -3,6 +3,21 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { coverageEnv as env } from "./coverage_env.mjs";
 import * as evidence_common from "./evidence_common.mjs";
 
+// shard 内の連番ではなく fixture identity から作業ファイル名を決める。
+// selectedFixtures.entries() の index を使うと shard 分割で stem が変わり、
+// compile manifest の function 名・公式生成JSのファイル名が正本と不一致になる。
+export function coverageFixtureStem(fixture) {
+  if (typeof fixture?.file !== "string" || typeof fixture?.id !== "string") {
+    throw new Error("coverage fixture identityが不正です");
+  }
+  const fileStem = fixture.file.replace(/\.json$/u, "");
+  if (fileStem.length === 0 || fileStem.includes("/") || fileStem.includes("\\") ||
+      fixture.id.includes("/") || fixture.id.includes("\\") || fixture.id.includes("..")) {
+    throw new Error(`coverage fixture stemが不正です: ${fixture.file}/${fixture.id}`);
+  }
+  return `${fileStem}-${fixture.id}`;
+}
+
 export const nativeDispatchCoverageExclusions = new Map([
   ["node-native-cases.json/plugin-node-native-archive", "公式生成JavaScriptが外部7z実行ファイルを必要とするため、既存のNodeネイティブZIPスモークテストへ分離する"],
   ["native-cases.json/native-uncaught-exception", "公式生成JavaScriptが意図的な未捕捉例外で終了するため、成功経路のdispatch監査から除外する"],
