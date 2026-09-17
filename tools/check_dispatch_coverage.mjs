@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import http from "node:http";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { processOutputVolatileContext } from "./lib/evidence/provenance.mjs";
 import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
 import { coverageEnv } from "./lib/coverage_env.mjs";
@@ -25,64 +26,6 @@ if (catalog.commandCount !== 527 || !Array.isArray(catalog.commands) || catalog.
   throw new Error("標準cnakoカタログが527 entryではありません");
 }
 const catalogByName = Map.groupBy(catalog.commands, (command) => command.name);
-const nativeDispatchCoverageExclusions = new Map([
-  ["node-native-cases.json/plugin-node-native-archive", "公式生成JavaScriptが外部7z実行ファイルを必要とするため、既存のNodeネイティブZIPスモークテストへ分離する"],
-  ["native-cases.json/native-uncaught-exception", "公式生成JavaScriptが意図的な未捕捉例外で終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-width-half-uncaught-error", "公式生成JavaScriptが意図的な未捕捉例外で終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-node-line-message-discontinued", "公式生成JavaScriptが意図的な廃止命令エラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-node-line-image-discontinued", "公式生成JavaScriptが意図的な廃止命令エラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-dictionary-byte-buffer-enumeration", "公式生成JavaScriptがTypedArrayへの辞書キー削除で意図的なTypeErrorを返すため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-node-exit-alias", "プロセス終了命令が意図的にtrace終端前に実行を終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-node-exit-japanese-alias", "プロセス終了命令が意図的にtrace終端前に実行を終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-node-exit-code", "プロセス終了命令が意図的にtrace終端前に実行を終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-regexp-invalid-pattern-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-regexp-unicode-invalid-escape-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-regexp-invalid-hex-escape-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-regexp-incomplete-quantifier-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-regexp-js-error-text", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-regexp-unicode-property-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-regexp-unicode-v-invalid-flags-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-regexp-unicode-control-escape-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-regexp-unicode-backreference-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-regexp-unicode-decimal-backreference-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-regexp-unicode-class-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-regexp-unicode-decimal-escape-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-regexp-unicode-zero-escape-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-regexp-unicode-named-backreference-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-regexp-invalid-capture-name-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-regexp-duplicate-capture-name-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-byte-buffer-method-calls", "公式CLI・生成JavaScriptが意図的なreceiver未束縛エラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-table-numeric-sort-bigint-error", "公式CLI・生成JavaScriptが意図的なBigInt変換エラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-table-numeric-sort-mixed-bigint-error", "公式CLI・生成JavaScriptが意図的なBigInt型混在エラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-table-sparse-unique", "公式CLI・生成JavaScriptが意図的な疎配列holeエラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-system-table-regexp-sparse-hole", "公式CLI・生成JavaScriptが意図的な疎配列holeエラーで終了するため、成功経路のdispatch監査から除外する"],
-  ["native-cases.json/native-datetime-plugin-era-data", "plugin_datetimeの元号データはdispatchではなく静的定数証拠へ分離する"],
-]);
-const excludedFixtures = new Map([
-  ["system-runtime-cases.json/system-runtime-execution-and-debug", "公式sourceとAOT O0の実行結果が一致せず、動的実行・非同期host境界は別の未実装証拠として扱う"],
-  ...nativeDispatchCoverageExclusions,
-]);
-const generatedRouteUnavailableFixtures = new Map([
-  ["standard-plugin-cases.json/plugin-toml-all", "公式生成JavaScriptのstandalone plugin host登録が不足する"],
-  ["supplemental-plugin-cases.json/plugin-markup-all", "公式生成JavaScriptのstandalone plugin host登録が不足する"],
-  ["supplemental-plugin-cases.json/plugin-kansuji-all", "公式生成JavaScriptのstandalone plugin host登録が不足する"],
-  ["supplemental-plugin-cases.json/plugin-caniuse-all", "公式生成JavaScriptのstandalone plugin host登録が不足する"],
-  ["system-runtime-cases.json/system-runtime-execution-and-debug", "公式生成JavaScriptのstandalone system async host登録が不足する"],
-  ["native-cases.json/native-caniuse-browsers", "公式生成JavaScriptのstandalone caniuse plugin host登録が不足する"],
-  ["native-cases.json/native-caniuse-agents", "公式生成JavaScriptのstandalone caniuse plugin host登録が不足する"],
-  ["native-cases.json/native-kansuji-commands", "公式生成JavaScriptのstandalone kansuji plugin host登録が不足する"],
-  ["native-cases.json/native-kansuji-aot-generated-boundaries", "公式生成JavaScriptのstandalone kansuji plugin host登録が不足する"],
-  ["native-cases.json/native-csv-commands", "公式生成JavaScriptのstandalone CSV plugin host登録が不足する"],
-  ["native-cases.json/native-toml-commands", "公式生成JavaScriptのstandalone TOML plugin host登録が不足する"],
-  ["native-cases.json/native-toml-temporal-values", "公式生成JavaScriptのstandalone TOML plugin host登録が不足する"],
-  ["native-cases.json/native-toml-default-generated-route", "公式生成JavaScriptのstandalone TOML plugin host登録が不足する"],
-  ["native-cases.json/native-toml-imported-generated-route", "公式生成JavaScriptのstandalone TOML plugin host登録が不足する"],
-  ["native-cases.json/native-markup-commands", "公式生成JavaScriptのstandalone markup plugin host登録が不足する"],
-  ["native-cases.json/native-system-dynamic-execution", "公式生成JavaScriptのstandalone system async host登録が不足する"],
-  ["http-server-dispatch-cases.json/plugin-httpserver-dispatch", "公式生成JavaScriptのstandalone plugin_node登録が不足し、shutdown補助命令『終了』を解決できない"],
-  ["plugin-route-cases.json/plugin-system-path-route", "公式生成JavaScriptのstandalone system-only compiler runtime bundleがなく、system plugin単独routeを実行できない"],
-  ["plugin-route-cases.json/plugin-system-end-route", "公式生成JavaScriptのstandalone system-only compiler runtime bundleがなく、system plugin単独routeを実行できない"],
-]);
 Object.assign(coverageEnv, {
   root,
   oracle,
@@ -91,9 +34,9 @@ Object.assign(coverageEnv, {
   lock,
   catalog,
   catalogByName,
-  nativeDispatchCoverageExclusions,
-  excludedFixtures,
-  generatedRouteUnavailableFixtures,
+  nativeDispatchCoverageExclusions: coverage_fixtures.nativeDispatchCoverageExclusions,
+  excludedFixtures: coverage_fixtures.excludedFixtures,
+  generatedRouteUnavailableFixtures: coverage_fixtures.generatedRouteUnavailableFixtures,
   arguments_,
 });
 const fixturePool = await coverage_fixtures.loadSelectedFixtures();
@@ -151,15 +94,20 @@ Object.assign(coverageEnv, {
   throwStatementOpcode,
   archiveHelperName,
   fixtureStateMutationCommands,
-  excludedFixtures,
-  generatedRouteUnavailableFixtures,
-  nativeDispatchCoverageExclusions,
+  excludedFixtures: coverage_fixtures.excludedFixtures,
+  generatedRouteUnavailableFixtures: coverage_fixtures.generatedRouteUnavailableFixtures,
+  nativeDispatchCoverageExclusions: coverage_fixtures.nativeDispatchCoverageExclusions,
   fixturePool,
   temporary,
 });
 let loopbackServer = null;
 try {
-  if (selectedFixtures.some((fixture) => fixture.file === "node-http-cases.json")) {
+  const needsLoopback = selectedFixtures.some((fixture) => fixture.file === "node-http-cases.json");
+  const needsHttpServer = selectedFixtures.some((fixture) => fixture.httpServer === true);
+  if (needsLoopback || needsHttpServer) {
+    await coverage_process.allocateCoveragePorts({ loopback: needsLoopback, httpServer: needsHttpServer });
+  }
+  if (needsLoopback) {
     loopbackServer = await coverage_process.startLoopbackServer();
   }
   const fixtureReports = [];
@@ -241,9 +189,9 @@ function parseArguments() {
 }
 
 async function runFixture(fixture, index, temporary, loopbackBase) {
-  const fixtureDirectory = resolve(temporary, `${String(index).padStart(2, "0")}-${fixture.id}`);
+  const stem = coverage_fixtures.coverageFixtureStem(fixture);
+  const fixtureDirectory = resolve(temporary, stem);
   await mkdir(fixtureDirectory);
-  const stem = `${String(index).padStart(2, "0")}-${fixture.id}`;
   const isolated = coverage_fixtures.requiresIsolatedFixtureState(fixture);
   const routeDirectory = (name) => isolated ? resolve(fixtureDirectory, name) : fixtureDirectory;
   const officialSourceDirectory = routeDirectory("official-source");
@@ -312,7 +260,7 @@ async function runFixture(fixture, index, temporary, loopbackBase) {
   coverage_process.assertSuccess(`${fixture.file}/${fixture.id} 公式JavaScript生成`, officialCompile);
   const generatedRouteUnavailable = coverage_fixtures.isKnownGeneratedRouteUnavailable(fixture);
   const officialGenerated = fixture.pluginRoute === "plugin_system"
-    ? coverage_process.unavailableProcess(generatedRouteUnavailableFixtures.get(`${fixture.file}/${fixture.id}`))
+    ? coverage_process.unavailableProcess(coverage_fixtures.generatedRouteUnavailableFixtures.get(`${fixture.file}/${fixture.id}`))
     : coverage_process.run(process.execPath, [...oracleHostArguments, generatedPath], baseEnvironment, officialGeneratedDirectory, runOptions);
   if (generatedRouteUnavailable && officialGenerated.status !== 0 && officialGenerated.status !== 1) {
     throw new Error(`${fixture.file}/${fixture.id} 公式生成JavaScriptの既知gapと異なる終了状態です: ${officialGenerated.status}`);
@@ -355,6 +303,14 @@ async function runFixture(fixture, index, temporary, loopbackBase) {
   if (fixture.expectedDispatchRoute !== undefined && associationWithoutDispatch.length > 0) {
     throw new Error(`${fixture.file}/${fixture.id} expectedDispatchRoute対象命令がdispatchされていません: ${JSON.stringify(associationWithoutDispatch)}`);
   }
+  // OS取得/OSアーキテクチャ取得の単独行とホーム・テンポラリ配下のパスは
+  // platform固有値のため畳む。shard merge後のcanonical正本とのfreshnessBytes
+  // 比較を跨platformで成立させる意味保持の正規化（同一platform内での
+  // 公式vs lnako一致は各routeのequivalence検査で別途保証済み）。
+  const volatileOutputContext = processOutputVolatileContext({
+    paths: [temporary, root, oracleRoot],
+    strings: loopbackBase === null ? [] : [loopbackBase],
+  });
   return {
     report: {
       id: fixture.id,
@@ -371,15 +327,15 @@ async function runFixture(fixture, index, temporary, loopbackBase) {
         selectedOracleEquivalent: true,
         officialGeneratedAvailable: officialGenerated.status === 0,
         officialGeneratedRouteUnavailableReason: generatedRouteUnavailable && officialGenerated.status !== 0
-          ? generatedRouteUnavailableFixtures.get(`${fixture.file}/${fixture.id}`)
+          ? coverage_fixtures.generatedRouteUnavailableFixtures.get(`${fixture.file}/${fixture.id}`)
           : null,
         officialRoutesEquivalent,
         officialSourceStderrIncludes: fixture.officialSourceStderrIncludes ?? null,
         results: Object.fromEntries([
-          ["officialSource", coverage_process.summarizeProcess(officialSource)],
-          ["officialGenerated", coverage_process.summarizeProcess(officialGenerated)],
-          ["lnakoRun", coverage_process.summarizeProcess(interpreterWithoutTrace)],
-          ["lnakoNativeO0", coverage_process.summarizeProcess(aotWithoutTrace)],
+          ["officialSource", coverage_process.summarizeProcess(officialSource, volatileOutputContext)],
+          ["officialGenerated", coverage_process.summarizeProcess(officialGenerated, volatileOutputContext)],
+          ["lnakoRun", coverage_process.summarizeProcess(interpreterWithoutTrace, volatileOutputContext)],
+          ["lnakoNativeO0", coverage_process.summarizeProcess(aotWithoutTrace, volatileOutputContext)],
         ]),
       },
       interpreter: {

@@ -41,7 +41,11 @@ const server = http.createServer(async (request, response) => {
   return send(response, 404, "text/plain", "not found");
 });
 
-server.listen(0, "127.0.0.1", () => process.stdout.write(`${server.address().port}\n`));
+const port = Number(process.env.LNAKO_HTTP_LOOPBACK_PORT ?? 0);
+if (!Number.isInteger(port) || port < 0 || port > 65535) {
+  throw new Error(`LNAKO_HTTP_LOOPBACK_PORTが不正です: ${process.env.LNAKO_HTTP_LOOPBACK_PORT}`);
+}
+server.listen(port, "127.0.0.1", () => process.stdout.write(`${server.address().port}\n`));
 for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => server.close(() => process.exit(0)));
 
 function send(response, status, contentType, body) {

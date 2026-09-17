@@ -10,12 +10,19 @@ import { computeSourceManifestSha256Sync } from "./lib/evidence/manifest.mjs";
 const root = resolve(import.meta.dirname, "..");
 const temporary = await mkdtemp(join(tmpdir(), "lnako-attestation-security-"));
 try {
+  // tracked正本はcanonical形（provenance.lnako・environment.nodeを持たない）。
+  // --dispatch-evidence入力はmeasured形を要求するため、ここで揮発provenanceを
+  // 復元してから偽造対象を作る。
   const evidence = JSON.parse(await readFile(resolve(root, "compat/v3.7.24/dispatch-evidence.json"), "utf8"));
   const commit = gitHead();
   evidence.attestation = null;
-  evidence.provenance.lnako.commit = commit;
-  evidence.provenance.lnako.dirty = false;
-  evidence.provenance.lnako.sourceManifestSha256 = computeSourceManifestSha256Sync(root).sha256;
+  evidence.provenance.environment.node = process.version;
+  evidence.provenance.lnako = {
+    binarySha256: "0".repeat(64),
+    sourceManifestSha256: computeSourceManifestSha256Sync(root).sha256,
+    commit,
+    dirty: false,
+  };
 
   const evidencePath = resolve(temporary, "dispatch-evidence.json");
   const evidenceBytes = Buffer.from(`${JSON.stringify(evidence, null, 2)}\n`, "utf8");
@@ -95,7 +102,35 @@ try {
   assertRejected(runSync(evidencePath, missingTrackedPath, bundlePath, missingTrackedOutput), "追跡attestation subjectがcanonical証拠17件の完全集合ではありません", "不完全なtracked subject集合");
   await assertAbsent(missingTrackedOutput);
 
-  console.log("dispatch attestation安全性検査: metadata単体・偽造bundle・tracked subject偽造・OS依存出力hashのcross-OS除外を検査");
+  // schema v3はsourceManifest記録（lnako-source-manifest.jsonのdigest）を必須とする。
+  // 宣言の欠落・偽造は構造検査で拒否され、偽bundleでは覆せない。
+  const declarationSha256 = "b".repeat(64);
+  const v3Base = { ...v2Base, schema: "lnako.dispatch-attestation.v3", trackedSubjects: realTrackedSubjects,
+    sourceManifest: { name: "lnako-source-manifest.json", sha256: declarationSha256 } };
+
+  const missingDeclarationAttestation = { ...v3Base };
+  delete missingDeclarationAttestation.sourceManifest;
+  const missingDeclarationPath = resolve(temporary, "missing-declaration-attestation.json");
+  await writeFile(missingDeclarationPath, `${JSON.stringify(missingDeclarationAttestation, null, 2)}\n`, { flag: "wx" });
+  const missingDeclarationOutput = resolve(temporary, "missing-declaration-output.json");
+  assertRejected(runSync(evidencePath, missingDeclarationPath, bundlePath, missingDeclarationOutput), "dispatch-evidence.attestation.sourceManifest", "v3の宣言記録欠落");
+  await assertAbsent(missingDeclarationOutput);
+
+  const wrongNameAttestation = { ...v3Base, sourceManifest: { name: "forged-source-manifest.json", sha256: declarationSha256 } };
+  const wrongNamePath = resolve(temporary, "wrong-declaration-name-attestation.json");
+  await writeFile(wrongNamePath, `${JSON.stringify(wrongNameAttestation, null, 2)}\n`, { flag: "wx" });
+  const wrongNameOutput = resolve(temporary, "wrong-declaration-name-output.json");
+  assertRejected(runSync(evidencePath, wrongNamePath, bundlePath, wrongNameOutput), "attestation sourceManifest記録が不正です", "宣言name偽造");
+  await assertAbsent(wrongNameOutput);
+
+  const malformedShaAttestation = { ...v3Base, sourceManifest: { name: "lnako-source-manifest.json", sha256: "not-a-sha256" } };
+  const malformedShaPath = resolve(temporary, "malformed-declaration-attestation.json");
+  await writeFile(malformedShaPath, `${JSON.stringify(malformedShaAttestation, null, 2)}\n`, { flag: "wx" });
+  const malformedShaOutput = resolve(temporary, "malformed-declaration-output.json");
+  assertRejected(runSync(evidencePath, malformedShaPath, bundlePath, malformedShaOutput), "attestation sourceManifest記録が不正です", "宣言digest偽造");
+  await assertAbsent(malformedShaOutput);
+
+  console.log("dispatch attestation安全性検査: metadata単体・偽造bundle・tracked subject偽造・v3宣言記録偽造・OS依存出力hashのcross-OS除外を検査");
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }

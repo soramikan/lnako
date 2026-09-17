@@ -1,8 +1,11 @@
-import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { dispatchCoverageAuditSha256 } from "./lib/evidence_common.mjs";
 import { computeSourceManifestSha256 } from "./lib/evidence/manifest.mjs";
+import { canonicalizeEvidenceDocument, freshnessBytes, stripEnvironmentForComparison } from "./lib/evidence/provenance.mjs";
+import { coverageEnv } from "./lib/coverage_env.mjs";
+import * as coverage_fixtures from "./lib/coverage_fixtures.mjs";
+import { mergeCoverageShards } from "./lib/coverage_merge.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const arguments_ = parseArguments();
@@ -10,31 +13,32 @@ const lock = JSON.parse(await readFile(resolve(root, "compat/upstream.lock.json"
 const baseline = lock.nadesiko3;
 const currentSourceManifestSha256 = (await computeSourceManifestSha256(root)).sha256;
 const auditScriptSha256 = await dispatchCoverageAuditSha256(root);
-const expectedSelection = "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, seven explicit plugin-route fixtures, and native-cut-commands, excluding explicit AOT gaps";
+const defaultSelection = "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, seven explicit plugin-route fixtures, and native-cut-commands, excluding explicit AOT gaps";
+const fullSelection = "the default command-bearing selection plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, seven explicit plugin-route fixtures, and all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps";
+// canonical 正本（darwin/arm64・231件）の freshness は Linux dedicated shard が供給する。
+// macOS native 相乗り・Windows support は既定の56件のまま維持する。
+// platform固有の出力値（OS名/arch行・ホーム/テンポラリパス）は監査側で固定
+// トークンへ正規化されるため、merge結果と正本のbyte比較が跨platformで成立する。
+const platformExpectations = new Map([
+  ["darwin-arm64", { selection: defaultSelection, fixtureCount: 56 }],
+  ["linux-x64", { selection: fullSelection, fixtureCount: 231 }],
+  ["win32-x64", { selection: defaultSelection, fixtureCount: 56 }],
+]);
 const files = (await jsonFiles(arguments_.directory)).sort();
 const expectedShardCount = arguments_.shardCount;
-const expectedArtifactCount = expectedShardCount * 3;
+const expectedArtifactCount = expectedShardCount * platformExpectations.size;
 if (files.length !== expectedArtifactCount) throw new Error(`dispatch coverage shard artifactは${expectedArtifactCount}件必要です: actual=${files.length}`);
 
 const artifacts = [];
 for (const path of files) artifacts.push(await readCoverageArtifact(path));
 const byPlatform = Map.groupBy(artifacts, (artifact) => artifact.platform);
-const expectedPlatforms = new Set(["darwin-arm64", "linux-x64", "win32-x64"]);
-if (byPlatform.size !== expectedPlatforms.size || [...byPlatform.keys()].some((platform) => !expectedPlatforms.has(platform))) {
+if (byPlatform.size !== platformExpectations.size || [...byPlatform.keys()].some((platform) => !platformExpectations.has(platform))) {
   throw new Error(`dispatch coverage artifactの正式OS集合が不正です: ${JSON.stringify([...byPlatform.keys()])}`);
 }
 
-const mac = requirePlatform(byPlatform, "darwin-arm64", expectedShardCount);
-if (mac.some((artifact) => artifact.kind !== "sampled-unattested-dispatch-audit-shard")) {
-  throw new Error("macOS dispatch coverage artifactは全てshard監査である必要があります");
-}
-const referenceFixtureCount = mac[0].shard?.totalFixtureCount;
-if (referenceFixtureCount !== 56) {
-  throw new Error(`macOS dispatch coverageの全fixture件数が不正です: reference=${referenceFixtureCount}`);
-}
-let referenceKeys = null;
-for (const platform of ["darwin-arm64", "linux-x64", "win32-x64"]) {
-  const shards = platform === "darwin-arm64" ? mac : requirePlatform(byPlatform, platform, expectedShardCount);
+const unions = new Map();
+for (const [platform, expectation] of platformExpectations) {
+  const shards = requirePlatform(byPlatform, platform, expectedShardCount);
   const indexes = shards.map((artifact) => artifact.shard.index).sort((left, right) => left - right);
   const expectedIndexes = Array.from({ length: expectedShardCount }, (_, index) => index);
   if (JSON.stringify(indexes) !== JSON.stringify(expectedIndexes)) {
@@ -42,7 +46,8 @@ for (const platform of ["darwin-arm64", "linux-x64", "win32-x64"]) {
   }
   const union = new Set();
   for (const artifact of shards) {
-    if (artifact.kind !== "sampled-unattested-dispatch-audit-shard" || artifact.shard.totalFixtureCount !== referenceFixtureCount ||
+    if (artifact.kind !== "sampled-unattested-dispatch-audit-shard" || artifact.selection !== expectation.selection ||
+        artifact.shard.totalFixtureCount !== expectation.fixtureCount ||
         artifact.shard.selectedFixtureCount !== artifact.fixtureCount || artifact.shard.count !== expectedShardCount) {
       throw new Error(`${platform} dispatch coverage shard metadataが不正です: ${artifact.path}`);
     }
@@ -51,16 +56,51 @@ for (const platform of ["darwin-arm64", "linux-x64", "win32-x64"]) {
       union.add(key);
     }
   }
-  if (referenceKeys === null) referenceKeys = union;
-  assertSetEqual(union, referenceKeys, `${platform} dispatch coverage shardのfixture集合`);
+  if (union.size !== expectation.fixtureCount) {
+    throw new Error(`${platform} dispatch coverageのshard集合が不完全です: actual=${union.size} expected=${expectation.fixtureCount}`);
+  }
+  unions.set(platform, union);
 }
-if (referenceKeys.size !== referenceFixtureCount) throw new Error(`macOS dispatch coverageのshard集合が不完全です: actual=${referenceKeys.size}`);
+// macOS・Windows は既定56件で同一集合、Linux の231件がその上位集合であることを確認する。
+const darwinUnion = unions.get("darwin-arm64");
+const win32Union = unions.get("win32-x64");
+const linuxUnion = unions.get("linux-x64");
+assertSetEqual(win32Union, darwinUnion, "darwin-arm64/win32-x64 dispatch coverage shardのfixture集合");
+assertSubset(darwinUnion, linuxUnion, "darwin-arm64 dispatch coverage shardのfixture集合（linux-x64 231件の部分集合）");
 
 const scriptHashes = new Set(artifacts.map((artifact) => artifact.auditScriptSha256));
 if (scriptHashes.size !== 1 || !scriptHashes.has(auditScriptSha256)) {
   throw new Error("dispatch coverage shardが同一の監査scriptから生成されていません");
 }
-console.log(`dispatch coverage shard監査: 3正式OS各${expectedShardCount} shardで56 fixtureを重複なく検証しました`);
+
+// Linux 231件 shard を全件実行形へ merge し、canonical 正本と freshnessBytes で照合する。
+const catalog = JSON.parse(await readFile(resolve(root, "compat/v3.7.24/standard-cnako.json"), "utf8"));
+Object.assign(coverageEnv, {
+  root,
+  catalog,
+  catalogByName: Map.groupBy(catalog.commands, (command) => command.name),
+  excludedFixtures: coverage_fixtures.excludedFixtures,
+  arguments_: { includeNative: true, fixtureShard: { index: null } },
+});
+const fixturePool = await coverage_fixtures.loadSelectedFixtures();
+const fixtureOrder = fixturePool.map((fixture) => `${fixture.file}/${fixture.id}`);
+assertSetEqual(linuxUnion, new Set(fixtureOrder), "linux-x64 dispatch coverage shardのfixture集合（fixture pool全体）");
+const merged = mergeCoverageShards(
+  byPlatform.get("linux-x64").map((artifact) => artifact.document),
+  { fixtureOrder, catalog },
+);
+const canonicalDocument = JSON.parse(await readFile(resolve(root, "compat/v3.7.24/dispatch-coverage-evidence.json"), "utf8"));
+if (freshnessBytes(merged) !== freshnessBytes(canonicalDocument)) {
+  const leaves = [];
+  diffLeafPaths(
+    stripEnvironmentForComparison(canonicalizeEvidenceDocument(canonicalDocument)),
+    stripEnvironmentForComparison(canonicalizeEvidenceDocument(merged)),
+    "",
+    leaves,
+  );
+  throw new Error(`Linux dispatch coverage shardのmerge結果がcanonical正本と一致しません: ${leaves.length === 0 ? "（差分leaf特定不可）" : leaves.join(", ")}\nnode tools/update_current_evidence.mjs で正本を再生成し、コードと証拠を同じコミットにまとめてください。`);
+}
+console.log(`dispatch coverage shard監査: 3正式OS各${expectedShardCount} shard（darwin/win32=56件、linux=231件⊃56件）を重複なく検証し、Linux mergeがcanonical正本と一致しました`);
 
 function parseArguments() {
   let directory = null;
@@ -108,7 +148,7 @@ async function readCoverageArtifact(path) {
   }
   const scope = evidence.scope;
   if (scope?.catalogEntries !== 527 || scope?.nativeEntries !== 523 || scope?.nativeUniqueNames !== 492 ||
-      scope?.fixtureSelection !== expectedSelection || scope?.commandAssociationIsNotExecutionEvidence !== true ||
+      ![defaultSelection, fullSelection].includes(scope?.fixtureSelection) || scope?.commandAssociationIsNotExecutionEvidence !== true ||
       !Array.isArray(scope?.excludedFixtures) || !Number.isSafeInteger(scope?.fixtureCount) || scope.fixtureCount < 1) {
     throw new Error(`dispatch coverage artifactのscopeが不正です: ${path}`);
   }
@@ -156,10 +196,12 @@ async function readCoverageArtifact(path) {
     path,
     platform,
     kind: evidence.kind,
+    selection: scope.fixtureSelection,
     shard,
     fixtureCount: scope.fixtureCount,
     fixtureKeys,
     auditScriptSha256: provenance.auditScriptSha256,
+    document: evidence,
   };
 }
 
@@ -176,6 +218,29 @@ function assertSetEqual(actual, expected, label) {
   throw new Error(`${label}が不一致です: missing=${JSON.stringify(missing)} extra=${JSON.stringify(extra)}`);
 }
 
-function sha256(value) {
-  return createHash("sha256").update(value).digest("hex");
+function assertSubset(subset, superset, label) {
+  const missing = [...subset].filter((value) => !superset.has(value));
+  if (missing.length === 0) return;
+  throw new Error(`${label}が不一致です: missing=${JSON.stringify(missing)}`);
+}
+
+function diffLeafPaths(left, right, path, out, limit = 8) {
+  if (out.length >= limit) return;
+  if (typeof left !== typeof right || left === null || right === null || typeof left !== "object") {
+    if (left !== right) out.push(path || "<root>");
+    return;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+      out.push(path || "<root>");
+      return;
+    }
+    for (let index = 0; index < left.length; index += 1) {
+      diffLeafPaths(left[index], right[index], `${path}[${index}]`, out, limit);
+    }
+    return;
+  }
+  for (const key of new Set([...Object.keys(left), ...Object.keys(right)])) {
+    diffLeafPaths(left[key], right[key], path === "" ? key : `${path}.${key}`, out, limit);
+  }
 }

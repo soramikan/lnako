@@ -1,24 +1,33 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { basename, isAbsolute, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { platformIndependentOfficialComparison } from "./dispatch_evidence_semantics.mjs";
 import { computeSourceManifestSha256Sync } from "./lib/evidence/manifest.mjs";
-import { canonicalAttestationSchema, currentAttestationPointerSchema, dispatchAttestationSchemaV2, trackedAttestationSubjects } from "./lib/evidence/attested_files.mjs";
+import { attestationsDirectory, canonicalAttestationSchemaV2, dispatchAttestationSchemaV3, loadAttestationSnapshot, loadCurrentAttestation, signedEvidenceDigests, trackedAttestationSubjects } from "./lib/evidence/attested_files.mjs";
+import { computeBackingDigestByProof, deriveVerifiedCatalog } from "./lib/evidence/promotion.mjs";
+import { sourceManifestDeclarationBasename, validateSourceManifestDeclarationBytes } from "./lib/evidence/source_manifest.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const defaultDirectory = resolve(root, "compat/v3.7.24/attestations/32983175945");
 const arguments_ = process.argv.slice(2);
 const offline = arguments_.includes("--offline");
+const requireCurrent = arguments_.includes("--require-current");
 const directoryIndex = arguments_.indexOf("--directory");
-const currentPointerIndex = arguments_.indexOf("--current-pointer");
-if (arguments_.some((argument) => argument.startsWith("--") && !new Set(["--directory", "--offline", "--current-pointer"]).has(argument)) ||
+const attestationsRootIndex = arguments_.indexOf("--attestations-root");
+const snapshotIndex = arguments_.indexOf("--snapshot");
+if (arguments_.some((argument) => argument.startsWith("--") && !new Set(["--directory", "--offline", "--attestations-root", "--snapshot", "--require-current"]).has(argument)) ||
     (directoryIndex >= 0 && (arguments_[directoryIndex + 1] === undefined || arguments_[directoryIndex + 1].startsWith("--"))) ||
-    (currentPointerIndex >= 0 && (arguments_[currentPointerIndex + 1] === undefined || arguments_[currentPointerIndex + 1].startsWith("--")))) {
-  throw new Error("usage: node tools/check_tracked_dispatch_attestation.mjs [--directory /absolute/path] [--current-pointer /absolute/path] [--offline]");
+    (attestationsRootIndex >= 0 && (arguments_[attestationsRootIndex + 1] === undefined || arguments_[attestationsRootIndex + 1].startsWith("--"))) ||
+    (snapshotIndex >= 0 && (arguments_[snapshotIndex + 1] === undefined || arguments_[snapshotIndex + 1].startsWith("--")))) {
+  throw new Error("usage: node tools/check_tracked_dispatch_attestation.mjs [--directory /absolute/path] [--attestations-root /absolute/path] [--snapshot /absolute/path] [--offline] [--require-current]");
+}
+if (snapshotIndex >= 0 && attestationsRootIndex >= 0) {
+  throw new Error("--snapshotと--attestations-rootは同時に指定できません");
 }
 const directory = directoryIndex >= 0 ? resolveAbsolute(arguments_[directoryIndex + 1], "--directory") : defaultDirectory;
-const currentPointerPath = currentPointerIndex >= 0 ? resolveAbsolute(arguments_[currentPointerIndex + 1], "--current-pointer") : resolve(root, "compat/v3.7.24/attestations/current.json");
+const attestationsRoot = attestationsRootIndex >= 0 ? resolveAbsolute(arguments_[attestationsRootIndex + 1], "--attestations-root") : resolve(root, attestationsDirectory);
+const snapshotDirectory = snapshotIndex >= 0 ? resolveAbsolute(arguments_[snapshotIndex + 1], "--snapshot") : null;
 
 const expected = {
   schema: "lnako.dispatch-evidence-history.v1",
@@ -135,65 +144,63 @@ assertEqual(catalog.executionEvidenceStates?.["trace-confirmed-unattested"], 0, 
 assertEqual(catalog.executionEvidenceStates?.unverified, 523, "historical catalog unverified count");
 validateHistoricalCatalog(baseCatalog, catalog, manifestSubjects);
 
+// canonical tracked evidence.json は常時 unattested。verified 状態は
+// current snapshot の署名 digest から導出される view であり、正本へは書き戻さない。
 const currentEvidence = JSON.parse(await readFile(resolve(root, "compat/v3.7.24/evidence.json"), "utf8"));
 const currentSummary = await validateCurrentSnapshot();
+assertEqual(currentEvidence.executionEvidenceStates?.verified, 0, "canonical catalog verified count");
+assertEqual(currentEvidence.executionEvidenceStates?.["trace-confirmed-unattested"], 527, "canonical catalog unattested count");
+assertEqual(currentEvidence.executionEvidenceStates?.unverified, 0, "canonical catalog unverified count");
 if (currentSummary === null) {
-  assertEqual(currentEvidence.executionEvidenceStates?.verified, 0, "current catalog verified count");
-  console.log(`追跡dispatch attestationを検証しました: run ${expected.run} / target ${expected.commit} / 3 OS / historical verified 4（current verified 0）`);
+  console.log(`追跡dispatch attestationを検証しました: run ${expected.run} / target ${expected.commit} / 3 OS / historical verified 4（現行manifestに一致するsnapshotなし・canonical verified 0）`);
 } else {
-  assertEqual(currentEvidence.executionEvidenceStates?.verified, 527, "current catalog verified count");
-  assertEqual(currentEvidence.executionEvidenceStates?.["trace-confirmed-unattested"], 0, "current catalog unattested count");
-  assertEqual(currentEvidence.executionEvidenceStates?.unverified, 0, "current catalog unverified count");
-  console.log(`追跡dispatch attestationを検証しました: run ${expected.run} / target ${expected.commit} / 3 OS / historical verified 4、current run ${currentSummary.run} / target ${currentSummary.commit} / 527 verified`);
+  console.log(`追跡dispatch attestationを検証しました: run ${expected.run} / target ${expected.commit} / 3 OS / historical verified 4、current run ${currentSummary.run} / target ${currentSummary.commit} / 導出verified 527`);
 }
 
 async function validateCurrentSnapshot() {
-  let pointer;
-  try {
-    pointer = JSON.parse(await readFile(currentPointerPath, "utf8"));
-  } catch (error) {
-    if (error?.code === "ENOENT" && currentPointerIndex < 0) return null;
-    throw new Error(`current attestation pointerを読み込めません: ${currentPointerPath}`);
+  const current = snapshotDirectory === null
+    ? await loadCurrentAttestation(root, attestationsRoot)
+    : await loadAttestationSnapshot(root, snapshotDirectory);
+  if (current === null) {
+    if (requireCurrent) throw new Error("現行source manifestに一致するattestation snapshotがありません");
+    return null;
   }
-  const pointerKeys = ["schema", "workflowRun", "workflowAttempt", "targetCommit", "sourceRef", "workflow", "sourceManifestSha256", "directory"];
-  assertKeys(pointer, pointerKeys, "current attestation pointer");
-  assertEqual(pointer.schema, currentAttestationPointerSchema, "current pointer schema");
-  if (!/^[0-9]+$/.test(pointer.workflowRun ?? "") || !Number.isSafeInteger(pointer.workflowAttempt) || pointer.workflowAttempt < 1 ||
-      !/^[0-9a-f]{40}$/i.test(pointer.targetCommit ?? "")) throw new Error("current attestation pointerのrunまたは対象commitが不正です");
-  assertEqual(pointer.sourceRef, "refs/heads/main", "current pointer source ref");
-  assertEqual(pointer.workflow, "soramikan/lnako/.github/workflows/ci.yml", "current pointer workflow");
-  assertSha256(pointer.sourceManifestSha256, "current pointer source manifest");
-  const currentManifest = computeSourceManifestSha256Sync(root).sha256;
-  if (pointer.sourceManifestSha256 !== currentManifest) throw new Error("current attestation pointerのsource manifestが現行と一致しません");
-  if (typeof pointer.directory !== "string" || !/^[0-9]+$/.test(pointer.directory)) throw new Error("current attestation pointerのdirectoryが不正です");
-  const snapshotRoot = resolve(dirname(currentPointerPath), pointer.directory);
-  if (currentPointerIndex < 0 && relative(resolve(root, "compat/v3.7.24/attestations"), snapshotRoot).startsWith("..")) {
-    throw new Error("current attestation snapshotがattestations配下にありません");
-  }
+  const snapshotRoot = current.directory;
   const readSnapshot = async (name) => {
     if (isAbsolute(name) || name.includes("\\") || name.split("/").includes("..")) throw new Error(`current snapshotのpathが安全ではありません: ${name}`);
     const path = resolve(snapshotRoot, name);
     if (relative(snapshotRoot, path).startsWith("..")) throw new Error(`current snapshotのpathが外を指しています: ${name}`);
     return path;
   };
-  const manifest = JSON.parse(await readFile(await readSnapshot("manifest.json"), "utf8"));
-  const manifestKeys = ["schema", "workflowRun", "workflowAttempt", "targetCommit", "sourceRef", "workflow", "sourceManifestSha256",
+  const manifest = current.manifest;
+  const manifestKeys = ["schema", "workflowRun", "workflowAttempt", "targetCommit", "sourceRef", "workflow", "sourceManifestSha256", "sourceManifest",
     "attestation", "bundle", "nativeAotAttestation", "nativeAotAggregate", "catalogEvidence", "dispatchEvidence", "trackedEvidence", "artifactSha256"];
   assertKeys(manifest, manifestKeys, "current attestation manifest");
-  assertEqual(manifest.schema, canonicalAttestationSchema, "current manifest schema");
-  for (const key of ["workflowRun", "workflowAttempt", "targetCommit", "sourceRef", "workflow", "sourceManifestSha256"]) {
-    assertEqual(manifest[key], pointer[key], `current manifest ${key}`);
-  }
+  assertEqual(manifest.schema, canonicalAttestationSchemaV2, "current manifest schema");
+  assertEqual(manifest.workflowRun, basename(snapshotRoot), "current manifest workflowRun");
+  if (!Number.isSafeInteger(manifest.workflowAttempt) || manifest.workflowAttempt < 1 ||
+      !/^[0-9a-f]{40}$/i.test(manifest.targetCommit ?? "")) throw new Error("current manifestのattemptまたは対象commitが不正です");
+  assertEqual(manifest.sourceRef, "refs/heads/main", "current manifest source ref");
+  assertEqual(manifest.workflow, "soramikan/lnako/.github/workflows/ci.yml", "current manifest workflow");
+  assertSha256(manifest.sourceManifestSha256, "current manifest source manifest");
+  assertEqual(manifest.sourceManifestSha256, computeSourceManifestSha256Sync(root).sha256, "current manifest source manifest一致");
+  assertNoForbiddenFields(manifest, "current manifest");
   assertEqual(manifest.attestation, "dispatch-attestation.json", "current manifest attestation");
   assertEqual(manifest.bundle, "sigstore-bundle.json", "current manifest bundle");
   assertEqual(manifest.nativeAotAttestation, "native-aot-attestation.json", "current manifest native AOT attestation");
   assertEqual(manifest.nativeAotAggregate, "native-aot-aggregate-evidence.json", "current manifest native AOT aggregate");
   assertEqual(manifest.catalogEvidence, "catalog-evidence-verified.json", "current manifest catalog");
-  assertKeys(manifest.artifactSha256, ["dispatch-attestation.json", "sigstore-bundle.json", "native-aot-attestation.json", "native-aot-aggregate-evidence.json", "catalog-evidence-verified.json"], "current manifest artifact digests");
+  assertEqual(manifest.sourceManifest, "source-manifest.json", "current manifest source manifest宣言path");
+  assertKeys(manifest.artifactSha256, ["dispatch-attestation.json", "sigstore-bundle.json", "native-aot-attestation.json", "native-aot-aggregate-evidence.json", "catalog-evidence-verified.json", "source-manifest.json"], "current manifest artifact digests");
   for (const [name, digest] of Object.entries(manifest.artifactSha256)) {
     assertSha256(digest, `current manifest ${name} digest`);
     assertEqual(sha256(await readFile(await readSnapshot(name))), digest, `current manifest ${name} file digest`);
   }
+  // source manifest宣言はcanonical byte列でmanifestの値と一致し、そのdigestが
+  // attestation記録と署名subjectへ含まれることを下で検証する。
+  const declarationBytes = await readFile(await readSnapshot(manifest.sourceManifest));
+  validateSourceManifestDeclarationBytes(declarationBytes, manifest.targetCommit, manifest.sourceManifestSha256);
+  const declarationSha256 = sha256(declarationBytes);
   if (!Array.isArray(manifest.dispatchEvidence) || manifest.dispatchEvidence.length !== expectedPlatforms.size) throw new Error("current snapshotのdispatch証拠が3正式OSの完全集合ではありません");
   const currentSubjects = new Map();
   for (const record of manifest.dispatchEvidence) {
@@ -224,15 +231,18 @@ async function validateCurrentSnapshot() {
     trackedByPath.set(record.path, record.sha256);
   }
   const attestation = JSON.parse(await readFile(await readSnapshot(manifest.attestation), "utf8"));
-  assertKeys(attestation, ["schema", "repository", "workflow", "sourceRef", "commit", "predicateType", "verifiedBy", "bundleSha256", "subjects", "trackedSubjects"], "current dispatch attestation");
-  assertEqual(attestation.schema, dispatchAttestationSchemaV2, "current attestation schema");
+  assertKeys(attestation, ["schema", "repository", "workflow", "sourceRef", "commit", "predicateType", "verifiedBy", "bundleSha256", "subjects", "trackedSubjects", "sourceManifest"], "current dispatch attestation");
+  assertEqual(attestation.schema, dispatchAttestationSchemaV3, "current attestation schema");
   assertEqual(attestation.repository, "soramikan/lnako", "current attestation repository");
-  assertEqual(attestation.workflow, pointer.workflow, "current attestation workflow");
-  assertEqual(attestation.sourceRef, pointer.sourceRef, "current attestation source ref");
-  assertEqual(attestation.commit, pointer.targetCommit, "current attestation commit");
+  assertEqual(attestation.workflow, manifest.workflow, "current attestation workflow");
+  assertEqual(attestation.sourceRef, manifest.sourceRef, "current attestation source ref");
+  assertEqual(attestation.commit, manifest.targetCommit, "current attestation commit");
   assertEqual(attestation.predicateType, "https://slsa.dev/provenance/v1", "current attestation predicate type");
   assertEqual(attestation.verifiedBy, "gh attestation verify", "current attestation verifier");
   assertNoForbiddenFields(attestation, "current dispatch attestation");
+  assertKeys(attestation.sourceManifest, ["name", "sha256"], "current attestation sourceManifest");
+  assertEqual(attestation.sourceManifest.name, sourceManifestDeclarationBasename, "current attestation sourceManifest name");
+  assertEqual(attestation.sourceManifest.sha256, declarationSha256, "current attestation sourceManifest digest");
   const attestationSubjects = subjectMap(attestation.subjects, "current attestation subjects");
   assertSubjectDigests(attestationSubjects, currentSubjects, "current dispatch attestation");
   if (!Array.isArray(attestation.trackedSubjects) || attestation.trackedSubjects.length !== expectedTracked.size) throw new Error("current attestationのtrackedSubjectsが17件ではありません");
@@ -258,6 +268,7 @@ async function validateCurrentSnapshot() {
   assertEqual(statement.predicateType, "https://slsa.dev/provenance/v1", "current bundle predicate type");
   const declaredDigests = new Set([...currentSubjects.values()].map((subject) => subject.sha256));
   for (const digest of trackedByPath.values()) declaredDigests.add(digest);
+  declaredDigests.add(declarationSha256);
   const bundleSubjects = new Map();
   for (const subject of statement.subject ?? []) {
     assertKeys(subject, ["name", "digest"], "current bundle subject");
@@ -267,22 +278,24 @@ async function validateCurrentSnapshot() {
   }
   for (const digest of declaredDigests) if (!bundleSubjects.has(digest)) throw new Error("current bundleが宣言された証拠digestを含みません");
   for (const [digest, name] of bundleSubjects) {
-    if (!declaredDigests.has(digest) && name !== "lnako-native-aot-aggregate-evidence.json" && !name.endsWith("/lnako-native-aot-aggregate-evidence.json")) {
+    const allowed = name === "lnako-native-aot-aggregate-evidence.json" || name.endsWith("/lnako-native-aot-aggregate-evidence.json") ||
+      name === sourceManifestDeclarationBasename || name.endsWith(`/${sourceManifestDeclarationBasename}`);
+    if (!declaredDigests.has(digest) && !allowed) {
       throw new Error(`current bundleに未知のsubjectがあります: ${name}`);
     }
   }
   const workflow = statement.predicate?.buildDefinition?.externalParameters?.workflow;
   assertEqual(workflow?.repository, "https://github.com/soramikan/lnako", "current bundle workflow repository");
   assertEqual(workflow?.path, ".github/workflows/ci.yml", "current bundle workflow path");
-  assertEqual(workflow?.ref, pointer.sourceRef, "current bundle workflow ref");
+  assertEqual(workflow?.ref, manifest.sourceRef, "current bundle workflow ref");
   assertEqual(statement.predicate?.buildDefinition?.internalParameters?.github?.event_name, "push", "current bundle event");
   assertEqual(statement.predicate?.buildDefinition?.internalParameters?.github?.runner_environment, "github-hosted", "current bundle runner environment");
   assertEqual(statement.predicate?.runDetails?.builder?.id, "https://github.com/soramikan/lnako/.github/workflows/ci.yml@refs/heads/main", "current bundle workflow identity");
   const invocationId = statement.predicate?.runDetails?.metadata?.invocationId;
-  if (invocationId !== `https://github.com/soramikan/lnako/actions/runs/${pointer.workflowRun}/attempts/${pointer.workflowAttempt}`) {
+  if (invocationId !== `https://github.com/soramikan/lnako/actions/runs/${manifest.workflowRun}/attempts/${manifest.workflowAttempt}`) {
     throw new Error(`current bundle invocation identityが不正です: ${invocationId}`);
   }
-  const dependency = statement.predicate?.buildDefinition?.resolvedDependencies?.find((entry) => entry.digest?.gitCommit === pointer.targetCommit);
+  const dependency = statement.predicate?.buildDefinition?.resolvedDependencies?.find((entry) => entry.digest?.gitCommit === manifest.targetCommit);
   if (dependency === undefined) throw new Error("current bundleに対象commitのresolved dependencyがありません");
   const aggregate = JSON.parse(await readFile(await readSnapshot(manifest.nativeAotAggregate), "utf8"));
   const aggregateDigest = sha256(await readFile(await readSnapshot(manifest.nativeAotAggregate)));
@@ -291,7 +304,7 @@ async function validateCurrentSnapshot() {
   const nativeAttestation = JSON.parse(await readFile(await readSnapshot(manifest.nativeAotAttestation), "utf8"));
   assertKeys(nativeAttestation, ["schema", "repository", "workflow", "sourceRef", "commit", "predicateType", "verifiedBy", "bundleSha256", "subject"], "current native AOT attestation");
   assertEqual(nativeAttestation.schema, "lnako.native-aot-attestation.v1", "current native AOT schema");
-  assertEqual(nativeAttestation.commit, pointer.targetCommit, "current native AOT commit");
+  assertEqual(nativeAttestation.commit, manifest.targetCommit, "current native AOT commit");
   assertEqual(nativeAttestation.bundleSha256, attestation.bundleSha256, "current native AOT bundle digest");
   assertEqual(nativeAttestation.subject?.file, "lnako-native-aot-aggregate-evidence.json", "current native AOT subject");
   assertEqual(nativeAttestation.subject?.sha256, aggregateDigest, "current native AOT subject digest");
@@ -303,14 +316,19 @@ async function validateCurrentSnapshot() {
   assertEqual(catalog.executionEvidenceStates?.["trace-confirmed-unattested"], 0, "current catalog unattested count");
   assertEqual(catalog.executionEvidenceStates?.unverified, 0, "current catalog unverified count");
   if (!Array.isArray(catalog.entries) || catalog.entries.length !== standardCatalog.commands.length) throw new Error("current catalog entry数がstandard catalogと一致しません");
+  // snapshot の verified catalog は、canonical evidence.json と snapshot の
+  // 署名 subject digest 集合から決定的に導出される view と byte 一致しなければ
+  // ならない。stored catalog を直接信頼しない。
   const canonicalCatalog = JSON.parse(await readFile(resolve(root, "compat/v3.7.24/evidence.json"), "utf8"));
-  if (JSON.stringify(catalog) !== JSON.stringify(canonicalCatalog)) throw new Error("current catalog evidenceがcanonical evidence.jsonと一致しません");
+  const derivedCatalog = deriveVerifiedCatalog(canonicalCatalog, signedEvidenceDigests(attestation), await computeBackingDigestByProof(root));
+  if (JSON.stringify(derivedCatalog) !== JSON.stringify(catalog)) throw new Error("current catalog evidenceがcanonical evidenceと署名digestから導出できません");
   if (!offline) {
-    for (const subject of currentSubjects.values()) verifyWithGhFor(subject.path, subject.sha256, await readSnapshot(manifest.bundle), pointer.targetCommit);
-    for (const [path, digest] of trackedByPath) verifyWithGhFor(resolve(root, path), digest, await readSnapshot(manifest.bundle), pointer.targetCommit);
-    verifyWithGhFor(await readSnapshot(manifest.nativeAotAggregate), aggregateDigest, await readSnapshot(manifest.bundle), pointer.targetCommit);
+    for (const subject of currentSubjects.values()) verifyWithGhFor(subject.path, subject.sha256, await readSnapshot(manifest.bundle), manifest.targetCommit);
+    for (const [path, digest] of trackedByPath) verifyWithGhFor(resolve(root, path), digest, await readSnapshot(manifest.bundle), manifest.targetCommit);
+    verifyWithGhFor(await readSnapshot(manifest.nativeAotAggregate), aggregateDigest, await readSnapshot(manifest.bundle), manifest.targetCommit);
+    verifyWithGhFor(await readSnapshot(manifest.sourceManifest), declarationSha256, await readSnapshot(manifest.bundle), manifest.targetCommit);
   }
-  return { run: pointer.workflowRun, commit: pointer.targetCommit };
+  return { run: manifest.workflowRun, commit: manifest.targetCommit };
 }
 
 function validateCurrentDispatchEvidence(evidence, platformKey) {

@@ -5,6 +5,11 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
 import { computeSourceManifestSha256 } from "./lib/evidence/manifest.mjs";
+import { processOutputSha256, processOutputVolatileContext } from "./lib/evidence/provenance.mjs";
+import { buildStaticConstantEvidenceInputs } from "./lib/evidence/constants.mjs";
+import { evidenceEnv } from "./lib/evidence/env.mjs";
+import { readFixtureRecords } from "./lib/evidence/records.mjs";
+import { duplicateNameSet, validateCompatJsEvidence } from "./lib/evidence/validators.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const lockPath = resolve(root, "compat/upstream.lock.json");
@@ -43,6 +48,14 @@ const [lock, catalog, implemented, cases] = await Promise.all([
   readJson(casesPath),
 ]);
 validatePlan(lock, catalog, implemented, cases);
+// lib/evidence共有検証が参照する実行コンテキスト（sync_compat_evidence.mjsと同じ初期値）。
+Object.assign(evidenceEnv, {
+  root,
+  oracleDirectory: resolve(root, "tests/oracle"),
+  staticConstantFixtureIds: new Set(buildStaticConstantEvidenceInputs(root).map((input) => input.fixtureId)),
+  standard: catalog,
+  duplicateNames: duplicateNameSet(catalog.commands),
+});
 if (!noBuild) buildCompatLnako();
 await access(compiler);
 const oracle = await readOracleIdentity(oracleRoot, lock.nadesiko3);
@@ -58,10 +71,11 @@ try {
     await writeExclusive(evidenceOutput, `${JSON.stringify(evidence, null, 2)}\n`);
     console.log(`compat-js実行証拠を生成しました: ${evidence.entries.length} entry / ${evidence.scope.caseCount}ケース`);
   } else {
+    // tracked正本はcanonical形（揮発provenanceを持たない内容クレーム）。
     const actual = JSON.parse(await readFile(evidencePath, "utf8"));
-    validateEvidence(actual, lock, catalog, cases, { allowDirty: false });
+    validateCompatJsEvidence(actual, lock, catalog, cases, await readFixtureRecords(), "canonical");
     validateLiveSites(actual, reports);
-    console.log(`compat-js実行証拠を検証しました: ${actual.entries.length} entry / ${actual.scope.caseCount}ケース（tracked artifact）`);
+    console.log(`compat-js実行証拠を検証しました: ${actual.entries.length} entry / ${actual.scope.caseCount}ケース（tracked canonical artifact）`);
   }
 } finally {
   await rm(temporary, { recursive: true, force: true });
@@ -363,7 +377,8 @@ function normalizeSuccess(result) {
 }
 
 function resultSummary(result) {
-  return { status: result.status, signal: result.signal, stdoutSha256: sha256(String(result.stdout ?? "").replaceAll("\r\n", "\n")), stderrSha256: sha256(String(result.stderr ?? "").replaceAll("\r\n", "\n")), failed: failed(result) };
+  const volatileOutputContext = processOutputVolatileContext({ paths: [temporary, root, oracleRoot] });
+  return { status: result.status, signal: result.signal, stdoutSha256: processOutputSha256(String(result.stdout ?? ""), volatileOutputContext), stderrSha256: processOutputSha256(String(result.stderr ?? ""), volatileOutputContext), failed: failed(result) };
 }
 
 function failed(result) {

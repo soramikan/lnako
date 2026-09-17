@@ -5,14 +5,15 @@ import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { coverageEnv as env } from "./coverage_env.mjs";
 import * as evidence_common from "./evidence_common.mjs";
+import { normalizeVolatileProcessOutput, processOutputSha256, processOutputVolatileContext } from "./evidence/provenance.mjs";
 import * as coverage_process from "./coverage_process.mjs";
 import * as coverage_fixtures from "./coverage_fixtures.mjs";
 import * as coverage_sites from "./coverage_sites.mjs";
 
 export async function runHttpServerFixture(fixture, index, temporary) {
-  const fixtureDirectory = resolve(temporary, `${String(index).padStart(2, "0")}-${fixture.id}`);
+  const stem = coverage_fixtures.coverageFixtureStem(fixture);
+  const fixtureDirectory = resolve(temporary, stem);
   await mkdir(fixtureDirectory);
-  const stem = `${String(index).padStart(2, "0")}-${fixture.id}`;
   const sourceName = fixture.sourceFileName ?? `${stem}.nako3`;
   const sourceSha256 = evidence_common.sha256(fixture.source);
   const directories = {
@@ -27,10 +28,11 @@ export async function runHttpServerFixture(fixture, index, temporary) {
     const staticDirectory = resolve(directory, "static");
     await mkdir(staticDirectory, { recursive: true });
     await writeFile(resolve(staticDirectory, "hello.txt"), "STATIC", "utf8");
-    const port = await reserveHttpServerPort();
+    const port = coverage_process.coverageHttpPort;
     const source = coverage_fixtures.replacePluginPlaceholders(fixture.source, directory, null, fixture, {
       "${PORT}": String(port),
-      "${STATIC}": staticDirectory.replaceAll("\\", "/"),
+      // 絶対パスだと checkout 長で compile manifest の source span が揮れる。
+      "${STATIC}": "static",
     });
     const sourcePath = resolve(directory, sourceName);
     await writeFile(sourcePath, source, "utf8");
@@ -121,6 +123,9 @@ export async function runHttpServerFixture(fixture, index, temporary) {
     .filter((name) => !observedCommandNames.has(name))
     .map((name) => ({ name, catalogIds: (env.catalogByName.get(name) ?? []).map((command) => command.id) }));
   const generatedAvailable = officialGenerated.responses !== null;
+  // platform固有値（OS名/archの単独行・ホーム/テンポラリ配下のパス）を畳み、
+  // shard merge後のcanonical正本との比較を跨platformで成立させる。
+  const volatileOutputContext = processOutputVolatileContext({ paths: [temporary, env.root, env.oracleRoot] });
   return {
     report: {
       id: fixture.id,
@@ -142,10 +147,10 @@ export async function runHttpServerFixture(fixture, index, temporary) {
         officialRoutesEquivalent: generatedAvailable && JSON.stringify(officialSource.responses) === JSON.stringify(officialGenerated.responses),
         officialSourceStderrIncludes: null,
         results: Object.fromEntries([
-          ["officialSource", summarizeHttpSuite(officialSource)],
-          ["officialGenerated", summarizeHttpSuite(officialGenerated)],
-          ["lnakoRun", summarizeHttpSuite(interpreterWithoutTrace)],
-          ["lnakoNativeO0", summarizeHttpSuite(aotWithoutTrace)],
+          ["officialSource", summarizeHttpSuite(officialSource, volatileOutputContext)],
+          ["officialGenerated", summarizeHttpSuite(officialGenerated, volatileOutputContext)],
+          ["lnakoRun", summarizeHttpSuite(interpreterWithoutTrace, volatileOutputContext)],
+          ["lnakoNativeO0", summarizeHttpSuite(aotWithoutTrace, volatileOutputContext)],
         ]),
       },
       interpreter: {
@@ -175,15 +180,7 @@ export async function runHttpServerFixture(fixture, index, temporary) {
 
 
 export async function reserveHttpServerPort() {
-  return new Promise((resolvePort, reject) => {
-    const server = http.createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      const port = typeof address === "object" && address !== null ? address.port : null;
-      server.close((error) => error ? reject(error) : resolvePort(port));
-    });
-  });
+  return coverage_process.coverageHttpPort;
 }
 
 
@@ -299,14 +296,14 @@ export function normalizeHttpServerResponse(response) {
 }
 
 
-export function summarizeHttpSuite(result) {
+export function summarizeHttpSuite(result, volatileOutputContext = {}) {
   return {
     status: result.status,
     signal: result.signal,
-    stdoutSha256: evidence_common.sha256(evidence_common.normalizeLineEndings(result.stdout)),
-    stderrSha256: evidence_common.sha256(evidence_common.normalizeLineEndings(result.stderr)),
+    stdoutSha256: processOutputSha256(result.stdout, volatileOutputContext),
+    stderrSha256: processOutputSha256(result.stderr, volatileOutputContext),
     responseCount: result.responses === null ? 0 : result.responses.length,
-    responseSha256: result.responses === null ? null : evidence_common.sha256(JSON.stringify(result.responses)),
+    responseSha256: result.responses === null ? null : evidence_common.sha256(normalizeVolatileProcessOutput(JSON.stringify(result.responses), volatileOutputContext)),
   };
 }
 

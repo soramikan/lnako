@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { coverageEnv as env } from "./coverage_env.mjs";
 import * as evidence_common from "./evidence_common.mjs";
+import { manifestContentSha256 } from "./evidence/provenance.mjs";
 
 export function readJsonLines(text, label) {
   if (!text.endsWith("\n")) throw new Error(`${label}が改行で完結していません`);
@@ -110,7 +111,7 @@ export async function readCompileManifest(path, sourcePath, fixture) {
       if (Object.hasOwn(record, forbidden)) throw new Error(`${fixture.id} AOT compile manifestに禁止fieldがあります: ${forbidden}`);
     }
   }
-  const parsed = { records, rawSha256: evidence_common.sha256(text) };
+  const parsed = { records, rawSha256: manifestContentSha256(text) };
   const header = parsed.records[0];
   const complete = parsed.records.at(-1);
   const entries = parsed.records.slice(1, -1);
@@ -303,8 +304,8 @@ export function resolveCatalogCommand(fixture, name) {
 }
 
 
-export async function createReport({ fixtureReports, sites, unresolvedSites, oracle }) {
-  const nativeCommands = env.catalog.commands.filter((command) => command.status === "native");
+export function coverageSummary({ fixtureReports, sites, unresolvedSites, catalog }) {
+  const nativeCommands = catalog.commands.filter((command) => command.status === "native");
   const nativeIds = new Set(nativeCommands.map((command) => command.id));
   const nativeNames = new Set(nativeCommands.map((command) => command.name));
   const observedNativeSites = sites.filter((site) => nativeIds.has(site.catalogId));
@@ -312,6 +313,27 @@ export async function createReport({ fixtureReports, sites, unresolvedSites, ora
   const observedNativeNames = new Set(observedNativeSites.map((site) => site.name));
   const unresolvedByName = Map.groupBy(unresolvedSites, (site) => site.sourceName);
   const associationWithoutDispatch = fixtureReports.flatMap((fixture) => fixture.associationWithoutDispatch.map((association) => ({ fixtureId: fixture.id, file: fixture.file, ...association })));
+  return {
+    nativeCommands,
+    nativeNames,
+    summary: {
+      unambiguousObservedNativeEntries: observedNativeIds.size,
+      unambiguousObservedNativeUniqueNames: observedNativeNames.size,
+      unambiguousObservedNativeEntryRatio: observedNativeIds.size / nativeCommands.length,
+      unambiguousObservedNativeUniqueNameRatio: observedNativeNames.size / nativeNames.size,
+      unobservedNativeEntryIds: nativeCommands.filter((command) => !observedNativeIds.has(command.id)).map((command) => command.id),
+      unobservedNativeNames: nativeCommands.filter((command) => !observedNativeNames.has(command.name)).map((command) => command.name).filter((name, index, values) => values.indexOf(name) === index),
+      unresolvedObservedSites: unresolvedSites,
+      unresolvedObservedNames: [...unresolvedByName.keys()].sort(),
+      associationWithoutDispatchCount: associationWithoutDispatch.length,
+      associationWithoutDispatch,
+    },
+  };
+}
+
+
+export async function createReport({ fixtureReports, sites, unresolvedSites, oracle }) {
+  const { nativeCommands, nativeNames, summary } = coverageSummary({ fixtureReports, sites, unresolvedSites, catalog: env.catalog });
   return {
     schema: "lnako.dispatch-coverage.v1",
     kind: env.arguments_.fixtureShard.index === null
@@ -348,18 +370,7 @@ export async function createReport({ fixtureReports, sites, unresolvedSites, ora
       },
       auditScriptSha256: await evidence_common.dispatchCoverageAuditSha256(env.root),
     },
-    coverage: {
-      unambiguousObservedNativeEntries: observedNativeIds.size,
-      unambiguousObservedNativeUniqueNames: observedNativeNames.size,
-      unambiguousObservedNativeEntryRatio: observedNativeIds.size / nativeCommands.length,
-      unambiguousObservedNativeUniqueNameRatio: observedNativeNames.size / nativeNames.size,
-      unobservedNativeEntryIds: nativeCommands.filter((command) => !observedNativeIds.has(command.id)).map((command) => command.id),
-      unobservedNativeNames: nativeCommands.filter((command) => !observedNativeNames.has(command.name)).map((command) => command.name).filter((name, index, values) => values.indexOf(name) === index),
-      unresolvedObservedSites: unresolvedSites,
-      unresolvedObservedNames: [...unresolvedByName.keys()].sort(),
-      associationWithoutDispatchCount: associationWithoutDispatch.length,
-      associationWithoutDispatch,
-    },
+    coverage: summary,
     fixtures: fixtureReports,
     sites: sites.sort(compareSites),
   };

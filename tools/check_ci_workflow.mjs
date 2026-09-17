@@ -17,7 +17,9 @@ const dispatchSecurityScript = await readFile(resolve(root, "tools/check_dispatc
 const dispatchAuditsScript = await readFile(resolve(root, "tools/check_dispatch_audits_parallel.mjs"), "utf8");
 const aotSuiteScript = await readFile(resolve(root, "tools/check_aot_suite_parallel.mjs"), "utf8");
 const dispatchCoverageScript = await readFile(resolve(root, "tools/check_dispatch_coverage.mjs"), "utf8") +
-  (await readFile(resolve(root, "tools/lib/coverage_fixtures.mjs"), "utf8"));
+  (await readFile(resolve(root, "tools/lib/coverage_fixtures.mjs"), "utf8")) +
+  (await readFile(resolve(root, "tools/lib/coverage_http.mjs"), "utf8")) +
+  (await readFile(resolve(root, "tools/lib/coverage_process.mjs"), "utf8"));
 const dispatchCoverageShardsScript = await readFile(resolve(root, "tools/check_dispatch_coverage_shards.mjs"), "utf8");
 const nativeOracleScript = await readFile(resolve(root, "tools/compare_native_oracle.mjs"), "utf8");
 const nativeAotArtifactChecker = await readFile(resolve(root, "tools/check_native_aot_artifacts.mjs"), "utf8");
@@ -26,14 +28,46 @@ const interpreterOracleScript = await readFile(resolve(root, "tools/compare_inte
 const compatJsEvidenceScript = await readFile(resolve(root, "tools/check_compat_js_evidence.mjs"), "utf8");
 const pruneLlvmToolchainScript = await readFile(resolve(root, "tools/prune_llvm_toolchain.mjs"), "utf8");
 const trackedAttestationChecker = await readFile(resolve(root, "tools/check_tracked_dispatch_attestation.mjs"), "utf8");
-const syncEvidence = await readFile(resolve(root, "tools/sync_compat_evidence.mjs"), "utf8") +
+const syncScript = await readFile(resolve(root, "tools/sync_compat_evidence.mjs"), "utf8");
+const syncEvidence = syncScript +
   (await readFile(resolve(root, "tools/lib/evidence/validators.mjs"), "utf8")) +
   (await readFile(resolve(root, "tools/lib/evidence/records.mjs"), "utf8")) +
   (await readFile(resolve(root, "tools/lib/evidence/constants.mjs"), "utf8")) +
-  (await readFile(resolve(root, "tools/lib/evidence/attested_files.mjs"), "utf8"));
+  (await readFile(resolve(root, "tools/lib/evidence/attested_files.mjs"), "utf8")) +
+  (await readFile(resolve(root, "tools/lib/evidence/promotion.mjs"), "utf8"));
 const verifyAttestation = await readFile(resolve(root, "tools/verify_dispatch_attestation.mjs"), "utf8");
+const evidenceFreshness = await readFile(resolve(root, "tools/check_evidence_freshness.mjs"), "utf8");
+const evidenceUpdate = await readFile(resolve(root, "tools/update_current_evidence.mjs"), "utf8") +
+  (await readFile(resolve(root, "tools/lib/evidence/generators.mjs"), "utf8"));
+const evidenceProvenance = await readFile(resolve(root, "tools/lib/evidence/provenance.mjs"), "utf8");
 if (!trackedAttestationChecker.includes("gh") || !trackedAttestationChecker.includes("--cert-oidc-issuer") || !trackedAttestationChecker.includes("--deny-self-hosted-runners") || !syncEvidence.includes("--historical-commit") || !syncEvidence.includes("canonical --output")) {
   throw new Error("tracked dispatch attestation checkerのhistorical commit／公式gh厳格検証が不完全です");
+}
+// canonical tracked evidence（揮発provenanceを持たない内容クレーム）の契約を固定する。
+if (!syncEvidence.includes('form !== "measured" && form !== "canonical"') ||
+    !syncEvidence.includes('isCanonicalEnvironment') ||
+    !evidenceProvenance.includes("canonicalizeEvidenceDocument") ||
+    !evidenceProvenance.includes("manifestContentSha256") ||
+    !evidenceProvenance.includes("processOutputSha256") ||
+    !evidenceProvenance.includes("freshnessBytes") ||
+    !evidenceProvenance.includes("$1:<col>") ||
+    !evidenceProvenance.includes("official-generated") ||
+    !dispatchCoverageScript.includes("coverageFixtureStem") ||
+    !dispatchCoverageScript.includes("coverageHttpPort") ||
+    !dispatchCoverageScript.includes("coverageLoopbackPort") ||
+    !dispatchCoverageScript.includes("allocateCoveragePorts") ||
+    !dispatchCoverageScript.includes("resetCoveragePorts") ||
+    !dispatchCoverageScript.includes("coverageHttpPortCandidates") ||
+    !dispatchCoverageScript.includes('"${STATIC}": "static"') ||
+    !dispatchCoverageScript.includes('replaced.replaceAll("${FILE}", fileNames[0])') ||
+    !evidenceFreshness.includes('from "./lib/evidence/generators.mjs"') ||
+    !evidenceFreshness.includes("freshnessBytes") ||
+    !evidenceFreshness.includes("stageは差分診断用") ||
+    !evidenceFreshness.includes("--dispatch-evidence") ||
+    !evidenceFreshness.includes("--compat-js-evidence") ||
+    !evidenceUpdate.includes('from "./lib/evidence/generators.mjs"') ||
+    !evidenceUpdate.includes("canonicalizeEvidenceDocument")) {
+  throw new Error("canonical evidence形・揮発値正規化・共有generator・freshness checkerの実装が不完全です");
 }
 if (!verifyAttestation.includes('evidence.fixture?.id !== "native-dispatch-commands"') || verifyAttestation.includes('evidence.fixture?.id !== "native-cut-commands"')) {
   throw new Error("dispatch attestation verifierが現行dispatch fixtureを検証していません");
@@ -233,11 +267,14 @@ if (!interpreterOracleScript.includes("sanity.error?.code !== \"ENOEXEC\"") ||
   throw new Error("Interpreter差分のENOEXEC cache再構築処理がありません");
 }
 const macSupportSteps = new Map([
+  ["Build macOS normal ReleaseSafe compiler", ["matrix.suite == 'mac-host-compat'", "run: zig build -Doptimize=ReleaseSafe"]],
   ["Build macOS AOT verification compiler", ["matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat'", "run: zig build"]],
   ["macOS AOT HTTP server oracle", ["matrix.suite == 'mac-core-standard-support'", "node tools/compare_http_server_aot_oracle.mjs --no-build"]],
   ["macOS dispatch evidence audit", ["matrix.suite == 'mac-host-compat'", "node tools/check_dispatch_trace.mjs --no-build"]],
   ["macOS dispatch trace security audit", ["matrix.suite == 'mac-host-compat'", "node tools/check_dispatch_trace_security.mjs --no-build"]],
   ["Upload macOS native dispatch evidence", ["matrix.suite == 'mac-host-compat' && always()", "name: lnako-dispatch-evidence-macos-15"]],
+  ["macOS compat-js evidence audit", ["matrix.suite == 'mac-host-compat'", "node tools/check_compat_js_evidence.mjs --no-build"]],
+  ["Canonical evidence freshness", ["matrix.suite == 'mac-host-compat'", "node tools/check_evidence_freshness.mjs"]],
   ["Build macOS ReleaseSafe compiler", ["matrix.suite == 'mac-core-standard-support'", "run: zig build -Doptimize=ReleaseSafe"]],
   ["macOS normal smoke test", ["matrix.suite == 'mac-core-standard-support'", "./zig-out/bin/lnako test tests/fixtures/run-tests.nako3"]],
 ]);
@@ -249,6 +286,27 @@ for (const [name, [condition, required]] of macSupportSteps) {
   if (!block || !block.includes(`if: ${condition}`) || !block.includes(required)) {
     throw new Error(`macOS分割jobの${name}が不完全です`);
   }
+}
+// canonical freshness は正本と同じ ReleaseSafe で測るため、mac-host-compat は
+// normal ReleaseSafe → dispatch 生成 → QuickJS ReleaseSafe → compat-js 生成 →
+// freshness（残りの生成＋比較）の順でなければならない。Debug 出力は比較しない。
+const macHostCompatOrder = [
+  "      - name: Build macOS normal ReleaseSafe compiler",
+  "      - name: macOS dispatch evidence audit",
+  "      - name: Test QuickJS build",
+  "      - name: Build QuickJS compiler",
+  "      - name: macOS compat-js evidence audit",
+  "      - name: Canonical evidence freshness",
+];
+const macHostCompatPositions = macHostCompatOrder.map((marker) => testJob.indexOf(marker));
+if (macHostCompatPositions.some((position) => position < 0) ||
+    !macHostCompatPositions.every((position, index) => index === 0 || macHostCompatPositions[index - 1] < position)) {
+  throw new Error("mac-host-compatのReleaseSafe証拠生成順が不正です（normal RS→dispatch→QuickJS RS→compat-js→freshness の順である必要があります）");
+}
+const freshnessBlock = testJob.slice(testJob.indexOf("      - name: Canonical evidence freshness"));
+if (!freshnessBlock.includes('--dispatch-evidence "${{ runner.temp }}/dispatch-evidence-macos-15.json"') ||
+    !freshnessBlock.includes('--compat-js-evidence "${{ runner.temp }}/compat-js-evidence.json"')) {
+  throw new Error("Canonical evidence freshnessが既存のdispatch/compat-js生成物を転用していません");
 }
 if ((testJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 1) {
   throw new Error("macOSのdispatch evidence artifact uploadが1件ありません");
@@ -265,8 +323,16 @@ if (!nativeAotJob.includes("strategy:\n      fail-fast: false") || !nativeAotJob
   throw new Error("分割AOT jobの実行条件が不正です");
 }
 const nativeAotBuildBlock = aotStep("Build AOT verification compiler");
-if (!nativeAotBuildBlock || !nativeAotBuildBlock.includes("if: matrix.task != 'support-smoke'") || !nativeAotBuildBlock.includes("run: zig build")) {
+if (!nativeAotBuildBlock || !nativeAotBuildBlock.includes("if: matrix.task != 'support-smoke' && !(matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04')") ||
+    !nativeAotBuildBlock.includes("run: zig build")) {
   throw new Error("AOT検証用compilerの先行buildがありません");
+}
+// canonical正本（231件）のfreshnessは正本生成と同じReleaseSafeで測るため、
+// それを供給するLinux coverage shardのbuildもReleaseSafeでなければならない。
+const linuxCoverageBuildBlock = aotStep("Build AOT verification compiler (ReleaseSafe)");
+if (!linuxCoverageBuildBlock || !linuxCoverageBuildBlock.includes("if: matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04'") ||
+    !linuxCoverageBuildBlock.includes("run: zig build -Doptimize=ReleaseSafe")) {
+  throw new Error("Linux dedicated dispatch coverage shardのReleaseSafe buildがありません");
 }
 const macCoverageBlock = aotStep("macOS dispatch coverage audit");
 if (!macCoverageBlock || !macCoverageBlock.includes("if: matrix.name == 'macOS arm64' && matrix.task == 'native'") ||
@@ -319,6 +385,21 @@ if (!dispatchEvidenceBlock.includes("node tools/check_dispatch_trace.mjs --no-bu
     !dispatchCoverageBlock.includes("--fixture-shard-count") || !dispatchCoverageBlock.includes("--output") ||
     !dispatchSecurityBlock.includes("node tools/check_dispatch_trace_security.mjs --no-build")) {
   throw new Error("dispatch evidence/coverageの分割監査、fixture shard、またはsecurity検査が不完全です");
+}
+// canonical正本（231件）のfreshnessはLinux dedicated shardのみが供給する。
+// Linuxのcoverage shardにだけ--include-nativeがあり、他OSには無いことを確認する。
+if (!dispatchCoverageBlock.includes("matrix.os != 'ubuntu-24.04'") || dispatchCoverageBlock.includes("--include-native")) {
+  throw new Error("Linux以外のdispatch coverage shardに--include-nativeが混入しています");
+}
+const linuxCoverageBlock = aotStep("Dispatch coverage audit (native fixtures)");
+if (!linuxCoverageBlock || !linuxCoverageBlock.includes("if: matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04'") ||
+    !linuxCoverageBlock.includes("node tools/check_dispatch_coverage.mjs --no-build --include-native") ||
+    !linuxCoverageBlock.includes("--fixture-shard-index") || !linuxCoverageBlock.includes("--fixture-shard-count") ||
+    !linuxCoverageBlock.includes("--output")) {
+  throw new Error("Linux dedicated dispatch coverage shardの--include-native監査が不完全です");
+}
+if (macCoverageBlock.includes("--include-native")) {
+  throw new Error("macOS native相乗りdispatch coverage shardは既定56件のままにしてください");
 }
 if (!httpAotScript.includes("if (!noBuild) buildLnako();") || !httpAotScript.includes("else await access(executable);")) {
   throw new Error("AOT HTTPサーバー比較のno-build実装がありません");
@@ -384,7 +465,12 @@ if (!coverageVerificationJob || !coverageVerificationJob.includes("if: needs.tes
     !coverageVerificationJob.includes("node tools/check_dispatch_coverage_shards.mjs") ||
     !coverageVerificationJob.includes("--shard-count 3") ||
     !dispatchCoverageShardsScript.includes("sampled-unattested-dispatch-audit-shard") ||
-    !dispatchCoverageShardsScript.includes("assertSetEqual(union, referenceKeys") ||
+    !dispatchCoverageShardsScript.includes("assertSubset(darwinUnion, linuxUnion") ||
+    !dispatchCoverageShardsScript.includes("mergeCoverageShards") ||
+    !dispatchCoverageShardsScript.includes("freshnessBytes") ||
+    !dispatchCoverageShardsScript.includes("diffLeafPaths") ||
+    !dispatchCoverageShardsScript.includes("fixtureCount: 231") ||
+    !dispatchCoverageShardsScript.includes("fixtureCount: 56") ||
     !dispatchCoverageScript.includes("const weightedFixtures = fixtures") ||
     !dispatchCoverageScript.includes(".sort((left, right) => right.weight - left.weight || left.index - right.index)") ||
     !dispatchCoverageScript.includes("--fixture-shard-index") || !dispatchCoverageScript.includes("--fixture-shard-count")) {
@@ -449,21 +535,74 @@ for (const required of [
 ]) {
   if (!attestJob.includes(`            ${required}\n`)) throw new Error(`attestation subject-pathに${required}がありません`);
 }
-if (!verifyAttestation.includes("lnako.dispatch-attestation.v2") || !verifyAttestation.includes("trackedSubjects") ||
-    !verifyAttestation.includes("trackedAttestationSubjects") || !verifyAttestation.includes("verifyWithGh(trackedPath, trackedSha256)")) {
-  throw new Error("dispatch attestation生成toolがcanonical証拠のtracked subjectsを検証・記録していません");
+if (!verifyAttestation.includes("dispatchAttestationSchemaV3") || !verifyAttestation.includes("trackedSubjects") ||
+    !verifyAttestation.includes("trackedAttestationSubjects") || !verifyAttestation.includes("verifyWithGh(trackedPath, trackedSha256)") ||
+    !verifyAttestation.includes("--source-manifest") || !verifyAttestation.includes("validateSourceManifestDeclarationBytes") ||
+    !verifyAttestation.includes("verifyWithGh(sourceManifestDeclaration, declarationSha256)") ||
+    !verifyAttestation.includes("sourceManifest: { name: sourceManifestDeclarationBasename, sha256: declarationSha256 }")) {
+  throw new Error("dispatch attestation生成toolがv3のtracked subjects／source manifest宣言を検証・記録していません");
+}
+// source manifest宣言は canonical byte列として共有libが生成し、CI attestation
+// jobが署名subjectへ含める。宣言生成stepはattest実行より前に必要。
+const sourceManifestLib = await readFile(resolve(root, "tools/lib/evidence/source_manifest.mjs"), "utf8");
+const emitDeclaration = await readFile(resolve(root, "tools/emit_source_manifest_declaration.mjs"), "utf8");
+if (!sourceManifestLib.includes('"lnako.source-manifest.v1"') || !sourceManifestLib.includes("sourceManifestDeclarationBytes") ||
+    !sourceManifestLib.includes("validateSourceManifestDeclarationBytes") ||
+    !emitDeclaration.includes("computeSourceManifestSha256Sync") || !emitDeclaration.includes("sourceManifestDeclarationBytes") ||
+    !attestJob.includes("node tools/emit_source_manifest_declaration.mjs") ||
+    !attestJob.includes('${{ runner.temp }}/lnako-source-manifest.json') ||
+    !attestJob.includes('--source-manifest "${{ runner.temp }}/lnako-source-manifest.json"') ||
+    attestJob.indexOf("Generate source manifest declaration") > attestJob.indexOf("Generate artifact attestation")) {
+  throw new Error("source manifest宣言の生成・署名subject・attestation検証が不完全です");
 }
 if (!syncEvidence.includes("signedEvidenceDigests") || !syncEvidence.includes("backingDigestByProof") ||
-    !syncEvidence.includes("loadCurrentAttestation") || !syncEvidence.includes("current attestation")) {
-  throw new Error("catalog証拠syncがcurrent attestationの自動適用または全証拠種別のverified昇格を実装していません");
+    !syncEvidence.includes("proofKeyForEvidenceDocument") || !syncEvidence.includes("deriveVerifiedCatalog") ||
+    syncScript.includes("loadCurrentAttestation") || !syncScript.includes("--attestation")) {
+  throw new Error("catalog証拠syncが導出verified viewまたは全証拠種別のverified昇格を実装していません");
 }
-if (!trackedAttestationChecker.includes("current.json") || !trackedAttestationChecker.includes("canonicalAttestationSchema") ||
-    !trackedAttestationChecker.includes("--current-pointer") || !trackedAttestationChecker.includes("current catalog verified count")) {
-  throw new Error("追跡attestation checkerがcurrent snapshot検証に対応していません");
+// 現行snapshot解決は走査型（manifest.sourceManifestSha256一致の最大workflowRun）。
+// pointerファイルは廃止済み。--require-currentはRelease preflightとdocs検証が
+// 使うが、CI workflow自体へは付けない（feature PRでは一致snapshot不在が正常）。
+if (trackedAttestationChecker.includes("current.json") || trackedAttestationChecker.includes("--current-pointer") ||
+    trackedAttestationChecker.includes("currentAttestationPointer") ||
+    !trackedAttestationChecker.includes("loadCurrentAttestation") || !trackedAttestationChecker.includes("loadAttestationSnapshot") ||
+    !trackedAttestationChecker.includes("--attestations-root") || !trackedAttestationChecker.includes("--snapshot") ||
+    !trackedAttestationChecker.includes("--require-current") || !trackedAttestationChecker.includes("canonicalAttestationSchemaV2") ||
+    !trackedAttestationChecker.includes("dispatchAttestationSchemaV3") || !trackedAttestationChecker.includes("validateSourceManifestDeclarationBytes") ||
+    !trackedAttestationChecker.includes("deriveVerifiedCatalog") ||
+    !trackedAttestationChecker.includes("computeBackingDigestByProof") || !trackedAttestationChecker.includes("canonical catalog verified count")) {
+  throw new Error("追跡attestation checkerが走査型current解決・宣言digest必須・導出view検証に対応していません");
 }
-if (!syncEvidence.includes('"lnako.canonical-attestation.v1"') || !syncEvidence.includes('"lnako.current-attestation.v1"') ||
-    !syncEvidence.includes('"lnako.dispatch-attestation.v2"')) {
-  throw new Error("canonical attestation schema識別子が共有libにありません");
+if (attestJob.includes("--require-current") || workflow.includes("attestations/current.json")) {
+  throw new Error("CI workflowに廃止されたcurrent pointerまたは--require-currentが混入しています");
+}
+if (!syncEvidence.includes('"lnako.canonical-attestation.v1"') || !syncEvidence.includes('"lnako.canonical-attestation.v2"') ||
+    !syncEvidence.includes('"lnako.dispatch-attestation.v3"') || !syncEvidence.includes("attestationsDirectory") ||
+    !syncEvidence.includes("loadCurrentAttestation") ||
+    !syncEvidence.includes("manifest.schema !== canonicalAttestationSchemaV2")) {
+  throw new Error("canonical attestation schema識別子または走査型snapshot解決（v2候補限定）が共有libにありません");
+}
+// docs表は導出viewを表示する契約: 一致snapshotがあればoffline検証済みの署名
+// digestから導出したstate、無ければcanonicalの常時unattested。正本自体は常時
+// unattested固定。tracked checkerのoffline完全検証と条件分岐まで固定する。
+const docsChecker = await readFile(resolve(root, "tools/check_docs_current.mjs"), "utf8");
+if (!docsChecker.includes("loadCurrentAttestation") || !docsChecker.includes("deriveVerifiedCatalog") ||
+    !docsChecker.includes("signedEvidenceDigests") || !docsChecker.includes("check_tracked_dispatch_attestation.mjs") ||
+    !docsChecker.includes('"--offline"') || !docsChecker.includes('"--require-current"') ||
+    !docsChecker.includes("currentAttestation !== null") || docsChecker.includes("current.json")) {
+  throw new Error("check_docs_currentが導出view表示（一致snapshot→offline検証後の導出state、無し→unattested）を検証していません");
+}
+const snapshotCreator = await readFile(resolve(root, "tools/create_attestation_snapshot.mjs"), "utf8");
+if (snapshotCreator.includes("current.json") || snapshotCreator.includes("currentAttestationPointer") ||
+    !snapshotCreator.includes("canonicalAttestationSchemaV2") || !snapshotCreator.includes("sourceManifest: \"source-manifest.json\"") ||
+    !snapshotCreator.includes("validateSourceManifestDeclarationBytes") ||
+    !snapshotCreator.includes('else if (name === sourceManifestDeclarationBasename) files.set("sourceManifest", path)') ||
+    !snapshotCreator.includes("deriveVerifiedCatalog") || !snapshotCreator.includes("derived.verified !== 527") ||
+    !snapshotCreator.includes("String(derived.verified)") ||
+    !snapshotCreator.includes('replaceInline(text, "<!-- attestation:verified -->"') ||
+    !snapshotCreator.includes('"--snapshot"') || !snapshotCreator.includes('"--require-current"') ||
+    !snapshotCreator.includes("options.outputDirectory === undefined")) {
+  throw new Error("snapshot作成toolがmanifest v2・宣言保存・pointer廃止・導出値書込（527以外拒否）・カスタム出力先の直接検証へ対応していません");
 }
 
 const smokeCommands = {

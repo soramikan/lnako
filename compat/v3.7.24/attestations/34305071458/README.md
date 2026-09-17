@@ -11,4 +11,4 @@
 
 `manifest.json` は対象commit・run・workflow identity・source manifest SHA-256・各成果物と3 OS dispatch・17件canonical証拠のSHA-256を固定します。`catalog-evidence-verified.json` はこのattestationで `verified: 527` に昇格したcatalogで、追跡中の `compat/v3.7.24/evidence.json` と同一です。
 
-このsnapshotがcanonical `verified` の根拠となるのは、`../current.json` がこのディレクトリを指し、かつ記録されたsource manifestが現行source manifestと一致する間だけです。manifestが変わるソース変更では新しいrunのsnapshotへ更新するまでverifiedは維持されません。
+このsnapshotがcanonical `verified` の根拠となるのは、走査型解決でこのディレクトリが現行snapshotとして選ばれる間だけです（`manifest.json` の `sourceManifestSha256` が現行source manifestと一致する最大workflowRun。pointerファイルは使いません）。manifestが変わるソース変更では新しいrunのsnapshotを追跡するまでverifiedは維持されません。

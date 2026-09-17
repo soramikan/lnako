@@ -6,7 +6,9 @@ import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { computeSourceManifestSha256Sync } from "./lib/evidence/manifest.mjs";
-import { canonicalAttestationSchema, currentAttestationPointerSchema, trackedAttestationSubjects } from "./lib/evidence/attested_files.mjs";
+import { canonicalAttestationSchemaV2, dispatchAttestationSchemaV3, signedEvidenceDigests, trackedAttestationSubjects } from "./lib/evidence/attested_files.mjs";
+import { computeBackingDigestByProof, deriveVerifiedCatalog } from "./lib/evidence/promotion.mjs";
+import { sourceManifestDeclarationBasename, validateSourceManifestDeclarationBytes } from "./lib/evidence/source_manifest.mjs";
 
 const root = resolve(fileURLToPath(import.meta.url), "..", "..");
 
@@ -42,7 +44,9 @@ function parseArguments() {
     console.log(`usage: node tools/create_attestation_snapshot.mjs --run-id <id> [options]
 
 成功したmain CI run (attest-dispatch-evidence job含む) からartifactを取得し、
-compat/v3.7.24/attestations/<run>/snapshot、attestations/current.json、evidence.jsonを更新します。
+compat/v3.7.24/attestations/<run>/ へsnapshotを追跡します。現行snapshotの解決は
+走査型（manifest.sourceManifestSha256が現行ソースと一致する最大workflowRun）であり、
+pointerファイルは作成しません。canonical evidence.jsonは常時unattestedのままです。
 
 options:
   --run-id <id>              必須。GitHub Actions workflow run ID。
@@ -160,6 +164,7 @@ const snapshotFiles = {
   nativeAotAttestation: "native-aot-attestation.json",
   catalogEvidence: "catalog-evidence-verified.json",
   nativeAotAggregate: "native-aot-aggregate-evidence.json",
+  sourceManifest: "source-manifest.json",
   bundle: "sigstore-bundle.json",
 };
 
@@ -185,18 +190,25 @@ function escapeRegExp(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-async function updateCompatibilityDocs(runId, commit, sourceManifestSha256) {
+async function updateCompatibilityDocs(runId, commit, sourceManifestSha256, dispatchAttestation) {
   const path = resolve(root, "docs", "COMPATIBILITY.md");
   let text = await readFile(path, "utf8");
 
-  text = replaceInline(text, "<!-- attestation:verified -->", "<!-- /attestation:verified -->", "527");
-  text = replaceInline(text, "<!-- attestation:trace -->", "<!-- /attestation:trace -->", "0");
-  text = replaceInline(text, "<!-- attestation:unverified -->", "<!-- /attestation:unverified -->", "0");
+  // docs表は導出viewを表示する。値はリテラル固定ではなく署名subject digestと
+  // canonical正本から導出し、verified 527以外の結果は拒否する。
+  const canonical = JSON.parse(await readFile(resolve(root, "compat/v3.7.24/evidence.json"), "utf8"));
+  const derived = deriveVerifiedCatalog(canonical, signedEvidenceDigests(dispatchAttestation), await computeBackingDigestByProof(root)).executionEvidenceStates;
+  if (derived.verified !== 527 || derived["trace-confirmed-unattested"] !== 0 || derived.unverified !== 0) {
+    throw new Error(`snapshotから導出したcatalog viewがverified 527ではありません: ${JSON.stringify(derived)}`);
+  }
+  text = replaceInline(text, "<!-- attestation:verified -->", "<!-- /attestation:verified -->", String(derived.verified));
+  text = replaceInline(text, "<!-- attestation:trace -->", "<!-- /attestation:trace -->", String(derived["trace-confirmed-unattested"]));
+  text = replaceInline(text, "<!-- attestation:unverified -->", "<!-- /attestation:unverified -->", String(derived.unverified));
 
-  const newDescription = `これは、全527 entryの実行証拠が追跡された現行attestation snapshot（\`attestations/current.json\` → \`attestations/${runId}/\`）で署名済みであることを示します。\`verified\` は、\`attestations/current.json\` が指す現行snapshotのsource manifest（\`${sourceManifestSha256}\`）と現行ソースが一致し、かつcanonical証拠ファイルのdigestが署名subjectに含まれる場合にのみ維持される状態です。sourceに変更を加えた場合、過去snapshotの \`verified: 527\` を流用せず、mainマージ後の新しいCI attestationを再取得して \`current.json\` を更新します。`;
+  const newDescription = `\`verified\` は正本のstateではなく、現行source manifestに一致するattestation snapshotから導出されるviewです。\`attestations/\` を走査し、\`manifest.json\` の \`sourceManifestSha256\`（\`${sourceManifestSha256}\`）が現行ソースと一致する最大workflowRunのsnapshot（\`attestations/${runId}/\`）が現行となり、canonical証拠ファイルとsource manifest宣言のdigestが署名subjectに含まれるため、導出viewでは全527 entryが \`verified\` です。sourceに変更を加えた場合、過去snapshotの導出結果を流用せず、mainマージ後の新しいCI attestation snapshotを追跡します。`;
   text = replaceRange(text, "<!-- attestation:description-start -->", "<!-- attestation:description-end -->", newDescription);
 
-  const newArtifacts = `### CIの一時artifact\n\n現行manifestに対応するCI run \`${runId}\`（commit \`${commit}\`、54/54 job成功）が生成したcatalog artifactは \`verified: 527\`、\`trace-confirmed-unattested: 0\`、\`unverified: 0\` です。このrunのattestationは3 OSのdispatch証拠・native AOT aggregate・canonical証拠17件を同一Sigstore bundleのsubjectとして署名しており、snapshotは \`attestations/${runId}/\` に追跡しています。前manifest用のsnapshot \`attestations/34305071458/\`（run \`34305071458\`）と \`attestations/34121804812/\`（run \`34121804812\`）、\`attestations/34113932297/\`（run \`34113932297\`）は履歴として残しています。\n\n一時artifactの値は、実行環境・署名・artifactの保存期間に依存します。追跡対象のcanonical \`evidence.json\` は、追跡された現行snapshotと現行source manifestの一致が確認できた場合にのみ \`verified\` を保持します。`;
+  const newArtifacts = `### CIの一時artifact\n\n現行manifestに対応するCI run \`${runId}\`（commit \`${commit}\`、54/54 job成功）のattestationは3 OSのdispatch証拠・native AOT aggregate・source manifest宣言・canonical証拠17件を同一Sigstore bundleのsubjectとして署名しており、snapshotは \`attestations/${runId}/\` に追跡しています。このsnapshotから導出されるcatalog viewは \`verified: 527\`、\`trace-confirmed-unattested: 0\`、\`unverified: 0\` です。前manifest用のsnapshot \`attestations/34402208204/\`（run \`34402208204\`）、\`attestations/34305071458/\`（run \`34305071458\`）、\`attestations/34121804812/\`（run \`34121804812\`）、\`attestations/34113932297/\`（run \`34113932297\`）は履歴として残しています。\n\n一時artifactの値は、実行環境・署名・artifactの保存期間に依存します。追跡対象のcanonical \`evidence.json\` は常時 \`trace-confirmed-unattested\` を保持し、\`verified\` は現行source manifestに一致するsnapshotの導出viewにのみ現れます。`;
   text = replaceRange(text, "<!-- attestation:artifacts-start -->", "<!-- attestation:artifacts-end -->", newArtifacts);
 
   await writeFile(path, text);
@@ -271,12 +283,14 @@ async function main() {
         if (name === "dispatch-attestation.json") files.set("dispatchAttestation", path);
         else if (name === "native-aot-attestation.json") files.set("nativeAotAttestation", path);
         else if (name === "catalog-evidence-verified.json") files.set("catalogEvidence", path);
+        else if (name === sourceManifestDeclarationBasename) files.set("sourceManifest", path);
       }
     }
     if (!files.has("bundle")) throw new Error("catalog artifactにsigstore bundleが見つかりません");
     if (!files.has("dispatchAttestation")) throw new Error("catalog artifactにdispatch-attestation.jsonがありません");
     if (!files.has("nativeAotAttestation")) throw new Error("catalog artifactにnative-aot-attestation.jsonがありません");
     if (!files.has("catalogEvidence")) throw new Error("catalog artifactにcatalog-evidence-verified.jsonがありません");
+    if (!files.has("sourceManifest")) throw new Error(`catalog artifactに${sourceManifestDeclarationBasename}がありません`);
 
     const aotFiles = listFilesSync(tempAot);
     const aotAggregateSource = aotFiles.find((path) => path.endsWith("native-aot-aggregate-evidence.json"));
@@ -288,6 +302,18 @@ async function main() {
       const target = resolve(outputDirectory, snapshotFiles[key]);
       await cp(source, target);
       artifactSha256[snapshotFiles[key]] = sha256FileSync(target);
+    }
+
+    // source manifest宣言は対象commit・現行manifest値とbyte一致し、そのdigestが
+    // dispatch attestation (v3) の記録と一致しなければならない。
+    const declarationBytes = await readFile(resolve(outputDirectory, snapshotFiles.sourceManifest));
+    validateSourceManifestDeclarationBytes(declarationBytes, targetCommit, sourceManifest.sha256);
+    const declarationSha256 = sha256(declarationBytes);
+    const dispatchAttestation = JSON.parse(await readFile(resolve(outputDirectory, snapshotFiles.dispatchAttestation), "utf8"));
+    if (dispatchAttestation.schema !== dispatchAttestationSchemaV3 ||
+        dispatchAttestation.sourceManifest?.name !== sourceManifestDeclarationBasename ||
+        dispatchAttestation.sourceManifest?.sha256 !== declarationSha256) {
+      throw new Error("dispatch attestationのsource manifest宣言記録がsnapshotの宣言と一致しません");
     }
 
     const dispatchEvidence = [];
@@ -316,13 +342,14 @@ async function main() {
     }
 
     const manifest = {
-      schema: canonicalAttestationSchema,
+      schema: canonicalAttestationSchemaV2,
       workflowRun: options.runId,
       workflowAttempt: Number(attempt),
       targetCommit,
       sourceRef: "refs/heads/main",
       workflow: options.workflow,
       sourceManifestSha256: sourceManifest.sha256,
+      sourceManifest: "source-manifest.json",
       attestation: "dispatch-attestation.json",
       bundle: "sigstore-bundle.json",
       nativeAotAttestation: "native-aot-attestation.json",
@@ -334,24 +361,20 @@ async function main() {
     };
     await writeFile(resolve(outputDirectory, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 
-    const currentPointer = {
-      schema: currentAttestationPointerSchema,
-      workflowRun: options.runId,
-      workflowAttempt: Number(attempt),
-      targetCommit,
-      sourceRef: "refs/heads/main",
-      workflow: options.workflow,
-      sourceManifestSha256: sourceManifest.sha256,
-      directory: options.runId,
-    };
-    await writeFile(resolve(root, "compat", "v3.7.24", "attestations", "current.json"), `${JSON.stringify(currentPointer, null, 2)}\n`);
-
     run("sync compat evidence", "node", [resolve(root, "tools", "sync_compat_evidence.mjs"), "--generate"]);
-    await updateCompatibilityDocs(options.runId, targetCommit, sourceManifest.sha256);
+    // docs表は tracked snapshot だけの導出view。--output-dir で既定の走査範囲外へ
+    // 書く場合は tracked ではないため表を更新しない。
+    if (options.outputDirectory === undefined) {
+      await updateCompatibilityDocs(options.runId, targetCommit, sourceManifest.sha256, dispatchAttestation);
+    }
 
     if (!options.noVerify) {
-      run("check tracked dispatch attestation", "node", [resolve(root, "tools", "check_tracked_dispatch_attestation.mjs"), "--offline"]);
-      run("check docs current", "node", [resolve(root, "tools", "check_docs_current.mjs")]);
+      // カスタム出力先は dirname === workflowRun の走査規則外になり得るため、
+      // 作成したディレクトリを直接検証する。
+      run("check tracked dispatch attestation", "node", [resolve(root, "tools", "check_tracked_dispatch_attestation.mjs"), "--offline", "--require-current", "--snapshot", outputDirectory]);
+      if (options.outputDirectory === undefined) {
+        run("check docs current", "node", [resolve(root, "tools", "check_docs_current.mjs")]);
+      }
       run("sync compat evidence --check", "node", [resolve(root, "tools", "sync_compat_evidence.mjs"), "--check"]);
     }
 
@@ -377,7 +400,7 @@ async function main() {
     "--base", options.base,
     "--head", options.branch,
     "--title", `chore: CI run ${options.runId} のattestation追跡`,
-    "--body", `CI \`${options.runId}\` が生成した Sigstore bundle、dispatch/native AOT attestation、canonical 証拠 snapshot を \`compat/v3.7.24/attestations/${options.runId}/\` へ追加し、\`current.json\` を更新して \`evidence.json\` を \`verified: 527\` に再生成しました。\n\n- workflow: ${options.workflow}\n- target commit: \`${targetCommit}\`\n- source manifest: \`${sourceManifest.sha256}\``,
+    "--body", `CI \`${options.runId}\` が生成した Sigstore bundle、dispatch/native AOT attestation、source manifest宣言、canonical 証拠 snapshot を \`compat/v3.7.24/attestations/${options.runId}/\` へ追加しました。現行snapshotは走査型解決（\`manifest.json\` の \`sourceManifestSha256\` が現行ソースと一致する最大workflowRun）で決まり、pointerファイルは使いません。canonical \`evidence.json\` は常時 unattested で、\`verified: 527\` はこのsnapshotから導出されるviewです。\n\n- workflow: ${options.workflow}\n- target commit: \`${targetCommit}\`\n- source manifest: \`${sourceManifest.sha256}\``,
   ]);
   console.log(prResult.stdout.trim());
 }

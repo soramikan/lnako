@@ -3,6 +3,81 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { coverageEnv as env } from "./coverage_env.mjs";
 import * as evidence_common from "./evidence_common.mjs";
 
+// shard 内の連番ではなく fixture identity から作業ファイル名を決める。
+// selectedFixtures.entries() の index を使うと shard 分割で stem が変わり、
+// compile manifest の function 名・公式生成JSのファイル名が正本と不一致になる。
+export function coverageFixtureStem(fixture) {
+  if (typeof fixture?.file !== "string" || typeof fixture?.id !== "string") {
+    throw new Error("coverage fixture identityが不正です");
+  }
+  const fileStem = fixture.file.replace(/\.json$/u, "");
+  if (fileStem.length === 0 || fileStem.includes("/") || fileStem.includes("\\") ||
+      fixture.id.includes("/") || fixture.id.includes("\\") || fixture.id.includes("..")) {
+    throw new Error(`coverage fixture stemが不正です: ${fixture.file}/${fixture.id}`);
+  }
+  return `${fileStem}-${fixture.id}`;
+}
+
+export const nativeDispatchCoverageExclusions = new Map([
+  ["node-native-cases.json/plugin-node-native-archive", "公式生成JavaScriptが外部7z実行ファイルを必要とするため、既存のNodeネイティブZIPスモークテストへ分離する"],
+  ["native-cases.json/native-uncaught-exception", "公式生成JavaScriptが意図的な未捕捉例外で終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-width-half-uncaught-error", "公式生成JavaScriptが意図的な未捕捉例外で終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-node-line-message-discontinued", "公式生成JavaScriptが意図的な廃止命令エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-node-line-image-discontinued", "公式生成JavaScriptが意図的な廃止命令エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-dictionary-byte-buffer-enumeration", "公式生成JavaScriptがTypedArrayへの辞書キー削除で意図的なTypeErrorを返すため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-node-exit-alias", "プロセス終了命令が意図的にtrace終端前に実行を終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-node-exit-japanese-alias", "プロセス終了命令が意図的にtrace終端前に実行を終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-node-exit-code", "プロセス終了命令が意図的にtrace終端前に実行を終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-invalid-pattern-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-unicode-invalid-escape-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-invalid-hex-escape-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-incomplete-quantifier-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-js-error-text", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-unicode-property-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-unicode-v-invalid-flags-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-unicode-control-escape-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-unicode-backreference-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-unicode-decimal-backreference-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-unicode-class-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-unicode-decimal-escape-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-unicode-zero-escape-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-unicode-named-backreference-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-invalid-capture-name-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-duplicate-capture-name-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-byte-buffer-method-calls", "公式CLI・生成JavaScriptが意図的なreceiver未束縛エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-table-numeric-sort-bigint-error", "公式CLI・生成JavaScriptが意図的なBigInt変換エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-table-numeric-sort-mixed-bigint-error", "公式CLI・生成JavaScriptが意図的なBigInt型混在エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-table-sparse-unique", "公式CLI・生成JavaScriptが意図的な疎配列holeエラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-table-regexp-sparse-hole", "公式CLI・生成JavaScriptが意図的な疎配列holeエラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-datetime-plugin-era-data", "plugin_datetimeの元号データはdispatchではなく静的定数証拠へ分離する"],
+]);
+export const excludedFixtures = new Map([
+  ["system-runtime-cases.json/system-runtime-execution-and-debug", "公式sourceとAOT O0の実行結果が一致せず、動的実行・非同期host境界は別の未実装証拠として扱う"],
+  ...nativeDispatchCoverageExclusions,
+]);
+export const generatedRouteUnavailableFixtures = new Map([
+  ["standard-plugin-cases.json/plugin-toml-all", "公式生成JavaScriptのstandalone plugin host登録が不足する"],
+  ["supplemental-plugin-cases.json/plugin-markup-all", "公式生成JavaScriptのstandalone plugin host登録が不足する"],
+  ["supplemental-plugin-cases.json/plugin-kansuji-all", "公式生成JavaScriptのstandalone plugin host登録が不足する"],
+  ["supplemental-plugin-cases.json/plugin-caniuse-all", "公式生成JavaScriptのstandalone plugin host登録が不足する"],
+  ["system-runtime-cases.json/system-runtime-execution-and-debug", "公式生成JavaScriptのstandalone system async host登録が不足する"],
+  ["native-cases.json/native-caniuse-browsers", "公式生成JavaScriptのstandalone caniuse plugin host登録が不足する"],
+  ["native-cases.json/native-caniuse-agents", "公式生成JavaScriptのstandalone caniuse plugin host登録が不足する"],
+  ["native-cases.json/native-kansuji-commands", "公式生成JavaScriptのstandalone kansuji plugin host登録が不足する"],
+  ["native-cases.json/native-kansuji-aot-generated-boundaries", "公式生成JavaScriptのstandalone kansuji plugin host登録が不足する"],
+  ["native-cases.json/native-csv-commands", "公式生成JavaScriptのstandalone CSV plugin host登録が不足する"],
+  ["native-cases.json/native-toml-commands", "公式生成JavaScriptのstandalone TOML plugin host登録が不足する"],
+  ["native-cases.json/native-toml-temporal-values", "公式生成JavaScriptのstandalone TOML plugin host登録が不足する"],
+  ["native-cases.json/native-toml-default-generated-route", "公式生成JavaScriptのstandalone TOML plugin host登録が不足する"],
+  ["native-cases.json/native-toml-imported-generated-route", "公式生成JavaScriptのstandalone TOML plugin host登録が不足する"],
+  ["native-cases.json/native-markup-commands", "公式生成JavaScriptのstandalone markup plugin host登録が不足する"],
+  ["native-cases.json/native-system-dynamic-execution", "公式生成JavaScriptのstandalone system async host登録が不足する"],
+  ["http-server-dispatch-cases.json/plugin-httpserver-dispatch", "公式生成JavaScriptのstandalone plugin_node登録が不足し、shutdown補助命令『終了』を解決できない"],
+  ["plugin-route-cases.json/plugin-system-path-route", "公式生成JavaScriptのstandalone system-only compiler runtime bundleがなく、system plugin単独routeを実行できない"],
+  ["plugin-route-cases.json/plugin-system-end-route", "公式生成JavaScriptのstandalone system-only compiler runtime bundleがなく、system plugin単独routeを実行できない"],
+]);
+
+
 export function parseShardInteger(argument, value) {
   if (value === undefined || !/^\d+$/.test(value)) throw new Error(`${argument}には0以上の整数を指定してください`);
   const parsed = Number(value);
@@ -210,16 +285,23 @@ export function fixedEnvironment() {
 
 
 export function replacePluginPlaceholders(source, fixtureDirectory, loopbackBase, fixture, extraReplacements = {}) {
-  const replacements = {
-    "${PLUGIN_CANIUSE}": relative(fixtureDirectory, resolve(env.oracleRoot, "src/plugin_caniuse.mjs")).replaceAll("\\", "/"),
-    "${PLUGIN_KANSUJI}": relative(fixtureDirectory, resolve(env.oracleRoot, "src/plugin_kansuji.mjs")).replaceAll("\\", "/"),
-    "${PLUGIN_MARKUP}": relative(fixtureDirectory, resolve(env.oracleRoot, "src/plugin_markup.mjs")).replaceAll("\\", "/"),
-    "${PLUGIN_CSV}": relative(fixtureDirectory, resolve(env.oracleRoot, "core/src/plugin_csv.mjs")).replaceAll("\\", "/"),
-    "${PLUGIN_TOML}": relative(fixtureDirectory, resolve(env.oracleRoot, "core/src/plugin_toml.mjs")).replaceAll("\\", "/"),
-    "${PLUGIN_DATETIME}": relative(fixtureDirectory, resolve(env.oracleRoot, "src/plugin_datetime.mjs")).replaceAll("\\", "/"),
-    "${PLUGIN}": relative(fixtureDirectory, resolve(env.oracleRoot, "src/plugin_httpserver.mjs")).replaceAll("\\", "/"),
+  const pluginFiles = {
+    "${PLUGIN_CANIUSE}": "src/plugin_caniuse.mjs",
+    "${PLUGIN_KANSUJI}": "src/plugin_kansuji.mjs",
+    "${PLUGIN_MARKUP}": "src/plugin_markup.mjs",
+    "${PLUGIN_CSV}": "core/src/plugin_csv.mjs",
+    "${PLUGIN_TOML}": "core/src/plugin_toml.mjs",
+    "${PLUGIN_DATETIME}": "src/plugin_datetime.mjs",
+    "${PLUGIN}": "src/plugin_httpserver.mjs",
   };
-  let replaced = Object.entries(replacements).reduce((result, [placeholder, path]) => result.replaceAll(placeholder, path), source);
+  let replaced = source;
+  for (const [placeholder, pluginFile] of Object.entries(pluginFiles)) {
+    if (!replaced.includes(placeholder)) continue;
+    replaced = replaced.replaceAll(
+      placeholder,
+      relative(fixtureDirectory, resolve(env.oracleRoot, pluginFile)).replaceAll("\\", "/"),
+    );
+  }
   for (const [placeholder, value] of Object.entries(extraReplacements)) {
     replaced = replaced.replaceAll(placeholder, value);
   }
@@ -230,7 +312,8 @@ export function replacePluginPlaceholders(source, fixtureDirectory, loopbackBase
   if (replaced.includes("${FILE}")) {
     const fileNames = Object.keys(fixture.files ?? {});
     if (fileNames.length !== 1) throw new Error(`${fixture.id}の\${FILE}にはfixture.filesを1件だけ指定してください`);
-    replaced = replaced.replaceAll("${FILE}", resolve(fixtureDirectory, fileNames[0]).replaceAll("\\", "/"));
+    // 絶対パスだと checkout 長で compile manifest の source span が揮れる。
+    replaced = replaced.replaceAll("${FILE}", fileNames[0]);
   }
   return replaced;
 }

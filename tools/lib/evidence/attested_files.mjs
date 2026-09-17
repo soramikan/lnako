@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { access, readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { computeSourceManifestSha256Sync } from "./manifest.mjs";
 
 // The CI attestation signs every canonical evidence file that can back a
 // catalog entry's selected proof. The list is fixed and complete: a catalog
@@ -27,13 +28,13 @@ export const trackedAttestationSubjects = [
   "compat/v3.7.24/static-string-constant-evidence.json",
 ];
 
-export const currentAttestationPointerPath = "compat/v3.7.24/attestations/current.json";
-export const currentAttestationPointerSchema = "lnako.current-attestation.v1";
+export const attestationsDirectory = "compat/v3.7.24/attestations";
 export const canonicalAttestationSchema = "lnako.canonical-attestation.v1";
+export const canonicalAttestationSchemaV2 = "lnako.canonical-attestation.v2";
 export const dispatchAttestationSchemaV2 = "lnako.dispatch-attestation.v2";
+export const dispatchAttestationSchemaV3 = "lnako.dispatch-attestation.v3";
 
 const hashPattern = /^[0-9a-f]{64}$/;
-const commitPattern = /^[0-9a-f]{40}$/i;
 
 export function sha256Bytes(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
@@ -51,12 +52,13 @@ export function signedEvidenceDigests(attestation) {
   for (const subject of attestation?.trackedSubjects ?? []) {
     if (typeof subject?.sha256 === "string") digests.add(subject.sha256);
   }
+  if (typeof attestation?.sourceManifest?.sha256 === "string") digests.add(attestation.sourceManifest.sha256);
   return digests;
 }
 
 export function assertTrackedSubjects(attestation, root) {
-  const isV2 = attestation.schema === dispatchAttestationSchemaV2;
-  if (!isV2) {
+  const hasTracked = attestation.schema === dispatchAttestationSchemaV2 || attestation.schema === dispatchAttestationSchemaV3;
+  if (!hasTracked) {
     if (attestation.trackedSubjects !== undefined) throw new Error("dispatch証拠のattestation schemaがtrackedSubjectsに対応していません");
     return;
   }
@@ -82,34 +84,76 @@ export function assertTrackedSubjects(attestation, root) {
   }
 }
 
-export async function loadCurrentAttestation(root) {
-  const pointerPath = resolve(root, currentAttestationPointerPath);
+// 現行snapshotの解決は走査型で行い、pointerファイルは使わない。候補は
+// canonical-attestation.v2 のmanifest（sourceManifest宣言を持つ形）に限る。
+// v1以前の履歴snapshotは宣言subjectを持たず現行になり得ないため、
+// sourceManifestSha256が偶然一致しても候補へ含めずunattestedとして扱う。
+// ここでは構造とmanifest一致だけを確認し、署名・内容の完全検証は
+// check_tracked_dispatch_attestation.mjs が担う。
+export async function loadCurrentAttestation(root, attestationsRoot = resolve(root, attestationsDirectory)) {
+  const sourceManifestSha256 = computeSourceManifestSha256Sync(root).sha256;
+  let entries;
   try {
-    await access(pointerPath);
-  } catch {
-    return null;
-  }
-  let pointer;
-  try {
-    pointer = JSON.parse(await readFile(pointerPath, "utf8"));
+    entries = await readdir(attestationsRoot, { withFileTypes: true });
   } catch (error) {
-    throw new Error(`current attestation pointerのJSONが不正です: ${error.message}`);
+    if (error?.code === "ENOENT") return null;
+    throw error;
   }
-  const keys = ["schema", "workflowRun", "workflowAttempt", "targetCommit", "sourceRef", "workflow", "sourceManifestSha256", "directory"];
-  if (pointer === null || typeof pointer !== "object" || Array.isArray(pointer) ||
-      JSON.stringify(Object.keys(pointer).sort()) !== JSON.stringify([...keys].sort()) ||
-      pointer.schema !== currentAttestationPointerSchema || !/^[0-9]+$/.test(pointer.workflowRun ?? "") ||
-      !Number.isSafeInteger(pointer.workflowAttempt) || pointer.workflowAttempt < 1 ||
-      !commitPattern.test(pointer.targetCommit ?? "") || pointer.sourceRef !== "refs/heads/main" ||
-      pointer.workflow !== "soramikan/lnako/.github/workflows/ci.yml" || !hashPattern.test(pointer.sourceManifestSha256 ?? "") ||
-      typeof pointer.directory !== "string" || !/^[0-9]+$/.test(pointer.directory)) {
-    throw new Error("current attestation pointerのschemaまたはidentityが不正です");
+  const candidates = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^[0-9]+$/.test(entry.name)) continue;
+    const directory = resolve(attestationsRoot, entry.name);
+    const manifestPath = resolve(directory, "manifest.json");
+    let manifest;
+    try {
+      manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      throw new Error(`attestation manifestのJSONが不正です: ${entry.name}`);
+    }
+    if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) continue;
+    if (manifest.schema !== canonicalAttestationSchemaV2) continue;
+    if (!/^[0-9]+$/.test(manifest.workflowRun ?? "") || manifest.workflowRun !== entry.name) continue;
+    if (!hashPattern.test(manifest.sourceManifestSha256 ?? "")) continue;
+    if (manifest.sourceManifestSha256 !== sourceManifestSha256) continue;
+    candidates.push({ directory, manifest, manifestPath });
   }
-  const directory = resolve(root, "compat/v3.7.24/attestations", pointer.directory);
+  if (candidates.length === 0) return null;
+  const runs = new Set(candidates.map((candidate) => candidate.manifest.workflowRun));
+  if (runs.size !== candidates.length) {
+    throw new Error("現行manifestに一致するattestation snapshotのworkflowRunが重複しています");
+  }
+  candidates.sort((left, right) => (BigInt(left.manifest.workflowRun) > BigInt(right.manifest.workflowRun) ? -1 : 1));
+  return snapshotHandle(candidates[0].directory, candidates[0].manifest, candidates[0].manifestPath);
+}
+
+// 指定ディレクトリを現行 snapshot として読む。走査規則（dirname === workflowRun）は
+// 適用しない。--output-dir で run ID 以外の basename へ書いた成果物を検証するため。
+export async function loadAttestationSnapshot(root, snapshotDirectory) {
+  const sourceManifestSha256 = computeSourceManifestSha256Sync(root).sha256;
+  const directory = resolve(snapshotDirectory);
+  const manifestPath = resolve(directory, "manifest.json");
+  let manifest;
+  try {
+    manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw new Error(`attestation manifestのJSONが不正です: ${directory}`);
+  }
+  if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) return null;
+  if (manifest.schema !== canonicalAttestationSchemaV2) return null;
+  if (!/^[0-9]+$/.test(manifest.workflowRun ?? "") || !hashPattern.test(manifest.sourceManifestSha256 ?? "")) return null;
+  if (manifest.sourceManifestSha256 !== sourceManifestSha256) return null;
+  return snapshotHandle(directory, manifest, manifestPath);
+}
+
+function snapshotHandle(directory, manifest, manifestPath) {
   return {
-    pointer,
+    directory,
+    manifest,
+    manifestPath,
     attestationPath: resolve(directory, "dispatch-attestation.json"),
     bundlePath: resolve(directory, "sigstore-bundle.json"),
-    manifestPath: resolve(directory, "manifest.json"),
+    sourceManifestPath: resolve(directory, "source-manifest.json"),
   };
 }

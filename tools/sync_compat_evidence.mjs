@@ -1,15 +1,14 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
 import { readDispatchFixture } from "./dispatch_fixture.mjs";
 import { evidenceEnv } from "./lib/evidence/env.mjs";
 import * as evidence_constants from "./lib/evidence/constants.mjs";
 import * as records_mod from "./lib/evidence/records.mjs";
 import * as validators from "./lib/evidence/validators.mjs";
 import * as evidence_common from "./lib/evidence_common.mjs";
-import { computeSourceManifestSha256Sync } from "./lib/evidence/manifest.mjs";
-import { loadCurrentAttestation, sha256Bytes, signedEvidenceDigests } from "./lib/evidence/attested_files.mjs";
+import { sha256Bytes, signedEvidenceDigests } from "./lib/evidence/attested_files.mjs";
+import { proofKeyForEvidenceDocument } from "./lib/evidence/promotion.mjs";
 
 
 const root = resolve(import.meta.dirname, "..");
@@ -103,45 +102,32 @@ const globalBindingEvidenceRecords = await Promise.all(globalBindingEvidenceInpu
   const bytes = await readFile(input.path);
   return { ...input, digest: sha256Bytes(bytes), evidence: JSON.parse(bytes.toString("utf8")) };
 }));
-// Canonical generation and --check automatically adopt the tracked current
-// attestation when one is recorded for the current source manifest. Explicit
-// --dispatch-evidence / --attestation / --historical-commit invocations keep
-// their explicit semantics and never auto-apply.
-let resolvedAttestationPath = attestationPath;
-let resolvedAttestationBundlePath = attestationBundlePath;
-let attestationOffline = false;
-if (attestationPath === null && historicalCommit === null && dispatchEvidenceInputPath === dispatchEvidencePath) {
-  const current = await loadCurrentAttestation(root);
-  if (current !== null) {
-    const currentManifest = computeSourceManifestSha256Sync(root).sha256;
-    if (current.pointer.sourceManifestSha256 === currentManifest) {
-      resolvedAttestationPath = current.attestationPath;
-      resolvedAttestationBundlePath = current.bundlePath;
-      attestationOffline = true;
-    }
-  }
-}
-const suppliedAttestation = resolvedAttestationPath === null ? null : await readJson(resolvedAttestationPath);
-const attestationBundleBytes = resolvedAttestationBundlePath === null ? null : await readFile(resolvedAttestationBundlePath);
+// Canonical generation and --check never apply a tracked attestation: the
+// canonical evidence layer stays unattested and verified state is a derived
+// view resolved by scanning attestations/. An explicit --attestation pair still
+// produces the derived verified view for the supplied snapshot.
+const suppliedAttestation = attestationPath === null ? null : await readJson(attestationPath);
+const attestationBundleBytes = attestationBundlePath === null ? null : await readFile(attestationBundlePath);
 const signedDigests = suppliedAttestation === null ? null : signedEvidenceDigests(suppliedAttestation);
 const backingDigestByProof = new Map();
 if (signedDigests !== null) {
-  backingDigestByProof.set(`${dispatchEvidenceBase.schema}|${dispatchEvidenceBase.fixture.id}`, dispatchEvidenceInputSha256);
-  backingDigestByProof.set(`${dispatchCoverageEvidence.schema}|dispatch-coverage`, sha256Bytes(dispatchCoverageEvidenceBytes));
-  backingDigestByProof.set(`${expectedExitEvidence.schema}|${expectedExitEvidence.fixture.id}`, sha256Bytes(expectedExitEvidenceBytes));
-  backingDigestByProof.set(`${compatJsEvidence.schema}|compat-js-evidence`, sha256Bytes(compatJsEvidenceBytes));
-  for (const input of staticConstantEvidenceRecords) backingDigestByProof.set(`${input.evidence.schema}|${input.evidence.fixture.id}`, input.digest);
-  for (const input of globalBindingEvidenceRecords) backingDigestByProof.set(`${input.evidence.schema}|${input.evidence.fixture.id}`, input.digest);
+  backingDigestByProof.set(proofKeyForEvidenceDocument(dispatchEvidenceBase), dispatchEvidenceInputSha256);
+  backingDigestByProof.set(proofKeyForEvidenceDocument(dispatchCoverageEvidence), sha256Bytes(dispatchCoverageEvidenceBytes));
+  backingDigestByProof.set(proofKeyForEvidenceDocument(expectedExitEvidence), sha256Bytes(expectedExitEvidenceBytes));
+  backingDigestByProof.set(proofKeyForEvidenceDocument(compatJsEvidence), sha256Bytes(compatJsEvidenceBytes));
+  for (const input of staticConstantEvidenceRecords) backingDigestByProof.set(proofKeyForEvidenceDocument(input.evidence), input.digest);
+  for (const input of globalBindingEvidenceRecords) backingDigestByProof.set(proofKeyForEvidenceDocument(input.evidence), input.digest);
 }
 const dispatchEvidence = suppliedAttestation === null
   ? dispatchEvidenceBase
   : { ...dispatchEvidenceBase, attestation: suppliedAttestation };
-validators.validateDispatchEvidence(dispatchEvidence, lock, standard, records, dispatchEvidenceInputSha256, dispatchEvidenceInputPath, resolvedAttestationBundlePath, attestationBundleBytes, historicalCommit, attestationOffline);
-validators.validateDispatchCoverageEvidence(dispatchCoverageEvidence, lock, standard, records, dispatchCoverageAuditScriptSha256);
-validators.validateExpectedExitEvidence(expectedExitEvidence, lock, standard, records);
-validators.validateCompatJsEvidence(compatJsEvidence, lock, standard, compatJsCases, records);
-for (const input of staticConstantEvidenceRecords) validators.validateStaticConstantEvidence(input.evidence, lock, standard, records, input);
-for (const input of globalBindingEvidenceRecords) validators.validateGlobalBindingEvidence(input.evidence, lock, standard, records, input);
+const dispatchEvidenceForm = dispatchEvidenceInputPath === dispatchEvidencePath ? "canonical" : "measured";
+validators.validateDispatchEvidence(dispatchEvidence, lock, standard, records, dispatchEvidenceInputSha256, dispatchEvidenceInputPath, attestationBundlePath, attestationBundleBytes, historicalCommit, false, dispatchEvidenceForm);
+validators.validateDispatchCoverageEvidence(dispatchCoverageEvidence, lock, standard, records, dispatchCoverageAuditScriptSha256, "canonical");
+validators.validateExpectedExitEvidence(expectedExitEvidence, lock, standard, records, "canonical");
+validators.validateCompatJsEvidence(compatJsEvidence, lock, standard, compatJsCases, records, "canonical");
+for (const input of staticConstantEvidenceRecords) validators.validateStaticConstantEvidence(input.evidence, lock, standard, records, input, "canonical");
+for (const input of globalBindingEvidenceRecords) validators.validateGlobalBindingEvidence(input.evidence, lock, standard, records, input, "canonical");
 const dispatchEvidenceByCatalogId = new Map();
 for (const site of dispatchEvidence.sites) {
   const sites = dispatchEvidenceByCatalogId.get(site.catalogId) ?? [];

@@ -53,8 +53,7 @@
   "provenance": {
     "environment": {
       "platform": "darwin",
-      "arch": "arm64",
-      "node": "v24.15.0"
+      "arch": "arm64"
     },
     "oracle": {
       "build": 4,
@@ -63,10 +62,6 @@
       "markerSha256": "e9444955298c3bb22164a219c0f342ee32301e901ec967d648cae9a25d8bf531",
       "treeHashAlgorithm": "sha256-json-records-v3",
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
-    },
-    "lnako": {
-      "binarySha256": "2ad5056c59a34bd88385cab14ea1cbca3f651edac7776fa3aa97c6413411cc52",
-      "sourceManifestSha256": "bdda14837237af4c400482101fb0d510ee8a2c526d1c1bcdcb929d91e567af7e"
     },
     "raw": {
       "traceSha256": {
@@ -296,7 +291,7 @@
               "siteId": "0x0000000000000003"
             }
           ],
-          "rawSha256": "e3393e6d08066628bc6284f258207a77d96927b232df1f8059fa176816b0260e"
+          "rawSha256": "2fbf0e86363854fb48db20cf92050101e981712d432f1d0162f1adb112eab807"
         }
       },
       "compileStatuses": {
@@ -499,7 +494,7 @@
               "siteId": "0x0000000100000004"
             }
           ],
-          "rawSha256": "ecad9f498a0727c0720c26cdda4afbda8d317477682bcc0cf80f5bf2af6e4f08"
+          "rawSha256": "d6ef28f662f4e46923280c46c4e2c993520a7ea7fde07cc3dc5bf5a7420ae4a7"
         }
       },
       "compileStatuses": {
@@ -695,7 +690,7 @@
               "siteId": "0x0000000000000003"
             }
           ],
-          "rawSha256": "5d5ffb046511708728e2c4fa6c190a04341404d09c5a0c9a1077df1d6330e8a6"
+          "rawSha256": "835738c1a58259f860d41b58e075e618ea13c80108e6475a57ee4b8ce47a2424"
         }
       },
       "compileStatuses": {
@@ -891,7 +886,7 @@
               "siteId": "0x0000000000000003"
             }
           ],
-          "rawSha256": "cc52d72a1cf9bac091dbc03bd4c18cad8409f118d1cc6526b70ae9df2a118f83"
+          "rawSha256": "d8bcbac91de2f94901d48ffcc7e78f44469d36a82f8cd84cc4b5ad230dd362c7"
         }
       },
       "compileStatuses": {
