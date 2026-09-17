@@ -56,6 +56,7 @@ if (!syncEvidence.includes('form !== "measured" && form !== "canonical"') ||
     !dispatchCoverageScript.includes("coverageHttpPort") ||
     !dispatchCoverageScript.includes("coverageLoopbackPort") ||
     !dispatchCoverageScript.includes("allocateCoveragePorts") ||
+    !dispatchCoverageScript.includes("resetCoveragePorts") ||
     !dispatchCoverageScript.includes("coverageHttpPortCandidates") ||
     !dispatchCoverageScript.includes('"${STATIC}": "static"') ||
     !dispatchCoverageScript.includes('replaced.replaceAll("${FILE}", fileNames[0])') ||

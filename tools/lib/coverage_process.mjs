@@ -14,6 +14,11 @@ export const coverageLoopbackPortCandidates = [18766, 18776, 18786, 18796, 18806
 export let coverageHttpPort = coverageHttpPortCandidates[0];
 export let coverageLoopbackPort = coverageLoopbackPortCandidates[0];
 
+export function resetCoveragePorts() {
+  coverageHttpPort = coverageHttpPortCandidates[0];
+  coverageLoopbackPort = coverageLoopbackPortCandidates[0];
+}
+
 export async function allocateCoveragePorts({ httpServer = false, loopback = false } = {}) {
   if (httpServer) coverageHttpPort = await allocateFiveDigitPort(coverageHttpPortCandidates, "HTTPサーバ");
   if (loopback) {

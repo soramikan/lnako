@@ -9,6 +9,7 @@ import {
   coverageHttpPortCandidates,
   coverageLoopbackPort,
   coverageLoopbackPortCandidates,
+  resetCoveragePorts,
 } from "./lib/coverage_process.mjs";
 
 const catalog = {
@@ -72,7 +73,10 @@ test("allocateCoveragePorts は使用中の先頭候補を避け同じ桁数の�
     assert.notEqual(ports.http, ports.loopback);
   } finally {
     await new Promise((resolveClose) => blocker.close(resolveClose));
+    resetCoveragePorts();
   }
+  assert.equal(coverageHttpPort, coverageHttpPortCandidates[0]);
+  assert.equal(coverageLoopbackPort, coverageLoopbackPortCandidates[0]);
 });
 
 test("replacePluginPlaceholders は ${FILE} を basename へ固定する", () => {
