@@ -1,12 +1,12 @@
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { execFile, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
 import { computeSourceManifestSha256 } from "./lib/evidence/manifest.mjs";
-import { manifestContentSha256, processOutputSha256 } from "./lib/evidence/provenance.mjs";
+import { manifestContentSha256, processOutputSha256, processOutputVolatileContext } from "./lib/evidence/provenance.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const compiler = resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
@@ -52,8 +52,8 @@ const staticConstantFixtureDefinitions = {
     manifestExtraGlobalReadNames: ["scalar-constants__A"],
     literalNames: new Set(),
     plugin: "plugin_datetime",
-    sourceReplacements: {
-      "${PLUGIN_DATETIME}": (temporary) => relative(temporary, resolve(oracleRoot, "src/plugin_datetime.mjs")).replaceAll("\\", "/"),
+    sourceCopies: {
+      "${PLUGIN_DATETIME}": "src/plugin_datetime.mjs",
     },
   },
   "native-node-archive-constant": {
@@ -86,8 +86,8 @@ const staticConstantFixtureDefinitions = {
     manifestGlobalReadNames: ["ブラウザ名変換表", "ブラウザ名変換表", "ブラウザ名変換表"],
     manifestExtraGlobalReadNames: ["scalar-constants__A", "scalar-constants__B"],
     plugin: "plugin_caniuse",
-    sourceReplacements: {
-      "${PLUGIN_CANIUSE}": (temporary) => relative(temporary, resolve(oracleRoot, "src/plugin_caniuse.mjs")).replaceAll("\\", "/"),
+    sourceCopies: {
+      "${PLUGIN_CANIUSE}": "src/plugin_caniuse.mjs",
     },
   },
   "native-node-http-initial-constants": {
@@ -178,7 +178,7 @@ try {
   const interpreterLiteralTrace = resolve(temporary, "interpreter-literal.jsonl");
   const aotLiteralTrace = resolve(temporary, "aot-literal.jsonl");
   const literalManifest = resolve(temporary, "literal-manifest.jsonl");
-  await writeFile(sourcePath, prepareFixtureSource(fixture.source, temporary), "utf8");
+  await writeFile(sourcePath, await prepareFixtureSource(fixture.source, temporary), "utf8");
 
   const baseEnvironment = {
     ...process.env,
@@ -298,7 +298,7 @@ try {
   if (new Set(entries.map((entry) => entry.catalogId)).size !== entries.length) throw new Error("静的定数のcatalog IDが重複しています");
 
   const git = await readGitState();
-  const volatileOutputContext = { volatilePaths: [temporary, root, oracleRoot] };
+  const volatileOutputContext = processOutputVolatileContext({ paths: [temporary, root, oracleRoot] });
   const evidence = {
     schema: "lnako.static-constant-evidence.v2",
     generator: "tools/check_static_constant_evidence.mjs",
@@ -411,8 +411,18 @@ function buildLnako() {
   if (result.status !== 0) throw new Error(`lnakoのビルドに失敗しました:\n${result.stderr}`);
 }
 
-function prepareFixtureSource(source, temporary) {
+// sourceCopies は oracle 配下の plugin ファイルを temporary へ link し、
+// placeholder を固定 basename へ置き換える。以前は temporary からの相対パスを
+// 埋め込んでいたが、temp dir の深さが環境依存のため manifest の source span が
+// 機種間で揺れた。plugin は別 package を import し得るため copy ではなく link に
+// する（Node が実体パスから依存を解決する）。
+async function prepareFixtureSource(source, temporary) {
   let prepared = source;
+  for (const [placeholder, oracleRelativePath] of Object.entries(fixtureDefinition.sourceCopies ?? {})) {
+    const name = basename(oracleRelativePath);
+    await symlink(resolve(oracleRoot, oracleRelativePath), resolve(temporary, name));
+    prepared = prepared.replaceAll(placeholder, `./${name}`);
+  }
   for (const [placeholder, replacement] of Object.entries(fixtureDefinition.sourceReplacements ?? {})) {
     prepared = prepared.replaceAll(placeholder, typeof replacement === "function" ? replacement(temporary) : replacement);
   }

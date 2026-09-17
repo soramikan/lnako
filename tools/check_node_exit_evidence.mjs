@@ -5,7 +5,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
 import { computeSourceManifestSha256 } from "./lib/evidence/manifest.mjs";
-import { manifestContentSha256, processOutputSha256 } from "./lib/evidence/provenance.mjs";
+import { manifestContentSha256, processOutputSha256, processOutputVolatileContext } from "./lib/evidence/provenance.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const lockPath = resolve(root, "compat/upstream.lock.json");
@@ -340,7 +340,7 @@ function normalizeProcess(result) {
 }
 
 function summarizeProcess(result) {
-  const volatileOutputContext = { volatilePaths: [temporary, root, oracleRoot] };
+  const volatileOutputContext = processOutputVolatileContext({ paths: [temporary, root, oracleRoot] });
   return {
     status: result.status,
     signal: result.signal,

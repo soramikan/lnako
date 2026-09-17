@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { isManifestInput } from "./lib/evidence/manifest.mjs";
 import { json } from "./lib/evidence/constants.mjs";
 import { canonicalizeEvidenceDocument } from "./lib/evidence/provenance.mjs";
+import { isCanonicalEnvironment } from "./lib/evidence/validators.mjs";
 import {
   evidenceBasenames,
   normalGeneratorSteps,
@@ -38,6 +39,12 @@ function validateArguments() {
 }
 
 async function main() {
+  // canonical 正本は生成環境 darwin/arm64 を宣言する。他環境では canonicalize 後も
+  // 当該環境の platform/arch が残るため、書き込み後の sync が必ず失敗する。
+  // 部分書き換え状態を残さないよう、生成より前に拒否する。
+  if (!isCanonicalEnvironment({ platform: process.platform, arch: process.arch })) {
+    throw new Error(`canonical証拠の生成はdarwin/arm64でのみ有効です（この環境: ${process.platform}/${process.arch}）。Linux dedicated shardが供給するcoverage merge結果の照合には tools/check_dispatch_coverage_shards.mjs を使ってください。`);
+  }
   const initialState = assertSourceTreeReady("開始時");
   const stage = await createStageDirectory();
   console.log(`互換性証拠のstage: ${stage}`);

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { access, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { readdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { computeSourceManifestSha256Sync } from "./lib/evidence/manifest.mjs";
@@ -362,11 +362,19 @@ async function main() {
     await writeFile(resolve(outputDirectory, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 
     run("sync compat evidence", "node", [resolve(root, "tools", "sync_compat_evidence.mjs"), "--generate"]);
-    await updateCompatibilityDocs(options.runId, targetCommit, sourceManifest.sha256, dispatchAttestation);
+    // docs表は tracked snapshot だけの導出view。--output-dir で既定の走査範囲外へ
+    // 書く場合は tracked ではないため表を更新しない。
+    if (options.outputDirectory === undefined) {
+      await updateCompatibilityDocs(options.runId, targetCommit, sourceManifest.sha256, dispatchAttestation);
+    }
 
     if (!options.noVerify) {
-      run("check tracked dispatch attestation", "node", [resolve(root, "tools", "check_tracked_dispatch_attestation.mjs"), "--offline"]);
-      run("check docs current", "node", [resolve(root, "tools", "check_docs_current.mjs")]);
+      // カスタム出力先も検証対象にするため、snapshotを含む親dirを走査rootとして
+      // 指定し、作成したsnapshotが現行manifestに一致・検証済みであることを要求する。
+      run("check tracked dispatch attestation", "node", [resolve(root, "tools", "check_tracked_dispatch_attestation.mjs"), "--offline", "--require-current", "--attestations-root", dirname(outputDirectory)]);
+      if (options.outputDirectory === undefined) {
+        run("check docs current", "node", [resolve(root, "tools", "check_docs_current.mjs")]);
+      }
       run("sync compat evidence --check", "node", [resolve(root, "tools", "sync_compat_evidence.mjs"), "--check"]);
     }
 

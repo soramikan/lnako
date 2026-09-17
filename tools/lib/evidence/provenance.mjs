@@ -1,3 +1,4 @@
+import { homedir, tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { normalizeLineEndings, sha256 } from "../evidence_common.mjs";
 import { json } from "./constants.mjs";
@@ -71,6 +72,9 @@ const volatileOutputPatterns = [
 // 依存の単独行）だけを畳む。部分文字列ではなく行一致に限定し、本文中に偶然
 // 現れる同文字列を巻き込まない。
 // 長いパスから先に置換し、root 配下の oracle のように包含関係があっても正しく畳む。
+// processOutputVolatileContext は全 generator 共通の実行環境依存値（ホーム・
+// テンポラリ dir・platform/arch の単独行）を追加した context を返す。呼び出し側は
+// paths に作業 directory・root・oracleRoot など run 固有のパスを渡す。
 export function normalizeVolatileProcessOutput(text, context = {}) {
   const paths = [...(context.volatilePaths ?? [])].sort((left, right) => right.length - left.length);
   let normalized = text;
@@ -97,4 +101,12 @@ export function normalizeVolatileProcessOutput(text, context = {}) {
 
 export function processOutputSha256(text, context = {}) {
   return sha256(normalizeVolatileProcessOutput(normalizeLineEndings(text), context));
+}
+
+export function processOutputVolatileContext({ paths = [], strings = [], lines = [] } = {}) {
+  return {
+    volatilePaths: [...paths, homedir(), tmpdir()],
+    volatileStrings: strings,
+    volatileLines: [process.platform, process.arch, ...lines],
+  };
 }

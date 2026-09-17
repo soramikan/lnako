@@ -3,10 +3,9 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
-import { homedir, tmpdir } from "node:os";
 import { coverageEnv as env } from "./coverage_env.mjs";
 import * as evidence_common from "./evidence_common.mjs";
-import { normalizeVolatileProcessOutput, processOutputSha256 } from "./evidence/provenance.mjs";
+import { normalizeVolatileProcessOutput, processOutputSha256, processOutputVolatileContext } from "./evidence/provenance.mjs";
 import * as coverage_process from "./coverage_process.mjs";
 import * as coverage_fixtures from "./coverage_fixtures.mjs";
 import * as coverage_sites from "./coverage_sites.mjs";
@@ -125,10 +124,7 @@ export async function runHttpServerFixture(fixture, index, temporary) {
   const generatedAvailable = officialGenerated.responses !== null;
   // platform固有値（OS名/archの単独行・ホーム/テンポラリ配下のパス）を畳み、
   // shard merge後のcanonical正本との比較を跨platformで成立させる。
-  const volatileOutputContext = {
-    volatilePaths: [temporary, env.root, env.oracleRoot, homedir(), tmpdir()],
-    volatileLines: [process.platform, process.arch],
-  };
+  const volatileOutputContext = processOutputVolatileContext({ paths: [temporary, env.root, env.oracleRoot] });
   return {
     report: {
       id: fixture.id,

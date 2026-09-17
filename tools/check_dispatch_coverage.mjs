@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import http from "node:http";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { homedir, tmpdir } from "node:os";
+import { processOutputVolatileContext } from "./lib/evidence/provenance.mjs";
 import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
 import { coverageEnv } from "./lib/coverage_env.mjs";
@@ -302,11 +302,10 @@ async function runFixture(fixture, index, temporary, loopbackBase) {
   // platform固有値のため畳む。shard merge後のcanonical正本とのfreshnessBytes
   // 比較を跨platformで成立させる意味保持の正規化（同一platform内での
   // 公式vs lnako一致は各routeのequivalence検査で別途保証済み）。
-  const volatileOutputContext = {
-    volatilePaths: [temporary, root, oracleRoot, homedir(), tmpdir()],
-    volatileStrings: loopbackBase === null ? [] : [loopbackBase],
-    volatileLines: [process.platform, process.arch],
-  };
+  const volatileOutputContext = processOutputVolatileContext({
+    paths: [temporary, root, oracleRoot],
+    strings: loopbackBase === null ? [] : [loopbackBase],
+  });
   return {
     report: {
       id: fixture.id,

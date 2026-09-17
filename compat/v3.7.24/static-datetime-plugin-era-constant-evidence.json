@@ -67,7 +67,7 @@
     "raw": {
       "interpreterTraceSha256": "4cffa2464ad6f612591a35bc5240822807fb0395919b1f99d5d926c09562717b",
       "aotTraceSha256": "97b20225abc19943eab7359100c62fc7bbd8ff6ededdbc02d01185263ca50fa5",
-      "globalManifestSha256": "687f8c09e1fbd078378c478ea09bdb8d7793b9fd0e9a0644133ff75d8328bf5c",
+      "globalManifestSha256": "43a748959dded9e9f71315b10953ad704051a17c3f4f6174f3e24e6f9a2aa25d",
       "literalInterpreterTraceSha256": "d1a240ca85bb6425f4ad3e15b23d56a4366b64e8631f58b1af10c96a38b65232",
       "literalAotTraceSha256": "b503b7eae644c3b3cc2fbe7504669a86aa68f5db0642b31b5d61cde895e2a1ea",
       "literalManifestSha256": "f3d9bcafc2675581f87bef1b4c39f9c17bc4e898ba3e915ccfa71b38cfed9b2e"

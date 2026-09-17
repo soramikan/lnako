@@ -6,10 +6,11 @@
 // coverage 正本は Linux dedicated shard の merge 結果が freshness を供給するため、
 // ここでは coverage を除く16件を扱う。
 
-import { mkdtemp, mkdir, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { freshnessBytes } from "./lib/evidence/provenance.mjs";
+import { canonicalizeEvidenceDocument, freshnessBytes, stripEnvironmentForComparison } from "./lib/evidence/provenance.mjs";
+import { json } from "./lib/evidence/constants.mjs";
 import {
   normalGeneratorSteps,
   compatJsGeneratorStep,
@@ -75,16 +76,37 @@ async function main() {
   await mkdir(cache, { recursive: true });
   const stage = await mkdtemp(join(cache, "evidence-freshness-"));
   const committedBytes = new Map();
+  const committedDocuments = new Map();
   const mismatches = new Set();
+  const mismatchDetails = new Map();
   let compared = 0;
+
+  // freshnessBytes 一致時は内容同一。不一致時のみ差分のある leaf path を診断に出す。
+  const diffLeafPaths = (left, right, path, out, limit = 8) => {
+    if (out.length >= limit) return;
+    if (typeof left !== typeof right || left === null || right === null || typeof left !== "object") {
+      if (left !== right) out.push(path || "<root>");
+      return;
+    }
+    for (const key of new Set([...Object.keys(left), ...Object.keys(right)])) diffLeafPaths(left[key], right[key], path === "" ? key : `${path}.${key}`, out, limit);
+  };
 
   const compare = async (basename, measuredPath) => {
     if (!committedBytes.has(basename)) {
-      committedBytes.set(basename, freshnessBytes(JSON.parse(await readFile(resolve(compat, basename), "utf8"))));
+      const committedDocument = JSON.parse(await readFile(resolve(compat, basename), "utf8"));
+      committedBytes.set(basename, freshnessBytes(committedDocument));
+      committedDocuments.set(basename, stripEnvironmentForComparison(canonicalizeEvidenceDocument(committedDocument)));
     }
-    const generated = freshnessBytes(JSON.parse(await readFile(measuredPath, "utf8")));
+    const generatedDocument = stripEnvironmentForComparison(canonicalizeEvidenceDocument(JSON.parse(await readFile(measuredPath, "utf8"))));
     compared += 1;
-    if (generated !== committedBytes.get(basename)) mismatches.add(basename);
+    if (json(generatedDocument) !== committedBytes.get(basename)) {
+      mismatches.add(basename);
+      if (!mismatchDetails.has(basename)) {
+        const leaves = [];
+        diffLeafPaths(committedDocuments.get(basename), generatedDocument, "", leaves);
+        mismatchDetails.set(basename, leaves);
+      }
+    }
   };
 
   // ジェネレータは既存出力を上書きしないため、round ごとに別ディレクトリへ生成する。
@@ -145,9 +167,14 @@ async function main() {
   }
 
   if (mismatches.size > 0) {
-    throw new Error(`canonical evidence が現行ソースの再生成結果と一致しません: ${[...mismatches].sort().join(", ")}\nnode tools/update_current_evidence.mjs で正本を再生成し、コードと証拠を同じコミットにまとめてください。`);
+    const detail = [...mismatches].sort().map((basename) => {
+      const leaves = mismatchDetails.get(basename) ?? [];
+      return `${basename}: ${leaves.length === 0 ? "（差分leaf特定不可）" : leaves.join(", ")}`;
+    }).join("\n");
+    throw new Error(`canonical evidence が現行ソースの再生成結果と一致しません:\n${detail}\nnode tools/update_current_evidence.mjs で正本を再生成し、コードと証拠を同じコミットにまとめてください（stage保持: ${stage}）。`);
   }
-  console.log(`canonical evidence freshness OK（${compared}回比較、stage保持: ${stage}）`);
+  await rm(stage, { recursive: true, force: true });
+  console.log(`canonical evidence freshness OK（${compared}回比較）`);
 }
 
 function parseRounds() {

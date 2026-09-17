@@ -584,8 +584,10 @@ if (snapshotCreator.includes("current.json") || snapshotCreator.includes("curren
     !snapshotCreator.includes('else if (name === sourceManifestDeclarationBasename) files.set("sourceManifest", path)') ||
     !snapshotCreator.includes("deriveVerifiedCatalog") || !snapshotCreator.includes("derived.verified !== 527") ||
     !snapshotCreator.includes("String(derived.verified)") ||
-    !snapshotCreator.includes('replaceInline(text, "<!-- attestation:verified -->"')) {
-  throw new Error("snapshot作成toolがmanifest v2・宣言保存・pointer廃止・導出値書込（527以外拒否）へ対応していません");
+    !snapshotCreator.includes('replaceInline(text, "<!-- attestation:verified -->"') ||
+    !snapshotCreator.includes('"--attestations-root"') || !snapshotCreator.includes('"--require-current"') ||
+    !snapshotCreator.includes("options.outputDirectory === undefined")) {
+  throw new Error("snapshot作成toolがmanifest v2・宣言保存・pointer廃止・導出値書込（527以外拒否）・カスタム出力先の検証へ対応していません");
 }
 
 const smokeCommands = {

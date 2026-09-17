@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
 import { readDispatchFixture } from "./dispatch_fixture.mjs";
 import { computeSourceManifestSha256 } from "./lib/evidence/manifest.mjs";
-import { manifestContentSha256, processOutputSha256 } from "./lib/evidence/provenance.mjs";
+import { manifestContentSha256, processOutputSha256, processOutputVolatileContext } from "./lib/evidence/provenance.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const throwStatementOpcode = 0xffff;
@@ -492,9 +492,7 @@ async function writeDispatchEvidence(output, fixture, interpreterEvents, aotEven
     }
   }
   const lock = JSON.parse(await readFile(resolve(root, "compat/upstream.lock.json"), "utf8"));
-  const volatileOutputContext = {
-    volatilePaths: [temporary, root, dirname(dirname(processes.oracle.cliPath))],
-  };
+  const volatileOutputContext = processOutputVolatileContext({ paths: [temporary, root, dirname(dirname(processes.oracle.cliPath))] });
   const routeResults = Object.fromEntries(Object.entries({
     officialSource: processes.officialSource,
     officialGenerated: processes.officialGenerated,

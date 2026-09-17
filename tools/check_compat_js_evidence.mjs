@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
 import { computeSourceManifestSha256 } from "./lib/evidence/manifest.mjs";
-import { processOutputSha256 } from "./lib/evidence/provenance.mjs";
+import { processOutputSha256, processOutputVolatileContext } from "./lib/evidence/provenance.mjs";
 import { buildStaticConstantEvidenceInputs } from "./lib/evidence/constants.mjs";
 import { evidenceEnv } from "./lib/evidence/env.mjs";
 import { readFixtureRecords } from "./lib/evidence/records.mjs";
@@ -377,7 +377,7 @@ function normalizeSuccess(result) {
 }
 
 function resultSummary(result) {
-  const volatileOutputContext = { volatilePaths: [temporary, root, oracleRoot] };
+  const volatileOutputContext = processOutputVolatileContext({ paths: [temporary, root, oracleRoot] });
   return { status: result.status, signal: result.signal, stdoutSha256: processOutputSha256(String(result.stdout ?? ""), volatileOutputContext), stderrSha256: processOutputSha256(String(result.stderr ?? ""), volatileOutputContext), failed: failed(result) };
 }
 
