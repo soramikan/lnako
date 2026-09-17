@@ -285,16 +285,23 @@ export function fixedEnvironment() {
 
 
 export function replacePluginPlaceholders(source, fixtureDirectory, loopbackBase, fixture, extraReplacements = {}) {
-  const replacements = {
-    "${PLUGIN_CANIUSE}": relative(fixtureDirectory, resolve(env.oracleRoot, "src/plugin_caniuse.mjs")).replaceAll("\\", "/"),
-    "${PLUGIN_KANSUJI}": relative(fixtureDirectory, resolve(env.oracleRoot, "src/plugin_kansuji.mjs")).replaceAll("\\", "/"),
-    "${PLUGIN_MARKUP}": relative(fixtureDirectory, resolve(env.oracleRoot, "src/plugin_markup.mjs")).replaceAll("\\", "/"),
-    "${PLUGIN_CSV}": relative(fixtureDirectory, resolve(env.oracleRoot, "core/src/plugin_csv.mjs")).replaceAll("\\", "/"),
-    "${PLUGIN_TOML}": relative(fixtureDirectory, resolve(env.oracleRoot, "core/src/plugin_toml.mjs")).replaceAll("\\", "/"),
-    "${PLUGIN_DATETIME}": relative(fixtureDirectory, resolve(env.oracleRoot, "src/plugin_datetime.mjs")).replaceAll("\\", "/"),
-    "${PLUGIN}": relative(fixtureDirectory, resolve(env.oracleRoot, "src/plugin_httpserver.mjs")).replaceAll("\\", "/"),
+  const pluginFiles = {
+    "${PLUGIN_CANIUSE}": "src/plugin_caniuse.mjs",
+    "${PLUGIN_KANSUJI}": "src/plugin_kansuji.mjs",
+    "${PLUGIN_MARKUP}": "src/plugin_markup.mjs",
+    "${PLUGIN_CSV}": "core/src/plugin_csv.mjs",
+    "${PLUGIN_TOML}": "core/src/plugin_toml.mjs",
+    "${PLUGIN_DATETIME}": "src/plugin_datetime.mjs",
+    "${PLUGIN}": "src/plugin_httpserver.mjs",
   };
-  let replaced = Object.entries(replacements).reduce((result, [placeholder, path]) => result.replaceAll(placeholder, path), source);
+  let replaced = source;
+  for (const [placeholder, pluginFile] of Object.entries(pluginFiles)) {
+    if (!replaced.includes(placeholder)) continue;
+    replaced = replaced.replaceAll(
+      placeholder,
+      relative(fixtureDirectory, resolve(env.oracleRoot, pluginFile)).replaceAll("\\", "/"),
+    );
+  }
   for (const [placeholder, value] of Object.entries(extraReplacements)) {
     replaced = replaced.replaceAll(placeholder, value);
   }
@@ -305,7 +312,8 @@ export function replacePluginPlaceholders(source, fixtureDirectory, loopbackBase
   if (replaced.includes("${FILE}")) {
     const fileNames = Object.keys(fixture.files ?? {});
     if (fileNames.length !== 1) throw new Error(`${fixture.id}の\${FILE}にはfixture.filesを1件だけ指定してください`);
-    replaced = replaced.replaceAll("${FILE}", resolve(fixtureDirectory, fileNames[0]).replaceAll("\\", "/"));
+    // 絶対パスだと checkout 長で compile manifest の source span が揮れる。
+    replaced = replaced.replaceAll("${FILE}", fileNames[0]);
   }
   return replaced;
 }

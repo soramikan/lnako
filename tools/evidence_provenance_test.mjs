@@ -78,6 +78,32 @@ test("normalizeVolatileProcessOutput は公式eval関数名のfuncIDを畳む", 
   assert.ok(normalizeVolatileProcessOutput(left).includes("__eval_nako3sync__"));
 });
 
+test("processOutputSha256 は coverage 生成JSの列差を畳み行番号と oracle .mjs 列は残す", () => {
+  const shortRoot = "/home/runner/work/lnako/lnako";
+  const longRoot = "/Users/sora/Repositories/soramikan/lnako.improve-compat";
+  const stem = "supplemental-plugin-cases-plugin-markup-all";
+  const temporary = (root) => `${root}/.tmp-lnako-dispatch-coverage-XXXXXX`;
+  const generated = (root, column, isolated) =>
+    `TypeError: (intermediate value).xxx is not a function\n` +
+    `    at file://${temporary(root)}/${stem}/${isolated ? "official-generated/" : ""}${stem}.mjs:118:${column}\n` +
+    `    at file://${root}/.cache/oracle/nadesiko3-3.7.24/core/src/nako_runner.mjs:59:23\n` +
+    `l1:${temporary(root)}/${stem}/${stem}.nako3\n`;
+  for (const isolated of [false, true]) {
+    const leftContext = { volatilePaths: [temporary(shortRoot), shortRoot] };
+    const rightContext = { volatilePaths: [temporary(longRoot), longRoot] };
+    const left = processOutputSha256(generated(shortRoot, 250, isolated), leftContext);
+    const right = processOutputSha256(generated(longRoot, 270, isolated), rightContext);
+    assert.equal(left, right);
+    const normalized = normalizeVolatileProcessOutput(generated(longRoot, 270, isolated), rightContext);
+    assert.ok(normalized.includes(`${stem}.mjs:118:<col>`), isolated ? "isolated" : "shared");
+    assert.ok(normalized.includes("nako_runner.mjs:59:23"));
+    assert.notEqual(processOutputSha256(generated(shortRoot, 250, isolated).replace(":118:", ":119:"), leftContext), left);
+  }
+  const nakoColumn = (column) => `error at case.nako3:2:${column}\n`;
+  assert.notEqual(processOutputSha256(nakoColumn(10)), processOutputSha256(nakoColumn(20)));
+  assert.ok(normalizeVolatileProcessOutput(nakoColumn(10)).includes("case.nako3:2:10"));
+});
+
 test("processOutputSha256 は eval 匿名位置の列差（ソース絶対パス長）を畳み行番号は残す", () => {
   const shortRoot = "/Users/runner/work/lnako/lnako";
   const longRoot = "/Users/sora/Repositories/soramikan/lnako.improve-compat";

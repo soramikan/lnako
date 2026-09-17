@@ -17,7 +17,9 @@ const dispatchSecurityScript = await readFile(resolve(root, "tools/check_dispatc
 const dispatchAuditsScript = await readFile(resolve(root, "tools/check_dispatch_audits_parallel.mjs"), "utf8");
 const aotSuiteScript = await readFile(resolve(root, "tools/check_aot_suite_parallel.mjs"), "utf8");
 const dispatchCoverageScript = await readFile(resolve(root, "tools/check_dispatch_coverage.mjs"), "utf8") +
-  (await readFile(resolve(root, "tools/lib/coverage_fixtures.mjs"), "utf8"));
+  (await readFile(resolve(root, "tools/lib/coverage_fixtures.mjs"), "utf8")) +
+  (await readFile(resolve(root, "tools/lib/coverage_http.mjs"), "utf8")) +
+  (await readFile(resolve(root, "tools/lib/coverage_process.mjs"), "utf8"));
 const dispatchCoverageShardsScript = await readFile(resolve(root, "tools/check_dispatch_coverage_shards.mjs"), "utf8");
 const nativeOracleScript = await readFile(resolve(root, "tools/compare_native_oracle.mjs"), "utf8");
 const nativeAotArtifactChecker = await readFile(resolve(root, "tools/check_native_aot_artifacts.mjs"), "utf8");
@@ -49,7 +51,12 @@ if (!syncEvidence.includes('form !== "measured" && form !== "canonical"') ||
     !evidenceProvenance.includes("processOutputSha256") ||
     !evidenceProvenance.includes("freshnessBytes") ||
     !evidenceProvenance.includes("$1:<col>") ||
+    !evidenceProvenance.includes("official-generated") ||
     !dispatchCoverageScript.includes("coverageFixtureStem") ||
+    !dispatchCoverageScript.includes("coverageHttpPort") ||
+    !dispatchCoverageScript.includes("coverageLoopbackPort") ||
+    !dispatchCoverageScript.includes('"${STATIC}": "static"') ||
+    !dispatchCoverageScript.includes('replaced.replaceAll("${FILE}", fileNames[0])') ||
     !evidenceFreshness.includes('from "./lib/evidence/generators.mjs"') ||
     !evidenceFreshness.includes("freshnessBytes") ||
     !evidenceFreshness.includes("--dispatch-evidence") ||

@@ -28,10 +28,11 @@ export async function runHttpServerFixture(fixture, index, temporary) {
     const staticDirectory = resolve(directory, "static");
     await mkdir(staticDirectory, { recursive: true });
     await writeFile(resolve(staticDirectory, "hello.txt"), "STATIC", "utf8");
-    const port = await reserveHttpServerPort();
+    const port = coverage_process.coverageHttpPort;
     const source = coverage_fixtures.replacePluginPlaceholders(fixture.source, directory, null, fixture, {
       "${PORT}": String(port),
-      "${STATIC}": staticDirectory.replaceAll("\\", "/"),
+      // 絶対パスだと checkout 長で compile manifest の source span が揮れる。
+      "${STATIC}": "static",
     });
     const sourcePath = resolve(directory, sourceName);
     await writeFile(sourcePath, source, "utf8");
@@ -179,15 +180,7 @@ export async function runHttpServerFixture(fixture, index, temporary) {
 
 
 export async function reserveHttpServerPort() {
-  return new Promise((resolvePort, reject) => {
-    const server = http.createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      const port = typeof address === "object" && address !== null ? address.port : null;
-      server.close((error) => error ? reject(error) : resolvePort(port));
-    });
-  });
+  return coverage_process.coverageHttpPort;
 }
 
 

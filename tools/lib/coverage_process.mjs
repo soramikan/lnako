@@ -5,10 +5,17 @@ import { coverageEnv as env } from "./coverage_env.mjs";
 import * as evidence_common from "./evidence_common.mjs";
 import { processOutputSha256 } from "./evidence/provenance.mjs";
 
+// HTTPサーバfixtureとloopbackモックは同一shardで同時に生きるため、
+// 桁数が同じ別portへ固定する。ephemeralだと4桁/5桁でcompile manifestの
+// source spanが揮れ、同一portだとEADDRINUSEになる。
+export const coverageHttpPort = 18765;
+export const coverageLoopbackPort = 18766;
+
 export async function startLoopbackServer() {
   const child = spawn(process.execPath, [resolve(env.root, "tools/oracle/http_loopback_server.mjs")], {
     cwd: env.root,
     stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, LNAKO_HTTP_LOOPBACK_PORT: String(coverageLoopbackPort) },
     windowsHide: true,
   });
   child.stderr.resume();

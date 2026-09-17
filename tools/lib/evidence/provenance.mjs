@@ -63,6 +63,9 @@ const volatileOutputPatterns = [
   // eval 生成 JS にソース絶対パスが埋め込まれるため、<anonymous> の列番号が
   // checkout パス長で変わる。行番号は発生位置の内容クレームとして残す。
   [/(<anonymous>:\d+):\d+/g, "$1:<col>"],
+  // coverage 生成JSは {stem}/[official-generated/]{stem}.mjs。ソース絶対パス埋め込みで
+  // 列が checkout 長で揮れる。oracle 本体の nako_runner.mjs:行:列 は安定なので畳まない。
+  [/(<lnako-volatile>[/\\]([^/\\\n]+)[/\\](?:official-generated[/\\])?\2\.(?:mjs|js):\d+):\d+/g, "$1:<col>"],
 ];
 
 // fixture/公式 runtime の出力には実行ごとに変わる値が混入し得る:

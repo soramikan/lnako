@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mergeCoverageShards } from "./lib/coverage_merge.mjs";
-import { coverageFixtureStem } from "./lib/coverage_fixtures.mjs";
+import { coverageFixtureStem, replacePluginPlaceholders } from "./lib/coverage_fixtures.mjs";
+import { coverageHttpPort, coverageLoopbackPort } from "./lib/coverage_process.mjs";
 
 const catalog = {
   commands: [
@@ -39,6 +40,26 @@ const shardDoc = (index, fixtures, { sites = [], unresolved = [], count = 2 } = 
   coverage: { unresolvedObservedSites: unresolved },
   fixtures,
   sites,
+});
+
+test("coverage HTTP/loopback port は桁数が同じ別番号へ固定する", () => {
+  assert.equal(String(coverageHttpPort).length, 5);
+  assert.equal(String(coverageLoopbackPort).length, 5);
+  assert.notEqual(coverageHttpPort, coverageLoopbackPort);
+});
+
+test("replacePluginPlaceholders は ${FILE} を basename へ固定する", () => {
+  const source = 'DISCORDファイル送信("${FILE}")';
+  const left = replacePluginPlaceholders(source, "/home/runner/work/lnako/lnako/.tmp-a/work", null, {
+    id: "plugin-node-http-discord-file",
+    files: { "discord.txt": "hello-file" },
+  });
+  const right = replacePluginPlaceholders(source, "/Users/sora/Repositories/soramikan/lnako.improve-compat/.tmp-b/work", null, {
+    id: "plugin-node-http-discord-file",
+    files: { "discord.txt": "hello-file" },
+  });
+  assert.equal(left, 'DISCORDファイル送信("discord.txt")');
+  assert.equal(left, right);
 });
 
 test("coverageFixtureStem は shard index に依存せず fixture identity から一意になる", () => {
