@@ -6,7 +6,8 @@ import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { computeSourceManifestSha256Sync } from "./lib/evidence/manifest.mjs";
-import { canonicalAttestationSchemaV2, dispatchAttestationSchemaV3, trackedAttestationSubjects } from "./lib/evidence/attested_files.mjs";
+import { canonicalAttestationSchemaV2, dispatchAttestationSchemaV3, signedEvidenceDigests, trackedAttestationSubjects } from "./lib/evidence/attested_files.mjs";
+import { computeBackingDigestByProof, deriveVerifiedCatalog } from "./lib/evidence/promotion.mjs";
 import { sourceManifestDeclarationBasename, validateSourceManifestDeclarationBytes } from "./lib/evidence/source_manifest.mjs";
 
 const root = resolve(fileURLToPath(import.meta.url), "..", "..");
@@ -189,16 +190,21 @@ function escapeRegExp(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-async function updateCompatibilityDocs(runId, commit, sourceManifestSha256) {
+async function updateCompatibilityDocs(runId, commit, sourceManifestSha256, dispatchAttestation) {
   const path = resolve(root, "docs", "COMPATIBILITY.md");
   let text = await readFile(path, "utf8");
 
-  // docs表は導出viewを表示する。このsnapshot追跡後は現行manifest一致の
-  // snapshotが存在するため、導出viewは verified:527 / trace:0 / unverified:0。
-  // canonical正本自体は常時unattestedのままである点に注意。
-  text = replaceInline(text, "<!-- attestation:verified -->", "<!-- /attestation:verified -->", "527");
-  text = replaceInline(text, "<!-- attestation:trace -->", "<!-- /attestation:trace -->", "0");
-  text = replaceInline(text, "<!-- attestation:unverified -->", "<!-- /attestation:unverified -->", "0");
+  // docs表は導出viewを表示する。追跡したsnapshotの署名subject digestとcanonical
+  // 正本から導出した値を書く（リテラル固定ではない）。有効なsnapshotでは
+  // verified:527 / trace:0 / unverified:0になるはずで、それ以外は拒否する。
+  const canonical = JSON.parse(await readFile(resolve(root, "compat/v3.7.24/evidence.json"), "utf8"));
+  const derived = deriveVerifiedCatalog(canonical, signedEvidenceDigests(dispatchAttestation), await computeBackingDigestByProof(root)).executionEvidenceStates;
+  if (derived.verified !== 527 || derived["trace-confirmed-unattested"] !== 0 || derived.unverified !== 0) {
+    throw new Error(`snapshotから導出したcatalog viewがverified 527ではありません: ${JSON.stringify(derived)}`);
+  }
+  text = replaceInline(text, "<!-- attestation:verified -->", "<!-- /attestation:verified -->", String(derived.verified));
+  text = replaceInline(text, "<!-- attestation:trace -->", "<!-- /attestation:trace -->", String(derived["trace-confirmed-unattested"]));
+  text = replaceInline(text, "<!-- attestation:unverified -->", "<!-- /attestation:unverified -->", String(derived.unverified));
 
   const newDescription = `\`verified\` は正本のstateではなく、現行source manifestに一致するattestation snapshotから導出されるviewです。\`attestations/\` を走査し、\`manifest.json\` の \`sourceManifestSha256\`（\`${sourceManifestSha256}\`）が現行ソースと一致する最大workflowRunのsnapshot（\`attestations/${runId}/\`）が現行となり、canonical証拠ファイルとsource manifest宣言のdigestが署名subjectに含まれるため、導出viewでは全527 entryが \`verified\` です。sourceに変更を加えた場合、過去snapshotの導出結果を流用せず、mainマージ後の新しいCI attestation snapshotを追跡します。`;
   text = replaceRange(text, "<!-- attestation:description-start -->", "<!-- attestation:description-end -->", newDescription);
@@ -357,7 +363,7 @@ async function main() {
     await writeFile(resolve(outputDirectory, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 
     run("sync compat evidence", "node", [resolve(root, "tools", "sync_compat_evidence.mjs"), "--generate"]);
-    await updateCompatibilityDocs(options.runId, targetCommit, sourceManifest.sha256);
+    await updateCompatibilityDocs(options.runId, targetCommit, sourceManifest.sha256, dispatchAttestation);
 
     if (!options.noVerify) {
       run("check tracked dispatch attestation", "node", [resolve(root, "tools", "check_tracked_dispatch_attestation.mjs"), "--offline"]);

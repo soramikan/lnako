@@ -310,8 +310,16 @@ if (!nativeAotJob.includes("strategy:\n      fail-fast: false") || !nativeAotJob
   throw new Error("分割AOT jobの実行条件が不正です");
 }
 const nativeAotBuildBlock = aotStep("Build AOT verification compiler");
-if (!nativeAotBuildBlock || !nativeAotBuildBlock.includes("if: matrix.task != 'support-smoke'") || !nativeAotBuildBlock.includes("run: zig build")) {
+if (!nativeAotBuildBlock || !nativeAotBuildBlock.includes("if: matrix.task != 'support-smoke' && !(matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04')") ||
+    !nativeAotBuildBlock.includes("run: zig build")) {
   throw new Error("AOT検証用compilerの先行buildがありません");
+}
+// canonical正本（231件）のfreshnessは正本生成と同じReleaseSafeで測るため、
+// それを供給するLinux coverage shardのbuildもReleaseSafeでなければならない。
+const linuxCoverageBuildBlock = aotStep("Build AOT verification compiler (ReleaseSafe)");
+if (!linuxCoverageBuildBlock || !linuxCoverageBuildBlock.includes("if: matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04'") ||
+    !linuxCoverageBuildBlock.includes("run: zig build -Doptimize=ReleaseSafe")) {
+  throw new Error("Linux dedicated dispatch coverage shardのReleaseSafe buildがありません");
 }
 const macCoverageBlock = aotStep("macOS dispatch coverage audit");
 if (!macCoverageBlock || !macCoverageBlock.includes("if: matrix.name == 'macOS arm64' && matrix.task == 'native'") ||
@@ -562,7 +570,8 @@ if (!syncEvidence.includes('"lnako.canonical-attestation.v1"') || !syncEvidence.
 // canonicalの常時unattested。正本evidence.json自体は常時unattested固定。
 const docsChecker = await readFile(resolve(root, "tools/check_docs_current.mjs"), "utf8");
 if (!docsChecker.includes("loadCurrentAttestation") || !docsChecker.includes("deriveVerifiedCatalog") ||
-    !docsChecker.includes("signedEvidenceDigests") || docsChecker.includes("current.json")) {
+    !docsChecker.includes("signedEvidenceDigests") || !docsChecker.includes("check_tracked_dispatch_attestation.mjs") ||
+    docsChecker.includes("current.json")) {
   throw new Error("check_docs_currentが導出view表示（一致snapshot→導出state、無し→unattested）を検証していません");
 }
 const snapshotCreator = await readFile(resolve(root, "tools/create_attestation_snapshot.mjs"), "utf8");
@@ -570,7 +579,8 @@ if (snapshotCreator.includes("current.json") || snapshotCreator.includes("curren
     !snapshotCreator.includes("canonicalAttestationSchemaV2") || !snapshotCreator.includes("sourceManifest: \"source-manifest.json\"") ||
     !snapshotCreator.includes("validateSourceManifestDeclarationBytes") ||
     !snapshotCreator.includes('else if (name === sourceManifestDeclarationBasename) files.set("sourceManifest", path)') ||
-    !snapshotCreator.includes('replaceInline(text, "<!-- attestation:verified -->", "<!-- /attestation:verified -->", "527")')) {
+    !snapshotCreator.includes("deriveVerifiedCatalog") || !snapshotCreator.includes("String(derived.verified)") ||
+    !snapshotCreator.includes('replaceInline(text, "<!-- attestation:verified -->"')) {
   throw new Error("snapshot作成toolがmanifest v2・宣言保存・pointer廃止へ対応していません");
 }
 

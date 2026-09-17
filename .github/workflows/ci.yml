@@ -750,8 +750,13 @@ jobs:
       - name: Build official oracle
         run: node tools/setup_oracle.mjs
       - name: Build AOT verification compiler
-        if: matrix.task != 'support-smoke'
+        if: matrix.task != 'support-smoke' && !(matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04')
         run: zig build
+      # canonical正本（231件）を供給するLinux coverage shardは、正本生成と
+      # freshnessと同じReleaseSafeでbuildする（Debugとの非一致を構造で排除）。
+      - name: Build AOT verification compiler (ReleaseSafe)
+        if: matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04'
+        run: zig build -Doptimize=ReleaseSafe
       - name: Differential native AOT verification (fixture/route shard)
         if: matrix.task == 'native'
         env:

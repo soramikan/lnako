@@ -36,6 +36,8 @@ LinuxとWindowsのnative AOTは、fixtureを3 shardに分け、各shardをO0、O
 
 support jobはnative AOTの代替ではありません。HTTP server、dispatch trace、dispatch coverage、smokeという別の証拠経路を担当します。後段jobはmatrix artifactと結果を集約し、欠落・重複・失敗を検査してからattestationを実行します。
 
+dispatch coverageのうち、canonical正本（231件）を供給するLinux dedicated shardは、正本生成とfreshnessと同じReleaseSafeでcompilerをbuildして実行します。他OSのcoverage shardと他taskの検証用buildはDebugのままです。
+
 attestation jobは、3 OSのdispatch証拠とnative AOT aggregateに加え、source manifest宣言 `lnako-source-manifest.json`（`lnako.source-manifest.v1`：対象commitとsource manifest SHA-256のcanonical宣言）と `compat/v3.7.24/` のcanonical証拠17件も同一Sigstore bundleのsubjectとして署名します。`dispatch-attestation.json` は `lnako.dispatch-attestation.v3` で、`subjects`（3 OS）・`trackedSubjects`（canonical証拠のpath＋SHA-256）・`sourceManifest`（宣言名＋SHA-256）を記録し、全証拠namespaceの `verified` 昇格を可能にします。canonical `evidence.json` は常時 `trace-confirmed-unattested` を保持し、`verified` は追跡snapshot `compat/v3.7.24/attestations/<run>/` から導出されるviewです。現行snapshotは走査型で解決します。`attestations/*/manifest.json` のうち `sourceManifestSha256` が現行ソースと一致する最大workflowRunを選び、pointerファイルは使いません。manifestが変わる変更直後のmain commitやfeature PRでは一致するsnapshotが無い状態が正常です。
 
 ## artifactとcache

@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { access, readdir, readFile } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { loadCurrentAttestation, signedEvidenceDigests } from "./lib/evidence/attested_files.mjs";
@@ -82,12 +83,17 @@ for (const [name, expected] of [["native", 523], ["compat-js", 4], ["blocked", 0
 for (const [name, expected] of [["verified", 0], ["trace-confirmed-unattested", 527], ["unverified", 0]]) {
   if (evidenceStates?.[name] !== expected) fail(`evidence.jsonの${name} stateが不一致です`);
 }
-// docsの表は導出viewを表示する。現行manifestに一致するsnapshotがあればその
-// 署名digestから導出したstate（一致時は通常 verified 527）、無ければcanonicalの
-// 常時unattested状態（verified 0）を使う。
+// docsの表は導出viewを表示する。現行manifestに一致するsnapshotがあれば、
+// tracked checkerのoffline検証（manifest v2・v3 attestation・宣言・bundle・
+// tracked digest・導出catalog一致）を通したうえで署名digestから導出したstateを、
+// 無ければcanonicalの常時unattested状態（verified 0）を使う。
 let displayStates = evidenceStates;
 const currentAttestation = await loadCurrentAttestation(root);
 if (currentAttestation !== null) {
+  const tracked = spawnSync(process.execPath, [
+    resolve(root, "tools/check_tracked_dispatch_attestation.mjs"), "--offline", "--require-current",
+  ], { cwd: root, encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
+  if (tracked.status !== 0) fail(`一致するattestation snapshotのoffline検証に失敗しました: ${tracked.stderr ?? tracked.stdout}`);
   const snapshotAttestation = JSON.parse(await readFile(currentAttestation.attestationPath, "utf8"));
   displayStates = deriveVerifiedCatalog(evidence, signedEvidenceDigests(snapshotAttestation), await computeBackingDigestByProof(root)).executionEvidenceStates;
 }

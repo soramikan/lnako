@@ -152,9 +152,7 @@ if (currentSummary === null) {
 }
 
 async function validateCurrentSnapshot() {
-  // 走査型解決: attestations/<run>/manifest.json のうち、記録された
-  // sourceManifestSha256 が現行ソースと一致するsnapshotを候補とし、
-  // workflowRun 最大を選択する。pointerファイルは使わない。
+  // 走査型解決は共有lib側（loadCurrentAttestation）に委譲する。
   const current = await loadCurrentAttestation(root, attestationsRoot);
   if (current === null) {
     if (requireCurrent) throw new Error("現行source manifestに一致するattestation snapshotがありません");
