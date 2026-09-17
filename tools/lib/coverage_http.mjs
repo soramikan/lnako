@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
+import { homedir, tmpdir } from "node:os";
 import { coverageEnv as env } from "./coverage_env.mjs";
 import * as evidence_common from "./evidence_common.mjs";
 import { normalizeVolatileProcessOutput, processOutputSha256 } from "./evidence/provenance.mjs";
@@ -122,7 +123,12 @@ export async function runHttpServerFixture(fixture, index, temporary) {
     .filter((name) => !observedCommandNames.has(name))
     .map((name) => ({ name, catalogIds: (env.catalogByName.get(name) ?? []).map((command) => command.id) }));
   const generatedAvailable = officialGenerated.responses !== null;
-  const volatileOutputContext = { volatilePaths: [temporary, env.root, env.oracleRoot] };
+  // platform固有値（OS名/archの単独行・ホーム/テンポラリ配下のパス）を畳み、
+  // shard merge後のcanonical正本との比較を跨platformで成立させる。
+  const volatileOutputContext = {
+    volatilePaths: [temporary, env.root, env.oracleRoot, homedir(), tmpdir()],
+    volatileLines: [process.platform, process.arch],
+  };
   return {
     report: {
       id: fixture.id,

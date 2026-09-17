@@ -78,6 +78,19 @@ test("normalizeVolatileProcessOutput は公式eval関数名のfuncIDを畳む", 
   assert.ok(normalizeVolatileProcessOutput(left).includes("__eval_nako3sync__"));
 });
 
+test("normalizeVolatileProcessOutput は行一致のplatform値のみ畳む", () => {
+  const darwin = normalizeVolatileProcessOutput("darwin\narm64\n共通linux勉強\n", { volatileLines: ["darwin", "arm64"] });
+  const linux = normalizeVolatileProcessOutput("linux\nx64\n共通linux勉強\n", { volatileLines: ["linux", "x64"] });
+  assert.equal(darwin, linux);
+  assert.ok(darwin.includes("共通linux勉強"));
+});
+
+test("processOutputSha256 は volatileLines で platform 差を畳み内容差を検出する", () => {
+  const context = { volatileLines: ["darwin", "linux", "arm64", "x64"] };
+  assert.equal(processOutputSha256("darwin\narm64\nok\n", context), processOutputSha256("linux\nx64\nok\n", context));
+  assert.notEqual(processOutputSha256("darwin\narm64\nok\n", context), processOutputSha256("linux\nx64\nng\n", context));
+});
+
 test("processOutputSha256 は意味ある出力差を検出する", () => {
   const context = { volatilePaths: ["/tmp/one"] };
   assert.notEqual(

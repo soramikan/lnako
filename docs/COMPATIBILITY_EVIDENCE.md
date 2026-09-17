@@ -46,7 +46,7 @@ CIやattestation検証が生成する **measured 形** は、現行環境・Node
 
 `dispatch-evidence.json` は `lnako.dispatch-evidence.v2` です。現行artifactはmacOS arm64で生成され、Interpreter trace 944 event、AOT trace 1,888 eventを持ち、公式source・公式生成JavaScript・`lnako run`・LLVM AOT O0の比較結果を記録しています。
 
-`dispatch-coverage-evidence.json` は `lnako.dispatch-coverage.v1` の sampled auditです。231 fixture、4,602 site、unambiguousなnative entry 426（unique name 424）を記録します。これは全527 entryの純LLVM AOT実行証明ではなく、同名命令の曖昧な推定も成功証拠として扱いません。canonical正本は `--include-native` の全件実行形で、CIではLinux dedicated shardが正本生成と同じReleaseSafe buildで全件を実行し、merge結果が正本と照合されます（macOS/Windowsのshardは既定の56件部分集合です）。
+`dispatch-coverage-evidence.json` は `lnako.dispatch-coverage.v1` の sampled auditです。231 fixture、4,602 site、unambiguousなnative entry 426（unique name 424）を記録します。これは全527 entryの純LLVM AOT実行証明ではなく、同名命令の曖昧な推定も成功証拠として扱いません。canonical正本は `--include-native` の全件実行形で、CIではLinux dedicated shardが正本生成と同じReleaseSafe buildで全件を実行し、merge結果が正本と照合されます（macOS/Windowsのshardは既定の56件部分集合です）。`OS取得`・`OSアーキテクチャ取得`の単独行やホーム・テンポラリ配下のパスなどplatform固有の出力値は、hash化前に固定トークンへ正規化するため、darwin/arm64生成の正本とLinux mergeを跨platformでbyte比較できます。同一platform内での公式処理系とlnakoの出力一致は、各shard内のroute equivalence検査が別途保証します。
 
 global binding、static literal、終了・例外、外部host、公式generated routeの差は、通常の命令siteとは別の証拠namespaceまたはfixture policyで扱います。理由を省略して成功件数だけを増やしません。
 

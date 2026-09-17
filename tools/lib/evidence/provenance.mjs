@@ -67,6 +67,9 @@ const volatileOutputPatterns = [
 //   - ephemeral port・PID・Node バージョン行
 // context.volatilePaths は絶対パス（file:// 形式と \ / 両方）、
 // context.volatileStrings は loopback base のような非パス文字列を指定する。
+// context.volatileLines は行全体が一致する値（OS取得の "darwin" など platform
+// 依存の単独行）だけを畳む。部分文字列ではなく行一致に限定し、本文中に偶然
+// 現れる同文字列を巻き込まない。
 // 長いパスから先に置換し、root 配下の oracle のように包含関係があっても正しく畳む。
 export function normalizeVolatileProcessOutput(text, context = {}) {
   const paths = [...(context.volatilePaths ?? [])].sort((left, right) => right.length - left.length);
@@ -81,6 +84,10 @@ export function normalizeVolatileProcessOutput(text, context = {}) {
   for (const literal of context.volatileStrings ?? []) {
     if (typeof literal !== "string" || literal.length === 0) continue;
     normalized = normalized.split(literal).join("<lnako-volatile>");
+  }
+  const volatileLines = new Set((context.volatileLines ?? []).filter((value) => typeof value === "string" && value.length > 0));
+  if (volatileLines.size > 0) {
+    normalized = normalized.split("\n").map((line) => volatileLines.has(line) ? "<lnako-volatile>" : line).join("\n");
   }
   for (const [pattern, replacement] of volatileOutputPatterns) {
     normalized = normalized.replace(pattern, replacement);

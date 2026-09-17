@@ -17,6 +17,8 @@ const defaultSelection = "plugin-system/system-runtime/standard-plugin/supplemen
 const fullSelection = "the default command-bearing selection plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, seven explicit plugin-route fixtures, and all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps";
 // canonical 正本（darwin/arm64・231件）の freshness は Linux dedicated shard が供給する。
 // macOS native 相乗り・Windows support は既定の56件のまま維持する。
+// platform固有の出力値（OS名/arch行・ホーム/テンポラリパス）は監査側で固定
+// トークンへ正規化されるため、merge結果と正本のbyte比較が跨platformで成立する。
 const platformExpectations = new Map([
   ["darwin-arm64", { selection: defaultSelection, fixtureCount: 56 }],
   ["linux-x64", { selection: fullSelection, fixtureCount: 231 }],

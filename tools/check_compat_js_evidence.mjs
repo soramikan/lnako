@@ -6,8 +6,10 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
 import { computeSourceManifestSha256 } from "./lib/evidence/manifest.mjs";
 import { processOutputSha256 } from "./lib/evidence/provenance.mjs";
+import { buildStaticConstantEvidenceInputs } from "./lib/evidence/constants.mjs";
+import { evidenceEnv } from "./lib/evidence/env.mjs";
 import { readFixtureRecords } from "./lib/evidence/records.mjs";
-import { validateCompatJsEvidence } from "./lib/evidence/validators.mjs";
+import { duplicateNameSet, validateCompatJsEvidence } from "./lib/evidence/validators.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const lockPath = resolve(root, "compat/upstream.lock.json");
@@ -46,6 +48,14 @@ const [lock, catalog, implemented, cases] = await Promise.all([
   readJson(casesPath),
 ]);
 validatePlan(lock, catalog, implemented, cases);
+// lib/evidence共有検証が参照する実行コンテキスト（sync_compat_evidence.mjsと同じ初期値）。
+Object.assign(evidenceEnv, {
+  root,
+  oracleDirectory: resolve(root, "tests/oracle"),
+  staticConstantFixtureIds: new Set(buildStaticConstantEvidenceInputs(root).map((input) => input.fixtureId)),
+  standard: catalog,
+  duplicateNames: duplicateNameSet(catalog.commands),
+});
 if (!noBuild) buildCompatLnako();
 await access(compiler);
 const oracle = await readOracleIdentity(oracleRoot, lock.nadesiko3);
