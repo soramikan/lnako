@@ -10,6 +10,10 @@ on:
       run-id:
         description: Successful main CI workflow run ID containing attest-dispatch-evidence
         required: true
+      create-pr:
+        description: Create a pull request with the updated attestation
+        default: true
+        type: boolean
 
 permissions: {}
 
@@ -19,6 +23,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      pull-requests: write
       actions: read
     env:
       GH_TOKEN: ${{ github.token }}
@@ -78,7 +83,7 @@ jobs:
         with:
           node-version: 24
 
-      - name: Create attestation snapshot and push to main
+      - name: Create attestation snapshot and PR
         run: |
           set -euo pipefail
           args=(
@@ -90,5 +95,8 @@ jobs:
           fi
           if [[ "${{ steps.metadata.outputs.head-sha }}" != "" ]]; then
             args+=("--commit" "${{ steps.metadata.outputs.head-sha }}")
+          fi
+          if [[ "${{ github.event.inputs.create-pr }}" == "false" ]]; then
+            args+=("--no-pr")
           fi
           node tools/create_attestation_snapshot.mjs "${args[@]}"

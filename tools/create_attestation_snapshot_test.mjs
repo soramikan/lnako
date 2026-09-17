@@ -7,6 +7,7 @@ import { test } from "node:test";
 import {
   parseArguments,
   publishGeneratedSnapshot,
+  snapshotBranchName,
   snapshotCommitMessage,
   snapshotExistsOnRef,
   snapshotManifestGitPath,
@@ -47,17 +48,14 @@ function writeSnapshot(cwd, runId) {
   }, null, 2)}\n`);
 }
 
-test("parseArguments はmain直接pushを既定にし廃止optionを拒否する", () => {
+test("parseArguments はPR作成を既定にし --no-pr / --no-push を受け付ける", () => {
   const options = parseArguments(["--run-id", "35236586118"]);
   assert.equal(options.runId, "35236586118");
   assert.equal(options.ref, "main");
   assert.equal(options.noPush, false);
+  assert.equal(options.noPr, false);
   assert.equal(options.noVerify, false);
-  assert.equal("branch" in options, false);
-  assert.equal("noPr" in options, false);
-  assert.throws(() => parseArguments(["--run-id", "1", "--no-pr"]), /廃止/);
-  assert.throws(() => parseArguments(["--run-id", "1", "--branch", "attestation/run-1"]), /廃止/);
-  assert.throws(() => parseArguments(["--run-id", "1", "--base", "main"]), /廃止/);
+  assert.equal(parseArguments(["--run-id", "1", "--no-pr"]).noPr, true);
   assert.equal(parseArguments(["--run-id", "1", "--no-push"]).noPush, true);
   assert.equal(parseArguments(["--run-id", "1", "--ref", "release"]).ref, "release");
 });
@@ -65,6 +63,7 @@ test("parseArguments はmain直接pushを既定にし廃止optionを拒否する
 test("snapshotCommitMessage と path は走査型snapshotの固定規則に従う", () => {
   assert.equal(snapshotCommitMessage("35236586118"), "CI run 35236586118 のattestation snapshotを追跡 (verified: 527)");
   assert.equal(snapshotManifestGitPath("35236586118"), "compat/v3.7.24/attestations/35236586118/manifest.json");
+  assert.equal(snapshotBranchName("35236586118"), "attestation/run-35236586118");
 });
 
 test("publishGeneratedSnapshot は既に追跡済みならpushせずskipする", () => {
@@ -78,7 +77,7 @@ test("publishGeneratedSnapshot は既に追跡済みならpushせずskipする",
     const action = publishGeneratedSnapshot(repos.work, {
       runId: "111",
       ref: "main",
-      sourceMatches: () => true,
+      createPr: false,
     });
     assert.equal(action, "skip-tracked");
     assert.equal(git(repos.origin, ["log", "-1", "--format=%s"]), snapshotCommitMessage("111"));
@@ -87,72 +86,20 @@ test("publishGeneratedSnapshot は既に追跡済みならpushせずskipする",
   }
 });
 
-test("publishGeneratedSnapshot はmainへfast-forward pushする", () => {
+test("publishGeneratedSnapshot は attestation/run-* ブランチへpushする", () => {
   const repos = makeRepositories();
   try {
     writeSnapshot(repos.work, "222");
     const action = publishGeneratedSnapshot(repos.work, {
       runId: "222",
       ref: "main",
-      sourceMatches: () => true,
+      createPr: false,
     });
-    assert.equal(action, "pushed");
-    assert.equal(snapshotExistsOnRef(repos.work, "origin/main", "222"), true);
-    assert.equal(git(repos.origin, ["log", "-1", "--format=%s"]), snapshotCommitMessage("222"));
-  } finally {
-    rmSync(repos.directory, { recursive: true, force: true });
-  }
-});
-
-test("publishGeneratedSnapshot はmainが進んでいてもrebaseしてpushする", () => {
-  const repos = makeRepositories();
-  try {
-    const extra = join(repos.directory, "extra");
-    git(repos.directory, ["clone", repos.origin, extra]);
-    git(extra, ["config", "user.name", "snapshot-test"]);
-    git(extra, ["config", "user.email", "snapshot-test@example.com"]);
-    writeFileSync(join(extra, "OTHER"), "ahead\n");
-    git(extra, ["add", "OTHER"]);
-    git(extra, ["commit", "-m", "ahead"]);
-    git(extra, ["push", "origin", "main"]);
-
-    writeSnapshot(repos.work, "444");
-    const action = publishGeneratedSnapshot(repos.work, {
-      runId: "444",
-      ref: "main",
-      sourceMatches: () => true,
-    });
-    assert.equal(action, "pushed");
-    assert.equal(snapshotExistsOnRef(repos.work, "origin/main", "444"), true);
-    const log = git(repos.origin, ["log", "--oneline", "-2"]);
-    assert.match(log, /CI run 444/);
-    assert.match(log, /ahead/);
-  } finally {
-    rmSync(repos.directory, { recursive: true, force: true });
-  }
-});
-
-test("publishGeneratedSnapshot はsource不一致ならrebase結果を捨てる", () => {
-  const repos = makeRepositories();
-  try {
-    const extra = join(repos.directory, "extra");
-    git(repos.directory, ["clone", repos.origin, extra]);
-    git(extra, ["config", "user.name", "snapshot-test"]);
-    git(extra, ["config", "user.email", "snapshot-test@example.com"]);
-    writeFileSync(join(extra, "OTHER"), "ahead\n");
-    git(extra, ["add", "OTHER"]);
-    git(extra, ["commit", "-m", "ahead"]);
-    git(extra, ["push", "origin", "main"]);
-
-    writeSnapshot(repos.work, "555");
-    const action = publishGeneratedSnapshot(repos.work, {
-      runId: "555",
-      ref: "main",
-      sourceMatches: () => false,
-    });
-    assert.equal(action, "skip-stale-source");
-    assert.equal(snapshotExistsOnRef(repos.work, "origin/main", "555"), false);
-    assert.equal(git(repos.origin, ["log", "-1", "--format=%s"]), "ahead");
+    assert.equal(action, "pushed-branch");
+    assert.equal(snapshotExistsOnRef(repos.work, "origin/main", "222"), false);
+    assert.equal(snapshotExistsOnRef(repos.work, "origin/attestation/run-222", "222"), true);
+    assert.equal(git(repos.origin, ["log", "-1", "--format=%s", "attestation/run-222"]), snapshotCommitMessage("222"));
+    assert.equal(git(repos.origin, ["log", "-1", "--format=%s", "main"]), "init");
   } finally {
     rmSync(repos.directory, { recursive: true, force: true });
   }
@@ -166,7 +113,7 @@ test("publishGeneratedSnapshot は --no-push でcommitしない", () => {
       runId: "333",
       ref: "main",
       noPush: true,
-      sourceMatches: () => true,
+      createPr: false,
     });
     assert.equal(action, "local-only");
     assert.equal(snapshotExistsOnRef(repos.work, "origin/main", "333"), false);

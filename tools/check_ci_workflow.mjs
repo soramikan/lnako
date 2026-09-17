@@ -603,21 +603,20 @@ if (snapshotCreator.includes("current.json") || snapshotCreator.includes("curren
     !snapshotCreator.includes("String(derived.verified)") ||
     !snapshotCreator.includes('replaceInline(text, "<!-- attestation:verified -->"') ||
     !snapshotCreator.includes('"--snapshot"') || !snapshotCreator.includes('"--require-current"') ||
-    !snapshotCreator.includes("options.outputDirectory === undefined") ||
+    !snapshotCreator.includes("options.outputDirectory == null") ||
     !snapshotCreator.includes("HEAD:refs/heads/") || !snapshotCreator.includes("--no-push") ||
     !snapshotCreator.includes("skip-tracked") || !snapshotCreator.includes("publishGeneratedSnapshot") ||
-    snapshotCreator.includes("gh pr create") || snapshotCreator.includes('["checkout", "-b"') ||
-    snapshotCreator.includes("attestation/run-")) {
-  throw new Error("snapshot作成toolがmanifest v2・宣言保存・pointer廃止・導出値書込（527以外拒否）・main直接push（PR/feature branch廃止）へ対応していません");
+    !snapshotCreator.includes("gh pr create") || !snapshotCreator.includes("attestation/run-") ||
+    !snapshotCreator.includes('["checkout", "-B"')) {
+  throw new Error("snapshot作成toolがmanifest v2・宣言保存・pointer廃止・導出値書込（527以外拒否）・attestation branchとPR作成へ対応していません");
 }
-if (updateAttestationWorkflow.includes("pull-requests:") || updateAttestationWorkflow.includes("create-pr") ||
-    updateAttestationWorkflow.includes("--branch") || updateAttestationWorkflow.includes("--no-pr") ||
-    updateAttestationWorkflow.includes("gh pr create") || updateAttestationWorkflow.includes("attestation/run-") ||
+if (!updateAttestationWorkflow.includes("pull-requests: write") || !updateAttestationWorkflow.includes("create-pr") ||
+    !updateAttestationWorkflow.includes("--no-pr") ||
     !updateAttestationWorkflow.includes("contents: write") ||
-    !updateAttestationWorkflow.includes('Create attestation snapshot and push to main') ||
-    !updateAttestationWorkflow.includes('node tools/create_attestation_snapshot.mjs') ||
+    !updateAttestationWorkflow.includes("Create attestation snapshot and PR") ||
+    !updateAttestationWorkflow.includes("node tools/create_attestation_snapshot.mjs") ||
     !updateAttestationWorkflow.includes('"--ref" "main"')) {
-  throw new Error("update-attestation workflowがmain直接push（PR作成権限なし）になっていません");
+  throw new Error("update-attestation workflowがattestation snapshot PR作成になっていません");
 }
 if (!workflow.includes("node --test tools/create_attestation_snapshot_test.mjs")) {
   throw new Error("CIがcreate_attestation_snapshotの単体テストを実行していません");
