@@ -4,7 +4,7 @@
 
 ## リリース状況と配布方針
 
-- 現在、`v0.1.0`（初回リリース）および `v0.1.1`（対話型標準入力・和文代入の改善）が正式公開されています。
+- 現在、`v0.2.0` が最新リリースです（過去のリリース: `v0.1.0`、`v0.1.1`）。
 - 配布アーカイブには、利用案内（`GETTING_STARTED.md`）、保証範囲（`COMPATIBILITY.md`）、未対応・後続課題一覧（`TODO.md`）、ライセンス、SPDX 2.3 SBOM、SHA-256チェックサムを必ず同梱します。
 - macOS環境では、[Homebrew tap](https://github.com/soramikan/homebrew-tap) による手軽なインストールを提供しています。
 - 配布物はmacOS arm64、Linux x86_64 GNU、Windows x86_64 MSVCの3正式環境を対象とします。
@@ -39,7 +39,7 @@ standard版やHomebrew環境では、`lnako toolchain install` を実行する�
 正式なリリースを行う際の手順は以下のとおりです。
 
 1. **バージョンの同期**：
-   - `build.zig.zon` の `.version` と `src/root.zig` の `pub const version` を更新対象バージョン（例: `0.1.1`）へ揃えます（`lnako --version` が一致すること）。
+   - `build.zig.zon` の `.version` と `src/root.zig` の `pub const version` を更新対象バージョン（例: `0.2.0`）へ揃えます（`lnako --version` が一致すること）。
 2. **互換性証拠の再生成**：
    - ソース変更に伴いsource manifestが更新されるため、`node tools/sync_compat_evidence.mjs` を実行して証拠を現行manifestに同期します。
 3. **CI全job成功の確認**：
@@ -47,7 +47,7 @@ standard版やHomebrew環境では、`lnako toolchain install` を実行する�
 4. **CI生成attestation snapshotの追跡**：
    - 成功したCI runのattestation artifactを `compat/v3.7.24/attestations/<run>/` へ追跡コミットします。走査型解決により、現行manifestに一致するsnapshotから `verified: 527` が導出されます。
 5. **署名済みタグの作成とpush**：
-   - 追跡snapshotを含む最終コミットに対し、GPG署名付きannotated tag（例: `git tag -s v0.1.1 -m "v0.1.1"`) を作成してpushします。
+   - 追跡snapshotを含む最終コミットに対し、GPG署名付きannotated tag（例: `git tag -s v0.2.0 -m "v0.2.0"`) を作成してpushします。
 6. **Release workflowの実行と公開**：
    - タグpushをトリガーに `.github/workflows/release.yml` が起動します。
    - preflightジョブが、タグ署名・バージョン一致・同一commitのCI 54 job全成功・canonical attestation完全検証を確認した上で、3 OSのstandard/full両バリアントおよびベンチマーク結果をビルド・検証し、GitHub Releaseとして公開します。
@@ -66,13 +66,13 @@ zig build -Doptimize=ReleaseSafe -Dcompat-js=true
 
 # standard版の作成
 node tools/create_distribution.mjs \
-  --version 0.1.1 \
+  --version 0.2.0 \
   --variant standard \
   --output /absolute/path/dist-standard
 
 # full版の作成（LLVMディレクトリを指定）
 node tools/create_distribution.mjs \
-  --version 0.1.1 \
+  --version 0.2.0 \
   --variant full \
   --llvm-dir "$LNAKO_LLVM_DIR" \
   --require-llvm \
@@ -80,9 +80,9 @@ node tools/create_distribution.mjs \
 
 # 配布アーカイブ構造とSBOMの検証
 node tools/check_distribution.mjs \
-  --archive /absolute/path/dist-standard/lnako-0.1.1-macos-arm64.tar.gz
+  --archive /absolute/path/dist-standard/lnako-0.2.0-macos-arm64.tar.gz
 node tools/check_distribution.mjs \
-  --archive /absolute/path/dist-full/lnako-0.1.1-macos-arm64-full.tar.gz
+  --archive /absolute/path/dist-full/lnako-0.2.0-macos-arm64-full.tar.gz
 ```
 
 ## macOS Developer ID署名とApple公証

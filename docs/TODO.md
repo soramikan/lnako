@@ -5,7 +5,7 @@
 
 `verified: 527` は、追跡されたfixture・dispatch・公式比較・3 OS attestationに基づく命令entryの実行証拠です。全ての入力値、Node/ECMAScript APIの全境界、実ネットワーク・外部アプリ・任意の外部toolまで完全同値であることを意味しません。未検証境界は本書と [互換性の概要](COMPATIBILITY.md) に明示します。
 
-## リリース済みの状態（v0.1.0 / v0.1.1）
+## リリース済みの状態（v0.1.0 / v0.1.1 / v0.2.0）
 
 - **v0.1.0（初回正式リリース）**：
   - 標準cnako 527 entry（native 523、compat-js 4、blocked 0）の実装と、macOS arm64・Linux x86_64・Windows x86_64の3 OSにおけるCI 54/54全job成功・attestation検証を達成。
@@ -13,7 +13,12 @@
 - **v0.1.1（入力改善・和文代入拡充）**：
   - 対話型（TTY）における「尋ねる」の一行読み込み・CRLF対応・複数行入力の安定化（[#24](https://github.com/soramikan/lnako/pull/24)）。
   - 連文結果の和文代入、「Aを1に定める」構文、配列・プロパティへの代入の拡充。
-  - 最新CI run `34402208204` によるattestation snapshotの追跡（[#26](https://github.com/soramikan/lnako/pull/26)）。
+- **v0.2.0（パッケージシステム基盤・低レイヤーAPI拡充・証拠管理刷新）**：
+  - なでしこ3パッケージシステム仕様案の策定およびZig製PubGrub依存解決器・マニフェスト解析・適合性検証の初期実装（[#66](https://github.com/soramikan/lnako/pull/66), [#67](https://github.com/soramikan/lnako/pull/67), [#69](https://github.com/soramikan/lnako/pull/69), [#79](https://github.com/soramikan/lnako/pull/79)）。
+  - 低レイヤーAPIのG0 Foundation、raw標準入出力、ストリームI/O、逐次ハッシュAPI、低層ファイルシステムAPI（stat/lstat/link/rename/unlink）の追加（[#68](https://github.com/soramikan/lnako/pull/68), [#75](https://github.com/soramikan/lnako/pull/75), [#76](https://github.com/soramikan/lnako/pull/76), [#77](https://github.com/soramikan/lnako/pull/77)）。
+  - DNCL完全互換と直接コンパイル対応、構造例外責務分割（[#71](https://github.com/soramikan/lnako/pull/71)）。
+  - 互換性証拠のcanonical形分離と走査型snapshot解決への移行（[#80](https://github.com/soramikan/lnako/pull/80)）。
+  - ドキュメント類の利用者向け全面刷新。
 
 ## 明示的に非対応とする境界（意図的制限・後続課題）
 
