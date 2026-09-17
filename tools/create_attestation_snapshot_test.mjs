@@ -24,7 +24,8 @@ function makeRepositories() {
   const directory = mkdtempSync(join(tmpdir(), "lnako-attestation-push-"));
   const origin = join(directory, "origin.git");
   const work = join(directory, "work");
-  git(directory, ["init", "--bare", origin]);
+  git(directory, ["init", "--bare", "--initial-branch=main", origin]);
+  git(origin, ["symbolic-ref", "HEAD", "refs/heads/main"]);
   git(directory, ["clone", origin, work]);
   git(work, ["checkout", "-B", "main"]);
   git(work, ["config", "user.name", "snapshot-test"]);
