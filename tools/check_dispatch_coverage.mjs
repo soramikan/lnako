@@ -102,7 +102,12 @@ Object.assign(coverageEnv, {
 });
 let loopbackServer = null;
 try {
-  if (selectedFixtures.some((fixture) => fixture.file === "node-http-cases.json")) {
+  const needsLoopback = selectedFixtures.some((fixture) => fixture.file === "node-http-cases.json");
+  const needsHttpServer = selectedFixtures.some((fixture) => fixture.httpServer === true);
+  if (needsLoopback || needsHttpServer) {
+    await coverage_process.allocateCoveragePorts({ loopback: needsLoopback, httpServer: needsHttpServer });
+  }
+  if (needsLoopback) {
     loopbackServer = await coverage_process.startLoopbackServer();
   }
   const fixtureReports = [];

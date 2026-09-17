@@ -156,7 +156,7 @@
       "treeHashAlgorithm": "sha256-json-records-v3",
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
-    "auditScriptSha256": "6948de4def735119a0546b2d611793a73097aaf3c5480ac21342a610b94d734b"
+    "auditScriptSha256": "f5fb0715902bbd94ad30d14680c76132fd4ff967b0c39c0b7675356b7f167097"
   },
   "coverage": {
     "unambiguousObservedNativeEntries": 426,

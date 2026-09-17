@@ -1,8 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mergeCoverageShards } from "./lib/coverage_merge.mjs";
+import http from "node:http";
 import { coverageFixtureStem, replacePluginPlaceholders } from "./lib/coverage_fixtures.mjs";
-import { coverageHttpPort, coverageLoopbackPort } from "./lib/coverage_process.mjs";
+import {
+  allocateCoveragePorts,
+  coverageHttpPort,
+  coverageHttpPortCandidates,
+  coverageLoopbackPort,
+  coverageLoopbackPortCandidates,
+} from "./lib/coverage_process.mjs";
 
 const catalog = {
   commands: [
@@ -42,10 +49,30 @@ const shardDoc = (index, fixtures, { sites = [], unresolved = [], count = 2 } = 
   sites,
 });
 
-test("coverage HTTP/loopback port は桁数が同じ別番号へ固定する", () => {
+test("coverage HTTP/loopback port 候補は全て5桁で互いに重複しない", () => {
+  const ports = [...coverageHttpPortCandidates, ...coverageLoopbackPortCandidates];
+  assert.equal(ports.every((port) => String(port).length === 5), true);
+  assert.equal(new Set(ports).size, ports.length);
   assert.equal(String(coverageHttpPort).length, 5);
   assert.equal(String(coverageLoopbackPort).length, 5);
   assert.notEqual(coverageHttpPort, coverageLoopbackPort);
+});
+
+test("allocateCoveragePorts は使用中の先頭候補を避け同じ桁数の空きportを選ぶ", async () => {
+  const blocker = http.createServer();
+  await new Promise((resolveListen, reject) => {
+    blocker.once("error", reject);
+    blocker.listen({ port: coverageHttpPortCandidates[0], host: "127.0.0.1", exclusive: true }, resolveListen);
+  });
+  try {
+    const ports = await allocateCoveragePorts({ httpServer: true, loopback: true });
+    assert.equal(String(ports.http).length, 5);
+    assert.notEqual(ports.http, coverageHttpPortCandidates[0]);
+    assert.equal(String(ports.loopback).length, 5);
+    assert.notEqual(ports.http, ports.loopback);
+  } finally {
+    await new Promise((resolveClose) => blocker.close(resolveClose));
+  }
 });
 
 test("replacePluginPlaceholders は ${FILE} を basename へ固定する", () => {

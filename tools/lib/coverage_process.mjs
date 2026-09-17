@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
+import http from "node:http";
 import { resolve } from "node:path";
 import { coverageEnv as env } from "./coverage_env.mjs";
 import * as evidence_common from "./evidence_common.mjs";
@@ -7,9 +8,49 @@ import { processOutputSha256 } from "./evidence/provenance.mjs";
 
 // HTTPサーバfixtureとloopbackモックは同一shardで同時に生きるため、
 // 桁数が同じ別portへ固定する。ephemeralだと4桁/5桁でcompile manifestの
-// source spanが揮れ、同一portだとEADDRINUSEになる。
-export const coverageHttpPort = 18765;
-export const coverageLoopbackPort = 18766;
+// source spanが揮れる。先頭候補が使用中なら同じ桁数の次候補を排他的に確保する。
+export const coverageHttpPortCandidates = [18765, 18775, 18785, 18795, 18805];
+export const coverageLoopbackPortCandidates = [18766, 18776, 18786, 18796, 18806];
+export let coverageHttpPort = coverageHttpPortCandidates[0];
+export let coverageLoopbackPort = coverageLoopbackPortCandidates[0];
+
+export async function allocateCoveragePorts({ httpServer = false, loopback = false } = {}) {
+  if (httpServer) coverageHttpPort = await allocateFiveDigitPort(coverageHttpPortCandidates, "HTTPサーバ");
+  if (loopback) {
+    coverageLoopbackPort = await allocateFiveDigitPort(
+      coverageLoopbackPortCandidates.filter((port) => port !== coverageHttpPort),
+      "loopback",
+    );
+  }
+  if (httpServer && loopback && coverageHttpPort === coverageLoopbackPort) {
+    throw new Error("coverageのHTTPサーバportとloopback portが衝突しています");
+  }
+  return { http: coverageHttpPort, loopback: coverageLoopbackPort };
+}
+
+async function allocateFiveDigitPort(candidates, label) {
+  const fiveDigit = candidates.filter((port) => Number.isInteger(port) && port >= 10000 && port <= 65535);
+  if (fiveDigit.length === 0) throw new Error(`coverage ${label}用の5桁port候補がありません`);
+  for (const port of fiveDigit) {
+    if (await portIsAvailable(port)) return port;
+  }
+  throw new Error(`coverage ${label}用の5桁portを確保できません: ${fiveDigit.join(", ")}`);
+}
+
+function portIsAvailable(port) {
+  return new Promise((resolveAvailable) => {
+    const server = http.createServer();
+    const finish = (available) => {
+      if (server.listening) {
+        server.close(() => resolveAvailable(available));
+        return;
+      }
+      resolveAvailable(available);
+    };
+    server.once("error", () => finish(false));
+    server.listen({ port, host: "127.0.0.1", exclusive: true }, () => finish(true));
+  });
+}
 
 export async function startLoopbackServer() {
   const child = spawn(process.execPath, [resolve(env.root, "tools/oracle/http_loopback_server.mjs")], {

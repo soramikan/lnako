@@ -55,10 +55,13 @@ if (!syncEvidence.includes('form !== "measured" && form !== "canonical"') ||
     !dispatchCoverageScript.includes("coverageFixtureStem") ||
     !dispatchCoverageScript.includes("coverageHttpPort") ||
     !dispatchCoverageScript.includes("coverageLoopbackPort") ||
+    !dispatchCoverageScript.includes("allocateCoveragePorts") ||
+    !dispatchCoverageScript.includes("coverageHttpPortCandidates") ||
     !dispatchCoverageScript.includes('"${STATIC}": "static"') ||
     !dispatchCoverageScript.includes('replaced.replaceAll("${FILE}", fileNames[0])') ||
     !evidenceFreshness.includes('from "./lib/evidence/generators.mjs"') ||
     !evidenceFreshness.includes("freshnessBytes") ||
+    !evidenceFreshness.includes("stageは差分診断用") ||
     !evidenceFreshness.includes("--dispatch-evidence") ||
     !evidenceFreshness.includes("--compat-js-evidence") ||
     !evidenceUpdate.includes('from "./lib/evidence/generators.mjs"') ||

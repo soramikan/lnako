@@ -171,6 +171,7 @@ async function main() {
       const leaves = mismatchDetails.get(basename) ?? [];
       return `${basename}: ${leaves.length === 0 ? "（差分leaf特定不可）" : leaves.join(", ")}`;
     }).join("\n");
+    // 不一致時のstageは差分診断用に残す。成功時のみ削除する。
     throw new Error(`canonical evidence が現行ソースの再生成結果と一致しません:\n${detail}\nnode tools/update_current_evidence.mjs で正本を再生成し、コードと証拠を同じコミットにまとめてください（stage保持: ${stage}）。`);
   }
   await rm(stage, { recursive: true, force: true });
