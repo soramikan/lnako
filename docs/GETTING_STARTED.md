@@ -1,10 +1,15 @@
 # lnakoを使い始める
 
-なでしこ3のソースをそのまま実行するには`lnako run`、ネイティブ実行ファイルを生成するには`lnako build`を使います。互換基準はなでしこ3 v3.7.24です。[保証範囲](COMPATIBILITY.md)と[未対応境界](TODO.md)も確認してください。
+`lnako` は、日本語プログラミング言語「なでしこ3」を高速に実行し、単一のネイティブ実行ファイルへコンパイルできるCLIツールです。
+互換基準はなでしこ3 v3.7.24です。[保証範囲](COMPATIBILITY.md)と[未対応境界](TODO.md)も合わせて確認してください。
 
-## macOS：Homebrewでインストール
+## 1. インストール
 
-[Homebrew](https://brew.sh/)を導入した環境で、[soramikanのtap](https://github.com/soramikan/homebrew-tap)を使います。
+利用環境に合わせて、HomebrewまたはGitHub Releasesからのアーカイブ導入を選択してください。
+
+### macOS：Homebrewでインストール（推奨）
+
+[Homebrew](https://brew.sh/) を導入済みの環境では、次のコマンドで簡単にインストールできます。
 
 ```sh
 brew tap soramikan/tap
@@ -12,101 +17,141 @@ brew install lnako
 lnako --version
 ```
 
-対応するbottleがある環境ではビルド済みバイナリを利用し、それ以外ではZigをビルド依存としてソースから構築します。正式検証対象のmacOSはApple Silicon（arm64）です。
+- Apple Silicon（macOS arm64）を正式検証対象としています。
+- 更新は `brew update && brew upgrade lnako`、アンインストールは `brew uninstall lnako` です。
+- インストール直後から `lnako run` でプログラムを実行できます。ネイティブ実行ファイルを作る場合は初回に後述の `lnako toolchain install` を実行してください。
 
-更新は`brew update`、`brew upgrade lnako`、削除は`brew uninstall lnako`です。
+### Linux・Windows・手動アーカイブ導入
 
-## アーカイブからインストール
+[GitHub Releases](https://github.com/soramikan/lnako/releases) から、お使いのOS・環境に合ったアーカイブをダウンロードします。
 
-[GitHub Releases](https://github.com/soramikan/lnako/releases)から対象OS・CPUのファイルを選びます。
+#### standard版とfull版の選び方
 
-| OS / CPU | standard版 | full版 |
+- **standard版**：プログラムの実行（`run`）や構文検査（`check`）を手軽に始めたい方向けの軽量版です。コンパイルに必要なLLVM/LLDは後から `lnako toolchain install` で自動ダウンロード・管理できます。
+- **full版**：LLVM/LLDを同梱しています。追加のダウンロードなしで、オフライン環境でもすぐにネイティブ実行ファイルの生成（`build`）を行いたい方におすすめです。
+
+| OS / CPU | standard版 | full版（LLVM/LLD同梱） |
 | --- | --- | --- |
-| macOS arm64 | `lnako-0.1.0-macos-arm64.tar.gz` | `lnako-0.1.0-macos-arm64-full.tar.gz` |
-| Linux x86_64 GNU | `lnako-0.1.0-linux-x64.tar.gz` | `lnako-0.1.0-linux-x64-full.tar.gz` |
-| Windows x86_64 MSVC | `lnako-0.1.0-windows-x64.zip` | `lnako-0.1.0-windows-x64-full.zip` |
+| macOS arm64 | `lnako-0.1.1-macos-arm64.tar.gz` | `lnako-0.1.1-macos-arm64-full.tar.gz` |
+| Linux x86_64 GNU | `lnako-0.1.1-linux-x64.tar.gz` | `lnako-0.1.1-linux-x64-full.tar.gz` |
+| Windows x86_64 MSVC | `lnako-0.1.1-windows-x64.zip` | `lnako-0.1.1-windows-x64-full.zip` |
 
-standard版はLLVM/LLDを含まず、full版は同梱します。`lnako run`はどちらでも使えます。AOTをすぐ使いたい場合はfull版を選びます。
+#### 展開とPATHの設定
 
-アーカイブと同名の`.sha256`も取得し、展開前にハッシュを照合します。
+アーカイブと同名で配布されている `.sha256` ファイルを取得し、展開前にハッシュ値を確認することを推奨します。
 
 ```sh
-# macOSの例
-shasum -a 256 -c lnako-0.1.0-macos-arm64.tar.gz.sha256
-tar -xzf lnako-0.1.0-macos-arm64.tar.gz
-# Linuxでは sha256sum -c を使用
+# macOSの例（ダウンロードファイルと照合）
+shasum -a 256 -c lnako-0.1.1-macos-arm64.tar.gz.sha256
+tar -xzf lnako-0.1.1-macos-arm64.tar.gz
+
+# Linuxの例
+sha256sum -c lnako-0.1.1-linux-x64.tar.gz.sha256
+tar -xzf lnako-0.1.1-linux-x64.tar.gz
 ```
 
 ```powershell
-# Windows PowerShellの例：出力を.sha256に記載された値と照合
-Get-FileHash .\lnako-0.1.0-windows-x64.zip -Algorithm SHA256
-Expand-Archive .\lnako-0.1.0-windows-x64.zip -DestinationPath .\lnako
+# Windows PowerShellの例（ハッシュ値を確認して展開）
+Get-FileHash .\lnako-0.1.1-windows-x64.zip -Algorithm SHA256
+Expand-Archive .\lnako-0.1.1-windows-x64.zip -DestinationPath .\lnako
 ```
 
-展開したディレクトリ全体を任意の場所へ配置し、その中の`bin`をPATHへ追加します。`bin/lnako`だけを取り出すと、AOT用の`lib`やfull版の`llvm`を解決できなくなるため、配置関係を保ってください。
+展開したフォルダ全体を任意の場所（例: `~/lnako` や `C:\tools\lnako`）に配置し、その中の `bin` フォルダを環境変数 `PATH` に追加してください。
 
-macOSのReleaseアーカイブはDeveloper ID署名・Apple公証を通して配布します。standalone CLIには公証ticketをstapleできないため、初回起動時の確認にネット接続が必要になる場合があります。
+> [!NOTE]
+> `bin/lnako` 単体を取り出さず、展開されたフォルダ構造（`bin/`, `lib/`, full版の場合は `llvm/`）を維持してください。コンパイルに必要なライブラリが解決できなくなります。
+> macOSのReleaseアーカイブはAppleの公証を通過していますが、初回起動時にGatekeeperの確認画面が表示される場合があります。
 
-## プログラムを実行
+## 2. プログラムを実行する
 
-UTF-8のテキストファイル`hello.nako3`を作ります。
+UTF-8のテキストファイル `hello.nako3` を作成します。
 
 ```nako3
-「こんにちは」と表示する。
+「こんにちは、世界！」と表示する。
 ```
 
+ターミナルで以下のコマンドを実行します。
+
 ```sh
+# 構文・意味の事前チェック（実行はしません）
 lnako check hello.nako3
+
+# プログラムをインタープリターで直接実行
 lnako run hello.nako3
 ```
 
-`こんにちは`と表示されます。`check`は実行せずに構文・意味を検査します。
+コンソールに `こんにちは、世界！` と表示されれば成功です。
 
-## ネイティブ実行ファイルを生成
+## 3. ネイティブ実行ファイルを生成する（コンパイル）
 
-Homebrewまたはstandard版では、最初にLLVM/LLDを導入します。full版ではこの操作は不要です。
+lnakoは、なでしこ3プログラムをLLVM経由で最適化されたスタンドアロンのネイティブ実行ファイルへコンパイル（AOTコンパイル）できます。
+
+### ツールチェーンの準備（standard版・Homebrew版のみ）
+
+full版をご利用の場合はこの手順は不要です。standard版またはHomebrew版で初めてコンパイルを行う場合、一度だけツールチェーンを導入します。
 
 ```sh
+# LLVM/LLDツールチェーンをインストール（OS標準キャッシュ領域に配置されます）
 lnako toolchain install
+
+# 状態を確認
 lnako toolchain status
+```
+
+### コンパイルと実行
+
+```sh
+# 最適化レベル -O2 で実行ファイルを生成
 lnako build hello.nako3 -o hello -O2
+
+# 生成されたバイナリを実行
 ./hello
 ```
 
-Windowsでは`lnako build hello.nako3 -o hello.exe -O2`で生成し、`.\hello.exe`を実行します。
+Windows環境では `-o hello.exe` を指定し、`.\hello.exe` で実行します。
 
-既存LLVMを使う場合は`lnako build hello.nako3 --llvm-dir /path/to/llvm -o hello -O2`、または環境変数`LNAKO_LLVM_DIR`で指定できます。基準版はLLVM/LLD 22.1.8です。toolchainはOS標準のキャッシュ領域へ保存され、`lnako toolchain dir`で場所を確認、`lnako toolchain remove`で削除できます。
+> [!TIP]
+> 生成された実行ファイルは単体で動作します。実行する環境にlnako、Zig、Node.js、LLVMなどを別途インストールする必要はありません（OS標準ライブラリや使用する外部ファイル等は必要です）。
 
-通常の生成物を動かす側にlnako・Zig・Node.js・LLVMは不要です。対象OSの標準ライブラリ、使用するファイル・外部ツール・動的ネイティブプラグインなどは別途必要です。別OS用の実行ファイルへの自動変換を保証するものではありません。
+既存のLLVMを使用したい場合は、`--llvm-dir /path/to/llvm` オプションまたは環境変数 `LNAKO_LLVM_DIR` で指定することも可能です（基準バージョンはLLVM 22.1.8）。
 
-## DNCLプログラムの実行
+## 4. DNCL（情報入試手順記述言語）の実行
 
-共通テスト用語のプログラミング言語DNCLのソースをそのまま実行・コンパイルできます。ファイル内の`!DNCLモード`（DNCL）または`!DNCL2`（DNCL2）ディレクティブが検出されるほか、`.dncl` / `.dncl2`拡張子や`--dncl` / `--dncl2`フラグでもモードを強制できます。
+lnakoは大学入学共通テスト「情報I」で用いられる手順記述標準言語「DNCL」および「DNCL2」の実行・コンパイルに完全対応しています。
+
+ファイル拡張子（`.dncl` / `.dncl2`）、ファイル先頭の指示（`!DNCLモード` / `!DNCL2`）、またはコマンドライン引数でモードを指定できます。
 
 ```sh
+# DNCLファイルの実行・ビルド
 lnako run program.dncl
 lnako build program.dncl -o program -O2
+
+# テスト実行
 lnako test program.dncl
+
+# .nako3 ファイルをDNCL2として強制実行
 lnako run program.nako3 --dncl2
 ```
 
-`--dncl`と`--dncl2`の同時指定、および拡張子と反対側の方言フラグの組合せ（`.dncl`+`--dncl2`、`.dncl2`+`--dncl`）は両方言の同時有効化になるため、usageエラー（終了コード2）で拒否します。`check`/`test`は記載外の引数を一切受理しません。`run`は`--`より前の`--`系オプションのみを検査し、位置引数は従来通りプログラム引数として扱います。`--dncll`のようなtypoはいずれのコマンドでもusageエラー（終了コード2）になるため、フラグ名のミスに気付けます。
+配列添字の開始番号（1始まり）など、モードごとの詳細な挙動は[Parser・構文のquirks](compatibility/PARSER.md)を参照してください。
 
-配列添字などモードごとの細かい差異は[Parser・構文のquirks](compatibility/PARSER.md)を参照してください。
+## 5. JavaScript互換モード（`--compat-js`）
 
-## JavaScript互換モード
-
-JavaScript固有の4命令が必要なプログラムでは、明示的に`--compat-js`を指定します。配布版とHomebrew版はQuickJSを同梱しています。
+公式なでしこ3のうち、JavaScript固有の機能（`JS実行`、`JSコード追加`、`JSグローバル取得`、`JSグローバル設定`）に依存するコードを実行する場合は、明示的に `--compat-js` フラグを付与します。
 
 ```sh
 lnako run program.nako3 --compat-js
 lnako build program.nako3 --compat-js -o program -O2
 ```
 
-通常モードはQuickJSを使わず、通常AOT生成物にもQuickJSを含めません。詳細は[互換モードの説明](https://github.com/soramikan/lnako/blob/main/docs/compatibility/COMPAT_JS.md)を参照してください。
+lnakoの配布バイナリには軽量JavaScriptエンジン（QuickJS）が組み込まれていますが、通常モードでは使用されず、余分なオーバーヘッドは発生しません。詳細は[互換モードの説明](compatibility/COMPAT_JS.md)を参照してください。
 
-## 問題が起きたら
+## 6. よくある質問・トラブルシューティング
 
-- `lnako`が見つからない：`bin`をPATHへ追加した後、ターミナルを開き直します。
-- `build`でLLVMが見つからない：`lnako toolchain status`で確認し、toolchainを導入するかfull版を使います。
-- 公式処理系と結果が違う：[互換性の保証範囲](COMPATIBILITY.md)と[既知の境界](TODO.md)を確認してください。報告は[GitHub Issues](https://github.com/soramikan/lnako/issues)へ、OS、`lnako --version`、実行コマンド、最小ソース、期待値と実際の結果を添えてください。
+- **`lnako` コマンドが見つからない**
+  - アーカイブ内の `bin` フォルダへのパスが環境変数 `PATH` に正しく追加されているか確認してください。設定後はターミナルを再起動してください。
+- **`build` 時にLLVMが見つからないエラーが出る**
+  - standard版またはHomebrew版をご利用の場合は、まず `lnako toolchain install` を実行してください。オフライン環境の場合は最初からfull版をご利用いただくか、`--llvm-dir` でローカルのLLVMを指定してください。
+- **公式cnakoと実行結果や挙動が異なる**
+  - lnakoは標準cnako 527命令の網羅的な互換性検証を行っていますが、ブラウザ専用命令や未定義の例外挙動など一部差異があります。[互換性の保証範囲](COMPATIBILITY.md)および[既知の境界・TODO](TODO.md)をご確認ください。
+  - バグと思われる挙動を発見した場合は、再現コードとOS、`lnako --version` を添えて [GitHub Issues](https://github.com/soramikan/lnako/issues) へご報告ください。

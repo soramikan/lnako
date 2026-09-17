@@ -5,13 +5,13 @@
 [![なでしこ3バージョン](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsoramikan%2Flnako%2Fmain%2Fcompat%2Fv3.7.24%2Fsummary.json&query=%24.baseline.tag&style=flat-square&label=%E3%81%AA%E3%81%A7%E3%81%97%E3%81%933%E3%83%90%E3%83%BC%E3%82%B8%E3%83%A7%E3%83%B3)](https://github.com/soramikan/lnako/blob/main/compat/v3.7.24/summary.json)
 [![ライセンス](https://img.shields.io/github/license/soramikan/lnako?style=flat-square&label=%E3%83%A9%E3%82%A4%E3%82%BB%E3%83%B3%E3%82%B9)](https://github.com/soramikan/lnako/blob/main/LICENSE)
 
-`lnako` は、なでしこ3の日本語プログラムを実行し、ネイティブ実行ファイルにも変換できるCLIです。なでしこ3を互換基準とし、macOS arm64・Linux x86_64 GNU・Windows x86_64 MSVCに対応します。
+`lnako` は、日本語プログラミング言語「なでしこ3」を高速に実行し、単一のネイティブ実行ファイルへコンパイルできるCLIツールです。公式なでしこ3（v3.7.24）互換を基準とし、macOS（arm64）・Linux（x86_64）・Windows（x86_64）に対応します。大学入学共通テスト手順記述標準言語（DNCL / DNCL2）の実行・ビルドにも対応しています。
 
 ## インストール
 
-### macOS：Homebrew
+### macOS（Homebrew）
 
-[Homebrew tap](https://github.com/soramikan/homebrew-tap)からインストールできます。
+[Homebrew tap](https://github.com/soramikan/homebrew-tap) から手軽に導入できます。
 
 ```sh
 brew tap soramikan/tap
@@ -19,50 +19,43 @@ brew install lnako
 lnako --version
 ```
 
-対応するbottleがあればビルド済みバイナリを利用し、それ以外はソースからビルドします。`lnako run`はインストール直後から使えます。
+### Linux・Windows・アーカイブ導入
 
-### Linux・Windows／アーカイブからの導入
+[GitHub Releases](https://github.com/soramikan/lnako/releases) から最新の配布アーカイブをダウンロードし、展開して `bin` をPATHに追加してください。
 
-[GitHub Releases](https://github.com/soramikan/lnako/releases)から対象OSのアーカイブを取得し、ディレクトリ構造を保って展開して`bin`をPATHへ追加します。macOS/Linuxは`tar.gz`、Windowsは`zip`です。
-
-| 配布版 | 用途 |
+| 配布版 | 特徴・用途 |
 | --- | --- |
-| standard | 小さな構成で始める。実行ファイルの生成にはLLVM/LLDを追加導入 |
-| full（ファイル名末尾が`-full`） | LLVM/LLDを同梱。追加のダウンロードなしで実行ファイルを生成 |
+| standard | 軽量版。スクリプト実行（`run`）や構文検査（`check`）向け。コンパイル用LLVMは後から追加可能 |
+| full（`-full`） | LLVM/LLD同梱版。追加ダウンロードなしで即座にネイティブ実行ファイルを生成可能 |
 
-チェックサム確認・OS別手順は[使い始める](docs/GETTING_STARTED.md)を参照してください。
+詳細なOS別手順やハッシュ検証は[使い始める](docs/GETTING_STARTED.md)を参照してください。
 
-## 使ってみる
+## 使い方
 
-`hello.nako3`を次の内容で保存します。
+`hello.nako3` を作成します。
 
 ```nako3
 「こんにちは」と表示する。
 ```
 
 ```sh
-lnako run hello.nako3            # そのまま実行
 lnako check hello.nako3          # 構文・意味をチェック
-lnako toolchain install          # Homebrew/standard版でAOTを使う場合に一度実行
-lnako build hello.nako3 -o hello -O2
-./hello                         # Windowsでは .\hello.exe
+lnako run hello.nako3            # スクリプトとして直接実行
+lnako toolchain install          # standard版/Homebrewでコンパイルを行う場合に初回のみ実行
+lnako build hello.nako3 -o hello -O2 # ネイティブ実行ファイルを生成（Windowsは -o hello.exe）
+./hello                          # 外部ランタイム不要で高速動作
 ```
 
-Windowsの生成先は`-o hello.exe`にします。生成した通常の実行ファイルには、実行時のlnako・Zig・Node.js・LLVMのインストールは不要です。OSの標準ライブラリや使用する外部プラグインなどは必要です。
-
-JavaScript固有命令を使う場合は`lnako run hello.nako3 --compat-js`のように明示します。配布版にはQuickJSを同梱していますが、通常実行には使いません。詳しくは[互換モード](docs/compatibility/COMPAT_JS.md)を参照してください。
+生成した実行ファイルは、lnakoやNode.js等のランタイム不要で単体動作します。JavaScript固有命令を使う場合は `lnako run hello.nako3 --compat-js` を指定します。詳細は[互換モード](docs/compatibility/COMPAT_JS.md)を参照してください。
 
 ## 対応範囲
 
-標準cnako 527 entryの実装分類は`native` 523、`compat-js` 4、`blocked` 0です。ブラウザ専用・拡張命令は対象外で、全入力やNode/ECMAScriptの全挙動を保証するものではありません。[互換性と保証範囲](docs/COMPATIBILITY.md)、[未対応境界・後続課題](docs/TODO.md)、[公式処理系との挙動差](docs/COMPATIBILITY_QUIRKS.md)を確認してください。件数と検証状態の正本は[`compat/`](compat/)です。
-
-なでしこ3処理系をまたいで利用できるパッケージシステムの仕様案は [`docs/package-system/SPECIFICATION.md`](docs/package-system/SPECIFICATION.md) と [`tools/package-system/`](tools/package-system/) にあります。本仕様は lnako 先行実装用の提案であり、上流 nadesiko3 への採用を保証するものではありません。
+標準cnako 527 entryの実装分類は `native` 523、`compat-js` 4、`blocked` 0です。詳細は[互換性と保証範囲](docs/COMPATIBILITY.md)、[未対応境界・後続課題](docs/TODO.md)、[公式処理系との挙動差](docs/COMPATIBILITY_QUIRKS.md)を確認してください。検証状態の正本は [`compat/`](compat/) です。
+また、なでしこ3向け共通パッケージシステム仕様案を [`docs/package-system/SPECIFICATION.md`](docs/package-system/SPECIFICATION.md) および [`tools/package-system/`](tools/package-system/) で提案・実装しています。
 
 ## 性能比較
 
-2026年9月9日（日本時間）の[リリース候補比較CI](https://github.com/soramikan/lnako/actions/runs/34246129122)、測定commit `5dcf585`の結果です。以下はLinuxの代表9ケースで、warmup 1回・測定3回の中央値（ms）。lnakoはReleaseSafe、AOTはO2です。
-
-cnako・gonako・lnakoを正式比較とします。対象バージョンやハッシュは[詳細結果](docs/benchmarks/RESULTS.md)に記録しています。cnako比は「cnakoの中央値 ÷ lnakoの中央値」で、例えば4倍は所要時間が約1/4、1倍未満はcnakoより遅いことを表します。丸め前の値から計算しています。
+2026年9月9日（JST）の[リリース候補比較CI](https://github.com/soramikan/lnako/actions/runs/34246129122)（commit `5dcf585`、Linux）の結果です。公式cnako比で起動時間は約40〜60倍高速化され、計算・処理も大幅に短縮されます。
 
 | 分野 | ケース | cnako | gonako | lnako Interpreter | cnako比 | lnako AOT | cnako比 |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -76,11 +69,11 @@ cnako・gonako・lnakoを正式比較とします。対象バージョンやハ�
 | 単語集計 | `word-count` | 125.37 | 37.12 | 251.92 | 0.50倍 | 15.20 | 8.25倍 |
 | JSON変換 | `json-transform` | 128.48 | 22.97 | 67.21 | 1.91倍 | 7.12 | 18.03倍 |
 
-起動・終了とケース内の初期化を含む時間で、AOTの事前コンパイルは含みません。短時間の測定は共有CIの負荷に左右されます。コンパイル時間、全19ケース・3 OSの結果、生サンプル、C/Rustの参考値は[詳細結果](docs/benchmarks/RESULTS.md)に分けて掲載しています。
+全19ケース、各OSの測定値、コンパイル時間の詳細は[詳細結果](docs/benchmarks/RESULTS.md)に掲載しています。
 
 ## 開発者向け
 
-lnako自体をソースからビルド・変更する場合は[開発・検証手順](docs/DEVELOPMENT.md)を参照してください。Zig 0.16.0、LLVM/LLD 22.1.8、oracle用Node.js 24.15.0、互換モード用QuickJS 2026-06-04を使用します。公式TypeScriptは製品ランタイムへ組み込みません。
+lnako自体のビルドや機能開発については[開発・検証手順](docs/DEVELOPMENT.md)を参照してください。
 
 - [アーキテクチャ](docs/ARCHITECTURE.md)・[ネイティブプラグインABI](docs/NATIVE_PLUGIN_ABI.md)
 - [CIと検証](docs/CI.md)・[互換性証拠](docs/COMPATIBILITY_EVIDENCE.md)
@@ -88,4 +81,4 @@ lnako自体をソースからビルド・変更する場合は[開発・検証�
 
 ## ライセンス
 
-MIT License。互換テストで参照するなでしこ3もMIT Licenseです。第三者依存関係は[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)に記録しています。
+MIT License。第三者依存関係は[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)に記録しています。

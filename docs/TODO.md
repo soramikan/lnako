@@ -1,23 +1,25 @@
-# 0.1.0 リリースTODO
+# 実装状況と未対応境界（TODO）
 
-この文書は、lnako 0.1.0を公開するための残作業と、0.1.0では保証しない境界、後続Issueを分離する正本です。互換基準はなでしこ3 v3.7.24（`aa18c7e640523938c680958fe731418cc6f7a58f`）で、標準cnako 527 entryの機械可読な実装・実行証拠は `compat/v3.7.24/` を正本とします。
+この文書は、`lnako` の実装状況、現行バージョンにおいて意図的に保証対象外としている境界、および後続Issue・機能拡張計画をまとめた正本です。
+互換基準はなでしこ3 v3.7.24（`aa18c7e640523938c680958fe731418cc6f7a58f`）で、標準cnako 527 entryの機械可読な実装・実行証拠は [`compat/v3.7.24/`](../compat/v3.7.24/) を正本とします。
 
-`verified: 527` は、追跡されたfixture・dispatch・公式比較・3 OS attestationに基づく命令entryの実行証拠です。全ての入力値、Node/ECMAScript APIの全境界、実ネットワーク・外部アプリ・任意の外部toolまで完全同値であることを意味しません。未検証境界は本書と `docs/compatibility/` に明示します。
+`verified: 527` は、追跡されたfixture・dispatch・公式比較・3 OS attestationに基づく命令entryの実行証拠です。全ての入力値、Node/ECMAScript APIの全境界、実ネットワーク・外部アプリ・任意の外部toolまで完全同値であることを意味しません。未検証境界は本書と [互換性の概要](COMPATIBILITY.md) に明示します。
 
-## 0.1.0をブロックする項目
+## リリース済みの状態（v0.1.0 / v0.1.1）
 
-| 項目 | 状態 | 完了条件 |
-| --- | --- | --- |
-| リリース文書・配布契約の整合 | [#13](https://github.com/soramikan/lnako/issues/13) | 本書、互換性文書、RELEASE、配布archive、versionを0.1.0向けに一致させる |
-| version・release workflow・canonical attestation | [PR #1](https://github.com/soramikan/lnako/pull/1) | 最終sourceでCI 54/54、`verified: 527`、署名済みannotated `v0.1.0` tag、release asset検証を通す |
+- **v0.1.0（初回正式リリース）**：
+  - 標準cnako 527 entry（native 523、compat-js 4、blocked 0）の実装と、macOS arm64・Linux x86_64・Windows x86_64の3 OSにおけるCI 54/54全job成功・attestation検証を達成。
+  - AOT動的値ブリッジのGC root安全性（[#2](https://github.com/soramikan/lnako/issues/2)）、利用者向け導線・配布契約（[#13](https://github.com/soramikan/lnako/issues/13)）、リリースワークフロー（[PR #1](https://github.com/soramikan/lnako/pull/1)）を完了。
+- **v0.1.1（入力改善・和文代入拡充）**：
+  - 対話型（TTY）における「尋ねる」の一行読み込み・CRLF対応・複数行入力の安定化（[#24](https://github.com/soramikan/lnako/pull/24)）。
+  - 連文結果の和文代入、「Aを1に定める」構文、配列・プロパティへの代入の拡充。
+  - 最新CI run `34402208204` によるattestation snapshotの追跡（[#26](https://github.com/soramikan/lnako/pull/26)）。
 
-[#2](https://github.com/soramikan/lnako/issues/2)（AOT⇔動的InterpreterブリッジのGC root安全性）は解消済み・closedです。#13の利用者向け導線・保証範囲・文書同梱は整備済みですが、最終候補のCI・canonical attestation・公開確認は引き続き必要です。上記の完了条件を満たす前に`v0.1.0`タグを作成しません。
+## 明示的に非対応とする境界（意図的制限・後続課題）
 
-## 0.1.0で明示的に非対応とする境界
+以下は標準命令そのものを非対応とする意味ではありません。既存fixtureで検証済みの命令経路は動作しますが、記載した一般化された境界を現行バージョンの保証対象外とします。
 
-以下は標準命令そのものを`blocked`にする意味ではありません。既存fixtureで検証済みの命令経路は対応しますが、記載した一般化された境界を0.1.0の保証対象外とします。
-
-| 領域 | 0.1.0の保証外 | 後続Issue |
+| 領域 | 現行の保証外 | 後続Issue |
 | --- | --- | --- |
 | AOT動的値ブリッジ | 一般の循環object graph、alias identity、疎配列hole、全prototype identityを保持する完全clone | [#3](https://github.com/soramikan/lnako/issues/3) |
 | RegExp | ECMAScript RegExp全grammar、未fixtureのUnicode set/string property、複雑なbacktracking、V8エラー本文完全一致 | [#4](https://github.com/soramikan/lnako/issues/4) |
@@ -27,19 +29,13 @@
 | QuickJS | 4 JS固有命令の成功・期待失敗範囲を越えるエラー本文完全互換 | [#8](https://github.com/soramikan/lnako/issues/8) |
 | ToPrimitive / Function | 未fixtureのreceiver副作用順序、function文字列化・辞書key化の全境界 | [#9](https://github.com/soramikan/lnako/issues/9) |
 | 上流バグ候補 | DNCL寛容構文、TOML異常入力、generated route登録不足等をlnakoの新しい安定仕様として保証すること | [#10](https://github.com/soramikan/lnako/issues/10) |
-| native plugin | `.dylib` / `.so` / `.dll`のdynamic ABIは対応。pluginのAOT静的リンク・単一実行ファイル化は非対応 | [#11](https://github.com/soramikan/lnako/issues/11) |
+| native plugin | `.dylib` / `.so` / `.dll` のdynamic ABIは対応。pluginのAOT静的リンク・単一実行ファイル化は非対応 | [#11](https://github.com/soramikan/lnako/issues/11) |
 
-ブラウザ専用429 entryと拡張189 entryは標準cnako 527 entryの外であり、0.1.0の互換対象外です。JavaScript固有4 entryは通常モードでは実行せず、明示的な`--compat-js`でのみ対象とします。
+ブラウザ専用429 entryと拡張189 entryは標準cnako 527 entryの外であり、互換対象外です。JavaScript固有4 entryは通常モードでは実行せず、明示的な `--compat-js` でのみ対象とします。
 
-## 0.1.0をブロックしない継続課題
+## 既存TODO識別子の対応状況
 
-- 性能: 最新のリリース候補測定は[ベンチマーク結果](benchmarks/RESULTS.md)を参照してください。Interpreterの性能、文字列処理、WindowsのAOT実行ファイルサイズなどの継続管理は [#12](https://github.com/soramikan/lnako/issues/12)。
-- upstream bug候補・route差の再追跡は [#10](https://github.com/soramikan/lnako/issues/10)。0.1.0では固定v3.7.24のoracleと意図的制限を維持します。
-- AOT native pluginの静的同梱は [#11](https://github.com/soramikan/lnako/issues/11)。現行dynamic ABIとAOTからの遅延ロードは別機能として対応済みです。
-
-## 既存TODO識別子の対応
-
-| TODO識別子 | 0.1.0分類 | Issue |
+| TODO識別子 | 分類 | Issue |
 | --- | --- | --- |
 | `official-dncl-all-elements-tail` | 上流バグ候補。非ブロッカー | #10 |
 | `no-josi-function-call` | 「の」助詞の関数呼出し（`Aの要素数`）は未対応。関数の助詞シグネチャ照合が必要 | #9 |
@@ -61,15 +57,23 @@
 | `aot-byte-buffer-value` | 部分対応 | #7 |
 | `aot-object-to-primitive` | 部分対応 | #9 |
 | `aot-function-string-name` | 部分対応 | #9 |
-| `aot-native-plugin-static-bundle` | 0.1.0非対応 | #11 |
+| `aot-native-plugin-static-bundle` | 非対応（後続課題） | #11 |
 | `compat-js-failure-diagnostic-equivalence` | optional routeの診断改善 | #8 |
 
-## リリース直前チェック
+## 進行中および今後の継続課題
 
-1. #2と#13を完了する。
-2. `zig build fmt-check`、`zig build test`、関連oracle・native plugin・distribution self-testを実行する。
-3. 最終source commitでCI 54/54 jobを成功させる。
-4. 同じsource manifestの3 OS attestationを追跡し、現行manifestに一致するsnapshotから導出されるviewを`verified: 527`、`unverified: 0`にする（canonical正本は常時`trace-confirmed-unattested`）。
-5. `lnako --version`、`build.zig.zon`、release versionを`0.1.0`へ一致させる。
-6. 署名済みannotated tag `v0.1.0`を最終commitに作成する。
-7. release workflowで3 OS archive、SHA-256、SPDX 2.3 SBOM、full benchmarkを検証してからGitHub Releaseを公開する。
+- **パッケージシステムの実装**：
+  - なでしこ3向け共通パッケージシステム仕様案（[SPECIFICATION.md](package-system/SPECIFICATION.md)）に基づく、PubGrub依存解決器、マニフェスト解析、ロックファイル生成の実装を進行中。
+- **低レイヤーAPI・ストリームI/O**：
+  - 構造化エラーハンドリング、生I/Oストリーム、逐次ハッシュ計算、ファイルシステム低層APIの拡充。
+- **性能・最適化の継続管理**：
+  - Interpreterの実行速度向上、文字列連結・正規表現の最適化、Windowsバイナリサイズの削減（[#12](https://github.com/soramikan/lnako/issues/12)）。
+
+## リリース時チェックリスト
+
+1. `zig build fmt-check`、`zig build test`、関連oracle・native plugin・distribution self-testを実行する。
+2. 最終source commitでCI 54/54 jobを成功させる。
+3. 同じsource manifestの3 OS attestationを追跡し、現行manifestに一致するsnapshotから導出されるviewを `verified: 527`、`unverified: 0` にする。
+4. `lnako --version`、`build.zig.zon`、release versionを対象バージョンへ一致させる。
+5. 署名済みannotated tag（`vX.Y.Z`）を最終commitに作成してpushする。
+6. release workflowで3 OS archive、SHA-256、SPDX 2.3 SBOM、full benchmarkを自動検証してからGitHub Releaseを公開する。

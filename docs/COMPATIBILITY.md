@@ -1,8 +1,9 @@
 # 互換性の概要
 
-この文書は、なでしこ3 v3.7.24に対する実装分類、実行証拠、3正式OS検証と、lnako 0.1.1で保証する範囲の関係を説明する入口です。件数の正本は本文ではなく `compat/v3.7.24/*.json` です。0.1.1の残課題と保証外境界は [`TODO.md`](TODO.md) を参照してください。
+この文書は、日本語プログラミング言語「なでしこ3」（v3.7.24）に対する実装状況、実行検証の仕組み、3正式OS環境での対応状況、および保証範囲について説明する総合ガイドです。
+件数および検証状態の正本は本文ではなく [`compat/v3.7.24/`](../compat/v3.7.24/) 配下のJSONファイル群です。未対応境界や今後の課題については [`TODO.md`](TODO.md) を参照してください。
 
-## 基準
+## 互換基準
 
 | 項目 | 値 |
 | --- | --- |
@@ -14,7 +15,7 @@
 
 ## 実装分類
 
-`compat/v3.7.24/summary.json` の標準カタログ分類は次のとおりです。
+`compat/v3.7.24/summary.json` における標準cnakoカタログの分類状況は以下のとおりです。
 
 | 分類 | entry | 意味 |
 | --- | ---: | --- |
@@ -22,24 +23,24 @@
 | `compat-js` | 4 | 明示的なQuickJS互換モードだけで扱う分類 |
 | `blocked` | 0 | 未対応として意図的に拒否する分類 |
 
-公式カタログ全体は1,145件で、標準cnako以外にブラウザ除外429件、拡張除外189件があります。この618 entryは0.1.1の標準cnako互換対象外です。分類は実装台帳であり、fixtureの存在、単一環境のtrace、`native`分類だけでは3 OSのAOT実行証拠を意味しません。
+公式なでしこ3のカタログ全体は1,145件存在しますが、標準cnakoの対象外として「ブラウザ専用（429件）」および「拡張機能（189件）」の計618件が除外されます。lnakoの互換対象は標準cnakoの527件です。
 
-## 0.1.1の互換性契約
+## 互換性契約と保証範囲
 
-0.1.1は「標準cnako 527 entryについて、追跡されたfixtureと公式v3.7.24 oracleで検証した命令経路」を互換対象とします。`verified: 527` は命令名ごとの証拠状態であり、各命令が受け取り得る全入力値の直積や、Node / ECMAScript / OSの全API境界を網羅した形式証明ではありません。
+lnakoは「標準cnako 527 entryについて、追跡されたfixtureと公式v3.7.24 oracleで検証した命令経路」を互換対象とします。`verified: 527` は命令名ごとの証拠状態であり、各命令が受け取り得る全入力値の直積や、Node / ECMAScript / OSの全API境界を網羅した形式証明ではありません。
 
-次は0.1.1で意図的に保証範囲を限定します。
+現行バージョンでは、以下の領域について意図的に保証範囲を限定しています。
 
-- JavaScript固有4 entryは通常モードではなく、明示的な `--compat-js` だけで実行します。QuickJS自体を通常Interpreter/AOTのfallbackにはしません。
-- ブラウザ専用429 entryと拡張189 entryは対象外です。
-- RegExpは共有UTF-16 engineの検証済み範囲を提供しますが、ECMAScript RegExp全grammarとV8エラー本文の完全一致を保証しません。
-- 表・疎配列・Buffer family・ToPrimitiveは既存差分fixtureで検証した境界を保証し、未fixtureの全prototype/descriptor/identity組合せまでは保証しません。
-- Node / Hostはloopback・synthetic topology・安全なhost adapter等の制御fixtureを互換証拠に使います。実Internet、任意proxy/TLS、実GUI launcher、実network interface集合、任意7z実装の副作用・列挙順・raw bytesは固定仕様にしません。
-- native pluginは `lnako_plugin_v1` のdynamic `.dylib` / `.so` / `.dll` loaderをInterpreterとAOTで提供します。AOT実行ファイルへのplugin静的リンク／単一ファイル化は0.1.1非対応です。
-- AOTと動的Interpreter間の一般object graph変換は、0.1.1では検証済みの非循環経路を保証対象とします。一般の循環参照・alias identity・全hole/prototype identityは後続Issueで扱います。
-- upstream v3.7.24自体のバグ候補やCLI/generated route差は、その挙動をlnako独自の永続仕様として拡張しません。固定oracleとの差分と意図的制限を領域別文書に残します。
+- **JavaScript固有命令**：`JS実行` などの4命令は通常モードでは実行せず、明示的な `--compat-js` 指定時のみ動作します。QuickJSは通常のInterpreter/AOTのフォールバックとしては動作しません。
+- **ブラウザ専用・拡張命令**：Webブラウザ専用API（DOM操作・Canvas等）や拡張命令は対象外です。
+- **正規表現（RegExp）**：共有UTF-16エンジンの検証済み範囲を提供しますが、ECMAScript RegExpの全構文規律やV8のエラーメッセージ完全一致は保証しません。
+- **表・疎配列・Buffer・ToPrimitive**：テスト用fixtureで検証した境界を保証し、未定義のプロトタイプチェーンや特殊なデスクリプタの組合せまでは保証しません。
+- **Node / Host環境**：loopbackやsynthetic adapterなどの制御された環境をテスト証拠として使用します。実ネットワークの接続性、プロキシ/TLS設定、実GUI起動、外部アーカイブツールの副次効果等は固定仕様としません。
+- **ネイティブプラグイン**：`lnako_plugin_v1` 仕様の動的ライブラリ（`.dylib` / `.so` / `.dll`）の読み込みに対応しています。AOT実行ファイルへのプラグイン静的リンク（単一バイナリ化）は後続課題です。
+- **AOT動的値ブリッジ**：検証済みの非循環オブジェクトグラフ変換を保証対象とし、一般的な循環参照や複雑なプロトタイプ保持は後続課題として扱います。
+- **上流固有の未定義動作**：upstream v3.7.24自体のバグ候補やCLI内部ルート差については、それをlnako独自の永続仕様として固定化しません。
 
-個別の非対応境界、TODO識別子とIssue番号は [`TODO.md`](TODO.md) が正本です。
+個別の境界やTODO識別子は [`TODO.md`](TODO.md) を参照してください。
 
 ## 証拠は二層で読む
 
@@ -67,21 +68,19 @@
 一時artifactの値は、実行環境・署名・artifactの保存期間に依存します。追跡対象のcanonical `evidence.json` は常時 `trace-confirmed-unattested` を保持し、`verified` は現行source manifestに一致するsnapshotの導出viewにのみ現れます。
 <!-- attestation:artifacts-end -->
 
-## route別の境界
+## 実行ルート別の特徴
 
 | route | 役割 | 証拠の入口 |
 | --- | --- | --- |
-| Interpreter | Zig製Nako SSA IR実行器。通常モードの基準実装 | `dispatch-evidence.json`、通常fixture |
-| LLVM AOT | LLVM/LLDで生成した通常モードのネイティブ実行ファイル | AOT fixture、dispatch coverage、CI artifact |
-| QuickJS | `--compat-js`限定の4命令 | `compat-js-evidence.json` |
+| Interpreter | Zig製Nako SSA IR実行器。直接実行（`run`）の基準実装 | `dispatch-evidence.json`、通常fixture |
+| LLVM AOT | LLVM/LLDで生成したネイティブ実行ファイル（`build`） | AOT fixture、dispatch coverage、CI artifact |
+| QuickJS | `--compat-js` 指定時のみ動作するJavaScript互換実行系 | `compat-js-evidence.json` |
 
-QuickJS証拠は4 entry、9 case（成功6、期待失敗3）で、native dispatch証拠とは別namespaceです。AOT native pluginはdynamic loader経路を提供しますが、pluginの静的同梱は標準527 entryの互換性とは別の後続製品機能です。
+## 関連ドキュメント
 
-## 関連文書
-
-- [`TODO.md`](TODO.md): 0.1.1必須、明示的非対応、後続Issueの正本
+- [`TODO.md`](TODO.md): 実装状況、明示的非対応、後続Issueの正本
 - [`COMPATIBILITY_EVIDENCE.md`](COMPATIBILITY_EVIDENCE.md): canonical JSON、state、identity、attestationの詳細
-- [`COMPATIBILITY_QUIRKS.md`](COMPATIBILITY_QUIRKS.md): 公式仕様の説明不足・バグ候補・意図的制限
-- [`CI.md`](CI.md): CI job構成、macOS 5枠、artifact、失敗時の確認方法
+- [`COMPATIBILITY_QUIRKS.md`](COMPATIBILITY_QUIRKS.md): 公式仕様との差異・意図的制限の解説
+- [`CI.md`](CI.md): CI job構成、検証パイプライン、失敗時の確認方法
 - [`compat/v3.7.24/summary.json`](../compat/v3.7.24/summary.json): 実装分類の正本
 - [`compat/v3.7.24/dispatch-evidence.json`](../compat/v3.7.24/dispatch-evidence.json): canonical dispatch証拠
