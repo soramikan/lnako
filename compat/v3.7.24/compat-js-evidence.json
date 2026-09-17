@@ -429,7 +429,7 @@
             "status": 0,
             "signal": null,
             "stdoutSha256": "38e0b9de817f645c4bec37c0d4a3e58baecccb040f5718dc069a72c7385a0bed",
-            "stderrSha256": "4190fa3783577d321402ac25557e188bb223ff834d981641b7953e7b86c16fc6",
+            "stderrSha256": "3801d5914890eb659653850d0b6e78a804e5948a0970cccb849d330606675771",
             "failed": true
           },
           "lnakoCompatJs": {

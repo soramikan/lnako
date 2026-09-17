@@ -78,6 +78,23 @@ test("normalizeVolatileProcessOutput は公式eval関数名のfuncIDを畳む", 
   assert.ok(normalizeVolatileProcessOutput(left).includes("__eval_nako3sync__"));
 });
 
+test("processOutputSha256 は eval 匿名位置の列差（ソース絶対パス長）を畳む", () => {
+  const shortRoot = "/Users/runner/work/lnako/lnako";
+  const longRoot = "/Users/sora/Repositories/soramikan/lnako.improve-compat";
+  const stack = (root, column) =>
+    "[eval] SyntaxError: Function statements require a function name\n" +
+    `    at sys.__evalJS (file://${root}/.cache/oracle/nadesiko3-3.7.24/core/src/plugin_system.mjs:204:33)\n` +
+    `    at __eval_nako3sync_1789630962195_1515687614__ (eval at evalJS (file://${root}/.cache/oracle/nadesiko3-3.7.24/core/src/nako_runner.mjs:59:23), <anonymous>:59:${column})\n`;
+  const left = processOutputSha256(stack(shortRoot, 189), { volatilePaths: [shortRoot] });
+  const right = processOutputSha256(stack(longRoot, 214), { volatilePaths: [longRoot] });
+  assert.equal(left, right);
+  assert.ok(normalizeVolatileProcessOutput(stack(longRoot, 214), { volatilePaths: [longRoot] }).includes("<anonymous>:<pos>"));
+  assert.notEqual(
+    processOutputSha256(stack(shortRoot, 189).replace("Function statements require a function name", "Unexpected token '('"), { volatilePaths: [shortRoot] }),
+    left,
+  );
+});
+
 test("normalizeVolatileProcessOutput は行一致のplatform値のみ畳む", () => {
   const darwin = normalizeVolatileProcessOutput("darwin\narm64\n共通linux勉強\n", { volatileLines: ["darwin", "arm64"] });
   const linux = normalizeVolatileProcessOutput("linux\nx64\n共通linux勉強\n", { volatileLines: ["linux", "x64"] });
