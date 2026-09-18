@@ -1,6 +1,7 @@
 const std = @import("std");
 const aot_state = @import("state.zig");
 const shared = @import("shared.zig");
+const http_tls = @import("../../http_tls.zig");
 
 const aot_builtin = shared.aot_builtin;
 const Runtime = aot_state.Runtime;
@@ -298,6 +299,13 @@ pub fn aotClientHttpRequest(runtime: *Runtime, request: *const AotClientHttpRequ
     const headers = try runtime.allocator.alloc(std.http.Header, request.headers.items.len);
     defer runtime.allocator.free(headers);
     for (request.headers.items, headers) |source, *target| target.* = .{ .name = source.name, .value = source.value };
+    // Interpreterと同じく、初回URIに関わらずTLS文脈を先に用意する。初回HTTPが
+    // HTTPSへ自動リダイレクトするとき`client.now`未初期化のまま
+    // `Tls.create`がpanicするのを防ぐ（Issue #82）。CA読込失敗は初回HTTPSの
+    // ときだけエラーにし、平文HTTPをCAストアへ依存させない。
+    const initial_is_tls = if (std.Uri.parse(request.url)) |uri| http_tls.requestRequiresTls(uri) else |_| false;
+    if (http_tls.tlsDisabledInitialError(initial_is_tls, std.http.Client.disable_tls)) |err| return err;
+    try http_tls.initializeClientTls(&client, initial_is_tls);
     var output: std.Io.Writer.Allocating = .init(runtime.allocator);
     errdefer output.deinit();
     const fetched = try client.fetch(.{
@@ -557,4 +565,38 @@ pub fn appendNodeUriComponent(writer: *std.Io.Writer, source: []const u8) !void 
             try writer.writeByte(hex[byte & 0x0f]);
         }
     }
+}
+
+test "AOTのHTTPからHTTPSへのリダイレクトでもTLS初期化を経てpanicしない" {
+    const http_tls_test = @import("../../http_tls_test.zig");
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const io = aotRuntimeIo(&runtime);
+
+    // CAバンドルを読めない環境ではリダイレクト先のTLSを検証できないため省略する。
+    {
+        var probe: std.http.Client = .{ .allocator = std.testing.allocator, .io = io };
+        defer probe.deinit();
+        http_tls.initializeClientTls(&probe, true) catch |err| switch (err) {
+            error.CertificateBundleLoadFailure => return,
+            else => return err,
+        };
+        if (probe.ca_bundle.bytes.items.len == 0) return;
+    }
+
+    var pair = http_tls_test.RedirectToClosedTls{ .io = io, .allocator = std.testing.allocator };
+    defer pair.stop();
+    try pair.start();
+
+    var request = try AotClientHttpRequest.init(std.testing.allocator, "GET", pair.url.?, "", false);
+    defer request.deinit();
+    const result = aotClientHttpRequest(&runtime, &request);
+    // リダイレクト先のTLS接続まで到達し、panicせず通常エラーで終わることを
+    // 検証する。エラー種別はOS依存のため固定しない。
+    try std.testing.expect(pair.tls_accepted.load(.acquire));
+    if (result) |success| {
+        var owned = success;
+        owned.deinit(std.testing.allocator);
+        return error.ExpectedHttpsFailure;
+    } else |_| {}
 }
