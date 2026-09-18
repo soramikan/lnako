@@ -185,6 +185,7 @@ test "AOT pluginContextはRuntimeのハンドル表へ開く" {
 pub const handleIdFor = shared.handleIdFor;
 pub const handleValueForId = shared.handleValueForId;
 pub const rememberHandle = shared.rememberHandle;
+pub const forgetHandleId = shared.forgetHandleId;
 pub const ensureAotStdinSource = stdio.ensureAotStdinSource;
 pub const stdioStdinFile = stdio.stdioStdinFile;
 pub const stdioStdoutFile = stdio.stdioStdoutFile;

@@ -12,6 +12,7 @@ pub const Effects = shared.Effects;
 /// ここから再エクスポートする。
 pub const low_level_context = context_mod;
 pub const Context = context_mod.Context;
+pub const FlatContext = context_mod.FlatContext;
 pub const StreamContext = context_mod.StreamContext;
 pub const HashContext = context_mod.HashContext;
 pub const FsContext = context_mod.FsContext;

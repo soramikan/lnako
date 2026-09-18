@@ -382,6 +382,109 @@ pub const Context = struct {
     }
 };
 
+/// lnako 0.2.0までのフラットなHost契約（`.context`, `.openFileFn`, `.statFn` …）。
+/// Issue #96で `Context` をサブContext化したため、外部Host実装の移行を機械的に
+/// するための互換初期化型。`toContext()` でドメイン別Contextへ詰め替える。
+///
+/// 注意: これは構造体リテラルの完全互換ではない。既存コードの
+/// `Context{ .context = host, .openFileFn = open }` は
+/// `FlatContext{ .context = host, .openFileFn = open }.toContext()` へ
+/// 書き換える必要がある。lnako本体のHost（`CliHost`）とAOTは移行済み。
+pub const FlatContext = struct {
+    context: *anyopaque,
+    openFileFn: ?*const fn (context: *anyopaque, path: []const u8, mode: foundation.OpenMode, exclusive: bool, sync: bool) anyerror!u64 = null,
+    closeFileFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
+    readFileBytesFn: ?*const fn (context: *anyopaque, raw: u64, buffer: []u8) anyerror!usize = null,
+    writeFileBytesFn: ?*const fn (context: *anyopaque, raw: u64, bytes: []const u8) anyerror!usize = null,
+    syncFileFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
+    truncateFileFn: ?*const fn (context: *anyopaque, raw: u64, size: u64) anyerror!void = null,
+    createHashFn: ?*const fn (context: *anyopaque, algorithm: []const u8) anyerror!u64 = null,
+    updateHashFn: ?*const fn (context: *anyopaque, raw: u64, bytes: []const u8) anyerror!void = null,
+    digestHashFn: ?*const fn (context: *anyopaque, raw: u64, allocator: std.mem.Allocator) anyerror![]u8 = null,
+    discardHashFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
+    statFn: ?*const fn (context: *anyopaque, path: []const u8, follow: bool) anyerror!low_level_fs.Metadata = null,
+    symlinkFn: ?*const fn (context: *anyopaque, target: []const u8, link: []const u8) anyerror!void = null,
+    readlinkFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) anyerror![]u8 = null,
+    hardlinkFn: ?*const fn (context: *anyopaque, target: []const u8, link: []const u8) anyerror!void = null,
+    realpathFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) anyerror![:0]u8 = null,
+    renameFn: ?*const fn (context: *anyopaque, source: []const u8, destination: []const u8) anyerror!void = null,
+    unlinkFn: ?*const fn (context: *anyopaque, path: []const u8) anyerror!void = null,
+    rmdirFn: ?*const fn (context: *anyopaque, path: []const u8) anyerror!void = null,
+    peekStdinSourceFn: ?*const fn (context: *anyopaque) ?*low_level_io.StdinSource = null,
+    stdinSourceFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator) anyerror!*low_level_io.StdinSource = null,
+    writeStdoutBytesFn: ?*const fn (context: *anyopaque, bytes: []const u8) anyerror!usize = null,
+    writeStderrBytesFn: ?*const fn (context: *anyopaque, bytes: []const u8) anyerror!usize = null,
+    syncStdoutFn: ?*const fn (context: *anyopaque) anyerror!void = null,
+    syncStderrFn: ?*const fn (context: *anyopaque) anyerror!void = null,
+
+    pub fn toContext(self: FlatContext) Context {
+        return .{
+            .stream = .{
+                .context = self.context,
+                .openFileFn = self.openFileFn,
+                .closeFileFn = self.closeFileFn,
+                .readFileBytesFn = self.readFileBytesFn,
+                .writeFileBytesFn = self.writeFileBytesFn,
+                .syncFileFn = self.syncFileFn,
+                .truncateFileFn = self.truncateFileFn,
+            },
+            .hash = .{
+                .context = self.context,
+                .createHashFn = self.createHashFn,
+                .updateHashFn = self.updateHashFn,
+                .digestHashFn = self.digestHashFn,
+                .discardHashFn = self.discardHashFn,
+            },
+            .fs = .{
+                .context = self.context,
+                .statFn = self.statFn,
+                .symlinkFn = self.symlinkFn,
+                .readlinkFn = self.readlinkFn,
+                .hardlinkFn = self.hardlinkFn,
+                .realpathFn = self.realpathFn,
+                .renameFn = self.renameFn,
+                .unlinkFn = self.unlinkFn,
+                .rmdirFn = self.rmdirFn,
+            },
+            .stdio = .{
+                .context = self.context,
+                .peekStdinSourceFn = self.peekStdinSourceFn,
+                .stdinSourceFn = self.stdinSourceFn,
+                .writeStdoutBytesFn = self.writeStdoutBytesFn,
+                .writeStderrBytesFn = self.writeStderrBytesFn,
+                .syncStdoutFn = self.syncStdoutFn,
+                .syncStderrFn = self.syncStderrFn,
+            },
+        };
+    }
+};
+
 pub fn emptyContext() Context {
     return .{};
+}
+
+test "FlatContextは旧フラット契約をドメイン別Contextへ詰め替える" {
+    const statFn = struct {
+        fn call(_: *anyopaque, _: []const u8, _: bool) anyerror!low_level_fs.Metadata {
+            return error.Unexpected;
+        }
+    }.call;
+    const writeFn = struct {
+        fn call(_: *anyopaque, _: []const u8) anyerror!usize {
+            return 0;
+        }
+    }.call;
+    var host: u8 = 0;
+    const flat = FlatContext{
+        .context = @ptrCast(&host),
+        .statFn = statFn,
+        .writeStdoutBytesFn = writeFn,
+    };
+    const converted = flat.toContext();
+    try std.testing.expect(converted.fs.statFn == statFn);
+    try std.testing.expect(converted.fs.context == @as(*anyopaque, @ptrCast(&host)));
+    try std.testing.expect(converted.stdio.writeStdoutBytesFn == writeFn);
+    try std.testing.expect(converted.stream.openFileFn == null);
+    try std.testing.expect(converted.hasStat());
+    try std.testing.expect(!converted.hasStreamFileIo());
 }
