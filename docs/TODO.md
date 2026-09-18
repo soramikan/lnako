@@ -5,7 +5,7 @@
 
 `verified: 527` は、追跡されたfixture・dispatch・公式比較・3 OS attestationに基づく命令entryの実行証拠です。全ての入力値、Node/ECMAScript APIの全境界、実ネットワーク・外部アプリ・任意の外部toolまで完全同値であることを意味しません。未検証境界は本書と [互換性の概要](COMPATIBILITY.md) に明示します。
 
-## リリース済みの状態（v0.1.0 / v0.1.1 / v0.2.0）
+## リリース済みの状態（v0.1.0 / v0.1.1 / v0.2.0 / v0.2.1）
 
 - **v0.1.0（初回正式リリース）**：
   - 標準cnako 527 entry（native 523、compat-js 4、blocked 0）の実装と、macOS arm64・Linux x86_64・Windows x86_64の3 OSにおけるCI 54/54全job成功・attestation検証を達成。
@@ -19,6 +19,11 @@
   - DNCL完全互換と直接コンパイル対応、構造例外責務分割（[#71](https://github.com/soramikan/lnako/pull/71)）。
   - 互換性証拠のcanonical形分離と走査型snapshot解決への移行（[#80](https://github.com/soramikan/lnako/pull/80)）。
   - ドキュメント類の利用者向け全面刷新。
+- **v0.2.1（バグ修正リリース）**：
+  - HTTPSのAJAX通信およびHTTPリダイレクト時のTLS初期化panicを修正し安定化（[#82](https://github.com/soramikan/lnako/issues/82), [#97](https://github.com/soramikan/lnako/pull/97)）。
+  - 先頭のUTF-8 BOM読み飛ばしによるBOM付きソースコード実行への対応（[#94](https://github.com/soramikan/lnako/pull/94)）。
+  - インデント構文における『エラーならば』が『違えば』同様にエラー監視スコープを閉じないよう構文解析を修正（[#81](https://github.com/soramikan/lnako/issues/81), [#95](https://github.com/soramikan/lnako/pull/95)）。
+  - CI/CDパイプライン改善（変更分類Stage 2、Windows producer最適化、クリティカルパス平準化、GitHub Attestations移行）。
 
 ## 明示的に非対応とする境界（意図的制限・後続課題）
 
