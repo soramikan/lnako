@@ -46,7 +46,7 @@ lnakoは「標準cnako 527 entryについて、追跡されたfixtureと公式v3
 
 ### 追跡対象のcanonical証拠
 
-[`compat/v3.7.24/evidence.json`](../compat/v3.7.24/evidence.json) はリポジトリに追跡する機械可読の正本です。正本自体は常時unattestedで、次の表は現行attestation snapshotから導出したviewの状態です。
+[`compat/v3.7.24/evidence.json`](../compat/v3.7.24/evidence.json) はリポジトリに追跡する機械可読の正本です。正本の実行証拠stateは常時 unattested です。外部署名の確認は git 上の snapshot コピーではなく、main CI の `actions/attest` が GitHub Attestations へ記録し、Release preflight が `gh attestation verify` で現行commitの17件のcanonical証拠とsource manifest宣言を検証します。
 
 | state | entry |
 | --- | ---: |
@@ -55,17 +55,17 @@ lnakoは「標準cnako 527 entryについて、追跡されたfixtureと公式v3
 | `unverified` | <!-- attestation:unverified -->0<!-- /attestation:unverified --> |
 
 <!-- attestation:description-start -->
-`verified` は正本のstateではなく、現行source manifestに一致するattestation snapshotから導出されるviewです。`attestations/` を走査しても現行source manifestと一致するsnapshotが無いため、導出viewは `verified: 0`、`trace-confirmed-unattested: 527` です。sourceに変更を加えた場合、過去snapshotの導出結果を流用せず、mainマージ後の新しいCI attestation snapshotを追跡します。
+`verified` は正本へ書き込みません。現行commitのCIが `actions/attest` でcanonical証拠17件とsource manifest宣言を署名し、Release preflightの `check_github_attestation.mjs` が公式 `gh attestation verify` で導出catalog `verified: 527` を確認します。gitへsnapshotをコピーしてPRする手順は使いません。
 <!-- attestation:description-end -->
 
-0.1.1の最終sourceでコードを変更した場合は、過去snapshotの527件をそのままリリース証拠として流用しません。最終source manifestに対してCIとattestationを取り直し、release preflightの `sync_compat_evidence.mjs --check` と `check_tracked_dispatch_attestation.mjs --require-current` を通過させます。
+コードを変更した場合は、そのcommitのCI attestationを取り直し、release preflightの `sync_compat_evidence.mjs --check` と `check_github_attestation.mjs` を通過させます。過去commitの署名を流用しません。
 
 <!-- attestation:artifacts-start -->
 ### CIの一時artifact
 
-現行source manifestに一致するsnapshotはまだありません。前manifest用のsnapshot `attestations/35236586118/`（run `35236586118`）、`attestations/34402208204/`（run `34402208204`）、`attestations/34305071458/`（run `34305071458`）、`attestations/34121804812/`（run `34121804812`）、`attestations/34113932297/`（run `34113932297`）は履歴として残しています。mainのCI成功後に新しいsnapshotを追跡すると、走査型解決でそのrunが現行となり、導出viewは `verified: 527` へ戻ります。
+main CIの `attest-dispatch-evidence` jobが3 OSのdispatch証拠・native AOT aggregate・source manifest宣言・canonical証拠17件を同一Sigstore bundleのsubjectとして署名し、GitHub Attestationsへ記録します。Release tag pushは同じcommitのCI 54 job成功に加え、このattestationを `gh attestation verify` で再確認します。`compat/v3.7.24/attestations/` の過去snapshotはオフライン改変検査用の履歴fixtureであり、現行のverified判定には使いません。
 
-一時artifactの値は、実行環境・署名・artifactの保存期間に依存します。追跡対象のcanonical `evidence.json` は常時 `trace-confirmed-unattested` を保持し、`verified` は現行source manifestに一致するsnapshotの導出viewにのみ現れます。
+一時artifactの値は実行環境とartifactの保存期間に依存します。追跡対象のcanonical `evidence.json` は常時 `trace-confirmed-unattested` を保持します。
 <!-- attestation:artifacts-end -->
 
 ## 実行ルート別の特徴

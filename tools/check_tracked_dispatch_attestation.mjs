@@ -6,6 +6,7 @@ import { platformIndependentOfficialComparison } from "./dispatch_evidence_seman
 import { computeSourceManifestSha256Sync } from "./lib/evidence/manifest.mjs";
 import { attestationsDirectory, canonicalAttestationSchemaV2, dispatchAttestationSchemaV3, loadAttestationSnapshot, loadCurrentAttestation, signedEvidenceDigests, trackedAttestationSubjects } from "./lib/evidence/attested_files.mjs";
 import { computeBackingDigestByProof, deriveVerifiedCatalog } from "./lib/evidence/promotion.mjs";
+import { verifyCurrentGithubAttestation } from "./lib/evidence/github_attestation.mjs";
 import { sourceManifestDeclarationBasename, validateSourceManifestDeclarationBytes } from "./lib/evidence/source_manifest.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -151,8 +152,23 @@ const currentSummary = await validateCurrentSnapshot();
 assertEqual(currentEvidence.executionEvidenceStates?.verified, 0, "canonical catalog verified count");
 assertEqual(currentEvidence.executionEvidenceStates?.["trace-confirmed-unattested"], 527, "canonical catalog unattested count");
 assertEqual(currentEvidence.executionEvidenceStates?.unverified, 0, "canonical catalog unverified count");
-if (currentSummary === null) {
+let githubSummary = null;
+if (requireCurrent) {
+  if (offline && snapshotDirectory === null) {
+    throw new Error("--require-currentはGitHub Attestationsのオンライン検証が必要です");
+  }
+  if (snapshotDirectory === null) {
+    const commitResult = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
+    if (commitResult.status !== 0 || !/^[0-9a-f]{40}$/i.test(commitResult.stdout.trim())) {
+      throw new Error("現行commitを取得できません");
+    }
+    githubSummary = await verifyCurrentGithubAttestation(root, { commit: commitResult.stdout.trim() });
+  }
+}
+if (currentSummary === null && githubSummary === null) {
   console.log(`追跡dispatch attestationを検証しました: run ${expected.run} / target ${expected.commit} / 3 OS / historical verified 4（現行manifestに一致するsnapshotなし・canonical verified 0）`);
+} else if (githubSummary !== null) {
+  console.log(`追跡dispatch attestationを検証しました: run ${expected.run} / target ${expected.commit} / 3 OS / historical verified 4、GitHub attestation commit ${githubSummary.commit} / 導出verified ${githubSummary.verified}`);
 } else {
   console.log(`追跡dispatch attestationを検証しました: run ${expected.run} / target ${expected.commit} / 3 OS / historical verified 4、current run ${currentSummary.run} / target ${currentSummary.commit} / 導出verified 527`);
 }
@@ -162,7 +178,7 @@ async function validateCurrentSnapshot() {
     ? await loadCurrentAttestation(root, attestationsRoot)
     : await loadAttestationSnapshot(root, snapshotDirectory);
   if (current === null) {
-    if (requireCurrent) throw new Error("現行source manifestに一致するattestation snapshotがありません");
+    if (requireCurrent && snapshotDirectory !== null) throw new Error("現行source manifestに一致するattestation snapshotがありません");
     return null;
   }
   const snapshotRoot = current.directory;

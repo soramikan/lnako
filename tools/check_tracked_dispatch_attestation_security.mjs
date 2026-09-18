@@ -334,7 +334,7 @@ try {
     throw new Error(`run名不一致snapshotを無視できませんでした: ${JSON.stringify({ status: result.status, stdout: result.stdout, stderr: result.stderr })}`);
   }
   const required = runTrackedCheck(mismatchedTemporary, ["--require-current"]);
-  assertTrackedRejected(required, "現行source manifestに一致するattestation snapshotがありません", "run名不一致時のrequire-current");
+  assertTrackedRejected(required, "--require-currentはGitHub Attestationsのオンライン検証が必要です", "run名不一致時のrequire-current");
   console.log("tracked dispatch attestation安全性検査: run名不一致snapshotを候補から除外しrequire-currentを拒否");
 } finally {
   await rm(mismatchedTemporary, { recursive: true, force: true });
@@ -349,7 +349,7 @@ try {
   if (result.status !== 0 || !`${result.stdout}\n${result.stderr}`.includes("一致するsnapshotなし")) {
     throw new Error(`v1 manifest snapshotを無視できませんでした: ${JSON.stringify({ status: result.status, stdout: result.stdout, stderr: result.stderr })}`);
   }
-  assertTrackedRejected(runTrackedCheck(v1Temporary, ["--require-current"]), "現行source manifestに一致するattestation snapshotがありません", "v1 manifest時のrequire-current");
+  assertTrackedRejected(runTrackedCheck(v1Temporary, ["--require-current"]), "--require-currentはGitHub Attestationsのオンライン検証が必要です", "v1 manifest時のrequire-current");
   console.log("tracked dispatch attestation安全性検査: v1 manifest snapshotを候補から除外しrequire-currentを拒否");
 } finally {
   await rm(v1Temporary, { recursive: true, force: true });
