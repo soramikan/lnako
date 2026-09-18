@@ -6,6 +6,7 @@ import {
   collectMetrics,
   collectRunMetrics,
   formatMarkdown,
+  formatSeconds,
   osFromJobName,
   parseToolchainLog,
   percentile,
@@ -150,6 +151,39 @@ test("collectMetrics fetches runs, jobs and logs through injected gh api", async
   assert.equal(aggregate.toolchain.llvmReused, 2);
   assert.ok(calls.some((path) => path.includes("/actions/jobs/1/logs")));
   assert.ok(calls.some((path) => path.includes("/actions/jobs/2/logs")));
+});
+
+test("collectMetricsは100件超のjobをページングで全件取得する", async () => {
+  const page1Jobs = Array.from({ length: 100 }, (_, index) => ({ ...jobsFixture[0], id: 1000 + index, name: `job-${index}` }));
+  const page2Jobs = Array.from({ length: 20 }, (_, index) => ({ ...jobsFixture[0], id: 2000 + index, name: `job-b-${index}` }));
+  const ghApiJsonImpl = async (path) => {
+    if (path.includes("/runs?")) return { workflow_runs: [runFixture] };
+    if (path.includes("/jobs?")) {
+      return path.includes("page=2")
+        ? { total_count: 120, jobs: page2Jobs }
+        : { total_count: 120, jobs: page1Jobs };
+    }
+    if (path.endsWith("/timing")) return { run_duration_ms: 900_000 };
+    throw new Error(`unexpected path: ${path}`);
+  };
+  const { aggregate } = await collectMetrics({
+    repo: "soramikan/lnako",
+    workflow: "ci.yml",
+    runCount: 1,
+    includeLogs: false,
+    ghApiJsonImpl,
+    ghApiLogImpl: async () => "",
+  });
+  assert.equal(aggregate.jobCount, 120);
+});
+
+test("formatSecondsは繰り上がりを分へ正しく伝播させる", () => {
+  assert.equal(formatSeconds(119.6), "2m00s");
+  assert.equal(formatSeconds(59.6), "1m00s");
+  assert.equal(formatSeconds(59.4), "59s");
+  assert.equal(formatSeconds(90), "1m30s");
+  assert.equal(formatSeconds(5), "5s");
+  assert.equal(formatSeconds(Number.NaN), "-");
 });
 
 test("formatMarkdown renders the KPI sections", () => {

@@ -212,10 +212,11 @@ export function formatMarkdown({ repo, workflow, generatedAt, runs, aggregate })
   return `${lines.join("\n")}\n`;
 }
 
-function formatSeconds(seconds) {
+export function formatSeconds(seconds) {
   if (!Number.isFinite(seconds)) return "-";
-  const minutes = Math.floor(seconds / 60);
-  const rest = Math.round(seconds % 60);
+  const roundedSeconds = Math.round(seconds);
+  const minutes = Math.floor(roundedSeconds / 60);
+  const rest = roundedSeconds % 60;
   return minutes > 0 ? `${minutes}m${String(rest).padStart(2, "0")}s` : `${rest}s`;
 }
 
@@ -240,10 +241,17 @@ export async function collectMetrics({ repo, workflow, runCount, includeLogs, gh
   const runs = (response.workflow_runs ?? []).filter((run) => run.conclusion === "success").slice(0, runCount);
   const collected = [];
   for (const run of runs) {
-    const jobsResponse = await ghApiJsonImpl(`repos/${repo}/actions/runs/${run.id}/jobs?per_page=100`);
-    const jobs = jobsResponse.jobs ?? [];
-    if (Number.isSafeInteger(jobsResponse.total_count) && jobsResponse.total_count > jobs.length) {
-      log(`run ${run.id}: jobs ${jobs.length}/${jobsResponse.total_count}（per_page上限で一部欠落）`);
+    const jobs = [];
+    let jobsTotal = null;
+    for (let page = 1; ; page += 1) {
+      const jobsResponse = await ghApiJsonImpl(`repos/${repo}/actions/runs/${run.id}/jobs?per_page=100&page=${page}`);
+      const pageJobs = jobsResponse.jobs ?? [];
+      jobs.push(...pageJobs);
+      jobsTotal = jobsResponse.total_count ?? jobsTotal;
+      if (pageJobs.length === 0 || (Number.isSafeInteger(jobsTotal) && jobs.length >= jobsTotal)) break;
+    }
+    if (Number.isSafeInteger(jobsTotal) && jobsTotal > jobs.length) {
+      log(`run ${run.id}: jobs ${jobs.length}/${jobsTotal}（ページング取得後も一部欠落）`);
     }
     const timing = await ghApiJsonImpl(`repos/${repo}/actions/runs/${run.id}/timing`).catch(() => null);
     const toolchainByJob = new Map();
