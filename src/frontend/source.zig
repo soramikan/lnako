@@ -13,10 +13,21 @@ pub const NormalizedSource = struct {
 const State = enum { code, literal, line_comment, block_comment };
 
 /// Windowsメモ帳のUTF-8保存などで先頭に付くBOM。本文の一部ではないため
-/// 読み飛ばし、BOM付きUTF-8のソースをそのまま実行できるようにする。
+/// ファイル先頭では読み飛ばし、BOM付きUTF-8のソースをそのまま実行できるようにする。
 pub const utf8_bom = "\xEF\xBB\xBF";
 
+pub const NormalizeOptions = struct {
+    /// 入力の先頭をファイル先頭としてUTF-8 BOMを読み飛ばす。
+    /// 文字列テンプレートの展開式など、元ファイルの途中を切り出した断片を
+    /// 正規化するときはfalseにして本文中のU+FEFFを保持する。
+    strip_leading_bom: bool = true,
+};
+
 pub fn normalize(allocator: std.mem.Allocator, input: []const u8) !NormalizedSource {
+    return normalizeWithOptions(allocator, input, .{});
+}
+
+pub fn normalizeWithOptions(allocator: std.mem.Allocator, input: []const u8, options: NormalizeOptions) !NormalizedSource {
     var output: std.ArrayList(u8) = .empty;
     var offsets: std.ArrayList(usize) = .empty;
     errdefer output.deinit(allocator);
@@ -25,9 +36,9 @@ pub fn normalize(allocator: std.mem.Allocator, input: []const u8) !NormalizedSou
     var state: State = .code;
     var literal_close: []const u8 = "";
     var literal_output_close: []const u8 = "";
-    // 先頭のBOMだけを読み飛ばし、source mapの先頭が元ファイルの
-    // BOM直後（本文先頭）を指すようにする。
-    var i: usize = if (std.mem.startsWith(u8, input, utf8_bom)) utf8_bom.len else 0;
+    // strip_leading_bomが有効なときだけ先頭BOMを読み飛ばし、source mapの
+    // 先頭が元ファイルのBOM直後（本文先頭）を指すようにする。
+    var i: usize = if (options.strip_leading_bom and std.mem.startsWith(u8, input, utf8_bom)) utf8_bom.len else 0;
     while (i < input.len) {
         switch (state) {
             .literal => {
@@ -257,6 +268,17 @@ test "本文中のBOMは読み飛ばさない" {
     try std.testing.expectEqualStrings("A" ++ utf8_bom ++ "B", normalized.text);
     try std.testing.expectEqual(@as(usize, 0), normalized.sourceOffset(0));
     try std.testing.expectEqual(@as(usize, 1), normalized.sourceOffset(1));
+}
+
+test "BOM除去が無効な断片では先頭BOMを本文として保持する" {
+    const allocator = std.testing.allocator;
+    const normalized = try normalizeWithOptions(allocator, utf8_bom ++ "A", .{ .strip_leading_bom = false });
+    defer allocator.free(normalized.text);
+    defer allocator.free(normalized.source_offsets);
+
+    try std.testing.expectEqualStrings(utf8_bom ++ "A", normalized.text);
+    try std.testing.expectEqual(@as(usize, 0), normalized.sourceOffset(0));
+    try std.testing.expectEqual(@as(usize, utf8_bom.len), normalized.sourceOffset(utf8_bom.len));
 }
 
 test "公式前処理の全角記号と改行規則に合わせる" {

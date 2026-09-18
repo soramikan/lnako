@@ -25,13 +25,24 @@ pub fn tokenize(backing_allocator: std.mem.Allocator, input: []const u8) Error!T
     return tokenizeWithMode(backing_allocator, input, .{});
 }
 
+/// 文字列テンプレートの展開式など、元ファイルの途中を切り出した断片を
+/// 字句化する。断片先頭のU+FEFFはファイル署名ではなく本文の一部なので
+/// 読み飛ばさず、既存どおり字句エラーとして扱う。
+pub fn tokenizeFragment(backing_allocator: std.mem.Allocator, input: []const u8) Error!TokenStream {
+    return tokenizeInternal(backing_allocator, input, .{}, .{ .strip_leading_bom = false });
+}
+
 /// `forced` は拡張子やコマンドライン引数で強制される構文モード。
 /// 先頭100トークン以内の行コメント指示による検出と合わせて有効化する。
 pub fn tokenizeWithMode(backing_allocator: std.mem.Allocator, input: []const u8, forced: Mode) Error!TokenStream {
+    return tokenizeInternal(backing_allocator, input, forced, .{});
+}
+
+fn tokenizeInternal(backing_allocator: std.mem.Allocator, input: []const u8, forced: Mode, normalize_options: source_mod.NormalizeOptions) Error!TokenStream {
     var arena = std.heap.ArenaAllocator.init(backing_allocator);
     errdefer arena.deinit();
     const allocator = arena.allocator();
-    const normalized = source_mod.normalize(allocator, input) catch |err| switch (err) {
+    const normalized = source_mod.normalizeWithOptions(allocator, input, normalize_options) catch |err| switch (err) {
         error.InvalidUtf8 => return error.InvalidUtf8,
         error.OutOfMemory => return error.OutOfMemory,
     };
@@ -831,6 +842,10 @@ test "先頭のBOM付きでもインデント構文とCRLFを扱う" {
         try std.testing.expectEqual(bom.len + "!インデント構文\r\n".len, token.span.source_start);
     }
     try std.testing.expect(found);
+}
+
+test "ファイル断片の先頭BOMは本文として字句エラーにする" {
+    try std.testing.expectError(error.UnexpectedCharacter, tokenizeFragment(std.testing.allocator, source_mod.utf8_bom ++ "A"));
 }
 
 test "モード指定の検出境界は公式の先頭101トークンと一致する" {
