@@ -168,8 +168,13 @@ jobで1回だけbuildし、metadata＋SHA-256付きartifact
 ### 設計
 
 - `aot_compiler`はfull経路でのみ実行（`changes`のlevelゲートと同じ条件）
-- `aot`は`needs: [changes, aot_compiler]`となり、Windows native shardのみ
-  `zig build`をskipしてartifactをdownload・検証・installする
+- Windows native 12 shardは専用consumer job `aot_windows`へ分離し、
+  そのjobのみ`needs: [changes, aot_compiler]`でproducerを待つ。
+  `needs`はjob全体に効くため、`aot`へ依存させるとLinux・macOS・supportの
+  27 shardまで直列化されproducer失敗で全てskipされる。`aot`は
+  `needs: [changes]`のまま並行起動する
+- `aot_windows`の各shardは`zig build`をskipしてartifactをdownload・
+  検証・installする
 - `tools/aot_compiler_artifact.mjs verify`が
   commit／platform／arch／Zig version／build mode／compat-JS構成／SHA-256を
   照合してから`zig-out/bin`へinstallする。誤commitや改変されたbinaryは

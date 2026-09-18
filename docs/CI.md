@@ -10,8 +10,9 @@ CIは、互換性検証の意味を保ったまま、AOTをfixture shardと最�
 | --- | ---: | --- |
 | `test` | 10 | core、standard、host、QuickJS/AOT smoke、macOS統合suite |
 | `parser_fuzz` | 2 | Linux/Windowsの文法生成fuzz |
-| `aot` native | 27 | Linux 12、macOS 3、Windows 12。O0〜O3とfixture shard |
+| `aot` native | 15 | Linux 12、macOS 3。O0〜O3とfixture shard |
 | `aot` support | 12 | Linux/Windows各6。HTTP、dispatch evidence、coverage 3 shard、smoke |
+| `aot_windows` native | 12 | Windows 12。O0〜O3とfixture shard。producer artifactを検証・installしてbuildを省略 |
 | 後段 | 3 | coverage集約、AOT artifact集約、dispatch＋canonical証拠のattestation |
 | 分類・軽量 | 2 | `changes`が変更パスを分類し、docs・attestation snapshot専用変更では`lightweight`のみ実行（matrixはskip） |
 | `aot_compiler` | 1 | Windows native AOT shardが共有するDebug compilerを1回buildし、metadata＋SHA-256付きでartifact化 |
