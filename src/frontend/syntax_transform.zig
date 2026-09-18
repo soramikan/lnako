@@ -637,6 +637,16 @@ fn isWordValue(token: Token, value: []const u8) bool {
     return isWordToken(token) and std.mem.eql(u8, token.value, value);
 }
 
+/// 公式 `nako_indent_inline.mts` の `isSkipWord` に対応する判定。
+/// インデント構文で行頭に現れる「違えば」や「エラーならば」の直前には
+/// 『ここまで』を挿入しない。公式と同じく `エラー` の直後の助詞が
+/// 「ならば」のときだけを対象にし、「エラーなら」等は閉じる。
+fn isSkipWord(token: Token) bool {
+    if (token.kind == .keyword_else) return true;
+    if (token.kind == .keyword_error and std.mem.eql(u8, token.josi, "ならば")) return true;
+    return false;
+}
+
 fn transformExplicitIndent(tokens: *std.ArrayList(Token), allocator: std.mem.Allocator) Error!void {
     for (tokens.items) |token| if (token.kind == .keyword_here_end) return error.ExplicitEndInIndentMode;
 
@@ -655,7 +665,7 @@ fn transformExplicitIndent(tokens: *std.ArrayList(Token), allocator: std.mem.All
                 const current = first.indent;
                 while (blocks.items.len > 0 and blocks.items[blocks.items.len - 1].body_indent > current) {
                     const block = blocks.pop().?;
-                    if (!(first.kind == .keyword_else and block.parent_indent == current)) {
+                    if (!(isSkipWord(first) and block.parent_indent == current)) {
                         try appendEnd(&output, allocator, lastToken(output.items));
                     }
                 }
@@ -722,7 +732,7 @@ fn transformInlineIndent(tokens: *std.ArrayList(Token), allocator: std.mem.Alloc
             if (nesting == 0) {
                 while (blocks.items.len > 0 and blocks.items[blocks.items.len - 1] >= first.indent) {
                     const block_indent = blocks.pop().?;
-                    if (!(first.kind == .keyword_else and block_indent == first.indent)) {
+                    if (!(isSkipWord(first) and block_indent == first.indent)) {
                         try appendEnd(&output, allocator, first);
                     }
                 }
@@ -840,6 +850,113 @@ test "インラインインデントのコロンをここまでへ変換する" 
     }
     try std.testing.expectEqual(@as(usize, 0), colon_count);
     try std.testing.expectEqual(@as(usize, 1), end_count);
+}
+
+fn countEndsBeforeError(tokens: []const Token) usize {
+    var count: usize = 0;
+    for (tokens) |token| {
+        if (token.kind == .keyword_error) break;
+        if (token.kind == .keyword_here_end) count += 1;
+    }
+    return count;
+}
+
+/// `keyword_error` ごとに、それ以前に出力された `keyword_here_end` の個数を counts へ記録する。
+fn errorEndCounts(tokens: []const Token, counts: []usize) usize {
+    var ends: usize = 0;
+    var errors: usize = 0;
+    for (tokens) |token| {
+        if (token.kind == .keyword_error) {
+            if (errors < counts.len) counts[errors] = ends;
+            errors += 1;
+        } else if (token.kind == .keyword_here_end) {
+            ends += 1;
+        }
+    }
+    return errors;
+}
+
+fn totalEnds(tokens: []const Token) usize {
+    var count: usize = 0;
+    for (tokens) |token| {
+        if (token.kind == .keyword_here_end) count += 1;
+    }
+    return count;
+}
+
+test "インラインインデントでエラーならばの直前へ余分なここまでを挿入しない" {
+    var stream = try lexer_mod.tokenize(std.testing.allocator, "エラー監視：\n　[1,2,3]を反復：\n　　対象を表示\nエラーならば：\n　「えらーだよ」と表示\n");
+    defer stream.deinit();
+    try apply(&stream);
+    // 内側の『反復』を閉じる1個だけを挿入し、親の『エラー監視』は閉じない。
+    try std.testing.expectEqual(@as(usize, 1), countEndsBeforeError(stream.tokens));
+}
+
+test "明示インデント構文でエラーならばの直前へ余分なここまでを挿入しない" {
+    var stream = try lexer_mod.tokenize(std.testing.allocator, "!インデント構文\nエラー監視\n　[1,2,3]を反復\n　　対象を表示\nエラーならば\n　「えらーだよ」と表示\n");
+    defer stream.deinit();
+    try apply(&stream);
+    try std.testing.expectEqual(@as(usize, 1), countEndsBeforeError(stream.tokens));
+}
+
+test "インラインインデントでエラーならは公式どおりここまでを挿入する" {
+    var stream = try lexer_mod.tokenize(std.testing.allocator, "エラー監視：\n　「故意」のエラー発生\nエラーなら：\n　「handled」を表示\n");
+    defer stream.deinit();
+    try apply(&stream);
+    // 公式は『エラー』の直後の助詞が『ならば』のときだけ閉じない。
+    // 『エラーなら』は『エラー監視』本体を閉じる1個を挿入する。
+    try std.testing.expectEqual(@as(usize, 1), countEndsBeforeError(stream.tokens));
+}
+
+test "インラインインデントのエラー監視で複数段のブロックをここまでで閉じる" {
+    var stream = try lexer_mod.tokenize(std.testing.allocator, "エラー監視：\n　3回：\n　　2回：\n　　　「x」と表示\nエラーならば：\n　「y」と表示\n");
+    defer stream.deinit();
+    try apply(&stream);
+    // 『3回』と『2回』を閉じる2個を挿入し、『エラー監視』は閉じない。
+    try std.testing.expectEqual(@as(usize, 2), countEndsBeforeError(stream.tokens));
+}
+
+test "エラー監視の本体内の違えばをここまでで閉じない" {
+    var stream = try lexer_mod.tokenize(std.testing.allocator, "エラー監視：\n　もし1=0ならば：\n　　「true」と表示\n　違えば：\n　　「false」と表示\nエラーならば：\n　「handled」を表示\n");
+    defer stream.deinit();
+    try apply(&stream);
+    // 『もし/違えば』のブロックを閉じる1個だけ。『エラー監視』は閉じない。
+    try std.testing.expectEqual(@as(usize, 1), countEndsBeforeError(stream.tokens));
+}
+
+test "入れ子のエラー監視では内側のブロックだけここまでで閉じる" {
+    var stream = try lexer_mod.tokenize(std.testing.allocator, "エラー監視：\n　エラー監視：\n　　「内側」のエラー発生\n　エラーならば：\n　　「内側ハンドラ」を表示\nエラーならば：\n　「外側ハンドラ」を表示\n");
+    defer stream.deinit();
+    try apply(&stream);
+    var counts = [_]usize{0} ** 2;
+    // 内側の『エラーならば』の前は0個。外側の『エラーならば』の前は内側を閉じる1個。
+    try std.testing.expectEqual(@as(usize, 2), errorEndCounts(stream.tokens, &counts));
+    try std.testing.expectEqual(@as(usize, 0), counts[0]);
+    try std.testing.expectEqual(@as(usize, 1), counts[1]);
+    try std.testing.expectEqual(@as(usize, 2), totalEnds(stream.tokens));
+}
+
+test "明示インデント構文の入れ子のエラー監視では内側のブロックだけここまでで閉じる" {
+    var stream = try lexer_mod.tokenize(std.testing.allocator, "!インデント構文\nエラー監視\n　エラー監視\n　　「内側」のエラー発生\n　エラーならば\n　　「内側ハンドラ」を表示\nエラーならば\n　「外側ハンドラ」を表示\n");
+    defer stream.deinit();
+    try apply(&stream);
+    var counts = [_]usize{0} ** 2;
+    try std.testing.expectEqual(@as(usize, 2), errorEndCounts(stream.tokens, &counts));
+    try std.testing.expectEqual(@as(usize, 0), counts[0]);
+    try std.testing.expectEqual(@as(usize, 1), counts[1]);
+    try std.testing.expectEqual(@as(usize, 2), totalEnds(stream.tokens));
+}
+
+test "違えばの直前へここまでを挿入しない既存動作を維持する" {
+    var stream = try lexer_mod.tokenize(std.testing.allocator, "もし1=0ならば:\n　　1を表示\n違えば:\n　　2を表示\n");
+    defer stream.deinit();
+    try apply(&stream);
+    var end_before_else: usize = 0;
+    for (stream.tokens) |token| {
+        if (token.kind == .keyword_else) break;
+        if (token.kind == .keyword_here_end) end_before_else += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 0), end_before_else);
 }
 
 test "DNCLの代入・整数除算・配列括弧を変換する" {
