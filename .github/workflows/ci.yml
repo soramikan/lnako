@@ -84,7 +84,6 @@ jobs:
           node tools/check_benchmark_result.mjs
           node tools/check_native_aot_artifacts.mjs --self-test
           node tools/check_distribution.mjs --self-test
-          node tools/check_package_isolation.mjs
           # Mock notarization IDs must not be written to the real job summary.
           GITHUB_STEP_SUMMARY= node --test tools/macos_signing.test.mjs
       - name: Change classifier tests

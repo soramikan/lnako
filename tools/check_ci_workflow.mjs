@@ -199,15 +199,18 @@ if (!lightweightJob || !lightweightJob.includes("if: needs.changes.outputs.level
     !lightweightJob.includes("node tools/check_benchmark_result.mjs") ||
     !lightweightJob.includes("node tools/check_native_aot_artifacts.mjs --self-test") ||
     !lightweightJob.includes("node tools/check_distribution.mjs --self-test") ||
-    !lightweightJob.includes("node tools/check_package_isolation.mjs") ||
     !lightweightJob.includes("GITHUB_STEP_SUMMARY= node --test tools/macos_signing.test.mjs") ||
     !lightweightJob.includes("node --test tools/classify_changes_test.mjs")) {
   throw new Error("軽量検証jobの発動条件または整合性検査が不完全です");
 }
+// check_package_isolation.mjsはconsumer packageを実際にzig fetch・zig build
+// するためzigが必要。軽量jobにはtoolchain setupが無いので含められない
+// （full相当では引き続き実行される）。
 if (lightweightJob.includes("zig build") || lightweightJob.includes("setup_llvm.mjs") ||
     lightweightJob.includes("setup_oracle.mjs") || lightweightJob.includes("compare_") ||
     lightweightJob.includes("setup_quickjs.mjs") || lightweightJob.includes("actions/cache@") ||
-    lightweightJob.includes("mlugg/setup-zig@")) {
+    lightweightJob.includes("mlugg/setup-zig@") ||
+    lightweightJob.includes("check_package_isolation.mjs")) {
   throw new Error("軽量検証jobへbuild・oracle・toolchain setupを混入させないでください");
 }
 // 重いjobはすべてfull相当でのみ起動する。列挙ではなく全jobを走査して、
