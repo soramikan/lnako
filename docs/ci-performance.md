@@ -140,3 +140,6 @@ attestationが発行される）か、full run済みのcommitをtag付けする�
 - `Classify changes`が`level=light`を出力する
 - test/parser_fuzz/AOT/verify/attestの各ジョブがskipされる
 - `Lightweight verification`がbuildなしのchecker群を実行してpassする
+
+初回検証では`check_package_isolation.mjs`がzigをspawnして失敗したため、
+軽量jobから除外し`check_ci_workflow.mjs`の禁止リストへ追加した。
