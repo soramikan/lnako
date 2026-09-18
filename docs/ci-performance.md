@@ -120,7 +120,9 @@ snapshotのみの変更では重いmatrix（test/parser_fuzz/AOT/attest）を起
   light相当のPRでもmerge gateは満たされる。
 - light相当でも`lightweight`ジョブがworkflow schema・追跡attestation・
   docs表・canonical evidenceの整合性を必ず検査する（build不要な
-  checkerのみ、所要2〜3分）。
+  checkerのみ、所要2〜3分）。`check_package_isolation.mjs`のように
+  zigをspawnして実buildするcheckerは除外し、含めないことを
+  `check_ci_workflow.mjs`の禁止リストで強制する。
 
 ### releaseとの関係
 
