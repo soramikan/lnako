@@ -7620,7 +7620,7 @@ test "AOT低レイヤーのincremental hashはファイルstreamとSHA-256一致
 }
 
 test "AOT動的変換は低レイヤーハンドルのHandleIdを引き継ぐ" {
-    const plugin_lowlevel = @import("../../plugins/lowlevel.zig");
+    const low_level_state = @import("../low_level/state.zig");
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
     state.active_runtime = runtime;
@@ -7653,7 +7653,7 @@ test "AOT動的変換は低レイヤーハンドルのHandleIdを引き継ぐ" {
     defer dynamic_roots.deinit();
     var dynamic_handle = try aotToDynamicValue(dynamic_state, handle);
     try dynamic_roots.protect(&dynamic_handle);
-    try std.testing.expectEqual(original, plugin_lowlevel.lookupHandle(&dynamic_state.interpreter.lowlevel_state, dynamic_handle).?);
+    try std.testing.expectEqual(original, low_level_state.lookupHandle(&dynamic_state.interpreter.lowlevel_state, dynamic_handle).?);
 
     const recovered = try dynamicToAotValue(dynamic_state, dynamic_handle);
     try std.testing.expectEqual(original, state.handleIdFor(active, recovered).?);
@@ -7669,7 +7669,7 @@ test "AOT動的変換は低レイヤーハンドルのHandleIdを引き継ぐ" {
 }
 
 test "AOT動的変換はハッシュハンドルのHandleIdを引き継ぐ" {
-    const plugin_lowlevel = @import("../../plugins/lowlevel.zig");
+    const low_level_state = @import("../low_level/state.zig");
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
     state.active_runtime = runtime;
@@ -7694,7 +7694,7 @@ test "AOT動的変換はハッシュハンドルのHandleIdを引き継ぐ" {
     defer dynamic_roots.deinit();
     var dynamic_handle = try aotToDynamicValue(dynamic_state, handle);
     try dynamic_roots.protect(&dynamic_handle);
-    try std.testing.expectEqual(original, plugin_lowlevel.lookupHandle(&dynamic_state.interpreter.lowlevel_state, dynamic_handle).?);
+    try std.testing.expectEqual(original, low_level_state.lookupHandle(&dynamic_state.interpreter.lowlevel_state, dynamic_handle).?);
 
     const recovered = try dynamicToAotValue(dynamic_state, dynamic_handle);
     try std.testing.expectEqual(original, state.handleIdFor(active, recovered).?);

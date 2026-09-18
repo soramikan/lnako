@@ -430,33 +430,44 @@ pub const CliHost = struct {
         return lnako.runtime.low_level_fs.rmdir(self.io, path);
     }
 
-    fn lowLevelContext(self: *CliHost) lnako.plugins.lowlevel.Context {
+    fn lowLevelContext(self: *CliHost) lnako.runtime.low_level_context.Context {
         return .{
-            .context = self,
-            .openFileFn = lowLevelOpenFile,
-            .closeFileFn = lowLevelCloseFile,
-            .readFileBytesFn = lowLevelReadFileBytes,
-            .writeFileBytesFn = lowLevelWriteFileBytes,
-            .syncFileFn = lowLevelSyncFile,
-            .truncateFileFn = lowLevelTruncateFile,
-            .createHashFn = lowLevelCreateHash,
-            .updateHashFn = lowLevelUpdateHash,
-            .digestHashFn = lowLevelDigestHash,
-            .discardHashFn = lowLevelDiscardHash,
-            .statFn = lowLevelStat,
-            .symlinkFn = lowLevelSymlink,
-            .readlinkFn = lowLevelReadlink,
-            .hardlinkFn = lowLevelHardlink,
-            .realpathFn = lowLevelRealpath,
-            .renameFn = lowLevelRename,
-            .unlinkFn = lowLevelUnlink,
-            .rmdirFn = lowLevelRmdir,
-            .peekStdinSourceFn = peekStdinSource,
-            .stdinSourceFn = stdinSource,
-            .writeStdoutBytesFn = lowLevelWriteStdout,
-            .writeStderrBytesFn = lowLevelWriteStderr,
-            .syncStdoutFn = lowLevelSyncStdout,
-            .syncStderrFn = lowLevelSyncStderr,
+            .stream = .{
+                .context = self,
+                .openFileFn = lowLevelOpenFile,
+                .closeFileFn = lowLevelCloseFile,
+                .readFileBytesFn = lowLevelReadFileBytes,
+                .writeFileBytesFn = lowLevelWriteFileBytes,
+                .syncFileFn = lowLevelSyncFile,
+                .truncateFileFn = lowLevelTruncateFile,
+            },
+            .hash = .{
+                .context = self,
+                .createHashFn = lowLevelCreateHash,
+                .updateHashFn = lowLevelUpdateHash,
+                .digestHashFn = lowLevelDigestHash,
+                .discardHashFn = lowLevelDiscardHash,
+            },
+            .fs = .{
+                .context = self,
+                .statFn = lowLevelStat,
+                .symlinkFn = lowLevelSymlink,
+                .readlinkFn = lowLevelReadlink,
+                .hardlinkFn = lowLevelHardlink,
+                .realpathFn = lowLevelRealpath,
+                .renameFn = lowLevelRename,
+                .unlinkFn = lowLevelUnlink,
+                .rmdirFn = lowLevelRmdir,
+            },
+            .stdio = .{
+                .context = self,
+                .peekStdinSourceFn = peekStdinSource,
+                .stdinSourceFn = stdinSource,
+                .writeStdoutBytesFn = lowLevelWriteStdout,
+                .writeStderrBytesFn = lowLevelWriteStderr,
+                .syncStdoutFn = lowLevelSyncStdout,
+                .syncStderrFn = lowLevelSyncStderr,
+            },
         };
     }
 

@@ -19,6 +19,7 @@ const plugin_csv = @import("../../plugins/csv.zig");
 const plugin_toml = @import("../../plugins/toml.zig");
 const plugin_node = @import("../../plugins/node.zig");
 const plugin_lowlevel = @import("../../plugins/lowlevel.zig");
+const low_level_context = @import("../low_level/context.zig");
 const plugin_encoding = @import("../../plugins/encoding.zig");
 const plugin_http_server = @import("../../plugins/http_server.zig");
 const plugin_markup = @import("../../plugins/markup.zig");
@@ -73,7 +74,7 @@ pub const Host = struct {
     monotonicMillisecondsFn: ?*const fn (context: *anyopaque) anyerror!f64 = null,
     randomFn: ?*const fn (context: *anyopaque) anyerror!f64 = null,
     node_context: ?plugin_node.Context = null,
-    lowlevel_context: ?plugin_lowlevel.Context = null,
+    lowlevel_context: ?low_level_context.Context = null,
     http_server_context: ?plugin_http_server.Context = null,
 
     pub fn write(self: Host, bytes: []const u8) !void {
