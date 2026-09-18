@@ -190,3 +190,47 @@ jobで1回だけbuildし、metadata＋SHA-256付きartifact
 - `retention-days: 1`の一時artifactで、永続成果物やreleaseへ混入しない
 - shard側は`--no-build`の`compare_native_oracle.mjs`を従来通り実行し、
   AOT差分テストと集約artifact uploadは維持される
+
+## Phase 1〜4実施後の計測（2026-09-18、run 35322133137）
+
+実測列は上記baseline集計（複数runのmedian）に対する**単一run**の値であり、
+run間ばらつきを含まない点に注意する。
+
+| 指標 | baseline（median） | run 35322133137（単一run） |
+| --- | ---: | ---: |
+| workflow wall time | 22m19s | 17m23s |
+| 最長job | Windows core 18m22s | Windows core 16m44s |
+| mac-core-standard-support | 17m56s | 9m46s（Node host差分を移出） |
+| mac-host-compat | 10m39s | 12m13s（Node host差分を末尾で吸収） |
+| LLVM再インストール率 | 100%（147/147 jobがcache hitでも再install） | 0%（hit時は0.2sで検証のみ） |
+| Windows native AOT shardのcompiler build | 12回（各shard個別） | 1回（producer 60s、12 shardが検証済みartifactをinstall） |
+
+### Windows native AOT shardのstep内訳（shard 1/3 / O0）
+
+setup系（checkout・zig・node・LLVM・QuickJS・oracle・artifact検証install）計約37s、
+差分テスト91s。producer側はcache hit時60sでcompilerをbuildしuploadする。
+
+### Phase 5・6の計測判断
+
+計画の判断基準に基づき実測で評価した：
+
+- **Phase 5（native AOT粒度12→6）**: AOT shardは80〜160sで、最長job
+  （Windows core 16m44s）の約1/10。2 optimization/groupへまとめても
+  runner-minutesは約5〜8分/run削減できる一方、job単位のwallは悪化し
+  flake時の再試行範囲も倍になる。AOT経路はクリティカルパス外のため
+  全体wallへの効果なし → **現行12 shard構成を維持**
+- **Phase 6（LNAKO_NATIVE_ORACLE_JOBS 1→2）**: shard時間は短縮するが
+  同様にクリティカルパス外のため全体wallへ効果なし。並列化の
+  fixture出力・一時ファイル安全性の確認コストに見合わない → **見送り**
+
+### Phase 7のボトルネック記録（Windows core、1004s）
+
+setup系は40s未満へ収束済みで、残存コストはテストハーネス本体：
+
+- `Zig package isolation check` 340s（consumer packageを`zig fetch`＋`zig build`）
+- `Test`（`zig build test`）334s
+- `Differential interpreter test` 212s
+
+これらはワークフロー重複ではなく実行コスト本体のため、Phase 7（P3）の
+対象として記録する。package isolationがzig global cacheを共有できるか、
+差分テストのworker並列化は別途計測が必要。
