@@ -6,7 +6,7 @@ const foundation = @import("../low_level_foundation.zig");
 const low_level_io = @import("../low_level_io.zig");
 const low_level_hash = @import("../low_level_hash.zig");
 const low_level_fs = @import("../low_level_fs.zig");
-const plugin_lowlevel = @import("../../plugins/lowlevel.zig");
+const low_level_context = @import("../low_level/context.zig");
 
 const aot_builtin = shared.aot_builtin;
 const BigInt = shared.BigInt;
@@ -48,33 +48,44 @@ fn hashTable(runtime: *Runtime) *low_level_hash.HashHandleTable {
     return &runtime.low_level_hash_handles.?;
 }
 
-pub fn pluginContext(runtime: *Runtime) plugin_lowlevel.Context {
+pub fn pluginContext(runtime: *Runtime) low_level_context.Context {
     return .{
-        .context = runtime,
-        .openFileFn = pluginOpenFile,
-        .closeFileFn = pluginCloseFile,
-        .readFileBytesFn = pluginReadFileBytes,
-        .writeFileBytesFn = pluginWriteFileBytes,
-        .syncFileFn = pluginSyncFile,
-        .truncateFileFn = pluginTruncateFile,
-        .createHashFn = pluginCreateHash,
-        .updateHashFn = pluginUpdateHash,
-        .digestHashFn = pluginDigestHash,
-        .discardHashFn = pluginDiscardHash,
-        .statFn = pluginStat,
-        .symlinkFn = pluginSymlink,
-        .readlinkFn = pluginReadlink,
-        .hardlinkFn = pluginHardlink,
-        .realpathFn = pluginRealpath,
-        .renameFn = pluginRename,
-        .unlinkFn = pluginUnlink,
-        .rmdirFn = pluginRmdir,
-        .peekStdinSourceFn = pluginPeekStdinSource,
-        .stdinSourceFn = pluginStdinSource,
-        .writeStdoutBytesFn = pluginWriteStdoutBytes,
-        .writeStderrBytesFn = pluginWriteStderrBytes,
-        .syncStdoutFn = pluginSyncStdout,
-        .syncStderrFn = pluginSyncStderr,
+        .stream = .{
+            .context = runtime,
+            .openFileFn = pluginOpenFile,
+            .closeFileFn = pluginCloseFile,
+            .readFileBytesFn = pluginReadFileBytes,
+            .writeFileBytesFn = pluginWriteFileBytes,
+            .syncFileFn = pluginSyncFile,
+            .truncateFileFn = pluginTruncateFile,
+        },
+        .hash = .{
+            .context = runtime,
+            .createHashFn = pluginCreateHash,
+            .updateHashFn = pluginUpdateHash,
+            .digestHashFn = pluginDigestHash,
+            .discardHashFn = pluginDiscardHash,
+        },
+        .fs = .{
+            .context = runtime,
+            .statFn = pluginStat,
+            .symlinkFn = pluginSymlink,
+            .readlinkFn = pluginReadlink,
+            .hardlinkFn = pluginHardlink,
+            .realpathFn = pluginRealpath,
+            .renameFn = pluginRename,
+            .unlinkFn = pluginUnlink,
+            .rmdirFn = pluginRmdir,
+        },
+        .stdio = .{
+            .context = runtime,
+            .peekStdinSourceFn = pluginPeekStdinSource,
+            .stdinSourceFn = pluginStdinSource,
+            .writeStdoutBytesFn = pluginWriteStdoutBytes,
+            .writeStderrBytesFn = pluginWriteStderrBytes,
+            .syncStdoutFn = pluginSyncStdout,
+            .syncStderrFn = pluginSyncStderr,
+        },
     };
 }
 

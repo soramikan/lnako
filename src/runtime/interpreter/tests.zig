@@ -2019,23 +2019,31 @@ const LowLevelTestHost = struct {
 
     fn context(self: *LowLevelTestHost) plugin_lowlevel.Context {
         return .{
-            .context = self,
-            .openFileFn = openFile,
-            .closeFileFn = closeFile,
-            .readFileBytesFn = readFileBytes,
-            .writeFileBytesFn = writeFileBytes,
-            .syncFileFn = syncFile,
-            .truncateFileFn = truncateFile,
-            .createHashFn = createHash,
-            .updateHashFn = updateHash,
-            .digestHashFn = digestHash,
-            .discardHashFn = discardHash,
-            .peekStdinSourceFn = peekStdinSource,
-            .stdinSourceFn = stdinSource,
-            .writeStdoutBytesFn = writeStdoutBytes,
-            .writeStderrBytesFn = writeStderrBytes,
-            .syncStdoutFn = syncStdout,
-            .syncStderrFn = syncStderr,
+            .stream = .{
+                .context = self,
+                .openFileFn = openFile,
+                .closeFileFn = closeFile,
+                .readFileBytesFn = readFileBytes,
+                .writeFileBytesFn = writeFileBytes,
+                .syncFileFn = syncFile,
+                .truncateFileFn = truncateFile,
+            },
+            .hash = .{
+                .context = self,
+                .createHashFn = createHash,
+                .updateHashFn = updateHash,
+                .digestHashFn = digestHash,
+                .discardHashFn = discardHash,
+            },
+            .stdio = .{
+                .context = self,
+                .peekStdinSourceFn = peekStdinSource,
+                .stdinSourceFn = stdinSource,
+                .writeStdoutBytesFn = writeStdoutBytes,
+                .writeStderrBytesFn = writeStderrBytes,
+                .syncStdoutFn = syncStdout,
+                .syncStderrFn = syncStderr,
+            },
         };
     }
 

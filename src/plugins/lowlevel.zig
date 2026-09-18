@@ -40,213 +40,15 @@ pub const State = struct {
     }
 };
 
-/// Host（CliHost）が実装する実OS I/O。関数ポインタはハンドル表を保持する
-/// Host側の状態へ繋がる。rawは `HandleId.raw()` であり、なでしこ値には
-/// 公開しない。
-pub const Context = struct {
-    context: *anyopaque,
-    openFileFn: ?*const fn (context: *anyopaque, path: []const u8, mode: foundation.OpenMode, exclusive: bool, sync: bool) anyerror!u64 = null,
-    closeFileFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
-    readFileBytesFn: ?*const fn (context: *anyopaque, raw: u64, buffer: []u8) anyerror!usize = null,
-    writeFileBytesFn: ?*const fn (context: *anyopaque, raw: u64, bytes: []const u8) anyerror!usize = null,
-    syncFileFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
-    truncateFileFn: ?*const fn (context: *anyopaque, raw: u64, size: u64) anyerror!void = null,
-    createHashFn: ?*const fn (context: *anyopaque, algorithm: []const u8) anyerror!u64 = null,
-    updateHashFn: ?*const fn (context: *anyopaque, raw: u64, bytes: []const u8) anyerror!void = null,
-    digestHashFn: ?*const fn (context: *anyopaque, raw: u64, allocator: std.mem.Allocator) anyerror![]u8 = null,
-    discardHashFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
-    statFn: ?*const fn (context: *anyopaque, path: []const u8, follow: bool) anyerror!low_level_fs.Metadata = null,
-    symlinkFn: ?*const fn (context: *anyopaque, target: []const u8, link: []const u8) anyerror!void = null,
-    readlinkFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) anyerror![]u8 = null,
-    hardlinkFn: ?*const fn (context: *anyopaque, target: []const u8, link: []const u8) anyerror!void = null,
-    realpathFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) anyerror![:0]u8 = null,
-    renameFn: ?*const fn (context: *anyopaque, source: []const u8, destination: []const u8) anyerror!void = null,
-    unlinkFn: ?*const fn (context: *anyopaque, path: []const u8) anyerror!void = null,
-    rmdirFn: ?*const fn (context: *anyopaque, path: []const u8) anyerror!void = null,
-    /// Issue #28: stdinの単一source of truth。`標準入力バイト読む` と
-    /// テキスト系stdin命令（`plugin_node` 経由）が同じ `StdinSource` の
-    /// `consumed` カーソルを消費する。sourceはhost側（CliHost等）が所有し、
-    /// peekは生成せず既存を返し、stdinSourceFnは無ければ生成する。
-    /// `allocator` 引数は助言的で、実装はhost寿命のallocatorで確保すること
-    /// （呼び出し側の短命runtime allocatorでsourceを確保するとUAFになる）。
-    /// peekとstdinSourceFnはセットで提供すること（peek欠落だとTTY `尋` が
-    /// 共有sourceを見落とし直接行readへ切り替わってバイトを置き去りにする）。
-    peekStdinSourceFn: ?*const fn (context: *anyopaque) ?*low_level_io.StdinSource = null,
-    stdinSourceFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator) anyerror!*low_level_io.StdinSource = null,
-    writeStdoutBytesFn: ?*const fn (context: *anyopaque, bytes: []const u8) anyerror!usize = null,
-    writeStderrBytesFn: ?*const fn (context: *anyopaque, bytes: []const u8) anyerror!usize = null,
-    syncStdoutFn: ?*const fn (context: *anyopaque) anyerror!void = null,
-    syncStderrFn: ?*const fn (context: *anyopaque) anyerror!void = null,
-
-    pub fn openFile(self: Context, path: []const u8, mode: foundation.OpenMode, exclusive: bool, sync: bool) !u64 {
-        const function = self.openFileFn orelse return error.LowLevelIoUnavailable;
-        return function(self.context, path, mode, exclusive, sync);
-    }
-
-    pub fn closeFile(self: Context, raw: u64) !void {
-        const function = self.closeFileFn orelse return error.LowLevelIoUnavailable;
-        return function(self.context, raw);
-    }
-
-    pub fn readFileBytes(self: Context, raw: u64, buffer: []u8) !usize {
-        const function = self.readFileBytesFn orelse return error.LowLevelIoUnavailable;
-        return function(self.context, raw, buffer);
-    }
-
-    pub fn writeFileBytes(self: Context, raw: u64, bytes: []const u8) !usize {
-        const function = self.writeFileBytesFn orelse return error.LowLevelIoUnavailable;
-        return function(self.context, raw, bytes);
-    }
-
-    pub fn syncFile(self: Context, raw: u64) !void {
-        const function = self.syncFileFn orelse return error.LowLevelIoUnavailable;
-        return function(self.context, raw);
-    }
-
-    pub fn truncateFile(self: Context, raw: u64, size: u64) !void {
-        const function = self.truncateFileFn orelse return error.LowLevelIoUnavailable;
-        return function(self.context, raw, size);
-    }
-
-    pub fn createHash(self: Context, algorithm: []const u8) !u64 {
-        const function = self.createHashFn orelse return error.IncrementalHashUnavailable;
-        return function(self.context, algorithm);
-    }
-
-    pub fn updateHash(self: Context, raw: u64, bytes: []const u8) !void {
-        const function = self.updateHashFn orelse return error.IncrementalHashUnavailable;
-        return function(self.context, raw, bytes);
-    }
-
-    pub fn digestHash(self: Context, raw: u64, allocator: std.mem.Allocator) ![]u8 {
-        const function = self.digestHashFn orelse return error.IncrementalHashUnavailable;
-        return function(self.context, raw, allocator);
-    }
-
-    pub fn discardHash(self: Context, raw: u64) !void {
-        const function = self.discardHashFn orelse return error.IncrementalHashUnavailable;
-        return function(self.context, raw);
-    }
-
-    pub fn stat(self: Context, path: []const u8, follow: bool) !low_level_fs.Metadata {
-        const function = self.statFn orelse return error.LowLevelIoUnavailable;
-        return function(self.context, path, follow);
-    }
-
-    pub fn createSymlink(self: Context, target: []const u8, link: []const u8) !void {
-        const function = self.symlinkFn orelse return error.LowLevelIoUnavailable;
-        return function(self.context, target, link);
-    }
-
-    pub fn readlink(self: Context, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-        const function = self.readlinkFn orelse return error.LowLevelIoUnavailable;
-        return function(self.context, allocator, path);
-    }
-
-    pub fn createHardLink(self: Context, target: []const u8, link: []const u8) !void {
-        const function = self.hardlinkFn orelse return error.LowLevelIoUnavailable;
-        return function(self.context, target, link);
-    }
-
-    pub fn realpath(self: Context, allocator: std.mem.Allocator, path: []const u8) ![:0]u8 {
-        const function = self.realpathFn orelse return error.LowLevelIoUnavailable;
-        return function(self.context, allocator, path);
-    }
-
-    pub fn rename(self: Context, source: []const u8, destination: []const u8) !void {
-        const function = self.renameFn orelse return error.LowLevelIoUnavailable;
-        return function(self.context, source, destination);
-    }
-
-    pub fn unlink(self: Context, path: []const u8) !void {
-        const function = self.unlinkFn orelse return error.LowLevelIoUnavailable;
-        return function(self.context, path);
-    }
-
-    pub fn rmdir(self: Context, path: []const u8) !void {
-        const function = self.rmdirFn orelse return error.LowLevelIoUnavailable;
-        return function(self.context, path);
-    }
-
-    pub fn stdinSource(self: Context, allocator: std.mem.Allocator) !*low_level_io.StdinSource {
-        const function = self.stdinSourceFn orelse return error.LowLevelIoUnavailable;
-        return function(self.context, allocator);
-    }
-
-    pub fn writeStdoutBytes(self: Context, bytes: []const u8) !usize {
-        const function = self.writeStdoutBytesFn orelse return error.LowLevelIoUnavailable;
-        return function(self.context, bytes);
-    }
-
-    pub fn writeStderrBytes(self: Context, bytes: []const u8) !usize {
-        const function = self.writeStderrBytesFn orelse return error.LowLevelIoUnavailable;
-        return function(self.context, bytes);
-    }
-
-    pub fn syncStdout(self: Context) !void {
-        const function = self.syncStdoutFn orelse return error.LowLevelIoUnavailable;
-        return function(self.context);
-    }
-
-    pub fn syncStderr(self: Context) !void {
-        const function = self.syncStderrFn orelse return error.LowLevelIoUnavailable;
-        return function(self.context);
-    }
-
-    pub fn hasStreamFileIo(self: Context) bool {
-        return self.openFileFn != null and self.closeFileFn != null and self.readFileBytesFn != null and self.writeFileBytesFn != null and self.syncFileFn != null;
-    }
-
-    pub fn hasTruncate(self: Context) bool {
-        return self.truncateFileFn != null;
-    }
-
-    pub fn hasIncrementalHash(self: Context) bool {
-        return self.createHashFn != null and self.updateHashFn != null and self.digestHashFn != null and self.discardHashFn != null;
-    }
-
-    pub fn hasStat(self: Context) bool {
-        return self.statFn != null;
-    }
-
-    pub fn hasSymlink(self: Context) bool {
-        return self.symlinkFn != null;
-    }
-
-    pub fn hasReadlink(self: Context) bool {
-        return self.readlinkFn != null;
-    }
-
-    pub fn hasHardLink(self: Context) bool {
-        return self.hardlinkFn != null;
-    }
-
-    pub fn hasRealpath(self: Context) bool {
-        return self.realpathFn != null;
-    }
-
-    pub fn hasRename(self: Context) bool {
-        return self.renameFn != null;
-    }
-
-    pub fn hasUnlink(self: Context) bool {
-        return self.unlinkFn != null;
-    }
-
-    pub fn hasRmdir(self: Context) bool {
-        return self.rmdirFn != null;
-    }
-
-    pub fn hasRawStdio(self: Context) bool {
-        return self.stdinSourceFn != null and self.peekStdinSourceFn != null and self.writeStdoutBytesFn != null and self.writeStderrBytesFn != null and self.syncStdoutFn != null and self.syncStderrFn != null;
-    }
-};
-
-var unused_context_host: u8 = 0;
-
-pub fn emptyContext() Context {
-    return .{ .context = @ptrCast(&unused_context_host) };
-}
+/// ドメイン別サブContextを含む低レイヤーI/O契約は共通基盤層で定義する。
+/// 既存のインポート元のためここでも再エクスポートする。
+pub const low_level_context = @import("../runtime/low_level/context.zig");
+pub const Context = low_level_context.Context;
+pub const StreamContext = low_level_context.StreamContext;
+pub const HashContext = low_level_context.HashContext;
+pub const FsContext = low_level_context.FsContext;
+pub const StdioContext = low_level_context.StdioContext;
+pub const emptyContext = low_level_context.emptyContext;
 
 /// 構造化エラーを例外として投げるためのコールバック。Interpreterが
 /// `exception_value` に辞書を設定して `error.NakoException` を返す。
@@ -1117,7 +919,7 @@ const StdioTestHost = struct {
     }
 
     fn context(self: *StdioTestHost) Context {
-        return .{
+        return .{ .stdio = .{
             .context = @ptrCast(self),
             .peekStdinSourceFn = peek,
             .stdinSourceFn = stdinSource,
@@ -1125,7 +927,7 @@ const StdioTestHost = struct {
             .writeStderrBytesFn = writeStderr,
             .syncStdoutFn = syncStdout,
             .syncStderrFn = syncStderr,
-        };
+        } };
     }
 };
 
@@ -1414,7 +1216,7 @@ test "部分読込は要求chunk未満で打ち切る" {
     try roots.protect(&handle);
     try rememberHandle(&state, runtime.allocator(), handle, .{ .index = 1, .generation = 1 });
     var host = ShortReadHost{};
-    const context = Context{ .context = @ptrCast(&host), .readFileBytesFn = ShortReadHost.read };
+    const context = Context{ .stream = .{ .context = @ptrCast(&host), .readFileBytesFn = ShortReadHost.read } };
     var result = (try call(&runtime, &state, context, effects, "ファイルバイト読", &.{ handle, .{ .number = 65536 } })) orelse return error.TestExpectedEqual;
     try roots.protect(&result);
     try std.testing.expectEqual(@as(usize, 1), host.calls);
@@ -1520,14 +1322,14 @@ test "余分な引数はEINVALで、openだけのホストはstream_file_io非�
 
     var truncate_name = try runtime.stringUtf8("truncate");
     try roots.protect(&truncate_name);
-    const truncate_full = Context{
-        .context = @ptrCast(&unused_context_host),
+    const truncate_full = Context{ .stream = .{
+        .context = emptyContext().stream.context,
         .truncateFileFn = struct {
             fn dummy(_: *anyopaque, _: u64, _: u64) anyerror!void {
                 return;
             }
         }.dummy,
-    };
+    } };
     const truncate_supported = (try call(&runtime, &state, truncate_full, effects, foundation.capability_supported_command, &.{truncate_name})) orelse return error.TestExpectedEqual;
     try std.testing.expect(truncate_supported == .boolean and truncate_supported.boolean);
 }
@@ -1568,8 +1370,8 @@ const FsTestHost = struct {
     }
 
     fn context() Context {
-        return .{
-            .context = @ptrCast(&unused_context_host),
+        return .{ .fs = .{
+            .context = emptyContext().fs.context,
             .statFn = statCallback,
             .symlinkFn = symlinkCallback,
             .readlinkFn = readlinkCallback,
@@ -1578,7 +1380,7 @@ const FsTestHost = struct {
             .renameFn = renameCallback,
             .unlinkFn = unlinkCallback,
             .rmdirFn = rmdirCallback,
-        };
+        } };
     }
 };
 
@@ -1616,13 +1418,13 @@ const HashHost = struct {
     }
 
     fn context(self: *HashHost) Context {
-        return .{
+        return .{ .hash = .{
             .context = self,
             .createHashFn = create,
             .updateHashFn = update,
             .digestHashFn = digest,
             .discardHashFn = discard,
-        };
+        } };
     }
 };
 
