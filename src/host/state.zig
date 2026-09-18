@@ -3,6 +3,8 @@ const builtin = @import("builtin");
 const lnako = @import("lnako");
 const archive = @import("archive.zig");
 const http_client = @import("http_client.zig");
+const http_tls = @import("../http_tls.zig");
+const http_tls_test = @import("../http_tls_test.zig");
 const http_ingress = @import("../http_ingress.zig");
 const process = @import("process.zig");
 const network = @import("network.zig");
@@ -1129,27 +1131,6 @@ pub const AsyncOperationTask = struct {
     }
 };
 
-/// HTTPS接続に必要なTLS文脈（`client.now`とCAバンドル）を事前に用意する。
-/// `std.http.Client.request`と同じ手順を先に済ませることで、リダイレクトで
-/// HTTPSへ遷移する経路でも`Tls.create`が`client.now.?`でpanicしない。
-fn initializeTlsContext(client: *std.http.Client) !void {
-    // TLS無効ビルドではHTTP要求までabortさせない。HTTPSは`request`側が拒否する。
-    if (std.http.Client.disable_tls) return;
-    if (client.now != null) return;
-    const io = client.io;
-    var bundle: std.crypto.Certificate.Bundle = .empty;
-    defer bundle.deinit(client.allocator);
-    const now = std.Io.Clock.real.now(io);
-    bundle.rescan(client.allocator, io, now) catch |err| switch (err) {
-        error.Canceled => |e| return e,
-        else => return error.CertificateBundleLoadFailure,
-    };
-    try client.ca_bundle_lock.lock(io);
-    defer client.ca_bundle_lock.unlock(io);
-    client.now = now;
-    std.mem.swap(std.crypto.Certificate.Bundle, &client.ca_bundle, &bundle);
-}
-
 fn httpRequest(cli_host: *CliHost, allocator: std.mem.Allocator, operation: anytype) !lnako.plugins.node.CommandResult {
     const max_http_body_size = 1024 * 1024 * 1024;
 
@@ -1164,13 +1145,17 @@ fn httpRequest(cli_host: *CliHost, allocator: std.mem.Allocator, operation: anyt
     }
 
     const uri = try std.Uri.parse(operation.url);
+    const protocol = std.http.Client.Protocol.fromUri(uri) orelse return error.UnsupportedUriScheme;
     const method = try http_client.httpMethod(operation.method);
     // 接続は`client.request`に任せる。以前は事前に`connectTcpOptions`で
     // TLS接続を開いていたが、`client.now`が未設定のまま`Tls.create`へ入り
-    // panicしていた（Issue #82）。加えて`request`は初回HTTPSでしかTLS文脈を
-    // 初期化せず、HTTPからHTTPSへのリダイレクトは初期化を経由しないため、
-    // ここで明示的に用意する。
-    try initializeTlsContext(&client);
+    // panicしていた（Issue #82）。TLS無効ビルドでHTTPSを渡すと`request`が
+    // abortするため、ここで通常エラーへ落とす。
+    // TLS無効ビルドでHTTPSを渡すと`request`がabortするため、通常エラーへ落とす。
+    if (http_tls.tlsDisabledInitialError(protocol == .tls, std.http.Client.disable_tls)) |err| return err;
+    // 初回HTTPSではCA読込失敗をエラーにし、初回HTTPではCAストアへ依存させない。
+    // どちらも`client.now`を先に設定し、リダイレクト先HTTPSでのpanicを防ぐ。
+    try http_tls.initializeClientTls(&client, protocol == .tls);
     var req = try client.request(method, uri, .{
         .keep_alive = false,
         .extra_headers = headers,
@@ -1289,25 +1274,32 @@ test "途中切断されたHTTP要求は接続を残さず次の要求を受け�
     try std.testing.expect(!cli_host.http_head_request);
 }
 
+/// TLS文脈の用意を試み、CAストアが無い環境だけスキップする。OOM等の
+/// その他の初期化失敗はテスト失敗として返す。
+fn tlsContextReadyOrSkip(client: *std.http.Client) !bool {
+    http_tls.initializeClientTls(client, true) catch |err| switch (err) {
+        error.CertificateBundleLoadFailure => return false,
+        else => return err,
+    };
+    return client.ca_bundle.bytes.items.len > 0;
+}
+
 test "TLS文脈の初期化はnowとCAバンドルを用意し再実行しても安全" {
     var client: std.http.Client = .{ .allocator = std.testing.allocator, .io = std.testing.io };
     defer client.deinit();
     try std.testing.expect(client.now == null);
-    // CAバンドルを読めない環境ではTLS接続自体を検証できないため省略する。
-    initializeTlsContext(&client) catch return;
-    if (client.ca_bundle.bytes.items.len == 0) return;
+    if (!try tlsContextReadyOrSkip(&client)) return;
     try std.testing.expect(client.now != null);
-    // `initializeTlsContext`は`client.now`で初期化済みを判定するため、
+    // `initializeClientTls`は`client.now`で初期化済みを判定するため、
     // 再実行してもCAバンドルを二重解放しない。
-    try initializeTlsContext(&client);
+    try http_tls.initializeClientTls(&client, true);
     try std.testing.expect(client.now != null);
 }
 
 test "TLS初期化後のTLS接続失敗はpanicにならない" {
     var client: std.http.Client = .{ .allocator = std.testing.allocator, .io = std.testing.io };
     defer client.deinit();
-    // CAバンドルを読めない環境ではTLS接続自体を検証できないため省略する。
-    initializeTlsContext(&client) catch return;
+    if (!try tlsContextReadyOrSkip(&client)) return;
 
     // TCP接続だけ受理して即座に閉じるloopbackサーバ。TLS初期化済みなので
     // `connectTcpOptions`は必ず接続を試み、受理直後の切断でハンドシェイクが
@@ -1342,8 +1334,7 @@ test "HTTPからHTTPSへのリダイレクトでもTLS初期化を経てpanicし
     {
         var probe: std.http.Client = .{ .allocator = std.testing.allocator, .io = std.testing.io };
         defer probe.deinit();
-        initializeTlsContext(&probe) catch return;
-        if (probe.ca_bundle.bytes.items.len == 0) return;
+        if (!try tlsContextReadyOrSkip(&probe)) return;
     }
 
     var output: std.Io.Writer.Allocating = .init(std.testing.allocator);
@@ -1359,52 +1350,11 @@ test "HTTPからHTTPSへのリダイレクトでもTLS初期化を経てpanicし
     defer cli_host.deinit();
 
     const io = std.testing.io;
-    const loopback: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
-    var tls_server = try loopback.listen(io, .{ .reuse_address = true });
-    var http_server = try loopback.listen(io, .{ .reuse_address = true });
-    const location = try std.fmt.allocPrint(std.testing.allocator, "https://127.0.0.1:{d}/binary", .{tls_server.socket.address.getPort()});
-    const url = try std.fmt.allocPrint(std.testing.allocator, "http://127.0.0.1:{d}/redirect", .{http_server.socket.address.getPort()});
-    var tls_thread: ?std.Thread = null;
-    var http_thread: ?std.Thread = null;
-    // joinより先にlisten socketを閉じ、途中失敗時もaccept中のacceptorを解く。
-    defer {
-        tls_server.deinit(io);
-        http_server.deinit(io);
-        if (http_thread) |thread| thread.join();
-        if (tls_thread) |thread| thread.join();
-        std.testing.allocator.free(location);
-        std.testing.allocator.free(url);
-    }
+    var pair = http_tls_test.RedirectToClosedTls{ .io = io, .allocator = std.testing.allocator };
+    defer pair.stop();
+    try pair.start();
 
-    const Acceptor = struct {
-        fn closeImmediately(listener: *std.Io.net.Server, listener_io: std.Io) void {
-            const stream = listener.accept(listener_io) catch return;
-            stream.close(listener_io);
-        }
-        fn redirect(listener: *std.Io.net.Server, listener_io: std.Io, target: []const u8) void {
-            var stream = listener.accept(listener_io) catch return;
-            defer stream.close(listener_io);
-            var read_buffer: [512]u8 = undefined;
-            var reader = stream.reader(listener_io, &read_buffer);
-            // 要求ヘッダの終端（CRLFCRLF）まで読み切ってから応答する。
-            var window: u32 = 0;
-            while (true) {
-                var byte: [1]u8 = undefined;
-                const n = reader.interface.readSliceShort(&byte) catch break;
-                if (n == 0) break;
-                window = (window << 8) | byte[0];
-                if (window == std.mem.readInt(u32, "\r\n\r\n", .big)) break;
-            }
-            var write_buffer: [1024]u8 = undefined;
-            var writer = stream.writer(listener_io, &write_buffer);
-            writer.interface.print("HTTP/1.1 301 Moved Permanently\r\nLocation: {s}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", .{target}) catch return;
-            writer.interface.flush() catch return;
-        }
-    };
-    tls_thread = try std.Thread.spawn(.{}, Acceptor.closeImmediately, .{ &tls_server, io });
-    http_thread = try std.Thread.spawn(.{}, Acceptor.redirect, .{ &http_server, io, location });
-
-    const request = lnako.plugins.node.HttpRequest{ .method = "GET", .url = url };
+    const request = lnako.plugins.node.HttpRequest{ .method = "GET", .url = pair.url.? };
     const Worker = struct {
         fn run(host: *CliHost, worker_request: lnako.plugins.node.HttpRequest, failure: *?anyerror) void {
             if (httpRequest(host, std.testing.allocator, worker_request)) |success| {
@@ -1416,8 +1366,10 @@ test "HTTPからHTTPSへのリダイレクトでもTLS初期化を経てpanicし
     var failure: ?anyerror = null;
     const worker = try std.Thread.spawn(.{}, Worker.run, .{ &cli_host, request, &failure });
     worker.join();
-    // リダイレクト先のTLSハンドシェイクは完了せず、panicではなくエラーになる。
-    try std.testing.expectEqual(error.TlsInitializationFailed, failure orelse return error.ExpectedTlsFailure);
+    // リダイレクト先のTLS接続まで到達し、panicせず通常エラーで終わることを
+    // 検証する。エラー種別はOS依存のため固定しない。
+    try std.testing.expect(pair.tls_accepted.load(.acquire));
+    try std.testing.expect(failure != null);
 }
 
 test "静的パス解決は成功、404、index、ディレクトリの全経路を解放する" {
