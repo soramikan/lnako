@@ -64,35 +64,99 @@ export function fetchOriginRef(cwd, ref) {
   gitOk(cwd, ["fetch", "origin", `+refs/heads/${ref}:refs/remotes/origin/${ref}`], `git fetch origin ${ref}`);
 }
 
-export function publishGeneratedSnapshot(cwd, { runId, ref = "main", noPush = false, createPr = true, repo = "soramikan/lnako" } = {}) {
+export function fetchOriginBranch(cwd, branch) {
+  return git(cwd, ["fetch", "origin", `+refs/heads/${branch}:refs/remotes/origin/${branch}`]).status === 0;
+}
+
+function snapshotFileExistsOnRef(cwd, ref, runId, name) {
+  return git(cwd, ["cat-file", "-e", `${ref}:compat/v3.7.24/attestations/${runId}/${name}`]).status === 0;
+}
+
+export function matchingSourceSnapshotOnRef(cwd, ref, sourceManifestSha256) {
+  if (!sourceManifestSha256) return null;
+  const listed = git(cwd, ["ls-tree", "--name-only", `${ref}:compat/v3.7.24/attestations`]);
+  if (listed.status !== 0 || !listed.stdout.trim()) return null;
+  let current = null;
+  for (const runId of listed.stdout.trim().split("\n")) {
+    if (!/^\d+$/.test(runId)) continue;
+    const shown = git(cwd, ["show", `${ref}:${snapshotManifestGitPath(runId)}`]);
+    if (shown.status !== 0) continue;
+    let manifest;
+    try {
+      manifest = JSON.parse(shown.stdout);
+    } catch {
+      continue;
+    }
+    if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) continue;
+    if (manifest.schema !== canonicalAttestationSchemaV2) continue;
+    if (manifest.workflowRun !== runId || manifest.sourceManifestSha256 !== sourceManifestSha256) continue;
+    if (!snapshotFileExistsOnRef(cwd, ref, runId, "catalog-evidence-verified.json")) continue;
+    if (!snapshotFileExistsOnRef(cwd, ref, runId, "sigstore-bundle.json")) continue;
+    if (current === null || BigInt(runId) > BigInt(current)) current = runId;
+  }
+  return current;
+}
+
+export function snapshotPullRequestBody(runId) {
+  return `CI \`${runId}\` が生成した Sigstore bundle、dispatch/native AOT attestation、source manifest宣言、canonical 証拠 snapshot を \`compat/v3.7.24/attestations/${runId}/\` へ追加します。現行snapshotは走査型解決（\`manifest.json\` の \`sourceManifestSha256\` が現行ソースと一致する最大workflowRun）で決まります。`;
+}
+
+export function defaultCreatePullRequest({ cwd, repo, base, head, runId }) {
+  return spawnSync("gh", [
+    "pr", "create",
+    "--repo", repo,
+    "--base", base,
+    "--head", head,
+    "--title", snapshotCommitMessage(runId).replace(" (verified: 527)", ""),
+    "--body", snapshotPullRequestBody(runId),
+  ], { cwd, encoding: "utf8" });
+}
+
+export function interpretPullRequestResult(result) {
+  if (result.status === 0) return "pr-created";
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  if (/already exists/i.test(output) || /A pull request already exists/i.test(output)) return "pr-exists";
+  throw new Error(`gh pr create が失敗しました: status=${result.status}\n${output}`);
+}
+
+export function publishGeneratedSnapshot(cwd, {
+  runId,
+  ref = "main",
+  noPush = false,
+  createPr = true,
+  repo = "soramikan/lnako",
+  sourceManifestSha256 = null,
+  createPullRequest = defaultCreatePullRequest,
+} = {}) {
   if (noPush) return "local-only";
   fetchOriginRef(cwd, ref);
   const remote = `origin/${ref}`;
   if (snapshotExistsOnRef(cwd, remote, runId)) return "skip-tracked";
+  if (matchingSourceSnapshotOnRef(cwd, remote, sourceManifestSha256) !== null) return "skip-current-manifest";
 
   const branch = snapshotBranchName(runId);
+  const remoteBranch = `origin/${branch}`;
+  const remoteBranchExists = fetchOriginBranch(cwd, branch);
+  const remoteSnapshotMatches = remoteBranchExists && snapshotExistsOnRef(cwd, remoteBranch, runId) &&
+    git(cwd, ["diff", "--quiet", remoteBranch, "--", `compat/v3.7.24/attestations/${runId}`]).status === 0;
+  if (remoteSnapshotMatches) {
+    if (!createPr) return "pushed-branch";
+    return interpretPullRequestResult(createPullRequest({ cwd, repo, base: ref, head: branch, runId }));
+  }
+
   gitOk(cwd, ["checkout", "-B", branch], "git checkout -B");
   gitOk(cwd, ["add", "-A"], "git add");
   if (git(cwd, ["diff", "--cached", "--quiet"]).status === 0) return "skip-clean";
   gitOk(cwd, ["commit", "-m", snapshotCommitMessage(runId)], "git commit");
 
-  gitOk(cwd, ["push", "--no-verify", "-u", "origin", `HEAD:refs/heads/${branch}`], `git push origin ${branch}`);
-  if (!createPr) return "pushed-branch";
-
-  const pr = spawnSync("gh", [
-    "pr", "create",
-    "--repo", repo,
-    "--base", ref,
-    "--head", branch,
-    "--title", snapshotCommitMessage(runId).replace(" (verified: 527)", ""),
-    "--body", `CI \`${runId}\` が生成した Sigstore bundle、dispatch/native AOT attestation、source manifest宣言、canonical 証拠 snapshot を \`compat/v3.7.24/attestations/${runId}/\` へ追加します。現行snapshotは走査型解決（\`manifest.json\` の \`sourceManifestSha256\` が現行ソースと一致する最大workflowRun）で決まります。`,
-  ], { cwd, encoding: "utf8" });
-  if (pr.status !== 0) {
-    const output = `${pr.stdout ?? ""}\n${pr.stderr ?? ""}`;
-    if (/already exists/i.test(output) || /A pull request already exists/i.test(output)) return "pr-exists";
-    throw new Error(`gh pr create が失敗しました: status=${pr.status}\n${output}`);
+  if (remoteBranchExists) {
+    const expected = gitOk(cwd, ["rev-parse", remoteBranch], `git rev-parse ${remoteBranch}`);
+    gitOk(cwd, ["push", "--no-verify", `--force-with-lease=refs/heads/${branch}:${expected}`, "origin", `HEAD:refs/heads/${branch}`], `git push --force-with-lease origin ${branch}`);
+  } else {
+    gitOk(cwd, ["push", "--no-verify", "-u", "origin", `HEAD:refs/heads/${branch}`], `git push origin ${branch}`);
   }
-  return "pr-created";
+  if (!createPr) return "pushed-branch";
+  return interpretPullRequestResult(createPullRequest({ cwd, repo, base: ref, head: branch, runId }));
 }
 
 function currentGitCommit() {
@@ -312,15 +376,19 @@ async function main() {
     throw new Error(`現行HEAD ${gitHead} がrun対象commit ${targetCommit} と一致しません。mainの最新commitで実行してください。`);
   }
 
+  const sourceManifest = computeSourceManifestSha256Sync(root);
   if (!options.noPush) {
     fetchOriginRef(root, options.ref);
     if (snapshotExistsOnRef(root, `origin/${options.ref}`, options.runId)) {
       console.log(`origin/${options.ref} は既に CI run ${options.runId} のattestation snapshotを追跡しています。`);
       return;
     }
+    const current = matchingSourceSnapshotOnRef(root, `origin/${options.ref}`, sourceManifest.sha256);
+    if (current !== null) {
+      console.log(`origin/${options.ref} は既に source manifest ${sourceManifest.sha256} のsnapshot（run ${current}）を追跡しています。`);
+      return;
+    }
   }
-
-  const sourceManifest = computeSourceManifestSha256Sync(root);
 
   const outputDirectory = options.outputDirectory ?? resolve(root, "compat", "v3.7.24", "attestations", options.runId);
   const dispatchDirectory = resolve(outputDirectory, "dispatch");
@@ -460,6 +528,7 @@ async function main() {
     repo: options.repo,
     noPush: options.noPush,
     createPr: !options.noPr,
+    sourceManifestSha256: sourceManifest.sha256,
   });
   if (action === "local-only") {
     console.log(`attestation snapshotを作成しました: ${outputDirectory}`);
@@ -468,6 +537,10 @@ async function main() {
   }
   if (action === "skip-tracked") {
     console.log(`origin/${options.ref} は既に CI run ${options.runId} のattestation snapshotを追跡しています。`);
+    return;
+  }
+  if (action === "skip-current-manifest") {
+    console.log(`origin/${options.ref} は既に現行source manifestのattestation snapshotを追跡しています。`);
     return;
   }
   if (action === "skip-clean") {
