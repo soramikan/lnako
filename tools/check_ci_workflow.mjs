@@ -612,14 +612,11 @@ if (snapshotCreator.includes("current.json") || snapshotCreator.includes("curren
     !snapshotCreator.includes('else if (name === sourceManifestDeclarationBasename) files.set("sourceManifest", path)') ||
     !snapshotCreator.includes("catalog-evidence-verified.json") ||
     snapshotCreator.includes("updateCompatibilityDocs") || snapshotCreator.includes("<!-- attestation:verified -->") ||
-    !snapshotCreator.includes('"--snapshot"') || !snapshotCreator.includes('"--require-current"') ||
-    !snapshotCreator.includes("HEAD:refs/heads/") || !snapshotCreator.includes("--no-push") ||
-    !snapshotCreator.includes("skip-tracked") || !snapshotCreator.includes("skip-current-manifest") ||
-    !snapshotCreator.includes("matchingSourceSnapshotOnRef") || !snapshotCreator.includes("publishGeneratedSnapshot") ||
-    !snapshotCreator.includes("--force-with-lease=") || !snapshotCreator.includes("interpretPullRequestResult") ||
-    !snapshotCreator.includes("gh pr create") || !snapshotCreator.includes("attestation/run-") ||
-    !snapshotCreator.includes('["checkout", "-B"')) {
-  throw new Error("snapshot作成toolがmanifest v2・宣言保存・pointer廃止・導出値書込（527以外拒否）・attestation branchとPR作成へ対応していません");
+    snapshotCreator.includes("gh pr create") || snapshotCreator.includes("publishGeneratedSnapshot") ||
+    snapshotCreator.includes("--force-with-lease") || snapshotCreator.includes("attestation/run-") ||
+    !snapshotCreator.includes("ローカル生成") ||
+    !snapshotCreator.includes('"--snapshot"') || !snapshotCreator.includes('"--require-current"')) {
+  throw new Error("snapshot作成toolがローカル生成のみ（git commit/PRなし）・manifest v2・pointer廃止に対応していません");
 }
 try {
   await readFile(resolve(root, ".github/workflows/update-attestation.yml"), "utf8");
