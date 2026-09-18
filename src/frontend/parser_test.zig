@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("ast.zig");
 const diagnostic = @import("diagnostic.zig");
 const parser_mod = @import("parser.zig");
+const source_mod = @import("source.zig");
 
 const parse = parser_mod.parse;
 
@@ -299,6 +300,26 @@ test "閉じていないブロックを位置付き診断にする" {
     try std.testing.expectEqual(@as(usize, 1), result.diagnostics.len);
     try std.testing.expectEqual(diagnostic.Code.missing_block_end, result.diagnostics[0].code);
     try std.testing.expectEqualStrings("broken.nako3", result.diagnostics[0].file);
+}
+
+test "先頭のUTF-8 BOMを本文から構文解析する" {
+    var result = try parse(std.testing.allocator, source_mod.utf8_bom ++ "「こんにちは」を表示\n", "bom.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const call = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, call.kind);
+    try std.testing.expectEqualStrings("表示", call.name);
+}
+
+test "BOM付きソースの診断位置を本文先頭から数える" {
+    const bom = source_mod.utf8_bom;
+    var result = try parse(std.testing.allocator, bom ++ "A=1\r\nB=\r\n", "bom.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+    try std.testing.expectEqual(diagnostic.Code.expected_expression, result.diagnostics[0].code);
+    try std.testing.expectEqual(@as(usize, 1), result.diagnostics[0].span.line);
+    try std.testing.expectEqual(@as(usize, 3), result.diagnostics[0].span.column);
+    try std.testing.expectEqual(bom.len + "A=1\r\nB=".len, result.diagnostics[0].span.source_start);
 }
 
 test "相対nako3取り込みをASTに保持する" {

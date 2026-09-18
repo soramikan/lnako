@@ -1,4 +1,5 @@
 const std = @import("std");
+const source_mod = @import("source.zig");
 const token_mod = @import("token.zig");
 
 pub const Severity = enum { error_severity, warning };
@@ -56,12 +57,17 @@ pub const Diagnostic = struct {
 
 const SourceLine = struct { text: []const u8 };
 
+/// ファイル先頭のUTF-8 BOMは本文ではないため、先頭行の診断表示から除外する。
+/// 字句解析の行・列はBOMを除いた本文先頭から数えているので、
+/// 表示する行本文も同じ基準に揃えてキャレット位置を一致させる。
 fn sourceLine(source: []const u8, offset: usize) SourceLine {
     const safe_offset = @min(offset, source.len);
     var start = safe_offset;
     while (start > 0 and source[start - 1] != '\n' and source[start - 1] != '\r') start -= 1;
+    if (start == 0 and std.mem.startsWith(u8, source, source_mod.utf8_bom)) start = source_mod.utf8_bom.len;
     var end = safe_offset;
     while (end < source.len and source[end] != '\n' and source[end] != '\r') end += 1;
+    if (end < start) end = start;
     return .{ .text = source[start..end] };
 }
 
@@ -77,6 +83,22 @@ test "診断をファイル位置とソース行付きで表示する" {
     try diagnostic.render("A=1\nB=\n", &output.writer);
     try std.testing.expectEqualStrings(
         "main.nako3:2:3: error[expected_expression]: 式が必要です\n  B=\n    ^\n",
+        output.written(),
+    );
+}
+
+test "BOM付きソースの先頭行はBOMを除いて表示する" {
+    var output: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer output.deinit();
+    const diagnostic: Diagnostic = .{
+        .code = .expected_expression,
+        .message = "式が必要です",
+        .file = "bom.nako3",
+        .span = .{ .start = 2, .end = 2, .source_start = 5, .source_end = 5, .line = 0, .column = 3 },
+    };
+    try diagnostic.render(source_mod.utf8_bom ++ "B=", &output.writer);
+    try std.testing.expectEqualStrings(
+        "bom.nako3:1:3: error[expected_expression]: 式が必要です\n  B=\n    ^\n",
         output.written(),
     );
 }

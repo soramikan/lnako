@@ -12,6 +12,10 @@ pub const NormalizedSource = struct {
 
 const State = enum { code, literal, line_comment, block_comment };
 
+/// Windowsメモ帳のUTF-8保存などで先頭に付くBOM。本文の一部ではないため
+/// 読み飛ばし、BOM付きUTF-8のソースをそのまま実行できるようにする。
+pub const utf8_bom = "\xEF\xBB\xBF";
+
 pub fn normalize(allocator: std.mem.Allocator, input: []const u8) !NormalizedSource {
     var output: std.ArrayList(u8) = .empty;
     var offsets: std.ArrayList(usize) = .empty;
@@ -21,7 +25,9 @@ pub fn normalize(allocator: std.mem.Allocator, input: []const u8) !NormalizedSou
     var state: State = .code;
     var literal_close: []const u8 = "";
     var literal_output_close: []const u8 = "";
-    var i: usize = 0;
+    // 先頭のBOMだけを読み飛ばし、source mapの先頭が元ファイルの
+    // BOM直後（本文先頭）を指すようにする。
+    var i: usize = if (std.mem.startsWith(u8, input, utf8_bom)) utf8_bom.len else 0;
     while (i < input.len) {
         switch (state) {
             .literal => {
@@ -218,6 +224,39 @@ test "全角ブロックコメントの区切りを正規化する" {
     defer allocator.free(normalized.text);
     defer allocator.free(normalized.source_offsets);
     try std.testing.expectEqualStrings("A/* Ｂ＝１ */=2", normalized.text);
+}
+
+test "先頭のUTF-8 BOMを読み飛ばし本文先頭へ対応させる" {
+    const allocator = std.testing.allocator;
+    const input = utf8_bom ++ "Ａ＝１\r\n";
+    const normalized = try normalize(allocator, input);
+    defer allocator.free(normalized.text);
+    defer allocator.free(normalized.source_offsets);
+
+    try std.testing.expectEqualStrings("A=1\n", normalized.text);
+    try std.testing.expectEqual(utf8_bom.len, normalized.sourceOffset(0));
+    try std.testing.expectEqual(input.len, normalized.sourceOffset(normalized.text.len));
+}
+
+test "BOMだけの入力を空の本文として扱う" {
+    const allocator = std.testing.allocator;
+    const normalized = try normalize(allocator, utf8_bom);
+    defer allocator.free(normalized.text);
+    defer allocator.free(normalized.source_offsets);
+
+    try std.testing.expectEqualStrings("", normalized.text);
+    try std.testing.expectEqual(utf8_bom.len, normalized.sourceOffset(0));
+}
+
+test "本文中のBOMは読み飛ばさない" {
+    const allocator = std.testing.allocator;
+    const normalized = try normalize(allocator, "A" ++ utf8_bom ++ "B");
+    defer allocator.free(normalized.text);
+    defer allocator.free(normalized.source_offsets);
+
+    try std.testing.expectEqualStrings("A" ++ utf8_bom ++ "B", normalized.text);
+    try std.testing.expectEqual(@as(usize, 0), normalized.sourceOffset(0));
+    try std.testing.expectEqual(@as(usize, 1), normalized.sourceOffset(1));
 }
 
 test "公式前処理の全角記号と改行規則に合わせる" {

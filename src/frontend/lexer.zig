@@ -803,6 +803,36 @@ test "モード指定は複数同時に有効化でき先頭100トークン以�
     try std.testing.expect(!late.mode.dncl);
 }
 
+test "先頭のUTF-8 BOMを構文に含めず本文から字句化する" {
+    const bom = source_mod.utf8_bom;
+    var stream = try tokenize(std.testing.allocator, bom ++ "「こんにちは」を表示\n");
+    defer stream.deinit();
+    try std.testing.expectEqual(Kind.string, stream.tokens[0].kind);
+    try std.testing.expectEqualStrings("こんにちは", stream.tokens[0].value);
+    try std.testing.expectEqualStrings("を", stream.tokens[0].josi);
+    try std.testing.expectEqual(@as(usize, 0), stream.tokens[0].span.line);
+    try std.testing.expectEqual(@as(usize, 1), stream.tokens[0].span.column);
+    try std.testing.expectEqual(@as(usize, 0), stream.tokens[0].span.start);
+    try std.testing.expectEqual(@as(usize, bom.len), stream.tokens[0].span.source_start);
+}
+
+test "先頭のBOM付きでもインデント構文とCRLFを扱う" {
+    const bom = source_mod.utf8_bom;
+    var stream = try tokenize(std.testing.allocator, bom ++ "!インデント構文\r\n「見出し」を表示\r\n");
+    defer stream.deinit();
+    try std.testing.expect(stream.mode.indent);
+    var found = false;
+    for (stream.tokens) |token| {
+        if (token.kind != .string) continue;
+        found = true;
+        try std.testing.expectEqualStrings("見出し", token.value);
+        try std.testing.expectEqual(@as(usize, 1), token.span.line);
+        try std.testing.expectEqual(@as(usize, 1), token.span.column);
+        try std.testing.expectEqual(bom.len + "!インデント構文\r\n".len, token.span.source_start);
+    }
+    try std.testing.expect(found);
+}
+
 test "モード指定の検出境界は公式の先頭101トークンと一致する" {
     // 公式useDNCLmode/useDNCL2modeは `i > 100` で打ち切るため、
     // 先行トークンindex 0..100（先頭101個）までが検出対象。
