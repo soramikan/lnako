@@ -36,6 +36,26 @@
     "source": "エラー監視\n「失敗」のエラー発生\nエラーならば\nエラーメッセージを表示\nここまで\n"
   },
   {
+    "id": "exception-inline-indent-nested-loop",
+    "source": "エラー監視：\n　[1,2,3]を反復：\n　　対象を表示\nエラーならば：\n　「えらーだよ」と表示\n"
+  },
+  {
+    "id": "exception-explicit-indent-nested-loop",
+    "source": "!インデント構文\nエラー監視\n　[1,2,3]を反復\n　　対象を表示\nエラーならば\n　「えらーだよ」と表示\n"
+  },
+  {
+    "id": "exception-inline-indent-handler",
+    "source": "エラー監視：\n　「故意」のエラー発生\nエラーならば：\n　「handled」を表示\n"
+  },
+  {
+    "id": "exception-inline-indent-multi-loop",
+    "source": "エラー監視：\n　3回：\n　　2回：\n　　　「x」と表示\nエラーならば：\n　「y」と表示\n"
+  },
+  {
+    "id": "exception-inline-indent-else-inside-guard",
+    "source": "エラー監視：\n　もし1=0ならば：\n　　「true」と表示\n　違えば：\n　　「false」と表示\nエラーならば：\n　「handled」を表示\n"
+  },
+  {
     "id": "dynamic-nadesiko",
     "source": "「1+2を表示する。」をナデシコする。\n"
   },
