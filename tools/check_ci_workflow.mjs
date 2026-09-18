@@ -600,19 +600,19 @@ if (!githubAttestationChecker.includes("verifyCurrentGithubAttestation") ||
     !githubAttestationChecker.includes("--deny-self-hosted-runners") ||
     !githubAttestationChecker.includes("trackedAttestationSubjects") ||
     !githubAttestationChecker.includes("deriveVerifiedCatalog") ||
-    !githubAttestationChecker.includes("sourceManifestDeclarationBytes")) {
-  throw new Error("GitHub attestation検証toolが現行commitの公式gh verifyと導出527に対応していません");
+    !githubAttestationChecker.includes("sourceManifestDeclarationBytes") ||
+    !githubAttestationChecker.includes("attestationIdentity") ||
+    !githubAttestationChecker.includes("同一bundleではありません")) {
+  throw new Error("GitHub attestation検証toolが現行commitの公式gh verify・同一bundle・導出527に対応していません");
 }
 const snapshotCreator = await readFile(resolve(root, "tools/create_attestation_snapshot.mjs"), "utf8");
 if (snapshotCreator.includes("current.json") || snapshotCreator.includes("currentAttestationPointer") ||
     !snapshotCreator.includes("canonicalAttestationSchemaV2") || !snapshotCreator.includes("sourceManifest: \"source-manifest.json\"") ||
     !snapshotCreator.includes("validateSourceManifestDeclarationBytes") ||
     !snapshotCreator.includes('else if (name === sourceManifestDeclarationBasename) files.set("sourceManifest", path)') ||
-    !snapshotCreator.includes("deriveVerifiedCatalog") || !snapshotCreator.includes("derived.verified !== 527") ||
-    !snapshotCreator.includes("String(derived.verified)") ||
-    !snapshotCreator.includes('replaceInline(text, "<!-- attestation:verified -->"') ||
+    !snapshotCreator.includes("catalog-evidence-verified.json") ||
+    snapshotCreator.includes("updateCompatibilityDocs") || snapshotCreator.includes("<!-- attestation:verified -->") ||
     !snapshotCreator.includes('"--snapshot"') || !snapshotCreator.includes('"--require-current"') ||
-    !snapshotCreator.includes("options.outputDirectory == null") ||
     !snapshotCreator.includes("HEAD:refs/heads/") || !snapshotCreator.includes("--no-push") ||
     !snapshotCreator.includes("skip-tracked") || !snapshotCreator.includes("skip-current-manifest") ||
     !snapshotCreator.includes("matchingSourceSnapshotOnRef") || !snapshotCreator.includes("publishGeneratedSnapshot") ||

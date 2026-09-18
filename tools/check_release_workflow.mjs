@@ -65,6 +65,10 @@ if (!workflow.includes("git/refs/tags/") || !workflow.includes("object.type") ||
 }
 const preflightBlock = workflow.match(/  preflight:[\s\S]*?(?=\n  build:)/)?.[0];
 if (!preflightBlock) throw new Error("Release workflowにpreflight jobがありません");
+if (!preflightBlock.includes("contents: read") || !preflightBlock.includes("actions: read") ||
+    !preflightBlock.includes("attestations: read")) {
+  throw new Error("Release preflightにcontents/actions/attestationsのread権限がありません");
+}
 const attestationGate = preflightBlock.match(/- name: Verify canonical compatibility evidence is fully attested\n[\s\S]*?(?=\n      - name:|$)/)?.[0];
 if (!attestationGate) throw new Error("Release workflowのpreflightにcanonical attestation検証stepがありません");
 if (!attestationGate.includes("if: github.event_name == 'push'") ||

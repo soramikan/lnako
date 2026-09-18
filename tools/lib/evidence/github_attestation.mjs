@@ -39,6 +39,25 @@ export function subjectDigestMatched(entries, digest) {
   }));
 }
 
+export function matchingAttestationEntry(entries, digest) {
+  if (!Array.isArray(entries)) return null;
+  return entries.find((entry) => subjectDigestMatched([entry], digest)) ?? null;
+}
+
+export function attestationIdentity(entry) {
+  const statement = entry?.verificationResult?.statement;
+  const invocationId = statement?.predicate?.runDetails?.metadata?.invocationId;
+  if (typeof invocationId === "string" && invocationId.length > 0) return invocationId;
+  const bundle = entry?.attestation?.bundle ?? entry?.bundle;
+  if (bundle !== null && typeof bundle === "object" && !Array.isArray(bundle)) {
+    return `bundle:${createHash("sha256").update(JSON.stringify(bundle)).digest("hex")}`;
+  }
+  if (statement !== null && typeof statement === "object" && !Array.isArray(statement)) {
+    return `statement:${createHash("sha256").update(JSON.stringify(statement)).digest("hex")}`;
+  }
+  return null;
+}
+
 export function verifyGithubAttestedFile(path, digest, options) {
   const result = spawnSync("gh", githubAttestationVerifyArgs(path, options), {
     cwd: options.cwd,
@@ -52,18 +71,34 @@ export function verifyGithubAttestedFile(path, digest, options) {
   } catch {
     throw new Error(`gh attestation verifyのJSON出力が不正です: ${path}`);
   }
-  if (!subjectDigestMatched(entries, digest)) {
+  const entry = matchingAttestationEntry(entries, digest);
+  if (entry === null) {
     throw new Error(`検証済みattestationのsubject digestが不一致です: ${path}`);
   }
+  const identity = attestationIdentity(entry);
+  if (identity === null) {
+    throw new Error(`GitHub attestationのbundle identityを特定できません: ${path}`);
+  }
+  return identity;
 }
 
 export async function verifyCurrentGithubAttestation(root, { commit, repository = githubAttestationRepository } = {}) {
   if (!/^[0-9a-f]{40}$/i.test(commit)) throw new Error("GitHub attestation検証のcommitが不正です");
   const signedDigests = new Set();
+  let bundleIdentity = null;
+  const rememberIdentity = (path, identity) => {
+    if (bundleIdentity === null) {
+      bundleIdentity = identity;
+      return;
+    }
+    if (identity !== bundleIdentity) {
+      throw new Error(`GitHub attestationが同一bundleではありません: ${path}`);
+    }
+  };
   for (const relativePath of trackedAttestationSubjects) {
     const path = resolve(root, relativePath);
     const digest = sha256File(path);
-    verifyGithubAttestedFile(path, digest, { repository, commit, cwd: root });
+    rememberIdentity(path, verifyGithubAttestedFile(path, digest, { repository, commit, cwd: root }));
     signedDigests.add(digest);
   }
   const sourceManifestSha256 = computeSourceManifestSha256Sync(root).sha256;
@@ -73,7 +108,7 @@ export async function verifyCurrentGithubAttestation(root, { commit, repository 
   const declarationPath = join(temporary, sourceManifestDeclarationBasename);
   try {
     writeFileSync(declarationPath, declarationBytes);
-    verifyGithubAttestedFile(declarationPath, declarationSha256, { repository, commit, cwd: root });
+    rememberIdentity(declarationPath, verifyGithubAttestedFile(declarationPath, declarationSha256, { repository, commit, cwd: root }));
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
@@ -89,5 +124,6 @@ export async function verifyCurrentGithubAttestation(root, { commit, repository 
     commit,
     sourceManifestSha256,
     verified: derived.executionEvidenceStates.verified,
+    bundleIdentity,
   };
 }

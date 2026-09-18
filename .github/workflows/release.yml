@@ -18,6 +18,10 @@ jobs:
   preflight:
     name: Validate release source
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      attestations: read
     outputs:
       version: ${{ steps.release-version.outputs.version }}
     steps:

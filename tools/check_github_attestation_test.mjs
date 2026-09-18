@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  attestationIdentity,
   githubAttestationOidcIssuer,
   githubAttestationPredicateType,
   githubAttestationSourceRef,
   githubAttestationVerifyArgs,
   githubAttestationWorkflow,
+  matchingAttestationEntry,
   subjectDigestMatched,
 } from "./lib/evidence/github_attestation.mjs";
 
@@ -36,4 +38,24 @@ test("subjectDigestMatched はsha256 subjectを受理し不一致を拒否する
     verificationResult: { statement: { subject: [{ digest: { sha256: "b".repeat(64) } }] } },
   }], digest), false);
   assert.equal(subjectDigestMatched([], digest), false);
+});
+
+test("attestationIdentity は同一invocationのbundleを同一視する", () => {
+  const digest = "a".repeat(64);
+  const invocation = "https://github.com/soramikan/lnako/actions/runs/1/attempts/1";
+  const entry = {
+    verificationResult: {
+      statement: {
+        subject: [{ digest: { sha256: digest } }],
+        predicate: { runDetails: { metadata: { invocationId: invocation } } },
+      },
+    },
+  };
+  assert.equal(matchingAttestationEntry([entry], digest), entry);
+  assert.equal(attestationIdentity(entry), invocation);
+  assert.equal(attestationIdentity({
+    attestation: { bundle: { mediaType: "application/vnd.dev.sigstore.bundle.v0.3+json" } },
+    verificationResult: { statement: { subject: [{ digest: { sha256: digest } }] } },
+  }).startsWith("bundle:"), true);
+  assert.equal(attestationIdentity({}), null);
 });
