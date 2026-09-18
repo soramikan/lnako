@@ -1,5 +1,6 @@
 const std = @import("std");
 const lexer_mod = @import("lexer.zig");
+const source_mod = @import("source.zig");
 const token_mod = @import("token.zig");
 
 pub const Error = lexer_mod.Error || error{ ExplicitEndInIndentMode, UnterminatedStringTemplate };
@@ -52,7 +53,7 @@ fn expandStringTemplates(stream: *lexer_mod.TokenStream, tokens: *std.ArrayList(
 
             const expression_start = open.index + open.len;
             const close = findTemplateClose(token.value, expression_start) orelse return error.UnterminatedStringTemplate;
-            var nested = try lexer_mod.tokenize(allocator, token.value[expression_start..close.index]);
+            var nested = try lexer_mod.tokenizeFragment(allocator, token.value[expression_start..close.index]);
             defer nested.deinit();
             for (nested.tokens) |nested_token| {
                 if (nested_token.kind == .eof) continue;
@@ -1015,4 +1016,10 @@ test "閉じ中括弧のない文字列テンプレートを拒否する" {
     var stream = try lexer_mod.tokenize(std.testing.allocator, "「A{B」を表示\n");
     defer stream.deinit();
     try std.testing.expectError(error.UnterminatedStringTemplate, apply(&stream));
+}
+
+test "展開式の先頭BOMは本文として拒否する" {
+    var stream = try lexer_mod.tokenize(std.testing.allocator, "A=1\n「{" ++ source_mod.utf8_bom ++ "A}」を表示\n");
+    defer stream.deinit();
+    try std.testing.expectError(error.UnexpectedCharacter, apply(&stream));
 }

@@ -462,6 +462,17 @@ jobs:
         run: node tools/prune_llvm_toolchain.mjs
       - name: Build AOT verification compiler
         run: zig build
+      # 共有artifactは12 shardがbuildなしで実行するため、作成前にこのjobで
+      # interpreterを一度動かし、壊れたbinaryを配布しないよう早期に検出する。
+      - name: Smoke test AOT verification compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '"smoke"を表示\n' > aot-compiler-smoke.nako3
+          output=$(zig-out/bin/lnako.exe run aot-compiler-smoke.nako3)
+          output="${output%$'\r'}"
+          test "$output" = "smoke"
+          rm -f aot-compiler-smoke.nako3
       - name: Package shared AOT compiler artifact
         shell: bash
         run: node tools/aot_compiler_artifact.mjs create --binary zig-out/bin/lnako.exe --runtime-lib zig-out/lib/lnako_runtime.lib --out-dir "${{ runner.temp }}/aot-compiler"

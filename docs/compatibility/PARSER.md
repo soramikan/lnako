@@ -11,6 +11,15 @@
 - 差分テストID: `compare_syntax_oracle.mjs`、`compare_parser_oracle.mjs`
 - TODO識別子: なし
 
+## 先頭のUTF-8 BOM
+
+- 公式実測・source根拠: 固定v3.7.24の`NakoPrepare.convert`と`NakoLexer`は先頭U+FEFFを正規化・空白処理の対象にせず、`未知の語句`の内部字句エラーで停止します。Nodeの`fs.readFileSync(path, 'utf-8')`はBOMを保持するため、Windowsメモ帳のBOM付きUTF-8は公式cnakoではそのまま実行できません。
+- lnakoの現在動作: `source.normalize`がファイル先頭のUTF-8 BOM（`EF BB BF`）だけを本文から読み飛ばし、source mapの先頭をBOM直後の本文先頭へ対応させます。診断の行・列はBOMを除いた本文先頭から数え、先頭行の表示本文からもBOMを除外します。本文中のBOMはそのまま保持します。文字列テンプレートの展開式など元ファイル途中の断片を再字句化する経路はBOM除去を無効化し、断片先頭のU+FEFFも本文として字句エラーにします。
+- 判定: 仕様（公式にない入力の寛容化。Windowsメモ帳の既定の「UTF-8」保存をそのまま実行できるようにする）
+- 対象経路: Lexer / Parser / Interpreter / AOT
+- 差分テストID: なし（公式は先頭BOMで字句エラーになるため`tests/oracle/`の比較対象に含めない）。単体テスト: `先頭のUTF-8 BOMを読み飛ばし本文先頭へ対応させる`、`BOMだけの入力を空の本文として扱う`、`本文中のBOMは読み飛ばさない`、`BOM除去が無効な断片では先頭BOMを本文として保持する`、`先頭のUTF-8 BOMを構文に含めず本文から字句化する`、`先頭のBOM付きでもインデント構文とCRLFを扱う`、`ファイル断片の先頭BOMは本文として字句エラーにする`、`先頭のUTF-8 BOMを本文から構文解析する`、`BOM付きソースの診断位置を本文先頭から数える`、`BOM付きソースの先頭行はBOMを除いて表示する`、`展開式の先頭BOMは本文として拒否する`
+- TODO識別子: なし
+
 ## DNCLの「でないならば」
 
 - 公式実測・source根拠: `!DNCLモード`の条件末尾は変換段階で `でなければ` へ正規化され、parserでは条件全体を `not` nodeで包みます。単なる助詞削除ではありません。
