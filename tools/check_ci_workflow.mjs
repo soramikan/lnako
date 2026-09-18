@@ -5,8 +5,7 @@ import { resolve } from "node:path";
 const root = resolve(import.meta.dirname, "..");
 const workflow = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
 const comparisonBenchmarkWorkflow = await readFile(resolve(root, ".github/workflows/comparison-benchmark.yml"), "utf8");
-const updateAttestationWorkflow = await readFile(resolve(root, ".github/workflows/update-attestation.yml"), "utf8");
-const floatingActions = [workflow, comparisonBenchmarkWorkflow, updateAttestationWorkflow]
+const floatingActions = [workflow, comparisonBenchmarkWorkflow]
   .flatMap((text) => [...text.matchAll(/uses: ([^\s@]+)@([^\s#]+)/g)])
   .filter((match) => !/^[0-9a-f]{40}$/.test(match[2]))
   .map((match) => `${match[1]}@${match[2]}`);
@@ -562,9 +561,9 @@ if (!syncEvidence.includes("signedEvidenceDigests") || !syncEvidence.includes("b
     syncScript.includes("loadCurrentAttestation") || !syncScript.includes("--attestation")) {
   throw new Error("catalog証拠syncが導出verified viewまたは全証拠種別のverified昇格を実装していません");
 }
-// 現行snapshot解決は走査型（manifest.sourceManifestSha256一致の最大workflowRun）。
-// pointerファイルは廃止済み。--require-currentはRelease preflightとdocs検証が
-// 使うが、CI workflow自体へは付けない（feature PRでは一致snapshot不在が正常）。
+// 現行のverified判定はGitHub Attestations。pointerファイルは廃止済み。
+// --require-currentは履歴snapshot検査用に残し、Releaseは check_github_attestation.mjs を使う。
+// CI workflow自体へは --require-current を付けない。
 if (trackedAttestationChecker.includes("current.json") || trackedAttestationChecker.includes("--current-pointer") ||
     trackedAttestationChecker.includes("currentAttestationPointer") ||
     !trackedAttestationChecker.includes("loadCurrentAttestation") || !trackedAttestationChecker.includes("loadAttestationSnapshot") ||
@@ -572,8 +571,10 @@ if (trackedAttestationChecker.includes("current.json") || trackedAttestationChec
     !trackedAttestationChecker.includes("--require-current") || !trackedAttestationChecker.includes("canonicalAttestationSchemaV2") ||
     !trackedAttestationChecker.includes("dispatchAttestationSchemaV3") || !trackedAttestationChecker.includes("validateSourceManifestDeclarationBytes") ||
     !trackedAttestationChecker.includes("deriveVerifiedCatalog") ||
+    !trackedAttestationChecker.includes("verifyCurrentGithubAttestation") ||
+    !trackedAttestationChecker.includes("GitHub Attestationsのオンライン検証が必要") ||
     !trackedAttestationChecker.includes("computeBackingDigestByProof") || !trackedAttestationChecker.includes("canonical catalog verified count")) {
-  throw new Error("追跡attestation checkerが走査型current解決・宣言digest必須・導出view検証に対応していません");
+  throw new Error("追跡attestation checkerが走査型current解決・宣言digest必須・導出view検証・GitHub attestationゲートに対応していません");
 }
 if (attestJob.includes("--require-current") || workflow.includes("attestations/current.json")) {
   throw new Error("CI workflowに廃止されたcurrent pointerまたは--require-currentが混入しています");
@@ -584,15 +585,23 @@ if (!syncEvidence.includes('"lnako.canonical-attestation.v1"') || !syncEvidence.
     !syncEvidence.includes("manifest.schema !== canonicalAttestationSchemaV2")) {
   throw new Error("canonical attestation schema識別子または走査型snapshot解決（v2候補限定）が共有libにありません");
 }
-// docs表は導出viewを表示する契約: 一致snapshotがあればoffline検証済みの署名
-// digestから導出したstate、無ければcanonicalの常時unattested。正本自体は常時
-// unattested固定。tracked checkerのoffline完全検証と条件分岐まで固定する。
+// docs表はcanonical正本の常時unattestedを表示する。verified確認はGitHub Attestations。
 const docsChecker = await readFile(resolve(root, "tools/check_docs_current.mjs"), "utf8");
-if (!docsChecker.includes("loadCurrentAttestation") || !docsChecker.includes("deriveVerifiedCatalog") ||
-    !docsChecker.includes("signedEvidenceDigests") || !docsChecker.includes("check_tracked_dispatch_attestation.mjs") ||
-    !docsChecker.includes('"--offline"') || !docsChecker.includes('"--require-current"') ||
-    !docsChecker.includes("currentAttestation !== null") || docsChecker.includes("current.json")) {
-  throw new Error("check_docs_currentが導出view表示（一致snapshot→offline検証後の導出state、無し→unattested）を検証していません");
+if (docsChecker.includes("loadCurrentAttestation") || docsChecker.includes("deriveVerifiedCatalog") ||
+    docsChecker.includes("--require-current") || docsChecker.includes("current.json")) {
+  throw new Error("check_docs_currentが廃止したgit snapshot導出viewを検証しています");
+}
+if (!docsChecker.includes("GitHub Attestations") || !docsChecker.includes("attestation snapshotから導出したview")) {
+  throw new Error("check_docs_currentがcanonical unattested表とsnapshot導出の廃止を検証していません");
+}
+const githubAttestationChecker = await readFile(resolve(root, "tools/check_github_attestation.mjs"), "utf8") +
+  (await readFile(resolve(root, "tools/lib/evidence/github_attestation.mjs"), "utf8"));
+if (!githubAttestationChecker.includes("verifyCurrentGithubAttestation") ||
+    !githubAttestationChecker.includes("--deny-self-hosted-runners") ||
+    !githubAttestationChecker.includes("trackedAttestationSubjects") ||
+    !githubAttestationChecker.includes("deriveVerifiedCatalog") ||
+    !githubAttestationChecker.includes("sourceManifestDeclarationBytes")) {
+  throw new Error("GitHub attestation検証toolが現行commitの公式gh verifyと導出527に対応していません");
 }
 const snapshotCreator = await readFile(resolve(root, "tools/create_attestation_snapshot.mjs"), "utf8");
 if (snapshotCreator.includes("current.json") || snapshotCreator.includes("currentAttestationPointer") ||
@@ -612,16 +621,15 @@ if (snapshotCreator.includes("current.json") || snapshotCreator.includes("curren
     !snapshotCreator.includes('["checkout", "-B"')) {
   throw new Error("snapshot作成toolがmanifest v2・宣言保存・pointer廃止・導出値書込（527以外拒否）・attestation branchとPR作成へ対応していません");
 }
-if (!updateAttestationWorkflow.includes("pull-requests: write") || !updateAttestationWorkflow.includes("create-pr") ||
-    !updateAttestationWorkflow.includes("--no-pr") ||
-    !updateAttestationWorkflow.includes("contents: write") ||
-    !updateAttestationWorkflow.includes("Create attestation snapshot and PR") ||
-    !updateAttestationWorkflow.includes("node tools/create_attestation_snapshot.mjs") ||
-    !updateAttestationWorkflow.includes('"--ref" "main"')) {
-  throw new Error("update-attestation workflowがattestation snapshot PR作成になっていません");
+try {
+  await readFile(resolve(root, ".github/workflows/update-attestation.yml"), "utf8");
+  throw new Error("update-attestation workflowは廃止済みです");
+} catch (error) {
+  if (error?.code !== "ENOENT") throw error;
 }
-if (!workflow.includes("node --test tools/create_attestation_snapshot_test.mjs")) {
-  throw new Error("CIがcreate_attestation_snapshotの単体テストを実行していません");
+if (!workflow.includes("tools/create_attestation_snapshot_test.mjs") ||
+    !workflow.includes("tools/check_github_attestation_test.mjs")) {
+  throw new Error("CIがattestation関連単体テストを実行していません");
 }
 
 const smokeCommands = {

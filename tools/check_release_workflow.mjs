@@ -69,8 +69,8 @@ const attestationGate = preflightBlock.match(/- name: Verify canonical compatibi
 if (!attestationGate) throw new Error("Release workflowのpreflightにcanonical attestation検証stepがありません");
 if (!attestationGate.includes("if: github.event_name == 'push'") ||
     !attestationGate.includes("node tools/sync_compat_evidence.mjs --check") ||
-    !attestationGate.includes("node tools/check_tracked_dispatch_attestation.mjs --require-current")) {
-  throw new Error("canonical attestation検証stepが不完全です（現行manifest一致snapshot必須・証拠再生成check・追跡snapshotの公式gh verifyが必要）");
+    !attestationGate.includes("node tools/check_github_attestation.mjs --commit")) {
+  throw new Error("canonical attestation検証stepが不完全です（証拠再生成check・現行commitのGitHub attestation検証が必要）");
 }
 if (workflow.includes("attestations/current.json") || workflow.includes("--current-pointer")) {
   throw new Error("Release workflowに廃止されたcurrent pointer参照が残っています");

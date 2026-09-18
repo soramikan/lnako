@@ -44,10 +44,10 @@ standard版やHomebrew環境では、`lnako toolchain install` を実行する�
    - ソース変更に伴いsource manifestが更新されるため、`node tools/sync_compat_evidence.mjs` を実行して証拠を現行manifestに同期します。
 3. **CI全job成功の確認**：
    - mainブランチへ取り込み、CI（51 matrix job＋後段3 job、**合計54 job**）がすべて成功するのを待ちます。
-4. **CI生成attestation snapshotの追跡**：
-   - mainのCI成功後、`Update attestation snapshot` workflowが成果物を `compat/v3.7.24/attestations/<run>/` へ追跡し、PRを作成します。走査型解決により、現行manifestに一致するsnapshotから `verified: 527` が導出されます。手動で行う場合は `node tools/create_attestation_snapshot.mjs --run-id <id>` です。
+4. **GitHub Attestationsの確認**：
+   - 同じsource commitのCIが `attest-dispatch-evidence` でcanonical証拠17件とsource manifest宣言を署名していることを確認します。Release preflightが `check_github_attestation.mjs` で公式 `gh attestation verify` と導出 `verified: 527` を要求します。gitへsnapshotをコピーする必要はありません。
 5. **署名済みタグの作成とpush**：
-   - 追跡snapshotを含む最終コミットに対し、GPG署名付きannotated tag（例: `git tag -s v0.2.0 -m "v0.2.0"`) を作成してpushします。
+   - CIが成功した最終コミットに対し、GPG署名付きannotated tag（例: `git tag -s v0.2.0 -m "v0.2.0"`) を作成してpushします。
 6. **Release workflowの実行と公開**：
    - タグpushをトリガーに `.github/workflows/release.yml` が起動します。
    - preflightジョブが、タグ署名・バージョン一致・同一commitのCI 54 job全成功・canonical attestation完全検証を確認した上で、3 OSのstandard/full両バリアントおよびベンチマーク結果をビルド・検証し、GitHub Releaseとして公開します。

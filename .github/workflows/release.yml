@@ -94,9 +94,9 @@ jobs:
         run: |
           set -euo pipefail
           node tools/sync_compat_evidence.mjs --check
-          # 現行source manifestに一致するattestation snapshotが必須。
-          # 一致するsnapshotが無ければReleaseを作成できない（走査型解決・pointer不使用）。
-          node tools/check_tracked_dispatch_attestation.mjs --require-current
+          # 現行commitのGitHub Attestations（actions/attest）を公式ghで検証する。
+          # git上のsnapshotコピーは使わない。
+          node tools/check_github_attestation.mjs --commit "$GITHUB_SHA"
 
   build:
     name: ${{ matrix.target }} / build benchmark distribution
