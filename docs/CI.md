@@ -4,7 +4,7 @@ CIは、互換性検証の意味を保ったまま、AOTをfixture shardと最�
 
 ## job構成
 
-現行workflowは **51 matrix job＋3後段job、合計54 job**です。matrixの失敗は別OS・別suiteの結果を隠さないよう `fail-fast: false`、同一branchの古いrunは `cancel-in-progress: true` です。
+現行workflowは **51 matrix job＋変更分類・軽量検証・3後段job、合計56 job**です。matrixの失敗は別OS・別suiteの結果を隠さないよう `fail-fast: false`、同一branchの古いrunは `cancel-in-progress: true` です。
 
 | job | 内訳 | 主な検証 |
 | --- | ---: | --- |
@@ -13,6 +13,7 @@ CIは、互換性検証の意味を保ったまま、AOTをfixture shardと最�
 | `aot` native | 27 | Linux 12、macOS 3、Windows 12。O0〜O3とfixture shard |
 | `aot` support | 12 | Linux/Windows各6。HTTP、dispatch evidence、coverage 3 shard、smoke |
 | 後段 | 3 | coverage集約、AOT artifact集約、dispatch＋canonical証拠のattestation |
+| 分類・軽量 | 2 | `changes`が変更パスを分類し、docs・attestation snapshot専用変更では`lightweight`のみ実行（matrixはskip） |
 
 job数を増やすことで、1つの巨大なAOT stepに検証を集中させず、失敗箇所と所要時間をjob単位で確認できます。検証suite、O0〜O3、QuickJS、3 OSのいずれも省略しません。
 
