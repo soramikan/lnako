@@ -130,3 +130,13 @@ dispatch evidence`がsuccessのrunを要求するため、そのcommitへのtag�
 失敗する。docs専用commitをrelease対象にする場合は、先にCI workflowを
 mainで`workflow_dispatch`実行する（dispatchは常にfull相当で走り
 attestationが発行される）か、full run済みのcommitをtag付けする。
+
+### light経路の実機検証
+
+本節の追記自体がdocs専用変更であり、`improve-ci-stage2`向けPRで
+`changes`→`lightweight`のみが走り重いmatrixがskipされることを
+確認するための検証用commitでもある。期待する観測:
+
+- `Classify changes`が`level=light`を出力する
+- test/parser_fuzz/AOT/verify/attestの各ジョブがskipされる
+- `Lightweight verification`がbuildなしのchecker群を実行してpassする
