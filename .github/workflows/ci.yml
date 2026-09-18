@@ -464,7 +464,7 @@ jobs:
         run: zig build
       - name: Package shared AOT compiler artifact
         shell: bash
-        run: node tools/aot_compiler_artifact.mjs create --binary zig-out/bin/lnako.exe --out-dir "${{ runner.temp }}/aot-compiler"
+        run: node tools/aot_compiler_artifact.mjs create --binary zig-out/bin/lnako.exe --runtime-lib zig-out/lib/lnako_runtime.lib --out-dir "${{ runner.temp }}/aot-compiler"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: lnako-aot-compiler-windows-x64

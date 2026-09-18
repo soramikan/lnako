@@ -12,7 +12,9 @@ const SCHEMA = "lnako.aot-compiler-artifact.v1";
 const METADATA_NAME = "compiler-artifact.json";
 const BUILD_MODE = "Debug";
 const COMPAT_JS = false;
-const EXPECTED_KEYS = ["schema", "commit", "os", "arch", "zig", "buildMode", "compatJs", "binaryName", "binarySha256"];
+// compilerは<exe>/../lib/のAOTランタイム静的ライブラリを必要とするため、
+// binaryとruntime libを1組の成果物として扱う。
+const EXPECTED_KEYS = ["schema", "commit", "os", "arch", "zig", "buildMode", "compatJs", "binaryName", "binarySha256", "runtimeLibName", "runtimeLibSha256"];
 const HEX_64 = /^[0-9a-f]{64}$/;
 
 export function sha256Hex(bytes) {
@@ -43,9 +45,11 @@ function zigVersion(root) {
   return lock.zig.version;
 }
 
-export function createArtifact({ binaryPath, outDir, root = process.cwd(), env = process.env, platform = process.platform, arch = process.arch }) {
+export function createArtifact({ binaryPath, runtimeLibPath, outDir, root = process.cwd(), env = process.env, platform = process.platform, arch = process.arch }) {
   if (!existsSync(binaryPath)) fail(`compiler binaryがありません: ${binaryPath}`);
+  if (!existsSync(runtimeLibPath)) fail(`AOT runtime libraryがありません: ${runtimeLibPath}`);
   const binaryBytes = readFileSync(binaryPath);
+  const runtimeLibBytes = readFileSync(runtimeLibPath);
   const metadata = {
     schema: SCHEMA,
     commit: resolveCommit(root, env),
@@ -56,10 +60,13 @@ export function createArtifact({ binaryPath, outDir, root = process.cwd(), env =
     compatJs: COMPAT_JS,
     binaryName: basename(binaryPath),
     binarySha256: sha256Hex(binaryBytes),
+    runtimeLibName: basename(runtimeLibPath),
+    runtimeLibSha256: sha256Hex(runtimeLibBytes),
   };
   mkdirSync(outDir, { recursive: true });
   writeFileSync(join(outDir, METADATA_NAME), `${JSON.stringify(metadata, null, 2)}\n`);
   copyFileSync(binaryPath, join(outDir, metadata.binaryName));
+  copyFileSync(runtimeLibPath, join(outDir, metadata.runtimeLibName));
   return metadata;
 }
 
@@ -79,17 +86,25 @@ export function verifyArtifact({ dir, installTo, root = process.cwd(), env = pro
   if (metadata.os !== platform || metadata.arch !== arch) fail(`platformが不一致です: artifact=${metadata.os}/${metadata.arch} runner=${platform}/${arch}`);
   if (metadata.zig !== zigVersion(root)) fail(`Zig versionが不一致です: artifact=${metadata.zig}`);
   if (metadata.buildMode !== BUILD_MODE || metadata.compatJs !== COMPAT_JS) fail("build構成が不一致です");
-  if (!HEX_64.test(metadata.binarySha256)) fail("binarySha256が不正です");
-  if (typeof metadata.binaryName !== "string" || metadata.binaryName.length === 0 || basename(metadata.binaryName) !== metadata.binaryName) {
-    fail(`binaryNameが不正です: ${metadata.binaryName}`);
+  if (!HEX_64.test(metadata.binarySha256) || !HEX_64.test(metadata.runtimeLibSha256)) fail("成果物のSHA-256が不正です");
+  for (const [field, name] of [["binaryName", metadata.binaryName], ["runtimeLibName", metadata.runtimeLibName]]) {
+    if (typeof name !== "string" || name.length === 0 || basename(name) !== name) fail(`${field}が不正です: ${name}`);
   }
   const binaryPath = join(dir, metadata.binaryName);
   if (!existsSync(binaryPath)) fail(`compiler binaryがありません: ${binaryPath}`);
   const actualSha256 = sha256Hex(readFileSync(binaryPath));
   if (actualSha256 !== metadata.binarySha256) fail(`compiler binaryのSHA-256が不一致です: expected=${metadata.binarySha256} actual=${actualSha256}`);
+  const runtimeLibPath = join(dir, metadata.runtimeLibName);
+  if (!existsSync(runtimeLibPath)) fail(`AOT runtime libraryがありません: ${runtimeLibPath}`);
+  const actualLibSha256 = sha256Hex(readFileSync(runtimeLibPath));
+  if (actualLibSha256 !== metadata.runtimeLibSha256) fail(`AOT runtime libraryのSHA-256が不一致です: expected=${metadata.runtimeLibSha256} actual=${actualLibSha256}`);
   if (installTo) {
     mkdirSync(installTo, { recursive: true });
     copyFileSync(binaryPath, join(installTo, metadata.binaryName));
+    // compilerは<exe>/../lib/を探索するため、binの兄弟libへinstallする。
+    const libDir = resolve(installTo, "..", "lib");
+    mkdirSync(libDir, { recursive: true });
+    copyFileSync(runtimeLibPath, join(libDir, metadata.runtimeLibName));
   }
   return { binaryPath, metadata };
 }
@@ -124,7 +139,7 @@ if (isMain) {
     return value;
   };
   if (command === "create") {
-    const metadata = createArtifact({ binaryPath: required("--binary"), outDir: required("--out-dir") });
+    const metadata = createArtifact({ binaryPath: required("--binary"), runtimeLibPath: required("--runtime-lib"), outDir: required("--out-dir") });
     console.log(`AOT compiler artifactを作成しました: commit=${metadata.commit} ${metadata.os}/${metadata.arch} zig=${metadata.zig} sha256=${metadata.binarySha256.slice(0, 12)}...`);
   } else if (command === "verify") {
     const { metadata } = verifyArtifact({ dir: required("--dir"), installTo: required("--install-to") });

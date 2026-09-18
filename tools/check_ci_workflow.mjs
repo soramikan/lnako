@@ -434,7 +434,7 @@ if (!aotCompilerJob || !aotCompilerJob.includes("name: Windows x86_64 / AOT veri
     !aotCompilerJob.includes("runs-on: windows-2025") ||
     !aotCompilerJob.includes("key: toolchains-${{ runner.os }}-${{ runner.arch }}-v3-") ||
     !aotCompilerJob.includes("run: zig build") ||
-    !aotCompilerJob.includes("node tools/aot_compiler_artifact.mjs create --binary zig-out/bin/lnako.exe --out-dir") ||
+    !aotCompilerJob.includes("node tools/aot_compiler_artifact.mjs create --binary zig-out/bin/lnako.exe --runtime-lib zig-out/lib/lnako_runtime.lib --out-dir") ||
     !aotCompilerJob.includes("name: lnako-aot-compiler-windows-x64") ||
     !aotCompilerJob.includes("if-no-files-found: error")) {
   throw new Error("Windows AOT compiler producer jobが不完全です");
@@ -453,8 +453,10 @@ if (!downloadCompilerBlock || !downloadCompilerBlock.includes("if: matrix.task =
   throw new Error("Windows native shardの共有compiler download／検証・install stepが不完全です");
 }
 if (!aotCompilerArtifactScript.includes('"lnako.aot-compiler-artifact.v1"') ||
-    !aotCompilerArtifactScript.includes("binarySha256") || !aotCompilerArtifactScript.includes("buildMode") ||
-    !aotCompilerArtifactScript.includes("compatJs") || !aotCompilerArtifactScript.includes("basename(metadata.binaryName) !== metadata.binaryName") ||
+    !aotCompilerArtifactScript.includes("binarySha256") || !aotCompilerArtifactScript.includes("runtimeLibSha256") ||
+    !aotCompilerArtifactScript.includes("buildMode") ||
+    !aotCompilerArtifactScript.includes("compatJs") || !aotCompilerArtifactScript.includes("basename(name) !== name") ||
+    !aotCompilerArtifactScript.includes('"..", "lib"') ||
     !aotCompilerArtifactScript.includes("rev-parse") || !aotCompilerArtifactScript.includes("toolchain.lock.json") ||
     !workflow.includes("node --test tools/setup_llvm_test.mjs tools/collect_ci_metrics_test.mjs tools/aot_compiler_artifact_test.mjs")) {
   throw new Error("AOT compiler artifactのmetadata照合または単体テストが不完全です");

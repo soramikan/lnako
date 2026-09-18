@@ -174,6 +174,9 @@ jobで1回だけbuildし、metadata＋SHA-256付きartifact
   commit／platform／arch／Zig version／build mode／compat-JS構成／SHA-256を
   照合してから`zig-out/bin`へinstallする。誤commitや改変されたbinaryは
   install前にrejectされる
+- compilerは`<exe>/../lib/`のAOTランタイム静的ライブラリ
+  （`lnako_runtime.lib`）を必要とするため、binaryとruntime libを
+  1組の成果物としてhash照合・installする（binの兄弟`lib/`へ展開）
 - Linux／macOS nativeとWindows support jobは従来通り各ジョブがbuildする
   （Linux coverage shardのReleaseSafe buildも変更なし）
 
