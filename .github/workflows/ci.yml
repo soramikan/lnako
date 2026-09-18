@@ -74,12 +74,12 @@ jobs:
         if: matrix.suite != 'compat-aot'
         with:
           node-version: 24.15.0
+      # toolchain cache世代v3。keyにtoolchain定義とsetup scriptのhashを含め、
+      # marker欠落でpoisonedなv1/v2 cacheを復元しないようrestore-keysは付けない。
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/toolchains
-          key: toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ runner.os }}-${{ runner.arch }}-v2-minimal
-          restore-keys: |
-            toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ runner.os }}-${{ runner.arch }}-v1
+          key: toolchains-${{ runner.os }}-${{ runner.arch }}-v3-${{ hashFiles('toolchain.lock.json', 'tools/setup_llvm.mjs', 'tools/setup_quickjs.mjs', 'tools/prune_llvm_toolchain.mjs') }}
       - name: Set up pinned LLVM and LLD
         shell: bash
         run: |
@@ -232,6 +232,9 @@ jobs:
       - name: Attestation snapshot tool tests
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node --test tools/create_attestation_snapshot_test.mjs tools/check_github_attestation_test.mjs
+      - name: Toolchain cache regression tests
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
+        run: node --test tools/setup_llvm_test.mjs tools/collect_ci_metrics_test.mjs
       - name: Toolchain command check
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         shell: bash
@@ -728,12 +731,12 @@ jobs:
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.15.0
+      # toolchain cache世代v3。keyにtoolchain定義とsetup scriptのhashを含め、
+      # marker欠落でpoisonedなv1/v2 cacheを復元しないようrestore-keysは付けない。
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/toolchains
-          key: toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ runner.os }}-${{ runner.arch }}-v2-minimal
-          restore-keys: |
-            toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ runner.os }}-${{ runner.arch }}-v1
+          key: toolchains-${{ runner.os }}-${{ runner.arch }}-v3-${{ hashFiles('toolchain.lock.json', 'tools/setup_llvm.mjs', 'tools/setup_quickjs.mjs', 'tools/prune_llvm_toolchain.mjs') }}
       - name: Set up pinned LLVM and LLD
         shell: bash
         run: |

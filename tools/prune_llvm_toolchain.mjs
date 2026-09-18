@@ -1,18 +1,21 @@
 import { access, lstat, mkdir, mkdtemp, readlink, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { dirname, join, normalize, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 
 const root = resolve(import.meta.dirname, "..");
-const options = parseArguments(process.argv.slice(2));
 
-if (options.selfTest) {
-  await selfTest();
-  console.log("LLVM toolchain cache prune self-test: 成功");
-} else {
-  const llvmRoot = options.root ?? process.env.LNAKO_LLVM_DIR;
-  if (!llvmRoot) throw new Error("LLVM rootが指定されていません: --root またはLNAKO_LLVM_DIRが必要です");
-  const result = await prune(resolve(llvmRoot), process.platform);
-  console.log(`LLVM toolchain cacheを縮小しました: ${result.beforeBytes} -> ${result.afterBytes} bytes / ${result.removedEntries} entries removed`);
+if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+  const options = parseArguments(process.argv.slice(2));
+  if (options.selfTest) {
+    await selfTest();
+    console.log("LLVM toolchain cache prune self-test: 成功");
+  } else {
+    const llvmRoot = options.root ?? process.env.LNAKO_LLVM_DIR;
+    if (!llvmRoot) throw new Error("LLVM rootが指定されていません: --root またはLNAKO_LLVM_DIRが必要です");
+    const result = await prune(resolve(llvmRoot), process.platform);
+    console.log(`LLVM toolchain cacheを縮小しました: ${result.beforeBytes} -> ${result.afterBytes} bytes / ${result.removedEntries} entries removed`);
+  }
 }
 
 function parseArguments(argumentsList) {
@@ -31,7 +34,7 @@ function parseArguments(argumentsList) {
   return result;
 }
 
-async function prune(llvmRoot, platform) {
+export async function prune(llvmRoot, platform) {
   const keep = await requiredPaths(llvmRoot, platform);
   const beforeBytes = await treeBytes(llvmRoot);
   const beforeEntries = await treeEntries(llvmRoot);
@@ -115,7 +118,7 @@ function shouldKeepFile(path, keep, platform) {
   if (keep.has(path)) return true;
   if (path.startsWith("lib/clang/")) return true;
   if (platform === "win32" && path.toLowerCase().startsWith("lib/clang/")) return true;
-  // 管理markerを残す。消すとcache復元後にisCurrent()がfalseになり全ジョブが再downloadする。
+  // 管理markerを残す。消すとcache復元後にcacheStatus()がinvalidになり全ジョブが再downloadする。
   if (path === ".lnako-toolchain.json") return true;
   return false;
 }
