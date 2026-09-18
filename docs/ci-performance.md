@@ -193,10 +193,15 @@ jobで1回だけbuildし、metadata＋SHA-256付きartifact
 
 ## Phase 1〜4実施後の計測（2026-09-18、run 35322133137）
 
-| 指標 | baseline | 実測 |
+実測列は上記baseline集計（複数runのmedian）に対する**単一run**の値であり、
+run間ばらつきを含まない点に注意する。
+
+| 指標 | baseline（median） | run 35322133137（単一run） |
 | --- | ---: | ---: |
-| wall time（median） | 22m19s | 17m23s |
-| 最長job | macOS 24m10s | Windows core 16m44s |
+| workflow wall time | 22m19s | 17m23s |
+| 最長job | Windows core 18m22s | Windows core 16m44s |
+| mac-core-standard-support | 17m56s | 9m46s（Node host差分を移出） |
+| mac-host-compat | 10m39s | 12m13s（Node host差分を末尾で吸収） |
 | LLVM再インストール率 | 100%（147/147 jobがcache hitでも再install） | 0%（hit時は0.2sで検証のみ） |
 | Windows native AOT shardのcompiler build | 12回（各shard個別） | 1回（producer 60s、12 shardが検証済みartifactをinstall） |
 
