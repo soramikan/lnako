@@ -29,6 +29,7 @@ const interpreterOracleScript = await readFile(resolve(root, "tools/compare_inte
 const compatJsEvidenceScript = await readFile(resolve(root, "tools/check_compat_js_evidence.mjs"), "utf8");
 const pruneLlvmToolchainScript = await readFile(resolve(root, "tools/prune_llvm_toolchain.mjs"), "utf8");
 const setupLlvmScript = await readFile(resolve(root, "tools/setup_llvm.mjs"), "utf8");
+const classifyChangesScript = await readFile(resolve(root, "tools/classify_changes.mjs"), "utf8");
 const trackedAttestationChecker = await readFile(resolve(root, "tools/check_tracked_dispatch_attestation.mjs"), "utf8");
 const syncScript = await readFile(resolve(root, "tools/sync_compat_evidence.mjs"), "utf8");
 const syncEvidence = syncScript +
@@ -137,6 +138,93 @@ if (nativeAotMatrixEntries.length !== expectedNativeRowCount || supportAotMatrix
   throw new Error(`AOT job分割数が不正です: native=${nativeAotMatrixEntries.length} support=${supportAotMatrixEntries.length}`);
 }
 if (matrixEntries.length !== 51) throw new Error(`CI matrixの実job数が不正です: actual=${matrixEntries.length}`);
+
+// 変更分類jobは重いmatrixの前段として必須。allow-list方式で、判定不能は
+// すべてfullへ倒す設計をtool側の実装とworkflowの両方から検査する。
+const changesJob = workflow.match(/  changes:[\s\S]*?(?=\n  lightweight:)/)?.[0];
+if (!changesJob || !changesJob.includes("name: Classify changes") ||
+    !changesJob.includes("runs-on: ubuntu-24.04") || !changesJob.includes("timeout-minutes: 5") ||
+    !changesJob.includes("level: ${{ steps.classify.outputs.level }}") ||
+    !changesJob.includes("reason: ${{ steps.classify.outputs.reason }}") ||
+    !changesJob.includes("fetch-depth: 0") ||
+    !changesJob.includes("id: classify") ||
+    !changesJob.includes("EVENT_NAME: ${{ github.event_name }}") ||
+    !changesJob.includes("BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}") ||
+    // 分類器はbase側の信頼済み版を実行する（PR側改変で軽量CIを騙せない）。
+    !changesJob.includes('git show "$BASE_SHA:tools/classify_changes.mjs"') ||
+    !changesJob.includes("reason=no-base-classifier") ||
+    !changesJob.includes('node "$classifier" --event "$EVENT_NAME" --base "$BASE_SHA" --output "$GITHUB_OUTPUT"') ||
+    // level出力欠落は全job静黙skipを招くためgrep検査でfailにする。
+    !changesJob.includes("grep -qE '^level=(full|light)$' \"$GITHUB_OUTPUT\"")) {
+  throw new Error("変更分類jobの構成（base版classifier実行・出力検証）が不完全です");
+}
+if (!classifyChangesScript.includes("export function isLightPath") ||
+    !classifyChangesScript.includes("export function classify") ||
+    !classifyChangesScript.includes("export function decide") ||
+    !classifyChangesScript.includes("/^docs\\//") ||
+    !classifyChangesScript.includes("/^[^/]+\\.md$/") ||
+    !classifyChangesScript.includes("/^compat\\/[^/]+\\/attestations\\//") ||
+    !classifyChangesScript.includes('"empty-diff"') ||
+    !classifyChangesScript.includes('"no-base"') ||
+    !classifyChangesScript.includes('"diff-error"') ||
+    !classifyChangesScript.includes('"allow-list"') ||
+    !classifyChangesScript.includes('"heavy-paths"') ||
+    !classifyChangesScript.includes('event !== "pull_request" && event !== "push"') ||
+    !classifyChangesScript.includes("realpathSync") ||
+    // renameをdelete+addへ分解し、heavy→light移動を取りこぼさない。
+    !classifyChangesScript.includes('"--no-renames"') ||
+    !classifyChangesScript.includes("git") || !classifyChangesScript.includes("diff") ||
+    !workflow.includes("run: node --test tools/classify_changes_test.mjs")) {
+  throw new Error("変更分類toolのallow-list／安全側判定／rename分解・単体テストが不完全です");
+}
+// 軽量検証jobはlight相当の変更でもworkflow schema・追跡attestation・docs表・
+// canonical evidenceの整合性を必ず検査する。buildを要する検査は含めない。
+const lightweightJob = workflow.match(/  lightweight:[\s\S]*?(?=\n  test:)/)?.[0];
+if (!lightweightJob || !lightweightJob.includes("if: needs.changes.outputs.level == 'light'") ||
+    !lightweightJob.includes("needs: [changes]") ||
+    !lightweightJob.includes("runs-on: ubuntu-24.04") ||
+    !lightweightJob.includes("node tools/check_ci_workflow.mjs") ||
+    !lightweightJob.includes("node tools/check_release_workflow.mjs") ||
+    !lightweightJob.includes("node tools/check_dispatch_attestation_security.mjs") ||
+    !lightweightJob.includes("node tools/check_tracked_dispatch_attestation.mjs --offline") ||
+    !lightweightJob.includes("node tools/check_tracked_dispatch_attestation_security.mjs") ||
+    !lightweightJob.includes("node tools/check_docs_current.mjs") ||
+    !lightweightJob.includes("node tools/sync_compat.mjs --check") ||
+    !lightweightJob.includes("node tools/sync_compat_evidence.mjs --check") ||
+    !lightweightJob.includes("node tools/check_interpreter_only_classification.mjs --check") ||
+    !lightweightJob.includes("node tools/check_builtin_catalog.mjs") ||
+    !lightweightJob.includes("node tools/check_low_level_spec.mjs") ||
+    !lightweightJob.includes("node tools/check_low_level_cases.mjs") ||
+    !lightweightJob.includes("node tools/check_source_structure.mjs") ||
+    !lightweightJob.includes("node tools/check_benchmark_result.mjs") ||
+    !lightweightJob.includes("node tools/check_native_aot_artifacts.mjs --self-test") ||
+    !lightweightJob.includes("node tools/check_distribution.mjs --self-test") ||
+    !lightweightJob.includes("node tools/check_package_isolation.mjs") ||
+    !lightweightJob.includes("GITHUB_STEP_SUMMARY= node --test tools/macos_signing.test.mjs") ||
+    !lightweightJob.includes("node --test tools/classify_changes_test.mjs")) {
+  throw new Error("軽量検証jobの発動条件または整合性検査が不完全です");
+}
+if (lightweightJob.includes("zig build") || lightweightJob.includes("setup_llvm.mjs") ||
+    lightweightJob.includes("setup_oracle.mjs") || lightweightJob.includes("compare_") ||
+    lightweightJob.includes("setup_quickjs.mjs") || lightweightJob.includes("actions/cache@") ||
+    lightweightJob.includes("mlugg/setup-zig@")) {
+  throw new Error("軽量検証jobへbuild・oracle・toolchain setupを混入させないでください");
+}
+// 重いjobはすべてfull相当でのみ起動する。列挙ではなく全jobを走査して、
+// changes／lightweight以外がneeds.changes.outputs.levelを参照しない追加を
+// 将来も許さない構造にする。
+const fullGate = "needs.changes.outputs.level == 'full'";
+const jobsSection = workflow.slice(workflow.indexOf("\njobs:"));
+const jobBlocks = [...jobsSection.matchAll(/^  ([a-zA-Z_-]+):\n(?=    )/gm)]
+  .map((match, index, all) => {
+    const end = index + 1 < all.length ? all[index + 1].index : jobsSection.length;
+    return { name: match[1], block: jobsSection.slice(match.index, end) };
+  });
+const gatedJobs = jobBlocks.filter(({ name }) => name !== "changes" && name !== "lightweight");
+if (jobBlocks.length !== 8 || gatedJobs.length !== 6 ||
+    gatedJobs.some(({ block }) => !block.includes(fullGate) || !block.includes("needs: [changes"))) {
+  throw new Error(`変更分類のfull gateを持たないjobがあります: ${gatedJobs.filter(({ block }) => !block.includes(fullGate) || !block.includes("needs: [changes")).map(({ name }) => name).join(",")}`);
+}
 const parserFuzzJob = workflow.match(/  parser_fuzz:[\s\S]*?(?=\n  aot:)/)?.[0];
 if (!parserFuzzJob || !parserFuzzJob.includes("strategy:\n      fail-fast: false") ||
     !parserFuzzJob.includes("runs-on: ${{ matrix.os }}") || !parserFuzzJob.includes("timeout-minutes: 20") ||
@@ -224,6 +312,7 @@ const stepSuites = new Map([
   ["Differential Node host test", "mac-core-host"],
   ["Distribution package self-test", "core"],
   ["Toolchain cache regression tests", "core"],
+  ["Change classifier tests", "core"],
   ["Toolchain command check", "core"],
   ["Zig package isolation check", "core"],
   ["Format", "core"],
@@ -460,8 +549,8 @@ if (!workflow.includes("if: matrix.suite == 'core' || matrix.suite == 'mac-core-
   throw new Error("coreの証拠追従検査に必要なfull checkout条件がありません");
 }
 const coverageVerificationJob = workflow.match(/  verify_dispatch_coverage:[\s\S]*?(?=\n  verify_native_aot_artifacts:)/)?.[0];
-if (!coverageVerificationJob || !coverageVerificationJob.includes("if: needs.test.result == 'success' && needs.aot.result == 'success'") ||
-    !coverageVerificationJob.includes("needs: [test, aot]") ||
+if (!coverageVerificationJob || !coverageVerificationJob.includes("if: needs.changes.outputs.level == 'full' && needs.test.result == 'success' && needs.aot.result == 'success'") ||
+    !coverageVerificationJob.includes("needs: [changes, test, aot]") ||
     !coverageVerificationJob.includes("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1") ||
     !coverageVerificationJob.includes("pattern: lnako-dispatch-coverage-*") ||
     !coverageVerificationJob.includes("merge-multiple: true") ||
@@ -480,8 +569,8 @@ if (!coverageVerificationJob || !coverageVerificationJob.includes("if: needs.tes
   throw new Error("dispatch coverage shardのdownload／重複・欠落検査jobが不完全です");
 }
 const nativeAotVerificationJob = workflow.match(/  verify_native_aot_artifacts:[\s\S]*?(?=\n  attest-dispatch-evidence:)/)?.[0];
-if (!nativeAotVerificationJob || !nativeAotVerificationJob.includes("if: always()") ||
-    !nativeAotVerificationJob.includes("needs: [aot]") ||
+if (!nativeAotVerificationJob || !nativeAotVerificationJob.includes("if: always() && needs.changes.outputs.level == 'full'") ||
+    !nativeAotVerificationJob.includes("needs: [changes, aot]") ||
     !nativeAotVerificationJob.includes("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1") ||
     !nativeAotVerificationJob.includes("pattern: lnako-native-oracle-*") ||
     !nativeAotVerificationJob.includes("merge-multiple: false") ||
@@ -503,7 +592,7 @@ if (!nativeAotArtifactChecker.includes('schema: "lnako.native-aot-aggregate-evid
 if (!workflow.includes("node tools/check_native_aot_artifacts.mjs --self-test")) throw new Error("native AOT artifact集約checkerのself-testがCIにありません");
 const attestJob = workflow.match(/  attest-dispatch-evidence:[\s\S]*$/)?.[0];
 if (!attestJob || !attestJob.includes("github.event_name == 'push'") || !attestJob.includes("github.ref == 'refs/heads/main'") ||
-    !attestJob.includes("needs: [test, parser_fuzz, aot, verify_dispatch_coverage, verify_native_aot_artifacts]") || !attestJob.includes("needs.test.result == 'success'") || !attestJob.includes("needs.parser_fuzz.result == 'success'") || !attestJob.includes("needs.aot.result == 'success'") || !attestJob.includes("needs.verify_dispatch_coverage.result == 'success'") || !attestJob.includes("needs.verify_native_aot_artifacts.result == 'success'") || !attestJob.includes("id-token: write") || !attestJob.includes("attestations: write") || !attestJob.includes("artifact-metadata: write") ||
+    !attestJob.includes("needs: [changes, test, parser_fuzz, aot, verify_dispatch_coverage, verify_native_aot_artifacts]") || !attestJob.includes("needs.changes.outputs.level == 'full'") || !attestJob.includes("needs.test.result == 'success'") || !attestJob.includes("needs.parser_fuzz.result == 'success'") || !attestJob.includes("needs.aot.result == 'success'") || !attestJob.includes("needs.verify_dispatch_coverage.result == 'success'") || !attestJob.includes("needs.verify_native_aot_artifacts.result == 'success'") || !attestJob.includes("id-token: write") || !attestJob.includes("attestations: write") || !attestJob.includes("artifact-metadata: write") ||
     !attestJob.includes("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1") || !attestJob.includes("merge-multiple: true") ||
     !attestJob.includes("actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2") || !attestJob.includes("node tools/verify_dispatch_attestation.mjs") ||
     !attestJob.includes("id: attest-dispatch") || !attestJob.includes("--bundle \"${{ steps.attest-dispatch.outputs.bundle-path }}\"") ||
@@ -743,7 +832,7 @@ if (comparisonBenchmarkWorkflow.includes("continue-on-error: true")) throw new E
 
 checkBashFailFastBehavior();
 
-console.log(`CI構成検査: ${matrixEntries.length} matrixジョブ＋coverage shard検証＋native AOT集約検証＋1 attestationジョブ・${stepSuites.size}条件付き検証ステップ成功`);
+console.log(`CI構成検査: 変更分類＋軽量検証＋${matrixEntries.length} matrixジョブ＋coverage shard検証＋native AOT集約検証＋1 attestationジョブ・${stepSuites.size}条件付き検証ステップ成功`);
 
 function checkFailFastShell(workflowText, filename) {
   const stepHeaders = [...workflowText.matchAll(/^      - name: .*$/gm)];

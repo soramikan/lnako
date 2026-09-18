@@ -14,8 +14,86 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # 変更パスをallow-listで分類し、docs・attestation snapshotのみの変更では
+  # 重いmatrixを起動しない。判定不能（diff失敗・base欠落・空diff・手動実行）は
+  # 常にfullへ倒し、検証をスキップしない。
+  changes:
+    name: Classify changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      level: ${{ steps.classify.outputs.level }}
+      reason: ${{ steps.classify.outputs.reason }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+      - name: Classify changed paths
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 分類器はbase側の信頼済み版を実行する。PR側checkoutの改変済み実装は
+          # 信用しない（分類器自身の改変で軽量CIを騙す経路を閉じる）。
+          # base側に存在しない（この機能の導入直後や削除PR）はfullへ倒す。
+          classifier="$RUNNER_TEMP/classify_changes.mjs"
+          if [[ -n "$BASE_SHA" ]] && git show "$BASE_SHA:tools/classify_changes.mjs" > "$classifier" 2>/dev/null; then
+            node "$classifier" --event "$EVENT_NAME" --base "$BASE_SHA" --output "$GITHUB_OUTPUT"
+          else
+            printf 'level=full\nreason=no-base-classifier\n' >> "$GITHUB_OUTPUT"
+          fi
+          # level出力が欠けると全jobが静黙skipされるためfailにする。
+          grep -qE '^level=(full|light)$' "$GITHUB_OUTPUT"
+
+  # light相当の変更でも、workflow schema・追跡attestation・docs表・
+  # canonical evidenceの整合性は必ず検査する（build不要なcheckerのみ）。
+  lightweight:
+    name: Lightweight verification
+    if: needs.changes.outputs.level == 'light'
+    needs: [changes]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+      - name: Verify documentation and attestation integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/check_ci_workflow.mjs
+          node tools/check_release_workflow.mjs
+          node tools/check_dispatch_attestation_security.mjs
+          node tools/check_tracked_dispatch_attestation.mjs --offline
+          node tools/check_tracked_dispatch_attestation_security.mjs
+          node tools/check_docs_current.mjs
+          node tools/sync_compat.mjs --check
+          node tools/sync_compat_evidence.mjs --check
+          node tools/check_interpreter_only_classification.mjs --check
+          node tools/check_builtin_catalog.mjs
+          node tools/check_low_level_spec.mjs
+          node tools/check_low_level_cases.mjs
+          node tools/check_source_structure.mjs
+          node tools/check_benchmark_result.mjs
+          node tools/check_native_aot_artifacts.mjs --self-test
+          node tools/check_distribution.mjs --self-test
+          node tools/check_package_isolation.mjs
+          # Mock notarization IDs must not be written to the real job summary.
+          GITHUB_STEP_SUMMARY= node --test tools/macos_signing.test.mjs
+      - name: Change classifier tests
+        run: node --test tools/classify_changes_test.mjs
+
   test:
     name: ${{ matrix.name }} / ${{ matrix.suite }}
+    if: needs.changes.outputs.level == 'full'
+    needs: [changes]
     strategy:
       fail-fast: false
       matrix:
@@ -235,6 +313,9 @@ jobs:
       - name: Toolchain cache regression tests
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node --test tools/setup_llvm_test.mjs tools/collect_ci_metrics_test.mjs
+      - name: Change classifier tests
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
+        run: node --test tools/classify_changes_test.mjs
       - name: Toolchain command check
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         shell: bash
@@ -310,6 +391,8 @@ jobs:
 
   parser_fuzz:
     name: ${{ matrix.name }} / parser fuzz
+    if: needs.changes.outputs.level == 'full'
+    needs: [changes]
     strategy:
       fail-fast: false
       matrix:
@@ -342,6 +425,8 @@ jobs:
 
   aot:
     name: ${{ matrix.name }} / ${{ matrix.jobName }}
+    if: needs.changes.outputs.level == 'full'
+    needs: [changes]
     strategy:
       fail-fast: false
       matrix:
@@ -870,8 +955,8 @@ jobs:
 
   verify_dispatch_coverage:
     name: Verify dispatch coverage shards
-    if: needs.test.result == 'success' && needs.aot.result == 'success'
-    needs: [test, aot]
+    if: needs.changes.outputs.level == 'full' && needs.test.result == 'success' && needs.aot.result == 'success'
+    needs: [changes, test, aot]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -895,8 +980,8 @@ jobs:
 
   verify_native_aot_artifacts:
     name: Verify native AOT artifacts
-    if: always()
-    needs: [aot]
+    if: always() && needs.changes.outputs.level == 'full'
+    needs: [changes, aot]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -934,8 +1019,8 @@ jobs:
 
   attest-dispatch-evidence:
     name: Attest and verify dispatch evidence
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') && needs.test.result == 'success' && needs.parser_fuzz.result == 'success' && needs.aot.result == 'success' && needs.verify_dispatch_coverage.result == 'success' && needs.verify_native_aot_artifacts.result == 'success'
-    needs: [test, parser_fuzz, aot, verify_dispatch_coverage, verify_native_aot_artifacts]
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') && needs.changes.outputs.level == 'full' && needs.test.result == 'success' && needs.parser_fuzz.result == 'success' && needs.aot.result == 'success' && needs.verify_dispatch_coverage.result == 'success' && needs.verify_native_aot_artifacts.result == 'success'
+    needs: [changes, test, parser_fuzz, aot, verify_dispatch_coverage, verify_native_aot_artifacts]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
