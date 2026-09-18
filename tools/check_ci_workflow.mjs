@@ -29,6 +29,7 @@ const interpreterOracleScript = await readFile(resolve(root, "tools/compare_inte
 const compatJsEvidenceScript = await readFile(resolve(root, "tools/check_compat_js_evidence.mjs"), "utf8");
 const pruneLlvmToolchainScript = await readFile(resolve(root, "tools/prune_llvm_toolchain.mjs"), "utf8");
 const setupLlvmScript = await readFile(resolve(root, "tools/setup_llvm.mjs"), "utf8");
+const aotCompilerArtifactScript = await readFile(resolve(root, "tools/aot_compiler_artifact.mjs"), "utf8");
 const classifyChangesScript = await readFile(resolve(root, "tools/classify_changes.mjs"), "utf8");
 const trackedAttestationChecker = await readFile(resolve(root, "tools/check_tracked_dispatch_attestation.mjs"), "utf8");
 const syncScript = await readFile(resolve(root, "tools/sync_compat_evidence.mjs"), "utf8");
@@ -224,11 +225,11 @@ const jobBlocks = [...jobsSection.matchAll(/^  ([a-zA-Z_-]+):\n(?=    )/gm)]
     return { name: match[1], block: jobsSection.slice(match.index, end) };
   });
 const gatedJobs = jobBlocks.filter(({ name }) => name !== "changes" && name !== "lightweight");
-if (jobBlocks.length !== 8 || gatedJobs.length !== 6 ||
+if (jobBlocks.length !== 9 || gatedJobs.length !== 7 ||
     gatedJobs.some(({ block }) => !block.includes(fullGate) || !block.includes("needs: [changes"))) {
   throw new Error(`変更分類のfull gateを持たないjobがあります: ${gatedJobs.filter(({ block }) => !block.includes(fullGate) || !block.includes("needs: [changes")).map(({ name }) => name).join(",")}`);
 }
-const parserFuzzJob = workflow.match(/  parser_fuzz:[\s\S]*?(?=\n  aot:)/)?.[0];
+const parserFuzzJob = workflow.match(/  parser_fuzz:[\s\S]*?(?=\n  aot_compiler:)/)?.[0];
 if (!parserFuzzJob || !parserFuzzJob.includes("strategy:\n      fail-fast: false") ||
     !parserFuzzJob.includes("runs-on: ${{ matrix.os }}") || !parserFuzzJob.includes("timeout-minutes: 20") ||
     !parserFuzzJob.includes("suite: parser-fuzz") ||
@@ -418,9 +419,42 @@ if (!nativeAotJob.includes("strategy:\n      fail-fast: false") || !nativeAotJob
   throw new Error("分割AOT jobの実行条件が不正です");
 }
 const nativeAotBuildBlock = aotStep("Build AOT verification compiler");
-if (!nativeAotBuildBlock || !nativeAotBuildBlock.includes("if: matrix.task != 'support-smoke' && !(matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04')") ||
+if (!nativeAotBuildBlock || !nativeAotBuildBlock.includes("if: matrix.task != 'support-smoke' && !(matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04') && !(matrix.task == 'native' && matrix.os == 'windows-2025')") ||
     !nativeAotBuildBlock.includes("run: zig build")) {
   throw new Error("AOT検証用compilerの先行buildがありません");
+}
+// Windows native shardはproducerが1回buildしたDebug compilerを共有する。
+// commit・platform・Zig version・SHA-256を照合してからinstallするため、
+// 誤commitや別構成のcompilerを誤用する経路はない。
+const aotCompilerJob = workflow.match(/  aot_compiler:[\s\S]*?(?=\n  aot:)/)?.[0];
+if (!aotCompilerJob || !aotCompilerJob.includes("name: Windows x86_64 / AOT verification compiler") ||
+    !aotCompilerJob.includes("runs-on: windows-2025") ||
+    !aotCompilerJob.includes("key: toolchains-${{ runner.os }}-${{ runner.arch }}-v3-") ||
+    !aotCompilerJob.includes("run: zig build") ||
+    !aotCompilerJob.includes("node tools/aot_compiler_artifact.mjs create --binary zig-out/bin/lnako.exe --out-dir") ||
+    !aotCompilerJob.includes("name: lnako-aot-compiler-windows-x64") ||
+    !aotCompilerJob.includes("if-no-files-found: error")) {
+  throw new Error("Windows AOT compiler producer jobが不完全です");
+}
+if (!nativeAotJob.includes("needs: [changes, aot_compiler]")) {
+  throw new Error("分割AOT jobがcompiler producerへ依存していません");
+}
+const downloadCompilerBlock = aotStep("Download shared AOT compiler artifact");
+const installCompilerBlock = aotStep("Verify and install shared AOT compiler");
+if (!downloadCompilerBlock || !downloadCompilerBlock.includes("if: matrix.task == 'native' && matrix.os == 'windows-2025'") ||
+    !downloadCompilerBlock.includes("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1") ||
+    !downloadCompilerBlock.includes("name: lnako-aot-compiler-windows-x64") ||
+    !installCompilerBlock || !installCompilerBlock.includes("if: matrix.task == 'native' && matrix.os == 'windows-2025'") ||
+    !installCompilerBlock.includes("node tools/aot_compiler_artifact.mjs verify") ||
+    !installCompilerBlock.includes("--install-to zig-out/bin")) {
+  throw new Error("Windows native shardの共有compiler download／検証・install stepが不完全です");
+}
+if (!aotCompilerArtifactScript.includes('"lnako.aot-compiler-artifact.v1"') ||
+    !aotCompilerArtifactScript.includes("binarySha256") || !aotCompilerArtifactScript.includes("buildMode") ||
+    !aotCompilerArtifactScript.includes("compatJs") || !aotCompilerArtifactScript.includes("basename(metadata.binaryName) !== metadata.binaryName") ||
+    !aotCompilerArtifactScript.includes("rev-parse") || !aotCompilerArtifactScript.includes("toolchain.lock.json") ||
+    !workflow.includes("node --test tools/setup_llvm_test.mjs tools/collect_ci_metrics_test.mjs tools/aot_compiler_artifact_test.mjs")) {
+  throw new Error("AOT compiler artifactのmetadata照合または単体テストが不完全です");
 }
 // canonical正本（231件）のfreshnessは正本生成と同じReleaseSafeで測るため、
 // それを供給するLinux coverage shardのbuildもReleaseSafeでなければならない。
@@ -760,11 +794,12 @@ const setupZigBlocks = [...workflow.matchAll(
   /      - uses: mlugg\/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2\.2\.1[\s\S]*?(?=      - uses: actions\/setup-node@)/g,
 )].map((match) => match[0]);
 const setupZigCacheSizeLimitMiB = 1536;
-if (setupZigBlocks.length !== 3 ||
+if (setupZigBlocks.length !== 4 ||
     !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat' }}") && block.includes("cache-key: ${{ matrix.suite }}")) ||
     !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.task == 'native' }}") && block.includes("cache-key: ${{ matrix.suite }}")) ||
+    !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: true") && block.includes("cache-key: aot-compiler")) ||
     !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: false")) ||
-    (workflow.match(/cache-size-limit:/g) ?? []).length !== 2) {
+    (workflow.match(/cache-size-limit:/g) ?? []).length !== 3) {
   throw new Error(`setup-zigのcache保存対象または${setupZigCacheSizeLimitMiB} MiB上限が不正です`);
 }
 
@@ -792,18 +827,18 @@ if (oracleSkipConditions.length !== 3) {
 }
 
 const cacheActions = [...workflow.matchAll(/^      - uses: actions\/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6\.1\.0$/gm)];
-if (cacheActions.length !== 5) throw new Error(`actions/cache v6.1.0固定SHAは5ステップ必要です: actual=${cacheActions.length}`);
+if (cacheActions.length !== 6) throw new Error(`actions/cache v6.1.0固定SHAは6ステップ必要です: actual=${cacheActions.length}`);
 // toolchain cache世代v3。keyにtoolchain定義とsetup scriptのhashを含め、
 // marker欠落でpoisonedな旧世代cacheを復元しないようrestore-keysは付けない。
 const toolchainCacheKey = "key: toolchains-${{ runner.os }}-${{ runner.arch }}-v3-${{ hashFiles('toolchain.lock.json', 'tools/setup_llvm.mjs', 'tools/setup_quickjs.mjs', 'tools/prune_llvm_toolchain.mjs') }}";
 const toolchainCacheBlocks = [...workflow.matchAll(
   /      - uses: actions\/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6\.1\.0\n        with:\n          path: \.cache\/toolchains\n[\s\S]*?(?=\n      - |\n  [a-z_]+:|$)/g,
 )].map((match) => match[0]);
-if (countOccurrences(workflow, toolchainCacheKey) !== 2 ||
-    toolchainCacheBlocks.length !== 2 || toolchainCacheBlocks.some((block) => block.includes("restore-keys:")) ||
+if (countOccurrences(workflow, toolchainCacheKey) !== 3 ||
+    toolchainCacheBlocks.length !== 3 || toolchainCacheBlocks.some((block) => block.includes("restore-keys:")) ||
     workflow.includes("-v2-minimal") ||
-    countOccurrences(workflow, "run: node tools/prune_llvm_toolchain.mjs") !== 2) {
-  throw new Error("LLVM toolchain cacheのv3世代key、旧世代restore-key排除、またはprune stepがtest／AOT jobへ設定されていません");
+    countOccurrences(workflow, "run: node tools/prune_llvm_toolchain.mjs") !== 3) {
+  throw new Error("LLVM toolchain cacheのv3世代key、旧世代restore-key排除、またはprune stepがtest／producer／AOT jobへ設定されていません");
 }
 // cache無効理由の分類出力と、prune→restore後もvalidと判定される回帰テストが
 // cache再利用を壊す変更を防ぐ。理由文字列はCI計測がparseするため固定する。
@@ -835,7 +870,7 @@ if (comparisonBenchmarkWorkflow.includes("continue-on-error: true")) throw new E
 
 checkBashFailFastBehavior();
 
-console.log(`CI構成検査: 変更分類＋軽量検証＋${matrixEntries.length} matrixジョブ＋coverage shard検証＋native AOT集約検証＋1 attestationジョブ・${stepSuites.size}条件付き検証ステップ成功`);
+console.log(`CI構成検査: 変更分類＋軽量検証＋${matrixEntries.length} matrixジョブ＋Windows AOT compiler producer＋coverage shard検証＋native AOT集約検証＋1 attestationジョブ・${stepSuites.size}条件付き検証ステップ成功`);
 
 function checkFailFastShell(workflowText, filename) {
   const stepHeaders = [...workflowText.matchAll(/^      - name: .*$/gm)];

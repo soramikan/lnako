@@ -311,7 +311,7 @@ jobs:
         run: node --test tools/create_attestation_snapshot_test.mjs tools/check_github_attestation_test.mjs
       - name: Toolchain cache regression tests
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
-        run: node --test tools/setup_llvm_test.mjs tools/collect_ci_metrics_test.mjs
+        run: node --test tools/setup_llvm_test.mjs tools/collect_ci_metrics_test.mjs tools/aot_compiler_artifact_test.mjs
       - name: Change classifier tests
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node --test tools/classify_changes_test.mjs
@@ -422,10 +422,56 @@ jobs:
       - name: Grammar-generating parser fuzz test
         run: node tools/fuzz_parser_oracle.mjs --iterations 1024 --seed 20260830
 
+  # Windows native AOT shardのDebug compiler buildを1回へ集約するproducer。
+  # 12 shardが個別にzig build（約3分）する重複を、artifact共有で解消する。
+  aot_compiler:
+    name: Windows x86_64 / AOT verification compiler
+    if: needs.changes.outputs.level == 'full'
+    needs: [changes]
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+          use-cache: true
+          cache-key: aot-compiler
+          cache-size-limit: 1536
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+      # toolchain cache世代v3。keyにtoolchain定義とsetup scriptのhashを含め、
+      # marker欠落でpoisonedなv1/v2 cacheを復元しないようrestore-keysは付けない。
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/toolchains
+          key: toolchains-${{ runner.os }}-${{ runner.arch }}-v3-${{ hashFiles('toolchain.lock.json', 'tools/setup_llvm.mjs', 'tools/setup_quickjs.mjs', 'tools/prune_llvm_toolchain.mjs') }}
+      - name: Set up pinned LLVM and LLD
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          node tools/setup_llvm.mjs
+      - name: Prune LLVM toolchain cache
+        shell: bash
+        run: node tools/prune_llvm_toolchain.mjs
+      - name: Build AOT verification compiler
+        run: zig build
+      - name: Package shared AOT compiler artifact
+        shell: bash
+        run: node tools/aot_compiler_artifact.mjs create --binary zig-out/bin/lnako.exe --out-dir "${{ runner.temp }}/aot-compiler"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-aot-compiler-windows-x64
+          path: ${{ runner.temp }}/aot-compiler
+          if-no-files-found: error
+          retention-days: 1
+
   aot:
     name: ${{ matrix.name }} / ${{ matrix.jobName }}
     if: needs.changes.outputs.level == 'full'
-    needs: [changes]
+    needs: [changes, aot_compiler]
     strategy:
       fail-fast: false
       matrix:
@@ -840,13 +886,26 @@ jobs:
       - name: Build official oracle
         run: node tools/setup_oracle.mjs
       - name: Build AOT verification compiler
-        if: matrix.task != 'support-smoke' && !(matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04')
+        if: matrix.task != 'support-smoke' && !(matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04') && !(matrix.task == 'native' && matrix.os == 'windows-2025')
         run: zig build
       # canonical正本（231件）を供給するLinux coverage shardは、正本生成と
       # freshnessと同じReleaseSafeでbuildする（Debugとの非一致を構造で排除）。
       - name: Build AOT verification compiler (ReleaseSafe)
         if: matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04'
         run: zig build -Doptimize=ReleaseSafe
+      # Windows native shardはproducerが1回buildしたDebug compilerを共有する。
+      # commit・platform・Zig version・SHA-256を照合してからinstallし、
+      # 誤commitや別構成のcompilerを誤用しない。
+      - name: Download shared AOT compiler artifact
+        if: matrix.task == 'native' && matrix.os == 'windows-2025'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: lnako-aot-compiler-windows-x64
+          path: ${{ runner.temp }}/aot-compiler
+      - name: Verify and install shared AOT compiler
+        if: matrix.task == 'native' && matrix.os == 'windows-2025'
+        shell: bash
+        run: node tools/aot_compiler_artifact.mjs verify --dir "${{ runner.temp }}/aot-compiler" --install-to zig-out/bin
       - name: Differential native AOT verification (fixture/route shard)
         if: matrix.task == 'native'
         env:
