@@ -4,16 +4,18 @@ CIは、互換性検証の意味を保ったまま、AOTをfixture shardと最�
 
 ## job構成
 
-現行workflowは **51 matrix job＋変更分類・軽量検証・3後段job、合計56 job**です。matrixの失敗は別OS・別suiteの結果を隠さないよう `fail-fast: false`、同一branchの古いrunは `cancel-in-progress: true` です。
+現行workflowは **51 matrix job＋変更分類・軽量検証・Windows AOT compiler producer・3後段job、合計57 job**です。matrixの失敗は別OS・別suiteの結果を隠さないよう `fail-fast: false`、同一branchの古いrunは `cancel-in-progress: true` です。
 
 | job | 内訳 | 主な検証 |
 | --- | ---: | --- |
 | `test` | 10 | core、standard、host、QuickJS/AOT smoke、macOS統合suite |
 | `parser_fuzz` | 2 | Linux/Windowsの文法生成fuzz |
-| `aot` native | 27 | Linux 12、macOS 3、Windows 12。O0〜O3とfixture shard |
+| `aot` native | 15 | Linux 12、macOS 3。O0〜O3とfixture shard |
 | `aot` support | 12 | Linux/Windows各6。HTTP、dispatch evidence、coverage 3 shard、smoke |
+| `aot_windows` native | 12 | Windows 12。O0〜O3とfixture shard。producer artifactを検証・installしてbuildを省略 |
 | 後段 | 3 | coverage集約、AOT artifact集約、dispatch＋canonical証拠のattestation |
 | 分類・軽量 | 2 | `changes`が変更パスを分類し、docs・attestation snapshot専用変更では`lightweight`のみ実行（matrixはskip） |
+| `aot_compiler` | 1 | Windows native AOT shardが共有するDebug compilerを1回buildし、metadata＋SHA-256付きでartifact化 |
 
 job数を増やすことで、1つの巨大なAOT stepに検証を集中させず、失敗箇所と所要時間をjob単位で確認できます。検証suite、O0〜O3、QuickJS、3 OSのいずれも省略しません。
 
@@ -79,6 +81,6 @@ gh run view <run-id> --log-failed
 
 ## 性能の継続測定
 
-`comparison-benchmark.yml` は本体56-job CIとは別に、正式3 OSで共通のv2 suiteを測定します。PRはsmoke（warmup 1・3 samples）、main更新と夜間はnormal（3・10）、手動実行はfull（5・25）も選択できます。cnakoは互換基準3.7.24、Nodeは24.15.0に固定します。必須処理系の失敗や期待出力の不一致は失敗とし、短時間測定や速度のばらつきは警告として記録します。前回成功したmainのartifactを取得できる場合は、条件が一致する測定の中央値を比較して退行候補を警告します。artifactが期限切れ、または入力・環境などの条件が異なる場合は比較を見送ります。共有runnerの時間だけで性能退行を断定せず、同一環境での再測定を行います。
+`comparison-benchmark.yml` は本体57-job CIとは別に、正式3 OSで共通のv2 suiteを測定します。PRはsmoke（warmup 1・3 samples）、main更新と夜間はnormal（3・10）、手動実行はfull（5・25）も選択できます。cnakoは互換基準3.7.24、Nodeは24.15.0に固定します。必須処理系の失敗や期待出力の不一致は失敗とし、短時間測定や速度のばらつきは警告として記録します。前回成功したmainのartifactを取得できる場合は、条件が一致する測定の中央値を比較して退行候補を警告します。artifactが期限切れ、または入力・環境などの条件が異なる場合は比較を見送ります。共有runnerの時間だけで性能退行を断定せず、同一環境での再測定を行います。
 
 JSONの生サンプルとMarkdownは90日保持します。リリース用のfull測定はリリース配布物に含めます。詳細な条件・ローカル実行方法は[`benchmarks/README.md`](../benchmarks/README.md)を参照してください。

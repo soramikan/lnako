@@ -156,3 +156,37 @@ attestationが発行される）か、full run済みのcommitをtag付けする�
   証拠生成順（normal RS→dispatch→QuickJS RS→compat-js→freshness）を維持
 - 配置順は`check_ci_workflow.mjs`の`macHostCompatOrder`で強制する
 - Linux／Windowsの`host`は従来通り同job内で実行（位置変更の影響なし）
+
+## Stage 4: Windows native AOT compilerの共有
+
+`aot` matrixのWindows native shard（3 fixture shard × O0〜O3 = 12ジョブ）は
+それぞれが同じcommitのDebug compilerを`zig build`していた。`aot_compiler`
+jobで1回だけbuildし、metadata＋SHA-256付きartifact
+（`lnako-aot-compiler-windows-x64`）として共有することで、
+12回分の重複buildを1回へ集約する。
+
+### 設計
+
+- `aot_compiler`はfull経路でのみ実行（`changes`のlevelゲートと同じ条件）
+- Windows native 12 shardは専用consumer job `aot_windows`へ分離し、
+  そのjobのみ`needs: [changes, aot_compiler]`でproducerを待つ。
+  `needs`はjob全体に効くため、`aot`へ依存させるとLinux・macOS・supportの
+  27 shardまで直列化されproducer失敗で全てskipされる。`aot`は
+  `needs: [changes]`のまま並行起動する
+- `aot_windows`の各shardは`zig build`をskipしてartifactをdownload・
+  検証・installする
+- `tools/aot_compiler_artifact.mjs verify`が
+  commit／platform／arch／Zig version／build mode／compat-JS構成／SHA-256を
+  照合してから`zig-out/bin`へinstallする。誤commitや改変されたbinaryは
+  install前にrejectされる
+- compilerは`<exe>/../lib/`のAOTランタイム静的ライブラリ
+  （`lnako_runtime.lib`）を必要とするため、binaryとruntime libを
+  1組の成果物としてhash照合・installする（binの兄弟`lib/`へ展開）
+- Linux／macOS nativeとWindows support jobは従来通り各ジョブがbuildする
+  （Linux coverage shardのReleaseSafe buildも変更なし）
+
+### 保証
+
+- `retention-days: 1`の一時artifactで、永続成果物やreleaseへ混入しない
+- shard側は`--no-build`の`compare_native_oracle.mjs`を従来通り実行し、
+  AOT差分テストと集約artifact uploadは維持される
