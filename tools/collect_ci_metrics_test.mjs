@@ -44,11 +44,11 @@ test("parseToolchainLog detects cache hit with reuse and reinstall reasons", () 
   assert.deepEqual(hitReuse, { cacheHit: true, llvmReinstalled: false, llvmReason: null });
 
   const hitReinstall = parseToolchainLog([
-    "Cache hit for: toolchains-llvm-22.1.8-quickjs-2026-06-04-macOS-ARM64-v2-minimal",
-    "LLVM cache invalid:",
-    "  reason=marker-missing",
-    "  path=/Users/runner/work/lnako/lnako/.cache/toolchains/llvm-22.1.8-macos-aarch64",
-    "LLVM 22.1.8をセットアップします: /Users/runner/work/lnako/lnako/.cache/toolchains/llvm-22.1.8-macos-aarch64",
+    "2026-09-18T01:12:30.1976960Z Cache hit for: toolchains-llvm-22.1.8-quickjs-2026-06-04-macOS-ARM64-v2-minimal",
+    "2026-09-18T01:12:35.1558410Z LLVM cache invalid:",
+    "2026-09-18T01:12:35.1558420Z   reason=marker-missing",
+    "2026-09-18T01:12:35.1558430Z   path=/Users/runner/work/lnako/lnako/.cache/toolchains/llvm-22.1.8-macos-aarch64",
+    "2026-09-18T01:12:35.1558440Z LLVM 22.1.8をセットアップします: /Users/runner/work/lnako/lnako/.cache/toolchains/llvm-22.1.8-macos-aarch64",
   ].join("\n"));
   assert.deepEqual(hitReinstall, { cacheHit: true, llvmReinstalled: true, llvmReason: "marker-missing" });
 
@@ -128,7 +128,8 @@ test("collectMetrics fetches runs, jobs and logs through injected gh api", async
   const ghApiJsonImpl = async (path) => {
     calls.push(path);
     if (path.includes("/runs?")) return { workflow_runs: [runFixture, { ...runFixture, id: 99, conclusion: "failure" }] };
-    if (path.includes("/jobs?")) return { jobs: jobsFixture };
+    if (path.includes("/jobs?")) return { total_count: jobsFixture.length, jobs: jobsFixture };
+    if (path.endsWith("/timing")) return { run_duration_ms: 900_000 };
     throw new Error(`unexpected path: ${path}`);
   };
   const ghApiLogImpl = async (path) => {
@@ -144,6 +145,7 @@ test("collectMetrics fetches runs, jobs and logs through injected gh api", async
     ghApiLogImpl,
   });
   assert.equal(runs.length, 1);
+  assert.equal(runs[0].wallSeconds, 900);
   assert.equal(aggregate.toolchain.jobsReported, 2);
   assert.equal(aggregate.toolchain.llvmReused, 2);
   assert.ok(calls.some((path) => path.includes("/actions/jobs/1/logs")));

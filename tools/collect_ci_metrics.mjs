@@ -52,7 +52,12 @@ export function osFromJobName(name) {
  * ran a full install (download or libLLVM-C relink).
  */
 export function parseToolchainLog(text) {
-  const clean = text.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "").replace(/\r/g, "");
+  // GitHubのjob logは全行にtimestamp prefixが付くため、行跨ぎのpatternを
+  // 評価する前に除去する。
+  const clean = text
+    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "")
+    .replace(/\r/g, "")
+    .replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z /gm, "");
   const result = { cacheHit: null, llvmReinstalled: null, llvmReason: null };
   if (/Cache restored from key: toolchains-/.test(clean) || /Cache hit for: toolchains-/.test(clean)) result.cacheHit = true;
   if (/Cache not found for (?:input )?keys?:[^\n]*toolchains-|Cache miss[^\n]*toolchains-/.test(clean)) result.cacheHit = false;
@@ -70,7 +75,7 @@ export function parseToolchainLog(text) {
   return result;
 }
 
-export function collectRunMetrics(run, jobs, toolchainByJob = new Map()) {
+export function collectRunMetrics(run, jobs, toolchainByJob = new Map(), durationMs = null) {
   const jobMetrics = jobs.map((job) => {
     const steps = (job.steps ?? [])
       .filter((step) => step.started_at && step.completed_at)
@@ -91,7 +96,9 @@ export function collectRunMetrics(run, jobs, toolchainByJob = new Map()) {
     conclusion: run.conclusion,
     headBranch: run.head_branch,
     createdAt: run.created_at,
-    wallSeconds: secondsBetween(run.created_at, run.updated_at),
+    // /actions/runs/{id}/timing のrun_duration_msは実実行区間。
+    // 取れない場合はcreated→updatedの近似へfallbackする。
+    wallSeconds: Number.isFinite(durationMs) ? durationMs / 1000 : secondsBetween(run.created_at, run.updated_at),
     queueSeconds: run.run_started_at ? secondsBetween(run.created_at, run.run_started_at) : null,
     jobs: jobMetrics,
   };
@@ -235,6 +242,10 @@ export async function collectMetrics({ repo, workflow, runCount, includeLogs, gh
   for (const run of runs) {
     const jobsResponse = await ghApiJsonImpl(`repos/${repo}/actions/runs/${run.id}/jobs?per_page=100`);
     const jobs = jobsResponse.jobs ?? [];
+    if (Number.isSafeInteger(jobsResponse.total_count) && jobsResponse.total_count > jobs.length) {
+      log(`run ${run.id}: jobs ${jobs.length}/${jobsResponse.total_count}（per_page上限で一部欠落）`);
+    }
+    const timing = await ghApiJsonImpl(`repos/${repo}/actions/runs/${run.id}/timing`).catch(() => null);
     const toolchainByJob = new Map();
     if (includeLogs) {
       for (const job of jobs) {
@@ -246,7 +257,7 @@ export async function collectMetrics({ repo, workflow, runCount, includeLogs, gh
         }
       }
     }
-    collected.push(collectRunMetrics(run, jobs, toolchainByJob));
+    collected.push(collectRunMetrics(run, jobs, toolchainByJob, timing?.run_duration_ms));
     log(`run ${run.id}: ${jobs.length} jobs`);
   }
   return { runs: collected, aggregate: aggregateRuns(collected) };
@@ -254,12 +265,17 @@ export async function collectMetrics({ repo, workflow, runCount, includeLogs, gh
 
 function parseArguments(argumentsList) {
   const options = { repo: "soramikan/lnako", workflow: "ci.yml", runs: 5, output: null, logs: true };
+  const takeValue = (index) => {
+    const value = argumentsList[index + 1];
+    if (value === undefined) throw new Error(`${argumentsList[index]}には値が必要です`);
+    return value;
+  };
   for (let index = 0; index < argumentsList.length; index += 1) {
     const argument = argumentsList[index];
-    if (argument === "--repo") options.repo = argumentsList[++index];
-    else if (argument === "--workflow") options.workflow = argumentsList[++index];
-    else if (argument === "--runs") options.runs = Number(argumentsList[++index]);
-    else if (argument === "--output") options.output = argumentsList[++index];
+    if (argument === "--repo") options.repo = takeValue(index++);
+    else if (argument === "--workflow") options.workflow = takeValue(index++);
+    else if (argument === "--runs") options.runs = Number(takeValue(index++));
+    else if (argument === "--output") options.output = takeValue(index++);
     else if (argument === "--no-logs") options.logs = false;
     else throw new Error(`未知の引数です: ${argument}\n使い方: node tools/collect_ci_metrics.mjs [--repo owner/name] [--workflow ci.yml] [--runs 5] [--output docs/ci-performance.md] [--no-logs]`);
   }

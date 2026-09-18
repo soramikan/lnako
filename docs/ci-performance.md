@@ -4,8 +4,10 @@ CI高速化・効率化の改善前ベースライン。`tools/collect_ci_metric
 GitHub Actions APIから収集する。
 
 ```sh
-# 再計測（job logまで解析してtoolchain cache状態を含める）
-node tools/collect_ci_metrics.mjs --runs 5 --output docs/ci-performance.md
+# 再計測（job logまで解析してtoolchain cache状態を含める）。
+# --outputは生成markdownで上書きするため、baseline節を残す本ファイルではなく
+# 別ファイルへ出力して所見を追記する運用とする。
+node tools/collect_ci_metrics.mjs --runs 5 --output docs/ci-performance-latest.md
 
 # 時刻情報のみの高速計測（log解析なし）
 node tools/collect_ci_metrics.mjs --runs 5 --no-logs

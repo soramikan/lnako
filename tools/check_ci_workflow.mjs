@@ -704,8 +704,11 @@ if (cacheActions.length !== 5) throw new Error(`actions/cache v6.1.0固定SHAは
 // toolchain cache世代v3。keyにtoolchain定義とsetup scriptのhashを含め、
 // marker欠落でpoisonedな旧世代cacheを復元しないようrestore-keysは付けない。
 const toolchainCacheKey = "key: toolchains-${{ runner.os }}-${{ runner.arch }}-v3-${{ hashFiles('toolchain.lock.json', 'tools/setup_llvm.mjs', 'tools/setup_quickjs.mjs', 'tools/prune_llvm_toolchain.mjs') }}";
+const toolchainCacheBlocks = [...workflow.matchAll(
+  /      - uses: actions\/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6\.1\.0\n        with:\n          path: \.cache\/toolchains\n[\s\S]*?(?=\n      - |\n  [a-z_]+:|$)/g,
+)].map((match) => match[0]);
 if (countOccurrences(workflow, toolchainCacheKey) !== 2 ||
-    workflow.includes("restore-keys:") ||
+    toolchainCacheBlocks.length !== 2 || toolchainCacheBlocks.some((block) => block.includes("restore-keys:")) ||
     workflow.includes("-v2-minimal") ||
     countOccurrences(workflow, "run: node tools/prune_llvm_toolchain.mjs") !== 2) {
   throw new Error("LLVM toolchain cacheのv3世代key、旧世代restore-key排除、またはprune stepがtest／AOT jobへ設定されていません");
