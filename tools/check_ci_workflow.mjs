@@ -438,6 +438,8 @@ if (!aotCompilerJob || !aotCompilerJob.includes("name: Windows x86_64 / AOT veri
     !aotCompilerJob.includes("runs-on: windows-2025") ||
     !aotCompilerJob.includes("key: toolchains-${{ runner.os }}-${{ runner.arch }}-v3-") ||
     !aotCompilerJob.includes("run: zig build") ||
+    !aotCompilerJob.includes("Smoke test AOT verification compiler") ||
+    !aotCompilerJob.includes("zig-out/bin/lnako.exe run") ||
     !aotCompilerJob.includes("node tools/aot_compiler_artifact.mjs create --binary zig-out/bin/lnako.exe --runtime-lib zig-out/lib/lnako_runtime.lib --out-dir") ||
     !aotCompilerJob.includes("name: lnako-aot-compiler-windows-x64") ||
     !aotCompilerJob.includes("if-no-files-found: error")) {
