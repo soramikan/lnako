@@ -2,7 +2,7 @@ const std = @import("std");
 const aot_state = @import("state.zig");
 const shared = @import("shared.zig");
 const low_level = @import("low_level.zig");
-const plugin_lowlevel = @import("../../plugins/lowlevel.zig");
+const low_level_state = @import("../low_level/state.zig");
 const foundation = @import("../low_level_foundation.zig");
 
 const aot_builtin = shared.aot_builtin;
@@ -291,12 +291,12 @@ pub fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror
         },
         .dictionary => {
             if (low_level.handleIdFor(owner, value)) |id| {
-                if (plugin_lowlevel.handleForId(&state.interpreter.lowlevel_state, id)) |existing| return existing;
+                if (low_level_state.handleForId(&state.interpreter.lowlevel_state, id)) |existing| return existing;
                 var result = try state.value_runtime.createDictionary();
                 var roots = state.value_runtime.rootFrame();
                 defer roots.deinit();
                 try roots.protect(&result);
-                try plugin_lowlevel.rememberHandle(&state.interpreter.lowlevel_state, state.value_runtime.allocator(), result, id);
+                try low_level_state.rememberHandle(&state.interpreter.lowlevel_state, state.value_runtime.allocator(), result, id);
                 return result;
             }
             if (value.object().?.toml_temporal) |temporal| {
@@ -361,7 +361,7 @@ pub fn dynamicToAotValue(state: *DynamicInterpreterState, value: dynamic_value.V
             break :blk result;
         },
         .dictionary => |dictionary| blk: {
-            if (plugin_lowlevel.lookupHandle(&state.interpreter.lowlevel_state, value)) |id| {
+            if (low_level_state.lookupHandle(&state.interpreter.lowlevel_state, value)) |id| {
                 if (low_level.handleValueForId(owner, id)) |existing| break :blk existing;
                 var result = try owner.createDictionary(&.{});
                 var result_roots = RootFrame{};
@@ -445,7 +445,7 @@ fn deinitDynamicState(runtime: *Runtime) void {
 
 fn forgetDynamicHandle(runtime: *Runtime, raw: u64) void {
     const state = runtime.dynamic_state orelse return;
-    plugin_lowlevel.forgetHandleId(&state.interpreter.lowlevel_state, foundation.HandleId.fromRaw(raw));
+    low_level_state.forgetHandleId(&state.interpreter.lowlevel_state, foundation.HandleId.fromRaw(raw));
 }
 
 // runtime.dynamic_drain 経由でのみ呼ばれる。drain_events など常時到達する
