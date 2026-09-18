@@ -7,102 +7,45 @@ import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const lock = JSON.parse(await readFile(resolve(root, "toolchain.lock.json"), "utf8")).llvm;
-const platformKey = platformArtifactKey();
-const artifact = lock.artifacts[platformKey];
-if (!artifact) throw new Error(`LLVM ${lock.version}の配布物が未定義です: ${platformKey}`);
+export const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+export const lock = JSON.parse(await readFile(resolve(root, "toolchain.lock.json"), "utf8")).llvm;
+export const markerName = ".lnako-toolchain.json";
 
-const cacheRoot = resolve(root, ".cache/toolchains");
-const target = resolve(cacheRoot, `llvm-${lock.version}-${platformKey}`);
-const marker = resolve(target, ".lnako-toolchain.json");
-const clang = resolve(target, "bin", process.platform === "win32" ? "clang.exe" : "clang");
-const lld = resolve(target, "bin", lldName());
-
-try {
-  if (!(await isCurrent())) {
-    console.log(`LLVM ${lock.version}をセットアップします: ${target}`);
-    await install();
+/**
+ * Classify why a restored LLVM toolchain cannot be reused. The reason strings
+ * are stable because CI metrics parse them from the step log.
+ */
+export async function cacheStatus({
+  markerPath,
+  clangPath,
+  lldPath,
+  version,
+  platform,
+  sha256,
+  accessImpl = access,
+  readFileImpl = readFile,
+}) {
+  let current;
+  try {
+    current = JSON.parse(await readFileImpl(markerPath, "utf8"));
+  } catch (error) {
+    return { valid: false, reason: error?.code === "ENOENT" ? "marker-missing" : "marker-invalid" };
   }
-  console.log(`LLVMツールを検証します: clang=${clang} lld=${lld}`);
-  verifyTool(clang, lock.version);
-  verifyTool(lld, lock.version);
-  const llvmLibrary = (await findLlvmLibrary(target)) ?? buildLlvmLibrary(target);
-  await exportEnvironment(llvmLibrary);
-  console.log(`LLVM/LLD ${lock.version}を確認しました: ${target}`);
-} catch (error) {
-  console.error(`setup_llvm.mjs failed: ${error}`);
-  if (error.stack) console.error(error.stack);
-  // Windowsではprocess.exitがpipe宛の未flush stderrを落とすためexitCodeで自然終了させる。
-  process.exitCode = 1;
+  if (!await canAccess(accessImpl, clangPath)) return { valid: false, reason: "clang-missing", detail: `missing=${clangPath}` };
+  if (!await canAccess(accessImpl, lldPath)) return { valid: false, reason: "lld-missing", detail: `missing=${lldPath}` };
+  if (current?.version !== version) return { valid: false, reason: "version-mismatch", detail: `expected=${version} actual=${current?.version ?? "?"}` };
+  if (current?.platform !== platform) return { valid: false, reason: "platform-mismatch", detail: `expected=${platform} actual=${current?.platform ?? "?"}` };
+  if (current?.sha256 !== sha256) return { valid: false, reason: "sha256-mismatch", detail: `expected=${sha256} actual=${current?.sha256 ?? "?"}` };
+  return { valid: true, reason: "valid" };
 }
 
-async function isCurrent() {
+async function canAccess(accessImpl, path) {
   try {
-    const current = JSON.parse(await readFile(marker, "utf8"));
-    await access(clang);
-    await access(lld);
-    return current.version === lock.version && current.platform === platformKey && current.sha256 === artifact.sha256;
+    await accessImpl(path);
+    return true;
   } catch {
     return false;
   }
-}
-
-async function install() {
-  const attempts = 3;
-  let lastError;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    try {
-      await installOnce();
-      return;
-    } catch (error) {
-      lastError = error;
-      if (attempt < attempts) {
-        console.error(`LLVMセットアップに失敗しました（${attempt}/${attempts}）。再試行します: ${error}`);
-        await new Promise((resolve_) => setTimeout(resolve_, 2000 * attempt));
-      }
-    }
-  }
-  throw lastError;
-}
-
-async function installOnce() {
-  await mkdir(cacheRoot, { recursive: true });
-  const staging = resolve(cacheRoot, `.llvm-staging-${platformKey}-${process.pid}`);
-  const archive = resolve(staging, "llvm.tar.xz");
-  await rm(staging, { recursive: true, force: true });
-  await mkdir(staging, { recursive: true });
-  try {
-    const response = await fetch(artifact.url);
-    if (!response.ok || !response.body) throw new Error(`LLVM配布物の取得に失敗しました: HTTP ${response.status}`);
-    const hash = createHash("sha256");
-    const hashingStream = new Transform({
-      transform(chunk, _encoding, callback) {
-        hash.update(chunk);
-        callback(null, chunk);
-      },
-    });
-    await pipeline(Readable.fromWeb(response.body), hashingStream, createWriteStream(archive));
-    const actualHash = hash.digest("hex");
-    if (actualHash !== artifact.sha256) {
-      throw new Error(`LLVM配布物のSHA-256不一致: expected=${artifact.sha256} actual=${actualHash}`);
-    }
-    run("tar", ["-xJf", basename(archive)], staging);
-    const entries = (await readdir(staging, { withFileTypes: true })).filter((entry) => entry.isDirectory());
-    if (entries.length !== 1) throw new Error(`LLVM配布物の展開ルートが一意ではありません: ${entries.map((entry) => entry.name).join(", ")}`);
-    const extracted = resolve(staging, entries[0].name);
-    await rm(target, { recursive: true, force: true });
-    await rename(extracted, target);
-    await writeFile(marker, `${JSON.stringify({ version: lock.version, platform: platformKey, sha256: artifact.sha256 }, null, 2)}\n`);
-  } finally {
-    await rm(staging, { recursive: true, force: true });
-  }
-}
-
-async function exportEnvironment(llvmLibrary) {
-  if (process.env.GITHUB_ENV) await appendFile(process.env.GITHUB_ENV, `LNAKO_LLVM_DIR=${target}\n`);
-  if (process.env.GITHUB_ENV) await appendFile(process.env.GITHUB_ENV, `LNAKO_LLVM_LIBRARY=${llvmLibrary}\n`);
-  if (process.env.GITHUB_PATH) await appendFile(process.env.GITHUB_PATH, `${resolve(target, "bin")}\n`);
 }
 
 async function findLlvmLibrary(directory) {
@@ -113,11 +56,11 @@ async function findLlvmLibrary(directory) {
   return matches[0];
 }
 
-function buildLlvmLibrary(directory) {
+function buildLlvmLibrary(directory, version) {
   if (process.platform === "win32") throw new Error(`LLVM C API共有ライブラリが配布物にありません: ${directory}`);
   const llvmConfig = resolve(directory, "bin", "llvm-config");
   const compiler = resolve(directory, "bin", "clang++");
-  verifyTool(llvmConfig, lock.version);
+  verifyTool(llvmConfig, version);
   const components = ["core", "irreader", "analysis", "target", "passes", "nativecodegen"];
   const libraries = capture(llvmConfig, ["--link-static", "--libfiles", ...components]).trim().split(/\s+/).filter(Boolean);
   const systemLibraries = preferSharedSystemLibraries(
@@ -240,4 +183,102 @@ function capture(command, args) {
 function run(command, args, cwd = root) {
   const result = spawnSync(command, args, { cwd, stdio: "inherit" });
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} が失敗しました`);
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+  const platformKey = platformArtifactKey();
+  const artifact = lock.artifacts[platformKey];
+  if (!artifact) throw new Error(`LLVM ${lock.version}の配布物が未定義です: ${platformKey}`);
+
+  const cacheRoot = resolve(root, ".cache/toolchains");
+  const target = resolve(cacheRoot, `llvm-${lock.version}-${platformKey}`);
+  const marker = resolve(target, markerName);
+  const clang = resolve(target, "bin", process.platform === "win32" ? "clang.exe" : "clang");
+  const lld = resolve(target, "bin", lldName());
+
+  async function install() {
+    const attempts = 3;
+    let lastError;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        await installOnce();
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < attempts) {
+          console.error(`LLVMセットアップに失敗しました（${attempt}/${attempts}）。再試行します: ${error}`);
+          await new Promise((resolve_) => setTimeout(resolve_, 2000 * attempt));
+        }
+      }
+    }
+    throw lastError;
+  }
+
+  async function installOnce() {
+    await mkdir(cacheRoot, { recursive: true });
+    const staging = resolve(cacheRoot, `.llvm-staging-${platformKey}-${process.pid}`);
+    const archive = resolve(staging, "llvm.tar.xz");
+    await rm(staging, { recursive: true, force: true });
+    await mkdir(staging, { recursive: true });
+    try {
+      const response = await fetch(artifact.url);
+      if (!response.ok || !response.body) throw new Error(`LLVM配布物の取得に失敗しました: HTTP ${response.status}`);
+      const hash = createHash("sha256");
+      const hashingStream = new Transform({
+        transform(chunk, _encoding, callback) {
+          hash.update(chunk);
+          callback(null, chunk);
+        },
+      });
+      await pipeline(Readable.fromWeb(response.body), hashingStream, createWriteStream(archive));
+      const actualHash = hash.digest("hex");
+      if (actualHash !== artifact.sha256) {
+        throw new Error(`LLVM配布物のSHA-256不一致: expected=${artifact.sha256} actual=${actualHash}`);
+      }
+      run("tar", ["-xJf", basename(archive)], staging);
+      const entries = (await readdir(staging, { withFileTypes: true })).filter((entry) => entry.isDirectory());
+      if (entries.length !== 1) throw new Error(`LLVM配布物の展開ルートが一意ではありません: ${entries.map((entry) => entry.name).join(", ")}`);
+      const extracted = resolve(staging, entries[0].name);
+      await rm(target, { recursive: true, force: true });
+      await rename(extracted, target);
+      await writeFile(marker, `${JSON.stringify({ version: lock.version, platform: platformKey, sha256: artifact.sha256 }, null, 2)}\n`);
+    } finally {
+      await rm(staging, { recursive: true, force: true });
+    }
+  }
+
+  async function exportEnvironment(llvmLibrary) {
+    if (process.env.GITHUB_ENV) await appendFile(process.env.GITHUB_ENV, `LNAKO_LLVM_DIR=${target}\n`);
+    if (process.env.GITHUB_ENV) await appendFile(process.env.GITHUB_ENV, `LNAKO_LLVM_LIBRARY=${llvmLibrary}\n`);
+    if (process.env.GITHUB_PATH) await appendFile(process.env.GITHUB_PATH, `${resolve(target, "bin")}\n`);
+  }
+
+  try {
+    const status = await cacheStatus({
+      markerPath: marker,
+      clangPath: clang,
+      lldPath: lld,
+      version: lock.version,
+      platform: platformKey,
+      sha256: artifact.sha256,
+    });
+    if (status.valid) {
+      console.log(`LLVM cache valid:\n  version=${lock.version}\n  platform=${platformKey}`);
+    } else {
+      console.log(`LLVM cache invalid:\n  reason=${status.reason}\n  path=${target}${status.detail ? `\n  ${status.detail}` : ""}`);
+      console.log(`LLVM ${lock.version}をセットアップします: ${target}`);
+      await install();
+    }
+    console.log(`LLVMツールを検証します: clang=${clang} lld=${lld}`);
+    verifyTool(clang, lock.version);
+    verifyTool(lld, lock.version);
+    const llvmLibrary = (await findLlvmLibrary(target)) ?? buildLlvmLibrary(target, lock.version);
+    await exportEnvironment(llvmLibrary);
+    console.log(`LLVM/LLD ${lock.version}を確認しました: ${target}`);
+  } catch (error) {
+    console.error(`setup_llvm.mjs failed: ${error}`);
+    if (error.stack) console.error(error.stack);
+    // Windowsではprocess.exitがpipe宛の未flush stderrを落とすためexitCodeで自然終了させる。
+    process.exitCode = 1;
+  }
 }

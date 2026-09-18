@@ -28,6 +28,7 @@ const nativeAotAttestationVerifier = await readFile(resolve(root, "tools/verify_
 const interpreterOracleScript = await readFile(resolve(root, "tools/compare_interpreter_oracle.mjs"), "utf8");
 const compatJsEvidenceScript = await readFile(resolve(root, "tools/check_compat_js_evidence.mjs"), "utf8");
 const pruneLlvmToolchainScript = await readFile(resolve(root, "tools/prune_llvm_toolchain.mjs"), "utf8");
+const setupLlvmScript = await readFile(resolve(root, "tools/setup_llvm.mjs"), "utf8");
 const trackedAttestationChecker = await readFile(resolve(root, "tools/check_tracked_dispatch_attestation.mjs"), "utf8");
 const syncScript = await readFile(resolve(root, "tools/sync_compat_evidence.mjs"), "utf8");
 const syncEvidence = syncScript +
@@ -222,6 +223,7 @@ const stepSuites = new Map([
   ["Native plugin ABI test", "host"],
   ["Differential Node host test", "mac-core-host"],
   ["Distribution package self-test", "core"],
+  ["Toolchain cache regression tests", "core"],
   ["Toolchain command check", "core"],
   ["Zig package isolation check", "core"],
   ["Format", "core"],
@@ -699,12 +701,26 @@ if (oracleSkipConditions.length !== 3) {
 
 const cacheActions = [...workflow.matchAll(/^      - uses: actions\/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6\.1\.0$/gm)];
 if (cacheActions.length !== 5) throw new Error(`actions/cache v6.1.0固定SHAは5ステップ必要です: actual=${cacheActions.length}`);
-const toolchainCacheKey = "toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ runner.os }}-${{ runner.arch }}-v2-minimal";
-const legacyToolchainCacheKey = "toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ runner.os }}-${{ runner.arch }}-v1";
-if (countOccurrences(workflow, `key: ${toolchainCacheKey}`) !== 2 ||
-    countOccurrences(workflow, `restore-keys: |\n            ${legacyToolchainCacheKey}`) !== 2 ||
+// toolchain cache世代v3。keyにtoolchain定義とsetup scriptのhashを含め、
+// marker欠落でpoisonedな旧世代cacheを復元しないようrestore-keysは付けない。
+const toolchainCacheKey = "key: toolchains-${{ runner.os }}-${{ runner.arch }}-v3-${{ hashFiles('toolchain.lock.json', 'tools/setup_llvm.mjs', 'tools/setup_quickjs.mjs', 'tools/prune_llvm_toolchain.mjs') }}";
+if (countOccurrences(workflow, toolchainCacheKey) !== 2 ||
+    workflow.includes("restore-keys:") ||
+    workflow.includes("-v2-minimal") ||
     countOccurrences(workflow, "run: node tools/prune_llvm_toolchain.mjs") !== 2) {
-  throw new Error("LLVM toolchain cacheのv2-minimal移行またはprune stepがtest／AOT jobへ設定されていません");
+  throw new Error("LLVM toolchain cacheのv3世代key、旧世代restore-key排除、またはprune stepがtest／AOT jobへ設定されていません");
+}
+// cache無効理由の分類出力と、prune→restore後もvalidと判定される回帰テストが
+// cache再利用を壊す変更を防ぐ。理由文字列はCI計測がparseするため固定する。
+if (!setupLlvmScript.includes("export async function cacheStatus") ||
+    !setupLlvmScript.includes('"marker-missing"') || !setupLlvmScript.includes('"marker-invalid"') ||
+    !setupLlvmScript.includes('"clang-missing"') || !setupLlvmScript.includes('"lld-missing"') ||
+    !setupLlvmScript.includes('"version-mismatch"') || !setupLlvmScript.includes('"platform-mismatch"') ||
+    !setupLlvmScript.includes('"sha256-mismatch"') ||
+    !setupLlvmScript.includes("LLVM cache invalid:") || !setupLlvmScript.includes("LLVM cache valid:") ||
+    !setupLlvmScript.includes("reason=") ||
+    !workflow.includes("run: node --test tools/setup_llvm_test.mjs tools/collect_ci_metrics_test.mjs")) {
+  throw new Error("LLVM cache無効理由の分類出力またはcache再利用回帰テストが不完全です");
 }
 const oracleBuild = setupOracle.match(/^const oracleBuild = (\d+);$/m)?.[1];
 if (oracleBuild === undefined) throw new Error("setup_oracle.mjsのoracleBuildを取得できません");
