@@ -146,6 +146,17 @@ attestationが発行される）か、full run済みのcommitをtag付けする�
 初回検証では`check_package_isolation.mjs`がzigをspawnして失敗したため、
 軽量jobから除外し`check_ci_workflow.mjs`の禁止リストへ追加した。
 
+## Stage 3: macOSクリティカルパスの再配分
+
+`Differential Node host test`（約5分）はこれまでmacOS最長jobの
+`mac-core-standard-support`で実行していたが、`mac-host-compat`の末尾へ移動した。
+
+- `mac-core-standard-support`から当該stepを除去し、クリティカルパスを短縮
+- `mac-host-compat`ではcanonical freshnessとDebug buildの完了後に配置し、
+  証拠生成順（normal RS→dispatch→QuickJS RS→compat-js→freshness）を維持
+- 配置順は`check_ci_workflow.mjs`の`macHostCompatOrder`で強制する
+- Linux／Windowsの`host`は従来通り同job内で実行（位置変更の影響なし）
+
 ## Stage 4: Windows native AOT compilerの共有
 
 `aot` matrixのWindows native shard（3 fixture shard × O0〜O3 = 12ジョブ）は

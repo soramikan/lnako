@@ -313,7 +313,7 @@ const stepSuites = new Map([
   ["Differential standard plugin test", "standard"],
   ["Differential QuickJS compatibility test", "host"],
   ["Native plugin ABI test", "host"],
-  ["Differential Node host test", "mac-core-host"],
+  ["Differential Node host test", "host"],
   ["Distribution package self-test", "core"],
   ["Toolchain cache regression tests", "core"],
   ["Change classifier tests", "core"],
@@ -335,8 +335,6 @@ for (const [name, suite] of stepSuites) {
       ? "matrix.suite == 'standard' || matrix.suite == 'mac-core-standard-support'"
       : suite === "host"
         ? "matrix.suite == 'host' || matrix.suite == 'mac-host-compat'"
-        : suite === "mac-core-host"
-        ? "matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support'"
         : "matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'";
   const pattern = new RegExp(`^      - name: ${escaped}\\n        if: ${condition.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m");
   if (!pattern.test(workflow)) throw new Error(`${name}のsuite条件が${suite}ではありません`);
@@ -373,6 +371,7 @@ const macSupportSteps = new Map([
   ["Canonical evidence freshness", ["matrix.suite == 'mac-host-compat'", "node tools/check_evidence_freshness.mjs"]],
   ["Build macOS ReleaseSafe compiler", ["matrix.suite == 'mac-core-standard-support'", "run: zig build -Doptimize=ReleaseSafe"]],
   ["macOS normal smoke test", ["matrix.suite == 'mac-core-standard-support'", "./zig-out/bin/lnako test tests/fixtures/run-tests.nako3"]],
+  ["Differential Node host test", ["matrix.suite == 'host' || matrix.suite == 'mac-host-compat'", "node tools/compare_node_http_oracle.mjs"]],
 ]);
 for (const [name, [condition, required]] of macSupportSteps) {
   const marker = "      - name: " + name;
@@ -385,7 +384,9 @@ for (const [name, [condition, required]] of macSupportSteps) {
 }
 // canonical freshness は正本と同じ ReleaseSafe で測るため、mac-host-compat は
 // normal ReleaseSafe → dispatch 生成 → QuickJS ReleaseSafe → compat-js 生成 →
-// freshness（残りの生成＋比較）の順でなければならない。Debug 出力は比較しない。
+// freshness（残りの生成＋比較）→ Debug build → Node host差分の順でなければ
+// ならない。Debug 出力は比較しない。Node host差分はmac-core-standard-supportの
+// クリティカルパスを外すため証拠生成の最後尾に置く。
 const macHostCompatOrder = [
   "      - name: Build macOS normal ReleaseSafe compiler",
   "      - name: macOS dispatch evidence audit",
@@ -393,6 +394,8 @@ const macHostCompatOrder = [
   "      - name: Build QuickJS compiler",
   "      - name: macOS compat-js evidence audit",
   "      - name: Canonical evidence freshness",
+  "      - name: Build macOS AOT verification compiler",
+  "      - name: Differential Node host test",
 ];
 const macHostCompatPositions = macHostCompatOrder.map((marker) => testJob.indexOf(marker));
 if (macHostCompatPositions.some((position) => position < 0) ||

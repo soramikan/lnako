@@ -111,7 +111,8 @@ jobs:
             suite: compat-aot
           # macOS-hosted runners admit at most five concurrent jobs. Keep the
           # two regular jobs and three native route jobs at exactly five slots;
-          # Node host verification is assigned to the core job, while the
+          # Node host verification is assigned to mac-host-compat at the end of
+          # its evidence chain to balance the critical path, while the
           # dispatch evidence/security stay on mac-host-compat, while the
           # coverage audit is distributed across the three native route jobs.
           - name: macOS arm64
@@ -270,24 +271,6 @@ jobs:
       - name: Native plugin ABI test
         if: matrix.suite == 'host' || matrix.suite == 'mac-host-compat'
         run: node tools/check_native_plugin_abi.mjs --release-safe
-      - name: Differential Node host test
-        if: matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support'
-        shell: bash
-        run: |
-          set -euo pipefail
-          node tools/generate_legacy_encoding.mjs --check
-          node tools/update_node_implemented.mjs --check
-          node tools/check_node_plugin_coverage.mjs
-          node tools/compare_node_file_oracle.mjs
-          node tools/check_encoding_compat.mjs
-          node tools/check_crypto_compat.mjs
-          node tools/compare_node_http_oracle.mjs
-          node tools/compare_http_server_oracle.mjs
-          node tools/compare_node_exit_oracle.mjs
-          node tools/compare_node_interrupt_oracle.mjs
-          node tools/check_node_current_directory_realpath.mjs
-          node tools/check_node_current_directory_errors.mjs
-          node tools/check_node_archive_smoke.mjs
       - name: Format
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: zig build fmt-check
@@ -387,6 +370,27 @@ jobs:
           ./zig-out/bin/lnako check tests/fixtures/module/main.nako3
           ./zig-out/bin/lnako run tests/fixtures/run-control.nako3
           ./zig-out/bin/lnako test tests/fixtures/run-tests.nako3
+      # Node host差分は約5分かかるため、最長jobであるmac-core-standard-support
+      # からmac-host-compatへ移しクリティカルパスを平準化する。canonical
+      # freshnessとDebug build完了後に配置し、証拠生成順を壊さない。
+      - name: Differential Node host test
+        if: matrix.suite == 'host' || matrix.suite == 'mac-host-compat'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/generate_legacy_encoding.mjs --check
+          node tools/update_node_implemented.mjs --check
+          node tools/check_node_plugin_coverage.mjs
+          node tools/compare_node_file_oracle.mjs
+          node tools/check_encoding_compat.mjs
+          node tools/check_crypto_compat.mjs
+          node tools/compare_node_http_oracle.mjs
+          node tools/compare_http_server_oracle.mjs
+          node tools/compare_node_exit_oracle.mjs
+          node tools/compare_node_interrupt_oracle.mjs
+          node tools/check_node_current_directory_realpath.mjs
+          node tools/check_node_current_directory_errors.mjs
+          node tools/check_node_archive_smoke.mjs
 
   parser_fuzz:
     name: ${{ matrix.name }} / parser fuzz
