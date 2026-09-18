@@ -102,3 +102,46 @@ reason内訳: unknown=147（改善前のlogにはreason分類出力が無い）
 - 最長jobは`Windows x86_64 / core`（median 18m22s）と
   `macOS arm64 / mac-core-standard-support`（17m56s）で、これらが
   workflow wall timeのクリティカルパスを構成する。
+
+## Stage 2: 変更分類による軽量CI
+
+`changes`ジョブが変更パスをallow-listで分類し、docs・attestation
+snapshotのみの変更では重いmatrix（test/parser_fuzz/AOT/attest）を起動しない。
+
+- light対象（allow-list）: `docs/**`、リポジトリ直下の`*.md`、
+  `compat/*/attestations/**`。これ以外はすべてfull。
+- 判定不能（diff失敗・base欠落・空diff・`pull_request`/`push`以外の
+  event）は常にfullへ倒す。renameは`--no-renames`でdelete+addへ分解し、
+  heavy→light移動を取りこぼさない。
+- 分類器はbase側（`pull_request.base.sha`またはpushの`before`）の
+  信頼済み版を`git show`で取り出して実行する。PR側checkoutの改変済み
+  実装を信用しないため、分類器自身を改変して軽量CIを騙す経路はない。
+- skippedなrequired checkはbranch protection上success扱いになるため、
+  light相当のPRでもmerge gateは満たされる。
+- light相当でも`lightweight`ジョブがworkflow schema・追跡attestation・
+  docs表・canonical evidenceの整合性を必ず検査する（build不要な
+  checkerのみ、所要2〜3分）。`check_package_isolation.mjs`のように
+  zigをspawnして実buildするcheckerは除外し、含めないことを
+  `check_ci_workflow.mjs`の禁止リストで強制する。
+
+### releaseとの関係
+
+docs専用commitがmainへpushされるとattestation jobもskipされ、そのcommit
+にはGitHub Attestationが存在しない。release gateは`Attest and verify
+dispatch evidence`がsuccessのrunを要求するため、そのcommitへのtag付けは
+失敗する。docs専用commitをrelease対象にする場合は、先にCI workflowを
+mainで`workflow_dispatch`実行する（dispatchは常にfull相当で走り
+attestationが発行される）か、full run済みのcommitをtag付けする。
+
+### light経路の実機検証
+
+本節の追記自体がdocs専用変更であり、`improve-ci-stage2`向けPRで
+`changes`→`lightweight`のみが走り重いmatrixがskipされることを
+確認するための検証用commitでもある。期待する観測:
+
+- `Classify changes`が`level=light`を出力する
+- test/parser_fuzz/AOT/verify/attestの各ジョブがskipされる
+- `Lightweight verification`がbuildなしのchecker群を実行してpassする
+
+初回検証では`check_package_isolation.mjs`がzigをspawnして失敗したため、
+軽量jobから除外し`check_ci_workflow.mjs`の禁止リストへ追加した。

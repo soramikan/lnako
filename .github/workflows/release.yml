@@ -36,8 +36,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION_INPUT: ${{ inputs.version }}
-          # 51 matrix jobs + dispatch coverage verifier + native AOT aggregate verifier + attestation.
-          CI_EXPECTED_JOB_COUNT: 54
+          # 51 matrix jobs + changes classifier + lightweight verifier +
+          # dispatch coverage verifier + native AOT aggregate verifier + attestation.
+          CI_EXPECTED_JOB_COUNT: 56
         shell: bash
         run: |
           set -euo pipefail
@@ -60,18 +61,26 @@ jobs:
               echo "GitHubがRelease tagの署名を検証できません: $GITHUB_REF_NAME" >&2
               exit 1
             fi
-            ci_run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow CI --commit "$GITHUB_SHA" --limit 50 --json databaseId,status,conclusion --jq '[.[] | select(.status == "completed" and .conclusion == "success") | .databaseId] | .[0] // empty')"
-            if [[ -z "$ci_run_id" ]]; then
-              echo "同じsource commitのCI成功runがありません: $GITHUB_SHA" >&2
+            # lightゲートでmatrixがskippedのrunもconclusion=successになりうるため、
+            # 全成功runを走査し Attest and verify dispatch evidence が success の
+            # run（= full matrix完走の終端証拠）を要求する。docs専用commit等へは
+            # workflow_dispatchをmainで実行すればfull run＋attestationが得られる。
+            ci_verified=""
+            while IFS= read -r ci_run_id; do
+              [[ -z "$ci_run_id" ]] && continue
+              ci_job_count="$(gh run view "$ci_run_id" --repo "$GITHUB_REPOSITORY" --json jobs --jq '.jobs | length')"
+              ci_failed_jobs="$(gh run view "$ci_run_id" --repo "$GITHUB_REPOSITORY" --json jobs --jq '[.jobs[] | select(.conclusion != "success" and .conclusion != "skipped")] | length')"
+              ci_attested="$(gh run view "$ci_run_id" --repo "$GITHUB_REPOSITORY" --json jobs --jq '[.jobs[] | select(.name == "Attest and verify dispatch evidence" and .conclusion == "success")] | length')"
+              if [[ "$ci_job_count" -eq "$CI_EXPECTED_JOB_COUNT" && "$ci_failed_jobs" -eq 0 && "$ci_attested" -eq 1 ]]; then
+                ci_verified="$ci_run_id"
+                break
+              fi
+            done < <(gh run list --repo "$GITHUB_REPOSITORY" --workflow CI --commit "$GITHUB_SHA" --limit 50 --json databaseId,status,conclusion --jq '[.[] | select(.status == "completed" and .conclusion == "success") | .databaseId] | .[]')
+            if [[ -z "$ci_verified" ]]; then
+              echo "同じsource commitのCIが全job成功（full matrix＋attestation完了）ではありません: $GITHUB_SHA" >&2
               exit 1
             fi
-            ci_job_count="$(gh run view "$ci_run_id" --repo "$GITHUB_REPOSITORY" --json jobs --jq '.jobs | length')"
-            ci_non_success_jobs="$(gh run view "$ci_run_id" --repo "$GITHUB_REPOSITORY" --json jobs --jq '[.jobs[] | select(.conclusion != "success")] | length')"
-            if [[ "$ci_job_count" -ne "$CI_EXPECTED_JOB_COUNT" || "$ci_non_success_jobs" -ne 0 ]]; then
-              echo "同じsource commitのCIが全job成功ではありません: run=$ci_run_id jobs=$ci_job_count/$CI_EXPECTED_JOB_COUNT non_success=$ci_non_success_jobs" >&2
-              exit 1
-            fi
-            echo "同じsource commitのCI全job成功を確認: run=$ci_run_id jobs=$ci_job_count/$CI_EXPECTED_JOB_COUNT"
+            echo "同じsource commitのCI全job成功を確認: run=$ci_verified jobs=$CI_EXPECTED_JOB_COUNT"
           else
             # 手動入力はtag形式のv接頭辞も許容して正規化する。
             version="${RELEASE_VERSION_INPUT#v}"

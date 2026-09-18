@@ -48,13 +48,20 @@ if (!workflow.includes("needs: preflight") || !workflow.includes("needs: [prefli
   throw new Error("Release workflowのjob依存関係またはpublish条件が不正です");
 }
 if (!workflow.includes("GITHUB_RUN_ID") || !workflow.includes("github.sha") || !workflow.includes("CI --commit") ||
-    !workflow.includes("CI_EXPECTED_JOB_COUNT: 54") || !workflow.includes("--json jobs") ||
-    !workflow.includes("ci_job_count") || !workflow.includes("ci_non_success_jobs")) {
+    !workflow.includes("CI_EXPECTED_JOB_COUNT: 56") || !workflow.includes("--json jobs") ||
+    !workflow.includes("ci_job_count") || !workflow.includes("ci_failed_jobs") ||
+    !workflow.includes("ci_attested") || !workflow.includes("ci_verified")) {
   throw new Error("Release workflowにsource commit／CI gateの検証がありません");
 }
-if (!workflow.includes('"$ci_job_count" -ne "$CI_EXPECTED_JOB_COUNT"') ||
-    !workflow.includes('"$ci_non_success_jobs" -ne 0')) {
-  throw new Error("Release workflowがCIの全job成功を要求していません");
+// lightゲートでmatrixがskippedの成功runと、full matrix完走runを区別するため、
+// attestation jobのsuccessを終端証拠として要求する（docs専用commitへのreleaseを
+// 防ぎつつ、skippedを失敗扱いしない）。
+if (!workflow.includes('"$ci_job_count" -eq "$CI_EXPECTED_JOB_COUNT"') ||
+    !workflow.includes('"$ci_failed_jobs" -eq 0') ||
+    !workflow.includes('"$ci_attested" -eq 1') ||
+    !workflow.includes('select(.name == "Attest and verify dispatch evidence" and .conclusion == "success")') ||
+    !workflow.includes('select(.conclusion != "success" and .conclusion != "skipped")')) {
+  throw new Error("Release workflowがCIの全job成功＋attestation完走を要求していません");
 }
 // actions/checkoutはtag refをcommitへ解決するため、annotated tagの判定は
 // GitHub APIのtag参照（object.type == "tag"）で行い、署名検証はgit tag

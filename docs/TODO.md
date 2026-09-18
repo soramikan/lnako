@@ -77,7 +77,7 @@
 ## リリース時チェックリスト
 
 1. `zig build fmt-check`、`zig build test`、関連oracle・native plugin・distribution self-testを実行する。
-2. 最終source commitでCI 54/54 jobを成功させる。
+2. 最終source commitでCIをfull相当（attestation発行を含む56 job構成）で成功させる。
 3. 同じsource manifestの3 OS attestationを追跡し、現行manifestに一致するsnapshotから導出されるviewを `verified: 527`、`unverified: 0` にする。
 4. `lnako --version`、`build.zig.zon`、release versionを対象バージョンへ一致させる。
 5. 署名済みannotated tag（`vX.Y.Z`）を最終commitに作成してpushする。
