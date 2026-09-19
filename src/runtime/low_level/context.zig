@@ -335,6 +335,9 @@ pub const ProcessContext = struct {
 
     pub fn spawn(self: ProcessContext, argv: []const []const u8, options: low_level_process.SpawnOptions) !u64 {
         const function = self.spawnFn orelse return error.LowLevelIoUnavailable;
+        // 起動後に言語側handleの確保が失敗した場合、discardで子を確実に
+        // ロールバックする必要がある。discard欠落のHostでは子を作る前に拒否する。
+        if (self.discardFn == null) return error.LowLevelIoUnavailable;
         return function(self.context, argv, options);
     }
 
@@ -344,9 +347,10 @@ pub const ProcessContext = struct {
     }
 
     /// handleをwaitせずに破棄する（誤差経路の後始末）。子プロセスを
-    /// 強制終了してreapする。
+    /// 強制終了してreapする。未提供のHostで成功扱いにすると子が追跡不能に
+    /// なるため、`spawn` と同様に `LowLevelIoUnavailable` を返す。
     pub fn discard(self: ProcessContext, raw: u64) !void {
-        const function = self.discardFn orelse return;
+        const function = self.discardFn orelse return error.LowLevelIoUnavailable;
         return function(self.context, raw);
     }
 
@@ -883,4 +887,11 @@ test "hasArgvSpawnはspawn/wait/discard/pid/ppidを全て要求する" {
     missing = full;
     missing.discardFn = null;
     try std.testing.expect(!missing.hasArgvSpawn());
+
+    // discardが無いHostでは子を作る前に起動を拒否し、起動後のロールバック
+    // 不能な子を残さない。
+    var no_discard = full;
+    no_discard.discardFn = null;
+    try std.testing.expectError(error.LowLevelIoUnavailable, no_discard.spawn(&.{}, .{}));
+    try std.testing.expectError(error.LowLevelIoUnavailable, no_discard.discard(1));
 }

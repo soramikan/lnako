@@ -21,6 +21,7 @@ const throwIoAs = shared.throwIoAs;
 const throwStructured = shared.throwStructured;
 const rememberHandle = shared.rememberHandle;
 const forgetHandle = shared.forgetHandle;
+const forgetHandleId = shared.forgetHandleId;
 const findHandleId = shared.findHandleId;
 const processTable = shared.processTable;
 const ensureProcessIo = shared.ensureProcessIo;
@@ -359,12 +360,23 @@ pub fn pluginSpawnProcess(context: *anyopaque, argv: []const []const u8, options
 
 pub fn pluginWaitProcess(context: *anyopaque, raw: u64) anyerror!low_level_process.WaitResult {
     const runtime: *Runtime = @ptrCast(@alignCast(context));
-    return processTable(runtime).wait(ensureProcessIo(runtime), foundation.HandleId.fromRaw(raw));
+    const id = foundation.HandleId.fromRaw(raw);
+    // プロセス表のentryはwaitの成否で消費されるため、AOT側のhandle対応表も
+    // 必ず同期して削除する（ファイル/ハッシュ/ディレクトリの消費系callbackと同じ）。
+    const result = processTable(runtime).wait(ensureProcessIo(runtime), id) catch |failure| {
+        forgetHandleId(runtime, id);
+        return failure;
+    };
+    forgetHandleId(runtime, id);
+    return result;
 }
 
 pub fn pluginDiscardProcess(context: *anyopaque, raw: u64) anyerror!void {
     const runtime: *Runtime = @ptrCast(@alignCast(context));
-    return processTable(runtime).discard(ensureProcessIo(runtime), foundation.HandleId.fromRaw(raw));
+    const id = foundation.HandleId.fromRaw(raw);
+    const result = processTable(runtime).discard(ensureProcessIo(runtime), id);
+    forgetHandleId(runtime, id);
+    return result;
 }
 
 pub fn pluginGetpid(_: *anyopaque) anyerror!u32 {
@@ -534,6 +546,24 @@ test "AOTのプロセス待機は別種handleを消費しない" {
     try std.testing.expectEqualStrings("EBADF", code);
     // 対応表から消えていない（ファイル/ハッシュhandleとして引き続き使える）。
     try std.testing.expect(findHandleId(&runtime, roots[0]) != null);
+}
+
+test "AOTの動的待機はhandle対応表からもプロセスを削除する" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try spawnArgv(&runtime, &.{"/usr/bin/true"});
+    roots[1] = try lowLevelProcessBuiltin(&runtime, .low_level_process_spawn, &.{roots[0]});
+    const id = findHandleId(&runtime, roots[1]) orelse return error.TestExpectedEqual;
+    // 埋め込みinterpreterのHost callback経由で待機しても、AOT側の対応表が
+    // 残らない（辞書のGCルート残留と再変換での無効handle化を防ぐ）。
+    _ = try pluginWaitProcess(@ptrCast(&runtime), id.raw());
+    try std.testing.expect(findHandleId(&runtime, roots[1]) == null);
 }
 
 test "AOTプロセス起動は存在しない実行ファイルをENOENTにする" {

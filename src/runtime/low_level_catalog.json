@@ -939,7 +939,7 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "shell stringを介さない。OPTIONSのcwd/env/stdio(inherit/pipe/null)/detached。WindowsのdetachedはENOTSUP。argv[0]の実行ファイル解決は親環境のPATHを使う。stdio=pipeの親側は公開されず、待機時にEOFまでdrainして破棄するため子との入出力には使えない。detachedとpipe stdioの併用はEINVAL",
+      "notes": "shell stringを介さない。OPTIONSのcwd/env/stdio(inherit/pipe/null)/detached。WindowsのdetachedはENOTSUP。argv[0]の実行ファイル解決は親環境のPATHを使う。stdio=pipeの親側は公開されず、待機時にEOFまでdrainして破棄するため子との入出力には使えない。detachedとpipe stdioの併用はEINVAL。detachedはPOSIXの新プロセスグループ生成のみで、新セッションやstdioの切り離しは行わない（完全なnohup相当は提供しない）。未waitのdetached子はRuntime破棄時にreaper threadが非同期にreapする",
       "implemented": true
     },
     {
@@ -1007,7 +1007,7 @@
         "EPERM",
         "ENOTSUP"
       ],
-      "notes": "Windowsは対応信号が限られる。非対応のsignal番号はENOTSUP。POSIXで送れる番号は0（存在確認）と1..31で、pid=0はEINVAL。Windowsの9/15はTerminateProcessへ写り、待機結果はexitCode=1, signal=null",
+      "notes": "Windowsは対応信号が限られる。非対応のsignal番号はENOTSUP。POSIXで送れる番号は0（存在確認）と1..31で、pid=0はEINVAL。Linuxのリアルタイム信号（34以上）は対象外。Windowsの9/15はTerminateProcessへ写り、待機結果はexitCode=1, signal=null",
       "implemented": true
     },
     {
