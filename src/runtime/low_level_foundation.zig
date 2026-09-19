@@ -410,11 +410,20 @@ pub fn capabilitySupportedOnOs(capability: Capability, os: OsKind) bool {
 }
 
 /// 実行中OSでの `capabilitySupportedOnOs`。WASIはPOSIX権限・所有者APIを
-/// 持たないため、これらのcapabilityはWindowsと同じくfalseになる。
+/// 持たないため、これらのcapabilityはWindowsと同じくfalseになる。加えて
+/// WASIは `utimensat`/`futimens` を持たず、utime（ファイル時刻設定/設定済）は
+/// 実行時に常に `ENOTSUP` になるためfalseを返す。
 pub fn capabilitySupportedOnCurrentOs(capability: Capability) bool {
+    if (!capabilityImplemented(capability)) return false;
+    if (builtin.os.tag == .wasi) {
+        return switch (capability) {
+            .utime => false,
+            else => capabilitySupportedOnOs(capability, .windows),
+        };
+    }
     const os: OsKind = switch (builtin.os.tag) {
         .linux => .linux,
-        .windows, .wasi => .windows,
+        .windows => .windows,
         else => .macos,
     };
     return capabilitySupportedOnOs(capability, os);
@@ -1078,6 +1087,14 @@ test "非対応OSのcapabilityは照会falseになる" {
     // 未実装capabilityは指定OSに関わらずfalse。
     try std.testing.expect(!capabilitySupportedOnOs(.termios, .linux));
     try std.testing.expect(!capabilitySupportedOnOs(.statfs, .macos));
+}
+
+test "WASIではutime capabilityがfalseになる" {
+    if (builtin.os.tag != .wasi) return error.SkipZigTest;
+    // WASIはutimensat/futimensを持たず実行時にENOTSUPになるため、照会もfalse。
+    try std.testing.expect(!capabilitySupportedOnCurrentOs(.utime));
+    // truncateはWASIでもopen+setLengthで提供できる。
+    try std.testing.expect(capabilitySupportedOnCurrentOs(.truncate));
 }
 
 test "未知capabilityの照会はfalseで、未対応実行はENOTSUP" {

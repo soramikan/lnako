@@ -263,9 +263,10 @@ fn setTimestampsPathWindows(io: std.Io, path: []const u8, atime: foundation.SetT
     if (set_status != .SUCCESS) return ntStatusError(set_status);
 }
 
-/// `FILE_WRITE_ATTRIBUTES | SYNCHRONIZE` と `OPEN_FOR_BACKUP_INTENT` でパスを
-/// 開く。read-only属性ファイルとディレクトリにも適用できる（reparse pointは
-/// 追跡する）。呼び出し側が `CloseHandle` する。
+/// `FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES | SYNCHRONIZE` と
+/// `OPEN_FOR_BACKUP_INTENT` でパスを開く。read-only属性ファイルとディレクトリにも
+/// 適用でき（reparse pointは追跡する）、`NtQueryInformationFile` で現在の属性を
+/// 取得できる。呼び出し側が `CloseHandle` する。
 fn openWindowsWriteAttributes(path: []const u8) anyerror!std.os.windows.HANDLE {
     const windows = std.os.windows;
     const allocator = std.heap.page_allocator;
@@ -293,7 +294,7 @@ fn openWindowsWriteAttributes(path: []const u8) anyerror!std.os.windows.HANDLE {
         &handle,
         .{
             .STANDARD = .{ .SYNCHRONIZE = true },
-            .SPECIFIC = .{ .FILE = .{ .WRITE_ATTRIBUTES = true } },
+            .SPECIFIC = .{ .FILE = .{ .READ_ATTRIBUTES = true, .WRITE_ATTRIBUTES = true } },
         },
         &attributes,
         &io_status_block,
@@ -396,6 +397,8 @@ fn fsPosixErrno(errno: std.c.E) anyerror {
         .ROFS => error.ReadOnlyFileSystem,
         .BADF => error.BadFileDescriptor,
         .FBIG => error.FileTooBig,
+        .NOSPC => error.NoSpaceLeft,
+        .DQUOT => error.DiskQuota,
         .NOSYS => error.Unsupported,
         .OPNOTSUPP => error.OperationUnsupported,
         else => error.Unexpected,
@@ -695,6 +698,7 @@ fn setFileReadOnly(path: []const u8, read_only: bool) !void {
         if (set_status != .SUCCESS) return ntStatusError(set_status);
         return;
     }
+    if (builtin.os.tag == .wasi) return error.OperationUnsupported;
     const file = try std.Io.Dir.cwd().openFile(std.testing.io, path, .{ .mode = .read_only });
     defer file.close(std.testing.io);
     try file.setPermissions(std.testing.io, std.Io.File.Permissions.default_file.setReadOnly(read_only));
@@ -1032,6 +1036,8 @@ test "setTimestampsPathは明示時刻・now・既存値維持を反映する" {
 
     const missing = try tmpPath(&temporary, "missing-times.txt");
     defer std.testing.allocator.free(missing);
+    // ATIME/MTIMEともnull（UTIME_OMIT）でもパス検証は行われ、ENOENTになる。
+    try std.testing.expectError(error.FileNotFound, setTimestampsPath(std.testing.io, missing, .unchanged, .unchanged));
     try std.testing.expectError(error.FileNotFound, setTimestampsPath(std.testing.io, missing, .now, .now));
 }
 
