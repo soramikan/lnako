@@ -42,18 +42,48 @@ pub const ProcessEntry = struct {
 };
 
 /// deinit時に引き取ったdetached子を待ってreapするthread。長寿命の子でも
-/// Runtimeを停止させず、子の終了後にゾンビを残さない。
+/// Runtimeを停止させず、子の終了後にゾンビを残さない。RuntimeのIo/allocatorは
+/// 先に破棄され得るため借用せず、生成物に依存しないglobal Ioと
+/// page_allocatorだけを使う（detachedはstdio=pipeを禁止しており、drainも不要）。
 const DetachedReaper = struct {
     child: *std.process.Child,
-    io: std.Io,
-    allocator: std.mem.Allocator,
 
     fn run(self: *DetachedReaper) void {
-        _ = self.child.wait(self.io) catch {};
-        self.allocator.destroy(self.child);
-        self.allocator.destroy(self);
+        const io = std.Io.Threaded.global_single_threaded.io();
+        _ = self.child.wait(io) catch {};
+        std.heap.page_allocator.destroy(self.child);
+        std.heap.page_allocator.destroy(self);
     }
 };
+
+/// detached子をreaper threadへ引き渡す。threadを起動できない場合は
+/// ゾンビを残さないよう同期回収へフォールバックする。Runtimeより長生きし得る
+/// reaperはRuntimeのallocator/Ioを借用せず、page_allocatorとglobal Ioを使う。
+fn handOffDetached(io: std.Io, child: *std.process.Child) void {
+    if (comptime builtin.os.tag == .windows) {
+        // detachedはWindowsではENOTSUPのため到達しない。
+        killChild(io, child);
+        return;
+    }
+    const owned_child = std.heap.page_allocator.create(std.process.Child) catch {
+        killChild(io, child);
+        return;
+    };
+    owned_child.* = child.*;
+    const reaper = std.heap.page_allocator.create(DetachedReaper) catch {
+        killChild(io, owned_child);
+        std.heap.page_allocator.destroy(owned_child);
+        return;
+    };
+    reaper.* = .{ .child = owned_child };
+    const thread = std.Thread.spawn(.{}, DetachedReaper.run, .{reaper}) catch {
+        killChild(io, owned_child);
+        std.heap.page_allocator.destroy(owned_child);
+        std.heap.page_allocator.destroy(reaper);
+        return;
+    };
+    thread.detach();
+}
 
 /// プロセスhandleの表。`HandleId` のindex空間
 /// `[process_handle_index_base, hash_handle_index_base)` を使い、
@@ -75,7 +105,7 @@ pub const ProcessTable = struct {
     pub fn deinit(self: *ProcessTable, io: std.Io) void {
         for (self.entries.items) |*entry| {
             if (entry.detached) {
-                self.handOffDetached(io, &entry.child);
+                handOffDetached(io, &entry.child);
                 continue;
             }
             if (entry.child.id != null) killChild(io, &entry.child);
@@ -84,34 +114,6 @@ pub const ProcessTable = struct {
         self.generations.deinit();
         self.free_indices.deinit(self.allocator);
         self.* = undefined;
-    }
-
-    /// detached子をreaper threadへ引き渡す。threadを起動できない場合は
-    /// ゾンビを残さないよう同期回収へフォールバックする。
-    fn handOffDetached(self: *ProcessTable, io: std.Io, child: *std.process.Child) void {
-        if (comptime builtin.os.tag == .windows) {
-            // detachedはWindowsではENOTSUPのため到達しない。
-            killChild(io, child);
-            return;
-        }
-        const owned_child = self.allocator.create(std.process.Child) catch {
-            killChild(io, child);
-            return;
-        };
-        owned_child.* = child.*;
-        const reaper = self.allocator.create(DetachedReaper) catch {
-            killChild(io, owned_child);
-            self.allocator.destroy(owned_child);
-            return;
-        };
-        reaper.* = .{ .child = owned_child, .io = io, .allocator = self.allocator };
-        const thread = std.Thread.spawn(.{}, DetachedReaper.run, .{reaper}) catch {
-            killChild(io, owned_child);
-            self.allocator.destroy(owned_child);
-            self.allocator.destroy(reaper);
-            return;
-        };
-        thread.detach();
     }
 
     pub fn len(self: *const ProcessTable) usize {
@@ -167,6 +169,11 @@ pub const ProcessTable = struct {
     /// entryが保持し、wait時にdrainしてから回収する。
     pub fn spawn(self: *ProcessTable, io: std.Io, argv: []const []const u8, options: SpawnOptions) !foundation.HandleId {
         if (argv.len == 0) return error.InvalidArgument;
+        // detachedは親が再びwaitしないため、drainする主体のいないpipe stdioは
+        // 子のブロックを招く。pipeとの併用はEINVALで拒否する。
+        if (options.detached and (options.stdin == .pipe or options.stdout == .pipe or options.stderr == .pipe)) {
+            return error.InvalidArgument;
+        }
         // WindowsはCREATE_NEW_PROCESS_GROUP/DETACHED_PROCESSをZigの
         // SpawnOptionsが公開しないため、detachedはENOTSUPにする。
         if (options.detached and builtin.os.tag == .windows) return error.OperationUnsupported;
@@ -717,4 +724,11 @@ test "detached起動でもシグナル送信と待機ができる" {
     try sendSignal(pid, 15);
     const killed = try table.wait(testing.io, id);
     try testing.expectEqual(@as(?u32, 15), killed.signal);
+}
+
+test "detachedとpipe stdioの併用はEINVALで拒否する" {
+    var table = ProcessTable.init(testing.allocator);
+    defer table.deinit(testing.io);
+    try testing.expectError(error.InvalidArgument, table.spawn(testing.io, &.{"/bin/true"}, .{ .detached = true, .stdout = .pipe }));
+    try testing.expectError(error.InvalidArgument, table.spawn(testing.io, &.{"/bin/true"}, .{ .detached = true, .stdin = .pipe }));
 }
