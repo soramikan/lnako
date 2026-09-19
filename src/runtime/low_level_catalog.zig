@@ -313,6 +313,9 @@ test "implementedフラグは実装済み命令の既知集合と一致する" {
         "ll-path-rename",
         "ll-path-unlink",
         "ll-path-rmdir",
+        "ll-file-truncate-path",
+        "ll-file-utime-path",
+        "ll-file-utime-handle",
     };
     var count: usize = 0;
     for (foundation.catalog_commands) |command| {

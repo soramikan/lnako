@@ -21,6 +21,9 @@ pub const StreamContext = struct {
     writeFileBytesFn: ?*const fn (context: *anyopaque, raw: u64, bytes: []const u8) anyerror!usize = null,
     syncFileFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
     truncateFileFn: ?*const fn (context: *anyopaque, raw: u64, size: u64) anyerror!void = null,
+    /// Issue #31: オープン済みハンドルの時刻設定（futimens相当）。atime/mtimeは
+    /// `foundation.SetTime`（null=既存値維持 / "now"=現在時刻 / ナノ秒明示）。
+    setTimestampsFileFn: ?*const fn (context: *anyopaque, raw: u64, atime: foundation.SetTime, mtime: foundation.SetTime) anyerror!void = null,
 
     pub fn openFile(self: StreamContext, path: []const u8, mode: foundation.OpenMode, exclusive: bool, sync: bool) !u64 {
         const function = self.openFileFn orelse return error.LowLevelIoUnavailable;
@@ -52,12 +55,21 @@ pub const StreamContext = struct {
         return function(self.context, raw, size);
     }
 
+    pub fn setTimestampsFile(self: StreamContext, raw: u64, atime: foundation.SetTime, mtime: foundation.SetTime) !void {
+        const function = self.setTimestampsFileFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, raw, atime, mtime);
+    }
+
     pub fn hasStreamFileIo(self: StreamContext) bool {
         return self.openFileFn != null and self.closeFileFn != null and self.readFileBytesFn != null and self.writeFileBytesFn != null and self.syncFileFn != null;
     }
 
     pub fn hasTruncate(self: StreamContext) bool {
         return self.truncateFileFn != null;
+    }
+
+    pub fn hasSetTimestamps(self: StreamContext) bool {
+        return self.setTimestampsFileFn != null;
     }
 };
 
@@ -105,6 +117,9 @@ pub const FsContext = struct {
     renameFn: ?*const fn (context: *anyopaque, source: []const u8, destination: []const u8) anyerror!void = null,
     unlinkFn: ?*const fn (context: *anyopaque, path: []const u8) anyerror!void = null,
     rmdirFn: ?*const fn (context: *anyopaque, path: []const u8) anyerror!void = null,
+    /// Issue #31: パス指定のtruncateと時刻設定（truncate / utimes相当）。
+    truncatePathFn: ?*const fn (context: *anyopaque, path: []const u8, size: u64) anyerror!void = null,
+    utimePathFn: ?*const fn (context: *anyopaque, path: []const u8, atime: foundation.SetTime, mtime: foundation.SetTime) anyerror!void = null,
 
     pub fn stat(self: FsContext, path: []const u8, follow: bool) !low_level_fs.Metadata {
         const function = self.statFn orelse return error.LowLevelIoUnavailable;
@@ -146,6 +161,16 @@ pub const FsContext = struct {
         return function(self.context, path);
     }
 
+    pub fn truncatePath(self: FsContext, path: []const u8, size: u64) !void {
+        const function = self.truncatePathFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, path, size);
+    }
+
+    pub fn utimePath(self: FsContext, path: []const u8, atime: foundation.SetTime, mtime: foundation.SetTime) !void {
+        const function = self.utimePathFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, path, atime, mtime);
+    }
+
     pub fn hasStat(self: FsContext) bool {
         return self.statFn != null;
     }
@@ -176,6 +201,14 @@ pub const FsContext = struct {
 
     pub fn hasRmdir(self: FsContext) bool {
         return self.rmdirFn != null;
+    }
+
+    pub fn hasTruncatePath(self: FsContext) bool {
+        return self.truncatePathFn != null;
+    }
+
+    pub fn hasUtimePath(self: FsContext) bool {
+        return self.utimePathFn != null;
     }
 };
 
@@ -265,6 +298,10 @@ pub const Context = struct {
         return self.stream.truncateFile(raw, size);
     }
 
+    pub fn setTimestampsFile(self: Context, raw: u64, atime: foundation.SetTime, mtime: foundation.SetTime) !void {
+        return self.stream.setTimestampsFile(raw, atime, mtime);
+    }
+
     pub fn createHash(self: Context, algorithm: []const u8) !u64 {
         return self.hash.createHash(algorithm);
     }
@@ -313,6 +350,14 @@ pub const Context = struct {
         return self.fs.rmdir(path);
     }
 
+    pub fn truncatePath(self: Context, path: []const u8, size: u64) !void {
+        return self.fs.truncatePath(path, size);
+    }
+
+    pub fn utimePath(self: Context, path: []const u8, atime: foundation.SetTime, mtime: foundation.SetTime) !void {
+        return self.fs.utimePath(path, atime, mtime);
+    }
+
     pub fn stdinSource(self: Context, allocator: std.mem.Allocator) !*low_level_io.StdinSource {
         return self.stdio.stdinSource(allocator);
     }
@@ -338,7 +383,13 @@ pub const Context = struct {
     }
 
     pub fn hasTruncate(self: Context) bool {
-        return self.stream.hasTruncate();
+        // truncate capabilityはhandleのftruncateとpathのtruncateの両命令を
+        // 含むため、両方のcallbackが揃っているときだけtrueにする。
+        return self.stream.hasTruncate() and self.fs.hasTruncatePath();
+    }
+
+    pub fn hasUtime(self: Context) bool {
+        return self.fs.hasUtimePath() and self.stream.hasSetTimestamps();
     }
 
     pub fn hasIncrementalHash(self: Context) bool {
@@ -398,6 +449,7 @@ pub const FlatContext = struct {
     writeFileBytesFn: ?*const fn (context: *anyopaque, raw: u64, bytes: []const u8) anyerror!usize = null,
     syncFileFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
     truncateFileFn: ?*const fn (context: *anyopaque, raw: u64, size: u64) anyerror!void = null,
+    setTimestampsFileFn: ?*const fn (context: *anyopaque, raw: u64, atime: foundation.SetTime, mtime: foundation.SetTime) anyerror!void = null,
     createHashFn: ?*const fn (context: *anyopaque, algorithm: []const u8) anyerror!u64 = null,
     updateHashFn: ?*const fn (context: *anyopaque, raw: u64, bytes: []const u8) anyerror!void = null,
     digestHashFn: ?*const fn (context: *anyopaque, raw: u64, allocator: std.mem.Allocator) anyerror![]u8 = null,
@@ -410,6 +462,8 @@ pub const FlatContext = struct {
     renameFn: ?*const fn (context: *anyopaque, source: []const u8, destination: []const u8) anyerror!void = null,
     unlinkFn: ?*const fn (context: *anyopaque, path: []const u8) anyerror!void = null,
     rmdirFn: ?*const fn (context: *anyopaque, path: []const u8) anyerror!void = null,
+    truncatePathFn: ?*const fn (context: *anyopaque, path: []const u8, size: u64) anyerror!void = null,
+    utimePathFn: ?*const fn (context: *anyopaque, path: []const u8, atime: foundation.SetTime, mtime: foundation.SetTime) anyerror!void = null,
     peekStdinSourceFn: ?*const fn (context: *anyopaque) ?*low_level_io.StdinSource = null,
     stdinSourceFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator) anyerror!*low_level_io.StdinSource = null,
     writeStdoutBytesFn: ?*const fn (context: *anyopaque, bytes: []const u8) anyerror!usize = null,
@@ -427,6 +481,7 @@ pub const FlatContext = struct {
                 .writeFileBytesFn = self.writeFileBytesFn,
                 .syncFileFn = self.syncFileFn,
                 .truncateFileFn = self.truncateFileFn,
+                .setTimestampsFileFn = self.setTimestampsFileFn,
             },
             .hash = .{
                 .context = self.context,
@@ -445,6 +500,8 @@ pub const FlatContext = struct {
                 .renameFn = self.renameFn,
                 .unlinkFn = self.unlinkFn,
                 .rmdirFn = self.rmdirFn,
+                .truncatePathFn = self.truncatePathFn,
+                .utimePathFn = self.utimePathFn,
             },
             .stdio = .{
                 .context = self.context,

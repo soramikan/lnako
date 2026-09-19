@@ -77,9 +77,9 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 
 - `ファイルサイズ変更`（ll-file-truncate-path）助詞 `PATHをSIZEで/PATHをSIZEに`、戻り `void`、capability `truncate`、エラー ENOENT/EACCES/EPERM/EISDIR/ENOSPC/EINVAL/ENOTSUP
 - `ファイル時刻設定`（ll-file-utime-path）助詞 `PATHをATIMEからMTIMEまで/PATHをATIMEとMTIMEで`、戻り `void`、capability `utime`、エラー ENOENT/EACCES/EINVAL/EPERM/ENOTSUP
-- `ファイル時刻設定済`（ll-file-utime-handle）助詞 `HANDLEをATIMEからMTIMEまで/HANDLEをATIMEとMTIMEで`、戻り `void`、capability `utime`、エラー EBADF/EINVAL/EPERM/ENOTSUP
+- `ファイル時刻設定済`（ll-file-utime-handle）助詞 `HANDLEをATIMEからMTIMEまで/HANDLEをATIMEとMTIMEで`、戻り `void`、capability `utime`、エラー EBADF/EACCES/EINVAL/EPERM/ENOTSUP
 
-`ATIME`/`MTIME` はナノ秒BigIntの引数で、`null` で既存値維持、`now` で現在時刻を表す。
+`ATIME`/`MTIME` はナノ秒BigInt（安全整数ならNumberも可）の引数で、`null`（`NULL`）で既存値維持（UTIME_OMIT）、文字列 `"now"` で現在時刻（UTIME_NOW）を表す。`ファイルサイズ変更` はPOSIXの `truncate` と同じくsymlinkを追跡し、write権限を要求する。grow時は0で埋め、ディレクトリは `EISDIR`。`ファイル時刻設定` はPOSIXでは `utimensat`、Windowsでは `FILE_WRITE_ATTRIBUTES` と backup intent でハンドルを開いて `NtSetInformationFile` を使う（read-only属性ファイルとディレクトリにも適用できる）。`ファイル時刻設定済` はオープン済みハンドルへ `futimens` / `SetFileTime` 相当を適用し、無効・close済みハンドルは `EBADF`。Windowsのハンドル経路は対象ハンドルに属性更新権（`GENERIC_WRITE` 等）が必要で、読み取り専用ハンドルでは `EACCES`/`EPERM` になり得る。`EACCES` はwrite権限欠如、`EPERM` は所有者以外による明示時刻設定やimmutable/append-only属性など、環境依存の条件で発生する。ファイルシステムの粒度により保存されるナノ秒は丸められ得る。
 
 ### Issue 32 incremental hash
 

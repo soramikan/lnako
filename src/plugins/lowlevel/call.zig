@@ -71,6 +71,9 @@ pub fn call(
     if (std.mem.eql(u8, name, foundation.filesystem_commands.rename)) return @as(?Value, try fs.renamePath(runtime, state, context, effects, arguments));
     if (std.mem.eql(u8, name, foundation.filesystem_commands.unlink)) return @as(?Value, try fs.unlinkPath(runtime, state, context, effects, arguments));
     if (std.mem.eql(u8, name, foundation.filesystem_commands.rmdir)) return @as(?Value, try fs.rmdirPath(runtime, state, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.filesystem_commands.truncate_path)) return @as(?Value, try fs.truncatePath(runtime, state, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.filesystem_commands.utime_path)) return @as(?Value, try fs.utimePath(runtime, state, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.filesystem_commands.utime_handle)) return @as(?Value, try fs.utimeHandle(runtime, state, context, effects, arguments));
     if (matches(name, foundation.stdio_commands.stdin_read, foundation.stdio_commands.stdin_read_user)) return @as(?Value, try stdio.stdinRead(runtime, context, effects, arguments));
     if (matches(name, foundation.stdio_commands.stdout_write, foundation.stdio_commands.stdout_write_user)) return @as(?Value, try stdio.stdoutWrite(runtime, context, effects, arguments));
     if (matches(name, foundation.stdio_commands.stderr_write, foundation.stdio_commands.stderr_write_user)) return @as(?Value, try stdio.stderrWrite(runtime, context, effects, arguments));
@@ -146,7 +149,7 @@ test "未実装命令はdispatch名と利用者名の両形で構造化ENOTSUP�
             }
         }
     }
-    try std.testing.expectEqual(@as(usize, 35), covered);
+    try std.testing.expectEqual(@as(usize, 32), covered);
 }
 
 test "実装済み命令の引数不足はEINVALで未知capability照会はfalse" {
@@ -209,7 +212,29 @@ test "余分な引数はEINVALで、openだけのホストはstream_file_io非�
 
     var truncate_name = try runtime.stringUtf8("truncate");
     try roots.protect(&truncate_name);
-    const truncate_full = Context{ .stream = .{
+    const truncate_full = Context{
+        .stream = .{
+            .context = emptyContext().stream.context,
+            .truncateFileFn = struct {
+                fn dummy(_: *anyopaque, _: u64, _: u64) anyerror!void {
+                    return;
+                }
+            }.dummy,
+        },
+        .fs = .{
+            .context = emptyContext().fs.context,
+            .truncatePathFn = struct {
+                fn dummy(_: *anyopaque, _: []const u8, _: u64) anyerror!void {
+                    return;
+                }
+            }.dummy,
+        },
+    };
+    const truncate_supported = (try call(&runtime, &state, truncate_full, effects, foundation.capability_supported_command, &.{truncate_name})) orelse return error.TestExpectedEqual;
+    try std.testing.expect(truncate_supported == .boolean and truncate_supported.boolean);
+
+    // handle側callbackだけではtruncate capabilityは成立しない（path側が必要）。
+    const truncate_partial = Context{ .stream = .{
         .context = emptyContext().stream.context,
         .truncateFileFn = struct {
             fn dummy(_: *anyopaque, _: u64, _: u64) anyerror!void {
@@ -217,6 +242,6 @@ test "余分な引数はEINVALで、openだけのホストはstream_file_io非�
             }
         }.dummy,
     } };
-    const truncate_supported = (try call(&runtime, &state, truncate_full, effects, foundation.capability_supported_command, &.{truncate_name})) orelse return error.TestExpectedEqual;
-    try std.testing.expect(truncate_supported == .boolean and truncate_supported.boolean);
+    const truncate_partial_supported = (try call(&runtime, &state, truncate_partial, effects, foundation.capability_supported_command, &.{truncate_name})) orelse return error.TestExpectedEqual;
+    try std.testing.expect(truncate_partial_supported == .boolean and !truncate_partial_supported.boolean);
 }

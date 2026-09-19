@@ -38,6 +38,7 @@ const forgetHandleId = shared.forgetHandleId;
 const fileFor = shared.fileFor;
 const pathStringFromBytes = shared.pathStringFromBytes;
 const sizeArgument = shared.sizeArgument;
+const setTimeArgument = shared.setTimeArgument;
 const bytesArgument = shared.bytesArgument;
 const publicSizeValue = shared.publicSizeValue;
 const setField = shared.setField;
@@ -220,6 +221,31 @@ pub fn truncateBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
         return throwIo(runtime, failure, foundation.stream_operations.ftruncate, null, null, .truncate);
     };
     return .{};
+}
+
+pub fn utimeHandleBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    const operation = foundation.filesystem_operations.futime;
+    if (arguments.len < 1) {
+        return throwStructured(runtime, .EBADF, operation, null, null, "無効なハンドルです");
+    }
+    const entry = fileFor(runtime, arguments[0]) orelse {
+        return throwStructured(runtime, .EBADF, operation, null, null, "無効なハンドルです");
+    };
+    if (arguments.len < 3) {
+        return throwStructured(runtime, .EINVAL, operation, null, null, "時刻はナノ秒の整数である必要があります");
+    }
+    const atime = try setTimeArgument(runtime, arguments[1], operation);
+    const mtime = try setTimeArgument(runtime, arguments[2], operation);
+    low_level_fs.setTimestampsHandle(io(runtime), entry.file, atime, mtime) catch |failure| {
+        return throwIo(runtime, failure, operation, null, null, .utime);
+    };
+    return .{};
+}
+
+pub fn pluginSetTimestampsFile(context: *anyopaque, raw: u64, atime: foundation.SetTime, mtime: foundation.SetTime) anyerror!void {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    const entry = table(runtime).find(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+    return low_level_fs.setTimestampsHandle(io(runtime), entry.file, atime, mtime);
 }
 
 test "AOT低レイヤーはread/write/truncate/closeをハンドル同一性で扱う" {

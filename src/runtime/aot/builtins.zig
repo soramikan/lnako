@@ -437,7 +437,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
-        .low_level_file_open, .low_level_file_close, .low_level_file_read_bytes, .low_level_file_write_bytes, .low_level_file_sync, .low_level_file_truncate, .low_level_file_stat, .low_level_file_lstat, .low_level_symlink_create, .low_level_symlink_read, .low_level_hardlink_create, .low_level_path_realpath, .low_level_path_rename, .low_level_path_unlink, .low_level_path_rmdir, .low_level_stdin_read, .low_level_stdout_write, .low_level_stderr_write, .low_level_stdout_sync, .low_level_stderr_sync => {
+        .low_level_file_open, .low_level_file_close, .low_level_file_read_bytes, .low_level_file_write_bytes, .low_level_file_sync, .low_level_file_truncate, .low_level_file_stat, .low_level_file_lstat, .low_level_symlink_create, .low_level_symlink_read, .low_level_hardlink_create, .low_level_path_realpath, .low_level_path_rename, .low_level_path_unlink, .low_level_path_rmdir, .low_level_file_truncate_path, .low_level_file_utime_path, .low_level_file_utime_handle, .low_level_stdin_read, .low_level_stdout_write, .low_level_stderr_write, .low_level_stdout_sync, .low_level_stderr_sync => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = state.lowLevelFileBuiltin(runtime, command, actual) catch |failure| {
                 if (!runtime.has_pending_exception) runtime.setFailure(failure);
@@ -467,7 +467,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         },
         // カタログ掲載済みだが未実装の低レイヤー命令。構造化 ENOTSUP を投げる
         // 共通stub。実装済み命令を追加するときは対応するcaseを上へ置く。
-        .low_level_file_seek, .low_level_file_tell, .low_level_file_pread, .low_level_file_pwrite, .low_level_file_truncate_path, .low_level_file_utime_path, .low_level_file_utime_handle, .low_level_dir_open, .low_level_dir_next, .low_level_dir_close, .low_level_dir_foreach, .low_level_file_chmod, .low_level_file_chown, .low_level_symlink_chown, .low_level_file_access, .low_level_uid_get, .low_level_euid_get, .low_level_gid_get, .low_level_egid_get, .low_level_groups_get, .low_level_umask_set, .low_level_process_spawn, .low_level_process_wait, .low_level_pid_get, .low_level_ppid_get, .low_level_signal_send, .low_level_process_priority_get, .low_level_process_priority_set, .low_level_tty_isatty, .low_level_tty_size, .low_level_statfs, .low_level_reflink, .low_level_seek_data, .low_level_seek_hole, .low_level_fallocate => {
+        .low_level_file_seek, .low_level_file_tell, .low_level_file_pread, .low_level_file_pwrite, .low_level_dir_open, .low_level_dir_next, .low_level_dir_close, .low_level_dir_foreach, .low_level_file_chmod, .low_level_file_chown, .low_level_symlink_chown, .low_level_file_access, .low_level_uid_get, .low_level_euid_get, .low_level_gid_get, .low_level_egid_get, .low_level_groups_get, .low_level_umask_set, .low_level_process_spawn, .low_level_process_wait, .low_level_pid_get, .low_level_ppid_get, .low_level_signal_send, .low_level_process_priority_get, .low_level_process_priority_set, .low_level_tty_isatty, .low_level_tty_size, .low_level_statfs, .low_level_reflink, .low_level_seek_data, .low_level_seek_hole, .low_level_fallocate => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = state.lowLevelUnsupportedBuiltin(runtime, command, actual) catch |failure| {
                 if (!runtime.has_pending_exception) runtime.setFailure(failure);

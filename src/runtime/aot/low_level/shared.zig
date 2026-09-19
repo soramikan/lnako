@@ -127,6 +127,35 @@ pub fn sizeArgument(_: *Runtime, value: Value) !u64 {
     };
 }
 
+/// `ファイル時刻設定` / `ファイル時刻設定済` のATIME/MTIME引数を `SetTime` 契約へ
+/// 変換する。nullは既存値維持、文字列 `"now"` は現在時刻、Number/BigIntは
+/// ナノ秒の明示値。契約外は `operation` を載せた `EINVAL` を投げる。
+pub fn setTimeArgument(runtime: *Runtime, value: Value, operation: []const u8) anyerror!foundation.SetTime {
+    return switch (value.tag) {
+        @intFromEnum(Tag.null_value) => .unchanged,
+        @intFromEnum(Tag.number) => .{ .at = foundation.timeNsFromNumber(valueToNumber(value)) catch
+            return throwStructured(runtime, .EINVAL, operation, null, null, "時刻はナノ秒の整数である必要があります") },
+        @intFromEnum(Tag.bigint) => .{ .at = value.object().?.payload.bigint.toI128() catch
+            return throwStructured(runtime, .EINVAL, operation, null, null, "時刻はナノ秒の整数である必要があります") },
+        @intFromEnum(Tag.static_utf8_string), @intFromEnum(Tag.utf16_string) => if (isNowValue(value))
+            .now
+        else
+            return throwStructured(runtime, .EINVAL, operation, null, null, "時刻はナノ秒の整数か\"now\"である必要があります"),
+        else => return throwStructured(runtime, .EINVAL, operation, null, null, "時刻はナノ秒の整数である必要があります"),
+    };
+}
+
+fn isNowValue(value: Value) bool {
+    return switch (value.tag) {
+        @intFromEnum(Tag.static_utf8_string) => std.mem.eql(u8, staticUtf8(value), "now"),
+        @intFromEnum(Tag.utf16_string) => blk: {
+            const units = value.object().?.payload.utf16_string;
+            break :blk units.len == 3 and units[0] == 'n' and units[1] == 'o' and units[2] == 'w';
+        },
+        else => false,
+    };
+}
+
 pub fn bytesArgument(value: Value) ![]const u8 {
     if (value.tag != @intFromEnum(Tag.byte_buffer)) return error.InvalidBytes;
     const buffer = value.object().?.payload.byte_buffer;
@@ -249,6 +278,7 @@ fn failureMessage(failure: anyerror) []const u8 {
         error.OperationUnsupported, error.UnsupportedReparsePointType, error.Unsupported, error.NotSupported => "この操作は対応していません",
         error.LinkQuotaExceeded => "リンク数の上限に達しました",
         error.NameTooLong => "名前が長すぎます",
+        error.InvalidTimestamp => "時刻が不正です",
         error.FileBusy => "ファイルが使用中です",
         error.InputOutput => "入出力エラーです",
         error.StreamTooLong => "標準入力が上限を超えました",
