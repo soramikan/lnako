@@ -727,3 +727,37 @@ AOT native shard 24件を削除し、新しい12件を追加する必要があ�
 `... / O2+O3`、およびWindowsの同12件（計12件）
 
 手順は本PRの説明に記載した `gh api` コマンドで行う。
+
+## 実測: Phase 5適用後（run 35465334491）
+
+| 指標 | 適用前 35460438958 | 適用後 35465334491 | 差 |
+| --- | ---: | ---: | ---: |
+| job数 | 57 | 45 | -12 |
+| 全job runner minutes | 188 min | **166 min** | **-22 min（-11.7%）** |
+| AOT native job数 | 24 | 12 | -12 |
+| AOT native runner時間 | 3,007s（50 min） | 2,182s（36 min） | -825s（-13.8 min） |
+| 最長job（Windows core） | 1,074s | 1,075s | ±0（クリティカルパス不変） |
+| failure | 0 | 0 | 悪化なし |
+| `Verify native AOT artifacts` | success | success | 統合groupでもpartition検証が成立 |
+
+推定（-17.8 min）に対し実測はAOT分で-13.8 min、全体では-22 minだった。
+最長jobが変わらないためwall clockへの影響はなく、予測どおりAOTは
+クリティカルパス外である。統合後も`verify_native_aot_artifacts`が成功しており、
+fixture × optimization の被覆（各optimizationでちょうど1回）は維持されている。
+
+## 改善計画2 の最終結果
+
+| 指標 | 改善前 | 改善後 | 差 |
+| --- | ---: | ---: | ---: |
+| workflow wall clock | 1,112s | 876〜1,113s | 最良876s（-21%） |
+| 全job runner minutes | 213 min | **166 min** | **-47 min（-22%）** |
+| matrix job数 | 57 | 45 | -12 |
+| AOT検証ステップ（24 shard合計） | 1,896s | 1,163s | -38.7% |
+
+計画の短期目標に対する到達状況:
+
+- Wall clock 20〜30%削減 → **-21%（達成帯の下端）**。ただしwallはrun間のqueue
+  変動が大きく、クリティカルパス（Windows core 約1,075s）が支配している。
+- Runner minutes 25%以上削減 → **-22%**（213→166 min）。ほぼ達成で、残りは
+  Windows coreの実ビルド／実実行コスト（CI構造では削減不可）に由来する。
+- Physical上「検証量を減らさず」を維持（Phase 4・5はビルドと実行の重複のみ除去）。
