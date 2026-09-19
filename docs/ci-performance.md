@@ -598,3 +598,31 @@ reviewerの調査）に比べて無効化のコストは小さい。
 いない。cacheの内容と生成物の対応は再現手順が重く、まず「壊れた成果物を
 配布しない」ことを優先した。同種のリスクは他jobにもあるが、成果物を
 artifactとして配布するのはこのjobだけである。
+
+### 修正の検証（run 35460438958）
+
+`-Dcpu=x86_64_v2` を入れた後のrunで確認した。
+
+| 確認項目 | 結果 |
+| --- | --- |
+| Windows AOT native shard 12件 | すべて success |
+| Windows AOT support 6件（HTTP・dispatch evidence・coverage 3・smoke） | すべて success |
+| Windows AOT compiler producer | success |
+| workflow全体 | success（failure 0件、wall 876s、runner minutes 188） |
+| 成果物のAVX-512命令 | `vmovdqu64`/`vmovdqa64`/`vpternlogq`/`vpxord`/`vpandq`/`vpbroadcastq` すべて **0件** |
+
+修正前のrun（35456603123 / 35458680454 / 35459423674）では、いずれも
+Windows AOT系が8〜15件失敗し、artifactにAVX-512命令が含まれていた。
+修正後は同一のfixture・shard構成で全件成功しており、原因の同定と修正が
+一致している。
+
+### 計測値の比較（同一構成のrun）
+
+| run | 状態 | wall | runner minutes |
+| --- | --- | ---: | ---: |
+| 35453416527 | 修正前（Phase 1のみ） | 1112s | 213 |
+| 35460438958 | 本修正後（Phase 1＋4＋CPU固定） | 876s | 188 |
+
+wallは1112s→876s（-21%）、runner minutesは213→188（-12%）。
+wall短縮の主因はPhase 4（Windows AOT support系5 jobのcompiler build共有）で、
+runner minutes削減の内訳はPhase 4の約15分とWindows AOT shardのcache保存停止である。
