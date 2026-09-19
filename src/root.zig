@@ -98,6 +98,7 @@ pub const package = struct {
     pub const features = @import("package/features.zig");
     pub const manifest = @import("package/manifest.zig");
     pub const resolver = @import("package/resolver.zig");
+    pub const lock = @import("package/lock.zig");
 };
 
 pub const Command = enum {
@@ -226,6 +227,7 @@ test {
     std.testing.refAllDecls(package.features);
     std.testing.refAllDecls(package.manifest);
     std.testing.refAllDecls(package.resolver);
+    std.testing.refAllDecls(package.lock);
 }
 
 test "コマンドを解析できる" {

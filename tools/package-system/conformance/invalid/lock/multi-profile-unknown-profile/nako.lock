@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "resolverVersion": 1,
+  "input": {
+    "manifestSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "profile": "default",
+    "features": ["default"],
+    "target": { "os": "macos", "cpu": "aarch64", "abi": "gnu" }
+  },
+  "packages": {},
+  "profiles": {
+    "default": { "runtime": "lnako", "os": "macos", "cpu": "aarch64", "abi": "gnu" }
+  },
+  "profilePackages": {
+    "ghost": {}
+  }
+}
