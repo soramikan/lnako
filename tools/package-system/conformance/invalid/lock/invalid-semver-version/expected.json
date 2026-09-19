@@ -1,0 +1,4 @@
+{
+  "code": "E024_INVALID_SEMVER",
+  "messageContains": "semver"
+}

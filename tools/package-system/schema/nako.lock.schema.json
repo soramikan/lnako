@@ -24,56 +24,71 @@
         "target": { "$ref": "common.schema.json#/$defs/target" }
       }
     },
-    "packages": {
-      "type": "object",
-      "additionalProperties": {
-        "type": "object",
-        "required": ["id", "name", "version", "dependencies"],
-        "additionalProperties": false,
-        "properties": {
-          "id": { "$ref": "common.schema.json#/$defs/packageId" },
-          "name": { "type": "string" },
-          "version": { "$ref": "common.schema.json#/$defs/semver" },
-          "source": {
-            "oneOf": [
-              { "$ref": "common.schema.json#/$defs/sourceRegistry" },
-              { "$ref": "common.schema.json#/$defs/sourceStatic" },
-              { "$ref": "common.schema.json#/$defs/sourceGit" },
-              { "$ref": "common.schema.json#/$defs/sourceHttp" },
-              { "$ref": "common.schema.json#/$defs/sourcePath" }
-            ]
-          },
-          "resolvedFrom": {
-            "oneOf": [
-              { "$ref": "common.schema.json#/$defs/sourceRegistry" },
-              { "$ref": "common.schema.json#/$defs/sourceStatic" },
-              { "$ref": "common.schema.json#/$defs/sourceGit" },
-              { "$ref": "common.schema.json#/$defs/sourceHttp" },
-              { "$ref": "common.schema.json#/$defs/sourcePath" }
-            ]
-          },
-          "dependencies": {
-            "type": "array",
-            "items": { "$ref": "common.schema.json#/$defs/packageId" }
-          },
-          "features": { "$ref": "common.schema.json#/$defs/featureList" },
-          "artifacts": {
-            "type": "object",
-            "additionalProperties": { "$ref": "common.schema.json#/$defs/artifactRecord" },
-            "propertyNames": { "type": "string" }
-          },
-          "npmInstances": {
-            "type": "object",
-            "additionalProperties": { "$ref": "common.schema.json#/$defs/npmInstance" }
-          }
-        }
-      },
-      "propertyNames": { "$ref": "common.schema.json#/$defs/packageId" }
-    },
+    "packages": { "$ref": "#/$defs/packageMap" },
     "profiles": {
       "type": "object",
       "additionalProperties": { "$ref": "common.schema.json#/$defs/profile" },
       "propertyNames": { "$ref": "common.schema.json#/$defs/featureName" }
+    },
+    "profilePackages": {
+      "description": "profile ごとの解決済 package グラフ。複数 profile を一つの lock に収録するとき、input.profile 以外の選択肢もここへ記録する。",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/packageMap" },
+      "propertyNames": { "$ref": "common.schema.json#/$defs/featureName" }
+    }
+  },
+  "$defs": {
+    "packageMap": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/packageEntry" },
+      "propertyNames": { "$ref": "common.schema.json#/$defs/packageId" }
+    },
+    "packageEntry": {
+      "type": "object",
+      "required": ["id", "name", "version", "dependencies"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "common.schema.json#/$defs/packageId" },
+        "name": { "type": "string" },
+        "version": { "$ref": "common.schema.json#/$defs/semver" },
+        "source": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/$defs/sourceRegistry" },
+            { "$ref": "common.schema.json#/$defs/sourceStatic" },
+            { "$ref": "common.schema.json#/$defs/sourceGit" },
+            { "$ref": "common.schema.json#/$defs/sourceHttp" },
+            { "$ref": "common.schema.json#/$defs/sourcePath" }
+          ]
+        },
+        "resolvedFrom": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/$defs/sourceRegistry" },
+            { "$ref": "common.schema.json#/$defs/sourceStatic" },
+            { "$ref": "common.schema.json#/$defs/sourceGit" },
+            { "$ref": "common.schema.json#/$defs/sourceHttp" },
+            { "$ref": "common.schema.json#/$defs/sourcePath" }
+          ]
+        },
+        "dependencies": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/$defs/packageId" }
+        },
+        "features": { "$ref": "common.schema.json#/$defs/featureList" },
+        "implementation": {
+          "description": "解決時に選択された実装種別。共通 source 既定・native 明示選択の結果を記録する。",
+          "type": "string",
+          "enum": ["source", "native", "ESM", "none"]
+        },
+        "artifacts": {
+          "type": "object",
+          "additionalProperties": { "$ref": "common.schema.json#/$defs/artifactRecord" },
+          "propertyNames": { "type": "string" }
+        },
+        "npmInstances": {
+          "type": "object",
+          "additionalProperties": { "$ref": "common.schema.json#/$defs/npmInstance" }
+        }
+      }
     }
   }
 }
