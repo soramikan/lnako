@@ -124,10 +124,13 @@ const nativeShardCounts = new Map([
   ["macOS arm64", 1],
   ["Windows x86_64", 3],
 ]);
+// Linux・Windowsは改善計画2 Phase 5（Case C）でO0+O1／O2+O3へ統合した。
+// 同じshardのoptimizationを1 jobにまとめるとoracle実行が1回で済み、
+// runner minutesが削減できる（実測: -17.8 min/run、wall効果なし）。
 const nativeOptimizationGroups = new Map([
-  ["Linux x86_64", [["O0", "O0"], ["O1", "O1"], ["O2", "O2"], ["O3", "O3"]]],
+  ["Linux x86_64", [["O0-O1", "O0,O1"], ["O2-O3", "O2,O3"]]],
   ["macOS arm64", [["O0-O1", "O0,O1"], ["O2", "O2"], ["O3", "O3"]]],
-  ["Windows x86_64", [["O0", "O0"], ["O1", "O1"], ["O2", "O2"], ["O3", "O3"]]],
+  ["Windows x86_64", [["O0-O1", "O0,O1"], ["O2-O3", "O2,O3"]]],
 ]);
 const expectedNativeRowCount = [...nativeShardCounts].reduce((total, [name, shardCount]) => total + shardCount * nativeOptimizationGroups.get(name).length, 0);
 const expectedSupportTaskCounts = new Map([
@@ -140,7 +143,7 @@ const expectedSupportRowCount = [...expectedSupportTaskCounts.values()].reduce((
 if (nativeAotMatrixEntries.length !== expectedNativeRowCount || supportAotMatrixEntries.length !== expectedSupportRowCount) {
   throw new Error(`AOT job分割数が不正です: native=${nativeAotMatrixEntries.length} support=${supportAotMatrixEntries.length}`);
 }
-if (matrixEntries.length !== 51) throw new Error(`CI matrixの実job数が不正です: actual=${matrixEntries.length}`);
+if (matrixEntries.length !== 39) throw new Error(`CI matrixの実job数が不正です: actual=${matrixEntries.length}`);
 
 // 変更分類jobは重いmatrixの前段として必須。allow-list方式で、判定不能は
 // すべてfullへ倒す設計をtool側の実装とworkflowの両方から検査する。
@@ -266,7 +269,8 @@ for (const [name, count] of nativeShardCounts) {
   for (let index = 0; index < count; index += 1) {
     for (const [optimizationKey, optimizations] of groups) {
       const sharded = count > 1;
-      const jobName = sharded ? `AOT native shard ${index + 1}/${count} / ${optimizationKey}` : `AOT native routes ${optimizationKey.replace("-", "+")}`;
+      // 統合group名はjob名でも`+`表記にする（例: O0+O1）。
+      const jobName = sharded ? `AOT native shard ${index + 1}/${count} / ${optimizationKey.replaceAll("-", "+")}` : `AOT native routes ${optimizationKey.replaceAll("-", "+")}`;
       expectedNativeRows.add(`${name}\0${platforms.get(name)}\0${index}\0${count}\0${sharded}\0${optimizationKey}\0${optimizations}\0${jobName}`);
     }
   }
@@ -473,17 +477,17 @@ if (!aotCompilerJob || !aotCompilerJob.includes("name: Windows x86_64 / AOT veri
 if (!nativeAotJob.includes("needs: [changes]\n") || nativeAotJob.includes("aot_compiler")) {
   throw new Error("aot jobがcompiler producerへ依存しています（直列化防止のためchangesのみへ依存させてください）");
 }
-// native 12 shardに加え、Windowsのsupport系5 job（HTTP・dispatch evidence・
-// dispatch coverage 3 shard）も共有compiler artifactを利用する
-// （改善計画2 Phase 4）。support-smokeはReleaseSafe compilerを検証するため
-// 共有Debug artifactを使えず、aot job側に残す。したがってconsumer jobに
-// `zig build`が無いことを確認する。
+// native 6 shard（O0+O1／O2+O3×3 shard。改善計画2 Phase 5 Case C）に加え、
+// Windowsのsupport系5 job（HTTP・dispatch evidence・dispatch coverage 3 shard）
+// も共有compiler artifactを利用する（同 Phase 4）。support-smokeはReleaseSafe
+// compilerを検証するため共有Debug artifactを使えず、aot job側に残す。
+// したがってconsumer jobに`zig build`が無いことを確認する。
 if (!windowsAotJob.includes("needs: [changes, aot_compiler]") ||
-    (windowsAotJob.match(/suite: aot-native\n            task: native/g) ?? []).length !== 12 ||
+    (windowsAotJob.match(/suite: aot-native\n            task: native/g) ?? []).length !== 6 ||
     (windowsAotJob.match(/suite: aot-support\n            task: support-/g) ?? []).length !== 5 ||
-    (windowsAotJob.match(/os: windows-2025/g) ?? []).length !== 17 ||
+    (windowsAotJob.match(/os: windows-2025/g) ?? []).length !== 11 ||
     windowsAotJob.includes("run: zig build")) {
-  throw new Error("Windows AOT consumer jobがproducer・12 native shard＋5 support job構成・共有compiler利用のいずれかを満たしていません");
+  throw new Error("Windows AOT consumer jobがproducer・6 native shard＋5 support job構成・共有compiler利用のいずれかを満たしていません");
 }
 const windowsAotStep = (name) => {
   const marker = "      - name: " + name;

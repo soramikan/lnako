@@ -4,7 +4,7 @@ CIは、互換性検証の意味を保ったまま、AOTをfixture shardと最�
 
 ## job構成
 
-現行workflowは **51 matrix job＋変更分類・軽量検証・Windows AOT compiler producer・3後段job、合計57 job**です。matrixの失敗は別OS・別suiteの結果を隠さないよう `fail-fast: false`、同一branchの古いrunは `cancel-in-progress: true` です。
+現行workflowは **39 matrix job＋変更分類・軽量検証・Windows AOT compiler producer・3後段job、合計45 job**です。matrixの失敗は別OS・別suiteの結果を隠さないよう `fail-fast: false`、同一branchの古いrunは `cancel-in-progress: true` です。
 
 | job | 内訳 | 主な検証 |
 | --- | ---: | --- |

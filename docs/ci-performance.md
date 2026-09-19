@@ -699,6 +699,31 @@ Case Cはrunner minutesを約17.8分/run（全体の約9%程度）削減でき�
 
 wall clockへの効果はない（AOTはクリティカルパス外）。Phase 4で同じ性質の
 「重複build削減」を既に実施しており、Phase 5はその残り（oracle再実行とfixed
-overhead）を削る施策である。runner minutes削減は15分以上と大きいため、
-**worker=2の効果を確定させた後に独立した変更として実施する**方針とし、
-本PRでは実測値と計算根拠を記録するに留める。
+overhead）を削る施策である。worker=2の標準化でAOT経路の効果を確定させた後、
+**Case Cを実施**した（実測-17.8 min/runはrunner minutes目標に対して有意）。
+
+### 実装
+
+Linux・WindowsのAOT native jobを O0+O1／O2+O3 の2 groupへ統合した
+（24 job → 12 job、matrix全体では57→45 job）。`optimizationKey` は `O0-O1`、
+`optimizations` は `O0,O1`、job名は `AOT native shard 1/3 / O0+O1` とし、
+macOSが既に使っている統合group方式（`O0-O1`）と揃えた。検証量は不変で、
+O0〜O3の全optimizationと公式oracle比較・interpreter比較を維持する。
+
+`check_ci_workflow.mjs` と `check_native_aot_artifacts.mjs` の期待groupも
+O0-O1／O2-O3へ更新し、artifact partition検証（fixtureが各optimizationで
+ちょうど1回被覆されること）は統合後も機能する。
+
+### 運用上の注意（重要）
+
+job名が変わるため、**mainのブランチ保護にある required status checks のうち
+AOT native shard 24件を削除し、新しい12件を追加する必要がある**。保護設定を
+更新しないままマージすると、以後のPRがrequired check未充足でブロックされる。
+
+削除対象（例）: `Linux x86_64 / AOT native shard 1/3 / O0` 〜 `... / O3`
+（Linux・Windows × 3 shard × O0〜O3 = 24件）
+
+追加対象: `Linux x86_64 / AOT native shard {1..3}/3 / O0+O1`、
+`... / O2+O3`、およびWindowsの同12件（計12件）
+
+手順は本PRの説明に記載した `gh api` コマンドで行う。

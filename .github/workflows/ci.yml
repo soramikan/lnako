@@ -520,126 +520,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 0
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O0
-            optimizations: O0
-            jobName: AOT native shard 1/3 / O0
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 0
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O1
-            optimizations: O1
-            jobName: AOT native shard 1/3 / O1
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 0
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O2
-            optimizations: O2
-            jobName: AOT native shard 1/3 / O2
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 0
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O3
-            optimizations: O3
-            jobName: AOT native shard 1/3 / O3
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 1
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O0
-            optimizations: O0
-            jobName: AOT native shard 2/3 / O0
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 1
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O1
-            optimizations: O1
-            jobName: AOT native shard 2/3 / O1
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 1
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O2
-            optimizations: O2
-            jobName: AOT native shard 2/3 / O2
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 1
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O3
-            optimizations: O3
-            jobName: AOT native shard 2/3 / O3
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 2
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O0
-            optimizations: O0
-            jobName: AOT native shard 3/3 / O0
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 2
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O1
-            optimizations: O1
-            jobName: AOT native shard 3/3 / O1
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 2
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O2
-            optimizations: O2
-            jobName: AOT native shard 3/3 / O2
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 2
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O3
-            optimizations: O3
-            jobName: AOT native shard 3/3 / O3
           - name: macOS arm64
             os: macos-15
             suite: aot-native
@@ -676,6 +556,66 @@ jobs:
             jobName: AOT native routes O3
             dispatchCoverageShardIndex: 2
             dispatchCoverageShardCount: 3
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-native
+            task: native
+            fixtureShardIndex: 0
+            fixtureShardCount: 3
+            fixtureSharded: true
+            optimizationKey: O0-O1
+            optimizations: O0,O1
+            jobName: AOT native shard 1/3 / O0+O1
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-native
+            task: native
+            fixtureShardIndex: 0
+            fixtureShardCount: 3
+            fixtureSharded: true
+            optimizationKey: O2-O3
+            optimizations: O2,O3
+            jobName: AOT native shard 1/3 / O2+O3
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-native
+            task: native
+            fixtureShardIndex: 1
+            fixtureShardCount: 3
+            fixtureSharded: true
+            optimizationKey: O0-O1
+            optimizations: O0,O1
+            jobName: AOT native shard 2/3 / O0+O1
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-native
+            task: native
+            fixtureShardIndex: 1
+            fixtureShardCount: 3
+            fixtureSharded: true
+            optimizationKey: O2-O3
+            optimizations: O2,O3
+            jobName: AOT native shard 2/3 / O2+O3
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-native
+            task: native
+            fixtureShardIndex: 2
+            fixtureShardCount: 3
+            fixtureSharded: true
+            optimizationKey: O0-O1
+            optimizations: O0,O1
+            jobName: AOT native shard 3/3 / O0+O1
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-native
+            task: native
+            fixtureShardIndex: 2
+            fixtureShardCount: 3
+            fixtureSharded: true
+            optimizationKey: O2-O3
+            optimizations: O2,O3
+            jobName: AOT native shard 3/3 / O2+O3
           - name: Linux x86_64
             os: ubuntu-24.04
             suite: aot-support
@@ -934,9 +874,9 @@ jobs:
             fixtureShardIndex: 0
             fixtureShardCount: 3
             fixtureSharded: true
-            optimizationKey: O0
-            optimizations: O0
-            jobName: AOT native shard 1/3 / O0
+            optimizationKey: O0-O1
+            optimizations: O0,O1
+            jobName: AOT native shard 1/3 / O0+O1
           - name: Windows x86_64
             os: windows-2025
             suite: aot-native
@@ -944,29 +884,9 @@ jobs:
             fixtureShardIndex: 0
             fixtureShardCount: 3
             fixtureSharded: true
-            optimizationKey: O1
-            optimizations: O1
-            jobName: AOT native shard 1/3 / O1
-          - name: Windows x86_64
-            os: windows-2025
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 0
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O2
-            optimizations: O2
-            jobName: AOT native shard 1/3 / O2
-          - name: Windows x86_64
-            os: windows-2025
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 0
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O3
-            optimizations: O3
-            jobName: AOT native shard 1/3 / O3
+            optimizationKey: O2-O3
+            optimizations: O2,O3
+            jobName: AOT native shard 1/3 / O2+O3
           - name: Windows x86_64
             os: windows-2025
             suite: aot-native
@@ -974,9 +894,9 @@ jobs:
             fixtureShardIndex: 1
             fixtureShardCount: 3
             fixtureSharded: true
-            optimizationKey: O0
-            optimizations: O0
-            jobName: AOT native shard 2/3 / O0
+            optimizationKey: O0-O1
+            optimizations: O0,O1
+            jobName: AOT native shard 2/3 / O0+O1
           - name: Windows x86_64
             os: windows-2025
             suite: aot-native
@@ -984,29 +904,9 @@ jobs:
             fixtureShardIndex: 1
             fixtureShardCount: 3
             fixtureSharded: true
-            optimizationKey: O1
-            optimizations: O1
-            jobName: AOT native shard 2/3 / O1
-          - name: Windows x86_64
-            os: windows-2025
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 1
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O2
-            optimizations: O2
-            jobName: AOT native shard 2/3 / O2
-          - name: Windows x86_64
-            os: windows-2025
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 1
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O3
-            optimizations: O3
-            jobName: AOT native shard 2/3 / O3
+            optimizationKey: O2-O3
+            optimizations: O2,O3
+            jobName: AOT native shard 2/3 / O2+O3
           - name: Windows x86_64
             os: windows-2025
             suite: aot-native
@@ -1014,9 +914,9 @@ jobs:
             fixtureShardIndex: 2
             fixtureShardCount: 3
             fixtureSharded: true
-            optimizationKey: O0
-            optimizations: O0
-            jobName: AOT native shard 3/3 / O0
+            optimizationKey: O0-O1
+            optimizations: O0,O1
+            jobName: AOT native shard 3/3 / O0+O1
           - name: Windows x86_64
             os: windows-2025
             suite: aot-native
@@ -1024,29 +924,9 @@ jobs:
             fixtureShardIndex: 2
             fixtureShardCount: 3
             fixtureSharded: true
-            optimizationKey: O1
-            optimizations: O1
-            jobName: AOT native shard 3/3 / O1
-          - name: Windows x86_64
-            os: windows-2025
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 2
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O2
-            optimizations: O2
-            jobName: AOT native shard 3/3 / O2
-          - name: Windows x86_64
-            os: windows-2025
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 2
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O3
-            optimizations: O3
-            jobName: AOT native shard 3/3 / O3
+            optimizationKey: O2-O3
+            optimizations: O2,O3
+            jobName: AOT native shard 3/3 / O2+O3
           # WindowsのAOT support系。共有compiler artifactをinstallして
           # `zig build`の重複を除く（support-smokeのみReleaseSafeのため
           # 自前buildを維持する）。
