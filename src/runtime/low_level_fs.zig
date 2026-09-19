@@ -153,12 +153,40 @@ pub fn rmdir(io: std.Io, path: []const u8) anyerror!void {
 
 /// パス指定のtruncate。POSIXの `truncate` と同じくsymlinkを追跡し、write権限を
 /// 要求する。grow時は0で埋める（実体はsparseになり得る）。ディレクトリは
-/// `error.IsDir`（EISDIR）で拒否する。Windowsは書込みハンドルを開いて
+/// `error.IsDir`（EISDIR）で拒否する。
+///
+/// POSIXではパスを直接指定する `truncate(2)` を使う。`open(O_WRONLY)` +
+/// `ftruncate` ではFIFOの書込み専用openが読取り側の接続までブロックし、POSIXの
+/// `truncate` なら即EINVALになる場面でランタイム全体が停止するため。
+/// Windowsは書込みハンドルを開いて
 /// `NtSetInformationFile(FileEndOfFileInformation)` を使う。
 pub fn truncatePath(io: std.Io, path: []const u8, size: u64) anyerror!void {
+    return switch (builtin.os.tag) {
+        .windows, .wasi => truncatePathByHandle(io, path, size),
+        else => truncatePathPosix(path, size),
+    };
+}
+
+fn truncatePathByHandle(io: std.Io, path: []const u8, size: u64) anyerror!void {
     const file = try std.Io.Dir.cwd().openFile(io, path, .{ .mode = .write_only });
     defer file.close(io);
     try file.setLength(io, size);
+}
+
+fn truncatePathPosix(path: []const u8, size: u64) anyerror!void {
+    const c_truncate = struct {
+        extern "c" fn truncate(pathname: [*:0]const u8, length: std.c.off_t) c_int;
+    }.truncate;
+    const destination = try std.posix.toPosixPath(path);
+    const length = std.math.cast(std.c.off_t, size) orelse return error.InvalidArgument;
+    while (true) {
+        const result = c_truncate(&destination, length);
+        if (result == 0) return;
+        const errno = std.c.errno(result);
+        // シグナル割込みは一時的なので再試行する（EINTRをEINVALにしない）。
+        if (errno == .INTR) continue;
+        return fsPosixErrno(errno);
+    }
 }
 
 /// パス指定の時刻設定（utimes/utimensat相当）。POSIXでは `utimensat`、Windowsでは
@@ -193,7 +221,7 @@ fn setTimestampsPathPosix(path: []const u8, atime: foundation.SetTime, mtime: fo
         const errno = std.c.errno(result);
         // シグナル割込みは一時的なので再試行する（EINTRをEINVALにしない）。
         if (errno == .INTR) continue;
-        return utimePosixErrno(errno);
+        return fsPosixErrno(errno);
     }
 }
 
@@ -207,7 +235,7 @@ fn setTimestampsHandlePosix(file: std.Io.File, atime: foundation.SetTime, mtime:
         if (result == 0) return;
         const errno = std.c.errno(result);
         if (errno == .INTR) continue;
-        return utimePosixErrno(errno);
+        return fsPosixErrno(errno);
     }
 }
 
@@ -304,12 +332,20 @@ fn windowsSysTime(time: foundation.SetTime, now_sys: i64) anyerror!i64 {
     return switch (time) {
         .unchanged => 0,
         .now => now_sys,
-        .at => |nanoseconds| blk: {
-            const hundred_ns = @divFloor(nanoseconds, 100);
-            const system_time = hundred_ns - @as(i128, std.time.epoch.windows) * (std.time.ns_per_s / 100);
-            break :blk std.math.cast(i64, system_time) orelse return error.InvalidTimestamp;
-        },
+        .at => |nanoseconds| windowsFiletimeFromNs(nanoseconds),
     };
+}
+
+/// Unixナノ秒をWindows FILETIME（1601-01-01起点・100ns）へ変換する。
+/// `FILE_BASIC_INFORMATION` の時刻は0が「変更しない」を意味する特別値であり、
+/// 負値は符号なしFILETIMEとして不正になるため、0以下とi64範囲外は
+/// `InvalidTimestamp`（EINVAL）で拒否する。Windows APIに依存しないので
+/// 全プラットフォームで単体テストできる。
+fn windowsFiletimeFromNs(nanoseconds: foundation.TimeNs) anyerror!i64 {
+    const hundred_ns = @divFloor(nanoseconds, 100);
+    const system_time = hundred_ns - @as(i128, std.time.epoch.windows) * (std.time.ns_per_s / 100);
+    if (system_time <= 0) return error.InvalidTimestamp;
+    return std.math.cast(i64, system_time) orelse return error.InvalidTimestamp;
 }
 
 /// `NtCreateFile` / `NtSetInformationFile` のNTSTATUSをportable codeへ写す。
@@ -347,17 +383,19 @@ fn timespecFromSetTime(time: foundation.SetTime) anyerror!std.c.timespec {
     };
 }
 
-fn utimePosixErrno(errno: std.c.E) anyerror {
+fn fsPosixErrno(errno: std.c.E) anyerror {
     return switch (errno) {
         .ACCES => error.AccessDenied,
         .PERM => error.PermissionDenied,
         .NOENT => error.FileNotFound,
         .NOTDIR => error.NotDir,
+        .ISDIR => error.IsDir,
         .LOOP => error.SymLinkLoop,
         .NAMETOOLONG => error.NameTooLong,
         .INVAL, .FAULT => error.InvalidArgument,
         .ROFS => error.ReadOnlyFileSystem,
         .BADF => error.BadFileDescriptor,
+        .FBIG => error.FileTooBig,
         .NOSYS => error.Unsupported,
         .OPNOTSUPP => error.OperationUnsupported,
         else => error.Unexpected,
@@ -927,6 +965,20 @@ test "truncatePathは縮小・拡大・0サイズを反映し不足パスとデ�
         defer setFileReadOnly(readonly_path, false) catch {};
         try std.testing.expectError(error.AccessDenied, truncatePath(std.testing.io, readonly_path, 1));
     }
+
+    // FIFOは `truncate(2)` で即EINVALになる。open(O_WRONLY)を使う実装だと
+    // 書込みopenが読取り側の接続までブロックし、この呼び出しが返らない。
+    if (builtin.os.tag != .windows and builtin.os.tag != .wasi) {
+        const fifo_path = try tmpPath(&temporary, "pipe.fifo");
+        defer std.testing.allocator.free(fifo_path);
+        const mkfifo_fn = struct {
+            extern "c" fn mkfifo(path: [*:0]const u8, mode: std.c.mode_t) c_int;
+        }.mkfifo;
+        const fifo_z = try std.testing.allocator.dupeZ(u8, fifo_path);
+        defer std.testing.allocator.free(fifo_z);
+        try std.testing.expectEqual(@as(c_int, 0), mkfifo_fn(fifo_z.ptr, 0o600));
+        try std.testing.expectError(error.InvalidArgument, truncatePath(std.testing.io, fifo_path, 0));
+    }
 }
 
 test "setTimestampsPathは明示時刻・now・既存値維持を反映する" {
@@ -1006,4 +1058,13 @@ test "setTimestampsHandleはオープン中ハンドルの時刻を更新する"
     const after_now = try stat(std.testing.io, path, true);
     try std.testing.expect(@abs(after_now.mtime_ns.? - mtime) < std.time.ns_per_us);
     try std.testing.expect(after_now.atime_ns.? > mtime + std.time.ns_per_day);
+}
+
+test "windowsFiletimeFromNsは1601以前と範囲外をInvalidTimestampにする" {
+    // 1970-01-01T00:00:00Z は FILETIME 116444736000000000。
+    try std.testing.expectEqual(@as(i64, 116444736000000000), try windowsFiletimeFromNs(0));
+    // 1601-01-01T00:00:00Z は FILETIME 0（「変更しない」の特別値）なので拒否する。
+    try std.testing.expectError(error.InvalidTimestamp, windowsFiletimeFromNs(-11644473600000000000));
+    try std.testing.expectError(error.InvalidTimestamp, windowsFiletimeFromNs(std.math.minInt(i128)));
+    try std.testing.expectError(error.InvalidTimestamp, windowsFiletimeFromNs(std.math.maxInt(i128)));
 }

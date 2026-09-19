@@ -543,6 +543,9 @@
         "EACCES",
         "EPERM",
         "EISDIR",
+        "ENOTDIR",
+        "ELOOP",
+        "EROFS",
         "ENOSPC",
         "EINVAL",
         "ENOTSUP"
@@ -563,6 +566,9 @@
       "errors": [
         "ENOENT",
         "EACCES",
+        "ENOTDIR",
+        "ELOOP",
+        "EROFS",
         "EINVAL",
         "EPERM",
         "ENOTSUP"
@@ -583,6 +589,7 @@
       "errors": [
         "EBADF",
         "EACCES",
+        "EROFS",
         "EINVAL",
         "EPERM",
         "ENOTSUP"
