@@ -303,6 +303,26 @@ cacheは復元されない。
 fixture × platform × optimization の代表値は `buildTimingAggregate()` が
 medianで求める（Phase 3のshard weight tableの入力）。
 
+### Windows AOT shardのZig cache保存を止める
+
+同じrunの実測で、`aot_windows` のnative shardは `zig build` を一切実行せず
+（`Build AOT verification compiler` ステップが存在しない）、producer jobの
+共有compiler artifactをinstallしてfixtureのAOT buildだけを行っていた。
+それでも `use-cache: true` だったため、shard別に約64 MBのZig cacheを
+毎run保存していた。
+
+| 項目 | 値 |
+| --- | --- |
+| shard別cacheサイズ | 62,090,000〜64,640,000 bytes |
+| 12 shard合計（毎run） | 約770 MB |
+| 保存したcacheの再利用 | なし（shardはcompilerをbuildしない） |
+| 既存cache総量 | 11,770,382,922 bytes（上限10 GiBを超過） |
+
+`aot_windows` のsetup-zigを `use-cache: false` に変更した。Zig compiler自体は
+setup-zigがtool cacheから供給するため、cache無効でもセットアップは成功する
+（実測9秒）。Linux側の `aot` は `zig build` で検証compilerを作るため保存を
+継続する。
+
 ### 現在の静的weight分布（参考）
 
 `--shard-count 3` の静的weight（source長＋command数×8）は

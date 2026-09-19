@@ -870,19 +870,25 @@ const setupZigBlocks = [...workflow.matchAll(
   /      - uses: mlugg\/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2\.2\.1[\s\S]*?(?=      - uses: actions\/setup-node@)/g,
 )].map((match) => match[0]);
 const setupZigCacheSizeLimitMiB = 1536;
-// AOT native shardのZig cache identityはsuiteだけでなくfixture shardと
-// optimizationまで含める（v2世代）。setup-zigは保存keyへrunId-attemptを付けて
-// prefix一致で復元するため、同一prefixのshardが並行すると先行shardの未完成
-// cacheを復元し、後続の保存がreservation競合で失敗する。
+// Linux側のAOT native shardは`zig build`で検証compilerを作るためZig cacheを
+// 保存し、identityをsuiteだけでなくfixture shardとoptimizationまで含める
+// （v2世代）。setup-zigは保存keyへrunId-attemptを付けてprefix一致で復元する
+// ため、同一prefixのshardが並行すると先行shardの未完成cacheを復元し、
+// 後続の保存がreservation競合で失敗する。
 const nativeAotCacheKey = "cache-key: ${{ matrix.task == 'native' && format('aot-native-v2-s{0}of{1}-{2}', matrix.fixtureShardIndex, matrix.fixtureShardCount, matrix.optimizationKey) || matrix.suite }}";
+// Windows側のAOT native shardは共有compiler artifactをinstallするだけで
+// `zig build`を行わない。Zig cacheを保存しても再利用されず、
+// 12 shard×約64 MBを毎run積み増すだけになるため保存しない。
+const aotWindowsJobBlock = setupZigBlocks.find((block) => block.includes("use-cache: false") && block.includes("cache-size-limit"));
 if (setupZigBlocks.length !== 5 ||
     !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat' }}") && block.includes("cache-key: ${{ matrix.suite }}")) ||
-    !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.task == 'native' }}") && block.includes("matrix.fixtureShardIndex") && block.includes("matrix.optimizationKey")) ||
-    countOccurrences(workflow, nativeAotCacheKey) !== 2 ||
+    !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.task == 'native' }}") && block.includes(nativeAotCacheKey)) ||
+    countOccurrences(workflow, nativeAotCacheKey) !== 1 ||
+    aotWindowsJobBlock === undefined ||
+    aotWindowsJobBlock.includes("cache-key:") ||
     !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: true") && block.includes("cache-key: aot-compiler")) ||
-    !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: false")) ||
     (workflow.match(/cache-size-limit:/g) ?? []).length !== 4) {
-  throw new Error(`setup-zigのcache保存対象、AOT shard／optimization単位のcache identity分離、または${setupZigCacheSizeLimitMiB} MiB上限が不正です`);
+  throw new Error(`setup-zigのcache保存対象、AOT shard／optimization単位のcache identity分離、Windows AOT shardのcache無効化、または${setupZigCacheSizeLimitMiB} MiB上限が不正です`);
 }
 
 const setupNodeBlock = workflow.match(
@@ -900,6 +906,7 @@ for (const required of [
   "use-cache: ${{ matrix.task == 'native' }}",
   "cache-key: ${{ matrix.suite }}",
   nativeAotCacheKey,
+  "use-cache: false",
   `cache-size-limit: ${setupZigCacheSizeLimitMiB}`,
   "timeout-minutes: 50",
 ]) if (!workflow.includes(required)) throw new Error(`CI安全設定がありません: ${required}`);

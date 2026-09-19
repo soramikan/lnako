@@ -753,14 +753,14 @@ jobs:
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
+          # Linux側のAOT native shardは`zig build`で検証compilerを作るため
+          # Zig cacheを保存する。identityをshardとoptimizationまで分離する
+          # （v2世代）のは、setup-zigが保存keyへrunId-attemptを付けprefix
+          # 一致で復元するため、同一prefixの並行shardが先行shardの未完成
+          # cacheを復元し、後続の保存がreservation競合で失敗する経路を
+          # 閉じるためである。OS／arch／Zig versionはsetup-zig側のkeyに
+          # 含まれるため重複させない。support taskはuse-cache=false。
           use-cache: ${{ matrix.task == 'native' }}
-          # Zig cache identityはsuiteだけでなくfixture shardとoptimizationまで
-          # 含める（v2世代）。setup-zigは保存keyへrunId-attemptを付けてprefix
-          # 一致で復元するため、同一prefixのshardが並行すると、先行shardが保存
-          # した未完成のcacheを後続shardが復元し、後続の保存は
-          # "another job may be creating this cache"で失敗する。
-          # OS／arch／Zig versionはsetup-zig側でkeyへ含まれるため重複させない。
-          # support taskはuse-cache=falseのためkey値は使われない。
           cache-key: ${{ matrix.task == 'native' && format('aot-native-v2-s{0}of{1}-{2}', matrix.fixtureShardIndex, matrix.fixtureShardCount, matrix.optimizationKey) || matrix.suite }}
           cache-size-limit: 1536
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
@@ -1055,15 +1055,13 @@ jobs:
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
-          use-cache: ${{ matrix.task == 'native' }}
-          # Zig cache identityはsuiteだけでなくfixture shardとoptimizationまで
-          # 含める（v2世代）。setup-zigは保存keyへrunId-attemptを付けてprefix
-          # 一致で復元するため、同一prefixのshardが並行すると、先行shardが保存
-          # した未完成のcacheを後続shardが復元し、後続の保存は
-          # "another job may be creating this cache"で失敗する。
-          # OS／arch／Zig versionはsetup-zig側でkeyへ含まれるため重複させない。
-          # support taskはuse-cache=falseのためkey値は使われない。
-          cache-key: ${{ matrix.task == 'native' && format('aot-native-v2-s{0}of{1}-{2}', matrix.fixtureShardIndex, matrix.fixtureShardCount, matrix.optimizationKey) || matrix.suite }}
+          # このjobは`zig build`を実行せず、producer jobの共有compiler
+          # artifactをinstallしてfixtureのAOT buildだけを行う。そのため
+          # Zigグローバルcacheを保存しても再利用されず、12 shard×約64 MBを
+          # 毎run積み増すだけになるので保存しない。Zig compiler自体は
+          # setup-zigがtool cacheから供給するため、cache無効でも
+          # セットアップは成功する（実測: 9秒）。
+          use-cache: false
           cache-size-limit: 1536
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
