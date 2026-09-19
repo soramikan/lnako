@@ -8033,6 +8033,64 @@ test "AOT低レイヤーのrename/unlink/rmdirはエラーコードを写す" {
     }
 }
 
+test "AOT低レイヤーのディレクトリ命令はdispatch経由でハンドル契約を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "only.txt", .data = "" });
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const missing_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "missing" });
+    defer std.testing.allocator.free(missing_path);
+    const plain_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "only.txt" });
+    defer std.testing.allocator.free(plain_path);
+
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+    roots[0] = try runtimeUtf8String(active, directory);
+    roots[1] = try runtimeUtf8String(active, missing_path);
+    roots[2] = try runtimeUtf8String(active, plain_path);
+
+    // open -> next -> null -> close。
+    var handle: Value = .{};
+    lnako_aot_builtin_call(&handle, @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.low_level_dir_open));
+    try std.testing.expectEqual(@as(c_int, 0), lnako_aot_exception_pending());
+    try std.testing.expectEqual(@intFromEnum(Tag.dictionary), handle.tag);
+    roots[0] = handle;
+
+    var entry: Value = .{};
+    lnako_aot_builtin_call(&entry, @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.low_level_dir_next));
+    try std.testing.expectEqual(@as(c_int, 0), lnako_aot_exception_pending());
+    try std.testing.expectEqual(@intFromEnum(Tag.dictionary), entry.tag);
+    try expectUtf16String(active, dictionaryProperty(entry, &.{ 'n', 'a', 'm', 'e' }), "only.txt");
+    try expectUtf16String(active, dictionaryProperty(entry, &.{ 't', 'y', 'p', 'e' }), "file");
+
+    var eof: Value = .{};
+    lnako_aot_builtin_call(&eof, @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.low_level_dir_next));
+    try std.testing.expectEqual(@as(c_int, 0), lnako_aot_exception_pending());
+    try std.testing.expectEqual(@intFromEnum(Tag.null_value), eof.tag);
+
+    var closed: Value = .{};
+    lnako_aot_builtin_call(&closed, @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.low_level_dir_close));
+    try std.testing.expectEqual(@as(c_int, 0), lnako_aot_exception_pending());
+
+    // 二重closeはEBADF。
+    try expectLowLevelCode(active, .low_level_dir_close, &.{roots[0]}, "EBADF");
+    // 通常ファイルと存在しないパスのopenはENOTDIR/ENOENT。
+    try expectLowLevelCode(active, .low_level_dir_open, &.{roots[2]}, "ENOTDIR");
+    try expectLowLevelCode(active, .low_level_dir_open, &.{roots[1]}, "ENOENT");
+}
+
 test "AOT低レイヤーの実装済みフラグの命令はstubへ到達しない" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -8109,7 +8167,7 @@ test "AOT低レイヤーの未実装命令は全てstub経由でENOTSUPを返す
         try std.testing.expect(taken.object().?.structured_error);
         try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "ENOTSUP");
     }
-    try std.testing.expectEqual(@as(usize, 35), stub_count);
+    try std.testing.expectEqual(@as(usize, 31), stub_count);
 }
 
 test "AOT未捕捉例外のmessage抽出は構造化エラーだけに限る" {

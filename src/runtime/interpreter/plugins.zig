@@ -718,6 +718,9 @@ pub fn lowlevelEffects(self: *Interpreter) plugin_lowlevel.Effects {
     return .{
         .context = self,
         .throwFn = lowlevelThrowStructured,
+        // `ディレクトリ列挙時` の糖衣がコールバックを実行するために使う。
+        .invokeFn = pluginCall,
+        .resolveFn = nodeResolve,
     };
 }
 

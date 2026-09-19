@@ -16,6 +16,7 @@ pub const FlatContext = context_mod.FlatContext;
 pub const StreamContext = context_mod.StreamContext;
 pub const HashContext = context_mod.HashContext;
 pub const FsContext = context_mod.FsContext;
+pub const DirContext = context_mod.DirContext;
 pub const StdioContext = context_mod.StdioContext;
 pub const emptyContext = context_mod.emptyContext;
 
@@ -37,5 +38,6 @@ test {
     _ = @import("lowlevel/stdio.zig");
     _ = @import("lowlevel/hash.zig");
     _ = @import("lowlevel/fs.zig");
+    _ = @import("lowlevel/dir.zig");
     _ = @import("lowlevel/call.zig");
 }

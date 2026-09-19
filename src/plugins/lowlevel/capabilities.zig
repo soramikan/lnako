@@ -48,6 +48,7 @@ pub fn capabilitySupported(arguments: []const Value, context: Context) bool {
         .rename => context.hasRename(),
         .unlink => context.hasUnlink(),
         .rmdir => context.hasRmdir(),
+        .dir_iterator => context.hasDirIterator(),
         else => false,
     };
 }

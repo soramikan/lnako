@@ -2,6 +2,7 @@ const std = @import("std");
 const foundation = @import("../low_level_foundation.zig");
 const low_level_io = @import("../low_level_io.zig");
 const low_level_fs = @import("../low_level_fs.zig");
+const low_level_dir = @import("../low_level_dir.zig");
 
 /// Hostが関数ポインタの `context` に載せるダミー領域。callbackを持たない
 /// 空サブContext専用で、実際に呼ばれることはない（呼べば未定義）。`emptyContext`
@@ -179,6 +180,35 @@ pub const FsContext = struct {
     }
 };
 
+/// 逐次ディレクトリ列挙ドメインのHostコールバック。opendir/readdir/closedir
+/// 相当を提供する。readdirは `Entry.name` をallocatorで確保して返し、呼び出し
+/// 側が同じallocatorでfreeする。EOFはnull。
+pub const DirContext = struct {
+    context: *anyopaque,
+    openDirFn: ?*const fn (context: *anyopaque, path: []const u8) anyerror!u64 = null,
+    nextDirFn: ?*const fn (context: *anyopaque, raw: u64, allocator: std.mem.Allocator) anyerror!?low_level_dir.Entry = null,
+    closeDirFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
+
+    pub fn openDir(self: DirContext, path: []const u8) !u64 {
+        const function = self.openDirFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, path);
+    }
+
+    pub fn nextDir(self: DirContext, raw: u64, allocator: std.mem.Allocator) !?low_level_dir.Entry {
+        const function = self.nextDirFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, raw, allocator);
+    }
+
+    pub fn closeDir(self: DirContext, raw: u64) !void {
+        const function = self.closeDirFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, raw);
+    }
+
+    pub fn hasDirIterator(self: DirContext) bool {
+        return self.openDirFn != null and self.nextDirFn != null and self.closeDirFn != null;
+    }
+};
+
 /// Raw Stdio（stdin/stderr/stdoutのバイト入出力）ドメインのHostコールバック。
 pub const StdioContext = struct {
     context: *anyopaque,
@@ -230,6 +260,7 @@ pub const StdioContext = struct {
 const empty_stream: StreamContext = .{ .context = default_host };
 const empty_hash: HashContext = .{ .context = default_host };
 const empty_fs: FsContext = .{ .context = default_host };
+const empty_dir: DirContext = .{ .context = default_host };
 const empty_stdio: StdioContext = .{ .context = default_host };
 
 /// 各ランタイム（Interpreter/AOT）がHostから受け取る低レイヤーI/O契約。
@@ -239,6 +270,7 @@ pub const Context = struct {
     stream: StreamContext = empty_stream,
     hash: HashContext = empty_hash,
     fs: FsContext = empty_fs,
+    dir: DirContext = empty_dir,
     stdio: StdioContext = empty_stdio,
 
     pub fn openFile(self: Context, path: []const u8, mode: foundation.OpenMode, exclusive: bool, sync: bool) !u64 {
@@ -313,6 +345,18 @@ pub const Context = struct {
         return self.fs.rmdir(path);
     }
 
+    pub fn openDir(self: Context, path: []const u8) !u64 {
+        return self.dir.openDir(path);
+    }
+
+    pub fn nextDir(self: Context, raw: u64, allocator: std.mem.Allocator) !?low_level_dir.Entry {
+        return self.dir.nextDir(raw, allocator);
+    }
+
+    pub fn closeDir(self: Context, raw: u64) !void {
+        return self.dir.closeDir(raw);
+    }
+
     pub fn stdinSource(self: Context, allocator: std.mem.Allocator) !*low_level_io.StdinSource {
         return self.stdio.stdinSource(allocator);
     }
@@ -377,6 +421,10 @@ pub const Context = struct {
         return self.fs.hasRmdir();
     }
 
+    pub fn hasDirIterator(self: Context) bool {
+        return self.dir.hasDirIterator();
+    }
+
     pub fn hasRawStdio(self: Context) bool {
         return self.stdio.hasRawStdio();
     }
@@ -410,6 +458,9 @@ pub const FlatContext = struct {
     renameFn: ?*const fn (context: *anyopaque, source: []const u8, destination: []const u8) anyerror!void = null,
     unlinkFn: ?*const fn (context: *anyopaque, path: []const u8) anyerror!void = null,
     rmdirFn: ?*const fn (context: *anyopaque, path: []const u8) anyerror!void = null,
+    openDirFn: ?*const fn (context: *anyopaque, path: []const u8) anyerror!u64 = null,
+    nextDirFn: ?*const fn (context: *anyopaque, raw: u64, allocator: std.mem.Allocator) anyerror!?low_level_dir.Entry = null,
+    closeDirFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
     peekStdinSourceFn: ?*const fn (context: *anyopaque) ?*low_level_io.StdinSource = null,
     stdinSourceFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator) anyerror!*low_level_io.StdinSource = null,
     writeStdoutBytesFn: ?*const fn (context: *anyopaque, bytes: []const u8) anyerror!usize = null,
@@ -446,6 +497,12 @@ pub const FlatContext = struct {
                 .unlinkFn = self.unlinkFn,
                 .rmdirFn = self.rmdirFn,
             },
+            .dir = .{
+                .context = self.context,
+                .openDirFn = self.openDirFn,
+                .nextDirFn = self.nextDirFn,
+                .closeDirFn = self.closeDirFn,
+            },
             .stdio = .{
                 .context = self.context,
                 .peekStdinSourceFn = self.peekStdinSourceFn,
@@ -474,17 +531,26 @@ test "FlatContextは旧フラット契約をドメイン別Contextへ詰め替�
             return 0;
         }
     }.call;
+    const openDirFn = struct {
+        fn call(_: *anyopaque, _: []const u8) anyerror!u64 {
+            return 0;
+        }
+    }.call;
     var host: u8 = 0;
     const flat = FlatContext{
         .context = @ptrCast(&host),
         .statFn = statFn,
         .writeStdoutBytesFn = writeFn,
+        .openDirFn = openDirFn,
     };
     const converted = flat.toContext();
     try std.testing.expect(converted.fs.statFn == statFn);
     try std.testing.expect(converted.fs.context == @as(*anyopaque, @ptrCast(&host)));
     try std.testing.expect(converted.stdio.writeStdoutBytesFn == writeFn);
+    try std.testing.expect(converted.dir.openDirFn == openDirFn);
     try std.testing.expect(converted.stream.openFileFn == null);
     try std.testing.expect(converted.hasStat());
     try std.testing.expect(!converted.hasStreamFileIo());
+    // dirは3関数が揃うまでcapability成立にしない。
+    try std.testing.expect(!converted.hasDirIterator());
 }

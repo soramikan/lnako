@@ -313,6 +313,10 @@ test "implementedフラグは実装済み命令の既知集合と一致する" {
         "ll-path-rename",
         "ll-path-unlink",
         "ll-path-rmdir",
+        "ll-dir-open",
+        "ll-dir-next",
+        "ll-dir-close",
+        "ll-dir-foreach",
     };
     var count: usize = 0;
     for (foundation.catalog_commands) |command| {

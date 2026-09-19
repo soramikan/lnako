@@ -677,7 +677,7 @@
         "ENOTSUP"
       ],
       "notes": "handle型を正本にする",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-dir-next",
@@ -695,7 +695,7 @@
         "ENOTSUP"
       ],
       "notes": "nameとtypeを返す。EOFはnull。.と..を含めない",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-dir-close",
@@ -711,7 +711,7 @@
         "EBADF"
       ],
       "notes": "early closeを許可。二重closeはEBADF",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-dir-foreach",
@@ -731,7 +731,7 @@
         "ENOTSUP"
       ],
       "notes": "糖衣。正本はhandle型",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-file-chmod",
@@ -1532,13 +1532,13 @@
       "id": "dir_iterator",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": true,
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {

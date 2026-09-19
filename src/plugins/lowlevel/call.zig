@@ -14,6 +14,7 @@ const stdio = @import("stdio.zig");
 const stream = @import("stream.zig");
 const hash = @import("hash.zig");
 const fs = @import("fs.zig");
+const dir = @import("dir.zig");
 
 const Value = shared.Value;
 const Runtime = shared.Runtime;
@@ -71,6 +72,10 @@ pub fn call(
     if (std.mem.eql(u8, name, foundation.filesystem_commands.rename)) return @as(?Value, try fs.renamePath(runtime, state, context, effects, arguments));
     if (std.mem.eql(u8, name, foundation.filesystem_commands.unlink)) return @as(?Value, try fs.unlinkPath(runtime, state, context, effects, arguments));
     if (std.mem.eql(u8, name, foundation.filesystem_commands.rmdir)) return @as(?Value, try fs.rmdirPath(runtime, state, context, effects, arguments));
+    if (matches(name, foundation.dir_commands.open, foundation.dir_commands.open_user)) return @as(?Value, try dir.openDirectory(runtime, state, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.dir_commands.next)) return @as(?Value, try dir.nextEntry(runtime, state, context, effects, arguments));
+    if (matches(name, foundation.dir_commands.close, foundation.dir_commands.close_user)) return @as(?Value, try dir.closeDirectory(runtime, state, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.dir_commands.foreach)) return @as(?Value, try dir.foreach(runtime, state, context, effects, arguments));
     if (matches(name, foundation.stdio_commands.stdin_read, foundation.stdio_commands.stdin_read_user)) return @as(?Value, try stdio.stdinRead(runtime, context, effects, arguments));
     if (matches(name, foundation.stdio_commands.stdout_write, foundation.stdio_commands.stdout_write_user)) return @as(?Value, try stdio.stdoutWrite(runtime, context, effects, arguments));
     if (matches(name, foundation.stdio_commands.stderr_write, foundation.stdio_commands.stderr_write_user)) return @as(?Value, try stdio.stderrWrite(runtime, context, effects, arguments));
@@ -146,7 +151,7 @@ test "未実装命令はdispatch名と利用者名の両形で構造化ENOTSUP�
             }
         }
     }
-    try std.testing.expectEqual(@as(usize, 35), covered);
+    try std.testing.expectEqual(@as(usize, 31), covered);
 }
 
 test "実装済み命令の引数不足はEINVALで未知capability照会はfalse" {

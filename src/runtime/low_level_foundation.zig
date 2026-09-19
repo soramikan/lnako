@@ -95,6 +95,13 @@ pub const HandleContract = struct {
 /// 種別を跨いで衝突しないことを双方向で保証する（Issue #32）。
 pub const hash_handle_index_base: u32 = 0x8000_0000;
 
+/// ディレクトリhandleのindex空間の開始値。ファイルhandle（1〜
+/// `hash_handle_index_base` 未満）とハッシュhandle（`hash_handle_index_base`〜
+/// 本値未満）のどちらとも重ならないよう、上位1/4を専有する（Issue #33）。
+/// 各tableの払い出しは自分の区間内へ留まり、raw HandleIdが種別を跨いで
+/// 衝突しない。
+pub const dir_handle_index_base: u32 = 0xC000_0000;
+
 pub fn isSafeInteger(number: f64) bool {
     if (!std.math.isFinite(number)) return false;
     if (number != @trunc(number)) return false;
@@ -360,6 +367,7 @@ pub fn capabilityImplemented(capability: Capability) bool {
         .rename,
         .unlink,
         .rmdir,
+        .dir_iterator,
         => true,
         else => false,
     };
@@ -462,6 +470,19 @@ pub const filesystem_commands = struct {
     pub const rmdir = "空フォルダ削除";
 };
 
+/// Issue #33の逐次ディレクトリ列挙命令名。カタログ・Interpreter dispatch・
+/// AOT bindingが同じ正本を参照する。dispatch名は送り仮名を落とした語幹で、
+/// 利用者の `ディレクトリ開く` / `ディレクトリ閉じる` は同じ命令へ正規化される。
+pub const dir_commands = struct {
+    pub const open = "ディレクトリ開";
+    pub const next = "ディレクトリ次取得";
+    pub const close = "ディレクトリ閉";
+    pub const foreach = "ディレクトリ列挙時";
+
+    pub const open_user = "ディレクトリ開く";
+    pub const close_user = "ディレクトリ閉じる";
+};
+
 /// Issue #28のraw標準入出力命令名。`stream_commands` と同じくdispatch名は
 /// 送り仮名を落とした語幹で、利用者の `…読む`/`…書く` は同じ命令へ
 /// 正規化される。同期命令は送り仮名を持たない。
@@ -537,10 +558,10 @@ pub const catalog_commands = [_]CatalogCommand{
     .{ .id = "ll-hash-update", .name = hash_commands.update, .min = 2, .max = 2, .operation = "hash", .capability = .incremental_hash, .implemented = true },
     .{ .id = "ll-hash-digest", .name = hash_commands.digest, .min = 1, .max = 2, .operation = "hash", .capability = .incremental_hash, .implemented = true },
     .{ .id = "ll-hash-discard", .name = hash_commands.discard, .min = 1, .max = 1, .operation = "hash", .capability = .incremental_hash, .implemented = true },
-    .{ .id = "ll-dir-open", .name = "ディレクトリ開", .user_name = "ディレクトリ開く", .min = 1, .max = 1, .operation = "opendir", .capability = .dir_iterator },
-    .{ .id = "ll-dir-next", .name = "ディレクトリ次取得", .min = 1, .max = 1, .operation = "readdir", .capability = .dir_iterator },
-    .{ .id = "ll-dir-close", .name = "ディレクトリ閉", .user_name = "ディレクトリ閉じる", .min = 1, .max = 1, .operation = "closedir", .capability = .dir_iterator },
-    .{ .id = "ll-dir-foreach", .name = "ディレクトリ列挙時", .min = 2, .max = 2, .operation = "readdir", .capability = .dir_iterator },
+    .{ .id = "ll-dir-open", .name = dir_commands.open, .user_name = dir_commands.open_user, .min = 1, .max = 1, .operation = directory_operations.open, .capability = .dir_iterator, .implemented = true },
+    .{ .id = "ll-dir-next", .name = dir_commands.next, .min = 1, .max = 1, .operation = directory_operations.next, .capability = .dir_iterator, .implemented = true },
+    .{ .id = "ll-dir-close", .name = dir_commands.close, .user_name = dir_commands.close_user, .min = 1, .max = 1, .operation = directory_operations.close, .capability = .dir_iterator, .implemented = true },
+    .{ .id = "ll-dir-foreach", .name = dir_commands.foreach, .min = 2, .max = 2, .operation = directory_operations.foreach, .capability = .dir_iterator, .implemented = true },
     .{ .id = "ll-file-chmod", .name = "ファイル権限設定", .min = 2, .max = 2, .operation = "chmod", .capability = .chmod },
     .{ .id = "ll-file-chown", .name = "ファイル所有者設定", .min = 3, .max = 3, .operation = "chown", .capability = .chown },
     .{ .id = "ll-symlink-chown", .name = "シンボリックリンク所有者設定", .min = 3, .max = 3, .operation = "lchown", .capability = .chown },
@@ -627,6 +648,27 @@ pub const filesystem_operations = struct {
     pub const rename = "rename";
     pub const unlink = "unlink";
     pub const rmdir = "rmdir";
+};
+
+/// Issue #33の逐次ディレクトリ列挙が失敗したときに返す構造化エラーの操作名
+/// （ASCII）。NodeのSystemError `syscall` / POSIX syscall名と揃える。
+pub const directory_operations = struct {
+    pub const open = "opendir";
+    pub const next = "readdir";
+    pub const close = "closedir";
+    pub const foreach = "readdir";
+};
+
+/// `dirEntry`辞書のフィールド名。カタログ `typeSchemas.dirEntry` と一致させる。
+pub const dir_entry_keys = struct {
+    pub const name = "name";
+    pub const kind = "type";
+};
+
+/// `dir_entry_keys` の全2フィールド。辞書構築の網羅テストが参照する。
+pub const dir_entry_key_list = [_][]const u8{
+    dir_entry_keys.name,
+    dir_entry_keys.kind,
 };
 
 /// `stat`辞書のフィールド名。カタログ `typeSchemas.stat` と一致させる。
@@ -821,6 +863,64 @@ pub fn portableCodeForFailure(failure: anyerror) ?PortableErrorCode {
         error.LinkQuotaExceeded => .EPERM,
         else => null,
     };
+}
+
+/// `ディレクトリ開く` が投げ得るcode。カタログの集合は
+/// ENOENT/ENOTDIR/EACCES/EPERM/EMFILE/ENFILE/ENOTSUP で、それ以外
+/// （ELOOP等のOS固有失敗や未写像エラー）は全命令共通のEINVALへ丸める。
+pub fn dirOpenErrorCode(failure: anyerror) PortableErrorCode {
+    return switch (portableCodeForFailure(failure) orelse .EINVAL) {
+        .ENOENT, .ENOTDIR, .EACCES, .EPERM, .EMFILE, .ENFILE, .ENOTSUP => |code| code,
+        else => .EINVAL,
+    };
+}
+
+/// `ディレクトリ次取得` が投げ得るcode。 EBADF/EINVAL/ENOTSUP のみを残す。
+pub fn dirNextErrorCode(failure: anyerror) PortableErrorCode {
+    return switch (portableCodeForFailure(failure) orelse .EINVAL) {
+        .EBADF, .ENOTSUP => |code| code,
+        else => .EINVAL,
+    };
+}
+
+/// `ディレクトリ列挙時` が投げ得るcode。列挙中のEACCES/EPERMを保持し、
+/// EBADF等の次取得専用codeはEINVALへ丸める。
+pub fn dirForeachErrorCode(failure: anyerror) PortableErrorCode {
+    return switch (portableCodeForFailure(failure) orelse .EINVAL) {
+        .ENOENT, .ENOTDIR, .EACCES, .EPERM, .ENOTSUP => |code| code,
+        else => .EINVAL,
+    };
+}
+
+/// `ディレクトリ閉じる` はEBADFのみを返す契約。無効ハンドル以外の失敗も
+/// 契約に合わせてEBADFへ丸める。
+pub fn dirCloseErrorCode(_: anyerror) PortableErrorCode {
+    return .EBADF;
+}
+
+test "ディレクトリ命令の失敗は契約のportable code集合へ丸められる" {
+    try std.testing.expectEqual(PortableErrorCode.ENOENT, dirOpenErrorCode(error.FileNotFound));
+    try std.testing.expectEqual(PortableErrorCode.ENOTDIR, dirOpenErrorCode(error.NotDir));
+    try std.testing.expectEqual(PortableErrorCode.EACCES, dirOpenErrorCode(error.AccessDenied));
+    try std.testing.expectEqual(PortableErrorCode.EPERM, dirOpenErrorCode(error.PermissionDenied));
+    try std.testing.expectEqual(PortableErrorCode.EMFILE, dirOpenErrorCode(error.ProcessFdQuotaExceeded));
+    try std.testing.expectEqual(PortableErrorCode.ENFILE, dirOpenErrorCode(error.SystemFdQuotaExceeded));
+    try std.testing.expectEqual(PortableErrorCode.ENOTSUP, dirOpenErrorCode(error.LowLevelIoUnavailable));
+    // openの契約に無いELOOPや未写像エラーはEINVAL。
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, dirOpenErrorCode(error.SymLinkLoop));
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, dirOpenErrorCode(error.Unexpected));
+
+    try std.testing.expectEqual(PortableErrorCode.EBADF, dirNextErrorCode(error.BadFileDescriptor));
+    try std.testing.expectEqual(PortableErrorCode.ENOTSUP, dirNextErrorCode(error.LowLevelIoUnavailable));
+    // 次取得の契約に無いEACCESはEINVAL。
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, dirNextErrorCode(error.AccessDenied));
+
+    try std.testing.expectEqual(PortableErrorCode.EACCES, dirForeachErrorCode(error.AccessDenied));
+    try std.testing.expectEqual(PortableErrorCode.EPERM, dirForeachErrorCode(error.PermissionDenied));
+    try std.testing.expectEqual(PortableErrorCode.ENOENT, dirForeachErrorCode(error.FileNotFound));
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, dirForeachErrorCode(error.BadFileDescriptor));
+
+    try std.testing.expectEqual(PortableErrorCode.EBADF, dirCloseErrorCode(error.Unexpected));
 }
 
 test "HandleIdはindexを下位32bit、generationを上位32bitに置く" {

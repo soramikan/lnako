@@ -40,6 +40,7 @@ pub const runtime = struct {
     pub const low_level_io = @import("runtime/low_level_io.zig");
     pub const low_level_hash = @import("runtime/low_level_hash.zig");
     pub const low_level_fs = @import("runtime/low_level_fs.zig");
+    pub const low_level_dir = @import("runtime/low_level_dir.zig");
     pub const low_level_catalog = @import("runtime/low_level_catalog.zig");
     pub const structured_error = @import("runtime/structured_error.zig");
     pub const structured_error_value = @import("runtime/structured_error_value.zig");
@@ -186,6 +187,7 @@ test {
     std.testing.refAllDecls(runtime.low_level_io);
     std.testing.refAllDecls(runtime.low_level_hash);
     std.testing.refAllDecls(runtime.low_level_fs);
+    std.testing.refAllDecls(runtime.low_level_dir);
     std.testing.refAllDecls(runtime.low_level_catalog);
     std.testing.refAllDecls(runtime.structured_error);
     std.testing.refAllDecls(runtime.structured_error_value);

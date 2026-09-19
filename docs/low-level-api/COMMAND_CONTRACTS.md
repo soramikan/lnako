@@ -97,7 +97,7 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 - `ディレクトリ閉じる`（ll-dir-close）助詞 `HANDLEを/HANDLEの`、戻り `void`、capability `dir_iterator`、エラー EBADF
 - `ディレクトリ列挙時`（ll-dir-foreach）助詞 `PATHをCALLBACKで/PATHのCALLBACKを`、戻り `void`、capability `dir_iterator`、エラー ENOENT/ENOTDIR/EACCES/EPERM/ENOTSUP
 
-正本はhandle型。`. と .. は含めない。EOFは `null`。entryの `type` は file/directory/symlink/other/unknown。
+正本はhandle型。`. と .. は含めない。EOFは `null`。entryの `type` は file/directory/symlink/other/unknown。列挙順はOSが返す順序でソートしない。`ディレクトリ列挙時` はhandle型の糖衣で、CALLBACKを各entryの `dirEntry` 辞書1引数で呼び、CALLBACKが真を返すとその時点で列挙を中断する。CALLBACKの例外はそのまま伝播し、ディレクトリhandleは必ず閉じる。ディレクトリhandleはファイル・ハッシュと別のindex空間から払い出し、他種別のhandleを渡した場合は `EBADF` になる。
 
 ### Issue 34 POSIX権限・所有者・UID/GID・access
 
