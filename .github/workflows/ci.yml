@@ -481,8 +481,16 @@ jobs:
       - name: Prune LLVM toolchain cache
         shell: bash
         run: node tools/prune_llvm_toolchain.mjs
+      # この成果物はproducerと別のrunner（17 job）で実行されるため、
+      # runnerのCPU機能に依存した命令を含めてはならない。
+      # `zig build` は -Dcpu 未指定だとホストのCPU機能を有効にするため、
+      # AVX-512対応runnerでbuildしたcompilerが非対応runnerで
+      # STATUS_ILLEGAL_INSTRUCTION (0xC000001D) / ACCESS_VIOLATION (0xC0000005)
+      # になる。実測で失敗artifactは vmovdqu64 8212件・vpternlogq 30件等の
+      # AVX-512命令を含み、成功artifactは0件だった。
+      # x86_64_v2（SSE4.2/POPCNT）はGitHubのx86_64 runnerで共通に利用できる。
       - name: Build AOT verification compiler
-        run: zig build
+        run: zig build -Dcpu=x86_64_v2
       # 共有artifactは12 shardがbuildなしで実行するため、作成前にこのjobで
       # interpreterを一度動かし、壊れたbinaryを配布しないよう早期に検出する。
       - name: Smoke test AOT verification compiler

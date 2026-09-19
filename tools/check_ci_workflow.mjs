@@ -456,6 +456,11 @@ if (!aotCompilerJob || !aotCompilerJob.includes("name: Windows x86_64 / AOT veri
     !aotCompilerJob.includes("run: zig build") ||
     !aotCompilerJob.includes("Smoke test AOT verification compiler") ||
     !aotCompilerJob.includes("zig-out/bin/lnako.exe run") ||
+    // 共有artifactはproducerと別のrunnerで実行されるため、runnerのCPU機能に
+    // 依存した命令を含めない（-Dcpu未指定だとホストCPU機能が有効になり、
+    // 非対応runnerでSTATUS_ILLEGAL_INSTRUCTIONになる）。
+    !aotCompilerJob.includes("run: zig build -Dcpu=x86_64_v2") ||
+    aotCompilerJob.includes("\n        run: zig build\n") ||
     !aotCompilerJob.includes("node tools/aot_compiler_artifact.mjs create --binary zig-out/bin/lnako.exe --runtime-lib zig-out/lib/lnako_runtime.lib --out-dir") ||
     !aotCompilerJob.includes("name: lnako-aot-compiler-windows-x64") ||
     !aotCompilerJob.includes("if-no-files-found: error")) {

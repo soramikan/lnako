@@ -478,11 +478,95 @@ commit・OS・arch・Zig version・build mode・compat-js・SHA-256を照合し�
 
 検証量は変えていない（同じ検証を同じOSで実行し、compiler buildだけを共有する）。
 
-## 実測: producerのZig cacheが壊れたcompilerを混入させる（重大）
+## 実測: Windows AOT jobのcompilerがrunner非依存でない（重大）
 
-`aot_compiler` producer jobのZigグローバルcacheは、prefix一致で前runの
-cacheを復元する。このcacheを有効にしたままにすると、Windows shardが
-`Illegal instruction` で失敗する事例を確認した。
+### 症状
+
+run 35456603123 / 35458680454 で、WindowsのAOT native shard 11件とsupport系が
+失敗した（15 / 13 job）。全fixtureで公式経路は成功しているのに
+`lnakoRun`（インタープリタ）と`lnakoNativeO0` の両方が落ちていた。
+
+| route | exit code | 意味 |
+| --- | ---: | --- |
+| `lnakoRun` | 3221225477 = 0xC0000005 | STATUS_ACCESS_VIOLATION |
+| `lnakoNativeO0` | 3221225501 = 0xC000001D | STATUS_ILLEGAL_INSTRUCTION |
+
+AOT成果物側の `0xC000001D`（Illegal instruction）は、**そのrunnerのCPUが
+実行できない命令が生成物に含まれている**ことを示す。
+
+### 原因
+
+`build.zig` は `b.standardTargetOptions(.{})` を既定引数で呼んでいる。
+Zigは `-Dtarget` も `-Dcpu` も指定されない場合、`args.default_target`
+（`std.Build.standardTargetOptions` の既定は `.{}`）を返し、`resolveTargetQuery` は
+`query.isNative()` でホスト自身（`b.graph.host`）へ解決する。つまり
+**`zig build` はrunnerのCPU機能をそのまま有効にしてコンパイルする**。
+
+GitHubの `windows-2025` runnerは同一ラベルでも世代の異なるCPUが混在する。
+producer jobが新しいCPU（例: AVX-512対応）でbuildし、consumer jobが
+古いCPUで実行すると、producerのsmoke test（producer自身のrunner）は通り、
+artifactのSHA-256照合も一致するが、consumerでは実行できない。
+
+### 実測（artifactサイズの分布）
+
+| run | event | compiler artifact | 結果 |
+| --- | --- | ---: | --- |
+| 35455870091 | pull_request | 9,871,000 B | Windows全job成功 |
+| 35457590285 | workflow_dispatch | 9,870,993 B | Windows全job成功 |
+| 35458680454 | pull_request | **9,882,319 B** | 13 job失敗 |
+| 35456603123 | pull_request | **9,823,566 B** | 15 job失敗 |
+
+成功runのサイズは3〜8 Bの差に収まる（同一CPU機能）のに対し、失敗runは
++11 KB / -47 KBと別物である。同一commit 6a2891ef でも、pull_request実行では
+失敗し workflow_dispatch実行では成功した（runner割り当ての差）。
+
+### 確定した証拠（逆アセンブル）
+
+失敗runと成功runのartifact `lnako.exe`（いずれもCOFF x86-64）を
+`llvm-objdump -d --triple=x86_64-pc-windows-msvc` で逆アセンブルし、
+AVX-512（EVEX）命令の出現数を数えた。
+
+| 命令 | 成功run 35457590285 | 失敗run 35458680454 |
+| --- | ---: | ---: |
+| `vmovdqu64` | 0 | **8,212** |
+| `vmovdqa64` | 0 | **882** |
+| `vpternlogq` | 0 | **30** |
+| `vpternlogd` | 0 | **18** |
+| `vpxord` | 0 | **21** |
+| `vpandq` | 0 | **12** |
+| `vpandd` | 0 | **7** |
+| `vpbroadcastq` | 2 | 29 |
+
+失敗artifactはAVX-512（AVX512BW等）命令を含み、成功artifactは含まない。
+AVX-512非対応のrunnerで実行すると `STATUS_ILLEGAL_INSTRUCTION`
+(0xC000001D) / `STATUS_ACCESS_VIOLATION` (0xC0000005) になる。これが
+`lnakoRun`と`lnakoNativeO0`の両方が落ちた理由である。
+
+### 対応
+
+`aot_compiler` の `zig build` に `-Dcpu=x86_64_v2` を明示した。x86_64_v2は
+SSE4.2/POPCNTを含みGitHubのx86_64 runnerで共通に利用できる。
+ローカルで同じ `-Dcpu=x86_64_v2` を指定してbuildした成果物を逆アセンブルし、
+AVX-512命令が0件になることを確認した（`vmovdqu64`/`vmovdqa64`/
+`vpternlogq`/`vpxord`/`vpandq` すべて0）。
+
+`check_ci_workflow.mjs` でproducerが `-Dcpu=x86_64_v2` 付きでbuildし、
+素の `zig build` へ戻っていないことを検査する。
+
+### 撤回した誤った原因推定
+
+先行して入れた「producerのZig cache無効化」は**原因ではなかった**
+（cache無効の35458680454でも同じ失敗が再現した）。cache無効化自体は
+被害を広げないための保守的判断として残すが、原因ではない。
+
+## （撤回）実測: producerのZig cacheが壊れたcompilerを混入させる
+
+**この節の結論は誤りだったため撤回する。** 当時は「producerのZig cache
+hit」と「失敗」が同時に観測されたためcacheを原因と推定したが、cacheを
+無効化したrun 35458680454でも同じ失敗が再現した。実際の原因は
+上記のとおりrunner間のCPU機能差である（cacheは無関係）。
+
+以下は当時の記録として残す（結論は上記で否定済み）。
 
 ### A/B（同一commit 75b7c651）
 
