@@ -652,6 +652,16 @@ runner minutes削減の内訳はPhase 4の約15分とWindows AOT shardのcache�
 | failure | 0 | 0 | 悪化なし |
 | timeout | 0 | 0 | 悪化なし |
 
+macOS（AOT native routes）も同じ傾向だった。
+
+| route | worker=1 | worker=2 | 差 |
+| --- | ---: | ---: | ---: |
+| O0+O1 | 225s | 133s | -41% |
+| O2 | 167s | 130s | -22% |
+| O3 | 179s | 133s | -26% |
+
+計画が求めるWindows・Linux・macOSの3正式OSすべてで短縮を確認した。
+
 worker=2で遅くなったshardは24件中0件だった。計画が警告する
 「並列度を増やすとZig compilationが競合して逆に遅くなる」現象は、
 並列度2では観測されなかった。
