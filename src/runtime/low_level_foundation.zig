@@ -103,6 +103,12 @@ pub const hash_handle_index_base: u32 = 0x8000_0000;
 /// 3種は同じ `HandleId` を共有するため、index空間を重ねない。
 pub const process_handle_index_base: u32 = 0x4000_0000;
 
+/// HandleIdがプロセスhandleのindex空間に属するか。プロセス命令へ
+/// ファイル/ハッシュhandleが渡された場合、表を変更せずEBADFで弾くために使う。
+pub fn isProcessHandleId(id: HandleId) bool {
+    return id.index >= process_handle_index_base and id.index < hash_handle_index_base;
+}
+
 pub fn isSafeInteger(number: f64) bool {
     if (!std.math.isFinite(number)) return false;
     if (number != @trunc(number)) return false;

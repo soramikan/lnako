@@ -37,8 +37,22 @@ pub const TtySize = struct {
 pub const ProcessEntry = struct {
     id: foundation.HandleId,
     child: std.process.Child,
-    /// detached起動。deinit時に強制終了せず親から切り離す（nohup相当）。
+    /// detached起動。deinit時に強制終了せず、reaper threadで非同期にreapする。
     detached: bool = false,
+};
+
+/// deinit時に引き取ったdetached子を待ってreapするthread。長寿命の子でも
+/// Runtimeを停止させず、子の終了後にゾンビを残さない。
+const DetachedReaper = struct {
+    child: *std.process.Child,
+    io: std.Io,
+    allocator: std.mem.Allocator,
+
+    fn run(self: *DetachedReaper) void {
+        _ = self.child.wait(self.io) catch {};
+        self.allocator.destroy(self.child);
+        self.allocator.destroy(self);
+    }
 };
 
 /// プロセスhandleの表。`HandleId` のindex空間
@@ -56,11 +70,12 @@ pub const ProcessTable = struct {
     }
 
     /// waitされていない子プロセスを後始末する。detachedの子は親の終了後も
-    /// 走り続けられるよう強制終了せず、親側のpipeだけ閉じて切り離す。
+    /// 走り続けられるよう強制終了しないが、ゾンビを残さないよう、専用の
+    /// reaper threadへ移して非同期にreapする。
     pub fn deinit(self: *ProcessTable, io: std.Io) void {
         for (self.entries.items) |*entry| {
             if (entry.detached) {
-                closeChildPipes(io, &entry.child);
+                self.handOffDetached(io, &entry.child);
                 continue;
             }
             if (entry.child.id != null) killChild(io, &entry.child);
@@ -69,6 +84,34 @@ pub const ProcessTable = struct {
         self.generations.deinit();
         self.free_indices.deinit(self.allocator);
         self.* = undefined;
+    }
+
+    /// detached子をreaper threadへ引き渡す。threadを起動できない場合は
+    /// ゾンビを残さないよう同期回収へフォールバックする。
+    fn handOffDetached(self: *ProcessTable, io: std.Io, child: *std.process.Child) void {
+        if (comptime builtin.os.tag == .windows) {
+            // detachedはWindowsではENOTSUPのため到達しない。
+            killChild(io, child);
+            return;
+        }
+        const owned_child = self.allocator.create(std.process.Child) catch {
+            killChild(io, child);
+            return;
+        };
+        owned_child.* = child.*;
+        const reaper = self.allocator.create(DetachedReaper) catch {
+            killChild(io, owned_child);
+            self.allocator.destroy(owned_child);
+            return;
+        };
+        reaper.* = .{ .child = owned_child, .io = io, .allocator = self.allocator };
+        const thread = std.Thread.spawn(.{}, DetachedReaper.run, .{reaper}) catch {
+            killChild(io, owned_child);
+            self.allocator.destroy(owned_child);
+            self.allocator.destroy(reaper);
+            return;
+        };
+        thread.detach();
     }
 
     pub fn len(self: *const ProcessTable) usize {
@@ -197,22 +240,6 @@ fn stdioFor(mode: foundation.ProcessStdioMode) std.process.SpawnOptions.StdIo {
     };
 }
 
-/// 親側のpipe fileだけを閉じる（子プロセスは終了させない）。
-fn closeChildPipes(io: std.Io, child: *std.process.Child) void {
-    if (child.stdin) |file| {
-        file.close(io);
-        child.stdin = null;
-    }
-    if (child.stdout) |file| {
-        file.close(io);
-        child.stdout = null;
-    }
-    if (child.stderr) |file| {
-        file.close(io);
-        child.stderr = null;
-    }
-}
-
 /// 子プロセスを強制終了してreapする。Zigの `Child.kill` はSIGTERMを送って
 /// 無期限に待つだけなので、SIGTERMを無視する子でハングしないようPOSIXでは
 /// SIGKILLを送ってからwaitで回収する。SIGKILLは無視できないため、
@@ -318,6 +345,9 @@ pub fn parentPid() !u32 {
 pub fn sendSignal(pid: u32, signal: u32) !void {
     if (pid == 0) return error.InvalidSignal;
     if (builtin.os.tag == .windows) return sendSignalWindows(pid, signal);
+    // 公開契約はu32だがPOSIXのpid_tは符号付き。pid_tの上限を超える値は
+    // 検査付きキャストでpanicするため、先にEINVALへ写す。
+    if (pid > @as(u32, @intCast(std.math.maxInt(std.posix.pid_t)))) return error.InvalidSignal;
     if (signal == 0) {
         std.posix.kill(@intCast(pid), @enumFromInt(0)) catch |failure| return switch (failure) {
             error.ProcessNotFound => error.ProcessNotFound,
@@ -524,6 +554,12 @@ test "WaitResultはシグナル終了を128+signalで表す" {
 
 test "currentPidは0を返さない" {
     try testing.expect(currentPid() != 0);
+}
+
+test "pid_t上限を超えるPIDはpanicせずEINVALへ写る" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    try testing.expectError(error.InvalidSignal, sendSignal(std.math.maxInt(u32), 0));
+    try testing.expectError(error.InvalidSignal, sendSignal(@as(u32, 1) << 31, 0));
 }
 
 test "spawnはargv境界を保持しpipe stdoutを読める" {

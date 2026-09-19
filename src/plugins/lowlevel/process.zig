@@ -186,6 +186,11 @@ pub fn wait(runtime: *Runtime, state: *State, context: Context, effects: Effects
     const id = lookupHandle(state, handle) orelse {
         return throwStructured(runtime, effects, .EBADF, operation, null, null, "無効なハンドルです");
     };
+    // ファイル/ハッシュhandleを待機へ渡された場合はプロセス表を変更しない。
+    // ここで対応表を消すと元の資源が操作不能になるため、保持したままEBADFにする。
+    if (!foundation.isProcessHandleId(id)) {
+        return throwStructured(runtime, effects, .EBADF, operation, null, null, "無効なハンドルです");
+    }
     const result = context.waitProcess(id.raw()) catch |failure| {
         // 失敗経路でもentryは消費済みなので、言語handleを残すと再waitが
         // 二重解放相当になる。必ずforgetしてからエラーを返す。
@@ -380,6 +385,34 @@ test "シグナル送信は非整数のPID/SIGNALをEINVALにする" {
     try expectThrownCode(&runtime, thrown, "EINVAL");
     try std.testing.expectError(error.NakoException, call(&runtime, &state, emptyContext(), effects, "シグナル送信", &.{ .{ .number = 1 }, .{ .string = undefined } }));
     try expectThrownCode(&runtime, thrown, "EINVAL");
+}
+
+test "プロセス待機は別種handleを消費せずEBADFにする" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    // ファイルhandleのindex空間のhandleを待機へ渡しても、対応表から消さない。
+    var file_handle = try runtime.createDictionary();
+    try roots.protect(&file_handle);
+    try rememberHandle(&state, runtime.allocator(), file_handle, .{ .index = 1, .generation = 1 });
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, emptyContext(), effects, "プロセス待機", &.{file_handle}));
+    try expectThrownCode(&runtime, thrown, "EBADF");
+    try std.testing.expect(lookupHandle(&state, file_handle) != null);
+
+    // ハッシュhandleのindex空間でも同様。
+    var hash_handle = try runtime.createDictionary();
+    try roots.protect(&hash_handle);
+    try rememberHandle(&state, runtime.allocator(), hash_handle, .{ .index = foundation.hash_handle_index_base, .generation = 1 });
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, emptyContext(), effects, "プロセス待機", &.{hash_handle}));
+    try expectThrownCode(&runtime, thrown, "EBADF");
+    try std.testing.expect(lookupHandle(&state, hash_handle) != null);
 }
 
 test "プロセス優先度設定は非整数VALUEをEINVALにする" {

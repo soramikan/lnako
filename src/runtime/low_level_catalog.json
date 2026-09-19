@@ -927,7 +927,7 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "shell stringを介さない。OPTIONSのcwd/env/stdio(inherit/pipe/null)/detached。WindowsのdetachedはENOTSUP。argv[0]の実行ファイル解決は親環境のPATHを使う",
+      "notes": "shell stringを介さない。OPTIONSのcwd/env/stdio(inherit/pipe/null)/detached。WindowsのdetachedはENOTSUP。argv[0]の実行ファイル解決は親環境のPATHを使う。stdio=pipeの親側は公開されず、待機時にEOFまでdrainして破棄するため子との入出力には使えない",
       "implemented": true
     },
     {
@@ -2082,7 +2082,7 @@
     "openMode": "ファイル開くの文字列flags。r/r+/w/w+/a/a+にb/x/s修飾（Nodeのfs.open形式）。string",
     "accessMode": "access検査のF_OK/R_OK/W_OK/X_OKビット和。u32",
     "argv": "文字列の配列。shell解釈しない",
-    "processOptions": "プロセス起動のOPTIONS辞書。cwd/env/stdio/detached。env指定時は子環境を置換し、argv[0]解決は親PATH",
+    "processOptions": "プロセス起動のOPTIONS辞書。cwd/env/stdio/detached。env指定時は子環境を置換し、argv[0]解決は親PATH。stdio=pipeは待機時に読み捨てられ子との入出力には使えない",
     "hashAlgorithm": "ハッシュアルゴリズム名。string。既存ハッシュ値計算と同一正規化",
     "hashEncoding": "ハッシュ出力encoding。省略時およびrawはbytes、hex/base64/base64url/latin1/binary/utf8は既存ハッシュ値計算と同一の文字列",
     "hashDigest": "ハッシュdigest。rawはbytes、hexはstring（ENCODING依存）",

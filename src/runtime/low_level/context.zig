@@ -298,7 +298,10 @@ pub const ProcessContext = struct {
     }
 
     pub fn hasArgvSpawn(self: ProcessContext) bool {
-        return self.spawnFn != null and self.waitFn != null and self.getpidFn != null;
+        // argv_spawn capabilityはspawn/wait/pid/ppidを含む。discardはspawn後の
+        // handle登録失敗を安全に後始末するため必須。
+        return self.spawnFn != null and self.waitFn != null and self.discardFn != null and
+            self.getpidFn != null and self.getppidFn != null;
     }
 
     pub fn hasSignal(self: ProcessContext) bool {
@@ -655,4 +658,48 @@ test "FlatContextは旧フラット契約をドメイン別Contextへ詰め替�
     try std.testing.expect(converted.stream.openFileFn == null);
     try std.testing.expect(converted.hasStat());
     try std.testing.expect(!converted.hasStreamFileIo());
+}
+
+test "hasArgvSpawnはspawn/wait/discard/pid/ppidを全て要求する" {
+    const spawnFn = struct {
+        fn call(_: *anyopaque, _: []const []const u8, _: low_level_process.SpawnOptions) anyerror!u64 {
+            return 1;
+        }
+    }.call;
+    const waitFn = struct {
+        fn call(_: *anyopaque, _: u64) anyerror!low_level_process.WaitResult {
+            return .{ .exit_code = 0, .signal = null };
+        }
+    }.call;
+    const discardFn = struct {
+        fn call(_: *anyopaque, _: u64) anyerror!void {}
+    }.call;
+    const pidFn = struct {
+        fn call(_: *anyopaque) anyerror!u32 {
+            return 1;
+        }
+    }.call;
+    const ppidFn = struct {
+        fn call(_: *anyopaque) anyerror!u32 {
+            return 1;
+        }
+    }.call;
+    var host: u8 = 0;
+    const full: ProcessContext = .{
+        .context = @ptrCast(&host),
+        .spawnFn = spawnFn,
+        .waitFn = waitFn,
+        .discardFn = discardFn,
+        .getpidFn = pidFn,
+        .getppidFn = ppidFn,
+    };
+    try std.testing.expect(full.hasArgvSpawn());
+
+    // 親PID取得やdiscardが欠けるとargv_spawnは不成立（照会と実行の一致）。
+    var missing = full;
+    missing.getppidFn = null;
+    try std.testing.expect(!missing.hasArgvSpawn());
+    missing = full;
+    missing.discardFn = null;
+    try std.testing.expect(!missing.hasArgvSpawn());
 }

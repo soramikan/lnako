@@ -215,6 +215,11 @@ pub fn waitBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     const id = findHandleId(runtime, arguments[0]) orelse {
         return throwStructured(runtime, .EBADF, operation, null, null, "無効なハンドルです");
     };
+    // ファイル/ハッシュhandleを待機へ渡された場合はプロセス表も対応表も
+    // 変更しない（元の資源を操作不能にしない）。
+    if (!foundation.isProcessHandleId(id)) {
+        return throwStructured(runtime, .EBADF, operation, null, null, "無効なハンドルです");
+    }
     const io = ensureProcessIo(runtime);
     const result = processTable(runtime).wait(io, id) catch |failure| {
         // 失敗経路でもentryは消費済みなので、言語handleを残さない。
@@ -511,6 +516,24 @@ test "AOTのPID/優先度/端末判定は実OSの値を返す" {
         defer runtime.allocator.free(code);
         try std.testing.expectEqualStrings("ENOTSUP", code);
     }
+}
+
+test "AOTのプロセス待機は別種handleを消費しない" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}};
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createDictionary(&.{});
+    try rememberHandle(&runtime, roots[0], .{ .index = 1, .generation = 1 });
+    try std.testing.expectError(error.NakoException, lowLevelProcessBuiltin(&runtime, .low_level_process_wait, &.{roots[0]}));
+    const code = try aotThrownCode(&runtime);
+    defer runtime.allocator.free(code);
+    try std.testing.expectEqualStrings("EBADF", code);
+    // 対応表から消えていない（ファイル/ハッシュhandleとして引き続き使える）。
+    try std.testing.expect(findHandleId(&runtime, roots[0]) != null);
 }
 
 test "AOTプロセス起動は存在しない実行ファイルをENOENTにする" {
