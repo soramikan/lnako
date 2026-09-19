@@ -443,3 +443,37 @@ cacheを有効にした場合のコスト：
 したがって、この job の短縮にはワークフロー変更ではなく
 **ビルド時間そのものの削減**（コンパイル単位の見直し等）が必要であり、
 改善計画2のCI効率化の範囲外として記録する。
+
+## 実測: Windows AOT support jobsのcompiler build重複（Phase 4）
+
+run 35453416527のWindows AOT support系jobは、いずれもjob内で
+`zig build`（Debug compiler）を実行していた。
+
+| job | job全体 | うちBuild AOT verification compiler |
+| --- | ---: | ---: |
+| Windows x86_64 / AOT support HTTP | 269s | 189s |
+| Windows x86_64 / AOT support dispatch evidence | 240s | 191s |
+| Windows x86_64 / AOT support dispatch coverage shard 1/3 | 252s | 191s |
+| Windows x86_64 / AOT support dispatch coverage shard 2/3 | 311s | 190s |
+| Windows x86_64 / AOT support dispatch coverage shard 3/3 | 325s | 231s |
+
+5 job × 約190s ＝ **約15分/run** が同一compilerの再buildであった。
+
+### 実装
+
+WindowsのAOT support系5 jobを、producer jobの共有compiler artifactを
+installする consumer job（`aot_windows`）へ移設した。artifactは
+commit・OS・arch・Zig version・build mode・compat-js・SHA-256を照合して
+からinstallされるため、誤commit・別構成のcompilerは使われない。
+
+計画の注意に従い、**共有しないもの**は移設していない。
+
+- `AOT support smoke` はReleaseSafe compilerを検証するため、`aot` job側に
+  残して従来どおり自前buildする（Debug compilerをReleaseSafe検証へ
+  流用するとテスト意味が変わる）。
+- Linux・macOSのsupport shardは`aot` job側のまま並行起動し、producer失敗時も
+  各shardの結果を返せる。
+- dispatch coverageの集約jobは、Windows artifactの供給元が`aot_windows`へ
+  移ったため`needs`と条件へ`aot_windows`を追加した。
+
+検証量は変えていない（同じ検証を同じOSで実行し、compiler buildだけを共有する）。

@@ -256,7 +256,9 @@ if (!nativeAotJob || !windowsAotJob) throw new Error("分割AOT jobがありま�
 // 行の期待集合は両jobをまたいで検証する。
 const nativeShardRows = [...(nativeAotJob + windowsAotJob).matchAll(/^          - name: (.+)\n            os: (.+)\n            suite: aot-native\n            task: native\n            fixtureShardIndex: (\d+)\n            fixtureShardCount: (\d+)\n            fixtureSharded: (true|false)\n            optimizationKey: (.+)\n            optimizations: (.+)\n            jobName: (.+)$/gm)]
   .map((match) => ({ name: match[1], os: match[2], index: Number(match[3]), count: Number(match[4]), sharded: match[5] === "true", optimizationKey: match[6], optimizations: match[7], jobName: match[8] }));
-const supportRows = [...nativeAotJob.matchAll(/^          - name: (.+)\n            os: (.+)\n            suite: aot-support\n            task: (.+)\n            fixtureShardIndex: (\d+)\n            fixtureShardCount: (\d+)\n            fixtureSharded: (true|false)\n            jobName: (.+)$/gm)]
+// Windows support行は共有compiler artifactを使うconsumer job（aot_windows）へ
+// 移したため、support行も両jobをまたいで検証する。
+const supportRows = [...(nativeAotJob + windowsAotJob).matchAll(/^          - name: (.+)\n            os: (.+)\n            suite: aot-support\n            task: (.+)\n            fixtureShardIndex: (\d+)\n            fixtureShardCount: (\d+)\n            fixtureSharded: (true|false)\n            jobName: (.+)$/gm)]
   .map((match) => ({ name: match[1], os: match[2], task: match[3], index: Number(match[4]), count: Number(match[5]), sharded: match[6] === "true", jobName: match[7] }));
 const expectedNativeRows = new Set();
 for (const [name, count] of nativeShardCounts) {
@@ -465,11 +467,17 @@ if (!aotCompilerJob || !aotCompilerJob.includes("name: Windows x86_64 / AOT veri
 if (!nativeAotJob.includes("needs: [changes]\n") || nativeAotJob.includes("aot_compiler")) {
   throw new Error("aot jobがcompiler producerへ依存しています（直列化防止のためchangesのみへ依存させてください）");
 }
+// native 12 shardに加え、Windowsのsupport系5 job（HTTP・dispatch evidence・
+// dispatch coverage 3 shard）も共有compiler artifactを利用する
+// （改善計画2 Phase 4）。support-smokeはReleaseSafe compilerを検証するため
+// 共有Debug artifactを使えず、aot job側に残す。したがってconsumer jobに
+// `zig build`が無いことを確認する。
 if (!windowsAotJob.includes("needs: [changes, aot_compiler]") ||
-    windowsAotJob.includes("run: zig build\n") ||
     (windowsAotJob.match(/suite: aot-native\n            task: native/g) ?? []).length !== 12 ||
-    (windowsAotJob.match(/os: windows-2025/g) ?? []).length !== 12) {
-  throw new Error("Windows AOT consumer jobがproducer・12 shard構成・build省略のいずれかを満たしていません");
+    (windowsAotJob.match(/suite: aot-support\n            task: support-/g) ?? []).length !== 5 ||
+    (windowsAotJob.match(/os: windows-2025/g) ?? []).length !== 17 ||
+    windowsAotJob.includes("run: zig build")) {
+  throw new Error("Windows AOT consumer jobがproducer・12 native shard＋5 support job構成・共有compiler利用のいずれかを満たしていません");
 }
 const windowsAotStep = (name) => {
   const marker = "      - name: " + name;
@@ -480,13 +488,44 @@ const windowsAotStep = (name) => {
 };
 const downloadCompilerBlock = windowsAotStep("Download shared AOT compiler artifact");
 const installCompilerBlock = windowsAotStep("Verify and install shared AOT compiler");
-if (!downloadCompilerBlock || !downloadCompilerBlock.includes("if: matrix.task == 'native' && matrix.os == 'windows-2025'") ||
+if (!downloadCompilerBlock || downloadCompilerBlock.includes("if:") ||
     !downloadCompilerBlock.includes("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1") ||
     !downloadCompilerBlock.includes("name: lnako-aot-compiler-windows-x64") ||
-    !installCompilerBlock || !installCompilerBlock.includes("if: matrix.task == 'native' && matrix.os == 'windows-2025'") ||
+    !installCompilerBlock || installCompilerBlock.includes("if:") ||
     !installCompilerBlock.includes("node tools/aot_compiler_artifact.mjs verify") ||
     !installCompilerBlock.includes("--install-to zig-out/bin")) {
-  throw new Error("Windows native shardの共有compiler download／検証・install stepが不完全です");
+  throw new Error("Windows AOT consumerの共有compiler download／検証・install stepが不完全です");
+}
+// support系の検証stepがconsumer jobへ移設されていることを確認する。
+const windowsSupportSteps = [
+  ["Differential HTTP server AOT oracle", "if: matrix.task == 'support-http'"],
+  ["Dispatch evidence audit", "if: matrix.task == 'support-dispatch-evidence'"],
+  ["Dispatch coverage audit", "if: matrix.task == 'support-dispatch-coverage'"],
+  ["Dispatch trace security audit", "if: matrix.task == 'support-dispatch-evidence'"],
+  ["Upload native dispatch evidence", "if: matrix.task == 'support-dispatch-evidence' && always()"],
+  ["Upload native dispatch coverage audit", "if: matrix.task == 'support-dispatch-coverage' && always()"],
+];
+for (const [name, condition] of windowsSupportSteps) {
+  const block = windowsAotStep(name);
+  if (!block || !block.includes(condition)) {
+    throw new Error(`Windows AOT support stepがconsumer jobへ移設されていません: ${name}`);
+  }
+  // 検証コマンドは必ず--no-buildで共有compilerを使う（smokeは自前build、
+  // upload stepはartifact送信のみ）。
+  const isUpload = name.startsWith("Upload ");
+  if (name !== "Normal smoke test" && !isUpload && !block.includes("--no-build")) {
+    throw new Error(`Windows AOT support stepが--no-buildを使っていません: ${name}`);
+  }
+}
+if (windowsAotJob.includes("Build AOT verification compiler\n")) {
+  throw new Error("Windows AOT consumer jobでcompilerをbuildし直しています");
+}
+// support-smokeはReleaseSafe compilerを検証するため、共有artifactを使う
+// consumer jobではなくaot job側で自前buildする。
+const smokeBuildBlock = aotStep("Build ReleaseSafe compiler");
+if (!smokeBuildBlock || !smokeBuildBlock.includes("if: matrix.task == 'support-smoke'") || !smokeBuildBlock.includes("zig build -Doptimize=ReleaseSafe") ||
+    windowsAotStep("Build ReleaseSafe compiler") !== null) {
+  throw new Error("support smokeのReleaseSafe compiler buildが不正です");
 }
 // consumerでも差分テストとshard artifact uploadは維持する。
 const windowsDifferentialBlock = windowsAotStep("Differential native AOT verification (fixture/route shard)");
@@ -557,6 +596,10 @@ if (!nativeOracleScript.includes("const shard = parseShard();") || !nativeOracle
     !nativeOracleScript.includes("--optimizations") || !nativeOracleScript.includes('schema: "lnako.native-oracle-artifact.v3"')) {
   throw new Error("native oracleのfixture／route shard実装がありません");
 }
+// support系stepはOSで担当jobが分かれる。Linux・macOSはaot job、
+// Windowsは共有compiler artifactを使うconsumer job（aot_windows）が担う。
+// ここではaot job側（Linux・macOS担当）の条件を確認し、Windows側の
+// 移設は別途windowsSupportStepsで確認する。
 const supportStepConditions = new Map([
   ["Differential HTTP server AOT oracle", "support-http"],
   ["Dispatch evidence audit", "support-dispatch-evidence"],
@@ -629,10 +672,15 @@ if (!nativeUpload || !nativeUpload.includes("if: matrix.task == 'native' && alwa
 }
 if (nativeUpload.includes("run:")) throw new Error("AOT shard artifact uploadで追加の検証コマンドを実行しないでください");
 const uploadActions = workflow.match(/^        uses: actions\/upload-artifact@/gm) ?? [];
-if (uploadActions.length !== 10 || (testJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 1 ||
+// aot側: macOS dispatch coverage 1＋AOT artifact 1＋timing telemetry 1＋
+//   dispatch evidence 1＋dispatch coverage 1 = 5
+// aot_windows側（Windows support系もここへ移設）: AOT artifact 1＋
+//   timing telemetry 1＋Windows dispatch evidence 1＋Windows dispatch coverage 1 = 4
+// test 1＋aggregate 1＋attestation 1 = 3（合計12）
+if (uploadActions.length !== 12 || (testJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 1 ||
     (nativeAotJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 5 ||
-    (windowsAotJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 2) {
-  throw new Error(`actions/upload-artifactはmacOS dispatch evidence 1＋AOT artifact 4＋timing telemetry 4＋Windows consumer 2＋aggregate 1＋attestation 1ステップ必要です: actual=${uploadActions.length}`);
+    (windowsAotJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 4) {
+  throw new Error(`actions/upload-artifactのステップ数が想定と一致しません（aot 5／aot_windows 4／test 1／aggregate 1／attestation 1）: actual=${uploadActions.length}`);
 }
 // timing telemetryは互換性evidenceとは別artifact名で分離する。集約検証は
 // `lnako-native-oracle-*` globでpartitionを検査するため、名前が被ると
@@ -673,8 +721,10 @@ if (!workflow.includes("if: matrix.suite == 'core' || matrix.suite == 'mac-core-
   throw new Error("coreの証拠追従検査に必要なfull checkout条件がありません");
 }
 const coverageVerificationJob = workflow.match(/  verify_dispatch_coverage:[\s\S]*?(?=\n  verify_native_aot_artifacts:)/)?.[0];
-if (!coverageVerificationJob || !coverageVerificationJob.includes("if: needs.changes.outputs.level == 'full' && needs.test.result == 'success' && needs.aot.result == 'success'") ||
-    !coverageVerificationJob.includes("needs: [changes, test, aot]") ||
+// Windowsのcoverage artifactは共有compiler artifactを使うconsumer job
+// （aot_windows）が供給するため、集約jobはaot_windowsの完了も待つ。
+if (!coverageVerificationJob || !coverageVerificationJob.includes("if: needs.changes.outputs.level == 'full' && needs.test.result == 'success' && needs.aot.result == 'success' && needs.aot_windows.result == 'success'") ||
+    !coverageVerificationJob.includes("needs: [changes, test, aot, aot_windows]") ||
     !coverageVerificationJob.includes("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1") ||
     !coverageVerificationJob.includes("pattern: lnako-dispatch-coverage-*") ||
     !coverageVerificationJob.includes("merge-multiple: true") ||
