@@ -489,9 +489,22 @@ pub const CliHost = struct {
         return lnako.runtime.low_level_process.isTty(self.io, self.processStreamFile(stream));
     }
 
+    /// `端末サイズ取得` 用のfile。WindowsのGetConsoleScreenBufferInfoは出力
+    /// 画面バッファ専用のため、stdin指定時はTTYなstdout/stderrを使う。
+    fn ttySizeFile(self: *CliHost, stream: lnako.runtime.low_level_foundation.ProcessStream) std.Io.File {
+        if (comptime builtin.os.tag == .windows) {
+            if (stream == .stdin) {
+                const stdout_file = self.stdoutFile();
+                if (stdout_file.isTty(self.io) catch false) return stdout_file;
+                return self.stderrFile();
+            }
+        }
+        return self.processStreamFile(stream);
+    }
+
     fn lowLevelTtySize(context: *anyopaque, stream: lnako.runtime.low_level_foundation.ProcessStream) anyerror!lnako.runtime.low_level_process.TtySize {
         const self: *CliHost = @ptrCast(@alignCast(context));
-        return lnako.runtime.low_level_process.ttySize(self.io, self.processStreamFile(stream));
+        return lnako.runtime.low_level_process.ttySize(self.io, self.ttySizeFile(stream));
     }
 
     fn lowLevelDirTable(self: *CliHost) *lnako.runtime.low_level_dir.DirHandleTable {

@@ -939,7 +939,7 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "shell stringを介さない。OPTIONSのcwd/env/stdio(inherit/pipe/null)/detached。WindowsのdetachedはENOTSUP。argv[0]の実行ファイル解決は親環境のPATHを使う。stdio=pipeの親側は公開されず、待機時にEOFまでdrainして破棄するため子との入出力には使えない。detachedとpipe stdioの併用はEINVAL。detachedはPOSIXの新プロセスグループ生成のみで、新セッションやstdioの切り離しは行わない（完全なnohup相当は提供しない）。未waitのdetached子はRuntime破棄時にreaper threadが非同期にreapする",
+      "notes": "shell stringを介さない。OPTIONSのcwd/env/stdio(inherit/pipe/null)/detached。WindowsのdetachedはENOTSUP。argv[0]の実行ファイル解決は親環境のPATHを使う。stdio=pipeの親側は公開されず、待機時にEOFまでdrainして破棄するため子との入出力には使えない。detachedとpipe stdioの併用はEINVAL。detachedはPOSIXの新プロセスグループ生成のみで、新セッションやstdioの切り離しは行わない（完全なnohup相当は提供しない）。未waitのdetached子はRuntime破棄時にreaper threadが非同期にreapする。env省略時はホストプロセスの環境を継承する（lnako testのスクリプト可視環境一覧とは独立）",
       "implemented": true
     },
     {

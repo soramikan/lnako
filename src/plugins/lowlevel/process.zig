@@ -167,7 +167,7 @@ pub fn spawn(runtime: *Runtime, state: *State, context: Context, effects: Effect
     }
 
     const raw = context.spawnProcess(argv.items, options) catch |failure| {
-        return throwIoAs(runtime, effects, failure, operation, null, capability);
+        return shared.throwSpawnIo(runtime, effects, failure, operation, capability);
     };
     errdefer context.discardProcess(raw) catch {};
 

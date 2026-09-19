@@ -1067,6 +1067,19 @@ pub fn portableCodeForFailure(failure: anyerror) ?PortableErrorCode {
     };
 }
 
+/// `プロセス起動` 専用のportable code写像。spawnの契約エラー集合は
+/// ENOENT/EACCES/EPERM/EINVAL/ENOTSUPだけなので、fd枯渇（EMFILE/ENFILE）や
+/// その他のリソース失敗を含む未写像の失敗はEINVALへ丸める。nullは返さない。
+pub fn portableCodeForSpawnFailure(failure: anyerror) PortableErrorCode {
+    return switch (failure) {
+        error.FileNotFound, error.NotFound => .ENOENT,
+        error.AccessDenied => .EACCES,
+        error.PermissionDenied => .EPERM,
+        error.OperationUnsupported, error.UnsupportedReparsePointType, error.Unsupported, error.NotSupported, error.LowLevelIoUnavailable => .ENOTSUP,
+        else => .EINVAL,
+    };
+}
+
 /// `ディレクトリ開く` が投げ得るcode。カタログの集合は
 /// ENOENT/ENOTDIR/EACCES/EPERM/EMFILE/ENFILE/ENOTSUP で、それ以外
 /// （ELOOP等のOS固有失敗や未写像エラー）は全命令共通のEINVALへ丸める。
@@ -1388,6 +1401,17 @@ test "portableCodeForFailureはI/O失敗をportable codeへ写す" {
     // stdin履歴上限超過はリソース枯渇としてENOSPCへ写す。
     try std.testing.expectEqual(PortableErrorCode.ENOSPC, portableCodeForFailure(error.StreamTooLong).?);
     try std.testing.expect(portableCodeForFailure(error.OutOfMemory) == null);
+}
+
+test "portableCodeForSpawnFailureは契約集合へ限定しEMFILE/ENFILEをEINVALへ丸める" {
+    try std.testing.expectEqual(PortableErrorCode.ENOENT, portableCodeForSpawnFailure(error.FileNotFound));
+    try std.testing.expectEqual(PortableErrorCode.EACCES, portableCodeForSpawnFailure(error.AccessDenied));
+    try std.testing.expectEqual(PortableErrorCode.EPERM, portableCodeForSpawnFailure(error.PermissionDenied));
+    try std.testing.expectEqual(PortableErrorCode.ENOTSUP, portableCodeForSpawnFailure(error.OperationUnsupported));
+    // spawn契約にEMFILE/ENFILEは無いためEINVALへ丸める。
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, portableCodeForSpawnFailure(error.ProcessFdQuotaExceeded));
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, portableCodeForSpawnFailure(error.SystemFdQuotaExceeded));
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, portableCodeForSpawnFailure(error.InvalidExe));
 }
 
 test "Issue 29の9命令は実装済みでcapabilityが有効になる" {

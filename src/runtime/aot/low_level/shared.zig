@@ -238,6 +238,16 @@ pub fn throwIoAs(runtime: *Runtime, failure: anyerror, operation: []const u8, pa
     return throwIo(runtime, failure, operation, path, null, capability);
 }
 
+/// `プロセス起動` 専用。spawnの契約エラー集合
+/// (ENOENT/EACCES/EPERM/EINVAL/ENOTSUP) に限定し、fd枯渇などの未写像失敗は
+/// EINVALへ丸める。OOMは内部エラーとして伝播する。
+pub fn throwSpawnIo(runtime: *Runtime, failure: anyerror, operation: []const u8, capability: foundation.Capability) anyerror {
+    if (failure == error.OutOfMemory) return failure;
+    const code = foundation.portableCodeForSpawnFailure(failure);
+    const capability_name: ?[]const u8 = if (code == .ENOTSUP) capability.id() else null;
+    return throwStructured(runtime, code, operation, null, capability_name, failureMessage(failure));
+}
+
 /// OS失敗を呼び出し側が選んだportable codeへ写す。コマンド契約が許すcodeを
 /// EBADF/EINVAL/ENOTSUP等へ限定したいときに使う（Interpreterと同じ契約）。
 /// `path` は失敗対象（無ければnull）。OOMは内部エラーとして伝播する。

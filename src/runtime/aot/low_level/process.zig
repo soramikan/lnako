@@ -18,6 +18,7 @@ const isString = shared.isString;
 const dictionaryProperty = shared.dictionaryProperty;
 const setField = shared.setField;
 const throwIoAs = shared.throwIoAs;
+const throwSpawnIo = shared.throwSpawnIo;
 const throwStructured = shared.throwStructured;
 const rememberHandle = shared.rememberHandle;
 const forgetHandle = shared.forgetHandle;
@@ -196,7 +197,7 @@ pub fn spawnBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
 
     const io = ensureProcessIo(runtime);
     const raw = processTable(runtime).spawn(io, argv.items, options) catch |failure| {
-        return throwIoAs(runtime, failure, operation, null, capability);
+        return throwSpawnIo(runtime, failure, operation, capability);
     };
     errdefer processTable(runtime).discard(io, raw) catch {};
     var handle = try runtime.createDictionary(&.{});
@@ -330,7 +331,7 @@ pub fn ttySizeBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
         return throwStructured(runtime, .EINVAL, operation, null, null, "STREAMが必要です");
     }
     const stream = try requireStream(runtime, arguments[0], operation);
-    const size = low_level_process.ttySize(ensureProcessIo(runtime), processStreamFile(runtime, stream)) catch |failure| {
+    const size = low_level_process.ttySize(ensureProcessIo(runtime), ttySizeFile(runtime, stream)) catch |failure| {
         return throwIoAs(runtime, failure, operation, null, .tty_isatty);
     };
     var roots = [_]Value{ .{}, .{} };
@@ -349,6 +350,19 @@ fn processStreamFile(runtime: *Runtime, stream: foundation.ProcessStream) std.Io
         .stdout => state.stdioStdoutFile(runtime),
         .stderr => state.stdioStderrFile(runtime),
     };
+}
+
+/// `端末サイズ取得` 用のfile。WindowsのGetConsoleScreenBufferInfoは出力画面
+/// バッファ専用のため、stdin指定時はTTYなstdout/stderrを使う。
+fn ttySizeFile(runtime: *Runtime, stream: foundation.ProcessStream) std.Io.File {
+    if (comptime builtin.os.tag == .windows) {
+        if (stream == .stdin) {
+            const stdout_file = state.stdioStdoutFile(runtime);
+            if (stdout_file.isTty(ensureProcessIo(runtime)) catch false) return stdout_file;
+            return state.stdioStderrFile(runtime);
+        }
+    }
+    return processStreamFile(runtime, stream);
 }
 
 /// 埋め込みinterpreter（dynamic bridge）向けHost callback。spawn/waitは
@@ -406,7 +420,7 @@ pub fn pluginIsatty(context: *anyopaque, stream: foundation.ProcessStream) anyer
 
 pub fn pluginTtySize(context: *anyopaque, stream: foundation.ProcessStream) anyerror!low_level_process.TtySize {
     const runtime: *Runtime = @ptrCast(@alignCast(context));
-    return low_level_process.ttySize(ensureProcessIo(runtime), processStreamFile(runtime, stream));
+    return low_level_process.ttySize(ensureProcessIo(runtime), ttySizeFile(runtime, stream));
 }
 
 test "AOTプロセス起動はARGV非配列と空配列をEINVALにする" {
