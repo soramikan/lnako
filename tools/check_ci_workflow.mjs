@@ -600,6 +600,10 @@ if (!aotCompilerArtifactScript.includes('"lnako.aot-compiler-artifact.v1"') ||
     !aotCompilerArtifactScript.includes("buildMode") ||
     !aotCompilerArtifactScript.includes("compatJs") || !aotCompilerArtifactScript.includes("basename(name) !== name") ||
     !aotCompilerArtifactScript.includes('"..", "lib"') ||
+    // upload-artifact／download-artifactは実行ビットを保証しないため、
+    // install時にPOSIXで実行ビットを付与する（Linux consumerのEACCES再発防止）。
+    !aotCompilerArtifactScript.includes("chmodSync") ||
+    !aotCompilerArtifactScript.includes("platform !== \"win32\"") ||
     !aotCompilerArtifactScript.includes("rev-parse") || !aotCompilerArtifactScript.includes("toolchain.lock.json") ||
     !workflow.includes("node --test tools/setup_llvm_test.mjs tools/collect_ci_metrics_test.mjs tools/aot_compiler_artifact_test.mjs")) {
   throw new Error("AOT compiler artifactのmetadata照合または単体テストが不完全です");

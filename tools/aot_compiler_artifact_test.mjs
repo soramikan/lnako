@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -41,6 +41,11 @@ test("create→verifyでmetadata・binary・runtime libを復元できる", () =
   const verified = verifyArtifact({ dir: outDir, installTo, root, env });
   assert.equal(verified.metadata.commit, COMMIT);
   assert.equal(readFileSync(join(installTo, "lnako.exe"), "utf8"), "fake-compiler-binary");
+  // upload-artifact／download-artifactは実行ビットを保証しないため、install時に
+  // POSIXでは実行ビットを付与する（Linux consumerのspawn EACCES再発防止）。
+  if (process.platform !== "win32") {
+    assert.notEqual(statSync(join(installTo, "lnako.exe")).mode & 0o111, 0, "install後のcompilerは実行可能でなければなりません");
+  }
   // compilerは<exe>/../lib/を探索するため、兄弟libへinstallされる必要がある。
   assert.equal(readFileSync(join(work, "zig-out", "lib", "lnako_runtime.lib"), "utf8"), "fake-runtime-library");
   rmSync(work, { recursive: true, force: true });
