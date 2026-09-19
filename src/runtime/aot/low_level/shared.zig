@@ -8,6 +8,7 @@ const low_level_hash = @import("../../low_level_hash.zig");
 const low_level_fs = @import("../../low_level_fs.zig");
 const low_level_dir = @import("../../low_level_dir.zig");
 const low_level_context = @import("../../low_level/context.zig");
+const low_level_process = @import("../../low_level_process.zig");
 
 pub const aot_builtin = aot_shared.aot_builtin;
 pub const BigInt = aot_shared.BigInt;
@@ -46,6 +47,25 @@ pub fn hashTable(runtime: *Runtime) *low_level_hash.HashHandleTable {
         runtime.low_level_hash_handles = low_level_hash.HashHandleTable.init(runtime.allocator);
     }
     return &runtime.low_level_hash_handles.?;
+}
+
+pub fn processTable(runtime: *Runtime) *low_level_process.ProcessTable {
+    if (runtime.low_level_process_handles == null) {
+        runtime.low_level_process_handles = low_level_process.ProcessTable.init(runtime.allocator);
+    }
+    return &runtime.low_level_process_handles.?;
+}
+
+/// プロセスspawn/waitが使うIoを保証する。AOTの `process_io` は
+/// `lnako_aot_runtime_init` でも初期化されるが、単体テストはRuntimeを
+/// 直接生成するため、初回にここでThreadedを用意する。`global_single_threaded`
+/// はfailing allocatorでspawnできないため使わない。
+pub fn ensureProcessIo(runtime: *Runtime) std.Io {
+    if (!runtime.process_io_initialized) {
+        runtime.process_io = std.Io.Threaded.init(runtime.allocator, .{ .environ = state.aotProcessEnvironment() });
+        runtime.process_io_initialized = true;
+    }
+    return runtime.process_io.io();
 }
 
 pub fn dirTable(runtime: *Runtime) *low_level_dir.DirHandleTable {

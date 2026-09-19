@@ -14,6 +14,7 @@ const stdio = @import("stdio.zig");
 const stream = @import("stream.zig");
 const hash = @import("hash.zig");
 const fs = @import("fs.zig");
+const process = @import("process.zig");
 const dir = @import("dir.zig");
 const posix = @import("posix.zig");
 
@@ -92,6 +93,15 @@ pub fn call(
     if (matches(name, foundation.stdio_commands.stderr_write, foundation.stdio_commands.stderr_write_user)) return @as(?Value, try stdio.stderrWrite(runtime, context, effects, arguments));
     if (std.mem.eql(u8, name, foundation.stdio_commands.stdout_sync)) return @as(?Value, try stdio.stdoutSync(runtime, context, effects));
     if (std.mem.eql(u8, name, foundation.stdio_commands.stderr_sync)) return @as(?Value, try stdio.stderrSync(runtime, context, effects));
+    if (std.mem.eql(u8, name, foundation.process_commands.spawn)) return @as(?Value, try process.spawn(runtime, state, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.process_commands.wait)) return @as(?Value, try process.wait(runtime, state, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.process_commands.pid_get)) return @as(?Value, try process.pidGet(runtime, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.process_commands.ppid_get)) return @as(?Value, try process.ppidGet(runtime, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.process_commands.signal_send)) return @as(?Value, try process.signalSend(runtime, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.process_commands.priority_get)) return @as(?Value, try process.priorityGet(runtime, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.process_commands.priority_set)) return @as(?Value, try process.prioritySet(runtime, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.process_commands.tty_isatty)) return @as(?Value, try process.ttyIsatty(runtime, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.process_commands.tty_size)) return @as(?Value, try process.ttySize(runtime, context, effects, arguments));
     // カタログ掲載済みだが未実装の命令は、capabilityとoperationを設定した
     // 構造化 ENOTSUP で応答する（G0の未対応契約）。実装済み命令がここへ
     // 到達するのはdispatch腕の書き忘れなので、開発時に検出する。
@@ -162,7 +172,7 @@ test "未実装命令はdispatch名と利用者名の両形で構造化ENOTSUP�
             }
         }
     }
-    try std.testing.expectEqual(@as(usize, 21), covered);
+    try std.testing.expectEqual(@as(usize, 12), covered);
 }
 
 test "実装済み命令の引数不足はEINVALで未知capability照会はfalse" {

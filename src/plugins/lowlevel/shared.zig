@@ -59,6 +59,41 @@ pub fn sizeArgument(_: *Runtime, value: Value) !u64 {
     };
 }
 
+/// pid/signalのようなu32値。安全整数Numberまたはu32範囲のBigIntだけを受け付ける。
+pub fn u32Argument(value: Value) !u32 {
+    return switch (value) {
+        .number => |number| blk: {
+            if (!foundation.isSafeInteger(number)) return error.InvalidInteger;
+            if (number < 0 or number > @as(f64, @floatFromInt(std.math.maxInt(u32)))) return error.InvalidInteger;
+            break :blk @intFromFloat(number);
+        },
+        .bigint => |bigint| blk: {
+            const integer = bigint.toU128() catch return error.InvalidInteger;
+            if (integer > std.math.maxInt(u32)) return error.InvalidInteger;
+            break :blk @intCast(integer);
+        },
+        else => error.InvalidInteger,
+    };
+}
+
+/// priority値のようなi32値。安全整数Numberまたはi32範囲のBigIntだけを受け付ける。
+pub fn i32Argument(value: Value) !i32 {
+    return switch (value) {
+        .number => |number| blk: {
+            if (!foundation.isSafeInteger(number)) return error.InvalidInteger;
+            if (number < @as(f64, @floatFromInt(std.math.minInt(i32))) or
+                number > @as(f64, @floatFromInt(std.math.maxInt(i32)))) return error.InvalidInteger;
+            break :blk @intFromFloat(number);
+        },
+        .bigint => |bigint| blk: {
+            const integer = bigint.toI128() catch return error.InvalidInteger;
+            if (integer < std.math.minInt(i32) or integer > std.math.maxInt(i32)) return error.InvalidInteger;
+            break :blk @intCast(integer);
+        },
+        else => error.InvalidInteger,
+    };
+}
+
 pub fn bytesArgument(runtime: *Runtime, value: Value) ![]const u8 {
     if (value != .bytes) return error.InvalidBytes;
     if (value.bytes.kind != .buffer) return error.InvalidBytes;
