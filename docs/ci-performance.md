@@ -772,10 +772,10 @@ fixture × optimization の被覆（各optimizationでちょうど1回）は維�
   Windows coreの実ビルド／実実行コスト（CI構造では削減不可）に由来する。
 - Physical上「検証量を減らさず」を維持（Phase 4・5はビルドと実行の重複のみ除去）。
 
-## 次段階の実測候補: Linux AOT jobsのcompiler build重複
+## Linux AOT jobsのcompiler build重複の解消
 
 Phase 4はWindowsのsupport系5 jobを共有compiler artifactへ寄せたが、**Linux側は
-依然として各jobがcompilerをbuildしている**。run 35465334491の実測:
+依然として各jobがcompilerをbuildしていた**。run 35465334491の実測:
 
 | job | job全体 | うちBuild AOT verification compiler |
 | --- | ---: | ---: |
@@ -783,16 +783,50 @@ Phase 4はWindowsのsupport系5 jobを共有compiler artifactへ寄せたが、*
 | Linux x86_64 / AOT support HTTP | 183s | 125s（68%） |
 | Windows x86_64 / AOT native shard 1/3 / O0+O1 | 131s | 0s（共有artifact） |
 
-LinuxのAOT native 6 jobとsupport系（HTTP・dispatch evidence）が各125〜172sを
-compiler buildに使っている。Windowsと同じproducer/consumer方式をLinuxへ広げれば
-**推定15〜20分/run**の追加削減が見込める（runner minutes 166 min → 約146 min、
-改善前比 -31%となり計画の25%目標を上回る）。
+補足: Phase 1のcache key分離（`aot-native-v2-s{shard}of{count}-{optimization}`）後は、
+Linux AOT nativeのbuildがcache hitで0〜1sになる場合もある。ただしcache総量が
+上限10 GiBを超えるためevictionが起き、run 35466605404では6 job中3 jobが
+cold（171〜177s）だった。共有artifactはこのcold buildを構造的に無くす。
 
-実装上の注意:
+### 実装: Linux専用producer＋consumer job
 
-- Linux runnerもCPU世代が混在しうるため、producerは`-Dcpu=x86_64_v2`でbuildする
-  （Windowsで実測したAVX-512混入と同じ問題を避ける）。
-- Linuxの`support-dispatch-coverage`（ubuntu）はcanonical正本のため
-  **ReleaseSafe**でbuildしており、Debug artifactは流用できない。ReleaseSafe用の
-  producerを別に用意するか、現状の自前buildを維持する。
-- `aot_compiler`をOS別matrixへ拡張するか、Linux専用のproducer jobを追加する。
+Windowsと同じproducer/consumer方式をLinuxへ広げた。
+
+- `aot_compiler_linux`（producer）: ubuntu-24.04でDebug compilerを1回buildし、
+  `aot_compiler_artifact.mjs create`でcommit・os・arch・Zig version・buildMode・
+  各SHA-256を持つartifactとしてuploadする。成果物はproducerと別のrunnerで実行される
+  ため`-Dcpu=x86_64_v2`を明示し、runner CPU依存命令の混入を防ぐ（Windowsで実測した
+  AVX-512混入と同じ問題の再発防止）。`use-cache: false`。
+- `aot_linux`（consumer）: Linux native 6 shard（O0+O1／O2+O3×3 shard）と、Debug
+  compilerで動作するLinux support 2 job（HTTP・dispatch evidence）を集約する。
+  artifactを`aot_compiler_artifact.mjs verify --install-to zig-out/bin`で検証・
+  installし、各jobの`zig build`（実測125〜172s）を0sにする。`use-cache: false`に
+  してshard別Zig cache（1 lineage 約64 MiB × 6 shard）も作らない。
+
+### job分割で維持した性質
+
+`needs`はjob全体へ効くため、producer依存はconsumer jobだけに置いた。`aot`
+（macOS native routes 3＋Linux dedicated coverage 3 shard＋Linux/Windows smoke）は
+`needs: [changes]`のままとし、producer失敗で他platform・support shardの検証を
+巻き込まない（`aot_windows`と同じ方針）。canonical正本を供給するLinux
+`support-dispatch-coverage`はReleaseSafeが必須で共有Debug artifactを流用できないため、
+従来どおり`aot`側で自前buildする。macOS nativeも同様に`aot`側で自前buildする。
+
+### 付随して修正した不整合
+
+Releaseのpreflightは「同一commitのCI全job成功」をjob数の一致で判定するが、
+`release.yml`の`CI_EXPECTED_JOB_COUNT`は57（Phase 5前の値）のままで、Phase 5後の
+CI（45 job）とは恒久的に不一致だった。本変更で正しい46 jobへ更新し、
+`check_release_workflow.mjs`が**CI定義から総job数を導出して**release側の固定値と
+照合するようにした（matrix行数＋matrixを持たないjob数）。job構成の変更に固定値が
+追従しない事故を構造的に防ぐ。
+
+### 期待効果
+
+Linux native 6 jobのcold build（実測171〜177s）とLinux support 2 jobのbuild
+（実測125s）を0sにでき、cache evictionの主因だったLinux nativeのZig cache
+（6×約64 MiB）も消える。推定**15〜20分/run**（runner minutes 166→約146 min）。
+本変更を含むrunの`collect_ci_metrics.mjs`出力で実測値を確認する。
+
+job名（`Linux x86_64 / AOT native shard 1/3 / O0+O1` 等）は変えていないため、
+**mainのブランチ保護のrequired status checksの更新は不要**である。

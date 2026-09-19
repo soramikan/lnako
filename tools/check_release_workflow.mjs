@@ -3,7 +3,22 @@ import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 const workflow = await readFile(resolve(root, ".github/workflows/release.yml"), "utf8");
+const ciWorkflow = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
 const distribution = await readFile(resolve(root, "tools/create_distribution.mjs"), "utf8");
+// Releaseのpreflightは「同一commitのCIが全job成功」を job数一致で判定する。
+// 期待値をCI定義から導出し、CIのjob構成が変わったのにrelease側の固定値が
+// 古いままでreleaseが恒久的に失敗する状態を構造的に防ぐ。
+// GitHubはmatrix行ごとに1 jobを作るため、総job数=matrix行数＋matrixを持たないjob数。
+const ciMatrixRows = (ciWorkflow.match(/^          - name: /gm) ?? []).length;
+const ciJobsSection = ciWorkflow.slice(ciWorkflow.indexOf("\njobs:"));
+const ciJobBlocks = [...ciJobsSection.matchAll(/^  ([a-zA-Z_-]+):\n(?=    )/gm)]
+  .map((match, index, all) => {
+    const end = index + 1 < all.length ? all[index + 1].index : ciJobsSection.length;
+    return { name: match[1], block: ciJobsSection.slice(match.index, end) };
+  });
+if (ciMatrixRows === 0 || ciJobBlocks.length === 0) throw new Error("CI workflowからjob数を導出できません");
+const ciSingletonJobs = ciJobBlocks.filter(({ block }) => !/^    strategy:$/m.test(block)).length;
+const expectedCiJobCount = ciMatrixRows + ciSingletonJobs;
 const floatingActions = [...workflow.matchAll(/uses: ([^\s@]+)@([^\s#]+)/g)]
   .filter((match) => !/^[0-9a-f]{40}$/.test(match[2]))
   .map((match) => `${match[1]}@${match[2]}`);
@@ -48,10 +63,10 @@ if (!workflow.includes("needs: preflight") || !workflow.includes("needs: [prefli
   throw new Error("Release workflowのjob依存関係またはpublish条件が不正です");
 }
 if (!workflow.includes("GITHUB_RUN_ID") || !workflow.includes("github.sha") || !workflow.includes("CI --commit") ||
-    !workflow.includes("CI_EXPECTED_JOB_COUNT: 57") || !workflow.includes("--json jobs") ||
+    !workflow.includes(`CI_EXPECTED_JOB_COUNT: ${expectedCiJobCount}`) || !workflow.includes("--json jobs") ||
     !workflow.includes("ci_job_count") || !workflow.includes("ci_failed_jobs") ||
     !workflow.includes("ci_attested") || !workflow.includes("ci_verified")) {
-  throw new Error("Release workflowにsource commit／CI gateの検証がありません");
+  throw new Error(`Release workflowにsource commit／CI gateの検証がありません（CIのjob数は${expectedCiJobCount}であるべきです）`);
 }
 // lightゲートでmatrixがskippedの成功runと、full matrix完走runを区別するため、
 // attestation jobのsuccessを終端証拠として要求する（docs専用commitへのreleaseを
