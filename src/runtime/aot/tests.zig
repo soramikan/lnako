@@ -7705,6 +7705,49 @@ test "AOT動的変換はハッシュハンドルのHandleIdを引き継ぐ" {
     try std.testing.expectEqual(@as(u32, 0), active.low_level_handle_ids.size);
 }
 
+test "AOT動的実行のディレクトリ閉じるはAOT側のID対応も解放する" {
+    const low_level_state = @import("../low_level/state.zig");
+    const aot_dir = @import("low_level/dir.zig");
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    const dynamic_state = try DynamicInterpreterState.init(std.testing.allocator, active);
+    active.dynamic_state = dynamic_state;
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "one.txt", .data = "" });
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+    roots[0] = try runtimeUtf8String(active, directory);
+    const handle = try state.lowLevelFileBuiltin(active, .low_level_dir_open, &.{roots[0]});
+    roots[1] = handle;
+    const original = state.handleIdFor(active, handle).?;
+
+    var dynamic_roots = dynamic_state.value_runtime.rootFrame();
+    defer dynamic_roots.deinit();
+    var dynamic_handle = try aotToDynamicValue(dynamic_state, handle);
+    try dynamic_roots.protect(&dynamic_handle);
+    try std.testing.expectEqual(original, low_level_state.lookupHandle(&dynamic_state.interpreter.lowlevel_state, dynamic_handle).?);
+
+    // 動的Interpreter側のcloseコールバックで閉じる（動的コードが
+    // `ディレクトリ閉じる` を呼んだ経路）。AOT側のID対応も解放されること。
+    try aot_dir.pluginCloseDir(active, original.raw());
+    try std.testing.expectEqual(@as(u32, 0), active.low_level_handle_ids.size);
+    try std.testing.expectEqual(@as(u32, 0), active.low_level_handle_by_id.size);
+    try std.testing.expectEqual(@as(usize, 0), active.low_level_dir_handles.?.len());
+}
+
 test "AOT低レイヤーの未実装命令はcapability/operation付きの構造化ENOTSUPを投げる" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();

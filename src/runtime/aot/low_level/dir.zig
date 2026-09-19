@@ -35,7 +35,12 @@ pub fn pluginNextDir(context: *anyopaque, raw: u64, allocator: std.mem.Allocator
 
 pub fn pluginCloseDir(context: *anyopaque, raw: u64) anyerror!void {
     const runtime: *Runtime = @ptrCast(@alignCast(context));
-    _ = dirTable(runtime).remove(io(runtime), foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+    const id = foundation.HandleId.fromRaw(raw);
+    _ = dirTable(runtime).remove(io(runtime), id) orelse return error.BadFileDescriptor;
+    // 動的InterpreterからAOTハンドルを閉じた場合も、AOT側のID対応表を
+    // 解放する。残すと辞書がGCルートとして保持され解放不能になる
+    // （pluginCloseFile/pluginDiscardHashと同じ後処理）。
+    forgetHandleId(runtime, id);
 }
 
 fn pathArgument(runtime: *Runtime, value: Value, operation: []const u8) ![]u8 {
