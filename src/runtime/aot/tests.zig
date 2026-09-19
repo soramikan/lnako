@@ -189,6 +189,7 @@ const nodeStdinAllBuiltin = state.nodeStdinAllBuiltin;
 const nodeStdinCallbackBuiltin = state.nodeStdinCallbackBuiltin;
 const nodeStdinLineBuiltin = state.nodeStdinLineBuiltin;
 const low_level_io = @import("../low_level_io.zig");
+const low_level_posix = @import("../low_level_posix.zig");
 const nodeStdinValueBuiltin = state.nodeStdinValueBuiltin;
 const numberValue = state.numberValue;
 const pathBuiltin = state.pathBuiltin;
@@ -8163,6 +8164,12 @@ test "AOT低レイヤーの実装済みフラグの命令はstubへ到達しな�
     const sink = try tmp.dir.createFile(std.testing.io, "stdio.bin", .{ .read = true });
     defer sink.close(std.testing.io);
     state.active_runtime.?.stdio_files = .{ .stdout = sink, .stderr = sink };
+    // `low_level_umask_set` はプロセス全体のumaskを変えるため、テストで
+    // 実行した後も元の値へ戻す（他テストのファイル生成modeに影響させない）。
+    const saved_umask: ?u32 = if (builtin.os.tag == .windows or builtin.os.tag == .wasi) null else low_level_posix.umask(0) catch null;
+    defer if (saved_umask) |value| {
+        _ = low_level_posix.umask(value) catch {};
+    };
     var taken: Value = .{};
     for (aot_builtin.low_level_bindings) |binding| {
         const spec = aot_builtin.lowLevelCatalogCommand(binding.command).?;
@@ -8210,7 +8217,7 @@ test "AOT低レイヤーの未実装命令は全てstub経由でENOTSUPを返す
         try std.testing.expect(taken.object().?.structured_error);
         try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "ENOTSUP");
     }
-    try std.testing.expectEqual(@as(usize, 31), stub_count);
+    try std.testing.expectEqual(@as(usize, 21), stub_count);
 }
 
 test "AOT未捕捉例外のmessage抽出は構造化エラーだけに限る" {
