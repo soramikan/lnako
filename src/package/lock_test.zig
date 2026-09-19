@@ -1194,6 +1194,51 @@ test "間接更新の原因は未変更の中間packageを越えて辿る" {
     try T.expectEqualStrings(a_id, c_change.caused_by[0]);
 }
 
+test "切れた旧依存経路を間接更新の原因に使わない" {
+    const a_id = "pkg:a1000000000000000000000000000000";
+    const b_id = "pkg:b1000000000000000000000000000000";
+    const c_id = "pkg:c1000000000000000000000000000000";
+    const d_id = "pkg:d1000000000000000000000000000000";
+    const x_id = "pkg:e1000000000000000000000000000000";
+    const fixtures = Fixtures{ .entries = &.{
+        .{ .id = a_id, .name = "a", .source = sqlite_source, .resolved_from = sqlite_source, .artifacts = &.{sqlite_source_artifact} },
+        .{ .id = b_id, .name = "b", .source = sqlite_source, .resolved_from = sqlite_source, .artifacts = &.{sqlite_source_artifact} },
+        .{ .id = c_id, .name = "c", .source = sqlite_source, .resolved_from = sqlite_source, .artifacts = &.{sqlite_source_artifact} },
+        .{ .id = d_id, .name = "d", .source = sqlite_source, .resolved_from = sqlite_source, .artifacts = &.{sqlite_source_artifact} },
+        .{ .id = x_id, .name = "x", .source = sqlite_source, .resolved_from = sqlite_source, .artifacts = &.{sqlite_source_artifact} },
+    } };
+
+    // 旧: A -> B -> C / X -> B -> C
+    // 新: A -> D / X -> B -> C（A->B は切れている）
+    const prev_nodes = [_]resolver.PackageNode{
+        try node(a_id, "1.0.0", &.{.{ .pkg = b_id }}, &.{"default"}),
+        try node(x_id, "1.0.0", &.{.{ .pkg = b_id }}, &.{"default"}),
+        try node(b_id, "1.0.0", &.{.{ .pkg = c_id }}, &.{"default"}),
+        try node(c_id, "1.0.0", &.{}, &.{"default"}),
+    };
+    const next_nodes = [_]resolver.PackageNode{
+        try node(a_id, "1.1.0", &.{.{ .pkg = d_id }}, &.{"default"}),
+        try node(x_id, "1.0.0", &.{.{ .pkg = b_id }}, &.{"default"}),
+        try node(b_id, "1.0.0", &.{.{ .pkg = c_id }}, &.{"default"}),
+        try node(c_id, "2.0.0", &.{}, &.{"default"}),
+        try node(d_id, "1.0.0", &.{}, &.{"default"}),
+    };
+
+    var previous = try lock.build(T.allocator, sampleInput(), &.{default_profile}, &prev_nodes, fixtures.details());
+    defer previous.deinit();
+    var next = try lock.build(T.allocator, sampleInput(), &.{default_profile}, &next_nodes, fixtures.details());
+    defer next.deinit();
+
+    var report = try lock.diff(T.allocator, &previous, &next, "default", &.{"a"});
+    defer report.deinit();
+
+    try T.expectEqual(lock.ChangeReason.updated_direct, report.find(a_id).?.reason);
+    const c_change = report.find(c_id).?;
+    try T.expectEqual(lock.ChangeReason.updated_indirect, c_change.reason);
+    // 新グラフで C へ至る経路は X -> B -> C のみで、A は切れている。
+    try T.expectEqual(@as(usize, 0), c_change.caused_by.len);
+}
+
 test "profilePackagesの欠落profileをE029で拒否する" {
     const entries = [_]lock.PackageEntry{
         .{ .id = sqlite_id, .name = sqlite_name, .version = "1.0.0", .artifacts = &.{sqlite_source_artifact} },
@@ -1217,6 +1262,36 @@ test "profilePackagesの欠落profileをE029で拒否する" {
     defer diagnostics.deinit();
     try lock.validate(&value, &diagnostics);
     try T.expect(diagnostics.find(diag.E029_INVALID_VALUE) != null);
+}
+
+test "定義済みinput profileのprofilePackages欠落はE029のみ" {
+    const default_entries = [_]lock.PackageEntry{
+        .{ .id = sqlite_id, .name = sqlite_name, .version = "1.0.0", .artifacts = &.{sqlite_source_artifact} },
+    };
+    const windows_entries = [_]lock.PackageEntry{
+        .{ .id = req_id, .name = req_name, .version = "2.0.1", .artifacts = &.{req_source_artifact} },
+    };
+    const profiles = [_]lock.NamedProfile{
+        .{ .name = "default", .record = .{ .runtime = "lnako", .os = "macos", .cpu = "aarch64", .abi = "gnu" } },
+        .{ .name = "windows", .record = .{ .runtime = "lnako", .os = "windows", .cpu = "x86_64", .abi = "msvc" } },
+    };
+    // input.profile = "default" は profiles に定義済みだが profilePackages に無い。
+    const profile_packages = [_]lock.ProfilePackages{
+        .{ .profile = "windows", .packages = &windows_entries },
+    };
+    var value = lock.Lock{
+        .arena = std.heap.ArenaAllocator.init(T.allocator),
+        .input = sampleInput(),
+        .packages = &default_entries,
+        .profiles = &profiles,
+        .profile_packages = &profile_packages,
+    };
+    defer value.deinit();
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    try lock.validate(&value, &diagnostics);
+    try T.expect(diagnostics.find(diag.E029_INVALID_VALUE) != null);
+    try T.expect(diagnostics.find(diag.E030_UNKNOWN_PROFILE) == null);
 }
 
 test "不正なprofile optimizeをE029で拒否する" {

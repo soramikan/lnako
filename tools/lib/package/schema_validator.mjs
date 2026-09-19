@@ -819,9 +819,6 @@ export function validateLock(lock, fixturePath) {
         fail("E029_INVALID_VALUE", `profilePackages is missing profile "${name}"`, `${fixturePath}.profilePackages`);
       }
     }
-    if (lock.input?.profile && !Object.hasOwn(lock.profilePackages, lock.input.profile)) {
-      fail("E030_UNKNOWN_PROFILE", `profilePackages is missing input.profile "${lock.input.profile}"`, `${fixturePath}.profilePackages`);
-    }
   }
 
   // lnako/cnako が共用する同一 ID・版の source artifact は同じ hash で参照する。

@@ -751,6 +751,8 @@ pub fn validate(lock: *const Lock, diagnostics: *diag.List) !void {
 
     // 複数 profile 形式では `profiles` と `profilePackages` の名前集合が一致
     // しなければならない（片方向の欠落を許すと既存版取得や差分が空になる）。
+    // 欠落は直前の集合一致検査と同じ E029 に統一する。`input.profile` 自体が
+    // 未定義の場合は上の profileRecord 検査が E030 を報告する。
     // 単一 profile 形式（profilePackages が空）はこの制約の対象外。
     if (lock.profile_packages.len > 0) {
         for (lock.profiles) |profile| {
@@ -764,9 +766,6 @@ pub fn validate(lock: *const Lock, diagnostics: *diag.List) !void {
             if (!found) {
                 try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock.profilePackages", .{}, "profilePackages is missing profile \"{s}\"", .{profile.name});
             }
-        }
-        if (!profile_package_names.contains(lock.input.profile)) {
-            try diagnostics.addFmt(diag.E030_UNKNOWN_PROFILE, .err, "nako.lock.profilePackages", .{}, "profilePackages is missing input.profile \"{s}\"", .{lock.input.profile});
         }
     }
 
@@ -1022,9 +1021,13 @@ pub fn diff(gpa: Allocator, previous: ?*const Lock, next: *const Lock, profile: 
     }
     std.mem.sort([]const u8, ids.items, {}, stringLessThan);
 
-    var parents: std.StringHashMapUnmanaged(std.ArrayListUnmanaged([]const u8)) = .empty;
-    try collectParentMap(allocator, previous_packages, &parents);
-    try collectParentMap(allocator, next_packages, &parents);
+    // 旧グラフと新グラフの親辺は分離して保持する。削除の説明には旧グラフを、
+    // 追加・更新の原因探索には更新後も実在する新グラフの辺だけを使い、切れた
+    // 経路を原因として誤報告しない。
+    var previous_parents: std.StringHashMapUnmanaged(std.ArrayListUnmanaged([]const u8)) = .empty;
+    try collectParentMap(allocator, previous_packages, &previous_parents);
+    var next_parents: std.StringHashMapUnmanaged(std.ArrayListUnmanaged([]const u8)) = .empty;
+    try collectParentMap(allocator, next_packages, &next_parents);
 
     var changes: std.ArrayList(Change) = .empty;
     var change_index: std.StringHashMapUnmanaged(usize) = .empty;
@@ -1066,7 +1069,8 @@ pub fn diff(gpa: Allocator, previous: ?*const Lock, next: *const Lock, profile: 
         var causes: std.ArrayList([]const u8) = .empty;
         var visited: std.StringHashMapUnmanaged(void) = .empty;
         var stack: std.ArrayList([]const u8) = .empty;
-        if (parents.get(change.id)) |list| {
+        const parent_map = if (change.reason == .removed) &previous_parents else &next_parents;
+        if (parent_map.get(change.id)) |list| {
             for (list.items) |parent| try stack.append(allocator, parent);
         }
         while (stack.pop()) |candidate| {
@@ -1076,8 +1080,8 @@ pub fn diff(gpa: Allocator, previous: ?*const Lock, next: *const Lock, profile: 
             gop.value_ptr.* = {};
             const index = change_index.get(candidate) orelse continue;
             if (changes.items[index].reason == .unchanged) {
-                // 未変更の中間 package はさらに上へ辿る。
-                if (parents.get(candidate)) |list| {
+                // 未変更の中間 package は同じグラフの辺だけをさらに上へ辿る。
+                if (parent_map.get(candidate)) |list| {
                     for (list.items) |parent| try stack.append(allocator, parent);
                 }
                 continue;
