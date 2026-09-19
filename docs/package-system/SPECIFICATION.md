@@ -245,8 +245,9 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
 | `schemaVersion` | integer | yes | lock ファイル schema version。 |
 | `resolverVersion` | integer | yes | 依存 resolver algorithm version。 |
 | `input` | object | yes | lock 生成時の入力条件。 |
-| `packages` | object | yes | Public ID をキーとする解決済 package マップ。 |
+| `packages` | object | yes | Public ID をキーとする解決済 package マップ。`input.profile` に対応する選択済みグラフ。 |
 | `profiles` | object | yes | 使用した profile 条件のマップ。 |
+| `profilePackages` | object | no | profile 名をキーとする解決済 package マップ。複数 profile を一つの lock に収録するときに使う。 |
 
 ### 4.3 package エントリ
 
@@ -259,9 +260,10 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
   "resolvedFrom": { "type": "registry", "url": "..." },
   "dependencies": ["pkg:<dep-hex>"],
   "features": ["default", "http"],
+  "implementation": "source",
   "artifacts": {
-    "source": { "kind": "tar.gz", "sha256": "...", "url": "..." },
-    "native": { "kind": ".npkg", "sha256": "...", "url": "..." }
+    "source": { "kind": "source", "type": "tar.gz", "sha256": "...", "url": "..." },
+    "native": { "kind": "native", "type": ".npkg", "sha256": "...", "url": "..." }
   },
   "npmInstances": {
     "escape-string-regexp@5.0.0": { ... }
@@ -272,6 +274,7 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
 - `source`: package の出典。
 - `resolvedFrom`: 実際に情報を取得した source。
 - `dependencies`: 直接依存の Public ID 配列。
+- `implementation`: 解決時に選択された実装種別（`source`/`native`/`ESM`/`none`）。`path` があれば既定で `source`、`prefer-native` 明示時のみ `native` を記録する。
 - `artifacts`: artifact kind (`source`/`native`/`ESM`) ごとに記録。
 - `npmInstances`: npm 補助依存のインスタンス。キーは `<npm-name>@<version>` または context-specific ID。
 
@@ -287,6 +290,16 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
 未知の `kind` はエラーとする。将来の kind は schema version bump または `x-` prefix で導入する。
 
 - lock 検証では選択 profile の `runtime` を考慮する。lock の `artifacts` は package 単位の集合で選択済み実装を表さないため、`cnako` または `compat-js = true` の場合を除き、ESM artifact が一つでもあれば保守的に `E006_JS_IN_NORMAL_MODE` とする（実際の選択は解決・import 時の `Export.resolve` が担う）。profile の `runtime` が未知の場合は `E014_INVALID_PROFILE`。選択された `input.profile` が `profiles` に存在しない場合は `E030_UNKNOWN_PROFILE`。
+
+### 4.5 複数 profile の収録と部分更新
+
+- lock は `input.profile` に対応する選択済みグラフを `packages` に持つ。複数 profile を一つの lock に収録する場合、profile 名をキーに `profilePackages` へ各 profile の解決済 package グラフを記録する。`packages` は `profilePackages[input.profile]` と一致する。
+- `profiles` は収録した全 profile の runtime・os・cpu・abi・compat-js・optimize を保持する。profile ごとの ESM 可否判定はその profile の runtime と compat-js で行う。
+- 排他的な profile 間では同じ Public ID に異なる版を許す。同一 profile の package グラフ内では Public ID ごとに一版とする。
+- lnako/cnako が共用する同一 source artifact は、同じ Public ID・版・hash で参照する。profile をまたいで同一 ID・版の source artifact の hash が食い違う lock は不正とする。
+- 通常解決では既存 lock の版を優先する。`update` で指定した package だけ優先固定を解除する。指定外の package が変化した場合は、変更元 package を変更理由（`caused_by`）として説明する。
+- `--locked` は lock 欠落、未知 `schemaVersion`、`resolverVersion` 不一致、manifest/profile/features/target の変更を検出したとき、lock を書き換えず失敗する。
+- path 依存は可変参照として記録する。path ソース本文の編集は root manifest の SHA-256 を変えないため再解決契機にならない。依存宣言を含む manifest 変更は `manifestSha256` の変化として検出する。
 
 ## 5. レジストリ契約
 

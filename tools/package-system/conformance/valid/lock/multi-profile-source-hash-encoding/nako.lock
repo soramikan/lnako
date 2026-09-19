@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "resolverVersion": 1,
+  "input": {
+    "manifestSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "profile": "default",
+    "features": ["default"],
+    "target": { "os": "macos", "cpu": "aarch64", "abi": "gnu" }
+  },
+  "packages": {
+    "pkg:00000000000000000000000000000000": {
+      "id": "pkg:00000000000000000000000000000000",
+      "name": "empty",
+      "version": "1.0.0",
+      "source": { "type": "registry", "url": "https://registry.example.com/pkg/empty" },
+      "resolvedFrom": { "type": "registry", "url": "https://registry.example.com/pkg/empty" },
+      "dependencies": [],
+      "features": ["default"],
+      "artifacts": {
+        "source": { "kind": "source", "type": "tar.gz", "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "url": "https://registry.example.com/pkg/empty/v1.0.0/source.tar.gz" }
+      }
+    }
+  },
+  "profiles": {
+    "default": { "runtime": "lnako", "os": "macos", "cpu": "aarch64", "abi": "gnu" },
+    "alt": { "runtime": "cnako", "os": "linux", "cpu": "x86_64", "abi": "gnu" }
+  },
+  "profilePackages": {
+    "default": {
+      "pkg:00000000000000000000000000000000": {
+        "id": "pkg:00000000000000000000000000000000",
+        "name": "empty",
+        "version": "1.0.0",
+        "source": { "type": "registry", "url": "https://registry.example.com/pkg/empty" },
+        "resolvedFrom": { "type": "registry", "url": "https://registry.example.com/pkg/empty" },
+        "dependencies": [],
+        "features": ["default"],
+        "artifacts": {
+          "source": { "kind": "source", "type": "tar.gz", "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "url": "https://registry.example.com/pkg/empty/v1.0.0/source.tar.gz" }
+        }
+      }
+    },
+    "alt": {
+      "pkg:00000000000000000000000000000000": {
+        "id": "pkg:00000000000000000000000000000000",
+        "name": "empty",
+        "version": "1.0.0",
+        "source": { "type": "registry", "url": "https://registry.example.com/pkg/empty" },
+        "resolvedFrom": { "type": "registry", "url": "https://registry.example.com/pkg/empty" },
+        "dependencies": [],
+        "features": ["default"],
+        "artifacts": {
+          "source": { "kind": "source", "type": "tar.gz", "sha256": "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=", "url": "https://registry.example.com/pkg/empty/v1.0.0/source.tar.gz" }
+        }
+      }
+    }
+  }
+}

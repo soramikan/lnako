@@ -708,7 +708,39 @@ export function validateManifest(manifest, fixturePath) {
   }
 }
 
+// lock の package version は manifest と同じく E024 で報告する。schema の
+// pattern より先に検査し、Zig 側 semver.Version.parse と診断コードを揃える。
+// Number.MAX_SAFE_INTEGER 超の数値要素も Zig 側と同じく拒否する。
+function assertLockSemver(value, path) {
+  if (typeof value !== "string") return;
+  const match = semverPattern.exec(value);
+  if (match === null || match.index !== 0 || match[0].length !== value.length) {
+    fail("E024_INVALID_SEMVER", `invalid semver "${value}"`, path);
+  }
+  for (const part of [match[1], match[2], match[3]]) {
+    if (Number(part) > Number.MAX_SAFE_INTEGER) {
+      fail("E024_INVALID_SEMVER", `semver component exceeds MAX_SAFE_INTEGER in "${value}"`, path);
+    }
+  }
+}
+
+function assertLockPackageVersions(packages, path) {
+  if (typeof packages !== "object" || packages === null || Array.isArray(packages)) return;
+  for (const [id, pkg] of Object.entries(packages)) {
+    if (typeof pkg === "object" && pkg !== null && !Array.isArray(pkg)) {
+      assertLockSemver(pkg.version, `${path}.${id}.version`);
+    }
+  }
+}
+
 export function validateLock(lock, fixturePath) {
+  if (typeof lock === "object" && lock !== null && !Array.isArray(lock)) {
+    assertLockPackageVersions(lock.packages, `${fixturePath}.packages`);
+    for (const [name, packages] of Object.entries(lock.profilePackages ?? {})) {
+      assertLockPackageVersions(packages, `${fixturePath}.profilePackages.${name}`);
+    }
+  }
+
   validateBySchemaFile(lock, "nako.lock.schema.json", fixturePath);
 
   if (!knownLockSchemaVersions.has(lock.schemaVersion)) {
@@ -732,30 +764,122 @@ export function validateLock(lock, fixturePath) {
     }
   }
   const selectedProfile = lock.profiles?.[lock.input?.profile];
-  const esmAllowed = selectedProfile?.["compat-js"] === true || selectedProfile?.runtime === "cnako";
+  validateLockPackageSet(lock.packages, selectedProfile, fixturePath, `${fixturePath}.packages`);
 
-  for (const [id, pkg] of Object.entries(lock.packages)) {
+  // 複数 profile 収録時は profile ごとの package グラフを、その profile の
+  // runtime/compat-js 条件で検証する。依存先の存在も同じグラフ内で閉じる。
+  for (const [name, packages] of Object.entries(lock.profilePackages ?? {})) {
+    if (!Object.hasOwn(lock.profiles ?? {}, name)) {
+      fail("E030_UNKNOWN_PROFILE", `unknown profile "${name}"`, `${fixturePath}.profilePackages.${name}`);
+    }
+    validateLockPackageSet(packages, lock.profiles?.[name], fixturePath, `${fixturePath}.profilePackages.${name}`);
+  }
+
+  // `packages` は選択された `input.profile` のグラフの正本であり、
+  // profilePackages に同じ profile がある場合は一致を要求する。
+  const selectedExtra = (lock.profilePackages ?? {})[lock.input?.profile];
+  if (selectedExtra !== undefined && !samePackageMap(selectedExtra, lock.packages)) {
+    fail("E029_INVALID_VALUE", `profilePackages.${lock.input?.profile} does not match packages`, `${fixturePath}.profilePackages.${lock.input?.profile}`);
+  }
+
+  // lnako/cnako が共用する同一 ID・版の source artifact は同じ hash で参照する。
+  const mismatch = sharedArtifactMismatch(lock);
+  if (mismatch) {
+    fail("E009_HASH_MISMATCH", `source artifact hash differs across profiles for ${mismatch.id}@${mismatch.version}`, `${fixturePath}.profilePackages`);
+  }
+}
+
+// キー順に依存しない JSON 等価判定。フィールド順の差で不一致としない。
+function canonicalJson(value) {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const key of Object.keys(value).sort()) out[key] = canonicalJson(value[key]);
+    return out;
+  }
+  return value;
+}
+
+// 省略された任意 collection を空として正規化する。Zig 側 `packageEntryEql`
+// は parse 時に省略を `[]`/`{}` にするため、JSON 表現の有無で不一致にしない。
+function normalizePackageEntry(entry) {
+  const out = { ...entry };
+  if (!("features" in out)) out.features = [];
+  if (!("artifacts" in out)) out.artifacts = {};
+  if (!("npmInstances" in out)) out.npmInstances = {};
+  return out;
+}
+
+function samePackageMap(a, b) {
+  const normalize = (map) => {
+    const out = {};
+    for (const [id, entry] of Object.entries(map)) out[id] = normalizePackageEntry(entry);
+    return out;
+  };
+  return JSON.stringify(canonicalJson(normalize(a))) === JSON.stringify(canonicalJson(normalize(b)));
+}
+
+// artifact map のキーではなく record の kind で source artifact を探す。
+// Zig 側 `PackageEntry.artifact("source")` と同一の判定。
+function sourceArtifact(pkg) {
+  for (const artifact of Object.values(pkg.artifacts ?? {})) {
+    if (artifact && artifact.kind === "source") return artifact;
+  }
+  return null;
+}
+
+// 選択済み `packages` と全 profilePackages を横断し、同一 ID・版の source
+// artifact の hash 不一致を最初の組で返す。
+function sharedArtifactMismatch(lock) {
+  const sets = [lock.packages, ...Object.values(lock.profilePackages ?? {})];
+  for (let i = 0; i < sets.length; i++) {
+    for (const pkg of Object.values(sets[i])) {
+      const source = sourceArtifact(pkg);
+      if (!source) continue;
+      for (let j = i + 1; j < sets.length; j++) {
+        for (const candidate of Object.values(sets[j])) {
+          if (candidate.id !== pkg.id || candidate.version !== pkg.version) continue;
+          const other = sourceArtifact(candidate);
+          if (!other) continue;
+          // hex/base64 表記を正規化して比較する（Zig 側 sha256Eql と同一）。
+          const left = normalizeSha256(source.sha256);
+          const right = normalizeSha256(other.sha256);
+          if (left !== null && right !== null) {
+            if (left !== right) return { id: pkg.id, version: pkg.version };
+          } else if ((source.sha256 ?? null) !== (other.sha256 ?? null)) {
+            return { id: pkg.id, version: pkg.version };
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// 1 つの package グラフを選択 profile の条件で検証する。lock の artifacts は
+// package 単位の集合で、各 kind が同じ export の代替実装か別 export かを表さない。
+// 選択情報がない以上 ESM が未使用と判断できないため、通常モード
+// （compat-js 無効・cnako 非選択）のグラフに ESM が一つでもあれば保守的に
+// E006 とする。実際の選択は解決・import 時に manifest の Export.resolve が担う。
+function validateLockPackageSet(packages, profile, fixturePath, path) {
+  const esmAllowed = profile?.["compat-js"] === true || profile?.runtime === "cnako";
+  for (const [id, pkg] of Object.entries(packages)) {
     if (!pkg.artifacts || Object.keys(pkg.artifacts).length === 0) {
-      fail("E008_MISSING_ARTIFACT", `package ${id} has no artifacts`, `${fixturePath}.packages.${id}.artifacts`);
+      fail("E008_MISSING_ARTIFACT", `package ${id} has no artifacts`, `${path}.${id}.artifacts`);
     }
     const kinds = new Set();
     for (const [kind, artifact] of Object.entries(pkg.artifacts)) {
       if (!knownArtifactKinds.has(artifact.kind)) {
-        fail("E007_UNKNOWN_ARTIFACT_KIND", `unknown artifact kind "${artifact.kind}" at ${fixturePath}.packages.${id}.artifacts.${kind}`, `${fixturePath}.packages.${id}.artifacts.${kind}`);
+        fail("E007_UNKNOWN_ARTIFACT_KIND", `unknown artifact kind "${artifact.kind}" at ${path}.${id}.artifacts.${kind}`, `${path}.${id}.artifacts.${kind}`);
       }
       kinds.add(artifact.kind);
     }
-    // lock の artifacts は package 単位の集合で、各 kind が同じ export の
-    // 代替実装か別 export かを表さない。選択情報がない以上 ESM が未使用と
-    // 判断できないため、通常モード（compat-js 無効・cnako 非選択）の lock に
-    // ESM が一つでもあれば保守的に E006 とする。実際の選択は解決・import 時に
-    // manifest の Export.resolve が担う。
     if (kinds.has("ESM") && !esmAllowed) {
-      fail("E006_JS_IN_NORMAL_MODE", `ESM artifact selected without compat-js profile`, `${fixturePath}.packages.${id}.artifacts`);
+      fail("E006_JS_IN_NORMAL_MODE", `ESM artifact selected without compat-js profile`, `${path}.${id}.artifacts`);
     }
     for (const dep of pkg.dependencies) {
-      if (!Object.hasOwn(lock.packages, dep)) {
-        fail("E013_MISSING_PACKAGE", `dependency ${dep} not found in lock packages`, `${fixturePath}.packages.${id}.dependencies`);
+      if (!Object.hasOwn(packages, dep)) {
+        fail("E013_MISSING_PACKAGE", `dependency ${dep} not found in lock packages`, `${path}.${id}.dependencies`);
       }
     }
   }

@@ -84,6 +84,8 @@ lock ファイルはトップレベルに `schemaVersion` と `resolverVersion` 
 - feature unification、diamond dependency、prerelease、partial update の扱いが変わる。
 - 診断コードや重大度が変わる。
 
+複数 profile を一つの lock に収録するための任意のトップレベルフィールド `profilePackages`（profile 名をキーとする解決済 package マップ）と、package エントリの任意フィールド `implementation`（選択された実装種別 `source`/`native`/`ESM`/`none`）を同一 schema version に追加した。いずれも任意フィールドであり、既存の必須フィールド・必須サブ構造・`input` の意味を変えないため version bump しない。`profilePackages` を読めない旧実装は `packages`（`input.profile` の選択済みグラフ）だけを参照できる。
+
 ### 4.3 下位互換
 
 - `schemaVersion` が未知の lock ファイルは読み込まない。`E002_UNKNOWN_LOCK_SCHEMA` 診断。

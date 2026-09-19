@@ -1,0 +1,124 @@
+{
+  "schemaVersion": 1,
+  "resolverVersion": 1,
+  "input": {
+    "manifestSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "profile": "macos-arm64",
+    "features": ["default"],
+    "target": { "os": "macos", "cpu": "aarch64", "abi": "gnu" }
+  },
+  "packages": {
+    "pkg:10000000000000000000000000000000": {
+      "id": "pkg:10000000000000000000000000000000",
+      "name": "sqlite",
+      "version": "1.2.3",
+      "source": { "type": "registry", "url": "https://registry.example.com/pkg/sqlite" },
+      "resolvedFrom": { "type": "registry", "url": "https://registry.example.com/pkg/sqlite" },
+      "dependencies": ["pkg:20000000000000000000000000000000"],
+      "features": ["default"],
+      "artifacts": {
+        "source": { "kind": "source", "type": "tar.gz", "sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "url": "https://registry.example.com/pkg/sqlite/v1.2.3/source.tar.gz" },
+        "native": { "kind": "native", "type": ".npkg", "sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "url": "https://registry.example.com/pkg/sqlite/v1.2.3/macos-arm64.npkg" }
+      }
+    },
+    "pkg:20000000000000000000000000000000": {
+      "id": "pkg:20000000000000000000000000000000",
+      "name": "req",
+      "version": "2.0.1",
+      "source": { "type": "registry", "url": "https://registry.example.com/pkg/req" },
+      "resolvedFrom": { "type": "registry", "url": "https://registry.example.com/pkg/req" },
+      "dependencies": [],
+      "features": ["default"],
+      "artifacts": {
+        "source": { "kind": "source", "type": "tar.gz", "sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "url": "https://registry.example.com/pkg/req/v2.0.1/source.tar.gz" }
+      }
+    }
+  },
+  "profiles": {
+    "macos-arm64": { "runtime": "lnako", "os": "macos", "cpu": "aarch64", "abi": "gnu", "compat-js": false },
+    "linux-x86-64": { "runtime": "lnako", "os": "linux", "cpu": "x86_64", "abi": "gnu", "compat-js": false },
+    "windows-x86-64-cnako": { "runtime": "cnako", "os": "windows", "cpu": "x86_64", "abi": "msvc" }
+  },
+  "profilePackages": {
+    "macos-arm64": {
+      "pkg:10000000000000000000000000000000": {
+        "id": "pkg:10000000000000000000000000000000",
+        "name": "sqlite",
+        "version": "1.2.3",
+        "source": { "type": "registry", "url": "https://registry.example.com/pkg/sqlite" },
+        "resolvedFrom": { "type": "registry", "url": "https://registry.example.com/pkg/sqlite" },
+        "dependencies": ["pkg:20000000000000000000000000000000"],
+        "features": ["default"],
+        "artifacts": {
+          "source": { "kind": "source", "type": "tar.gz", "sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "url": "https://registry.example.com/pkg/sqlite/v1.2.3/source.tar.gz" },
+          "native": { "kind": "native", "type": ".npkg", "sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "url": "https://registry.example.com/pkg/sqlite/v1.2.3/macos-arm64.npkg" }
+        }
+      },
+      "pkg:20000000000000000000000000000000": {
+        "id": "pkg:20000000000000000000000000000000",
+        "name": "req",
+        "version": "2.0.1",
+        "source": { "type": "registry", "url": "https://registry.example.com/pkg/req" },
+        "resolvedFrom": { "type": "registry", "url": "https://registry.example.com/pkg/req" },
+        "dependencies": [],
+        "features": ["default"],
+        "artifacts": {
+          "source": { "kind": "source", "type": "tar.gz", "sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "url": "https://registry.example.com/pkg/req/v2.0.1/source.tar.gz" }
+        }
+      }
+    },
+    "linux-x86-64": {
+      "pkg:10000000000000000000000000000000": {
+        "id": "pkg:10000000000000000000000000000000",
+        "name": "sqlite",
+        "version": "1.2.3",
+        "source": { "type": "registry", "url": "https://registry.example.com/pkg/sqlite" },
+        "resolvedFrom": { "type": "registry", "url": "https://registry.example.com/pkg/sqlite" },
+        "dependencies": ["pkg:20000000000000000000000000000000"],
+        "features": ["default"],
+        "artifacts": {
+          "source": { "kind": "source", "type": "tar.gz", "sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "url": "https://registry.example.com/pkg/sqlite/v1.2.3/source.tar.gz" },
+          "native": { "kind": "native", "type": ".npkg", "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "url": "https://registry.example.com/pkg/sqlite/v1.2.3/linux-x86-64.npkg" }
+        }
+      },
+      "pkg:20000000000000000000000000000000": {
+        "id": "pkg:20000000000000000000000000000000",
+        "name": "req",
+        "version": "2.1.0",
+        "source": { "type": "registry", "url": "https://registry.example.com/pkg/req" },
+        "resolvedFrom": { "type": "registry", "url": "https://registry.example.com/pkg/req" },
+        "dependencies": [],
+        "features": ["default"],
+        "artifacts": {
+          "source": { "kind": "source", "type": "tar.gz", "sha256": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "url": "https://registry.example.com/pkg/req/v2.1.0/source.tar.gz" }
+        }
+      }
+    },
+    "windows-x86-64-cnako": {
+      "pkg:10000000000000000000000000000000": {
+        "id": "pkg:10000000000000000000000000000000",
+        "name": "sqlite",
+        "version": "1.2.3",
+        "source": { "type": "registry", "url": "https://registry.example.com/pkg/sqlite" },
+        "resolvedFrom": { "type": "registry", "url": "https://registry.example.com/pkg/sqlite" },
+        "dependencies": ["pkg:20000000000000000000000000000000"],
+        "features": ["default"],
+        "artifacts": {
+          "source": { "kind": "source", "type": "tar.gz", "sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "url": "https://registry.example.com/pkg/sqlite/v1.2.3/source.tar.gz" }
+        }
+      },
+      "pkg:20000000000000000000000000000000": {
+        "id": "pkg:20000000000000000000000000000000",
+        "name": "req",
+        "version": "2.0.1",
+        "source": { "type": "registry", "url": "https://registry.example.com/pkg/req" },
+        "resolvedFrom": { "type": "registry", "url": "https://registry.example.com/pkg/req" },
+        "dependencies": [],
+        "features": ["default"],
+        "artifacts": {
+          "source": { "kind": "source", "type": "tar.gz", "sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "url": "https://registry.example.com/pkg/req/v2.0.1/source.tar.gz" }
+        }
+      }
+    }
+  }
+}

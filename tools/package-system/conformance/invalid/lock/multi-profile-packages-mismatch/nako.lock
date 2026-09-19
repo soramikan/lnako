@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "resolverVersion": 1,
+  "input": {
+    "manifestSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "profile": "default",
+    "features": ["default"],
+    "target": { "os": "macos", "cpu": "aarch64", "abi": "gnu" }
+  },
+  "packages": {
+    "pkg:00000000000000000000000000000000": {
+      "id": "pkg:00000000000000000000000000000000",
+      "name": "sqlite",
+      "version": "1.0.0",
+      "source": { "type": "registry", "url": "https://registry.example.com/pkg/sqlite" },
+      "resolvedFrom": { "type": "registry", "url": "https://registry.example.com/pkg/sqlite" },
+      "dependencies": [],
+      "features": ["default"],
+      "artifacts": {
+        "source": { "kind": "source", "type": "tar.gz", "sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111", "url": "https://registry.example.com/pkg/sqlite/v1.0.0/source.tar.gz" }
+      }
+    }
+  },
+  "profiles": {
+    "default": { "runtime": "lnako", "os": "macos", "cpu": "aarch64", "abi": "gnu" }
+  },
+  "profilePackages": {
+    "default": {
+      "pkg:00000000000000000000000000000000": {
+        "id": "pkg:00000000000000000000000000000000",
+        "name": "sqlite",
+        "version": "1.0.1",
+        "source": { "type": "registry", "url": "https://registry.example.com/pkg/sqlite" },
+        "resolvedFrom": { "type": "registry", "url": "https://registry.example.com/pkg/sqlite" },
+        "dependencies": [],
+        "features": ["default"],
+        "artifacts": {
+          "source": { "kind": "source", "type": "tar.gz", "sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111", "url": "https://registry.example.com/pkg/sqlite/v1.0.1/source.tar.gz" }
+        }
+      }
+    }
+  }
+}
