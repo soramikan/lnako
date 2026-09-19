@@ -764,6 +764,13 @@ export function validateLock(lock, fixturePath) {
     }
   }
   const selectedProfile = lock.profiles?.[lock.input?.profile];
+  // 選択 profile の環境条件は input.target と一致していなければならない。
+  if (selectedProfile && lock.input?.target) {
+    const target = lock.input.target;
+    if (selectedProfile.os !== target.os || selectedProfile.cpu !== target.cpu || selectedProfile.abi !== target.abi) {
+      fail("E014_INVALID_PROFILE", `input.target does not match profile "${lock.input.profile}" os/cpu/abi`, `${fixturePath}.input.target`);
+    }
+  }
   validateLockPackageSet(lock.packages, selectedProfile, fixturePath, `${fixturePath}.packages`);
 
   // 複数 profile 収録時は profile ごとの package グラフを、その profile の

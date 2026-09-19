@@ -1085,6 +1085,39 @@ test "version不変でもfeature統合の変化を差分で報告する" {
     try T.expectEqualStrings("2.0.1", change.to_version.?);
 }
 
+test "buildMultiは主profileの欠落と重複を拒否する" {
+    const profiles = [_]lock.NamedProfile{
+        .{ .name = "macos", .record = .{ .runtime = "lnako", .os = "macos", .cpu = "aarch64", .abi = "gnu" } },
+        .{ .name = "linux", .record = .{ .runtime = "lnako", .os = "linux", .cpu = "x86_64", .abi = "gnu" } },
+    };
+    const nodes = [_]resolver.PackageNode{try node(sqlite_id, "1.2.3", &.{}, &.{"default"})};
+    var input = sampleInput();
+    input.profile = "linux";
+
+    try T.expectError(error.InvalidPrimaryProfile, lock.buildMulti(T.allocator, input, &profiles, &.{
+        .{ .profile = "macos", .nodes = &nodes },
+    }, default_fixtures.details()));
+
+    try T.expectError(error.InvalidPrimaryProfile, lock.buildMulti(T.allocator, input, &profiles, &.{
+        .{ .profile = "macos", .nodes = &nodes },
+        .{ .profile = "linux", .nodes = &nodes },
+        .{ .profile = "linux", .nodes = &nodes },
+    }, default_fixtures.details()));
+}
+
+test "buildPackagesはPublic IDの衝突を拒否する" {
+    const shared_public = "pkg:90000000000000000000000000000000";
+    const fixtures = Fixtures{ .entries = &.{
+        .{ .id = "old", .public_id = shared_public, .name = "old", .source = sqlite_source, .resolved_from = sqlite_source, .artifacts = &.{sqlite_source_artifact} },
+        .{ .id = "new", .public_id = shared_public, .name = "new", .source = sqlite_source, .resolved_from = sqlite_source, .artifacts = &.{sqlite_source_artifact} },
+    } };
+    const nodes = [_]resolver.PackageNode{
+        try node("old", "1.0.0", &.{}, &.{"default"}),
+        try node("new", "1.0.0", &.{}, &.{"default"}),
+    };
+    try T.expectError(error.DuplicatePublicId, lock.build(T.allocator, sampleInput(), &.{default_profile}, &nodes, fixtures.details()));
+}
+
 test "public idがresolver idと異なっても依存辺をpublic idへ張り替える" {
     const a_public = "pkg:70000000000000000000000000000000";
     const b_public = "pkg:80000000000000000000000000000000";
@@ -1320,6 +1353,8 @@ test "lock適合fixtureをZig側でも検証する" {
         .{ .path = "tools/package-system/conformance/invalid/lock/multi-profile-unknown-profile/nako.lock", .expected = diag.E030_UNKNOWN_PROFILE },
         .{ .path = "tools/package-system/conformance/invalid/lock/invalid-semver-version/nako.lock", .expected = diag.E024_INVALID_SEMVER },
         .{ .path = "tools/package-system/conformance/invalid/lock/overflow-version/nako.lock", .expected = diag.E024_INVALID_SEMVER },
+        .{ .path = "tools/package-system/conformance/invalid/lock/profile-target-mismatch/nako.lock", .expected = diag.E014_INVALID_PROFILE },
+        .{ .path = "tools/package-system/conformance/invalid/lock/invalid-package-id/nako.lock", .expected = diag.E029_INVALID_VALUE },
     };
     for (cases) |case| {
         const bytes = try repo.readFileAlloc(T.io, case.path, allocator, .limited(1 << 20));

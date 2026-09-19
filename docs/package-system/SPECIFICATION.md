@@ -298,7 +298,8 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
 - 排他的な profile 間では同じ Public ID に異なる版を許す。同一 profile の package グラフ内では Public ID ごとに一版とする。
 - lnako/cnako が共用する同一 source artifact は、同じ Public ID・版・hash で参照する。profile をまたいで同一 ID・版の source artifact の hash が食い違う lock は不正とする。
 - 通常解決では既存 lock の版を優先する。`update` で指定した package だけ優先固定を解除する。指定外の package が変化した場合は、変更元 package を変更理由（`caused_by`）として説明する。
-- `--locked` は lock 欠落、未知 `schemaVersion`、`resolverVersion` 不一致、manifest/profile/features/target の変更を検出したとき、lock を書き換えず失敗する。
+- `--locked` は lock 欠落、未知 `schemaVersion`、`resolverVersion` 不一致、manifest/profile/features/target の変更を検出したとき、lock を書き換えず失敗する。呼出し側は先に意味検証（`validate`）を行い、その上で鮮度判定を行う（鮮度判定自体は入力条件のみを比較し、意味検証を含まない）。
+- 鮮度は選択された `input`（`manifestSha256`・`profile`・`features`・`target`）で判定する。manifest の変更は全 profile に影響する `manifestSha256` の変化として検出し、別 profile の選択は `input.profile` の変化として検出する。非選択 profile の `profilePackages` は lock の再生成時に更新する。
 - path 依存は可変参照として記録する。path ソース本文の編集は root manifest の SHA-256 を変えないため再解決契機にならない。依存宣言を含む manifest 変更は `manifestSha256` の変化として検出する。
 
 ## 5. レジストリ契約

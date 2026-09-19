@@ -557,6 +557,18 @@ pub fn parse(gpa: Allocator, bytes: []const u8, diagnostics: *diag.List) ParseEr
 // 意味検証
 // ---------------------------------------------------------------------------
 
+/// `pkg:<32桁小文字16進>` 形式かを判定する。JSON Schema の packageId pattern と
+/// 同じ受理集合を Zig 側でも要求する。
+fn isValidPublicId(text: []const u8) bool {
+    if (!std.mem.startsWith(u8, text, "pkg:") or text.len != "pkg:".len + 32) return false;
+    for (text["pkg:".len..]) |ch| {
+        const digit = ch >= '0' and ch <= '9';
+        const lower_hex = ch >= 'a' and ch <= 'f';
+        if (!digit and !lower_hex) return false;
+    }
+    return true;
+}
+
 fn validatePackageSet(packages: []const PackageEntry, exists: *const std.StringHashMapUnmanaged(void), profile: ?ProfileRecord, path: []const u8, diagnostics: *diag.List) !void {
     const esm_allowed = if (profile) |record| record.allowsEsm() else false;
     for (packages) |package| {
@@ -564,6 +576,9 @@ fn validatePackageSet(packages: []const PackageEntry, exists: *const std.StringH
         defer diagnostics.allocator.free(package_path);
         const artifacts_path = try std.fmt.allocPrint(diagnostics.allocator, "{s}.artifacts", .{package_path});
         defer diagnostics.allocator.free(artifacts_path);
+        if (!isValidPublicId(package.id)) {
+            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, package_path, .{}, "invalid package id \"{s}\" (expected pkg:<32hex>)", .{package.id});
+        }
         _ = semver.Version.parse(package.version) catch {
             try diagnostics.addFmt(diag.E024_INVALID_SEMVER, .err, package_path, .{}, "invalid package version \"{s}\" (not semver)", .{package.version});
         };
@@ -590,9 +605,12 @@ fn validatePackageSet(packages: []const PackageEntry, exists: *const std.StringH
             try diagnostics.addFmt(diag.E006_JS_IN_NORMAL_MODE, .err, artifacts_path, .{}, "ESM artifact selected without compat-js profile", .{});
         }
         for (package.dependencies) |dependency| {
+            const dependencies_path = try std.fmt.allocPrint(diagnostics.allocator, "{s}.dependencies", .{package_path});
+            defer diagnostics.allocator.free(dependencies_path);
+            if (!isValidPublicId(dependency)) {
+                try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, dependencies_path, .{}, "invalid dependency id \"{s}\" (expected pkg:<32hex>)", .{dependency});
+            }
             if (!exists.contains(dependency)) {
-                const dependencies_path = try std.fmt.allocPrint(diagnostics.allocator, "{s}.dependencies", .{package_path});
-                defer diagnostics.allocator.free(dependencies_path);
                 try diagnostics.addFmt(diag.E013_MISSING_PACKAGE, .err, dependencies_path, .{}, "dependency {s} not found in lock packages", .{dependency});
             }
         }
@@ -630,6 +648,15 @@ pub fn validate(lock: *const Lock, diagnostics: *diag.List) !void {
         try diagnostics.addFmt(diag.E030_UNKNOWN_PROFILE, .err, "nako.lock.input.profile", .{}, "unknown profile \"{s}\"", .{lock.input.profile});
     }
     const selected = lock.profileRecord(lock.input.profile);
+    // 選択 profile の環境条件は `input.target` と一致していなければならない。
+    if (selected) |record| {
+        if (!std.mem.eql(u8, record.os, lock.input.target.os) or
+            !std.mem.eql(u8, record.cpu, lock.input.target.cpu) or
+            !std.mem.eql(u8, record.abi, lock.input.target.abi))
+        {
+            try diagnostics.addFmt(diag.E014_INVALID_PROFILE, .err, "nako.lock.input.target", .{}, "input.target does not match profile \"{s}\" os/cpu/abi", .{lock.input.profile});
+        }
+    }
     try validatePackageSet(lock.packages, &id_set, if (selected) |record| record.* else null, "nako.lock.packages", diagnostics);
 
     for (lock.profile_packages) |profile| {
@@ -687,6 +714,11 @@ pub fn checkFreshness(existing: ?*const Lock, current: Input) Freshness {
 
 /// `--locked` 時の契約。lock 不足・未知 schema・resolver 不一致・陳腐化は
 /// 無変更で失敗させる（`error.LockedNotSatisfied`）。
+///
+/// これは入力メタデータ（`manifestSha256`・`profile`・`features`・`target`）の
+/// 鮮度のみを判定し、`validate` の意味検証は含まない。呼出し側は意味検証を
+/// 先に行うこと。manifest 変更は全 profile に影響する `manifestSha256` の
+/// 変化として、別 profile の選択は `input.profile` の変化として検出する。
 pub const LockedError = error{LockedNotSatisfied};
 
 pub fn requireFresh(existing: ?*const Lock, current: Input) LockedError!void {
@@ -992,11 +1024,19 @@ pub fn buildPackages(allocator: Allocator, nodes: []const resolver.PackageNode, 
     };
     var infos: std.ArrayList(Info) = .empty;
     var public_ids: std.StringHashMapUnmanaged([]const u8) = .empty;
+    // 異なる resolver id が同じ Public ID を指すと lock の package map が
+    // 重複キーになり再解析できないため、衝突は明示エラーにする。
+    var public_owners: std.StringHashMapUnmanaged([]const u8) = .empty;
     for (nodes) |*node| {
         const id_text = try formatPackageId(allocator, node.id);
         const version_text = try std.fmt.allocPrint(allocator, "{f}", .{node.version});
         const detail = try details.get(allocator, id_text, version_text);
         const public_id = if (detail) |value| if (value.public_id) |value_id| try allocator.dupe(u8, value_id) else id_text else id_text;
+        if (public_owners.get(public_id)) |owner| {
+            if (!std.mem.eql(u8, owner, id_text)) return error.DuplicatePublicId;
+        } else {
+            try public_owners.put(allocator, public_id, id_text);
+        }
         try public_ids.put(allocator, id_text, public_id);
         try infos.append(allocator, .{
             .node = node,
@@ -1164,6 +1204,14 @@ pub fn buildMulti(
     per_profile: []const ProfileInput,
     details: DetailsSource,
 ) !Lock {
+    // `input.profile` の解決結果がちょうど1つ必要。欠落・重複は生成物が
+    // 選択済みグラフを失うか重複するため、生成前に拒否する。
+    var primary_count: usize = 0;
+    for (per_profile) |profile_input| {
+        if (std.mem.eql(u8, profile_input.profile, input.profile)) primary_count += 1;
+    }
+    if (primary_count != 1) return error.InvalidPrimaryProfile;
+
     var lock = try build(gpa, input, profiles, &.{}, details);
     errdefer lock.deinit();
     const allocator = lock.arena.allocator();
