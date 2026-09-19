@@ -253,7 +253,12 @@ fn openWindowsWriteAttributes(path: []const u8) anyerror!std.os.windows.HANDLE {
     }
     defer windows.ntdll.RtlFreeUnicodeString(&nt_path);
 
-    var attributes = windows.OBJECT.ATTRIBUTES{ .ObjectName = &nt_path };
+    // 通常のWin32パス解決と同じく大小文字を区別しない。`Flags` の既定値も
+    // trueだが、stdの既定値変更に依存しないよう明示する。
+    var attributes = windows.OBJECT.ATTRIBUTES{
+        .ObjectName = &nt_path,
+        .Attributes = .{ .CASE_INSENSITIVE = true },
+    };
     var io_status_block: windows.IO_STATUS_BLOCK = undefined;
     var handle: windows.HANDLE = undefined;
     const status = windows.ntdll.NtCreateFile(
