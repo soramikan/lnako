@@ -42,8 +42,9 @@ pub fn chown(path: []const u8, uid: ?u32, gid: ?u32, follow: bool) anyerror!void
 }
 
 /// OSのaccess(2)相当でpathのアクセス可否を判定する。`mode` は
-/// `foundation.access_mode` のビット和。権限の拒否・対象不在はエラーではなく
-/// `false` を返し、不正mode（`EINVAL`）と非対応環境（`ENOTSUP`）だけを投げる。
+/// `foundation.access_mode` のビット和。契約どおり実効UID/GID・補助グループで
+/// 判定し（`AT_EACCESS`）、権限の拒否・対象不在はエラーではなく `false` を返す。
+/// 不正mode（`EINVAL`）と非対応環境（`ENOTSUP`）だけを投げる。
 pub fn access(path: []const u8, mode: u32) anyerror!bool {
     return switch (builtin.os.tag) {
         .windows, .wasi => error.OperationUnsupported,
@@ -143,8 +144,13 @@ fn chownPosix(path: []const u8, uid: ?u32, gid: ?u32, follow: bool) anyerror!voi
 
 fn accessPosix(path: []const u8, mode: u32) anyerror!bool {
     const posix_path = try std.posix.toPosixPath(path);
+    // 契約の「実効アクセス semantics」に合わせ、実IDではなく実効UID/GIDと
+    // 補助グループで判定するよう AT_EACCESS を付ける。Linuxはカーネル5.8未満で
+    // faccessat2がENOSYSになるが、glibcのfaccessatは実効IDで判定する互換経路へ
+    // フォールバックする（それも不可ならENOTSUPになる）。
+    const flags = accessFlags();
     while (true) {
-        const result = std.c.faccessat(std.c.AT.FDCWD, &posix_path, @intCast(mode), 0);
+        const result = std.c.faccessat(std.c.AT.FDCWD, &posix_path, @intCast(mode), flags);
         if (result == 0) return true;
         const errno = std.c.errno(result);
         if (errno == .INTR) continue;
@@ -155,6 +161,15 @@ fn accessPosix(path: []const u8, mode: u32) anyerror!bool {
             else => errnoError(errno),
         };
     }
+}
+
+/// `faccessat` の実効ID判定フラグ。Linuxの `std.c.AT` は `EACCESS` を持たない
+/// ため、`linux/fs.h` の `AT_EACCESS`（0x200）を直接使う。macOS等はlibc定義を使う。
+fn accessFlags() c_uint {
+    return switch (builtin.os.tag) {
+        .linux => 0x200,
+        else => std.c.AT.EACCESS,
+    };
 }
 
 /// POSIX errnoをZigエラーへ写す。portable code対応外のerrnoは `error.Unexpected`
@@ -171,6 +186,9 @@ fn errnoError(errno: std.c.E) anyerror {
         .ROFS => error.ReadOnlyFileSystem,
         .NOSPC => error.NoSpaceLeft,
         .NOMEM => error.SystemResources,
+        // faccessat2非対応カーネル等、OSが判定自体に対応しない場合はcapability
+        // 非対応としてENOTSUPへ写す（accessのcatalogエラーにENOTSUPを含む）。
+        .NOSYS, .OPNOTSUPP => error.OperationUnsupported,
         else => error.Unexpected,
     };
 }
@@ -191,6 +209,9 @@ test "chmodはmodeを変更しaccessは権限ビットを判定する" {
 
     try std.testing.expect(try access(path, foundation.access_mode.f_ok));
     try std.testing.expect(try access(path, foundation.access_mode.r_ok));
+    // `access` は AT_EACCESS を使うため実効UID/GIDで判定する。実IDと実効IDが
+    // 異なるsetuidプロセスは単体テストで再現できないため、ここでは通常
+    // （実ID=実効ID）の可否だけを検証する。
     // 実行ビットは付いていない。ただしroot（euid=0）は実行ビット無しでも
     // access(X_OK)が成功し得るため、その場合は検証しない。
     if (try id(.euid) != 0) {
