@@ -37,5 +37,6 @@ test {
     _ = @import("lowlevel/stdio.zig");
     _ = @import("lowlevel/hash.zig");
     _ = @import("lowlevel/fs.zig");
+    _ = @import("lowlevel/posix.zig");
     _ = @import("lowlevel/call.zig");
 }

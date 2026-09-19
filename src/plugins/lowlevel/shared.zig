@@ -70,6 +70,16 @@ pub fn pathStringFromBytes(runtime: *Runtime, bytes: []const u8) !Value {
     return runtime.stringCodeUnits(units);
 }
 
+/// なでしこ文字列のpath引数を可逆なWTF-8（孤立サロゲート保持）へ変換する。
+/// lossy変換は孤立サロゲートをU+FFFDへ化けさせ、実在する同名ファイルへの誤操作を
+/// 招くため、非文字列は構造化EINVALにする。fs/posixドメインで共有する。
+pub fn pathArgument(runtime: *Runtime, effects: Effects, value: Value, operation: []const u8) ![]u8 {
+    if (value != .string) {
+        return throwStructured(runtime, effects, .EINVAL, operation, null, null, "pathは文字列である必要があります");
+    }
+    return foundation.pathBytesFromUtf16(runtime.allocator(), value.string.units);
+}
+
 fn buildError(
     runtime: *Runtime,
     code: foundation.PortableErrorCode,

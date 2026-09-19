@@ -316,6 +316,16 @@ test "implementedフラグは実装済み命令の既知集合と一致する" {
         "ll-file-truncate-path",
         "ll-file-utime-path",
         "ll-file-utime-handle",
+        "ll-file-chmod",
+        "ll-file-chown",
+        "ll-symlink-chown",
+        "ll-file-access",
+        "ll-uid-get",
+        "ll-euid-get",
+        "ll-gid-get",
+        "ll-egid-get",
+        "ll-groups-get",
+        "ll-umask-set",
     };
     var count: usize = 0;
     for (foundation.catalog_commands) |command| {

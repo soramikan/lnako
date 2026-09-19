@@ -116,7 +116,7 @@ pub fn capabilitySupported(value: Value) bool {
     };
     if (text.len > buffer.len) return false;
     const capability = foundation.Capability.fromId(text) orelse return false;
-    return foundation.capabilityImplemented(capability);
+    return foundation.capabilitySupportedOnCurrentOs(capability);
 }
 
 pub fn sizeArgument(_: *Runtime, value: Value) !u64 {
@@ -154,6 +154,17 @@ fn isNowValue(value: Value) bool {
         },
         else => false,
     };
+}
+
+/// なでしこ文字列のpath引数を可逆なWTF-8（孤立サロゲート保持）へ変換する。
+/// 非文字列は構造化EINVALを投げる。fs/posixドメインで共有する。
+pub fn pathArgument(runtime: *Runtime, value: Value, operation: []const u8) ![]u8 {
+    if (!isString(value)) {
+        return throwStructured(runtime, .EINVAL, operation, null, null, "pathは文字列である必要があります");
+    }
+    const units = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(units);
+    return foundation.pathBytesFromUtf16(runtime.allocator, units);
 }
 
 pub fn bytesArgument(value: Value) ![]const u8 {

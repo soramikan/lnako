@@ -37,6 +37,7 @@ const findHandleId = shared.findHandleId;
 const forgetHandleId = shared.forgetHandleId;
 const fileFor = shared.fileFor;
 const pathStringFromBytes = shared.pathStringFromBytes;
+const pathArgument = shared.pathArgument;
 const sizeArgument = shared.sizeArgument;
 const setTimeArgument = shared.setTimeArgument;
 const bytesArgument = shared.bytesArgument;
@@ -91,17 +92,6 @@ pub fn pluginUnlink(context: *anyopaque, path: []const u8) anyerror!void {
 pub fn pluginRmdir(context: *anyopaque, path: []const u8) anyerror!void {
     const runtime: *Runtime = @ptrCast(@alignCast(context));
     return low_level_fs.rmdir(io(runtime), path);
-}
-
-fn pathArgument(runtime: *Runtime, value: Value, operation: []const u8) ![]u8 {
-    if (!isString(value)) {
-        return throwStructured(runtime, .EINVAL, operation, null, null, "pathは文字列である必要があります");
-    }
-    // lossy変換は孤立サロゲートをU+FFFDへ化けさせ、実在する同名ファイルへの
-    // 誤操作につながるため、可逆なWTF-8変換を使う（InterpreterのrequirePathと同じ規則）。
-    const units = try valueUtf16Alloc(runtime, value);
-    defer runtime.allocator.free(units);
-    return foundation.pathBytesFromUtf16(runtime.allocator, units);
 }
 
 pub fn statBuiltin(runtime: *Runtime, arguments: []const Value, follow: bool) !Value {

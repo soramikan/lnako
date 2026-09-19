@@ -19,26 +19,18 @@ const State = shared.State;
 const Effects = shared.Effects;
 const Context = low_level_context.Context;
 
-const throwStructured = shared.throwStructured;
 const throwIo = shared.throwIo;
+const throwStructured = shared.throwStructured;
 const publicSizeValue = shared.publicSizeValue;
 const pathStringFromBytes = shared.pathStringFromBytes;
 const lookupHandle = shared.lookupHandle;
 const sizeArgument = shared.sizeArgument;
+const requirePath = shared.pathArgument;
 
 const captureThrow = shared.captureThrow;
 const expectThrownCode = shared.expectThrownCode;
 const expectThrownField = shared.expectThrownField;
 const expectThrownPathPair = shared.expectThrownPathPair;
-
-fn requirePath(runtime: *Runtime, effects: Effects, value: Value, operation: []const u8) ![]u8 {
-    if (value != .string) {
-        return throwStructured(runtime, effects, .EINVAL, operation, null, null, "pathは文字列である必要があります");
-    }
-    // lossy変換は孤立サロゲートをU+FFFDへ化けさせ、実在する同名ファイルへの
-    // 誤操作につながるため、可逆なWTF-8変換を使う（AOTのpathArgumentと同じ規則）。
-    return foundation.pathBytesFromUtf16(runtime.allocator(), value.string.units);
-}
 
 pub fn statPath(runtime: *Runtime, state: *State, context: Context, effects: Effects, arguments: []const Value, follow: bool) !Value {
     _ = state;

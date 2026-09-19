@@ -2,6 +2,7 @@ const std = @import("std");
 const foundation = @import("../low_level_foundation.zig");
 const low_level_io = @import("../low_level_io.zig");
 const low_level_fs = @import("../low_level_fs.zig");
+const low_level_posix = @import("../low_level_posix.zig");
 
 /// Hostが関数ポインタの `context` に載せるダミー領域。callbackを持たない
 /// 空サブContext専用で、実際に呼ばれることはない（呼べば未定義）。`emptyContext`
@@ -212,6 +213,63 @@ pub const FsContext = struct {
     }
 };
 
+/// POSIX権限・所有者・UID/GID・accessドメインのHostコールバック。
+pub const PosixContext = struct {
+    context: *anyopaque,
+    chmodFn: ?*const fn (context: *anyopaque, path: []const u8, mode: u32) anyerror!void = null,
+    chownFn: ?*const fn (context: *anyopaque, path: []const u8, uid: ?u32, gid: ?u32, follow: bool) anyerror!void = null,
+    accessFn: ?*const fn (context: *anyopaque, path: []const u8, mode: u32) anyerror!bool = null,
+    idFn: ?*const fn (context: *anyopaque, kind: low_level_posix.IdKind) anyerror!u32 = null,
+    groupsFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator) anyerror![]u32 = null,
+    umaskFn: ?*const fn (context: *anyopaque, mode: u32) anyerror!u32 = null,
+
+    pub fn chmod(self: PosixContext, path: []const u8, mode: u32) !void {
+        const function = self.chmodFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, path, mode);
+    }
+
+    pub fn chown(self: PosixContext, path: []const u8, uid: ?u32, gid: ?u32, follow: bool) !void {
+        const function = self.chownFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, path, uid, gid, follow);
+    }
+
+    pub fn access(self: PosixContext, path: []const u8, mode: u32) !bool {
+        const function = self.accessFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, path, mode);
+    }
+
+    pub fn id(self: PosixContext, kind: low_level_posix.IdKind) !u32 {
+        const function = self.idFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, kind);
+    }
+
+    pub fn groups(self: PosixContext, allocator: std.mem.Allocator) ![]u32 {
+        const function = self.groupsFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, allocator);
+    }
+
+    pub fn umask(self: PosixContext, mode: u32) !u32 {
+        const function = self.umaskFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, mode);
+    }
+
+    pub fn hasChmod(self: PosixContext) bool {
+        return self.chmodFn != null;
+    }
+
+    pub fn hasChown(self: PosixContext) bool {
+        return self.chownFn != null;
+    }
+
+    pub fn hasAccess(self: PosixContext) bool {
+        return self.accessFn != null;
+    }
+
+    pub fn hasUidGid(self: PosixContext) bool {
+        return self.idFn != null and self.groupsFn != null and self.umaskFn != null;
+    }
+};
+
 /// Raw Stdio（stdin/stderr/stdoutのバイト入出力）ドメインのHostコールバック。
 pub const StdioContext = struct {
     context: *anyopaque,
@@ -263,6 +321,7 @@ pub const StdioContext = struct {
 const empty_stream: StreamContext = .{ .context = default_host };
 const empty_hash: HashContext = .{ .context = default_host };
 const empty_fs: FsContext = .{ .context = default_host };
+const empty_posix: PosixContext = .{ .context = default_host };
 const empty_stdio: StdioContext = .{ .context = default_host };
 
 /// 各ランタイム（Interpreter/AOT）がHostから受け取る低レイヤーI/O契約。
@@ -272,6 +331,7 @@ pub const Context = struct {
     stream: StreamContext = empty_stream,
     hash: HashContext = empty_hash,
     fs: FsContext = empty_fs,
+    posix: PosixContext = empty_posix,
     stdio: StdioContext = empty_stdio,
 
     pub fn openFile(self: Context, path: []const u8, mode: foundation.OpenMode, exclusive: bool, sync: bool) !u64 {
@@ -358,6 +418,30 @@ pub const Context = struct {
         return self.fs.utimePath(path, atime, mtime);
     }
 
+    pub fn chmod(self: Context, path: []const u8, mode: u32) !void {
+        return self.posix.chmod(path, mode);
+    }
+
+    pub fn chown(self: Context, path: []const u8, uid: ?u32, gid: ?u32, follow: bool) !void {
+        return self.posix.chown(path, uid, gid, follow);
+    }
+
+    pub fn access(self: Context, path: []const u8, mode: u32) !bool {
+        return self.posix.access(path, mode);
+    }
+
+    pub fn id(self: Context, kind: low_level_posix.IdKind) !u32 {
+        return self.posix.id(kind);
+    }
+
+    pub fn groups(self: Context, allocator: std.mem.Allocator) ![]u32 {
+        return self.posix.groups(allocator);
+    }
+
+    pub fn umask(self: Context, mode: u32) !u32 {
+        return self.posix.umask(mode);
+    }
+
     pub fn stdinSource(self: Context, allocator: std.mem.Allocator) !*low_level_io.StdinSource {
         return self.stdio.stdinSource(allocator);
     }
@@ -428,6 +512,22 @@ pub const Context = struct {
         return self.fs.hasRmdir();
     }
 
+    pub fn hasChmod(self: Context) bool {
+        return self.posix.hasChmod();
+    }
+
+    pub fn hasChown(self: Context) bool {
+        return self.posix.hasChown();
+    }
+
+    pub fn hasAccess(self: Context) bool {
+        return self.posix.hasAccess();
+    }
+
+    pub fn hasUidGid(self: Context) bool {
+        return self.posix.hasUidGid();
+    }
+
     pub fn hasRawStdio(self: Context) bool {
         return self.stdio.hasRawStdio();
     }
@@ -464,6 +564,12 @@ pub const FlatContext = struct {
     rmdirFn: ?*const fn (context: *anyopaque, path: []const u8) anyerror!void = null,
     truncatePathFn: ?*const fn (context: *anyopaque, path: []const u8, size: u64) anyerror!void = null,
     utimePathFn: ?*const fn (context: *anyopaque, path: []const u8, atime: foundation.SetTime, mtime: foundation.SetTime) anyerror!void = null,
+    chmodFn: ?*const fn (context: *anyopaque, path: []const u8, mode: u32) anyerror!void = null,
+    chownFn: ?*const fn (context: *anyopaque, path: []const u8, uid: ?u32, gid: ?u32, follow: bool) anyerror!void = null,
+    accessFn: ?*const fn (context: *anyopaque, path: []const u8, mode: u32) anyerror!bool = null,
+    idFn: ?*const fn (context: *anyopaque, kind: low_level_posix.IdKind) anyerror!u32 = null,
+    groupsFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator) anyerror![]u32 = null,
+    umaskFn: ?*const fn (context: *anyopaque, mode: u32) anyerror!u32 = null,
     peekStdinSourceFn: ?*const fn (context: *anyopaque) ?*low_level_io.StdinSource = null,
     stdinSourceFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator) anyerror!*low_level_io.StdinSource = null,
     writeStdoutBytesFn: ?*const fn (context: *anyopaque, bytes: []const u8) anyerror!usize = null,
@@ -502,6 +608,15 @@ pub const FlatContext = struct {
                 .rmdirFn = self.rmdirFn,
                 .truncatePathFn = self.truncatePathFn,
                 .utimePathFn = self.utimePathFn,
+            },
+            .posix = .{
+                .context = self.context,
+                .chmodFn = self.chmodFn,
+                .chownFn = self.chownFn,
+                .accessFn = self.accessFn,
+                .idFn = self.idFn,
+                .groupsFn = self.groupsFn,
+                .umaskFn = self.umaskFn,
             },
             .stdio = .{
                 .context = self.context,
