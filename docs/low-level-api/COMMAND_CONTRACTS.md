@@ -112,7 +112,7 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 - `所属グループID一覧取得`（ll-groups-get）助詞 `-`、戻り `array`、capability `uid_gid`、エラー ENOTSUP
 - `UMASK変更`（ll-umask-set）助詞 `MODEで/MODEを`、戻り `number`、capability `uid_gid`、エラー ENOTSUP
 
-数値modeのみを受け、symbolic mode（`u+x`）の解析はCore Utilities側で行う。`ファイルアクセス可能` はstatのmode-bit判定でなくOSのeffective access semanticsを使う。
+数値modeのみを受け、symbolic mode（`u+x`）の解析はCore Utilities側で行う。`ファイルアクセス可能` はstatのmode-bit判定でなくOSのeffective access semanticsを使い、LinuxではPOSIX ACLを正しく評価する `faccessat2`（kernel 5.8以降）を必須とし、非対応カーネルは `ENOTSUP` を返す（capability `access` の `os.linux` は `conditional`）。
 
 ### Issue 35 argv型プロセス起動・signal・priority・TTY
 

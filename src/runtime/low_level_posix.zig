@@ -44,7 +44,8 @@ pub fn chown(path: []const u8, uid: ?u32, gid: ?u32, follow: bool) anyerror!void
 /// OSのaccess(2)相当でpathのアクセス可否を判定する。`mode` は
 /// `foundation.access_mode` のビット和。契約どおり実効UID/GID・補助グループで
 /// 判定し（`AT_EACCESS`）、権限の拒否・対象不在はエラーではなく `false` を返す。
-/// 不正mode（`EINVAL`）と非対応環境（`ENOTSUP`）だけを投げる。
+/// 不正mode（`EINVAL`）と非対応環境（`ENOTSUP`）だけを投げる。LinuxはPOSIX ACLを
+/// 正しく評価するため `faccessat2`（kernel 5.8以降）を直接使う。
 pub fn access(path: []const u8, mode: u32) anyerror!bool {
     return switch (builtin.os.tag) {
         .windows, .wasi => error.OperationUnsupported,
@@ -144,23 +145,35 @@ fn chownPosix(path: []const u8, uid: ?u32, gid: ?u32, follow: bool) anyerror!voi
 
 fn accessPosix(path: []const u8, mode: u32) anyerror!bool {
     const posix_path = try std.posix.toPosixPath(path);
-    // 契約の「実効アクセス semantics」に合わせ、実IDではなく実効UID/GIDと
-    // 補助グループで判定するよう AT_EACCESS を付ける。Linuxはカーネル5.8未満で
-    // faccessat2がENOSYSになるが、glibcのfaccessatは実効IDで判定する互換経路へ
-    // フォールバックする（それも不可ならENOTSUPになる）。
-    const flags = accessFlags();
+    if (builtin.os.tag == .linux) {
+        // libcのfaccessat(AT_EACCESS)はカーネル5.8未満でstatベースの模倣になり
+        // POSIX ACLを評価しない。カーネルのfaccessat2を直接呼び、非対応カーネル
+        // （ENOSYS）は不正確な判定を返さずENOTSUPへ写す。
+        while (true) {
+            const result = std.os.linux.faccessat(std.os.linux.AT.FDCWD, &posix_path, mode, accessFlags());
+            const errno = std.os.linux.errno(result);
+            if (errno == .SUCCESS) return true;
+            if (errno == .INTR) continue;
+            return accessResult(errno);
+        }
+    }
     while (true) {
-        const result = std.c.faccessat(std.c.AT.FDCWD, &posix_path, @intCast(mode), flags);
+        const result = std.c.faccessat(std.c.AT.FDCWD, &posix_path, @intCast(mode), accessFlags());
         if (result == 0) return true;
         const errno = std.c.errno(result);
         if (errno == .INTR) continue;
-        return switch (errno) {
-            // 権限拒否・対象不在・読み取り専用FSでの書込み拒否は、エラーではなく
-            // 「アクセス不可」としてfalseを返す（catalogのエラーはEINVAL/ENOTSUPのみ）。
-            .ACCES, .PERM, .NOENT, .NOTDIR, .LOOP, .ROFS => false,
-            else => errnoError(errno),
-        };
+        return accessResult(errno);
     }
+}
+
+/// `access` のerrnoを結果へ写す。拒否系はfalse、それ以外は構造化エラーへ。
+fn accessResult(errno: std.c.E) anyerror!bool {
+    return switch (errno) {
+        // 権限拒否・対象不在・読み取り専用FSでの書込み拒否は、エラーではなく
+        // 「アクセス不可」としてfalseを返す（catalogのエラーはEINVAL/ENOTSUPのみ）。
+        .ACCES, .PERM, .NOENT, .NOTDIR, .LOOP, .ROFS => false,
+        else => errnoError(errno),
+    };
 }
 
 /// `faccessat` の実効ID判定フラグ。Linuxの `std.c.AT` は `EACCESS` を持たない
@@ -294,6 +307,18 @@ test "accessは存在可否を判定し、不在はfalseになる" {
     try std.testing.expect(try access(path, foundation.access_mode.f_ok));
     // 存在しないpathはF_OKでもエラーではなくfalse。
     try std.testing.expect(!try access(missing, foundation.access_mode.f_ok));
+}
+
+test "accessのerrno写像は拒否をfalse、非対応をENOTSUPにする" {
+    // 拒否系はアクセス不可としてfalse。
+    try std.testing.expectEqual(false, try accessResult(.ACCES));
+    try std.testing.expectEqual(false, try accessResult(.PERM));
+    try std.testing.expectEqual(false, try accessResult(.NOENT));
+    try std.testing.expectEqual(false, try accessResult(.ROFS));
+    // 不正modeはEINVAL、faccessat2非対応カーネルはENOTSUP。
+    try std.testing.expectEqual(error.InvalidArgument, errnoError(.INVAL));
+    try std.testing.expectEqual(error.OperationUnsupported, errnoError(.NOSYS));
+    try std.testing.expectEqual(error.OperationUnsupported, errnoError(.OPNOTSUPP));
 }
 
 test "POSIX非対応OSではchmod/chown/access/uid取得/umaskがENOTSUPになる" {

@@ -819,7 +819,7 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "OSのeffective access semantics。拒否はfalseで返す",
+      "notes": "OSのeffective access semantics。拒否はfalseで返す。LinuxはPOSIX ACLを評価するfaccessat2（kernel 5.8以降）必須で、非対応はENOTSUP",
       "paramTypes": {
         "PATH": "string",
         "MODE": "accessMode"
@@ -1726,7 +1726,7 @@
       "id": "access",
       "class": "posix_extension",
       "os": {
-        "linux": true,
+        "linux": "conditional",
         "macos": true,
         "windows": false
       },
