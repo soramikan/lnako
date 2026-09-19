@@ -755,23 +755,6 @@ AOT native shard 24件を削除し、新しい12件を追加する必要があ�
 クリティカルパス外である。統合後も`verify_native_aot_artifacts`が成功しており、
 fixture × optimization の被覆（各optimizationでちょうど1回）は維持されている。
 
-## 改善計画2 の最終結果
-
-| 指標 | 改善前 | 改善後 | 差 |
-| --- | ---: | ---: | ---: |
-| workflow wall clock | 1,112s | 876〜1,113s | 最良876s（-21%） |
-| 全job runner minutes | 213 min | **166 min** | **-47 min（-22%）** |
-| matrix job数 | 57 | 45 | -12 |
-| AOT検証ステップ（24 shard合計） | 1,896s | 1,163s | -38.7% |
-
-計画の短期目標に対する到達状況:
-
-- Wall clock 20〜30%削減 → **-21%（達成帯の下端）**。ただしwallはrun間のqueue
-  変動が大きく、クリティカルパス（Windows core 約1,075s）が支配している。
-- Runner minutes 25%以上削減 → **-22%**（213→166 min）。ほぼ達成で、残りは
-  Windows coreの実ビルド／実実行コスト（CI構造では削減不可）に由来する。
-- Physical上「検証量を減らさず」を維持（Phase 4・5はビルドと実行の重複のみ除去）。
-
 ## Linux AOT jobsのcompiler build重複の解消
 
 Phase 4はWindowsのsupport系5 jobを共有compiler artifactへ寄せたが、**Linux側は
@@ -833,11 +816,11 @@ run 35469356296で`aot_linux`の8 jobが `spawn .../zig-out/bin/lnako EACCES` �
 install直後に`chmod 0o755`するようにし、単体テストで実行ビットを固定、
 `check_ci_workflow.mjs`にもchmod実装の存在を検査として追加した。
 
-### 実測結果（run 35469955469・46 job・failure 0）
+### 実測結果（run 35469955469・35471297565。いずれも46 job・failure 0）
 
-Linux AOTの対象job群（native 6 shard＋support HTTP＋support dispatch evidence）を
-まとめたrunner minutesは、先行7 runの **21.0〜32.2 min（median 26.6）** から
-**8.4 min** へ減った。内訳は次のとおり。
+Linux AOTの対象job群（native 6 shard＋support HTTP＋support dispatch evidence＋
+新規producer）をまとめたrunner minutesは、先行7 runの **21.0〜32.2 min（median 26.6）**
+から **11.8 / 11.3 min** へ減った。個別jobの内訳は次のとおり。
 
 | job | Phase 6前（run 35465334491） | Phase 6後（run 35469955469） | 差 |
 | --- | ---: | ---: | ---: |
@@ -853,35 +836,69 @@ Linux AOTの対象job群（native 6 shard＋support HTTP＋support dispatch evid
 | **対象8 job群の合計（producerを除く）** | **1,728s（28.8 min）** | **507s（8.4 min）** | **-1,221s（-20.4 min）** |
 | **正味（producerを含む）** | **1,728s（28.8 min）** | **709s（11.8 min）** | **-1,019s（-17.0 min）** |
 
-新しいproducerの`+202s`（3.4 min）を含めても**正味-17.0 min/run**である。先行7 runの
-対象job群はcache hitの状況により21.0〜32.2 min（median 26.6）で変動していたため、
-median基準では正味**-14.8 min/run**（26.6→11.8）となる。
+producerの`+202s`（3.4 min）を含めても**正味-17.0 min/run**（run 35465334491比）。
+先行7 runの対象job群はcache hitの状況により21.0〜32.2 minで変動していたため、
+median基準では **26.6→11.55 min（-15.1 min/run）** となる。
 
-#### run全体のrunner minutesは横ばいだが、原因は無関係jobの変動
+run全体のrunner minutesも、2 runでは**166.4 / 151.6 min（median 159.0）**で、
+先行7 runの**median 174.8 min（範囲166.9〜191.3）**から**-15.8 min/run**減った。
+ただしrun全体は本変更が触れていない`test` job行の変動が大きいため、単一run比較では
+判断しない（下記）。
 
-一方、run全体のrunner minutesは**166.4 min**（Phase 5のrun 35465334491は166.9 min）
-でほぼ横ばいだった。これは本変更が触れていない`test` job行の変動が大きいためである。
+#### run全体の値は無関係jobの変動が支配する
 
-| job | run 35465334491 | run 35469955469 | 差 |
-| --- | ---: | ---: | ---: |
-| Windows x86_64 / host | 234s | 860s | +626s |
-| Windows x86_64 / compat-aot | 595s | 785s | +190s |
-| macOS arm64 / mac-core-standard-support | 454s | 604s | +150s |
-| macOS arm64 / mac-host-compat | 602s | 735s | +133s |
+`test` job行（Phase 6の変更対象外）はrun間で大きく変動する。
 
-`Windows x86_64 / host`は先行runでも193〜860sの範囲で変動しており
-（35466605404=845s、35468023057=699s）、35465334491の234sが速い側の外れ値である。
-総runner minutesは**単一run比較では判断できない**ため、対象job群（構造的に
-変わった部分）で評価した。run全体を20〜30 runで評価する長期計測は別途継続する。
+| job | 先行7 run の範囲 |
+| --- | ---: |
+| Windows x86_64 / host | 193〜860s |
+| Linux x86_64 / host | 133〜512s |
+
+特に`Windows x86_64 / host`は193〜860s（4.5倍）で変動し、run全体の差を
+単独で覆す。したがって総runner minutesは**対象job群（構造的に変わった部分）と
+複数runのmedianで評価**する。run全体を20〜30 runで評価する長期計測（計画§10）は
+別途継続する。
 
 job名（`Linux x86_64 / AOT native shard 1/3 / O0+O1` 等）は変えていないため、
 **mainのブランチ保護のrequired status checksの更新は不要**である。
 
 ### 検証
 
-- run 35469955469（46 job）が**failure 0**で成功。`AOT-Linux`の8 consumer、
-  `aot_compiler_linux`、`verify_native_aot_artifacts`（3 job分のartifact partition検証）、
-  `verify_dispatch_coverage`（3 OSのcoverage shard partition検証）がすべて成功した。
+- run 35469955469 / 35471297565（いずれも46 job）が**failure 0**で成功。
+  Linux AOTの8 consumer、`aot_compiler_linux`、`verify_native_aot_artifacts`
+  （3 OS分のartifact partition検証）、`verify_dispatch_coverage`
+  （3 OSのcoverage shard partition検証）がすべて成功した。
 - `attest-dispatch-evidence`はPR runではattestation発行条件（mainへのpush／
   workflow_dispatch）を満たさないためskipされる（従来どおり）。
 
+
+## 改善計画2 の最終結果
+
+| 指標 | 改善前 | Phase 1〜5後（7 run） | Phase 6後（2 run） |
+| --- | ---: | ---: | ---: |
+| workflow wall clock | 1,112s | 876〜1,462s（median 約1,113s） | 1,130〜1,141s（median 約1,136s） |
+| 全job runner minutes | 213 min | 166〜191 min（median 174.8） | 151.6 / 166.4（median 159.0） |
+| matrix job数 | 57 | 45 | 総46（matrix 39＋producer／後段7） |
+| AOT検証ステップ（24 shard合計） | 1,896s | 1,163s | -38.7% |
+| Linux AOT job群（8 consumer＋producer） | — | 21.0〜32.2 min（median 26.6） | 11.3〜11.8 min |
+
+計画の短期目標に対する到達状況:
+
+- Wall clock 20〜30%削減 → **未達（実質不変）**。wallはクリティカルパス
+  （Windows core 約1,075〜1,097s）とrun間のqueue変動に支配され、AOT施策は
+  クリティカルパス外のためwallは変わらない（1,112s→median 約1,136s）。
+  途中で「wall 1,112s→876s（-21%）」と記録したが、その876sは速い側の外れ値runで
+  あり代表値ではない。**この-21%は誤った一般化として撤回する**（Phase 4・5の
+  セクションの当時の記録はそのまま残す）。
+- Runner minutes → **Phase 1〜5で-22%**（213→median 174.8 min）、**Phase 6で
+  追加-15.8 min/run**（median 174.8→159.0、改善前比 **-25.4%**）。残りは
+  Windows coreの実ビルド／実実行コスト（CI構造では削減不可）に由来する。
+- Physical上「検証量を減らさず」を維持（Phase 4・5・6はビルドと実行の重複のみ除去）。
+
+## 計測の限界と継続課題
+
+run全体のrunner minutesは、Phase 6の変更対象外である`test` job行の変動
+（`Windows x86_64 / host`は193〜860s、`Linux x86_64 / host`は133〜512s）が支配的で、
+**単一run比較では施策の効果を判定できない**。計画§10の長期計測（20〜30 runの
+median/p75/p90/p95の蓄積）は別途継続する。本節のPhase 6評価は、構造的に変わった
+Linux AOT job群の実測と複数runのmedianに基づく。
