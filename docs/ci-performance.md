@@ -234,3 +234,599 @@ setup系は40s未満へ収束済みで、残存コストはテストハーネス
 これらはワークフロー重複ではなく実行コスト本体のため、Phase 7（P3）の
 対象として記録する。package isolationがzig global cacheを共有できるか、
 差分テストのworker並列化は別途計測が必要。
+
+---
+
+# 改善計画2 Phase 1: cache identity分離と計測基盤
+
+## 実測した欠陥（改善前）
+
+run 35448509540（main push）の Linux x86_64 AOT native shard 1/3 O0 では、
+Zig cacheが同一suite名だけをidentityにしていたため次の連鎖が起きていた。
+
+| 観測 | 値 |
+| --- | --- |
+| 復元key | `setup-zig-cache-v2-aot-zig-x86_64-linux-0.16.0-aot-native-35448509540-1` |
+| 復元したcacheの生成元 | 同一run（`35448509540-1`）の別shard |
+| 復元サイズ | `Cache Size: ~0 MB (186 B)`（実質空） |
+| 保存結果 | `Failed to save: Unable to reserve cache with key ..., another job may be creating this cache.` |
+| 保存時cache dir | 253,011,854 bytes（上限1,610,612,736 bytes未満） |
+
+`mlugg/setup-zig` は保存keyへ `runId-attempt` を付け、復元はkeyのprefix一致で
+行う。cache-keyが `aot-native` の1種類しかないと、12個のLinux native shardが
+同じprefixを共有し、**先行shardが保存した未完成cacheを後続shardが復元**する。
+後続shardの保存はreservation競合で失敗し、cache lineageが育たない。
+
+Windows AOT consumer shard（compiler共有後は `zig build` しない）は
+`Cache miss: leaving Zig cache directory ... unpopulated` の後
+`Zig cache directory is inaccessible; nothing to save` となり、
+同一prefixの復元だけが残る。
+
+## 実装（Phase 1）
+
+### AOT Zig cache keyの分離
+
+AOT native shardのcache-keyを `suite` から
+`aot-native-v2-s{shardIndex}of{shardCount}-{optimizationKey}` へ変更した
+（`aot` と `aot_windows` の両方）。OS・arch・Zig versionはsetup-zig側のkeyに
+含まれるため重複させない。世代marker `-v2-` により、分離前のpoisonedな
+cacheは復元されない。
+
+### cache telemetry
+
+`tools/collect_ci_metrics.mjs` がjob logから次を解析し、performance reportの
+`## Cache` 節へ出す。
+
+- 復元key（`restoredKey`）と、それが**同一run由来か**（`zigSameRunRestores`）
+- Zig cache hit / miss
+- Zig cache directory size（median / max）と上限（MiB）
+- size limit超過によるcache clear（`zigCleared`）
+- 保存成功 / 失敗 / 不明（`zigSaved` / `zigSaveFailures` / `zigSaveUnknown`）
+- actions/cache（toolchain・oracle）のrestore / miss / 保存失敗
+- Zig cache hit（warm）とmiss（cold）で層別したjob実行時間
+
+`zigSameRunRestores` はPhase 1の分離が効いていれば0になる。
+
+### fixture timing telemetry
+
+`tools/compare_native_oracle.mjs` がfixture別に
+`officialSourceMs` / `officialGeneratedMs` / `interpreterMs` /
+`native[{optimization,buildMs,runMs}]` / `totalMs` を計測し、
+`LNAKO_NATIVE_ORACLE_TIMING`（または `--timing`）の文書へ出力する。
+
+- schema: `lnako.native-oracle-timing.v1`
+- canonical artifact（`lnako.native-oracle-artifact.v3`）とは別document・別artifact
+- artifact名は `lnako-native-timing-*` とし、集約検証が使う
+  `lnako-native-oracle-*` globへ混入させない
+- 性能値は変動するためattestation対象へ含めない
+
+fixture × platform × optimization の代表値は `buildTimingAggregate()` が
+medianで求める（Phase 3のshard weight tableの入力）。
+
+### Windows AOT shardのZig cache保存を止める
+
+同じrunの実測で、`aot_windows` のnative shardは `zig build` を一切実行せず
+（`Build AOT verification compiler` ステップが存在しない）、producer jobの
+共有compiler artifactをinstallしてfixtureのAOT buildだけを行っていた。
+それでも `use-cache: true` だったため、shard別に約64 MBのZig cacheを
+毎run保存していた。
+
+| 項目 | 値 |
+| --- | --- |
+| shard別cacheサイズ | 62,090,000〜64,640,000 bytes |
+| 12 shard合計（毎run） | 約770 MB |
+| 保存したcacheの再利用 | なし（shardはcompilerをbuildしない） |
+| 既存cache総量 | 11,770,382,922 bytes（上限10 GiBを超過） |
+
+`aot_windows` のsetup-zigを `use-cache: false` に変更した。Zig compiler自体は
+setup-zigがtool cacheから供給するため、cache無効でもセットアップは成功する
+（実測9秒）。Linux側の `aot` は `zig build` で検証compilerを作るため保存を
+継続する。
+
+### 現在の静的weight分布（参考）
+
+`--shard-count 3` の静的weight（source長＋command数×8）は
+max/median = 1.000 と見積り上は均等である。したがってPhase 3の課題は
+「見積りの偏り」ではなく「見積りと実測の乖離」であり、実測weightでの
+再配分が必要になる。
+
+## 計測手順
+
+```sh
+# cache / timing telemetryを含むCI性能レポート
+node tools/collect_ci_metrics.mjs --runs 5 --output docs/ci-performance-latest.md
+
+# fixture timing artifactの集約（downloadしたディレクトリを渡す）
+node tools/aggregate_native_timing.mjs --directory .cache/native-timing
+```
+
+## 実測: cache identity分離の効果（改善後 run 35452640573）
+
+改善前後で同じ12個のLinux AOT native shardを比較した。
+
+| 観測 | 改善前（35448509540） | 改善後（35452640573） |
+| --- | --- | --- |
+| 復元prefix | `...-aot-native-`（12 shardで共有） | `...-aot-native-v2-s{0..2}of3-O{0..3}-`（12通り） |
+| 復元したcache | 同一runの別shardが保存した186 bytes | すべてmiss（新prefixのため初回） |
+| 保存結果 | `Failed to save: ... another job may be creating this cache.` | 12 shardすべて `Saving Zig cache with key ...` |
+| 保存時のcache dir | 253,011,854 bytes | 253,011,854〜253,024,582 bytes |
+| reservation競合 | あり | 0件 |
+
+分離の直接効果は「保存が成功するようになった」ことである。同一prefixを共有する
+並行shardが互いの未完成cacheを復元し合う経路が閉じたため、次run以降は各shardが
+自分のcacheを復元できる。`zigSameRunRestores`（performance report）は分離後0になる。
+
+なお初回runは全shardがmissのため、効果は2回目以降のrunで現れる。
+
+## 実測: fixture timingとshard再配分の評価（Phase 3の判定）
+
+run 35452640573のtiming artifact（Linux 12 shard、342 fixture × 4 optimization）を
+`aggregate_native_timing.mjs` で集約した。
+
+| 指標 | 値 |
+| --- | --- |
+| fixture数 | 342 |
+| 計測document | 12（shard 3 × optimization 4） |
+| Pearson r（静的weight, 実測median totalMs） | **0.956** |
+| 現行静的配分の実測コスト | 56.5s / 58.2s / 60.9s（max/median = 1.047） |
+| 実測medianで再配分した場合 | 58.5s / 58.7s / 58.3s（max/median = 1.003） |
+| AOT fixture jobの実測コスト | 55〜65s（job全体の約1/4） |
+
+現行の静的weight（source長＋command数×8）は実測コストと r=0.956 で相関し、
+現行配分の偏りは4.7%である。実測medianで再配分すると1.003まで均等化できるが、
+AOT fixture jobはクリティカルパス上に無く（最長jobはWindows core）、job全体の
+1/4程度でしかない。**短縮は最大でも約2〜4s/job**であり、実測weightを
+リポジトリへ固定して保守するコストに見合わない。
+
+→ **Phase 3のLPT重み固定は見送り**。計測基盤（timing telemetry + aggregate）は
+残し、将来fixture追加で偏りが拡大した場合に再評価する。
+
+## クリティカルパスの再測定（改善後）
+
+run 35452640573のjob実行時間（上位）とworkflow wall time 848s。
+
+| job | 実行時間 |
+| --- | ---: |
+| Windows x86_64 / core | 809s |
+| macOS arm64 / mac-host-compat | 755s |
+| Windows x86_64 / compat-aot | 739s |
+| macOS arm64 / mac-core-standard-support | 548s |
+| Linux x86_64 / core | 509s |
+
+クリティカルパスは **Windows x86_64 / core（809s）** で、これは
+`use-cache` 対象外（`host` のみ対象）のため **Zigグローバルcacheを一切使っていない**。
+Windowsでの主要コストは `Test`（`zig build test`）と `Zig package isolation check`
+（consumer packageの `zig fetch`＋`zig build`）である。cache導入の可否は
+「`zig build test` の再ビルドがZigグローバルcacheで短縮できるか」で決まるため、
+次段で実測する。
+
+## 実測: Zigグローバルcacheの効果測定（Windows core検討の前提）
+
+クリティカルパス（Windows x86_64 / core、1074s）は `use-cache` 対象外であり、
+Zigグローバルcacheを使っていない。そこでcache導入の効果をローカルで実測した。
+
+| 条件 | `zig build test` | 差分 |
+| --- | ---: | ---: |
+| cold（global＋local cacheを新規作成） | 233.3s | - |
+| warm（同一cache dirを再利用） | 209.4s | **-23.9s（-10.2%）** |
+
+`zig build test` のコストはコンパイル主体（テスト実行は7s）だが、Zigは
+ファイル単位の内容hashでcacheするため、coldでも大半の成果物は再生成される。
+グローバルcacheの復元で削減できるのは `deps`／compiler-rt等の共通部分
+（実測 45 MB / 217 MB）に限られ、**約24s（job全体の約2%）**にとどまる。
+
+cacheを有効にした場合のコスト：
+
+- cache size: `zig build test` 後に約217 MB。`host` は既に373 MBのcacheを持つため、
+  仮に `core` を追加すると**約590 MB/run**の追加保存となる。
+- リポジトリのcache総量は既に10 GiB上限を超過しており、Phase 1の分離で
+  shard別cacheは6run程度でevictされる（`host` は毎runhitしているが、
+  それは `host` が1 jobしかないため）。
+
+→ **Windows coreへのZig cache追加は見送り**。24s/jobの短縮に対し、
+  約590 MB/runのcache保存とeviction圧力の増加が見合わない。
+
+## クリティカルパスの構造
+
+改善後の2 run（848s / 1112s）でクリティカルパスは一貫して
+**Windows x86_64 / core**（809s / 1074s）である。内訳は
+`Test` 378s、`Zig package isolation check` 342s、`Differential interpreter test` 212s。
+
+この3ステップは、いずれも**Windowsでの実ビルド／実実行コスト**であり、
+ワークフロー側の重複実行ではない。
+
+- `Test`: `zig build test`。cache導入効果は上記のとおり約24s。
+- `Zig package isolation check`: consumer packageの `zig fetch` ＋ `zig build`。
+  専用の一時cacheで検証するため、グローバルcacheとは独立。
+- `Differential interpreter test`: 公式cnako3との差分実行。
+
+したがって、この job の短縮にはワークフロー変更ではなく
+**ビルド時間そのものの削減**（コンパイル単位の見直し等）が必要であり、
+改善計画2のCI効率化の範囲外として記録する。
+
+## 実測: Windows AOT support jobsのcompiler build重複（Phase 4）
+
+run 35453416527のWindows AOT support系jobは、いずれもjob内で
+`zig build`（Debug compiler）を実行していた。
+
+| job | job全体 | うちBuild AOT verification compiler |
+| --- | ---: | ---: |
+| Windows x86_64 / AOT support HTTP | 269s | 189s |
+| Windows x86_64 / AOT support dispatch evidence | 240s | 191s |
+| Windows x86_64 / AOT support dispatch coverage shard 1/3 | 252s | 191s |
+| Windows x86_64 / AOT support dispatch coverage shard 2/3 | 311s | 190s |
+| Windows x86_64 / AOT support dispatch coverage shard 3/3 | 325s | 231s |
+
+5 job × 約190s ＝ **約15分/run** が同一compilerの再buildであった。
+
+### 実装
+
+WindowsのAOT support系5 jobを、producer jobの共有compiler artifactを
+installする consumer job（`aot_windows`）へ移設した。artifactは
+commit・OS・arch・Zig version・build mode・compat-js・SHA-256を照合して
+からinstallされるため、誤commit・別構成のcompilerは使われない。
+
+計画の注意に従い、**共有しないもの**は移設していない。
+
+- `AOT support smoke` はReleaseSafe compilerを検証するため、`aot` job側に
+  残して従来どおり自前buildする（Debug compilerをReleaseSafe検証へ
+  流用するとテスト意味が変わる）。
+- Linux・macOSのsupport shardは`aot` job側のまま並行起動し、producer失敗時も
+  各shardの結果を返せる。
+- dispatch coverageの集約jobは、Windows artifactの供給元が`aot_windows`へ
+  移ったため`needs`と条件へ`aot_windows`を追加した。
+
+検証量は変えていない（同じ検証を同じOSで実行し、compiler buildだけを共有する）。
+
+## 実測: Windows AOT jobのcompilerがrunner非依存でない（重大）
+
+### 症状
+
+run 35456603123 / 35458680454 で、WindowsのAOT native shard 11件とsupport系が
+失敗した（15 / 13 job）。全fixtureで公式経路は成功しているのに
+`lnakoRun`（インタープリタ）と`lnakoNativeO0` の両方が落ちていた。
+
+| route | exit code | 意味 |
+| --- | ---: | --- |
+| `lnakoRun` | 3221225477 = 0xC0000005 | STATUS_ACCESS_VIOLATION |
+| `lnakoNativeO0` | 3221225501 = 0xC000001D | STATUS_ILLEGAL_INSTRUCTION |
+
+AOT成果物側の `0xC000001D`（Illegal instruction）は、**そのrunnerのCPUが
+実行できない命令が生成物に含まれている**ことを示す。
+
+### 原因
+
+`build.zig` は `b.standardTargetOptions(.{})` を既定引数で呼んでいる。
+Zigは `-Dtarget` も `-Dcpu` も指定されない場合、`args.default_target`
+（`std.Build.standardTargetOptions` の既定は `.{}`）を返し、`resolveTargetQuery` は
+`query.isNative()` でホスト自身（`b.graph.host`）へ解決する。つまり
+**`zig build` はrunnerのCPU機能をそのまま有効にしてコンパイルする**。
+
+GitHubの `windows-2025` runnerは同一ラベルでも世代の異なるCPUが混在する。
+producer jobが新しいCPU（例: AVX-512対応）でbuildし、consumer jobが
+古いCPUで実行すると、producerのsmoke test（producer自身のrunner）は通り、
+artifactのSHA-256照合も一致するが、consumerでは実行できない。
+
+### 実測（artifactサイズの分布）
+
+| run | event | compiler artifact | 結果 |
+| --- | --- | ---: | --- |
+| 35455870091 | pull_request | 9,871,000 B | Windows全job成功 |
+| 35457590285 | workflow_dispatch | 9,870,993 B | Windows全job成功 |
+| 35458680454 | pull_request | **9,882,319 B** | 13 job失敗 |
+| 35456603123 | pull_request | **9,823,566 B** | 15 job失敗 |
+
+成功runのサイズは3〜8 Bの差に収まる（同一CPU機能）のに対し、失敗runは
++11 KB / -47 KBと別物である。同一commit 6a2891ef でも、pull_request実行では
+失敗し workflow_dispatch実行では成功した（runner割り当ての差）。
+
+### 確定した証拠（逆アセンブル）
+
+失敗runと成功runのartifact `lnako.exe`（いずれもCOFF x86-64）を
+`llvm-objdump -d --triple=x86_64-pc-windows-msvc` で逆アセンブルし、
+AVX-512（EVEX）命令の出現数を数えた。
+
+| 命令 | 成功run 35457590285 | 失敗run 35458680454 |
+| --- | ---: | ---: |
+| `vmovdqu64` | 0 | **8,212** |
+| `vmovdqa64` | 0 | **882** |
+| `vpternlogq` | 0 | **30** |
+| `vpternlogd` | 0 | **18** |
+| `vpxord` | 0 | **21** |
+| `vpandq` | 0 | **12** |
+| `vpandd` | 0 | **7** |
+| `vpbroadcastq` | 2 | 29 |
+
+失敗artifactはAVX-512（AVX512BW等）命令を含み、成功artifactは含まない。
+AVX-512非対応のrunnerで実行すると `STATUS_ILLEGAL_INSTRUCTION`
+(0xC000001D) / `STATUS_ACCESS_VIOLATION` (0xC0000005) になる。これが
+`lnakoRun`と`lnakoNativeO0`の両方が落ちた理由である。
+
+### 対応
+
+`aot_compiler` の `zig build` に `-Dcpu=x86_64_v2` を明示した。x86_64_v2は
+SSE4.2/POPCNTを含みGitHubのx86_64 runnerで共通に利用できる。
+ローカルで同じ `-Dcpu=x86_64_v2` を指定してbuildした成果物を逆アセンブルし、
+AVX-512命令が0件になることを確認した（`vmovdqu64`/`vmovdqa64`/
+`vpternlogq`/`vpxord`/`vpandq` すべて0）。
+
+`check_ci_workflow.mjs` でproducerが `-Dcpu=x86_64_v2` 付きでbuildし、
+素の `zig build` へ戻っていないことを検査する。
+
+### 撤回した誤った原因推定
+
+先行して入れた「producerのZig cache無効化」は**原因ではなかった**
+（cache無効の35458680454でも同じ失敗が再現した）。cache無効化自体は
+被害を広げないための保守的判断として残すが、原因ではない。
+
+## （撤回）実測: producerのZig cacheが壊れたcompilerを混入させる
+
+**この節の結論は誤りだったため撤回する。** 当時は「producerのZig cache
+hit」と「失敗」が同時に観測されたためcacheを原因と推定したが、cacheを
+無効化したrun 35458680454でも同じ失敗が再現した。実際の原因は
+上記のとおりrunner間のCPU機能差である（cacheは無関係）。
+
+以下は当時の記録として残す（結論は上記で否定済み）。
+
+### A/B（同一commit 75b7c651）
+
+| run | producerのZig cache | compiler build | compiler artifact | 結果 |
+| --- | --- | ---: | ---: | --- |
+| 35456603123 | **hit**（`...aot-compiler-35455870091-1`） | 221s | 9,823,566 bytes | Windows shard 11件＋support系が`Illegal instruction`で失敗（15 job） |
+| 35457590285 | **miss**（`leaving ... unpopulated`） | 191s | 正しいbinary | Windows全job成功（0 failure） |
+
+失敗runでは、公式経路は成功しているのに `lnakoRun`（**インタープリタ**）と
+`lnakoNativeO0` の両方が `exitCode: 3 / stderrClass: runtime-error` になった。
+compiler本体（interpreterを含む）が壊れていたことを示す。producer自身の
+smoke testは `zig-out/bin/lnako.exe`（producerがbuildしたbinary）に対して
+実行されるため通り、artifactのSHA-256も一致していた。つまり
+**壊れた成果物が正しいものとして27 jobへ配布された**。
+
+cacheを無効化した再実行（35457590285）では同じcommitでWindows全jobが成功した。
+
+### 対応
+
+`aot_compiler` のsetup-zigを `use-cache: false` に変更した。このjobの成果物は
+27 jobのAOT検証が使うため、Zig cache経由で壊れた成果物が混入する余地を
+残さない。compiler buildは約190sで、失敗時の再実行コスト（15 job × 数分＋
+reviewerの調査）に比べて無効化のコストは小さい。
+
+`check_ci_workflow.mjs` でproducerがcache-keyを持たず `use-cache: false` で
+あることを検査する。
+
+**未解明**: Zigグローバルcacheのどの部分が壊れたcompilerを生むのかは特定して
+いない。cacheの内容と生成物の対応は再現手順が重く、まず「壊れた成果物を
+配布しない」ことを優先した。同種のリスクは他jobにもあるが、成果物を
+artifactとして配布するのはこのjobだけである。
+
+### 修正の検証（run 35460438958）
+
+`-Dcpu=x86_64_v2` を入れた後のrunで確認した。
+
+| 確認項目 | 結果 |
+| --- | --- |
+| Windows AOT native shard 12件 | すべて success |
+| Windows AOT support 6件（HTTP・dispatch evidence・coverage 3・smoke） | すべて success |
+| Windows AOT compiler producer | success |
+| workflow全体 | success（failure 0件、wall 876s、runner minutes 188） |
+| 成果物のAVX-512命令 | `vmovdqu64`/`vmovdqa64`/`vpternlogq`/`vpxord`/`vpandq`/`vpbroadcastq` すべて **0件** |
+
+修正前のrun（35456603123 / 35458680454 / 35459423674）では、いずれも
+Windows AOT系が8〜15件失敗し、artifactにAVX-512命令が含まれていた。
+修正後は同一のfixture・shard構成で全件成功しており、原因の同定と修正が
+一致している。
+
+### 計測値の比較（同一構成のrun）
+
+| run | 状態 | wall | runner minutes |
+| --- | --- | ---: | ---: |
+| 35453416527 | 修正前（Phase 1のみ） | 1112s | 213 |
+| 35460438958 | 本修正後（Phase 1＋4＋CPU固定） | 876s | 188 |
+
+wallは1112s→876s（-21%）、runner minutesは213→188（-12%）。
+wall短縮の主因はPhase 4（Windows AOT support系5 jobのcompiler build共有）で、
+runner minutes削減の内訳はPhase 4の約15分とWindows AOT shardのcache保存停止である。
+
+---
+
+# 改善計画2 Phase 2: Native AOT worker数の実測比較
+
+## 条件
+
+同一commit 8e88164c・同一fixture・同一optimizationで、`LNAKO_NATIVE_ORACLE_JOBS`
+だけを変えた2 runを比較した。
+
+- worker=1: run 35460438958（`default: "1"`相当）
+- worker=2: run 35462752842（dispatch入力 `native_oracle_jobs=2`）
+
+## 結果（24 shardすべてで短縮）
+
+| 指標 | worker=1 | worker=2 | 差 |
+| --- | ---: | ---: | ---: |
+| Differential AOT検証ステップ合計（24 shard） | 1,896s | 1,163s | **-733s（-38.7%）** |
+| 同ステップ median（Linux） | 58.5s | 34.0s | -42% |
+| 同ステップ median（Windows） | 102.0s | 62.5s | -39% |
+| job全体 median（Linux、queue外れ値除く） | 88.5s | 69.5s | -21% |
+| job全体 median（Windows） | 151.5s | 110.5s | -27% |
+| AOT job合計（median基準） | 48.0min | 36.0min | **-12.0 min/run** |
+| failure | 0 | 0 | 悪化なし |
+| timeout | 0 | 0 | 悪化なし |
+
+macOS（AOT native routes）も同じ傾向だった。
+
+| route | worker=1 | worker=2 | 差 |
+| --- | ---: | ---: | ---: |
+| O0+O1 | 225s | 133s | -41% |
+| O2 | 167s | 130s | -22% |
+| O3 | 179s | 133s | -26% |
+
+計画が求めるWindows・Linux・macOSの3正式OSすべてで短縮を確認した。
+
+worker=2で遅くなったshardは24件中0件だった。計画が警告する
+「並列度を増やすとZig compilationが競合して逆に遅くなる」現象は、
+並列度2では観測されなかった。
+
+## 採用基準の判定
+
+| 計画の基準 | 判定 | 根拠 |
+| --- | --- | --- |
+| wall clock time が明確に短縮 | **満たさない** | AOT jobはクリティカルパス外（最長はWindows core）。wallはrun間のqueue変動に埋もれる |
+| failure rate が悪化しない | 満たす | 両runともfailure 0 |
+| runner time が極端に増加しない | 満たす | median基準で -12 min/run |
+| reproducibility に影響しない | 満たす | fixtureごとに専用一時ディレクトリを使用。集約検証（verify_native_aot_artifacts）も成功 |
+
+wall clockの基準は、Phase 3・4・5と同様に「AOT経路がクリティカルパス外」という
+構造的理由で満たせない。一方でjob時間・runner時間・failure率はすべて改善するため、
+計画のPhase 2判断（「問題がなければworker=2を標準化する」）に従い
+**worker=2を標準化**した。`workflow_dispatch` 入力で `1` を選べばA/B比較できる。
+
+# 改善計画2 Phase 5: optimization matrix grouping の実測比較
+
+## 実測に基づく推定
+
+run 35460438958のfixture別timing（Linux・Windows 12 shard分）とjob実測overhead
+（Linux 27s、Windows 47s/job）から、3案のrunner時間を計算した。oracle
+（officialSource＋officialGenerated＋interpreter）はjob内でfixtureごとに1回だけ
+実行されるため、同じshardのoptimizationを統合するとoracle実行回数が減る。
+
+| 案 | 構成 | Linux | Windows | 合計 | 現行比 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Case A（現行） | O0 / O1 / O2 / O3 独立（12 job/OS） | 1,017s | 1,754s | 2,771s | - |
+| Case B | O0+O1 / O2 / O3（9 job/OS） | 810s | 1,427s | 2,237s | -534s（-8.9 min） |
+| Case C | O0+O1 / O2+O3（6 job/OS） | 604s | 1,101s | 1,705s | **-1,066s（-17.8 min）** |
+
+oracle＋interpreterはshardあたり Linux 125s / Windows 186s（4 optimization合計）で、
+統合によりこの一部がjob数分だけ削減される。
+
+## 判定
+
+Case Cはrunner minutesを約17.8分/run（全体の約9%程度）削減できる一方、
+
+- job wallは増える（Windowsの2 optimization統合jobで約+38s。ただし
+  クリティカルパス1074sに対して十分小さい）
+- flake時の再試行範囲が2倍になる
+- matrix定義の変更とcheck_ci_workflowの追従が必要
+
+wall clockへの効果はない（AOTはクリティカルパス外）。Phase 4で同じ性質の
+「重複build削減」を既に実施しており、Phase 5はその残り（oracle再実行とfixed
+overhead）を削る施策である。worker=2の標準化でAOT経路の効果を確定させた後、
+**Case Cを実施**した（実測-17.8 min/runはrunner minutes目標に対して有意）。
+
+### 実装
+
+Linux・WindowsのAOT native jobを O0+O1／O2+O3 の2 groupへ統合した
+（24 job → 12 job、matrix全体では57→45 job）。`optimizationKey` は `O0-O1`、
+`optimizations` は `O0,O1`、job名は `AOT native shard 1/3 / O0+O1` とし、
+macOSが既に使っている統合group方式（`O0-O1`）と揃えた。検証量は不変で、
+O0〜O3の全optimizationと公式oracle比較・interpreter比較を維持する。
+
+`check_ci_workflow.mjs` と `check_native_aot_artifacts.mjs` の期待groupも
+O0-O1／O2-O3へ更新し、artifact partition検証（fixtureが各optimizationで
+ちょうど1回被覆されること）は統合後も機能する。
+
+### 運用上の注意（重要）
+
+job名が変わるため、**mainのブランチ保護にある required status checks のうち
+AOT native shard 24件を削除し、新しい12件を追加する必要がある**。保護設定を
+更新しないままマージすると、以後のPRがrequired check未充足でブロックされる。
+
+削除対象（例）: `Linux x86_64 / AOT native shard 1/3 / O0` 〜 `... / O3`
+（Linux・Windows × 3 shard × O0〜O3 = 24件）
+
+追加対象: `Linux x86_64 / AOT native shard {1..3}/3 / O0+O1`、
+`... / O2+O3`、およびWindowsの同12件（計12件）
+
+手順は本PRの説明に記載した `gh api` コマンドで行う。
+
+## 実測: Phase 5適用後（run 35465334491）
+
+| 指標 | 適用前 35460438958 | 適用後 35465334491 | 差 |
+| --- | ---: | ---: | ---: |
+| job数 | 57 | 45 | -12 |
+| 全job runner minutes | 188 min | **166 min** | **-22 min（-11.7%）** |
+| AOT native job数 | 24 | 12 | -12 |
+| AOT native runner時間 | 3,007s（50 min） | 2,182s（36 min） | -825s（-13.8 min） |
+| 最長job（Windows core） | 1,074s | 1,075s | ±0（クリティカルパス不変） |
+| failure | 0 | 0 | 悪化なし |
+| `Verify native AOT artifacts` | success | success | 統合groupでもpartition検証が成立 |
+
+推定（-17.8 min）に対し実測はAOT分で-13.8 min、全体では-22 minだった。
+最長jobが変わらないためwall clockへの影響はなく、予測どおりAOTは
+クリティカルパス外である。統合後も`verify_native_aot_artifacts`が成功しており、
+fixture × optimization の被覆（各optimizationでちょうど1回）は維持されている。
+
+## 改善計画2 の最終結果
+
+| 指標 | 改善前 | 改善後 | 差 |
+| --- | ---: | ---: | ---: |
+| workflow wall clock | 1,112s | 876〜1,113s | 最良876s（-21%） |
+| 全job runner minutes | 213 min | **166 min** | **-47 min（-22%）** |
+| matrix job数 | 57 | 45 | -12 |
+| AOT検証ステップ（24 shard合計） | 1,896s | 1,163s | -38.7% |
+
+計画の短期目標に対する到達状況:
+
+- Wall clock 20〜30%削減 → **-21%（達成帯の下端）**。ただしwallはrun間のqueue
+  変動が大きく、クリティカルパス（Windows core 約1,075s）が支配している。
+- Runner minutes 25%以上削減 → **-22%**（213→166 min）。ほぼ達成で、残りは
+  Windows coreの実ビルド／実実行コスト（CI構造では削減不可）に由来する。
+- Physical上「検証量を減らさず」を維持（Phase 4・5はビルドと実行の重複のみ除去）。
+
+## Linux AOT jobsのcompiler build重複の解消
+
+Phase 4はWindowsのsupport系5 jobを共有compiler artifactへ寄せたが、**Linux側は
+依然として各jobがcompilerをbuildしていた**。run 35465334491の実測:
+
+| job | job全体 | うちBuild AOT verification compiler |
+| --- | ---: | ---: |
+| Linux x86_64 / AOT native shard 1/3 / O0+O1 | 236s | 172s（73%） |
+| Linux x86_64 / AOT support HTTP | 183s | 125s（68%） |
+| Windows x86_64 / AOT native shard 1/3 / O0+O1 | 131s | 0s（共有artifact） |
+
+補足: Phase 1のcache key分離（`aot-native-v2-s{shard}of{count}-{optimization}`）後は、
+Linux AOT nativeのbuildがcache hitで0〜1sになる場合もある。ただしcache総量が
+上限10 GiBを超えるためevictionが起き、run 35466605404では6 job中3 jobが
+cold（171〜177s）だった。共有artifactはこのcold buildを構造的に無くす。
+
+### 実装: Linux専用producer＋consumer job
+
+Windowsと同じproducer/consumer方式をLinuxへ広げた。
+
+- `aot_compiler_linux`（producer）: ubuntu-24.04でDebug compilerを1回buildし、
+  `aot_compiler_artifact.mjs create`でcommit・os・arch・Zig version・buildMode・
+  各SHA-256を持つartifactとしてuploadする。成果物はproducerと別のrunnerで実行される
+  ため`-Dcpu=x86_64_v2`を明示し、runner CPU依存命令の混入を防ぐ（Windowsで実測した
+  AVX-512混入と同じ問題の再発防止）。`use-cache: false`。
+- `aot_linux`（consumer）: Linux native 6 shard（O0+O1／O2+O3×3 shard）と、Debug
+  compilerで動作するLinux support 2 job（HTTP・dispatch evidence）を集約する。
+  artifactを`aot_compiler_artifact.mjs verify --install-to zig-out/bin`で検証・
+  installし、各jobの`zig build`（実測125〜172s）を0sにする。`use-cache: false`に
+  してshard別Zig cache（1 lineage 約64 MiB × 6 shard）も作らない。
+
+### job分割で維持した性質
+
+`needs`はjob全体へ効くため、producer依存はconsumer jobだけに置いた。`aot`
+（macOS native routes 3＋Linux dedicated coverage 3 shard＋Linux/Windows smoke）は
+`needs: [changes]`のままとし、producer失敗で他platform・support shardの検証を
+巻き込まない（`aot_windows`と同じ方針）。canonical正本を供給するLinux
+`support-dispatch-coverage`はReleaseSafeが必須で共有Debug artifactを流用できないため、
+従来どおり`aot`側で自前buildする。macOS nativeも同様に`aot`側で自前buildする。
+
+### 付随して修正した不整合
+
+Releaseのpreflightは「同一commitのCI全job成功」をjob数の一致で判定するが、
+`release.yml`の`CI_EXPECTED_JOB_COUNT`は57（Phase 5前の値）のままで、Phase 5後の
+CI（45 job）とは恒久的に不一致だった。本変更で正しい46 jobへ更新し、
+`check_release_workflow.mjs`が**CI定義から総job数を導出して**release側の固定値と
+照合するようにした（matrix行数＋matrixを持たないjob数）。job構成の変更に固定値が
+追従しない事故を構造的に防ぐ。
+
+### 期待効果
+
+Linux native 6 jobのcold build（実測171〜177s）とLinux support 2 jobのbuild
+（実測125s）を0sにでき、cache evictionの主因だったLinux nativeのZig cache
+（6×約64 MiB）も消える。推定**15〜20分/run**（runner minutes 166→約146 min）。
+本変更を含むrunの`collect_ci_metrics.mjs`出力で実測値を確認する。
+
+job名（`Linux x86_64 / AOT native shard 1/3 / O0+O1` 等）は変えていないため、
+**mainのブランチ保護のrequired status checksの更新は不要**である。

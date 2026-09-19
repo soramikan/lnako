@@ -36,10 +36,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION_INPUT: ${{ inputs.version }}
-          # 51 matrix jobs + changes classifier + lightweight verifier +
-          # Windows AOT compiler producer + dispatch coverage verifier +
-          # native AOT aggregate verifier + attestation.
-          CI_EXPECTED_JOB_COUNT: 57
+          # 39 matrix job + changes classifier + lightweight verifier +
+          # Windows AOT compiler producer + Linux AOT compiler producer +
+          # dispatch coverage verifier + native AOT aggregate verifier +
+          # attestation = 46。
+          # CIのjob構成を変えたら check_release_workflow.mjs が導出値との不一致を
+          # 検出するため、この固定値も必ず追従させる。
+          CI_EXPECTED_JOB_COUNT: 46
         shell: bash
         run: |
           set -euo pipefail

@@ -5,6 +5,18 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      # Native AOT worker数の比較実験（改善計画2 Phase 2）用。
+      # 既定は1で、CIの標準動作を変えない。手動実行で1/2を切り替えて
+      # 同一commitのjob時間・runner時間・failure率を比較する。
+      native_oracle_jobs:
+        description: "Native AOT verifierのworker数（既定2。1はA/B比較用）"
+        required: false
+        default: "2"
+        type: choice
+        options:
+          - "2"
+          - "1"
 
 permissions:
   contents: read
@@ -295,6 +307,9 @@ jobs:
       - name: Toolchain cache regression tests
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node --test tools/setup_llvm_test.mjs tools/collect_ci_metrics_test.mjs tools/aot_compiler_artifact_test.mjs
+      - name: CI telemetry tests
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
+        run: node --test tools/native_oracle_timing_test.mjs
       - name: Change classifier tests
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node --test tools/classify_changes_test.mjs
@@ -439,8 +454,14 @@ jobs:
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
-          use-cache: true
-          cache-key: aot-compiler
+          # このjobの成果物（compiler binary）は27 jobのAOT検証が使うため、
+          # Zig cache経由で壊れた成果物が混入しないよう保存しない。
+          # 保存する場合、setup-zigはprefix一致で復元するため前runのcacheを
+          # 引き継ぎ、内容hashが一致しないartifactを再利用し得る。
+          # 実測ではcache有効時に221sでbuildし、cache無効のrun（169s）より
+          # 47KB小さいcompilerが生成され、Windows shard 11件が
+          # "Illegal instruction" で失敗した。
+          use-cache: false
           cache-size-limit: 1536
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
@@ -460,8 +481,16 @@ jobs:
       - name: Prune LLVM toolchain cache
         shell: bash
         run: node tools/prune_llvm_toolchain.mjs
+      # この成果物はproducerと別のrunner（17 job）で実行されるため、
+      # runnerのCPU機能に依存した命令を含めてはならない。
+      # `zig build` は -Dcpu 未指定だとホストのCPU機能を有効にするため、
+      # AVX-512対応runnerでbuildしたcompilerが非対応runnerで
+      # STATUS_ILLEGAL_INSTRUCTION (0xC000001D) / ACCESS_VIOLATION (0xC0000005)
+      # になる。実測で失敗artifactは vmovdqu64 8212件・vpternlogq 30件等の
+      # AVX-512命令を含み、成功artifactは0件だった。
+      # x86_64_v2（SSE4.2/POPCNT）はGitHubのx86_64 runnerで共通に利用できる。
       - name: Build AOT verification compiler
-        run: zig build
+        run: zig build -Dcpu=x86_64_v2
       # 共有artifactは12 shardがbuildなしで実行するため、作成前にこのjobで
       # interpreterを一度動かし、壊れたbinaryを配布しないよう早期に検出する。
       - name: Smoke test AOT verification compiler
@@ -483,6 +512,68 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # Linux側のAOT検証compilerも1回だけbuildし、LinuxのAOT jobが共有する。
+  # 各jobが個別にbuildすると1 jobあたり125〜175sを重複して消費し、さらに
+  # shard別のZig cache（1 lineage 約64 MiB）がrunごとに積み上がって
+  # リポジトリのcache上限(10 GiB)を圧迫する（実測: aot cache 5.9 GiB / 67 entry）。
+  # artifact共有ならbuildは0s・cache増加もない。
+  aot_compiler_linux:
+    name: Linux x86_64 / AOT verification compiler
+    if: needs.changes.outputs.level == 'full'
+    needs: [changes]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+          # 成果物の再現性を優先してZig cacheは使わない（Windows producerと同じ理由）。
+          use-cache: false
+          cache-size-limit: 1536
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/toolchains
+          key: toolchains-${{ runner.os }}-${{ runner.arch }}-v3-${{ hashFiles('toolchain.lock.json', 'tools/setup_llvm.mjs', 'tools/setup_quickjs.mjs', 'tools/prune_llvm_toolchain.mjs') }}
+      - name: Set up pinned LLVM and LLD
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          node tools/setup_llvm.mjs
+      - name: Prune LLVM toolchain cache
+        shell: bash
+        run: node tools/prune_llvm_toolchain.mjs
+      # 成果物は別runnerで実行されるためrunner依存のCPU命令を含めない
+      # （Windowsで実測したAVX-512混入と同じ問題を避ける）。
+      - name: Build AOT verification compiler
+        run: zig build -Dcpu=x86_64_v2
+      - name: Smoke test AOT verification compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '"smoke"を表示\n' > aot-compiler-smoke.nako3
+          output=$(zig-out/bin/lnako run aot-compiler-smoke.nako3)
+          test "$output" = "smoke"
+          rm -f aot-compiler-smoke.nako3
+      - name: Package shared AOT compiler artifact
+        shell: bash
+        run: node tools/aot_compiler_artifact.mjs create --binary zig-out/bin/lnako --runtime-lib zig-out/lib/liblnako_runtime.a --out-dir "${{ runner.temp }}/aot-compiler"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-aot-compiler-linux-x64
+          path: ${{ runner.temp }}/aot-compiler
+          if-no-files-found: error
+          retention-days: 1
+
+  # macOS native routesとLinux dedicated dispatch coverage shard、
+  # Windowsのsmoke（ReleaseSafe検証）を担う。共有compiler artifactを使う
+  # LinuxのDebug consumerは専用job（aot_linux）へ分離する。producer依存は
+  # consumer job側だけに置き、producer失敗時に他platform・support shardの
+  # 検証を巻き込まない（Windows側のaot_windowsと同じ方針）。
   aot:
     name: ${{ matrix.name }} / ${{ matrix.jobName }}
     if: needs.changes.outputs.level == 'full'
@@ -491,126 +582,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 0
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O0
-            optimizations: O0
-            jobName: AOT native shard 1/3 / O0
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 0
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O1
-            optimizations: O1
-            jobName: AOT native shard 1/3 / O1
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 0
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O2
-            optimizations: O2
-            jobName: AOT native shard 1/3 / O2
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 0
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O3
-            optimizations: O3
-            jobName: AOT native shard 1/3 / O3
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 1
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O0
-            optimizations: O0
-            jobName: AOT native shard 2/3 / O0
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 1
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O1
-            optimizations: O1
-            jobName: AOT native shard 2/3 / O1
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 1
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O2
-            optimizations: O2
-            jobName: AOT native shard 2/3 / O2
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 1
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O3
-            optimizations: O3
-            jobName: AOT native shard 2/3 / O3
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 2
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O0
-            optimizations: O0
-            jobName: AOT native shard 3/3 / O0
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 2
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O1
-            optimizations: O1
-            jobName: AOT native shard 3/3 / O1
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 2
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O2
-            optimizations: O2
-            jobName: AOT native shard 3/3 / O2
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 2
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O3
-            optimizations: O3
-            jobName: AOT native shard 3/3 / O3
           - name: macOS arm64
             os: macos-15
             suite: aot-native
@@ -650,22 +621,6 @@ jobs:
           - name: Linux x86_64
             os: ubuntu-24.04
             suite: aot-support
-            task: support-http
-            fixtureShardIndex: 0
-            fixtureShardCount: 1
-            fixtureSharded: false
-            jobName: AOT support HTTP
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-support
-            task: support-dispatch-evidence
-            fixtureShardIndex: 0
-            fixtureShardCount: 1
-            fixtureSharded: false
-            jobName: AOT support dispatch evidence
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            suite: aot-support
             task: support-dispatch-coverage
             fixtureShardIndex: 0
             fixtureShardCount: 3
@@ -695,46 +650,8 @@ jobs:
             fixtureShardCount: 1
             fixtureSharded: false
             jobName: AOT support smoke
-          - name: Windows x86_64
-            os: windows-2025
-            suite: aot-support
-            task: support-http
-            fixtureShardIndex: 0
-            fixtureShardCount: 1
-            fixtureSharded: false
-            jobName: AOT support HTTP
-          - name: Windows x86_64
-            os: windows-2025
-            suite: aot-support
-            task: support-dispatch-evidence
-            fixtureShardIndex: 0
-            fixtureShardCount: 1
-            fixtureSharded: false
-            jobName: AOT support dispatch evidence
-          - name: Windows x86_64
-            os: windows-2025
-            suite: aot-support
-            task: support-dispatch-coverage
-            fixtureShardIndex: 0
-            fixtureShardCount: 3
-            fixtureSharded: true
-            jobName: AOT support dispatch coverage shard 1/3
-          - name: Windows x86_64
-            os: windows-2025
-            suite: aot-support
-            task: support-dispatch-coverage
-            fixtureShardIndex: 1
-            fixtureShardCount: 3
-            fixtureSharded: true
-            jobName: AOT support dispatch coverage shard 2/3
-          - name: Windows x86_64
-            os: windows-2025
-            suite: aot-support
-            task: support-dispatch-coverage
-            fixtureShardIndex: 2
-            fixtureShardCount: 3
-            fixtureSharded: true
-            jobName: AOT support dispatch coverage shard 3/3
+          # support-smokeはReleaseSafe compilerを検証するため共有Debug
+          # artifactを使えない。よってこのjob（aot）に残す。
           - name: Windows x86_64
             os: windows-2025
             suite: aot-support
@@ -750,8 +667,11 @@ jobs:
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
+          # このjobで`zig build`するのはmacOS nativeだけになった
+          # （LinuxのDebug consumerはaot_linuxが共有artifactをinstallする）。
+          # Zig cacheはmacOS nativeのみ保存する。
           use-cache: ${{ matrix.task == 'native' }}
-          cache-key: ${{ matrix.suite }}
+          cache-key: ${{ matrix.task == 'native' && format('aot-native-v2-s{0}of{1}-{2}', matrix.fixtureShardIndex, matrix.fixtureShardCount, matrix.optimizationKey) || matrix.suite }}
           cache-size-limit: 1536
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
@@ -791,8 +711,13 @@ jobs:
       - name: Differential native AOT verification (fixture/route shard)
         if: matrix.task == 'native'
         env:
-          LNAKO_NATIVE_ORACLE_JOBS: "1"
+          # 改善計画2 Phase 2の実測でworker=2を標準化した（下記docs参照）。
+          # 手動実行の入力で1を選べばA/B比較できる。
+          LNAKO_NATIVE_ORACLE_JOBS: ${{ inputs.native_oracle_jobs || '2' }}
           LNAKO_NATIVE_ORACLE_ARTIFACT: ${{ runner.temp }}/lnako-native-oracle-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
+          # timing telemetryは互換性evidenceと分離した別ファイルへ出力する。
+          # 性能値は毎回変動するためcanonical evidence／attestationへは含めない。
+          LNAKO_NATIVE_ORACLE_TIMING: ${{ runner.temp }}/lnako-native-timing-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
           FIXTURE_SHARDED: ${{ matrix.fixtureSharded }}
           FIXTURE_SHARD_INDEX: ${{ matrix.fixtureShardIndex }}
           FIXTURE_SHARD_COUNT: ${{ matrix.fixtureShardCount }}
@@ -817,6 +742,17 @@ jobs:
           path: ${{ runner.temp }}/lnako-native-oracle-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
           if-no-files-found: ignore
           retention-days: 30
+      # timing artifactは集約検証の`lnako-native-oracle-*` globへ入らない名前で
+      # 分離する（partition検証対象は互換性evidenceのみ）。
+      - name: Upload native AOT timing telemetry
+        if: matrix.task == 'native' && always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-native-timing-${{ matrix.os }}-shard-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}
+          path: ${{ runner.temp }}/lnako-native-timing-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
+          if-no-files-found: ignore
+          retention-days: 30
       - name: macOS dispatch coverage audit
         if: matrix.name == 'macOS arm64' && matrix.task == 'native'
         run: >
@@ -833,23 +769,8 @@ jobs:
           path: ${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}-${{ matrix.dispatchCoverageShardIndex }}.json
           if-no-files-found: ignore
           retention-days: 30
-      - name: Differential HTTP server AOT oracle
-        if: matrix.task == 'support-http'
-        run: node tools/compare_http_server_aot_oracle.mjs --no-build
-      - name: Dispatch evidence audit
-        if: matrix.task == 'support-dispatch-evidence'
-        run: >
-          node tools/check_dispatch_trace.mjs --no-build
-          --evidence-output "${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json"
-      # canonical 正本（231件）の freshness は Linux dedicated shard が供給する。
-      # macOS native 相乗り・Windows support は既定の56件のまま維持する。
-      - name: Dispatch coverage audit
-        if: matrix.task == 'support-dispatch-coverage' && matrix.os != 'ubuntu-24.04'
-        run: >
-          node tools/check_dispatch_coverage.mjs --no-build
-          --fixture-shard-index "${{ matrix.fixtureShardIndex }}"
-          --fixture-shard-count "${{ matrix.fixtureShardCount }}"
-          --output "${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}-${{ matrix.fixtureShardIndex }}.json"
+      # canonical正本（231件）のfreshnessはLinux dedicated shardが供給する。
+      # macOS native相乗り・Windows supportは既定の56件のまま維持する。
       - name: Dispatch coverage audit (native fixtures)
         if: matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04'
         run: >
@@ -857,18 +778,6 @@ jobs:
           --fixture-shard-index "${{ matrix.fixtureShardIndex }}"
           --fixture-shard-count "${{ matrix.fixtureShardCount }}"
           --output "${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}-${{ matrix.fixtureShardIndex }}.json"
-      - name: Dispatch trace security audit
-        if: matrix.task == 'support-dispatch-evidence'
-        run: node tools/check_dispatch_trace_security.mjs --no-build
-      - name: Upload native dispatch evidence
-        if: matrix.task == 'support-dispatch-evidence' && always()
-        continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: lnako-dispatch-evidence-${{ matrix.os }}
-          path: ${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json
-          if-no-files-found: ignore
-          retention-days: 30
       - name: Upload native dispatch coverage audit
         if: matrix.task == 'support-dispatch-coverage' && always()
         continue-on-error: true
@@ -878,6 +787,8 @@ jobs:
           path: ${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}-${{ matrix.fixtureShardIndex }}.json
           if-no-files-found: ignore
           retention-days: 30
+      # ReleaseSafe compilerを検証するsmokeは、共有Debug artifactを流用せず
+      # このjobで自分でbuildする（configuration違い自体を検証するため）。
       - name: Build ReleaseSafe compiler
         if: matrix.task == 'support-smoke'
         run: zig build -Doptimize=ReleaseSafe
@@ -893,9 +804,227 @@ jobs:
           ./zig-out/bin/lnako run tests/fixtures/run-control.nako3
           ./zig-out/bin/lnako test tests/fixtures/run-tests.nako3
 
-  # Windows native shardのみproducer成果物を利用するconsumer job。
-  # 他OS・support shardはproducerへ依存せず並行起動し、
-  # producer失敗時も27 shardの結果を返せる。
+  # LinuxのDebug consumer job。producer job（aot_compiler_linux）が1回buildした
+  # 共有compiler artifactを検証してから使うため、`zig build`によるcompiler buildを
+  # 各jobで繰り返さない。native 6 shard（O0+O1／O2+O3×3 shard）に加え、Linuxの
+  # AOT supportのうちDebug compilerで動作するHTTP・dispatch evidenceを集約する。
+  # これによりshard別Zig cache（1 lineage 約64 MiB × 6 shard）も作らなくなり、
+  # リポジトリのcache上限(10 GiB)への圧迫を減らす。
+  # 注意: macOS native、Linuxのdispatch coverage shard（canonical正本）とsmokeは
+  # ReleaseSafe compilerを検証・生成するため共有Debug artifactを使えず、
+  # aot job側で自前buildする。
+  aot_linux:
+    name: ${{ matrix.name }} / ${{ matrix.jobName }}
+    if: needs.changes.outputs.level == 'full'
+    needs: [changes, aot_compiler_linux]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-native
+            task: native
+            fixtureShardIndex: 0
+            fixtureShardCount: 3
+            fixtureSharded: true
+            optimizationKey: O0-O1
+            optimizations: O0,O1
+            jobName: AOT native shard 1/3 / O0+O1
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-native
+            task: native
+            fixtureShardIndex: 0
+            fixtureShardCount: 3
+            fixtureSharded: true
+            optimizationKey: O2-O3
+            optimizations: O2,O3
+            jobName: AOT native shard 1/3 / O2+O3
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-native
+            task: native
+            fixtureShardIndex: 1
+            fixtureShardCount: 3
+            fixtureSharded: true
+            optimizationKey: O0-O1
+            optimizations: O0,O1
+            jobName: AOT native shard 2/3 / O0+O1
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-native
+            task: native
+            fixtureShardIndex: 1
+            fixtureShardCount: 3
+            fixtureSharded: true
+            optimizationKey: O2-O3
+            optimizations: O2,O3
+            jobName: AOT native shard 2/3 / O2+O3
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-native
+            task: native
+            fixtureShardIndex: 2
+            fixtureShardCount: 3
+            fixtureSharded: true
+            optimizationKey: O0-O1
+            optimizations: O0,O1
+            jobName: AOT native shard 3/3 / O0+O1
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-native
+            task: native
+            fixtureShardIndex: 2
+            fixtureShardCount: 3
+            fixtureSharded: true
+            optimizationKey: O2-O3
+            optimizations: O2,O3
+            jobName: AOT native shard 3/3 / O2+O3
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-support
+            task: support-http
+            fixtureShardIndex: 0
+            fixtureShardCount: 1
+            fixtureSharded: false
+            jobName: AOT support HTTP
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-support
+            task: support-dispatch-evidence
+            fixtureShardIndex: 0
+            fixtureShardCount: 1
+            fixtureSharded: false
+            jobName: AOT support dispatch evidence
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+          # このjobは`zig build`を実行せず、producerがbuildした共有compiler
+          # artifactをinstallしてfixtureのAOT buildだけを行う。Zig cacheを
+          # 保存しても再利用されず、6 shard×約64 MBを毎run積み増すだけに
+          # なるため保存しない。
+          use-cache: false
+          cache-size-limit: 1536
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+      # toolchain cache世代v3。keyにtoolchain定義とsetup scriptのhashを含め、
+      # marker欠落でpoisonedなv1/v2 cacheを復元しないようrestore-keysは付けない。
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/toolchains
+          key: toolchains-${{ runner.os }}-${{ runner.arch }}-v3-${{ hashFiles('toolchain.lock.json', 'tools/setup_llvm.mjs', 'tools/setup_quickjs.mjs', 'tools/prune_llvm_toolchain.mjs') }}
+      - name: Set up pinned LLVM and LLD
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          node tools/setup_llvm.mjs
+      - name: Prune LLVM toolchain cache
+        shell: bash
+        run: node tools/prune_llvm_toolchain.mjs
+      - name: Set up pinned QuickJS
+        shell: bash
+        run: node tools/setup_quickjs.mjs
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/oracle
+          key: nadesiko3-oracle-3.7.24-${{ runner.os }}-${{ runner.arch }}-ac3bedbf10111-v4
+      - name: Build official oracle
+        run: node tools/setup_oracle.mjs
+      # producerが1回buildしたDebug compilerを共有する。commit・platform・
+      # Zig version・SHA-256を照合してからinstallし、誤commitや別構成の
+      # compilerを誤用しない。canonical正本のReleaseSafe configとも照合する。
+      - name: Download shared AOT compiler artifact (Linux)
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: lnako-aot-compiler-linux-x64
+          path: ${{ runner.temp }}/aot-compiler
+      - name: Verify and install shared AOT compiler (Linux)
+        shell: bash
+        run: node tools/aot_compiler_artifact.mjs verify --dir "${{ runner.temp }}/aot-compiler" --install-to zig-out/bin
+      - name: Differential native AOT verification (fixture/route shard)
+        if: matrix.task == 'native'
+        env:
+          # 改善計画2 Phase 2の実測でworker=2を標準化した（下記docs参照）。
+          # 手動実行の入力で1を選べばA/B比較できる。
+          LNAKO_NATIVE_ORACLE_JOBS: ${{ inputs.native_oracle_jobs || '2' }}
+          LNAKO_NATIVE_ORACLE_ARTIFACT: ${{ runner.temp }}/lnako-native-oracle-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
+          # timing telemetryは互換性evidenceと分離した別ファイルへ出力する。
+          # 性能値は毎回変動するためcanonical evidence／attestationへは含めない。
+          LNAKO_NATIVE_ORACLE_TIMING: ${{ runner.temp }}/lnako-native-timing-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
+          FIXTURE_SHARDED: ${{ matrix.fixtureSharded }}
+          FIXTURE_SHARD_INDEX: ${{ matrix.fixtureShardIndex }}
+          FIXTURE_SHARD_COUNT: ${{ matrix.fixtureShardCount }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          native_args=(
+            --no-build
+            --optimizations "${{ matrix.optimizations }}"
+            --artifact "$LNAKO_NATIVE_ORACLE_ARTIFACT"
+          )
+          if [[ "$FIXTURE_SHARDED" == "true" ]]; then
+            native_args+=(--shard-index "$FIXTURE_SHARD_INDEX" --shard-count "$FIXTURE_SHARD_COUNT")
+          fi
+          node tools/compare_native_oracle.mjs "${native_args[@]}"
+      - name: Upload native AOT oracle artifact
+        if: matrix.task == 'native' && always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-native-oracle-${{ matrix.os }}-shard-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}
+          path: ${{ runner.temp }}/lnako-native-oracle-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
+          if-no-files-found: ignore
+          retention-days: 30
+      # timing artifactは集約検証の`lnako-native-oracle-*` globへ入らない名前で
+      # 分離する（partition検証対象は互換性evidenceのみ）。
+      - name: Upload native AOT timing telemetry
+        if: matrix.task == 'native' && always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-native-timing-${{ matrix.os }}-shard-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}
+          path: ${{ runner.temp }}/lnako-native-timing-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
+          if-no-files-found: ignore
+          retention-days: 30
+      # Linuxのsupport系。`zig build`は共有artifactのinstallで済ませる。
+      - name: Differential HTTP server AOT oracle
+        if: matrix.task == 'support-http'
+        run: node tools/compare_http_server_aot_oracle.mjs --no-build
+      - name: Dispatch evidence audit
+        if: matrix.task == 'support-dispatch-evidence'
+        run: >
+          node tools/check_dispatch_trace.mjs --no-build
+          --evidence-output "${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json"
+      - name: Dispatch trace security audit
+        if: matrix.task == 'support-dispatch-evidence'
+        run: node tools/check_dispatch_trace_security.mjs --no-build
+      - name: Upload native dispatch evidence
+        if: matrix.task == 'support-dispatch-evidence' && always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-dispatch-evidence-${{ matrix.os }}
+          path: ${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # Windows AOTのconsumer job。producer job（aot_compiler）の共有compiler
+  # artifactを検証してから使うため、`zig build`によるcompiler buildを各jobで
+  # 繰り返さない。Windows native 6 shard（O0+O1／O2+O3×3）に加え、Windowsの
+  # AOT support系5 jobもここへ集約する（改善計画2 Phase 4・5）。support系は
+  # Debug compilerで動作するため共有artifactとbuild構成が一致する。
+  # 注意: support-smokeはReleaseSafe compilerを別途buildするため、
+  # このjobではartifactをinstallせずaot job側で自分でbuildする
+  # （Debug compilerをReleaseSafe検証へ流用するとテスト意味が変わる）。
+  # macOS nativeとLinux dedicated coverage/smokeはaot job、LinuxのDebug
+  # consumerはaot_linuxが担い、各jobは自分のproducerだけへ依存する。
   aot_windows:
     name: ${{ matrix.name }} / ${{ matrix.jobName }}
     if: needs.changes.outputs.level == 'full'
@@ -911,9 +1040,9 @@ jobs:
             fixtureShardIndex: 0
             fixtureShardCount: 3
             fixtureSharded: true
-            optimizationKey: O0
-            optimizations: O0
-            jobName: AOT native shard 1/3 / O0
+            optimizationKey: O0-O1
+            optimizations: O0,O1
+            jobName: AOT native shard 1/3 / O0+O1
           - name: Windows x86_64
             os: windows-2025
             suite: aot-native
@@ -921,109 +1050,92 @@ jobs:
             fixtureShardIndex: 0
             fixtureShardCount: 3
             fixtureSharded: true
-            optimizationKey: O1
-            optimizations: O1
-            jobName: AOT native shard 1/3 / O1
+            optimizationKey: O2-O3
+            optimizations: O2,O3
+            jobName: AOT native shard 1/3 / O2+O3
           - name: Windows x86_64
             os: windows-2025
             suite: aot-native
             task: native
+            fixtureShardIndex: 1
+            fixtureShardCount: 3
+            fixtureSharded: true
+            optimizationKey: O0-O1
+            optimizations: O0,O1
+            jobName: AOT native shard 2/3 / O0+O1
+          - name: Windows x86_64
+            os: windows-2025
+            suite: aot-native
+            task: native
+            fixtureShardIndex: 1
+            fixtureShardCount: 3
+            fixtureSharded: true
+            optimizationKey: O2-O3
+            optimizations: O2,O3
+            jobName: AOT native shard 2/3 / O2+O3
+          - name: Windows x86_64
+            os: windows-2025
+            suite: aot-native
+            task: native
+            fixtureShardIndex: 2
+            fixtureShardCount: 3
+            fixtureSharded: true
+            optimizationKey: O0-O1
+            optimizations: O0,O1
+            jobName: AOT native shard 3/3 / O0+O1
+          - name: Windows x86_64
+            os: windows-2025
+            suite: aot-native
+            task: native
+            fixtureShardIndex: 2
+            fixtureShardCount: 3
+            fixtureSharded: true
+            optimizationKey: O2-O3
+            optimizations: O2,O3
+            jobName: AOT native shard 3/3 / O2+O3
+          # WindowsのAOT support系。共有compiler artifactをinstallして
+          # `zig build`の重複を除く（support-smokeのみReleaseSafeのため
+          # 自前buildを維持する）。
+          - name: Windows x86_64
+            os: windows-2025
+            suite: aot-support
+            task: support-http
+            fixtureShardIndex: 0
+            fixtureShardCount: 1
+            fixtureSharded: false
+            jobName: AOT support HTTP
+          - name: Windows x86_64
+            os: windows-2025
+            suite: aot-support
+            task: support-dispatch-evidence
+            fixtureShardIndex: 0
+            fixtureShardCount: 1
+            fixtureSharded: false
+            jobName: AOT support dispatch evidence
+          - name: Windows x86_64
+            os: windows-2025
+            suite: aot-support
+            task: support-dispatch-coverage
             fixtureShardIndex: 0
             fixtureShardCount: 3
             fixtureSharded: true
-            optimizationKey: O2
-            optimizations: O2
-            jobName: AOT native shard 1/3 / O2
+            jobName: AOT support dispatch coverage shard 1/3
           - name: Windows x86_64
             os: windows-2025
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 0
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O3
-            optimizations: O3
-            jobName: AOT native shard 1/3 / O3
-          - name: Windows x86_64
-            os: windows-2025
-            suite: aot-native
-            task: native
+            suite: aot-support
+            task: support-dispatch-coverage
             fixtureShardIndex: 1
             fixtureShardCount: 3
             fixtureSharded: true
-            optimizationKey: O0
-            optimizations: O0
-            jobName: AOT native shard 2/3 / O0
+            jobName: AOT support dispatch coverage shard 2/3
           - name: Windows x86_64
             os: windows-2025
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 1
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O1
-            optimizations: O1
-            jobName: AOT native shard 2/3 / O1
-          - name: Windows x86_64
-            os: windows-2025
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 1
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O2
-            optimizations: O2
-            jobName: AOT native shard 2/3 / O2
-          - name: Windows x86_64
-            os: windows-2025
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 1
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O3
-            optimizations: O3
-            jobName: AOT native shard 2/3 / O3
-          - name: Windows x86_64
-            os: windows-2025
-            suite: aot-native
-            task: native
+            suite: aot-support
+            task: support-dispatch-coverage
             fixtureShardIndex: 2
             fixtureShardCount: 3
             fixtureSharded: true
-            optimizationKey: O0
-            optimizations: O0
-            jobName: AOT native shard 3/3 / O0
-          - name: Windows x86_64
-            os: windows-2025
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 2
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O1
-            optimizations: O1
-            jobName: AOT native shard 3/3 / O1
-          - name: Windows x86_64
-            os: windows-2025
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 2
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O2
-            optimizations: O2
-            jobName: AOT native shard 3/3 / O2
-          - name: Windows x86_64
-            os: windows-2025
-            suite: aot-native
-            task: native
-            fixtureShardIndex: 2
-            fixtureShardCount: 3
-            fixtureSharded: true
-            optimizationKey: O3
-            optimizations: O3
-            jobName: AOT native shard 3/3 / O3
+            jobName: AOT support dispatch coverage shard 3/3
     runs-on: ${{ matrix.os }}
     timeout-minutes: 50
     steps:
@@ -1031,8 +1143,13 @@ jobs:
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
-          use-cache: ${{ matrix.task == 'native' }}
-          cache-key: ${{ matrix.suite }}
+          # このjobは`zig build`を実行せず、producer jobの共有compiler
+          # artifactをinstallしてfixtureのAOT buildだけを行う。そのため
+          # Zigグローバルcacheを保存しても再利用されず、12 shard×約64 MBを
+          # 毎run積み増すだけになるので保存しない。Zig compiler自体は
+          # setup-zigがtool cacheから供給するため、cache無効でも
+          # セットアップは成功する（実測: 9秒）。
+          use-cache: false
           cache-size-limit: 1536
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
@@ -1064,21 +1181,25 @@ jobs:
       # producerが1回buildしたDebug compilerを共有する。
       # commit・platform・Zig version・SHA-256を照合してからinstallし、
       # 誤commitや別構成のcompilerを誤用しない。
+      # このjobのsupport系はDebug compilerで動作するため共有artifactを使う。
       - name: Download shared AOT compiler artifact
-        if: matrix.task == 'native' && matrix.os == 'windows-2025'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: lnako-aot-compiler-windows-x64
           path: ${{ runner.temp }}/aot-compiler
       - name: Verify and install shared AOT compiler
-        if: matrix.task == 'native' && matrix.os == 'windows-2025'
         shell: bash
         run: node tools/aot_compiler_artifact.mjs verify --dir "${{ runner.temp }}/aot-compiler" --install-to zig-out/bin
       - name: Differential native AOT verification (fixture/route shard)
         if: matrix.task == 'native'
         env:
-          LNAKO_NATIVE_ORACLE_JOBS: "1"
+          # 改善計画2 Phase 2の実測でworker=2を標準化した（下記docs参照）。
+          # 手動実行の入力で1を選べばA/B比較できる。
+          LNAKO_NATIVE_ORACLE_JOBS: ${{ inputs.native_oracle_jobs || '2' }}
           LNAKO_NATIVE_ORACLE_ARTIFACT: ${{ runner.temp }}/lnako-native-oracle-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
+          # timing telemetryは互換性evidenceと分離した別ファイルへ出力する。
+          # 性能値は毎回変動するためcanonical evidence／attestationへは含めない。
+          LNAKO_NATIVE_ORACLE_TIMING: ${{ runner.temp }}/lnako-native-timing-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
           FIXTURE_SHARDED: ${{ matrix.fixtureSharded }}
           FIXTURE_SHARD_INDEX: ${{ matrix.fixtureShardIndex }}
           FIXTURE_SHARD_COUNT: ${{ matrix.fixtureShardCount }}
@@ -1103,11 +1224,62 @@ jobs:
           path: ${{ runner.temp }}/lnako-native-oracle-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
           if-no-files-found: ignore
           retention-days: 30
+      # timing artifactは集約検証の`lnako-native-oracle-*` globへ入らない名前で
+      # 分離する（partition検証対象は互換性evidenceのみ）。
+      - name: Upload native AOT timing telemetry
+        if: matrix.task == 'native' && always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-native-timing-${{ matrix.os }}-shard-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}
+          path: ${{ runner.temp }}/lnako-native-timing-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
+          if-no-files-found: ignore
+          retention-days: 30
+      # ここからWindowsのAOT support系。`zig build`は共有artifactのinstallで
+      # 済ませ、producer jobのcompiler buildを再利用する。
+      - name: Differential HTTP server AOT oracle
+        if: matrix.task == 'support-http'
+        run: node tools/compare_http_server_aot_oracle.mjs --no-build
+      - name: Dispatch evidence audit
+        if: matrix.task == 'support-dispatch-evidence'
+        run: >
+          node tools/check_dispatch_trace.mjs --no-build
+          --evidence-output "${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json"
+      - name: Dispatch coverage audit
+        if: matrix.task == 'support-dispatch-coverage'
+        run: >
+          node tools/check_dispatch_coverage.mjs --no-build
+          --fixture-shard-index "${{ matrix.fixtureShardIndex }}"
+          --fixture-shard-count "${{ matrix.fixtureShardCount }}"
+          --output "${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}-${{ matrix.fixtureShardIndex }}.json"
+      - name: Dispatch trace security audit
+        if: matrix.task == 'support-dispatch-evidence'
+        run: node tools/check_dispatch_trace_security.mjs --no-build
+      - name: Upload native dispatch evidence
+        if: matrix.task == 'support-dispatch-evidence' && always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-dispatch-evidence-${{ matrix.os }}
+          path: ${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Upload native dispatch coverage audit
+        if: matrix.task == 'support-dispatch-coverage' && always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-dispatch-coverage-${{ matrix.os }}-shard-${{ matrix.fixtureShardIndex }}
+          path: ${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}-${{ matrix.fixtureShardIndex }}.json
+          if-no-files-found: ignore
+          retention-days: 30
 
   verify_dispatch_coverage:
     name: Verify dispatch coverage shards
-    if: needs.changes.outputs.level == 'full' && needs.test.result == 'success' && needs.aot.result == 'success'
-    needs: [changes, test, aot]
+    if: needs.changes.outputs.level == 'full' && needs.test.result == 'success' && needs.aot.result == 'success' && needs.aot_windows.result == 'success'
+    # Windowsのdispatch coverage artifactはaot_windows（共有compiler
+    # artifactを使うconsumer job）が供給するため、両jobの完了を待つ。
+    needs: [changes, test, aot, aot_windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -1132,7 +1304,9 @@ jobs:
   verify_native_aot_artifacts:
     name: Verify native AOT artifacts
     if: always() && needs.changes.outputs.level == 'full'
-    needs: [changes, aot, aot_windows]
+    # Linuxのnative artifactは共有compiler artifactを使うconsumer job
+    # （aot_linux）が供給するため、集約検証はその完了も待つ。
+    needs: [changes, aot, aot_linux, aot_windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -1143,21 +1317,21 @@ jobs:
         with:
           node-version: 24.15.0
       - name: Download native AOT artifacts
-        if: needs.aot.result == 'success' && needs.aot_windows.result == 'success'
+        if: needs.aot.result == 'success' && needs.aot_linux.result == 'success' && needs.aot_windows.result == 'success'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: lnako-native-oracle-*
           path: ${{ runner.temp }}/native-aot-artifacts
           merge-multiple: false
       - name: Verify native AOT artifact partition
-        if: needs.aot.result == 'success' && needs.aot_windows.result == 'success'
+        if: needs.aot.result == 'success' && needs.aot_linux.result == 'success' && needs.aot_windows.result == 'success'
         run: >
           node tools/check_native_aot_artifacts.mjs
           --directory "${{ runner.temp }}/native-aot-artifacts"
           --commit "${{ github.sha }}"
           --output "${{ runner.temp }}/lnako-native-aot-aggregate-evidence.json"
       - name: Reject failed native AOT matrix
-        if: needs.aot.result != 'success' || needs.aot_windows.result != 'success'
+        if: needs.aot.result != 'success' || needs.aot_linux.result != 'success' || needs.aot_windows.result != 'success'
         run: exit 1
       - name: Upload native AOT aggregate evidence
         if: success()
@@ -1170,8 +1344,8 @@ jobs:
 
   attest-dispatch-evidence:
     name: Attest and verify dispatch evidence
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') && needs.changes.outputs.level == 'full' && needs.test.result == 'success' && needs.parser_fuzz.result == 'success' && needs.aot.result == 'success' && needs.aot_windows.result == 'success' && needs.verify_dispatch_coverage.result == 'success' && needs.verify_native_aot_artifacts.result == 'success'
-    needs: [changes, test, parser_fuzz, aot, aot_windows, verify_dispatch_coverage, verify_native_aot_artifacts]
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') && needs.changes.outputs.level == 'full' && needs.test.result == 'success' && needs.parser_fuzz.result == 'success' && needs.aot.result == 'success' && needs.aot_linux.result == 'success' && needs.aot_windows.result == 'success' && needs.verify_dispatch_coverage.result == 'success' && needs.verify_native_aot_artifacts.result == 'success'
+    needs: [changes, test, parser_fuzz, aot, aot_linux, aot_windows, verify_dispatch_coverage, verify_native_aot_artifacts]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
