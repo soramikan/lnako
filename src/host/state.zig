@@ -430,6 +430,36 @@ pub const CliHost = struct {
         return lnako.runtime.low_level_fs.rmdir(self.io, path);
     }
 
+    fn lowLevelChmod(context: *anyopaque, path: []const u8, mode: u32) anyerror!void {
+        _ = context;
+        return lnako.runtime.low_level_posix.chmod(path, mode);
+    }
+
+    fn lowLevelChown(context: *anyopaque, path: []const u8, uid: ?u32, gid: ?u32, follow: bool) anyerror!void {
+        _ = context;
+        return lnako.runtime.low_level_posix.chown(path, uid, gid, follow);
+    }
+
+    fn lowLevelAccess(context: *anyopaque, path: []const u8, mode: u32) anyerror!bool {
+        _ = context;
+        return lnako.runtime.low_level_posix.access(path, mode);
+    }
+
+    fn lowLevelId(context: *anyopaque, kind: lnako.runtime.low_level_posix.IdKind) anyerror!u32 {
+        _ = context;
+        return lnako.runtime.low_level_posix.id(kind);
+    }
+
+    fn lowLevelGroups(context: *anyopaque, allocator: std.mem.Allocator) anyerror![]u32 {
+        _ = context;
+        return lnako.runtime.low_level_posix.groups(allocator);
+    }
+
+    fn lowLevelUmask(context: *anyopaque, mode: u32) anyerror!u32 {
+        _ = context;
+        return lnako.runtime.low_level_posix.umask(mode);
+    }
+
     fn lowLevelContext(self: *CliHost) lnako.runtime.low_level_context.Context {
         return .{
             .stream = .{
@@ -458,6 +488,15 @@ pub const CliHost = struct {
                 .renameFn = lowLevelRename,
                 .unlinkFn = lowLevelUnlink,
                 .rmdirFn = lowLevelRmdir,
+            },
+            .posix = .{
+                .context = self,
+                .chmodFn = lowLevelChmod,
+                .chownFn = lowLevelChown,
+                .accessFn = lowLevelAccess,
+                .idFn = lowLevelId,
+                .groupsFn = lowLevelGroups,
+                .umaskFn = lowLevelUmask,
             },
             .stdio = .{
                 .context = self,

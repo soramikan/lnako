@@ -747,11 +747,15 @@
         "ENOENT",
         "EACCES",
         "EPERM",
+        "ENOTDIR",
+        "ELOOP",
+        "EROFS",
+        "ENOSPC",
         "EINVAL",
         "ENOTSUP"
       ],
       "notes": "数値modeのみ。symbolic modeはCore Utilities側",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-file-chown",
@@ -767,11 +771,15 @@
         "ENOENT",
         "EACCES",
         "EPERM",
+        "ENOTDIR",
+        "ELOOP",
+        "EROFS",
+        "ENOSPC",
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "chown。-1で無変更",
-      "implemented": false
+      "notes": "chown。-1で無変更（u32最大もPOSIXでは(uid_t)-1として無変更）",
+      "implemented": true
     },
     {
       "id": "ll-symlink-chown",
@@ -787,11 +795,15 @@
         "ENOENT",
         "EACCES",
         "EPERM",
+        "ENOTDIR",
+        "ELOOP",
+        "EROFS",
+        "ENOSPC",
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "lchown相当",
-      "implemented": false
+      "notes": "lchown相当。-1で無変更（u32最大もPOSIXでは(uid_t)-1として無変更）",
+      "implemented": true
     },
     {
       "id": "ll-file-access",
@@ -812,7 +824,7 @@
         "PATH": "string",
         "MODE": "accessMode"
       },
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-uid-get",
@@ -828,7 +840,7 @@
         "ENOTSUP"
       ],
       "notes": "",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-euid-get",
@@ -844,7 +856,7 @@
         "ENOTSUP"
       ],
       "notes": "",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-gid-get",
@@ -860,7 +872,7 @@
         "ENOTSUP"
       ],
       "notes": "",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-egid-get",
@@ -876,7 +888,7 @@
         "ENOTSUP"
       ],
       "notes": "",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-groups-get",
@@ -892,7 +904,7 @@
         "ENOTSUP"
       ],
       "notes": "Numberの配列",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-umask-set",
@@ -908,7 +920,7 @@
         "ENOTSUP"
       ],
       "notes": "戻り値は旧umask",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-process-spawn",
@@ -1662,13 +1674,13 @@
       "id": "chmod",
       "class": "posix_extension",
       "os": {
-        "linux": false,
-        "macos": false,
+        "linux": true,
+        "macos": true,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1688,13 +1700,13 @@
       "id": "chown",
       "class": "posix_extension",
       "os": {
-        "linux": false,
-        "macos": false,
+        "linux": true,
+        "macos": true,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1714,13 +1726,13 @@
       "id": "access",
       "class": "posix_extension",
       "os": {
-        "linux": false,
-        "macos": false,
+        "linux": true,
+        "macos": true,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1740,13 +1752,13 @@
       "id": "uid_gid",
       "class": "posix_extension",
       "os": {
-        "linux": false,
-        "macos": false,
+        "linux": true,
+        "macos": true,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {

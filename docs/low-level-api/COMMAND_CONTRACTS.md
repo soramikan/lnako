@@ -101,9 +101,9 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 
 ### Issue 34 POSIX権限・所有者・UID/GID・access
 
-- `ファイル権限設定`（ll-file-chmod）助詞 `PATHをMODEで/PATHをMODEに`、戻り `void`、capability `chmod`、エラー ENOENT/EACCES/EPERM/EINVAL/ENOTSUP
-- `ファイル所有者設定`（ll-file-chown）助詞 `PATHをUIDとGIDで/PATHをUIDにGIDを`、戻り `void`、capability `chown`、エラー ENOENT/EACCES/EPERM/EINVAL/ENOTSUP
-- `シンボリックリンク所有者設定`（ll-symlink-chown）助詞 `PATHをUIDとGIDで/PATHをUIDにGIDを`、戻り `void`、capability `chown`、エラー ENOENT/EACCES/EPERM/EINVAL/ENOTSUP
+- `ファイル権限設定`（ll-file-chmod）助詞 `PATHをMODEで/PATHをMODEに`、戻り `void`、capability `chmod`、エラー ENOENT/EACCES/EPERM/ENOTDIR/ELOOP/EROFS/ENOSPC/EINVAL/ENOTSUP
+- `ファイル所有者設定`（ll-file-chown）助詞 `PATHをUIDとGIDで/PATHをUIDにGIDを`、戻り `void`、capability `chown`、エラー ENOENT/EACCES/EPERM/ENOTDIR/ELOOP/EROFS/ENOSPC/EINVAL/ENOTSUP
+- `シンボリックリンク所有者設定`（ll-symlink-chown）助詞 `PATHをUIDとGIDで/PATHをUIDにGIDを`、戻り `void`、capability `chown`、エラー ENOENT/EACCES/EPERM/ENOTDIR/ELOOP/EROFS/ENOSPC/EINVAL/ENOTSUP
 - `ファイルアクセス可能`（ll-file-access）助詞 `PATHをMODEで/PATHがMODEで`、戻り `boolean`、capability `access`、エラー EINVAL/ENOTSUP
 - `UID取得`（ll-uid-get）助詞 `-`、戻り `uid`、capability `uid_gid`、エラー ENOTSUP
 - `EUID取得`（ll-euid-get）助詞 `-`、戻り `uid`、capability `uid_gid`、エラー ENOTSUP
