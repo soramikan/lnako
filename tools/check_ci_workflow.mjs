@@ -431,13 +431,14 @@ if (!nativeAotJob.includes("strategy:\n      fail-fast: false") || !nativeAotJob
 // Phase 2のworker数比較はworkflow_dispatch入力で切り替える。既定は1で
 // CIの標準動作を変えず、手動実行のときだけ2を選べるようにしておく。
 const dispatchInput = workflow.match(/^  workflow_dispatch:\n([\s\S]*?)(?=\n[a-z]|\Z)/m)?.[1] ?? "";
+// Phase 2の実測でworker=2を標準化した。dispatch入力の既定も2とし、
+// 1を選べばA/B比較できる（既定を1へ戻す変更をここで検出する）。
 if (!dispatchInput.includes("native_oracle_jobs:") ||
-    !dispatchInput.includes('default: "1"') ||
-    !/options:\s*\n\s*- "1"\s*\n\s*- "2"/.test(dispatchInput) ||
-    !workflow.includes("LNAKO_NATIVE_ORACLE_JOBS: ${{ inputs.native_oracle_jobs || '1' }}") ||
-    countOccurrences(workflow, "LNAKO_NATIVE_ORACLE_JOBS: ${{ inputs.native_oracle_jobs || '1' }}") !== 2 ||
-    workflow.includes('LNAKO_NATIVE_ORACLE_JOBS: "2"')) {
-  throw new Error("Native AOT worker数の比較実験用dispatch入力が不正です");
+    !dispatchInput.includes('default: "2"') ||
+    !/options:\s*\n\s*- "2"\s*\n\s*- "1"/.test(dispatchInput) ||
+    !workflow.includes("LNAKO_NATIVE_ORACLE_JOBS: ${{ inputs.native_oracle_jobs || '2' }}") ||
+    countOccurrences(workflow, "LNAKO_NATIVE_ORACLE_JOBS: ${{ inputs.native_oracle_jobs || '2' }}") !== 2) {
+  throw new Error("Native AOT worker数の標準設定（既定2・A/B用に1）が不正です");
 }
 
 const nativeAotBuildBlock = aotStep("Build AOT verification compiler");
@@ -574,7 +575,7 @@ if (!macCoverageUploadBlock || !macCoverageUploadBlock.includes("if: matrix.name
 }
 const nativeAotVerificationBlock = aotStep("Differential native AOT verification (fixture/route shard)");
 if (!nativeAotVerificationBlock || !nativeAotVerificationBlock.includes("if: matrix.task == 'native'") ||
-    !nativeAotVerificationBlock.includes("LNAKO_NATIVE_ORACLE_JOBS: ${{ inputs.native_oracle_jobs || '1' }}") ||
+    !nativeAotVerificationBlock.includes("LNAKO_NATIVE_ORACLE_JOBS: ${{ inputs.native_oracle_jobs || '2' }}") ||
     (nativeAotVerificationBlock.match(/node tools\/compare_native_oracle\.mjs/g) ?? []).length !== 1 ||
     !nativeAotVerificationBlock.includes("--no-build") || !nativeAotVerificationBlock.includes("--optimizations") || !nativeAotVerificationBlock.includes("--shard-index") ||
     !nativeAotVerificationBlock.includes("--shard-count") || !nativeAotVerificationBlock.includes("--artifact")) {

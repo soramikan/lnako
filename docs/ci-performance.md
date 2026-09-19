@@ -626,3 +626,79 @@ Windows AOT系が8〜15件失敗し、artifactにAVX-512命令が含まれてい
 wallは1112s→876s（-21%）、runner minutesは213→188（-12%）。
 wall短縮の主因はPhase 4（Windows AOT support系5 jobのcompiler build共有）で、
 runner minutes削減の内訳はPhase 4の約15分とWindows AOT shardのcache保存停止である。
+
+---
+
+# 改善計画2 Phase 2: Native AOT worker数の実測比較
+
+## 条件
+
+同一commit 8e88164c・同一fixture・同一optimizationで、`LNAKO_NATIVE_ORACLE_JOBS`
+だけを変えた2 runを比較した。
+
+- worker=1: run 35460438958（`default: "1"`相当）
+- worker=2: run 35462752842（dispatch入力 `native_oracle_jobs=2`）
+
+## 結果（24 shardすべてで短縮）
+
+| 指標 | worker=1 | worker=2 | 差 |
+| --- | ---: | ---: | ---: |
+| Differential AOT検証ステップ合計（24 shard） | 1,896s | 1,163s | **-733s（-38.7%）** |
+| 同ステップ median（Linux） | 58.5s | 34.0s | -42% |
+| 同ステップ median（Windows） | 102.0s | 62.5s | -39% |
+| job全体 median（Linux、queue外れ値除く） | 88.5s | 69.5s | -21% |
+| job全体 median（Windows） | 151.5s | 110.5s | -27% |
+| AOT job合計（median基準） | 48.0min | 36.0min | **-12.0 min/run** |
+| failure | 0 | 0 | 悪化なし |
+| timeout | 0 | 0 | 悪化なし |
+
+worker=2で遅くなったshardは24件中0件だった。計画が警告する
+「並列度を増やすとZig compilationが競合して逆に遅くなる」現象は、
+並列度2では観測されなかった。
+
+## 採用基準の判定
+
+| 計画の基準 | 判定 | 根拠 |
+| --- | --- | --- |
+| wall clock time が明確に短縮 | **満たさない** | AOT jobはクリティカルパス外（最長はWindows core）。wallはrun間のqueue変動に埋もれる |
+| failure rate が悪化しない | 満たす | 両runともfailure 0 |
+| runner time が極端に増加しない | 満たす | median基準で -12 min/run |
+| reproducibility に影響しない | 満たす | fixtureごとに専用一時ディレクトリを使用。集約検証（verify_native_aot_artifacts）も成功 |
+
+wall clockの基準は、Phase 3・4・5と同様に「AOT経路がクリティカルパス外」という
+構造的理由で満たせない。一方でjob時間・runner時間・failure率はすべて改善するため、
+計画のPhase 2判断（「問題がなければworker=2を標準化する」）に従い
+**worker=2を標準化**した。`workflow_dispatch` 入力で `1` を選べばA/B比較できる。
+
+# 改善計画2 Phase 5: optimization matrix grouping の実測比較
+
+## 実測に基づく推定
+
+run 35460438958のfixture別timing（Linux・Windows 12 shard分）とjob実測overhead
+（Linux 27s、Windows 47s/job）から、3案のrunner時間を計算した。oracle
+（officialSource＋officialGenerated＋interpreter）はjob内でfixtureごとに1回だけ
+実行されるため、同じshardのoptimizationを統合するとoracle実行回数が減る。
+
+| 案 | 構成 | Linux | Windows | 合計 | 現行比 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Case A（現行） | O0 / O1 / O2 / O3 独立（12 job/OS） | 1,017s | 1,754s | 2,771s | - |
+| Case B | O0+O1 / O2 / O3（9 job/OS） | 810s | 1,427s | 2,237s | -534s（-8.9 min） |
+| Case C | O0+O1 / O2+O3（6 job/OS） | 604s | 1,101s | 1,705s | **-1,066s（-17.8 min）** |
+
+oracle＋interpreterはshardあたり Linux 125s / Windows 186s（4 optimization合計）で、
+統合によりこの一部がjob数分だけ削減される。
+
+## 判定
+
+Case Cはrunner minutesを約17.8分/run（全体の約9%程度）削減できる一方、
+
+- job wallは増える（Windowsの2 optimization統合jobで約+38s。ただし
+  クリティカルパス1074sに対して十分小さい）
+- flake時の再試行範囲が2倍になる
+- matrix定義の変更とcheck_ci_workflowの追従が必要
+
+wall clockへの効果はない（AOTはクリティカルパス外）。Phase 4で同じ性質の
+「重複build削減」を既に実施しており、Phase 5はその残り（oracle再実行とfixed
+overhead）を削る施策である。runner minutes削減は15分以上と大きいため、
+**worker=2の効果を確定させた後に独立した変更として実施する**方針とし、
+本PRでは実測値と計算根拠を記録するに留める。
