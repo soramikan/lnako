@@ -13,6 +13,7 @@ const plugin_lowlevel = @import("../../plugins/lowlevel.zig");
 const low_level_foundation = @import("../low_level_foundation.zig");
 const low_level_io = @import("../low_level_io.zig");
 const low_level_hash = @import("../low_level_hash.zig");
+const low_level_dir = @import("../low_level_dir.zig");
 const prepared = @import("prepared.zig");
 
 const Interpreter = istate.Interpreter;
@@ -1883,6 +1884,7 @@ test "Interpreterのtrace未設定時はemitがロックを取得しない" {
 const LowLevelTestHost = struct {
     table: low_level_io.FileHandleTable,
     hash_table: low_level_hash.HashHandleTable,
+    dir_table: low_level_dir.DirHandleTable,
     io: std.Io,
     /// Issue #28: raw stdio検証用。stdinは事前充填した共有source、
     /// raw stdout/stderr書込みはここへ捕まえ、sync呼出しを数える。
@@ -1898,6 +1900,7 @@ const LowLevelTestHost = struct {
         return .{
             .table = low_level_io.FileHandleTable.init(allocator),
             .hash_table = low_level_hash.HashHandleTable.init(allocator),
+            .dir_table = low_level_dir.DirHandleTable.init(allocator),
             .io = std.testing.io,
             .raw_stdout = .empty,
             .raw_stderr = .empty,
@@ -1910,6 +1913,7 @@ const LowLevelTestHost = struct {
         self.raw_stderr.deinit(std.testing.allocator);
         self.table.deinit(self.io);
         self.hash_table.deinit();
+        self.dir_table.deinit(self.io);
     }
 
     fn openFile(pointer: *anyopaque, path: []const u8, mode: low_level_foundation.OpenMode, exclusive: bool, sync: bool) anyerror!u64 {
@@ -1967,6 +1971,21 @@ const LowLevelTestHost = struct {
     fn discardHash(pointer: *anyopaque, raw: u64) anyerror!void {
         const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
         _ = self.hash_table.remove(low_level_foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+    }
+
+    fn openDir(pointer: *anyopaque, path: []const u8) anyerror!u64 {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        return (try self.dir_table.open(self.io, path)).raw();
+    }
+
+    fn nextDir(pointer: *anyopaque, raw: u64, allocator: std.mem.Allocator) anyerror!?low_level_dir.Entry {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        return self.dir_table.next(low_level_foundation.HandleId.fromRaw(raw), self.io, allocator);
+    }
+
+    fn closeDir(pointer: *anyopaque, raw: u64) anyerror!void {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        _ = self.dir_table.remove(self.io, low_level_foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
     }
 
     fn peekStdinSource(pointer: *anyopaque) ?*low_level_io.StdinSource {
@@ -2034,6 +2053,12 @@ const LowLevelTestHost = struct {
                 .updateHashFn = updateHash,
                 .digestHashFn = digestHash,
                 .discardHashFn = discardHash,
+            },
+            .dir = .{
+                .context = self,
+                .openDirFn = openDir,
+                .nextDirFn = nextDir,
+                .closeDirFn = closeDir,
             },
             .stdio = .{
                 .context = self,
@@ -2322,6 +2347,127 @@ test "Interpreter低レイヤーは非文字列pathをEINVALにする" {
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expect(std.mem.indexOf(u8, host.written(), "EINVAL") != null);
+}
+
+test "Interpreter低レイヤーのディレクトリhandle APIはEOFでnullを返す" {
+    const allocator = std.testing.allocator;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "only.txt", .data = "" });
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(directory);
+
+    const source = try std.fmt.allocPrint(allocator,
+        \\D="{s}"
+        \\H=ディレクトリ開く(D)
+        \\E=ディレクトリ次取得(H)
+        \\E["name"]を表示
+        \\E2=ディレクトリ次取得(H)
+        \\E2を表示
+        \\ディレクトリ閉じる(H)
+        \\
+    , .{directory});
+    defer allocator.free(source);
+
+    var fixture_compiled = try compileForTest(allocator, source);
+    defer fixture_compiled.ir_program.deinit();
+    defer fixture_compiled.hir_program.deinit();
+    defer fixture_compiled.analyzed.deinit();
+    defer fixture_compiled.parsed.deinit();
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = allocator };
+    defer host.deinit();
+    var low_host = LowLevelTestHost.init(allocator);
+    defer low_host.deinit();
+    var runtime_host = host.host();
+    runtime_host.lowlevel_context = low_host.context();
+    var interpreter = Interpreter.init(allocator, &runtime, fixture_compiled.ir_program, runtime_host);
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    // 1件目は名前、EOFは null を表示する。
+    try std.testing.expectEqualStrings("only.txt\nnull\n", host.written());
+    // 列挙後はハンドルが残らない。
+    try std.testing.expectEqual(@as(usize, 0), low_host.dir_table.len());
+}
+
+test "Interpreter低レイヤーのファイルhandleはディレクトリ命令でEBADFになる" {
+    const allocator = std.testing.allocator;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "only.txt", .data = "" });
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(directory);
+    const file_path = try std.fs.path.join(allocator, &.{ directory, "only.txt" });
+    defer allocator.free(file_path);
+
+    const source = try std.fmt.allocPrint(allocator,
+        \\D="{s}"
+        \\F=ファイル開く("{s}","r")
+        \\エラー監視
+        \\ディレクトリ次取得(F)
+        \\エラーならば
+        \\エラーメッセージ["code"]を表示
+        \\ここまで
+        \\ファイル閉じる(F)
+        \\
+    , .{ directory, file_path });
+    defer allocator.free(source);
+
+    var fixture_compiled = try compileForTest(allocator, source);
+    defer fixture_compiled.ir_program.deinit();
+    defer fixture_compiled.hir_program.deinit();
+    defer fixture_compiled.analyzed.deinit();
+    defer fixture_compiled.parsed.deinit();
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = allocator };
+    defer host.deinit();
+    var low_host = LowLevelTestHost.init(allocator);
+    defer low_host.deinit();
+    var runtime_host = host.host();
+    runtime_host.lowlevel_context = low_host.context();
+    var interpreter = Interpreter.init(allocator, &runtime, fixture_compiled.ir_program, runtime_host);
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("EBADF\n", host.written());
+}
+
+test "Interpreter低レイヤーのディレクトリ列挙時はコールバックを呼ぶ" {
+    const allocator = std.testing.allocator;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "only.txt", .data = "" });
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(directory);
+
+    const source = try std.fmt.allocPrint(allocator,
+        \\●(Eを)訪問者とは
+        \\E["name"]を表示
+        \\ここまで
+        \\ディレクトリ列挙時("{s}", "訪問者")
+        \\
+    , .{directory});
+    defer allocator.free(source);
+
+    var fixture_compiled = try compileForTest(allocator, source);
+    defer fixture_compiled.ir_program.deinit();
+    defer fixture_compiled.hir_program.deinit();
+    defer fixture_compiled.analyzed.deinit();
+    defer fixture_compiled.parsed.deinit();
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = allocator };
+    defer host.deinit();
+    var low_host = LowLevelTestHost.init(allocator);
+    defer low_host.deinit();
+    var runtime_host = host.host();
+    runtime_host.lowlevel_context = low_host.context();
+    var interpreter = Interpreter.init(allocator, &runtime, fixture_compiled.ir_program, runtime_host);
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("only.txt\n", host.written());
+    try std.testing.expectEqual(@as(usize, 0), low_host.dir_table.len());
 }
 
 test "Interpreter低レイヤーのappendは切詰め後も末尾へ書く" {

@@ -6,6 +6,7 @@ const foundation = @import("../../low_level_foundation.zig");
 const low_level_io = @import("../../low_level_io.zig");
 const low_level_hash = @import("../../low_level_hash.zig");
 const low_level_fs = @import("../../low_level_fs.zig");
+const low_level_dir = @import("../../low_level_dir.zig");
 const low_level_context = @import("../../low_level/context.zig");
 
 pub const aot_builtin = aot_shared.aot_builtin;
@@ -45,6 +46,13 @@ pub fn hashTable(runtime: *Runtime) *low_level_hash.HashHandleTable {
         runtime.low_level_hash_handles = low_level_hash.HashHandleTable.init(runtime.allocator);
     }
     return &runtime.low_level_hash_handles.?;
+}
+
+pub fn dirTable(runtime: *Runtime) *low_level_dir.DirHandleTable {
+    if (runtime.low_level_dir_handles == null) {
+        runtime.low_level_dir_handles = low_level_dir.DirHandleTable.init(runtime.allocator);
+    }
+    return &runtime.low_level_dir_handles.?;
 }
 
 pub fn handleIdFor(runtime: *Runtime, value: Value) ?foundation.HandleId {
@@ -208,6 +216,22 @@ pub fn throwIo(
 /// path2を取らないI/O失敗の薄いラッパー（`plugins/lowlevel.zig` と同じ契約）。
 pub fn throwIoAs(runtime: *Runtime, failure: anyerror, operation: []const u8, path: ?[]const u8, capability: foundation.Capability) anyerror {
     return throwIo(runtime, failure, operation, path, null, capability);
+}
+
+/// OS失敗を呼び出し側が選んだportable codeへ写す。コマンド契約が許すcodeを
+/// EBADF/EINVAL/ENOTSUP等へ限定したいときに使う（Interpreterと同じ契約）。
+/// `path` は失敗対象（無ければnull）。OOMは内部エラーとして伝播する。
+pub fn throwIoMapped(
+    runtime: *Runtime,
+    failure: anyerror,
+    code: foundation.PortableErrorCode,
+    operation: []const u8,
+    path: ?[]const u8,
+    capability: foundation.Capability,
+) anyerror {
+    if (failure == error.OutOfMemory) return failure;
+    const capability_name: ?[]const u8 = if (code == .ENOTSUP) capability.id() else null;
+    return throwStructured(runtime, code, operation, path, capability_name, failureMessage(failure));
 }
 
 pub fn throwStructured(

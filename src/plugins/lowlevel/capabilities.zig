@@ -50,6 +50,7 @@ pub fn capabilitySupported(arguments: []const Value, context: Context) bool {
         .rename => context.hasRename(),
         .unlink => context.hasUnlink(),
         .rmdir => context.hasRmdir(),
+        .dir_iterator => context.hasDirIterator(),
         .chmod => context.hasChmod(),
         .chown => context.hasChown(),
         .access => context.hasAccess(),

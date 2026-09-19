@@ -151,7 +151,7 @@ pub fn rmdir(io: std.Io, path: []const u8) anyerror!void {
     try std.Io.Dir.cwd().deleteDir(io, path);
 }
 
-fn kindFrom(kind: std.Io.File.Kind) FileKind {
+pub fn kindFrom(kind: std.Io.File.Kind) FileKind {
     return switch (kind) {
         .file => .file,
         .directory => .directory,

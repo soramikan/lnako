@@ -6,6 +6,7 @@ const stream = @import("low_level/stream.zig");
 const stdio = @import("low_level/stdio.zig");
 const hash = @import("low_level/hash.zig");
 const fs = @import("low_level/fs.zig");
+const dir = @import("low_level/dir.zig");
 const posix = @import("low_level/posix.zig");
 const foundation = @import("../low_level_foundation.zig");
 const low_level_context = @import("../low_level/context.zig");
@@ -46,6 +47,12 @@ pub fn pluginContext(runtime: *Runtime) low_level_context.Context {
             .renameFn = fs.pluginRename,
             .unlinkFn = fs.pluginUnlink,
             .rmdirFn = fs.pluginRmdir,
+        },
+        .dir = .{
+            .context = runtime,
+            .openDirFn = dir.pluginOpenDir,
+            .nextDirFn = dir.pluginNextDir,
+            .closeDirFn = dir.pluginCloseDir,
         },
         .posix = .{
             .context = runtime,
@@ -115,6 +122,10 @@ pub fn lowLevelFileBuiltin(runtime: *Runtime, command: aot_builtin.Command, argu
         .low_level_path_rename => fs.renameBuiltin(runtime, arguments),
         .low_level_path_unlink => fs.unlinkBuiltin(runtime, arguments),
         .low_level_path_rmdir => fs.rmdirBuiltin(runtime, arguments),
+        .low_level_dir_open => dir.openBuiltin(runtime, arguments),
+        .low_level_dir_next => dir.nextBuiltin(runtime, arguments),
+        .low_level_dir_close => dir.closeBuiltin(runtime, arguments),
+        .low_level_dir_foreach => dir.foreachBuiltin(runtime, arguments),
         .low_level_stdin_read => stdio.stdinReadBuiltin(runtime, arguments),
         .low_level_stdout_write => stdio.stdioWriteBuiltin(runtime, arguments, false),
         .low_level_stderr_write => stdio.stdioWriteBuiltin(runtime, arguments, true),
@@ -233,5 +244,6 @@ test {
     _ = @import("low_level/stdio.zig");
     _ = @import("low_level/hash.zig");
     _ = @import("low_level/fs.zig");
+    _ = @import("low_level/dir.zig");
     _ = @import("low_level/posix.zig");
 }

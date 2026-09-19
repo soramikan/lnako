@@ -363,15 +363,16 @@ pub const HashHandleTable = struct {
             return .{ .index = index, .generation = if (generation == 0) 1 else generation };
         }
         var index: u32 = self.next_index;
-        if (index < hash_handle_index_base) index = hash_handle_index_base;
-        // ファイルhandleのindex空間へ巻き戻らないよう、必ずbase以上に留める。
+        if (index < hash_handle_index_base or index >= foundation.dir_handle_index_base) index = hash_handle_index_base;
+        // ファイルhandleのindex空間へ巻き戻らず、ディレクトリhandleの空間
+        // （`dir_handle_index_base` 以上）へも侵入しないよう区間内に留める。
         while (self.generations.contains(index)) {
             index +%= 1;
-            if (index < hash_handle_index_base) index = hash_handle_index_base;
+            if (index < hash_handle_index_base or index >= foundation.dir_handle_index_base) index = hash_handle_index_base;
         }
         try self.generations.put(index, 1);
         self.next_index = index +% 1;
-        if (self.next_index < hash_handle_index_base) self.next_index = hash_handle_index_base;
+        if (self.next_index < hash_handle_index_base or self.next_index >= foundation.dir_handle_index_base) self.next_index = hash_handle_index_base;
         return .{ .index = index, .generation = 1 };
     }
 };
@@ -512,6 +513,19 @@ test "HashHandleTableは完了・破棄後に同じindexを世代を進めて再
     try std.testing.expect(table.find(first) == null);
     try std.testing.expect(table.find(reused) != null);
     try std.testing.expectEqual(@as(usize, 2), table.len());
+}
+
+test "HashHandleTableのindexはディレクトリ空間へ侵入しない" {
+    var table = HashHandleTable.init(std.testing.allocator);
+    defer table.deinit();
+    table.next_index = foundation.dir_handle_index_base - 2;
+    const first = try table.allocateId();
+    const second = try table.allocateId();
+    const third = try table.allocateId();
+    try std.testing.expectEqual(foundation.dir_handle_index_base - 2, first.index);
+    try std.testing.expectEqual(foundation.dir_handle_index_base - 1, second.index);
+    try std.testing.expectEqual(hash_handle_index_base, third.index);
+    try std.testing.expect(first.index < foundation.dir_handle_index_base);
 }
 
 test "startNamedは未知をUnsupported、非逐次をIncrementalUnsupportedにする" {
