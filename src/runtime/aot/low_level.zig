@@ -28,6 +28,7 @@ pub fn pluginContext(runtime: *Runtime) low_level_context.Context {
             .writeFileBytesFn = stream.pluginWriteFileBytes,
             .syncFileFn = stream.pluginSyncFile,
             .truncateFileFn = stream.pluginTruncateFile,
+            .setTimestampsFileFn = stream.pluginSetTimestampsFile,
         },
         .hash = .{
             .context = runtime,
@@ -46,6 +47,8 @@ pub fn pluginContext(runtime: *Runtime) low_level_context.Context {
             .renameFn = fs.pluginRename,
             .unlinkFn = fs.pluginUnlink,
             .rmdirFn = fs.pluginRmdir,
+            .truncatePathFn = fs.pluginTruncatePath,
+            .utimePathFn = fs.pluginUtimePath,
         },
         .posix = .{
             .context = runtime,
@@ -115,6 +118,9 @@ pub fn lowLevelFileBuiltin(runtime: *Runtime, command: aot_builtin.Command, argu
         .low_level_path_rename => fs.renameBuiltin(runtime, arguments),
         .low_level_path_unlink => fs.unlinkBuiltin(runtime, arguments),
         .low_level_path_rmdir => fs.rmdirBuiltin(runtime, arguments),
+        .low_level_file_truncate_path => fs.truncateBuiltin(runtime, arguments),
+        .low_level_file_utime_path => fs.utimeBuiltin(runtime, arguments),
+        .low_level_file_utime_handle => stream.utimeHandleBuiltin(runtime, arguments),
         .low_level_stdin_read => stdio.stdinReadBuiltin(runtime, arguments),
         .low_level_stdout_write => stdio.stdioWriteBuiltin(runtime, arguments, false),
         .low_level_stderr_write => stdio.stdioWriteBuiltin(runtime, arguments, true),

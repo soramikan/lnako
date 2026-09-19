@@ -39,6 +39,7 @@ const fileFor = shared.fileFor;
 const pathStringFromBytes = shared.pathStringFromBytes;
 const pathArgument = shared.pathArgument;
 const sizeArgument = shared.sizeArgument;
+const setTimeArgument = shared.setTimeArgument;
 const bytesArgument = shared.bytesArgument;
 const publicSizeValue = shared.publicSizeValue;
 const setField = shared.setField;
@@ -208,4 +209,39 @@ pub fn rmdirBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
         return throwIo(runtime, failure, operation, path, null, .rmdir);
     };
     return .{};
+}
+
+pub fn truncateBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    const operation = foundation.filesystem_operations.truncate;
+    const path = try pathArgument(runtime, arguments[0], operation);
+    defer runtime.allocator.free(path);
+    const size = sizeArgument(runtime, arguments[1]) catch {
+        return throwStructured(runtime, .EINVAL, operation, path, null, "切詰める大きさが不正です");
+    };
+    low_level_fs.truncatePath(io(runtime), path, size) catch |failure| {
+        return throwIo(runtime, failure, operation, path, null, .truncate);
+    };
+    return .{};
+}
+
+pub fn utimeBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    const operation = foundation.filesystem_operations.utime;
+    const path = try pathArgument(runtime, arguments[0], operation);
+    defer runtime.allocator.free(path);
+    const atime = try setTimeArgument(runtime, arguments[1], operation);
+    const mtime = try setTimeArgument(runtime, arguments[2], operation);
+    low_level_fs.setTimestampsPath(io(runtime), path, atime, mtime) catch |failure| {
+        return throwIo(runtime, failure, operation, path, null, .utime);
+    };
+    return .{};
+}
+
+pub fn pluginTruncatePath(context: *anyopaque, path: []const u8, size: u64) anyerror!void {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    return low_level_fs.truncatePath(io(runtime), path, size);
+}
+
+pub fn pluginUtimePath(context: *anyopaque, path: []const u8, atime: foundation.SetTime, mtime: foundation.SetTime) anyerror!void {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    return low_level_fs.setTimestampsPath(io(runtime), path, atime, mtime);
 }
