@@ -11,6 +11,7 @@ const csv_state = @import("csv_state.zig");
 const async_types = @import("async_types.zig");
 const low_level_io = @import("../low_level_io.zig");
 const low_level_hash = @import("../low_level_hash.zig");
+const low_level_process = @import("../low_level_process.zig");
 
 const builtin = shared.builtin;
 const aot_builtin = shared.aot_builtin;
@@ -404,6 +405,7 @@ pub const Runtime = struct {
     standard_property_cache: std.ArrayList(StandardPropertyCacheEntry) = .empty,
     low_level_handles: ?low_level_io.FileHandleTable = null,
     low_level_hash_handles: ?low_level_hash.HashHandleTable = null,
+    low_level_process_handles: ?low_level_process.ProcessTable = null,
     low_level_handle_ids: std.AutoHashMapUnmanaged(usize, u64) = .empty,
     low_level_handle_by_id: std.AutoHashMapUnmanaged(u64, usize) = .empty,
     /// Canonical storage for emitted string literals.  `lnako_aot_string_literal`
@@ -433,6 +435,12 @@ pub const Runtime = struct {
         self.file_tasks.deinit(self.allocator);
         while (self.process_tasks.pop()) |task| task.deinit(self.allocator, true);
         self.process_tasks.deinit(self.allocator);
+        // プロセス表はspawn/waitと同じ `process_io` で子を回収してから
+        // `process_io.deinit()` する（逆順にすると破棄済みIoを使う）。
+        if (self.low_level_process_handles) |*table| {
+            const process_io = if (self.process_io_initialized) self.process_io.io() else io;
+            table.deinit(process_io);
+        }
         if (self.process_io_initialized) self.process_io.deinit();
         if (self.low_level_handles) |*table| table.deinit(io);
         if (self.low_level_hash_handles) |*table| table.deinit();

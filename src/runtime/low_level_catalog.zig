@@ -313,6 +313,15 @@ test "implementedフラグは実装済み命令の既知集合と一致する" {
         "ll-path-rename",
         "ll-path-unlink",
         "ll-path-rmdir",
+        "ll-process-spawn",
+        "ll-process-wait",
+        "ll-pid-get",
+        "ll-ppid-get",
+        "ll-signal-send",
+        "ll-process-priority-get",
+        "ll-process-priority-set",
+        "ll-tty-isatty",
+        "ll-tty-size",
     };
     var count: usize = 0;
     for (foundation.catalog_commands) |command| {

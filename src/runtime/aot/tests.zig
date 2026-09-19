@@ -8109,7 +8109,7 @@ test "AOT低レイヤーの未実装命令は全てstub経由でENOTSUPを返す
         try std.testing.expect(taken.object().?.structured_error);
         try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "ENOTSUP");
     }
-    try std.testing.expectEqual(@as(usize, 35), stub_count);
+    try std.testing.expectEqual(@as(usize, 26), stub_count);
 }
 
 test "AOT未捕捉例外のmessage抽出は構造化エラーだけに限る" {

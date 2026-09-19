@@ -2,6 +2,7 @@ const std = @import("std");
 const foundation = @import("../low_level_foundation.zig");
 const low_level_io = @import("../low_level_io.zig");
 const low_level_fs = @import("../low_level_fs.zig");
+const low_level_process = @import("../low_level_process.zig");
 
 /// Hostが関数ポインタの `context` に載せるダミー領域。callbackを持たない
 /// 空サブContext専用で、実際に呼ばれることはない（呼べば未定義）。`emptyContext`
@@ -227,10 +228,97 @@ pub const StdioContext = struct {
     }
 };
 
+/// Issue #35 argv型プロセス・signal・priority・TTYドメインのHostコールバック。
+/// spawn/waitはホストがプロセス表を所有するため必須で、pid/priority/ttyは
+/// OS差をホスト側で吸収する。未提供のcallbackは実行時ENOTSUPになり、
+/// `低レイヤー機能対応判定` もfalseになる。
+pub const ProcessContext = struct {
+    context: *anyopaque,
+    spawnFn: ?*const fn (context: *anyopaque, argv: []const []const u8, options: low_level_process.SpawnOptions) anyerror!u64 = null,
+    waitFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!low_level_process.WaitResult = null,
+    discardFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
+    getpidFn: ?*const fn (context: *anyopaque) anyerror!u32 = null,
+    getppidFn: ?*const fn (context: *anyopaque) anyerror!u32 = null,
+    signalFn: ?*const fn (context: *anyopaque, pid: u32, signal: u32) anyerror!void = null,
+    priorityGetFn: ?*const fn (context: *anyopaque, pid: u32) anyerror!i32 = null,
+    prioritySetFn: ?*const fn (context: *anyopaque, pid: u32, value: i32) anyerror!void = null,
+    isattyFn: ?*const fn (context: *anyopaque, stream: foundation.ProcessStream) anyerror!bool = null,
+    ttySizeFn: ?*const fn (context: *anyopaque, stream: foundation.ProcessStream) anyerror!low_level_process.TtySize = null,
+
+    pub fn spawn(self: ProcessContext, argv: []const []const u8, options: low_level_process.SpawnOptions) !u64 {
+        const function = self.spawnFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, argv, options);
+    }
+
+    pub fn wait(self: ProcessContext, raw: u64) !low_level_process.WaitResult {
+        const function = self.waitFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, raw);
+    }
+
+    /// handleをwaitせずに破棄する（誤差経路の後始末）。子プロセスを
+    /// 強制終了してreapする。
+    pub fn discard(self: ProcessContext, raw: u64) !void {
+        const function = self.discardFn orelse return;
+        return function(self.context, raw);
+    }
+
+    pub fn getpid(self: ProcessContext) !u32 {
+        const function = self.getpidFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context);
+    }
+
+    pub fn getppid(self: ProcessContext) !u32 {
+        const function = self.getppidFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context);
+    }
+
+    pub fn signal(self: ProcessContext, pid: u32, signal_number: u32) !void {
+        const function = self.signalFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, pid, signal_number);
+    }
+
+    pub fn getPriority(self: ProcessContext, pid: u32) !i32 {
+        const function = self.priorityGetFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, pid);
+    }
+
+    pub fn setPriority(self: ProcessContext, pid: u32, value: i32) !void {
+        const function = self.prioritySetFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, pid, value);
+    }
+
+    pub fn isatty(self: ProcessContext, stream: foundation.ProcessStream) !bool {
+        const function = self.isattyFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, stream);
+    }
+
+    pub fn ttySize(self: ProcessContext, stream: foundation.ProcessStream) !low_level_process.TtySize {
+        const function = self.ttySizeFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, stream);
+    }
+
+    pub fn hasArgvSpawn(self: ProcessContext) bool {
+        return self.spawnFn != null and self.waitFn != null and self.getpidFn != null;
+    }
+
+    pub fn hasSignal(self: ProcessContext) bool {
+        return self.signalFn != null;
+    }
+
+    pub fn hasPriority(self: ProcessContext) bool {
+        return self.priorityGetFn != null and self.prioritySetFn != null;
+    }
+
+    pub fn hasTty(self: ProcessContext) bool {
+        return self.isattyFn != null and self.ttySizeFn != null;
+    }
+};
+
 const empty_stream: StreamContext = .{ .context = default_host };
 const empty_hash: HashContext = .{ .context = default_host };
 const empty_fs: FsContext = .{ .context = default_host };
 const empty_stdio: StdioContext = .{ .context = default_host };
+const empty_process: ProcessContext = .{ .context = default_host };
 
 /// 各ランタイム（Interpreter/AOT）がHostから受け取る低レイヤーI/O契約。
 /// ドメイン別サブContextへ分割し、Hostはドメインごとに関数を実装する。
@@ -240,6 +328,7 @@ pub const Context = struct {
     hash: HashContext = empty_hash,
     fs: FsContext = empty_fs,
     stdio: StdioContext = empty_stdio,
+    process: ProcessContext = empty_process,
 
     pub fn openFile(self: Context, path: []const u8, mode: foundation.OpenMode, exclusive: bool, sync: bool) !u64 {
         return self.stream.openFile(path, mode, exclusive, sync);
@@ -380,6 +469,62 @@ pub const Context = struct {
     pub fn hasRawStdio(self: Context) bool {
         return self.stdio.hasRawStdio();
     }
+
+    pub fn spawnProcess(self: Context, argv: []const []const u8, options: low_level_process.SpawnOptions) !u64 {
+        return self.process.spawn(argv, options);
+    }
+
+    pub fn waitProcess(self: Context, raw: u64) !low_level_process.WaitResult {
+        return self.process.wait(raw);
+    }
+
+    pub fn discardProcess(self: Context, raw: u64) !void {
+        return self.process.discard(raw);
+    }
+
+    pub fn processId(self: Context) !u32 {
+        return self.process.getpid();
+    }
+
+    pub fn parentProcessId(self: Context) !u32 {
+        return self.process.getppid();
+    }
+
+    pub fn signalProcess(self: Context, pid: u32, signal_number: u32) !void {
+        return self.process.signal(pid, signal_number);
+    }
+
+    pub fn processPriority(self: Context, pid: u32) !i32 {
+        return self.process.getPriority(pid);
+    }
+
+    pub fn setProcessPriority(self: Context, pid: u32, value: i32) !void {
+        return self.process.setPriority(pid, value);
+    }
+
+    pub fn processIsatty(self: Context, stream: foundation.ProcessStream) !bool {
+        return self.process.isatty(stream);
+    }
+
+    pub fn processTtySize(self: Context, stream: foundation.ProcessStream) !low_level_process.TtySize {
+        return self.process.ttySize(stream);
+    }
+
+    pub fn hasArgvSpawn(self: Context) bool {
+        return self.process.hasArgvSpawn();
+    }
+
+    pub fn hasSignal(self: Context) bool {
+        return self.process.hasSignal();
+    }
+
+    pub fn hasProcessPriority(self: Context) bool {
+        return self.process.hasPriority();
+    }
+
+    pub fn hasTty(self: Context) bool {
+        return self.process.hasTty();
+    }
 };
 
 /// lnako 0.2.0までのフラットなHost契約（`.context`, `.openFileFn`, `.statFn` …）。
@@ -416,6 +561,16 @@ pub const FlatContext = struct {
     writeStderrBytesFn: ?*const fn (context: *anyopaque, bytes: []const u8) anyerror!usize = null,
     syncStdoutFn: ?*const fn (context: *anyopaque) anyerror!void = null,
     syncStderrFn: ?*const fn (context: *anyopaque) anyerror!void = null,
+    spawnProcessFn: ?*const fn (context: *anyopaque, argv: []const []const u8, options: low_level_process.SpawnOptions) anyerror!u64 = null,
+    waitProcessFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!low_level_process.WaitResult = null,
+    discardProcessFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
+    getpidFn: ?*const fn (context: *anyopaque) anyerror!u32 = null,
+    getppidFn: ?*const fn (context: *anyopaque) anyerror!u32 = null,
+    signalFn: ?*const fn (context: *anyopaque, pid: u32, signal: u32) anyerror!void = null,
+    priorityGetFn: ?*const fn (context: *anyopaque, pid: u32) anyerror!i32 = null,
+    prioritySetFn: ?*const fn (context: *anyopaque, pid: u32, value: i32) anyerror!void = null,
+    isattyFn: ?*const fn (context: *anyopaque, stream: foundation.ProcessStream) anyerror!bool = null,
+    ttySizeFn: ?*const fn (context: *anyopaque, stream: foundation.ProcessStream) anyerror!low_level_process.TtySize = null,
 
     pub fn toContext(self: FlatContext) Context {
         return .{
@@ -454,6 +609,19 @@ pub const FlatContext = struct {
                 .writeStderrBytesFn = self.writeStderrBytesFn,
                 .syncStdoutFn = self.syncStdoutFn,
                 .syncStderrFn = self.syncStderrFn,
+            },
+            .process = .{
+                .context = self.context,
+                .spawnFn = self.spawnProcessFn,
+                .waitFn = self.waitProcessFn,
+                .discardFn = self.discardProcessFn,
+                .getpidFn = self.getpidFn,
+                .getppidFn = self.getppidFn,
+                .signalFn = self.signalFn,
+                .priorityGetFn = self.priorityGetFn,
+                .prioritySetFn = self.prioritySetFn,
+                .isattyFn = self.isattyFn,
+                .ttySizeFn = self.ttySizeFn,
             },
         };
     }

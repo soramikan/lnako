@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub const max_safe_integer: i64 = 9007199254740991;
 pub const min_safe_integer: i64 = -9007199254740991;
@@ -90,10 +91,17 @@ pub const HandleContract = struct {
     pub const double_close_is_ebadf = true;
 };
 
-/// ハッシュhandleのindex空間の開始値。ファイルhandleは1から連番で払い出す。
-/// ファイル側の払い出しもこの値へ到達しないよう制限し、raw HandleIdが
-/// 種別を跨いで衝突しないことを双方向で保証する（Issue #32）。
+/// ハッシュhandleのindex空間の開始値。ファイル・プロセスhandleは1から連番で
+/// 払い出し、それぞれの上限で止める。raw HandleIdが種別を跨いで衝突しないことを
+/// 双方向で保証する（Issue #32・#35）。
 pub const hash_handle_index_base: u32 = 0x8000_0000;
+
+/// プロセスhandleのindex空間の開始値。ファイルhandleは
+/// `[1, process_handle_index_base)`、プロセスは
+/// `[process_handle_index_base, hash_handle_index_base)`、
+/// ハッシュは `[hash_handle_index_base, u32max]` を使う。
+/// 3種は同じ `HandleId` を共有するため、index空間を重ねない。
+pub const process_handle_index_base: u32 = 0x4000_0000;
 
 pub fn isSafeInteger(number: f64) bool {
     if (!std.math.isFinite(number)) return false;
@@ -360,8 +368,22 @@ pub fn capabilityImplemented(capability: Capability) bool {
         .rename,
         .unlink,
         .rmdir,
+        .argv_spawn,
+        .signal,
+        .tty_isatty,
+        .priority,
         => true,
         else => false,
+    };
+}
+
+/// 現行OSでこのcapabilityが提供されるか。実装済みでもWindows非対応の
+/// capability（hardlink・priority）を能力照会から除外し、Interpreterと
+/// AOTの真偽をOS別matrixへ一致させる。
+pub fn capabilityAvailableOnCurrentOs(capability: Capability) bool {
+    return switch (capability) {
+        .hardlink, .priority => builtin.os.tag != .windows,
+        else => true,
     };
 }
 
@@ -370,7 +392,6 @@ pub const RuntimeKind = enum {
     lnako_aot,
     cnako_node,
 };
-
 pub const OsKind = enum {
     linux,
     macos,
@@ -477,6 +498,104 @@ pub const stdio_commands = struct {
     pub const stderr_write_user = "標準エラー出力バイト書く";
 };
 
+/// Issue #35のargv型プロセス起動・signal・priority・TTY命令名。カタログ・
+/// Interpreter dispatch・AOT bindingが共通で参照する正本である。送り仮名を
+/// 持たない語幹名を固定する。
+pub const process_commands = struct {
+    pub const spawn = "プロセス起動";
+    pub const wait = "プロセス待機";
+    pub const pid_get = "プロセスID取得";
+    pub const ppid_get = "親プロセスID取得";
+    pub const signal_send = "シグナル送信";
+    pub const priority_get = "プロセス優先度取得";
+    pub const priority_set = "プロセス優先度設定";
+    pub const tty_isatty = "端末判定";
+    pub const tty_size = "端末サイズ取得";
+};
+
+/// Issue #35のプロセス命令が失敗したときに返す構造化エラーの操作名（ASCII）。
+/// カタログ `operation` と揃える。NodeのSystemError `syscall` 相当。
+pub const process_operations = struct {
+    pub const spawn = "spawn";
+    pub const wait = "wait";
+    pub const getpid = "getpid";
+    pub const getppid = "getppid";
+    pub const kill = "kill";
+    pub const getpriority = "getpriority";
+    pub const setpriority = "setpriority";
+    pub const isatty = "isatty";
+    pub const winsize = "winsize";
+};
+
+/// プロセスの標準入出力ストリーム。`端末判定` / `端末サイズ取得` の
+/// STREAM引数を表す。助詞の `標準入力` / `標準出力` / `標準エラー出力` と
+/// Nodeの `stdin` / `stdout` / `stderr` の両表記を受け付ける。
+pub const ProcessStream = enum {
+    stdin,
+    stdout,
+    stderr,
+
+    pub fn fromText(text: []const u8) ?ProcessStream {
+        if (std.mem.eql(u8, text, "stdin") or std.mem.eql(u8, text, "標準入力")) return .stdin;
+        if (std.mem.eql(u8, text, "stdout") or std.mem.eql(u8, text, "標準出力")) return .stdout;
+        if (std.mem.eql(u8, text, "stderr") or std.mem.eql(u8, text, "標準エラー出力")) return .stderr;
+        return null;
+    }
+
+    pub fn name(self: ProcessStream) []const u8 {
+        return @tagName(self);
+    }
+};
+
+/// `プロセス起動` OPTIONSの stdio 値。Nodeの `child_process` と同じ
+/// `inherit` / `pipe` / `null`（`ignore` もnull扱い）。
+pub const ProcessStdioMode = enum {
+    inherit,
+    pipe,
+    null_,
+
+    pub fn fromText(text: []const u8) ?ProcessStdioMode {
+        if (std.mem.eql(u8, text, "inherit")) return .inherit;
+        if (std.mem.eql(u8, text, "pipe")) return .pipe;
+        if (std.mem.eql(u8, text, "null") or std.mem.eql(u8, text, "ignore")) return .null_;
+        return null;
+    }
+
+    pub fn name(self: ProcessStdioMode) []const u8 {
+        return switch (self) {
+            .inherit => "inherit",
+            .pipe => "pipe",
+            .null_ => "null",
+        };
+    }
+};
+
+/// `OPTIONS` 辞書のキー。cwd/env/stdio/detached。
+pub const process_option_keys = struct {
+    pub const cwd = "cwd";
+    pub const env = "env";
+    pub const stdio = "stdio";
+    pub const detached = "detached";
+};
+
+/// `waitResult` 辞書のキー。`exitCode` と `signal`。
+pub const wait_result_keys = struct {
+    pub const exit_code = "exitCode";
+    pub const signal = "signal";
+};
+
+/// `ttySize` 辞書のキー。`rows` と `columns`。
+pub const tty_size_keys = struct {
+    pub const rows = "rows";
+    pub const columns = "columns";
+};
+
+/// `waitResult.signal` が正常終了時に取る値。
+pub const signal_on_normal_exit_is_null = true;
+
+/// シグナル終了時の `exitCode` は `128 + signal`（shellと同じ慣例）。
+pub const signal_exit_code_offset: u32 = 128;
+
 /// 標準cnako 527件の外にある低レイヤー命令名。`builtin_catalog.names` は
 /// 公式527件と同期して生成されるため変更せず、解析器のbuiltin解決だけに
 /// 追加する。`低レイヤー機能対応判定` / `低レイヤー機能一覧取得` も含む。
@@ -551,15 +670,15 @@ pub const catalog_commands = [_]CatalogCommand{
     .{ .id = "ll-egid-get", .name = "EGID取得", .min = 0, .max = 0, .operation = "getegid", .capability = .uid_gid },
     .{ .id = "ll-groups-get", .name = "所属グループID一覧取得", .min = 0, .max = 0, .operation = "getgroups", .capability = .uid_gid },
     .{ .id = "ll-umask-set", .name = "UMASK変更", .min = 1, .max = 1, .operation = "umask", .capability = .uid_gid },
-    .{ .id = "ll-process-spawn", .name = "プロセス起動", .min = 1, .max = 2, .operation = "spawn", .capability = .argv_spawn },
-    .{ .id = "ll-process-wait", .name = "プロセス待機", .min = 1, .max = 1, .operation = "wait", .capability = .argv_spawn },
-    .{ .id = "ll-pid-get", .name = "プロセスID取得", .min = 0, .max = 0, .operation = "getpid", .capability = .argv_spawn },
-    .{ .id = "ll-ppid-get", .name = "親プロセスID取得", .min = 0, .max = 0, .operation = "getppid", .capability = .argv_spawn },
-    .{ .id = "ll-signal-send", .name = "シグナル送信", .min = 2, .max = 2, .operation = "kill", .capability = .signal },
-    .{ .id = "ll-process-priority-get", .name = "プロセス優先度取得", .min = 1, .max = 1, .operation = "getpriority", .capability = .priority },
-    .{ .id = "ll-process-priority-set", .name = "プロセス優先度設定", .min = 2, .max = 2, .operation = "setpriority", .capability = .priority },
-    .{ .id = "ll-tty-isatty", .name = "端末判定", .min = 1, .max = 1, .operation = "isatty", .capability = .tty_isatty },
-    .{ .id = "ll-tty-size", .name = "端末サイズ取得", .min = 1, .max = 1, .operation = "winsize", .capability = .tty_isatty },
+    .{ .id = "ll-process-spawn", .name = process_commands.spawn, .min = 1, .max = 2, .operation = process_operations.spawn, .capability = .argv_spawn, .implemented = true },
+    .{ .id = "ll-process-wait", .name = process_commands.wait, .min = 1, .max = 1, .operation = process_operations.wait, .capability = .argv_spawn, .implemented = true },
+    .{ .id = "ll-pid-get", .name = process_commands.pid_get, .min = 0, .max = 0, .operation = process_operations.getpid, .capability = .argv_spawn, .implemented = true },
+    .{ .id = "ll-ppid-get", .name = process_commands.ppid_get, .min = 0, .max = 0, .operation = process_operations.getppid, .capability = .argv_spawn, .implemented = true },
+    .{ .id = "ll-signal-send", .name = process_commands.signal_send, .min = 2, .max = 2, .operation = process_operations.kill, .capability = .signal, .implemented = true },
+    .{ .id = "ll-process-priority-get", .name = process_commands.priority_get, .min = 1, .max = 1, .operation = process_operations.getpriority, .capability = .priority, .implemented = true },
+    .{ .id = "ll-process-priority-set", .name = process_commands.priority_set, .min = 2, .max = 2, .operation = process_operations.setpriority, .capability = .priority, .implemented = true },
+    .{ .id = "ll-tty-isatty", .name = process_commands.tty_isatty, .min = 1, .max = 1, .operation = process_operations.isatty, .capability = .tty_isatty, .implemented = true },
+    .{ .id = "ll-tty-size", .name = process_commands.tty_size, .min = 1, .max = 1, .operation = process_operations.winsize, .capability = .tty_isatty, .implemented = true },
     .{ .id = "ll-statfs", .name = "ファイルシステム情報取得", .min = 1, .max = 1, .operation = "statfs", .capability = .statfs },
     .{ .id = "ll-reflink", .name = "ファイルクローン", .min = 2, .max = 3, .operation = "reflink", .capability = .reflink },
     .{ .id = "ll-seek-data", .name = "ファイルデータ領域検索", .min = 2, .max = 2, .operation = "lseek", .capability = .seek_data },
@@ -809,10 +928,19 @@ pub fn portableCodeForFailure(failure: anyerror) ?PortableErrorCode {
         error.ProcessFdQuotaExceeded => .EMFILE,
         error.SystemFdQuotaExceeded => .ENFILE,
         error.NotOpenForReading, error.NotOpenForWriting, error.BadFileDescriptor => .EBADF,
+        // 低レイヤーhandle表の内部整合が崩れた場合（wait/close対象が表に無い）
+        // も無効handleとしてEBADFへ写す。
+        error.InvalidHandle => .EBADF,
         error.BrokenPipe => .EPIPE,
         // stdin履歴上限超過。ポータブル集合にENOMEM等が無いため、リソース
         // 枯渇として最も近いENOSPCへ写像する。
         error.StreamTooLong => .ENOSPC,
+        // Issue #35: kill/setpriorityの対象プロセス不在は引数不正としてEINVAL、
+        // 非対応シグナル・非対応プラットフォームはENOTSUPへ写す。EACCES/EPERMは
+        // 上の AccessDenied/PermissionDenied で既に写像済み。
+        error.ProcessNotFound => .EINVAL,
+        error.InvalidSignal, error.InvalidSignalNumber => .EINVAL,
+        error.UnsupportedSignal => .ENOTSUP,
         // hardlink/renameの非対応FSとWindowsの未対応reparse pointはENOTSUP。
         // 本関数はG0正本 `structured_error.portableCodeFromFailure` の上位集合で、
         // 低レイヤー固有のエラー名（LowLevelIoUnavailable等）もここで畳む。

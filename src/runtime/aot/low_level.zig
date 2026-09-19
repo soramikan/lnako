@@ -6,6 +6,7 @@ const stream = @import("low_level/stream.zig");
 const stdio = @import("low_level/stdio.zig");
 const hash = @import("low_level/hash.zig");
 const fs = @import("low_level/fs.zig");
+const process = @import("low_level/process.zig");
 const foundation = @import("../low_level_foundation.zig");
 const low_level_context = @import("../low_level/context.zig");
 
@@ -55,6 +56,19 @@ pub fn pluginContext(runtime: *Runtime) low_level_context.Context {
             .syncStdoutFn = stdio.pluginSyncStdout,
             .syncStderrFn = stdio.pluginSyncStderr,
         },
+        .process = .{
+            .context = runtime,
+            .spawnFn = process.pluginSpawnProcess,
+            .waitFn = process.pluginWaitProcess,
+            .discardFn = process.pluginDiscardProcess,
+            .getpidFn = process.pluginGetpid,
+            .getppidFn = process.pluginGetppid,
+            .signalFn = process.pluginSignal,
+            .priorityGetFn = process.pluginPriorityGet,
+            .prioritySetFn = process.pluginPrioritySet,
+            .isattyFn = process.pluginIsatty,
+            .ttySizeFn = process.pluginTtySize,
+        },
     };
 }
 
@@ -74,6 +88,29 @@ pub fn lowLevelHashBuiltin(runtime: *Runtime, command: aot_builtin.Command, argu
         .low_level_hash_update => hash.hashUpdateBuiltin(runtime, arguments),
         .low_level_hash_digest => hash.hashDigestBuiltin(runtime, arguments),
         .low_level_hash_discard => hash.hashDiscardBuiltin(runtime, arguments),
+        else => lowLevelUnsupportedBuiltin(runtime, command, arguments),
+    };
+}
+
+pub fn lowLevelProcessBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    if (aot_builtin.lowLevelCatalogCommand(command)) |spec| {
+        if (arguments.len > spec.max) {
+            return throwStructured(runtime, .EINVAL, spec.operation, null, null, "引数の数が不正です");
+        }
+        if (spec.implemented and arguments.len < spec.min) {
+            return throwStructured(runtime, .EINVAL, spec.operation, null, null, "引数の数が不正です");
+        }
+    }
+    return switch (command) {
+        .low_level_process_spawn => process.spawnBuiltin(runtime, arguments),
+        .low_level_process_wait => process.waitBuiltin(runtime, arguments),
+        .low_level_pid_get => process.pidGetBuiltin(runtime, arguments),
+        .low_level_ppid_get => process.ppidGetBuiltin(runtime, arguments),
+        .low_level_signal_send => process.signalSendBuiltin(runtime, arguments),
+        .low_level_process_priority_get => process.priorityGetBuiltin(runtime, arguments),
+        .low_level_process_priority_set => process.prioritySetBuiltin(runtime, arguments),
+        .low_level_tty_isatty => process.ttyIsattyBuiltin(runtime, arguments),
+        .low_level_tty_size => process.ttySizeBuiltin(runtime, arguments),
         else => lowLevelUnsupportedBuiltin(runtime, command, arguments),
     };
 }
@@ -197,4 +234,5 @@ test {
     _ = @import("low_level/stdio.zig");
     _ = @import("low_level/hash.zig");
     _ = @import("low_level/fs.zig");
+    _ = @import("low_level/process.zig");
 }

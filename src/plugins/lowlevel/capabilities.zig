@@ -35,6 +35,7 @@ pub fn capabilitySupported(arguments: []const Value, context: Context) bool {
     }
     const capability = foundation.Capability.fromId(buffer[0..length]) orelse return false;
     if (!foundation.capabilityImplemented(capability)) return false;
+    if (!foundation.capabilityAvailableOnCurrentOs(capability)) return false;
     return switch (capability) {
         .stream_file_io => context.hasStreamFileIo(),
         .truncate => context.hasTruncate(),
@@ -48,6 +49,10 @@ pub fn capabilitySupported(arguments: []const Value, context: Context) bool {
         .rename => context.hasRename(),
         .unlink => context.hasUnlink(),
         .rmdir => context.hasRmdir(),
+        .argv_spawn => context.hasArgvSpawn(),
+        .signal => context.hasSignal(),
+        .tty_isatty => context.hasTty(),
+        .priority => context.hasProcessPriority(),
         else => false,
     };
 }
