@@ -5,6 +5,18 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      # Native AOT worker数の比較実験（改善計画2 Phase 2）用。
+      # 既定は1で、CIの標準動作を変えない。手動実行で1/2を切り替えて
+      # 同一commitのjob時間・runner時間・failure率を比較する。
+      native_oracle_jobs:
+        description: "Native AOT verifierのworker数（1=標準、2=実験）"
+        required: false
+        default: "1"
+        type: choice
+        options:
+          - "1"
+          - "2"
 
 permissions:
   contents: read
@@ -801,7 +813,9 @@ jobs:
       - name: Differential native AOT verification (fixture/route shard)
         if: matrix.task == 'native'
         env:
-          LNAKO_NATIVE_ORACLE_JOBS: "1"
+          # 標準は1。手動実行の入力で2を選んだ場合だけ実験的に並列化する
+          # （改善計画2 Phase 2の比較実験）。
+          LNAKO_NATIVE_ORACLE_JOBS: ${{ inputs.native_oracle_jobs || '1' }}
           LNAKO_NATIVE_ORACLE_ARTIFACT: ${{ runner.temp }}/lnako-native-oracle-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
           # timing telemetryは互換性evidenceと分離した別ファイルへ出力する。
           # 性能値は毎回変動するためcanonical evidence／attestationへは含めない。
@@ -1106,7 +1120,9 @@ jobs:
       - name: Differential native AOT verification (fixture/route shard)
         if: matrix.task == 'native'
         env:
-          LNAKO_NATIVE_ORACLE_JOBS: "1"
+          # 標準は1。手動実行の入力で2を選んだ場合だけ実験的に並列化する
+          # （改善計画2 Phase 2の比較実験）。
+          LNAKO_NATIVE_ORACLE_JOBS: ${{ inputs.native_oracle_jobs || '1' }}
           LNAKO_NATIVE_ORACLE_ARTIFACT: ${{ runner.temp }}/lnako-native-oracle-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
           # timing telemetryは互換性evidenceと分離した別ファイルへ出力する。
           # 性能値は毎回変動するためcanonical evidence／attestationへは含めない。
