@@ -821,12 +821,67 @@ CI（45 job）とは恒久的に不一致だった。本変更で正しい46 job
 照合するようにした（matrix行数＋matrixを持たないjob数）。job構成の変更に固定値が
 追従しない事故を構造的に防ぐ。
 
-### 期待効果
+### 検証中に発見・修正した不具合: artifact install後の実行ビット欠落
 
-Linux native 6 jobのcold build（実測171〜177s）とLinux support 2 jobのbuild
-（実測125s）を0sにでき、cache evictionの主因だったLinux nativeのZig cache
-（6×約64 MiB）も消える。推定**15〜20分/run**（runner minutes 166→約146 min）。
-本変更を含むrunの`collect_ci_metrics.mjs`出力で実測値を確認する。
+run 35469356296で`aot_linux`の8 jobが `spawn .../zig-out/bin/lnako EACCES` で
+失敗した。原因は**upload-artifact／download-artifactが実行ビットを保証しない**
+ことだった。producerがbuildしたcompilerを`verify --install-to`でinstallしても
+非実行ファイルになり、Linuxではexecに失敗する。Windows consumerは実行ビットが
+不要なため、同じ共有artifactを使うPhase 4では顕在化していなかった。
+
+`aot_compiler_artifact.mjs verify --install-to` がPOSIX（`platform !== 'win32'`）で
+install直後に`chmod 0o755`するようにし、単体テストで実行ビットを固定、
+`check_ci_workflow.mjs`にもchmod実装の存在を検査として追加した。
+
+### 実測結果（run 35469955469・46 job・failure 0）
+
+Linux AOTの対象job群（native 6 shard＋support HTTP＋support dispatch evidence）を
+まとめたrunner minutesは、先行7 runの **21.0〜32.2 min（median 26.6）** から
+**8.4 min** へ減った。内訳は次のとおり。
+
+| job | Phase 6前（run 35465334491） | Phase 6後（run 35469955469） | 差 |
+| --- | ---: | ---: | ---: |
+| Linux / AOT native shard 1/3 / O0+O1 | 236s | 66s | -170s |
+| Linux / AOT native shard 2/3 / O0+O1 | 243s | 68s | -175s |
+| Linux / AOT native shard 3/3 / O0+O1 | 209s | 71s | -138s |
+| Linux / AOT native shard 1/3 / O2+O3 | 247s | 70s | -177s |
+| Linux / AOT native shard 2/3 / O2+O3 | 242s | 76s | -166s |
+| Linux / AOT native shard 3/3 / O2+O3 | 213s | 67s | -146s |
+| Linux / AOT support HTTP | 183s | 58s | -125s |
+| Linux / AOT support dispatch evidence | 155s | 31s | -124s |
+| Linux / AOT verification compiler（新規producer） | — | 202s | +202s |
+| **対象8 job群の合計（producerを除く）** | **1,728s（28.8 min）** | **507s（8.4 min）** | **-1,221s（-20.4 min）** |
+| **正味（producerを含む）** | **1,728s（28.8 min）** | **709s（11.8 min）** | **-1,019s（-17.0 min）** |
+
+新しいproducerの`+202s`（3.4 min）を含めても**正味-17.0 min/run**である。先行7 runの
+対象job群はcache hitの状況により21.0〜32.2 min（median 26.6）で変動していたため、
+median基準では正味**-14.8 min/run**（26.6→11.8）となる。
+
+#### run全体のrunner minutesは横ばいだが、原因は無関係jobの変動
+
+一方、run全体のrunner minutesは**166.4 min**（Phase 5のrun 35465334491は166.9 min）
+でほぼ横ばいだった。これは本変更が触れていない`test` job行の変動が大きいためである。
+
+| job | run 35465334491 | run 35469955469 | 差 |
+| --- | ---: | ---: | ---: |
+| Windows x86_64 / host | 234s | 860s | +626s |
+| Windows x86_64 / compat-aot | 595s | 785s | +190s |
+| macOS arm64 / mac-core-standard-support | 454s | 604s | +150s |
+| macOS arm64 / mac-host-compat | 602s | 735s | +133s |
+
+`Windows x86_64 / host`は先行runでも193〜860sの範囲で変動しており
+（35466605404=845s、35468023057=699s）、35465334491の234sが速い側の外れ値である。
+総runner minutesは**単一run比較では判断できない**ため、対象job群（構造的に
+変わった部分）で評価した。run全体を20〜30 runで評価する長期計測は別途継続する。
 
 job名（`Linux x86_64 / AOT native shard 1/3 / O0+O1` 等）は変えていないため、
 **mainのブランチ保護のrequired status checksの更新は不要**である。
+
+### 検証
+
+- run 35469955469（46 job）が**failure 0**で成功。`AOT-Linux`の8 consumer、
+  `aot_compiler_linux`、`verify_native_aot_artifacts`（3 job分のartifact partition検証）、
+  `verify_dispatch_coverage`（3 OSのcoverage shard partition検証）がすべて成功した。
+- `attest-dispatch-evidence`はPR runではattestation発行条件（mainへのpush／
+  workflow_dispatch）を満たさないためskipされる（従来どおり）。
+
