@@ -772,12 +772,6 @@ jobs:
       - name: Build AOT verification compiler (ReleaseSafe)
         if: matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04'
         run: zig build -Doptimize=ReleaseSafe
-      # ReleaseSafe compilerを検証するjobは共有Debug artifactを使わない。
-      # 配布物の最終release build・configuration違い自体を検証するテストも
-      # 同様に対象外とする（改善計画2 Phase 4の注意）。
-      - name: Build ReleaseSafe compiler (support smoke)
-        if: matrix.task == 'support-smoke'
-        run: zig build -Doptimize=ReleaseSafe
       - name: Differential native AOT verification (fixture/route shard)
         if: matrix.task == 'native'
         env:
