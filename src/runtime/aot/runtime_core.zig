@@ -12,6 +12,7 @@ const async_types = @import("async_types.zig");
 const low_level_io = @import("../low_level_io.zig");
 const low_level_hash = @import("../low_level_hash.zig");
 const low_level_process = @import("../low_level_process.zig");
+const low_level_dir = @import("../low_level_dir.zig");
 
 const builtin = shared.builtin;
 const aot_builtin = shared.aot_builtin;
@@ -406,6 +407,7 @@ pub const Runtime = struct {
     low_level_handles: ?low_level_io.FileHandleTable = null,
     low_level_hash_handles: ?low_level_hash.HashHandleTable = null,
     low_level_process_handles: ?low_level_process.ProcessTable = null,
+    low_level_dir_handles: ?low_level_dir.DirHandleTable = null,
     low_level_handle_ids: std.AutoHashMapUnmanaged(usize, u64) = .empty,
     low_level_handle_by_id: std.AutoHashMapUnmanaged(u64, usize) = .empty,
     /// Canonical storage for emitted string literals.  `lnako_aot_string_literal`
@@ -444,6 +446,7 @@ pub const Runtime = struct {
         if (self.process_io_initialized) self.process_io.deinit();
         if (self.low_level_handles) |*table| table.deinit(io);
         if (self.low_level_hash_handles) |*table| table.deinit();
+        if (self.low_level_dir_handles) |*table| table.deinit(io);
         self.low_level_handle_ids.deinit(self.allocator);
         self.low_level_handle_by_id.deinit(self.allocator);
         if (self.dynamic_deinit) |deinit_dynamic| deinit_dynamic(self);

@@ -2,7 +2,7 @@
 
 Issue [#37](https://github.com/soramikan/lnako/issues/37) のcapability方針に従い、命令の登録有無をOSごとに変えず、対応状況を capability で機械判定する。機械可読な正本は [`catalog.json`](catalog.json) の `capabilities` であり、本書はその解釈と計画値を示す。
 
-`catalog.json` の各capabilityは2層のmatrixを持つ。正本の `os` / `runtimes` は**現在の実装状況**で、`low_level_foundation.zig` の `capabilityImplemented` と実行経路に一致する（未実装は全てfalse、cnako側に低レイヤー命令は存在しないため `cnako_node` は常にfalse）。`planned.os` / `planned.runtimes` と本書の表は**将来計画値**で、#27〜#36 の実装が進むにつれ正本へ反映する。実装済み17件（`stream_file_io` / `truncate` / `incremental_hash` / `raw_stdio` / `stat` / `lstat` / `symlink` / `readlink` / `hardlink` / `realpath` / `rename` / `unlink` / `rmdir` / `argv_spawn` / `signal` / `tty_isatty` / `priority`）の経路別値は実際の判定実装に一致する: Interpreterはホストが対象の関数を提供しない場合 `低レイヤー機能対応判定` がfalseを返すため `lnako_interpreter` は `conditional`、AOTは `pluginContext` が常に全関数を提供するため `lnako_aot` は `true`。`priority` はPOSIX専用でWindowsは `ENOTSUP` のため `os.windows` はfalse。
+`catalog.json` の各capabilityは2層のmatrixを持つ。正本の `os` / `runtimes` は**現在の実装状況**で、`low_level_foundation.zig` の `capabilityImplemented` と実行経路に一致する（未実装は全てfalse、cnako側に低レイヤー命令は存在しないため `cnako_node` は常にfalse）。`planned.os` / `planned.runtimes` と本書の表は**将来計画値**で、#27〜#36 の実装が進むにつれ正本へ反映する。実装済み22件（`stream_file_io` / `truncate` / `incremental_hash` / `raw_stdio` / `stat` / `lstat` / `symlink` / `readlink` / `hardlink` / `realpath` / `rename` / `unlink` / `rmdir` / `dir_iterator` / `chmod` / `chown` / `access` / `uid_gid` / `argv_spawn` / `signal` / `tty_isatty` / `priority`）の経路別値は実際の判定実装に一致する: Interpreterはホストが対象の関数を提供しない場合 `低レイヤー機能対応判定` がfalseを返すため `lnako_interpreter` は `conditional`、AOTは `pluginContext` が常に全関数を提供するため `lnako_aot` は `true`。`priority` はPOSIX専用でWindowsは `ENOTSUP` のため `os.windows` はfalse。
 
 ## 分類
 

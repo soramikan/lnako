@@ -189,6 +189,7 @@ const nodeStdinAllBuiltin = state.nodeStdinAllBuiltin;
 const nodeStdinCallbackBuiltin = state.nodeStdinCallbackBuiltin;
 const nodeStdinLineBuiltin = state.nodeStdinLineBuiltin;
 const low_level_io = @import("../low_level_io.zig");
+const low_level_posix = @import("../low_level_posix.zig");
 const nodeStdinValueBuiltin = state.nodeStdinValueBuiltin;
 const numberValue = state.numberValue;
 const pathBuiltin = state.pathBuiltin;
@@ -7705,6 +7706,49 @@ test "AOT動的変換はハッシュハンドルのHandleIdを引き継ぐ" {
     try std.testing.expectEqual(@as(u32, 0), active.low_level_handle_ids.size);
 }
 
+test "AOT動的実行のディレクトリ閉じるはAOT側のID対応も解放する" {
+    const low_level_state = @import("../low_level/state.zig");
+    const aot_dir = @import("low_level/dir.zig");
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    const dynamic_state = try DynamicInterpreterState.init(std.testing.allocator, active);
+    active.dynamic_state = dynamic_state;
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "one.txt", .data = "" });
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+    roots[0] = try runtimeUtf8String(active, directory);
+    const handle = try state.lowLevelFileBuiltin(active, .low_level_dir_open, &.{roots[0]});
+    roots[1] = handle;
+    const original = state.handleIdFor(active, handle).?;
+
+    var dynamic_roots = dynamic_state.value_runtime.rootFrame();
+    defer dynamic_roots.deinit();
+    var dynamic_handle = try aotToDynamicValue(dynamic_state, handle);
+    try dynamic_roots.protect(&dynamic_handle);
+    try std.testing.expectEqual(original, low_level_state.lookupHandle(&dynamic_state.interpreter.lowlevel_state, dynamic_handle).?);
+
+    // 動的Interpreter側のcloseコールバックで閉じる（動的コードが
+    // `ディレクトリ閉じる` を呼んだ経路）。AOT側のID対応も解放されること。
+    try aot_dir.pluginCloseDir(active, original.raw());
+    try std.testing.expectEqual(@as(u32, 0), active.low_level_handle_ids.size);
+    try std.testing.expectEqual(@as(u32, 0), active.low_level_handle_by_id.size);
+    try std.testing.expectEqual(@as(usize, 0), active.low_level_dir_handles.?.len());
+}
+
 test "AOT低レイヤーの未実装命令はcapability/operation付きの構造化ENOTSUPを投げる" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -8033,6 +8077,64 @@ test "AOT低レイヤーのrename/unlink/rmdirはエラーコードを写す" {
     }
 }
 
+test "AOT低レイヤーのディレクトリ命令はdispatch経由でハンドル契約を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "only.txt", .data = "" });
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const missing_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "missing" });
+    defer std.testing.allocator.free(missing_path);
+    const plain_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "only.txt" });
+    defer std.testing.allocator.free(plain_path);
+
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+    roots[0] = try runtimeUtf8String(active, directory);
+    roots[1] = try runtimeUtf8String(active, missing_path);
+    roots[2] = try runtimeUtf8String(active, plain_path);
+
+    // open -> next -> null -> close。
+    var handle: Value = .{};
+    lnako_aot_builtin_call(&handle, @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.low_level_dir_open));
+    try std.testing.expectEqual(@as(c_int, 0), lnako_aot_exception_pending());
+    try std.testing.expectEqual(@intFromEnum(Tag.dictionary), handle.tag);
+    roots[0] = handle;
+
+    var entry: Value = .{};
+    lnako_aot_builtin_call(&entry, @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.low_level_dir_next));
+    try std.testing.expectEqual(@as(c_int, 0), lnako_aot_exception_pending());
+    try std.testing.expectEqual(@intFromEnum(Tag.dictionary), entry.tag);
+    try expectUtf16String(active, dictionaryProperty(entry, &.{ 'n', 'a', 'm', 'e' }), "only.txt");
+    try expectUtf16String(active, dictionaryProperty(entry, &.{ 't', 'y', 'p', 'e' }), "file");
+
+    var eof: Value = .{};
+    lnako_aot_builtin_call(&eof, @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.low_level_dir_next));
+    try std.testing.expectEqual(@as(c_int, 0), lnako_aot_exception_pending());
+    try std.testing.expectEqual(@intFromEnum(Tag.null_value), eof.tag);
+
+    var closed: Value = .{};
+    lnako_aot_builtin_call(&closed, @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.low_level_dir_close));
+    try std.testing.expectEqual(@as(c_int, 0), lnako_aot_exception_pending());
+
+    // 二重closeはEBADF。
+    try expectLowLevelCode(active, .low_level_dir_close, &.{roots[0]}, "EBADF");
+    // 通常ファイルと存在しないパスのopenはENOTDIR/ENOENT。
+    try expectLowLevelCode(active, .low_level_dir_open, &.{roots[2]}, "ENOTDIR");
+    try expectLowLevelCode(active, .low_level_dir_open, &.{roots[1]}, "ENOENT");
+}
+
 test "AOT低レイヤーの実装済みフラグの命令はstubへ到達しない" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -8062,6 +8164,12 @@ test "AOT低レイヤーの実装済みフラグの命令はstubへ到達しな�
     const sink = try tmp.dir.createFile(std.testing.io, "stdio.bin", .{ .read = true });
     defer sink.close(std.testing.io);
     state.active_runtime.?.stdio_files = .{ .stdout = sink, .stderr = sink };
+    // `low_level_umask_set` はプロセス全体のumaskを変えるため、テストで
+    // 実行した後も元の値へ戻す（他テストのファイル生成modeに影響させない）。
+    const saved_umask: ?u32 = if (builtin.os.tag == .windows or builtin.os.tag == .wasi) null else low_level_posix.umask(0) catch null;
+    defer if (saved_umask) |value| {
+        _ = low_level_posix.umask(value) catch {};
+    };
     var taken: Value = .{};
     for (aot_builtin.low_level_bindings) |binding| {
         const spec = aot_builtin.lowLevelCatalogCommand(binding.command).?;
@@ -8109,7 +8217,7 @@ test "AOT低レイヤーの未実装命令は全てstub経由でENOTSUPを返す
         try std.testing.expect(taken.object().?.structured_error);
         try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "ENOTSUP");
     }
-    try std.testing.expectEqual(@as(usize, 26), stub_count);
+    try std.testing.expectEqual(@as(usize, 12), stub_count);
 }
 
 test "AOT未捕捉例外のmessage抽出は構造化エラーだけに限る" {

@@ -25,12 +25,27 @@ pub const forgetHandleId = low_level_state.forgetHandleId;
 
 /// 構造化エラーを例外として投げるためのコールバック。Interpreterが
 /// `exception_value` に辞書を設定して `error.NakoException` を返す。
+/// `invokeFn` / `resolveFn` は `ディレクトリ列挙時` のコールバック実行に使う。
+/// Hostが提供しない場合は未設定（null）で、糖衣命令はENOTSUP相当の失敗になる。
 pub const Effects = struct {
     context: *anyopaque,
     throwFn: *const fn (context: *anyopaque, value: Value) anyerror!void,
+    invokeFn: ?*const fn (context: *anyopaque, callable: Value, arguments: []const Value) anyerror!Value = null,
+    resolveFn: ?*const fn (context: *anyopaque, value: Value) anyerror!Value = null,
 
     pub fn throw(self: Effects, value: Value) !void {
         return self.throwFn(self.context, value);
+    }
+
+    pub fn invoke(self: Effects, callable: Value, arguments: []const Value) !Value {
+        const function = self.invokeFn orelse return error.CallbackExecutionUnavailable;
+        return function(self.context, callable, arguments);
+    }
+
+    /// 関数値または関数名（文字列）を呼び出し可能な値へ解決する。
+    pub fn resolve(self: Effects, value: Value) !Value {
+        const function = self.resolveFn orelse return error.CallbackExecutionUnavailable;
+        return function(self.context, value);
     }
 };
 
@@ -105,6 +120,16 @@ pub fn pathStringFromBytes(runtime: *Runtime, bytes: []const u8) !Value {
     return runtime.stringCodeUnits(units);
 }
 
+/// なでしこ文字列のpath引数を可逆なWTF-8（孤立サロゲート保持）へ変換する。
+/// lossy変換は孤立サロゲートをU+FFFDへ化けさせ、実在する同名ファイルへの誤操作を
+/// 招くため、非文字列は構造化EINVALにする。fs/posixドメインで共有する。
+pub fn pathArgument(runtime: *Runtime, effects: Effects, value: Value, operation: []const u8) ![]u8 {
+    if (value != .string) {
+        return throwStructured(runtime, effects, .EINVAL, operation, null, null, "pathは文字列である必要があります");
+    }
+    return foundation.pathBytesFromUtf16(runtime.allocator(), value.string.units);
+}
+
 fn buildError(
     runtime: *Runtime,
     code: foundation.PortableErrorCode,
@@ -150,6 +175,24 @@ pub fn throwIo(
 /// path2を取らないI/O失敗の薄いラッパー。
 pub fn throwIoAs(runtime: *Runtime, effects: Effects, failure: anyerror, operation: []const u8, path: ?[]const u8, capability: foundation.Capability) anyerror {
     return throwIo(runtime, effects, failure, operation, path, null, capability);
+}
+
+/// OS失敗を呼び出し側が選んだportable codeへ写す。コマンド契約が許すcodeを
+/// EBADF/EINVAL/ENOTSUP等へ限定したいときに使う（汎用写像のEACCES等を
+/// コマンド固有の上限へ丸める）。`path` は失敗対象（無ければnull）。OOMは
+/// 内部エラーとして伝播する。
+pub fn throwIoMapped(
+    runtime: *Runtime,
+    effects: Effects,
+    failure: anyerror,
+    code: foundation.PortableErrorCode,
+    operation: []const u8,
+    path: ?[]const u8,
+    capability: foundation.Capability,
+) anyerror {
+    if (failure == error.OutOfMemory) return failure;
+    const capability_name: ?[]const u8 = if (code == .ENOTSUP) capability.id() else null;
+    return throwStructured(runtime, effects, code, operation, path, capability_name, failureMessage(failure));
 }
 
 pub fn throwStructured(

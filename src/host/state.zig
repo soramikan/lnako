@@ -42,6 +42,7 @@ pub const CliHost = struct {
     low_level_handles: ?lnako.runtime.low_level_io.FileHandleTable = null,
     low_level_hash_handles: ?lnako.runtime.low_level_hash.HashHandleTable = null,
     low_level_processes: ?lnako.runtime.low_level_process.ProcessTable = null,
+    low_level_dir_handles: ?lnako.runtime.low_level_dir.DirHandleTable = null,
     /// Issue #28: テキスト系stdin命令とrawバイト命令が共有するstdinの
     /// 単一source。node.Contextとlowlevel.Contextの両方がここへ到達する。
     stdin_source: ?lnako.runtime.low_level_io.StdinSource = null,
@@ -70,6 +71,7 @@ pub const CliHost = struct {
         if (self.low_level_handles) |*table| table.deinit(self.io);
         if (self.low_level_hash_handles) |*table| table.deinit();
         if (self.low_level_processes) |*table| table.deinit(self.io);
+        if (self.low_level_dir_handles) |*table| table.deinit(self.io);
         if (self.stdin_source) |*source| source.deinit();
         while (self.async_tasks.pop()) |task| destroyAsyncTask(task, true);
         self.async_tasks.deinit(std.heap.page_allocator);
@@ -492,6 +494,58 @@ pub const CliHost = struct {
         return lnako.runtime.low_level_process.ttySize(self.io, self.processStreamFile(stream));
     }
 
+    fn lowLevelDirTable(self: *CliHost) *lnako.runtime.low_level_dir.DirHandleTable {
+        if (self.low_level_dir_handles == null) {
+            self.low_level_dir_handles = lnako.runtime.low_level_dir.DirHandleTable.init(std.heap.page_allocator);
+        }
+        return &self.low_level_dir_handles.?;
+    }
+
+    fn lowLevelOpenDir(context: *anyopaque, path: []const u8) anyerror!u64 {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return (try self.lowLevelDirTable().open(self.io, path)).raw();
+    }
+
+    fn lowLevelNextDir(context: *anyopaque, raw: u64, allocator: std.mem.Allocator) anyerror!?lnako.runtime.low_level_dir.Entry {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return self.lowLevelDirTable().next(lnako.runtime.low_level_foundation.HandleId.fromRaw(raw), self.io, allocator);
+    }
+
+    fn lowLevelCloseDir(context: *anyopaque, raw: u64) anyerror!void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        _ = self.lowLevelDirTable().remove(self.io, lnako.runtime.low_level_foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+    }
+
+    fn lowLevelChmod(context: *anyopaque, path: []const u8, mode: u32) anyerror!void {
+        _ = context;
+        return lnako.runtime.low_level_posix.chmod(path, mode);
+    }
+
+    fn lowLevelChown(context: *anyopaque, path: []const u8, uid: ?u32, gid: ?u32, follow: bool) anyerror!void {
+        _ = context;
+        return lnako.runtime.low_level_posix.chown(path, uid, gid, follow);
+    }
+
+    fn lowLevelAccess(context: *anyopaque, path: []const u8, mode: u32) anyerror!bool {
+        _ = context;
+        return lnako.runtime.low_level_posix.access(path, mode);
+    }
+
+    fn lowLevelId(context: *anyopaque, kind: lnako.runtime.low_level_posix.IdKind) anyerror!u32 {
+        _ = context;
+        return lnako.runtime.low_level_posix.id(kind);
+    }
+
+    fn lowLevelGroups(context: *anyopaque, allocator: std.mem.Allocator) anyerror![]u32 {
+        _ = context;
+        return lnako.runtime.low_level_posix.groups(allocator);
+    }
+
+    fn lowLevelUmask(context: *anyopaque, mode: u32) anyerror!u32 {
+        _ = context;
+        return lnako.runtime.low_level_posix.umask(mode);
+    }
+
     fn lowLevelContext(self: *CliHost) lnako.runtime.low_level_context.Context {
         return .{
             .stream = .{
@@ -520,6 +574,21 @@ pub const CliHost = struct {
                 .renameFn = lowLevelRename,
                 .unlinkFn = lowLevelUnlink,
                 .rmdirFn = lowLevelRmdir,
+            },
+            .dir = .{
+                .context = self,
+                .openDirFn = lowLevelOpenDir,
+                .nextDirFn = lowLevelNextDir,
+                .closeDirFn = lowLevelCloseDir,
+            },
+            .posix = .{
+                .context = self,
+                .chmodFn = lowLevelChmod,
+                .chownFn = lowLevelChown,
+                .accessFn = lowLevelAccess,
+                .idFn = lowLevelId,
+                .groupsFn = lowLevelGroups,
+                .umaskFn = lowLevelUmask,
             },
             .stdio = .{
                 .context = self,

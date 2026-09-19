@@ -171,6 +171,7 @@ const low_level_module = @import("low_level.zig");
 pub const lowLevelFileBuiltin = low_level_module.lowLevelFileBuiltin;
 pub const lowLevelHashBuiltin = low_level_module.lowLevelHashBuiltin;
 pub const lowLevelProcessBuiltin = low_level_module.lowLevelProcessBuiltin;
+pub const lowLevelPosixBuiltin = low_level_module.lowLevelPosixBuiltin;
 pub const lowLevelCapabilitySupportedBuiltin = low_level_module.lowLevelCapabilitySupportedBuiltin;
 pub const lowLevelCapabilityListBuiltin = low_level_module.lowLevelCapabilityListBuiltin;
 pub const lowLevelUnsupportedBuiltin = low_level_module.lowLevelUnsupportedBuiltin;

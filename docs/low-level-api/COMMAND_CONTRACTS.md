@@ -97,13 +97,13 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 - `ディレクトリ閉じる`（ll-dir-close）助詞 `HANDLEを/HANDLEの`、戻り `void`、capability `dir_iterator`、エラー EBADF
 - `ディレクトリ列挙時`（ll-dir-foreach）助詞 `PATHをCALLBACKで/PATHのCALLBACKを`、戻り `void`、capability `dir_iterator`、エラー ENOENT/ENOTDIR/EACCES/EPERM/ENOTSUP
 
-正本はhandle型。`. と .. は含めない。EOFは `null`。entryの `type` は file/directory/symlink/other/unknown。
+正本はhandle型。`. と .. は含めない。EOFは `null`。entryの `type` は file/directory/symlink/other/unknown。列挙順はOSが返す順序でソートしない。`ディレクトリ列挙時` はhandle型の糖衣で、CALLBACKを各entryの `dirEntry` 辞書1引数で呼び、CALLBACKが真を返すとその時点で列挙を中断する。CALLBACKの例外はそのまま伝播し、ディレクトリhandleは必ず閉じる。ディレクトリhandleはファイル・ハッシュと別のindex空間から払い出し、他種別のhandleを渡した場合は `EBADF` になる。
 
 ### Issue 34 POSIX権限・所有者・UID/GID・access
 
-- `ファイル権限設定`（ll-file-chmod）助詞 `PATHをMODEで/PATHをMODEに`、戻り `void`、capability `chmod`、エラー ENOENT/EACCES/EPERM/EINVAL/ENOTSUP
-- `ファイル所有者設定`（ll-file-chown）助詞 `PATHをUIDとGIDで/PATHをUIDにGIDを`、戻り `void`、capability `chown`、エラー ENOENT/EACCES/EPERM/EINVAL/ENOTSUP
-- `シンボリックリンク所有者設定`（ll-symlink-chown）助詞 `PATHをUIDとGIDで/PATHをUIDにGIDを`、戻り `void`、capability `chown`、エラー ENOENT/EACCES/EPERM/EINVAL/ENOTSUP
+- `ファイル権限設定`（ll-file-chmod）助詞 `PATHをMODEで/PATHをMODEに`、戻り `void`、capability `chmod`、エラー ENOENT/EACCES/EPERM/ENOTDIR/ELOOP/EROFS/ENOSPC/EINVAL/ENOTSUP
+- `ファイル所有者設定`（ll-file-chown）助詞 `PATHをUIDとGIDで/PATHをUIDにGIDを`、戻り `void`、capability `chown`、エラー ENOENT/EACCES/EPERM/ENOTDIR/ELOOP/EROFS/ENOSPC/EINVAL/ENOTSUP
+- `シンボリックリンク所有者設定`（ll-symlink-chown）助詞 `PATHをUIDとGIDで/PATHをUIDにGIDを`、戻り `void`、capability `chown`、エラー ENOENT/EACCES/EPERM/ENOTDIR/ELOOP/EROFS/ENOSPC/EINVAL/ENOTSUP
 - `ファイルアクセス可能`（ll-file-access）助詞 `PATHをMODEで/PATHがMODEで`、戻り `boolean`、capability `access`、エラー EINVAL/ENOTSUP
 - `UID取得`（ll-uid-get）助詞 `-`、戻り `uid`、capability `uid_gid`、エラー ENOTSUP
 - `EUID取得`（ll-euid-get）助詞 `-`、戻り `uid`、capability `uid_gid`、エラー ENOTSUP
@@ -112,7 +112,7 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 - `所属グループID一覧取得`（ll-groups-get）助詞 `-`、戻り `array`、capability `uid_gid`、エラー ENOTSUP
 - `UMASK変更`（ll-umask-set）助詞 `MODEで/MODEを`、戻り `number`、capability `uid_gid`、エラー ENOTSUP
 
-数値modeのみを受け、symbolic mode（`u+x`）の解析はCore Utilities側で行う。`ファイルアクセス可能` はstatのmode-bit判定でなくOSのeffective access semanticsを使う。
+数値modeのみを受け、symbolic mode（`u+x`）の解析はCore Utilities側で行う。`ファイルアクセス可能` はstatのmode-bit判定でなくOSのeffective access semanticsを使い、LinuxではPOSIX ACLを正しく評価する `faccessat2`（kernel 5.8以降）を必須とし、非対応カーネルは `ENOTSUP` を返す（capability `access` の `os.linux` は `conditional`）。
 
 ### Issue 35 argv型プロセス起動・signal・priority・TTY
 

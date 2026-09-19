@@ -99,15 +99,23 @@ pub const hash_handle_index_base: u32 = 0x8000_0000;
 /// プロセスhandleのindex空間の開始値。ファイルhandleは
 /// `[1, process_handle_index_base)`、プロセスは
 /// `[process_handle_index_base, hash_handle_index_base)`、
-/// ハッシュは `[hash_handle_index_base, u32max]` を使う。
-/// 3種は同じ `HandleId` を共有するため、index空間を重ねない。
+/// ハッシュは `[hash_handle_index_base, dir_handle_index_base)`、
+/// ディレクトリは `[dir_handle_index_base, u32max]` を使う。
+/// 4種は同じ `HandleId` を共有するため、index空間を重ねない。
 pub const process_handle_index_base: u32 = 0x4000_0000;
 
 /// HandleIdがプロセスhandleのindex空間に属するか。プロセス命令へ
-/// ファイル/ハッシュhandleが渡された場合、表を変更せずEBADFで弾くために使う。
+/// ファイル/ハッシュ/ディレクトリhandleが渡された場合、表を変更せずEBADFで
+/// 弾くために使う。
 pub fn isProcessHandleId(id: HandleId) bool {
     return id.index >= process_handle_index_base and id.index < hash_handle_index_base;
 }
+
+/// ディレクトリhandleのindex空間の開始値。ファイル・プロセス・ハッシュの
+/// どの空間とも重ならないよう、最上位1/4を専有する（Issue #33）。
+/// 各tableの払い出しは自分の区間内へ留まり、raw HandleIdが種別を跨いで
+/// 衝突しない。
+pub const dir_handle_index_base: u32 = 0xC000_0000;
 
 pub fn isSafeInteger(number: f64) bool {
     if (!std.math.isFinite(number)) return false;
@@ -374,6 +382,11 @@ pub fn capabilityImplemented(capability: Capability) bool {
         .rename,
         .unlink,
         .rmdir,
+        .dir_iterator,
+        .chmod,
+        .chown,
+        .access,
+        .uid_gid,
         .argv_spawn,
         .signal,
         .tty_isatty,
@@ -383,16 +396,31 @@ pub fn capabilityImplemented(capability: Capability) bool {
     };
 }
 
-/// 現行OSでこのcapabilityが提供されるか。実装済みでもWindows非対応の
-/// capability（hardlink・priority）を能力照会から除外し、Interpreterと
-/// AOTの真偽をOS別matrixへ一致させる。
-pub fn capabilityAvailableOnCurrentOs(capability: Capability) bool {
+/// 既知capabilityが指定OSで成立するか。catalog.json の `os` matrix（実装状況）と
+/// `matrixRule`（`supported = os[OS] && runtimes[実行経路]`）に一致させ、未実装・
+/// 非対応OSでは `低レイヤー機能対応判定` がfalseになるようにする。Linuxのstatx
+/// 非対応のように実行環境依存の `conditional` はここでは判定できないためtrueを
+/// 返し、実行時に `ENOTSUP` で通知する。
+pub fn capabilitySupportedOnOs(capability: Capability, os: OsKind) bool {
+    if (!capabilityImplemented(capability)) return false;
     return switch (capability) {
-        .hardlink, .priority => builtin.os.tag != .windows,
+        // posix_extensionと、Zig 0.16 stdがWindowsで未対応のhardlinkは
+        // Windowsでは提供しない（catalogの `os.windows` はfalse）。
+        .chmod, .chown, .access, .uid_gid, .hardlink, .priority => os != .windows,
         else => true,
     };
 }
 
+/// 実行中OSでの `capabilitySupportedOnOs`。WASIはPOSIX権限・所有者APIを
+/// 持たないため、これらのcapabilityはWindowsと同じくfalseになる。
+pub fn capabilitySupportedOnCurrentOs(capability: Capability) bool {
+    const os: OsKind = switch (builtin.os.tag) {
+        .linux => .linux,
+        .windows, .wasi => .windows,
+        else => .macos,
+    };
+    return capabilitySupportedOnOs(capability, os);
+}
 pub const RuntimeKind = enum {
     lnako_interpreter,
     lnako_aot,
@@ -487,6 +515,35 @@ pub const filesystem_commands = struct {
     pub const rename = "パス名変更";
     pub const unlink = "ファイルリンク削除";
     pub const rmdir = "空フォルダ削除";
+};
+
+/// Issue #33の逐次ディレクトリ列挙命令名。カタログ・Interpreter dispatch・
+/// AOT bindingが同じ正本を参照する。dispatch名は送り仮名を落とした語幹で、
+/// 利用者の `ディレクトリ開く` / `ディレクトリ閉じる` は同じ命令へ正規化される。
+pub const dir_commands = struct {
+    pub const open = "ディレクトリ開";
+    pub const next = "ディレクトリ次取得";
+    pub const close = "ディレクトリ閉";
+    pub const foreach = "ディレクトリ列挙時";
+
+    pub const open_user = "ディレクトリ開く";
+    pub const close_user = "ディレクトリ閉じる";
+};
+
+/// Issue #34のPOSIX権限・所有者・UID/GID・access命令名。カタログ・Interpreter
+/// dispatch・AOTが同じ正本を参照し、名前のドリフトで静かにENOTSUP化しない
+/// ようにする。送り仮名を持たない語幹名を固定する。
+pub const posix_commands = struct {
+    pub const chmod = "ファイル権限設定";
+    pub const chown = "ファイル所有者設定";
+    pub const lchown = "シンボリックリンク所有者設定";
+    pub const access = "ファイルアクセス可能";
+    pub const uid = "UID取得";
+    pub const euid = "EUID取得";
+    pub const gid = "GID取得";
+    pub const egid = "EGID取得";
+    pub const groups = "所属グループID一覧取得";
+    pub const umask = "UMASK変更";
 };
 
 /// Issue #28のraw標準入出力命令名。`stream_commands` と同じくdispatch名は
@@ -662,20 +719,20 @@ pub const catalog_commands = [_]CatalogCommand{
     .{ .id = "ll-hash-update", .name = hash_commands.update, .min = 2, .max = 2, .operation = "hash", .capability = .incremental_hash, .implemented = true },
     .{ .id = "ll-hash-digest", .name = hash_commands.digest, .min = 1, .max = 2, .operation = "hash", .capability = .incremental_hash, .implemented = true },
     .{ .id = "ll-hash-discard", .name = hash_commands.discard, .min = 1, .max = 1, .operation = "hash", .capability = .incremental_hash, .implemented = true },
-    .{ .id = "ll-dir-open", .name = "ディレクトリ開", .user_name = "ディレクトリ開く", .min = 1, .max = 1, .operation = "opendir", .capability = .dir_iterator },
-    .{ .id = "ll-dir-next", .name = "ディレクトリ次取得", .min = 1, .max = 1, .operation = "readdir", .capability = .dir_iterator },
-    .{ .id = "ll-dir-close", .name = "ディレクトリ閉", .user_name = "ディレクトリ閉じる", .min = 1, .max = 1, .operation = "closedir", .capability = .dir_iterator },
-    .{ .id = "ll-dir-foreach", .name = "ディレクトリ列挙時", .min = 2, .max = 2, .operation = "readdir", .capability = .dir_iterator },
-    .{ .id = "ll-file-chmod", .name = "ファイル権限設定", .min = 2, .max = 2, .operation = "chmod", .capability = .chmod },
-    .{ .id = "ll-file-chown", .name = "ファイル所有者設定", .min = 3, .max = 3, .operation = "chown", .capability = .chown },
-    .{ .id = "ll-symlink-chown", .name = "シンボリックリンク所有者設定", .min = 3, .max = 3, .operation = "lchown", .capability = .chown },
-    .{ .id = "ll-file-access", .name = "ファイルアクセス可能", .min = 2, .max = 2, .operation = "access", .capability = .access },
-    .{ .id = "ll-uid-get", .name = "UID取得", .min = 0, .max = 0, .operation = "getuid", .capability = .uid_gid },
-    .{ .id = "ll-euid-get", .name = "EUID取得", .min = 0, .max = 0, .operation = "geteuid", .capability = .uid_gid },
-    .{ .id = "ll-gid-get", .name = "GID取得", .min = 0, .max = 0, .operation = "getgid", .capability = .uid_gid },
-    .{ .id = "ll-egid-get", .name = "EGID取得", .min = 0, .max = 0, .operation = "getegid", .capability = .uid_gid },
-    .{ .id = "ll-groups-get", .name = "所属グループID一覧取得", .min = 0, .max = 0, .operation = "getgroups", .capability = .uid_gid },
-    .{ .id = "ll-umask-set", .name = "UMASK変更", .min = 1, .max = 1, .operation = "umask", .capability = .uid_gid },
+    .{ .id = "ll-dir-open", .name = dir_commands.open, .user_name = dir_commands.open_user, .min = 1, .max = 1, .operation = directory_operations.open, .capability = .dir_iterator, .implemented = true },
+    .{ .id = "ll-dir-next", .name = dir_commands.next, .min = 1, .max = 1, .operation = directory_operations.next, .capability = .dir_iterator, .implemented = true },
+    .{ .id = "ll-dir-close", .name = dir_commands.close, .user_name = dir_commands.close_user, .min = 1, .max = 1, .operation = directory_operations.close, .capability = .dir_iterator, .implemented = true },
+    .{ .id = "ll-dir-foreach", .name = dir_commands.foreach, .min = 2, .max = 2, .operation = directory_operations.foreach, .capability = .dir_iterator, .implemented = true },
+    .{ .id = "ll-file-chmod", .name = posix_commands.chmod, .min = 2, .max = 2, .operation = posix_operations.chmod, .capability = .chmod, .implemented = true },
+    .{ .id = "ll-file-chown", .name = posix_commands.chown, .min = 3, .max = 3, .operation = posix_operations.chown, .capability = .chown, .implemented = true },
+    .{ .id = "ll-symlink-chown", .name = posix_commands.lchown, .min = 3, .max = 3, .operation = posix_operations.lchown, .capability = .chown, .implemented = true },
+    .{ .id = "ll-file-access", .name = posix_commands.access, .min = 2, .max = 2, .operation = posix_operations.access, .capability = .access, .implemented = true },
+    .{ .id = "ll-uid-get", .name = posix_commands.uid, .min = 0, .max = 0, .operation = posix_operations.uid, .capability = .uid_gid, .implemented = true },
+    .{ .id = "ll-euid-get", .name = posix_commands.euid, .min = 0, .max = 0, .operation = posix_operations.euid, .capability = .uid_gid, .implemented = true },
+    .{ .id = "ll-gid-get", .name = posix_commands.gid, .min = 0, .max = 0, .operation = posix_operations.gid, .capability = .uid_gid, .implemented = true },
+    .{ .id = "ll-egid-get", .name = posix_commands.egid, .min = 0, .max = 0, .operation = posix_operations.egid, .capability = .uid_gid, .implemented = true },
+    .{ .id = "ll-groups-get", .name = posix_commands.groups, .min = 0, .max = 0, .operation = posix_operations.groups, .capability = .uid_gid, .implemented = true },
+    .{ .id = "ll-umask-set", .name = posix_commands.umask, .min = 1, .max = 1, .operation = posix_operations.umask, .capability = .uid_gid, .implemented = true },
     .{ .id = "ll-process-spawn", .name = process_commands.spawn, .min = 1, .max = 2, .operation = process_operations.spawn, .capability = .argv_spawn, .implemented = true },
     .{ .id = "ll-process-wait", .name = process_commands.wait, .min = 1, .max = 1, .operation = process_operations.wait, .capability = .argv_spawn, .implemented = true },
     .{ .id = "ll-pid-get", .name = process_commands.pid_get, .min = 0, .max = 0, .operation = process_operations.getpid, .capability = .argv_spawn, .implemented = true },
@@ -753,6 +810,59 @@ pub const filesystem_operations = struct {
     pub const unlink = "unlink";
     pub const rmdir = "rmdir";
 };
+
+/// Issue #33の逐次ディレクトリ列挙が失敗したときに返す構造化エラーの操作名
+/// （ASCII）。NodeのSystemError `syscall` / POSIX syscall名と揃える。
+pub const directory_operations = struct {
+    pub const open = "opendir";
+    pub const next = "readdir";
+    pub const close = "closedir";
+    pub const foreach = "readdir";
+};
+
+/// `dirEntry`辞書のフィールド名。カタログ `typeSchemas.dirEntry` と一致させる。
+pub const dir_entry_keys = struct {
+    pub const name = "name";
+    pub const kind = "type";
+};
+
+/// `dir_entry_keys` の全2フィールド。辞書構築の網羅テストが参照する。
+pub const dir_entry_key_list = [_][]const u8{
+    dir_entry_keys.name,
+    dir_entry_keys.kind,
+};
+
+/// Issue #34のPOSIX権限・所有者・UID/GID・access命令が失敗したときに返す
+/// 構造化エラーの操作名（ASCII）。NodeのSystemError `syscall` / POSIX
+/// syscall名と揃える。
+pub const posix_operations = struct {
+    pub const chmod = "chmod";
+    pub const chown = "chown";
+    pub const lchown = "lchown";
+    pub const access = "access";
+    pub const uid = "getuid";
+    pub const euid = "geteuid";
+    pub const gid = "getgid";
+    pub const egid = "getegid";
+    pub const groups = "getgroups";
+    pub const umask = "umask";
+};
+
+/// `ファイルアクセス可能` のMODEビット。OSのaccess(2)と同じ値で、
+/// F_OK(0) / R_OK(4) / W_OK(2) / X_OK(1) のビット和を取る。
+pub const access_mode = struct {
+    pub const f_ok: u32 = 0;
+    pub const x_ok: u32 = 1;
+    pub const w_ok: u32 = 2;
+    pub const r_ok: u32 = 4;
+    pub const all: u32 = r_ok | w_ok | x_ok;
+};
+
+/// `ファイル権限設定`/`UMASK変更` が受け付ける数値modeの上限（0〜0o7777）。
+pub const max_permission_mode: u32 = 0o7777;
+
+/// chown/lchownで「そのIDを変更しない」を表す値（POSIXの `(uid_t)-1`）。
+pub const unchanged_id: i64 = -1;
 
 /// `stat`辞書のフィールド名。カタログ `typeSchemas.stat` と一致させる。
 pub const stat_field_keys = struct {
@@ -957,6 +1067,64 @@ pub fn portableCodeForFailure(failure: anyerror) ?PortableErrorCode {
     };
 }
 
+/// `ディレクトリ開く` が投げ得るcode。カタログの集合は
+/// ENOENT/ENOTDIR/EACCES/EPERM/EMFILE/ENFILE/ENOTSUP で、それ以外
+/// （ELOOP等のOS固有失敗や未写像エラー）は全命令共通のEINVALへ丸める。
+pub fn dirOpenErrorCode(failure: anyerror) PortableErrorCode {
+    return switch (portableCodeForFailure(failure) orelse .EINVAL) {
+        .ENOENT, .ENOTDIR, .EACCES, .EPERM, .EMFILE, .ENFILE, .ENOTSUP => |code| code,
+        else => .EINVAL,
+    };
+}
+
+/// `ディレクトリ次取得` が投げ得るcode。 EBADF/EINVAL/ENOTSUP のみを残す。
+pub fn dirNextErrorCode(failure: anyerror) PortableErrorCode {
+    return switch (portableCodeForFailure(failure) orelse .EINVAL) {
+        .EBADF, .ENOTSUP => |code| code,
+        else => .EINVAL,
+    };
+}
+
+/// `ディレクトリ列挙時` が投げ得るcode。列挙中のEACCES/EPERMを保持し、
+/// EBADF等の次取得専用codeはEINVALへ丸める。
+pub fn dirForeachErrorCode(failure: anyerror) PortableErrorCode {
+    return switch (portableCodeForFailure(failure) orelse .EINVAL) {
+        .ENOENT, .ENOTDIR, .EACCES, .EPERM, .ENOTSUP => |code| code,
+        else => .EINVAL,
+    };
+}
+
+/// `ディレクトリ閉じる` はEBADFのみを返す契約。無効ハンドル以外の失敗も
+/// 契約に合わせてEBADFへ丸める。
+pub fn dirCloseErrorCode(_: anyerror) PortableErrorCode {
+    return .EBADF;
+}
+
+test "ディレクトリ命令の失敗は契約のportable code集合へ丸められる" {
+    try std.testing.expectEqual(PortableErrorCode.ENOENT, dirOpenErrorCode(error.FileNotFound));
+    try std.testing.expectEqual(PortableErrorCode.ENOTDIR, dirOpenErrorCode(error.NotDir));
+    try std.testing.expectEqual(PortableErrorCode.EACCES, dirOpenErrorCode(error.AccessDenied));
+    try std.testing.expectEqual(PortableErrorCode.EPERM, dirOpenErrorCode(error.PermissionDenied));
+    try std.testing.expectEqual(PortableErrorCode.EMFILE, dirOpenErrorCode(error.ProcessFdQuotaExceeded));
+    try std.testing.expectEqual(PortableErrorCode.ENFILE, dirOpenErrorCode(error.SystemFdQuotaExceeded));
+    try std.testing.expectEqual(PortableErrorCode.ENOTSUP, dirOpenErrorCode(error.LowLevelIoUnavailable));
+    // openの契約に無いELOOPや未写像エラーはEINVAL。
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, dirOpenErrorCode(error.SymLinkLoop));
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, dirOpenErrorCode(error.Unexpected));
+
+    try std.testing.expectEqual(PortableErrorCode.EBADF, dirNextErrorCode(error.BadFileDescriptor));
+    try std.testing.expectEqual(PortableErrorCode.ENOTSUP, dirNextErrorCode(error.LowLevelIoUnavailable));
+    // 次取得の契約に無いEACCESはEINVAL。
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, dirNextErrorCode(error.AccessDenied));
+
+    try std.testing.expectEqual(PortableErrorCode.EACCES, dirForeachErrorCode(error.AccessDenied));
+    try std.testing.expectEqual(PortableErrorCode.EPERM, dirForeachErrorCode(error.PermissionDenied));
+    try std.testing.expectEqual(PortableErrorCode.ENOENT, dirForeachErrorCode(error.FileNotFound));
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, dirForeachErrorCode(error.BadFileDescriptor));
+
+    try std.testing.expectEqual(PortableErrorCode.EBADF, dirCloseErrorCode(error.Unexpected));
+}
+
 test "HandleIdはindexを下位32bit、generationを上位32bitに置く" {
     const id = HandleId{ .index = 1, .generation = 2 };
     try std.testing.expectEqual(@as(u64, (@as(u64, 2) << 32) | 1), id.raw());
@@ -1077,8 +1245,23 @@ test "capability識別子はsnake_caseで分類が閉じている" {
     }
 }
 
-test "未知capabilityの照会はfalseで、未対応実行はENOTSUP" {
+test "非対応OSのcapabilityは照会falseになる" {
     try std.testing.expect(capability_query_unknown_returns_false);
+    inline for (.{ .chmod, .chown, .access, .uid_gid, .hardlink }) |capability| {
+        try std.testing.expect(!capabilitySupportedOnOs(capability, .windows));
+        try std.testing.expect(capabilitySupportedOnOs(capability, .linux));
+        try std.testing.expect(capabilitySupportedOnOs(capability, .macos));
+    }
+    // Windowsでも成立するcapabilityはOSで落とさない。
+    inline for (.{ .stream_file_io, .stat, .lstat, .unlink, .rename }) |capability| {
+        try std.testing.expect(capabilitySupportedOnOs(capability, .windows));
+    }
+    // 未実装capabilityは指定OSに関わらずfalse。
+    try std.testing.expect(!capabilitySupportedOnOs(.termios, .linux));
+    try std.testing.expect(!capabilitySupportedOnOs(.statfs, .macos));
+}
+
+test "未知capabilityの照会はfalseで、未対応実行はENOTSUP" {
     try std.testing.expect(aot_compiles_unsupported_calls);
     try std.testing.expectEqualStrings("低レイヤー機能対応判定", capability_supported_command);
     try std.testing.expectEqualStrings("低レイヤー機能一覧取得", capability_list_command);
@@ -1248,4 +1431,49 @@ test "Issue 29の9命令は実装済みでcapabilityが有効になる" {
     try std.testing.expectEqualStrings("blockSize", stat_field_keys.block_size);
     try std.testing.expectEqualStrings("birthtimeNs", stat_field_keys.birthtime_ns);
     try std.testing.expectEqualStrings("kind", stat_field_keys.kind);
+}
+
+test "Issue 34の10命令は実装済みでcapabilityが有効になる" {
+    const expected_ids = [_][]const u8{
+        "ll-file-chmod",
+        "ll-file-chown",
+        "ll-symlink-chown",
+        "ll-file-access",
+        "ll-uid-get",
+        "ll-euid-get",
+        "ll-gid-get",
+        "ll-egid-get",
+        "ll-groups-get",
+        "ll-umask-set",
+    };
+    const expected_capabilities = [_]Capability{
+        .chmod, .chown, .chown, .access, .uid_gid, .uid_gid, .uid_gid, .uid_gid, .uid_gid, .uid_gid,
+    };
+    const expected_operations = [_][]const u8{
+        posix_operations.chmod,
+        posix_operations.chown,
+        posix_operations.lchown,
+        posix_operations.access,
+        posix_operations.uid,
+        posix_operations.euid,
+        posix_operations.gid,
+        posix_operations.egid,
+        posix_operations.groups,
+        posix_operations.umask,
+    };
+    for (expected_ids, 0..) |id, index| {
+        var found = false;
+        for (catalog_commands) |command| {
+            if (!std.mem.eql(u8, command.id, id)) continue;
+            found = true;
+            try std.testing.expect(command.implemented);
+            try std.testing.expectEqual(expected_capabilities[index], command.capability.?);
+            try std.testing.expectEqualStrings(expected_operations[index], command.operation);
+        }
+        try std.testing.expect(found);
+        try std.testing.expect(capabilityImplemented(expected_capabilities[index]));
+    }
+    try std.testing.expectEqual(@as(u32, 0o7777), max_permission_mode);
+    try std.testing.expectEqual(@as(u32, 7), access_mode.all);
+    try std.testing.expectEqual(@as(i64, -1), unchanged_id);
 }

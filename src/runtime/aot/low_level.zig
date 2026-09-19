@@ -7,6 +7,8 @@ const stdio = @import("low_level/stdio.zig");
 const hash = @import("low_level/hash.zig");
 const fs = @import("low_level/fs.zig");
 const process = @import("low_level/process.zig");
+const dir = @import("low_level/dir.zig");
+const posix = @import("low_level/posix.zig");
 const foundation = @import("../low_level_foundation.zig");
 const low_level_context = @import("../low_level/context.zig");
 
@@ -46,6 +48,21 @@ pub fn pluginContext(runtime: *Runtime) low_level_context.Context {
             .renameFn = fs.pluginRename,
             .unlinkFn = fs.pluginUnlink,
             .rmdirFn = fs.pluginRmdir,
+        },
+        .dir = .{
+            .context = runtime,
+            .openDirFn = dir.pluginOpenDir,
+            .nextDirFn = dir.pluginNextDir,
+            .closeDirFn = dir.pluginCloseDir,
+        },
+        .posix = .{
+            .context = runtime,
+            .chmodFn = posix.pluginChmod,
+            .chownFn = posix.pluginChown,
+            .accessFn = posix.pluginAccess,
+            .idFn = posix.pluginId,
+            .groupsFn = posix.pluginGroups,
+            .umaskFn = posix.pluginUmask,
         },
         .stdio = .{
             .context = runtime,
@@ -142,6 +159,10 @@ pub fn lowLevelFileBuiltin(runtime: *Runtime, command: aot_builtin.Command, argu
         .low_level_path_rename => fs.renameBuiltin(runtime, arguments),
         .low_level_path_unlink => fs.unlinkBuiltin(runtime, arguments),
         .low_level_path_rmdir => fs.rmdirBuiltin(runtime, arguments),
+        .low_level_dir_open => dir.openBuiltin(runtime, arguments),
+        .low_level_dir_next => dir.nextBuiltin(runtime, arguments),
+        .low_level_dir_close => dir.closeBuiltin(runtime, arguments),
+        .low_level_dir_foreach => dir.foreachBuiltin(runtime, arguments),
         .low_level_stdin_read => stdio.stdinReadBuiltin(runtime, arguments),
         .low_level_stdout_write => stdio.stdioWriteBuiltin(runtime, arguments, false),
         .low_level_stderr_write => stdio.stdioWriteBuiltin(runtime, arguments, true),
@@ -149,6 +170,32 @@ pub fn lowLevelFileBuiltin(runtime: *Runtime, command: aot_builtin.Command, argu
         .low_level_stderr_sync => stdio.stdioSyncBuiltin(runtime, true),
         // dispatchは未実装命令を `lowLevelUnsupportedBuiltin` へ振り分けるため
         // 通常は到達しない。仮に到達しても構造化エラーの契約を維持する。
+        else => lowLevelUnsupportedBuiltin(runtime, command, arguments),
+    };
+}
+
+/// Issue #34のPOSIX権限・所有者・UID/GID・access命令。arity検査は
+/// `lowLevelFileBuiltin` と同じ契約で行い、実装済み命令の下限未満はEINVAL。
+pub fn lowLevelPosixBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    if (aot_builtin.lowLevelCatalogCommand(command)) |spec| {
+        if (arguments.len > spec.max) {
+            return throwStructured(runtime, .EINVAL, spec.operation, null, null, "引数の数が不正です");
+        }
+        if (spec.implemented and arguments.len < spec.min) {
+            return throwStructured(runtime, .EINVAL, spec.operation, null, null, "引数の数が不正です");
+        }
+    }
+    return switch (command) {
+        .low_level_file_chmod => posix.chmodBuiltin(runtime, arguments),
+        .low_level_file_chown => posix.chownBuiltin(runtime, arguments, true),
+        .low_level_symlink_chown => posix.chownBuiltin(runtime, arguments, false),
+        .low_level_file_access => posix.accessBuiltin(runtime, arguments),
+        .low_level_uid_get => posix.idBuiltin(runtime, arguments, .uid),
+        .low_level_euid_get => posix.idBuiltin(runtime, arguments, .euid),
+        .low_level_gid_get => posix.idBuiltin(runtime, arguments, .gid),
+        .low_level_egid_get => posix.idBuiltin(runtime, arguments, .egid),
+        .low_level_groups_get => posix.groupsBuiltin(runtime, arguments),
+        .low_level_umask_set => posix.umaskBuiltin(runtime, arguments),
         else => lowLevelUnsupportedBuiltin(runtime, command, arguments),
     };
 }
@@ -235,4 +282,6 @@ test {
     _ = @import("low_level/hash.zig");
     _ = @import("low_level/fs.zig");
     _ = @import("low_level/process.zig");
+    _ = @import("low_level/dir.zig");
+    _ = @import("low_level/posix.zig");
 }

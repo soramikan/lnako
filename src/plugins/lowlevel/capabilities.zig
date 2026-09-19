@@ -34,8 +34,9 @@ pub fn capabilitySupported(arguments: []const Value, context: Context) bool {
         buffer[index] = @intCast(unit);
     }
     const capability = foundation.Capability.fromId(buffer[0..length]) orelse return false;
-    if (!foundation.capabilityImplemented(capability)) return false;
-    if (!foundation.capabilityAvailableOnCurrentOs(capability)) return false;
+    // 未実装・非対応OS（Windows/WASIのPOSIX拡張）は照会をfalseにする。
+    // catalogの `os` matrix / `matrixRule` とここで一致させる。
+    if (!foundation.capabilitySupportedOnCurrentOs(capability)) return false;
     return switch (capability) {
         .stream_file_io => context.hasStreamFileIo(),
         .truncate => context.hasTruncate(),
@@ -49,6 +50,11 @@ pub fn capabilitySupported(arguments: []const Value, context: Context) bool {
         .rename => context.hasRename(),
         .unlink => context.hasUnlink(),
         .rmdir => context.hasRmdir(),
+        .dir_iterator => context.hasDirIterator(),
+        .chmod => context.hasChmod(),
+        .chown => context.hasChown(),
+        .access => context.hasAccess(),
+        .uid_gid => context.hasUidGid(),
         .argv_spawn => context.hasArgvSpawn(),
         .signal => context.hasSignal(),
         .tty_isatty => context.hasTty(),

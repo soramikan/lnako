@@ -6,6 +6,7 @@ const foundation = @import("../../low_level_foundation.zig");
 const low_level_io = @import("../../low_level_io.zig");
 const low_level_hash = @import("../../low_level_hash.zig");
 const low_level_fs = @import("../../low_level_fs.zig");
+const low_level_dir = @import("../../low_level_dir.zig");
 const low_level_context = @import("../../low_level/context.zig");
 const low_level_process = @import("../../low_level_process.zig");
 
@@ -65,6 +66,13 @@ pub fn ensureProcessIo(runtime: *Runtime) std.Io {
         runtime.process_io_initialized = true;
     }
     return runtime.process_io.io();
+}
+
+pub fn dirTable(runtime: *Runtime) *low_level_dir.DirHandleTable {
+    if (runtime.low_level_dir_handles == null) {
+        runtime.low_level_dir_handles = low_level_dir.DirHandleTable.init(runtime.allocator);
+    }
+    return &runtime.low_level_dir_handles.?;
 }
 
 pub fn handleIdFor(runtime: *Runtime, value: Value) ?foundation.HandleId {
@@ -136,7 +144,7 @@ pub fn capabilitySupported(value: Value) bool {
     };
     if (text.len > buffer.len) return false;
     const capability = foundation.Capability.fromId(text) orelse return false;
-    return foundation.capabilityImplemented(capability) and foundation.capabilityAvailableOnCurrentOs(capability);
+    return foundation.capabilitySupportedOnCurrentOs(capability);
 }
 
 pub fn sizeArgument(_: *Runtime, value: Value) !u64 {
@@ -145,6 +153,17 @@ pub fn sizeArgument(_: *Runtime, value: Value) !u64 {
         @intFromEnum(Tag.bigint) => foundation.sizeFromUnsigned(value.object().?.payload.bigint.toU128() catch return error.InvalidSize),
         else => error.InvalidSize,
     };
+}
+
+/// なでしこ文字列のpath引数を可逆なWTF-8（孤立サロゲート保持）へ変換する。
+/// 非文字列は構造化EINVALを投げる。fs/posixドメインで共有する。
+pub fn pathArgument(runtime: *Runtime, value: Value, operation: []const u8) ![]u8 {
+    if (!isString(value)) {
+        return throwStructured(runtime, .EINVAL, operation, null, null, "pathは文字列である必要があります");
+    }
+    const units = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(units);
+    return foundation.pathBytesFromUtf16(runtime.allocator, units);
 }
 
 pub fn bytesArgument(value: Value) ![]const u8 {
@@ -217,6 +236,22 @@ pub fn throwIo(
 /// path2を取らないI/O失敗の薄いラッパー（`plugins/lowlevel.zig` と同じ契約）。
 pub fn throwIoAs(runtime: *Runtime, failure: anyerror, operation: []const u8, path: ?[]const u8, capability: foundation.Capability) anyerror {
     return throwIo(runtime, failure, operation, path, null, capability);
+}
+
+/// OS失敗を呼び出し側が選んだportable codeへ写す。コマンド契約が許すcodeを
+/// EBADF/EINVAL/ENOTSUP等へ限定したいときに使う（Interpreterと同じ契約）。
+/// `path` は失敗対象（無ければnull）。OOMは内部エラーとして伝播する。
+pub fn throwIoMapped(
+    runtime: *Runtime,
+    failure: anyerror,
+    code: foundation.PortableErrorCode,
+    operation: []const u8,
+    path: ?[]const u8,
+    capability: foundation.Capability,
+) anyerror {
+    if (failure == error.OutOfMemory) return failure;
+    const capability_name: ?[]const u8 = if (code == .ENOTSUP) capability.id() else null;
+    return throwStructured(runtime, code, operation, path, capability_name, failureMessage(failure));
 }
 
 pub fn throwStructured(
