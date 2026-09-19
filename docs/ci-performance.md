@@ -771,3 +771,28 @@ fixture × optimization の被覆（各optimizationでちょうど1回）は維�
 - Runner minutes 25%以上削減 → **-22%**（213→166 min）。ほぼ達成で、残りは
   Windows coreの実ビルド／実実行コスト（CI構造では削減不可）に由来する。
 - Physical上「検証量を減らさず」を維持（Phase 4・5はビルドと実行の重複のみ除去）。
+
+## 次段階の実測候補: Linux AOT jobsのcompiler build重複
+
+Phase 4はWindowsのsupport系5 jobを共有compiler artifactへ寄せたが、**Linux側は
+依然として各jobがcompilerをbuildしている**。run 35465334491の実測:
+
+| job | job全体 | うちBuild AOT verification compiler |
+| --- | ---: | ---: |
+| Linux x86_64 / AOT native shard 1/3 / O0+O1 | 236s | 172s（73%） |
+| Linux x86_64 / AOT support HTTP | 183s | 125s（68%） |
+| Windows x86_64 / AOT native shard 1/3 / O0+O1 | 131s | 0s（共有artifact） |
+
+LinuxのAOT native 6 jobとsupport系（HTTP・dispatch evidence）が各125〜172sを
+compiler buildに使っている。Windowsと同じproducer/consumer方式をLinuxへ広げれば
+**推定15〜20分/run**の追加削減が見込める（runner minutes 166 min → 約146 min、
+改善前比 -31%となり計画の25%目標を上回る）。
+
+実装上の注意:
+
+- Linux runnerもCPU世代が混在しうるため、producerは`-Dcpu=x86_64_v2`でbuildする
+  （Windowsで実測したAVX-512混入と同じ問題を避ける）。
+- Linuxの`support-dispatch-coverage`（ubuntu）はcanonical正本のため
+  **ReleaseSafe**でbuildしており、Debug artifactは流用できない。ReleaseSafe用の
+  producerを別に用意するか、現状の自前buildを維持する。
+- `aot_compiler`をOS別matrixへ拡張するか、Linux専用のproducer jobを追加する。
