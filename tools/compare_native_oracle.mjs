@@ -191,7 +191,16 @@ try {
     validateArtifact(artifact);
     await writeArtifactExclusive(artifactPath, artifact);
   }
-  if (timingPath !== null) await writeTiming(concurrency, failures === 0 ? "success" : "comparison-failure", timingFixtures);
+  // timing telemetryはcanonical evidenceではない任意の計測出力であり、
+  // 書込み障害でAOT差分検証そのものを失敗させない（stderrへ報告して継続）。
+  // インフラ失敗経路の扱いと揃える。
+  if (timingPath !== null) {
+    try {
+      await writeTiming(concurrency, failures === 0 ? "success" : "comparison-failure", timingFixtures);
+    } catch (timingError) {
+      console.error(`timing telemetryの出力に失敗しました: ${timingError instanceof Error ? timingError.message : String(timingError)}`);
+    }
+  }
   if (failures > 0) throw new Error(`AOT実行結果の差分が${failures}件あります`);
   console.log(
     `公式cnako3・公式生成JavaScript・lnako run・LLVM AOT ${selectedOptimizations.join("/")}の${routeNames.length}経路実行差分テスト: ${selectedCases.length}件成功` +
@@ -271,8 +280,12 @@ async function runCase(testCase, index, temporary, executable, officialCli, coll
   const runOptions = testCase.stdin === undefined ? options : { ...options, input: testCase.stdin };
   const oracleHost = testCase.normalizeDebugDump ? resolve(root, "tools/oracle/normalize_debug_host.mjs") : fixedHost;
   const oracleHostArgument = ["--import", pathToFileURL(oracleHost).href];
+  // 公式source経路の計測範囲は「準備完了後〜公式CLI実行完了」に限定する。
+  // fixtureStartはディレクトリ作成・source書き込み・環境構築を含むため、
+  // totalMs専用とし、officialSourceMsには使わない（他の経路と同じ粒度に揃える）。
+  const officialSourceStart = performance.now();
   const officialSource = await runProcess(process.execPath, [...oracleHostArgument, officialCli, sourcePath], runOptions);
-  const officialSourceMs = elapsedMs(fixtureStart);
+  const officialSourceMs = elapsedMs(officialSourceStart);
   const compileStart = performance.now();
   const officialCompile = await runProcess(process.execPath, [...oracleHostArgument, officialCli, "--compile", "--silent", "--output", generatedJavaScript, sourcePath], options);
   if (officialCompile.status === 0) {

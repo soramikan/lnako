@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -202,4 +202,40 @@ test("formatMs renders milliseconds and seconds", () => {
   assert.equal(formatMs(999), "999ms");
   assert.equal(formatMs(1500), "1.50s");
   assert.equal(formatMs(null), "-");
+});
+
+test("loadTimingDocuments reads artifact-name subdirectories and rejects deeper nesting", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lnako-timing-nested-"));
+  try {
+    // `gh run download -p 'lnako-native-timing-*'` の既定展開（artifact名ディレクトリ）を再現する。
+    await mkdir(join(directory, "lnako-native-timing-linux-x64-shard-0-O0-O1"), { recursive: true });
+    await writeTimingDocument(join(directory, "lnako-native-timing-linux-x64-shard-0-O0-O1", "timing.json"), document({ fixtures: [fixture("a", { totalMs: 1000 })] }));
+    await writeTimingDocument(join(directory, "top.json"), document({ fixtures: [fixture("a", { totalMs: 2000 })] }));
+    const documents = await loadTimingDocuments(directory);
+    assert.equal(documents.length, 2);
+    assert.equal(documents.reduce((total, item) => total + item.fixtures.length, 0), 2);
+
+    // 契約より深い階層は黙って無視せず失敗させる。
+    await mkdir(join(directory, "too", "deep"), { recursive: true });
+    await assert.rejects(loadTimingDocuments(directory), /展開階層が深すぎます/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("buildTimingAggregate rejects mixed concurrency and excludes non-success documents", () => {
+  assert.throws(() => buildTimingAggregate([document({ concurrency: 1 }), document({ concurrency: 2 })]), /concurrencyが混在/);
+  const aggregate = buildTimingAggregate([
+    document({ fixtures: [fixture("a", { totalMs: 1000, buildMs: 100 }), fixture("b", { totalMs: 3000, buildMs: 300 })] }),
+    document({ status: "comparison-failure", fixtures: [fixture("a", { totalMs: 9000, buildMs: 900 }), fixture("b", { totalMs: 9000, buildMs: 900 })] }),
+  ]);
+  assert.equal(aggregate.documents, 2);
+  assert.equal(aggregate.aggregatedDocuments, 1);
+  assert.deepEqual(aggregate.skippedByStatus, [{ status: "comparison-failure", count: 1 }]);
+  assert.equal(aggregate.concurrency, 1);
+  assert.equal(aggregate.fixtures.find((entry) => entry.id === "a").medianTotalMs, 1000);
+  assert.equal(aggregate.optimizations.find((entry) => entry.id === "a").medianBuildMs, 100);
+  const markdown = formatTimingAggregate(aggregate);
+  assert.match(markdown, /集約対象: 1、concurrency: 1/);
+  assert.match(markdown, /除外したstatus: comparison-failure×1/);
 });

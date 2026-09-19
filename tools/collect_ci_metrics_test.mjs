@@ -346,6 +346,11 @@ test("collectRunMetrics and aggregateRuns compute wall/runner/step stats", () =>
   assert.equal(run.jobs[0].queueSeconds, 25);
   assert.equal(run.jobs[0].os, "macOS");
 
+  // 旧シグネチャ（第4引数がdurationMsの数値）も近似wall timeへ退行せず受け付ける。
+  assert.equal(collectRunMetrics(runFixture, jobsFixture, undefined, 900000).wallSeconds, 900);
+  assert.equal(collectRunMetrics(runFixture, jobsFixture, new Map(), { durationMs: 600000 }).wallSeconds, 600);
+  assert.equal(collectRunMetrics(runFixture, jobsFixture, undefined, 900000).jobs[0].seconds, 1050);
+
   const aggregate = aggregateRuns([run]);
   assert.equal(aggregate.runCount, 1);
   assert.equal(aggregate.jobCount, 2);

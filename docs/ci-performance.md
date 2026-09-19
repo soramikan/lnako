@@ -724,6 +724,20 @@ O0〜O3の全optimizationと公式oracle比較・interpreter比較を維持す�
 O0-O1／O2-O3へ更新し、artifact partition検証（fixtureが各optimizationで
 ちょうど1回被覆されること）は統合後も機能する。
 
+#### 併せて修正した不整合: attestation verifierのgroup定義
+
+同group定義は集約検査（`check_native_aot_artifacts.mjs`）だけでなく、
+attestation検証（`verify_native_aot_attestation.mjs`）にもある。Phase 5では
+集約側だけを更新し、**verifier側が旧`O0`／`O1`／`O2`／`O3`の4 group定義のまま
+残っていた**。そのため`validateAggregate`がLinux/Windowsのartifact数（6 対 期待12）
+で必ず失敗し、main push時の`attest-dispatch-evidence`が完走せず、release pinに
+必要な署名済み証拠も生成できない状態だった（PR #104のレビューで検出）。
+
+verifier側を`O0-O1`／`O2-O3`へ修正し、artifact総数15と各platformがO0〜O3を
+ちょうど1回被覆することをモジュール内で検査するようにした。さらに
+`check_ci_workflow.mjs`が**CI matrix・集約検査・attestation検証の3箇所のgroup
+定義を機械的に照合**するようにし、片側だけ更新して食い違う事故を構造的に防ぐ。
+
 ### 運用上の注意（重要）
 
 job名が変わるため、**mainのブランチ保護にある required status checks のうち
@@ -875,7 +889,7 @@ job名（`Linux x86_64 / AOT native shard 1/3 / O0+O1` 等）は変えていな�
 
 ## 改善計画2 の最終結果
 
-| 指標 | 改善前 | Phase 1〜5後（7 run） | Phase 6後（2 run） |
+| 指標 | 改善前 | Phase 1〜5後（7 run） | Phase 6後（3 run） |
 | --- | ---: | ---: | ---: |
 | workflow wall clock | 1,112s | 876〜1,462s（median 約1,113s） | 1,071〜1,141s（median 約1,130s） |
 | 全job runner minutes | 213 min | 166〜191 min（median 174.8） | 151.6〜166.4（median 152.4） |
@@ -887,7 +901,7 @@ job名（`Linux x86_64 / AOT native shard 1/3 / O0+O1` 等）は変えていな�
 
 - Wall clock 20〜30%削減 → **未達（実質不変）**。wallはクリティカルパス
   （Windows core 約1,075〜1,097s）とrun間のqueue変動に支配され、AOT施策は
-  クリティカルパス外のためwallは変わらない（1,112s→median 約1,136s）。
+  クリティカルパス外のためwallは変わらない（1,112s→median 約1,130s）。
   途中で「wall 1,112s→876s（-21%）」と記録したが、その876sは速い側の外れ値runで
   あり代表値ではない。**この-21%は誤った一般化として撤回する**（Phase 4・5の
   セクションの当時の記録はそのまま残す）。

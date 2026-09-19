@@ -313,6 +313,37 @@ for (const [jobName, index] of expectedMacCoverageRows) {
   if (!nativeAotJob.includes(row)) throw new Error(`macOS ${jobName}のdispatch coverage shard割当が不正です`);
 }
 
+// AOT artifactのoptimization group定義は、CI matrix・集約検査
+// （check_native_aot_artifacts.mjs）・attestation検証
+// （verify_native_aot_attestation.mjs）の3箇所で一致していなければならない。
+// 改善計画2 Phase 5でCIをO0+O1／O2+O3へ統合した際にverifier側だけが旧4 groupの
+// ままで、mainのattestationが必ず失敗する不整合が実際に生じたため機械的に照合する。
+const optimizationGroupPattern = /\{ key: "([^"]+)", optimizations: \[([^\]]*)\] \}/g;
+const parseOptimizations = (text) => text.split(",").map((value) => value.trim().replaceAll('"', "")).filter((value) => value.length > 0);
+const ciGroupsByRunner = new Map();
+for (const row of nativeShardRows) {
+  const groups = ciGroupsByRunner.get(row.os) ?? [];
+  if (!groups.some(([key]) => key === row.optimizationKey)) groups.push([row.optimizationKey, row.optimizations.split(",")]);
+  ciGroupsByRunner.set(row.os, groups);
+}
+const checkerGroupsBlock = nativeAotArtifactChecker.match(/const expectedGroups = new Map\(\[([\s\S]*?)\n\]\);/)?.[1];
+if (!checkerGroupsBlock) throw new Error("check_native_aot_artifacts.mjsのoptimization group定義を解析できません");
+const checkerGroupsByRunner = new Map([...checkerGroupsBlock.matchAll(/\["([^"]+)", \[\n([\s\S]*?)\n  \]\]/g)]
+  .map((match) => [match[1], [...match[2].matchAll(optimizationGroupPattern)].map((group) => [group[1], parseOptimizations(group[2])])]));
+const verifierGroupsByRunner = new Map([...nativeAotAttestationVerifier.matchAll(/runner: "([^"]+)",[\s\S]*?groups: \[([\s\S]*?)\n    \],/g)]
+  .map((match) => [match[1], [...match[2].matchAll(optimizationGroupPattern)].map((group) => [group[1], parseOptimizations(group[2])])]));
+if (ciGroupsByRunner.size !== 3 || checkerGroupsByRunner.size !== 3 || verifierGroupsByRunner.size !== 3) {
+  throw new Error("AOT optimization group定義を持つOSがCI matrix／集約検査／attestation検証で一致しません");
+}
+for (const [runner, ciGroups] of ciGroupsByRunner) {
+  for (const [label, reference] of [["集約検査(check_native_aot_artifacts.mjs)", checkerGroupsByRunner.get(runner)], ["attestation検証(verify_native_aot_attestation.mjs)", verifierGroupsByRunner.get(runner)]]) {
+    if (reference === undefined || reference.length !== ciGroups.length ||
+        ciGroups.some(([key, optimizations], index) => reference[index][0] !== key || JSON.stringify(reference[index][1]) !== JSON.stringify(optimizations))) {
+      throw new Error(`${label}のoptimization group定義がCI matrixと一致しません: ${runner}`);
+    }
+  }
+}
+
 const stepSuites = new Map([
   ["Verify compatibility baseline", "core"],
   ["Differential lexer test", "core"],
@@ -444,8 +475,7 @@ const linuxAotStep = (name) => {
 if (!nativeAotJob.includes("strategy:\n      fail-fast: false") || !nativeAotJob.includes("runs-on: ${{ matrix.os }}") || !nativeAotJob.includes("timeout-minutes: 50")) {
   throw new Error("分割AOT jobの実行条件が不正です");
 }
-// Phase 2のworker数比較はworkflow_dispatch入力で切り替える。既定は1で
-// CIの標準動作を変えず、手動実行のときだけ2を選べるようにしておく。
+// Phase 2のworker数比較はworkflow_dispatch入力で切り替える。
 const dispatchInput = workflow.match(/^  workflow_dispatch:\n([\s\S]*?)(?=\n[a-z]|\Z)/m)?.[1] ?? "";
 // Phase 2の実測でworker=2を標準化した。dispatch入力の既定も2とし、
 // 1を選べばA/B比較できる（既定を1へ戻す変更をここで検出する）。
@@ -644,12 +674,24 @@ if (!nativeAotVerificationBlock || !nativeAotVerificationBlock.includes("if: mat
 if (!nativeOracleScript.includes("import { createTimingDocument, parseTimingPath, platformKey, roundMs, writeTimingDocument }") ||
     !nativeOracleScript.includes("const timingPath = parseTimingPath(process.argv, process.env);") ||
     !nativeOracleScript.includes("await writeTiming(") ||
+    // 公式source経路の計測はfixture準備を含めない（totalMs専用のfixtureStartを流用しない）。
+    !nativeOracleScript.includes("const officialSourceStart = performance.now();") ||
+    !nativeOracleScript.includes("const officialSourceMs = elapsedMs(officialSourceStart);") ||
+    // 任意telemetryの書込み障害で互換性検証を落とさない。
+    !/try \{\n\s+await writeTiming\(concurrency, failures === 0/.test(nativeOracleScript) ||
     !nativeTimingScript.includes('"lnako.native-oracle-timing.v1"') ||
     !nativeTimingScript.includes("export function buildTimingAggregate") ||
     !nativeTimingScript.includes("export function medianOf") ||
+    // 集約はconcurrency混在を拒否し、success以外をweight集計から除外する。
+    !nativeTimingScript.includes("timing documentのconcurrencyが混在しています") ||
+    !nativeTimingScript.includes('document.status === "success"') ||
+    !nativeTimingScript.includes("aggregatedDocuments") ||
     !nativeTimingScript.includes("LNAKO_NATIVE_ORACLE_TIMING") ||
     !timingAggregateScript.includes("buildTimingAggregate") ||
     !timingAggregateScript.includes("lnako-native-timing-*") ||
+    // artifact名ディレクトリ（gh run downloadの既定展開）も走査する。
+    !timingAggregateScript.includes("collectJsonPaths") ||
+    !timingAggregateScript.includes("集約対象のtiming documentがありません") ||
     !workflow.includes("node --test tools/native_oracle_timing_test.mjs")) {
   throw new Error("AOT fixture timing telemetryの分離実装または単体テストが不完全です");
 }
@@ -1027,19 +1069,30 @@ const setupZigCacheSizeLimitMiB = 1536;
 // へrunId-attemptを付けprefix一致で復元するため、同一prefixの並行jobが先行jobの
 // 未完成cacheを復元する経路を閉じるためである。
 const nativeAotCacheKey = "cache-key: ${{ matrix.task == 'native' && format('aot-native-v2-s{0}of{1}-{2}', matrix.fixtureShardIndex, matrix.fixtureShardCount, matrix.optimizationKey) || matrix.suite }}";
-// LinuxのAOT native shardは共有compiler artifactをinstallするだけで`zig build`を
-// 行わない。Zig cacheを保存しても再利用されず、6 shard×約64 MBを毎run積み増す
-// だけになるため保存しない（Windows側と同じ理由）。
-const aotWindowsJobBlock = setupZigBlocks.find((block) => block.includes("use-cache: false") && block.includes("cache-size-limit"));
+// 共有compiler artifactをinstallするjob（producer 2件＋consumer 2件）は
+// `zig build`を行わないためZig cacheを保存しない。setup-zigブロックを
+// ワークフロー順に探すだけでは同じ特徴を持つ先頭のproducerブロックに一致し、
+// consumer側の再有効化を見逃す（Devinレビューで実指摘）ため、job単位で検査する。
+const setupZigStepPattern = /      - uses: mlugg\/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2\.2\.1[\s\S]*?(?=      - uses: actions\/setup-node@)/;
+const cacheDisabledJobs = new Map([
+  ["Windows AOT compiler producer", workflow.match(/  aot_compiler:[\s\S]*?(?=\n  aot_compiler_linux:)/)?.[0]],
+  ["Linux AOT compiler producer", workflow.match(/  aot_compiler_linux:[\s\S]*?(?=\n  aot:)/)?.[0]],
+  ["Linux AOT consumer job", linuxAotJob],
+  ["Windows AOT consumer job", windowsAotJob],
+]);
+for (const [label, jobText] of cacheDisabledJobs) {
+  const block = jobText?.match(setupZigStepPattern)?.[0];
+  if (!block || !block.includes("version: 0.16.0") || !block.includes("use-cache: false") ||
+      !block.includes(`cache-size-limit: ${setupZigCacheSizeLimitMiB}`) || block.includes("cache-key:")) {
+    throw new Error(`${label}のsetup-zigがZig cacheを保存しない設定になっていません`);
+  }
+}
 // setup-zigブロックは7つ（test／parser_fuzz／Windows producer／Linux producer／
 // aot（macOS nativeのみcache）／aot_linux／aot_windows）。
 if (setupZigBlocks.length !== 7 ||
     !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat' }}") && block.includes("cache-key: ${{ matrix.suite }}")) ||
     !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.task == 'native' }}") && block.includes(nativeAotCacheKey)) ||
     countOccurrences(workflow, nativeAotCacheKey) !== 1 ||
-    aotWindowsJobBlock === undefined ||
-    aotWindowsJobBlock.includes("cache-key:") ||
-    !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: false") && block.includes("cache-size-limit") && !block.includes("cache-key:")) ||
     countOccurrences(workflow, "cache-key: aot-compiler") !== 0 ||
     (workflow.match(/cache-size-limit:/g) ?? []).length !== 6) {
   throw new Error(`setup-zigのcache保存対象、AOT shard／optimization単位のcache identity分離、Linux／Windows AOT shardのcache無効化、または${setupZigCacheSizeLimitMiB} MiB上限が不正です`);

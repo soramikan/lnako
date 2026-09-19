@@ -235,7 +235,10 @@ export function parseToolchainLog(text) {
 }
 
 export function collectRunMetrics(run, jobs, toolchainByJob = new Map(), options = {}) {
-  const { durationMs = null, cacheByJob = new Map() } = options;
+  // 旧シグネチャは第4引数がdurationMsの数値だった。数値を渡すと分割代入は
+  // 黙って成立しdurationMs=nullへ退行して近似wall timeを返すため正規化する。
+  const resolved = typeof options === "number" ? { durationMs: options } : options;
+  const { durationMs = null, cacheByJob = new Map() } = resolved;
   const jobMetrics = jobs.map((job) => {
     const steps = (job.steps ?? [])
       .filter((step) => step.started_at && step.completed_at)

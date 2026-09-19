@@ -9,22 +9,38 @@ import { fileURLToPath } from "node:url";
 
 import { TIMING_SCHEMA, buildTimingAggregate, validateTimingDocument } from "./native_oracle_timing.mjs";
 
+// GitHub Actionsの複数artifactダウンロード（`gh run download -p 'lnako-native-timing-*'`）
+// は、artifact名ごとのサブディレクトリへ展開する。直下と階層1の両方から.jsonを
+// 集め、それより深い階層は契約違反として拒否する（黙って0件にしない）。
+async function collectJsonPaths(directory) {
+  const entries = [...await readdir(directory, { withFileTypes: true })].sort((left, right) => left.name.localeCompare(right.name));
+  const paths = [];
+  for (const entry of entries) {
+    if (entry.isFile()) {
+      if (entry.name.endsWith(".json")) paths.push({ label: entry.name, path: resolve(directory, entry.name) });
+      continue;
+    }
+    if (!entry.isDirectory()) continue;
+    const children = [...await readdir(resolve(directory, entry.name), { withFileTypes: true })].sort((left, right) => left.name.localeCompare(right.name));
+    if (children.some((child) => child.isDirectory())) throw new Error(`timing artifactの展開階層が深すぎます: ${entry.name}`);
+    for (const child of children) {
+      if (child.isFile() && child.name.endsWith(".json")) paths.push({ label: `${entry.name}/${child.name}`, path: resolve(directory, entry.name, child.name) });
+    }
+  }
+  return paths;
+}
+
 export async function loadTimingDocuments(directory) {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const files = entries
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-    .map((entry) => entry.name)
-    .sort();
+  const paths = await collectJsonPaths(directory);
   const documents = [];
-  for (const name of files) {
-    const path = resolve(directory, name);
+  for (const { label, path } of paths) {
     let parsed;
     try {
       parsed = JSON.parse(await readFile(path, "utf8"));
     } catch (error) {
-      throw new Error(`timing documentをJSONとして読めません: ${name}: ${error.message}`);
+      throw new Error(`timing documentをJSONとして読めません: ${label}: ${error.message}`);
     }
-    if (parsed?.schema !== TIMING_SCHEMA) throw new Error(`未知のtiming document schemaです: ${name}`);
+    if (parsed?.schema !== TIMING_SCHEMA) throw new Error(`未知のtiming document schemaです: ${label}`);
     validateTimingDocument(parsed);
     documents.push(parsed);
   }
@@ -35,7 +51,8 @@ export function formatTimingAggregate(aggregate, { limit = 30 } = {}) {
   const lines = [
     "# AOT fixture timing aggregate",
     "",
-    `入力document数: ${aggregate.documents}`,
+    `入力document数: ${aggregate.documents}（集約対象: ${aggregate.aggregatedDocuments}、concurrency: ${aggregate.concurrency ?? "-"}）`,
+    ...(aggregate.skippedByStatus.length === 0 ? [] : [`除外したstatus: ${aggregate.skippedByStatus.map((entry) => `${entry.status}×${entry.count}`).join(", ")}`]),
     "",
     "## fixture別 median total cost（LPT weight候補）",
     "",
@@ -52,7 +69,8 @@ export function formatTimingAggregate(aggregate, { limit = 30 } = {}) {
       `| ${entry.platform} | ${entry.optimization} | ${entry.id} | ${entry.observations} | ${formatMs(entry.medianBuildMs)} | ${formatMs(entry.medianRunMs)} |`),
     "",
     "medianは平均ではなく中央値であり、run間の外れ値に引きずられない。",
-    "cold／warm cacheは混ぜず、同一concurrency条件のdocumentだけを比較する。",
+    "cold／warm cacheは混ぜない。concurrencyが混在する入力は集約前に拒否し、",
+    "statusがsuccess以外のdocumentはweight集計から除外する。",
     "",
   ];
   return `${lines.join("\n")}\n`;
@@ -87,10 +105,14 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
     const options = parseArguments(process.argv.slice(2));
     const documents = await loadTimingDocuments(options.directory);
     if (documents.length === 0) throw new Error(`timing documentがありません: ${options.directory}`);
-    const markdown = formatTimingAggregate(buildTimingAggregate(documents), { limit: options.limit });
+    const aggregate = buildTimingAggregate(documents);
+    if (aggregate.aggregatedDocuments === 0) {
+      throw new Error(`集約対象のtiming documentがありません（status=successが0件。除外内訳: ${aggregate.skippedByStatus.map((entry) => `${entry.status}×${entry.count}`).join(", ") || "なし"}）`);
+    }
+    const markdown = formatTimingAggregate(aggregate, { limit: options.limit });
     if (options.output) {
       await writeFile(resolve(options.output), markdown, "utf8");
-      console.log(`timing aggregateを${options.output}へ書き出しました: ${documents.length} documents`);
+      console.log(`timing aggregateを${options.output}へ書き出しました: ${aggregate.aggregatedDocuments}/${documents.length} documents`);
     } else {
       process.stdout.write(markdown);
     }

@@ -123,12 +123,28 @@ export function validateTimingDocument(document) {
 /**
  * 複数runのtiming documentから fixture × platform × optimization の代表値を求める。
  * 代表値は平均ではなくmedian（外れ値に強い）。Phase 3のshard weight tableの入力。
+ *
+ * 集約契約:
+ * - 全documentの`concurrency`が一致していることを要求する。worker数が違うと
+ *   競合条件が変わり、同じmedianへ混ぜると実在しない重みになるため。
+ * - `status === "success"`のdocumentだけを集計する。`comparison-failure`は
+ *   計測が途中で終わりうるため、weight推定の入力にしない。
  */
 export function buildTimingAggregate(documents) {
+  const validated = documents.map((document) => validateTimingDocument(document));
+  const concurrencies = [...new Set(validated.map((document) => document.concurrency))].sort((left, right) => left - right);
+  if (concurrencies.length > 1) {
+    throw new Error(`timing documentのconcurrencyが混在しています: ${concurrencies.join(", ")}（同一concurrencyのdocumentだけを集約してください）`);
+  }
+  const usable = validated.filter((document) => document.status === "success");
+  const skipped = new Map();
+  for (const document of validated) {
+    if (document.status === "success") continue;
+    skipped.set(document.status, (skipped.get(document.status) ?? 0) + 1);
+  }
   const byFixture = new Map();
   const byOptimization = new Map();
-  for (const document of documents) {
-    validateTimingDocument(document);
+  for (const document of usable) {
     for (const fixture of document.fixtures) {
       const fixtureKey = `${fixture.platform}|${fixture.id}`;
       const fixtureEntry = byFixture.get(fixtureKey) ?? { platform: fixture.platform, id: fixture.id, observations: [], totalMs: [], officialMs: [], interpreterMs: [] };
@@ -147,7 +163,10 @@ export function buildTimingAggregate(documents) {
     }
   }
   return {
-    documents: documents.length,
+    documents: validated.length,
+    aggregatedDocuments: usable.length,
+    skippedByStatus: [...skipped].sort(([left], [right]) => left.localeCompare(right)).map(([status, count]) => ({ status, count })),
+    concurrency: concurrencies.length === 1 ? concurrencies[0] : null,
     fixtures: [...byFixture.values()]
       .map((entry) => ({
         platform: entry.platform,

@@ -7,8 +7,8 @@ on:
   workflow_dispatch:
     inputs:
       # Native AOT worker数の比較実験（改善計画2 Phase 2）用。
-      # 既定は1で、CIの標準動作を変えない。手動実行で1/2を切り替えて
-      # 同一commitのjob時間・runner時間・failure率を比較する。
+      # Phase 2の実測でworker=2を標準化したため既定は2。手動実行で1を選ぶと
+      # 同一commitのjob時間・runner時間・failure率をA/B比較できる。
       native_oracle_jobs:
         description: "Native AOT verifierのworker数（既定2。1はA/B比較用）"
         required: false
@@ -938,8 +938,10 @@ jobs:
       - name: Build official oracle
         run: node tools/setup_oracle.mjs
       # producerが1回buildしたDebug compilerを共有する。commit・platform・
-      # Zig version・SHA-256を照合してからinstallし、誤commitや別構成の
-      # compilerを誤用しない。canonical正本のReleaseSafe configとも照合する。
+      # Zig version・buildMode（Debug）・compatJs無効・SHA-256を照合してから
+      # installし、誤commitや別構成のcompilerを誤用しない。ReleaseSafeを
+      # 必要とするconsumer（canonical正本のcoverage shard・smoke）はこの
+      # artifactを使わず自前buildするため、ReleaseSafe構成との照合は行わない。
       - name: Download shared AOT compiler artifact (Linux)
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -1179,8 +1181,8 @@ jobs:
       - name: Build official oracle
         run: node tools/setup_oracle.mjs
       # producerが1回buildしたDebug compilerを共有する。
-      # commit・platform・Zig version・SHA-256を照合してからinstallし、
-      # 誤commitや別構成のcompilerを誤用しない。
+      # commit・platform・Zig version・buildMode（Debug）・compatJs無効・
+      # SHA-256を照合してからinstallし、誤commitや別構成のcompilerを誤用しない。
       # このjobのsupport系はDebug compilerで動作するため共有artifactを使う。
       - name: Download shared AOT compiler artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
