@@ -3,15 +3,21 @@ import { test } from "node:test";
 
 import {
   aggregateRuns,
+  cacheKeyRun,
   collectMetrics,
   collectRunMetrics,
+  formatBytes,
   formatMarkdown,
   formatSeconds,
+  isSameRunCacheKey,
+  normalizeLogText,
   osFromJobName,
+  parseCacheLog,
   parseToolchainLog,
   percentile,
   secondsBetween,
   summarize,
+  summarizeCache,
 } from "./collect_ci_metrics.mjs";
 
 test("percentile and summarize compute median/p90/p95", () => {
@@ -63,6 +69,144 @@ test("parseToolchainLog detects cache hit with reuse and reinstall reasons", () 
 
   const empty = parseToolchainLog("unrelated output\n");
   assert.deepEqual(empty, { cacheHit: null, llvmReinstalled: null, llvmReason: null });
+});
+
+// run 35448509540 / Linux x86_64 AOT native shard 1/3 O0 の実log。
+// 同一suiteのprefixを共有する別shardが保存したcacheを復元してしまい、
+// 後続の保存がreservation競合で失敗した実測例である。
+const linuxShardCacheLog = [
+  "2026-09-19T14:30:58.9076181Z Attempting restore of Zig cache with prefix 'setup-zig-cache-v2-aot-zig-x86_64-linux-0.16.0-aot-native-'",
+  "2026-09-19T14:30:59.7016938Z Cache hit (key 'setup-zig-cache-v2-aot-zig-x86_64-linux-0.16.0-aot-native-35448509540-1'): populating Zig cache directory at /home/runner/work/lnako/lnako/.zig-cache",
+  "2026-09-19T14:31:07.8732988Z Cache hit for: toolchains-Linux-X64-v3-ee850565da26825639a975e71e7965fd549e3ff1241cd0bdad5795155d47d7c9",
+  "2026-09-19T14:31:08.9699088Z Cache Size: ~189 MB (197923188 B)",
+  "2026-09-19T14:31:08.9866320Z Cache restored from key: toolchains-Linux-X64-v3-ee850565da26825639a975e71e7965fd549e3ff1241cd0bdad5795155d47d7c9",
+  "2026-09-19T14:35:02.2160923Z Cache directory is 253011854 bytes, below limit of 1610612736 bytes; keeping intact",
+  "2026-09-19T14:35:02.2167124Z Saving Zig cache with key 'setup-zig-cache-v2-aot-zig-x86_64-linux-0.16.0-aot-native-35448509540-1'",
+  "2026-09-19T14:35:03.1215943Z Failed to save: Unable to reserve cache with key setup-zig-cache-v2-aot-zig-x86_64-linux-0.16.0-aot-native-35448509540-1, another job may be creating this cache.",
+].join("\n");
+
+test("parseCacheLog detects a same-run Zig cache restore and the reservation failure", () => {
+  const parsed = parseCacheLog(linuxShardCacheLog);
+  assert.equal(parsed.zigCache.requestedPrefix, "setup-zig-cache-v2-aot-zig-x86_64-linux-0.16.0-aot-native-");
+  assert.equal(parsed.zigCache.hit, true);
+  assert.equal(parsed.zigCache.restoredKey, "setup-zig-cache-v2-aot-zig-x86_64-linux-0.16.0-aot-native-35448509540-1");
+  assert.equal(parsed.zigCache.sizeBytes, 253011854);
+  assert.equal(parsed.zigCache.limitBytes, 1610612736);
+  assert.equal(parsed.zigCache.cleared, false);
+  assert.equal(parsed.zigCache.saveOutcome, "failed");
+  assert.match(parsed.zigCache.saveFailure, /another job may be creating this cache/);
+  assert.equal(parsed.saveFailures, 1);
+  assert.equal(parsed.cleared, 0);
+  // actions/cacheのrestoreはkey・サイズごと記録され、Zig cacheと混ざらない。
+  assert.deepEqual(parsed.restores.map((restore) => restore.key), [
+    "toolchains-Linux-X64-v3-ee850565da26825639a975e71e7965fd549e3ff1241cd0bdad5795155d47d7c9",
+  ]);
+  assert.equal(parsed.restores[0].sizeBytes, 197923188);
+  assert.deepEqual(parsed.misses, []);
+  assert.equal(isSameRunCacheKey(parsed.zigCache.restoredKey, 35448509540), true);
+  assert.equal(isSameRunCacheKey(parsed.zigCache.restoredKey, 35448509541), false);
+  assert.deepEqual(cacheKeyRun(parsed.zigCache.restoredKey), { runId: 35448509540, attempt: 1 });
+});
+
+test("parseCacheLog detects Zig cache size-limit clear and save conflicts", () => {
+  const cleared = parseCacheLog([
+    "Attempting restore of Zig cache with prefix 'setup-zig-cache-v2-aot-zig-x86_64-windows-0.16.0-aot-native-v2-s0of3-O0-'",
+    "Cache miss: leaving Zig cache directory at D:\\a\\lnako\\lnako\\.zig-cache unpopulated",
+    "Cache directory reached 1932735283 bytes, exceeding limit of 1610612736 bytes; clearing cache",
+    "Saving Zig cache with key 'setup-zig-cache-v2-aot-zig-x86_64-windows-0.16.0-aot-native-v2-s0of3-O0-1-1'",
+  ].join("\n"));
+  assert.equal(cleared.zigCache.hit, false);
+  assert.equal(cleared.zigCache.cleared, true);
+  assert.equal(cleared.zigCache.sizeBytes, 1932735283);
+  assert.equal(cleared.zigCache.limitBytes, 1610612736);
+  assert.equal(cleared.cleared, 1);
+  // 保存行が無い場合は成功と断定しない（不明として記録する）。
+  assert.equal(cleared.zigCache.saveOutcome, "unknown");
+
+  const inaccessible = parseCacheLog([
+    "Attempting restore of Zig cache with prefix 'setup-zig-cache-v2-aot_windows-zig-x86_64-windows-0.16.0-aot-native-'",
+    "Cache miss: leaving Zig cache directory at D:\\a\\lnako\\lnako\\.zig-cache unpopulated",
+    "Zig cache directory is inaccessible; nothing to save",
+  ].join("\n"));
+  assert.equal(inaccessible.zigCache.saveOutcome, "skipped");
+
+  const noZigCache = parseCacheLog("unrelated output\n");
+  assert.equal(noZigCache.zigCache, null);
+  assert.deepEqual(noZigCache.restores, []);
+});
+
+test("parseCacheLog records actions/cache hits, misses and saves", () => {
+  const parsed = parseCacheLog([
+    "Cache hit for: nadesiko3-oracle-3.7.24-Windows-X64-ac3bedbf10111-v4",
+    "Cache Size: ~2 MB (2341229 B)",
+    "Cache restored successfully",
+    "Cache restored from key: nadesiko3-oracle-3.7.24-Windows-X64-ac3bedbf10111-v4",
+    "Cache not found for input keys: toolchains-Windows-X64-v3-abc, toolchains-Windows-X64-v3-def",
+    "Adding to the cache ...",
+    "Cache Size: ~102 MB (106745896 B)",
+    "Cache saved with key: toolchains-Windows-X64-v3-abc",
+    "Cache hit occurred on the primary key nadesiko3-oracle-3.7.24-Windows-X64-ac3bedbf10111-v4, not saving cache.",
+    "Cache size of ~11000 MB (11534336000 B) is over the 10GB limit, not saving cache.",
+  ].join("\n"));
+  assert.deepEqual(parsed.restores, [
+    { key: "nadesiko3-oracle-3.7.24-Windows-X64-ac3bedbf10111-v4", sizeBytes: 2341229 },
+  ]);
+  assert.deepEqual(parsed.misses, [
+    { requestedKeys: ["toolchains-Windows-X64-v3-abc", "toolchains-Windows-X64-v3-def"] },
+  ]);
+  assert.deepEqual(parsed.saves, [
+    { outcome: "saved", key: "toolchains-Windows-X64-v3-abc", sizeBytes: 106745896, failure: null },
+    { outcome: "skipped-hit", key: "nadesiko3-oracle-3.7.24-Windows-X64-ac3bedbf10111-v4", sizeBytes: null, failure: null },
+    { outcome: "failed", key: null, sizeBytes: null, failure: "size-over-10GB-limit" },
+  ]);
+  assert.equal(parsed.saveFailures, 1);
+  assert.equal(parsed.zigCache, null);
+});
+
+test("summarizeCache stratifies job runtime by Zig cache hit and miss", () => {
+  const parsed = parseCacheLog(linuxShardCacheLog);
+  const aggregate = summarizeCache([
+    { id: 1, runId: 35448509540, name: "Linux x86_64 / aot", seconds: 240, cache: parsed },
+    {
+      id: 2,
+      runId: 35448509540,
+      name: "Linux x86_64 / aot cold",
+      seconds: 400,
+      cache: {
+        zigCache: { requestedPrefix: "p", restoredKey: null, hit: false, sizeBytes: 1000, limitBytes: 1610612736, cleared: true, saveKey: "k", saveOutcome: "saved", saveFailure: null },
+        restores: [],
+        misses: [{ requestedKeys: ["x"] }],
+        saves: [],
+        cleared: 1,
+        saveFailures: 0,
+      },
+    },
+  ]);
+  assert.equal(aggregate.jobsReported, 2);
+  assert.equal(aggregate.zigJobs, 2);
+  assert.equal(aggregate.zigHits, 1);
+  assert.equal(aggregate.zigMisses, 1);
+  assert.equal(aggregate.zigSameRunRestores, 1);
+  assert.equal(aggregate.zigCleared, 1);
+  assert.equal(aggregate.zigSaved, 1);
+  assert.equal(aggregate.zigSaveFailures, 1);
+  assert.equal(aggregate.limitMiB, 1536);
+  assert.equal(aggregate.coldWarm.hit.median, 240);
+  assert.equal(aggregate.coldWarm.miss.median, 400);
+  assert.equal(aggregate.misses, 1);
+  assert.equal(aggregate.saveFailures, 1);
+});
+
+test("normalizeLogText strips ANSI escapes and timestamp prefixes", () => {
+  const normalized = normalizeLogText("\u001b[36;1m2026-09-19T14:30:59.7016938Z Cache hit (key 'k')\u001b[0m\r\n");
+  assert.equal(normalized, "Cache hit (key 'k')\n");
+});
+
+test("formatBytes renders MiB and KiB", () => {
+  assert.equal(formatBytes(1610612736), "1536 MiB");
+  assert.equal(formatBytes(253011854), "241 MiB");
+  assert.equal(formatBytes(2048), "2 KiB");
+  assert.equal(formatBytes(null), "-");
 });
 
 const runFixture = {
@@ -200,5 +344,7 @@ test("formatMarkdown renders the KPI sections", () => {
   assert.match(markdown, /workflow wall time/);
   assert.match(markdown, /OS別 runner time/);
   assert.match(markdown, /LLVM toolchain cache/);
+  assert.match(markdown, /## Cache \(Zigグローバルcache \/ actions\/cache\)/);
+  assert.match(markdown, /同一run保存cacheの復元/);
   assert.match(markdown, /17m30s/);
 });

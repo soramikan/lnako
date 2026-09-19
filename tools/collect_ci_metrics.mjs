@@ -9,6 +9,170 @@ import { fileURLToPath } from "node:url";
 
 export const LLVM_SETUP_STEP = "Set up pinned LLVM and LLD";
 export const TOOLCHAIN_CACHE_PATH = ".cache/toolchains";
+export const SETUP_ZIG_STEP = "Run mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29";
+export const ACTIONS_CACHE_STEP_PREFIX = "Run actions/cache@";
+
+/**
+ * GitHubのjob logは全行にtimestamp prefixが付き、ANSI escapeも含むため、
+ * 行跨ぎのpatternを評価する前に正規化する。
+ */
+export function normalizeLogText(text) {
+  return text
+    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "")
+    .replace(/\r/g, "")
+    .replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z /gm, "");
+}
+
+/**
+ * Zigグローバルcache（mlugg/setup-zig）とactions/cacheの両方を解析する。
+ *
+ * - `zigCache`: setup-zigが管理するZig cacheの復元key・hit/miss・cache
+ *   ディレクトリサイズ・上限・上限超過によるclear・保存結果
+ * - `restores` / `misses` / `saves`: 同一job内の全cache操作（toolchain、
+ *   oracle、Zig tarballを含む）の生イベント
+ *
+ * setup-zigは保存keyへrunId-attemptを付けてprefix一致で復元するため、
+ * 復元されたkeyがこのrun自身のものであるかどうかもreportで判別できる。
+ */
+export function parseCacheLog(text) {
+  const clean = normalizeLogText(text);
+  const result = {
+    zigCache: null,
+    restores: [],
+    misses: [],
+    saves: [],
+    cleared: 0,
+    saveFailures: 0,
+  };
+  let pendingRestore = null;
+  let pendingSave = null;
+  for (const line of clean.split("\n")) {
+    let match;
+    if ((match = /^Attempting restore of Zig cache with prefix '([^']*)'$/.exec(line)) !== null) {
+      result.zigCache = {
+        requestedPrefix: match[1],
+        restoredKey: null,
+        hit: null,
+        sizeBytes: null,
+        limitBytes: null,
+        cleared: null,
+        saveKey: null,
+        saveOutcome: null,
+        saveFailure: null,
+      };
+      pendingRestore = null;
+      continue;
+    }
+    if ((match = /^Cache hit \(key '([^']*)'\): populating Zig cache directory at /.exec(line)) !== null) {
+      if (result.zigCache === null) continue;
+      result.zigCache.hit = true;
+      result.zigCache.restoredKey = match[1];
+      continue;
+    }
+    if (/^Cache miss: leaving Zig cache directory at /.test(line)) {
+      if (result.zigCache === null) continue;
+      result.zigCache.hit = false;
+      continue;
+    }
+    if ((match = /^Cache directory is (\d+) bytes, below limit of (\d+) bytes; keeping intact$/.exec(line)) !== null) {
+      if (result.zigCache === null) continue;
+      result.zigCache.sizeBytes = Number(match[1]);
+      result.zigCache.limitBytes = Number(match[2]);
+      result.zigCache.cleared = false;
+      continue;
+    }
+    if ((match = /^Cache directory reached (\d+) bytes, exceeding limit of (\d+) bytes; clearing cache$/.exec(line)) !== null) {
+      if (result.zigCache === null) continue;
+      result.zigCache.sizeBytes = Number(match[1]);
+      result.zigCache.limitBytes = Number(match[2]);
+      result.zigCache.cleared = true;
+      result.cleared += 1;
+      continue;
+    }
+    if ((match = /^Saving Zig cache with key '([^']*)'$/.exec(line)) !== null) {
+      if (result.zigCache === null) continue;
+      result.zigCache.saveKey = match[1];
+      pendingSave = { key: match[1], sizeBytes: null };
+      continue;
+    }
+    if (/^Zig cache directory is inaccessible; nothing to save$/.test(line)) {
+      if (result.zigCache !== null) result.zigCache.saveOutcome = "skipped";
+      continue;
+    }
+    if ((match = /^Cache hit for: (.+)$/.exec(line)) !== null) {
+      pendingRestore = { key: match[1].trim(), sizeBytes: null };
+      result.restores.push(pendingRestore);
+      continue;
+    }
+    if ((match = /^Cache restored from key: (.+)$/.exec(line)) !== null) {
+      if (pendingRestore !== null && pendingRestore.key === "") pendingRestore.key = match[1].trim();
+      else if (pendingRestore === null) {
+        pendingRestore = { key: match[1].trim(), sizeBytes: null };
+        result.restores.push(pendingRestore);
+      }
+      continue;
+    }
+    if ((match = /^Cache not found for (?:input )?keys?: (.+)$/.exec(line)) !== null) {
+      result.misses.push({ requestedKeys: match[1].split(",").map((key) => key.trim()).filter((key) => key.length > 0) });
+      pendingRestore = null;
+      continue;
+    }
+    if ((match = /^Cache Size: ~\d+ MB \((\d+) B\)$/.exec(line)) !== null) {
+      const sizeBytes = Number(match[1]);
+      if (pendingRestore !== null && pendingRestore.sizeBytes === null) pendingRestore.sizeBytes = sizeBytes;
+      else if (pendingSave !== null && pendingSave.sizeBytes === null) pendingSave.sizeBytes = sizeBytes;
+      else if (result.zigCache !== null && result.zigCache.sizeBytes === null) result.zigCache.sizeBytes = sizeBytes;
+      continue;
+    }
+    if ((match = /^Adding to the cache \.\.\.$/.exec(line)) !== null) {
+      pendingSave = { key: null, sizeBytes: null };
+      continue;
+    }
+    if ((match = /^Cache saved with key: (.+)$/.exec(line)) !== null) {
+      const key = match[1].trim();
+      result.saves.push({ outcome: "saved", key, sizeBytes: pendingSave?.sizeBytes ?? null, failure: null });
+      pendingSave = null;
+      continue;
+    }
+    if ((match = /^Cache hit occurred on the primary key (.+), not saving cache\.$/.exec(line)) !== null) {
+      result.saves.push({ outcome: "skipped-hit", key: match[1].trim(), sizeBytes: null, failure: null });
+      pendingSave = null;
+      continue;
+    }
+    if ((match = /^Cache size of ~\d+ MB \(\d+ B\) is over the (.+), not saving cache\.$/.exec(line)) !== null) {
+      result.saves.push({ outcome: "failed", key: pendingSave?.key ?? null, sizeBytes: pendingSave?.sizeBytes ?? null, failure: `size-over-${match[1].replaceAll(" ", "-")}` });
+      result.saveFailures += 1;
+      pendingSave = null;
+      continue;
+    }
+    if ((match = /^(?:Failed to save|Failed to reserve cache|Cache reservation failed): (.+)$/.exec(line)) !== null) {
+      result.saves.push({ outcome: "failed", key: pendingSave?.key ?? null, sizeBytes: pendingSave?.sizeBytes ?? null, failure: match[1].trim() });
+      result.saveFailures += 1;
+      pendingSave = null;
+      continue;
+    }
+  }
+  if (result.zigCache !== null && result.zigCache.saveKey !== null && result.zigCache.saveOutcome === null) {
+    const matching = result.saves.find((save) => save.key === result.zigCache.saveKey);
+    result.zigCache.saveOutcome = matching?.outcome ?? "unknown";
+    result.zigCache.saveFailure = matching?.failure ?? null;
+  }
+  return result;
+}
+
+/**
+ * setup-zigは保存keyへ `runId-attempt` を付ける。復元keyからrun idを取り出せば、
+ * 「同一runの別jobが保存したcacheを復元した」＝未完成cacheの巻き込みを検出できる。
+ */
+export function cacheKeyRun(key) {
+  const match = /-(\d+)-(\d+)$/.exec(typeof key === "string" ? key : "");
+  return match === null ? null : { runId: Number(match[1]), attempt: Number(match[2]) };
+}
+
+export function isSameRunCacheKey(key, runId) {
+  const parsed = cacheKeyRun(key);
+  return parsed !== null && Number.isSafeInteger(runId) && parsed.runId === runId;
+}
 
 export function secondsBetween(startedAt, completedAt) {
   return (Date.parse(completedAt) - Date.parse(startedAt)) / 1000;
@@ -52,12 +216,7 @@ export function osFromJobName(name) {
  * ran a full install (download or libLLVM-C relink).
  */
 export function parseToolchainLog(text) {
-  // GitHubのjob logは全行にtimestamp prefixが付くため、行跨ぎのpatternを
-  // 評価する前に除去する。
-  const clean = text
-    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "")
-    .replace(/\r/g, "")
-    .replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z /gm, "");
+  const clean = normalizeLogText(text);
   const result = { cacheHit: null, llvmReinstalled: null, llvmReason: null };
   if (/Cache restored from key: toolchains-/.test(clean) || /Cache hit for: toolchains-/.test(clean)) result.cacheHit = true;
   if (/Cache not found for (?:input )?keys?:[^\n]*toolchains-|Cache miss[^\n]*toolchains-/.test(clean)) result.cacheHit = false;
@@ -75,7 +234,8 @@ export function parseToolchainLog(text) {
   return result;
 }
 
-export function collectRunMetrics(run, jobs, toolchainByJob = new Map(), durationMs = null) {
+export function collectRunMetrics(run, jobs, toolchainByJob = new Map(), options = {}) {
+  const { durationMs = null, cacheByJob = new Map() } = options;
   const jobMetrics = jobs.map((job) => {
     const steps = (job.steps ?? [])
       .filter((step) => step.started_at && step.completed_at)
@@ -84,10 +244,12 @@ export function collectRunMetrics(run, jobs, toolchainByJob = new Map(), duratio
       name: job.name,
       os: osFromJobName(job.name),
       conclusion: job.conclusion,
+      runId: run.id,
       seconds: job.started_at && job.completed_at ? secondsBetween(job.started_at, job.completed_at) : null,
       queueSeconds: job.started_at && job.created_at ? secondsBetween(job.created_at, job.started_at) : null,
       steps,
       toolchain: toolchainByJob.get(job.id) ?? null,
+      cache: cacheByJob.get(job.id) ?? null,
     };
   });
   return {
@@ -152,6 +314,38 @@ export function aggregateRuns(runMetrics) {
         return reasons;
       }, {}),
     },
+    cache: summarizeCache(allJobs.filter((job) => job.cache !== null)),
+  };
+}
+
+/**
+ * Zigグローバルcacheとactions/cacheの実測をjob横断で集計する。
+ * `coldWarm` はZig cacheのhit/missでjob実行時間を層別した値で、
+ * cold/warmの実行時間差を同じ土俵で比較するための指標である。
+ */
+export function summarizeCache(cacheJobs) {
+  const zigJobs = cacheJobs.filter((job) => job.cache.zigCache !== null);
+  const zigCache = (job) => job.cache.zigCache;
+  const outcome = (job) => zigCache(job).saveOutcome;
+  const byHit = (hit) => summarize(zigJobs.filter((job) => zigCache(job).hit === hit).map((job) => job.seconds));
+  const limits = zigJobs.map((job) => zigCache(job).limitBytes).filter((value) => Number.isFinite(value));
+  const sameRunRestores = zigJobs.filter((job) => isSameRunCacheKey(zigCache(job).restoredKey, job.runId)).length;
+  return {
+    jobsReported: cacheJobs.length,
+    zigJobs: zigJobs.length,
+    zigHits: zigJobs.filter((job) => zigCache(job).hit === true).length,
+    zigMisses: zigJobs.filter((job) => zigCache(job).hit === false).length,
+    zigSameRunRestores: sameRunRestores,
+    zigCleared: zigJobs.filter((job) => zigCache(job).cleared === true).length,
+    zigSaved: zigJobs.filter((job) => outcome(job) === "saved").length,
+    zigSaveFailures: zigJobs.filter((job) => outcome(job) === "failed").length,
+    zigSaveUnknown: zigJobs.filter((job) => outcome(job) === "unknown").length,
+    zigSizeBytes: summarize(zigJobs.map((job) => zigCache(job).sizeBytes)),
+    limitMiB: limits.length === 0 ? null : Math.max(...limits) / (1024 * 1024),
+    restores: cacheJobs.reduce((total, job) => total + job.cache.restores.length, 0),
+    misses: cacheJobs.reduce((total, job) => total + job.cache.misses.length, 0),
+    saveFailures: cacheJobs.reduce((total, job) => total + job.cache.saveFailures, 0),
+    coldWarm: { hit: byHit(true), miss: byHit(false) },
   };
 }
 
@@ -208,8 +402,42 @@ export function formatMarkdown({ repo, workflow, generatedAt, runs, aggregate })
     "",
     `reason内訳: ${Object.entries(aggregate.toolchain.reasons).map(([reason, count]) => `${reason}=${count}`).join(", ") || "なし"}`,
     "",
+    "## Cache (Zigグローバルcache / actions/cache)",
+    "",
+    `計測job数: ${aggregate.cache.jobsReported}（うちZig cache管理job: ${aggregate.cache.zigJobs}）`,
+    "",
+    "| metric | value |",
+    "| --- | ---: |",
+    `| Zig cache hit | ${aggregate.cache.zigHits} |`,
+    `| Zig cache miss | ${aggregate.cache.zigMisses} |`,
+    `| 同一run保存cacheの復元 | ${aggregate.cache.zigSameRunRestores} |`,
+    `| Zig cache 保存成功 | ${aggregate.cache.zigSaved} |`,
+    `| Zig cache 保存失敗 | ${aggregate.cache.zigSaveFailures} |`,
+    `| Zig cache 保存結果不明 | ${aggregate.cache.zigSaveUnknown} |`,
+    `| Zig cache size limit超過によるclear | ${aggregate.cache.zigCleared} |`,
+    `| Zig cache 上限 | ${aggregate.cache.limitMiB === null ? "-" : `${aggregate.cache.limitMiB.toFixed(0)} MiB`} |`,
+    `| Zig cache directory size median | ${formatBytes(aggregate.cache.zigSizeBytes.median)} |`,
+    `| Zig cache directory size max | ${formatBytes(aggregate.cache.zigSizeBytes.max)} |`,
+    `| actions/cache restore | ${aggregate.cache.restores} |`,
+    `| actions/cache miss | ${aggregate.cache.misses} |`,
+    `| actions/cache 保存失敗 | ${aggregate.cache.saveFailures} |`,
+    "",
+    "| Zig cache | job数 | job実行時間 median | p90 |",
+    "| --- | ---: | ---: | ---: |",
+    `| hit（warm） | ${aggregate.cache.coldWarm.hit.count} | ${formatSeconds(aggregate.cache.coldWarm.hit.median)} | ${formatSeconds(aggregate.cache.coldWarm.hit.p90)} |`,
+    `| miss（cold） | ${aggregate.cache.coldWarm.miss.count} | ${formatSeconds(aggregate.cache.coldWarm.miss.median)} | ${formatSeconds(aggregate.cache.coldWarm.miss.p90)} |`,
+    "",
+    "同一run保存cacheの復元は、同一prefixを共有する並行jobが保存した未完成cacheを",
+    "復元した回数である（0が正常）。",
+    "",
   ];
   return `${lines.join("\n")}\n`;
+}
+
+export function formatBytes(bytes) {
+  if (!Number.isFinite(bytes)) return "-";
+  const mib = bytes / (1024 * 1024);
+  return mib >= 1 ? `${mib.toFixed(0)} MiB` : `${Math.round(bytes / 1024)} KiB`;
 }
 
 export function formatSeconds(seconds) {
@@ -255,17 +483,26 @@ export async function collectMetrics({ repo, workflow, runCount, includeLogs, gh
     }
     const timing = await ghApiJsonImpl(`repos/${repo}/actions/runs/${run.id}/timing`).catch(() => null);
     const toolchainByJob = new Map();
+    const cacheByJob = new Map();
     if (includeLogs) {
       for (const job of jobs) {
-        if (!(job.steps ?? []).some((step) => step.name === LLVM_SETUP_STEP)) continue;
+        const stepNames = (job.steps ?? []).map((step) => step.name);
+        const hasToolchain = stepNames.includes(LLVM_SETUP_STEP);
+        const hasCache = stepNames.includes(SETUP_ZIG_STEP) ||
+          stepNames.some((name) => name.startsWith(ACTIONS_CACHE_STEP_PREFIX) || name.startsWith(`Post ${ACTIONS_CACHE_STEP_PREFIX}`));
+        if (!hasToolchain && !hasCache) continue;
+        let text;
         try {
-          toolchainByJob.set(job.id, parseToolchainLog(await ghApiLogImpl(`repos/${repo}/actions/jobs/${job.id}/logs`)));
+          text = await ghApiLogImpl(`repos/${repo}/actions/jobs/${job.id}/logs`);
         } catch (error) {
           log(`job ${job.id} (${job.name})のlog取得に失敗しました: ${error.message}`);
+          continue;
         }
+        if (hasToolchain) toolchainByJob.set(job.id, parseToolchainLog(text));
+        if (hasCache) cacheByJob.set(job.id, parseCacheLog(text));
       }
     }
-    collected.push(collectRunMetrics(run, jobs, toolchainByJob, timing?.run_duration_ms));
+    collected.push(collectRunMetrics(run, jobs, toolchainByJob, { durationMs: timing?.run_duration_ms, cacheByJob }));
     log(`run ${run.id}: ${jobs.length} jobs`);
   }
   return { runs: collected, aggregate: aggregateRuns(collected) };

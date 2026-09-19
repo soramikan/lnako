@@ -23,6 +23,8 @@ const dispatchCoverageScript = await readFile(resolve(root, "tools/check_dispatc
   (await readFile(resolve(root, "tools/lib/coverage_process.mjs"), "utf8"));
 const dispatchCoverageShardsScript = await readFile(resolve(root, "tools/check_dispatch_coverage_shards.mjs"), "utf8");
 const nativeOracleScript = await readFile(resolve(root, "tools/compare_native_oracle.mjs"), "utf8");
+const nativeTimingScript = await readFile(resolve(root, "tools/native_oracle_timing.mjs"), "utf8");
+const timingAggregateScript = await readFile(resolve(root, "tools/aggregate_native_timing.mjs"), "utf8");
 const nativeAotArtifactChecker = await readFile(resolve(root, "tools/check_native_aot_artifacts.mjs"), "utf8");
 const nativeAotAttestationVerifier = await readFile(resolve(root, "tools/verify_native_aot_attestation.mjs"), "utf8");
 const interpreterOracleScript = await readFile(resolve(root, "tools/compare_interpreter_oracle.mjs"), "utf8");
@@ -522,6 +524,21 @@ if (!nativeAotVerificationBlock || !nativeAotVerificationBlock.includes("if: mat
     !nativeAotVerificationBlock.includes("--shard-count") || !nativeAotVerificationBlock.includes("--artifact")) {
   throw new Error("AOT fixture／route shardのworker、shard指定、またはartifact出力が不正です");
 }
+// timing telemetryはcanonical artifactと別document・別artifactで扱い、
+// median weight table（shard再配分）の入力にのみ使う。互換性evidenceの
+// 契約へ性能値を混ぜないことをここで固定する。
+if (!nativeOracleScript.includes("import { createTimingDocument, parseTimingPath, platformKey, roundMs, writeTimingDocument }") ||
+    !nativeOracleScript.includes("const timingPath = parseTimingPath(process.argv, process.env);") ||
+    !nativeOracleScript.includes("await writeTiming(") ||
+    !nativeTimingScript.includes('"lnako.native-oracle-timing.v1"') ||
+    !nativeTimingScript.includes("export function buildTimingAggregate") ||
+    !nativeTimingScript.includes("export function medianOf") ||
+    !nativeTimingScript.includes("LNAKO_NATIVE_ORACLE_TIMING") ||
+    !timingAggregateScript.includes("buildTimingAggregate") ||
+    !timingAggregateScript.includes("lnako-native-timing-*") ||
+    !workflow.includes("node --test tools/native_oracle_timing_test.mjs")) {
+  throw new Error("AOT fixture timing telemetryの分離実装または単体テストが不完全です");
+}
 if (nativeAotJob.includes("check_aot_suite_parallel.mjs")) throw new Error("旧AOT全検査runnerを分割jobへ再導入しないでください");
 if (!nativeOracleScript.includes("const shard = parseShard();") || !nativeOracleScript.includes("selectedCases = selectCases(cases, shard);") ||
     !nativeOracleScript.includes("const selectedOptimizations = parseOptimizations();") || !nativeOracleScript.includes("weighted-source-command") || !nativeOracleScript.includes("--shard-index") ||
@@ -600,10 +617,31 @@ if (!nativeUpload || !nativeUpload.includes("if: matrix.task == 'native' && alwa
 }
 if (nativeUpload.includes("run:")) throw new Error("AOT shard artifact uploadで追加の検証コマンドを実行しないでください");
 const uploadActions = workflow.match(/^        uses: actions\/upload-artifact@/gm) ?? [];
-if (uploadActions.length !== 8 || (testJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 1 ||
-    (nativeAotJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 4 ||
-    (windowsAotJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 1) {
-  throw new Error(`actions/upload-artifactはmacOS dispatch evidence 1＋AOT artifact 4＋Windows consumer 1＋aggregate 1＋attestation 1ステップ必要です: actual=${uploadActions.length}`);
+if (uploadActions.length !== 10 || (testJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 1 ||
+    (nativeAotJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 5 ||
+    (windowsAotJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 2) {
+  throw new Error(`actions/upload-artifactはmacOS dispatch evidence 1＋AOT artifact 4＋timing telemetry 4＋Windows consumer 2＋aggregate 1＋attestation 1ステップ必要です: actual=${uploadActions.length}`);
+}
+// timing telemetryは互換性evidenceとは別artifact名で分離する。集約検証は
+// `lnako-native-oracle-*` globでpartitionを検査するため、名前が被ると
+// 検証対象へ混入してしまう。
+const nativeTimingUpload = aotStep("Upload native AOT timing telemetry");
+if (!nativeTimingUpload || !nativeTimingUpload.includes("if: matrix.task == 'native' && always()") ||
+    !nativeTimingUpload.includes("name: lnako-native-timing-${{ matrix.os }}-shard-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}") ||
+    !nativeTimingUpload.includes("path: ${{ runner.temp }}/lnako-native-timing-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json") ||
+    !nativeTimingUpload.includes("if-no-files-found: ignore") || !nativeTimingUpload.includes("retention-days: 30") ||
+    nativeTimingUpload.includes("lnako-native-oracle-")) {
+  throw new Error("AOT timing telemetry artifactの分離設定が不正です");
+}
+if (nativeTimingUpload.includes("run:")) throw new Error("AOT timing telemetry uploadで追加の検証コマンドを実行しないでください");
+const windowsTimingUpload = windowsAotStep("Upload native AOT timing telemetry");
+if (!windowsTimingUpload || !windowsTimingUpload.includes("name: lnako-native-timing-") || windowsTimingUpload.includes("lnako-native-oracle-")) {
+  throw new Error("Windows AOT consumerのtiming telemetry artifact分離が不正です");
+}
+const nativeTimingVerificationBlock = aotStep("Differential native AOT verification (fixture/route shard)");
+if (!nativeTimingVerificationBlock || !nativeTimingVerificationBlock.includes("LNAKO_NATIVE_ORACLE_TIMING: ${{ runner.temp }}/lnako-native-timing-") ||
+    !windowsDifferentialBlock.includes("LNAKO_NATIVE_ORACLE_TIMING: ${{ runner.temp }}/lnako-native-timing-")) {
+  throw new Error("AOT fixture／route shardのtiming telemetry出力先が未設定です");
 }
 const dispatchUploadBlock = aotStep("Upload native dispatch evidence");
 if (!dispatchUploadBlock || !dispatchUploadBlock.includes("if: matrix.task == 'support-dispatch-evidence' && always()") ||
@@ -832,13 +870,19 @@ const setupZigBlocks = [...workflow.matchAll(
   /      - uses: mlugg\/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2\.2\.1[\s\S]*?(?=      - uses: actions\/setup-node@)/g,
 )].map((match) => match[0]);
 const setupZigCacheSizeLimitMiB = 1536;
+// AOT native shardのZig cache identityはsuiteだけでなくfixture shardと
+// optimizationまで含める（v2世代）。setup-zigは保存keyへrunId-attemptを付けて
+// prefix一致で復元するため、同一prefixのshardが並行すると先行shardの未完成
+// cacheを復元し、後続の保存がreservation競合で失敗する。
+const nativeAotCacheKey = "cache-key: ${{ matrix.task == 'native' && format('aot-native-v2-s{0}of{1}-{2}', matrix.fixtureShardIndex, matrix.fixtureShardCount, matrix.optimizationKey) || matrix.suite }}";
 if (setupZigBlocks.length !== 5 ||
     !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat' }}") && block.includes("cache-key: ${{ matrix.suite }}")) ||
-    !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.task == 'native' }}") && block.includes("cache-key: ${{ matrix.suite }}")) ||
+    !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.task == 'native' }}") && block.includes("matrix.fixtureShardIndex") && block.includes("matrix.optimizationKey")) ||
+    countOccurrences(workflow, nativeAotCacheKey) !== 2 ||
     !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: true") && block.includes("cache-key: aot-compiler")) ||
     !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: false")) ||
     (workflow.match(/cache-size-limit:/g) ?? []).length !== 4) {
-  throw new Error(`setup-zigのcache保存対象または${setupZigCacheSizeLimitMiB} MiB上限が不正です`);
+  throw new Error(`setup-zigのcache保存対象、AOT shard／optimization単位のcache identity分離、または${setupZigCacheSizeLimitMiB} MiB上限が不正です`);
 }
 
 const setupNodeBlock = workflow.match(
@@ -855,6 +899,7 @@ for (const required of [
   "use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat' }}",
   "use-cache: ${{ matrix.task == 'native' }}",
   "cache-key: ${{ matrix.suite }}",
+  nativeAotCacheKey,
   `cache-size-limit: ${setupZigCacheSizeLimitMiB}`,
   "timeout-minutes: 50",
 ]) if (!workflow.includes(required)) throw new Error(`CI安全設定がありません: ${required}`);

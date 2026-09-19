@@ -234,3 +234,88 @@ setup系は40s未満へ収束済みで、残存コストはテストハーネス
 これらはワークフロー重複ではなく実行コスト本体のため、Phase 7（P3）の
 対象として記録する。package isolationがzig global cacheを共有できるか、
 差分テストのworker並列化は別途計測が必要。
+
+---
+
+# 改善計画2 Phase 1: cache identity分離と計測基盤
+
+## 実測した欠陥（改善前）
+
+run 35448509540（main push）の Linux x86_64 AOT native shard 1/3 O0 では、
+Zig cacheが同一suite名だけをidentityにしていたため次の連鎖が起きていた。
+
+| 観測 | 値 |
+| --- | --- |
+| 復元key | `setup-zig-cache-v2-aot-zig-x86_64-linux-0.16.0-aot-native-35448509540-1` |
+| 復元したcacheの生成元 | 同一run（`35448509540-1`）の別shard |
+| 復元サイズ | `Cache Size: ~0 MB (186 B)`（実質空） |
+| 保存結果 | `Failed to save: Unable to reserve cache with key ..., another job may be creating this cache.` |
+| 保存時cache dir | 253,011,854 bytes（上限1,610,612,736 bytes未満） |
+
+`mlugg/setup-zig` は保存keyへ `runId-attempt` を付け、復元はkeyのprefix一致で
+行う。cache-keyが `aot-native` の1種類しかないと、12個のLinux native shardが
+同じprefixを共有し、**先行shardが保存した未完成cacheを後続shardが復元**する。
+後続shardの保存はreservation競合で失敗し、cache lineageが育たない。
+
+Windows AOT consumer shard（compiler共有後は `zig build` しない）は
+`Cache miss: leaving Zig cache directory ... unpopulated` の後
+`Zig cache directory is inaccessible; nothing to save` となり、
+同一prefixの復元だけが残る。
+
+## 実装（Phase 1）
+
+### AOT Zig cache keyの分離
+
+AOT native shardのcache-keyを `suite` から
+`aot-native-v2-s{shardIndex}of{shardCount}-{optimizationKey}` へ変更した
+（`aot` と `aot_windows` の両方）。OS・arch・Zig versionはsetup-zig側のkeyに
+含まれるため重複させない。世代marker `-v2-` により、分離前のpoisonedな
+cacheは復元されない。
+
+### cache telemetry
+
+`tools/collect_ci_metrics.mjs` がjob logから次を解析し、performance reportの
+`## Cache` 節へ出す。
+
+- 復元key（`restoredKey`）と、それが**同一run由来か**（`zigSameRunRestores`）
+- Zig cache hit / miss
+- Zig cache directory size（median / max）と上限（MiB）
+- size limit超過によるcache clear（`zigCleared`）
+- 保存成功 / 失敗 / 不明（`zigSaved` / `zigSaveFailures` / `zigSaveUnknown`）
+- actions/cache（toolchain・oracle）のrestore / miss / 保存失敗
+- Zig cache hit（warm）とmiss（cold）で層別したjob実行時間
+
+`zigSameRunRestores` はPhase 1の分離が効いていれば0になる。
+
+### fixture timing telemetry
+
+`tools/compare_native_oracle.mjs` がfixture別に
+`officialSourceMs` / `officialGeneratedMs` / `interpreterMs` /
+`native[{optimization,buildMs,runMs}]` / `totalMs` を計測し、
+`LNAKO_NATIVE_ORACLE_TIMING`（または `--timing`）の文書へ出力する。
+
+- schema: `lnako.native-oracle-timing.v1`
+- canonical artifact（`lnako.native-oracle-artifact.v3`）とは別document・別artifact
+- artifact名は `lnako-native-timing-*` とし、集約検証が使う
+  `lnako-native-oracle-*` globへ混入させない
+- 性能値は変動するためattestation対象へ含めない
+
+fixture × platform × optimization の代表値は `buildTimingAggregate()` が
+medianで求める（Phase 3のshard weight tableの入力）。
+
+### 現在の静的weight分布（参考）
+
+`--shard-count 3` の静的weight（source長＋command数×8）は
+max/median = 1.000 と見積り上は均等である。したがってPhase 3の課題は
+「見積りの偏り」ではなく「見積りと実測の乖離」であり、実測weightでの
+再配分が必要になる。
+
+## 計測手順
+
+```sh
+# cache / timing telemetryを含むCI性能レポート
+node tools/collect_ci_metrics.mjs --runs 5 --output docs/ci-performance-latest.md
+
+# fixture timing artifactの集約（downloadしたディレクトリを渡す）
+node tools/aggregate_native_timing.mjs --directory .cache/native-timing
+```

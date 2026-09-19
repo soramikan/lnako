@@ -295,6 +295,9 @@ jobs:
       - name: Toolchain cache regression tests
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node --test tools/setup_llvm_test.mjs tools/collect_ci_metrics_test.mjs tools/aot_compiler_artifact_test.mjs
+      - name: CI telemetry tests
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
+        run: node --test tools/native_oracle_timing_test.mjs
       - name: Change classifier tests
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node --test tools/classify_changes_test.mjs
@@ -751,7 +754,14 @@ jobs:
         with:
           version: 0.16.0
           use-cache: ${{ matrix.task == 'native' }}
-          cache-key: ${{ matrix.suite }}
+          # Zig cache identityはsuiteだけでなくfixture shardとoptimizationまで
+          # 含める（v2世代）。setup-zigは保存keyへrunId-attemptを付けてprefix
+          # 一致で復元するため、同一prefixのshardが並行すると、先行shardが保存
+          # した未完成のcacheを後続shardが復元し、後続の保存は
+          # "another job may be creating this cache"で失敗する。
+          # OS／arch／Zig versionはsetup-zig側でkeyへ含まれるため重複させない。
+          # support taskはuse-cache=falseのためkey値は使われない。
+          cache-key: ${{ matrix.task == 'native' && format('aot-native-v2-s{0}of{1}-{2}', matrix.fixtureShardIndex, matrix.fixtureShardCount, matrix.optimizationKey) || matrix.suite }}
           cache-size-limit: 1536
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
@@ -793,6 +803,9 @@ jobs:
         env:
           LNAKO_NATIVE_ORACLE_JOBS: "1"
           LNAKO_NATIVE_ORACLE_ARTIFACT: ${{ runner.temp }}/lnako-native-oracle-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
+          # timing telemetryは互換性evidenceと分離した別ファイルへ出力する。
+          # 性能値は毎回変動するためcanonical evidence／attestationへは含めない。
+          LNAKO_NATIVE_ORACLE_TIMING: ${{ runner.temp }}/lnako-native-timing-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
           FIXTURE_SHARDED: ${{ matrix.fixtureSharded }}
           FIXTURE_SHARD_INDEX: ${{ matrix.fixtureShardIndex }}
           FIXTURE_SHARD_COUNT: ${{ matrix.fixtureShardCount }}
@@ -815,6 +828,17 @@ jobs:
         with:
           name: lnako-native-oracle-${{ matrix.os }}-shard-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}
           path: ${{ runner.temp }}/lnako-native-oracle-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
+          if-no-files-found: ignore
+          retention-days: 30
+      # timing artifactは集約検証の`lnako-native-oracle-*` globへ入らない名前で
+      # 分離する（partition検証対象は互換性evidenceのみ）。
+      - name: Upload native AOT timing telemetry
+        if: matrix.task == 'native' && always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-native-timing-${{ matrix.os }}-shard-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}
+          path: ${{ runner.temp }}/lnako-native-timing-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
           if-no-files-found: ignore
           retention-days: 30
       - name: macOS dispatch coverage audit
@@ -1032,7 +1056,14 @@ jobs:
         with:
           version: 0.16.0
           use-cache: ${{ matrix.task == 'native' }}
-          cache-key: ${{ matrix.suite }}
+          # Zig cache identityはsuiteだけでなくfixture shardとoptimizationまで
+          # 含める（v2世代）。setup-zigは保存keyへrunId-attemptを付けてprefix
+          # 一致で復元するため、同一prefixのshardが並行すると、先行shardが保存
+          # した未完成のcacheを後続shardが復元し、後続の保存は
+          # "another job may be creating this cache"で失敗する。
+          # OS／arch／Zig versionはsetup-zig側でkeyへ含まれるため重複させない。
+          # support taskはuse-cache=falseのためkey値は使われない。
+          cache-key: ${{ matrix.task == 'native' && format('aot-native-v2-s{0}of{1}-{2}', matrix.fixtureShardIndex, matrix.fixtureShardCount, matrix.optimizationKey) || matrix.suite }}
           cache-size-limit: 1536
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
@@ -1079,6 +1110,9 @@ jobs:
         env:
           LNAKO_NATIVE_ORACLE_JOBS: "1"
           LNAKO_NATIVE_ORACLE_ARTIFACT: ${{ runner.temp }}/lnako-native-oracle-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
+          # timing telemetryは互換性evidenceと分離した別ファイルへ出力する。
+          # 性能値は毎回変動するためcanonical evidence／attestationへは含めない。
+          LNAKO_NATIVE_ORACLE_TIMING: ${{ runner.temp }}/lnako-native-timing-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
           FIXTURE_SHARDED: ${{ matrix.fixtureSharded }}
           FIXTURE_SHARD_INDEX: ${{ matrix.fixtureShardIndex }}
           FIXTURE_SHARD_COUNT: ${{ matrix.fixtureShardCount }}
@@ -1101,6 +1135,17 @@ jobs:
         with:
           name: lnako-native-oracle-${{ matrix.os }}-shard-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}
           path: ${{ runner.temp }}/lnako-native-oracle-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
+          if-no-files-found: ignore
+          retention-days: 30
+      # timing artifactは集約検証の`lnako-native-oracle-*` globへ入らない名前で
+      # 分離する（partition検証対象は互換性evidenceのみ）。
+      - name: Upload native AOT timing telemetry
+        if: matrix.task == 'native' && always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-native-timing-${{ matrix.os }}-shard-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}
+          path: ${{ runner.temp }}/lnako-native-timing-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
           if-no-files-found: ignore
           retention-days: 30
 
