@@ -902,3 +902,20 @@ run全体のrunner minutesは、Phase 6の変更対象外である`test` job行�
 **単一run比較では施策の効果を判定できない**。計画§10の長期計測（20〜30 runの
 median/p75/p90/p95の蓄積）は別途継続する。本節のPhase 6評価は、構造的に変わった
 Linux AOT job群の実測と複数runのmedianに基づく。
+
+## 参考: 観測されたflaky失敗（本施策とは無関係）
+
+run 35472553438（docs専用commit。直前のrunと`docs/ci-performance.md`のみ差分）で
+`macOS arm64 / AOT native routes O0+O1` が1件失敗した。
+
+- 失敗箇所: dispatch coverage auditのfixture
+  `node-file-cases.json/plugin-node-process-completion-order`
+  （`tools/lib/coverage_process.mjs` の `assertEquivalent`。trace有無で結果が変化）
+- 当該fixtureは子processの完了順（25 msポーリング＋2000 ms＋8000 ms deadline）と
+  `5秒待` に依存する**タイミング依存**の内容で、失敗時は実行に51 sを要していた。
+  macOS runnerの負荷でtrace有効側の出力が変わったものと見られる。
+- `task: native`行は本施策の変更対象外（macOS行は`aot` jobのまま）で、直前の2 run
+  （35469955469 / 35471297565）では同じコードが成功していた。失敗jobのみ再実行した
+  ところ全て成功し、**flaky**であることを確認した。
+- fixtureの待ち時間へ余裕を足す等のハードニングは互換oracleの意味を変えない範囲で
+  検討すべき別課題のため、本施策では変更していない。
