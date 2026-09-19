@@ -477,3 +477,40 @@ commit・OS・arch・Zig version・build mode・compat-js・SHA-256を照合し�
   移ったため`needs`と条件へ`aot_windows`を追加した。
 
 検証量は変えていない（同じ検証を同じOSで実行し、compiler buildだけを共有する）。
+
+## 実測: producerのZig cacheが壊れたcompilerを混入させる（重大）
+
+`aot_compiler` producer jobのZigグローバルcacheは、prefix一致で前runの
+cacheを復元する。このcacheを有効にしたままにすると、Windows shardが
+`Illegal instruction` で失敗する事例を確認した。
+
+### A/B（同一commit 75b7c651）
+
+| run | producerのZig cache | compiler build | compiler artifact | 結果 |
+| --- | --- | ---: | ---: | --- |
+| 35456603123 | **hit**（`...aot-compiler-35455870091-1`） | 221s | 9,823,566 bytes | Windows shard 11件＋support系が`Illegal instruction`で失敗（15 job） |
+| 35457590285 | **miss**（`leaving ... unpopulated`） | 191s | 正しいbinary | Windows全job成功（0 failure） |
+
+失敗runでは、公式経路は成功しているのに `lnakoRun`（**インタープリタ**）と
+`lnakoNativeO0` の両方が `exitCode: 3 / stderrClass: runtime-error` になった。
+compiler本体（interpreterを含む）が壊れていたことを示す。producer自身の
+smoke testは `zig-out/bin/lnako.exe`（producerがbuildしたbinary）に対して
+実行されるため通り、artifactのSHA-256も一致していた。つまり
+**壊れた成果物が正しいものとして27 jobへ配布された**。
+
+cacheを無効化した再実行（35457590285）では同じcommitでWindows全jobが成功した。
+
+### 対応
+
+`aot_compiler` のsetup-zigを `use-cache: false` に変更した。このjobの成果物は
+27 jobのAOT検証が使うため、Zig cache経由で壊れた成果物が混入する余地を
+残さない。compiler buildは約190sで、失敗時の再実行コスト（15 job × 数分＋
+reviewerの調査）に比べて無効化のコストは小さい。
+
+`check_ci_workflow.mjs` でproducerがcache-keyを持たず `use-cache: false` で
+あることを検査する。
+
+**未解明**: Zigグローバルcacheのどの部分が壊れたcompilerを生むのかは特定して
+いない。cacheの内容と生成物の対応は再現手順が重く、まず「壊れた成果物を
+配布しない」ことを優先した。同種のリスクは他jobにもあるが、成果物を
+artifactとして配布するのはこのjobだけである。

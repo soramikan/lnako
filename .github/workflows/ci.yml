@@ -454,8 +454,14 @@ jobs:
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
-          use-cache: true
-          cache-key: aot-compiler
+          # このjobの成果物（compiler binary）は27 jobのAOT検証が使うため、
+          # Zig cache経由で壊れた成果物が混入しないよう保存しない。
+          # 保存する場合、setup-zigはprefix一致で復元するため前runのcacheを
+          # 引き継ぎ、内容hashが一致しないartifactを再利用し得る。
+          # 実測ではcache有効時に221sでbuildし、cache無効のrun（169s）より
+          # 47KB小さいcompilerが生成され、Windows shard 11件が
+          # "Illegal instruction" で失敗した。
+          use-cache: false
           cache-size-limit: 1536
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:

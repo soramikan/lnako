@@ -948,7 +948,8 @@ if (setupZigBlocks.length !== 5 ||
     countOccurrences(workflow, nativeAotCacheKey) !== 1 ||
     aotWindowsJobBlock === undefined ||
     aotWindowsJobBlock.includes("cache-key:") ||
-    !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: true") && block.includes("cache-key: aot-compiler")) ||
+    !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: false") && block.includes("cache-size-limit") && !block.includes("cache-key:")) ||
+    countOccurrences(workflow, "cache-key: aot-compiler") !== 0 ||
     (workflow.match(/cache-size-limit:/g) ?? []).length !== 4) {
   throw new Error(`setup-zigのcache保存対象、AOT shard／optimization単位のcache identity分離、Windows AOT shardのcache無効化、または${setupZigCacheSizeLimitMiB} MiB上限が不正です`);
 }
