@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   aggregateRuns,
+  cacheComparisonKey,
   cacheKeyRun,
   collectMetrics,
   collectRunMetrics,
@@ -195,6 +196,97 @@ test("summarizeCache stratifies job runtime by Zig cache hit and miss", () => {
   assert.equal(aggregate.coldWarm.miss.median, 400);
   assert.equal(aggregate.misses, 1);
   assert.equal(aggregate.saveFailures, 1);
+});
+
+test("summarizeCache pairs cold and warm runs of the same job only", () => {
+  const make = (hit, seconds, name, prefix) => ({
+    id: 1,
+    runId: 100,
+    name,
+    seconds,
+    cache: {
+      zigCache: { requestedPrefix: prefix, restoredKey: hit ? `k-100-1` : null, hit, sizeBytes: 1024, limitBytes: 1536 * 1024 * 1024, cleared: false, saveKey: "k", saveOutcome: "saved", saveFailure: null },
+      restores: [],
+      misses: [],
+      saves: [],
+      cleared: 0,
+      saveFailures: 0,
+    },
+  });
+  const aggregate = summarizeCache([
+    // 同名jobがcold 400s / warm 200sを観測 → 差200s
+    make(false, 400, "Linux x86_64 / core", "p-core-"),
+    make(true, 200, "Linux x86_64 / core", "p-core-"),
+    // 別suiteは同じ名前空間へ混ぜない
+    make(false, 50, "Linux x86_64 / standard", "p-standard-"),
+    // cold/warmの片方しか無いjobは対応表へ出さない
+    make(true, 30, "Linux x86_64 / host", "p-host-"),
+  ]);
+  assert.equal(aggregate.pairedColdWarm.length, 1);
+  assert.deepEqual(aggregate.pairedColdWarm[0], {
+    name: "Linux x86_64 / core",
+    coldRuns: 1,
+    warmRuns: 1,
+    coldMedianSeconds: 400,
+    warmMedianSeconds: 200,
+    deltaSeconds: 200,
+  });
+  // 層別の参考値は従来どおり全jobを対象にする。
+  assert.equal(aggregate.coldWarm.miss.count, 2);
+  assert.equal(aggregate.coldWarm.hit.count, 2);
+  assert.equal(cacheComparisonKey(make(true, 1, "a", "p-")), "a|p-");
+  assert.notEqual(cacheComparisonKey(make(true, 1, "a", "p-")), cacheComparisonKey(make(true, 1, "a", "q-")));
+});
+
+test("formatMarkdown renders the paired cold/warm table only when available", () => {
+  const withPairs = formatMarkdown({
+    repo: "soramikan/lnako",
+    workflow: "ci.yml",
+    generatedAt: "2026-09-19T00:00:00.000Z",
+    runs: [],
+    aggregate: {
+      runCount: 1,
+      wallTime: summarize([100]),
+      queueTime: summarize([5]),
+      jobCount: 1,
+      runnerMinutesByOs: { linux: 1 },
+      longestJobs: [],
+      steps: [],
+      toolchain: { jobsReported: 0, cacheHits: 0, cacheMisses: 0, llvmReinstalled: 0, llvmReused: 0, reasons: {} },
+      cache: {
+        jobsReported: 1, zigJobs: 1, zigHits: 1, zigMisses: 1, zigSameRunRestores: 0, zigCleared: 0,
+        zigSaved: 1, zigSaveFailures: 0, zigSaveUnknown: 0, zigSizeBytes: summarize([1024]), limitMiB: 1536,
+        restores: 0, misses: 0, saveFailures: 0,
+        coldWarm: { hit: summarize([200]), miss: summarize([400]) },
+        pairedColdWarm: [{ name: "Linux x86_64 / core", coldRuns: 1, warmRuns: 1, coldMedianSeconds: 400, warmMedianSeconds: 200, deltaSeconds: 200 }],
+      },
+    },
+  });
+  assert.match(withPairs, /cold\/warm対応表で判断する/);
+  assert.match(withPairs, /\| Linux x86_64 \/ core \| 1 \| 1 \| 6m40s \| 3m20s \| 3m20s \|/);
+  assert.match(withPairs, /prefixを分離した世代では0になる/);
+
+  const withoutPairs = formatMarkdown({
+    repo: "soramikan/lnako",
+    workflow: "ci.yml",
+    generatedAt: "2026-09-19T00:00:00.000Z",
+    runs: [],
+    aggregate: {
+      runCount: 1, wallTime: summarize([100]), queueTime: summarize([5]), jobCount: 0,
+      runnerMinutesByOs: {}, longestJobs: [], steps: [],
+      toolchain: { jobsReported: 0, cacheHits: 0, cacheMisses: 0, llvmReinstalled: 0, llvmReused: 0, reasons: {} },
+      cache: {
+        jobsReported: 0, zigJobs: 0, zigHits: 0, zigMisses: 0, zigSameRunRestores: 0, zigCleared: 0,
+        zigSaved: 0, zigSaveFailures: 0, zigSaveUnknown: 0, zigSizeBytes: summarize([]), limitMiB: null,
+        restores: 0, misses: 0, saveFailures: 0,
+        coldWarm: { hit: summarize([]), miss: summarize([]) },
+        pairedColdWarm: [],
+      },
+    },
+  });
+  assert.doesNotMatch(withoutPairs, /^\| job（同名・同一prefix） \|/m);
+  assert.match(withoutPairs, /対応表は出していない/);
+  assert.match(withoutPairs, /\| Zig cache 上限 \| - \|/);
 });
 
 test("normalizeLogText strips ANSI escapes and timestamp prefixes", () => {

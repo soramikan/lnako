@@ -339,3 +339,107 @@ node tools/collect_ci_metrics.mjs --runs 5 --output docs/ci-performance-latest.m
 # fixture timing artifactの集約（downloadしたディレクトリを渡す）
 node tools/aggregate_native_timing.mjs --directory .cache/native-timing
 ```
+
+## 実測: cache identity分離の効果（改善後 run 35452640573）
+
+改善前後で同じ12個のLinux AOT native shardを比較した。
+
+| 観測 | 改善前（35448509540） | 改善後（35452640573） |
+| --- | --- | --- |
+| 復元prefix | `...-aot-native-`（12 shardで共有） | `...-aot-native-v2-s{0..2}of3-O{0..3}-`（12通り） |
+| 復元したcache | 同一runの別shardが保存した186 bytes | すべてmiss（新prefixのため初回） |
+| 保存結果 | `Failed to save: ... another job may be creating this cache.` | 12 shardすべて `Saving Zig cache with key ...` |
+| 保存時のcache dir | 253,011,854 bytes | 253,011,854〜253,024,582 bytes |
+| reservation競合 | あり | 0件 |
+
+分離の直接効果は「保存が成功するようになった」ことである。同一prefixを共有する
+並行shardが互いの未完成cacheを復元し合う経路が閉じたため、次run以降は各shardが
+自分のcacheを復元できる。`zigSameRunRestores`（performance report）は分離後0になる。
+
+なお初回runは全shardがmissのため、効果は2回目以降のrunで現れる。
+
+## 実測: fixture timingとshard再配分の評価（Phase 3の判定）
+
+run 35452640573のtiming artifact（Linux 12 shard、342 fixture × 4 optimization）を
+`aggregate_native_timing.mjs` で集約した。
+
+| 指標 | 値 |
+| --- | --- |
+| fixture数 | 342 |
+| 計測document | 12（shard 3 × optimization 4） |
+| Pearson r（静的weight, 実測median totalMs） | **0.956** |
+| 現行静的配分の実測コスト | 56.5s / 58.2s / 60.9s（max/median = 1.047） |
+| 実測medianで再配分した場合 | 58.5s / 58.7s / 58.3s（max/median = 1.003） |
+| AOT fixture jobの実測コスト | 55〜65s（job全体の約1/4） |
+
+現行の静的weight（source長＋command数×8）は実測コストと r=0.956 で相関し、
+現行配分の偏りは4.7%である。実測medianで再配分すると1.003まで均等化できるが、
+AOT fixture jobはクリティカルパス上に無く（最長jobはWindows core）、job全体の
+1/4程度でしかない。**短縮は最大でも約2〜4s/job**であり、実測weightを
+リポジトリへ固定して保守するコストに見合わない。
+
+→ **Phase 3のLPT重み固定は見送り**。計測基盤（timing telemetry + aggregate）は
+残し、将来fixture追加で偏りが拡大した場合に再評価する。
+
+## クリティカルパスの再測定（改善後）
+
+run 35452640573のjob実行時間（上位）とworkflow wall time 848s。
+
+| job | 実行時間 |
+| --- | ---: |
+| Windows x86_64 / core | 809s |
+| macOS arm64 / mac-host-compat | 755s |
+| Windows x86_64 / compat-aot | 739s |
+| macOS arm64 / mac-core-standard-support | 548s |
+| Linux x86_64 / core | 509s |
+
+クリティカルパスは **Windows x86_64 / core（809s）** で、これは
+`use-cache` 対象外（`host` のみ対象）のため **Zigグローバルcacheを一切使っていない**。
+Windowsでの主要コストは `Test`（`zig build test`）と `Zig package isolation check`
+（consumer packageの `zig fetch`＋`zig build`）である。cache導入の可否は
+「`zig build test` の再ビルドがZigグローバルcacheで短縮できるか」で決まるため、
+次段で実測する。
+
+## 実測: Zigグローバルcacheの効果測定（Windows core検討の前提）
+
+クリティカルパス（Windows x86_64 / core、1074s）は `use-cache` 対象外であり、
+Zigグローバルcacheを使っていない。そこでcache導入の効果をローカルで実測した。
+
+| 条件 | `zig build test` | 差分 |
+| --- | ---: | ---: |
+| cold（global＋local cacheを新規作成） | 233.3s | - |
+| warm（同一cache dirを再利用） | 209.4s | **-23.9s（-10.2%）** |
+
+`zig build test` のコストはコンパイル主体（テスト実行は7s）だが、Zigは
+ファイル単位の内容hashでcacheするため、coldでも大半の成果物は再生成される。
+グローバルcacheの復元で削減できるのは `deps`／compiler-rt等の共通部分
+（実測 45 MB / 217 MB）に限られ、**約24s（job全体の約2%）**にとどまる。
+
+cacheを有効にした場合のコスト：
+
+- cache size: `zig build test` 後に約217 MB。`host` は既に373 MBのcacheを持つため、
+  仮に `core` を追加すると**約590 MB/run**の追加保存となる。
+- リポジトリのcache総量は既に10 GiB上限を超過しており、Phase 1の分離で
+  shard別cacheは6run程度でevictされる（`host` は毎runhitしているが、
+  それは `host` が1 jobしかないため）。
+
+→ **Windows coreへのZig cache追加は見送り**。24s/jobの短縮に対し、
+  約590 MB/runのcache保存とeviction圧力の増加が見合わない。
+
+## クリティカルパスの構造
+
+改善後の2 run（848s / 1112s）でクリティカルパスは一貫して
+**Windows x86_64 / core**（809s / 1074s）である。内訳は
+`Test` 378s、`Zig package isolation check` 342s、`Differential interpreter test` 212s。
+
+この3ステップは、いずれも**Windowsでの実ビルド／実実行コスト**であり、
+ワークフロー側の重複実行ではない。
+
+- `Test`: `zig build test`。cache導入効果は上記のとおり約24s。
+- `Zig package isolation check`: consumer packageの `zig fetch` ＋ `zig build`。
+  専用の一時cacheで検証するため、グローバルcacheとは独立。
+- `Differential interpreter test`: 公式cnako3との差分実行。
+
+したがって、この job の短縮にはワークフロー変更ではなく
+**ビルド時間そのものの削減**（コンパイル単位の見直し等）が必要であり、
+改善計画2のCI効率化の範囲外として記録する。

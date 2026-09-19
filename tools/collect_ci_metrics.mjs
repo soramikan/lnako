@@ -319,9 +319,19 @@ export function aggregateRuns(runMetrics) {
 }
 
 /**
+ * 同名jobをrun横断で同一視するためのkey。
+ * Zig cacheのcold/warmはjob種別ごとに比較しないと意味がない
+ * （matrixの別suite・別shardを混ぜると差がcache以外の要因で決まる）。
+ */
+export function cacheComparisonKey(job) {
+  return `${job.name}|${job.cache.zigCache?.requestedPrefix ?? ""}`;
+}
+
+/**
  * Zigグローバルcacheとactions/cacheの実測をjob横断で集計する。
- * `coldWarm` はZig cacheのhit/missでjob実行時間を層別した値で、
- * cold/warmの実行時間差を同じ土俵で比較するための指標である。
+ * `coldWarm` は同名job（同一prefix）のうち、coldなrunとwarmなrunの
+ * job実行時間を層別した値である。matrixの別suiteを混ぜないため、
+ * cacheの効果だけを比較できる。
  */
 export function summarizeCache(cacheJobs) {
   const zigJobs = cacheJobs.filter((job) => job.cache.zigCache !== null);
@@ -330,6 +340,30 @@ export function summarizeCache(cacheJobs) {
   const byHit = (hit) => summarize(zigJobs.filter((job) => zigCache(job).hit === hit).map((job) => job.seconds));
   const limits = zigJobs.map((job) => zigCache(job).limitBytes).filter((value) => Number.isFinite(value));
   const sameRunRestores = zigJobs.filter((job) => isSameRunCacheKey(zigCache(job).restoredKey, job.runId)).length;
+  // 同名jobが複数runでcold/warm両方を観測した場合だけ、その差を出す。
+  const byJob = new Map();
+  for (const job of zigJobs) {
+    const key = cacheComparisonKey(job);
+    const entry = byJob.get(key) ?? { name: job.name, cold: [], warm: [] };
+    if (zigCache(job).hit === true) entry.warm.push(job.seconds);
+    else if (zigCache(job).hit === false) entry.cold.push(job.seconds);
+    byJob.set(key, entry);
+  }
+  const paired = [...byJob.values()]
+    .filter((entry) => entry.cold.length > 0 && entry.warm.length > 0)
+    .map((entry) => {
+      const coldMedian = summarize(entry.cold).median;
+      const warmMedian = summarize(entry.warm).median;
+      return {
+        name: entry.name,
+        coldRuns: entry.cold.length,
+        warmRuns: entry.warm.length,
+        coldMedianSeconds: coldMedian,
+        warmMedianSeconds: warmMedian,
+        deltaSeconds: coldMedian === null || warmMedian === null ? null : coldMedian - warmMedian,
+      };
+    })
+    .sort((left, right) => (right.deltaSeconds ?? 0) - (left.deltaSeconds ?? 0));
   return {
     jobsReported: cacheJobs.length,
     zigJobs: zigJobs.length,
@@ -346,6 +380,7 @@ export function summarizeCache(cacheJobs) {
     misses: cacheJobs.reduce((total, job) => total + job.cache.misses.length, 0),
     saveFailures: cacheJobs.reduce((total, job) => total + job.cache.saveFailures, 0),
     coldWarm: { hit: byHit(true), miss: byHit(false) },
+    pairedColdWarm: paired,
   };
 }
 
@@ -427,10 +462,29 @@ export function formatMarkdown({ repo, workflow, generatedAt, runs, aggregate })
     `| hit（warm） | ${aggregate.cache.coldWarm.hit.count} | ${formatSeconds(aggregate.cache.coldWarm.hit.median)} | ${formatSeconds(aggregate.cache.coldWarm.hit.p90)} |`,
     `| miss（cold） | ${aggregate.cache.coldWarm.miss.count} | ${formatSeconds(aggregate.cache.coldWarm.miss.median)} | ${formatSeconds(aggregate.cache.coldWarm.miss.p90)} |`,
     "",
-    "同一run保存cacheの復元は、同一prefixを共有する並行jobが保存した未完成cacheを",
-    "復元した回数である（0が正常）。",
+    "上の表はmatrixの別suite・別shardを混ぜた参考値である。cacheの効果は",
+    "同名job（同一prefix）のcold/warm対応表で判断する。",
     "",
   ];
+  if (aggregate.cache.pairedColdWarm.length > 0) {
+    lines.push(
+      "| job（同名・同一prefix） | cold run数 | warm run数 | cold median | warm median | 短縮 |",
+      "| --- | ---: | ---: | ---: | ---: | ---: |",
+      ...aggregate.cache.pairedColdWarm.map((entry) =>
+        `| ${entry.name} | ${entry.coldRuns} | ${entry.warmRuns} | ${formatSeconds(entry.coldMedianSeconds)} | ${formatSeconds(entry.warmMedianSeconds)} | ${formatSeconds(entry.deltaSeconds)} |`),
+      "",
+    );
+  } else {
+    lines.push(
+      "同名jobがcold/warm両方を観測したrunがまだ無いため、対応表は出していない。",
+      "",
+    );
+  }
+  lines.push(
+    "同一run保存cacheの復元は、同一prefixを共有する並行jobが保存した未完成cacheを",
+    "復元した回数である。prefixを分離した世代では0になる。",
+    "",
+  );
   return `${lines.join("\n")}\n`;
 }
 
