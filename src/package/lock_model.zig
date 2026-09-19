@@ -15,6 +15,14 @@ pub const known_profile_runtimes = [_][]const u8{ "lnako", "cnako", "any", "comm
 pub const known_artifact_types = [_][]const u8{ "tar.gz", ".npkg", "raw", "npm-tarball" };
 /// package entry の `implementation` に許容する値。
 pub const known_implementations = [_][]const u8{ "source", "native", "ESM", "none" };
+/// profile / target が受理する OS。`manifest.zig` の検証集合と揃える。
+pub const known_profile_os = [_][]const u8{ "macos", "linux", "windows" };
+/// profile / target が受理する CPU。
+pub const known_profile_cpu = [_][]const u8{ "aarch64", "x86_64", "arm", "wasm32" };
+/// profile / target が受理する ABI。
+pub const known_profile_abi = [_][]const u8{ "gnu", "msvc", "musl", "none" };
+/// profile が受理する最適化レベル。
+pub const known_optimize = [_][]const u8{ "O0", "O1", "O2", "O3" };
 
 // ---------------------------------------------------------------------------
 // データモデル
@@ -559,6 +567,13 @@ fn writePackageMap(writer: *std.Io.Writer, level: usize, packages: []const Packa
 }
 
 /// lock を決定的な JSON へ書き出す。同一モデルからは常に同一バイト列になる。
+///
+/// 決定性の保証範囲は「同じ入力から `build`/`buildPackages` が生成した
+/// モデル」である。これらは package マップ・profile・features・依存辺・
+/// artifact をソートして保持する。`Lock` を直接構築または外部 parser で
+/// 組み立てた場合、`serialize` はモデルのスライス順をそのまま出力するため、
+/// 意味的に同じでもスライス順が異なれば SHA-256 も異なり得る。手動構築時は
+/// スライスを正規化するか、`build` 経由で生成すること。
 pub fn serialize(lock: *const Lock, writer: *std.Io.Writer) !void {
     try writer.writeAll("{\n");
     try writeIndent(writer, 1);

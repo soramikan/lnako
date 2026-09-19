@@ -1105,6 +1105,114 @@ test "buildMultiは主profileの欠落と重複を拒否する" {
     }, default_fixtures.details()));
 }
 
+test "buildMultiはprofile集合の不一致を拒否する" {
+    const profiles = [_]lock.NamedProfile{
+        .{ .name = "lnako", .record = .{ .runtime = "lnako", .os = "macos", .cpu = "aarch64", .abi = "gnu" } },
+        .{ .name = "cnako", .record = .{ .runtime = "cnako", .os = "linux", .cpu = "x86_64", .abi = "gnu" } },
+    };
+    const nodes = [_]resolver.PackageNode{try node(sqlite_id, "1.2.3", &.{}, &.{"default"})};
+    var input = sampleInput();
+    input.profile = "lnako";
+
+    // 他 profile の欠落。
+    try T.expectError(error.InvalidProfileSet, lock.buildMulti(T.allocator, input, &profiles, &.{
+        .{ .profile = "lnako", .nodes = &nodes },
+    }, default_fixtures.details()));
+    // 他 profile の重複。
+    try T.expectError(error.InvalidProfileSet, lock.buildMulti(T.allocator, input, &profiles, &.{
+        .{ .profile = "lnako", .nodes = &nodes },
+        .{ .profile = "cnako", .nodes = &nodes },
+        .{ .profile = "cnako", .nodes = &nodes },
+    }, default_fixtures.details()));
+    // profiles に無い名前。
+    try T.expectError(error.InvalidProfileSet, lock.buildMulti(T.allocator, input, &profiles, &.{
+        .{ .profile = "lnako", .nodes = &nodes },
+        .{ .profile = "other", .nodes = &nodes },
+    }, default_fixtures.details()));
+}
+
+test "validateはprofileとprofilePackagesの重複をE029で拒否する" {
+    const entries = [_]lock.PackageEntry{
+        .{ .id = sqlite_id, .name = sqlite_name, .version = "1.0.0", .artifacts = &.{sqlite_source_artifact} },
+    };
+    const duplicate_profiles = [_]lock.NamedProfile{
+        .{ .name = "default", .record = .{ .runtime = "lnako", .os = "macos", .cpu = "aarch64", .abi = "gnu" } },
+        .{ .name = "default", .record = .{ .runtime = "lnako", .os = "macos", .cpu = "aarch64", .abi = "gnu" } },
+    };
+    const duplicate_packages = [_]lock.ProfilePackages{
+        .{ .profile = "default", .packages = &entries },
+        .{ .profile = "default", .packages = &entries },
+    };
+    var value = lock.Lock{
+        .arena = std.heap.ArenaAllocator.init(T.allocator),
+        .input = sampleInput(),
+        .packages = &entries,
+        .profiles = &duplicate_profiles,
+        .profile_packages = &duplicate_packages,
+    };
+    defer value.deinit();
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    try lock.validate(&value, &diagnostics);
+    try T.expect(diagnostics.find(diag.E029_INVALID_VALUE) != null);
+}
+
+test "不正なprofile optimizeをE029で拒否する" {
+    const entries = [_]lock.PackageEntry{
+        .{ .id = sqlite_id, .name = sqlite_name, .version = "1.0.0", .artifacts = &.{sqlite_source_artifact} },
+    };
+    const profiles = [_]lock.NamedProfile{
+        .{ .name = "default", .record = .{ .runtime = "lnako", .os = "macos", .cpu = "aarch64", .abi = "gnu", .optimize = "O9" } },
+    };
+    var value = lock.Lock{
+        .arena = std.heap.ArenaAllocator.init(T.allocator),
+        .input = sampleInput(),
+        .packages = &entries,
+        .profiles = &profiles,
+    };
+    defer value.deinit();
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    try lock.validate(&value, &diagnostics);
+    try T.expect(diagnostics.find(diag.E029_INVALID_VALUE) != null);
+    try T.expect(diagnostics.find(diag.E014_INVALID_PROFILE) == null);
+}
+
+test "選択実装に対応するartifactの欠落をE008で拒否する" {
+    const source_only = [_]lock.PackageEntry{
+        .{ .id = sqlite_id, .name = sqlite_name, .version = "1.0.0", .implementation = "native", .artifacts = &.{sqlite_source_artifact} },
+    };
+    const profiles = [_]lock.NamedProfile{
+        .{ .name = "default", .record = .{ .runtime = "lnako", .os = "macos", .cpu = "aarch64", .abi = "gnu" } },
+    };
+    var value = lock.Lock{
+        .arena = std.heap.ArenaAllocator.init(T.allocator),
+        .input = sampleInput(),
+        .packages = &source_only,
+        .profiles = &profiles,
+    };
+    defer value.deinit();
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    try lock.validate(&value, &diagnostics);
+    try T.expect(diagnostics.find(diag.E008_MISSING_ARTIFACT) != null);
+
+    const matching = [_]lock.PackageEntry{
+        .{ .id = sqlite_id, .name = sqlite_name, .version = "1.0.0", .implementation = "source", .artifacts = &.{sqlite_source_artifact} },
+    };
+    var ok_value = lock.Lock{
+        .arena = std.heap.ArenaAllocator.init(T.allocator),
+        .input = sampleInput(),
+        .packages = &matching,
+        .profiles = &profiles,
+    };
+    defer ok_value.deinit();
+    var ok_diagnostics = diag.List.init(T.allocator);
+    defer ok_diagnostics.deinit();
+    try lock.validate(&ok_value, &ok_diagnostics);
+    try T.expect(ok_diagnostics.find(diag.E008_MISSING_ARTIFACT) == null);
+}
+
 test "buildPackagesはPublic IDの衝突を拒否する" {
     const shared_public = "pkg:90000000000000000000000000000000";
     const fixtures = Fixtures{ .entries = &.{
@@ -1355,6 +1463,10 @@ test "lock適合fixtureをZig側でも検証する" {
         .{ .path = "tools/package-system/conformance/invalid/lock/overflow-version/nako.lock", .expected = diag.E024_INVALID_SEMVER },
         .{ .path = "tools/package-system/conformance/invalid/lock/profile-target-mismatch/nako.lock", .expected = diag.E014_INVALID_PROFILE },
         .{ .path = "tools/package-system/conformance/invalid/lock/invalid-package-id/nako.lock", .expected = diag.E029_INVALID_VALUE },
+        .{ .path = "tools/package-system/conformance/invalid/lock/unknown-target/nako.lock", .expected = diag.E014_INVALID_PROFILE },
+        .{ .path = "tools/package-system/conformance/invalid/lock/unknown-profile-os/nako.lock", .expected = diag.E014_INVALID_PROFILE },
+        .{ .path = "tools/package-system/conformance/invalid/lock/invalid-optimize/nako.lock", .expected = diag.E029_INVALID_VALUE },
+        .{ .path = "tools/package-system/conformance/invalid/lock/missing-implementation-artifact/nako.lock", .expected = diag.E008_MISSING_ARTIFACT },
     };
     for (cases) |case| {
         const bytes = try repo.readFileAlloc(T.io, case.path, allocator, .limited(1 << 20));

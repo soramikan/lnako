@@ -12,6 +12,10 @@ pub const known_artifact_kinds = model.known_artifact_kinds;
 pub const known_profile_runtimes = model.known_profile_runtimes;
 pub const known_artifact_types = model.known_artifact_types;
 pub const known_implementations = model.known_implementations;
+pub const known_profile_os = model.known_profile_os;
+pub const known_profile_cpu = model.known_profile_cpu;
+pub const known_profile_abi = model.known_profile_abi;
+pub const known_optimize = model.known_optimize;
 pub const Target = model.Target;
 pub const ProfileRecord = model.ProfileRecord;
 pub const NamedProfile = model.NamedProfile;
@@ -604,6 +608,14 @@ fn validatePackageSet(packages: []const PackageEntry, exists: *const std.StringH
         if (has_esm and !esm_allowed) {
             try diagnostics.addFmt(diag.E006_JS_IN_NORMAL_MODE, .err, artifacts_path, .{}, "ESM artifact selected without compat-js profile", .{});
         }
+        // 選択された実装種別に対応する artifact が存在しなければ同期できない。
+        if (package.implementation) |implementation| {
+            if (!containsString(&known_implementations, implementation)) {
+                try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, package_path, .{}, "unknown implementation \"{s}\"", .{implementation});
+            } else if (!std.mem.eql(u8, implementation, "none") and !package.hasKind(implementation)) {
+                try diagnostics.addFmt(diag.E008_MISSING_ARTIFACT, .err, artifacts_path, .{}, "selected implementation \"{s}\" has no matching artifact", .{implementation});
+            }
+        }
         for (package.dependencies) |dependency| {
             const dependencies_path = try std.fmt.allocPrint(diagnostics.allocator, "{s}.dependencies", .{package_path});
             defer diagnostics.allocator.free(dependencies_path);
@@ -625,21 +637,76 @@ fn buildIdSet(gpa: Allocator, packages: []const PackageEntry) !std.StringHashMap
     return set;
 }
 
+const KnownField = struct {
+    name: []const u8,
+    value: []const u8,
+    known: []const []const u8,
+};
+
+fn validateKnownFields(fields: []const KnownField, base: []const u8, label: []const u8, diagnostics: *diag.List) !void {
+    for (fields) |field| {
+        if (containsString(field.known, field.value)) continue;
+        const path = try std.fmt.allocPrint(diagnostics.allocator, "{s}.{s}", .{ base, field.name });
+        defer diagnostics.allocator.free(path);
+        try diagnostics.addFmt(diag.E014_INVALID_PROFILE, .err, path, .{}, "{s} has invalid {s}: {s}", .{ label, field.name, field.value });
+    }
+}
+
+/// profile 条件の runtime・os・cpu・abi・optimize を manifest と同じ既知値で検証する。
+fn validateProfileRecord(name: []const u8, record: ProfileRecord, diagnostics: *diag.List) !void {
+    const base = try std.fmt.allocPrint(diagnostics.allocator, "nako.lock.profiles.{s}", .{name});
+    defer diagnostics.allocator.free(base);
+
+    if (record.runtime) |runtime| {
+        if (!containsString(&known_profile_runtimes, runtime)) {
+            const path = try std.fmt.allocPrint(diagnostics.allocator, "{s}.runtime", .{base});
+            defer diagnostics.allocator.free(path);
+            try diagnostics.addFmt(diag.E014_INVALID_PROFILE, .err, path, .{}, "profile \"{s}\" has invalid runtime: {s}", .{ name, runtime });
+        }
+    }
+    try validateKnownFields(&.{
+        .{ .name = "os", .value = record.os, .known = &known_profile_os },
+        .{ .name = "cpu", .value = record.cpu, .known = &known_profile_cpu },
+        .{ .name = "abi", .value = record.abi, .known = &known_profile_abi },
+    }, base, "profile", diagnostics);
+    // optimize は JSON Schema / manifest と同じく E029 で報告する。
+    if (record.optimize) |optimize| {
+        if (!containsString(&known_optimize, optimize)) {
+            const path = try std.fmt.allocPrint(diagnostics.allocator, "{s}.optimize", .{base});
+            defer diagnostics.allocator.free(path);
+            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, path, .{}, "profile \"{s}\" has invalid optimize: {s}", .{ name, optimize });
+        }
+    }
+}
+
+fn validateTarget(target: Target, path: []const u8, diagnostics: *diag.List) !void {
+    try validateKnownFields(&.{
+        .{ .name = "os", .value = target.os, .known = &known_profile_os },
+        .{ .name = "cpu", .value = target.cpu, .known = &known_profile_cpu },
+        .{ .name = "abi", .value = target.abi, .known = &known_profile_abi },
+    }, path, "input.target", diagnostics);
+}
+
 /// lock の意味的な整合性を検証する。既知の診断は SPECIFICATION.md §8 と対応する。
 pub fn validate(lock: *const Lock, diagnostics: *diag.List) !void {
     if (lock.schema_version != lock_schema_version) {
         try diagnostics.addFmt(diag.E002_UNKNOWN_LOCK_SCHEMA, .err, "nako.lock.schemaVersion", .{}, "unknown lock schema version {d}", .{lock.schema_version});
     }
 
+    var profile_names: std.StringHashMapUnmanaged(void) = .empty;
+    defer profile_names.deinit(diagnostics.allocator);
     for (lock.profiles) |profile| {
-        if (profile.record.runtime) |runtime| {
-            if (!containsString(&known_profile_runtimes, runtime)) {
-                const path = try std.fmt.allocPrint(diagnostics.allocator, "nako.lock.profiles.{s}.runtime", .{profile.name});
-                defer diagnostics.allocator.free(path);
-                try diagnostics.addFmt(diag.E014_INVALID_PROFILE, .err, path, .{}, "profile \"{s}\" has invalid runtime: {s}", .{ profile.name, runtime });
-            }
+        const gop = try profile_names.getOrPut(diagnostics.allocator, profile.name);
+        if (gop.found_existing) {
+            const path = try std.fmt.allocPrint(diagnostics.allocator, "nako.lock.profiles.{s}", .{profile.name});
+            defer diagnostics.allocator.free(path);
+            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, path, .{}, "duplicate profile \"{s}\"", .{profile.name});
         }
+        try validateProfileRecord(profile.name, profile.record, diagnostics);
     }
+
+    // `input.target` も profile と同じ既知値集合で検証する。
+    try validateTarget(lock.input.target, "nako.lock.input.target", diagnostics);
 
     var id_set = try buildIdSet(diagnostics.allocator, lock.packages);
     defer id_set.deinit(diagnostics.allocator);
@@ -659,11 +726,17 @@ pub fn validate(lock: *const Lock, diagnostics: *diag.List) !void {
     }
     try validatePackageSet(lock.packages, &id_set, if (selected) |record| record.* else null, "nako.lock.packages", diagnostics);
 
+    var profile_package_names: std.StringHashMapUnmanaged(void) = .empty;
+    defer profile_package_names.deinit(diagnostics.allocator);
     for (lock.profile_packages) |profile| {
         var profile_id_set = try buildIdSet(diagnostics.allocator, profile.packages);
         defer profile_id_set.deinit(diagnostics.allocator);
         const profile_path = try std.fmt.allocPrint(diagnostics.allocator, "nako.lock.profilePackages.{s}", .{profile.profile});
         defer diagnostics.allocator.free(profile_path);
+        const gop = try profile_package_names.getOrPut(diagnostics.allocator, profile.profile);
+        if (gop.found_existing) {
+            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, profile_path, .{}, "duplicate profilePackages entry \"{s}\"", .{profile.profile});
+        }
         const record = lock.profileRecord(profile.profile);
         if (record == null) {
             try diagnostics.addFmt(diag.E030_UNKNOWN_PROFILE, .err, profile_path, .{}, "unknown profile \"{s}\"", .{profile.profile});
@@ -1211,6 +1284,25 @@ pub fn buildMulti(
         if (std.mem.eql(u8, profile_input.profile, input.profile)) primary_count += 1;
     }
     if (primary_count != 1) return error.InvalidPrimaryProfile;
+
+    // `profiles` と `per_profile` の名前集合は一対一で一致しなければならない。
+    // 重複名は profilePackages の重複キーを、欠落・未知は宣言との不整合を招く。
+    for (profiles, 0..) |profile, index| {
+        for (profiles[index + 1 ..]) |other| {
+            if (std.mem.eql(u8, profile.name, other.name)) return error.InvalidProfileSet;
+        }
+    }
+    for (per_profile, 0..) |profile_input, index| {
+        var declared = false;
+        for (profiles) |profile| {
+            if (std.mem.eql(u8, profile.name, profile_input.profile)) declared = true;
+        }
+        if (!declared) return error.InvalidProfileSet;
+        for (per_profile[index + 1 ..]) |other| {
+            if (std.mem.eql(u8, profile_input.profile, other.profile)) return error.InvalidProfileSet;
+        }
+    }
+    if (per_profile.len != profiles.len) return error.InvalidProfileSet;
 
     var lock = try build(gpa, input, profiles, &.{}, details);
     errdefer lock.deinit();

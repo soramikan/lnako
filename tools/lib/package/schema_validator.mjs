@@ -755,11 +755,32 @@ export function validateLock(lock, fixturePath) {
 
   // 選択された profile の runtime と compat-js を読む。cnako は ESM を
   // 直接扱えるため compat-js を要求せず、lnako などの通常モードのみ
-  // E006 の対象とする。未知の runtime は E014 で拒否する。
+  // E006 の対象とする。未知の runtime・os・cpu・abi は E014 で拒否する
+  // （optimize は JSON Schema の enum が E029_INVALID_VALUE で拒否する）。
   if (lock.profiles) {
     for (const [name, prof] of Object.entries(lock.profiles)) {
       if (prof.runtime != null && !knownProfileRuntime.has(prof.runtime)) {
         fail("E014_INVALID_PROFILE", `profile "${name}" has invalid runtime: ${prof.runtime}`, `${fixturePath}.profiles.${name}.runtime`);
+      }
+      if (typeof prof.os === "string" && !knownProfileOs.has(prof.os)) {
+        fail("E014_INVALID_PROFILE", `profile "${name}" has invalid os: ${prof.os}`, `${fixturePath}.profiles.${name}.os`);
+      }
+      if (typeof prof.cpu === "string" && !knownProfileCpu.has(prof.cpu)) {
+        fail("E014_INVALID_PROFILE", `profile "${name}" has invalid cpu: ${prof.cpu}`, `${fixturePath}.profiles.${name}.cpu`);
+      }
+      if (typeof prof.abi === "string" && !knownProfileAbi.has(prof.abi)) {
+        fail("E014_INVALID_PROFILE", `profile "${name}" has invalid abi: ${prof.abi}`, `${fixturePath}.profiles.${name}.abi`);
+      }
+      // optimize は JSON Schema の enum が E029_INVALID_VALUE で拒否する。
+    }
+  }
+  // input.target も profile と同じ既知値集合で検証する。
+  if (lock.input?.target) {
+    const target = lock.input.target;
+    for (const field of ["os", "cpu", "abi"]) {
+      const known = field === "os" ? knownProfileOs : field === "cpu" ? knownProfileCpu : knownProfileAbi;
+      if (typeof target[field] === "string" && !known.has(target[field])) {
+        fail("E014_INVALID_PROFILE", `input.target has invalid ${field}: ${target[field]}`, `${fixturePath}.input.target.${field}`);
       }
     }
   }
@@ -883,6 +904,10 @@ function validateLockPackageSet(packages, profile, fixturePath, path) {
     }
     if (kinds.has("ESM") && !esmAllowed) {
       fail("E006_JS_IN_NORMAL_MODE", `ESM artifact selected without compat-js profile`, `${path}.${id}.artifacts`);
+    }
+    // 選択された実装種別に対応する artifact が存在しなければ同期できない。
+    if (pkg.implementation != null && pkg.implementation !== "none" && !kinds.has(pkg.implementation)) {
+      fail("E008_MISSING_ARTIFACT", `selected implementation "${pkg.implementation}" has no matching artifact`, `${path}.${id}.artifacts`);
     }
     for (const dep of pkg.dependencies) {
       if (!Object.hasOwn(packages, dep)) {

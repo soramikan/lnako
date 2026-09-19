@@ -300,6 +300,7 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
 - 通常解決では既存 lock の版を優先する。`update` で指定した package だけ優先固定を解除する。指定外の package が変化した場合は、変更元 package を変更理由（`caused_by`）として説明する。
 - `--locked` は lock 欠落、未知 `schemaVersion`、`resolverVersion` 不一致、manifest/profile/features/target の変更を検出したとき、lock を書き換えず失敗する。呼出し側は先に意味検証（`validate`）を行い、その上で鮮度判定を行う（鮮度判定自体は入力条件のみを比較し、意味検証を含まない）。
 - 鮮度は選択された `input`（`manifestSha256`・`profile`・`features`・`target`）で判定する。manifest の変更は全 profile に影響する `manifestSha256` の変化として検出し、別 profile の選択は `input.profile` の変化として検出する。非選択 profile の `profilePackages` は lock の再生成時に更新する。
+- 生成の決定性は `build`/`buildPackages` が生成したモデルを対象とする。これらは package マップ・profile・features・依存辺・artifact をソートして保持する。serializer はモデルのスライス順をそのまま出力するため、手動構築したモデルは正規化しない限り意味的に同じでもバイト列・SHA-256 が異なり得る。
 - path 依存は可変参照として記録する。path ソース本文の編集は root manifest の SHA-256 を変えないため再解決契機にならない。依存宣言を含む manifest 変更は `manifestSha256` の変化として検出する。
 
 ## 5. レジストリ契約
