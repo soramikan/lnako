@@ -163,6 +163,13 @@ pub const SetTime = union(enum) {
             else => false,
         };
     }
+
+    pub fn isUnchanged(self: SetTime) bool {
+        return switch (self) {
+            .unchanged => true,
+            else => false,
+        };
+    }
 };
 
 pub fn timeNsFromUnixNs(value: i128) TimeNs {

@@ -196,7 +196,7 @@ pub fn setTimestampsPath(io: std.Io, path: []const u8, atime: foundation.SetTime
     return switch (builtin.os.tag) {
         .windows => setTimestampsPathWindows(io, path, atime, mtime),
         .wasi => error.OperationUnsupported,
-        else => setTimestampsPathPosix(path, atime, mtime),
+        else => setTimestampsPathPosix(io, path, atime, mtime),
     };
 }
 
@@ -209,7 +209,13 @@ pub fn setTimestampsHandle(io: std.Io, file: std.Io.File, atime: foundation.SetT
     };
 }
 
-fn setTimestampsPathPosix(path: []const u8, atime: foundation.SetTime, mtime: foundation.SetTime) anyerror!void {
+fn setTimestampsPathPosix(io: std.Io, path: []const u8, atime: foundation.SetTime, mtime: foundation.SetTime) anyerror!void {
+    // LinuxのutimensatはATIME/MTIMEともUTIME_OMITのときパスを解決せず成功するため、
+    // 存在しないパスでもENOENTにならない。macOS/Windowsと揃えて明示的に検証する。
+    if (atime.isUnchanged() and mtime.isUnchanged()) {
+        _ = try std.Io.Dir.cwd().statFile(io, path, .{});
+        return;
+    }
     const destination = try std.posix.toPosixPath(path);
     const times = [2]std.c.timespec{
         try timespecFromSetTime(atime),
