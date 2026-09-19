@@ -1157,6 +1157,68 @@ test "validateはprofileとprofilePackagesの重複をE029で拒否する" {
     try T.expect(diagnostics.find(diag.E029_INVALID_VALUE) != null);
 }
 
+test "間接更新の原因は未変更の中間packageを越えて辿る" {
+    const a_id = "pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const b_id = "pkg:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const c_id = "pkg:cccccccccccccccccccccccccccccccc";
+    const fixtures = Fixtures{ .entries = &.{
+        .{ .id = a_id, .name = "a", .source = sqlite_source, .resolved_from = sqlite_source, .artifacts = &.{sqlite_source_artifact} },
+        .{ .id = b_id, .name = "b", .source = sqlite_source, .resolved_from = sqlite_source, .artifacts = &.{sqlite_source_artifact} },
+        .{ .id = c_id, .name = "c", .source = sqlite_source, .resolved_from = sqlite_source, .artifacts = &.{sqlite_source_artifact} },
+    } };
+
+    const prev_nodes = [_]resolver.PackageNode{
+        try node(a_id, "1.0.0", &.{.{ .pkg = b_id }}, &.{"default"}),
+        try node(b_id, "1.0.0", &.{.{ .pkg = c_id }}, &.{"default"}),
+        try node(c_id, "1.0.0", &.{}, &.{"default"}),
+    };
+    const next_nodes = [_]resolver.PackageNode{
+        try node(a_id, "1.1.0", &.{.{ .pkg = b_id }}, &.{"default"}),
+        try node(b_id, "1.0.0", &.{.{ .pkg = c_id }}, &.{"default"}),
+        try node(c_id, "2.0.0", &.{}, &.{"default"}),
+    };
+
+    var previous = try lock.build(T.allocator, sampleInput(), &.{default_profile}, &prev_nodes, fixtures.details());
+    defer previous.deinit();
+    var next = try lock.build(T.allocator, sampleInput(), &.{default_profile}, &next_nodes, fixtures.details());
+    defer next.deinit();
+
+    var report = try lock.diff(T.allocator, &previous, &next, "default", &.{"a"});
+    defer report.deinit();
+
+    try T.expectEqual(lock.ChangeReason.updated_direct, report.find(a_id).?.reason);
+    try T.expectEqual(lock.ChangeReason.unchanged, report.find(b_id).?.reason);
+    const c_change = report.find(c_id).?;
+    try T.expectEqual(lock.ChangeReason.updated_indirect, c_change.reason);
+    try T.expectEqual(@as(usize, 1), c_change.caused_by.len);
+    try T.expectEqualStrings(a_id, c_change.caused_by[0]);
+}
+
+test "profilePackagesの欠落profileをE029で拒否する" {
+    const entries = [_]lock.PackageEntry{
+        .{ .id = sqlite_id, .name = sqlite_name, .version = "1.0.0", .artifacts = &.{sqlite_source_artifact} },
+    };
+    const profiles = [_]lock.NamedProfile{
+        .{ .name = "default", .record = .{ .runtime = "lnako", .os = "macos", .cpu = "aarch64", .abi = "gnu" } },
+        .{ .name = "windows", .record = .{ .runtime = "lnako", .os = "windows", .cpu = "x86_64", .abi = "msvc" } },
+    };
+    const profile_packages = [_]lock.ProfilePackages{
+        .{ .profile = "default", .packages = &entries },
+    };
+    var value = lock.Lock{
+        .arena = std.heap.ArenaAllocator.init(T.allocator),
+        .input = sampleInput(),
+        .packages = &entries,
+        .profiles = &profiles,
+        .profile_packages = &profile_packages,
+    };
+    defer value.deinit();
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    try lock.validate(&value, &diagnostics);
+    try T.expect(diagnostics.find(diag.E029_INVALID_VALUE) != null);
+}
+
 test "不正なprofile optimizeをE029で拒否する" {
     const entries = [_]lock.PackageEntry{
         .{ .id = sqlite_id, .name = sqlite_name, .version = "1.0.0", .artifacts = &.{sqlite_source_artifact} },
@@ -1466,6 +1528,7 @@ test "lock適合fixtureをZig側でも検証する" {
         .{ .path = "tools/package-system/conformance/invalid/lock/unknown-target/nako.lock", .expected = diag.E014_INVALID_PROFILE },
         .{ .path = "tools/package-system/conformance/invalid/lock/unknown-profile-os/nako.lock", .expected = diag.E014_INVALID_PROFILE },
         .{ .path = "tools/package-system/conformance/invalid/lock/invalid-optimize/nako.lock", .expected = diag.E029_INVALID_VALUE },
+        .{ .path = "tools/package-system/conformance/invalid/lock/profile-packages-incomplete/nako.lock", .expected = diag.E029_INVALID_VALUE },
         .{ .path = "tools/package-system/conformance/invalid/lock/missing-implementation-artifact/nako.lock", .expected = diag.E008_MISSING_ARTIFACT },
     };
     for (cases) |case| {

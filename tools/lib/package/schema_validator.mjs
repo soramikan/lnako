@@ -810,6 +810,20 @@ export function validateLock(lock, fixturePath) {
     fail("E029_INVALID_VALUE", `profilePackages.${lock.input?.profile} does not match packages`, `${fixturePath}.profilePackages.${lock.input?.profile}`);
   }
 
+  // 複数 profile 形式では profiles と profilePackages の名前集合が一致する
+  // ことを要求する。単一 profile 形式（profilePackages が空）は対象外。
+  const profilePackageNames = Object.keys(lock.profilePackages ?? {});
+  if (profilePackageNames.length > 0) {
+    for (const name of Object.keys(lock.profiles ?? {})) {
+      if (!Object.hasOwn(lock.profilePackages, name)) {
+        fail("E029_INVALID_VALUE", `profilePackages is missing profile "${name}"`, `${fixturePath}.profilePackages`);
+      }
+    }
+    if (lock.input?.profile && !Object.hasOwn(lock.profilePackages, lock.input.profile)) {
+      fail("E030_UNKNOWN_PROFILE", `profilePackages is missing input.profile "${lock.input.profile}"`, `${fixturePath}.profilePackages`);
+    }
+  }
+
   // lnako/cnako が共用する同一 ID・版の source artifact は同じ hash で参照する。
   const mismatch = sharedArtifactMismatch(lock);
   if (mismatch) {

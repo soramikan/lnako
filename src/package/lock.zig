@@ -749,6 +749,27 @@ pub fn validate(lock: *const Lock, diagnostics: *diag.List) !void {
         try validatePackageSet(profile.packages, &profile_id_set, if (record) |value| value.* else null, profile_path, diagnostics);
     }
 
+    // 複数 profile 形式では `profiles` と `profilePackages` の名前集合が一致
+    // しなければならない（片方向の欠落を許すと既存版取得や差分が空になる）。
+    // 単一 profile 形式（profilePackages が空）はこの制約の対象外。
+    if (lock.profile_packages.len > 0) {
+        for (lock.profiles) |profile| {
+            var found = false;
+            for (lock.profile_packages) |entry| {
+                if (std.mem.eql(u8, entry.profile, profile.name)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock.profilePackages", .{}, "profilePackages is missing profile \"{s}\"", .{profile.name});
+            }
+        }
+        if (!profile_package_names.contains(lock.input.profile)) {
+            try diagnostics.addFmt(diag.E030_UNKNOWN_PROFILE, .err, "nako.lock.profilePackages", .{}, "profilePackages is missing input.profile \"{s}\"", .{lock.input.profile});
+        }
+    }
+
     // lnako/cnako が共用する同一 ID・版の source artifact は同じ hash で
     // 参照しなければならない。
     if (sharedArtifactMismatch(lock)) |mismatch| {
@@ -1036,16 +1057,33 @@ pub fn diff(gpa: Allocator, previous: ?*const Lock, next: *const Lock, profile: 
         });
     }
 
+    // 変更理由は直接親だけでなく、未変更の中間 package を越えて祖先まで辿る。
+    // 最初に到達した「変更済み」の祖先（直接更新対象を含む）を原因として収集し、
+    // 循環・重複に備えて訪問済み集合を使う。
     // レポートは lock の arena に依存せず単独で使えるよう、参照文字列も複製する。
     for (changes.items) |*change| {
         if (change.reason == .unchanged or change.reason == .updated_direct) continue;
         var causes: std.ArrayList([]const u8) = .empty;
+        var visited: std.StringHashMapUnmanaged(void) = .empty;
+        var stack: std.ArrayList([]const u8) = .empty;
         if (parents.get(change.id)) |list| {
-            for (list.items) |parent| {
-                if (std.mem.eql(u8, parent, change.id)) continue;
-                const index = change_index.get(parent) orelse continue;
-                if (changes.items[index].reason == .unchanged) continue;
-                if (!parentListContains(causes.items, parent)) try causes.append(allocator, try allocator.dupe(u8, parent));
+            for (list.items) |parent| try stack.append(allocator, parent);
+        }
+        while (stack.pop()) |candidate| {
+            if (std.mem.eql(u8, candidate, change.id)) continue;
+            const gop = try visited.getOrPut(allocator, candidate);
+            if (gop.found_existing) continue;
+            gop.value_ptr.* = {};
+            const index = change_index.get(candidate) orelse continue;
+            if (changes.items[index].reason == .unchanged) {
+                // 未変更の中間 package はさらに上へ辿る。
+                if (parents.get(candidate)) |list| {
+                    for (list.items) |parent| try stack.append(allocator, parent);
+                }
+                continue;
+            }
+            if (!parentListContains(causes.items, candidate)) {
+                try causes.append(allocator, try allocator.dupe(u8, candidate));
             }
         }
         std.mem.sort([]const u8, causes.items, {}, stringLessThan);
