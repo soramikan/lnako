@@ -808,8 +808,10 @@ fn executeCallFallback(
         // 公式はプラグインが設定した同名のグローバル変数があっても、`func token`の
         // 呼出しとして組み込み命令を呼ぶ（`デスクトップ`は公式では0引数の関数で、
         // グローバル変数は`デスクトップを表示`のための便宜値）。関数以外の値で
-        // 隠れている場合だけ、組み込み命令へフォールバックする。
-        if (builtin_id == null) return error.NotCallable;
+        // 隠れている場合だけ、組み込み命令へフォールバックする。意味解析が
+        // 同名の変数へ束縛した呼出し（`変数 表示=1`のあとの`1を表示`）は
+        // 組み込み呼出しではないので、AOTと同じく非関数呼出しとして失敗させる。
+        if (builtin_id == null or !instruction.is_builtin_call) return error.NotCallable;
     }
     writes_result.* = !preservesResultVariable(instruction.name);
     const site_id = if (frame.owner_program == &self.root_program) instruction.site_id else null;

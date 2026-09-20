@@ -269,7 +269,7 @@ fn attachSiteExpansions(
                     } else {
                         const chain = try loader.allocator.alloc(bool, loader.modules.items.len);
                         @memset(chain, false);
-                        node.expansion = try copyExpansion(loader, target_module, item.variant, entry, chain, budget, accumulated + depth + target_depth);
+                        node.expansion = try copyExpansion(loader, target_module, item.variant, entry, chain, budget, accumulated + depth + 1);
                     }
                 }
             };
@@ -329,7 +329,7 @@ fn attachCopyExpansions(
                     if (accumulated + depth + target_depth > parser.max_ast_depth) {
                         try loader.nestingDiagnosticAt(node.span, module_path, "式や命令の入れ子が深すぎます");
                     } else {
-                        node.expansion = try copyExpansion(loader, target_module, item.variant, entry, chain, budget, accumulated + depth + target_depth);
+                        node.expansion = try copyExpansion(loader, target_module, item.variant, entry, chain, budget, accumulated + depth + 1);
                     }
                 }
             };
