@@ -812,6 +812,11 @@ fn executeCallFallback(
         // 同名の変数へ束縛した呼出し（`変数 表示=1`のあとの`1を表示`）は
         // 組み込み呼出しではないので、AOTと同じく非関数呼出しとして失敗させる。
         if (builtin_id == null or !instruction.is_builtin_call) return error.NotCallable;
+    } else if (builtin_id != null and !instruction.is_builtin_call) {
+        // 意味解析はブロックを先に事前宣言するため、呼出しより後にある同名の
+        // 変数宣言もその呼出しを変数へ束縛する。変数がまだ未設定でグローバルが
+        // 無い場合も、固定IDの組み込み命令へ落とさない。
+        return error.NotCallable;
     }
     writes_result.* = !preservesResultVariable(instruction.name);
     const site_id = if (frame.owner_program == &self.root_program) instruction.site_id else null;
