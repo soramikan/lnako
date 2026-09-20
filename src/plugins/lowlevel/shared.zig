@@ -59,6 +59,41 @@ pub fn sizeArgument(_: *Runtime, value: Value) !u64 {
     };
 }
 
+/// pid/signalのようなu32値。安全整数Numberまたはu32範囲のBigIntだけを受け付ける。
+pub fn u32Argument(value: Value) !u32 {
+    return switch (value) {
+        .number => |number| blk: {
+            if (!foundation.isSafeInteger(number)) return error.InvalidInteger;
+            if (number < 0 or number > @as(f64, @floatFromInt(std.math.maxInt(u32)))) return error.InvalidInteger;
+            break :blk @intFromFloat(number);
+        },
+        .bigint => |bigint| blk: {
+            const integer = bigint.toU128() catch return error.InvalidInteger;
+            if (integer > std.math.maxInt(u32)) return error.InvalidInteger;
+            break :blk @intCast(integer);
+        },
+        else => error.InvalidInteger,
+    };
+}
+
+/// priority値のようなi32値。安全整数Numberまたはi32範囲のBigIntだけを受け付ける。
+pub fn i32Argument(value: Value) !i32 {
+    return switch (value) {
+        .number => |number| blk: {
+            if (!foundation.isSafeInteger(number)) return error.InvalidInteger;
+            if (number < @as(f64, @floatFromInt(std.math.minInt(i32))) or
+                number > @as(f64, @floatFromInt(std.math.maxInt(i32)))) return error.InvalidInteger;
+            break :blk @intFromFloat(number);
+        },
+        .bigint => |bigint| blk: {
+            const integer = bigint.toI128() catch return error.InvalidInteger;
+            if (integer < std.math.minInt(i32) or integer > std.math.maxInt(i32)) return error.InvalidInteger;
+            break :blk @intCast(integer);
+        },
+        else => error.InvalidInteger,
+    };
+}
+
 pub fn bytesArgument(runtime: *Runtime, value: Value) ![]const u8 {
     if (value != .bytes) return error.InvalidBytes;
     if (value.bytes.kind != .buffer) return error.InvalidBytes;
@@ -140,6 +175,16 @@ pub fn throwIo(
 /// path2を取らないI/O失敗の薄いラッパー。
 pub fn throwIoAs(runtime: *Runtime, effects: Effects, failure: anyerror, operation: []const u8, path: ?[]const u8, capability: foundation.Capability) anyerror {
     return throwIo(runtime, effects, failure, operation, path, null, capability);
+}
+
+/// `プロセス起動` 専用。spawnの契約エラー集合
+/// (ENOENT/EACCES/EPERM/EINVAL/ENOTSUP) に限定し、fd枯渇などの未写像失敗は
+/// EINVALへ丸める。OOMは内部エラーとして伝播する。
+pub fn throwSpawnIo(runtime: *Runtime, effects: Effects, failure: anyerror, operation: []const u8, capability: foundation.Capability) anyerror {
+    if (failure == error.OutOfMemory) return failure;
+    const code = foundation.portableCodeForSpawnFailure(failure);
+    const capability_name: ?[]const u8 = if (code == .ENOTSUP) capability.id() else null;
+    return throwStructuredAt(runtime, effects, code, operation, null, null, capability_name, failureMessage(failure));
 }
 
 /// OS失敗を呼び出し側が選んだportable codeへ写す。コマンド契約が許すcodeを

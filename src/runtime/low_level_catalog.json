@@ -939,8 +939,8 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "shell stringを介さない。OPTIONSにcwd/env/stdio/detached",
-      "implemented": false
+      "notes": "shell stringを介さない。OPTIONSのcwd/env/stdio(inherit/pipe/null)/detached。WindowsのdetachedはENOTSUP。argv[0]の実行ファイル解決は親環境のPATHを使う。stdio=pipeの親側は公開されず、待機時にEOFまでdrainして破棄するため子との入出力には使えない。detachedとpipe stdioの併用はEINVAL。detachedはPOSIXの新プロセスグループ生成のみで、新セッションやstdioの切り離しは行わない（完全なnohup相当は提供しない）。未waitのdetached子はRuntime破棄時にreaper threadが非同期にreapする。env省略時はホストプロセスの環境を継承する（lnako testのスクリプト可視環境一覧とは独立）",
+      "implemented": true
     },
     {
       "id": "ll-process-wait",
@@ -954,10 +954,11 @@
       "operation": "wait",
       "errors": [
         "EBADF",
-        "EINVAL"
+        "EINVAL",
+        "ENOTSUP"
       ],
-      "notes": "exitCodeとsignalを構造化して返す",
-      "implemented": false
+      "notes": "exitCodeとsignalを構造化して返す。POSIXのシグナル終了時はexitCode=128+signalでsignalに番号を入れる。WindowsでTerminateProcessされた子はexitCode=1, signal=null",
+      "implemented": true
     },
     {
       "id": "ll-pid-get",
@@ -969,9 +970,11 @@
       "returns": "pid",
       "capability": "argv_spawn",
       "operation": "getpid",
-      "errors": [],
+      "errors": [
+        "ENOTSUP"
+      ],
       "notes": "pidはu32。実行時0は不正で発生しない",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-ppid-get",
@@ -987,7 +990,7 @@
         "ENOTSUP"
       ],
       "notes": "",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-signal-send",
@@ -1004,8 +1007,8 @@
         "EPERM",
         "ENOTSUP"
       ],
-      "notes": "Windowsは対応信号が限られる。非対応のsignal番号はENOTSUP",
-      "implemented": false
+      "notes": "Windowsは対応信号が限られる。非対応のsignal番号はENOTSUP。POSIXで送れる番号は0（存在確認）と1..31で、pid=0はEINVAL。Linuxのリアルタイム信号（34以上）は対象外。Windowsの9/15はTerminateProcessへ写り、待機結果はexitCode=1, signal=null",
+      "implemented": true
     },
     {
       "id": "ll-process-priority-get",
@@ -1019,10 +1022,11 @@
       "operation": "getpriority",
       "errors": [
         "EINVAL",
+        "EPERM",
         "ENOTSUP"
       ],
-      "notes": "優先度（niceness等）の現在値を返す",
-      "implemented": false
+      "notes": "優先度（niceness等）の現在値を返す。POSIXのみでWindowsはENOTSUP。pid=0はカレントプロセス",
+      "implemented": true
     },
     {
       "id": "ll-process-priority-set",
@@ -1039,8 +1043,8 @@
         "EPERM",
         "ENOTSUP"
       ],
-      "notes": "優先度（niceness等）を設定する",
-      "implemented": false
+      "notes": "優先度（niceness等）を設定する。POSIXのみでWindowsはENOTSUP。pid=0はカレントプロセス",
+      "implemented": true
     },
     {
       "id": "ll-tty-isatty",
@@ -1053,10 +1057,11 @@
       "capability": "tty_isatty",
       "operation": "isatty",
       "errors": [
-        "EINVAL"
+        "EINVAL",
+        "ENOTSUP"
       ],
       "notes": "STREAMは標準入力/標準出力/標準エラー出力",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-tty-size",
@@ -1073,7 +1078,7 @@
         "ENOTSUP"
       ],
       "notes": "rowsとcolumns",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-statfs",
@@ -1570,13 +1575,13 @@
       "id": "argv_spawn",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": true,
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1596,13 +1601,13 @@
       "id": "signal",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": true,
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1622,13 +1627,13 @@
       "id": "tty_isatty",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": true,
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1778,13 +1783,13 @@
       "id": "priority",
       "class": "posix_extension",
       "os": {
-        "linux": false,
-        "macos": false,
+        "linux": true,
+        "macos": true,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -2089,7 +2094,7 @@
     "openMode": "ファイル開くの文字列flags。r/r+/w/w+/a/a+にb/x/s修飾（Nodeのfs.open形式）。string",
     "accessMode": "access検査のF_OK/R_OK/W_OK/X_OKビット和。u32",
     "argv": "文字列の配列。shell解釈しない",
-    "processOptions": "プロセス起動のOPTIONS辞書。cwd/env/stdio/detached",
+    "processOptions": "プロセス起動のOPTIONS辞書。cwd/env/stdio/detached。env指定時は子環境を置換し、argv[0]解決は親PATH。stdio=pipeは待機時に読み捨てられ子との入出力には使えない。detachedとの併用はEINVAL",
     "hashAlgorithm": "ハッシュアルゴリズム名。string。既存ハッシュ値計算と同一正規化",
     "hashEncoding": "ハッシュ出力encoding。省略時およびrawはbytes、hex/base64/base64url/latin1/binary/utf8は既存ハッシュ値計算と同一の文字列",
     "hashDigest": "ハッシュdigest。rawはbytes、hexはstring（ENCODING依存）",
@@ -2585,7 +2590,7 @@
         "exitCode": "number",
         "signal": "signal"
       },
-      "note": "signalは正常終了時null"
+      "note": "signalは正常終了時null。POSIXのシグナル終了時はexitCode=128+signal。WindowsでTerminateProcessされた子はexitCode=1, signal=null"
     },
     "ttySize": {
       "fields": {

@@ -55,6 +55,10 @@ pub fn capabilitySupported(arguments: []const Value, context: Context) bool {
         .chown => context.hasChown(),
         .access => context.hasAccess(),
         .uid_gid => context.hasUidGid(),
+        .argv_spawn => context.hasArgvSpawn(),
+        .signal => context.hasSignal(),
+        .tty_isatty => context.hasTty(),
+        .priority => context.hasProcessPriority(),
         else => false,
     };
 }
