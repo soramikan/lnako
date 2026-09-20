@@ -578,6 +578,18 @@ pub const Loader = struct {
             .span = span orelse ast.emptySpan(),
         });
     }
+
+    /// 取り込み展開を接続した後のAST深さ超過を位置付き診断にする。
+    /// ファイル単体の解析時検査（`parser.max_ast_depth`）では、展開子が
+    /// 後から接続されるため合成後の深さを測れない。
+    pub fn nestingDiagnosticAt(self: *Loader, span: ?ast.Span, file: []const u8, message: []const u8) !void {
+        try self.diagnostics.append(self.allocator, .{
+            .code = .nesting_too_deep,
+            .message = message,
+            .file = try self.allocator.dupe(u8, file),
+            .span = span orelse ast.emptySpan(),
+        });
+    }
 };
 
 const ModeState = enum { unvisited, visiting, done };

@@ -145,6 +145,51 @@ pub fn attachInlineExpansions(loader: *Loader, entry: u32) !void {
             try attachSiteExpansions(loader, variant.imports, vroot, false, entry);
         }
     }
+    try checkExpansionDepth(loader);
+}
+
+/// 展開子を接続した後は、childrenとexpansionを合わせた実効の深さが
+/// ファイル単体の解析時検査より深くなる。意味解析とloweringは展開を
+/// 呼び出し元の再帰途中から走査するため、合成後の深さを測り直す。
+/// 検査自体を再帰にすると同じクラッシュを起こすため明示的なスタックで測る。
+fn checkExpansionDepth(loader: *Loader) !void {
+    for (loader.modules.items) |module| {
+        const parsed = module.parsed orelse continue;
+        if (parsed.root) |root| {
+            if (try exceedCombinedDepth(loader.allocator, root)) |span| {
+                try loader.nestingDiagnosticAt(span, module.path, "式や命令の入れ子が深すぎます");
+            }
+        }
+        for (module.variants.items) |*variant| {
+            const vroot = variant.parse.root orelse continue;
+            if (try exceedCombinedDepth(loader.allocator, vroot)) |span| {
+                try loader.nestingDiagnosticAt(span, module.path, "式や命令の入れ子が深すぎます");
+            }
+        }
+    }
+}
+
+/// childrenとexpansionを合わせた深さが上限を超えたとき、最深部の位置を返す。
+fn exceedCombinedDepth(allocator: std.mem.Allocator, root: *ast.Node) std.mem.Allocator.Error!?ast.Span {
+    const Frame = struct { node: *ast.Node, index: usize };
+    var stack: std.ArrayList(Frame) = .empty;
+    defer stack.deinit(allocator);
+    try stack.append(allocator, .{ .node = root, .index = 0 });
+    while (stack.items.len > 0) {
+        const top = stack.items[stack.items.len - 1];
+        if (top.index >= top.node.children.len + top.node.expansion.len) {
+            _ = stack.pop();
+            continue;
+        }
+        stack.items[stack.items.len - 1].index += 1;
+        const child = if (top.index < top.node.children.len)
+            top.node.children[top.index]
+        else
+            top.node.expansion[top.index - top.node.children.len];
+        if (stack.items.len + 1 > parser.max_ast_depth) return child.span;
+        try stack.append(allocator, .{ .node = child, .index = 0 });
+    }
+    return null;
 }
 
 fn attachSiteExpansions(loader: *Loader, imports: []Import, node: *ast.Node, in_function: bool, entry: u32) !void {
