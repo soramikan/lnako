@@ -970,3 +970,29 @@ run 35472553438（docs専用commit。直前のrunと`docs/ci-performance.md`の�
   ところ全て成功し、**flaky**であることを確認した。
 - fixtureの待ち時間へ余裕を足す等のハードニングは互換oracleの意味を変えない範囲で
   検討すべき別課題のため、本施策では変更していない。
+
+### 2件目の観測（run 35481147659）と原因の確定
+
+同じfixtureが今度は`macOS arm64 / mac-host-compat`の`compare_node_file_oracle.mjs`で
+**1件の差分**として失敗した。ログに残った同一job内の比較結果が原因を確定させている。
+
+| optimization | stdout |
+| --- | --- |
+| 公式oracle（期待値） | `["FAST","SLOW"]` |
+| lnako AOT O0 / O1 / O2 | `["FAST","SLOW"]` |
+| lnako AOT O3 | `["SLOW","FAST"]` |
+
+**同じfixtureを同じjob内でO0〜O3へコンパイルした結果、O3だけ順序が反転した**。
+つまり差は最適化による意味の変化ではなく、子processの完了順という競合の結果である。
+fixtureは「child-fastがmarkerを書く→child-slowが25 ms間隔で検出して2000 ms後に
+`SLOW`を出力」というraceに依存し、負荷や生成コードの速度差で順序が入れ替わる。
+
+したがって期待値が順序を固定している点は、公式oracle自身も保証しない性質を
+要求している可能性が高い。対応方針は次のいずれかで、いずれも**互換oracleの
+期待値を変える判断**を伴うため、本PRでは実施せず記録に留める。
+
+1. 比較を順序非依存にする（同一multisetを要求し、順序は問わない）。
+2. fixture側のタイミングを決定的にする（例: `child-slow`がmarker検出後すぐ出力し、
+   `child-fast`側で完了を保証する）が、`5秒待`の窓との兼ね合いを再設計する必要がある。
+
+いずれも本施策（CI効率化）とは独立の課題である。
