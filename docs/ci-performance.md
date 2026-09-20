@@ -1090,6 +1090,19 @@ wall律速が`Windows compat-aot`（12m59s〜13m15s）へ移ったため、`use-
 ReleaseSafe compat-js構成のビルドが1sで終わるため、構成差ではなくcacheの有無が
 効いていると見られる。
 
+#### 2件のrun（保存→復元）
+
+| run | 構成 | Windows compat-aot | Linux compat-aot |
+| --- | --- | ---: | ---: |
+| 35487256825〜35502310307（cache無効、4 run） | — | 779〜795s | 351〜375s |
+| 35503960505（cache有効・初回） | cache **miss**（cold） | 610s（Test QuickJS build 279s＋Build QuickJS compiler 293s） | 375s |
+| 35506831210（cache有効・2回目） | cache **hit**（run A保存分を復元） | **499s**（224s＋232s） | 369s |
+
+2回目はmainのマージでソースが変わったため部分的にしかcacheが効かないが、
+それでもcold相当（610s）より約110s短い。同一ソースでの効果は次のrun（docs変更のみで
+ソース不変）で測る。**容量面の懸念は小さい**: 保存されるZig cacheはWindowsで
+728 MB（dir。初回は412 MB）・Linuxで863 MB、いずれも`cache-size-limit` 1.5 GiB以内。
+
 #### 初回run（run 35503960505、cache保存のみ）
 
 | 観測 | Windows compat-aot | Linux compat-aot |
@@ -1249,6 +1262,13 @@ fixtureは「child-fastがmarkerを書く→child-slowが25 ms間隔で検出し
 2. lnako側の完了コールバック配送が負荷時に遅れる事象を調査する。
 
 #### タイミング余裕の拡大（利用者判断で1を実施）
+
+対象fixtureは本PRの変更外でも再発している。run 35505193318（`feat/file-metadata`の
+`macOS arm64 / AOT native routes O0+O1`、workflow_dispatch）では、同じ
+`node-file-cases.json/plugin-node-process-completion-order`で
+`AOT traceでtrace有無の結果が変化しました` となり、集約job
+`Verify native AOT artifacts`が設計どおり失敗を検出した（fixture開始から101sで失敗）。
+本節の硬化はこの再発に対する対応でもある。
 
 互換oracleの意味を変えずに余裕だけを広げた（`tests/oracle/node-file-cases.json`）。
 
