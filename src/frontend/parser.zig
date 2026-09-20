@@ -1,5 +1,6 @@
 const std = @import("std");
 const ast = @import("ast.zig");
+const builtin_commands = @import("builtin_commands.zig");
 const diagnostic = @import("diagnostic.zig");
 const lexer = @import("lexer.zig");
 const syntax_transform = @import("syntax_transform.zig");
@@ -47,7 +48,25 @@ pub const ParseOptions = struct {
     initial: ?token_mod.Mode = null,
     /// 各取り込み文の直後に適用する、取り込み先モジュールの終端モード。
     tail_modes: []const TailMode = &.{},
+    /// 公式の`func token`に相当する既知の命令名。助詞付きの命令名を、公式
+    /// `yCallFunc`と同じく連鎖呼出しとして解決するために使う
+    /// （`大文字変換を表示` = `表示(大文字変換(それ))`）。既定は生成済みの
+    /// 一覧（`builtin_commands.function_names`）で、空を渡すと連鎖解決しない。
+    builtin_commands: []const []const u8 = &builtin_commands.function_names,
 };
+
+/// 式・命令の再帰下降の入れ子の上限。公式も極端に深い入れ子を文法エラー
+/// 『Maximum call stack size exceeded』で拒否する（v3.7.24・固定オラクルで
+/// `((((1))))`は1,000段成功・2,000段失敗）。上限が無いとパーサ自身の再帰が
+/// 深い括弧・ブロックでプロセススタックを使い切るため、位置付き診断へ収束させる。
+pub const max_parse_nesting_depth: usize = 1024;
+
+/// ASTの入れ子の上限。連鎖呼出しと左入れ子の演算子（`1+1+...`）はパーサの再帰を
+/// 深くしないまま深いASTを作るため、別に測る。公式の実測境界は連鎖・`+`連鎖とも
+/// 2,000段成功・3,000段失敗なので、その受理範囲を含む2048を上限にする。
+/// 後段の意味解析と中間表現loweringはASTを再帰走査するため、上限を超える入力は
+/// プロセスクラッシュではなく位置付き診断へ収束させる。
+pub const max_ast_depth: usize = 2048;
 
 pub const ParseResult = struct {
     stream: lexer.TokenStream,
@@ -74,6 +93,11 @@ pub const ParseResult = struct {
 /// 字句解析・構文変換を含めてソース全体を構文解析する。
 /// 構文エラーは Zig の error ではなく diagnostics と root=null で返す。
 /// 公式処理系が継続する廃止構文は、diagnosticを残したままrootを返す。
+/// `ParseOptions`を既定値で解析する便宜API。既定の`builtin_commands`は生成済みの
+/// 既知命令名の一覧（`builtin_commands.function_names`）なので、本番経路と同じく
+/// 助詞付きの命令名を連鎖呼出しとして解決する（`大文字変換を表示`は
+/// `表示(大文字変換(それ))`になる）。連鎖解決を止めたいテストは
+/// `parseWithMode`へ空の`builtin_commands`を渡す。
 pub fn parse(backing_allocator: std.mem.Allocator, source: []const u8, filename: []const u8) Error!ParseResult {
     return parseWithMode(backing_allocator, source, filename, .{});
 }
@@ -99,11 +123,25 @@ pub fn parseWithMode(backing_allocator: std.mem.Allocator, source: []const u8, f
         .mode = orMode(options.initial orelse .{}, options.forced),
         .own_mode = orMode(options.initial orelse .{}, options.forced),
         .tail_modes = options.tail_modes,
+        .builtin_commands = options.builtin_commands,
     };
-    const root = parser.parseProgram() catch |err| switch (err) {
+    var root = parser.parseProgram() catch |err| switch (err) {
         error.ParseFailed => null,
         error.OutOfMemory => return error.OutOfMemory,
     };
+    // パーサの再帰では捕まえられない深い左入れ子（`1+1+...`）と連鎖呼出しを、
+    // 再帰走査する意味解析・loweringへ渡す前に位置付き診断で止める。
+    if (root) |node| {
+        if (try parser.exceedAstDepth(node)) |span| {
+            try parser.diagnostics.append(allocator, .{
+                .code = .nesting_too_deep,
+                .message = "式や命令の入れ子が深すぎます",
+                .file = owned_filename,
+                .span = span,
+            });
+            root = null;
+        }
+    }
     const diagnostics = try parser.diagnostics.toOwnedSlice(allocator);
     return .{
         .stream = stream,
@@ -139,11 +177,49 @@ pub const Parser = struct {
     /// tail_modes適用を除いたモード累積（初期モード＋モード文の有効化）。
     own_mode: token_mod.Mode,
     tail_modes: []const TailMode = &.{},
+    /// 公式の`func token`に相当する既知の命令名（`ParseOptions.builtin_commands`）。
+    builtin_commands: []const []const u8 = &.{},
     tail_cursor: usize = 0,
     import_modes: std.ArrayList(ImportMode) = .empty,
     index: usize = 0,
     delimited_expression_depth: usize = 0,
+    /// 再帰下降の現在の深さ（`max_nesting_depth`と比較する）。
+    nesting_depth: usize = 0,
     diagnostics: std.ArrayList(diagnostic.Diagnostic) = .empty,
+
+    /// 再帰下降の一段分を数え、上限を超えたら位置付き診断にする。
+    /// 上限が無いとパーサ自身の再帰が深い括弧・ブロックでプロセススタックを使い切る。
+    pub fn enterNesting(self: *Parser) ParseFailure!void {
+        self.nesting_depth += 1;
+        if (self.nesting_depth > max_parse_nesting_depth) return self.fail(.nesting_too_deep, "式や命令の入れ子が深すぎます", self.peek());
+    }
+
+    pub fn leaveNesting(self: *Parser) void {
+        self.nesting_depth -= 1;
+    }
+
+    /// 解析済みのASTの深さを、明示的なスタックで測る（再帰すると検査自体が
+    /// プロセススタックを使い切る）。上限を超えたときだけ最深部の位置を返す。
+    /// パーサの再帰深さでは捕まえられない左入れ子（`1+1+...`）と連鎖呼出しを、
+    /// 後段の意味解析・loweringへ渡す前に止める。
+    pub fn exceedAstDepth(self: *Parser, root: *ast.Node) std.mem.Allocator.Error!?ast.Span {
+        const Frame = struct { node: *ast.Node, index: usize };
+        var stack: std.ArrayList(Frame) = .empty;
+        defer stack.deinit(self.allocator);
+        try stack.append(self.allocator, .{ .node = root, .index = 0 });
+        while (stack.items.len > 0) {
+            const top = stack.items[stack.items.len - 1];
+            if (top.index >= top.node.children.len) {
+                _ = stack.pop();
+                continue;
+            }
+            stack.items[stack.items.len - 1].index += 1;
+            const child = top.node.children[top.index];
+            if (stack.items.len + 1 > max_ast_depth) return child.span;
+            try stack.append(self.allocator, .{ .node = child, .index = 0 });
+        }
+        return null;
+    }
 
     pub fn parseProgram(self: *Parser) ParseFailure!*ast.Node {
         const root = try self.parseBlock(.{});
@@ -187,6 +263,11 @@ pub const Parser = struct {
     }
 
     pub fn parseStatement(self: *Parser) ParseFailure!*ast.Node {
+        // 文の解析は全てここを通るため、入れ子の上限はここで数える。ブロック・
+        // 同一行の制御構文（`もし1ならばもし1ならば…`）・ループ本体・スコープ
+        // 指定・無名関数は、いずれも`parseStatement`の再帰として深くなる。
+        try self.enterNesting();
+        defer self.leaveNesting();
         self.applyTailModes();
         const token = self.peek();
         if (self.isImportDirective()) return self.parseImportDirective();
@@ -660,6 +741,16 @@ pub const Parser = struct {
                 return self.parseFor(start, arguments.items);
             }
 
+            // 助詞付きの既知命令名は、公式`yCallFunc`と同じく命令として呼び出し、
+            // 結果を次の命令の引数にする（`大文字変換を表示`）。
+            if (try self.callChainedBuiltinCommand(&arguments)) {
+                // 直後の識別子は連鎖の結果を引数に取る命令名なので、ここで解決する。
+                if (self.at(.identifier) and !self.isChainedBuiltinCommand(self.peek())) {
+                    if (try self.resolveCommandName(start, &arguments, &chained_calls)) |statement| return statement;
+                }
+                continue;
+            }
+
             if (chained_calls.items.len > 0 and self.at(.identifier)) {
                 // 連文の続きが引数（「に」「を」「へ」等）で始まる場合、
                 // その識別子を命令と誤認せず、下のparseExpression経由で引数として処理する。
@@ -686,72 +777,8 @@ pub const Parser = struct {
             try arguments.append(self.allocator, expression);
 
             if (self.at(.identifier)) {
-                // 助詞付きの識別子の直後に別の命令名が続く場合、手前は命令ではなく
-                // 引数として扱う。例: `201でHを簡易HTTPサーバヘッダ出力`。
-                // 「して」などの連文助詞と「には」のコールバック構文は従来どおり
-                // その位置の識別子を命令として確定する。
-                if (self.peek().josi.len > 0 and
-                    !isSequenceJosi(self.peek().josi) and
-                    !isImplicitCallbackJosi(self.peek().josi) and
-                    self.peekAhead(1).kind == .identifier)
-                {
-                    continue;
-                }
-                // 配列添字・プロパティ・@参照の直後に助詞が続く場合、識別子は命令名ではなく値として続行する。
-                // 例: `1をA[0]に代入`, `1をA$fooに代入`。
-                const next_kind = self.peekAhead(1).kind;
-                if (next_kind == .left_bracket or next_kind == .at or next_kind == .property) {
-                    continue;
-                }
-                if ((self.identifierValue("増") or self.identifierValue("減")) and self.peekAhead(1).kind == .keyword_repeat) {
-                    return self.parseFor(start, arguments.items);
-                }
-                const command = self.advance();
-                if (std.mem.eql(u8, command.value, "実行速度優先") or std.mem.eql(u8, command.value, "パフォーマンスモニタ適用")) {
-                    const option = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try builder.nop(self, start);
-                    if (chained_calls.items.len > 0) {
-                        const statement = try self.parseScopedMode(start, command, option);
-                        try chained_calls.append(self.allocator, statement);
-                        return builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
-                    }
-                    return self.parseScopedMode(start, command, option);
-                }
-                if (std.mem.eql(u8, command.value, "条件分岐")) {
-                    const condition = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else return self.fail(.invalid_control_statement, "『条件分岐』の値が必要です", command);
-                    if (chained_calls.items.len > 0) {
-                        const statement = try self.parseSwitch(start, condition);
-                        try chained_calls.append(self.allocator, statement);
-                        return builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
-                    }
-                    return self.parseSwitch(start, condition);
-                }
-                if (try self.parseJapaneseCommand(start, command, arguments.items)) |statement| {
-                    if (chained_calls.items.len > 0) {
-                        try chained_calls.append(self.allocator, statement);
-                        return builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
-                    }
-                    return statement;
-                }
-                if (isImplicitCallbackJosi(command.josi)) {
-                    const statement = try self.parseImplicitCallbackCall(command, arguments.items);
-                    if (chained_calls.items.len > 0) {
-                        try chained_calls.append(self.allocator, statement);
-                        return builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
-                    }
-                    return statement;
-                }
-                const call = try self.makeCommandCall(command, try arguments.toOwnedSlice(self.allocator));
-                if (isSequenceJosi(command.josi)) {
-                    try chained_calls.append(self.allocator, call);
-                    arguments = .empty;
-                    try arguments.append(self.allocator, try self.implicitIt(command));
-                    continue;
-                }
-                if (chained_calls.items.len > 0) {
-                    try chained_calls.append(self.allocator, call);
-                    return builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
-                }
-                return call;
+                if (try self.resolveCommandName(start, &arguments, &chained_calls)) |statement| return statement;
+                continue;
             }
             if (self.isTerminator()) break;
         }
@@ -769,6 +796,111 @@ pub const Parser = struct {
             return node;
         }
         return self.fail(.unexpected_token, "命令呼び出しを構成できません", self.peek());
+    }
+
+    /// 現在位置の識別子を命令名として解決する。命令・制御構文へ確定した場合は
+    /// そのノードを返し、識別子が引数として扱われる場合は`null`を返す
+    /// （呼出し元は文の解析を継続する）。
+    fn resolveCommandName(
+        self: *Parser,
+        start: Token,
+        arguments: *std.ArrayList(*ast.Node),
+        chained_calls: *std.ArrayList(*ast.Node),
+    ) ParseFailure!?*ast.Node {
+        // 助詞付きの既知命令名は、公式`yCallFunc`と同じく命令として呼び出し、
+        // 結果を次の命令の引数にする（`「abc」の要素数を表示`）。長い連鎖でも
+        // プロセススタックを消費しないよう、再帰せず反復して解決する。
+        while (self.isChainedBuiltinCommand(self.peek())) _ = try self.callChainedBuiltinCommand(arguments);
+        // 助詞付きの識別子の直後に別の命令名が続く場合、手前は命令ではなく
+        // 引数として扱う。例: `201でHを簡易HTTPサーバヘッダ出力`。
+        // 「して」などの連文助詞と「には」のコールバック構文は従来どおり
+        // その位置の識別子を命令として確定する。
+        if (self.peek().josi.len > 0 and
+            !isSequenceJosi(self.peek().josi) and
+            !isImplicitCallbackJosi(self.peek().josi) and
+            self.peekAhead(1).kind == .identifier)
+        {
+            return null;
+        }
+        // 配列添字・プロパティ・@参照の直後に助詞が続く場合、識別子は命令名ではなく値として続行する。
+        // 例: `1をA[0]に代入`, `1をA$fooに代入`。
+        const next_kind = self.peekAhead(1).kind;
+        if (next_kind == .left_bracket or next_kind == .at or next_kind == .property) return null;
+        if ((self.identifierValue("増") or self.identifierValue("減")) and self.peekAhead(1).kind == .keyword_repeat) {
+            return try self.parseFor(start, arguments.items);
+        }
+        const command = self.advance();
+        if (std.mem.eql(u8, command.value, "実行速度優先") or std.mem.eql(u8, command.value, "パフォーマンスモニタ適用")) {
+            const option = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try builder.nop(self, start);
+            if (chained_calls.items.len > 0) {
+                const statement = try self.parseScopedMode(start, command, option);
+                try chained_calls.append(self.allocator, statement);
+                return try builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
+            }
+            return try self.parseScopedMode(start, command, option);
+        }
+        if (std.mem.eql(u8, command.value, "条件分岐")) {
+            const condition = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else return self.fail(.invalid_control_statement, "『条件分岐』の値が必要です", command);
+            if (chained_calls.items.len > 0) {
+                const statement = try self.parseSwitch(start, condition);
+                try chained_calls.append(self.allocator, statement);
+                return try builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
+            }
+            return try self.parseSwitch(start, condition);
+        }
+        if (try self.parseJapaneseCommand(start, command, arguments.items)) |statement| {
+            if (chained_calls.items.len > 0) {
+                try chained_calls.append(self.allocator, statement);
+                return try builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
+            }
+            return statement;
+        }
+        if (isImplicitCallbackJosi(command.josi)) {
+            const statement = try self.parseImplicitCallbackCall(command, arguments.items);
+            if (chained_calls.items.len > 0) {
+                try chained_calls.append(self.allocator, statement);
+                return try builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
+            }
+            return statement;
+        }
+        const call = try self.makeCommandCall(command, try arguments.toOwnedSlice(self.allocator));
+        if (isSequenceJosi(command.josi)) {
+            try chained_calls.append(self.allocator, call);
+            arguments.* = .empty;
+            try arguments.*.append(self.allocator, try self.implicitIt(command));
+            return null;
+        }
+        if (chained_calls.items.len > 0) {
+            try chained_calls.append(self.allocator, call);
+            return try builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
+        }
+        return call;
+    }
+
+    /// 公式の`func token`相当（既知の命令名）かどうか。
+    fn isBuiltinCommandName(self: *Parser, value: []const u8) bool {
+        for (self.builtin_commands) |name| if (std.mem.eql(u8, name, value)) return true;
+        return false;
+    }
+
+    /// 現在位置の識別子が「助詞付きの既知命令名」で、直後にも識別子が続くか。
+    /// 公式`yCallFunc`はこの位置の命令を呼び出し、結果を次の命令の引数にする。
+    fn isChainedBuiltinCommand(self: *Parser, token: Token) bool {
+        if (token.kind != .identifier) return false;
+        if (token.josi.len == 0 or isSequenceJosi(token.josi) or isImplicitCallbackJosi(token.josi)) return false;
+        if (self.peekAhead(1).kind != .identifier) return false;
+        return self.isBuiltinCommandName(token.value);
+    }
+
+    /// 現在位置の助詞付き命令を呼び出し、結果を引数リストへ置き換える。
+    /// 置き換えた場合は`true`を返す。
+    fn callChainedBuiltinCommand(self: *Parser, arguments: *std.ArrayList(*ast.Node)) ParseFailure!bool {
+        if (!self.isChainedBuiltinCommand(self.peek())) return false;
+        const command = self.advance();
+        const call = try self.makeCommandCall(command, try arguments.toOwnedSlice(self.allocator));
+        arguments.* = .empty;
+        try arguments.append(self.allocator, call);
+        return true;
     }
 
     pub fn makeCommandCall(self: *Parser, command: Token, arguments: []*ast.Node) ParseFailure!*ast.Node {
@@ -980,6 +1112,9 @@ pub const Parser = struct {
         const argument_start = self.index;
         while (true) {
             if (self.at(.identifier)) {
+                // 助詞付きの既知命令名は、文位置と同じく連鎖呼出しとして解決する
+                // （`A=「abc」の大文字変換を文字数`の右辺も同じASTにする）。
+                if (try self.callChainedBuiltinCommand(&arguments)) continue;
                 if (self.peek().josi.len > 0 and self.peekAhead(1).kind == .identifier) {
                     try arguments.append(self.allocator, try expressions.parseExpression(self, 0));
                     continue;

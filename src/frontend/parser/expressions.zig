@@ -14,6 +14,9 @@ pub fn parseExpression(self: *Parser, minimum_precedence: u8) ParseFailure!*ast.
 }
 
 pub fn parseExpressionWithContext(self: *Parser, minimum_precedence: u8, allow_negative_number_literal: bool) ParseFailure!*ast.Node {
+    // 演算子の優先順位による再帰も含め、式の入れ子はここで数える。
+    try self.enterNesting();
+    defer self.leaveNesting();
     var left = try parseUnary(self, allow_negative_number_literal);
     while (helpers.operatorInfo(self.peek().kind)) |info| {
         if (info.precedence < minimum_precedence) break;
@@ -43,6 +46,9 @@ pub fn parseUnary(self: *Parser, allow_negative_number_literal: bool) ParseFailu
         return self.fail(.unexpected_token, "括弧・配列・辞書の内側では負のBigIntリテラルを直接使用できません", self.peek());
     }
     if (self.at(.not) or self.at(.minus)) {
+        // 単項演算子の連鎖は`parseUnary`自身が再帰するため、ここでも数える。
+        try self.enterNesting();
+        defer self.leaveNesting();
         const operator_token = self.advance();
         const operand = try parseUnary(self, allow_negative_number_literal);
         if (operator_token.kind == .minus) {

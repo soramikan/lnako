@@ -7,6 +7,7 @@ const ast = @import("../frontend/ast.zig");
 const parser = @import("../frontend/parser.zig");
 const token_mod = @import("../frontend/token.zig");
 const module_graph = @import("module_graph.zig");
+const builtin_catalog = @import("builtin_catalog.zig");
 
 const Loader = module_graph.Loader;
 const Import = module_graph.Import;
@@ -69,6 +70,7 @@ fn variantForSite(loader: *Loader, target: u32, ambient: token_mod.Mode, site_pa
     const probe = parser.parseWithMode(loader.backing_allocator, target_module.source, target_module.path, .{
         .forced = target_module.forced_mode,
         .initial = effective_initial,
+        .builtin_commands = &builtin_catalog.function_names,
     }) catch |err| {
         try loader.importDiagnosticAt(site_span, site_path, "循環取り込みの再展開コピーを文脈の構文モードで解析できません");
         return err;
@@ -118,6 +120,7 @@ fn variantForSite(loader: *Loader, target: u32, ambient: token_mod.Mode, site_pa
             .forced = target_module.forced_mode,
             .initial = ambient,
             .tail_modes = tail_modes.items,
+            .builtin_commands = &builtin_catalog.function_names,
         }) catch |err| {
             try loader.importDiagnosticAt(site_span, site_path, "循環取り込みの再展開コピーを文脈の構文モードで解析できません");
             return err;
@@ -133,18 +136,122 @@ fn variantForSite(loader: *Loader, target: u32, ambient: token_mod.Mode, site_pa
 /// 取り込み先の変数宣言・文が呼び出し元関数のローカルになる。
 /// 複製内の取り込み文も関数内へ落ちるため再帰的に展開を接続する。
 pub fn attachInlineExpansions(loader: *Loader, entry: u32) !void {
+    var budget = ExpansionBudget{ .depths = try loader.allocator.alloc(usize, loader.modules.items.len) };
+    @memset(budget.depths, 0);
     for (loader.modules.items) |module| {
         const parsed = module.parsed orelse continue;
         const root = parsed.root orelse continue;
-        try attachSiteExpansions(loader, module.imports, root, false, entry);
+        try attachSiteExpansions(loader, module.imports, root, false, entry, module.path, &budget, 0, 1);
         for (module.variants.items) |*variant| {
             const vroot = variant.parse.root orelse continue;
-            try attachSiteExpansions(loader, variant.imports, vroot, false, entry);
+            try attachSiteExpansions(loader, variant.imports, vroot, false, entry, module.path, &budget, 0, 1);
+        }
+    }
+    try checkExpansionDepth(loader);
+}
+
+/// 展開の構築中に合成後のAST深さを追跡する。展開は取り込み元ASTの途中へ
+/// 接続されるため、`parser.parseWithMode`のファイル単体検査では合成後の深さを
+/// 測れず、また複製を作る再帰自体が深い非循環チェーンでスタックを使い切る。
+/// 構築しながら「取り込み元での位置 + 取り込み先のAST深さ」を積み上げ、上限を
+/// 超える辺は展開せず診断へ変換する。
+const ExpansionBudget = struct {
+    /// モジュール索引ごとのAST深さ（0は未計算）。
+    depths: []usize,
+
+    fn depthOf(self: *ExpansionBudget, loader: *Loader, module: *LoadedModule) !usize {
+        if (self.depths[module.index] == 0) {
+            const root = if (module.parsed) |parsed| parsed.root else null;
+            self.depths[module.index] = if (root) |node| try astDepth(loader.allocator, node) else 1;
+        }
+        return self.depths[module.index];
+    }
+};
+
+/// `children`だけを辿ったASTの最大深さ。展開子は別モジュールなので数えない。
+fn astDepth(allocator: std.mem.Allocator, root: *ast.Node) std.mem.Allocator.Error!usize {
+    const Frame = struct { node: *ast.Node, index: usize, depth: usize };
+    var stack: std.ArrayList(Frame) = .empty;
+    defer stack.deinit(allocator);
+    try stack.append(allocator, .{ .node = root, .index = 0, .depth = 1 });
+    var deepest: usize = 1;
+    while (stack.items.len > 0) {
+        const top = stack.items[stack.items.len - 1];
+        if (top.index >= top.node.children.len) {
+            _ = stack.pop();
+            continue;
+        }
+        stack.items[stack.items.len - 1].index += 1;
+        const child = top.node.children[top.index];
+        if (top.depth + 1 > deepest) deepest = top.depth + 1;
+        try stack.append(allocator, .{ .node = child, .index = 0, .depth = top.depth + 1 });
+    }
+    return deepest;
+}
+
+/// 展開子を接続した後は、childrenとexpansionを合わせた実効の深さが
+/// ファイル単体の解析時検査より深くなる。意味解析とloweringは展開を
+/// 呼び出し元の再帰途中から走査するため、合成後の深さを測り直す。
+/// 検査自体を再帰にすると同じクラッシュを起こすため明示的なスタックで測る。
+fn checkExpansionDepth(loader: *Loader) !void {
+    for (loader.modules.items) |module| {
+        const parsed = module.parsed orelse continue;
+        if (parsed.root) |root| {
+            if (try exceedCombinedDepth(loader.allocator, root)) |span| {
+                try loader.nestingDiagnosticAt(span, module.path, "式や命令の入れ子が深すぎます");
+            }
+        }
+        for (module.variants.items) |*variant| {
+            const vroot = variant.parse.root orelse continue;
+            if (try exceedCombinedDepth(loader.allocator, vroot)) |span| {
+                try loader.nestingDiagnosticAt(span, module.path, "式や命令の入れ子が深すぎます");
+            }
         }
     }
 }
 
-fn attachSiteExpansions(loader: *Loader, imports: []Import, node: *ast.Node, in_function: bool, entry: u32) !void {
+/// childrenとexpansionを合わせた深さが上限を超えたとき、最深部の位置を返す。
+/// `expansion`の子は別モジュールの複製なので、その`span`は診断へ渡す
+/// `module.path`のソース位置ではない。展開へ入る辺を越えたら、その辺を
+/// 持つ取り込み文（診断対象モジュール側のノード）の位置を返す。
+fn exceedCombinedDepth(allocator: std.mem.Allocator, root: *ast.Node) std.mem.Allocator.Error!?ast.Span {
+    const Frame = struct { node: *ast.Node, index: usize, origin: *ast.Node };
+    var stack: std.ArrayList(Frame) = .empty;
+    defer stack.deinit(allocator);
+    try stack.append(allocator, .{ .node = root, .index = 0, .origin = root });
+    while (stack.items.len > 0) {
+        const top = stack.items[stack.items.len - 1];
+        if (top.index >= top.node.children.len + top.node.expansion.len) {
+            _ = stack.pop();
+            continue;
+        }
+        stack.items[stack.items.len - 1].index += 1;
+        const in_children = top.index < top.node.children.len;
+        const child = if (in_children)
+            top.node.children[top.index]
+        else
+            top.node.expansion[top.index - top.node.children.len];
+        if (stack.items.len + 1 > parser.max_ast_depth) return (if (in_children) child else top.origin).span;
+        try stack.append(allocator, .{
+            .node = child,
+            .index = 0,
+            .origin = if (in_children) child else top.origin,
+        });
+    }
+    return null;
+}
+
+fn attachSiteExpansions(
+    loader: *Loader,
+    imports: []Import,
+    node: *ast.Node,
+    in_function: bool,
+    entry: u32,
+    module_path: []const u8,
+    budget: *ExpansionBudget,
+    accumulated: usize,
+    depth: usize,
+) !void {
     if (node.kind == .import and in_function) {
         for (imports) |*item| {
             if (item.span.start != node.span.start) continue;
@@ -154,9 +261,16 @@ fn attachSiteExpansions(loader: *Loader, imports: []Import, node: *ast.Node, in_
                 // グローバル生成済みのため、コピー内でも隠さない。
                 if (target_module.kind == .nako3) {
                     if (target != entry) target_module.expands_in_function = true;
-                    const chain = try loader.allocator.alloc(bool, loader.modules.items.len);
-                    @memset(chain, false);
-                    node.expansion = try copyExpansion(loader, target_module, item.variant, entry, chain);
+                    const target_depth = try budget.depthOf(loader, target_module);
+                    if (accumulated + depth + target_depth > parser.max_ast_depth) {
+                        // 合成後の深さが上限を超える辺は展開しない。構築を
+                        // 続けると意味解析より先に複製の再帰が深くなる。
+                        try loader.nestingDiagnosticAt(node.span, module_path, "式や命令の入れ子が深すぎます");
+                    } else {
+                        const chain = try loader.allocator.alloc(bool, loader.modules.items.len);
+                        @memset(chain, false);
+                        node.expansion = try copyExpansion(loader, target_module, item.variant, entry, chain, budget, accumulated + depth + 1);
+                    }
                 }
             };
             break;
@@ -164,7 +278,7 @@ fn attachSiteExpansions(loader: *Loader, imports: []Import, node: *ast.Node, in_
     }
     const child_in_function = in_function or node.kind == .function_definition or
         node.kind == .test_definition or node.kind == .anonymous_function;
-    for (node.children) |child| try attachSiteExpansions(loader, imports, child, child_in_function, entry);
+    for (node.children) |child| try attachSiteExpansions(loader, imports, child, child_in_function, entry, module_path, budget, accumulated, depth + 1);
 }
 
 /// 実効取り込みサイト用に、取り込み先トップレベル文を複製する。
@@ -172,7 +286,15 @@ fn attachSiteExpansions(loader: *Loader, imports: []Import, node: *ast.Node, in_
 /// 展開を接続する。chain はこの展開系で複製中のモジュールを表し、
 /// 公式のfilePathガード相当として系内で既出の対象への辺は
 /// 展開しない（取り込み文は残るが展開子は空＝実行時に何もしない）。
-fn copyExpansion(loader: *Loader, module: *LoadedModule, variant_index: ?u32, entry: u32, chain: []bool) anyerror![]const *ast.Node {
+fn copyExpansion(
+    loader: *Loader,
+    module: *LoadedModule,
+    variant_index: ?u32,
+    entry: u32,
+    chain: []bool,
+    budget: *ExpansionBudget,
+    accumulated: usize,
+) anyerror![]const *ast.Node {
     if (chain[module.index]) return &.{};
     chain[module.index] = true;
     defer chain[module.index] = false;
@@ -181,11 +303,21 @@ fn copyExpansion(loader: *Loader, module: *LoadedModule, variant_index: ?u32, en
     const source_root = root orelse return &.{};
     const children = try loader.allocator.alloc(*ast.Node, source_root.children.len);
     for (source_root.children, 0..) |child, index| children[index] = try copySubtree(loader, child);
-    for (children) |child| try attachCopyExpansions(loader, imports, child, entry, chain);
+    for (children) |child| try attachCopyExpansions(loader, imports, child, entry, chain, module.path, budget, accumulated, 1);
     return children;
 }
 
-fn attachCopyExpansions(loader: *Loader, imports: []Import, node: *ast.Node, entry: u32, chain: []bool) !void {
+fn attachCopyExpansions(
+    loader: *Loader,
+    imports: []Import,
+    node: *ast.Node,
+    entry: u32,
+    chain: []bool,
+    module_path: []const u8,
+    budget: *ExpansionBudget,
+    accumulated: usize,
+    depth: usize,
+) !void {
     if (node.kind == .import and node.expansion.len == 0) {
         for (imports) |*item| {
             if (item.span.start != node.span.start) continue;
@@ -193,7 +325,12 @@ fn attachCopyExpansions(loader: *Loader, imports: []Import, node: *ast.Node, ent
                 const target_module = loader.modules.items[target];
                 if (target_module.kind == .nako3 and !chain[target]) {
                     if (target != entry) target_module.expands_in_function = true;
-                    node.expansion = try copyExpansion(loader, target_module, item.variant, entry, chain);
+                    const target_depth = try budget.depthOf(loader, target_module);
+                    if (accumulated + depth + target_depth > parser.max_ast_depth) {
+                        try loader.nestingDiagnosticAt(node.span, module_path, "式や命令の入れ子が深すぎます");
+                    } else {
+                        node.expansion = try copyExpansion(loader, target_module, item.variant, entry, chain, budget, accumulated + depth + 1);
+                    }
                 }
             };
             break;
@@ -202,7 +339,7 @@ fn attachCopyExpansions(loader: *Loader, imports: []Import, node: *ast.Node, ent
     // node.expansion は copyExpansion で作成時に対象モジュール自身の辺で
     // 処理済み。ここで外側モジュールのimportsで再走査すると、循環ガードで
     // 空にした取り込み文が位置一致で別対象として再展開され無限再帰する。
-    for (node.children) |child| try attachCopyExpansions(loader, imports, child, entry, chain);
+    for (node.children) |child| try attachCopyExpansions(loader, imports, child, entry, chain, module_path, budget, accumulated, depth + 1);
 }
 
 fn copySubtree(loader: *Loader, node: *ast.Node) anyerror!*ast.Node {

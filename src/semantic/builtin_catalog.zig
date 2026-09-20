@@ -973,6 +973,11 @@ pub const arities = [_]BuiltinArity{
     .{ .name = "算用数字", .count = 1, .is_variable = false },
 };
 
+/// 公式の`func token`に相当する命令名（カタログ種別が「関数」のもの）。
+/// 一覧そのものは`frontend`層の`builtin_commands.zig`が持ち、ここでは再公開する
+/// （パーサの既定値が本番と同じになるよう、`frontend`層が自分で参照できるため）。
+pub const function_names = @import("../frontend/builtin_commands.zig").function_names;
+
 pub fn findArity(name: []const u8) ?BuiltinArity {
     for (arities) |entry| if (std.mem.eql(u8, entry.name, name)) return entry;
     return null;

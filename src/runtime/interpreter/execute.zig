@@ -801,9 +801,22 @@ fn executeCallFallback(
 ) !Value {
     const global = if (global_slot != prepared.no_global_slot) self.globalSlotValue(global_slot) else self.globals.get(instruction.name);
     if (global) |callable| {
-        if (callable != .function) return error.NotCallable;
-        writes_result.* = callable.function.kind == .ir;
-        return self.callFunctionValue(callable.function, arguments);
+        if (callable == .function) {
+            writes_result.* = callable.function.kind == .ir;
+            return self.callFunctionValue(callable.function, arguments);
+        }
+        // 公式はプラグインが設定した同名のグローバル変数があっても、`func token`の
+        // 呼出しとして組み込み命令を呼ぶ（`デスクトップ`は公式では0引数の関数で、
+        // グローバル変数は`デスクトップを表示`のための便宜値）。関数以外の値で
+        // 隠れている場合だけ、組み込み命令へフォールバックする。意味解析が
+        // 同名の変数へ束縛した呼出し（`変数 表示=1`のあとの`1を表示`）は
+        // 組み込み呼出しではないので、AOTと同じく非関数呼出しとして失敗させる。
+        if (builtin_id == null or !instruction.is_builtin_call) return error.NotCallable;
+    } else if (builtin_id != null and !instruction.is_builtin_call) {
+        // 意味解析はブロックを先に事前宣言するため、呼出しより後にある同名の
+        // 変数宣言もその呼出しを変数へ束縛する。変数がまだ未設定でグローバルが
+        // 無い場合も、固定IDの組み込み命令へ落とさない。
+        return error.NotCallable;
     }
     writes_result.* = !preservesResultVariable(instruction.name);
     const site_id = if (frame.owner_program == &self.root_program) instruction.site_id else null;
@@ -1345,7 +1358,7 @@ pub fn executeDynamicValue(self: *Interpreter, source_value: Value) !Value {
     defer self.allocator.free(source);
     self.dynamic_depth += 1;
     defer self.dynamic_depth -= 1;
-    var parsed = try parser.parse(self.allocator, source, "<dynamic>.nako3");
+    var parsed = try parser.parseWithMode(self.allocator, source, "<dynamic>.nako3", .{ .builtin_commands = &builtin_catalog.function_names });
     defer parsed.deinit();
     if (!parsed.succeeded()) return error.DynamicParseFailed;
     // 公式cnako3は動的コードを常にmain名前空間としてコンパイルする。

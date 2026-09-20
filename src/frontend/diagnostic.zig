@@ -22,6 +22,9 @@ pub const Code = enum {
     import_not_found,
     ambiguous_import,
     legacy_deprecated,
+    /// 式・命令・連鎖の入れ子が上限を超えた。公式も深い入れ子を文法エラー
+    /// 『Maximum call stack size exceeded』で拒否するため、受理せず位置付き診断にする。
+    nesting_too_deep,
 };
 
 pub const Diagnostic = struct {

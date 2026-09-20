@@ -12,7 +12,7 @@ pub fn main(init: std.process.Init) !void {
 
     for (process_args[1..], 0..) |source, index| {
         if (index > 0) try stdout.writeAll("\n---\n\n");
-        var parsed = try lnako.frontend.parser.parse(allocator, source, "main.nako3");
+        var parsed = try lnako.frontend.parser.parseWithMode(allocator, source, "main.nako3", .{ .builtin_commands = &lnako.semantic.builtin_catalog.function_names });
         defer parsed.deinit();
         if (!parsed.succeeded()) return error.ParseFailed;
         var analyzed = try lnako.semantic.analyzer.analyze(allocator, parsed.root.?, "main.nako3");

@@ -473,3 +473,172 @@ test "和文代入の値に式を許容する" {
     try std.testing.expectEqualStrings("A", assignment.name);
     try std.testing.expectEqual(ast.Kind.binary_operator, assignment.children[0].kind);
 }
+
+test "助詞付きの既知命令名を連鎖呼出しとして解析する" {
+    const names = [_][]const u8{ "要素数", "表示" };
+    var result = try parser_mod.parseWithMode(std.testing.allocator, "「abc」の要素数を表示\n", "chain.nako3", .{
+        .builtin_commands = &names,
+    });
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const display = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, display.kind);
+    try std.testing.expectEqualStrings("表示", display.name);
+    try std.testing.expectEqual(@as(usize, 1), display.children.len);
+    const count = display.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, count.kind);
+    try std.testing.expectEqualStrings("要素数", count.name);
+    try std.testing.expectEqualStrings("を", count.josi);
+    try std.testing.expectEqual(@as(usize, 1), count.children.len);
+    try std.testing.expectEqual(ast.Kind.string, count.children[0].kind);
+    try std.testing.expectEqualStrings("abc", count.children[0].value);
+    try std.testing.expectEqualStrings("の", count.children[0].josi);
+}
+
+test "既知命令名の一覧が空なら連鎖呼出しにしない" {
+    var result = try parser_mod.parseWithMode(std.testing.allocator, "「abc」の要素数を表示\n", "chain-disabled.nako3", .{
+        .builtin_commands = &.{},
+    });
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const display = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, display.kind);
+    try std.testing.expectEqualStrings("表示", display.name);
+    try std.testing.expectEqual(@as(usize, 2), display.children.len);
+    try std.testing.expectEqual(ast.Kind.word, display.children[1].kind);
+    try std.testing.expectEqualStrings("要素数", display.children[1].value);
+}
+
+test "長い連鎖呼出しでもパーサは再帰せずに解析する" {
+    const names = [_][]const u8{ "大文字変換", "表示" };
+    var source: std.ArrayList(u8) = .empty;
+    defer source.deinit(std.testing.allocator);
+    try source.appendSlice(std.testing.allocator, "「a」の");
+    var index: usize = 0;
+    while (index < 2000) : (index += 1) try source.appendSlice(std.testing.allocator, "大文字変換を");
+    try source.appendSlice(std.testing.allocator, "表示\n");
+    var result = try parser_mod.parseWithMode(std.testing.allocator, source.items, "long-chain.nako3", .{
+        .builtin_commands = &names,
+    });
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const display = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, display.kind);
+    try std.testing.expectEqualStrings("表示", display.name);
+    // 連鎖の先頭は先頭値を受ける入れ子の呼出しになる。
+    var current = display;
+    var depth: usize = 0;
+    while (current.children.len > 0) : (depth += 1) current = current.children[0];
+    try std.testing.expectEqual(@as(usize, 2001), depth);
+    try std.testing.expectEqual(ast.Kind.string, current.kind);
+    try std.testing.expectEqualStrings("a", current.value);
+}
+
+test "代入右辺の連鎖呼出しが文位置と同じASTになる" {
+    // 文位置の`「abc」の要素数を文字数`は`文字数(要素数("abc"))`になる。
+    var statement = try parse(std.testing.allocator, "「abc」の要素数を文字数\n", "chain-statement.nako3");
+    defer statement.deinit();
+    try std.testing.expect(statement.succeeded());
+    // 文位置も同じ入れ子の呼出しになる。
+    try std.testing.expectEqual(ast.Kind.function_call, statement.root.?.children[0].kind);
+    try std.testing.expectEqualStrings("文字数", statement.root.?.children[0].name);
+    try std.testing.expectEqual(@as(usize, 1), statement.root.?.children[0].children.len);
+    try std.testing.expectEqualStrings("要素数", statement.root.?.children[0].children[0].name);
+    var assigned = try parse(std.testing.allocator, "A=「abc」の要素数を文字数\n", "chain-assign.nako3");
+    defer assigned.deinit();
+    try std.testing.expect(assigned.succeeded());
+    const assignment = assigned.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.assignment, assignment.kind);
+    try std.testing.expectEqualStrings("A", assignment.name);
+    // 代入右辺も文位置と同じ入れ子の呼出しになり、位置引数へ分解されない。
+    try std.testing.expectEqual(ast.Kind.function_call, assignment.children[0].kind);
+    try std.testing.expectEqualStrings("文字数", assignment.children[0].name);
+    try std.testing.expectEqual(@as(usize, 1), assignment.children[0].children.len);
+    const count = assignment.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, count.kind);
+    try std.testing.expectEqualStrings("要素数", count.name);
+    try std.testing.expectEqualStrings("を", count.josi);
+    try std.testing.expectEqualStrings("abc", count.children[0].value);
+    try std.testing.expectEqualStrings("の", count.children[0].josi);
+}
+
+test "ASTの深さが上限を超えたら位置付き診断にする" {
+    const names = [_][]const u8{ "大文字変換", "表示" };
+    var source: std.ArrayList(u8) = .empty;
+    defer source.deinit(std.testing.allocator);
+    try source.appendSlice(std.testing.allocator, "「a」の");
+    // 公式は2,000段の連鎖を受理し、3,000段を文法エラーにする（実測）。
+    var index: usize = 0;
+    while (index < parser_mod.max_ast_depth + 8) : (index += 1) try source.appendSlice(std.testing.allocator, "大文字変換を");
+    try source.appendSlice(std.testing.allocator, "表示\n");
+    var result = try parser_mod.parseWithMode(std.testing.allocator, source.items, "deep-chain.nako3", .{
+        .builtin_commands = &names,
+    });
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+    try std.testing.expectEqual(@as(?*ast.Node, null), result.root);
+    try std.testing.expectEqual(diagnostic.Code.nesting_too_deep, result.diagnostics[0].code);
+    try std.testing.expectEqual(@as(usize, 0), result.diagnostics[0].span.line);
+}
+
+test "深い演算子の入れ子が上限を超えたら位置付き診断にする" {
+    var source: std.ArrayList(u8) = .empty;
+    defer source.deinit(std.testing.allocator);
+    try source.appendSlice(std.testing.allocator, "それは1");
+    var index: usize = 0;
+    while (index < parser_mod.max_ast_depth + 8) : (index += 1) try source.appendSlice(std.testing.allocator, "+1");
+    try source.appendSlice(std.testing.allocator, "\nそれを表示。\n");
+    var result = try parse(std.testing.allocator, source.items, "deep-sum.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+    try std.testing.expectEqual(@as(?*ast.Node, null), result.root);
+    try std.testing.expectEqual(diagnostic.Code.nesting_too_deep, result.diagnostics[0].code);
+}
+
+test "深い括弧の入れ子が上限を超えたら位置付き診断にする" {
+    const depth = parser_mod.max_parse_nesting_depth + 8;
+    var source: std.ArrayList(u8) = .empty;
+    defer source.deinit(std.testing.allocator);
+    try source.appendSlice(std.testing.allocator, "それは");
+    var index: usize = 0;
+    while (index < depth) : (index += 1) try source.appendSlice(std.testing.allocator, "(");
+    try source.appendSlice(std.testing.allocator, "1");
+    index = 0;
+    while (index < depth) : (index += 1) try source.appendSlice(std.testing.allocator, ")");
+    try source.appendSlice(std.testing.allocator, "\nそれを表示。\n");
+    var result = try parse(std.testing.allocator, source.items, "deep-paren.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+    try std.testing.expectEqual(@as(?*ast.Node, null), result.root);
+    try std.testing.expectEqual(diagnostic.Code.nesting_too_deep, result.diagnostics[0].code);
+}
+
+test "同一行の制御構文の入れ子が上限を超えたら位置付き診断にする" {
+    // `parseBlock`を通らない同一行の入れ子も`parseStatement`で数える。
+    const depth = parser_mod.max_parse_nesting_depth + 8;
+    var source: std.ArrayList(u8) = .empty;
+    defer source.deinit(std.testing.allocator);
+    var index: usize = 0;
+    while (index < depth) : (index += 1) try source.appendSlice(std.testing.allocator, "もし1ならば");
+    try source.appendSlice(std.testing.allocator, "1を表示\n");
+    var result = try parse(std.testing.allocator, source.items, "deep-inline-if.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+    try std.testing.expectEqual(@as(?*ast.Node, null), result.root);
+    try std.testing.expectEqual(diagnostic.Code.nesting_too_deep, result.diagnostics[0].code);
+}
+
+test "深い単項演算子の入れ子が上限を超えたら位置付き診断にする" {
+    const depth = parser_mod.max_parse_nesting_depth + 8;
+    var source: std.ArrayList(u8) = .empty;
+    defer source.deinit(std.testing.allocator);
+    try source.appendSlice(std.testing.allocator, "それは");
+    var index: usize = 0;
+    while (index < depth) : (index += 1) try source.appendSlice(std.testing.allocator, "-");
+    try source.appendSlice(std.testing.allocator, "1\nそれを表示。\n");
+    var result = try parse(std.testing.allocator, source.items, "deep-unary.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+    try std.testing.expectEqual(@as(?*ast.Node, null), result.root);
+    try std.testing.expectEqual(diagnostic.Code.nesting_too_deep, result.diagnostics[0].code);
+}

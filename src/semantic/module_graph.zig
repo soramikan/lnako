@@ -5,6 +5,7 @@ const parser = @import("../frontend/parser.zig");
 const token_mod = @import("../frontend/token.zig");
 const analyzer = @import("analyzer.zig");
 const variants = @import("module_graph_variants.zig");
+const builtin_catalog = @import("builtin_catalog.zig");
 
 pub const SourceProvider = struct {
     context: *anyopaque,
@@ -390,6 +391,7 @@ pub const Loader = struct {
         module.parsed = parser.parseWithMode(self.backing_allocator, source, path, .{
             .forced = forced_mode,
             .initial = initial,
+            .builtin_commands = &builtin_catalog.function_names,
         }) catch |err| {
             try self.importDiagnostic(import_node, path, "取り込み先を字句解析できません");
             return err;
@@ -495,6 +497,7 @@ pub const Loader = struct {
             const reparsed = parser.parseWithMode(self.backing_allocator, module.source, module.path, .{
                 .forced = module.forced_mode,
                 .initial = initial,
+                .builtin_commands = &builtin_catalog.function_names,
             }) catch |err| {
                 try self.importDiagnostic(null, module.path, "取り込み先を字句解析できません");
                 return err;
@@ -531,6 +534,7 @@ pub const Loader = struct {
                 .forced = module.forced_mode,
                 .initial = initial,
                 .tail_modes = tail_modes.items,
+                .builtin_commands = &builtin_catalog.function_names,
             }) catch |err| {
                 try self.importDiagnostic(null, module.path, "取り込み先を字句解析できません");
                 return err;
@@ -569,6 +573,18 @@ pub const Loader = struct {
     pub fn importDiagnosticAt(self: *Loader, span: ?ast.Span, file: []const u8, message: []const u8) !void {
         try self.diagnostics.append(self.allocator, .{
             .code = .invalid_import,
+            .message = message,
+            .file = try self.allocator.dupe(u8, file),
+            .span = span orelse ast.emptySpan(),
+        });
+    }
+
+    /// 取り込み展開を接続した後のAST深さ超過を位置付き診断にする。
+    /// ファイル単体の解析時検査（`parser.max_ast_depth`）では、展開子が
+    /// 後から接続されるため合成後の深さを測れない。
+    pub fn nestingDiagnosticAt(self: *Loader, span: ?ast.Span, file: []const u8, message: []const u8) !void {
+        try self.diagnostics.append(self.allocator, .{
+            .code = .nesting_too_deep,
             .message = message,
             .file = try self.allocator.dupe(u8, file),
             .span = span orelse ast.emptySpan(),
