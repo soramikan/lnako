@@ -895,27 +895,27 @@ job名（`Linux x86_64 / AOT native shard 1/3 / O0+O1` 等）は変えていな�
 
 | 指標 | 改善前 | Phase 1〜5後（7 run） | Phase 6後（4 run） | wall律速job分割後（n=4） |
 | --- | ---: | ---: | ---: | ---: |
-| workflow wall clock | 1,112s | 876〜1,462s（median 約1,113s） | 1,071〜1,141s（median 約1,130s）※ | **818〜1,173s（median 830s＝13m50s）※※** |
-| 全job runner minutes | 213 min | 166〜191 min（median 174.8） | 151.6〜169.1（median 159.4） | 146.1〜163.6 min（median 154.2） |
+| workflow wall clock | 1,112s | 876〜1,462s（median 約1,113s） | 1,071〜1,141s（median 約1,130s）※ | **818〜1,173s（median 832s＝13m52s）※※** |
+| 全job runner minutes | 213 min | 166〜191 min（median 174.8） | 151.6〜169.1（median 159.4） | 146.1〜163.6 min（median 153.2） |
 | matrix job数 | 57 | 45 | 総47（matrix 40＋producer／後段7）※ | 総47（同左） |
 | AOT検証ステップ（24 shard合計） | 1,896s | 1,163s | -38.7% | -38.7%（不変） |
 | Linux AOT job群（8 consumer＋producer） | — | 21.0〜32.2 min（median 26.6） | 11.3〜11.8 min（median 11.4） | 11.5〜12.6 min（median 11.9） |
 
 計画の短期目標に対する到達状況:
 
-- Wall clock 20〜30%削減 → **wall律速jobの分割で目標帯へ到達（n=4、medianで-25.3%）**。
+- Wall clock 20〜30%削減 → **wall律速jobの分割で目標帯へ到達（n=5、medianで-25.2%）**。
   46 job構成のmedian（17m51s）までしか下がっていなかったwallは、`Windows x86_64 / core`
   （median 17m12s）が律速していたためである。分割後は律速が `Windows compat-aot`
-  （12m59s〜13m15s）と `macOS host-compat`（10m34s〜13m00s）へ移り、wallは
-  818〜1,173s（median 830s＝13m50s、run 35487256825・35488606007・35489573736・
-  35502310307）となった。改善前比では -25.3%（57 job基準、median 830s）／
-  -38.0%（54 jobベースライン基準）。**n=4のため系列を蓄積して確認する**。
+  （12m59s〜13m15s）と `macOS host-compat`（10m34s〜13m20s）へ移り、wallは
+  818〜1,173s（median 832s＝13m52s、5 run）となった。改善前比では -25.2%
+  （57 job基準、median 832s）／-37.9%（54 jobベースライン基準）。
+  **n=5のため系列を蓄積して確認する**。
   途中で「wall 1,112s→876s（-21%）」と記録したが、その876sは速い側の外れ値runで
   あり代表値ではない。**この-21%は誤った一般化として撤回する**（Phase 4・5の
   セクションの当時の記録はそのまま残す）。
 - Runner minutes → **Phase 1〜5で-22%**（213→median 174.8 min）、**Phase 6で
   追加-15.4 min/run**（median 174.8→159.4、改善前比 **-25.2%**）。wall分割後も
-  runner minutes median 152.5（46 job、n=9）→154.2（47 job、n=4）で**-25%以上を維持**する。
+  runner minutes median 152.5（46 job、n=9）→153.2（47 job、n=5）で**-25%以上を維持**する。
   残りは Windows coreの実ビルド／実実行コスト（CI構造では削減不可）に由来する。
 - Physical上「検証量を減らさず」を維持（Phase 4・5・6とwall分割はビルドと実行の
   重複のみ除去し、jobを分けただけである）。
@@ -950,22 +950,26 @@ Linux AOT job群の実測と複数runのmedianに基づく。
 | 全job runner minutes | 9 | 152.5 | 161.9 | 166.9 | 167.8 | 146.2 | 168.7 |
 | Linux AOT job群（8 consumer＋producer、分） | 9 | 11.7 | 11.8 | 12.0 | 12.0 | 11.3 | 12.0 |
 
-#### 47 job構成（wall律速jobの分割後。n=4）
+#### 47 job構成（wall律速jobの分割後。n=5）
 
-n=4ではp90/p95が標本の線形補間になり意味を持たないため、median/min/maxのみ示す。
+少数標本ではp90/p95が標本の線形補間になり意味を持たないため、median/min/maxのみ示す。
 
 | 指標 | n | median | min | max |
 | --- | ---: | ---: | ---: | ---: |
-| workflow wall clock（分） | 4 | 13.8 | 13.6 | 19.6 |
-| 全job runner minutes | 4 | 154.2 | 146.1 | 163.6 |
-| Linux AOT job群（8 consumer＋producer、分） | 4 | 11.9 | 11.5 | 12.6 |
+| workflow wall clock（分） | 5 | 13.9 | 13.6 | 19.6 |
+| 全job runner minutes | 5 | 153.2 | 146.1 | 163.6 |
+| Linux AOT job群（8 consumer＋producer、分） | 5 | 11.9 | 11.5 | 12.6 |
 
+- 採用run: 35487256825（829s）・35488606007（832s）・35489573736（818s）・
+  35502310307（1173s）・35509082323（885s）。compat-aotのcache実験を行った
+  35503960505・35506831210・35507540242の3 runは、cache有効という別構成のため
+  系列から除外している（job数では区別できないため記録として手動で除外。撤回済み）。
 - wallのmax 19.6分（run 35502310307）は、macOSの5枠制限による`mac-host-compat`の
   **queue待ち484s（8分）** と、`Windows x86_64 / host`が853s（同job行の通常範囲
   193〜860sの上限側）へ振れたことが重なったrunである。このrunでも律速job以外の
   実行は通常どおりで、wallはqueue待ちに支配された。
 
-- 全job runner minutesのmin 146.2は、`test` job行が速い側へ振れたrunである
+- 全job runner minutesのmin 146.1は、`test` job行が速い側へ振れたrunである
   （同job行は193〜860sで変動する）。
 - Linux AOT job群は全runが11.3〜12.0 minで、施策の効果が最も安定して
   観測できる指標である。
@@ -1150,15 +1154,15 @@ job内のsetup系は合計43s）。そこで最大の独立検証である `Zig 
 Windows専用job（`suite: win-package-isolation`）へ分離し、Windows `core`では同stepを
 skipする。**検証量は変えず、実行するjobだけを分ける**。
 
-#### 実測（run 35487256825・35488606007・35489573736・35502310307。47 job・failure 0）
+#### 実測（47 job・failure 0の5 run）
 
 | 指標 | 分割前（46 job、n=9） | 分割後（47 job、n=4） |
 | --- | ---: | ---: |
-| workflow wall clock | median 17m51s（12m42s〜24m07s） | 13m49s／13m52s／13m38s／19m33s※ |
-| 律速job | `Windows core` median 17m12s（p75 17m54s） | `Windows compat-aot` 13m11s／13m15s／12m59s／13m03s |
-| `Windows x86_64 / core` | median 17m12s（p75 17m54s） | 10m51s／12m38s／6m54s／9m02s |
-| `Windows x86_64 / win-package-isolation`（新規） | — | 6m34s／6m52s／5m37s／5m51s |
-| 全job runner minutes | median 152.5（n=9） | 152.4／155.9／146.1／163.6 |
+| workflow wall clock | median 17m51s（12m42s〜24m07s） | 13m49s／13m52s／13m38s／19m33s※／14m45s |
+| 律速job | `Windows core` median 17m12s（p75 17m54s） | `Windows compat-aot` 13m11s〜13m15s（5 run目は`macOS host-compat` 13m20s） |
+| `Windows x86_64 / core` | median 17m12s（p75 17m54s） | 7m07s〜12m38s |
+| `Windows x86_64 / win-package-isolation`（新規） | — | 5m37s〜6m52s |
+| 全job runner minutes | median 152.5（n=9） | 146.1〜163.6（median 153.2） |
 
 ※ run 35502310307の19m33sはmacOSの5枠制限による`mac-host-compat`の484s queue待ちと
 `Windows x86_64 / host`の853s（通常193〜860sの上限側）が重なったrunである。
@@ -1171,14 +1175,14 @@ macOS host-compat 780s、Windows compat-aot 779s）。これが当面のwall下�
 `Windows core` 自体も414〜758sとrun間で1.8倍振れるため、柱の特定は複数runのmedianで行う。
 
 計画§14のwall clock目標（full CI baseline比-20〜30%）に対する到達状況は、基準の取り方で
-次のとおり。**分割後はn=4のため、目標帯に入ったという観測であり、系列を蓄積して確認する**
+次のとおり。**分割後はn=5のため、目標帯に入ったという観測であり、系列を蓄積して確認する**
 （§10は少数サンプルでの判断を禁じている）。
 
-| 基準 | wall | 分割後（median 830s＝13m50s）との差 |
+| 基準 | wall | 分割後（median 832s＝13m52s）との差 |
 | --- | ---: | ---: |
-| 改善前ベースライン節（54 job、n=3、median） | 22m19s | -38.0% |
-| 最終結果表の改善前（57 job、run 35453416527） | 18m32s | -25.3% |
-| 直近の46 job構成（n=9、median） | 17m51s | -22.5% |
+| 改善前ベースライン節（54 job、n=3、median） | 22m19s | -37.9% |
+| 最終結果表の改善前（57 job、run 35453416527） | 18m32s | -25.2% |
+| 直近の46 job構成（n=9、median） | 17m51s | -22.3% |
 
 同runのstep実測からの算術では、分割前なら `Windows x86_64 / core` が
 10m51s＋5m47s＝**16m38s**となり、`Windows compat-aot`（13m11s）より長いまま律速していた。
