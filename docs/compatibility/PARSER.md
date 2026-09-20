@@ -121,12 +121,21 @@
 
 ## 助詞付き引数の省略
 
-- 公式実測・source根拠: C風呼出しではarity不足・超過が文法エラーになりますが、助詞構文では不足引数が `undefined` として渡される命令があります。例えば結合の区切り値が未指定でも、命令自体は実行されます。
-- lnakoの現在動作: C風呼出しには固定catalogのarity診断を適用し、助詞構文は公式同様に不足値を補います。
+- 公式実測・source根拠: 助詞呼出しで引数を省略すると、公式`yCallFunc`は不足スロットを変数「それ」で補完する（`core/src/nako_parser3.mts:1502-1514`）。補完は助詞スロット単位で、引数は末尾スロットから助詞一致で取り出し、足りないスロットへ`それ`を入れる。2個以上不足し、かつ「引数が1つ以上ある」「命令の助詞が無い」「連文助詞が付く」のいずれかを満たすときだけ文法エラー『関数『X』の引数が不足しています。』になる。C風呼出しは従来どおり個数一致が必要。
+- lnakoの現在動作: 組み込み命令・ユーザー定義関数とも同じ補完を実装し、`それは5`に続く`表示。`は5を出力する。`「a」を「X」に置換`のように先頭引数を省略した呼出しも、助詞スロットへ割り当て直して`それ`を補う。助詞がどのスロットにも一致する引数が残る場合は補完せず元の並びを渡す。
 - 判定: 仕様
-- 対象経路: Interpreter / AOT / QuickJS
-- 差分テストID: `native-system-array-particle-omission`、`semantic-diagnostic-builtin-arity-missing`、`semantic-diagnostic-builtin-arity-extra`
+- 対象経路: Parser（補完の計画は中間表現loweringで確定）/ Interpreter / AOT
+- 差分テストID: `native-system-particle-implicit-it`、`native-system-particle-implicit-it-function`、`semantic-diagnostic-builtin-insufficient-arguments`、`semantic-diagnostic-function-insufficient-arguments`、`native-system-array-particle-omission`、`semantic-diagnostic-builtin-arity-missing`、`semantic-diagnostic-builtin-arity-extra`
 - TODO識別子: なし
+
+## 助詞付き組み込み命令の連鎖呼出し
+
+- 公式実測・source根拠: 先行する組み込み命令名の助詞が関数宣言の助詞一覧と一致すると、その命令を呼び出して結果を次の命令の引数にする（`大文字変換を表示`は`表示(大文字変換(それ))`相当、`要素数を表示`は`表示(要素数(それ))`相当）。
+- lnakoの現在動作: 助詞付きの組み込み命令名を命令ではなく値参照として扱い、`undefined`相当になる。ユーザー定義関数は同じ位置でも`それ`補完つきの呼出しとして解決できる。
+- 判定: 未実装境界（「の」助詞の関数呼出しと同じ助詞シグネチャ照合が必要）
+- 対象経路: Parser / Interpreter / AOT
+- 差分テストID: なし
+- TODO識別子: `TODO: no-josi-function-call`
 
 ## 辞書リテラルの数値キー
 

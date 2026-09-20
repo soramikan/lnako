@@ -920,7 +920,7 @@ pub const arities = [_]BuiltinArity{
     .{ .name = "終了", .count = 0, .is_variable = false },
     .{ .name = "OS取得", .count = 0, .is_variable = false },
     .{ .name = "OSアーキテクチャ取得", .count = 0, .is_variable = false },
-    .{ .name = "標準入力取得時", .count = 2, .is_variable = false },
+    .{ .name = "標準入力取得時", .count = 1, .is_variable = false },
     .{ .name = "尋", .count = 1, .is_variable = false },
     .{ .name = "文字尋", .count = 1, .is_variable = false },
     .{ .name = "標準入力全取得", .count = 0, .is_variable = false },

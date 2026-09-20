@@ -2,6 +2,9 @@ const std = @import("std");
 const ast = @import("../frontend/ast.zig");
 const diagnostic = @import("../frontend/diagnostic.zig");
 const builtin_catalog = @import("builtin_catalog.zig");
+const builtin_josi = @import("builtin_josi.zig");
+const argument_completion = @import("argument_completion.zig");
+const parser_helpers = @import("../frontend/parser/helpers.zig");
 const system_constant = @import("../runtime/system_constant.zig");
 const low_level_foundation = @import("../runtime/low_level_foundation.zig");
 
@@ -95,6 +98,9 @@ pub const Symbol = struct {
     is_export: bool,
     is_mutable: bool,
     argument_count: usize = 0,
+    /// 仮引数の助詞（宣言順）。公式`yCallFunc`と同じ助詞補完で、
+    /// どのスロットへ引数を割り当てるかの判定に使う。
+    parameter_josi: []const []const u8 = &.{},
     /// 宣言文が他モジュールのシンボルへ解決され、実質的に
     /// 作られなかった暗黙宣言。公式は単一パスで名前を確定するため
     /// 解決済みの参照からも見えない。
@@ -235,8 +241,10 @@ const Analyzer = struct {
     /// （resolveBlock側で mod__F シンボルへ束縛する）。
     fn predeclareBlockEx(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId, recurse: bool, expansion: bool) anyerror!void {
         if (node.kind == .function_definition or node.kind == .test_definition) {
-            if (!expansion)
-                _ = try self.declare(module_index, scope, node.name, if (node.kind == .test_definition) .test_function else .function, node.span, node.is_export, false, node.arguments.len, false);
+            if (!expansion) {
+                const symbol_id = try self.declare(module_index, scope, node.name, if (node.kind == .test_definition) .test_function else .function, node.span, node.is_export, false, node.arguments.len, false);
+                try self.setParameterJosi(symbol_id, node.arguments);
+            }
             return;
         }
         if (node.kind == .anonymous_function) return;
@@ -410,7 +418,7 @@ const Analyzer = struct {
         // 公式文言: 『定数「名」は既に定義済みなので、値を代入することは
         // できません』（main__ 接頭辞は #1223 で省略）。
         if ((node.kind == .assignment or node.kind == .increment) and !symbol.is_mutable) {
-            const shown = if (std.mem.startsWith(u8, symbol.qualified_name, "main__")) symbol.qualified_name["main__".len..] else symbol.qualified_name;
+            const shown = displayQualifiedName(symbol.qualified_name);
             const message = try std.fmt.allocPrint(self.allocator, "定数『{s}』は既に定義済みなので、値を代入することはできません。", .{shown});
             try self.addDiagnostic(.assign_to_constant, node.span, self.modules.items[module_index].path, message);
         }
@@ -428,13 +436,21 @@ const Analyzer = struct {
                 try self.addDiagnostic(.invalid_array_access, node.span, self.modules.items[module_index].path, "配列アクセスで指定ミス");
                 return;
             }
-            if (callable and (symbol.kind == .function or symbol.kind == .test_function) and node.children.len != symbol.argument_count) {
-                const message = try std.fmt.allocPrint(self.allocator, "関数『{s}』は引数{d}個を必要としますが、{d}個が指定されました", .{ name, symbol.argument_count, node.children.len });
-                try self.addDiagnostic(.invalid_argument_count, node.span, self.modules.items[module_index].path, message);
+            // C風呼出しは公式同様に個数一致を要求する。助詞呼出しは不足分を
+            // 変数「それ」で補完し、公式の条件を満たす2個以上の不足だけを
+            // 文法エラーにする（`yCallFunc`のnullCount判定）。
+            if (callable and (symbol.kind == .function or symbol.kind == .test_function)) {
+                if (node.is_c_style_call) {
+                    if (node.children.len != symbol.argument_count) {
+                        const message = try std.fmt.allocPrint(self.allocator, "関数『{s}』は引数{d}個を必要としますが、{d}個が指定されました", .{ name, symbol.argument_count, node.children.len });
+                        try self.addDiagnostic(.invalid_argument_count, node.span, self.modules.items[module_index].path, message);
+                    }
+                } else if (symbol.parameter_josi.len > 0) {
+                    try self.checkParticleArgumentCount(module_index, node, try argument_completion.parameterSlots(self.allocator, symbol.parameter_josi), false, symbol.qualified_name);
+                }
             }
-            if (implicit_call and symbol.argument_count > 1) {
-                const message = try std.fmt.allocPrint(self.allocator, "関数『{s}』を引数なしで使うには、引数が1個以下である必要があります", .{name});
-                try self.addDiagnostic(.invalid_argument_count, node.span, self.modules.items[module_index].path, message);
+            if (implicit_call and symbol.parameter_josi.len > 0) {
+                try self.checkParticleArgumentCount(module_index, node, try argument_completion.parameterSlots(self.allocator, symbol.parameter_josi), false, symbol.qualified_name);
             }
             try self.bind(node, if (callable or implicit_call) .call else .reference, name, symbol.qualified_name, symbol.id);
             return;
@@ -472,6 +488,12 @@ const Analyzer = struct {
                             );
                         try self.addDiagnostic(.invalid_argument_count, node.span, self.modules.items[module_index].path, message);
                     }
+                }
+            } else if (callable) {
+                // 助詞呼出しの組み込み命令は、公式同様に不足引数を「それ」で
+                // 補完し、2個以上不足するときだけ文法エラーにする。
+                if (builtin_josi.findJosi(name)) |spec| {
+                    try self.checkParticleArgumentCount(module_index, node, try argument_completion.builtinSlots(self.allocator, spec), spec.is_variable, name);
                 }
             }
             try self.bind(node, .builtin, name, name, null);
@@ -585,6 +607,34 @@ const Analyzer = struct {
             .argument_count = argument_count,
         });
         return id;
+    }
+
+    /// 公式`yCallFunc`と同じ規則で、助詞呼出しの不足引数を検査する。
+    /// 2個以上不足し、かつ公式のエラー条件（引数が1つ以上ある・命令の助詞が
+    /// 無い・連文助詞が付く）を満たすときだけ文法エラーにする。
+    fn checkParticleArgumentCount(self: *Analyzer, module_index: u32, node: *ast.Node, slots: []const argument_completion.Slot, variable_final: bool, shown_name: []const u8) !void {
+        if (slots.len == 0) return;
+        const plan = try argument_completion.plan(self.allocator, slots, node.children, variable_final) orelse return;
+        if (plan.missing < 2) return;
+        if (!(plan.provided > 0 or node.josi.len == 0 or parser_helpers.isSequenceJosi(node.josi))) return;
+        const message = try std.fmt.allocPrint(self.allocator, "関数『{s}』の引数が不足しています。", .{displayQualifiedName(shown_name)});
+        try self.addDiagnostic(.invalid_argument_count, node.span, self.modules.items[module_index].path, message);
+    }
+
+    /// 公式は`main__`接頭辞を診断文言から省略する（#1223）。
+    fn displayQualifiedName(qualified_name: []const u8) []const u8 {
+        return if (std.mem.startsWith(u8, qualified_name, "main__")) qualified_name["main__".len..] else qualified_name;
+    }
+
+    /// 仮引数の助詞（宣言順）をシンボルへ記録する。公式`yCallFunc`の助詞補完で、
+    /// 助詞呼出しの引数をどのスロットへ割り当てるかの判定に使う。
+    fn setParameterJosi(self: *Analyzer, symbol_id: SymbolId, arguments: []const ast.Argument) !void {
+        if (arguments.len == 0) return;
+        const symbol = &self.symbols.items[symbol_id];
+        if (symbol.kind != .function and symbol.kind != .test_function) return;
+        const josi = try self.allocator.alloc([]const u8, arguments.len);
+        for (arguments, 0..) |argument, index| josi[index] = argument.josi;
+        symbol.parameter_josi = josi;
     }
 
     fn lookupLexical(self: *Analyzer, scope: ScopeId, name: []const u8) ?Symbol {

@@ -349,6 +349,22 @@
     "source": "[1,2]を配列結合して表示\n[1,2]から配列検索して表示\n"
   },
   {
+    "id": "native-system-particle-implicit-it",
+    "source": "それは「  abc   」\n空白除去。\n大文字変換\n表示。\nそれは[5,6,7]\n要素数。\n表示。\n「2017/03/16」の「/」を「-」に置換。\n表示。\nそれは「abcabc」\n「a」を「X」に置換\nそれを表示。\n"
+  },
+  {
+    "id": "native-system-particle-implicit-it-function",
+    "source": "●(AとBを)足し算とは\n(A+B)で戻る\nここまで\nそれは3\n足し算を表示。\nそれは3\n5を足し算。\nそれを表示。\n"
+  },
+  {
+    "id": "native-system-particle-implicit-it-variable-slot",
+    "source": "それは10\n5に連続加算\nそれを表示。\nそれは10\n5とMAX\nそれを表示。\nそれは10\n3とMIN\nそれを表示。\n"
+  },
+  {
+    "id": "native-csv-option-implicit-it",
+    "source": "それは{\"delimiter\":\"|\"}\nCSVオプション設定\nそれは「a|b」\nCSV取得\n表示。\n"
+  },
+  {
     "id": "native-system-array-sort-commands",
     "source": "A=[\"\",undefined,\"😀\",\"A\",\"A\"]\nB=配列ソート(A)\n(A===B)を表示\nA[0]を表示\nA[1]を表示\nA[2]を表示\nA[3]を表示\nN=[\"10\",undefined,2n,非数,\"2x\",-0,0]\nM=配列数値ソート(N)\n(M===N)を表示\nN[0]を表示\nN[1]を表示\nN[2]を表示\nN[3]を表示\nN[4]を表示\nN[5]を表示\nN[6]を表示\nC=[undefined,\"2x\",2n]\nD=配列数値変換(C)\n(D===C)を表示\nC[0]を表示\nC[1]を表示\nC[2]を表示\nR=[1,2,3]\nS=配列逆順(R)\n(S===R)を表示\nR[0]を表示\nR[1]を表示\nR[2]を表示\n"
   },
