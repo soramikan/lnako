@@ -499,7 +499,7 @@ test("collectMetricsは構成の異なるrun（--jobs）を系列から除外し
     aggregate: result.aggregate,
     selection: result.selection,
   });
-  assert.match(markdown, /系列フィルタ: branch=- \/ jobs=2 \/ since=-（要求2 run・採用1 run・探索2 run）/);
+  assert.match(markdown, /系列フィルタ: branch=- \/ jobs=2 \/ since=- \/ require-job=-（要求2 run・採用1 run・探索2 run）/);
   assert.match(markdown, /構成の異なるrun 1件を除外/);
 });
 
@@ -539,6 +539,69 @@ test("collectMetricsは部分再実行run（run_attempt>1）を系列から除�
     selection: result.selection,
   });
   assert.match(markdown, /部分再実行run（run_attempt > 1）1件を除外/);
+});
+
+test("collectMetricsはfull実行でないrun（sentinel jobが未実行）を系列から除外する", async () => {
+  // lightweight runはmatrix jobをskipしてもjob数がfullと同じ（skipも一覧へ出る）。
+  // fullでだけ走るsentinel jobを必須にすることでfull実行だけを系列へ採用する。
+  const lightweightRun = { ...runFixture, id: 800, created_at: "2026-09-20T03:00:00Z" };
+  const fullRun = { ...runFixture, id: 900, created_at: "2026-09-20T02:00:00Z" };
+  const sentinelName = "Verify native AOT artifacts";
+  const fullJobs = [...jobsFixture, { ...jobsFixture[0], id: 30, name: sentinelName, conclusion: "success" }];
+  const lightweightJobs = [...jobsFixture, { ...jobsFixture[0], id: 31, name: sentinelName, conclusion: "skipped" }];
+  const logs = [];
+  const ghApiJsonImpl = async (path) => {
+    if (path.includes("/runs?")) return { workflow_runs: [lightweightRun, fullRun] };
+    if (path.includes("/actions/runs/800/jobs?")) return { total_count: lightweightJobs.length, jobs: lightweightJobs };
+    if (path.includes("/actions/runs/900/jobs?")) return { total_count: fullJobs.length, jobs: fullJobs };
+    if (path.endsWith("/timing")) return { run_duration_ms: 900_000 };
+    throw new Error(`unexpected path: ${path}`);
+  };
+  const result = await collectMetrics({
+    repo: "soramikan/lnako",
+    workflow: "ci.yml",
+    runCount: 2,
+    expectedJobCount: fullJobs.length,
+    requireJobs: [sentinelName],
+    includeLogs: false,
+    ghApiJsonImpl,
+    log: (message) => logs.push(message),
+  });
+  assert.deepEqual(result.runs.map((run) => run.id), [fullRun.id]);
+  assert.deepEqual(result.selection.skippedByRequiredJob, [{ id: lightweightRun.id, missing: [sentinelName] }]);
+  assert.deepEqual(result.selection.requireJobs, [sentinelName]);
+  assert.ok(logs.some((message) => message.includes("full実行でないrunを除外: 1件")));
+});
+
+test("collectMetricsは--since境界より古いrunが失敗続きでも探索を打ち切る", async () => {
+  // 日時境界は成功状態・部分再実行より先に判定する。境界より古いrunが
+  // 失敗・キャンセルばかりでも「境界到達」を認識できること（page-limitの誤報防止）。
+  const recentRun = { ...runFixture, id: 1000, created_at: "2026-09-20T03:00:00Z" };
+  const oldCancelled = { ...runFixture, id: 1100, created_at: "2026-09-19T03:00:00Z", conclusion: "cancelled" };
+  const oldFailed = { ...runFixture, id: 1200, created_at: "2026-09-18T03:00:00Z", conclusion: "failure" };
+  const logs = [];
+  const ghApiJsonImpl = async (path) => {
+    if (path.includes("/runs?")) return { workflow_runs: [recentRun, oldCancelled, oldFailed] };
+    if (path.includes("/jobs?")) {
+      return path.includes("/actions/runs/1000/") || path.includes("runs/1000")
+        ? { total_count: jobsFixture.length, jobs: jobsFixture }
+        : { total_count: 0, jobs: [] };
+    }
+    if (path.endsWith("/timing")) return { run_duration_ms: 900_000 };
+    throw new Error(`unexpected path: ${path}`);
+  };
+  const result = await collectMetrics({
+    repo: "soramikan/lnako",
+    workflow: "ci.yml",
+    runCount: 3,
+    since: "2026-09-20T00:00:00Z",
+    includeLogs: false,
+    ghApiJsonImpl,
+    log: (message) => logs.push(message),
+  });
+  assert.deepEqual(result.runs.map((run) => run.id), [recentRun.id]);
+  assert.equal(result.selection.exploration, "since");
+  assert.equal(result.selection.unexplored, false);
 });
 
 test("collectMetricsは--sinceより前のrunを系列から除外する", async () => {

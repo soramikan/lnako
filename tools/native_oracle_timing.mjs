@@ -137,6 +137,13 @@ export function buildTimingAggregate(documents) {
     throw new Error(`timing documentのconcurrencyが混在しています: ${concurrencies.join(", ")}（同一concurrencyのdocumentだけを集約してください）`);
   }
   const usable = validated.filter((document) => document.status === "success");
+  // 異なるcommitのfixture timingを混ぜると、同じfixtureの中央値が別リビジョンの
+  // 実行を混ぜた値になる（再配分の入力として無意味）。concurrencyと同じく
+  // 混在を拒否し、同一commitのdocumentだけを集約する。
+  const commits = [...new Set(usable.map((document) => document.commit))].sort();
+  if (commits.length > 1) {
+    throw new Error(`timing documentのcommitが混在しています: ${commits.join(", ")}（同一commitのdocumentだけを集約してください）`);
+  }
   const skipped = new Map();
   for (const document of validated) {
     if (document.status === "success") continue;
@@ -167,6 +174,7 @@ export function buildTimingAggregate(documents) {
     aggregatedDocuments: usable.length,
     skippedByStatus: [...skipped].sort(([left], [right]) => left.localeCompare(right)).map(([status, count]) => ({ status, count })),
     concurrency: concurrencies.length === 1 ? concurrencies[0] : null,
+    commit: commits.length === 1 ? commits[0] : null,
     fixtures: [...byFixture.values()]
       .map((entry) => ({
         platform: entry.platform,

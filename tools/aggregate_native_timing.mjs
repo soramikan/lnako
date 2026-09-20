@@ -47,7 +47,10 @@ export async function loadTimingDocuments(directory) {
   return documents;
 }
 
-export function formatTimingAggregate(aggregate, { limit = 30 } = {}) {
+// 既定は無制限。この表はLPT再配分のweight入力であり、既定で切ると軽いfixtureが
+// 欠落して再配分に使えなくなる（342件中30件しか出ない等）。表示を絞りたい場合だけ
+// `--limit N`（またはformatTimingAggregateのlimit）を明示する。
+export function formatTimingAggregate(aggregate, { limit = null } = {}) {
   const lines = [
     "# AOT fixture timing aggregate",
     "",
@@ -58,14 +61,14 @@ export function formatTimingAggregate(aggregate, { limit = 30 } = {}) {
     "",
     "| platform | fixture | observations | median total | median official | median interpreter |",
     "| --- | --- | ---: | ---: | ---: | ---: |",
-    ...aggregate.fixtures.slice(0, limit).map((fixture) =>
+    ...(limit === null ? aggregate.fixtures : aggregate.fixtures.slice(0, limit)).map((fixture) =>
       `| ${fixture.platform} | ${fixture.id} | ${fixture.observations} | ${formatMs(fixture.medianTotalMs)} | ${formatMs(fixture.medianOfficialMs)} | ${formatMs(fixture.medianInterpreterMs)} |`),
     "",
     "## platform × optimization 別 median build／run",
     "",
     "| platform | optimization | fixture | observations | median build | median run |",
     "| --- | --- | --- | ---: | ---: | ---: |",
-    ...aggregate.optimizations.slice(0, limit).map((entry) =>
+    ...(limit === null ? aggregate.optimizations : aggregate.optimizations.slice(0, limit)).map((entry) =>
       `| ${entry.platform} | ${entry.optimization} | ${entry.id} | ${entry.observations} | ${formatMs(entry.medianBuildMs)} | ${formatMs(entry.medianRunMs)} |`),
     "",
     "medianは平均ではなく中央値であり、run間の外れ値に引きずられない。",
@@ -82,7 +85,7 @@ export function formatMs(value) {
 }
 
 function parseArguments(argumentsList) {
-  const options = { directory: null, output: null, limit: 30 };
+  const options = { directory: null, output: null, limit: null };
   const takeValue = (index, name) => {
     const value = argumentsList[index + 1];
     if (value === undefined) throw new Error(`${name}には値が必要です`);
@@ -93,10 +96,10 @@ function parseArguments(argumentsList) {
     if (argument === "--directory") options.directory = takeValue(index, "--directory"), index += 1;
     else if (argument === "--output") options.output = takeValue(index, "--output"), index += 1;
     else if (argument === "--limit") options.limit = Number(takeValue(index, "--limit")), index += 1;
-    else throw new Error(`未知の引数です: ${argument}\n使い方: node tools/aggregate_native_timing.mjs --directory <timing artifact展開先> [--output <markdown>] [--limit 30]`);
+    else throw new Error(`未知の引数です: ${argument}\n使い方: node tools/aggregate_native_timing.mjs --directory <timing artifact展開先> [--output <markdown>] [--limit <表示件数。既定は全件>]`);
   }
   if (options.directory === null) throw new Error("--directoryにはtiming artifactを展開したディレクトリを指定してください");
-  if (!Number.isSafeInteger(options.limit) || options.limit < 1) throw new Error("--limitには正の整数を指定してください");
+  if (options.limit !== null && (!Number.isSafeInteger(options.limit) || options.limit < 1)) throw new Error("--limitには正の整数を指定してください");
   return options;
 }
 

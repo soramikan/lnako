@@ -223,6 +223,30 @@ test("loadTimingDocuments reads artifact-name subdirectories and rejects deeper 
   }
 });
 
+test("formatTimingAggregateは既定で全fixtureを出力する（--limitは明示時のみ）", () => {
+  // この表はLPT再配分のweight入力であり、既定で切ると軽いfixtureが欠落する。
+  const fixtures = Array.from({ length: 40 }, (_, index) => fixture(`fixture-${String(index).padStart(2, "0")}`, { totalMs: 100 + index }));
+  const aggregate = buildTimingAggregate([document({ fixtures })]);
+  const unlimited = formatTimingAggregate(aggregate);
+  for (const entry of fixtures) assert.ok(unlimited.includes(`| linux-x64 | ${entry.id} |`), `${entry.id}が既定出力にありません`);
+  const countRows = (markdown) => (markdown.match(/^\| linux-x64 \| fixture-/gm) ?? []).length;
+  assert.equal(countRows(unlimited), fixtures.length);
+  const limited = formatTimingAggregate(aggregate, { limit: 3 });
+  assert.equal(countRows(limited), 3);
+});
+
+test("buildTimingAggregate rejects mixed commits", () => {
+  // 別commitのfixture timingを混ぜると同じfixtureの中央値が別リビジョンの実行を
+  // 混ぜた値になり、再配分の入力として無意味になるため拒否する。
+  const otherCommit = "b".repeat(40);
+  assert.throws(
+    () => buildTimingAggregate([document({}), document({ commit: otherCommit })]),
+    /commitが混在/,
+  );
+  const aggregate = buildTimingAggregate([document({ fixtures: [fixture("a", { totalMs: 1000, buildMs: 100 })] })]);
+  assert.equal(aggregate.commit, commit);
+});
+
 test("buildTimingAggregate rejects mixed concurrency and excludes non-success documents", () => {
   assert.throws(() => buildTimingAggregate([document({ concurrency: 1 }), document({ concurrency: 2 })]), /concurrencyが混在/);
   const aggregate = buildTimingAggregate([

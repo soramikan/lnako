@@ -18,6 +18,15 @@ const ciJobBlocks = [...ciJobsSection.matchAll(/^  ([a-zA-Z_-]+):\n(?=    )/gm)]
   });
 if (ciMatrixRows === 0 || ciJobBlocks.length === 0) throw new Error("CI workflowからjob数を導出できません");
 const ciSingletonJobs = ciJobBlocks.filter(({ block }) => !/^    strategy:$/m.test(block)).length;
+// 導出は「matrixは`include:`の行列表で1行=1 job」という書き方に依存する。
+// 直積形式（例: `matrix: {os: [...], suite: [...]}`）へ変えると行数とjob数が
+// 一致せず、総数を静かに過少計上してreleaseが恒久的に失敗するため、
+// include形式以外のmatrixを検出したら失敗させる（乖離を黙って許さない）。
+const nonIncludeMatrixJobs = ciJobBlocks.filter(({ block }) =>
+  /^    strategy:$/m.test(block) && !/include:/.test(block)).map(({ name }) => name);
+if (nonIncludeMatrixJobs.length > 0) {
+  throw new Error(`matrixの行数からjob数を導出できない書き方です（include形式のmatrixにしてください）: ${nonIncludeMatrixJobs.join(", ")}`);
+}
 const expectedCiJobCount = ciMatrixRows + ciSingletonJobs;
 const floatingActions = [...workflow.matchAll(/uses: ([^\s@]+)@([^\s#]+)/g)]
   .filter((match) => !/^[0-9a-f]{40}$/.test(match[2]))

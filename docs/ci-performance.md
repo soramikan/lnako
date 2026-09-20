@@ -969,6 +969,9 @@ n=4ではp90/p95が標本の線形補間になり意味を持たないため、m
   （同job行は193〜860sで変動する）。
 - Linux AOT job群は全runが11.3〜12.0 minで、施策の効果が最も安定して
   観測できる指標である。
+- **lightweight runはjob数がfullと同じ**（skipされたjobも一覧へ出る）ため、job数だけでは
+  full実行と区別できない。fullでだけ実行されるsentinel job（例: `Verify native AOT artifacts`）を
+  `--require-job`で必須にし、それがsuccessでないrunは系列から除外する。
 - 系列を揃えるため`collect_ci_metrics.mjs`に構成境界のフィルタを追加した。
   `--branch`は他branchを除外するが、**同じbranch内の構成変更（job数の違う旧run）は
   区別できない**ため、`--jobs`（期待job数）と`--since`（開始日時）でも絞る。
@@ -978,8 +981,12 @@ n=4ではp90/p95が標本の線形補間になり意味を持たないため、m
   出力へ明示して静かに取りこぼさない。同じコマンドで更新する:
 
 ```sh
-node tools/collect_ci_metrics.mjs --branch improve/ci --jobs 46 --runs 30 --no-logs
-node tools/collect_ci_metrics.mjs --branch improve/ci --jobs 47 --runs 30 --no-logs
+# lightweight runはmatrixをskipしてもjob数がfullと同じ（skipも一覧へ出る）ため、
+# fullでだけ実行されるsentinel jobを必須にする。
+node tools/collect_ci_metrics.mjs --branch improve/ci --jobs 46 --runs 30 --no-logs \
+  --require-job "Verify native AOT artifacts"
+node tools/collect_ci_metrics.mjs --branch improve/ci --jobs 47 --runs 30 --no-logs \
+  --require-job "Verify native AOT artifacts"
 ```
 
 #### 部分再実行runを除外する修正

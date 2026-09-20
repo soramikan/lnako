@@ -406,9 +406,17 @@ export function formatMarkdown({ repo, workflow, generatedAt, runs, aggregate, s
     `対象: ${repo} / workflow: ${workflow}`,
     `生成: ${generatedAt}`,
     `分析run数: ${aggregate.runCount}（成功した完了runのみ）`,
-    ...(selection === null ? [] : [`系列フィルタ: branch=${selection.branch ?? "-"} / jobs=${selection.expectedJobCount ?? "-"} / since=${selection.since ?? "-"}（要求${selection.requested} run・採用${selection.adopted} run・探索${selection.exploredRuns ?? "-"} run）`]),
+    ...(selection === null ? [] : [`系列フィルタ: branch=${selection.branch ?? "-"} / jobs=${selection.expectedJobCount ?? "-"} / since=${selection.since ?? "-"} / require-job=${(selection.requireJobs ?? []).join(",") || "-"}（要求${selection.requested} run・採用${selection.adopted} run・探索${selection.exploredRuns ?? "-"} run）`]),
     ...(selection !== null && selection.adopted < selection.requested
-      ? [`注意: 構成の異なるrun ${selection.skippedByJobCount.length}件を除外したため、採用run数が要求${selection.requested}に達していません（旧構成で穴埋めしない）。`]
+      ? (() => {
+        const reasons = [
+          ["構成の異なるrun", selection.skippedByJobCount.length],
+          ["部分再実行run", (selection.skippedByAttempt ?? []).length],
+          ["full実行でないrun", (selection.skippedByRequiredJob ?? []).length],
+        ].filter(([, count]) => count > 0).map(([label, count]) => `${label} ${count}件`);
+        const detail = reasons.length > 0 ? `${reasons.join("・")}を除外した` : "対象runが尽きた";
+        return [`注意: ${detail}ため、採用run数が要求${selection.requested}に達していません（旧構成で穴埋めしない）。`];
+      })()
       : []),
     ...(selection !== null && (selection.skippedByAttempt ?? []).length > 0
       ? [`注意: 部分再実行run（run_attempt > 1）${selection.skippedByAttempt.length}件を除外しました。再実行されなかったjobは前attemptの実行時刻のまま返り、/timingのrun_duration_msは最新attemptしか指さないため、wall／runner minutes／step統計が単一の実行区間になりません。`]
@@ -543,7 +551,7 @@ export async function ghApiLog(path) {
   return result.stdout;
 }
 
-export async function collectMetrics({ repo, workflow, runCount, branch = null, expectedJobCount = null, since = null, includeLogs, ghApiJsonImpl = ghApiJson, ghApiLogImpl = ghApiLog, log = () => {} }) {
+export async function collectMetrics({ repo, workflow, runCount, branch = null, expectedJobCount = null, since = null, requireJobs = [], includeLogs, ghApiJsonImpl = ghApiJson, ghApiLogImpl = ghApiLog, log = () => {} }) {
   // 改善計画2 §10は同一系列でmedian/p75/p90/p95を蓄積する。branchだけでは
   // 同一branch内の構成変更（job数の違う旧run）を区別できず、`--runs 30`が
   // 旧構成の値を現行構成のpercentileへ混ぜてしまう。そのため構成境界
@@ -555,6 +563,7 @@ export async function collectMetrics({ repo, workflow, runCount, branch = null, 
   const collected = [];
   const skippedByJobCount = [];
   const skippedByAttempt = [];
+  const skippedByRequiredJob = [];
   // 構成フィルタで採用が少なくなるとき、1ページだけで探索を打ち切ると
   // 範囲外にある一致runを取りこぼす。採用数が要求へ達するか候補が尽きるまで
   // run一覧をページングする（上限に達した場合は未探索があることを報告する）。
@@ -572,6 +581,15 @@ export async function collectMetrics({ repo, workflow, runCount, branch = null, 
     let reachedSince = false;
     for (const run of pageRuns) {
       if (collected.length >= runCount) break;
+      // run一覧は新しい順なので、--sinceより古いrunに達したら以降も対象外。
+      // 日時境界はrunの成功状態や部分再実行より先に判定する。成功runだけを見て
+      // から境界を判定すると、境界より古いrunが失敗・キャンセルばかりのときに
+      // 境界到達を認識できず、候補が尽きているのに探索上限（未探索あり）と
+      // 誤って報告してしまう。
+      if (sinceMs !== null && Date.parse(run.created_at) < sinceMs) {
+        reachedSince = true;
+        break;
+      }
       if (run.conclusion !== "success") continue;
       // 部分再実行（run_attempt > 1）のrunは、再実行されなかったjobが前attemptの
       // started_at/completed_atのまま返り、job一覧がattempt間で混在する。一方
@@ -582,11 +600,6 @@ export async function collectMetrics({ repo, workflow, runCount, branch = null, 
       if (Number.isSafeInteger(run.run_attempt) && run.run_attempt > 1) {
         skippedByAttempt.push({ id: run.id, attempt: run.run_attempt });
         continue;
-      }
-      // run一覧は新しい順なので、--sinceより古いrunに達したら以降も対象外。
-      if (sinceMs !== null && Date.parse(run.created_at) < sinceMs) {
-        reachedSince = true;
-        break;
       }
       const jobs = [];
       let jobsTotal = null;
@@ -608,6 +621,21 @@ export async function collectMetrics({ repo, workflow, runCount, branch = null, 
       if (expectedJobCount !== null && jobs.length !== expectedJobCount) {
         skippedByJobCount.push({ id: run.id, jobs: jobs.length });
         continue;
+      }
+      // lightweight runはmatrixをskipしてもjob数がfullと変わらない（skipされた
+      // jobも一覧へ出る）ため、job数だけではfull runと区別できない。fullでだけ
+      // 実行されるsentinel job（例: `Verify native AOT artifacts`）を必須にし、
+      // それがsuccessでないrunはfull実行ではないとして系列から除外する。
+      if (requireJobs.length > 0) {
+        const byName = new Map(jobs.map((job) => [job.name, job]));
+        const missing = requireJobs.filter((name) => {
+          const job = byName.get(name);
+          return !job || job.conclusion !== "success";
+        });
+        if (missing.length > 0) {
+          skippedByRequiredJob.push({ id: run.id, missing });
+          continue;
+        }
       }
       await adoptRun(run, jobs);
     }
@@ -658,19 +686,22 @@ export async function collectMetrics({ repo, workflow, runCount, branch = null, 
     skippedByJobCount,
     // 部分再実行runはattempt混在で単一実行区間にならないため採用しない。
     skippedByAttempt,
+    // full実行でないrun（lightweight等）はsentinel jobがsuccessでないため採用しない。
+    skippedByRequiredJob,
+    requireJobs,
     exploredRuns,
     // "since"=境界到達, "exhausted"=候補尽き, "page-limit"=探索上限で未探索あり。
     exploration,
     unexplored: exploration === "page-limit",
   };
   if (collected.length < runCount) {
-    log(`要求${runCount} runに対し採用${collected.length} run（構成の異なるrunを除外: ${skippedByJobCount.length}件・部分再実行runを除外: ${skippedByAttempt.length}件${exploration === "page-limit" ? `・探索は${MAX_RUN_PAGES}ページ（${exploredRuns} run）で打ち切り` : ""}）`);
+    log(`要求${runCount} runに対し採用${collected.length} run（構成の異なるrunを除外: ${skippedByJobCount.length}件・部分再実行runを除外: ${skippedByAttempt.length}件・full実行でないrunを除外: ${skippedByRequiredJob.length}件${exploration === "page-limit" ? `・探索は${MAX_RUN_PAGES}ページ（${exploredRuns} run）で打ち切り` : ""}）`);
   }
   return { runs: collected, aggregate: aggregateRuns(collected), selection };
 }
 
 function parseArguments(argumentsList) {
-  const options = { repo: "soramikan/lnako", workflow: "ci.yml", branch: null, jobs: null, since: null, runs: 5, output: null, logs: true };
+  const options = { repo: "soramikan/lnako", workflow: "ci.yml", branch: null, jobs: null, since: null, requireJobs: [], runs: 5, output: null, logs: true };
   const takeValue = (index) => {
     const value = argumentsList[index + 1];
     if (value === undefined) throw new Error(`${argumentsList[index]}には値が必要です`);
@@ -683,10 +714,13 @@ function parseArguments(argumentsList) {
     else if (argument === "--branch") options.branch = takeValue(index++);
     else if (argument === "--jobs") options.jobs = Number(takeValue(index++));
     else if (argument === "--since") options.since = takeValue(index++);
+    // full実行でだけ走るsentinel job（複数指定可）。lightweight runはmatrixを
+    // skipしてもjob数が変わらないため、これでfull実行を識別する。
+    else if (argument === "--require-job") options.requireJobs.push(takeValue(index++));
     else if (argument === "--runs") options.runs = Number(takeValue(index++));
     else if (argument === "--output") options.output = takeValue(index++);
     else if (argument === "--no-logs") options.logs = false;
-    else throw new Error(`未知の引数です: ${argument}\n使い方: node tools/collect_ci_metrics.mjs [--repo owner/name] [--workflow ci.yml] [--branch <name>] [--jobs <期待job数>] [--since <ISO8601>] [--runs 5] [--output docs/ci-performance.md] [--no-logs]`);
+    else throw new Error(`未知の引数です: ${argument}\n使い方: node tools/collect_ci_metrics.mjs [--repo owner/name] [--workflow ci.yml] [--branch <name>] [--jobs <期待job数>] [--since <ISO8601>] [--require-job <job名>] [--runs 5] [--output docs/ci-performance.md] [--no-logs]`);
   }
   if (!Number.isSafeInteger(options.runs) || options.runs < 1) throw new Error("--runsには正の整数を指定してください");
   if (options.jobs !== null && (!Number.isSafeInteger(options.jobs) || options.jobs < 1)) throw new Error("--jobsには正の整数を指定してください");
@@ -702,6 +736,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
       branch: options.branch,
       expectedJobCount: options.jobs,
       since: options.since,
+      requireJobs: options.requireJobs,
       runCount: options.runs,
       includeLogs: options.logs,
       log: (message) => console.error(message),
