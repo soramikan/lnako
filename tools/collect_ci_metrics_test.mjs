@@ -652,6 +652,41 @@ test("collectMetricsは100件超のjobをページングで全件取得する", 
   assert.equal(aggregate.jobCount, 120);
 });
 
+test("collectMetricsはページング後も宣言件数に届かないrunを除外する", async () => {
+  // jobs APIがtotal_count=47と言いながら46件しか返さない場合、そのrunの
+  // runner minutes／最長job／step統計は欠落分だけ過少になる。宣言値では
+  // なく実際の取得件数で構成判定し、不完全なrunは系列へ採用しない。
+  const incompleteRun = { ...runFixture, id: 600 };
+  const completeRun = { ...runFixture, id: 700 };
+  const logs = [];
+  const ghApiJsonImpl = async (path) => {
+    if (path.includes("/runs?")) return { workflow_runs: [incompleteRun, completeRun] };
+    if (path.includes("/actions/runs/600/jobs?")) {
+      // 2ページ目は空で返し、宣言件数へ届かない状態を再現する。
+      return path.includes("page=2")
+        ? { total_count: jobsFixture.length + 1, jobs: [] }
+        : { total_count: jobsFixture.length + 1, jobs: jobsFixture };
+    }
+    if (path.includes("/actions/runs/700/jobs?")) {
+      return { total_count: jobsFixture.length, jobs: jobsFixture };
+    }
+    if (path.endsWith("/timing")) return { run_duration_ms: 900_000 };
+    throw new Error(`unexpected path: ${path}`);
+  };
+  const result = await collectMetrics({
+    repo: "soramikan/lnako",
+    workflow: "ci.yml",
+    runCount: 2,
+    expectedJobCount: jobsFixture.length,
+    includeLogs: false,
+    ghApiJsonImpl,
+    log: (message) => logs.push(message),
+  });
+  assert.deepEqual(result.runs.map((run) => run.id), [completeRun.id]);
+  assert.deepEqual(result.selection.skippedByJobCount, [{ id: incompleteRun.id, jobs: jobsFixture.length }]);
+  assert.ok(logs.some((message) => message.includes("ページング取得後も一部欠落のため除外")));
+});
+
 test("formatSecondsは繰り上がりを分へ正しく伝播させる", () => {
   assert.equal(formatSeconds(119.6), "2m00s");
   assert.equal(formatSeconds(59.6), "1m00s");

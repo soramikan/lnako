@@ -19,7 +19,9 @@ CIは、互換性検証の意味を保ったまま、AOTをfixture shardと最�
 
 job数を増やすことで、1つの巨大なAOT stepに検証を集中させず、失敗箇所と所要時間をjob単位で確認できます。検証suite、O0〜O3、QuickJS、3 OSのいずれも省略しません。
 
-Windowsの`core` jobはwall clockの律速（分割前の実測 median 1,032s／p75 1,074s）だったため、独立した検証である`Zig package isolation check`をWindows専用job（`suite: win-package-isolation`）へ分離しています。検証量は変えず、実行するjobだけを分けてwallを短縮します（Windows `core`では同stepはskip）。分離後の2 run（[`35487256825`](https://github.com/soramikan/lnako/actions/runs/35487256825)・[`35488606007`](https://github.com/soramikan/lnako/actions/runs/35488606007)）はwall 13m49s／13m52sで、律速は`Windows compat-aot`（13m11s／13m15s）へ移りました（詳細は`docs/ci-performance.md`）。
+Windowsの`core` jobはwall clockの律速（分割前の実測 median 1,032s／p75 1,074s）だったため、独立した検証である`Zig package isolation check`をWindows専用job（`suite: win-package-isolation`）へ分離しています。検証量は変えず、実行するjobだけを分けてwallを短縮します（Windows `core`では同stepはskip）。分離後の3 run（[`35487256825`](https://github.com/soramikan/lnako/actions/runs/35487256825)・[`35488606007`](https://github.com/soramikan/lnako/actions/runs/35488606007)・[`35489573736`](https://github.com/soramikan/lnako/actions/runs/35489573736)）はwall 13m49s／13m52s／13m38sで、律速は`Windows compat-aot`（13m11s／13m15s／12m59s）と`macOS arm64 / mac-host-compat`（13m00s）へ移りました（詳細は`docs/ci-performance.md`）。
+
+matrix jobを増やすとブランチ保護のrequired status checksへ追加漏れが起こり得ます。required checkは**skipされたjobを成功として扱う**ため、集約job（`verify_dispatch_coverage`・`verify_native_aot_artifacts`）は`always()`で起動し、上流matrixの失敗を`Reject failed ... matrix`stepで明示的な失敗へ変換します。これにより、新設jobがrequiredへ未登録でも検証漏れをマージできません。
 
 ## macOSの5枠制限
 

@@ -598,10 +598,15 @@ export async function collectMetrics({ repo, workflow, runCount, branch = null, 
         if (pageJobs.length === 0 || (Number.isSafeInteger(jobsTotal) && jobs.length >= jobsTotal)) break;
       }
       if (Number.isSafeInteger(jobsTotal) && jobsTotal > jobs.length) {
-        log(`run ${run.id}: jobs ${jobs.length}/${jobsTotal}（ページング取得後も一部欠落）`);
+        // ページング後もjobs APIが宣言した件数へ届かないrunは、job一覧が不完全で
+        // runner minutes／最長job／step統計が欠落分だけ過少になる。宣言値では
+        // なく実際に取得できた件数で構成判定するため、ここで系列から除外する。
+        log(`run ${run.id}: jobs ${jobs.length}/${jobsTotal}（ページング取得後も一部欠落のため除外）`);
+        skippedByJobCount.push({ id: run.id, jobs: jobs.length });
+        continue;
       }
-      if (expectedJobCount !== null && jobsTotal !== expectedJobCount) {
-        skippedByJobCount.push({ id: run.id, jobs: jobsTotal });
+      if (expectedJobCount !== null && jobs.length !== expectedJobCount) {
+        skippedByJobCount.push({ id: run.id, jobs: jobs.length });
         continue;
       }
       await adoptRun(run, jobs);

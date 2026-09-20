@@ -864,13 +864,20 @@ if (!workflow.includes("if: matrix.suite == 'core' || matrix.suite == 'mac-core-
 const coverageVerificationJob = workflow.match(/  verify_dispatch_coverage:[\s\S]*?(?=\n  verify_native_aot_artifacts:)/)?.[0];
 // Windowsのcoverage artifactは共有compiler artifactを使うconsumer job
 // （aot_windows）が供給するため、集約jobはaot_windowsの完了も待つ。
-if (!coverageVerificationJob || !coverageVerificationJob.includes("if: needs.changes.outputs.level == 'full' && needs.test.result == 'success' && needs.aot.result == 'success' && needs.aot_windows.result == 'success'") ||
+// このjobはrequired status checkであり、required checkはskipを成功として扱う。
+// そのため`needs.test.result == 'success'`をjob条件に置くだけでは、matrix jobが
+// 失敗したrunでこのjobがskipされて検証漏れをマージできてしまう。`always()`で
+// 起動し、上流matrixの失敗を明示的な失敗へ変換する（verify_native_aot_artifactsと
+// 同じ規約）。
+if (!coverageVerificationJob || !coverageVerificationJob.includes("if: always() && needs.changes.outputs.level == 'full'") ||
     !coverageVerificationJob.includes("needs: [changes, test, aot, aot_windows]") ||
     !coverageVerificationJob.includes("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1") ||
     !coverageVerificationJob.includes("pattern: lnako-dispatch-coverage-*") ||
     !coverageVerificationJob.includes("merge-multiple: true") ||
     !coverageVerificationJob.includes("node tools/check_dispatch_coverage_shards.mjs") ||
     !coverageVerificationJob.includes("--shard-count 3") ||
+    !coverageVerificationJob.includes("Reject failed test/dispatch matrix") ||
+    !/if: needs\.test\.result != 'success' \|\| needs\.aot\.result != 'success' \|\| needs\.aot_windows\.result != 'success'/.test(coverageVerificationJob) ||
     !dispatchCoverageShardsScript.includes("sampled-unattested-dispatch-audit-shard") ||
     !dispatchCoverageShardsScript.includes("assertSubset(darwinUnion, linuxUnion") ||
     !dispatchCoverageShardsScript.includes("mergeCoverageShards") ||
