@@ -1274,9 +1274,18 @@ fixtureは「child-fastがmarkerを書く→child-slowが25 ms間隔で検出し
 設計上の性質は次のとおり。
 
 - 通常はmarker検出（25 msポーリング）＋3000 msで`SLOW`が出る。
-- markerが検出できなくてもdeadline 4000 ms＋3000 ms＝7000 msで`SLOW`が出るため、
-  `8000 ms`の待ち時間内に必ず両方のコールバックが揃う（順序はFAST→SLOW）。
+- **markerが検出できない場合は成功経路と同じ`SLOW`を出さず、`TIMEOUT`を出力する**。
+  同じ`SLOW`を出すと「SLOWがFASTより先」という順序反転として現れ、原因（計測できて
+  いない）が分からない。`TIMEOUT`なら比較の差分にそのまま現れ、fallbackが原因だと
+  判別できる（公式側と両方がtimeoutした場合は両者一致となる点は残る）。
 - lnako側の配送遅延が3秒を超えない限り順序は崩れない（変更前は2秒）。
+
+ローカルでtimeout経路も確認した。
+
+| 実行 | 出力 | 所要 |
+| --- | --- | ---: |
+| markerなし（`child-slow.mjs`単体） | `TIMEOUT`（exit 0） | 4.1s |
+| markerあり | `SLOW`（exit 0） | 3.1s |
 
 ローカル実測（公式cnako3・lnako interpreter・lnako AOT O3の3者一致）:
 
