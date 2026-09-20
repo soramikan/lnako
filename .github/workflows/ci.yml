@@ -165,7 +165,12 @@ jobs:
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
-          use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat' }}
+          # compat-aotはwall clockの律速jobであり、毎回
+          # `zig build -Dcompat-js=true -Doptimize=ReleaseSafe`をフルコンパイル
+          # していた（Windowsで356s、Linuxで175s）。cache有効なmac-host-compatは
+          # 同じ構成のビルドが1sで終わるため、cacheの保存対象へ加えて実測する。
+          # cache総量は10 GiB上限に近く、他suiteのevictionを招く場合は戻す。
+          use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat' || matrix.suite == 'compat-aot' }}
           cache-key: ${{ matrix.suite }}
           cache-size-limit: 1536
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0

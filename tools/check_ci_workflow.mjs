@@ -1106,7 +1106,7 @@ for (const [label, jobText] of cacheDisabledJobs) {
 // setup-zigブロックは7つ（test／parser_fuzz／Windows producer／Linux producer／
 // aot（macOS nativeのみcache）／aot_linux／aot_windows）。
 if (setupZigBlocks.length !== 7 ||
-    !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat' }}") && block.includes("cache-key: ${{ matrix.suite }}")) ||
+    !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat' || matrix.suite == 'compat-aot' }}") && block.includes("cache-key: ${{ matrix.suite }}")) ||
     !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.task == 'native' }}") && block.includes(nativeAotCacheKey)) ||
     countOccurrences(workflow, nativeAotCacheKey) !== 1 ||
     countOccurrences(workflow, "cache-key: aot-compiler") !== 0 ||
@@ -1125,7 +1125,7 @@ if (setupNodeBlock === undefined || !setupNodeBlock.includes("if: matrix.suite !
 for (const required of [
   "group: ci-${{ github.workflow }}-${{ github.ref }}",
   "cancel-in-progress: true",
-  "use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat' }}",
+  "use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat' || matrix.suite == 'compat-aot' }}",
   "use-cache: ${{ matrix.task == 'native' }}",
   "cache-key: ${{ matrix.suite }}",
   nativeAotCacheKey,
