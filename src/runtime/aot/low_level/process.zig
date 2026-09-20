@@ -16,6 +16,7 @@ const valueUtf16Alloc = shared.valueUtf16Alloc;
 const runtimeUtf8String = shared.runtimeUtf8String;
 const isString = shared.isString;
 const dictionaryProperty = shared.dictionaryProperty;
+const dictionaryOwnProperty = shared.dictionaryOwnProperty;
 const setField = shared.setField;
 const throwIoAs = shared.throwIoAs;
 const throwSpawnIo = shared.throwSpawnIo;
@@ -80,14 +81,15 @@ fn applyStdioMode(
             stderr.* = mode;
         },
         .dictionary => {
-            const dictionary = value.object().?.payload.dictionary;
-            const stdin_field = dictionaryProperty(value, &.{ 's', 't', 'd', 'i', 'n' });
-            if (stdin_field.tag != @intFromEnum(Tag.undefined)) stdin.* = try parseStdioMode(runtime, stdin_field, operation);
-            const stdout_field = dictionaryProperty(value, &.{ 's', 't', 'd', 'o', 'u', 't' });
-            if (stdout_field.tag != @intFromEnum(Tag.undefined)) stdout.* = try parseStdioMode(runtime, stdout_field, operation);
-            const stderr_field = dictionaryProperty(value, &.{ 's', 't', 'd', 'e', 'r', 'r' });
-            if (stderr_field.tag != @intFromEnum(Tag.undefined)) stderr.* = try parseStdioMode(runtime, stderr_field, operation);
-            _ = dictionary;
+            if (dictionaryOwnProperty(value, &.{ 's', 't', 'd', 'i', 'n' })) |stdin_field| {
+                stdin.* = try parseStdioMode(runtime, stdin_field, operation);
+            }
+            if (dictionaryOwnProperty(value, &.{ 's', 't', 'd', 'o', 'u', 't' })) |stdout_field| {
+                stdout.* = try parseStdioMode(runtime, stdout_field, operation);
+            }
+            if (dictionaryOwnProperty(value, &.{ 's', 't', 'd', 'e', 'r', 'r' })) |stderr_field| {
+                stderr.* = try parseStdioMode(runtime, stderr_field, operation);
+            }
         },
         else => return throwStructured(runtime, .EINVAL, operation, null, null, "stdioは文字列または辞書である必要があります"),
     }
@@ -160,15 +162,15 @@ pub fn spawnBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
         if (arguments[1].tag != @intFromEnum(Tag.dictionary)) {
             return throwStructured(runtime, .EINVAL, operation, null, null, "OPTIONSは辞書である必要があります");
         }
-        const cwd_value = dictionaryProperty(arguments[1], &.{ 'c', 'w', 'd' });
-        if (cwd_value.tag != @intFromEnum(Tag.undefined)) {
+        // OPTIONSはデータレコードとして扱い、own propertyだけを読む
+        // （Interpreterの dictionaryGetAscii と一致させる。prototype継承は見ない）。
+        if (dictionaryOwnProperty(arguments[1], &.{ 'c', 'w', 'd' })) |cwd_value| {
             if (!isString(cwd_value)) {
                 return throwStructured(runtime, .EINVAL, operation, null, null, "cwdは文字列である必要があります");
             }
             options.cwd = try wtf8Alloc(runtime, arena, cwd_value);
         }
-        const env_value = dictionaryProperty(arguments[1], &.{ 'e', 'n', 'v' });
-        if (env_value.tag != @intFromEnum(Tag.undefined)) {
+        if (dictionaryOwnProperty(arguments[1], &.{ 'e', 'n', 'v' })) |env_value| {
             if (env_value.tag != @intFromEnum(Tag.dictionary)) {
                 return throwStructured(runtime, .EINVAL, operation, null, null, "envは辞書である必要があります");
             }
@@ -182,12 +184,10 @@ pub fn spawnBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
             }
             options.env = env.items;
         }
-        const stdio_value = dictionaryProperty(arguments[1], &.{ 's', 't', 'd', 'i', 'o' });
-        if (stdio_value.tag != @intFromEnum(Tag.undefined)) {
+        if (dictionaryOwnProperty(arguments[1], &.{ 's', 't', 'd', 'i', 'o' })) |stdio_value| {
             try applyStdioMode(runtime, stdio_value, operation, &options.stdin, &options.stdout, &options.stderr);
         }
-        const detached_value = dictionaryProperty(arguments[1], &.{ 'd', 'e', 't', 'a', 'c', 'h', 'e', 'd' });
-        if (detached_value.tag != @intFromEnum(Tag.undefined)) {
+        if (dictionaryOwnProperty(arguments[1], &.{ 'd', 'e', 't', 'a', 'c', 'h', 'e', 'd' })) |detached_value| {
             if (detached_value.tag != @intFromEnum(Tag.boolean)) {
                 return throwStructured(runtime, .EINVAL, operation, null, null, "detachedは真偽値である必要があります");
             }
@@ -331,7 +331,7 @@ pub fn ttySizeBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
         return throwStructured(runtime, .EINVAL, operation, null, null, "STREAMが必要です");
     }
     const stream = try requireStream(runtime, arguments[0], operation);
-    const size = low_level_process.ttySize(ensureProcessIo(runtime), ttySizeFile(runtime, stream)) catch |failure| {
+    const size = low_level_process.ttySize(ensureProcessIo(runtime), try ttySizeFile(runtime, stream)) catch |failure| {
         return throwIoAs(runtime, failure, operation, null, .tty_isatty);
     };
     var roots = [_]Value{ .{}, .{} };
@@ -353,10 +353,15 @@ fn processStreamFile(runtime: *Runtime, stream: foundation.ProcessStream) std.Io
 }
 
 /// `端末サイズ取得` 用のfile。WindowsのGetConsoleScreenBufferInfoは出力画面
-/// バッファ専用のため、stdin指定時はTTYなstdout/stderrを使う。
-fn ttySizeFile(runtime: *Runtime, stream: foundation.ProcessStream) std.Io.File {
+/// バッファ専用のため、stdin指定時はまず実stdinが端末か確認し、端末の場合だけ
+/// TTYなstdout/stderrの画面バッファを使う。stdinが非端末なら `端末判定` と
+/// 矛盾しないようENOTSUPにする。
+fn ttySizeFile(runtime: *Runtime, stream: foundation.ProcessStream) !std.Io.File {
     if (comptime builtin.os.tag == .windows) {
         if (stream == .stdin) {
+            if (!(state.stdioStdinFile(runtime).isTty(ensureProcessIo(runtime)) catch false)) {
+                return error.OperationUnsupported;
+            }
             const stdout_file = state.stdioStdoutFile(runtime);
             if (stdout_file.isTty(ensureProcessIo(runtime)) catch false) return stdout_file;
             return state.stdioStderrFile(runtime);
@@ -420,7 +425,7 @@ pub fn pluginIsatty(context: *anyopaque, stream: foundation.ProcessStream) anyer
 
 pub fn pluginTtySize(context: *anyopaque, stream: foundation.ProcessStream) anyerror!low_level_process.TtySize {
     const runtime: *Runtime = @ptrCast(@alignCast(context));
-    return low_level_process.ttySize(ensureProcessIo(runtime), ttySizeFile(runtime, stream));
+    return low_level_process.ttySize(ensureProcessIo(runtime), try ttySizeFile(runtime, stream));
 }
 
 test "AOTプロセス起動はARGV非配列と空配列をEINVALにする" {
@@ -578,6 +583,29 @@ test "AOTの動的待機はhandle対応表からもプロセスを削除する" 
     // 残らない（辞書のGCルート残留と再変換での無効handle化を防ぐ）。
     _ = try pluginWaitProcess(@ptrCast(&runtime), id.raw());
     try std.testing.expect(findHandleId(&runtime, roots[1]) == null);
+}
+
+test "AOTのプロセス起動はOPTIONSの継承プロパティを無視する" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    // prototypeへ不正なcwdを置いてもown propertyではないため無視され、起動が成功する
+    // （Interpreterの dictionaryGetAscii と同じ own-property 規則）。
+    roots[0] = try runtimeUtf8String(&runtime, "cwd");
+    roots[1] = try runtimeUtf8String(&runtime, "/nonexistent/lnako-prototype-cwd");
+    const proto = try runtime.createDictionary(&.{ roots[0], roots[1] });
+    const options = try runtime.createDictionary(&.{});
+    options.object().?.prototype = proto;
+
+    roots[2] = try spawnArgv(&runtime, &.{"/usr/bin/true"});
+    const handle = try lowLevelProcessBuiltin(&runtime, .low_level_process_spawn, &.{ roots[2], options });
+    const result = try lowLevelProcessBuiltin(&runtime, .low_level_process_wait, &.{handle});
+    try std.testing.expectEqual(@as(f64, 0), valueToNumber(dictionaryProperty(result, &.{ 'e', 'x', 'i', 't', 'C', 'o', 'd', 'e' })));
 }
 
 test "AOTプロセス起動は存在しない実行ファイルをENOENTにする" {

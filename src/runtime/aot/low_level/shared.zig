@@ -28,6 +28,7 @@ pub const aotRuntimeIo = state.aotRuntimeIo;
 pub const staticUtf8 = state.staticUtf8;
 pub const isString = state.isString;
 pub const dictionaryProperty = state.dictionaryProperty;
+pub const dictionaryOwnProperty = state.dictionaryOwnProperty;
 pub const fflush = state.fflush;
 pub const read_chunk_bytes: usize = 64 * 1024;
 

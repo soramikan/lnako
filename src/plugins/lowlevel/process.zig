@@ -623,6 +623,39 @@ test "InterpreterのOPTIONSはcwd/env/stdio/detachedを解釈する" {
     _ = (try call(&runtime, &state, host.context(), effects, "プロセス待機", &.{handle2})) orelse return error.TestExpectedEqual;
 }
 
+test "Interpreterのプロセス起動はOPTIONSの継承プロパティを無視する" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var host = ProcessTestHost.init(std.testing.io);
+    defer host.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var argv = try spawnArgv(&runtime, &.{"/usr/bin/true"});
+    try roots.protect(&argv);
+
+    // prototypeに不正なcwdを置いてもown propertyではないため無視され、起動が成功する。
+    var proto = try runtime.createDictionary();
+    try roots.protect(&proto);
+    var cwd = try runtime.stringUtf8("/nonexistent/lnako-prototype-cwd");
+    try roots.protect(&cwd);
+    try node_shared.setDictionary(&runtime, proto.dictionary, "cwd", cwd);
+    var options = try runtime.createDictionary();
+    try roots.protect(&options);
+    options.dictionary.prototype = proto;
+
+    var handle = (try call(&runtime, &state, host.context(), effects, "プロセス起動", &.{ argv, options })) orelse return error.TestExpectedEqual;
+    try roots.protect(&handle);
+    var result = (try call(&runtime, &state, host.context(), effects, "プロセス待機", &.{handle})) orelse return error.TestExpectedEqual;
+    try roots.protect(&result);
+    const exit_code = node_shared.dictionaryGetAscii(result.dictionary, foundation.wait_result_keys.exit_code) orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(@as(f64, 0), exit_code.number);
+}
+
 fn spawnArgv(runtime: *Runtime, argv: []const []const u8) !Value {
     var array = try runtime.createArray();
     var roots = runtime.rootFrame();

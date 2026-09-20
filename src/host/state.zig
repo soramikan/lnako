@@ -490,10 +490,13 @@ pub const CliHost = struct {
     }
 
     /// `端末サイズ取得` 用のfile。WindowsのGetConsoleScreenBufferInfoは出力
-    /// 画面バッファ専用のため、stdin指定時はTTYなstdout/stderrを使う。
-    fn ttySizeFile(self: *CliHost, stream: lnako.runtime.low_level_foundation.ProcessStream) std.Io.File {
+    /// 画面バッファ専用のため、stdin指定時はまず実stdinが端末か確認し、端末の
+    /// 場合だけTTYなstdout/stderrの画面バッファを使う。stdinが非端末なら
+    /// `端末判定` と矛盾しないようENOTSUPにする。
+    fn ttySizeFile(self: *CliHost, stream: lnako.runtime.low_level_foundation.ProcessStream) !std.Io.File {
         if (comptime builtin.os.tag == .windows) {
             if (stream == .stdin) {
+                if (!(self.stdinFile().isTty(self.io) catch false)) return error.OperationUnsupported;
                 const stdout_file = self.stdoutFile();
                 if (stdout_file.isTty(self.io) catch false) return stdout_file;
                 return self.stderrFile();
@@ -504,7 +507,7 @@ pub const CliHost = struct {
 
     fn lowLevelTtySize(context: *anyopaque, stream: lnako.runtime.low_level_foundation.ProcessStream) anyerror!lnako.runtime.low_level_process.TtySize {
         const self: *CliHost = @ptrCast(@alignCast(context));
-        return lnako.runtime.low_level_process.ttySize(self.io, self.ttySizeFile(stream));
+        return lnako.runtime.low_level_process.ttySize(self.io, try self.ttySizeFile(stream));
     }
 
     fn lowLevelDirTable(self: *CliHost) *lnako.runtime.low_level_dir.DirHandleTable {
