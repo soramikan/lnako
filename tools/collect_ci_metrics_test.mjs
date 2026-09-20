@@ -5,6 +5,8 @@ import {
   aggregateRuns,
   cacheComparisonKey,
   cacheKeyRun,
+  MAX_RUN_PAGES,
+  RUNS_PAGE_SIZE,
   collectMetrics,
   collectRunMetrics,
   formatBytes,
@@ -396,6 +398,70 @@ test("collectMetrics fetches runs, jobs and logs through injected gh api", async
   assert.ok(calls.some((path) => path.includes("/actions/jobs/2/logs")));
 });
 
+test("collectMetricsはrun一覧をページングして構成一致runを探す", async () => {
+  const legacyRuns = Array.from({ length: RUNS_PAGE_SIZE }, (_, index) => ({ ...runFixture, id: 1000 + index, created_at: "2026-09-18T01:00:00Z" }));
+  const matchingRun = { ...runFixture, id: 2000, created_at: "2026-09-20T01:00:00Z" };
+  const ghApiJsonImpl = async (path) => {
+    if (path.includes("/runs?")) {
+      // "per_page=100" が "page=1" を含むため、ページ番号は区切り付きで読む。
+      const pageNumber = Number(path.match(/[?&]page=(\d+)/)[1]);
+      if (pageNumber === 1) return { workflow_runs: legacyRuns };
+      if (pageNumber === 2) return { workflow_runs: [matchingRun] };
+      return { workflow_runs: [] };
+    }
+    if (path.includes("/jobs?")) {
+      const runId = Number(path.match(/runs\/(\d+)\/jobs/)[1]);
+      if (runId === matchingRun.id) return { total_count: jobsFixture.length, jobs: jobsFixture };
+      return { total_count: jobsFixture.length + 1, jobs: [...jobsFixture, { ...jobsFixture[0], id: 9, name: "legacy-only" }] };
+    }
+    if (path.endsWith("/timing")) return { run_duration_ms: 900_000 };
+    throw new Error(`unexpected path: ${path}`);
+  };
+  const result = await collectMetrics({
+    repo: "soramikan/lnako",
+    workflow: "ci.yml",
+    runCount: 1,
+    expectedJobCount: jobsFixture.length,
+    includeLogs: false,
+    ghApiJsonImpl,
+  });
+  // 1ページ目が構成不一致でも探索を打ち切らず、2ページ目の一致runを採用する。
+  assert.deepEqual(result.runs.map((run) => run.id), [matchingRun.id]);
+  assert.equal(result.selection.skippedByJobCount.length, RUNS_PAGE_SIZE);
+  assert.equal(result.selection.exploration, "exhausted");
+  assert.equal(result.selection.unexplored, false);
+});
+
+test("collectMetricsは探索上限に達したら未探索を明示する", async () => {
+  const page = Array.from({ length: RUNS_PAGE_SIZE }, (_, index) => ({ ...runFixture, id: 3000 + index, created_at: "2026-09-18T01:00:00Z" }));
+  const ghApiJsonImpl = async (path) => {
+    if (path.includes("/runs?")) return { workflow_runs: page };
+    if (path.includes("/jobs?")) return { total_count: jobsFixture.length + 1, jobs: [...jobsFixture, { ...jobsFixture[0], id: 9, name: "legacy-only" }] };
+    throw new Error(`unexpected path: ${path}`);
+  };
+  const result = await collectMetrics({
+    repo: "soramikan/lnako",
+    workflow: "ci.yml",
+    runCount: 1,
+    expectedJobCount: jobsFixture.length,
+    includeLogs: false,
+    ghApiJsonImpl,
+  });
+  assert.equal(result.runs.length, 0);
+  assert.equal(result.selection.exploration, "page-limit");
+  assert.equal(result.selection.unexplored, true);
+  assert.equal(result.selection.exploredRuns, RUNS_PAGE_SIZE * MAX_RUN_PAGES);
+  const markdown = formatMarkdown({
+    repo: "soramikan/lnako",
+    workflow: "ci.yml",
+    generatedAt: "2026-09-20T00:00:00Z",
+    runs: result.runs,
+    aggregate: result.aggregate,
+    selection: result.selection,
+  });
+  assert.match(markdown, /探索上限（10ページ）に達したため、未探索のrunがあります/);
+});
+
 test("collectMetricsは構成の異なるrun（--jobs）を系列から除外し採用数を明示する", async () => {
   const currentRun = { ...runFixture, id: 200, created_at: "2026-09-20T01:00:00Z" };
   const legacyRun = { ...runFixture, id: 100, created_at: "2026-09-18T01:00:00Z" };
@@ -433,7 +499,7 @@ test("collectMetricsは構成の異なるrun（--jobs）を系列から除外し
     aggregate: result.aggregate,
     selection: result.selection,
   });
-  assert.match(markdown, /系列フィルタ: branch=- \/ jobs=2 \/ since=-（要求2 run・採用1 run）/);
+  assert.match(markdown, /系列フィルタ: branch=- \/ jobs=2 \/ since=-（要求2 run・採用1 run・探索2 run）/);
   assert.match(markdown, /構成の異なるrun 1件を除外/);
 });
 

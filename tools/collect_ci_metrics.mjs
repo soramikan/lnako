@@ -11,6 +11,10 @@ export const LLVM_SETUP_STEP = "Set up pinned LLVM and LLD";
 export const TOOLCHAIN_CACHE_PATH = ".cache/toolchains";
 export const SETUP_ZIG_STEP = "Run mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29";
 export const ACTIONS_CACHE_STEP_PREFIX = "Run actions/cache@";
+// 改善計画2 §10の系列収集でrun一覧を辿るページ幅と上限。
+// 上限に達した場合は「未探索あり」を出力へ明示し、静かに取りこぼさない。
+export const RUNS_PAGE_SIZE = 100;
+export const MAX_RUN_PAGES = 10;
 
 /**
  * GitHubのjob logは全行にtimestamp prefixが付き、ANSI escapeも含むため、
@@ -396,9 +400,12 @@ export function formatMarkdown({ repo, workflow, generatedAt, runs, aggregate, s
     `対象: ${repo} / workflow: ${workflow}`,
     `生成: ${generatedAt}`,
     `分析run数: ${aggregate.runCount}（成功した完了runのみ）`,
-    ...(selection === null ? [] : [`系列フィルタ: branch=${selection.branch ?? "-"} / jobs=${selection.expectedJobCount ?? "-"} / since=${selection.since ?? "-"}（要求${selection.requested} run・採用${selection.adopted} run）`]),
+    ...(selection === null ? [] : [`系列フィルタ: branch=${selection.branch ?? "-"} / jobs=${selection.expectedJobCount ?? "-"} / since=${selection.since ?? "-"}（要求${selection.requested} run・採用${selection.adopted} run・探索${selection.exploredRuns ?? "-"} run）`]),
     ...(selection !== null && selection.adopted < selection.requested
       ? [`注意: 構成の異なるrun ${selection.skippedByJobCount.length}件を除外したため、採用run数が要求${selection.requested}に達していません（旧構成で穴埋めしない）。`]
+      : []),
+    ...(selection !== null && selection.unexplored === true
+      ? [`注意: run一覧の探索上限（${MAX_RUN_PAGES}ページ）に達したため、未探索のrunがあります。採用数とpercentileは不完全です。`]
       : []),
     "",
     "## 対象run",
@@ -531,35 +538,67 @@ export async function collectMetrics({ repo, workflow, runCount, branch = null, 
   // 改善計画2 §10は同一系列でmedian/p75/p90/p95を蓄積する。branchだけでは
   // 同一branch内の構成変更（job数の違う旧run）を区別できず、`--runs 30`が
   // 旧構成の値を現行構成のpercentileへ混ぜてしまう。そのため構成境界
-  // （--jobs＝期待job数、--since＝開始日時）でも絞り、要求run数に届かない場合は
+  // （--jobs＝期待job数、--since＝開始日時）でも絞り、要求run数に達しない場合は
   // 旧構成で穴埋めせず採用数を明示する。
   const sinceMs = since === null ? null : Date.parse(since);
   if (since !== null && Number.isNaN(sinceMs)) throw new Error("--sinceにはISO8601の日時（例: 2026-09-20T00:00:00Z）を指定してください");
   const branchQuery = branch === null ? "" : `&branch=${encodeURIComponent(branch)}`;
-  const response = await ghApiJsonImpl(`repos/${repo}/actions/workflows/${workflow}/runs?per_page=${Math.min(100, runCount * 4)}&status=completed${branchQuery}`);
-  const candidates = (response.workflow_runs ?? [])
-    .filter((run) => run.conclusion === "success")
-    .filter((run) => sinceMs === null || Date.parse(run.created_at) >= sinceMs);
   const collected = [];
   const skippedByJobCount = [];
-  for (const run of candidates) {
-    if (collected.length >= runCount) break;
-    const jobs = [];
-    let jobsTotal = null;
-    for (let page = 1; ; page += 1) {
-      const jobsResponse = await ghApiJsonImpl(`repos/${repo}/actions/runs/${run.id}/jobs?per_page=100&page=${page}`);
-      const pageJobs = jobsResponse.jobs ?? [];
-      jobs.push(...pageJobs);
-      jobsTotal = jobsResponse.total_count ?? jobsTotal;
-      if (pageJobs.length === 0 || (Number.isSafeInteger(jobsTotal) && jobs.length >= jobsTotal)) break;
+  // 構成フィルタで採用が少なくなるとき、1ページだけで探索を打ち切ると
+  // 範囲外にある一致runを取りこぼす。採用数が要求へ達するか候補が尽きるまで
+  // run一覧をページングする（上限に達した場合は未探索があることを報告する）。
+  let runsPage = 1;
+  let exploredRuns = 0;
+  let exploration = "exhausted";
+  for (; collected.length < runCount && runsPage <= MAX_RUN_PAGES; runsPage += 1) {
+    const response = await ghApiJsonImpl(`repos/${repo}/actions/workflows/${workflow}/runs?per_page=${RUNS_PAGE_SIZE}&page=${runsPage}&status=completed${branchQuery}`);
+    const pageRuns = response.workflow_runs ?? [];
+    exploredRuns += pageRuns.length;
+    if (pageRuns.length === 0) {
+      exploration = "exhausted";
+      break;
     }
-    if (Number.isSafeInteger(jobsTotal) && jobsTotal > jobs.length) {
-      log(`run ${run.id}: jobs ${jobs.length}/${jobsTotal}（ページング取得後も一部欠落）`);
+    let reachedSince = false;
+    for (const run of pageRuns) {
+      if (collected.length >= runCount) break;
+      if (run.conclusion !== "success") continue;
+      // run一覧は新しい順なので、--sinceより古いrunに達したら以降も対象外。
+      if (sinceMs !== null && Date.parse(run.created_at) < sinceMs) {
+        reachedSince = true;
+        break;
+      }
+      const jobs = [];
+      let jobsTotal = null;
+      for (let page = 1; ; page += 1) {
+        const jobsResponse = await ghApiJsonImpl(`repos/${repo}/actions/runs/${run.id}/jobs?per_page=100&page=${page}`);
+        const pageJobs = jobsResponse.jobs ?? [];
+        jobs.push(...pageJobs);
+        jobsTotal = jobsResponse.total_count ?? jobsTotal;
+        if (pageJobs.length === 0 || (Number.isSafeInteger(jobsTotal) && jobs.length >= jobsTotal)) break;
+      }
+      if (Number.isSafeInteger(jobsTotal) && jobsTotal > jobs.length) {
+        log(`run ${run.id}: jobs ${jobs.length}/${jobsTotal}（ページング取得後も一部欠落）`);
+      }
+      if (expectedJobCount !== null && jobsTotal !== expectedJobCount) {
+        skippedByJobCount.push({ id: run.id, jobs: jobsTotal });
+        continue;
+      }
+      await adoptRun(run, jobs);
     }
-    if (expectedJobCount !== null && jobsTotal !== expectedJobCount) {
-      skippedByJobCount.push({ id: run.id, jobs: jobsTotal });
-      continue;
+    if (reachedSince) {
+      exploration = "since";
+      break;
     }
+    if (pageRuns.length < RUNS_PAGE_SIZE) {
+      exploration = "exhausted";
+      break;
+    }
+  }
+  if (collected.length < runCount && runsPage > MAX_RUN_PAGES) exploration = "page-limit";
+
+  // 採用runの計測（job一覧は取得済み。ログ解析は必要時のみ）。
+  async function adoptRun(run, jobs) {
     const timing = await ghApiJsonImpl(`repos/${repo}/actions/runs/${run.id}/timing`).catch(() => null);
     const toolchainByJob = new Map();
     const cacheByJob = new Map();
@@ -592,9 +631,13 @@ export async function collectMetrics({ repo, workflow, runCount, branch = null, 
     adopted: collected.length,
     // 構成の異なるrunは採用しない（旧構成で要求数を穴埋めしない）。
     skippedByJobCount,
+    exploredRuns,
+    // "since"=境界到達, "exhausted"=候補尽き, "page-limit"=探索上限で未探索あり。
+    exploration,
+    unexplored: exploration === "page-limit",
   };
   if (collected.length < runCount) {
-    log(`要求${runCount} runに対し採用${collected.length} run（構成の異なるrunを除外: ${skippedByJobCount.length}件）`);
+    log(`要求${runCount} runに対し採用${collected.length} run（構成の異なるrunを除外: ${skippedByJobCount.length}件${exploration === "page-limit" ? `・探索は${MAX_RUN_PAGES}ページ（${exploredRuns} run）で打ち切り` : ""}）`);
   }
   return { runs: collected, aggregate: aggregateRuns(collected), selection };
 }
