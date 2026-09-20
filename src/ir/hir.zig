@@ -1,6 +1,8 @@
 const std = @import("std");
 const ast = @import("../frontend/ast.zig");
 const semantic = @import("../semantic/analyzer.zig");
+const argument_completion = @import("../semantic/argument_completion.zig");
+const builtin_josi = @import("../semantic/builtin_josi.zig");
 
 pub const NodeId = u32;
 pub const FunctionId = u32;
@@ -322,19 +324,21 @@ const Lowerer = struct {
             return self.addNode(.nop, node.span, &.{});
         }
         const implicit_function = self.implicitFunction(node);
-        var child_ids = if (implicit_function) |function|
-            try self.allocator.alloc(NodeId, function.argument_count)
-        else
-            try self.allocator.alloc(NodeId, node.children.len);
-        if (implicit_function) |function| {
-            if (function.argument_count > 1) return error.InvalidImplicitFunctionArity;
-            if (function.argument_count == 1) {
-                child_ids[0] = try self.addNode(.load_global, node.span, &.{});
-                const argument = &self.nodes.items[child_ids[0]];
-                argument.name = try self.allocator.dupe(u8, "それ");
-                argument.text = try self.allocator.dupe(u8, "それ");
+        const completion = try self.argumentCompletionPlan(node);
+        var child_ids: []NodeId = undefined;
+        if (completion) |plan| {
+            // 公式`yCallFunc`と同じ助詞補完。省略された引数は変数「それ」を渡す。
+            child_ids = try self.allocator.alloc(NodeId, plan.operands.len);
+            for (plan.operands, 0..) |operand, index| {
+                child_ids[index] = switch (operand) {
+                    .provided => |argument| try self.lowerNode(node.children[argument], module_index),
+                    .implicit_it => try self.implicitItNode(node.span),
+                };
             }
-        } else for (node.children, 0..) |child, index| child_ids[index] = try self.lowerNode(child, module_index);
+        } else {
+            child_ids = try self.allocator.alloc(NodeId, if (implicit_function != null) 0 else node.children.len);
+            for (node.children, 0..) |child, index| child_ids[index] = try self.lowerNode(child, module_index);
+        }
         const kind: Kind = switch (node.kind) {
             // .import はこの関数の先頭でcall/nopに変換済みのためここへは来ない
             .import, .nop, .eol, .run_mode, .function_definition, .test_definition => .nop,
@@ -425,14 +429,54 @@ const Lowerer = struct {
         return false;
     }
 
-    fn implicitFunction(self: Lowerer, node: *ast.Node) ?semantic.Symbol {
+    fn implicitFunction(self: *Lowerer, node: *ast.Node) ?semantic.Symbol {
         if (node.kind != .word) return null;
+        return self.callableSymbol(node);
+    }
+
+    /// 呼出し先がユーザー定義関数へ解決されたノードのシンボルを返す。
+    fn callableSymbol(self: *Lowerer, node: *ast.Node) ?semantic.Symbol {
         for (self.semantic_program.bindings) |binding| if (binding.node == node and binding.kind == .call) {
             const symbol_id = binding.symbol orelse return null;
-            const symbol = self.semantic_program.symbols[symbol_id];
-            if (symbol.kind == .function or symbol.kind == .test_function) return symbol;
+            return self.semantic_program.symbols[symbol_id];
         };
         return null;
+    }
+
+    /// 公式`nako_parser3.mts`の`yCallFunc`と同じ助詞補完の計画を返す。
+    /// C風呼出し・可変長引数・助詞スロットが無い命令は補完対象外として`null`を返す。
+    fn argumentCompletionPlan(self: *Lowerer, node: *ast.Node) !?argument_completion.Plan {
+        if (node.is_c_style_call) return null;
+        switch (node.kind) {
+            .function_call => {
+                if (self.bindingIsBuiltin(node)) {
+                    const spec = builtin_josi.findJosi(node.name) orelse return null;
+                    const slots = try argument_completion.builtinSlots(self.allocator, spec);
+                    return argument_completion.plan(self.allocator, slots, node.children, spec.is_variable);
+                }
+                const symbol = self.callableSymbol(node) orelse return null;
+                if (symbol.kind != .function and symbol.kind != .test_function) return null;
+                const slots = try argument_completion.parameterSlots(self.allocator, symbol.parameter_josi);
+                if (slots.len == 0) return null;
+                return argument_completion.plan(self.allocator, slots, node.children, false);
+            },
+            .word => {
+                const symbol = self.callableSymbol(node) orelse return null;
+                const slots = try argument_completion.parameterSlots(self.allocator, symbol.parameter_josi);
+                if (slots.len == 0) return null;
+                return argument_completion.plan(self.allocator, slots, node.children, false);
+            },
+            else => return null,
+        }
+    }
+
+    /// 省略引数へ補完する変数「それ」の読み出しノードを作る。
+    fn implicitItNode(self: *Lowerer, span: ast.Span) !NodeId {
+        const id = try self.addNode(.load_global, span, &.{});
+        const node = &self.nodes.items[id];
+        node.name = try self.allocator.dupe(u8, "それ");
+        node.text = try self.allocator.dupe(u8, "それ");
+        return id;
     }
 
     /// 分解代入の各ターゲット名を解決済み名とローカル束縛フラグで埋める。
@@ -557,6 +601,61 @@ test "裸の1引数関数をそれ付き暗黙呼び出しへ下げる" {
         const argument = program.node(node.children[0]);
         try std.testing.expectEqual(Kind.load_global, argument.kind);
         try std.testing.expectEqualStrings("それ", argument.name);
+        found = true;
+    }
+    try std.testing.expect(found);
+}
+
+test "助詞呼出しの省略引数を変数「それ」で補完する" {
+    const parser = @import("../frontend/parser.zig");
+    const source = "それは「abcabc」\n「a」を「X」に置換\n表示。\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "particle.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "particle.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var program = try lowerSingle(std.testing.allocator, parsed.root.?, "particle", "particle.nako3", analyzed);
+    defer program.deinit();
+    var replace_children: ?[]const NodeId = null;
+    var display_children: ?[]const NodeId = null;
+    for (program.nodes) |node| {
+        if (node.kind != .call) continue;
+        if (std.mem.eql(u8, node.name, "置換")) replace_children = node.children;
+        if (std.mem.eql(u8, node.name, "表示")) display_children = node.children;
+    }
+    // 置換は「それ」を先頭引数として補完し、続けて「a」「X」を渡す。
+    const replace = replace_children orelse return error.MissingReplaceCall;
+    try std.testing.expectEqual(@as(usize, 3), replace.len);
+    try std.testing.expectEqualStrings("それ", program.node(replace[0]).name);
+    try std.testing.expectEqual(Kind.load_global, program.node(replace[0]).kind);
+    try std.testing.expectEqualStrings("a", program.node(replace[1]).text);
+    try std.testing.expectEqualStrings("X", program.node(replace[2]).text);
+    // 表示は省略引数1個を「それ」で補完する。
+    const display = display_children orelse return error.MissingDisplayCall;
+    try std.testing.expectEqual(@as(usize, 1), display.len);
+    try std.testing.expectEqual(Kind.load_global, program.node(display[0]).kind);
+    try std.testing.expectEqualStrings("それ", program.node(display[0]).name);
+}
+
+test "複数引数の裸関数呼出しを「それ」で補完する" {
+    const parser = @import("../frontend/parser.zig");
+    const source = "●(AとBを)二和とは\n(A+B)で戻る\nここまで\nそれは3\n二和を表示。\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "fill.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "fill.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var program = try lowerSingle(std.testing.allocator, parsed.root.?, "fill", "fill.nako3", analyzed);
+    defer program.deinit();
+    var found = false;
+    for (program.nodes) |node| {
+        if (node.kind != .call or !std.mem.eql(u8, node.name, "fill__二和")) continue;
+        try std.testing.expectEqual(@as(usize, 2), node.children.len);
+        for (node.children) |child| {
+            const argument = program.node(child);
+            try std.testing.expectEqual(Kind.load_global, argument.kind);
+            try std.testing.expectEqualStrings("それ", argument.name);
+        }
         found = true;
     }
     try std.testing.expect(found);
