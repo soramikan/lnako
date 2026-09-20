@@ -396,6 +396,72 @@ test("collectMetrics fetches runs, jobs and logs through injected gh api", async
   assert.ok(calls.some((path) => path.includes("/actions/jobs/2/logs")));
 });
 
+test("collectMetricsは構成の異なるrun（--jobs）を系列から除外し採用数を明示する", async () => {
+  const currentRun = { ...runFixture, id: 200, created_at: "2026-09-20T01:00:00Z" };
+  const legacyRun = { ...runFixture, id: 100, created_at: "2026-09-18T01:00:00Z" };
+  const logs = [];
+  const ghApiJsonImpl = async (path) => {
+    if (path.includes("/runs?")) return { workflow_runs: [currentRun, legacyRun] };
+    if (path.includes("/actions/runs/200/jobs?")) return { total_count: jobsFixture.length, jobs: jobsFixture };
+    if (path.includes("/actions/runs/100/jobs?")) {
+      return { total_count: jobsFixture.length + 1, jobs: [...jobsFixture, { ...jobsFixture[0], id: 3, name: "legacy-only" }] };
+    }
+    if (path.endsWith("/timing")) return { run_duration_ms: 900_000 };
+    throw new Error(`unexpected path: ${path}`);
+  };
+  const result = await collectMetrics({
+    repo: "soramikan/lnako",
+    workflow: "ci.yml",
+    runCount: 2,
+    expectedJobCount: jobsFixture.length,
+    includeLogs: false,
+    ghApiJsonImpl,
+    log: (message) => logs.push(message),
+  });
+  // 旧構成（job数の違うrun）は採用せず、要求数を穴埋めしない。
+  assert.deepEqual(result.runs.map((run) => run.id), [200]);
+  assert.equal(result.selection.adopted, 1);
+  assert.equal(result.selection.requested, 2);
+  assert.deepEqual(result.selection.skippedByJobCount, [{ id: 100, jobs: jobsFixture.length + 1 }]);
+  assert.ok(logs.some((message) => message.includes("要求2 runに対し採用1 run")));
+
+  const markdown = formatMarkdown({
+    repo: "soramikan/lnako",
+    workflow: "ci.yml",
+    generatedAt: "2026-09-20T00:00:00Z",
+    runs: result.runs,
+    aggregate: result.aggregate,
+    selection: result.selection,
+  });
+  assert.match(markdown, /系列フィルタ: branch=- \/ jobs=2 \/ since=-（要求2 run・採用1 run）/);
+  assert.match(markdown, /構成の異なるrun 1件を除外/);
+});
+
+test("collectMetricsは--sinceより前のrunを系列から除外する", async () => {
+  const newer = { ...runFixture, id: 300, created_at: "2026-09-20T01:00:00Z" };
+  const older = { ...runFixture, id: 100, created_at: "2026-09-18T01:00:00Z" };
+  const ghApiJsonImpl = async (path) => {
+    if (path.includes("/runs?")) return { workflow_runs: [newer, older] };
+    if (path.includes("/jobs?")) return { total_count: jobsFixture.length, jobs: jobsFixture };
+    if (path.endsWith("/timing")) return { run_duration_ms: 900_000 };
+    throw new Error(`unexpected path: ${path}`);
+  };
+  const result = await collectMetrics({
+    repo: "soramikan/lnako",
+    workflow: "ci.yml",
+    runCount: 5,
+    since: "2026-09-19T00:00:00Z",
+    includeLogs: false,
+    ghApiJsonImpl,
+  });
+  assert.deepEqual(result.runs.map((run) => run.id), [300]);
+  assert.equal(result.selection.since, "2026-09-19T00:00:00Z");
+  await assert.rejects(
+    collectMetrics({ repo: "soramikan/lnako", workflow: "ci.yml", runCount: 1, since: "not-a-date", includeLogs: false, ghApiJsonImpl }),
+    /--sinceにはISO8601/,
+  );
+});
+
 test("collectMetrics restricts the series to one branch when --branch is given", async () => {
   const calls = [];
   const ghApiJsonImpl = async (path) => {

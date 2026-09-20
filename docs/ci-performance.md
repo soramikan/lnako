@@ -925,24 +925,30 @@ Linux AOT job群の実測と複数runのmedianに基づく。
 
 ### 長期計測スナップショット（ローリング）
 
-計画§10の統計を、現行構成（46 job）の系列で蓄積する。2026-09-20時点の
-**5 run**は次のとおり。少数標本ではp90/p95が最大値へ寄るため、標本数と併記する。
+計画§10の統計を、現行構成（46 job）の系列で蓄積する。2026-09-20時点で
+`--branch improve/ci --jobs 46` が採用した**7 run**は次のとおり。少数標本では
+p90/p95が最大値へ寄るため、標本数と併記する。
 
 | 指標 | n | median | p75 | p90 | p95 | min | max |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| workflow wall clock（分） | 5 | 18.8 | 19.0 | 21.9 | 22.8 | 15.9 | 23.8 |
-| 全job runner minutes | 5 | 166.4 | 168.7 | 168.9 | 169.0 | 151.6 | 169.1 |
-| Linux AOT job群（8 consumer＋producer、分） | 5 | 11.4 | 11.5 | 11.7 | 11.7 | 11.3 | 11.8 |
+| workflow wall clock（分） | 7 | 18.8 | 21.7 | 24.7 | 25.0 | 14.2 | 25.2 |
+| 全job runner minutes | 7 | 159.4 | 167.5 | 168.9 | 169.0 | 134.6 | 169.1 |
+| Linux AOT job群（8 consumer＋producer、分） | 7 | 11.5 | 11.8 | 11.9 | 11.9 | 10.8 | 12.0 |
 
-- wall clockは実行時間にqueue待ちを含むため、系列を絞っても変動が大きい
-  （min 15.9／max 23.8）。施策の効果判定には使わない。
-- runner minutesとLinux AOT job群は安定しており、AOT job群は5 runいずれも
-  11.3〜11.8 minである。
-- 系列を揃えるため`collect_ci_metrics.mjs`に`--branch`を追加した
-  （他branchのrunが混ざると施策の効果を判定できない）。同じコマンドで更新する:
+- wall clockは実行時間にqueue待ちを含むため変動が大きい（min 14.2／max 25.2。
+  35472553438は18m07sのqueue待ちを含む）。施策の効果判定には使わない。
+- 全job runner minutesのmin 134.6は、`test` job行が速い側へ振れたrunである
+  （同job行は193〜860sで変動する）。
+- Linux AOT job群は7 runいずれも10.8〜12.0 minで、施策の効果が最も安定して
+  観測できる指標である。
+- 系列を揃えるため`collect_ci_metrics.mjs`に構成境界のフィルタを追加した。
+  `--branch`は他branchを除外するが、**同じbranch内の構成変更（job数の違う旧run）は
+  区別できない**ため、`--jobs`（期待job数）と`--since`（開始日時）でも絞る。
+  構成の異なるrunは採用せず、採用数が要求に届かない場合は出力へ明示する
+  （旧構成の値で要求数を穴埋めしない）。同じコマンドで更新する:
 
 ```sh
-node tools/collect_ci_metrics.mjs --branch improve/ci --runs 30 --no-logs
+node tools/collect_ci_metrics.mjs --branch improve/ci --jobs 46 --runs 30 --no-logs
 ```
 
 サンプル数を20〜30へ増やして再評価するのは継続課題である（本節はその途中経過）。

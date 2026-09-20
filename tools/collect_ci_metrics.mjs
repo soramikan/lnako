@@ -389,13 +389,17 @@ export function summarizeCache(cacheJobs) {
   };
 }
 
-export function formatMarkdown({ repo, workflow, generatedAt, runs, aggregate }) {
+export function formatMarkdown({ repo, workflow, generatedAt, runs, aggregate, selection = null }) {
   const lines = [
     "# CI performance metrics",
     "",
     `対象: ${repo} / workflow: ${workflow}`,
     `生成: ${generatedAt}`,
     `分析run数: ${aggregate.runCount}（成功した完了runのみ）`,
+    ...(selection === null ? [] : [`系列フィルタ: branch=${selection.branch ?? "-"} / jobs=${selection.expectedJobCount ?? "-"} / since=${selection.since ?? "-"}（要求${selection.requested} run・採用${selection.adopted} run）`]),
+    ...(selection !== null && selection.adopted < selection.requested
+      ? [`注意: 構成の異なるrun ${selection.skippedByJobCount.length}件を除外したため、採用run数が要求${selection.requested}に達していません（旧構成で穴埋めしない）。`]
+      : []),
     "",
     "## 対象run",
     "",
@@ -523,14 +527,23 @@ export async function ghApiLog(path) {
   return result.stdout;
 }
 
-export async function collectMetrics({ repo, workflow, runCount, branch = null, includeLogs, ghApiJsonImpl = ghApiJson, ghApiLogImpl = ghApiLog, log = () => {} }) {
-  // 改善計画2 §10は同一系列（branch）でmedian/p75/p90/p95を蓄積する。
-  // branchを指定しないと他branchのrunが混ざり、施策の効果を判定できない。
+export async function collectMetrics({ repo, workflow, runCount, branch = null, expectedJobCount = null, since = null, includeLogs, ghApiJsonImpl = ghApiJson, ghApiLogImpl = ghApiLog, log = () => {} }) {
+  // 改善計画2 §10は同一系列でmedian/p75/p90/p95を蓄積する。branchだけでは
+  // 同一branch内の構成変更（job数の違う旧run）を区別できず、`--runs 30`が
+  // 旧構成の値を現行構成のpercentileへ混ぜてしまう。そのため構成境界
+  // （--jobs＝期待job数、--since＝開始日時）でも絞り、要求run数に届かない場合は
+  // 旧構成で穴埋めせず採用数を明示する。
+  const sinceMs = since === null ? null : Date.parse(since);
+  if (since !== null && Number.isNaN(sinceMs)) throw new Error("--sinceにはISO8601の日時（例: 2026-09-20T00:00:00Z）を指定してください");
   const branchQuery = branch === null ? "" : `&branch=${encodeURIComponent(branch)}`;
   const response = await ghApiJsonImpl(`repos/${repo}/actions/workflows/${workflow}/runs?per_page=${Math.min(100, runCount * 4)}&status=completed${branchQuery}`);
-  const runs = (response.workflow_runs ?? []).filter((run) => run.conclusion === "success").slice(0, runCount);
+  const candidates = (response.workflow_runs ?? [])
+    .filter((run) => run.conclusion === "success")
+    .filter((run) => sinceMs === null || Date.parse(run.created_at) >= sinceMs);
   const collected = [];
-  for (const run of runs) {
+  const skippedByJobCount = [];
+  for (const run of candidates) {
+    if (collected.length >= runCount) break;
     const jobs = [];
     let jobsTotal = null;
     for (let page = 1; ; page += 1) {
@@ -542,6 +555,10 @@ export async function collectMetrics({ repo, workflow, runCount, branch = null, 
     }
     if (Number.isSafeInteger(jobsTotal) && jobsTotal > jobs.length) {
       log(`run ${run.id}: jobs ${jobs.length}/${jobsTotal}（ページング取得後も一部欠落）`);
+    }
+    if (expectedJobCount !== null && jobsTotal !== expectedJobCount) {
+      skippedByJobCount.push({ id: run.id, jobs: jobsTotal });
+      continue;
     }
     const timing = await ghApiJsonImpl(`repos/${repo}/actions/runs/${run.id}/timing`).catch(() => null);
     const toolchainByJob = new Map();
@@ -567,11 +584,23 @@ export async function collectMetrics({ repo, workflow, runCount, branch = null, 
     collected.push(collectRunMetrics(run, jobs, toolchainByJob, { durationMs: timing?.run_duration_ms, cacheByJob }));
     log(`run ${run.id}: ${jobs.length} jobs`);
   }
-  return { runs: collected, aggregate: aggregateRuns(collected) };
+  const selection = {
+    branch,
+    expectedJobCount,
+    since,
+    requested: runCount,
+    adopted: collected.length,
+    // 構成の異なるrunは採用しない（旧構成で要求数を穴埋めしない）。
+    skippedByJobCount,
+  };
+  if (collected.length < runCount) {
+    log(`要求${runCount} runに対し採用${collected.length} run（構成の異なるrunを除外: ${skippedByJobCount.length}件）`);
+  }
+  return { runs: collected, aggregate: aggregateRuns(collected), selection };
 }
 
 function parseArguments(argumentsList) {
-  const options = { repo: "soramikan/lnako", workflow: "ci.yml", branch: null, runs: 5, output: null, logs: true };
+  const options = { repo: "soramikan/lnako", workflow: "ci.yml", branch: null, jobs: null, since: null, runs: 5, output: null, logs: true };
   const takeValue = (index) => {
     const value = argumentsList[index + 1];
     if (value === undefined) throw new Error(`${argumentsList[index]}には値が必要です`);
@@ -582,22 +611,27 @@ function parseArguments(argumentsList) {
     if (argument === "--repo") options.repo = takeValue(index++);
     else if (argument === "--workflow") options.workflow = takeValue(index++);
     else if (argument === "--branch") options.branch = takeValue(index++);
+    else if (argument === "--jobs") options.jobs = Number(takeValue(index++));
+    else if (argument === "--since") options.since = takeValue(index++);
     else if (argument === "--runs") options.runs = Number(takeValue(index++));
     else if (argument === "--output") options.output = takeValue(index++);
     else if (argument === "--no-logs") options.logs = false;
-    else throw new Error(`未知の引数です: ${argument}\n使い方: node tools/collect_ci_metrics.mjs [--repo owner/name] [--workflow ci.yml] [--branch <name>] [--runs 5] [--output docs/ci-performance.md] [--no-logs]`);
+    else throw new Error(`未知の引数です: ${argument}\n使い方: node tools/collect_ci_metrics.mjs [--repo owner/name] [--workflow ci.yml] [--branch <name>] [--jobs <期待job数>] [--since <ISO8601>] [--runs 5] [--output docs/ci-performance.md] [--no-logs]`);
   }
   if (!Number.isSafeInteger(options.runs) || options.runs < 1) throw new Error("--runsには正の整数を指定してください");
+  if (options.jobs !== null && (!Number.isSafeInteger(options.jobs) || options.jobs < 1)) throw new Error("--jobsには正の整数を指定してください");
   return options;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
   const options = parseArguments(process.argv.slice(2));
   try {
-    const { runs, aggregate } = await collectMetrics({
+    const { runs, aggregate, selection } = await collectMetrics({
       repo: options.repo,
       workflow: options.workflow,
       branch: options.branch,
+      expectedJobCount: options.jobs,
+      since: options.since,
       runCount: options.runs,
       includeLogs: options.logs,
       log: (message) => console.error(message),
@@ -608,6 +642,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
       generatedAt: new Date().toISOString(),
       runs,
       aggregate,
+      selection,
     });
     if (options.output) {
       await writeFile(resolve(dirname(fileURLToPath(import.meta.url)), "..", options.output), markdown);
