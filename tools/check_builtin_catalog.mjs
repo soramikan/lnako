@@ -193,13 +193,9 @@ const lines = [
   "};",
   "",
   "/// 公式の`func token`に相当する命令名（カタログ種別が「関数」のもの）。",
-  "/// パーサは助詞付きのこの名前を、公式`yCallFunc`と同じく連鎖呼出しとして解決する。",
-  "/// `定数`（`回数`など）は変数として使われるため含めず、node プラグインが同名の",
-  "/// グローバル変数を設定する`関数`（`デスクトップ`など）も、助詞の無い位置",
-  "/// （`ファイル名抽出(デスクトップ)`）が読むグローバル読み出し経路を保つため含めない。",
-  "pub const function_names = [_][]const u8{",
-  ...functionNames.map((name) => `    ${JSON.stringify(name)},`),
-  "};",
+  "/// 一覧そのものは`frontend`層の`builtin_commands.zig`が持ち、ここでは再公開する",
+  "/// （パーサの既定値が本番と同じになるよう、`frontend`層が自分で参照できるため）。",
+  "pub const function_names = @import(\"../frontend/builtin_commands.zig\").function_names;",
   "",
   "pub fn findArity(name: []const u8) ?BuiltinArity {",
   "    for (arities) |entry| if (std.mem.eql(u8, entry.name, name)) return entry;",
@@ -241,9 +237,31 @@ const josiLines = [
   "}",
   "",
 ];
+// 命令名の一覧は`frontend`層が既定で使うため、`semantic`層へ依存できない
+// `frontend`層のファイルとして生成する（`tools/source_structure.json`の層許可）。
+const commandLines = [
+  "const std = @import(\"std\");",
+  "",
+  "/// 公式の`func token`に相当する命令名（カタログ種別が「関数」のもの）。",
+  "/// パーサは助詞付きのこの名前を、公式`yCallFunc`と同じく連鎖呼出しとして解決する。",
+  "/// `定数`（`回数`など）は変数として使われるため含めず、node プラグインが同名の",
+  "/// グローバル変数を設定する`関数`（`デスクトップ`など）も、助詞の無い位置",
+  "/// （`ファイル名抽出(デスクトップ)`）が読むグローバル読み出し経路を保つため含めない。",
+  "pub const function_names = [_][]const u8{",
+  ...functionNames.map((name) => `    ${JSON.stringify(name)},`),
+  "};",
+  "",
+  "/// 公式の`func token`に相当する既知の命令名かどうか。",
+  "pub fn isKnown(name: []const u8) bool {",
+  "    for (function_names) |entry| if (std.mem.eql(u8, entry, name)) return true;",
+  "    return false;",
+  "}",
+  "",
+];
 const outputs = [
   { path: resolve(root, "src/semantic/builtin_catalog.zig"), expected: lines.join("\n"), label: "組み込み命令索引" },
   { path: resolve(root, "src/semantic/builtin_josi.zig"), expected: josiLines.join("\n"), label: "助詞スロット表" },
+  { path: resolve(root, "src/frontend/builtin_commands.zig"), expected: commandLines.join("\n"), label: "既知命令名一覧" },
 ];
 const generate = process.argv.includes("--generate");
 for (const output of outputs) {

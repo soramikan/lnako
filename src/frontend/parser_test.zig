@@ -496,7 +496,9 @@ test "助詞付きの既知命令名を連鎖呼出しとして解析する" {
 }
 
 test "既知命令名の一覧が空なら連鎖呼出しにしない" {
-    var result = try parse(std.testing.allocator, "「abc」の要素数を表示\n", "chain-disabled.nako3");
+    var result = try parser_mod.parseWithMode(std.testing.allocator, "「abc」の要素数を表示\n", "chain-disabled.nako3", .{
+        .builtin_commands = &.{},
+    });
     defer result.deinit();
     try std.testing.expect(result.succeeded());
     const display = result.root.?.children[0];
@@ -530,6 +532,34 @@ test "長い連鎖呼出しでもパーサは再帰せずに解析する" {
     try std.testing.expectEqual(@as(usize, 2001), depth);
     try std.testing.expectEqual(ast.Kind.string, current.kind);
     try std.testing.expectEqualStrings("a", current.value);
+}
+
+test "代入右辺の連鎖呼出しが文位置と同じASTになる" {
+    // 文位置の`「abc」の要素数を文字数`は`文字数(要素数("abc"))`になる。
+    var statement = try parse(std.testing.allocator, "「abc」の要素数を文字数\n", "chain-statement.nako3");
+    defer statement.deinit();
+    try std.testing.expect(statement.succeeded());
+    // 文位置も同じ入れ子の呼出しになる。
+    try std.testing.expectEqual(ast.Kind.function_call, statement.root.?.children[0].kind);
+    try std.testing.expectEqualStrings("文字数", statement.root.?.children[0].name);
+    try std.testing.expectEqual(@as(usize, 1), statement.root.?.children[0].children.len);
+    try std.testing.expectEqualStrings("要素数", statement.root.?.children[0].children[0].name);
+    var assigned = try parse(std.testing.allocator, "A=「abc」の要素数を文字数\n", "chain-assign.nako3");
+    defer assigned.deinit();
+    try std.testing.expect(assigned.succeeded());
+    const assignment = assigned.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.assignment, assignment.kind);
+    try std.testing.expectEqualStrings("A", assignment.name);
+    // 代入右辺も文位置と同じ入れ子の呼出しになり、位置引数へ分解されない。
+    try std.testing.expectEqual(ast.Kind.function_call, assignment.children[0].kind);
+    try std.testing.expectEqualStrings("文字数", assignment.children[0].name);
+    try std.testing.expectEqual(@as(usize, 1), assignment.children[0].children.len);
+    const count = assignment.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, count.kind);
+    try std.testing.expectEqualStrings("要素数", count.name);
+    try std.testing.expectEqualStrings("を", count.josi);
+    try std.testing.expectEqualStrings("abc", count.children[0].value);
+    try std.testing.expectEqualStrings("の", count.children[0].josi);
 }
 
 test "ASTの深さが上限を超えたら位置付き診断にする" {

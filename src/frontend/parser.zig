@@ -1,5 +1,6 @@
 const std = @import("std");
 const ast = @import("ast.zig");
+const builtin_commands = @import("builtin_commands.zig");
 const diagnostic = @import("diagnostic.zig");
 const lexer = @import("lexer.zig");
 const syntax_transform = @import("syntax_transform.zig");
@@ -49,8 +50,9 @@ pub const ParseOptions = struct {
     tail_modes: []const TailMode = &.{},
     /// 公式の`func token`に相当する既知の命令名。助詞付きの命令名を、公式
     /// `yCallFunc`と同じく連鎖呼出しとして解決するために使う
-    /// （`大文字変換を表示` = `表示(大文字変換(それ))`）。空なら連鎖解決しない。
-    builtin_commands: []const []const u8 = &.{},
+    /// （`大文字変換を表示` = `表示(大文字変換(それ))`）。既定は生成済みの
+    /// 一覧（`builtin_commands.function_names`）で、空を渡すと連鎖解決しない。
+    builtin_commands: []const []const u8 = &builtin_commands.function_names,
 };
 
 /// 式・命令の再帰下降の入れ子の上限。公式も極端に深い入れ子を文法エラー
@@ -91,12 +93,11 @@ pub const ParseResult = struct {
 /// 字句解析・構文変換を含めてソース全体を構文解析する。
 /// 構文エラーは Zig の error ではなく diagnostics と root=null で返す。
 /// 公式処理系が継続する廃止構文は、diagnosticを残したままrootを返す。
-/// `ParseOptions`を既定値で解析する便宜API。`builtin_commands`が空のため、
-/// 助詞付きの命令名を連鎖呼出しとして解決しない（`大文字変換を表示`は
-/// `表示(大文字変換)`になる）。frontend層はcompatカタログへ依存できないため、
-/// 既知命令名は本番経路（モジュール読み込み・動的実行は`parseWithMode`で
-/// `builtin_commands`を渡す）が与える。テストとprobeで既定挙動を確認する用途を除き、
-/// 本番経路と同じ解析が必要な場合は`parseWithMode`を使う。
+/// `ParseOptions`を既定値で解析する便宜API。既定の`builtin_commands`は生成済みの
+/// 既知命令名の一覧（`builtin_commands.function_names`）なので、本番経路と同じく
+/// 助詞付きの命令名を連鎖呼出しとして解決する（`大文字変換を表示`は
+/// `表示(大文字変換(それ))`になる）。連鎖解決を止めたいテストは
+/// `parseWithMode`へ空の`builtin_commands`を渡す。
 pub fn parse(backing_allocator: std.mem.Allocator, source: []const u8, filename: []const u8) Error!ParseResult {
     return parseWithMode(backing_allocator, source, filename, .{});
 }
@@ -1108,6 +1109,9 @@ pub const Parser = struct {
         const argument_start = self.index;
         while (true) {
             if (self.at(.identifier)) {
+                // 助詞付きの既知命令名は、文位置と同じく連鎖呼出しとして解決する
+                // （`A=「abc」の大文字変換を文字数`の右辺も同じASTにする）。
+                if (try self.callChainedBuiltinCommand(&arguments)) continue;
                 if (self.peek().josi.len > 0 and self.peekAhead(1).kind == .identifier) {
                     try arguments.append(self.allocator, try expressions.parseExpression(self, 0));
                     continue;

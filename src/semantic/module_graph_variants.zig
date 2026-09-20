@@ -170,11 +170,14 @@ fn checkExpansionDepth(loader: *Loader) !void {
 }
 
 /// childrenとexpansionを合わせた深さが上限を超えたとき、最深部の位置を返す。
+/// `expansion`の子は別モジュールの複製なので、その`span`は診断へ渡す
+/// `module.path`のソース位置ではない。展開へ入る辺を越えたら、その辺を
+/// 持つ取り込み文（診断対象モジュール側のノード）の位置を返す。
 fn exceedCombinedDepth(allocator: std.mem.Allocator, root: *ast.Node) std.mem.Allocator.Error!?ast.Span {
-    const Frame = struct { node: *ast.Node, index: usize };
+    const Frame = struct { node: *ast.Node, index: usize, origin: *ast.Node };
     var stack: std.ArrayList(Frame) = .empty;
     defer stack.deinit(allocator);
-    try stack.append(allocator, .{ .node = root, .index = 0 });
+    try stack.append(allocator, .{ .node = root, .index = 0, .origin = root });
     while (stack.items.len > 0) {
         const top = stack.items[stack.items.len - 1];
         if (top.index >= top.node.children.len + top.node.expansion.len) {
@@ -182,12 +185,17 @@ fn exceedCombinedDepth(allocator: std.mem.Allocator, root: *ast.Node) std.mem.Al
             continue;
         }
         stack.items[stack.items.len - 1].index += 1;
-        const child = if (top.index < top.node.children.len)
+        const in_children = top.index < top.node.children.len;
+        const child = if (in_children)
             top.node.children[top.index]
         else
             top.node.expansion[top.index - top.node.children.len];
-        if (stack.items.len + 1 > parser.max_ast_depth) return child.span;
-        try stack.append(allocator, .{ .node = child, .index = 0 });
+        if (stack.items.len + 1 > parser.max_ast_depth) return (if (in_children) child else top.origin).span;
+        try stack.append(allocator, .{
+            .node = child,
+            .index = 0,
+            .origin = if (in_children) child else top.origin,
+        });
     }
     return null;
 }
