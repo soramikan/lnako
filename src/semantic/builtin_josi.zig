@@ -254,6 +254,7 @@ pub const josi_table = [_]BuiltinJosi{
     .{ .name = "CSV変換", .slot_starts = &.{0}, .josi = &.{"を"}, .is_variable = false },
     .{ .name = "表TSV変換", .slot_starts = &.{0}, .josi = &.{"を"}, .is_variable = false },
     .{ .name = "TSV変換", .slot_starts = &.{0}, .josi = &.{"を"}, .is_variable = false },
+    .{ .name = "CSVオプション設定", .slot_starts = &.{0}, .josi = &.{ "を", "で" }, .is_variable = false },
     .{ .name = "TOML取得", .slot_starts = &.{0}, .josi = &.{ "を", "の", "から" }, .is_variable = false },
     .{ .name = "TOML変換", .slot_starts = &.{0}, .josi = &.{ "を", "から", "の" }, .is_variable = false },
     .{ .name = "SIN", .slot_starts = &.{0}, .josi = &.{"の"}, .is_variable = false },

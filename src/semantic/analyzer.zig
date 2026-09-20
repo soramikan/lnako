@@ -446,11 +446,11 @@ const Analyzer = struct {
                         try self.addDiagnostic(.invalid_argument_count, node.span, self.modules.items[module_index].path, message);
                     }
                 } else if (symbol.parameter_josi.len > 0) {
-                    try self.checkParticleArgumentCount(module_index, node, try argument_completion.parameterSlots(self.allocator, symbol.parameter_josi), symbol.qualified_name);
+                    try self.checkParticleArgumentCount(module_index, node, try argument_completion.parameterSlots(self.allocator, symbol.parameter_josi), false, symbol.qualified_name);
                 }
             }
             if (implicit_call and symbol.parameter_josi.len > 0) {
-                try self.checkParticleArgumentCount(module_index, node, try argument_completion.parameterSlots(self.allocator, symbol.parameter_josi), symbol.qualified_name);
+                try self.checkParticleArgumentCount(module_index, node, try argument_completion.parameterSlots(self.allocator, symbol.parameter_josi), false, symbol.qualified_name);
             }
             try self.bind(node, if (callable or implicit_call) .call else .reference, name, symbol.qualified_name, symbol.id);
             return;
@@ -493,9 +493,7 @@ const Analyzer = struct {
                 // 助詞呼出しの組み込み命令は、公式同様に不足引数を「それ」で
                 // 補完し、2個以上不足するときだけ文法エラーにする。
                 if (builtin_josi.findJosi(name)) |spec| {
-                    if (!spec.is_variable) {
-                        try self.checkParticleArgumentCount(module_index, node, try argument_completion.builtinSlots(self.allocator, spec), name);
-                    }
+                    try self.checkParticleArgumentCount(module_index, node, try argument_completion.builtinSlots(self.allocator, spec), spec.is_variable, name);
                 }
             }
             try self.bind(node, .builtin, name, name, null);
@@ -614,9 +612,9 @@ const Analyzer = struct {
     /// 公式`yCallFunc`と同じ規則で、助詞呼出しの不足引数を検査する。
     /// 2個以上不足し、かつ公式のエラー条件（引数が1つ以上ある・命令の助詞が
     /// 無い・連文助詞が付く）を満たすときだけ文法エラーにする。
-    fn checkParticleArgumentCount(self: *Analyzer, module_index: u32, node: *ast.Node, slots: []const argument_completion.Slot, shown_name: []const u8) !void {
+    fn checkParticleArgumentCount(self: *Analyzer, module_index: u32, node: *ast.Node, slots: []const argument_completion.Slot, variable_final: bool, shown_name: []const u8) !void {
         if (slots.len == 0) return;
-        const plan = try argument_completion.plan(self.allocator, slots, node.children) orelse return;
+        const plan = try argument_completion.plan(self.allocator, slots, node.children, variable_final) orelse return;
         if (plan.missing < 2) return;
         if (!(plan.provided > 0 or node.josi.len == 0 or parser_helpers.isSequenceJosi(node.josi))) return;
         const message = try std.fmt.allocPrint(self.allocator, "関数『{s}』の引数が不足しています。", .{displayQualifiedName(shown_name)});

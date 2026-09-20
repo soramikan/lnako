@@ -25,10 +25,12 @@ pub const Plan = struct {
 /// 公式`nako_parser3.mts`の`yCallFunc`と同じ順序で助詞引数を解決する。
 ///
 /// 末尾のスロットから順に、助詞が一致する引数をスタック末尾側から取り出し、
-/// 見つからないスロットは変数「それ」で補完する。スロットへ割り当てられない
-/// 引数が残る場合やスロットが1つも無い場合は、呼出し元の並びを変更しないため
-/// `null`を返す（補完しない）。
-pub fn plan(allocator: std.mem.Allocator, slots: []const Slot, arguments: []const *ast.Node) !?Plan {
+/// 見つからないスロットは変数「それ」で補完する。`variable_final`が真のときは
+/// 末尾スロットを可変長引数として扱い、助詞が一致する引数を元の並びのまま
+/// 全て取り出すが、不足数へは数えず「それ」補完もしない。
+/// スロットへ割り当てられない引数が残る場合やスロットが1つも無い場合は、
+/// 呼出し元の並びを変更しないため`null`を返す（補完しない）。
+pub fn plan(allocator: std.mem.Allocator, slots: []const Slot, arguments: []const *ast.Node, variable_final: bool) !?Plan {
     if (slots.len == 0) return null;
     const assigned = try allocator.alloc(?usize, slots.len);
     errdefer allocator.free(assigned);
@@ -36,8 +38,22 @@ pub fn plan(allocator: std.mem.Allocator, slots: []const Slot, arguments: []cons
     errdefer allocator.free(used);
     @memset(assigned, null);
     @memset(used, false);
+    var variable_arguments: std.ArrayList(usize) = .empty;
+    defer variable_arguments.deinit(allocator);
 
-    var index = slots.len;
+    var fixed_count = slots.len;
+    if (variable_final) {
+        // 可変長の末尾スロットは公式と同じく最初に処理し、助詞が一致する引数を
+        // 元の並びのまま全て取り出す。
+        for (arguments, 0..) |argument, index| {
+            if (!matches(slots[slots.len - 1], argument.josi)) continue;
+            used[index] = true;
+            try variable_arguments.append(allocator, index);
+        }
+        fixed_count = slots.len - 1;
+    }
+
+    var index = fixed_count;
     while (index > 0) {
         index -= 1;
         var candidate = arguments.len;
@@ -58,17 +74,23 @@ pub fn plan(allocator: std.mem.Allocator, slots: []const Slot, arguments: []cons
         return null;
     };
 
-    var provided: usize = 0;
+    var provided: usize = variable_arguments.items.len;
     var missing: usize = 0;
-    const operands = try allocator.alloc(Operand, slots.len);
-    for (assigned, 0..) |item, slot_index| {
+    const operands = try allocator.alloc(Operand, fixed_count + variable_arguments.items.len);
+    var position: usize = 0;
+    for (assigned[0..fixed_count]) |item| {
         if (item) |argument| {
-            operands[slot_index] = .{ .provided = argument };
+            operands[position] = .{ .provided = argument };
             provided += 1;
         } else {
-            operands[slot_index] = .implicit_it;
+            operands[position] = .implicit_it;
             missing += 1;
         }
+        position += 1;
+    }
+    for (variable_arguments.items) |argument| {
+        operands[position] = .{ .provided = argument };
+        position += 1;
     }
     allocator.free(assigned);
     allocator.free(used);
@@ -112,7 +134,7 @@ test "助詞が一致するスロットへ引数を割り当て不足分を「�
         .{ .josi = &.{"を"} },
         .{ .josi = &.{"に"} },
     };
-    const result = (try plan(std.testing.allocator, &slots, &arguments)).?;
+    const result = (try plan(std.testing.allocator, &slots, &arguments, false)).?;
     defer std.testing.allocator.free(result.operands);
     try std.testing.expectEqual(@as(usize, 2), result.provided);
     try std.testing.expectEqual(@as(usize, 1), result.missing);
@@ -123,7 +145,7 @@ test "助詞が一致するスロットへ引数を割り当て不足分を「�
 
 test "全引数を省略したスロットを宣言順に「それ」で補完する" {
     const slots = [_]Slot{ .{ .josi = &.{"と"} }, .{ .josi = &.{"を"} } };
-    const result = (try plan(std.testing.allocator, &slots, &.{})).?;
+    const result = (try plan(std.testing.allocator, &slots, &.{}, false)).?;
     defer std.testing.allocator.free(result.operands);
     try std.testing.expectEqual(@as(usize, 0), result.provided);
     try std.testing.expectEqual(@as(usize, 2), result.missing);
@@ -135,6 +157,28 @@ test "助詞がどのスロットにも一致しない引数があれば補完�
     var node = ast.Node{ .kind = .number, .span = ast.emptySpan(), .end_span = ast.emptySpan(), .josi = "が" };
     const arguments = [_]*ast.Node{&node};
     const slots = [_]Slot{.{ .josi = &.{"を"} }};
-    const result = try plan(std.testing.allocator, &slots, &arguments);
+    const result = try plan(std.testing.allocator, &slots, &arguments, false);
     try std.testing.expect(result == null);
+}
+
+test "可変長の末尾スロットは補完せず先行する固定スロットを「それ」にする" {
+    var node = ast.Node{ .kind = .number, .span = ast.emptySpan(), .end_span = ast.emptySpan(), .josi = "に" };
+    const arguments = [_]*ast.Node{&node};
+    const slots = [_]Slot{ .{ .josi = &.{"を"} }, .{ .josi = &.{ "に", "と" } } };
+    const result = (try plan(std.testing.allocator, &slots, &arguments, true)).?;
+    defer std.testing.allocator.free(result.operands);
+    try std.testing.expectEqual(@as(usize, 1), result.provided);
+    try std.testing.expectEqual(@as(usize, 1), result.missing);
+    // 固定スロットの「それ」が先頭、可変長スロットの引数が末尾に並ぶ。
+    try std.testing.expectEqual(Operand.implicit_it, result.operands[0]);
+    try std.testing.expectEqual(@as(usize, 0), result.operands[1].provided);
+}
+
+test "可変長の末尾スロットだけの命令は引数なしでも「それ」を補完しない" {
+    const slots = [_]Slot{.{ .josi = &.{ "と", "を" } }};
+    const result = (try plan(std.testing.allocator, &slots, &.{}, true)).?;
+    defer std.testing.allocator.free(result.operands);
+    try std.testing.expectEqual(@as(usize, 0), result.operands.len);
+    try std.testing.expectEqual(@as(usize, 0), result.provided);
+    try std.testing.expectEqual(@as(usize, 0), result.missing);
 }

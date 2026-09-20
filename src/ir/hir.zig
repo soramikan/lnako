@@ -451,21 +451,20 @@ const Lowerer = struct {
             .function_call => {
                 if (self.bindingIsBuiltin(node)) {
                     const spec = builtin_josi.findJosi(node.name) orelse return null;
-                    if (spec.is_variable) return null;
                     const slots = try argument_completion.builtinSlots(self.allocator, spec);
-                    return argument_completion.plan(self.allocator, slots, node.children);
+                    return argument_completion.plan(self.allocator, slots, node.children, spec.is_variable);
                 }
                 const symbol = self.callableSymbol(node) orelse return null;
                 if (symbol.kind != .function and symbol.kind != .test_function) return null;
                 const slots = try argument_completion.parameterSlots(self.allocator, symbol.parameter_josi);
                 if (slots.len == 0) return null;
-                return argument_completion.plan(self.allocator, slots, node.children);
+                return argument_completion.plan(self.allocator, slots, node.children, false);
             },
             .word => {
                 const symbol = self.callableSymbol(node) orelse return null;
                 const slots = try argument_completion.parameterSlots(self.allocator, symbol.parameter_josi);
                 if (slots.len == 0) return null;
-                return argument_completion.plan(self.allocator, slots, node.children);
+                return argument_completion.plan(self.allocator, slots, node.children, false);
             },
             else => return null,
         }

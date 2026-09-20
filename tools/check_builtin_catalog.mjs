@@ -41,14 +41,19 @@ function argumentNames(args) {
   return names.concat(objectNames.map((name) => `__object_argument_${name}`));
 }
 
+// 助詞スロット表では、オブジェクト引数は波括弧の中だけを取り除いて外側の引数名と
+// 助詞を1スロットとして残す（`OBJ{ [KEY}を` → `OBJを`。`CSVオプション設定`）。
+function normalizedJosiNotation(args) {
+  return args.replace(/\{[^}]*\}/g, "").replace(/\([A-Z][A-Z0-9_]*\)?/g, "");
+}
+
 // `args`から助詞スロット表を作る。異表記は`/`区切りで、名前の並びは最長variantの
 // 部分列になっている（例: `置換`の`SでAからBへ`は`SのAをBに`と同スロット数の異表記、
 // `文字抜出`の`SのCNT`は`SでAからCNTを`の部分列）。整列できない定義は補完対象外にする。
 function josiSlots(args) {
-  if (args.includes("{")) return null;
   const variants = args.split("/").map((variant) => {
     const entries = [];
-    for (const match of normalizedArgumentNotation(variant).matchAll(/([A-Z][A-Z0-9_]*)([^A-Z]*)/g)) {
+    for (const match of normalizedJosiNotation(variant).matchAll(/([A-Z][A-Z0-9_]*)([^A-Z]*)/g)) {
       // `...A`は可変長引数の印で、直前の助詞へ混ざるため助詞から取り除く。
       entries.push({ name: match[1], josi: match[2].replace(/\.\.\./g, "") });
     }
