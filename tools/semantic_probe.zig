@@ -11,7 +11,7 @@ pub fn main(init: std.process.Init) !void {
     defer stdout.flush() catch {};
 
     for (process_args[1..]) |source| {
-        var parsed = try lnako.frontend.parser.parse(allocator, source, "main.nako3");
+        var parsed = try lnako.frontend.parser.parseWithMode(allocator, source, "main.nako3", .{ .builtin_commands = &lnako.semantic.builtin_catalog.function_names });
         defer parsed.deinit();
         if (!parsed.succeeded()) {
             try stdout.writeAll("{\"diagnostics\":true}\n");

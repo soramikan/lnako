@@ -16,6 +16,8 @@ pub const frontend = struct {
 pub const semantic = struct {
     pub const analyzer = @import("semantic/analyzer.zig");
     pub const module_graph = @import("semantic/module_graph.zig");
+    pub const builtin_catalog = @import("semantic/builtin_catalog.zig");
+    pub const builtin_josi = @import("semantic/builtin_josi.zig");
 };
 
 pub const ir = struct {

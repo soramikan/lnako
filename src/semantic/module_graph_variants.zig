@@ -7,6 +7,7 @@ const ast = @import("../frontend/ast.zig");
 const parser = @import("../frontend/parser.zig");
 const token_mod = @import("../frontend/token.zig");
 const module_graph = @import("module_graph.zig");
+const builtin_catalog = @import("builtin_catalog.zig");
 
 const Loader = module_graph.Loader;
 const Import = module_graph.Import;
@@ -69,6 +70,7 @@ fn variantForSite(loader: *Loader, target: u32, ambient: token_mod.Mode, site_pa
     const probe = parser.parseWithMode(loader.backing_allocator, target_module.source, target_module.path, .{
         .forced = target_module.forced_mode,
         .initial = effective_initial,
+        .builtin_commands = &builtin_catalog.function_names,
     }) catch |err| {
         try loader.importDiagnosticAt(site_span, site_path, "循環取り込みの再展開コピーを文脈の構文モードで解析できません");
         return err;
@@ -118,6 +120,7 @@ fn variantForSite(loader: *Loader, target: u32, ambient: token_mod.Mode, site_pa
             .forced = target_module.forced_mode,
             .initial = ambient,
             .tail_modes = tail_modes.items,
+            .builtin_commands = &builtin_catalog.function_names,
         }) catch |err| {
             try loader.importDiagnosticAt(site_span, site_path, "循環取り込みの再展開コピーを文脈の構文モードで解析できません");
             return err;

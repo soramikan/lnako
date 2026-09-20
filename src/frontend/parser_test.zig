@@ -473,3 +473,36 @@ test "和文代入の値に式を許容する" {
     try std.testing.expectEqualStrings("A", assignment.name);
     try std.testing.expectEqual(ast.Kind.binary_operator, assignment.children[0].kind);
 }
+
+test "助詞付きの既知命令名を連鎖呼出しとして解析する" {
+    const names = [_][]const u8{ "要素数", "表示" };
+    var result = try parser_mod.parseWithMode(std.testing.allocator, "「abc」の要素数を表示\n", "chain.nako3", .{
+        .builtin_commands = &names,
+    });
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const display = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, display.kind);
+    try std.testing.expectEqualStrings("表示", display.name);
+    try std.testing.expectEqual(@as(usize, 1), display.children.len);
+    const count = display.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, count.kind);
+    try std.testing.expectEqualStrings("要素数", count.name);
+    try std.testing.expectEqualStrings("を", count.josi);
+    try std.testing.expectEqual(@as(usize, 1), count.children.len);
+    try std.testing.expectEqual(ast.Kind.string, count.children[0].kind);
+    try std.testing.expectEqualStrings("abc", count.children[0].value);
+    try std.testing.expectEqualStrings("の", count.children[0].josi);
+}
+
+test "既知命令名の一覧が空なら連鎖呼出しにしない" {
+    var result = try parse(std.testing.allocator, "「abc」の要素数を表示\n", "chain-disabled.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const display = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, display.kind);
+    try std.testing.expectEqualStrings("表示", display.name);
+    try std.testing.expectEqual(@as(usize, 2), display.children.len);
+    try std.testing.expectEqual(ast.Kind.word, display.children[1].kind);
+    try std.testing.expectEqualStrings("要素数", display.children[1].value);
+}

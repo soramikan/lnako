@@ -365,6 +365,10 @@
     "source": "それは{\"delimiter\":\"|\"}\nCSVオプション設定\nそれは「a|b」\nCSV取得\n表示。\n"
   },
   {
+    "id": "native-system-chained-builtin-call",
+    "source": "それは「abc」\n大文字変換を表示。\nそれは「a-b-c」\n「-」を「+」に置換を表示。\n「abc」の要素数を表示\n「abc」の大文字変換を表示\n"
+  },
+  {
     "id": "native-system-array-sort-commands",
     "source": "A=[\"\",undefined,\"😀\",\"A\",\"A\"]\nB=配列ソート(A)\n(A===B)を表示\nA[0]を表示\nA[1]を表示\nA[2]を表示\nA[3]を表示\nN=[\"10\",undefined,2n,非数,\"2x\",-0,0]\nM=配列数値ソート(N)\n(M===N)を表示\nN[0]を表示\nN[1]を表示\nN[2]を表示\nN[3]を表示\nN[4]を表示\nN[5]を表示\nN[6]を表示\nC=[undefined,\"2x\",2n]\nD=配列数値変換(C)\n(D===C)を表示\nC[0]を表示\nC[1]を表示\nC[2]を表示\nR=[1,2,3]\nS=配列逆順(R)\n(S===R)を表示\nR[0]を表示\nR[1]を表示\nR[2]を表示\n"
   },
