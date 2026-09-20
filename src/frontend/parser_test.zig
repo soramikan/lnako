@@ -506,3 +506,28 @@ test "既知命令名の一覧が空なら連鎖呼出しにしない" {
     try std.testing.expectEqual(ast.Kind.word, display.children[1].kind);
     try std.testing.expectEqualStrings("要素数", display.children[1].value);
 }
+
+test "長い連鎖呼出しでもパーサは再帰せずに解析する" {
+    const names = [_][]const u8{ "大文字変換", "表示" };
+    var source: std.ArrayList(u8) = .empty;
+    defer source.deinit(std.testing.allocator);
+    try source.appendSlice(std.testing.allocator, "「a」の");
+    var index: usize = 0;
+    while (index < 2000) : (index += 1) try source.appendSlice(std.testing.allocator, "大文字変換を");
+    try source.appendSlice(std.testing.allocator, "表示\n");
+    var result = try parser_mod.parseWithMode(std.testing.allocator, source.items, "long-chain.nako3", .{
+        .builtin_commands = &names,
+    });
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const display = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, display.kind);
+    try std.testing.expectEqualStrings("表示", display.name);
+    // 連鎖の先頭は先頭値を受ける入れ子の呼出しになる。
+    var current = display;
+    var depth: usize = 0;
+    while (current.children.len > 0) : (depth += 1) current = current.children[0];
+    try std.testing.expectEqual(@as(usize, 2001), depth);
+    try std.testing.expectEqual(ast.Kind.string, current.kind);
+    try std.testing.expectEqualStrings("a", current.value);
+}

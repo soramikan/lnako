@@ -48,6 +48,8 @@
 | TODO識別子 | 分類 | Issue |
 | --- | --- | --- |
 | `official-dncl-all-elements-tail` | 上流バグ候補。非ブロッカー | #10 |
+| `josi-signature-argument-match` | 助詞が宣言と一致しない引数を位置引数として受理してしまう（公式は未解決語の文法エラー）。引数の助詞シグネチャ照合が必要 | #108 |
+| `deep-ast-diagnostic` | 深い入れ子ASTで位置付き診断ではなくプロセスクラッシュになる（公式は『Maximum call stack size exceeded』の文法エラー） | #109 |
 | `sparse-array-presence` | 部分対応、一般境界は保証外 | #5 |
 | `table-inherited-properties` | 保証外 | #5 |
 | `regexp-unicode-flags` | 部分対応 | #4 |

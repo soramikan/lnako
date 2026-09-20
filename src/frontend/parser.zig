@@ -78,6 +78,12 @@ pub const ParseResult = struct {
 /// 字句解析・構文変換を含めてソース全体を構文解析する。
 /// 構文エラーは Zig の error ではなく diagnostics と root=null で返す。
 /// 公式処理系が継続する廃止構文は、diagnosticを残したままrootを返す。
+/// `ParseOptions`を既定値で解析する便宜API。`builtin_commands`が空のため、
+/// 助詞付きの命令名を連鎖呼出しとして解決しない（`大文字変換を表示`は
+/// `表示(大文字変換)`になる）。frontend層はcompatカタログへ依存できないため、
+/// 既知命令名は本番経路（モジュール読み込み・動的実行は`parseWithMode`で
+/// `builtin_commands`を渡す）が与える。テストとprobeで既定挙動を確認する用途を除き、
+/// 本番経路と同じ解析が必要な場合は`parseWithMode`を使う。
 pub fn parse(backing_allocator: std.mem.Allocator, source: []const u8, filename: []const u8) Error!ParseResult {
     return parseWithMode(backing_allocator, source, filename, .{});
 }
@@ -733,6 +739,10 @@ pub const Parser = struct {
         arguments: *std.ArrayList(*ast.Node),
         chained_calls: *std.ArrayList(*ast.Node),
     ) ParseFailure!?*ast.Node {
+        // 助詞付きの既知命令名は、公式`yCallFunc`と同じく命令として呼び出し、
+        // 結果を次の命令の引数にする（`「abc」の要素数を表示`）。長い連鎖でも
+        // プロセススタックを消費しないよう、再帰せず反復して解決する。
+        while (self.isChainedBuiltinCommand(self.peek())) _ = try self.callChainedBuiltinCommand(arguments);
         // 助詞付きの識別子の直後に別の命令名が続く場合、手前は命令ではなく
         // 引数として扱う。例: `201でHを簡易HTTPサーバヘッダ出力`。
         // 「して」などの連文助詞と「には」のコールバック構文は従来どおり
@@ -742,12 +752,6 @@ pub const Parser = struct {
             !isImplicitCallbackJosi(self.peek().josi) and
             self.peekAhead(1).kind == .identifier)
         {
-            // 手前の識別子が助詞付きの既知命令名なら、公式`yCallFunc`と同じく
-            // 命令として呼び出し、結果をさらに次の命令の引数にする
-            // （`「abc」の要素数を表示`）。
-            if (try self.callChainedBuiltinCommand(arguments)) {
-                if (self.at(.identifier)) return try self.resolveCommandName(start, arguments, chained_calls);
-            }
             return null;
         }
         // 配列添字・プロパティ・@参照の直後に助詞が続く場合、識別子は命令名ではなく値として続行する。

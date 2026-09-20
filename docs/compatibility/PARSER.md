@@ -128,6 +128,24 @@
 - 差分テストID: `native-system-particle-implicit-it`、`native-system-particle-implicit-it-function`、`semantic-diagnostic-builtin-insufficient-arguments`、`semantic-diagnostic-function-insufficient-arguments`、`native-system-array-particle-omission`、`semantic-diagnostic-builtin-arity-missing`、`semantic-diagnostic-builtin-arity-extra`
 - TODO識別子: なし
 
+## 助詞が宣言と一致しない引数
+
+- 公式実測・source根拠: 助詞呼出しの引数は命令の宣言助詞と照合され、どのスロットにも一致しない値は未解決の単語として文法エラー『未解決の単語があります』になります（`AがBを足す`は`足す`の宣言助詞`に`/`を`と一致しないため文法エラー）。
+- lnakoの現在動作: 一致しない助詞の引数も位置引数として渡すため、`AがBを足す`は`3`を出力します。連鎖呼出し（`「abc」で大文字変換を表示`）でも同じで、公式は文法エラー、lnakoは値を返します。一致する助詞（`AにBを足す`、`「abc」の大文字変換`）は公式と一致します。
+- 判定: 未実装境界（引数の助詞シグネチャ照合と未解決語診断。連鎖固有ではなく従来からの一般境界）
+- 対象経路: Parser / Interpreter / AOT
+- 差分テストID: なし
+- TODO識別子: `TODO: josi-signature-argument-match`
+
+## 深い入れ子AST
+
+- 公式実測・source根拠: 公式も極端に深い入れ子では文法エラー『Maximum call stack size exceeded』を返し、受理しません（20,000項の和・4,000段の連鎖呼出しで実測）。
+- lnakoの現在動作: ASTを再帰的に走査するため、2,000段程度まで動作し、それを大きく超えると位置付き診断ではなくプロセスクラッシュになります。パーサの連鎖解決は反復化済みで、残る深さは解析・loweringの再帰由来です（`1+1+...`でも再現）。
+- 判定: 未実装境界（上限超過を位置付き診断へ収束させる）
+- 対象経路: Parser / Interpreter / AOT
+- 差分テストID: なし
+- TODO識別子: `TODO: deep-ast-diagnostic`
+
 ## 助詞付き組み込み命令の連鎖呼出し
 
 - 公式実測・source根拠: 先行する組み込み命令名の助詞が関数宣言の助詞一覧と一致すると、その命令を呼び出して結果を次の命令の引数にする（`大文字変換を表示`は`表示(大文字変換(それ))`相当、`要素数を表示`は`表示(要素数(それ))`相当）。
