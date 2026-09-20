@@ -152,12 +152,25 @@ for (const command of catalog.commands) {
     josiEntries.push(entry);
   }
 }
+// node プラグインが同名のグローバル変数を設定する`関数`は、連鎖呼出しの一覧から除く。
+// 公式は`func token`なので`デスクトップを表示`も連鎖呼出しになるが、助詞の無い位置
+// （`ファイル名抽出(デスクトップ)`）はパーサが連鎖へ解決しないためグローバルを読む。
+// lnakoのnodeプラグインはそのグローバルを`install`で設定し、
+// `compat/v3.7.24/directory-binding-evidence.json`（`node-directory` profile）が
+// Interpreter/AOTのglobal-read経路として固定している。両経路を保つために対象外とする。
+const installedGlobalFunctionNames = ["デスクトップ", "マイドキュメント", "テンポラリフォルダ"];
+
 const functionNames = [];
 const seenFunctionNames = new Set();
 for (const command of catalog.commands) {
   if (command.type !== "関数" || seenFunctionNames.has(command.name)) continue;
+  if (installedGlobalFunctionNames.includes(command.name)) continue;
   seenFunctionNames.add(command.name);
   functionNames.push(command.name);
+}
+for (const name of installedGlobalFunctionNames) {
+  const entry = catalog.commands.find((command) => command.name === name);
+  if (entry === undefined || entry.type !== "関数") throw new Error(`同名グローバルを持つ関数の定義が変わりました: ${name}`);
 }
 
 const lines = [
@@ -181,7 +194,9 @@ const lines = [
   "",
   "/// 公式の`func token`に相当する命令名（カタログ種別が「関数」のもの）。",
   "/// パーサは助詞付きのこの名前を、公式`yCallFunc`と同じく連鎖呼出しとして解決する。",
-  "/// `定数`（`回数`など）は変数として使われるため含めない。",
+  "/// `定数`（`回数`など）は変数として使われるため含めず、node プラグインが同名の",
+  "/// グローバル変数を設定する`関数`（`デスクトップ`など）も、助詞の無い位置",
+  "/// （`ファイル名抽出(デスクトップ)`）が読むグローバル読み出し経路を保つため含めない。",
   "pub const function_names = [_][]const u8{",
   ...functionNames.map((name) => `    ${JSON.stringify(name)},`),
   "};",
