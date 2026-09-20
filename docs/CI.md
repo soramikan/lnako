@@ -19,7 +19,7 @@ CIは、互換性検証の意味を保ったまま、AOTをfixture shardと最�
 
 job数を増やすことで、1つの巨大なAOT stepに検証を集中させず、失敗箇所と所要時間をjob単位で確認できます。検証suite、O0〜O3、QuickJS、3 OSのいずれも省略しません。
 
-Windowsの`core` jobはwall clockの律速（実測713〜1,113s）だったため、独立した検証である`Zig package isolation check`をWindows専用job（`suite: win-package-isolation`）へ分離しています。検証量は変えず、実行するjobだけを分けてwallを短縮します（Windows `core`では同stepはskip）。
+Windowsの`core` jobはwall clockの律速（分割前の実測 median 1,032s／p75 1,074s）だったため、独立した検証である`Zig package isolation check`をWindows専用job（`suite: win-package-isolation`）へ分離しています。検証量は変えず、実行するjobだけを分けてwallを短縮します（Windows `core`では同stepはskip）。分離後の初回run（[`35487256825`](https://github.com/soramikan/lnako/actions/runs/35487256825)）はwall 13m49sで、律速は`Windows compat-aot`（13m11s）へ移りました（詳細は`docs/ci-performance.md`）。
 
 ## macOSの5枠制限
 

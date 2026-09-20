@@ -891,31 +891,35 @@ job名（`Linux x86_64 / AOT native shard 1/3 / O0+O1` 等）は変えていな�
 
 ## 改善計画2 の最終結果
 
-| 指標 | 改善前 | Phase 1〜5後（7 run） | Phase 6後（4 run） |
-| --- | ---: | ---: | ---: |
-| workflow wall clock | 1,112s | 876〜1,462s（median 約1,113s） | 1,071〜1,141s（median 約1,130s）※ |
-| 全job runner minutes | 213 min | 166〜191 min（median 174.8） | 151.6〜169.1（median 159.4） |
-| matrix job数 | 57 | 45 | 総47（matrix 40＋producer／後段7）※ |
-| AOT検証ステップ（24 shard合計） | 1,896s | 1,163s | -38.7% |
-| Linux AOT job群（8 consumer＋producer） | — | 21.0〜32.2 min（median 26.6） | 11.3〜11.8 min（median 11.4） |
+| 指標 | 改善前 | Phase 1〜5後（7 run） | Phase 6後（4 run） | wall律速job分割後（n=1） |
+| --- | ---: | ---: | ---: | ---: |
+| workflow wall clock | 1,112s | 876〜1,462s（median 約1,113s） | 1,071〜1,141s（median 約1,130s）※ | **829s（13m49s）** |
+| 全job runner minutes | 213 min | 166〜191 min（median 174.8） | 151.6〜169.1（median 159.4） | 152.4 min |
+| matrix job数 | 57 | 45 | 総47（matrix 40＋producer／後段7）※ | 総47（同左） |
+| AOT検証ステップ（24 shard合計） | 1,896s | 1,163s | -38.7% | -38.7%（不変） |
+| Linux AOT job群（8 consumer＋producer） | — | 21.0〜32.2 min（median 26.6） | 11.3〜11.8 min（median 11.4） | 11.6 min |
 
 計画の短期目標に対する到達状況:
 
-- Wall clock 20〜30%削減 → **未達（実質不変）**。wallはクリティカルパス
-  （Windows core 約1,075〜1,097s）とrun間のqueue変動に支配され、AOT施策は
-  クリティカルパス外のためwallは変わらない（1,112s→median 約1,130s）。
+- Wall clock 20〜30%削減 → **wall律速jobの分割で目標帯へ到達（初回run、n=1）**。
+  46 job構成のmedian（17m51s）までしか下がっていなかったwallは、`Windows x86_64 / core`
+  （median 17m12s）が律速していたためである。分割後は律速が `Windows compat-aot`
+  （13m11s）へ移り、wall 829s（13m49s、run 35487256825）となった。改善前比では
+  -25.4%（57 job基準）／-38.1%（54 jobベースライン基準）。**n=1のため系列を蓄積して確認する**。
   途中で「wall 1,112s→876s（-21%）」と記録したが、その876sは速い側の外れ値runで
   あり代表値ではない。**この-21%は誤った一般化として撤回する**（Phase 4・5の
   セクションの当時の記録はそのまま残す）。
 - Runner minutes → **Phase 1〜5で-22%**（213→median 174.8 min）、**Phase 6で
-  追加-15.4 min/run**（median 174.8→159.4、改善前比 **-25.2%**）。残りは
-  Windows coreの実ビルド／実実行コスト（CI構造では削減不可）に由来する。
-- Physical上「検証量を減らさず」を維持（Phase 4・5・6はビルドと実行の重複のみ除去）。
+  追加-15.4 min/run**（median 174.8→159.4、改善前比 **-25.2%**）。wall分割後も
+  runner minutes median 152.5（46 job、n=9）→152.4（n=1）で**-25%以上を維持**する。
+  残りは Windows coreの実ビルド／実実行コスト（CI構造では削減不可）に由来する。
+- Physical上「検証量を減らさず」を維持（Phase 4・5・6とwall分割はビルドと実行の
+  重複のみ除去し、jobを分けただけである）。
 
 ※ run 35476491104のwallは1,511sだが、branchのconcurrency操作（旧run再実行による
    cancel）でqueueが延びた参考値であり、wallの集計からは除外している。
 ※ Windows専用の`win-package-isolation` jobを追加したため総job数は47（matrix 40）。
-   この変更はwall clockの律速jobを分離するもので、下表のPhase 6評価（46 job構成）
+   この変更はwall clockの律速jobを分離するもので、上表のPhase 6評価（46 job構成）
    とは別の変更である。
 
 ## 計測の限界と継続課題
@@ -928,21 +932,28 @@ Linux AOT job群の実測と複数runのmedianに基づく。
 
 ### 長期計測スナップショット（ローリング）
 
-計画§10の統計を、現行構成（46 job）の系列で蓄積する。2026-09-20時点で
-`--branch improve/ci --jobs 46` が採用した**10 run**は次のとおり。少数標本では
-p90/p95が最大値へ寄るため、標本数と併記する。
+計画§10の統計を蓄積する。2026-09-20時点の構成別の採用runは次のとおり
+（少数標本ではp90/p95が最大値へ寄るため、標本数と併記する）。
+
+#### 46 job構成（wall律速jobの分割前。n=9）
 
 | 指標 | n | median | p75 | p90 | p95 | min | max |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| workflow wall clock（分） | 10 | 18.4 | 19.2 | 23.8 | 24.0 | 6.3 | 24.1 |
-| 全job runner minutes | 10 | 155.9 | 165.3 | 168.7 | 168.9 | 134.6 | 169.1 |
-| Linux AOT job群（8 consumer＋producer、分） | 10 | 11.6 | 11.8 | 12.0 | 12.0 | 10.8 | 12.0 |
+| workflow wall clock（分） | 9 | 17.9 | 19.0 | 20.2 | 22.2 | 12.7 | 24.1 |
+| 全job runner minutes | 9 | 152.5 | 161.9 | 166.9 | 167.8 | 146.2 | 168.7 |
+| Linux AOT job群（8 consumer＋producer、分） | 9 | 11.7 | 11.8 | 12.0 | 12.0 | 11.3 | 12.0 |
 
-- wall clockは実行時間にqueue待ちを含むため変動が大きい（min 6.3／max 24.1。
-  35472553438は18m07sのqueue待ちを含む）。施策の効果判定には使わない。
-- 全job runner minutesのmin 134.6は、`test` job行が速い側へ振れたrunである
+#### 47 job構成（wall律速jobの分割後。n=1）
+
+| 指標 | n | median | p75 | p90 | p95 | min | max |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| workflow wall clock（分） | 1 | 13.8 | 13.8 | 13.8 | 13.8 | 13.8 | 13.8 |
+| 全job runner minutes | 1 | 152.4 | 152.4 | 152.4 | 152.4 | 152.4 | 152.4 |
+| Linux AOT job群（8 consumer＋producer、分） | 1 | 11.6 | 11.6 | 11.6 | 11.6 | 11.6 | 11.6 |
+
+- 全job runner minutesのmin 146.2は、`test` job行が速い側へ振れたrunである
   （同job行は193〜860sで変動する）。
-- Linux AOT job群は10 runいずれも10.8〜12.0 minで、施策の効果が最も安定して
+- Linux AOT job群は全runが11.3〜12.0 minで、施策の効果が最も安定して
   観測できる指標である。
 - 系列を揃えるため`collect_ci_metrics.mjs`に構成境界のフィルタを追加した。
   `--branch`は他branchを除外するが、**同じbranch内の構成変更（job数の違う旧run）は
@@ -954,7 +965,19 @@ p90/p95が最大値へ寄るため、標本数と併記する。
 
 ```sh
 node tools/collect_ci_metrics.mjs --branch improve/ci --jobs 46 --runs 30 --no-logs
+node tools/collect_ci_metrics.mjs --branch improve/ci --jobs 47 --runs 30 --no-logs
 ```
+
+#### 部分再実行runを除外する修正
+
+`run_attempt > 1`のrun（部分再実行）は、**再実行されなかったjobが前attemptの
+started_at/completed_atのまま返る**ため、job一覧がattempt間で混在する。一方
+`/actions/runs/{id}/timing`の`run_duration_ms`は最新attemptしか指さない。実測では
+run 35472553438がwall 6m18sに対して最長job 17m26sとなり、**jobがrunより長い**
+矛盾した観測になった。この状態ではwall／runner minutes／step統計が単一の実行区間を
+表さないため、`collect_ci_metrics.mjs`は`run_attempt > 1`のrunを系列から除外し、
+出力に除外件数を明示する（単体テストで担保）。46 job構成の系列は11 run中2件
+（35472553438・35476491104）が該当し、**n=9**となった。
 
 サンプル数を20〜30へ増やして再評価するのは継続課題である（本節はその途中経過）。
 
@@ -1009,42 +1032,73 @@ step統計で目立つ`Test QuickJS build`（267s）と`Build QuickJS compiler`�
 そのもの**であり、Phase 4・6で除去した「重複ビルド」に相当する構造的な重複は
 残っていない。
 
-### wall clockの残存レバー: 最長jobの分割（実施済み・実測中）
+### wall clockの残存レバー: 最長jobの分割（実施済み・初回実測で目標帯へ）
 
-計画§10のwall clockは未達（実質不変）のままである。原因を再測定したところ、
-**wallはほぼ最長jobそのもの**で、11 run中9 runで `Windows x86_64 / core` が
-律速していた。
+計画§10のwall clockは未達（実質不変）のままだった。原因を再測定したところ、
+**wallはほぼ最長jobそのもの**で、46 job構成の11 run中9 runで `Windows x86_64 / core`
+が律速していた（wallは`run_duration_ms`、すなわち`run_started_at→updated_at`。部分再実行run
+2件は後述の理由で除外）。
 
 | run | wall | 最長job | 律速job | wall−最長job |
 | --- | ---: | ---: | --- | ---: |
-| 35486004917 | 12.7min | 12.0min | macOS host-compat | 0.7min |
-| 35484046897 | 24.1min | 18.6min | Windows core | 5.6min |
-| 35483104649 | 17.4min | 16.2min | Windows core | 1.2min |
-| 35481889139 | 19.2min | 17.9min | Windows core | 1.3min |
-| 35480137046 | 14.2min | 13.6min | Windows core | 0.6min |
-| 35477810503 | 15.9min | 15.3min | Windows compat-aot | 0.7min |
-| 35476491104 | 25.2min | 17.6min | Windows core | 7.5min |
-| 35473939691 | 17.9min | 17.2min | Windows core | 0.7min |
-| 35472553438 | 24.4min | 17.4min | Windows core | 7.0min |
-| 35471297565 | 18.8min | 17.6min | Windows core | 1.2min |
-| 35469955469 | 19.0min | 18.3min | Windows core | 0.7min |
+| 35486004917 | 12m42s | 12m02s | macOS host-compat | 40s |
+| 35484046897 | 24m07s | 18m33s | Windows core | 5m34s |
+| 35483104649 | 17m25s | 16m14s | Windows core | 1m11s |
+| 35481889139 | 19m12s | 17m54s | Windows core | 1m18s |
+| 35480137046 | 14m10s | 13m34s | Windows core | 36s |
+| 35477810503 | 15m54s | 15m15s | Windows compat-aot | 39s |
+| 35473939691 | 17m51s | 17m12s | Windows core | 39s |
+| 35471297565 | 18m50s | 17m38s | Windows core | 1m12s |
+| 35469955469 | 19m01s | 18m17s | Windows core | 44s |
+
+wallは最長jobに加えて後段の集約job（`Verify dispatch coverage shards`。PR runでは
+`Attest and verify dispatch evidence`はskip）だけを含む。律速run以外のwall−最長jobが
+36〜44sなのに対し、35484046897の5m34sはrun開始後にjobが起動するまでのrunner確保待ち
+（最初のjobはrun開始から2m46s後）である。
 
 `Windows x86_64 / core` の中身は独立した3つの検証である（実測例: `Test` 213〜390s、
 `Zig package isolation check` 239〜377s、`Differential interpreter test` 134〜204s。
-job内のsetup系は合計43s）。これらを別jobへ分ければWindows群のwallは
-**約285〜435s**（最長の検証＋setup）になり、律速は `Windows compat-aot`
-（716〜754s）または `macOS host-compat`（666〜722s）へ移る。したがって
-**wallはmedian 18.4min → 約12〜13min（-30%程度）**が見込める。
+job内のsetup系は合計43s）。そこで最大の独立検証である `Zig package isolation check` を
+Windows専用job（`suite: win-package-isolation`）へ分離し、Windows `core`では同stepを
+skipする。**検証量は変えず、実行するjobだけを分ける**。
 
-一方でコストは小さい。現行のjobあたりsetupは**約45s**（checkout 13s、setup-zig 8s、
-setup-node 8s、LLVM／QuickJS／oracleはcache hitで数秒）なので、2 job増でも
-**runner minutes +0.75〜1.5 min/run（+0.5〜1%）**に留まり、計画の
-runner minutes目標（-25%以上）は維持できる。
+#### 実測（run 35487256825。47 job・failure 0・初回run）
 
-この分割は計画のPhase 5（runner minutesを優先して統合し、wallは変わらないと
-判断）とは逆向きのトレードオフであり、job名が増えるためブランチ保護の
-required status checksにも影響する。**計画に無い変更のため、実施の判断は
-利用者に委ねる**（本節はその判断材料の記録）。
+| 指標 | 分割前（46 job、n=9） | 分割後（47 job、n=1） |
+| --- | ---: | ---: |
+| workflow wall clock | median 17m51s（12m42s〜24m07s） | **13m49s** |
+| 律速job | `Windows core` median 17m12s（p75 17m54s） | `Windows compat-aot` 13m11s |
+| `Windows x86_64 / core` | median 17m12s（p75 17m54s） | **10m51s** |
+| `Windows x86_64 / win-package-isolation`（新規） | — | 6m34s（うち`Zig package isolation check` 5m47s） |
+| 全job runner minutes | median 152.5（n=9） | 152.4 |
+
+wall−最長jobは**38s**で、wallは最長jobそのものという関係が保たれている。律速は
+`Windows compat-aot` 13m11s（`Test QuickJS build` 6m37s＋`Build QuickJS compiler` 5m56s）
+へ移り、これが当面のwall下限（約13分）になる。
+
+計画§14のwall clock目標（full CI baseline比-20〜30%）に対する到達状況は、基準の取り方で
+次のとおり。**分割後はn=1のため、目標帯に入ったという初回観測であり、系列を蓄積して確認する**
+（§10は単一runでの判断を禁じている）。
+
+| 基準 | wall | 分割後との差 |
+| --- | ---: | ---: |
+| 改善前ベースライン節（54 job、n=3、median） | 22m19s | -38.1% |
+| 最終結果表の改善前（57 job、run 35453416527） | 18m32s | -25.4% |
+| 直近の46 job構成（n=9、median） | 17m51s | -22.6% |
+
+同runのstep実測からの算術では、分割前なら `Windows x86_64 / core` が
+10m51s＋5m47s＝**16m38s**となり、`Windows compat-aot`（13m11s）より長いまま律速していた。
+すなわちこの分割は、実行条件を揃えた同一run内でも律速を約3.5分下げる効果を持つ。
+
+コストは小さい。jobあたりsetupは約45s（checkout 13s、setup-zig 8s、setup-node 8s、
+LLVM／QuickJS／oracleはcache hitで数秒）なので、専用job 1つ分の増加でも**runner minutes
++0.75 min/run（+0.5%）**に留まり、計画のrunner minutes目標（-25%以上）は
+維持できる（実測でも n=9 median 152.5 → 152.4 min）。
+
+この分割は計画のPhase 5（runner minutesを優先して統合し、wallは変わらないと判断）
+とは逆向きのトレードオフであり、job名が増えるためブランチ保護のrequired status checks
+にも影響する。**計画に無い変更のため利用者の判断で実施した**（本節はその実測記録）。
+
 
 ## 参考: 観測されたflaky失敗（本施策とは無関係）
 
