@@ -97,7 +97,7 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 - `ディレクトリ閉じる`（ll-dir-close）助詞 `HANDLEを/HANDLEの`、戻り `void`、capability `dir_iterator`、エラー EBADF
 - `ディレクトリ列挙時`（ll-dir-foreach）助詞 `PATHをCALLBACKで/PATHのCALLBACKを`、戻り `void`、capability `dir_iterator`、エラー ENOENT/ENOTDIR/EACCES/EPERM/ENOTSUP
 
-正本はhandle型。`. と .. は含めない。EOFは `null`。entryの `type` は file/directory/symlink/other/unknown。
+正本はhandle型。`. と .. は含めない。EOFは `null`。entryの `type` は file/directory/symlink/other/unknown。列挙順はOSが返す順序でソートしない。`ディレクトリ列挙時` はhandle型の糖衣で、CALLBACKを各entryの `dirEntry` 辞書1引数で呼び、CALLBACKが真を返すとその時点で列挙を中断する。CALLBACKの例外はそのまま伝播し、ディレクトリhandleは必ず閉じる。ディレクトリhandleはファイル・ハッシュと別のindex空間から払い出し、他種別のhandleを渡した場合は `EBADF` になる。
 
 ### Issue 34 POSIX権限・所有者・UID/GID・access
 
@@ -117,16 +117,16 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 ### Issue 35 argv型プロセス起動・signal・priority・TTY
 
 - `プロセス起動`（ll-process-spawn）助詞 `ARGVをOPTIONSで/ARGVを`、戻り `handle`、capability `argv_spawn`、エラー ENOENT/EACCES/EPERM/EINVAL/ENOTSUP
-- `プロセス待機`（ll-process-wait）助詞 `HANDLEを/HANDLEの`、戻り `waitResult`、capability `argv_spawn`、エラー EBADF/EINVAL
-- `プロセスID取得`（ll-pid-get）助詞 `-`、戻り `pid`、capability `argv_spawn`
+- `プロセス待機`（ll-process-wait）助詞 `HANDLEを/HANDLEの`、戻り `waitResult`、capability `argv_spawn`、エラー EBADF/EINVAL/ENOTSUP
+- `プロセスID取得`（ll-pid-get）助詞 `-`、戻り `pid`、capability `argv_spawn`、エラー ENOTSUP
 - `親プロセスID取得`（ll-ppid-get）助詞 `-`、戻り `pid`、capability `argv_spawn`、エラー ENOTSUP
 - `シグナル送信`（ll-signal-send）助詞 `PIDにSIGNALを/PIDへSIGNALで`、戻り `void`、capability `signal`、エラー EINVAL/EPERM/ENOTSUP
-- `プロセス優先度取得`（ll-process-priority-get）助詞 `PIDを/PIDの`、戻り `number`、capability `priority`、エラー EINVAL/ENOTSUP
+- `プロセス優先度取得`（ll-process-priority-get）助詞 `PIDを/PIDの`、戻り `number`、capability `priority`、エラー EINVAL/EPERM/ENOTSUP
 - `プロセス優先度設定`（ll-process-priority-set）助詞 `PIDをVALUEで/PIDをVALUEに`、戻り `void`、capability `priority`、エラー EINVAL/EPERM/ENOTSUP
-- `端末判定`（ll-tty-isatty）助詞 `STREAMを/STREAMで`、戻り `boolean`、capability `tty_isatty`、エラー EINVAL
+- `端末判定`（ll-tty-isatty）助詞 `STREAMを/STREAMで`、戻り `boolean`、capability `tty_isatty`、エラー EINVAL/ENOTSUP
 - `端末サイズ取得`（ll-tty-size）助詞 `STREAMを/STREAMで`、戻り `ttySize`、capability `tty_isatty`、エラー EINVAL/ENOTSUP
 
-`プロセス起動` はshell文字列を介さずargv境界を保持する。`OPTIONS` に cwd / env / stdin・stdout・stderr（inherit/pipe/null）/ detached。`プロセス待機` の結果は `exitCode` と `signal` を分けて返す。
+`プロセス起動` はshell文字列を介さずargv境界を保持する。`OPTIONS` に cwd / env / stdin・stdout・stderr（inherit/pipe/null）/ detached。`env` は指定時に子の環境を置き換える。`stdio` は単一文字列（全streamに適用）または `stdin`/`stdout`/`stderr` をキーとする辞書。`pipe` の親側は公開されず、`プロセス待機` がEOFまでdrainして破棄する（子のpipe buffer詰まりによるデッドロックを避ける。子との入出力には使えない）。`detached` と pipe stdio の併用は drain する主体が無いため `EINVAL`。`detached` はPOSIXの新プロセスグループ生成のみで、新セッションや stdio の切り離しは行わず（完全なnohup相当は提供しない）、未waitのdetached子はRuntime破棄時にreaper threadが非同期にreapする。`env` 省略時はホストプロセスの環境を継承する（`lnako test` のスクリプト可視環境一覧とは独立）。POSIXの `detached` は新しいプロセスグループを作り、Windowsの `detached` は `ENOTSUP`。`プロセス待機` の結果は `exitCode` と `signal` を分けて返し、POSIXのシグナル終了時は `exitCode = 128 + signal`、`signal` に番号を入れる（正常終了時 `signal` は `null`）。Windowsで `TerminateProcess` された子は `exitCode = 1`、`signal` は `null`。`argv[0]` の実行ファイル解決は親環境のPATHを使う（子へ渡す `env` のPATHではない）。`シグナル送信` のWindows対応は existence check(0) と terminate(9/15) だけで、他は `ENOTSUP`。POSIXで送れる信号番号は0（存在確認）と1..31で、pid=0は受け付けない。Linuxのリアルタイム信号（34以上）は対象外。`プロセス優先度取得`/`設定` はPOSIX専用（Windowsは `ENOTSUP`）で、pid=0はカレントプロセスを指す。`端末サイズ取得` は非端末で `ENOTSUP`。
 
 ### Issue 36 statfs・reflink・sparse file
 

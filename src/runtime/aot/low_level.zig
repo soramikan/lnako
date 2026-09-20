@@ -6,6 +6,8 @@ const stream = @import("low_level/stream.zig");
 const stdio = @import("low_level/stdio.zig");
 const hash = @import("low_level/hash.zig");
 const fs = @import("low_level/fs.zig");
+const process = @import("low_level/process.zig");
+const dir = @import("low_level/dir.zig");
 const posix = @import("low_level/posix.zig");
 const foundation = @import("../low_level_foundation.zig");
 const low_level_context = @import("../low_level/context.zig");
@@ -50,6 +52,12 @@ pub fn pluginContext(runtime: *Runtime) low_level_context.Context {
             .truncatePathFn = fs.pluginTruncatePath,
             .utimePathFn = fs.pluginUtimePath,
         },
+        .dir = .{
+            .context = runtime,
+            .openDirFn = dir.pluginOpenDir,
+            .nextDirFn = dir.pluginNextDir,
+            .closeDirFn = dir.pluginCloseDir,
+        },
         .posix = .{
             .context = runtime,
             .chmodFn = posix.pluginChmod,
@@ -67,6 +75,19 @@ pub fn pluginContext(runtime: *Runtime) low_level_context.Context {
             .writeStderrBytesFn = stdio.pluginWriteStderrBytes,
             .syncStdoutFn = stdio.pluginSyncStdout,
             .syncStderrFn = stdio.pluginSyncStderr,
+        },
+        .process = .{
+            .context = runtime,
+            .spawnFn = process.pluginSpawnProcess,
+            .waitFn = process.pluginWaitProcess,
+            .discardFn = process.pluginDiscardProcess,
+            .getpidFn = process.pluginGetpid,
+            .getppidFn = process.pluginGetppid,
+            .signalFn = process.pluginSignal,
+            .priorityGetFn = process.pluginPriorityGet,
+            .prioritySetFn = process.pluginPrioritySet,
+            .isattyFn = process.pluginIsatty,
+            .ttySizeFn = process.pluginTtySize,
         },
     };
 }
@@ -87,6 +108,29 @@ pub fn lowLevelHashBuiltin(runtime: *Runtime, command: aot_builtin.Command, argu
         .low_level_hash_update => hash.hashUpdateBuiltin(runtime, arguments),
         .low_level_hash_digest => hash.hashDigestBuiltin(runtime, arguments),
         .low_level_hash_discard => hash.hashDiscardBuiltin(runtime, arguments),
+        else => lowLevelUnsupportedBuiltin(runtime, command, arguments),
+    };
+}
+
+pub fn lowLevelProcessBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    if (aot_builtin.lowLevelCatalogCommand(command)) |spec| {
+        if (arguments.len > spec.max) {
+            return throwStructured(runtime, .EINVAL, spec.operation, null, null, "引数の数が不正です");
+        }
+        if (spec.implemented and arguments.len < spec.min) {
+            return throwStructured(runtime, .EINVAL, spec.operation, null, null, "引数の数が不正です");
+        }
+    }
+    return switch (command) {
+        .low_level_process_spawn => process.spawnBuiltin(runtime, arguments),
+        .low_level_process_wait => process.waitBuiltin(runtime, arguments),
+        .low_level_pid_get => process.pidGetBuiltin(runtime, arguments),
+        .low_level_ppid_get => process.ppidGetBuiltin(runtime, arguments),
+        .low_level_signal_send => process.signalSendBuiltin(runtime, arguments),
+        .low_level_process_priority_get => process.priorityGetBuiltin(runtime, arguments),
+        .low_level_process_priority_set => process.prioritySetBuiltin(runtime, arguments),
+        .low_level_tty_isatty => process.ttyIsattyBuiltin(runtime, arguments),
+        .low_level_tty_size => process.ttySizeBuiltin(runtime, arguments),
         else => lowLevelUnsupportedBuiltin(runtime, command, arguments),
     };
 }
@@ -121,6 +165,10 @@ pub fn lowLevelFileBuiltin(runtime: *Runtime, command: aot_builtin.Command, argu
         .low_level_file_truncate_path => fs.truncateBuiltin(runtime, arguments),
         .low_level_file_utime_path => fs.utimeBuiltin(runtime, arguments),
         .low_level_file_utime_handle => stream.utimeHandleBuiltin(runtime, arguments),
+        .low_level_dir_open => dir.openBuiltin(runtime, arguments),
+        .low_level_dir_next => dir.nextBuiltin(runtime, arguments),
+        .low_level_dir_close => dir.closeBuiltin(runtime, arguments),
+        .low_level_dir_foreach => dir.foreachBuiltin(runtime, arguments),
         .low_level_stdin_read => stdio.stdinReadBuiltin(runtime, arguments),
         .low_level_stdout_write => stdio.stdioWriteBuiltin(runtime, arguments, false),
         .low_level_stderr_write => stdio.stdioWriteBuiltin(runtime, arguments, true),
@@ -239,5 +287,7 @@ test {
     _ = @import("low_level/stdio.zig");
     _ = @import("low_level/hash.zig");
     _ = @import("low_level/fs.zig");
+    _ = @import("low_level/process.zig");
+    _ = @import("low_level/dir.zig");
     _ = @import("low_level/posix.zig");
 }

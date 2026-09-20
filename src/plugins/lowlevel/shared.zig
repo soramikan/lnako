@@ -25,12 +25,27 @@ pub const forgetHandleId = low_level_state.forgetHandleId;
 
 /// 構造化エラーを例外として投げるためのコールバック。Interpreterが
 /// `exception_value` に辞書を設定して `error.NakoException` を返す。
+/// `invokeFn` / `resolveFn` は `ディレクトリ列挙時` のコールバック実行に使う。
+/// Hostが提供しない場合は未設定（null）で、糖衣命令はENOTSUP相当の失敗になる。
 pub const Effects = struct {
     context: *anyopaque,
     throwFn: *const fn (context: *anyopaque, value: Value) anyerror!void,
+    invokeFn: ?*const fn (context: *anyopaque, callable: Value, arguments: []const Value) anyerror!Value = null,
+    resolveFn: ?*const fn (context: *anyopaque, value: Value) anyerror!Value = null,
 
     pub fn throw(self: Effects, value: Value) !void {
         return self.throwFn(self.context, value);
+    }
+
+    pub fn invoke(self: Effects, callable: Value, arguments: []const Value) !Value {
+        const function = self.invokeFn orelse return error.CallbackExecutionUnavailable;
+        return function(self.context, callable, arguments);
+    }
+
+    /// 関数値または関数名（文字列）を呼び出し可能な値へ解決する。
+    pub fn resolve(self: Effects, value: Value) !Value {
+        const function = self.resolveFn orelse return error.CallbackExecutionUnavailable;
+        return function(self.context, value);
     }
 };
 
@@ -41,6 +56,41 @@ pub fn sizeArgument(_: *Runtime, value: Value) !u64 {
         .number => |number| foundation.sizeFromNumber(number),
         .bigint => |bigint| foundation.sizeFromUnsigned(bigint.toU128() catch return error.InvalidSize),
         else => error.InvalidSize,
+    };
+}
+
+/// pid/signalのようなu32値。安全整数Numberまたはu32範囲のBigIntだけを受け付ける。
+pub fn u32Argument(value: Value) !u32 {
+    return switch (value) {
+        .number => |number| blk: {
+            if (!foundation.isSafeInteger(number)) return error.InvalidInteger;
+            if (number < 0 or number > @as(f64, @floatFromInt(std.math.maxInt(u32)))) return error.InvalidInteger;
+            break :blk @intFromFloat(number);
+        },
+        .bigint => |bigint| blk: {
+            const integer = bigint.toU128() catch return error.InvalidInteger;
+            if (integer > std.math.maxInt(u32)) return error.InvalidInteger;
+            break :blk @intCast(integer);
+        },
+        else => error.InvalidInteger,
+    };
+}
+
+/// priority値のようなi32値。安全整数Numberまたはi32範囲のBigIntだけを受け付ける。
+pub fn i32Argument(value: Value) !i32 {
+    return switch (value) {
+        .number => |number| blk: {
+            if (!foundation.isSafeInteger(number)) return error.InvalidInteger;
+            if (number < @as(f64, @floatFromInt(std.math.minInt(i32))) or
+                number > @as(f64, @floatFromInt(std.math.maxInt(i32)))) return error.InvalidInteger;
+            break :blk @intFromFloat(number);
+        },
+        .bigint => |bigint| blk: {
+            const integer = bigint.toI128() catch return error.InvalidInteger;
+            if (integer < std.math.minInt(i32) or integer > std.math.maxInt(i32)) return error.InvalidInteger;
+            break :blk @intCast(integer);
+        },
+        else => error.InvalidInteger,
     };
 }
 
@@ -125,6 +175,34 @@ pub fn throwIo(
 /// path2を取らないI/O失敗の薄いラッパー。
 pub fn throwIoAs(runtime: *Runtime, effects: Effects, failure: anyerror, operation: []const u8, path: ?[]const u8, capability: foundation.Capability) anyerror {
     return throwIo(runtime, effects, failure, operation, path, null, capability);
+}
+
+/// `プロセス起動` 専用。spawnの契約エラー集合
+/// (ENOENT/EACCES/EPERM/EINVAL/ENOTSUP) に限定し、fd枯渇などの未写像失敗は
+/// EINVALへ丸める。OOMは内部エラーとして伝播する。
+pub fn throwSpawnIo(runtime: *Runtime, effects: Effects, failure: anyerror, operation: []const u8, capability: foundation.Capability) anyerror {
+    if (failure == error.OutOfMemory) return failure;
+    const code = foundation.portableCodeForSpawnFailure(failure);
+    const capability_name: ?[]const u8 = if (code == .ENOTSUP) capability.id() else null;
+    return throwStructuredAt(runtime, effects, code, operation, null, null, capability_name, failureMessage(failure));
+}
+
+/// OS失敗を呼び出し側が選んだportable codeへ写す。コマンド契約が許すcodeを
+/// EBADF/EINVAL/ENOTSUP等へ限定したいときに使う（汎用写像のEACCES等を
+/// コマンド固有の上限へ丸める）。`path` は失敗対象（無ければnull）。OOMは
+/// 内部エラーとして伝播する。
+pub fn throwIoMapped(
+    runtime: *Runtime,
+    effects: Effects,
+    failure: anyerror,
+    code: foundation.PortableErrorCode,
+    operation: []const u8,
+    path: ?[]const u8,
+    capability: foundation.Capability,
+) anyerror {
+    if (failure == error.OutOfMemory) return failure;
+    const capability_name: ?[]const u8 = if (code == .ENOTSUP) capability.id() else null;
+    return throwStructured(runtime, effects, code, operation, path, capability_name, failureMessage(failure));
 }
 
 pub fn throwStructured(

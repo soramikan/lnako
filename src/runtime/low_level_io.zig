@@ -73,16 +73,17 @@ pub const FileHandleTable = struct {
             return .{ .index = index, .generation = if (generation == 0) 1 else generation };
         }
         var index: u32 = self.next_index;
-        if (index == 0 or index >= foundation.hash_handle_index_base) index = 1;
-        // ハッシュhandleのindex空間([hash_handle_index_base, u32max])へは
-        // 侵入せず、ファイル空間内で巡回する。
+        if (index == 0 or index >= foundation.process_handle_index_base) index = 1;
+        // プロセスhandleのindex空間([process_handle_index_base,
+        // hash_handle_index_base))とハッシュ空間([hash_handle_index_base,
+        // u32max])へは侵入せず、ファイル空間内で巡回する。
         while (self.generations.contains(index) or index == 0) {
             index +%= 1;
-            if (index == 0 or index >= foundation.hash_handle_index_base) index = 1;
+            if (index == 0 or index >= foundation.process_handle_index_base) index = 1;
         }
         try self.generations.put(index, 1);
         self.next_index = index +% 1;
-        if (self.next_index == 0 or self.next_index >= foundation.hash_handle_index_base) self.next_index = 1;
+        if (self.next_index == 0 or self.next_index >= foundation.process_handle_index_base) self.next_index = 1;
         return .{ .index = index, .generation = 1 };
     }
 
@@ -572,19 +573,19 @@ test "空書込みは0を返しwriteAtCurrentAllは残バイトを書き切る" 
     try std.testing.expectEqualSlices(u8, "hello", buffer[0..read]);
 }
 
-test "ファイルhandleのindexはハッシュ空間へ侵入せず巡回する" {
+test "ファイルhandleのindexはプロセス・ハッシュ空間へ侵入せず巡回する" {
     var table = FileHandleTable.init(std.testing.allocator);
     defer table.deinit(std.testing.io);
-    table.next_index = foundation.hash_handle_index_base - 2;
+    table.next_index = foundation.process_handle_index_base - 2;
     const first = try table.allocateId();
     const second = try table.allocateId();
     const third = try table.allocateId();
-    try std.testing.expectEqual(foundation.hash_handle_index_base - 2, first.index);
-    try std.testing.expectEqual(foundation.hash_handle_index_base - 1, second.index);
+    try std.testing.expectEqual(foundation.process_handle_index_base - 2, first.index);
+    try std.testing.expectEqual(foundation.process_handle_index_base - 1, second.index);
     try std.testing.expectEqual(@as(u32, 1), third.index);
     var iterator = table.generations.iterator();
     while (iterator.next()) |entry| {
-        try std.testing.expect(entry.key_ptr.* < foundation.hash_handle_index_base);
+        try std.testing.expect(entry.key_ptr.* < foundation.process_handle_index_base);
     }
 }
 

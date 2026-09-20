@@ -6,7 +6,9 @@ const foundation = @import("../../low_level_foundation.zig");
 const low_level_io = @import("../../low_level_io.zig");
 const low_level_hash = @import("../../low_level_hash.zig");
 const low_level_fs = @import("../../low_level_fs.zig");
+const low_level_dir = @import("../../low_level_dir.zig");
 const low_level_context = @import("../../low_level/context.zig");
+const low_level_process = @import("../../low_level_process.zig");
 
 pub const aot_builtin = aot_shared.aot_builtin;
 pub const BigInt = aot_shared.BigInt;
@@ -26,6 +28,7 @@ pub const aotRuntimeIo = state.aotRuntimeIo;
 pub const staticUtf8 = state.staticUtf8;
 pub const isString = state.isString;
 pub const dictionaryProperty = state.dictionaryProperty;
+pub const dictionaryOwnProperty = state.dictionaryOwnProperty;
 pub const fflush = state.fflush;
 pub const read_chunk_bytes: usize = 64 * 1024;
 
@@ -45,6 +48,32 @@ pub fn hashTable(runtime: *Runtime) *low_level_hash.HashHandleTable {
         runtime.low_level_hash_handles = low_level_hash.HashHandleTable.init(runtime.allocator);
     }
     return &runtime.low_level_hash_handles.?;
+}
+
+pub fn processTable(runtime: *Runtime) *low_level_process.ProcessTable {
+    if (runtime.low_level_process_handles == null) {
+        runtime.low_level_process_handles = low_level_process.ProcessTable.init(runtime.allocator);
+    }
+    return &runtime.low_level_process_handles.?;
+}
+
+/// プロセスspawn/waitが使うIoを保証する。AOTの `process_io` は
+/// `lnako_aot_runtime_init` でも初期化されるが、単体テストはRuntimeを
+/// 直接生成するため、初回にここでThreadedを用意する。`global_single_threaded`
+/// はfailing allocatorでspawnできないため使わない。
+pub fn ensureProcessIo(runtime: *Runtime) std.Io {
+    if (!runtime.process_io_initialized) {
+        runtime.process_io = std.Io.Threaded.init(runtime.allocator, .{ .environ = state.aotProcessEnvironment() });
+        runtime.process_io_initialized = true;
+    }
+    return runtime.process_io.io();
+}
+
+pub fn dirTable(runtime: *Runtime) *low_level_dir.DirHandleTable {
+    if (runtime.low_level_dir_handles == null) {
+        runtime.low_level_dir_handles = low_level_dir.DirHandleTable.init(runtime.allocator);
+    }
+    return &runtime.low_level_dir_handles.?;
 }
 
 pub fn handleIdFor(runtime: *Runtime, value: Value) ?foundation.HandleId {
@@ -237,6 +266,32 @@ pub fn throwIo(
 /// path2を取らないI/O失敗の薄いラッパー（`plugins/lowlevel.zig` と同じ契約）。
 pub fn throwIoAs(runtime: *Runtime, failure: anyerror, operation: []const u8, path: ?[]const u8, capability: foundation.Capability) anyerror {
     return throwIo(runtime, failure, operation, path, null, capability);
+}
+
+/// `プロセス起動` 専用。spawnの契約エラー集合
+/// (ENOENT/EACCES/EPERM/EINVAL/ENOTSUP) に限定し、fd枯渇などの未写像失敗は
+/// EINVALへ丸める。OOMは内部エラーとして伝播する。
+pub fn throwSpawnIo(runtime: *Runtime, failure: anyerror, operation: []const u8, capability: foundation.Capability) anyerror {
+    if (failure == error.OutOfMemory) return failure;
+    const code = foundation.portableCodeForSpawnFailure(failure);
+    const capability_name: ?[]const u8 = if (code == .ENOTSUP) capability.id() else null;
+    return throwStructured(runtime, code, operation, null, capability_name, failureMessage(failure));
+}
+
+/// OS失敗を呼び出し側が選んだportable codeへ写す。コマンド契約が許すcodeを
+/// EBADF/EINVAL/ENOTSUP等へ限定したいときに使う（Interpreterと同じ契約）。
+/// `path` は失敗対象（無ければnull）。OOMは内部エラーとして伝播する。
+pub fn throwIoMapped(
+    runtime: *Runtime,
+    failure: anyerror,
+    code: foundation.PortableErrorCode,
+    operation: []const u8,
+    path: ?[]const u8,
+    capability: foundation.Capability,
+) anyerror {
+    if (failure == error.OutOfMemory) return failure;
+    const capability_name: ?[]const u8 = if (code == .ENOTSUP) capability.id() else null;
+    return throwStructured(runtime, code, operation, path, capability_name, failureMessage(failure));
 }
 
 pub fn throwStructured(

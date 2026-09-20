@@ -40,6 +40,8 @@ pub const runtime = struct {
     pub const low_level_io = @import("runtime/low_level_io.zig");
     pub const low_level_hash = @import("runtime/low_level_hash.zig");
     pub const low_level_fs = @import("runtime/low_level_fs.zig");
+    pub const low_level_process = @import("runtime/low_level_process.zig");
+    pub const low_level_dir = @import("runtime/low_level_dir.zig");
     pub const low_level_posix = @import("runtime/low_level_posix.zig");
     pub const low_level_catalog = @import("runtime/low_level_catalog.zig");
     pub const structured_error = @import("runtime/structured_error.zig");
@@ -97,6 +99,7 @@ pub const package = struct {
     pub const features = @import("package/features.zig");
     pub const manifest = @import("package/manifest.zig");
     pub const resolver = @import("package/resolver.zig");
+    pub const lock = @import("package/lock.zig");
 };
 
 pub const Command = enum {
@@ -187,6 +190,8 @@ test {
     std.testing.refAllDecls(runtime.low_level_io);
     std.testing.refAllDecls(runtime.low_level_hash);
     std.testing.refAllDecls(runtime.low_level_fs);
+    std.testing.refAllDecls(runtime.low_level_process);
+    std.testing.refAllDecls(runtime.low_level_dir);
     std.testing.refAllDecls(runtime.low_level_posix);
     std.testing.refAllDecls(runtime.low_level_catalog);
     std.testing.refAllDecls(runtime.structured_error);
@@ -224,6 +229,7 @@ test {
     std.testing.refAllDecls(package.features);
     std.testing.refAllDecls(package.manifest);
     std.testing.refAllDecls(package.resolver);
+    std.testing.refAllDecls(package.lock);
 }
 
 test "コマンドを解析できる" {

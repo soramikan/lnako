@@ -2,6 +2,8 @@ const std = @import("std");
 const foundation = @import("../low_level_foundation.zig");
 const low_level_io = @import("../low_level_io.zig");
 const low_level_fs = @import("../low_level_fs.zig");
+const low_level_process = @import("../low_level_process.zig");
+const low_level_dir = @import("../low_level_dir.zig");
 const low_level_posix = @import("../low_level_posix.zig");
 
 /// Hostが関数ポインタの `context` に載せるダミー領域。callbackを持たない
@@ -213,6 +215,35 @@ pub const FsContext = struct {
     }
 };
 
+/// 逐次ディレクトリ列挙ドメインのHostコールバック。opendir/readdir/closedir
+/// 相当を提供する。readdirは `Entry.name` をallocatorで確保して返し、呼び出し
+/// 側が同じallocatorでfreeする。EOFはnull。
+pub const DirContext = struct {
+    context: *anyopaque,
+    openDirFn: ?*const fn (context: *anyopaque, path: []const u8) anyerror!u64 = null,
+    nextDirFn: ?*const fn (context: *anyopaque, raw: u64, allocator: std.mem.Allocator) anyerror!?low_level_dir.Entry = null,
+    closeDirFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
+
+    pub fn openDir(self: DirContext, path: []const u8) !u64 {
+        const function = self.openDirFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, path);
+    }
+
+    pub fn nextDir(self: DirContext, raw: u64, allocator: std.mem.Allocator) !?low_level_dir.Entry {
+        const function = self.nextDirFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, raw, allocator);
+    }
+
+    pub fn closeDir(self: DirContext, raw: u64) !void {
+        const function = self.closeDirFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, raw);
+    }
+
+    pub fn hasDirIterator(self: DirContext) bool {
+        return self.openDirFn != null and self.nextDirFn != null and self.closeDirFn != null;
+    }
+};
+
 /// POSIX権限・所有者・UID/GID・accessドメインのHostコールバック。
 pub const PosixContext = struct {
     context: *anyopaque,
@@ -318,11 +349,106 @@ pub const StdioContext = struct {
     }
 };
 
+/// Issue #35 argv型プロセス・signal・priority・TTYドメインのHostコールバック。
+/// spawn/waitはホストがプロセス表を所有するため必須で、pid/priority/ttyは
+/// OS差をホスト側で吸収する。未提供のcallbackは実行時ENOTSUPになり、
+/// `低レイヤー機能対応判定` もfalseになる。
+pub const ProcessContext = struct {
+    context: *anyopaque,
+    spawnFn: ?*const fn (context: *anyopaque, argv: []const []const u8, options: low_level_process.SpawnOptions) anyerror!u64 = null,
+    waitFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!low_level_process.WaitResult = null,
+    discardFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
+    getpidFn: ?*const fn (context: *anyopaque) anyerror!u32 = null,
+    getppidFn: ?*const fn (context: *anyopaque) anyerror!u32 = null,
+    signalFn: ?*const fn (context: *anyopaque, pid: u32, signal: u32) anyerror!void = null,
+    priorityGetFn: ?*const fn (context: *anyopaque, pid: u32) anyerror!i32 = null,
+    prioritySetFn: ?*const fn (context: *anyopaque, pid: u32, value: i32) anyerror!void = null,
+    isattyFn: ?*const fn (context: *anyopaque, stream: foundation.ProcessStream) anyerror!bool = null,
+    ttySizeFn: ?*const fn (context: *anyopaque, stream: foundation.ProcessStream) anyerror!low_level_process.TtySize = null,
+
+    pub fn spawn(self: ProcessContext, argv: []const []const u8, options: low_level_process.SpawnOptions) !u64 {
+        const function = self.spawnFn orelse return error.LowLevelIoUnavailable;
+        // 起動後に言語側handleの確保が失敗した場合、discardで子を確実に
+        // ロールバックする必要がある。discard欠落のHostでは子を作る前に拒否する。
+        if (self.discardFn == null) return error.LowLevelIoUnavailable;
+        return function(self.context, argv, options);
+    }
+
+    pub fn wait(self: ProcessContext, raw: u64) !low_level_process.WaitResult {
+        const function = self.waitFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, raw);
+    }
+
+    /// handleをwaitせずに破棄する（誤差経路の後始末）。子プロセスを
+    /// 強制終了してreapする。未提供のHostで成功扱いにすると子が追跡不能に
+    /// なるため、`spawn` と同様に `LowLevelIoUnavailable` を返す。
+    pub fn discard(self: ProcessContext, raw: u64) !void {
+        const function = self.discardFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, raw);
+    }
+
+    pub fn getpid(self: ProcessContext) !u32 {
+        const function = self.getpidFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context);
+    }
+
+    pub fn getppid(self: ProcessContext) !u32 {
+        const function = self.getppidFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context);
+    }
+
+    pub fn signal(self: ProcessContext, pid: u32, signal_number: u32) !void {
+        const function = self.signalFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, pid, signal_number);
+    }
+
+    pub fn getPriority(self: ProcessContext, pid: u32) !i32 {
+        const function = self.priorityGetFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, pid);
+    }
+
+    pub fn setPriority(self: ProcessContext, pid: u32, value: i32) !void {
+        const function = self.prioritySetFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, pid, value);
+    }
+
+    pub fn isatty(self: ProcessContext, stream: foundation.ProcessStream) !bool {
+        const function = self.isattyFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, stream);
+    }
+
+    pub fn ttySize(self: ProcessContext, stream: foundation.ProcessStream) !low_level_process.TtySize {
+        const function = self.ttySizeFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, stream);
+    }
+
+    pub fn hasArgvSpawn(self: ProcessContext) bool {
+        // argv_spawn capabilityはspawn/wait/pid/ppidを含む。discardはspawn後の
+        // handle登録失敗を安全に後始末するため必須。
+        return self.spawnFn != null and self.waitFn != null and self.discardFn != null and
+            self.getpidFn != null and self.getppidFn != null;
+    }
+
+    pub fn hasSignal(self: ProcessContext) bool {
+        return self.signalFn != null;
+    }
+
+    pub fn hasPriority(self: ProcessContext) bool {
+        return self.priorityGetFn != null and self.prioritySetFn != null;
+    }
+
+    pub fn hasTty(self: ProcessContext) bool {
+        return self.isattyFn != null and self.ttySizeFn != null;
+    }
+};
+
 const empty_stream: StreamContext = .{ .context = default_host };
 const empty_hash: HashContext = .{ .context = default_host };
 const empty_fs: FsContext = .{ .context = default_host };
+const empty_dir: DirContext = .{ .context = default_host };
 const empty_posix: PosixContext = .{ .context = default_host };
 const empty_stdio: StdioContext = .{ .context = default_host };
+const empty_process: ProcessContext = .{ .context = default_host };
 
 /// 各ランタイム（Interpreter/AOT）がHostから受け取る低レイヤーI/O契約。
 /// ドメイン別サブContextへ分割し、Hostはドメインごとに関数を実装する。
@@ -331,8 +457,10 @@ pub const Context = struct {
     stream: StreamContext = empty_stream,
     hash: HashContext = empty_hash,
     fs: FsContext = empty_fs,
+    dir: DirContext = empty_dir,
     posix: PosixContext = empty_posix,
     stdio: StdioContext = empty_stdio,
+    process: ProcessContext = empty_process,
 
     pub fn openFile(self: Context, path: []const u8, mode: foundation.OpenMode, exclusive: bool, sync: bool) !u64 {
         return self.stream.openFile(path, mode, exclusive, sync);
@@ -416,6 +544,18 @@ pub const Context = struct {
 
     pub fn utimePath(self: Context, path: []const u8, atime: foundation.SetTime, mtime: foundation.SetTime) !void {
         return self.fs.utimePath(path, atime, mtime);
+    }
+
+    pub fn openDir(self: Context, path: []const u8) !u64 {
+        return self.dir.openDir(path);
+    }
+
+    pub fn nextDir(self: Context, raw: u64, allocator: std.mem.Allocator) !?low_level_dir.Entry {
+        return self.dir.nextDir(raw, allocator);
+    }
+
+    pub fn closeDir(self: Context, raw: u64) !void {
+        return self.dir.closeDir(raw);
     }
 
     pub fn chmod(self: Context, path: []const u8, mode: u32) !void {
@@ -512,6 +652,10 @@ pub const Context = struct {
         return self.fs.hasRmdir();
     }
 
+    pub fn hasDirIterator(self: Context) bool {
+        return self.dir.hasDirIterator();
+    }
+
     pub fn hasChmod(self: Context) bool {
         return self.posix.hasChmod();
     }
@@ -530,6 +674,62 @@ pub const Context = struct {
 
     pub fn hasRawStdio(self: Context) bool {
         return self.stdio.hasRawStdio();
+    }
+
+    pub fn spawnProcess(self: Context, argv: []const []const u8, options: low_level_process.SpawnOptions) !u64 {
+        return self.process.spawn(argv, options);
+    }
+
+    pub fn waitProcess(self: Context, raw: u64) !low_level_process.WaitResult {
+        return self.process.wait(raw);
+    }
+
+    pub fn discardProcess(self: Context, raw: u64) !void {
+        return self.process.discard(raw);
+    }
+
+    pub fn processId(self: Context) !u32 {
+        return self.process.getpid();
+    }
+
+    pub fn parentProcessId(self: Context) !u32 {
+        return self.process.getppid();
+    }
+
+    pub fn signalProcess(self: Context, pid: u32, signal_number: u32) !void {
+        return self.process.signal(pid, signal_number);
+    }
+
+    pub fn processPriority(self: Context, pid: u32) !i32 {
+        return self.process.getPriority(pid);
+    }
+
+    pub fn setProcessPriority(self: Context, pid: u32, value: i32) !void {
+        return self.process.setPriority(pid, value);
+    }
+
+    pub fn processIsatty(self: Context, stream: foundation.ProcessStream) !bool {
+        return self.process.isatty(stream);
+    }
+
+    pub fn processTtySize(self: Context, stream: foundation.ProcessStream) !low_level_process.TtySize {
+        return self.process.ttySize(stream);
+    }
+
+    pub fn hasArgvSpawn(self: Context) bool {
+        return self.process.hasArgvSpawn();
+    }
+
+    pub fn hasSignal(self: Context) bool {
+        return self.process.hasSignal();
+    }
+
+    pub fn hasProcessPriority(self: Context) bool {
+        return self.process.hasPriority();
+    }
+
+    pub fn hasTty(self: Context) bool {
+        return self.process.hasTty();
     }
 };
 
@@ -564,6 +764,9 @@ pub const FlatContext = struct {
     rmdirFn: ?*const fn (context: *anyopaque, path: []const u8) anyerror!void = null,
     truncatePathFn: ?*const fn (context: *anyopaque, path: []const u8, size: u64) anyerror!void = null,
     utimePathFn: ?*const fn (context: *anyopaque, path: []const u8, atime: foundation.SetTime, mtime: foundation.SetTime) anyerror!void = null,
+    openDirFn: ?*const fn (context: *anyopaque, path: []const u8) anyerror!u64 = null,
+    nextDirFn: ?*const fn (context: *anyopaque, raw: u64, allocator: std.mem.Allocator) anyerror!?low_level_dir.Entry = null,
+    closeDirFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
     chmodFn: ?*const fn (context: *anyopaque, path: []const u8, mode: u32) anyerror!void = null,
     chownFn: ?*const fn (context: *anyopaque, path: []const u8, uid: ?u32, gid: ?u32, follow: bool) anyerror!void = null,
     accessFn: ?*const fn (context: *anyopaque, path: []const u8, mode: u32) anyerror!bool = null,
@@ -576,6 +779,16 @@ pub const FlatContext = struct {
     writeStderrBytesFn: ?*const fn (context: *anyopaque, bytes: []const u8) anyerror!usize = null,
     syncStdoutFn: ?*const fn (context: *anyopaque) anyerror!void = null,
     syncStderrFn: ?*const fn (context: *anyopaque) anyerror!void = null,
+    spawnProcessFn: ?*const fn (context: *anyopaque, argv: []const []const u8, options: low_level_process.SpawnOptions) anyerror!u64 = null,
+    waitProcessFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!low_level_process.WaitResult = null,
+    discardProcessFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
+    getpidFn: ?*const fn (context: *anyopaque) anyerror!u32 = null,
+    getppidFn: ?*const fn (context: *anyopaque) anyerror!u32 = null,
+    signalFn: ?*const fn (context: *anyopaque, pid: u32, signal: u32) anyerror!void = null,
+    priorityGetFn: ?*const fn (context: *anyopaque, pid: u32) anyerror!i32 = null,
+    prioritySetFn: ?*const fn (context: *anyopaque, pid: u32, value: i32) anyerror!void = null,
+    isattyFn: ?*const fn (context: *anyopaque, stream: foundation.ProcessStream) anyerror!bool = null,
+    ttySizeFn: ?*const fn (context: *anyopaque, stream: foundation.ProcessStream) anyerror!low_level_process.TtySize = null,
 
     pub fn toContext(self: FlatContext) Context {
         return .{
@@ -609,6 +822,12 @@ pub const FlatContext = struct {
                 .truncatePathFn = self.truncatePathFn,
                 .utimePathFn = self.utimePathFn,
             },
+            .dir = .{
+                .context = self.context,
+                .openDirFn = self.openDirFn,
+                .nextDirFn = self.nextDirFn,
+                .closeDirFn = self.closeDirFn,
+            },
             .posix = .{
                 .context = self.context,
                 .chmodFn = self.chmodFn,
@@ -626,6 +845,19 @@ pub const FlatContext = struct {
                 .writeStderrBytesFn = self.writeStderrBytesFn,
                 .syncStdoutFn = self.syncStdoutFn,
                 .syncStderrFn = self.syncStderrFn,
+            },
+            .process = .{
+                .context = self.context,
+                .spawnFn = self.spawnProcessFn,
+                .waitFn = self.waitProcessFn,
+                .discardFn = self.discardProcessFn,
+                .getpidFn = self.getpidFn,
+                .getppidFn = self.getppidFn,
+                .signalFn = self.signalFn,
+                .priorityGetFn = self.priorityGetFn,
+                .prioritySetFn = self.prioritySetFn,
+                .isattyFn = self.isattyFn,
+                .ttySizeFn = self.ttySizeFn,
             },
         };
     }
@@ -646,17 +878,77 @@ test "FlatContextは旧フラット契約をドメイン別Contextへ詰め替�
             return 0;
         }
     }.call;
+    const openDirFn = struct {
+        fn call(_: *anyopaque, _: []const u8) anyerror!u64 {
+            return 0;
+        }
+    }.call;
     var host: u8 = 0;
     const flat = FlatContext{
         .context = @ptrCast(&host),
         .statFn = statFn,
         .writeStdoutBytesFn = writeFn,
+        .openDirFn = openDirFn,
     };
     const converted = flat.toContext();
     try std.testing.expect(converted.fs.statFn == statFn);
     try std.testing.expect(converted.fs.context == @as(*anyopaque, @ptrCast(&host)));
     try std.testing.expect(converted.stdio.writeStdoutBytesFn == writeFn);
+    try std.testing.expect(converted.dir.openDirFn == openDirFn);
     try std.testing.expect(converted.stream.openFileFn == null);
     try std.testing.expect(converted.hasStat());
     try std.testing.expect(!converted.hasStreamFileIo());
+    // dirは3関数が揃うまでcapability成立にしない。
+    try std.testing.expect(!converted.hasDirIterator());
+}
+
+test "hasArgvSpawnはspawn/wait/discard/pid/ppidを全て要求する" {
+    const spawnFn = struct {
+        fn call(_: *anyopaque, _: []const []const u8, _: low_level_process.SpawnOptions) anyerror!u64 {
+            return 1;
+        }
+    }.call;
+    const waitFn = struct {
+        fn call(_: *anyopaque, _: u64) anyerror!low_level_process.WaitResult {
+            return .{ .exit_code = 0, .signal = null };
+        }
+    }.call;
+    const discardFn = struct {
+        fn call(_: *anyopaque, _: u64) anyerror!void {}
+    }.call;
+    const pidFn = struct {
+        fn call(_: *anyopaque) anyerror!u32 {
+            return 1;
+        }
+    }.call;
+    const ppidFn = struct {
+        fn call(_: *anyopaque) anyerror!u32 {
+            return 1;
+        }
+    }.call;
+    var host: u8 = 0;
+    const full: ProcessContext = .{
+        .context = @ptrCast(&host),
+        .spawnFn = spawnFn,
+        .waitFn = waitFn,
+        .discardFn = discardFn,
+        .getpidFn = pidFn,
+        .getppidFn = ppidFn,
+    };
+    try std.testing.expect(full.hasArgvSpawn());
+
+    // 親PID取得やdiscardが欠けるとargv_spawnは不成立（照会と実行の一致）。
+    var missing = full;
+    missing.getppidFn = null;
+    try std.testing.expect(!missing.hasArgvSpawn());
+    missing = full;
+    missing.discardFn = null;
+    try std.testing.expect(!missing.hasArgvSpawn());
+
+    // discardが無いHostでは子を作る前に起動を拒否し、起動後のロールバック
+    // 不能な子を残さない。
+    var no_discard = full;
+    no_discard.discardFn = null;
+    try std.testing.expectError(error.LowLevelIoUnavailable, no_discard.spawn(&.{}, .{}));
+    try std.testing.expectError(error.LowLevelIoUnavailable, no_discard.discard(1));
 }

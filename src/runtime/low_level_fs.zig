@@ -416,7 +416,7 @@ fn fsPosixErrno(errno: std.c.E) anyerror {
     };
 }
 
-fn kindFrom(kind: std.Io.File.Kind) FileKind {
+pub fn kindFrom(kind: std.Io.File.Kind) FileKind {
     return switch (kind) {
         .file => .file,
         .directory => .directory,
