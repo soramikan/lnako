@@ -757,6 +757,11 @@ test("formatSecondsは負の差分も正しい絶対値で表示する", () => {
   assert.equal(formatSeconds(-119.6), "-2m00s");
   assert.equal(formatSeconds(-5), "-5s");
   assert.equal(formatSeconds(-3600), "-60m00s");
+  // 丸め後に0になる微小な負数は"-0s"にしない（通常時間と同じ"0s"）。
+  assert.equal(formatSeconds(-0.4), "0s");
+  assert.equal(formatSeconds(-0.49), "0s");
+  assert.equal(formatSeconds(0), "0s");
+  assert.equal(formatSeconds(-0.6), "-1s");
 });
 
 test("formatSecondsは繰り上がりを分へ正しく伝播させる", () => {

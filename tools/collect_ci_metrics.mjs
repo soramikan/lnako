@@ -532,8 +532,9 @@ export function formatSeconds(seconds) {
   // 差分（warm−cold）は負になり得る。床関数と負の剰余の組合せでは絶対値を
   // 正しく分解できないため、符号を分離して絶対値を書式化してから付け直す
   // （-100秒は"-1m40s"。以前は"-2m20s"と誤表示していた）。
-  const sign = seconds < 0 ? "-" : "";
+  // 丸め後に0になる微小な負数（-0.4秒等）は符号を付けない（"-0s"を出さない）。
   const roundedSeconds = Math.round(Math.abs(seconds));
+  const sign = seconds < 0 && roundedSeconds > 0 ? "-" : "";
   const minutes = Math.floor(roundedSeconds / 60);
   const rest = roundedSeconds % 60;
   return minutes > 0 ? `${sign}${minutes}m${String(rest).padStart(2, "0")}s` : `${sign}${rest}s`;
