@@ -164,34 +164,43 @@ pub fn spawnBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
         }
         // OPTIONSはデータレコードとして扱い、own propertyだけを読む
         // （Interpreterの dictionaryGetAscii と一致させる。prototype継承は見ない）。
+        // 値がundefinedの項目はInterpreterと同じく未指定として無視する。
         if (dictionaryOwnProperty(arguments[1], &.{ 'c', 'w', 'd' })) |cwd_value| {
-            if (!isString(cwd_value)) {
-                return throwStructured(runtime, .EINVAL, operation, null, null, "cwdは文字列である必要があります");
+            if (cwd_value.tag != @intFromEnum(Tag.undefined)) {
+                if (!isString(cwd_value)) {
+                    return throwStructured(runtime, .EINVAL, operation, null, null, "cwdは文字列である必要があります");
+                }
+                options.cwd = try wtf8Alloc(runtime, arena, cwd_value);
             }
-            options.cwd = try wtf8Alloc(runtime, arena, cwd_value);
         }
         if (dictionaryOwnProperty(arguments[1], &.{ 'e', 'n', 'v' })) |env_value| {
-            if (env_value.tag != @intFromEnum(Tag.dictionary)) {
-                return throwStructured(runtime, .EINVAL, operation, null, null, "envは辞書である必要があります");
-            }
-            for (env_value.object().?.payload.dictionary.entries.items) |entry| {
-                if (!isString(entry.value)) {
-                    return throwStructured(runtime, .EINVAL, operation, null, null, "envの値は文字列である必要があります");
+            if (env_value.tag != @intFromEnum(Tag.undefined)) {
+                if (env_value.tag != @intFromEnum(Tag.dictionary)) {
+                    return throwStructured(runtime, .EINVAL, operation, null, null, "envは辞書である必要があります");
                 }
-                const name = try wtf8Alloc(runtime, arena, entry.key);
-                const value_text = try wtf8Alloc(runtime, arena, entry.value);
-                try env.append(arena, .{ .name = name, .value = value_text });
+                for (env_value.object().?.payload.dictionary.entries.items) |entry| {
+                    if (!isString(entry.value)) {
+                        return throwStructured(runtime, .EINVAL, operation, null, null, "envの値は文字列である必要があります");
+                    }
+                    const name = try wtf8Alloc(runtime, arena, entry.key);
+                    const value_text = try wtf8Alloc(runtime, arena, entry.value);
+                    try env.append(arena, .{ .name = name, .value = value_text });
+                }
+                options.env = env.items;
             }
-            options.env = env.items;
         }
         if (dictionaryOwnProperty(arguments[1], &.{ 's', 't', 'd', 'i', 'o' })) |stdio_value| {
-            try applyStdioMode(runtime, stdio_value, operation, &options.stdin, &options.stdout, &options.stderr);
+            if (stdio_value.tag != @intFromEnum(Tag.undefined)) {
+                try applyStdioMode(runtime, stdio_value, operation, &options.stdin, &options.stdout, &options.stderr);
+            }
         }
         if (dictionaryOwnProperty(arguments[1], &.{ 'd', 'e', 't', 'a', 'c', 'h', 'e', 'd' })) |detached_value| {
-            if (detached_value.tag != @intFromEnum(Tag.boolean)) {
-                return throwStructured(runtime, .EINVAL, operation, null, null, "detachedは真偽値である必要があります");
+            if (detached_value.tag != @intFromEnum(Tag.undefined)) {
+                if (detached_value.tag != @intFromEnum(Tag.boolean)) {
+                    return throwStructured(runtime, .EINVAL, operation, null, null, "detachedは真偽値である必要があります");
+                }
+                options.detached = detached_value.payload != 0;
             }
-            options.detached = detached_value.payload != 0;
         }
     }
 
@@ -331,7 +340,11 @@ pub fn ttySizeBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
         return throwStructured(runtime, .EINVAL, operation, null, null, "STREAMが必要です");
     }
     const stream = try requireStream(runtime, arguments[0], operation);
-    const size = low_level_process.ttySize(ensureProcessIo(runtime), try ttySizeFile(runtime, stream)) catch |failure| {
+    // file選択（Windowsの非端末stdinなど）の失敗も構造化ENOTSUPへ写す。
+    const file = ttySizeFile(runtime, stream) catch |failure| {
+        return throwIoAs(runtime, failure, operation, null, .tty_isatty);
+    };
+    const size = low_level_process.ttySize(ensureProcessIo(runtime), file) catch |failure| {
         return throwIoAs(runtime, failure, operation, null, .tty_isatty);
     };
     var roots = [_]Value{ .{}, .{} };
@@ -602,6 +615,25 @@ test "AOTのプロセス起動はOPTIONSの継承プロパティを無視する"
     const options = try runtime.createDictionary(&.{});
     options.object().?.prototype = proto;
 
+    roots[2] = try spawnArgv(&runtime, &.{"/usr/bin/true"});
+    const handle = try lowLevelProcessBuiltin(&runtime, .low_level_process_spawn, &.{ roots[2], options });
+    const result = try lowLevelProcessBuiltin(&runtime, .low_level_process_wait, &.{handle});
+    try std.testing.expectEqual(@as(f64, 0), valueToNumber(dictionaryProperty(result, &.{ 'e', 'x', 'i', 't', 'C', 'o', 'd', 'e' })));
+}
+
+test "AOTのプロセス起動はown propertyのundefinedを未指定として扱う" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    // own propertyでも値がundefinedならInterpreterと同じく未指定として無視する。
+    roots[0] = try runtimeUtf8String(&runtime, "cwd");
+    roots[1] = try runtimeUtf8String(&runtime, "detached");
+    const options = try runtime.createDictionary(&.{ roots[0], .{}, roots[1], .{} });
     roots[2] = try spawnArgv(&runtime, &.{"/usr/bin/true"});
     const handle = try lowLevelProcessBuiltin(&runtime, .low_level_process_spawn, &.{ roots[2], options });
     const result = try lowLevelProcessBuiltin(&runtime, .low_level_process_wait, &.{handle});
