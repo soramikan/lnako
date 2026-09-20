@@ -23,6 +23,8 @@ const dispatchCoverageScript = await readFile(resolve(root, "tools/check_dispatc
   (await readFile(resolve(root, "tools/lib/coverage_process.mjs"), "utf8"));
 const dispatchCoverageShardsScript = await readFile(resolve(root, "tools/check_dispatch_coverage_shards.mjs"), "utf8");
 const nativeOracleScript = await readFile(resolve(root, "tools/compare_native_oracle.mjs"), "utf8");
+const nativeTimingScript = await readFile(resolve(root, "tools/native_oracle_timing.mjs"), "utf8");
+const timingAggregateScript = await readFile(resolve(root, "tools/aggregate_native_timing.mjs"), "utf8");
 const nativeAotArtifactChecker = await readFile(resolve(root, "tools/check_native_aot_artifacts.mjs"), "utf8");
 const nativeAotAttestationVerifier = await readFile(resolve(root, "tools/verify_native_aot_attestation.mjs"), "utf8");
 const interpreterOracleScript = await readFile(resolve(root, "tools/compare_interpreter_oracle.mjs"), "utf8");
@@ -96,6 +98,9 @@ const platforms = new Map([
   ["Windows x86_64", "windows-2025"],
 ]);
 const suites = ["core", "standard", "host", "compat-aot", "aot-native", "aot-support"];
+// Windowsのcore jobがwall clockの律速だったため、独立検証である
+// `Zig package isolation check` をWindows専用jobへ分離した（wall短縮）。
+const windowsOnlySuites = ["win-package-isolation"];
 const matrixEntries = [...workflow.matchAll(/^          - name: (.+)\n            os: (.+)\n            suite: (.+)$/gm)]
   .map((match) => ({ name: match[1], os: match[2], suite: match[3] }));
 const actualMatrix = new Set(matrixEntries.map((entry) => `${entry.name}\0${entry.os}\0${entry.suite}`));
@@ -103,7 +108,9 @@ const expectedMatrix = new Set();
 for (const [name, os] of platforms) {
   const expectedSuites = name === "macOS arm64"
     ? ["mac-core-standard-support", "mac-host-compat", "aot-native"]
-    : [...suites, "parser-fuzz"];
+    : name === "Windows x86_64"
+      ? [...suites, "parser-fuzz", ...windowsOnlySuites]
+      : [...suites, "parser-fuzz"];
   for (const suite of expectedSuites) expectedMatrix.add(`${name}\0${os}\0${suite}`);
 }
 assertSetEqual(actualMatrix, expectedMatrix, "CI matrix");
@@ -122,10 +129,13 @@ const nativeShardCounts = new Map([
   ["macOS arm64", 1],
   ["Windows x86_64", 3],
 ]);
+// Linux・Windowsは改善計画2 Phase 5（Case C）でO0+O1／O2+O3へ統合した。
+// 同じshardのoptimizationを1 jobにまとめるとoracle実行が1回で済み、
+// runner minutesが削減できる（実測: -17.8 min/run、wall効果なし）。
 const nativeOptimizationGroups = new Map([
-  ["Linux x86_64", [["O0", "O0"], ["O1", "O1"], ["O2", "O2"], ["O3", "O3"]]],
+  ["Linux x86_64", [["O0-O1", "O0,O1"], ["O2-O3", "O2,O3"]]],
   ["macOS arm64", [["O0-O1", "O0,O1"], ["O2", "O2"], ["O3", "O3"]]],
-  ["Windows x86_64", [["O0", "O0"], ["O1", "O1"], ["O2", "O2"], ["O3", "O3"]]],
+  ["Windows x86_64", [["O0-O1", "O0,O1"], ["O2-O3", "O2,O3"]]],
 ]);
 const expectedNativeRowCount = [...nativeShardCounts].reduce((total, [name, shardCount]) => total + shardCount * nativeOptimizationGroups.get(name).length, 0);
 const expectedSupportTaskCounts = new Map([
@@ -138,7 +148,7 @@ const expectedSupportRowCount = [...expectedSupportTaskCounts.values()].reduce((
 if (nativeAotMatrixEntries.length !== expectedNativeRowCount || supportAotMatrixEntries.length !== expectedSupportRowCount) {
   throw new Error(`AOT job分割数が不正です: native=${nativeAotMatrixEntries.length} support=${supportAotMatrixEntries.length}`);
 }
-if (matrixEntries.length !== 51) throw new Error(`CI matrixの実job数が不正です: actual=${matrixEntries.length}`);
+if (matrixEntries.length !== 40) throw new Error(`CI matrixの実job数が不正です: actual=${matrixEntries.length}`);
 
 // 変更分類jobは重いmatrixの前段として必須。allow-list方式で、判定不能は
 // すべてfullへ倒す設計をtool側の実装とworkflowの両方から検査する。
@@ -225,7 +235,9 @@ const jobBlocks = [...jobsSection.matchAll(/^  ([a-zA-Z_-]+):\n(?=    )/gm)]
     return { name: match[1], block: jobsSection.slice(match.index, end) };
   });
 const gatedJobs = jobBlocks.filter(({ name }) => name !== "changes" && name !== "lightweight");
-if (jobBlocks.length !== 10 || gatedJobs.length !== 8 ||
+// aot_compiler_linux（Linux側のcompiler producer）とaot_linux（そのconsumer）を
+// 追加したため12 job・10 gated。
+if (jobBlocks.length !== 12 || gatedJobs.length !== 10 ||
     gatedJobs.some(({ block }) => !block.includes(fullGate) || !block.includes("needs: [changes"))) {
   throw new Error(`変更分類のfull gateを持たないjobがあります: ${gatedJobs.filter(({ block }) => !block.includes(fullGate) || !block.includes("needs: [changes")).map(({ name }) => name).join(",")}`);
 }
@@ -247,14 +259,18 @@ if (!parserFuzzJob || !parserFuzzJob.includes("strategy:\n      fail-fast: false
 if (parserFuzzJob.includes("macos-15") || parserFuzzJob.includes("macOS arm64")) {
   throw new Error("parser fuzz専用jobへmacOSを追加してrunner上限5を超えています");
 }
-const nativeAotJob = workflow.match(/  aot:[\s\S]*?(?=\n  (?:aot_windows|verify_dispatch_coverage|verify_native_aot_artifacts|attest-dispatch-evidence):)/)?.[0];
+const nativeAotJob = workflow.match(/  aot:[\s\S]*?(?=\n  (?:aot_linux|aot_windows|verify_dispatch_coverage|verify_native_aot_artifacts|attest-dispatch-evidence):)/)?.[0];
+const linuxAotJob = workflow.match(/  aot_linux:[\s\S]*?(?=\n  (?:aot_windows|verify_dispatch_coverage|verify_native_aot_artifacts|attest-dispatch-evidence):)/)?.[0];
 const windowsAotJob = workflow.match(/  aot_windows:[\s\S]*?(?=\n  (?:verify_dispatch_coverage|verify_native_aot_artifacts|attest-dispatch-evidence):)/)?.[0];
-if (!nativeAotJob || !windowsAotJob) throw new Error("分割AOT jobがありません");
-// Windows native行は専用consumer job（aot_windows）へ分離され、残りはaotへ残る。
-// 行の期待集合は両jobをまたいで検証する。
-const nativeShardRows = [...(nativeAotJob + windowsAotJob).matchAll(/^          - name: (.+)\n            os: (.+)\n            suite: aot-native\n            task: native\n            fixtureShardIndex: (\d+)\n            fixtureShardCount: (\d+)\n            fixtureSharded: (true|false)\n            optimizationKey: (.+)\n            optimizations: (.+)\n            jobName: (.+)$/gm)]
+if (!nativeAotJob || !linuxAotJob || !windowsAotJob) throw new Error("分割AOT jobがありません");
+// LinuxのDebug consumer行は専用consumer job（aot_linux）へ分離され、macOS行・
+// Linux coverage/smoke行はaotへ残る。行の期待集合は全jobをまたいで検証する。
+const nativeShardRows = [...(nativeAotJob + linuxAotJob + windowsAotJob).matchAll(/^          - name: (.+)\n            os: (.+)\n            suite: aot-native\n            task: native\n            fixtureShardIndex: (\d+)\n            fixtureShardCount: (\d+)\n            fixtureSharded: (true|false)\n            optimizationKey: (.+)\n            optimizations: (.+)\n            jobName: (.+)$/gm)]
   .map((match) => ({ name: match[1], os: match[2], index: Number(match[3]), count: Number(match[4]), sharded: match[5] === "true", optimizationKey: match[6], optimizations: match[7], jobName: match[8] }));
-const supportRows = [...nativeAotJob.matchAll(/^          - name: (.+)\n            os: (.+)\n            suite: aot-support\n            task: (.+)\n            fixtureShardIndex: (\d+)\n            fixtureShardCount: (\d+)\n            fixtureSharded: (true|false)\n            jobName: (.+)$/gm)]
+// 共有compiler artifactを使うLinux support行はaot_linux、Windows support行は
+// aot_windows、Linux coverage/smoke行はaotへ残るため、support行も全jobを
+// またいで検証する。
+const supportRows = [...(nativeAotJob + linuxAotJob + windowsAotJob).matchAll(/^          - name: (.+)\n            os: (.+)\n            suite: aot-support\n            task: (.+)\n            fixtureShardIndex: (\d+)\n            fixtureShardCount: (\d+)\n            fixtureSharded: (true|false)\n            jobName: (.+)$/gm)]
   .map((match) => ({ name: match[1], os: match[2], task: match[3], index: Number(match[4]), count: Number(match[5]), sharded: match[6] === "true", jobName: match[7] }));
 const expectedNativeRows = new Set();
 for (const [name, count] of nativeShardCounts) {
@@ -262,7 +278,8 @@ for (const [name, count] of nativeShardCounts) {
   for (let index = 0; index < count; index += 1) {
     for (const [optimizationKey, optimizations] of groups) {
       const sharded = count > 1;
-      const jobName = sharded ? `AOT native shard ${index + 1}/${count} / ${optimizationKey}` : `AOT native routes ${optimizationKey.replace("-", "+")}`;
+      // 統合group名はjob名でも`+`表記にする（例: O0+O1）。
+      const jobName = sharded ? `AOT native shard ${index + 1}/${count} / ${optimizationKey.replaceAll("-", "+")}` : `AOT native routes ${optimizationKey.replaceAll("-", "+")}`;
       expectedNativeRows.add(`${name}\0${platforms.get(name)}\0${index}\0${count}\0${sharded}\0${optimizationKey}\0${optimizations}\0${jobName}`);
     }
   }
@@ -301,6 +318,37 @@ for (const [jobName, index] of expectedMacCoverageRows) {
   if (!nativeAotJob.includes(row)) throw new Error(`macOS ${jobName}のdispatch coverage shard割当が不正です`);
 }
 
+// AOT artifactのoptimization group定義は、CI matrix・集約検査
+// （check_native_aot_artifacts.mjs）・attestation検証
+// （verify_native_aot_attestation.mjs）の3箇所で一致していなければならない。
+// 改善計画2 Phase 5でCIをO0+O1／O2+O3へ統合した際にverifier側だけが旧4 groupの
+// ままで、mainのattestationが必ず失敗する不整合が実際に生じたため機械的に照合する。
+const optimizationGroupPattern = /\{ key: "([^"]+)", optimizations: \[([^\]]*)\] \}/g;
+const parseOptimizations = (text) => text.split(",").map((value) => value.trim().replaceAll('"', "")).filter((value) => value.length > 0);
+const ciGroupsByRunner = new Map();
+for (const row of nativeShardRows) {
+  const groups = ciGroupsByRunner.get(row.os) ?? [];
+  if (!groups.some(([key]) => key === row.optimizationKey)) groups.push([row.optimizationKey, row.optimizations.split(",")]);
+  ciGroupsByRunner.set(row.os, groups);
+}
+const checkerGroupsBlock = nativeAotArtifactChecker.match(/const expectedGroups = new Map\(\[([\s\S]*?)\n\]\);/)?.[1];
+if (!checkerGroupsBlock) throw new Error("check_native_aot_artifacts.mjsのoptimization group定義を解析できません");
+const checkerGroupsByRunner = new Map([...checkerGroupsBlock.matchAll(/\["([^"]+)", \[\n([\s\S]*?)\n  \]\]/g)]
+  .map((match) => [match[1], [...match[2].matchAll(optimizationGroupPattern)].map((group) => [group[1], parseOptimizations(group[2])])]));
+const verifierGroupsByRunner = new Map([...nativeAotAttestationVerifier.matchAll(/runner: "([^"]+)",[\s\S]*?groups: \[([\s\S]*?)\n    \],/g)]
+  .map((match) => [match[1], [...match[2].matchAll(optimizationGroupPattern)].map((group) => [group[1], parseOptimizations(group[2])])]));
+if (ciGroupsByRunner.size !== 3 || checkerGroupsByRunner.size !== 3 || verifierGroupsByRunner.size !== 3) {
+  throw new Error("AOT optimization group定義を持つOSがCI matrix／集約検査／attestation検証で一致しません");
+}
+for (const [runner, ciGroups] of ciGroupsByRunner) {
+  for (const [label, reference] of [["集約検査(check_native_aot_artifacts.mjs)", checkerGroupsByRunner.get(runner)], ["attestation検証(verify_native_aot_attestation.mjs)", verifierGroupsByRunner.get(runner)]]) {
+    if (reference === undefined || reference.length !== ciGroups.length ||
+        ciGroups.some(([key, optimizations], index) => reference[index][0] !== key || JSON.stringify(reference[index][1]) !== JSON.stringify(optimizations))) {
+      throw new Error(`${label}のoptimization group定義がCI matrixと一致しません: ${runner}`);
+    }
+  }
+}
+
 const stepSuites = new Map([
   ["Verify compatibility baseline", "core"],
   ["Differential lexer test", "core"],
@@ -321,7 +369,7 @@ const stepSuites = new Map([
   ["Toolchain cache regression tests", "core"],
   ["Change classifier tests", "core"],
   ["Toolchain command check", "core"],
-  ["Zig package isolation check", "core"],
+  ["Zig package isolation check", "package-isolation"],
   ["Format", "core"],
   ["Test", "core"],
   ["Test QuickJS build", "compat-aot"],
@@ -338,7 +386,9 @@ for (const [name, suite] of stepSuites) {
       ? "matrix.suite == 'standard' || matrix.suite == 'mac-core-standard-support'"
       : suite === "host"
         ? "matrix.suite == 'host' || matrix.suite == 'mac-host-compat'"
-        : "matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'";
+        : suite === "package-isolation"
+          ? "matrix.suite == 'win-package-isolation' || (matrix.suite == 'core' && matrix.name != 'Windows x86_64') || matrix.suite == 'mac-core-standard-support'"
+          : "matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'";
   const pattern = new RegExp(`^      - name: ${escaped}\\n        if: ${condition.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m");
   if (!pattern.test(workflow)) throw new Error(`${name}のsuite条件が${suite}ではありません`);
 }
@@ -350,10 +400,12 @@ if (!testJob.includes("name: Clear generated Zig install outputs\n        shell:
 }
 // Zigのtest serverはテスト間で60秒無応答のrunnerを失敗扱いする。負荷の高い
 // Windows runnerではtestプロセスがスケジュールされず60秒を超えることがある
-// ため、両単体テストstepで上限を5分へ引き上げる。
-if (!testJob.includes("run: zig build test --test-timeout 5m") ||
-    !testJob.includes("run: zig build -Dcompat-js=true test --test-timeout 5m")) {
-  throw new Error("単体テストstepの--test-timeout 5mがありません（Windows runnerのスケジューラ遅延でtest runnerが60s無応答扱いになるflake対策）");
+// ため、両単体テストstepで上限を5分へ引き上げる。`--summary all`は出力のみで
+// 意味を変えないが、test binaryごとのpass／skip／fail／crash／timeout件数を
+// logへ出すため、panic痕跡の有無だけで判断せず集計を機械的に確認できる。
+if (!testJob.includes("run: zig build test --test-timeout 5m --summary all") ||
+    !testJob.includes("run: zig build -Dcompat-js=true test --test-timeout 5m --summary all")) {
+  throw new Error("単体テストstepの--test-timeout 5m／--summary allがありません（Windows runnerのスケジューラ遅延対策と、test binaryごとの集計の可視化）");
 }
 if (testJob.includes("Grammar-generating parser fuzz test\n")) {
   throw new Error("Linux／Windowsのparser fuzzを通常core jobへ残さないでください");
@@ -421,13 +473,61 @@ const aotStep = (name) => {
   const next = nativeAotJob.indexOf("\n      - name:", start + marker.length);
   return nativeAotJob.slice(start, next < 0 ? nativeAotJob.length : next);
 };
+// aot_linux（Linuxの共有compiler consumer job）のstepを名前で引く。
+const linuxAotStep = (name) => {
+  const marker = "      - name: " + name;
+  const start = linuxAotJob.indexOf(marker);
+  if (start < 0) return null;
+  const next = linuxAotJob.indexOf("\n      - name:", start + marker.length);
+  return linuxAotJob.slice(start, next < 0 ? linuxAotJob.length : next);
+};
 if (!nativeAotJob.includes("strategy:\n      fail-fast: false") || !nativeAotJob.includes("runs-on: ${{ matrix.os }}") || !nativeAotJob.includes("timeout-minutes: 50")) {
   throw new Error("分割AOT jobの実行条件が不正です");
 }
+// Phase 2のworker数比較はworkflow_dispatch入力で切り替える。
+const dispatchInput = workflow.match(/^  workflow_dispatch:\n([\s\S]*?)(?=\n[a-z]|\Z)/m)?.[1] ?? "";
+// Phase 2の実測でworker=2を標準化した。dispatch入力の既定も2とし、
+// 1を選べばA/B比較できる（既定を1へ戻す変更をここで検出する）。
+if (!dispatchInput.includes("native_oracle_jobs:") ||
+    !dispatchInput.includes('default: "2"') ||
+    !/options:\s*\n\s*- "2"\s*\n\s*- "1"/.test(dispatchInput) ||
+    !workflow.includes("LNAKO_NATIVE_ORACLE_JOBS: ${{ inputs.native_oracle_jobs || '2' }}") ||
+    countOccurrences(workflow, "LNAKO_NATIVE_ORACLE_JOBS: ${{ inputs.native_oracle_jobs || '2' }}") !== 3) {
+  throw new Error("Native AOT worker数の標準設定（既定2・A/B用に1）が不正です");
+}
+
+// macOS nativeはこのjobでbuildする（Linux nativeはaot_linuxが共有artifactを使う）。
 const nativeAotBuildBlock = aotStep("Build AOT verification compiler");
 if (!nativeAotBuildBlock || !nativeAotBuildBlock.includes("if: matrix.task != 'support-smoke' && !(matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04')") ||
     !nativeAotBuildBlock.includes("run: zig build")) {
   throw new Error("AOT検証用compilerの先行buildがありません");
+}
+// LinuxのDebug compilerはproducer job（aot_compiler_linux）が1回buildし、
+// consumer job（aot_linux）がartifactを検証してからinstallする。
+const linuxCompilerJob = workflow.match(/  aot_compiler_linux:[\s\S]*?(?=\n  aot:)/)?.[0];
+if (!linuxCompilerJob || !linuxCompilerJob.includes("runs-on: ubuntu-24.04") ||
+    !linuxCompilerJob.includes("use-cache: false") ||
+    !linuxCompilerJob.includes("run: zig build -Dcpu=baseline") ||
+    !linuxCompilerJob.includes("node tools/aot_compiler_artifact.mjs create --binary zig-out/bin/lnako --runtime-lib zig-out/lib/liblnako_runtime.a --out-dir") ||
+    !linuxCompilerJob.includes("name: lnako-aot-compiler-linux-x64") ||
+    !linuxCompilerJob.includes("retention-days: 1")) {
+  throw new Error("Linux AOT compiler producer jobが不完全です");
+}
+if (!linuxAotJob.includes("needs: [changes, aot_compiler_linux]")) {
+  throw new Error("aot_linux jobがLinux compiler producerへ依存していません");
+}
+const linuxDownloadBlock = linuxAotStep("Download shared AOT compiler artifact (Linux)");
+const linuxInstallBlock = linuxAotStep("Verify and install shared AOT compiler (Linux)");
+if (!linuxDownloadBlock || linuxDownloadBlock.includes("if:") ||
+    !linuxDownloadBlock.includes("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1") ||
+    !linuxDownloadBlock.includes("name: lnako-aot-compiler-linux-x64") ||
+    !linuxInstallBlock || linuxInstallBlock.includes("if:") ||
+    !linuxInstallBlock.includes("node tools/aot_compiler_artifact.mjs verify") ||
+    !linuxInstallBlock.includes("--install-to zig-out/bin")) {
+  throw new Error("Linux AOT consumerの共有compiler download／検証・install stepが不完全です");
+}
+if (!linuxAotJob.includes("use-cache: false") || linuxAotJob.includes("Build AOT verification compiler\n")) {
+  throw new Error("aot_linux jobが不要なZig cache保存またはcompiler buildを行っています");
 }
 // Windows native shardはproducerが1回buildしたDebug compilerを共有する。
 // commit・platform・Zig version・SHA-256を照合してからinstallするため、
@@ -440,22 +540,42 @@ if (!aotCompilerJob || !aotCompilerJob.includes("name: Windows x86_64 / AOT veri
     !aotCompilerJob.includes("run: zig build") ||
     !aotCompilerJob.includes("Smoke test AOT verification compiler") ||
     !aotCompilerJob.includes("zig-out/bin/lnako.exe run") ||
+    // 共有artifactはproducerと別のrunnerで実行されるため、runnerのCPU機能に
+    // 依存した命令を含めない（-Dcpu未指定だとホストCPU機能が有効になり、
+    // 非対応runnerでSTATUS_ILLEGAL_INSTRUCTIONになる）。
+    !aotCompilerJob.includes("run: zig build -Dcpu=baseline") ||
+    aotCompilerJob.includes("\n        run: zig build\n") ||
     !aotCompilerJob.includes("node tools/aot_compiler_artifact.mjs create --binary zig-out/bin/lnako.exe --runtime-lib zig-out/lib/lnako_runtime.lib --out-dir") ||
     !aotCompilerJob.includes("name: lnako-aot-compiler-windows-x64") ||
     !aotCompilerJob.includes("if-no-files-found: error")) {
   throw new Error("Windows AOT compiler producer jobが不完全です");
 }
-// needsはjob全体に効くため、producer依存はconsumer job側のみに限定する。
-// aotがaot_compilerへ依存するとLinux・macOS・support shardまで直列化され、
-// producer失敗でmatrix全体がskipされる。
-if (!nativeAotJob.includes("needs: [changes]\n") || nativeAotJob.includes("aot_compiler")) {
-  throw new Error("aot jobがcompiler producerへ依存しています（直列化防止のためchangesのみへ依存させてください）");
+// needsはjob全体に効く。producer依存はconsumer job（aot_linux／aot_windows）
+// 側だけに置き、aot（macOS native＋Linux coverage/smoke＋Windows smoke）は
+// changesのみへ依存させる。producer失敗で他platform・support shardの検証を
+// 巻き込まないため。
+if (!nativeAotJob.includes("needs: [changes]\n") || /needs: \[changes, aot_compiler/.test(nativeAotJob)) {
+  throw new Error("aot jobがcompiler producerへ依存しています（consumerはaot_linux／aot_windowsへ分離してください）");
+}
+// native 6 shard（O0+O1／O2+O3×3 shard。改善計画2 Phase 5 Case C）に加え、
+// Linuxのsupport系2 job（HTTP・dispatch evidence）も共有compiler artifactを
+// 利用する。support-smokeはReleaseSafe compilerを検証するため共有Debug
+// artifactを使えず、aot job側に残す。
+// したがってaot_linuxに`zig build`とReleaseSafe buildが無いことを確認する。
+if (!linuxAotJob.includes("needs: [changes, aot_compiler_linux]") ||
+    (linuxAotJob.match(/suite: aot-native\n            task: native/g) ?? []).length !== 6 ||
+    (linuxAotJob.match(/suite: aot-support\n            task: support-/g) ?? []).length !== 2 ||
+    (linuxAotJob.match(/os: ubuntu-24\.04/g) ?? []).length !== 8 ||
+    linuxAotJob.includes("run: zig build") ||
+    (linuxAotJob.match(/task: support-smoke|task: support-dispatch-coverage/g) ?? []).length !== 0) {
+  throw new Error("Linux AOT consumer jobがproducer・6 native shard＋2 support job構成・共有compiler利用のいずれかを満たしていません");
 }
 if (!windowsAotJob.includes("needs: [changes, aot_compiler]") ||
-    windowsAotJob.includes("run: zig build\n") ||
-    (windowsAotJob.match(/suite: aot-native\n            task: native/g) ?? []).length !== 12 ||
-    (windowsAotJob.match(/os: windows-2025/g) ?? []).length !== 12) {
-  throw new Error("Windows AOT consumer jobがproducer・12 shard構成・build省略のいずれかを満たしていません");
+    (windowsAotJob.match(/suite: aot-native\n            task: native/g) ?? []).length !== 6 ||
+    (windowsAotJob.match(/suite: aot-support\n            task: support-/g) ?? []).length !== 5 ||
+    (windowsAotJob.match(/os: windows-2025/g) ?? []).length !== 11 ||
+    windowsAotJob.includes("run: zig build")) {
+  throw new Error("Windows AOT consumer jobがproducer・6 native shard＋5 support job構成・共有compiler利用のいずれかを満たしていません");
 }
 const windowsAotStep = (name) => {
   const marker = "      - name: " + name;
@@ -466,13 +586,44 @@ const windowsAotStep = (name) => {
 };
 const downloadCompilerBlock = windowsAotStep("Download shared AOT compiler artifact");
 const installCompilerBlock = windowsAotStep("Verify and install shared AOT compiler");
-if (!downloadCompilerBlock || !downloadCompilerBlock.includes("if: matrix.task == 'native' && matrix.os == 'windows-2025'") ||
+if (!downloadCompilerBlock || downloadCompilerBlock.includes("if:") ||
     !downloadCompilerBlock.includes("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1") ||
     !downloadCompilerBlock.includes("name: lnako-aot-compiler-windows-x64") ||
-    !installCompilerBlock || !installCompilerBlock.includes("if: matrix.task == 'native' && matrix.os == 'windows-2025'") ||
+    !installCompilerBlock || installCompilerBlock.includes("if:") ||
     !installCompilerBlock.includes("node tools/aot_compiler_artifact.mjs verify") ||
     !installCompilerBlock.includes("--install-to zig-out/bin")) {
-  throw new Error("Windows native shardの共有compiler download／検証・install stepが不完全です");
+  throw new Error("Windows AOT consumerの共有compiler download／検証・install stepが不完全です");
+}
+// support系の検証stepがconsumer jobへ移設されていることを確認する。
+const windowsSupportSteps = [
+  ["Differential HTTP server AOT oracle", "if: matrix.task == 'support-http'"],
+  ["Dispatch evidence audit", "if: matrix.task == 'support-dispatch-evidence'"],
+  ["Dispatch coverage audit", "if: matrix.task == 'support-dispatch-coverage'"],
+  ["Dispatch trace security audit", "if: matrix.task == 'support-dispatch-evidence'"],
+  ["Upload native dispatch evidence", "if: matrix.task == 'support-dispatch-evidence' && always()"],
+  ["Upload native dispatch coverage audit", "if: matrix.task == 'support-dispatch-coverage' && always()"],
+];
+for (const [name, condition] of windowsSupportSteps) {
+  const block = windowsAotStep(name);
+  if (!block || !block.includes(condition)) {
+    throw new Error(`Windows AOT support stepがconsumer jobへ移設されていません: ${name}`);
+  }
+  // 検証コマンドは必ず--no-buildで共有compilerを使う（smokeは自前build、
+  // upload stepはartifact送信のみ）。
+  const isUpload = name.startsWith("Upload ");
+  if (name !== "Normal smoke test" && !isUpload && !block.includes("--no-build")) {
+    throw new Error(`Windows AOT support stepが--no-buildを使っていません: ${name}`);
+  }
+}
+if (windowsAotJob.includes("Build AOT verification compiler\n")) {
+  throw new Error("Windows AOT consumer jobでcompilerをbuildし直しています");
+}
+// support-smokeはReleaseSafe compilerを検証するため、共有artifactを使う
+// consumer jobではなくaot job側で自前buildする。
+const smokeBuildBlock = aotStep("Build ReleaseSafe compiler");
+if (!smokeBuildBlock || !smokeBuildBlock.includes("if: matrix.task == 'support-smoke'") || !smokeBuildBlock.includes("zig build -Doptimize=ReleaseSafe") ||
+    windowsAotStep("Build ReleaseSafe compiler") !== null) {
+  throw new Error("support smokeのReleaseSafe compiler buildが不正です");
 }
 // consumerでも差分テストとshard artifact uploadは維持する。
 const windowsDifferentialBlock = windowsAotStep("Differential native AOT verification (fixture/route shard)");
@@ -488,6 +639,10 @@ if (!aotCompilerArtifactScript.includes('"lnako.aot-compiler-artifact.v1"') ||
     !aotCompilerArtifactScript.includes("buildMode") ||
     !aotCompilerArtifactScript.includes("compatJs") || !aotCompilerArtifactScript.includes("basename(name) !== name") ||
     !aotCompilerArtifactScript.includes('"..", "lib"') ||
+    // upload-artifact／download-artifactは実行ビットを保証しないため、
+    // install時にPOSIXで実行ビットを付与する（Linux consumerのEACCES再発防止）。
+    !aotCompilerArtifactScript.includes("chmodSync") ||
+    !aotCompilerArtifactScript.includes("platform !== \"win32\"") ||
     !aotCompilerArtifactScript.includes("rev-parse") || !aotCompilerArtifactScript.includes("toolchain.lock.json") ||
     !workflow.includes("node --test tools/setup_llvm_test.mjs tools/collect_ci_metrics_test.mjs tools/aot_compiler_artifact_test.mjs")) {
   throw new Error("AOT compiler artifactのmetadata照合または単体テストが不完全です");
@@ -516,11 +671,38 @@ if (!macCoverageUploadBlock || !macCoverageUploadBlock.includes("if: matrix.name
 }
 const nativeAotVerificationBlock = aotStep("Differential native AOT verification (fixture/route shard)");
 if (!nativeAotVerificationBlock || !nativeAotVerificationBlock.includes("if: matrix.task == 'native'") ||
-    !nativeAotVerificationBlock.includes('LNAKO_NATIVE_ORACLE_JOBS: "1"') ||
+    !nativeAotVerificationBlock.includes("LNAKO_NATIVE_ORACLE_JOBS: ${{ inputs.native_oracle_jobs || '2' }}") ||
     (nativeAotVerificationBlock.match(/node tools\/compare_native_oracle\.mjs/g) ?? []).length !== 1 ||
     !nativeAotVerificationBlock.includes("--no-build") || !nativeAotVerificationBlock.includes("--optimizations") || !nativeAotVerificationBlock.includes("--shard-index") ||
     !nativeAotVerificationBlock.includes("--shard-count") || !nativeAotVerificationBlock.includes("--artifact")) {
   throw new Error("AOT fixture／route shardのworker、shard指定、またはartifact出力が不正です");
+}
+// timing telemetryはcanonical artifactと別document・別artifactで扱い、
+// median weight table（shard再配分）の入力にのみ使う。互換性evidenceの
+// 契約へ性能値を混ぜないことをここで固定する。
+if (!nativeOracleScript.includes("import { createTimingDocument, parseTimingPath, platformKey, roundMs, writeTimingDocument }") ||
+    !nativeOracleScript.includes("const timingPath = parseTimingPath(process.argv, process.env);") ||
+    !nativeOracleScript.includes("await writeTiming(") ||
+    // 公式source経路の計測はfixture準備を含めない（totalMs専用のfixtureStartを流用しない）。
+    !nativeOracleScript.includes("const officialSourceStart = performance.now();") ||
+    !nativeOracleScript.includes("const officialSourceMs = elapsedMs(officialSourceStart);") ||
+    // 任意telemetryの書込み障害で互換性検証を落とさない。
+    !/try \{\n\s+await writeTiming\(concurrency, failures === 0/.test(nativeOracleScript) ||
+    !nativeTimingScript.includes('"lnako.native-oracle-timing.v1"') ||
+    !nativeTimingScript.includes("export function buildTimingAggregate") ||
+    !nativeTimingScript.includes("export function medianOf") ||
+    // 集約はconcurrency混在を拒否し、success以外をweight集計から除外する。
+    !nativeTimingScript.includes("timing documentのconcurrencyが混在しています") ||
+    !nativeTimingScript.includes('document.status === "success"') ||
+    !nativeTimingScript.includes("aggregatedDocuments") ||
+    !nativeTimingScript.includes("LNAKO_NATIVE_ORACLE_TIMING") ||
+    !timingAggregateScript.includes("buildTimingAggregate") ||
+    !timingAggregateScript.includes("lnako-native-timing-*") ||
+    // artifact名ディレクトリ（gh run downloadの既定展開）も走査する。
+    !timingAggregateScript.includes("collectJsonPaths") ||
+    !timingAggregateScript.includes("集約対象のtiming documentがありません") ||
+    !workflow.includes("node --test tools/native_oracle_timing_test.mjs")) {
+  throw new Error("AOT fixture timing telemetryの分離実装または単体テストが不完全です");
 }
 if (nativeAotJob.includes("check_aot_suite_parallel.mjs")) throw new Error("旧AOT全検査runnerを分割jobへ再導入しないでください");
 if (!nativeOracleScript.includes("const shard = parseShard();") || !nativeOracleScript.includes("selectedCases = selectCases(cases, shard);") ||
@@ -528,40 +710,53 @@ if (!nativeOracleScript.includes("const shard = parseShard();") || !nativeOracle
     !nativeOracleScript.includes("--optimizations") || !nativeOracleScript.includes('schema: "lnako.native-oracle-artifact.v3"')) {
   throw new Error("native oracleのfixture／route shard実装がありません");
 }
-const supportStepConditions = new Map([
+// support系stepはOSで担当jobが分かれる。LinuxのDebug consumer（HTTP・
+// dispatch evidence・security）は共有compiler artifactを使うaot_linux、
+// Linux dedicated coverage shard（canonical正本）・macOS相乗りcoverage・
+// smokeはaot、Windowsのsupport系はaot_windowsが担う。
+const linuxSupportStepConditions = new Map([
   ["Differential HTTP server AOT oracle", "support-http"],
   ["Dispatch evidence audit", "support-dispatch-evidence"],
-  ["Dispatch coverage audit", "support-dispatch-coverage"],
   ["Dispatch trace security audit", "support-dispatch-evidence"],
+]);
+for (const [name, task] of linuxSupportStepConditions) {
+  const block = linuxAotStep(name);
+  if (!block || !block.includes(`if: matrix.task == '${task}'`)) throw new Error(`aot_linuxの${name}のsupport条件がありません`);
+  if (!block.includes("--no-build")) throw new Error(`aot_linuxの${name}が--no-buildを使っていません`);
+}
+const httpAotBlock = linuxAotStep("Differential HTTP server AOT oracle");
+if (!httpAotBlock.includes("node tools/compare_http_server_aot_oracle.mjs --no-build")) throw new Error("AOT HTTP server比較のno-build実装がありません");
+const dispatchEvidenceBlock = linuxAotStep("Dispatch evidence audit");
+const dispatchSecurityBlock = linuxAotStep("Dispatch trace security audit");
+if (!dispatchEvidenceBlock.includes("node tools/check_dispatch_trace.mjs --no-build") || !dispatchEvidenceBlock.includes("--evidence-output") ||
+    !dispatchSecurityBlock.includes("node tools/check_dispatch_trace_security.mjs --no-build")) {
+  throw new Error("dispatch evidenceの分割監査またはsecurity検査が不完全です");
+}
+// smokeはReleaseSafe compilerを検証するためaot job側で自前buildする。
+const smokeStepConditions = new Map([
   ["Build ReleaseSafe compiler", "support-smoke"],
   ["Normal smoke test", "support-smoke"],
 ]);
-for (const [name, task] of supportStepConditions) {
+for (const [name, task] of smokeStepConditions) {
   const block = aotStep(name);
   if (!block || !block.includes(`if: matrix.task == '${task}'`)) throw new Error(`${name}のsupport条件がありません`);
 }
-const httpAotBlock = aotStep("Differential HTTP server AOT oracle");
-if (!httpAotBlock.includes("node tools/compare_http_server_aot_oracle.mjs --no-build")) throw new Error("AOT HTTP server比較のno-build実装がありません");
-const dispatchEvidenceBlock = aotStep("Dispatch evidence audit");
-const dispatchCoverageBlock = aotStep("Dispatch coverage audit");
-const dispatchSecurityBlock = aotStep("Dispatch trace security audit");
-if (!dispatchEvidenceBlock.includes("node tools/check_dispatch_trace.mjs --no-build") || !dispatchEvidenceBlock.includes("--evidence-output") ||
-    !dispatchCoverageBlock.includes("node tools/check_dispatch_coverage.mjs --no-build") || !dispatchCoverageBlock.includes("--fixture-shard-index") ||
-    !dispatchCoverageBlock.includes("--fixture-shard-count") || !dispatchCoverageBlock.includes("--output") ||
-    !dispatchSecurityBlock.includes("node tools/check_dispatch_trace_security.mjs --no-build")) {
-  throw new Error("dispatch evidence/coverageの分割監査、fixture shard、またはsecurity検査が不完全です");
-}
 // canonical正本（231件）のfreshnessはLinux dedicated shardのみが供給する。
 // Linuxのcoverage shardにだけ--include-nativeがあり、他OSには無いことを確認する。
-if (!dispatchCoverageBlock.includes("matrix.os != 'ubuntu-24.04'") || dispatchCoverageBlock.includes("--include-native")) {
-  throw new Error("Linux以外のdispatch coverage shardに--include-nativeが混入しています");
-}
 const linuxCoverageBlock = aotStep("Dispatch coverage audit (native fixtures)");
 if (!linuxCoverageBlock || !linuxCoverageBlock.includes("if: matrix.task == 'support-dispatch-coverage' && matrix.os == 'ubuntu-24.04'") ||
     !linuxCoverageBlock.includes("node tools/check_dispatch_coverage.mjs --no-build --include-native") ||
     !linuxCoverageBlock.includes("--fixture-shard-index") || !linuxCoverageBlock.includes("--fixture-shard-count") ||
     !linuxCoverageBlock.includes("--output")) {
   throw new Error("Linux dedicated dispatch coverage shardの--include-native監査が不完全です");
+}
+if (linuxCoverageBlock.includes("matrix.os != 'ubuntu-24.04'")) {
+  throw new Error("Linux dedicated dispatch coverage shardの条件が不正です");
+}
+const windowsPlainCoverageBlock = windowsAotStep("Dispatch coverage audit");
+if (!windowsPlainCoverageBlock || !windowsPlainCoverageBlock.includes("node tools/check_dispatch_coverage.mjs --no-build") ||
+    windowsPlainCoverageBlock.includes("--include-native")) {
+  throw new Error("Windowsのdispatch coverage shardに--include-nativeが混入しています");
 }
 if (macCoverageBlock.includes("--include-native")) {
   throw new Error("macOS native相乗りdispatch coverage shardは既定56件のままにしてください");
@@ -599,13 +794,57 @@ if (!nativeUpload || !nativeUpload.includes("if: matrix.task == 'native' && alwa
   throw new Error("AOT shard artifact uploadの設定が不正です");
 }
 if (nativeUpload.includes("run:")) throw new Error("AOT shard artifact uploadで追加の検証コマンドを実行しないでください");
-const uploadActions = workflow.match(/^        uses: actions\/upload-artifact@/gm) ?? [];
-if (uploadActions.length !== 8 || (testJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 1 ||
-    (nativeAotJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 4 ||
-    (windowsAotJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 1) {
-  throw new Error(`actions/upload-artifactはmacOS dispatch evidence 1＋AOT artifact 4＋Windows consumer 1＋aggregate 1＋attestation 1ステップ必要です: actual=${uploadActions.length}`);
+const linuxNativeUpload = linuxAotStep("Upload native AOT oracle artifact");
+if (!linuxNativeUpload || !linuxNativeUpload.includes("if: matrix.task == 'native' && always()") ||
+    !linuxNativeUpload.includes("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a") ||
+    !linuxNativeUpload.includes("matrix.os") || !linuxNativeUpload.includes("matrix.fixtureShardIndex") || !linuxNativeUpload.includes("matrix.optimizationKey") ||
+    !linuxNativeUpload.includes("if-no-files-found: ignore") || !linuxNativeUpload.includes("retention-days: 30")) {
+  throw new Error("Linux AOT consumerのshard artifact uploadの設定が不正です");
 }
-const dispatchUploadBlock = aotStep("Upload native dispatch evidence");
+const uploadActions = workflow.match(/^        uses: actions\/upload-artifact@/gm) ?? [];
+// aot側（macOS native＋Linux coverage/smoke＋Windows smoke）:
+//   macOS dispatch coverage 1＋AOT artifact 1＋timing telemetry 1＋
+//   dispatch coverage 1 = 4
+// aot_linux側（Linuxの共有compiler consumer）: AOT artifact 1＋
+//   timing telemetry 1＋Linux dispatch evidence 1 = 3
+// aot_windows側（Windows support系もここへ移設）: AOT artifact 1＋
+//   timing telemetry 1＋Windows dispatch evidence 1＋Windows dispatch coverage 1 = 4
+// test 1＋aggregate 1＋attestation 1 = 3（合計14）
+if (uploadActions.length !== 14 || (testJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 1 ||
+    (nativeAotJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 4 ||
+    (linuxAotJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 3 ||
+    (windowsAotJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 4) {
+  throw new Error(`actions/upload-artifactのステップ数が想定と一致しません（aot 4／aot_linux 3／aot_windows 4／test 1／aggregate 1／attestation 1）: actual=${uploadActions.length}`);
+}
+// timing telemetryは互換性evidenceとは別artifact名で分離する。集約検証は
+// `lnako-native-oracle-*` globでpartitionを検査するため、名前が被ると
+// 検証対象へ混入してしまう。
+const nativeTimingUpload = aotStep("Upload native AOT timing telemetry");
+if (!nativeTimingUpload || !nativeTimingUpload.includes("if: matrix.task == 'native' && always()") ||
+    !nativeTimingUpload.includes("name: lnako-native-timing-${{ matrix.os }}-shard-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}") ||
+    !nativeTimingUpload.includes("path: ${{ runner.temp }}/lnako-native-timing-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json") ||
+    !nativeTimingUpload.includes("if-no-files-found: ignore") || !nativeTimingUpload.includes("retention-days: 30") ||
+    nativeTimingUpload.includes("lnako-native-oracle-")) {
+  throw new Error("AOT timing telemetry artifactの分離設定が不正です");
+}
+if (nativeTimingUpload.includes("run:")) throw new Error("AOT timing telemetry uploadで追加の検証コマンドを実行しないでください");
+const linuxTimingUpload = linuxAotStep("Upload native AOT timing telemetry");
+if (!linuxTimingUpload || !linuxTimingUpload.includes("name: lnako-native-timing-") ||
+    !linuxTimingUpload.includes("retention-days: 30") || linuxTimingUpload.includes("lnako-native-oracle-")) {
+  throw new Error("Linux AOT consumerのtiming telemetry artifact分離が不正です");
+}
+const windowsTimingUpload = windowsAotStep("Upload native AOT timing telemetry");
+if (!windowsTimingUpload || !windowsTimingUpload.includes("name: lnako-native-timing-") || windowsTimingUpload.includes("lnako-native-oracle-")) {
+  throw new Error("Windows AOT consumerのtiming telemetry artifact分離が不正です");
+}
+const nativeTimingVerificationBlock = aotStep("Differential native AOT verification (fixture/route shard)");
+const linuxDifferentialBlock = linuxAotStep("Differential native AOT verification (fixture/route shard)");
+if (!nativeTimingVerificationBlock || !nativeTimingVerificationBlock.includes("LNAKO_NATIVE_ORACLE_TIMING: ${{ runner.temp }}/lnako-native-timing-") ||
+    !linuxDifferentialBlock || !linuxDifferentialBlock.includes("LNAKO_NATIVE_ORACLE_TIMING: ${{ runner.temp }}/lnako-native-timing-") ||
+    !windowsDifferentialBlock.includes("LNAKO_NATIVE_ORACLE_TIMING: ${{ runner.temp }}/lnako-native-timing-")) {
+  throw new Error("AOT fixture／route shardのtiming telemetry出力先が未設定です");
+}
+const dispatchUploadBlock = linuxAotStep("Upload native dispatch evidence");
 if (!dispatchUploadBlock || !dispatchUploadBlock.includes("if: matrix.task == 'support-dispatch-evidence' && always()") ||
     !dispatchUploadBlock.includes("name: lnako-dispatch-evidence-") || !dispatchUploadBlock.includes("dispatch-evidence-") ||
     !dispatchUploadBlock.includes("if-no-files-found: ignore")) {
@@ -623,13 +862,22 @@ if (!workflow.includes("if: matrix.suite == 'core' || matrix.suite == 'mac-core-
   throw new Error("coreの証拠追従検査に必要なfull checkout条件がありません");
 }
 const coverageVerificationJob = workflow.match(/  verify_dispatch_coverage:[\s\S]*?(?=\n  verify_native_aot_artifacts:)/)?.[0];
-if (!coverageVerificationJob || !coverageVerificationJob.includes("if: needs.changes.outputs.level == 'full' && needs.test.result == 'success' && needs.aot.result == 'success'") ||
-    !coverageVerificationJob.includes("needs: [changes, test, aot]") ||
+// Windowsのcoverage artifactは共有compiler artifactを使うconsumer job
+// （aot_windows）が供給するため、集約jobはaot_windowsの完了も待つ。
+// このjobはrequired status checkであり、required checkはskipを成功として扱う。
+// そのため`needs.test.result == 'success'`をjob条件に置くだけでは、matrix jobが
+// 失敗したrunでこのjobがskipされて検証漏れをマージできてしまう。`always()`で
+// 起動し、上流matrixの失敗を明示的な失敗へ変換する（verify_native_aot_artifactsと
+// 同じ規約）。
+if (!coverageVerificationJob || !coverageVerificationJob.includes("if: always() && needs.changes.outputs.level == 'full'") ||
+    !coverageVerificationJob.includes("needs: [changes, test, aot, aot_windows]") ||
     !coverageVerificationJob.includes("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1") ||
     !coverageVerificationJob.includes("pattern: lnako-dispatch-coverage-*") ||
     !coverageVerificationJob.includes("merge-multiple: true") ||
     !coverageVerificationJob.includes("node tools/check_dispatch_coverage_shards.mjs") ||
     !coverageVerificationJob.includes("--shard-count 3") ||
+    !coverageVerificationJob.includes("Reject failed test/dispatch matrix") ||
+    !/if: needs\.test\.result != 'success' \|\| needs\.aot\.result != 'success' \|\| needs\.aot_windows\.result != 'success'/.test(coverageVerificationJob) ||
     !dispatchCoverageShardsScript.includes("sampled-unattested-dispatch-audit-shard") ||
     !dispatchCoverageShardsScript.includes("assertSubset(darwinUnion, linuxUnion") ||
     !dispatchCoverageShardsScript.includes("mergeCoverageShards") ||
@@ -644,15 +892,15 @@ if (!coverageVerificationJob || !coverageVerificationJob.includes("if: needs.cha
 }
 const nativeAotVerificationJob = workflow.match(/  verify_native_aot_artifacts:[\s\S]*?(?=\n  attest-dispatch-evidence:)/)?.[0];
 if (!nativeAotVerificationJob || !nativeAotVerificationJob.includes("if: always() && needs.changes.outputs.level == 'full'") ||
-    !nativeAotVerificationJob.includes("needs: [changes, aot, aot_windows]") ||
+    !nativeAotVerificationJob.includes("needs: [changes, aot, aot_linux, aot_windows]") ||
     !nativeAotVerificationJob.includes("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1") ||
     !nativeAotVerificationJob.includes("pattern: lnako-native-oracle-*") ||
     !nativeAotVerificationJob.includes("merge-multiple: false") ||
     !nativeAotVerificationJob.includes("node tools/check_native_aot_artifacts.mjs") ||
     !nativeAotVerificationJob.includes("--directory") || !nativeAotVerificationJob.includes("--commit \"${{ github.sha }}\"") ||
     !nativeAotVerificationJob.includes("--output") || !nativeAotVerificationJob.includes("Reject failed native AOT matrix") ||
-    !nativeAotVerificationJob.includes("if: needs.aot.result == 'success' && needs.aot_windows.result == 'success'") ||
-    !nativeAotVerificationJob.includes("if: needs.aot.result != 'success' || needs.aot_windows.result != 'success'") ||
+    !nativeAotVerificationJob.includes("if: needs.aot.result == 'success' && needs.aot_linux.result == 'success' && needs.aot_windows.result == 'success'") ||
+    !nativeAotVerificationJob.includes("if: needs.aot.result != 'success' || needs.aot_linux.result != 'success' || needs.aot_windows.result != 'success'") ||
     !nativeAotVerificationJob.includes("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1") ||
     !nativeAotVerificationJob.includes("name: lnako-native-aot-aggregate") ||
     !nativeAotVerificationJob.includes("if-no-files-found: error") || !nativeAotVerificationJob.includes("retention-days: 30")) {
@@ -667,7 +915,7 @@ if (!nativeAotArtifactChecker.includes('schema: "lnako.native-aot-aggregate-evid
 if (!workflow.includes("node tools/check_native_aot_artifacts.mjs --self-test")) throw new Error("native AOT artifact集約checkerのself-testがCIにありません");
 const attestJob = workflow.match(/  attest-dispatch-evidence:[\s\S]*$/)?.[0];
 if (!attestJob || !attestJob.includes("github.event_name == 'push'") || !attestJob.includes("github.ref == 'refs/heads/main'") ||
-    !attestJob.includes("needs: [changes, test, parser_fuzz, aot, aot_windows, verify_dispatch_coverage, verify_native_aot_artifacts]") || !attestJob.includes("needs.changes.outputs.level == 'full'") || !attestJob.includes("needs.test.result == 'success'") || !attestJob.includes("needs.parser_fuzz.result == 'success'") || !attestJob.includes("needs.aot.result == 'success'") || !attestJob.includes("needs.aot_windows.result == 'success'") || !attestJob.includes("needs.verify_dispatch_coverage.result == 'success'") || !attestJob.includes("needs.verify_native_aot_artifacts.result == 'success'") || !attestJob.includes("id-token: write") || !attestJob.includes("attestations: write") || !attestJob.includes("artifact-metadata: write") ||
+    !attestJob.includes("needs: [changes, test, parser_fuzz, aot, aot_linux, aot_windows, verify_dispatch_coverage, verify_native_aot_artifacts]") || !attestJob.includes("needs.changes.outputs.level == 'full'") || !attestJob.includes("needs.test.result == 'success'") || !attestJob.includes("needs.parser_fuzz.result == 'success'") || !attestJob.includes("needs.aot.result == 'success'") || !attestJob.includes("needs.aot_linux.result == 'success'") || !attestJob.includes("needs.aot_windows.result == 'success'") || !attestJob.includes("needs.verify_dispatch_coverage.result == 'success'") || !attestJob.includes("needs.verify_native_aot_artifacts.result == 'success'") || !attestJob.includes("id-token: write") || !attestJob.includes("attestations: write") || !attestJob.includes("artifact-metadata: write") ||
     !attestJob.includes("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1") || !attestJob.includes("merge-multiple: true") ||
     !attestJob.includes("actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2") || !attestJob.includes("node tools/verify_dispatch_attestation.mjs") ||
     !attestJob.includes("id: attest-dispatch") || !attestJob.includes("--bundle \"${{ steps.attest-dispatch.outputs.bundle-path }}\"") ||
@@ -832,13 +1080,38 @@ const setupZigBlocks = [...workflow.matchAll(
   /      - uses: mlugg\/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2\.2\.1[\s\S]*?(?=      - uses: actions\/setup-node@)/g,
 )].map((match) => match[0]);
 const setupZigCacheSizeLimitMiB = 1536;
-if (setupZigBlocks.length !== 5 ||
+// このjob（aot）で`zig build`するのはmacOS nativeのみ。identityをsuiteだけで
+// なくfixture shardとoptimizationまで含める（v2世代）のは、setup-zigが保存key
+// へrunId-attemptを付けprefix一致で復元するため、同一prefixの並行jobが先行jobの
+// 未完成cacheを復元する経路を閉じるためである。
+const nativeAotCacheKey = "cache-key: ${{ matrix.task == 'native' && format('aot-native-v2-s{0}of{1}-{2}', matrix.fixtureShardIndex, matrix.fixtureShardCount, matrix.optimizationKey) || matrix.suite }}";
+// 共有compiler artifactをinstallするjob（producer 2件＋consumer 2件）は
+// `zig build`を行わないためZig cacheを保存しない。setup-zigブロックを
+// ワークフロー順に探すだけでは同じ特徴を持つ先頭のproducerブロックに一致し、
+// consumer側の再有効化を見逃す（Devinレビューで実指摘）ため、job単位で検査する。
+const setupZigStepPattern = /      - uses: mlugg\/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2\.2\.1[\s\S]*?(?=      - uses: actions\/setup-node@)/;
+const cacheDisabledJobs = new Map([
+  ["Windows AOT compiler producer", workflow.match(/  aot_compiler:[\s\S]*?(?=\n  aot_compiler_linux:)/)?.[0]],
+  ["Linux AOT compiler producer", workflow.match(/  aot_compiler_linux:[\s\S]*?(?=\n  aot:)/)?.[0]],
+  ["Linux AOT consumer job", linuxAotJob],
+  ["Windows AOT consumer job", windowsAotJob],
+]);
+for (const [label, jobText] of cacheDisabledJobs) {
+  const block = jobText?.match(setupZigStepPattern)?.[0];
+  if (!block || !block.includes("version: 0.16.0") || !block.includes("use-cache: false") ||
+      !block.includes(`cache-size-limit: ${setupZigCacheSizeLimitMiB}`) || block.includes("cache-key:")) {
+    throw new Error(`${label}のsetup-zigがZig cacheを保存しない設定になっていません`);
+  }
+}
+// setup-zigブロックは7つ（test／parser_fuzz／Windows producer／Linux producer／
+// aot（macOS nativeのみcache）／aot_linux／aot_windows）。
+if (setupZigBlocks.length !== 7 ||
     !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat' }}") && block.includes("cache-key: ${{ matrix.suite }}")) ||
-    !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.task == 'native' }}") && block.includes("cache-key: ${{ matrix.suite }}")) ||
-    !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: true") && block.includes("cache-key: aot-compiler")) ||
-    !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: false")) ||
-    (workflow.match(/cache-size-limit:/g) ?? []).length !== 4) {
-  throw new Error(`setup-zigのcache保存対象または${setupZigCacheSizeLimitMiB} MiB上限が不正です`);
+    !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.task == 'native' }}") && block.includes(nativeAotCacheKey)) ||
+    countOccurrences(workflow, nativeAotCacheKey) !== 1 ||
+    countOccurrences(workflow, "cache-key: aot-compiler") !== 0 ||
+    (workflow.match(/cache-size-limit:/g) ?? []).length !== 6) {
+  throw new Error(`setup-zigのcache保存対象、AOT shard／optimization単位のcache identity分離、Linux／Windows AOT shardのcache無効化、または${setupZigCacheSizeLimitMiB} MiB上限が不正です`);
 }
 
 const setupNodeBlock = workflow.match(
@@ -855,6 +1128,8 @@ for (const required of [
   "use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat' }}",
   "use-cache: ${{ matrix.task == 'native' }}",
   "cache-key: ${{ matrix.suite }}",
+  nativeAotCacheKey,
+  "use-cache: false",
   `cache-size-limit: ${setupZigCacheSizeLimitMiB}`,
   "timeout-minutes: 50",
 ]) if (!workflow.includes(required)) throw new Error(`CI安全設定がありません: ${required}`);
@@ -865,17 +1140,20 @@ if (oracleSkipConditions.length !== 3) {
 }
 
 const cacheActions = [...workflow.matchAll(/^      - uses: actions\/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6\.1\.0$/gm)];
-if (cacheActions.length !== 8) throw new Error(`actions/cache v6.1.0固定SHAは8ステップ必要です: actual=${cacheActions.length}`);
+// Linuxのcompiler producerとconsumer（aot_linux）を追加したため11ステップ。
+if (cacheActions.length !== 11) throw new Error(`actions/cache v6.1.0固定SHAは11ステップ必要です: actual=${cacheActions.length}`);
 // toolchain cache世代v3。keyにtoolchain定義とsetup scriptのhashを含め、
 // marker欠落でpoisonedな旧世代cacheを復元しないようrestore-keysは付けない。
 const toolchainCacheKey = "key: toolchains-${{ runner.os }}-${{ runner.arch }}-v3-${{ hashFiles('toolchain.lock.json', 'tools/setup_llvm.mjs', 'tools/setup_quickjs.mjs', 'tools/prune_llvm_toolchain.mjs') }}";
 const toolchainCacheBlocks = [...workflow.matchAll(
   /      - uses: actions\/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6\.1\.0\n        with:\n          path: \.cache\/toolchains\n[\s\S]*?(?=\n      - |\n  [a-z_]+:|$)/g,
 )].map((match) => match[0]);
-if (countOccurrences(workflow, toolchainCacheKey) !== 4 ||
-    toolchainCacheBlocks.length !== 4 || toolchainCacheBlocks.some((block) => block.includes("restore-keys:")) ||
+// Linuxのcompiler producerとconsumer（aot_linux）を追加したため6
+// （test／Windows producer／Linux producer／aot／aot_linux／aot_windows）。
+if (countOccurrences(workflow, toolchainCacheKey) !== 6 ||
+    toolchainCacheBlocks.length !== 6 || toolchainCacheBlocks.some((block) => block.includes("restore-keys:")) ||
     workflow.includes("-v2-minimal") ||
-    countOccurrences(workflow, "run: node tools/prune_llvm_toolchain.mjs") !== 4) {
+    countOccurrences(workflow, "run: node tools/prune_llvm_toolchain.mjs") !== 6) {
   throw new Error("LLVM toolchain cacheのv3世代key、旧世代restore-key排除、またはprune stepがtest／producer／AOT jobへ設定されていません");
 }
 // cache無効理由の分類出力と、prune→restore後もvalidと判定される回帰テストが
@@ -908,7 +1186,7 @@ if (comparisonBenchmarkWorkflow.includes("continue-on-error: true")) throw new E
 
 checkBashFailFastBehavior();
 
-console.log(`CI構成検査: 変更分類＋軽量検証＋${matrixEntries.length} matrixジョブ＋Windows AOT compiler producer＋coverage shard検証＋native AOT集約検証＋1 attestationジョブ・${stepSuites.size}条件付き検証ステップ成功`);
+console.log(`CI構成検査: 変更分類＋軽量検証＋${matrixEntries.length} matrixジョブ＋Windows／Linux AOT compiler producer＋Linux AOT consumer＋coverage shard検証＋native AOT集約検証＋1 attestationジョブ・${stepSuites.size}条件付き検証ステップ成功`);
 
 function checkFailFastShell(workflowText, filename) {
   const stepHeaders = [...workflowText.matchAll(/^      - name: .*$/gm)];

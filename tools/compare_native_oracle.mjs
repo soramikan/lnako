@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { execFile, spawn, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
+import { createTimingDocument, parseTimingPath, platformKey, roundMs, writeTimingDocument } from "./native_oracle_timing.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const noBuild = parseNoBuild();
@@ -25,9 +26,13 @@ const officialCli = resolve(oracleRoot, "src/cnako3.mjs");
 const fixedHost = resolve(root, "tools/oracle/fixed_host.mjs");
 const artifactPath = parseArtifactPath();
 if (artifactPath !== null) await ensureArtifactDestinationFree(artifactPath);
+// timing telemetryはcanonical evidenceと分離して別ファイルへ出力する。
+const timingPath = parseTimingPath(process.argv, process.env);
+const neededGitState = artifactPath !== null || timingPath !== null;
+const evidenceGitState = neededGitState ? gitState() : null;
 const artifactBaseline = artifactPath === null ? null : JSON.parse(await readFile(resolve(root, "compat/upstream.lock.json"), "utf8")).nadesiko3;
 const artifactToolchain = artifactPath === null ? null : JSON.parse(await readFile(resolve(root, "toolchain.lock.json"), "utf8"));
-const artifactGitState = artifactPath === null ? null : gitState();
+const artifactGitState = artifactPath === null ? null : evidenceGitState;
 const artifactCompareScriptSha256 = artifactPath === null ? null : sha256(await readFile(resolve(root, "tools/compare_native_oracle.mjs")));
 const oracleBaseline = JSON.parse(await readFile(resolve(root, "compat/upstream.lock.json"), "utf8")).nadesiko3;
 const oracleIdentity = await readOracleIdentity(oracleRoot, officialCli, oracleBaseline);
@@ -84,19 +89,31 @@ try {
     }
   }
   selectedCases = selectCases(cases, shard);
+  const concurrency = nativeOracleConcurrency();
   let completed;
   try {
-    completed = await runCases(selectedCases, temporary, executable, officialCli, nativeOracleConcurrency());
+    completed = await runCases(selectedCases, temporary, executable, officialCli, concurrency);
   } catch (error) {
     if (artifactPath !== null) {
       const artifact = createArtifact([], 1, selectedCases.length, artifactBaseline, artifactToolchain, artifactGitState, artifactCompareScriptSha256, artifactLnakoBinarySha256, artifactOracleIdentity, "infrastructure-failure", artifactSelection(cases.length, shard));
       validateArtifact(artifact);
       await writeArtifactExclusive(artifactPath, artifact);
     }
+    // インフラ失敗時も計測値を残すが、本来の失敗要因を隠さないよう
+    // telemetry側の失敗はstderrへ報告して元のerrorを投げ直す。
+    if (timingPath !== null) {
+      try {
+        await writeTiming(concurrency, "infrastructure-failure", []);
+      } catch (timingError) {
+        console.error(`timing telemetryの出力に失敗しました: ${timingError instanceof Error ? timingError.message : String(timingError)}`);
+      }
+    }
     throw error;
   }
   const artifactFixtures = [];
-  for (const { testCase, results, stderrResults, officialCompile, compileErrors, manifestSummary, generatedJavaScriptSha256, compileStatuses } of completed) {
+  const timingFixtures = [];
+  for (const { testCase, results, stderrResults, officialCompile, compileErrors, manifestSummary, generatedJavaScriptSha256, compileStatuses, timing } of completed) {
+    timingFixtures.push(timing);
     if (testCase.oracle === "official-generated") generatedOracleCases += 1;
     if (testCase.oracle === "official-source") sourceOracleCases += 1;
     const oracleKey = testCase.oracle === "official-generated" ? "officialGenerated" : "officialSource";
@@ -174,6 +191,16 @@ try {
     validateArtifact(artifact);
     await writeArtifactExclusive(artifactPath, artifact);
   }
+  // timing telemetryはcanonical evidenceではない任意の計測出力であり、
+  // 書込み障害でAOT差分検証そのものを失敗させない（stderrへ報告して継続）。
+  // インフラ失敗経路の扱いと揃える。
+  if (timingPath !== null) {
+    try {
+      await writeTiming(concurrency, failures === 0 ? "success" : "comparison-failure", timingFixtures);
+    } catch (timingError) {
+      console.error(`timing telemetryの出力に失敗しました: ${timingError instanceof Error ? timingError.message : String(timingError)}`);
+    }
+  }
   if (failures > 0) throw new Error(`AOT実行結果の差分が${failures}件あります`);
   console.log(
     `公式cnako3・公式生成JavaScript・lnako run・LLVM AOT ${selectedOptimizations.join("/")}の${routeNames.length}経路実行差分テスト: ${selectedCases.length}件成功` +
@@ -224,6 +251,8 @@ async function runCases(cases, temporary, executable, officialCli, concurrency) 
 }
 
 async function runCase(testCase, index, temporary, executable, officialCli, collectManifest) {
+  // fixture別timing telemetry。canonical artifactへは入れず、別documentへ出力する。
+  const fixtureStart = performance.now();
   // The ordinal makes temporary paths unique even if a future fixture list
   // accidentally contains duplicate IDs. Each worker owns one fixture, and
   // all commands within that fixture remain sequential. A private cwd also
@@ -251,7 +280,13 @@ async function runCase(testCase, index, temporary, executable, officialCli, coll
   const runOptions = testCase.stdin === undefined ? options : { ...options, input: testCase.stdin };
   const oracleHost = testCase.normalizeDebugDump ? resolve(root, "tools/oracle/normalize_debug_host.mjs") : fixedHost;
   const oracleHostArgument = ["--import", pathToFileURL(oracleHost).href];
+  // 公式source経路の計測範囲は「準備完了後〜公式CLI実行完了」に限定する。
+  // fixtureStartはディレクトリ作成・source書き込み・環境構築を含むため、
+  // totalMs専用とし、officialSourceMsには使わない（他の経路と同じ粒度に揃える）。
+  const officialSourceStart = performance.now();
   const officialSource = await runProcess(process.execPath, [...oracleHostArgument, officialCli, sourcePath], runOptions);
+  const officialSourceMs = elapsedMs(officialSourceStart);
+  const compileStart = performance.now();
   const officialCompile = await runProcess(process.execPath, [...oracleHostArgument, officialCli, "--compile", "--silent", "--output", generatedJavaScript, sourcePath], options);
   if (officialCompile.status === 0) {
     try {
@@ -265,8 +300,12 @@ async function runCase(testCase, index, temporary, executable, officialCli, coll
     }
   }
   const officialGenerated = officialCompile.status === 0 ? await runProcess(process.execPath, [...oracleHostArgument, generatedJavaScript], runOptions) : officialCompile;
+  // 公式生成routeのコストは「JavaScript生成＋生成物実行」の合計として記録する。
+  const officialGeneratedMs = roundMs(performance.now() - compileStart);
   const generatedJavaScriptSha256 = collectManifest && officialCompile.status === 0 ? sha256(await readFile(generatedJavaScript)) : null;
+  const interpretedStart = performance.now();
   const interpreted = await runProcess(executable, ["run", sourcePath], runOptions);
+  const interpreterMs = roundMs(performance.now() - interpretedStart);
   const results = {
     officialSource: normalize(officialSource),
     officialGenerated: normalize(officialGenerated),
@@ -281,23 +320,44 @@ async function runCase(testCase, index, temporary, executable, officialCli, coll
   const manifestPath = collectManifest && selectedOptimizations.includes("O0") ? resolve(fixtureDirectory, `${stem}-manifest.jsonl`) : null;
   let manifestSummary = null;
   const compileStatuses = collectManifest ? Object.fromEntries(selectedOptimizations.map((optimization) => [optimization, null])) : null;
+  const nativeTimings = [];
   for (const optimization of selectedOptimizations) {
     const nativeExecutable = resolve(fixtureDirectory, `${stem}-${optimization}${process.platform === "win32" ? ".exe" : ""}`);
     const compileOptions = manifestPath !== null && optimization === "O0"
       ? { ...options, env: { ...options.env, LNAKO_COMPILE_MANIFEST: manifestPath } }
       : options;
+    const nativeCompileStart = performance.now();
     const nativeCompile = await runProcess(executable, ["build", sourcePath, "-o", nativeExecutable, `-${optimization}`], compileOptions);
+    const buildMs = roundMs(performance.now() - nativeCompileStart);
     if (compileStatuses !== null) compileStatuses[optimization] = nativeCompile.status;
     if (manifestPath !== null && optimization === "O0" && nativeCompile.status === 0) {
       manifestSummary = await readManifestSummary(manifestPath);
     }
+    const nativeRunStart = performance.now();
     const nativeResult = nativeCompile.status === 0 ? await runProcess(nativeExecutable, [], runOptions) : nativeCompile;
+    // build失敗時はnativeResultがcompile結果そのものなので二重計上しない。
+    const runMs = nativeCompile.status === 0 ? roundMs(performance.now() - nativeRunStart) : 0;
+    nativeTimings.push({ optimization, buildMs, runMs });
     results[`lnakoNative${optimization}`] = normalize(nativeResult);
     stderrResults[`lnakoNative${optimization}`] = normalizeStderr(nativeResult);
     if (nativeCompile.status !== 0) compileErrors.push(`${optimization}:\n${nativeCompile.stderr}`);
   }
   if (manifestPath !== null) await rm(manifestPath, { force: true });
-  return { testCase, results, stderrResults, officialCompile, compileErrors, manifestSummary, generatedJavaScriptSha256, compileStatuses };
+  const timing = {
+    id: testCase.id,
+    platform: platformKey(),
+    optimizations: [...selectedOptimizations],
+    officialSourceMs,
+    officialGeneratedMs,
+    interpreterMs,
+    native: nativeTimings,
+    totalMs: elapsedMs(fixtureStart),
+  };
+  return { testCase, results, stderrResults, officialCompile, compileErrors, manifestSummary, generatedJavaScriptSha256, compileStatuses, timing };
+}
+
+function elapsedMs(start) {
+  return roundMs(performance.now() - start);
 }
 
 function replaceNativePluginPlaceholders(source, oracleRoot, fixtureDirectory) {
@@ -787,6 +847,26 @@ function assertStringArray(value, expected, label, allowed = new Set(expected ??
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !allowed.has(item)) || new Set(value).size !== value.length || (expected !== null && JSON.stringify(value) !== JSON.stringify(expected))) {
     throw new Error(`${label}が不正です`);
   }
+}
+
+/**
+ * timing telemetryを別documentとして書き出す。canonical artifactと同じく
+ * 「どのcommit・どのshard・どのoptimization・どの並列度」で測ったかを残し、
+ * 後段のmedian weight tableが条件を混ぜずに集計できるようにする。
+ */
+async function writeTiming(concurrency, status, timingFixtures) {
+  const document = createTimingDocument({
+    platform: process.platform,
+    arch: process.arch,
+    commit: evidenceGitState.commit,
+    concurrency,
+    shard,
+    totalFixtureCount: cases.length,
+    optimizations: selectedOptimizations,
+    status,
+    fixtures: timingFixtures,
+  });
+  await writeTimingDocument(timingPath, document);
 }
 
 async function writeArtifactExclusive(path, artifact) {
