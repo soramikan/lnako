@@ -38,6 +38,9 @@ pub fn parseExpressionWithContext(self: *Parser, minimum_precedence: u8, allow_n
 }
 
 pub fn parseUnary(self: *Parser, allow_negative_number_literal: bool) ParseFailure!*ast.Node {
+    // 式の再帰下降はすべてここを通るため、入れ子の上限はここで数える。
+    try self.enterNesting();
+    defer self.leaveNesting();
     if (self.at(.plus)) return self.fail(.unexpected_token, "単項『+』は使用できません", self.peek());
     if (self.delimited_expression_depth > 0 and !allow_negative_number_literal and self.at(.minus) and self.peekAhead(1).kind == .bigint) {
         return self.fail(.unexpected_token, "括弧・配列・辞書の内側では負のBigIntリテラルを直接使用できません", self.peek());

@@ -53,6 +53,19 @@ pub const ParseOptions = struct {
     builtin_commands: []const []const u8 = &.{},
 };
 
+/// 式・命令の再帰下降の入れ子の上限。公式も極端に深い入れ子を文法エラー
+/// 『Maximum call stack size exceeded』で拒否する（v3.7.24・固定オラクルで
+/// `((((1))))`は1,000段成功・2,000段失敗）。上限が無いとパーサ自身の再帰が
+/// 深い括弧・ブロックでプロセススタックを使い切るため、位置付き診断へ収束させる。
+pub const max_parse_nesting_depth: usize = 1024;
+
+/// ASTの入れ子の上限。連鎖呼出しと左入れ子の演算子（`1+1+...`）はパーサの再帰を
+/// 深くしないまま深いASTを作るため、別に測る。公式の実測境界は連鎖・`+`連鎖とも
+/// 2,000段成功・3,000段失敗なので、その受理範囲を含む2048を上限にする。
+/// 後段の意味解析と中間表現loweringはASTを再帰走査するため、上限を超える入力は
+/// プロセスクラッシュではなく位置付き診断へ収束させる。
+pub const max_ast_depth: usize = 2048;
+
 pub const ParseResult = struct {
     stream: lexer.TokenStream,
     filename: []const u8,
@@ -111,10 +124,23 @@ pub fn parseWithMode(backing_allocator: std.mem.Allocator, source: []const u8, f
         .tail_modes = options.tail_modes,
         .builtin_commands = options.builtin_commands,
     };
-    const root = parser.parseProgram() catch |err| switch (err) {
+    var root = parser.parseProgram() catch |err| switch (err) {
         error.ParseFailed => null,
         error.OutOfMemory => return error.OutOfMemory,
     };
+    // パーサの再帰では捕まえられない深い左入れ子（`1+1+...`）と連鎖呼出しを、
+    // 再帰走査する意味解析・loweringへ渡す前に位置付き診断で止める。
+    if (root) |node| {
+        if (try parser.exceedAstDepth(node)) |span| {
+            try parser.diagnostics.append(allocator, .{
+                .code = .nesting_too_deep,
+                .message = "式や命令の入れ子が深すぎます",
+                .file = owned_filename,
+                .span = span,
+            });
+            root = null;
+        }
+    }
     const diagnostics = try parser.diagnostics.toOwnedSlice(allocator);
     return .{
         .stream = stream,
@@ -156,7 +182,43 @@ pub const Parser = struct {
     import_modes: std.ArrayList(ImportMode) = .empty,
     index: usize = 0,
     delimited_expression_depth: usize = 0,
+    /// 再帰下降の現在の深さ（`max_nesting_depth`と比較する）。
+    nesting_depth: usize = 0,
     diagnostics: std.ArrayList(diagnostic.Diagnostic) = .empty,
+
+    /// 再帰下降の一段分を数え、上限を超えたら位置付き診断にする。
+    /// 上限が無いとパーサ自身の再帰が深い括弧・ブロックでプロセススタックを使い切る。
+    pub fn enterNesting(self: *Parser) ParseFailure!void {
+        self.nesting_depth += 1;
+        if (self.nesting_depth > max_parse_nesting_depth) return self.fail(.nesting_too_deep, "式や命令の入れ子が深すぎます", self.peek());
+    }
+
+    pub fn leaveNesting(self: *Parser) void {
+        self.nesting_depth -= 1;
+    }
+
+    /// 解析済みのASTの深さを、明示的なスタックで測る（再帰すると検査自体が
+    /// プロセススタックを使い切る）。上限を超えたときだけ最深部の位置を返す。
+    /// パーサの再帰深さでは捕まえられない左入れ子（`1+1+...`）と連鎖呼出しを、
+    /// 後段の意味解析・loweringへ渡す前に止める。
+    pub fn exceedAstDepth(self: *Parser, root: *ast.Node) std.mem.Allocator.Error!?ast.Span {
+        const Frame = struct { node: *ast.Node, index: usize };
+        var stack: std.ArrayList(Frame) = .empty;
+        defer stack.deinit(self.allocator);
+        try stack.append(self.allocator, .{ .node = root, .index = 0 });
+        while (stack.items.len > 0) {
+            const top = stack.items[stack.items.len - 1];
+            if (top.index >= top.node.children.len) {
+                _ = stack.pop();
+                continue;
+            }
+            stack.items[stack.items.len - 1].index += 1;
+            const child = top.node.children[top.index];
+            if (stack.items.len + 1 > max_ast_depth) return child.span;
+            try stack.append(self.allocator, .{ .node = child, .index = 0 });
+        }
+        return null;
+    }
 
     pub fn parseProgram(self: *Parser) ParseFailure!*ast.Node {
         const root = try self.parseBlock(.{});
@@ -188,6 +250,8 @@ pub const Parser = struct {
     }
 
     pub fn parseBlock(self: *Parser, stop: Stop) ParseFailure!*ast.Node {
+        try self.enterNesting();
+        defer self.leaveNesting();
         const first = self.peek();
         var children: std.ArrayList(*ast.Node) = .empty;
         while (!self.at(.eof) and !self.isStop(stop)) {

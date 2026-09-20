@@ -531,3 +531,54 @@ test "長い連鎖呼出しでもパーサは再帰せずに解析する" {
     try std.testing.expectEqual(ast.Kind.string, current.kind);
     try std.testing.expectEqualStrings("a", current.value);
 }
+
+test "ASTの深さが上限を超えたら位置付き診断にする" {
+    const names = [_][]const u8{ "大文字変換", "表示" };
+    var source: std.ArrayList(u8) = .empty;
+    defer source.deinit(std.testing.allocator);
+    try source.appendSlice(std.testing.allocator, "「a」の");
+    // 公式は2,000段の連鎖を受理し、3,000段を文法エラーにする（実測）。
+    var index: usize = 0;
+    while (index < parser_mod.max_ast_depth + 8) : (index += 1) try source.appendSlice(std.testing.allocator, "大文字変換を");
+    try source.appendSlice(std.testing.allocator, "表示\n");
+    var result = try parser_mod.parseWithMode(std.testing.allocator, source.items, "deep-chain.nako3", .{
+        .builtin_commands = &names,
+    });
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+    try std.testing.expectEqual(@as(?*ast.Node, null), result.root);
+    try std.testing.expectEqual(diagnostic.Code.nesting_too_deep, result.diagnostics[0].code);
+    try std.testing.expectEqual(@as(usize, 0), result.diagnostics[0].span.line);
+}
+
+test "深い演算子の入れ子が上限を超えたら位置付き診断にする" {
+    var source: std.ArrayList(u8) = .empty;
+    defer source.deinit(std.testing.allocator);
+    try source.appendSlice(std.testing.allocator, "それは1");
+    var index: usize = 0;
+    while (index < parser_mod.max_ast_depth + 8) : (index += 1) try source.appendSlice(std.testing.allocator, "+1");
+    try source.appendSlice(std.testing.allocator, "\nそれを表示。\n");
+    var result = try parse(std.testing.allocator, source.items, "deep-sum.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+    try std.testing.expectEqual(@as(?*ast.Node, null), result.root);
+    try std.testing.expectEqual(diagnostic.Code.nesting_too_deep, result.diagnostics[0].code);
+}
+
+test "深い括弧の入れ子が上限を超えたら位置付き診断にする" {
+    const depth = parser_mod.max_parse_nesting_depth + 8;
+    var source: std.ArrayList(u8) = .empty;
+    defer source.deinit(std.testing.allocator);
+    try source.appendSlice(std.testing.allocator, "それは");
+    var index: usize = 0;
+    while (index < depth) : (index += 1) try source.appendSlice(std.testing.allocator, "(");
+    try source.appendSlice(std.testing.allocator, "1");
+    index = 0;
+    while (index < depth) : (index += 1) try source.appendSlice(std.testing.allocator, ")");
+    try source.appendSlice(std.testing.allocator, "\nそれを表示。\n");
+    var result = try parse(std.testing.allocator, source.items, "deep-paren.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+    try std.testing.expectEqual(@as(?*ast.Node, null), result.root);
+    try std.testing.expectEqual(diagnostic.Code.nesting_too_deep, result.diagnostics[0].code);
+}
