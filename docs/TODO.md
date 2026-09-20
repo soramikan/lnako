@@ -78,6 +78,9 @@
   - 構造化エラーハンドリング、生I/Oストリーム、逐次ハッシュ計算、ファイルシステム低層APIの拡充。
 - **性能・最適化の継続管理**：
   - Interpreterの実行速度向上、文字列連結・正規表現の最適化、Windowsバイナリサイズの削減（[#12](https://github.com/soramikan/lnako/issues/12)）。
+- **Windowsのsocket teardown時panic（CIのテスト結果では検知できない）**：
+  - Windowsの単体テストで、ピアが閉じたsocketのreadが `std.Io.Threaded.netReadWindows` の `unexpectedStatus` により `LOCAL_DISCONNECT`（0xc000013b）／`CONNECTION_RESET`（0xc000020d）でpanicする。`zig build test --summary all` の集計は Windows `11/11 steps succeeded; 1685/1724 tests passed (39 skipped)`、macOS `11/11 steps succeeded; 1717/1724 tests passed (7 skipped)` で、**failed／crashed／timed outはいずれも0**であり、panicはどのテストにも帰属されずstepは成功する（WindowsはmacOSより32件多くskipする）。
+  - 痕跡が出るテストは `TLS初期化後のTLS接続失敗はpanicにならない` と `受信engineのstopはqueue内socketを一度だけ閉じてworkerを回収する`。後続課題として、std側のNTSTATUSマッピング（`error.ConnectionResetByPeer` 等）と、lnako側のspawn threadのjoinによりpanicをテスト失敗として顕在化させることを検討する。実測は [ci-performance.md](ci-performance.md) に記録。
 
 ## リリース時チェックリスト
 

@@ -891,28 +891,29 @@ job名（`Linux x86_64 / AOT native shard 1/3 / O0+O1` 等）は変えていな�
 
 ## 改善計画2 の最終結果
 
-| 指標 | 改善前 | Phase 1〜5後（7 run） | Phase 6後（4 run） | wall律速job分割後（n=2） |
+| 指標 | 改善前 | Phase 1〜5後（7 run） | Phase 6後（4 run） | wall律速job分割後（n=3） |
 | --- | ---: | ---: | ---: | ---: |
-| workflow wall clock | 1,112s | 876〜1,462s（median 約1,113s） | 1,071〜1,141s（median 約1,130s）※ | **829s／832s（median 13m51s）** |
-| 全job runner minutes | 213 min | 166〜191 min（median 174.8） | 151.6〜169.1（median 159.4） | 152.4／155.9 min |
+| workflow wall clock | 1,112s | 876〜1,462s（median 約1,113s） | 1,071〜1,141s（median 約1,130s）※ | **818〜832s（median 829s＝13m49s）** |
+| 全job runner minutes | 213 min | 166〜191 min（median 174.8） | 151.6〜169.1（median 159.4） | 146.1〜155.9 min（median 152.4） |
 | matrix job数 | 57 | 45 | 総47（matrix 40＋producer／後段7）※ | 総47（同左） |
 | AOT検証ステップ（24 shard合計） | 1,896s | 1,163s | -38.7% | -38.7%（不変） |
 | Linux AOT job群（8 consumer＋producer） | — | 21.0〜32.2 min（median 26.6） | 11.3〜11.8 min（median 11.4） | 11.6 min |
 
 計画の短期目標に対する到達状況:
 
-- Wall clock 20〜30%削減 → **wall律速jobの分割で目標帯へ到達（n=2で連続）**。
+- Wall clock 20〜30%削減 → **wall律速jobの分割で目標帯へ到達（n=3で連続）**。
   46 job構成のmedian（17m51s）までしか下がっていなかったwallは、`Windows x86_64 / core`
   （median 17m12s）が律速していたためである。分割後は律速が `Windows compat-aot`
-  （13m11s／13m15s）へ移り、wall 829s／832s（13m49s／13m52s、run 35487256825・
-  35488606007）となった。改善前比では -25.3%（57 job基準、median 831s）／
-  -37.9%（54 jobベースライン基準）。**n=2のため系列を蓄積して確認する**。
+  （13m11s／13m15s／12m59s）と `macOS host-compat`（13m00s）へ移り、wallは
+  818〜832s（median 829s＝13m49s、run 35487256825・35488606007・35489573736）
+  となった。改善前比では -25.4%（57 job基準、median 829s）／
+  -38.1%（54 jobベースライン基準）。**n=3のため系列を蓄積して確認する**。
   途中で「wall 1,112s→876s（-21%）」と記録したが、その876sは速い側の外れ値runで
   あり代表値ではない。**この-21%は誤った一般化として撤回する**（Phase 4・5の
   セクションの当時の記録はそのまま残す）。
 - Runner minutes → **Phase 1〜5で-22%**（213→median 174.8 min）、**Phase 6で
   追加-15.4 min/run**（median 174.8→159.4、改善前比 **-25.2%**）。wall分割後も
-  runner minutes median 152.5（46 job、n=9）→154.2（47 job、n=2）で**-25%以上を維持**する。
+  runner minutes median 152.5（46 job、n=9）→152.4（47 job、n=3）で**-25%以上を維持**する。
   残りは Windows coreの実ビルド／実実行コスト（CI構造では削減不可）に由来する。
 - Physical上「検証量を減らさず」を維持（Phase 4・5・6とwall分割はビルドと実行の
   重複のみ除去し、jobを分けただけである）。
@@ -944,15 +945,15 @@ Linux AOT job群の実測と複数runのmedianに基づく。
 | 全job runner minutes | 9 | 152.5 | 161.9 | 166.9 | 167.8 | 146.2 | 168.7 |
 | Linux AOT job群（8 consumer＋producer、分） | 9 | 11.7 | 11.8 | 12.0 | 12.0 | 11.3 | 12.0 |
 
-#### 47 job構成（wall律速jobの分割後。n=2）
+#### 47 job構成（wall律速jobの分割後。n=3）
 
-n=2ではp75/p90/p95が標本の線形補間になり意味を持たないため、median/min/maxのみ示す。
+n=3ではp90/p95が標本の線形補間になり意味を持たないため、median/min/maxのみ示す。
 
 | 指標 | n | median | min | max |
 | --- | ---: | ---: | ---: | ---: |
-| workflow wall clock（分） | 2 | 13.8 | 13.8 | 13.9 |
-| 全job runner minutes | 2 | 154.2 | 152.4 | 155.9 |
-| Linux AOT job群（8 consumer＋producer、分） | 2 | 11.9 | 11.6 | 12.2 |
+| workflow wall clock（分） | 3 | 13.8 | 13.6 | 13.9 |
+| 全job runner minutes | 3 | 152.4 | 146.1 | 155.9 |
+| Linux AOT job群（8 consumer＋producer、分） | 3 | 11.6 | 11.5 | 12.2 |
 
 - 全job runner minutesのmin 146.2は、`test` job行が速い側へ振れたrunである
   （同job行は193〜860sで変動する）。
@@ -984,7 +985,7 @@ run 35472553438がwall 6m18sに対して最長job 17m26sとなり、**jobがrun�
 
 サンプル数を20〜30へ増やして再評価するのは継続課題である（本節はその途中経過）。
 
-#### Windowsのtest stepに出るpanic痕跡と`--summary all`による確認（調査中）
+#### Windowsのtest stepに出るpanic痕跡（`--summary all`で判定済み）
 
 Windowsの`Test`／`Test QuickJS build` stepのlogには、Zigのtest runnerが出力する
 **panic痕跡**が含まれる（Linux／macOSの同stepには出ない）。痕跡の起点は
@@ -998,17 +999,23 @@ Windowsの`Test`／`Test QuickJS build` stepのlogには、Zigのtest runnerが�
 | Linux `compat-aot` | `Test QuickJS build` | なし | 176s | success |
 | macOS `mac-host-compat` | `Test QuickJS build` | なし | 235s | success |
 
-痕跡の直後には`failed command: ...test.exe ... --listen=-`が出る。Zig 0.16の
-`std/Build/Step/Run.zig`では`Step.TestResults.isSuccess()`が`crash_count != 0`で
-falseになり、crashが計上されればstepは失敗する。**step結論がsuccessである以上、
-build systemがcrashとして計上しない経路（spawnしたスレッド内でのpanicなど）が
-残っている**が、CIのlogだけでは判別できない（実行時間はWindowsがLinuxの2倍以上で、
-この痕跡との関連も未検証）。
+痕跡の直後には`failed command: ...test.exe ... --listen=-`が出る。step結論がsuccessで
+あることから、痕跡の有無だけでは実害を判断できない。そこで両test stepへ
+`--summary all`（出力のみ。テスト意味は不変）を追加し、run 35489573736で集計を確認した。
 
-そこで両test stepへ`--summary all`（出力のみ。テスト意味は不変）を追加した。
-test binaryごとの`N pass, M skip, K failed, J crashed, I timed out`がlogへ出るため、
-痕跡の有無ではなく**集計**で判定できる。集計が0件なら痕跡は実行結果に影響しない出力、
-0でなければCIが失敗を表示できていないことになり、step側で明示的に検証する必要がある。
+| OS（run 35489573736） | Build Summary | test binary別 |
+| --- | --- | --- |
+| Windows `core` | `11/11 steps succeeded; 1685/1724 tests passed (39 skipped)` | 797＋840＋48 pass、17＋22 skip、**failed／crashed／timed outは0** |
+| macOS `mac-core-standard-support` | `11/11 steps succeeded; 1717/1724 tests passed (7 skipped)` | 810＋859＋48 pass、4＋3 skip、**failed／crashed／timed outは0** |
+
+**登録されるテスト数は両OSで同じ1724**で、Windowsは39件（macOS比+32件）をskipする。
+panic痕跡は**どのテストにも帰属されず`crash_count`は0**なのでstepは成功する（panicは
+test関数の完了後に残ったspawn thread内で起き、子processはexit 0で終わるため、というのが
+観測とZigの`std/Build/Step/Run.zig`の分岐から導ける説明である）。
+
+したがってCIは「失敗したテスト」を隠してはいないが、**panicがテスト結果へ現れない盲点**が
+ある。後続課題として、std側のNTSTATUSマッピングとlnako側のthread joinを検討する
+（[TODO.md](TODO.md) に記録）。
 
 
 #### step統計の忠実性（skipされたstepを除外する修正）
@@ -1091,30 +1098,32 @@ job内のsetup系は合計43s）。そこで最大の独立検証である `Zig 
 Windows専用job（`suite: win-package-isolation`）へ分離し、Windows `core`では同stepを
 skipする。**検証量は変えず、実行するjobだけを分ける**。
 
-#### 実測（run 35487256825・35488606007。47 job・failure 0）
+#### 実測（run 35487256825・35488606007・35489573736。47 job・failure 0）
 
-| 指標 | 分割前（46 job、n=9） | 分割後（47 job、n=2） |
+| 指標 | 分割前（46 job、n=9） | 分割後（47 job、n=3） |
 | --- | ---: | ---: |
-| workflow wall clock | median 17m51s（12m42s〜24m07s） | **13m49s／13m52s** |
-| 律速job | `Windows core` median 17m12s（p75 17m54s） | `Windows compat-aot` 13m11s／13m15s |
-| `Windows x86_64 / core` | median 17m12s（p75 17m54s） | 10m51s／12m38s |
-| `Windows x86_64 / win-package-isolation`（新規） | — | 6m34s／6m52s（うち isolation step 5m47s／6m02s） |
-| 全job runner minutes | median 152.5（n=9） | 152.4／155.9 |
+| workflow wall clock | median 17m51s（12m42s〜24m07s） | **13m49s／13m52s／13m38s** |
+| 律速job | `Windows core` median 17m12s（p75 17m54s） | `Windows compat-aot` 13m11s／13m15s／12m59s |
+| `Windows x86_64 / core` | median 17m12s（p75 17m54s） | 10m51s／12m38s／6m54s |
+| `Windows x86_64 / win-package-isolation`（新規） | — | 6m34s／6m52s／5m37s |
+| 全job runner minutes | median 152.5（n=9） | 152.4／155.9／146.1 |
 
-2 run とも wall は最長job＋38s以内（38s／37s）で、律速は `Windows compat-aot`
-（`Test QuickJS build` と `Build QuickJS compiler` の2段のビルド）へ移った。これが
-当面のwall下限（約13分）になる。`Windows core` は2 run目に12m38sへ伸びたが
-（runner間の変動）、それでも律速にはならない。
+3 run とも wall は最長job＋38s以内（38s／37s／38s）。律速は
+`Windows compat-aot`（791s／795s／779s）と `macOS host-compat`（634s／671s／780s）が
+入れ替わるようになり、**上位2 jobが16s差まで並んだ**（run 35489573736の最長は
+macOS host-compat 780s、Windows compat-aot 779s）。これが当面のwall下限（約13分）に
+なる。wallをさらに下げるには両方を同時に短縮する必要がある。
+`Windows core` 自体も414〜758sとrun間で1.8倍振れるため、柱の特定は複数runのmedianで行う。
 
 計画§14のwall clock目標（full CI baseline比-20〜30%）に対する到達状況は、基準の取り方で
-次のとおり。**分割後はn=2のため、目標帯に入ったという初回観測であり、系列を蓄積して確認する**
+次のとおり。**分割後はn=3のため、目標帯に入ったという初回観測であり、系列を蓄積して確認する**
 （§10は少数サンプルでの判断を禁じている）。
 
-| 基準 | wall | 分割後（median 831s＝13m51s）との差 |
+| 基準 | wall | 分割後（median 829s＝13m49s）との差 |
 | --- | ---: | ---: |
-| 改善前ベースライン節（54 job、n=3、median） | 22m19s | -37.9% |
-| 最終結果表の改善前（57 job、run 35453416527） | 18m32s | -25.3% |
-| 直近の46 job構成（n=9、median） | 17m51s | -22.4% |
+| 改善前ベースライン節（54 job、n=3、median） | 22m19s | -38.1% |
+| 最終結果表の改善前（57 job、run 35453416527） | 18m32s | -25.4% |
+| 直近の46 job構成（n=9、median） | 17m51s | -22.6% |
 
 同runのstep実測からの算術では、分割前なら `Windows x86_64 / core` が
 10m51s＋5m47s＝**16m38s**となり、`Windows compat-aot`（13m11s）より長いまま律速していた。
