@@ -269,6 +269,7 @@ export function collectRunMetrics(run, jobs, toolchainByJob = new Map(), options
   return {
     id: run.id,
     event: run.event,
+    attempt: run.run_attempt ?? 1,
     conclusion: run.conclusion,
     headBranch: run.head_branch,
     createdAt: run.created_at,
@@ -408,6 +409,9 @@ export function formatMarkdown({ repo, workflow, generatedAt, runs, aggregate, s
     ...(selection === null ? [] : [`系列フィルタ: branch=${selection.branch ?? "-"} / jobs=${selection.expectedJobCount ?? "-"} / since=${selection.since ?? "-"}（要求${selection.requested} run・採用${selection.adopted} run・探索${selection.exploredRuns ?? "-"} run）`]),
     ...(selection !== null && selection.adopted < selection.requested
       ? [`注意: 構成の異なるrun ${selection.skippedByJobCount.length}件を除外したため、採用run数が要求${selection.requested}に達していません（旧構成で穴埋めしない）。`]
+      : []),
+    ...(selection !== null && (selection.skippedByAttempt ?? []).length > 0
+      ? [`注意: 部分再実行run（run_attempt > 1）${selection.skippedByAttempt.length}件を除外しました。再実行されなかったjobは前attemptの実行時刻のまま返り、/timingのrun_duration_msは最新attemptしか指さないため、wall／runner minutes／step統計が単一の実行区間になりません。`]
       : []),
     ...(selection !== null && selection.unexplored === true
       ? [`注意: run一覧の探索上限（${MAX_RUN_PAGES}ページ）に達したため、未探索のrunがあります。採用数とpercentileは不完全です。`]
@@ -550,6 +554,7 @@ export async function collectMetrics({ repo, workflow, runCount, branch = null, 
   const branchQuery = branch === null ? "" : `&branch=${encodeURIComponent(branch)}`;
   const collected = [];
   const skippedByJobCount = [];
+  const skippedByAttempt = [];
   // 構成フィルタで採用が少なくなるとき、1ページだけで探索を打ち切ると
   // 範囲外にある一致runを取りこぼす。採用数が要求へ達するか候補が尽きるまで
   // run一覧をページングする（上限に達した場合は未探索があることを報告する）。
@@ -568,6 +573,16 @@ export async function collectMetrics({ repo, workflow, runCount, branch = null, 
     for (const run of pageRuns) {
       if (collected.length >= runCount) break;
       if (run.conclusion !== "success") continue;
+      // 部分再実行（run_attempt > 1）のrunは、再実行されなかったjobが前attemptの
+      // started_at/completed_atのまま返り、job一覧がattempt間で混在する。一方
+      // /timingのrun_duration_msは最新attemptしか指さないため、wall／runner
+      // minutes／step統計が単一の実行区間にならず、jobがrunより長い観測になる
+      // （実測: run 35472553438はwall 6m18s・最長job 17m26s）。再現できる観測では
+      // ないため系列から除外する。
+      if (Number.isSafeInteger(run.run_attempt) && run.run_attempt > 1) {
+        skippedByAttempt.push({ id: run.id, attempt: run.run_attempt });
+        continue;
+      }
       // run一覧は新しい順なので、--sinceより古いrunに達したら以降も対象外。
       if (sinceMs !== null && Date.parse(run.created_at) < sinceMs) {
         reachedSince = true;
@@ -636,13 +651,15 @@ export async function collectMetrics({ repo, workflow, runCount, branch = null, 
     adopted: collected.length,
     // 構成の異なるrunは採用しない（旧構成で要求数を穴埋めしない）。
     skippedByJobCount,
+    // 部分再実行runはattempt混在で単一実行区間にならないため採用しない。
+    skippedByAttempt,
     exploredRuns,
     // "since"=境界到達, "exhausted"=候補尽き, "page-limit"=探索上限で未探索あり。
     exploration,
     unexplored: exploration === "page-limit",
   };
   if (collected.length < runCount) {
-    log(`要求${runCount} runに対し採用${collected.length} run（構成の異なるrunを除外: ${skippedByJobCount.length}件${exploration === "page-limit" ? `・探索は${MAX_RUN_PAGES}ページ（${exploredRuns} run）で打ち切り` : ""}）`);
+    log(`要求${runCount} runに対し採用${collected.length} run（構成の異なるrunを除外: ${skippedByJobCount.length}件・部分再実行runを除外: ${skippedByAttempt.length}件${exploration === "page-limit" ? `・探索は${MAX_RUN_PAGES}ページ（${exploredRuns} run）で打ち切り` : ""}）`);
   }
   return { runs: collected, aggregate: aggregateRuns(collected), selection };
 }

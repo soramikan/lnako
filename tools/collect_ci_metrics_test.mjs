@@ -503,6 +503,44 @@ test("collectMetricsは構成の異なるrun（--jobs）を系列から除外し
   assert.match(markdown, /構成の異なるrun 1件を除外/);
 });
 
+test("collectMetricsは部分再実行run（run_attempt>1）を系列から除外する", async () => {
+  // 部分再実行runは再実行されなかったjobが前attemptの実行時刻のまま返り、
+  // /timingのrun_duration_msは最新attemptしか指さないため、wall／runner minutes／
+  // step統計が単一実行区間にならない（実測: run 35472553438はwall 6m18s・最長job 17m26s）。
+  const rerunRun = { ...runFixture, id: 400, run_attempt: 2, created_at: "2026-09-20T02:00:00Z" };
+  const freshRun = { ...runFixture, id: 500, run_attempt: 1, created_at: "2026-09-20T01:00:00Z" };
+  const logs = [];
+  const ghApiJsonImpl = async (path) => {
+    if (path.includes("/runs?")) return { workflow_runs: [rerunRun, freshRun] };
+    if (path.includes("/jobs?")) return { total_count: jobsFixture.length, jobs: jobsFixture };
+    if (path.endsWith("/timing")) return { run_duration_ms: 900_000 };
+    throw new Error(`unexpected path: ${path}`);
+  };
+  const result = await collectMetrics({
+    repo: "soramikan/lnako",
+    workflow: "ci.yml",
+    runCount: 2,
+    includeLogs: false,
+    ghApiJsonImpl,
+    log: (message) => logs.push(message),
+  });
+  assert.deepEqual(result.runs.map((run) => run.id), [freshRun.id]);
+  assert.deepEqual(result.selection.skippedByAttempt, [{ id: rerunRun.id, attempt: 2 }]);
+  assert.equal(result.runs[0].attempt, 1);
+  assert.ok(logs.some((message) => message.includes("部分再実行runを除外: 1件")));
+  assert.ok(!logs.some((message) => message.includes("構成の異なるrunを除外: 1件")), "部分再実行runを構成不一致として数えない");
+
+  const markdown = formatMarkdown({
+    repo: "soramikan/lnako",
+    workflow: "ci.yml",
+    generatedAt: "2026-09-20T00:00:00Z",
+    runs: result.runs,
+    aggregate: result.aggregate,
+    selection: result.selection,
+  });
+  assert.match(markdown, /部分再実行run（run_attempt > 1）1件を除外/);
+});
+
 test("collectMetricsは--sinceより前のrunを系列から除外する", async () => {
   const newer = { ...runFixture, id: 300, created_at: "2026-09-20T01:00:00Z" };
   const older = { ...runFixture, id: 100, created_at: "2026-09-18T01:00:00Z" };
