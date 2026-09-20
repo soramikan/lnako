@@ -27,6 +27,16 @@
     "checkMessage": true
   },
   {
+    "id": "semantic-diagnostic-builtin-insufficient-arguments",
+    "source": "それは「abc」\n切取。\n",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-function-insufficient-arguments",
+    "source": "●(AとBを)Fとは\nA+Bで戻る\nここまで\nF\n",
+    "checkMessage": true
+  },
+  {
     "id": "semantic-diagnostic-bare-index-word",
     "source": "●fとは\nそれは0\nここまで\nA=[[1,2],[3,4]]\nA[1,f,2]を表示\n",
     "code": "invalid_array_access"

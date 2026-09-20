@@ -48,7 +48,7 @@
 | TODO識別子 | 分類 | Issue |
 | --- | --- | --- |
 | `official-dncl-all-elements-tail` | 上流バグ候補。非ブロッカー | #10 |
-| `no-josi-function-call` | 「の」助詞の関数呼出し（`Aの要素数`）は未対応。関数の助詞シグネチャ照合が必要 | #9 |
+| `no-josi-function-call` | 「の」助詞の関数呼出し（`Aの要素数`）と助詞付き組み込み命令の連鎖呼出し（`大文字変換を表示`）は未対応。関数の助詞シグネチャ照合が必要 | #9 |
 | `sparse-array-presence` | 部分対応、一般境界は保証外 | #5 |
 | `table-inherited-properties` | 保証外 | #5 |
 | `regexp-unicode-flags` | 部分対応 | #4 |
