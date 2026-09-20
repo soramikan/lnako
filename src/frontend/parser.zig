@@ -251,8 +251,6 @@ pub const Parser = struct {
     }
 
     pub fn parseBlock(self: *Parser, stop: Stop) ParseFailure!*ast.Node {
-        try self.enterNesting();
-        defer self.leaveNesting();
         const first = self.peek();
         var children: std.ArrayList(*ast.Node) = .empty;
         while (!self.at(.eof) and !self.isStop(stop)) {
@@ -265,6 +263,11 @@ pub const Parser = struct {
     }
 
     pub fn parseStatement(self: *Parser) ParseFailure!*ast.Node {
+        // 文の解析は全てここを通るため、入れ子の上限はここで数える。ブロック・
+        // 同一行の制御構文（`もし1ならばもし1ならば…`）・ループ本体・スコープ
+        // 指定・無名関数は、いずれも`parseStatement`の再帰として深くなる。
+        try self.enterNesting();
+        defer self.leaveNesting();
         self.applyTailModes();
         const token = self.peek();
         if (self.isImportDirective()) return self.parseImportDirective();

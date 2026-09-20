@@ -613,6 +613,21 @@ test "深い括弧の入れ子が上限を超えたら位置付き診断にす�
     try std.testing.expectEqual(diagnostic.Code.nesting_too_deep, result.diagnostics[0].code);
 }
 
+test "同一行の制御構文の入れ子が上限を超えたら位置付き診断にする" {
+    // `parseBlock`を通らない同一行の入れ子も`parseStatement`で数える。
+    const depth = parser_mod.max_parse_nesting_depth + 8;
+    var source: std.ArrayList(u8) = .empty;
+    defer source.deinit(std.testing.allocator);
+    var index: usize = 0;
+    while (index < depth) : (index += 1) try source.appendSlice(std.testing.allocator, "もし1ならば");
+    try source.appendSlice(std.testing.allocator, "1を表示\n");
+    var result = try parse(std.testing.allocator, source.items, "deep-inline-if.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+    try std.testing.expectEqual(@as(?*ast.Node, null), result.root);
+    try std.testing.expectEqual(diagnostic.Code.nesting_too_deep, result.diagnostics[0].code);
+}
+
 test "深い単項演算子の入れ子が上限を超えたら位置付き診断にする" {
     const depth = parser_mod.max_parse_nesting_depth + 8;
     var source: std.ArrayList(u8) = .empty;
