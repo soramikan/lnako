@@ -53,7 +53,9 @@ function normalizedJosiNotation(args) {
 function josiSlots(args) {
   const variants = args.split("/").map((variant) => {
     const entries = [];
-    for (const match of normalizedJosiNotation(variant).matchAll(/([A-Z][A-Z0-9_]*)([^A-Z]*)/g)) {
+    // 仮引数名は`_TOKEN`のようにアンダースコアで始まることがあるため名前側で受理し、
+    // 助詞側ではアンダースコアを受理しない（`_TOKENへ`が`TOKEN`＋`へ_`にならないようにする）。
+    for (const match of normalizedJosiNotation(variant).matchAll(/(_?[A-Z][A-Z0-9_]*)([^A-Z_]*)/g)) {
       // `...A`は可変長引数の印で、直前の助詞へ混ざるため助詞から取り除く。
       entries.push({ name: match[1], josi: match[2].replace(/\.\.\./g, "") });
     }

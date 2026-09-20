@@ -182,3 +182,21 @@ test "可変長の末尾スロットだけの命令は引数なしでも「そ�
     try std.testing.expectEqual(@as(usize, 0), result.provided);
     try std.testing.expectEqual(@as(usize, 0), result.missing);
 }
+
+test "オブジェクト表記の命令も外側スロットと助詞を持つ" {
+    const options = builtin_josi.findJosi("CSVオプション設定").?;
+    try std.testing.expectEqual(@as(usize, 1), options.slot_starts.len);
+    try std.testing.expectEqualSlices([]const u8, &.{ "を", "で" }, options.josi[0..2]);
+}
+
+test "アンダースコア始まりの仮引数でも助詞スロットが正しい" {
+    const send = builtin_josi.findJosi("LINE送信").?;
+    try std.testing.expectEqual(@as(usize, 2), send.slot_starts.len);
+    try std.testing.expectEqualSlices([]const u8, &.{ "へ", "に" }, send.josi[0..2]);
+    try std.testing.expectEqualSlices([]const u8, &.{"を"}, send.josi[2..3]);
+    const image = builtin_josi.findJosi("LINE画像送信").?;
+    try std.testing.expectEqual(@as(usize, 3), image.slot_starts.len);
+    try std.testing.expectEqualSlices([]const u8, &.{ "へ", "に" }, image.josi[0..2]);
+    try std.testing.expectEqualSlices([]const u8, &.{"と"}, image.josi[2..3]);
+    try std.testing.expectEqualSlices([]const u8, &.{"を"}, image.josi[3..4]);
+}
