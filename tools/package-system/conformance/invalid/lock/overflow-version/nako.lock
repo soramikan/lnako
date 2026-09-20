@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "resolverVersion": 1,
+  "input": {
+    "manifestSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "profile": "default",
+    "features": ["default"],
+    "target": { "os": "macos", "cpu": "aarch64", "abi": "gnu" }
+  },
+  "packages": {
+    "pkg:00000000000000000000000000000000": {
+      "id": "pkg:00000000000000000000000000000000",
+      "name": "test",
+      "version": "9007199254740992.0.0",
+      "dependencies": [],
+      "artifacts": {
+        "native": { "kind": "native", "type": ".npkg", "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "url": "https://registry.example.com/pkg/test/v1.0.0/native.npkg" }
+      }
+    }
+  },
+  "profiles": {
+    "default": { "runtime": "lnako", "os": "macos", "cpu": "aarch64", "abi": "gnu" }
+  }
+}

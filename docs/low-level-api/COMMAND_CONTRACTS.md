@@ -75,11 +75,11 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 
 ### Issue 31 ファイル時刻・truncate・高精度メタデータ更新
 
-- `ファイルサイズ変更`（ll-file-truncate-path）助詞 `PATHをSIZEで/PATHをSIZEに`、戻り `void`、capability `truncate`、エラー ENOENT/EACCES/EPERM/EISDIR/ENOSPC/EINVAL/ENOTSUP
-- `ファイル時刻設定`（ll-file-utime-path）助詞 `PATHをATIMEからMTIMEまで/PATHをATIMEとMTIMEで`、戻り `void`、capability `utime`、エラー ENOENT/EACCES/EINVAL/EPERM/ENOTSUP
-- `ファイル時刻設定済`（ll-file-utime-handle）助詞 `HANDLEをATIMEからMTIMEまで/HANDLEをATIMEとMTIMEで`、戻り `void`、capability `utime`、エラー EBADF/EINVAL/EPERM/ENOTSUP
+- `ファイルサイズ変更`（ll-file-truncate-path）助詞 `PATHをSIZEで/PATHをSIZEに`、戻り `void`、capability `truncate`、エラー ENOENT/EACCES/EPERM/EISDIR/ENOTDIR/ELOOP/EROFS/ENOSPC/EINVAL/ENOTSUP
+- `ファイル時刻設定`（ll-file-utime-path）助詞 `PATHをATIMEからMTIMEまで/PATHをATIMEとMTIMEで`、戻り `void`、capability `utime`、エラー ENOENT/EACCES/ENOTDIR/ELOOP/EROFS/EINVAL/EPERM/ENOTSUP
+- `ファイル時刻設定済`（ll-file-utime-handle）助詞 `HANDLEをATIMEからMTIMEまで/HANDLEをATIMEとMTIMEで`、戻り `void`、capability `utime`、エラー EBADF/EACCES/EROFS/EINVAL/EPERM/ENOTSUP
 
-`ATIME`/`MTIME` はナノ秒BigIntの引数で、`null` で既存値維持、`now` で現在時刻を表す。
+`ATIME`/`MTIME` はナノ秒BigInt（安全整数ならNumberも可）の引数で、`null`（`NULL`）で既存値維持（UTIME_OMIT）、文字列 `"now"` で現在時刻（UTIME_NOW）を表す。`ファイルサイズ変更` はPOSIXの `truncate(2)` と同じくsymlinkを追跡し、write権限を要求する。grow時は0で埋め、ディレクトリは `EISDIR`、FIFOやソケットなどの非正規ファイルは `EINVAL` になる（`open(O_WRONLY)`+`ftruncate` ではFIFOの書込みopenが読取り側までブロックするため、パス指定の `truncate` を使う）。`ファイル時刻設定` はPOSIXでは `utimensat`、Windowsでは `FILE_WRITE_ATTRIBUTES` と backup intent でハンドルを開いて `NtSetInformationFile` を使う（read-only属性ファイルとディレクトリにも適用できる）。WindowsのFILETIMEは1601-01-01起点の符号なし値で、0は「変更しない」の特別値のため、1601年以前・0・i64範囲外の明示時刻は `EINVAL` で拒否する。`ファイル時刻設定済` はオープン済みハンドルへ `futimens` / `SetFileTime` 相当を適用し、無効・close済みハンドルは `EBADF`。Windowsのハンドル経路は対象ハンドルに属性更新権（`GENERIC_WRITE` 等）が必要で、読み取り専用ハンドルでは `EACCES`/`EPERM` になり得る。`EACCES` はwrite権限欠如、`EPERM` は所有者以外による明示時刻設定やimmutable/append-only属性など、環境依存の条件で発生する。ファイルシステムの粒度により保存されるナノ秒は丸められ得る。
 
 ### Issue 32 incremental hash
 
@@ -117,16 +117,16 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 ### Issue 35 argv型プロセス起動・signal・priority・TTY
 
 - `プロセス起動`（ll-process-spawn）助詞 `ARGVをOPTIONSで/ARGVを`、戻り `handle`、capability `argv_spawn`、エラー ENOENT/EACCES/EPERM/EINVAL/ENOTSUP
-- `プロセス待機`（ll-process-wait）助詞 `HANDLEを/HANDLEの`、戻り `waitResult`、capability `argv_spawn`、エラー EBADF/EINVAL
-- `プロセスID取得`（ll-pid-get）助詞 `-`、戻り `pid`、capability `argv_spawn`
+- `プロセス待機`（ll-process-wait）助詞 `HANDLEを/HANDLEの`、戻り `waitResult`、capability `argv_spawn`、エラー EBADF/EINVAL/ENOTSUP
+- `プロセスID取得`（ll-pid-get）助詞 `-`、戻り `pid`、capability `argv_spawn`、エラー ENOTSUP
 - `親プロセスID取得`（ll-ppid-get）助詞 `-`、戻り `pid`、capability `argv_spawn`、エラー ENOTSUP
 - `シグナル送信`（ll-signal-send）助詞 `PIDにSIGNALを/PIDへSIGNALで`、戻り `void`、capability `signal`、エラー EINVAL/EPERM/ENOTSUP
-- `プロセス優先度取得`（ll-process-priority-get）助詞 `PIDを/PIDの`、戻り `number`、capability `priority`、エラー EINVAL/ENOTSUP
+- `プロセス優先度取得`（ll-process-priority-get）助詞 `PIDを/PIDの`、戻り `number`、capability `priority`、エラー EINVAL/EPERM/ENOTSUP
 - `プロセス優先度設定`（ll-process-priority-set）助詞 `PIDをVALUEで/PIDをVALUEに`、戻り `void`、capability `priority`、エラー EINVAL/EPERM/ENOTSUP
-- `端末判定`（ll-tty-isatty）助詞 `STREAMを/STREAMで`、戻り `boolean`、capability `tty_isatty`、エラー EINVAL
+- `端末判定`（ll-tty-isatty）助詞 `STREAMを/STREAMで`、戻り `boolean`、capability `tty_isatty`、エラー EINVAL/ENOTSUP
 - `端末サイズ取得`（ll-tty-size）助詞 `STREAMを/STREAMで`、戻り `ttySize`、capability `tty_isatty`、エラー EINVAL/ENOTSUP
 
-`プロセス起動` はshell文字列を介さずargv境界を保持する。`OPTIONS` に cwd / env / stdin・stdout・stderr（inherit/pipe/null）/ detached。`プロセス待機` の結果は `exitCode` と `signal` を分けて返す。
+`プロセス起動` はshell文字列を介さずargv境界を保持する。`OPTIONS` に cwd / env / stdin・stdout・stderr（inherit/pipe/null）/ detached。`env` は指定時に子の環境を置き換える。`stdio` は単一文字列（全streamに適用）または `stdin`/`stdout`/`stderr` をキーとする辞書。`pipe` の親側は公開されず、`プロセス待機` がEOFまでdrainして破棄する（子のpipe buffer詰まりによるデッドロックを避ける。子との入出力には使えない）。`detached` と pipe stdio の併用は drain する主体が無いため `EINVAL`。`detached` はPOSIXの新プロセスグループ生成のみで、新セッションや stdio の切り離しは行わず（完全なnohup相当は提供しない）、未waitのdetached子はRuntime破棄時にreaper threadが非同期にreapする。`env` 省略時はホストプロセスの環境を継承する（`lnako test` のスクリプト可視環境一覧とは独立）。POSIXの `detached` は新しいプロセスグループを作り、Windowsの `detached` は `ENOTSUP`。`プロセス待機` の結果は `exitCode` と `signal` を分けて返し、POSIXのシグナル終了時は `exitCode = 128 + signal`、`signal` に番号を入れる（正常終了時 `signal` は `null`）。Windowsで `TerminateProcess` された子は `exitCode = 1`、`signal` は `null`。`argv[0]` の実行ファイル解決は親環境のPATHを使う（子へ渡す `env` のPATHではない）。`シグナル送信` のWindows対応は existence check(0) と terminate(9/15) だけで、他は `ENOTSUP`。POSIXで送れる信号番号は0（存在確認）と1..31で、pid=0は受け付けない。Linuxのリアルタイム信号（34以上）は対象外。`プロセス優先度取得`/`設定` はPOSIX専用（Windowsは `ENOTSUP`）で、pid=0はカレントプロセスを指す。`端末サイズ取得` は非端末で `ENOTSUP`。
 
 ### Issue 36 statfs・reflink・sparse file
 

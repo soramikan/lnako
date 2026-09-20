@@ -41,6 +41,7 @@ pub const CliHost = struct {
     literal_trace_file: ?std.Io.File = null,
     low_level_handles: ?lnako.runtime.low_level_io.FileHandleTable = null,
     low_level_hash_handles: ?lnako.runtime.low_level_hash.HashHandleTable = null,
+    low_level_processes: ?lnako.runtime.low_level_process.ProcessTable = null,
     low_level_dir_handles: ?lnako.runtime.low_level_dir.DirHandleTable = null,
     /// Issue #28: テキスト系stdin命令とrawバイト命令が共有するstdinの
     /// 単一source。node.Contextとlowlevel.Contextの両方がここへ到達する。
@@ -69,6 +70,7 @@ pub const CliHost = struct {
         if (self.http_server) |*server| server.deinit(self.io);
         if (self.low_level_handles) |*table| table.deinit(self.io);
         if (self.low_level_hash_handles) |*table| table.deinit();
+        if (self.low_level_processes) |*table| table.deinit(self.io);
         if (self.low_level_dir_handles) |*table| table.deinit(self.io);
         if (self.stdin_source) |*source| source.deinit();
         while (self.async_tasks.pop()) |task| destroyAsyncTask(task, true);
@@ -432,6 +434,99 @@ pub const CliHost = struct {
         return lnako.runtime.low_level_fs.rmdir(self.io, path);
     }
 
+    fn lowLevelTruncatePath(context: *anyopaque, path: []const u8, size: u64) anyerror!void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return lnako.runtime.low_level_fs.truncatePath(self.io, path, size);
+    }
+
+    fn lowLevelUtimePath(context: *anyopaque, path: []const u8, atime: lnako.runtime.low_level_foundation.SetTime, mtime: lnako.runtime.low_level_foundation.SetTime) anyerror!void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return lnako.runtime.low_level_fs.setTimestampsPath(self.io, path, atime, mtime);
+    }
+
+    fn lowLevelSetTimestampsFile(context: *anyopaque, raw: u64, atime: lnako.runtime.low_level_foundation.SetTime, mtime: lnako.runtime.low_level_foundation.SetTime) anyerror!void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const id = lnako.runtime.low_level_foundation.HandleId.fromRaw(raw);
+        const entry = self.lowLevelTable().find(id) orelse return error.BadFileDescriptor;
+        return lnako.runtime.low_level_fs.setTimestampsHandle(self.io, entry.file, atime, mtime);
+    }
+
+    fn lowLevelProcessTable(self: *CliHost) *lnako.runtime.low_level_process.ProcessTable {
+        if (self.low_level_processes == null) {
+            self.low_level_processes = lnako.runtime.low_level_process.ProcessTable.init(std.heap.page_allocator);
+        }
+        return &self.low_level_processes.?;
+    }
+
+    fn lowLevelSpawnProcess(context: *anyopaque, argv: []const []const u8, options: lnako.runtime.low_level_process.SpawnOptions) anyerror!u64 {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return (try self.lowLevelProcessTable().spawn(self.io, argv, options)).raw();
+    }
+
+    fn lowLevelWaitProcess(context: *anyopaque, raw: u64) anyerror!lnako.runtime.low_level_process.WaitResult {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return self.lowLevelProcessTable().wait(self.io, lnako.runtime.low_level_foundation.HandleId.fromRaw(raw));
+    }
+
+    fn lowLevelDiscardProcess(context: *anyopaque, raw: u64) anyerror!void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return self.lowLevelProcessTable().discard(self.io, lnako.runtime.low_level_foundation.HandleId.fromRaw(raw));
+    }
+
+    fn lowLevelGetpid(_: *anyopaque) anyerror!u32 {
+        return lnako.runtime.low_level_process.currentPid();
+    }
+
+    fn lowLevelGetppid(_: *anyopaque) anyerror!u32 {
+        return lnako.runtime.low_level_process.parentPid();
+    }
+
+    fn lowLevelSignal(_: *anyopaque, pid: u32, signal: u32) anyerror!void {
+        return lnako.runtime.low_level_process.sendSignal(pid, signal);
+    }
+
+    fn lowLevelPriorityGet(_: *anyopaque, pid: u32) anyerror!i32 {
+        return lnako.runtime.low_level_process.getPriority(pid);
+    }
+
+    fn lowLevelPrioritySet(_: *anyopaque, pid: u32, value: i32) anyerror!void {
+        return lnako.runtime.low_level_process.setPriority(pid, value);
+    }
+
+    fn processStreamFile(self: *CliHost, stream: lnako.runtime.low_level_foundation.ProcessStream) std.Io.File {
+        return switch (stream) {
+            .stdin => self.stdinFile(),
+            .stdout => self.stdoutFile(),
+            .stderr => self.stderrFile(),
+        };
+    }
+
+    fn lowLevelIsatty(context: *anyopaque, stream: lnako.runtime.low_level_foundation.ProcessStream) anyerror!bool {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return lnako.runtime.low_level_process.isTty(self.io, self.processStreamFile(stream));
+    }
+
+    /// `端末サイズ取得` 用のfile。WindowsのGetConsoleScreenBufferInfoは出力
+    /// 画面バッファ専用のため、stdin指定時はまず実stdinが端末か確認し、端末の
+    /// 場合だけTTYなstdout/stderrの画面バッファを使う。stdinが非端末なら
+    /// `端末判定` と矛盾しないようENOTSUPにする。
+    fn ttySizeFile(self: *CliHost, stream: lnako.runtime.low_level_foundation.ProcessStream) !std.Io.File {
+        if (comptime builtin.os.tag == .windows) {
+            if (stream == .stdin) {
+                if (!(self.stdinFile().isTty(self.io) catch false)) return error.OperationUnsupported;
+                const stdout_file = self.stdoutFile();
+                if (stdout_file.isTty(self.io) catch false) return stdout_file;
+                return self.stderrFile();
+            }
+        }
+        return self.processStreamFile(stream);
+    }
+
+    fn lowLevelTtySize(context: *anyopaque, stream: lnako.runtime.low_level_foundation.ProcessStream) anyerror!lnako.runtime.low_level_process.TtySize {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return lnako.runtime.low_level_process.ttySize(self.io, try self.ttySizeFile(stream));
+    }
+
     fn lowLevelDirTable(self: *CliHost) *lnako.runtime.low_level_dir.DirHandleTable {
         if (self.low_level_dir_handles == null) {
             self.low_level_dir_handles = lnako.runtime.low_level_dir.DirHandleTable.init(std.heap.page_allocator);
@@ -494,6 +589,7 @@ pub const CliHost = struct {
                 .writeFileBytesFn = lowLevelWriteFileBytes,
                 .syncFileFn = lowLevelSyncFile,
                 .truncateFileFn = lowLevelTruncateFile,
+                .setTimestampsFileFn = lowLevelSetTimestampsFile,
             },
             .hash = .{
                 .context = self,
@@ -512,6 +608,8 @@ pub const CliHost = struct {
                 .renameFn = lowLevelRename,
                 .unlinkFn = lowLevelUnlink,
                 .rmdirFn = lowLevelRmdir,
+                .truncatePathFn = lowLevelTruncatePath,
+                .utimePathFn = lowLevelUtimePath,
             },
             .dir = .{
                 .context = self,
@@ -536,6 +634,19 @@ pub const CliHost = struct {
                 .writeStderrBytesFn = lowLevelWriteStderr,
                 .syncStdoutFn = lowLevelSyncStdout,
                 .syncStderrFn = lowLevelSyncStderr,
+            },
+            .process = .{
+                .context = self,
+                .spawnFn = lowLevelSpawnProcess,
+                .waitFn = lowLevelWaitProcess,
+                .discardFn = lowLevelDiscardProcess,
+                .getpidFn = lowLevelGetpid,
+                .getppidFn = lowLevelGetppid,
+                .signalFn = lowLevelSignal,
+                .priorityGetFn = lowLevelPriorityGet,
+                .prioritySetFn = lowLevelPrioritySet,
+                .isattyFn = lowLevelIsatty,
+                .ttySizeFn = lowLevelTtySize,
             },
         };
     }

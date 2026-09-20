@@ -507,7 +507,7 @@ if (!nativeAotBuildBlock || !nativeAotBuildBlock.includes("if: matrix.task != 's
 const linuxCompilerJob = workflow.match(/  aot_compiler_linux:[\s\S]*?(?=\n  aot:)/)?.[0];
 if (!linuxCompilerJob || !linuxCompilerJob.includes("runs-on: ubuntu-24.04") ||
     !linuxCompilerJob.includes("use-cache: false") ||
-    !linuxCompilerJob.includes("run: zig build -Dcpu=x86_64_v2") ||
+    !linuxCompilerJob.includes("run: zig build -Dcpu=baseline") ||
     !linuxCompilerJob.includes("node tools/aot_compiler_artifact.mjs create --binary zig-out/bin/lnako --runtime-lib zig-out/lib/liblnako_runtime.a --out-dir") ||
     !linuxCompilerJob.includes("name: lnako-aot-compiler-linux-x64") ||
     !linuxCompilerJob.includes("retention-days: 1")) {
@@ -543,7 +543,7 @@ if (!aotCompilerJob || !aotCompilerJob.includes("name: Windows x86_64 / AOT veri
     // 共有artifactはproducerと別のrunnerで実行されるため、runnerのCPU機能に
     // 依存した命令を含めない（-Dcpu未指定だとホストCPU機能が有効になり、
     // 非対応runnerでSTATUS_ILLEGAL_INSTRUCTIONになる）。
-    !aotCompilerJob.includes("run: zig build -Dcpu=x86_64_v2") ||
+    !aotCompilerJob.includes("run: zig build -Dcpu=baseline") ||
     aotCompilerJob.includes("\n        run: zig build\n") ||
     !aotCompilerJob.includes("node tools/aot_compiler_artifact.mjs create --binary zig-out/bin/lnako.exe --runtime-lib zig-out/lib/lnako_runtime.lib --out-dir") ||
     !aotCompilerJob.includes("name: lnako-aot-compiler-windows-x64") ||

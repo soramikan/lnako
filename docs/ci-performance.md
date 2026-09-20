@@ -544,13 +544,15 @@ AVX-512非対応のrunnerで実行すると `STATUS_ILLEGAL_INSTRUCTION`
 
 ### 対応
 
-`aot_compiler` の `zig build` に `-Dcpu=x86_64_v2` を明示した。x86_64_v2は
-SSE4.2/POPCNTを含みGitHubのx86_64 runnerで共通に利用できる。
-ローカルで同じ `-Dcpu=x86_64_v2` を指定してbuildした成果物を逆アセンブルし、
+`aot_compiler`（とPhase 6で追加した`aot_compiler_linux`）の `zig build` に
+`-Dcpu=baseline` を明示した。固定ISAを指定することでrunner CPU依存命令の混入を防ぐ
+（`baseline`はx86_64の最小ISA。本ブランチでは当初`-Dcpu=x86_64_v2`で検証し、
+mainへ同等の修正（`-Dcpu=baseline`）が入ったため、マージ後に両producerで
+`baseline`へ統一した）。ローカルで固定ISAを指定してbuildした成果物を逆アセンブルし、
 AVX-512命令が0件になることを確認した（`vmovdqu64`/`vmovdqa64`/
 `vpternlogq`/`vpxord`/`vpandq` すべて0）。
 
-`check_ci_workflow.mjs` でproducerが `-Dcpu=x86_64_v2` 付きでbuildし、
+`check_ci_workflow.mjs` で両producerが `-Dcpu=baseline` 付きでbuildし、
 素の `zig build` へ戻っていないことを検査する。
 
 ### 撤回した誤った原因推定
@@ -601,7 +603,7 @@ artifactとして配布するのはこのjobだけである。
 
 ### 修正の検証（run 35460438958）
 
-`-Dcpu=x86_64_v2` を入れた後のrunで確認した。
+固定ISA指定（`-Dcpu`）を入れた後のrunで確認した。
 
 | 確認項目 | 結果 |
 | --- | --- |
@@ -792,7 +794,7 @@ Windowsと同じproducer/consumer方式をLinuxへ広げた。
 - `aot_compiler_linux`（producer）: ubuntu-24.04でDebug compilerを1回buildし、
   `aot_compiler_artifact.mjs create`でcommit・os・arch・Zig version・buildMode・
   各SHA-256を持つartifactとしてuploadする。成果物はproducerと別のrunnerで実行される
-  ため`-Dcpu=x86_64_v2`を明示し、runner CPU依存命令の混入を防ぐ（Windowsで実測した
+  ため`-Dcpu=baseline`を明示し、runner CPU依存命令の混入を防ぐ（Windowsで実測した
   AVX-512混入と同じ問題の再発防止）。`use-cache: false`。
 - `aot_linux`（consumer）: Linux native 6 shard（O0+O1／O2+O3×3 shard）と、Debug
   compilerで動作するLinux support 2 job（HTTP・dispatch evidence）を集約する。

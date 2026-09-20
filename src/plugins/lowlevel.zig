@@ -18,6 +18,7 @@ pub const HashContext = context_mod.HashContext;
 pub const FsContext = context_mod.FsContext;
 pub const DirContext = context_mod.DirContext;
 pub const StdioContext = context_mod.StdioContext;
+pub const ProcessContext = context_mod.ProcessContext;
 pub const emptyContext = context_mod.emptyContext;
 
 /// handle表はプラグイン/ドメインで共有する。既存の外部参照（AOTの
@@ -38,6 +39,7 @@ test {
     _ = @import("lowlevel/stdio.zig");
     _ = @import("lowlevel/hash.zig");
     _ = @import("lowlevel/fs.zig");
+    _ = @import("lowlevel/process.zig");
     _ = @import("lowlevel/dir.zig");
     _ = @import("lowlevel/posix.zig");
     _ = @import("lowlevel/call.zig");

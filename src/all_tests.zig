@@ -30,6 +30,7 @@ test {
     _ = @import("lnako").package.features;
     _ = @import("lnako").package.manifest;
     _ = @import("lnako").package.resolver;
+    _ = @import("lnako").package.lock;
 
     _ = @import("regexp");
 }

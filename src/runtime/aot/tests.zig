@@ -7869,6 +7869,80 @@ test "AOT低レイヤーのstatとlstatは種別とメタデータを返す" {
     try expectLowLevelCode(active, .low_level_file_stat, &.{}, "EINVAL");
 }
 
+test "AOT低レイヤーのtruncateとutimeはpathとhandleで反映される" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "meta.bin", .data = "hello world" });
+    const path = try std.fs.path.join(std.testing.allocator, &.{ directory, "meta.bin" });
+    defer std.testing.allocator.free(path);
+
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+    roots[0] = try runtimeUtf8String(active, path);
+
+    // path truncate: 11 -> 5 byte。
+    _ = try state.lowLevelFileBuiltin(active, .low_level_file_truncate_path, &.{ roots[0], numberValue(5) });
+    var stat_value = try state.lowLevelFileBuiltin(active, .low_level_file_stat, &.{roots[0]});
+    try std.testing.expectEqual(@as(f64, 5), valueToNumber(dictionaryProperty(stat_value, &.{ 's', 'i', 'z', 'e' })));
+
+    // path utime: 明示ナノ秒をBigIntで指定する。サブ秒0.5sで1秒粒度を検出する。
+    const atime_ns: i64 = 1_600_000_000_500_000_000;
+    const mtime_ns: i64 = 1_600_000_005_750_000_000;
+    roots[5] = try active.createBigInt("1600000000500000000n");
+    roots[6] = try active.createBigInt("1600000005750000000n");
+    _ = try state.lowLevelFileBuiltin(active, .low_level_file_utime_path, &.{ roots[0], roots[5], roots[6] });
+    stat_value = try state.lowLevelFileBuiltin(active, .low_level_file_stat, &.{roots[0]});
+    const actual_atime = try dictionaryProperty(stat_value, &.{ 'a', 't', 'i', 'm', 'e', 'N', 's' }).object().?.payload.bigint.toI64();
+    const actual_mtime = try dictionaryProperty(stat_value, &.{ 'm', 't', 'i', 'm', 'e', 'N', 's' }).object().?.payload.bigint.toI64();
+    try std.testing.expect(@abs(actual_atime - atime_ns) < std.time.ns_per_us);
+    try std.testing.expect(@abs(actual_mtime - mtime_ns) < std.time.ns_per_us);
+
+    // mtimeはnullで既存値維持、atimeだけ現在時刻（2026年以降）へ進める。
+    roots[3] = .{ .tag = @intFromEnum(Tag.null_value) };
+    roots[4] = try runtimeUtf8String(active, "now");
+    _ = try state.lowLevelFileBuiltin(active, .low_level_file_utime_path, &.{ roots[0], roots[4], roots[3] });
+    stat_value = try state.lowLevelFileBuiltin(active, .low_level_file_stat, &.{roots[0]});
+    const now_atime = try dictionaryProperty(stat_value, &.{ 'a', 't', 'i', 'm', 'e', 'N', 's' }).object().?.payload.bigint.toI64();
+    const kept_mtime = try dictionaryProperty(stat_value, &.{ 'm', 't', 'i', 'm', 'e', 'N', 's' }).object().?.payload.bigint.toI64();
+    try std.testing.expect(now_atime > atime_ns + std.time.ns_per_day);
+    try std.testing.expect(@abs(kept_mtime - mtime_ns) < std.time.ns_per_us);
+
+    // handle utime: r+で開いたハンドルへ現在時刻を設定し、statで反映を確認する。
+    roots[1] = try runtimeUtf8String(active, "r+");
+    roots[2] = try state.lowLevelFileBuiltin(active, .low_level_file_open, &.{ roots[0], roots[1] });
+    _ = try state.lowLevelFileBuiltin(active, .low_level_file_utime_handle, &.{ roots[2], roots[4], roots[4] });
+    stat_value = try state.lowLevelFileBuiltin(active, .low_level_file_stat, &.{roots[0]});
+    const handle_atime = try dictionaryProperty(stat_value, &.{ 'a', 't', 'i', 'm', 'e', 'N', 's' }).object().?.payload.bigint.toI64();
+    const handle_mtime = try dictionaryProperty(stat_value, &.{ 'm', 't', 'i', 'm', 'e', 'N', 's' }).object().?.payload.bigint.toI64();
+    try std.testing.expect(handle_atime > mtime_ns + std.time.ns_per_day);
+    try std.testing.expect(handle_mtime > mtime_ns + std.time.ns_per_day);
+
+    // 契約外の時刻と無効/close済みハンドルはEINVAL/EBADF。
+    try expectLowLevelCode(active, .low_level_file_utime_path, &.{ roots[0], numberValue(1.5), numberValue(1) }, "EINVAL");
+    try expectLowLevelCode(active, .low_level_file_utime_handle, &.{ numberValue(1), numberValue(1), numberValue(1) }, "EBADF");
+    _ = try state.lowLevelFileBuiltin(active, .low_level_file_close, &.{roots[2]});
+    try expectLowLevelCode(active, .low_level_file_utime_handle, &.{ roots[2], roots[5], roots[5] }, "EBADF");
+
+    const missing = try std.fs.path.join(std.testing.allocator, &.{ directory, "missing-meta.bin" });
+    defer std.testing.allocator.free(missing);
+    roots[0] = try runtimeUtf8String(active, missing);
+    try expectLowLevelCode(active, .low_level_file_utime_path, &.{ roots[0], numberValue(1), numberValue(1) }, "ENOENT");
+    try expectLowLevelCode(active, .low_level_file_truncate_path, &.{ roots[0], numberValue(1) }, "ENOENT");
+}
+
 test "AOT低レイヤーは孤立サロゲートをU+FFFDへ置換せず別ファイルを削除しない" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -8217,7 +8291,7 @@ test "AOT低レイヤーの未実装命令は全てstub経由でENOTSUPを返す
         try std.testing.expect(taken.object().?.structured_error);
         try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "ENOTSUP");
     }
-    try std.testing.expectEqual(@as(usize, 21), stub_count);
+    try std.testing.expectEqual(@as(usize, 9), stub_count);
 }
 
 test "AOT未捕捉例外のmessage抽出は構造化エラーだけに限る" {

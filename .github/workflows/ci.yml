@@ -507,9 +507,11 @@ jobs:
       # STATUS_ILLEGAL_INSTRUCTION (0xC000001D) / ACCESS_VIOLATION (0xC0000005)
       # になる。実測で失敗artifactは vmovdqu64 8212件・vpternlogq 30件等の
       # AVX-512命令を含み、成功artifactは0件だった。
-      # x86_64_v2（SSE4.2/POPCNT）はGitHubのx86_64 runnerで共通に利用できる。
+      # 共有artifactは別runnerのshardが実行するため、producerのnative CPU機能を
+      # 焼き込むと異なるCPUのshardでSIGILLになる。baseline CPUで生成し、
+      # runner間で実行可能にする。
       - name: Build AOT verification compiler
-        run: zig build -Dcpu=x86_64_v2
+        run: zig build -Dcpu=baseline
       # 共有artifactは12 shardがbuildなしで実行するため、作成前にこのjobで
       # interpreterを一度動かし、壊れたbinaryを配布しないよう早期に検出する。
       - name: Smoke test AOT verification compiler
@@ -569,7 +571,7 @@ jobs:
       # 成果物は別runnerで実行されるためrunner依存のCPU命令を含めない
       # （Windowsで実測したAVX-512混入と同じ問題を避ける）。
       - name: Build AOT verification compiler
-        run: zig build -Dcpu=x86_64_v2
+        run: zig build -Dcpu=baseline
       - name: Smoke test AOT verification compiler
         shell: bash
         run: |

@@ -8,6 +8,7 @@ const low_level_hash = @import("../../low_level_hash.zig");
 const low_level_fs = @import("../../low_level_fs.zig");
 const low_level_dir = @import("../../low_level_dir.zig");
 const low_level_context = @import("../../low_level/context.zig");
+const low_level_process = @import("../../low_level_process.zig");
 
 pub const aot_builtin = aot_shared.aot_builtin;
 pub const BigInt = aot_shared.BigInt;
@@ -27,6 +28,7 @@ pub const aotRuntimeIo = state.aotRuntimeIo;
 pub const staticUtf8 = state.staticUtf8;
 pub const isString = state.isString;
 pub const dictionaryProperty = state.dictionaryProperty;
+pub const dictionaryOwnProperty = state.dictionaryOwnProperty;
 pub const fflush = state.fflush;
 pub const read_chunk_bytes: usize = 64 * 1024;
 
@@ -46,6 +48,25 @@ pub fn hashTable(runtime: *Runtime) *low_level_hash.HashHandleTable {
         runtime.low_level_hash_handles = low_level_hash.HashHandleTable.init(runtime.allocator);
     }
     return &runtime.low_level_hash_handles.?;
+}
+
+pub fn processTable(runtime: *Runtime) *low_level_process.ProcessTable {
+    if (runtime.low_level_process_handles == null) {
+        runtime.low_level_process_handles = low_level_process.ProcessTable.init(runtime.allocator);
+    }
+    return &runtime.low_level_process_handles.?;
+}
+
+/// プロセスspawn/waitが使うIoを保証する。AOTの `process_io` は
+/// `lnako_aot_runtime_init` でも初期化されるが、単体テストはRuntimeを
+/// 直接生成するため、初回にここでThreadedを用意する。`global_single_threaded`
+/// はfailing allocatorでspawnできないため使わない。
+pub fn ensureProcessIo(runtime: *Runtime) std.Io {
+    if (!runtime.process_io_initialized) {
+        runtime.process_io = std.Io.Threaded.init(runtime.allocator, .{ .environ = state.aotProcessEnvironment() });
+        runtime.process_io_initialized = true;
+    }
+    return runtime.process_io.io();
 }
 
 pub fn dirTable(runtime: *Runtime) *low_level_dir.DirHandleTable {
@@ -135,6 +156,35 @@ pub fn sizeArgument(_: *Runtime, value: Value) !u64 {
     };
 }
 
+/// `ファイル時刻設定` / `ファイル時刻設定済` のATIME/MTIME引数を `SetTime` 契約へ
+/// 変換する。nullは既存値維持、文字列 `"now"` は現在時刻、Number/BigIntは
+/// ナノ秒の明示値。契約外は `operation` を載せた `EINVAL` を投げる。
+pub fn setTimeArgument(runtime: *Runtime, value: Value, operation: []const u8) anyerror!foundation.SetTime {
+    return switch (value.tag) {
+        @intFromEnum(Tag.null_value) => .unchanged,
+        @intFromEnum(Tag.number) => .{ .at = foundation.timeNsFromNumber(valueToNumber(value)) catch
+            return throwStructured(runtime, .EINVAL, operation, null, null, "時刻はナノ秒の整数である必要があります") },
+        @intFromEnum(Tag.bigint) => .{ .at = value.object().?.payload.bigint.toI128() catch
+            return throwStructured(runtime, .EINVAL, operation, null, null, "時刻はナノ秒の整数である必要があります") },
+        @intFromEnum(Tag.static_utf8_string), @intFromEnum(Tag.utf16_string) => if (isNowValue(value))
+            .now
+        else
+            return throwStructured(runtime, .EINVAL, operation, null, null, "時刻はナノ秒の整数か\"now\"である必要があります"),
+        else => return throwStructured(runtime, .EINVAL, operation, null, null, "時刻はナノ秒の整数である必要があります"),
+    };
+}
+
+fn isNowValue(value: Value) bool {
+    return switch (value.tag) {
+        @intFromEnum(Tag.static_utf8_string) => std.mem.eql(u8, staticUtf8(value), "now"),
+        @intFromEnum(Tag.utf16_string) => blk: {
+            const units = value.object().?.payload.utf16_string;
+            break :blk units.len == 3 and units[0] == 'n' and units[1] == 'o' and units[2] == 'w';
+        },
+        else => false,
+    };
+}
+
 /// なでしこ文字列のpath引数を可逆なWTF-8（孤立サロゲート保持）へ変換する。
 /// 非文字列は構造化EINVALを投げる。fs/posixドメインで共有する。
 pub fn pathArgument(runtime: *Runtime, value: Value, operation: []const u8) ![]u8 {
@@ -218,6 +268,16 @@ pub fn throwIoAs(runtime: *Runtime, failure: anyerror, operation: []const u8, pa
     return throwIo(runtime, failure, operation, path, null, capability);
 }
 
+/// `プロセス起動` 専用。spawnの契約エラー集合
+/// (ENOENT/EACCES/EPERM/EINVAL/ENOTSUP) に限定し、fd枯渇などの未写像失敗は
+/// EINVALへ丸める。OOMは内部エラーとして伝播する。
+pub fn throwSpawnIo(runtime: *Runtime, failure: anyerror, operation: []const u8, capability: foundation.Capability) anyerror {
+    if (failure == error.OutOfMemory) return failure;
+    const code = foundation.portableCodeForSpawnFailure(failure);
+    const capability_name: ?[]const u8 = if (code == .ENOTSUP) capability.id() else null;
+    return throwStructured(runtime, code, operation, null, capability_name, failureMessage(failure));
+}
+
 /// OS失敗を呼び出し側が選んだportable codeへ写す。コマンド契約が許すcodeを
 /// EBADF/EINVAL/ENOTSUP等へ限定したいときに使う（Interpreterと同じ契約）。
 /// `path` は失敗対象（無ければnull）。OOMは内部エラーとして伝播する。
@@ -284,6 +344,7 @@ fn failureMessage(failure: anyerror) []const u8 {
         error.OperationUnsupported, error.UnsupportedReparsePointType, error.Unsupported, error.NotSupported => "この操作は対応していません",
         error.LinkQuotaExceeded => "リンク数の上限に達しました",
         error.NameTooLong => "名前が長すぎます",
+        error.InvalidTimestamp => "時刻が不正です",
         error.FileBusy => "ファイルが使用中です",
         error.InputOutput => "入出力エラーです",
         error.StreamTooLong => "標準入力が上限を超えました",
