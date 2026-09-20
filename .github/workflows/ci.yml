@@ -461,7 +461,10 @@ jobs:
         shell: bash
         run: node tools/prune_llvm_toolchain.mjs
       - name: Build AOT verification compiler
-        run: zig build
+        # 共有artifactは別runnerのshardが実行するため、producerのnative CPU機能を
+        # 焼き込むと異なるCPUのshardでSIGILLになる。baseline CPUで生成し、
+        # runner間で実行可能にする。
+        run: zig build -Dcpu=baseline
       # 共有artifactは12 shardがbuildなしで実行するため、作成前にこのjobで
       # interpreterを一度動かし、壊れたbinaryを配布しないよう早期に検出する。
       - name: Smoke test AOT verification compiler

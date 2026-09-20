@@ -543,12 +543,15 @@
         "EACCES",
         "EPERM",
         "EISDIR",
+        "ENOTDIR",
+        "ELOOP",
+        "EROFS",
         "ENOSPC",
         "EINVAL",
         "ENOTSUP"
       ],
       "notes": "truncate。grow/shrink/zero-size",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-file-utime-path",
@@ -563,12 +566,15 @@
       "errors": [
         "ENOENT",
         "EACCES",
+        "ENOTDIR",
+        "ELOOP",
+        "EROFS",
         "EINVAL",
         "EPERM",
         "ENOTSUP"
       ],
-      "notes": "utimes。ATIME/MTIMEはナノ秒BigInt。nullで既存値維持、nowで現在時刻",
-      "implemented": false
+      "notes": "utimes。ATIME/MTIMEはナノ秒BigInt（安全整数はNumber可）。nullは既存値維持、\"now\"は現在時刻",
+      "implemented": true
     },
     {
       "id": "ll-file-utime-handle",
@@ -582,12 +588,14 @@
       "operation": "futime",
       "errors": [
         "EBADF",
+        "EACCES",
+        "EROFS",
         "EINVAL",
         "EPERM",
         "ENOTSUP"
       ],
-      "notes": "futimes相当",
-      "implemented": false
+      "notes": "futimes相当。ATIME/MTIMEの契約はファイル時刻設定と同じ",
+      "implemented": true
     },
     {
       "id": "ll-hash-create",
@@ -1497,13 +1505,13 @@
       "id": "utime",
       "class": "portable_core",
       "os": {
-        "linux": false,
-        "macos": false,
-        "windows": false
+        "linux": true,
+        "macos": true,
+        "windows": true
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {

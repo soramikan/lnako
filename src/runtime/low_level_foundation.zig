@@ -163,6 +163,36 @@ pub fn timeNsFromUnixMsNumber(number: f64) Error!TimeNs {
     return ms * ns_per_ms;
 }
 
+/// ナノ秒のNumber入力を `TimeNs` へ変換する。安全整数のみを受け付け、
+/// 小数や安全整数外は `InvalidTimestamp`（EINVAL）になる。
+pub fn timeNsFromNumber(number: f64) Error!TimeNs {
+    if (!isSafeInteger(number)) return error.InvalidTimestamp;
+    return @intFromFloat(number);
+}
+
+/// `ファイル時刻設定` / `ファイル時刻設定済` のATIME/MTIME引数契約。
+/// `null` は既存値維持（UTIME_OMIT）、`"now"` は現在時刻（UTIME_NOW）、
+/// ナノ秒BigInt/Numberはその時刻（UTIME系の明示値）を表す。
+pub const SetTime = union(enum) {
+    unchanged,
+    now,
+    at: TimeNs,
+
+    pub fn isNow(self: SetTime) bool {
+        return switch (self) {
+            .now => true,
+            else => false,
+        };
+    }
+
+    pub fn isUnchanged(self: SetTime) bool {
+        return switch (self) {
+            .unchanged => true,
+            else => false,
+        };
+    }
+};
+
 pub fn timeNsFromUnixNs(value: i128) TimeNs {
     return value;
 }
@@ -382,6 +412,7 @@ pub fn capabilityImplemented(capability: Capability) bool {
         .rename,
         .unlink,
         .rmdir,
+        .utime,
         .dir_iterator,
         .chmod,
         .chown,
@@ -412,11 +443,20 @@ pub fn capabilitySupportedOnOs(capability: Capability, os: OsKind) bool {
 }
 
 /// 実行中OSでの `capabilitySupportedOnOs`。WASIはPOSIX権限・所有者APIを
-/// 持たないため、これらのcapabilityはWindowsと同じくfalseになる。
+/// 持たないため、これらのcapabilityはWindowsと同じくfalseになる。加えて
+/// WASIは `utimensat`/`futimens` を持たず、utime（ファイル時刻設定/設定済）は
+/// 実行時に常に `ENOTSUP` になるためfalseを返す。
 pub fn capabilitySupportedOnCurrentOs(capability: Capability) bool {
+    if (!capabilityImplemented(capability)) return false;
+    if (builtin.os.tag == .wasi) {
+        return switch (capability) {
+            .utime => false,
+            else => capabilitySupportedOnOs(capability, .windows),
+        };
+    }
     const os: OsKind = switch (builtin.os.tag) {
         .linux => .linux,
-        .windows, .wasi => .windows,
+        .windows => .windows,
         else => .macos,
     };
     return capabilitySupportedOnOs(capability, os);
@@ -515,6 +555,10 @@ pub const filesystem_commands = struct {
     pub const rename = "パス名変更";
     pub const unlink = "ファイルリンク削除";
     pub const rmdir = "空フォルダ削除";
+    /// Issue #31: パス指定のtruncateとナノ秒精度の時刻設定。
+    pub const truncate_path = "ファイルサイズ変更";
+    pub const utime_path = "ファイル時刻設定";
+    pub const utime_handle = "ファイル時刻設定済";
 };
 
 /// Issue #33の逐次ディレクトリ列挙命令名。カタログ・Interpreter dispatch・
@@ -712,9 +756,9 @@ pub const catalog_commands = [_]CatalogCommand{
     .{ .id = "ll-path-rename", .name = filesystem_commands.rename, .min = 2, .max = 2, .operation = filesystem_operations.rename, .capability = .rename, .implemented = true },
     .{ .id = "ll-path-unlink", .name = filesystem_commands.unlink, .min = 1, .max = 1, .operation = filesystem_operations.unlink, .capability = .unlink, .implemented = true },
     .{ .id = "ll-path-rmdir", .name = filesystem_commands.rmdir, .min = 1, .max = 1, .operation = filesystem_operations.rmdir, .capability = .rmdir, .implemented = true },
-    .{ .id = "ll-file-truncate-path", .name = "ファイルサイズ変更", .min = 2, .max = 2, .operation = "truncate", .capability = .truncate },
-    .{ .id = "ll-file-utime-path", .name = "ファイル時刻設定", .min = 3, .max = 3, .operation = "utime", .capability = .utime },
-    .{ .id = "ll-file-utime-handle", .name = "ファイル時刻設定済", .min = 3, .max = 3, .operation = "futime", .capability = .utime },
+    .{ .id = "ll-file-truncate-path", .name = filesystem_commands.truncate_path, .min = 2, .max = 2, .operation = filesystem_operations.truncate, .capability = .truncate, .implemented = true },
+    .{ .id = "ll-file-utime-path", .name = filesystem_commands.utime_path, .min = 3, .max = 3, .operation = filesystem_operations.utime, .capability = .utime, .implemented = true },
+    .{ .id = "ll-file-utime-handle", .name = filesystem_commands.utime_handle, .min = 3, .max = 3, .operation = filesystem_operations.futime, .capability = .utime, .implemented = true },
     .{ .id = "ll-hash-create", .name = hash_commands.create, .min = 1, .max = 1, .operation = "hash", .capability = .incremental_hash, .implemented = true },
     .{ .id = "ll-hash-update", .name = hash_commands.update, .min = 2, .max = 2, .operation = "hash", .capability = .incremental_hash, .implemented = true },
     .{ .id = "ll-hash-digest", .name = hash_commands.digest, .min = 1, .max = 2, .operation = "hash", .capability = .incremental_hash, .implemented = true },
@@ -809,6 +853,11 @@ pub const filesystem_operations = struct {
     pub const rename = "rename";
     pub const unlink = "unlink";
     pub const rmdir = "rmdir";
+    /// Issue #31のパスtruncateと時刻設定のsyscall名。NodeのSystemError
+    /// `syscall` / POSIX syscall名と揃える。
+    pub const truncate = "truncate";
+    pub const utime = "utime";
+    pub const futime = "futime";
 };
 
 /// Issue #33の逐次ディレクトリ列挙が失敗したときに返す構造化エラーの操作名
@@ -1039,6 +1088,8 @@ pub fn portableCodeForFailure(failure: anyerror) ?PortableErrorCode {
         // readlinkの対象がsymlinkでない場合はEINVAL（Node fs.readlinkと同じ）。
         // 不正なパス表現（WTF-8として不正等）もEINVALへ揃える。
         error.NotLink, error.BadPathName, error.InvalidWtf8, error.InvalidArgument => .EINVAL,
+        // 時刻がOS表現（time_t / Windowsの100ns）に収まらない場合はEINVAL。
+        error.InvalidTimestamp => .EINVAL,
         error.ReadOnlyFileSystem => .EROFS,
         error.NoSpaceLeft, error.DiskQuota, error.FileTooBig => .ENOSPC,
         error.ProcessFdQuotaExceeded => .EMFILE,
@@ -1199,6 +1250,12 @@ test "timestampのナノ秒公開は常にBigIntで、欠損はnull、0はepoch"
     try std.testing.expectError(error.InvalidTimestamp, timeNsFromUnixMsNumber(1.5));
     try std.testing.expectEqual(@as(TimeNs, 2_000_000_000), timeNsFromUnixSeconds(2));
     try std.testing.expectEqual(@as(TimeNs, 2_000_000), timeNsFromUnixMicroseconds(2_000));
+    try std.testing.expectEqual(@as(TimeNs, 9007199254740991), try timeNsFromNumber(9007199254740991));
+    try std.testing.expectEqual(@as(TimeNs, 0), try timeNsFromNumber(0));
+    try std.testing.expectEqual(@as(TimeNs, -1), try timeNsFromNumber(-1));
+    try std.testing.expectError(error.InvalidTimestamp, timeNsFromNumber(1.5));
+    try std.testing.expectError(error.InvalidTimestamp, timeNsFromNumber(@floatFromInt(max_safe_integer + 1)));
+    try std.testing.expectEqual(@as(TimeNs, 2_000_000_000), (SetTime{ .at = 2_000_000_000 }).at);
     try std.testing.expectEqual(@as(TimeNs, -11644473600000000000), timeNsFromWindowsFileTime(0));
     try std.testing.expect(missing == null);
     try std.testing.expect(missing_timestamp_is_null);
@@ -1239,6 +1296,7 @@ test "capability識別子はsnake_caseで分類が閉じている" {
     try std.testing.expectEqual(CapabilityClass.portable_core, Capability.stream_file_io.class());
     try std.testing.expect(capabilityImplemented(.stream_file_io));
     try std.testing.expect(capabilityImplemented(.truncate));
+    try std.testing.expect(capabilityImplemented(.utime));
     try std.testing.expect(capabilityImplemented(.incremental_hash));
     try std.testing.expect(capabilityImplemented(.raw_stdio));
     try std.testing.expect(!capabilityImplemented(.termios));
@@ -1272,6 +1330,14 @@ test "非対応OSのcapabilityは照会falseになる" {
     // 未実装capabilityは指定OSに関わらずfalse。
     try std.testing.expect(!capabilitySupportedOnOs(.termios, .linux));
     try std.testing.expect(!capabilitySupportedOnOs(.statfs, .macos));
+}
+
+test "WASIではutime capabilityがfalseになる" {
+    if (builtin.os.tag != .wasi) return error.SkipZigTest;
+    // WASIはutimensat/futimensを持たず実行時にENOTSUPになるため、照会もfalse。
+    try std.testing.expect(!capabilitySupportedOnCurrentOs(.utime));
+    // truncateはWASIでもopen+setLengthで提供できる。
+    try std.testing.expect(capabilitySupportedOnCurrentOs(.truncate));
 }
 
 test "未知capabilityの照会はfalseで、未対応実行はENOTSUP" {
@@ -1395,6 +1461,7 @@ test "portableCodeForFailureはI/O失敗をportable codeへ写す" {
     try std.testing.expectEqual(PortableErrorCode.ENOTEMPTY, portableCodeForFailure(error.DirNotEmpty).?);
     try std.testing.expectEqual(PortableErrorCode.EXDEV, portableCodeForFailure(error.CrossDevice).?);
     try std.testing.expectEqual(PortableErrorCode.EINVAL, portableCodeForFailure(error.NotLink).?);
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, portableCodeForFailure(error.InvalidTimestamp).?);
     try std.testing.expectEqual(PortableErrorCode.ENOTSUP, portableCodeForFailure(error.OperationUnsupported).?);
     try std.testing.expectEqual(PortableErrorCode.ENOTSUP, portableCodeForFailure(error.UnsupportedReparsePointType).?);
     try std.testing.expectEqual(PortableErrorCode.EPERM, portableCodeForFailure(error.LinkQuotaExceeded).?);
@@ -1455,6 +1522,38 @@ test "Issue 29の9命令は実装済みでcapabilityが有効になる" {
     try std.testing.expectEqualStrings("blockSize", stat_field_keys.block_size);
     try std.testing.expectEqualStrings("birthtimeNs", stat_field_keys.birthtime_ns);
     try std.testing.expectEqualStrings("kind", stat_field_keys.kind);
+}
+
+test "Issue 31の3命令は実装済みでtruncate/utime capabilityが有効になる" {
+    const expected_ids = [_][]const u8{
+        "ll-file-truncate-path",
+        "ll-file-utime-path",
+        "ll-file-utime-handle",
+    };
+    const expected_operations = [_][]const u8{
+        filesystem_operations.truncate,
+        filesystem_operations.utime,
+        filesystem_operations.futime,
+    };
+    const expected_capabilities = [_]Capability{ .truncate, .utime, .utime };
+    for (expected_ids, 0..) |id, index| {
+        var found = false;
+        for (catalog_commands) |command| {
+            if (!std.mem.eql(u8, command.id, id)) continue;
+            found = true;
+            try std.testing.expect(command.implemented);
+            try std.testing.expectEqual(expected_capabilities[index], command.capability.?);
+            try std.testing.expectEqualStrings(expected_operations[index], command.operation);
+            try std.testing.expectEqual(if (index == 0) @as(u8, 2) else @as(u8, 3), command.min);
+        }
+        try std.testing.expect(found);
+        try std.testing.expect(capabilityImplemented(expected_capabilities[index]));
+    }
+    try std.testing.expectEqualStrings("ファイルサイズ変更", filesystem_commands.truncate_path);
+    try std.testing.expectEqualStrings("ファイル時刻設定", filesystem_commands.utime_path);
+    try std.testing.expectEqualStrings("ファイル時刻設定済", filesystem_commands.utime_handle);
+    try std.testing.expectEqual(@as(u8, 2), commandArity(filesystem_commands.truncate_path).?.min);
+    try std.testing.expectEqual(@as(u8, 3), commandArity(filesystem_commands.utime_path).?.max);
 }
 
 test "Issue 34の10命令は実装済みでcapabilityが有効になる" {

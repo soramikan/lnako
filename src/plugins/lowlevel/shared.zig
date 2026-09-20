@@ -258,6 +258,7 @@ fn failureMessage(failure: anyerror) []const u8 {
         error.OperationUnsupported, error.UnsupportedReparsePointType, error.Unsupported, error.NotSupported => "この操作は対応していません",
         error.LinkQuotaExceeded => "リンク数の上限に達しました",
         error.NameTooLong => "名前が長すぎます",
+        error.InvalidTimestamp => "時刻が不正です",
         error.FileBusy => "ファイルが使用中です",
         error.InputOutput => "入出力エラーです",
         error.StreamTooLong => "標準入力が上限を超えました",

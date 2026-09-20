@@ -434,6 +434,23 @@ pub const CliHost = struct {
         return lnako.runtime.low_level_fs.rmdir(self.io, path);
     }
 
+    fn lowLevelTruncatePath(context: *anyopaque, path: []const u8, size: u64) anyerror!void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return lnako.runtime.low_level_fs.truncatePath(self.io, path, size);
+    }
+
+    fn lowLevelUtimePath(context: *anyopaque, path: []const u8, atime: lnako.runtime.low_level_foundation.SetTime, mtime: lnako.runtime.low_level_foundation.SetTime) anyerror!void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return lnako.runtime.low_level_fs.setTimestampsPath(self.io, path, atime, mtime);
+    }
+
+    fn lowLevelSetTimestampsFile(context: *anyopaque, raw: u64, atime: lnako.runtime.low_level_foundation.SetTime, mtime: lnako.runtime.low_level_foundation.SetTime) anyerror!void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const id = lnako.runtime.low_level_foundation.HandleId.fromRaw(raw);
+        const entry = self.lowLevelTable().find(id) orelse return error.BadFileDescriptor;
+        return lnako.runtime.low_level_fs.setTimestampsHandle(self.io, entry.file, atime, mtime);
+    }
+
     fn lowLevelProcessTable(self: *CliHost) *lnako.runtime.low_level_process.ProcessTable {
         if (self.low_level_processes == null) {
             self.low_level_processes = lnako.runtime.low_level_process.ProcessTable.init(std.heap.page_allocator);
@@ -572,6 +589,7 @@ pub const CliHost = struct {
                 .writeFileBytesFn = lowLevelWriteFileBytes,
                 .syncFileFn = lowLevelSyncFile,
                 .truncateFileFn = lowLevelTruncateFile,
+                .setTimestampsFileFn = lowLevelSetTimestampsFile,
             },
             .hash = .{
                 .context = self,
@@ -590,6 +608,8 @@ pub const CliHost = struct {
                 .renameFn = lowLevelRename,
                 .unlinkFn = lowLevelUnlink,
                 .rmdirFn = lowLevelRmdir,
+                .truncatePathFn = lowLevelTruncatePath,
+                .utimePathFn = lowLevelUtimePath,
             },
             .dir = .{
                 .context = self,

@@ -18,11 +18,13 @@ const Runtime = shared.Runtime;
 const State = shared.State;
 const Effects = shared.Effects;
 const Context = low_level_context.Context;
-const emptyContext = low_level_context.emptyContext;
 
 const throwIo = shared.throwIo;
+const throwStructured = shared.throwStructured;
 const publicSizeValue = shared.publicSizeValue;
 const pathStringFromBytes = shared.pathStringFromBytes;
+const lookupHandle = shared.lookupHandle;
+const sizeArgument = shared.sizeArgument;
 const requirePath = shared.pathArgument;
 
 const captureThrow = shared.captureThrow;
@@ -155,9 +157,109 @@ pub fn rmdirPath(runtime: *Runtime, state: *State, context: Context, effects: Ef
     return .undefined;
 }
 
-/// Issue #29のパス操作を実OSで検証するためのContext。InterpreterのHostと同じ
-/// `low_level_fs` 実装を共有し、dispatchと値組み立てだけを単体で検査する。
+/// ATIME/MTIME引数を `SetTime` 契約へ変換する。nullは既存値維持、
+/// 文字列 `"now"` は現在時刻、Number/BigIntはナノ秒の明示値。
+fn requireSetTime(runtime: *Runtime, effects: Effects, value: Value, operation: []const u8) !foundation.SetTime {
+    return switch (value) {
+        .null_value => .unchanged,
+        .number => |number| .{ .at = foundation.timeNsFromNumber(number) catch {
+            return throwStructured(runtime, effects, .EINVAL, operation, null, null, "時刻はナノ秒の整数である必要があります");
+        } },
+        .bigint => |bigint| .{ .at = bigint.toI128() catch {
+            return throwStructured(runtime, effects, .EINVAL, operation, null, null, "時刻はナノ秒の整数である必要があります");
+        } },
+        .string => |string| if (isNowString(string.units))
+            .now
+        else
+            return throwStructured(runtime, effects, .EINVAL, operation, null, null, "時刻はナノ秒の整数か\"now\"である必要があります"),
+        else => return throwStructured(runtime, effects, .EINVAL, operation, null, null, "時刻はナノ秒の整数である必要があります"),
+    };
+}
+
+fn isNowString(units: []const u16) bool {
+    if (units.len != 3) return false;
+    return units[0] == 'n' and units[1] == 'o' and units[2] == 'w';
+}
+
+pub fn truncatePath(runtime: *Runtime, state: *State, context: Context, effects: Effects, arguments: []const Value) !Value {
+    _ = state;
+    const operation = foundation.filesystem_operations.truncate;
+    const path = try requirePath(runtime, effects, common.argument(arguments, 0), operation);
+    defer runtime.allocator().free(path);
+    const size = sizeArgument(runtime, common.argument(arguments, 1)) catch {
+        return throwStructured(runtime, effects, .EINVAL, operation, path, null, "切詰める大きさが不正です");
+    };
+    context.truncatePath(path, size) catch |failure| {
+        return throwIo(runtime, effects, failure, operation, path, null, .truncate);
+    };
+    return .undefined;
+}
+
+pub fn utimePath(runtime: *Runtime, state: *State, context: Context, effects: Effects, arguments: []const Value) !Value {
+    _ = state;
+    const operation = foundation.filesystem_operations.utime;
+    const path = try requirePath(runtime, effects, common.argument(arguments, 0), operation);
+    defer runtime.allocator().free(path);
+    const atime = try requireSetTime(runtime, effects, common.argument(arguments, 1), operation);
+    const mtime = try requireSetTime(runtime, effects, common.argument(arguments, 2), operation);
+    context.utimePath(path, atime, mtime) catch |failure| {
+        return throwIo(runtime, effects, failure, operation, path, null, .utime);
+    };
+    return .undefined;
+}
+
+pub fn utimeHandle(runtime: *Runtime, state: *State, context: Context, effects: Effects, arguments: []const Value) !Value {
+    const operation = foundation.filesystem_operations.futime;
+    const handle = common.argument(arguments, 0);
+    const id = lookupHandle(state, handle) orelse {
+        return throwStructured(runtime, effects, .EBADF, operation, null, null, "無効なハンドルです");
+    };
+    const atime = try requireSetTime(runtime, effects, common.argument(arguments, 1), operation);
+    const mtime = try requireSetTime(runtime, effects, common.argument(arguments, 2), operation);
+    context.setTimestampsFile(id.raw(), atime, mtime) catch |failure| {
+        return throwIo(runtime, effects, failure, operation, null, null, .utime);
+    };
+    return .undefined;
+}
+
+/// Issue #29/#31のパス操作を実OSで検証するためのContext。InterpreterのHostと
+/// 同じ `low_level_fs` 実装を共有し、dispatchと値組み立てだけを単体で検査する。
+/// `ファイル時刻設定済` のhandle解決は実ファイル表を持つため、開閉callbackも
+/// 併せて提供する。
 const FsTestHost = struct {
+    table: low_level_io.FileHandleTable,
+
+    fn init() FsTestHost {
+        return .{ .table = low_level_io.FileHandleTable.init(std.testing.allocator) };
+    }
+
+    fn deinit(self: *FsTestHost) void {
+        self.table.deinit(std.testing.io);
+    }
+
+    fn openCallback(pointer: *anyopaque, path: []const u8, mode: foundation.OpenMode, exclusive: bool, sync: bool) anyerror!u64 {
+        const self: *FsTestHost = @ptrCast(@alignCast(pointer));
+        return (try self.table.open(std.testing.io, .{ .path = path, .mode = mode, .exclusive = exclusive, .sync = sync })).raw();
+    }
+
+    fn closeCallback(pointer: *anyopaque, raw: u64) anyerror!void {
+        const self: *FsTestHost = @ptrCast(@alignCast(pointer));
+        const removed = self.table.remove(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+        removed.file.close(std.testing.io);
+    }
+
+    fn setTimestampsCallback(pointer: *anyopaque, raw: u64, atime: foundation.SetTime, mtime: foundation.SetTime) anyerror!void {
+        const self: *FsTestHost = @ptrCast(@alignCast(pointer));
+        const entry = self.table.find(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+        return low_level_fs.setTimestampsHandle(std.testing.io, entry.file, atime, mtime);
+    }
+
+    fn truncateFileCallback(pointer: *anyopaque, raw: u64, size: u64) anyerror!void {
+        const self: *FsTestHost = @ptrCast(@alignCast(pointer));
+        const entry = self.table.find(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+        return low_level_io.setLength(std.testing.io, entry.file, size);
+    }
+
     fn statCallback(_: *anyopaque, path: []const u8, follow: bool) anyerror!low_level_fs.Metadata {
         return low_level_fs.stat(std.testing.io, path, follow);
     }
@@ -190,18 +292,37 @@ const FsTestHost = struct {
         return low_level_fs.rmdir(std.testing.io, path);
     }
 
-    fn context() Context {
-        return .{ .fs = .{
-            .context = emptyContext().fs.context,
-            .statFn = statCallback,
-            .symlinkFn = symlinkCallback,
-            .readlinkFn = readlinkCallback,
-            .hardlinkFn = hardlinkCallback,
-            .realpathFn = realpathCallback,
-            .renameFn = renameCallback,
-            .unlinkFn = unlinkCallback,
-            .rmdirFn = rmdirCallback,
-        } };
+    fn truncatePathCallback(_: *anyopaque, path: []const u8, size: u64) anyerror!void {
+        return low_level_fs.truncatePath(std.testing.io, path, size);
+    }
+
+    fn utimePathCallback(_: *anyopaque, path: []const u8, atime: foundation.SetTime, mtime: foundation.SetTime) anyerror!void {
+        return low_level_fs.setTimestampsPath(std.testing.io, path, atime, mtime);
+    }
+
+    fn context(self: *FsTestHost) Context {
+        return .{
+            .stream = .{
+                .context = self,
+                .openFileFn = openCallback,
+                .closeFileFn = closeCallback,
+                .truncateFileFn = truncateFileCallback,
+                .setTimestampsFileFn = setTimestampsCallback,
+            },
+            .fs = .{
+                .context = self,
+                .statFn = statCallback,
+                .symlinkFn = symlinkCallback,
+                .readlinkFn = readlinkCallback,
+                .hardlinkFn = hardlinkCallback,
+                .realpathFn = realpathCallback,
+                .renameFn = renameCallback,
+                .unlinkFn = unlinkCallback,
+                .rmdirFn = rmdirCallback,
+                .truncatePathFn = truncatePathCallback,
+                .utimePathFn = utimePathCallback,
+            },
+        };
     }
 };
 
@@ -225,7 +346,9 @@ test "低レイヤーのstatはContext経由で辞書を返しcapabilityが有�
 
     var path = try runtime.stringUtf8(path_bytes);
     try roots.protect(&path);
-    const context = FsTestHost.context();
+    var host = FsTestHost.init();
+    defer host.deinit();
+    const context = host.context();
 
     var capability_name = try runtime.stringUtf8("stat");
     try roots.protect(&capability_name);
@@ -262,7 +385,9 @@ test "低レイヤーのunlink/rmdirはContext経由でEISDIRとENOTEMPTYを返�
     const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
     var roots = runtime.rootFrame();
     defer roots.deinit();
-    const context = FsTestHost.context();
+    var host = FsTestHost.init();
+    defer host.deinit();
+    const context = host.context();
 
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
@@ -304,7 +429,9 @@ test "孤立サロゲートのパスはU+FFFD名へ置換されず別ファイ�
     const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
     var roots = runtime.rootFrame();
     defer roots.deinit();
-    const context = FsTestHost.context();
+    var host = FsTestHost.init();
+    defer host.deinit();
+    const context = host.context();
 
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
@@ -347,7 +474,9 @@ test "readlinkは孤立サロゲートを含むリンク先を可逆に返す" {
     const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
     var roots = runtime.rootFrame();
     defer roots.deinit();
-    const context = FsTestHost.context();
+    var host = FsTestHost.init();
+    defer host.deinit();
+    const context = host.context();
 
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
@@ -380,7 +509,9 @@ test "低レイヤーのsymlink/lstat/hardlink/readlink/realpath/renameはContex
     const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
     var roots = runtime.rootFrame();
     defer roots.deinit();
-    const context = FsTestHost.context();
+    var host = FsTestHost.init();
+    defer host.deinit();
+    const context = host.context();
 
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
@@ -473,4 +604,99 @@ test "低レイヤーのsymlink/lstat/hardlink/readlink/realpath/renameはContex
     try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイル詳細情報取得", &.{loop}));
     try roots.protect(&thrown);
     try expectThrownCode(&runtime, thrown, "ELOOP");
+}
+
+test "低レイヤーのtruncate/utimeはContext経由で反映され契約違反をEINVALにする" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var host = FsTestHost.init();
+    defer host.deinit();
+    const context = host.context();
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "meta.bin", .data = "hello world" });
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const path_bytes = try std.fs.path.join(std.testing.allocator, &.{ directory, "meta.bin" });
+    defer std.testing.allocator.free(path_bytes);
+    var path = try runtime.stringUtf8(path_bytes);
+    try roots.protect(&path);
+
+    // パスtruncate: 11 -> 5 byte。
+    _ = (try call(&runtime, &state, context, effects, "ファイルサイズ変更", &.{ path, .{ .number = 5 } })) orelse return error.TestExpectedEqual;
+    var info = (try call(&runtime, &state, context, effects, "ファイル詳細情報取得", &.{path})) orelse return error.TestExpectedEqual;
+    try roots.protect(&info);
+    const size = node_shared.dictionaryGetAscii(info.dictionary, foundation.stat_field_keys.size) orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(@as(f64, 5), size.number);
+
+    // 明示ナノ秒の時刻設定（BigInt引数）。サブ秒0.5sで1秒粒度を検出する。
+    const explicit_ns: i128 = 1_600_000_000_500_000_000;
+    var explicit = try runtime.ownBigInt(try value_mod.BigInt.init(runtime.allocator(), explicit_ns));
+    try roots.protect(&explicit);
+    _ = (try call(&runtime, &state, context, effects, "ファイル時刻設定", &.{ path, explicit, explicit })) orelse return error.TestExpectedEqual;
+    info = (try call(&runtime, &state, context, effects, "ファイル詳細情報取得", &.{path})) orelse return error.TestExpectedEqual;
+    try roots.protect(&info);
+    const atime = node_shared.dictionaryGetAscii(info.dictionary, foundation.stat_field_keys.atime_ns) orelse return error.TestExpectedEqual;
+    try std.testing.expect(atime == .bigint);
+    try std.testing.expect(@abs((try atime.bigint.toI64()) - explicit_ns) < std.time.ns_per_us);
+
+    // NOWは現在時刻（2026年以降）へ進み、null/既存値維持は変更しない。
+    var now_text = try runtime.stringUtf8("now");
+    try roots.protect(&now_text);
+    _ = (try call(&runtime, &state, context, effects, "ファイル時刻設定", &.{ path, now_text, .null_value })) orelse return error.TestExpectedEqual;
+    info = (try call(&runtime, &state, context, effects, "ファイル詳細情報取得", &.{path})) orelse return error.TestExpectedEqual;
+    try roots.protect(&info);
+    const now_atime = node_shared.dictionaryGetAscii(info.dictionary, foundation.stat_field_keys.atime_ns) orelse return error.TestExpectedEqual;
+    const kept_mtime = node_shared.dictionaryGetAscii(info.dictionary, foundation.stat_field_keys.mtime_ns) orelse return error.TestExpectedEqual;
+    try std.testing.expect(try now_atime.bigint.toI64() > explicit_ns + std.time.ns_per_day);
+    try std.testing.expect(@abs((try kept_mtime.bigint.toI64()) - explicit_ns) < std.time.ns_per_us);
+
+    // 契約外の時刻はEINVAL。
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイル時刻設定", &.{ path, .{ .number = 1.5 }, now_text }));
+    try roots.protect(&thrown);
+    try expectThrownCode(&runtime, thrown, "EINVAL");
+
+    // ハンドル経由の時刻設定（now/now）。
+    var mode = try runtime.stringUtf8("r+");
+    try roots.protect(&mode);
+    var handle = (try call(&runtime, &state, context, effects, "ファイル開く", &.{ path, mode })) orelse return error.TestExpectedEqual;
+    try roots.protect(&handle);
+    _ = (try call(&runtime, &state, context, effects, "ファイル時刻設定済", &.{ handle, now_text, now_text })) orelse return error.TestExpectedEqual;
+    info = (try call(&runtime, &state, context, effects, "ファイル詳細情報取得", &.{path})) orelse return error.TestExpectedEqual;
+    try roots.protect(&info);
+    const handle_atime = node_shared.dictionaryGetAscii(info.dictionary, foundation.stat_field_keys.atime_ns) orelse return error.TestExpectedEqual;
+    const handle_mtime = node_shared.dictionaryGetAscii(info.dictionary, foundation.stat_field_keys.mtime_ns) orelse return error.TestExpectedEqual;
+    try std.testing.expect(try handle_atime.bigint.toI64() > explicit_ns + std.time.ns_per_day);
+    try std.testing.expect(try handle_mtime.bigint.toI64() > explicit_ns + std.time.ns_per_day);
+
+    // 無効ハンドルはEBADF。
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイル時刻設定済", &.{ .{ .number = 1 }, now_text, .null_value }));
+    try roots.protect(&thrown);
+    try expectThrownCode(&runtime, thrown, "EBADF");
+
+    // close後ハンドルもEBADF（状態から消えているため）。
+    _ = (try call(&runtime, &state, context, effects, "ファイル閉じる", &.{handle})) orelse return error.TestExpectedEqual;
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイル時刻設定済", &.{ handle, now_text, .null_value }));
+    try roots.protect(&thrown);
+    try expectThrownCode(&runtime, thrown, "EBADF");
+
+    // 存在しないパスはENOENT。
+    const missing_bytes = try std.fs.path.join(std.testing.allocator, &.{ directory, "missing-meta.bin" });
+    defer std.testing.allocator.free(missing_bytes);
+    var missing = try runtime.stringUtf8(missing_bytes);
+    try roots.protect(&missing);
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイルサイズ変更", &.{ missing, .{ .number = 1 } }));
+    try roots.protect(&thrown);
+    try expectThrownCode(&runtime, thrown, "ENOENT");
 }
