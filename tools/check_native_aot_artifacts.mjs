@@ -31,11 +31,10 @@ const expectedPlatforms = new Map([
   ["windows-2025", { target: "windows-x64", platform: "win32", arch: "x64", shardCount: 3 }],
 ]);
 const expectedGroups = new Map([
+  // Linux・WindowsはO0+O1／O2+O3へ統合した（改善計画2 Phase 5 Case C）。
   ["ubuntu-24.04", [
-    { key: "O0", optimizations: ["O0"] },
-    { key: "O1", optimizations: ["O1"] },
-    { key: "O2", optimizations: ["O2"] },
-    { key: "O3", optimizations: ["O3"] },
+    { key: "O0-O1", optimizations: ["O0", "O1"] },
+    { key: "O2-O3", optimizations: ["O2", "O3"] },
   ]],
   ["macos-15", [
     { key: "O0-O1", optimizations: ["O0", "O1"] },
@@ -43,10 +42,8 @@ const expectedGroups = new Map([
     { key: "O3", optimizations: ["O3"] },
   ]],
   ["windows-2025", [
-    { key: "O0", optimizations: ["O0"] },
-    { key: "O1", optimizations: ["O1"] },
-    { key: "O2", optimizations: ["O2"] },
-    { key: "O3", optimizations: ["O3"] },
+    { key: "O0-O1", optimizations: ["O0", "O1"] },
+    { key: "O2-O3", optimizations: ["O2", "O3"] },
   ]],
 ]);
 

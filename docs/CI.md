@@ -4,20 +4,24 @@ CIは、互換性検証の意味を保ったまま、AOTをfixture shardと最�
 
 ## job構成
 
-現行workflowは **51 matrix job＋変更分類・軽量検証・Windows AOT compiler producer・3後段job、合計57 job**です。matrixの失敗は別OS・別suiteの結果を隠さないよう `fail-fast: false`、同一branchの古いrunは `cancel-in-progress: true` です。
+現行workflowは **40 matrix job＋変更分類・軽量検証・Windows／Linux AOT compiler producer・3後段job、合計47 job**です。matrixの失敗は別OS・別suiteの結果を隠さないよう `fail-fast: false`、同一branchの古いrunは `cancel-in-progress: true` です。
 
 | job | 内訳 | 主な検証 |
 | --- | ---: | --- |
-| `test` | 10 | core、standard、host、QuickJS/AOT smoke、macOS統合suite |
+| `test` | 11 | core、standard、host、QuickJS/AOT smoke、macOS統合suite、Windows専用のpackage isolation |
 | `parser_fuzz` | 2 | Linux/Windowsの文法生成fuzz |
-| `aot` native | 15 | Linux 12、macOS 3。O0〜O3とfixture shard |
-| `aot` support | 12 | Linux/Windows各6。HTTP、dispatch evidence、coverage 3 shard、smoke |
-| `aot_windows` native | 12 | Windows 12。O0〜O3とfixture shard。producer artifactを検証・installしてbuildを省略 |
+| `aot` | 8 | macOS native 3（O0+O1／O2／O3のroutes全件）＋Linux dedicated coverage 3 shard（canonical正本・ReleaseSafe）＋Linux/Windowsのsmoke 2 |
+| `aot_linux` | 8 | Linux native 6 shard（O0+O1／O2+O3×3）＋Linux support 2（HTTP、dispatch evidence）。producer artifactを検証・installしてbuildを省略 |
+| `aot_windows` | 11 | Windows native 6 shard＋Windows support 5（HTTP、dispatch evidence、coverage 3 shard）。producer artifactを検証・installしてbuildを省略 |
+| producer | 2 | `aot_compiler`（Windows）と`aot_compiler_linux`（Linux）がDebug compilerを各1回buildし、metadata＋SHA-256付きでartifact化 |
 | 後段 | 3 | coverage集約、AOT artifact集約、dispatch＋canonical証拠のattestation |
 | 分類・軽量 | 2 | `changes`が変更パスを分類し、docs・attestation snapshot専用変更では`lightweight`のみ実行（matrixはskip） |
-| `aot_compiler` | 1 | Windows native AOT shardが共有するDebug compilerを1回buildし、metadata＋SHA-256付きでartifact化 |
 
 job数を増やすことで、1つの巨大なAOT stepに検証を集中させず、失敗箇所と所要時間をjob単位で確認できます。検証suite、O0〜O3、QuickJS、3 OSのいずれも省略しません。
+
+Windowsの`core` jobはwall clockの律速（分割前の実測 median 1,032s／p75 1,074s）だったため、独立した検証である`Zig package isolation check`をWindows専用job（`suite: win-package-isolation`）へ分離しています。検証量は変えず、実行するjobだけを分けてwallを短縮します（Windows `core`では同stepはskip）。分離後の3 run（[`35487256825`](https://github.com/soramikan/lnako/actions/runs/35487256825)・[`35488606007`](https://github.com/soramikan/lnako/actions/runs/35488606007)・[`35489573736`](https://github.com/soramikan/lnako/actions/runs/35489573736)）はwall 13m49s／13m52s／13m38sで、律速は`Windows compat-aot`（13m11s／13m15s／12m59s）と`macOS arm64 / mac-host-compat`（13m00s）へ移りました（詳細は`docs/ci-performance.md`）。
+
+matrix jobを増やすとブランチ保護のrequired status checksへ追加漏れが起こり得ます。required checkは**skipされたjobを成功として扱う**ため、集約job（`verify_dispatch_coverage`・`verify_native_aot_artifacts`）は`always()`で起動し、上流matrixの失敗を`Reject failed ... matrix`stepで明示的な失敗へ変換します。これにより、新設jobがrequiredへ未登録でも検証漏れをマージできません。
 
 ## macOSの5枠制限
 
@@ -35,7 +39,7 @@ macOSのjobをさらに増やすと実行待ちが発生するため、分割は
 
 ## AOTの分割単位
 
-LinuxとWindowsのnative AOTは、fixtureを3 shardに分け、各shardをO0、O1、O2、O3の4 jobで実行します。macOSはfixtureを増やさず、O0＋O1、O2、O3の3 jobで全routeを検証します。
+LinuxとWindowsのnative AOTは、fixtureを3 shardに分け、各shardを `O0+O1` と `O2+O3` の2 jobで実行します（同じshardのoptimizationを1 jobにまとめ、oracle実行を1回にします）。macOSはfixtureを増やさず、O0＋O1、O2、O3の3 jobで全routeを検証します。
 
 support jobはnative AOTの代替ではありません。HTTP server、dispatch trace、dispatch coverage、smokeという別の証拠経路を担当します。後段jobはmatrix artifactと結果を集約し、欠落・重複・失敗を検査してからattestationを実行します。
 

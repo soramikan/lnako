@@ -4,7 +4,7 @@
 // binaryのSHA-256を厳密に照合してからinstallする。
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -100,7 +100,12 @@ export function verifyArtifact({ dir, installTo, root = process.cwd(), env = pro
   if (actualLibSha256 !== metadata.runtimeLibSha256) fail(`AOT runtime libraryのSHA-256が不一致です: expected=${metadata.runtimeLibSha256} actual=${actualLibSha256}`);
   if (installTo) {
     mkdirSync(installTo, { recursive: true });
-    copyFileSync(binaryPath, join(installTo, metadata.binaryName));
+    const installedBinary = join(installTo, metadata.binaryName);
+    copyFileSync(binaryPath, installedBinary);
+    // upload-artifact／download-artifactは実行ビットを保証しないため、
+    // POSIXではinstall時に明示的に付与する（Linux consumerで
+    // `spawn ... EACCES`になる実測不具合の再発防止）。Windowsでは不要。
+    if (platform !== "win32") chmodSync(installedBinary, 0o755);
     // compilerは<exe>/../lib/を探索するため、binの兄弟libへinstallする。
     const libDir = resolve(installTo, "..", "lib");
     mkdirSync(libDir, { recursive: true });

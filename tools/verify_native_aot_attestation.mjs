@@ -18,11 +18,11 @@ const expectedPlatforms = [
     platform: "linux",
     arch: "x64",
     shardCount: 3,
+    // 改善計画2 Phase 5 Case CでO0+O1／O2+O3へ統合した（集約側の
+    // tools/check_native_aot_artifacts.mjs と同じgroup定義を保つこと）。
     groups: [
-      { key: "O0", optimizations: ["O0"] },
-      { key: "O1", optimizations: ["O1"] },
-      { key: "O2", optimizations: ["O2"] },
-      { key: "O3", optimizations: ["O3"] },
+      { key: "O0-O1", optimizations: ["O0", "O1"] },
+      { key: "O2-O3", optimizations: ["O2", "O3"] },
     ],
   },
   {
@@ -43,15 +43,25 @@ const expectedPlatforms = [
     platform: "win32",
     arch: "x64",
     shardCount: 3,
+    // Linuxと同じくO0+O1／O2+O3へ統合した。
     groups: [
-      { key: "O0", optimizations: ["O0"] },
-      { key: "O1", optimizations: ["O1"] },
-      { key: "O2", optimizations: ["O2"] },
-      { key: "O3", optimizations: ["O3"] },
+      { key: "O0-O1", optimizations: ["O0", "O1"] },
+      { key: "O2-O3", optimizations: ["O2", "O3"] },
     ],
   },
 ];
 const expectedArtifactCount = expectedPlatforms.reduce((total, platform) => total + platform.shardCount * platform.groups.length, 0);
+// group定義の自己整合。各platformのoptimizationsがO0〜O3をちょうど1回ずつ被覆し、
+// group keyが重複せず、artifact総数がCI matrix（3 OS×shardCount×group）と一致する
+// ことを保証する。CI matrixとの突き合わせは check_ci_workflow.mjs も行う。
+for (const platform of expectedPlatforms) {
+  const covered = platform.groups.flatMap((group) => group.optimizations);
+  if (JSON.stringify([...covered].sort()) !== JSON.stringify(["O0", "O1", "O2", "O3"]) ||
+      new Set(platform.groups.map((group) => group.key)).size !== platform.groups.length) {
+    throw new Error(`expectedPlatformsのoptimization group定義が不正です: ${platform.target}`);
+  }
+}
+if (expectedArtifactCount !== 15) throw new Error(`expectedPlatformsのartifact総数が不正です: ${expectedArtifactCount}`);
 if (!Array.isArray(fixtures) || fixtures.length !== 347 || fixtures.some((fixture) => fixture === null || typeof fixture !== "object" || Array.isArray(fixture))) {
   throw new Error("native-cases.jsonのfixture集合が不正です");
 }

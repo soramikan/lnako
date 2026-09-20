@@ -63,7 +63,7 @@ lnakoは「標準cnako 527 entryについて、追跡されたfixtureと公式v3
 <!-- attestation:artifacts-start -->
 ### CIの一時artifact
 
-main CIの `attest-dispatch-evidence` jobが3 OSのdispatch証拠・native AOT aggregate・source manifest宣言・canonical証拠17件を同一Sigstore bundleのsubjectとして署名し、GitHub Attestationsへ記録します。Release tag pushは同じcommitのCI 57 job構成でのfull相当成功に加え、このattestationを `gh attestation verify` で再確認します。`compat/v3.7.24/attestations/` の過去snapshotはオフライン改変検査用の履歴fixtureであり、現行のverified判定には使いません。
+main CIの `attest-dispatch-evidence` jobが3 OSのdispatch証拠・native AOT aggregate・source manifest宣言・canonical証拠17件を同一Sigstore bundleのsubjectとして署名し、GitHub Attestationsへ記録します。Release tag pushは同じcommitのCI 47 job構成でのfull相当成功に加え、このattestationを `gh attestation verify` で再確認します。`compat/v3.7.24/attestations/` の過去snapshotはオフライン改変検査用の履歴fixtureであり、現行のverified判定には使いません。
 
 一時artifactの値は実行環境とartifactの保存期間に依存します。追跡対象のcanonical `evidence.json` は常時 `trace-confirmed-unattested` を保持します。
 <!-- attestation:artifacts-end -->
