@@ -1076,6 +1076,47 @@ step統計で目立つ`Test QuickJS build`（267s）と`Build QuickJS compiler`�
 そのもの**であり、Phase 4・6で除去した「重複ビルド」に相当する構造的な重複は
 残っていない。
 
+### compat-aotのZig cache保存（実測中）
+
+wall律速が`Windows compat-aot`（12m59s〜13m15s）へ移ったため、`use-cache: false`
+だった`compat-aot`をcache保存の対象へ加えて実測している（利用者判断で
+「実測して効果とcache容量を比較し、効果が無い／他suiteがcold化するなら撤回」）。
+
+`compat-aot`は`zig build -Dcompat-js=true test`と
+`zig build -Dcompat-js=true -Doptimize=ReleaseSafe`を毎回フルコンパイルしており、
+後者はWindowsで356s・Linuxで175sだった。cache有効な`mac-host-compat`は同じ
+ReleaseSafe compat-js構成のビルドが1sで終わるため、構成差ではなくcacheの有無が
+効いていると見られる。
+
+#### 初回run（run 35503960505、cache保存のみ）
+
+| 観測 | Windows compat-aot | Linux compat-aot |
+| --- | --- | --- |
+| Zig cache復元 | **miss（cold。想定どおり初回）** | **miss（cold）** |
+| Zig cache保存 | あり（dir 411,771,718 bytes、上限1,610,612,736 bytes以内） | あり |
+| 転送量（圧縮） | 115,227,993 bytes（約110 MiB） | 約110 MiB |
+| `Test QuickJS build` | 279s（変更前397s） | 176s相当 |
+| `Build QuickJS compiler` | 293s（変更前356s） | 175s相当 |
+| job全体 | 610s（変更前779〜795s） | 375s（変更前351〜375s） |
+
+coldのまま短縮しているのはrunner間の変動であり、cacheの効果は2回目（hit時）に
+現れる。**容量面の懸念は小さい**: 保存されるZig cacheは1 OSあたり約110 MiB
+（dir 412 MB）で、`cache-size-limit` 1.5 GiB以内に収まる。また同じrunで
+`mac-host-compat`のZig cacheは**hit**（key `…mac-host-compat-35502310307-1`を復元）し、
+**この変更によるevictionは起きていない**（撤回条件には該当しない）。
+
+同runの`mac-host-compat`はjob全体1281sだったが、これは`Native plugin ABI test`
+（141s、通常1s）・`Differential QuickJS compatibility test`（110s、通常6s）など
+runner環境側の劣化によるもので、cache状態は上記のとおりhitである。
+
+なおrun 35503960505のrun全体はwall 23m02s・runner minutes 179.4 min（Linux AOT
+job群 10.6 min）で、上記の環境劣化（`Windows x86_64 / host` 812s、
+`Linux x86_64 / core` 692s、`mac-core-standard-support` 679s）を含むため、
+§10系列（cache無効の46/47 job構成）とは別の観測として扱う。
+
+2回目のrun（cache hit）で`Build QuickJS compiler`が短縮するかを確認して、
+採用／撤回を決める。
+
 ### wall clockの残存レバー: 最長jobの分割（実施済み・初回実測で目標帯へ）
 
 計画§10のwall clockは未達（実質不変）のままだった。原因を再測定したところ、
@@ -1205,4 +1246,31 @@ fixtureは「child-fastがmarkerを書く→child-slowが25 ms間隔で検出し
 1. fixtureのタイミング余裕を広げる（`2000 ms`／`5秒待`のマージンを増やす）。
 2. lnako側の完了コールバック配送が負荷時に遅れる事象を調査する。
 
-いずれも互換oracleの意味に触れるため、本PRでは変更せず記録に留める。
+#### タイミング余裕の拡大（利用者判断で1を実施）
+
+互換oracleの意味を変えずに余裕だけを広げた（`tests/oracle/node-file-cases.json`）。
+
+| 定数 | 変更前 | 変更後 | 意図 |
+| --- | ---: | ---: | --- |
+| `child-slow.mjs`のmarker待ちdeadline | 8000 ms | 4000 ms | 外側の待ち時間の中へ収める |
+| marker検出後`SLOW`を出すまでの遅延 | 2000 ms | 3000 ms | 「FAST→SLOW」の順序が崩れる余裕を3秒へ拡大 |
+| 外側の待ち（`5秒待`） | 5000 ms | 8000 ms | 両方が揃うための余裕を拡大 |
+
+設計上の性質は次のとおり。
+
+- 通常はmarker検出（25 msポーリング）＋3000 msで`SLOW`が出る。
+- markerが検出できなくてもdeadline 4000 ms＋3000 ms＝7000 msで`SLOW`が出るため、
+  `8000 ms`の待ち時間内に必ず両方のコールバックが揃う（順序はFAST→SLOW）。
+- lnako側の配送遅延が3秒を超えない限り順序は崩れない（変更前は2秒）。
+
+ローカル実測（公式cnako3・lnako interpreter・lnako AOT O3の3者一致）:
+
+| 条件 | 結果 |
+| --- | --- |
+| アイドル 3回 | 3/3一致（`["FAST","SLOW"]`） |
+| CPU負荷16並列（8 core×2） 3回 | 3/3一致（`["FAST","SLOW"]`） |
+
+`node tools/compare_node_file_oracle.mjs`もローカルで成功（13ケース・65命令、AOT O0〜O3は5ケース）。
+加えて、互換oracleの意味をさらに強くする案として「markerの書き込みをlnako側の
+完了コールバック（`F`）へ移す」方法がある（順序raceそのものを消せる）。fixtureの
+意味を変えるため、本PRでは採用せず代替案として記録する。
