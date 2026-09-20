@@ -893,7 +893,7 @@ job名（`Linux x86_64 / AOT native shard 1/3 / O0+O1` 等）は変えていな�
 
 ## 改善計画2 の最終結果
 
-| 指標 | 改善前 | Phase 1〜5後（7 run） | Phase 6後（4 run） | wall律速job分割後（n=4） |
+| 指標 | 改善前 | Phase 1〜5後（7 run） | Phase 6後（4 run） | wall律速job分割後（n=5） |
 | --- | ---: | ---: | ---: | ---: |
 | workflow wall clock | 1,112s | 876〜1,462s（median 約1,113s） | 1,071〜1,141s（median 約1,130s）※ | **818〜1,173s（median 832s＝13m52s）※※** |
 | 全job runner minutes | 213 min | 166〜191 min（median 174.8） | 151.6〜169.1（median 159.4） | 146.1〜163.6 min（median 153.2） |
@@ -1167,7 +1167,8 @@ skipする。**検証量は変えず、実行するjobだけを分ける**。
 ※ run 35502310307の19m33sはmacOSの5枠制限による`mac-host-compat`の484s queue待ちと
 `Windows x86_64 / host`の853s（通常193〜860sの上限側）が重なったrunである。
 
-queue待ちの無い3 run は wall が最長job＋38s以内（38s／37s／38s）である。律速は
+queue待ちの無い4 run（35487256825・35488606007・35489573736・35509082323。job単位の
+queue待ちの最大は9〜38s）は wall が最長job＋38〜85s以内である。律速は
 `Windows compat-aot`（791s／795s／779s／783s）と `macOS host-compat`（634s／671s／780s／648s）が
 入れ替わるようになり、**上位2 jobが16s差まで並んだ**（run 35489573736の最長は
 macOS host-compat 780s、Windows compat-aot 779s）。これが当面のwall下限（約13分）に

@@ -185,7 +185,7 @@ test("loadTimingDocuments loads, validates and aggregates artifact directories",
     const markdown = formatTimingAggregate(buildTimingAggregate(documents));
     assert.match(markdown, /AOT fixture timing aggregate/);
     assert.match(markdown, /入力document数: 2/);
-    assert.match(markdown, /\| linux-x64 \| a \| 2 \| 1\.50s \|/);
+    assert.match(markdown, /\| linux-x64 \| a \| O0 \| 2 \| 1\.50s \|/);
 
     // schema違い・破損JSONは黙って無視せず失敗させる。
     await writeFile(join(directory, "broken.json"), "{ not json", "utf8");
@@ -233,6 +233,23 @@ test("formatTimingAggregateは既定で全fixtureを出力する（--limitは明
   assert.equal(countRows(unlimited), fixtures.length);
   const limited = formatTimingAggregate(aggregate, { limit: 3 });
   assert.equal(countRows(limited), 3);
+});
+
+test("buildTimingAggregateはoptimization集合が違う文書を別行へ分ける", () => {
+  // totalMsは文書の最適化集合のbuild/runを全部含むため、集合が違う観測を同じ
+  // 中央値へ混ぜると測定範囲が揃わない（macOSはO0+O1と単独O2/O3の別文書を出す）。
+  const aggregate = buildTimingAggregate([
+    document({ optimizations: ["O0", "O1"], fixtures: [fixture("a", { optimizations: ["O0", "O1"], totalMs: 12_000 })] }),
+    document({ optimizations: ["O2"], fixtures: [fixture("a", { optimizations: ["O2"], totalMs: 7_000 })] }),
+    document({ optimizations: ["O3"], fixtures: [fixture("a", { optimizations: ["O3"], totalMs: 8_000 })] }),
+  ]);
+  const rows = aggregate.fixtures.filter((entry) => entry.id === "a");
+  assert.equal(rows.length, 3);
+  assert.deepEqual(rows.map((entry) => entry.optimizations).sort(), ["O0+O1", "O2", "O3"]);
+  assert.equal(rows.find((entry) => entry.optimizations === "O0+O1").medianTotalMs, 12_000);
+  assert.equal(rows.find((entry) => entry.optimizations === "O2").medianTotalMs, 7_000);
+  const markdown = formatTimingAggregate(aggregate);
+  assert.match(markdown, /\| linux-x64 \| a \| O0\+O1 \| 1 \| 12\.00s \|/);
 });
 
 test("buildTimingAggregate rejects mixed commits", () => {

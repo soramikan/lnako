@@ -529,10 +529,14 @@ export function formatBytes(bytes) {
 
 export function formatSeconds(seconds) {
   if (!Number.isFinite(seconds)) return "-";
-  const roundedSeconds = Math.round(seconds);
+  // 差分（warm−cold）は負になり得る。床関数と負の剰余の組合せでは絶対値を
+  // 正しく分解できないため、符号を分離して絶対値を書式化してから付け直す
+  // （-100秒は"-1m40s"。以前は"-2m20s"と誤表示していた）。
+  const sign = seconds < 0 ? "-" : "";
+  const roundedSeconds = Math.round(Math.abs(seconds));
   const minutes = Math.floor(roundedSeconds / 60);
   const rest = roundedSeconds % 60;
-  return minutes > 0 ? `${minutes}m${String(rest).padStart(2, "0")}s` : `${rest}s`;
+  return minutes > 0 ? `${sign}${minutes}m${String(rest).padStart(2, "0")}s` : `${sign}${rest}s`;
 }
 
 export async function ghApi(path) {

@@ -153,8 +153,13 @@ export function buildTimingAggregate(documents) {
   const byOptimization = new Map();
   for (const document of usable) {
     for (const fixture of document.fixtures) {
-      const fixtureKey = `${fixture.platform}|${fixture.id}`;
-      const fixtureEntry = byFixture.get(fixtureKey) ?? { platform: fixture.platform, id: fixture.id, observations: [], totalMs: [], officialMs: [], interpreterMs: [] };
+      // `totalMs`は文書が選んだoptimization集合のbuild/runを全部含むため、
+      // 集合が違う文書のtotalを同じ中央値へ混ぜると測定範囲が揃わない
+      // （macOSはO0+O1と単独O2/O3の別文書を出す）。optimization集合を
+      // 集約キーへ含め、同じ測定範囲の観測だけで中央値を出す。
+      const optimizationSignature = [...fixture.optimizations].sort().join("+");
+      const fixtureKey = `${fixture.platform}|${optimizationSignature}|${fixture.id}`;
+      const fixtureEntry = byFixture.get(fixtureKey) ?? { platform: fixture.platform, optimizations: optimizationSignature, id: fixture.id, observations: [], totalMs: [], officialMs: [], interpreterMs: [] };
       fixtureEntry.observations.push({ commit: document.commit, concurrency: document.concurrency, totalMs: fixture.totalMs });
       fixtureEntry.totalMs.push(fixture.totalMs);
       fixtureEntry.officialMs.push(fixture.officialSourceMs + fixture.officialGeneratedMs);
@@ -178,6 +183,7 @@ export function buildTimingAggregate(documents) {
     fixtures: [...byFixture.values()]
       .map((entry) => ({
         platform: entry.platform,
+        optimizations: entry.optimizations,
         id: entry.id,
         observations: entry.observations.length,
         medianTotalMs: medianOf(entry.totalMs),

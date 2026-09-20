@@ -750,6 +750,15 @@ test("collectMetricsはページング後も宣言件数に届かないrunを除
   assert.ok(logs.some((message) => message.includes("ページング取得後も一部欠落のため除外")));
 });
 
+test("formatSecondsは負の差分も正しい絶対値で表示する", () => {
+  // 差分（warm−cold）は負になり得る。符号を分離しないと-100秒が"-2m20s"になる。
+  assert.equal(formatSeconds(-100), "-1m40s");
+  assert.equal(formatSeconds(-59.4), "-59s");
+  assert.equal(formatSeconds(-119.6), "-2m00s");
+  assert.equal(formatSeconds(-5), "-5s");
+  assert.equal(formatSeconds(-3600), "-60m00s");
+});
+
 test("formatSecondsは繰り上がりを分へ正しく伝播させる", () => {
   assert.equal(formatSeconds(119.6), "2m00s");
   assert.equal(formatSeconds(59.6), "1m00s");
