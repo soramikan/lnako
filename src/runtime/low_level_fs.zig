@@ -253,7 +253,7 @@ fn setTimestampsHandlePosix(file: std.Io.File, atime: foundation.SetTime, mtime:
 fn setTimestampsPathWindows(io: std.Io, path: []const u8, atime: foundation.SetTime, mtime: foundation.SetTime) anyerror!void {
     _ = io;
     const windows = std.os.windows;
-    const handle = try openWindowsWriteAttributes(path);
+    const handle = try openWindowsAttributes(path, false);
     defer windows.CloseHandle(handle);
 
     var io_status_block: windows.IO_STATUS_BLOCK = undefined;
@@ -269,11 +269,16 @@ fn setTimestampsPathWindows(io: std.Io, path: []const u8, atime: foundation.SetT
     if (set_status != .SUCCESS) return ntStatusError(set_status);
 }
 
-/// `FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES | SYNCHRONIZE` と
-/// `OPEN_FOR_BACKUP_INTENT` でパスを開く。read-only属性ファイルとディレクトリにも
-/// 適用でき（reparse pointは追跡する）、`NtQueryInformationFile` で現在の属性を
-/// 取得できる。呼び出し側が `CloseHandle` する。
-fn openWindowsWriteAttributes(path: []const u8) anyerror!std.os.windows.HANDLE {
+/// `FILE_WRITE_ATTRIBUTES | SYNCHRONIZE`（`read_attributes` が true なら
+/// `FILE_READ_ATTRIBUTES` も）と `OPEN_FOR_BACKUP_INTENT` でパスを開く。
+/// read-only属性ファイルとディレクトリにも適用でき、reparse pointは追跡する。
+///
+/// 製品の時刻設定は属性を照会せず `NtSetInformationFile` だけを行うため
+/// `read_attributes=false` で開く。WindowsのACLは読取属性と書込属性を別々に
+/// 許可できるため、`FILE_READ_ATTRIBUTES` を不要に要求すると書込属性だけを
+/// 許可されたファイルで `ACCESS_DENIED` になる。属性queryを行うテストhelper
+/// だけが `read_attributes=true` を指定する。呼び出し側が `CloseHandle` する。
+fn openWindowsAttributes(path: []const u8, read_attributes: bool) anyerror!std.os.windows.HANDLE {
     const windows = std.os.windows;
     const allocator = std.heap.page_allocator;
     const dos_path = std.unicode.wtf8ToWtf16LeAllocZ(allocator, path) catch |failure| switch (failure) {
@@ -300,7 +305,7 @@ fn openWindowsWriteAttributes(path: []const u8) anyerror!std.os.windows.HANDLE {
         &handle,
         .{
             .STANDARD = .{ .SYNCHRONIZE = true },
-            .SPECIFIC = .{ .FILE = .{ .READ_ATTRIBUTES = true, .WRITE_ATTRIBUTES = true } },
+            .SPECIFIC = .{ .FILE = .{ .READ_ATTRIBUTES = read_attributes, .WRITE_ATTRIBUTES = true } },
         },
         &attributes,
         &io_status_block,
@@ -684,12 +689,12 @@ fn tmpPath(temporary: *std.testing.TmpDir, name: []const u8) ![]u8 {
 }
 
 /// テスト用にread-only属性/権限を切り替える。POSIXはwrite bit、Windowsは
-/// `FILE_ATTRIBUTE_READONLY` を操作する。WindowsはGENERIC_WRITEではなく
-/// `FILE_WRITE_ATTRIBUTES` で開く必要があるため、本番と同じ開き方を使う。
+/// `FILE_ATTRIBUTE_READONLY` を操作する。Windowsは現在の属性をqueryするため
+/// `FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES` で開く。
 fn setFileReadOnly(path: []const u8, read_only: bool) !void {
     if (builtin.os.tag == .windows) {
         const windows = std.os.windows;
-        const handle = try openWindowsWriteAttributes(path);
+        const handle = try openWindowsAttributes(path, true);
         defer windows.CloseHandle(handle);
         var io_status_block: windows.IO_STATUS_BLOCK = undefined;
         var info: windows.FILE.BASIC_INFORMATION = undefined;
