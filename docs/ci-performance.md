@@ -926,20 +926,20 @@ Linux AOT job群の実測と複数runのmedianに基づく。
 ### 長期計測スナップショット（ローリング）
 
 計画§10の統計を、現行構成（46 job）の系列で蓄積する。2026-09-20時点で
-`--branch improve/ci --jobs 46` が採用した**7 run**は次のとおり。少数標本では
+`--branch improve/ci --jobs 46` が採用した**10 run**は次のとおり。少数標本では
 p90/p95が最大値へ寄るため、標本数と併記する。
 
 | 指標 | n | median | p75 | p90 | p95 | min | max |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| workflow wall clock（分） | 7 | 18.8 | 21.7 | 24.7 | 25.0 | 14.2 | 25.2 |
-| 全job runner minutes | 7 | 159.4 | 167.5 | 168.9 | 169.0 | 134.6 | 169.1 |
-| Linux AOT job群（8 consumer＋producer、分） | 7 | 11.5 | 11.8 | 11.9 | 11.9 | 10.8 | 12.0 |
+| workflow wall clock（分） | 10 | 18.4 | 19.2 | 23.8 | 24.0 | 6.3 | 24.1 |
+| 全job runner minutes | 10 | 155.9 | 165.3 | 168.7 | 168.9 | 134.6 | 169.1 |
+| Linux AOT job群（8 consumer＋producer、分） | 10 | 11.6 | 11.8 | 12.0 | 12.0 | 10.8 | 12.0 |
 
-- wall clockは実行時間にqueue待ちを含むため変動が大きい（min 14.2／max 25.2。
+- wall clockは実行時間にqueue待ちを含むため変動が大きい（min 6.3／max 24.1。
   35472553438は18m07sのqueue待ちを含む）。施策の効果判定には使わない。
 - 全job runner minutesのmin 134.6は、`test` job行が速い側へ振れたrunである
   （同job行は193〜860sで変動する）。
-- Linux AOT job群は7 runいずれも10.8〜12.0 minで、施策の効果が最も安定して
+- Linux AOT job群は10 runいずれも10.8〜12.0 minで、施策の効果が最も安定して
   観測できる指標である。
 - 系列を揃えるため`collect_ci_metrics.mjs`に構成境界のフィルタを追加した。
   `--branch`は他branchを除外するが、**同じbranch内の構成変更（job数の違う旧run）は
@@ -955,6 +955,56 @@ node tools/collect_ci_metrics.mjs --branch improve/ci --jobs 46 --runs 30 --no-l
 
 サンプル数を20〜30へ増やして再評価するのは継続課題である（本節はその途中経過）。
 
+
+#### step統計の忠実性（skipされたstepを除外する修正）
+
+GitHubは実行しなかったstepも`conclusion: "skipped"`として返し、そのstarted_atと
+completed_atは同時刻（0秒）になる。当初これを除外していなかったため、1 runあたり
+1,370 step中**480 step（35%）**の0秒観測が混入し、step別のmedianが0sへ潰れていた
+（例: `Test QuickJS build` がmedian 0s・p95 384s）。`conclusion === "skipped"`を
+除外して修正し、回帰テストを追加した。修正後の現行構成（10 run）のstep中央値:
+
+| step | n | median | p95 |
+| --- | ---: | ---: | ---: |
+| Test QuickJS build | 30 | 267s | 397s |
+| Test | 30 | 257s | 364s |
+| Build ReleaseSafe compiler | 20 | 234s | 339s |
+| Build QuickJS compiler | 30 | 205s | 393s |
+| Build AOT verification compiler (ReleaseSafe) | 30 | 190s | 213s |
+| Zig package isolation check | 30 | 181s | 386s |
+| Differential interpreter test | 30 | 151s | 207s |
+| Differential Node host test | 30 | 145s | 309s |
+| Build AOT verification compiler | 100 | 1s | 3m12s |
+
+`Build AOT verification compiler`がmedian 1s（p95 3m12s）であることが、Phase 6の
+共有artifact化が効いている証拠である（残る裾はmacOS native等の自前build）。
+
+### 次段階の検討: QuickJSビルドとsuite間Zig cache（実測により見送り）
+
+step統計で目立つ`Test QuickJS build`（267s）と`Build QuickJS compiler`（205s）は
+3 job/run（Linux/Windowsのcompat-aot、macOSのmac-host-compat）で実行され、
+合計**約23.6 min/run**を占める。削減余地を実測で確認した結果、**いずれの案も
+見送る**。
+
+1. **QuickJSコンパイルの共有**: `zig build -Dcompat-js=true -Doptimize=ReleaseSafe
+   --summary all`（ローカル、コールドcache）の内訳は`compile exe lnako ReleaseSafe
+   native 1m`と`compile lib lnako_runtime ReleaseSafe native 54s`の2 stepのみで、
+   **QuickJSのコンパイルは独立stepではなくlnakoのcompileへ統合**されている。
+   共有するにはビルドシステムを変更してQuickJSを静的ライブラリとして事前ビルドし、
+   `-Dcpu`等のCPU依存（Phase 4で実測したAVX-512混入の教訓）を管理する必要がある。
+   検証構成（Debug・compat-js・ReleaseSafe compat-js）は変えられないため、
+   費用対効果が合わない。
+2. **suite間でのZig cache共有**: 現行はsuite別key（`cache-key: ${{ matrix.suite }}`）
+   で、suite間で共有すればcompile objectを再利用できる可能性があった。しかし同一
+   cacheで`zig build test`（コールド）→`zig build -Dcompat-js=true test`を実測すると
+   **232.2s → 226.6s（-2.5%）**しか短縮せず、compat-js構成はほぼ全objectを作り直す
+   ため**cache lineageを共有しても効果がない**。加えて並行suiteが同一keyへ保存すると
+   未完成cacheの復元・予約競合（Phase 1で実測した問題）が再発するため、現行の
+   suite別keyが妥当である。
+
+結論として、`test` jobの残存コストは**要求された構成での実ビルドと実テスト実行
+そのもの**であり、Phase 4・6で除去した「重複ビルド」に相当する構造的な重複は
+残っていない。
 
 ## 参考: 観測されたflaky失敗（本施策とは無関係）
 

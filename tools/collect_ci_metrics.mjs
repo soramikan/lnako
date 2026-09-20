@@ -246,7 +246,12 @@ export function collectRunMetrics(run, jobs, toolchainByJob = new Map(), options
   const resolved = typeof options === "number" ? { durationMs: options } : options;
   const { durationMs = null, cacheByJob = new Map() } = resolved;
   const jobMetrics = jobs.map((job) => {
+    // GitHubは実行されなかったstepも`conclusion: "skipped"`として返し、
+    // そのstarted_atとcompleted_atは同時刻（0秒）になる。除外しないと
+    // §10のstep統計（median/p75/p90/p95）が0秒の観測で薄まり、
+    // 例: `Test QuickJS build` がmedian 0s・p95 384s のように歪む。
     const steps = (job.steps ?? [])
+      .filter((step) => step.conclusion !== "skipped")
       .filter((step) => step.started_at && step.completed_at)
       .map((step) => ({ name: step.name, seconds: secondsBetween(step.started_at, step.completed_at) }));
     return {

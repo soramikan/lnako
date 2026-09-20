@@ -528,6 +528,31 @@ test("collectMetricsは--sinceより前のrunを系列から除外する", async
   );
 });
 
+test("collectRunMetricsはskipされたstepを統計から除外する", () => {
+  // GitHubは実行しなかったstepも `conclusion: "skipped"` として返し、
+  // started_at == completed_at（0秒）になる。除外しないとmedian/p95が歪む。
+  const job = {
+    id: 7,
+    name: "Linux x86_64 / compat-aot",
+    conclusion: "success",
+    created_at: "2026-09-18T01:00:05Z",
+    started_at: "2026-09-18T01:00:06Z",
+    completed_at: "2026-09-18T01:08:00Z",
+    steps: [
+      { name: "Test QuickJS build", conclusion: "success", started_at: "2026-09-18T01:01:00Z", completed_at: "2026-09-18T01:05:00Z" },
+      { name: "Differential interpreter test", conclusion: "skipped", started_at: "2026-09-18T01:05:00Z", completed_at: "2026-09-18T01:05:00Z" },
+      { name: "Build QuickJS compiler", conclusion: "success", started_at: "2026-09-18T01:05:00Z", completed_at: "2026-09-18T01:07:30Z" },
+    ],
+  };
+  const metrics = collectRunMetrics({ ...runFixture, id: 7 }, [job]);
+  assert.deepEqual(metrics.jobs[0].steps.map((step) => step.name), ["Test QuickJS build", "Build QuickJS compiler"]);
+  const aggregate = aggregateRuns([metrics]);
+  assert.equal(aggregate.steps.every((step) => step.median > 0), true);
+  const quickjs = aggregate.steps.find((step) => step.name === "Test QuickJS build");
+  assert.equal(quickjs.count, 1);
+  assert.equal(quickjs.median, 240);
+});
+
 test("collectMetrics restricts the series to one branch when --branch is given", async () => {
   const calls = [];
   const ghApiJsonImpl = async (path) => {
