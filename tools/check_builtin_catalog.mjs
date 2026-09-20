@@ -152,6 +152,14 @@ for (const command of catalog.commands) {
     josiEntries.push(entry);
   }
 }
+const functionNames = [];
+const seenFunctionNames = new Set();
+for (const command of catalog.commands) {
+  if (command.type !== "関数" || seenFunctionNames.has(command.name)) continue;
+  seenFunctionNames.add(command.name);
+  functionNames.push(command.name);
+}
+
 const lines = [
   "const std = @import(\"std\");",
   "",
@@ -169,6 +177,13 @@ const lines = [
   "",
   "pub const arities = [_]BuiltinArity{",
   ...arityEntries.map((entry) => `    .{ .name = ${JSON.stringify(entry.name)}, .count = ${entry.count}, .is_variable = ${entry.isVariable} },`),
+  "};",
+  "",
+  "/// 公式の`func token`に相当する命令名（カタログ種別が「関数」のもの）。",
+  "/// パーサは助詞付きのこの名前を、公式`yCallFunc`と同じく連鎖呼出しとして解決する。",
+  "/// `定数`（`回数`など）は変数として使われるため含めない。",
+  "pub const function_names = [_][]const u8{",
+  ...functionNames.map((name) => `    ${JSON.stringify(name)},`),
   "};",
   "",
   "pub fn findArity(name: []const u8) ?BuiltinArity {",
