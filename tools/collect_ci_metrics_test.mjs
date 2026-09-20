@@ -21,7 +21,7 @@ import {
   summarizeCache,
 } from "./collect_ci_metrics.mjs";
 
-test("percentile and summarize compute median/p90/p95", () => {
+test("percentile and summarize compute median/p75/p90/p95", () => {
   const values = [10, 1, 5, 3, 8, 2, 9, 4, 7, 6];
   assert.equal(percentile(values, 50), 5.5);
   assert.equal(percentile(values, 100), 10);
@@ -29,10 +29,12 @@ test("percentile and summarize compute median/p90/p95", () => {
   const summary = summarize(values);
   assert.equal(summary.count, 10);
   assert.equal(summary.median, 5.5);
+  assert.equal(summary.p75, 7.75);
   assert.ok(Math.abs(summary.p95 - 9.55) < 1e-9);
   assert.equal(summary.min, 1);
   assert.equal(summary.max, 10);
   assert.equal(summarize([]).median, null);
+  assert.equal(summarize([]).p75, null);
 });
 
 test("osFromJobName groups matrix jobs by OS", () => {
@@ -392,6 +394,43 @@ test("collectMetrics fetches runs, jobs and logs through injected gh api", async
   assert.equal(aggregate.toolchain.llvmReused, 2);
   assert.ok(calls.some((path) => path.includes("/actions/jobs/1/logs")));
   assert.ok(calls.some((path) => path.includes("/actions/jobs/2/logs")));
+});
+
+test("collectMetrics restricts the series to one branch when --branch is given", async () => {
+  const calls = [];
+  const ghApiJsonImpl = async (path) => {
+    calls.push(path);
+    if (path.includes("/runs?")) return { workflow_runs: [runFixture] };
+    if (path.includes("/jobs?")) return { total_count: jobsFixture.length, jobs: jobsFixture };
+    if (path.endsWith("/timing")) return { run_duration_ms: 900_000 };
+    throw new Error(`unexpected path: ${path}`);
+  };
+  await collectMetrics({
+    repo: "soramikan/lnako",
+    workflow: "ci.yml",
+    branch: "improve/ci",
+    runCount: 5,
+    includeLogs: false,
+    ghApiJsonImpl,
+  });
+  // 他branchのrunが混ざると§10の系列比較が成立しないため、seriesはbranchで絞る。
+  assert.ok(calls.some((path) => path.includes("/runs?") && path.includes("branch=improve%2Fci")));
+
+  const withoutBranch = [];
+  await collectMetrics({
+    repo: "soramikan/lnako",
+    workflow: "ci.yml",
+    runCount: 1,
+    includeLogs: false,
+    ghApiJsonImpl: async (path) => {
+      withoutBranch.push(path);
+      if (path.includes("/runs?")) return { workflow_runs: [runFixture] };
+      if (path.includes("/jobs?")) return { total_count: jobsFixture.length, jobs: jobsFixture };
+      if (path.endsWith("/timing")) return { run_duration_ms: 900_000 };
+      throw new Error(`unexpected path: ${path}`);
+    },
+  });
+  assert.ok(withoutBranch.some((path) => path.includes("/runs?") && !path.includes("branch=")));
 });
 
 test("collectMetricsは100件超のjobをページングで全件取得する", async () => {

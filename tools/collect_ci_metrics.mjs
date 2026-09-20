@@ -190,11 +190,13 @@ export function percentile(values, p) {
 
 export function summarize(values) {
   const clean = values.filter((value) => Number.isFinite(value));
-  if (clean.length === 0) return { count: 0, min: null, median: null, p90: null, p95: null, max: null, mean: null };
+  if (clean.length === 0) return { count: 0, min: null, median: null, p75: null, p90: null, p95: null, max: null, mean: null };
   return {
     count: clean.length,
     min: Math.min(...clean),
     median: percentile(clean, 50),
+    // 改善計画2 §10はmedian/p75/p90/p95の蓄積を求めるためp75も出す。
+    p75: percentile(clean, 75),
     p90: percentile(clean, 90),
     p95: percentile(clean, 95),
     max: Math.max(...clean),
@@ -403,10 +405,10 @@ export function formatMarkdown({ repo, workflow, generatedAt, runs, aggregate })
     "",
     "## Wall time",
     "",
-    "| metric | median | p90 | p95 | min | max |",
-    "| --- | ---: | ---: | ---: | ---: | ---: |",
-    `| workflow wall time | ${formatSeconds(aggregate.wallTime.median)} | ${formatSeconds(aggregate.wallTime.p90)} | ${formatSeconds(aggregate.wallTime.p95)} | ${formatSeconds(aggregate.wallTime.min)} | ${formatSeconds(aggregate.wallTime.max)} |`,
-    `| job queue time | ${formatSeconds(aggregate.queueTime.median)} | ${formatSeconds(aggregate.queueTime.p90)} | ${formatSeconds(aggregate.queueTime.p95)} | ${formatSeconds(aggregate.queueTime.min)} | ${formatSeconds(aggregate.queueTime.max)} |`,
+    "| metric | median | p75 | p90 | p95 | min | max |",
+    "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    `| workflow wall time | ${formatSeconds(aggregate.wallTime.median)} | ${formatSeconds(aggregate.wallTime.p75)} | ${formatSeconds(aggregate.wallTime.p90)} | ${formatSeconds(aggregate.wallTime.p95)} | ${formatSeconds(aggregate.wallTime.min)} | ${formatSeconds(aggregate.wallTime.max)} |`,
+    `| job queue time | ${formatSeconds(aggregate.queueTime.median)} | ${formatSeconds(aggregate.queueTime.p75)} | ${formatSeconds(aggregate.queueTime.p90)} | ${formatSeconds(aggregate.queueTime.p95)} | ${formatSeconds(aggregate.queueTime.min)} | ${formatSeconds(aggregate.queueTime.max)} |`,
     "",
     "## OS別 runner time（分析run合計）",
     "",
@@ -417,15 +419,15 @@ export function formatMarkdown({ repo, workflow, generatedAt, runs, aggregate })
     "",
     "## 最長job（median上位10）",
     "",
-    "| job | median | p95 |",
-    "| --- | ---: | ---: |",
-    ...aggregate.longestJobs.slice(0, 10).map((job) => `| ${job.name} | ${formatSeconds(job.median)} | ${formatSeconds(job.p95)} |`),
+    "| job | median | p75 | p95 |",
+    "| --- | ---: | ---: | ---: |",
+    ...aggregate.longestJobs.slice(0, 10).map((job) => `| ${job.name} | ${formatSeconds(job.median)} | ${formatSeconds(job.p75)} | ${formatSeconds(job.p95)} |`),
     "",
     "## 主要step（median上位15）",
     "",
-    "| step | count | median | p95 |",
-    "| --- | ---: | ---: | ---: |",
-    ...aggregate.steps.slice(0, 15).map((step) => `| ${step.name} | ${step.count} | ${formatSeconds(step.median)} | ${formatSeconds(step.p95)} |`),
+    "| step | count | median | p75 | p95 |",
+    "| --- | ---: | ---: | ---: | ---: |",
+    ...aggregate.steps.slice(0, 15).map((step) => `| ${step.name} | ${step.count} | ${formatSeconds(step.median)} | ${formatSeconds(step.p75)} | ${formatSeconds(step.p95)} |`),
     "",
     "## LLVM toolchain cache",
     "",
@@ -521,8 +523,11 @@ export async function ghApiLog(path) {
   return result.stdout;
 }
 
-export async function collectMetrics({ repo, workflow, runCount, includeLogs, ghApiJsonImpl = ghApiJson, ghApiLogImpl = ghApiLog, log = () => {} }) {
-  const response = await ghApiJsonImpl(`repos/${repo}/actions/workflows/${workflow}/runs?per_page=${Math.min(100, runCount * 4)}&status=completed`);
+export async function collectMetrics({ repo, workflow, runCount, branch = null, includeLogs, ghApiJsonImpl = ghApiJson, ghApiLogImpl = ghApiLog, log = () => {} }) {
+  // 改善計画2 §10は同一系列（branch）でmedian/p75/p90/p95を蓄積する。
+  // branchを指定しないと他branchのrunが混ざり、施策の効果を判定できない。
+  const branchQuery = branch === null ? "" : `&branch=${encodeURIComponent(branch)}`;
+  const response = await ghApiJsonImpl(`repos/${repo}/actions/workflows/${workflow}/runs?per_page=${Math.min(100, runCount * 4)}&status=completed${branchQuery}`);
   const runs = (response.workflow_runs ?? []).filter((run) => run.conclusion === "success").slice(0, runCount);
   const collected = [];
   for (const run of runs) {
@@ -566,7 +571,7 @@ export async function collectMetrics({ repo, workflow, runCount, includeLogs, gh
 }
 
 function parseArguments(argumentsList) {
-  const options = { repo: "soramikan/lnako", workflow: "ci.yml", runs: 5, output: null, logs: true };
+  const options = { repo: "soramikan/lnako", workflow: "ci.yml", branch: null, runs: 5, output: null, logs: true };
   const takeValue = (index) => {
     const value = argumentsList[index + 1];
     if (value === undefined) throw new Error(`${argumentsList[index]}には値が必要です`);
@@ -576,10 +581,11 @@ function parseArguments(argumentsList) {
     const argument = argumentsList[index];
     if (argument === "--repo") options.repo = takeValue(index++);
     else if (argument === "--workflow") options.workflow = takeValue(index++);
+    else if (argument === "--branch") options.branch = takeValue(index++);
     else if (argument === "--runs") options.runs = Number(takeValue(index++));
     else if (argument === "--output") options.output = takeValue(index++);
     else if (argument === "--no-logs") options.logs = false;
-    else throw new Error(`未知の引数です: ${argument}\n使い方: node tools/collect_ci_metrics.mjs [--repo owner/name] [--workflow ci.yml] [--runs 5] [--output docs/ci-performance.md] [--no-logs]`);
+    else throw new Error(`未知の引数です: ${argument}\n使い方: node tools/collect_ci_metrics.mjs [--repo owner/name] [--workflow ci.yml] [--branch <name>] [--runs 5] [--output docs/ci-performance.md] [--no-logs]`);
   }
   if (!Number.isSafeInteger(options.runs) || options.runs < 1) throw new Error("--runsには正の整数を指定してください");
   return options;
@@ -591,6 +597,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
     const { runs, aggregate } = await collectMetrics({
       repo: options.repo,
       workflow: options.workflow,
+      branch: options.branch,
       runCount: options.runs,
       includeLogs: options.logs,
       log: (message) => console.error(message),

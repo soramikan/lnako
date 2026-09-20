@@ -923,6 +923,31 @@ run全体のrunner minutesは、Phase 6の変更対象外である`test` job行�
 median/p75/p90/p95の蓄積）は別途継続する。本節のPhase 6評価は、構造的に変わった
 Linux AOT job群の実測と複数runのmedianに基づく。
 
+### 長期計測スナップショット（ローリング）
+
+計画§10の統計を、現行構成（46 job）の系列で蓄積する。2026-09-20時点の
+**5 run**は次のとおり。少数標本ではp90/p95が最大値へ寄るため、標本数と併記する。
+
+| 指標 | n | median | p75 | p90 | p95 | min | max |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| workflow wall clock（分） | 5 | 18.8 | 19.0 | 21.9 | 22.8 | 15.9 | 23.8 |
+| 全job runner minutes | 5 | 166.4 | 168.7 | 168.9 | 169.0 | 151.6 | 169.1 |
+| Linux AOT job群（8 consumer＋producer、分） | 5 | 11.4 | 11.5 | 11.7 | 11.7 | 11.3 | 11.8 |
+
+- wall clockは実行時間にqueue待ちを含むため、系列を絞っても変動が大きい
+  （min 15.9／max 23.8）。施策の効果判定には使わない。
+- runner minutesとLinux AOT job群は安定しており、AOT job群は5 runいずれも
+  11.3〜11.8 minである。
+- 系列を揃えるため`collect_ci_metrics.mjs`に`--branch`を追加した
+  （他branchのrunが混ざると施策の効果を判定できない）。同じコマンドで更新する:
+
+```sh
+node tools/collect_ci_metrics.mjs --branch improve/ci --runs 30 --no-logs
+```
+
+サンプル数を20〜30へ増やして再評価するのは継続課題である（本節はその途中経過）。
+
+
 ## 参考: 観測されたflaky失敗（本施策とは無関係）
 
 run 35472553438（docs専用commit。直前のrunと`docs/ci-performance.md`のみ差分）で
