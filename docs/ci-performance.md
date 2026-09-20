@@ -1006,6 +1006,43 @@ step統計で目立つ`Test QuickJS build`（267s）と`Build QuickJS compiler`�
 そのもの**であり、Phase 4・6で除去した「重複ビルド」に相当する構造的な重複は
 残っていない。
 
+### wall clockの残存レバー: 最長jobの分割（未実施・要判断）
+
+計画§10のwall clockは未達（実質不変）のままである。原因を再測定したところ、
+**wallはほぼ最長jobそのもの**で、11 run中9 runで `Windows x86_64 / core` が
+律速していた。
+
+| run | wall | 最長job | 律速job | wall−最長job |
+| --- | ---: | ---: | --- | ---: |
+| 35486004917 | 12.7min | 12.0min | macOS host-compat | 0.7min |
+| 35484046897 | 24.1min | 18.6min | Windows core | 5.6min |
+| 35483104649 | 17.4min | 16.2min | Windows core | 1.2min |
+| 35481889139 | 19.2min | 17.9min | Windows core | 1.3min |
+| 35480137046 | 14.2min | 13.6min | Windows core | 0.6min |
+| 35477810503 | 15.9min | 15.3min | Windows compat-aot | 0.7min |
+| 35476491104 | 25.2min | 17.6min | Windows core | 7.5min |
+| 35473939691 | 17.9min | 17.2min | Windows core | 0.7min |
+| 35472553438 | 24.4min | 17.4min | Windows core | 7.0min |
+| 35471297565 | 18.8min | 17.6min | Windows core | 1.2min |
+| 35469955469 | 19.0min | 18.3min | Windows core | 0.7min |
+
+`Windows x86_64 / core` の中身は独立した3つの検証である（実測例: `Test` 213〜390s、
+`Zig package isolation check` 239〜377s、`Differential interpreter test` 134〜204s。
+job内のsetup系は合計43s）。これらを別jobへ分ければWindows群のwallは
+**約285〜435s**（最長の検証＋setup）になり、律速は `Windows compat-aot`
+（716〜754s）または `macOS host-compat`（666〜722s）へ移る。したがって
+**wallはmedian 18.4min → 約12〜13min（-30%程度）**が見込める。
+
+一方でコストは小さい。現行のjobあたりsetupは**約45s**（checkout 13s、setup-zig 8s、
+setup-node 8s、LLVM／QuickJS／oracleはcache hitで数秒）なので、2 job増でも
+**runner minutes +0.75〜1.5 min/run（+0.5〜1%）**に留まり、計画の
+runner minutes目標（-25%以上）は維持できる。
+
+この分割は計画のPhase 5（runner minutesを優先して統合し、wallは変わらないと
+判断）とは逆向きのトレードオフであり、job名が増えるためブランチ保護の
+required status checksにも影響する。**計画に無い変更のため、実施の判断は
+利用者に委ねる**（本節はその判断材料の記録）。
+
 ## 参考: 観測されたflaky失敗（本施策とは無関係）
 
 run 35472553438（docs専用commit。直前のrunと`docs/ci-performance.md`のみ差分）で
