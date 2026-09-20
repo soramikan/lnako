@@ -145,6 +145,14 @@ jobs:
           - name: Windows x86_64
             os: windows-2025
             suite: compat-aot
+          # wall clockの律速job（Windows core 実測713〜1,113s）から独立検証を
+          # 1つ分離する。Windows coreは Test 213〜390s／package isolation
+          # 239〜377s／interpreter 134〜204s（setup系は合計43s）を直列に実行し、
+          # wall（median 18.4min）をほぼ単独で決めていた。分離後はこのjobが
+          # 約285s（setup＋検証）になり、律速はWindows compat-aot等（約12min）へ移る。
+          - name: Windows x86_64
+            os: windows-2025
+            suite: win-package-isolation
     runs-on: ${{ matrix.os }}
     timeout-minutes: 50
     steps:
@@ -213,8 +221,11 @@ jobs:
       - name: Distribution package self-test
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node tools/check_distribution.mjs --self-test
+      # Windows coreのwall律速を解消するため、独立検証のうち最大のものを専用job
+      # （suite: win-package-isolation）へ分離した。Windowsのcore jobではここを
+      # 走らせない（検証量は不変で、実行するjobだけを分ける）。
       - name: Zig package isolation check
-        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
+        if: matrix.suite == 'win-package-isolation' || (matrix.suite == 'core' && matrix.name != 'Windows x86_64') || matrix.suite == 'mac-core-standard-support'
         run: node tools/check_package_isolation.mjs
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: matrix.suite != 'compat-aot'

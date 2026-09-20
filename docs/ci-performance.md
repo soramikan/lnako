@@ -895,7 +895,7 @@ job名（`Linux x86_64 / AOT native shard 1/3 / O0+O1` 等）は変えていな�
 | --- | ---: | ---: | ---: |
 | workflow wall clock | 1,112s | 876〜1,462s（median 約1,113s） | 1,071〜1,141s（median 約1,130s）※ |
 | 全job runner minutes | 213 min | 166〜191 min（median 174.8） | 151.6〜169.1（median 159.4） |
-| matrix job数 | 57 | 45 | 総46（matrix 39＋producer／後段7） |
+| matrix job数 | 57 | 45 | 総47（matrix 40＋producer／後段7）※ |
 | AOT検証ステップ（24 shard合計） | 1,896s | 1,163s | -38.7% |
 | Linux AOT job群（8 consumer＋producer） | — | 21.0〜32.2 min（median 26.6） | 11.3〜11.8 min（median 11.4） |
 
@@ -914,6 +914,9 @@ job名（`Linux x86_64 / AOT native shard 1/3 / O0+O1` 等）は変えていな�
 
 ※ run 35476491104のwallは1,511sだが、branchのconcurrency操作（旧run再実行による
    cancel）でqueueが延びた参考値であり、wallの集計からは除外している。
+※ Windows専用の`win-package-isolation` jobを追加したため総job数は47（matrix 40）。
+   この変更はwall clockの律速jobを分離するもので、下表のPhase 6評価（46 job構成）
+   とは別の変更である。
 
 ## 計測の限界と継続課題
 
@@ -1006,7 +1009,7 @@ step統計で目立つ`Test QuickJS build`（267s）と`Build QuickJS compiler`�
 そのもの**であり、Phase 4・6で除去した「重複ビルド」に相当する構造的な重複は
 残っていない。
 
-### wall clockの残存レバー: 最長jobの分割（未実施・要判断）
+### wall clockの残存レバー: 最長jobの分割（実施済み・実測中）
 
 計画§10のwall clockは未達（実質不変）のままである。原因を再測定したところ、
 **wallはほぼ最長jobそのもの**で、11 run中9 runで `Windows x86_64 / core` が

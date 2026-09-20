@@ -43,14 +43,14 @@ standard版やHomebrew環境では、`lnako toolchain install` を実行する�
 2. **互換性証拠の再生成**：
    - ソース変更に伴いsource manifestが更新されるため、`node tools/sync_compat_evidence.mjs` を実行して証拠を現行manifestに同期します。
 3. **CI全job成功の確認**：
-   - mainブランチへ取り込み、CI（39 matrix job＋変更分類・軽量検証・Windows／Linux compiler producer・後段3 job、**合計46 job**）がfull相当ですべて成功するのを待ちます。
+   - mainブランチへ取り込み、CI（39 matrix job＋変更分類・軽量検証・Windows／Linux compiler producer・後段3 job、**合計47 job**）がfull相当ですべて成功するのを待ちます。
 4. **GitHub Attestationsの確認**：
    - 同じsource commitのCIが `attest-dispatch-evidence` でcanonical証拠17件とsource manifest宣言を署名していることを確認します。Release preflightが `check_github_attestation.mjs` で公式 `gh attestation verify` と導出 `verified: 527` を要求します。gitへsnapshotをコピーする必要はありません。
 5. **署名済みタグの作成とpush**：
    - CIが成功した最終コミットに対し、GPG署名付きannotated tag（例: `git tag -s v0.2.1 -m "v0.2.1"`) を作成してpushします。
 6. **Release workflowの実行と公開**：
    - タグpushをトリガーに `.github/workflows/release.yml` が起動します。
-   - preflightジョブが、タグ署名・バージョン一致・同一commitのCI 46 job構成でfull matrix全成功（軽量runのskippedは成功とみなさない）・canonical attestation完全検証を確認した上で、3 OSのstandard/full両バリアントおよびベンチマーク結果をビルド・検証し、GitHub Releaseとして公開します。
+   - preflightジョブが、タグ署名・バージョン一致・同一commitのCI 47 job構成でfull matrix全成功（軽量runのskippedは成功とみなさない）・canonical attestation完全検証を確認した上で、3 OSのstandard/full両バリアントおよびベンチマーク結果をビルド・検証し、GitHub Releaseとして公開します。
 
 ### ローカルでの配布物生成・検証
 

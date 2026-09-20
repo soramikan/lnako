@@ -98,6 +98,9 @@ const platforms = new Map([
   ["Windows x86_64", "windows-2025"],
 ]);
 const suites = ["core", "standard", "host", "compat-aot", "aot-native", "aot-support"];
+// Windowsのcore jobがwall clockの律速だったため、独立検証である
+// `Zig package isolation check` をWindows専用jobへ分離した（wall短縮）。
+const windowsOnlySuites = ["win-package-isolation"];
 const matrixEntries = [...workflow.matchAll(/^          - name: (.+)\n            os: (.+)\n            suite: (.+)$/gm)]
   .map((match) => ({ name: match[1], os: match[2], suite: match[3] }));
 const actualMatrix = new Set(matrixEntries.map((entry) => `${entry.name}\0${entry.os}\0${entry.suite}`));
@@ -105,7 +108,9 @@ const expectedMatrix = new Set();
 for (const [name, os] of platforms) {
   const expectedSuites = name === "macOS arm64"
     ? ["mac-core-standard-support", "mac-host-compat", "aot-native"]
-    : [...suites, "parser-fuzz"];
+    : name === "Windows x86_64"
+      ? [...suites, "parser-fuzz", ...windowsOnlySuites]
+      : [...suites, "parser-fuzz"];
   for (const suite of expectedSuites) expectedMatrix.add(`${name}\0${os}\0${suite}`);
 }
 assertSetEqual(actualMatrix, expectedMatrix, "CI matrix");
@@ -143,7 +148,7 @@ const expectedSupportRowCount = [...expectedSupportTaskCounts.values()].reduce((
 if (nativeAotMatrixEntries.length !== expectedNativeRowCount || supportAotMatrixEntries.length !== expectedSupportRowCount) {
   throw new Error(`AOT job分割数が不正です: native=${nativeAotMatrixEntries.length} support=${supportAotMatrixEntries.length}`);
 }
-if (matrixEntries.length !== 39) throw new Error(`CI matrixの実job数が不正です: actual=${matrixEntries.length}`);
+if (matrixEntries.length !== 40) throw new Error(`CI matrixの実job数が不正です: actual=${matrixEntries.length}`);
 
 // 変更分類jobは重いmatrixの前段として必須。allow-list方式で、判定不能は
 // すべてfullへ倒す設計をtool側の実装とworkflowの両方から検査する。
@@ -364,7 +369,7 @@ const stepSuites = new Map([
   ["Toolchain cache regression tests", "core"],
   ["Change classifier tests", "core"],
   ["Toolchain command check", "core"],
-  ["Zig package isolation check", "core"],
+  ["Zig package isolation check", "package-isolation"],
   ["Format", "core"],
   ["Test", "core"],
   ["Test QuickJS build", "compat-aot"],
@@ -381,7 +386,9 @@ for (const [name, suite] of stepSuites) {
       ? "matrix.suite == 'standard' || matrix.suite == 'mac-core-standard-support'"
       : suite === "host"
         ? "matrix.suite == 'host' || matrix.suite == 'mac-host-compat'"
-        : "matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'";
+        : suite === "package-isolation"
+          ? "matrix.suite == 'win-package-isolation' || (matrix.suite == 'core' && matrix.name != 'Windows x86_64') || matrix.suite == 'mac-core-standard-support'"
+          : "matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'";
   const pattern = new RegExp(`^      - name: ${escaped}\\n        if: ${condition.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m");
   if (!pattern.test(workflow)) throw new Error(`${name}のsuite条件が${suite}ではありません`);
 }
