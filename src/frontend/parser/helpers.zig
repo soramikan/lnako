@@ -146,3 +146,44 @@ pub fn emptyToken() Token {
         .span = ast.emptySpan(),
     };
 }
+
+/// 公式`NakoLexer.preDefineFunc`相当。解析前のトークン列を走査してソース内で
+/// 定義された関数名を集める。公式は定義の位置に関わらず関数名を`func token`
+/// にするため、後方定義の呼出し（前方参照）も命令呼出しとして解決できる。
+pub fn collectUserFunctionNames(allocator: std.mem.Allocator, tokens: []const Token) std.mem.Allocator.Error![]const []const u8 {
+    var names: std.ArrayList([]const u8) = .empty;
+    var index: usize = 0;
+    while (index < tokens.len) : (index += 1) {
+        if (tokens[index].kind != .def_func and tokens[index].kind != .def_test) continue;
+        // 無名関数の`関数`キーワードも`def_func`になるが、名前を持たないため
+        // 直後の識別子は本体の先頭語（`F=関数(A)それはA`の「それ」）であって
+        // 関数名ではない。名前付き定義（`●`・`●テスト:`）だけを集める。
+        if (std.mem.eql(u8, tokens[index].value, "関数")) continue;
+        var cursor = index + 1;
+        // `●{公開}Fとは` のような属性を読み飛ばす。
+        if (cursor < tokens.len and tokens[cursor].kind == .left_brace) {
+            cursor += 1;
+            while (cursor < tokens.len and tokens[cursor].kind != .right_brace) cursor += 1;
+            cursor += 1;
+        }
+        // `●(Aを)Fとは` のように名前の前に来る引数宣言を読み飛ばす。
+        if (cursor < tokens.len and tokens[cursor].kind == .left_paren) {
+            var depth: usize = 0;
+            while (cursor < tokens.len) : (cursor += 1) {
+                if (tokens[cursor].kind == .left_paren) {
+                    depth += 1;
+                } else if (tokens[cursor].kind == .right_paren) {
+                    depth -= 1;
+                    if (depth == 0) {
+                        cursor += 1;
+                        break;
+                    }
+                }
+            }
+        }
+        if (cursor < tokens.len and tokens[cursor].kind == .identifier) {
+            try names.append(allocator, tokens[cursor].value);
+        }
+    }
+    return names.toOwnedSlice(allocator);
+}

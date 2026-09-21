@@ -282,6 +282,26 @@ test "無名関数の本体先頭語を関数名として登録しない" {
     try std.testing.expect(!result.succeeded());
 }
 
+test "条件分岐の「違えば」節を同じ行で閉じる形を受理する" {
+    // 公式`ySwitch`は『違えば』とペアの『ここまで』を消費し、続けて
+    // 『条件分岐』本体の『ここまで』も消費する。
+    const cases = [_]struct { source: []const u8, filename: []const u8 }{
+        .{ .source = "Nで条件分岐\n1ならば、「1」と表示。ここまで。\n2ならば、「2」と表示。ここまで。\n違えば、「@」と表示。ここまで。\nここまで。\n", .filename = "switch-else-inline.nako3" },
+        // 『違えば』節が本体の終端を兼ねる形（本体の『ここまで』が1つだけ）。
+        .{ .source = "Nで条件分岐\n1ならば、「1」と表示。ここまで。\n違えば、「@」と表示。\nここまで。\n", .filename = "switch-else-shared-end.nako3" },
+        // 節を複数行で書く形。
+        .{ .source = "Nで条件分岐\n1ならば\n「1」と表示\nここまで\n違えば\n「@」と表示\nここまで\nここまで\n", .filename = "switch-else-multiline.nako3" },
+        // 『違えば』のあとに読点が続く形。
+        .{ .source = "Nで条件分岐\n1ならば、「1」と表示。ここまで。\n違えば、\n「@」と表示\nここまで\nここまで\n", .filename = "switch-else-comma.nako3" },
+    };
+    for (cases) |case| {
+        var result = try parse(std.testing.allocator, case.source, case.filename);
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+        try std.testing.expectEqual(ast.Kind.switch_statement, result.root.?.children[0].kind);
+    }
+}
+
 test "範囲演算式を「もし」省略形の条件文へ昇格しない" {
     // 公式は範囲を`func`ノードにするが、`yCall`のスタックが残るため
     // `1…2ならば`は『不完全な文です』で拒否する。
