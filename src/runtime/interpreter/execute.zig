@@ -227,8 +227,18 @@ pub fn executeFunction(self: *Interpreter, function: *const ir.Function, argumen
         const cell = capture.cell orelse try self.runtime.createBindingCell(capture.value);
         try self.attachLocal(&frame, name, cell);
     };
+    frame.call_arguments = arguments;
     for (function.parameters, 0..) |parameter, index| {
-        const argument = if (index < arguments.len) arguments[index] else Value.undefined;
+        // 関数値経由の呼出しでは、公式が実引数の末尾へ__selfを連結するため
+        // 不足分の先頭スロットに実行コンテキストが入る。パディングは実引数列を
+        // 改変せず仮引数マッピングだけで行い、`引数`束縛が余剰実引数を保持
+        // できるようにする。直接呼出しの不足分は従来通りundefinedとする。
+        const argument = if (index < arguments.len)
+            arguments[index]
+        else if (index == arguments.len and closure != null)
+            try self.systemContext()
+        else
+            Value.undefined;
         frame.values[parameter.value] = argument;
         try self.bindLocal(&frame, parameter.name, argument);
     }
@@ -404,6 +414,9 @@ fn executeInstructionResolved(
             try self.executeCall(frame, instruction),
         .call_value => result = try self.executeCallValue(frame, instruction),
         .make_array => result = try self.makeArray(frame, instruction),
+        // `引数`束縛。仮引数値ではなく呼出し時の実引数列をそのまま
+        // 配列化する（公式の`var 引数 = arguments`相当）。
+        .arguments_array => result = try self.makeCallArguments(frame),
         .make_object => result = try self.makeDictionary(frame, instruction),
         .array_get, .property_get => result = try self.getIndexed(frame, instruction),
         .element_set => try self.elementSet(frame, instruction),
@@ -858,14 +871,10 @@ pub fn callIrFunctionValue(self: *Interpreter, function_id: ir.FunctionId, funct
     const owner_program: *const ir.Program = if (function.ir_program) |pointer| @ptrCast(@alignCast(pointer)) else &self.program;
     if (function_id >= owner_program.functions.len) return error.InvalidIrFunction;
     const target = &owner_program.functions[function_id];
-    const arity = target.parameters.len;
-    if (arguments.len >= arity) return self.executeFunction(target, arguments, function, owner_program);
-    const padded = try self.allocator.alloc(Value, arity);
-    defer self.allocator.free(padded);
-    @memcpy(padded[0..arguments.len], arguments);
-    padded[arguments.len] = try self.systemContext();
-    @memset(padded[arguments.len + 1 ..], .undefined);
-    return self.executeFunction(target, padded, function, owner_program);
+    // 実引数列はそのままexecuteFunctionへ渡す。仮引数個数へのパディングは
+    // executeFunction側の仮引数マッピングが行い、`引数`束縛が余剰実引数を
+    // 保持できるようにする（公式のarguments相当）。
+    return self.executeFunction(target, arguments, function, owner_program);
 }
 
 pub fn makeArray(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
@@ -874,6 +883,18 @@ pub fn makeArray(self: *Interpreter, frame: *Frame, instruction: ir.Instruction)
     defer root.deinit();
     try root.protect(&result);
     for (instruction.operands) |operand_id| _ = try result.array.push(frame.values[operand_id]);
+    return result;
+}
+
+/// arguments_array命令の実体。呼出し時の実引数列（frame.call_arguments）を
+/// そのまま要素とする配列を作る。仮引数個数への正規化やコンテキストの
+/// パディングは行わない（`__self`相当はJS実装詳細のため含めない）。
+pub fn makeCallArguments(self: *Interpreter, frame: *Frame) !Value {
+    var result = try self.runtime.createArray();
+    var root = self.runtime.rootFrame();
+    defer root.deinit();
+    try root.protect(&result);
+    for (frame.call_arguments) |argument| _ = try result.array.push(argument);
     return result;
 }
 

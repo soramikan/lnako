@@ -29,6 +29,7 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
                 .store_local,
                 .make_array,
                 .make_object,
+                .arguments_array,
                 .array_get,
                 .property_get,
                 .element_set,

@@ -204,6 +204,11 @@ pub const FunctionCallback = *const fn (*Value, *anyopaque, ?[*]const Value, usi
 const FunctionObject = struct {
     callback: FunctionCallback,
     arity: usize,
+    /// LLVM生成wrapperは呼出し時の実引数列を(ポインタ,実個数)で受け取る
+    /// （『引数』束縛が余剰実引数を保持できる）。偽のcallback（埋め込み・
+    /// ランタイム内）は従来契約のまま、実引数不足時に仮引数個数まで
+    /// パディングした個数を受け取る。
+    generated_wrapper: bool = false,
     /// The generated wrapper name is retained as UTF-8 bytes so converting a
     /// function value to a string can preserve the same observable name that
     /// the interpreter exposes. The slice is owned by the function object.
@@ -777,6 +782,15 @@ pub const Runtime = struct {
 
     pub fn createMethodFunction(self: *Runtime, callback: FunctionCallback, arity: usize, name: []const u8, captures: []const Value) !Value {
         return self.createFunctionObject(callback, arity, name, captures, false, .none);
+    }
+
+    /// LLVM生成wrapper用の関数値を作る。実引数列を(ポインタ,実個数)で
+    /// 受け取る呼出し規約を持つため、『引数』束縛が余剰実引数を保持できる。
+    /// 埋め込み向けのcreateNamedFunction等とは不足時の個数契約が異なる。
+    pub fn createGeneratedFunction(self: *Runtime, callback: FunctionCallback, arity: usize, name: []const u8, captures: []const Value) !Value {
+        const value = try self.createFunctionObject(callback, arity, name, captures, true, .none);
+        if (value.object()) |object| object.payload.function.generated_wrapper = true;
+        return value;
     }
 
     pub fn createFunctionObject(

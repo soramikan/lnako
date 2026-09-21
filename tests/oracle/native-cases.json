@@ -2986,6 +2986,56 @@
     "source": "変数 A\nA=A+1\nAを表示\nBとは変数\nBを表示\nCとは定数\nCを表示\nDとは定数=50\nDを表示\n変数 E{非公開}=1\nEを表示\n定数 F{公開}=2\nFを表示\nGとは変数{非公開}=3\nGを表示\n"
   },
   {
+    "id": "native-arguments-array-in-function",
+    "sourceFileName": "natargs.nako3",
+    "source": "●(AとBの)加算処理とは\nそれ＝引数[0] + 引数[1]\nここまで\n3と5の加算処理して表示。\n"
+  },
+  {
+    "id": "native-arguments-array-indexed-write-only",
+    "sourceFileName": "natargsidx.nako3",
+    "source": "●(Aの)Fとは\n引数[0]=9\nここまで\n「ok」を表示\n1のF\n"
+  },
+  {
+    "id": "native-arguments-array-per-call",
+    "sourceFileName": "natargspercall.nako3",
+    "source": "●(Aの)内とは\n引数[0]を表示\nここまで\n●(Aの)外とは\nそれ=引数[0]\n9の内\n引数[0]を表示\nここまで\n5の外\n"
+  },
+  {
+    "id": "native-arguments-array-anonymous",
+    "sourceFileName": "natargsanon.nako3",
+    "source": "F=関数(A)それは引数[0];ここまで\nF(3)を表示\n"
+  },
+  {
+    "id": "native-arguments-array-local-declaration",
+    "sourceFileName": "natargsdecl.nako3",
+    "source": "●(Aの)Fとは\n変数 引数=7\n引数を表示\nここまで\n1のF\n"
+  },
+  {
+    "id": "native-arguments-array-call-value-extra",
+    "sourceFileName": "natargscvextra.nako3",
+    "source": "F=関数(A)\n引数[0]を表示\n引数[1]を表示\nここまで\nF(10,20)\n"
+  },
+  {
+    "id": "native-arguments-array-call-value-less",
+    "sourceFileName": "natargscvless.nako3",
+    "source": "F=関数(A,B)\n引数[0]を表示\nBを表示\nここまで\nF(10)\n"
+  },
+  {
+    "id": "native-arguments-array-call-value-exact",
+    "sourceFileName": "natargscvexact.nako3",
+    "source": "F=関数(A,B)\nそれは引数[0]+引数[1]\nここまで\nF(10,20)を表示\n"
+  },
+  {
+    "id": "native-arguments-array-call-value-nested",
+    "sourceFileName": "natargscvnested.nako3",
+    "source": "G=関数(A)\n引数[0]を表示\nここまで\nF=関数(A)\nG(1,2,3)\n引数[0]を表示\nここまで\nF(9)\n"
+  },
+  {
+    "id": "native-arguments-array-property-after-registration",
+    "sourceFileName": "natargsprop.nako3",
+    "source": "●(Aの)Fとは\n引数[0]を表示\n引数$a=99\n引数$aを表示\nここまで\n1のF\n"
+  },
+  {
     "id": "native-strict-check-undefined-variable",
     "source": "!厳しくチェック\n「{X}」を表示。\nXを表示\n"
   }

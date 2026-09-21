@@ -138,6 +138,7 @@ const lnako_aot_function_call = state.lnako_aot_function_call;
 const lnako_aot_function_capture = state.lnako_aot_function_capture;
 const lnako_aot_function_new = state.lnako_aot_function_new;
 const lnako_aot_function_new_named = state.lnako_aot_function_new_named;
+const lnako_aot_function_new_generated = state.lnako_aot_function_new_generated;
 const lnako_aot_hatena_execute = debug.lnako_aot_hatena_execute;
 const lnako_aot_is_undefined = state.lnako_aot_is_undefined;
 const lnako_aot_coalesce_or_zero = state.lnako_aot_coalesce_or_zero;
@@ -589,6 +590,37 @@ test "AOT動的関数の不足引数へ共有システム文脈を追加し超�
     try std.testing.expectEqual(system_context, roots[4].payload);
     lnako_aot_function_call(&roots[4], &roots[0], @ptrCast(&roots[2]), 2);
     try std.testing.expectEqual(roots[2].payload, roots[4].payload);
+}
+
+test "AOT関数呼出しの個数契約は埋め込みcallbackと生成wrapperで分かれる" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var args = [_]Value{ numberValue(1), numberValue(2), numberValue(3) };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    const name = "試験生成";
+    lnako_aot_function_new(&roots[0], testAotCapturedLen, 2, null, 0);
+    lnako_aot_function_new_generated(&roots[1], testAotCapturedLen, 2, name.ptr, name.len, null, 0);
+    // 埋め込みcallbackは従来契約: 不足時はパディング後の仮引数個数を受け取る。
+    lnako_aot_function_call(&roots[2], &roots[0], @ptrCast(&args), 1);
+    try std.testing.expectEqual(@as(usize, 2), captured_arguments_len);
+    // 生成wrapperは実引数個数のまま受け取る（『引数』が余剰・不足を区別するため）。
+    lnako_aot_function_call(&roots[2], &roots[1], @ptrCast(&args), 1);
+    try std.testing.expectEqual(@as(usize, 1), captured_arguments_len);
+    // 余剰実引数でも埋め込みcallbackは従来契約どおり仮引数個数を受け取る。
+    lnako_aot_function_call(&roots[2], &roots[0], @ptrCast(&args), 3);
+    try std.testing.expectEqual(@as(usize, 2), captured_arguments_len);
+    // 生成wrapperは実引数個数のまま受け取る。
+    lnako_aot_function_call(&roots[2], &roots[1], @ptrCast(&args), 3);
+    try std.testing.expectEqual(@as(usize, 3), captured_arguments_len);
 }
 
 test "AOT標準命令ディスパッチで値を文字列へ変換する" {
@@ -6963,8 +6995,10 @@ test "AOT generic builtin dispatch routeはmanifestと一致する" {
     try std.testing.expectEqualStrings("builtin", builtinDispatchRoute(.to_string));
 }
 
-pub fn testAotFunction(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
-    out.* = if (arguments == null or len != 1) .{} else arguments.?[0];
+pub fn testAotFunction(out: *Value, _: *anyopaque, arguments: ?[*]const Value, _: usize) callconv(.c) void {
+    // バッファは実引数不足時に仮引数個数分までパディング済みなので、
+    // len ではなく先頭スロットをそのまま読む。
+    out.* = if (arguments == null) .{} else arguments.?[0];
 }
 
 pub fn testAotCustomString(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
@@ -7017,8 +7051,17 @@ pub fn testAotThrowAfterSideEffect(out: *Value, context: *anyopaque, _: ?[*]cons
     out.* = .{};
 }
 
-pub fn testAotSecondArgument(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
-    out.* = if (arguments == null or len != 2) .{} else arguments.?[1];
+pub fn testAotSecondArgument(out: *Value, _: *anyopaque, arguments: ?[*]const Value, _: usize) callconv(.c) void {
+    // パディング済みバッファの仮引数スロットをそのまま読む。
+    // 実引数不足時はスロットへ実行コンテキストが入る。
+    out.* = if (arguments == null) .{} else arguments.?[1];
+}
+
+var captured_arguments_len: usize = 0;
+
+pub fn testAotCapturedLen(out: *Value, _: *anyopaque, _: ?[*]const Value, len: usize) callconv(.c) void {
+    captured_arguments_len = len;
+    out.* = .{};
 }
 
 pub fn testAotDescending(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {

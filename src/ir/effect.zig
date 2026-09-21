@@ -42,7 +42,7 @@ fn markInstruction(summary: *Summary, instruction: ir.Instruction) void {
             summary.reads_globals = true;
             summary.writes_globals = true;
         },
-        .make_array, .make_object, .make_closure, .iterator_begin => summary.may_allocate = true,
+        .make_array, .make_object, .arguments_array, .make_closure, .iterator_begin => summary.may_allocate = true,
         .binary, .unary => {
             summary.may_throw = true;
             summary.may_reenter = true;

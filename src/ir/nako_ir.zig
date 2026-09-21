@@ -25,6 +25,10 @@ pub const Opcode = enum {
     call_value,
     make_array,
     make_object,
+    /// arguments_array: operands=[]。公式の`var 引数 = arguments`相当で、
+    /// 呼出し側が渡した実引数列をそのまま配列化する（仮引数個数へ
+    /// 正規化しない）。実行時の呼出し引数列を見るため専用命令とする。
+    arguments_array,
     array_get,
     property_get,
     /// 解決済みコンテナへの要素代入。operands=[container, key, value]。

@@ -75,6 +75,10 @@ pub const Node = struct {
     /// 代入系ノードの対象名が意味解析でローカルシンボルへ解決された場合に真。
     /// local slotの登録対象判定に使う（修飾名やシステム定数は含まない）。
     local_target: bool = false,
+    /// このノードの参照先が関数スコープの暗黙束縛`引数`（実引数配列）なら真。
+    /// HIR種別ではなく意味解析の束縛から導出するため、代入・増減・添字代入など
+    /// ノード自身が名前を持つ形の追加に追従不要（lower引数の先頭束縛の判定用）。
+    uses_implicit_arguments: bool = false,
     /// 実効取り込み文からのモジュールエントリ呼び出しで真。公式は取り込み先
     /// トークンを文位置へ展開するため、制御が到達するたびに実行される。
     is_module_entry: bool = false,
@@ -394,6 +398,7 @@ const Lowerer = struct {
         result.is_builtin_call = node.kind == .function_call and self.bindingIsBuiltin(node);
         result.check_array_init = node.check_array_init;
         result.local_target = self.bindingIsLocal(node);
+        result.uses_implicit_arguments = self.bindsImplicitArguments(node);
         result.loop_direction = node.loop_direction;
         if (node.kind == .anonymous_function) {
             result.name = try self.allocator.dupe(u8, self.anonymous_names.get(node) orelse return error.MissingAnonymousFunction);
@@ -420,6 +425,17 @@ const Lowerer = struct {
                 const symbol = self.semantic_program.symbols[symbol_id];
                 return self.semantic_program.scopes[symbol.scope].kind != .module;
             }
+        };
+        return false;
+    }
+
+    /// このノードの参照先が関数スコープの暗黙束縛`引数`かを返す。
+    /// `引数`への読み出し・代入・増減・添字代入は、どのHIR種別でも同じ
+    /// シンボルへ束縛されるため、種別を列挙せず束縛から判定する。
+    fn bindsImplicitArguments(self: *Lowerer, node: *ast.Node) bool {
+        for (self.semantic_program.bindings) |binding| if (binding.node == node) {
+            const symbol_id = binding.symbol orelse continue;
+            return self.semantic_program.symbols[symbol_id].implicit_arguments;
         };
         return false;
     }

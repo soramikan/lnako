@@ -199,7 +199,7 @@ fn instructionType(program: ir.Program, instruction: ir.Instruction, types: []co
         .const_boolean => .boolean,
         .const_null => .null_value,
         .const_string => .string,
-        .make_array => .array,
+        .make_array, .arguments_array => .array,
         .make_object => .object,
         .make_closure => .function,
         .iterator_has_next => .boolean,

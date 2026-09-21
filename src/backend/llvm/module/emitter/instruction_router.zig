@@ -108,6 +108,7 @@ pub fn writeInstruction(emitter: *Emitter, function: ir.Function, locals: []cons
         .make_closure => try calls_mod.writeMakeClosure(emitter, function, locals, instruction, scope, aggregate_count),
         .make_array => try collections_mod.writeAggregate(emitter, function, instruction, scope, aggregate_count, "lnako_aot_array_new"),
         .make_object => try collections_mod.writeAggregate(emitter, function, instruction, scope, aggregate_count, "lnako_aot_dictionary_new"),
+        .arguments_array => try collections_mod.writeArgumentsArray(emitter, instruction, scope),
         .array_get, .property_get => try collections_mod.writeIndexGet(emitter, instruction, scope),
         .element_set => try collections_mod.writeElementSet(emitter, instruction, scope),
         .ensure_array_var => try collections_mod.writeEnsureArrayVar(emitter, locals, instruction, scope),
