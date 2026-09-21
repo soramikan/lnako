@@ -124,6 +124,208 @@ test "間と繰り返すの間の読点を許可する" {
     try std.testing.expectEqual(ast.Kind.while_statement, result.root.?.children[0].kind);
 }
 
+test "「AがBならば」を等価比較の条件式へ変換する" {
+    var result = try parse(std.testing.allocator, "もし、Aが5ならば\nB=1\nここまで\n", "josi-eq.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const condition = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.binary_operator, condition.kind);
+    try std.testing.expectEqualStrings("eq", condition.operator);
+    try std.testing.expectEqual(@as(usize, 2), condition.children.len);
+    try std.testing.expectEqualStrings("A", condition.children[0].value);
+    try std.testing.expectEqualStrings("が", condition.children[0].josi);
+    try std.testing.expectEqualStrings("5", condition.children[1].value);
+    try std.testing.expectEqualStrings("ならば", condition.children[1].josi);
+}
+
+test "「AがBでなければ」を不等価比較の条件式へ変換する" {
+    var result = try parse(std.testing.allocator, "もし、Aが3でなければ\nB=1\nここまで\n", "josi-noteq.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const condition = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.binary_operator, condition.kind);
+    try std.testing.expectEqualStrings("noteq", condition.operator);
+    try std.testing.expectEqualStrings("でなければ", condition.children[1].josi);
+}
+
+test "「Aが3以下ならば」を助詞呼出しの条件式へ変換する" {
+    var result = try parse(std.testing.allocator, "もし、Aが3以下ならば\nB=1\nここまで\n", "josi-call.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const condition = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, condition.kind);
+    try std.testing.expectEqualStrings("以下", condition.name);
+    try std.testing.expectEqualStrings("", condition.josi);
+    try std.testing.expectEqual(@as(usize, 2), condition.children.len);
+    try std.testing.expectEqualStrings("A", condition.children[0].value);
+    try std.testing.expectEqualStrings("が", condition.children[0].josi);
+    try std.testing.expectEqualStrings("3", condition.children[1].value);
+    try std.testing.expectEqualStrings("", condition.children[1].josi);
+}
+
+test "「AがBと等しいならば」を助詞呼出しの条件式へ変換する" {
+    var result = try parse(std.testing.allocator, "もし、AがBと等しいならば\nC=1\nここまで\n", "josi-equal-call.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const condition = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, condition.kind);
+    try std.testing.expectEqualStrings("等", condition.name);
+    try std.testing.expectEqual(@as(usize, 2), condition.children.len);
+    try std.testing.expectEqualStrings("B", condition.children[1].value);
+    try std.testing.expectEqualStrings("と", condition.children[1].josi);
+}
+
+test "「DにAが辞書キー存在するならば」を助詞呼出しの条件式へ変換する" {
+    var result = try parse(std.testing.allocator, "もし、Dに\"a\"が辞書キー存在するならば\nB=1\nここまで\n", "josi-dict.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const condition = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, condition.kind);
+    try std.testing.expectEqualStrings("辞書キー存在", condition.name);
+    try std.testing.expectEqualStrings("D", condition.children[0].value);
+    try std.testing.expectEqualStrings("に", condition.children[0].josi);
+    try std.testing.expectEqualStrings("a", condition.children[1].value);
+    try std.testing.expectEqualStrings("が", condition.children[1].josi);
+}
+
+test "「存在しなければ」を助詞呼出しの条件否定へ変換する" {
+    var result = try parse(std.testing.allocator, "もし、Dに\"a\"が辞書キー存在しなければ\nB=1\nここまで\n", "josi-dict-not.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const condition = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.unary_operator, condition.kind);
+    try std.testing.expectEqualStrings("not", condition.operator);
+    try std.testing.expectEqual(ast.Kind.function_call, condition.children[0].kind);
+    try std.testing.expectEqualStrings("辞書キー存在", condition.children[0].name);
+}
+
+test "「もし」省略形の「AがBと等しいならば」を条件文にする" {
+    var result = try parse(std.testing.allocator, "Aが5と等しいならば\nB=1\n違えば\nB=2\nここまで\n", "implicit-if.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const statement = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.if_statement, statement.kind);
+    try std.testing.expectEqual(ast.Kind.function_call, statement.children[0].kind);
+    try std.testing.expectEqualStrings("等", statement.children[0].name);
+}
+
+test "括弧付きの助詞呼出し条件式を受理する" {
+    var result = try parse(std.testing.allocator, "もし、(Aが3以下)ならば\nB=1\nここまで\n", "grouped-josi-call.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const condition = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, condition.kind);
+    try std.testing.expectEqualStrings("以下", condition.name);
+    try std.testing.expectEqualStrings("", condition.josi);
+}
+
+test "「Aが5以下の間」を助詞呼出しの条件式にする" {
+    var result = try parse(std.testing.allocator, "Aが5以下の間\nA=A+1\nここまで\n", "josi-while.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const statement = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.while_statement, statement.kind);
+    const condition = statement.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, condition.kind);
+    try std.testing.expectEqualStrings("以下", condition.name);
+    try std.testing.expectEqualStrings("の", condition.josi);
+    try std.testing.expectEqual(@as(usize, 2), condition.children.len);
+}
+
+test "後判定の括弧付き助詞呼出し条件式を受理する" {
+    var result = try parse(std.testing.allocator, "後判定\nA=A+1\nここまで,(Aが3以下)の間\n", "josi-post-test.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const statement = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.post_test_loop, statement.kind);
+    const condition = statement.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, condition.kind);
+    try std.testing.expectEqualStrings("以下", condition.name);
+    try std.testing.expectEqualStrings("の", condition.josi);
+}
+
+test "「もし」省略形は命令呼出しのときだけ条件文にする" {
+    // 公式`ySentence`は`yCall`が命令呼出しで確定した場合だけ`yIfThen`へ入る。
+    // 演算式や数値は『不完全な文です』で拒否されるため条件文にしない。
+    var number = try parse(std.testing.allocator, "1ならば\n", "implicit-if-number.nako3");
+    defer number.deinit();
+    try std.testing.expect(number.succeeded());
+    try std.testing.expectEqual(ast.Kind.dynamic_execute, number.root.?.children[0].kind);
+
+    // 単独語は変数参照と区別できないため、既知の命令名でなければ条件文にしない。
+    var word = try parse(std.testing.allocator, "Aならば\n", "implicit-if-word.nako3");
+    defer word.deinit();
+    try std.testing.expect(word.succeeded());
+    try std.testing.expectEqual(ast.Kind.function_call, word.root.?.children[0].kind);
+    try std.testing.expect(!word.root.?.children[0].is_c_style_call);
+
+    // 未定義語の助詞付き呼出しは公式も未解決語として拒否するため条件文にしない。
+    var undefined_call = try parse(std.testing.allocator, "1を未定義Fならば\n", "implicit-if-undefined.nako3");
+    defer undefined_call.deinit();
+    try std.testing.expect(undefined_call.succeeded());
+    try std.testing.expectEqual(ast.Kind.function_call, undefined_call.root.?.children[0].kind);
+
+    // 既知の命令名（公式の`func token`）の0引数呼出しは命令呼出しなので条件文になる。
+    var command = try parse(std.testing.allocator, "今ならば\n「x」と表示\nここまで\n", "implicit-if-command.nako3");
+    defer command.deinit();
+    try std.testing.expect(command.succeeded());
+    try std.testing.expectEqual(ast.Kind.if_statement, command.root.?.children[0].kind);
+    try std.testing.expectEqual(ast.Kind.function_call, command.root.?.children[0].children[0].kind);
+    try std.testing.expectEqualStrings("今", command.root.?.children[0].children[0].name);
+}
+
+test "無名関数の本体先頭語を関数名として登録しない" {
+    // 無名関数の`関数`キーワードも`def_func`になるため、定義の直後の識別子は
+    // 本体の先頭語（この例では「それ」）であって関数名ではない。
+    var result = try parse(std.testing.allocator, "F=関数(A)\nそれはA+1\nここまで\nそれならば\n「x」と表示\nここまで\n", "anonymous-func-body.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+}
+
+test "範囲演算式を「もし」省略形の条件文へ昇格しない" {
+    // 公式は範囲を`func`ノードにするが、`yCall`のスタックが残るため
+    // `1…2ならば`は『不完全な文です』で拒否する。
+    var result = try parse(std.testing.allocator, "1…2ならば\n「x」と表示\nここまで\n", "range-if.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+}
+
+test "ユーザー定義関数を単独語の条件として命令呼出しにする" {
+    // 公式`preDefineFunc`と同じくトークンを先読みするため、後方定義でも解決する。
+    const cases = [_]struct { source: []const u8, filename: []const u8, name: []const u8 }{
+        .{ .source = "Fならば\n「x」と表示\nここまで\n●Fとは\nはいで戻る\nここまで\n", .filename = "user-func-if.nako3", .name = "F" },
+        // 属性付き・名前の前後に引数宣言が来る定義形も関数名として集める。
+        .{ .source = "●{公開}Fとは\nはいで戻る\nここまで\nFならば\n「x」と表示\nここまで\n", .filename = "user-func-attr-if.nako3", .name = "F" },
+        .{ .source = "●(Aを)Gとは\nAで戻る\nここまで\nGならば\n「x」と表示\nここまで\n", .filename = "user-func-leading-args-if.nako3", .name = "G" },
+        // 助詞付きの引数でも、ユーザー定義関数を条件式の命令呼出しへ解決する。
+        .{ .source = "もし、1をFならば\n「x」と表示\nここまで\n●(Aを)Fとは\nAで戻る\nここまで\n", .filename = "user-func-josi-call-if.nako3", .name = "F" },
+    };
+    for (cases) |case| {
+        var result = try parse(std.testing.allocator, case.source, case.filename);
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+        var promoted = false;
+        for (result.root.?.children) |child| {
+            if (child.kind != .if_statement) continue;
+            promoted = true;
+            try std.testing.expectEqual(ast.Kind.function_call, child.children[0].kind);
+            try std.testing.expectEqualStrings(case.name, child.children[0].name);
+        }
+        try std.testing.expect(promoted);
+    }
+}
+
+test "「なければ」を条件の否定として扱う" {
+    var result = try parse(std.testing.allocator, "もし、Aなければ\nB=1\nここまで\n", "josi-nakereba.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const condition = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.unary_operator, condition.kind);
+    try std.testing.expectEqualStrings("not", condition.operator);
+    try std.testing.expectEqualStrings("A", condition.children[0].value);
+    try std.testing.expectEqualStrings("", condition.children[0].josi);
+}
+
 test "括弧付き演算子の助詞を内部式へ伝播しない" {
     var result = try parse(std.testing.allocator, "(-1>\"\")を反復\n対象を表示\nここまで\n", "grouped-josi.nako3");
     defer result.deinit();
