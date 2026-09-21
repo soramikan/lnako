@@ -165,6 +165,10 @@ fn collectUserFunctionNames(allocator: std.mem.Allocator, tokens: []const Token)
     var index: usize = 0;
     while (index < tokens.len) : (index += 1) {
         if (tokens[index].kind != .def_func and tokens[index].kind != .def_test) continue;
+        // 無名関数の`関数`キーワードも`def_func`になるが、名前を持たないため
+        // 直後の識別子は本体の先頭語（`F=関数(A)それはA`の「それ」）であって
+        // 関数名ではない。名前付き定義（`●`・`●テスト:`）だけを集める。
+        if (std.mem.eql(u8, tokens[index].value, "関数")) continue;
         var cursor = index + 1;
         // `●{公開}Fとは` のような属性を読み飛ばす。
         if (cursor < tokens.len and tokens[cursor].kind == .left_brace) {
@@ -515,7 +519,7 @@ pub const Parser = struct {
         var stack: std.ArrayList(*ast.Node) = .empty;
         try stack.append(self.allocator, first);
         while (true) {
-            if (self.at(.identifier) and self.isBuiltinCommandName(self.peek().value)) {
+            if (self.at(.identifier) and self.isKnownCommandName(self.peek().value)) {
                 const command = self.advance();
                 const call = try self.makeCommandCall(command, try stack.toOwnedSlice(self.allocator));
                 stack = .empty;

@@ -268,6 +268,14 @@ test "「もし」省略形は命令呼出しのときだけ条件文にする" 
     try std.testing.expectEqualStrings("今", command.root.?.children[0].children[0].name);
 }
 
+test "無名関数の本体先頭語を関数名として登録しない" {
+    // 無名関数の`関数`キーワードも`def_func`になるため、定義の直後の識別子は
+    // 本体の先頭語（この例では「それ」）であって関数名ではない。
+    var result = try parse(std.testing.allocator, "F=関数(A)\nそれはA+1\nここまで\nそれならば\n「x」と表示\nここまで\n", "anonymous-func-body.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+}
+
 test "範囲演算式を「もし」省略形の条件文へ昇格しない" {
     // 公式は範囲を`func`ノードにするが、`yCall`のスタックが残るため
     // `1…2ならば`は『不完全な文です』で拒否する。
@@ -283,6 +291,8 @@ test "ユーザー定義関数を単独語の条件として命令呼出しに�
         // 属性付き・名前の前後に引数宣言が来る定義形も関数名として集める。
         .{ .source = "●{公開}Fとは\nはいで戻る\nここまで\nFならば\n「x」と表示\nここまで\n", .filename = "user-func-attr-if.nako3", .name = "F" },
         .{ .source = "●(Aを)Gとは\nAで戻る\nここまで\nGならば\n「x」と表示\nここまで\n", .filename = "user-func-leading-args-if.nako3", .name = "G" },
+        // 助詞付きの引数でも、ユーザー定義関数を条件式の命令呼出しへ解決する。
+        .{ .source = "もし、1をFならば\n「x」と表示\nここまで\n●(Aを)Fとは\nAで戻る\nここまで\n", .filename = "user-func-josi-call-if.nako3", .name = "F" },
     };
     for (cases) |case| {
         var result = try parse(std.testing.allocator, case.source, case.filename);
