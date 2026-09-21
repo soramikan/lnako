@@ -89,6 +89,10 @@ pub const Node = struct {
     grouped: bool = false,
     /// C風の `命令(...)` 呼び出しだけを、助詞構文と区別する。
     is_c_style_call: bool = false,
+    /// 助詞付きの命令名を解決して作った呼出し（公式の`func token`の呼出し）。
+    /// 範囲演算子（`1…5`）のように演算子から作られる`function_call`と区別し、
+    /// 公式`ySentence`の「もし」省略形の昇格判定にだけ使う。
+    command_call: bool = false,
     loop_direction: LoopDirection = .automatic,
     /// 関数本体内の実効取り込み文だけが持つ、取り込み先トップレベル文の
     /// 複製。公式は取り込み先トークンを取り込み文の位置へそのまま展開する

@@ -268,6 +268,37 @@ test "「もし」省略形は命令呼出しのときだけ条件文にする" 
     try std.testing.expectEqualStrings("今", command.root.?.children[0].children[0].name);
 }
 
+test "範囲演算式を「もし」省略形の条件文へ昇格しない" {
+    // 公式は範囲を`func`ノードにするが、`yCall`のスタックが残るため
+    // `1…2ならば`は『不完全な文です』で拒否する。
+    var result = try parse(std.testing.allocator, "1…2ならば\n「x」と表示\nここまで\n", "range-if.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+}
+
+test "ユーザー定義関数を単独語の条件として命令呼出しにする" {
+    // 公式`preDefineFunc`と同じくトークンを先読みするため、後方定義でも解決する。
+    const cases = [_]struct { source: []const u8, filename: []const u8, name: []const u8 }{
+        .{ .source = "Fならば\n「x」と表示\nここまで\n●Fとは\nはいで戻る\nここまで\n", .filename = "user-func-if.nako3", .name = "F" },
+        // 属性付き・名前の前後に引数宣言が来る定義形も関数名として集める。
+        .{ .source = "●{公開}Fとは\nはいで戻る\nここまで\nFならば\n「x」と表示\nここまで\n", .filename = "user-func-attr-if.nako3", .name = "F" },
+        .{ .source = "●(Aを)Gとは\nAで戻る\nここまで\nGならば\n「x」と表示\nここまで\n", .filename = "user-func-leading-args-if.nako3", .name = "G" },
+    };
+    for (cases) |case| {
+        var result = try parse(std.testing.allocator, case.source, case.filename);
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+        var promoted = false;
+        for (result.root.?.children) |child| {
+            if (child.kind != .if_statement) continue;
+            promoted = true;
+            try std.testing.expectEqual(ast.Kind.function_call, child.children[0].kind);
+            try std.testing.expectEqualStrings(case.name, child.children[0].name);
+        }
+        try std.testing.expect(promoted);
+    }
+}
+
 test "「なければ」を条件の否定として扱う" {
     var result = try parse(std.testing.allocator, "もし、Aなければ\nB=1\nここまで\n", "josi-nakereba.nako3");
     defer result.deinit();

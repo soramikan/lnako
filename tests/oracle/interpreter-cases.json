@@ -426,5 +426,9 @@
   {
     "id": "josi-call-post-test-condition",
     "source": "C=0\n後判定\nC=C+1\nCを表示\nここまで,(Cが3以下)の間\n"
+  },
+  {
+    "id": "implicit-if-user-function-condition",
+    "source": "Fならば\n「x」と表示\nここまで\n●Fとは\nはいで戻る\nここまで\n"
   }
 ]

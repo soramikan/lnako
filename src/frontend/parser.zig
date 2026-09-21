@@ -125,6 +125,7 @@ pub fn parseWithMode(backing_allocator: std.mem.Allocator, source: []const u8, f
         .own_mode = orMode(options.initial orelse .{}, options.forced),
         .tail_modes = options.tail_modes,
         .builtin_commands = options.builtin_commands,
+        .user_functions = try collectUserFunctionNames(allocator, stream.tokens),
     };
     var root = parser.parseProgram() catch |err| switch (err) {
         error.ParseFailed => null,
@@ -156,6 +157,43 @@ pub fn parseWithMode(backing_allocator: std.mem.Allocator, source: []const u8, f
 
 pub const ParseFailure = error{ ParseFailed, OutOfMemory };
 
+/// 公式`NakoLexer.preDefineFunc`相当。解析前のトークン列を走査してソース内で
+/// 定義された関数名を集める。公式は定義の位置に関わらず関数名を`func token`
+/// にするため、後方定義の呼出し（前方参照）も命令呼出しとして解決できる。
+fn collectUserFunctionNames(allocator: std.mem.Allocator, tokens: []const Token) std.mem.Allocator.Error![]const []const u8 {
+    var names: std.ArrayList([]const u8) = .empty;
+    var index: usize = 0;
+    while (index < tokens.len) : (index += 1) {
+        if (tokens[index].kind != .def_func and tokens[index].kind != .def_test) continue;
+        var cursor = index + 1;
+        // `●{公開}Fとは` のような属性を読み飛ばす。
+        if (cursor < tokens.len and tokens[cursor].kind == .left_brace) {
+            cursor += 1;
+            while (cursor < tokens.len and tokens[cursor].kind != .right_brace) cursor += 1;
+            cursor += 1;
+        }
+        // `●(Aを)Fとは` のように名前の前に来る引数宣言を読み飛ばす。
+        if (cursor < tokens.len and tokens[cursor].kind == .left_paren) {
+            var depth: usize = 0;
+            while (cursor < tokens.len) : (cursor += 1) {
+                if (tokens[cursor].kind == .left_paren) {
+                    depth += 1;
+                } else if (tokens[cursor].kind == .right_paren) {
+                    depth -= 1;
+                    if (depth == 0) {
+                        cursor += 1;
+                        break;
+                    }
+                }
+            }
+        }
+        if (cursor < tokens.len and tokens[cursor].kind == .identifier) {
+            try names.append(allocator, tokens[cursor].value);
+        }
+    }
+    return names.toOwnedSlice(allocator);
+}
+
 fn orMode(a: token_mod.Mode, b: token_mod.Mode) token_mod.Mode {
     return .{
         .dncl = a.dncl or b.dncl,
@@ -180,6 +218,10 @@ pub const Parser = struct {
     tail_modes: []const TailMode = &.{},
     /// 公式の`func token`に相当する既知の命令名（`ParseOptions.builtin_commands`）。
     builtin_commands: []const []const u8 = &.{},
+    /// ソース内で定義された関数名（公式`NakoLexer.preDefineFunc`相当の先読み）。
+    /// 公式はユーザー定義関数も`func token`にするため、助詞付きの単独語を
+    /// 命令呼出しとして解決できるようにする。
+    user_functions: []const []const u8 = &.{},
     tail_cursor: usize = 0,
     import_modes: std.ArrayList(ImportMode) = .empty,
     index: usize = 0,
@@ -297,11 +339,14 @@ pub const Parser = struct {
                 // 「もし」省略形の条件文として扱う（`Aが5と等しいならば`）。
                 // lnakoの字句解析は『ならば』を直前の語の助詞にするため、
                 // 文の末尾助詞で判定する。ただし公式が条件文へ昇格させるのは
-                // `yCall`が命令呼出しで確定した場合だけなので、単独語の文は
-                // 既知の命令名（公式の`func token`）のときだけ命令呼出しとみなす
-                // （公式も`Aならば`は未解決語、`1ならば`は不完全な文として拒否する）。
+                // `yCall`が命令呼出しで確定した場合だけなので、命令名の解決で
+                // 作った呼出しかC風呼出しに限る。範囲演算子（`1…5`）や単独語は
+                // 命令呼出しではない（公式も`1…5ならば`は不完全な文、`Aならば`は
+                // 未解決語として拒否する）。単独語は公式の`func token`に相当する
+                // 既知の命令名・ユーザー定義関数のときだけ命令呼出しとみなす。
                 if (statement.kind == .function_call and isConditionalJosi(statement.josi) and
-                    (statement.children.len > 0 or statement.is_c_style_call or self.isBuiltinCommandName(statement.name)))
+                    (statement.command_call or statement.is_c_style_call or
+                        (statement.children.len == 0 and self.isKnownCommandName(statement.name))))
                 {
                     break :blk self.parseIfThen(token, try self.finishCondition(statement));
                 }
@@ -987,6 +1032,14 @@ pub const Parser = struct {
         return false;
     }
 
+    /// 公式の`func token`として解決できる名前かどうか。公式は組み込み命令に
+    /// 加えて、ソース内で定義された関数も`func token`にする。
+    fn isKnownCommandName(self: *Parser, value: []const u8) bool {
+        if (self.isBuiltinCommandName(value)) return true;
+        for (self.user_functions) |name| if (std.mem.eql(u8, name, value)) return true;
+        return false;
+    }
+
     /// 現在位置の識別子が「助詞付きの既知命令名」で、直後にも識別子が続くか。
     /// 公式`yCallFunc`はこの位置の命令を呼び出し、結果を次の命令の引数にする。
     fn isChainedBuiltinCommand(self: *Parser, token: Token) bool {
@@ -1012,6 +1065,7 @@ pub const Parser = struct {
         call.name = command.value;
         call.josi = if (isSequenceJosi(command.josi)) "して" else command.josi;
         call.raw_josi = command.raw_josi;
+        call.command_call = true;
         return call;
     }
 
@@ -1238,6 +1292,7 @@ pub const Parser = struct {
             const call = try builder.makeNodeWithChildren(self, .function_call, command, try arguments.toOwnedSlice(self.allocator));
             call.name = command.value;
             call.josi = command.josi;
+            call.command_call = true;
             if (!isSequenceJosi(command.josi)) return call;
             arguments = .empty;
             try arguments.append(self.allocator, call);
