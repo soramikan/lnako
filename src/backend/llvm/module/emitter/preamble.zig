@@ -107,6 +107,7 @@ pub fn emitPreamble(emitter: *Emitter) !void {
             "declare ptr @lnako_aot_binding_cell_value(ptr)\n" ++
             "declare void @lnako_aot_function_new(ptr, ptr, i64, ptr, i64)\n" ++
             "declare void @lnako_aot_function_new_named(ptr, ptr, i64, ptr, i64, ptr, i64)\n" ++
+            "declare void @lnako_aot_function_new_generated(ptr, ptr, i64, ptr, i64, ptr, i64)\n" ++
             "declare void @lnako_aot_function_capture(ptr, ptr, i64)\n" ++
             "declare void @lnako_aot_function_call(ptr, ptr, ptr, i64)\n" ++
             "declare void @lnako_aot_cut(ptr, ptr, ptr, i64, i8)\n" ++

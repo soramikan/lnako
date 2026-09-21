@@ -317,7 +317,7 @@ pub fn writeMakeClosure(emitter: *Emitter, caller: ir.Function, locals: []const 
         try emitter.output.writer.print("  store %lnako.Value %closure.capture.{d}.{d}, ptr %closure.capture.slot.{d}.{d}", .{ result, index, result, index });
         try emitter.debugSuffix(instruction.span, scope);
     }
-    try emitter.output.writer.print("  call void @lnako_aot_function_new_named(ptr %root.slot.{d}, ptr @lnako.wrapper.{d}, i64 {d}, ptr @lnako.function.name.{d}, i64 {d}, ptr ", .{ result, function.id, function.parameters.len, function.id, function.name.len });
+    try emitter.output.writer.print("  call void @lnako_aot_function_new_generated(ptr %root.slot.{d}, ptr @lnako.wrapper.{d}, i64 {d}, ptr @lnako.function.name.{d}, i64 {d}, ptr ", .{ result, function.id, function.parameters.len, function.id, function.name.len });
     if (function.captures.len > 0) {
         try emitter.output.writer.print("%closure.capture.slot.{d}.0", .{result});
     } else try emitter.output.writer.writeAll("null");

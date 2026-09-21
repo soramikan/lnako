@@ -459,7 +459,7 @@ pub fn writeMain(emitter: *Emitter) !void {
         try emitter.output.writer.print(", i64 {d})\n", .{emitter.source_path.len});
     }
     for (emitter.program.functions) |function| if (emitter.globalIndex(function.name)) |global_index| {
-        try emitter.output.writer.print("  call void @lnako_aot_function_new_named(ptr @lnako.global.{d}, ptr @lnako.wrapper.{d}, i64 {d}, ptr @lnako.function.name.{d}, i64 {d}, ptr null, i64 0)\n", .{ global_index, function.id, function.parameters.len, function.id, function.name.len });
+        try emitter.output.writer.print("  call void @lnako_aot_function_new_generated(ptr @lnako.global.{d}, ptr @lnako.wrapper.{d}, i64 {d}, ptr @lnako.function.name.{d}, i64 {d}, ptr null, i64 0)\n", .{ global_index, function.id, function.parameters.len, function.id, function.name.len });
     };
     if (emitter.program.http_server_plugin_imported) {
         try emitter.output.writer.writeAll("  call void @lnako_aot_http_server_init(ptr ");
