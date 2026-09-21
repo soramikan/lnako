@@ -38,7 +38,9 @@ pub fn operatorInfo(kind: Kind) ?OperatorInfo {
 
 pub fn canStartExpression(kind: Kind) bool {
     return switch (kind) {
-        .number, .bigint, .string, .string_template, .identifier, .function_ref, .left_paren, .left_bracket, .left_brace, .not, .minus => true,
+        // 公式`yValue`は`def_func`（匿名関数）も値として読むため、
+        // `F(1 関数() 2で戻る ここまで)`のようなカンマ無し引数でも開始できる。
+        .number, .bigint, .string, .string_template, .identifier, .function_ref, .left_paren, .left_bracket, .left_brace, .not, .minus, .def_func => true,
         else => false,
     };
 }

@@ -1302,3 +1302,18 @@ test "括弧・C風引数・辞書値の演算子を挟む助詞呼出しを受�
         try std.testing.expect(result.succeeded());
     }
 }
+
+test "カンマ無し引数に匿名関数を受理する" {
+    // 公式`yValue`は`def_func`を値として読むため、カンマ無しの継続引数でも
+    // 匿名関数を開始できる（`F(1 関数() 2で戻る ここまで)`）。
+    const cases = [_][]const u8{
+        "●(AとBを)Fとは\nAを表示\nここまで\nF(1 関数() 2で戻る ここまで)\n",
+        "●(AとBを)Fとは\nAを表示\nここまで\nF(関数() 2で戻る ここまで 1)\n",
+        "●(Aを)Fとは\nAを表示\nここまで\nG=F\nG(1 関数() 2で戻る ここまで)\n",
+    };
+    for (cases) |source| {
+        var result = try parse(std.testing.allocator, source, "no-comma-anon-func.nako3");
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+    }
+}

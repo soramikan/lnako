@@ -7,7 +7,7 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "2ba4e7848e273c05fdef56bdad5fd84de08acf42549d51467c75cb008a5f1dca"
+    "sha256": "c62eb46bda7249f00354c4d46ec6e2b16321dc4158a4676b2fe95cada0b4de2f"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
