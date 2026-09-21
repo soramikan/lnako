@@ -430,5 +430,13 @@
   {
     "id": "implicit-if-user-function-condition",
     "source": "Fならば\n「x」と表示\nここまで\n●Fとは\nはいで戻る\nここまで\n"
+  },
+  {
+    "id": "block-end-dots",
+    "source": "3回繰り返す\n「😀」と表示。\n「😂」と表示。。。\n「完了」を表示。\n"
+  },
+  {
+    "id": "block-end-semicolons",
+    "source": "3回繰り返す\n「😀」と表示。\n「😂」と表示;;;\n「完了」を表示。\n"
   }
 ]

@@ -131,6 +131,9 @@ const Lexer = struct {
         const start = self.offset;
         const rest = self.source.text[start..];
 
+        // 公式の字句規則は `/^;;;/` を `/^;/` より先に評価する。`。。。`は
+        // 正規化で`;;;`になるため、単独の`;`より先に`ここまで`として扱う。
+        if (std.mem.startsWith(u8, rest, ";;;")) return self.simple(.keyword_here_end, 3);
         if (rest[0] == '\n' or rest[0] == ';') {
             const line = self.line;
             const column = self.column;
@@ -172,7 +175,6 @@ const Lexer = struct {
             const len = if (std.mem.startsWith(u8, rest, "ここまで")) "ここまで".len else "💧".len;
             return self.simple(.keyword_here_end, len);
         }
-        if (std.mem.startsWith(u8, rest, ";;;")) return self.simple(.keyword_here_end, 3);
         if (std.mem.startsWith(u8, rest, "もしも")) return self.simple(.keyword_if, "もしも".len);
         if (std.mem.startsWith(u8, rest, "もし")) return self.simple(.keyword_if, "もし".len);
         if (std.mem.startsWith(u8, rest, "違えば")) return self.simple(.keyword_else, "違えば".len);
@@ -744,6 +746,27 @@ test "文字列内部を正規化せず直後の助詞を読む" {
     try std.testing.expectEqualStrings("を", stream.tokens[0].josi);
     try std.testing.expectEqualStrings("表示", stream.tokens[1].value);
     try std.testing.expectEqual(Kind.eol, stream.tokens[2].kind);
+}
+
+test "『。。。』と『;;;』をブロック終端として扱う" {
+    // 公式の字句規則は`/^;;;/`を`/^;/`より先に評価する（#925）。
+    // `。。。`は正規化で`;;;`になるため、同じ`ここまで`になる。
+    var dots = try tokenize(std.testing.allocator, "1を表示。。。");
+    defer dots.deinit();
+    try std.testing.expectEqual(Kind.keyword_here_end, dots.tokens[2].kind);
+    try std.testing.expectEqualStrings(";;;", dots.tokens[2].value);
+
+    var semicolons = try tokenize(std.testing.allocator, "1を表示;;;");
+    defer semicolons.deinit();
+    try std.testing.expectEqual(Kind.keyword_here_end, semicolons.tokens[2].kind);
+
+    // `;;`までや単独の`;`は行末のまま。
+    var single = try tokenize(std.testing.allocator, "1を表示;2を表示");
+    defer single.deinit();
+    try std.testing.expectEqual(Kind.eol, single.tokens[2].kind);
+    var double = try tokenize(std.testing.allocator, "1を表示;;2を表示");
+    defer double.deinit();
+    try std.testing.expectEqual(Kind.eol, double.tokens[2].kind);
 }
 
 test "全角演算子・BigInt・数値区切りを扱う" {
