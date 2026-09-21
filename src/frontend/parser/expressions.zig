@@ -17,27 +17,52 @@ pub fn parseExpressionWithContext(self: *Parser, minimum_precedence: u8, allow_n
     // 演算子の優先順位による再帰も含め、式の入れ子はここで数える。
     try self.enterNesting();
     defer self.leaveNesting();
-    var left = try parseUnary(self, allow_negative_number_literal);
+    const left = try parseUnary(self, allow_negative_number_literal);
+    return parseOperatorTail(self, left, minimum_precedence);
+}
+
+/// 式の先頭`left`に続く演算子と右辺を、優先順位に従って読む。
+/// `collectJosiSequence`が命令呼出しの直後に続く演算子を取り込むためにも使う
+/// （公式`yCall`が呼出し結果へ`yGetArgOperator`を適用するのに相当）。
+pub fn parseOperatorTail(self: *Parser, left: *ast.Node, minimum_precedence: u8) ParseFailure!*ast.Node {
+    var result = left;
     while (helpers.operatorInfo(self.peek().kind)) |info| {
         if (info.precedence < minimum_precedence) break;
         const operator_token = self.advance();
         const next_precedence = info.precedence + @intFromBool(!info.right_associative);
         const right = try parseExpressionWithContext(self, next_precedence, true);
         if (operator_token.kind == .range) {
-            const range = try builder.makeNodeWithChildren(self, .function_call, operator_token, try builder.copyChildren(self, &.{ left, right }));
+            const range = try builder.makeNodeWithChildren(self, .function_call, operator_token, try builder.copyChildren(self, &.{ result, right }));
             range.name = "範囲";
             range.josi = right.josi;
-            left = range;
+            result = range;
         } else {
-            const binary = try builder.makeNodeWithChildren(self, .binary_operator, operator_token, try builder.copyChildren(self, &.{ left, right }));
+            const binary = try builder.makeNodeWithChildren(self, .binary_operator, operator_token, try builder.copyChildren(self, &.{ result, right }));
             binary.operator = info.name;
             binary.josi = right.josi;
             binary.raw_josi = right.raw_josi;
-            left = binary;
+            result = binary;
         }
     }
-    if (minimum_precedence == 0 and left.kind == .binary_operator) helpers.propagateOperatorJosi(left, left.josi);
-    return left;
+    if (minimum_precedence == 0 and result.kind == .binary_operator) helpers.propagateOperatorJosi(result, result.josi);
+    return result;
+}
+
+/// 区切り式（括弧・C風呼出し引数・添字・配列/辞書リテラルの要素）の内側で、
+/// 公式`yCalc`1回分に相当する値の並びを読む。先頭の値が助詞を持てば
+/// `collectJosiSequence`で命令呼出しまで読み、解決後に残ったノード列を
+/// そのまま返す（公式でスタックに残る値に相当）。助詞を持たない値は
+/// 単独で返す（公式`yCalcMain`の早期return相当）。
+/// 命令呼出しに続く演算子は`collectJosiSequence`が式の一部として取り込む
+/// （`Aの要素数+Bの要素数`）。
+pub fn parseDelimitedSequence(self: *Parser) ParseFailure![]*ast.Node {
+    const first = try parseExpression(self, 0);
+    if (first.josi.len == 0) {
+        const single = try self.allocator.alloc(*ast.Node, 1);
+        single[0] = first;
+        return single;
+    }
+    return self.collectJosiSequence(first);
 }
 
 pub fn parseUnary(self: *Parser, allow_negative_number_literal: bool) ParseFailure!*ast.Node {
@@ -87,10 +112,16 @@ pub fn parsePostfix(self: *Parser) ParseFailure!*ast.Node {
             self.delimited_expression_depth += 1;
             defer self.delimited_expression_depth -= 1;
             var arguments: std.ArrayList(*ast.Node) = .empty;
+            // 公式`yGetArgParen`相当: 各引数を`yCalc`相当の区切り式単位で読み、
+            // 助詞付きの命令呼出しも引数として受理する（`割(1を2で)`）。
+            // カンマが無くても値が続く限り引数として読む（`加算(1 2)`）。
             while (!self.at(.right_paren) and !self.at(.eof)) {
-                try arguments.append(self.allocator, try parseExpression(self, 0));
-                if (!self.at(.comma)) break;
-                _ = self.advance();
+                try arguments.appendSlice(self.allocator, try parseDelimitedSequence(self));
+                if (self.at(.comma)) {
+                    _ = self.advance();
+                    continue;
+                }
+                if (!helpers.canStartExpression(self.peek().kind)) break;
             }
             const close = try self.require(.right_paren, "C風関数呼び出しを閉じる『)』が必要です");
             const call = try builder.makeNodeWithChildren(self, .function_call, open, try arguments.toOwnedSlice(self.allocator));
@@ -108,9 +139,12 @@ pub fn parsePostfix(self: *Parser) ParseFailure!*ast.Node {
             var arguments: std.ArrayList(*ast.Node) = .empty;
             try arguments.append(self.allocator, value);
             while (!self.at(.right_paren) and !self.at(.eof)) {
-                try arguments.append(self.allocator, try parseExpression(self, 0));
-                if (!self.at(.comma)) break;
-                _ = self.advance();
+                try arguments.appendSlice(self.allocator, try parseDelimitedSequence(self));
+                if (self.at(.comma)) {
+                    _ = self.advance();
+                    continue;
+                }
+                if (!helpers.canStartExpression(self.peek().kind)) break;
             }
             const close = try self.require(.right_paren, "関数値呼び出しを閉じる『)』が必要です");
             value = try builder.makeNodeWithChildren(self, .call_value, open, try arguments.toOwnedSlice(self.allocator));
@@ -136,7 +170,10 @@ pub fn parsePostfix(self: *Parser) ParseFailure!*ast.Node {
             defer self.delimited_expression_depth -= 1;
             var indexes: std.ArrayList(*ast.Node) = .empty;
             while (!self.at(.right_bracket) and !self.at(.eof)) {
-                const index = try parseExpression(self, 0);
+                const items = try parseDelimitedSequence(self);
+                // 添字は単一の値に解決される必要がある（公式`yCalc`の結果相当）。
+                if (items.len != 1) return self.fail(.unexpected_token, "命令呼び出しを構成できません", self.peek());
+                const index = items[0];
                 // 公式のfunc tokenはカンマ直前では値として受理されない。
                 // 関数名への解決は意味解析で行うため、ここでは裸の単語だけ記録する。
                 if (index.kind == .word and index.josi.len == 0 and !index.grouped and self.at(.comma)) index.bare_index_word = true;
@@ -185,11 +222,13 @@ pub fn parsePrimary(self: *Parser) ParseFailure!*ast.Node {
         .left_paren => blk: {
             self.delimited_expression_depth += 1;
             defer self.delimited_expression_depth -= 1;
-            // 公式`yValueKakko`は括弧内も`yCall`で解析するため、助詞付きの
-            // 命令呼出しを条件式と同じ規則で受理する（`(Aが3以下)`）。
-            const value = try self.parseJosiCallExpression(try parseExpression(self, 0));
+            // 公式`yValueKakko`は括弧内を`yCalc`で解析し、スタックに残った
+            // 末尾の値を括弧の値とする。助詞付きの命令呼出しも受理する
+            // （`(Aが3以下)`、`(1を2で)`は末尾の`2`が値になる）。
+            const items = try parseDelimitedSequence(self);
             if (!self.at(.right_paren)) return self.fail(.expected_token, "式を閉じる『)』が必要です", token);
             const close = self.advance();
+            const value = items[items.len - 1];
             value.josi = close.josi;
             value.raw_josi = close.raw_josi;
             value.grouped = true;
@@ -233,7 +272,11 @@ pub fn parseArrayAfterOpen(self: *Parser, open: Token) ParseFailure!*ast.Node {
             _ = self.advance();
             continue;
         }
-        try values.append(self.allocator, try parseExpression(self, 0));
+        // 公式`yJSONArrayValue`は各要素を`yCalc`で読むため、助詞付きの
+        // 命令呼出しも要素として受理する（`[Aの要素数]`）。
+        const items = try parseDelimitedSequence(self);
+        if (items.len != 1) return self.fail(.unexpected_token, "命令呼び出しを構成できません", self.peek());
+        try values.append(self.allocator, items[0]);
         if (self.at(.comma)) _ = self.advance();
     }
     if (!self.at(.right_bracket)) return self.fail(.expected_token, "配列リテラルを閉じる『]』が必要です", open);
@@ -261,7 +304,11 @@ pub fn parseObjectAfterOpen(self: *Parser, open: Token) ParseFailure!*ast.Node {
         try values.append(self.allocator, key);
         if (self.at(.colon)) {
             _ = self.advance();
-            try values.append(self.allocator, try parseExpression(self, 0));
+            // 公式`yJSONObjectValue`は値を`yCalc`で読むため、助詞付きの
+            // 命令呼出しも値として受理する（`{a: Aの要素数}`）。
+            const items = try parseDelimitedSequence(self);
+            if (items.len != 1) return self.fail(.unexpected_token, "命令呼び出しを構成できません", self.peek());
+            try values.append(self.allocator, items[0]);
         } else {
             const value_kind: ast.Kind = if (key_token.kind == .string) .string else .word;
             try values.append(self.allocator, try builder.valueNode(self, value_kind, key_token));
