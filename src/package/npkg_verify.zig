@@ -14,6 +14,7 @@ const manifest_mod = @import("manifest.zig");
 const npkg_commands = @import("npkg_commands.zig");
 const npkg_files = @import("npkg_files.zig");
 const npkg_metadata = @import("npkg_metadata.zig");
+const features_mod = @import("features.zig");
 const semver = @import("semver.zig");
 
 const Allocator = std.mem.Allocator;
@@ -33,7 +34,12 @@ pub const Target = struct {
     os_version: ?[]const u8 = null,
     libc: ?[]const u8 = null,
     compat_js: bool = false,
+    /// 有効化を要求する feature 名。`[features]` 定義の推移展開と
+    /// `default`（`default_features` が真の場合）を加えた集合が
+    /// artifact 照合に使われる。
     features: []const []const u8 = &.{},
+    /// `default` feature を有効化するか（依存解決と同じ既定で真）。
+    default_features: bool = true,
     /// なでしこ言語バージョン。`engines.nako` 照合と marker の `version`
     /// 評価に使う。null の場合はこれらの制約を未検査とする。
     nako_version: ?semver.Version = null,
@@ -77,6 +83,7 @@ const ZipEntry = struct {
     method: u16,
     mod_time: u16,
     mod_date: u16,
+    crc: u32,
     compressed_size: u32,
     uncompressed_size: u32,
     disk_start: u16,
@@ -137,6 +144,7 @@ fn readCentralDirectory(allocator: Allocator, archive: []const u8) ![]ZipEntry {
             .method = readInt(u16, archive, offset + 10),
             .mod_time = readInt(u16, archive, offset + 12),
             .mod_date = readInt(u16, archive, offset + 14),
+            .crc = readInt(u32, archive, offset + 16),
             .compressed_size = readInt(u32, archive, offset + 20),
             .uncompressed_size = readInt(u32, archive, offset + 24),
             .disk_start = readInt(u16, archive, offset + 34),
@@ -169,12 +177,13 @@ fn readEntryData(archive: []const u8, entry: ZipEntry) ![]u8 {
     const local_name = archive[lh + 30 .. lh + 30 + local_name_len];
     if (!std.mem.eql(u8, local_name, entry.name)) return error.InvalidArchive;
     // local header も正規形を要求する: UTF-8 フラグ・stored・時刻ゼロ・
-    // extra なし、size は central directory と一致。両 header を独立に
-    // 検査しないと、検証側と展開側で読む内容がずれ得る。
+    // extra なし、CRC・size は central directory と一致。両 header を
+    // 独立に検査しないと、検証側と展開側で読む内容がずれ得る。
     if (readInt(u16, archive, lh + 6) != 0x0800 or
         readInt(u16, archive, lh + 8) != 0 or
         readInt(u16, archive, lh + 10) != 0 or
         readInt(u16, archive, lh + 12) != 0 or
+        readInt(u32, archive, lh + 14) != entry.crc or
         local_extra_len != 0 or
         readInt(u32, archive, lh + 18) != entry.compressed_size or
         readInt(u32, archive, lh + 22) != entry.uncompressed_size)
@@ -184,11 +193,40 @@ fn readEntryData(archive: []const u8, entry: ZipEntry) ![]u8 {
     if (entry.method != 0) return error.InvalidArchive;
     const compressed = archive[data_offset..data_end];
     if (compressed.len != entry.uncompressed_size) return error.InvalidArchive;
+    // ZIP の CRC-32 を内容から再計算して照合する。FILES.toml の SHA-256 で
+    // 内容自体は保証されるが、展開側が CRC を検査するため、CRC だけ壊れた
+    // アーカイブを「検証済みだが展開不能」として通さない。
+    if (std.hash.Crc32.hash(compressed) != entry.crc) return error.InvalidArchive;
     return @constCast(compressed);
 }
 
 fn report(diagnostics: *diag.List, code: []const u8, path: []const u8, comptime format: []const u8, args: anytype) !void {
     try diagnostics.addFmt(code, .err, path, .{}, format, args);
+}
+
+/// artifact 照合用の有効 feature 集合を返す。依存解決の feature
+/// unification と同じ意味論とする。`[features]` に定義された要求名は
+/// 推移展開して有効集合へ入れ、`use_default` が真なら `default` も有効化
+/// する。未定義の要求名と依存 alias は orphan 相当として有効集合へ
+/// 入れない（その名を要求する artifact は適合しない）。
+fn effectiveFeatures(allocator: Allocator, manifest: *const manifest_mod.Manifest, requested_names: []const []const u8, use_default: bool) ![]const []const u8 {
+    var aliases = try manifest.dependencyAliases(allocator);
+    defer aliases.deinit();
+    var requested: std.ArrayList([]const u8) = .empty;
+    for (requested_names) |name| {
+        if (manifest.features.contains(name)) try requested.append(allocator, name);
+    }
+    var expanded = features_mod.expand(allocator, &manifest.features, requested.items, use_default, &aliases, null) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        // 定義の参照先（未定義名・巡回）は manifest 検証段階で受理され得る
+        // ため、照合不能として InvalidPackage に正規化する。
+        error.FeatureCycle, error.UnknownFeature => return error.InvalidPackage,
+    };
+    defer expanded.deinit();
+    var out: std.ArrayList([]const u8) = .empty;
+    var iterator = expanded.features.keyIterator();
+    while (iterator.next()) |key| try out.append(allocator, key.*);
+    return out.items;
 }
 
 /// `.npkg` バイト列を検証し、解析済みメタデータを返す。
@@ -294,6 +332,11 @@ pub fn verify(
         error.OutOfMemory => return err,
         else => return error.InvalidPackage,
     };
+    // 配布単位は少なくとも1件の payload を要する（生成側と同じ不変条件。
+    // メタデータ3エントリだけのアーカイブは何も配布しない）。
+    if (files.entries.len == 0) {
+        try report(diagnostics, diag.E036_NPKG_MISSING_ENTRY, npkg_files.files_entry, "package contains no distributable payload files", .{});
+    }
 
     // FILES.toml と payload の集合・hash・size 照合。
     var listed: std.StringHashMapUnmanaged(npkg_files.FileEntry) = .empty;
@@ -320,6 +363,16 @@ pub fn verify(
     for (files.entries) |file| {
         if (!contents.contains(file.path)) {
             try report(diagnostics, diag.E036_NPKG_MISSING_ENTRY, file.path, "indexed file \"{s}\" is missing from the archive", .{file.path});
+        }
+    }
+
+    // `dependencies.path` の依存先は package 内に同梱されていなければ
+    // 配布先で再現できない。依存先の manifest が索引に無い宣言は拒否する。
+    var dep_iterator = manifest.dependencies.path.valueIterator();
+    while (dep_iterator.next()) |dep| {
+        const dep_manifest = try std.fmt.allocPrint(allocator, "{s}/nako.toml", .{dep.path});
+        if (!listed.contains(dep_manifest)) {
+            try report(diagnostics, diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY, dep.path, "path dependency \"{s}\" is not included in the package", .{dep.path});
         }
     }
 
@@ -351,8 +404,12 @@ pub fn verify(
         diagnostics,
         .{},
     );
+    // artifact 照合の feature 集合は、要求名に [features] 定義の推移展開と
+    // default（無効化可能）を加えた有効集合とする（依存解決と同じ意味論）。
+    var artifact_target = target.artifactTarget();
+    artifact_target.features = try effectiveFeatures(allocator, &manifest, target.features, target.default_features);
     for (manifest.exports) |*export_entry| {
-        _ = try export_entry.resolve(allocator, target.artifactTarget(), false, diagnostics);
+        _ = try export_entry.resolve(allocator, artifact_target, false, diagnostics);
     }
 
     if (diagnostics.errorCount() > prior_errors) return error.InvalidPackage;

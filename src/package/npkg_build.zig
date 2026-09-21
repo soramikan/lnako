@@ -137,16 +137,19 @@ fn collectPayloads(
         if (walked.kind == .directory) continue;
         const path = try allocator.dupe(u8, walked.path);
         std.mem.replaceScalar(u8, path, '\\', '/');
-        if (walked.kind != .file) {
-            try report(diagnostics, diag.E040_NPKG_NONCANONICAL_PATH, path, "payload \"{s}\" is not a regular file", .{path});
-            continue;
-        }
+        // 収録対象かの判定を先に行う。include・既定除外・出力除外で対象外の
+        // symlink/FIFO が「通常ファイルでない」診断を出して build を失敗
+        // させないため、kind 検査は収録対象に残った項目へだけ適用する。
         if (exclude) |excluded_path| {
             if (std.mem.eql(u8, path, excluded_path)) continue;
         }
         if (include) |patterns| {
             if (!matchesInclude(patterns, path)) continue;
         } else if (isExcluded(path)) {
+            continue;
+        }
+        if (walked.kind != .file) {
+            try report(diagnostics, diag.E040_NPKG_NONCANONICAL_PATH, path, "payload \"{s}\" is not a regular file", .{path});
             continue;
         }
         if (!npkg_files.isCanonicalPath(path) or npkg_files.isMetadataPath(path)) {
@@ -189,16 +192,28 @@ fn checkExportPaths(allocator: Allocator, manifest: *const manifest_mod.Manifest
 }
 
 /// `dependencies` が配布可能な形か検証する。
-/// - `path` 依存: package 境界内の規範 path であること。絶対パス・空成分・
-///   `.`・`..`・バックスラッシュを含む宣言は、正規化後に境界内へ収まる
-///   場合でも配布先で同じ依存を再現できないため拒否する。
+/// - `path` 依存: package 境界内の規範 path であり、依存先 manifest
+///   （`<path>/nako.toml`）が payload に収録されていること。規範形式でも
+///   実体の無い依存は配布先で再現できないため拒否する。絶対パス・空成分・
+///   `.`・`..`・バックスラッシュを含む宣言も同様に拒否する。
 /// - `pkg` 依存の `profile`: 配布メタデータは `profiles` を含まないため
 ///   参照を再現できず、持つ依存は配布不能として拒否する。
-fn checkDependencies(manifest: *const manifest_mod.Manifest, diagnostics: *diag.List) !void {
+fn checkDependencies(allocator: Allocator, manifest: *const manifest_mod.Manifest, payloads: []Payload, diagnostics: *diag.List) !void {
+    var present: std.StringHashMapUnmanaged(void) = .empty;
+    var present_built = false;
     var iterator = manifest.dependencies.path.valueIterator();
     while (iterator.next()) |dep| {
         if (!npkg_files.isCanonicalPath(dep.path)) {
             try report(diagnostics, diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY, dep.path, "path dependency \"{s}\" is not a canonical package-relative path", .{dep.path});
+            continue;
+        }
+        if (!present_built) {
+            for (payloads) |payload| try present.put(allocator, payload.path, {});
+            present_built = true;
+        }
+        const dep_manifest = try std.fmt.allocPrint(allocator, "{s}/nako.toml", .{dep.path});
+        if (!present.contains(dep_manifest)) {
+            try report(diagnostics, diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY, dep.path, "path dependency \"{s}\" has no manifest in the package payload", .{dep.path});
         }
     }
     var pkg_iterator = manifest.dependencies.pkg.valueIterator();
@@ -266,7 +281,7 @@ pub fn build(backing_allocator: Allocator, io: std.Io, root: []const u8, diagnos
 
     const payloads = try collectPayloads(allocator, io, dir, manifest.package.include, exclude, diagnostics);
     try checkExportPaths(allocator, &manifest, payloads, diagnostics);
-    try checkDependencies(&manifest, diagnostics);
+    try checkDependencies(allocator, &manifest, payloads, diagnostics);
     if (payloads.len == 0) {
         try report(diagnostics, diag.E036_NPKG_MISSING_ENTRY, root, "package contains no distributable payload files", .{});
     }
@@ -318,10 +333,13 @@ pub fn build(backing_allocator: Allocator, io: std.Io, root: []const u8, diagnos
 
     if (diagnostics.errorCount() > prior_errors) return error.InvalidPackage;
 
-    // 全割当が完了した後に arena を移す。
+    const archive = try zip.writeEntries(allocator, entries.items);
+    // 全割当が完了した後に arena を移す（戻り値の構造体リテラル内で
+    // allocator を使うと、コピー済みの arena 状態に新規 chunk が
+    // 含まれず解放漏れになる）。
     return .{
         .arena = arena,
-        .archive = try zip.writeEntries(allocator, entries.items),
+        .archive = archive,
         .files = file_entries,
         .manifest = manifest,
     };

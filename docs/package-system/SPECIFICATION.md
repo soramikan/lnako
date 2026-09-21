@@ -378,7 +378,7 @@ manifest を配布形へ正規化した写像。先頭に `schemaVersion = 1` �
 - `[features]`: feature 定義。
 - `nativePluginAbi = "lnako_plugin_v1"`: native artifact を持つ場合に必須。
 
-ファイル索引は METADATA.toml には持たず `FILES.toml` が正本とする。パッケージ境界の外を指す・規範 path でない `dependencies.path` と、配布メタデータが `profiles` を含まないため再現できない `profile` 参照を持つ依存は、配布不能として `E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY` で拒否する。
+ファイル索引は METADATA.toml には持たず `FILES.toml` が正本とする。パッケージ境界の外を指す・規範 path でない `dependencies.path`、依存先 manifest（`<path>/nako.toml`）が payload に収録されていない `path` 依存、配布メタデータが `profiles` を含まないため再現できない `profile` 参照を持つ依存は、配布不能として `E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY` で拒否する。
 
 生成側は決定性のため次の正規形で出力する。フィールド順は固定、`dependencies`/`features` の map 由来キーはバイト順ソート、`exports` は `name` 順ソートとする。artifact 宣言は「条件を持たない単一宣言」のみ文字列省略形、それ以外は `{ path, when?, min-os?, libc?, features? }` のインラインテーブル配列で宣言順を保持して出力する。`package.schema-version`・`include`・`dev-dependencies`・`profiles` は配布メタデータに含めない。
 
@@ -417,8 +417,11 @@ size = 1234
 
 - 必須 `NAKO-PKG` エントリの存在と既知 schema version（未知は `E035_UNKNOWN_NPKG_SCHEMA`）。
 - 全エントリ名の規範パス適合と重複なし。全エントリが stored 格納であり、各 local header のファイル名が central directory のエントリ名と一致すること。
-- アーカイブが §6.1 の正規形であること。central directory のエントリが名前のバイト順ソートであること、UTF-8 ファイル名フラグのみが立ち timestamp がゼロ・extra field と comment が空・単一 disk で stored の `compressed == uncompressed` であること、local header も同じ正規形（フラグ・method・時刻・extra・size 一致）を持つこと、EOCD の comment が空で末尾が EOCD と一致すること。外部作成物もこの正規形を要求する。
-- `FILES.toml` と payload エントリ集合の完全一致、各 hash・size の一致。
+- アーカイブが §6.1 の正規形であること。central directory のエントリが名前のバイト順ソートであること、UTF-8 ファイル名フラグのみが立ち timestamp がゼロ・extra field と comment が空・単一 disk で stored の `compressed == uncompressed` であること、local header も同じ正規形（フラグ・method・時刻・extra・CRC・size 一致）を持つこと、EOCD の comment が空で末尾が EOCD と一致すること。外部作成物もこの正規形を要求する。
+- 各エントリの CRC-32 が内容と一致すること（local header・central directory・実データの三者一致）。SHA-256 は `FILES.toml` が保証するが、展開側が CRC を検査するため CRC だけ壊れたアーカイブを検証済みとして受理しない。
+- `FILES.toml` と payload エントリ集合の完全一致、各 hash・size の一致。索引が空（payload 0 件）のアーカイブは配布単位として成立しないため `E036_NPKG_MISSING_ENTRY` で拒否する。
+- `dependencies.path` の各依存先 manifest（`<path>/nako.toml`）が索引に収録されていること。無ければ `E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY` で拒否する。
+- artifact 条件の `features` 照合には、要求名に `[features]` 定義の推移展開と `default`（無効化可能）を加えた有効 feature 集合を使う（依存解決の feature unification と同じ意味論）。marker の `version` はなでしこ言語版を指し、言語版が不明な場合は `version` を使う式は証明不能として不適合とする。
 - `METADATA.toml` の構造・必須フィールド、宣言ファイル（`exports[].path` および全 native/esm artifact の `path`）の収録。
 - 対象 profile（os/cpu/abi/min-os/libc/features）と artifact 条件の適合。不適合な native artifact は `E015_NATIVE_FOR_INCOMPATIBLE_TARGET`、未対応 runtime は `E031_UNSUPPORTED_RUNTIME`、engine 要件不適合は `E032_ENGINE_MISMATCH`。
 - 通常モードでの ESM artifact 利用は `E006_JS_IN_NORMAL_MODE`。

@@ -1375,6 +1375,301 @@ test "npkg build は include で除外された import 先を拒否する" {
     return error.TestUnexpectedResult;
 }
 
+test "npkg verify は CRC-32 の不一致を拒否する" {
+    const allocator = testing.allocator;
+
+    // central directory 側だけ壊した場合（local header との不一致）。
+    {
+        const archive = try minimalArchive(allocator);
+        defer allocator.free(archive);
+        const cd = findCentralEntry(archive, "a.txt").?;
+        std.mem.writeInt(u32, archive[cd + 16 ..][0..4], 0xdeadbeef, .little);
+        var list = try verifyArchive(allocator, archive);
+        defer list.deinit();
+        try testing.expect(list.find(diag.E029_INVALID_VALUE) != null);
+    }
+    // local と central を同じ不正値へ揃えても実データの CRC と不一致。
+    // SHA-256 が正しくても展開側は CRC を検査するため受理できない。
+    {
+        const archive = try minimalArchive(allocator);
+        defer allocator.free(archive);
+        const cd = findCentralEntry(archive, "a.txt").?;
+        std.mem.writeInt(u32, archive[cd + 16 ..][0..4], 0xdeadbeef, .little);
+        const lh = findLocalHeader(archive, "a.txt").?;
+        std.mem.writeInt(u32, archive[lh + 14 ..][0..4], 0xdeadbeef, .little);
+        var list = try verifyArchive(allocator, archive);
+        defer list.deinit();
+        try testing.expect(list.find(diag.E029_INVALID_VALUE) != null);
+    }
+}
+
+test "npkg verify は payload を持たないアーカイブを拒否する" {
+    const allocator = testing.allocator;
+    // メタデータ3エントリのみ・索引も空の構造的に正しいアーカイブ。
+    const files_toml = try emitFilesToml(allocator, &.{});
+    defer allocator.free(files_toml);
+    const archive = try zip.writeEntries(allocator, &.{
+        .{ .name = "NAKO-PKG/METADATA.toml", .data = minimal_metadata },
+        .{ .name = "NAKO-PKG/FILES.toml", .data = files_toml },
+        .{ .name = "NAKO-PKG/commands.json", .data = empty_commands },
+    });
+    defer allocator.free(archive);
+
+    var list = try verifyArchive(allocator, archive);
+    defer list.deinit();
+    try testing.expect(list.find(diag.E036_NPKG_MISSING_ENTRY) != null);
+}
+
+test "npkg verify は索引に無い path 依存を拒否する" {
+    const allocator = testing.allocator;
+    const metadata =
+        \\schemaVersion = 1
+        \\
+        \\[package]
+        \\name = "x"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[dependencies.path]
+        \\local = { path = "vendor/local" }
+        \\
+    ;
+    const payload = "x";
+    const files_toml = try emitFilesToml(allocator, &.{
+        .{ .path = "a.txt", .sha256 = sha256Of(payload), .size = payload.len },
+    });
+    defer allocator.free(files_toml);
+    const archive = try zip.writeEntries(allocator, &.{
+        .{ .name = "NAKO-PKG/METADATA.toml", .data = metadata },
+        .{ .name = "NAKO-PKG/FILES.toml", .data = files_toml },
+        .{ .name = "NAKO-PKG/commands.json", .data = empty_commands },
+        .{ .name = "a.txt", .data = payload },
+    });
+    defer allocator.free(archive);
+
+    var list = try verifyArchive(allocator, archive);
+    defer list.deinit();
+    try testing.expect(list.find(diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY) != null);
+}
+
+test "npkg verify は feature 要求を推移展開して artifact を照合する" {
+    const allocator = testing.allocator;
+    const metadata =
+        \\schemaVersion = 1
+        \\nativePluginAbi = "lnako_plugin_v1"
+        \\
+        \\[package]
+        \\name = "x"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[features]
+        \\full = ["child"]
+        \\child = []
+        \\
+        \\[[exports]]
+        \\name = "plugin"
+        \\native = [{ path = "lib/x.so", features = ["child"] }]
+        \\
+    ;
+    const payload = "x";
+    const files_toml = try emitFilesToml(allocator, &.{
+        .{ .path = "lib/x.so", .sha256 = sha256Of(payload), .size = payload.len },
+    });
+    defer allocator.free(files_toml);
+    const archive = try zip.writeEntries(allocator, &.{
+        .{ .name = "NAKO-PKG/METADATA.toml", .data = metadata },
+        .{ .name = "NAKO-PKG/FILES.toml", .data = files_toml },
+        .{ .name = "NAKO-PKG/commands.json", .data = empty_commands },
+        .{ .name = "lib/x.so", .data = payload },
+    });
+    defer allocator.free(archive);
+
+    // "full" の推移展開で "child" が有効になり native artifact が適合する。
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var verified = try npkg_verify.verify(allocator, archive, .{
+        .features = &.{"full"},
+    }, &list);
+    defer verified.deinit();
+
+    // 展開しない要求名だけでは "child" を満たせず不適合。
+    var failing = diag.List.init(allocator);
+    defer failing.deinit();
+    try testing.expectError(error.InvalidPackage, npkg_verify.verify(allocator, archive, .{}, &failing));
+    try testing.expect(failing.find(diag.E015_NATIVE_FOR_INCOMPATIBLE_TARGET) != null);
+}
+
+test "npkg verify は default feature を有効化・無効化できる" {
+    const allocator = testing.allocator;
+    const metadata =
+        \\schemaVersion = 1
+        \\nativePluginAbi = "lnako_plugin_v1"
+        \\
+        \\[package]
+        \\name = "x"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[features]
+        \\default = ["child"]
+        \\child = []
+        \\
+        \\[[exports]]
+        \\name = "plugin"
+        \\native = [{ path = "lib/x.so", features = ["child"] }]
+        \\
+    ;
+    const payload = "x";
+    const files_toml = try emitFilesToml(allocator, &.{
+        .{ .path = "lib/x.so", .sha256 = sha256Of(payload), .size = payload.len },
+    });
+    defer allocator.free(files_toml);
+    const archive = try zip.writeEntries(allocator, &.{
+        .{ .name = "NAKO-PKG/METADATA.toml", .data = metadata },
+        .{ .name = "NAKO-PKG/FILES.toml", .data = files_toml },
+        .{ .name = "NAKO-PKG/commands.json", .data = empty_commands },
+        .{ .name = "lib/x.so", .data = payload },
+    });
+    defer allocator.free(archive);
+
+    // 既定では default が有効化され "child" 要件を満たす。
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var verified = try npkg_verify.verify(allocator, archive, .{}, &list);
+    defer verified.deinit();
+
+    // default を無効化すれば要件を満たせず不適合。
+    var failing = diag.List.init(allocator);
+    defer failing.deinit();
+    try testing.expectError(error.InvalidPackage, npkg_verify.verify(allocator, archive, .{
+        .default_features = false,
+    }, &failing));
+    try testing.expect(failing.find(diag.E015_NATIVE_FOR_INCOMPATIBLE_TARGET) != null);
+}
+
+test "npkg build は include 対象外の symlink を無視する" {
+    const allocator = testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "pkg/src");
+    try temporary.dir.createDirPath(io, "pkg/docs");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "pkg/nako.toml",
+        .data =
+        \\[package]
+        \\name = "demo"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\include = ["src/**"]
+        \\
+        \\[[exports]]
+        \\name = "demo"
+        \\path = "src/index.nako3"
+        \\
+        ,
+    });
+    try temporary.dir.writeFile(io, .{ .sub_path = "pkg/src/index.nako3", .data = "" });
+    // include に合致しない docs/latest は symlink。収録対象の判定を先に
+    // 行うため「通常ファイルでない」診断にならず build が成功する。
+    temporary.dir.symLink(io, "../src/index.nako3", "pkg/docs/latest", .{}) catch |err| switch (err) {
+        // Windows等でlink作成権限がない環境では検証を省略する。
+        error.AccessDenied, error.PermissionDenied, error.FileSystem => return error.SkipZigTest,
+        else => return err,
+    };
+    const root = try tmpRoot(&temporary, allocator);
+    defer allocator.free(root);
+
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var built = try npkg_build.build(allocator, io, root, &list, .{});
+    defer built.deinit();
+    try testing.expectEqual(@as(usize, 1), built.files.len);
+    try testing.expectEqualStrings("src/index.nako3", built.files[0].path);
+}
+
+test "npkg build は payload に無い path 依存を拒否する" {
+    const allocator = testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "pkg/src");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "pkg/nako.toml",
+        .data =
+        \\[package]
+        \\name = "demo"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\local = { path = "vendor/local" }
+        \\
+        \\[[exports]]
+        \\name = "demo"
+        \\path = "src/index.nako3"
+        \\
+        ,
+    });
+    try temporary.dir.writeFile(io, .{ .sub_path = "pkg/src/index.nako3", .data = "" });
+    const root = try tmpRoot(&temporary, allocator);
+    defer allocator.free(root);
+
+    // vendor/local が payload に無い宣言は拒否される。
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var built = npkg_build.build(allocator, io, root, &list, .{}) catch |err| {
+        try testing.expectEqual(error.InvalidPackage, err);
+        try testing.expect(list.find(diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY) != null);
+        return;
+    };
+    defer built.deinit();
+    return error.TestUnexpectedResult;
+}
+
+test "npkg build は payload 内の path 依存を受理する" {
+    const allocator = testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "pkg/src");
+    try temporary.dir.createDirPath(io, "pkg/vendor/local");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "pkg/nako.toml",
+        .data =
+        \\[package]
+        \\name = "demo"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\local = { path = "vendor/local" }
+        \\
+        \\[[exports]]
+        \\name = "demo"
+        \\path = "src/index.nako3"
+        \\
+        ,
+    });
+    try temporary.dir.writeFile(io, .{ .sub_path = "pkg/src/index.nako3", .data = "" });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "pkg/vendor/local/nako.toml",
+        .data =
+        \\[package]
+        \\name = "local"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        ,
+    });
+    const root = try tmpRoot(&temporary, allocator);
+    defer allocator.free(root);
+
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var built = try npkg_build.build(allocator, io, root, &list, .{});
+    defer built.deinit();
+    try testing.expectEqual(@as(usize, 3), built.files.len);
+}
+
 test "npkg build は profile 付き依存を拒否する" {
     const allocator = testing.allocator;
     const io = std.testing.io;

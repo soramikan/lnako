@@ -115,6 +115,8 @@ fn runVerify(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8,
         if (matched) continue;
         if (std.mem.eql(u8, argument, "--compat-js")) {
             target.compat_js = true;
+        } else if (std.mem.eql(u8, argument, "--no-default-features")) {
+            target.default_features = false;
         } else if (std.mem.startsWith(u8, argument, "-")) {
             try stderr.print("package verify: 不明なオプションです: {s}\n", .{argument});
             std.process.exit(2);

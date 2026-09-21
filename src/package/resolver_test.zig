@@ -1233,6 +1233,44 @@ test "min-os付きartifactはTarget.os_versionで照合する" {
     try T.expect(meta_unknown.unavailable_reason != null);
 }
 
+test "marker の version は言語版のみで評価する" {
+    var arena = std.heap.ArenaAllocator.init(T.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+    var m = try parseManifest(gpa,
+        \\[package]
+        \\name = "versioned"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[[exports]]
+        \\name = "plugin"
+        \\native = { path = "lib/x.so", when = "version >= \"3.7.0\"" }
+        \\
+    );
+    defer m.deinit();
+
+    // 言語版が不明な場合、処理系版が分かっていても `version` 条件は
+    // 証明不能として不適合（verify 側の契約と一致させる）。
+    const unknown = try resolver.metaFromManifest(gpa, &m, .{
+        .runtime = "lnako",
+        .os = "linux",
+        .abi = "gnu",
+        .lnako_version = try semver.Version.parse("9.9.9"),
+    });
+    try T.expect(!unknown.has_native);
+    try T.expect(unknown.unavailable_reason != null);
+
+    // 言語版を与えれば `version` 条件が評価される。
+    const known = try resolver.metaFromManifest(gpa, &m, .{
+        .runtime = "lnako",
+        .os = "linux",
+        .abi = "gnu",
+        .nako_version = try semver.Version.parse("3.7.24"),
+    });
+    try T.expect(known.has_native);
+}
+
 // ---------------------------------------------------------------------------
 // brute-force oracle
 // ---------------------------------------------------------------------------
