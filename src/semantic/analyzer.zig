@@ -191,6 +191,10 @@ const Analyzer = struct {
     function_scopes: std.ArrayList(FunctionScope) = .empty,
     diagnostics: std.ArrayList(diagnostic.Diagnostic) = .empty,
     builtins: std.StringHashMapUnmanaged(void) = .empty,
+    /// 公式の`func token`に相当する命令名の全一覧（`デスクトップ`など同名
+    /// グローバルを持つ命令名も含む）。代入先に現れたら構文エラーにする
+    /// （v3.1.21で廃止された代入的呼出し。`check2(['func','eq'])`相当）。
+    function_builtins: std.StringHashMapUnmanaged(void) = .empty,
     /// 公式のmodList相当: 結合ストリーム上の展開マーカー位置順に並ぶ
     /// モジュールindexの一覧。エントリは順位0で常に先頭になる。
     mod_list: std.ArrayList(u32) = .empty,
@@ -229,6 +233,19 @@ const Analyzer = struct {
         for (builtin_catalog.names) |name| try self.builtins.put(self.allocator, name, {});
         for (low_level_foundation.extension_command_names) |name| try self.builtins.put(self.allocator, name, {});
         for ([_][]const u8{ "それ", "対象", "対象キー", "回数", "エラー内容" }) |name| try self.builtins.put(self.allocator, name, {});
+        for (builtin_catalog.assign_to_function_names) |name| try self.function_builtins.put(self.allocator, name, {});
+    }
+
+    /// 公式は文頭の`func token`＋`=`（および`代入`文の代入先）を関数名への
+    /// 代入として拒否する。システム変数（`回数`など）は`func token`ではない
+    /// ため対象外にする。修飾名（`__`を含む名前）は一覧に一致しないだけで、
+    /// `__DEBUG`のような`__`を含む命令名自体は拒否対象になる。
+    fn rejectFunctionTarget(self: *Analyzer, span: ast.Span, module_index: u32, name: []const u8) !bool {
+        if (name.len == 0) return false;
+        if (self.function_builtins.get(name) == null) return false;
+        const message = try std.fmt.allocPrint(self.allocator, "関数『{s}』に代入できません。", .{displayQualifiedName(name)});
+        try self.addDiagnostic(.assign_to_function, span, self.modules.items[module_index].path, message);
+        return true;
     }
 
     fn predeclareBlock(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId, recurse: bool) anyerror!void {
@@ -255,7 +272,10 @@ const Analyzer = struct {
             // `{非公開}`属性はモジュール変数の公開を打ち消す（公式isExport相当）。
             _ = try self.declare(module_index, scope, node.name, if (node.is_const) .constant else .variable, node.span, exportable and node.is_export, !node.is_const, 0, true);
         } else if (node.kind == .variable_list_definition) {
-            for (node.arguments) |name| _ = try self.declare(module_index, scope, name.name, if (node.is_const) .constant else .variable, name.span, exportable and node.is_export, !node.is_const, 0, true);
+            for (node.arguments) |name| {
+                _ = try self.rejectFunctionTarget(name.span, module_index, name.name);
+                _ = try self.declare(module_index, scope, name.name, if (node.is_const) .constant else .variable, name.span, exportable and node.is_export, !node.is_const, 0, true);
+            }
         } else if ((node.kind == .assignment or node.kind == .increment or
             (node.kind == .array_assignment and node.check_array_init)) and self.builtins.get(node.name) == null and
             !(node.check_array_init and system_constant.isConstant(node.name)) and
@@ -351,6 +371,12 @@ const Analyzer = struct {
     }
 
     fn resolveDeclaration(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId) !void {
+        // 公式は組み込み命令名への代入を構文エラーにする（代入的呼出しの廃止）。
+        // 同名のユーザー関数がある場合も公式は単一のエラーなので、ここで
+        // 診断したらシンボル解決側では再診断しない。
+        if (node.kind == .assignment or node.kind == .variable_definition) {
+            if (try self.rejectFunctionTarget(node.span, module_index, node.name)) return;
+        }
         // 公式の明示宣言（変数/定数）はfindVarを使わず無条件に変数を作る
         // （createVar相当）。事前宣言した自分自身のシンボルにそのまま束縛する。
         if (node.kind == .variable_definition) {
@@ -420,8 +446,14 @@ const Analyzer = struct {
         // できません』（main__ 接頭辞は #1223 で省略）。
         if ((node.kind == .assignment or node.kind == .increment) and !symbol.is_mutable) {
             const shown = displayQualifiedName(symbol.qualified_name);
-            const message = try std.fmt.allocPrint(self.allocator, "定数『{s}』は既に定義済みなので、値を代入することはできません。", .{shown});
-            try self.addDiagnostic(.assign_to_constant, node.span, self.modules.items[module_index].path, message);
+            // ユーザー定義関数も公式は『関数『名』に代入できません』で拒否する。
+            if (symbol.kind == .function or symbol.kind == .test_function) {
+                const message = try std.fmt.allocPrint(self.allocator, "関数『{s}』に代入できません。", .{shown});
+                try self.addDiagnostic(.assign_to_function, node.span, self.modules.items[module_index].path, message);
+            } else {
+                const message = try std.fmt.allocPrint(self.allocator, "定数『{s}』は既に定義済みなので、値を代入することはできません。", .{shown});
+                try self.addDiagnostic(.assign_to_constant, node.span, self.modules.items[module_index].path, message);
+            }
         }
         try self.bind(node, .declaration, node.name, symbol.qualified_name, symbol.id);
     }
@@ -1053,4 +1085,58 @@ test "厳チェックの未定義名と定数再代入を診断する" {
     }
     try std.testing.expectEqual(@as(usize, 1), undefined_count);
     try std.testing.expectEqual(@as(usize, 1), const_count);
+}
+
+test "組み込み命令名と関数名への代入を診断する" {
+    // 公式は`func token`＋`=`を代入的呼出しの名残として構文エラーにする。
+    const parser = @import("../frontend/parser.zig");
+    const sources = [_][]const u8{
+        "INT=3.5\n", // 代入
+        "INTに2を代入\n", // 代入文
+        "変数 INT=1\n", // 変数宣言
+        "今とは定数=1\n", // とは宣言
+        "変数 [INT,A]=[1,2]\n", // 変数一覧宣言
+        "デスクトップ=1\n", // 同名グローバルを持つ命令名（連鎖呼出し一覧からは除外されるが`func token`）
+        "__DEBUG=1\n", // `__`を含む命令名
+    };
+    for (sources) |source| {
+        var parsed = try parser.parse(std.testing.allocator, source, "function-target.nako3");
+        defer parsed.deinit();
+        var program = try analyze(std.testing.allocator, parsed.root.?, "function-target.nako3");
+        defer program.deinit();
+        try std.testing.expect(!program.succeeded());
+        try std.testing.expectEqual(diagnostic.Code.assign_to_function, program.diagnostics[0].code);
+        try std.testing.expectEqual(@as(u32, 1), program.diagnostics[0].span.line + 1);
+    }
+
+    // システム変数（`func token`ではない）と通常の変数は代入できる。
+    const allowed = [_][]const u8{ "回数=1\n", "A=1\nA=2\n" };
+    for (allowed) |source| {
+        var parsed = try parser.parse(std.testing.allocator, source, "function-target-ok.nako3");
+        defer parsed.deinit();
+        var program = try analyze(std.testing.allocator, parsed.root.?, "function-target-ok.nako3");
+        defer program.deinit();
+        try std.testing.expect(program.succeeded());
+    }
+
+    // ユーザー定義関数への代入も公式と同じく関数として報告する。
+    var parsed = try parser.parse(std.testing.allocator, "●Fとは\n1で戻る\nここまで\nF=1\n", "user-function-target.nako3");
+    defer parsed.deinit();
+    var program = try analyze(std.testing.allocator, parsed.root.?, "user-function-target.nako3");
+    defer program.deinit();
+    try std.testing.expect(!program.succeeded());
+    try std.testing.expectEqual(diagnostic.Code.assign_to_function, program.diagnostics[0].code);
+    try std.testing.expectEqual(@as(u32, 4), program.diagnostics[0].span.line + 1);
+
+    // 組み込み名と同名のユーザー関数への代入は、公式の単一エラーと同じく
+    // 診断を1件だけ出す（命令名とシンボルの両経路で重複させない）。
+    {
+        var dup_parsed = try parser.parse(std.testing.allocator, "●INTとは\n1で戻る\nここまで\nINT=1\n", "dup-function-target.nako3");
+        defer dup_parsed.deinit();
+        var dup_program = try analyze(std.testing.allocator, dup_parsed.root.?, "dup-function-target.nako3");
+        defer dup_program.deinit();
+        try std.testing.expect(!dup_program.succeeded());
+        try std.testing.expectEqual(diagnostic.Code.assign_to_function, dup_program.diagnostics[0].code);
+        try std.testing.expectEqual(@as(usize, 1), dup_program.diagnostics.len);
+    }
 }

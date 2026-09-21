@@ -168,6 +168,15 @@ for (const command of catalog.commands) {
   seenFunctionNames.add(command.name);
   functionNames.push(command.name);
 }
+// 代入先の検査には`func token`の完全な一覧を使う。installedGlobalFunctionNamesの
+// 3名も公式では関数名への代入を構文エラーにするため、こちらでは除外しない。
+const assignToFunctionNames = [];
+const seenAssignToFunctionNames = new Set();
+for (const command of catalog.commands) {
+  if (command.type !== "関数" || seenAssignToFunctionNames.has(command.name)) continue;
+  seenAssignToFunctionNames.add(command.name);
+  assignToFunctionNames.push(command.name);
+}
 for (const name of installedGlobalFunctionNames) {
   const entry = catalog.commands.find((command) => command.name === name);
   if (entry === undefined || entry.type !== "関数") throw new Error(`同名グローバルを持つ関数の定義が変わりました: ${name}`);
@@ -196,6 +205,13 @@ const lines = [
   "/// 一覧そのものは`frontend`層の`builtin_commands.zig`が持ち、ここでは再公開する",
   "/// （パーサの既定値が本番と同じになるよう、`frontend`層が自分で参照できるため）。",
   "pub const function_names = @import(\"../frontend/builtin_commands.zig\").function_names;",
+  "",
+  "/// 代入先・宣言名の検査に使うカタログ種別「関数」の全名称。`function_names`が",
+  "/// 除外する`デスクトップ`・`マイドキュメント`・`テンポラリフォルダ`も公式は",
+  "/// `func token`として代入を構文エラーにするため、こちらは除外しない。",
+  "pub const assign_to_function_names = [_][]const u8{",
+  ...assignToFunctionNames.map((name) => `    ${JSON.stringify(name)},`),
+  "};",
   "",
   "pub fn findArity(name: []const u8) ?BuiltinArity {",
   "    for (arities) |entry| if (std.mem.eql(u8, entry.name, name)) return entry;",
@@ -273,5 +289,6 @@ for (const output of outputs) {
   if (actual !== output.expected) throw new Error(`${output.label}がstandard-cnako.jsonと一致しません`);
 }
 if (catalog.commands.length !== 527) throw new Error(`組み込み命令数が527件ではありません: ${catalog.commands.length}`);
+if (assignToFunctionNames.length !== functionNames.length + installedGlobalFunctionNames.length) throw new Error(`代入検査用の関数名一覧が連鎖呼出し用+同名グローバル分と一致しません: ${assignToFunctionNames.length}`);
 if (defaultNames.length !== 478) throw new Error(`既定システム変数名が478件ではありません: ${defaultNames.length}`);
 console.log(`${generate ? "生成" : "検証"}しました: 組み込み命令索引527件（既定478件）・助詞スロット${josiEntries.length}件`);
