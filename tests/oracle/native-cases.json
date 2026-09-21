@@ -2987,9 +2987,6 @@
   },
   {
     "id": "native-strict-check-undefined-variable",
-    "commands": [
-      "表示"
-    ],
     "source": "!厳しくチェック\n「{X}」を表示。\nXを表示\n"
   }
 ]

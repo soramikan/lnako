@@ -16738,7 +16738,6 @@
       "aotFixtureIds": [
         "native-cut-commands",
         "native-numeric-pow-ecmascript-specials",
-        "native-strict-check-undefined-variable",
         "native-system-array-callback-order",
         "native-system-array-callback-order-large",
         "native-system-array-to-primitive",
@@ -16768,9 +16767,6 @@
             "fixture.commands"
           ],
           "native-numeric-pow-ecmascript-specials": [
-            "fixture.commands"
-          ],
-          "native-strict-check-undefined-variable": [
             "fixture.commands"
           ],
           "native-system-array-callback-order": [
