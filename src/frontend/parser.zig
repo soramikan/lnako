@@ -519,6 +519,13 @@ pub const Parser = struct {
             true_block = try self.parseBlock(.{ .end = true, .else_branch = true });
         } else {
             true_block = try builder.wrapSingle(self, try self.parseStatement());
+            // 公式`yIfThen`は真節のあとの改行を読み飛ばしてから『違えば』を
+            // 調べる。lnakoのASTは改行を保持するため、直後に『違えば』がある
+            // 場合だけ読み飛ばし、単文の真節でも偽節を繋げられるようにする
+            // （`もし、A=1ならば、「OK」と表示。` の次行の `違えば、…`）。
+            const after_true = self.index;
+            self.skipEols();
+            if (!self.at(.keyword_else)) self.index = after_true;
         }
 
         var false_block = try builder.emptyBlock(self, self.peek());
