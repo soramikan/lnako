@@ -529,5 +529,13 @@
   {
     "id": "no-comma-anon-func-arg",
     "source": "●(AとBを)Fとは\n「ok」と表示\nここまで\nF(1 関数() 2で戻る ここまで)\nF(関数() 2で戻る ここまで 1)\n●(Aを)Gとは\nそれは関数(Bを) B*2で戻る ここまで\nここまで\nH=G(1)\nH(2 関数(Cを) C+1で戻る ここまで)を表示\n"
+  },
+  {
+    "id": "strict-check-undefined-variable",
+    "source": "!厳しくチェック\n「{X}」を表示。\nXを表示\n"
+  },
+  {
+    "id": "strict-check-alias-and-continues",
+    "source": "!厳チェック\nXを表示\nX=1\nXを表示\n"
   }
 ]

@@ -916,7 +916,9 @@ test "ネイティブプラグイン命令を厳格モードでも動的解決�
     try std.testing.expect(found);
 }
 
-test "ネイティブプラグインを取り込んでも厳格モードの未知変数を拒否する" {
+test "ネイティブプラグインを取り込んでも厳格モードの未知変数を警告にする" {
+    // 公式`!厳しくチェック`は未知変数を`logger.warn`で警告するだけで、
+    // コンパイルと実行を継続する（終了0・`undefined`表示）。
     var memory = MemoryProvider{ .files = &.{
         .{ .suffix = "main.nako3", .source = "!厳しくチェック\n!「plugin.so」を取り込む\n未知値を表示\n" },
     } };
@@ -924,9 +926,10 @@ test "ネイティブプラグインを取り込んでも厳格モードの未�
     defer graph.deinit();
     var program = try graph.analyze(std.testing.allocator);
     defer program.deinit();
-    try std.testing.expect(!program.succeeded());
+    try std.testing.expect(program.succeeded());
     var found = false;
     for (program.diagnostics) |item| if (item.code == .undefined_symbol) {
+        try std.testing.expectEqual(@import("../frontend/diagnostic.zig").Severity.warning, item.severity);
         found = true;
     };
     try std.testing.expect(found);
