@@ -6963,8 +6963,10 @@ test "AOT generic builtin dispatch routeはmanifestと一致する" {
     try std.testing.expectEqualStrings("builtin", builtinDispatchRoute(.to_string));
 }
 
-pub fn testAotFunction(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
-    out.* = if (arguments == null or len != 1) .{} else arguments.?[0];
+pub fn testAotFunction(out: *Value, _: *anyopaque, arguments: ?[*]const Value, _: usize) callconv(.c) void {
+    // callbackへ渡る個数は実引数個数のまま（パディングしない）。バッファは
+    // 仮引数個数分まで有効なので、生成wrapper同様に先頭スロットをそのまま読む。
+    out.* = if (arguments == null) .{} else arguments.?[0];
 }
 
 pub fn testAotCustomString(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
@@ -7017,8 +7019,10 @@ pub fn testAotThrowAfterSideEffect(out: *Value, context: *anyopaque, _: ?[*]cons
     out.* = .{};
 }
 
-pub fn testAotSecondArgument(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
-    out.* = if (arguments == null or len != 2) .{} else arguments.?[1];
+pub fn testAotSecondArgument(out: *Value, _: *anyopaque, arguments: ?[*]const Value, _: usize) callconv(.c) void {
+    // 生成wrapper同様、パディング済みバッファの仮引数スロットをそのまま読む。
+    // len はパディング前の実引数個数なので不足判定には使わない。
+    out.* = if (arguments == null) .{} else arguments.?[1];
 }
 
 pub fn testAotDescending(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {

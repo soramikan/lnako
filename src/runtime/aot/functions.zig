@@ -201,6 +201,11 @@ pub export fn lnako_aot_function_call(out: *state.Value, callable: *const state.
             return;
         },
     }
+    // 不足時は仮引数個数分のバッファへ実引数＋実行コンテキスト＋undefinedで
+    // パディングするが、callbackへ渡す個数はパディング前の実引数個数のまま
+    // にする。生成wrapperは仮引数をバッファ先頭から読み、実引数列は
+    // (ポインタ, 実個数) で本体へ転送するため、`引数`束縛が余剰実引数を
+    // 保持できる（公式のarguments相当・__self相当は含めない）。
     var padded: ?[]state.Value = null;
     defer if (padded) |values| runtime.allocator.free(values);
     var call_arguments = arguments;
@@ -218,5 +223,5 @@ pub export fn lnako_aot_function_call(out: *state.Value, callable: *const state.
         @memset(values[len + 1 ..], .{});
         call_arguments = values.ptr;
     }
-    function.callback(out, @ptrCast(object), call_arguments, function.arity);
+    function.callback(out, @ptrCast(object), call_arguments, len);
 }

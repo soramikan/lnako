@@ -8,9 +8,9 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 597,
-    "nativeAot": 373,
-    "interpreter": 234,
+    "total": 605,
+    "nativeAot": 377,
+    "interpreter": 238,
     "compatJs": 9
   },
   "fixtureCoverageStates": {

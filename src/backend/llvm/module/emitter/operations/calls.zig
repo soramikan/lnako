@@ -94,7 +94,25 @@ pub fn writeCall(emitter: *Emitter, function: ir.Function, locals: []const []con
     if (instruction.is_module_entry) {
         try writeModuleEntryCall(emitter, function, resolved, result, instruction, scope);
     } else {
+        // callee が`引数`束縛（arguments_array命令）を持つときだけ実引数列を
+        // aggregate バッファへ書き出して (ptr, count) で渡す。持たない callee
+        // は実引数列を読まないため null を渡して書き出しを省略する。
+        const pass_call_arguments = usesArgumentsArray(resolved);
+        if (pass_call_arguments) {
+            if (instruction.operands.len > aggregate_count) return error.InvalidCallScratch;
+            for (instruction.operands, 0..) |operand, index| {
+                try emitter.output.writer.print("  %call.{d}.args.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+                try emitter.debugSuffix(instruction.span, scope);
+                try emitter.output.writer.writeAll("  store %lnako.Value ");
+                try constants_mod.writeValueRef(emitter, function, operand);
+                try emitter.output.writer.print(", ptr %call.{d}.args.{d}", .{ result, index });
+                try emitter.debugSuffix(instruction.span, scope);
+            }
+        }
         try emitter.output.writer.print("  %v{d} = call %lnako.Value @lnako.fn.{d}(ptr null", .{ result, resolved.id });
+        if (pass_call_arguments and instruction.operands.len > 0) {
+            try emitter.output.writer.print(", ptr %call.{d}.args.0, i64 {d}", .{ result, instruction.operands.len });
+        } else try emitter.output.writer.writeAll(", ptr null, i64 0");
         for (instruction.operands) |operand| {
             try emitter.output.writer.writeAll(", %lnako.Value ");
             try constants_mod.writeValueRef(emitter, function, operand);
@@ -103,6 +121,15 @@ pub fn writeCall(emitter: *Emitter, function: ir.Function, locals: []const []con
         try emitter.debugSuffix(instruction.span, scope);
     }
     try writeCallResult(emitter, result, instruction.span, scope);
+}
+
+/// callee の本体に`引数`束縛（arguments_array命令）が含まれるか。
+/// 含まれる呼出しだけ実引数列の転送が必要になる。
+fn usesArgumentsArray(function: ir.Function) bool {
+    for (function.blocks) |block| for (block.instructions) |instruction| {
+        if (instruction.opcode == .arguments_array) return true;
+    };
+    return false;
 }
 
 /// 実効取り込み文からのモジュールエントリ呼び出し。公式の静的展開相当
@@ -122,7 +149,7 @@ fn writeModuleEntryCall(emitter: *Emitter, caller: ir.Function, callee: ir.Funct
     try emitter.output.writer.print("  br i1 %import.run.{d}, label %import.call.{d}, label %import.skip.{d}", .{ result, result, result });
     try emitter.debugSuffix(instruction.span, scope);
     try emitter.output.writer.print("import.call.{d}:\n", .{result});
-    try emitter.output.writer.print("  %import.value.{d} = call %lnako.Value @lnako.fn.{d}(ptr null", .{ result, callee.id });
+    try emitter.output.writer.print("  %import.value.{d} = call %lnako.Value @lnako.fn.{d}(ptr null, ptr null, i64 0", .{ result, callee.id });
     for (instruction.operands) |operand| {
         try emitter.output.writer.writeAll(", %lnako.Value ");
         try constants_mod.writeValueRef(emitter, caller, operand);

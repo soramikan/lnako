@@ -3009,5 +3009,25 @@
     "id": "native-arguments-array-local-declaration",
     "sourceFileName": "natargsdecl.nako3",
     "source": "●(Aの)Fとは\n変数 引数=7\n引数を表示\nここまで\n1のF\n"
+  },
+  {
+    "id": "native-arguments-array-call-value-extra",
+    "sourceFileName": "natargscvextra.nako3",
+    "source": "F=関数(A)\n引数[0]を表示\n引数[1]を表示\nここまで\nF(10,20)\n"
+  },
+  {
+    "id": "native-arguments-array-call-value-less",
+    "sourceFileName": "natargscvless.nako3",
+    "source": "F=関数(A,B)\n引数[0]を表示\nBを表示\nここまで\nF(10)\n"
+  },
+  {
+    "id": "native-arguments-array-call-value-exact",
+    "sourceFileName": "natargscvexact.nako3",
+    "source": "F=関数(A,B)\nそれは引数[0]+引数[1]\nここまで\nF(10,20)を表示\n"
+  },
+  {
+    "id": "native-arguments-array-call-value-nested",
+    "sourceFileName": "natargscvnested.nako3",
+    "source": "G=関数(A)\n引数[0]を表示\nここまで\nF=関数(A)\nG(1,2,3)\n引数[0]を表示\nここまで\nF(9)\n"
   }
 ]

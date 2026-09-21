@@ -21,8 +21,9 @@ pub fn lower(backing_allocator: std.mem.Allocator, hir_program: hir.Program) !ir
             .value = @intCast(index),
         });
         // 公式は関数内の`引数`を実引数の配列へ束縛する（nako_genのyCallFunc相当）。
-        // 呼出し側は宣言個数へ補完済みの実引数を渡すため、仮引数の並びがそのまま
-        // `引数`の要素になる。InterpreterとAOTが同じIRを受け取るようここで作る。
+        // 関数値呼び出しでは仮引数より多い実引数が届きうるため、配列は
+        // 仮引数の並びではなく実行時の実引数列から作る専用命令をemitする。
+        // InterpreterとAOTが同じIRを受け取るようここで作る。
         if (findArgumentsReference(hir_program, function.body)) |reference| try builder.lowerArgumentsBinding(reference);
         _ = try builder.lowerNode(function.body);
         if (!builder.isTerminated()) builder.terminate(.{ .return_value = builder.implicitResult() });
@@ -227,12 +228,13 @@ const FunctionBuilder = struct {
         return last;
     }
 
-    /// 関数先頭で`引数 = [仮引数...]`を実行する。参照ノードを渡すのは、
-    /// 生成する命令へ`引数`という名前とspanを引き継ぐため。
+    /// 関数先頭で`引数 = 実引数配列`を実行する。公式はJSの`arguments`を
+    /// 束縛するため、関数値呼び出しで仮引数より多く渡された実引数も
+    /// 要素に含まれる（末尾の`__self`相当だけはJS実装詳細のため含めない）。
+    /// 参照ノードを渡すのは、生成する命令へ`引数`という名前とspanを
+    /// 引き継ぐため。
     fn lowerArgumentsBinding(self: *FunctionBuilder, reference: hir.Node) !void {
-        const operands = try self.allocator.alloc(ir.ValueId, self.parameters.items.len);
-        for (self.parameters.items, 0..) |parameter, index| operands[index] = parameter.value;
-        const array = try self.emitValue(.make_array, .array, operands, reference);
+        const array = try self.emitValue(.arguments_array, .array, &.{}, reference);
         try self.emitVoid(.store_local, &.{array}, reference);
     }
 

@@ -506,6 +506,22 @@
     "source": "●(Aの)Fとは\n!「./arguments-lib.nako3」を取り込む\n引数を表示\nここまで\n1のF\n"
   },
   {
+    "id": "arguments-array-call-value-extra",
+    "source": "F=関数(A)\n引数[0]を表示\n引数[1]を表示\nここまで\nF(10,20)\n"
+  },
+  {
+    "id": "arguments-array-call-value-less",
+    "source": "F=関数(A,B)\n引数[0]を表示\nBを表示\nここまで\nF(10)\n"
+  },
+  {
+    "id": "arguments-array-call-value-exact",
+    "source": "F=関数(A,B)\nそれは引数[0]+引数[1]\nここまで\nF(10,20)を表示\n"
+  },
+  {
+    "id": "arguments-array-call-value-nested",
+    "source": "G=関数(A)\n引数[0]を表示\nここまで\nF=関数(A)\nG(1,2,3)\n引数[0]を表示\nここまで\nF(9)\n"
+  },
+  {
     "id": "implicit-if-user-function-josi-call",
     "source": "もし、1をFならば\n「ok」と表示\nここまで\n●(Aを)Fとは\nAで戻る\nここまで\n"
   },

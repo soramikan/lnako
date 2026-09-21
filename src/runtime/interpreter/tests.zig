@@ -224,6 +224,57 @@ test "仮引数名が『引数』でも実引数配列を参照する" {
     try std.testing.expectEqualStrings("3\n", host.written());
 }
 
+test "関数値呼び出しの『引数』は余剰実引数を保持する" {
+    // 公式は`引数`をJSの`arguments`から作るため、関数値へ仮引数より多く
+    // 渡した実引数も要素に残る。仮引数の並びから配列を作ると余剰分が
+    // 消えるため、実引数列そのものから生成する。
+    const source =
+        "F=関数(A)\n" ++
+        "引数[0]を表示\n" ++
+        "引数[1]を表示\n" ++
+        "ここまで\n" ++
+        "F(10,20)\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("10\n20\n", host.written());
+}
+
+test "関数値呼び出しの不足実引数は『引数』へ含めず仮引数だけ埋める" {
+    // 不足分は仮引数スロットへ実行コンテキストが入るが、`引数`配列は
+    // 実引数列だけを保持する（末尾の__self相当はJS実装詳細のため含めない）。
+    const source =
+        "F=関数(A,B)\n" ++
+        "引数の要素数を表示\n" ++
+        "Bを表示\n" ++
+        "ここまで\n" ++
+        "F(10)\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("1\n[object Object]\n", host.written());
+}
+
 test "読み出しの無い『引数』添字代入でも先頭束縛を作る" {
     // 添字代入は対象変数をHIRノード自身の名前で保持し、loweringが暗黙に
     // load_localを発行する。子に`load_local`が無くても利用として検出する。
