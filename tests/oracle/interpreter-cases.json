@@ -433,5 +433,17 @@
   {
     "id": "arguments-array-local-declaration",
     "source": "●(Aの)Fとは\n変数 引数=7\n引数を表示\nここまで\n1のF\n"
+  },
+  {
+    "id": "arguments-array-indexed-write-only",
+    "source": "●(Aの)Fとは\n引数[0]=9\nここまで\n「ok」を表示\n1のF\n"
+  },
+  {
+    "id": "arguments-array-function-import",
+    "files": {
+      "arguments-lib.nako3": "変数 引数=7\n"
+    },
+    "source": "●(Aの)Fとは\n!「./arguments-lib.nako3」を取り込む\n引数を表示\nここまで\n1のF\n"
   }
 ]
+

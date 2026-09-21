@@ -118,12 +118,29 @@ fn isStaticLiteralInstruction(instruction: *const ir.Instruction) bool {
 /// `load_local`/`store_local`として現れる（トップレベルは対象外）。
 fn findArgumentsReference(program: hir.Program, node_id: hir.NodeId) ?hir.Node {
     const node = program.node(node_id);
-    if ((node.kind == .load_local or node.kind == .store_local) and std.mem.eql(u8, node.name, "引数")) return node;
+    if (node.local_target and std.mem.eql(u8, node.name, "引数") and holdsLocalTarget(node.kind)) return node;
     // `.nop`/`.closure`は入れ子の関数定義をloweringした痕跡で、子には本体が
     // 残る。入れ子関数はそれぞれ独自の`引数`束縛を持つため走査しない。
     if (node.kind == .nop or node.kind == .closure) return null;
     for (node.children) |child| if (findArgumentsReference(program, child)) |found| return found;
     return null;
+}
+
+/// 対象変数を子の`load_local`ではなくノード自身の`name`/`local_target`へ
+/// 保持するHIR。添字・プロパティ代入や増減はこの形で現れるため、
+/// `引数`の利用検出に含める（各loweringが暗黙に`load_local`を発行する）。
+fn holdsLocalTarget(kind: hir.Kind) bool {
+    return switch (kind) {
+        .load_local,
+        .store_local,
+        .array_set,
+        .property_set,
+        .increment,
+        .increment_indexed,
+        .destructure_store,
+        => true,
+        else => false,
+    };
 }
 
 const BlockBuilder = struct {

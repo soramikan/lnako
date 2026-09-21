@@ -2989,5 +2989,25 @@
     "id": "native-arguments-array-in-function",
     "sourceFileName": "natargs.nako3",
     "source": "●(AとBの)加算処理とは\nそれ＝引数[0] + 引数[1]\nここまで\n3と5の加算処理して表示。\n"
+  },
+  {
+    "id": "native-arguments-array-indexed-write-only",
+    "sourceFileName": "natargsidx.nako3",
+    "source": "●(Aの)Fとは\n引数[0]=9\nここまで\n「ok」を表示\n1のF\n"
+  },
+  {
+    "id": "native-arguments-array-per-call",
+    "sourceFileName": "natargspercall.nako3",
+    "source": "●(Aの)内とは\n引数[0]を表示\nここまで\n●(Aの)外とは\nそれ=引数[0]\n9の内\n引数[0]を表示\nここまで\n5の外\n"
+  },
+  {
+    "id": "native-arguments-array-anonymous",
+    "sourceFileName": "natargsanon.nako3",
+    "source": "F=関数(A)それは引数[0];ここまで\nF(3)を表示\n"
+  },
+  {
+    "id": "native-arguments-array-local-declaration",
+    "sourceFileName": "natargsdecl.nako3",
+    "source": "●(Aの)Fとは\n変数 引数=7\n引数を表示\nここまで\n1のF\n"
   }
 ]

@@ -371,7 +371,7 @@ const Analyzer = struct {
             // 一致にならない。公式は本体先頭の`__vars.set('引数', arguments)`の
             // うえで利用者の宣言をそのまま実行するので、同じローカルへ束縛する。
             const symbol = self.lookupDeclSite(module_index, scope, node.name, node.span) orelse
-                self.lookupImplicitArguments(scope, module_index, node.name);
+                self.lookupImplicitArguments(scope, node.name);
             if (symbol) |found| try self.bind(node, .declaration, node.name, found.qualified_name, found.id);
             return;
         }
@@ -601,8 +601,16 @@ const Analyzer = struct {
             // 変数/定数の明示定義は同名の再利用も公式同様に二重定義とする。
             if (!explicit_def and existing.kind == kind and (kind == .variable or kind == .loop_variable)) return existing.id;
             // 関数内の`引数`は公式が呼出しごとに用意する束縛であり、
-            // ユーザーが同名を宣言しても上書きできる。
-            if (existing.implicit_arguments) return existing.id;
+            // ユーザーが同名を宣言しても上書きできる。明示宣言は同じローカルを
+            // 上書きし、以降の代入検査は宣言されたkind/mutabilityで行う
+            // （関数先頭の暗黙初期化はlowering側のstore_localなので影響しない）。
+            if (existing.implicit_arguments) {
+                if (explicit_def) {
+                    self.symbols.items[existing.id].kind = kind;
+                    self.symbols.items[existing.id].is_mutable = is_mutable;
+                }
+                return existing.id;
+            }
             const message = try std.fmt.allocPrint(self.allocator, "『{s}』は同じスコープで既に定義されています", .{name});
             try self.addDiagnostic(.duplicate_symbol, span, self.modules.items[module_index].path, message);
             return existing.id;
@@ -697,9 +705,11 @@ const Analyzer = struct {
     }
 
     /// このスコープの関数内`引数`束縛（公式yCallFunc相当）だけを返す。
-    fn lookupImplicitArguments(self: *Analyzer, scope: ScopeId, module_index: u32, name: []const u8) ?Symbol {
+    /// 関数内取り込みの宣言は取り込み先モジュール番号で解析されるため、
+    /// 所有権はモジュールではなくスコープ（関数）で判定する。
+    fn lookupImplicitArguments(self: *Analyzer, scope: ScopeId, name: []const u8) ?Symbol {
         const symbol = self.lookupLexical(scope, name) orelse return null;
-        if (!symbol.implicit_arguments or symbol.module_index != module_index) return null;
+        if (!symbol.implicit_arguments) return null;
         return symbol;
     }
 

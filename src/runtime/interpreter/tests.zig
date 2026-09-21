@@ -200,6 +200,31 @@ test "『引数』宣言は同名ローカルとして再利用する" {
     try std.testing.expectEqualStrings("7\n", host.written());
 }
 
+test "読み出しの無い『引数』添字代入でも先頭束縛を作る" {
+    // 添字代入は対象変数をHIRノード自身の名前で保持し、loweringが暗黙に
+    // load_localを発行する。子に`load_local`が無くても利用として検出する。
+    const source =
+        "●(Aの)Fとは\n" ++
+        "引数[0]=9\n" ++
+        "ここまで\n" ++
+        "「ok」を表示\n" ++
+        "1のF\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("ok\n", host.written());
+}
+
 test "Prepared Interpreterはdead result storeを省略し戻り値観測を維持する" {
     const overwritten_source =
         "●Aとは\n" ++
