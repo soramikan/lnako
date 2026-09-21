@@ -124,6 +124,7 @@ pub const Command = enum {
     compat,
     benchmark,
     toolchain,
+    package,
     help,
     version,
 };
@@ -145,6 +146,7 @@ pub fn parseCommand(args: []const []const u8) ParseError!Command {
     if (std.mem.eql(u8, first, "test")) return .test_command;
     if (std.mem.eql(u8, first, "benchmark")) return .benchmark;
     if (std.mem.eql(u8, first, "toolchain")) return .toolchain;
+    if (std.mem.eql(u8, first, "package")) return .package;
     if (std.mem.eql(u8, first, "compat")) {
         if (args.len < 2 or !std.mem.eql(u8, args[1], "report")) return error.MissingCompatAction;
         return .compat;
@@ -164,6 +166,8 @@ pub fn usage(writer: *std.Io.Writer) !void {
         \\  lnako compat report
         \\  lnako benchmark
         \\  lnako toolchain <status|dir|install|update|remove>
+        \\  lnako package build [<dir>] [-o <output.npkg>]
+        \\  lnako package verify <file.npkg> [--runtime lnako|cnako] [--os <os>] [--cpu <cpu>] [--abi <abi>] [--os-version <v>] [--libc <libc>] [--feature <name>] [--engine-version <v>] [--compat-js]
         \\
         \\共通オプション:
         \\  -h, --help       このヘルプを表示

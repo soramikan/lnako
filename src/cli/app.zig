@@ -5,6 +5,7 @@ const benchmark = @import("../benchmark.zig");
 const compiler_pipeline = @import("../compiler_pipeline.zig");
 const arguments = @import("arguments.zig");
 const test_command = @import("commands/test.zig");
+const package_command = @import("commands/package.zig");
 
 pub fn run(
     allocator: std.mem.Allocator,
@@ -291,6 +292,13 @@ pub fn run(
         .toolchain => {
             runToolchainCommand(allocator, io, args[1..], executable_path, init.environ_map, stdout, stderr) catch |err| {
                 try stderr.print("toolchain: {s}\n", .{@errorName(err)});
+                try stderr.flush();
+                std.process.exit(1);
+            };
+        },
+        .package => {
+            package_command.run(allocator, io, args[1..], stdout, stderr) catch |err| {
+                try stderr.print("package: {s}\n", .{@errorName(err)});
                 try stderr.flush();
                 std.process.exit(1);
             };

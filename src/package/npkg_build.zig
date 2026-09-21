@@ -42,6 +42,8 @@ pub const Built = struct {
     archive: []u8,
     /// payload 索引（`path` バイト順）。
     files: []npkg_files.FileEntry,
+    /// 解析済み `nako.toml`（出力名の決定等に使う）。
+    manifest: manifest_mod.Manifest,
 
     pub fn deinit(self: *Built) void {
         self.arena.deinit();
@@ -265,6 +267,7 @@ pub fn build(backing_allocator: Allocator, io: std.Io, root: []const u8, diagnos
         .arena = arena,
         .archive = try zip.writeEntries(allocator, entries.items),
         .files = file_entries,
+        .manifest = manifest,
     };
 }
 
