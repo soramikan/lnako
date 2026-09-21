@@ -58,6 +58,11 @@
     "checkMessage": true
   },
   {
+    "id": "semantic-diagnostic-assign-to-defined-constant",
+    "source": "リンゴ値段を320に定める。\nリンゴ値段=500\n",
+    "code": "assign_to_constant"
+  },
+  {
     "id": "semantic-diagnostic-arguments-duplicate-declaration",
     "source": "●(Aの)Fとは\n変数 引数=1\n変数 引数=2\n引数を表示\nここまで\n5のF\n",
     "code": "duplicate_symbol"

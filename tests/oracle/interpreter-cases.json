@@ -392,6 +392,14 @@
     "source": "●Fとは\n　main__Iを1から3まで繰り返す\n　ここまで\nここまで\nF\nmain__Iを表示\n"
   },
   {
+    "id": "declaration-towa-comma-and-empty-value",
+    "source": "Aとは変数,B=1\nAを表示\nBを表示\nCとは定数=\nCを表示\nDとは変数{公開}=\nDを表示\n定数 E=\nEを表示\n"
+  },
+  {
+    "id": "declaration-unknown-attribute-requires-value",
+    "source": "変数 A{未知}=1\nAを表示\n"
+  },
+  {
     "id": "josi-eq-condition",
     "source": "A=5\nもし、Aが5ならば\n「OK」と表示\nここまで\nもし、Aが3でなければ\n「NG」と表示\nここまで\n"
   },
@@ -463,6 +471,10 @@
     "source": "!「./define-lib.nako3」を取り込む\nAを表示\nBを表示\nCを表示\nDを表示\n"
   },
   {
+    "id": "declaration-anonymous-function-initializer",
+    "source": "定数 F=関数()\n  1で戻る\nここまで\nF()を表示\nAとは変数=関数()\n  2で戻る\nここまで\nA()を表示\n"
+  },
+  {
     "id": "arguments-array-in-function",
     "source": "●(AとBの)加算処理とは\nそれ＝引数[0] + 引数[1]\nここまで\n3と5の加算処理して表示。\n"
   },
@@ -488,6 +500,22 @@
   {
     "id": "implicit-if-user-function-josi-call",
     "source": "もし、1をFならば\n「ok」と表示\nここまで\n●(Aを)Fとは\nAで戻る\nここまで\n"
+  },
+  {
+    "id": "switch-else-inline-clause",
+    "source": "N=2\nNで条件分岐\n    1ならば、「1」と表示。ここまで。\n    2ならば、「2」と表示。ここまで。\n    違えば、「@」と表示。ここまで。\nここまで。\n"
+  },
+  {
+    "id": "switch-else-without-own-end",
+    "source": "N=2\nNで条件分岐\n    1ならば、「1」と表示。ここまで。\n    違えば、「@」と表示。\nここまで。\n"
+  },
+  {
+    "id": "switch-else-multiline-clause",
+    "source": "N=3\nNで条件分岐\n    1ならば\n        「1」と表示\n    ここまで\n    違えば\n        「@」と表示\n    ここまで\nここまで\n"
+  },
+  {
+    "id": "switch-else-comma-clause",
+    "source": "N=2\nNで条件分岐\n    1ならば、「1」と表示。ここまで。\n    違えば、\n        「@」と表示\n    ここまで\nここまで\n"
   }
 ]
 

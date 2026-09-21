@@ -11,6 +11,7 @@ const Kind = token_mod.Kind;
 
 pub const helpers = @import("parser/helpers.zig");
 pub const builder = @import("parser/builder.zig");
+const declarations = @import("parser/declarations.zig");
 pub const expressions = @import("parser/expressions.zig");
 
 const isConditionalJosi = helpers.isConditionalJosi;
@@ -125,7 +126,7 @@ pub fn parseWithMode(backing_allocator: std.mem.Allocator, source: []const u8, f
         .own_mode = orMode(options.initial orelse .{}, options.forced),
         .tail_modes = options.tail_modes,
         .builtin_commands = options.builtin_commands,
-        .user_functions = try collectUserFunctionNames(allocator, stream.tokens),
+        .user_functions = try helpers.collectUserFunctionNames(allocator, stream.tokens),
     };
     var root = parser.parseProgram() catch |err| switch (err) {
         error.ParseFailed => null,
@@ -157,47 +158,6 @@ pub fn parseWithMode(backing_allocator: std.mem.Allocator, source: []const u8, f
 
 pub const ParseFailure = error{ ParseFailed, OutOfMemory };
 
-/// 公式`NakoLexer.preDefineFunc`相当。解析前のトークン列を走査してソース内で
-/// 定義された関数名を集める。公式は定義の位置に関わらず関数名を`func token`
-/// にするため、後方定義の呼出し（前方参照）も命令呼出しとして解決できる。
-fn collectUserFunctionNames(allocator: std.mem.Allocator, tokens: []const Token) std.mem.Allocator.Error![]const []const u8 {
-    var names: std.ArrayList([]const u8) = .empty;
-    var index: usize = 0;
-    while (index < tokens.len) : (index += 1) {
-        if (tokens[index].kind != .def_func and tokens[index].kind != .def_test) continue;
-        // 無名関数の`関数`キーワードも`def_func`になるが、名前を持たないため
-        // 直後の識別子は本体の先頭語（`F=関数(A)それはA`の「それ」）であって
-        // 関数名ではない。名前付き定義（`●`・`●テスト:`）だけを集める。
-        if (std.mem.eql(u8, tokens[index].value, "関数")) continue;
-        var cursor = index + 1;
-        // `●{公開}Fとは` のような属性を読み飛ばす。
-        if (cursor < tokens.len and tokens[cursor].kind == .left_brace) {
-            cursor += 1;
-            while (cursor < tokens.len and tokens[cursor].kind != .right_brace) cursor += 1;
-            cursor += 1;
-        }
-        // `●(Aを)Fとは` のように名前の前に来る引数宣言を読み飛ばす。
-        if (cursor < tokens.len and tokens[cursor].kind == .left_paren) {
-            var depth: usize = 0;
-            while (cursor < tokens.len) : (cursor += 1) {
-                if (tokens[cursor].kind == .left_paren) {
-                    depth += 1;
-                } else if (tokens[cursor].kind == .right_paren) {
-                    depth -= 1;
-                    if (depth == 0) {
-                        cursor += 1;
-                        break;
-                    }
-                }
-            }
-        }
-        if (cursor < tokens.len and tokens[cursor].kind == .identifier) {
-            try names.append(allocator, tokens[cursor].value);
-        }
-    }
-    return names.toOwnedSlice(allocator);
-}
-
 fn orMode(a: token_mod.Mode, b: token_mod.Mode) token_mod.Mode {
     return .{
         .dncl = a.dncl or b.dncl,
@@ -222,6 +182,9 @@ pub const Parser = struct {
     tail_modes: []const TailMode = &.{},
     /// 公式の`func token`に相当する既知の命令名（`ParseOptions.builtin_commands`）。
     builtin_commands: []const []const u8 = &.{},
+    /// 公式`isExportDefault`相当。`!モジュール公開既定値=「非公開」`で偽になり、
+    /// 属性を省略した宣言の公開設定の既定値になる（既定は公開）。
+    export_default: bool = true,
     /// ソース内で定義された関数名（公式`NakoLexer.preDefineFunc`相当の先読み）。
     /// 公式はユーザー定義関数も`func token`にするため、助詞付きの単独語を
     /// 命令呼出しとして解決できるようにする。
@@ -396,7 +359,9 @@ pub const Parser = struct {
             const directive = try self.require(.identifier, "『!』の後ろにモード名が必要です");
             if (std.mem.eql(u8, directive.value, "モジュール公開既定値")) {
                 _ = try self.require(.equal, "モジュール公開既定値に『=』が必要です");
-                _ = try expressions.parseExpression(self, 0);
+                const setting = try expressions.parseExpression(self, 0);
+                // 公式yExportDefault: 『公開』以外は非公開を既定にする。
+                self.export_default = setting.kind == .string and std.mem.eql(u8, setting.value, "公開");
                 return builder.makeNode(self, .eol, first);
             }
             const node = try builder.makeNode(self, .run_mode, first);
@@ -662,49 +627,13 @@ pub const Parser = struct {
         return arguments.toOwnedSlice(self.allocator);
     }
 
-    pub fn parseDeclaration(self: *Parser, is_const: bool) ParseFailure!*ast.Node {
-        const start = self.advance();
-        if (self.at(.left_bracket)) {
-            const names = try expressions.parseArrayLiteral(
-                self,
-            );
-            _ = try self.require(.equal, "変数一覧の後ろに『=』が必要です");
-            const value = try self.parseCallExpression();
-            const node = try builder.makeNodeWithChildren(self, .variable_list_definition, start, try builder.copyChildren(self, &.{value}));
-            node.arguments = try builder.namesToArguments(self, names.children);
-            node.is_const = is_const;
-            return node;
-        }
-        const name = try self.require(.identifier, "変数名が必要です");
-        const has_attribute = self.at(.left_brace);
-        const is_export = try self.parseVariableAttribute(true);
-        // 公式は`変数 A`の初期値省略を許し、その値は0になる。属性付きの
-        // 宣言と`定数`は`=`を必須にする。
-        var value = try builder.omittedValue(self, name);
-        if (self.at(.equal)) {
-            _ = self.advance();
-            value = try self.parseCallExpression();
-        } else if (is_const or has_attribute) {
-            return self.fail(.expected_token, "変数宣言に『=』が必要です", self.peek());
-        }
-        const node = try builder.makeNodeWithChildren(self, .variable_definition, start, try builder.copyChildren(self, &.{value}));
-        node.name = name.value;
-        node.is_const = is_const;
-        node.is_export = is_export;
-        return node;
-    }
-
-    /// 変数・定数の`{公開}`/`{非公開}`属性を読み、公開可否を返す。
-    /// 属性が無ければ`default`をそのまま返す。
-    pub fn parseVariableAttribute(self: *Parser, default: bool) ParseFailure!bool {
-        if (!self.at(.left_brace)) return default;
-        _ = self.advance();
-        const attribute = try self.require(.identifier, "変数属性が必要です");
-        _ = try self.require(.right_brace, "変数属性を閉じる『}』が必要です");
-        if (std.mem.eql(u8, attribute.value, "非公開")) return false;
-        if (std.mem.eql(u8, attribute.value, "公開") or std.mem.eql(u8, attribute.value, "エクスポート")) return true;
-        return default;
-    }
+    /// 宣言文と代入文の解析は `parser/declarations.zig` へ分離する
+    /// （`parser.zig`のサイズ上限を保つため）。
+    pub const parseDeclaration = declarations.parseDeclaration;
+    pub const parseVariableAttribute = declarations.parseVariableAttribute;
+    pub const isTowaDeclaration = declarations.isTowaDeclaration;
+    pub const parseAssignment = declarations.parseAssignment;
+    pub const VariableAttribute = declarations.VariableAttribute;
 
     /// `取込 <expr>` の文頭形式。
     pub fn parseImport(self: *Parser) ParseFailure!*ast.Node {
@@ -761,73 +690,6 @@ pub const Parser = struct {
             }
         }
         return false;
-    }
-
-    /// `Aとは変数`/`Aとは定数`の宣言文。公式は初期値を省略できるため、
-    /// `=`の有無だけを見る`canStartAssignment`では判定できない。
-    pub fn isTowaDeclaration(self: *Parser) bool {
-        const token = self.peek();
-        if (token.kind != .identifier) return false;
-        if (!std.mem.eql(u8, token.josi, "とは")) return false;
-        const next = self.peekAhead(1);
-        return next.kind == .keyword_let or next.kind == .keyword_const;
-    }
-
-    pub fn parseAssignment(self: *Parser) ParseFailure!*ast.Node {
-        const start = self.peek();
-        var targets: std.ArrayList(*ast.Node) = .empty;
-        try targets.append(self.allocator, try self.parseLValue());
-        while (self.at(.comma)) {
-            _ = self.advance();
-            try targets.append(self.allocator, try self.parseLValue());
-        }
-        // 公式は`Aとは変数`/`Aとは定数`を宣言として扱い、`{公開}`/`{非公開}`
-        // 属性と`=`による初期値を任意にする。
-        const declaration_from_towa = (self.at(.keyword_let) or self.at(.keyword_const)) and
-            std.mem.eql(u8, targets.items[0].josi, "とは");
-        var declaration_is_const = false;
-        var declaration_is_export = true;
-        if (declaration_from_towa) {
-            declaration_is_const = self.peek().kind == .keyword_const;
-            _ = self.advance();
-            declaration_is_export = try self.parseVariableAttribute(true);
-        }
-        var value = if (declaration_from_towa) try builder.omittedValue(self, start) else undefined;
-        if (self.at(.equal)) {
-            _ = self.advance();
-            value = try self.parseCallExpression();
-        } else if (!declaration_from_towa) {
-            return self.fail(.expected_token, "代入文に『=』が必要です", self.peek());
-        }
-        if (targets.items.len > 1) {
-            const result = try builder.makeNodeWithChildren(self, .variable_list_definition, start, try builder.copyChildren(self, &.{value}));
-            result.arguments = try builder.namesToArguments(self, targets.items);
-            return result;
-        }
-        const target = targets.items[0];
-        const kind: ast.Kind = switch (target.kind) {
-            .array_reference => .array_assignment,
-            .property_reference => .property_assignment,
-            else => if (declaration_from_towa) .variable_definition else .assignment,
-        };
-        const target_children = if (target.kind == .array_reference or target.kind == .property_reference)
-            try builder.assignmentPath(self, target)
-        else
-            target.children;
-        const children = if (target_children.len == 0)
-            try builder.copyChildren(self, &.{value})
-        else
-            try builder.prepend(self, value, target_children);
-        const node = try builder.makeNodeWithChildren(self, kind, start, children);
-        node.name = if (target.name.len > 0) target.name else target.value;
-        node.josi = "";
-        if (declaration_from_towa) {
-            node.is_const = declaration_is_const;
-            node.is_export = declaration_is_export;
-        }
-        // DNCLでは未初期化変数への配列要素代入で30要素配列を自動初期化する（公式flagCheckArrayInit相当）
-        node.check_array_init = kind == .array_assignment and (self.mode.dncl or self.mode.dncl2);
-        return node;
     }
 
     pub fn parseLValue(self: *Parser) ParseFailure!*ast.Node {
@@ -1154,6 +1016,9 @@ pub const Parser = struct {
 
         if (arguments.len == 0) return self.fail(.invalid_assignment, "代入先と値の指定が必要です", command);
 
+        // 公式ySadameruは値の後ろの `{公開}`/`{非公開}` 属性を受理する。
+        const attribute_is_export = if (is_define) try self.parseVariableAttribute(self.export_default) else self.export_default;
+
         // 「に代入」は「に」が代入先、「を」が値。「に定める」は「を」が定義対象、「に」が値。
 
         var target_index: ?usize = null;
@@ -1206,9 +1071,13 @@ pub const Parser = struct {
             const result = try builder.makeNodeWithChildren(self, kind, start, children);
             result.name = if (target.kind == .word) target.value else if (target.name.len > 0) target.name else target.value;
             result.josi = "";
-            // `Aを1に定める`の宣言も公式同様にモジュール変数として既定公開する。
-            // ASTのis_exportは既定falseなので、ここで明示する。
-            if (kind == .variable_definition) result.is_export = true;
+            // `Aを1に定める`の宣言も公式ySadameru同様にモジュール変数として
+            // 既定公開する。ASTのis_exportは既定falseなので、ここで明示する。
+            if (kind == .variable_definition) {
+                result.is_export = attribute_is_export;
+                // 公式ySadameruは`createVar(word, true, ...)`で定数を作る。
+                result.is_const = is_define;
+            }
             result.check_array_init = kind == .array_assignment and (self.mode.dncl or self.mode.dncl2);
             return result;
         }
@@ -1285,14 +1154,21 @@ pub const Parser = struct {
         self.skipEols();
         var default_block = try builder.emptyBlock(self, start);
         var cases: std.ArrayList(*ast.Node) = .empty;
+        var default_done = false;
         while (!self.at(.keyword_here_end) and !self.at(.eof)) {
             if (self.at(.keyword_else)) {
                 _ = self.advance();
-                self.skipEols();
+                self.skipCommas();
                 default_block = try self.parseBlock(.{ .end = true });
-                try self.requireEnd("『条件分岐』の違えば節");
+                // 公式`ySwitch`は『違えば』とペアの『ここまで』を消費し、続けて
+                // 『条件分岐』本体の『ここまで』も消費する。節を同じ行で閉じる形
+                // （`違えば、…。ここまで。`）と、本体の終端を1つだけ書く形の
+                // 両方を受理し、本体の終端を二重に要求しない。
+                if (self.at(.keyword_here_end)) _ = self.advance();
                 self.skipEols();
-                continue;
+                if (self.at(.keyword_here_end)) _ = self.advance();
+                default_done = true;
+                break;
             }
             const case_value = try expressions.parseExpression(self, 0);
             if (!isConditionalJosi(case_value.josi)) return self.fail(.invalid_control_statement, "条件分岐の値に『ならば』が必要です", self.peekPrevious());
@@ -1304,7 +1180,7 @@ pub const Parser = struct {
             try cases.append(self.allocator, case_body);
             self.skipEols();
         }
-        try self.requireEnd("『条件分岐』文");
+        if (!default_done) try self.requireEnd("『条件分岐』文");
         var children: std.ArrayList(*ast.Node) = .empty;
         try children.append(self.allocator, condition);
         try children.append(self.allocator, default_block);

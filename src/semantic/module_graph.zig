@@ -1076,3 +1076,58 @@ test "エントリの.nako3へ--dncl/--dncl2相当のモードを強制する" {
     defer imported_graph.deinit();
     try std.testing.expect(!imported_graph.succeeded());
 }
+
+test "『{非公開}』属性のモジュール変数を他モジュールの名前解決から隠す" {
+    // 公式findVarはmodList検索で `isExport === false` のモジュール変数を
+    // 除外する。`{公開}` と無属性は既定どおり公開される。
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「lib.nako3」を取り込む\n秘密を表示\n公開値を表示\n既定値を表示\n" },
+        .{ .suffix = "lib.nako3", .source = "変数 秘密{非公開}=1\n変数 公開値{公開}=2\n変数 既定値=3\n" },
+    } };
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{});
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    try std.testing.expect(!program.findSymbol("lib__秘密").?.is_export);
+    try std.testing.expect(program.findSymbol("lib__公開値").?.is_export);
+    try std.testing.expect(program.findSymbol("lib__既定値").?.is_export);
+
+    var hidden_resolved = false;
+    var public_resolved = false;
+    var default_resolved = false;
+    for (program.bindings) |binding| {
+        if (binding.kind != .reference) continue;
+        if (std.mem.eql(u8, binding.name, "秘密")) hidden_resolved = std.mem.eql(u8, binding.resolved_name, "main__秘密");
+        if (std.mem.eql(u8, binding.name, "公開値")) public_resolved = std.mem.eql(u8, binding.resolved_name, "lib__公開値");
+        if (std.mem.eql(u8, binding.name, "既定値")) default_resolved = std.mem.eql(u8, binding.resolved_name, "lib__既定値");
+    }
+    try std.testing.expect(hidden_resolved);
+    try std.testing.expect(public_resolved);
+    try std.testing.expect(default_resolved);
+}
+
+test "『!モジュール公開既定値』が取り込み先のモジュール変数の公開を決める" {
+    // 公式yExportDefaultはモジュール単位の既定を作り、findVarのmodList検索が
+    // `isExport===false` の変数を除外する。属性付きの宣言は常に優先する。
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「lib.nako3」を取り込む\n秘密を表示\n公開値を表示\n一覧を表示\n" },
+        .{ .suffix = "lib.nako3", .source = "!モジュール公開既定値=「非公開」\n変数 秘密=1\n変数 公開値{公開}=2\n変数 [一覧]=[7]\n" },
+    } };
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{});
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    try std.testing.expect(!program.findSymbol("lib__秘密").?.is_export);
+    try std.testing.expect(program.findSymbol("lib__公開値").?.is_export);
+    try std.testing.expect(!program.findSymbol("lib__一覧").?.is_export);
+    for (program.bindings) |binding| {
+        if (binding.kind != .reference) continue;
+        if (std.mem.eql(u8, binding.name, "秘密")) try std.testing.expectEqualStrings("main__秘密", binding.resolved_name);
+        if (std.mem.eql(u8, binding.name, "公開値")) try std.testing.expectEqualStrings("lib__公開値", binding.resolved_name);
+        if (std.mem.eql(u8, binding.name, "一覧")) try std.testing.expectEqualStrings("main__一覧", binding.resolved_name);
+    }
+}
