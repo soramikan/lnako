@@ -215,8 +215,20 @@ pub fn parsePrimary(self: *Parser) ParseFailure!*ast.Node {
         .string_template => builder.valueNode(self, .string_template, token),
         .identifier => parseIdentifierValue(self, token),
         .function_ref => blk: {
+            // 公式は字句解析の後処理で`{関数}`の直後にある関数名トークンを
+            // `func_pointer`へ変換する（`{関数}`トークン自体は除去される）。
+            // lnakoはパーサで結合し、関数名と助詞をそのトークンから引き継ぐ。
+            // 名前が関数・組み込み命令へ解決できるかは意味解析で検査する。
+            if (!std.mem.eql(u8, token.value, "{関数}"))
+                return self.fail(.unexpected_token, "『{関数},』の形式は関数参照に使えません", token);
+            const name_token = self.peek();
+            if (name_token.kind != .identifier)
+                return self.fail(.expected_name, "『{関数}』の後ろに関数名が必要です", name_token);
+            _ = self.advance();
             const node = try builder.makeNode(self, .function_pointer, token);
-            node.name = token.value;
+            node.name = name_token.value;
+            node.josi = name_token.josi;
+            node.raw_josi = name_token.raw_josi;
             break :blk node;
         },
         .left_paren => blk: {

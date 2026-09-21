@@ -475,6 +475,53 @@
     "source": "定数 F=関数()\n  1で戻る\nここまで\nF()を表示\nAとは変数=関数()\n  2で戻る\nここまで\nA()を表示\n"
   },
   {
+    "id": "arguments-array-in-function",
+    "source": "●(AとBの)加算処理とは\nそれ＝引数[0] + 引数[1]\nここまで\n3と5の加算処理して表示。\n"
+  },
+  {
+    "id": "arguments-array-per-call",
+    "source": "●(Aの)内とは\n引数[0]を表示\nここまで\n●(Aの)外とは\nそれ=引数[0]\n9の内\n引数[0]を表示\nここまで\n5の外\n"
+  },
+  {
+    "id": "arguments-array-local-declaration",
+    "source": "●(Aの)Fとは\n変数 引数=7\n引数を表示\nここまで\n1のF\n"
+  },
+  {
+    "id": "arguments-array-indexed-write-only",
+    "source": "●(Aの)Fとは\n引数[0]=9\nここまで\n「ok」を表示\n1のF\n"
+  },
+  {
+    "id": "arguments-array-varlist-after-declaration",
+    "source": "●(Aの)Fとは\n変数 引数=7\n変数[引数,B]=[1,2]\n引数を表示\nここまで\n5のF\n"
+  },
+  {
+    "id": "arguments-array-nested-function-scope",
+    "source": "●(Aの)Fとは\n  ●(Bの)Gとは\n    引数を表示\n  ここまで\n  変数 引数=7\n  引数を表示\nここまで\n5のF\n"
+  },
+  {
+    "id": "arguments-array-function-import",
+    "files": {
+      "arguments-lib.nako3": "変数 引数=7\n"
+    },
+    "source": "●(Aの)Fとは\n!「./arguments-lib.nako3」を取り込む\n引数を表示\nここまで\n1のF\n"
+  },
+  {
+    "id": "arguments-array-call-value-extra",
+    "source": "F=関数(A)\n引数[0]を表示\n引数[1]を表示\nここまで\nF(10,20)\n"
+  },
+  {
+    "id": "arguments-array-call-value-less",
+    "source": "F=関数(A,B)\n引数[0]を表示\nBを表示\nここまで\nF(10)\n"
+  },
+  {
+    "id": "arguments-array-call-value-exact",
+    "source": "F=関数(A,B)\nそれは引数[0]+引数[1]\nここまで\nF(10,20)を表示\n"
+  },
+  {
+    "id": "arguments-array-call-value-nested",
+    "source": "G=関数(A)\n引数[0]を表示\nここまで\nF=関数(A)\nG(1,2,3)\n引数[0]を表示\nここまで\nF(9)\n"
+  },
+  {
     "id": "implicit-if-user-function-josi-call",
     "source": "もし、1をFならば\n「ok」と表示\nここまで\n●(Aを)Fとは\nAで戻る\nここまで\n"
   },
@@ -519,6 +566,10 @@
     "source": "A=1\nもし、A=1ならば、「OK」と表示。\n違えば、もし、A=2ならば、「NG」と表示。\n違えば、「その他」と表示。\n"
   },
   {
+    "id": "arguments-array-property-after-registration",
+    "source": "●(Aの)Fとは\n引数[0]を表示\n引数$a=99\n引数$aを表示\nここまで\n1のF\n"
+  },
+  {
     "id": "delimited-josi-calls",
     "source": "割(1を2で)を表示\n割(2で1を)を表示\n表示(1を2で割)\n(1を2で割)を表示\nA=[10,20,30]\nA[Aの要素数-1]を表示\nB=[Aの要素数]\nB[0]を表示\nD={\"x\":Aの要素数}\nD[\"x\"]を表示\nC=[7,8,9]\nS=0\nIを1から(Cの要素数)-1まで繰り返す\nS=S+I\nここまで\nSを表示\n"
   },
@@ -531,11 +582,24 @@
     "source": "●(AとBを)Fとは\n「ok」と表示\nここまで\nF(1 関数() 2で戻る ここまで)\nF(関数() 2で戻る ここまで 1)\n●(Aを)Gとは\nそれは関数(Bを) B*2で戻る ここまで\nここまで\nH=G(1)\nH(2 関数(Cを) C+1で戻る ここまで)を表示\n"
   },
   {
+    "id": "func-ref-prefix-user",
+    "source": "●AAAとは\n30を戻す\nここまで\n{関数}AAAを実行して表示\nF={関数}AAA\nF()を表示\n"
+  },
+  {
+    "id": "func-ref-prefix-builtin",
+    "source": "F={関数}足\nF(3,4)を表示\nG={関数}実行\n●AAAとは\n99を戻す\nここまで\nG({関数}AAA)を表示\n"
+  },
+  {
     "id": "strict-check-undefined-variable",
     "source": "!厳しくチェック\n「{X}」を表示。\nXを表示\n"
   },
   {
     "id": "strict-check-alias-and-continues",
     "source": "!厳チェック\nXを表示\nX=1\nXを表示\n"
+  },
+  {
+    "id": "func-ref-prefix-variable-arity",
+    "source": "F={関数}MAX\nF(3,5,2)を表示\nG={関数}連結\nG(\"a\",\"b\",\"c\")を表示\n"
   }
 ]
+

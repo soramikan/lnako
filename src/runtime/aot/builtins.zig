@@ -14,6 +14,22 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
     lnako_aot_builtin_call_site(out, arguments, len, opcode, 0);
 }
 
+/// `{関数}名`で関数値化された組み込み命令のコールバック。関数オブジェクトが
+/// 保持する命令名からオペコードを引き、通常の組み込みディスパッチ経路へ委譲する。
+pub export fn lnako_aot_builtin_function_call(out: *Value, context: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
+    out.* = .{};
+    const object: *state.Object = @ptrCast(@alignCast(context));
+    if (object.payload != .function) {
+        state.runtimeFailure(error.NotCallable);
+        return;
+    }
+    const command = aot_builtin.lookup(object.payload.function.name) orelse {
+        state.runtimeFailure(error.UnknownCommand);
+        return;
+    };
+    lnako_aot_builtin_call_site(out, arguments, len, @intFromEnum(command), 0);
+}
+
 /// Dedicated ABI for timer commands. Timer registration updates the shared
 /// `対象` value, so generated LLVM passes that global explicitly instead of
 /// relying on a runtime-local lookup.

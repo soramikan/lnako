@@ -29,6 +29,7 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
                 .store_local,
                 .make_array,
                 .make_object,
+                .arguments_array,
                 .array_get,
                 .property_get,
                 .element_set,
@@ -92,7 +93,8 @@ fn validDirectCallee(program: ir.Program, instruction: ir.Instruction) bool {
 }
 
 fn closureSupported(program: ir.Program, caller: ir.Function, name: []const u8) bool {
-    const function = shared.lookupFunction(program, name) orelse return false;
+    const function = shared.lookupFunction(program, name) orelse
+        return shared.builtinClosureCommand(name) != null or shared.nativePluginClosure(program, name);
     for (function.captures) |capture| if (!shared.hasLocalName(caller, capture)) return false;
     return true;
 }

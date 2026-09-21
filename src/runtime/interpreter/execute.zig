@@ -227,8 +227,18 @@ pub fn executeFunction(self: *Interpreter, function: *const ir.Function, argumen
         const cell = capture.cell orelse try self.runtime.createBindingCell(capture.value);
         try self.attachLocal(&frame, name, cell);
     };
+    frame.call_arguments = arguments;
     for (function.parameters, 0..) |parameter, index| {
-        const argument = if (index < arguments.len) arguments[index] else Value.undefined;
+        // 関数値経由の呼出しでは、公式が実引数の末尾へ__selfを連結するため
+        // 不足分の先頭スロットに実行コンテキストが入る。パディングは実引数列を
+        // 改変せず仮引数マッピングだけで行い、`引数`束縛が余剰実引数を保持
+        // できるようにする。直接呼出しの不足分は従来通りundefinedとする。
+        const argument = if (index < arguments.len)
+            arguments[index]
+        else if (index == arguments.len and closure != null)
+            try self.systemContext()
+        else
+            Value.undefined;
         frame.values[parameter.value] = argument;
         try self.bindLocal(&frame, parameter.name, argument);
     }
@@ -404,6 +414,9 @@ fn executeInstructionResolved(
             try self.executeCall(frame, instruction),
         .call_value => result = try self.executeCallValue(frame, instruction),
         .make_array => result = try self.makeArray(frame, instruction),
+        // `引数`束縛。仮引数値ではなく呼出し時の実引数列をそのまま
+        // 配列化する（公式の`var 引数 = arguments`相当）。
+        .arguments_array => result = try self.makeCallArguments(frame),
         .make_object => result = try self.makeDictionary(frame, instruction),
         .array_get, .property_get => result = try self.getIndexed(frame, instruction),
         .element_set => try self.elementSet(frame, instruction),
@@ -850,6 +863,13 @@ pub fn callFunctionValue(self: *Interpreter, function: *value_mod.Function, argu
     if (self.promise_all_handlers.get(function)) |handler| return self.handlePromiseAll(function, handler, arguments);
     return switch (function.kind) {
         .native, .external => self.runtime.call(.{ .function = function }, arguments),
+        // `{関数}名`で組み込み命令を参照した関数値。命令名で通常の
+        // 組み込みディスパッチへ流す（公式はプラグインのJS関数を呼ぶ）。
+        .builtin => blk: {
+            const name = try function.name.toUtf8Lossy(self.allocator);
+            defer self.allocator.free(name);
+            break :blk try self.callBuiltin(name, arguments, null);
+        },
         .ir => |function_id| self.callIrFunctionValue(function_id, function, arguments),
     };
 }
@@ -858,14 +878,10 @@ pub fn callIrFunctionValue(self: *Interpreter, function_id: ir.FunctionId, funct
     const owner_program: *const ir.Program = if (function.ir_program) |pointer| @ptrCast(@alignCast(pointer)) else &self.program;
     if (function_id >= owner_program.functions.len) return error.InvalidIrFunction;
     const target = &owner_program.functions[function_id];
-    const arity = target.parameters.len;
-    if (arguments.len >= arity) return self.executeFunction(target, arguments, function, owner_program);
-    const padded = try self.allocator.alloc(Value, arity);
-    defer self.allocator.free(padded);
-    @memcpy(padded[0..arguments.len], arguments);
-    padded[arguments.len] = try self.systemContext();
-    @memset(padded[arguments.len + 1 ..], .undefined);
-    return self.executeFunction(target, padded, function, owner_program);
+    // 実引数列はそのままexecuteFunctionへ渡す。仮引数個数へのパディングは
+    // executeFunction側の仮引数マッピングが行い、`引数`束縛が余剰実引数を
+    // 保持できるようにする（公式のarguments相当）。
+    return self.executeFunction(target, arguments, function, owner_program);
 }
 
 pub fn makeArray(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
@@ -874,6 +890,18 @@ pub fn makeArray(self: *Interpreter, frame: *Frame, instruction: ir.Instruction)
     defer root.deinit();
     try root.protect(&result);
     for (instruction.operands) |operand_id| _ = try result.array.push(frame.values[operand_id]);
+    return result;
+}
+
+/// arguments_array命令の実体。呼出し時の実引数列（frame.call_arguments）を
+/// そのまま要素とする配列を作る。仮引数個数への正規化やコンテキストの
+/// パディングは行わない（`__self`相当はJS実装詳細のため含めない）。
+pub fn makeCallArguments(self: *Interpreter, frame: *Frame) !Value {
+    var result = try self.runtime.createArray();
+    var root = self.runtime.rootFrame();
+    defer root.deinit();
+    try root.protect(&result);
+    for (frame.call_arguments) |argument| _ = try result.array.push(argument);
     return result;
 }
 
@@ -1238,7 +1266,16 @@ fn makeClosureResolved(self: *Interpreter, frame: *Frame, instruction: ir.Instru
     const function = if (prepared_target) |target| blk: {
         if (target >= frame.owner_program.functions.len) return error.UnknownFunction;
         break :blk &frame.owner_program.functions[target];
-    } else self.findFunction(frame.owner_program, instruction.name) orelse return error.UnknownFunction;
+    } else self.findFunction(frame.owner_program, instruction.name) orelse {
+        // `{関数}名`で組み込み命令を参照した場合は命令名ディスパッチの
+        // 関数値を作る（公式はプラグイン関数のJS参照を返す）。ネイティブ
+        // プラグイン取り込み済みプログラムの動的命令名もcallBuiltin経由の
+        // プラグインディスパッチで呼べる関数値にする。
+        if (isBuiltinReferenceName(instruction.name) or
+            frame.owner_program.native_plugin_paths.len > 0)
+            return makeBuiltinFunctionValue(self, instruction.name);
+        return error.UnknownFunction;
+    };
     const name = try self.runtime.stringUtf8(instruction.name);
     var name_root = name;
     var root = self.runtime.rootFrame();
@@ -1258,6 +1295,25 @@ fn makeClosureResolved(self: *Interpreter, frame: *Frame, instruction: ir.Instru
     const result = try self.runtime.createIrFunction(name.string, function.parameters.len, function.id, captures);
     result.function.ir_program = @ptrCast(self.currentProgramOwner());
     return result;
+}
+
+/// `{関数}名`で参照できる組み込み命令名かどうか。公式のfunclistに相当する
+/// ため、連鎖呼出し解決が除外する`デスクトップ`等のグローバル兼用名も含む
+/// （`assign_to_function_names`はカタログ種別「関数」の全名称）。
+fn isBuiltinReferenceName(name: []const u8) bool {
+    for (builtin_catalog.assign_to_function_names) |candidate| {
+        if (std.mem.eql(u8, candidate, name)) return true;
+    }
+    return false;
+}
+
+fn makeBuiltinFunctionValue(self: *Interpreter, name: []const u8) !Value {
+    var name_value = try self.runtime.stringUtf8(name);
+    var root = self.runtime.rootFrame();
+    defer root.deinit();
+    try root.protect(&name_value);
+    const arity = if (builtin_catalog.findArity(name)) |spec| spec.count else 0;
+    return self.runtime.createBuiltinFunction(name_value.string, arity);
 }
 
 pub fn iteratorBegin(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {

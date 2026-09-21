@@ -128,6 +128,7 @@ pub fn kindName(kind: Kind) []const u8 {
         .binary_operator => "op",
         .unary_operator => "not",
         .function_call => "func",
+        .function_pointer => "func_pointer",
         .sequence => "renbun",
         .array_reference => "ref_array",
         .array_value_reference => "ref_array_value",

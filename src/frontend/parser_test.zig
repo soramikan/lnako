@@ -1317,3 +1317,37 @@ test "カンマ無し引数に匿名関数を受理する" {
         try std.testing.expect(result.succeeded());
     }
 }
+
+test "『{関数}名』をfunction_pointerとして解析する" {
+    // 公式は字句後処理で`{関数}`直後の関数名をfunc_pointerへ変換する。
+    // lnakoはパーサで結合し、関数名と助詞を直後の識別子から引き継ぐ。
+    var result = try parse(std.testing.allocator, "F={関数}AAA\n{関数}AAAを実行\n", "func-ref.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const assign = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.assignment, assign.kind);
+    const pointer = assign.children[0];
+    try std.testing.expectEqual(ast.Kind.function_pointer, pointer.kind);
+    try std.testing.expectEqualStrings("AAA", pointer.name);
+    const call = result.root.?.children[2];
+    try std.testing.expectEqual(ast.Kind.function_call, call.kind);
+    try std.testing.expectEqualStrings("実行", call.name);
+    const argument = call.children[0];
+    try std.testing.expectEqual(ast.Kind.function_pointer, argument.kind);
+    try std.testing.expectEqualStrings("AAA", argument.name);
+    try std.testing.expectEqualStrings("を", argument.josi);
+}
+
+test "『{関数}』のカンマ形式と関数名欠落を拒否する" {
+    // 公式は`{関数},名`・名前無しの`{関数}`を文法エラーにする。
+    const cases = [_][]const u8{
+        "F={関数},AAA\n",
+        "F={関数}\n",
+        "F={関数}123\n",
+    };
+    for (cases) |source| {
+        var result = try parse(std.testing.allocator, source, "bad-func-ref.nako3");
+        defer result.deinit();
+        try std.testing.expect(!result.succeeded());
+    }
+}

@@ -69,6 +69,17 @@ pub fn writeAggregate(emitter: *Emitter, function: ir.Function, instruction: ir.
     try emitter.debugSuffix(instruction.span, scope);
 }
 
+/// arguments_array命令。呼出し時の実引数列（%call.args/%call.argc）を
+/// そのまま要素とする配列を作る。仮引数個数への正規化やコンテキストの
+/// パディングは行わない（公式の`var 引数 = arguments`相当・__self相当は除く）。
+pub fn writeArgumentsArray(emitter: *Emitter, instruction: ir.Instruction, scope: usize) !void {
+    const result = instruction.result orelse return error.MissingInstructionResult;
+    try emitter.output.writer.print("  call void @lnako_aot_array_new(ptr %root.slot.{d}, ptr %call.args, i64 %call.argc)", .{result});
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+}
+
 pub fn writeIndexGet(emitter: *Emitter, instruction: ir.Instruction, scope: usize) !void {
     const result = instruction.result orelse return error.MissingInstructionResult;
     if (instruction.operands.len < 2) return error.InvalidIndexReference;

@@ -357,6 +357,7 @@ fn isInterruptSafepoint(opcode: ir.Opcode) bool {
         .call_value,
         .make_array,
         .make_object,
+        .arguments_array,
         .array_get,
         .property_get,
         .element_set,
