@@ -140,43 +140,63 @@ const Collector = struct {
     fn collect(self: *Collector, node: *ast.Node, path: []const u8) anyerror!void {
         switch (node.kind) {
             .function_definition => {
-                if (!node.is_export) return;
-                var args: std.ArrayList([]const u8) = .empty;
-                var josi: std.ArrayList([]const u8) = .empty;
-                for (node.arguments) |argument| {
-                    try args.append(self.allocator, argument.name);
-                    try josi.append(self.allocator, argument.josi);
+                if (node.is_export) {
+                    var args: std.ArrayList([]const u8) = .empty;
+                    var josi: std.ArrayList([]const u8) = .empty;
+                    for (node.arguments) |argument| {
+                        try args.append(self.allocator, argument.name);
+                        try josi.append(self.allocator, argument.josi);
+                    }
+                    try self.addCommand(.{
+                        .name = node.name,
+                        .args = args.items,
+                        .josi = josi.items,
+                    });
                 }
-                try self.addCommand(.{
-                    .name = node.name,
-                    .args = args.items,
-                    .josi = josi.items,
-                });
             },
             .variable_definition => {
-                if (!node.is_export) return;
-                try self.addCommand(.{ .name = node.name, .variable = true });
-            },
-            .variable_list_definition => {
-                if (!node.is_export) return;
-                for (node.arguments) |argument| {
-                    try self.addCommand(.{ .name = argument.name, .variable = true });
+                if (node.is_export) {
+                    try self.addCommand(.{ .name = node.name, .variable = true });
                 }
             },
-            .import => {
-                // 動的な取り込み式（node.value が空）は静的に解決しない。
-                if (node.value.len == 0) return;
-                const resolved = (try resolveImport(self.allocator, path, node.value)) orelse {
-                    try self.report(diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY, path, "import \"{s}\" escapes the package root", .{node.value});
-                    return;
-                };
-                if (!isNakoSource(resolved)) return;
-                self.depth += 1;
-                defer self.depth -= 1;
-                try self.process(resolved);
+            .variable_list_definition => {
+                if (node.is_export) {
+                    for (node.arguments) |argument| {
+                        try self.addCommand(.{ .name = argument.name, .variable = true });
+                    }
+                }
             },
+            .import => return self.followImport(node, path),
             else => {},
         }
+        // 公開定義の収集はトップレベル文のみだが、取り込みは module_graph と
+        // 同様に文の子孫まで辿る（条件分岐や関数内の静的取り込みも実行時の
+        // 依存辺になるため、索引閉包から欠落させない）。
+        try self.collectImports(node, path);
+    }
+
+    /// 文の子孫から `.import` ノードを再帰探索する。
+    fn collectImports(self: *Collector, node: *ast.Node, path: []const u8) anyerror!void {
+        for (node.children) |child| {
+            if (child.kind == .import) {
+                try self.followImport(child, path);
+            } else {
+                try self.collectImports(child, path);
+            }
+        }
+    }
+
+    fn followImport(self: *Collector, node: *ast.Node, path: []const u8) anyerror!void {
+        // 動的な取り込み式（node.value が空）は静的に解決しない。
+        if (node.value.len == 0) return;
+        const resolved = (try resolveImport(self.allocator, path, node.value)) orelse {
+            try self.report(diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY, path, "import \"{s}\" escapes the package root", .{node.value});
+            return;
+        };
+        if (!isNakoSource(resolved)) return;
+        self.depth += 1;
+        defer self.depth -= 1;
+        try self.process(resolved);
     }
 
     /// 同名命令は先勝ちで索引化する（index は識別子参照のため重複を持たない）。

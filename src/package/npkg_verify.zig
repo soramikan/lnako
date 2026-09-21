@@ -1,10 +1,11 @@
 //! `.npkg` アーカイブのインストール前検証。
 //!
 //! バイト列から ZIP central directory を読み、SPECIFICATION §6.5 の検証を行う:
-//! 必須 `NAKO-PKG` エントリの存在・schema version・エントリ名の規範性と重複、
+//! 必須 `NAKO-PKG` エントリの存在・schema version・エントリ名の規範性と重複・
+//! §6.1 の正規形（ソート順・UTF-8 フラグ・時刻ゼロ・extra/comment なし）、
 //! `FILES.toml` と payload エントリ集合の一致・hash/size 照合、
 //! `METADATA.toml` の構造、対象環境（runtime/os/cpu/abi/min-os/libc/
-//! features/engine）との適合。検証は静的であり、パッケージの初期化コードや
+//! features/engines）との適合。検証は静的であり、パッケージの初期化コードや
 //! 任意コードは実行しない。
 
 const std = @import("std");
@@ -33,8 +34,14 @@ pub const Target = struct {
     libc: ?[]const u8 = null,
     compat_js: bool = false,
     features: []const []const u8 = &.{},
-    /// 実行系のバージョン（`engines` 照合用）。null のキーは未検査。
-    engine_version: ?semver.Version = null,
+    /// なでしこ言語バージョン。`engines.nako` 照合と marker の `version`
+    /// 評価に使う。null の場合はこれらの制約を未検査とする。
+    nako_version: ?semver.Version = null,
+    /// 処理系バージョン（`engines.cnako`/`engines.lnako` 照合用）。
+    /// null のキーは未検査。言語バージョンと処理系バージョンは独立に
+    /// 指定する（lnako のリリース番号と対応する言語版は一致しないため）。
+    cnako_version: ?semver.Version = null,
+    lnako_version: ?semver.Version = null,
 
     fn artifactTarget(self: Target) manifest_mod.ArtifactTarget {
         return .{
@@ -45,7 +52,7 @@ pub const Target = struct {
             .os_version = self.os_version,
             .libc = self.libc,
             .compat_js = self.compat_js,
-            .version = self.engine_version,
+            .version = self.nako_version,
             .features = self.features,
         };
     }
@@ -66,9 +73,15 @@ pub const Verified = struct {
 
 const ZipEntry = struct {
     name: []const u8,
+    flags: u16,
     method: u16,
+    mod_time: u16,
+    mod_date: u16,
     compressed_size: u32,
     uncompressed_size: u32,
+    disk_start: u16,
+    extra_len: u16,
+    comment_len: u16,
     local_offset: u32,
 };
 
@@ -91,14 +104,20 @@ fn readCentralDirectory(allocator: Allocator, archive: []const u8) ![]ZipEntry {
         if (index == search_start) break;
     }
     const eocd = eocd_offset orelse return error.InvalidArchive;
+    // 複数 disk・EOCD comment・末尾の余剰バイトは正規形でないため拒否する。
+    // 加算は u64/usize で行い、細工された offset の u32 オーバーフローで
+    // 境界検査を迂回できないようにする。
     if (readInt(u16, archive, eocd + 4) != 0 or readInt(u16, archive, eocd + 6) != 0)
         return error.InvalidArchive;
     const entry_count = readInt(u16, archive, eocd + 10);
+    if (readInt(u16, archive, eocd + 8) != entry_count) return error.InvalidArchive;
     const cd_size = readInt(u32, archive, eocd + 12);
     const cd_offset = readInt(u32, archive, eocd + 16);
     if (entry_count > max_entries) return error.InvalidArchive;
-    if (@as(u64, cd_offset) + cd_size > archive.len or cd_offset + cd_size > eocd)
+    if (readInt(u16, archive, eocd + 20) != 0 or eocd + 22 != archive.len)
         return error.InvalidArchive;
+    const cd_end = @as(u64, cd_offset) + @as(u64, cd_size);
+    if (cd_end > archive.len or cd_end > eocd) return error.InvalidArchive;
 
     var entries: std.ArrayList(ZipEntry) = .empty;
     var offset: usize = cd_offset;
@@ -114,14 +133,20 @@ fn readCentralDirectory(allocator: Allocator, archive: []const u8) ![]ZipEntry {
         const name = archive[name_start .. name_start + name_len];
         try entries.append(allocator, .{
             .name = name,
+            .flags = readInt(u16, archive, offset + 8),
             .method = readInt(u16, archive, offset + 10),
+            .mod_time = readInt(u16, archive, offset + 12),
+            .mod_date = readInt(u16, archive, offset + 14),
             .compressed_size = readInt(u32, archive, offset + 20),
             .uncompressed_size = readInt(u32, archive, offset + 24),
+            .disk_start = readInt(u16, archive, offset + 34),
+            .extra_len = extra_len,
+            .comment_len = comment_len,
             .local_offset = readInt(u32, archive, offset + 42),
         });
         offset = name_end;
     }
-    if (offset != cd_offset + cd_size) return error.InvalidArchive;
+    if (offset != @as(usize, @intCast(cd_end))) return error.InvalidArchive;
     return entries.toOwnedSlice(allocator);
 }
 
@@ -130,15 +155,32 @@ fn readCentralDirectory(allocator: Allocator, archive: []const u8) ![]ZipEntry {
 /// central directory の名前と一致しないアーカイブは拒否する（二重名義で
 /// 検証済み内容と展開先をずらす偽装を防ぐ）。
 fn readEntryData(archive: []const u8, entry: ZipEntry) ![]u8 {
-    const lh = entry.local_offset;
+    // offset 加算は全て usize で行う（u32 の local_offset に 30 や 65535 を
+    // 足しても桁あふれしない）。細工された offset がパニックや境界検査の
+    // 迂回を引き起こさないよう、スライス前に常に範囲を確認する。
+    const lh: usize = entry.local_offset;
     if (lh + 30 > archive.len or readInt(u32, archive, lh) != 0x04034b50)
         return error.InvalidArchive;
-    const local_name_len = readInt(u16, archive, lh + 26);
-    const data_offset = lh + 30 + local_name_len + readInt(u16, archive, lh + 28);
-    const data_end = @as(usize, data_offset) + entry.compressed_size;
+    const local_name_len: usize = readInt(u16, archive, lh + 26);
+    const local_extra_len: usize = readInt(u16, archive, lh + 28);
+    const data_offset = lh + 30 + local_name_len + local_extra_len;
+    const data_end = data_offset + @as(usize, entry.compressed_size);
     if (data_end > archive.len) return error.InvalidArchive;
     const local_name = archive[lh + 30 .. lh + 30 + local_name_len];
     if (!std.mem.eql(u8, local_name, entry.name)) return error.InvalidArchive;
+    // local header も正規形を要求する: UTF-8 フラグ・stored・時刻ゼロ・
+    // extra なし、size は central directory と一致。両 header を独立に
+    // 検査しないと、検証側と展開側で読む内容がずれ得る。
+    if (readInt(u16, archive, lh + 6) != 0x0800 or
+        readInt(u16, archive, lh + 8) != 0 or
+        readInt(u16, archive, lh + 10) != 0 or
+        readInt(u16, archive, lh + 12) != 0 or
+        local_extra_len != 0 or
+        readInt(u32, archive, lh + 18) != entry.compressed_size or
+        readInt(u32, archive, lh + 22) != entry.uncompressed_size)
+    {
+        return error.InvalidArchive;
+    }
     if (entry.method != 0) return error.InvalidArchive;
     const compressed = archive[data_offset..data_end];
     if (compressed.len != entry.uncompressed_size) return error.InvalidArchive;
@@ -170,14 +212,22 @@ pub fn verify(
         },
     };
 
-    // エントリ名の規範性・重複・メタデータ領域の検査と内容の読み出し。
+    // エントリ名の規範性・重複・正規形・メタデータ領域の検査と内容の読み出し。
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     var contents: std.StringHashMapUnmanaged([]u8) = .empty;
     var total_uncompressed: u64 = 0;
+    var previous_name: ?[]const u8 = null;
     for (zip_entries) |entry| {
         // 重複・規範性・格納形式は directory エントリを含む全エントリに
         // 適用する（§6.5）。directory エントリは末尾 `/` のため規範 path に
         // 適合せず、ここで拒否される。
+        if (previous_name) |previous| {
+            if (std.mem.order(u8, previous, entry.name) == .gt) {
+                try report(diagnostics, diag.E029_INVALID_VALUE, entry.name, "archive entry \"{s}\" is not in canonical sorted order", .{entry.name});
+                continue;
+            }
+        }
+        previous_name = entry.name;
         if ((try seen.getOrPut(allocator, entry.name)).found_existing) {
             try report(diagnostics, diag.E038_NPKG_DUPLICATE_ENTRY, entry.name, "duplicate archive entry \"{s}\"", .{entry.name});
             continue;
@@ -188,6 +238,17 @@ pub fn verify(
         }
         if (entry.method != 0) {
             try report(diagnostics, diag.E029_INVALID_VALUE, entry.name, "archive entry \"{s}\" uses non-stored compression", .{entry.name});
+            continue;
+        }
+        // §6.1 の正規形: UTF-8 フラグのみ・時刻ゼロ・extra/comment なし・
+        // 単一 disk・stored は compressed == uncompressed。外部作成物にも
+        // 正規形を強制し、検証したバイト列が生成側の決定的出力と同じ形を
+        // 持つことを保証する。
+        if (entry.flags != 0x0800 or entry.mod_time != 0 or entry.mod_date != 0 or
+            entry.extra_len != 0 or entry.comment_len != 0 or entry.disk_start != 0 or
+            entry.compressed_size != entry.uncompressed_size)
+        {
+            try report(diagnostics, diag.E029_INVALID_VALUE, entry.name, "archive entry \"{s}\" is not in canonical form", .{entry.name});
             continue;
         }
         if (npkg_files.isMetadataPath(entry.name)) {
@@ -281,10 +342,12 @@ pub fn verify(
 
     // 対象環境との適合: runtime・engines・各 export の artifact 選択。
     _ = try manifest.checkRuntime(target.runtime, diagnostics, .{});
+    // 言語版と処理系版は独立した制約として検査する。対象 runtime の
+    // 処理系版のみを渡し、値が不明な制約は未検査とする。
     _ = try manifest.checkEngines(
-        target.engine_version,
-        if (std.mem.eql(u8, target.runtime, "cnako")) target.engine_version else null,
-        if (std.mem.eql(u8, target.runtime, "lnako")) target.engine_version else null,
+        target.nako_version,
+        if (std.mem.eql(u8, target.runtime, "cnako")) target.cnako_version else null,
+        if (std.mem.eql(u8, target.runtime, "lnako")) target.lnako_version else null,
         diagnostics,
         .{},
     );

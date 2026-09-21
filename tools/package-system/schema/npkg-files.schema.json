@@ -16,7 +16,7 @@
         "additionalProperties": false,
         "properties": {
           "path": { "type": "string" },
-          "sha256": { "$ref": "common.schema.json#/$defs/hash" },
+          "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
           "size": { "type": "integer", "minimum": 0 }
         }
       }

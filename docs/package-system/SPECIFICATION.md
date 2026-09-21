@@ -408,7 +408,7 @@ size = 1234
 
 - 公開トップレベル関数: `{ "name", "args": [...], "josi": [...] }`（引数名と助詞の対応配列）。
 - 公開トップレベル変数: `{ "name", "variable": true }`。
-- `fn`・`async`・`return` のような静的に確定できない値は出力しない。
+- `fn`・`async`・`return` のような静的に確定できない値は v1 の生成側では出力しない。これらは将来の拡張用予約フィールドであり、v1 の受理側は読み飛ばす（値を解釈しない）。
 - `commands` は `name` のバイト順ソートで安定化する。
 
 ### 6.5 検証
@@ -417,6 +417,7 @@ size = 1234
 
 - 必須 `NAKO-PKG` エントリの存在と既知 schema version（未知は `E035_UNKNOWN_NPKG_SCHEMA`）。
 - 全エントリ名の規範パス適合と重複なし。全エントリが stored 格納であり、各 local header のファイル名が central directory のエントリ名と一致すること。
+- アーカイブが §6.1 の正規形であること。central directory のエントリが名前のバイト順ソートであること、UTF-8 ファイル名フラグのみが立ち timestamp がゼロ・extra field と comment が空・単一 disk で stored の `compressed == uncompressed` であること、local header も同じ正規形（フラグ・method・時刻・extra・size 一致）を持つこと、EOCD の comment が空で末尾が EOCD と一致すること。外部作成物もこの正規形を要求する。
 - `FILES.toml` と payload エントリ集合の完全一致、各 hash・size の一致。
 - `METADATA.toml` の構造・必須フィールド、宣言ファイル（`exports[].path` および全 native/esm artifact の `path`）の収録。
 - 対象 profile（os/cpu/abi/min-os/libc/features）と artifact 条件の適合。不適合な native artifact は `E015_NATIVE_FOR_INCOMPATIBLE_TARGET`、未対応 runtime は `E031_UNSUPPORTED_RUNTIME`、engine 要件不適合は `E032_ENGINE_MISMATCH`。

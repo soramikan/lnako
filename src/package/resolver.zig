@@ -181,6 +181,11 @@ pub const Target = struct {
     os: []const u8 = "macos",
     cpu: []const u8 = "aarch64",
     abi: []const u8 = "gnu",
+    /// OS バージョン（`min-os` 付き artifact 宣言の照合用）。null は不明で、
+    /// `min-os` を要求する宣言は適合を証明できないため不適合となる。
+    os_version: ?[]const u8 = null,
+    /// libc 種別（`libc` 付き artifact 宣言の照合用）。null は `abi` から推定。
+    libc: ?[]const u8 = null,
     compat_js: bool = false,
     optimize: []const u8 = "O0",
     nako_version: ?semver.Version = null,
@@ -972,17 +977,19 @@ pub fn metaFromManifest(gpa: Allocator, source: *const manifest.Manifest, target
     };
     // native/esm は宣言の存在ではなく「対象環境へ適合する宣言の有無」で
     // 実装可否を決める。条件付き宣言（when/min-os/libc）が一つも対象へ
-    // 適合しない種別は実装候補にしない。resolver の Target には
-    // os_version/libc/features が無いため、os_version・libc を要求する
-    // 宣言は適合を証明できず不適合となる（保守方向）。`features` 要件は
-    // feature unification 後にしか確定しないためこの段階では未評価とし、
-    // feature 条件だけで version 候補を落とさない（最終的な実装選択は
-    // import 時の `Export.resolve` が再有効化 feature で検証する）。
+    // 適合しない種別は実装候補にしない。`os_version`/`libc` が Target で
+    // 未指定の場合、それを要求する宣言は適合を証明できず不適合となる
+    // （保守方向）。`features` 要件は feature unification 後にしか確定
+    // しないためこの段階では未評価とし、feature 条件だけで version 候補を
+    // 落とさない（最終的な実装選択は import 時の `Export.resolve` が
+    // 再有効化 feature で検証する）。
     const artifact_target = manifest.ArtifactTarget{
         .runtime = target.runtime,
         .os = target.os,
         .cpu = target.cpu,
         .abi = target.abi,
+        .os_version = target.os_version,
+        .libc = target.libc,
         .compat_js = target.compat_js,
         .version = target.nako_version orelse target.lnako_version orelse target.cnako_version,
     };

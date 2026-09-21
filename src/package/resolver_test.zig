@@ -1186,6 +1186,53 @@ test "条件付きartifactは対象外環境で実装候補にしない" {
     }, false));
 }
 
+test "min-os付きartifactはTarget.os_versionで照合する" {
+    var arena = std.heap.ArenaAllocator.init(T.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+    var m = try parseManifest(gpa,
+        \\[package]
+        \\name = "macos14"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[[exports]]
+        \\name = "plugin"
+        \\native = { path = "lib/x.dylib", min-os = "14.0" }
+        \\
+    );
+    defer m.deinit();
+
+    // os_version が下限を満たす対象では native 実装が候補になる。
+    const meta15 = try resolver.metaFromManifest(gpa, &m, .{
+        .runtime = "lnako",
+        .os = "macos",
+        .abi = "none",
+        .os_version = "15.1",
+    });
+    try T.expect(meta15.has_native);
+    try T.expect(meta15.unavailable_reason == null);
+
+    // os_version が下限未満なら不適合。
+    const meta13 = try resolver.metaFromManifest(gpa, &m, .{
+        .runtime = "lnako",
+        .os = "macos",
+        .abi = "none",
+        .os_version = "13.9",
+    });
+    try T.expect(!meta13.has_native);
+    try T.expect(meta13.unavailable_reason != null);
+
+    // os_version 不明（null）では適合を証明できず保守的に不適合。
+    const meta_unknown = try resolver.metaFromManifest(gpa, &m, .{
+        .runtime = "lnako",
+        .os = "macos",
+        .abi = "none",
+    });
+    try T.expect(!meta_unknown.has_native);
+    try T.expect(meta_unknown.unavailable_reason != null);
+}
+
 // ---------------------------------------------------------------------------
 // brute-force oracle
 // ---------------------------------------------------------------------------

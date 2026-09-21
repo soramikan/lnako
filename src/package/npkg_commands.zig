@@ -4,6 +4,8 @@
 //! 生成される（初期化コードは実行しない）。公開トップレベル関数は
 //! `{ name, args, josi }`、公開変数は `{ name, variable: true }` を持つ。
 //! `fn`/`async`/`return` は静的に決定できないため生成側では省略する。
+//! これらは将来拡張用の予約フィールドとして受理側では許容するが、v1 では
+//! 値を解釈せずモデルへも保持しない（SPECIFICATION §6.4）。
 //!
 //! 形式は `docs/package-system/SPECIFICATION.md` §6.4、
 //! `tools/package-system/schema/commands.schema.json` に対応する。

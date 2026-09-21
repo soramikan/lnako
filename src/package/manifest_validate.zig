@@ -326,7 +326,7 @@ const Validator = struct {
                 }
                 if (decl_table.getPtr("features")) |features_value| {
                     const item_path = try self.pathOf(field_path, "features");
-                    decl.features = try self.expectStringList(features_value, item_path);
+                    decl.features = try self.expectFeatureList(features_value, item_path);
                 }
                 return decl;
             },
@@ -386,8 +386,15 @@ const Validator = struct {
 
     fn validatePackage(self: *Validator, table: *std.StringHashMapUnmanaged(toml.Value), position: Position) Error!void {
         const path = "package";
-        const known = [_][]const u8{ "name", "version", "license", "id", "description", "authors", "keywords", "repository", "homepage", "nako-version", "min-nako-version", "schema-version", "runtimes", "engines", "include" };
-        try self.rejectUnknownFields(table, path, &known);
+        // `schema-version`・`include` は manifest 専用で、配布メタデータの
+        // 正規形・JSON Schema（npkg-metadata.schema.json）には存在しない。
+        // npkg_metadata モードでは未知フィールドとして拒否し、両検証を
+        // 一致させる。
+        const known: []const []const u8 = switch (self.mode) {
+            .manifest => &.{ "name", "version", "license", "id", "description", "authors", "keywords", "repository", "homepage", "nako-version", "min-nako-version", "schema-version", "runtimes", "engines", "include" },
+            .npkg_metadata => &.{ "name", "version", "license", "id", "description", "authors", "keywords", "repository", "homepage", "nako-version", "min-nako-version", "runtimes", "engines" },
+        };
+        try self.rejectUnknownFields(table, path, known);
 
         var package = Package{
             .name = "",
@@ -477,22 +484,26 @@ const Validator = struct {
                 }
             }
         }
-        if (table.getPtr("include")) |value| {
-            package.include = try self.expectStringList(value, "package.include");
+        if (self.mode == .manifest) {
+            if (table.getPtr("include")) |value| {
+                package.include = try self.expectStringList(value, "package.include");
+            }
         }
-        if (table.getPtr("schema-version")) |value| {
-            switch (value.kind) {
-                .integer => |integer| {
-                    if (integer < 1) {
-                        try self.report(diag.E029_INVALID_VALUE, "package.schema-version", value.position, "invalid schema-version {d}", .{integer});
-                    } else if (integer > known_schema_version) {
-                        // u32 範囲を超える巨大な値も含めて未知 schema version として診断する。
-                        try self.report(diag.E001_UNKNOWN_MANIFEST_SCHEMA, "package.schema-version", value.position, "unknown manifest schema version {d}", .{integer});
-                    } else {
-                        package.schema_version = @intCast(integer);
-                    }
-                },
-                else => try self.report(diag.E023_INVALID_TYPE, "package.schema-version", value.position, "expected integer for \"package.schema-version\"", .{}),
+        if (self.mode == .manifest) {
+            if (table.getPtr("schema-version")) |value| {
+                switch (value.kind) {
+                    .integer => |integer| {
+                        if (integer < 1) {
+                            try self.report(diag.E029_INVALID_VALUE, "package.schema-version", value.position, "invalid schema-version {d}", .{integer});
+                        } else if (integer > known_schema_version) {
+                            // u32 範囲を超える巨大な値も含めて未知 schema version として診断する。
+                            try self.report(diag.E001_UNKNOWN_MANIFEST_SCHEMA, "package.schema-version", value.position, "unknown manifest schema version {d}", .{integer});
+                        } else {
+                            package.schema_version = @intCast(integer);
+                        }
+                    },
+                    else => try self.report(diag.E023_INVALID_TYPE, "package.schema-version", value.position, "expected integer for \"package.schema-version\"", .{}),
+                }
             }
         }
         self.manifest.package = package;

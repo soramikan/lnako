@@ -6,8 +6,11 @@ const std = @import("std");
 /// - `?`  : `/` 以外の1文字
 /// 上記以外はリテラルとして比較する。`[...]`・`{a,b}`・`!`否定は対象外。
 /// patternとpathはともにPOSIX区切りの正規化済みパスを前提とする。
-/// パターンがdir名のみを指す場合（例: `data`）はその配下全体に一致する
-/// （`data` は `data/**` と同義）。
+/// パターンを消費し尽くした時点で path に未消費の成分が残る場合は不一致
+/// （`*.txt` は `a.txt/sub/file` に一致しない）。末尾 `**` だけが残りの
+/// 全成分へ一致する。glob を含まないパターンの directory 接頭辞扱い
+/// （`data` が `data/sub/x` に一致する）は呼出し側の
+/// `includePatternMatches` が担う。
 pub fn match(pattern: []const u8, path: []const u8) bool {
     var pattern_segments = std.mem.splitScalar(u8, pattern, '/');
     var path_segments = std.mem.splitScalar(u8, path, '/');
@@ -15,7 +18,10 @@ pub fn match(pattern: []const u8, path: []const u8) bool {
 }
 
 fn matchSegments(pattern: *std.mem.SplitIterator(u8, .scalar), path: *std.mem.SplitIterator(u8, .scalar)) bool {
-    const segment = pattern.next() orelse return true;
+    // パターンを消費し尽くしたとき path 側も尽きている場合のみ一致。
+    // これを緩めると `*.txt` が `a.txt/sub/file` のような深い path へ
+    // 一致し、意図しないファイルを payload に収録してしまう。
+    const segment = pattern.next() orelse return path.next() == null;
     if (std.mem.eql(u8, segment, "**")) {
         // `**` は0個以上のpath成分へ展開する。
         var rest = pattern.*;
@@ -60,6 +66,11 @@ test "globパターンでpathを照合する" {
     try std.testing.expect(match("data/*.json", "data/dic.json"));
     try std.testing.expect(match("?", "a"));
     try std.testing.expect(!match("?", "ab"));
-    // ディレクトリ指定は配下全体を含む。
-    try std.testing.expect(match("data", "data/sub/x.bin"));
+    // 末尾 `**` だけが残り成分全体へ一致する。パターン消費後に path が
+    // 残る場合は不一致（`data` のようなリテラル dir 接頭辞は
+    // `includePatternMatches` の責務）。
+    try std.testing.expect(match("data/**", "data/sub/x.bin"));
+    try std.testing.expect(!match("data", "data/sub/x.bin"));
+    try std.testing.expect(!match("*.txt", "a.txt/sub/file"));
+    try std.testing.expect(!match("assets/*.txt", "assets/readme.txt/sub/secret.bin"));
 }

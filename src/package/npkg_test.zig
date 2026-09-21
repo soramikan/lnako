@@ -6,6 +6,7 @@ const npkg_commands = @import("npkg_commands.zig");
 const npkg_commands_gen = @import("npkg_commands_gen.zig");
 const npkg_build = @import("npkg_build.zig");
 const npkg_verify = @import("npkg_verify.zig");
+const semver = @import("semver.zig");
 const zip = @import("../archive/zip.zig");
 const diag = @import("diagnostics.zig");
 
@@ -397,6 +398,41 @@ test "METADATA.toml の .npkg 固有検証" {
         \\
     , diag.E029_INVALID_VALUE);
 
+    // [package] の include/schema-version は manifest 専用で、配布
+    // メタデータ（npkg-metadata.schema.json）では未知フィールド
+    try parseMetadataErrCode(allocator,
+        \\schemaVersion = 1
+        \\[package]
+        \\name = "x"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\include = ["src/**"]
+        \\
+    , diag.E022_UNKNOWN_FIELD);
+    try parseMetadataErrCode(allocator,
+        \\schemaVersion = 1
+        \\[package]
+        \\name = "x"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\schema-version = 1
+        \\
+    , diag.E022_UNKNOWN_FIELD);
+
+    // artifact 宣言の features も feature 名規則で検査する
+    try parseMetadataErrCode(allocator,
+        \\schemaVersion = 1
+        \\nativePluginAbi = "lnako_plugin_v1"
+        \\[package]
+        \\name = "x"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "p"
+        \\native = [{ path = "x.so", features = ["bad name"] }]
+        \\
+    , diag.E029_INVALID_VALUE);
+
     // native 宣言なしなら nativePluginAbi 不要
     var manifest = try parseMetadataOk(allocator,
         \\schemaVersion = 1
@@ -479,6 +515,39 @@ test "commands.json を AST から生成する" {
     try testing.expect(by_name.get("差分") != null);
     try testing.expect(by_name.get("内部") == null);
     try testing.expect(by_name.get("秘密") == null);
+}
+
+test "commands.json 生成は文の子孫にある取り込みも辿る" {
+    const allocator = testing.allocator;
+    var provider = try MapProvider.init(allocator);
+    defer provider.deinit();
+    // 条件分岐と関数本体内の静的取り込みは module_graph 上も依存辺になる
+    // ため、索引の閉包に含める必要がある。
+    try provider.put("src/index.nako3",
+        \\もし、1=1ならば
+        \\  「lib/util.nako3」を取り込む
+        \\ここまで
+        \\●(AをBと)合計とは
+        \\  A+Bで戻る
+        \\ここまで
+        \\
+    );
+    try provider.put("src/lib/util.nako3",
+        \\●変換とは
+        \\ここまで
+        \\
+    );
+
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var result = try npkg_commands_gen.generate(allocator, provider.provider(), &.{"src/index.nako3"}, &list);
+    defer result.deinit();
+
+    var by_name = std.StringHashMap(npkg_commands.Command).init(allocator);
+    defer by_name.deinit();
+    for (result.commands) |command| try by_name.put(command.name, command);
+    try testing.expect(by_name.get("合計") != null);
+    try testing.expect(by_name.get("変換") != null);
 }
 
 test "commands.json 生成はルート外 import を拒否する" {
@@ -1001,6 +1070,102 @@ test "npkg verify は stored 以外の圧縮を拒否する" {
     var list = try verifyArchive(allocator, archive);
     defer list.deinit();
     try testing.expect(list.find(diag.E029_INVALID_VALUE) != null);
+}
+
+test "npkg verify は非正規形の ZIP を拒否する" {
+    const allocator = testing.allocator;
+
+    // UTF-8 フラグを落とした central エントリは正規形でない。
+    {
+        const archive = try minimalArchive(allocator);
+        defer allocator.free(archive);
+        const cd = findCentralEntry(archive, "a.txt").?;
+        std.mem.writeInt(u16, archive[cd + 8 ..][0..2], 0, .little);
+        var list = try verifyArchive(allocator, archive);
+        defer list.deinit();
+        try testing.expect(list.find(diag.E029_INVALID_VALUE) != null);
+    }
+    // timestamp がゼロでないエントリは正規形でない。
+    {
+        const archive = try minimalArchive(allocator);
+        defer allocator.free(archive);
+        const cd = findCentralEntry(archive, "a.txt").?;
+        std.mem.writeInt(u16, archive[cd + 12 ..][0..2], 1, .little);
+        var list = try verifyArchive(allocator, archive);
+        defer list.deinit();
+        try testing.expect(list.find(diag.E029_INVALID_VALUE) != null);
+    }
+    // EOCD 後の余剰バイトは正規形でない。
+    {
+        const archive = try minimalArchive(allocator);
+        defer allocator.free(archive);
+        const padded = try allocator.alloc(u8, archive.len + 4);
+        defer allocator.free(padded);
+        @memcpy(padded[0..archive.len], archive);
+        @memcpy(padded[archive.len..], "junk");
+        var list = try verifyArchive(allocator, padded);
+        defer list.deinit();
+        try testing.expect(list.find(diag.E029_INVALID_VALUE) != null);
+    }
+    // 細工された local_offset（u32 上限付近）でパニックせず診断を返す。
+    {
+        const archive = try minimalArchive(allocator);
+        defer allocator.free(archive);
+        const cd = findCentralEntry(archive, "a.txt").?;
+        std.mem.writeInt(u32, archive[cd + 42 ..][0..4], 0xfffffff0, .little);
+        var list = try verifyArchive(allocator, archive);
+        defer list.deinit();
+        try testing.expect(list.find(diag.E029_INVALID_VALUE) != null);
+    }
+}
+
+test "npkg verify は言語版と処理系版を独立に検査する" {
+    const allocator = testing.allocator;
+    const metadata =
+        \\schemaVersion = 1
+        \\
+        \\[package]
+        \\name = "x"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[package.engines]
+        \\nako = ">=3.7.0"
+        \\lnako = ">=0.1.0"
+        \\
+    ;
+    const payload = "x";
+    const files_toml = try emitFilesToml(allocator, &.{
+        .{ .path = "a.txt", .sha256 = sha256Of(payload), .size = payload.len },
+    });
+    defer allocator.free(files_toml);
+    const archive = try zip.writeEntries(allocator, &.{
+        .{ .name = "NAKO-PKG/METADATA.toml", .data = metadata },
+        .{ .name = "NAKO-PKG/FILES.toml", .data = files_toml },
+        .{ .name = "NAKO-PKG/commands.json", .data = empty_commands },
+        .{ .name = "a.txt", .data = payload },
+    });
+    defer allocator.free(archive);
+
+    // lnako 0.2.0 向けに処理系版だけ指定すれば、言語版制約（>=3.7.0）は
+    // 未検査で通る。同じ値を両方へ流用すると 0.2.0 が nako 制約で誤拒否
+    // される（回帰）。
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var verified = try npkg_verify.verify(allocator, archive, .{
+        .runtime = "lnako",
+        .lnako_version = try semver.Version.parse("0.2.0"),
+    }, &list);
+    defer verified.deinit();
+
+    // 言語版が制約未満なら処理系版を満たしても拒否される。
+    var failing = diag.List.init(allocator);
+    defer failing.deinit();
+    try testing.expectError(error.InvalidPackage, npkg_verify.verify(allocator, archive, .{
+        .runtime = "lnako",
+        .nako_version = try semver.Version.parse("3.0.0"),
+        .lnako_version = try semver.Version.parse("0.2.0"),
+    }, &failing));
+    try testing.expect(failing.find(diag.E032_ENGINE_MISMATCH) != null);
 }
 
 test "npkg verify は directory エントリを拒否する" {

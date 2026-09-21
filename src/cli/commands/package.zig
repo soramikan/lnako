@@ -71,12 +71,14 @@ fn runVerify(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8,
     var archive_path: ?[]const u8 = null;
     var target = npkg_verify.Target{};
     var features: std.ArrayList([]const u8) = .empty;
-    var engine_version_text: ?[]const u8 = null;
+    var nako_version_text: ?[]const u8 = null;
+    var cnako_version_text: ?[]const u8 = null;
+    var lnako_version_text: ?[]const u8 = null;
 
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
         const argument = args[index];
-        const value_options = [_][]const u8{ "--runtime", "--os", "--cpu", "--abi", "--os-version", "--libc", "--feature", "--engine-version" };
+        const value_options = [_][]const u8{ "--runtime", "--os", "--cpu", "--abi", "--os-version", "--libc", "--feature", "--nako-version", "--cnako-version", "--lnako-version" };
         var matched = false;
         inline for (value_options) |option| {
             if (std.mem.eql(u8, argument, option)) {
@@ -100,8 +102,12 @@ fn runVerify(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8,
                     target.libc = value;
                 } else if (comptime std.mem.eql(u8, option, "--feature")) {
                     try features.append(allocator, value);
-                } else if (comptime std.mem.eql(u8, option, "--engine-version")) {
-                    engine_version_text = value;
+                } else if (comptime std.mem.eql(u8, option, "--nako-version")) {
+                    nako_version_text = value;
+                } else if (comptime std.mem.eql(u8, option, "--cnako-version")) {
+                    cnako_version_text = value;
+                } else if (comptime std.mem.eql(u8, option, "--lnako-version")) {
+                    lnako_version_text = value;
                 }
                 matched = true;
             }
@@ -123,9 +129,24 @@ fn runVerify(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8,
         try stderr.writeAll("package verify: .npkg ファイルを指定してください\n");
         std.process.exit(2);
     };
-    if (engine_version_text) |text| {
-        target.engine_version = semver.Version.parse(text) catch {
-            try stderr.print("package verify: --engine-version が不正です: {s}\n", .{text});
+    // 言語版（--nako-version）と処理系版（--cnako-version/--lnako-version）は
+    // 独立に指定する。同じ値を両制約へ流用すると、lnako のリリース番号と
+    // 対応する言語版が異なるパッケージを誤って拒否する。
+    if (nako_version_text) |text| {
+        target.nako_version = semver.Version.parse(text) catch {
+            try stderr.print("package verify: --nako-version が不正です: {s}\n", .{text});
+            std.process.exit(2);
+        };
+    }
+    if (cnako_version_text) |text| {
+        target.cnako_version = semver.Version.parse(text) catch {
+            try stderr.print("package verify: --cnako-version が不正です: {s}\n", .{text});
+            std.process.exit(2);
+        };
+    }
+    if (lnako_version_text) |text| {
+        target.lnako_version = semver.Version.parse(text) catch {
+            try stderr.print("package verify: --lnako-version が不正です: {s}\n", .{text});
             std.process.exit(2);
         };
     }
