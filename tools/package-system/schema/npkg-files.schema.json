@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/soramikan/lnako/package-system/schema/npkg-files/v1",
+  "type": "object",
+  "required": ["schemaVersion", "files"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "sha256", "size"],
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string" },
+          "sha256": { "$ref": "common.schema.json#/$defs/hash" },
+          "size": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  }
+}
