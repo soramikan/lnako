@@ -290,7 +290,7 @@ pub const Parser = struct {
             .keyword_here_end, .keyword_else, .keyword_error => self.fail(.unexpected_token, "対応する構文の開始がありません", token),
             else => blk: {
                 if (self.isModeDirective()) break :blk self.parseModeDirective();
-                if (self.canStartAssignment()) break :blk self.parseAssignment();
+                if (self.isTowaDeclaration() or self.canStartAssignment()) break :blk self.parseAssignment();
                 break :blk self.parseCallOrControl();
             },
         };
@@ -538,12 +538,34 @@ pub const Parser = struct {
             return node;
         }
         const name = try self.require(.identifier, "変数名が必要です");
-        _ = try self.require(.equal, "変数宣言に『=』が必要です");
-        const value = try self.parseCallExpression();
+        const has_attribute = self.at(.left_brace);
+        const is_export = try self.parseVariableAttribute(true);
+        // 公式は`変数 A`の初期値省略を許し、その値は0になる。属性付きの
+        // 宣言と`定数`は`=`を必須にする。
+        var value = try builder.omittedValue(self, name);
+        if (self.at(.equal)) {
+            _ = self.advance();
+            value = try self.parseCallExpression();
+        } else if (is_const or has_attribute) {
+            return self.fail(.expected_token, "変数宣言に『=』が必要です", self.peek());
+        }
         const node = try builder.makeNodeWithChildren(self, .variable_definition, start, try builder.copyChildren(self, &.{value}));
         node.name = name.value;
         node.is_const = is_const;
+        node.is_export = is_export;
         return node;
+    }
+
+    /// 変数・定数の`{公開}`/`{非公開}`属性を読み、公開可否を返す。
+    /// 属性が無ければ`default`をそのまま返す。
+    pub fn parseVariableAttribute(self: *Parser, default: bool) ParseFailure!bool {
+        if (!self.at(.left_brace)) return default;
+        _ = self.advance();
+        const attribute = try self.require(.identifier, "変数属性が必要です");
+        _ = try self.require(.right_brace, "変数属性を閉じる『}』が必要です");
+        if (std.mem.eql(u8, attribute.value, "非公開")) return false;
+        if (std.mem.eql(u8, attribute.value, "公開") or std.mem.eql(u8, attribute.value, "エクスポート")) return true;
+        return default;
     }
 
     /// `取込 <expr>` の文頭形式。
@@ -603,6 +625,16 @@ pub const Parser = struct {
         return false;
     }
 
+    /// `Aとは変数`/`Aとは定数`の宣言文。公式は初期値を省略できるため、
+    /// `=`の有無だけを見る`canStartAssignment`では判定できない。
+    pub fn isTowaDeclaration(self: *Parser) bool {
+        const token = self.peek();
+        if (token.kind != .identifier) return false;
+        if (!std.mem.eql(u8, token.josi, "とは")) return false;
+        const next = self.peekAhead(1);
+        return next.kind == .keyword_let or next.kind == .keyword_const;
+    }
+
     pub fn parseAssignment(self: *Parser) ParseFailure!*ast.Node {
         const start = self.peek();
         var targets: std.ArrayList(*ast.Node) = .empty;
@@ -611,10 +643,24 @@ pub const Parser = struct {
             _ = self.advance();
             try targets.append(self.allocator, try self.parseLValue());
         }
-        const declaration_from_towa = self.at(.keyword_let) and std.mem.eql(u8, targets.items[0].josi, "とは");
-        if (declaration_from_towa) _ = self.advance();
-        _ = try self.require(.equal, "代入文に『=』が必要です");
-        const value = try self.parseCallExpression();
+        // 公式は`Aとは変数`/`Aとは定数`を宣言として扱い、`{公開}`/`{非公開}`
+        // 属性と`=`による初期値を任意にする。
+        const declaration_from_towa = (self.at(.keyword_let) or self.at(.keyword_const)) and
+            std.mem.eql(u8, targets.items[0].josi, "とは");
+        var declaration_is_const = false;
+        var declaration_is_export = true;
+        if (declaration_from_towa) {
+            declaration_is_const = self.peek().kind == .keyword_const;
+            _ = self.advance();
+            declaration_is_export = try self.parseVariableAttribute(true);
+        }
+        var value = if (declaration_from_towa) try builder.omittedValue(self, start) else undefined;
+        if (self.at(.equal)) {
+            _ = self.advance();
+            value = try self.parseCallExpression();
+        } else if (!declaration_from_towa) {
+            return self.fail(.expected_token, "代入文に『=』が必要です", self.peek());
+        }
         if (targets.items.len > 1) {
             const result = try builder.makeNodeWithChildren(self, .variable_list_definition, start, try builder.copyChildren(self, &.{value}));
             result.arguments = try builder.namesToArguments(self, targets.items);
@@ -637,6 +683,10 @@ pub const Parser = struct {
         const node = try builder.makeNodeWithChildren(self, kind, start, children);
         node.name = if (target.name.len > 0) target.name else target.value;
         node.josi = "";
+        if (declaration_from_towa) {
+            node.is_const = declaration_is_const;
+            node.is_export = declaration_is_export;
+        }
         // DNCLでは未初期化変数への配列要素代入で30要素配列を自動初期化する（公式flagCheckArrayInit相当）
         node.check_array_init = kind == .array_assignment and (self.mode.dncl or self.mode.dncl2);
         return node;

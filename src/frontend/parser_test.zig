@@ -233,6 +233,51 @@ test "変数と定数の角括弧分割宣言を構文解析する" {
     try std.testing.expect(constant_declaration.is_const);
 }
 
+test "初期値省略と公開属性の宣言を公式同様に構文解析する" {
+    // 公式は`変数 A`・`Aとは変数`・`Aとは定数`の初期値を省略でき、その値を0に
+    // する。属性は`変数 A{公開}=1`と`Aとは変数{非公開}=3`の両形で受理する。
+    const source = "変数 A\nBとは変数\nCとは定数\nDとは定数=50\n" ++
+        "変数 E{非公開}=1\n定数 F{公開}=2\nGとは変数{非公開}=3\n";
+    var result = try parse(std.testing.allocator, source, "宣言.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const expected = [_]struct { name: []const u8, is_const: bool, is_export: bool, number: ?f64 }{
+        .{ .name = "A", .is_const = false, .is_export = true, .number = null },
+        .{ .name = "B", .is_const = false, .is_export = true, .number = null },
+        .{ .name = "C", .is_const = true, .is_export = true, .number = null },
+        .{ .name = "D", .is_const = true, .is_export = true, .number = 50 },
+        .{ .name = "E", .is_const = false, .is_export = false, .number = 1 },
+        .{ .name = "F", .is_const = true, .is_export = true, .number = 2 },
+        .{ .name = "G", .is_const = false, .is_export = false, .number = 3 },
+    };
+    for (expected, 0..) |declaration, index| {
+        const node = result.root.?.children[index * 2];
+        try std.testing.expectEqual(ast.Kind.variable_definition, node.kind);
+        try std.testing.expectEqualStrings(declaration.name, node.name);
+        try std.testing.expectEqual(declaration.is_const, node.is_const);
+        try std.testing.expectEqual(declaration.is_export, node.is_export);
+        const value = node.children[0];
+        if (declaration.number) |number| {
+            try std.testing.expectEqual(ast.Kind.number, value.kind);
+            try std.testing.expectEqual(number, value.number_value.?);
+        } else {
+            // 公式は初期値省略をnopブロックにし、コード生成で0にする。
+            try std.testing.expectEqual(ast.Kind.nop, value.kind);
+        }
+    }
+}
+
+test "属性付きの変数宣言と初期値なしの定数宣言を公式同様に拒否する" {
+    const cases = [_][]const u8{ "変数 A{非公開}\n", "定数 C\n" };
+    for (cases) |source| {
+        var result = try parse(std.testing.allocator, source, "宣言.nako3");
+        defer result.deinit();
+        try std.testing.expect(!result.succeeded());
+        try std.testing.expectEqual(diagnostic.Code.expected_token, result.diagnostics[0].code);
+        try std.testing.expectEqualStrings("変数宣言に『=』が必要です", result.diagnostics[0].message);
+    }
+}
+
 test "公式同様に宣言なしの角括弧分割代入を拒否する" {
     var result = try parse(std.testing.allocator, "[A,B]=[1,2]\n", "分割.nako3");
     defer result.deinit();
