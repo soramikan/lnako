@@ -343,14 +343,15 @@ pub const Parser = struct {
                 // 「もし」省略形の条件文として扱う（`Aが5と等しいならば`）。
                 // lnakoの字句解析は『ならば』を直前の語の助詞にするため、
                 // 文の末尾助詞で判定する。ただし公式が条件文へ昇格させるのは
-                // `yCall`が命令呼出しで確定した場合だけなので、命令名の解決で
-                // 作った呼出しかC風呼出しに限る。範囲演算子（`1…5`）や単独語は
-                // 命令呼出しではない（公式も`1…5ならば`は不完全な文、`Aならば`は
-                // 未解決語として拒否する）。単独語は公式の`func token`に相当する
-                // 既知の命令名・ユーザー定義関数のときだけ命令呼出しとみなす。
+                // `yCall`が命令呼出しで確定した場合だけなので、公式の`func token`
+                // に相当する既知の命令名・ユーザー定義関数の呼出しに限る。
+                // 範囲演算子（`1…5`）や単独語は命令呼出しではなく、未定義語
+                // （`1を未定義Fならば`）は公式も未解決語として拒否する。
+                // C風呼出しは公式も条件文へ入れてから名前解決で失敗するため、
+                // 既知名の確認は行わない。
                 if (statement.kind == .function_call and isConditionalJosi(statement.josi) and
-                    (statement.command_call or statement.is_c_style_call or
-                        (statement.children.len == 0 and self.isKnownCommandName(statement.name))))
+                    (statement.is_c_style_call or
+                        ((statement.command_call or statement.children.len == 0) and self.isKnownCommandName(statement.name))))
                 {
                     break :blk self.parseIfThen(token, try self.finishCondition(statement));
                 }

@@ -259,6 +259,12 @@ test "「もし」省略形は命令呼出しのときだけ条件文にする" 
     try std.testing.expectEqual(ast.Kind.function_call, word.root.?.children[0].kind);
     try std.testing.expect(!word.root.?.children[0].is_c_style_call);
 
+    // 未定義語の助詞付き呼出しは公式も未解決語として拒否するため条件文にしない。
+    var undefined_call = try parse(std.testing.allocator, "1を未定義Fならば\n", "implicit-if-undefined.nako3");
+    defer undefined_call.deinit();
+    try std.testing.expect(undefined_call.succeeded());
+    try std.testing.expectEqual(ast.Kind.function_call, undefined_call.root.?.children[0].kind);
+
     // 既知の命令名（公式の`func token`）の0引数呼出しは命令呼出しなので条件文になる。
     var command = try parse(std.testing.allocator, "今ならば\n「x」と表示\nここまで\n", "implicit-if-command.nako3");
     defer command.deinit();
