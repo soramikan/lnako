@@ -311,6 +311,20 @@ pub const Export = struct {
                     return null;
                 }
             }
+            if (self.native.len != 0) {
+                // native artifact は宣言されたが対象条件に適合しない。
+                if (diagnostics) |d| {
+                    try d.addFmt(
+                        diag.E015_NATIVE_FOR_INCOMPATIBLE_TARGET,
+                        .err,
+                        self.name,
+                        self.position,
+                        "no native artifact of export \"{s}\" matches the target environment",
+                        .{self.name},
+                    );
+                }
+                return null;
+            }
         } else {
             // cnako は ESM を直接扱えるため、native 併記時も ESM を先に選ぶ。
             if (esm_decl) |decl| {

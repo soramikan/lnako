@@ -5,6 +5,7 @@ const npkg_files = @import("npkg_files.zig");
 const npkg_commands = @import("npkg_commands.zig");
 const npkg_commands_gen = @import("npkg_commands_gen.zig");
 const npkg_build = @import("npkg_build.zig");
+const npkg_verify = @import("npkg_verify.zig");
 const zip = @import("../archive/zip.zig");
 const diag = @import("diagnostics.zig");
 
@@ -669,4 +670,145 @@ test "npkg build は宣言 export の未収録と境界外 path 依存を拒否�
     };
     defer built.deinit();
     return error.TestUnexpectedResult;
+}
+
+fn emitFilesToml(allocator: std.mem.Allocator, entries: []const npkg_files.FileEntry) ![]u8 {
+    var buffer: std.Io.Writer.Allocating = .init(allocator);
+    defer buffer.deinit();
+    try npkg_files.emit(allocator, entries, &buffer.writer);
+    return buffer.toOwnedSlice();
+}
+
+fn sha256Of(data: []const u8) [32]u8 {
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(data, &digest, .{});
+    return digest;
+}
+
+const minimal_metadata =
+    \\schemaVersion = 1
+    \\
+    \\[package]
+    \\name = "x"
+    \\version = "1.0.0"
+    \\license = "MIT"
+    \\
+;
+
+const empty_commands = "{\"schemaVersion\":1,\"commands\":[]}\n";
+
+test "npkg verify は build 生成物を受理する" {
+    const allocator = testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try writeDemoPackage(&temporary);
+    const root = try tmpRoot(&temporary, allocator);
+    defer allocator.free(root);
+
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var built = try npkg_build.build(allocator, io, root, &list);
+    defer built.deinit();
+
+    var verified = try npkg_verify.verify(allocator, built.archive, .{
+        .runtime = "lnako",
+        .os = "macos",
+        .cpu = "aarch64",
+        .abi = "gnu",
+    }, &list);
+    defer verified.deinit();
+    try testing.expectEqualStrings("demo", verified.manifest.package.name);
+    try testing.expectEqual(@as(usize, 2), verified.files.len);
+    try testing.expectEqual(@as(usize, 1), verified.commands.len);
+    try testing.expectEqualStrings("合計", verified.commands[0].name);
+}
+
+test "npkg verify は hash 不一致を拒否する" {
+    const allocator = testing.allocator;
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+
+    const files_toml = try emitFilesToml(allocator, &.{
+        .{ .path = "a.txt", .sha256 = sha256Of("tampered"), .size = 5 },
+    });
+    defer allocator.free(files_toml);
+    const archive = try zip.writeEntries(allocator, &.{
+        .{ .name = "NAKO-PKG/METADATA.toml", .data = minimal_metadata },
+        .{ .name = "NAKO-PKG/FILES.toml", .data = files_toml },
+        .{ .name = "NAKO-PKG/commands.json", .data = empty_commands },
+        .{ .name = "a.txt", .data = "hello" },
+    });
+    defer allocator.free(archive);
+
+    try testing.expectError(error.InvalidPackage, npkg_verify.verify(allocator, archive, .{}, &list));
+    try testing.expect(list.find(diag.E009_HASH_MISMATCH) != null);
+}
+
+test "npkg verify は未収録 payload を拒否する" {
+    const allocator = testing.allocator;
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+
+    const files_toml = try emitFilesToml(allocator, &.{});
+    defer allocator.free(files_toml);
+    const archive = try zip.writeEntries(allocator, &.{
+        .{ .name = "NAKO-PKG/METADATA.toml", .data = minimal_metadata },
+        .{ .name = "NAKO-PKG/FILES.toml", .data = files_toml },
+        .{ .name = "NAKO-PKG/commands.json", .data = empty_commands },
+        .{ .name = "unlisted.txt", .data = "x" },
+    });
+    defer allocator.free(archive);
+
+    try testing.expectError(error.InvalidPackage, npkg_verify.verify(allocator, archive, .{}, &list));
+    try testing.expect(list.find(diag.E037_NPKG_UNLISTED_ENTRY) != null);
+}
+
+test "npkg verify は必須エントリの欠落を拒否する" {
+    const allocator = testing.allocator;
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+
+    const files_toml = try emitFilesToml(allocator, &.{});
+    defer allocator.free(files_toml);
+    const archive = try zip.writeEntries(allocator, &.{
+        .{ .name = "NAKO-PKG/METADATA.toml", .data = minimal_metadata },
+        .{ .name = "NAKO-PKG/FILES.toml", .data = files_toml },
+    });
+    defer allocator.free(archive);
+
+    try testing.expectError(error.InvalidPackage, npkg_verify.verify(allocator, archive, .{}, &list));
+    try testing.expect(list.find(diag.E036_NPKG_MISSING_ENTRY) != null);
+}
+
+test "npkg verify は runtime 不適合を拒否する" {
+    const allocator = testing.allocator;
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+
+    const metadata =
+        \\schemaVersion = 1
+        \\
+        \\[package]
+        \\name = "x"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\runtimes = ["cnako"]
+        \\
+    ;
+    const payload = "x";
+    const files_toml = try emitFilesToml(allocator, &.{
+        .{ .path = "a.txt", .sha256 = sha256Of(payload), .size = payload.len },
+    });
+    defer allocator.free(files_toml);
+    const archive = try zip.writeEntries(allocator, &.{
+        .{ .name = "NAKO-PKG/METADATA.toml", .data = metadata },
+        .{ .name = "NAKO-PKG/FILES.toml", .data = files_toml },
+        .{ .name = "NAKO-PKG/commands.json", .data = empty_commands },
+        .{ .name = "a.txt", .data = payload },
+    });
+    defer allocator.free(archive);
+
+    try testing.expectError(error.InvalidPackage, npkg_verify.verify(allocator, archive, .{ .runtime = "lnako" }, &list));
+    try testing.expect(list.find(diag.E031_UNSUPPORTED_RUNTIME) != null);
 }

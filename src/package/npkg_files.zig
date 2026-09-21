@@ -214,8 +214,9 @@ const Validator = struct {
             },
         }
 
+        // `files` の省略は空索引として受理する（emit は空索引を省略する）。
         const files_value = root.getPtr("files") orelse {
-            try self.report(diag.E019_REQUIRED_FIELD_MISSING, "files", .{}, "missing required field \"files\"", .{});
+            self.files.entries = &.{};
             return;
         };
         const array = files_value.asArray() orelse {
