@@ -255,7 +255,7 @@ const Analyzer = struct {
             // `{非公開}`属性はモジュール変数の公開を打ち消す（公式isExport相当）。
             _ = try self.declare(module_index, scope, node.name, if (node.is_const) .constant else .variable, node.span, exportable and node.is_export, !node.is_const, 0, true);
         } else if (node.kind == .variable_list_definition) {
-            for (node.arguments) |name| _ = try self.declare(module_index, scope, name.name, if (node.is_const) .constant else .variable, name.span, exportable, !node.is_const, 0, true);
+            for (node.arguments) |name| _ = try self.declare(module_index, scope, name.name, if (node.is_const) .constant else .variable, name.span, exportable and node.is_export, !node.is_const, 0, true);
         } else if ((node.kind == .assignment or node.kind == .increment or
             (node.kind == .array_assignment and node.check_array_init)) and self.builtins.get(node.name) == null and
             !(node.check_array_init and system_constant.isConstant(node.name)) and
