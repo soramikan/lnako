@@ -550,6 +550,34 @@ test "commands.json 生成は文の子孫にある取り込みも辿る" {
     try testing.expect(by_name.get("変換") != null);
 }
 
+test "commands.json は同名定義の先勝ちを固定する" {
+    const allocator = testing.allocator;
+    var provider = try MapProvider.init(allocator);
+    defer provider.deinit();
+    // 索引は識別子参照のため重複を持たず、入口の走査順で最初の定義を採用する。
+    try provider.put("a.nako3",
+        \\●(AをBに)加算とは
+        \\  A+Bで戻る
+        \\ここまで
+        \\
+    );
+    try provider.put("b.nako3",
+        \\●(Aを)加算とは
+        \\  A*2で戻る
+        \\ここまで
+        \\
+    );
+
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var result = try npkg_commands_gen.generate(allocator, provider.provider(), &.{ "a.nako3", "b.nako3" }, &list);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 1), result.commands.len);
+    try testing.expectEqualStrings("加算", result.commands[0].name);
+    try testing.expectEqual(@as(usize, 2), result.commands[0].args.len);
+}
+
 test "commands.json 生成はルート外 import を拒否する" {
     const allocator = testing.allocator;
     var provider = try MapProvider.init(allocator);
@@ -1621,6 +1649,57 @@ test "npkg build は include 対象外の symlink を無視する" {
     defer built.deinit();
     try testing.expectEqual(@as(usize, 1), built.files.len);
     try testing.expectEqualStrings("src/index.nako3", built.files[0].path);
+}
+
+test "npkg build は記号を含む literal directory を include で収録する" {
+    const allocator = testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "pkg/src");
+    try temporary.dir.createDirPath(io, "pkg/assets[old]");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "pkg/nako.toml",
+        .data =
+        \\[package]
+        \\name = "demo"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\include = ["src/**", "assets[old]"]
+        \\
+        \\[[exports]]
+        \\name = "demo"
+        \\path = "src/index.nako3"
+        \\
+        ,
+    });
+    try temporary.dir.writeFile(io, .{ .sub_path = "pkg/src/index.nako3", .data = "" });
+    // `[`/`{` は glob 構文ではなく literal のため、`assets[old]` は
+    // directory 接頭辞として配下を収録する。
+    try temporary.dir.writeFile(io, .{ .sub_path = "pkg/assets[old]/icon.png", .data = "x" });
+    const root = try tmpRoot(&temporary, allocator);
+    defer allocator.free(root);
+
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var built = try npkg_build.build(allocator, io, root, &list, .{});
+    defer built.deinit();
+    try testing.expectEqual(@as(usize, 2), built.files.len);
+    try testing.expectEqualStrings("assets[old]/icon.png", built.files[0].path);
+    try testing.expectEqualStrings("src/index.nako3", built.files[1].path);
+}
+
+test "npkg verify は未定義の要求 feature を拒否する" {
+    const allocator = testing.allocator;
+    const archive = try minimalArchive(allocator);
+    defer allocator.free(archive);
+
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    try testing.expectError(error.InvalidPackage, npkg_verify.verify(allocator, archive, .{
+        .features = &.{"typoed-name"},
+    }, &list));
+    try testing.expect(list.find(diag.E028_UNKNOWN_FEATURE) != null);
 }
 
 test "npkg build は payload に無い path 依存を拒否する" {

@@ -898,6 +898,18 @@ const Validator = struct {
             export_entry.alias = try self.expectString(export_table, "alias", "exports");
             export_entry.native = try self.expectArtifactDecls(export_table, "native", "exports");
             export_entry.esm = try self.expectArtifactDecls(export_table, "esm", "exports");
+            // artifact の features は [features] で定義済みの名だけを指す。
+            // 未定義名は有効 feature 集合へ入る経路が無く、常に不適合な
+            // 宣言（=検証不能なパッケージ）になるためここで拒否する。
+            for ([_][]const ArtifactDecl{ export_entry.native, export_entry.esm }) |decls| {
+                for (decls) |decl| {
+                    for (decl.features) |feature| {
+                        if (!self.manifest.features.contains(feature)) {
+                            try self.report(diag.E028_UNKNOWN_FEATURE, "exports", decl.position, "unknown feature \"{s}\" in artifact condition", .{feature});
+                        }
+                    }
+                }
+            }
             // lnako 通常モードで ESM が選択されるのは「path も native も無い」
             // 場合のみ（path があれば共通ソース、native があれば native を選択）。
             // cnako 対応（runtimes 未指定・cnako を含む）または compat-js profile

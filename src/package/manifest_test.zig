@@ -1210,6 +1210,8 @@ test "native/esmの構造化artifact宣言を解析する" {
         \\name = "multi-artifact"
         \\version = "1.0.0"
         \\license = "MIT"
+        \\[features]
+        \\simd = []
         \\
         \\[[exports]]
         \\name = "main"
@@ -1242,6 +1244,21 @@ test "native/esmの構造化artifact宣言を解析する" {
     const web = manifest.exports[1];
     try std.testing.expectEqual(@as(usize, 1), web.esm.len);
     try std.testing.expectEqualStrings("dist/web.mjs", web.esm[0].path);
+}
+
+test "artifact条件の未定義feature名を診断する" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "main"
+        \\native = [{ path = "lib/a.so", features = ["typoed"] }]
+        \\
+    ;
+    try parseErrCode(allocator, source, diag.E028_UNKNOWN_FEATURE);
 }
 
 test "artifact条件は対象環境へ照合される" {

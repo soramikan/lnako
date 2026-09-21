@@ -95,6 +95,11 @@ pub fn resolveImport(allocator: Allocator, base: []const u8, rel: []const u8) !?
 /// 安全弁であり、通常のパッケージ構造では到達しない。
 const max_import_depth = 256;
 
+/// 命令索引化のために保持するソースの累計上限。各ファイルの AST・トークンは
+/// 収集した name/args/josi が参照するため generate 完了まで解放できず、
+/// 閉包が無制限に読み込むとメモリを使い切るため、ソース合計で束縛する。
+const max_index_source_bytes = 64 * 1024 * 1024;
+
 const Collector = struct {
     allocator: Allocator,
     provider: SourceProvider,
@@ -103,6 +108,7 @@ const Collector = struct {
     commands: std.ArrayList(Command),
     command_names: std.StringHashMapUnmanaged(void),
     depth: usize = 0,
+    source_bytes: usize = 0,
 
     fn report(self: *Collector, code: []const u8, path: []const u8, comptime format: []const u8, args: anytype) !void {
         try self.diagnostics.addFmt(code, .err, path, .{}, format, args);
@@ -123,6 +129,11 @@ const Collector = struct {
             try self.report(diag.E036_NPKG_MISSING_ENTRY, path, "command index source \"{s}\" is not readable", .{path});
             return;
         };
+        self.source_bytes += source.len;
+        if (self.source_bytes > max_index_source_bytes) {
+            try self.report(diag.E029_INVALID_VALUE, path, "command index sources exceed the total size limit {d} bytes", .{max_index_source_bytes});
+            return;
+        }
 
         // AST・トークン文字列はパース結果の arena に乗るが、それは Result の
         // arena を親に持つため、あえて deinit せず Result.deinit で一括解放する

@@ -65,8 +65,11 @@ fn isExcluded(path: []const u8) bool {
     return false;
 }
 
+/// glob 構文は `*`・`?`・`**` のみ。`[`・`{` は literal として扱うため
+/// glob 判定へ含めない（含めると `assets[old]` のような literal
+/// directory が接頭辞照合されず配下を取りこぼす）。
 fn hasGlobSyntax(pattern: []const u8) bool {
-    return std.mem.indexOfAny(u8, pattern, "*?[{") != null;
+    return std.mem.indexOfAny(u8, pattern, "*?") != null;
 }
 
 /// `include` パターン1件が `path` を拾うか。glob を含まないパターンは

@@ -217,14 +217,20 @@ fn report(diagnostics: *diag.List, code: []const u8, path: []const u8, comptime 
 /// artifact 照合用の有効 feature 集合を返す。依存解決の feature
 /// unification と同じ意味論とする。`[features]` に定義された要求名は
 /// 推移展開して有効集合へ入れ、`use_default` が真なら `default` も有効化
-/// する。未定義の要求名と依存 alias は orphan 相当として有効集合へ
-/// 入れない（その名を要求する artifact は適合しない）。
-fn effectiveFeatures(allocator: Allocator, manifest: *const manifest_mod.Manifest, requested_names: []const []const u8, use_default: bool) ![]const []const u8 {
+/// する。未定義の要求名と依存 alias は有効集合へ入らない（その名を
+/// 要求する artifact は適合しない）。未定義の要求名は入力ミスを成功
+/// 扱いにしないため `E028_UNKNOWN_FEATURE` で診断する（依存解決の
+/// orphan 相当。`default` は resolver 同様に無視する）。
+fn effectiveFeatures(allocator: Allocator, manifest: *const manifest_mod.Manifest, requested_names: []const []const u8, use_default: bool, diagnostics: *diag.List) ![]const []const u8 {
     var aliases = try manifest.dependencyAliases(allocator);
     defer aliases.deinit();
     var requested: std.ArrayList([]const u8) = .empty;
     for (requested_names) |name| {
-        if (manifest.features.contains(name)) try requested.append(allocator, name);
+        if (manifest.features.contains(name)) {
+            try requested.append(allocator, name);
+        } else if (!aliases.contains(name) and !std.mem.eql(u8, name, "default")) {
+            try diagnostics.addFmt(diag.E028_UNKNOWN_FEATURE, .err, "features", .{}, "unknown feature \"{s}\"", .{name});
+        }
     }
     var expanded = features_mod.expand(allocator, &manifest.features, requested.items, use_default, &aliases, null) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -430,7 +436,7 @@ pub fn verify(
     // artifact 照合の feature 集合は、要求名に [features] 定義の推移展開と
     // default（無効化可能）を加えた有効集合とする（依存解決と同じ意味論）。
     var artifact_target = target.artifactTarget();
-    artifact_target.features = try effectiveFeatures(allocator, &manifest, target.features, target.default_features);
+    artifact_target.features = try effectiveFeatures(allocator, &manifest, target.features, target.default_features, diagnostics);
     for (manifest.exports) |*export_entry| {
         _ = try export_entry.resolve(allocator, artifact_target, false, diagnostics);
     }

@@ -190,7 +190,7 @@ native = [
   - `when`: 対象条件を表す marker 式（3.8 節）。評価が真の宣言のみ選択対象となる。
   - `min-os`: 対象 OS の最小バージョン（`.` 区切りの数列）。対象側の OS version が不明な場合は適合を証明できないため、その宣言は選択されない。
   - `libc`: 要求 libc 系（`gnu`/`msvc`/`musl`/`none`）。対象の libc（未指定時は abi）と一致しない宣言は選択されない。
-  - `features`: この artifact が要求する feature 名の配列。対象で有効化されていない feature を要求する宣言は選択されない。
+  - `features`: この artifact が要求する feature 名の配列。`[features]` で定義済みの名のみを指せる（未定義名は有効化経路がなく常に不適合になるため `E028_UNKNOWN_FEATURE` で拒否する）。対象で有効化されていない feature を要求する宣言は選択されない。
   - 空配列・path なしテーブルは `E019`/`E029`、未知フィールドは `E022`、不正な `when` は `E026`、不正な `min-os`/`libc` は `E029`。
   - 複数宣言がある場合、対象に適合する最初の宣言が選択される。どの宣言も適合しない場合、その artifact 種別は対象では利用不能とみなす。
 - 同じ `name` の export を重複して宣言できない。
@@ -409,7 +409,8 @@ size = 1234
 - 公開トップレベル関数: `{ "name", "args": [...], "josi": [...] }`（引数名と助詞の対応配列）。
 - 公開トップレベル変数: `{ "name", "variable": true }`。
 - `fn`・`async`・`return` のような静的に確定できない値は v1 の生成側では出力しない。これらは将来の拡張用予約フィールドであり、v1 の受理側は読み飛ばす（値を解釈しない）。
-- `commands` は `name` のバイト順ソートで安定化する。
+- `commands` は `name` のバイト順ソートで安定化する。同名の公開定義が複数入口・import 閉包に現れた場合、索引は識別子参照のため重複を持たず、最初に走査した定義を採用する。
+- 各ソースの AST・トークンは収集した名前が参照するため generate 完了まで保持する。閉包が読み込むソースの累計は上限（64 MiB）で束縛し、超過は `E029_INVALID_VALUE` で拒否する。
 
 ### 6.5 検証
 
@@ -421,7 +422,7 @@ size = 1234
 - 各エントリの CRC-32 が内容と一致すること（local header・central directory・実データの三者一致）。SHA-256 は `FILES.toml` が保証するが、展開側が CRC を検査するため CRC だけ壊れたアーカイブを検証済みとして受理しない。
 - `FILES.toml` と payload エントリ集合の完全一致、各 hash・size の一致。索引が空（payload 0 件）のアーカイブは配布単位として成立しないため `E036_NPKG_MISSING_ENTRY` で拒否する。
 - `dependencies.path` の各依存先 manifest（`<path>/nako.toml`）が索引に収録されていること。無ければ `E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY` で拒否する。
-- artifact 条件の `features` 照合には、要求名に `[features]` 定義の推移展開と `default`（無効化可能）を加えた有効 feature 集合を使う（依存解決の feature unification と同じ意味論）。marker の `version` はなでしこ言語版を指し、言語版が不明な場合は `version` を使う式は証明不能として不適合とする。
+- artifact 条件の `features` 照合には、要求名に `[features]` 定義の推移展開と `default`（無効化可能）を加えた有効 feature 集合を使う（依存解決の feature unification と同じ意味論）。未定義の要求 feature 名（依存 alias でも `default` でもない）は `E028_UNKNOWN_FEATURE` で診断する。marker の `version` はなでしこ言語版を指し、言語版が不明な場合は `version` を使う式は証明不能として不適合とする。
 - `METADATA.toml` の構造・必須フィールド、宣言ファイル（`exports[].path` および全 native/esm artifact の `path`）の収録。
 - 対象 profile（os/cpu/abi/min-os/libc/optimize/features）と artifact 条件の適合。不適合な native artifact は `E015_NATIVE_FOR_INCOMPATIBLE_TARGET`、未対応 runtime は `E031_UNSUPPORTED_RUNTIME`、engine 要件不適合は `E032_ENGINE_MISMATCH`。
 - 通常モードでの ESM artifact 利用は `E006_JS_IN_NORMAL_MODE`。

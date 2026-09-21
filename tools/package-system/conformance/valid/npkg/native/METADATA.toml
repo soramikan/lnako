@@ -6,6 +6,9 @@ name = "avxmath"
 version = "2.0.0"
 license = "Apache-2.0"
 
+[features]
+simd = []
+
 [[exports]]
 name = "avxmath"
 path = "src/index.nako3"

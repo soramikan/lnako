@@ -23,9 +23,11 @@ fn matchSegments(pattern: *std.mem.SplitIterator(u8, .scalar), path: *std.mem.Sp
     // 一致し、意図しないファイルを payload に収録してしまう。
     const segment = pattern.next() orelse return path.next() == null;
     if (std.mem.eql(u8, segment, "**")) {
-        // `**` は0個以上のpath成分へ展開する。
-        var rest = pattern.*;
-        if (rest.next() == null) return true;
+        // `**` は0個以上のpath成分へ展開する。末尾確認は probe コピーで
+        // 行い、再帰へ渡す rest 自体は `**` 直後の位置を維持する。
+        const rest = pattern.*;
+        var rest_probe = rest;
+        if (rest_probe.next() == null) return true;
         var probe = path.*;
         while (true) {
             var candidate_pattern = rest;
@@ -62,6 +64,10 @@ test "globパターンでpathを照合する" {
     try std.testing.expect(!match("src/*.nako3", "src/sub/index.nako3"));
     try std.testing.expect(match("src/**/*.nako3", "src/sub/deep/index.nako3"));
     try std.testing.expect(match("src/**/*.nako3", "src/index.nako3"));
+    // `**` の末尾確認で iterator が進まないこと（`*.nako3` は消費されず
+    // 拡張子の違うファイルへ一致しない）。
+    try std.testing.expect(!match("src/**/*.nako3", "src/private.bin"));
+    try std.testing.expect(!match("src/**/*.nako3", "src/sub/notes.txt"));
     try std.testing.expect(match("**/*.nako3", "index.nako3"));
     try std.testing.expect(match("data/*.json", "data/dic.json"));
     try std.testing.expect(match("?", "a"));
