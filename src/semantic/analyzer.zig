@@ -108,6 +108,9 @@ pub const Symbol = struct {
     /// 関数内の`引数`束縛（公式`yCallFunc`の実引数配列）。公式は呼出しごとに
     /// 用意するため、ユーザーの同名宣言で二重定義にしない。
     implicit_arguments: bool = false,
+    /// 明示宣言が`引数`束縛を1度だけ再利用したか。公式の`varsSet`同名判定と
+    /// 同じく、2回目以降の宣言は通常の二重定義診断へ落とす。
+    arguments_reused: bool = false,
 };
 
 pub const Binding = struct {
@@ -245,9 +248,20 @@ const Analyzer = struct {
     /// 公式の生成コードは本体先頭で`引数`へ実引数配列を設定し、仮引数名が
     /// `引数`のときはその仮引数の束縛を生成しない（`__vars.set("引数", ...)`が
     /// 出ない）。同じ名前にすると実引数配列が仮引数の値で上書きされてしまう。
-    fn declareParameter(self: *Analyzer, module_index: u32, scope: ScopeId, argument: ast.Argument) !void {
-        if (std.mem.eql(u8, argument.name, "引数")) return;
-        _ = try self.declare(module_index, scope, argument.name, .parameter, argument.span, false, true, 0, false);
+    /// ただし仮引数一覧内の同名重複は通常の仮引数と同じく診断する。
+    fn declareParameters(self: *Analyzer, module_index: u32, scope: ScopeId, arguments: []ast.Argument) !void {
+        var arguments_binding_seen = false;
+        for (arguments) |argument| {
+            if (std.mem.eql(u8, argument.name, "引数")) {
+                if (arguments_binding_seen) {
+                    const message = try std.fmt.allocPrint(self.allocator, "『{s}』は同じスコープで既に定義されています", .{argument.name});
+                    try self.addDiagnostic(.duplicate_symbol, argument.span, self.modules.items[module_index].path, message);
+                }
+                arguments_binding_seen = true;
+                continue;
+            }
+            _ = try self.declare(module_index, scope, argument.name, .parameter, argument.span, false, true, 0, false);
+        }
     }
 
     fn predeclareBlock(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId, recurse: bool) anyerror!void {
@@ -313,7 +327,7 @@ const Analyzer = struct {
                 if (declared) |symbol| try self.bind(node, .declaration, node.name, symbol.qualified_name, symbol.id);
                 const function_scope = try self.addScope(scope, module_index, .function);
                 try self.function_scopes.append(self.allocator, .{ .node = node, .scope = function_scope });
-                for (node.arguments) |argument| try self.declareParameter(module_index, function_scope, argument);
+                try self.declareParameters(module_index, function_scope, node.arguments);
                 try self.declareImplicitArguments(module_index, function_scope, node.span);
                 for (node.children) |child| try self.predeclareBlock(child, module_index, function_scope, false);
                 for (node.children) |child| try self.resolveBlock(child, module_index, function_scope);
@@ -322,7 +336,7 @@ const Analyzer = struct {
             .anonymous_function => {
                 const function_scope = try self.addScope(scope, module_index, .anonymous_function);
                 try self.function_scopes.append(self.allocator, .{ .node = node, .scope = function_scope });
-                for (node.arguments) |argument| try self.declareParameter(module_index, function_scope, argument);
+                try self.declareParameters(module_index, function_scope, node.arguments);
                 try self.declareImplicitArguments(module_index, function_scope, node.span);
                 for (node.children) |child| try self.predeclareBlock(child, module_index, function_scope, false);
                 for (node.children) |child| try self.resolveBlock(child, module_index, function_scope);
@@ -612,12 +626,15 @@ const Analyzer = struct {
             // ユーザーが同名を宣言しても上書きできる。明示宣言は同じローカルを
             // 上書きし、以降の代入検査は宣言されたkind/mutabilityで行う
             // （関数先頭の暗黙初期化はlowering側のstore_localなので影響しない）。
+            // 特例は最初の明示宣言だけとし、2回目以降は通常の二重定義診断にする。
             if (existing.implicit_arguments) {
-                if (explicit_def) {
+                if (!explicit_def) return existing.id;
+                if (!existing.arguments_reused) {
                     self.symbols.items[existing.id].kind = kind;
                     self.symbols.items[existing.id].is_mutable = is_mutable;
+                    self.symbols.items[existing.id].arguments_reused = true;
+                    return existing.id;
                 }
-                return existing.id;
             }
             const message = try std.fmt.allocPrint(self.allocator, "『{s}』は同じスコープで既に定義されています", .{name});
             try self.addDiagnostic(.duplicate_symbol, span, self.modules.items[module_index].path, message);
@@ -888,6 +905,27 @@ pub fn moduleName(allocator: std.mem.Allocator, filename: []const u8) ![]u8 {
     else
         0;
     return allocator.dupe(u8, basename[0 .. basename.len - suffix_length]);
+}
+
+test "仮引数『引数』と同名宣言の重複診断を保つ" {
+    const parser = @import("../frontend/parser.zig");
+    const Case = struct {
+        fn expectDuplicate(source: []const u8) !void {
+            var parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
+            defer parsed.deinit();
+            var analyzed = try analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+            defer analyzed.deinit();
+            var found = false;
+            for (analyzed.diagnostics) |item| if (item.code == .duplicate_symbol) {
+                found = true;
+            };
+            try std.testing.expect(found);
+        }
+    };
+    // 仮引数`引数`の2個目は通常の仮引数と同じく二重定義として診断する。
+    try Case.expectDuplicate("●(引数と引数の)Fとは\n引数を表示\nここまで\nF(1,2)\n");
+    // 明示宣言の特例は最初の1回だけで、2個目の宣言は二重定義として診断する。
+    try Case.expectDuplicate("●(Aの)Fとは\n変数 引数=1\n変数 引数=2\n引数を表示\nここまで\n5のF\n");
 }
 
 test "公式と同じファイル名をモジュール名に保つ" {
