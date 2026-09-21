@@ -90,6 +90,10 @@ pub const toolchain = struct {
     pub const manager = @import("toolchain/manager.zig");
 };
 
+pub const archive = struct {
+    pub const zip = @import("archive/zip.zig");
+};
+
 /// nadesiko3 パッケージシステムのデータ解析層（Issue #44）。
 /// ランタイムの `plugins.toml` とは独立した manifest 向け TOML/SemVer/
 /// marker/feature 解析を提供する。
@@ -108,6 +112,7 @@ pub const package = struct {
     pub const npkg_files = @import("package/npkg_files.zig");
     pub const npkg_commands = @import("package/npkg_commands.zig");
     pub const npkg_commands_gen = @import("package/npkg_commands_gen.zig");
+    pub const npkg_build = @import("package/npkg_build.zig");
 };
 
 pub const Command = enum {
@@ -244,6 +249,7 @@ test {
     std.testing.refAllDecls(package.npkg_files);
     std.testing.refAllDecls(package.npkg_commands);
     std.testing.refAllDecls(package.npkg_commands_gen);
+    std.testing.refAllDecls(package.npkg_build);
 }
 
 test "コマンドを解析できる" {

@@ -4,6 +4,8 @@ const npkg_metadata = @import("npkg_metadata.zig");
 const npkg_files = @import("npkg_files.zig");
 const npkg_commands = @import("npkg_commands.zig");
 const npkg_commands_gen = @import("npkg_commands_gen.zig");
+const npkg_build = @import("npkg_build.zig");
+const zip = @import("../archive/zip.zig");
 const diag = @import("diagnostics.zig");
 
 const testing = std.testing;
@@ -517,4 +519,154 @@ test "import path をパッケージ相対へ解決する" {
     defer allocator.free(up);
     try testing.expectEqualStrings("src/b.nako3", up);
     try testing.expect((try npkg_commands_gen.resolveImport(allocator, "a.nako3", "../x.nako3")) == null);
+}
+
+fn tmpRoot(temporary: *std.testing.TmpDir, allocator: std.mem.Allocator) ![:0]u8 {
+    return temporary.dir.realPathFileAlloc(std.testing.io, "pkg", allocator);
+}
+
+fn writeDemoPackage(temporary: *std.testing.TmpDir) !void {
+    const io = std.testing.io;
+    try temporary.dir.createDirPath(io, "pkg/src");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "pkg/nako.toml",
+        .data =
+        \\[package]
+        \\name = "demo"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[[exports]]
+        \\name = "demo"
+        \\path = "src/index.nako3"
+        \\
+        ,
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "pkg/src/index.nako3",
+        .data = "●(AをBと)合計とは\n  A+Bで戻る\nここまで\n",
+    });
+}
+
+test "npkg build は決定的なアーカイブを生成する" {
+    const allocator = testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try writeDemoPackage(&temporary);
+    const root = try tmpRoot(&temporary, allocator);
+    defer allocator.free(root);
+
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var built = try npkg_build.build(allocator, io, root, &list);
+    defer built.deinit();
+    var rebuilt = try npkg_build.build(allocator, io, root, &list);
+    defer rebuilt.deinit();
+    try testing.expectEqualStrings(built.archive, rebuilt.archive);
+
+    // 必須エントリと payload が格納されている。
+    for ([_][]const u8{
+        "NAKO-PKG/METADATA.toml",
+        "NAKO-PKG/FILES.toml",
+        "NAKO-PKG/commands.json",
+        "nako.toml",
+        "src/index.nako3",
+    }) |name| {
+        try testing.expect(std.mem.indexOf(u8, built.archive, name) != null);
+    }
+    try testing.expectEqual(@as(usize, 2), built.files.len);
+
+    // 展開して commands.json の内容を確認する。
+    try temporary.dir.writeFile(io, .{ .sub_path = "out.npkg", .data = built.archive });
+    const archive_path = try temporary.dir.realPathFileAlloc(io, "out.npkg", allocator);
+    defer allocator.free(archive_path);
+    const extract_root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(extract_root);
+    const extracted = try std.fs.path.join(allocator, &.{ extract_root, "extracted" });
+    defer allocator.free(extracted);
+    try zip.extract(io, archive_path, extracted);
+    const commands_path = try std.fs.path.join(allocator, &.{ extracted, "NAKO-PKG", "commands.json" });
+    defer allocator.free(commands_path);
+    const commands_bytes = try std.Io.Dir.cwd().readFileAlloc(io, commands_path, allocator, .limited(1 << 20));
+    defer allocator.free(commands_bytes);
+    var parsed = try npkg_commands.parse(allocator, commands_bytes, &list);
+    defer parsed.deinit();
+    try testing.expectEqual(@as(usize, 1), parsed.commands.len);
+    try testing.expectEqualStrings("合計", parsed.commands[0].name);
+}
+
+test "npkg build は include 指定で対象を絞る" {
+    const allocator = testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try writeDemoPackage(&temporary);
+    try temporary.dir.writeFile(io, .{ .sub_path = "pkg/extra.txt", .data = "x" });
+    const root = try tmpRoot(&temporary, allocator);
+    defer allocator.free(root);
+
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var built = try npkg_build.build(allocator, io, root, &list);
+    defer built.deinit();
+    // include 未指定: nako.toml・src/index.nako3・extra.txt の3件。
+    try testing.expectEqual(@as(usize, 3), built.files.len);
+
+    const include_source =
+        \\[package]
+        \\name = "demo"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\include = ["src/**"]
+        \\
+        \\[[exports]]
+        \\name = "demo"
+        \\path = "src/index.nako3"
+        \\
+    ;
+    try temporary.dir.writeFile(io, .{ .sub_path = "pkg/nako.toml", .data = include_source });
+    var narrowed = try npkg_build.build(allocator, io, root, &list);
+    defer narrowed.deinit();
+    try testing.expectEqual(@as(usize, 1), narrowed.files.len);
+    try testing.expectEqualStrings("src/index.nako3", narrowed.files[0].path);
+}
+
+test "npkg build は宣言 export の未収録と境界外 path 依存を拒否する" {
+    const allocator = testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "pkg");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "pkg/nako.toml",
+        .data =
+        \\[package]
+        \\name = "demo"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\sibling = { path = "../sibling" }
+        \\
+        \\[[exports]]
+        \\name = "demo"
+        \\path = "src/missing.nako3"
+        \\
+        ,
+    });
+    try temporary.dir.writeFile(io, .{ .sub_path = "pkg/index.nako3", .data = "" });
+    const root = try tmpRoot(&temporary, allocator);
+    defer allocator.free(root);
+
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var built = npkg_build.build(allocator, io, root, &list) catch |err| {
+        try testing.expectEqual(error.InvalidPackage, err);
+        try testing.expect(list.find(diag.E036_NPKG_MISSING_ENTRY) != null);
+        try testing.expect(list.find(diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY) != null);
+        return;
+    };
+    defer built.deinit();
+    return error.TestUnexpectedResult;
 }
