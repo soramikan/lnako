@@ -596,6 +596,10 @@
   {
     "id": "strict-check-alias-and-continues",
     "source": "!厳チェック\nXを表示\nX=1\nXを表示\n"
+  },
+  {
+    "id": "func-ref-prefix-variable-arity",
+    "source": "F={関数}MAX\nF(3,5,2)を表示\nG={関数}連結\nG(\"a\",\"b\",\"c\")を表示\n"
   }
 ]
 

@@ -2882,3 +2882,32 @@ test "『{関数}組み込み命令』を関数値として呼び出せる" {
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("7\n", host.written());
 }
+
+test "『{関数}名』のプラグイン未取り込み名は関数値化を拒否する" {
+    // 動的に束縛されたプラグイン命令名は、プラグイン取り込み済み
+    // プログラム（native_plugin_paths非空）でのみ関数値を作る。
+    // 実dlopenを伴う呼出しは tools/check_native_plugin_abi.mjs のE2Eで検証する。
+    var parsed = try parser.parse(std.testing.allocator, "F={関数}外部追加\n「ok」を表示\n", "native-plugin.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyzeModules(std.testing.allocator, &.{.{
+        .name = "native-plugin",
+        .path = "native-plugin.nako3",
+        .root = parsed.root.?,
+        .allows_dynamic_commands = true,
+    }});
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lower(std.testing.allocator, &.{parsed.root.?}, &.{"native-plugin"}, &.{"native-plugin.nako3"}, &.{&.{}}, analyzed);
+    defer hir_program.deinit();
+    var ir_program = try lower_ssa.lower(std.testing.allocator, hir_program);
+    defer ir_program.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, ir_program, host.host());
+    defer interpreter.deinit();
+    // native_plugin_paths未設定では関数値化できずUnknownFunctionになる。
+    try std.testing.expectError(error.UnknownFunction, interpreter.run());
+}

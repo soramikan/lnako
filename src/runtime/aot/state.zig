@@ -26,6 +26,7 @@ pub const toml_temporal = shared.toml_temporal;
 
 pub const lnako_aot_builtin_call = builtins.lnako_aot_builtin_call;
 pub const lnako_aot_builtin_function_call = builtins.lnako_aot_builtin_function_call;
+pub const lnako_aot_plugin_function_call = functions_module.lnako_aot_plugin_function_call;
 pub const lnako_aot_builtin_call_site = builtins.lnako_aot_builtin_call_site;
 pub const lnako_aot_array_push_call_site = builtins.lnako_aot_array_push_call_site;
 pub const lnako_aot_element_count_call_site = builtins.lnako_aot_element_count_call_site;

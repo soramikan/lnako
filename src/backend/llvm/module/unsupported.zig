@@ -93,7 +93,8 @@ fn validDirectCallee(program: ir.Program, instruction: ir.Instruction) bool {
 }
 
 fn closureSupported(program: ir.Program, caller: ir.Function, name: []const u8) bool {
-    const function = shared.lookupFunction(program, name) orelse return shared.builtinClosureArity(name) != null;
+    const function = shared.lookupFunction(program, name) orelse
+        return shared.builtinClosureCommand(name) != null or shared.nativePluginClosure(program, name);
     for (function.captures) |capture| if (!shared.hasLocalName(caller, capture)) return false;
     return true;
 }

@@ -111,6 +111,7 @@ pub fn emitPreamble(emitter: *Emitter) !void {
             "declare void @lnako_aot_function_capture(ptr, ptr, i64)\n" ++
             "declare void @lnako_aot_function_call(ptr, ptr, ptr, i64)\n" ++
             "declare void @lnako_aot_builtin_function_call(ptr, ptr, ptr, i64)\n" ++
+            "declare void @lnako_aot_plugin_function_call(ptr, ptr, ptr, i64)\n" ++
             "declare void @lnako_aot_cut(ptr, ptr, ptr, i64, i8)\n" ++
             "declare void @lnako_aot_cut_site(ptr, ptr, ptr, i64, i8, i64)\n" ++
             "declare void @lnako_aot_builtin_call(ptr, ptr, i64, i16)\n" ++
@@ -262,7 +263,8 @@ pub fn collectModuleData(emitter: *Emitter) !void {
             }
             if (instruction.opcode == .make_closure and
                 lookupFunction(emitter.program, instruction.name) == null and
-                shared.builtinClosureArity(instruction.name) != null and
+                (shared.builtinClosureCommand(instruction.name) != null or
+                    shared.nativePluginClosure(emitter.program, instruction.name)) and
                 emitter.builtinClosureNameIndex(instruction.name) == null)
             {
                 try emitter.builtin_closure_names.append(emitter.allocator, instruction.name);

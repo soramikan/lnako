@@ -131,6 +131,12 @@ pub const Emitter = struct {
         if (self.used_commands) |commands| return commands;
         var commands: std.EnumSet(aot_builtin.Command) = .initEmpty();
         for (self.program.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
+            // `{関数}名`で関数値化された組み込み命令も使用コマンドとして数える。
+            // callback経由で非同期命令を呼び得るためusesAsyncEvents判定に必須。
+            if (instruction.opcode == .make_closure) {
+                if (shared.builtinClosureCommand(instruction.name)) |closure| commands.insert(closure.command);
+                continue;
+            }
             if (instruction.opcode != .call or instruction.direct_callee != null or !instruction.is_builtin_call) continue;
             if (try self.builtinCommand(instruction.name)) |command| commands.insert(command);
         };
@@ -162,6 +168,8 @@ pub const Emitter = struct {
         if (self.program.native_plugin_paths.len > 0) {
             for (self.program.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
                 if (isNativePluginCall(self.program, function, instruction)) return true;
+                // 関数値化されたプラグイン命令も実行時に非同期タスクを登録し得る
+                if (instruction.opcode == .make_closure and shared.nativePluginClosure(self.program, instruction.name)) return true;
             };
         }
         return false;

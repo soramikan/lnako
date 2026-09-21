@@ -22,14 +22,34 @@ pub fn lookupFunction(program: ir.Program, name: []const u8) ?ir.Function {
     return found;
 }
 
-/// `{関数}名`で関数値化する組み込み命令の固定arity。AOTオペコードを持たない
-/// 命令や可変長命令は関数値呼出しABI（実引数数ではなくarityをcallbackへ渡す）
-/// で正しくディスパッチできないためnullを返し、make_closureを未対応扱いにする。
-pub fn builtinClosureArity(name: []const u8) ?usize {
-    if (aot_builtin.lookup(name) == null) return null;
+pub const BuiltinClosure = struct {
+    command: aot_builtin.Command,
+    arity: usize,
+    /// 可変長命令は実引数列をそのままcallbackへ渡すgenerated ABIを使う。
+    variable: bool,
+};
+
+/// `{関数}名`で関数値化する組み込み命令。汎用call siteが処理できない専用ABI
+/// 命令は関数値呼出しでUnknownCommandになるためnullを返し、make_closureを
+/// 未対応扱いにする。可変長命令はgenerated wrapper経由で実引数列を渡す。
+pub fn builtinClosureCommand(name: []const u8) ?BuiltinClosure {
+    const command = aot_builtin.lookup(name) orelse return null;
+    if (!aot_builtin.hasGenericCallSiteDispatch(command)) return null;
     const arity = builtin_catalog.findArity(name) orelse return null;
-    if (arity.is_variable) return null;
-    return arity.count;
+    return .{ .command = command, .arity = arity.count, .variable = arity.is_variable };
+}
+
+/// `{関数}名`で関数値化されたネイティブプラグイン命令。意味解析の動的命令
+/// 束縛はプラグイン取り込みモジュールでのみ成立するため、IR関数でも組み込み
+/// 関数名（専用ABI命令を含むカタログ全件）でもない名前をプラグイン命令と
+/// みなす。専用ABI命令をここへ流すと実行時plugin dispatchで失敗するため、
+/// builtinClosureCommandがnullでもカタログ名は除外する。
+pub fn nativePluginClosure(program: ir.Program, name: []const u8) bool {
+    if (program.native_plugin_paths.len == 0 or lookupFunction(program, name) != null) return false;
+    for (builtin_catalog.assign_to_function_names) |candidate| {
+        if (std.mem.eql(u8, candidate, name)) return false;
+    }
+    return true;
 }
 
 pub fn isDynamicNamedCall(function: ir.Function, name: []const u8) bool {

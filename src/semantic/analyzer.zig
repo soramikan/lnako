@@ -1148,3 +1148,25 @@ test "『{関数}未定義名』は関数として見つからない旨を診断
     }
     try std.testing.expectEqual(@as(usize, 1), count);
 }
+
+test "『{関数}名』の動的プラグイン命令はdynamic_builtinとして束縛する" {
+    const parser = @import("../frontend/parser.zig");
+    // ネイティブプラグイン取り込みモジュールでは未知の命令名を動的命令と
+    // して束縛する。関数値は実行時にplugin dispatchへ委譲される。
+    var parsed = try parser.parse(std.testing.allocator, "F={関数}外部追加\n", "native-plugin.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var program = try analyzeModules(std.testing.allocator, &.{.{
+        .name = "native-plugin",
+        .path = "native-plugin.nako3",
+        .root = parsed.root.?,
+        .allows_dynamic_commands = true,
+    }});
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var saw_dynamic = false;
+    for (program.bindings) |binding| {
+        if (binding.kind == .builtin and binding.dynamic_builtin and std.mem.eql(u8, binding.resolved_name, "外部追加")) saw_dynamic = true;
+    }
+    try std.testing.expect(saw_dynamic);
+}

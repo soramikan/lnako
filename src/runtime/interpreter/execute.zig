@@ -1268,8 +1268,11 @@ fn makeClosureResolved(self: *Interpreter, frame: *Frame, instruction: ir.Instru
         break :blk &frame.owner_program.functions[target];
     } else self.findFunction(frame.owner_program, instruction.name) orelse {
         // `{関数}名`で組み込み命令を参照した場合は命令名ディスパッチの
-        // 関数値を作る（公式はプラグイン関数のJS参照を返す）。
-        if (isBuiltinReferenceName(instruction.name))
+        // 関数値を作る（公式はプラグイン関数のJS参照を返す）。ネイティブ
+        // プラグイン取り込み済みプログラムの動的命令名もcallBuiltin経由の
+        // プラグインディスパッチで呼べる関数値にする。
+        if (isBuiltinReferenceName(instruction.name) or
+            frame.owner_program.native_plugin_paths.len > 0)
             return makeBuiltinFunctionValue(self, instruction.name);
         return error.UnknownFunction;
     };
