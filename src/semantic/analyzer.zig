@@ -252,7 +252,8 @@ const Analyzer = struct {
         // モジュールスコープの変数はis_export=trueとする。
         const exportable = self.scopes.items[scope].kind == .module;
         if (node.kind == .variable_definition) {
-            _ = try self.declare(module_index, scope, node.name, if (node.is_const) .constant else .variable, node.span, exportable, !node.is_const, 0, true);
+            // `{非公開}`属性はモジュール変数の公開を打ち消す（公式isExport相当）。
+            _ = try self.declare(module_index, scope, node.name, if (node.is_const) .constant else .variable, node.span, exportable and node.is_export, !node.is_const, 0, true);
         } else if (node.kind == .variable_list_definition) {
             for (node.arguments) |name| _ = try self.declare(module_index, scope, name.name, if (node.is_const) .constant else .variable, name.span, exportable, !node.is_const, 0, true);
         } else if ((node.kind == .assignment or node.kind == .increment or

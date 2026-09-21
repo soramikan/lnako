@@ -52,6 +52,16 @@ pub fn numberOne(self: *Parser, token: Token) ParseFailure!*ast.Node {
     return node;
 }
 
+/// 公式は初期値を省略した宣言（`変数 A`・`Aとは変数`）の値にnopブロックを
+/// 置き、コード生成で0にする（nako_genのconvDefLocalVar相当）。
+/// lnakoはHIR loweringで同じく0へ落とすため、ASTも公式と同じnopにする。
+pub fn omittedValue(self: *Parser, token: Token) ParseFailure!*ast.Node {
+    const node = try makeNode(self, .nop, token);
+    node.josi = "";
+    node.raw_josi = "";
+    return node;
+}
+
 pub fn nop(self: *Parser, token: Token) ParseFailure!*ast.Node {
     return makeNode(self, .nop, token);
 }
