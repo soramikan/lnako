@@ -2984,5 +2984,10 @@
     "id": "native-declaration-without-initializer",
     "sourceFileName": "natdecl.nako3",
     "source": "変数 A\nA=A+1\nAを表示\nBとは変数\nBを表示\nCとは定数\nCを表示\nDとは定数=50\nDを表示\n変数 E{非公開}=1\nEを表示\n定数 F{公開}=2\nFを表示\nGとは変数{非公開}=3\nGを表示\n"
+  },
+  {
+    "id": "native-arguments-array-in-function",
+    "sourceFileName": "natargs.nako3",
+    "source": "●(AとBの)加算処理とは\nそれ＝引数[0] + 引数[1]\nここまで\n3と5の加算処理して表示。\n"
   }
 ]

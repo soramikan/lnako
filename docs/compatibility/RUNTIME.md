@@ -101,6 +101,15 @@
 - 差分テストID: `scope-named-fn-late-module-var`、`scope-anon-fn-late-module-var`、`dncl-v1-scope-late-module-var`、`scopequalreadlate`、`scopequalreadearly`、`scopequalwritelate`、`scopequalarraylate`、`scopequalincrlate`、`scopequaldncllate`、`scopequallocalleak`、`scopequalwriteearly`、`scopequalcrossfn`、`scopequalmodread`、`scopequalsamestmt`、`native-scopequal-same-stmt`、`native-scopequalreadlate`、`native-scopequalreadearly`、`native-scopequalwritelate`、`native-scopequalarraylate`、`native-scopequalincrlate`、`native-scopequaldncllate`（`compare_interpreter_oracle.mjs` / `compare_native_oracle.mjs`）、`semantic-diagnostic-property-root-later`（`compare_semantic_diagnostics_oracle.mjs`）、`取り込んだモジュールの同名シンボルは展開順の先勝ちで解決する`、`推移的に取り込んだモジュールの変数を裸名で解決する`、`取り込み先の代入はエントリの同名変数をmodList解決で上書きする`、`取り込み先の変数宣言はエントリの同名変数を上書きしない`、`取り込み先関数本体内の代入もmodList順でエントリ変数を上書きする`、`関数定義位置より後のエントリ変数は取り込み先関数から見えない`（`src/runtime/interpreter/tests.zig`）
 - TODO識別子: なし
 
+## 関数内の特殊変数『引数』
+
+- 公式実測・source根拠: `nako_gen.mts` は関数本体の先頭で `__self.__vars.set('引数', arguments)` を生成します。値はJavaScriptの `arguments` オブジェクトそのもので、宣言した仮引数に加えて、公式の呼出し規約が末尾へ渡す `__self`（実行コンテキスト）も要素に含まれます。実測では1仮引数の関数呼出しで `引数の要素数` は2、`引数[0]` は第1実引数、`引数[1]` は `[object Object]` でした。
+- lnakoの現在動作: semantic analyzer が関数スコープへ `引数` をローカル変数として宣言し、HIR lowererが関数先頭で仮引数の並びから配列を作って束縛します。呼出し側は助詞補完済みの実引数を渡すため `引数[i]` は公式と同じ実引数を返し、束縛は呼出しごとのフレームに閉じるため入れ子呼出しでも壊れません。
+- 判定: 仕様（実引数の並びと呼出しごとの束縛）／意図的制限（`引数の要素数` は公式より1小さい。公式の末尾要素はJS実装の実行コンテキスト `__self` であり、lnakoには対応する値がないため合成しません）
+- 対象経路: Interpreter / AOT
+- 差分テストID: `arguments-array-in-function`、`arguments-array-per-call`（`compare_interpreter_oracle.mjs`）、`native-arguments-array-in-function`（`compare_native_oracle.mjs`）、`関数内の『引数』は実引数の配列になる`、`『引数』は呼出しごとに独立し入れ子呼出しで壊れない`、`『引数』宣言は同名ローカルとして再利用する`（`src/runtime/interpreter/tests.zig`）
+- TODO識別子: なし
+
 ## 添字・プロパティ代入のコンテナ束縛と評価順
 
 - 公式実測・source根拠: 公式コード生成は `A[k]=v` を `get(name)[k0]..[kn-1] = v` の形にします（`convLet`/`convLetArray`）。ルート変数参照は全ての添字式・値の評価より先に1度だけ束縛され、中間レベルは左辺の走査として添字評価と交互に読み出されます。添字式がルート変数自体を再束縛しても代入は束縛済みの古いコンテナへ行われ、値の評価は全添字の評価後になります。`A[i]をN増やす`（`convInc`）も `$nako_o1 = get(name)` を添字評価の前に生成します。中間読出しがnullishで失敗する場合、後続の添字式・値は評価されません。増減の量式は `v0 = obj[..]` の読み出しとundefined初期化の後、`Number(v0) + Number(incValue)` の行で評価され、書き戻しは量の評価後に `o1[i1]..` を再走査して行います。DNCLモードの自動初期化（`convLetArray`）では、中間添字は `instanceof Array` チェック式と初期化時の書き戻し式で2回評価され、最終代入は `code = name` から生成されるため束縛済みの `tmpVar` ではなくルート変数を読み直します。

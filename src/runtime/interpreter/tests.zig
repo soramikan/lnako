@@ -125,6 +125,81 @@ test "Prepared Interpreterはinterrupt budgetと命令safepointを維持する" 
     try std.testing.expect(interpreter.interruptSafepointCount() > 1);
 }
 
+test "関数内の『引数』は実引数の配列になる" {
+    // 公式は`引数`を関数呼出しごとの実引数配列にする（nako_genのyCallFunc相当）。
+    const source =
+        "●(AとBの)加算処理とは\n" ++
+        "それ＝引数[0] + 引数[1]\n" ++
+        "ここまで\n" ++
+        "3と5の加算処理して表示。\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("8\n", host.written());
+}
+
+test "『引数』は呼出しごとに独立し入れ子呼出しで壊れない" {
+    const source =
+        "●(Aの)内とは\n" ++
+        "引数[0]を表示\n" ++
+        "ここまで\n" ++
+        "●(Aの)外とは\n" ++
+        "それ=引数[0]\n" ++
+        "9の内\n" ++
+        "引数[0]を表示\n" ++
+        "ここまで\n" ++
+        "5の外\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("9\n5\n", host.written());
+}
+
+test "『引数』宣言は同名ローカルとして再利用する" {
+    // 公式は本体先頭で`引数`を実引数配列にしてから利用者の宣言を実行する。
+    // 宣言は同じローカルを上書きする（二重定義にしない）。
+    const source =
+        "●(Aの)Fとは\n" ++
+        "変数 引数=7\n" ++
+        "引数を表示\n" ++
+        "ここまで\n" ++
+        "1のF\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("7\n", host.written());
+}
+
 test "Prepared Interpreterはdead result storeを省略し戻り値観測を維持する" {
     const overwritten_source =
         "●Aとは\n" ++

@@ -105,6 +105,9 @@ pub const Symbol = struct {
     /// 作られなかった暗黙宣言。公式は単一パスで名前を確定するため
     /// 解決済みの参照からも見えない。
     shadowed: bool = false,
+    /// 関数内の`引数`束縛（公式`yCallFunc`の実引数配列）。公式は呼出しごとに
+    /// 用意するため、ユーザーの同名宣言で二重定義にしない。
+    implicit_arguments: bool = false,
 };
 
 pub const Binding = struct {
@@ -231,6 +234,14 @@ const Analyzer = struct {
         for ([_][]const u8{ "それ", "対象", "対象キー", "回数", "エラー内容" }) |name| try self.builtins.put(self.allocator, name, {});
     }
 
+    /// 公式は関数内の`引数`を実引数の配列へ束縛する（nako_genのyCallFunc相当）。
+    /// ユーザーが同名を宣言しても二重定義にしない印を付けて関数スコープへ置く。
+    fn declareImplicitArguments(self: *Analyzer, module_index: u32, scope: ScopeId, span: ast.Span) !void {
+        if (self.lookupLexical(scope, "引数") != null) return;
+        const id = try self.declare(module_index, scope, "引数", .variable, span, false, true, 0, false);
+        self.symbols.items[id].implicit_arguments = true;
+    }
+
     fn predeclareBlock(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId, recurse: bool) anyerror!void {
         try self.predeclareBlockEx(node, module_index, scope, recurse, false);
     }
@@ -295,6 +306,7 @@ const Analyzer = struct {
                 const function_scope = try self.addScope(scope, module_index, .function);
                 try self.function_scopes.append(self.allocator, .{ .node = node, .scope = function_scope });
                 for (node.arguments) |argument| _ = try self.declare(module_index, function_scope, argument.name, .parameter, argument.span, false, true, 0, false);
+                try self.declareImplicitArguments(module_index, function_scope, node.span);
                 for (node.children) |child| try self.predeclareBlock(child, module_index, function_scope, false);
                 for (node.children) |child| try self.resolveBlock(child, module_index, function_scope);
                 return;
@@ -303,6 +315,7 @@ const Analyzer = struct {
                 const function_scope = try self.addScope(scope, module_index, .anonymous_function);
                 try self.function_scopes.append(self.allocator, .{ .node = node, .scope = function_scope });
                 for (node.arguments) |argument| _ = try self.declare(module_index, function_scope, argument.name, .parameter, argument.span, false, true, 0, false);
+                try self.declareImplicitArguments(module_index, function_scope, node.span);
                 for (node.children) |child| try self.predeclareBlock(child, module_index, function_scope, false);
                 for (node.children) |child| try self.resolveBlock(child, module_index, function_scope);
                 return;
@@ -354,8 +367,12 @@ const Analyzer = struct {
         // 公式の明示宣言（変数/定数）はfindVarを使わず無条件に変数を作る
         // （createVar相当）。事前宣言した自分自身のシンボルにそのまま束縛する。
         if (node.kind == .variable_definition) {
-            if (self.lookupDeclSite(module_index, scope, node.name, node.span)) |symbol|
-                try self.bind(node, .declaration, node.name, symbol.qualified_name, symbol.id);
+            // 関数内の`引数`は宣言文を持たない関数全体の束縛のため、宣言サイト
+            // 一致にならない。公式は本体先頭の`__vars.set('引数', arguments)`の
+            // うえで利用者の宣言をそのまま実行するので、同じローカルへ束縛する。
+            const symbol = self.lookupDeclSite(module_index, scope, node.name, node.span) orelse
+                self.lookupImplicitArguments(scope, module_index, node.name);
+            if (symbol) |found| try self.bind(node, .declaration, node.name, found.qualified_name, found.id);
             return;
         }
         // 公式findVarの書き込み側解決: ローカル→自身mod__→modList順。
@@ -583,6 +600,9 @@ const Analyzer = struct {
             // 代入や反復による暗黙宣言は既存変数を再利用するが、
             // 変数/定数の明示定義は同名の再利用も公式同様に二重定義とする。
             if (!explicit_def and existing.kind == kind and (kind == .variable or kind == .loop_variable)) return existing.id;
+            // 関数内の`引数`は公式が呼出しごとに用意する束縛であり、
+            // ユーザーが同名を宣言しても上書きできる。
+            if (existing.implicit_arguments) return existing.id;
             const message = try std.fmt.allocPrint(self.allocator, "『{s}』は同じスコープで既に定義されています", .{name});
             try self.addDiagnostic(.duplicate_symbol, span, self.modules.items[module_index].path, message);
             return existing.id;
@@ -674,6 +694,13 @@ const Analyzer = struct {
         return symbol.module_index == module_index and
             (symbol.kind == .variable or symbol.kind == .constant) and
             symbol.span.start <= use_span.start and use_span.end <= symbol.span.end;
+    }
+
+    /// このスコープの関数内`引数`束縛（公式yCallFunc相当）だけを返す。
+    fn lookupImplicitArguments(self: *Analyzer, scope: ScopeId, module_index: u32, name: []const u8) ?Symbol {
+        const symbol = self.lookupLexical(scope, name) orelse return null;
+        if (!symbol.implicit_arguments or symbol.module_index != module_index) return null;
+        return symbol;
     }
 
     /// この文自身が暗黙・明示に宣言するシンボルを返す。
