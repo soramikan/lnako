@@ -1257,37 +1257,43 @@ test "artifact条件は対象環境へ照合される" {
         .os = "linux",
         .abi = "gnu",
         .features = &.{"simd"},
-    }));
+    }, true));
     // when が偽の場合は不適合
     try std.testing.expect(!try decl.matchesTarget(allocator, .{
         .runtime = "lnako",
         .os = "macos",
         .abi = "gnu",
         .features = &.{"simd"},
-    }));
+    }, true));
     // libc 不一致は不適合
     try std.testing.expect(!try decl.matchesTarget(allocator, .{
         .runtime = "lnako",
         .os = "linux",
         .abi = "musl",
         .features = &.{"simd"},
-    }));
+    }, true));
     // 要求 feature が対象に無ければ不適合
     try std.testing.expect(!try decl.matchesTarget(allocator, .{
         .runtime = "lnako",
         .os = "linux",
         .abi = "gnu",
-    }));
+    }, true));
+    // check_features=false なら feature 要件は未評価（候補段階の用途）
+    try std.testing.expect(try decl.matchesTarget(allocator, .{
+        .runtime = "lnako",
+        .os = "linux",
+        .abi = "gnu",
+    }, false));
 
     // min-os: 対象 os_version が下限以上なら適合、未指定なら証明不能で不適合
     const gated = manifest_mod.ArtifactDecl{
         .path = "lib/a.dylib",
         .min_os = "14.0",
     };
-    try std.testing.expect(try gated.matchesTarget(allocator, .{ .runtime = "lnako", .os = "macos", .os_version = "15.1" }));
-    try std.testing.expect(try gated.matchesTarget(allocator, .{ .runtime = "lnako", .os = "macos", .os_version = "14.0" }));
-    try std.testing.expect(!try gated.matchesTarget(allocator, .{ .runtime = "lnako", .os = "macos", .os_version = "13.9" }));
-    try std.testing.expect(!try gated.matchesTarget(allocator, .{ .runtime = "lnako", .os = "macos" }));
+    try std.testing.expect(try gated.matchesTarget(allocator, .{ .runtime = "lnako", .os = "macos", .os_version = "15.1" }, true));
+    try std.testing.expect(try gated.matchesTarget(allocator, .{ .runtime = "lnako", .os = "macos", .os_version = "14.0" }, true));
+    try std.testing.expect(!try gated.matchesTarget(allocator, .{ .runtime = "lnako", .os = "macos", .os_version = "13.9" }, true));
+    try std.testing.expect(!try gated.matchesTarget(allocator, .{ .runtime = "lnako", .os = "macos" }, true));
 }
 
 test "条件付きartifactは対象へ適合する宣言だけを選択する" {

@@ -167,7 +167,10 @@ pub const ArtifactDecl = struct {
     /// 宣言があるのに対象側の値が不明な場合は適合を証明できないため不適合
     /// とみなす（保守方向）。`when` の解析失敗は manifest 検証で報告済みの
     /// 前提であり、ここでは不適合として扱う。
-    pub fn matchesTarget(self: *const ArtifactDecl, allocator: std.mem.Allocator, target: ArtifactTarget) !bool {
+    /// `check_features` を false にすると `features` 要件を未評価とみなす。
+    /// 依存解決の version 候補判定のように、有効 feature 集合が未確定の
+    /// 段階で feature 条件を理由に候補を落とさないために使う。
+    pub fn matchesTarget(self: *const ArtifactDecl, allocator: std.mem.Allocator, target: ArtifactTarget, check_features: bool) !bool {
         if (self.when) |text| {
             var parsed = try marker_mod.parse(allocator, text);
             const ok = switch (parsed) {
@@ -188,8 +191,10 @@ pub const ArtifactDecl = struct {
             const target_libc = if (target.libc) |l| l else target.abi;
             if (!std.mem.eql(u8, target_libc, libc)) return false;
         }
-        for (self.features) |feature| {
-            if (!containsString(target.features, feature)) return false;
+        if (check_features) {
+            for (self.features) |feature| {
+                if (!containsString(target.features, feature)) return false;
+            }
         }
         return true;
     }
@@ -240,7 +245,7 @@ pub fn compareDottedVersion(a: []const u8, b: []const u8) ?i8 {
 /// 宣言リストから対象に適合する最初の artifact を返す。
 fn firstMatchingArtifact(decls: []const ArtifactDecl, allocator: std.mem.Allocator, target: ArtifactTarget) !?ArtifactDecl {
     for (decls) |decl| {
-        if (try decl.matchesTarget(allocator, target)) return decl;
+        if (try decl.matchesTarget(allocator, target, true)) return decl;
     }
     return null;
 }

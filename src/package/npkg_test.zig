@@ -520,6 +520,11 @@ test "import path をパッケージ相対へ解決する" {
     defer allocator.free(up);
     try testing.expectEqualStrings("src/b.nako3", up);
     try testing.expect((try npkg_commands_gen.resolveImport(allocator, "a.nako3", "../x.nako3")) == null);
+    // 絶対パス・バックスラッシュ・空成分は package 相対の規範形式でないため拒否
+    try testing.expect((try npkg_commands_gen.resolveImport(allocator, "src/index.nako3", "/util.nako3")) == null);
+    try testing.expect((try npkg_commands_gen.resolveImport(allocator, "src/index.nako3", "lib\\util.nako3")) == null);
+    try testing.expect((try npkg_commands_gen.resolveImport(allocator, "src/index.nako3", "lib//util.nako3")) == null);
+    try testing.expect((try npkg_commands_gen.resolveImport(allocator, "src/index.nako3", "lib/")) == null);
 }
 
 fn tmpRoot(temporary: *std.testing.TmpDir, allocator: std.mem.Allocator) ![:0]u8 {
@@ -1159,4 +1164,91 @@ test "npkg build は export されないソースの命令を索引しない" {
     defer parsed.deinit();
     try testing.expectEqual(@as(usize, 1), parsed.commands.len);
     try testing.expectEqualStrings("合計", parsed.commands[0].name);
+}
+
+test "npkg build は include で除外された import 先を拒否する" {
+    const allocator = testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "pkg/src");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "pkg/nako.toml",
+        .data =
+        \\[package]
+        \\name = "demo"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\include = ["src/index.nako3"]
+        \\
+        \\[[exports]]
+        \\name = "demo"
+        \\path = "src/index.nako3"
+        \\
+        ,
+    });
+    // src/util.nako3 は include に合致せず payload へ入らない。
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "pkg/src/index.nako3",
+        .data = "「src/util.nako3」を取り込む\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "pkg/src/util.nako3",
+        .data = "●補助とは\nここまで\n",
+    });
+    const root = try tmpRoot(&temporary, allocator);
+    defer allocator.free(root);
+
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var built = npkg_build.build(allocator, io, root, &list, .{}) catch |err| {
+        try testing.expectEqual(error.InvalidPackage, err);
+        try testing.expect(list.find(diag.E036_NPKG_MISSING_ENTRY) != null);
+        return;
+    };
+    defer built.deinit();
+    return error.TestUnexpectedResult;
+}
+
+test "npkg build は profile 付き依存を拒否する" {
+    const allocator = testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "pkg/src");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "pkg/nako.toml",
+        .data =
+        \\[package]
+        \\name = "demo"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[profiles.linux]
+        \\os = "linux"
+        \\cpu = "x86_64"
+        \\abi = "gnu"
+        \\
+        \\[dependencies.pkg]
+        \\dep = { version = "^1.0", profile = "linux" }
+        \\
+        \\[[exports]]
+        \\name = "demo"
+        \\path = "src/index.nako3"
+        \\
+        ,
+    });
+    try temporary.dir.writeFile(io, .{ .sub_path = "pkg/src/index.nako3", .data = "" });
+    const root = try tmpRoot(&temporary, allocator);
+    defer allocator.free(root);
+
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var built = npkg_build.build(allocator, io, root, &list, .{}) catch |err| {
+        try testing.expectEqual(error.InvalidPackage, err);
+        try testing.expect(list.find(diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY) != null);
+        return;
+    };
+    defer built.deinit();
+    return error.TestUnexpectedResult;
 }

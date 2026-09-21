@@ -87,13 +87,17 @@ fn matchesInclude(patterns: []const []const u8, path: []const u8) bool {
 }
 
 /// ファイルシステムを `SourceProvider` へ適合させる。path は package root
-/// 相対の posix path。見つからない場合は null。
+/// 相対の posix path。payload に収録されたファイル以外は null を返す
+/// （`package.include` で除外された import 先を commands.json へ掲載した
+/// まま実体を欠く .npkg が生成されないようにするため）。
 const FsProvider = struct {
     io: std.Io,
     dir: std.Io.Dir,
+    payloads: *const std.StringHashMapUnmanaged(void),
 
     fn read(context: *anyopaque, allocator: Allocator, path: []const u8) anyerror!?[]u8 {
         const self: *FsProvider = @ptrCast(@alignCast(context));
+        if (!self.payloads.contains(path)) return null;
         return self.dir.readFileAlloc(self.io, path, allocator, .limited(max_file_size)) catch |err| switch (err) {
             error.FileNotFound => null,
             else => return err,
@@ -184,14 +188,23 @@ fn checkExportPaths(allocator: Allocator, manifest: *const manifest_mod.Manifest
     }
 }
 
-/// `dependencies.path` がパッケージ境界内の規範 path か検証する。
-/// 絶対パス・空成分・`.`・`..`・バックスラッシュを含む宣言は、正規化後に
-/// 境界内へ収まる場合でも配布先で同じ依存を再現できないため拒否する。
-fn checkPathDependencies(manifest: *const manifest_mod.Manifest, diagnostics: *diag.List) !void {
+/// `dependencies` が配布可能な形か検証する。
+/// - `path` 依存: package 境界内の規範 path であること。絶対パス・空成分・
+///   `.`・`..`・バックスラッシュを含む宣言は、正規化後に境界内へ収まる
+///   場合でも配布先で同じ依存を再現できないため拒否する。
+/// - `pkg` 依存の `profile`: 配布メタデータは `profiles` を含まないため
+///   参照を再現できず、持つ依存は配布不能として拒否する。
+fn checkDependencies(manifest: *const manifest_mod.Manifest, diagnostics: *diag.List) !void {
     var iterator = manifest.dependencies.path.valueIterator();
     while (iterator.next()) |dep| {
         if (!npkg_files.isCanonicalPath(dep.path)) {
             try report(diagnostics, diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY, dep.path, "path dependency \"{s}\" is not a canonical package-relative path", .{dep.path});
+        }
+    }
+    var pkg_iterator = manifest.dependencies.pkg.valueIterator();
+    while (pkg_iterator.next()) |dep| {
+        if (dep.profile) |profile| {
+            try report(diagnostics, diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY, dep.name, "dependency \"{s}\" uses profile \"{s}\" which .npkg metadata cannot represent", .{ dep.name, profile });
         }
     }
 }
@@ -253,7 +266,7 @@ pub fn build(backing_allocator: Allocator, io: std.Io, root: []const u8, diagnos
 
     const payloads = try collectPayloads(allocator, io, dir, manifest.package.include, exclude, diagnostics);
     try checkExportPaths(allocator, &manifest, payloads, diagnostics);
-    try checkPathDependencies(&manifest, diagnostics);
+    try checkDependencies(&manifest, diagnostics);
     if (payloads.len == 0) {
         try report(diagnostics, diag.E036_NPKG_MISSING_ENTRY, root, "package contains no distributable payload files", .{});
     }
@@ -271,7 +284,7 @@ pub fn build(backing_allocator: Allocator, io: std.Io, root: []const u8, diagnos
         if ((try entry_seen.getOrPut(allocator, path)).found_existing) continue;
         try entry_paths.append(allocator, path);
     }
-    var fs_provider = FsProvider{ .io = io, .dir = dir };
+    var fs_provider = FsProvider{ .io = io, .dir = dir, .payloads = &payload_set };
     var generated = npkg_commands_gen.generate(allocator, fs_provider.provider(), entry_paths.items, diagnostics) catch |err| switch (err) {
         error.InvalidCommands => return error.InvalidPackage,
         else => return err,

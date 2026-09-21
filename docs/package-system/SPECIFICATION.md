@@ -378,7 +378,7 @@ manifest を配布形へ正規化した写像。先頭に `schemaVersion = 1` �
 - `[features]`: feature 定義。
 - `nativePluginAbi = "lnako_plugin_v1"`: native artifact を持つ場合に必須。
 
-ファイル索引は METADATA.toml には持たず `FILES.toml` が正本とする。パッケージ境界の外を指す `dependencies.path` 等の配布不能な依存は `E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY` で拒否する。
+ファイル索引は METADATA.toml には持たず `FILES.toml` が正本とする。パッケージ境界の外を指す・規範 path でない `dependencies.path` と、配布メタデータが `profiles` を含まないため再現できない `profile` 参照を持つ依存は、配布不能として `E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY` で拒否する。
 
 生成側は決定性のため次の正規形で出力する。フィールド順は固定、`dependencies`/`features` の map 由来キーはバイト順ソート、`exports` は `name` 順ソートとする。artifact 宣言は「条件を持たない単一宣言」のみ文字列省略形、それ以外は `{ path, when?, min-os?, libc?, features? }` のインラインテーブル配列で宣言順を保持して出力する。`package.schema-version`・`include`・`dev-dependencies`・`profiles` は配布メタデータに含めない。
 

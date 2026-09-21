@@ -971,10 +971,13 @@ pub fn metaFromManifest(gpa: Allocator, source: *const manifest.Manifest, target
         .feature_aliases = feature_aliases.items,
     };
     // native/esm は宣言の存在ではなく「対象環境へ適合する宣言の有無」で
-    // 実装可否を決める。条件付き宣言（when/min-os/libc/features）が一つも
-    // 対象へ適合しない種別は実装候補にしない。resolver の Target には
-    // os_version/libc/features が無いため、それらを要求する宣言は適合を
-    // 証明できず不適合となる（保守方向）。
+    // 実装可否を決める。条件付き宣言（when/min-os/libc）が一つも対象へ
+    // 適合しない種別は実装候補にしない。resolver の Target には
+    // os_version/libc/features が無いため、os_version・libc を要求する
+    // 宣言は適合を証明できず不適合となる（保守方向）。`features` 要件は
+    // feature unification 後にしか確定しないためこの段階では未評価とし、
+    // feature 条件だけで version 候補を落とさない（最終的な実装選択は
+    // import 時の `Export.resolve` が再有効化 feature で検証する）。
     const artifact_target = manifest.ArtifactTarget{
         .runtime = target.runtime,
         .os = target.os,
@@ -986,13 +989,13 @@ pub fn metaFromManifest(gpa: Allocator, source: *const manifest.Manifest, target
     for (source.exports) |item| {
         if (item.path != null) meta.has_source = true;
         for (item.native) |*decl| {
-            if (try decl.matchesTarget(gpa, artifact_target)) {
+            if (try decl.matchesTarget(gpa, artifact_target, false)) {
                 meta.has_native = true;
                 break;
             }
         }
         for (item.esm) |*decl| {
-            if (try decl.matchesTarget(gpa, artifact_target)) {
+            if (try decl.matchesTarget(gpa, artifact_target, false)) {
                 meta.has_esm = true;
                 break;
             }

@@ -62,6 +62,11 @@ fn isNakoSource(path: []const u8) bool {
 /// パッケージ相対の規範 path へ解決する。ルート外への脱出は null。
 /// `allocator` への割当は呼出し側のメモリ管理に従う。
 pub fn resolveImport(allocator: Allocator, base: []const u8, rel: []const u8) !?[]const u8 {
+    // 絶対パス・バックスラッシュ・空成分を含む指定は package 相対の
+    // 規範形式ではないため拒否する（絶対 import が importer 配下の別
+    // ファイルへ誤変換されるのを防ぐ）。
+    if (rel.len == 0 or rel[0] == '/' or rel[rel.len - 1] == '/') return null;
+    if (std.mem.indexOfScalar(u8, rel, '\\') != null) return null;
     var segments: std.ArrayList([]const u8) = .empty;
     defer segments.deinit(allocator);
     // base のディレクトリ部を起点にする
@@ -73,7 +78,8 @@ pub fn resolveImport(allocator: Allocator, base: []const u8, rel: []const u8) !?
     }
     var it = std.mem.splitScalar(u8, rel, '/');
     while (it.next()) |part| {
-        if (part.len == 0 or std.mem.eql(u8, part, ".")) continue;
+        if (part.len == 0) return null;
+        if (std.mem.eql(u8, part, ".")) continue;
         if (std.mem.eql(u8, part, "..")) {
             if (segments.items.len == 0) return null;
             _ = segments.pop();

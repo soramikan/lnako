@@ -6,12 +6,11 @@
   "additionalProperties": false,
   "properties": {
     "schemaVersion": {
-      "type": "integer",
-      "minimum": 1
+      "const": 1
     },
     "package": {
       "type": "object",
-      "required": ["name", "version"],
+      "required": ["name", "version", "license"],
       "additionalProperties": false,
       "properties": {
         "id": { "$ref": "common.schema.json#/$defs/packageId" },
