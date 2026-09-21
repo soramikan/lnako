@@ -921,3 +921,125 @@ test "深い単項演算子の入れ子が上限を超えたら位置付き診�
     try std.testing.expectEqual(@as(?*ast.Node, null), result.root);
     try std.testing.expectEqual(diagnostic.Code.nesting_too_deep, result.diagnostics[0].code);
 }
+
+test "公式同様に『定数 名』と属性付きの初期値なし宣言を拒否する" {
+    const cases = [_][]const u8{ "定数 A\n", "定数 A{公開}\n", "変数 A{公開}\n" };
+    for (cases) |source| {
+        var result = try parse(std.testing.allocator, source, "宣言エラー.nako3");
+        defer result.deinit();
+        try std.testing.expect(!result.succeeded());
+        try std.testing.expectEqual(diagnostic.Code.expected_token, result.diagnostics[0].code);
+    }
+}
+
+test "未知の属性名でも『変数 名{属性}』は『=』を必須にする" {
+    // 公式は `変数 word { word } eq` を先に試すため、属性名が未知でも
+    // 『=』が無ければ「変数宣言のみ」の形へは落ちない。
+    var result = try parse(std.testing.allocator, "変数 A{未知}\nAを表示\n", "未知属性.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+    try std.testing.expectEqual(diagnostic.Code.expected_token, result.diagnostics[0].code);
+
+    var with_value = try parse(std.testing.allocator, "変数 A{未知}=1\nAを表示\n", "未知属性2.nako3");
+    defer with_value.deinit();
+    try std.testing.expect(with_value.succeeded());
+    try std.testing.expect(with_value.root.?.children[0].is_export);
+}
+
+test "『!モジュール公開既定値』が無属性宣言の公開設定の既定値になる" {
+    // 公式yExportDefault: 『公開』以外は非公開を既定にする。
+    var result = try parse(std.testing.allocator, "!モジュール公開既定値=「非公開」\n変数 A=1\n変数 B{公開}=2\nAとは変数=3\n変数 [C]=[4]\n", "公開既定値.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const declarations = try variableDefinitions(std.testing.allocator, result.root.?);
+    defer std.testing.allocator.free(declarations);
+    try std.testing.expectEqual(@as(usize, 3), declarations.len);
+    try std.testing.expect(!declarations[0].is_export);
+    try std.testing.expect(declarations[1].is_export);
+    try std.testing.expect(!declarations[2].is_export);
+    try std.testing.expect(!result.root.?.children[6].is_export);
+
+    var public_default = try parse(std.testing.allocator, "!モジュール公開既定値=「公開」\n変数 A=1\n変数 B{非公開}=2\n", "公開既定値2.nako3");
+    defer public_default.deinit();
+    const public_declarations = try variableDefinitions(std.testing.allocator, public_default.root.?);
+    defer std.testing.allocator.free(public_declarations);
+    try std.testing.expectEqual(@as(usize, 2), public_declarations.len);
+    try std.testing.expect(public_declarations[0].is_export);
+    try std.testing.expect(!public_declarations[1].is_export);
+}
+
+test "『〜とは 変数|定数=』の空の右辺と宣言直後のカンマを公式同様に受理する" {
+    // 公式yLetは `yCalc() || value` で空の右辺をnopに落とし、
+    // `名前1=値1, 名前2=値2` のために宣言直後のカンマを1つ読み飛ばす。
+    var result = try parse(std.testing.allocator, "Aとは変数=\nBとは定数=\nCとは変数{公開}=\nDとは変数=1,E=2\n", "とは省略.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    for ([_]usize{ 0, 2, 4 }) |index| {
+        const declaration = result.root.?.children[index];
+        try std.testing.expectEqual(ast.Kind.variable_definition, declaration.kind);
+        try std.testing.expectEqual(ast.Kind.nop, declaration.children[0].kind);
+    }
+    const assigned = result.root.?.children[6];
+    try std.testing.expectEqual(@as(f64, 1), assigned.children[0].number_value.?);
+}
+
+test "『定数 名=』は空の右辺をnopにし『変数 名=』は拒否する" {
+    var constant = try parse(std.testing.allocator, "定数 A=\nAを表示\n", "定数省略.nako3");
+    defer constant.deinit();
+    try std.testing.expect(constant.succeeded());
+    try std.testing.expectEqual(ast.Kind.nop, constant.root.?.children[0].children[0].kind);
+
+    const rejected = [_][]const u8{ "変数 A=\nAを表示\n", "変数 A{公開}=\nAを表示\n" };
+    for (rejected) |source| {
+        var result = try parse(std.testing.allocator, source, "変数省略.nako3");
+        defer result.deinit();
+        try std.testing.expect(!result.succeeded());
+    }
+}
+
+test "『定める』の後置属性を公開設定として受理する" {
+    var result = try parse(std.testing.allocator, "Aを1に定める{非公開}\nBを2に定める{公開}\nCを3に定める\n", "定める属性.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    try std.testing.expect(!result.root.?.children[0].is_export);
+    try std.testing.expect(result.root.?.children[2].is_export);
+    try std.testing.expect(result.root.?.children[4].is_export);
+}
+
+/// ブロック直下の `variable_definition` を文順に集める。
+fn variableDefinitions(allocator: std.mem.Allocator, root: *ast.Node) ![]const *ast.Node {
+    var collected: std.ArrayList(*ast.Node) = .empty;
+    for (root.children) |child| if (child.kind == .variable_definition) try collected.append(allocator, child);
+    return collected.toOwnedSlice(allocator);
+}
+
+test "『定める』は定数を生成し匿名関数も右辺に取れる" {
+    // 公式ySadameruは `createVar(word, true, ...)` で定数を作る。
+    var result = try parse(std.testing.allocator, "リンゴ値段を320に定める。\n", "定める.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const declaration = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.variable_definition, declaration.kind);
+    try std.testing.expectEqualStrings("リンゴ値段", declaration.name);
+    try std.testing.expect(declaration.is_const);
+    try std.testing.expectEqual(@as(f64, 320), declaration.children[0].number_value.?);
+}
+
+test "宣言の右辺は匿名関数も受理する" {
+    // 公式`yCalc()`は匿名関数（`関数()`）を式として受理するため、
+    // 空の右辺判定でも`.def_func`を式開始として扱う。
+    const sources = [_][]const u8{
+        "定数 F=関数()\n  1で戻る\nここまで\nF()を表示\n",
+        "Aとは変数=関数()\n  2で戻る\nここまで\nA()を表示\n",
+        "Aとは定数=関数()\n  3で戻る\nここまで\nA()を表示\n",
+    };
+    for (sources) |source| {
+        var result = try parse(std.testing.allocator, source, "匿名関数右辺.nako3");
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+        const declarations = try variableDefinitions(std.testing.allocator, result.root.?);
+        defer std.testing.allocator.free(declarations);
+        try std.testing.expectEqual(@as(usize, 1), declarations.len);
+        try std.testing.expectEqual(ast.Kind.anonymous_function, declarations[0].children[0].kind);
+    }
+}
