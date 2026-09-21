@@ -414,5 +414,12 @@
   {
     "id": "declaration-local-scope",
     "source": "●Fとは\n変数 L\nL=3\nLを表示\nここまで\nF\n"
+  },
+  {
+    "id": "declaration-define-module-export",
+    "files": {
+      "define-lib.nako3": "Aを1に定める\nBとは変数=2\nCとは定数=3\nD=4\n"
+    },
+    "source": "!「./define-lib.nako3」を取り込む\nAを表示\nBを表示\nCを表示\nDを表示\n"
   }
 ]

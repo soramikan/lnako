@@ -19,6 +19,11 @@ try {
   let failures = 0;
   for (const testCase of cases) {
     const sourcePath = resolve(temporary, `${testCase.id}.nako3`);
+    // `files` は同じディレクトリへ置く補助ファイル。取り込み文の差分を
+    // 1ケースで比較するために使う。
+    for (const [name, contents] of Object.entries(testCase.files ?? {})) {
+      await writeFile(resolve(temporary, name), contents, "utf8");
+    }
     await writeFile(sourcePath, testCase.source, "utf8");
     const options = {
       cwd: temporary,

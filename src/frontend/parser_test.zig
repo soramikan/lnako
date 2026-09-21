@@ -267,6 +267,18 @@ test "初期値省略と公開属性の宣言を公式同様に構文解析す�
     }
 }
 
+test "日本語命令形式の宣言もモジュール変数として既定公開する" {
+    // `Aを1に定める`は公式でもモジュール変数を定義する。ASTのis_exportは
+    // 既定falseなので、意味解析が非公開と解釈しないよう宣言時に明示する。
+    var result = try parse(std.testing.allocator, "Aを1に定める\n", "宣言.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const node = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.variable_definition, node.kind);
+    try std.testing.expectEqualStrings("A", node.name);
+    try std.testing.expect(node.is_export);
+}
+
 test "属性付きの変数宣言と初期値なしの定数宣言を公式同様に拒否する" {
     const cases = [_][]const u8{ "変数 A{非公開}\n", "定数 C\n" };
     for (cases) |source| {

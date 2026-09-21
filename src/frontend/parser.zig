@@ -1043,6 +1043,9 @@ pub const Parser = struct {
             const result = try builder.makeNodeWithChildren(self, kind, start, children);
             result.name = if (target.kind == .word) target.value else if (target.name.len > 0) target.name else target.value;
             result.josi = "";
+            // `Aを1に定める`の宣言も公式同様にモジュール変数として既定公開する。
+            // ASTのis_exportは既定falseなので、ここで明示する。
+            if (kind == .variable_definition) result.is_export = true;
             result.check_array_init = kind == .array_assignment and (self.mode.dncl or self.mode.dncl2);
             return result;
         }
