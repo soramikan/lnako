@@ -166,7 +166,10 @@ pub const VersionMeta = struct {
     /// null なら選択可能。値がある場合は選択不能な理由（runtime/engines/OS/
     /// artifact 欠落など）。理由は競合説明の hint として表示される。
     unavailable_reason: ?[]const u8 = null,
-    /// export 実装の有無。
+    /// 要求 target へ適合する export 実装の有無。provider は条件付き
+    /// artifact 宣言（`when`/`min-os`/`libc`/`features`）を target で照合し、
+    /// 適合する宣言が一つも無い種別は false にする（`metaFromManifest`
+    /// が manifest 由来の照合を行う）。
     has_source: bool = false,
     has_native: bool = false,
     has_esm: bool = false,
@@ -967,10 +970,33 @@ pub fn metaFromManifest(gpa: Allocator, source: *const manifest.Manifest, target
         .features = definitions.items,
         .feature_aliases = feature_aliases.items,
     };
+    // native/esm は宣言の存在ではなく「対象環境へ適合する宣言の有無」で
+    // 実装可否を決める。条件付き宣言（when/min-os/libc/features）が一つも
+    // 対象へ適合しない種別は実装候補にしない。resolver の Target には
+    // os_version/libc/features が無いため、それらを要求する宣言は適合を
+    // 証明できず不適合となる（保守方向）。
+    const artifact_target = manifest.ArtifactTarget{
+        .runtime = target.runtime,
+        .os = target.os,
+        .cpu = target.cpu,
+        .abi = target.abi,
+        .compat_js = target.compat_js,
+        .version = target.nako_version orelse target.lnako_version orelse target.cnako_version,
+    };
     for (source.exports) |item| {
         if (item.path != null) meta.has_source = true;
-        if (item.native.len != 0) meta.has_native = true;
-        if (item.esm.len != 0) meta.has_esm = true;
+        for (item.native) |*decl| {
+            if (try decl.matchesTarget(gpa, artifact_target)) {
+                meta.has_native = true;
+                break;
+            }
+        }
+        for (item.esm) |*decl| {
+            if (try decl.matchesTarget(gpa, artifact_target)) {
+                meta.has_esm = true;
+                break;
+            }
+        }
     }
     meta.unavailable_reason = unavailableReason(source, meta, target);
     return meta;

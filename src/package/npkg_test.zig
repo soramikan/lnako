@@ -560,9 +560,9 @@ test "npkg build は決定的なアーカイブを生成する" {
 
     var list = diag.List.init(allocator);
     defer list.deinit();
-    var built = try npkg_build.build(allocator, io, root, &list);
+    var built = try npkg_build.build(allocator, io, root, &list, .{});
     defer built.deinit();
-    var rebuilt = try npkg_build.build(allocator, io, root, &list);
+    var rebuilt = try npkg_build.build(allocator, io, root, &list, .{});
     defer rebuilt.deinit();
     try testing.expectEqualStrings(built.archive, rebuilt.archive);
 
@@ -609,7 +609,7 @@ test "npkg build は include 指定で対象を絞る" {
 
     var list = diag.List.init(allocator);
     defer list.deinit();
-    var built = try npkg_build.build(allocator, io, root, &list);
+    var built = try npkg_build.build(allocator, io, root, &list, .{});
     defer built.deinit();
     // include 未指定: nako.toml・src/index.nako3・extra.txt の3件。
     try testing.expectEqual(@as(usize, 3), built.files.len);
@@ -627,7 +627,7 @@ test "npkg build は include 指定で対象を絞る" {
         \\
     ;
     try temporary.dir.writeFile(io, .{ .sub_path = "pkg/nako.toml", .data = include_source });
-    var narrowed = try npkg_build.build(allocator, io, root, &list);
+    var narrowed = try npkg_build.build(allocator, io, root, &list, .{});
     defer narrowed.deinit();
     try testing.expectEqual(@as(usize, 1), narrowed.files.len);
     try testing.expectEqualStrings("src/index.nako3", narrowed.files[0].path);
@@ -662,7 +662,7 @@ test "npkg build は宣言 export の未収録と境界外 path 依存を拒否�
 
     var list = diag.List.init(allocator);
     defer list.deinit();
-    var built = npkg_build.build(allocator, io, root, &list) catch |err| {
+    var built = npkg_build.build(allocator, io, root, &list, .{}) catch |err| {
         try testing.expectEqual(error.InvalidPackage, err);
         try testing.expect(list.find(diag.E036_NPKG_MISSING_ENTRY) != null);
         try testing.expect(list.find(diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY) != null);
@@ -708,7 +708,7 @@ test "npkg verify は build 生成物を受理する" {
 
     var list = diag.List.init(allocator);
     defer list.deinit();
-    var built = try npkg_build.build(allocator, io, root, &list);
+    var built = try npkg_build.build(allocator, io, root, &list, .{});
     defer built.deinit();
 
     var verified = try npkg_verify.verify(allocator, built.archive, .{
@@ -881,4 +881,282 @@ test "npkg適合fixtureを解析できる" {
         defer commands.deinit();
         try testing.expect(commands.commands.len > 0);
     }
+}
+
+test "npkg verify は宣言 export の未収録を拒否する" {
+    const allocator = testing.allocator;
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+
+    // export は src/missing.nako3 と lib/x.so を宣言するが、索引と
+    // payload には無関係な a.txt のみ存在する。
+    const metadata =
+        \\schemaVersion = 1
+        \\nativePluginAbi = "lnako_plugin_v1"
+        \\
+        \\[package]
+        \\name = "x"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[[exports]]
+        \\name = "main"
+        \\path = "src/missing.nako3"
+        \\
+        \\[[exports]]
+        \\name = "plugin"
+        \\native = "lib/x.so"
+        \\
+    ;
+    const payload = "x";
+    const files_toml = try emitFilesToml(allocator, &.{
+        .{ .path = "a.txt", .sha256 = sha256Of(payload), .size = payload.len },
+    });
+    defer allocator.free(files_toml);
+    const archive = try zip.writeEntries(allocator, &.{
+        .{ .name = "NAKO-PKG/METADATA.toml", .data = metadata },
+        .{ .name = "NAKO-PKG/FILES.toml", .data = files_toml },
+        .{ .name = "NAKO-PKG/commands.json", .data = empty_commands },
+        .{ .name = "a.txt", .data = payload },
+    });
+    defer allocator.free(archive);
+
+    try testing.expectError(error.InvalidPackage, npkg_verify.verify(allocator, archive, .{}, &list));
+    try testing.expect(list.find(diag.E036_NPKG_MISSING_ENTRY) != null);
+}
+
+/// `name` を持つ local header のオフセットを返す。
+fn findLocalHeader(archive: []u8, name: []const u8) ?usize {
+    var offset: usize = 0;
+    while (std.mem.indexOfPos(u8, archive, offset, "\x50\x4b\x03\x04")) |lh| {
+        const name_len = std.mem.readInt(u16, archive[lh + 26 ..][0..2], .little);
+        if (std.mem.eql(u8, archive[lh + 30 .. lh + 30 + name_len], name)) return lh;
+        offset = lh + 1;
+    }
+    return null;
+}
+
+/// `name` を持つ central directory エントリのオフセットを返す。
+fn findCentralEntry(archive: []u8, name: []const u8) ?usize {
+    var offset: usize = 0;
+    while (std.mem.indexOfPos(u8, archive, offset, "\x50\x4b\x01\x02")) |cd| {
+        const name_len = std.mem.readInt(u16, archive[cd + 28 ..][0..2], .little);
+        if (std.mem.eql(u8, archive[cd + 46 .. cd + 46 + name_len], name)) return cd;
+        offset = cd + 1;
+    }
+    return null;
+}
+
+fn verifyArchive(allocator: std.mem.Allocator, archive: []const u8) !diag.List {
+    var list = diag.List.init(allocator);
+    errdefer list.deinit();
+    try testing.expectError(error.InvalidPackage, npkg_verify.verify(allocator, archive, .{}, &list));
+    return list;
+}
+
+fn minimalArchive(allocator: std.mem.Allocator) ![]u8 {
+    const payload = "x";
+    const files_toml = try emitFilesToml(allocator, &.{
+        .{ .path = "a.txt", .sha256 = sha256Of(payload), .size = payload.len },
+    });
+    defer allocator.free(files_toml);
+    return zip.writeEntries(allocator, &.{
+        .{ .name = "NAKO-PKG/METADATA.toml", .data = minimal_metadata },
+        .{ .name = "NAKO-PKG/FILES.toml", .data = files_toml },
+        .{ .name = "NAKO-PKG/commands.json", .data = empty_commands },
+        .{ .name = "a.txt", .data = payload },
+    });
+}
+
+test "npkg verify は local header 名と central 名の不一致を拒否する" {
+    const allocator = testing.allocator;
+    const archive = try minimalArchive(allocator);
+    defer allocator.free(archive);
+
+    // a.txt の local header 名だけを同長の b.txt へ書き換える。
+    const lh = findLocalHeader(archive, "a.txt").?;
+    @memcpy(archive[lh + 30 .. lh + 30 + 5], "b.txt");
+
+    var list = try verifyArchive(allocator, archive);
+    defer list.deinit();
+    try testing.expect(list.find(diag.E029_INVALID_VALUE) != null);
+}
+
+test "npkg verify は stored 以外の圧縮を拒否する" {
+    const allocator = testing.allocator;
+    const archive = try minimalArchive(allocator);
+    defer allocator.free(archive);
+
+    // a.txt の method を deflate(8) へ書き換える（local + central 双方）。
+    const cd = findCentralEntry(archive, "a.txt").?;
+    std.mem.writeInt(u16, archive[cd + 10 ..][0..2], 8, .little);
+    const lh = findLocalHeader(archive, "a.txt").?;
+    std.mem.writeInt(u16, archive[lh + 8 ..][0..2], 8, .little);
+
+    var list = try verifyArchive(allocator, archive);
+    defer list.deinit();
+    try testing.expect(list.find(diag.E029_INVALID_VALUE) != null);
+}
+
+test "npkg verify は directory エントリを拒否する" {
+    const allocator = testing.allocator;
+    const payload = "x";
+    const files_toml = try emitFilesToml(allocator, &.{
+        .{ .path = "a.txt", .sha256 = sha256Of(payload), .size = payload.len },
+    });
+    defer allocator.free(files_toml);
+    const archive = try zip.writeEntries(allocator, &.{
+        .{ .name = "NAKO-PKG/METADATA.toml", .data = minimal_metadata },
+        .{ .name = "NAKO-PKG/FILES.toml", .data = files_toml },
+        .{ .name = "NAKO-PKG/commands.json", .data = empty_commands },
+        .{ .name = "a.txt", .data = payload },
+        .{ .name = "sub/", .data = "", .is_directory = true },
+    });
+    defer allocator.free(archive);
+
+    var list = try verifyArchive(allocator, archive);
+    defer list.deinit();
+    try testing.expect(list.find(diag.E040_NPKG_NONCANONICAL_PATH) != null);
+}
+
+test "npkg build は出力予定の .npkg を収録しない" {
+    const allocator = testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try writeDemoPackage(&temporary);
+    // 前回ビルドの残存成果物を root 内へ置く。
+    try temporary.dir.writeFile(io, .{ .sub_path = "pkg/demo-1.0.0.npkg", .data = "stale" });
+    const root = try tmpRoot(&temporary, allocator);
+    defer allocator.free(root);
+
+    const output = try std.fs.path.join(allocator, &.{ root, "demo-1.0.0.npkg" });
+    defer allocator.free(output);
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var built = try npkg_build.build(allocator, io, root, &list, .{ .output = output });
+    defer built.deinit();
+
+    // 出力先は除外され nako.toml・src/index.nako3 の2件のみ。
+    try testing.expectEqual(@as(usize, 2), built.files.len);
+    for (built.files) |file| {
+        try testing.expect(!std.mem.endsWith(u8, file.path, ".npkg"));
+    }
+}
+
+test "npkg build は include 指定時に既定除外を適用しない" {
+    const allocator = testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try writeDemoPackage(&temporary);
+    try temporary.dir.createDirPath(io, "pkg/.nako");
+    try temporary.dir.writeFile(io, .{ .sub_path = "pkg/.nako/data.json", .data = "{}" });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "pkg/nako.toml",
+        .data =
+        \\[package]
+        \\name = "demo"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\include = ["src/**", ".nako/**"]
+        \\
+        \\[[exports]]
+        \\name = "demo"
+        \\path = "src/index.nako3"
+        \\
+        ,
+    });
+    const root = try tmpRoot(&temporary, allocator);
+    defer allocator.free(root);
+
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var built = try npkg_build.build(allocator, io, root, &list, .{});
+    defer built.deinit();
+
+    // 明示 include により既定除外の .nako 配下も収録される。
+    try testing.expectEqual(@as(usize, 2), built.files.len);
+    try testing.expectEqualStrings(".nako/data.json", built.files[0].path);
+    try testing.expectEqualStrings("src/index.nako3", built.files[1].path);
+}
+
+test "npkg build は絶対パスの依存を拒否する" {
+    const allocator = testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "pkg");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "pkg/nako.toml",
+        .data =
+        \\[package]
+        \\name = "demo"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\local = { path = "/opt/localdep" }
+        \\
+        \\[[exports]]
+        \\name = "demo"
+        \\path = "src/index.nako3"
+        \\
+        ,
+    });
+    try temporary.dir.createDirPath(io, "pkg/src");
+    try temporary.dir.writeFile(io, .{ .sub_path = "pkg/src/index.nako3", .data = "" });
+    const root = try tmpRoot(&temporary, allocator);
+    defer allocator.free(root);
+
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var built = npkg_build.build(allocator, io, root, &list, .{}) catch |err| {
+        try testing.expectEqual(error.InvalidPackage, err);
+        try testing.expect(list.find(diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY) != null);
+        return;
+    };
+    defer built.deinit();
+    return error.TestUnexpectedResult;
+}
+
+test "npkg build は export されないソースの命令を索引しない" {
+    const allocator = testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try writeDemoPackage(&temporary);
+    // export されず import もされない内部補助ソース。
+    try temporary.dir.createDirPath(io, "pkg/tests");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "pkg/tests/helper.nako3",
+        .data = "●補助とは\nここまで\n",
+    });
+    const root = try tmpRoot(&temporary, allocator);
+    defer allocator.free(root);
+
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var built = try npkg_build.build(allocator, io, root, &list, .{});
+    defer built.deinit();
+
+    // tests/helper.nako3 は payload に収録されるが commands.json の
+    // 索引対象にはならない。
+    try testing.expectEqual(@as(usize, 3), built.files.len);
+    try temporary.dir.writeFile(io, .{ .sub_path = "out2.npkg", .data = built.archive });
+    const archive_path = try temporary.dir.realPathFileAlloc(io, "out2.npkg", allocator);
+    defer allocator.free(archive_path);
+    const extract_root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(extract_root);
+    const extracted = try std.fs.path.join(allocator, &.{ extract_root, "extracted2" });
+    defer allocator.free(extracted);
+    try zip.extract(io, archive_path, extracted);
+    const commands_path = try std.fs.path.join(allocator, &.{ extracted, "NAKO-PKG", "commands.json" });
+    defer allocator.free(commands_path);
+    const commands_bytes = try std.Io.Dir.cwd().readFileAlloc(io, commands_path, allocator, .limited(1 << 20));
+    defer allocator.free(commands_bytes);
+    var parsed = try npkg_commands.parse(allocator, commands_bytes, &list);
+    defer parsed.deinit();
+    try testing.expectEqual(@as(usize, 1), parsed.commands.len);
+    try testing.expectEqualStrings("合計", parsed.commands[0].name);
 }

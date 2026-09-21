@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/soramikan/lnako/package-system/schema/npkg-files/v1",
   "type": "object",
-  "required": ["schemaVersion", "files"],
+  "required": ["schemaVersion"],
   "additionalProperties": false,
   "properties": {
     "schemaVersion": {

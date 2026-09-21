@@ -360,10 +360,12 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
 
 - エントリ名は POSIX `/` 区切りの規範パスとする。`..`・`.`・空の成分、`\`、制御文字（U+0000–U+001F, U+007F）、先頭 `/`、末尾 `/` を含むエントリは `E040_NPKG_NONCANONICAL_PATH` で拒否する。
 - `NAKO-PKG/` はメタデータ予約領域であり、payload のパスは `NAKO-PKG/` で始まってはならない。必須3エントリ以外の `NAKO-PKG/` エントリは `E037_NPKG_UNLISTED_ENTRY` で拒否する。
-- directory エントリ（末尾 `/`）は配布意味を持たない。生成側は書き出さず、検証側も directory エントリの有無を payload の判断材料にしない。
+- directory エントリ（末尾 `/`）は配布意味を持たず、末尾 `/` は規範パスに適合しないため `E040_NPKG_NONCANONICAL_PATH` で拒否する。生成側も書き出さない。
+- 格納形式は stored のみとする。stored 以外の compression method を持つエントリは検証で拒否する。
 - ZIP の local header / central directory の並びはエントリ名のバイト順ソートで固定し、timestamp・comment・extra field は固定値（時刻ゼロ、UTF-8 ファイル名フラグ、stored 格納）とする。同一入力からは同一バイト列が得られなければならない。
 - 同名エントリの重複は `E038_NPKG_DUPLICATE_ENTRY` で拒否する。
-- `package.include` 未指定時は VCS・生成物（`.git`、`.zig-cache`、`zig-out`、`node_modules`、`.nako`、`nako.lock`、`.DS_Store`）を除く package 内ファイルを再帰収録する。
+- `package.include` 未指定時は VCS・生成物（`.git`、`.zig-cache`、`zig-out`、`node_modules`、`.nako`、`nako.lock`、`.DS_Store`）を除く package 内ファイルを再帰収録する。`include` 指定時は既定除外を適用せず、パターン適合のみで収録可否を決める。
+- 出力予定の `.npkg` が package root 内にある場合、生成側はそれを収集対象から除外する（再ビルドで前回成果物が payload に混入しないようにするため）。
 
 ### 6.2 `NAKO-PKG/METADATA.toml`
 
@@ -402,6 +404,8 @@ size = 1234
 
 公開 command 情報。`schemaVersion` と `commands` 配列を持ち、`.nako3` 公開ソースの AST から静的に導出する。初期化コードや任意のパッケージコードは実行しない。
 
+走査の入口は `exports[].path` の収録済みソースのみとし、そこから静的に解決できる import 閉包を辿る。export されない内部ファイルの公開定義は索引に含めない。
+
 - 公開トップレベル関数: `{ "name", "args": [...], "josi": [...] }`（引数名と助詞の対応配列）。
 - 公開トップレベル変数: `{ "name", "variable": true }`。
 - `fn`・`async`・`return` のような静的に確定できない値は出力しない。
@@ -412,9 +416,9 @@ size = 1234
 インストール・利用前の静的検証は次を確認する:
 
 - 必須 `NAKO-PKG` エントリの存在と既知 schema version（未知は `E035_UNKNOWN_NPKG_SCHEMA`）。
-- 全エントリ名の規範パス適合と重複なし。
+- 全エントリ名の規範パス適合と重複なし。全エントリが stored 格納であり、各 local header のファイル名が central directory のエントリ名と一致すること。
 - `FILES.toml` と payload エントリ集合の完全一致、各 hash・size の一致。
-- `METADATA.toml` の構造・必須フィールド、宣言ファイルの収録。
+- `METADATA.toml` の構造・必須フィールド、宣言ファイル（`exports[].path` および全 native/esm artifact の `path`）の収録。
 - 対象 profile（os/cpu/abi/min-os/libc/features）と artifact 条件の適合。不適合な native artifact は `E015_NATIVE_FOR_INCOMPATIBLE_TARGET`、未対応 runtime は `E031_UNSUPPORTED_RUNTIME`、engine 要件不適合は `E032_ENGINE_MISMATCH`。
 - 通常モードでの ESM artifact 利用は `E006_JS_IN_NORMAL_MODE`。
 

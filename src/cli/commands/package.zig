@@ -46,7 +46,7 @@ fn runBuild(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, 
 
     var list = diag.List.init(allocator);
     defer list.deinit();
-    var built = npkg_build.build(allocator, io, root, &list) catch |err| switch (err) {
+    var built = npkg_build.build(allocator, io, root, &list, .{ .output = output }) catch |err| switch (err) {
         error.InvalidPackage => try renderAndFail(&list, stderr, root),
         error.FileNotFound => {
             try stderr.print("package build: {s}/nako.toml が見つかりません\n", .{root});

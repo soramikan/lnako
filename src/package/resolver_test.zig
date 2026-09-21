@@ -1140,6 +1140,52 @@ test "ESM専用packageは通常lnakoで解決不能・compat-jsで解決可能" 
     try T.expect(cnako.unavailable_reason == null);
 }
 
+test "条件付きartifactは対象外環境で実装候補にしない" {
+    var arena = std.heap.ArenaAllocator.init(T.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+    var m = try parseManifest(gpa,
+        \\[package]
+        \\name = "linux-only"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[[exports]]
+        \\name = "plugin"
+        \\native = { path = "lib/x.so", when = "os == 'linux'" }
+        \\
+    );
+    defer m.deinit();
+
+    // Linux 対象では native 実装が使える。
+    const linux_meta = try resolver.metaFromManifest(gpa, &m, .{
+        .runtime = "lnako",
+        .os = "linux",
+        .abi = "gnu",
+    });
+    try T.expect(linux_meta.unavailable_reason == null);
+    try T.expect(linux_meta.has_native);
+    try T.expectEqual(Impl.native, resolver.chooseImplementation(linux_meta, .{
+        .runtime = "lnako",
+        .os = "linux",
+        .abi = "gnu",
+    }, false));
+
+    // macOS 対象では条件に合う宣言が無く、実装なしとして解決不能になる。
+    const macos_meta = try resolver.metaFromManifest(gpa, &m, .{
+        .runtime = "lnako",
+        .os = "macos",
+        .abi = "none",
+    });
+    try T.expect(!macos_meta.has_native);
+    try T.expect(macos_meta.unavailable_reason != null);
+    try T.expectEqual(Impl.none, resolver.chooseImplementation(macos_meta, .{
+        .runtime = "lnako",
+        .os = "macos",
+        .abi = "none",
+    }, false));
+}
+
 // ---------------------------------------------------------------------------
 // brute-force oracle
 // ---------------------------------------------------------------------------

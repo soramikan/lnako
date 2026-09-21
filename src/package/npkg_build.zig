@@ -115,12 +115,15 @@ fn payloadLessThan(_: void, a: Payload, b: Payload) bool {
 }
 
 /// package root 以下を走査して収録対象ファイル一覧を返す（ソート済み）。
-/// `include` 指定時はパターン適合のみ、未指定時は既定除外以外の全ファイル。
+/// `include` 指定時はパターン適合のみ（既定除外は適用しない）、未指定時は
+/// 既定除外以外の全ファイル。`exclude` は生成中の出力 `.npkg` など
+/// include 指定に関わらず常に除外する package 相対 path。
 fn collectPayloads(
     allocator: Allocator,
     io: std.Io,
     dir: std.Io.Dir,
     include: ?[]const []const u8,
+    exclude: ?[]const u8,
     diagnostics: *diag.List,
 ) ![]Payload {
     var payloads: std.ArrayList(Payload) = .empty;
@@ -134,9 +137,13 @@ fn collectPayloads(
             try report(diagnostics, diag.E040_NPKG_NONCANONICAL_PATH, path, "payload \"{s}\" is not a regular file", .{path});
             continue;
         }
-        if (isExcluded(path)) continue;
+        if (exclude) |excluded_path| {
+            if (std.mem.eql(u8, path, excluded_path)) continue;
+        }
         if (include) |patterns| {
             if (!matchesInclude(patterns, path)) continue;
+        } else if (isExcluded(path)) {
+            continue;
         }
         if (!npkg_files.isCanonicalPath(path) or npkg_files.isMetadataPath(path)) {
             try report(diagnostics, diag.E040_NPKG_NONCANONICAL_PATH, path, "payload path \"{s}\" is not a canonical package path", .{path});
@@ -177,20 +184,44 @@ fn checkExportPaths(allocator: Allocator, manifest: *const manifest_mod.Manifest
     }
 }
 
-/// `dependencies.path` がパッケージ境界の外を指さないか検証する。
-fn checkPathDependencies(allocator: Allocator, manifest: *const manifest_mod.Manifest, diagnostics: *diag.List) !void {
+/// `dependencies.path` がパッケージ境界内の規範 path か検証する。
+/// 絶対パス・空成分・`.`・`..`・バックスラッシュを含む宣言は、正規化後に
+/// 境界内へ収まる場合でも配布先で同じ依存を再現できないため拒否する。
+fn checkPathDependencies(manifest: *const manifest_mod.Manifest, diagnostics: *diag.List) !void {
     var iterator = manifest.dependencies.path.valueIterator();
     while (iterator.next()) |dep| {
-        // base を空にして package root 直下からの相対解決とする。
-        if ((try npkg_commands_gen.resolveImport(allocator, "", dep.path)) == null) {
-            try report(diagnostics, diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY, dep.path, "path dependency \"{s}\" escapes the package root", .{dep.path});
+        if (!npkg_files.isCanonicalPath(dep.path)) {
+            try report(diagnostics, diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY, dep.path, "path dependency \"{s}\" is not a canonical package-relative path", .{dep.path});
         }
     }
 }
 
+/// 出力予定の `.npkg` が package root 内にあれば、その root 相対 path を
+/// 返す（収集対象から除外するため）。root 外または比較不能なら null。
+fn outputExcludePath(allocator: Allocator, io: std.Io, root: []const u8, output: []const u8) !?[]const u8 {
+    const cwd = try std.Io.Dir.cwd().realPathFileAlloc(io, ".", allocator);
+    const relative = try std.fs.path.relative(allocator, cwd, null, root, output);
+    if (relative.len == 0 or std.fs.path.isAbsolute(relative) or
+        std.mem.eql(u8, relative, "..") or std.mem.startsWith(u8, relative, "../") or
+        std.mem.startsWith(u8, relative, "..\\"))
+    {
+        return null;
+    }
+    std.mem.replaceScalar(u8, relative, '\\', '/');
+    return relative;
+}
+
+/// build の追加オプション。
+pub const Options = struct {
+    /// 出力予定の `.npkg` path（cwd 相対または絶対）。package root 内に
+    /// ある場合は収集対象から除外し、再ビルドで前回成果物が payload に
+    /// 混入しないようにする。
+    output: ?[]const u8 = null,
+};
+
 /// `root`（`nako.toml` を含む directory）から `.npkg` バイト列を生成する。
 /// 失敗時は diagnostics へ記録して `error.InvalidPackage` を返す。
-pub fn build(backing_allocator: Allocator, io: std.Io, root: []const u8, diagnostics: *diag.List) !Built {
+pub fn build(backing_allocator: Allocator, io: std.Io, root: []const u8, diagnostics: *diag.List, options: Options) !Built {
     var arena = std.heap.ArenaAllocator.init(backing_allocator);
     errdefer arena.deinit();
     const allocator = arena.allocator();
@@ -210,23 +241,35 @@ pub fn build(backing_allocator: Allocator, io: std.Io, root: []const u8, diagnos
     var dir = try std.Io.Dir.cwd().openDir(io, root, .{ .iterate = true });
     defer dir.close(io);
 
-    const payloads = try collectPayloads(allocator, io, dir, manifest.package.include, diagnostics);
+    // 出力先が package root 内なら収集対象から外し、再ビルドで前回の
+    // 成果物が payload へ混入しないようにする。
+    const default_output = try std.fmt.allocPrint(allocator, "{s}-{d}.{d}.{d}.npkg", .{
+        manifest.package.name,
+        manifest.package.version.major,
+        manifest.package.version.minor,
+        manifest.package.version.patch,
+    });
+    const exclude = try outputExcludePath(allocator, io, root, options.output orelse default_output);
+
+    const payloads = try collectPayloads(allocator, io, dir, manifest.package.include, exclude, diagnostics);
     try checkExportPaths(allocator, &manifest, payloads, diagnostics);
-    try checkPathDependencies(allocator, &manifest, diagnostics);
+    try checkPathDependencies(&manifest, diagnostics);
     if (payloads.len == 0) {
         try report(diagnostics, diag.E036_NPKG_MISSING_ENTRY, root, "package contains no distributable payload files", .{});
     }
 
-    // commands.json: 収録されたなでしこソースを入口として静的索引を生成する。
+    // commands.json: 公開入口は `exports[].path` の収録済みソースのみ。
+    // そこからの静的 import 閉包は generator が辿る（export されない内部
+    // ファイルの公開定義を索引へ混ぜない）。
+    var payload_set: std.StringHashMapUnmanaged(void) = .empty;
+    for (payloads) |payload| try payload_set.put(allocator, payload.path, {});
+    var entry_seen: std.StringHashMapUnmanaged(void) = .empty;
     var entry_paths: std.ArrayList([]const u8) = .empty;
-    for (payloads) |payload| {
-        const extension = std.fs.path.extension(payload.path);
-        if (std.ascii.eqlIgnoreCase(extension, ".nako3") or
-            std.ascii.eqlIgnoreCase(extension, ".dncl") or
-            std.ascii.eqlIgnoreCase(extension, ".dncl2"))
-        {
-            try entry_paths.append(allocator, payload.path);
-        }
+    for (manifest.exports) |export_entry| {
+        const path = export_entry.path orelse continue;
+        if (!payload_set.contains(path)) continue;
+        if ((try entry_seen.getOrPut(allocator, path)).found_existing) continue;
+        try entry_paths.append(allocator, path);
     }
     var fs_provider = FsProvider{ .io = io, .dir = dir };
     var generated = npkg_commands_gen.generate(allocator, fs_provider.provider(), entry_paths.items, diagnostics) catch |err| switch (err) {

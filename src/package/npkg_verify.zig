@@ -125,30 +125,24 @@ fn readCentralDirectory(allocator: Allocator, archive: []const u8) ![]ZipEntry {
     return entries.toOwnedSlice(allocator);
 }
 
-/// local header を辿って entry 内容を返す。stored と deflate を受理する。
-fn readEntryData(allocator: Allocator, archive: []const u8, entry: ZipEntry) ![]u8 {
+/// local header を辿って entry 内容を返す。`NAKO-PKG` 形式は stored のみ
+/// 規定するため method 0 以外は受理しない。local header のファイル名が
+/// central directory の名前と一致しないアーカイブは拒否する（二重名義で
+/// 検証済み内容と展開先をずらす偽装を防ぐ）。
+fn readEntryData(archive: []const u8, entry: ZipEntry) ![]u8 {
     const lh = entry.local_offset;
     if (lh + 30 > archive.len or readInt(u32, archive, lh) != 0x04034b50)
         return error.InvalidArchive;
-    const data_offset = lh + 30 + readInt(u16, archive, lh + 26) + readInt(u16, archive, lh + 28);
+    const local_name_len = readInt(u16, archive, lh + 26);
+    const data_offset = lh + 30 + local_name_len + readInt(u16, archive, lh + 28);
     const data_end = @as(usize, data_offset) + entry.compressed_size;
     if (data_end > archive.len) return error.InvalidArchive;
+    const local_name = archive[lh + 30 .. lh + 30 + local_name_len];
+    if (!std.mem.eql(u8, local_name, entry.name)) return error.InvalidArchive;
+    if (entry.method != 0) return error.InvalidArchive;
     const compressed = archive[data_offset..data_end];
-    switch (entry.method) {
-        0 => {
-            if (compressed.len != entry.uncompressed_size) return error.InvalidArchive;
-            return @constCast(compressed);
-        },
-        8 => {
-            const data = try allocator.alloc(u8, entry.uncompressed_size);
-            var input: std.Io.Reader = .fixed(compressed);
-            var window: [std.compress.flate.max_window_len]u8 = undefined;
-            var decompress = std.compress.flate.Decompress.init(&input, .raw, &window);
-            decompress.reader.readSliceAll(data) catch return error.InvalidArchive;
-            return data;
-        },
-        else => return error.InvalidArchive,
-    }
+    if (compressed.len != entry.uncompressed_size) return error.InvalidArchive;
+    return @constCast(compressed);
 }
 
 fn report(diagnostics: *diag.List, code: []const u8, path: []const u8, comptime format: []const u8, args: anytype) !void {
@@ -179,17 +173,21 @@ pub fn verify(
     // エントリ名の規範性・重複・メタデータ領域の検査と内容の読み出し。
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     var contents: std.StringHashMapUnmanaged([]u8) = .empty;
-    var payload_count: usize = 0;
     var total_uncompressed: u64 = 0;
     for (zip_entries) |entry| {
-        // directory エントリは payload の判断材料にしない（§6.1）。
-        if (entry.name.len != 0 and entry.name[entry.name.len - 1] == '/') continue;
+        // 重複・規範性・格納形式は directory エントリを含む全エントリに
+        // 適用する（§6.5）。directory エントリは末尾 `/` のため規範 path に
+        // 適合せず、ここで拒否される。
         if ((try seen.getOrPut(allocator, entry.name)).found_existing) {
             try report(diagnostics, diag.E038_NPKG_DUPLICATE_ENTRY, entry.name, "duplicate archive entry \"{s}\"", .{entry.name});
             continue;
         }
         if (!npkg_files.isCanonicalPath(entry.name)) {
             try report(diagnostics, diag.E040_NPKG_NONCANONICAL_PATH, entry.name, "archive entry \"{s}\" is not a canonical path", .{entry.name});
+            continue;
+        }
+        if (entry.method != 0) {
+            try report(diagnostics, diag.E029_INVALID_VALUE, entry.name, "archive entry \"{s}\" uses non-stored compression", .{entry.name});
             continue;
         }
         if (npkg_files.isMetadataPath(entry.name)) {
@@ -202,20 +200,15 @@ pub fn verify(
                 try report(diagnostics, diag.E037_NPKG_UNLISTED_ENTRY, entry.name, "unexpected metadata entry \"{s}\"", .{entry.name});
                 continue;
             }
-        } else {
-            payload_count += 1;
         }
         total_uncompressed += entry.uncompressed_size;
         if (total_uncompressed > max_total_size) {
             try report(diagnostics, diag.E029_INVALID_VALUE, entry.name, "archive exceeds the total size limit", .{});
             return error.InvalidPackage;
         }
-        const data = readEntryData(allocator, archive, entry) catch |err| switch (err) {
-            error.OutOfMemory => return err,
-            else => {
-                try report(diagnostics, diag.E029_INVALID_VALUE, entry.name, "archive entry \"{s}\" is not readable", .{entry.name});
-                continue;
-            },
+        const data = readEntryData(archive, entry) catch {
+            try report(diagnostics, diag.E029_INVALID_VALUE, entry.name, "archive entry \"{s}\" is not readable", .{entry.name});
+            continue;
         };
         try contents.put(allocator, entry.name, data);
     }
@@ -266,6 +259,23 @@ pub fn verify(
     for (files.entries) |file| {
         if (!contents.contains(file.path)) {
             try report(diagnostics, diag.E036_NPKG_MISSING_ENTRY, file.path, "indexed file \"{s}\" is missing from the archive", .{file.path});
+        }
+    }
+
+    // exports が参照するファイルが索引（=payload、集合一致は検証済み）へ
+    // 収録されているか。宣言だけ存在して実体が無い export を拒否する。
+    for (manifest.exports) |export_entry| {
+        if (export_entry.path) |path| {
+            if (!listed.contains(path)) {
+                try report(diagnostics, diag.E036_NPKG_MISSING_ENTRY, path, "export \"{s}\" source \"{s}\" is not included in the package", .{ export_entry.name, path });
+            }
+        }
+        for ([_][]const manifest_mod.ArtifactDecl{ export_entry.native, export_entry.esm }) |decls| {
+            for (decls) |decl| {
+                if (!listed.contains(decl.path)) {
+                    try report(diagnostics, diag.E036_NPKG_MISSING_ENTRY, decl.path, "export \"{s}\" artifact \"{s}\" is not included in the package", .{ export_entry.name, decl.path });
+                }
+            }
         }
     }
 

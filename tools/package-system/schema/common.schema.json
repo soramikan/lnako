@@ -178,7 +178,12 @@
         {
           "type": "array",
           "minItems": 1,
-          "items": { "$ref": "#/$defs/artifactDecl" }
+          "items": {
+            "oneOf": [
+              { "type": "string" },
+              { "$ref": "#/$defs/artifactDecl" }
+            ]
+          }
         }
       ]
     },
