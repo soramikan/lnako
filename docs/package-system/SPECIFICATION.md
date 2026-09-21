@@ -175,6 +175,24 @@ native = "libsqlite.dylib"
 - `path` は `.nako3` ファイル。
 - `native` は native plugin ファイル。
 - `esm` は ESM ファイル。`cnako` または `lnako` の `compat-js = true` 指定時のみ扱う。
+- `native`/`esm` は対象条件付きの複数 artifact を宣言できる。文字列は `{ path = <文字列> }` の省略形、テーブルまたはその配列で複数候補を宣言する:
+
+```toml
+[[exports]]
+name = "plugin"
+native = [
+  { path = "lib/plugin.dylib", when = "os == 'macos'", min-os = "14.0" },
+  { path = "lib/plugin.so", when = "os == 'linux'", libc = "gnu" },
+]
+```
+
+  - `path`（必須）: artifact の package 内相対パス。
+  - `when`: 対象条件を表す marker 式（3.8 節）。評価が真の宣言のみ選択対象となる。
+  - `min-os`: 対象 OS の最小バージョン（`.` 区切りの数列）。対象側の OS version が不明な場合は適合を証明できないため、その宣言は選択されない。
+  - `libc`: 要求 libc 系（`gnu`/`msvc`/`musl`/`none`）。対象の libc（未指定時は abi）と一致しない宣言は選択されない。
+  - `features`: この artifact が要求する feature 名の配列。`[features]` で定義済みの名のみを指せる（未定義名は有効化経路がなく常に不適合になるため `E028_UNKNOWN_FEATURE` で拒否する）。対象で有効化されていない feature を要求する宣言は選択されない。
+  - 空配列・path なしテーブルは `E019`/`E029`、未知フィールドは `E022`、不正な `when` は `E026`、不正な `min-os`/`libc` は `E029`。
+  - 複数宣言がある場合、対象に適合する最初の宣言が選択される。どの宣言も適合しない場合、その artifact 種別は対象では利用不能とみなす。
 - 同じ `name` の export を重複して宣言できない。
 - **実装選択の優先契約**（対象処理系は `lnako` または `cnako`。それ以外の処理系は `path` の有無にかかわらず `E031_UNSUPPORTED_RUNTIME`）:
   - `path`（共通ソース）が宣言されている場合は常に `path` が優先選択される。`dependencies.pkg` で `prefer-native = true` が明示され、かつ対象処理系が `lnako` の場合のみ、`native` が高速化実装として優先される（`cnako` ではフラグを無視して `path` を選択する）。
@@ -330,14 +348,84 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
 `.npkg` は ZIP アーカイブ。必須エントリ:
 
 - `NAKO-PKG/METADATA.toml`
-- `NAKO-PKG/FILES.toml`（ファイルパス → hash マップ）
+- `NAKO-PKG/FILES.toml`（配包ファイルの path/hash/size 索引）
 - `NAKO-PKG/commands.json`（公開 command 情報）
 - 配包されるソースファイルまたは native artifact
 
-- ソースのみのパッケージ（source-only package）は、C ABI や OS 別 binary を要求せず、`.nako3` ソースと `nako.toml` のみで完結する。
-- `NAKO-PKG/commands.json` は手書きを要求せず、`.nako3` の AST（関数定義）から自動導出・生成される。
+- ソースのみのパッケージ（source-only package）は、C ABI や OS 別 binary を要求せず、`.nako3` ソースとメタデータのみで完結する。
 - `package.include` により画像や辞書データ等のデータファイルを同梱でき、パッケージ内相対パスで参照する。
-- ネイティブ package は `lnako_plugin_v1` ABI を満たす dynamic library を公開する。
+- ネイティブ package は `lnako_plugin_v1` ABI を満たす dynamic library を公開する。SSA IR や LLVM bitcode は配布 ABI として使用しない。
+
+### 6.1 アーカイブ規則
+
+- エントリ名は POSIX `/` 区切りの規範パスとする。`..`・`.`・空の成分、`\`、制御文字（U+0000–U+001F, U+007F）、先頭 `/`、末尾 `/` を含むエントリは `E040_NPKG_NONCANONICAL_PATH` で拒否する。
+- `NAKO-PKG/` はメタデータ予約領域であり、payload のパスは `NAKO-PKG/` で始まってはならない。必須3エントリ以外の `NAKO-PKG/` エントリは `E037_NPKG_UNLISTED_ENTRY` で拒否する。
+- directory エントリ（末尾 `/`）は配布意味を持たず、末尾 `/` は規範パスに適合しないため `E040_NPKG_NONCANONICAL_PATH` で拒否する。生成側も書き出さない。
+- 格納形式は stored のみとする。stored 以外の compression method を持つエントリは検証で拒否する。
+- ZIP の local header / central directory の並びはエントリ名のバイト順ソートで固定し、timestamp・comment・extra field は固定値（時刻ゼロ、UTF-8 ファイル名フラグ、stored 格納）とする。local record は先頭 offset 0 からこの順序で隙間なく連続配置し、最後の record は central directory の直前で終わる。同一入力からは同一バイト列が得られなければならない。
+- 同名エントリの重複は `E038_NPKG_DUPLICATE_ENTRY` で拒否する。
+- `package.include` 未指定時は VCS・生成物（`.git`、`.zig-cache`、`zig-out`、`node_modules`、`.nako`、`nako.lock`、`.DS_Store`）を除く package 内ファイルを再帰収録する。`include` 指定時は既定除外を適用せず、パターン適合のみで収録可否を決める。
+- 出力予定の `.npkg` が package root 内にある場合、生成側はそれを収集対象から除外する（再ビルドで前回成果物が payload に混入しないようにするため）。既定の出力名は `<name>-<version>.npkg` で、version は prerelease・build metadata を含む完全な SemVer 表記とする（`1.0.0-alpha` と `1.0.0` が同名へ写像されないようにするため）。
+
+### 6.2 `NAKO-PKG/METADATA.toml`
+
+manifest を配布形へ正規化した写像。先頭に `schemaVersion = 1` を持ち、次を含む:
+
+- `[package]`: `name`・`version`・`license`・`id`（Public ID）・`description`・`authors`・`keywords`・`repository`・`homepage`・`nako-version`・`min-nako-version`・`runtimes`・`engines`。
+- `[[exports]]`: 各 export の `name`・`alias` と `path`/`native`/`esm`。
+- `native`/`esm` は artifact 宣言テーブル（`path`・`when`・`min-os`・`libc`・`features`）またはその配列も許容する（3.6 節の構造化形式）。
+- `[dependencies]`: manifest の依存宣言のうち配布可能なもののみ。
+- `[features]`: feature 定義。
+- `nativePluginAbi = "lnako_plugin_v1"`: native artifact を持つ場合に必須。
+
+ファイル索引は METADATA.toml には持たず `FILES.toml` が正本とする。パッケージ境界の外を指す・規範 path でない `dependencies.path`、依存先 manifest（`<path>/nako.toml`）が payload に収録されていない `path` 依存、配布メタデータが `profiles` を含まないため再現できない `profile` 参照を持つ依存は、配布不能として `E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY` で拒否する。
+
+生成側は決定性のため次の正規形で出力する。フィールド順は固定、`dependencies`/`features` の map 由来キーはバイト順ソート、`exports` は `name` 順ソートとする。artifact 宣言は「条件を持たない単一宣言」のみ文字列省略形、それ以外は `{ path, when?, min-os?, libc?, features? }` のインラインテーブル配列で宣言順を保持して出力する。`package.schema-version`・`include`・`dev-dependencies`・`profiles` は配布メタデータに含めない。
+
+### 6.3 `NAKO-PKG/FILES.toml`
+
+payload ファイルの索引。`schemaVersion = 1` と `[[files]]` の配列を持つ:
+
+```toml
+schemaVersion = 1
+
+[[files]]
+path = "src/index.nako3"
+sha256 = "sha256:<64桁hex>"
+size = 1234
+```
+
+- `path` は規範パス、`sha256` は `sha256:` + 64桁 hex、`size` はバイト数。
+- `NAKO-PKG/` 以下のメタデータエントリは索引に含めない（自己参照を避けるため）。索引対象は payload ファイルのみ。
+- 索引は `path` のバイト順ソートで出力する。索引内の path 重複は `E038_NPKG_DUPLICATE_ENTRY`。
+- 索引に無い payload エントリは `E037_NPKG_UNLISTED_ENTRY`、索引にあるが archive に無いエントリは `E036_NPKG_MISSING_ENTRY`、hash・size の不一致は `E009_HASH_MISMATCH`。
+
+### 6.4 `NAKO-PKG/commands.json`
+
+公開 command 情報。`schemaVersion` と `commands` 配列を持ち、`.nako3` 公開ソースの AST から静的に導出する。初期化コードや任意のパッケージコードは実行しない。
+
+走査の入口は `exports[].path` の収録済みソースのみとし、そこから静的に解決できる import 閉包を辿る。静的に解決できるのは文字列リテラルの取り込みのみであり、文字列テンプレート・識別子・その他の式は実行時にパスが決まるため閉包の対象外とする。export されない内部ファイルの公開定義は索引に含めない。
+
+- 公開トップレベル関数: `{ "name", "args": [...], "josi": [...] }`（引数名と助詞の対応配列）。
+- 公開トップレベル変数: `{ "name", "variable": true }`。
+- `fn`・`async`・`return` のような静的に確定できない値は v1 の生成側では出力しない。これらは将来の拡張用予約フィールドであり、v1 の受理側は読み飛ばす（値を解釈しない）。
+- `commands` は `name` のバイト順ソートで安定化する。同名の公開定義が複数入口・import 閉包に現れた場合、索引は識別子参照のため重複を持たず、最初に走査した定義を採用する。
+- 各ソースの AST・トークンは収集した名前が参照するため generate 完了まで保持する。閉包が読み込むソースの累計は上限（64 MiB）で束縛し、超過は `E029_INVALID_VALUE` で拒否する。
+
+### 6.5 検証
+
+インストール・利用前の静的検証は次を確認する:
+
+- 必須 `NAKO-PKG` エントリの存在と既知 schema version（未知は `E035_UNKNOWN_NPKG_SCHEMA`）。
+- 全エントリ名の規範パス適合と重複なし。全エントリが stored 格納であり、各 local header のファイル名が central directory のエントリ名と一致すること。
+- アーカイブが §6.1 の正規形であること。central directory のエントリが名前のバイト順ソートであること、UTF-8 ファイル名フラグのみが立ち timestamp がゼロ・extra field と comment が空・単一 disk で stored の `compressed == uncompressed` であること、local header も同じ正規形（フラグ・method・時刻・extra・CRC・size 一致）を持つこと、EOCD の comment が空で末尾が EOCD と一致すること。さらに local record が offset 0 から名前順に隙間なく連続し、最後が `cd_offset` で終わること。外部作成物もこの正規形を要求する。
+- 各エントリの CRC-32 が内容と一致すること（local header・central directory・実データの三者一致）。SHA-256 は `FILES.toml` が保証するが、展開側が CRC を検査するため CRC だけ壊れたアーカイブを検証済みとして受理しない。
+- `FILES.toml` と payload エントリ集合の完全一致、各 hash・size の一致。索引が空（payload 0 件）のアーカイブは配布単位として成立しないため `E036_NPKG_MISSING_ENTRY` で拒否する。
+- `dependencies.path` の各依存先 manifest（`<path>/nako.toml`）が索引に収録されていること。無ければ `E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY` で拒否する。
+- artifact 条件の `features` 照合には、要求名に `[features]` 定義の推移展開と `default`（無効化可能）を加えた有効 feature 集合を使う（依存解決の feature unification と同じ意味論）。未定義の要求 feature 名（依存 alias でも `default` でもない）は `E028_UNKNOWN_FEATURE` で診断する。marker の `version` はなでしこ言語版を指し、言語版が不明な場合は `version` を使う式は証明不能として不適合とする。
+- `METADATA.toml` の構造・必須フィールド、宣言ファイル（`exports[].path` および全 native/esm artifact の `path`）の収録。
+- 対象 profile（os/cpu/abi/min-os/libc/optimize/features）と artifact 条件の適合。不適合な native artifact は `E015_NATIVE_FOR_INCOMPATIBLE_TARGET`、未対応 runtime は `E031_UNSUPPORTED_RUNTIME`、engine 要件不適合は `E032_ENGINE_MISMATCH`。
+- 通常モードでの ESM artifact 利用は `E006_JS_IN_NORMAL_MODE`。
 
 ## 7. Resolver / Import 契約
 
@@ -406,6 +494,12 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
 | `E032_ENGINE_MISMATCH` | error | 言語・処理系バージョンが `package.engines` 要件を満たしていない。 |
 | `E033_STRICT_SHARING_FAILED` | error | 厳格共用検査において静的検証不能な動的機能利用を検出。 |
 | `E034_INVALID_ENVIRONMENT_REFERENCE` | error | `.nako/environment.json` の破損・不整合・未存在。 |
+| `E035_UNKNOWN_NPKG_SCHEMA` | error | `.npkg` 内 `NAKO-PKG` メタデータの schema version が未知。 |
+| `E036_NPKG_MISSING_ENTRY` | error | `.npkg` の必須エントリまたは索引済みファイルが archive に存在しない。 |
+| `E037_NPKG_UNLISTED_ENTRY` | error | `FILES.toml` に無いエントリ、または未知の `NAKO-PKG/` エントリが archive に存在する。 |
+| `E038_NPKG_DUPLICATE_ENTRY` | error | `.npkg` 内エントリ名または `FILES.toml` 索引の path が重複。 |
+| `E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY` | error | パッケージ境界の外を指す path 依存など配布不能な依存を含む。 |
+| `E040_NPKG_NONCANONICAL_PATH` | error | `.npkg` エントリ名・索引 path が規範パスでない（`..`・`\`・制御文字等）。 |
 
 `nako.toml` の解析診断は `path:line:column` のソース位置と `dependencies.pkg.<name>.version` 形式のフィールドパスを保持する。
 

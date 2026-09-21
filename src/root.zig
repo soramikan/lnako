@@ -90,6 +90,10 @@ pub const toolchain = struct {
     pub const manager = @import("toolchain/manager.zig");
 };
 
+pub const archive = struct {
+    pub const zip = @import("archive/zip.zig");
+};
+
 /// nadesiko3 パッケージシステムのデータ解析層（Issue #44）。
 /// ランタイムの `plugins.toml` とは独立した manifest 向け TOML/SemVer/
 /// marker/feature 解析を提供する。
@@ -102,6 +106,14 @@ pub const package = struct {
     pub const manifest = @import("package/manifest.zig");
     pub const resolver = @import("package/resolver.zig");
     pub const lock = @import("package/lock.zig");
+    pub const toml_write = @import("package/toml_write.zig");
+    pub const glob = @import("package/glob.zig");
+    pub const npkg_metadata = @import("package/npkg_metadata.zig");
+    pub const npkg_files = @import("package/npkg_files.zig");
+    pub const npkg_commands = @import("package/npkg_commands.zig");
+    pub const npkg_commands_gen = @import("package/npkg_commands_gen.zig");
+    pub const npkg_build = @import("package/npkg_build.zig");
+    pub const npkg_verify = @import("package/npkg_verify.zig");
 };
 
 pub const Command = enum {
@@ -112,6 +124,7 @@ pub const Command = enum {
     compat,
     benchmark,
     toolchain,
+    package,
     help,
     version,
 };
@@ -133,6 +146,7 @@ pub fn parseCommand(args: []const []const u8) ParseError!Command {
     if (std.mem.eql(u8, first, "test")) return .test_command;
     if (std.mem.eql(u8, first, "benchmark")) return .benchmark;
     if (std.mem.eql(u8, first, "toolchain")) return .toolchain;
+    if (std.mem.eql(u8, first, "package")) return .package;
     if (std.mem.eql(u8, first, "compat")) {
         if (args.len < 2 or !std.mem.eql(u8, args[1], "report")) return error.MissingCompatAction;
         return .compat;
@@ -152,6 +166,8 @@ pub fn usage(writer: *std.Io.Writer) !void {
         \\  lnako compat report
         \\  lnako benchmark
         \\  lnako toolchain <status|dir|install|update|remove>
+        \\  lnako package build [<dir>] [-o <output.npkg>]
+        \\  lnako package verify <file.npkg> [--runtime lnako|cnako] [--os <os>] [--cpu <cpu>] [--abi <abi>] [--os-version <v>] [--libc <libc>] [--optimize <level>] [--feature <name>] [--no-default-features] [--nako-version <v>] [--cnako-version <v>] [--lnako-version <v>] [--compat-js]
         \\
         \\共通オプション:
         \\  -h, --help       このヘルプを表示
@@ -232,6 +248,14 @@ test {
     std.testing.refAllDecls(package.manifest);
     std.testing.refAllDecls(package.resolver);
     std.testing.refAllDecls(package.lock);
+    std.testing.refAllDecls(package.toml_write);
+    std.testing.refAllDecls(package.glob);
+    std.testing.refAllDecls(package.npkg_metadata);
+    std.testing.refAllDecls(package.npkg_files);
+    std.testing.refAllDecls(package.npkg_commands);
+    std.testing.refAllDecls(package.npkg_commands_gen);
+    std.testing.refAllDecls(package.npkg_build);
+    std.testing.refAllDecls(package.npkg_verify);
 }
 
 test "コマンドを解析できる" {

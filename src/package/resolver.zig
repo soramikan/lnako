@@ -166,7 +166,10 @@ pub const VersionMeta = struct {
     /// null なら選択可能。値がある場合は選択不能な理由（runtime/engines/OS/
     /// artifact 欠落など）。理由は競合説明の hint として表示される。
     unavailable_reason: ?[]const u8 = null,
-    /// export 実装の有無。
+    /// 要求 target へ適合する export 実装の有無。provider は条件付き
+    /// artifact 宣言（`when`/`min-os`/`libc`/`features`）を target で照合し、
+    /// 適合する宣言が一つも無い種別は false にする（`metaFromManifest`
+    /// が manifest 由来の照合を行う）。
     has_source: bool = false,
     has_native: bool = false,
     has_esm: bool = false,
@@ -178,6 +181,11 @@ pub const Target = struct {
     os: []const u8 = "macos",
     cpu: []const u8 = "aarch64",
     abi: []const u8 = "gnu",
+    /// OS バージョン（`min-os` 付き artifact 宣言の照合用）。null は不明で、
+    /// `min-os` を要求する宣言は適合を証明できないため不適合となる。
+    os_version: ?[]const u8 = null,
+    /// libc 種別（`libc` 付き artifact 宣言の照合用）。null は `abi` から推定。
+    libc: ?[]const u8 = null,
     compat_js: bool = false,
     optimize: []const u8 = "O0",
     nako_version: ?semver.Version = null,
@@ -967,10 +975,42 @@ pub fn metaFromManifest(gpa: Allocator, source: *const manifest.Manifest, target
         .features = definitions.items,
         .feature_aliases = feature_aliases.items,
     };
+    // native/esm は宣言の存在ではなく「対象環境へ適合する宣言の有無」で
+    // 実装可否を決める。条件付き宣言（when/min-os/libc）が一つも対象へ
+    // 適合しない種別は実装候補にしない。`os_version`/`libc` が Target で
+    // 未指定の場合、それを要求する宣言は適合を証明できず不適合となる
+    // （保守方向）。`features` 要件は feature unification 後にしか確定
+    // しないためこの段階では未評価とし、feature 条件だけで version 候補を
+    // 落とさない（最終的な実装選択は import 時の `Export.resolve` が
+    // 再有効化 feature で検証する）。
+    const artifact_target = manifest.ArtifactTarget{
+        .runtime = target.runtime,
+        .os = target.os,
+        .cpu = target.cpu,
+        .abi = target.abi,
+        .os_version = target.os_version,
+        .libc = target.libc,
+        .compat_js = target.compat_js,
+        .optimize = target.optimize,
+        // marker の `version` はなでしこ言語版を指す。処理系版への
+        // フォールバックは verify 側（nako_version のみ）と契約がずれる
+        // ため行わず、不明な場合は `version` を使う式を証明不能とする。
+        .version = target.nako_version,
+    };
     for (source.exports) |item| {
         if (item.path != null) meta.has_source = true;
-        if (item.native != null) meta.has_native = true;
-        if (item.esm != null) meta.has_esm = true;
+        for (item.native) |*decl| {
+            if (try decl.matchesTarget(gpa, artifact_target, false)) {
+                meta.has_native = true;
+                break;
+            }
+        }
+        for (item.esm) |*decl| {
+            if (try decl.matchesTarget(gpa, artifact_target, false)) {
+                meta.has_esm = true;
+                break;
+            }
+        }
     }
     meta.unavailable_reason = unavailableReason(source, meta, target);
     return meta;

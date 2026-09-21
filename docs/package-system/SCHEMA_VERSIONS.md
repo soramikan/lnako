@@ -9,12 +9,18 @@
 | `manifestSchemaVersion` | `nako.toml` の schema version。 |
 | `lockSchemaVersion` | `nako.lock` の schema version。 |
 | `resolverVersion` | 依存 resolver algorithm の version。 |
+| `npkgMetadataSchemaVersion` | `.npkg` 内 `NAKO-PKG/METADATA.toml` の schema version。 |
+| `npkgFilesSchemaVersion` | `.npkg` 内 `NAKO-PKG/FILES.toml` の schema version。 |
+| `npkgCommandsSchemaVersion` | `.npkg` 内 `NAKO-PKG/commands.json` の schema version。 |
 
 ## 2. 初期バージョン
 
 - `manifestSchemaVersion`: 1
 - `lockSchemaVersion`: 1
 - `resolverVersion`: 1
+- `npkgMetadataSchemaVersion`: 1
+- `npkgFilesSchemaVersion`: 1
+- `npkgCommandsSchemaVersion`: 1
 
 ## 3. `nako.toml` schema version
 
@@ -93,25 +99,40 @@ lock ファイルはトップレベルに `schemaVersion` と `resolverVersion` 
 - `schemaVersion` が未知の lock ファイルは読み込まない。`E002_UNKNOWN_LOCK_SCHEMA` 診断。
 - `resolverVersion` が未知の lock ファイルは、`--locked` 指定時はエラー、非ロック時は再解決を試みる。
 
-## 5. JSON Schema ファイルの version
+## 5. `.npkg` 内メタデータの schema version
+
+`.npkg` アーカイブ内の `NAKO-PKG` メタデータはそれぞれ独立した schema version を持つ。
+
+| ファイル | version フィールド | 初期 version |
+|---------|-------------------|--------------|
+| `NAKO-PKG/METADATA.toml` | `schemaVersion` | 1 |
+| `NAKO-PKG/FILES.toml` | `schemaVersion` | 1 |
+| `NAKO-PKG/commands.json` | `schemaVersion` | 1 |
+
+- 未知の `schemaVersion` を持つ `.npkg` は `E035_UNKNOWN_NPKG_SCHEMA` で拒否する。
+- payload ファイルの索引は `METADATA.toml` ではなく `FILES.toml` が正本とする。`METADATA.toml` に `files` フィールドは存在しない。
+- 各メタデータの必須フィールド・構造変更は対応する schema version の bump が必要。新しい任意フィールドの追加は同じ major version の minor 更新としてよい。
+- `.npkg` エントリのレイアウト規則（規範パス・決定的順序・必須エントリ集合）自体の変更は archive format 変更であり、3エントリすべての major bump として扱う。
+
+## 6. JSON Schema ファイルの version
 
 - `tools/package-system/schema/*.schema.json` は `$id` URL に version を含める。
 - 例: `https://github.com/soramikan/lnako/package-system/schema/nako.toml/v1`
 - schema ファイル自身は `required`/`additionalProperties` で厳密に version を縛る。
 
-## 6. レジストリ応答の version
+## 7. レジストリ応答の version
 
 - 全てのレジストリ応答 JSON は `schemaVersion` を含める。
 - 静的レジストリ index/package/version 応答は、lock schema version と同じ major version スキーマを使う。
 - 中央レジストリ API は同等の `schemaVersion` を返す。
 
-## 7. 移行
+## 8. 移行
 
 - 中央レジストリへの移行は、既存 lock の hash を変更しない。
 - `source`/`resolvedFrom` の `type` を `static` から `registry` に更新しても、artifact 内容と hash は同じままとする。
 - 移行 fixture `valid/lock/central-migration/` はこの性質を示す。
 
-## 8. 今後の予定
+## 9. 今後の予定
 
 - `manifestSchemaVersion` 1: Issue #69 において共通ソース優先、`package.runtimes`、`package.engines`、`package.include`、profile `runtime`、`prefer-native`、および `.nako/environment.json` 契約をインプレースで包含する仕様改訂を実施した。v1/v2 の並行運用や移行ロジックは導入せず、単一正本スキーマとして維持する。
 - `lockSchemaVersion` 2: workspace lock、複数ルート package の対応を予定。

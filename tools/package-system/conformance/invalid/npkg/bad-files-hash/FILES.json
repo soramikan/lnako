@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "files": [
+    { "path": "src/index.nako3", "sha256": "sha256:xyz", "size": 10 }
+  ]
+}

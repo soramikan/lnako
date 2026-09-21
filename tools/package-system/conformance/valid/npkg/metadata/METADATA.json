@@ -11,9 +11,5 @@
   "exports": [
     { "name": "index.nako3", "path": "src/index.nako3" }
   ],
-  "nativePluginAbi": "lnako_plugin_v1",
-  "files": [
-    { "path": "src/index.nako3", "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
-    { "path": "libsqlite.so", "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" }
-  ]
+  "nativePluginAbi": "lnako_plugin_v1"
 }

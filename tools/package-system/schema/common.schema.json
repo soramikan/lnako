@@ -159,6 +159,34 @@
         "mutable": { "type": "boolean" }
       }
     },
+    "artifactDecl": {
+      "type": "object",
+      "required": ["path"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string" },
+        "when": { "type": "string" },
+        "min-os": { "type": "string", "pattern": "^\\d+(?:\\.\\d+)*$" },
+        "libc": { "type": "string", "enum": ["gnu", "msvc", "musl", "none"] },
+        "features": { "$ref": "#/$defs/featureList" }
+      }
+    },
+    "artifactRef": {
+      "oneOf": [
+        { "type": "string" },
+        { "$ref": "#/$defs/artifactDecl" },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              { "type": "string" },
+              { "$ref": "#/$defs/artifactDecl" }
+            ]
+          }
+        }
+      ]
+    },
     "exportEntry": {
       "type": "object",
       "required": ["name"],
@@ -167,8 +195,101 @@
         "name": { "type": "string" },
         "path": { "type": "string" },
         "alias": { "type": "string" },
-        "native": { "type": "string" },
-        "esm": { "type": "string" }
+        "native": { "$ref": "#/$defs/artifactRef" },
+        "esm": { "$ref": "#/$defs/artifactRef" }
+      }
+    },
+    "dependencyGroup": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pkg": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["version"],
+            "additionalProperties": false,
+            "properties": {
+              "version": { "$ref": "#/$defs/semverRange" },
+              "features": { "$ref": "#/$defs/featureList" },
+              "default-features": { "type": "boolean" },
+              "profile": { "type": "string" },
+              "alias": { "type": "string" },
+              "public-id": { "$ref": "#/$defs/packageId" },
+              "prefer-native": { "type": "boolean" }
+            }
+          },
+          "propertyNames": { "type": "string", "minLength": 1 }
+        },
+        "npm": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              { "$ref": "#/$defs/semverRange" },
+              {
+                "type": "object",
+                "required": ["version"],
+                "additionalProperties": false,
+                "properties": {
+                  "version": { "$ref": "#/$defs/semverRange" },
+                  "context": { "type": "string" },
+                  "features": { "$ref": "#/$defs/featureList" },
+                  "peer-dependencies": {
+                    "type": "object",
+                    "additionalProperties": { "$ref": "#/$defs/semverRange" }
+                  },
+                  "optional-peers": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                }
+              }
+            ]
+          },
+          "propertyNames": { "type": "string", "minLength": 1 }
+        },
+        "path": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["path"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string" },
+              "mutable": { "type": "boolean" }
+            }
+          },
+          "propertyNames": { "type": "string", "minLength": 1 }
+        },
+        "git": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["url", "commit"],
+            "additionalProperties": false,
+            "properties": {
+              "url": { "type": "string", "format": "uri" },
+              "commit": { "type": "string", "pattern": "^[0-9a-f]{7,40}$" },
+              "path": { "type": "string" },
+              "alias": { "type": "string" }
+            }
+          },
+          "propertyNames": { "type": "string", "minLength": 1 }
+        },
+        "http": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["url", "hash"],
+            "additionalProperties": false,
+            "properties": {
+              "url": { "type": "string", "format": "uri" },
+              "hash": { "$ref": "#/$defs/hash" },
+              "alias": { "type": "string" }
+            }
+          },
+          "propertyNames": { "type": "string", "minLength": 1 }
+        }
       }
     }
   }

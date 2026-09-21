@@ -1070,22 +1070,22 @@ test "exportの実装選択契約（共通ソース優先・明示native選択�
     const dual_export = manifest_mod.Export{
         .name = "dual",
         .path = "src/dual.nako3",
-        .native = "libdual.dylib",
+        .native = &.{.{ .path = "libdual.dylib" }},
     };
-    const def_lnako = (try dual_export.resolve("lnako", false, false, &list)).?;
+    const def_lnako = (try dual_export.resolve(allocator, .{ .runtime = "lnako" }, false, &list)).?;
     try std.testing.expectEqual(manifest_mod.ResolvedExportKind.source, def_lnako.kind);
     try std.testing.expectEqualStrings("src/dual.nako3", def_lnako.target);
 
-    const def_cnako = (try dual_export.resolve("cnako", false, false, &list)).?;
+    const def_cnako = (try dual_export.resolve(allocator, .{ .runtime = "cnako" }, false, &list)).?;
     try std.testing.expectEqual(manifest_mod.ResolvedExportKind.source, def_cnako.kind);
 
     // 2. prefer_native = true の場合: lnako では native が選択される
-    const native_lnako = (try dual_export.resolve("lnako", true, false, &list)).?;
+    const native_lnako = (try dual_export.resolve(allocator, .{ .runtime = "lnako" }, true, &list)).?;
     try std.testing.expectEqual(manifest_mod.ResolvedExportKind.native, native_lnako.kind);
     try std.testing.expectEqualStrings("libdual.dylib", native_lnako.target);
 
     // 3. prefer_native = true は lnako のみ有効。cnako では共通ソース（path）が選ばれる
-    const native_cnako = (try dual_export.resolve("cnako", true, false, &list)).?;
+    const native_cnako = (try dual_export.resolve(allocator, .{ .runtime = "cnako" }, true, &list)).?;
     try std.testing.expectEqual(manifest_mod.ResolvedExportKind.source, native_cnako.kind);
     try std.testing.expectEqualStrings("src/dual.nako3", native_cnako.target);
 
@@ -1093,46 +1093,46 @@ test "exportの実装選択契約（共通ソース優先・明示native選択�
     //    lnako では native が選択され、cnako では native に遮られず esm が選択される
     const hybrid_export = manifest_mod.Export{
         .name = "codec",
-        .native = "codec.so",
-        .esm = "codec.mjs",
+        .native = &.{.{ .path = "codec.so" }},
+        .esm = &.{.{ .path = "codec.mjs" }},
     };
-    const hybrid_lnako = (try hybrid_export.resolve("lnako", false, false, &list)).?;
+    const hybrid_lnako = (try hybrid_export.resolve(allocator, .{ .runtime = "lnako" }, false, &list)).?;
     try std.testing.expectEqual(manifest_mod.ResolvedExportKind.native, hybrid_lnako.kind);
     try std.testing.expectEqualStrings("codec.so", hybrid_lnako.target);
 
-    const hybrid_cnako = (try hybrid_export.resolve("cnako", false, false, &list)).?;
+    const hybrid_cnako = (try hybrid_export.resolve(allocator, .{ .runtime = "cnako" }, false, &list)).?;
     try std.testing.expectEqual(manifest_mod.ResolvedExportKind.esm, hybrid_cnako.kind);
     try std.testing.expectEqualStrings("codec.mjs", hybrid_cnako.target);
 
     // 5. native専用package: lnako ではOK、cnako ではエラー（E031）
     const native_only = manifest_mod.Export{
         .name = "nat",
-        .native = "libnat.so",
+        .native = &.{.{ .path = "libnat.so" }},
     };
-    const nat_ok = (try native_only.resolve("lnako", false, false, &list)).?;
+    const nat_ok = (try native_only.resolve(allocator, .{ .runtime = "lnako" }, false, &list)).?;
     try std.testing.expectEqual(manifest_mod.ResolvedExportKind.native, nat_ok.kind);
-    const nat_fail = try native_only.resolve("cnako", false, false, &list);
+    const nat_fail = try native_only.resolve(allocator, .{ .runtime = "cnako" }, false, &list);
     try std.testing.expect(nat_fail == null);
     try std.testing.expect(list.find(diag.E031_UNSUPPORTED_RUNTIME) != null);
 
     // 6. ESM専用package: cnako ではOK、lnako 通常モードはE006、compat-js有効時はOK
     const esm_only = manifest_mod.Export{
         .name = "esm",
-        .esm = "index.mjs",
+        .esm = &.{.{ .path = "index.mjs" }},
     };
-    const esm_cnako = (try esm_only.resolve("cnako", false, false, &list)).?;
+    const esm_cnako = (try esm_only.resolve(allocator, .{ .runtime = "cnako" }, false, &list)).?;
     try std.testing.expectEqual(manifest_mod.ResolvedExportKind.esm, esm_cnako.kind);
 
-    const esm_lnako_normal = try esm_only.resolve("lnako", false, false, &list);
+    const esm_lnako_normal = try esm_only.resolve(allocator, .{ .runtime = "lnako" }, false, &list);
     try std.testing.expect(esm_lnako_normal == null);
     try std.testing.expect(list.find(diag.E006_JS_IN_NORMAL_MODE) != null);
 
-    const esm_lnako_compat = (try esm_only.resolve("lnako", false, true, &list)).?;
+    const esm_lnako_compat = (try esm_only.resolve(allocator, .{ .runtime = "lnako", .compat_js = true }, false, &list)).?;
     try std.testing.expectEqual(manifest_mod.ResolvedExportKind.esm, esm_lnako_compat.kind);
 
     // 7. 実装なしexport: E019
     const empty_export = manifest_mod.Export{ .name = "empty" };
-    const empty_res = try empty_export.resolve("lnako", false, false, &list);
+    const empty_res = try empty_export.resolve(allocator, .{ .runtime = "lnako" }, false, &list);
     try std.testing.expect(empty_res == null);
     try std.testing.expect(list.find(diag.E019_REQUIRED_FIELD_MISSING) != null);
 
@@ -1140,17 +1140,17 @@ test "exportの実装選択契約（共通ソース優先・明示native選択�
     const source_esm = manifest_mod.Export{
         .name = "src-esm",
         .path = "src/main.nako3",
-        .esm = "main.mjs",
+        .esm = &.{.{ .path = "main.mjs" }},
     };
-    const source_esm_lnako = (try source_esm.resolve("lnako", false, false, &list)).?;
+    const source_esm_lnako = (try source_esm.resolve(allocator, .{ .runtime = "lnako" }, false, &list)).?;
     try std.testing.expectEqual(manifest_mod.ResolvedExportKind.source, source_esm_lnako.kind);
-    const source_esm_cnako = (try source_esm.resolve("cnako", false, false, &list)).?;
+    const source_esm_cnako = (try source_esm.resolve(allocator, .{ .runtime = "cnako" }, false, &list)).?;
     try std.testing.expectEqual(manifest_mod.ResolvedExportKind.source, source_esm_cnako.kind);
 
     // 9. 未知の処理系は path があっても E031 で拒否する
     var unknown_list = diag.List.init(allocator);
     defer unknown_list.deinit();
-    const unknown_res = try source_esm.resolve("browser", false, false, &unknown_list);
+    const unknown_res = try source_esm.resolve(allocator, .{ .runtime = "browser" }, false, &unknown_list);
     try std.testing.expect(unknown_res == null);
     try std.testing.expect(unknown_list.find(diag.E031_UNSUPPORTED_RUNTIME) != null);
 }
@@ -1201,4 +1201,217 @@ test "cnako向けマニフェストでのESM exportを正常に受理する" {
     );
     defer m2.deinit();
     try std.testing.expectEqual(@as(usize, 1), m2.exports.len);
+}
+
+test "native/esmの構造化artifact宣言を解析する" {
+    const allocator = std.testing.allocator;
+    var manifest = try parseOk(allocator,
+        \\[package]
+        \\name = "multi-artifact"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[features]
+        \\simd = []
+        \\
+        \\[[exports]]
+        \\name = "main"
+        \\path = "src/main.nako3"
+        \\native = [
+        \\  { path = "lib/a.dylib", when = "os == 'macos'", min-os = "14.0" },
+        \\  { path = "lib/a.so", when = "os == 'linux'", libc = "gnu", features = ["simd"] },
+        \\  "lib/fallback.so",
+        \\]
+        \\
+        \\[[exports]]
+        \\name = "web"
+        \\esm = { path = "dist/web.mjs" }
+        \\
+    );
+    defer manifest.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), manifest.exports.len);
+    const main = manifest.exports[0];
+    try std.testing.expectEqual(@as(usize, 3), main.native.len);
+    try std.testing.expectEqualStrings("lib/a.dylib", main.native[0].path);
+    try std.testing.expectEqualStrings("os == 'macos'", main.native[0].when.?);
+    try std.testing.expectEqualStrings("14.0", main.native[0].min_os.?);
+    try std.testing.expectEqualStrings("lib/a.so", main.native[1].path);
+    try std.testing.expectEqualStrings("gnu", main.native[1].libc.?);
+    try std.testing.expectEqualStrings("simd", main.native[1].features[0]);
+    try std.testing.expectEqualStrings("lib/fallback.so", main.native[2].path);
+    try std.testing.expect(main.native[2].when == null);
+
+    const web = manifest.exports[1];
+    try std.testing.expectEqual(@as(usize, 1), web.esm.len);
+    try std.testing.expectEqualStrings("dist/web.mjs", web.esm[0].path);
+}
+
+test "artifact条件の未定義feature名を診断する" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "main"
+        \\native = [{ path = "lib/a.so", features = ["typoed"] }]
+        \\
+    ;
+    try parseErrCode(allocator, source, diag.E028_UNKNOWN_FEATURE);
+}
+
+test "artifact条件は対象環境へ照合される" {
+    const allocator = std.testing.allocator;
+    const decl = manifest_mod.ArtifactDecl{
+        .path = "lib/a.so",
+        .when = "os == 'linux'",
+        .libc = "gnu",
+        .features = &.{"simd"},
+    };
+    try std.testing.expect(try decl.matchesTarget(allocator, .{
+        .runtime = "lnako",
+        .os = "linux",
+        .abi = "gnu",
+        .features = &.{"simd"},
+    }, true));
+    // when が偽の場合は不適合
+    try std.testing.expect(!try decl.matchesTarget(allocator, .{
+        .runtime = "lnako",
+        .os = "macos",
+        .abi = "gnu",
+        .features = &.{"simd"},
+    }, true));
+    // libc 不一致は不適合
+    try std.testing.expect(!try decl.matchesTarget(allocator, .{
+        .runtime = "lnako",
+        .os = "linux",
+        .abi = "musl",
+        .features = &.{"simd"},
+    }, true));
+    // 要求 feature が対象に無ければ不適合
+    try std.testing.expect(!try decl.matchesTarget(allocator, .{
+        .runtime = "lnako",
+        .os = "linux",
+        .abi = "gnu",
+    }, true));
+    // check_features=false なら feature 要件は未評価（候補段階の用途）
+    try std.testing.expect(try decl.matchesTarget(allocator, .{
+        .runtime = "lnako",
+        .os = "linux",
+        .abi = "gnu",
+    }, false));
+
+    // min-os: 対象 os_version が下限以上なら適合、未指定なら証明不能で不適合
+    const gated = manifest_mod.ArtifactDecl{
+        .path = "lib/a.dylib",
+        .min_os = "14.0",
+    };
+    try std.testing.expect(try gated.matchesTarget(allocator, .{ .runtime = "lnako", .os = "macos", .os_version = "15.1" }, true));
+    try std.testing.expect(try gated.matchesTarget(allocator, .{ .runtime = "lnako", .os = "macos", .os_version = "14.0" }, true));
+    try std.testing.expect(!try gated.matchesTarget(allocator, .{ .runtime = "lnako", .os = "macos", .os_version = "13.9" }, true));
+    try std.testing.expect(!try gated.matchesTarget(allocator, .{ .runtime = "lnako", .os = "macos" }, true));
+}
+
+test "条件付きartifactは対象へ適合する宣言だけを選択する" {
+    const allocator = std.testing.allocator;
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+
+    const conditional = manifest_mod.Export{
+        .name = "cond",
+        .native = &.{
+            .{ .path = "lib/linux.so", .when = "os == 'linux'" },
+            .{ .path = "lib/macos.dylib", .when = "os == 'macos'" },
+        },
+    };
+    // 対象 os が与えられた場合は一致する宣言だけが選ばれる
+    const linux = (try conditional.resolve(allocator, .{ .runtime = "lnako", .os = "linux", .abi = "gnu" }, false, &list)).?;
+    try std.testing.expectEqualStrings("lib/linux.so", linux.target);
+    const macos = (try conditional.resolve(allocator, .{ .runtime = "lnako", .os = "macos", .abi = "none" }, false, &list)).?;
+    try std.testing.expectEqualStrings("lib/macos.dylib", macos.target);
+    // 対象情報が無い最小ターゲットでは条件付き宣言は選択されない
+    const unknown = try conditional.resolve(allocator, .{ .runtime = "lnako" }, false, &list);
+    try std.testing.expect(unknown == null);
+}
+
+test "不正なartifact宣言を拒否する" {
+    const allocator = std.testing.allocator;
+    // テーブルに path が無い
+    try parseErrCode(allocator,
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "x"
+        \\native = { when = "os == 'linux'" }
+        \\
+    , diag.E019_REQUIRED_FIELD_MISSING);
+    // when の marker 構文エラー
+    try parseErrCode(allocator,
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "x"
+        \\native = { path = "a.so", when = "os ==" }
+        \\
+    , diag.E026_INVALID_MARKER);
+    // 未知フィールド
+    try parseErrCode(allocator,
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "x"
+        \\native = { path = "a.so", arch = "x86_64" }
+        \\
+    , diag.E022_UNKNOWN_FIELD);
+    // 不正な min-os
+    try parseErrCode(allocator,
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "x"
+        \\native = { path = "a.so", min-os = "ventura" }
+        \\
+    , diag.E029_INVALID_VALUE);
+    // 不正な libc
+    try parseErrCode(allocator,
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "x"
+        \\native = { path = "a.so", libc = "glibc2" }
+        \\
+    , diag.E029_INVALID_VALUE);
+    // 空配列
+    try parseErrCode(allocator,
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "x"
+        \\native = []
+        \\
+    , diag.E029_INVALID_VALUE);
+    // 配列内の数値要素
+    try parseErrCode(allocator,
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "x"
+        \\native = [42]
+        \\
+    , diag.E023_INVALID_TYPE);
 }
