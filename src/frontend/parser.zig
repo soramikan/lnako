@@ -296,8 +296,13 @@ pub const Parser = struct {
                 // 公式`ySentence`は、命令呼出しの直後に『ならば』が続く場合を
                 // 「もし」省略形の条件文として扱う（`Aが5と等しいならば`）。
                 // lnakoの字句解析は『ならば』を直前の語の助詞にするため、
-                // 文の末尾助詞で判定する。
-                if (isConditionalJosi(statement.josi)) {
+                // 文の末尾助詞で判定する。ただし公式が条件文へ昇格させるのは
+                // `yCall`が命令呼出しで確定した場合だけなので、単独語の文は
+                // 既知の命令名（公式の`func token`）のときだけ命令呼出しとみなす
+                // （公式も`Aならば`は未解決語、`1ならば`は不完全な文として拒否する）。
+                if (statement.kind == .function_call and isConditionalJosi(statement.josi) and
+                    (statement.children.len > 0 or statement.is_c_style_call or self.isBuiltinCommandName(statement.name)))
+                {
                     break :blk self.parseIfThen(token, try self.finishCondition(statement));
                 }
                 break :blk statement;

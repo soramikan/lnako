@@ -244,6 +244,30 @@ test "後判定の括弧付き助詞呼出し条件式を受理する" {
     try std.testing.expectEqualStrings("の", condition.josi);
 }
 
+test "「もし」省略形は命令呼出しのときだけ条件文にする" {
+    // 公式`ySentence`は`yCall`が命令呼出しで確定した場合だけ`yIfThen`へ入る。
+    // 演算式や数値は『不完全な文です』で拒否されるため条件文にしない。
+    var number = try parse(std.testing.allocator, "1ならば\n", "implicit-if-number.nako3");
+    defer number.deinit();
+    try std.testing.expect(number.succeeded());
+    try std.testing.expectEqual(ast.Kind.dynamic_execute, number.root.?.children[0].kind);
+
+    // 単独語は変数参照と区別できないため、既知の命令名でなければ条件文にしない。
+    var word = try parse(std.testing.allocator, "Aならば\n", "implicit-if-word.nako3");
+    defer word.deinit();
+    try std.testing.expect(word.succeeded());
+    try std.testing.expectEqual(ast.Kind.function_call, word.root.?.children[0].kind);
+    try std.testing.expect(!word.root.?.children[0].is_c_style_call);
+
+    // 既知の命令名（公式の`func token`）の0引数呼出しは命令呼出しなので条件文になる。
+    var command = try parse(std.testing.allocator, "今ならば\n「x」と表示\nここまで\n", "implicit-if-command.nako3");
+    defer command.deinit();
+    try std.testing.expect(command.succeeded());
+    try std.testing.expectEqual(ast.Kind.if_statement, command.root.?.children[0].kind);
+    try std.testing.expectEqual(ast.Kind.function_call, command.root.?.children[0].children[0].kind);
+    try std.testing.expectEqualStrings("今", command.root.?.children[0].children[0].name);
+}
+
 test "「なければ」を条件の否定として扱う" {
     var result = try parse(std.testing.allocator, "もし、Aなければ\nB=1\nここまで\n", "josi-nakereba.nako3");
     defer result.deinit();
