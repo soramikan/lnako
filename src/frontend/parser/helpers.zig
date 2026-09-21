@@ -78,6 +78,17 @@ pub fn isValueJosi(josi: []const u8) bool {
     return std.mem.eql(u8, josi, "を") or std.mem.eql(u8, josi, "から");
 }
 
+/// 公式ySadameruが定義対象に取る助詞（`popStack(['を'])`）。
+pub fn isDefineTargetJosi(josi: []const u8) bool {
+    return std.mem.eql(u8, josi, "を");
+}
+
+/// 公式ySadameruが値に取る助詞（`popStack(['へ', 'に', 'と'])`）。
+/// `代入`の対象助詞（`へ`/`に`）と違い`と`も値として扱う。
+pub fn isDefineValueJosi(josi: []const u8) bool {
+    return isTargetJosi(josi) or std.mem.eql(u8, josi, "と");
+}
+
 pub fn isImplicitCallbackJosi(josi: []const u8) bool {
     return std.mem.eql(u8, josi, "には");
 }
