@@ -105,10 +105,10 @@
 
 - 公式実測・source根拠: `nako_gen.mts` は関数本体の先頭で `__self.__vars.set('引数', arguments)` を生成します。値はJavaScriptの `arguments` オブジェクトそのもので、宣言した仮引数に加えて、公式の呼出し規約が末尾へ渡す `__self`（実行コンテキスト）も要素に含まれます。実測では1仮引数の関数呼出しで `引数の要素数` は2、`引数[0]` は第1実引数、`引数[1]` は `[object Object]` でした。
 - lnakoの現在動作: semantic analyzer が関数スコープへ `引数` をローカル変数として宣言し、HIR lowererが関数先頭で仮引数の並びから配列を作って束縛します。呼出し側は助詞補完済みの実引数を渡すため `引数[i]` は公式と同じ実引数を返し、束縛は呼出しごとのフレームに閉じるため入れ子呼出しでも壊れません。
-- 判定: 仕様（実引数の並びと呼出しごとの束縛）／意図的制限（`引数の要素数` は公式より1小さい。公式の末尾要素はJS実装の実行コンテキスト `__self` であり、lnakoには対応する値がないため合成しません）
+- 判定: 仕様（実引数の並びと呼出しごとの束縛）／意図的制限（`引数の要素数` は公式より1小さい。公式の末尾要素はJS実装の実行コンテキスト `__self` であり、lnakoには対応する値がないため合成しません。また仮引数より多い実引数は、lnakoの呼出し規約が仮引数の個数で値を受け渡すため `引数` に現れません。公式はJSの `arguments` が余剰実引数も保持します）
 - 対象経路: Interpreter / AOT
-- 差分テストID: `arguments-array-in-function`、`arguments-array-per-call`、`arguments-array-local-declaration`、`arguments-array-indexed-write-only`、`arguments-array-function-import`（`compare_interpreter_oracle.mjs`）、`native-arguments-array-in-function`、`native-arguments-array-indexed-write-only`、`native-arguments-array-per-call`、`native-arguments-array-anonymous`、`native-arguments-array-local-declaration`（`compare_native_oracle.mjs`）、`関数内の『引数』は実引数の配列になる`、`『引数』は呼出しごとに独立し入れ子呼出しで壊れない`、`『引数』宣言は同名ローカルとして再利用する`（`src/runtime/interpreter/tests.zig`）
-- TODO識別子: なし
+- 差分テストID: `arguments-array-in-function`、`arguments-array-per-call`、`arguments-array-local-declaration`、`arguments-array-indexed-write-only`、`arguments-array-function-import`（`compare_interpreter_oracle.mjs`）、`native-arguments-array-in-function`、`native-arguments-array-indexed-write-only`、`native-arguments-array-per-call`、`native-arguments-array-anonymous`、`native-arguments-array-local-declaration`（`compare_native_oracle.mjs`）、`関数内の『引数』は実引数の配列になる`、`『引数』は呼出しごとに独立し入れ子呼出しで壊れない`、`『引数』宣言は同名ローカルとして再利用する`、`仮引数名が『引数』でも実引数配列を参照する`、`読み出しの無い『引数』添字代入でも先頭束縛を作る`（`src/runtime/interpreter/tests.zig`）
+- TODO識別子: `TODO: arguments-excess-args`
 
 ## 添字・プロパティ代入のコンテナ束縛と評価順
 

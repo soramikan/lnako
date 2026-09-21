@@ -242,6 +242,14 @@ const Analyzer = struct {
         self.symbols.items[id].implicit_arguments = true;
     }
 
+    /// 公式の生成コードは本体先頭で`引数`へ実引数配列を設定し、仮引数名が
+    /// `引数`のときはその仮引数の束縛を生成しない（`__vars.set("引数", ...)`が
+    /// 出ない）。同じ名前にすると実引数配列が仮引数の値で上書きされてしまう。
+    fn declareParameter(self: *Analyzer, module_index: u32, scope: ScopeId, argument: ast.Argument) !void {
+        if (std.mem.eql(u8, argument.name, "引数")) return;
+        _ = try self.declare(module_index, scope, argument.name, .parameter, argument.span, false, true, 0, false);
+    }
+
     fn predeclareBlock(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId, recurse: bool) anyerror!void {
         try self.predeclareBlockEx(node, module_index, scope, recurse, false);
     }
@@ -305,7 +313,7 @@ const Analyzer = struct {
                 if (declared) |symbol| try self.bind(node, .declaration, node.name, symbol.qualified_name, symbol.id);
                 const function_scope = try self.addScope(scope, module_index, .function);
                 try self.function_scopes.append(self.allocator, .{ .node = node, .scope = function_scope });
-                for (node.arguments) |argument| _ = try self.declare(module_index, function_scope, argument.name, .parameter, argument.span, false, true, 0, false);
+                for (node.arguments) |argument| try self.declareParameter(module_index, function_scope, argument);
                 try self.declareImplicitArguments(module_index, function_scope, node.span);
                 for (node.children) |child| try self.predeclareBlock(child, module_index, function_scope, false);
                 for (node.children) |child| try self.resolveBlock(child, module_index, function_scope);
@@ -314,7 +322,7 @@ const Analyzer = struct {
             .anonymous_function => {
                 const function_scope = try self.addScope(scope, module_index, .anonymous_function);
                 try self.function_scopes.append(self.allocator, .{ .node = node, .scope = function_scope });
-                for (node.arguments) |argument| _ = try self.declare(module_index, function_scope, argument.name, .parameter, argument.span, false, true, 0, false);
+                for (node.arguments) |argument| try self.declareParameter(module_index, function_scope, argument);
                 try self.declareImplicitArguments(module_index, function_scope, node.span);
                 for (node.children) |child| try self.predeclareBlock(child, module_index, function_scope, false);
                 for (node.children) |child| try self.resolveBlock(child, module_index, function_scope);

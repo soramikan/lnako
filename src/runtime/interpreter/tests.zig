@@ -200,6 +200,30 @@ test "『引数』宣言は同名ローカルとして再利用する" {
     try std.testing.expectEqualStrings("7\n", host.written());
 }
 
+test "仮引数名が『引数』でも実引数配列を参照する" {
+    // 公式の生成コードは仮引数`引数`の束縛を生成せず、本体先頭で設定した
+    // 実引数配列をそのまま参照させる。
+    const source =
+        "●(引数の)Fとは\n" ++
+        "引数[0]を表示\n" ++
+        "ここまで\n" ++
+        "3のF\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("3\n", host.written());
+}
+
 test "読み出しの無い『引数』添字代入でも先頭束縛を作る" {
     // 添字代入は対象変数をHIRノード自身の名前で保持し、loweringが暗黙に
     // load_localを発行する。子に`load_local`が無くても利用として検出する。
