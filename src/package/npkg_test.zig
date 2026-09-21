@@ -1403,6 +1403,43 @@ test "npkg verify は CRC-32 の不一致を拒否する" {
     }
 }
 
+test "npkg verify は local record の非正規配置を拒否する" {
+    const allocator = testing.allocator;
+    const payload = "x";
+    const files_toml = try emitFilesToml(allocator, &.{
+        .{ .path = "a.txt", .sha256 = sha256Of(payload), .size = payload.len },
+        .{ .path = "b.txt", .sha256 = sha256Of(payload), .size = payload.len },
+    });
+    defer allocator.free(files_toml);
+    const archive = try zip.writeEntries(allocator, &.{
+        .{ .name = "NAKO-PKG/METADATA.toml", .data = minimal_metadata },
+        .{ .name = "NAKO-PKG/FILES.toml", .data = files_toml },
+        .{ .name = "NAKO-PKG/commands.json", .data = empty_commands },
+        .{ .name = "a.txt", .data = payload },
+        .{ .name = "b.txt", .data = payload },
+    });
+    defer allocator.free(archive);
+
+    // a.txt と b.txt の local record（同じ 36 バイト）を物理的に入れ替え、
+    // central directory の local_offset だけ追随させる。名前・CRC・hash は
+    // 全て正しいままだが、local record が名前順でない正規形違反。
+    const la = findLocalHeader(archive, "a.txt").?;
+    const lb = findLocalHeader(archive, "b.txt").?;
+    const record_len = 30 + 5 + 1;
+    var swap_buffer: [64]u8 = undefined;
+    @memcpy(swap_buffer[0..record_len], archive[la .. la + record_len]);
+    @memcpy(archive[la .. la + record_len], archive[lb .. lb + record_len]);
+    @memcpy(archive[lb .. lb + record_len], swap_buffer[0..record_len]);
+    const ca = findCentralEntry(archive, "a.txt").?;
+    std.mem.writeInt(u32, archive[ca + 42 ..][0..4], @intCast(lb), .little);
+    const cb = findCentralEntry(archive, "b.txt").?;
+    std.mem.writeInt(u32, archive[cb + 42 ..][0..4], @intCast(la), .little);
+
+    var list = try verifyArchive(allocator, archive);
+    defer list.deinit();
+    try testing.expect(list.find(diag.E029_INVALID_VALUE) != null);
+}
+
 test "npkg verify は payload を持たないアーカイブを拒否する" {
     const allocator = testing.allocator;
     // メタデータ3エントリのみ・索引も空の構造的に正しいアーカイブ。

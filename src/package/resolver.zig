@@ -991,6 +991,7 @@ pub fn metaFromManifest(gpa: Allocator, source: *const manifest.Manifest, target
         .os_version = target.os_version,
         .libc = target.libc,
         .compat_js = target.compat_js,
+        .optimize = target.optimize,
         // marker の `version` はなでしこ言語版を指す。処理系版への
         // フォールバックは verify 側（nako_version のみ）と契約がずれる
         // ため行わず、不明な場合は `version` を使う式を証明不能とする。

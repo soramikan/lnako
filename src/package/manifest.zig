@@ -168,15 +168,21 @@ pub const ArtifactDecl = struct {
     /// とみなす（保守方向）。`when` の解析失敗は manifest 検証で報告済みの
     /// 前提であり、ここでは不適合として扱う。
     /// `check_features` を false にすると `features` 要件を未評価とみなす。
-    /// 依存解決の version 候補判定のように、有効 feature 集合が未確定の
-    /// 段階で feature 条件を理由に候補を落とさないために使う。
+    /// `when` 式内の `features` 参照も同時に未確定として三値評価し、
+    /// 確定条件（os/cpu 等）だけで偽になる式のみ不適合とする。依存解決の
+    /// version 候補判定のように、有効 feature 集合が未確定の段階で
+    /// feature 条件を理由に候補を落とさないために使う。
     pub fn matchesTarget(self: *const ArtifactDecl, allocator: std.mem.Allocator, target: ArtifactTarget, check_features: bool) !bool {
         if (self.when) |text| {
             var parsed = try marker_mod.parse(allocator, text);
             const ok = switch (parsed) {
                 .ok => |*m| blk: {
                     defer m.deinit();
-                    break :blk m.evaluate(target.markerContext()) catch false;
+                    if (check_features) {
+                        break :blk m.evaluate(target.markerContext()) catch false;
+                    }
+                    const result = m.evaluatePartial(target.markerContext(), .initOne(.features)) catch .fail;
+                    break :blk result != .fail;
                 },
                 .err => false,
             };
@@ -210,6 +216,7 @@ pub const ArtifactTarget = struct {
     os_version: ?[]const u8 = null,
     libc: ?[]const u8 = null,
     compat_js: bool = false,
+    optimize: []const u8 = "O0",
     version: ?semver.Version = null,
     features: []const []const u8 = &.{},
 
@@ -220,6 +227,7 @@ pub const ArtifactTarget = struct {
             .cpu = self.cpu,
             .abi = self.abi,
             .compat_js = self.compat_js,
+            .optimize = self.optimize,
             .version = self.version,
             .features = self.features,
         };

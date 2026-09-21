@@ -167,7 +167,7 @@ pub fn usage(writer: *std.Io.Writer) !void {
         \\  lnako benchmark
         \\  lnako toolchain <status|dir|install|update|remove>
         \\  lnako package build [<dir>] [-o <output.npkg>]
-        \\  lnako package verify <file.npkg> [--runtime lnako|cnako] [--os <os>] [--cpu <cpu>] [--abi <abi>] [--os-version <v>] [--libc <libc>] [--feature <name>] [--no-default-features] [--nako-version <v>] [--cnako-version <v>] [--lnako-version <v>] [--compat-js]
+        \\  lnako package verify <file.npkg> [--runtime lnako|cnako] [--os <os>] [--cpu <cpu>] [--abi <abi>] [--os-version <v>] [--libc <libc>] [--optimize <level>] [--feature <name>] [--no-default-features] [--nako-version <v>] [--cnako-version <v>] [--lnako-version <v>] [--compat-js]
         \\
         \\共通オプション:
         \\  -h, --help       このヘルプを表示

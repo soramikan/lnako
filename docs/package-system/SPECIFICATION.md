@@ -362,7 +362,7 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
 - `NAKO-PKG/` はメタデータ予約領域であり、payload のパスは `NAKO-PKG/` で始まってはならない。必須3エントリ以外の `NAKO-PKG/` エントリは `E037_NPKG_UNLISTED_ENTRY` で拒否する。
 - directory エントリ（末尾 `/`）は配布意味を持たず、末尾 `/` は規範パスに適合しないため `E040_NPKG_NONCANONICAL_PATH` で拒否する。生成側も書き出さない。
 - 格納形式は stored のみとする。stored 以外の compression method を持つエントリは検証で拒否する。
-- ZIP の local header / central directory の並びはエントリ名のバイト順ソートで固定し、timestamp・comment・extra field は固定値（時刻ゼロ、UTF-8 ファイル名フラグ、stored 格納）とする。同一入力からは同一バイト列が得られなければならない。
+- ZIP の local header / central directory の並びはエントリ名のバイト順ソートで固定し、timestamp・comment・extra field は固定値（時刻ゼロ、UTF-8 ファイル名フラグ、stored 格納）とする。local record は先頭 offset 0 からこの順序で隙間なく連続配置し、最後の record は central directory の直前で終わる。同一入力からは同一バイト列が得られなければならない。
 - 同名エントリの重複は `E038_NPKG_DUPLICATE_ENTRY` で拒否する。
 - `package.include` 未指定時は VCS・生成物（`.git`、`.zig-cache`、`zig-out`、`node_modules`、`.nako`、`nako.lock`、`.DS_Store`）を除く package 内ファイルを再帰収録する。`include` 指定時は既定除外を適用せず、パターン適合のみで収録可否を決める。
 - 出力予定の `.npkg` が package root 内にある場合、生成側はそれを収集対象から除外する（再ビルドで前回成果物が payload に混入しないようにするため）。
@@ -417,13 +417,13 @@ size = 1234
 
 - 必須 `NAKO-PKG` エントリの存在と既知 schema version（未知は `E035_UNKNOWN_NPKG_SCHEMA`）。
 - 全エントリ名の規範パス適合と重複なし。全エントリが stored 格納であり、各 local header のファイル名が central directory のエントリ名と一致すること。
-- アーカイブが §6.1 の正規形であること。central directory のエントリが名前のバイト順ソートであること、UTF-8 ファイル名フラグのみが立ち timestamp がゼロ・extra field と comment が空・単一 disk で stored の `compressed == uncompressed` であること、local header も同じ正規形（フラグ・method・時刻・extra・CRC・size 一致）を持つこと、EOCD の comment が空で末尾が EOCD と一致すること。外部作成物もこの正規形を要求する。
+- アーカイブが §6.1 の正規形であること。central directory のエントリが名前のバイト順ソートであること、UTF-8 ファイル名フラグのみが立ち timestamp がゼロ・extra field と comment が空・単一 disk で stored の `compressed == uncompressed` であること、local header も同じ正規形（フラグ・method・時刻・extra・CRC・size 一致）を持つこと、EOCD の comment が空で末尾が EOCD と一致すること。さらに local record が offset 0 から名前順に隙間なく連続し、最後が `cd_offset` で終わること。外部作成物もこの正規形を要求する。
 - 各エントリの CRC-32 が内容と一致すること（local header・central directory・実データの三者一致）。SHA-256 は `FILES.toml` が保証するが、展開側が CRC を検査するため CRC だけ壊れたアーカイブを検証済みとして受理しない。
 - `FILES.toml` と payload エントリ集合の完全一致、各 hash・size の一致。索引が空（payload 0 件）のアーカイブは配布単位として成立しないため `E036_NPKG_MISSING_ENTRY` で拒否する。
 - `dependencies.path` の各依存先 manifest（`<path>/nako.toml`）が索引に収録されていること。無ければ `E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY` で拒否する。
 - artifact 条件の `features` 照合には、要求名に `[features]` 定義の推移展開と `default`（無効化可能）を加えた有効 feature 集合を使う（依存解決の feature unification と同じ意味論）。marker の `version` はなでしこ言語版を指し、言語版が不明な場合は `version` を使う式は証明不能として不適合とする。
 - `METADATA.toml` の構造・必須フィールド、宣言ファイル（`exports[].path` および全 native/esm artifact の `path`）の収録。
-- 対象 profile（os/cpu/abi/min-os/libc/features）と artifact 条件の適合。不適合な native artifact は `E015_NATIVE_FOR_INCOMPATIBLE_TARGET`、未対応 runtime は `E031_UNSUPPORTED_RUNTIME`、engine 要件不適合は `E032_ENGINE_MISMATCH`。
+- 対象 profile（os/cpu/abi/min-os/libc/optimize/features）と artifact 条件の適合。不適合な native artifact は `E015_NATIVE_FOR_INCOMPATIBLE_TARGET`、未対応 runtime は `E031_UNSUPPORTED_RUNTIME`、engine 要件不適合は `E032_ENGINE_MISMATCH`。
 - 通常モードでの ESM artifact 利用は `E006_JS_IN_NORMAL_MODE`。
 
 ## 7. Resolver / Import 契約

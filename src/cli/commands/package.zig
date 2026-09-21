@@ -78,7 +78,7 @@ fn runVerify(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8,
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
         const argument = args[index];
-        const value_options = [_][]const u8{ "--runtime", "--os", "--cpu", "--abi", "--os-version", "--libc", "--feature", "--nako-version", "--cnako-version", "--lnako-version" };
+        const value_options = [_][]const u8{ "--runtime", "--os", "--cpu", "--abi", "--os-version", "--libc", "--optimize", "--feature", "--nako-version", "--cnako-version", "--lnako-version" };
         var matched = false;
         inline for (value_options) |option| {
             if (std.mem.eql(u8, argument, option)) {
@@ -100,6 +100,8 @@ fn runVerify(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8,
                     target.os_version = value;
                 } else if (comptime std.mem.eql(u8, option, "--libc")) {
                     target.libc = value;
+                } else if (comptime std.mem.eql(u8, option, "--optimize")) {
+                    target.optimize = value;
                 } else if (comptime std.mem.eql(u8, option, "--feature")) {
                     try features.append(allocator, value);
                 } else if (comptime std.mem.eql(u8, option, "--nako-version")) {

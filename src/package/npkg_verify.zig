@@ -34,6 +34,8 @@ pub const Target = struct {
     os_version: ?[]const u8 = null,
     libc: ?[]const u8 = null,
     compat_js: bool = false,
+    /// 最適化レベル（marker の `optimize` 評価用）。既定は `O0`。
+    optimize: []const u8 = "O0",
     /// 有効化を要求する feature 名。`[features]` 定義の推移展開と
     /// `default`（`default_features` が真の場合）を加えた集合が
     /// artifact 照合に使われる。
@@ -58,6 +60,7 @@ pub const Target = struct {
             .os_version = self.os_version,
             .libc = self.libc,
             .compat_js = self.compat_js,
+            .optimize = self.optimize,
             .version = self.nako_version,
             .features = self.features,
         };
@@ -96,9 +99,16 @@ fn readInt(comptime T: type, bytes: []const u8, offset: usize) T {
     return std.mem.readInt(T, bytes[offset..][0..@sizeOf(T)], .little);
 }
 
+/// central directory の走査結果。`cd_offset` は local record 領域の
+/// 終端（= central directory の先頭）を示す。
+const CentralDirectory = struct {
+    entries: []ZipEntry,
+    cd_offset: usize,
+};
+
 /// central directory を走査してエントリ一覧を返す。ZIP64・複数 disk・
 /// データ記述子は受理しない（生成側が使わない形式）。
-fn readCentralDirectory(allocator: Allocator, archive: []const u8) ![]ZipEntry {
+fn readCentralDirectory(allocator: Allocator, archive: []const u8) !CentralDirectory {
     if (archive.len < 22) return error.InvalidArchive;
     const search_start = if (archive.len > eocd_search) archive.len - eocd_search else 0;
     var eocd_offset: ?usize = null;
@@ -155,7 +165,7 @@ fn readCentralDirectory(allocator: Allocator, archive: []const u8) ![]ZipEntry {
         offset = name_end;
     }
     if (offset != @as(usize, @intCast(cd_end))) return error.InvalidArchive;
-    return entries.toOwnedSlice(allocator);
+    return .{ .entries = try entries.toOwnedSlice(allocator), .cd_offset = cd_offset };
 }
 
 /// local header を辿って entry 内容を返す。`NAKO-PKG` 形式は stored のみ
@@ -242,20 +252,29 @@ pub fn verify(
     const allocator = arena.allocator();
     const prior_errors = diagnostics.errorCount();
 
-    const zip_entries = readCentralDirectory(allocator, archive) catch |err| switch (err) {
+    const central = readCentralDirectory(allocator, archive) catch |err| switch (err) {
         error.OutOfMemory => return err,
         else => {
             try report(diagnostics, diag.E029_INVALID_VALUE, ".npkg", "archive is not a readable ZIP", .{});
             return error.InvalidPackage;
         },
     };
+    const zip_entries = central.entries;
 
     // エントリ名の規範性・重複・正規形・メタデータ領域の検査と内容の読み出し。
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     var contents: std.StringHashMapUnmanaged([]u8) = .empty;
     var total_uncompressed: u64 = 0;
     var previous_name: ?[]const u8 = null;
+    // local record は先頭 offset 0 から central の名前順どおりに隙間なく
+    // 連続する（§6.1 の決定的配置）。他の検査で entry を skip しても
+    // 期待 offset は正規形どおりに進める。
+    var expected_local: usize = 0;
     for (zip_entries) |entry| {
+        if (@as(usize, entry.local_offset) != expected_local) {
+            try report(diagnostics, diag.E029_INVALID_VALUE, entry.name, "archive entry \"{s}\" local header is not at the canonical offset", .{entry.name});
+        }
+        expected_local += 30 + entry.name.len + @as(usize, entry.compressed_size);
         // 重複・規範性・格納形式は directory エントリを含む全エントリに
         // 適用する（§6.5）。directory エントリは末尾 `/` のため規範 path に
         // 適合せず、ここで拒否される。
@@ -310,6 +329,10 @@ pub fn verify(
             continue;
         };
         try contents.put(allocator, entry.name, data);
+    }
+    // 最後の local record は central directory の直前で終わる。
+    if (expected_local != central.cd_offset) {
+        try report(diagnostics, diag.E029_INVALID_VALUE, ".npkg", "local file records do not end at the central directory", .{});
     }
 
     for ([_][]const u8{ npkg_files.metadata_entry, npkg_files.files_entry, npkg_files.commands_entry }) |required| {

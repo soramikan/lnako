@@ -166,8 +166,8 @@
       "properties": {
         "path": { "type": "string" },
         "when": { "type": "string" },
-        "min-os": { "type": "string" },
-        "libc": { "type": "string" },
+        "min-os": { "type": "string", "pattern": "^\\d+(?:\\.\\d+)*$" },
+        "libc": { "type": "string", "enum": ["gnu", "msvc", "musl", "none"] },
         "features": { "$ref": "#/$defs/featureList" }
       }
     },

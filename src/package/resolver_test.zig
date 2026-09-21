@@ -1271,6 +1271,97 @@ test "marker の version は言語版のみで評価する" {
     try T.expect(known.has_native);
 }
 
+test "when が features を参照する artifact は候補から落とさない" {
+    var arena = std.heap.ArenaAllocator.init(T.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+    var m = try parseManifest(gpa,
+        \\[package]
+        \\name = "simd-pkg"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[features]
+        \\simd = []
+        \\
+        \\[[exports]]
+        \\name = "plugin"
+        \\native = { path = "lib/x.so", when = "'simd' in features" }
+        \\
+    );
+    defer m.deinit();
+
+    // 有効 feature 集合は unification 後にしか確定しないため、候補判定で
+    // `when` 内の `features` 参照は未確定とし、version を落とさない。
+    const meta = try resolver.metaFromManifest(gpa, &m, .{
+        .runtime = "lnako",
+        .os = "linux",
+        .abi = "gnu",
+    });
+    try T.expect(meta.has_native);
+    try T.expect(meta.unavailable_reason == null);
+
+    // 確定条件が偽の項を含む式はその段階で不適合となる。
+    var gated = try parseManifest(gpa,
+        \\[package]
+        \\name = "gated"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[[exports]]
+        \\name = "plugin"
+        \\native = { path = "lib/x.so", when = "os == 'linux' and 'simd' in features" }
+        \\
+    );
+    defer gated.deinit();
+    const macos_meta = try resolver.metaFromManifest(gpa, &gated, .{
+        .runtime = "lnako",
+        .os = "macos",
+        .abi = "none",
+    });
+    try T.expect(!macos_meta.has_native);
+    const linux_meta = try resolver.metaFromManifest(gpa, &gated, .{
+        .runtime = "lnako",
+        .os = "linux",
+        .abi = "gnu",
+    });
+    try T.expect(linux_meta.has_native);
+}
+
+test "optimize 条件付き artifact は対象の optimize で照合する" {
+    var arena = std.heap.ArenaAllocator.init(T.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+    var m = try parseManifest(gpa,
+        \\[package]
+        \\name = "opt-pkg"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[[exports]]
+        \\name = "plugin"
+        \\native = { path = "lib/x.so", when = "optimize == 'O2'" }
+        \\
+    );
+    defer m.deinit();
+
+    // Target の optimize が marker へ転送され、O2 向け artifact が選べる。
+    const o2 = try resolver.metaFromManifest(gpa, &m, .{
+        .runtime = "lnako",
+        .os = "linux",
+        .abi = "gnu",
+        .optimize = "O2",
+    });
+    try T.expect(o2.has_native);
+
+    // 既定 O0 のままでは `optimize == 'O2'` は不適合。
+    const o0 = try resolver.metaFromManifest(gpa, &m, .{
+        .runtime = "lnako",
+        .os = "linux",
+        .abi = "gnu",
+    });
+    try T.expect(!o0.has_native);
+}
+
 // ---------------------------------------------------------------------------
 // brute-force oracle
 // ---------------------------------------------------------------------------
