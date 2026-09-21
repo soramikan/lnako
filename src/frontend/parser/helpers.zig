@@ -58,6 +58,12 @@ pub fn isConditionalJosi(josi: []const u8) bool {
         std.mem.eql(u8, josi, "でなければ") or std.mem.eql(u8, josi, "なければ");
 }
 
+/// 否定の条件助詞かどうか。公式の字句解析は「でなければ」「しなければ」
+/// 「なければ」をすべて否定の条件助詞へ正規化するため、条件式はnotで包む。
+pub fn isNegativeConditionJosi(josi: []const u8) bool {
+    return std.mem.eql(u8, josi, "でなければ") or std.mem.eql(u8, josi, "なければ");
+}
+
 pub fn isSequenceJosi(josi: []const u8) bool {
     const values = [_][]const u8{ "いて", "えて", "きて", "けて", "して", "って", "にて", "みて", "めて", "ねて", "には", "んで" };
     for (values) |value| if (std.mem.eql(u8, josi, value)) return true;

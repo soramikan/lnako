@@ -185,7 +185,9 @@ pub fn parsePrimary(self: *Parser) ParseFailure!*ast.Node {
         .left_paren => blk: {
             self.delimited_expression_depth += 1;
             defer self.delimited_expression_depth -= 1;
-            const value = try parseExpression(self, 0);
+            // 公式`yValueKakko`は括弧内も`yCall`で解析するため、助詞付きの
+            // 命令呼出しを条件式と同じ規則で受理する（`(Aが3以下)`）。
+            const value = try self.parseJosiCallExpression(try parseExpression(self, 0));
             if (!self.at(.right_paren)) return self.fail(.expected_token, "式を閉じる『)』が必要です", token);
             const close = self.advance();
             value.josi = close.josi;

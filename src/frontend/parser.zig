@@ -14,6 +14,7 @@ pub const builder = @import("parser/builder.zig");
 pub const expressions = @import("parser/expressions.zig");
 
 const isConditionalJosi = helpers.isConditionalJosi;
+const isNegativeConditionJosi = helpers.isNegativeConditionJosi;
 const isSequenceJosi = helpers.isSequenceJosi;
 const isTargetJosi = helpers.isTargetJosi;
 const isValueJosi = helpers.isValueJosi;
@@ -291,7 +292,15 @@ pub const Parser = struct {
             else => blk: {
                 if (self.isModeDirective()) break :blk self.parseModeDirective();
                 if (self.canStartAssignment()) break :blk self.parseAssignment();
-                break :blk self.parseCallOrControl();
+                const statement = try self.parseCallOrControl();
+                // 公式`ySentence`は、命令呼出しの直後に『ならば』が続く場合を
+                // 「もし」省略形の条件文として扱う（`Aが5と等しいならば`）。
+                // lnakoの字句解析は『ならば』を直前の語の助詞にするため、
+                // 文の末尾助詞で判定する。
+                if (isConditionalJosi(statement.josi)) {
+                    break :blk self.parseIfThen(token, try self.finishCondition(statement));
+                }
+                break :blk statement;
             },
         };
     }
@@ -397,22 +406,91 @@ pub const Parser = struct {
                 std.mem.eql(u8, token.value, "パフォーマンスモニタ適用")));
     }
 
+    /// 公式`yIFCond`相当の条件式解析。`もし`以降の条件を、演算子比較式・
+    /// C風呼出しに加えて、助詞`が`の比較形（`AがBならば`＝`A=B`）と
+    /// 助詞付きの命令呼出し（`Aが3以下ならば`＝`以下(A,3)`）でも受理する。
+    /// 公式のトークン列では「ならば」「でなければ」が独立トークンになるが、
+    /// lnakoの字句解析は直前の語へ助詞として付けるため、ここで吸収する。
+    pub fn parseIfCondition(self: *Parser) ParseFailure!*ast.Node {
+        const first = try expressions.parseExpression(self, 0);
+        if (isConditionalJosi(first.josi)) return self.finishCondition(first);
+        if (self.identifierValue("ならば")) {
+            _ = self.advance();
+            clearConditionalJosi(first);
+            return first;
+        }
+        // チェック: `AがBならば` --- 「A = B」のとき。公式`yIFCond`は一度
+        // 二番目の値を読み、条件助詞が付かなければ位置を戻して呼出し解決へ進む。
+        if (std.mem.eql(u8, first.josi, "が")) {
+            const saved = self.index;
+            const second = try expressions.parseExpression(self, 0);
+            if (isConditionalJosi(second.josi)) {
+                const result = try builder.makeNodeWithChildren(self, .binary_operator, self.peekPrevious(), try builder.copyChildren(self, &.{ first, second }));
+                result.operator = if (isNegativeConditionJosi(second.josi)) "noteq" else "eq";
+                result.josi = "";
+                result.raw_josi = "";
+                return result;
+            }
+            self.index = saved;
+        }
+        // チェック: `AがBならば` --- 「関数B(A)」のとき
+        const result = try self.parseJosiCallExpression(first);
+        if (isConditionalJosi(result.josi)) return self.finishCondition(result);
+        if (self.identifierValue("ならば")) {
+            _ = self.advance();
+            clearConditionalJosi(result);
+            return result;
+        }
+        return self.fail(.invalid_control_statement, "『もし』文の条件末尾に『ならば』が必要です", self.peek());
+    }
+
+    /// 公式parserは「Aでなければ」を条件式Aの否定ノードとして保持する。
+    /// DNCLの「Aでないならば」はsyntax_transformで同じ助詞へ正規化されるため、
+    /// 条件式のjosiを消す前にnotへ包む必要がある。公式の字句解析は
+    /// 「でなければ」「しなければ」「なければ」をすべて否定の条件助詞にする。
+    fn finishCondition(self: *Parser, condition: *ast.Node) ParseFailure!*ast.Node {
+        var result = condition;
+        if (isNegativeConditionJosi(result.josi)) {
+            result = try builder.unary(self, "not", result, self.peekPrevious());
+        }
+        clearConditionalJosi(result);
+        return result;
+    }
+
+    /// 公式`yCall`相当の式解析。先頭の値`first`に続けて助詞付きの値と
+    /// 既知命令名を読み、助詞付きの値を引数として呼出し式を組み立てる
+    /// （`Aが3以下`＝`以下(A,3)`、`Dに"a"が辞書キー存在`＝`辞書キー存在(D,"a")`）。
+    /// 命令の助詞が無い、または連文助詞の場合はそこで呼出しが確定する。
+    pub fn parseJosiCallExpression(self: *Parser, first: *ast.Node) ParseFailure!*ast.Node {
+        var stack: std.ArrayList(*ast.Node) = .empty;
+        try stack.append(self.allocator, first);
+        while (true) {
+            if (self.at(.identifier) and self.isBuiltinCommandName(self.peek().value)) {
+                const command = self.advance();
+                const call = try self.makeCommandCall(command, try stack.toOwnedSlice(self.allocator));
+                stack = .empty;
+                try stack.append(self.allocator, call);
+                // 言い切り・連文の助詞はそこで一度切る（公式`yCallFunc`）。
+                if (command.josi.len == 0 or isSequenceJosi(command.josi)) return call;
+                continue;
+            }
+            if (!canStartExpression(self.peek().kind)) break;
+            try stack.append(self.allocator, try expressions.parseExpression(self, 0));
+        }
+        if (stack.items.len == 1) return stack.items[0];
+        return self.fail(.unexpected_token, "命令呼び出しを構成できません", self.peek());
+    }
+
     pub fn parseIf(self: *Parser) ParseFailure!*ast.Node {
         const start = self.advance();
         self.skipCommas();
-        var condition = try expressions.parseExpression(self, 0);
-        if (!isConditionalJosi(condition.josi) and !self.identifierValue("ならば")) {
-            return self.fail(.invalid_control_statement, "『もし』文の条件末尾に『ならば』が必要です", self.peek());
-        }
-        if (self.identifierValue("ならば")) _ = self.advance();
-        // 公式parserは「Aでなければ」を条件式Aの否定ノードとして保持する。
-        // DNCLの「Aでないならば」はsyntax_transformで同じ助詞へ正規化されるため、
-        // 条件式のjosiを消す前にnotへ包む必要がある。
-        if (std.mem.eql(u8, condition.josi, "でなければ")) {
-            condition = try builder.unary(self, "not", condition, self.peekPrevious());
-        }
-        clearConditionalJosi(condition);
+        const condition = try self.parseIfCondition();
+        return self.parseIfThen(start, condition);
+    }
 
+    /// 公式`yIfThen`相当。条件式を受けて真節・偽節を解析する。公式は「もし」を
+    /// 伴わない条件文（`Aが5と等しいならば`）も同じ`yIfThen`へ入る。
+    pub fn parseIfThen(self: *Parser, start: Token, condition: *ast.Node) ParseFailure!*ast.Node {
         var multiline = false;
         var true_block: *ast.Node = undefined;
         if (self.at(.eol)) {
@@ -440,7 +518,12 @@ pub const Parser = struct {
             }
         }
         if (multiline) try self.requireEnd("『もし』文");
-        return builder.makeNodeWithChildren(self, .if_statement, start, try builder.copyChildren(self, &.{ condition, true_block, false_block }));
+        const result = try builder.makeNodeWithChildren(self, .if_statement, start, try builder.copyChildren(self, &.{ condition, true_block, false_block }));
+        // 公式`yIfThen`の`if`ノードは助詞を持たない。「もし」省略形では開始
+        // トークンが条件式の先頭語（`Aが…`）になるため、助詞を落とす。
+        result.josi = "";
+        result.raw_josi = "";
+        return result;
     }
 
     pub fn parsePostTestLoop(self: *Parser) ParseFailure!*ast.Node {
@@ -864,6 +947,15 @@ pub const Parser = struct {
             return statement;
         }
         const call = try self.makeCommandCall(command, try arguments.toOwnedSlice(self.allocator));
+        // 助詞付きの関数呼出しの直後にループの語が続く場合、公式`yCall`は
+        // 呼出しをスタックに積んだまま制御構文へ渡す（`Aが5以下の間`は
+        // `以下(A,5)`を条件とする`間`になる）。呼出しを引数として保持し、
+        // 文の解析を続けて制御構文の分岐へ委ねる。
+        if (command.josi.len > 0 and chained_calls.items.len == 0 and self.atLoopKeyword()) {
+            arguments.* = .empty;
+            try arguments.*.append(self.allocator, call);
+            return null;
+        }
         if (isSequenceJosi(command.josi)) {
             try chained_calls.append(self.allocator, call);
             arguments.* = .empty;
@@ -875,6 +967,13 @@ pub const Parser = struct {
             return try builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
         }
         return call;
+    }
+
+    /// 現在位置がループの語かどうか。公式`yCall`は助詞付きの関数呼出しを
+    /// スタックへ積んだまま、この位置の制御構文へ条件として渡す。
+    fn atLoopKeyword(self: *Parser) bool {
+        return self.at(.keyword_repeat_while) or self.at(.keyword_repeat_count) or
+            self.at(.keyword_repeat) or self.at(.keyword_foreach);
     }
 
     /// 公式の`func token`相当（既知の命令名）かどうか。

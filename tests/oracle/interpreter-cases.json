@@ -390,5 +390,41 @@
   {
     "id": "loop-var-qualified-name-local",
     "source": "●Fとは\n　main__Iを1から3まで繰り返す\n　ここまで\nここまで\nF\nmain__Iを表示\n"
+  },
+  {
+    "id": "josi-eq-condition",
+    "source": "A=5\nもし、Aが5ならば\n「OK」と表示\nここまで\nもし、Aが3でなければ\n「NG」と表示\nここまで\n"
+  },
+  {
+    "id": "josi-eq-condition-negated",
+    "source": "A=5\nもし、Aが3でなければ\n「NG」と表示\nここまで\n"
+  },
+  {
+    "id": "josi-call-condition",
+    "source": "A=5\nもし、Aが5と等しいならば\n「eq」と表示\nここまで\nもし、Aが3以下ならば\n「le」と表示\nここまで\nもし、Aが5以上ならば\n「ge」と表示\nここまで\nもし、Aが9未満ならば\n「lt」と表示\nここまで\n"
+  },
+  {
+    "id": "josi-call-condition-grouped",
+    "source": "A=5\nもし、(Aが3以下)ならば\n「le」と表示\n違えば\n「gt」と表示\nここまで\n"
+  },
+  {
+    "id": "josi-call-condition-or",
+    "source": "A=15\nもし((A%3)が0と等しい)または((A%5)が0と等しい)ならば\n「fizzbuzz」と表示\nここまで\n"
+  },
+  {
+    "id": "josi-call-condition-dict",
+    "source": "D={\"a\":1}\nもし、Dに\"a\"が辞書キー存在するならば\n「ある」と表示\nここまで\nもし、Dに\"b\"が辞書キー存在しなければ\n「ない」と表示\nここまで\n"
+  },
+  {
+    "id": "josi-call-condition-implicit-if",
+    "source": "A=5\nAが5と等しいならば\n「OK」と表示\n違えば\n「NG」と表示\nここまで\n"
+  },
+  {
+    "id": "josi-call-while-condition",
+    "source": "C=1\nCが5以下の間\nC=C+1\nここまで\nCを表示\n"
+  },
+  {
+    "id": "josi-call-post-test-condition",
+    "source": "C=0\n後判定\nC=C+1\nCを表示\nここまで,(Cが3以下)の間\n"
   }
 ]
