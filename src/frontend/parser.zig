@@ -479,11 +479,15 @@ pub const Parser = struct {
         return result;
     }
 
-    /// 公式`yCall`相当の式解析。先頭の値`first`に続けて助詞付きの値と
-    /// 既知命令名を読み、助詞付きの値を引数として呼出し式を組み立てる
-    /// （`Aが3以下`＝`以下(A,3)`、`Dに"a"が辞書キー存在`＝`辞書キー存在(D,"a")`）。
-    /// 命令の助詞が無い、または連文助詞の場合はそこで呼出しが確定する。
-    pub fn parseJosiCallExpression(self: *Parser, first: *ast.Node) ParseFailure!*ast.Node {
+    /// 公式`yCall`相当の助詞シーケンス収集。先頭の値`first`に続けて助詞付きの
+    /// 値と既知命令名を読み、命令名の手前までに集まった値をその命令の引数として
+    /// 呼出し式を組み立てる（`Aが3以下`＝`以下(A,3)`、
+    /// `Dに"a"が辞書キー存在`＝`辞書キー存在(D,"a")`）。
+    /// 命令の助詞が無い、または連文助詞の場合はそこで呼出しが確定する
+    /// （公式`yCallFunc`の言い切り相当）。
+    /// カンマは公式`yValue`の読み飛ばしと同じく透過的に扱う。
+    /// 戻り値は解決後に残ったノード列で、`first`を先頭に含む。
+    pub fn collectJosiSequence(self: *Parser, first: *ast.Node) ParseFailure![]*ast.Node {
         var stack: std.ArrayList(*ast.Node) = .empty;
         try stack.append(self.allocator, first);
         while (true) {
@@ -493,13 +497,24 @@ pub const Parser = struct {
                 stack = .empty;
                 try stack.append(self.allocator, call);
                 // 言い切り・連文の助詞はそこで一度切る（公式`yCallFunc`）。
-                if (command.josi.len == 0 or isSequenceJosi(command.josi)) return call;
+                if (command.josi.len == 0 or isSequenceJosi(command.josi)) break;
+                continue;
+            }
+            if (self.at(.comma)) {
+                _ = self.advance();
                 continue;
             }
             if (!canStartExpression(self.peek().kind)) break;
             try stack.append(self.allocator, try expressions.parseExpression(self, 0));
         }
-        if (stack.items.len == 1) return stack.items[0];
+        return stack.toOwnedSlice(self.allocator);
+    }
+
+    /// 公式`yCall`相当の式解析。`collectJosiSequence`の収集結果が単一の値に
+    /// 解決されるときだけ受理し、残った値があれば文法エラーにする。
+    pub fn parseJosiCallExpression(self: *Parser, first: *ast.Node) ParseFailure!*ast.Node {
+        const stack = try self.collectJosiSequence(first);
+        if (stack.len == 1) return stack[0];
         return self.fail(.unexpected_token, "命令呼び出しを構成できません", self.peek());
     }
 
@@ -722,7 +737,10 @@ pub const Parser = struct {
                 defer self.delimited_expression_depth -= 1;
                 var indexes: std.ArrayList(*ast.Node) = .empty;
                 while (!self.at(.right_bracket) and !self.at(.eof)) {
-                    const index = try expressions.parseExpression(self, 0);
+                    const items = try expressions.parseDelimitedSequence(self);
+                    // 添字は単一の値に解決される必要がある（公式`yCalc`の結果相当）。
+                    if (items.len != 1) return self.fail(.unexpected_token, "命令呼び出しを構成できません", self.peek());
+                    const index = items[0];
                     // 読み出し側と同じく、公式はfunc tokenをカンマ直前では
                     // 値として受理しない（代入側のlet_arrayでも指定ミスになる）。
                     if (index.kind == .word and index.josi.len == 0 and !index.grouped and self.at(.comma)) index.bare_index_word = true;
