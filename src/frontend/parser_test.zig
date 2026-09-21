@@ -302,6 +302,39 @@ test "条件分岐の「違えば」節を同じ行で閉じる形を受理す�
     }
 }
 
+test "単文の「もし〜ならば」に次行の「違えば」を繋げる" {
+    // 公式`yIfThen`は真節のあとの改行を読み飛ばしてから『違えば』を調べる。
+    // ドキュメント自身が v3.2.27 以前の記法として注記する形だが公式は受理する。
+    const cases = [_]struct { source: []const u8, filename: []const u8 }{
+        .{ .source = "もし、A=1ならば、「OK」と表示。\n違えば、「NG」と表示。\n", .filename = "single-statement-else.nako3" },
+        .{ .source = "もし、A=1ならば、「OK」と表示。\n違えば\n「NG」と表示\n", .filename = "single-statement-else-multiline.nako3" },
+        .{ .source = "もし、A=1ならば、「OK」と表示。\n\n違えば、「NG」と表示。\n", .filename = "single-statement-else-blank.nako3" },
+    };
+    for (cases) |case| {
+        var result = try parse(std.testing.allocator, case.source, case.filename);
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+        const statement = result.root.?.children[0];
+        try std.testing.expectEqual(ast.Kind.if_statement, statement.kind);
+        try std.testing.expectEqual(@as(usize, 3), statement.children.len);
+    }
+}
+
+test "単文の「もし〜ならば」の「違えば」に続けて文を書ける" {
+    var result = try parse(std.testing.allocator, "もし、A=1ならば、「OK」と表示。\n違えば、「NG」と表示。\n「あと」と表示。\n", "single-statement-else-next.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    try std.testing.expectEqual(ast.Kind.if_statement, result.root.?.children[0].kind);
+}
+
+test "単文の「もし〜ならば」に終端の「ここまで」は不要" {
+    // 公式`yIfThen`は真節が単文のとき`ここまで`を要求しないため、
+    // 末尾に`ここまで`を書くと公式も『『ここまで』の使い方が間違っています』で拒否する。
+    var result = try parse(std.testing.allocator, "もし、A=1ならば、「OK」と表示。\n違えば、「NG」と表示。\nここまで\n", "single-statement-else-end.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+}
+
 test "範囲演算式を「もし」省略形の条件文へ昇格しない" {
     // 公式は範囲を`func`ノードにするが、`yCall`のスタックが残るため
     // `1…2ならば`は『不完全な文です』で拒否する。

@@ -497,5 +497,25 @@
   {
     "id": "define-to-particle-and-omitted-value",
     "source": "Cを1と定める\nCを表示\nDを定める\nDを表示\n"
+  },
+  {
+    "id": "single-statement-if-else",
+    "source": "A=1\nもし、A=1ならば、「OK」と表示。\n違えば、「NG」と表示。\n"
+  },
+  {
+    "id": "single-statement-if-else-false",
+    "source": "A=2\nもし、A=1ならば、「OK」と表示。\n違えば、「NG」と表示。\n"
+  },
+  {
+    "id": "single-statement-if-else-multiline",
+    "source": "A=2\nもし、A=1ならば、「OK」と表示。\n違えば\n「NG」と表示\n"
+  },
+  {
+    "id": "single-statement-if-else-next",
+    "source": "A=1\nもし、A=1ならば、「OK」と表示。\n違えば、「NG」と表示。\n「あと」と表示。\n"
+  },
+  {
+    "id": "single-statement-if-else-chain",
+    "source": "A=1\nもし、A=1ならば、「OK」と表示。\n違えば、もし、A=2ならば、「NG」と表示。\n違えば、「その他」と表示。\n"
   }
 ]
