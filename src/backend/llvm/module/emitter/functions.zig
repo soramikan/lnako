@@ -38,7 +38,10 @@ const declarations_mod = @import("declarations.zig");
 
 pub fn writeFunction(emitter: *Emitter, function: ir.Function) !void {
     const scope = 4 + function.id;
-    try emitter.output.writer.print("define internal %lnako.Value @lnako.fn.{d}(ptr %context", .{function.id});
+    // %call.args/%call.argc は呼出し時の実引数列そのもの。関数内の`引数`
+    // 束縛（arguments_array命令）が参照し、仮引数個数への正規化や
+    // コンテキストのパディングはここでは行わない。
+    try emitter.output.writer.print("define internal %lnako.Value @lnako.fn.{d}(ptr %context, ptr %call.args, i64 %call.argc", .{function.id});
     for (function.parameters, 0..) |_, index| {
         try emitter.output.writer.print(", %lnako.Value %arg.{d}", .{index});
     }
@@ -379,13 +382,16 @@ fn booleanPredicate(operator: []const u8) ?[]const u8 {
     return null;
 }
 
+/// %arguments は仮引数個数分へ不足分をパディング済みのバッファ（余剰分は
+/// 末尾に残る）で、%argument.count はパディング前の実引数個数。本体へは
+/// 実引数列をそのまま転送し、`引数`束縛が余剰実引数を保持できるようにする。
 pub fn writeFunctionWrapper(emitter: *Emitter, function: ir.Function) !void {
     try emitter.output.writer.print("define internal void @lnako.wrapper.{d}(ptr %result.out, ptr %context, ptr %arguments, i64 %argument.count) {{\nentry:\n", .{function.id});
     for (function.parameters, 0..) |_, index| {
         try emitter.output.writer.print("  %wrapper.argument.pointer.{d} = getelementptr %lnako.Value, ptr %arguments, i64 {d}\n", .{ index, index });
         try emitter.output.writer.print("  %wrapper.argument.{d} = load %lnako.Value, ptr %wrapper.argument.pointer.{d}\n", .{ index, index });
     }
-    try emitter.output.writer.print("  %wrapper.result = call %lnako.Value @lnako.fn.{d}(ptr %context", .{function.id});
+    try emitter.output.writer.print("  %wrapper.result = call %lnako.Value @lnako.fn.{d}(ptr %context, ptr %arguments, i64 %argument.count", .{function.id});
     for (function.parameters, 0..) |_, index| {
         try emitter.output.writer.print(", %lnako.Value %wrapper.argument.{d}", .{index});
     }
@@ -453,7 +459,7 @@ pub fn writeMain(emitter: *Emitter) !void {
         try emitter.output.writer.print(", i64 {d})\n", .{emitter.source_path.len});
     }
     for (emitter.program.functions) |function| if (emitter.globalIndex(function.name)) |global_index| {
-        try emitter.output.writer.print("  call void @lnako_aot_function_new_named(ptr @lnako.global.{d}, ptr @lnako.wrapper.{d}, i64 {d}, ptr @lnako.function.name.{d}, i64 {d}, ptr null, i64 0)\n", .{ global_index, function.id, function.parameters.len, function.id, function.name.len });
+        try emitter.output.writer.print("  call void @lnako_aot_function_new_generated(ptr @lnako.global.{d}, ptr @lnako.wrapper.{d}, i64 {d}, ptr @lnako.function.name.{d}, i64 {d}, ptr null, i64 0)\n", .{ global_index, function.id, function.parameters.len, function.id, function.name.len });
     };
     if (emitter.program.http_server_plugin_imported) {
         try emitter.output.writer.writeAll("  call void @lnako_aot_http_server_init(ptr ");
@@ -469,7 +475,7 @@ pub fn writeMain(emitter: *Emitter) !void {
     // 取り込み先のトップレベルは取り込み文位置での呼び出しとして各関数へ
     // 埋め込まれているため、起動時に実行するのはルートのエントリのみ。
     if (emitter.program.module_entries.len > 0) {
-        try emitter.output.writer.print("  %entry.result = call %lnako.Value @lnako.fn.{d}(ptr null)", .{emitter.program.module_entries[0]});
+        try emitter.output.writer.print("  %entry.result = call %lnako.Value @lnako.fn.{d}(ptr null, ptr null, i64 0)", .{emitter.program.module_entries[0]});
         try emitter.debugSuffix(ast.emptySpan(), scope);
         try emitter.output.writer.writeAll("  %entry.exception.pending = call i32 @lnako_aot_exception_pending()\n");
         try emitter.output.writer.writeAll("  %entry.exception.is-pending = icmp ne i32 %entry.exception.pending, 0\n");

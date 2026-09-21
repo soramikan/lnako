@@ -811,8 +811,9 @@ test "非捕捉無名関数を統一ABIの関数値へ変換する" {
     defer module.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_function_new") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_function_new_named") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_function_new_generated") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.function.name.0") != null);
-    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_function_new_named") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_function_new_generated") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_function_call") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.wrapper.0") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "define internal void @lnako.wrapper.0(ptr %result.out") != null);

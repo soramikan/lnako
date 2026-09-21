@@ -1016,6 +1016,10 @@ pub const Interpreter = struct {
         return execute.makeArray(self, frame, instruction);
     }
 
+    pub fn makeCallArguments(self: *Interpreter, frame: *Frame) !Value {
+        return execute.makeCallArguments(self, frame);
+    }
+
     pub fn makeDictionary(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
         return execute.makeDictionary(self, frame, instruction);
     }

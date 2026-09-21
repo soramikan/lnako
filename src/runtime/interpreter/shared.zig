@@ -466,6 +466,10 @@ pub const Frame = struct {
     local_values_initialized_storage: [8]bool = [_]bool{false} ** 8,
     local_values_buffer: ?[]Value = null,
     local_values_initialized_buffer: ?[]bool = null,
+    /// この呼出しに渡された実引数列。関数内の`引数`束縛（arguments_array
+    /// 命令）が参照する。仮引数個数への正規化はせず、呼出し側の並びを
+    /// そのまま保持する（公式の`arguments`相当・末尾の__self相当は除く）。
+    call_arguments: []const Value = &.{},
     locals: std.StringHashMapUnmanaged(*value_mod.BindingCell) = .empty,
     owned_names: std.ArrayList([]u8) = .empty,
     iterators: std.AutoHashMapUnmanaged(ir.ValueId, IteratorState) = .empty,

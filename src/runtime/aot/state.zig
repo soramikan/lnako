@@ -777,5 +777,6 @@ pub const lnako_aot_dynamic_call = functions_module.lnako_aot_dynamic_call;
 pub const lnako_aot_native_plugin_call = functions_module.lnako_aot_native_plugin_call;
 pub const lnako_aot_function_new = functions_module.lnako_aot_function_new;
 pub const lnako_aot_function_new_named = functions_module.lnako_aot_function_new_named;
+pub const lnako_aot_function_new_generated = functions_module.lnako_aot_function_new_generated;
 pub const lnako_aot_function_capture = functions_module.lnako_aot_function_capture;
 pub const lnako_aot_function_call = functions_module.lnako_aot_function_call;

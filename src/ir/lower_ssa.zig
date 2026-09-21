@@ -20,6 +20,11 @@ pub fn lower(backing_allocator: std.mem.Allocator, hir_program: hir.Program) !ir
             .name = try allocator.dupe(u8, parameter.name),
             .value = @intCast(index),
         });
+        // 公式は関数内の`引数`を実引数の配列へ束縛する（nako_genのyCallFunc相当）。
+        // 関数値呼び出しでは仮引数より多い実引数が届きうるため、配列は
+        // 仮引数の並びではなく実行時の実引数列から作る専用命令をemitする。
+        // InterpreterとAOTが同じIRを受け取るようここで作る。
+        if (findArgumentsReference(hir_program, function.body)) |reference| try builder.lowerArgumentsBinding(reference);
         _ = try builder.lowerNode(function.body);
         if (!builder.isTerminated()) builder.terminate(.{ .return_value = builder.implicitResult() });
         var lowered = try builder.finish();
@@ -107,6 +112,20 @@ fn isStaticLiteralInstruction(instruction: *const ir.Instruction) bool {
         std.mem.eql(u8, instruction.text, "オン") or
         std.mem.eql(u8, instruction.text, "オフ") or
         std.mem.eql(u8, instruction.text, "NULL");
+}
+
+/// 関数本体が`引数`を参照しているかを調べ、最初の参照ノードを返す。
+/// 解析器は`引数`を関数スコープのローカルとして宣言するため、参照は
+/// `load_local`/`store_local`として現れる（トップレベルは対象外）。
+/// ノード種別ではなく意味解析の束縛（`uses_implicit_arguments`）で判定する。
+fn findArgumentsReference(program: hir.Program, node_id: hir.NodeId) ?hir.Node {
+    const node = program.node(node_id);
+    if (node.uses_implicit_arguments) return node;
+    // `.nop`/`.closure`は入れ子の関数定義をloweringした痕跡で、子には本体が
+    // 残る。入れ子関数はそれぞれ独自の`引数`束縛を持つため走査しない。
+    if (node.kind == .nop or node.kind == .closure) return null;
+    for (node.children) |child| if (findArgumentsReference(program, child)) |found| return found;
+    return null;
 }
 
 const BlockBuilder = struct {
@@ -207,6 +226,16 @@ const FunctionBuilder = struct {
             last = try self.lowerNode(child);
         }
         return last;
+    }
+
+    /// 関数先頭で`引数 = 実引数配列`を実行する。公式はJSの`arguments`を
+    /// 束縛するため、関数値呼び出しで仮引数より多く渡された実引数も
+    /// 要素に含まれる（末尾の`__self`相当だけはJS実装詳細のため含めない）。
+    /// 参照ノードを渡すのは、生成する命令へ`引数`という名前とspanを
+    /// 引き継ぐため。
+    fn lowerArgumentsBinding(self: *FunctionBuilder, reference: hir.Node) !void {
+        const array = try self.emitValue(.arguments_array, .array, &.{}, reference);
+        try self.emitVoid(.store_local, &.{array}, reference);
     }
 
     fn lowerStore(self: *FunctionBuilder, opcode: ir.Opcode, node: hir.Node) !?ir.ValueId {

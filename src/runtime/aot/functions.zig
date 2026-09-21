@@ -161,6 +161,27 @@ pub export fn lnako_aot_function_new_named(
     out.* = runtime.createNamedFunction(callback, arity, function_name, source) catch |failure| state.runtimeFailure(failure);
 }
 
+/// LLVM生成wrapper専用の登録。呼出し時の実引数列を(ポインタ,実個数)で
+/// 受け取る規約を持ち、『引数』束縛が余剰実引数を保持できる。
+/// lnako_aot_function_new/new_namedは埋め込み向けの従来契約（実引数不足時に
+/// 仮引数個数までパディングした個数を渡す）のままとする。
+pub export fn lnako_aot_function_new_generated(
+    out: *state.Value,
+    callback: state.FunctionCallback,
+    arity: usize,
+    name: ?[*]const u8,
+    name_len: usize,
+    captures: ?[*]const state.Value,
+    capture_count: usize,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (state.active_runtime) |*value| value else return;
+    const function_name = if (name) |pointer| pointer[0..name_len] else if (name_len == 0) &.{} else state.runtimeFailure(error.InvalidFunctionName);
+    const source = if (captures) |pointer| pointer[0..capture_count] else if (capture_count == 0) &.{} else state.runtimeFailure(error.InvalidCaptures);
+    for (source) |capture| if (capture.tag != @intFromEnum(shared.Tag.binding_cell)) state.runtimeFailure(error.InvalidBindingCell);
+    out.* = runtime.createGeneratedFunction(callback, arity, function_name, source) catch |failure| state.runtimeFailure(failure);
+}
+
 pub export fn lnako_aot_function_capture(out: *state.Value, context: *anyopaque, index: usize) callconv(.c) void {
     const object: *state.Object = @ptrCast(@alignCast(context));
     if (object.payload != .function or index >= object.payload.function.captures.len) state.runtimeFailure(error.InvalidClosureCapture);
@@ -201,6 +222,12 @@ pub export fn lnako_aot_function_call(out: *state.Value, callable: *const state.
             return;
         },
     }
+    // 不足時は仮引数個数分のバッファへ実引数＋実行コンテキスト＋undefinedで
+    // パディングする。生成wrapperは仮引数をバッファ先頭から読み、実引数列は
+    // (ポインタ, 実個数) で本体へ転送するため、`引数`束縛が余剰実引数を
+    // 保持できる（公式のarguments相当・__self相当は含めない）。それ以外の
+    // callback（埋め込み・ランタイム内）は従来契約どおり、不足・超過に
+    // 関わらず仮引数個数を個数として渡す。
     var padded: ?[]state.Value = null;
     defer if (padded) |values| runtime.allocator.free(values);
     var call_arguments = arguments;
@@ -218,5 +245,6 @@ pub export fn lnako_aot_function_call(out: *state.Value, callable: *const state.
         @memset(values[len + 1 ..], .{});
         call_arguments = values.ptr;
     }
-    function.callback(out, @ptrCast(object), call_arguments, function.arity);
+    const callback_len = if (function.generated_wrapper) len else function.arity;
+    function.callback(out, @ptrCast(object), call_arguments, callback_len);
 }
