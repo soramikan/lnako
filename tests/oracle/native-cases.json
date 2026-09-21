@@ -2986,6 +2986,14 @@
     "source": "変数 A\nA=A+1\nAを表示\nBとは変数\nBを表示\nCとは定数\nCを表示\nDとは定数=50\nDを表示\n変数 E{非公開}=1\nEを表示\n定数 F{公開}=2\nFを表示\nGとは変数{非公開}=3\nGを表示\n"
   },
   {
+    "id": "native-func-ref-prefix-user",
+    "source": "●AAAとは\n30を戻す\nここまで\n{関数}AAAを実行して表示\nF={関数}AAA\nF()を表示\n"
+  },
+  {
+    "id": "native-func-ref-prefix-builtin",
+    "source": "F={関数}足\nF(3,4)を表示\nG={関数}実行\n●AAAとは\n99を戻す\nここまで\nG({関数}AAA)を表示\n"
+  },
+  {
     "id": "native-arguments-array-in-function",
     "sourceFileName": "natargs.nako3",
     "source": "●(AとBの)加算処理とは\nそれ＝引数[0] + 引数[1]\nここまで\n3と5の加算処理して表示。\n"
@@ -3038,5 +3046,10 @@
   {
     "id": "native-strict-check-undefined-variable",
     "source": "!厳しくチェック\n「{X}」を表示。\nXを表示\n"
+  },
+  {
+    "id": "native-func-ref-prefix-variable-arity",
+    "source": "F={関数}MAX\nF(3,5,2)を表示\nG={関数}連結\nG(\"a\",\"b\",\"c\")を表示\n"
   }
 ]
+

@@ -863,6 +863,13 @@ pub fn callFunctionValue(self: *Interpreter, function: *value_mod.Function, argu
     if (self.promise_all_handlers.get(function)) |handler| return self.handlePromiseAll(function, handler, arguments);
     return switch (function.kind) {
         .native, .external => self.runtime.call(.{ .function = function }, arguments),
+        // `{関数}名`で組み込み命令を参照した関数値。命令名で通常の
+        // 組み込みディスパッチへ流す（公式はプラグインのJS関数を呼ぶ）。
+        .builtin => blk: {
+            const name = try function.name.toUtf8Lossy(self.allocator);
+            defer self.allocator.free(name);
+            break :blk try self.callBuiltin(name, arguments, null);
+        },
         .ir => |function_id| self.callIrFunctionValue(function_id, function, arguments),
     };
 }
@@ -1259,7 +1266,16 @@ fn makeClosureResolved(self: *Interpreter, frame: *Frame, instruction: ir.Instru
     const function = if (prepared_target) |target| blk: {
         if (target >= frame.owner_program.functions.len) return error.UnknownFunction;
         break :blk &frame.owner_program.functions[target];
-    } else self.findFunction(frame.owner_program, instruction.name) orelse return error.UnknownFunction;
+    } else self.findFunction(frame.owner_program, instruction.name) orelse {
+        // `{関数}名`で組み込み命令を参照した場合は命令名ディスパッチの
+        // 関数値を作る（公式はプラグイン関数のJS参照を返す）。ネイティブ
+        // プラグイン取り込み済みプログラムの動的命令名もcallBuiltin経由の
+        // プラグインディスパッチで呼べる関数値にする。
+        if (isBuiltinReferenceName(instruction.name) or
+            frame.owner_program.native_plugin_paths.len > 0)
+            return makeBuiltinFunctionValue(self, instruction.name);
+        return error.UnknownFunction;
+    };
     const name = try self.runtime.stringUtf8(instruction.name);
     var name_root = name;
     var root = self.runtime.rootFrame();
@@ -1279,6 +1295,25 @@ fn makeClosureResolved(self: *Interpreter, frame: *Frame, instruction: ir.Instru
     const result = try self.runtime.createIrFunction(name.string, function.parameters.len, function.id, captures);
     result.function.ir_program = @ptrCast(self.currentProgramOwner());
     return result;
+}
+
+/// `{関数}名`で参照できる組み込み命令名かどうか。公式のfunclistに相当する
+/// ため、連鎖呼出し解決が除外する`デスクトップ`等のグローバル兼用名も含む
+/// （`assign_to_function_names`はカタログ種別「関数」の全名称）。
+fn isBuiltinReferenceName(name: []const u8) bool {
+    for (builtin_catalog.assign_to_function_names) |candidate| {
+        if (std.mem.eql(u8, candidate, name)) return true;
+    }
+    return false;
+}
+
+fn makeBuiltinFunctionValue(self: *Interpreter, name: []const u8) !Value {
+    var name_value = try self.runtime.stringUtf8(name);
+    var root = self.runtime.rootFrame();
+    defer root.deinit();
+    try root.protect(&name_value);
+    const arity = if (builtin_catalog.findArity(name)) |spec| spec.count else 0;
+    return self.runtime.createBuiltinFunction(name_value.string, arity);
 }
 
 pub fn iteratorBegin(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {

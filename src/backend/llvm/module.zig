@@ -194,6 +194,114 @@ test "ネイティブプラグイン命令をAOT ABIへ出力する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_native_plugin_call(ptr %root.slot.") != null);
 }
 
+test "『{関数}名』のネイティブプラグイン命令を関数値としてemitする" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "F={関数}外部追加\nF(1)を表示\n", "native-plugin.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyzeModules(std.testing.allocator, &.{.{
+        .name = "native-plugin",
+        .path = "native-plugin.nako3",
+        .root = parsed.root.?,
+        .allows_dynamic_commands = true,
+    }});
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lower(std.testing.allocator, &.{parsed.root.?}, &.{"native-plugin"}, &.{"native-plugin.nako3"}, &.{&.{}}, analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    const path_allocator = program.arena.allocator();
+    const paths = try path_allocator.alloc([]const u8, 1);
+    paths[0] = try path_allocator.dupe(u8, "/tmp/liblnako_test_plugin.dylib");
+    program.native_plugin_paths = paths;
+
+    try std.testing.expect(findUnsupported(program) == null);
+
+    var module = try generate(std.testing.allocator, program, "native-plugin.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    // プラグイン命令の関数値は実引数列をそのままplugin ABIへ転送する
+    // generated wrapper経由で作り、callbackは名前解決してplugin ABIへ委譲する。
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_plugin_function_call") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_function_new_generated(ptr %root.slot.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.builtin.name.0") != null);
+}
+
+test "『{関数}名』の可変長組み込み命令はgenerated ABIでemitする" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "F={関数}MAX\nF(1,2,3)を表示\n", "func-ref-var.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "func-ref-var.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "func-ref-var.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    try std.testing.expect(findUnsupported(program) == null);
+    var module = try generate(std.testing.allocator, program, "func-ref-var.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    // 可変長命令は実引数列をそのままcallbackへ渡すgenerated ABIを使う。
+    // 固定契約のnew_namedでarity個数へ切り詰めると呼出しが壊れる。
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_function_new_generated(ptr %root.slot.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_builtin_function_call") != null);
+}
+
+test "『{関数}名』の専用ABI組み込み命令はAOT未対応として拒否する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    // 正規表現マッチは汎用builtin call siteがUnknownCommandを返す専用ABI命令。
+    // 関数値化もそのままでは呼べないためコンパイル時に拒否する。
+    var parsed = try parser.parse(std.testing.allocator, "F={関数}正規表現マッチ\n", "func-ref-regexp.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "func-ref-regexp.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "func-ref-regexp.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    const unsupported = findUnsupported(program) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("make_closure", unsupported.opcode);
+    try std.testing.expectEqualStrings("正規表現マッチ", unsupported.detail);
+    // プラグイン取り込み済みプログラムでもカタログ内の組み込み名は
+    // プラグイン命令へ誤分類せず、同じくコンパイル時に拒否する。
+    const path_allocator = program.arena.allocator();
+    const paths = try path_allocator.alloc([]const u8, 1);
+    paths[0] = try path_allocator.dupe(u8, "/tmp/liblnako_test_plugin.dylib");
+    program.native_plugin_paths = paths;
+    const unsupported_with_plugin = findUnsupported(program) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("make_closure", unsupported_with_plugin.opcode);
+    try std.testing.expectEqualStrings("正規表現マッチ", unsupported_with_plugin.detail);
+}
+
+test "『{関数}名』で参照した非同期組み込み命令も完全event drainを生成する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    // 関数値経由の秒後は直接callに現れないが、callbackからタイマーを登録
+    // し得るため軽量drainでは終了時に破棄される。
+    var parsed = try parser.parse(std.testing.allocator, "F={関数}秒後\nF({関数}通知関数,0.01)\n●通知関数とは\n「ok」を表示\nここまで\n", "func-ref-async.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "func-ref-async.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "func-ref-async.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    var module = try generate(std.testing.allocator, program, "func-ref-async.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_runtime_drain_events()\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_runtime_drain_events_light()\n") == null);
+}
+
 test "未実装の低レイヤー命令はbuiltin call siteとしてopcode付きでemitする" {
     const parser = @import("../../frontend/parser.zig");
     const semantic = @import("../../semantic/analyzer.zig");

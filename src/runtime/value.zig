@@ -343,7 +343,8 @@ pub const ExternalFunction = struct {
     binding: ExternalHandle,
     callFn: *const fn (context: *anyopaque, handle: *anyopaque, runtime: *Runtime, arguments: []const Value) anyerror!Value,
 };
-pub const FunctionKind = union(enum) { ir: u32, native: NativeCallback, external: ExternalFunction };
+// `builtin`は`{関数}名`で参照した組み込み命令の関数値。呼出しはInterpreter.callFunctionValueが仲介する。
+pub const FunctionKind = union(enum) { ir: u32, native: NativeCallback, external: ExternalFunction, builtin: void };
 
 pub const Function = struct {
     gc_marked: bool = false,
@@ -1155,6 +1156,11 @@ pub const Runtime = struct {
         return self.createFunction(name, arity, .{ .external = external }, &.{});
     }
 
+    // `{関数}組み込み命令`の関数値。nameの命令名がディスパッチへ渡される。
+    pub fn createBuiltinFunction(self: *Runtime, name: *String, arity: usize) !Value {
+        return self.createFunction(name, arity, .builtin, &.{});
+    }
+
     fn createFunction(self: *Runtime, name: *String, arity: usize, kind: FunctionKind, captures: []const Capture) !Value {
         if (self.stress_collection or self.objects.items.len >= self.next_collection) {
             errdefer self.clearAllMarks();
@@ -1195,6 +1201,7 @@ pub const Runtime = struct {
             .native => |callback| callback(self, arguments),
             .external => |external| external.callFn(external.binding.context, external.binding.handle, self, arguments),
             .ir => error.IrFunctionNotExecutable,
+            .builtin => error.BuiltinFunctionNeedsInterpreter,
         };
     }
 

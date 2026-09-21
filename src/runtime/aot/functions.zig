@@ -182,6 +182,35 @@ pub export fn lnako_aot_function_new_generated(
     out.* = runtime.createGeneratedFunction(callback, arity, function_name, source) catch |failure| state.runtimeFailure(failure);
 }
 
+/// `{関数}名`で関数値化されたネイティブプラグイン命令のコールバック。
+/// 関数オブジェクトが保持する命令名を`lnako_aot_native_plugin_call`と
+/// 同じ`lnako_plugin_v1` ABIへ委譲する。実引数列はそのまま転送するため
+/// generated wrapper規約で作ること。
+pub export fn lnako_aot_plugin_function_call(out: *state.Value, context: *anyopaque, arguments: ?[*]const state.Value, len: usize) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (state.active_runtime) |*active| active else return;
+    const object: *state.Object = @ptrCast(@alignCast(context));
+    if (object.payload != .function) {
+        runtime.setFailure(error.NotCallable);
+        return;
+    }
+    const command_name = object.payload.function.name;
+    const call_id = runtime.dispatch_trace.begin(command_name, 0, "native-plugin", 0);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, 0, "native-plugin", 0, success);
+    if (arguments == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+    out.* = state.nativePluginBuiltin(runtime, command_name, actual) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    success = runtime.failure_epoch == start_epoch;
+}
+
 pub export fn lnako_aot_function_capture(out: *state.Value, context: *anyopaque, index: usize) callconv(.c) void {
     const object: *state.Object = @ptrCast(@alignCast(context));
     if (object.payload != .function or index >= object.payload.function.captures.len) state.runtimeFailure(error.InvalidClosureCapture);

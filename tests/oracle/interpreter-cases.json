@@ -582,12 +582,24 @@
     "source": "●(AとBを)Fとは\n「ok」と表示\nここまで\nF(1 関数() 2で戻る ここまで)\nF(関数() 2で戻る ここまで 1)\n●(Aを)Gとは\nそれは関数(Bを) B*2で戻る ここまで\nここまで\nH=G(1)\nH(2 関数(Cを) C+1で戻る ここまで)を表示\n"
   },
   {
+    "id": "func-ref-prefix-user",
+    "source": "●AAAとは\n30を戻す\nここまで\n{関数}AAAを実行して表示\nF={関数}AAA\nF()を表示\n"
+  },
+  {
+    "id": "func-ref-prefix-builtin",
+    "source": "F={関数}足\nF(3,4)を表示\nG={関数}実行\n●AAAとは\n99を戻す\nここまで\nG({関数}AAA)を表示\n"
+  },
+  {
     "id": "strict-check-undefined-variable",
     "source": "!厳しくチェック\n「{X}」を表示。\nXを表示\n"
   },
   {
     "id": "strict-check-alias-and-continues",
     "source": "!厳チェック\nXを表示\nX=1\nXを表示\n"
+  },
+  {
+    "id": "func-ref-prefix-variable-arity",
+    "source": "F={関数}MAX\nF(3,5,2)を表示\nG={関数}連結\nG(\"a\",\"b\",\"c\")を表示\n"
   }
 ]
 

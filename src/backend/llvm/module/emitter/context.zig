@@ -33,6 +33,9 @@ pub const Emitter = struct {
     system_dictionaries: std.ArrayList(usize) = .empty,
     system_era_data: std.ArrayList(usize) = .empty,
     bigints: std.ArrayList(BigIntConstant) = .empty,
+    /// `{関数}名`で関数値化された組み込み命令名（重複なし、収集順）。
+    /// `@lnako.builtin.name.{index}` 定数の索引として使う。
+    builtin_closure_names: std.ArrayList([]const u8) = .empty,
     locations: std.ArrayList(DebugLocation) = .empty,
     next_metadata: usize = 4,
     // 名前解決の線形再探索を避ける索引。aot_builtin.lookupは全コマンド名への
@@ -58,6 +61,7 @@ pub const Emitter = struct {
         self.system_dictionaries.deinit(self.allocator);
         self.system_era_data.deinit(self.allocator);
         self.bigints.deinit(self.allocator);
+        self.builtin_closure_names.deinit(self.allocator);
         self.locations.deinit(self.allocator);
         self.builtin_command_cache.deinit(self.allocator);
         if (self.function_index) |*index| index.deinit(self.allocator);
@@ -127,6 +131,12 @@ pub const Emitter = struct {
         if (self.used_commands) |commands| return commands;
         var commands: std.EnumSet(aot_builtin.Command) = .initEmpty();
         for (self.program.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
+            // `{関数}名`で関数値化された組み込み命令も使用コマンドとして数える。
+            // callback経由で非同期命令を呼び得るためusesAsyncEvents判定に必須。
+            if (instruction.opcode == .make_closure) {
+                if (shared.builtinClosureCommand(instruction.name)) |closure| commands.insert(closure.command);
+                continue;
+            }
             if (instruction.opcode != .call or instruction.direct_callee != null or !instruction.is_builtin_call) continue;
             if (try self.builtinCommand(instruction.name)) |command| commands.insert(command);
         };
@@ -158,6 +168,8 @@ pub const Emitter = struct {
         if (self.program.native_plugin_paths.len > 0) {
             for (self.program.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
                 if (isNativePluginCall(self.program, function, instruction)) return true;
+                // 関数値化されたプラグイン命令も実行時に非同期タスクを登録し得る
+                if (instruction.opcode == .make_closure and shared.nativePluginClosure(self.program, instruction.name)) return true;
             };
         }
         return false;
@@ -187,6 +199,11 @@ pub const Emitter = struct {
 
     pub fn debugPathIndex(self: Emitter, path: []const u8) ?usize {
         for (self.debug_paths.items, 0..) |constant, index| if (std.mem.eql(u8, constant.path, path)) return index;
+        return null;
+    }
+
+    pub fn builtinClosureNameIndex(self: Emitter, name: []const u8) ?usize {
+        for (self.builtin_closure_names.items, 0..) |entry, index| if (std.mem.eql(u8, entry, name)) return index;
         return null;
     }
 

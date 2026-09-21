@@ -726,6 +726,18 @@ pub fn dispatchRoute(command: Command) []const u8 {
     return dispatchRouteFor(command, datetimePluginRouteEnabled());
 }
 
+/// 汎用の`lnako_aot_builtin_call_site`が処理できる命令か。専用ABIを持つ
+/// 命令（正規表現・アーカイブ・Node HTTP・標準入力callback等）は直接
+/// 呼出しの生成経路が担うため、汎用dispatchへ送ると`UnknownCommand`になる。
+/// `{関数}名`の関数値callbackはこの集合だけを受理する。builtins.zig側の
+/// UnknownCommandアームと同じ集合を維持すること。
+pub fn hasGenericCallSiteDispatch(command: Command) bool {
+    return switch (command) {
+        .regexp_match, .regexp_extract, .regexp_replace, .regexp_split, .system_hatena_execute, .node_archive_tool_path_set, .node_ajax_options_set, .node_ajax_onerror_set, .node_ajax_send_callback, .node_ajax_receive_callback, .node_get_send_callback, .node_post_send_callback, .node_post_form_send_callback, .node_ajax_response_promise, .node_http_response_promise, .node_get_response_promise, .node_post_response_promise, .node_post_form_response_promise, .node_ajax_content_get, .node_ajax_receive, .node_post_send, .node_post_form_send, .node_ajax_text_get, .node_ajax_json_get, .node_ajax_binary_get, .node_discord_send, .node_discord_file_send, .node_archive_extract, .node_archive_extract_callback, .node_archive_create, .node_archive_create_callback, .node_stdin_callback => false,
+        else => true,
+    };
+}
+
 pub fn lookup(name: []const u8) ?Command {
     if (routeSpecificCommand(name, systemRouteEnabled())) |command| return command;
     if (std.mem.eql(u8, name, "文字列変換") or std.mem.eql(u8, name, "TOSTR")) return .to_string;
