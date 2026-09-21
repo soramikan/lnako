@@ -615,9 +615,10 @@ test "AOT関数呼出しの個数契約は埋め込みcallbackと生成wrapper�
     // 生成wrapperは実引数個数のまま受け取る（『引数』が余剰・不足を区別するため）。
     lnako_aot_function_call(&roots[2], &roots[1], @ptrCast(&args), 1);
     try std.testing.expectEqual(@as(usize, 1), captured_arguments_len);
-    // 余剰実引数はどちらの契約でも実個数のまま届く。
+    // 余剰実引数でも埋め込みcallbackは従来契約どおり仮引数個数を受け取る。
     lnako_aot_function_call(&roots[2], &roots[0], @ptrCast(&args), 3);
-    try std.testing.expectEqual(@as(usize, 3), captured_arguments_len);
+    try std.testing.expectEqual(@as(usize, 2), captured_arguments_len);
+    // 生成wrapperは実引数個数のまま受け取る。
     lnako_aot_function_call(&roots[2], &roots[1], @ptrCast(&args), 3);
     try std.testing.expectEqual(@as(usize, 3), captured_arguments_len);
 }
