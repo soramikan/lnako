@@ -233,6 +233,63 @@ test "変数と定数の角括弧分割宣言を構文解析する" {
     try std.testing.expect(constant_declaration.is_const);
 }
 
+test "初期値省略と公開属性の宣言を公式同様に構文解析する" {
+    // 公式は`変数 A`・`Aとは変数`・`Aとは定数`の初期値を省略でき、その値を0に
+    // する。属性は`変数 A{公開}=1`と`Aとは変数{非公開}=3`の両形で受理する。
+    const source = "変数 A\nBとは変数\nCとは定数\nDとは定数=50\n" ++
+        "変数 E{非公開}=1\n定数 F{公開}=2\nGとは変数{非公開}=3\n";
+    var result = try parse(std.testing.allocator, source, "宣言.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const expected = [_]struct { name: []const u8, is_const: bool, is_export: bool, number: ?f64 }{
+        .{ .name = "A", .is_const = false, .is_export = true, .number = null },
+        .{ .name = "B", .is_const = false, .is_export = true, .number = null },
+        .{ .name = "C", .is_const = true, .is_export = true, .number = null },
+        .{ .name = "D", .is_const = true, .is_export = true, .number = 50 },
+        .{ .name = "E", .is_const = false, .is_export = false, .number = 1 },
+        .{ .name = "F", .is_const = true, .is_export = true, .number = 2 },
+        .{ .name = "G", .is_const = false, .is_export = false, .number = 3 },
+    };
+    for (expected, 0..) |declaration, index| {
+        const node = result.root.?.children[index * 2];
+        try std.testing.expectEqual(ast.Kind.variable_definition, node.kind);
+        try std.testing.expectEqualStrings(declaration.name, node.name);
+        try std.testing.expectEqual(declaration.is_const, node.is_const);
+        try std.testing.expectEqual(declaration.is_export, node.is_export);
+        const value = node.children[0];
+        if (declaration.number) |number| {
+            try std.testing.expectEqual(ast.Kind.number, value.kind);
+            try std.testing.expectEqual(number, value.number_value.?);
+        } else {
+            // 公式は初期値省略をnopブロックにし、コード生成で0にする。
+            try std.testing.expectEqual(ast.Kind.nop, value.kind);
+        }
+    }
+}
+
+test "日本語命令形式の宣言もモジュール変数として既定公開する" {
+    // `Aを1に定める`は公式でもモジュール変数を定義する。ASTのis_exportは
+    // 既定falseなので、意味解析が非公開と解釈しないよう宣言時に明示する。
+    var result = try parse(std.testing.allocator, "Aを1に定める\n", "宣言.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const node = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.variable_definition, node.kind);
+    try std.testing.expectEqualStrings("A", node.name);
+    try std.testing.expect(node.is_export);
+}
+
+test "属性付きの変数宣言と初期値なしの定数宣言を公式同様に拒否する" {
+    const cases = [_][]const u8{ "変数 A{非公開}\n", "定数 C\n" };
+    for (cases) |source| {
+        var result = try parse(std.testing.allocator, source, "宣言.nako3");
+        defer result.deinit();
+        try std.testing.expect(!result.succeeded());
+        try std.testing.expectEqual(diagnostic.Code.expected_token, result.diagnostics[0].code);
+        try std.testing.expectEqualStrings("変数宣言に『=』が必要です", result.diagnostics[0].message);
+    }
+}
+
 test "公式同様に宣言なしの角括弧分割代入を拒否する" {
     var result = try parse(std.testing.allocator, "[A,B]=[1,2]\n", "分割.nako3");
     defer result.deinit();
@@ -643,65 +700,6 @@ test "深い単項演算子の入れ子が上限を超えたら位置付き診�
     try std.testing.expectEqual(diagnostic.Code.nesting_too_deep, result.diagnostics[0].code);
 }
 
-test "初期値を省略した変数・定数宣言を0で初期化する" {
-    // 公式yLetの「変数 名」は初期値を省略でき、convDefLocalVarがnopを0にする。
-    var result = try parse(std.testing.allocator, "変数 A\nAを表示\n", "変数.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const declaration = result.root.?.children[0];
-    try std.testing.expectEqual(ast.Kind.variable_definition, declaration.kind);
-    try std.testing.expectEqualStrings("A", declaration.name);
-    try std.testing.expect(!declaration.is_const);
-    try std.testing.expect(declaration.is_export);
-    try std.testing.expectEqual(@as(usize, 1), declaration.children.len);
-    try std.testing.expectEqual(ast.Kind.number, declaration.children[0].kind);
-    try std.testing.expectEqual(@as(f64, 0), declaration.children[0].number_value.?);
-}
-
-test "『〜とは変数』『〜とは定数』の初期値なし宣言を受理する" {
-    var result = try parse(std.testing.allocator, "Aとは変数\nBとは定数\n", "とは宣言.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const variable = result.root.?.children[0];
-    try std.testing.expectEqual(ast.Kind.variable_definition, variable.kind);
-    try std.testing.expectEqualStrings("A", variable.name);
-    try std.testing.expect(!variable.is_const);
-    try std.testing.expectEqual(ast.Kind.number, variable.children[0].kind);
-    const constant = result.root.?.children[2];
-    try std.testing.expectEqual(ast.Kind.variable_definition, constant.kind);
-    try std.testing.expectEqualStrings("B", constant.name);
-    try std.testing.expect(constant.is_const);
-    try std.testing.expectEqual(ast.Kind.number, constant.children[0].kind);
-}
-
-test "『〜とは定数=値』を定数定義として構文解析する" {
-    var result = try parse(std.testing.allocator, "Dとは定数=50\n", "とは定数.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const declaration = result.root.?.children[0];
-    try std.testing.expectEqual(ast.Kind.variable_definition, declaration.kind);
-    try std.testing.expectEqualStrings("D", declaration.name);
-    try std.testing.expect(declaration.is_const);
-    try std.testing.expectEqual(@as(f64, 50), declaration.children[0].number_value.?);
-}
-
-test "宣言の『{公開}』『{非公開}』属性を公開設定として受理する" {
-    var result = try parse(std.testing.allocator, "変数 A{非公開}=1\n定数 C{公開}=2\nEとは変数{非公開}\nFとは定数{エクスポート}=3\n", "属性.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const private_variable = result.root.?.children[0];
-    try std.testing.expect(!private_variable.is_export);
-    const public_constant = result.root.?.children[2];
-    try std.testing.expect(public_constant.is_const);
-    try std.testing.expect(public_constant.is_export);
-    const private_towa = result.root.?.children[4];
-    try std.testing.expect(!private_towa.is_export);
-    try std.testing.expectEqual(ast.Kind.number, private_towa.children[0].kind);
-    const exported_towa = result.root.?.children[6];
-    try std.testing.expect(exported_towa.is_const);
-    try std.testing.expect(exported_towa.is_export);
-}
-
 test "公式同様に『定数 名』と属性付きの初期値なし宣言を拒否する" {
     const cases = [_][]const u8{ "定数 A\n", "定数 A{公開}\n", "変数 A{公開}\n" };
     for (cases) |source| {
@@ -710,27 +708,6 @@ test "公式同様に『定数 名』と属性付きの初期値なし宣言を�
         try std.testing.expect(!result.succeeded());
         try std.testing.expectEqual(diagnostic.Code.expected_token, result.diagnostics[0].code);
     }
-}
-
-test "『!モジュール公開既定値』が無属性宣言の公開設定の既定値になる" {
-    // 公式yExportDefault: 『公開』以外は非公開を既定にする。
-    var result = try parse(std.testing.allocator, "!モジュール公開既定値=「非公開」\n変数 A=1\n変数 B{公開}=2\nAとは変数=3\n", "公開既定値.nako3");
-    defer result.deinit();
-    try std.testing.expect(result.succeeded());
-    const declarations = try variableDefinitions(std.testing.allocator, result.root.?);
-    defer std.testing.allocator.free(declarations);
-    try std.testing.expectEqual(@as(usize, 3), declarations.len);
-    try std.testing.expect(!declarations[0].is_export);
-    try std.testing.expect(declarations[1].is_export);
-    try std.testing.expect(!declarations[2].is_export);
-
-    var public_default = try parse(std.testing.allocator, "!モジュール公開既定値=「公開」\n変数 A=1\n変数 B{非公開}=2\n", "公開既定値2.nako3");
-    defer public_default.deinit();
-    const public_declarations = try variableDefinitions(std.testing.allocator, public_default.root.?);
-    defer std.testing.allocator.free(public_declarations);
-    try std.testing.expectEqual(@as(usize, 2), public_declarations.len);
-    try std.testing.expect(public_declarations[0].is_export);
-    try std.testing.expect(!public_declarations[1].is_export);
 }
 
 test "未知の属性名でも『変数 名{属性}』は『=』を必須にする" {
@@ -747,6 +724,28 @@ test "未知の属性名でも『変数 名{属性}』は『=』を必須にす�
     try std.testing.expect(with_value.root.?.children[0].is_export);
 }
 
+test "『!モジュール公開既定値』が無属性宣言の公開設定の既定値になる" {
+    // 公式yExportDefault: 『公開』以外は非公開を既定にする。
+    var result = try parse(std.testing.allocator, "!モジュール公開既定値=「非公開」\n変数 A=1\n変数 B{公開}=2\nAとは変数=3\n変数 [C]=[4]\n", "公開既定値.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const declarations = try variableDefinitions(std.testing.allocator, result.root.?);
+    defer std.testing.allocator.free(declarations);
+    try std.testing.expectEqual(@as(usize, 3), declarations.len);
+    try std.testing.expect(!declarations[0].is_export);
+    try std.testing.expect(declarations[1].is_export);
+    try std.testing.expect(!declarations[2].is_export);
+    try std.testing.expect(!result.root.?.children[6].is_export);
+
+    var public_default = try parse(std.testing.allocator, "!モジュール公開既定値=「公開」\n変数 A=1\n変数 B{非公開}=2\n", "公開既定値2.nako3");
+    defer public_default.deinit();
+    const public_declarations = try variableDefinitions(std.testing.allocator, public_default.root.?);
+    defer std.testing.allocator.free(public_declarations);
+    try std.testing.expectEqual(@as(usize, 2), public_declarations.len);
+    try std.testing.expect(public_declarations[0].is_export);
+    try std.testing.expect(!public_declarations[1].is_export);
+}
+
 test "『〜とは 変数|定数=』の空の右辺と宣言直後のカンマを公式同様に受理する" {
     // 公式yLetは `yCalc() || value` で空の右辺をnopに落とし、
     // `名前1=値1, 名前2=値2` のために宣言直後のカンマを1つ読み飛ばす。
@@ -756,22 +755,24 @@ test "『〜とは 変数|定数=』の空の右辺と宣言直後のカンマ�
     for ([_]usize{ 0, 2, 4 }) |index| {
         const declaration = result.root.?.children[index];
         try std.testing.expectEqual(ast.Kind.variable_definition, declaration.kind);
-        try std.testing.expectEqual(ast.Kind.number, declaration.children[0].kind);
-        try std.testing.expectEqual(@as(f64, 0), declaration.children[0].number_value.?);
+        try std.testing.expectEqual(ast.Kind.nop, declaration.children[0].kind);
     }
     const assigned = result.root.?.children[6];
     try std.testing.expectEqual(@as(f64, 1), assigned.children[0].number_value.?);
 }
 
-test "『定数 名=』は空の右辺を0にし『変数 名=』は拒否する" {
+test "『定数 名=』は空の右辺をnopにし『変数 名=』は拒否する" {
     var constant = try parse(std.testing.allocator, "定数 A=\nAを表示\n", "定数省略.nako3");
     defer constant.deinit();
     try std.testing.expect(constant.succeeded());
-    try std.testing.expectEqual(@as(f64, 0), constant.root.?.children[0].children[0].number_value.?);
+    try std.testing.expectEqual(ast.Kind.nop, constant.root.?.children[0].children[0].kind);
 
-    var variable = try parse(std.testing.allocator, "変数 A=\nAを表示\n", "変数省略.nako3");
-    defer variable.deinit();
-    try std.testing.expect(!variable.succeeded());
+    const rejected = [_][]const u8{ "変数 A=\nAを表示\n", "変数 A{公開}=\nAを表示\n" };
+    for (rejected) |source| {
+        var result = try parse(std.testing.allocator, source, "変数省略.nako3");
+        defer result.deinit();
+        try std.testing.expect(!result.succeeded());
+    }
 }
 
 test "『定める』の後置属性を公開設定として受理する" {

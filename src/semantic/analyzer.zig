@@ -249,11 +249,10 @@ const Analyzer = struct {
         }
         if (node.kind == .anonymous_function) return;
         // 公式はモジュール変数を既定で公開（isExportDefault=true）するため、
-        // モジュールスコープの変数はis_export=trueとする。宣言に `{非公開}`
-        // 属性が付いた場合だけ、公式findVarのmodList検索（isExport===false）と
-        // 同じく他モジュールから隠す。
+        // モジュールスコープの変数はis_export=trueとする。
         const exportable = self.scopes.items[scope].kind == .module;
         if (node.kind == .variable_definition) {
+            // `{非公開}`属性はモジュール変数の公開を打ち消す（公式isExport相当）。
             _ = try self.declare(module_index, scope, node.name, if (node.is_const) .constant else .variable, node.span, exportable and node.is_export, !node.is_const, 0, true);
         } else if (node.kind == .variable_list_definition) {
             for (node.arguments) |name| _ = try self.declare(module_index, scope, name.name, if (node.is_const) .constant else .variable, name.span, exportable and node.is_export, !node.is_const, 0, true);
