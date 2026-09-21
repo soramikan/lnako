@@ -8,9 +8,9 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 574,
-    "nativeAot": 368,
-    "interpreter": 216,
+    "total": 577,
+    "nativeAot": 369,
+    "interpreter": 218,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
@@ -16738,6 +16738,7 @@
       "aotFixtureIds": [
         "native-cut-commands",
         "native-numeric-pow-ecmascript-specials",
+        "native-strict-check-undefined-variable",
         "native-system-array-callback-order",
         "native-system-array-callback-order-large",
         "native-system-array-to-primitive",
@@ -16767,6 +16768,9 @@
             "fixture.commands"
           ],
           "native-numeric-pow-ecmascript-specials": [
+            "fixture.commands"
+          ],
+          "native-strict-check-undefined-variable": [
             "fixture.commands"
           ],
           "native-system-array-callback-order": [

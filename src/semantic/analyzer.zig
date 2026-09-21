@@ -507,8 +507,14 @@ const Analyzer = struct {
         }
         if (self.modules.items[module_index].strict) {
             const message = try std.fmt.allocPrint(self.allocator, "未定義の{s}『{s}』です", .{ if (callable) "命令" else "変数", name });
-            try self.addDiagnostic(.undefined_symbol, node.span, self.modules.items[module_index].path, message);
-            return;
+            // 公式`!厳しくチェック`は未定義の変数を`logger.warn`で警告するだけで
+            // 実行を継続する（`warnUndefinedVar`）。未定義の命令呼出しは公式も
+            // 文法エラー（`関数『X』が見当たりません`）なのでエラーのままにする。
+            if (callable) {
+                try self.addDiagnostic(.undefined_symbol, node.span, self.modules.items[module_index].path, message);
+                return;
+            }
+            try self.addWarning(.undefined_symbol, node.span, self.modules.items[module_index].path, message);
         }
         // 関数本体内の未解決名は公式同様に関数ローカル（__vars）へ宣言する。
         // システム定数名は常にグローバルの定数値を参照させるため除外する。
@@ -815,7 +821,18 @@ const Analyzer = struct {
     }
 
     fn addDiagnostic(self: *Analyzer, code: diagnostic.Code, span: ast.Span, file: []const u8, message: []const u8) !void {
-        try self.diagnostics.append(self.allocator, .{ .code = code, .span = span, .file = file, .message = message });
+        try self.addDiagnosticWithSeverity(code, span, file, message, .error_severity);
+    }
+
+    /// 公式`logger.warn`相当の診断。`Program.succeeded()`は真のままなので
+    /// コンパイルを止めず、実行を継続する（cnako3の既定logLevelはerrorのため
+    /// 警告自体は表示されない）。
+    fn addWarning(self: *Analyzer, code: diagnostic.Code, span: ast.Span, file: []const u8, message: []const u8) !void {
+        try self.addDiagnosticWithSeverity(code, span, file, message, .warning);
+    }
+
+    fn addDiagnosticWithSeverity(self: *Analyzer, code: diagnostic.Code, span: ast.Span, file: []const u8, message: []const u8, severity: diagnostic.Severity) !void {
+        try self.diagnostics.append(self.allocator, .{ .severity = severity, .code = code, .span = span, .file = file, .message = message });
     }
 };
 
@@ -1038,7 +1055,9 @@ test "取り込んだ公開関数を非修飾名と修飾名で解決する" {
     try std.testing.expectEqual(@as(usize, 2), imported_calls);
 }
 
-test "厳チェックの未定義名と定数再代入を診断する" {
+test "厳チェックの未定義名を警告にし、定数再代入はエラーにする" {
+    // 公式`!厳しくチェック`は未定義参照を`logger.warn`で警告するだけで
+    // 実行を継続する（終了0・`undefined`表示）。定数再代入はエラーのまま。
     const parser = @import("../frontend/parser.zig");
     var parsed = try parser.parse(std.testing.allocator, "!厳チェック\n定数 A=1\nA=2\n未宣言値を表示\n", "strict.nako3");
     defer parsed.deinit();
@@ -1048,9 +1067,38 @@ test "厳チェックの未定義名と定数再代入を診断する" {
     var undefined_count: usize = 0;
     var const_count: usize = 0;
     for (program.diagnostics) |item| {
-        if (item.code == .undefined_symbol) undefined_count += 1;
+        if (item.code == .undefined_symbol) {
+            undefined_count += 1;
+            try std.testing.expectEqual(diagnostic.Severity.warning, item.severity);
+        }
         if (item.code == .assign_to_constant) const_count += 1;
     }
     try std.testing.expectEqual(@as(usize, 1), undefined_count);
     try std.testing.expectEqual(@as(usize, 1), const_count);
+
+    // 未定義参照だけなら警告に留まり、コンパイルは成功する。
+    var warnings_only = try parser.parse(std.testing.allocator, "!厳しくチェック\n「{X}」を表示。\n", "strict-warn.nako3");
+    defer warnings_only.deinit();
+    var warning_program = try analyze(std.testing.allocator, warnings_only.root.?, "strict-warn.nako3");
+    defer warning_program.deinit();
+    try std.testing.expect(warning_program.succeeded());
+    try std.testing.expectEqual(diagnostic.Severity.warning, warning_program.diagnostics[0].severity);
+    try std.testing.expectEqual(diagnostic.Code.undefined_symbol, warning_program.diagnostics[0].code);
+
+    // 未定義名は暗黙宣言され、実行時に`undefined`として読める。
+    var bound = false;
+    for (warning_program.bindings) |binding| {
+        if (binding.kind == .reference and std.mem.eql(u8, binding.name, "X")) bound = std.mem.eql(u8, binding.resolved_name, "strict-warn__X");
+    }
+    try std.testing.expect(bound);
+
+    // 未定義の命令呼出しは公式も文法エラー（`関数『X』が見当たりません`）
+    // なので、厳格モードでもエラーのままにする。
+    var call_parsed = try parser.parse(std.testing.allocator, "!厳しくチェック\n未知命令()\n", "strict-call.nako3");
+    defer call_parsed.deinit();
+    var call_program = try analyze(std.testing.allocator, call_parsed.root.?, "strict-call.nako3");
+    defer call_program.deinit();
+    try std.testing.expect(!call_program.succeeded());
+    try std.testing.expectEqual(diagnostic.Code.undefined_symbol, call_program.diagnostics[0].code);
+    try std.testing.expectEqual(diagnostic.Severity.error_severity, call_program.diagnostics[0].severity);
 }

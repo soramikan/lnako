@@ -517,5 +517,13 @@
   {
     "id": "single-statement-if-else-chain",
     "source": "A=1\nもし、A=1ならば、「OK」と表示。\n違えば、もし、A=2ならば、「NG」と表示。\n違えば、「その他」と表示。\n"
+  },
+  {
+    "id": "strict-check-undefined-variable",
+    "source": "!厳しくチェック\n「{X}」を表示。\nXを表示\n"
+  },
+  {
+    "id": "strict-check-alias-and-continues",
+    "source": "!厳チェック\nXを表示\nX=1\nXを表示\n"
   }
 ]
