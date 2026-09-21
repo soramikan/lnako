@@ -365,7 +365,7 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
 - ZIP の local header / central directory の並びはエントリ名のバイト順ソートで固定し、timestamp・comment・extra field は固定値（時刻ゼロ、UTF-8 ファイル名フラグ、stored 格納）とする。local record は先頭 offset 0 からこの順序で隙間なく連続配置し、最後の record は central directory の直前で終わる。同一入力からは同一バイト列が得られなければならない。
 - 同名エントリの重複は `E038_NPKG_DUPLICATE_ENTRY` で拒否する。
 - `package.include` 未指定時は VCS・生成物（`.git`、`.zig-cache`、`zig-out`、`node_modules`、`.nako`、`nako.lock`、`.DS_Store`）を除く package 内ファイルを再帰収録する。`include` 指定時は既定除外を適用せず、パターン適合のみで収録可否を決める。
-- 出力予定の `.npkg` が package root 内にある場合、生成側はそれを収集対象から除外する（再ビルドで前回成果物が payload に混入しないようにするため）。
+- 出力予定の `.npkg` が package root 内にある場合、生成側はそれを収集対象から除外する（再ビルドで前回成果物が payload に混入しないようにするため）。既定の出力名は `<name>-<version>.npkg` で、version は prerelease・build metadata を含む完全な SemVer 表記とする（`1.0.0-alpha` と `1.0.0` が同名へ写像されないようにするため）。
 
 ### 6.2 `NAKO-PKG/METADATA.toml`
 
@@ -404,7 +404,7 @@ size = 1234
 
 公開 command 情報。`schemaVersion` と `commands` 配列を持ち、`.nako3` 公開ソースの AST から静的に導出する。初期化コードや任意のパッケージコードは実行しない。
 
-走査の入口は `exports[].path` の収録済みソースのみとし、そこから静的に解決できる import 閉包を辿る。export されない内部ファイルの公開定義は索引に含めない。
+走査の入口は `exports[].path` の収録済みソースのみとし、そこから静的に解決できる import 閉包を辿る。静的に解決できるのは文字列リテラルの取り込みのみであり、文字列テンプレート・識別子・その他の式は実行時にパスが決まるため閉包の対象外とする。export されない内部ファイルの公開定義は索引に含めない。
 
 - 公開トップレベル関数: `{ "name", "args": [...], "josi": [...] }`（引数名と助詞の対応配列）。
 - 公開トップレベル変数: `{ "name", "variable": true }`。

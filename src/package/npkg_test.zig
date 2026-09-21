@@ -550,6 +550,30 @@ test "commands.json 生成は文の子孫にある取り込みも辿る" {
     try testing.expect(by_name.get("変換") != null);
 }
 
+test "commands.json 生成は動的な取り込みを静的閉包の対象外にする" {
+    const allocator = testing.allocator;
+    var provider = try MapProvider.init(allocator);
+    defer provider.deinit();
+    // 文字列テンプレート・識別子の取り込みは実行時にパスが決まるため
+    // 静的閉包へ入れない（未展開パスを探して E036 で失敗させない）。
+    try provider.put("index.nako3",
+        \\種類="a"
+        \\「lib/{種類}.nako3」を取り込む
+        \\取込 パス
+        \\●甲とは
+        \\ここまで
+        \\
+    );
+
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var result = try npkg_commands_gen.generate(allocator, provider.provider(), &.{"index.nako3"}, &list);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 1), result.commands.len);
+    try testing.expectEqualStrings("甲", result.commands[0].name);
+}
+
 test "commands.json は同名定義の先勝ちを固定する" {
     const allocator = testing.allocator;
     var provider = try MapProvider.init(allocator);
@@ -1649,6 +1673,25 @@ test "npkg build は include 対象外の symlink を無視する" {
     defer built.deinit();
     try testing.expectEqual(@as(usize, 1), built.files.len);
     try testing.expectEqualStrings("src/index.nako3", built.files[0].path);
+}
+
+test "既定の出力名は SemVer 全体を含む" {
+    const allocator = testing.allocator;
+    var manifest = try parseMetadataOk(allocator,
+        \\schemaVersion = 1
+        \\
+        \\[package]
+        \\name = "demo"
+        \\version = "1.0.0-alpha.1+build.5"
+        \\license = "MIT"
+        \\
+    );
+    defer manifest.deinit();
+
+    const name = try npkg_build.defaultOutputName(allocator, &manifest);
+    defer allocator.free(name);
+    // prerelease・build metadata だけ異なる成果物が同名へ写像されない。
+    try testing.expectEqualStrings("demo-1.0.0-alpha.1+build.5.npkg", name);
 }
 
 test "npkg build は記号を含む literal directory を include で収録する" {

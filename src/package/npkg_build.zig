@@ -65,6 +65,16 @@ fn isExcluded(path: []const u8) bool {
     return false;
 }
 
+/// 既定の出力ファイル名 `<name>-<version>.npkg`。SemVer 全体
+/// （prerelease・build metadata を含む）を使い、バージョンが異なる
+/// 成果物が同じファイル名へ写像されて上書きされないようにする。
+pub fn defaultOutputName(allocator: Allocator, manifest: *const manifest_mod.Manifest) ![]u8 {
+    return std.fmt.allocPrint(allocator, "{s}-{f}.npkg", .{
+        manifest.package.name,
+        manifest.package.version,
+    });
+}
+
 /// glob 構文は `*`・`?`・`**` のみ。`[`・`{` は literal として扱うため
 /// glob 判定へ含めない（含めると `assets[old]` のような literal
 /// directory が接頭辞照合されず配下を取りこぼす）。
@@ -274,12 +284,7 @@ pub fn build(backing_allocator: Allocator, io: std.Io, root: []const u8, diagnos
 
     // 出力先が package root 内なら収集対象から外し、再ビルドで前回の
     // 成果物が payload へ混入しないようにする。
-    const default_output = try std.fmt.allocPrint(allocator, "{s}-{d}.{d}.{d}.npkg", .{
-        manifest.package.name,
-        manifest.package.version.major,
-        manifest.package.version.minor,
-        manifest.package.version.patch,
-    });
+    const default_output = try defaultOutputName(allocator, &manifest);
     const exclude = try outputExcludePath(allocator, io, root, options.output orelse default_output);
 
     const payloads = try collectPayloads(allocator, io, dir, manifest.package.include, exclude, diagnostics);

@@ -57,12 +57,7 @@ fn runBuild(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, 
     };
     defer built.deinit();
 
-    const output_path = output orelse try std.fmt.allocPrint(allocator, "{s}-{}.{}.{}.npkg", .{
-        built.manifest.package.name,
-        built.manifest.package.version.major,
-        built.manifest.package.version.minor,
-        built.manifest.package.version.patch,
-    });
+    const output_path = output orelse try npkg_build.defaultOutputName(allocator, &built.manifest);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = output_path, .data = built.archive });
     try stdout.print("{s}: {d} ファイルを収録しました\n", .{ output_path, built.files.len });
 }

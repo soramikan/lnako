@@ -198,7 +198,12 @@ const Collector = struct {
     }
 
     fn followImport(self: *Collector, node: *ast.Node, path: []const u8) anyerror!void {
-        // 動的な取り込み式（node.value が空）は静的に解決しない。
+        // 静的に辿るのは文字列リテラルの取り込みのみ。文字列テンプレートや
+        // 識別子・式は実行時にパスが決まるため静的閉包の対象外とする
+        // （node.value はテンプレートのリテラル部でも非空になり得るため、
+        // 値の有無ではなく path 式ノードの kind で判定する）。
+        if (node.children.len == 0) return;
+        if (node.children[0].kind != .string) return;
         if (node.value.len == 0) return;
         const resolved = (try resolveImport(self.allocator, path, node.value)) orelse {
             try self.report(diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY, path, "import \"{s}\" escapes the package root", .{node.value});
