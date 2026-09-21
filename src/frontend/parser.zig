@@ -14,6 +14,7 @@ pub const builder = @import("parser/builder.zig");
 pub const expressions = @import("parser/expressions.zig");
 
 const isConditionalJosi = helpers.isConditionalJosi;
+const isNegativeConditionJosi = helpers.isNegativeConditionJosi;
 const isSequenceJosi = helpers.isSequenceJosi;
 const isTargetJosi = helpers.isTargetJosi;
 const isValueJosi = helpers.isValueJosi;
@@ -124,6 +125,7 @@ pub fn parseWithMode(backing_allocator: std.mem.Allocator, source: []const u8, f
         .own_mode = orMode(options.initial orelse .{}, options.forced),
         .tail_modes = options.tail_modes,
         .builtin_commands = options.builtin_commands,
+        .user_functions = try collectUserFunctionNames(allocator, stream.tokens),
     };
     var root = parser.parseProgram() catch |err| switch (err) {
         error.ParseFailed => null,
@@ -155,6 +157,47 @@ pub fn parseWithMode(backing_allocator: std.mem.Allocator, source: []const u8, f
 
 pub const ParseFailure = error{ ParseFailed, OutOfMemory };
 
+/// 公式`NakoLexer.preDefineFunc`相当。解析前のトークン列を走査してソース内で
+/// 定義された関数名を集める。公式は定義の位置に関わらず関数名を`func token`
+/// にするため、後方定義の呼出し（前方参照）も命令呼出しとして解決できる。
+fn collectUserFunctionNames(allocator: std.mem.Allocator, tokens: []const Token) std.mem.Allocator.Error![]const []const u8 {
+    var names: std.ArrayList([]const u8) = .empty;
+    var index: usize = 0;
+    while (index < tokens.len) : (index += 1) {
+        if (tokens[index].kind != .def_func and tokens[index].kind != .def_test) continue;
+        // 無名関数の`関数`キーワードも`def_func`になるが、名前を持たないため
+        // 直後の識別子は本体の先頭語（`F=関数(A)それはA`の「それ」）であって
+        // 関数名ではない。名前付き定義（`●`・`●テスト:`）だけを集める。
+        if (std.mem.eql(u8, tokens[index].value, "関数")) continue;
+        var cursor = index + 1;
+        // `●{公開}Fとは` のような属性を読み飛ばす。
+        if (cursor < tokens.len and tokens[cursor].kind == .left_brace) {
+            cursor += 1;
+            while (cursor < tokens.len and tokens[cursor].kind != .right_brace) cursor += 1;
+            cursor += 1;
+        }
+        // `●(Aを)Fとは` のように名前の前に来る引数宣言を読み飛ばす。
+        if (cursor < tokens.len and tokens[cursor].kind == .left_paren) {
+            var depth: usize = 0;
+            while (cursor < tokens.len) : (cursor += 1) {
+                if (tokens[cursor].kind == .left_paren) {
+                    depth += 1;
+                } else if (tokens[cursor].kind == .right_paren) {
+                    depth -= 1;
+                    if (depth == 0) {
+                        cursor += 1;
+                        break;
+                    }
+                }
+            }
+        }
+        if (cursor < tokens.len and tokens[cursor].kind == .identifier) {
+            try names.append(allocator, tokens[cursor].value);
+        }
+    }
+    return names.toOwnedSlice(allocator);
+}
+
 fn orMode(a: token_mod.Mode, b: token_mod.Mode) token_mod.Mode {
     return .{
         .dncl = a.dncl or b.dncl,
@@ -179,6 +222,10 @@ pub const Parser = struct {
     tail_modes: []const TailMode = &.{},
     /// 公式の`func token`に相当する既知の命令名（`ParseOptions.builtin_commands`）。
     builtin_commands: []const []const u8 = &.{},
+    /// ソース内で定義された関数名（公式`NakoLexer.preDefineFunc`相当の先読み）。
+    /// 公式はユーザー定義関数も`func token`にするため、助詞付きの単独語を
+    /// 命令呼出しとして解決できるようにする。
+    user_functions: []const []const u8 = &.{},
     tail_cursor: usize = 0,
     import_modes: std.ArrayList(ImportMode) = .empty,
     index: usize = 0,
@@ -291,7 +338,24 @@ pub const Parser = struct {
             else => blk: {
                 if (self.isModeDirective()) break :blk self.parseModeDirective();
                 if (self.isTowaDeclaration() or self.canStartAssignment()) break :blk self.parseAssignment();
-                break :blk self.parseCallOrControl();
+                const statement = try self.parseCallOrControl();
+                // 公式`ySentence`は、命令呼出しの直後に『ならば』が続く場合を
+                // 「もし」省略形の条件文として扱う（`Aが5と等しいならば`）。
+                // lnakoの字句解析は『ならば』を直前の語の助詞にするため、
+                // 文の末尾助詞で判定する。ただし公式が条件文へ昇格させるのは
+                // `yCall`が命令呼出しで確定した場合だけなので、公式の`func token`
+                // に相当する既知の命令名・ユーザー定義関数の呼出しに限る。
+                // 範囲演算子（`1…5`）や単独語は命令呼出しではなく、未定義語
+                // （`1を未定義Fならば`）は公式も未解決語として拒否する。
+                // C風呼出しは公式も条件文へ入れてから名前解決で失敗するため、
+                // 既知名の確認は行わない。
+                if (statement.kind == .function_call and isConditionalJosi(statement.josi) and
+                    (statement.is_c_style_call or
+                        ((statement.command_call or statement.children.len == 0) and self.isKnownCommandName(statement.name))))
+                {
+                    break :blk self.parseIfThen(token, try self.finishCondition(statement));
+                }
+                break :blk statement;
             },
         };
     }
@@ -397,22 +461,91 @@ pub const Parser = struct {
                 std.mem.eql(u8, token.value, "パフォーマンスモニタ適用")));
     }
 
+    /// 公式`yIFCond`相当の条件式解析。`もし`以降の条件を、演算子比較式・
+    /// C風呼出しに加えて、助詞`が`の比較形（`AがBならば`＝`A=B`）と
+    /// 助詞付きの命令呼出し（`Aが3以下ならば`＝`以下(A,3)`）でも受理する。
+    /// 公式のトークン列では「ならば」「でなければ」が独立トークンになるが、
+    /// lnakoの字句解析は直前の語へ助詞として付けるため、ここで吸収する。
+    pub fn parseIfCondition(self: *Parser) ParseFailure!*ast.Node {
+        const first = try expressions.parseExpression(self, 0);
+        if (isConditionalJosi(first.josi)) return self.finishCondition(first);
+        if (self.identifierValue("ならば")) {
+            _ = self.advance();
+            clearConditionalJosi(first);
+            return first;
+        }
+        // チェック: `AがBならば` --- 「A = B」のとき。公式`yIFCond`は一度
+        // 二番目の値を読み、条件助詞が付かなければ位置を戻して呼出し解決へ進む。
+        if (std.mem.eql(u8, first.josi, "が")) {
+            const saved = self.index;
+            const second = try expressions.parseExpression(self, 0);
+            if (isConditionalJosi(second.josi)) {
+                const result = try builder.makeNodeWithChildren(self, .binary_operator, self.peekPrevious(), try builder.copyChildren(self, &.{ first, second }));
+                result.operator = if (isNegativeConditionJosi(second.josi)) "noteq" else "eq";
+                result.josi = "";
+                result.raw_josi = "";
+                return result;
+            }
+            self.index = saved;
+        }
+        // チェック: `AがBならば` --- 「関数B(A)」のとき
+        const result = try self.parseJosiCallExpression(first);
+        if (isConditionalJosi(result.josi)) return self.finishCondition(result);
+        if (self.identifierValue("ならば")) {
+            _ = self.advance();
+            clearConditionalJosi(result);
+            return result;
+        }
+        return self.fail(.invalid_control_statement, "『もし』文の条件末尾に『ならば』が必要です", self.peek());
+    }
+
+    /// 公式parserは「Aでなければ」を条件式Aの否定ノードとして保持する。
+    /// DNCLの「Aでないならば」はsyntax_transformで同じ助詞へ正規化されるため、
+    /// 条件式のjosiを消す前にnotへ包む必要がある。公式の字句解析は
+    /// 「でなければ」「しなければ」「なければ」をすべて否定の条件助詞にする。
+    fn finishCondition(self: *Parser, condition: *ast.Node) ParseFailure!*ast.Node {
+        var result = condition;
+        if (isNegativeConditionJosi(result.josi)) {
+            result = try builder.unary(self, "not", result, self.peekPrevious());
+        }
+        clearConditionalJosi(result);
+        return result;
+    }
+
+    /// 公式`yCall`相当の式解析。先頭の値`first`に続けて助詞付きの値と
+    /// 既知命令名を読み、助詞付きの値を引数として呼出し式を組み立てる
+    /// （`Aが3以下`＝`以下(A,3)`、`Dに"a"が辞書キー存在`＝`辞書キー存在(D,"a")`）。
+    /// 命令の助詞が無い、または連文助詞の場合はそこで呼出しが確定する。
+    pub fn parseJosiCallExpression(self: *Parser, first: *ast.Node) ParseFailure!*ast.Node {
+        var stack: std.ArrayList(*ast.Node) = .empty;
+        try stack.append(self.allocator, first);
+        while (true) {
+            if (self.at(.identifier) and self.isKnownCommandName(self.peek().value)) {
+                const command = self.advance();
+                const call = try self.makeCommandCall(command, try stack.toOwnedSlice(self.allocator));
+                stack = .empty;
+                try stack.append(self.allocator, call);
+                // 言い切り・連文の助詞はそこで一度切る（公式`yCallFunc`）。
+                if (command.josi.len == 0 or isSequenceJosi(command.josi)) return call;
+                continue;
+            }
+            if (!canStartExpression(self.peek().kind)) break;
+            try stack.append(self.allocator, try expressions.parseExpression(self, 0));
+        }
+        if (stack.items.len == 1) return stack.items[0];
+        return self.fail(.unexpected_token, "命令呼び出しを構成できません", self.peek());
+    }
+
     pub fn parseIf(self: *Parser) ParseFailure!*ast.Node {
         const start = self.advance();
         self.skipCommas();
-        var condition = try expressions.parseExpression(self, 0);
-        if (!isConditionalJosi(condition.josi) and !self.identifierValue("ならば")) {
-            return self.fail(.invalid_control_statement, "『もし』文の条件末尾に『ならば』が必要です", self.peek());
-        }
-        if (self.identifierValue("ならば")) _ = self.advance();
-        // 公式parserは「Aでなければ」を条件式Aの否定ノードとして保持する。
-        // DNCLの「Aでないならば」はsyntax_transformで同じ助詞へ正規化されるため、
-        // 条件式のjosiを消す前にnotへ包む必要がある。
-        if (std.mem.eql(u8, condition.josi, "でなければ")) {
-            condition = try builder.unary(self, "not", condition, self.peekPrevious());
-        }
-        clearConditionalJosi(condition);
+        const condition = try self.parseIfCondition();
+        return self.parseIfThen(start, condition);
+    }
 
+    /// 公式`yIfThen`相当。条件式を受けて真節・偽節を解析する。公式は「もし」を
+    /// 伴わない条件文（`Aが5と等しいならば`）も同じ`yIfThen`へ入る。
+    pub fn parseIfThen(self: *Parser, start: Token, condition: *ast.Node) ParseFailure!*ast.Node {
         var multiline = false;
         var true_block: *ast.Node = undefined;
         if (self.at(.eol)) {
@@ -440,7 +573,12 @@ pub const Parser = struct {
             }
         }
         if (multiline) try self.requireEnd("『もし』文");
-        return builder.makeNodeWithChildren(self, .if_statement, start, try builder.copyChildren(self, &.{ condition, true_block, false_block }));
+        const result = try builder.makeNodeWithChildren(self, .if_statement, start, try builder.copyChildren(self, &.{ condition, true_block, false_block }));
+        // 公式`yIfThen`の`if`ノードは助詞を持たない。「もし」省略形では開始
+        // トークンが条件式の先頭語（`Aが…`）になるため、助詞を落とす。
+        result.josi = "";
+        result.raw_josi = "";
+        return result;
     }
 
     pub fn parsePostTestLoop(self: *Parser) ParseFailure!*ast.Node {
@@ -914,6 +1052,15 @@ pub const Parser = struct {
             return statement;
         }
         const call = try self.makeCommandCall(command, try arguments.toOwnedSlice(self.allocator));
+        // 助詞付きの関数呼出しの直後にループの語が続く場合、公式`yCall`は
+        // 呼出しをスタックに積んだまま制御構文へ渡す（`Aが5以下の間`は
+        // `以下(A,5)`を条件とする`間`になる）。呼出しを引数として保持し、
+        // 文の解析を続けて制御構文の分岐へ委ねる。
+        if (command.josi.len > 0 and chained_calls.items.len == 0 and self.atLoopKeyword()) {
+            arguments.* = .empty;
+            try arguments.*.append(self.allocator, call);
+            return null;
+        }
         if (isSequenceJosi(command.josi)) {
             try chained_calls.append(self.allocator, call);
             arguments.* = .empty;
@@ -927,9 +1074,24 @@ pub const Parser = struct {
         return call;
     }
 
+    /// 現在位置がループの語かどうか。公式`yCall`は助詞付きの関数呼出しを
+    /// スタックへ積んだまま、この位置の制御構文へ条件として渡す。
+    fn atLoopKeyword(self: *Parser) bool {
+        return self.at(.keyword_repeat_while) or self.at(.keyword_repeat_count) or
+            self.at(.keyword_repeat) or self.at(.keyword_foreach);
+    }
+
     /// 公式の`func token`相当（既知の命令名）かどうか。
     fn isBuiltinCommandName(self: *Parser, value: []const u8) bool {
         for (self.builtin_commands) |name| if (std.mem.eql(u8, name, value)) return true;
+        return false;
+    }
+
+    /// 公式の`func token`として解決できる名前かどうか。公式は組み込み命令に
+    /// 加えて、ソース内で定義された関数も`func token`にする。
+    fn isKnownCommandName(self: *Parser, value: []const u8) bool {
+        if (self.isBuiltinCommandName(value)) return true;
+        for (self.user_functions) |name| if (std.mem.eql(u8, name, value)) return true;
         return false;
     }
 
@@ -958,6 +1120,7 @@ pub const Parser = struct {
         call.name = command.value;
         call.josi = if (isSequenceJosi(command.josi)) "して" else command.josi;
         call.raw_josi = command.raw_josi;
+        call.command_call = true;
         return call;
     }
 
@@ -1187,6 +1350,7 @@ pub const Parser = struct {
             const call = try builder.makeNodeWithChildren(self, .function_call, command, try arguments.toOwnedSlice(self.allocator));
             call.name = command.value;
             call.josi = command.josi;
+            call.command_call = true;
             if (!isSequenceJosi(command.josi)) return call;
             arguments = .empty;
             try arguments.append(self.allocator, call);
