@@ -564,6 +564,10 @@
   {
     "id": "single-statement-if-else-chain",
     "source": "A=1\nもし、A=1ならば、「OK」と表示。\n違えば、もし、A=2ならば、「NG」と表示。\n違えば、「その他」と表示。\n"
+  },
+  {
+    "id": "arguments-array-property-after-registration",
+    "source": "●(Aの)Fとは\n引数[0]を表示\n引数$a=99\n引数$aを表示\nここまで\n1のF\n"
   }
 ]
 

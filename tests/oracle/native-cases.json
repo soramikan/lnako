@@ -3029,5 +3029,10 @@
     "id": "native-arguments-array-call-value-nested",
     "sourceFileName": "natargscvnested.nako3",
     "source": "G=関数(A)\n引数[0]を表示\nここまで\nF=関数(A)\nG(1,2,3)\n引数[0]を表示\nここまで\nF(9)\n"
+  },
+  {
+    "id": "native-arguments-array-property-after-registration",
+    "sourceFileName": "natargsprop.nako3",
+    "source": "●(Aの)Fとは\n引数[0]を表示\n引数$a=99\n引数$aを表示\nここまで\n1のF\n"
   }
 ]
