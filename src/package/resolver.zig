@@ -969,8 +969,8 @@ pub fn metaFromManifest(gpa: Allocator, source: *const manifest.Manifest, target
     };
     for (source.exports) |item| {
         if (item.path != null) meta.has_source = true;
-        if (item.native != null) meta.has_native = true;
-        if (item.esm != null) meta.has_esm = true;
+        if (item.native.len != 0) meta.has_native = true;
+        if (item.esm.len != 0) meta.has_esm = true;
     }
     meta.unavailable_reason = unavailableReason(source, meta, target);
     return meta;

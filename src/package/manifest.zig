@@ -141,27 +141,123 @@ pub const ExportResolution = struct {
     target: []const u8,
 };
 
+/// `native`/`esm` artifact の宣言。文字列省略形は `path` のみを持つ。
+/// `when` は marker 式、`min_os` は対象 OS の最小バージョン（`14`/`14.0`/
+/// `14.0.1` 形式）、`libc` は要求 libc 系、`features` は要求 feature 一覧。
+pub const ArtifactDecl = struct {
+    path: []const u8,
+    when: ?[]const u8 = null,
+    min_os: ?[]const u8 = null,
+    libc: ?[]const u8 = null,
+    features: []const []const u8 = &.{},
+    position: Position = .{},
+
+    /// 条件が対象環境へ適用可能か。`when` の marker 式は `target` の
+    /// os/cpu/abi/compat-js/features/version で評価する。`min-os`・`libc` は
+    /// 宣言があるのに対象側の値が不明な場合は適合を証明できないため不適合
+    /// とみなす（保守方向）。`when` の解析失敗は manifest 検証で報告済みの
+    /// 前提であり、ここでは不適合として扱う。
+    pub fn matchesTarget(self: *const ArtifactDecl, allocator: std.mem.Allocator, target: ArtifactTarget) !bool {
+        if (self.when) |text| {
+            var parsed = try marker_mod.parse(allocator, text);
+            const ok = switch (parsed) {
+                .ok => |*m| blk: {
+                    defer m.deinit();
+                    break :blk m.evaluate(target.markerContext()) catch false;
+                },
+                .err => false,
+            };
+            if (!ok) return false;
+        }
+        if (self.min_os) |min| {
+            const os_version = target.os_version orelse return false;
+            const order = compareDottedVersion(os_version, min) orelse return false;
+            if (order < 0) return false;
+        }
+        if (self.libc) |libc| {
+            const target_libc = if (target.libc) |l| l else target.abi;
+            if (!std.mem.eql(u8, target_libc, libc)) return false;
+        }
+        for (self.features) |feature| {
+            if (!containsString(target.features, feature)) return false;
+        }
+        return true;
+    }
+};
+
+/// artifact 条件の照合対象。runtime 選択のみの経路では os/cpu/abi 系は
+/// 空のままでよい（その場合 `min-os`/`libc` 付き宣言は不適合となる）。
+pub const ArtifactTarget = struct {
+    runtime: []const u8,
+    os: []const u8 = "",
+    cpu: []const u8 = "",
+    abi: []const u8 = "",
+    os_version: ?[]const u8 = null,
+    libc: ?[]const u8 = null,
+    compat_js: bool = false,
+    version: ?semver.Version = null,
+    features: []const []const u8 = &.{},
+
+    fn markerContext(self: ArtifactTarget) marker_mod.Context {
+        return .{
+            .runtime = self.runtime,
+            .os = self.os,
+            .cpu = self.cpu,
+            .abi = self.abi,
+            .compat_js = self.compat_js,
+            .version = self.version,
+            .features = self.features,
+        };
+    }
+};
+
+/// `.` 区切りの数列を辞書順＋数値比較する。`14` と `14.0` は等しい。
+/// 数値でない成分を含む場合は `null`。
+fn compareDottedVersion(a: []const u8, b: []const u8) ?i8 {
+    var a_it = std.mem.splitScalar(u8, a, '.');
+    var b_it = std.mem.splitScalar(u8, b, '.');
+    while (true) {
+        const a_part = a_it.next();
+        const b_part = b_it.next();
+        if (a_part == null and b_part == null) return 0;
+        const a_num = if (a_part) |p| std.fmt.parseInt(u64, p, 10) catch return null else 0;
+        const b_num = if (b_part) |p| std.fmt.parseInt(u64, p, 10) catch return null else 0;
+        if (a_num < b_num) return -1;
+        if (a_num > b_num) return 1;
+    }
+}
+
+/// 宣言リストから対象に適合する最初の artifact を返す。
+fn firstMatchingArtifact(decls: []const ArtifactDecl, allocator: std.mem.Allocator, target: ArtifactTarget) !?ArtifactDecl {
+    for (decls) |decl| {
+        if (try decl.matchesTarget(allocator, target)) return decl;
+    }
+    return null;
+}
+
 pub const Export = struct {
     name: []const u8,
     path: ?[]const u8 = null,
     alias: ?[]const u8 = null,
-    native: ?[]const u8 = null,
-    esm: ?[]const u8 = null,
+    native: []const ArtifactDecl = &.{},
+    esm: []const ArtifactDecl = &.{},
     position: Position = .{},
 
     /// 処理系条件・ネイティブ明示選択フラグ・compat-js条件に基づいてexport実装を選択する。
     /// 共通.nako3ソース（path）が存在する場合は既定で優先選択され、
     /// prefer_native=true が指定された場合のみ高速化用nativeが選択される。
+    /// `target` の os/cpu/abi 等が空の場合、`when`/`min-os`/`libc` 付きの
+    /// artifact 宣言は適合を証明できないため選択されない。
     pub fn resolve(
         self: *const Export,
-        target_runtime: []const u8,
+        allocator: std.mem.Allocator,
+        target: ArtifactTarget,
         prefer_native: bool,
-        compat_js: bool,
         diagnostics: ?*diag.List,
     ) !?ExportResolution {
         // 対象処理系は公開契約上 lnako / cnako のみ。共通ソース（path）の
         // 有無にかかわらず未知の処理系は E031 で拒否する。
-        if (!containsString(&known_package_runtime, target_runtime)) {
+        if (!containsString(&known_package_runtime, target.runtime)) {
             if (diagnostics) |d| {
                 try d.addFmt(
                     diag.E031_UNSUPPORTED_RUNTIME,
@@ -169,26 +265,28 @@ pub const Export = struct {
                     self.name,
                     self.position,
                     "unsupported runtime \"{s}\" for export \"{s}\"",
-                    .{ target_runtime, self.name },
+                    .{ target.runtime, self.name },
                 );
             }
             return null;
         }
+        const native_decl = try firstMatchingArtifact(self.native, allocator, target);
+        const esm_decl = try firstMatchingArtifact(self.esm, allocator, target);
         if (self.path) |p| {
             // 共通ソースは常に利用可能。prefer-native が lnako で明示された
             // 場合のみ native を高速化実装として優先する。
-            if (prefer_native and std.mem.eql(u8, target_runtime, "lnako") and self.native != null) {
-                return .{ .kind = .native, .target = self.native.? };
+            if (prefer_native and std.mem.eql(u8, target.runtime, "lnako") and native_decl != null) {
+                return .{ .kind = .native, .target = native_decl.?.path };
             }
             return .{ .kind = .source, .target = p };
         }
-        if (std.mem.eql(u8, target_runtime, "lnako")) {
-            if (self.native) |nat| {
-                return .{ .kind = .native, .target = nat };
+        if (std.mem.eql(u8, target.runtime, "lnako")) {
+            if (native_decl) |decl| {
+                return .{ .kind = .native, .target = decl.path };
             }
-            if (self.esm) |esm_path| {
-                if (compat_js) {
-                    return .{ .kind = .esm, .target = esm_path };
+            if (esm_decl) |decl| {
+                if (target.compat_js) {
+                    return .{ .kind = .esm, .target = decl.path };
                 } else {
                     if (diagnostics) |d| {
                         try d.addFmt(
@@ -205,10 +303,10 @@ pub const Export = struct {
             }
         } else {
             // cnako は ESM を直接扱えるため、native 併記時も ESM を先に選ぶ。
-            if (self.esm) |esm_path| {
-                return .{ .kind = .esm, .target = esm_path };
+            if (esm_decl) |decl| {
+                return .{ .kind = .esm, .target = decl.path };
             }
-            if (self.native != null) {
+            if (self.native.len != 0) {
                 if (diagnostics) |d| {
                     try d.addFmt(
                         diag.E031_UNSUPPORTED_RUNTIME,
@@ -216,7 +314,7 @@ pub const Export = struct {
                         self.name,
                         self.position,
                         "native-only export \"{s}\" is not supported on runtime \"{s}\"",
-                        .{ self.name, target_runtime },
+                        .{ self.name, target.runtime },
                     );
                 }
                 return null;
@@ -585,6 +683,103 @@ const Validator = struct {
             items.appendAssumeCapacity(text);
         }
         return try items.toOwnedSlice(self.arena);
+    }
+
+    /// `native`/`esm` フィールドを artifact 宣言列へ変換する。受理する形は
+    /// 文字列省略形、宣言テーブル、またはその配列。戻り値のスライスと
+    /// 各 `features` は arena 確保。
+    fn expectArtifactDecls(self: *Validator, table: *std.StringHashMapUnmanaged(toml.Value), key: []const u8, path: []const u8) Error![]const ArtifactDecl {
+        const value = table.getPtr(key) orelse return &.{};
+        const field_path = try self.pathOf(path, key);
+        switch (value.kind) {
+            .string => |text| {
+                const decls = try self.arena.alloc(ArtifactDecl, 1);
+                decls[0] = .{ .path = text, .position = value.position };
+                return decls;
+            },
+            .table => {
+                const decls = try self.arena.alloc(ArtifactDecl, 1);
+                decls[0] = try self.parseArtifactDecl(value, field_path);
+                return decls;
+            },
+            .array => |*array| {
+                if (array.items.len == 0) {
+                    try self.report(diag.E029_INVALID_VALUE, field_path, value.position, "\"{s}\" must not be an empty array", .{field_path});
+                    return &.{};
+                }
+                const decls = try self.arena.alloc(ArtifactDecl, array.items.len);
+                for (array.items, 0..) |*item, index| {
+                    decls[index] = try self.parseArtifactDecl(item, field_path);
+                }
+                return decls;
+            },
+            else => {
+                try self.report(diag.E023_INVALID_TYPE, field_path, value.position, "expected string, table, or array for \"{s}\"", .{field_path});
+                return &.{};
+            },
+        }
+    }
+
+    /// artifact 宣言の1要素（文字列またはテーブル）を `ArtifactDecl` へ変換する。
+    /// 不正要素は既定値（空pathの宣言）を返し、診断のみ記録する。
+    fn parseArtifactDecl(self: *Validator, value: *toml.Value, field_path: []const u8) Error!ArtifactDecl {
+        switch (value.kind) {
+            .string => |text| {
+                if (text.len == 0) {
+                    try self.report(diag.E029_INVALID_VALUE, field_path, value.position, "\"{s}\" must not be an empty path", .{field_path});
+                }
+                return .{ .path = text, .position = value.position };
+            },
+            .table => |*decl_table| {
+                const known = [_][]const u8{ "path", "when", "min-os", "libc", "features" };
+                try self.rejectUnknownFields(decl_table, field_path, &known);
+                var decl = ArtifactDecl{
+                    .path = "",
+                    .position = value.position,
+                };
+                if (try self.requireString(decl_table, "path", field_path, value.position)) |text| {
+                    if (text.len == 0) {
+                        const item_path = try self.pathOf(field_path, "path");
+                        try self.report(diag.E029_INVALID_VALUE, item_path, value.position, "\"{s}.path\" must not be empty", .{field_path});
+                    }
+                    decl.path = text;
+                }
+                if (try self.expectString(decl_table, "when", field_path)) |text| {
+                    var parsed = try marker_mod.parse(self.scratch, text);
+                    switch (parsed) {
+                        .ok => |*m| m.deinit(),
+                        .err => |*syntax_error| {
+                            const item_path = try self.pathOf(field_path, "when");
+                            try self.report(diag.E026_INVALID_MARKER, item_path, value.position, "invalid marker expression in \"{s}.when\": {s}", .{ field_path, syntax_error.message });
+                        },
+                    }
+                    decl.when = text;
+                }
+                if (try self.expectString(decl_table, "min-os", field_path)) |text| {
+                    if (compareDottedVersion(text, text) == null) {
+                        const item_path = try self.pathOf(field_path, "min-os");
+                        try self.report(diag.E029_INVALID_VALUE, item_path, value.position, "invalid min-os \"{s}\" (expected dotted numeric version)", .{text});
+                    }
+                    decl.min_os = text;
+                }
+                if (try self.expectString(decl_table, "libc", field_path)) |text| {
+                    if (!containsString(&known_profile_abi, text)) {
+                        const item_path = try self.pathOf(field_path, "libc");
+                        try self.report(diag.E029_INVALID_VALUE, item_path, value.position, "invalid libc \"{s}\"", .{text});
+                    }
+                    decl.libc = text;
+                }
+                if (decl_table.getPtr("features")) |features_value| {
+                    const item_path = try self.pathOf(field_path, "features");
+                    decl.features = try self.expectStringList(features_value, item_path);
+                }
+                return decl;
+            },
+            else => {
+                try self.report(diag.E023_INVALID_TYPE, field_path, value.position, "expected string or table item in \"{s}\"", .{field_path});
+                return .{ .path = "", .position = value.position };
+            },
+        }
     }
 
     fn rejectUnknownFields(self: *Validator, table: *std.StringHashMapUnmanaged(toml.Value), path: []const u8, known: []const []const u8) Error!void {
@@ -1135,8 +1330,8 @@ const Validator = struct {
             }
             export_entry.path = try self.expectString(export_table, "path", "exports");
             export_entry.alias = try self.expectString(export_table, "alias", "exports");
-            export_entry.native = try self.expectString(export_table, "native", "exports");
-            export_entry.esm = try self.expectString(export_table, "esm", "exports");
+            export_entry.native = try self.expectArtifactDecls(export_table, "native", "exports");
+            export_entry.esm = try self.expectArtifactDecls(export_table, "esm", "exports");
             // lnako 通常モードで ESM が選択されるのは「path も native も無い」
             // 場合のみ（path があれば共通ソース、native があれば native を選択）。
             // cnako 対応（runtimes 未指定・cnako を含む）または compat-js profile
@@ -1145,7 +1340,7 @@ const Validator = struct {
             // cnako 対応の場合にのみ有効な経路であり、runtimes で cnako を
             // 否定している矛盾した宣言では数えない。実行時は Export.resolve が
             // 対象 runtime へ E006 を報告する。
-            if (export_entry.esm != null and export_entry.path == null and export_entry.native == null and
+            if (export_entry.esm.len != 0 and export_entry.path == null and export_entry.native.len == 0 and
                 !has_compat_js and !supports_cnako)
             {
                 try self.report(diag.E006_JS_IN_NORMAL_MODE, "exports", item.position, "ESM export \"{s}\" requires compat-js profile", .{export_entry.name});

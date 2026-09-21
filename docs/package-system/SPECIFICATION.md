@@ -175,6 +175,24 @@ native = "libsqlite.dylib"
 - `path` は `.nako3` ファイル。
 - `native` は native plugin ファイル。
 - `esm` は ESM ファイル。`cnako` または `lnako` の `compat-js = true` 指定時のみ扱う。
+- `native`/`esm` は対象条件付きの複数 artifact を宣言できる。文字列は `{ path = <文字列> }` の省略形、テーブルまたはその配列で複数候補を宣言する:
+
+```toml
+[[exports]]
+name = "plugin"
+native = [
+  { path = "lib/plugin.dylib", when = "os == 'macos'", min-os = "14.0" },
+  { path = "lib/plugin.so", when = "os == 'linux'", libc = "gnu" },
+]
+```
+
+  - `path`（必須）: artifact の package 内相対パス。
+  - `when`: 対象条件を表す marker 式（3.8 節）。評価が真の宣言のみ選択対象となる。
+  - `min-os`: 対象 OS の最小バージョン（`.` 区切りの数列）。対象側の OS version が不明な場合は適合を証明できないため、その宣言は選択されない。
+  - `libc`: 要求 libc 系（`gnu`/`msvc`/`musl`/`none`）。対象の libc（未指定時は abi）と一致しない宣言は選択されない。
+  - `features`: この artifact が要求する feature 名の配列。対象で有効化されていない feature を要求する宣言は選択されない。
+  - 空配列・path なしテーブルは `E019`/`E029`、未知フィールドは `E022`、不正な `when` は `E026`、不正な `min-os`/`libc` は `E029`。
+  - 複数宣言がある場合、対象に適合する最初の宣言が選択される。どの宣言も適合しない場合、その artifact 種別は対象では利用不能とみなす。
 - 同じ `name` の export を重複して宣言できない。
 - **実装選択の優先契約**（対象処理系は `lnako` または `cnako`。それ以外の処理系は `path` の有無にかかわらず `E031_UNSUPPORTED_RUNTIME`）:
   - `path`（共通ソース）が宣言されている場合は常に `path` が優先選択される。`dependencies.pkg` で `prefer-native = true` が明示され、かつ対象処理系が `lnako` の場合のみ、`native` が高速化実装として優先される（`cnako` ではフラグを無視して `path` を選択する）。
