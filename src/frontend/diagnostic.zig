@@ -18,6 +18,9 @@ pub const Code = enum {
     undefined_symbol,
     invalid_argument_count,
     assign_to_constant,
+    /// 組み込み命令名（公式の`func token`）への代入。v3.1.21で廃止された
+    /// 代入的呼出しに当たり、公式は構文エラー『関数『X』に代入できません』にする。
+    assign_to_function,
     invalid_import,
     import_not_found,
     ambiguous_import,
