@@ -108,8 +108,9 @@ pub const Symbol = struct {
     /// 関数内の`引数`束縛（公式`yCallFunc`の実引数配列）。公式は呼出しごとに
     /// 用意するため、ユーザーの同名宣言で二重定義にしない。
     implicit_arguments: bool = false,
-    /// 明示宣言が`引数`束縛を1度だけ再利用したか。公式の`varsSet`同名判定と
-    /// 同じく、2回目以降の宣言は通常の二重定義診断へ落とす。
+    /// `引数`がソース上で最初に参照・代入・宣言され変数登録済みになったか。
+    /// 公式の`varsSet.names`登録と同じく、登録後の明示宣言は通常の
+    /// 二重定義診断へ落とす。
     arguments_reused: bool = false,
 };
 
@@ -281,32 +282,88 @@ const Analyzer = struct {
             return;
         }
         if (node.kind == .anonymous_function) return;
+        // 公式は`引数`をソース上で最初に参照・代入・宣言した時点で変数登録
+        // する（genVar/varname_setのnames.add相当）。読み出しだけの文でも
+        // 登録されるため、参照形のノードでも暗黙束縛を使用済みにする。
+        // 事前宣言は文をソース順に走査するため、この記録により後続の
+        // 明示宣言は既存の二重定義診断へ落ちる。
+        if ((node.kind == .word and std.mem.eql(u8, node.value, "引数")) or
+            (node.kind == .function_call and std.mem.eql(u8, node.name, "引数")))
+        {
+            self.consumeImplicitArgumentsBinding(scope, "引数");
+        }
         // 公式はモジュール変数を既定で公開（isExportDefault=true）するため、
         // モジュールスコープの変数はis_export=trueとする。
         const exportable = self.scopes.items[scope].kind == .module;
         if (node.kind == .variable_definition) {
+            // 公式convDefLocalVarは名前の登録より先に初期化式を評価するため、
+            // `変数 引数=引数`のように式内の参照で先に登録され二重定義になる。
+            if (std.mem.eql(u8, node.name, "引数"))
+                for (node.children) |child| self.consumeArgumentsReadsIn(scope, child);
             // `{非公開}`属性はモジュール変数の公開を打ち消す（公式isExport相当）。
             _ = try self.declare(module_index, scope, node.name, if (node.is_const) .constant else .variable, node.span, exportable and node.is_export, !node.is_const, 0, true);
         } else if (node.kind == .variable_list_definition) {
-            for (node.arguments) |name| _ = try self.declare(module_index, scope, name.name, if (node.is_const) .constant else .variable, name.span, exportable and node.is_export, !node.is_const, 0, true);
-        } else if (node.kind == .assignment or node.kind == .increment or
-            (node.kind == .array_assignment and node.check_array_init))
+            for (node.arguments) |name| {
+                // 公式convDefLocalVarlistは分割宣言の二重定義を検査しない
+                // （#1027）。暗黙の`引数`は再利用・重複判定ではなく使用済みの
+                // 記録だけ行い、定数リストでは読み取り専用にする。登録済みの
+                // 定数への適用はcheckVarWritable相当の代入診断になる。
+                if (self.lookupImplicitArguments(scope, name.name)) |symbol| {
+                    if (!symbol.is_mutable) {
+                        const message = try std.fmt.allocPrint(self.allocator, "定数『{s}』は既に定義済みなので、値を代入することはできません。", .{name.name});
+                        try self.addDiagnostic(.assign_to_constant, name.span, self.modules.items[module_index].path, message);
+                    }
+                    self.symbols.items[symbol.id].arguments_reused = true;
+                    if (node.is_const) {
+                        self.symbols.items[symbol.id].kind = .constant;
+                        self.symbols.items[symbol.id].is_mutable = false;
+                    }
+                    continue;
+                }
+                _ = try self.declare(module_index, scope, name.name, if (node.is_const) .constant else .variable, name.span, exportable and node.is_export, !node.is_const, 0, true);
+            }
+        } else if (node.kind == .assignment or node.kind == .increment or node.kind == .increment_indexed or
+            node.kind == .array_assignment)
         {
             if (self.builtins.get(node.name) == null and
                 !(node.check_array_init and system_constant.isConstant(node.name)) and
                 (std.mem.indexOf(u8, node.name, "__") == null or self.scopes.items[scope].kind == .module))
             {
                 if (self.lookupAssignmentTarget(scope, node.name, node.span) == null) {
-                    _ = try self.declare(module_index, scope, node.name, .variable, node.span, true, true, 0, false);
+                    // 暗黙宣言を作るのは代入・増減とDNCL配列初期化だけ。
+                    if (node.kind != .array_assignment or node.check_array_init)
+                        _ = try self.declare(module_index, scope, node.name, .variable, node.span, true, true, 0, false);
                 } else {
-                    // 暗黙の`引数`束縛への代入は公式では定義と同じ扱いになり、
-                    // 後続の明示宣言が「二重定義」として拒否される
+                    // 暗黙の`引数`束縛への代入・添字代入・増減は公式では定義と
+                    // 同じ扱い（genVar/varname_setのnames.add）になり、後続の
+                    // 明示宣言が「二重定義」として拒否される
                     // （`A=8;定数 A=7` が二重定義になるのと同じ）。
                     self.consumeImplicitArgumentsBinding(scope, node.name);
                 }
             }
-        } else if (node.kind == .for_statement and node.name.len > 0 and self.lookupLexical(scope, node.name) == null) {
-            _ = try self.declare(module_index, scope, node.name, .loop_variable, node.span, exportable, true, 0, false);
+        } else if (node.kind == .for_statement and node.name.len > 0) {
+            if (self.lookupLexical(scope, node.name) == null) {
+                _ = try self.declare(module_index, scope, node.name, .loop_variable, node.span, exportable, true, 0, false);
+            } else {
+                // ループ変数への`引数`適用も公式は使用位置での変数登録になる
+                // （convForのnames.add相当）。
+                self.consumeImplicitArgumentsBinding(scope, node.name);
+            }
+        } else if (node.kind == .import and self.enclosingFunctionScope(scope) != null) {
+            // 関数内取り込み: 公式は取り込み先トークンをこの位置へ展開するため、
+            // 展開先の宣言・`引数`登録もこの文の位置順で処理する。resolveBlock
+            // 側で行う展開子の解決と同じ対象だけをここで事前宣言する。
+            for (self.active_import_entries) |entry| {
+                if (entry.position != node.span.start) continue;
+                const saved_entries = self.active_import_entries;
+                self.active_import_entries = if (entry.callee_variant) |variant_index|
+                    self.inputs[entry.callee_module].variants[variant_index].import_entries
+                else
+                    self.inputs[entry.callee_module].import_entries;
+                for (node.expansion) |child| try self.predeclareBlockEx(child, entry.callee_module, scope, true, true);
+                self.active_import_entries = saved_entries;
+                break;
+            }
         }
         if (!recurse and node.kind == .function_definition) return;
         // expansion 状態は子へ引き継ぐ。制御構文の内側にある展開済み関数定義も
@@ -380,7 +437,6 @@ const Analyzer = struct {
                             self.inputs[entry.callee_module].variants[variant_index].import_entries
                         else
                             self.inputs[entry.callee_module].import_entries;
-                        for (node.expansion) |child| try self.predeclareBlockEx(child, entry.callee_module, scope, true, true);
                         for (node.expansion) |child| try self.resolveBlock(child, entry.callee_module, scope);
                         self.active_import_entries = saved_entries;
                     }
@@ -417,9 +473,13 @@ const Analyzer = struct {
         // 関数本体内の位置依存は moduleSymbolVisible が関数定義位置で処理済み。
         if (resolved) |symbol| {
             if (node.kind == .property_assignment and
-                self.scopes.items[symbol.scope].kind == .module and
-                self.enclosingFunctionScope(scope) == null and
-                self.positionAfter(symbol.module_index, symbol.span, module_index, node.span))
+                ((self.scopes.items[symbol.scope].kind == .module and
+                    self.enclosingFunctionScope(scope) == null and
+                    self.positionAfter(symbol.module_index, symbol.span, module_index, node.span)) or
+                    // 暗黙の`引数`はソース上の最初の接触で変数登録される。
+                    // 公式convLetPropは登録済みの名前だけを対象にするため、
+                    // 未登録の`引数`へのプロパティ代入は『見当たりません』になる。
+                    (symbol.implicit_arguments and !symbol.arguments_reused)))
             {
                 resolved = null;
             }
@@ -755,6 +815,20 @@ const Analyzer = struct {
         self.symbols.items[symbol.id].arguments_reused = true;
     }
 
+    /// 式内の`引数`参照を使用済みにする。公式convDefLocalVarは名前の登録
+    /// より先に初期化式を評価するため、`変数 引数=引数`のような宣言は式内の
+    /// 参照で先に登録される。入れ子の関数は独自の`引数`束縛を持つため潜らない。
+    fn consumeArgumentsReadsIn(self: *Analyzer, scope: ScopeId, node: *ast.Node) void {
+        if (node.kind == .function_definition or node.kind == .test_definition or
+            node.kind == .anonymous_function) return;
+        if ((node.kind == .word and std.mem.eql(u8, node.value, "引数")) or
+            (node.kind == .function_call and std.mem.eql(u8, node.name, "引数")))
+        {
+            self.consumeImplicitArgumentsBinding(scope, "引数");
+        }
+        for (node.children) |child| self.consumeArgumentsReadsIn(scope, child);
+    }
+
     /// この文自身が暗黙・明示に宣言するシンボルを返す。
     fn lookupDeclSite(self: *Analyzer, module_index: u32, scope: ScopeId, name: []const u8, decl_span: ast.Span) ?Symbol {
         var current: ?ScopeId = scope;
@@ -947,6 +1021,23 @@ test "仮引数『引数』と同名宣言の重複診断を保つ" {
     // （公式は「定数『引数』の二重定義はできません。」を宣言行で報告する）。
     try Case.expectDuplicate("●(Aの)Fとは\n引数=8\n定数 引数=7\n引数を表示\nここまで\n1のF\n");
     try Case.expectDuplicate("●(Aの)Fとは\n引数を1増やす\n変数 引数=7\n引数を表示\nここまで\n1のF\n");
+    // 読み出し・添字参照・プロパティ参照も変数登録になるため、後続の
+    // 明示宣言は二重定義になる（公式genVar/varname_setのnames.add相当）。
+    try Case.expectDuplicate("●(Aの)Fとは\n引数を表示\n変数 引数=7\nここまで\n5のF\n");
+    try Case.expectDuplicate("●(Aの)Fとは\n引数[0]を表示\n変数 引数=7\nここまで\n5のF\n");
+    try Case.expectDuplicate("●(Aの)Fとは\n引数$aを表示\n変数 引数=7\nここまで\n5のF\n");
+    // 添字代入・添字増減もDNCL初期化モードに関わらず変数登録になる
+    // （公式convLetArray/convIncは常にgenVarする）。
+    try Case.expectDuplicate("●(Aの)Fとは\n引数[0]=9\n変数 引数=7\nここまで\n5のF\n");
+    try Case.expectDuplicate("●(Aの)Fとは\n引数[0]を1増やす\n変数 引数=7\nここまで\n5のF\n");
+    // 宣言の初期化式は名前の登録より先に評価されるため自己参照でも二重定義。
+    try Case.expectDuplicate("●(Aの)Fとは\n変数 引数=引数\nここまで\n5のF\n");
+    // 分割宣言は二重定義を検査しないが名前は登録するため後続の宣言は二重定義。
+    try Case.expectDuplicate("●(Aの)Fとは\n変数[引数,B]=[1,2]\n変数 引数=7\nここまで\n5のF\n");
+    // ループ変数への適用も変数登録になる。
+    try Case.expectDuplicate("●(Aの)Fとは\n引数を1から3まで繰り返す\nここまで\n変数 引数=7\nここまで\n5のF\n");
+    // 関数値の中でも独立した暗黙束縛が同じ規則で管理される。
+    try Case.expectDuplicate("F=関数(A)\n引数を表示\n変数 引数=7\nここまで\nF(5)\n");
 }
 
 test "『引数』の明示宣言は同名ローカルとして再利用し宣言前の代入を拒否しない" {
@@ -971,6 +1062,42 @@ test "『引数』の明示宣言は同名ローカルとして再利用し宣�
     try Case.expectDiagnostics("●(Aの)Fとは\n定数 引数=7\n引数を表示\nここまで\n1のF\n", 0, 0);
     // 宣言後の再代入は定数代入として拒否する（公式と同じ検出段階）。
     try Case.expectDiagnostics("●(Aの)Fとは\n定数 引数=7\n引数=8\nここまで\n1のF\n", 0, 1);
+    // 分割宣言は二重定義を検査しない（公式#1027）ため登録済みの`引数`への
+    // 適用も成功する。
+    try Case.expectDiagnostics("●(Aの)Fとは\n変数 引数=7\n変数[引数,B]=[1,2]\n引数を表示\nここまで\n1のF\n", 0, 0);
+    // 未登録の暗黙`引数`への分割宣言も二重定義にならず名前だけ登録される。
+    try Case.expectDiagnostics("●(Aの)Fとは\n変数[引数,B]=[1,2]\nここまで\n1のF\n", 0, 0);
+    // 定数宣言済みの`引数`への分割宣言はcheckVarWritable相当の代入診断。
+    try Case.expectDiagnostics("●(Aの)Fとは\n定数 引数=7\n変数[引数,B]=[1,2]\nここまで\n1のF\n", 0, 1);
+    // 定数リストへの`引数`適用は定数化され後続の代入を拒否する。
+    try Case.expectDiagnostics("●(Aの)Fとは\n定数[引数,B]=[1,2]\n引数=9\nここまで\n1のF\n", 0, 1);
+    // 入れ子関数の`引数`読み出しは外側の束縛に影響しない。
+    try Case.expectDiagnostics("●(Aの)Fとは\n●(Bの)Gとは\n引数を表示\nここまで\n変数 引数=7\nここまで\n5のF\n", 0, 0);
+}
+
+test "未登録の『引数』へのプロパティ代入は未定義として診断する" {
+    const parser = @import("../frontend/parser.zig");
+    const Case = struct {
+        fn expectUndefinedCount(source: []const u8, expected: usize) !void {
+            var parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
+            defer parsed.deinit();
+            var analyzed = try analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+            defer analyzed.deinit();
+            var count: usize = 0;
+            for (analyzed.diagnostics) |item| if (item.code == .undefined_symbol) {
+                count += 1;
+            };
+            try std.testing.expectEqual(expected, count);
+        }
+    };
+    // 公式convLetPropは登録済みの名前だけを対象にするため、ソース上で
+    // 一度も参照・代入・宣言されていない`引数`へのプロパティ代入は
+    // 『見当たりません』になる。
+    try Case.expectUndefinedCount("●(Aの)Fとは\n引数$a=1\nここまで\n5のF\n", 1);
+    // 宣言・読み出し・代入のどれかで登録済みならプロパティ代入は成功する。
+    try Case.expectUndefinedCount("●(Aの)Fとは\n変数 引数=7\n引数$a=1\nここまで\n5のF\n", 0);
+    try Case.expectUndefinedCount("●(Aの)Fとは\n引数を表示\n引数$a=1\nここまで\n5のF\n", 0);
+    try Case.expectUndefinedCount("●(Aの)Fとは\n引数=8\n引数$a=1\nここまで\n5のF\n", 0);
 }
 
 test "厳チェックでも関数内の『引数』は未定義にならない" {

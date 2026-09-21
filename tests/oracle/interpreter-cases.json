@@ -491,6 +491,14 @@
     "source": "●(Aの)Fとは\n引数[0]=9\nここまで\n「ok」を表示\n1のF\n"
   },
   {
+    "id": "arguments-array-varlist-after-declaration",
+    "source": "●(Aの)Fとは\n変数 引数=7\n変数[引数,B]=[1,2]\n引数を表示\nここまで\n5のF\n"
+  },
+  {
+    "id": "arguments-array-nested-function-scope",
+    "source": "●(Aの)Fとは\n  ●(Bの)Gとは\n    引数を表示\n  ここまで\n  変数 引数=7\n  引数を表示\nここまで\n5のF\n"
+  },
+  {
     "id": "arguments-array-function-import",
     "files": {
       "arguments-lib.nako3": "変数 引数=7\n"

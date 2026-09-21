@@ -71,5 +71,50 @@
     "id": "semantic-diagnostic-arguments-const-after-assignment",
     "source": "●(Aの)Fとは\n引数=8\n定数 引数=7\n引数を表示\nここまで\n1のF\n",
     "code": "duplicate_symbol"
+  },
+  {
+    "id": "semantic-diagnostic-arguments-duplicate-after-read",
+    "source": "●(Aの)Fとは\n引数を表示\n変数 引数=7\nここまで\n5のF\n",
+    "code": "duplicate_symbol"
+  },
+  {
+    "id": "semantic-diagnostic-arguments-duplicate-after-index-read",
+    "source": "●(Aの)Fとは\n引数[0]を表示\n変数 引数=7\nここまで\n5のF\n",
+    "code": "duplicate_symbol"
+  },
+  {
+    "id": "semantic-diagnostic-arguments-duplicate-after-property-read",
+    "source": "●(Aの)Fとは\n引数$aを表示\n変数 引数=7\nここまで\n5のF\n",
+    "code": "duplicate_symbol"
+  },
+  {
+    "id": "semantic-diagnostic-arguments-duplicate-after-array-assign",
+    "source": "●(Aの)Fとは\n引数[0]=9\n変数 引数=7\nここまで\n5のF\n",
+    "code": "duplicate_symbol"
+  },
+  {
+    "id": "semantic-diagnostic-arguments-duplicate-self-init",
+    "source": "●(Aの)Fとは\n変数 引数=引数\nここまで\n5のF\n",
+    "code": "duplicate_symbol"
+  },
+  {
+    "id": "semantic-diagnostic-arguments-duplicate-after-varlist",
+    "source": "●(Aの)Fとは\n変数[引数,B]=[1,2]\n変数 引数=7\nここまで\n5のF\n",
+    "code": "duplicate_symbol"
+  },
+  {
+    "id": "semantic-diagnostic-arguments-property-write-unregistered",
+    "source": "●(Aの)Fとは\n引数$a=1\nここまで\n5のF\n",
+    "code": "undefined_symbol"
+  },
+  {
+    "id": "semantic-diagnostic-arguments-const-varlist",
+    "source": "●(Aの)Fとは\n定数 引数=7\n変数[引数,B]=[1,2]\nここまで\n5のF\n",
+    "code": "assign_to_constant"
+  },
+  {
+    "id": "semantic-diagnostic-arguments-anonymous-function-read",
+    "source": "F=関数(A)\n引数を表示\n変数 引数=7\nここまで\nF(5)\n",
+    "code": "duplicate_symbol"
   }
 ]
