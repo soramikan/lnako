@@ -90,9 +90,25 @@ pub const Marker = struct {
     }
 
     pub fn evaluate(self: *const Marker, context: Context) EvalError!bool {
-        return evalExpr(self.root, context);
+        return switch (try evalExpr(self.root, context, .initEmpty())) {
+            .pass => true,
+            .fail => false,
+            .unknown => unreachable,
+        };
+    }
+
+    /// `unknown_fields` に挙げたフィールドへの参照を「不明」として三値
+    /// 評価する。`unknown` は確定条件だけでは真偽が決まらない式を示す。
+    /// 有効 feature 集合の未確定段階で `features` 参照だけを保留するなど、
+    /// 未確定条件を理由に候補を落とさない判定に使う。
+    pub fn evaluatePartial(self: *const Marker, context: Context, unknown_fields: std.EnumSet(Field)) EvalError!EvalResult {
+        return evalExpr(self.root, context, unknown_fields);
     }
 };
+
+/// 三値評価の結果。`unknown` は評価に必要なフィールドが未確定だった
+/// ことを示す。
+pub const EvalResult = enum { pass, fail, unknown };
 
 pub const Result = union(enum) {
     ok: Marker,
@@ -490,6 +506,7 @@ fn fieldFromName(name: []const u8) ?Field {
 }
 
 const Resolved = union(enum) {
+    unknown,
     string: []const u8,
     boolean: bool,
     version: semver.Version,
@@ -508,17 +525,17 @@ const ListView = union(enum) {
         };
     }
 
-    fn at(self: ListView, index: usize, context: Context) EvalError!Resolved {
+    fn at(self: ListView, index: usize, context: Context, unknown: std.EnumSet(Field)) EvalError!Resolved {
         return switch (self) {
-            .operands => |items| resolveOperand(items[index], context),
+            .operands => |items| resolveOperand(items[index], context, unknown),
             .strings => |items| .{ .string = items[index] },
         };
     }
 };
 
-fn resolveOperand(operand: Operand, context: Context) EvalError!Resolved {
+fn resolveOperand(operand: Operand, context: Context, unknown: std.EnumSet(Field)) EvalError!Resolved {
     return switch (operand) {
-        .field => |field| switch (field) {
+        .field => |field| if (unknown.contains(field)) .unknown else switch (field) {
             .runtime => .{ .string = context.runtime },
             .os => .{ .string = context.os },
             .cpu => .{ .string = context.cpu },
@@ -536,35 +553,48 @@ fn resolveOperand(operand: Operand, context: Context) EvalError!Resolved {
 
 // AST の深さは parseUnary の `max_marker_nesting` で束縛されるため、
 // この再帰はネイティブスタックを枯渇させない。
-fn evalExpr(expr: *const Expr, context: Context) EvalError!bool {
+fn evalExpr(expr: *const Expr, context: Context, unknown: std.EnumSet(Field)) EvalError!EvalResult {
     return switch (expr.*) {
         .or_ => |items| blk: {
+            var saw_unknown = false;
             for (items) |child| {
-                if (try evalExpr(child, context)) break :blk true;
+                switch (try evalExpr(child, context, unknown)) {
+                    .pass => break :blk .pass,
+                    .unknown => saw_unknown = true,
+                    .fail => {},
+                }
             }
-            break :blk false;
+            break :blk if (saw_unknown) .unknown else .fail;
         },
         .and_ => |items| blk: {
+            var saw_unknown = false;
             for (items) |child| {
-                if (!(try evalExpr(child, context))) break :blk false;
+                switch (try evalExpr(child, context, unknown)) {
+                    .fail => break :blk .fail,
+                    .unknown => saw_unknown = true,
+                    .pass => {},
+                }
             }
-            break :blk true;
+            break :blk if (saw_unknown) .unknown else .pass;
         },
-        .not => |operand| !(try evalExpr(operand, context)),
-        .operand => |operand| blk: {
-            const resolved = try resolveOperand(operand, context);
-            break :blk switch (resolved) {
-                .boolean => |boolean| boolean,
-                else => error.TypeMismatch,
-            };
+        .not => |operand| switch (try evalExpr(operand, context, unknown)) {
+            .pass => .fail,
+            .fail => .pass,
+            .unknown => .unknown,
         },
-        .comparison => |comparison| try evalComparison(comparison, context),
+        .operand => |operand| switch (try resolveOperand(operand, context, unknown)) {
+            .boolean => |boolean| if (boolean) EvalResult.pass else .fail,
+            .unknown => .unknown,
+            else => error.TypeMismatch,
+        },
+        .comparison => |comparison| try evalComparison(comparison, context, unknown),
     };
 }
 
-fn evalComparison(comparison: Comparison, context: Context) EvalError!bool {
-    const left = try resolveOperand(comparison.left, context);
-    const right = try resolveOperand(comparison.right, context);
+fn evalComparison(comparison: Comparison, context: Context, unknown: std.EnumSet(Field)) EvalError!EvalResult {
+    const left = try resolveOperand(comparison.left, context, unknown);
+    const right = try resolveOperand(comparison.right, context, unknown);
+    if (left == .unknown or right == .unknown) return .unknown;
     switch (comparison.op) {
         .in, .not_in => {
             const list = switch (right) {
@@ -572,8 +602,13 @@ fn evalComparison(comparison: Comparison, context: Context) EvalError!bool {
                 else => return error.TypeMismatch,
             };
             var found = false;
+            var saw_unknown = false;
             for (0..list.len()) |i| {
-                const item = try list.at(i, context);
+                const item = try list.at(i, context, unknown);
+                if (item == .unknown) {
+                    saw_unknown = true;
+                    continue;
+                }
                 // `in` の要素比較は `==` と同じ意味論（SemVer 強制を含む）。
                 // 比較不能な型同士は一致しないものとして扱う。
                 const ord = compareResolved(left, item) catch continue;
@@ -582,18 +617,20 @@ fn evalComparison(comparison: Comparison, context: Context) EvalError!bool {
                     break;
                 }
             }
-            return if (comparison.op == .in) found else !found;
+            if (found) return if (comparison.op == .in) .pass else .fail;
+            if (saw_unknown) return .unknown;
+            return if (comparison.op == .in) .fail else .pass;
         },
         else => {},
     }
     const ord = try compareResolved(left, right);
     return switch (comparison.op) {
-        .eq => ord == .eq,
-        .ne => ord != .eq,
-        .lt => ord == .lt,
-        .lte => ord != .gt,
-        .gt => ord == .gt,
-        .gte => ord != .lt,
+        .eq => if (ord == .eq) EvalResult.pass else .fail,
+        .ne => if (ord != .eq) .pass else .fail,
+        .lt => if (ord == .lt) .pass else .fail,
+        .lte => if (ord != .gt) .pass else .fail,
+        .gt => if (ord == .gt) .pass else .fail,
+        .gte => if (ord != .lt) .pass else .fail,
         else => unreachable,
     };
 }

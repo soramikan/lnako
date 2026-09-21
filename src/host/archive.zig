@@ -1,6 +1,6 @@
 const std = @import("std");
 const lnako = @import("lnako");
-const zip_archive = @import("../archive/zip.zig");
+const zip_archive = lnako.archive.zip;
 
 pub fn runStoredZipArchive(allocator: std.mem.Allocator, io: std.Io, operation: lnako.plugins.node.ArchiveOperation, source: []const u8, destination: []const u8) ![]u8 {
     switch (operation) {

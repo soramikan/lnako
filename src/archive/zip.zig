@@ -8,7 +8,6 @@ const Entry = struct {
     name: []u8,
     data: []u8,
     is_directory: bool,
-    local_offset: u32 = 0,
 
     fn deinit(self: Entry, allocator: std.mem.Allocator) void {
         allocator.free(self.name);
@@ -16,24 +15,39 @@ const Entry = struct {
     }
 };
 
-pub fn create(allocator: std.mem.Allocator, io: std.Io, source: []const u8, destination: []const u8) !void {
-    var entries: std.ArrayList(Entry) = .empty;
-    defer {
-        for (entries.items) |entry| entry.deinit(allocator);
-        entries.deinit(allocator);
+/// 明示的なentry一覧からZIPを生成するための書き込み表現。
+/// `name` はPOSIX区切りの正規化済みパス、directory entryは末尾`/`。
+/// `writeEntries` 呼出しの間だけ有効な借用でよい。
+pub const WriteEntry = struct {
+    name: []const u8,
+    data: []const u8 = "",
+    is_directory: bool = false,
+};
+
+/// entry一覧から決定的なstored ZIPバイト列を生成する。
+/// 名前のバイト順にソートして書き込み、時刻・コメントは固定値にするため、
+/// 同一入力からは同一バイト列が得られる。同名entryの重複は拒否する。
+pub fn writeEntries(allocator: std.mem.Allocator, entries: []const WriteEntry) ![]u8 {
+    if (entries.len > max_entries) return error.ZipEntryCountExceeded;
+    const sorted = try allocator.dupe(WriteEntry, entries);
+    defer allocator.free(sorted);
+    std.mem.sort(WriteEntry, sorted, {}, lessThanWriteEntry);
+    for (sorted, 0..) |entry, index| {
+        if (index == 0) continue;
+        if (std.mem.eql(u8, entry.name, sorted[index - 1].name)) return error.ZipDuplicateEntry;
     }
-    try gatherEntries(allocator, io, source, &entries);
-    std.mem.sort(Entry, entries.items, {}, lessThanEntry);
-    if (entries.items.len > max_entries) return error.ZipEntryCountExceeded;
 
     var total_input_size: u64 = 0;
-    for (entries.items) |entry| total_input_size += entry.data.len;
+    for (sorted) |entry| total_input_size += entry.data.len;
     if (total_input_size > max_total_size) return error.ZipTotalSizeExceeded;
 
+    const offsets = try allocator.alloc(u32, sorted.len);
+    defer allocator.free(offsets);
+
     var output: std.ArrayList(u8) = .empty;
-    defer output.deinit(allocator);
-    for (entries.items) |*entry| {
-        entry.local_offset = std.math.cast(u32, output.items.len) orelse return error.Zip64Required;
+    errdefer output.deinit(allocator);
+    for (sorted, 0..) |entry, index| {
+        offsets[index] = std.math.cast(u32, output.items.len) orelse return error.Zip64Required;
         const crc = if (entry.is_directory) 0 else std.hash.Crc32.hash(entry.data);
         const size = std.math.cast(u32, entry.data.len) orelse return error.Zip64Required;
         try appendInt(&output, allocator, u32, 0x04034b50);
@@ -52,7 +66,7 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, source: []const u8, dest
     }
 
     const central_offset = std.math.cast(u32, output.items.len) orelse return error.Zip64Required;
-    for (entries.items) |entry| {
+    for (sorted, 0..) |entry, index| {
         const crc = if (entry.is_directory) 0 else std.hash.Crc32.hash(entry.data);
         const size = std.math.cast(u32, entry.data.len) orelse return error.Zip64Required;
         try appendInt(&output, allocator, u32, 0x02014b50);
@@ -71,11 +85,11 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, source: []const u8, dest
         try appendInt(&output, allocator, u16, 0);
         try appendInt(&output, allocator, u16, 0);
         try appendInt(&output, allocator, u32, if (entry.is_directory) 0x41ed0010 else 0x81a40000);
-        try appendInt(&output, allocator, u32, entry.local_offset);
+        try appendInt(&output, allocator, u32, offsets[index]);
         try output.appendSlice(allocator, entry.name);
     }
     const central_size = std.math.cast(u32, output.items.len - central_offset) orelse return error.Zip64Required;
-    const count = std.math.cast(u16, entries.items.len) orelse return error.Zip64Required;
+    const count = std.math.cast(u16, sorted.len) orelse return error.Zip64Required;
     try appendInt(&output, allocator, u32, 0x06054b50);
     try appendInt(&output, allocator, u16, 0);
     try appendInt(&output, allocator, u16, 0);
@@ -85,7 +99,24 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, source: []const u8, dest
     try appendInt(&output, allocator, u32, central_offset);
     try appendInt(&output, allocator, u16, 0);
     if (output.items.len > max_total_size) return error.ZipTotalSizeExceeded;
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = destination, .data = output.items });
+    return output.toOwnedSlice(allocator);
+}
+
+pub fn create(allocator: std.mem.Allocator, io: std.Io, source: []const u8, destination: []const u8) !void {
+    var entries: std.ArrayList(Entry) = .empty;
+    defer {
+        for (entries.items) |entry| entry.deinit(allocator);
+        entries.deinit(allocator);
+    }
+    try gatherEntries(allocator, io, source, &entries);
+    const write_entries = try allocator.alloc(WriteEntry, entries.items.len);
+    defer allocator.free(write_entries);
+    for (entries.items, 0..) |entry, index| {
+        write_entries[index] = .{ .name = entry.name, .data = entry.data, .is_directory = entry.is_directory };
+    }
+    const output = try writeEntries(allocator, write_entries);
+    defer allocator.free(output);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = destination, .data = output });
 }
 
 pub fn extract(io: std.Io, source: []const u8, destination: []const u8) !void {
@@ -343,6 +374,38 @@ fn appendInt(list: *std.ArrayList(u8), allocator: std.mem.Allocator, comptime T:
 
 fn lessThanEntry(_: void, left: Entry, right: Entry) bool {
     return std.mem.order(u8, left.name, right.name) == .lt;
+}
+
+fn lessThanWriteEntry(_: void, left: WriteEntry, right: WriteEntry) bool {
+    return std.mem.order(u8, left.name, right.name) == .lt;
+}
+
+test "writeEntriesは同一入力から同一バイト列を生成し重複を拒否する" {
+    const allocator = std.testing.allocator;
+    const entries = [_]WriteEntry{
+        .{ .name = "b/second.txt", .data = "2" },
+        .{ .name = "a/first.txt", .data = "1" },
+        .{ .name = "NAKO-PKG/METADATA.toml", .data = "schemaVersion = 1\n" },
+    };
+    const first = try writeEntries(allocator, &entries);
+    defer allocator.free(first);
+    const second = try writeEntries(allocator, &entries);
+    defer allocator.free(second);
+    try std.testing.expectEqualSlices(u8, first, second);
+
+    // entry名のバイト順ソートでlocal headerが並ぶ。
+    var position: usize = 0;
+    for ([_][]const u8{ "NAKO-PKG/METADATA.toml", "a/first.txt", "b/second.txt" }) |name| {
+        const found = std.mem.indexOfPos(u8, first, position, name).?;
+        try std.testing.expect(first[found - 30] == 'P' and first[found - 29] == 'K');
+        position = found + name.len;
+    }
+
+    const duplicated = [_]WriteEntry{
+        .{ .name = "a.txt", .data = "x" },
+        .{ .name = "a.txt", .data = "y" },
+    };
+    try std.testing.expectError(error.ZipDuplicateEntry, writeEntries(allocator, &duplicated));
 }
 
 test "stored ZIPを作成・展開する" {

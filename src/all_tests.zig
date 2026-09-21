@@ -31,6 +31,14 @@ test {
     _ = @import("lnako").package.manifest;
     _ = @import("lnako").package.resolver;
     _ = @import("lnako").package.lock;
+    _ = @import("lnako").package.toml_write;
+    _ = @import("lnako").package.glob;
+    _ = @import("lnako").package.npkg_metadata;
+    _ = @import("lnako").package.npkg_files;
+    _ = @import("lnako").package.npkg_commands;
+    _ = @import("lnako").package.npkg_commands_gen;
+    _ = @import("lnako").package.npkg_build;
+    _ = @import("lnako").package.npkg_verify;
 
     _ = @import("regexp");
 }
