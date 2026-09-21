@@ -1040,21 +1040,21 @@ pub const Parser = struct {
             var value: *ast.Node = undefined;
             if (target_index) |ti| {
                 target = arguments[ti];
-                if (target.kind != .word and target.kind != .array_reference and target.kind != .property_reference)
-                    return self.fail(.invalid_assignment, "代入先は変数・配列・プロパティである必要があります", command);
                 // 公式ySadameruは値の助詞が無ければnop（=0）を初期値にする。
                 value = if (value_index) |vi| arguments[vi] else if (is_define) try builder.omittedValue(self, command) else if (arguments.len > 1 and ti != 0) arguments[0] else try self.implicitIt(command);
             } else if (value_index) |vi| {
                 value = arguments[vi];
                 target = if (vi == 0) try self.implicitIt(command) else arguments[0];
-                if (target.kind != .word and target.kind != .array_reference and target.kind != .property_reference)
-                    return self.fail(.invalid_assignment, "代入先は変数・配列・プロパティである必要があります", command);
             } else {
                 target = arguments[0];
-                if (target.kind != .word and target.kind != .array_reference and target.kind != .property_reference)
-                    return self.fail(.invalid_assignment, "代入先は変数・配列・プロパティである必要があります", command);
                 value = if (arguments.len > 1) arguments[1] else try self.implicitIt(command);
             }
+            // 公式ySadameruの定義対象は`word`に限る。配列要素・プロパティは
+            // 『(定数名)を(値)に定める』の形ではないため文法エラーになる。
+            if (is_define and target.kind != .word)
+                return self.fail(.invalid_assignment, "『定める』文で定数が見当たりません。『(定数名)を(値)に定める』のように使います。", command);
+            if (!is_define and target.kind != .word and target.kind != .array_reference and target.kind != .property_reference)
+                return self.fail(.invalid_assignment, "代入先は変数・配列・プロパティである必要があります", command);
 
             const kind: ast.Kind = if (is_define and target.kind == .word)
                 .variable_definition
