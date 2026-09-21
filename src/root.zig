@@ -104,6 +104,9 @@ pub const package = struct {
     pub const lock = @import("package/lock.zig");
     pub const toml_write = @import("package/toml_write.zig");
     pub const glob = @import("package/glob.zig");
+    pub const npkg_metadata = @import("package/npkg_metadata.zig");
+    pub const npkg_files = @import("package/npkg_files.zig");
+    pub const npkg_commands = @import("package/npkg_commands.zig");
 };
 
 pub const Command = enum {
@@ -236,6 +239,9 @@ test {
     std.testing.refAllDecls(package.lock);
     std.testing.refAllDecls(package.toml_write);
     std.testing.refAllDecls(package.glob);
+    std.testing.refAllDecls(package.npkg_metadata);
+    std.testing.refAllDecls(package.npkg_files);
+    std.testing.refAllDecls(package.npkg_commands);
 }
 
 test "コマンドを解析できる" {
