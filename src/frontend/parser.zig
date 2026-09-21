@@ -524,6 +524,48 @@ pub const Parser = struct {
         return arguments.toOwnedSlice(self.allocator);
     }
 
+    /// 公式yLet/ySadameruの変数属性 `{公開}`/`{非公開}`/`{エクスポート}`。
+    /// 公式は `{` `word` `}` の並びだけを属性として消費し、未知の属性名は
+    /// 警告なしで既定（公開）のまま残す。属性が無ければ null を返す。
+    pub fn parseVariableAttribute(self: *Parser) ParseFailure!?bool {
+        if (!self.at(.left_brace) or self.peekAhead(1).kind != .identifier or self.peekAhead(2).kind != .right_brace) return null;
+        _ = self.advance();
+        const attribute = self.advance();
+        _ = self.advance();
+        if (std.mem.eql(u8, attribute.value, "非公開")) return false;
+        if (std.mem.eql(u8, attribute.value, "公開") or std.mem.eql(u8, attribute.value, "エクスポート")) return true;
+        return null;
+    }
+
+    /// 公式convDefLocalVar相当のローカル変数定義。初期値を省略した場合は
+    /// 公式と同じく 0 を初期値にする（nopブロックの既定値）。
+    pub fn makeVariableDefinition(
+        self: *Parser,
+        start: Token,
+        name: []const u8,
+        is_const: bool,
+        attribute: ?bool,
+        value: ?*ast.Node,
+    ) ParseFailure!*ast.Node {
+        const initial = value orelse try builder.numberZero(self, start);
+        const node = try builder.makeNodeWithChildren(self, .variable_definition, start, try builder.copyChildren(self, &.{initial}));
+        node.name = name;
+        node.is_const = is_const;
+        // 公式のdef_local_varはjosiを持たない（『Aとは変数』の『とは』は宣言構文の一部）。
+        node.josi = "";
+        node.raw_josi = "";
+        // 属性が無い場合は公式のisExportDefault（既定は公開）に従う。
+        node.is_export = attribute orelse true;
+        return node;
+    }
+
+    /// 宣言文で『=』を省略できるのは「変数 名」だけ。定数と属性付きの変数は
+    /// 公式も『=』を必須にしている（`定数 A`・`変数 A{公開}` は構文解析に失敗する）。
+    fn requireDeclarationValue(self: *Parser, is_const: bool, attribute: ?bool) ParseFailure!void {
+        if (!is_const and attribute == null) return;
+        return self.fail(.expected_token, if (is_const) "定数宣言に『=』が必要です" else "変数宣言に『=』が必要です", self.peek());
+    }
+
     pub fn parseDeclaration(self: *Parser, is_const: bool) ParseFailure!*ast.Node {
         const start = self.advance();
         if (self.at(.left_bracket)) {
@@ -538,12 +580,14 @@ pub const Parser = struct {
             return node;
         }
         const name = try self.require(.identifier, "変数名が必要です");
-        _ = try self.require(.equal, "変数宣言に『=』が必要です");
+        const attribute = try self.parseVariableAttribute();
+        if (!self.at(.equal)) {
+            try self.requireDeclarationValue(is_const, attribute);
+            return self.makeVariableDefinition(start, name.value, is_const, attribute, null);
+        }
+        _ = self.advance();
         const value = try self.parseCallExpression();
-        const node = try builder.makeNodeWithChildren(self, .variable_definition, start, try builder.copyChildren(self, &.{value}));
-        node.name = name.value;
-        node.is_const = is_const;
-        return node;
+        return self.makeVariableDefinition(start, name.value, is_const, attribute, value);
     }
 
     /// `取込 <expr>` の文頭形式。
@@ -586,6 +630,9 @@ pub const Parser = struct {
     }
 
     pub fn canStartAssignment(self: *Parser) bool {
+        // 公式yLetの「Aとは変数」「Aとは定数」は初期値を省略できるため、
+        // 『=』が無くても宣言文として解析する。
+        if (self.isTowaDeclaration()) return true;
         var i = self.index;
         var nesting: usize = 0;
         while (i < self.tokens.len) : (i += 1) {
@@ -603,6 +650,26 @@ pub const Parser = struct {
         return false;
     }
 
+    /// 現在位置が「(名前)とは 変数|定数」で始まるか。公式yLetのローカル変数定義。
+    fn isTowaDeclaration(self: *Parser) bool {
+        if (self.peek().kind != .identifier or !std.mem.eql(u8, self.peek().josi, "とは")) return false;
+        const next = self.peekAhead(1).kind;
+        return next == .keyword_let or next == .keyword_const;
+    }
+
+    /// 公式yLetのローカル変数定義「(名前)とは 変数|定数 [{属性}] [= 値]」。
+    /// 公式はこの形だけ『=』を常に省略でき、省略時は 0 を初期値にする。
+    fn parseTowaDeclaration(self: *Parser, start: Token, target: *ast.Node) ParseFailure!*ast.Node {
+        const is_const = self.at(.keyword_const);
+        _ = self.advance(); // 変数 / 定数
+        const attribute = try self.parseVariableAttribute();
+        const name = if (target.name.len > 0) target.name else target.value;
+        if (!self.at(.equal)) return self.makeVariableDefinition(start, name, is_const, attribute, null);
+        _ = self.advance();
+        const value = try self.parseCallExpression();
+        return self.makeVariableDefinition(start, name, is_const, attribute, value);
+    }
+
     pub fn parseAssignment(self: *Parser) ParseFailure!*ast.Node {
         const start = self.peek();
         var targets: std.ArrayList(*ast.Node) = .empty;
@@ -611,8 +678,11 @@ pub const Parser = struct {
             _ = self.advance();
             try targets.append(self.allocator, try self.parseLValue());
         }
-        const declaration_from_towa = self.at(.keyword_let) and std.mem.eql(u8, targets.items[0].josi, "とは");
-        if (declaration_from_towa) _ = self.advance();
+        if (targets.items.len == 1 and std.mem.eql(u8, targets.items[0].josi, "とは") and
+            (self.at(.keyword_let) or self.at(.keyword_const)))
+        {
+            return self.parseTowaDeclaration(start, targets.items[0]);
+        }
         _ = try self.require(.equal, "代入文に『=』が必要です");
         const value = try self.parseCallExpression();
         if (targets.items.len > 1) {
@@ -624,7 +694,7 @@ pub const Parser = struct {
         const kind: ast.Kind = switch (target.kind) {
             .array_reference => .array_assignment,
             .property_reference => .property_assignment,
-            else => if (declaration_from_towa) .variable_definition else .assignment,
+            else => .assignment,
         };
         const target_children = if (target.kind == .array_reference or target.kind == .property_reference)
             try builder.assignmentPath(self, target)
@@ -993,6 +1063,8 @@ pub const Parser = struct {
             const result = try builder.makeNodeWithChildren(self, kind, start, children);
             result.name = if (target.kind == .word) target.value else if (target.name.len > 0) target.name else target.value;
             result.josi = "";
+            // 公式ySadameruの既定公開設定（isExportDefault）に従う。
+            if (kind == .variable_definition) result.is_export = true;
             result.check_array_init = kind == .array_assignment and (self.mode.dncl or self.mode.dncl2);
             return result;
         }

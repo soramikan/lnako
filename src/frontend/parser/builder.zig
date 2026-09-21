@@ -52,6 +52,13 @@ pub fn numberOne(self: *Parser, token: Token) ParseFailure!*ast.Node {
     return node;
 }
 
+pub fn numberZero(self: *Parser, token: Token) ParseFailure!*ast.Node {
+    const node = try makeNode(self, .number, token);
+    node.value = "0";
+    node.number_value = 0;
+    return node;
+}
+
 pub fn nop(self: *Parser, token: Token) ParseFailure!*ast.Node {
     return makeNode(self, .nop, token);
 }

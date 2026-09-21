@@ -642,3 +642,72 @@ test "深い単項演算子の入れ子が上限を超えたら位置付き診�
     try std.testing.expectEqual(@as(?*ast.Node, null), result.root);
     try std.testing.expectEqual(diagnostic.Code.nesting_too_deep, result.diagnostics[0].code);
 }
+
+test "初期値を省略した変数・定数宣言を0で初期化する" {
+    // 公式yLetの「変数 名」は初期値を省略でき、convDefLocalVarがnopを0にする。
+    var result = try parse(std.testing.allocator, "変数 A\nAを表示\n", "変数.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const declaration = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.variable_definition, declaration.kind);
+    try std.testing.expectEqualStrings("A", declaration.name);
+    try std.testing.expect(!declaration.is_const);
+    try std.testing.expect(declaration.is_export);
+    try std.testing.expectEqual(@as(usize, 1), declaration.children.len);
+    try std.testing.expectEqual(ast.Kind.number, declaration.children[0].kind);
+    try std.testing.expectEqual(@as(f64, 0), declaration.children[0].number_value.?);
+}
+
+test "『〜とは変数』『〜とは定数』の初期値なし宣言を受理する" {
+    var result = try parse(std.testing.allocator, "Aとは変数\nBとは定数\n", "とは宣言.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const variable = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.variable_definition, variable.kind);
+    try std.testing.expectEqualStrings("A", variable.name);
+    try std.testing.expect(!variable.is_const);
+    try std.testing.expectEqual(ast.Kind.number, variable.children[0].kind);
+    const constant = result.root.?.children[2];
+    try std.testing.expectEqual(ast.Kind.variable_definition, constant.kind);
+    try std.testing.expectEqualStrings("B", constant.name);
+    try std.testing.expect(constant.is_const);
+    try std.testing.expectEqual(ast.Kind.number, constant.children[0].kind);
+}
+
+test "『〜とは定数=値』を定数定義として構文解析する" {
+    var result = try parse(std.testing.allocator, "Dとは定数=50\n", "とは定数.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const declaration = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.variable_definition, declaration.kind);
+    try std.testing.expectEqualStrings("D", declaration.name);
+    try std.testing.expect(declaration.is_const);
+    try std.testing.expectEqual(@as(f64, 50), declaration.children[0].number_value.?);
+}
+
+test "宣言の『{公開}』『{非公開}』属性を公開設定として受理する" {
+    var result = try parse(std.testing.allocator, "変数 A{非公開}=1\n定数 C{公開}=2\nEとは変数{非公開}\nFとは定数{エクスポート}=3\n", "属性.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const private_variable = result.root.?.children[0];
+    try std.testing.expect(!private_variable.is_export);
+    const public_constant = result.root.?.children[2];
+    try std.testing.expect(public_constant.is_const);
+    try std.testing.expect(public_constant.is_export);
+    const private_towa = result.root.?.children[4];
+    try std.testing.expect(!private_towa.is_export);
+    try std.testing.expectEqual(ast.Kind.number, private_towa.children[0].kind);
+    const exported_towa = result.root.?.children[6];
+    try std.testing.expect(exported_towa.is_const);
+    try std.testing.expect(exported_towa.is_export);
+}
+
+test "公式同様に『定数 名』と属性付きの初期値なし宣言を拒否する" {
+    const cases = [_][]const u8{ "定数 A\n", "定数 A{公開}\n", "変数 A{公開}\n" };
+    for (cases) |source| {
+        var result = try parse(std.testing.allocator, source, "宣言エラー.nako3");
+        defer result.deinit();
+        try std.testing.expect(!result.succeeded());
+        try std.testing.expectEqual(diagnostic.Code.expected_token, result.diagnostics[0].code);
+    }
+}

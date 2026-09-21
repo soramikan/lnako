@@ -390,5 +390,13 @@
   {
     "id": "loop-var-qualified-name-local",
     "source": "●Fとは\n　main__Iを1から3まで繰り返す\n　ここまで\nここまで\nF\nmain__Iを表示\n"
+  },
+  {
+    "id": "declaration-initializer-omitted",
+    "source": "変数 A\nAを表示\nBとは変数\nBを表示\nCとは定数\nCを表示\nDとは定数=50\nDを表示\n"
+  },
+  {
+    "id": "declaration-visibility-attribute",
+    "source": "変数 A{非公開}=1\nAを表示\n定数 C{公開}=2\nCを表示\nEとは変数{公開}\nEを表示\nFとは定数{非公開}=3\nFを表示\n"
   }
 ]
