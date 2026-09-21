@@ -1076,3 +1076,41 @@ test "宣言の右辺は匿名関数も受理する" {
         try std.testing.expectEqual(ast.Kind.anonymous_function, declarations[0].children[0].kind);
     }
 }
+
+test "『定める』が『と』助詞を値として受理し値の省略をnopにする" {
+    // 公式ySadameruは `popStack(['を'])` を定義対象、`popStack(['へ','に','と'])`
+    // を値に取り、値が無ければnop（コード生成で0）にする。
+    var result = try parse(std.testing.allocator, "Cを1と定める\nDを定める\n", "定めると.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const declarations = try variableDefinitions(std.testing.allocator, result.root.?);
+    defer std.testing.allocator.free(declarations);
+    try std.testing.expectEqual(@as(usize, 2), declarations.len);
+    try std.testing.expectEqualStrings("C", declarations[0].name);
+    try std.testing.expectEqual(@as(f64, 1), declarations[0].children[0].number_value.?);
+    try std.testing.expectEqualStrings("D", declarations[1].name);
+    try std.testing.expectEqual(ast.Kind.nop, declarations[1].children[0].kind);
+}
+
+test "『定める』は配列要素・プロパティを定義対象にしない" {
+    // 公式ySadameruの定義対象は`word`に限る（配列要素・プロパティは
+    // 『(定数名)を(値)に定める』の形ではないため文法エラーになる）。
+    const cases = [_][]const u8{
+        "A=[]\nA[0]を定める\n",
+        "A=[0]\nA[0]を5に定める\n",
+        "A={}\nA$xを定める\n",
+        "A={\"x\":0}\nA$xを5に定める\n",
+    };
+    for (cases) |source| {
+        var result = try parse(std.testing.allocator, source, "定める対象.nako3");
+        defer result.deinit();
+        try std.testing.expect(!result.succeeded());
+        try std.testing.expectEqual(diagnostic.Code.invalid_assignment, result.diagnostics[0].code);
+        try std.testing.expectEqualStrings("『定める』文で定数が見当たりません。『(定数名)を(値)に定める』のように使います。", result.diagnostics[0].message);
+    }
+
+    // `代入`は従来どおり配列要素・プロパティを対象にできる。
+    var assignment = try parse(std.testing.allocator, "A=[0]\nA[0]に5を代入\nA[0]を表示\n", "代入対象.nako3");
+    defer assignment.deinit();
+    try std.testing.expect(assignment.succeeded());
+}
