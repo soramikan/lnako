@@ -711,3 +711,81 @@ test "公式同様に『定数 名』と属性付きの初期値なし宣言を�
         try std.testing.expectEqual(diagnostic.Code.expected_token, result.diagnostics[0].code);
     }
 }
+
+test "『!モジュール公開既定値』が無属性宣言の公開設定の既定値になる" {
+    // 公式yExportDefault: 『公開』以外は非公開を既定にする。
+    var result = try parse(std.testing.allocator, "!モジュール公開既定値=「非公開」\n変数 A=1\n変数 B{公開}=2\nAとは変数=3\n", "公開既定値.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const declarations = try variableDefinitions(std.testing.allocator, result.root.?);
+    defer std.testing.allocator.free(declarations);
+    try std.testing.expectEqual(@as(usize, 3), declarations.len);
+    try std.testing.expect(!declarations[0].is_export);
+    try std.testing.expect(declarations[1].is_export);
+    try std.testing.expect(!declarations[2].is_export);
+
+    var public_default = try parse(std.testing.allocator, "!モジュール公開既定値=「公開」\n変数 A=1\n変数 B{非公開}=2\n", "公開既定値2.nako3");
+    defer public_default.deinit();
+    const public_declarations = try variableDefinitions(std.testing.allocator, public_default.root.?);
+    defer std.testing.allocator.free(public_declarations);
+    try std.testing.expectEqual(@as(usize, 2), public_declarations.len);
+    try std.testing.expect(public_declarations[0].is_export);
+    try std.testing.expect(!public_declarations[1].is_export);
+}
+
+test "未知の属性名でも『変数 名{属性}』は『=』を必須にする" {
+    // 公式は `変数 word { word } eq` を先に試すため、属性名が未知でも
+    // 『=』が無ければ「変数宣言のみ」の形へは落ちない。
+    var result = try parse(std.testing.allocator, "変数 A{未知}\nAを表示\n", "未知属性.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+    try std.testing.expectEqual(diagnostic.Code.expected_token, result.diagnostics[0].code);
+
+    var with_value = try parse(std.testing.allocator, "変数 A{未知}=1\nAを表示\n", "未知属性2.nako3");
+    defer with_value.deinit();
+    try std.testing.expect(with_value.succeeded());
+    try std.testing.expect(with_value.root.?.children[0].is_export);
+}
+
+test "『〜とは 変数|定数=』の空の右辺と宣言直後のカンマを公式同様に受理する" {
+    // 公式yLetは `yCalc() || value` で空の右辺をnopに落とし、
+    // `名前1=値1, 名前2=値2` のために宣言直後のカンマを1つ読み飛ばす。
+    var result = try parse(std.testing.allocator, "Aとは変数=\nBとは定数=\nCとは変数{公開}=\nDとは変数=1,E=2\n", "とは省略.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    for ([_]usize{ 0, 2, 4 }) |index| {
+        const declaration = result.root.?.children[index];
+        try std.testing.expectEqual(ast.Kind.variable_definition, declaration.kind);
+        try std.testing.expectEqual(ast.Kind.number, declaration.children[0].kind);
+        try std.testing.expectEqual(@as(f64, 0), declaration.children[0].number_value.?);
+    }
+    const assigned = result.root.?.children[6];
+    try std.testing.expectEqual(@as(f64, 1), assigned.children[0].number_value.?);
+}
+
+test "『定数 名=』は空の右辺を0にし『変数 名=』は拒否する" {
+    var constant = try parse(std.testing.allocator, "定数 A=\nAを表示\n", "定数省略.nako3");
+    defer constant.deinit();
+    try std.testing.expect(constant.succeeded());
+    try std.testing.expectEqual(@as(f64, 0), constant.root.?.children[0].children[0].number_value.?);
+
+    var variable = try parse(std.testing.allocator, "変数 A=\nAを表示\n", "変数省略.nako3");
+    defer variable.deinit();
+    try std.testing.expect(!variable.succeeded());
+}
+
+test "『定める』の後置属性を公開設定として受理する" {
+    var result = try parse(std.testing.allocator, "Aを1に定める{非公開}\nBを2に定める{公開}\nCを3に定める\n", "定める属性.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    try std.testing.expect(!result.root.?.children[0].is_export);
+    try std.testing.expect(result.root.?.children[2].is_export);
+    try std.testing.expect(result.root.?.children[4].is_export);
+}
+
+/// ブロック直下の `variable_definition` を文順に集める。
+fn variableDefinitions(allocator: std.mem.Allocator, root: *ast.Node) ![]const *ast.Node {
+    var collected: std.ArrayList(*ast.Node) = .empty;
+    for (root.children) |child| if (child.kind == .variable_definition) try collected.append(allocator, child);
+    return collected.toOwnedSlice(allocator);
+}

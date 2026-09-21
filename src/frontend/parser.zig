@@ -179,6 +179,9 @@ pub const Parser = struct {
     tail_modes: []const TailMode = &.{},
     /// 公式の`func token`に相当する既知の命令名（`ParseOptions.builtin_commands`）。
     builtin_commands: []const []const u8 = &.{},
+    /// 公式`isExportDefault`相当。`!モジュール公開既定値=「非公開」`で偽になり、
+    /// 属性を省略した宣言の公開設定の既定値になる（既定は公開）。
+    export_default: bool = true,
     tail_cursor: usize = 0,
     import_modes: std.ArrayList(ImportMode) = .empty,
     index: usize = 0,
@@ -332,7 +335,9 @@ pub const Parser = struct {
             const directive = try self.require(.identifier, "『!』の後ろにモード名が必要です");
             if (std.mem.eql(u8, directive.value, "モジュール公開既定値")) {
                 _ = try self.require(.equal, "モジュール公開既定値に『=』が必要です");
-                _ = try expressions.parseExpression(self, 0);
+                const setting = try expressions.parseExpression(self, 0);
+                // 公式yExportDefault: 『公開』以外は非公開を既定にする。
+                self.export_default = setting.kind == .string and std.mem.eql(u8, setting.value, "公開");
                 return builder.makeNode(self, .eol, first);
             }
             const node = try builder.makeNode(self, .run_mode, first);
@@ -525,16 +530,24 @@ pub const Parser = struct {
     }
 
     /// 公式yLet/ySadameruの変数属性 `{公開}`/`{非公開}`/`{エクスポート}`。
+    pub const VariableAttribute = struct {
+        /// `{` `word` `}` を属性として消費したか。公式は属性の後ろに『=』を
+        /// 必須にするため、未知の属性名でも消費した事実だけは区別する。
+        present: bool = false,
+        /// `公開`/`非公開`/`エクスポート` なら公開設定。未知の属性名は null。
+        is_export: ?bool = null,
+    };
+
     /// 公式は `{` `word` `}` の並びだけを属性として消費し、未知の属性名は
-    /// 警告なしで既定（公開）のまま残す。属性が無ければ null を返す。
-    pub fn parseVariableAttribute(self: *Parser) ParseFailure!?bool {
-        if (!self.at(.left_brace) or self.peekAhead(1).kind != .identifier or self.peekAhead(2).kind != .right_brace) return null;
+    /// 警告なしで既定（`export_default`）のまま残す。
+    pub fn parseVariableAttribute(self: *Parser) ParseFailure!VariableAttribute {
+        if (!self.at(.left_brace) or self.peekAhead(1).kind != .identifier or self.peekAhead(2).kind != .right_brace) return .{};
         _ = self.advance();
         const attribute = self.advance();
         _ = self.advance();
-        if (std.mem.eql(u8, attribute.value, "非公開")) return false;
-        if (std.mem.eql(u8, attribute.value, "公開") or std.mem.eql(u8, attribute.value, "エクスポート")) return true;
-        return null;
+        if (std.mem.eql(u8, attribute.value, "非公開")) return .{ .present = true, .is_export = false };
+        if (std.mem.eql(u8, attribute.value, "公開") or std.mem.eql(u8, attribute.value, "エクスポート")) return .{ .present = true, .is_export = true };
+        return .{ .present = true };
     }
 
     /// 公式convDefLocalVar相当のローカル変数定義。初期値を省略した場合は
@@ -544,7 +557,7 @@ pub const Parser = struct {
         start: Token,
         name: []const u8,
         is_const: bool,
-        attribute: ?bool,
+        attribute: VariableAttribute,
         value: ?*ast.Node,
     ) ParseFailure!*ast.Node {
         const initial = value orelse try builder.numberZero(self, start);
@@ -554,16 +567,23 @@ pub const Parser = struct {
         // 公式のdef_local_varはjosiを持たない（『Aとは変数』の『とは』は宣言構文の一部）。
         node.josi = "";
         node.raw_josi = "";
-        // 属性が無い場合は公式のisExportDefault（既定は公開）に従う。
-        node.is_export = attribute orelse true;
+        // 属性が無い場合は公式のisExportDefault（`!モジュール公開既定値`）に従う。
+        node.is_export = attribute.is_export orelse self.export_default;
         return node;
     }
 
-    /// 宣言文で『=』を省略できるのは「変数 名」だけ。定数と属性付きの変数は
-    /// 公式も『=』を必須にしている（`定数 A`・`変数 A{公開}` は構文解析に失敗する）。
-    fn requireDeclarationValue(self: *Parser, is_const: bool, attribute: ?bool) ParseFailure!void {
-        if (!is_const and attribute == null) return;
+    /// 公式は『=』を省略できるのを「変数 名」と「(名前)とは 変数|定数」だけに
+    /// 限定している。定数と属性付きの変数は、属性名が未知でも『=』を必須にする。
+    fn requireDeclarationValue(self: *Parser, is_const: bool, attribute: VariableAttribute) ParseFailure!void {
+        if (!is_const and !attribute.present) return;
         return self.fail(.expected_token, if (is_const) "定数宣言に『=』が必要です" else "変数宣言に『=』が必要です", self.peek());
+    }
+
+    /// 公式`yCalc()`は式が無い位置でnullを返し、呼び出し側がnopへ落とす。
+    /// `定数 A=` や `Aとは変数=` のように『=』の直後が空の宣言を受理する。
+    fn parseDeclarationValue(self: *Parser) ParseFailure!?*ast.Node {
+        if (!canStartExpression(self.peek().kind)) return null;
+        return try self.parseCallExpression();
     }
 
     pub fn parseDeclaration(self: *Parser, is_const: bool) ParseFailure!*ast.Node {
@@ -577,6 +597,7 @@ pub const Parser = struct {
             const node = try builder.makeNodeWithChildren(self, .variable_list_definition, start, try builder.copyChildren(self, &.{value}));
             node.arguments = try builder.namesToArguments(self, names.children);
             node.is_const = is_const;
+            node.is_export = self.export_default;
             return node;
         }
         const name = try self.require(.identifier, "変数名が必要です");
@@ -586,7 +607,8 @@ pub const Parser = struct {
             return self.makeVariableDefinition(start, name.value, is_const, attribute, null);
         }
         _ = self.advance();
-        const value = try self.parseCallExpression();
+        // 公式は「変数 名=」の空の右辺を受理しないが、「定数 名=」はnopへ落とす。
+        const value = if (!is_const and !attribute.present) try self.parseCallExpression() else try self.parseDeclarationValue();
         return self.makeVariableDefinition(start, name.value, is_const, attribute, value);
     }
 
@@ -658,15 +680,19 @@ pub const Parser = struct {
     }
 
     /// 公式yLetのローカル変数定義「(名前)とは 変数|定数 [{属性}] [= 値]」。
-    /// 公式はこの形だけ『=』を常に省略でき、省略時は 0 を初期値にする。
+    /// 公式はこの形だけ『=』を常に省略でき、値が空でもnop（=0）にする。
+    /// また公式は `名前1=値1, 名前2=値2` の形のために宣言直後のカンマを1つ読み飛ばす。
     fn parseTowaDeclaration(self: *Parser, start: Token, target: *ast.Node) ParseFailure!*ast.Node {
         const is_const = self.at(.keyword_const);
         _ = self.advance(); // 変数 / 定数
         const attribute = try self.parseVariableAttribute();
         const name = if (target.name.len > 0) target.name else target.value;
-        if (!self.at(.equal)) return self.makeVariableDefinition(start, name, is_const, attribute, null);
-        _ = self.advance();
-        const value = try self.parseCallExpression();
+        var value: ?*ast.Node = null;
+        if (self.at(.equal)) {
+            _ = self.advance();
+            value = try self.parseDeclarationValue();
+        }
+        if (self.at(.comma)) _ = self.advance();
         return self.makeVariableDefinition(start, name, is_const, attribute, value);
     }
 
@@ -688,6 +714,7 @@ pub const Parser = struct {
         if (targets.items.len > 1) {
             const result = try builder.makeNodeWithChildren(self, .variable_list_definition, start, try builder.copyChildren(self, &.{value}));
             result.arguments = try builder.namesToArguments(self, targets.items);
+            result.is_export = self.export_default;
             return result;
         }
         const target = targets.items[0];
@@ -1011,6 +1038,9 @@ pub const Parser = struct {
 
         if (arguments.len == 0) return self.fail(.invalid_assignment, "代入先と値の指定が必要です", command);
 
+        // 公式ySadameruは値の後ろの `{公開}`/`{非公開}` 属性を受理する。
+        const attribute = if (is_define) try self.parseVariableAttribute() else VariableAttribute{};
+
         // 「に代入」は「に」が代入先、「を」が値。「に定める」は「を」が定義対象、「に」が値。
 
         var target_index: ?usize = null;
@@ -1063,8 +1093,8 @@ pub const Parser = struct {
             const result = try builder.makeNodeWithChildren(self, kind, start, children);
             result.name = if (target.kind == .word) target.value else if (target.name.len > 0) target.name else target.value;
             result.josi = "";
-            // 公式ySadameruの既定公開設定（isExportDefault）に従う。
-            if (kind == .variable_definition) result.is_export = true;
+            // 公式ySadameruのisExportDefaultと `{公開}` 属性に従う。
+            if (kind == .variable_definition) result.is_export = attribute.is_export orelse self.export_default;
             result.check_array_init = kind == .array_assignment and (self.mode.dncl or self.mode.dncl2);
             return result;
         }
