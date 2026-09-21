@@ -191,7 +191,8 @@ const Analyzer = struct {
     function_scopes: std.ArrayList(FunctionScope) = .empty,
     diagnostics: std.ArrayList(diagnostic.Diagnostic) = .empty,
     builtins: std.StringHashMapUnmanaged(void) = .empty,
-    /// 公式の`func token`に相当する命令名。代入先に現れたら構文エラーにする
+    /// 公式の`func token`に相当する命令名の全一覧（`デスクトップ`など同名
+    /// グローバルを持つ命令名も含む）。代入先に現れたら構文エラーにする
     /// （v3.1.21で廃止された代入的呼出し。`check2(['func','eq'])`相当）。
     function_builtins: std.StringHashMapUnmanaged(void) = .empty,
     /// 公式のmodList相当: 結合ストリーム上の展開マーカー位置順に並ぶ
@@ -232,14 +233,15 @@ const Analyzer = struct {
         for (builtin_catalog.names) |name| try self.builtins.put(self.allocator, name, {});
         for (low_level_foundation.extension_command_names) |name| try self.builtins.put(self.allocator, name, {});
         for ([_][]const u8{ "それ", "対象", "対象キー", "回数", "エラー内容" }) |name| try self.builtins.put(self.allocator, name, {});
-        for (builtin_catalog.function_names) |name| try self.function_builtins.put(self.allocator, name, {});
+        for (builtin_catalog.assign_to_function_names) |name| try self.function_builtins.put(self.allocator, name, {});
     }
 
     /// 公式は文頭の`func token`＋`=`（および`代入`文の代入先）を関数名への
     /// 代入として拒否する。システム変数（`回数`など）は`func token`ではない
-    /// ため対象外にする。
+    /// ため対象外にする。修飾名（`__`を含む名前）は一覧に一致しないだけで、
+    /// `__DEBUG`のような`__`を含む命令名自体は拒否対象になる。
     fn rejectFunctionTarget(self: *Analyzer, span: ast.Span, module_index: u32, name: []const u8) !bool {
-        if (name.len == 0 or std.mem.indexOf(u8, name, "__") != null) return false;
+        if (name.len == 0) return false;
         if (self.function_builtins.get(name) == null) return false;
         const message = try std.fmt.allocPrint(self.allocator, "関数『{s}』に代入できません。", .{displayQualifiedName(name)});
         try self.addDiagnostic(.assign_to_function, span, self.modules.items[module_index].path, message);
@@ -1091,6 +1093,8 @@ test "組み込み命令名と関数名への代入を診断する" {
         "変数 INT=1\n", // 変数宣言
         "今とは定数=1\n", // とは宣言
         "変数 [INT,A]=[1,2]\n", // 変数一覧宣言
+        "デスクトップ=1\n", // 同名グローバルを持つ命令名（連鎖呼出し一覧からは除外されるが`func token`）
+        "__DEBUG=1\n", // `__`を含む命令名
     };
     for (sources) |source| {
         var parsed = try parser.parse(std.testing.allocator, source, "function-target.nako3");

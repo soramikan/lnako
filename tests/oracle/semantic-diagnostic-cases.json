@@ -91,5 +91,11 @@
     "id": "semantic-diagnostic-assign-to-function-via-dainyu",
     "source": "INTに2を代入\n",
     "code": "assign_to_function"
+  },
+  {
+    "id": "semantic-diagnostic-assign-to-underscore-function",
+    "source": "__DEBUG=1\n",
+    "code": "assign_to_function",
+    "checkMessage": true
   }
 ]
