@@ -390,5 +390,13 @@
   {
     "id": "loop-var-qualified-name-local",
     "source": "●Fとは\n　main__Iを1から3まで繰り返す\n　ここまで\nここまで\nF\nmain__Iを表示\n"
+  },
+  {
+    "id": "block-end-dots",
+    "source": "3回繰り返す\n「😀」と表示。\n「😂」と表示。。。\n「完了」を表示。\n"
+  },
+  {
+    "id": "block-end-semicolons",
+    "source": "3回繰り返す\n「😀」と表示。\n「😂」と表示;;;\n「完了」を表示。\n"
   }
 ]
