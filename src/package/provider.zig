@@ -3,6 +3,7 @@ const fetch = @import("fetch.zig");
 const diag = @import("diagnostics.zig");
 const lock_model = @import("lock_model.zig");
 const manifest_mod = @import("manifest.zig");
+const npkg_files = @import("npkg_files.zig");
 const npkg_verify = @import("npkg_verify.zig");
 
 const Allocator = std.mem.Allocator;
@@ -46,24 +47,32 @@ pub fn acquirePath(
     base_dir: []const u8,
 ) Error!Acquired {
     const gpa = session.allocator();
-    const io = session.io;
     const dir_path = try std.fs.path.join(gpa, &.{ base_dir, dep.path });
     const manifest_path = try std.fs.path.join(gpa, &.{ dir_path, "nako.toml" });
-    const bytes = std.Io.Dir.cwd().readFileAlloc(io, manifest_path, gpa, .limited(session.policy.max_bytes)) catch |err| switch (err) {
+    const parsed = try readDependencyManifest(session, manifest_path, dep.name, "path");
+    return .{
+        .source = .{ .kind = .path, .path = dep.path, .mutable = dep.mutable },
+        .manifest = parsed,
+    };
+}
+
+/// path・git provider 共通の manifest 読み取り。`max_bytes = 0` は上限なし
+/// （HTTP 取得と同じ契約）として扱い、上限超過は `too_large` に分類する。
+fn readDependencyManifest(session: *Session, manifest_path: []const u8, dep_name: []const u8, dep_kind: []const u8) Error!manifest_mod.Manifest {
+    const gpa = session.allocator();
+    const limit: std.Io.Limit = if (session.policy.max_bytes == 0) .unlimited else .limited(session.policy.max_bytes);
+    const bytes = std.Io.Dir.cwd().readFileAlloc(session.io, manifest_path, gpa, limit) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Canceled => return error.Canceled,
-        error.FileNotFound => return session.fail(.not_found, .manifest, manifest_path, "path dependency \"{s}\" has no nako.toml at \"{s}\"", .{ dep.name, manifest_path }),
+        error.FileNotFound => return session.fail(.not_found, .manifest, manifest_path, "{s} dependency \"{s}\" has no nako.toml at \"{s}\"", .{ dep_kind, dep_name, manifest_path }),
+        error.StreamTooLong => return session.fail(.too_large, .manifest, manifest_path, "manifest at \"{s}\" exceeds the {d} byte limit", .{ manifest_path, session.policy.max_bytes }),
         else => return session.fail(.network, .manifest, manifest_path, "cannot read \"{s}\": {s}", .{ manifest_path, @errorName(err) }),
     };
     var scratch = diag.List.init(session.gpa);
     defer scratch.deinit();
-    const parsed = manifest_mod.parse(gpa, bytes, session.diagSink(&scratch)) catch |err| switch (err) {
+    return manifest_mod.parse(gpa, bytes, session.diagSink(&scratch)) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.InvalidManifest => return session.fail(.invalid_metadata, .manifest, manifest_path, "manifest at \"{s}\" is invalid", .{manifest_path}),
-    };
-    return .{
-        .source = .{ .kind = .path, .path = dep.path, .mutable = dep.mutable },
-        .manifest = parsed,
     };
 }
 
@@ -119,7 +128,17 @@ pub fn acquireGit(
         try gitRun(session, &.{ "git", "clone", "--quiet", "--no-checkout", dep.url, checkout_dir }, null);
     }
 
-    const full_commit = pinned orelse try resolveCommit(session, checkout_dir, dep.commit);
+    // 既存 checkout に commit-ish が無ければ、オンラインではリモートを
+    // fetch してから再解決する（clone 後に追加された commit を拾う）。
+    const full_commit = pinned orelse blk: {
+        if (try resolveCommit(session, checkout_dir, dep.commit)) |commit| break :blk commit;
+        if (session.policy.offline) {
+            return session.fail(.offline, .repository, dep.url, "offline mode: commit-ish \"{s}\" of \"{s}\" is not available locally", .{ dep.commit, dep.url });
+        }
+        try gitRun(session, &.{ "git", "-C", checkout_dir, "fetch", "--quiet", "origin" }, dep.url);
+        if (try resolveCommit(session, checkout_dir, dep.commit)) |commit| break :blk commit;
+        return session.fail(.not_found, .repository, dep.url, "commit \"{s}\" of \"{s}\" was not found", .{ dep.commit, dep.url });
+    };
 
     // object が clone 済みか確認し、checkout して manifest を読む。
     {
@@ -138,20 +157,16 @@ pub fn acquireGit(
     }
     try gitRun(session, &.{ "git", "-C", checkout_dir, "checkout", "--quiet", full_commit }, dep.url);
 
+    // `dep.path` は checkout 内の subdirectory。`..`・絶対 path などで
+    // checkout 境界の外へ出る指定は拒否する（npkg の規範 path 規則と同じ）。
+    if (dep.path) |sub| {
+        if (!npkg_files.isCanonicalPath(sub)) {
+            return session.fail(.invalid_source, .repository, sub, "git dependency path \"{s}\" is not a canonical repository-relative path", .{sub});
+        }
+    }
     const manifest_dir = if (dep.path) |sub| try std.fs.path.join(gpa, &.{ checkout_dir, sub }) else checkout_dir;
     const manifest_path = try std.fs.path.join(gpa, &.{ manifest_dir, "nako.toml" });
-    const bytes = std.Io.Dir.cwd().readFileAlloc(io, manifest_path, gpa, .limited(session.policy.max_bytes)) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.Canceled => return error.Canceled,
-        error.FileNotFound => return session.fail(.not_found, .manifest, manifest_path, "git dependency \"{s}\" has no nako.toml at \"{s}\"", .{ dep.name, manifest_path }),
-        else => return session.fail(.network, .manifest, manifest_path, "cannot read \"{s}\": {s}", .{ manifest_path, @errorName(err) }),
-    };
-    var scratch = diag.List.init(session.gpa);
-    defer scratch.deinit();
-    const parsed = manifest_mod.parse(gpa, bytes, session.diagSink(&scratch)) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.InvalidManifest => return session.fail(.invalid_metadata, .manifest, manifest_path, "manifest at \"{s}\" is invalid", .{manifest_path}),
-    };
+    const parsed = try readDependencyManifest(session, manifest_path, dep.name, "git");
     return .{
         .source = .{ .kind = .git, .url = dep.url, .commit = full_commit, .path = dep.path },
         .manifest = parsed,
@@ -161,13 +176,14 @@ pub fn acquireGit(
 /// commit-ish（7–40 桁 hex）を完全な commit SHA へ解決する。
 /// `--disambiguate` で object を列挙するため、prefix と同名の移動した
 /// tag/branch に衝突して誤った参照を選ばない。
-fn resolveCommit(session: *Session, checkout_dir: []const u8, commitish: []const u8) Error![]const u8 {
+/// ローカル object に見つからない場合は null を返す（失敗は記録しない。
+/// 呼出し側が fetch 後の再試行や失敗分類を行う）。prefix が複数 commit
+/// へ曖昧な場合は `invalid_source` として記録して失敗する。
+fn resolveCommit(session: *Session, checkout_dir: []const u8, commitish: []const u8) Error!?[]const u8 {
     const gpa = session.allocator();
     const arg = try std.fmt.allocPrint(gpa, "--disambiguate={s}", .{commitish});
     const result = try gitRunAllowFailure(session, gpa, &.{ "git", "-C", checkout_dir, "rev-parse", arg });
-    if (!result.succeeded) {
-        return session.fail(.not_found, .repository, commitish, "commit \"{s}\" was not found", .{commitish});
-    }
+    if (!result.succeeded) return null;
     var commit: ?[]const u8 = null;
     var lines = std.mem.splitScalar(u8, result.stdout, '\n');
     while (lines.next()) |line| {
@@ -181,7 +197,7 @@ fn resolveCommit(session: *Session, checkout_dir: []const u8, commitish: []const
         }
         commit = try gpa.dupe(u8, candidate);
     }
-    return commit orelse session.fail(.not_found, .repository, commitish, "commit \"{s}\" was not found", .{commitish});
+    return commit;
 }
 
 const GitResult = struct {
@@ -231,7 +247,7 @@ fn gitRun(session: *Session, argv: []const []const u8, target: ?[]const u8) Erro
 /// hash 未検証の受理は行わない。
 pub fn acquireHttp(session: *Session, dep: manifest_mod.HttpDependency) Error!Acquired {
     const bytes = try fetch.fetchBytes(session, dep.url, .artifact);
-    try fetch.verifySha256(session, bytes, dep.hash, dep.url, .artifact);
+    try fetch.verifyHash(session, bytes, dep.hash, dep.url, .artifact);
 
     var acquired = Acquired{
         .source = .{ .kind = .http, .url = dep.url, .hash = dep.hash },

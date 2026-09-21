@@ -373,7 +373,8 @@ fn classifyRequestError(session: *Session, err: anyerror, url: []const u8, resou
     return switch (err) {
         error.OutOfMemory => error.OutOfMemory,
         error.Canceled => error.Canceled,
-        error.Timeout => error.Timeout,
+        // 下位レイヤーの timeout も失敗履歴へ記録して Session 契約を守る。
+        error.Timeout => session.fail(.timeout, resource, url, "fetch of \"{s}\" timed out", .{url}),
         error.TooManyHttpRedirects => session.fail(.redirect_denied, resource, url, "redirect limit exceeded for \"{s}\"", .{url}),
         else => session.fail(.network, resource, url, "fetch of \"{s}\" failed: {s}", .{ url, @errorName(err) }),
     };
@@ -384,8 +385,7 @@ fn classifyRequestError(session: *Session, err: anyerror, url: []const u8, resou
 // ---------------------------------------------------------------------------
 
 /// SHA-256 表記（`sha256-<base64>=`・`sha256:<hex>`・生 `<hex>`）を
-/// 32 バイトへ正規化する。`sha512-`/`sha512:` は受理しない（照合手段が
-/// 無いため）。解釈できない場合は null。
+/// 32 バイトへ正規化する。解釈できない場合は null。
 pub fn normalizeSha256(text: []const u8) ?[32]u8 {
     var out: [32]u8 = undefined;
     if (text.len == 64) {
@@ -407,6 +407,25 @@ pub fn normalizeSha256(text: []const u8) ?[32]u8 {
     return null;
 }
 
+/// SHA-512 表記（`sha512-<base64>=`・`sha512:<hex>`）を 64 バイトへ
+/// 正規化する。解釈できない場合は null。
+fn normalizeSha512(text: []const u8) ?[64]u8 {
+    var out: [64]u8 = undefined;
+    if (text.len == "sha512:".len + 128 and std.mem.startsWith(u8, text, "sha512:")) {
+        _ = std.fmt.hexToBytes(&out, text["sha512:".len..]) catch return null;
+        return out;
+    }
+    if (text.len == "sha512-".len + 88 and std.mem.startsWith(u8, text, "sha512-")) {
+        const encoded = text["sha512-".len..];
+        if (encoded[encoded.len - 1] != '=') return null;
+        const size = std.base64.standard.Decoder.calcSizeForSlice(encoded) catch return null;
+        if (size != 64) return null;
+        std.base64.standard.Decoder.decode(&out, encoded) catch return null;
+        return out;
+    }
+    return null;
+}
+
 pub fn sha256Hex(gpa: Allocator, bytes: []const u8) ![]u8 {
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});
@@ -415,17 +434,35 @@ pub fn sha256Hex(gpa: Allocator, bytes: []const u8) ![]u8 {
     return hex;
 }
 
-/// 取得 bytes を宣言 hash と照合する。`expected` が解釈不能な形式なら
-/// `invalid_source`、不一致なら `hash_mismatch` を記録して失敗する。
-pub fn verifySha256(session: *Session, bytes: []const u8, expected: []const u8, target: []const u8, resource: ResourceKind) Error!void {
-    const expected_bytes = normalizeSha256(expected) orelse
-        return session.fail(.invalid_source, resource, target, "unsupported sha256 format \"{s}\"", .{expected});
-    var actual: [32]u8 = undefined;
-    std.crypto.hash.sha2.Sha256.hash(bytes, &actual, .{});
-    if (!std.mem.eql(u8, &actual, &expected_bytes)) {
+fn sha512Hex(gpa: Allocator, bytes: []const u8) ![]u8 {
+    var digest: [64]u8 = undefined;
+    std.crypto.hash.sha2.Sha512.hash(bytes, &digest, .{});
+    const hex = try gpa.alloc(u8, 128);
+    _ = std.fmt.bufPrint(hex, "{x}", .{digest}) catch unreachable;
+    return hex;
+}
+
+/// 取得 bytes を宣言 hash と照合する。`expected` は sha256
+/// （`sha256:<hex>`・`sha256-<base64>=`・生 `<hex>`）または sha512
+/// （`sha512:<hex>`・`sha512-<base64>=`）表記を受理する。解釈不能な
+/// 形式なら `invalid_source`、不一致なら `hash_mismatch` を記録して
+/// 失敗する。
+pub fn verifyHash(session: *Session, bytes: []const u8, expected: []const u8, target: []const u8, resource: ResourceKind) Error!void {
+    if (normalizeSha256(expected)) |expected_bytes| {
+        var actual: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(bytes, &actual, .{});
+        if (std.mem.eql(u8, &actual, &expected_bytes)) return;
         const actual_hex = try sha256Hex(session.arena.allocator(), bytes);
         return session.fail(.hash_mismatch, resource, target, "sha256 mismatch for \"{s}\": expected {s}, got sha256:{s}", .{ target, expected, actual_hex });
     }
+    if (normalizeSha512(expected)) |expected_bytes| {
+        var actual: [64]u8 = undefined;
+        std.crypto.hash.sha2.Sha512.hash(bytes, &actual, .{});
+        if (std.mem.eql(u8, &actual, &expected_bytes)) return;
+        const actual_hex = try sha512Hex(session.arena.allocator(), bytes);
+        return session.fail(.hash_mismatch, resource, target, "sha512 mismatch for \"{s}\": expected {s}, got sha512:{s}", .{ target, expected, actual_hex });
+    }
+    return session.fail(.invalid_source, resource, target, "unsupported hash notation \"{s}\"", .{expected});
 }
 
 /// git 子プロセスへ渡す環境を構築する。`git push` の hook（pre-push 等）や

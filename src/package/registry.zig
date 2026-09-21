@@ -108,8 +108,15 @@ pub const StaticRegistry = struct {
         const bytes = try fetch.fetchBytes(self.session, url, .package);
         const doc = try gpa.create(PackageDoc);
         doc.* = try parsePackageDoc(self.session, bytes, url);
-        if (!std.mem.eql(u8, doc.record.id, package.id)) {
-            return self.session.failCode(.invalid_metadata, .package, url, diag.E010_REGISTRY_RECORD_MISMATCH, "package record \"{s}\" id {s} does not match index entry {s}", .{ url, doc.record.id, package.id });
+        // package record は index entry の静的 metadata（id・name・owner・
+        // humanId）と一致しなければならない。ID だけ一致させて別名や別 owner
+        // の record を混在させない。
+        const record_matches = std.mem.eql(u8, doc.record.id, package.id) and
+            std.mem.eql(u8, doc.record.name, package.name) and
+            std.mem.eql(u8, doc.record.owner, package.owner) and
+            optEqlOpt(doc.record.human_id, package.human_id);
+        if (!record_matches) {
+            return self.session.failCode(.invalid_metadata, .package, url, diag.E010_REGISTRY_RECORD_MISMATCH, "package record \"{s}\" does not match index entry {s} ({s}/{s})", .{ url, package.id, package.owner, package.name });
         }
         try self.package_docs.put(self.session.gpa, key, doc);
         return doc;
@@ -133,6 +140,10 @@ pub const StaticRegistry = struct {
         return found orelse self.session.fail(.not_found, .package, name, "package \"{s}\" is not in the registry index", .{name});
     }
 
+    /// `version` の record を返す。package record の versions に無い場合は
+    /// PS01 layout の個別 version record `<owner>/<name>/<version>.json` を
+    /// 参照する（offline では取得できないため not_found）。
+    /// 返すポインタは session arena が所有する。
     fn findVersion(self: *StaticRegistry, package: *const PackageRecord, version: resolver.Version) Error!*const VersionRecord {
         const doc = try self.loadPackageDoc(package);
         var text_buffer: [64]u8 = undefined;
@@ -142,7 +153,19 @@ pub const StaticRegistry = struct {
         for (doc.versions) |*record| {
             if (std.mem.eql(u8, record.version, text)) return record;
         }
-        return self.session.fail(.not_found, .version, text, "version {s} of \"{s}\" is not in the registry", .{ text, package.name });
+        if (self.session.policy.offline) {
+            return self.session.fail(.not_found, .version, text, "version {s} of \"{s}\" is not in the registry", .{ text, package.name });
+        }
+        const gpa = self.session.allocator();
+        const url = try std.fmt.allocPrint(gpa, "{s}/{s}/{s}/{s}.json", .{ self.base_url, package.owner, package.name, text });
+        const bytes = try fetch.fetchBytes(self.session, url, .version);
+        var parser = JsonParser{ .session = self.session, .url = url, .resource = .version };
+        const record = try gpa.create(VersionRecord);
+        record.* = try parseVersionRecord(&parser, try parseJson(self.session, bytes, url, .version));
+        if (!std.mem.eql(u8, record.version, text)) {
+            return self.session.failCode(.invalid_metadata, .version, url, diag.E010_REGISTRY_RECORD_MISMATCH, "version record \"{s}\" declares version {s}, expected {s}", .{ url, record.version, text });
+        }
+        return record;
     }
 
     // ---------------------------------------------------------------------
@@ -285,7 +308,7 @@ pub const StaticRegistry = struct {
                 return self.session.fail(.invalid_metadata, .artifact, key, "artifact \"{s}\" of {s}@{s} has no url", .{ key, name, version_text });
             const bytes = try fetch.fetchBytes(self.session, url, .artifact);
             if (artifact.sha256) |expected| {
-                try fetch.verifySha256(self.session, bytes, expected, url, .artifact);
+                try fetch.verifyHash(self.session, bytes, expected, url, .artifact);
             }
             const actual = try fetch.sha256Hex(self.session.allocator(), bytes);
             return .{
@@ -312,6 +335,13 @@ pub const AcquiredArtifact = struct {
 fn optEql(a: ?[]const u8, b: []const u8) bool {
     const value = a orelse return false;
     return std.mem.eql(u8, value, b);
+}
+
+fn optEqlOpt(a: ?[]const u8, b: ?[]const u8) bool {
+    if (a == null and b == null) return true;
+    const value_a = a orelse return false;
+    const value_b = b orelse return false;
+    return std.mem.eql(u8, value_a, value_b);
 }
 
 // ---------------------------------------------------------------------------
@@ -486,17 +516,20 @@ fn isHashFormat(text: []const u8) bool {
         }
     }.check;
     const is_b64 = struct {
+        /// schema regex の `[A-Za-z0-9+/]{43}=` / `{86}=` 形に合わせ、`=` は
+        /// 末尾1文字のみ許可する（途中の `=` を含む文字列は受理しない）。
         fn check(encoded: []const u8) bool {
-            for (encoded) |byte| {
-                if (!(std.ascii.isAlphanumeric(byte) or byte == '+' or byte == '/' or byte == '=')) return false;
+            if (encoded.len == 0 or encoded[encoded.len - 1] != '=') return false;
+            for (encoded[0 .. encoded.len - 1]) |byte| {
+                if (!(std.ascii.isAlphanumeric(byte) or byte == '+' or byte == '/')) return false;
             }
             return true;
         }
     }.check;
     if (std.mem.startsWith(u8, text, "sha256:")) return text.len == 7 + 64 and is_hex(text[7..]);
     if (std.mem.startsWith(u8, text, "sha512:")) return text.len == 7 + 128 and is_hex(text[7..]);
-    if (std.mem.startsWith(u8, text, "sha256-")) return text.len == 7 + 44 and text[text.len - 1] == '=' and is_b64(text[7..]);
-    if (std.mem.startsWith(u8, text, "sha512-")) return text.len == 7 + 88 and text[text.len - 1] == '=' and is_b64(text[7..]);
+    if (std.mem.startsWith(u8, text, "sha256-")) return text.len == 7 + 44 and is_b64(text[7..]);
+    if (std.mem.startsWith(u8, text, "sha512-")) return text.len == 7 + 88 and is_b64(text[7..]);
     return false;
 }
 
@@ -591,6 +624,12 @@ fn parseVersionRecord(parser: *JsonParser, value: std.json.Value) Error!VersionR
             if (artifact_url) |artifact_uri| {
                 if (!isUri(artifact_uri)) {
                     return parser.invalid("registry artifact url \"{s}\" is not an absolute uri", .{artifact_uri});
+                }
+                // artifact 取得は HTTP(S) のみ。file:・gopher: 等の scheme へ
+                // registry metadata から誘導されないよう限定する。
+                const parsed_uri = std.Uri.parse(artifact_uri) catch unreachable;
+                if (!std.mem.eql(u8, parsed_uri.scheme, "http") and !std.mem.eql(u8, parsed_uri.scheme, "https")) {
+                    return parser.invalid("registry artifact url \"{s}\" must use http or https", .{artifact_uri});
                 }
             }
             try artifacts.append(parser.session.allocator(), .{
