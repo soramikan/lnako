@@ -36,6 +36,7 @@ test {
     _ = @import("lnako").package.npkg_metadata;
     _ = @import("lnako").package.npkg_files;
     _ = @import("lnako").package.npkg_commands;
+    _ = @import("lnako").package.npkg_commands_gen;
 
     _ = @import("regexp");
 }

@@ -107,6 +107,7 @@ pub const package = struct {
     pub const npkg_metadata = @import("package/npkg_metadata.zig");
     pub const npkg_files = @import("package/npkg_files.zig");
     pub const npkg_commands = @import("package/npkg_commands.zig");
+    pub const npkg_commands_gen = @import("package/npkg_commands_gen.zig");
 };
 
 pub const Command = enum {
@@ -242,6 +243,7 @@ test {
     std.testing.refAllDecls(package.npkg_metadata);
     std.testing.refAllDecls(package.npkg_files);
     std.testing.refAllDecls(package.npkg_commands);
+    std.testing.refAllDecls(package.npkg_commands_gen);
 }
 
 test "コマンドを解析できる" {

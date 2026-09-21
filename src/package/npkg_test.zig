@@ -3,6 +3,7 @@ const manifest_mod = @import("manifest.zig");
 const npkg_metadata = @import("npkg_metadata.zig");
 const npkg_files = @import("npkg_files.zig");
 const npkg_commands = @import("npkg_commands.zig");
+const npkg_commands_gen = @import("npkg_commands_gen.zig");
 const diag = @import("diagnostics.zig");
 
 const testing = std.testing;
@@ -406,4 +407,114 @@ test "METADATA.toml の .npkg 固有検証" {
     try testing.expect(manifest.npkg != null);
     try testing.expectEqual(@as(u32, 1), manifest.npkg.?.schema_version);
     try testing.expect(manifest.npkg.?.native_plugin_abi == null);
+}
+
+const MapProvider = struct {
+    map: std.StringHashMap([]const u8),
+
+    fn init(allocator: std.mem.Allocator) !MapProvider {
+        return .{ .map = std.StringHashMap([]const u8).init(allocator) };
+    }
+
+    fn deinit(self: *MapProvider) void {
+        self.map.deinit();
+    }
+
+    fn put(self: *MapProvider, path: []const u8, source: []const u8) !void {
+        try self.map.put(path, source);
+    }
+
+    fn read(context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) !?[]u8 {
+        const self: *MapProvider = @ptrCast(@alignCast(context));
+        const text = self.map.get(path) orelse return null;
+        return try allocator.dupe(u8, text);
+    }
+
+    fn provider(self: *MapProvider) npkg_commands_gen.SourceProvider {
+        return .{ .context = self, .readFn = read };
+    }
+};
+
+test "commands.json を AST から生成する" {
+    const allocator = testing.allocator;
+    var provider = try MapProvider.init(allocator);
+    defer provider.deinit();
+    try provider.put("src/index.nako3",
+        \\●(AをBと)合計とは
+        \\  A+Bで戻る
+        \\ここまで
+        \\●{非公開}内部とは
+        \\ここまで
+        \\定数 公開フラグ{公開}=2
+        \\変数 秘密{非公開}=1
+        \\「lib/util.nako3」を取り込む
+        \\
+    );
+    try provider.put("src/lib/util.nako3",
+        \\●差分とは
+        \\ここまで
+        \\
+    );
+
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var result = try npkg_commands_gen.generate(allocator, provider.provider(), &.{"src/index.nako3"}, &list);
+    defer result.deinit();
+
+    try testing.expectEqual(@as(usize, 3), result.commands.len);
+    var by_name = std.StringHashMap(npkg_commands.Command).init(allocator);
+    defer by_name.deinit();
+    for (result.commands) |command| try by_name.put(command.name, command);
+    const add = by_name.get("合計").?;
+    try testing.expectEqual(@as(usize, 2), add.args.len);
+    try testing.expectEqualStrings("A", add.args[0]);
+    try testing.expectEqualStrings("B", add.args[1]);
+    try testing.expectEqual(@as(usize, 2), add.josi.len);
+    try testing.expectEqualStrings("を", add.josi[0]);
+    try testing.expectEqualStrings("と", add.josi[1]);
+    try testing.expect(by_name.get("公開フラグ").?.variable);
+    try testing.expect(by_name.get("差分") != null);
+    try testing.expect(by_name.get("内部") == null);
+    try testing.expect(by_name.get("秘密") == null);
+}
+
+test "commands.json 生成はルート外 import を拒否する" {
+    const allocator = testing.allocator;
+    var provider = try MapProvider.init(allocator);
+    defer provider.deinit();
+    try provider.put("index.nako3",
+        \\「../outside.nako3」を取り込む
+        \\
+    );
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    try testing.expectError(
+        error.InvalidCommands,
+        npkg_commands_gen.generate(allocator, provider.provider(), &.{"index.nako3"}, &list),
+    );
+    try testing.expect(list.find(diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY) != null);
+}
+
+test "commands.json 生成は欠落ソースとパース失敗を診断する" {
+    const allocator = testing.allocator;
+    var provider = try MapProvider.init(allocator);
+    defer provider.deinit();
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    try testing.expectError(
+        error.InvalidCommands,
+        npkg_commands_gen.generate(allocator, provider.provider(), &.{"missing.nako3"}, &list),
+    );
+    try testing.expect(list.find(diag.E036_NPKG_MISSING_ENTRY) != null);
+}
+
+test "import path をパッケージ相対へ解決する" {
+    const allocator = testing.allocator;
+    const resolved = (try npkg_commands_gen.resolveImport(allocator, "src/index.nako3", "lib/./util.nako3")).?;
+    defer allocator.free(resolved);
+    try testing.expectEqualStrings("src/lib/util.nako3", resolved);
+    const up = (try npkg_commands_gen.resolveImport(allocator, "src/sub/a.nako3", "../b.nako3")).?;
+    defer allocator.free(up);
+    try testing.expectEqualStrings("src/b.nako3", up);
+    try testing.expect((try npkg_commands_gen.resolveImport(allocator, "a.nako3", "../x.nako3")) == null);
 }
