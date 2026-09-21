@@ -485,6 +485,20 @@ const Analyzer = struct {
             if (implicit_call and symbol.parameter_josi.len > 0) {
                 try self.checkParticleArgumentCount(module_index, node, try argument_completion.parameterSlots(self.allocator, symbol.parameter_josi), false, symbol.qualified_name);
             }
+            // 厳格モード: 結合ストリーム上で参照位置より後に宣言される同一
+            // モジュールの変数系シンボルは、公式の単一パスでは参照時点で
+            // 未定義のため警告対象にする（`Xを表示`→`X=1`の順の場合など）。
+            // 束縛は既存シンボルのまま維持する。関数本体内のモジュール変数は
+            // moduleSymbolVisible が関数定義位置で不可視判定済みのため、
+            // ここに残るのは同一関数ローカルやトップレベルの前方参照だけ。
+            if (!callable and self.modules.items[module_index].strict and
+                symbol.kind != .function and symbol.kind != .test_function and
+                symbol.module_index == module_index and
+                self.positionAfter(symbol.module_index, symbol.span, module_index, node.span))
+            {
+                const message = try std.fmt.allocPrint(self.allocator, "未定義の変数『{s}』です", .{name});
+                try self.addWarning(.undefined_symbol, node.span, self.modules.items[module_index].path, message);
+            }
             try self.bind(node, if (callable or implicit_call) .call else .reference, name, symbol.qualified_name, symbol.id);
             return;
         }
@@ -1123,6 +1137,28 @@ test "厳チェックの未定義名を警告にし、定数再代入はエラ�
         if (binding.kind == .reference and std.mem.eql(u8, binding.name, "X")) bound = std.mem.eql(u8, binding.resolved_name, "strict-warn__X");
     }
     try std.testing.expect(bound);
+
+    // 参照位置より後の代入が作るシンボルへの前方参照も、公式の単一パスでは
+    // 参照時点で未定義のため警告する（束縛は後続代入のシンボルのまま）。
+    var fwd_parsed = try parser.parse(std.testing.allocator, "!厳チェック\nXを表示\nX=1\nXを表示\n", "strict-fwd.nako3");
+    defer fwd_parsed.deinit();
+    var fwd_program = try analyze(std.testing.allocator, fwd_parsed.root.?, "strict-fwd.nako3");
+    defer fwd_program.deinit();
+    try std.testing.expect(fwd_program.succeeded());
+    var fwd_warnings: usize = 0;
+    for (fwd_program.diagnostics) |item| {
+        if (item.code == .undefined_symbol) {
+            fwd_warnings += 1;
+            try std.testing.expectEqual(diagnostic.Severity.warning, item.severity);
+            try std.testing.expectEqual(@as(u32, 1), item.span.line);
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 1), fwd_warnings);
+    var fwd_bound = false;
+    for (fwd_program.bindings) |binding| {
+        if (binding.kind == .reference and std.mem.eql(u8, binding.name, "X")) fwd_bound = std.mem.eql(u8, binding.resolved_name, "strict-fwd__X");
+    }
+    try std.testing.expect(fwd_bound);
 
     // 未定義の命令呼出しは公式も文法エラー（`関数『X』が見当たりません`）
     // なので、厳格モードでもエラーのままにする。
