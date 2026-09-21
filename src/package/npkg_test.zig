@@ -812,3 +812,73 @@ test "npkg verify は runtime 不適合を拒否する" {
     try testing.expectError(error.InvalidPackage, npkg_verify.verify(allocator, archive, .{ .runtime = "lnako" }, &list));
     try testing.expect(list.find(diag.E031_UNSUPPORTED_RUNTIME) != null);
 }
+
+/// cwd から上方向に conformance fixture ルートを探す（manifest_test と同規則）。
+fn openRepoRoot(io: std.Io) !std.Io.Dir {
+    const probe = "tools/package-system/conformance/valid/manifest/minimal/nako.toml";
+    var prefix: []const u8 = ".";
+    for (0..8) |_| {
+        var candidate = try std.Io.Dir.cwd().openDir(io, prefix, .{});
+        if (candidate.openFile(io, probe, .{})) |file| {
+            file.close(io);
+            return candidate;
+        } else |_| {
+            candidate.close(io);
+        }
+        prefix = try std.fmt.allocPrint(std.testing.allocator, "{s}/..", .{prefix});
+    }
+    return error.FileNotFound;
+}
+
+test "npkg適合fixtureを解析できる" {
+    const allocator = testing.allocator;
+    const io = std.testing.io;
+    var repo = try openRepoRoot(io);
+    defer repo.close(io);
+
+    const metadata_cases = [_][]const u8{
+        "tools/package-system/conformance/valid/npkg/source-only/METADATA.toml",
+        "tools/package-system/conformance/valid/npkg/native/METADATA.toml",
+        "tools/package-system/conformance/valid/npkg/esm/METADATA.toml",
+    };
+    for (metadata_cases) |case| {
+        const source = try repo.readFileAlloc(io, case, allocator, .limited(1 << 20));
+        defer allocator.free(source);
+        var list = diag.List.init(allocator);
+        defer list.deinit();
+        var manifest = npkg_metadata.parse(allocator, source, &list) catch |err| {
+            for (list.items.items) |item| std.debug.print("{s}: {s} {s}\n", .{ case, item.code, item.message });
+            return err;
+        };
+        defer manifest.deinit();
+        try testing.expect(manifest.npkg != null);
+    }
+
+    const files_cases = [_][]const u8{
+        "tools/package-system/conformance/valid/npkg/source-only/FILES.toml",
+        "tools/package-system/conformance/valid/npkg/files/FILES.toml",
+    };
+    for (files_cases) |case| {
+        const source = try repo.readFileAlloc(io, case, allocator, .limited(1 << 20));
+        defer allocator.free(source);
+        var list = diag.List.init(allocator);
+        defer list.deinit();
+        var files = try npkg_files.parse(allocator, source, &list);
+        defer files.deinit();
+        try testing.expect(files.entries.len > 0);
+    }
+
+    const commands_cases = [_][]const u8{
+        "tools/package-system/conformance/valid/npkg/source-only/commands.json",
+        "tools/package-system/conformance/valid/npkg/commands/commands.json",
+    };
+    for (commands_cases) |case| {
+        const source = try repo.readFileAlloc(io, case, allocator, .limited(1 << 20));
+        defer allocator.free(source);
+        var list = diag.List.init(allocator);
+        defer list.deinit();
+        var commands = try npkg_commands.parse(allocator, source, &list);
+        defer commands.deinit();
+        try testing.expect(commands.commands.len > 0);
+    }
+}

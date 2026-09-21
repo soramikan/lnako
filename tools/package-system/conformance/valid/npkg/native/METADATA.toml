@@ -1,0 +1,15 @@
+schemaVersion = 1
+nativePluginAbi = "lnako_plugin_v1"
+
+[package]
+name = "avxmath"
+version = "2.0.0"
+license = "Apache-2.0"
+
+[[exports]]
+name = "avxmath"
+path = "src/index.nako3"
+native = [
+  { path = "lib/avxmath-linux.so", when = "os == 'linux' and cpu == 'x86_64'", libc = "gnu" },
+  { path = "lib/avxmath-macos.dylib", when = "os == 'macos'", min-os = "14.0", features = ["simd"] },
+]
