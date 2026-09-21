@@ -1233,3 +1233,72 @@ test "添字・配列・辞書の内側で単一値に解決されない助詞�
         try std.testing.expect(!result.succeeded());
     }
 }
+
+test "演算子を挟む助詞呼出しは演算式全体を後続命令の引数にする" {
+    // 公式`yCall`は言い切りの呼出し結果へ演算子を適用してシーケンスを続ける
+    // ため、`Aの要素数+Aの要素数`は`要素数(要素数(A)+A)`になる。
+    var result = try parse(std.testing.allocator, "A=[1,2]\nB=[Aの要素数+Aの要素数]\n", "operator-josi.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const assign = result.root.?.children[2];
+    const array = assign.children[0];
+    try std.testing.expectEqual(ast.Kind.array_literal, array.kind);
+    try std.testing.expectEqual(@as(usize, 1), array.children.len);
+    const outer = array.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, outer.kind);
+    try std.testing.expectEqualStrings("要素数", outer.name);
+    try std.testing.expectEqual(@as(usize, 1), outer.children.len);
+    const op = outer.children[0];
+    try std.testing.expectEqual(ast.Kind.binary_operator, op.kind);
+    try std.testing.expectEqualStrings("+", op.operator);
+    try std.testing.expectEqual(ast.Kind.function_call, op.children[0].kind);
+    try std.testing.expectEqualStrings("要素数", op.children[0].name);
+    try std.testing.expectEqual(ast.Kind.word, op.children[1].kind);
+    try std.testing.expectEqualStrings("A", op.children[1].value);
+}
+
+test "添字内の演算子右辺の助詞呼出しを受理する" {
+    var result = try parse(std.testing.allocator, "A=[1,2]\nA[Aの要素数+Aの要素数-4]を表示\n", "index-operator-josi.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const display = result.root.?.children[2];
+    const reference = display.children[0];
+    try std.testing.expectEqual(ast.Kind.array_reference, reference.kind);
+    const index = reference.children[1];
+    // `要素数(要素数(A)+A)-4`の形になる。
+    try std.testing.expectEqual(ast.Kind.binary_operator, index.kind);
+    try std.testing.expectEqualStrings("-", index.operator);
+    const outer = index.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, outer.kind);
+    try std.testing.expectEqualStrings("要素数", outer.name);
+    try std.testing.expectEqual(ast.Kind.binary_operator, outer.children[0].kind);
+    try std.testing.expectEqualStrings("+", outer.children[0].operator);
+}
+
+test "代入右辺の演算子を挟む助詞呼出しを受理する" {
+    // 代入文の右辺（公式yCalc相当）でも同じシーケンス解決を行う。
+    var result = try parse(std.testing.allocator, "A=[1,2]\nC=Aの要素数+Aの要素数\n", "assign-operator-josi.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const assign = result.root.?.children[2];
+    const outer = assign.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, outer.kind);
+    try std.testing.expectEqualStrings("要素数", outer.name);
+    const op = outer.children[0];
+    try std.testing.expectEqual(ast.Kind.binary_operator, op.kind);
+    try std.testing.expectEqualStrings("+", op.operator);
+    try std.testing.expectEqualStrings("要素数", op.children[0].name);
+}
+
+test "括弧・C風引数・辞書値の演算子を挟む助詞呼出しを受理する" {
+    const cases = [_][]const u8{
+        "A=[1,2]\n(Aの要素数+Aの要素数)を表示\n",
+        "A=[1,2]\n表示(Aの要素数+Aの要素数)\n",
+        "A=[1,2]\nD={\"x\":Aの要素数+Aの要素数}\n",
+    };
+    for (cases) |source| {
+        var result = try parse(std.testing.allocator, source, "delimited-operator-josi.nako3");
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+    }
+}

@@ -497,7 +497,13 @@ pub const Parser = struct {
                 stack = .empty;
                 try stack.append(self.allocator, call);
                 // 言い切り・連文の助詞はそこで一度切る（公式`yCallFunc`）。
-                if (command.josi.len == 0 or isSequenceJosi(command.josi)) break;
+                // ただし直後に演算子が続くなら、公式`yCall`は呼出し結果へ
+                // `yGetArgOperator`を適用してシーケンスを続ける
+                // （`Aの要素数+Bの要素数`の後半`要素数`は演算式全体を引数に取る）。
+                if (command.josi.len == 0 or isSequenceJosi(command.josi)) {
+                    if (helpers.operatorInfo(self.peek().kind) == null) break;
+                    stack.items[stack.items.len - 1] = try expressions.parseOperatorTail(self, call, 0);
+                }
                 continue;
             }
             if (self.at(.comma)) {
@@ -1255,10 +1261,27 @@ pub const Parser = struct {
             call.name = command.value;
             call.josi = command.josi;
             call.command_call = true;
-            if (!isSequenceJosi(command.josi)) return call;
+            if (isSequenceJosi(command.josi)) {
+                arguments = .empty;
+                try arguments.append(self.allocator, call);
+                if (!self.isTerminator()) try arguments.append(self.allocator, try expressions.parseExpression(self, 0));
+                continue;
+            }
+            // 言い切りの命令呼出しの直後に演算子が続くなら、公式`yCall`は
+            // 呼出し結果へ`yGetArgOperator`を適用してシーケンスを続ける
+            // （`C=Aの要素数+Aの要素数`の後半`要素数`は演算式全体を引数に取る）。
+            if (helpers.operatorInfo(self.peek().kind) == null) return call;
             arguments = .empty;
-            try arguments.append(self.allocator, call);
-            if (!self.isTerminator()) try arguments.append(self.allocator, try expressions.parseExpression(self, 0));
+            try arguments.append(self.allocator, try expressions.parseOperatorTail(self, call, 0));
+            // 演算子の右辺に続く助詞付きの値を引数として集め直し、
+            // 次の命令名へ進む。
+            while (!self.at(.identifier) and !self.isTerminator() and
+                arguments.items[arguments.items.len - 1].josi.len > 0 and
+                canStartExpression(self.peek().kind))
+            {
+                try arguments.append(self.allocator, try expressions.parseExpression(self, 0));
+            }
+            if (!self.at(.identifier)) return arguments.items[0];
         }
         return arguments.items[0];
     }

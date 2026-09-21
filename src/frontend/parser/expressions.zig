@@ -22,9 +22,9 @@ pub fn parseExpressionWithContext(self: *Parser, minimum_precedence: u8, allow_n
 }
 
 /// 式の先頭`left`に続く演算子と右辺を、優先順位に従って読む。
-/// `parseDelimitedSequence`が命令呼出しの直後に続く演算子を取り込むためにも使う
+/// `collectJosiSequence`が命令呼出しの直後に続く演算子を取り込むためにも使う
 /// （公式`yCall`が呼出し結果へ`yGetArgOperator`を適用するのに相当）。
-fn parseOperatorTail(self: *Parser, left: *ast.Node, minimum_precedence: u8) ParseFailure!*ast.Node {
+pub fn parseOperatorTail(self: *Parser, left: *ast.Node, minimum_precedence: u8) ParseFailure!*ast.Node {
     var result = left;
     while (helpers.operatorInfo(self.peek().kind)) |info| {
         if (info.precedence < minimum_precedence) break;
@@ -52,8 +52,9 @@ fn parseOperatorTail(self: *Parser, left: *ast.Node, minimum_precedence: u8) Par
 /// 公式`yCalc`1回分に相当する値の並びを読む。先頭の値が助詞を持てば
 /// `collectJosiSequence`で命令呼出しまで読み、解決後に残ったノード列を
 /// そのまま返す（公式でスタックに残る値に相当）。助詞を持たない値は
-/// 単独で返す（公式`yCalcMain`の早期return相当）。末尾の値に続く演算子は
-/// 式の一部として取り込む（`1を2で割+3`＝`割(1,2)+3`）。
+/// 単独で返す（公式`yCalcMain`の早期return相当）。
+/// 命令呼出しに続く演算子は`collectJosiSequence`が式の一部として取り込む
+/// （`Aの要素数+Bの要素数`）。
 pub fn parseDelimitedSequence(self: *Parser) ParseFailure![]*ast.Node {
     const first = try parseExpression(self, 0);
     if (first.josi.len == 0) {
@@ -61,9 +62,7 @@ pub fn parseDelimitedSequence(self: *Parser) ParseFailure![]*ast.Node {
         single[0] = first;
         return single;
     }
-    const items = try self.collectJosiSequence(first);
-    items[items.len - 1] = try parseOperatorTail(self, items[items.len - 1], 0);
-    return items;
+    return self.collectJosiSequence(first);
 }
 
 pub fn parseUnary(self: *Parser, allow_negative_number_literal: bool) ParseFailure!*ast.Node {
