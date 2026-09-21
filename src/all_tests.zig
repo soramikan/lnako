@@ -31,6 +31,8 @@ test {
     _ = @import("lnako").package.manifest;
     _ = @import("lnako").package.resolver;
     _ = @import("lnako").package.lock;
+    _ = @import("lnako").package.toml_write;
+    _ = @import("lnako").package.glob;
 
     _ = @import("regexp");
 }

@@ -102,6 +102,8 @@ pub const package = struct {
     pub const manifest = @import("package/manifest.zig");
     pub const resolver = @import("package/resolver.zig");
     pub const lock = @import("package/lock.zig");
+    pub const toml_write = @import("package/toml_write.zig");
+    pub const glob = @import("package/glob.zig");
 };
 
 pub const Command = enum {
@@ -232,6 +234,8 @@ test {
     std.testing.refAllDecls(package.manifest);
     std.testing.refAllDecls(package.resolver);
     std.testing.refAllDecls(package.lock);
+    std.testing.refAllDecls(package.toml_write);
+    std.testing.refAllDecls(package.glob);
 }
 
 test "コマンドを解析できる" {
