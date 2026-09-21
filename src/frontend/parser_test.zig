@@ -1043,3 +1043,18 @@ test "宣言の右辺は匿名関数も受理する" {
         try std.testing.expectEqual(ast.Kind.anonymous_function, declarations[0].children[0].kind);
     }
 }
+
+test "『定める』が『と』助詞を値として受理し値の省略をnopにする" {
+    // 公式ySadameruは `popStack(['を'])` を定義対象、`popStack(['へ','に','と'])`
+    // を値に取り、値が無ければnop（コード生成で0）にする。
+    var result = try parse(std.testing.allocator, "Cを1と定める\nDを定める\n", "定めると.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const declarations = try variableDefinitions(std.testing.allocator, result.root.?);
+    defer std.testing.allocator.free(declarations);
+    try std.testing.expectEqual(@as(usize, 2), declarations.len);
+    try std.testing.expectEqualStrings("C", declarations[0].name);
+    try std.testing.expectEqual(@as(f64, 1), declarations[0].children[0].number_value.?);
+    try std.testing.expectEqualStrings("D", declarations[1].name);
+    try std.testing.expectEqual(ast.Kind.nop, declarations[1].children[0].kind);
+}

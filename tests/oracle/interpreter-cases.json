@@ -493,5 +493,9 @@
   {
     "id": "switch-else-comma-clause",
     "source": "N=2\nNで条件分岐\n    1ならば、「1」と表示。ここまで。\n    違えば、\n        「@」と表示\n    ここまで\nここまで\n"
+  },
+  {
+    "id": "define-to-particle-and-omitted-value",
+    "source": "Cを1と定める\nCを表示\nDを定める\nDを表示\n"
   }
 ]
