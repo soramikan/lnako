@@ -210,7 +210,13 @@ const FunctionBuilder = struct {
     }
 
     fn lowerStore(self: *FunctionBuilder, opcode: ir.Opcode, node: hir.Node) !?ir.ValueId {
-        const value = if (node.children.len > 0) (try self.lowerNode(node.children[0])) orelse try self.emitUndefined(node) else try self.emitUndefined(node);
+        // 公式は初期値を省略した宣言（`変数 A`・`Aとは変数`）のnopブロックを
+        // 0として保存する（nako_genのconvDefLocalVar相当）。保存先を持たない
+        // 文はchildを持たないため、従来どおりundefinedを保存する。
+        const value = if (node.children.len > 0)
+            (try self.lowerNode(node.children[0])) orelse try self.emitConstNumber(0, node)
+        else
+            try self.emitUndefined(node);
         try self.emitVoid(opcode, &.{value}, node);
         return value;
     }
