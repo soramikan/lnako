@@ -61,5 +61,35 @@
     "id": "semantic-diagnostic-assign-to-defined-constant",
     "source": "リンゴ値段を320に定める。\nリンゴ値段=500\n",
     "code": "assign_to_constant"
+  },
+  {
+    "id": "semantic-diagnostic-assign-to-builtin-function",
+    "source": "INT=3.5\n",
+    "code": "assign_to_function"
+  },
+  {
+    "id": "semantic-diagnostic-assign-to-builtin-command",
+    "source": "表示=1\n",
+    "code": "assign_to_function"
+  },
+  {
+    "id": "semantic-diagnostic-declare-builtin-function-name",
+    "source": "変数 INT=1\n",
+    "code": "assign_to_function"
+  },
+  {
+    "id": "semantic-diagnostic-towa-declare-builtin-function-name",
+    "source": "今とは変数=1\n",
+    "code": "assign_to_function"
+  },
+  {
+    "id": "semantic-diagnostic-assign-to-user-function",
+    "source": "●Fとは\n1で戻る\nここまで\nF=1\n",
+    "code": "assign_to_function"
+  },
+  {
+    "id": "semantic-diagnostic-assign-to-function-via-dainyu",
+    "source": "INTに2を代入\n",
+    "code": "assign_to_function"
   }
 ]
