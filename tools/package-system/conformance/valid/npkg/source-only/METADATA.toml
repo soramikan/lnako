@@ -1,0 +1,17 @@
+schemaVersion = 1
+
+[package]
+name = "hello"
+version = "1.0.0"
+license = "MIT"
+description = "hello package"
+authors = ["soramikan"]
+keywords = ["example"]
+runtimes = ["lnako", "cnako"]
+
+[package.engines]
+nako = ">=3.7.0"
+
+[[exports]]
+name = "hello"
+path = "src/index.nako3"

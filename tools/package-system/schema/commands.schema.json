@@ -6,8 +6,7 @@
   "additionalProperties": false,
   "properties": {
     "schemaVersion": {
-      "type": "integer",
-      "minimum": 1
+      "const": 1
     },
     "commands": {
       "type": "array",

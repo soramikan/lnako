@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "commands": [
+    { "name": "挨拶", "args": ["名前"], "josi": ["に"] },
+    { "name": "バージョン", "variable": true }
+  ]
+}

@@ -3,7 +3,7 @@ import { join, dirname, basename, extname, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { DiagnosticError, validateManifest, validateLock, validateRegistryIndex, validateRegistryPackage, validateRegistryVersion, validateNpkgMetadata, validateNpkgCommands, validateEnvironment, validateEnvironmentReference } from "./lib/package/schema_validator.mjs";
+import { DiagnosticError, validateManifest, validateLock, validateRegistryIndex, validateRegistryPackage, validateRegistryVersion, validateNpkgMetadata, validateNpkgCommands, validateNpkgFiles, validateEnvironment, validateEnvironmentReference } from "./lib/package/schema_validator.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -59,7 +59,7 @@ function primaryFixtureFiles(dir) {
       if (files.includes(f)) candidates.push(f);
     }
   } else if (category === "npkg") {
-    for (const f of ["METADATA.json", "commands.json"]) {
+    for (const f of ["METADATA.toml", "METADATA.json", "FILES.toml", "FILES.json", "commands.json"]) {
       if (files.includes(f)) candidates.push(f);
     }
   } else if (category === "environment") {
@@ -95,7 +95,8 @@ function validateFixtureFile(file) {
     }
     case "npkg": {
       const name = basename(file);
-      if (name === "METADATA.json") validateNpkgMetadata(value, file);
+      if (name === "METADATA.toml" || name === "METADATA.json") validateNpkgMetadata(value, file);
+      else if (name === "FILES.toml" || name === "FILES.json") validateNpkgFiles(value, file);
       else if (name === "commands.json") validateNpkgCommands(value, file);
       else throw new Error(`unknown npkg fixture: ${file}`);
       break;

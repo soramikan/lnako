@@ -955,6 +955,10 @@ export function validateNpkgCommands(commands, fixturePath) {
   validateBySchemaFile(commands, "commands.schema.json", fixturePath);
 }
 
+export function validateNpkgFiles(files, fixturePath) {
+  validateBySchemaFile(files, "npkg-files.schema.json", fixturePath);
+}
+
 export function validateEnvironment(environment, fixturePath) {
   // `.nako/environment.json` は cnako が単独で参照する外部契約であり、
   // 欠落・破損・版不一致・lock 不一致はすべて E034 に正規化する。

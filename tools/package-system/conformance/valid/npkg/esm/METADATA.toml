@@ -1,0 +1,14 @@
+schemaVersion = 1
+
+[package]
+name = "webutil"
+version = "0.3.1"
+license = "MIT"
+runtimes = ["cnako"]
+
+[[exports]]
+name = "webutil"
+esm = [
+  { path = "esm/webutil.mjs" },
+  { path = "esm/webutil-legacy.mjs", when = "runtime == 'cnako'" },
+]

@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "commands": [
+    { "name": "挨拶", "bogus": true }
+  ]
+}
