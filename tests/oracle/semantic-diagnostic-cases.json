@@ -56,5 +56,10 @@
     "source": "A$b=1\nA=0\n",
     "code": "undefined_symbol",
     "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-assign-to-defined-constant",
+    "source": "リンゴ値段を320に定める。\nリンゴ値段=500\n",
+    "code": "assign_to_constant"
   }
 ]

@@ -553,7 +553,7 @@ pub const Parser = struct {
             _ = self.advance();
             // 公式は`定数 名=`の空の右辺をnop（=0）に落とす。属性付きの宣言と
             // `変数 名=`は式が必須（`yCalc() || yNop()`は定数の形だけ）。
-            if (!is_const or has_attribute or canStartExpression(self.peek().kind)) {
+            if (!is_const or has_attribute or self.canStartDeclarationValue()) {
                 value = try self.parseCallExpression();
             }
         } else if (is_const or has_attribute) {
@@ -576,6 +576,13 @@ pub const Parser = struct {
         if (std.mem.eql(u8, attribute.value, "非公開")) return false;
         if (std.mem.eql(u8, attribute.value, "公開") or std.mem.eql(u8, attribute.value, "エクスポート")) return true;
         return default;
+    }
+
+    /// 宣言の右辺を開始できるか。公式`yCalc()`は通常の式に加えて
+    /// 匿名関数（`関数()`）も右辺として受理するため、`parseCallExpression`
+    /// と同じく `.def_func` を式開始として扱う。
+    fn canStartDeclarationValue(self: *Parser) bool {
+        return self.peek().kind == .def_func or canStartExpression(self.peek().kind);
     }
 
     /// `取込 <expr>` の文頭形式。
@@ -668,7 +675,7 @@ pub const Parser = struct {
         if (self.at(.equal)) {
             _ = self.advance();
             // 公式は`yCalc() || value`で式の無い右辺をnopへ落とす。
-            if (!declaration_from_towa or canStartExpression(self.peek().kind)) {
+            if (!declaration_from_towa or self.canStartDeclarationValue()) {
                 value = try self.parseCallExpression();
             }
         } else if (!declaration_from_towa) {
@@ -1064,7 +1071,11 @@ pub const Parser = struct {
             result.josi = "";
             // `Aを1に定める`の宣言も公式ySadameru同様にモジュール変数として
             // 既定公開する。ASTのis_exportは既定falseなので、ここで明示する。
-            if (kind == .variable_definition) result.is_export = attribute_is_export;
+            if (kind == .variable_definition) {
+                result.is_export = attribute_is_export;
+                // 公式ySadameruは`createVar(word, true, ...)`で定数を作る。
+                result.is_const = is_define;
+            }
             result.check_array_init = kind == .array_assignment and (self.mode.dncl or self.mode.dncl2);
             return result;
         }

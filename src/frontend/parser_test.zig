@@ -790,3 +790,34 @@ fn variableDefinitions(allocator: std.mem.Allocator, root: *ast.Node) ![]const *
     for (root.children) |child| if (child.kind == .variable_definition) try collected.append(allocator, child);
     return collected.toOwnedSlice(allocator);
 }
+
+test "『定める』は定数を生成し匿名関数も右辺に取れる" {
+    // 公式ySadameruは `createVar(word, true, ...)` で定数を作る。
+    var result = try parse(std.testing.allocator, "リンゴ値段を320に定める。\n", "定める.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const declaration = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.variable_definition, declaration.kind);
+    try std.testing.expectEqualStrings("リンゴ値段", declaration.name);
+    try std.testing.expect(declaration.is_const);
+    try std.testing.expectEqual(@as(f64, 320), declaration.children[0].number_value.?);
+}
+
+test "宣言の右辺は匿名関数も受理する" {
+    // 公式`yCalc()`は匿名関数（`関数()`）を式として受理するため、
+    // 空の右辺判定でも`.def_func`を式開始として扱う。
+    const sources = [_][]const u8{
+        "定数 F=関数()\n  1で戻る\nここまで\nF()を表示\n",
+        "Aとは変数=関数()\n  2で戻る\nここまで\nA()を表示\n",
+        "Aとは定数=関数()\n  3で戻る\nここまで\nA()を表示\n",
+    };
+    for (sources) |source| {
+        var result = try parse(std.testing.allocator, source, "匿名関数右辺.nako3");
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+        const declarations = try variableDefinitions(std.testing.allocator, result.root.?);
+        defer std.testing.allocator.free(declarations);
+        try std.testing.expectEqual(@as(usize, 1), declarations.len);
+        try std.testing.expectEqual(ast.Kind.anonymous_function, declarations[0].children[0].kind);
+    }
+}
