@@ -97,5 +97,11 @@
     "source": "__DEBUG=1\n",
     "code": "assign_to_function",
     "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-assign-to-shadowing-user-function",
+    "source": "●INTとは\n1で戻る\nここまで\nINT=1\n",
+    "code": "assign_to_function",
+    "checkMessage": true
   }
 ]

@@ -372,8 +372,11 @@ const Analyzer = struct {
 
     fn resolveDeclaration(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId) !void {
         // 公式は組み込み命令名への代入を構文エラーにする（代入的呼出しの廃止）。
-        if (node.kind == .assignment or node.kind == .variable_definition)
-            _ = try self.rejectFunctionTarget(node.span, module_index, node.name);
+        // 同名のユーザー関数がある場合も公式は単一のエラーなので、ここで
+        // 診断したらシンボル解決側では再診断しない。
+        if (node.kind == .assignment or node.kind == .variable_definition) {
+            if (try self.rejectFunctionTarget(node.span, module_index, node.name)) return;
+        }
         // 公式の明示宣言（変数/定数）はfindVarを使わず無条件に変数を作る
         // （createVar相当）。事前宣言した自分自身のシンボルにそのまま束縛する。
         if (node.kind == .variable_definition) {
@@ -1124,4 +1127,16 @@ test "組み込み命令名と関数名への代入を診断する" {
     try std.testing.expect(!program.succeeded());
     try std.testing.expectEqual(diagnostic.Code.assign_to_function, program.diagnostics[0].code);
     try std.testing.expectEqual(@as(u32, 4), program.diagnostics[0].span.line + 1);
+
+    // 組み込み名と同名のユーザー関数への代入は、公式の単一エラーと同じく
+    // 診断を1件だけ出す（命令名とシンボルの両経路で重複させない）。
+    {
+        var dup_parsed = try parser.parse(std.testing.allocator, "●INTとは\n1で戻る\nここまで\nINT=1\n", "dup-function-target.nako3");
+        defer dup_parsed.deinit();
+        var dup_program = try analyze(std.testing.allocator, dup_parsed.root.?, "dup-function-target.nako3");
+        defer dup_program.deinit();
+        try std.testing.expect(!dup_program.succeeded());
+        try std.testing.expectEqual(diagnostic.Code.assign_to_function, dup_program.diagnostics[0].code);
+        try std.testing.expectEqual(@as(usize, 1), dup_program.diagnostics.len);
+    }
 }
