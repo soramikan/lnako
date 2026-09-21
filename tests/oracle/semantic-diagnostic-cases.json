@@ -66,5 +66,10 @@
     "id": "semantic-diagnostic-arguments-duplicate-declaration",
     "source": "●(Aの)Fとは\n変数 引数=1\n変数 引数=2\n引数を表示\nここまで\n5のF\n",
     "code": "duplicate_symbol"
+  },
+  {
+    "id": "semantic-diagnostic-arguments-const-after-assignment",
+    "source": "●(Aの)Fとは\n引数=8\n定数 引数=7\n引数を表示\nここまで\n1のF\n",
+    "code": "duplicate_symbol"
   }
 ]

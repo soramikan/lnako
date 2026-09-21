@@ -289,13 +289,22 @@ const Analyzer = struct {
             _ = try self.declare(module_index, scope, node.name, if (node.is_const) .constant else .variable, node.span, exportable and node.is_export, !node.is_const, 0, true);
         } else if (node.kind == .variable_list_definition) {
             for (node.arguments) |name| _ = try self.declare(module_index, scope, name.name, if (node.is_const) .constant else .variable, name.span, exportable and node.is_export, !node.is_const, 0, true);
-        } else if ((node.kind == .assignment or node.kind == .increment or
-            (node.kind == .array_assignment and node.check_array_init)) and self.builtins.get(node.name) == null and
-            !(node.check_array_init and system_constant.isConstant(node.name)) and
-            (std.mem.indexOf(u8, node.name, "__") == null or self.scopes.items[scope].kind == .module) and
-            self.lookupAssignmentTarget(scope, node.name, node.span) == null)
+        } else if (node.kind == .assignment or node.kind == .increment or
+            (node.kind == .array_assignment and node.check_array_init))
         {
-            _ = try self.declare(module_index, scope, node.name, .variable, node.span, true, true, 0, false);
+            if (self.builtins.get(node.name) == null and
+                !(node.check_array_init and system_constant.isConstant(node.name)) and
+                (std.mem.indexOf(u8, node.name, "__") == null or self.scopes.items[scope].kind == .module))
+            {
+                if (self.lookupAssignmentTarget(scope, node.name, node.span) == null) {
+                    _ = try self.declare(module_index, scope, node.name, .variable, node.span, true, true, 0, false);
+                } else {
+                    // 暗黙の`引数`束縛への代入は公式では定義と同じ扱いになり、
+                    // 後続の明示宣言が「二重定義」として拒否される
+                    // （`A=8;定数 A=7` が二重定義になるのと同じ）。
+                    self.consumeImplicitArgumentsBinding(scope, node.name);
+                }
+            }
         } else if (node.kind == .for_statement and node.name.len > 0 and self.lookupLexical(scope, node.name) == null) {
             _ = try self.declare(module_index, scope, node.name, .loop_variable, node.span, exportable, true, 0, false);
         }
@@ -729,13 +738,21 @@ const Analyzer = struct {
             symbol.span.start <= use_span.start and use_span.end <= symbol.span.end;
     }
 
-    /// このスコープの関数内`引数`束縛（公式yCallFunc相当）だけを返す。
     /// 関数内取り込みの宣言は取り込み先モジュール番号で解析されるため、
     /// 所有権はモジュールではなくスコープ（関数）で判定する。
     fn lookupImplicitArguments(self: *Analyzer, scope: ScopeId, name: []const u8) ?Symbol {
         const symbol = self.lookupLexical(scope, name) orelse return null;
         if (!symbol.implicit_arguments) return null;
         return symbol;
+    }
+
+    /// 暗黙の`引数`束縛への代入は、公式では未宣言名への代入と同じく変数の
+    /// 「定義」になる（生成コードの`__vars.set`と参照登録）。したがって
+    /// 以降の明示宣言は同名変数の二重定義として扱う。代入そのものは再束縛
+    /// ではないため、束縛済みシンボルの可変性（kind/is_mutable）は変えない。
+    fn consumeImplicitArgumentsBinding(self: *Analyzer, scope: ScopeId, name: []const u8) void {
+        const symbol = self.lookupImplicitArguments(scope, name) orelse return;
+        self.symbols.items[symbol.id].arguments_reused = true;
     }
 
     /// この文自身が暗黙・明示に宣言するシンボルを返す。
@@ -926,6 +943,43 @@ test "仮引数『引数』と同名宣言の重複診断を保つ" {
     try Case.expectDuplicate("●(引数と引数の)Fとは\n引数を表示\nここまで\nF(1,2)\n");
     // 明示宣言の特例は最初の1回だけで、2個目の宣言は二重定義として診断する。
     try Case.expectDuplicate("●(Aの)Fとは\n変数 引数=1\n変数 引数=2\n引数を表示\nここまで\n5のF\n");
+    // 暗黙の`引数`への代入は定義なので、後続の明示宣言は二重定義になる
+    // （公式は「定数『引数』の二重定義はできません。」を宣言行で報告する）。
+    try Case.expectDuplicate("●(Aの)Fとは\n引数=8\n定数 引数=7\n引数を表示\nここまで\n1のF\n");
+    try Case.expectDuplicate("●(Aの)Fとは\n引数を1増やす\n変数 引数=7\n引数を表示\nここまで\n1のF\n");
+}
+
+test "『引数』の明示宣言は同名ローカルとして再利用し宣言前の代入を拒否しない" {
+    const parser = @import("../frontend/parser.zig");
+    const Case = struct {
+        fn expectDiagnostics(source: []const u8, duplicates: usize, constant_assignments: usize) !void {
+            var parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
+            defer parsed.deinit();
+            var analyzed = try analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+            defer analyzed.deinit();
+            var duplicate_count: usize = 0;
+            var assignment_count: usize = 0;
+            for (analyzed.diagnostics) |item| {
+                if (item.code == .duplicate_symbol) duplicate_count += 1;
+                if (item.code == .assign_to_constant) assignment_count += 1;
+            }
+            try std.testing.expectEqual(duplicates, duplicate_count);
+            try std.testing.expectEqual(constant_assignments, assignment_count);
+        }
+    };
+    // 宣言だけの`引数`は暗黙束縛をそのまま置き換える（公式も受理する）。
+    try Case.expectDiagnostics("●(Aの)Fとは\n定数 引数=7\n引数を表示\nここまで\n1のF\n", 0, 0);
+    // 宣言後の再代入は定数代入として拒否する（公式と同じ検出段階）。
+    try Case.expectDiagnostics("●(Aの)Fとは\n定数 引数=7\n引数=8\nここまで\n1のF\n", 0, 1);
+}
+
+test "厳チェックでも関数内の『引数』は未定義にならない" {
+    const parser = @import("../frontend/parser.zig");
+    var parsed = try parser.parse(std.testing.allocator, "!厳チェック\n●(Aの)Fとは\n引数[0]を表示\nここまで\n1のF\nF2=関数(A)それは引数[0];ここまで\nF2(3)を表示\n", "strict-arguments.nako3");
+    defer parsed.deinit();
+    var program = try analyze(std.testing.allocator, parsed.root.?, "strict-arguments.nako3");
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
 }
 
 test "公式と同じファイル名をモジュール名に保つ" {
