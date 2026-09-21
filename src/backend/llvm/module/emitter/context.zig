@@ -33,6 +33,9 @@ pub const Emitter = struct {
     system_dictionaries: std.ArrayList(usize) = .empty,
     system_era_data: std.ArrayList(usize) = .empty,
     bigints: std.ArrayList(BigIntConstant) = .empty,
+    /// `{関数}名`で関数値化された組み込み命令名（重複なし、収集順）。
+    /// `@lnako.builtin.name.{index}` 定数の索引として使う。
+    builtin_closure_names: std.ArrayList([]const u8) = .empty,
     locations: std.ArrayList(DebugLocation) = .empty,
     next_metadata: usize = 4,
     // 名前解決の線形再探索を避ける索引。aot_builtin.lookupは全コマンド名への
@@ -58,6 +61,7 @@ pub const Emitter = struct {
         self.system_dictionaries.deinit(self.allocator);
         self.system_era_data.deinit(self.allocator);
         self.bigints.deinit(self.allocator);
+        self.builtin_closure_names.deinit(self.allocator);
         self.locations.deinit(self.allocator);
         self.builtin_command_cache.deinit(self.allocator);
         if (self.function_index) |*index| index.deinit(self.allocator);
@@ -187,6 +191,11 @@ pub const Emitter = struct {
 
     pub fn debugPathIndex(self: Emitter, path: []const u8) ?usize {
         for (self.debug_paths.items, 0..) |constant, index| if (std.mem.eql(u8, constant.path, path)) return index;
+        return null;
+    }
+
+    pub fn builtinClosureNameIndex(self: Emitter, name: []const u8) ?usize {
+        for (self.builtin_closure_names.items, 0..) |entry, index| if (std.mem.eql(u8, entry, name)) return index;
         return null;
     }
 

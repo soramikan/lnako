@@ -2663,3 +2663,47 @@ test "Interpreter低レイヤーのカタログ命令はシステム関数存在
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("true\ntrue\nfalse\n", host.written());
 }
+
+test "『{関数}名』のユーザー関数参照を実行できる" {
+    const source =
+        "●AAAとは\n" ++
+        "30を戻す\n" ++
+        "ここまで\n" ++
+        "{関数}AAAを実行して表示\n" ++
+        "F={関数}AAA\n" ++
+        "F()を表示\n" ++
+        "G={関数}実行\n" ++
+        "G({関数}AAA)を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("30\n30\n30\n", host.written());
+}
+
+test "『{関数}組み込み命令』を関数値として呼び出せる" {
+    const source =
+        "F={関数}足\n" ++
+        "F(3,4)を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("7\n", host.written());
+}

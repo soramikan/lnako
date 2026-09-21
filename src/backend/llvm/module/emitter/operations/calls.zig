@@ -276,7 +276,17 @@ pub fn writeDynamicCall(
 
 pub fn writeMakeClosure(emitter: *Emitter, caller: ir.Function, locals: []const []const u8, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
     const result = instruction.result orelse return error.MissingInstructionResult;
-    const function = try emitter.findFunction(instruction.name) orelse return error.UnknownClosureFunction;
+    const function = try emitter.findFunction(instruction.name) orelse {
+        // `{関数}組み込み命令` — IR関数ではなく組み込み命令への関数値。
+        // 関数名定数と専用コールバック経由で通常の組み込みディスパッチへ流す。
+        const name_index = emitter.builtinClosureNameIndex(instruction.name) orelse return error.UnknownClosureFunction;
+        const arity = shared.builtinClosureArity(instruction.name) orelse return error.UnknownClosureFunction;
+        try emitter.output.writer.print("  call void @lnako_aot_function_new_named(ptr %root.slot.{d}, ptr @lnako_aot_builtin_function_call, i64 {d}, ptr @lnako.builtin.name.{d}, i64 {d}, ptr null, i64 0)", .{ result, arity, name_index, instruction.name.len });
+        try emitter.debugSuffix(instruction.span, scope);
+        try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+        try emitter.debugSuffix(instruction.span, scope);
+        return;
+    };
     if (function.captures.len > aggregate_count) return error.InvalidAggregateScratch;
     const value_root_count = context.functionValueCount(caller);
     for (function.captures, 0..) |capture, index| {

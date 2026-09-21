@@ -117,6 +117,7 @@ const lnako_aot_unary = state.lnako_aot_unary;
 const lnako_aot_binding_cell_new = state.lnako_aot_binding_cell_new;
 const lnako_aot_binding_cell_value = state.lnako_aot_binding_cell_value;
 const lnako_aot_builtin_call = state.lnako_aot_builtin_call;
+const lnako_aot_builtin_function_call = state.lnako_aot_builtin_function_call;
 const lnako_aot_builtin_call_site = state.lnako_aot_builtin_call_site;
 const lnako_aot_array_push_call_site = state.lnako_aot_array_push_call_site;
 const lnako_aot_element_count_call_site = state.lnako_aot_element_count_call_site;
@@ -8350,4 +8351,24 @@ test "AOT低レイヤーのハッシュ完了encodingはハッシュ値計算と
         defer std.testing.allocator.free(actual_text);
         try std.testing.expectEqualStrings(expected_text, actual_text);
     }
+}
+
+test "AOT組み込み命令の関数値は名前からオペコードを引いて呼び出せる" {
+    // `{関数}組み込み命令`で生成される関数値のコールバック。関数オブジェクトの
+    // 名前からオペコードを解決し、通常の組み込みディスパッチへ委譲する。
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, numberValue(3), numberValue(4), .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+    const name = "足";
+    lnako_aot_function_new_named(&roots[0], lnako_aot_builtin_function_call, 2, name.ptr, name.len, null, 0);
+    lnako_aot_function_call(&roots[3], &roots[0], @ptrCast(&roots[1]), 2);
+    try std.testing.expectEqual(@as(f64, 7), @as(f64, @bitCast(roots[3].payload)));
 }

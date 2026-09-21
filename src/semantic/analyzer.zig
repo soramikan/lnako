@@ -335,6 +335,7 @@ const Analyzer = struct {
             },
             .word => try self.resolveReference(node, module_index, scope, false),
             .function_call => try self.resolveReference(node, module_index, scope, true),
+            .function_pointer => try self.resolveFunctionPointer(node, module_index, scope),
             .for_statement => if (node.name.len > 0) {
                 if (self.lookupLexical(scope, node.name)) |symbol| try self.bind(node, .declaration, node.name, symbol.qualified_name, symbol.id);
             },
@@ -552,6 +553,34 @@ const Analyzer = struct {
         const symbol_id = try self.declare(module_index, declare_scope, name, .variable, node.span, true, true, 0, false);
         const symbol = self.symbols.items[symbol_id];
         try self.bind(node, if (callable) .call else .reference, name, symbol.qualified_name, symbol.id);
+    }
+
+    /// `{関数}名` の関数参照を解決する。公式は字句解析時に funclist で直後の
+    /// 名前を `func_pointer` へ変換するため、ユーザー定義関数（取り込み
+    /// モジュール含む）・組み込み命令のいずれにも解決できない名前は
+    /// 『関数の定義でエラー』相当の診断にする。
+    fn resolveFunctionPointer(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId) !void {
+        const name = node.name;
+        if (name.len == 0) return;
+        if (self.resolveSymbol(module_index, scope, name, node.span)) |symbol| {
+            if (symbol.kind == .function or symbol.kind == .test_function) {
+                try self.bind(node, .call, name, symbol.qualified_name, symbol.id);
+                return;
+            }
+        }
+        for (builtin_catalog.assign_to_function_names) |candidate| {
+            if (std.mem.eql(u8, candidate, name)) {
+                try self.bind(node, .builtin, name, name, null);
+                return;
+            }
+        }
+        if (self.inputs[module_index].allows_dynamic_commands) {
+            try self.bind(node, .builtin, name, name, null);
+            self.bindings.items[self.bindings.items.len - 1].dynamic_builtin = true;
+            return;
+        }
+        const message = try std.fmt.allocPrint(self.allocator, "『{{関数}}』の参照先『{s}』は関数として見つかりません", .{name});
+        try self.addDiagnostic(.undefined_symbol, node.span, self.modules.items[module_index].path, message);
     }
 
     /// 関数内取り込みで展開されるモジュールの変数系モジュールシンボルは、
@@ -1139,4 +1168,38 @@ test "組み込み命令名と関数名への代入を診断する" {
         try std.testing.expectEqual(diagnostic.Code.assign_to_function, dup_program.diagnostics[0].code);
         try std.testing.expectEqual(@as(usize, 1), dup_program.diagnostics.len);
     }
+}
+
+test "『{関数}名』はユーザー関数と組み込み命令へ束縛する" {
+    const parser = @import("../frontend/parser.zig");
+    const source = "●AAAとは\n30を戻す\nここまで\n{関数}AAAを実行\n{関数}足を実行\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "func-ref.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var program = try analyze(std.testing.allocator, parsed.root.?, "func-ref.nako3");
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var saw_user = false;
+    var saw_builtin = false;
+    for (program.bindings) |binding| {
+        if (binding.kind == .call and std.mem.eql(u8, binding.name, "AAA") and std.mem.endsWith(u8, binding.resolved_name, "__AAA")) saw_user = true;
+        if (binding.kind == .builtin and std.mem.eql(u8, binding.resolved_name, "足")) saw_builtin = true;
+    }
+    try std.testing.expect(saw_user);
+    try std.testing.expect(saw_builtin);
+}
+
+test "『{関数}未定義名』は関数として見つからない旨を診断する" {
+    const parser = @import("../frontend/parser.zig");
+    var parsed = try parser.parse(std.testing.allocator, "{関数}ZZZを実行\n", "func-ref-unknown.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var program = try analyze(std.testing.allocator, parsed.root.?, "func-ref-unknown.nako3");
+    defer program.deinit();
+    try std.testing.expect(!program.succeeded());
+    var count: usize = 0;
+    for (program.diagnostics) |item| {
+        if (item.code == .undefined_symbol) count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), count);
 }

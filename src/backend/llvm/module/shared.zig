@@ -1,5 +1,7 @@
 const std = @import("std");
 const ir = @import("../../../ir/nako_ir.zig");
+const aot_builtin = @import("../../../runtime/aot_builtin.zig");
+const builtin_catalog = @import("../../../semantic/builtin_catalog.zig");
 
 pub const manifest_schema = "lnako.aot.builtin-manifest.v1";
 pub const global_manifest_schema = "lnako.aot.global-manifest.v1";
@@ -18,6 +20,16 @@ pub fn lookupFunction(program: ir.Program, name: []const u8) ?ir.Function {
         found = function;
     };
     return found;
+}
+
+/// `{関数}名`で関数値化する組み込み命令の固定arity。AOTオペコードを持たない
+/// 命令や可変長命令は関数値呼出しABI（実引数数ではなくarityをcallbackへ渡す）
+/// で正しくディスパッチできないためnullを返し、make_closureを未対応扱いにする。
+pub fn builtinClosureArity(name: []const u8) ?usize {
+    if (aot_builtin.lookup(name) == null) return null;
+    const arity = builtin_catalog.findArity(name) orelse return null;
+    if (arity.is_variable) return null;
+    return arity.count;
 }
 
 pub fn isDynamicNamedCall(function: ir.Function, name: []const u8) bool {

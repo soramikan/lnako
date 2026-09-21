@@ -109,6 +109,7 @@ pub fn emitPreamble(emitter: *Emitter) !void {
             "declare void @lnako_aot_function_new_named(ptr, ptr, i64, ptr, i64, ptr, i64)\n" ++
             "declare void @lnako_aot_function_capture(ptr, ptr, i64)\n" ++
             "declare void @lnako_aot_function_call(ptr, ptr, ptr, i64)\n" ++
+            "declare void @lnako_aot_builtin_function_call(ptr, ptr, ptr, i64)\n" ++
             "declare void @lnako_aot_cut(ptr, ptr, ptr, i64, i8)\n" ++
             "declare void @lnako_aot_cut_site(ptr, ptr, ptr, i64, i8, i64)\n" ++
             "declare void @lnako_aot_builtin_call(ptr, ptr, i64, i16)\n" ++
@@ -258,6 +259,13 @@ pub fn collectModuleData(emitter: *Emitter) !void {
                 });
                 bigint_index += 1;
             }
+            if (instruction.opcode == .make_closure and
+                lookupFunction(emitter.program, instruction.name) == null and
+                shared.builtinClosureArity(instruction.name) != null and
+                emitter.builtinClosureNameIndex(instruction.name) == null)
+            {
+                try emitter.builtin_closure_names.append(emitter.allocator, instruction.name);
+            }
         };
     }
     for (emitter.globals.items, 0..) |name, global_index| if (emitter.systemStringValue(name)) |value| {
@@ -365,6 +373,20 @@ pub fn emitDeclarations(emitter: *Emitter) !void {
         }
     }
     if (emitter.program.functions.len > 0) try writer.writeByte('\n');
+    for (emitter.builtin_closure_names.items, 0..) |name, index| {
+        try writer.print("@lnako.builtin.name.{d} = private unnamed_addr constant [{d} x i8] ", .{ index, name.len });
+        if (name.len == 0) {
+            try writer.writeAll("zeroinitializer\n");
+        } else {
+            try writer.writeByte('[');
+            for (name, 0..) |byte, byte_index| {
+                if (byte_index > 0) try writer.writeAll(", ");
+                try writer.print("i8 {d}", .{byte});
+            }
+            try writer.writeAll("]\n");
+        }
+    }
+    if (emitter.builtin_closure_names.items.len > 0) try writer.writeByte('\n');
     for (emitter.system_strings.items, 0..) |constant, index| {
         try writer.print("@lnako.system.string.{d} = private unnamed_addr constant [{d} x i16] ", .{ index, constant.units.len });
         if (constant.units.len == 0) {

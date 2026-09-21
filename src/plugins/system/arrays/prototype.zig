@@ -495,7 +495,7 @@ pub fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u
                 rooted_source.function.prototype = prototype;
                 break :blk @as(?Value, prototype);
             },
-            .native, .external => null,
+            .native, .external, .builtin => null,
         };
     }
 
