@@ -465,5 +465,21 @@
   {
     "id": "implicit-if-user-function-josi-call",
     "source": "もし、1をFならば\n「ok」と表示\nここまで\n●(Aを)Fとは\nAで戻る\nここまで\n"
+  },
+  {
+    "id": "switch-else-inline-clause",
+    "source": "N=2\nNで条件分岐\n    1ならば、「1」と表示。ここまで。\n    2ならば、「2」と表示。ここまで。\n    違えば、「@」と表示。ここまで。\nここまで。\n"
+  },
+  {
+    "id": "switch-else-without-own-end",
+    "source": "N=2\nNで条件分岐\n    1ならば、「1」と表示。ここまで。\n    違えば、「@」と表示。\nここまで。\n"
+  },
+  {
+    "id": "switch-else-multiline-clause",
+    "source": "N=3\nNで条件分岐\n    1ならば\n        「1」と表示\n    ここまで\n    違えば\n        「@」と表示\n    ここまで\nここまで\n"
+  },
+  {
+    "id": "switch-else-comma-clause",
+    "source": "N=2\nNで条件分岐\n    1ならば、「1」と表示。ここまで。\n    違えば、\n        「@」と表示\n    ここまで\nここまで\n"
   }
 ]
