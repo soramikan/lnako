@@ -1834,7 +1834,14 @@ test "範囲繰り返しは『で』助詞の変数・範囲オブジェクト�
         "Iを7から8まで繰り返す\nそれを表示\nここまで\n" ++
         "Jで2から4の範囲を繰り返す\nそれを表示\nここまで\n" ++
         "Kで9…11を繰り返す\nKを表示\nここまで\n" ++
-        "Lで1から4の範囲を2ずつ増繰返す\nLを表示\nここまで\n";
+        "Lで1から4の範囲を2ずつ増繰返す\nLを表示\nここまで\n" ++
+        // 範囲オブジェクトは一度だけ評価する（公式convForの$nako_temp相当）。
+        // 二重評価ならF/Gが二度走りC=22・末尾が22になる。
+        "C=0\n" ++
+        "●Fとは\nC=C+1\nCを戻す\nここまで\n" ++
+        "●Gとは\nC=C+10\nCを戻す\nここまで\n" ++
+        "範囲(F(),G())を繰り返す\nここまで\n" ++
+        "「C={C}」を表示\n";
     var fixture = try compileForTest(std.testing.allocator, source);
     defer fixture.ir_program.deinit();
     defer fixture.hir_program.deinit();
@@ -1847,7 +1854,7 @@ test "範囲繰り返しは『で』助詞の変数・範囲オブジェクト�
     var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
     defer interpreter.deinit();
     _ = try interpreter.run();
-    try std.testing.expectEqualStrings("0\n1\n2\n3\n3\n4\n5\n7\n8\n2\n3\n4\n9\n10\n11\n1\n3\n", host.written());
+    try std.testing.expectEqualStrings("0\n1\n2\n3\n3\n4\n5\n7\n8\n2\n3\n4\n9\n10\n11\n1\n3\nC=11\n", host.written());
 }
 
 test "nullとundefinedへの添字代入をキー付き例外として監視する" {

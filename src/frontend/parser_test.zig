@@ -1018,20 +1018,29 @@ test "『で』助詞の繰り返し変数を後置で受理する" {
     try std.testing.expectEqualStrings("5", repeat.children[1].value);
 }
 
-test "範囲オブジェクトの繰り返しは先頭/末尾参照を開始値・終了値に展開する" {
+test "範囲オブジェクトの繰り返しは一時変数の先頭/末尾参照を開始値・終了値に展開する" {
     var result = try parse(std.testing.allocator, "Nで1から5の範囲を繰り返す\nNを表示\nここまで\n", "for-range-object.nako3");
     defer result.deinit();
     try std.testing.expect(result.succeeded());
-    const repeat = result.root.?.children[0];
+    // 公式convForは範囲オブジェクトを一度だけ評価するため、先立つ一時変数への
+    // 代入文とその『先頭』『末尾』参照のfor_statementへ展開する。
+    const sequence = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.block, sequence.kind);
+    const assign = sequence.children[0];
+    try std.testing.expectEqual(ast.Kind.assignment, assign.kind);
+    try std.testing.expectEqualStrings("繰り返し範囲$一時値", assign.name);
+    try std.testing.expectEqual(ast.Kind.function_call, assign.children[0].kind);
+    try std.testing.expectEqualStrings("範囲", assign.children[0].name);
+    try std.testing.expectEqual(@as(usize, 2), assign.children[0].children.len);
+    const repeat = sequence.children[1];
     try std.testing.expectEqual(ast.Kind.for_statement, repeat.kind);
     try std.testing.expectEqualStrings("N", repeat.name);
     const edge_keys = [_][]const u8{ "先頭", "末尾" };
     for (edge_keys, 0..) |key, i| {
         const edge = repeat.children[i];
         try std.testing.expectEqual(ast.Kind.array_value_reference, edge.kind);
-        try std.testing.expectEqual(ast.Kind.function_call, edge.children[0].kind);
-        try std.testing.expectEqualStrings("範囲", edge.children[0].name);
-        try std.testing.expectEqual(@as(usize, 2), edge.children[0].children.len);
+        try std.testing.expectEqual(ast.Kind.word, edge.children[0].kind);
+        try std.testing.expectEqualStrings("繰り返し範囲$一時値", edge.children[0].value);
         try std.testing.expectEqualStrings(key, edge.children[1].value);
     }
 }
@@ -1040,7 +1049,9 @@ test "範囲オブジェクトの繰り返しは増分『ずつ』も受理す�
     var result = try parse(std.testing.allocator, "Iで1から4の範囲を2ずつ増繰返す\nIを表示\nここまで\n", "for-range-inc.nako3");
     defer result.deinit();
     try std.testing.expect(result.succeeded());
-    const repeat = result.root.?.children[0];
+    const sequence = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.block, sequence.kind);
+    const repeat = sequence.children[1];
     try std.testing.expectEqual(ast.Kind.for_statement, repeat.kind);
     try std.testing.expectEqualStrings("I", repeat.name);
     try std.testing.expectEqual(ast.LoopDirection.up, repeat.loop_direction);

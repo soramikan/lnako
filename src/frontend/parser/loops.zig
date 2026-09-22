@@ -110,11 +110,28 @@ pub fn parseFor(self: *Parser, start: Token, arguments: []const *ast.Node) Parse
     if (variable.len == 0) variable = "それ";
     var from_node = from_arg orelse try builder.nop(self, keyword);
     var to_node = to_arg.?;
+    var range_temp_assign: ?*ast.Node = null;
     if (is_range_object) {
         // 『AからBの範囲を繰り返す』『NでA…Bを繰り返す』(#1704互換):
         // 範囲オブジェクトの『先頭』『末尾』が開始値・終了値になる。
-        from_node = try builder.reference(self, .array_value_reference, to_node, &.{try stringNode(self, "先頭", keyword)}, keyword);
-        to_node = try builder.reference(self, .array_value_reference, try copyAst(self, to_node), &.{try stringNode(self, "末尾", keyword)}, keyword);
+        // 公式convForは範囲オブジェクトを$nako_tempへ一度だけ評価するため、
+        // AST複製による二重評価（副作用の二重発生）を避け、ユーザーが記述
+        // できない一時変数への代入文をループの前へ置く。
+        const temp_name = "繰り返し範囲$一時値";
+        const assign = try builder.makeNodeWithChildren(self, .assignment, start, try builder.copyChildren(self, &.{to_node}));
+        assign.name = temp_name;
+        assign.josi = "";
+        range_temp_assign = assign;
+        const head_base = try builder.makeNode(self, .word, keyword);
+        head_base.value = temp_name;
+        head_base.josi = "";
+        head_base.raw_josi = "";
+        const tail_base = try builder.makeNode(self, .word, keyword);
+        tail_base.value = temp_name;
+        tail_base.josi = "";
+        tail_base.raw_josi = "";
+        from_node = try builder.reference(self, .array_value_reference, head_base, &.{try stringNode(self, "先頭", keyword)}, keyword);
+        to_node = try builder.reference(self, .array_value_reference, tail_base, &.{try stringNode(self, "末尾", keyword)}, keyword);
     }
     const increment = increment_arg orelse try builder.nop(self, keyword);
     const body = try self.parseLoopBody("『繰り返す』文");
@@ -124,6 +141,8 @@ pub fn parseFor(self: *Parser, start: Token, arguments: []const *ast.Node) Parse
     node.loop_direction = direction;
     if (std.mem.eql(u8, keyword.value, "増繰返")) node.loop_direction = .up;
     if (std.mem.eql(u8, keyword.value, "減繰返")) node.loop_direction = .down;
+    if (range_temp_assign) |assign|
+        return builder.makeNodeWithChildren(self, .block, start, try builder.copyChildren(self, &.{ assign, node }));
     return node;
 }
 
@@ -144,18 +163,6 @@ pub fn popJosiArgumentAny(arguments: *std.ArrayList(*ast.Node), josi_list: []con
         }
     }
     return null;
-}
-
-/// 範囲オブジェクトの両端参照用にASTを複製する（同一ノードの二重参照を避ける）。
-fn copyAst(self: *Parser, node: *ast.Node) ParseFailure!*ast.Node {
-    const copy = try self.allocator.create(ast.Node);
-    copy.* = node.*;
-    if (node.children.len > 0) {
-        const children = try self.allocator.alloc(*ast.Node, node.children.len);
-        for (node.children, 0..) |child, i| children[i] = try copyAst(self, child);
-        copy.children = children;
-    }
-    return copy;
 }
 
 /// 『先頭』『末尾』キー参照用の文字列リテラルノードを作る。
