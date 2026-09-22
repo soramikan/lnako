@@ -51,7 +51,9 @@ pub fn acquirePath(
     const manifest_path = try std.fs.path.join(gpa, &.{ dir_path, "nako.toml" });
     const parsed = try readDependencyManifest(session, manifest_path, dep.name, "path");
     return .{
-        .source = .{ .kind = .path, .path = dep.path, .mutable = dep.mutable },
+        // source の文字列は全て session arena が所有する（`dep` や lock の
+        // allocator より長生きしなければならない契約）。
+        .source = .{ .kind = .path, .path = try gpa.dupe(u8, dep.path), .mutable = dep.mutable },
         .manifest = parsed,
     };
 }
@@ -126,6 +128,10 @@ pub fn acquireGit(
             return session.fail(.offline, .repository, dep.url, "offline mode: git repository \"{s}\" is not available locally", .{dep.url});
         }
         try gitRun(session, &.{ "git", "clone", "--quiet", "--no-checkout", dep.url, checkout_dir }, null);
+    } else {
+        // 既存 checkout の origin が宣言 URL と一致するか検証する。別 repo の
+        // checkout を再利用して別 URL の内容を読み違えないようにする。
+        try verifyCheckoutOrigin(session, checkout_dir, dep);
     }
 
     // 既存 checkout に commit-ish が無ければ、オンラインではリモートを
@@ -167,8 +173,15 @@ pub fn acquireGit(
     const manifest_dir = if (dep.path) |sub| try std.fs.path.join(gpa, &.{ checkout_dir, sub }) else checkout_dir;
     const manifest_path = try std.fs.path.join(gpa, &.{ manifest_dir, "nako.toml" });
     const parsed = try readDependencyManifest(session, manifest_path, dep.name, "git");
+    // source の文字列は全て session arena が所有する。`dep`・lock 由来の
+    // pinned commit もここで複製する。
     return .{
-        .source = .{ .kind = .git, .url = dep.url, .commit = full_commit, .path = dep.path },
+        .source = .{
+            .kind = .git,
+            .url = try gpa.dupe(u8, dep.url),
+            .commit = try gpa.dupe(u8, full_commit),
+            .path = if (dep.path) |sub| try gpa.dupe(u8, sub) else null,
+        },
         .manifest = parsed,
     };
 }
@@ -198,6 +211,40 @@ fn resolveCommit(session: *Session, checkout_dir: []const u8, commitish: []const
         commit = try gpa.dupe(u8, candidate);
     }
     return commit;
+}
+
+/// 既存 checkout の origin が宣言 URL を指しているか検証する。
+/// origin が無い checkout（手動 seed 等）には宣言 URL の origin を設定する。
+/// origin が別 URL を指す場合、別 repo の内容を別 source として返さないよう
+/// `source_collision` で拒否する。
+fn verifyCheckoutOrigin(session: *Session, checkout_dir: []const u8, dep: manifest_mod.GitDependency) Error!void {
+    const gpa = session.allocator();
+    const result = try gitRunAllowFailure(session, gpa, &.{ "git", "-C", checkout_dir, "remote", "get-url", "origin" });
+    if (!result.succeeded) {
+        // origin remote が無い checkout には宣言 URL を設定して後段の
+        // fetch が動くようにする。
+        try gitRun(session, &.{ "git", "-C", checkout_dir, "remote", "add", "origin", dep.url }, dep.url);
+        return;
+    }
+    const existing = std.mem.trim(u8, result.stdout, " \t\r\n");
+    if (!gitUrlEql(existing, dep.url)) {
+        return session.fail(.source_collision, .repository, dep.url, "checkout \"{s}\" belongs to a different repository (origin is \"{s}\")", .{ checkout_dir, existing });
+    }
+}
+
+/// git remote URL の比較用正規化。`file://` scheme・末尾 `/`・末尾 `.git`
+/// の表記揺れを吸収する（内容は変えない）。
+fn gitUrlEql(a: []const u8, b: []const u8) bool {
+    const normalize = struct {
+        fn run(url: []const u8) []const u8 {
+            var text = url;
+            if (std.mem.startsWith(u8, text, "file://")) text = text["file://".len..];
+            text = std.mem.trimEnd(u8, text, "/");
+            if (std.mem.endsWith(u8, text, ".git")) text = text[0 .. text.len - ".git".len];
+            return text;
+        }
+    }.run;
+    return std.mem.eql(u8, normalize(a), normalize(b));
 }
 
 const GitResult = struct {
@@ -250,7 +297,12 @@ pub fn acquireHttp(session: *Session, dep: manifest_mod.HttpDependency) Error!Ac
     try fetch.verifyHash(session, bytes, dep.hash, dep.url, .artifact);
 
     var acquired = Acquired{
-        .source = .{ .kind = .http, .url = dep.url, .hash = dep.hash },
+        // source の文字列は全て session arena が所有する。
+        .source = .{
+            .kind = .http,
+            .url = try session.allocator().dupe(u8, dep.url),
+            .hash = try session.allocator().dupe(u8, dep.hash),
+        },
         .artifact_bytes = bytes,
         .artifact_sha256 = try fetch.sha256Hex(session.allocator(), bytes),
         .artifact_type = "raw",

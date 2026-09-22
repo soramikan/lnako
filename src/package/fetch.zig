@@ -89,6 +89,12 @@ pub const Policy = struct {
     timeout_ns: u64 = 60 * std.time.ns_per_s,
     /// 許可する redirect 回数。0 は redirect を一切拒否する。
     max_redirects: u16 = 3,
+    /// true のとき平文 `http://` を全 host で許可する。false（既定）では
+    /// loopback host（localhost・127.0.0.0/8・::1）への平文 http だけを
+    /// 許可し、それ以外は `invalid_source` として拒否する。registry の
+    /// index/metadata や manifest の hash を通信路上で改変される攻撃を
+    /// 既定で防ぐための制限。
+    allow_plaintext_http: bool = false,
 };
 
 /// provider 呼出しに共通の環境。`failures` には直近の失敗が新しい順に
@@ -305,6 +311,11 @@ fn fetchBytesInner(session: *Session, uri: std.Uri, url: []const u8, resource: R
 
     const protocol = std.http.Client.Protocol.fromUri(uri) orelse
         return session.fail(.invalid_source, resource, url, "unsupported uri scheme in \"{s}\"", .{url});
+    // 平文 http は loopback 配布または明示 opt-in のみ許可する。registry
+    // metadata・artifact URL を平文へ誘導されないよう既定で制限する。
+    if (protocol == .plain and !session.policy.allow_plaintext_http and !isLoopbackHost(uri)) {
+        return session.fail(.invalid_source, resource, url, "plaintext http url \"{s}\" is only allowed for loopback hosts (set allow_plaintext_http to opt in)", .{url});
+    }
     // TLS無効ビルドでHTTPSを渡すと`request`がabortするため通常エラーへ落とす
     // （`src/http_tls.zig` の `tlsDisabledInitialError` と同じ契約）。
     if (std.http.Client.disable_tls and protocol == .tls) {
@@ -366,6 +377,25 @@ fn fetchBytesInner(session: *Session, uri: std.Uri, url: []const u8, resource: R
         try output.appendSlice(gpa, chunk[0..n]);
     }
     return output.items;
+}
+
+/// URI の host が loopback（localhost・*.localhost・127.0.0.0/8・::1）
+/// なら true。平文 http を同一マシン配布に限って許可する判定に使う。
+fn isLoopbackHost(uri: std.Uri) bool {
+    const component = uri.host orelse return false;
+    const host = switch (component) {
+        .raw, .percent_encoded => |text| text,
+    };
+    if (std.ascii.eqlIgnoreCase(host, "localhost") or std.ascii.endsWithIgnoreCase(host, ".localhost")) return true;
+    if (std.Io.net.Ip4Address.parse(host, 0)) |ip4| {
+        return ip4.bytes[0] == 127;
+    } else |_| {}
+    // IPv6 literal は URI 上 `[…]` で囲まれる。
+    const inner = if (host.len >= 2 and host[0] == '[' and host[host.len - 1] == ']') host[1 .. host.len - 1] else host;
+    if (std.Io.net.Ip6Address.parse(inner, 0)) |ip6| {
+        return std.mem.eql(u8, &ip6.bytes, &std.Io.net.Ip6Address.loopback(0).bytes);
+    } else |_| {}
+    return false;
 }
 
 /// `std.http.Client` 由来の error を統一の失敗分類へ写像する。
@@ -469,19 +499,52 @@ pub fn verifyHash(session: *Session, bytes: []const u8, expected: []const u8, ta
 /// rebase から起動されたプロセスでは GIT_DIR・GIT_WORK_TREE・
 /// GIT_INDEX_FILE 等の `GIT_*` 環境変数が設定されており、そのまま継承
 /// すると子プロセスの git が意図した repo ではなく呼出し側の repo を
-/// 操作する。POSIX では `GIT_*` を除去した環境を返し、対応しない環境では
-/// null（既定の継承）を返す。
+/// 操作する。POSIX は `environ`、Windows は PEB の WTF-16 環境ブロックから
+/// `GIT_*` を除去した環境を返す。対応しない環境では null（既定の継承）
+/// を返す。
 /// 返り値の Map は呼出し側が `deinit` で解放する。
 pub fn sanitizedGitEnvMap(gpa: Allocator) Allocator.Error!?std.process.Environ.Map {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return null;
     var map = std.process.Environ.Map.init(gpa);
     errdefer map.deinit();
-    var i: usize = 0;
-    while (std.c.environ[i]) |entry| : (i += 1) {
-        const kv = std.mem.span(entry);
-        const eq = std.mem.indexOfScalar(u8, kv, '=') orelse continue;
-        if (std.mem.startsWith(u8, kv[0..eq], "GIT_")) continue;
-        try map.put(kv[0..eq], kv[eq + 1 ..]);
+    switch (builtin.os.tag) {
+        .windows => {
+            const windows = std.os.windows;
+            const peb = windows.peb();
+            _ = windows.ntdll.RtlEnterCriticalSection(peb.FastPebLock);
+            defer _ = windows.ntdll.RtlLeaveCriticalSection(peb.FastPebLock);
+            const ptr = peb.ProcessParameters.Environment;
+            var i: usize = 0;
+            while (ptr[i] != 0) {
+                const key_start = i;
+                // `=C:` 形式の特殊変数は先頭 '=' を key の一部として扱う。
+                if (ptr[i] == '=') i += 1;
+                while (ptr[i] != 0 and ptr[i] != '=') : (i += 1) {}
+                const key_w = ptr[key_start..i];
+                if (ptr[i] == '=') i += 1;
+                const value_start = i;
+                while (ptr[i] != 0) : (i += 1) {}
+                const value_w = ptr[value_start..i];
+                i += 1;
+                // Windows の環境変数参照は大小文字を区別しない。
+                if (key_w.len >= 4 and windows.eqlIgnoreCaseWtf16(key_w[0..4], &.{ 'G', 'I', 'T', '_' })) continue;
+                const key = try std.unicode.wtf16LeToWtf8Alloc(gpa, key_w);
+                defer gpa.free(key);
+                const value = try std.unicode.wtf16LeToWtf8Alloc(gpa, value_w);
+                defer gpa.free(value);
+                try map.put(key, value);
+            }
+            return map;
+        },
+        .wasi => return null,
+        else => {
+            var i: usize = 0;
+            while (std.c.environ[i]) |entry| : (i += 1) {
+                const kv = std.mem.span(entry);
+                const eq = std.mem.indexOfScalar(u8, kv, '=') orelse continue;
+                if (kv[0..eq].len >= 4 and std.ascii.eqlIgnoreCase(kv[0..eq][0..4], "GIT_")) continue;
+                try map.put(kv[0..eq], kv[eq + 1 ..]);
+            }
+            return map;
+        },
     }
-    return map;
 }

@@ -259,6 +259,26 @@ test "path provider は max_bytes=0 を上限なしとし上限超過を too_lar
     try testing.expectEqual(fetch.FailureKind.too_large, limited.lastFailure().?.kind);
 }
 
+test "provider は返却 source の文字列を session arena へ複製する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "pkg/src");
+    try writePackage(temporary.dir, io, "pkg");
+    const base = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(base);
+
+    var session = newSession(.{});
+    defer session.deinit();
+    // 宣言側の文字列は session より短命な allocator で確保する。
+    const dep_path = try testing.allocator.dupe(u8, "pkg");
+    defer testing.allocator.free(dep_path);
+    const acquired = try provider.acquirePath(&session, .{ .name = "demo", .path = dep_path, .mutable = true }, base);
+    // 返却 source は dep のメモリを共有せず session arena が所有する。
+    try testing.expect(acquired.source.path.?.ptr != dep_path.ptr);
+    try testing.expectEqualStrings("pkg", acquired.source.path.?);
+}
+
 // ---------------------------------------------------------------------------
 // HTTP fetch
 // ---------------------------------------------------------------------------
@@ -452,6 +472,21 @@ test "http provider は sha512 宣言も照合する" {
     const wrong = "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
     try testing.expectError(error.HashMismatch, provider.acquireHttp(&mismatch, .{ .name = "dep", .url = url, .hash = wrong }));
     try testing.expectEqual(fetch.FailureKind.hash_mismatch, mismatch.lastFailure().?.kind);
+}
+
+test "取得 provider は非 loopback の平文 http を拒否する" {
+    // 既定 policy では loopback 以外の http:// を invalid_source で拒否する
+    // （接続前に失敗するためネットワーク不要）。
+    var session = newSession(.{});
+    defer session.deinit();
+    try testing.expectError(error.InvalidSource, provider.acquireHttp(&session, .{ .name = "dep", .url = "http://example.com/dep.tar.gz", .hash = "sha256:0000000000000000000000000000000000000000000000000000000000000000" }));
+    try testing.expectEqual(fetch.FailureKind.invalid_source, session.lastFailure().?.kind);
+
+    // ドメイン名は数字始まりでも IP literal でなければ loopback 扱いしない。
+    var deceptive = newSession(.{});
+    defer deceptive.deinit();
+    try testing.expectError(error.InvalidSource, provider.acquireHttp(&deceptive, .{ .name = "dep", .url = "http://127.evil.example/x", .hash = "sha256:00" }));
+    try testing.expectEqual(fetch.FailureKind.invalid_source, deceptive.lastFailure().?.kind);
 }
 
 // ---------------------------------------------------------------------------
@@ -694,6 +729,60 @@ test "git provider は checkout 境界の外を指す path を拒否する" {
     defer session.deinit();
     try testing.expectError(error.InvalidSource, provider.acquireGit(&session, .{ .name = "demo", .url = repo.url, .commit = repo.commit[0..7], .path = "../escape" }, checkout, null));
     try testing.expectEqual(fetch.FailureKind.invalid_source, session.lastFailure().?.kind);
+}
+
+test "git provider は別 repository の既存 checkout を拒否する" {
+    const io = testing.io;
+    if (!gitAvailable(io)) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var temporary_b = std.testing.tmpDir(.{});
+    defer temporary_b.cleanup();
+    const repo_a = try createGitRepo(&temporary, io);
+    defer testing.allocator.free(repo_a.path);
+    defer testing.allocator.free(repo_a.url);
+    defer testing.allocator.free(repo_a.commit);
+    const repo_b = try createGitRepo(&temporary_b, io);
+    defer testing.allocator.free(repo_b.path);
+    defer testing.allocator.free(repo_b.url);
+    defer testing.allocator.free(repo_b.commit);
+
+    const tmp_root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(tmp_root);
+    const checkout = try std.fs.path.join(testing.allocator, &.{ tmp_root, "checkout" });
+    defer testing.allocator.free(checkout);
+
+    var session = newSession(.{});
+    defer session.deinit();
+    // repo A の checkout を作った後、同じ checkout_dir を repo B の URL で
+    // 再利用すると origin 不一致として拒否する。
+    _ = try provider.acquireGit(&session, .{ .name = "demo", .url = repo_a.url, .commit = repo_a.commit[0..7] }, checkout, null);
+    try testing.expectError(error.SourceCollision, provider.acquireGit(&session, .{ .name = "demo", .url = repo_b.url, .commit = repo_b.commit[0..7] }, checkout, null));
+    try testing.expectEqual(fetch.FailureKind.source_collision, session.lastFailure().?.kind);
+}
+
+test "git provider は bare path origin と file:// URL を同一視する" {
+    const io = testing.io;
+    if (!gitAvailable(io)) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const repo = try createGitRepo(&temporary, io);
+    defer testing.allocator.free(repo.path);
+    defer testing.allocator.free(repo.url);
+    defer testing.allocator.free(repo.commit);
+
+    const tmp_root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(tmp_root);
+    const checkout = try std.fs.path.join(testing.allocator, &.{ tmp_root, "checkout" });
+    defer testing.allocator.free(checkout);
+
+    // bare path で clone すると origin は bare path のまま記録される。
+    // `file://` 表記の宣言 URL と同一 repo として扱えることを確認する。
+    try gitRun(io, &.{ "git", "clone", "--quiet", "--no-checkout", repo.path, checkout });
+    var session = newSession(.{});
+    defer session.deinit();
+    const acquired = try provider.acquireGit(&session, .{ .name = "demo", .url = repo.url, .commit = repo.commit[0..7] }, checkout, null);
+    try testing.expectEqualStrings(repo.commit, acquired.source.commit.?);
 }
 
 // ---------------------------------------------------------------------------
@@ -953,6 +1042,83 @@ test "registry artifact url は http/https 以外の scheme を拒否する" {
     ;
     try testing.expectError(error.InvalidMetadata, registry.parseIndex(&session, doc, "test://index"));
     try testing.expectEqual(fetch.FailureKind.invalid_metadata, session.lastFailure().?.kind);
+}
+
+test "registry は任意 string フィールドの明示的 null を拒否する" {
+    var session = newSession(.{});
+    defer session.deinit();
+    const doc =
+        \\{"schemaVersion":1,"packages":[
+        \\  {"schemaVersion":1,"id":"pkg:00000000000000000000000000000000","name":"x","owner":"o","humanId":null,"versions":[]}
+        \\]}
+    ;
+    try testing.expectError(error.InvalidMetadata, registry.parseIndex(&session, doc, "test://index"));
+    try testing.expectEqualStrings(diag.E023_INVALID_TYPE, session.lastFailure().?.diagnosticCode());
+}
+
+test "registry は任意 metadata フィールドの型と URI を検証する" {
+    var session = newSession(.{});
+    defer session.deinit();
+    const bad_type =
+        \\{"schemaVersion":1,"packages":[
+        \\  {"schemaVersion":1,"id":"pkg:00000000000000000000000000000000","name":"x","owner":"o","description":42,"versions":[]}
+        \\]}
+    ;
+    try testing.expectError(error.InvalidMetadata, registry.parseIndex(&session, bad_type, "test://index"));
+    try testing.expectEqualStrings(diag.E023_INVALID_TYPE, session.lastFailure().?.diagnosticCode());
+
+    var session_uri = newSession(.{});
+    defer session_uri.deinit();
+    const bad_uri =
+        \\{"schemaVersion":1,"packages":[
+        \\  {"schemaVersion":1,"id":"pkg:00000000000000000000000000000000","name":"x","owner":"o","repository":"not a uri","versions":[]}
+        \\]}
+    ;
+    try testing.expectError(error.InvalidMetadata, registry.parseIndex(&session_uri, bad_uri, "test://index"));
+    try testing.expectEqual(fetch.FailureKind.invalid_metadata, session_uri.lastFailure().?.kind);
+}
+
+test "registry は未知の artifact kind を E007 で拒否する" {
+    var session = newSession(.{});
+    defer session.deinit();
+    const doc =
+        \\{"schemaVersion":1,"packages":[
+        \\  {"schemaVersion":1,"id":"pkg:00000000000000000000000000000000","name":"x","owner":"o","versions":[
+        \\    {"schemaVersion":1,"version":"1.0.0","manifestHash":"sha256:0000000000000000000000000000000000000000000000000000000000000000","artifacts":{"source":{"kind":"sources","type":"raw","url":"https://example.com/x"}}}
+        \\  ]}
+        \\]}
+    ;
+    try testing.expectError(error.InvalidMetadata, registry.parseIndex(&session, doc, "test://index"));
+    const failure = session.lastFailure().?;
+    try testing.expectEqual(fetch.FailureKind.invalid_metadata, failure.kind);
+    try testing.expectEqualStrings(diag.E007_UNKNOWN_ARTIFACT_KIND, failure.diagnosticCode());
+}
+
+test "静的registry は offline で version record 不足を offline と分類する" {
+    const io = testing.io;
+    var server = FixtureServer{ .io = io, .allocator = testing.allocator };
+    const index_doc =
+        \\{"schemaVersion":1,"packages":[
+        \\  {"schemaVersion":1,"id":"pkg:00000000000000000000000000000000","name":"libeps","owner":"o","versions":[
+        \\    {"schemaVersion":1,"version":"1.0.0","manifestHash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}
+        \\  ]}
+        \\]}
+    ;
+    try server.start(&.{.{ .path = "/index.json", .body = index_doc }});
+    defer server.stop();
+
+    var session = newSession(.{});
+    defer session.deinit();
+    var reg = try registry.StaticRegistry.init(&session, server.base_url.?, .{});
+    defer reg.deinit();
+    // index を online で読み込んでから offline に切り替える。package record の
+    // versions に無い version は個別 record の取得が必要なため offline 分類。
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    _ = try reg.provider().listVersions(arena.allocator(), .{ .pkg = "libeps" });
+    session.policy.offline = true;
+    try testing.expectError(error.Offline, reg.acquireArtifact("libeps", "2.0.0", "source"));
+    try testing.expectEqual(fetch.FailureKind.offline, session.lastFailure().?.kind);
 }
 
 test "静的registry は index と矛盾する package record を E010 で拒否する" {
