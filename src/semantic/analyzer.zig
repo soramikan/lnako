@@ -658,9 +658,9 @@ const Analyzer = struct {
                         try self.addDiagnostic(.invalid_argument_count, node.span, self.modules.items[module_index].path, message);
                     }
                 }
-            } else if (callable) {
-                // 助詞呼出しの組み込み命令は、公式同様に不足引数を「それ」で
-                // 補完し、2個以上不足するときだけ文法エラーにする。
+            } else if (callable or (node.kind == .word and builtin_catalog.findArity(name) != null)) {
+                // 助詞呼出し・値位置の裸の組み込み命令は、公式同様に不足引数を
+                // 「それ」で補完し、2個以上不足するときだけ文法エラーにする。
                 if (builtin_josi.findJosi(name)) |spec| {
                     try self.checkParticleArgumentCount(module_index, node, try argument_completion.builtinSlots(self.allocator, spec), spec.is_variable, name);
                 }

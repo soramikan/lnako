@@ -2937,6 +2937,35 @@ test "『{関数}組み込み命令』を関数値として呼び出せる" {
     try std.testing.expectEqualStrings("7\n", host.written());
 }
 
+test "連鎖位置の裸の「エラー発生」語をthrowとして実行する" {
+    var fixture = try compileForTest(std.testing.allocator, "それは「msg1」\nエラー監視\nエラー発生して「done」を表示\n「続行」を表示\nエラーならば\n「catch[」＆エラーメッセージ＆「]」を表示\nここまで\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("catch[msg1]\n", host.written());
+}
+
+test "複数必須引数の裸の組み込み命令は不足診断になる" {
+    var parsed = try parser.parse(std.testing.allocator, "置換して表示\n", "builtin-multi.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "builtin-multi.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(!analyzed.succeeded());
+    var count: usize = 0;
+    for (analyzed.diagnostics) |item| if (item.code == .invalid_argument_count) {
+        count += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 1), count);
+}
+
 test "『{関数}名』のプラグイン未取り込み名は関数値化を拒否する" {
     // 動的に束縛されたプラグイン命令名は、プラグイン取り込み済み
     // プログラム（native_plugin_paths非空）でのみ関数値を作る。

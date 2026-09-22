@@ -356,7 +356,7 @@ const Lowerer = struct {
             .null_value => .null_value,
             .string => .string,
             .string_template => .string_template,
-            .word => if (implicit_function != null or self.bindingIsBuiltinCommand(node)) .call else if (self.bindingIsLocal(node)) .load_local else .load_global,
+            .word => if (implicit_function != null) .call else if (self.bindingIsBuiltinCommand(node)) (if (std.mem.eql(u8, node.value, "エラー発生")) .throw_statement else .call) else if (self.bindingIsLocal(node)) .load_local else .load_global,
             .assignment, .variable_definition => if (self.bindingIsLocal(node)) .store_local else .store_global,
             .variable_list_definition => .destructure_store,
             .array_assignment => .array_set,
@@ -732,6 +732,28 @@ test "0引数の組み込み命令語を暗黙呼出しへ下げる" {
         if (node.kind != .call or !std.mem.eql(u8, node.name, "礼節レベル取得")) continue;
         try std.testing.expect(node.is_builtin_call);
         try std.testing.expectEqual(@as(usize, 0), node.children.len);
+        found = true;
+    }
+    try std.testing.expect(found);
+}
+
+test "裸の「エラー発生」語をthrow_statementへ下げる" {
+    const parser = @import("../frontend/parser.zig");
+    const source = "エラー発生して表示\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "builtin-throw.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "builtin-throw.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var program = try lowerSingle(std.testing.allocator, parsed.root.?, "builtin-throw", "builtin-throw.nako3", analyzed);
+    defer program.deinit();
+    var found = false;
+    for (program.nodes) |node| {
+        if (!std.mem.eql(u8, node.name, "エラー発生")) continue;
+        // 通常のbuiltin callではなく専用のthrow終端へ下げる（AOTのdispatch対象外命令）
+        try std.testing.expectEqual(Kind.throw_statement, node.kind);
+        try std.testing.expect(node.is_builtin_call);
+        try std.testing.expectEqual(@as(usize, 1), node.children.len);
         found = true;
     }
     try std.testing.expect(found);
