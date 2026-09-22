@@ -140,9 +140,11 @@ pub fn parseFor(self: *Parser, start: Token, arguments: []const *ast.Node) Parse
         // 『AからBの範囲を繰り返す』『NでA…Bを繰り返す』(#1704互換):
         // 範囲オブジェクトの『先頭』『末尾』が開始値・終了値になる。
         // 公式convForは範囲オブジェクトを$nako_tempへ一度だけ評価するため、
-        // AST複製による二重評価（副作用の二重発生）を避け、ユーザーが記述
-        // できない一時変数への代入文をループの前へ置く。
-        const temp_name = "繰り返し範囲$一時値";
+        // AST複製による二重評価（副作用の二重発生）を避け、一時変数への
+        // 代入文をループの前へ置く。名前に『}』と『》』を両方含めることで
+        // 拡張単語（${…}・《…》）でも記述できない名前とし、同スコープの
+        // 利用者変数・定数を決して上書きしない。
+        const temp_name = "繰り返し範囲$一時値}》";
         const assign = try builder.makeNodeWithChildren(self, .assignment, start, try builder.copyChildren(self, &.{to_node}));
         assign.name = temp_name;
         assign.josi = "";

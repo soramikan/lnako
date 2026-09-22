@@ -1028,7 +1028,7 @@ test "範囲オブジェクトの繰り返しは一時変数の先頭/末尾参�
     try std.testing.expectEqual(ast.Kind.block, sequence.kind);
     const assign = sequence.children[0];
     try std.testing.expectEqual(ast.Kind.assignment, assign.kind);
-    try std.testing.expectEqualStrings("繰り返し範囲$一時値", assign.name);
+    try std.testing.expectEqualStrings("繰り返し範囲$一時値}》", assign.name);
     try std.testing.expectEqual(ast.Kind.function_call, assign.children[0].kind);
     try std.testing.expectEqualStrings("範囲", assign.children[0].name);
     try std.testing.expectEqual(@as(usize, 2), assign.children[0].children.len);
@@ -1040,7 +1040,7 @@ test "範囲オブジェクトの繰り返しは一時変数の先頭/末尾参�
         const edge = repeat.children[i];
         try std.testing.expectEqual(ast.Kind.array_value_reference, edge.kind);
         try std.testing.expectEqual(ast.Kind.word, edge.children[0].kind);
-        try std.testing.expectEqualStrings("繰り返し範囲$一時値", edge.children[0].value);
+        try std.testing.expectEqualStrings("繰り返し範囲$一時値}》", edge.children[0].value);
         try std.testing.expectEqualStrings(key, edge.children[1].value);
     }
 }

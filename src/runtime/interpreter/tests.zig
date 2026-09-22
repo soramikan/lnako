@@ -1862,6 +1862,30 @@ test "範囲繰り返しは『で』助詞の変数・範囲オブジェクト�
     try std.testing.expectEqualStrings("0\n1\n2\n3\n3\n4\n5\n7\n8\n2\n3\n4\n9\n10\n11\n1\n3\nC=11\n1\n3\n1\n3\n1\n4\n", host.written());
 }
 
+test "範囲オブジェクトの一時変数は拡張単語の同名変数・定数を破壊しない" {
+    // 一時変数名は拡張単語（${…}・《…》）でも記述できない形にし、
+    // 同スコープの利用者変数・定数を上書きしない（#113）。
+    const source =
+        "${繰り返し範囲$一時値}=99\n" ++
+        "《繰り返し範囲$一時値}》=88\n" ++
+        "1から2の範囲を繰り返す\nそれを表示\nここまで\n" ++
+        "${繰り返し範囲$一時値}を表示\n" ++
+        "《繰り返し範囲$一時値}》を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("1\n2\n99\n88\n", host.written());
+}
+
 test "nullとundefinedへの添字代入をキー付き例外として監視する" {
     const source =
         "エラー監視\nNULL[0]=2\nエラーならば\nエラーメッセージを表示\nここまで\n" ++
