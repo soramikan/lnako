@@ -1698,6 +1698,60 @@ test "助詞を持たない呼出しの直後の括弧は従来どおり関数�
     try std.testing.expectEqual(ast.Kind.function_call, call.children[0].kind);
 }
 
+test "関数値呼出しは『(』の数だけ多段に連鎖する" {
+    // 公式`yCallValue`は`(`の数だけ連鎖を読む。`G()()()`は
+    // call_value(call_value(G(),...),...)の入れ子になる（#128）。
+    var result = try parse(std.testing.allocator, "G()()()を表示\n", "call-value-chain3.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const display = result.root.?.children[0];
+    const outer = display.children[0];
+    try std.testing.expectEqual(ast.Kind.call_value, outer.kind);
+    const inner = outer.children[0];
+    try std.testing.expectEqual(ast.Kind.call_value, inner.kind);
+    try std.testing.expectEqual(ast.Kind.function_call, inner.children[0].kind);
+    try std.testing.expectEqualStrings("G", inner.children[0].name);
+}
+
+test "call_valueの直後の『@』『[』『.』はcall_value未解決の構文エラー" {
+    // 公式`yCallValue`はcall_valueの結果へ添字・プロパティを続けず、
+    // 『不完全な文です。『call_value』が解決していません』で拒否する。
+    const cases = [_][]const u8{
+        "F()()@0を表示\n",
+        "F()()[0]を表示\n",
+        "F()().xを表示\n",
+    };
+    for (cases) |source| {
+        var result = try parse(std.testing.allocator, source, "call-value-postfix.nako3");
+        defer result.deinit();
+        try std.testing.expect(!result.succeeded());
+        try std.testing.expectEqual(diagnostic.Code.incomplete_statement, result.diagnostics[0].code);
+        try std.testing.expectEqualStrings("不完全な文です。『call_value』が解決していません", result.diagnostics[0].message);
+    }
+}
+
+test "括弧で括ったcall_valueには添字・プロパティを適用できる" {
+    // `(F()())`は括弧済みの通常の値なので、公式も`[0]`・`@0`・`.x`を受理する。
+    const cases = [_][]const u8{
+        "(F()())[0]を表示\n",
+        "(F()())@0を表示\n",
+        "(F()()).xを表示\n",
+    };
+    for (cases) |source| {
+        var result = try parse(std.testing.allocator, source, "grouped-call-value-postfix.nako3");
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+    }
+}
+
+test "括弧で括った呼出しの直後の括弧はcall_valueへ連鎖しない" {
+    // `(F())`・`(F)`の直後の`(`は公式では次の括弧式になるため、
+    // call_valueへ結合しない（`(F())()`は公式`(...)の解析エラー`）。
+    var result = try parse(std.testing.allocator, "(F())()を表示\n", "grouped-call-paren.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+}
+
 test "括弧内で呼出しに解決されなかった残りは末尾の値を使う" {
     // 公式`yCalc`は残スタックの末尾を返すため、`(1を2で)`は`2`になる。
     var result = try parse(std.testing.allocator, "(1を2で)を表示\n", "paren-leftover.nako3");

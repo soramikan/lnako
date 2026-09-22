@@ -107,7 +107,9 @@ pub fn parsePostfix(self: *Parser) ParseFailure!*ast.Node {
         self,
     );
     while (true) {
-        if (self.at(.left_paren) and value.kind == .word and value.josi.len == 0) {
+        // 括弧で括った値の直後の`(`はC風呼出し・関数値呼出しにならず、
+        // 次の式の開始（公式では`(F)(1)`の`(1)`が別の括弧式になり未解決）。
+        if (self.at(.left_paren) and value.kind == .word and value.josi.len == 0 and !value.grouped) {
             const open = self.advance();
             self.delimited_expression_depth += 1;
             defer self.delimited_expression_depth -= 1;
@@ -135,7 +137,11 @@ pub fn parsePostfix(self: *Parser) ParseFailure!*ast.Node {
         // 助詞付きの呼出しは引数として確定済みのため、直後の`(`は関数値
         // 呼出しではなく次の式の開始（`(AをBに代入)を(C)を表示`）。
         // 公式も助詞のある呼出しの後の括弧をcall_valueへ結合しない。
-        if (self.at(.left_paren) and value.kind == .function_call and value.josi.len == 0) {
+        // call_valueの直後の`(`も同様に連鎖する（`F()()()`は各段の戻り値を
+        // 呼ぶ多重呼出しで、公式`yCallValue`は`(`の数だけ連鎖を読む）。
+        // 括弧で括った呼出し結果（`(F())`・`(F()())`）の直後の`(`は連鎖
+        // せず、公式と同じく次の括弧式として別に読む。
+        if (self.at(.left_paren) and (value.kind == .function_call or value.kind == .call_value) and value.josi.len == 0 and !value.grouped) {
             const open = self.advance();
             self.delimited_expression_depth += 1;
             defer self.delimited_expression_depth -= 1;
@@ -154,7 +160,10 @@ pub fn parsePostfix(self: *Parser) ParseFailure!*ast.Node {
             value.josi = close.josi;
             continue;
         }
-        if (self.at(.at)) {
+        // 公式`yCallValue`はcall_valueの結果へ『@』添字を続けない
+        // （`F()()@0`はcall_value未解決の文法エラー）。括弧で括れば
+        // 通常の値として添字を適用できる（`(F()())@0`は受理）。
+        if (self.at(.at) and (value.kind != .call_value or value.grouped)) {
             const token = self.advance();
             // 公式はprop[i]形（プロパティ参照への添字適用）を受理しない
             if (value.kind == .property_reference) return self.fail(.invalid_array_access, "配列アクセスで指定ミス", token);
@@ -166,7 +175,9 @@ pub fn parsePostfix(self: *Parser) ParseFailure!*ast.Node {
             value = try builder.reference(self, reference_kind, value, &.{index}, token);
             continue;
         }
-        if (self.at(.left_bracket) and value.josi.len == 0) {
+        // call_valueの直後も同様（`F()()[0]`は公式では未解決の単語、
+        // `(F()())[0]`は受理）。
+        if (self.at(.left_bracket) and value.josi.len == 0 and (value.kind != .call_value or value.grouped)) {
             const open = self.advance();
             if (value.kind == .property_reference) return self.fail(.invalid_array_access, "配列アクセスで指定ミス", open);
             self.delimited_expression_depth += 1;
@@ -194,7 +205,9 @@ pub fn parsePostfix(self: *Parser) ParseFailure!*ast.Node {
             value.raw_josi = close.raw_josi;
             continue;
         }
-        if (self.at(.property)) {
+        // call_valueの直後も同様（`F()().x`は公式では不完全な文、
+        // `(F()()).x`は受理）。
+        if (self.at(.property) and (value.kind != .call_value or value.grouped)) {
             const token = self.advance();
             const property_token = self.advance();
             if (property_token.kind != .identifier and property_token.kind != .string) return self.fail(.expected_name, "『$』の後ろにプロパティ名が必要です", property_token);

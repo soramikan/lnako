@@ -938,6 +938,19 @@ pub const Parser = struct {
             }
             try arguments.append(self.allocator, expression);
 
+            // 公式`yCallValue`はcall_valueの直後の『@』『[』『.』をpostfix
+            // として続けない（`F()()@0`・`F()()[0]`・`F()().x`はcall_value
+            // 未解決の文法エラー）。括弧で括ったcall_valueは通常の値なので
+            // postfixを許すため、ここでは非グループのcall_valueだけを対象に
+            // 公式と同じ『不完全な文です。『call_value』が解決していません』
+            // で拒否する。
+            if (expression.kind == .call_value and !expression.grouped and
+                (self.at(.at) or self.at(.left_bracket) or self.at(.property)))
+            {
+                const leftovers = [_]*ast.Node{expression};
+                return self.failIncompleteStatement(start, &leftovers);
+            }
+
             if (self.at(.identifier)) {
                 if (try self.resolveCommandName(start, &arguments, &chained_calls)) |statement| return statement;
                 continue;
