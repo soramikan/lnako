@@ -284,11 +284,12 @@ fn classifyGitUrl(gpa: Allocator, url: []const u8) Allocator.Error!GitUrlKind {
 /// path の表現差を吸収する。POSIX では `\` は正当なファイル名文字の
 /// ため置換しない。
 fn normalizeLocalGitPath(gpa: Allocator, path: []const u8) Allocator.Error![]const u8 {
-    const trimmed = std.mem.trimEnd(u8, path, "/");
-    if (builtin.os.tag != .windows) return trimmed;
-    const buf = try gpa.dupe(u8, trimmed);
+    // POSIX では `\` は正当なファイル名文字のため末尾 `/` だけを除く。
+    if (builtin.os.tag != .windows) return std.mem.trimEnd(u8, path, "/");
+    // 末尾 `\` も区切り文字として扱うため、変換してから末尾 `/` を除く。
+    const buf = try gpa.dupe(u8, path);
     std.mem.replaceScalar(u8, buf, '\\', '/');
-    var text: []u8 = buf;
+    var text: []u8 = std.mem.trimEnd(u8, buf, "/");
     // file: URL の Windows drive 表現 `/C:/x` → `C:/x`。
     if (text.len >= 3 and text[0] == '/' and std.ascii.isAlphabetic(text[1]) and text[2] == ':') {
         text = text[1..];
