@@ -100,9 +100,9 @@ pub fn emitPreamble(emitter: *Emitter) !void {
             "declare i32 @lnako_aot_is_array(ptr)\n" ++
             "declare void @lnako_aot_init_array_index(ptr, ptr)\n" ++
             "declare void @lnako_aot_destructure_get(ptr, ptr, i64)\n" ++
-            "declare void @lnako_aot_iterator_new(ptr, ptr, i64, i1, i8)\n" ++
+            "declare void @lnako_aot_iterator_new(ptr, ptr, i64, i1, i8, i1)\n" ++
             "declare i32 @lnako_aot_iterator_has_next(ptr)\n" ++
-            "declare void @lnako_aot_iterator_next(ptr, ptr, ptr, ptr, ptr, ptr)\n" ++
+            "declare void @lnako_aot_iterator_next(ptr, ptr, ptr, ptr, ptr, ptr, ptr)\n" ++
             "declare void @lnako_aot_binding_cell_new(ptr, ptr)\n" ++
             "declare ptr @lnako_aot_binding_cell_value(ptr)\n" ++
             "declare void @lnako_aot_function_new(ptr, ptr, i64, ptr, i64)\n" ++

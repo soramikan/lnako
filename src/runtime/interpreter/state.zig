@@ -30,6 +30,7 @@ const quickjs = @import("../../compat/quickjs.zig");
 const environment = @import("../environment.zig");
 const shared = @import("shared.zig");
 const execute = @import("execute.zig");
+const iterator_ops = @import("iterators.zig");
 const events = @import("events.zig");
 const plugins = @import("plugins.zig");
 const prepared = @import("prepared.zig");
@@ -213,7 +214,10 @@ pub fn traceRoots(context: *anyopaque, runtime: *Runtime) !void {
         var locals = active.locals.valueIterator();
         while (locals.next()) |cell| try runtime.traceExternalBindingCell(cell.*);
         var iterators = active.iterators.valueIterator();
-        while (iterators.next()) |iterator| try runtime.traceExternal(iterator.source);
+        while (iterators.next()) |iterator| {
+            try runtime.traceExternal(iterator.source);
+            if (iterator.keys) |keys| for (keys) |key| try runtime.traceExternal(.{ .string = key });
+        }
     }
     for (self.timers.items) |timer| try runtime.traceExternal(timer.callback);
     var resolvers = self.promise_resolvers.iterator();
@@ -1050,15 +1054,15 @@ pub const Interpreter = struct {
     }
 
     pub fn iteratorBegin(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
-        return execute.iteratorBegin(self, frame, instruction);
+        return iterator_ops.iteratorBegin(self, frame, instruction);
     }
 
     pub fn iteratorHasNext(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !bool {
-        return execute.iteratorHasNext(self, frame, instruction);
+        return iterator_ops.iteratorHasNext(self, frame, instruction);
     }
 
     pub fn iteratorNext(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
-        return execute.iteratorNext(self, frame, instruction);
+        return iterator_ops.iteratorNext(self, frame, instruction);
     }
 
     pub fn executeDynamicValue(self: *Interpreter, source_value: Value) !Value {

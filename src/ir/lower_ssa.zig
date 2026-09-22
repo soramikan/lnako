@@ -76,9 +76,11 @@ fn assignDispatchSiteIds(function: *ir.Function) !void {
             // ensure_array_varはlocal_target=falseのとき変数スロットへ
             // 新規配列を書き戻すため、グローバル書き込みサイトとして記録する。
             // システム定数名は実行時・emitterとも初期化を省略するため記録しない。
-            if (instruction.opcode == .load_global or instruction.opcode == .store_global or
-                (instruction.opcode == .ensure_array_var and !instruction.local_target and
-                    !system_constant.isConstant(instruction.name)))
+            // lowering生成の内部命令（反復の退避・復元）は観測対象外とする。
+            if (!instruction.synthetic and
+                (instruction.opcode == .load_global or instruction.opcode == .store_global or
+                    (instruction.opcode == .ensure_array_var and !instruction.local_target and
+                        !system_constant.isConstant(instruction.name))))
             {
                 global_ordinal += 1;
                 if (global_ordinal > std.math.maxInt(u32)) return error.GlobalSiteIdOverflow;
@@ -524,8 +526,19 @@ const FunctionBuilder = struct {
         return null;
     }
 
+    /// 反復構文で退避するシステム変数名。公式convForeachは対象・対象キー・
+    /// それの3つをループ前に退避し、出口で復元する。
+    const foreach_saved_names = [_][]const u8{ "対象", "対象キー", "それ" };
+
     fn lowerIteratorLoop(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
         if (node.children.len < 2) return error.InvalidHir;
+        const is_foreach = node.kind == .foreach_statement;
+        // 公式convForeachは反復データの評価より先に「対象」「対象キー」「それ」を
+        // 退避し、ループ出口で復元する（#1735の入れ子ループ互換）。
+        var saved: [foreach_saved_names.len]ir.ValueId = undefined;
+        if (is_foreach) {
+            for (foreach_saved_names, 0..) |name, index| saved[index] = try self.emitSyntheticGlobalAccess(.load_global, name, null, node);
+        }
         var inputs: std.ArrayList(ir.ValueId) = .empty;
         for (node.children[0 .. node.children.len - 1]) |child| {
             const value = (try self.lowerNode(child)) orelse try self.emitUndefined(node);
@@ -546,7 +559,28 @@ const FunctionBuilder = struct {
         if (!self.isTerminated()) self.terminate(.{ .branch = condition_block });
         _ = self.loops.pop();
         self.current = exit_block;
+        if (is_foreach) {
+            for (foreach_saved_names, 0..) |name, index| _ = try self.emitSyntheticGlobalAccess(.store_global, name, saved[index], node);
+        }
         return null;
+    }
+
+    /// 反復の退避・復元のように、ソースの式ではなくloweringが生成する
+    /// グローバルアクセス。観測証跡（global site ID）を持たない内部命令とする。
+    fn emitSyntheticGlobalAccess(self: *FunctionBuilder, opcode: ir.Opcode, name: []const u8, operand: ?ir.ValueId, node: hir.Node) !ir.ValueId {
+        const value = self.next_value;
+        self.next_value += 1;
+        const operands: []const ir.ValueId = if (operand) |id| &.{id} else &.{};
+        try self.currentBlock().instructions.append(self.allocator, .{
+            .result = if (opcode == .store_global) null else value,
+            .opcode = opcode,
+            .type = if (opcode == .store_global) .void else .dynamic,
+            .operands = try self.allocator.dupe(ir.ValueId, operands),
+            .name = try self.allocator.dupe(u8, name),
+            .synthetic = true,
+            .span = node.span,
+        });
+        return value;
     }
 
     fn lowerReturn(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
@@ -667,6 +701,7 @@ const FunctionBuilder = struct {
             .is_builtin_call = node.is_builtin_call,
             .check_array_init = node.check_array_init,
             .local_target = node.local_target,
+            .is_foreach = node.kind == .foreach_statement,
             .is_module_entry = node.is_module_entry,
             .site_module = node.site_module,
             .site_order = node.site_order,
@@ -694,6 +729,7 @@ const FunctionBuilder = struct {
             .is_builtin_call = node.is_builtin_call,
             .check_array_init = node.check_array_init,
             .local_target = node.local_target,
+            .is_foreach = node.kind == .foreach_statement,
             .is_module_entry = node.is_module_entry,
             .site_module = node.site_module,
             .site_order = node.site_order,

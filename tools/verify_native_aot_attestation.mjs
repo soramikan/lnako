@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { isAbsolute, resolve } from "node:path";
+import { expectedNativeFixtureCount } from "./lib/native_fixture_count.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const options = parseArguments(process.argv.slice(2));
@@ -62,7 +63,7 @@ for (const platform of expectedPlatforms) {
   }
 }
 if (expectedArtifactCount !== 15) throw new Error(`expectedPlatformsのartifact総数が不正です: ${expectedArtifactCount}`);
-if (!Array.isArray(fixtures) || fixtures.length !== 368 || fixtures.some((fixture) => fixture === null || typeof fixture !== "object" || Array.isArray(fixture))) {
+if (!Array.isArray(fixtures) || fixtures.length !== expectedNativeFixtureCount || fixtures.some((fixture) => fixture === null || typeof fixture !== "object" || Array.isArray(fixture))) {
   throw new Error("native-cases.jsonのfixture集合が不正です");
 }
 if (fixtureIds.some((id) => typeof id !== "string" || id.length === 0) || fixtureIdSet.size !== fixtures.length) throw new Error("native-cases.jsonのfixture IDが不正です");
