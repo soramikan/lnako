@@ -836,6 +836,38 @@ test "git provider は末尾 .git だけが異なる別 repo を拒否する" {
     try testing.expectEqual(fetch.FailureKind.source_collision, session.lastFailure().?.kind);
 }
 
+test "git provider は percent-encoded な file:// URL と bare path を同一視する" {
+    const io = testing.io;
+    if (!gitAvailable(io)) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    // 空白を含むローカル repo。origin の bare path は空白を保持し、
+    // file: URL の宣言は %20 で表現される。
+    try temporary.dir.createDirPath(io, "my repo/src");
+    try writePackage(temporary.dir, io, "my repo");
+    try temporary.dir.writeFile(io, .{ .sub_path = "my repo/src/index.nako3", .data = "●表示とは\nここまで\n" });
+    const repo_path = try temporary.dir.realPathFileAlloc(io, "my repo", testing.allocator);
+    defer testing.allocator.free(repo_path);
+    try gitRun(io, &.{ "git", "init", "--quiet", repo_path });
+    try gitRun(io, &.{ "git", "-C", repo_path, "-c", "user.email=test@example.com", "-c", "user.name=test", "add", "-A" });
+    try gitRun(io, &.{ "git", "-C", repo_path, "-c", "user.email=test@example.com", "-c", "user.name=test", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "init" });
+    const commit = try gitStdout(io, &.{ "git", "-C", repo_path, "rev-parse", "HEAD" });
+    defer testing.allocator.free(commit);
+
+    const tmp_root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(tmp_root);
+    const checkout = try std.fs.path.join(testing.allocator, &.{ tmp_root, "checkout" });
+    defer testing.allocator.free(checkout);
+    try gitRun(io, &.{ "git", "clone", "--quiet", "--no-checkout", repo_path, checkout });
+
+    const declared = try std.fmt.allocPrint(testing.allocator, "file://{s}/my%20repo", .{tmp_root});
+    defer testing.allocator.free(declared);
+    var session = newSession(.{});
+    defer session.deinit();
+    const acquired = try provider.acquireGit(&session, .{ .name = "demo", .url = declared, .commit = commit[0..7] }, checkout, null);
+    try testing.expectEqualStrings(commit, acquired.source.commit.?);
+}
+
 // ---------------------------------------------------------------------------
 // source identity
 // ---------------------------------------------------------------------------

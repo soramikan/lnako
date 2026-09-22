@@ -370,7 +370,11 @@ fn fetchBytesInner(session: *Session, uri: std.Uri, url: []const u8, resource: R
         // 現在の URI を基準に Location を解決する。解決結果の各成分は
         // scratch 領域を指すため、session arena に確保して次イテレーション
         // 以降も有効にする。`location` は redirect_buffer 上のため複製する。
-        const resolve_buf = try gpa.alloc(u8, location.len + 8 * 1024);
+        // scratch の必要量は location 複製 + merge 結果の上限で足りる。
+        const base_path: []const u8 = switch (current_uri.path) {
+            .raw, .percent_encoded => |text| text,
+        };
+        const resolve_buf = try gpa.alloc(u8, location.len + base_path.len + location.len + 2);
         @memcpy(resolve_buf[0..location.len], location);
         var aux: []u8 = resolve_buf;
         current_uri = current_uri.resolveInPlace(location.len, &aux) catch
@@ -580,7 +584,8 @@ pub fn sanitizedGitEnvMap(gpa: Allocator) Allocator.Error!?std.process.Environ.M
             while (std.c.environ[i]) |entry| : (i += 1) {
                 const kv = std.mem.span(entry);
                 const eq = std.mem.indexOfScalar(u8, kv, '=') orelse continue;
-                if (kv[0..eq].len >= 4 and std.ascii.eqlIgnoreCase(kv[0..eq][0..4], "GIT_")) continue;
+                // POSIX の環境変数名は大小文字を区別するため `GIT_` 限定。
+                if (std.mem.startsWith(u8, kv[0..eq], "GIT_")) continue;
                 try map.put(kv[0..eq], kv[eq + 1 ..]);
             }
             return map;

@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const fetch = @import("fetch.zig");
 const diag = @import("diagnostics.zig");
 const lock_model = @import("lock_model.zig");
@@ -227,7 +228,7 @@ fn verifyCheckoutOrigin(session: *Session, checkout_dir: []const u8, dep: manife
         return;
     }
     const existing = std.mem.trim(u8, result.stdout, " \t\r\n");
-    if (!gitUrlEql(existing, dep.url)) {
+    if (!try gitUrlEql(gpa, existing, dep.url)) {
         return session.fail(.source_collision, .repository, dep.url, "checkout \"{s}\" belongs to a different repository (origin is \"{s}\")", .{ checkout_dir, existing });
     }
 }
@@ -238,13 +239,13 @@ fn verifyCheckoutOrigin(session: *Session, checkout_dir: []const u8, dep: manife
 /// なり得る）。リモート形式（`scheme://`、scp 形式 `user@host:path`、
 /// authority を持つ `file:` URL）は末尾 `/` と慣例的な `.git` 接尾辞の
 /// 表記揺れだけを吸収する。ローカルとリモートは一致しない。
-fn gitUrlEql(a: []const u8, b: []const u8) bool {
-    return switch (classifyGitUrl(a)) {
-        .local => |pa| switch (classifyGitUrl(b)) {
+fn gitUrlEql(gpa: Allocator, a: []const u8, b: []const u8) Allocator.Error!bool {
+    return switch (try classifyGitUrl(gpa, a)) {
+        .local => |pa| switch (try classifyGitUrl(gpa, b)) {
             .local => |pb| std.mem.eql(u8, pa, pb),
             .remote => false,
         },
-        .remote => |ra| switch (classifyGitUrl(b)) {
+        .remote => |ra| switch (try classifyGitUrl(gpa, b)) {
             .local => false,
             .remote => |rb| std.mem.eql(u8, ra, rb),
         },
@@ -253,13 +254,20 @@ fn gitUrlEql(a: []const u8, b: []const u8) bool {
 
 const GitUrlKind = union(enum) { local: []const u8, remote: []const u8 };
 
-fn classifyGitUrl(url: []const u8) GitUrlKind {
+fn classifyGitUrl(gpa: Allocator, url: []const u8) Allocator.Error!GitUrlKind {
     if (std.mem.startsWith(u8, url, "file://")) {
         const rest = url["file://".len..];
         const slash = std.mem.indexOfScalar(u8, rest, '/') orelse rest.len;
         const authority = rest[0..slash];
         if (authority.len == 0 or std.ascii.eqlIgnoreCase(authority, "localhost")) {
-            return .{ .local = std.mem.trimEnd(u8, rest[slash..], "/") };
+            // file: URL の path は URI 規則（percent encoding）を復号し、
+            // OS の path 表現へ正規化してから bare path と比較する。
+            const raw_path = rest[slash..];
+            const decoded = if (std.mem.indexOfScalar(u8, raw_path, '%') != null)
+                std.Uri.percentDecodeBackwards(try gpa.alloc(u8, raw_path.len), raw_path)
+            else
+                raw_path;
+            return .{ .local = try normalizeLocalGitPath(gpa, decoded) };
         }
         // authority を持つ file: URL はローカル path ではない（`file://h/s`
         // が bare path `h/s` や `s` と同一視されると別 repo を誤認する）。
@@ -268,7 +276,28 @@ fn classifyGitUrl(url: []const u8) GitUrlKind {
     if (std.mem.indexOf(u8, url, "://") != null or isScpLikeGitUrl(url)) {
         return .{ .remote = normalizeRemoteGitUrl(url) };
     }
-    return .{ .local = std.mem.trimEnd(u8, url, "/") };
+    return .{ .local = try normalizeLocalGitPath(gpa, url) };
+}
+
+/// ローカル path の正規化。末尾 `/` を除く。Windows では `\`→`/`、
+/// `/C:/x`→`C:/x`、drive letter の大文字化を行い、file: URL と bare
+/// path の表現差を吸収する。POSIX では `\` は正当なファイル名文字の
+/// ため置換しない。
+fn normalizeLocalGitPath(gpa: Allocator, path: []const u8) Allocator.Error![]const u8 {
+    const trimmed = std.mem.trimEnd(u8, path, "/");
+    if (builtin.os.tag != .windows) return trimmed;
+    const buf = try gpa.dupe(u8, trimmed);
+    std.mem.replaceScalar(u8, buf, '\\', '/');
+    var text: []u8 = buf;
+    // file: URL の Windows drive 表現 `/C:/x` → `C:/x`。
+    if (text.len >= 3 and text[0] == '/' and std.ascii.isAlphabetic(text[1]) and text[2] == ':') {
+        text = text[1..];
+    }
+    // drive letter は大小文字を区別しない。
+    if (text.len >= 2 and std.ascii.isAlphabetic(text[0]) and text[1] == ':') {
+        text[0] = std.ascii.toUpper(text[0]);
+    }
+    return text;
 }
 
 /// scp 形式 `user@host:path` の判定。最初の `/` より前に `:` がある
