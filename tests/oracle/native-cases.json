@@ -3089,6 +3089,7 @@
   },
   {
     "id": "native-builtin-word-foreach",
+    "oracle": "official-source",
     "source": "助詞一覧取得して反復\n対象を表示\nここまで\n"
   },
   {
