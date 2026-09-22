@@ -4307,6 +4307,43 @@ test "AOT反復は開始時の添字・キー集合を列挙し穴と削除済�
     try std.testing.expect(!runtime.iteratorHasNext(iterator));
 }
 
+test "AOT配列反復は添字の後にownプロパティを列挙する" {
+    // 公式のfor..inは配列の整数添字を昇順で列挙した後、ownの文字列
+    // プロパティを挿入順で列挙する。開始時のキー集合を上限とし、
+    // 到達時点で削除済みのプロパティは飛ばす。
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 2;
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    var target: Value = .{};
+    var key: Value = .{};
+
+    roots[0] = try runtime.createArray(&.{numberValue(1)});
+    const properties = &roots[0].object().?.array_properties;
+    try runtime.setDictionary(properties, staticStringValue("x"), numberValue(9));
+    try runtime.setDictionary(properties, staticStringValue("y"), numberValue(8));
+    const iterator = try runtime.createIterator(&.{roots[0]}, false, 0, true);
+
+    _ = runtime.iteratorNext(iterator, null, &target, &key, null, null);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 0))), key.payload);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 1))), target.payload);
+    _ = runtime.iteratorNext(iterator, null, &target, &key, null, null);
+    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @enumFromInt(key.tag)));
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 9))), target.payload);
+    // 未到達プロパティを削除してもスナップショット走査は残りを列挙しない。
+    _ = properties.orderedRemoveEntry(runtime.allocator, properties.findByKey(staticStringValue("y")).?);
+    try std.testing.expect(!runtime.iteratorHasNext(iterator));
+
+    // 反復中に追加したownプロパティは列挙しない。
+    roots[1] = try runtime.createArray(&.{numberValue(1)});
+    const second = try runtime.createIterator(&.{roots[1]}, false, 0, true);
+    _ = runtime.iteratorNext(second, null, &target, &key, null, null);
+    try runtime.setDictionary(&roots[1].object().?.array_properties, staticStringValue("z"), numberValue(7));
+    try std.testing.expect(!runtime.iteratorHasNext(second));
+}
+
 test "AOT配列の集約・入替・連番・要素生成を公式境界で処理する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();

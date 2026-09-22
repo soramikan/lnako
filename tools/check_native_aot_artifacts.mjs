@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { expectedNativeFixtureCount } from "./lib/native_fixture_count.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const args = parseArguments(process.argv.slice(2));
@@ -13,7 +14,7 @@ const fixtures = JSON.parse(fixtureBytes.toString("utf8"));
 if (!Array.isArray(fixtures) || fixtures.some((fixture) => fixture === null || typeof fixture !== "object" || Array.isArray(fixture))) {
   throw new Error("native-cases.jsonのfixture配列が不正です");
 }
-if (fixtures.length !== 366) throw new Error(`native-cases.jsonのfixture数が不正です: ${fixtures.length}`);
+if (fixtures.length !== expectedNativeFixtureCount) throw new Error(`native-cases.jsonのfixture数が不正です: ${fixtures.length}`);
 const fixtureById = new Map();
 for (const fixture of fixtures) {
   if (typeof fixture.id !== "string" || fixture.id.length === 0 || fixtureById.has(fixture.id)) throw new Error(`native-cases.jsonのfixture IDが不正です: ${fixture.id}`);

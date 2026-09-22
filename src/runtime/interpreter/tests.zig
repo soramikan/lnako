@@ -1549,6 +1549,57 @@ test "GCストレス中も辞書反復のキースナップショットをルー
     try std.testing.expectEqualStrings("a\nc\n", host.written());
 }
 
+test "配列反復は添字の後にownプロパティを列挙する" {
+    // 公式のfor..inは配列の整数添字を昇順で列挙した後、ownの文字列
+    // プロパティを挿入順で列挙する。開始時のキー集合を上限とし、
+    // 到達時点で削除済みのプロパティは飛ばす。
+    const source =
+        "A=[1,2]\nA[\"x\"]=9\nA[\"y\"]=8\nAを反復\n「{対象キー}:{対象}」を表示\n" ++
+        "もし対象キーが「x」ならば\nAから「y」を辞書キー削除\nここまで\nここまで\n" ++
+        "B=[1]\nBを反復\n対象キーを表示\nもし対象キーが0ならば\nB[\"z\"]=7\nここまで\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings(
+        "0:1\n1:2\nx:9\n" ++ // 添字の後にownプロパティ、削除済みyを飛ばす
+            "0\n", // 反復中に追加したzは列挙しない
+        host.written(),
+    );
+}
+
+test "辞書反復の再開始は旧キースナップショットを解放する" {
+    // 外側ループで同じiterator_beginが繰り返し実行されると、Frame内の
+    // 同一IDの反復状態が置き換わる。旧キースナップショットを解放しないと
+    // 開始のたびにリークするため、置換時の解放をtesting.allocatorで検知する。
+    const source =
+        "D={\"a\":1,\"b\":2,\"c\":3}\n" ++
+        "3回\n" ++
+        "Dを反復\n対象キーを表示\nここまで\n" ++
+        "ここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("a\nb\nc\na\nb\nc\na\nb\nc\n", host.written());
+}
+
 test "nullとundefinedへの添字代入をキー付き例外として監視する" {
     const source =
         "エラー監視\nNULL[0]=2\nエラーならば\nエラーメッセージを表示\nここまで\n" ++

@@ -10,7 +10,7 @@ pub fn Timer(comptime Value: type) type {
     };
 }
 
-pub const IteratorKind = enum { repeat, range, bytes, string, array, dictionary };
+pub const IteratorKind = enum { repeat, range, bytes, string, array, dictionary, properties };
 
 pub fn Iterator(comptime Value: type) type {
     return struct {
@@ -21,8 +21,10 @@ pub fn Iterator(comptime Value: type) type {
         current: f64 = 0,
         end: f64 = 0,
         step: f64 = 1,
-        // 辞書反復は反復開始時のキー列をGC配列として保持する。公式のfor..inは
-        // 開始後に追加されたキーを列挙せず、削除済みキーは到達時点で飛ばす。
+        // 反復開始時のキー列をGC配列として保持する。辞書はownキー全体、
+        // 配列・bytesは添字領域の後に続くownプロパティ名、properties種別は
+        // ownプロパティ名のみを保持する。公式のfor..inは開始後に追加された
+        // キーを列挙せず、削除済みキーは到達時点で飛ばす。
         keys: Value = .{},
     };
 }

@@ -767,8 +767,21 @@ pub const Runtime = struct {
         } else switch (@as(Tag, @enumFromInt(values[0].tag))) {
             .number => .{ .kind = .repeat, .count = if (is_foreach) 0 else try repeatCount(valueToNumber(values[0])) },
             .utf16_string => .{ .kind = .string, .source = values[0], .count = values[0].object().?.payload.utf16_string.len },
-            .byte_buffer => .{ .kind = .bytes, .source = values[0], .count = values[0].object().?.payload.byte_buffer.bytes.len },
-            .array => .{ .kind = .array, .source = values[0], .count = values[0].object().?.payload.array.items.len },
+            // for..in互換: 配列・bytesは添字領域の後にownプロパティ名を、
+            // 関数・Promiseはownプロパティ名のみを列挙する。キー列は開始時の
+            // スナップショットで、削除済みキーはiteratorHasNextで飛ばす。
+            .byte_buffer => blk: {
+                const keys = try self.snapshotOwnPropertyKeys(values[0]);
+                break :blk .{ .kind = .bytes, .source = values[0], .count = values[0].object().?.payload.byte_buffer.bytes.len, .keys = keys };
+            },
+            .array => blk: {
+                const keys = try self.snapshotOwnPropertyKeys(values[0]);
+                break :blk .{ .kind = .array, .source = values[0], .count = values[0].object().?.payload.array.items.len, .keys = keys };
+            },
+            .function, .promise => blk: {
+                const keys = try self.snapshotOwnPropertyKeys(values[0]);
+                break :blk .{ .kind = .properties, .source = values[0], .keys = keys };
+            },
             .dictionary => blk: {
                 // for..in互換: 反復開始時のキー列を保持し、反復中に削除された
                 // キーはiteratorHasNextで飛ばす。開始後に追加されたキーは列挙しない。
@@ -786,6 +799,23 @@ pub const Runtime = struct {
             else => .{ .kind = .repeat, .count = 0 },
         };
         return self.createObject(.{ .iterator = iterator }, .iterator);
+    }
+
+    /// ownプロパティ名の反復開始時スナップショットをGC配列で返す。
+    /// ownプロパティが無ければ空Valueを返す。
+    fn snapshotOwnPropertyKeys(self: *Runtime, source: Value) !Value {
+        const object = source.object() orelse return .{};
+        const properties = &object.array_properties;
+        if (properties.entries.items.len == 0) return .{};
+        var roots = [_]Value{ source, .{} };
+        var frame = RootFrame{};
+        self.pushRoots(&frame, &roots, roots.len);
+        defer self.popRoots(&frame);
+        const keys = try self.allocator.alloc(Value, properties.entries.items.len);
+        defer self.allocator.free(keys);
+        for (properties.entries.items, 0..) |entry, key_index| keys[key_index] = entry.key;
+        roots[1] = try self.createArray(keys);
+        return roots[1];
     }
 
     pub fn createFunction(self: *Runtime, callback: FunctionCallback, arity: usize, captures: []const Value) !Value {
