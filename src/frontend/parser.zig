@@ -833,22 +833,20 @@ pub const Parser = struct {
                 // 回数より前に残った実引数は公式の未解決単語と同じく構文エラー
                 // （`5を3回繰り返す`の『5を』）。連文が挿入した暗黙『それ』
                 // だけは後続命令への足場として残存を許す。
-                if (arguments.items.len > 0) {
-                    for (arguments.items[0 .. arguments.items.len - 1]) |arg| {
-                        if (!helpers.isImplicitItMarker(arg))
-                            return self.fail(.invalid_control_statement, "『回』繰り返しに解決できない引数があります", keyword);
-                    }
+                for (arguments.items[0..arguments.items.len -| 1]) |arg| {
+                    if (!helpers.isImplicitItMarker(arg))
+                        try self.failUnresolvedWords(arguments.items[0..arguments.items.len -| 1]);
                 }
                 return self.finishChained(start, &chained_calls, try self.parseRepeatTimes(start, count));
             }
             if (self.at(.keyword_repeat_while)) {
-                const keyword = self.advance();
+                _ = self.advance();
                 if (arguments.items.len == 0) return self.fail(.invalid_control_statement, "『間』の前に条件式が必要です", start);
                 // 条件式より前に残った実引数も公式と同じく未解決の単語になる
                 // （`NでAが5以下の間`の『Nで』）。
                 for (arguments.items[0 .. arguments.items.len - 1]) |arg| {
                     if (!helpers.isImplicitItMarker(arg))
-                        return self.fail(.invalid_control_statement, "『間』繰り返しに解決できない引数があります", keyword);
+                        try self.failUnresolvedWords(arguments.items[0 .. arguments.items.len - 1]);
                 }
                 return self.finishChained(start, &chained_calls, try self.parseWhile(start, arguments.items[arguments.items.len - 1]));
             }
@@ -973,6 +971,9 @@ pub const Parser = struct {
             const call = try builder.makeNode(self, .function_call, start);
             call.name = value.value;
             call.josi = value.josi;
+            // 裸の命令語の呼出しなので、演算子由来の疑似呼出し（範囲等）と
+            // 区別するため命令呼出しフラグを立てる。
+            call.command_call = true;
             return call;
         }
         if (arguments.items.len > 0) {
@@ -980,7 +981,10 @@ pub const Parser = struct {
             // 『不完全な文です』で拒否する。式文のまま実行系へ流すと
             // `1+1`のような演算式が動的実行へ変換されて再解析を繰り返し
             // 実行上限超過になるため、ここで文法エラーにする。
-            return self.failIncompleteStatement(start, arguments.items);
+            // `空白除去して5を`の『空白除去して』のようにfunc tokenの
+            // 連鎖呼出しは公式`yCallFunc`で解決済みのため残り語から除く。
+            const real = try self.realArguments(arguments.items);
+            return self.failIncompleteStatement(start, if (real.len > 0) real else arguments.items);
         }
         return self.fail(.unexpected_token, "命令呼び出しを構成できません", self.peek());
     }
@@ -1004,7 +1008,7 @@ pub const Parser = struct {
     fn realArguments(self: *Parser, arguments: []const *ast.Node) ParseFailure![]const *ast.Node {
         var real: std.ArrayList(*ast.Node) = .empty;
         for (arguments) |arg| {
-            if (!helpers.isImplicitItMarker(arg)) try real.append(self.allocator, arg);
+            if (!helpers.isImplicitItMarker(arg) and !self.isChainCallArgument(arg)) try real.append(self.allocator, arg);
         }
         return real.items;
     }
@@ -1027,6 +1031,90 @@ pub const Parser = struct {
             .object_literal => "『json_obj』",
             else => "式",
         };
+    }
+
+    /// `XしてY`の連文で引数列へ残った連鎖呼出しかどうか。func tokenは
+    /// 公式`yCallFunc`がその場で解決するため残り語にしない。引数側の表現は
+    /// `command_call`済みの呼出しノードと、既知命令名の`.word`
+    /// （`空白除去して`など）の2形態。変数・未知の語はfunc tokenでは
+    /// ないため残り語として報告する。
+    fn isChainCallArgument(self: *Parser, arg: *ast.Node) bool {
+        if (helpers.isChainedCallResult(arg)) return true;
+        return arg.kind == .word and isSequenceJosi(arg.josi) and self.isKnownCommandName(arg.value);
+    }
+
+    /// 公式`yEOL`相当の未解決語診断を発行する。命令呼出しや制御構文へ
+    /// 渡せなかった実引数を`[desc,desc]`の形で列挙し、位置は公式が検出
+    /// する行末トークン（改行なら次の行、`;`なら同じ行）に揃える。
+    /// 連文が挿入した暗黙『それ』マーカーは実引数ではないため除く。
+    pub fn failUnresolvedWords(self: *Parser, leftovers: []const *ast.Node) ParseFailure!void {
+        var message: std.ArrayList(u8) = .empty;
+        try message.appendSlice(self.allocator, "未解決の単語があります: [");
+        var count: usize = 0;
+        for (leftovers) |arg| {
+            if (helpers.isImplicitItMarker(arg)) continue;
+            if (self.isChainCallArgument(arg)) continue;
+            if (count > 0) try message.appendSlice(self.allocator, ",");
+            try message.appendSlice(self.allocator, try self.unresolvedWordDescription(arg));
+            count += 1;
+        }
+        try message.appendSlice(self.allocator, "]");
+        // 残りが暗黙マーカーだけなら公式はそのまま捨てて実行を続ける。
+        if (count == 0) return;
+        const terminator = self.statementTerminator();
+        var span = terminator.span;
+        // 公式の_eolトークンは改行をまたいだ次の行に付く。lnakoのeolは
+        // 改行自身の行を指すため、改行区切りだけ+1して公式の行へ揃える。
+        if (terminator.kind == .eol and terminator.lexeme.len > 0 and terminator.lexeme[0] == '\n') span.line += 1;
+        self.diagnostics.append(self.allocator, .{
+            .code = .unresolved_word,
+            .message = message.items,
+            .file = self.filename,
+            .span = span,
+        }) catch return error.OutOfMemory;
+        return error.ParseFailed;
+    }
+
+    /// 現在位置以降で最初に現れる文区切り（eol/eof）のトークンを返す。
+    fn statementTerminator(self: *Parser) Token {
+        var i = self.index;
+        while (i < self.tokens.len and self.tokens[i].kind != .eol and self.tokens[i].kind != .eof) i += 1;
+        return self.tokens[@min(i, self.tokens.len - 1)];
+    }
+
+    /// 公式`nodeToStr({depth:1})`相当の未解決語の説明を返す。単語は
+    /// `ファイル名__語`のモジュール修飾名、命令参照は『関数』、特殊変数は
+    /// 修飾なしで表し、末尾へ助詞を付ける。
+    fn unresolvedWordDescription(self: *Parser, value: *ast.Node) ParseFailure![]const u8 {
+        const base = switch (value.kind) {
+            .word, .boolean, .null_value => blk: {
+                if (value.kind == .word and self.isKnownCommandName(value.value)) {
+                    // ユーザー定義関数はモジュール修飾名で表示される
+                    break :blk try std.fmt.allocPrint(self.allocator, "関数『{s}』", .{try self.moduleQualifiedName(value.value, self.isBuiltinCommandName(value.value))});
+                }
+                break :blk try std.fmt.allocPrint(self.allocator, "単語『{s}』", .{try self.unresolvedWordName(value)});
+            },
+            .function_call => try std.fmt.allocPrint(self.allocator, "関数『{s}』", .{try self.moduleQualifiedName(value.name, self.isBuiltinCommandName(value.name))}),
+            else => try self.incompleteStatementDescription(value),
+        };
+        return try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ base, value.josi });
+    }
+
+    /// 未解決の単語の表示名。『それ』『そう』『回数』『対象』は公式と
+    /// 同じく修飾なし（『そう』は『それ』へ畳む）で、その他は
+    /// `ファイル名__語`とする。
+    fn unresolvedWordName(self: *Parser, value: *ast.Node) ParseFailure![]const u8 {
+        if (std.mem.eql(u8, value.value, "そう")) return "それ";
+        for ([_][]const u8{ "それ", "回数", "対象" }) |special|
+            if (std.mem.eql(u8, value.value, special)) return special;
+        return try self.moduleQualifiedName(value.value, false);
+    }
+
+    /// `ファイル名__語`のモジュール修飾名を返す。組み込み命令や既に
+    /// 修飾済みの名前はそのまま返す。
+    fn moduleQualifiedName(self: *Parser, name: []const u8, unqualified: bool) ParseFailure![]const u8 {
+        if (unqualified or std.mem.indexOf(u8, name, "__") != null) return name;
+        return try std.fmt.allocPrint(self.allocator, "{s}__{s}", .{ std.fs.path.stem(self.filename), name });
     }
 
     /// 命令名解決・助詞付き命令呼出し・連文の確定文まとめ・日本語命令

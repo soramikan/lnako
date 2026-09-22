@@ -203,6 +203,7 @@ pub const ModuleGraph = struct {
                 .name = module.name,
                 .path = module.path,
                 .root = module.parsed.?.root.?,
+                .normalized_source = module.parsed.?.stream.source.text,
                 .allows_dynamic_commands = allows_dynamic_commands,
                 .expands_in_function = module.expands_in_function,
                 .variants = try variant_inputs.toOwnedSlice(temp),
