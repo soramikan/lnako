@@ -401,7 +401,10 @@ test "Prepared InterpreterはToPrimitive callback中のそれを保持する" {
     };
     try std.testing.expect(saw_kept_call);
     _ = try interpreter.run();
-    try std.testing.expectEqualStrings("7\n6\n9\n", host.written());
+    // 公式の関数スコープではコールバック内の『それ』は呼び出し側の値を
+    // 引き継がずundefinedから始まるため、先頭行は`undefined`になる
+    // （cnako3 3.7.24との差分確認済み）。
+    try std.testing.expectEqualStrings("undefined\n6\n9\n", host.written());
 }
 
 test "Prepared Interpreterはloop・call・allocの割り込みを実際にキャンセルする" {
@@ -1097,6 +1100,40 @@ test "関数の戻り値だけをシステム変数それへ書き戻す" {
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("7\nundefined\n8\n1\n8\n", host.written());
+}
+
+test "『〜こと』語尾の命令呼出しを関数の暗黙戻り値として返す" {
+    const source = "●(AとBの)加算処理とは\nAにBを足すこと。\nここまで\n3と7の加算処理して表示。\n●(AとBの)連鎖加算とは\nAにBを足してそれを戻す。\nここまで\n3と7の連鎖加算して表示。\n●(AとBの)連鎖戻しとは\nAにBを足して戻す。\nここまで\n3と7の連鎖戻しして表示。\n●設定とは\nそれは5\n戻す\nここまで\n設定して表示。\nそれは7\n●空とは\nここまで\n空して表示。\n●読出しとは\nそれを表示\nここまで\n読出し\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("10\n10\n10\n5\nundefined\nundefined\n", host.written());
+}
+
+test "関数からの例外伝播で呼び出し側のそれを復元する" {
+    const source = "それは7\n●Fとは\nそれは1\n「失敗」のエラー発生\nここまで\nエラー監視\nF()\nエラーならば\nそれを表示\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("7\n", host.written());
 }
 
 test "動的関数の不足引数へ共有システム文脈を追加し超過引数を無視する" {

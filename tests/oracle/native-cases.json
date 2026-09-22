@@ -3050,6 +3050,18 @@
   {
     "id": "native-func-ref-prefix-variable-arity",
     "source": "F={関数}MAX\nF(3,5,2)を表示\nG={関数}連結\nG(\"a\",\"b\",\"c\")を表示\n"
+  },
+  {
+    "id": "native-koto-call-suffix-implicit-return",
+    "source": "●(AとBの)加算処理とは\nAにBを足すこと。\nここまで\n3と7の加算処理して表示。\n"
+  },
+  {
+    "id": "native-chained-return-and-function-sore-scope",
+    "source": "●(AとBの)連鎖加算とは\nAにBを足してそれを戻す。\nここまで\n3と7の連鎖加算して表示。\n●(AとBの)連鎖戻しとは\nAにBを足して戻す。\nここまで\n3と7の連鎖戻しして表示。\n●設定とは\nそれは5\n戻す\nここまで\n設定して表示。\nそれは7\n●空とは\nここまで\n空して表示。\n●読出しとは\nそれを表示\nここまで\n読出し\n"
+  },
+  {
+    "id": "native-function-exception-restores-caller-sore",
+    "source": "それは7\n●Fとは\nそれは1\n「失敗」のエラー発生\nここまで\nエラー監視\nF()\nエラーならば\nそれを表示\nここまで\n"
   }
 ]
 

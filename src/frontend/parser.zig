@@ -789,26 +789,29 @@ pub const Parser = struct {
             }
             if (self.at(.keyword_return)) {
                 const keyword = self.advance();
-                const value = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try builder.nop(self, keyword);
+                // 公式yReturnはpopStack(['で','を'])を戻り値にし、無ければ
+                // nop（=『それ』）を使う。引数を取らない『戻す』も現在の
+                // 『それ』を返すため、ここでも暗黙の『それ』を補う。
+                const value = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try self.implicitIt(keyword);
                 const result = try builder.makeNodeWithChildren(self, .return_statement, start, try builder.copyChildren(self, &.{value}));
                 result.josi = "";
-                return result;
+                return self.finishChained(start, &chained_calls, result);
             }
             if (self.at(.keyword_repeat_count)) {
                 const keyword = self.advance();
                 const count = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try self.implicitIt(keyword);
-                return self.parseRepeatTimes(start, count);
+                return self.finishChained(start, &chained_calls, try self.parseRepeatTimes(start, count));
             }
             if (self.at(.keyword_repeat_while)) {
                 _ = self.advance();
                 if (arguments.items.len == 0) return self.fail(.invalid_control_statement, "『間』の前に条件式が必要です", start);
-                return self.parseWhile(start, arguments.items[arguments.items.len - 1]);
+                return self.finishChained(start, &chained_calls, try self.parseWhile(start, arguments.items[arguments.items.len - 1]));
             }
-            if (self.at(.keyword_repeat)) return self.parseFor(start, arguments.items);
+            if (self.at(.keyword_repeat)) return self.finishChained(start, &chained_calls, try self.parseFor(start, arguments.items));
             if (self.at(.keyword_foreach)) {
                 _ = self.advance();
                 const collection = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try builder.nop(self, start);
-                return self.parseForeach(start, collection);
+                return self.finishChained(start, &chained_calls, try self.parseForeach(start, collection));
             }
             if (self.at(.keyword_import)) {
                 const command = self.advance();
@@ -818,10 +821,10 @@ pub const Parser = struct {
                 node.value = path.value;
                 node.josi = "";
                 try self.recordImportMode(node);
-                return node;
+                return self.finishChained(start, &chained_calls, node);
             }
             if ((self.identifierValue("増") or self.identifierValue("減")) and self.peekAhead(1).kind == .keyword_repeat) {
-                return self.parseFor(start, arguments.items);
+                return self.finishChained(start, &chained_calls, try self.parseFor(start, arguments.items));
             }
 
             // 助詞付きの既知命令名は、公式`yCallFunc`と同じく命令として呼び出し、
@@ -855,7 +858,7 @@ pub const Parser = struct {
 
             const expression = try expressions.parseExpression(self, 0);
             if (expression.kind == .function_call and self.isTerminator()) {
-                return expression;
+                return self.finishChained(start, &chained_calls, expression);
             }
             try arguments.append(self.allocator, expression);
 
@@ -879,6 +882,15 @@ pub const Parser = struct {
             return node;
         }
         return self.fail(.unexpected_token, "命令呼び出しを構成できません", self.peek());
+    }
+
+    /// 連文（『して』等）で積み上げた呼出しがある文をblockへまとめて返す。
+    /// 公式は`して`で文を終わらせて後続を別の文として並べるため、戻る・
+    /// 繰り返し・取り込みなどの確定文も連鎖の一部として残す必要がある。
+    fn finishChained(self: *Parser, start: Token, chained_calls: *std.ArrayList(*ast.Node), statement: *ast.Node) ParseFailure!*ast.Node {
+        if (chained_calls.items.len == 0) return statement;
+        try chained_calls.append(self.allocator, statement);
+        return builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
     }
 
     /// 現在位置の識別子を命令名として解決する。命令・制御構文へ確定した場合は
