@@ -148,6 +148,8 @@ pub fn iteratorNext(self: *Interpreter, frame: *Frame, instruction: ir.Instructi
             if (state.variable_local) {
                 try self.storeLocal(frame, state.variable_name, result);
             } else try self.setGlobal(state.variable_name, result);
+            // 公式convForは変数指定の有無に関わらず各回『それ』へも現在値を束縛する
+            if (!std.mem.eql(u8, state.variable_name, "それ")) try self.setGlobal("それ", result);
         },
         .bytes, .array => {
             if (state.index < state.count) {
