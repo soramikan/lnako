@@ -750,6 +750,91 @@ test "連文で後続の命令に引数を渡す" {
     try std.testing.expectEqualStrings("2", block.children[1].children[1].value);
 }
 
+test "連文のあとに続く戻す文をblockへまとめる" {
+    var result = try parse(std.testing.allocator, "AにBを足してそれを戻す\n", "chain-return.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const block = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.block, block.kind);
+    try std.testing.expectEqual(@as(usize, 2), block.children.len);
+    try std.testing.expectEqual(ast.Kind.function_call, block.children[0].kind);
+    try std.testing.expectEqualStrings("足", block.children[0].name);
+    try std.testing.expectEqual(ast.Kind.return_statement, block.children[1].kind);
+    try std.testing.expectEqual(ast.Kind.word, block.children[1].children[0].kind);
+    try std.testing.expectEqualStrings("それ", block.children[1].children[0].value);
+}
+
+test "連文のあとに続く制御構文をblockへまとめる" {
+    var result = try parse(std.testing.allocator, "AにBを足して3回\n「x」を表示\nここまで\n", "chain-repeat.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const block = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.block, block.kind);
+    try std.testing.expectEqual(@as(usize, 2), block.children.len);
+    try std.testing.expectEqual(ast.Kind.function_call, block.children[0].kind);
+    try std.testing.expectEqualStrings("足", block.children[0].name);
+    try std.testing.expectEqual(ast.Kind.repeat_times, block.children[1].kind);
+}
+
+test "連文のあとに続く範囲繰り返しをblockへまとめる" {
+    var result = try parse(std.testing.allocator, "1を表示してIを1から3まで繰り返す\nIを表示\nここまで\n", "chain-range.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const block = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.block, block.kind);
+    try std.testing.expectEqual(@as(usize, 2), block.children.len);
+    try std.testing.expectEqual(ast.Kind.function_call, block.children[0].kind);
+    try std.testing.expectEqualStrings("表示", block.children[0].name);
+    const repeat = block.children[1];
+    try std.testing.expectEqual(ast.Kind.for_statement, repeat.kind);
+    try std.testing.expectEqualStrings("I", repeat.name);
+    try std.testing.expectEqual(ast.Kind.number, repeat.children[0].kind);
+    try std.testing.expectEqualStrings("1", repeat.children[0].value);
+    try std.testing.expectEqual(ast.Kind.number, repeat.children[1].kind);
+    try std.testing.expectEqualStrings("3", repeat.children[1].value);
+}
+
+test "連文のあとの変数なし範囲繰り返しは暗黙のそれを範囲引数から除く" {
+    var result = try parse(std.testing.allocator, "1を表示して1から3まで繰り返す\nそれを表示\nここまで\n", "chain-range-novar.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const block = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.block, block.kind);
+    try std.testing.expectEqual(@as(usize, 2), block.children.len);
+    const repeat = block.children[1];
+    try std.testing.expectEqual(ast.Kind.for_statement, repeat.kind);
+    try std.testing.expectEqualStrings("それ", repeat.name);
+    try std.testing.expectEqual(ast.Kind.number, repeat.children[0].kind);
+    try std.testing.expectEqualStrings("1", repeat.children[0].value);
+    try std.testing.expectEqual(ast.Kind.number, repeat.children[1].kind);
+    try std.testing.expectEqualStrings("3", repeat.children[1].value);
+}
+
+test "連文のあとの範囲繰り返しでユーザー記述の『それを』は除外しない" {
+    var result = try parse(std.testing.allocator, "1を表示してそれを1から3まで繰り返す\nそれを表示\nここまで\n", "chain-range-sore.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const block = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.block, block.kind);
+    const repeat = block.children[1];
+    try std.testing.expectEqual(ast.Kind.for_statement, repeat.kind);
+    try std.testing.expectEqualStrings("それ", repeat.name);
+    try std.testing.expectEqual(ast.Kind.number, repeat.children[0].kind);
+    try std.testing.expectEqualStrings("1", repeat.children[0].value);
+    try std.testing.expectEqual(ast.Kind.number, repeat.children[1].kind);
+    try std.testing.expectEqualStrings("3", repeat.children[1].value);
+}
+
+test "引数のない戻すは暗黙の『それ』を返す" {
+    var result = try parse(std.testing.allocator, "戻す\n", "return-it.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const statement = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.return_statement, statement.kind);
+    try std.testing.expectEqual(ast.Kind.word, statement.children[0].kind);
+    try std.testing.expectEqualStrings("それ", statement.children[0].value);
+}
+
 test "和文代入で配列要素を更新する" {
     var result = try parse(std.testing.allocator, "1をA[0]に代入。\n", "array-assign.nako3");
     defer result.deinit();

@@ -243,6 +243,17 @@ pub fn executeFunction(self: *Interpreter, function: *const ir.Function, argumen
         try self.bindLocal(&frame, parameter.name, argument);
     }
 
+    // 公式は関数呼び出しごとに新しい変数スコープを作り、『それ』は呼び出し側の
+    // 値を引き継がない（nako_genの__nako_scope_enter相当）。lnakoは『それ』を
+    // グローバル変数として共有するため、入口で呼び出し側の値をフレームへ退避
+    // してundefinedへ初期化し、関数を抜ける全経路（正常・例外・エラー）で
+    // 復元する。モジュールエントリ（sore_scope=false）は対象外。
+    if (function.sore_scope) {
+        frame.sore_backup = self.getGlobal("それ") orelse .undefined;
+        try self.setGlobal("それ", .undefined);
+    }
+    defer if (frame.sore_backup) |backup| self.setGlobal("それ", backup) catch {};
+
     var current_block = function.entry;
     var predecessor: ?ir.BlockId = null;
     execution: while (true) {
@@ -287,7 +298,10 @@ pub fn executeFunction(self: *Interpreter, function: *const ir.Function, argumen
                 predecessor = current_block;
                 current_block = if (frame.values[branch.condition].toBoolean()) branch.then_block else branch.else_block;
             },
-            .return_value => |value| return if (value) |id| frame.values[id] else .undefined,
+            // 戻り値を持たない終端は、sore_scope関数では関数ローカルの
+            // 『それ』を返す（公式が全ユーザー関数へ`return (それ)`を付与する
+            // convDefFuncCommon相当）。復元はこの後のdeferが行う。
+            .return_value => |value| return if (value) |id| frame.values[id] else if (function.sore_scope) self.getGlobal("それ") orelse .undefined else .undefined,
             .throw_value => |throw_value| {
                 self.dispatch_trace.emit(traceBuiltinName("エラー発生"), "throw", "failure", throw_value.site_id);
                 const thrown = frame.values[throw_value.value];

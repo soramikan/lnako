@@ -33,7 +33,17 @@ const functions_mod = @import("functions.zig");
 const preamble_mod = @import("preamble.zig");
 const declarations_mod = @import("declarations.zig");
 
-pub fn writeTerminator(emitter: *Emitter, function: ir.Function, terminator: ir.Terminator, span: ast.Span, scope: usize) !void {
+/// sore_scope関数を抜ける経路で、入口で専用root slotへ退避した呼び出し側の
+/// 『それ』を復元する（公式の__nako_scope_leave相当）。関数内で捕捉される
+/// 例外（throw_valueにtargetがある）ではスコープを抜けないため復元しない。
+fn writeScopeRestore(emitter: *Emitter, block_id: ir.BlockId, sore_slot: ?usize) !void {
+    const slot = sore_slot orelse return;
+    const global_index = emitter.globalIndex("それ") orelse return error.MissingResultGlobal;
+    try emitter.output.writer.print("  %scope.sore.caller.{d} = load %lnako.Value, ptr %root.slot.{d}\n", .{ block_id, slot });
+    try emitter.output.writer.print("  store %lnako.Value %scope.sore.caller.{d}, ptr @lnako.global.{d}\n", .{ block_id, global_index });
+}
+
+pub fn writeTerminator(emitter: *Emitter, function: ir.Function, block_id: ir.BlockId, terminator: ir.Terminator, span: ast.Span, scope: usize, sore_slot: ?usize) !void {
     switch (terminator) {
         .branch => |target| {
             try emitter.output.writer.print("  br label %bb{d}", .{target});
@@ -47,9 +57,23 @@ pub fn writeTerminator(emitter: *Emitter, function: ir.Function, terminator: ir.
             try emitter.debugSuffix(span, scope);
         },
         .return_value => |value| {
+            // 戻り値を持たない終端は、sore_scope関数では関数ローカルの『それ』を
+            // 返す（公式が全ユーザー関数へ`return (それ)`を付与する
+            // convDefFuncCommon相当）。復元より先に読み出す必要がある。
+            if (value == null and sore_slot != null) {
+                const global_index = emitter.globalIndex("それ") orelse return error.MissingResultGlobal;
+                try emitter.output.writer.print("  %scope.sore.result.{d} = load %lnako.Value, ptr @lnako.global.{d}\n", .{ block_id, global_index });
+            }
+            try writeScopeRestore(emitter, block_id, sore_slot);
             try emitter.output.writer.writeAll("  call void @lnako_aot_pop_roots(ptr %root.frame)\n");
             try emitter.output.writer.writeAll("  ret %lnako.Value ");
-            if (value) |operand| try constants_mod.writeValueRef(emitter, function, operand) else try emitter.output.writer.writeAll("{ i8 0, i64 0 }");
+            if (value) |operand| {
+                try constants_mod.writeValueRef(emitter, function, operand);
+            } else if (sore_slot != null) {
+                try emitter.output.writer.print("%scope.sore.result.{d}", .{block_id});
+            } else {
+                try emitter.output.writer.writeAll("{ i8 0, i64 0 }");
+            }
             try emitter.debugSuffix(span, scope);
         },
         .throw_value => |throw_value| {
@@ -64,12 +88,14 @@ pub fn writeTerminator(emitter: *Emitter, function: ir.Function, terminator: ir.
                 try emitter.output.writer.print("  br label %bb{d}", .{target});
                 try emitter.debugSuffix(span, scope);
             } else {
+                try writeScopeRestore(emitter, block_id, sore_slot);
                 try emitter.output.writer.writeAll("  call void @lnako_aot_pop_roots(ptr %root.frame)\n");
                 try emitter.output.writer.writeAll("  ret %lnako.Value { i8 0, i64 0 }");
                 try emitter.debugSuffix(span, scope);
             }
         },
         .propagate_exception => {
+            try writeScopeRestore(emitter, block_id, sore_slot);
             try emitter.output.writer.writeAll("  call void @lnako_aot_pop_roots(ptr %root.frame)\n");
             try emitter.output.writer.writeAll("  ret %lnako.Value { i8 0, i64 0 }");
             try emitter.debugSuffix(span, scope);

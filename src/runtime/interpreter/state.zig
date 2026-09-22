@@ -205,6 +205,7 @@ pub fn traceRoots(context: *anyopaque, runtime: *Runtime) !void {
     try runtime.traceExternal(self.system_context);
     var frame = self.active_frame;
     while (frame) |active| : (frame = active.parent) {
+        if (active.sore_backup) |backup| try runtime.traceExternal(backup);
         for (active.values) |value| try runtime.traceExternal(value);
         for (active.local_values, active.local_values_initialized) |value, initialized| {
             if (initialized) try runtime.traceExternal(value);
