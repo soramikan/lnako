@@ -3070,5 +3070,9 @@
   {
     "id": "native-foreach-array-own-property",
     "source": "A=[1,2]\nA[\"x\"]=9\nA[\"y\"]=8\nAを反復\n「{対象キー}:{対象}」を表示\nもし対象キーが「x」ならば\nAから「y」を辞書キー削除\nここまで\nここまで\nB=[1]\nBを反復\n対象キーを表示\nもし対象キーが0ならば\nB[\"z\"]=7\nここまで\nここまで\n"
+  },
+  {
+    "id": "native-foreach-dictionary-integer-key-order",
+    "source": "D={\"2\":2,\"1\":1,\"x\":9,\"10\":10}\nDを反復\n対象キーを表示\nここまで\n"
   }
 ]

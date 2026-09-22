@@ -89,7 +89,7 @@ if (compatibilityText.includes("attestation snapshotから導出したview") || 
 }
 
 const fixtureInventory = evidence.fixtureInventory;
-if (fixtureInventory?.total !== 648 || fixtureInventory?.nativeAot !== 387 || fixtureInventory?.interpreter !== 271 || fixtureInventory?.compatJs !== 9) {
+if (fixtureInventory?.total !== 650 || fixtureInventory?.nativeAot !== 388 || fixtureInventory?.interpreter !== 272 || fixtureInventory?.compatJs !== 9) {
   fail("evidence.jsonのfixture inventoryが不一致です");
 }
 if (dispatchCoverage.scope?.fixtureCount !== 231 || dispatchCoverage.sites?.length !== 4602 ||

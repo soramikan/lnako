@@ -1576,6 +1576,25 @@ test "配列反復は添字の後にownプロパティを列挙する" {
     );
 }
 
+test "辞書反復は整数添字キーを昇順で先に列挙する" {
+    // 公式のfor..inは整数添字相当のキーを昇順で先に列挙し、
+    // それ以外のキーは挿入順を保つ。
+    const source = "D={\"2\":2,\"1\":1,\"x\":9,\"10\":10}\nDを反復\n対象キーを表示\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("1\n2\n10\nx\n", host.written());
+}
+
 test "辞書反復の再開始は旧キースナップショットを解放する" {
     // 外側ループで同じiterator_beginが繰り返し実行されると、Frame内の
     // 同一IDの反復状態が置き換わる。旧キースナップショットを解放しないと

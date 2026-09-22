@@ -793,12 +793,58 @@ pub const Runtime = struct {
                 const keys = try self.allocator.alloc(Value, dictionary.entries.items.len);
                 defer self.allocator.free(keys);
                 for (dictionary.entries.items, 0..) |entry, key_index| keys[key_index] = entry.key;
+                orderEnumerableKeys(keys);
                 roots[1] = try self.createArray(keys);
                 break :blk .{ .kind = .dictionary, .source = roots[0], .count = keys.len, .keys = roots[1] };
             },
             else => .{ .kind = .repeat, .count = 0 },
         };
         return self.createObject(.{ .iterator = iterator }, .iterator);
+    }
+
+    /// for..in互換の列挙順: 整数添字相当のキーを昇順で先に列挙し、
+    /// それ以外のキーは挿入順を保つ。安定ソートで非整数キーの順序を維持する。
+    fn orderEnumerableKeys(keys: []Value) void {
+        std.mem.sort(Value, keys, {}, struct {
+            fn lessThan(_: void, a: Value, b: Value) bool {
+                const a_index = canonicalEnumerableIndex(a);
+                const b_index = canonicalEnumerableIndex(b);
+                if (a_index == null) return false;
+                if (b_index == null) return true;
+                return a_index.? < b_index.?;
+            }
+        }.lessThan);
+    }
+
+    /// 列挙キーが整数添字相当かを返す。aotCanonicalArrayIndexUnitsと同じ
+    /// 正準添字規則を文字列Valueへ適用する。
+    fn canonicalEnumerableIndex(key: Value) ?usize {
+        return switch (@as(Tag, @enumFromInt(key.tag))) {
+            .static_utf8_string => canonicalIndexUtf8(staticUtf8(key)),
+            .utf16_string => blk: {
+                const units = key.object().?.payload.utf16_string;
+                if (units.len == 0 or (units.len > 1 and units[0] == '0')) break :blk null;
+                var result: usize = 0;
+                for (units) |unit| {
+                    if (unit < '0' or unit > '9') break :blk null;
+                    result = std.math.mul(usize, result, 10) catch break :blk null;
+                    result = std.math.add(usize, result, unit - '0') catch break :blk null;
+                }
+                break :blk if (result <= 4_294_967_294) result else null;
+            },
+            else => null,
+        };
+    }
+
+    fn canonicalIndexUtf8(bytes: []const u8) ?usize {
+        if (bytes.len == 0 or (bytes.len > 1 and bytes[0] == '0')) return null;
+        var result: usize = 0;
+        for (bytes) |byte| {
+            if (byte < '0' or byte > '9') return null;
+            result = std.math.mul(usize, result, 10) catch return null;
+            result = std.math.add(usize, result, byte - '0') catch return null;
+        }
+        return if (result <= 4_294_967_294) result else null;
     }
 
     /// ownプロパティ名の反復開始時スナップショットをGC配列で返す。
@@ -814,6 +860,7 @@ pub const Runtime = struct {
         const keys = try self.allocator.alloc(Value, properties.entries.items.len);
         defer self.allocator.free(keys);
         for (properties.entries.items, 0..) |entry, key_index| keys[key_index] = entry.key;
+        orderEnumerableKeys(keys);
         roots[1] = try self.createArray(keys);
         return roots[1];
     }

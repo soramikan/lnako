@@ -1317,12 +1317,27 @@ fn makeBuiltinFunctionValue(self: *Interpreter, name: []const u8) !Value {
     return self.runtime.createBuiltinFunction(name_value.string, arity);
 }
 
+/// for..in互換の列挙順: 整数添字相当のキーを昇順で先に列挙し、
+/// それ以外のキーは挿入順を保つ。安定ソートで非整数キーの順序を維持する。
+fn orderEnumerableKeys(keys: []*String) void {
+    std.mem.sort(*String, keys, {}, struct {
+        fn lessThan(_: void, a: *String, b: *String) bool {
+            const a_index = shared.interpreterArrayIndex(a.units);
+            const b_index = shared.interpreterArrayIndex(b.units);
+            if (a_index == null) return false;
+            if (b_index == null) return true;
+            return a_index.? < b_index.?;
+        }
+    }.lessThan);
+}
+
 /// ownプロパティ名の反復開始時スナップショット。空ならnullを返し、
 /// 確保後の失敗は呼出し側のerrdeferで解放する。
 fn snapshotOwnPropertyKeys(allocator: std.mem.Allocator, properties: []const value_mod.ArrayProperty) !?[]*String {
     if (properties.len == 0) return null;
     const keys = try allocator.alloc(*String, properties.len);
     for (properties, 0..) |property, index| keys[index] = property.key;
+    orderEnumerableKeys(keys);
     return keys;
 }
 
@@ -1366,6 +1381,7 @@ pub fn iteratorBegin(self: *Interpreter, frame: *Frame, instruction: ir.Instruct
                 // for..in互換: 反復開始時のキー列を保持し、反復中に削除された
                 // キーはiteratorHasNextで飛ばす。開始後に追加されたキーは列挙しない。
                 const keys = try self.allocator.dupe(*String, source.dictionary.keys());
+                orderEnumerableKeys(keys);
                 break :blk .{ .kind = .dictionary, .source = source, .count = keys.len, .keys = keys };
             },
             else => .{ .kind = .repeat, .count = 0 },
