@@ -1059,6 +1059,39 @@ test "範囲オブジェクトの繰り返しは増分『ずつ』も受理す�
     try std.testing.expectEqualStrings("2", repeat.children[2].value);
 }
 
+test "範囲オブジェクトの繰り返しは括弧付き増分式も受理する" {
+    // 公式は`(1+1)ずつ`のような括弧付き式も増分引数として読むため、
+    // 先読みは対応する閉じ区切りまで式を読み飛ばす。
+    var result = try parse(std.testing.allocator, "Iで1から4の範囲を(1+1)ずつ増繰返す\nIを表示\nここまで\n", "for-range-paren-inc.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const sequence = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.block, sequence.kind);
+    const repeat = sequence.children[1];
+    try std.testing.expectEqual(ast.Kind.for_statement, repeat.kind);
+    try std.testing.expectEqualStrings("I", repeat.name);
+    try std.testing.expectEqual(ast.Kind.binary_operator, repeat.children[2].kind);
+}
+
+test "範囲オブジェクトの繰り返しはC風呼出しの増分式も受理する" {
+    // 公式yCallFuncの括弧呼出しは直前のスタックを消費しないため、
+    // `範囲をF(1)ずつ`の範囲呼出しは繰り返しの引数になる。
+    var result = try parse(std.testing.allocator, "●(Aを)Fとは\n　それはA+1\nここまで\nIで1から4の範囲をF(1)ずつ増繰返す\nIを表示\nここまで\n", "for-range-call-inc.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    var sequence: ?*ast.Node = null;
+    for (result.root.?.children) |child| {
+        if (child.kind == .block and child.children.len > 1 and child.children[1].kind == .for_statement) sequence = child;
+    }
+    try std.testing.expect(sequence != null);
+    const repeat = sequence.?.children[1];
+    try std.testing.expectEqual(ast.Kind.for_statement, repeat.kind);
+    try std.testing.expectEqualStrings("I", repeat.name);
+    const increment = repeat.children[2];
+    try std.testing.expectEqual(ast.Kind.function_call, increment.kind);
+    try std.testing.expectEqualStrings("F", increment.name);
+}
+
 test "『ずつ』引数は増減繰返以外では構文エラー" {
     var result = try parse(std.testing.allocator, "1から5まで2ずつ繰り返す\nそれを表示\nここまで\n", "for-stray-inc.nako3");
     defer result.deinit();

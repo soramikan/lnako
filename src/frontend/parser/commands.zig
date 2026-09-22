@@ -51,6 +51,11 @@ pub fn resolveCommandName(
     // 例: `1をA[0]に代入`, `1をA$fooに代入`。
     const next_kind = self.peekAhead(1).kind;
     if (next_kind == .left_bracket or next_kind == .at or next_kind == .property) return null;
+    // 助詞なし識別子の直後が『(』ならC風呼出しの式。公式`yCallFunc`の括弧呼出しは
+    // 括弧内の引数だけを使い、直前のスタックを消費しない（`5をF(1)`は『5を』が
+    // 未解決の単語になる）。命令として確定せず式の解析へ委ねる
+    // （`範囲をF(1)ずつ増繰返す`の`F(1)`は増分の式になる）。
+    if (self.peek().josi.len == 0 and next_kind == .left_paren) return null;
     if ((self.identifierValue("増") or self.identifierValue("減")) and self.peekAhead(1).kind == .keyword_repeat) {
         return try self.parseFor(start, self.rangeArguments(arguments, chained_calls));
     }
@@ -88,7 +93,11 @@ pub fn resolveCommandName(
         }
         return statement;
     }
-    const call = try self.makeCommandCall(command, try arguments.toOwnedSlice(self.allocator));
+    // 助詞なし命令名の直後が『(』ならC風呼出し。公式`yCallFunc`の括弧呼出しは
+    // 括弧内の引数だけを使い、直前のスタックを消費しない（`5をF(1)`では
+    // 『5を』が未解決の単語になる）。保留中の引数は呼出しへ渡さず残し、
+    // `範囲をF(1)ずつ増繰返す`では範囲が繰り返しの引数になる。
+    const call = try self.makeCommandCall(command, if (command.josi.len == 0 and self.at(.left_paren)) &[_]*ast.Node{} else try arguments.toOwnedSlice(self.allocator));
     // 『戻る』の直前の助詞付き呼出しは、公式`yReturn`の`popStack(['で','を'])`
     // と同じく呼出し結果を戻り値にする（`「abc」の要素数で戻る`は3を返す）。
     // 連文の途中でも、先行呼出しは連文ノード群として保持したまま最後の

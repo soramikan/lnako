@@ -3,6 +3,7 @@ const ast = @import("../ast.zig");
 const token_mod = @import("../token.zig");
 const parser_mod = @import("../parser.zig");
 const builder = @import("builder.zig");
+const helpers = @import("helpers.zig");
 
 const Parser = parser_mod.Parser;
 const ParseFailure = parser_mod.ParseFailure;
@@ -27,21 +28,45 @@ pub fn atLoopKeywordAhead(self: *Parser, offset: usize) bool {
 /// ループ語のときだけ引数とし、間に引数があれば先行文とする。
 pub fn atForLoopKeywordAhead(self: *Parser, sequence_josi: bool) bool {
     var offset: usize = 0;
+    var depth: usize = 0;
     while (true) : (offset += 1) {
         if (sequence_josi and offset > 0) return false;
         const token = self.peekAhead(offset);
+        // 括弧内は対応する閉じ区切りまで任意の式を読み飛ばす
+        // （`範囲を(1+1)ずつ増繰返す`や`範囲をF(2)ずつ増繰返す`）。
+        if (depth > 0) {
+            switch (token.kind) {
+                .left_paren, .left_bracket, .left_brace => depth += 1,
+                .right_paren, .right_bracket, .right_brace => depth -= 1,
+                .eol, .eof => return false,
+                else => {},
+            }
+            continue;
+        }
         switch (token.kind) {
             .keyword_repeat, .keyword_foreach => return true,
             .keyword_repeat_while, .keyword_repeat_count => return offset == 0,
+            .left_paren, .left_bracket, .left_brace => depth += 1,
             .identifier => {
                 // 『増』『減』+繰返の組もループ開始。命令名に解決できる識別子は境界。
                 if ((std.mem.eql(u8, token.value, "増") or std.mem.eql(u8, token.value, "減")) and
                     self.peekAhead(offset + 1).kind == .keyword_repeat) return true;
-                if (token.josi.len > 0 and !self.isKnownCommandName(token.value)) continue;
+                if (token.josi.len > 0) {
+                    if (self.isKnownCommandName(token.value)) return false;
+                    continue;
+                }
+                // 助詞なし識別子でも、呼出し括弧や式演算子で続く場合は引数式の一部
+                // （`範囲をF(1)ずつ増繰返す`、`範囲を1+2ずつ増繰返す`）。
+                const next = self.peekAhead(offset + 1).kind;
+                if (next == .left_paren or helpers.operatorInfo(next) != null) continue;
                 return false;
             },
-            .number, .bigint, .string, .string_template, .comma, .left_paren, .left_bracket, .left_brace, .minus => continue,
-            else => return false,
+            else => {
+                // 式を構成するトークン（リテラル・演算子・区切りカンマ）は引数式として読み飛ばす。
+                if (helpers.canStartExpression(token.kind) or helpers.operatorInfo(token.kind) != null or
+                    token.kind == .comma) continue;
+                return false;
+            },
         }
     }
 }
