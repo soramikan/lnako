@@ -4344,6 +4344,30 @@ test "AOT配列反復は添字の後にownプロパティを列挙する" {
     try std.testing.expect(!runtime.iteratorHasNext(second));
 }
 
+test "AOTのArrayBuffer反復は添字を列挙せずownプロパティのみ列挙する" {
+    // ArrayBufferは数値添字を持たない（添字読み出しがundefinedを返す契約と
+    // 同じ）ため、添字領域は0件としてownプロパティ名のみを列挙する。
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 1;
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    var target: Value = .{};
+    var key: Value = .{};
+
+    roots[0] = try runtime.createArrayBuffer(&.{ 1, 2 });
+    try runtime.setDictionary(&roots[0].object().?.array_properties, staticStringValue("x"), numberValue(9));
+    const iterator = try runtime.createIterator(&.{roots[0]}, false, 0, true);
+
+    // 添字0・1（内部バイト）は列挙せず、ownプロパティxのみ到達する。
+    try std.testing.expect(runtime.iteratorHasNext(iterator));
+    _ = runtime.iteratorNext(iterator, null, &target, &key, null, null);
+    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @enumFromInt(key.tag)));
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 9))), target.payload);
+    try std.testing.expect(!runtime.iteratorHasNext(iterator));
+}
+
 test "AOT配列の集約・入替・連番・要素生成を公式境界で処理する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();

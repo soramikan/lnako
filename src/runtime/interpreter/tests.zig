@@ -1630,6 +1630,47 @@ test "配列反復は添字の後にownプロパティを列挙する" {
     );
 }
 
+test "ArrayBuffer反復は添字を列挙せずownプロパティのみ列挙する" {
+    // ArrayBufferは数値添字を持たない（添字読み出しがundefinedを返す契約と
+    // 同じ）ため、for..in相当の添字領域は0件としてownプロパティ名のみを
+    // 列挙する。Buffer/Uint8Arrayの添字列挙は従来どおり維持する。
+    var fixture = try compileForTest(std.testing.allocator, "1を表示\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+
+    var root = runtime.rootFrame();
+    defer root.deinit();
+    var buffer_value = try runtime.createArrayBuffer(&.{ 1, 2 });
+    var key_value = try runtime.stringUtf8("x");
+    try root.protect(&buffer_value);
+    try root.protect(&key_value);
+    try shared.setOwnProperty(&buffer_value.bytes.properties, buffer_value.bytes.allocator, key_value.string, .{ .number = 9 });
+
+    const values = try interpreter.allocator.alloc(Value, 1);
+    values[0] = buffer_value;
+    var frame = shared.Frame{ .parent = null, .function = &fixture.ir_program.functions[0], .owner_program = &fixture.ir_program, .values = values };
+    defer frame.deinit(interpreter.allocator);
+    const begin_operands = [_]ir.ValueId{0};
+    const begin = ir.Instruction{ .result = 42, .opcode = .iterator_begin, .type = .dynamic, .operands = @constCast(&begin_operands), .is_foreach = true, .span = .{ .start = 0, .end = 0, .source_start = 0, .source_end = 0, .line = 0, .column = 0 } };
+    _ = try interpreter.iteratorBegin(&frame, begin);
+    const next_operands = [_]ir.ValueId{42};
+    const has_next = ir.Instruction{ .result = 43, .opcode = .iterator_has_next, .type = .dynamic, .operands = @constCast(&next_operands), .span = .{ .start = 0, .end = 0, .source_start = 0, .source_end = 0, .line = 0, .column = 0 } };
+    try std.testing.expect(try interpreter.iteratorHasNext(&frame, has_next));
+    const next = ir.Instruction{ .result = 44, .opcode = .iterator_next, .type = .dynamic, .operands = @constCast(&next_operands), .is_foreach = true, .span = .{ .start = 0, .end = 0, .source_start = 0, .source_end = 0, .line = 0, .column = 0 } };
+    const element = try interpreter.iteratorNext(&frame, next);
+    // 添字0・1（内部バイト）は列挙せず、ownプロパティxのみ到達する。
+    try std.testing.expectEqual(@as(f64, 9), element.number);
+    try std.testing.expect(!try interpreter.iteratorHasNext(&frame, has_next));
+}
+
 test "辞書反復は整数添字キーを昇順で先に列挙する" {
     // 公式のfor..inは整数添字相当のキーを昇順で先に列挙し、
     // それ以外のキーは挿入順を保つ。

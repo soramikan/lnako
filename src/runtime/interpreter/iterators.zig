@@ -60,7 +60,10 @@ pub fn iteratorBegin(self: *Interpreter, frame: *Frame, instruction: ir.Instruct
             // キー列を保持し、削除済みキーはiteratorHasNextで飛ばす。
             .bytes => blk: {
                 const keys = try snapshotOwnPropertyKeys(self.allocator, shared.ownPropertyList(source));
-                break :blk .{ .kind = .bytes, .source = source, .count = source.bytes.bytes.len, .keys = keys };
+                // ArrayBufferは数値添字を持たない（添字読み出しと同じ契約）ため
+                // 添字領域は空とし、ownプロパティ名のみを列挙する。
+                const count: usize = if (source.bytes.kind == .array_buffer) 0 else source.bytes.bytes.len;
+                break :blk .{ .kind = .bytes, .source = source, .count = count, .keys = keys };
             },
             .array => blk: {
                 const keys = try snapshotOwnPropertyKeys(self.allocator, shared.ownPropertyList(source));

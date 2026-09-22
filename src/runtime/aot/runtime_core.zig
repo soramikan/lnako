@@ -772,7 +772,11 @@ pub const Runtime = struct {
             // スナップショットで、削除済みキーはiteratorHasNextで飛ばす。
             .byte_buffer => blk: {
                 const keys = try self.snapshotOwnPropertyKeys(values[0]);
-                break :blk .{ .kind = .bytes, .source = values[0], .count = values[0].object().?.payload.byte_buffer.bytes.len, .keys = keys };
+                const buffer = &values[0].object().?.payload.byte_buffer;
+                // ArrayBufferは数値添字を持たない（添字読み出しと同じ契約）ため
+                // 添字領域は空とし、ownプロパティ名のみを列挙する。
+                const count: usize = if (buffer.kind == .array_buffer) 0 else buffer.bytes.len;
+                break :blk .{ .kind = .bytes, .source = values[0], .count = count, .keys = keys };
             },
             .array => blk: {
                 const keys = try self.snapshotOwnPropertyKeys(values[0]);
