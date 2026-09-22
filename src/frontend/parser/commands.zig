@@ -45,8 +45,19 @@ pub fn resolveCommandName(
     }
     // ループの語の直前にある未知の識別子も命令ではなく引数とする。
     // 公式はfunclist外の名をwordとしてスタックへ積むため、`AをBで反復`の
-    // Bは命令呼出しではなく反復の変数になる。
-    if (!self.isKnownCommandName(self.peek().value) and self.atLoopKeywordAhead(1)) return null;
+    // Bは命令呼出しではなく反復の変数になる。`1からNで3まで繰り返す`のように
+    // 識別子とループの語の間に別の引数が挟まる場合も同じく引数として扱う
+    // （公式のyForが助詞でスタックから取り出すため）。
+    // 「して」などの連文助詞・「には」のコールバック・条件助詞は文として
+    // 確定する構文なので、従来どおり直後のループ語のみを見る。
+    if (!self.isKnownCommandName(self.peek().value)) {
+        const josi = self.peek().josi;
+        const loop_follows = self.atLoopKeywordAhead(1) or
+            (josi.len > 0 and !isSequenceJosi(josi) and
+                !isImplicitCallbackJosi(josi) and !isConditionalJosi(josi) and
+                self.atForLoopKeywordAhead(false));
+        if (loop_follows) return null;
+    }
     // 配列添字・プロパティ・@参照の直後に助詞が続く場合、識別子は命令名ではなく値として続行する。
     // 例: `1をA[0]に代入`, `1をA$fooに代入`。
     const next_kind = self.peekAhead(1).kind;
@@ -55,7 +66,10 @@ pub fn resolveCommandName(
     // 括弧内の引数だけを使い、直前のスタックを消費しない（`5をF(1)`は『5を』が
     // 未解決の単語になる）。命令として確定せず式の解析へ委ねる
     // （`範囲をF(1)ずつ増繰返す`の`F(1)`は増分の式になる）。
-    if (self.peek().josi.len == 0 and next_kind == .left_paren) return null;
+    // 二項演算子が続く場合も同様で、`AからA+2まで繰り返す`の`A+2`のように
+    // 式の一部として扱う。
+    if (self.peek().josi.len == 0 and
+        (next_kind == .left_paren or helpers.operatorInfo(next_kind) != null)) return null;
     if ((self.identifierValue("増") or self.identifierValue("減")) and self.peekAhead(1).kind == .keyword_repeat) {
         return try self.parseFor(start, self.rangeArguments(arguments, chained_calls));
     }
