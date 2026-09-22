@@ -583,7 +583,7 @@ fn interruptTestConsume(context: *anyopaque) bool {
 }
 
 test "SSA IRで条件・反復・関数・配列辞書を実行する" {
-    const source = "●(AとBを)足すとは\nA+Bで戻る\nここまで\n合計=0\nNを1から3まで繰り返す\n合計=合計+N\nここまで\nもし合計=6ならば\n足す(合計,4)を表示\n違えば\n0を表示\nここまで\nA=[1,2]\nA[1]=5\nA[1]を表示\nB={\"x\":7}\nB@\"x\"を表示\n";
+    const source = "●(AとBを)足すとは\nA+Bで戻る\nここまで\n合計値=0\nNを1から3まで繰り返す\n合計値=合計値+N\nここまで\nもし合計値=6ならば\n足す(合計値,4)を表示\n違えば\n0を表示\nここまで\nA=[1,2]\nA[1]=5\nA[1]を表示\nB={\"x\":7}\nB@\"x\"を表示\n";
     var fixture = try compileForTest(std.testing.allocator, source);
     defer fixture.ir_program.deinit();
     defer fixture.hir_program.deinit();
@@ -3283,6 +3283,51 @@ test "『{関数}組み込み命令』を関数値として呼び出せる" {
     try std.testing.expectEqualStrings("7\n", host.written());
 }
 
+test "連鎖位置の裸の「エラー発生」語をthrowとして実行する" {
+    var fixture = try compileForTest(std.testing.allocator, "それは「msg1」\nエラー監視\nエラー発生して「done」を表示\n「続行」を表示\nエラーならば\n「catch[」＆エラーメッセージ＆「]」を表示\nここまで\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("catch[msg1]\n", host.written());
+}
+
+test "条件分岐の節値にある裸の「エラー発生」語をthrowとして実行する" {
+    var fixture = try compileForTest(std.testing.allocator, "それは「msg2」\nエラー監視\n1で条件分岐\nエラー発生ならば、「x」と表示。ここまで。\nここまで。\n「続行」を表示\nエラーならば\n「catch[」＆エラーメッセージ＆「]」を表示\nここまで\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("catch[msg2]\n", host.written());
+}
+
+test "複数必須引数の裸の組み込み命令は不足診断になる" {
+    var parsed = try parser.parse(std.testing.allocator, "置換して表示\n", "builtin-multi.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "builtin-multi.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(!analyzed.succeeded());
+    var count: usize = 0;
+    for (analyzed.diagnostics) |item| if (item.code == .invalid_argument_count) {
+        count += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 1), count);
+}
+
 test "『{関数}名』のプラグイン未取り込み名は関数値化を拒否する" {
     // 動的に束縛されたプラグイン命令名は、プラグイン取り込み済み
     // プログラム（native_plugin_paths非空）でのみ関数値を作る。
@@ -3310,4 +3355,20 @@ test "『{関数}名』のプラグイン未取り込み名は関数値化を拒
     defer interpreter.deinit();
     // native_plugin_paths未設定では関数値化できずUnknownFunctionになる。
     try std.testing.expectError(error.UnknownFunction, interpreter.run());
+}
+
+test "値位置・連鎖位置の組み込み命令語を暗黙呼出しとして実行する" {
+    var fixture = try compileForTest(std.testing.allocator, "それは「  abc  」\n空白除去して表示\n礼節レベル取得して表示\n助詞一覧取得して反復\n対象を表示\nここまで\n3回\n回数を表示\nここまで\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("abc\n0\nについて\nくらい\nなのか\nまでを\nまでの\nによる\nとして\nとは\nから\nまで\nだけ\nより\nほど\nなど\nいて\nえて\nきて\nけて\nして\nって\nにて\nみて\nめて\nねて\nでは\nには\nんで\nずつ\nは\nを\nに\nへ\nで\nと\nが\nの\nでなければ\nなければ\nならば\nなら\nたら\nれば\nこと\nである\nです\nします\nでした\nにゃん\n1\n2\n3\n", host.written());
 }

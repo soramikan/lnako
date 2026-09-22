@@ -37,6 +37,21 @@
     "checkMessage": true
   },
   {
+    "id": "semantic-diagnostic-builtin-word-insufficient-arguments",
+    "source": "それは「abc」\n置換して表示\n",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-builtin-word-insufficient-arguments-bare",
+    "source": "それは「abc」\n置換\n",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-builtin-word-insufficient-arguments-value",
+    "source": "X=置換\n",
+    "code": "invalid_argument_count"
+  },
+  {
     "id": "semantic-diagnostic-bare-index-word",
     "source": "●fとは\nそれは0\nここまで\nA=[[1,2],[3,4]]\nA[1,f,2]を表示\n",
     "code": "invalid_array_access"

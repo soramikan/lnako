@@ -30,16 +30,19 @@ const profiles = {
   },
   "node-directory": {
     schema: "lnako.global-binding-evidence.v2",
-    fixtureId: "native-node-directory-values",
+    // Issue #111: 関数型組み込み命令（デスクトップ等）は値位置でも暗黙呼出し
+    // （builtin call）になりglobal-loadサイトを持たない。global束縛の証拠は
+    // 定数型plugin_node命令へ切り替えて継続する。
+    fixtureId: "native-node-command-line-constants",
     bindings: [
-      { catalogId: "command-0731", name: "デスクトップ", plugin: "plugin_node", type: "関数" },
-      { catalogId: "command-0732", name: "マイドキュメント", plugin: "plugin_node", type: "関数" },
-      { catalogId: "command-0735", name: "テンポラリフォルダ", plugin: "plugin_node", type: "関数" },
+      { catalogId: "command-0751", name: "コマンドライン", plugin: "plugin_node", type: "定数" },
+      { catalogId: "command-0752", name: "ナデシコランタイム", plugin: "plugin_node", type: "定数" },
+      { catalogId: "command-0753", name: "ナデシコランタイムパス", plugin: "plugin_node", type: "定数" },
     ],
     accesses: [
-      { catalogId: "command-0731", name: "デスクトップ", plugin: "plugin_node", kind: "global-load", phase: "global-read" },
-      { catalogId: "command-0732", name: "マイドキュメント", plugin: "plugin_node", kind: "global-load", phase: "global-read" },
-      { catalogId: "command-0735", name: "テンポラリフォルダ", plugin: "plugin_node", kind: "global-load", phase: "global-read" },
+      { catalogId: "command-0751", name: "コマンドライン", plugin: "plugin_node", kind: "global-load", phase: "global-read" },
+      { catalogId: "command-0752", name: "ナデシコランタイム", plugin: "plugin_node", kind: "global-load", phase: "global-read" },
+      { catalogId: "command-0753", name: "ナデシコランタイムパス", plugin: "plugin_node", kind: "global-load", phase: "global-read" },
     ],
   },
 };
