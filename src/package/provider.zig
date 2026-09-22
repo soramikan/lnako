@@ -267,7 +267,7 @@ fn classifyGitUrl(gpa: Allocator, url: []const u8) Allocator.Error!GitUrlKind {
                 std.Uri.percentDecodeBackwards(try gpa.alloc(u8, raw_path.len), raw_path)
             else
                 raw_path;
-            return .{ .local = try normalizeLocalGitPath(gpa, decoded) };
+            return .{ .local = try normalizeLocalGitPath(gpa, decoded, builtin.os.tag == .windows) };
         }
         // authority を持つ file: URL はローカル path ではない（`file://h/s`
         // が bare path `h/s` や `s` と同一視されると別 repo を誤認する）。
@@ -276,20 +276,23 @@ fn classifyGitUrl(gpa: Allocator, url: []const u8) Allocator.Error!GitUrlKind {
     if (std.mem.indexOf(u8, url, "://") != null or isScpLikeGitUrl(url)) {
         return .{ .remote = normalizeRemoteGitUrl(url) };
     }
-    return .{ .local = try normalizeLocalGitPath(gpa, url) };
+    return .{ .local = try normalizeLocalGitPath(gpa, url, builtin.os.tag == .windows) };
 }
 
 /// ローカル path の正規化。末尾 `/` を除く。Windows では `\`→`/`、
 /// `/C:/x`→`C:/x`、drive letter の大文字化を行い、file: URL と bare
 /// path の表現差を吸収する。POSIX では `\` は正当なファイル名文字の
-/// ため置換しない。
-fn normalizeLocalGitPath(gpa: Allocator, path: []const u8) Allocator.Error![]const u8 {
+/// ため置換しない。`windows_paths` は呼出し OS の判定結果を受け取り、
+/// テストから Windows 分岐を検証できるようにする。
+fn normalizeLocalGitPath(gpa: Allocator, path: []const u8, windows_paths: bool) Allocator.Error![]const u8 {
     // POSIX では `\` は正当なファイル名文字のため末尾 `/` だけを除く。
-    if (builtin.os.tag != .windows) return std.mem.trimEnd(u8, path, "/");
+    if (!windows_paths) return std.mem.trimEnd(u8, path, "/");
     // 末尾 `\` も区切り文字として扱うため、変換してから末尾 `/` を除く。
     const buf = try gpa.dupe(u8, path);
     std.mem.replaceScalar(u8, buf, '\\', '/');
-    var text: []u8 = std.mem.trimEnd(u8, buf, "/");
+    var end = buf.len;
+    while (end > 0 and buf[end - 1] == '/') end -= 1;
+    var text: []u8 = buf[0..end];
     // file: URL の Windows drive 表現 `/C:/x` → `C:/x`。
     if (text.len >= 3 and text[0] == '/' and std.ascii.isAlphabetic(text[1]) and text[2] == ':') {
         text = text[1..];
@@ -504,6 +507,21 @@ pub fn identityText(gpa: Allocator, source: lock_model.Source) ![]u8 {
         .path => std.fmt.allocPrint(gpa, "path:{s}", .{source.path orelse ""}),
         .registry, .static => std.fmt.allocPrint(gpa, "{s}:{s}", .{ @tagName(source.kind), source.url orelse "" }),
     };
+}
+
+test "normalizeLocalGitPath は Windows 区切りと drive letter を正規化する" {
+    // 返り値は確保バッファの subslice になり得るため arena で受ける。
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+    // 末尾 `\` は変換後の末尾 `/` として除去する（`C:\repo\` ≡ `C:/repo`）。
+    try std.testing.expectEqualStrings("C:/repo", try normalizeLocalGitPath(gpa, "C:\\repo\\", true));
+    // file: URL の drive 表現 `/C:/x` は `C:/x` へ。
+    try std.testing.expectEqualStrings("C:/x", try normalizeLocalGitPath(gpa, "/C:/x", true));
+    // drive letter は大文字へ揃える。
+    try std.testing.expectEqualStrings("C:/x", try normalizeLocalGitPath(gpa, "c:\\x", true));
+    // POSIX では `\` はファイル名文字のため変換しない（末尾 `/` のみ除去）。
+    try std.testing.expectEqualStrings("a\\b", try normalizeLocalGitPath(gpa, "a\\b/", false));
 }
 
 test {
