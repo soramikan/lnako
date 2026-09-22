@@ -565,12 +565,19 @@ const FunctionBuilder = struct {
     fn lowerIteratorLoop(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
         if (node.children.len < 2) return error.InvalidHir;
         const is_foreach = node.kind == .foreach_statement;
+        const is_repeat_times = node.kind == .repeat_times;
         // 公式convForeachは反復データの評価より先に「対象」「対象キー」「それ」を
         // 退避し、ループ出口で復元する（#1735の入れ子ループ互換）。
         var saved: [foreach_saved_names.len]ir.ValueId = undefined;
         if (is_foreach) {
             for (foreach_saved_names, 0..) |name, index| saved[index] = try self.emitSyntheticGlobalAccess(.load_global, name, null, node);
         }
+        // 公式convRepeatTimesは回数繰り返しの前に「回数」を退避し、
+        // 出口で「回数」と「それ」の両方へその退避値を書き戻す。
+        const saved_kaisu: ?ir.ValueId = if (is_repeat_times)
+            try self.emitSyntheticGlobalAccess(.load_global, "回数", null, node)
+        else
+            null;
         var inputs: std.ArrayList(ir.ValueId) = .empty;
         for (node.children[0 .. node.children.len - 1]) |child| {
             const value = (try self.lowerNode(child)) orelse try self.emitUndefined(node);
@@ -594,6 +601,10 @@ const FunctionBuilder = struct {
         self.current = exit_block;
         if (is_foreach) {
             for (foreach_saved_names, 0..) |name, index| _ = try self.emitSyntheticGlobalAccess(.store_global, name, saved[index], node);
+        }
+        if (saved_kaisu) |value| {
+            _ = try self.emitSyntheticGlobalAccess(.store_global, "それ", value, node);
+            _ = try self.emitSyntheticGlobalAccess(.store_global, "回数", value, node);
         }
         return null;
     }
