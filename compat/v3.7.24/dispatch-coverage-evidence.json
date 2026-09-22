@@ -159,10 +159,10 @@
     "auditScriptSha256": "638403a09d142d5457ddff70d7dee78800d7c15a6c82294ae62b6de7c4cf38ac"
   },
   "coverage": {
-    "unambiguousObservedNativeEntries": 426,
-    "unambiguousObservedNativeUniqueNames": 424,
-    "unambiguousObservedNativeEntryRatio": 0.8145315487571702,
-    "unambiguousObservedNativeUniqueNameRatio": 0.8617886178861789,
+    "unambiguousObservedNativeEntries": 429,
+    "unambiguousObservedNativeUniqueNames": 427,
+    "unambiguousObservedNativeEntryRatio": 0.8202676864244742,
+    "unambiguousObservedNativeUniqueNameRatio": 0.8678861788617886,
     "unobservedNativeEntryIds": [
       "command-0001",
       "command-0002",
@@ -244,10 +244,7 @@
       "command-0311",
       "command-0370",
       "command-0709",
-      "command-0731",
-      "command-0732",
       "command-0733",
-      "command-0735",
       "command-0739",
       "command-0745",
       "command-0746",
@@ -316,10 +313,7 @@
       "表示ログ",
       "そ",
       "ファイルコピーデフォルト動作",
-      "デスクトップ",
-      "マイドキュメント",
       "母艦パス",
-      "テンポラリフォルダ",
       "圧縮解凍ツールパス",
       "プロセス終",
       "コマンドライン",
@@ -2213,7 +2207,7 @@
       "来月",
       "秒差"
     ],
-    "associationWithoutDispatchCount": 142,
+    "associationWithoutDispatchCount": 139,
     "associationWithoutDispatch": [
       {
         "fixtureId": "plugin-system-constants",
@@ -3289,30 +3283,6 @@
         "name": "そ",
         "catalogIds": [
           "command-0370"
-        ]
-      },
-      {
-        "fixtureId": "native-node-directory-values",
-        "file": "native-cases.json",
-        "name": "デスクトップ",
-        "catalogIds": [
-          "command-0731"
-        ]
-      },
-      {
-        "fixtureId": "native-node-directory-values",
-        "file": "native-cases.json",
-        "name": "マイドキュメント",
-        "catalogIds": [
-          "command-0732"
-        ]
-      },
-      {
-        "fixtureId": "native-node-directory-values",
-        "file": "native-cases.json",
-        "name": "テンポラリフォルダ",
-        "catalogIds": [
-          "command-0735"
         ]
       },
       {
@@ -23602,32 +23572,19 @@
         "マイドキュメント",
         "テンポラリフォルダ"
       ],
-      "associationWithoutDispatch": [
-        {
-          "name": "デスクトップ",
-          "catalogIds": [
-            "command-0731"
-          ]
-        },
-        {
-          "name": "マイドキュメント",
-          "catalogIds": [
-            "command-0732"
-          ]
-        },
-        {
-          "name": "テンポラリフォルダ",
-          "catalogIds": [
-            "command-0735"
-          ]
-        }
-      ],
+      "associationWithoutDispatch": [],
       "observedStaticCommandNames": [
+        "テンポラリフォルダ",
+        "デスクトップ",
         "ホームディレクトリ取得",
+        "マイドキュメント",
         "表示"
       ],
       "observedDispatchCommandNames": [
+        "テンポラリフォルダ",
+        "デスクトップ",
         "ホームディレクトリ取得",
+        "マイドキュメント",
         "表示"
       ],
       "dispatchExpectations": [],
@@ -23672,23 +23629,23 @@
         }
       },
       "interpreter": {
-        "dispatchEventCount": 5,
-        "staticSuccessSiteCount": 5,
+        "dispatchEventCount": 8,
+        "staticSuccessSiteCount": 8,
         "expectedFailureSiteCount": 0,
         "expectedFailureDispatchCount": 0,
         "staticSiteWithoutAotManifestCount": 0,
-        "traceSha256": "0921d1ff8557e7e579e146244827654d058e4aa09163c380d04f9f336515a212"
+        "traceSha256": "fb222d377b1549580fa6f12a0ee53d66852ea4ce725fb7871aab9f73b29bec74"
       },
       "aot": {
-        "manifestEntryCount": 5,
-        "dispatchAttemptCount": 5,
-        "dispatchResultCount": 5,
-        "staticSuccessSiteCount": 5,
+        "manifestEntryCount": 8,
+        "dispatchAttemptCount": 8,
+        "dispatchResultCount": 8,
+        "staticSuccessSiteCount": 8,
         "expectedFailureSiteCount": 0,
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
-        "traceSha256": "f482059bbbb5dd16e98a58561fb275105583a5c41fba034ab25e94da39b3ce55",
-        "compileManifestSha256": "fb69842f9568d3e0b3e5077dc72ea49ceb1778ee5a52e3ee46b032db30fe778d"
+        "traceSha256": "286a5f23823bc2450dee7a9c71adabf2718039382f9eb8a6c1ec52d545048cb0",
+        "compileManifestSha256": "6ed7b3d1f68e7b9ecf065551eea3a11a478a4b650c086d65a0dc4dbdd52ead07"
       }
     },
     {
@@ -51227,22 +51184,22 @@
       "fixtureId": "native-node-directory-values",
       "file": "native-cases.json",
       "siteId": "0x0000000000000003",
-      "sourceName": "表示",
-      "canonicalOpcode": "display",
-      "opcode": 0,
-      "route": "direct-display",
+      "sourceName": "デスクトップ",
+      "canonicalOpcode": "node_desktop",
+      "opcode": 275,
+      "route": "builtin",
       "runtimeRoutes": [
-        "direct-display"
+        "builtin"
       ],
       "interpreterRoutes": [
-        "interpreter-core"
+        "plugin_node"
       ],
       "interpreterCount": 1,
       "aotCount": 1,
       "result": "success",
-      "catalogId": "command-0307",
-      "name": "表示",
-      "plugin": "plugin_system",
+      "catalogId": "command-0731",
+      "name": "デスクトップ",
+      "plugin": "plugin_node",
       "catalogStatus": "native",
       "resolution": "unique-name",
       "selectedOracleEquivalent": true
@@ -51275,6 +51232,78 @@
       "fixtureId": "native-node-directory-values",
       "file": "native-cases.json",
       "siteId": "0x0000000000000005",
+      "sourceName": "マイドキュメント",
+      "canonicalOpcode": "node_documents",
+      "opcode": 276,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_node"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0732",
+      "name": "マイドキュメント",
+      "plugin": "plugin_node",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-node-directory-values",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000006",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-node-directory-values",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000007",
+      "sourceName": "テンポラリフォルダ",
+      "canonicalOpcode": "node_temporary_directory",
+      "opcode": 277,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_node"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0735",
+      "name": "テンポラリフォルダ",
+      "plugin": "plugin_node",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-node-directory-values",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000008",
       "sourceName": "表示",
       "canonicalOpcode": "display",
       "opcode": 0,

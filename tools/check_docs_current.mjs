@@ -89,12 +89,12 @@ if (compatibilityText.includes("attestation snapshotから導出したview") || 
 }
 
 const fixtureInventory = evidence.fixtureInventory;
-if (fixtureInventory?.total !== 684 || fixtureInventory?.nativeAot !== 405 || fixtureInventory?.interpreter !== 289 || fixtureInventory?.compatJs !== 9) {
+if (fixtureInventory?.total !== 697 || fixtureInventory?.nativeAot !== 410 || fixtureInventory?.interpreter !== 297 || fixtureInventory?.compatJs !== 9) {
   fail("evidence.jsonのfixture inventoryが不一致です");
 }
-if (dispatchCoverage.scope?.fixtureCount !== 231 || dispatchCoverage.sites?.length !== 4602 ||
-    dispatchCoverage.coverage?.unambiguousObservedNativeEntries !== 426 ||
-    dispatchCoverage.coverage?.unambiguousObservedNativeUniqueNames !== 424) {
+if (dispatchCoverage.scope?.fixtureCount !== 231 || dispatchCoverage.sites?.length !== 4605 ||
+    dispatchCoverage.coverage?.unambiguousObservedNativeEntries !== 429 ||
+    dispatchCoverage.coverage?.unambiguousObservedNativeUniqueNames !== 427) {
   fail("dispatch coverageの現行集計が不一致です");
 }
 if (compatJsEvidence.scope?.catalogEntries !== 4 || compatJsEvidence.scope?.caseCount !== 9 ||
