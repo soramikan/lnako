@@ -92,9 +92,9 @@ const fixtureInventory = evidence.fixtureInventory;
 if (fixtureInventory?.total !== 656 || fixtureInventory?.nativeAot !== 393 || fixtureInventory?.interpreter !== 273 || fixtureInventory?.compatJs !== 9) {
   fail("evidence.jsonのfixture inventoryが不一致です");
 }
-if (dispatchCoverage.scope?.fixtureCount !== 231 || dispatchCoverage.sites?.length !== 4602 ||
-    dispatchCoverage.coverage?.unambiguousObservedNativeEntries !== 426 ||
-    dispatchCoverage.coverage?.unambiguousObservedNativeUniqueNames !== 424) {
+if (dispatchCoverage.scope?.fixtureCount !== 231 || dispatchCoverage.sites?.length !== 4605 ||
+    dispatchCoverage.coverage?.unambiguousObservedNativeEntries !== 429 ||
+    dispatchCoverage.coverage?.unambiguousObservedNativeUniqueNames !== 427) {
   fail("dispatch coverageの現行集計が不一致です");
 }
 if (compatJsEvidence.scope?.catalogEntries !== 4 || compatJsEvidence.scope?.caseCount !== 9 ||
