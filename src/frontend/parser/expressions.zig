@@ -132,7 +132,10 @@ pub fn parsePostfix(self: *Parser) ParseFailure!*ast.Node {
             value = call;
             continue;
         }
-        if (self.at(.left_paren) and value.kind == .function_call) {
+        // 助詞付きの呼出しは引数として確定済みのため、直後の`(`は関数値
+        // 呼出しではなく次の式の開始（`(AをBに代入)を(C)を表示`）。
+        // 公式も助詞のある呼出しの後の括弧をcall_valueへ結合しない。
+        if (self.at(.left_paren) and value.kind == .function_call and value.josi.len == 0) {
             const open = self.advance();
             self.delimited_expression_depth += 1;
             defer self.delimited_expression_depth -= 1;
