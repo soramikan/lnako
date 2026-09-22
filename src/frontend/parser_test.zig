@@ -825,6 +825,80 @@ test "連文のあとの範囲繰り返しでユーザー記述の『それを�
     try std.testing.expectEqualStrings("3", repeat.children[1].value);
 }
 
+test "『で』助詞の繰り返し変数を前置で受理する" {
+    var result = try parse(std.testing.allocator, "Nで1から3まで繰り返す\nNを表示\nここまで\n", "for-de-prefix.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const repeat = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.for_statement, repeat.kind);
+    try std.testing.expectEqualStrings("N", repeat.name);
+    try std.testing.expectEqual(ast.Kind.number, repeat.children[0].kind);
+    try std.testing.expectEqualStrings("1", repeat.children[0].value);
+    try std.testing.expectEqual(ast.Kind.number, repeat.children[1].kind);
+    try std.testing.expectEqualStrings("3", repeat.children[1].value);
+}
+
+test "『で』助詞の繰り返し変数を後置で受理する" {
+    var result = try parse(std.testing.allocator, "3から5までNで繰り返す\nNを表示\nここまで\n", "for-de-suffix.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const repeat = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.for_statement, repeat.kind);
+    try std.testing.expectEqualStrings("N", repeat.name);
+    try std.testing.expectEqual(ast.Kind.number, repeat.children[0].kind);
+    try std.testing.expectEqualStrings("3", repeat.children[0].value);
+    try std.testing.expectEqual(ast.Kind.number, repeat.children[1].kind);
+    try std.testing.expectEqualStrings("5", repeat.children[1].value);
+}
+
+test "範囲オブジェクトの繰り返しは先頭/末尾参照を開始値・終了値に展開する" {
+    var result = try parse(std.testing.allocator, "Nで1から5の範囲を繰り返す\nNを表示\nここまで\n", "for-range-object.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const repeat = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.for_statement, repeat.kind);
+    try std.testing.expectEqualStrings("N", repeat.name);
+    const edge_keys = [_][]const u8{ "先頭", "末尾" };
+    for (edge_keys, 0..) |key, i| {
+        const edge = repeat.children[i];
+        try std.testing.expectEqual(ast.Kind.array_value_reference, edge.kind);
+        try std.testing.expectEqual(ast.Kind.function_call, edge.children[0].kind);
+        try std.testing.expectEqualStrings("範囲", edge.children[0].name);
+        try std.testing.expectEqual(@as(usize, 2), edge.children[0].children.len);
+        try std.testing.expectEqualStrings(key, edge.children[1].value);
+    }
+}
+
+test "範囲オブジェクトの繰り返しは増分『ずつ』も受理する" {
+    var result = try parse(std.testing.allocator, "Iで1から4の範囲を2ずつ増繰返す\nIを表示\nここまで\n", "for-range-inc.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const repeat = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.for_statement, repeat.kind);
+    try std.testing.expectEqualStrings("I", repeat.name);
+    try std.testing.expectEqual(ast.LoopDirection.up, repeat.loop_direction);
+    try std.testing.expectEqual(ast.Kind.number, repeat.children[2].kind);
+    try std.testing.expectEqualStrings("2", repeat.children[2].value);
+}
+
+test "『ずつ』引数は増減繰返以外では構文エラー" {
+    var result = try parse(std.testing.allocator, "1から5まで2ずつ繰り返す\nそれを表示\nここまで\n", "for-stray-inc.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+}
+
+test "繰り返し変数位置が単語でなければ構文エラー" {
+    var result = try parse(std.testing.allocator, "5で1から3まで繰り返す\nそれを表示\nここまで\n", "for-nonword-var.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+}
+
+test "末尾側の『を』助詞が終了値より後なら未解決引数として構文エラー" {
+    var result = try parse(std.testing.allocator, "3から5までNを繰り返す\nそれを表示\nここまで\n", "for-stray-wo.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+}
+
 test "引数のない戻すは暗黙の『それ』を返す" {
     var result = try parse(std.testing.allocator, "戻す\n", "return-it.nako3");
     defer result.deinit();

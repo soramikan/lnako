@@ -4262,6 +4262,28 @@ test "AOT反復構文は「それ」と指定変数へ束縛し指定変数あ�
     try std.testing.expect(!runtime.iteratorHasNext(iterator));
 }
 
+test "AOT範囲繰り返しは『それ』と繰り返し変数の両方へ束縛する" {
+    // Issue #113: 公式convForは変数指定の有無に関わらず各回『それ』へも
+    // 現在値を束縛する。生成コードは範囲繰り返しにも「それ」ポインタを渡す。
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var iterator = try runtime.createIterator(&.{ numberValue(1), numberValue(3) }, true, 0, false);
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, @ptrCast(&iterator), 1);
+    defer runtime.popRoots(&frame);
+    var sore: Value = .{};
+    var variable: Value = .{};
+    _ = runtime.iteratorNext(iterator, null, null, null, &variable, &sore);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 1))), variable.payload);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 1))), sore.payload);
+    _ = runtime.iteratorNext(iterator, null, null, null, &variable, &sore);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 2))), sore.payload);
+    // 変数ポインタを渡さない『それ』のみの束縛でも現在値が届く。
+    _ = runtime.iteratorNext(iterator, null, null, null, null, &sore);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 3))), sore.payload);
+    try std.testing.expect(!runtime.iteratorHasNext(iterator));
+}
+
 test "AOT反復は開始時の添字・キー集合を列挙し穴と削除済みを飛ばす" {
     // for..in互換: 配列はpresenceが真の添字のみ、辞書は開始時に保持した
     // キー集合のみ列挙する。反復中の短縮・削除済み添字・キーは飛ばし、

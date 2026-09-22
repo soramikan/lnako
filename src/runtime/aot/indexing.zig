@@ -425,6 +425,8 @@ pub fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_
         .range => blk: {
             const result = numberValue(iterator.current);
             iterator.current += iterator.step;
+            // 公式convForは変数指定の有無に関わらず各回『それ』へも現在値を束縛する
+            if (sore_target) |target| target.* = result;
             if (range_target) |target| target.* = result;
             break :blk result;
         },

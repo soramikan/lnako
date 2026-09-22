@@ -1014,7 +1014,7 @@ pub const Parser = struct {
         // 呼出しをスタックに積んだまま制御構文へ渡す（`Aが5以下の間`は
         // `以下(A,5)`を条件とする`間`になる）。呼出しを引数として保持し、
         // 文の解析を続けて制御構文の分岐へ委ねる。
-        if (command.josi.len > 0 and chained_calls.items.len == 0 and self.atLoopKeyword()) {
+        if (command.josi.len > 0 and chained_calls.items.len == 0 and self.atForLoopKeywordAhead(isSequenceJosi(command.josi))) {
             arguments.* = .empty;
             try arguments.*.append(self.allocator, call);
             return null;
@@ -1030,6 +1030,32 @@ pub const Parser = struct {
             return try builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
         }
         return call;
+    }
+
+    /// 助詞付き呼出しの直後が、引数列を挟んでループの語へ続くか。
+    /// 公式は呼出し結果をスタックに残すため、`範囲を2ずつ増繰返す`のように
+    /// 間に引数があっても呼出しはループの引数になる。
+    /// 連文呼出し(『して』等)と条件『間』・回数『回』は従来どおり直後の
+    /// ループ語のときだけ引数とし、間に引数があれば先行文とする。
+    fn atForLoopKeywordAhead(self: *Parser, sequence_josi: bool) bool {
+        var offset: usize = 0;
+        while (true) : (offset += 1) {
+            if (sequence_josi and offset > 0) return false;
+            const token = self.peekAhead(offset);
+            switch (token.kind) {
+                .keyword_repeat, .keyword_foreach => return true,
+                .keyword_repeat_while, .keyword_repeat_count => return offset == 0,
+                .identifier => {
+                    // 『増』『減』+繰返の組もループ開始。命令名に解決できる識別子は境界。
+                    if ((std.mem.eql(u8, token.value, "増") or std.mem.eql(u8, token.value, "減")) and
+                        self.peekAhead(offset + 1).kind == .keyword_repeat) return true;
+                    if (token.josi.len > 0 and !self.isKnownCommandName(token.value)) continue;
+                    return false;
+                },
+                .number, .bigint, .string, .string_template, .comma, .left_paren, .left_bracket, .left_brace, .minus => continue,
+                else => return false,
+            }
+        }
     }
 
     /// 公式の`func token`相当（既知の命令名）かどうか。
