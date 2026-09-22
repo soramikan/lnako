@@ -273,6 +273,55 @@ test "助詞付き命令呼出しの直後の「戻る」は呼出し結果を�
     }
 }
 
+test "連文の途中でも「戻る」は直前の呼出し・値を戻り値にする" {
+    // 公式は『して』で文が切れるため、続く助詞付き呼出しや値は新しい文として
+    // `yReturn`の対象になる。lnakoは先行する連文を保持したまま、最後の
+    // 呼出し・値を戻り値にしたブロックを組み立てる。
+    var call = try parse(std.testing.allocator, "●Fとは\n「x」と表示して「abc」の要素数で戻る\nここまで\n", "return-chained-call.nako3");
+    defer call.deinit();
+    try std.testing.expect(call.succeeded());
+    const call_body = call.root.?.children[0].children[0];
+    const call_block = call_body.children[0];
+    try std.testing.expectEqual(ast.Kind.block, call_block.kind);
+    try std.testing.expectEqual(@as(usize, 2), call_block.children.len);
+    try std.testing.expectEqual(ast.Kind.function_call, call_block.children[0].kind);
+    try std.testing.expectEqualStrings("表示", call_block.children[0].name);
+    const call_return = call_block.children[1];
+    try std.testing.expectEqual(ast.Kind.return_statement, call_return.kind);
+    try std.testing.expectEqual(ast.Kind.function_call, call_return.children[0].kind);
+    try std.testing.expectEqualStrings("要素数", call_return.children[0].name);
+
+    // 連文のあとの助詞付き変数も先行呼出しを実行してから戻り値になる。
+    var variable = try parse(std.testing.allocator, "●Fとは\n「x」と表示して「abc」を戻る\nここまで\n", "return-chained-var.nako3");
+    defer variable.deinit();
+    try std.testing.expect(variable.succeeded());
+    const variable_body = variable.root.?.children[0].children[0];
+    const variable_block = variable_body.children[0];
+    try std.testing.expectEqual(ast.Kind.block, variable_block.kind);
+    try std.testing.expectEqual(@as(usize, 2), variable_block.children.len);
+    try std.testing.expectEqual(ast.Kind.return_statement, variable_block.children[1].kind);
+
+    // 連文助詞『して』の直後の「戻る」は呼出し自体が戻り値になる。
+    // 公式は『して』で文が切れて`return それ`（＝直前呼出しの結果）になるので同じ値。
+    var direct = try parse(std.testing.allocator, "●Fとは\n「x」と表示して戻る\nここまで\n", "return-chained-direct.nako3");
+    defer direct.deinit();
+    try std.testing.expect(direct.succeeded());
+    const direct_body = direct.root.?.children[0].children[0];
+    const direct_statement = direct_body.children[0];
+    try std.testing.expectEqual(ast.Kind.return_statement, direct_statement.kind);
+    try std.testing.expectEqual(ast.Kind.function_call, direct_statement.children[0].kind);
+    try std.testing.expectEqualStrings("表示", direct_statement.children[0].name);
+
+    // 連文ブロックの末尾にある裸の「戻る」も先行呼出しを落とさない。
+    var bare = try parse(std.testing.allocator, "●Fとは\n「x」と表示して「a」と表示して戻る\nここまで\n", "return-chained-bare.nako3");
+    defer bare.deinit();
+    try std.testing.expect(bare.succeeded());
+    const bare_body = bare.root.?.children[0].children[0];
+    const bare_block = bare_body.children[0];
+    try std.testing.expectEqual(ast.Kind.block, bare_block.kind);
+    try std.testing.expectEqual(ast.Kind.return_statement, bare_block.children[bare_block.children.len - 1].kind);
+}
+
 test "「戻る」の戻り値は助詞付き命令呼出しの有無で切り替わる" {
     // 助詞付き変数は従来どおり直前の引数として戻り値になる。
     var variable = try parse(std.testing.allocator, "●Fとは\nそれは5\nそれを戻る\nここまで\n", "return-sore.nako3");

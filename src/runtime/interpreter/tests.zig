@@ -216,6 +216,40 @@ test "助詞付き命令呼出しの直後の『戻る』は呼出し結果を�
     try std.testing.expectEqualStrings("3\n3\n3\nABC\n3\n", host.written());
 }
 
+test "連文の途中でも『戻る』は先行呼出しを実行して戻り値を返す" {
+    // 連文のあとの助詞付き呼出し・変数・裸の『戻る』は、先行する連文を
+    // 実行したうえで戻り値を返す。連鎖中の呼出し引数には『して』の
+    // 暗黙『それ』も含まれるため、`要素数`は『それ』を引数に取る
+    // （`XしてYを表示`と同じ連鎖引数モデル）。
+    const source =
+        "●Fとは\n" ++
+        "「x」と表示して「abc」の要素数で戻る\n" ++
+        "ここまで\n" ++
+        "●Gとは\n" ++
+        "「x」と表示して「abc」を戻る\n" ++
+        "ここまで\n" ++
+        "●Hとは\n" ++
+        "「x」と表示して戻る\n" ++
+        "ここまで\n" ++
+        "Fを表示\n" ++
+        "Gを表示\n" ++
+        "Hを表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("x\n1\nx\nabc\nx\nundefined\n", host.written());
+}
+
 test "『引数』宣言は同名ローカルとして再利用する" {
     // 公式は本体先頭で`引数`を実引数配列にしてから利用者の宣言を実行する。
     // 宣言は同じローカルを上書きする（二重定義にしない）。

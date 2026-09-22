@@ -792,6 +792,13 @@ pub const Parser = struct {
                 const value = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try builder.nop(self, keyword);
                 const result = try builder.makeNodeWithChildren(self, .return_statement, start, try builder.copyChildren(self, &.{value}));
                 result.josi = "";
+                // 連文の途中でも『戻る』は先行する呼出しを実行したうえで戻り値を返す。
+                // 公式は『して』で文が切れるため、続く『戻る』は新しい文として
+                // スタック上の値を返す（`Xして戻る`は`return それ`になる）。
+                if (chained_calls.items.len > 0) {
+                    try chained_calls.append(self.allocator, result);
+                    return try builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
+                }
                 return result;
             }
             if (self.at(.keyword_repeat_count)) {
@@ -947,14 +954,20 @@ pub const Parser = struct {
             return statement;
         }
         const call = try self.makeCommandCall(command, try arguments.toOwnedSlice(self.allocator));
-        // 助詞付きの関数呼出しの直後にループの語や『戻る』が続く場合、公式
-        // `yCall`は呼出しをスタックに積んだまま制御構文へ渡す（`Aが5以下の間`は
-        // `以下(A,5)`を条件とする`間`、`「abc」の要素数で戻る`は呼出し結果を
-        // 返す`戻る`になる）。呼出しを引数として保持し、文の解析を続けて
-        // 制御構文の分岐へ委ねる。
-        if (command.josi.len > 0 and chained_calls.items.len == 0 and
-            (self.atLoopKeyword() or self.at(.keyword_return)))
-        {
+        // 『戻る』の直前の助詞付き呼出しは、公式`yReturn`の`popStack(['で','を'])`
+        // と同じく呼出し結果を戻り値にする（`「abc」の要素数で戻る`は3を返す）。
+        // 連文の途中でも、先行呼出しは連文ノード群として保持したまま最後の
+        // 呼出しを戻り値へ渡す（`keyword_return`側の分岐がブロックを組み立てる）。
+        if (command.josi.len > 0 and self.at(.keyword_return)) {
+            arguments.* = .empty;
+            try arguments.*.append(self.allocator, call);
+            return null;
+        }
+        // 助詞付きの関数呼出しの直後にループの語が続く場合、公式`yCall`は
+        // 呼出しをスタックに積んだまま制御構文へ渡す（`Aが5以下の間`は
+        // `以下(A,5)`を条件とする`間`になる）。呼出しを引数として保持し、
+        // 文の解析を続けて制御構文の分岐へ委ねる。
+        if (command.josi.len > 0 and chained_calls.items.len == 0 and self.atLoopKeyword()) {
             arguments.* = .empty;
             try arguments.*.append(self.allocator, call);
             return null;
