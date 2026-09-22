@@ -3062,6 +3062,14 @@
   {
     "id": "native-function-exception-restores-caller-sore",
     "source": "それは7\n●Fとは\nそれは1\n「失敗」のエラー発生\nここまで\nエラー監視\nF()\nエラーならば\nそれを表示\nここまで\n"
+  },
+  {
+    "id": "native-chained-range-loop",
+    "source": "5を表示してIを1から3まで繰り返す\nIを表示\nここまで\n5を表示してIを1から5まで2ずつ増繰返す\nIを表示\nここまで\n"
+  },
+  {
+    "id": "native-chained-range-loop-novar",
+    "source": "5を表示して1から3まで繰り返す\nそれを表示\nここまで\n5を表示して1から5まで2ずつ増繰返す\nそれを表示\nここまで\n"
   }
 ]
 

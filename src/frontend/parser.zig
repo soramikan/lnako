@@ -807,7 +807,7 @@ pub const Parser = struct {
                 if (arguments.items.len == 0) return self.fail(.invalid_control_statement, "『間』の前に条件式が必要です", start);
                 return self.finishChained(start, &chained_calls, try self.parseWhile(start, arguments.items[arguments.items.len - 1]));
             }
-            if (self.at(.keyword_repeat)) return self.finishChained(start, &chained_calls, try self.parseFor(start, arguments.items));
+            if (self.at(.keyword_repeat)) return self.finishChained(start, &chained_calls, try self.parseFor(start, self.rangeArguments(&arguments, &chained_calls)));
             if (self.at(.keyword_foreach)) {
                 _ = self.advance();
                 const collection = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try builder.nop(self, start);
@@ -824,7 +824,7 @@ pub const Parser = struct {
                 return self.finishChained(start, &chained_calls, node);
             }
             if ((self.identifierValue("増") or self.identifierValue("減")) and self.peekAhead(1).kind == .keyword_repeat) {
-                return self.finishChained(start, &chained_calls, try self.parseFor(start, arguments.items));
+                return self.finishChained(start, &chained_calls, try self.parseFor(start, self.rangeArguments(&arguments, &chained_calls)));
             }
 
             // 助詞付きの既知命令名は、公式`yCallFunc`と同じく命令として呼び出し、
@@ -893,6 +893,23 @@ pub const Parser = struct {
         return builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
     }
 
+    /// 連文継続用にarguments先頭へ挿入した暗黙の『それ』を、範囲引数を
+    /// 先頭から読む『繰り返す』のために除外する。回数・条件・反復は末尾の
+    /// 引数だけを使うため影響しないが、範囲繰り返しは先頭から順に
+    /// ループ変数・開始値・終了値を読むため、マーカーを残すと一つずれて
+    /// 消費される。暗黙マーカーはjosi・raw_josiが共に空のword『それ』で、
+    /// ユーザーが書いた`それを`（josi=を）とは区別できる。
+    fn rangeArguments(self: *Parser, arguments: *std.ArrayList(*ast.Node), chained_calls: *std.ArrayList(*ast.Node)) []const *ast.Node {
+        _ = self;
+        if (chained_calls.items.len > 0 and arguments.items.len > 0 and
+            arguments.items[0].kind == .word and std.mem.eql(u8, arguments.items[0].value, "それ") and
+            arguments.items[0].josi.len == 0 and arguments.items[0].raw_josi.len == 0)
+        {
+            return arguments.items[1..];
+        }
+        return arguments.items;
+    }
+
     /// 現在位置の識別子を命令名として解決する。命令・制御構文へ確定した場合は
     /// そのノードを返し、識別子が引数として扱われる場合は`null`を返す
     /// （呼出し元は文の解析を継続する）。
@@ -922,7 +939,7 @@ pub const Parser = struct {
         const next_kind = self.peekAhead(1).kind;
         if (next_kind == .left_bracket or next_kind == .at or next_kind == .property) return null;
         if ((self.identifierValue("増") or self.identifierValue("減")) and self.peekAhead(1).kind == .keyword_repeat) {
-            return try self.parseFor(start, arguments.items);
+            return try self.parseFor(start, self.rangeArguments(arguments, chained_calls));
         }
         const command = self.advance();
         if (std.mem.eql(u8, command.value, "実行速度優先") or std.mem.eql(u8, command.value, "パフォーマンスモニタ適用")) {
@@ -1329,6 +1346,9 @@ pub const Parser = struct {
             variable = arguments[0].value;
             offset = 1;
         }
+        // 公式は繰り返し変数を省略した範囲繰り返しを『それ』へ束縛する
+        // （繰り返し中に『それ』へ現在値が入り、『回数』は変化しない）。
+        if (variable.len == 0) variable = "それ";
         if (arguments.len < offset + 2) return self.fail(.invalid_control_statement, "『繰り返す』に開始値と終了値が必要です", keyword);
         const increment = if (arguments.len > offset + 2) arguments[offset + 2] else try builder.nop(self, keyword);
         const body = try self.parseLoopBody("『繰り返す』文");
