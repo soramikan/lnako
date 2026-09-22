@@ -574,6 +574,10 @@ fn gitStdout(io: std.Io, argv: []const []const u8) ![]u8 {
 fn createGitRepo(temporary: *std.testing.TmpDir, io: std.Io) !struct { path: [:0]u8, url: []u8, commit: []u8 } {
     try temporary.dir.createDirPath(io, "repo/src");
     try writePackage(temporary.dir, io, "repo");
+    // Windows CI の git は core.autocrlf で checkout 時に LF→CRLF 変換する。
+    // cache object が作業木の byte 列をそのまま保持する契約を検証するため、
+    // fixture repo では text 変換を無効化する。
+    try temporary.dir.writeFile(io, .{ .sub_path = "repo/.gitattributes", .data = "* -text\n" });
     try temporary.dir.writeFile(io, .{ .sub_path = "repo/src/index.nako3", .data = "●表示とは\nここまで\n" });
     const repo = try temporary.dir.realPathFileAlloc(io, "repo", testing.allocator);
     errdefer testing.allocator.free(repo);
