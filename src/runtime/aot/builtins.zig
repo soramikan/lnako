@@ -114,6 +114,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
+    // 専用ABIを持つ命令はエミッタが専用call siteへ振り分けるため、汎用
+    // dispatchでは処理しない。除外集合はaot_builtin.hasGenericCallSiteDispatch
+    // が単一の分類として管理し、`{関数}名`の関数値化可否も同じ判定を使う。
+    if (!aot_builtin.hasGenericCallSiteDispatch(command)) {
+        runtime.setFailure(error.UnknownCommand);
+        return;
+    }
     const value = if (len > 0) arguments.?[0] else Value{};
     switch (command) {
         .line_notify_discontinued, .line_image_notify_discontinued => {
@@ -157,10 +164,6 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 runtime.setFailure(failure);
                 return;
             };
-        },
-        .regexp_match, .regexp_extract, .regexp_replace, .regexp_split => {
-            runtime.setFailure(error.UnknownCommand);
-            return;
         },
         .json_encode, .json_encode_pretty => {
             out.* = state.jsonEncodeBuiltin(runtime, value, command == .json_encode_pretty) catch |failure| {
@@ -306,22 +309,6 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
             runtime.setFailure(failure);
             return;
         },
-        .system_hatena_execute => {
-            runtime.setFailure(error.UnknownCommand);
-            return;
-        },
-        .node_archive_tool_path_set, .node_ajax_options_set, .node_ajax_onerror_set => {
-            runtime.setFailure(error.UnknownCommand);
-            return;
-        },
-        .node_ajax_send_callback, .node_ajax_receive_callback, .node_get_send_callback, .node_post_send_callback, .node_post_form_send_callback, .node_ajax_response_promise, .node_http_response_promise, .node_get_response_promise, .node_post_response_promise, .node_post_form_response_promise, .node_ajax_content_get, .node_ajax_receive, .node_post_send, .node_post_form_send, .node_ajax_text_get, .node_ajax_json_get, .node_ajax_binary_get, .node_discord_send, .node_discord_file_send => {
-            runtime.setFailure(error.UnknownCommand);
-            return;
-        },
-        .node_archive_extract, .node_archive_extract_callback, .node_archive_create, .node_archive_create_callback => {
-            runtime.setFailure(error.UnknownCommand);
-            return;
-        },
         .node_process_run_wait, .node_process_run, .node_process_start, .node_process_run_wait_output, .node_process_start_callback, .node_open_external_browser, .node_open_external_explorer => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = state.nodeProcessBuiltin(runtime, command, actual) catch |failure| {
@@ -335,10 +322,6 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 runtime.setFailure(failure);
                 return;
             };
-        },
-        .node_stdin_callback => {
-            runtime.setFailure(error.UnknownCommand);
-            return;
         },
         .system_debug_enable => runtime.debug_enabled = true,
         .system_global_function_names => {
@@ -1227,6 +1210,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 runtime.setFailure(failure);
                 return;
             };
+        },
+        // hasGenericCallSiteDispatch=falseの専用ABI命令は冒頭の判定で
+        // 返されるためここへ到達しない。到達するのは汎用実装をまだ持たない
+        // 命令だけであり、従来の明示UnknownCommandアームと同じ失敗にする。
+        else => {
+            runtime.setFailure(error.UnknownCommand);
+            return;
         },
     }
     success = runtime.failure_epoch == start_epoch;
