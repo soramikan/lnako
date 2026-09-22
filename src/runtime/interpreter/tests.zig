@@ -175,6 +175,116 @@ test "『引数』は呼出しごとに独立し入れ子呼出しで壊れな�
     try std.testing.expectEqualStrings("9\n5\n", host.written());
 }
 
+test "助詞付き命令呼出しの直後の『戻る』は呼出し結果を返す" {
+    // 公式`yCall`は助詞付きの関数呼出しをスタックに積んだまま`yReturn`へ渡し、
+    // 『で』『を』助詞の呼出し結果を戻り値にする。連文助詞『して』も
+    // 公式の`return それ`と同じ値になる。
+    const source =
+        "●Fとは\n" ++
+        "「abc」の要素数で戻る\n" ++
+        "ここまで\n" ++
+        "●Gとは\n" ++
+        "「abc」の要素数を戻る\n" ++
+        "ここまで\n" ++
+        "●Hとは\n" ++
+        "1と2を足すで戻る\n" ++
+        "ここまで\n" ++
+        "●Iとは\n" ++
+        "「abc」の大文字変換で戻る\n" ++
+        "ここまで\n" ++
+        "●Jとは\n" ++
+        "「abc」の要素数して戻る\n" ++
+        "ここまで\n" ++
+        "Fを表示\n" ++
+        "Gを表示\n" ++
+        "Hを表示\n" ++
+        "Iを表示\n" ++
+        "Jを表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("3\n3\n3\nABC\n3\n", host.written());
+}
+
+test "連文の途中でも『戻る』は先行呼出しを実行して戻り値を返す" {
+    // 連文のあとの助詞付き呼出し・変数・裸の『戻る』は、先行する連文を
+    // 実行したうえで戻り値を返す。連鎖中の呼出し引数には『して』の
+    // 暗黙『それ』も含まれるため、`要素数`は『それ』を引数に取る
+    // （`XしてYを表示`と同じ連鎖引数モデル）。
+    const source =
+        "●Fとは\n" ++
+        "「x」と表示して「abc」の要素数で戻る\n" ++
+        "ここまで\n" ++
+        "●Gとは\n" ++
+        "「x」と表示して「abc」を戻る\n" ++
+        "ここまで\n" ++
+        "●Hとは\n" ++
+        "「x」と表示して戻る\n" ++
+        "ここまで\n" ++
+        "Fを表示\n" ++
+        "Gを表示\n" ++
+        "Hを表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("x\n1\nx\nabc\nx\nundefined\n", host.written());
+}
+
+test "条件助詞付き呼出しのあとの『戻る』は条件文の分岐になる" {
+    // `Aが1と等しいならば戻る`は『もし』省略形。条件が偽なら後続の
+    // 『9で戻る』へ進み、真なら条件分岐内の『戻る』で返る。
+    const source =
+        "●(Aの)Fとは\n" ++
+        "Aが1と等しいならば戻る\n" ++
+        "9で戻る\n" ++
+        "ここまで\n" ++
+        "●(Aの)Gとは\n" ++
+        "Aが1と等しいならばAを戻る\n" ++
+        "9で戻る\n" ++
+        "ここまで\n" ++
+        "F(2)を表示\n" ++
+        "G(2)を表示\n" ++
+        "G(1)を表示\n" ++
+        "B=1\n" ++
+        "Bが1と等しいならばBを表示\n" ++
+        "B=2\n" ++
+        "Bが1と等しいならばBを表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("9\n9\n1\n1\n", host.written());
+}
+
 test "『引数』宣言は同名ローカルとして再利用する" {
     // 公式は本体先頭で`引数`を実引数配列にしてから利用者の宣言を実行する。
     // 宣言は同じローカルを上書きする（二重定義にしない）。
@@ -1476,6 +1586,242 @@ test "プリミティブへの添字代入と反復を公式同様に無操作�
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("1\nabc\n後\n", host.written());
+}
+
+test "反復構文は「それ」と指定変数へ束縛し外側のシステム変数を復元する" {
+    // Issue #112: 公式convForeach互換。
+    // - 対象省略の「反復」は「それ」を反復する
+    // - 「Aを反復」は要素を「対象」と「それ」へ束縛する
+    // - 「AをBで反復」はBと「それ」へ束縛し「対象」を更新しない
+    // - 「NでAを反復」はNへ束縛する
+    // - 「Aを「,」で区切って反復」は連文の結果を反復する
+    // - 数値の反復対象は0回実行（公式for..in相当）
+    // - ループ後に外側の「対象」「対象キー」「それ」を復元する
+    const source =
+        "対象=「外側」\n対象キー=「外側キー」\n" ++
+        "それ=[1,2]\n反復\nそれを表示\nここまで\n" ++
+        "「{対象キー}:{対象}:{それ}」を表示\n" ++
+        "[3,4]を反復\n「{対象キー}:{対象}:{それ}」を表示\nここまで\n" ++
+        "「{対象キー}:{対象}:{それ}」を表示\n" ++
+        "[5,6]をBで反復\n「B={B}:それ={それ}:対象={対象}」を表示\nここまで\n" ++
+        "Nで[7]を反復\nNを表示\nここまで\n" ++
+        "アンケート=「a,b」\nアンケートを「,」で区切って反復\n対象を表示\nここまで\n" ++
+        "5を反復\n「到達不可」を表示\nここまで\n" ++
+        "「{対象キー}:{対象}」を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings(
+        "1\n2\n" ++ // 対象省略は「それ」の配列を反復
+            "外側キー:外側:1,2\n" ++ // ループ後は外側のシステム変数へ復元
+            "0:3:3\n1:4:4\n" ++ // 「Aを反復」は対象キー・対象・それを束縛
+            "外側キー:外側:1,2\n" ++
+            "B=5:それ=5:対象=外側\nB=6:それ=6:対象=外側\n" ++ // 指定変数は対象を更新しない
+            "7\n" ++ // 「NでAを反復」はNへ束縛
+            "a\nb\n" ++ // 「で区切っ」の結果を反復
+            "外側キー:外側\n", // 数値反復は0回実行で値も復元される
+        host.written(),
+    );
+}
+
+test "入れ子の反復は内側終了後に外側の束縛へ戻る" {
+    // 公式convForeachはループ毎に「対象」「対象キー」「それ」を退避し、
+    // 出口で復元する（#1735）。内側ループの復元が外側ループの状態を
+    // 壊さないことを確認する。
+    const source =
+        "[[1,2],[3]]を反復\n" ++
+        "「外{対象}」を表示\n" ++
+        "対象を反復\n「内{対象キー}:{対象}」を表示\nここまで\n" ++
+        "「外後{対象キー}:{対象}」を表示\n" ++
+        "ここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings(
+        "外1,2\n" ++ "内0:1\n内1:2\n" ++ "外後0:1,2\n" ++ "外3\n" ++ "内0:3\n" ++ "外後1:3\n",
+        host.written(),
+    );
+}
+
+test "反復は開始時の添字・キー集合を列挙し穴と削除済みを飛ばす" {
+    // 公式のfor..inは反復開始時に存在した添字・キーのみを対象とし、
+    // 到達時点で存在しないもの(配列の穴・反復中の削除)を飛ばす。
+    // 反復中に追加された要素・キーは列挙しない。
+    const source =
+        "A=[]\nA[2]に9を代入\nAを反復\n「穴{対象キー}:{対象}」を表示\nここまで\n" ++
+        "B=[1,2,3]\nBを反復\n対象を表示\nBの配列ポップ\nここまで\n" ++
+        "C=[1,2]\nCを反復\n対象を表示\nもし対象キーが1ならば\nCに3を配列追加\nここまで\nここまで\n" ++
+        "D={\"a\":1,\"b\":2,\"c\":3}\nDを反復\n対象キーを表示\nもし対象キーが「a」ならば\nDから「b」を辞書キー削除\nここまで\nここまで\n" ++
+        "E={\"a\":1,\"b\":2}\nEを反復\n対象キーを表示\nもし対象キーが「a」ならば\nE[\"z\"]=9\nここまで\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings(
+        "穴2:9\n" ++ // 穴のある添字0,1を飛ばす
+            "1\n2\n" ++ // 短縮で消えた添字2を飛ばす
+            "1\n2\n" ++ // 反復中に追加した3は列挙しない
+            "a\nc\n" ++ // 未到達のbを削除すると飛ばす
+            "a\nb\n", // 反復中に追加したzは列挙しない
+        host.written(),
+    );
+}
+
+test "GCストレス中も辞書反復のキースナップショットをルートとして保持する" {
+    // 削除済みキーの文字列はスナップショットのみが参照するため、
+    // 収集対象にしないようiteratorsのトレースでマークする必要がある。
+    const source = "D={\"a\":1,\"b\":2,\"c\":3}\nDを反復\n対象キーを表示\nもし対象キーが「a」ならば\nDから「b」を辞書キー削除\nここまで\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("a\nc\n", host.written());
+}
+
+test "配列反復は添字の後にownプロパティを列挙する" {
+    // 公式のfor..inは配列の整数添字を昇順で列挙した後、ownの文字列
+    // プロパティを挿入順で列挙する。開始時のキー集合を上限とし、
+    // 到達時点で削除済みのプロパティは飛ばす。
+    const source =
+        "A=[1,2]\nA[\"x\"]=9\nA[\"y\"]=8\nAを反復\n「{対象キー}:{対象}」を表示\n" ++
+        "もし対象キーが「x」ならば\nAから「y」を辞書キー削除\nここまで\nここまで\n" ++
+        "B=[1]\nBを反復\n対象キーを表示\nもし対象キーが0ならば\nB[\"z\"]=7\nここまで\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings(
+        "0:1\n1:2\nx:9\n" ++ // 添字の後にownプロパティ、削除済みyを飛ばす
+            "0\n", // 反復中に追加したzは列挙しない
+        host.written(),
+    );
+}
+
+test "ArrayBuffer反復は添字を列挙せずownプロパティのみ列挙する" {
+    // ArrayBufferは数値添字を持たない（添字読み出しがundefinedを返す契約と
+    // 同じ）ため、for..in相当の添字領域は0件としてownプロパティ名のみを
+    // 列挙する。Buffer/Uint8Arrayの添字列挙は従来どおり維持する。
+    var fixture = try compileForTest(std.testing.allocator, "1を表示\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+
+    var root = runtime.rootFrame();
+    defer root.deinit();
+    var buffer_value = try runtime.createArrayBuffer(&.{ 1, 2 });
+    var key_value = try runtime.stringUtf8("x");
+    try root.protect(&buffer_value);
+    try root.protect(&key_value);
+    try shared.setOwnProperty(&buffer_value.bytes.properties, buffer_value.bytes.allocator, key_value.string, .{ .number = 9 });
+
+    const values = try interpreter.allocator.alloc(Value, 1);
+    values[0] = buffer_value;
+    var frame = shared.Frame{ .parent = null, .function = &fixture.ir_program.functions[0], .owner_program = &fixture.ir_program, .values = values };
+    defer frame.deinit(interpreter.allocator);
+    const begin_operands = [_]ir.ValueId{0};
+    const begin = ir.Instruction{ .result = 42, .opcode = .iterator_begin, .type = .dynamic, .operands = @constCast(&begin_operands), .is_foreach = true, .span = .{ .start = 0, .end = 0, .source_start = 0, .source_end = 0, .line = 0, .column = 0 } };
+    _ = try interpreter.iteratorBegin(&frame, begin);
+    const next_operands = [_]ir.ValueId{42};
+    const has_next = ir.Instruction{ .result = 43, .opcode = .iterator_has_next, .type = .dynamic, .operands = @constCast(&next_operands), .span = .{ .start = 0, .end = 0, .source_start = 0, .source_end = 0, .line = 0, .column = 0 } };
+    try std.testing.expect(try interpreter.iteratorHasNext(&frame, has_next));
+    const next = ir.Instruction{ .result = 44, .opcode = .iterator_next, .type = .dynamic, .operands = @constCast(&next_operands), .is_foreach = true, .span = .{ .start = 0, .end = 0, .source_start = 0, .source_end = 0, .line = 0, .column = 0 } };
+    const element = try interpreter.iteratorNext(&frame, next);
+    // 添字0・1（内部バイト）は列挙せず、ownプロパティxのみ到達する。
+    try std.testing.expectEqual(@as(f64, 9), element.number);
+    try std.testing.expect(!try interpreter.iteratorHasNext(&frame, has_next));
+}
+
+test "辞書反復は整数添字キーを昇順で先に列挙する" {
+    // 公式のfor..inは整数添字相当のキーを昇順で先に列挙し、
+    // それ以外のキーは挿入順を保つ。
+    const source = "D={\"2\":2,\"1\":1,\"x\":9,\"10\":10}\nDを反復\n対象キーを表示\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("1\n2\n10\nx\n", host.written());
+}
+
+test "辞書反復の再開始は旧キースナップショットを解放する" {
+    // 外側ループで同じiterator_beginが繰り返し実行されると、Frame内の
+    // 同一IDの反復状態が置き換わる。旧キースナップショットを解放しないと
+    // 開始のたびにリークするため、置換時の解放をtesting.allocatorで検知する。
+    const source =
+        "D={\"a\":1,\"b\":2,\"c\":3}\n" ++
+        "3回\n" ++
+        "Dを反復\n対象キーを表示\nここまで\n" ++
+        "ここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("a\nb\nc\na\nb\nc\na\nb\nc\n", host.written());
 }
 
 test "nullとundefinedへの添字代入をキー付き例外として監視する" {

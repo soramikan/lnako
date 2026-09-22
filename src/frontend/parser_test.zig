@@ -244,6 +244,173 @@ test "後判定の括弧付き助詞呼出し条件式を受理する" {
     try std.testing.expectEqualStrings("の", condition.josi);
 }
 
+test "助詞付き命令呼出しの直後の「戻る」は呼出し結果を戻り値にする" {
+    // 公式`yCall`は助詞付きの関数呼出しをスタックに積んだまま`yReturn`へ渡し、
+    // `yReturn`は『で』『を』助詞の要素を戻り値として取り出す。
+    // lnakoでは助詞付き変数と同じく、呼出しを『戻る』の直前の引数として保持する。
+    const cases = [_]struct { source: []const u8, filename: []const u8, name: []const u8, josi: []const u8 }{
+        .{ .source = "●Fとは\n「abc」の要素数で戻る\nここまで\n", .filename = "return-josi-de.nako3", .name = "要素数", .josi = "で" },
+        .{ .source = "●Fとは\n「abc」の要素数を戻る\nここまで\n", .filename = "return-josi-wo.nako3", .name = "要素数", .josi = "を" },
+        .{ .source = "●Fとは\n1と2を足すで戻る\nここまで\n", .filename = "return-josi-tasu.nako3", .name = "足", .josi = "で" },
+        .{ .source = "●Fとは\n「abc」の大文字変換で戻る\nここまで\n", .filename = "return-josi-case.nako3", .name = "大文字変換", .josi = "で" },
+        // 連文助詞でも公式は`return それ`で同じ値を返すため、呼出しを戻り値にする。
+        .{ .source = "●Fとは\n「abc」の要素数して戻る\nここまで\n", .filename = "return-josi-shite.nako3", .name = "要素数", .josi = "して" },
+    };
+    for (cases) |case| {
+        var result = try parse(std.testing.allocator, case.source, case.filename);
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+        const definition = result.root.?.children[0];
+        try std.testing.expectEqual(ast.Kind.function_definition, definition.kind);
+        const body = definition.children[0];
+        const statement = body.children[0];
+        try std.testing.expectEqual(ast.Kind.return_statement, statement.kind);
+        const value = statement.children[0];
+        try std.testing.expectEqual(ast.Kind.function_call, value.kind);
+        try std.testing.expectEqualStrings(case.name, value.name);
+        // 命令呼出し自身の助詞は保持される。
+        try std.testing.expectEqualStrings(case.josi, value.josi);
+    }
+}
+
+test "連文の途中でも「戻る」は直前の呼出し・値を戻り値にする" {
+    // 公式は『して』で文が切れるため、続く助詞付き呼出しや値は新しい文として
+    // `yReturn`の対象になる。lnakoは先行する連文を保持したまま、最後の
+    // 呼出し・値を戻り値にしたブロックを組み立てる。
+    var call = try parse(std.testing.allocator, "●Fとは\n「x」と表示して「abc」の要素数で戻る\nここまで\n", "return-chained-call.nako3");
+    defer call.deinit();
+    try std.testing.expect(call.succeeded());
+    const call_body = call.root.?.children[0].children[0];
+    const call_block = call_body.children[0];
+    try std.testing.expectEqual(ast.Kind.block, call_block.kind);
+    try std.testing.expectEqual(@as(usize, 2), call_block.children.len);
+    try std.testing.expectEqual(ast.Kind.function_call, call_block.children[0].kind);
+    try std.testing.expectEqualStrings("表示", call_block.children[0].name);
+    const call_return = call_block.children[1];
+    try std.testing.expectEqual(ast.Kind.return_statement, call_return.kind);
+    try std.testing.expectEqual(ast.Kind.function_call, call_return.children[0].kind);
+    try std.testing.expectEqualStrings("要素数", call_return.children[0].name);
+
+    // 連文のあとの助詞付き変数も先行呼出しを実行してから戻り値になる。
+    var variable = try parse(std.testing.allocator, "●Fとは\n「x」と表示して「abc」を戻る\nここまで\n", "return-chained-var.nako3");
+    defer variable.deinit();
+    try std.testing.expect(variable.succeeded());
+    const variable_body = variable.root.?.children[0].children[0];
+    const variable_block = variable_body.children[0];
+    try std.testing.expectEqual(ast.Kind.block, variable_block.kind);
+    try std.testing.expectEqual(@as(usize, 2), variable_block.children.len);
+    try std.testing.expectEqual(ast.Kind.return_statement, variable_block.children[1].kind);
+
+    // 連文助詞『して』の直後の「戻る」は呼出し自体が戻り値になる。
+    // 公式は『して』で文が切れて`return それ`（＝直前呼出しの結果）になるので同じ値。
+    var direct = try parse(std.testing.allocator, "●Fとは\n「x」と表示して戻る\nここまで\n", "return-chained-direct.nako3");
+    defer direct.deinit();
+    try std.testing.expect(direct.succeeded());
+    const direct_body = direct.root.?.children[0].children[0];
+    const direct_statement = direct_body.children[0];
+    try std.testing.expectEqual(ast.Kind.return_statement, direct_statement.kind);
+    try std.testing.expectEqual(ast.Kind.function_call, direct_statement.children[0].kind);
+    try std.testing.expectEqualStrings("表示", direct_statement.children[0].name);
+
+    // 連文ブロックの末尾にある裸の「戻る」も先行呼出しを落とさない。
+    var bare = try parse(std.testing.allocator, "●Fとは\n「x」と表示して「a」と表示して戻る\nここまで\n", "return-chained-bare.nako3");
+    defer bare.deinit();
+    try std.testing.expect(bare.succeeded());
+    const bare_body = bare.root.?.children[0].children[0];
+    const bare_block = bare_body.children[0];
+    try std.testing.expectEqual(ast.Kind.block, bare_block.kind);
+    try std.testing.expectEqual(ast.Kind.return_statement, bare_block.children[bare_block.children.len - 1].kind);
+}
+
+test "「戻る」の戻り値は助詞付き命令呼出しの有無で切り替わる" {
+    // 助詞付き変数は従来どおり直前の引数として戻り値になる。
+    var variable = try parse(std.testing.allocator, "●Fとは\nそれは5\nそれを戻る\nここまで\n", "return-sore.nako3");
+    defer variable.deinit();
+    try std.testing.expect(variable.succeeded());
+    const variable_body = variable.root.?.children[0].children[0];
+    var variable_statement: ?*ast.Node = null;
+    for (variable_body.children) |child| {
+        if (child.kind == .return_statement) variable_statement = child;
+    }
+    try std.testing.expect(variable_statement != null);
+    try std.testing.expect(variable_statement.?.children[0].kind != .nop);
+
+    // 直前に引数が無い「戻る」は暗黙の『それ』を返す。
+    var bare = try parse(std.testing.allocator, "●Fとは\n戻る\nここまで\n", "return-bare.nako3");
+    defer bare.deinit();
+    try std.testing.expect(bare.succeeded());
+    const bare_body = bare.root.?.children[0].children[0];
+    var bare_statement: ?*ast.Node = null;
+    for (bare_body.children) |child| {
+        if (child.kind == .return_statement) bare_statement = child;
+    }
+    try std.testing.expect(bare_statement != null);
+    try std.testing.expectEqual(ast.Kind.word, bare_statement.?.children[0].kind);
+    try std.testing.expectEqualStrings("それ", bare_statement.?.children[0].value);
+}
+
+test "条件助詞付き呼出しの直後の「戻る」は条件文の分岐になる" {
+    // `Aが1と等しいならば戻る`は『もし』省略形の条件文。条件呼出しを『戻る』の
+    // 戻り値にすると、条件が偽でも無条件に真偽値を返してしまうため、
+    // 呼出しは条件式として`parseIfThen`へ委ねる。
+    var result = try parse(std.testing.allocator, "●Fとは\nAが1と等しいならば戻る\n9で戻る\nここまで\n", "return-cond-naraba.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const body = result.root.?.children[0].children[0];
+    const if_node = body.children[0];
+    try std.testing.expectEqual(ast.Kind.if_statement, if_node.kind);
+    const condition = if_node.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, condition.kind);
+    try std.testing.expectEqualStrings("等", condition.name);
+    const true_block = if_node.children[1];
+    try std.testing.expectEqual(ast.Kind.return_statement, true_block.children[0].kind);
+    // 条件が偽のときの『9で戻る』は別の文として残る。
+    var fallback: ?*ast.Node = null;
+    for (body.children) |child| {
+        if (child.kind == .return_statement) fallback = child;
+    }
+    try std.testing.expect(fallback != null);
+    try std.testing.expectEqual(ast.Kind.number, fallback.?.children[0].kind);
+
+    // 否定条件助詞も同じく条件文へ昇格させる（条件式はnotで包まれる）。
+    var negative = try parse(std.testing.allocator, "●Fとは\nAが1と等しいでなければ戻る\nここまで\n", "return-cond-denakereba.nako3");
+    defer negative.deinit();
+    try std.testing.expect(negative.succeeded());
+    const negative_if = negative.root.?.children[0].children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.if_statement, negative_if.kind);
+    try std.testing.expectEqual(ast.Kind.unary_operator, negative_if.children[0].kind);
+}
+
+test "条件助詞付き呼出しのあとに値が続いても条件文になる" {
+    // `Aが1と等しいならばAを戻る`は『もし』省略形。語が続く場合に呼出しを
+    // 引数チェーンへ入れると条件文を構成できず実行時エラーになるため、
+    // 条件助詞は引数継続の対象にしない。
+    var result = try parse(std.testing.allocator, "●(Aの)Fとは\nAが1と等しいならばAを戻る\nここまで\n", "return-cond-arg.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const body = result.root.?.children[0].children[0];
+    const if_node = body.children[0];
+    try std.testing.expectEqual(ast.Kind.if_statement, if_node.kind);
+    const true_block = if_node.children[1];
+    try std.testing.expectEqual(ast.Kind.return_statement, true_block.children[0].kind);
+    try std.testing.expectEqual(ast.Kind.word, true_block.children[0].children[0].kind);
+
+    // `XしてYならばZ`は連文の末尾の呼出しを条件文へ昇格させる。
+    var chained = try parse(std.testing.allocator, "●Fとは\n「x」と表示してAが1と等しいならば戻る\nここまで\n", "return-cond-chained.nako3");
+    defer chained.deinit();
+    try std.testing.expect(chained.succeeded());
+    const chained_body = chained.root.?.children[0].children[0];
+    const chained_block = chained_body.children[0];
+    try std.testing.expectEqual(ast.Kind.block, chained_block.kind);
+    try std.testing.expectEqual(@as(usize, 2), chained_block.children.len);
+    try std.testing.expectEqual(ast.Kind.function_call, chained_block.children[0].kind);
+    try std.testing.expectEqualStrings("表示", chained_block.children[0].name);
+    const chained_if = chained_block.children[1];
+    try std.testing.expectEqual(ast.Kind.if_statement, chained_if.kind);
+    try std.testing.expectEqual(ast.Kind.function_call, chained_if.children[0].kind);
+    try std.testing.expectEqualStrings("等", chained_if.children[0].name);
+}
+
 test "「もし」省略形は命令呼出しのときだけ条件文にする" {
     // 公式`ySentence`は`yCall`が命令呼出しで確定した場合だけ`yIfThen`へ入る。
     // 演算式や数値は『不完全な文です』で拒否されるため条件文にしない。
@@ -1435,4 +1602,76 @@ test "『{関数}』のカンマ形式と関数名欠落を拒否する" {
         defer result.deinit();
         try std.testing.expect(!result.succeeded());
     }
+}
+
+test "『反復』の対象省略は「それ」を反復対象にする" {
+    // 公式yForEachは`popStack(['を'])`が無いとき`yNop()`を対象とし、
+    // convForeachが`それ`の値を反復データとして使う。lnakoは省略時に
+    // 「それ」を参照するwordノードを生成する。
+    var result = try parse(std.testing.allocator, "反復\n対象を表示\nここまで\n", "foreach-implicit.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const statement = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.foreach_statement, statement.kind);
+    try std.testing.expectEqualStrings("", statement.name);
+    try std.testing.expectEqual(ast.Kind.word, statement.children[0].kind);
+    try std.testing.expectEqualStrings("それ", statement.children[0].value);
+}
+
+test "『Aを反復』は助詞「を」の値を反復対象にする" {
+    var result = try parse(std.testing.allocator, "Aを反復\n対象を表示\nここまで\n", "foreach-target.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const statement = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.foreach_statement, statement.kind);
+    try std.testing.expectEqualStrings("", statement.name);
+    try std.testing.expectEqual(ast.Kind.word, statement.children[0].kind);
+    try std.testing.expectEqualStrings("A", statement.children[0].value);
+}
+
+test "『AをBで反復』は指定変数を解析する" {
+    // 公式yForEachは`popStack(['で'])`のwordをループ変数とする。
+    // `B`は命令名ではなく変数名として扱われる。
+    var result = try parse(std.testing.allocator, "AをBで反復\nBを表示\nここまで\n", "foreach-var.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const statement = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.foreach_statement, statement.kind);
+    try std.testing.expectEqualStrings("B", statement.name);
+    try std.testing.expectEqual(ast.Kind.word, statement.children[0].kind);
+    try std.testing.expectEqualStrings("A", statement.children[0].value);
+}
+
+test "『Nで配列を反復』は前置の指定変数を解析する" {
+    var result = try parse(std.testing.allocator, "Nで[1,2,3]を反復\nNを表示\nここまで\n", "foreach-var-prefix.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const statement = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.foreach_statement, statement.kind);
+    try std.testing.expectEqualStrings("N", statement.name);
+    try std.testing.expectEqual(ast.Kind.array_literal, statement.children[0].kind);
+}
+
+test "『Aを「,」で区切って反復』は連文の呼出しを先行文として評価する" {
+    // 公式は「で区切っ」の呼出しがスタックに残り、先行文として実行されて
+    // 結果が「それ」へ残る。反復対象は省略され「それ」を使う。
+    var result = try parse(std.testing.allocator, "アンケートを「,」で区切って反復\n対象を表示\nここまで\n", "foreach-chained.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const statement = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.block, statement.kind);
+    try std.testing.expectEqual(ast.Kind.function_call, statement.children[0].kind);
+    const foreach = statement.children[statement.children.len - 1];
+    try std.testing.expectEqual(ast.Kind.foreach_statement, foreach.kind);
+    try std.testing.expectEqualStrings("", foreach.name);
+    try std.testing.expectEqual(ast.Kind.word, foreach.children[0].kind);
+    try std.testing.expectEqualStrings("それ", foreach.children[0].value);
+}
+
+test "『反復』の指定変数はwordに限る" {
+    // 公式は`popStack(['で'])`の結果がwordでない場合
+    // 『(変数名)で(配列)を反復』で指定してください。の文法エラーにする。
+    var result = try parse(std.testing.allocator, "Aを1で反復\nここまで\n", "foreach-var-number.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
 }

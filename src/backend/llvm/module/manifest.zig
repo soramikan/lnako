@@ -264,6 +264,9 @@ pub fn writeGlobalManifest(allocator: std.mem.Allocator, io: std.Io, program: ir
                     (instruction.opcode == .ensure_array_var and !instruction.local_target and
                         !system_constant.isConstant(instruction.name));
                 if (instruction.opcode != .load_global and !is_global_write) continue;
+                // lowering生成の退避・復元命令（反復の対象・対象キー・それ）は
+                // ソース上の観測サイトではないためmanifestへ記録しない。
+                if (instruction.synthetic) continue;
                 const site_id = instruction.global_site_id orelse return error.MissingGlobalSiteId;
                 if (seen_site_ids.contains(site_id)) return error.ManifestSiteIdCollision;
                 try seen_site_ids.put(allocator, site_id, {});

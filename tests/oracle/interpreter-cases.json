@@ -602,6 +602,102 @@
     "source": "F={関数}MAX\nF(3,5,2)を表示\nG={関数}連結\nG(\"a\",\"b\",\"c\")を表示\n"
   },
   {
+    "id": "return-josi-call",
+    "source": "●Fとは\n「abc」の要素数で戻る\nここまで\n●Gとは\n「abc」の要素数を戻る\nここまで\n●Hとは\n1と2を足すで戻る\nここまで\n●Iとは\n「abc」の大文字変換で戻る\nここまで\nFを表示\nGを表示\nHを表示\nIを表示\n"
+  },
+  {
+    "id": "return-josi-call-shite",
+    "source": "●Fとは\n「abc」の要素数して戻る\nここまで\nFを表示\n"
+  },
+  {
+    "id": "return-josi-call-undefined",
+    "source": "●Fとは\n「a」を「b」に置換して戻る\nここまで\nFを表示\n"
+  },
+  {
+    "id": "return-josi-eq",
+    "source": "●Fとは\nAが1と等しいで戻る\nここまで\nA=1\nFを表示\n"
+  },
+  {
+    "id": "return-sore-wo",
+    "source": "●Fとは\nそれは5\nそれを戻る\nここまで\nFを表示\n"
+  },
+  {
+    "id": "return-chained-var",
+    "source": "●Fとは\n「x」と表示して「abc」を戻る\nここまで\nFを表示\n"
+  },
+  {
+    "id": "return-chained-bare",
+    "source": "●Fとは\n「x」と表示して戻る\nここまで\nFを表示\n"
+  },
+  {
+    "id": "return-cond-naraba",
+    "source": "●(Aの)Fとは\nAが1と等しいならば戻る\n9で戻る\nここまで\nF(2)を表示\n"
+  },
+  {
+    "id": "return-cond-arg",
+    "source": "●(Aの)Fとは\nAが1と等しいならばAを戻る\n9で戻る\nここまで\nF(2)を表示\nF(1)を表示\n"
+  },
+  {
+    "id": "return-cond-display",
+    "source": "B=1\nBが1と等しいならばBを表示\nB=2\nBが1と等しいならばBを表示\n"
+  },
+  {
+    "id": "return-cond-chained",
+    "source": "●(Aの)Fとは\n「x」と表示してAが1と等しいならば戻る\n9で戻る\nここまで\nF(2)を表示\n"
+  },
+  {
+    "id": "foreach-implicit-sore",
+    "source": "それ=[1,2]\n反復\nそれを表示\nここまで\n"
+  },
+  {
+    "id": "foreach-target-binding",
+    "source": "対象=「外側」\n対象キー=「外側キー」\n[3,4]を反復\n「{対象キー}:{対象}:{それ}」を表示\nここまで\n「{対象キー}:{対象}」を表示\n"
+  },
+  {
+    "id": "foreach-named-variable",
+    "source": "対象=「外側」\n[5,6]をBで反復\n「B={B}:それ={それ}:対象={対象}」を表示\nここまで\nNで[7]を反復\nNを表示\nここまで\n"
+  },
+  {
+    "id": "foreach-sore-named-variable",
+    "source": "それ=[9,8]\nそれをXで反復\nXを表示\nここまで\n"
+  },
+  {
+    "id": "foreach-chained-call",
+    "source": "アンケート=「a,b」\nアンケートを「,」で区切って反復\n対象を表示\nここまで\n"
+  },
+  {
+    "id": "foreach-scalar-empty",
+    "source": "対象=「外」\n5を反復\n「到達不可」を表示\nここまで\n対象を表示\n"
+  },
+  {
+    "id": "foreach-nested-restore",
+    "source": "[[1,2],[3]]を反復\n「外{対象}」を表示\n対象を反復\n「内{対象キー}:{対象}」を表示\nここまで\n「外後{対象キー}:{対象}」を表示\nここまで\n"
+  },
+  {
+    "id": "foreach-sparse-array-hole",
+    "source": "A=[]\nA[2]に9を代入\nAを反復\n対象キーを表示\n対象を表示\nここまで\n"
+  },
+  {
+    "id": "foreach-array-shrink",
+    "source": "A=[1,2,3]\nAを反復\n対象を表示\nAの配列ポップ\nここまで\n"
+  },
+  {
+    "id": "foreach-array-grow-not-enumerated",
+    "source": "A=[1,2]\nAを反復\n対象を表示\nもし対象キーが1ならば\nAに3を配列追加\nここまで\nここまで\n"
+  },
+  {
+    "id": "foreach-dictionary-mutation",
+    "source": "D={\"a\":1,\"b\":2,\"c\":3}\nDを反復\n対象キーを表示\nもし対象キーが「a」ならば\nDから「b」を辞書キー削除\nここまで\nここまで\nE={\"a\":1,\"b\":2}\nEを反復\n対象キーを表示\nもし対象キーが「a」ならば\nE[\"z\"]=9\nここまで\nここまで\n"
+  },
+  {
+    "id": "foreach-array-own-property",
+    "source": "A=[1,2]\nA[\"x\"]=9\nA[\"y\"]=8\nAを反復\n「{対象キー}:{対象}」を表示\nもし対象キーが「x」ならば\nAから「y」を辞書キー削除\nここまで\nここまで\nB=[1]\nBを反復\n対象キーを表示\nもし対象キーが0ならば\nB[\"z\"]=7\nここまで\nここまで\n"
+  },
+  {
+    "id": "foreach-dictionary-integer-key-order",
+    "source": "D={\"2\":2,\"1\":1,\"x\":9,\"10\":10}\nDを反復\n対象キーを表示\nここまで\n"
+  },
+  {
     "id": "koto-call-suffix-implicit-return",
     "source": "●(AとBの)加算処理とは\nAにBを足すこと。\nここまで\n3と7の加算処理して表示。\n"
   },
@@ -626,4 +722,3 @@
     "source": "●Fとは\n1から3まで繰り返す\nここまで\nここまで\nF()を表示\n●Gとは\nそれは9\n1から2まで繰り返す\nそれを表示\nここまで\nそれを戻す\nここまで\nG()を表示\n"
   }
 ]
-
