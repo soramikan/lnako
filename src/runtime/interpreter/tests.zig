@@ -1932,6 +1932,35 @@ test "回数繰り返しはそれを回数へ束縛し退避値を復元する" 
     try std.testing.expectEqualStrings("1\n2\n3\n1\n2\n後:\n回数:\n", host.written());
 }
 
+test "連文の各文は直前結果を『それ』へ伝播し先行文の出力を欠落させない" {
+    // Issue #114: `。`区切りの中間呼出し結果が『それ』に繋がり、
+    // 先行する文の出力も保持されることを固定する。『戻り値無し』を
+    // 『して』連鎖で受け取る形は公式同様に0を返す。
+    const source =
+        "A=それに5を足す。2を掛ける。それを表示\n" ++
+        "1と2を足す。3を掛ける。それを表示\n" ++
+        "前=1。中=前に1を足す。後=中に1を足す。「{前},{中},{後}」を表示\n" ++
+        "●(誰に)挨拶とは\n　それは戻り値無し\nここまで\n" ++
+        "「友人」に挨拶して表示\n" ++
+        "●Fとは\n　入=1。出=入に1を足す。それは出\nここまで\n" ++
+        "Fを表示\n" ++
+        "●Gとは\n　入=1。出=入に1を足す。戻る\nここまで\n" ++
+        "Gを表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("NaN\n9\n1,2,3\n0\n2\n2\n", host.written());
+}
+
 test "範囲オブジェクトの一時変数は拡張単語の同名変数・定数を破壊しない" {
     // 一時変数名は拡張単語（${…}・《…》）でも記述できない形にし、
     // 同スコープの利用者変数・定数を上書きしない（#113）。
