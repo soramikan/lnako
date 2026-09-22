@@ -232,19 +232,63 @@ fn verifyCheckoutOrigin(session: *Session, checkout_dir: []const u8, dep: manife
     }
 }
 
-/// git remote URL の比較用正規化。`file://` scheme・末尾 `/`・末尾 `.git`
-/// の表記揺れを吸収する（内容は変えない）。
+/// git remote URL の構造化比較。ローカル形式（bare path または authority
+/// が空・`localhost` の `file:` URL）はパスをそのまま比較し、末尾 `.git`
+/// はファイル名の一部として残す（`/deps/a` と `/deps/a.git` は別 repo に
+/// なり得る）。リモート形式（`scheme://`、scp 形式 `user@host:path`、
+/// authority を持つ `file:` URL）は末尾 `/` と慣例的な `.git` 接尾辞の
+/// 表記揺れだけを吸収する。ローカルとリモートは一致しない。
 fn gitUrlEql(a: []const u8, b: []const u8) bool {
-    const normalize = struct {
-        fn run(url: []const u8) []const u8 {
-            var text = url;
-            if (std.mem.startsWith(u8, text, "file://")) text = text["file://".len..];
-            text = std.mem.trimEnd(u8, text, "/");
-            if (std.mem.endsWith(u8, text, ".git")) text = text[0 .. text.len - ".git".len];
-            return text;
+    return switch (classifyGitUrl(a)) {
+        .local => |pa| switch (classifyGitUrl(b)) {
+            .local => |pb| std.mem.eql(u8, pa, pb),
+            .remote => false,
+        },
+        .remote => |ra| switch (classifyGitUrl(b)) {
+            .local => false,
+            .remote => |rb| std.mem.eql(u8, ra, rb),
+        },
+    };
+}
+
+const GitUrlKind = union(enum) { local: []const u8, remote: []const u8 };
+
+fn classifyGitUrl(url: []const u8) GitUrlKind {
+    if (std.mem.startsWith(u8, url, "file://")) {
+        const rest = url["file://".len..];
+        const slash = std.mem.indexOfScalar(u8, rest, '/') orelse rest.len;
+        const authority = rest[0..slash];
+        if (authority.len == 0 or std.ascii.eqlIgnoreCase(authority, "localhost")) {
+            return .{ .local = std.mem.trimEnd(u8, rest[slash..], "/") };
         }
-    }.run;
-    return std.mem.eql(u8, normalize(a), normalize(b));
+        // authority を持つ file: URL はローカル path ではない（`file://h/s`
+        // が bare path `h/s` や `s` と同一視されると別 repo を誤認する）。
+        return .{ .remote = normalizeRemoteGitUrl(url) };
+    }
+    if (std.mem.indexOf(u8, url, "://") != null or isScpLikeGitUrl(url)) {
+        return .{ .remote = normalizeRemoteGitUrl(url) };
+    }
+    return .{ .local = std.mem.trimEnd(u8, url, "/") };
+}
+
+/// scp 形式 `user@host:path` の判定。最初の `/` より前に `:` がある
+/// 形式をリモートとみなす（Windows drive letter `C:` はローカル path）。
+fn isScpLikeGitUrl(url: []const u8) bool {
+    const colon = std.mem.indexOfScalar(u8, url, ':') orelse return false;
+    if (colon == 0) return false;
+    if (colon == 1 and std.ascii.isAlphabetic(url[0])) return false;
+    if (std.mem.indexOfScalar(u8, url, '/')) |slash| {
+        if (slash < colon) return false;
+    }
+    return true;
+}
+
+/// リモート URL の表記揺れ吸収。末尾 `/` とホスティング慣例の `.git`
+/// 接尾辞を除く。ローカル path には適用しない。
+fn normalizeRemoteGitUrl(url: []const u8) []const u8 {
+    var text = std.mem.trimEnd(u8, url, "/");
+    if (std.mem.endsWith(u8, text, ".git")) text = text[0 .. text.len - ".git".len];
+    return text;
 }
 
 const GitResult = struct {

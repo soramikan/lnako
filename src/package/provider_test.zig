@@ -474,6 +474,23 @@ test "http provider は sha512 宣言も照合する" {
     try testing.expectEqual(fetch.FailureKind.hash_mismatch, mismatch.lastFailure().?.kind);
 }
 
+test "HTTP取得は redirect 先の非 loopback 平文 http を拒否する" {
+    // 初回 URL が loopback http で許可されても、redirect 先が非 loopback の
+    // 平文 http なら接続前に invalid_source で拒否する（降格回避の遮断）。
+    var server = FixtureServer{ .io = testing.io, .allocator = testing.allocator };
+    try server.start(&.{
+        .{ .path = "/go", .status = 302, .location = "http://example.com/evil" },
+    });
+    defer server.stop();
+
+    var session = newSession(.{});
+    defer session.deinit();
+    const url = try server.url("/go");
+    defer testing.allocator.free(url);
+    try testing.expectError(error.InvalidSource, fetch.fetchBytes(&session, url, .artifact));
+    try testing.expectEqual(fetch.FailureKind.invalid_source, session.lastFailure().?.kind);
+}
+
 test "取得 provider は非 loopback の平文 http を拒否する" {
     // 既定 policy では loopback 以外の http:// を invalid_source で拒否する
     // （接続前に失敗するためネットワーク不要）。
@@ -783,6 +800,40 @@ test "git provider は bare path origin と file:// URL を同一視する" {
     defer session.deinit();
     const acquired = try provider.acquireGit(&session, .{ .name = "demo", .url = repo.url, .commit = repo.commit[0..7] }, checkout, null);
     try testing.expectEqualStrings(repo.commit, acquired.source.commit.?);
+}
+
+test "git provider は末尾 .git だけが異なる別 repo を拒否する" {
+    const io = testing.io;
+    if (!gitAvailable(io)) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    // 末尾が .git のローカル repo（`/deps/a` と `/deps/a.git` は別物）。
+    try temporary.dir.createDirPath(io, "lib.git/src");
+    try writePackage(temporary.dir, io, "lib.git");
+    try temporary.dir.writeFile(io, .{ .sub_path = "lib.git/src/index.nako3", .data = "●表示とは\nここまで\n" });
+    const repo_path = try temporary.dir.realPathFileAlloc(io, "lib.git", testing.allocator);
+    defer testing.allocator.free(repo_path);
+    try gitRun(io, &.{ "git", "init", "--quiet", repo_path });
+    try gitRun(io, &.{ "git", "-C", repo_path, "-c", "user.email=test@example.com", "-c", "user.name=test", "add", "-A" });
+    try gitRun(io, &.{ "git", "-C", repo_path, "-c", "user.email=test@example.com", "-c", "user.name=test", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "init" });
+    const commit = try gitStdout(io, &.{ "git", "-C", repo_path, "rev-parse", "HEAD" });
+    defer testing.allocator.free(commit);
+
+    const tmp_root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(tmp_root);
+    const checkout = try std.fs.path.join(testing.allocator, &.{ tmp_root, "checkout" });
+    defer testing.allocator.free(checkout);
+    // bare path で clone → origin は bare path <tmp>/lib.git のまま。
+    try gitRun(io, &.{ "git", "clone", "--quiet", "--no-checkout", repo_path, checkout });
+
+    // 宣言 URL は <tmp>/lib（.git 無し）。ローカル path の .git はファイル
+    // 名の一部であり除去しないため、別 repo の宣言として拒否する。
+    const declared = try std.fmt.allocPrint(testing.allocator, "{s}/lib", .{tmp_root});
+    defer testing.allocator.free(declared);
+    var session = newSession(.{});
+    defer session.deinit();
+    try testing.expectError(error.SourceCollision, provider.acquireGit(&session, .{ .name = "demo", .url = declared, .commit = commit[0..7] }, checkout, null));
+    try testing.expectEqual(fetch.FailureKind.source_collision, session.lastFailure().?.kind);
 }
 
 // ---------------------------------------------------------------------------

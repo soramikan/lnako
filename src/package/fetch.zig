@@ -302,17 +302,12 @@ fn initializeClientTls(client: *std.http.Client, require_bundle: bool) !void {
     std.mem.swap(std.crypto.Certificate.Bundle, &client.ca_bundle, &bundle);
 }
 
-fn fetchBytesInner(session: *Session, uri: std.Uri, url: []const u8, resource: ResourceKind) Error![]u8 {
-    const gpa = session.arena.allocator();
-    const io = session.io;
-
-    var client: std.http.Client = .{ .allocator = gpa, .io = io };
-    defer client.deinit();
-
+/// 初回・redirect 先の各ホップへ適用する URL 検査。平文 http は loopback
+/// 配布または明示 opt-in のみ許可し、HTTPS→HTTP への redirect 降格もここで
+/// 拒否する。
+fn checkFetchUriPolicy(session: *Session, uri: std.Uri, url: []const u8, resource: ResourceKind) Error!std.http.Client.Protocol {
     const protocol = std.http.Client.Protocol.fromUri(uri) orelse
         return session.fail(.invalid_source, resource, url, "unsupported uri scheme in \"{s}\"", .{url});
-    // 平文 http は loopback 配布または明示 opt-in のみ許可する。registry
-    // metadata・artifact URL を平文へ誘導されないよう既定で制限する。
     if (protocol == .plain and !session.policy.allow_plaintext_http and !isLoopbackHost(uri)) {
         return session.fail(.invalid_source, resource, url, "plaintext http url \"{s}\" is only allowed for loopback hosts (set allow_plaintext_http to opt in)", .{url});
     }
@@ -321,24 +316,68 @@ fn fetchBytesInner(session: *Session, uri: std.Uri, url: []const u8, resource: R
     if (std.http.Client.disable_tls and protocol == .tls) {
         return session.fail(.network, resource, url, "TLS is not available in this build", .{});
     }
-    // 初回HTTPからのHTTPSリダイレクトでもTLS文脈未初期化でpanicしないよう
-    // 事前に TLS 文脈を用意する。
-    initializeClientTls(&client, protocol == .tls) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.Canceled => return error.Canceled,
-        else => return session.fail(.network, resource, url, "TLS initialization failed for \"{s}\"", .{url}),
-    };
+    return protocol;
+}
 
-    var request = client.request(.GET, uri, .{
-        .keep_alive = false,
-        .redirect_behavior = .init(session.policy.max_redirects),
-    }) catch |err| return classifyRequestError(session, err, url, resource);
-    defer request.deinit();
+fn fetchBytesInner(session: *Session, uri: std.Uri, url: []const u8, resource: ResourceKind) Error![]u8 {
+    const gpa = session.arena.allocator();
+    const io = session.io;
 
-    request.sendBodiless() catch |err| return classifyRequestError(session, err, url, resource);
+    var client: std.http.Client = .{ .allocator = gpa, .io = io };
+    defer client.deinit();
+
+    var current_uri = uri;
+    var redirects_left = session.policy.max_redirects;
+    var tls_initialized = false;
 
     var redirect_buffer: [8 * 1024]u8 = undefined;
-    var response = request.receiveHead(&redirect_buffer) catch |err| return classifyRequestError(session, err, url, resource);
+    var request: std.http.Client.Request = undefined;
+    var have_request = false;
+    defer if (have_request) request.deinit();
+
+    var response: std.http.Client.Response = undefined;
+    while (true) {
+        const protocol = try checkFetchUriPolicy(session, current_uri, url, resource);
+        if (!tls_initialized) {
+            // 初回HTTPからのHTTPSリダイレクトでもTLS文脈未初期化でpanicしない
+            // よう事前に TLS 文脈を用意する。
+            initializeClientTls(&client, protocol == .tls) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Canceled => return error.Canceled,
+                else => return session.fail(.network, resource, url, "TLS initialization failed for \"{s}\"", .{url}),
+            };
+            tls_initialized = true;
+        }
+
+        // redirect は自動追跡せず、各ホップの URL をポリシー検査してから
+        // 新しい request を張り直す（HTTPS→平文 HTTP への降格を防ぐ）。
+        request = client.request(.GET, current_uri, .{
+            .keep_alive = false,
+            .redirect_behavior = .unhandled,
+        }) catch |err| return classifyRequestError(session, err, url, resource);
+        have_request = true;
+
+        request.sendBodiless() catch |err| return classifyRequestError(session, err, url, resource);
+        response = request.receiveHead(&redirect_buffer) catch |err| return classifyRequestError(session, err, url, resource);
+
+        if (response.head.status.class() != .redirect) break;
+        if (redirects_left == 0) {
+            return session.fail(.redirect_denied, resource, url, "redirect limit exceeded for \"{s}\"", .{url});
+        }
+        redirects_left -= 1;
+        const location = response.head.location orelse
+            return session.fail(.network, resource, url, "redirect from \"{s}\" has no Location header", .{url});
+        // 現在の URI を基準に Location を解決する。解決結果の各成分は
+        // scratch 領域を指すため、session arena に確保して次イテレーション
+        // 以降も有効にする。`location` は redirect_buffer 上のため複製する。
+        const resolve_buf = try gpa.alloc(u8, location.len + 8 * 1024);
+        @memcpy(resolve_buf[0..location.len], location);
+        var aux: []u8 = resolve_buf;
+        current_uri = current_uri.resolveInPlace(location.len, &aux) catch
+            return session.fail(.invalid_source, resource, url, "redirect location from \"{s}\" is invalid", .{url});
+        request.deinit();
+        have_request = false;
+    }
 
     switch (response.head.status) {
         .ok => {},
