@@ -3163,5 +3163,21 @@
   {
     "id": "native-builtin-word-vars-preserved",
     "source": "A=[1,2]\nAを反復\n対象を表示\nここまで\n3回\n回数を表示\nここまで\n"
+  },
+  {
+    "id": "native-paren-multi-josi-call",
+    "source": "S=「言葉」\n(Sの「言葉」へ「●」から置換)を表示\n"
+  },
+  {
+    "id": "native-paren-josi-call-wo-arg",
+    "source": "(「abc」の「a」から「x」へ置換)を表示\n"
+  },
+  {
+    "id": "native-paren-josi-call-arg",
+    "source": "(「a」の「a」から「b」へ置換)と(「d」と連結)を連結して表示\n"
+  },
+  {
+    "id": "native-paren-josi-call-value",
+    "source": "(「a」を「b」と連結)を表示\n"
   }
 ]
