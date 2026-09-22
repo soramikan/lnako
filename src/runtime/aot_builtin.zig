@@ -726,11 +726,11 @@ pub fn dispatchRoute(command: Command) []const u8 {
     return dispatchRouteFor(command, datetimePluginRouteEnabled());
 }
 
-/// 汎用の`lnako_aot_builtin_call_site`が処理できる命令か。専用ABIを持つ
-/// 命令（正規表現・アーカイブ・Node HTTP・標準入力callback等）は直接
-/// 呼出しの生成経路が担うため、汎用dispatchへ送ると`UnknownCommand`になる。
-/// `{関数}名`の関数値callbackはこの集合だけを受理する。builtins.zig側の
-/// UnknownCommandアームと同じ集合を維持すること。
+/// 汎用の`lnako_aot_builtin_call_site`が処理できる命令かの単一の分類。
+/// 専用ABIを持つ命令（正規表現・アーカイブ・Node HTTP・標準入力callback等）
+/// は直接呼出しの生成経路が担うためfalseを返す。`lnako_aot_builtin_call_site`
+/// 自身と`{関数}名`の関数値化可否判定の両方がこの分類を参照するため、専用
+/// ABI命令を追加するときはこの一覧へ列挙する。
 pub fn hasGenericCallSiteDispatch(command: Command) bool {
     return switch (command) {
         .regexp_match, .regexp_extract, .regexp_replace, .regexp_split, .system_hatena_execute, .node_archive_tool_path_set, .node_ajax_options_set, .node_ajax_onerror_set, .node_ajax_send_callback, .node_ajax_receive_callback, .node_get_send_callback, .node_post_send_callback, .node_post_form_send_callback, .node_ajax_response_promise, .node_http_response_promise, .node_get_response_promise, .node_post_response_promise, .node_post_form_response_promise, .node_ajax_content_get, .node_ajax_receive, .node_post_send, .node_post_form_send, .node_ajax_text_get, .node_ajax_json_get, .node_ajax_binary_get, .node_discord_send, .node_discord_file_send, .node_archive_extract, .node_archive_extract_callback, .node_archive_create, .node_archive_create_callback, .node_stdin_callback => false,
