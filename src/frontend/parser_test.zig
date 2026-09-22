@@ -1087,6 +1087,36 @@ test "範囲オブジェクトの繰り返しは一時変数の先頭/末尾参�
     }
 }
 
+test "『…』範囲式の繰り返しも一時変数へ展開し変数省略時は『それ』にする" {
+    // Issue #117の形: `1…3を繰り返す`・`A…Bを繰り返す`。`…`演算子の範囲
+    // function_callも`AからBの範囲`と同じ一時変数展開を受け、ループ変数の
+    // 省略は『それ』になる。
+    for ([_][]const u8{ "1…3を繰り返す\nそれを表示\nここまで\n", "A=1\nB=3\nA…Bを繰り返す\nそれを表示\nここまで\n" }) |source| {
+        var result = try parse(std.testing.allocator, source, "for-range-dots.nako3");
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+        var sequence: ?*ast.Node = null;
+        for (result.root.?.children) |child| {
+            if (child.kind == .block and child.children.len > 1 and child.children[1].kind == .for_statement) sequence = child;
+        }
+        try std.testing.expect(sequence != null);
+        const assign = sequence.?.children[0];
+        try std.testing.expectEqual(ast.Kind.assignment, assign.kind);
+        try std.testing.expectEqualStrings("繰り返し範囲$一時値}》", assign.name);
+        try std.testing.expectEqual(ast.Kind.function_call, assign.children[0].kind);
+        try std.testing.expectEqualStrings("範囲", assign.children[0].name);
+        const repeat = sequence.?.children[1];
+        try std.testing.expectEqual(ast.Kind.for_statement, repeat.kind);
+        try std.testing.expectEqualStrings("それ", repeat.name);
+        for ([_][]const u8{ "先頭", "末尾" }, 0..) |key, i| {
+            const edge = repeat.children[i];
+            try std.testing.expectEqual(ast.Kind.array_value_reference, edge.kind);
+            try std.testing.expectEqualStrings("繰り返し範囲$一時値}》", edge.children[0].value);
+            try std.testing.expectEqualStrings(key, edge.children[1].value);
+        }
+    }
+}
+
 test "範囲オブジェクトの繰り返しは増分『ずつ』も受理する" {
     var result = try parse(std.testing.allocator, "Iで1から4の範囲を2ずつ増繰返す\nIを表示\nここまで\n", "for-range-inc.nako3");
     defer result.deinit();

@@ -1862,6 +1862,29 @@ test "範囲繰り返しは『で』助詞の変数・範囲オブジェクト�
     try std.testing.expectEqualStrings("0\n1\n2\n3\n3\n4\n5\n7\n8\n2\n3\n4\n9\n10\n11\n1\n3\nC=11\n1\n3\n1\n3\n1\n4\n", host.written());
 }
 
+test "Issue #117の範囲オブジェクト反復対象を受理する" {
+    // Issueの再現形: `1…3を繰り返す`・`Nで4から6の範囲を繰り返す`と、
+    // 変数境界`A…B`・コロンブロック形。
+    const source =
+        "1…3を繰り返す\n「回数: {それ}」を表示\nここまで\n" ++
+        "Nで4から6の範囲を繰り返す\n「回数: {N}」を表示\nここまで\n" ++
+        "A=1\nB=2\nA…Bを繰り返す\n「{それ}」を表示\nここまで\n" ++
+        "7…8を繰り返す：\n　　「{それ}」を表示。\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("回数: 1\n回数: 2\n回数: 3\n回数: 4\n回数: 5\n回数: 6\n1\n2\n7\n8\n", host.written());
+}
+
 test "範囲オブジェクトの一時変数は拡張単語の同名変数・定数を破壊しない" {
     // 一時変数名は拡張単語（${…}・《…》）でも記述できない形にし、
     // 同スコープの利用者変数・定数を上書きしない（#113）。
