@@ -240,12 +240,13 @@ fn verifyCheckoutOrigin(session: *Session, checkout_dir: []const u8, dep: manife
 /// authority を持つ `file:` URL）は末尾 `/` と慣例的な `.git` 接尾辞の
 /// 表記揺れだけを吸収する。ローカルとリモートは一致しない。
 fn gitUrlEql(gpa: Allocator, a: []const u8, b: []const u8) Allocator.Error!bool {
-    return switch (try classifyGitUrl(gpa, a)) {
-        .local => |pa| switch (try classifyGitUrl(gpa, b)) {
+    const windows_paths = builtin.os.tag == .windows;
+    return switch (try classifyGitUrl(gpa, a, windows_paths)) {
+        .local => |pa| switch (try classifyGitUrl(gpa, b, windows_paths)) {
             .local => |pb| std.mem.eql(u8, pa, pb),
             .remote => false,
         },
-        .remote => |ra| switch (try classifyGitUrl(gpa, b)) {
+        .remote => |ra| switch (try classifyGitUrl(gpa, b, windows_paths)) {
             .local => false,
             .remote => |rb| std.mem.eql(u8, ra, rb),
         },
@@ -254,8 +255,7 @@ fn gitUrlEql(gpa: Allocator, a: []const u8, b: []const u8) Allocator.Error!bool 
 
 const GitUrlKind = union(enum) { local: []const u8, remote: []const u8 };
 
-fn classifyGitUrl(gpa: Allocator, url: []const u8) Allocator.Error!GitUrlKind {
-    const windows_paths = builtin.os.tag == .windows;
+fn classifyGitUrl(gpa: Allocator, url: []const u8, windows_paths: bool) Allocator.Error!GitUrlKind {
     if (std.mem.startsWith(u8, url, "file://")) {
         const rest = url["file://".len..];
         const slash = std.mem.indexOfScalar(u8, rest, '/') orelse rest.len;
@@ -306,7 +306,11 @@ fn normalizeLocalGitPath(gpa: Allocator, path: []const u8, windows_paths: bool) 
     while (end > 0 and buf[end - 1] == '/') end -= 1;
     var text: []u8 = buf[0..end];
     // extended-length `\\?\`・device `\\.\` 前置は除去する。
-    if (std.mem.startsWith(u8, text, "//?/") or std.mem.startsWith(u8, text, "//./")) {
+    // `\\?\UNC\` は通常 UNC `\\` 形へ畳み込む（`//?/UNC/s/s` → `//s/s`）。
+    if (std.ascii.startsWithIgnoreCase(text, "//?/UNC/") or std.ascii.startsWithIgnoreCase(text, "//./UNC/")) {
+        std.mem.copyForwards(u8, text[2..], text[8..]);
+        text = text[0 .. text.len - 6];
+    } else if (std.mem.startsWith(u8, text, "//?/") or std.mem.startsWith(u8, text, "//./")) {
         text = text[4..];
     }
     // file: URL の Windows drive 表現 `/C:/x` → `C:/x`。
@@ -536,8 +540,45 @@ test "normalizeLocalGitPath は Windows 区切りと drive letter を正規化�
     try std.testing.expectEqualStrings("C:/x", try normalizeLocalGitPath(gpa, "/C:/x", true));
     // drive letter は大文字へ揃える。
     try std.testing.expectEqualStrings("C:/x", try normalizeLocalGitPath(gpa, "c:\\x", true));
+    // extended-length `\\?\D:\x` と device `\\.\D:\x` は `D:/x` へ。
+    try std.testing.expectEqualStrings("D:/x", try normalizeLocalGitPath(gpa, "\\\\?\\D:\\x", true));
+    try std.testing.expectEqualStrings("D:/x", try normalizeLocalGitPath(gpa, "\\\\.\\D:\\x", true));
+    // extended-length UNC `\\?\UNC\s\s` は通常 UNC `\\s\s` と同一視する。
+    try std.testing.expectEqualStrings("//s/s", try normalizeLocalGitPath(gpa, "\\\\?\\UNC\\s\\s", true));
+    try std.testing.expectEqualStrings("//s/s", try normalizeLocalGitPath(gpa, "\\\\.\\UNC\\s\\s", true));
+    try std.testing.expectEqualStrings("//s/s", try normalizeLocalGitPath(gpa, "\\\\s\\s", true));
     // POSIX では `\` はファイル名文字のため変換しない（末尾 `/` のみ除去）。
     try std.testing.expectEqualStrings("a\\b", try normalizeLocalGitPath(gpa, "a\\b/", false));
+}
+
+test "classifyGitUrl は Windows の file:// drive 形式と UNC をローカル分類する" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+    // `file://C:/x`・`file://D:\x` は authority ではなく drive path とみなす。
+    switch (try classifyGitUrl(gpa, "file://C:/x", true)) {
+        .local => |p| try std.testing.expectEqualStrings("C:/x", p),
+        .remote => return error.TestUnexpectedResult,
+    }
+    switch (try classifyGitUrl(gpa, "file://D:\\x", true)) {
+        .local => |p| try std.testing.expectEqualStrings("D:/x", p),
+        .remote => return error.TestUnexpectedResult,
+    }
+    // `file://\\host\share` は UNC path とみなす。
+    switch (try classifyGitUrl(gpa, "file://\\\\s\\s", true)) {
+        .local => |p| try std.testing.expectEqualStrings("//s/s", p),
+        .remote => return error.TestUnexpectedResult,
+    }
+    // `file://host/share` は引き続きリモート（bare path と誤認しない）。
+    switch (try classifyGitUrl(gpa, "file://h/s", true)) {
+        .local => return error.TestUnexpectedResult,
+        .remote => {},
+    }
+    // POSIX では `file://C:/x` の `C:` は authority として残る。
+    switch (try classifyGitUrl(gpa, "file://C:/x", false)) {
+        .local => return error.TestUnexpectedResult,
+        .remote => {},
+    }
 }
 
 test {
