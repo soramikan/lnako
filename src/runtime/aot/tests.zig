@@ -8415,3 +8415,29 @@ test "AOT組み込み命令の関数値は名前からオペコードを引い�
     lnako_aot_function_call(&roots[3], &roots[0], @ptrCast(&roots[1]), 2);
     try std.testing.expectEqual(@as(f64, 7), @as(f64, @bitCast(roots[3].payload)));
 }
+
+test "AOT汎用call siteは専用ABI命令をhasGenericCallSiteDispatchで拒否する" {
+    // 汎用dispatch可否はaot_builtin.hasGenericCallSiteDispatchが単一の分類。
+    // `{関数}名`の関数値化可否も同じ判定を参照するため、専用ABI命令が
+    // 汎用call siteへ流れた場合でもUnknownCommandで失敗する。
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, staticStringValue("abc"), staticStringValue("a") };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+    const epoch = state.active_runtime.?.failure_epoch;
+    lnako_aot_builtin_call(&roots[0], @ptrCast(&roots[1]), 2, @intFromEnum(aot_builtin.Command.regexp_match));
+    try std.testing.expectEqual(epoch +% 1, state.active_runtime.?.failure_epoch);
+    try std.testing.expect(state.active_runtime.?.has_pending_exception);
+    _ = state.active_runtime.?.takeException();
+    // 汎用dispatch可能な命令は従来通り処理される。
+    lnako_aot_builtin_call(&roots[0], @ptrCast(&roots[1]), 1, @intFromEnum(aot_builtin.Command.to_string));
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqualSlices(u16, &.{ 'a', 'b', 'c' }, roots[0].object().?.payload.utf16_string);
+}
