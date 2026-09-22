@@ -420,6 +420,8 @@ pub fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_
             iterator.index += 1;
             const result = numberValue(@floatFromInt(iterator.index));
             if (repeat_target) |target| target.* = result;
+            // 公式convRepeatTimesは各回『それ』へも回数を束縛する
+            if (sore_target) |target| target.* = result;
             break :blk result;
         },
         .range => blk: {

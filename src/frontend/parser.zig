@@ -830,11 +830,26 @@ pub const Parser = struct {
             if (self.at(.keyword_repeat_count)) {
                 const keyword = self.advance();
                 const count = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try self.implicitIt(keyword);
+                // 回数より前に残った実引数は公式の未解決単語と同じく構文エラー
+                // （`5を3回繰り返す`の『5を』）。連文が挿入した暗黙『それ』
+                // だけは後続命令への足場として残存を許す。
+                if (arguments.items.len > 0) {
+                    for (arguments.items[0 .. arguments.items.len - 1]) |arg| {
+                        if (!helpers.isImplicitItMarker(arg))
+                            return self.fail(.invalid_control_statement, "『回』繰り返しに解決できない引数があります", keyword);
+                    }
+                }
                 return self.finishChained(start, &chained_calls, try self.parseRepeatTimes(start, count));
             }
             if (self.at(.keyword_repeat_while)) {
-                _ = self.advance();
+                const keyword = self.advance();
                 if (arguments.items.len == 0) return self.fail(.invalid_control_statement, "『間』の前に条件式が必要です", start);
+                // 条件式より前に残った実引数も公式と同じく未解決の単語になる
+                // （`NでAが5以下の間`の『Nで』）。
+                for (arguments.items[0 .. arguments.items.len - 1]) |arg| {
+                    if (!helpers.isImplicitItMarker(arg))
+                        return self.fail(.invalid_control_statement, "『間』繰り返しに解決できない引数があります", keyword);
+                }
                 return self.finishChained(start, &chained_calls, try self.parseWhile(start, arguments.items[arguments.items.len - 1]));
             }
             if (self.at(.keyword_repeat)) return self.finishChained(start, &chained_calls, try self.parseFor(start, self.rangeArguments(&arguments, &chained_calls)));

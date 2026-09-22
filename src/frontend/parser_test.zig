@@ -1228,6 +1228,92 @@ test "末尾側の『を』助詞が終了値より後なら未解決引数と�
     try std.testing.expect(!result.succeeded());
 }
 
+test "繰り返し引数は助詞で照合し引数の並び順を問わない" {
+    // Issue #118: 公式yForは助詞でスタックから取り出すため、繰り返し変数が
+    // 開始値・終了値の間に挟まる`1からNで3まで`や、『を』変数が先頭の
+    // `Nを3まで1から`も同じ意味になる。未知の識別子はループの語の手前まで
+    // 引数として読む。
+    const cases = [_][]const u8{
+        "Nを3まで1から繰り返す\nNを表示\nここまで\n",
+        "1からNで3まで繰り返す\nNを表示\nここまで\n",
+        "3まで1からNで繰り返す\nNを表示\nここまで\n",
+        "Nで3まで1から繰り返す\nNを表示\nここまで\n",
+    };
+    for (cases) |source| {
+        var result = try parse(std.testing.allocator, source, "for-josi-order.nako3");
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+        const repeat = result.root.?.children[0];
+        try std.testing.expectEqual(ast.Kind.for_statement, repeat.kind);
+        try std.testing.expectEqualStrings("N", repeat.name);
+        try std.testing.expectEqual(ast.Kind.number, repeat.children[0].kind);
+        try std.testing.expectEqualStrings("1", repeat.children[0].value);
+        try std.testing.expectEqual(ast.Kind.number, repeat.children[1].kind);
+        try std.testing.expectEqualStrings("3", repeat.children[1].value);
+    }
+}
+
+test "末尾側の『を』助詞は終了値として取り出し途中の『まで』は未解決引数" {
+    // 公式yForは末尾側から『まで|を』を終了値として取り出すため、
+    // `3までNを1から`はNをが終了値・残った3までが未解決の単語になる。
+    var result = try parse(std.testing.allocator, "3までNを1から繰り返す\nNを表示\nここまで\n", "for-stray-made.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+    try std.testing.expectEqual(diagnostic.Code.invalid_control_statement, result.diagnostics[0].code);
+}
+
+test "繰り返しの境界値は演算子を含む式を受理する" {
+    // Issue #118: 公式はスタックの式をそのまま境界値にするため、
+    // `AからA+2まで`のような式も開始値・終了値になる。助詞なし識別子に
+    // 二項演算子が続く場合は式の一部として扱う。
+    const cases = [_][]const u8{
+        "A=1\nNでAからA+2まで繰り返す\nNを表示\nここまで\n",
+        "A=1\n1からA+2まで繰り返す\nそれを表示\nここまで\n",
+        "A=1\nB=5\nNでAからB-2まで繰り返す\nNを表示\nここまで\n",
+    };
+    for (cases) |source| {
+        var result = try parse(std.testing.allocator, source, "for-expr-bound.nako3");
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+        var repeat: ?*ast.Node = null;
+        for (result.root.?.children) |child| {
+            if (child.kind == .for_statement) repeat = child;
+        }
+        try std.testing.expect(repeat != null);
+        try std.testing.expectEqual(ast.Kind.binary_operator, repeat.?.children[1].kind);
+    }
+}
+
+test "『で』『を』変数の増減繰返も助詞で引数を照合する" {
+    // `1までNで5から減繰返す`のように完全に並べ替えた形も受理する。
+    var result = try parse(std.testing.allocator, "1までNで5から減繰返す\nNを表示\nここまで\n", "for-dec-josi-order.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const repeat = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.for_statement, repeat.kind);
+    try std.testing.expectEqualStrings("N", repeat.name);
+    try std.testing.expectEqual(ast.LoopDirection.down, repeat.loop_direction);
+    try std.testing.expectEqualStrings("5", repeat.children[0].value);
+    try std.testing.expectEqualStrings("1", repeat.children[1].value);
+}
+
+test "回数・条件繰り返しの残り引数は公式同様に構文エラー" {
+    // 公式はループ引数として取り出せなかった語を未解決の単語として
+    // 文法エラーにする。`5を3回`の『5を』や`Nで3回`の『Nで』、
+    // `5をA>0の間`の『5を』が該当する。
+    const cases = [_][]const u8{
+        "5を3回繰り返す\nそれを表示\nここまで\n",
+        "Nで3回繰り返す\nそれを表示\nここまで\n",
+        "5をA>0の間\nAを表示\nここまで\n",
+    };
+    for (cases) |source| {
+        var result = try parse(std.testing.allocator, source, "loop-stray-arg.nako3");
+        defer result.deinit();
+        try std.testing.expect(!result.succeeded());
+        try std.testing.expectEqual(diagnostic.Code.invalid_control_statement, result.diagnostics[0].code);
+    }
+}
+
 test "引数のない戻すは暗黙の『それ』を返す" {
     var result = try parse(std.testing.allocator, "戻す\n", "return-it.nako3");
     defer result.deinit();

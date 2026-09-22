@@ -139,6 +139,8 @@ pub fn iteratorNext(self: *Interpreter, frame: *Frame, instruction: ir.Instructi
             state.index += 1;
             result = .{ .number = @floatFromInt(state.index) };
             try self.setGlobal("回数", result);
+            // 公式convRepeatTimesは各回『それ』へも回数を束縛する
+            try self.setGlobal("それ", result);
         },
         .range => {
             result = .{ .number = state.current };

@@ -23,9 +23,11 @@ pub fn atLoopKeywordAhead(self: *Parser, offset: usize) bool {
 
 /// 助詞付き呼出しの直後が、引数列を挟んでループの語へ続くか。
 /// 公式は呼出し結果をスタックに残すため、`範囲を2ずつ増繰返す`のように
-/// 間に引数があっても呼出しはループの引数になる。
-/// 連文呼出し(『して』等)と条件『間』・回数『回』は従来どおり直後の
-/// ループ語のときだけ引数とし、間に引数があれば先行文とする。
+/// 間に引数があっても呼出しはループの引数になる。`NでAが5以下の間`や
+/// `Nで3回繰り返す`の『Nで』のように、『間』『回』の前にも引数を
+/// 挟み得る（残った引数は公式の未解決単語と同じく構文エラーになる）。
+/// 連文呼出し(『して』等)は従来どおり直後のループ語のときだけ引数とし、
+/// 間に引数があれば先行文とする。
 pub fn atForLoopKeywordAhead(self: *Parser, sequence_josi: bool) bool {
     var offset: usize = 0;
     var depth: usize = 0;
@@ -44,8 +46,7 @@ pub fn atForLoopKeywordAhead(self: *Parser, sequence_josi: bool) bool {
             continue;
         }
         switch (token.kind) {
-            .keyword_repeat, .keyword_foreach => return true,
-            .keyword_repeat_while, .keyword_repeat_count => return offset == 0,
+            .keyword_repeat, .keyword_foreach, .keyword_repeat_while, .keyword_repeat_count => return true,
             .left_paren, .left_bracket, .left_brace => depth += 1,
             .identifier => {
                 // 『増』『減』+繰返の組もループ開始。命令名に解決できる識別子は境界。

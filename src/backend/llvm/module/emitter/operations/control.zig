@@ -94,10 +94,12 @@ pub fn writeIteratorNext(emitter: *Emitter, function: ir.Function, locals: []con
         try variables_mod.writeOptionalNamedPointer(emitter, locals, begin.name);
     }
     try emitter.output.writer.writeAll(", ptr ");
-    // 「それ」への要素束縛は反復構文と範囲繰り返し（公式convForは変数指定の
-    // 有無に関わらず各回『それ』へ束縛する）。回数繰り返しは書き戻さない。
+    // 「それ」への束縛は反復構文と範囲繰り返し（公式convForは変数指定の
+    // 有無に関わらず各回『それ』へ束縛する）、回数繰り返し
+    // （公式convRepeatTimesは各回『それ』へ回数を束縛する）で行う。
     const is_range_for = begin.name.len > 0 and begin.operands.len >= 2;
-    try variables_mod.writeOptionalNamedPointer(emitter, locals, if (begin.is_foreach or is_range_for) "それ" else "");
+    const is_repeat_times = !begin.is_foreach and begin.operands.len < 2;
+    try variables_mod.writeOptionalNamedPointer(emitter, locals, if (begin.is_foreach or is_range_for or is_repeat_times) "それ" else "");
     try emitter.output.writer.writeByte(')');
     try emitter.debugSuffix(instruction.span, scope);
     try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
