@@ -966,6 +966,52 @@ test "存在しない取り込みを位置付き診断にする" {
     try std.testing.expectEqual(@as(usize, 0), graph.diagnostics[0].span.line);
 }
 
+test "関数内取り込みの展開で合成AST深さが上限を超えたら位置付き診断にする" {
+    // `A=1+1+…`（2,044項）は単体では深さ2,046で受理されるが、関数内の
+    // 取り込み位置へ展開すると合成深さが `parser.max_ast_depth` を超える。
+    var lib_source: std.ArrayList(u8) = .empty;
+    defer lib_source.deinit(std.testing.allocator);
+    try lib_source.appendSlice(std.testing.allocator, "A=1");
+    var index: usize = 0;
+    while (index < 2043) : (index += 1) try lib_source.appendSlice(std.testing.allocator, "+1");
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "●(Aを)Fとは\n!「./lib.nako3」を取り込む\nAで戻る\nここまで\nF(1)を表示\n" },
+        .{ .suffix = "lib.nako3", .source = lib_source.items },
+    } };
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{});
+    defer graph.deinit();
+    try std.testing.expect(!graph.succeeded());
+    try std.testing.expect(graph.diagnostics.len >= 1);
+    try std.testing.expectEqual(diagnostic.Code.nesting_too_deep, graph.diagnostics[0].code);
+    // 診断は取り込み元ファイル内の関数内取り込み文（2行目）を指す。
+    try std.testing.expect(std.mem.endsWith(u8, graph.diagnostics[0].file, "main.nako3"));
+    try std.testing.expectEqual(@as(usize, 1), graph.diagnostics[0].span.line);
+}
+
+test "関数内取り込みの展開連鎖で合成AST深さが上限を超えたら位置付き診断にする" {
+    // main→mid→deep の取り込み連鎖。各ファイル単体は上限内だが、main側の
+    // 関数内取り込み位置＋コピー内の取り込み文位置＋deepの深さの合計が
+    // `parser.max_ast_depth` を超える。
+    var deep_source: std.ArrayList(u8) = .empty;
+    defer deep_source.deinit(std.testing.allocator);
+    try deep_source.appendSlice(std.testing.allocator, "A=1");
+    var index: usize = 0;
+    while (index < 2042) : (index += 1) try deep_source.appendSlice(std.testing.allocator, "+1");
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "●(Aを)Fとは\n!「./mid.nako3」を取り込む\nBで戻る\nここまで\nF(1)を表示\n" },
+        .{ .suffix = "mid.nako3", .source = "!「./deep.nako3」を取り込む\nB=2\n" },
+        .{ .suffix = "deep.nako3", .source = deep_source.items },
+    } };
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{});
+    defer graph.deinit();
+    try std.testing.expect(!graph.succeeded());
+    try std.testing.expect(graph.diagnostics.len >= 1);
+    try std.testing.expectEqual(diagnostic.Code.nesting_too_deep, graph.diagnostics[0].code);
+    // 診断はコピー元モジュール（mid）側の取り込み文（1行目）を指す。
+    try std.testing.expect(std.mem.endsWith(u8, graph.diagnostics[0].file, "mid.nako3"));
+    try std.testing.expectEqual(@as(usize, 0), graph.diagnostics[0].span.line);
+}
+
 test ".dncl/.dncl2拡張子でDNCL系モードを強制する" {
     var memory = MemoryProvider{
         .files = &.{
