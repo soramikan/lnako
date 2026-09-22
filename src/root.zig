@@ -120,6 +120,7 @@ pub const package = struct {
     pub const cache = @import("package/cache.zig");
     pub const environment = @import("package/environment.zig");
     pub const materialize = @import("package/materialize.zig");
+    pub const unpack = @import("package/unpack.zig");
     pub const sync = @import("package/sync.zig");
 };
 
@@ -273,6 +274,7 @@ test {
     std.testing.refAllDecls(package.cache);
     std.testing.refAllDecls(package.environment);
     std.testing.refAllDecls(package.materialize);
+    std.testing.refAllDecls(package.unpack);
     std.testing.refAllDecls(package.sync);
 }
 

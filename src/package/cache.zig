@@ -36,6 +36,89 @@ fn validKey(key: []const u8) bool {
     return true;
 }
 
+const DigestEntry = struct {
+    rel: []const u8,
+    kind: std.Io.File.Kind,
+    size: u64 = 0,
+};
+
+fn digestEntryLessThan(_: void, a: DigestEntry, b: DigestEntry) bool {
+    return std.mem.order(u8, a.rel, b.rel) == .lt;
+}
+
+fn collectDigestEntries(io: std.Io, gpa: Allocator, root_abs: []const u8, rel: []const u8, entries: *std.ArrayListUnmanaged(DigestEntry)) !void {
+    const abs = if (rel.len == 0) try gpa.dupe(u8, root_abs) else try std.fs.path.join(gpa, &.{ root_abs, rel });
+    defer gpa.free(abs);
+    var dir = try std.Io.Dir.cwd().openDir(io, abs, .{ .iterate = true });
+    defer dir.close(io);
+    var it = dir.iterate();
+    while (try it.next(io)) |entry| {
+        const child_rel = if (rel.len == 0)
+            try gpa.dupe(u8, entry.name)
+        else
+            try std.fs.path.join(gpa, &.{ rel, entry.name });
+        switch (entry.kind) {
+            .file => {
+                const file_abs = try std.fs.path.join(gpa, &.{ root_abs, child_rel });
+                defer gpa.free(file_abs);
+                const stat = try std.Io.Dir.cwd().statFile(io, file_abs, .{});
+                try entries.append(gpa, .{ .rel = child_rel, .kind = .file, .size = stat.size });
+            },
+            .directory => {
+                try entries.append(gpa, .{ .rel = child_rel, .kind = .directory });
+                try collectDigestEntries(io, gpa, root_abs, child_rel, entries);
+            },
+            // symlink 等は内容アドレス tree に存在しない（publish 前の
+            // materialize 検証で拒否済み）。存在したら digest 不能として失敗。
+            else => return error.UnsupportedEntry,
+        }
+    }
+}
+
+/// `tree/` の内容 digest。path・種別・size・内容を決定順で hash するため
+/// 同一 tree は常に同一 digest。marker 記録と hit 時の再検証に使う。
+fn digestTree(io: std.Io, gpa: Allocator, tree_abs: []const u8) ![32]u8 {
+    var entries = std.ArrayListUnmanaged(DigestEntry).empty;
+    defer {
+        for (entries.items) |entry| gpa.free(entry.rel);
+        entries.deinit(gpa);
+    }
+    try collectDigestEntries(io, gpa, tree_abs, "", &entries);
+    std.mem.sort(DigestEntry, entries.items, {}, digestEntryLessThan);
+
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    for (entries.items) |entry| {
+        hasher.update(entry.rel);
+        hasher.update(&.{0});
+        switch (entry.kind) {
+            .directory => hasher.update("D"),
+            .file => {
+                hasher.update("F");
+                var size_le: [8]u8 = undefined;
+                std.mem.writeInt(u64, &size_le, entry.size, .little);
+                hasher.update(&size_le);
+                const abs = try std.fs.path.join(gpa, &.{ tree_abs, entry.rel });
+                defer gpa.free(abs);
+                const bytes = try std.Io.Dir.cwd().readFileAlloc(io, abs, gpa, .unlimited);
+                defer gpa.free(bytes);
+                hasher.update(bytes);
+            },
+            else => unreachable,
+        }
+    }
+    var digest: [32]u8 = undefined;
+    hasher.final(&digest);
+    return digest;
+}
+
+/// marker 本文 `sha256:<64hex>` を32バイトへデコードする。不一致は false。
+fn parseMarkerDigest(text: []const u8, out: *[32]u8) bool {
+    const line = std.mem.trim(u8, text, "\r\n");
+    if (line.len != 7 + 64 or !std.mem.startsWith(u8, line, "sha256:")) return false;
+    _ = std.fmt.hexToBytes(out, line[7..]) catch return false;
+    return true;
+}
+
 /// OS 標準の cache dir を返す。環境変数が無い・環境列挙不可なら null。
 /// - Windows: `%LOCALAPPDATA%\lnako\cache`（無ければ `%TEMP%\lnako-cache`）
 /// - macOS: `~/Library/Caches/lnako`
@@ -122,6 +205,8 @@ pub const Store = struct {
     }
 
     /// 完了 marker まで存在する完全な entry があるか。
+    /// marker の有無だけを見る軽量版。内容を信頼して利用する判断は
+    /// `verifyEntry` を使うこと。
     pub fn entryExists(self: *const Store, key: []const u8) bool {
         const entry = (self.entryPath(self.gpa, key) catch return false) orelse return false;
         defer self.gpa.free(entry);
@@ -129,6 +214,31 @@ pub const Store = struct {
         defer self.gpa.free(marker_file);
         std.Io.Dir.cwd().access(self.io, marker_file, .{}) catch return false;
         return true;
+    }
+
+    /// marker が記録した tree digest と entry の実内容を照合する。
+    /// 共有 cache への改変（marker だけ残して内容を差し替えた場合など）を
+    /// 検出するため、hit した entry を消費する前に必ず呼ぶこと。
+    /// 戻り値は「marker あり・digest 一致」のみ true。IO 失敗も false。
+    pub fn verifyEntry(self: *const Store, gpa: Allocator, key: []const u8) !bool {
+        const entry = (try self.entryPath(gpa, key)) orelse return false;
+        defer gpa.free(entry);
+        const marker_file = std.fs.path.join(gpa, &.{ entry, complete_marker }) catch return false;
+        defer gpa.free(marker_file);
+        const expected = std.Io.Dir.cwd().readFileAlloc(self.io, marker_file, gpa, .limited(4096)) catch return false;
+        defer gpa.free(expected);
+        const tree = std.fs.path.join(gpa, &.{ entry, "tree" }) catch return false;
+        defer gpa.free(tree);
+        const actual = digestTree(self.io, gpa, tree) catch return false;
+        var expected_bytes: [32]u8 = undefined;
+        return parseMarkerDigest(expected, &expected_bytes) and std.mem.eql(u8, &expected_bytes, &actual);
+    }
+
+    /// entry（改変検出・不完全など）を削除する。cache lock 保持中に呼ぶこと。
+    pub fn removeEntry(self: *const Store, key: []const u8) !void {
+        const entry = (try self.entryPath(self.gpa, key)) orelse return error.InvalidKey;
+        defer self.gpa.free(entry);
+        try std.Io.Dir.cwd().deleteTree(self.io, entry);
     }
 
     /// 完了 marker の無い entry（公開途中で中断した残骸）を削除する。
@@ -172,9 +282,18 @@ pub const Store = struct {
         if (!validKey(key)) return error.InvalidKey;
         // 完了 marker を staging 内に書いてから rename する。rename は atomic
         // なので、観測される entry は常に marker 付きの完全なものになる。
+        // marker には `tree/` の内容 digest を記録し、hit 時の再検証に使う
+        // （共有 cache を改変されても marker だけで信頼しない契約）。
+        const tree = try std.fs.path.join(self.gpa, &.{ staging_abs, "tree" });
+        defer self.gpa.free(tree);
+        const digest = try digestTree(self.io, self.gpa, tree);
+        var marker: [7 + 64 + 1]u8 = undefined;
+        @memcpy(marker[0..7], "sha256:");
+        @memcpy(marker[7..71], &std.fmt.bytesToHex(digest, .lower));
+        marker[71] = '\n';
         const marker_file = try std.fs.path.join(self.gpa, &.{ staging_abs, complete_marker });
         defer self.gpa.free(marker_file);
-        try std.Io.Dir.cwd().writeFile(self.io, .{ .sub_path = marker_file, .data = "ok\n" });
+        try std.Io.Dir.cwd().writeFile(self.io, .{ .sub_path = marker_file, .data = &marker });
         const dest = try std.fs.path.join(self.gpa, &.{ self.root, objects_dir, key });
         defer self.gpa.free(dest);
         std.Io.Dir.renameAbsolute(staging_abs, dest, self.io) catch |err| switch (err) {
@@ -422,4 +541,50 @@ test "cache defaultRoot は環境から OS 標準 dir を導く" {
     defer testing.allocator.free(root);
     try testing.expect(std.fs.path.isAbsolute(root));
     try testing.expect(std.mem.indexOf(u8, root, "lnako") != null);
+}
+
+test "cache verifyEntry は marker digest と内容の不整合を検出し removeEntry で除去する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "stage/tree");
+    try temporary.dir.writeFile(io, .{ .sub_path = "stage/tree/payload", .data = "original" });
+    const staging_abs = try temporary.dir.realPathFileAlloc(io, "stage", testing.allocator);
+    defer testing.allocator.free(staging_abs);
+
+    var store = try openTempStore(&temporary);
+    defer store.deinit();
+    try store.publish("victim", staging_abs);
+    try testing.expect(try store.verifyEntry(testing.allocator, "victim"));
+
+    // 公開済み tree を改変する（共有 cache への改変を模倣）。
+    const entry = (try store.entryPath(testing.allocator, "victim")).?;
+    defer testing.allocator.free(entry);
+    const tampered = try std.fs.path.join(testing.allocator, &.{ entry, "tree", "payload" });
+    defer testing.allocator.free(tampered);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = tampered, .data = "replaced" });
+    try testing.expect(!(try store.verifyEntry(testing.allocator, "victim")));
+
+    // 改変 entry を除去すると marker も含めて消える。
+    try store.removeEntry("victim");
+    try testing.expect(!store.entryExists("victim"));
+}
+
+test "cache verifyEntry は marker が無い・壊れた entry を false とする" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+
+    var store = try openTempStore(&temporary);
+    defer store.deinit();
+    try testing.expect(!(try store.verifyEntry(testing.allocator, "missing")));
+
+    // marker のみあって tree が無い不完全な entry も不一致。
+    const broken = try std.fs.path.join(testing.allocator, &.{ store.root, objects_dir, "broken" });
+    defer testing.allocator.free(broken);
+    try std.Io.Dir.cwd().createDirPath(io, broken);
+    const marker = try std.fs.path.join(testing.allocator, &.{ broken, complete_marker });
+    defer testing.allocator.free(marker);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = marker, .data = "sha256:nothex\n" });
+    try testing.expect(!(try store.verifyEntry(testing.allocator, "broken")));
 }

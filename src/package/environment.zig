@@ -49,6 +49,7 @@ pub const PackageRecord = struct {
 pub const ExportRecord = struct {
     name: []const u8,
     path: []const u8,
+    alias: ?[]const u8 = null,
 };
 
 pub const Document = struct {
@@ -98,6 +99,10 @@ pub fn emit(gpa: Allocator, doc: Document, writer: *std.Io.Writer) !void {
                 if (i > 0) try writer.writeByte(',');
                 try writer.writeAll("{\"name\":");
                 try writeJsonString(writer, item.name);
+                if (item.alias) |alias| {
+                    try writer.writeAll(",\"alias\":");
+                    try writeJsonString(writer, alias);
+                }
                 try writer.writeAll(",\"path\":");
                 try writeJsonString(writer, item.path);
                 try writer.writeByte('}');
@@ -239,6 +244,25 @@ pub const Store = struct {
             else => return err,
         };
         return bytes;
+    }
+
+    /// 公開済み `environment.json` が参照している世代名を復元する。
+    /// package の `path` に記録された `.nako/env/<gen>` を走査して最初に
+    /// 見つかった世代名を返す。`current` と不一致の場合でも公開環境が
+    /// 実際に使っている世代を特定できる（中断復旧時の保守的な世代保持用）。
+    /// env.json が無い・読めない・世代参照を含まない場合は null。
+    pub fn readPublishedGeneration(self: *const Store, gpa: Allocator) !?[]u8 {
+        const bytes = (try self.readEnvironmentJson(gpa)) orelse return null;
+        defer gpa.free(bytes);
+        // 世代 dir を参照する path は `.nako/env/gen-<hex>/...` 形式。
+        const marker = dir_name ++ "/" ++ env_dir ++ "/";
+        const at = std.mem.indexOf(u8, bytes, marker) orelse return null;
+        const start = at + marker.len;
+        if (!std.mem.startsWith(u8, bytes[start..], generation_prefix)) return null;
+        var end = start + generation_prefix.len;
+        while (end < bytes.len and std.ascii.isHex(bytes[end])) end += 1;
+        if (end == start + generation_prefix.len) return null;
+        return try gpa.dupe(u8, bytes[start..end]);
     }
 
     /// 中断残留の staging dir を回収する。`staging/` の中身を全て削除する。
@@ -502,4 +526,37 @@ test "validGenerationName は gen- 前置と文字種を検査する" {
     try testing.expect(!validGenerationName("gen-"));
     try testing.expect(!validGenerationName("other-0123"));
     try testing.expect(!validGenerationName("gen-../x"));
+}
+
+test "environment store は readPublishedGeneration で公開環境の参照世代を復元する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var store = try openTempStore(&temporary);
+    defer store.deinit();
+
+    // env.json が無い状態では null。
+    try testing.expect((try store.readPublishedGeneration(testing.allocator)) == null);
+
+    const generation = try store.newGeneration(testing.allocator);
+    defer testing.allocator.free(generation.generation);
+    defer testing.allocator.free(generation.abs_path);
+    var json_buffer: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer json_buffer.deinit();
+    const pkgs = [_]PackageRecord{
+        .{ .key = "k", .name = "a", .version = "1.0.0", .id = null, .path = try std.fmt.allocPrint(testing.allocator, ".nako/env/{s}/deps/a", .{generation.generation}) },
+    };
+    defer testing.allocator.free(pkgs[0].path);
+    try emit(testing.allocator, .{ .lock_sha256 = "sha256:00", .profile = "default", .runtime = "lnako", .packages = &pkgs }, &json_buffer.writer);
+    try store.commit(generation.generation, json_buffer.written());
+
+    const published = (try store.readPublishedGeneration(testing.allocator)).?;
+    defer testing.allocator.free(published);
+    try testing.expectEqualStrings(generation.generation, published);
+
+    // 世代参照を含まない env.json では null（保守判定で prune を見送る側）。
+    const json_path = try std.fs.path.join(testing.allocator, &.{ store.root, environment_file });
+    defer testing.allocator.free(json_path);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = json_path, .data = "{\"packages\":[]}\n" });
+    try testing.expect((try store.readPublishedGeneration(testing.allocator)) == null);
 }

@@ -46,6 +46,7 @@ test {
     _ = @import("lnako").package.cache;
     _ = @import("lnako").package.environment;
     _ = @import("lnako").package.materialize;
+    _ = @import("lnako").package.unpack;
     _ = @import("lnako").package.sync;
 
     _ = @import("regexp");

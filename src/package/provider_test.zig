@@ -7,6 +7,7 @@ const npkg_build = @import("npkg_build.zig");
 const provider = @import("provider.zig");
 const registry = @import("registry.zig");
 const resolver = @import("resolver.zig");
+const sync_mod = @import("sync.zig");
 
 const testing = std.testing;
 
@@ -1328,4 +1329,271 @@ test "registry適合fixtureをZig側でも検証する" {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// sync 統合（lock 駆動の取得・検証・materialize）
+// ---------------------------------------------------------------------------
+
+const sync_app_manifest =
+    \\[package]
+    \\name = "app"
+    \\version = "0.1.0"
+    \\license = "MIT"
+    \\
+;
+
+/// `proj/` に app manifest と lock を書く。`lock_fmt` は manifestSha256 の
+/// `{s}` を先頭に1箇所だけ含む書式文字列（残りは `args` が埋める）。
+fn writeSyncProject(temporary: *std.testing.TmpDir, comptime lock_fmt: []const u8, args: anytype) ![:0]u8 {
+    const io = testing.io;
+    try temporary.dir.createDirPath(io, "proj");
+    try temporary.dir.writeFile(io, .{ .sub_path = "proj/nako.toml", .data = sync_app_manifest });
+    const manifest_sha = try fetch.sha256Hex(testing.allocator, sync_app_manifest);
+    defer testing.allocator.free(manifest_sha);
+    const lock = try std.fmt.allocPrint(testing.allocator, lock_fmt, .{manifest_sha} ++ args);
+    defer testing.allocator.free(lock);
+    try temporary.dir.writeFile(io, .{ .sub_path = "proj/nako.lock", .data = lock });
+    return try temporary.dir.realPathFileAlloc(io, "proj", testing.allocator);
+}
+
+/// tar entry を gzip 圧縮した byte 列を作る（unpack.zig の検査対象を供給）。
+fn buildTarGz(gpa: std.mem.Allocator, files: []const struct { path: []const u8, content: []const u8 }) ![]u8 {
+    var tar_buffer: std.Io.Writer.Allocating = .init(gpa);
+    defer tar_buffer.deinit();
+    var tar_writer: std.tar.Writer = .{ .underlying_writer = &tar_buffer.writer };
+    for (files) |file| try tar_writer.writeFileBytes(file.path, file.content, .{});
+    try tar_writer.finishPedantically();
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    errdefer out.deinit();
+    // Compress.init は出力 buffer の最低容量を要求するため先に確保する。
+    try out.ensureUnusedCapacity(64);
+    var window_buf: [std.compress.flate.max_window_len]u8 = undefined;
+    var compress = try std.compress.flate.Compress.init(&out.writer, &window_buf, .gzip, .default);
+    try compress.writer.writeAll(tar_buffer.written());
+    try compress.finish();
+    return try out.toOwnedSlice();
+}
+
+test "sync は static registry の package 固有 URL から .npkg を直接取得する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "pkg/src");
+    try writePackage(temporary.dir, io, "pkg");
+    try temporary.dir.writeFile(io, .{ .sub_path = "pkg/src/index.nako3", .data = "●表示とは\nここまで\n" });
+    const pkg_root = try temporary.dir.realPathFileAlloc(io, "pkg", testing.allocator);
+    defer testing.allocator.free(pkg_root);
+
+    var list = diag.List.init(testing.allocator);
+    defer list.deinit();
+    var built = try npkg_build.build(testing.allocator, io, pkg_root, &list, .{});
+    defer built.deinit();
+    const hash = try fetch.sha256Hex(testing.allocator, built.archive);
+    defer testing.allocator.free(hash);
+
+    var server = FixtureServer{ .io = testing.io, .allocator = testing.allocator };
+    // package 固有 URL の下に index.json は無い。誤って index を引く実装は
+    // 404 で失敗するため、成功と要求数で直接取得を検証する。
+    try server.start(&.{.{ .path = "/alice/demo/demo.npkg", .body = built.archive }});
+    defer server.stop();
+    const artifact_url = try server.url("/alice/demo/demo.npkg");
+    defer testing.allocator.free(artifact_url);
+    const source_url = try server.url("/alice/demo");
+    defer testing.allocator.free(source_url);
+
+    const project_abs = try writeSyncProject(&temporary,
+        \\{{
+        \\  "schemaVersion": 1, "resolverVersion": 1,
+        \\  "input": {{ "manifestSha256": "sha256:{s}", "profile": "default", "features": [], "target": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu" }} }},
+        \\  "packages": {{
+        \\    "pkg:33333333333333333333333333333333": {{
+        \\      "id": "pkg:33333333333333333333333333333333",
+        \\      "name": "demo", "version": "1.0.0",
+        \\      "source": {{ "type": "static", "url": "{s}" }},
+        \\      "dependencies": [], "features": [],
+        \\      "implementation": "source",
+        \\      "artifacts": {{ "source": {{ "kind": "source", "type": ".npkg", "sha256": "sha256:{s}", "url": "{s}" }} }}
+        \\    }}
+        \\  }},
+        \\  "profiles": {{ "default": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu", "runtime": "lnako" }} }}
+        \\}}
+    , .{ source_url, hash, artifact_url });
+    defer testing.allocator.free(project_abs);
+    const cache_root = try std.fs.path.join(testing.allocator, &.{ project_abs, "cache" });
+    defer testing.allocator.free(cache_root);
+
+    var report = try sync_mod.run(testing.allocator, io, .{
+        .project_root = project_abs,
+        .cache_root = cache_root,
+    }, &list);
+    defer report.deinit();
+    try testing.expectEqual(@as(usize, 1), report.package_count);
+    // artifact 1 回だけの要求（`<pkg>/index.json` 等の index 再解決をしない）。
+    try testing.expectEqual(@as(usize, 1), server.requests.load(.acquire));
+
+    // 検証済み .npkg の内容が世代 dir に展開される。
+    const index_path = try std.fs.path.join(testing.allocator, &.{ project_abs, ".nako", "env", report.generation, "deps", "demo", "src", "index.nako3" });
+    defer testing.allocator.free(index_path);
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, index_path, testing.allocator, .unlimited);
+    defer testing.allocator.free(bytes);
+    try testing.expectEqualStrings("●表示とは\nここまで\n", bytes);
+}
+
+test "sync は lock の implementation で選択した artifact を取得する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+
+    const native_manifest =
+        \\[package]
+        \\name = "demo"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\runtimes = ["lnako"]
+        \\
+        \\[[exports]]
+        \\name = "demo"
+        \\native = "lib/demo.so"
+        \\
+    ;
+    const native_tgz = try buildTarGz(testing.allocator, &.{
+        .{ .path = "nako.toml", .content = native_manifest },
+        .{ .path = "lib/demo.so", .content = "NATIVE-BINARY" },
+    });
+    defer testing.allocator.free(native_tgz);
+    const source_tgz = try buildTarGz(testing.allocator, &.{
+        .{ .path = "nako.toml", .content = native_manifest },
+        .{ .path = "src/index.nako3", .content = "SOURCE-DECOY" },
+    });
+    defer testing.allocator.free(source_tgz);
+    const native_hash = try fetch.sha256Hex(testing.allocator, native_tgz);
+    defer testing.allocator.free(native_hash);
+    const source_hash = try fetch.sha256Hex(testing.allocator, source_tgz);
+    defer testing.allocator.free(source_hash);
+
+    var server = FixtureServer{ .io = testing.io, .allocator = testing.allocator };
+    try server.start(&.{
+        .{ .path = "/alice/demo/native.tar.gz", .body = native_tgz },
+        .{ .path = "/alice/demo/source.tar.gz", .body = source_tgz },
+    });
+    defer server.stop();
+    const native_url = try server.url("/alice/demo/native.tar.gz");
+    defer testing.allocator.free(native_url);
+    const source_url = try server.url("/alice/demo/source.tar.gz");
+    defer testing.allocator.free(source_url);
+    const package_url = try server.url("/alice/demo");
+    defer testing.allocator.free(package_url);
+
+    // implementation が "native" のため、source artifact ではなく native を
+    // 取得・展開する。env.json の exports も native path を記録する。
+    const project_abs = try writeSyncProject(&temporary,
+        \\{{
+        \\  "schemaVersion": 1, "resolverVersion": 1,
+        \\  "input": {{ "manifestSha256": "sha256:{s}", "profile": "default", "features": [], "target": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu" }} }},
+        \\  "packages": {{
+        \\    "pkg:44444444444444444444444444444444": {{
+        \\      "id": "pkg:44444444444444444444444444444444",
+        \\      "name": "demo", "version": "1.0.0",
+        \\      "source": {{ "type": "static", "url": "{s}" }},
+        \\      "dependencies": [], "features": [],
+        \\      "implementation": "native",
+        \\      "artifacts": {{
+        \\        "source": {{ "kind": "source", "type": "tar.gz", "sha256": "sha256:{s}", "url": "{s}" }},
+        \\        "native": {{ "kind": "native", "type": "tar.gz", "sha256": "sha256:{s}", "url": "{s}" }}
+        \\      }}
+        \\    }}
+        \\  }},
+        \\  "profiles": {{ "default": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu", "runtime": "lnako" }} }}
+        \\}}
+    , .{ package_url, source_hash, source_url, native_hash, native_url });
+    defer testing.allocator.free(project_abs);
+    const cache_root = try std.fs.path.join(testing.allocator, &.{ project_abs, "cache" });
+    defer testing.allocator.free(cache_root);
+
+    var list = diag.List.init(testing.allocator);
+    defer list.deinit();
+    var report = try sync_mod.run(testing.allocator, io, .{
+        .project_root = project_abs,
+        .cache_root = cache_root,
+    }, &list);
+    defer report.deinit();
+
+    // native artifact のみ取得され、その内容が materialize される。
+    try testing.expectEqual(@as(usize, 1), server.requests.load(.acquire));
+    const native_path = try std.fs.path.join(testing.allocator, &.{ project_abs, ".nako", "env", report.generation, "deps", "demo", "lib", "demo.so" });
+    defer testing.allocator.free(native_path);
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, native_path, testing.allocator, .unlimited);
+    defer testing.allocator.free(bytes);
+    try testing.expectEqualStrings("NATIVE-BINARY", bytes);
+    const decoy_path = try std.fs.path.join(testing.allocator, &.{ project_abs, ".nako", "env", report.generation, "deps", "demo", "src", "index.nako3" });
+    defer testing.allocator.free(decoy_path);
+    try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(io, decoy_path, .{}));
+
+    // exports は lock の "native" 選択に合わせて native path を記録する。
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, report.environment_json, .{});
+    defer parsed.deinit();
+    const pkg = parsed.value.object.get("packages").?.object.get("pkg:44444444444444444444444444444444").?.object;
+    const exports = pkg.get("exports").?.array;
+    try testing.expectEqual(@as(usize, 1), exports.items.len);
+    try testing.expectEqualStrings("lib/demo.so", exports.items[0].object.get("path").?.string);
+}
+
+test "sync は検証済み git object があれば checkout 無しで offline 同期する" {
+    const io = testing.io;
+    if (!gitAvailable(io)) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const repo = try createGitRepo(&temporary, io);
+    defer testing.allocator.free(repo.path);
+    defer testing.allocator.free(repo.url);
+    defer testing.allocator.free(repo.commit);
+
+    const project_abs = try writeSyncProject(&temporary,
+        \\{{
+        \\  "schemaVersion": 1, "resolverVersion": 1,
+        \\  "input": {{ "manifestSha256": "sha256:{s}", "profile": "default", "features": [], "target": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu" }} }},
+        \\  "packages": {{
+        \\    "pkg:55555555555555555555555555555555": {{
+        \\      "id": "pkg:55555555555555555555555555555555",
+        \\      "name": "demo", "version": "1.0.0",
+        \\      "source": {{ "type": "git", "url": "{s}", "commit": "{s}" }},
+        \\      "dependencies": [], "features": [],
+        \\      "artifacts": {{ "source": {{ "kind": "source", "type": "raw" }} }}
+        \\    }}
+        \\  }},
+        \\  "profiles": {{ "default": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu", "runtime": "lnako" }} }}
+        \\}}
+    , .{ repo.url, repo.commit });
+    defer testing.allocator.free(project_abs);
+    const cache_root = try std.fs.path.join(testing.allocator, &.{ project_abs, "cache" });
+    defer testing.allocator.free(cache_root);
+
+    var list = diag.List.init(testing.allocator);
+    defer list.deinit();
+    var first = try sync_mod.run(testing.allocator, io, .{
+        .project_root = project_abs,
+        .cache_root = cache_root,
+    }, &list);
+    first.deinit();
+
+    // 可変 checkout と upstream repo を消しても、検証済み object だけで
+    // materialize できる（offline で Git 起動・clone/fetch を要求しない）。
+    const checkouts = try std.fs.path.join(testing.allocator, &.{ cache_root, "checkouts" });
+    defer testing.allocator.free(checkouts);
+    try std.Io.Dir.cwd().deleteTree(io, checkouts);
+    try std.Io.Dir.cwd().deleteTree(io, repo.path);
+
+    var second = try sync_mod.run(testing.allocator, io, .{
+        .project_root = project_abs,
+        .cache_root = cache_root,
+        .policy = .{ .offline = true },
+    }, &list);
+    defer second.deinit();
+    const index_path = try std.fs.path.join(testing.allocator, &.{ project_abs, ".nako", "env", second.generation, "deps", "demo", "src", "index.nako3" });
+    defer testing.allocator.free(index_path);
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, index_path, testing.allocator, .unlimited);
+    defer testing.allocator.free(bytes);
+    try testing.expectEqualStrings("●表示とは\nここまで\n", bytes);
 }
