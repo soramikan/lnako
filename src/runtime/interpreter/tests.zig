@@ -175,6 +175,47 @@ test "『引数』は呼出しごとに独立し入れ子呼出しで壊れな�
     try std.testing.expectEqualStrings("9\n5\n", host.written());
 }
 
+test "助詞付き命令呼出しの直後の『戻る』は呼出し結果を返す" {
+    // 公式`yCall`は助詞付きの関数呼出しをスタックに積んだまま`yReturn`へ渡し、
+    // 『で』『を』助詞の呼出し結果を戻り値にする。連文助詞『して』も
+    // 公式の`return それ`と同じ値になる。
+    const source =
+        "●Fとは\n" ++
+        "「abc」の要素数で戻る\n" ++
+        "ここまで\n" ++
+        "●Gとは\n" ++
+        "「abc」の要素数を戻る\n" ++
+        "ここまで\n" ++
+        "●Hとは\n" ++
+        "1と2を足すで戻る\n" ++
+        "ここまで\n" ++
+        "●Iとは\n" ++
+        "「abc」の大文字変換で戻る\n" ++
+        "ここまで\n" ++
+        "●Jとは\n" ++
+        "「abc」の要素数して戻る\n" ++
+        "ここまで\n" ++
+        "Fを表示\n" ++
+        "Gを表示\n" ++
+        "Hを表示\n" ++
+        "Iを表示\n" ++
+        "Jを表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("3\n3\n3\nABC\n3\n", host.written());
+}
+
 test "『引数』宣言は同名ローカルとして再利用する" {
     // 公式は本体先頭で`引数`を実引数配列にしてから利用者の宣言を実行する。
     // 宣言は同じローカルを上書きする（二重定義にしない）。

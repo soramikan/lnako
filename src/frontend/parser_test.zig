@@ -244,6 +244,61 @@ test "後判定の括弧付き助詞呼出し条件式を受理する" {
     try std.testing.expectEqualStrings("の", condition.josi);
 }
 
+test "助詞付き命令呼出しの直後の「戻る」は呼出し結果を戻り値にする" {
+    // 公式`yCall`は助詞付きの関数呼出しをスタックに積んだまま`yReturn`へ渡し、
+    // `yReturn`は『で』『を』助詞の要素を戻り値として取り出す。
+    // lnakoでは助詞付き変数と同じく、呼出しを『戻る』の直前の引数として保持する。
+    const cases = [_]struct { source: []const u8, filename: []const u8, name: []const u8, josi: []const u8 }{
+        .{ .source = "●Fとは\n「abc」の要素数で戻る\nここまで\n", .filename = "return-josi-de.nako3", .name = "要素数", .josi = "で" },
+        .{ .source = "●Fとは\n「abc」の要素数を戻る\nここまで\n", .filename = "return-josi-wo.nako3", .name = "要素数", .josi = "を" },
+        .{ .source = "●Fとは\n1と2を足すで戻る\nここまで\n", .filename = "return-josi-tasu.nako3", .name = "足", .josi = "で" },
+        .{ .source = "●Fとは\n「abc」の大文字変換で戻る\nここまで\n", .filename = "return-josi-case.nako3", .name = "大文字変換", .josi = "で" },
+        // 連文助詞でも公式は`return それ`で同じ値を返すため、呼出しを戻り値にする。
+        .{ .source = "●Fとは\n「abc」の要素数して戻る\nここまで\n", .filename = "return-josi-shite.nako3", .name = "要素数", .josi = "して" },
+    };
+    for (cases) |case| {
+        var result = try parse(std.testing.allocator, case.source, case.filename);
+        defer result.deinit();
+        try std.testing.expect(result.succeeded());
+        const definition = result.root.?.children[0];
+        try std.testing.expectEqual(ast.Kind.function_definition, definition.kind);
+        const body = definition.children[0];
+        const statement = body.children[0];
+        try std.testing.expectEqual(ast.Kind.return_statement, statement.kind);
+        const value = statement.children[0];
+        try std.testing.expectEqual(ast.Kind.function_call, value.kind);
+        try std.testing.expectEqualStrings(case.name, value.name);
+        // 命令呼出し自身の助詞は保持される。
+        try std.testing.expectEqualStrings(case.josi, value.josi);
+    }
+}
+
+test "「戻る」の戻り値は助詞付き命令呼出しの有無で切り替わる" {
+    // 助詞付き変数は従来どおり直前の引数として戻り値になる。
+    var variable = try parse(std.testing.allocator, "●Fとは\nそれは5\nそれを戻る\nここまで\n", "return-sore.nako3");
+    defer variable.deinit();
+    try std.testing.expect(variable.succeeded());
+    const variable_body = variable.root.?.children[0].children[0];
+    var variable_statement: ?*ast.Node = null;
+    for (variable_body.children) |child| {
+        if (child.kind == .return_statement) variable_statement = child;
+    }
+    try std.testing.expect(variable_statement != null);
+    try std.testing.expect(variable_statement.?.children[0].kind != .nop);
+
+    // 直前に引数が無い「戻る」は従来どおり`nop`を返す。
+    var bare = try parse(std.testing.allocator, "●Fとは\n戻る\nここまで\n", "return-bare.nako3");
+    defer bare.deinit();
+    try std.testing.expect(bare.succeeded());
+    const bare_body = bare.root.?.children[0].children[0];
+    var bare_statement: ?*ast.Node = null;
+    for (bare_body.children) |child| {
+        if (child.kind == .return_statement) bare_statement = child;
+    }
+    try std.testing.expect(bare_statement != null);
+    try std.testing.expectEqual(ast.Kind.nop, bare_statement.?.children[0].kind);
+}
+
 test "「もし」省略形は命令呼出しのときだけ条件文にする" {
     // 公式`ySentence`は`yCall`が命令呼出しで確定した場合だけ`yIfThen`へ入る。
     // 演算式や数値は『不完全な文です』で拒否されるため条件文にしない。

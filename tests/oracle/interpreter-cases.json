@@ -600,6 +600,25 @@
   {
     "id": "func-ref-prefix-variable-arity",
     "source": "F={関数}MAX\nF(3,5,2)を表示\nG={関数}連結\nG(\"a\",\"b\",\"c\")を表示\n"
+  },
+  {
+    "id": "return-josi-call",
+    "source": "●Fとは\n「abc」の要素数で戻る\nここまで\n●Gとは\n「abc」の要素数を戻る\nここまで\n●Hとは\n1と2を足すで戻る\nここまで\n●Iとは\n「abc」の大文字変換で戻る\nここまで\nFを表示\nGを表示\nHを表示\nIを表示\n"
+  },
+  {
+    "id": "return-josi-call-shite",
+    "source": "●Fとは\n「abc」の要素数して戻る\nここまで\nFを表示\n"
+  },
+  {
+    "id": "return-josi-call-undefined",
+    "source": "●Fとは\n「a」を「b」に置換して戻る\nここまで\nFを表示\n"
+  },
+  {
+    "id": "return-josi-eq",
+    "source": "●Fとは\nAが1と等しいで戻る\nここまで\nA=1\nFを表示\n"
+  },
+  {
+    "id": "return-sore-wo",
+    "source": "●Fとは\nそれは5\nそれを戻る\nここまで\nFを表示\n"
   }
 ]
-

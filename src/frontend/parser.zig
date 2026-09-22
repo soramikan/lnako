@@ -947,11 +947,14 @@ pub const Parser = struct {
             return statement;
         }
         const call = try self.makeCommandCall(command, try arguments.toOwnedSlice(self.allocator));
-        // 助詞付きの関数呼出しの直後にループの語が続く場合、公式`yCall`は
-        // 呼出しをスタックに積んだまま制御構文へ渡す（`Aが5以下の間`は
-        // `以下(A,5)`を条件とする`間`になる）。呼出しを引数として保持し、
-        // 文の解析を続けて制御構文の分岐へ委ねる。
-        if (command.josi.len > 0 and chained_calls.items.len == 0 and self.atLoopKeyword()) {
+        // 助詞付きの関数呼出しの直後にループの語や『戻る』が続く場合、公式
+        // `yCall`は呼出しをスタックに積んだまま制御構文へ渡す（`Aが5以下の間`は
+        // `以下(A,5)`を条件とする`間`、`「abc」の要素数で戻る`は呼出し結果を
+        // 返す`戻る`になる）。呼出しを引数として保持し、文の解析を続けて
+        // 制御構文の分岐へ委ねる。
+        if (command.josi.len > 0 and chained_calls.items.len == 0 and
+            (self.atLoopKeyword() or self.at(.keyword_return)))
+        {
             arguments.* = .empty;
             try arguments.*.append(self.allocator, call);
             return null;
