@@ -151,6 +151,12 @@ const FunctionBuilder = struct {
     exception_handlers: std.ArrayList(ir.BlockId) = .empty,
 
     fn finish(self: *FunctionBuilder) !ir.Function {
+        // 引数位置の『エラー発生』等で途中終端した経路では、生成済みだが
+        // 未到達となったブロックが終端未設定のまま残りうる。実行されない
+        // ブロックとして unreachable を補っておく。
+        for (self.blocks.items) |block| if (block.terminator == .none) {
+            block.terminator = .unreachable_terminator;
+        };
         var blocks = try self.allocator.alloc(ir.BasicBlock, self.blocks.items.len);
         for (self.blocks.items, 0..) |block, index| blocks[index] = .{
             .id = block.id,
@@ -249,13 +255,20 @@ const FunctionBuilder = struct {
             (try self.lowerNode(node.children[0])) orelse try self.emitConstNumber(0, node)
         else
             try self.emitUndefined(node);
+        if (self.isTerminated()) return null;
         try self.emitVoid(opcode, &.{value}, node);
         return value;
     }
 
     fn lowerVariadic(self: *FunctionBuilder, opcode: ir.Opcode, result_type: ir.Type, node: hir.Node) !?ir.ValueId {
         var operands: std.ArrayList(ir.ValueId) = .empty;
-        for (node.children) |child| if (try self.lowerNode(child)) |value| try operands.append(self.allocator, value);
+        for (node.children) |child| {
+            if (self.isTerminated()) break;
+            if (try self.lowerNode(child)) |value| try operands.append(self.allocator, value);
+        }
+        // 引数位置の『エラー発生』など、子の評価でブロックが終端した場合は
+        // 後続の命令を発行しない（終端を上書きしてthrowを失わないため）。
+        if (self.isTerminated()) return null;
         if (result_type == .void) {
             try self.emitVoid(opcode, operands.items, node);
             return null;
@@ -263,20 +276,21 @@ const FunctionBuilder = struct {
         return try self.emitValue(opcode, result_type, operands.items, node);
     }
 
-    fn lowerCall(self: *FunctionBuilder, opcode: ir.Opcode, node: hir.Node) !ir.ValueId {
-        const result = (try self.lowerVariadic(opcode, toType(node.type_hint), node)) orelse return error.InvalidCallResult;
+    fn lowerCall(self: *FunctionBuilder, opcode: ir.Opcode, node: hir.Node) !?ir.ValueId {
+        const result = (try self.lowerVariadic(opcode, toType(node.type_hint), node)) orelse return null;
         try self.lowerExceptionCheck(node);
         return result;
     }
 
-    fn lowerFallible(self: *FunctionBuilder, opcode: ir.Opcode, result_type: ir.Type, node: hir.Node) !ir.ValueId {
-        const result = (try self.lowerVariadic(opcode, result_type, node)) orelse return error.InvalidFallibleResult;
+    fn lowerFallible(self: *FunctionBuilder, opcode: ir.Opcode, result_type: ir.Type, node: hir.Node) !?ir.ValueId {
+        const result = (try self.lowerVariadic(opcode, result_type, node)) orelse return null;
         try self.lowerExceptionCheck(node);
         return result;
     }
 
     fn lowerFallibleVoid(self: *FunctionBuilder, opcode: ir.Opcode, node: hir.Node) !?ir.ValueId {
         _ = try self.lowerVariadic(opcode, .void, node);
+        if (self.isTerminated()) return null;
         try self.lowerExceptionCheck(node);
         return null;
     }
@@ -310,6 +324,7 @@ const FunctionBuilder = struct {
                 var container = tmp;
                 for (0..level + 1) |j| {
                     const key = (try self.lowerNode(key_nodes[j])) orelse try self.emitUndefined(node);
+                    if (self.isTerminated()) return null;
                     container = try self.emitValue(.array_get, .dynamic, &.{ container, key }, node);
                     // チェーン途中のnullish読出し失敗を最初の文言で伝播させる
                     try self.lowerExceptionCheck(node);
@@ -323,10 +338,12 @@ const FunctionBuilder = struct {
                 var write_container = tmp;
                 for (0..level) |j| {
                     const key = (try self.lowerNode(key_nodes[j])) orelse try self.emitUndefined(node);
+                    if (self.isTerminated()) return null;
                     write_container = try self.emitValue(.array_get, .dynamic, &.{ write_container, key }, node);
                     try self.lowerExceptionCheck(node);
                 }
                 const write_key = (try self.lowerNode(key_nodes[level])) orelse try self.emitUndefined(node);
+                if (self.isTerminated()) return null;
                 try self.emitVoid(.init_array_index, &.{ write_container, write_key }, node);
                 try self.lowerExceptionCheck(node);
                 self.terminate(.{ .branch = merge_block });
@@ -344,11 +361,14 @@ const FunctionBuilder = struct {
             tmp;
         for (key_nodes[0 .. key_nodes.len - 1]) |key_node| {
             const key = (try self.lowerNode(key_node)) orelse try self.emitUndefined(node);
+            if (self.isTerminated()) return null;
             container = try self.emitValue(.array_get, .dynamic, &.{ container, key }, node);
             try self.lowerExceptionCheck(node);
         }
         const last_key = (try self.lowerNode(key_nodes[key_nodes.len - 1])) orelse try self.emitUndefined(node);
+        if (self.isTerminated()) return null;
         const value = (try self.lowerNode(node.children[0])) orelse try self.emitUndefined(node);
+        if (self.isTerminated()) return null;
         try self.emitVoid(.element_set, &.{ container, last_key, value }, node);
         try self.lowerExceptionCheck(node);
         return null;
@@ -377,6 +397,7 @@ const FunctionBuilder = struct {
             (try self.lowerNode(node.children[0])) orelse try self.emitConstNumber(1, node)
         else
             try self.emitConstNumber(1, node);
+        if (self.isTerminated()) return null;
         const updated = try self.emitValue(.increment_values, .dynamic, &.{ base, amount }, node);
         try self.lowerExceptionCheck(node);
         try self.emitVoid(store_op, &.{updated}, node);
@@ -395,8 +416,10 @@ const FunctionBuilder = struct {
         // 公式のpreCode相当: コンテナ→添字の順に一度だけ束縛する
         const container = try self.emitValue(if (node.local_target) .load_local else .load_global, .dynamic, &.{}, node);
         var keys: std.ArrayList(ir.ValueId) = .empty;
-        for (key_nodes) |key_node|
+        for (key_nodes) |key_node| {
             try keys.append(self.allocator, (try self.lowerNode(key_node)) orelse try self.emitUndefined(node));
+            if (self.isTerminated()) return null;
+        }
         // varGetter相当: 束縛したコンテナ・添字で要素を読み出す
         var deepest = container;
         for (keys.items[0 .. keys.items.len - 1]) |key| {
@@ -423,6 +446,7 @@ const FunctionBuilder = struct {
             (try self.lowerNode(node.children[0])) orelse try self.emitConstNumber(1, node)
         else
             try self.emitConstNumber(1, node);
+        if (self.isTerminated()) return null;
         const updated = try self.emitValue(.increment_values, .dynamic, &.{ base, amount }, node);
         try self.lowerExceptionCheck(node);
         // varSetter相当: 公式は `o1[i1]…` を再評価するため、量の評価で
@@ -438,6 +462,7 @@ const FunctionBuilder = struct {
     }
 
     fn lowerExceptionCheck(self: *FunctionBuilder, node: hir.Node) !void {
+        if (self.isTerminated()) return;
         const pending = try self.emitValue(.exception_pending, .boolean, &.{}, node);
         const exception_block = if (self.exception_handlers.items.len > 0)
             self.exception_handlers.items[self.exception_handlers.items.len - 1]
@@ -455,6 +480,7 @@ const FunctionBuilder = struct {
     fn lowerLogical(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
         if (node.children.len != 2) return error.InvalidHir;
         const left = (try self.lowerNode(node.children[0])) orelse try self.emitUndefined(node);
+        if (self.isTerminated()) return null;
         const left_predecessor = self.current;
         const right_block = try self.createBlock("logical.right");
         const merge_block = try self.createBlock("logical.end");
@@ -492,6 +518,7 @@ const FunctionBuilder = struct {
     fn lowerIf(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
         if (node.children.len < 3) return error.InvalidHir;
         const condition = (try self.lowerNode(node.children[0])) orelse try self.emitUndefined(node);
+        if (self.isTerminated()) return null;
         const then_block = try self.createBlock("if.then");
         const else_block = try self.createBlock("if.else");
         const merge_block = try self.createBlock("if.end");
@@ -520,6 +547,11 @@ const FunctionBuilder = struct {
         if (!self.isTerminated()) self.terminate(.{ .branch = condition_block });
         self.current = condition_block;
         const condition = (try self.lowerNode(node.children[0])) orelse try self.emitUndefined(node);
+        if (self.isTerminated()) {
+            _ = self.loops.pop();
+            self.current = exit_block;
+            return null;
+        }
         self.terminate(.{ .conditional_branch = .{ .condition = condition, .then_block = body_block, .else_block = exit_block } });
         _ = self.loops.pop();
         self.current = exit_block;
@@ -543,6 +575,7 @@ const FunctionBuilder = struct {
         for (node.children[0 .. node.children.len - 1]) |child| {
             const value = (try self.lowerNode(child)) orelse try self.emitUndefined(node);
             try inputs.append(self.allocator, value);
+            if (self.isTerminated()) return null;
         }
         const iterator = try self.emitValue(.iterator_begin, .dynamic, inputs.items, node);
         const condition_block = try self.createBlock("iterator.cond");
@@ -585,6 +618,7 @@ const FunctionBuilder = struct {
 
     fn lowerReturn(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
         const value = if (node.children.len > 0) try self.lowerNode(node.children[0]) else null;
+        if (self.isTerminated()) return null;
         self.terminate(.{ .return_value = value });
         return value;
     }
@@ -631,6 +665,7 @@ const FunctionBuilder = struct {
             (try self.lowerNode(node.children[node.children.len - 1])) orelse try self.emitUndefined(node)
         else
             try self.emitUndefined(node);
+        if (self.isTerminated()) return null;
         self.terminate(.{ .throw_value = .{
             .value = value,
             .target = if (self.exception_handlers.items.len > 0) self.exception_handlers.items[self.exception_handlers.items.len - 1] else null,
@@ -643,10 +678,12 @@ const FunctionBuilder = struct {
     fn lowerSwitch(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
         if (node.children.len == 0) return null;
         const discriminant = (try self.lowerNode(node.children[0])) orelse try self.emitUndefined(node);
+        if (self.isTerminated()) return null;
         const merge_block = try self.createBlock("switch.end");
         var index: usize = 2;
         while (index + 1 < node.children.len) : (index += 2) {
             const case_value = (try self.lowerNode(node.children[index])) orelse try self.emitUndefined(node);
+            if (self.isTerminated()) return null;
             const compare = try self.emitValue(.binary, .boolean, &.{ discriminant, case_value }, node);
             self.currentBlock().instructions.items[self.currentBlock().instructions.items.len - 1].operator = "==";
             const case_block = try self.createBlock("switch.case");

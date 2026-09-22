@@ -6,22 +6,22 @@
     "commit": "aa18c7e640523938c680958fe731418cc6f7a58f"
   },
   "fixture": {
-    "id": "native-node-directory-values",
+    "id": "native-node-command-line-constants",
     "file": "native-cases.json",
-    "sourceSha256": "a7245143aad45c54e9113cea6f295d11e11870f686af9405b967968f28e7676c"
+    "sourceSha256": "a474be8d7996793e5582b4836bb923941af075727161fbd0aa82e4dfacc6bf21"
   },
   "bindings": [
     {
-      "catalogId": "command-0731",
-      "name": "デスクトップ",
+      "catalogId": "command-0751",
+      "name": "コマンドライン",
       "plugin": "plugin_node",
       "accessSequence": [
         "global-load"
       ],
       "sites": [
         {
-          "catalogId": "command-0731",
-          "name": "デスクトップ",
+          "catalogId": "command-0751",
+          "name": "コマンドライン",
           "plugin": "plugin_node",
           "kind": "global-load",
           "siteId": "0x0000000000000001"
@@ -29,16 +29,16 @@
       ]
     },
     {
-      "catalogId": "command-0732",
-      "name": "マイドキュメント",
+      "catalogId": "command-0752",
+      "name": "ナデシコランタイム",
       "plugin": "plugin_node",
       "accessSequence": [
         "global-load"
       ],
       "sites": [
         {
-          "catalogId": "command-0732",
-          "name": "マイドキュメント",
+          "catalogId": "command-0752",
+          "name": "ナデシコランタイム",
           "plugin": "plugin_node",
           "kind": "global-load",
           "siteId": "0x0000000000000002"
@@ -46,16 +46,16 @@
       ]
     },
     {
-      "catalogId": "command-0735",
-      "name": "テンポラリフォルダ",
+      "catalogId": "command-0753",
+      "name": "ナデシコランタイムパス",
       "plugin": "plugin_node",
       "accessSequence": [
         "global-load"
       ],
       "sites": [
         {
-          "catalogId": "command-0735",
-          "name": "テンポラリフォルダ",
+          "catalogId": "command-0753",
+          "name": "ナデシコランタイムパス",
           "plugin": "plugin_node",
           "kind": "global-load",
           "siteId": "0x0000000000000003"
@@ -76,25 +76,25 @@
       "officialSource": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "0e8c8ee5baf5120775e305e5622fcc0a77bfa5c977ddc5113603b1c42ac51905",
+        "stdoutSha256": "36768a89e8faf166700f48bc8df99361609e43956dd7d2bffebde9439ea5033c",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "officialGenerated": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "0e8c8ee5baf5120775e305e5622fcc0a77bfa5c977ddc5113603b1c42ac51905",
+        "stdoutSha256": "36768a89e8faf166700f48bc8df99361609e43956dd7d2bffebde9439ea5033c",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoRun": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "0e8c8ee5baf5120775e305e5622fcc0a77bfa5c977ddc5113603b1c42ac51905",
+        "stdoutSha256": "36768a89e8faf166700f48bc8df99361609e43956dd7d2bffebde9439ea5033c",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoNativeO0": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "0e8c8ee5baf5120775e305e5622fcc0a77bfa5c977ddc5113603b1c42ac51905",
+        "stdoutSha256": "36768a89e8faf166700f48bc8df99361609e43956dd7d2bffebde9439ea5033c",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       }
     }
@@ -114,9 +114,9 @@
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
     "raw": {
-      "interpreterTraceSha256": "6ee351ec2c4f0d11c0ec1f3cf1df9e43a1661e51df8e66f9c70795fa43a8ce03",
+      "interpreterTraceSha256": "48bcece450aae15379862166d60eb80031ed4fb30af078515c36dd6f159a7ac4",
       "aotTraceSha256": "8563fae5ec29d621b51a24d9ec37e50d89bb5b8186f336d5e42d28e9467a6cb4",
-      "globalManifestSha256": "29343f1397b664edb40a66bb8badcf0c7173acb4f60da21719d14ff7bacd3bce"
+      "globalManifestSha256": "bad893ac2a4fa9c5f84f29b4563b42dcafb75dabfc84283bfdb1f9dfdf319a95"
     }
   },
   "trace": {
