@@ -913,11 +913,18 @@ pub const Parser = struct {
 
             const expression = try expressions.parseExpression(self, 0);
             if (expression.kind == .function_call and self.isTerminator()) {
+                // 範囲演算子のような演算子由来の疑似呼出し（助詞呼出しでも
+                // C風呼出しでもないfunction_call）は命令呼出しではないため、
+                // 文の末尾に来ても公式と同じく『不完全な文です』で拒否する。
+                if (expression.children.len > 0 and !expression.command_call and !expression.is_c_style_call) {
+                    const leftovers = [_]*ast.Node{expression};
+                    return self.failIncompleteStatement(start, &leftovers);
+                }
                 // 保留中の実引数がある終端呼出しはそのまま返せない。`5をF(1)`の
                 // 『5を』は公式では未解決の単語として構文エラーになるため、
-                // 引数へ回して末尾の未解決判定（命令呼び出しを構成できません）
-                // へ通す。連文が挿入した暗黙の『それ』だけが残る場合は実引数
-                // ではないため、呼出しを連文ブロックの一部として返す
+                // 残った実引数だけを『不完全な文です』の未解決判定へ通す。
+                // 連文が挿入した暗黙の『それ』だけが残る場合は実引数ではない
+                // ため、呼出しを連文ブロックの一部として返す
                 // （`1を表示してF(1)`は表示とF(1)を順に実行する）。
                 var only_implicit_it = true;
                 for (arguments.items) |arg| {
@@ -927,6 +934,7 @@ pub const Parser = struct {
                     }
                 }
                 if (only_implicit_it) return self.finishChained(start, &chained_calls, expression);
+                return self.failIncompleteStatement(start, try self.realArguments(arguments.items));
             }
             try arguments.append(self.allocator, expression);
 
@@ -941,25 +949,69 @@ pub const Parser = struct {
             // 文末まで残った実引数は未解決（`1を表示して5をF(1)`の『5を』は
             // 公式でも未解決の単語として文法エラーになる）。連文が挿入した
             // 暗黙の『それ』マーカーは後続命令へ渡す足場なので残存を許す。
-            for (arguments.items) |arg| {
-                if (!helpers.isImplicitItMarker(arg)) {
-                    return self.fail(.unexpected_token, "命令呼び出しを構成できません", self.peek());
-                }
-            }
+            const leftovers = try self.realArguments(arguments.items);
+            if (leftovers.len > 0) return self.failIncompleteStatement(start, leftovers);
             return builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
         }
-        if (arguments.items.len == 1) {
+        if (arguments.items.len == 1 and arguments.items[0].kind == .word) {
             const value = arguments.items[0];
-            if (value.kind == .word) {
-                const call = try builder.makeNode(self, .function_call, start);
-                call.name = value.value;
-                call.josi = value.josi;
-                return call;
-            }
-            const node = try builder.makeNodeWithChildren(self, .dynamic_execute, start, try builder.copyChildren(self, &.{value}));
-            return node;
+            const call = try builder.makeNode(self, .function_call, start);
+            call.name = value.value;
+            call.josi = value.josi;
+            return call;
+        }
+        if (arguments.items.len > 0) {
+            // 公式`ySentence`は命令呼出しを構成せずに残った値を
+            // 『不完全な文です』で拒否する。式文のまま実行系へ流すと
+            // `1+1`のような演算式が動的実行へ変換されて再解析を繰り返し
+            // 実行上限超過になるため、ここで文法エラーにする。
+            return self.failIncompleteStatement(start, arguments.items);
         }
         return self.fail(.unexpected_token, "命令呼び出しを構成できません", self.peek());
+    }
+
+    /// 公式`ySentence`が文末に解決しなかった値を報告する
+    /// 『不完全な文です。Xが解決していません』相当の診断を発行する。
+    fn failIncompleteStatement(self: *Parser, start: Token, leftovers: []const *ast.Node) ParseFailure {
+        var message: std.ArrayList(u8) = .empty;
+        try message.appendSlice(self.allocator, "不完全な文です。");
+        for (leftovers, 0..) |value, index| {
+            if (index > 0) try message.appendSlice(self.allocator, "、");
+            try message.appendSlice(self.allocator, try self.incompleteStatementDescription(value));
+        }
+        try message.appendSlice(self.allocator, "が解決していません");
+        return self.fail(.incomplete_statement, message.items, start);
+    }
+
+    /// 引数列から連文が挿入した暗黙の『それ』マーカーを除いた実引数だけを
+    /// 返す。未解決判定の対象はユーザーが書いた値だけで、マーカーは
+    /// 診断の説明へ出さない。
+    fn realArguments(self: *Parser, arguments: []const *ast.Node) ParseFailure![]const *ast.Node {
+        var real: std.ArrayList(*ast.Node) = .empty;
+        for (arguments) |arg| {
+            if (!helpers.isImplicitItMarker(arg)) try real.append(self.allocator, arg);
+        }
+        return real.items;
+    }
+
+    fn incompleteStatementDescription(self: *Parser, value: *ast.Node) ParseFailure![]const u8 {
+        return switch (value.kind) {
+            .number => if (value.number_value) |number|
+                try std.fmt.allocPrint(self.allocator, "数値{d}", .{number})
+            else
+                try std.fmt.allocPrint(self.allocator, "数値{s}", .{value.value}),
+            .bigint => try std.fmt.allocPrint(self.allocator, "数値{s}", .{value.value}),
+            .string, .string_template => try std.fmt.allocPrint(self.allocator, "文字列『{s}』", .{value.value}),
+            .word, .boolean, .null_value => try std.fmt.allocPrint(self.allocator, "単語『{s}』", .{value.value}),
+            .binary_operator, .unary_operator => try std.fmt.allocPrint(self.allocator, "演算子『{s}』", .{value.operator}),
+            .function_call => try std.fmt.allocPrint(self.allocator, "関数『{s}』", .{value.name}),
+            .call_value => "『call_value』",
+            .array_reference, .array_value_reference => "『ref_array』",
+            .property_reference => "『ref_prop』",
+            .array_literal => "『json_array』",
+            .object_literal => "『json_obj』",
+            else => "式",
+        };
     }
 
     /// 命令名解決・助詞付き命令呼出し・連文の確定文まとめ・日本語命令

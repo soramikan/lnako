@@ -28,6 +28,9 @@ pub const Code = enum {
     /// 式・命令・連鎖の入れ子が上限を超えた。公式も深い入れ子を文法エラー
     /// 『Maximum call stack size exceeded』で拒否するため、受理せず位置付き診断にする。
     nesting_too_deep,
+    /// 命令呼出しを構成せずに文の末尾へ残った式。公式は『不完全な文です。
+    /// Xが解決していません』で拒否する。
+    incomplete_statement,
 };
 
 pub const Diagnostic = struct {

@@ -53,7 +53,6 @@ pub const Kind = enum {
     performance_monitor,
     speed_mode,
     run_mode,
-    dynamic_execute,
 };
 
 pub const Argument = struct {
@@ -138,7 +137,6 @@ pub fn kindName(kind: Kind) []const u8 {
         .array_value_reference => "ref_array_value",
         .property_reference => "ref_prop",
         .import => "require",
-        .dynamic_execute => "calc_func",
         else => @tagName(kind),
     };
 }

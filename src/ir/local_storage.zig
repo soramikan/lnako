@@ -22,13 +22,11 @@ pub const Observation = packed struct {
     captured_out: bool = false,
     /// The binding identity may be retained by an escaping execution.
     escaped: bool = false,
-    /// Dynamic source execution can observe the current lexical environment.
-    dynamic: bool = false,
     /// A callback may update the binding after the current operation returns.
     callback: bool = false,
 
     pub fn requiresCell(self: Observation) bool {
-        return self.captured_in or self.captured_out or self.escaped or self.dynamic or self.callback;
+        return self.captured_in or self.captured_out or self.escaped or self.callback;
     }
 
     pub fn storageClass(self: Observation) StorageClass {
@@ -163,13 +161,6 @@ fn findFunction(program: ir.Program, name: []const u8) ?ir.Function {
     return found;
 }
 
-fn dynamicObserved(function: ir.Function) bool {
-    for (function.blocks) |block| for (block.instructions) |instruction| {
-        if (instruction.opcode == .dynamic_execute) return true;
-    };
-    return false;
-}
-
 /// Analyze one function against its enclosing program.  This function is
 /// useful to consumers that already iterate functions, while `analyze`
 /// below avoids repeating the same work for the common whole-program path.
@@ -182,10 +173,6 @@ pub fn analyzeFunction(allocator: std.mem.Allocator, program: ir.Program, functi
 
     for (locals) |*local| {
         if (nameInList(function.captures, local.name)) local.observation.captured_in = true;
-        if (dynamicObserved(function)) {
-            local.observation.dynamic = true;
-            local.observation.escaped = true;
-        }
 
         // A closure's capture list is the proof that this frame's binding
         // identity leaves the frame.  It is deliberately conservative about
@@ -233,7 +220,7 @@ pub fn analyze(allocator: std.mem.Allocator, program: ir.Program) !Analysis {
 /// Unknown bindings remain conservative, because their addressability cannot
 /// be proven from the caller's local IR.
 pub fn storageClass(program: ir.Program, function: ir.Function, name: []const u8) StorageClass {
-    if (nameInList(function.captures, name) or dynamicObserved(function)) return .cell;
+    if (nameInList(function.captures, name)) return .cell;
     for (function.blocks) |block| for (block.instructions) |instruction| {
         if (instruction.opcode != .make_closure) continue;
         const child = findFunction(program, instruction.name) orelse return .cell;
@@ -306,43 +293,6 @@ test "通常localはValue slot、capture localはcellへ分類する" {
     try std.testing.expectEqual(StorageClass.cell, analysis.storageClass(0, "A"));
     try std.testing.expectEqual(StorageClass.value, analysis.storageClass(0, "B"));
     try std.testing.expectEqual(StorageClass.cell, analysis.storageClass(1, "A"));
-}
-
-test "dynamic executionはlocalのbinding identityを保持する" {
-    const span = @import("../frontend/ast.zig").emptySpan();
-    var local_operands = [_]ir.ValueId{0};
-    var dynamic_operands = [_]ir.ValueId{0};
-    var instructions = [_]ir.Instruction{
-        .{ .result = 0, .opcode = .const_number, .type = .number, .number_value = 1, .span = span },
-        .{ .result = null, .opcode = .store_local, .type = .void, .name = "A", .operands = &local_operands, .span = span },
-        .{ .result = 1, .opcode = .dynamic_execute, .type = .dynamic, .operands = &dynamic_operands, .span = span },
-    };
-    var blocks = [_]ir.BasicBlock{.{
-        .id = 0,
-        .name = "entry",
-        .instructions = &instructions,
-        .terminator = .{ .return_value = 1 },
-    }};
-    var parameters = [_]ir.Parameter{};
-    const function = ir.Function{
-        .id = 0,
-        .name = "dynamic",
-        .parameters = &parameters,
-        .blocks = &blocks,
-        .entry = 0,
-        .return_type = .dynamic,
-        .is_async = false,
-        .is_test = false,
-    };
-    var functions = [_]ir.Function{function};
-    var module_entries = [_]ir.FunctionId{};
-    var program = ir.Program{
-        .arena = std.heap.ArenaAllocator.init(std.testing.allocator),
-        .functions = &functions,
-        .module_entries = &module_entries,
-    };
-    defer program.arena.deinit();
-    try std.testing.expect(requiresCell(program, function, "A"));
 }
 
 test "添字とpropertyのglobal代入をlocal slotへ登録しない" {
