@@ -3074,5 +3074,29 @@
   {
     "id": "native-foreach-dictionary-integer-key-order",
     "source": "D={\"2\":2,\"1\":1,\"x\":9,\"10\":10}\nDを反復\n対象キーを表示\nここまで\n"
+  },
+  {
+    "id": "native-koto-call-suffix-implicit-return",
+    "source": "●(AとBの)加算処理とは\nAにBを足すこと。\nここまで\n3と7の加算処理して表示。\n"
+  },
+  {
+    "id": "native-chained-return-and-function-sore-scope",
+    "source": "●(AとBの)連鎖加算とは\nAにBを足してそれを戻す。\nここまで\n3と7の連鎖加算して表示。\n●(AとBの)連鎖戻しとは\nAにBを足して戻す。\nここまで\n3と7の連鎖戻しして表示。\n●設定とは\nそれは5\n戻す\nここまで\n設定して表示。\nそれは7\n●空とは\nここまで\n空して表示。\n●読出しとは\nそれを表示\nここまで\n読出し\n"
+  },
+  {
+    "id": "native-function-exception-restores-caller-sore",
+    "source": "それは7\n●Fとは\nそれは1\n「失敗」のエラー発生\nここまで\nエラー監視\nF()\nエラーならば\nそれを表示\nここまで\n"
+  },
+  {
+    "id": "native-chained-range-loop",
+    "source": "5を表示してIを1から3まで繰り返す\nIを表示\nここまで\n5を表示してIを1から5まで2ずつ増繰返す\nIを表示\nここまで\n"
+  },
+  {
+    "id": "native-chained-range-loop-novar",
+    "source": "5を表示して1から3まで繰り返す\nそれを表示\nここまで\n5を表示して1から5まで2ずつ増繰返す\nそれを表示\nここまで\n"
+  },
+  {
+    "id": "native-range-loop-novar-sore-in-function",
+    "source": "●Fとは\n1から3まで繰り返す\nここまで\nここまで\nF()を表示\n●Gとは\nそれは9\n1から2まで繰り返す\nそれを表示\nここまで\nそれを戻す\nここまで\nG()を表示\n"
   }
 ]

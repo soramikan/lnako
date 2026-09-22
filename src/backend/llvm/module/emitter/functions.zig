@@ -51,14 +51,19 @@ pub fn writeFunction(emitter: *Emitter, function: ir.Function) !void {
     var root_plan = if (emitter.optimized) try root_liveness.analyze(emitter.allocator, function) else null;
     defer if (root_plan) |*plan| plan.deinit();
     const value_root_count = context.functionValueCount(function);
-    const root_count = value_root_count + locals.len;
+    // sore_scope関数は呼び出し側の『それ』を入口で退避する（公式の
+    // __nako_scope_enter相当）。退避値は関数実行中も参照を保つ必要があるため、
+    // safepointでクリアされないローカル領域の末尾に専用root slotを確保する。
+    const sore_root_extra: usize = if (function.sore_scope) 1 else 0;
+    const sore_slot: ?usize = if (!function.sore_scope) null else if (root_plan) |plan| plan.slots.len + locals.len else value_root_count + locals.len;
+    const root_count = value_root_count + locals.len + sore_root_extra;
     const root_storage_count = @max(@as(usize, 1), root_count);
     const aggregate_count = @max(context.maxAggregateOperandCount(function), context.maxClosureCaptureCount(emitter.program, function));
     for (function.blocks, 0..) |block, block_index| {
         try emitter.output.writer.print("bb{d}:\n", .{block.id});
         if (block.id == function.entry) {
             if (root_plan) |plan| {
-                try roots_mod.writeStorage(emitter, plan, locals.len);
+                try roots_mod.writeStorage(emitter, plan, locals.len + sore_root_extra);
             } else {
                 try emitter.output.writer.print("  %root.values = alloca [{d} x %lnako.Value]\n", .{root_storage_count});
                 try emitter.output.writer.writeAll("  %root.frame = alloca %lnako.RootFrame\n");
@@ -102,6 +107,12 @@ pub fn writeFunction(emitter: *Emitter, function: ir.Function) !void {
                     },
                 }
             }
+            if (sore_slot) |slot| {
+                const global_index = emitter.globalIndex("それ") orelse return error.MissingResultGlobal;
+                try emitter.output.writer.print("  %scope.sore.backup = load %lnako.Value, ptr @lnako.global.{d}\n", .{global_index});
+                try emitter.output.writer.print("  store %lnako.Value %scope.sore.backup, ptr %root.slot.{d}\n", .{slot});
+                try emitter.output.writer.print("  store %lnako.Value {{ i8 0, i64 0 }}, ptr @lnako.global.{d}\n", .{global_index});
+            }
         }
         var phi_count: usize = 0;
         while (phi_count < block.instructions.len and block.instructions[phi_count].opcode == .phi) : (phi_count += 1) {
@@ -119,7 +130,7 @@ pub fn writeFunction(emitter: *Emitter, function: ir.Function) !void {
             try roots_mod.writeSafepoint(emitter, plan, plan.blocks[block_index].before[block.instructions.len]);
         };
         const terminator_span = if (block.instructions.len > 0) block.instructions[block.instructions.len - 1].span else ast.emptySpan();
-        try terminators_mod.writeTerminator(emitter, function, block.terminator, terminator_span, scope);
+        try terminators_mod.writeTerminator(emitter, function, block.id, block.terminator, terminator_span, scope, sore_slot);
     }
     try emitter.output.writer.writeAll("}\n\n");
     if (emitter.optimized) {

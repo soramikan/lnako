@@ -476,6 +476,11 @@ pub const Frame = struct {
     /// 命令）が参照する。仮引数個数への正規化はせず、呼出し側の並びを
     /// そのまま保持する（公式の`arguments`相当・末尾の__self相当は除く）。
     call_arguments: []const Value = &.{},
+    /// 関数スコープの『それ』を作る呼出し（ir.Function.sore_scope）で
+    /// 退避した呼び出し側の『それ』。関数を抜ける全経路で復元する
+    /// （公式の__nako_scope_enter/leave相当）。GCが参照を保持できるよう
+    /// フレーム上に置き、traceRootsで辿る。
+    sore_backup: ?Value = null,
     locals: std.StringHashMapUnmanaged(*value_mod.BindingCell) = .empty,
     owned_names: std.ArrayList([]u8) = .empty,
     iterators: std.AutoHashMapUnmanaged(ir.ValueId, IteratorState) = .empty,

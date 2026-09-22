@@ -168,6 +168,7 @@ const FunctionBuilder = struct {
             .return_type = toType(self.function.return_type),
             .is_async = self.function.is_async,
             .is_test = self.function.is_test,
+            .sore_scope = !self.function.is_entry,
         };
     }
 
@@ -756,6 +757,13 @@ const FunctionBuilder = struct {
         return self.currentBlock().terminator != .none;
     }
 
+    /// 関数末尾の暗黙戻り値。末尾が『それ』への保存ならその値をそのまま
+    /// 返す。それ以外は`null`を返し、sore_scope関数では実行側が現在の
+    /// 『それ』を返す（公式は全ユーザー関数へ`return (それ)`を付与する
+    /// nako_genのconvDefFuncCommon相当）。呼出し結果は実行時に『それ』へ
+    /// 書き戻されるため、末尾の命令呼出しの結果も届く。
+    /// モジュールエントリは呼び出し側と同じスコープで動くため従来どおり
+    /// `null`（=undefined）のまま。
     fn implicitResult(self: *FunctionBuilder) ?ir.ValueId {
         const instructions = self.currentBlock().instructions.items;
         if (instructions.len == 0) return null;
@@ -801,6 +809,40 @@ fn dupeStrings(allocator: std.mem.Allocator, strings: []const []const u8) ![]con
     const result = try allocator.alloc([]const u8, strings.len);
     for (strings, 0..) |value, index| result[index] = try allocator.dupe(u8, value);
     return result;
+}
+
+test "ユーザー関数は『それ』を呼び出しごとのスコープで扱う" {
+    const parser = @import("../frontend/parser.zig");
+    const semantic = @import("../semantic/analyzer.zig");
+    var parsed = try parser.parse(std.testing.allocator, "●Fとは\n1に2を足す\nここまで\nF\n", "main.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    var user_function: ?ir.Function = null;
+    for (program.functions) |function| {
+        if (!std.mem.endsWith(u8, function.name, "$entry")) user_function = function;
+    }
+    const function = user_function.?;
+    // ユーザー関数はsore_scope=true。呼出しごとの『それ』スコープは実行側が
+    // 入口で退避・初期化し全終端で復元するため、IRの命令列にはスコープ管理を
+    // 混ぜない（typed ABIやresult_store解析の対象命令を増やさない）。
+    try std.testing.expect(function.sore_scope);
+    for (function.blocks) |block| {
+        for (block.instructions) |instruction| {
+            try std.testing.expect(!std.mem.eql(u8, instruction.name, "$それ"));
+        }
+    }
+    // 末尾が命令呼出しの場合、暗黙戻り値は`null`（=実行側が現在の『それ』を返す）。
+    const last_block = function.blocks[function.blocks.len - 1];
+    try std.testing.expect(last_block.terminator == .return_value);
+    try std.testing.expect(last_block.terminator.return_value == null);
+    // モジュールエントリは呼び出し側と同じスコープで動くため対象外。
+    const entry = program.findFunction("main__$entry").?;
+    try std.testing.expect(!entry.sore_scope);
 }
 
 test "HIRから分岐とループを含むSSA IRを生成する" {

@@ -154,7 +154,7 @@ pub const StaticRegistry = struct {
             if (std.mem.eql(u8, record.version, text)) return record;
         }
         if (self.session.policy.offline) {
-            return self.session.fail(.not_found, .version, text, "version {s} of \"{s}\" is not in the registry", .{ text, package.name });
+            return self.session.fail(.offline, .version, text, "offline mode: version record {s} of \"{s}\" is not available locally", .{ text, package.name });
         }
         const gpa = self.session.allocator();
         const url = try std.fmt.allocPrint(gpa, "{s}/{s}/{s}/{s}.json", .{ self.base_url, package.owner, package.name, text });
@@ -429,9 +429,10 @@ const JsonParser = struct {
         return self.asString(value, field);
     }
 
+    /// 任意 string フィールド。キーが無ければ null を返すが、明示的な
+    /// `null` は schema の `type: "string"` に反するため型エラーとする。
     fn optionalString(self: *JsonParser, object: std.json.ObjectMap, field: []const u8) Error!?[]const u8 {
         const value = object.get(field) orelse return null;
-        if (value == .null) return null;
         return try self.asString(value, field);
     }
 };
@@ -604,6 +605,16 @@ fn parseVersionRecord(parser: *JsonParser, value: std.json.Value) Error!VersionR
             const artifact_object = try parser.asObject(entry.value_ptr.*);
             try parser.rejectUnknownFields(artifact_object, &artifact_fields);
             const kind = try parser.requiredString(artifact_object, "kind");
+            // 未知の artifact kind は仕様 §4.4 のエラー（E007）。
+            // 将来の kind は schema version bump または `x-` prefix で
+            // 導入されるため、現行では既知値のみ受理する。
+            var kind_known = false;
+            for (lock_model.known_artifact_kinds) |allowed| {
+                if (std.mem.eql(u8, kind, allowed)) kind_known = true;
+            }
+            if (!kind_known) {
+                return parser.invalidCode(diag.E007_UNKNOWN_ARTIFACT_KIND, "registry artifact kind \"{s}\" is unknown", .{kind});
+            }
             const artifact_type = try parser.optionalString(artifact_object, "type");
             if (artifact_type) |type_text| {
                 var known = false;
@@ -677,6 +688,19 @@ fn parsePackageRecord(parser: *JsonParser, value: std.json.Value) Error!PackageR
     if (human_id) |hid| {
         if (!isHumanId(hid)) {
             return parser.invalid("registry humanId \"{s}\" is not a valid human id", .{hid});
+        }
+    }
+    // モデルでは使わない任意フィールドも schema の型・format を検証する。
+    _ = try parser.optionalString(object, "description");
+    _ = try parser.optionalString(object, "license");
+    if (try parser.optionalString(object, "repository")) |uri| {
+        if (!isUri(uri)) {
+            return parser.invalid("registry repository \"{s}\" is not an absolute uri", .{uri});
+        }
+    }
+    if (try parser.optionalString(object, "homepage")) |uri| {
+        if (!isUri(uri)) {
+            return parser.invalid("registry homepage \"{s}\" is not an absolute uri", .{uri});
         }
     }
 

@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const fetch = @import("fetch.zig");
 const diag = @import("diagnostics.zig");
 const lock_model = @import("lock_model.zig");
@@ -51,7 +52,9 @@ pub fn acquirePath(
     const manifest_path = try std.fs.path.join(gpa, &.{ dir_path, "nako.toml" });
     const parsed = try readDependencyManifest(session, manifest_path, dep.name, "path");
     return .{
-        .source = .{ .kind = .path, .path = dep.path, .mutable = dep.mutable },
+        // source の文字列は全て session arena が所有する（`dep` や lock の
+        // allocator より長生きしなければならない契約）。
+        .source = .{ .kind = .path, .path = try gpa.dupe(u8, dep.path), .mutable = dep.mutable },
         .manifest = parsed,
     };
 }
@@ -126,6 +129,10 @@ pub fn acquireGit(
             return session.fail(.offline, .repository, dep.url, "offline mode: git repository \"{s}\" is not available locally", .{dep.url});
         }
         try gitRun(session, &.{ "git", "clone", "--quiet", "--no-checkout", dep.url, checkout_dir }, null);
+    } else {
+        // 既存 checkout の origin が宣言 URL と一致するか検証する。別 repo の
+        // checkout を再利用して別 URL の内容を読み違えないようにする。
+        try verifyCheckoutOrigin(session, checkout_dir, dep);
     }
 
     // 既存 checkout に commit-ish が無ければ、オンラインではリモートを
@@ -167,8 +174,15 @@ pub fn acquireGit(
     const manifest_dir = if (dep.path) |sub| try std.fs.path.join(gpa, &.{ checkout_dir, sub }) else checkout_dir;
     const manifest_path = try std.fs.path.join(gpa, &.{ manifest_dir, "nako.toml" });
     const parsed = try readDependencyManifest(session, manifest_path, dep.name, "git");
+    // source の文字列は全て session arena が所有する。`dep`・lock 由来の
+    // pinned commit もここで複製する。
     return .{
-        .source = .{ .kind = .git, .url = dep.url, .commit = full_commit, .path = dep.path },
+        .source = .{
+            .kind = .git,
+            .url = try gpa.dupe(u8, dep.url),
+            .commit = try gpa.dupe(u8, full_commit),
+            .path = if (dep.path) |sub| try gpa.dupe(u8, sub) else null,
+        },
         .manifest = parsed,
     };
 }
@@ -198,6 +212,136 @@ fn resolveCommit(session: *Session, checkout_dir: []const u8, commitish: []const
         commit = try gpa.dupe(u8, candidate);
     }
     return commit;
+}
+
+/// 既存 checkout の origin が宣言 URL を指しているか検証する。
+/// origin が無い checkout（手動 seed 等）には宣言 URL の origin を設定する。
+/// origin が別 URL を指す場合、別 repo の内容を別 source として返さないよう
+/// `source_collision` で拒否する。
+fn verifyCheckoutOrigin(session: *Session, checkout_dir: []const u8, dep: manifest_mod.GitDependency) Error!void {
+    const gpa = session.allocator();
+    const result = try gitRunAllowFailure(session, gpa, &.{ "git", "-C", checkout_dir, "remote", "get-url", "origin" });
+    if (!result.succeeded) {
+        // origin remote が無い checkout には宣言 URL を設定して後段の
+        // fetch が動くようにする。
+        try gitRun(session, &.{ "git", "-C", checkout_dir, "remote", "add", "origin", dep.url }, dep.url);
+        return;
+    }
+    const existing = std.mem.trim(u8, result.stdout, " \t\r\n");
+    if (!try gitUrlEql(gpa, existing, dep.url)) {
+        return session.fail(.source_collision, .repository, dep.url, "checkout \"{s}\" belongs to a different repository (origin is \"{s}\")", .{ checkout_dir, existing });
+    }
+}
+
+/// git remote URL の構造化比較。ローカル形式（bare path または authority
+/// が空・`localhost` の `file:` URL）はパスをそのまま比較し、末尾 `.git`
+/// はファイル名の一部として残す（`/deps/a` と `/deps/a.git` は別 repo に
+/// なり得る）。リモート形式（`scheme://`、scp 形式 `user@host:path`、
+/// authority を持つ `file:` URL）は末尾 `/` と慣例的な `.git` 接尾辞の
+/// 表記揺れだけを吸収する。ローカルとリモートは一致しない。
+fn gitUrlEql(gpa: Allocator, a: []const u8, b: []const u8) Allocator.Error!bool {
+    const windows_paths = builtin.os.tag == .windows;
+    return switch (try classifyGitUrl(gpa, a, windows_paths)) {
+        .local => |pa| switch (try classifyGitUrl(gpa, b, windows_paths)) {
+            .local => |pb| std.mem.eql(u8, pa, pb),
+            .remote => false,
+        },
+        .remote => |ra| switch (try classifyGitUrl(gpa, b, windows_paths)) {
+            .local => false,
+            .remote => |rb| std.mem.eql(u8, ra, rb),
+        },
+    };
+}
+
+const GitUrlKind = union(enum) { local: []const u8, remote: []const u8 };
+
+fn classifyGitUrl(gpa: Allocator, url: []const u8, windows_paths: bool) Allocator.Error!GitUrlKind {
+    if (std.mem.startsWith(u8, url, "file://")) {
+        const rest = url["file://".len..];
+        const slash = std.mem.indexOfScalar(u8, rest, '/') orelse rest.len;
+        const authority = rest[0..slash];
+        // `file://\\host\share`（UNC 形式）や `file://C:/x`・`file://D:\x`
+        // のような Windows ローカル表現は authority ではなく path とみなす。
+        const windows_local = windows_paths and
+            (std.mem.startsWith(u8, rest, "\\\\") or
+                (authority.len >= 2 and std.ascii.isAlphabetic(authority[0]) and authority[1] == ':' and
+                    (authority.len == 2 or authority[2] == '\\')));
+        if (authority.len == 0 or std.ascii.eqlIgnoreCase(authority, "localhost") or windows_local) {
+            // file: URL の path は URI 規則（percent encoding）を復号し、
+            // OS の path 表現へ正規化してから bare path と比較する。
+            const raw_path = if (windows_local) rest else rest[slash..];
+            const decoded = if (std.mem.indexOfScalar(u8, raw_path, '%') != null)
+                std.Uri.percentDecodeBackwards(try gpa.alloc(u8, raw_path.len), raw_path)
+            else
+                raw_path;
+            return .{ .local = try normalizeLocalGitPath(gpa, decoded, windows_paths) };
+        }
+        // authority を持つ file: URL はローカル path ではない（`file://h/s`
+        // が bare path `h/s` や `s` と同一視されると別 repo を誤認する）。
+        return .{ .remote = normalizeRemoteGitUrl(url) };
+    }
+    // `\\host\share`・`\\?\D:\x`（UNC / extended-length path）はローカル。
+    // scp 判定より先に見る（`\\?\D:` の `:` を scp の `:` と誤認しない）。
+    if (std.mem.startsWith(u8, url, "\\\\")) {
+        return .{ .local = try normalizeLocalGitPath(gpa, url, windows_paths) };
+    }
+    if (std.mem.indexOf(u8, url, "://") != null or isScpLikeGitUrl(url)) {
+        return .{ .remote = normalizeRemoteGitUrl(url) };
+    }
+    return .{ .local = try normalizeLocalGitPath(gpa, url, windows_paths) };
+}
+
+/// ローカル path の正規化。末尾 `/` を除く。Windows では `\`→`/`、
+/// `/C:/x`→`C:/x`、drive letter の大文字化を行い、file: URL と bare
+/// path の表現差を吸収する。POSIX では `\` は正当なファイル名文字の
+/// ため置換しない。`windows_paths` は呼出し OS の判定結果を受け取り、
+/// テストから Windows 分岐を検証できるようにする。
+fn normalizeLocalGitPath(gpa: Allocator, path: []const u8, windows_paths: bool) Allocator.Error![]const u8 {
+    // POSIX では `\` は正当なファイル名文字のため末尾 `/` だけを除く。
+    if (!windows_paths) return std.mem.trimEnd(u8, path, "/");
+    // 末尾 `\` も区切り文字として扱うため、変換してから末尾 `/` を除く。
+    const buf = try gpa.dupe(u8, path);
+    std.mem.replaceScalar(u8, buf, '\\', '/');
+    var end = buf.len;
+    while (end > 0 and buf[end - 1] == '/') end -= 1;
+    var text: []u8 = buf[0..end];
+    // extended-length `\\?\`・device `\\.\` 前置は除去する。
+    // `\\?\UNC\` は通常 UNC `\\` 形へ畳み込む（`//?/UNC/s/s` → `//s/s`）。
+    if (std.ascii.startsWithIgnoreCase(text, "//?/UNC/") or std.ascii.startsWithIgnoreCase(text, "//./UNC/")) {
+        std.mem.copyForwards(u8, text[2..], text[8..]);
+        text = text[0 .. text.len - 6];
+    } else if (std.mem.startsWith(u8, text, "//?/") or std.mem.startsWith(u8, text, "//./")) {
+        text = text[4..];
+    }
+    // file: URL の Windows drive 表現 `/C:/x` → `C:/x`。
+    if (text.len >= 3 and text[0] == '/' and std.ascii.isAlphabetic(text[1]) and text[2] == ':') {
+        text = text[1..];
+    }
+    // drive letter は大小文字を区別しない。
+    if (text.len >= 2 and std.ascii.isAlphabetic(text[0]) and text[1] == ':') {
+        text[0] = std.ascii.toUpper(text[0]);
+    }
+    return text;
+}
+
+/// scp 形式 `user@host:path` の判定。最初の `/` より前に `:` がある
+/// 形式をリモートとみなす（Windows drive letter `C:` はローカル path）。
+fn isScpLikeGitUrl(url: []const u8) bool {
+    const colon = std.mem.indexOfScalar(u8, url, ':') orelse return false;
+    if (colon == 0) return false;
+    if (colon == 1 and std.ascii.isAlphabetic(url[0])) return false;
+    if (std.mem.indexOfScalar(u8, url, '/')) |slash| {
+        if (slash < colon) return false;
+    }
+    return true;
+}
+
+/// リモート URL の表記揺れ吸収。末尾 `/` とホスティング慣例の `.git`
+/// 接尾辞を除く。ローカル path には適用しない。
+fn normalizeRemoteGitUrl(url: []const u8) []const u8 {
+    var text = std.mem.trimEnd(u8, url, "/");
+    if (std.mem.endsWith(u8, text, ".git")) text = text[0 .. text.len - ".git".len];
+    return text;
 }
 
 const GitResult = struct {
@@ -250,7 +394,12 @@ pub fn acquireHttp(session: *Session, dep: manifest_mod.HttpDependency) Error!Ac
     try fetch.verifyHash(session, bytes, dep.hash, dep.url, .artifact);
 
     var acquired = Acquired{
-        .source = .{ .kind = .http, .url = dep.url, .hash = dep.hash },
+        // source の文字列は全て session arena が所有する。
+        .source = .{
+            .kind = .http,
+            .url = try session.allocator().dupe(u8, dep.url),
+            .hash = try session.allocator().dupe(u8, dep.hash),
+        },
         .artifact_bytes = bytes,
         .artifact_sha256 = try fetch.sha256Hex(session.allocator(), bytes),
         .artifact_type = "raw",
@@ -378,6 +527,58 @@ pub fn identityText(gpa: Allocator, source: lock_model.Source) ![]u8 {
         .path => std.fmt.allocPrint(gpa, "path:{s}", .{source.path orelse ""}),
         .registry, .static => std.fmt.allocPrint(gpa, "{s}:{s}", .{ @tagName(source.kind), source.url orelse "" }),
     };
+}
+
+test "normalizeLocalGitPath は Windows 区切りと drive letter を正規化する" {
+    // 返り値は確保バッファの subslice になり得るため arena で受ける。
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+    // 末尾 `\` は変換後の末尾 `/` として除去する（`C:\repo\` ≡ `C:/repo`）。
+    try std.testing.expectEqualStrings("C:/repo", try normalizeLocalGitPath(gpa, "C:\\repo\\", true));
+    // file: URL の drive 表現 `/C:/x` は `C:/x` へ。
+    try std.testing.expectEqualStrings("C:/x", try normalizeLocalGitPath(gpa, "/C:/x", true));
+    // drive letter は大文字へ揃える。
+    try std.testing.expectEqualStrings("C:/x", try normalizeLocalGitPath(gpa, "c:\\x", true));
+    // extended-length `\\?\D:\x` と device `\\.\D:\x` は `D:/x` へ。
+    try std.testing.expectEqualStrings("D:/x", try normalizeLocalGitPath(gpa, "\\\\?\\D:\\x", true));
+    try std.testing.expectEqualStrings("D:/x", try normalizeLocalGitPath(gpa, "\\\\.\\D:\\x", true));
+    // extended-length UNC `\\?\UNC\s\s` は通常 UNC `\\s\s` と同一視する。
+    try std.testing.expectEqualStrings("//s/s", try normalizeLocalGitPath(gpa, "\\\\?\\UNC\\s\\s", true));
+    try std.testing.expectEqualStrings("//s/s", try normalizeLocalGitPath(gpa, "\\\\.\\UNC\\s\\s", true));
+    try std.testing.expectEqualStrings("//s/s", try normalizeLocalGitPath(gpa, "\\\\s\\s", true));
+    // POSIX では `\` はファイル名文字のため変換しない（末尾 `/` のみ除去）。
+    try std.testing.expectEqualStrings("a\\b", try normalizeLocalGitPath(gpa, "a\\b/", false));
+}
+
+test "classifyGitUrl は Windows の file:// drive 形式と UNC をローカル分類する" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+    // `file://C:/x`・`file://D:\x` は authority ではなく drive path とみなす。
+    switch (try classifyGitUrl(gpa, "file://C:/x", true)) {
+        .local => |p| try std.testing.expectEqualStrings("C:/x", p),
+        .remote => return error.TestUnexpectedResult,
+    }
+    switch (try classifyGitUrl(gpa, "file://D:\\x", true)) {
+        .local => |p| try std.testing.expectEqualStrings("D:/x", p),
+        .remote => return error.TestUnexpectedResult,
+    }
+    // `file://\\host\share` は UNC path とみなす。
+    switch (try classifyGitUrl(gpa, "file://\\\\s\\s", true)) {
+        .local => |p| try std.testing.expectEqualStrings("//s/s", p),
+        .remote => return error.TestUnexpectedResult,
+    }
+    // `file://host/share` は引き続きリモート（bare path と誤認しない）。
+    switch (try classifyGitUrl(gpa, "file://h/s", true)) {
+        .local => return error.TestUnexpectedResult,
+        .remote => {},
+    }
+    // POSIX では `file://C:/x` の `C:` は authority として残る。
+    switch (try classifyGitUrl(gpa, "file://C:/x", false)) {
+        .local => return error.TestUnexpectedResult,
+        .remote => {},
+    }
 }
 
 test {
