@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const diag = @import("diagnostics.zig");
 const fetch = @import("fetch.zig");
 const lock_model = @import("lock_model.zig");
@@ -582,7 +583,16 @@ fn createGitRepo(temporary: *std.testing.TmpDir, io: std.Io) !struct { path: [:0
     try gitRun(io, &.{ "git", "-C", repo, "-c", "user.email=test@example.com", "-c", "user.name=test", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "init" });
     const commit = try gitStdout(io, &.{ "git", "-C", repo, "rev-parse", "HEAD" });
     errdefer testing.allocator.free(commit);
-    const url = try std.fmt.allocPrint(testing.allocator, "file://{s}", .{repo});
+    // 正規の file:/// URL 形にする。Windows の `D:\a` をそのまま連結すると
+    // バックスラッシュを含み、lock JSON へ埋め込むと不正エスケープになる。
+    const url = if (builtin.os.tag == .windows) blk: {
+        const fwd = try testing.allocator.dupe(u8, repo);
+        defer testing.allocator.free(fwd);
+        for (fwd) |*c| {
+            if (c.* == '\\') c.* = '/';
+        }
+        break :blk try std.fmt.allocPrint(testing.allocator, "file:///{s}", .{fwd});
+    } else try std.fmt.allocPrint(testing.allocator, "file://{s}", .{repo});
     return .{ .path = repo, .url = url, .commit = commit };
 }
 
