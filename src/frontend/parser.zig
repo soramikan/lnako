@@ -890,9 +890,13 @@ pub const Parser = struct {
                 // その識別子を命令と誤認せず、下のparseExpression経由で引数として処理する。
                 // 条件助詞（`ならば`等）は命令として確定し、条件文へ昇格させる。
                 const token = self.peek();
-                if (token.josi.len > 0 and !isSequenceJosi(token.josi) and !isImplicitCallbackJosi(token.josi) and
-                    !isConditionalJosi(token.josi))
+                if ((token.josi.len > 0 and !isSequenceJosi(token.josi) and !isImplicitCallbackJosi(token.josi) and
+                    !isConditionalJosi(token.josi)) or
+                    (token.josi.len == 0 and self.peekAhead(1).kind == .left_paren))
                 {
+                    // 助詞なし識別子の直後が『(』ならC風呼出しの式。
+                    // resolveCommandName側と同じく命令として確定せず、
+                    // 式の解析へ委ねる（`1を表示してF(1)`）。
                     // fall through to parseExpression.
                 } else {
                     const command = self.advance();
@@ -908,12 +912,21 @@ pub const Parser = struct {
             }
 
             const expression = try expressions.parseExpression(self, 0);
-            // 保留中の引数がある終端呼出しはそのまま返せない。`5をF(1)`の
-            // 『5を』は公式では未解決の単語として構文エラーになるため、
-            // 引数へ回して末尾の未解決判定（命令呼び出しを構成できません）
-            // へ通す。`範囲をF(1)ずつ増繰返す`の増分式も同じ経路で保持される。
-            if (expression.kind == .function_call and arguments.items.len == 0 and self.isTerminator()) {
-                return self.finishChained(start, &chained_calls, expression);
+            if (expression.kind == .function_call and self.isTerminator()) {
+                // 保留中の実引数がある終端呼出しはそのまま返せない。`5をF(1)`の
+                // 『5を』は公式では未解決の単語として構文エラーになるため、
+                // 引数へ回して末尾の未解決判定（命令呼び出しを構成できません）
+                // へ通す。連文が挿入した暗黙の『それ』だけが残る場合は実引数
+                // ではないため、呼出しを連文ブロックの一部として返す
+                // （`1を表示してF(1)`は表示とF(1)を順に実行する）。
+                var only_implicit_it = true;
+                for (arguments.items) |arg| {
+                    if (!helpers.isImplicitItMarker(arg)) {
+                        only_implicit_it = false;
+                        break;
+                    }
+                }
+                if (only_implicit_it) return self.finishChained(start, &chained_calls, expression);
             }
             try arguments.append(self.allocator, expression);
 
@@ -924,7 +937,17 @@ pub const Parser = struct {
             if (self.isTerminator()) break;
         }
 
-        if (chained_calls.items.len > 0) return builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
+        if (chained_calls.items.len > 0) {
+            // 文末まで残った実引数は未解決（`1を表示して5をF(1)`の『5を』は
+            // 公式でも未解決の単語として文法エラーになる）。連文が挿入した
+            // 暗黙の『それ』マーカーは後続命令へ渡す足場なので残存を許す。
+            for (arguments.items) |arg| {
+                if (!helpers.isImplicitItMarker(arg)) {
+                    return self.fail(.unexpected_token, "命令呼び出しを構成できません", self.peek());
+                }
+            }
+            return builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
+        }
         if (arguments.items.len == 1) {
             const value = arguments.items[0];
             if (value.kind == .word) {

@@ -95,6 +95,14 @@ pub fn isImplicitCallbackJosi(josi: []const u8) bool {
     return std.mem.eql(u8, josi, "には");
 }
 
+/// `implicitIt`が連文継続用に挿入した暗黙の『それ』マーカーかどうか。
+/// ユーザーが記述した`それ`はjosiかraw_josiの少なくとも一方を持つため、
+/// 両方が空のword『それ』はマーカーとして区別できる。
+pub fn isImplicitItMarker(node: *ast.Node) bool {
+    return node.kind == .word and std.mem.eql(u8, node.value, "それ") and
+        node.josi.len == 0 and node.raw_josi.len == 0;
+}
+
 pub fn isVariableReference(kind: ast.Kind) bool {
     return kind == .word or kind == .array_reference or kind == .property_reference;
 }

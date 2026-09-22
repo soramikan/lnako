@@ -1103,6 +1103,32 @@ test "先行引数を残したC風呼出しは未解決引数として構文エ�
     try std.testing.expectEqual(diagnostic.Code.unexpected_token, result.diagnostics[0].code);
 }
 
+test "連文のあとのC風呼出しは独立した呼出しとして実行する" {
+    // 公式は`して`で文を区切るため、`1を表示してF(1)`は表示とF(1)を
+    // 順に実行する。連文が挿入した暗黙の『それ』はF(1)へ渡さない。
+    var result = try parse(std.testing.allocator, "●(Aを)Fとは\n　それはA+1\nここまで\n1を表示してF(1)\n", "chain-c-call.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    var block: ?*ast.Node = null;
+    for (result.root.?.children) |child| {
+        if (child.kind == .block) block = child;
+    }
+    try std.testing.expect(block != null);
+    try std.testing.expectEqual(ast.Kind.block, block.?.kind);
+    try std.testing.expectEqual(@as(usize, 2), block.?.children.len);
+    try std.testing.expectEqualStrings("表示", block.?.children[0].name);
+    try std.testing.expectEqualStrings("F", block.?.children[1].name);
+    try std.testing.expectEqual(@as(usize, 1), block.?.children[1].children.len);
+    try std.testing.expectEqualStrings("1", block.?.children[1].children[0].value);
+}
+
+test "連文で残った実引数とC風呼出しは未解決引数として構文エラー" {
+    var result = try parse(std.testing.allocator, "●(Aを)Fとは\n　それはA+1\nここまで\n1を表示して5をF(1)\n", "chain-c-call-stray.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+    try std.testing.expectEqual(diagnostic.Code.unexpected_token, result.diagnostics[0].code);
+}
+
 test "『ずつ』引数は増減繰返以外では構文エラー" {
     var result = try parse(std.testing.allocator, "1から5まで2ずつ繰り返す\nそれを表示\nここまで\n", "for-stray-inc.nako3");
     defer result.deinit();

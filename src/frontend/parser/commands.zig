@@ -149,8 +149,7 @@ pub fn finishChained(self: *Parser, start: Token, chained_calls: *std.ArrayList(
 pub fn rangeArguments(self: *Parser, arguments: *std.ArrayList(*ast.Node), chained_calls: *std.ArrayList(*ast.Node)) []const *ast.Node {
     _ = self;
     if (chained_calls.items.len > 0 and arguments.items.len > 0 and
-        arguments.items[0].kind == .word and std.mem.eql(u8, arguments.items[0].value, "それ") and
-        arguments.items[0].josi.len == 0 and arguments.items[0].raw_josi.len == 0)
+        helpers.isImplicitItMarker(arguments.items[0]))
     {
         return arguments.items[1..];
     }
