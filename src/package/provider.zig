@@ -255,28 +255,40 @@ fn gitUrlEql(gpa: Allocator, a: []const u8, b: []const u8) Allocator.Error!bool 
 const GitUrlKind = union(enum) { local: []const u8, remote: []const u8 };
 
 fn classifyGitUrl(gpa: Allocator, url: []const u8) Allocator.Error!GitUrlKind {
+    const windows_paths = builtin.os.tag == .windows;
     if (std.mem.startsWith(u8, url, "file://")) {
         const rest = url["file://".len..];
         const slash = std.mem.indexOfScalar(u8, rest, '/') orelse rest.len;
         const authority = rest[0..slash];
-        if (authority.len == 0 or std.ascii.eqlIgnoreCase(authority, "localhost")) {
+        // `file://\\host\share`（UNC 形式）や `file://C:/x`・`file://D:\x`
+        // のような Windows ローカル表現は authority ではなく path とみなす。
+        const windows_local = windows_paths and
+            (std.mem.startsWith(u8, rest, "\\\\") or
+                (authority.len >= 2 and std.ascii.isAlphabetic(authority[0]) and authority[1] == ':' and
+                    (authority.len == 2 or authority[2] == '\\')));
+        if (authority.len == 0 or std.ascii.eqlIgnoreCase(authority, "localhost") or windows_local) {
             // file: URL の path は URI 規則（percent encoding）を復号し、
             // OS の path 表現へ正規化してから bare path と比較する。
-            const raw_path = rest[slash..];
+            const raw_path = if (windows_local) rest else rest[slash..];
             const decoded = if (std.mem.indexOfScalar(u8, raw_path, '%') != null)
                 std.Uri.percentDecodeBackwards(try gpa.alloc(u8, raw_path.len), raw_path)
             else
                 raw_path;
-            return .{ .local = try normalizeLocalGitPath(gpa, decoded, builtin.os.tag == .windows) };
+            return .{ .local = try normalizeLocalGitPath(gpa, decoded, windows_paths) };
         }
         // authority を持つ file: URL はローカル path ではない（`file://h/s`
         // が bare path `h/s` や `s` と同一視されると別 repo を誤認する）。
         return .{ .remote = normalizeRemoteGitUrl(url) };
     }
+    // `\\host\share`・`\\?\D:\x`（UNC / extended-length path）はローカル。
+    // scp 判定より先に見る（`\\?\D:` の `:` を scp の `:` と誤認しない）。
+    if (std.mem.startsWith(u8, url, "\\\\")) {
+        return .{ .local = try normalizeLocalGitPath(gpa, url, windows_paths) };
+    }
     if (std.mem.indexOf(u8, url, "://") != null or isScpLikeGitUrl(url)) {
         return .{ .remote = normalizeRemoteGitUrl(url) };
     }
-    return .{ .local = try normalizeLocalGitPath(gpa, url, builtin.os.tag == .windows) };
+    return .{ .local = try normalizeLocalGitPath(gpa, url, windows_paths) };
 }
 
 /// ローカル path の正規化。末尾 `/` を除く。Windows では `\`→`/`、
@@ -293,6 +305,10 @@ fn normalizeLocalGitPath(gpa: Allocator, path: []const u8, windows_paths: bool) 
     var end = buf.len;
     while (end > 0 and buf[end - 1] == '/') end -= 1;
     var text: []u8 = buf[0..end];
+    // extended-length `\\?\`・device `\\.\` 前置は除去する。
+    if (std.mem.startsWith(u8, text, "//?/") or std.mem.startsWith(u8, text, "//./")) {
+        text = text[4..];
+    }
     // file: URL の Windows drive 表現 `/C:/x` → `C:/x`。
     if (text.len >= 3 and text[0] == '/' and std.ascii.isAlphabetic(text[1]) and text[2] == ':') {
         text = text[1..];
