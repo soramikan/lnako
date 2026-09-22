@@ -1,0 +1,425 @@
+//! 内容アドレス型パッケージ cache。OS 標準の cache dir に検証済みの
+//! package 内容を不変 entry として保存し、`.nako/` 環境が共有利用する。
+//!
+//! - entry は `objects/<key>/` の dir で、staging で検証を完了してから
+//!   原子的に rename して公開する。公開済み entry は変更しない。
+//! - 同時に走る取得・公開・clean は `cache.lock` の OS file lock で排他する。
+//!   process 終了時に lock は自動解放されるため、中断後に stale lock は残らない。
+//! - staging の残留は公開時・clean 時に回収する。
+
+const std = @import("std");
+const builtin = @import("builtin");
+const fetch = @import("fetch.zig");
+
+const Allocator = std.mem.Allocator;
+
+/// entry 公開完了の marker。staging 内で最後に書き込み、rename 後に存在
+/// すれば完全な entry として扱う。公開途中で中断された entry には無い。
+pub const complete_marker = ".nako-cache-entry";
+pub const lock_name = "cache.lock";
+pub const objects_dir = "objects";
+pub const staging_dir = "staging";
+pub const checkouts_dir = "checkouts";
+
+pub const Error = error{
+    Busy,
+    InvalidKey,
+    OutOfMemory,
+};
+
+/// key に使える文字。hex・`git-<hex>`・`http-<hex>` 等の決定的 ID のみ。
+fn validKey(key: []const u8) bool {
+    if (key.len == 0 or key.len > 128) return false;
+    for (key) |c| {
+        if (!(std.ascii.isAlphanumeric(c) or c == '-' or c == '_' or c == '.')) return false;
+    }
+    return true;
+}
+
+/// OS 標準の cache dir を返す。環境変数が無い・環境列挙不可なら null。
+/// - Windows: `%LOCALAPPDATA%\lnako\cache`（無ければ `%TEMP%\lnako-cache`）
+/// - macOS: `~/Library/Caches/lnako`
+/// - その他 POSIX: `$XDG_CACHE_HOME/lnako` → `~/.cache/lnako`
+pub fn defaultRoot(gpa: Allocator) Allocator.Error!?[]u8 {
+    switch (builtin.os.tag) {
+        .windows => {
+            if (try fetch.envVar(gpa, "LOCALAPPDATA")) |base| {
+                defer gpa.free(base);
+                return try std.fs.path.join(gpa, &.{ base, "lnako", "cache" });
+            }
+            if (try fetch.envVar(gpa, "TEMP")) |base| {
+                defer gpa.free(base);
+                return try std.fs.path.join(gpa, &.{ base, "lnako-cache" });
+            }
+            return null;
+        },
+        .macos => {
+            const home = (try fetch.envVar(gpa, "HOME")) orelse return null;
+            defer gpa.free(home);
+            return try std.fs.path.join(gpa, &.{ home, "Library", "Caches", "lnako" });
+        },
+        else => {
+            if (try fetch.envVar(gpa, "XDG_CACHE_HOME")) |base| {
+                defer gpa.free(base);
+                if (base.len != 0) return try std.fs.path.join(gpa, &.{ base, "lnako" });
+            }
+            const home = (try fetch.envVar(gpa, "HOME")) orelse return null;
+            defer gpa.free(home);
+            return try std.fs.path.join(gpa, &.{ home, ".cache", "lnako" });
+        },
+    }
+}
+
+/// cache.lock の排他保持。`unlock` で解放して file を閉じる。
+pub const LockGuard = struct {
+    file: std.Io.File,
+    io: std.Io,
+
+    pub fn unlock(self: *LockGuard) void {
+        self.file.unlock(self.io);
+        self.file.close(self.io);
+        self.* = undefined;
+    }
+};
+
+pub const Store = struct {
+    gpa: Allocator,
+    io: std.Io,
+    /// `objects/`・`staging/`・`cache.lock` を持つ cache ルートの絶対 path。
+    root: []const u8,
+
+    /// `root` を開き、必要な下位 dir を作成する。
+    pub fn open(gpa: Allocator, io: std.Io, root: []const u8) !Store {
+        const owned = try gpa.dupe(u8, root);
+        errdefer gpa.free(owned);
+        const objects = try std.fs.path.join(gpa, &.{ owned, objects_dir });
+        defer gpa.free(objects);
+        try std.Io.Dir.cwd().createDirPath(io, objects);
+        const staging = try std.fs.path.join(gpa, &.{ owned, staging_dir });
+        defer gpa.free(staging);
+        try std.Io.Dir.cwd().createDirPath(io, staging);
+        const checkouts = try std.fs.path.join(gpa, &.{ owned, checkouts_dir });
+        defer gpa.free(checkouts);
+        try std.Io.Dir.cwd().createDirPath(io, checkouts);
+        return .{ .gpa = gpa, .io = io, .root = owned };
+    }
+
+    pub fn deinit(self: *Store) void {
+        self.gpa.free(self.root);
+        self.* = undefined;
+    }
+
+    /// `objects/<key>` の絶対 path。key 不正は null。
+    pub fn entryPath(self: *const Store, gpa: Allocator, key: []const u8) Allocator.Error!?[]u8 {
+        if (!validKey(key)) return null;
+        return try std.fs.path.join(gpa, &.{ self.root, objects_dir, key });
+    }
+
+    /// `checkouts/<key>` の絶対 path。git checkout 等の再利用作業 dir。
+    pub fn checkoutPath(self: *const Store, gpa: Allocator, key: []const u8) Allocator.Error!?[]u8 {
+        if (!validKey(key)) return null;
+        return try std.fs.path.join(gpa, &.{ self.root, checkouts_dir, key });
+    }
+
+    /// 完了 marker まで存在する完全な entry があるか。
+    pub fn entryExists(self: *const Store, key: []const u8) bool {
+        const entry = (self.entryPath(self.gpa, key) catch return false) orelse return false;
+        defer self.gpa.free(entry);
+        const marker_file = std.fs.path.join(self.gpa, &.{ entry, complete_marker }) catch return false;
+        defer self.gpa.free(marker_file);
+        std.Io.Dir.cwd().access(self.io, marker_file, .{}) catch return false;
+        return true;
+    }
+
+    /// 完了 marker の無い entry（公開途中で中断した残骸）を削除する。
+    /// cache lock 保持中に呼ぶこと。
+    pub fn pruneIncomplete(self: *const Store) !void {
+        const objects = try std.fs.path.join(self.gpa, &.{ self.root, objects_dir });
+        defer self.gpa.free(objects);
+        var dir = std.Io.Dir.cwd().openDir(self.io, objects, .{ .iterate = true }) catch |err| switch (err) {
+            error.FileNotFound => return,
+            else => return err,
+        };
+        defer dir.close(self.io);
+        var it = dir.iterate();
+        while (try it.next(self.io)) |entry| {
+            if (entry.kind != .directory) continue;
+            if (self.entryExists(entry.name)) continue;
+            const victim = try std.fs.path.join(self.gpa, &.{ objects, entry.name });
+            defer self.gpa.free(victim);
+            std.Io.Dir.cwd().deleteTree(self.io, victim) catch continue;
+        }
+        // staging の残留も回収する。
+        const staging = try std.fs.path.join(self.gpa, &.{ self.root, staging_dir });
+        defer self.gpa.free(staging);
+        var sdir = std.Io.Dir.cwd().openDir(self.io, staging, .{ .iterate = true }) catch return;
+        defer sdir.close(self.io);
+        var sit = sdir.iterate();
+        while (try sit.next(self.io)) |entry| {
+            const victim = try std.fs.path.join(self.gpa, &.{ staging, entry.name });
+            defer self.gpa.free(victim);
+            std.Io.Dir.cwd().deleteTree(self.io, victim) catch continue;
+        }
+    }
+
+    /// `staging_abs`（検証済みの dir 木）を `objects/<key>` として原子的に
+    /// 公開する。既に同名 entry があれば staging を破棄して成功とする
+    /// （内容アドレスなので同一 key = 同一内容）。
+    /// `staging_abs` は cache root の `staging/` 内でなくてもよいが、
+    /// rename が同じ volume 内で成立する必要がある（跨ぐ場合は呼出し側が
+    /// cache 内 staging を使う）。
+    pub fn publish(self: *const Store, key: []const u8, staging_abs: []const u8) !void {
+        if (!validKey(key)) return error.InvalidKey;
+        // 完了 marker を staging 内に書いてから rename する。rename は atomic
+        // なので、観測される entry は常に marker 付きの完全なものになる。
+        const marker_file = try std.fs.path.join(self.gpa, &.{ staging_abs, complete_marker });
+        defer self.gpa.free(marker_file);
+        try std.Io.Dir.cwd().writeFile(self.io, .{ .sub_path = marker_file, .data = "ok\n" });
+        const dest = try std.fs.path.join(self.gpa, &.{ self.root, objects_dir, key });
+        defer self.gpa.free(dest);
+        std.Io.Dir.renameAbsolute(staging_abs, dest, self.io) catch |err| switch (err) {
+            // 同名 dir が既に存在する（同一 key の entry が先に公開された）。
+            // 内容アドレスなので内容は同一とみなし、重複した staging は破棄する。
+            error.IsDir, error.NotDir, error.DirNotEmpty => {
+                std.Io.Dir.cwd().deleteTree(self.io, staging_abs) catch {};
+            },
+            else => return err,
+        };
+    }
+
+    /// `keep` に含まれない entry を削除する。呼出し側が cache lock を保持
+    /// している前提で、使用中 entry を消さない協調を実現する。staging と
+    /// 未完了 entry も回収する。戻り値は削除した entry 数。
+    pub fn cleanKeep(self: *const Store, keep: []const []const u8) !usize {
+        const objects = try std.fs.path.join(self.gpa, &.{ self.root, objects_dir });
+        defer self.gpa.free(objects);
+        var removed: usize = 0;
+        var dir = std.Io.Dir.cwd().openDir(self.io, objects, .{ .iterate = true }) catch |err| switch (err) {
+            error.FileNotFound => return 0,
+            else => return err,
+        };
+        defer dir.close(self.io);
+        var it = dir.iterate();
+        while (try it.next(self.io)) |entry| {
+            if (entry.kind != .directory) continue;
+            var keep_it = false;
+            for (keep) |k| {
+                if (std.mem.eql(u8, k, entry.name)) {
+                    keep_it = true;
+                    break;
+                }
+            }
+            if (!keep_it) {
+                const victim = try std.fs.path.join(self.gpa, &.{ objects, entry.name });
+                defer self.gpa.free(victim);
+                std.Io.Dir.cwd().deleteTree(self.io, victim) catch continue;
+                removed += 1;
+            }
+        }
+        try self.pruneIncomplete();
+        return removed;
+    }
+
+    /// objects・checkouts・staging の全内容を削除する（cache の完全初期化）。
+    /// cache lock 保持中に呼ぶこと。戻り値は削除したトップレ項目数。
+    pub fn cleanAll(self: *const Store) !usize {
+        var removed: usize = 0;
+        const subdirs = [_][]const u8{ objects_dir, staging_dir, checkouts_dir };
+        for (subdirs) |sub| {
+            const base = try std.fs.path.join(self.gpa, &.{ self.root, sub });
+            defer self.gpa.free(base);
+            var dir = std.Io.Dir.cwd().openDir(self.io, base, .{ .iterate = true }) catch |err| switch (err) {
+                error.FileNotFound => continue,
+                else => return err,
+            };
+            defer dir.close(self.io);
+            var it = dir.iterate();
+            while (try it.next(self.io)) |entry| {
+                const victim = try std.fs.path.join(self.gpa, &.{ base, entry.name });
+                defer self.gpa.free(victim);
+                std.Io.Dir.cwd().deleteTree(self.io, victim) catch continue;
+                removed += 1;
+            }
+        }
+        return removed;
+    }
+
+    /// `cache.lock` を排他取得する。別 process が保持中は `error.Busy`。
+    /// OS の advisory lock は process 終了で自動解放されるため、中断後に
+    /// stale lock が残らない。
+    pub fn lock(self: *const Store) (Error || std.Io.File.OpenError)!LockGuard {
+        return self.lockImpl(true);
+    }
+
+    /// `lock` の blocking 版。保持中の処理が終わるまで待つ。
+    pub fn lockWait(self: *const Store) (Error || std.Io.File.OpenError)!LockGuard {
+        return self.lockImpl(false);
+    }
+
+    fn lockImpl(self: *const Store, nonblocking: bool) (Error || std.Io.File.OpenError)!LockGuard {
+        const path = try std.fs.path.join(self.gpa, &.{ self.root, lock_name });
+        defer self.gpa.free(path);
+        var file = std.Io.Dir.cwd().createFile(self.io, path, .{
+            .read = true,
+            .lock = .exclusive,
+            .lock_nonblocking = nonblocking,
+        }) catch |err| switch (err) {
+            error.WouldBlock => return error.Busy,
+            else => return err,
+        };
+        errdefer file.close(self.io);
+        return .{ .file = file, .io = self.io };
+    }
+};
+
+// ---------------------------------------------------------------------------
+// tests
+// ---------------------------------------------------------------------------
+
+const testing = std.testing;
+
+fn openTempStore(temporary: *std.testing.TmpDir) !Store {
+    const root = try temporary.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    return try Store.open(testing.allocator, testing.io, root);
+}
+
+test "cache store は staging を publish で原子的に公開する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "stage/tree/src");
+    try temporary.dir.writeFile(io, .{ .sub_path = "stage/tree/src/index.nako3", .data = "●テストとは\n" });
+    const staging_abs = try temporary.dir.realPathFileAlloc(io, "stage", testing.allocator);
+    defer testing.allocator.free(staging_abs);
+
+    var store = try openTempStore(&temporary);
+    defer store.deinit();
+    try store.publish("deadbeef", staging_abs);
+    try testing.expect(store.entryExists("deadbeef"));
+    try testing.expect(!store.entryExists("other"));
+
+    // 公開された tree の内容を確認する。
+    const entry = (try store.entryPath(testing.allocator, "deadbeef")).?;
+    defer testing.allocator.free(entry);
+    const copied = try std.fs.path.join(testing.allocator, &.{ entry, "tree", "src", "index.nako3" });
+    defer testing.allocator.free(copied);
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, copied, testing.allocator, .unlimited);
+    defer testing.allocator.free(bytes);
+    try testing.expectEqualStrings("●テストとは\n", bytes);
+}
+
+test "cache store は同一 key の再公開で既存 entry を維持する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "first/tree");
+    try temporary.dir.createDirPath(io, "second/tree");
+    try temporary.dir.writeFile(io, .{ .sub_path = "first/tree/a", .data = "1" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "second/tree/a", .data = "2" });
+    const first = try temporary.dir.realPathFileAlloc(io, "first", testing.allocator);
+    defer testing.allocator.free(first);
+    const second = try temporary.dir.realPathFileAlloc(io, "second", testing.allocator);
+    defer testing.allocator.free(second);
+
+    var store = try openTempStore(&temporary);
+    defer store.deinit();
+    try store.publish("same", first);
+    try store.publish("same", second);
+
+    const entry = (try store.entryPath(testing.allocator, "same")).?;
+    defer testing.allocator.free(entry);
+    const file = try std.fs.path.join(testing.allocator, &.{ entry, "tree", "a" });
+    defer testing.allocator.free(file);
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, file, testing.allocator, .unlimited);
+    defer testing.allocator.free(bytes);
+    try testing.expectEqualStrings("1", bytes);
+}
+
+test "cache store は marker の無い不完全 entry と staging 残留を回収する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+
+    var store = try openTempStore(&temporary);
+    defer store.deinit();
+    // 公開途中で中断した不完全 entry と staging 残骸を作る。
+    const incomplete = try std.fs.path.join(testing.allocator, &.{ store.root, objects_dir, "broken", "tree" });
+    defer testing.allocator.free(incomplete);
+    try std.Io.Dir.cwd().createDirPath(io, incomplete);
+    const stale = try std.fs.path.join(testing.allocator, &.{ store.root, staging_dir, "leftover" });
+    defer testing.allocator.free(stale);
+    try std.Io.Dir.cwd().createDirPath(io, stale);
+
+    try testing.expect(!store.entryExists("broken"));
+    try store.pruneIncomplete();
+
+    const objects_path = try std.fs.path.join(testing.allocator, &.{ store.root, objects_dir });
+    defer testing.allocator.free(objects_path);
+    var objects = try std.Io.Dir.openDirAbsolute(io, objects_path, .{ .iterate = true });
+    defer objects.close(io);
+    var it = objects.iterate();
+    try testing.expect((try it.next(io)) == null);
+
+    const staging_path = try std.fs.path.join(testing.allocator, &.{ store.root, staging_dir });
+    defer testing.allocator.free(staging_path);
+    var staging = try std.Io.Dir.openDirAbsolute(io, staging_path, .{ .iterate = true });
+    defer staging.close(io);
+    var sit = staging.iterate();
+    try testing.expect((try sit.next(io)) == null);
+}
+
+test "cache store の cleanKeep は keep 以外の entry を削除する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var store = try openTempStore(&temporary);
+    defer store.deinit();
+
+    for ([_][]const u8{ "keep-a", "drop-b", "drop-c" }) |key| {
+        const staging = try std.fs.path.join(testing.allocator, &.{ store.root, staging_dir, key });
+        defer testing.allocator.free(staging);
+        const tree = try std.fmt.allocPrint(testing.allocator, "{s}/tree", .{staging});
+        defer testing.allocator.free(tree);
+        try std.Io.Dir.cwd().createDirPath(io, tree);
+        try store.publish(key, staging);
+    }
+    const removed = try store.cleanKeep(&.{"keep-a"});
+    try testing.expectEqual(@as(usize, 2), removed);
+    try testing.expect(store.entryExists("keep-a"));
+    try testing.expect(!store.entryExists("drop-b"));
+    try testing.expect(!store.entryExists("drop-c"));
+}
+
+test "cache store の排他 lock は保持中に Busy を返し解放後に取得できる" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var store = try openTempStore(&temporary);
+    defer store.deinit();
+
+    var guard = try store.lock();
+    try testing.expectError(error.Busy, store.lock());
+    guard.unlock();
+    var second = try store.lock();
+    second.unlock();
+}
+
+test "cache key は規範外の文字を拒否する" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var store = try openTempStore(&temporary);
+    defer store.deinit();
+
+    try testing.expect((try store.entryPath(testing.allocator, "../escape")) == null);
+    try testing.expect((try store.entryPath(testing.allocator, "a/b")) == null);
+    try testing.expect((try store.entryPath(testing.allocator, "")) == null);
+    try testing.expectError(error.InvalidKey, store.publish("../escape", "/tmp/never"));
+}
+
+test "cache defaultRoot は環境から OS 標準 dir を導く" {
+    if (@import("builtin").os.tag == .wasi) return error.SkipZigTest;
+    const root = (try defaultRoot(testing.allocator)) orelse return error.SkipZigTest;
+    defer testing.allocator.free(root);
+    try testing.expect(std.fs.path.isAbsolute(root));
+    try testing.expect(std.mem.indexOf(u8, root, "lnako") != null);
+}
