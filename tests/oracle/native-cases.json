@@ -3052,6 +3052,30 @@
     "source": "F={関数}MAX\nF(3,5,2)を表示\nG={関数}連結\nG(\"a\",\"b\",\"c\")を表示\n"
   },
   {
+    "id": "native-foreach-sparse-array-hole",
+    "source": "A=[]\nA[2]に9を代入\nAを反復\n対象キーを表示\n対象を表示\nここまで\n"
+  },
+  {
+    "id": "native-foreach-array-shrink",
+    "source": "A=[1,2,3]\nAを反復\n対象を表示\nAの配列ポップ\nここまで\n"
+  },
+  {
+    "id": "native-foreach-array-grow-not-enumerated",
+    "source": "A=[1,2]\nAを反復\n対象を表示\nもし対象キーが1ならば\nAに3を配列追加\nここまで\nここまで\n"
+  },
+  {
+    "id": "native-foreach-dictionary-mutation",
+    "source": "D={\"a\":1,\"b\":2,\"c\":3}\nDを反復\n対象キーを表示\nもし対象キーが「a」ならば\nDから「b」を辞書キー削除\nここまで\nここまで\nE={\"a\":1,\"b\":2}\nEを反復\n対象キーを表示\nもし対象キーが「a」ならば\nE[\"z\"]=9\nここまで\nここまで\n"
+  },
+  {
+    "id": "native-foreach-array-own-property",
+    "source": "A=[1,2]\nA[\"x\"]=9\nA[\"y\"]=8\nAを反復\n「{対象キー}:{対象}」を表示\nもし対象キーが「x」ならば\nAから「y」を辞書キー削除\nここまで\nここまで\nB=[1]\nBを反復\n対象キーを表示\nもし対象キーが0ならば\nB[\"z\"]=7\nここまで\nここまで\n"
+  },
+  {
+    "id": "native-foreach-dictionary-integer-key-order",
+    "source": "D={\"2\":2,\"1\":1,\"x\":9,\"10\":10}\nDを反復\n対象キーを表示\nここまで\n"
+  },
+  {
     "id": "native-koto-call-suffix-implicit-return",
     "source": "●(AとBの)加算処理とは\nAにBを足すこと。\nここまで\n3と7の加算処理して表示。\n"
   },
@@ -3097,4 +3121,3 @@
     "source": "A=[1,2]\nAを反復\n対象を表示\nここまで\n3回\n回数を表示\nここまで\n"
   }
 ]
-

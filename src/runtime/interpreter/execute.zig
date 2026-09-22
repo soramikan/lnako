@@ -35,6 +35,7 @@ const Interpreter = istate.Interpreter;
 const TestResult = shared.TestResult;
 const Value = shared.Value;
 const Runtime = shared.Runtime;
+const String = value_mod.String;
 const DynamicPreparationFn = istate.DynamicPreparationFn;
 const Frame = shared.Frame;
 const IteratorKind = shared.IteratorKind;
@@ -1328,97 +1329,6 @@ fn makeBuiltinFunctionValue(self: *Interpreter, name: []const u8) !Value {
     try root.protect(&name_value);
     const arity = if (builtin_catalog.findArity(name)) |spec| spec.count else 0;
     return self.runtime.createBuiltinFunction(name_value.string, arity);
-}
-
-pub fn iteratorBegin(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
-    const id = instruction.result orelse return error.InvalidIterator;
-    var state: IteratorState = undefined;
-    if (instruction.name.len > 0 and instruction.operands.len >= 2) {
-        const start = try self.runtime.valueToNumber(self.operand(frame, instruction, 0));
-        const end = try self.runtime.valueToNumber(self.operand(frame, instruction, 1));
-        var step: f64 = if (instruction.operands.len >= 3 and self.operand(frame, instruction, 2) != .undefined)
-            try self.runtime.valueToNumber(self.operand(frame, instruction, 2))
-        else if (instruction.loop_direction == .down or (instruction.loop_direction == .automatic and start > end)) -1 else 1;
-        if (instruction.loop_direction == .down and step > 0) step = -step;
-        if (instruction.loop_direction == .up and step < 0) step = -step;
-        if (!std.math.isFinite(start) or !std.math.isFinite(end)) return error.InvalidIteratorRange;
-        if (step == 0 or !std.math.isFinite(step)) return error.InvalidIteratorStep;
-        state = .{ .kind = .range, .current = start, .end = end, .step = step, .variable_name = instruction.name, .variable_local = instruction.local_target };
-    } else {
-        const source = self.operand(frame, instruction, 0);
-        state = switch (source) {
-            .number => |number| .{ .kind = .repeat, .count = try repeatCount(number) },
-            .bytes => .{ .kind = .bytes, .source = source, .count = source.bytes.bytes.len },
-            .array => .{ .kind = .array, .source = source, .count = source.array.len() },
-            .string => .{ .kind = .string, .source = source, .count = source.string.len() },
-            .dictionary => .{ .kind = .dictionary, .source = source, .count = source.dictionary.len() },
-            else => .{ .kind = .repeat, .count = 0 },
-        };
-    }
-    try frame.iterators.put(self.allocator, id, state);
-    return .{ .number = @floatFromInt(id) };
-}
-
-pub fn iteratorHasNext(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !bool {
-    _ = self;
-    const id = instruction.operands[0];
-    const state = frame.iterators.get(id) orelse return error.InvalidIterator;
-    return switch (state.kind) {
-        .range => if (state.step > 0) state.current <= state.end else state.current >= state.end,
-        else => state.index < state.count,
-    };
-}
-
-pub fn iteratorNext(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
-    const id = instruction.operands[0];
-    const state = frame.iterators.getPtr(id) orelse return error.InvalidIterator;
-    var result: Value = .undefined;
-    switch (state.kind) {
-        .repeat => {
-            state.index += 1;
-            result = .{ .number = @floatFromInt(state.index) };
-            try self.setGlobal("回数", result);
-        },
-        .range => {
-            result = .{ .number = state.current };
-            state.current += state.step;
-            // 繰り返し変数は意味解析の束縛結果（iterator_begin時に保持）で
-            // ローカル・グローバルを分ける。同名ローカルの有無で推測しない。
-            if (state.variable_local) {
-                try self.storeLocal(frame, state.variable_name, result);
-            } else try self.setGlobal(state.variable_name, result);
-        },
-        .bytes => {
-            result = state.source.bytes.get(state.index);
-            try self.setGlobal("対象キー", .{ .number = @floatFromInt(state.index) });
-            state.index += 1;
-            try self.setGlobal("対象", result);
-        },
-        .array => {
-            result = state.source.array.get(state.index);
-            try self.setGlobal("対象キー", .{ .number = @floatFromInt(state.index) });
-            state.index += 1;
-            try self.setGlobal("対象", result);
-        },
-        .string => {
-            const owned = (try state.source.string.at(self.allocator, state.index)).?;
-            defer {
-                var temporary = owned;
-                temporary.deinit();
-            }
-            result = try self.runtime.stringCodeUnits(owned.units);
-            try self.setGlobal("対象キー", .{ .number = @floatFromInt(state.index) });
-            state.index += 1;
-            try self.setGlobal("対象", result);
-        },
-        .dictionary => {
-            result = state.source.dictionary.values()[state.index];
-            try self.setGlobal("対象キー", .{ .string = state.source.dictionary.keys()[state.index] });
-            state.index += 1;
-            try self.setGlobal("対象", result);
-        },
-    }
-    return result;
 }
 
 pub fn executeDynamicValue(self: *Interpreter, source_value: Value) !Value {

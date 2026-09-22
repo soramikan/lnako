@@ -209,19 +209,19 @@ pub export fn lnako_aot_destructure_get(out: *state.Value, source: *const state.
     out.* = if (state.active_runtime) |*runtime| runtime.destructureGet(source.*, index) else .{};
 }
 
-pub export fn lnako_aot_iterator_new(out: *state.Value, values: ?[*]const state.Value, len: usize, is_range: bool, direction: u8) callconv(.c) void {
+pub export fn lnako_aot_iterator_new(out: *state.Value, values: ?[*]const state.Value, len: usize, is_range: bool, direction: u8, is_foreach: bool) callconv(.c) void {
     out.* = .{};
     const runtime = if (state.active_runtime) |*value| value else return;
     const source = if (values) |pointer| pointer[0..len] else if (len == 0) &.{} else return;
-    out.* = runtime.createIterator(source, is_range, direction) catch |failure| state.runtimeFailure(failure);
+    out.* = runtime.createIterator(source, is_range, direction, is_foreach) catch |failure| state.runtimeFailure(failure);
 }
 
 pub export fn lnako_aot_iterator_has_next(iterator: *const state.Value) callconv(.c) c_int {
     return if (state.active_runtime) |*runtime| @intFromBool(runtime.iteratorHasNext(iterator.*)) else 0;
 }
 
-pub export fn lnako_aot_iterator_next(out: *state.Value, iterator: *const state.Value, repeat_target: ?*state.Value, value_target: ?*state.Value, key_target: ?*state.Value, range_target: ?*state.Value) callconv(.c) void {
-    out.* = if (state.active_runtime) |*runtime| runtime.iteratorNext(iterator.*, repeat_target, value_target, key_target, range_target) else .{};
+pub export fn lnako_aot_iterator_next(out: *state.Value, iterator: *const state.Value, repeat_target: ?*state.Value, value_target: ?*state.Value, key_target: ?*state.Value, range_target: ?*state.Value, sore_target: ?*state.Value) callconv(.c) void {
+    out.* = if (state.active_runtime) |*runtime| runtime.iteratorNext(iterator.*, repeat_target, value_target, key_target, range_target, sore_target) else .{};
 }
 
 pub export fn lnako_aot_binding_cell_new(out: *state.Value, initial: ?*const state.Value) callconv(.c) void {
