@@ -939,6 +939,45 @@ test "npkg verify は runtime 不適合を拒否する" {
     try testing.expect(list.find(diag.E031_UNSUPPORTED_RUNTIME) != null);
 }
 
+test "npkg verifyArchive は target 適合を検査せず checkManifestTarget で再検証できる" {
+    const allocator = testing.allocator;
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+
+    const metadata =
+        \\schemaVersion = 1
+        \\
+        \\[package]
+        \\name = "x"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\runtimes = ["cnako"]
+        \\
+    ;
+    const payload = "x";
+    const files_toml = try emitFilesToml(allocator, &.{
+        .{ .path = "a.txt", .sha256 = sha256Of(payload), .size = payload.len },
+    });
+    defer allocator.free(files_toml);
+    const archive = try zip.writeEntries(allocator, &.{
+        .{ .name = "NAKO-PKG/METADATA.toml", .data = metadata },
+        .{ .name = "NAKO-PKG/FILES.toml", .data = files_toml },
+        .{ .name = "NAKO-PKG/commands.json", .data = empty_commands },
+        .{ .name = "a.txt", .data = payload },
+    });
+    defer allocator.free(archive);
+
+    // 取得層の検証は archive 構造と FILES.toml のみを見る。cnako 専用の
+    // 配布も既定 target で誤拒否せず受理する。
+    var verified = try npkg_verify.verifyArchive(allocator, archive, &list);
+    defer verified.deinit();
+
+    // 利用側は要求 target で適合を再検証する（cache 命中経路も同じ判定）。
+    try npkg_verify.checkManifestTarget(allocator, &verified.manifest, .{ .runtime = "cnako" }, &list);
+    try testing.expectError(error.InvalidPackage, npkg_verify.checkManifestTarget(allocator, &verified.manifest, .{ .runtime = "lnako" }, &list));
+    try testing.expect(list.find(diag.E031_UNSUPPORTED_RUNTIME) != null);
+}
+
 /// cwd から上方向に conformance fixture ルートを探す（manifest_test と同規則）。
 fn openRepoRoot(io: std.Io) !std.Io.Dir {
     const probe = "tools/package-system/conformance/valid/manifest/minimal/nako.toml";

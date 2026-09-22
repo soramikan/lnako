@@ -546,7 +546,9 @@ pub fn verifyHash(session: *Session, bytes: []const u8, expected: []const u8, ta
 /// `GIT_*` を除去した環境を返す。対応しない環境では null（既定の継承）
 /// を返す。
 /// 返り値の Map は呼出し側が `deinit` で解放する。
-pub fn sanitizedGitEnvMap(gpa: Allocator) Allocator.Error!?std.process.Environ.Map {
+/// 全環境変数を `Environ.Map` として読み取る。WASI のように環境列挙を
+/// 持たない実行環境では null を返す。
+pub fn readEnvMap(gpa: Allocator) Allocator.Error!?std.process.Environ.Map {
     var map = std.process.Environ.Map.init(gpa);
     errdefer map.deinit();
     switch (builtin.os.tag) {
@@ -568,8 +570,6 @@ pub fn sanitizedGitEnvMap(gpa: Allocator) Allocator.Error!?std.process.Environ.M
                 while (ptr[i] != 0) : (i += 1) {}
                 const value_w = ptr[value_start..i];
                 i += 1;
-                // Windows の環境変数参照は大小文字を区別しない。
-                if (key_w.len >= 4 and windows.eqlIgnoreCaseWtf16(key_w[0..4], &.{ 'G', 'I', 'T', '_' })) continue;
                 const key = try std.unicode.wtf16LeToWtf8Alloc(gpa, key_w);
                 defer gpa.free(key);
                 const value = try std.unicode.wtf16LeToWtf8Alloc(gpa, value_w);
@@ -584,11 +584,41 @@ pub fn sanitizedGitEnvMap(gpa: Allocator) Allocator.Error!?std.process.Environ.M
             while (std.c.environ[i]) |entry| : (i += 1) {
                 const kv = std.mem.span(entry);
                 const eq = std.mem.indexOfScalar(u8, kv, '=') orelse continue;
-                // POSIX の環境変数名は大小文字を区別するため `GIT_` 限定。
-                if (std.mem.startsWith(u8, kv[0..eq], "GIT_")) continue;
                 try map.put(kv[0..eq], kv[eq + 1 ..]);
             }
             return map;
         },
     }
+}
+
+/// `name` の環境変数値を返す。環境列挙を持たない実行環境・未設定は null。
+pub fn envVar(gpa: Allocator, name: []const u8) Allocator.Error!?[]u8 {
+    var map = (try readEnvMap(gpa)) orelse return null;
+    defer map.deinit();
+    const value = map.get(name) orelse return null;
+    return try gpa.dupe(u8, value);
+}
+
+/// git 子プロセスへ渡す環境。`GIT_*` を除去して呼出し側の Git 状態
+/// （`GIT_DIR`・`GIT_WORK_TREE`・フック実行中の変数等）が別 repository の
+/// 操作へ漏れないようにする。環境列挙を持たない実行環境では null を返し、
+/// 呼出し側は environ を引き継がない選択を検討する。
+pub fn sanitizedGitEnvMap(gpa: Allocator) Allocator.Error!?std.process.Environ.Map {
+    var full = (try readEnvMap(gpa)) orelse return null;
+    defer full.deinit();
+    var map = std.process.Environ.Map.init(gpa);
+    errdefer map.deinit();
+    const keys = full.keys();
+    const values = full.values();
+    for (keys, values) |key, value| {
+        // Windows の環境変数参照は大小文字を区別しない。POSIX は区別する
+        // ため小文字の `git_*` は残す。
+        const is_git = if (builtin.os.tag == .windows)
+            key.len >= 4 and std.ascii.eqlIgnoreCase(key[0..4], "GIT_")
+        else
+            std.mem.startsWith(u8, key, "GIT_");
+        if (is_git) continue;
+        try map.put(key, value);
+    }
+    return map;
 }

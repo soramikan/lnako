@@ -37,9 +37,22 @@ pub const Acquired = struct {
 // path provider
 // ---------------------------------------------------------------------------
 
+/// path 依存の宣言 path が絶対 path か。spec §3.4.3 は相対・絶対の双方を
+/// 許容する。実行環境の `std.fs.path.isAbsolute` だけでは判定できない
+/// Windows 形式（`C:/x`・`C:\x`・`\\srv\sh`）も全環境で絶対扱いする
+/// （lock は生成環境の path をそのまま保持するため）。
+pub fn isAbsoluteDepPath(path: []const u8) bool {
+    if (path.len == 0) return false;
+    if (path[0] == '/' or path[0] == '\\') return true;
+    if (path.len >= 3 and std.ascii.isAlphabetic(path[0]) and path[1] == ':' and
+        (path[2] == '/' or path[2] == '\\')) return true;
+    return std.fs.path.isAbsolute(path);
+}
+
 /// path 依存の取得。path は編集可能な参照であり、ディレクトリ内の
 /// `nako.toml` を読んで manifest を返す。ネットワーク・git は使わないため
 /// `--offline` でも動作する。Unicode path は byte 列としてそのまま扱う。
+/// 絶対 path は `base_dir` と結合せずそのまま使う（spec §3.4.3）。
 ///
 /// `base_dir` は manifest を置いたプロジェクトルート（依存宣言の基準 dir）。
 pub fn acquirePath(
@@ -48,7 +61,10 @@ pub fn acquirePath(
     base_dir: []const u8,
 ) Error!Acquired {
     const gpa = session.allocator();
-    const dir_path = try std.fs.path.join(gpa, &.{ base_dir, dep.path });
+    const dir_path = if (isAbsoluteDepPath(dep.path))
+        try gpa.dupe(u8, dep.path)
+    else
+        try std.fs.path.join(gpa, &.{ base_dir, dep.path });
     const manifest_path = try std.fs.path.join(gpa, &.{ dir_path, "nako.toml" });
     const parsed = try readDependencyManifest(session, manifest_path, dep.name, "path");
     return .{
@@ -389,6 +405,10 @@ fn gitRun(session: *Session, argv: []const []const u8, target: ?[]const u8) Erro
 /// HTTP URL 依存の取得。`dep.hash` で内容を照合し、`.npkg`（ZIP）であれば
 /// `npkg_verify` で検証して manifest を取り出す。別 source への暗黙切替や
 /// hash 未検証の受理は行わない。
+///
+/// `.npkg` の対象環境適合は provider が決められないため archive 構造・
+/// 必須 metadata・FILES.toml のみをここで検査する。runtime・engines・
+/// artifact 選択の適合判定は利用側（`sync` の `npkgTarget` 検証）が担う。
 pub fn acquireHttp(session: *Session, dep: manifest_mod.HttpDependency) Error!Acquired {
     const bytes = try fetch.fetchBytes(session, dep.url, .artifact);
     try fetch.verifyHash(session, bytes, dep.hash, dep.url, .artifact);
@@ -411,7 +431,9 @@ pub fn acquireHttp(session: *Session, dep: manifest_mod.HttpDependency) Error!Ac
         defer scratch.deinit();
         // `Verified` の arena は session arena を backing にするため、deinit
         // せず session の寿命まで `verified.manifest` を有効に保つ。
-        const verified = npkg_verify.verify(session.allocator(), bytes, .{}, session.diagSink(&scratch)) catch |err| switch (err) {
+        // target 適合は要求 profile 未定のここでは判定しない（既定 target
+        // での誤拒否を防ぐ）。sync 側が実 target で再検証する。
+        const verified = npkg_verify.verifyArchive(session.allocator(), bytes, session.diagSink(&scratch)) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => return session.fail(.invalid_metadata, .artifact, dep.url, "downloaded .npkg at \"{s}\" failed verification", .{dep.url}),
         };

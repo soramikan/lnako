@@ -117,6 +117,11 @@ pub const package = struct {
     pub const fetch = @import("package/fetch.zig");
     pub const provider = @import("package/provider.zig");
     pub const registry = @import("package/registry.zig");
+    pub const cache = @import("package/cache.zig");
+    pub const environment = @import("package/environment.zig");
+    pub const materialize = @import("package/materialize.zig");
+    pub const unpack = @import("package/unpack.zig");
+    pub const sync = @import("package/sync.zig");
 };
 
 pub const Command = enum {
@@ -128,6 +133,7 @@ pub const Command = enum {
     benchmark,
     toolchain,
     package,
+    sync,
     help,
     version,
 };
@@ -150,6 +156,7 @@ pub fn parseCommand(args: []const []const u8) ParseError!Command {
     if (std.mem.eql(u8, first, "benchmark")) return .benchmark;
     if (std.mem.eql(u8, first, "toolchain")) return .toolchain;
     if (std.mem.eql(u8, first, "package")) return .package;
+    if (std.mem.eql(u8, first, "sync")) return .sync;
     if (std.mem.eql(u8, first, "compat")) {
         if (args.len < 2 or !std.mem.eql(u8, args[1], "report")) return error.MissingCompatAction;
         return .compat;
@@ -171,6 +178,8 @@ pub fn usage(writer: *std.Io.Writer) !void {
         \\  lnako toolchain <status|dir|install|update|remove>
         \\  lnako package build [<dir>] [-o <output.npkg>]
         \\  lnako package verify <file.npkg> [--runtime lnako|cnako] [--os <os>] [--cpu <cpu>] [--abi <abi>] [--os-version <v>] [--libc <libc>] [--optimize <level>] [--feature <name>] [--no-default-features] [--nako-version <v>] [--cnako-version <v>] [--lnako-version <v>] [--compat-js]
+        \\  lnako package cache dir|clean [--package-cache-dir <path>]
+        \\  lnako sync [<dir>] [--profile <name>] [--runtime lnako|cnako] [--offline] [--json] [--package-cache-dir <path>] [--package-cache-clean] [--allow-plaintext-http]
         \\
         \\共通オプション:
         \\  -h, --help       このヘルプを表示
@@ -262,6 +271,11 @@ test {
     std.testing.refAllDecls(package.fetch);
     std.testing.refAllDecls(package.provider);
     std.testing.refAllDecls(package.registry);
+    std.testing.refAllDecls(package.cache);
+    std.testing.refAllDecls(package.environment);
+    std.testing.refAllDecls(package.materialize);
+    std.testing.refAllDecls(package.unpack);
+    std.testing.refAllDecls(package.sync);
 }
 
 test "コマンドを解析できる" {

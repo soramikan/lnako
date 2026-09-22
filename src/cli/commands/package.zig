@@ -11,6 +11,7 @@ const diag = lnako.package.diagnostics;
 const npkg_build = lnako.package.npkg_build;
 const npkg_verify = lnako.package.npkg_verify;
 const semver = lnako.package.semver;
+const cache = lnako.package.cache;
 
 fn renderAndFail(list: *const diag.List, stderr: *std.Io.Writer, source_name: []const u8) !noreturn {
     try list.render(stderr, source_name);
@@ -170,9 +171,64 @@ fn runVerify(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8,
     try stdout.print("（{d} ファイル、{d} 命令）— 検証 OK\n", .{ verified.files.len, verified.commands.len });
 }
 
+/// `lnako package cache dir|clean` — 共有 cache の場所表示と初期化。
+/// clean は cache lock を取得してから objects・checkouts・staging を全て
+/// 削除する。使用中の sync は lock で直列化されるため途中の entry を
+/// 観測・削除しない。
+fn runCache(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !void {
+    if (args.len == 0) {
+        try stderr.writeAll("package cache: 操作を指定してください（dir|clean）\n");
+        std.process.exit(2);
+    }
+    const action = args[0];
+    var cache_dir: ?[]const u8 = null;
+    var index: usize = 1;
+    while (index < args.len) : (index += 1) {
+        const argument = args[index];
+        if (std.mem.eql(u8, argument, "--package-cache-dir")) {
+            index += 1;
+            if (index >= args.len) {
+                try stderr.writeAll("package cache: --package-cache-dir にはパスが必要です\n");
+                std.process.exit(2);
+            }
+            cache_dir = args[index];
+        } else {
+            try stderr.print("package cache: 不明な引数です: {s}\n", .{argument});
+            std.process.exit(2);
+        }
+    }
+
+    const root = cache_dir orelse (try cache.defaultRoot(allocator)) orelse {
+        try stderr.writeAll("package cache: 環境変数から cache dir を決定できません。--package-cache-dir を指定してください\n");
+        std.process.exit(1);
+    };
+
+    if (std.mem.eql(u8, action, "dir")) {
+        try stdout.print("{s}\n", .{root});
+        return;
+    }
+    if (!std.mem.eql(u8, action, "clean")) {
+        try stderr.print("package cache: 不明な操作です: {s}（dir|clean）\n", .{action});
+        std.process.exit(2);
+    }
+
+    var store = try cache.Store.open(allocator, io, root);
+    defer store.deinit();
+    var guard = store.lockWait() catch |err| switch (err) {
+        error.Busy => {
+            try stderr.writeAll("package cache clean: 別の処理が cache を使用中です\n");
+            std.process.exit(1);
+        },
+        else => return err,
+    };
+    defer guard.unlock();
+    const removed = try store.cleanAll();
+    try stdout.print("package cache clean: {d} 個の項目を削除しました（{s}）\n", .{ removed, root });
+}
+
 pub fn run(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !void {
     if (args.len == 0) {
-        try stderr.writeAll("package: 操作を指定してください（build|verify）\n");
+        try stderr.writeAll("package: 操作を指定してください（build|verify|cache）\n");
         std.process.exit(2);
     }
     if (std.mem.eql(u8, args[0], "build")) {
@@ -181,6 +237,9 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, s
     if (std.mem.eql(u8, args[0], "verify")) {
         return runVerify(allocator, io, args[1..], stdout, stderr);
     }
-    try stderr.print("package: 不明な操作です: {s}（build|verify）\n", .{args[0]});
+    if (std.mem.eql(u8, args[0], "cache")) {
+        return runCache(allocator, io, args[1..], stdout, stderr);
+    }
+    try stderr.print("package: 不明な操作です: {s}（build|verify|cache）\n", .{args[0]});
     std.process.exit(2);
 }

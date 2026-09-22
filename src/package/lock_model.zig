@@ -217,7 +217,7 @@ pub fn optEql(a: ?[]const u8, b: ?[]const u8) bool {
 
 /// SHA-256 の各表記（SRI `sha256-<base64>=`、`sha256:<hex>`、生 `<hex>`）を
 /// 32 バイトへ正規化する。解釈できない場合は false。
-fn normalizeSha256(text: []const u8, out: *[32]u8) bool {
+pub fn normalizeSha256(text: []const u8, out: *[32]u8) bool {
     if (text.len == 64) return hexToBytes(text, out);
     if (text.len == "sha256:".len + 64 and std.mem.startsWith(u8, text, "sha256:")) {
         return hexToBytes(text["sha256:".len..], out);
