@@ -66,11 +66,8 @@ fn readsIncomingResult(program: ir.Program, instruction: ir.Instruction, summari
             summaries[callee].reads_result
         else
             true,
-        // A callback can inspect globals before it returns.  Dynamic source
-        // has the same unknown visibility, even when its current text is
-        // available only at runtime.
+        // A callback can inspect globals before it returns.
         .call_value,
-        .dynamic_execute,
         // These operations can invoke user supplied coercion, getter, setter,
         // iterator, or destructuring hooks.  Keep the summary conservative so
         // a direct caller cannot erase an incoming result around them.
@@ -92,7 +89,6 @@ fn instructionMayThrow(program: ir.Program, instruction: ir.Instruction, summari
     return switch (instruction.opcode) {
         .call => if (directCallee(program, instruction)) |callee| summaries[callee].may_throw else true,
         .call_value,
-        .dynamic_execute,
         .const_bigint,
         .const_string,
         .binary,

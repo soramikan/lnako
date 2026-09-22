@@ -35,7 +35,7 @@ fn markInstruction(summary: *Summary, instruction: ir.Instruction) void {
     switch (instruction.opcode) {
         .load_global => summary.reads_globals = true,
         .store_global => summary.writes_globals = true,
-        .call, .call_value, .dynamic_execute => {
+        .call, .call_value => {
             summary.may_allocate = true;
             summary.may_throw = true;
             summary.may_reenter = true;
