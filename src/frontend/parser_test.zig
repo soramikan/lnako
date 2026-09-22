@@ -1123,10 +1123,18 @@ test "連文のあとのC風呼出しは独立した呼出しとして実行す�
 }
 
 test "連文で残った実引数とC風呼出しは未解決引数として構文エラー" {
-    var result = try parse(std.testing.allocator, "●(Aを)Fとは\n　それはA+1\nここまで\n1を表示して5をF(1)\n", "chain-c-call-stray.nako3");
-    defer result.deinit();
-    try std.testing.expect(!result.succeeded());
-    try std.testing.expectEqual(diagnostic.Code.unexpected_token, result.diagnostics[0].code);
+    // `5を`と同様に、括弧付きで明示した`(それ)`も実引数として残る。
+    // 連文が挿入する暗黙『それ』マーカーとは生成元フラグで区別する。
+    const cases = [_][]const u8{
+        "●(Aを)Fとは\n　それはA+1\nここまで\n1を表示して5をF(1)\n",
+        "●(Aを)Fとは\n　それはA+1\nここまで\n1を表示して(それ) F(1)\n",
+    };
+    for (cases) |source| {
+        var result = try parse(std.testing.allocator, source, "chain-c-call-stray.nako3");
+        defer result.deinit();
+        try std.testing.expect(!result.succeeded());
+        try std.testing.expectEqual(diagnostic.Code.unexpected_token, result.diagnostics[0].code);
+    }
 }
 
 test "『ずつ』引数は増減繰返以外では構文エラー" {
