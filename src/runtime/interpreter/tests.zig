@@ -1885,6 +1885,53 @@ test "Issue #117の範囲オブジェクト反復対象を受理する" {
     try std.testing.expectEqualStrings("回数: 1\n回数: 2\n回数: 3\n回数: 4\n回数: 5\n回数: 6\n1\n2\n7\n8\n", host.written());
 }
 
+test "Issue #118の制御構文引数は助詞で照合し並び順を問わない" {
+    // Issueの再現形`Nを3まで1から繰り返す`に加え、繰り返し変数が引数の
+    // 中間にある`1からNで3まで`、完全に並べ替えた減繰返、演算式の境界値、
+    // 並べ替えた増分も公式と同じ意味で実行する。
+    const source =
+        "Nを3まで1から繰り返す\nNを表示\nここまで\n" ++
+        "1からNで3まで繰り返す\nNを表示\nここまで\n" ++
+        "1までNで5から減繰返す\nNを表示\nここまで\n" ++
+        "A=1\nNでAからA+2まで繰り返す\nNを表示\nここまで\n" ++
+        "2ずつ1からNで5まで増繰返す\nNを表示\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("1\n2\n3\n1\n2\n3\n5\n4\n3\n2\n1\n1\n2\n3\n1\n3\n5\n", host.written());
+}
+
+test "回数繰り返しはそれを回数へ束縛し退避値を復元する" {
+    // 公式convRepeatTimesは各回『それ』へ回数を束縛し、ループ前の『回数』を
+    // 退避して出口で『回数』と『それ』の両方へ書き戻す（Issue #118関連）。
+    const source =
+        "3回繰り返す\n「{それ}」を表示\nここまで\n" ++
+        "それ=9\n2回繰り返す\n「{それ}」を表示\nここまで\n" ++
+        "「後:{それ}」を表示\n「回数:{回数}」を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("1\n2\n3\n1\n2\n後:\n回数:\n", host.written());
+}
+
 test "範囲オブジェクトの一時変数は拡張単語の同名変数・定数を破壊しない" {
     // 一時変数名は拡張単語（${…}・《…》）でも記述できない形にし、
     // 同スコープの利用者変数・定数を上書きしない（#113）。
