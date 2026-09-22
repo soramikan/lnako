@@ -3070,6 +3070,10 @@
   {
     "id": "native-chained-range-loop-novar",
     "source": "5を表示して1から3まで繰り返す\nそれを表示\nここまで\n5を表示して1から5まで2ずつ増繰返す\nそれを表示\nここまで\n"
+  },
+  {
+    "id": "native-range-loop-novar-sore-in-function",
+    "source": "●Fとは\n1から3まで繰り返す\nここまで\nここまで\nF()を表示\n●Gとは\nそれは9\n1から2まで繰り返す\nそれを表示\nここまで\nそれを戻す\nここまで\nG()を表示\n"
   }
 ]
 

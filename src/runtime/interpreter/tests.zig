@@ -1119,6 +1119,23 @@ test "『〜こと』語尾の命令呼出しを関数の暗黙戻り値とし�
     try std.testing.expectEqualStrings("10\n10\n10\n5\nundefined\nundefined\n", host.written());
 }
 
+test "変数省略の範囲繰り返しは専用のそれへ束縛する" {
+    const source = "●Fとは\n1から3まで繰り返す\nここまで\nここまで\nF()を表示\n●Gとは\nそれは9\n1から2まで繰り返す\nそれを表示\nここまで\nそれを戻す\nここまで\nG()を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("3\n1\n2\n2\n", host.written());
+}
+
 test "関数からの例外伝播で呼び出し側のそれを復元する" {
     const source = "それは7\n●Fとは\nそれは1\n「失敗」のエラー発生\nここまで\nエラー監視\nF()\nエラーならば\nそれを表示\nここまで\n";
     var fixture = try compileForTest(std.testing.allocator, source);
