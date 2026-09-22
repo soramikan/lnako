@@ -1824,6 +1824,68 @@ test "辞書反復の再開始は旧キースナップショットを解放す�
     try std.testing.expectEqualStrings("a\nb\nc\na\nb\nc\na\nb\nc\n", host.written());
 }
 
+test "範囲繰り返しは『で』助詞の変数・範囲オブジェクト・『それ』束縛を受理する" {
+    // 公式yForは繰り返し変数を『を』『で』助詞で取り、『AからBの範囲』や
+    // 『A…B』の範囲オブジェクトは『先頭』『末尾』を開始値・終了値に使う。
+    // 変数指定の有無に関わらず『それ』へも現在値を束縛する（#113）。
+    const source =
+        "Nで0から3まで繰り返す\nNを表示\nここまで\n" ++
+        "3から5までMで繰り返す\nMを表示\nここまで\n" ++
+        "Iを7から8まで繰り返す\nそれを表示\nここまで\n" ++
+        "Jで2から4の範囲を繰り返す\nそれを表示\nここまで\n" ++
+        "Kで9…11を繰り返す\nKを表示\nここまで\n" ++
+        "Lで1から4の範囲を2ずつ増繰返す\nLを表示\nここまで\n" ++
+        // 範囲オブジェクトは一度だけ評価する（公式convForの$nako_temp相当）。
+        // 二重評価ならF/Gが二度走りC=22・末尾が22になる。
+        "C=0\n" ++
+        "●Fとは\nC=C+1\nCを戻す\nここまで\n" ++
+        "●Gとは\nC=C+10\nCを戻す\nここまで\n" ++
+        "範囲(F(),G())を繰り返す\nここまで\n" ++
+        "「C={C}」を表示\n" ++
+        // 公式は括弧付き式・C風呼出し・演算子式も増分引数として読む。
+        "Qで1から4の範囲を(1+1)ずつ増繰返す\nQを表示\nここまで\n" ++
+        "●(Aを)Hとは\nそれはA+1\nここまで\n" ++
+        "Rで1から4の範囲をH(1)ずつ増繰返す\nRを表示\nここまで\n" ++
+        "Tで1から4の範囲を1+2ずつ増繰返す\nTを表示\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("0\n1\n2\n3\n3\n4\n5\n7\n8\n2\n3\n4\n9\n10\n11\n1\n3\nC=11\n1\n3\n1\n3\n1\n4\n", host.written());
+}
+
+test "範囲オブジェクトの一時変数は拡張単語の同名変数・定数を破壊しない" {
+    // 一時変数名は拡張単語（${…}・《…》）でも記述できない形にし、
+    // 同スコープの利用者変数・定数を上書きしない（#113）。
+    const source =
+        "${繰り返し範囲$一時値}=99\n" ++
+        "《繰り返し範囲$一時値}》=88\n" ++
+        "1から2の範囲を繰り返す\nそれを表示\nここまで\n" ++
+        "${繰り返し範囲$一時値}を表示\n" ++
+        "《繰り返し範囲$一時値}》を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("1\n2\n99\n88\n", host.written());
+}
+
 test "nullとundefinedへの添字代入をキー付き例外として監視する" {
     const source =
         "エラー監視\nNULL[0]=2\nエラーならば\nエラーメッセージを表示\nここまで\n" ++
