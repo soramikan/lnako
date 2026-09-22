@@ -4262,6 +4262,51 @@ test "AOT反復構文は「それ」と指定変数へ束縛し指定変数あ�
     try std.testing.expect(!runtime.iteratorHasNext(iterator));
 }
 
+test "AOT反復は開始時の添字・キー集合を列挙し穴と削除済みを飛ばす" {
+    // for..in互換: 配列はpresenceが真の添字のみ、辞書は開始時に保持した
+    // キー集合のみ列挙する。反復中の短縮・削除済み添字・キーは飛ばし、
+    // 開始後の追加要素・キーは列挙しない。
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 4;
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    var target: Value = .{};
+    var key: Value = .{};
+
+    // 穴のある配列は実在する添字だけ列挙する（公式はfor..inで穴を飛ばす）。
+    roots[0] = try runtime.createArray(&.{});
+    try runtime.aotArraySetIndex(roots[0].object().?, 2, numberValue(9));
+    var iterator = try runtime.createIterator(&.{roots[0]}, false, 0, true);
+    try std.testing.expect(runtime.iteratorHasNext(iterator));
+    _ = runtime.iteratorNext(iterator, null, &target, &key, null, null);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 2))), key.payload);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 9))), target.payload);
+    try std.testing.expect(!runtime.iteratorHasNext(iterator));
+
+    // 反復中に短縮した配列は範囲外を読まずに残りを飛ばす。
+    roots[1] = try runtime.createArray(&.{ numberValue(1), numberValue(2), numberValue(3) });
+    iterator = try runtime.createIterator(&.{roots[1]}, false, 0, true);
+    _ = runtime.iteratorNext(iterator, null, &target, &key, null, null);
+    _ = roots[1].object().?.payload.array.pop();
+    _ = roots[1].object().?.payload.array.pop();
+    try std.testing.expect(!runtime.iteratorHasNext(iterator));
+
+    // 辞書は開始時のキー集合で列挙し、未到達キーの削除を飛ばす。
+    roots[2] = try runtime.createDictionary(&.{ staticStringValue("a"), numberValue(1), staticStringValue("b"), numberValue(2), staticStringValue("c"), numberValue(3) });
+    iterator = try runtime.createIterator(&.{roots[2]}, false, 0, true);
+    _ = runtime.iteratorNext(iterator, null, &target, &key, null, null);
+    const dictionary = &roots[2].object().?.payload.dictionary;
+    _ = dictionary.orderedRemoveEntry(runtime.allocator, dictionary.findByKey(staticStringValue("b")).?);
+    try std.testing.expect(runtime.iteratorHasNext(iterator));
+    _ = runtime.iteratorNext(iterator, null, &target, &key, null, null);
+    const key_units = try valueUtf16Alloc(&runtime, key);
+    defer std.testing.allocator.free(key_units);
+    try std.testing.expectEqualSlices(u16, std.unicode.utf8ToUtf16LeStringLiteral("c"), key_units);
+    try std.testing.expect(!runtime.iteratorHasNext(iterator));
+}
+
 test "AOT配列の集約・入替・連番・要素生成を公式境界で処理する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();

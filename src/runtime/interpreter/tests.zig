@@ -1497,6 +1497,58 @@ test "入れ子の反復は内側終了後に外側の束縛へ戻る" {
     );
 }
 
+test "反復は開始時の添字・キー集合を列挙し穴と削除済みを飛ばす" {
+    // 公式のfor..inは反復開始時に存在した添字・キーのみを対象とし、
+    // 到達時点で存在しないもの(配列の穴・反復中の削除)を飛ばす。
+    // 反復中に追加された要素・キーは列挙しない。
+    const source =
+        "A=[]\nA[2]に9を代入\nAを反復\n「穴{対象キー}:{対象}」を表示\nここまで\n" ++
+        "B=[1,2,3]\nBを反復\n対象を表示\nBの配列ポップ\nここまで\n" ++
+        "C=[1,2]\nCを反復\n対象を表示\nもし対象キーが1ならば\nCに3を配列追加\nここまで\nここまで\n" ++
+        "D={\"a\":1,\"b\":2,\"c\":3}\nDを反復\n対象キーを表示\nもし対象キーが「a」ならば\nDから「b」を辞書キー削除\nここまで\nここまで\n" ++
+        "E={\"a\":1,\"b\":2}\nEを反復\n対象キーを表示\nもし対象キーが「a」ならば\nE[\"z\"]=9\nここまで\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings(
+        "穴2:9\n" ++ // 穴のある添字0,1を飛ばす
+            "1\n2\n" ++ // 短縮で消えた添字2を飛ばす
+            "1\n2\n" ++ // 反復中に追加した3は列挙しない
+            "a\nc\n" ++ // 未到達のbを削除すると飛ばす
+            "a\nb\n", // 反復中に追加したzは列挙しない
+        host.written(),
+    );
+}
+
+test "GCストレス中も辞書反復のキースナップショットをルートとして保持する" {
+    // 削除済みキーの文字列はスナップショットのみが参照するため、
+    // 収集対象にしないようiteratorsのトレースでマークする必要がある。
+    const source = "D={\"a\":1,\"b\":2,\"c\":3}\nDを反復\n対象キーを表示\nもし対象キーが「a」ならば\nDから「b」を辞書キー削除\nここまで\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("a\nc\n", host.written());
+}
+
 test "nullとundefinedへの添字代入をキー付き例外として監視する" {
     const source =
         "エラー監視\nNULL[0]=2\nエラーならば\nエラーメッセージを表示\nここまで\n" ++

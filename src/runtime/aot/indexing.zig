@@ -361,10 +361,21 @@ pub fn aotCanonicalArrayIndexUnits(_: *Runtime, units: []const u16) ?usize {
     return if (result <= 4_294_967_294) result else null;
 }
 
-pub fn iteratorHasNext(_: *Runtime, value: Value) bool {
+pub fn iteratorHasNext(self: *Runtime, value: Value) bool {
     const object = value.object() orelse return false;
     if (object.payload != .iterator) return false;
-    const iterator = object.payload.iterator;
+    const iterator = &object.payload.iterator;
+    // for..in互換: 反復開始時の添字・キー集合を上限とし、配列の穴や反復中に
+    // 削除された添字・キーは到達時点で飛ばす。開始後の追加要素は列挙しない。
+    switch (iterator.kind) {
+        .array => {
+            while (iterator.index < iterator.count and !aotArrayIsPresent(self, iterator.source.object().?, iterator.index)) iterator.index += 1;
+        },
+        .dictionary => {
+            while (iterator.index < iterator.count and iterator.source.object().?.payload.dictionary.findByKey(iterator.keys.object().?.payload.array.items[iterator.index]) == null) iterator.index += 1;
+        },
+        else => {},
+    }
     return switch (iterator.kind) {
         .range => if (iterator.step > 0) iterator.current <= iterator.end else iterator.current >= iterator.end,
         else => iterator.index < iterator.count,
@@ -423,11 +434,13 @@ pub fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_
             break :blk result;
         },
         .dictionary => blk: {
-            const entry = iterator.source.object().?.payload.dictionary.entries.items[iterator.index];
-            if (key_target) |target| target.* = entry.key;
+            const key = iterator.keys.object().?.payload.array.items[iterator.index];
+            const found = iterator.source.object().?.payload.dictionary.findByKey(key);
+            const result: Value = if (found) |found_index| iterator.source.object().?.payload.dictionary.entries.items[found_index].value else .{};
+            if (key_target) |target| target.* = key;
             iterator.index += 1;
-            bindForeachElement(entry.value, sore_target, value_target, range_target);
-            break :blk entry.value;
+            bindForeachElement(result, sore_target, value_target, range_target);
+            break :blk result;
         },
     };
 }

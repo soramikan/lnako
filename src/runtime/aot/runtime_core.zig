@@ -769,7 +769,20 @@ pub const Runtime = struct {
             .utf16_string => .{ .kind = .string, .source = values[0], .count = values[0].object().?.payload.utf16_string.len },
             .byte_buffer => .{ .kind = .bytes, .source = values[0], .count = values[0].object().?.payload.byte_buffer.bytes.len },
             .array => .{ .kind = .array, .source = values[0], .count = values[0].object().?.payload.array.items.len },
-            .dictionary => .{ .kind = .dictionary, .source = values[0], .count = values[0].object().?.payload.dictionary.entries.items.len },
+            .dictionary => blk: {
+                // for..in互換: 反復開始時のキー列を保持し、反復中に削除された
+                // キーはiteratorHasNextで飛ばす。開始後に追加されたキーは列挙しない。
+                var roots = [_]Value{ values[0], .{} };
+                var frame = RootFrame{};
+                self.pushRoots(&frame, &roots, roots.len);
+                defer self.popRoots(&frame);
+                const dictionary = &roots[0].object().?.payload.dictionary;
+                const keys = try self.allocator.alloc(Value, dictionary.entries.items.len);
+                defer self.allocator.free(keys);
+                for (dictionary.entries.items, 0..) |entry, key_index| keys[key_index] = entry.key;
+                roots[1] = try self.createArray(keys);
+                break :blk .{ .kind = .dictionary, .source = roots[0], .count = keys.len, .keys = roots[1] };
+            },
             else => .{ .kind = .repeat, .count = 0 },
         };
         return self.createObject(.{ .iterator = iterator }, .iterator);
@@ -984,7 +997,10 @@ pub const Runtime = struct {
                         self.markValue(entry.value);
                     }
                 },
-                .iterator => |iterator| self.markValue(iterator.source),
+                .iterator => |iterator| {
+                    self.markValue(iterator.source);
+                    self.markValue(iterator.keys);
+                },
                 .promise => |promise| {
                     self.markValue(promise.result);
                     for (object.array_properties.entries.items) |property| {

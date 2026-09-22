@@ -212,7 +212,10 @@ pub fn traceRoots(context: *anyopaque, runtime: *Runtime) !void {
         var locals = active.locals.valueIterator();
         while (locals.next()) |cell| try runtime.traceExternalBindingCell(cell.*);
         var iterators = active.iterators.valueIterator();
-        while (iterators.next()) |iterator| try runtime.traceExternal(iterator.source);
+        while (iterators.next()) |iterator| {
+            try runtime.traceExternal(iterator.source);
+            if (iterator.keys) |keys| for (keys) |key| try runtime.traceExternal(.{ .string = key });
+        }
     }
     for (self.timers.items) |timer| try runtime.traceExternal(timer.callback);
     var resolvers = self.promise_resolvers.iterator();

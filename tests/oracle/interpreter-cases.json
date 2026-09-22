@@ -628,5 +628,21 @@
   {
     "id": "foreach-nested-restore",
     "source": "[[1,2],[3]]を反復\n「外{対象}」を表示\n対象を反復\n「内{対象キー}:{対象}」を表示\nここまで\n「外後{対象キー}:{対象}」を表示\nここまで\n"
+  },
+  {
+    "id": "foreach-sparse-array-hole",
+    "source": "A=[]\nA[2]に9を代入\nAを反復\n対象キーを表示\n対象を表示\nここまで\n"
+  },
+  {
+    "id": "foreach-array-shrink",
+    "source": "A=[1,2,3]\nAを反復\n対象を表示\nAの配列ポップ\nここまで\n"
+  },
+  {
+    "id": "foreach-array-grow-not-enumerated",
+    "source": "A=[1,2]\nAを反復\n対象を表示\nもし対象キーが1ならば\nAに3を配列追加\nここまで\nここまで\n"
+  },
+  {
+    "id": "foreach-dictionary-mutation",
+    "source": "D={\"a\":1,\"b\":2,\"c\":3}\nDを反復\n対象キーを表示\nもし対象キーが「a」ならば\nDから「b」を辞書キー削除\nここまで\nここまで\nE={\"a\":1,\"b\":2}\nEを反復\n対象キーを表示\nもし対象キーが「a」ならば\nE[\"z\"]=9\nここまで\nここまで\n"
   }
 ]

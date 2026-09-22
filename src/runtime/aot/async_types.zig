@@ -21,6 +21,9 @@ pub fn Iterator(comptime Value: type) type {
         current: f64 = 0,
         end: f64 = 0,
         step: f64 = 1,
+        // 辞書反復は反復開始時のキー列をGC配列として保持する。公式のfor..inは
+        // 開始後に追加されたキーを列挙せず、削除済みキーは到達時点で飛ばす。
+        keys: Value = .{},
     };
 }
 

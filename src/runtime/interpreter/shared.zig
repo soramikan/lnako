@@ -404,6 +404,10 @@ pub const IteratorState = struct {
     // 範囲繰り返し変数の束縛先。意味解析のlocal_targetをそのまま保持し、
     // スロットの有無では推測しない。
     variable_local: bool = false,
+    // 辞書反復は反復開始時のキー列を保持する。公式のfor..inは開始後に
+    // 追加されたキーを列挙せず、削除済みキーは到達時点で飛ばす。
+    // キー文字列はGC管理のため、state.zigのトレースでsourceと共にマークする。
+    keys: ?[]*value_mod.String = null,
 };
 
 pub const Timer = struct {
@@ -479,6 +483,8 @@ pub const Frame = struct {
         self.locals.deinit(allocator);
         for (self.owned_names.items) |name| allocator.free(name);
         self.owned_names.deinit(allocator);
+        var iterator_states = self.iterators.valueIterator();
+        while (iterator_states.next()) |iterator| if (iterator.keys) |keys| allocator.free(keys);
         self.iterators.deinit(allocator);
         self.handlers.deinit(allocator);
         if (self.local_cells_buffer) |buffer| allocator.free(buffer);

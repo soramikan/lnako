@@ -35,6 +35,7 @@ const Interpreter = istate.Interpreter;
 const TestResult = shared.TestResult;
 const Value = shared.Value;
 const Runtime = shared.Runtime;
+const String = value_mod.String;
 const DynamicPreparationFn = istate.DynamicPreparationFn;
 const Frame = shared.Frame;
 const IteratorKind = shared.IteratorKind;
@@ -1339,7 +1340,12 @@ pub fn iteratorBegin(self: *Interpreter, frame: *Frame, instruction: ir.Instruct
             .bytes => .{ .kind = .bytes, .source = source, .count = source.bytes.bytes.len },
             .array => .{ .kind = .array, .source = source, .count = source.array.len() },
             .string => .{ .kind = .string, .source = source, .count = source.string.len() },
-            .dictionary => .{ .kind = .dictionary, .source = source, .count = source.dictionary.len() },
+            .dictionary => blk: {
+                // for..in互換: 反復開始時のキー列を保持し、反復中に削除された
+                // キーはiteratorHasNextで飛ばす。開始後に追加されたキーは列挙しない。
+                const keys = try self.allocator.dupe(*String, source.dictionary.keys());
+                break :blk .{ .kind = .dictionary, .source = source, .count = keys.len, .keys = keys };
+            },
             else => .{ .kind = .repeat, .count = 0 },
         };
     }
@@ -1350,7 +1356,18 @@ pub fn iteratorBegin(self: *Interpreter, frame: *Frame, instruction: ir.Instruct
 pub fn iteratorHasNext(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !bool {
     _ = self;
     const id = instruction.operands[0];
-    const state = frame.iterators.get(id) orelse return error.InvalidIterator;
+    const state = frame.iterators.getPtr(id) orelse return error.InvalidIterator;
+    // for..in互換: 反復開始時の添字・キー集合を上限とし、配列の穴や反復中に
+    // 削除された添字・キーは到達時点で飛ばす。開始後の追加要素は列挙しない。
+    switch (state.kind) {
+        .array => {
+            while (state.index < state.count and !state.source.array.isPresent(state.index)) state.index += 1;
+        },
+        .dictionary => {
+            while (state.index < state.count and !state.source.dictionary.has(state.keys.?[state.index])) state.index += 1;
+        },
+        else => {},
+    }
     return switch (state.kind) {
         .range => if (state.step > 0) state.current <= state.end else state.current >= state.end,
         else => state.index < state.count,
@@ -1400,8 +1417,9 @@ pub fn iteratorNext(self: *Interpreter, frame: *Frame, instruction: ir.Instructi
             try bindForeachValue(self, frame, instruction, result);
         },
         .dictionary => {
-            result = state.source.dictionary.values()[state.index];
-            try self.setGlobal("対象キー", .{ .string = state.source.dictionary.keys()[state.index] });
+            const key = state.keys.?[state.index];
+            result = state.source.dictionary.get(key) orelse .undefined;
+            try self.setGlobal("対象キー", .{ .string = key });
             state.index += 1;
             try bindForeachValue(self, frame, instruction, result);
         },
