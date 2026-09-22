@@ -102,6 +102,15 @@ pub fn isImplicitItMarker(node: *ast.Node) bool {
     return node.is_implicit_it;
 }
 
+/// `XしてY`の連文で、先行する命令呼出しとして後続命令の引数列へ挿入
+/// されたノードかどうか。連文助詞を持つ命令呼出しは実引数ではなく連鎖
+/// 呼出し（結果は『それ』経由で渡る）なので、助詞スロット照合・未解決語
+/// 判定の対象から除く。演算子由来の疑似呼出し（範囲など`command_call`
+/// でないもの）は公式でも残り語として報告されるため除外しない。
+pub fn isChainedCallResult(node: *ast.Node) bool {
+    return node.kind == .function_call and node.command_call and isSequenceJosi(node.josi);
+}
+
 pub fn isVariableReference(kind: ast.Kind) bool {
     return kind == .word or kind == .array_reference or kind == .property_reference;
 }

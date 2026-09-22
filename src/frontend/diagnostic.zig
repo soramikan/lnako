@@ -31,6 +31,10 @@ pub const Code = enum {
     /// 命令呼出しを構成せずに文の末尾へ残った式。公式は『不完全な文です。
     /// Xが解決していません』で拒否する。
     incomplete_statement,
+    /// 命令の宣言助詞のどのスロットにも一致しない引数。公式`yCallFunc`は
+    /// 一致しない値をスタックへ残し、行末で『未解決の単語があります』の
+    /// 文法エラーにする。
+    unresolved_word,
 };
 
 pub const Diagnostic = struct {

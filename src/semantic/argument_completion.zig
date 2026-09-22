@@ -22,16 +22,22 @@ pub const Plan = struct {
     missing: usize,
 };
 
-/// 公式`nako_parser3.mts`の`yCallFunc`と同じ順序で助詞引数を解決する。
-///
-/// 末尾のスロットから順に、助詞が一致する引数をスタック末尾側から取り出し、
-/// 見つからないスロットは変数「それ」で補完する。`variable_final`が真のときは
-/// 末尾スロットを可変長引数として扱い、助詞が一致する引数を元の並びのまま
-/// 全て取り出すが、不足数へは数えず「それ」補完もしない。
-/// スロットへ割り当てられない引数が残る場合やスロットが1つも無い場合は、
-/// 呼出し元の並びを変更しないため`null`を返す（補完しない）。
-pub fn plan(allocator: std.mem.Allocator, slots: []const Slot, arguments: []const *ast.Node, variable_final: bool) !?Plan {
-    if (slots.len == 0) return null;
+const Match = struct {
+    assigned: []?usize,
+    used: []bool,
+    variable_arguments: std.ArrayList(usize),
+    fixed_count: usize,
+
+    fn deinit(self: *Match, allocator: std.mem.Allocator) void {
+        allocator.free(self.assigned);
+        allocator.free(self.used);
+        self.variable_arguments.deinit(allocator);
+    }
+};
+
+/// 公式`yCallFunc`と同じ順序で引数をスロットへ割り当てる。`plan`の補完計画と
+/// `unresolvedArguments`の未解決引数検出が同じ割当規則を共有する。
+fn match(allocator: std.mem.Allocator, slots: []const Slot, arguments: []const *ast.Node, variable_final: bool) !Match {
     const assigned = try allocator.alloc(?usize, slots.len);
     errdefer allocator.free(assigned);
     const used = try allocator.alloc(bool, arguments.len);
@@ -39,7 +45,7 @@ pub fn plan(allocator: std.mem.Allocator, slots: []const Slot, arguments: []cons
     @memset(assigned, null);
     @memset(used, false);
     var variable_arguments: std.ArrayList(usize) = .empty;
-    defer variable_arguments.deinit(allocator);
+    errdefer variable_arguments.deinit(allocator);
 
     var fixed_count = slots.len;
     if (variable_final) {
@@ -66,13 +72,28 @@ pub fn plan(allocator: std.mem.Allocator, slots: []const Slot, arguments: []cons
             break;
         }
     }
+    return .{ .assigned = assigned, .used = used, .variable_arguments = variable_arguments, .fixed_count = fixed_count };
+}
+
+/// 公式`nako_parser3.mts`の`yCallFunc`と同じ順序で助詞引数を解決する。
+///
+/// 末尾のスロットから順に、助詞が一致する引数をスタック末尾側から取り出し、
+/// 見つからないスロットは変数「それ」で補完する。`variable_final`が真のときは
+/// 末尾スロットを可変長引数として扱い、助詞が一致する引数を元の並びのまま
+/// 全て取り出すが、不足数へは数えず「それ」補完もしない。
+/// スロットへ割り当てられない引数が残る場合やスロットが1つも無い場合は、
+/// 呼出し元の並びを変更しないため`null`を返す（補完しない）。
+pub fn plan(allocator: std.mem.Allocator, slots: []const Slot, arguments: []const *ast.Node, variable_final: bool) !?Plan {
+    if (slots.len == 0) return null;
+    var result = try match(allocator, slots, arguments, variable_final);
+    defer result.deinit(allocator);
+    const assigned = result.assigned;
+    const used = result.used;
+    const fixed_count = result.fixed_count;
+    const variable_arguments = &result.variable_arguments;
     // 助詞が一致するスロットが無い引数が残っている場合は、公式の並びを
     // 再現できないため補完せずに呼出し元の並びを尊重する。
-    for (used) |item| if (!item) {
-        allocator.free(assigned);
-        allocator.free(used);
-        return null;
-    };
+    for (used) |item| if (!item) return null;
 
     var provided: usize = variable_arguments.items.len;
     var missing: usize = 0;
@@ -92,9 +113,25 @@ pub fn plan(allocator: std.mem.Allocator, slots: []const Slot, arguments: []cons
         operands[position] = .{ .provided = argument };
         position += 1;
     }
-    allocator.free(assigned);
-    allocator.free(used);
     return .{ .operands = operands, .provided = provided, .missing = missing };
+}
+
+/// `plan`と同じ割当規則で、どのスロットにも助詞が一致しなかった引数の
+/// 添字を返す。公式はこの値をスタックへ残して行末の未解決の単語エラーに
+/// する。`slots.len == 0`のときは全引数が未解決になる。
+pub fn unresolvedArguments(allocator: std.mem.Allocator, slots: []const Slot, arguments: []const *ast.Node, variable_final: bool) ![]usize {
+    var unresolved: std.ArrayList(usize) = .empty;
+    errdefer unresolved.deinit(allocator);
+    if (slots.len == 0) {
+        for (0..arguments.len) |index| try unresolved.append(allocator, index);
+        return unresolved.toOwnedSlice(allocator);
+    }
+    var result = try match(allocator, slots, arguments, variable_final);
+    defer result.deinit(allocator);
+    for (result.used, 0..) |item, index| {
+        if (!item) try unresolved.append(allocator, index);
+    }
+    return unresolved.toOwnedSlice(allocator);
 }
 
 fn matches(slot: Slot, josi: []const u8) bool {
@@ -159,6 +196,54 @@ test "助詞がどのスロットにも一致しない引数があれば補完�
     const slots = [_]Slot{.{ .josi = &.{"を"} }};
     const result = try plan(std.testing.allocator, &slots, &arguments, false);
     try std.testing.expect(result == null);
+}
+
+test "unresolvedArgumentsはスロットへ割り当てられなかった引数の添字を返す" {
+    // `AがBを足す`の『Aが』のように、宣言助詞のどのスロットにも一致しない
+    // 引数は公式の行末未解決単語へ残る。
+    var nodes = [_]ast.Node{
+        .{ .kind = .word, .span = ast.emptySpan(), .end_span = ast.emptySpan(), .josi = "が" },
+        .{ .kind = .number, .span = ast.emptySpan(), .end_span = ast.emptySpan(), .josi = "を" },
+    };
+    const arguments = [_]*ast.Node{ &nodes[0], &nodes[1] };
+    const slots = [_]Slot{ .{ .josi = &.{ "に", "と" } }, .{ .josi = &.{"を"} } };
+    const unresolved = try unresolvedArguments(std.testing.allocator, &slots, &arguments, false);
+    defer std.testing.allocator.free(unresolved);
+    try std.testing.expectEqualSlices(usize, &.{0}, unresolved);
+}
+
+test "unresolvedArgumentsは末尾一致のスロットへ最後の一致引数を割り当てる" {
+    // `5を7を表示`のように同じ助詞が並ぶと、公式と同じく末尾側の引数が
+    // スロットへ割り当てられ、残った先頭側が未解決になる。
+    var nodes = [_]ast.Node{
+        .{ .kind = .number, .span = ast.emptySpan(), .end_span = ast.emptySpan(), .josi = "を" },
+        .{ .kind = .number, .span = ast.emptySpan(), .end_span = ast.emptySpan(), .josi = "を" },
+    };
+    const arguments = [_]*ast.Node{ &nodes[0], &nodes[1] };
+    const slots = [_]Slot{.{ .josi = &.{ "を", "と" } }};
+    const unresolved = try unresolvedArguments(std.testing.allocator, &slots, &arguments, false);
+    defer std.testing.allocator.free(unresolved);
+    try std.testing.expectEqualSlices(usize, &.{0}, unresolved);
+}
+
+test "unresolvedArgumentsはスロットの無い命令の全引数を未解決にする" {
+    var node = ast.Node{ .kind = .number, .span = ast.emptySpan(), .end_span = ast.emptySpan(), .josi = "を" };
+    const arguments = [_]*ast.Node{&node};
+    const unresolved = try unresolvedArguments(std.testing.allocator, &.{}, &arguments, false);
+    defer std.testing.allocator.free(unresolved);
+    try std.testing.expectEqualSlices(usize, &.{0}, unresolved);
+}
+
+test "unresolvedArgumentsは全引数が割り当てられれば空を返す" {
+    var nodes = [_]ast.Node{
+        .{ .kind = .number, .span = ast.emptySpan(), .end_span = ast.emptySpan(), .josi = "に" },
+        .{ .kind = .number, .span = ast.emptySpan(), .end_span = ast.emptySpan(), .josi = "を" },
+    };
+    const arguments = [_]*ast.Node{ &nodes[0], &nodes[1] };
+    const slots = [_]Slot{ .{ .josi = &.{"に"} }, .{ .josi = &.{"を"} } };
+    const unresolved = try unresolvedArguments(std.testing.allocator, &slots, &arguments, false);
+    defer std.testing.allocator.free(unresolved);
+    try std.testing.expectEqual(@as(usize, 0), unresolved.len);
 }
 
 test "可変長の末尾スロットは補完せず先行する固定スロットを「それ」にする" {

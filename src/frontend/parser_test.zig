@@ -1256,10 +1256,13 @@ test "繰り返し引数は助詞で照合し引数の並び順を問わない" 
 test "末尾側の『を』助詞は終了値として取り出し途中の『まで』は未解決引数" {
     // 公式yForは末尾側から『まで|を』を終了値として取り出すため、
     // `3までNを1から`はNをが終了値・残った3までが未解決の単語になる。
+    // 診断位置は公式が検出する行末（この文の次の行）に揃える。
     var result = try parse(std.testing.allocator, "3までNを1から繰り返す\nNを表示\nここまで\n", "for-stray-made.nako3");
     defer result.deinit();
     try std.testing.expect(!result.succeeded());
-    try std.testing.expectEqual(diagnostic.Code.invalid_control_statement, result.diagnostics[0].code);
+    try std.testing.expectEqual(diagnostic.Code.unresolved_word, result.diagnostics[0].code);
+    try std.testing.expectEqualStrings("未解決の単語があります: [数値3まで]", result.diagnostics[0].message);
+    try std.testing.expectEqual(@as(usize, 1), result.diagnostics[0].span.line);
 }
 
 test "繰り返しの境界値は演算子を含む式を受理する" {
@@ -1300,17 +1303,20 @@ test "『で』『を』変数の増減繰返も助詞で引数を照合する" 
 test "回数・条件繰り返しの残り引数は公式同様に構文エラー" {
     // 公式はループ引数として取り出せなかった語を未解決の単語として
     // 文法エラーにする。`5を3回`の『5を』や`Nで3回`の『Nで』、
-    // `5をA>0の間`の『5を』が該当する。
-    const cases = [_][]const u8{
-        "5を3回繰り返す\nそれを表示\nここまで\n",
-        "Nで3回繰り返す\nそれを表示\nここまで\n",
-        "5をA>0の間\nAを表示\nここまで\n",
+    // `5をA>0の間`の『5を』が該当する。診断は行末位置＋
+    // `未解決の単語があります: [...]`の公式形式で報告する。
+    const cases = [_]struct { source: []const u8, message: []const u8 }{
+        .{ .source = "5を3回繰り返す\nそれを表示\nここまで\n", .message = "未解決の単語があります: [数値5を]" },
+        .{ .source = "Nで3回繰り返す\nそれを表示\nここまで\n", .message = "未解決の単語があります: [単語『loop-stray-arg__N』で]" },
+        .{ .source = "5をA>0の間\nAを表示\nここまで\n", .message = "未解決の単語があります: [数値5を]" },
     };
-    for (cases) |source| {
-        var result = try parse(std.testing.allocator, source, "loop-stray-arg.nako3");
+    for (cases) |case| {
+        var result = try parse(std.testing.allocator, case.source, "loop-stray-arg.nako3");
         defer result.deinit();
         try std.testing.expect(!result.succeeded());
-        try std.testing.expectEqual(diagnostic.Code.invalid_control_statement, result.diagnostics[0].code);
+        try std.testing.expectEqual(diagnostic.Code.unresolved_word, result.diagnostics[0].code);
+        try std.testing.expectEqualStrings(case.message, result.diagnostics[0].message);
+        try std.testing.expectEqual(@as(usize, 1), result.diagnostics[0].span.line);
     }
 }
 

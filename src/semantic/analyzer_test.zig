@@ -322,3 +322,46 @@ test "組み込み命令名と関数名への代入を診断する" {
         try std.testing.expectEqual(@as(usize, 1), dup_program.diagnostics.len);
     }
 }
+
+test "宣言助詞に一致しない引数は公式の未解決の単語診断になる" {
+    // Issue #108: 公式`yCallFunc`は助詞スロットへ収まらない引数をスタックへ
+    // 残し、行末で『未解決の単語があります: [...]』の文法エラーにする。
+    // 診断位置は公式が検出する行末（改行区切りなら次の行）に揃える。
+    const parser = @import("../frontend/parser.zig");
+    const cases = [_]struct { source: []const u8, line: usize, message: []const u8 }{
+        .{ .source = "A=1\nB=2\nAがBを足す\nそれを表示\n", .line = 3, .message = "未解決の単語があります: [単語『main__A』が]" },
+        .{ .source = "それは「xyz」\n「abc」で大文字変換を表示。\n", .line = 1, .message = "未解決の単語があります: [文字列『abc』で]" },
+        .{ .source = "●Fとは\n9で戻る\nここまで\nAをF\n", .line = 4, .message = "未解決の単語があります: [単語『main__A』を]" },
+        .{ .source = "5を7を表示\n", .line = 1, .message = "未解決の単語があります: [数値5を]" },
+        .{ .source = "●Fとは\n9で戻る\nここまで\nそれをF\n", .line = 4, .message = "未解決の単語があります: [単語『それ』を]" },
+        .{ .source = "●(XにYを)Fとは\nX+Yで戻る\nここまで\nAがBをF\n", .line = 4, .message = "未解決の単語があります: [単語『main__A』が]" },
+    };
+    for (cases) |case| {
+        var parsed = try parser.parse(std.testing.allocator, case.source, "main.nako3");
+        defer parsed.deinit();
+        try std.testing.expect(parsed.succeeded());
+        var program = try analyzer.analyzeWithSource(std.testing.allocator, parsed.root.?, "main.nako3", parsed.stream.source.text);
+        defer program.deinit();
+        try std.testing.expect(!program.succeeded());
+        try std.testing.expectEqual(diagnostic.Code.unresolved_word, program.diagnostics[0].code);
+        try std.testing.expectEqual(case.line, program.diagnostics[0].span.line);
+        try std.testing.expectEqualStrings(case.message, program.diagnostics[0].message);
+    }
+}
+
+test "助詞が正しい呼出しと暗黙『それ』連文は未解決語にしない" {
+    const parser = @import("../frontend/parser.zig");
+    const sources = [_][]const u8{
+        "A=1\nB=2\nAにBを足して表示\n",
+        "「abc」を大文字変換して表示\n",
+        "●Fとは\n9で戻る\nここまで\nF\n",
+        "●(Aを)Fとは\nAで戻る\nここまで\n1を表示してF\n",
+    };
+    for (sources) |source| {
+        var parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
+        defer parsed.deinit();
+        var program = try analyzer.analyzeWithSource(std.testing.allocator, parsed.root.?, "main.nako3", parsed.stream.source.text);
+        defer program.deinit();
+        try std.testing.expect(program.succeeded());
+    }
+}

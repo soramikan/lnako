@@ -193,5 +193,35 @@
     "source": "●INTとは\n1で戻る\nここまで\nINT=1\n",
     "code": "assign_to_function",
     "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-unresolved-user-function-josi",
+    "source": "A=1\nB=2\n●(XにYを)Fとは\nX+Yで戻る\nここまで\nAがBをF\n",
+    "code": "unresolved_word"
+  },
+  {
+    "id": "semantic-diagnostic-unresolved-builtin-josi",
+    "source": "それは「xyz」\n「abc」で大文字変換を表示。\n",
+    "code": "unresolved_word"
+  },
+  {
+    "id": "semantic-diagnostic-unresolved-nullary-function",
+    "source": "●Fとは\n9で戻る\nここまで\nAをF\n",
+    "code": "unresolved_word"
+  },
+  {
+    "id": "semantic-diagnostic-unresolved-extra-argument",
+    "source": "5を7を表示\n",
+    "code": "unresolved_word"
+  },
+  {
+    "id": "semantic-diagnostic-unresolved-builtin-extra-word",
+    "source": "Aが5を表示\n",
+    "code": "unresolved_word"
+  },
+  {
+    "id": "semantic-diagnostic-unresolved-sore",
+    "source": "●Fとは\n9で戻る\nここまで\nそれをF\n",
+    "code": "unresolved_word"
   }
 ]
