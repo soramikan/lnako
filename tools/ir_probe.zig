@@ -15,7 +15,7 @@ pub fn main(init: std.process.Init) !void {
         var parsed = try lnako.frontend.parser.parseWithMode(allocator, source, "main.nako3", .{ .builtin_commands = &lnako.semantic.builtin_catalog.function_names });
         defer parsed.deinit();
         if (!parsed.succeeded()) return error.ParseFailed;
-        var analyzed = try lnako.semantic.analyzer.analyze(allocator, parsed.root.?, "main.nako3");
+        var analyzed = try lnako.semantic.analyzer.analyzeWithSource(allocator, parsed.root.?, "main.nako3", parsed.stream.source.text);
         defer analyzed.deinit();
         if (!analyzed.succeeded()) return error.SemanticAnalysisFailed;
         var hir_program = try lnako.ir.hir.lowerSingle(allocator, parsed.root.?, "main", "main.nako3", analyzed);

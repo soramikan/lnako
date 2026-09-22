@@ -125,8 +125,7 @@ pub fn parseFor(self: *Parser, start: Token, arguments: []const *ast.Node) Parse
         variable = arg.value;
     }
     // 取り出せなかった引数は公式でも未解決の単語として構文エラーになる
-    if (args.items.len > 0)
-        return self.fail(.invalid_control_statement, "『繰り返す』文に解決できない引数があります", keyword);
+    if (args.items.len > 0) try self.failUnresolvedWords(args.items);
     const is_range_object = to_arg != null and to_arg.?.kind == .function_call and
         std.mem.eql(u8, to_arg.?.name, "範囲");
     if (to_arg == null or (from_arg == null and !is_range_object))

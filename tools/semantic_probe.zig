@@ -17,7 +17,7 @@ pub fn main(init: std.process.Init) !void {
             try stdout.writeAll("{\"diagnostics\":true}\n");
             continue;
         }
-        var program = try lnako.semantic.analyzer.analyze(allocator, parsed.root.?, "main.nako3");
+        var program = try lnako.semantic.analyzer.analyzeWithSource(allocator, parsed.root.?, "main.nako3", parsed.stream.source.text);
         defer program.deinit();
         try stdout.writeAll("{\"bindings\":[");
         for (program.bindings, 0..) |binding, index| {

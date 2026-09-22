@@ -227,6 +227,9 @@ pub fn parseImplicitCallbackCall(self: *Parser, command: Token, arguments: []con
     callback.arguments = callback_arguments;
     callback.josi = "";
     callback.raw_josi = "";
+    // コールバックは引数スタック由来ではなく構文が挿入した合成ノードなので、
+    // 呼出しの助詞スロット照合で未解決の単語として数えないよう印を付ける。
+    callback.is_implicit_it = true;
     const call = try self.makeCommandCall(command, try builder.prepend(self, callback, arguments));
     call.josi = "して";
     return call;

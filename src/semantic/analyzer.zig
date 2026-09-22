@@ -5,6 +5,7 @@ const builtin_catalog = @import("builtin_catalog.zig");
 const builtin_josi = @import("builtin_josi.zig");
 const argument_completion = @import("argument_completion.zig");
 const parser_helpers = @import("../frontend/parser/helpers.zig");
+const unresolved_words = @import("unresolved_words.zig");
 const system_constant = @import("../runtime/system_constant.zig");
 const low_level_foundation = @import("../runtime/low_level_foundation.zig");
 
@@ -47,6 +48,9 @@ pub const ModuleInput = struct {
     name: []const u8,
     path: []const u8,
     root: *ast.Node,
+    /// 字句解析が使った正規化済み本文。span の source 位置はこの本文を
+    /// 指す。文区切り（`;`／改行）の種別判定などに使う。
+    normalized_source: []const u8 = "",
     allows_dynamic_commands: bool = false,
     /// root.children と同じ長さの、結合ストリーム上の文順位。
     /// 空ならモジュール内位置をファイル内のspan順で比較する。
@@ -160,9 +164,15 @@ pub const Program = struct {
 };
 
 pub fn analyze(backing_allocator: std.mem.Allocator, root: *ast.Node, filename: []const u8) !Program {
+    return analyzeWithSource(backing_allocator, root, filename, "");
+}
+
+/// `analyze`に加えて字句解析済みの正規化本文を渡す版。未解決語診断が
+/// 検出位置の行末トークン種別（`;`／改行）を調べるために使う。
+pub fn analyzeWithSource(backing_allocator: std.mem.Allocator, root: *ast.Node, filename: []const u8, normalized_source: []const u8) !Program {
     const name = try moduleName(backing_allocator, filename);
     defer backing_allocator.free(name);
-    return analyzeModules(backing_allocator, &.{.{ .name = name, .path = filename, .root = root }});
+    return analyzeModules(backing_allocator, &.{.{ .name = name, .path = filename, .root = root, .normalized_source = normalized_source }});
 }
 
 pub fn analyzeModules(backing_allocator: std.mem.Allocator, inputs: []const ModuleInput) !Program {
@@ -189,7 +199,7 @@ pub fn analyzeModules(backing_allocator: std.mem.Allocator, inputs: []const Modu
     };
 }
 
-const Analyzer = struct {
+pub const Analyzer = struct {
     allocator: std.mem.Allocator,
     inputs: []const ModuleInput,
     modules: std.ArrayList(Module) = .empty,
@@ -209,6 +219,10 @@ const Analyzer = struct {
     /// resolveBlock中のルートに対応する取り込み辺一覧。変体ルートや
     /// 関数内展開の入れ子サイトでは対象側の一覧へ切り替わる。
     active_import_entries: []const ImportEntry = &.{},
+    /// 助詞不一致引数の未解決語報告の遅延キュー。公式は引数側の
+    /// func tokenを先に処理するため、子の呼出しの診断が先に出るよう
+    /// 呼出しの子解決が終わるまで報告を遅らせる。
+    deferred_unresolved: std.ArrayList(unresolved_words.DeferredUnresolved) = .empty,
     /// 事前宣言走査で訪れたノード数。展開子は取り込み文の位置で走査される
     /// ため、この順位は公式の単一パス（結合ストリーム）順と一致する。
     stream_order: usize = 0,
@@ -481,6 +495,9 @@ const Analyzer = struct {
             else => {},
         }
         for (node.children) |child| try self.resolveBlock(child, module_index, scope);
+        // 助詞不一致引数の未解決語報告は、引数側の呼出しが解決し終わる
+        // まで遅延する（公式は引数のfunc tokenを先に処理する）。
+        try unresolved_words.drainDeferredUnresolved(self, node);
     }
 
     fn resolveDeclaration(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId) !void {
@@ -594,18 +611,27 @@ const Analyzer = struct {
             // C風呼出しは公式同様に個数一致を要求する。助詞呼出しは不足分を
             // 変数「それ」で補完し、公式の条件を満たす2個以上の不足だけを
             // 文法エラーにする（`yCallFunc`のnullCount判定）。
-            if (callable and (symbol.kind == .function or symbol.kind == .test_function)) {
+            // 演算子由来の疑似呼出し（範囲など`command_call`でもC風呼出しでも
+            // ないfunction_call）は助詞呼出しではないため個数検査の対象外。
+            // その子は演算子のオペランドであって助詞引数ではない。
+            if (callable and (node.command_call or node.is_c_style_call) and (symbol.kind == .function or symbol.kind == .test_function)) {
                 if (node.is_c_style_call) {
                     if (node.children.len != symbol.argument_count) {
                         const message = try std.fmt.allocPrint(self.allocator, "関数『{s}』は引数{d}個を必要としますが、{d}個が指定されました", .{ name, symbol.argument_count, node.children.len });
                         try self.addDiagnostic(.invalid_argument_count, node.span, self.modules.items[module_index].path, message);
                     }
                 } else if (symbol.parameter_josi.len > 0) {
-                    try self.checkParticleArgumentCount(module_index, node, try argument_completion.parameterSlots(self.allocator, symbol.parameter_josi), false, symbol.qualified_name);
+                    try self.checkParticleArgumentCount(module_index, scope, node, try argument_completion.parameterSlots(self.allocator, symbol.parameter_josi), false, symbol.qualified_name);
+                } else {
+                    // 宣言引数を持たない関数へ助詞引数を渡した場合、公式は
+                    // 全て未解決の単語として文法エラーにする（Issue #108）。
+                    try unresolved_words.deferUnresolvedArguments(self, module_index, scope, node, &.{}, false);
                 }
             }
             if (implicit_call and symbol.parameter_josi.len > 0) {
-                try self.checkParticleArgumentCount(module_index, node, try argument_completion.parameterSlots(self.allocator, symbol.parameter_josi), false, symbol.qualified_name);
+                try self.checkParticleArgumentCount(module_index, scope, node, try argument_completion.parameterSlots(self.allocator, symbol.parameter_josi), false, symbol.qualified_name);
+            } else if (implicit_call and symbol.parameter_josi.len == 0) {
+                try unresolved_words.deferUnresolvedArguments(self, module_index, scope, node, &.{}, false);
             }
             // 厳格モード: 結合ストリーム上で参照位置より後に宣言される同一
             // モジュールの変数系シンボルは、公式の単一パスでは参照時点で
@@ -658,11 +684,17 @@ const Analyzer = struct {
                         try self.addDiagnostic(.invalid_argument_count, node.span, self.modules.items[module_index].path, message);
                     }
                 }
-            } else if (callable or (node.kind == .word and builtin_catalog.findArity(name) != null)) {
+            } else if ((callable and (node.command_call or node.is_c_style_call)) or (node.kind == .word and builtin_catalog.findArity(name) != null)) {
                 // 助詞呼出し・値位置の裸の組み込み命令は、公式同様に不足引数を
                 // 「それ」で補完し、2個以上不足するときだけ文法エラーにする。
                 if (builtin_josi.findJosi(name)) |spec| {
-                    try self.checkParticleArgumentCount(module_index, node, try argument_completion.builtinSlots(self.allocator, spec), spec.is_variable, name);
+                    try self.checkParticleArgumentCount(module_index, scope, node, try argument_completion.builtinSlots(self.allocator, spec), spec.is_variable, name);
+                } else if (builtin_catalog.findArity(name)) |arity| {
+                    // 宣言引数を持たない組み込み命令（`空配列`など）への実引数も
+                    // 公式は未解決の単語にする（Issue #108）。助詞スロット表に
+                    // 無い独自拡張命令は対象外とし、個数表の arity==0 で判定する。
+                    if (arity.count == 0 and !arity.is_variable)
+                        try unresolved_words.deferUnresolvedArguments(self, module_index, scope, node, &.{}, false);
                 }
             }
             try self.bind(node, .builtin, name, name, null);
@@ -735,7 +767,7 @@ const Analyzer = struct {
             self.inputs[symbol.module_index].expands_in_function;
     }
 
-    fn resolveSymbol(self: *Analyzer, module_index: u32, scope: ScopeId, name: []const u8, use_span: ast.Span) ?Symbol {
+    pub fn resolveSymbol(self: *Analyzer, module_index: u32, scope: ScopeId, name: []const u8, use_span: ast.Span) ?Symbol {
         var current: ?ScopeId = scope;
         while (current) |id| : (current = self.scopes.items[id].parent) {
             if (self.lookupLexical(id, name)) |symbol| {
@@ -829,13 +861,22 @@ const Analyzer = struct {
     /// 公式`yCallFunc`と同じ規則で、助詞呼出しの不足引数を検査する。
     /// 2個以上不足し、かつ公式のエラー条件（引数が1つ以上ある・命令の助詞が
     /// 無い・連文助詞が付く）を満たすときだけ文法エラーにする。
-    fn checkParticleArgumentCount(self: *Analyzer, module_index: u32, node: *ast.Node, slots: []const argument_completion.Slot, variable_final: bool, shown_name: []const u8) !void {
-        if (slots.len == 0) return;
-        const plan = try argument_completion.plan(self.allocator, slots, node.children, variable_final) orelse return;
-        if (plan.missing < 2) return;
-        if (!(plan.provided > 0 or node.josi.len == 0 or parser_helpers.isSequenceJosi(node.josi))) return;
-        const message = try std.fmt.allocPrint(self.allocator, "関数『{s}』の引数が不足しています。", .{displayQualifiedName(shown_name)});
-        try self.addDiagnostic(.invalid_argument_count, node.span, self.modules.items[module_index].path, message);
+    fn checkParticleArgumentCount(self: *Analyzer, module_index: u32, scope: ScopeId, node: *ast.Node, slots: []const argument_completion.Slot, variable_final: bool, shown_name: []const u8) !void {
+        if (slots.len == 0) {
+            try unresolved_words.deferUnresolvedArguments(self, module_index, scope, node, slots, variable_final);
+            return;
+        }
+        if (try argument_completion.plan(self.allocator, slots, node.children, variable_final)) |plan_result| {
+            if (plan_result.missing < 2) return;
+            if (!(plan_result.provided > 0 or node.josi.len == 0 or parser_helpers.isSequenceJosi(node.josi))) return;
+            const message = try std.fmt.allocPrint(self.allocator, "関数『{s}』の引数が不足しています。", .{displayQualifiedName(shown_name)});
+            try self.addDiagnostic(.invalid_argument_count, node.span, self.modules.items[module_index].path, message);
+            return;
+        }
+        // 公式`yCallFunc`は宣言助詞のどのスロットにも一致しない引数を
+        // スタックへ残し、行末で『未解決の単語があります』の文法エラーに
+        // する（Issue #108）。補完計画が立たない＝残った引数がある場合。
+        try unresolved_words.deferUnresolvedArguments(self, module_index, scope, node, slots, variable_final);
     }
 
     /// 公式は`main__`接頭辞を診断文言から省略する（#1223）。
@@ -1071,7 +1112,7 @@ const Analyzer = struct {
         });
     }
 
-    fn addDiagnostic(self: *Analyzer, code: diagnostic.Code, span: ast.Span, file: []const u8, message: []const u8) !void {
+    pub fn addDiagnostic(self: *Analyzer, code: diagnostic.Code, span: ast.Span, file: []const u8, message: []const u8) !void {
         try self.addDiagnosticWithSeverity(code, span, file, message, .error_severity);
     }
 
