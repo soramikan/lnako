@@ -66,7 +66,6 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
                 .call_value => instruction.operands.len > 0,
                 .make_closure => closureSupported(program, function, instruction.name),
                 .iterator_begin => iteratorSourceSupported(function, instruction),
-                else => false,
             };
             if (!supported) return .{
                 .function_name = function.name,

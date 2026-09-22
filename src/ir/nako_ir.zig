@@ -67,7 +67,6 @@ pub const Opcode = enum {
     try_end,
     exception_pending,
     exception_take,
-    dynamic_execute,
     speed_mode_begin,
     speed_mode_end,
     performance_monitor_begin,

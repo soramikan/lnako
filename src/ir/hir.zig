@@ -49,7 +49,6 @@ pub const Kind = enum {
     break_statement,
     continue_statement,
     closure,
-    dynamic_execute,
     speed_mode,
     performance_monitor,
 };
@@ -383,7 +382,6 @@ const Lowerer = struct {
             .break_statement => .break_statement,
             .continue_statement => .continue_statement,
             .anonymous_function => .closure,
-            .dynamic_execute => .dynamic_execute,
             .function_pointer => .closure,
         };
         const id = try self.addNode(kind, node.span, child_ids);

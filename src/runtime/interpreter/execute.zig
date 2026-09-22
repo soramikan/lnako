@@ -455,7 +455,6 @@ fn executeInstructionResolved(
         .try_end => _ = frame.handlers.pop(),
         .exception_pending => result = .{ .boolean = false },
         .exception_take => {},
-        .dynamic_execute => result = try self.executeDynamicValue(self.operand(frame, instruction, 0)),
         .phi => {
             const source = predecessor orelse return error.InvalidPhiPredecessor;
             for (instruction.phi_incoming) |incoming| if (incoming.predecessor == source) {
