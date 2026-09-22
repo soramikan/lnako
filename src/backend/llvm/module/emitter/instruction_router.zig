@@ -152,6 +152,5 @@ pub fn writeInstruction(emitter: *Emitter, function: ir.Function, locals: []cons
             try emitter.debugSuffix(instruction.span, scope);
         },
         .speed_mode_begin, .speed_mode_end, .performance_monitor_begin, .performance_monitor_end => {},
-        else => return error.UnsupportedInstruction,
     }
 }

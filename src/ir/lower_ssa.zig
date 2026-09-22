@@ -221,7 +221,6 @@ const FunctionBuilder = struct {
             .closure => try self.emitValue(.make_closure, .function, &.{}, node),
             .try_except => self.lowerTry(node),
             .throw_statement => self.lowerThrow(node),
-            .dynamic_execute => try self.lowerVariadic(.dynamic_execute, .dynamic, node),
             .switch_statement => self.lowerSwitch(node),
             .speed_mode => self.lowerScopedMode(.speed_mode_begin, .speed_mode_end, node),
             .performance_monitor => self.lowerScopedMode(.performance_monitor_begin, .performance_monitor_end, node),

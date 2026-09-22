@@ -367,7 +367,6 @@ fn isInterruptSafepoint(opcode: ir.Opcode) bool {
         .make_closure,
         .iterator_begin,
         .iterator_next,
-        .dynamic_execute,
         => true,
         else => false,
     };

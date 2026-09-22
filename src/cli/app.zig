@@ -6,6 +6,7 @@ const compiler_pipeline = @import("../compiler_pipeline.zig");
 const arguments = @import("arguments.zig");
 const test_command = @import("commands/test.zig");
 const package_command = @import("commands/package.zig");
+const sync_command = @import("commands/sync.zig");
 
 pub fn run(
     allocator: std.mem.Allocator,
@@ -299,6 +300,13 @@ pub fn run(
         .package => {
             package_command.run(allocator, io, args[1..], stdout, stderr) catch |err| {
                 try stderr.print("package: {s}\n", .{@errorName(err)});
+                try stderr.flush();
+                std.process.exit(1);
+            };
+        },
+        .sync => {
+            sync_command.run(allocator, io, args[1..], stdout, stderr) catch |err| {
+                try stderr.print("sync: {s}\n", .{@errorName(err)});
                 try stderr.flush();
                 std.process.exit(1);
             };

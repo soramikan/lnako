@@ -253,6 +253,22 @@ pub fn verify(
     target: Target,
     diagnostics: *diag.List,
 ) !Verified {
+    var verified = try verifyArchive(backing_allocator, archive, diagnostics);
+    errdefer verified.deinit();
+    try checkManifestTarget(backing_allocator, &verified.manifest, target, diagnostics);
+    return verified;
+}
+
+/// `.npkg` バイト列の archive 構造・必須 metadata・FILES.toml と payload の
+/// 完全一致を検証し、解析済みメタデータを返す。対象環境適合（runtime・
+/// engines・artifact 選択）は検査しない。取得層のように利用 target を
+/// 決められない場面で使い、適合判定は `checkManifestTarget` で行う。
+/// 失敗時は diagnostics へ記録して `error.InvalidPackage` を返す。
+pub fn verifyArchive(
+    backing_allocator: Allocator,
+    archive: []const u8,
+    diagnostics: *diag.List,
+) !Verified {
     var arena = std.heap.ArenaAllocator.init(backing_allocator);
     errdefer arena.deinit();
     const allocator = arena.allocator();
@@ -422,6 +438,30 @@ pub fn verify(
         }
     }
 
+    if (diagnostics.errorCount() > prior_errors) return error.InvalidPackage;
+
+    // 全割当が完了した後に arena を移す。manifest/files/commands は
+    // いずれも arena 由来の document が所有するため個別 deinit は不要。
+    return .{
+        .arena = arena,
+        .manifest = manifest,
+        .files = files.entries,
+        .commands = commands.commands,
+    };
+}
+
+/// `verify` の対象環境適合部分を manifest 単位で実行する。runtime・
+/// engines・有効 feature 展開を含む各 export の artifact 選択を検査する。
+/// 展開済み cache entry のように archive が残らず manifest だけを読める
+/// 場面でも適合を再確認できる。失敗時は diagnostics へ記録して
+/// `error.InvalidPackage` を返す。
+pub fn checkManifestTarget(
+    backing_allocator: Allocator,
+    manifest: *const manifest_mod.Manifest,
+    target: Target,
+    diagnostics: *diag.List,
+) !void {
+    const prior_errors = diagnostics.errorCount();
     // 対象環境との適合: runtime・engines・各 export の artifact 選択。
     _ = try manifest.checkRuntime(target.runtime, diagnostics, .{});
     // 言語版と処理系版は独立した制約として検査する。対象 runtime の
@@ -435,22 +475,16 @@ pub fn verify(
     );
     // artifact 照合の feature 集合は、要求名に [features] 定義の推移展開と
     // default（無効化可能）を加えた有効集合とする（依存解決と同じ意味論）。
+    var scratch = std.heap.ArenaAllocator.init(backing_allocator);
+    defer scratch.deinit();
+    const allocator = scratch.allocator();
     var artifact_target = target.artifactTarget();
-    artifact_target.features = try effectiveFeatures(allocator, &manifest, target.features, target.default_features, diagnostics);
+    artifact_target.features = try effectiveFeatures(allocator, manifest, target.features, target.default_features, diagnostics);
     for (manifest.exports) |*export_entry| {
         _ = try export_entry.resolve(allocator, artifact_target, false, diagnostics);
     }
 
     if (diagnostics.errorCount() > prior_errors) return error.InvalidPackage;
-
-    // 全割当が完了した後に arena を移す。manifest/files/commands は
-    // いずれも arena 由来の document が所有するため個別 deinit は不要。
-    return .{
-        .arena = arena,
-        .manifest = manifest,
-        .files = files.entries,
-        .commands = commands.commands,
-    };
 }
 
 /// `.npkg` ファイルを読んで検証する。

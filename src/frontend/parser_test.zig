@@ -413,11 +413,10 @@ test "条件助詞付き呼出しのあとに値が続いても条件文にな�
 
 test "「もし」省略形は命令呼出しのときだけ条件文にする" {
     // 公式`ySentence`は`yCall`が命令呼出しで確定した場合だけ`yIfThen`へ入る。
-    // 演算式や数値は『不完全な文です』で拒否されるため条件文にしない。
+    // 演算式や数値は公式と同じく『不完全な文です』で拒否する。
     var number = try parse(std.testing.allocator, "1ならば\n", "implicit-if-number.nako3");
     defer number.deinit();
-    try std.testing.expect(number.succeeded());
-    try std.testing.expectEqual(ast.Kind.dynamic_execute, number.root.?.children[0].kind);
+    try std.testing.expect(!number.succeeded());
 
     // 単独語は変数参照と区別できないため、既知の命令名でなければ条件文にしない。
     var word = try parse(std.testing.allocator, "Aならば\n", "implicit-if-word.nako3");
@@ -439,6 +438,49 @@ test "「もし」省略形は命令呼出しのときだけ条件文にする" 
     try std.testing.expectEqual(ast.Kind.if_statement, command.root.?.children[0].kind);
     try std.testing.expectEqual(ast.Kind.function_call, command.root.?.children[0].children[0].kind);
     try std.testing.expectEqualStrings("今", command.root.?.children[0].children[0].name);
+}
+
+test "命令呼出しを構成しない裸の式文は不完全な文として拒否する" {
+    // 公式`ySentence`は文の末尾に残った値を『不完全な文です』で拒否する。
+    // 式文として実行系へ流すと`1+1`のような演算式が動的実行へ変換されて
+    // 再解析を繰り返し実行上限超過になるため、構文解析時点で拒否する。
+    const cases = [_]struct { source: []const u8, message: []const u8 }{
+        .{ .source = "1+1\n", .message = "不完全な文です。演算子『+』が解決していません" },
+        .{ .source = "１＋１\n", .message = "不完全な文です。演算子『+』が解決していません" },
+        .{ .source = "A+1\n", .message = "不完全な文です。演算子『+』が解決していません" },
+        .{ .source = "1\n", .message = "不完全な文です。数値1が解決していません" },
+        .{ .source = "1.5\n", .message = "不完全な文です。数値1.5が解決していません" },
+        .{ .source = "「あ」\n", .message = "不完全な文です。文字列『あ』が解決していません" },
+        .{ .source = "「1+2を表示」\n", .message = "不完全な文です。文字列『1+2を表示』が解決していません" },
+        .{ .source = "[1,2]\n", .message = "不完全な文です。『json_array』が解決していません" },
+        .{ .source = "{「a」:1}\n", .message = "不完全な文です。『json_obj』が解決していません" },
+        .{ .source = "A[0]\n", .message = "不完全な文です。『ref_array』が解決していません" },
+        .{ .source = "A.B\n", .message = "不完全な文です。『ref_prop』が解決していません" },
+        .{ .source = "!A\n", .message = "不完全な文です。演算子『not』が解決していません" },
+        .{ .source = "「a」と「b」\n", .message = "不完全な文です。文字列『a』、文字列『b』が解決していません" },
+        .{ .source = "1 2\n", .message = "不完全な文です。数値1、数値2が解決していません" },
+        .{ .source = "F(1)+1\n", .message = "不完全な文です。演算子『+』が解決していません" },
+        .{ .source = "F(1)(2)\n", .message = "不完全な文です。『call_value』が解決していません" },
+    };
+    for (cases) |case| {
+        var result = try parse(std.testing.allocator, case.source, "bare-expression.nako3");
+        defer result.deinit();
+        try std.testing.expect(!result.succeeded());
+        try std.testing.expectEqual(diagnostic.Code.incomplete_statement, result.diagnostics[0].code);
+        try std.testing.expectEqualStrings(case.message, result.diagnostics[0].message);
+    }
+
+    // 範囲演算子の疑似呼出しも命令呼出しではないため『不完全な文です』で拒否する。
+    var range = try parse(std.testing.allocator, "1…5\n", "bare-range.nako3");
+    defer range.deinit();
+    try std.testing.expect(!range.succeeded());
+    try std.testing.expectEqualStrings("不完全な文です。関数『範囲』が解決していません", range.diagnostics[0].message);
+
+    // 単独語は変数参照と区別できないため従来どおり命令呼出しとして扱う。
+    var word = try parse(std.testing.allocator, "A\n", "bare-word.nako3");
+    defer word.deinit();
+    try std.testing.expect(word.succeeded());
+    try std.testing.expectEqual(ast.Kind.function_call, word.root.?.children[0].kind);
 }
 
 test "無名関数の本体先頭語を関数名として登録しない" {
@@ -1130,7 +1172,8 @@ test "先行引数を残したC風呼出しは未解決引数として構文エ�
     var result = try parse(std.testing.allocator, "●(Aを)Fとは\n　それはA+1\nここまで\n5をF(1)\n", "c-call-stray-arg.nako3");
     defer result.deinit();
     try std.testing.expect(!result.succeeded());
-    try std.testing.expectEqual(diagnostic.Code.unexpected_token, result.diagnostics[0].code);
+    try std.testing.expectEqual(diagnostic.Code.incomplete_statement, result.diagnostics[0].code);
+    try std.testing.expectEqualStrings("不完全な文です。数値5が解決していません", result.diagnostics[0].message);
 }
 
 test "連文のあとのC風呼出しは独立した呼出しとして実行する" {
@@ -1163,7 +1206,7 @@ test "連文で残った実引数とC風呼出しは未解決引数として構�
         var result = try parse(std.testing.allocator, source, "chain-c-call-stray.nako3");
         defer result.deinit();
         try std.testing.expect(!result.succeeded());
-        try std.testing.expectEqual(diagnostic.Code.unexpected_token, result.diagnostics[0].code);
+        try std.testing.expectEqual(diagnostic.Code.incomplete_statement, result.diagnostics[0].code);
     }
 }
 

@@ -22,6 +22,7 @@ test {
     _ = @import("cli/app.zig");
     _ = @import("cli/arguments.zig");
     _ = @import("cli/commands/test.zig");
+    _ = @import("cli/commands/sync.zig");
 
     _ = @import("lnako").package.diagnostics;
     _ = @import("lnako").package.toml;
@@ -42,6 +43,11 @@ test {
     _ = @import("lnako").package.fetch;
     _ = @import("lnako").package.provider;
     _ = @import("lnako").package.registry;
+    _ = @import("lnako").package.cache;
+    _ = @import("lnako").package.environment;
+    _ = @import("lnako").package.materialize;
+    _ = @import("lnako").package.unpack;
+    _ = @import("lnako").package.sync;
 
     _ = @import("regexp");
 }
