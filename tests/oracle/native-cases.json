@@ -3187,5 +3187,9 @@
   {
     "id": "native-paren-josi-call-value",
     "source": "(「a」を「b」と連結)を表示\n"
+  },
+  {
+    "id": "native-range-object-iteration-issue117",
+    "source": "1…3を繰り返す\n「回数: {それ}」を表示\nここまで\nNで4から6の範囲を繰り返す\n「回数: {N}」を表示\nここまで\nA=1\nB=2\nA…Bを繰り返す\n「{それ}」を表示\nここまで\n7…8を繰り返す：\n　　「{それ}」を表示。\n"
   }
 ]
