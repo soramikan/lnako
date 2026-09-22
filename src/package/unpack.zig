@@ -38,18 +38,24 @@ pub const Options = struct {
     limits: materialize.Limits = .{},
 };
 
-/// tar entry 名を規範化する。`..`・`.`・`\`・制御文字・先頭 `/` は
-/// `error.NonCanonicalPath`。`strip_components` 未満しか成分を持たない
-/// entry は null（例: npm-tarball の `package/` dir 自身）。
+/// tar entry 名を規範化する。`..`・`.`・空成分（`a//b`・`./a`・先頭 `/`）・
+/// `\`・制御文字は `error.NonCanonicalPath`。directory entry が持つ末尾の
+/// `/` は dir marker として1つだけ除去してから成分を検査する。
+/// `strip_components` 未満しか成分を持たない entry は null（例:
+/// npm-tarball の `package/` dir 自身）。
 fn normalizeEntryName(raw: []const u8, strip_components: u32, gpa: Allocator) (Error || Allocator.Error)!?[]u8 {
     if (raw.len == 0 or raw[0] == '/') return error.NonCanonicalPath;
+    const name = if (raw[raw.len - 1] == '/') raw[0 .. raw.len - 1] else raw;
+    if (name.len == 0) return error.NonCanonicalPath;
     var rel = std.ArrayListUnmanaged(u8).empty;
     errdefer rel.deinit(gpa);
     var depth: u32 = 0;
-    var components = std.mem.splitScalar(u8, raw, '/');
+    var components = std.mem.splitScalar(u8, name, '/');
     while (components.next()) |component| {
-        if (component.len == 0 or std.mem.eql(u8, component, ".")) continue;
-        if (std.mem.eql(u8, component, "..")) return error.NonCanonicalPath;
+        // 空成分・`.`・`..` は正規化せず拒否する。黙って落とすと
+        // `a//b` や `./a` が別名の正規 path として受理されてしまう。
+        if (component.len == 0 or std.mem.eql(u8, component, ".") or
+            std.mem.eql(u8, component, "..")) return error.NonCanonicalPath;
         for (component) |byte| {
             if (byte < 0x20 or byte == 0x7f or byte == '\\') return error.NonCanonicalPath;
         }
@@ -240,6 +246,17 @@ test "unpack extractTarGz は symlink・traversal・重複 entry を拒否する
     try testing.expectError(error.NonCanonicalPath, normalizeEntryName("a/../b", 0, testing.allocator));
     try testing.expectError(error.NonCanonicalPath, normalizeEntryName("/abs", 0, testing.allocator));
     try testing.expectError(error.NonCanonicalPath, normalizeEntryName("a\\b", 0, testing.allocator));
+    // 空成分・`.` 成分も正規化せず拒否する（`a//b` や `./a` が黙って
+    // 別名として受理されないこと）。
+    try testing.expectError(error.NonCanonicalPath, normalizeEntryName("a//b", 0, testing.allocator));
+    try testing.expectError(error.NonCanonicalPath, normalizeEntryName("./a", 0, testing.allocator));
+    try testing.expectError(error.NonCanonicalPath, normalizeEntryName("a/./b", 0, testing.allocator));
+    try testing.expectError(error.NonCanonicalPath, normalizeEntryName("a/b//", 0, testing.allocator));
+
+    // directory entry の末尾 `/` は dir marker として除去される。
+    const dir_name = (try normalizeEntryName("src/dir/", 0, testing.allocator)).?;
+    defer testing.allocator.free(dir_name);
+    try testing.expectEqualStrings("src/dir", dir_name);
 
     // 同一 path の重複は PathSet が検出する。
     const dup = try buildTarGz(testing.allocator, "", &.{

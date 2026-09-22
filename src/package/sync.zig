@@ -302,7 +302,11 @@ pub fn run(
     // staging 世代 dir を env/ へ rename し、environment.json・current を
     // 原子的に切り替える。ここまで来る前に失敗した場合、既存環境は無変更。
     env_store.commit(generation.generation, json_buffer.written()) catch |err| return mapFs(err);
-    env_store.writeCurrent(generation.generation) catch |err| return mapFs(err);
+    // environment.json 公開後に current の更新だけ失敗しても、公開済み環境を
+    // 巻き戻せない。current は世代整理と次回 sync のヒントに過ぎず、実際の
+    // 参照世代は environment.json から復元する（中断時と同じ状態）ため、
+    // ここでの失敗は成功扱いとする。
+    env_store.writeCurrent(generation.generation) catch {};
 
     // 前世代は使用中の可能性があるため、現行・直前・公開環境の参照世代を
     // 残して整理する。参照世代を特定できない場合（env.json 破損等）は
@@ -422,7 +426,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                 }
                 try buildGitObject(ctx, object_key, checkout_dir, source.path);
             } else {
-                manifest = try cachedManifest(ctx, object_key);
+                manifest = if (try cachedManifest(ctx, object_key)) |cached| cached.manifest else null;
             }
             tree_abs = tree;
             const dest = try materializeIntoGeneration(ctx, entry.name, tree);
@@ -433,7 +437,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                 return ctx.session.fail(.invalid_source, .package, entry.name, "http source of \"{s}\" has no url", .{entry.name});
             const declared_hash = source.hash orelse
                 return ctx.session.fail(.invalid_source, .package, entry.name, "http source of \"{s}\" has no hash", .{entry.name});
-            const object_key = try artifactKey(ctx, "http", declared_hash, url);
+            const object_key = try artifactKey(arena, "http", declared_hash, url);
             try rememberKey(ctx, object_key);
             const tree = (try ctx.objectTree(object_key)).?;
             const verified_hit = (ctx.cache_store.verifyEntry(arena, object_key) catch false) and ctx.cache_store.entryExists(object_key);
@@ -449,10 +453,11 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                 manifest = acquired.manifest;
                 const prepared = try buildArtifactObject(ctx, object_key, acquired.artifact_bytes.?, acquired.artifact_type orelse "raw", entry);
                 applyPrepared(&manifest, &verified_commands, prepared);
-            } else {
-                // cache 命中時も manifest が必要なら artifact を読み直す。
-                manifest = try cachedManifest(ctx, object_key);
             }
+            // cache 命中時は object から manifest を読み直す。`.npkg` 由来なら
+            // 公開時と今回の target が異なり得るため適合を再検証する（miss の
+            // tar.gz/raw でも公開済み tree から manifest を拾う）。
+            manifest = manifest orelse try checkedCachedManifest(ctx, object_key, entry);
             tree_abs = tree;
             const dest = try materializeIntoGeneration(ctx, entry.name, tree);
             env_path = dest;
@@ -465,7 +470,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                 return ctx.session.fail(.not_found, .artifact, entry.name, "package \"{s}\" has no artifact for runtime \"{s}\"", .{ entry.name, ctx.runtime.name() });
             const url = artifact.url orelse
                 return ctx.session.fail(.invalid_source, .artifact, entry.name, "artifact \"{s}\" of \"{s}\" has no url", .{ artifact.key, entry.name });
-            const object_key = try artifactKey(ctx, "artifact", artifact.sha256 orelse artifact.key, url);
+            const object_key = try artifactKey(arena, "artifact", artifact.sha256 orelse artifact.key, url);
             try rememberKey(ctx, object_key);
             const tree = (try ctx.objectTree(object_key)).?;
             const verified_hit = (ctx.cache_store.verifyEntry(arena, object_key) catch false) and ctx.cache_store.entryExists(object_key);
@@ -480,7 +485,9 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                 const prepared = try buildArtifactObject(ctx, object_key, bytes, artifact.type orelse "raw", entry);
                 applyPrepared(&manifest, &verified_commands, prepared);
             }
-            manifest = manifest orelse try cachedManifest(ctx, object_key);
+            // http 経路と同じく cache 命中の `.npkg` 由来 manifest は現在
+            // target への適合を再検証する。
+            manifest = manifest orelse try checkedCachedManifest(ctx, object_key, entry);
             tree_abs = tree;
             const dest = try materializeIntoGeneration(ctx, entry.name, tree);
             env_path = dest;
@@ -575,14 +582,20 @@ fn shortKey(arena: Allocator, prefix: []const u8, parts: []const []const u8) ![]
 }
 
 /// hash 宣言から内容アドレス key を作る。sha256 に正規化できる場合は実ダイ
-/// ジェストを key に使い、そうでなければ識別文字列の hash へ退避する。
-fn artifactKey(ctx: *Context, prefix: []const u8, declared_hash: []const u8, identity: []const u8) ![]const u8 {
+/// ジェストを key に使う。そうでなければ宣言 hash を key 材料へ含める。
+/// sha256 以外（sha512 等）でも lock の hash 更新が必ず別 entry になるよう
+/// URL だけを key にしない（同じ URL で配布物が更新される通常ケースで
+/// 古い内容を復元しないため）。
+fn artifactKey(arena: Allocator, prefix: []const u8, declared_hash: []const u8, identity: []const u8) ![]const u8 {
     var digest: [32]u8 = undefined;
     if (lock_model.normalizeSha256(declared_hash, &digest)) {
         const hex = std.fmt.bytesToHex(digest, .lower);
-        return try std.fmt.allocPrint(ctx.arena, "{s}-{s}", .{ prefix, hex[0..32] });
+        return try std.fmt.allocPrint(arena, "{s}-{s}", .{ prefix, hex[0..32] });
     }
-    return try shortKey(ctx.arena, prefix, &.{identity});
+    if (declared_hash.len != 0) {
+        return try shortKey(arena, prefix, &.{ declared_hash, identity });
+    }
+    return try shortKey(arena, prefix, &.{identity});
 }
 
 fn rememberKey(ctx: *Context, key: []const u8) !void {
@@ -713,9 +726,16 @@ fn buildArtifactObject(ctx: *Context, key: []const u8, bytes: []const u8, artifa
     return prepared;
 }
 
-/// cache object 内の manifest を読み直す。`tree/nako.toml` または
-/// `tree/NAKO-PKG/METADATA.toml` を探す。無ければ null。
-fn cachedManifest(ctx: *Context, key: []const u8) Error!?manifest_mod.Manifest {
+/// cache object から読み直した manifest。`from_npkg` は `NAKO-PKG/
+/// METADATA.toml` 由来（= `.npkg` artifact の展開物）の場合に真。
+const CachedManifest = struct {
+    manifest: manifest_mod.Manifest,
+    from_npkg: bool,
+};
+
+/// cache object 内の manifest を読み直す。`tree/NAKO-PKG/METADATA.toml`
+/// を優先し、無ければ `tree/nako.toml` を探す。どちらも無ければ null。
+fn cachedManifest(ctx: *Context, key: []const u8) Error!?CachedManifest {
     const arena = ctx.arena;
     const tree = (try ctx.objectTree(key)).?;
     // 両方ある package では配布向け正規化済みの METADATA.toml が正本。
@@ -733,12 +753,30 @@ fn cachedManifest(ctx: *Context, key: []const u8) Error!?manifest_mod.Manifest {
             manifest_mod.parseNpkgMetadata(arena, bytes, ctx.session.diagSink(&scratch))
         else
             manifest_mod.parse(arena, bytes, ctx.session.diagSink(&scratch));
-        return parsed catch |err| switch (err) {
+        const manifest = parsed catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => return ctx.session.fail(.invalid_metadata, .manifest, path, "cached manifest at \"{s}\" is invalid", .{path}),
         };
+        return .{ .manifest = manifest, .from_npkg = candidate.npkg };
     }
     return null;
+}
+
+/// cache object から manifest を読み、`.npkg` 由来なら現在 target への適合を
+/// 再検証する。展開済み object は公開時に検証済みだが、公開時と今回の
+/// profile/target が異なり得るため hit 経路でも適合判定を省略しない。
+/// manifest が無ければ null。不適合なら `invalid_metadata` で失敗する。
+fn checkedCachedManifest(ctx: *Context, key: []const u8, entry: *const lock_model.PackageEntry) Error!?manifest_mod.Manifest {
+    const cached = (try cachedManifest(ctx, key)) orelse return null;
+    if (!cached.from_npkg) return cached.manifest;
+    var manifest = cached.manifest;
+    var scratch = diag.List.init(ctx.gpa);
+    defer scratch.deinit();
+    npkg_verify.checkManifestTarget(ctx.arena, &manifest, npkgTarget(ctx, entry), ctx.session.diagSink(&scratch)) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return ctx.session.fail(.invalid_metadata, .artifact, key, "cached .npkg object \"{s}\" does not fit the requested target", .{key}),
+    };
+    return manifest;
 }
 
 /// registry artifact の選択。lock が記録した `implementation`（解決時に
@@ -1108,6 +1146,58 @@ test "sync は offline で http 依存の未取得を拒否する" {
         .policy = .{ .offline = true },
     }, &list));
     try testing.expectError(error.FileNotFound, temporary.dir.access(io, ".nako/environment.json", .{}));
+}
+
+test "artifactKey は宣言 hash を key 材料へ含める" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const allocator = arena_impl.allocator();
+    const url = "https://example.test/pkg.tar.gz";
+    // sha256 は digest 自体が key になるため表記が違っても同一 key。
+    const a = try artifactKey(allocator, "http", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", url);
+    const b = try artifactKey(allocator, "http", "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", url);
+    try testing.expectEqualStrings(a, b);
+    // sha256 以外の表記でも宣言 hash が key 材料へ入る。同じ URL で lock の
+    // hash が更新されれば必ず別 entry になり、古い内容を復元しない。
+    const c = try artifactKey(allocator, "http", "sha512:aaaa", url);
+    const d = try artifactKey(allocator, "http", "sha512:bbbb", url);
+    try testing.expect(!std.mem.eql(u8, c, d));
+    try testing.expect(!std.mem.eql(u8, a, c));
+    // 同じ hash 宣言でも取得元が違えば別 entry。
+    const e = try artifactKey(allocator, "http", "sha512:aaaa", "https://other.test/pkg.tar.gz");
+    try testing.expect(!std.mem.eql(u8, c, e));
+}
+
+test "sync は current が欠損しても公開済み世代を environment.json から保持する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const manifest_sha = try sha256HexAlloc(testing.allocator, app_manifest);
+    defer testing.allocator.free(manifest_sha);
+    try writeFixtureProject(&temporary, manifest_sha);
+    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const cache_root = try std.fs.path.join(testing.allocator, &.{ root, "cache" });
+    defer testing.allocator.free(cache_root);
+
+    var list = diag.List.init(testing.allocator);
+    defer list.deinit();
+    var first = try run(testing.allocator, io, .{ .project_root = root, .cache_root = cache_root }, &list);
+    const first_gen = try testing.allocator.dupe(u8, first.generation);
+    defer testing.allocator.free(first_gen);
+    first.deinit();
+
+    // current 更新失敗・中断と同等の状態（公開済みだが current が無い）。
+    try temporary.dir.deleteFile(io, ".nako/current");
+
+    var second = try run(testing.allocator, io, .{ .project_root = root, .cache_root = cache_root }, &list);
+    defer second.deinit();
+    try testing.expect(!std.mem.eql(u8, first_gen, second.generation));
+
+    // current が無くても environment.json の参照から前世代が保持される。
+    const previous = try std.fs.path.join(testing.allocator, &.{ root, ".nako", "env", first_gen });
+    defer testing.allocator.free(previous);
+    try std.Io.Dir.cwd().access(io, previous, .{});
 }
 
 test "sync は再実行で世代を更新し直前世代を保持する" {

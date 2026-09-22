@@ -99,9 +99,18 @@ fn digestTree(io: std.Io, gpa: Allocator, tree_abs: []const u8) ![32]u8 {
                 hasher.update(&size_le);
                 const abs = try std.fs.path.join(gpa, &.{ tree_abs, entry.rel });
                 defer gpa.free(abs);
-                const bytes = try std.Io.Dir.cwd().readFileAlloc(io, abs, gpa, .unlimited);
-                defer gpa.free(bytes);
-                hasher.update(bytes);
+                // 大きな file を一括確保しないよう、固定 buffer で
+                // ストリーミング読み出しして hash を更新する。
+                var file = try std.Io.Dir.cwd().openFile(io, abs, .{});
+                defer file.close(io);
+                var read_buffer: [8192]u8 = undefined;
+                var reader = file.reader(io, &read_buffer);
+                while (true) {
+                    var chunk: [8192]u8 = undefined;
+                    const length = try reader.interface.readSliceShort(&chunk);
+                    if (length == 0) break;
+                    hasher.update(chunk[0..length]);
+                }
             },
             else => unreachable,
         }

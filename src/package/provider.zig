@@ -405,6 +405,10 @@ fn gitRun(session: *Session, argv: []const []const u8, target: ?[]const u8) Erro
 /// HTTP URL 依存の取得。`dep.hash` で内容を照合し、`.npkg`（ZIP）であれば
 /// `npkg_verify` で検証して manifest を取り出す。別 source への暗黙切替や
 /// hash 未検証の受理は行わない。
+///
+/// `.npkg` の対象環境適合は provider が決められないため archive 構造・
+/// 必須 metadata・FILES.toml のみをここで検査する。runtime・engines・
+/// artifact 選択の適合判定は利用側（`sync` の `npkgTarget` 検証）が担う。
 pub fn acquireHttp(session: *Session, dep: manifest_mod.HttpDependency) Error!Acquired {
     const bytes = try fetch.fetchBytes(session, dep.url, .artifact);
     try fetch.verifyHash(session, bytes, dep.hash, dep.url, .artifact);
@@ -427,7 +431,9 @@ pub fn acquireHttp(session: *Session, dep: manifest_mod.HttpDependency) Error!Ac
         defer scratch.deinit();
         // `Verified` の arena は session arena を backing にするため、deinit
         // せず session の寿命まで `verified.manifest` を有効に保つ。
-        const verified = npkg_verify.verify(session.allocator(), bytes, .{}, session.diagSink(&scratch)) catch |err| switch (err) {
+        // target 適合は要求 profile 未定のここでは判定しない（既定 target
+        // での誤拒否を防ぐ）。sync 側が実 target で再検証する。
+        const verified = npkg_verify.verifyArchive(session.allocator(), bytes, session.diagSink(&scratch)) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => return session.fail(.invalid_metadata, .artifact, dep.url, "downloaded .npkg at \"{s}\" failed verification", .{dep.url}),
         };
