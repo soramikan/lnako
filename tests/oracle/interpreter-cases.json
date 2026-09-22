@@ -628,5 +628,21 @@
   {
     "id": "return-chained-bare",
     "source": "●Fとは\n「x」と表示して戻る\nここまで\nFを表示\n"
+  },
+  {
+    "id": "return-cond-naraba",
+    "source": "●(Aの)Fとは\nAが1と等しいならば戻る\n9で戻る\nここまで\nF(2)を表示\n"
+  },
+  {
+    "id": "return-cond-arg",
+    "source": "●(Aの)Fとは\nAが1と等しいならばAを戻る\n9で戻る\nここまで\nF(2)を表示\nF(1)を表示\n"
+  },
+  {
+    "id": "return-cond-display",
+    "source": "B=1\nBが1と等しいならばBを表示\nB=2\nBが1と等しいならばBを表示\n"
+  },
+  {
+    "id": "return-cond-chained",
+    "source": "●(Aの)Fとは\n「x」と表示してAが1と等しいならば戻る\n9で戻る\nここまで\nF(2)を表示\n"
   }
 ]
