@@ -687,6 +687,7 @@ pub const Parser = struct {
     /// （`parser.zig`のサイズ上限を保つため）。
     pub const atLoopKeyword = loops.atLoopKeyword;
     pub const atLoopKeywordAhead = loops.atLoopKeywordAhead;
+    pub const atForLoopKeywordAhead = loops.atForLoopKeywordAhead;
     pub const parseRepeatTimes = loops.parseRepeatTimes;
     pub const parseWhile = loops.parseWhile;
     pub const parseFor = loops.parseFor;
@@ -889,9 +890,13 @@ pub const Parser = struct {
                 // その識別子を命令と誤認せず、下のparseExpression経由で引数として処理する。
                 // 条件助詞（`ならば`等）は命令として確定し、条件文へ昇格させる。
                 const token = self.peek();
-                if (token.josi.len > 0 and !isSequenceJosi(token.josi) and !isImplicitCallbackJosi(token.josi) and
-                    !isConditionalJosi(token.josi))
+                if ((token.josi.len > 0 and !isSequenceJosi(token.josi) and !isImplicitCallbackJosi(token.josi) and
+                    !isConditionalJosi(token.josi)) or
+                    (token.josi.len == 0 and self.peekAhead(1).kind == .left_paren))
                 {
+                    // 助詞なし識別子の直後が『(』ならC風呼出しの式。
+                    // resolveCommandName側と同じく命令として確定せず、
+                    // 式の解析へ委ねる（`1を表示してF(1)`）。
                     // fall through to parseExpression.
                 } else {
                     const command = self.advance();
@@ -915,7 +920,21 @@ pub const Parser = struct {
                     const leftovers = [_]*ast.Node{expression};
                     return self.failIncompleteStatement(start, &leftovers);
                 }
-                return self.finishChained(start, &chained_calls, expression);
+                // 保留中の実引数がある終端呼出しはそのまま返せない。`5をF(1)`の
+                // 『5を』は公式では未解決の単語として構文エラーになるため、
+                // 残った実引数だけを『不完全な文です』の未解決判定へ通す。
+                // 連文が挿入した暗黙の『それ』だけが残る場合は実引数ではない
+                // ため、呼出しを連文ブロックの一部として返す
+                // （`1を表示してF(1)`は表示とF(1)を順に実行する）。
+                var only_implicit_it = true;
+                for (arguments.items) |arg| {
+                    if (!helpers.isImplicitItMarker(arg)) {
+                        only_implicit_it = false;
+                        break;
+                    }
+                }
+                if (only_implicit_it) return self.finishChained(start, &chained_calls, expression);
+                return self.failIncompleteStatement(start, try self.realArguments(arguments.items));
             }
             try arguments.append(self.allocator, expression);
 
@@ -926,7 +945,14 @@ pub const Parser = struct {
             if (self.isTerminator()) break;
         }
 
-        if (chained_calls.items.len > 0) return builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
+        if (chained_calls.items.len > 0) {
+            // 文末まで残った実引数は未解決（`1を表示して5をF(1)`の『5を』は
+            // 公式でも未解決の単語として文法エラーになる）。連文が挿入した
+            // 暗黙の『それ』マーカーは後続命令へ渡す足場なので残存を許す。
+            const leftovers = try self.realArguments(arguments.items);
+            if (leftovers.len > 0) return self.failIncompleteStatement(start, leftovers);
+            return builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
+        }
         if (arguments.items.len == 1 and arguments.items[0].kind == .word) {
             const value = arguments.items[0];
             const call = try builder.makeNode(self, .function_call, start);
@@ -955,6 +981,17 @@ pub const Parser = struct {
         }
         try message.appendSlice(self.allocator, "が解決していません");
         return self.fail(.incomplete_statement, message.items, start);
+    }
+
+    /// 引数列から連文が挿入した暗黙の『それ』マーカーを除いた実引数だけを
+    /// 返す。未解決判定の対象はユーザーが書いた値だけで、マーカーは
+    /// 診断の説明へ出さない。
+    fn realArguments(self: *Parser, arguments: []const *ast.Node) ParseFailure![]const *ast.Node {
+        var real: std.ArrayList(*ast.Node) = .empty;
+        for (arguments) |arg| {
+            if (!helpers.isImplicitItMarker(arg)) try real.append(self.allocator, arg);
+        }
+        return real.items;
     }
 
     fn incompleteStatementDescription(self: *Parser, value: *ast.Node) ParseFailure![]const u8 {

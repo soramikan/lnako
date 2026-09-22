@@ -88,6 +88,10 @@ pub const Node = struct {
     grouped: bool = false,
     /// C風の `命令(...)` 呼び出しだけを、助詞構文と区別する。
     is_c_style_call: bool = false,
+    /// 連文継続用に`implicitIt`が挿入した暗黙の『それ』マーカー。
+    /// ユーザーが記述する`それ`・`(それ)`は値として残るため、
+    /// 見た目の助詞情報では区別できず生成元フラグでのみ判定する。
+    is_implicit_it: bool = false,
     /// 助詞付きの命令名を解決して作った呼出し（公式の`func token`の呼出し）。
     /// 範囲演算子（`1…5`）のように演算子から作られる`function_call`と区別し、
     /// 公式`ySentence`の「もし」省略形の昇格判定にだけ使う。
