@@ -473,7 +473,7 @@ fn interruptTestConsume(context: *anyopaque) bool {
 }
 
 test "SSA IRで条件・反復・関数・配列辞書を実行する" {
-    const source = "●(AとBを)足すとは\nA+Bで戻る\nここまで\n合計=0\nNを1から3まで繰り返す\n合計=合計+N\nここまで\nもし合計=6ならば\n足す(合計,4)を表示\n違えば\n0を表示\nここまで\nA=[1,2]\nA[1]=5\nA[1]を表示\nB={\"x\":7}\nB@\"x\"を表示\n";
+    const source = "●(AとBを)足すとは\nA+Bで戻る\nここまで\n合計値=0\nNを1から3まで繰り返す\n合計値=合計値+N\nここまで\nもし合計値=6ならば\n足す(合計値,4)を表示\n違えば\n0を表示\nここまで\nA=[1,2]\nA[1]=5\nA[1]を表示\nB={\"x\":7}\nB@\"x\"を表示\n";
     var fixture = try compileForTest(std.testing.allocator, source);
     defer fixture.ir_program.deinit();
     defer fixture.hir_program.deinit();
@@ -2964,4 +2964,20 @@ test "『{関数}名』のプラグイン未取り込み名は関数値化を拒
     defer interpreter.deinit();
     // native_plugin_paths未設定では関数値化できずUnknownFunctionになる。
     try std.testing.expectError(error.UnknownFunction, interpreter.run());
+}
+
+test "値位置・連鎖位置の組み込み命令語を暗黙呼出しとして実行する" {
+    var fixture = try compileForTest(std.testing.allocator, "それは「  abc  」\n空白除去して表示\n礼節レベル取得して表示\n助詞一覧取得して反復\n対象を表示\nここまで\n3回\n回数を表示\nここまで\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("abc\n0\nについて\nくらい\nなのか\nまでを\nまでの\nによる\nとして\nとは\nから\nまで\nだけ\nより\nほど\nなど\nいて\nえて\nきて\nけて\nして\nって\nにて\nみて\nめて\nねて\nでは\nには\nんで\nずつ\nは\nを\nに\nへ\nで\nと\nが\nの\nでなければ\nなければ\nならば\nなら\nたら\nれば\nこと\nである\nです\nします\nでした\nにゃん\n1\n2\n3\n", host.written());
 }

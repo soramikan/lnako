@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("../frontend/ast.zig");
 const semantic = @import("../semantic/analyzer.zig");
 const argument_completion = @import("../semantic/argument_completion.zig");
+const builtin_catalog = @import("../semantic/builtin_catalog.zig");
 const builtin_josi = @import("../semantic/builtin_josi.zig");
 
 pub const NodeId = u32;
@@ -355,7 +356,7 @@ const Lowerer = struct {
             .null_value => .null_value,
             .string => .string,
             .string_template => .string_template,
-            .word => if (implicit_function != null) .call else if (self.bindingIsLocal(node)) .load_local else .load_global,
+            .word => if (implicit_function != null or self.bindingIsBuiltinCommand(node)) .call else if (self.bindingIsLocal(node)) .load_local else .load_global,
             .assignment, .variable_definition => if (self.bindingIsLocal(node)) .store_local else .store_global,
             .variable_list_definition => .destructure_store,
             .array_assignment => .array_set,
@@ -395,7 +396,11 @@ const Lowerer = struct {
         if (node.arguments.len > 0) try self.resolveArgumentTargets(node, result);
         result.number_value = node.number_value;
         result.boolean_value = node.number_value != null and node.number_value.? != 0;
-        result.is_builtin_call = node.kind == .function_call and self.bindingIsBuiltin(node);
+        result.is_builtin_call = switch (node.kind) {
+            .function_call => self.bindingIsBuiltin(node),
+            .word => self.bindingIsBuiltinCommand(node),
+            else => false,
+        };
         result.check_array_init = node.check_array_init;
         result.local_target = self.bindingIsLocal(node);
         result.uses_implicit_arguments = self.bindsImplicitArguments(node);
@@ -445,6 +450,13 @@ const Lowerer = struct {
         return false;
     }
 
+    /// 組み込み命令へ束縛された`.word`ノードを暗黙呼出しにするか判定する。
+    /// 「それ」「対象」など組み込み名の変数はarity表に無いため呼出しへ変換しない。
+    fn bindingIsBuiltinCommand(self: Lowerer, node: *ast.Node) bool {
+        if (!self.bindingIsBuiltin(node)) return false;
+        return builtin_catalog.findArity(node.value) != null;
+    }
+
     fn implicitFunction(self: *Lowerer, node: *ast.Node) ?semantic.Symbol {
         if (node.kind != .word) return null;
         return self.callableSymbol(node);
@@ -477,6 +489,11 @@ const Lowerer = struct {
                 return argument_completion.plan(self.allocator, slots, node.children, false);
             },
             .word => {
+                if (self.bindingIsBuiltinCommand(node)) {
+                    const spec = builtin_josi.findJosi(node.value) orelse return null;
+                    const slots = try argument_completion.builtinSlots(self.allocator, spec);
+                    return argument_completion.plan(self.allocator, slots, node.children, spec.is_variable);
+                }
                 const symbol = self.callableSymbol(node) orelse return null;
                 const slots = try argument_completion.parameterSlots(self.allocator, symbol.parameter_josi);
                 if (slots.len == 0) return null;
@@ -675,6 +692,72 @@ test "複数引数の裸関数呼出しを「それ」で補完する" {
         found = true;
     }
     try std.testing.expect(found);
+}
+
+test "値位置の組み込み命令語を「それ」補完付きの暗黙呼出しへ下げる" {
+    const parser = @import("../frontend/parser.zig");
+    const source = "それは「  abc  」\n空白除去して表示\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "builtin-word.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "builtin-word.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var program = try lowerSingle(std.testing.allocator, parsed.root.?, "builtin-word", "builtin-word.nako3", analyzed);
+    defer program.deinit();
+    var found = false;
+    for (program.nodes) |node| {
+        if (node.kind != .call or !std.mem.eql(u8, node.name, "空白除去")) continue;
+        try std.testing.expect(node.is_builtin_call);
+        try std.testing.expectEqual(@as(usize, 1), node.children.len);
+        const argument = program.node(node.children[0]);
+        try std.testing.expectEqual(Kind.load_global, argument.kind);
+        try std.testing.expectEqualStrings("それ", argument.name);
+        found = true;
+    }
+    try std.testing.expect(found);
+}
+
+test "0引数の組み込み命令語を暗黙呼出しへ下げる" {
+    const parser = @import("../frontend/parser.zig");
+    const source = "礼節レベル取得して表示\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "builtin-zero.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "builtin-zero.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var program = try lowerSingle(std.testing.allocator, parsed.root.?, "builtin-zero", "builtin-zero.nako3", analyzed);
+    defer program.deinit();
+    var found = false;
+    for (program.nodes) |node| {
+        if (node.kind != .call or !std.mem.eql(u8, node.name, "礼節レベル取得")) continue;
+        try std.testing.expect(node.is_builtin_call);
+        try std.testing.expectEqual(@as(usize, 0), node.children.len);
+        found = true;
+    }
+    try std.testing.expect(found);
+}
+
+test "組み込み名の変数は暗黙呼出しへ変換しない" {
+    const parser = @import("../frontend/parser.zig");
+    const source = "A=[1,2]\nAを反復\n対象を表示\nここまで\nそれを表示\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "builtin-vars.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "builtin-vars.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var program = try lowerSingle(std.testing.allocator, parsed.root.?, "builtin-vars", "builtin-vars.nako3", analyzed);
+    defer program.deinit();
+    var saw_target = false;
+    var saw_sore = false;
+    for (program.nodes) |node| {
+        if (std.mem.eql(u8, node.name, "対象")) {
+            try std.testing.expectEqual(Kind.load_global, node.kind);
+            saw_target = true;
+        }
+        if (node.kind == .load_global and std.mem.eql(u8, node.name, "それ")) saw_sore = true;
+    }
+    try std.testing.expect(saw_target);
+    try std.testing.expect(saw_sore);
 }
 
 test "入れ子の無名関数へ自由変数捕捉を中継する" {

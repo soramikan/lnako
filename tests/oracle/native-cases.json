@@ -3074,6 +3074,26 @@
   {
     "id": "native-range-loop-novar-sore-in-function",
     "source": "●Fとは\n1から3まで繰り返す\nここまで\nここまで\nF()を表示\n●Gとは\nそれは9\n1から2まで繰り返す\nそれを表示\nここまで\nそれを戻す\nここまで\nG()を表示\n"
+  },
+  {
+    "id": "native-builtin-word-shite-chain",
+    "source": "それは「  abc  」\n空白除去して表示\n"
+  },
+  {
+    "id": "native-builtin-word-zeroarg-chain",
+    "source": "礼節レベル取得して表示\n"
+  },
+  {
+    "id": "native-builtin-word-value-position",
+    "source": "それは「  abc  」\nX=空白除去\nXを表示\n"
+  },
+  {
+    "id": "native-builtin-word-foreach",
+    "source": "助詞一覧取得して反復\n対象を表示\nここまで\n"
+  },
+  {
+    "id": "native-builtin-word-vars-preserved",
+    "source": "A=[1,2]\nAを反復\n対象を表示\nここまで\n3回\n回数を表示\nここまで\n"
   }
 ]
 
