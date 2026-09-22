@@ -746,7 +746,10 @@ pub const Runtime = struct {
         return roots[0];
     }
 
-    pub fn createIterator(self: *Runtime, values: []const Value, is_range: bool, direction: u8) !Value {
+    /// `is_foreach`は反復構文（`反復`）由来の生成で真。公式はfor..inで
+    /// 列挙可能なプロパティを持たない値（数値など）を空反復するため、
+    /// 数値を`N回`の回数として扱わず0回実行とする。
+    pub fn createIterator(self: *Runtime, values: []const Value, is_range: bool, direction: u8, is_foreach: bool) !Value {
         if (values.len == 0) return error.InvalidIterator;
         try self.beforeAllocation();
         const iterator: Iterator = if (is_range) blk: {
@@ -762,7 +765,7 @@ pub const Runtime = struct {
             if (!std.math.isFinite(step) or step == 0) return error.InvalidIteratorStep;
             break :blk .{ .kind = .range, .current = start, .end = end, .step = step };
         } else switch (@as(Tag, @enumFromInt(values[0].tag))) {
-            .number => .{ .kind = .repeat, .count = try repeatCount(valueToNumber(values[0])) },
+            .number => .{ .kind = .repeat, .count = if (is_foreach) 0 else try repeatCount(valueToNumber(values[0])) },
             .utf16_string => .{ .kind = .string, .source = values[0], .count = values[0].object().?.payload.utf16_string.len },
             .byte_buffer => .{ .kind = .bytes, .source = values[0], .count = values[0].object().?.payload.byte_buffer.bytes.len },
             .array => .{ .kind = .array, .source = values[0], .count = values[0].object().?.payload.array.items.len },
@@ -1227,8 +1230,8 @@ pub const Runtime = struct {
         return indexing.iteratorHasNext(self, value);
     }
 
-    pub fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_target: ?*Value, key_target: ?*Value, range_target: ?*Value) Value {
-        return indexing.iteratorNext(self, value, repeat_target, value_target, key_target, range_target);
+    pub fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_target: ?*Value, key_target: ?*Value, range_target: ?*Value, sore_target: ?*Value) Value {
+        return indexing.iteratorNext(self, value, repeat_target, value_target, key_target, range_target, sore_target);
     }
 
     pub fn stringAt(self: *Runtime, source: Value, index: usize) Value {

@@ -370,7 +370,7 @@ const Analyzer = struct {
                     self.consumeImplicitArgumentsBinding(scope, node.name);
                 }
             }
-        } else if (node.kind == .for_statement and node.name.len > 0) {
+        } else if ((node.kind == .for_statement or node.kind == .foreach_statement) and node.name.len > 0) {
             if (self.lookupLexical(scope, node.name) == null) {
                 _ = try self.declare(module_index, scope, node.name, .loop_variable, node.span, exportable, true, 0, false);
             } else {
@@ -446,7 +446,7 @@ const Analyzer = struct {
             .word => try self.resolveReference(node, module_index, scope, false),
             .function_call => try self.resolveReference(node, module_index, scope, true),
             .function_pointer => try self.resolveFunctionPointer(node, module_index, scope),
-            .for_statement => if (node.name.len > 0) {
+            .for_statement, .foreach_statement => if (node.name.len > 0) {
                 if (self.lookupLexical(scope, node.name)) |symbol| try self.bind(node, .declaration, node.name, symbol.qualified_name, symbol.id);
             },
             // 実効取り込み文は取り込み先エントリへの呼び出しとして束縛する。

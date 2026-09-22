@@ -443,6 +443,8 @@ fn replaceWithConstant(instruction: *ir.Instruction, constant: Constant) void {
     instruction.names_local = &.{};
     instruction.local_target = false;
     instruction.check_array_init = false;
+    instruction.is_foreach = false;
+    instruction.synthetic = false;
     instruction.is_module_entry = false;
     instruction.site_module = 0;
     instruction.site_order = 0;

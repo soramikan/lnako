@@ -1351,3 +1351,75 @@ test "『{関数}』のカンマ形式と関数名欠落を拒否する" {
         try std.testing.expect(!result.succeeded());
     }
 }
+
+test "『反復』の対象省略は「それ」を反復対象にする" {
+    // 公式yForEachは`popStack(['を'])`が無いとき`yNop()`を対象とし、
+    // convForeachが`それ`の値を反復データとして使う。lnakoは省略時に
+    // 「それ」を参照するwordノードを生成する。
+    var result = try parse(std.testing.allocator, "反復\n対象を表示\nここまで\n", "foreach-implicit.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const statement = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.foreach_statement, statement.kind);
+    try std.testing.expectEqualStrings("", statement.name);
+    try std.testing.expectEqual(ast.Kind.word, statement.children[0].kind);
+    try std.testing.expectEqualStrings("それ", statement.children[0].value);
+}
+
+test "『Aを反復』は助詞「を」の値を反復対象にする" {
+    var result = try parse(std.testing.allocator, "Aを反復\n対象を表示\nここまで\n", "foreach-target.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const statement = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.foreach_statement, statement.kind);
+    try std.testing.expectEqualStrings("", statement.name);
+    try std.testing.expectEqual(ast.Kind.word, statement.children[0].kind);
+    try std.testing.expectEqualStrings("A", statement.children[0].value);
+}
+
+test "『AをBで反復』は指定変数を解析する" {
+    // 公式yForEachは`popStack(['で'])`のwordをループ変数とする。
+    // `B`は命令名ではなく変数名として扱われる。
+    var result = try parse(std.testing.allocator, "AをBで反復\nBを表示\nここまで\n", "foreach-var.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const statement = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.foreach_statement, statement.kind);
+    try std.testing.expectEqualStrings("B", statement.name);
+    try std.testing.expectEqual(ast.Kind.word, statement.children[0].kind);
+    try std.testing.expectEqualStrings("A", statement.children[0].value);
+}
+
+test "『Nで配列を反復』は前置の指定変数を解析する" {
+    var result = try parse(std.testing.allocator, "Nで[1,2,3]を反復\nNを表示\nここまで\n", "foreach-var-prefix.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const statement = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.foreach_statement, statement.kind);
+    try std.testing.expectEqualStrings("N", statement.name);
+    try std.testing.expectEqual(ast.Kind.array_literal, statement.children[0].kind);
+}
+
+test "『Aを「,」で区切って反復』は連文の呼出しを先行文として評価する" {
+    // 公式は「で区切っ」の呼出しがスタックに残り、先行文として実行されて
+    // 結果が「それ」へ残る。反復対象は省略され「それ」を使う。
+    var result = try parse(std.testing.allocator, "アンケートを「,」で区切って反復\n対象を表示\nここまで\n", "foreach-chained.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const statement = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.block, statement.kind);
+    try std.testing.expectEqual(ast.Kind.function_call, statement.children[0].kind);
+    const foreach = statement.children[statement.children.len - 1];
+    try std.testing.expectEqual(ast.Kind.foreach_statement, foreach.kind);
+    try std.testing.expectEqualStrings("", foreach.name);
+    try std.testing.expectEqual(ast.Kind.word, foreach.children[0].kind);
+    try std.testing.expectEqualStrings("それ", foreach.children[0].value);
+}
+
+test "『反復』の指定変数はwordに限る" {
+    // 公式は`popStack(['で'])`の結果がwordでない場合
+    // 『(変数名)で(配列)を反復』で指定してください。の文法エラーにする。
+    var result = try parse(std.testing.allocator, "Aを1で反復\nここまで\n", "foreach-var-number.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+}

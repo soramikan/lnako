@@ -806,9 +806,27 @@ pub const Parser = struct {
             }
             if (self.at(.keyword_repeat)) return self.parseFor(start, arguments.items);
             if (self.at(.keyword_foreach)) {
-                _ = self.advance();
-                const collection = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try builder.nop(self, start);
-                return self.parseForeach(start, collection);
+                const keyword = self.advance();
+                // 公式yForEachは「を」助詞の値を反復対象とし、省略時は「それ」を
+                // 使う。「で」助詞の語をループ変数として受け取る
+                // （`AをBで反復`/`NでAを反復`）。
+                const collection = popJosiArgument(&arguments, "を") orelse try self.implicitIt(keyword);
+                var variable: []const u8 = "";
+                if (popJosiArgument(&arguments, "で")) |name_argument| {
+                    if (name_argument.kind != .word)
+                        return self.fail(.invalid_control_statement, "『(変数名)で(配列)を反復』で指定してください。", keyword);
+                    variable = name_argument.value;
+                }
+                const statement = try self.parseForeach(start, collection, variable);
+                // `Aを「,」で区切って反復`のような命令の連文は、公式では呼出しが
+                // 先行文として実行され結果が「それ」へ残る。残った引数を先行文と
+                // して評価するブロックへ包む。
+                if (arguments.items.len == 0) return statement;
+                try arguments.append(self.allocator, statement);
+                const sequence = try builder.makeNodeWithChildren(self, .block, start, try arguments.toOwnedSlice(self.allocator));
+                sequence.josi = "";
+                sequence.raw_josi = "";
+                return sequence;
             }
             if (self.at(.keyword_import)) {
                 const command = self.advance();
@@ -905,6 +923,10 @@ pub const Parser = struct {
         {
             return null;
         }
+        // ループの語の直前にある未知の識別子も命令ではなく引数とする。
+        // 公式はfunclist外の名をwordとしてスタックへ積むため、`AをBで反復`の
+        // Bは命令呼出しではなく反復の変数になる。
+        if (!self.isKnownCommandName(self.peek().value) and self.atLoopKeywordAhead(1)) return null;
         // 配列添字・プロパティ・@参照の直後に助詞が続く場合、識別子は命令名ではなく値として続行する。
         // 例: `1をA[0]に代入`, `1をA$fooに代入`。
         const next_kind = self.peekAhead(1).kind;
@@ -974,6 +996,13 @@ pub const Parser = struct {
     fn atLoopKeyword(self: *Parser) bool {
         return self.at(.keyword_repeat_while) or self.at(.keyword_repeat_count) or
             self.at(.keyword_repeat) or self.at(.keyword_foreach);
+    }
+
+    /// `offset`先のトークンがループの語かどうか。
+    fn atLoopKeywordAhead(self: *Parser, offset: usize) bool {
+        const token = self.peekAhead(offset);
+        return token.kind == .keyword_repeat_while or token.kind == .keyword_repeat_count or
+            token.kind == .keyword_repeat or token.kind == .keyword_foreach;
     }
 
     /// 公式の`func token`相当（既知の命令名）かどうか。
@@ -1329,9 +1358,23 @@ pub const Parser = struct {
         return node;
     }
 
-    pub fn parseForeach(self: *Parser, start: Token, collection: *ast.Node) ParseFailure!*ast.Node {
+    /// 公式`popStack`相当: 引数リストの末尾から指定助詞を持つ値を取り出す。
+    /// 該当する助詞が見つからなければnullを返す。
+    fn popJosiArgument(arguments: *std.ArrayList(*ast.Node), josi: []const u8) ?*ast.Node {
+        var index = arguments.items.len;
+        while (index > 0) {
+            index -= 1;
+            if (std.mem.eql(u8, arguments.items[index].josi, josi)) {
+                return arguments.orderedRemove(index);
+            }
+        }
+        return null;
+    }
+
+    pub fn parseForeach(self: *Parser, start: Token, collection: *ast.Node, variable: []const u8) ParseFailure!*ast.Node {
         const body = try self.parseLoopBody("『反復』文");
         const result = try builder.makeNodeWithChildren(self, .foreach_statement, start, try builder.copyChildren(self, &.{ collection, body }));
+        result.name = variable;
         result.josi = "";
         result.raw_josi = "";
         return result;

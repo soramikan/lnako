@@ -1333,7 +1333,9 @@ pub fn iteratorBegin(self: *Interpreter, frame: *Frame, instruction: ir.Instruct
     } else {
         const source = self.operand(frame, instruction, 0);
         state = switch (source) {
-            .number => |number| .{ .kind = .repeat, .count = try repeatCount(number) },
+            // 反復構文の対象が数値・非反復値のときは0回実行（公式はfor..inで
+            // 列挙可能なプロパティを持たない値を空反復する）。
+            .number => |number| .{ .kind = .repeat, .count = if (instruction.is_foreach) 0 else try repeatCount(number) },
             .bytes => .{ .kind = .bytes, .source = source, .count = source.bytes.bytes.len },
             .array => .{ .kind = .array, .source = source, .count = source.array.len() },
             .string => .{ .kind = .string, .source = source, .count = source.string.len() },
@@ -1378,13 +1380,13 @@ pub fn iteratorNext(self: *Interpreter, frame: *Frame, instruction: ir.Instructi
             result = state.source.bytes.get(state.index);
             try self.setGlobal("対象キー", .{ .number = @floatFromInt(state.index) });
             state.index += 1;
-            try self.setGlobal("対象", result);
+            try bindForeachValue(self, frame, instruction, result);
         },
         .array => {
             result = state.source.array.get(state.index);
             try self.setGlobal("対象キー", .{ .number = @floatFromInt(state.index) });
             state.index += 1;
-            try self.setGlobal("対象", result);
+            try bindForeachValue(self, frame, instruction, result);
         },
         .string => {
             const owned = (try state.source.string.at(self.allocator, state.index)).?;
@@ -1395,16 +1397,27 @@ pub fn iteratorNext(self: *Interpreter, frame: *Frame, instruction: ir.Instructi
             result = try self.runtime.stringCodeUnits(owned.units);
             try self.setGlobal("対象キー", .{ .number = @floatFromInt(state.index) });
             state.index += 1;
-            try self.setGlobal("対象", result);
+            try bindForeachValue(self, frame, instruction, result);
         },
         .dictionary => {
             result = state.source.dictionary.values()[state.index];
             try self.setGlobal("対象キー", .{ .string = state.source.dictionary.keys()[state.index] });
             state.index += 1;
-            try self.setGlobal("対象", result);
+            try bindForeachValue(self, frame, instruction, result);
         },
     }
     return result;
+}
+
+/// 反復構文の要素束縛。公式convForeachは要素を「それ」へ束縛し、
+/// `AをBで反復`の指定変数があればその変数へ、無ければ「対象」へ書き込む。
+/// 範囲繰り返しのコレクション反復は従来どおり「対象」のみ更新する。
+fn bindForeachValue(self: *Interpreter, frame: *Frame, instruction: ir.Instruction, element: Value) !void {
+    if (!instruction.is_foreach) return self.setGlobal("対象", element);
+    try self.setGlobal("それ", element);
+    if (instruction.name.len == 0) return self.setGlobal("対象", element);
+    if (instruction.local_target) return self.storeLocal(frame, instruction.name, element);
+    return self.setGlobal(instruction.name, element);
 }
 
 pub fn executeDynamicValue(self: *Interpreter, source_value: Value) !Value {

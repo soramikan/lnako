@@ -371,7 +371,19 @@ pub fn iteratorHasNext(_: *Runtime, value: Value) bool {
     };
 }
 
-pub fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_target: ?*Value, key_target: ?*Value, range_target: ?*Value) Value {
+/// コレクション反復の要素束縛。公式convForeachは要素を「それ」へ束縛し、
+/// `AをBで反復`の指定変数があればその変数へ（variable_target）、無ければ
+/// 「対象」へ（value_target）書き込む。いずれのポインタもnullなら書き戻さない。
+fn bindForeachElement(result: Value, sore_target: ?*Value, value_target: ?*Value, variable_target: ?*Value) void {
+    if (sore_target) |target| target.* = result;
+    if (variable_target) |target| {
+        target.* = result;
+    } else if (value_target) |target| {
+        target.* = result;
+    }
+}
+
+pub fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_target: ?*Value, key_target: ?*Value, range_target: ?*Value, sore_target: ?*Value) Value {
     const object = value.object() orelse return .{};
     if (object.payload != .iterator) return .{};
     const iterator = &object.payload.iterator;
@@ -393,28 +405,28 @@ pub fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_
             const result = numberValue(@floatFromInt(iterator.source.object().?.payload.byte_buffer.bytes[iterator.index]));
             if (key_target) |target| target.* = numberValue(@floatFromInt(iterator.index));
             iterator.index += 1;
-            if (value_target) |target| target.* = result;
+            bindForeachElement(result, sore_target, value_target, range_target);
             break :blk result;
         },
         .string => blk: {
             const result = stringAt(self, iterator.source, iterator.index);
             if (key_target) |target| target.* = numberValue(@floatFromInt(iterator.index));
             iterator.index += 1;
-            if (value_target) |target| target.* = result;
+            bindForeachElement(result, sore_target, value_target, range_target);
             break :blk result;
         },
         .array => blk: {
             const result = iterator.source.object().?.payload.array.items[iterator.index];
             if (key_target) |target| target.* = numberValue(@floatFromInt(iterator.index));
             iterator.index += 1;
-            if (value_target) |target| target.* = result;
+            bindForeachElement(result, sore_target, value_target, range_target);
             break :blk result;
         },
         .dictionary => blk: {
             const entry = iterator.source.object().?.payload.dictionary.entries.items[iterator.index];
             if (key_target) |target| target.* = entry.key;
             iterator.index += 1;
-            if (value_target) |target| target.* = entry.value;
+            bindForeachElement(entry.value, sore_target, value_target, range_target);
             break :blk entry.value;
         },
     };

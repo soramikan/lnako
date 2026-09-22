@@ -1424,6 +1424,79 @@ test "プリミティブへの添字代入と反復を公式同様に無操作�
     try std.testing.expectEqualStrings("1\nabc\n後\n", host.written());
 }
 
+test "反復構文は「それ」と指定変数へ束縛し外側のシステム変数を復元する" {
+    // Issue #112: 公式convForeach互換。
+    // - 対象省略の「反復」は「それ」を反復する
+    // - 「Aを反復」は要素を「対象」と「それ」へ束縛する
+    // - 「AをBで反復」はBと「それ」へ束縛し「対象」を更新しない
+    // - 「NでAを反復」はNへ束縛する
+    // - 「Aを「,」で区切って反復」は連文の結果を反復する
+    // - 数値の反復対象は0回実行（公式for..in相当）
+    // - ループ後に外側の「対象」「対象キー」「それ」を復元する
+    const source =
+        "対象=「外側」\n対象キー=「外側キー」\n" ++
+        "それ=[1,2]\n反復\nそれを表示\nここまで\n" ++
+        "「{対象キー}:{対象}:{それ}」を表示\n" ++
+        "[3,4]を反復\n「{対象キー}:{対象}:{それ}」を表示\nここまで\n" ++
+        "「{対象キー}:{対象}:{それ}」を表示\n" ++
+        "[5,6]をBで反復\n「B={B}:それ={それ}:対象={対象}」を表示\nここまで\n" ++
+        "Nで[7]を反復\nNを表示\nここまで\n" ++
+        "アンケート=「a,b」\nアンケートを「,」で区切って反復\n対象を表示\nここまで\n" ++
+        "5を反復\n「到達不可」を表示\nここまで\n" ++
+        "「{対象キー}:{対象}」を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings(
+        "1\n2\n" ++ // 対象省略は「それ」の配列を反復
+            "外側キー:外側:1,2\n" ++ // ループ後は外側のシステム変数へ復元
+            "0:3:3\n1:4:4\n" ++ // 「Aを反復」は対象キー・対象・それを束縛
+            "外側キー:外側:1,2\n" ++
+            "B=5:それ=5:対象=外側\nB=6:それ=6:対象=外側\n" ++ // 指定変数は対象を更新しない
+            "7\n" ++ // 「NでAを反復」はNへ束縛
+            "a\nb\n" ++ // 「で区切っ」の結果を反復
+            "外側キー:外側\n", // 数値反復は0回実行で値も復元される
+        host.written(),
+    );
+}
+
+test "入れ子の反復は内側終了後に外側の束縛へ戻る" {
+    // 公式convForeachはループ毎に「対象」「対象キー」「それ」を退避し、
+    // 出口で復元する（#1735）。内側ループの復元が外側ループの状態を
+    // 壊さないことを確認する。
+    const source =
+        "[[1,2],[3]]を反復\n" ++
+        "「外{対象}」を表示\n" ++
+        "対象を反復\n「内{対象キー}:{対象}」を表示\nここまで\n" ++
+        "「外後{対象キー}:{対象}」を表示\n" ++
+        "ここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings(
+        "外1,2\n" ++ "内0:1\n内1:2\n" ++ "外後0:1,2\n" ++ "外3\n" ++ "内0:3\n" ++ "外後1:3\n",
+        host.written(),
+    );
+}
+
 test "nullとundefinedへの添字代入をキー付き例外として監視する" {
     const source =
         "エラー監視\nNULL[0]=2\nエラーならば\nエラーメッセージを表示\nここまで\n" ++
