@@ -76,9 +76,11 @@ fn assignDispatchSiteIds(function: *ir.Function) !void {
             // ensure_array_varはlocal_target=falseのとき変数スロットへ
             // 新規配列を書き戻すため、グローバル書き込みサイトとして記録する。
             // システム定数名は実行時・emitterとも初期化を省略するため記録しない。
-            if (instruction.opcode == .load_global or instruction.opcode == .store_global or
-                (instruction.opcode == .ensure_array_var and !instruction.local_target and
-                    !system_constant.isConstant(instruction.name)))
+            // lowering生成の内部命令（反復の退避・復元）は観測対象外とする。
+            if (!instruction.synthetic and
+                (instruction.opcode == .load_global or instruction.opcode == .store_global or
+                    (instruction.opcode == .ensure_array_var and !instruction.local_target and
+                        !system_constant.isConstant(instruction.name))))
             {
                 global_ordinal += 1;
                 if (global_ordinal > std.math.maxInt(u32)) return error.GlobalSiteIdOverflow;
@@ -166,6 +168,7 @@ const FunctionBuilder = struct {
             .return_type = toType(self.function.return_type),
             .is_async = self.function.is_async,
             .is_test = self.function.is_test,
+            .sore_scope = !self.function.is_entry,
         };
     }
 
@@ -523,8 +526,19 @@ const FunctionBuilder = struct {
         return null;
     }
 
+    /// 反復構文で退避するシステム変数名。公式convForeachは対象・対象キー・
+    /// それの3つをループ前に退避し、出口で復元する。
+    const foreach_saved_names = [_][]const u8{ "対象", "対象キー", "それ" };
+
     fn lowerIteratorLoop(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
         if (node.children.len < 2) return error.InvalidHir;
+        const is_foreach = node.kind == .foreach_statement;
+        // 公式convForeachは反復データの評価より先に「対象」「対象キー」「それ」を
+        // 退避し、ループ出口で復元する（#1735の入れ子ループ互換）。
+        var saved: [foreach_saved_names.len]ir.ValueId = undefined;
+        if (is_foreach) {
+            for (foreach_saved_names, 0..) |name, index| saved[index] = try self.emitSyntheticGlobalAccess(.load_global, name, null, node);
+        }
         var inputs: std.ArrayList(ir.ValueId) = .empty;
         for (node.children[0 .. node.children.len - 1]) |child| {
             const value = (try self.lowerNode(child)) orelse try self.emitUndefined(node);
@@ -545,7 +559,28 @@ const FunctionBuilder = struct {
         if (!self.isTerminated()) self.terminate(.{ .branch = condition_block });
         _ = self.loops.pop();
         self.current = exit_block;
+        if (is_foreach) {
+            for (foreach_saved_names, 0..) |name, index| _ = try self.emitSyntheticGlobalAccess(.store_global, name, saved[index], node);
+        }
         return null;
+    }
+
+    /// 反復の退避・復元のように、ソースの式ではなくloweringが生成する
+    /// グローバルアクセス。観測証跡（global site ID）を持たない内部命令とする。
+    fn emitSyntheticGlobalAccess(self: *FunctionBuilder, opcode: ir.Opcode, name: []const u8, operand: ?ir.ValueId, node: hir.Node) !ir.ValueId {
+        const value = self.next_value;
+        self.next_value += 1;
+        const operands: []const ir.ValueId = if (operand) |id| &.{id} else &.{};
+        try self.currentBlock().instructions.append(self.allocator, .{
+            .result = if (opcode == .store_global) null else value,
+            .opcode = opcode,
+            .type = if (opcode == .store_global) .void else .dynamic,
+            .operands = try self.allocator.dupe(ir.ValueId, operands),
+            .name = try self.allocator.dupe(u8, name),
+            .synthetic = true,
+            .span = node.span,
+        });
+        return value;
     }
 
     fn lowerReturn(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
@@ -666,6 +701,7 @@ const FunctionBuilder = struct {
             .is_builtin_call = node.is_builtin_call,
             .check_array_init = node.check_array_init,
             .local_target = node.local_target,
+            .is_foreach = node.kind == .foreach_statement,
             .is_module_entry = node.is_module_entry,
             .site_module = node.site_module,
             .site_order = node.site_order,
@@ -693,6 +729,7 @@ const FunctionBuilder = struct {
             .is_builtin_call = node.is_builtin_call,
             .check_array_init = node.check_array_init,
             .local_target = node.local_target,
+            .is_foreach = node.kind == .foreach_statement,
             .is_module_entry = node.is_module_entry,
             .site_module = node.site_module,
             .site_order = node.site_order,
@@ -720,6 +757,13 @@ const FunctionBuilder = struct {
         return self.currentBlock().terminator != .none;
     }
 
+    /// 関数末尾の暗黙戻り値。末尾が『それ』への保存ならその値をそのまま
+    /// 返す。それ以外は`null`を返し、sore_scope関数では実行側が現在の
+    /// 『それ』を返す（公式は全ユーザー関数へ`return (それ)`を付与する
+    /// nako_genのconvDefFuncCommon相当）。呼出し結果は実行時に『それ』へ
+    /// 書き戻されるため、末尾の命令呼出しの結果も届く。
+    /// モジュールエントリは呼び出し側と同じスコープで動くため従来どおり
+    /// `null`（=undefined）のまま。
     fn implicitResult(self: *FunctionBuilder) ?ir.ValueId {
         const instructions = self.currentBlock().instructions.items;
         if (instructions.len == 0) return null;
@@ -765,6 +809,40 @@ fn dupeStrings(allocator: std.mem.Allocator, strings: []const []const u8) ![]con
     const result = try allocator.alloc([]const u8, strings.len);
     for (strings, 0..) |value, index| result[index] = try allocator.dupe(u8, value);
     return result;
+}
+
+test "ユーザー関数は『それ』を呼び出しごとのスコープで扱う" {
+    const parser = @import("../frontend/parser.zig");
+    const semantic = @import("../semantic/analyzer.zig");
+    var parsed = try parser.parse(std.testing.allocator, "●Fとは\n1に2を足す\nここまで\nF\n", "main.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    var user_function: ?ir.Function = null;
+    for (program.functions) |function| {
+        if (!std.mem.endsWith(u8, function.name, "$entry")) user_function = function;
+    }
+    const function = user_function.?;
+    // ユーザー関数はsore_scope=true。呼出しごとの『それ』スコープは実行側が
+    // 入口で退避・初期化し全終端で復元するため、IRの命令列にはスコープ管理を
+    // 混ぜない（typed ABIやresult_store解析の対象命令を増やさない）。
+    try std.testing.expect(function.sore_scope);
+    for (function.blocks) |block| {
+        for (block.instructions) |instruction| {
+            try std.testing.expect(!std.mem.eql(u8, instruction.name, "$それ"));
+        }
+    }
+    // 末尾が命令呼出しの場合、暗黙戻り値は`null`（=実行側が現在の『それ』を返す）。
+    const last_block = function.blocks[function.blocks.len - 1];
+    try std.testing.expect(last_block.terminator == .return_value);
+    try std.testing.expect(last_block.terminator.return_value == null);
+    // モジュールエントリは呼び出し側と同じスコープで動くため対象外。
+    const entry = program.findFunction("main__$entry").?;
+    try std.testing.expect(!entry.sore_scope);
 }
 
 test "HIRから分岐とループを含むSSA IRを生成する" {

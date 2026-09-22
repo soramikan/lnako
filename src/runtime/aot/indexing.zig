@@ -361,17 +361,56 @@ pub fn aotCanonicalArrayIndexUnits(_: *Runtime, units: []const u16) ?usize {
     return if (result <= 4_294_967_294) result else null;
 }
 
-pub fn iteratorHasNext(_: *Runtime, value: Value) bool {
+pub fn iteratorHasNext(self: *Runtime, value: Value) bool {
     const object = value.object() orelse return false;
     if (object.payload != .iterator) return false;
-    const iterator = object.payload.iterator;
+    const iterator = &object.payload.iterator;
+    // for..in互換: 反復開始時の添字・キー集合を上限とし、配列の穴や反復中に
+    // 削除された添字・キーは到達時点で飛ばす。開始後の追加要素は列挙しない。
+    switch (iterator.kind) {
+        .array, .bytes, .properties => {
+            const keys_len = if (iterator.keys.object()) |keys| keys.payload.array.items.len else 0;
+            const total = iterator.count + keys_len;
+            while (iterator.index < total) {
+                if (iterator.index < iterator.count) {
+                    // 添字領域は配列のみ穴・削除があり得る。bytesの添字と
+                    // properties種別（count==0）は存在チェックを要しない。
+                    if (iterator.kind != .array or aotArrayIsPresent(self, iterator.source.object().?, iterator.index)) break;
+                } else {
+                    const key = iterator.keys.object().?.payload.array.items[iterator.index - iterator.count];
+                    if (iterator.source.object().?.array_properties.findByKey(key) != null) break;
+                }
+                iterator.index += 1;
+            }
+        },
+        .dictionary => {
+            while (iterator.index < iterator.count and iterator.source.object().?.payload.dictionary.findByKey(iterator.keys.object().?.payload.array.items[iterator.index]) == null) iterator.index += 1;
+        },
+        else => {},
+    }
     return switch (iterator.kind) {
         .range => if (iterator.step > 0) iterator.current <= iterator.end else iterator.current >= iterator.end,
+        .array, .bytes, .properties => blk: {
+            const keys_len = if (iterator.keys.object()) |keys| keys.payload.array.items.len else 0;
+            break :blk iterator.index < iterator.count + keys_len;
+        },
         else => iterator.index < iterator.count,
     };
 }
 
-pub fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_target: ?*Value, key_target: ?*Value, range_target: ?*Value) Value {
+/// コレクション反復の要素束縛。公式convForeachは要素を「それ」へ束縛し、
+/// `AをBで反復`の指定変数があればその変数へ（variable_target）、無ければ
+/// 「対象」へ（value_target）書き込む。いずれのポインタもnullなら書き戻さない。
+fn bindForeachElement(result: Value, sore_target: ?*Value, value_target: ?*Value, variable_target: ?*Value) void {
+    if (sore_target) |target| target.* = result;
+    if (variable_target) |target| {
+        target.* = result;
+    } else if (value_target) |target| {
+        target.* = result;
+    }
+}
+
+pub fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_target: ?*Value, key_target: ?*Value, range_target: ?*Value, sore_target: ?*Value) Value {
     const object = value.object() orelse return .{};
     if (object.payload != .iterator) return .{};
     const iterator = &object.payload.iterator;
@@ -390,32 +429,60 @@ pub fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_
             break :blk result;
         },
         .bytes => blk: {
-            const result = numberValue(@floatFromInt(iterator.source.object().?.payload.byte_buffer.bytes[iterator.index]));
-            if (key_target) |target| target.* = numberValue(@floatFromInt(iterator.index));
+            var result: Value = undefined;
+            if (iterator.index >= iterator.count) {
+                // ownプロパティ領域。キー名をkey_targetへ、値を要素として返す。
+                const key = iterator.keys.object().?.payload.array.items[iterator.index - iterator.count];
+                const found = iterator.source.object().?.array_properties.findByKey(key);
+                result = if (found) |found_index| iterator.source.object().?.array_properties.entries.items[found_index].value else .{};
+                if (key_target) |target| target.* = key;
+            } else {
+                result = numberValue(@floatFromInt(iterator.source.object().?.payload.byte_buffer.bytes[iterator.index]));
+                if (key_target) |target| target.* = numberValue(@floatFromInt(iterator.index));
+            }
             iterator.index += 1;
-            if (value_target) |target| target.* = result;
+            bindForeachElement(result, sore_target, value_target, range_target);
             break :blk result;
         },
         .string => blk: {
             const result = stringAt(self, iterator.source, iterator.index);
             if (key_target) |target| target.* = numberValue(@floatFromInt(iterator.index));
             iterator.index += 1;
-            if (value_target) |target| target.* = result;
+            bindForeachElement(result, sore_target, value_target, range_target);
             break :blk result;
         },
         .array => blk: {
-            const result = iterator.source.object().?.payload.array.items[iterator.index];
-            if (key_target) |target| target.* = numberValue(@floatFromInt(iterator.index));
+            var result: Value = undefined;
+            if (iterator.index >= iterator.count) {
+                const key = iterator.keys.object().?.payload.array.items[iterator.index - iterator.count];
+                const found = iterator.source.object().?.array_properties.findByKey(key);
+                result = if (found) |found_index| iterator.source.object().?.array_properties.entries.items[found_index].value else .{};
+                if (key_target) |target| target.* = key;
+            } else {
+                result = iterator.source.object().?.payload.array.items[iterator.index];
+                if (key_target) |target| target.* = numberValue(@floatFromInt(iterator.index));
+            }
             iterator.index += 1;
-            if (value_target) |target| target.* = result;
+            bindForeachElement(result, sore_target, value_target, range_target);
+            break :blk result;
+        },
+        .properties => blk: {
+            const key = iterator.keys.object().?.payload.array.items[iterator.index - iterator.count];
+            const found = iterator.source.object().?.array_properties.findByKey(key);
+            const result: Value = if (found) |found_index| iterator.source.object().?.array_properties.entries.items[found_index].value else .{};
+            if (key_target) |target| target.* = key;
+            iterator.index += 1;
+            bindForeachElement(result, sore_target, value_target, range_target);
             break :blk result;
         },
         .dictionary => blk: {
-            const entry = iterator.source.object().?.payload.dictionary.entries.items[iterator.index];
-            if (key_target) |target| target.* = entry.key;
+            const key = iterator.keys.object().?.payload.array.items[iterator.index];
+            const found = iterator.source.object().?.payload.dictionary.findByKey(key);
+            const result: Value = if (found) |found_index| iterator.source.object().?.payload.dictionary.entries.items[found_index].value else .{};
+            if (key_target) |target| target.* = key;
             iterator.index += 1;
-            if (value_target) |target| target.* = entry.value;
-            break :blk entry.value;
+            bindForeachElement(result, sore_target, value_target, range_target);
+            break :blk result;
         },
     };
 }

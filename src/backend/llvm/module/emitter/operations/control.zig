@@ -49,7 +49,7 @@ pub fn writeIteratorBegin(emitter: *Emitter, function: ir.Function, instruction:
         .up => 1,
         .down => 2,
     };
-    try emitter.output.writer.print("  call void @lnako_aot_iterator_new(ptr %root.slot.{d}, ptr %iterator.{d}.slot.0, i64 {d}, i1 {s}, i8 {d})", .{ result, result, instruction.operands.len, if (is_range) "true" else "false", direction });
+    try emitter.output.writer.print("  call void @lnako_aot_iterator_new(ptr %root.slot.{d}, ptr %iterator.{d}.slot.0, i64 {d}, i1 {s}, i8 {d}, i1 {s})", .{ result, result, instruction.operands.len, if (is_range) "true" else "false", direction, if (instruction.is_foreach) "true" else "false" });
     try emitter.debugSuffix(instruction.span, scope);
     try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
     try emitter.debugSuffix(instruction.span, scope);
@@ -76,13 +76,16 @@ pub fn writeIteratorNext(emitter: *Emitter, function: ir.Function, locals: []con
     try emitter.output.writer.print("  call void @lnako_aot_iterator_next(ptr %root.slot.{d}, ptr %root.slot.{d}, ptr ", .{ result, instruction.operands[0] });
     try variables_mod.writeOptionalNamedPointer(emitter, locals, "回数");
     try emitter.output.writer.writeAll(", ptr ");
-    try variables_mod.writeOptionalNamedPointer(emitter, locals, "対象");
+    // 公式convForeachは`AをBで反復`の指定変数があるとき「対象」を更新しない。
+    const foreach_variable = begin.is_foreach and begin.name.len > 0;
+    try variables_mod.writeOptionalNamedPointer(emitter, locals, if (foreach_variable) "" else "対象");
     try emitter.output.writer.writeAll(", ptr ");
     try variables_mod.writeOptionalNamedPointer(emitter, locals, "対象キー");
     try emitter.output.writer.writeAll(", ptr ");
     // ループ変数は束縛結果（local_target）で解決する。ローカル束縛なら
     // ローカルスロット必須、グローバル束縛は他の参照がスロットを作った
-    // 場合のみ書き戻す（未参照なら書き戻し自体が不要）。
+    // 場合のみ書き戻す（未参照なら書き戻し自体が不要）。範囲繰り返しと
+    // `AをBで反復`の指定変数がこのポインタを共有する。
     if (begin.local_target and begin.name.len > 0) {
         if (context.nameIndex(locals, begin.name)) |index| {
             try emitter.output.writer.print("%local.{d}", .{index});
@@ -90,6 +93,10 @@ pub fn writeIteratorNext(emitter: *Emitter, function: ir.Function, locals: []con
     } else {
         try variables_mod.writeOptionalNamedPointer(emitter, locals, begin.name);
     }
+    try emitter.output.writer.writeAll(", ptr ");
+    // 「それ」への要素束縛は反復構文のみ。範囲繰り返し・回数繰り返しは
+    // 従来どおり書き戻さない。
+    try variables_mod.writeOptionalNamedPointer(emitter, locals, if (begin.is_foreach) "それ" else "");
     try emitter.output.writer.writeByte(')');
     try emitter.debugSuffix(instruction.span, scope);
     try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });

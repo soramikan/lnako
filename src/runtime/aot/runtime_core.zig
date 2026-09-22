@@ -746,7 +746,10 @@ pub const Runtime = struct {
         return roots[0];
     }
 
-    pub fn createIterator(self: *Runtime, values: []const Value, is_range: bool, direction: u8) !Value {
+    /// `is_foreach`は反復構文（`反復`）由来の生成で真。公式はfor..inで
+    /// 列挙可能なプロパティを持たない値（数値など）を空反復するため、
+    /// 数値を`N回`の回数として扱わず0回実行とする。
+    pub fn createIterator(self: *Runtime, values: []const Value, is_range: bool, direction: u8, is_foreach: bool) !Value {
         if (values.len == 0) return error.InvalidIterator;
         try self.beforeAllocation();
         const iterator: Iterator = if (is_range) blk: {
@@ -762,14 +765,108 @@ pub const Runtime = struct {
             if (!std.math.isFinite(step) or step == 0) return error.InvalidIteratorStep;
             break :blk .{ .kind = .range, .current = start, .end = end, .step = step };
         } else switch (@as(Tag, @enumFromInt(values[0].tag))) {
-            .number => .{ .kind = .repeat, .count = try repeatCount(valueToNumber(values[0])) },
+            .number => .{ .kind = .repeat, .count = if (is_foreach) 0 else try repeatCount(valueToNumber(values[0])) },
             .utf16_string => .{ .kind = .string, .source = values[0], .count = values[0].object().?.payload.utf16_string.len },
-            .byte_buffer => .{ .kind = .bytes, .source = values[0], .count = values[0].object().?.payload.byte_buffer.bytes.len },
-            .array => .{ .kind = .array, .source = values[0], .count = values[0].object().?.payload.array.items.len },
-            .dictionary => .{ .kind = .dictionary, .source = values[0], .count = values[0].object().?.payload.dictionary.entries.items.len },
+            // for..in互換: 配列・bytesは添字領域の後にownプロパティ名を、
+            // 関数・Promiseはownプロパティ名のみを列挙する。キー列は開始時の
+            // スナップショットで、削除済みキーはiteratorHasNextで飛ばす。
+            .byte_buffer => blk: {
+                const keys = try self.snapshotOwnPropertyKeys(values[0]);
+                const buffer = &values[0].object().?.payload.byte_buffer;
+                // ArrayBufferは数値添字を持たない（添字読み出しと同じ契約）ため
+                // 添字領域は空とし、ownプロパティ名のみを列挙する。
+                const count: usize = if (buffer.kind == .array_buffer) 0 else buffer.bytes.len;
+                break :blk .{ .kind = .bytes, .source = values[0], .count = count, .keys = keys };
+            },
+            .array => blk: {
+                const keys = try self.snapshotOwnPropertyKeys(values[0]);
+                break :blk .{ .kind = .array, .source = values[0], .count = values[0].object().?.payload.array.items.len, .keys = keys };
+            },
+            .function, .promise => blk: {
+                const keys = try self.snapshotOwnPropertyKeys(values[0]);
+                break :blk .{ .kind = .properties, .source = values[0], .keys = keys };
+            },
+            .dictionary => blk: {
+                // for..in互換: 反復開始時のキー列を保持し、反復中に削除された
+                // キーはiteratorHasNextで飛ばす。開始後に追加されたキーは列挙しない。
+                var roots = [_]Value{ values[0], .{} };
+                var frame = RootFrame{};
+                self.pushRoots(&frame, &roots, roots.len);
+                defer self.popRoots(&frame);
+                const dictionary = &roots[0].object().?.payload.dictionary;
+                const keys = try self.allocator.alloc(Value, dictionary.entries.items.len);
+                defer self.allocator.free(keys);
+                for (dictionary.entries.items, 0..) |entry, key_index| keys[key_index] = entry.key;
+                orderEnumerableKeys(keys);
+                roots[1] = try self.createArray(keys);
+                break :blk .{ .kind = .dictionary, .source = roots[0], .count = keys.len, .keys = roots[1] };
+            },
             else => .{ .kind = .repeat, .count = 0 },
         };
         return self.createObject(.{ .iterator = iterator }, .iterator);
+    }
+
+    /// for..in互換の列挙順: 整数添字相当のキーを昇順で先に列挙し、
+    /// それ以外のキーは挿入順を保つ。安定ソートで非整数キーの順序を維持する。
+    fn orderEnumerableKeys(keys: []Value) void {
+        std.mem.sort(Value, keys, {}, struct {
+            fn lessThan(_: void, a: Value, b: Value) bool {
+                const a_index = canonicalEnumerableIndex(a);
+                const b_index = canonicalEnumerableIndex(b);
+                if (a_index == null) return false;
+                if (b_index == null) return true;
+                return a_index.? < b_index.?;
+            }
+        }.lessThan);
+    }
+
+    /// 列挙キーが整数添字相当かを返す。aotCanonicalArrayIndexUnitsと同じ
+    /// 正準添字規則を文字列Valueへ適用する。
+    fn canonicalEnumerableIndex(key: Value) ?usize {
+        return switch (@as(Tag, @enumFromInt(key.tag))) {
+            .static_utf8_string => canonicalIndexUtf8(staticUtf8(key)),
+            .utf16_string => blk: {
+                const units = key.object().?.payload.utf16_string;
+                if (units.len == 0 or (units.len > 1 and units[0] == '0')) break :blk null;
+                var result: usize = 0;
+                for (units) |unit| {
+                    if (unit < '0' or unit > '9') break :blk null;
+                    result = std.math.mul(usize, result, 10) catch break :blk null;
+                    result = std.math.add(usize, result, unit - '0') catch break :blk null;
+                }
+                break :blk if (result <= 4_294_967_294) result else null;
+            },
+            else => null,
+        };
+    }
+
+    fn canonicalIndexUtf8(bytes: []const u8) ?usize {
+        if (bytes.len == 0 or (bytes.len > 1 and bytes[0] == '0')) return null;
+        var result: usize = 0;
+        for (bytes) |byte| {
+            if (byte < '0' or byte > '9') return null;
+            result = std.math.mul(usize, result, 10) catch return null;
+            result = std.math.add(usize, result, byte - '0') catch return null;
+        }
+        return if (result <= 4_294_967_294) result else null;
+    }
+
+    /// ownプロパティ名の反復開始時スナップショットをGC配列で返す。
+    /// ownプロパティが無ければ空Valueを返す。
+    fn snapshotOwnPropertyKeys(self: *Runtime, source: Value) !Value {
+        const object = source.object() orelse return .{};
+        const properties = &object.array_properties;
+        if (properties.entries.items.len == 0) return .{};
+        var roots = [_]Value{ source, .{} };
+        var frame = RootFrame{};
+        self.pushRoots(&frame, &roots, roots.len);
+        defer self.popRoots(&frame);
+        const keys = try self.allocator.alloc(Value, properties.entries.items.len);
+        defer self.allocator.free(keys);
+        for (properties.entries.items, 0..) |entry, key_index| keys[key_index] = entry.key;
+        orderEnumerableKeys(keys);
+        roots[1] = try self.createArray(keys);
+        return roots[1];
     }
 
     pub fn createFunction(self: *Runtime, callback: FunctionCallback, arity: usize, captures: []const Value) !Value {
@@ -981,7 +1078,10 @@ pub const Runtime = struct {
                         self.markValue(entry.value);
                     }
                 },
-                .iterator => |iterator| self.markValue(iterator.source),
+                .iterator => |iterator| {
+                    self.markValue(iterator.source);
+                    self.markValue(iterator.keys);
+                },
                 .promise => |promise| {
                     self.markValue(promise.result);
                     for (object.array_properties.entries.items) |property| {
@@ -1227,8 +1327,8 @@ pub const Runtime = struct {
         return indexing.iteratorHasNext(self, value);
     }
 
-    pub fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_target: ?*Value, key_target: ?*Value, range_target: ?*Value) Value {
-        return indexing.iteratorNext(self, value, repeat_target, value_target, key_target, range_target);
+    pub fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_target: ?*Value, key_target: ?*Value, range_target: ?*Value, sore_target: ?*Value) Value {
+        return indexing.iteratorNext(self, value, repeat_target, value_target, key_target, range_target, sore_target);
     }
 
     pub fn stringAt(self: *Runtime, source: Value, index: usize) Value {

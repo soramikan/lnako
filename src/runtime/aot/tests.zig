@@ -3664,7 +3664,7 @@ test "プリミティブへの添字代入を無視し非反復値を空とし�
     const text = try runtime.createString(&.{ 'a', 'b', 'c' });
     try runtime.indexSet(text, numberValue(0), numberValue(2));
     try std.testing.expectEqualSlices(u16, &.{ 'a', 'b', 'c' }, text.object().?.payload.utf16_string);
-    const iterator = try runtime.createIterator(&.{.{ .tag = @intFromEnum(Tag.null_value) }}, false, 0);
+    const iterator = try runtime.createIterator(&.{.{ .tag = @intFromEnum(Tag.null_value) }}, false, 0, false);
     try std.testing.expect(!runtime.iteratorHasNext(iterator));
 }
 
@@ -3686,12 +3686,12 @@ test "UTF-16文字列の添字と反復をコード単位で処理する" {
     runtime.pushRoots(&frame, &values, values.len);
     const high = runtime.indexGet(values[0], numberValue(1));
     try std.testing.expectEqualSlices(u16, &.{0xd83d}, high.object().?.payload.utf16_string);
-    values[0] = try runtime.createIterator(&.{values[0]}, false, 0);
+    values[0] = try runtime.createIterator(&.{values[0]}, false, 0, false);
     var target: Value = .{};
     var key: Value = .{};
-    _ = runtime.iteratorNext(values[0], null, &target, &key, null);
+    _ = runtime.iteratorNext(values[0], null, &target, &key, null, null);
     try std.testing.expectEqualSlices(u16, &.{'A'}, target.object().?.payload.utf16_string);
-    _ = runtime.iteratorNext(values[0], null, &target, &key, null);
+    _ = runtime.iteratorNext(values[0], null, &target, &key, null, null);
     try std.testing.expectEqualSlices(u16, &.{0xd83d}, target.object().?.payload.utf16_string);
     try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 1))), key.payload);
     runtime.popRoots(&frame);
@@ -4204,27 +4204,168 @@ test "回数・範囲・配列・辞書の反復状態と元コレクション�
     var values = [_]Value{try runtime.createArray(&.{ numberValue(3), numberValue(4) })};
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &values, values.len);
-    values[0] = try runtime.createIterator(&.{values[0]}, false, 0);
+    values[0] = try runtime.createIterator(&.{values[0]}, false, 0, false);
     try std.testing.expectEqual(@as(usize, 0), runtime.collect());
     try std.testing.expectEqual(@as(usize, 2), runtime.object_count);
     var target: Value = .{};
     var key: Value = .{};
-    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 3))), runtime.iteratorNext(values[0], null, &target, &key, null).payload);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 3))), runtime.iteratorNext(values[0], null, &target, &key, null, null).payload);
     try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 0))), key.payload);
     try std.testing.expect(runtime.iteratorHasNext(values[0]));
-    _ = runtime.iteratorNext(values[0], null, &target, &key, null);
+    _ = runtime.iteratorNext(values[0], null, &target, &key, null, null);
     try std.testing.expect(!runtime.iteratorHasNext(values[0]));
     runtime.popRoots(&frame);
     try std.testing.expectEqual(@as(usize, 2), runtime.collect());
 
-    var repeat = try runtime.createIterator(&.{numberValue(2)}, false, 0);
+    var repeat = try runtime.createIterator(&.{numberValue(2)}, false, 0, false);
     runtime.pushRoots(&frame, @ptrCast(&repeat), 1);
     var repeat_target: Value = .{};
-    _ = runtime.iteratorNext(repeat, &repeat_target, null, null, null);
+    _ = runtime.iteratorNext(repeat, &repeat_target, null, null, null, null);
     try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 1))), repeat_target.payload);
     runtime.popRoots(&frame);
-    const non_iterable = try runtime.createIterator(&.{try runtime.createBigInt("1n")}, false, 0);
+    const non_iterable = try runtime.createIterator(&.{try runtime.createBigInt("1n")}, false, 0, false);
     try std.testing.expect(!runtime.iteratorHasNext(non_iterable));
+}
+
+test "AOT反復構文は「それ」と指定変数へ束縛し指定変数ありで「対象」を更新しない" {
+    // Issue #112: 公式convForeach互換。生成コードは「対象」・「対象キー」・
+    // ループ変数・「それ」の4ポインタを渡し、指定変数がある`AをBで反復`は
+    // 「対象」ポインタをnullにする。数値の反復対象は0回実行。
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var values = [_]Value{try runtime.createArray(&.{ numberValue(3), numberValue(4) })};
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &values, values.len);
+    defer runtime.popRoots(&frame);
+
+    // `Aを反復`: 「それ」と「対象」へ束縛し「対象キー」も更新する。
+    var taisyou: Value = .{};
+    var sore: Value = .{};
+    var key: Value = .{};
+    var iterator = try runtime.createIterator(&.{values[0]}, false, 0, true);
+    _ = runtime.iteratorNext(iterator, null, &taisyou, &key, null, &sore);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 3))), taisyou.payload);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 3))), sore.payload);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 0))), key.payload);
+
+    // `AをBで反復`: 指定変数へ束縛し「対象」はnullで更新されない。
+    var variable: Value = .{};
+    taisyou = .{};
+    iterator = try runtime.createIterator(&.{values[0]}, false, 0, true);
+    _ = runtime.iteratorNext(iterator, null, null, &key, &variable, &sore);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 3))), variable.payload);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 3))), sore.payload);
+    try std.testing.expectEqual(@as(u64, 0), taisyou.payload);
+
+    // `5を反復`: 数値の反復対象は0回実行（範囲繰り返しの`N回`ではない）。
+    iterator = try runtime.createIterator(&.{numberValue(5)}, false, 0, true);
+    try std.testing.expect(!runtime.iteratorHasNext(iterator));
+}
+
+test "AOT反復は開始時の添字・キー集合を列挙し穴と削除済みを飛ばす" {
+    // for..in互換: 配列はpresenceが真の添字のみ、辞書は開始時に保持した
+    // キー集合のみ列挙する。反復中の短縮・削除済み添字・キーは飛ばし、
+    // 開始後の追加要素・キーは列挙しない。
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 4;
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    var target: Value = .{};
+    var key: Value = .{};
+
+    // 穴のある配列は実在する添字だけ列挙する（公式はfor..inで穴を飛ばす）。
+    roots[0] = try runtime.createArray(&.{});
+    try runtime.aotArraySetIndex(roots[0].object().?, 2, numberValue(9));
+    var iterator = try runtime.createIterator(&.{roots[0]}, false, 0, true);
+    try std.testing.expect(runtime.iteratorHasNext(iterator));
+    _ = runtime.iteratorNext(iterator, null, &target, &key, null, null);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 2))), key.payload);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 9))), target.payload);
+    try std.testing.expect(!runtime.iteratorHasNext(iterator));
+
+    // 反復中に短縮した配列は範囲外を読まずに残りを飛ばす。
+    roots[1] = try runtime.createArray(&.{ numberValue(1), numberValue(2), numberValue(3) });
+    iterator = try runtime.createIterator(&.{roots[1]}, false, 0, true);
+    _ = runtime.iteratorNext(iterator, null, &target, &key, null, null);
+    _ = roots[1].object().?.payload.array.pop();
+    _ = roots[1].object().?.payload.array.pop();
+    try std.testing.expect(!runtime.iteratorHasNext(iterator));
+
+    // 辞書は開始時のキー集合で列挙し、未到達キーの削除を飛ばす。
+    roots[2] = try runtime.createDictionary(&.{ staticStringValue("a"), numberValue(1), staticStringValue("b"), numberValue(2), staticStringValue("c"), numberValue(3) });
+    iterator = try runtime.createIterator(&.{roots[2]}, false, 0, true);
+    _ = runtime.iteratorNext(iterator, null, &target, &key, null, null);
+    const dictionary = &roots[2].object().?.payload.dictionary;
+    _ = dictionary.orderedRemoveEntry(runtime.allocator, dictionary.findByKey(staticStringValue("b")).?);
+    try std.testing.expect(runtime.iteratorHasNext(iterator));
+    _ = runtime.iteratorNext(iterator, null, &target, &key, null, null);
+    const key_units = try valueUtf16Alloc(&runtime, key);
+    defer std.testing.allocator.free(key_units);
+    try std.testing.expectEqualSlices(u16, std.unicode.utf8ToUtf16LeStringLiteral("c"), key_units);
+    try std.testing.expect(!runtime.iteratorHasNext(iterator));
+}
+
+test "AOT配列反復は添字の後にownプロパティを列挙する" {
+    // 公式のfor..inは配列の整数添字を昇順で列挙した後、ownの文字列
+    // プロパティを挿入順で列挙する。開始時のキー集合を上限とし、
+    // 到達時点で削除済みのプロパティは飛ばす。
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 2;
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    var target: Value = .{};
+    var key: Value = .{};
+
+    roots[0] = try runtime.createArray(&.{numberValue(1)});
+    const properties = &roots[0].object().?.array_properties;
+    try runtime.setDictionary(properties, staticStringValue("x"), numberValue(9));
+    try runtime.setDictionary(properties, staticStringValue("y"), numberValue(8));
+    const iterator = try runtime.createIterator(&.{roots[0]}, false, 0, true);
+
+    _ = runtime.iteratorNext(iterator, null, &target, &key, null, null);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 0))), key.payload);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 1))), target.payload);
+    _ = runtime.iteratorNext(iterator, null, &target, &key, null, null);
+    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @enumFromInt(key.tag)));
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 9))), target.payload);
+    // 未到達プロパティを削除してもスナップショット走査は残りを列挙しない。
+    _ = properties.orderedRemoveEntry(runtime.allocator, properties.findByKey(staticStringValue("y")).?);
+    try std.testing.expect(!runtime.iteratorHasNext(iterator));
+
+    // 反復中に追加したownプロパティは列挙しない。
+    roots[1] = try runtime.createArray(&.{numberValue(1)});
+    const second = try runtime.createIterator(&.{roots[1]}, false, 0, true);
+    _ = runtime.iteratorNext(second, null, &target, &key, null, null);
+    try runtime.setDictionary(&roots[1].object().?.array_properties, staticStringValue("z"), numberValue(7));
+    try std.testing.expect(!runtime.iteratorHasNext(second));
+}
+
+test "AOTのArrayBuffer反復は添字を列挙せずownプロパティのみ列挙する" {
+    // ArrayBufferは数値添字を持たない（添字読み出しがundefinedを返す契約と
+    // 同じ）ため、添字領域は0件としてownプロパティ名のみを列挙する。
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 1;
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    var target: Value = .{};
+    var key: Value = .{};
+
+    roots[0] = try runtime.createArrayBuffer(&.{ 1, 2 });
+    try runtime.setDictionary(&roots[0].object().?.array_properties, staticStringValue("x"), numberValue(9));
+    const iterator = try runtime.createIterator(&.{roots[0]}, false, 0, true);
+
+    // 添字0・1（内部バイト）は列挙せず、ownプロパティxのみ到達する。
+    try std.testing.expect(runtime.iteratorHasNext(iterator));
+    _ = runtime.iteratorNext(iterator, null, &target, &key, null, null);
+    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @enumFromInt(key.tag)));
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 9))), target.payload);
+    try std.testing.expect(!runtime.iteratorHasNext(iterator));
 }
 
 test "AOT配列の集約・入替・連番・要素生成を公式境界で処理する" {
@@ -4832,10 +4973,10 @@ test "AOT Node暗号はバイト値の型と境界を保持する" {
     try std.testing.expectEqual(@as(u16, '4'), uuid[14]);
     try std.testing.expect(uuid[19] == '8' or uuid[19] == '9' or uuid[19] == 'a' or uuid[19] == 'b');
 
-    roots[6] = try state.active_runtime.?.createIterator(&.{roots[4]}, false, 0);
+    roots[6] = try state.active_runtime.?.createIterator(&.{roots[4]}, false, 0, false);
     var iterator_value = Value{};
     var iterator_key = Value{};
-    _ = state.active_runtime.?.iteratorNext(roots[6], null, &iterator_value, &iterator_key, null);
+    _ = state.active_runtime.?.iteratorNext(roots[6], null, &iterator_value, &iterator_key, null, null);
     try std.testing.expectEqual(@as(f64, 0), valueToNumber(iterator_key));
     try std.testing.expectEqual(@as(f64, 2), valueToNumber(iterator_value));
 

@@ -43,12 +43,16 @@ pub fn resolveCommandName(
     {
         return null;
     }
+    // ループの語の直前にある未知の識別子も命令ではなく引数とする。
+    // 公式はfunclist外の名をwordとしてスタックへ積むため、`AをBで反復`の
+    // Bは命令呼出しではなく反復の変数になる。
+    if (!self.isKnownCommandName(self.peek().value) and self.atLoopKeywordAhead(1)) return null;
     // 配列添字・プロパティ・@参照の直後に助詞が続く場合、識別子は命令名ではなく値として続行する。
     // 例: `1をA[0]に代入`, `1をA$fooに代入`。
     const next_kind = self.peekAhead(1).kind;
     if (next_kind == .left_bracket or next_kind == .at or next_kind == .property) return null;
     if ((self.identifierValue("増") or self.identifierValue("減")) and self.peekAhead(1).kind == .keyword_repeat) {
-        return try self.parseFor(start, arguments.items);
+        return try self.parseFor(start, self.rangeArguments(arguments, chained_calls));
     }
     const command = self.advance();
     if (std.mem.eql(u8, command.value, "実行速度優先") or std.mem.eql(u8, command.value, "パフォーマンスモニタ適用")) {
@@ -118,11 +122,30 @@ pub fn resolveCommandName(
     return call;
 }
 
-/// 現在位置がループの語かどうか。公式`yCall`は助詞付きの関数呼出しを
-/// スタックへ積んだまま、この位置の制御構文へ条件として渡す。
-pub fn atLoopKeyword(self: *Parser) bool {
-    return self.at(.keyword_repeat_while) or self.at(.keyword_repeat_count) or
-        self.at(.keyword_repeat) or self.at(.keyword_foreach);
+/// 連文（『して』等）で積み上げた呼出しがある文をblockへまとめて返す。
+/// 公式は`して`で文を終わらせて後続を別の文として並べるため、戻る・
+/// 繰り返し・取り込みなどの確定文も連鎖の一部として残す必要がある。
+pub fn finishChained(self: *Parser, start: Token, chained_calls: *std.ArrayList(*ast.Node), statement: *ast.Node) ParseFailure!*ast.Node {
+    if (chained_calls.items.len == 0) return statement;
+    try chained_calls.append(self.allocator, statement);
+    return builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
+}
+
+/// 連文継続用にarguments先頭へ挿入した暗黙の『それ』を、範囲引数を
+/// 先頭から読む『繰り返す』のために除外する。回数・条件・反復は末尾の
+/// 引数だけを使うため影響しないが、範囲繰り返しは先頭から順に
+/// ループ変数・開始値・終了値を読むため、マーカーを残すと一つずれて
+/// 消費される。暗黙マーカーはjosi・raw_josiが共に空のword『それ』で、
+/// ユーザーが書いた`それを`（josi=を）とは区別できる。
+pub fn rangeArguments(self: *Parser, arguments: *std.ArrayList(*ast.Node), chained_calls: *std.ArrayList(*ast.Node)) []const *ast.Node {
+    _ = self;
+    if (chained_calls.items.len > 0 and arguments.items.len > 0 and
+        arguments.items[0].kind == .word and std.mem.eql(u8, arguments.items[0].value, "それ") and
+        arguments.items[0].josi.len == 0 and arguments.items[0].raw_josi.len == 0)
+    {
+        return arguments.items[1..];
+    }
+    return arguments.items;
 }
 
 /// 公式の`func token`相当（既知の命令名）かどうか。

@@ -101,6 +101,12 @@ pub const Instruction = struct {
     /// 対象名がローカルシンボルへ解決された代入系命令で真。
     /// local slotの登録対象判定に使う。
     local_target: bool = false,
+    /// `foreach_statement`由来のiterator命令で真。反復構文は範囲繰り返しと
+    /// 異なり、数値・非反復値を0回実行とし、要素を「それ」へ束縛する。
+    is_foreach: bool = false,
+    /// loweringが生成する内部命令（反復の退避・復元など）で真。
+    /// 観測証跡（global site ID）を持たない実行専用の命令として扱う。
+    synthetic: bool = false,
     /// 実効取り込み文からのモジュールエントリ呼び出しで真。
     /// モジュール直下の取り込み文（site_toplevel）は、その辺が存在する
     /// ストリームでのみ実行される: ベース側の辺（callee_order <=
@@ -185,6 +191,13 @@ pub const Function = struct {
     return_type: Type,
     is_async: bool,
     is_test: bool,
+    /// 公式の__nako_scope_enter/leave相当。関数呼び出しごとに『それ』の
+    /// スコープを作り直す関数ならtrue。入口で実行側が呼び出し側の『それ』
+    /// を退避してundefinedへ初期化し、関数を抜ける全経路で復元する。
+    /// `return_value`が`null`の終端は現在の『それ』を返す（公式が関数末尾へ
+    /// `return (それ)`を付与するconvDefFuncCommon相当）。モジュール
+    /// エントリは呼び出し側と同じスコープで動くためfalse。
+    sore_scope: bool = false,
 };
 
 pub const JavaScriptModule = struct {

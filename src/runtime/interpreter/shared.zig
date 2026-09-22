@@ -390,7 +390,7 @@ pub const LiteralTrace = struct {
 
 pub const TestResult = struct { name: []const u8, passed: bool, message: []const u8 = "" };
 
-pub const IteratorKind = enum { repeat, range, bytes, array, string, dictionary };
+pub const IteratorKind = enum { repeat, range, bytes, array, string, dictionary, properties };
 
 pub const IteratorState = struct {
     kind: IteratorKind,
@@ -404,6 +404,12 @@ pub const IteratorState = struct {
     // 範囲繰り返し変数の束縛先。意味解析のlocal_targetをそのまま保持し、
     // スロットの有無では推測しない。
     variable_local: bool = false,
+    // 反復開始時のキー列を保持する。辞書はownキー全体、配列・bytesは
+    // 添字領域の後に続くownプロパティ名、properties種別はownプロパティ名のみ。
+    // 公式のfor..inは開始後に追加されたキーを列挙せず、削除済みキーは
+    // 到達時点で飛ばす。キー文字列はGC管理のため、state.zigのトレースで
+    // sourceと共にマークする。
+    keys: ?[]*value_mod.String = null,
 };
 
 pub const Timer = struct {
@@ -470,6 +476,11 @@ pub const Frame = struct {
     /// 命令）が参照する。仮引数個数への正規化はせず、呼出し側の並びを
     /// そのまま保持する（公式の`arguments`相当・末尾の__self相当は除く）。
     call_arguments: []const Value = &.{},
+    /// 関数スコープの『それ』を作る呼出し（ir.Function.sore_scope）で
+    /// 退避した呼び出し側の『それ』。関数を抜ける全経路で復元する
+    /// （公式の__nako_scope_enter/leave相当）。GCが参照を保持できるよう
+    /// フレーム上に置き、traceRootsで辿る。
+    sore_backup: ?Value = null,
     locals: std.StringHashMapUnmanaged(*value_mod.BindingCell) = .empty,
     owned_names: std.ArrayList([]u8) = .empty,
     iterators: std.AutoHashMapUnmanaged(ir.ValueId, IteratorState) = .empty,
@@ -479,6 +490,8 @@ pub const Frame = struct {
         self.locals.deinit(allocator);
         for (self.owned_names.items) |name| allocator.free(name);
         self.owned_names.deinit(allocator);
+        var iterator_states = self.iterators.valueIterator();
+        while (iterator_states.next()) |iterator| if (iterator.keys) |keys| allocator.free(keys);
         self.iterators.deinit(allocator);
         self.handlers.deinit(allocator);
         if (self.local_cells_buffer) |buffer| allocator.free(buffer);
@@ -659,6 +672,19 @@ pub fn repeatCount(number: f64) !usize {
 pub fn ownProperty(properties: []const value_mod.ArrayProperty, name: []const u16) ?Value {
     for (properties) |property| if (std.mem.eql(u16, property.key.units, name)) return property.value;
     return null;
+}
+
+/// for..inが列挙するownプロパティ列。配列・bytes・関数・Promiseは同じ
+/// 挿入順リストへownプロパティを保持するため、反復のキースナップショットと
+/// 削除判定で共通して使う。
+pub fn ownPropertyList(value: Value) []const value_mod.ArrayProperty {
+    return switch (value) {
+        .array => |array| array.properties.items,
+        .bytes => |bytes| bytes.properties.items,
+        .function => |function| function.properties.items,
+        .promise => |promise| promise.properties.items,
+        else => &.{},
+    };
 }
 
 pub fn setOwnProperty(properties: *std.ArrayList(value_mod.ArrayProperty), allocator: std.mem.Allocator, key: *value_mod.String, value: Value) !void {

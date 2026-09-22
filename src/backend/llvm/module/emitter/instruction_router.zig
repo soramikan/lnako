@@ -80,9 +80,13 @@ pub fn writeInstruction(emitter: *Emitter, function: ir.Function, locals: []cons
         },
         .store_global => {
             const index = emitter.globalIndex(instruction.name) orelse return error.UnknownGlobal;
-            const site_id = instruction.global_site_id orelse return error.MissingGlobalSiteId;
-            try emitter.output.writer.print("  call void @lnako_aot_global_write_site(i64 {d})", .{site_id});
-            try emitter.debugSuffix(instruction.span, scope);
+            // synthetic（反復の退避・復元などlowering生成の内部命令）は
+            // 観測サイトを持たず、書き込み証跡も記録しない。
+            if (!instruction.synthetic) {
+                const site_id = instruction.global_site_id orelse return error.MissingGlobalSiteId;
+                try emitter.output.writer.print("  call void @lnako_aot_global_write_site(i64 {d})", .{site_id});
+                try emitter.debugSuffix(instruction.span, scope);
+            }
             try emitter.output.writer.print("  store %lnako.Value ", .{});
             try constants_mod.writeValueRef(emitter, function, instruction.operands[0]);
             try emitter.output.writer.print(", ptr @lnako.global.{d}", .{index});
