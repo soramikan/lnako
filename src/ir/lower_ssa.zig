@@ -683,6 +683,7 @@ const FunctionBuilder = struct {
         var index: usize = 2;
         while (index + 1 < node.children.len) : (index += 2) {
             const case_value = (try self.lowerNode(node.children[index])) orelse try self.emitUndefined(node);
+            if (self.isTerminated()) return null;
             const compare = try self.emitValue(.binary, .boolean, &.{ discriminant, case_value }, node);
             self.currentBlock().instructions.items[self.currentBlock().instructions.items.len - 1].operator = "==";
             const case_block = try self.createBlock("switch.case");

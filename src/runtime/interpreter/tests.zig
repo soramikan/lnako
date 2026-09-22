@@ -3299,6 +3299,22 @@ test "連鎖位置の裸の「エラー発生」語をthrowとして実行する
     try std.testing.expectEqualStrings("catch[msg1]\n", host.written());
 }
 
+test "条件分岐の節値にある裸の「エラー発生」語をthrowとして実行する" {
+    var fixture = try compileForTest(std.testing.allocator, "それは「msg2」\nエラー監視\n1で条件分岐\nエラー発生ならば、「x」と表示。ここまで。\nここまで。\n「続行」を表示\nエラーならば\n「catch[」＆エラーメッセージ＆「]」を表示\nここまで\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("catch[msg2]\n", host.written());
+}
+
 test "複数必須引数の裸の組み込み命令は不足診断になる" {
     var parsed = try parser.parse(std.testing.allocator, "置換して表示\n", "builtin-multi.nako3");
     defer parsed.deinit();
