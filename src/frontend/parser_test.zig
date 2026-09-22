@@ -1092,6 +1092,17 @@ test "範囲オブジェクトの繰り返しはC風呼出しの増分式も受�
     try std.testing.expectEqualStrings("F", increment.name);
 }
 
+test "先行引数を残したC風呼出しは未解決引数として構文エラー" {
+    // 公式は`5をF(1)`の『5を』を未解決の単語として文法エラーにする。
+    // C風呼出しを式解析へ委ねても、保留中の引数は破棄せず通常の
+    // 未解決引数判定へ通す（`範囲をF(1)ずつ増繰返す`の増分式は
+    // ループ引数として保持されるため影響しない）。
+    var result = try parse(std.testing.allocator, "●(Aを)Fとは\n　それはA+1\nここまで\n5をF(1)\n", "c-call-stray-arg.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+    try std.testing.expectEqual(diagnostic.Code.unexpected_token, result.diagnostics[0].code);
+}
+
 test "『ずつ』引数は増減繰返以外では構文エラー" {
     var result = try parse(std.testing.allocator, "1から5まで2ずつ繰り返す\nそれを表示\nここまで\n", "for-stray-inc.nako3");
     defer result.deinit();

@@ -908,7 +908,11 @@ pub const Parser = struct {
             }
 
             const expression = try expressions.parseExpression(self, 0);
-            if (expression.kind == .function_call and self.isTerminator()) {
+            // 保留中の引数がある終端呼出しはそのまま返せない。`5をF(1)`の
+            // 『5を』は公式では未解決の単語として構文エラーになるため、
+            // 引数へ回して末尾の未解決判定（命令呼び出しを構成できません）
+            // へ通す。`範囲をF(1)ずつ増繰返す`の増分式も同じ経路で保持される。
+            if (expression.kind == .function_call and arguments.items.len == 0 and self.isTerminator()) {
                 return self.finishChained(start, &chained_calls, expression);
             }
             try arguments.append(self.allocator, expression);
