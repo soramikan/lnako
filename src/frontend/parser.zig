@@ -789,26 +789,29 @@ pub const Parser = struct {
             }
             if (self.at(.keyword_return)) {
                 const keyword = self.advance();
-                const value = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try builder.nop(self, keyword);
+                // 公式yReturnはpopStack(['で','を'])を戻り値にし、無ければ
+                // nop（=『それ』）を使う。引数を取らない『戻す』も現在の
+                // 『それ』を返すため、ここでも暗黙の『それ』を補う。
+                const value = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try self.implicitIt(keyword);
                 const result = try builder.makeNodeWithChildren(self, .return_statement, start, try builder.copyChildren(self, &.{value}));
                 result.josi = "";
-                return result;
+                return self.finishChained(start, &chained_calls, result);
             }
             if (self.at(.keyword_repeat_count)) {
                 const keyword = self.advance();
                 const count = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try self.implicitIt(keyword);
-                return self.parseRepeatTimes(start, count);
+                return self.finishChained(start, &chained_calls, try self.parseRepeatTimes(start, count));
             }
             if (self.at(.keyword_repeat_while)) {
                 _ = self.advance();
                 if (arguments.items.len == 0) return self.fail(.invalid_control_statement, "『間』の前に条件式が必要です", start);
-                return self.parseWhile(start, arguments.items[arguments.items.len - 1]);
+                return self.finishChained(start, &chained_calls, try self.parseWhile(start, arguments.items[arguments.items.len - 1]));
             }
-            if (self.at(.keyword_repeat)) return self.parseFor(start, arguments.items);
+            if (self.at(.keyword_repeat)) return self.finishChained(start, &chained_calls, try self.parseFor(start, self.rangeArguments(&arguments, &chained_calls)));
             if (self.at(.keyword_foreach)) {
                 _ = self.advance();
                 const collection = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try builder.nop(self, start);
-                return self.parseForeach(start, collection);
+                return self.finishChained(start, &chained_calls, try self.parseForeach(start, collection));
             }
             if (self.at(.keyword_import)) {
                 const command = self.advance();
@@ -818,10 +821,10 @@ pub const Parser = struct {
                 node.value = path.value;
                 node.josi = "";
                 try self.recordImportMode(node);
-                return node;
+                return self.finishChained(start, &chained_calls, node);
             }
             if ((self.identifierValue("増") or self.identifierValue("減")) and self.peekAhead(1).kind == .keyword_repeat) {
-                return self.parseFor(start, arguments.items);
+                return self.finishChained(start, &chained_calls, try self.parseFor(start, self.rangeArguments(&arguments, &chained_calls)));
             }
 
             // 助詞付きの既知命令名は、公式`yCallFunc`と同じく命令として呼び出し、
@@ -855,7 +858,7 @@ pub const Parser = struct {
 
             const expression = try expressions.parseExpression(self, 0);
             if (expression.kind == .function_call and self.isTerminator()) {
-                return expression;
+                return self.finishChained(start, &chained_calls, expression);
             }
             try arguments.append(self.allocator, expression);
 
@@ -879,6 +882,32 @@ pub const Parser = struct {
             return node;
         }
         return self.fail(.unexpected_token, "命令呼び出しを構成できません", self.peek());
+    }
+
+    /// 連文（『して』等）で積み上げた呼出しがある文をblockへまとめて返す。
+    /// 公式は`して`で文を終わらせて後続を別の文として並べるため、戻る・
+    /// 繰り返し・取り込みなどの確定文も連鎖の一部として残す必要がある。
+    fn finishChained(self: *Parser, start: Token, chained_calls: *std.ArrayList(*ast.Node), statement: *ast.Node) ParseFailure!*ast.Node {
+        if (chained_calls.items.len == 0) return statement;
+        try chained_calls.append(self.allocator, statement);
+        return builder.makeNodeWithChildren(self, .block, start, try chained_calls.toOwnedSlice(self.allocator));
+    }
+
+    /// 連文継続用にarguments先頭へ挿入した暗黙の『それ』を、範囲引数を
+    /// 先頭から読む『繰り返す』のために除外する。回数・条件・反復は末尾の
+    /// 引数だけを使うため影響しないが、範囲繰り返しは先頭から順に
+    /// ループ変数・開始値・終了値を読むため、マーカーを残すと一つずれて
+    /// 消費される。暗黙マーカーはjosi・raw_josiが共に空のword『それ』で、
+    /// ユーザーが書いた`それを`（josi=を）とは区別できる。
+    fn rangeArguments(self: *Parser, arguments: *std.ArrayList(*ast.Node), chained_calls: *std.ArrayList(*ast.Node)) []const *ast.Node {
+        _ = self;
+        if (chained_calls.items.len > 0 and arguments.items.len > 0 and
+            arguments.items[0].kind == .word and std.mem.eql(u8, arguments.items[0].value, "それ") and
+            arguments.items[0].josi.len == 0 and arguments.items[0].raw_josi.len == 0)
+        {
+            return arguments.items[1..];
+        }
+        return arguments.items;
     }
 
     /// 現在位置の識別子を命令名として解決する。命令・制御構文へ確定した場合は
@@ -910,7 +939,7 @@ pub const Parser = struct {
         const next_kind = self.peekAhead(1).kind;
         if (next_kind == .left_bracket or next_kind == .at or next_kind == .property) return null;
         if ((self.identifierValue("増") or self.identifierValue("減")) and self.peekAhead(1).kind == .keyword_repeat) {
-            return try self.parseFor(start, arguments.items);
+            return try self.parseFor(start, self.rangeArguments(arguments, chained_calls));
         }
         const command = self.advance();
         if (std.mem.eql(u8, command.value, "実行速度優先") or std.mem.eql(u8, command.value, "パフォーマンスモニタ適用")) {
@@ -1317,6 +1346,9 @@ pub const Parser = struct {
             variable = arguments[0].value;
             offset = 1;
         }
+        // 公式は繰り返し変数を省略した範囲繰り返しを『それ』へ束縛する
+        // （繰り返し中に『それ』へ現在値が入り、『回数』は変化しない）。
+        if (variable.len == 0) variable = "それ";
         if (arguments.len < offset + 2) return self.fail(.invalid_control_statement, "『繰り返す』に開始値と終了値が必要です", keyword);
         const increment = if (arguments.len > offset + 2) arguments[offset + 2] else try builder.nop(self, keyword);
         const body = try self.parseLoopBody("『繰り返す』文");

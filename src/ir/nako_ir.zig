@@ -185,6 +185,13 @@ pub const Function = struct {
     return_type: Type,
     is_async: bool,
     is_test: bool,
+    /// 公式の__nako_scope_enter/leave相当。関数呼び出しごとに『それ』の
+    /// スコープを作り直す関数ならtrue。入口で実行側が呼び出し側の『それ』
+    /// を退避してundefinedへ初期化し、関数を抜ける全経路で復元する。
+    /// `return_value`が`null`の終端は現在の『それ』を返す（公式が関数末尾へ
+    /// `return (それ)`を付与するconvDefFuncCommon相当）。モジュール
+    /// エントリは呼び出し側と同じスコープで動くためfalse。
+    sore_scope: bool = false,
 };
 
 pub const JavaScriptModule = struct {
