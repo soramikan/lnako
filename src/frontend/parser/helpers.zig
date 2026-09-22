@@ -96,11 +96,10 @@ pub fn isImplicitCallbackJosi(josi: []const u8) bool {
 }
 
 /// `implicitIt`が連文継続用に挿入した暗黙の『それ』マーカーかどうか。
-/// ユーザーが記述した`それ`はjosiかraw_josiの少なくとも一方を持つため、
-/// 両方が空のword『それ』はマーカーとして区別できる。
+/// ユーザーが記述する`それ`・`(それ)`は同じ見た目の助詞情報を持つため、
+/// 生成元フラグでのみ判定する。
 pub fn isImplicitItMarker(node: *ast.Node) bool {
-    return node.kind == .word and std.mem.eql(u8, node.value, "それ") and
-        node.josi.len == 0 and node.raw_josi.len == 0;
+    return node.is_implicit_it;
 }
 
 pub fn isVariableReference(kind: ast.Kind) bool {

@@ -144,8 +144,8 @@ pub fn finishChained(self: *Parser, start: Token, chained_calls: *std.ArrayList(
 /// 先頭から読む『繰り返す』のために除外する。回数・条件・反復は末尾の
 /// 引数だけを使うため影響しないが、範囲繰り返しは先頭から順に
 /// ループ変数・開始値・終了値を読むため、マーカーを残すと一つずれて
-/// 消費される。暗黙マーカーはjosi・raw_josiが共に空のword『それ』で、
-/// ユーザーが書いた`それを`（josi=を）とは区別できる。
+/// 消費される。暗黙マーカーは生成元フラグ`is_implicit_it`でのみ判定する。
+/// ユーザーが書いた`それ`・`(それ)`は同じ助詞情報を持つ値として残る。
 pub fn rangeArguments(self: *Parser, arguments: *std.ArrayList(*ast.Node), chained_calls: *std.ArrayList(*ast.Node)) []const *ast.Node {
     _ = self;
     if (chained_calls.items.len > 0 and arguments.items.len > 0 and
@@ -223,6 +223,7 @@ pub fn implicitIt(self: *Parser, token: Token) ParseFailure!*ast.Node {
     result.value = "それ";
     result.josi = "";
     result.raw_josi = "";
+    result.is_implicit_it = true;
     return result;
 }
 
