@@ -1429,6 +1429,39 @@ test "括弧内の助詞付き命令呼出しを受理する" {
     try std.testing.expectEqualStrings("を", call.josi);
 }
 
+test "助詞付き呼出しの直後の括弧は関数値呼出しではなく次の式として扱う" {
+    // `(expr)助詞(expr)…` 形。助詞を持つ呼出しは引数として確定済みのため、
+    // 直後の`(`はcall_valueではなく別の式の開始。公式は
+    // `(「a」の「a」から「b」へ置換)と(「d」と連結)を連結して表示`を`bd`と評価する。
+    var result = try parse(std.testing.allocator, "(「a」の「a」から「b」へ置換)と(「d」と連結)を連結して表示\n", "paren-josi-next-paren.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const block = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.block, block.kind);
+    const concat = block.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, concat.kind);
+    try std.testing.expectEqualStrings("連結", concat.name);
+    try std.testing.expectEqual(@as(usize, 2), concat.children.len);
+    try std.testing.expectEqual(ast.Kind.function_call, concat.children[0].kind);
+    try std.testing.expectEqualStrings("置換", concat.children[0].name);
+    try std.testing.expectEqualStrings("と", concat.children[0].josi);
+    try std.testing.expectEqual(ast.Kind.function_call, concat.children[1].kind);
+    try std.testing.expectEqualStrings("連結", concat.children[1].name);
+    try std.testing.expectEqualStrings("を", concat.children[1].josi);
+}
+
+test "助詞を持たない呼出しの直後の括弧は従来どおり関数値呼出しになる" {
+    // `(expr)(expr)` はlnako拡張のcall_value（公式は文法エラー）。
+    var result = try parse(std.testing.allocator, "F(1)(2)を表示\n", "paren-call-value.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const display = result.root.?.children[0];
+    const call = display.children[0];
+    try std.testing.expectEqual(ast.Kind.call_value, call.kind);
+    try std.testing.expectEqual(@as(usize, 2), call.children.len);
+    try std.testing.expectEqual(ast.Kind.function_call, call.children[0].kind);
+}
+
 test "括弧内で呼出しに解決されなかった残りは末尾の値を使う" {
     // 公式`yCalc`は残スタックの末尾を返すため、`(1を2で)`は`2`になる。
     var result = try parse(std.testing.allocator, "(1を2で)を表示\n", "paren-leftover.nako3");
