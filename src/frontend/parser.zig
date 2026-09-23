@@ -959,10 +959,14 @@ pub const Parser = struct {
             // で拒否する。『@』『.』は式を開始できないため助詞の有無に関わらず
             // 拒否するが、『[』は助詞付きcall_valueの直後では新たな配列
             // リテラル引数の開始になるため（`F()()と[1,2]を連結`）、助詞を
-            // 持たないcall_valueの直後だけを拒否対象にする。
+            // 持たないcall_valueの直後だけを拒否対象にする。ただし条件助詞
+            // （なら・たら等）は公式では文レベルの条件構文でcall_valueがその
+            // 境界で先に失敗するため、『[』は引数として読まれず同じく拒否する
+            // （`F()()なら[1]を表示`は公式でも『call_value』未解決）。
             if (expression.kind == .call_value and !expression.grouped and
                 (self.at(.at) or self.at(.property) or
-                    (self.at(.left_bracket) and expression.josi.len == 0)))
+                    (self.at(.left_bracket) and
+                        (expression.josi.len == 0 or isConditionalJosi(expression.josi)))))
             {
                 const leftovers = [_]*ast.Node{expression};
                 return self.failIncompleteStatement(start, &leftovers);

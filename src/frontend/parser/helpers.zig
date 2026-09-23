@@ -123,7 +123,9 @@ pub fn isVariableReference(kind: ast.Kind) bool {
 /// 吸収するため、array_referenceを含む連鎖は`『ref_array』`と出す。
 /// `.array_value_reference`は生成時に`name`へ`'@'`/`'$'`を記録済み。
 pub fn referenceTypeName(node: *const ast.Node) []const u8 {
-    if (node.kind == .array_value_reference) return node.name;
+    // name未設定のarray_value_referenceや将来追加される参照kindは、
+    // 公式nodeToStrと同じく型名をそのまま表示する。
+    if (node.kind == .array_value_reference and node.name.len > 0) return node.name;
     // レシーバ鎖を裸のwordまで降りる。groupedノードは括弧化された値
     // なので公式ではref_array_valueのレシーバになり、それ以上降りない。
     var saw_array_reference = false;
@@ -145,7 +147,7 @@ pub fn referenceTypeName(node: *const ast.Node) []const u8 {
         // （`(A.x).y`のように括弧済み参照が子へ畳まれる形はAST上
         // `A.x.y`と区別できず`ref_prop`と出る既知の差分がある。）
         .property_reference => if (!bare_word_root) "$" else if (saw_array_reference) "ref_array" else "ref_prop",
-        else => unreachable,
+        else => ast.kindName(node.kind),
     };
 }
 
