@@ -32,9 +32,9 @@ lnako --version
 
 | OS / CPU | standard版 | full版（LLVM/LLD同梱） |
 | --- | --- | --- |
-| macOS arm64 | `lnako-0.2.1-macos-arm64.tar.gz` | `lnako-0.2.1-macos-arm64-full.tar.gz` |
-| Linux x86_64 GNU | `lnako-0.2.1-linux-x64.tar.gz` | `lnako-0.2.1-linux-x64-full.tar.gz` |
-| Windows x86_64 MSVC | `lnako-0.2.1-windows-x64.zip` | `lnako-0.2.1-windows-x64-full.zip` |
+| macOS arm64 | `lnako-0.2.2-macos-arm64.tar.gz` | `lnako-0.2.2-macos-arm64-full.tar.gz` |
+| Linux x86_64 GNU | `lnako-0.2.2-linux-x64.tar.gz` | `lnako-0.2.2-linux-x64-full.tar.gz` |
+| Windows x86_64 MSVC | `lnako-0.2.2-windows-x64.zip` | `lnako-0.2.2-windows-x64-full.zip` |
 
 #### 展開とPATHの設定
 
@@ -42,18 +42,18 @@ lnako --version
 
 ```sh
 # macOSの例（ダウンロードファイルと照合）
-shasum -a 256 -c lnako-0.2.1-macos-arm64.tar.gz.sha256
-tar -xzf lnako-0.2.1-macos-arm64.tar.gz
+shasum -a 256 -c lnako-0.2.2-macos-arm64.tar.gz.sha256
+tar -xzf lnako-0.2.2-macos-arm64.tar.gz
 
 # Linuxの例
-sha256sum -c lnako-0.2.1-linux-x64.tar.gz.sha256
-tar -xzf lnako-0.2.1-linux-x64.tar.gz
+sha256sum -c lnako-0.2.2-linux-x64.tar.gz.sha256
+tar -xzf lnako-0.2.2-linux-x64.tar.gz
 ```
 
 ```powershell
 # Windows PowerShellの例（ハッシュ値を確認して展開）
-Get-FileHash .\lnako-0.2.1-windows-x64.zip -Algorithm SHA256
-Expand-Archive .\lnako-0.2.1-windows-x64.zip -DestinationPath .\lnako
+Get-FileHash .\lnako-0.2.2-windows-x64.zip -Algorithm SHA256
+Expand-Archive .\lnako-0.2.2-windows-x64.zip -DestinationPath .\lnako
 ```
 
 展開したフォルダ全体を任意の場所（例: `~/lnako` や `C:\tools\lnako`）に配置し、その中の `bin` フォルダを環境変数 `PATH` に追加してください。

@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const version = "0.2.1";
+pub const version = "0.2.2";
 
 pub const frontend = struct {
     pub const source = @import("frontend/source.zig");
