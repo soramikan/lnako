@@ -219,7 +219,9 @@ pub export fn lnako_aot_iterator_new(out: *state.Value, values: ?[*]const state.
 pub export fn lnako_aot_iterator_has_next(iterator: *const state.Value) callconv(.c) c_int {
     const runtime = if (state.active_runtime) |*value| value else return 0;
     return @intFromBool(runtime.iteratorHasNext(iterator.*) catch |failure| {
-        runtime.setFailure(failure);
+        // コールバック（カスタムvalueOf等）が投げた例外はpendingのまま
+        // 残っているため、汎用失敗で上書きしない。
+        if (!runtime.has_pending_exception) runtime.setFailure(failure);
         return 0;
     });
 }
@@ -228,7 +230,7 @@ pub export fn lnako_aot_iterator_next(out: *state.Value, iterator: *const state.
     out.* = .{};
     const runtime = if (state.active_runtime) |*value| value else return;
     out.* = runtime.iteratorNext(iterator.*, repeat_target, value_target, key_target, range_target, sore_target) catch |failure| {
-        runtime.setFailure(failure);
+        if (!runtime.has_pending_exception) runtime.setFailure(failure);
         return;
     };
 }

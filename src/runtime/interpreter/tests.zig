@@ -1990,6 +1990,45 @@ test "N回繰り返しはオペランドを反復ごとに抽象関係比較す�
     try std.testing.expectEqualStrings("call\n1\ncall\n2\ncall\nE1\nE2\nF1\n", host.written());
 }
 
+test "N回繰り返しのガードは非callable変換メソッドを飛ばし例外を監視へ配送する" {
+    // Issue #165: ECMAScriptのGetMethod相当で非callableのvalueOf/toStringは
+    // メソッド不在として次候補へ進む（{"valueOf":1}→既定toString→NaN→0回）。
+    // ガードのcoercionが投げた例外は通常のループ脱出ではなく最内の
+    // エラー監視ハンドラへ配送され、コールバック由来の元例外が保持される。
+    const source =
+        "D={}\n" ++
+        "D[\"valueOf\"]=1\n" ++
+        "D回\n「D{回数}」を表示\nここまで\n" ++
+        "「done」と表示\n" ++
+        "エラー監視\n" ++
+        "E={}\n" ++
+        "E[\"valueOf\"]=関数()\n『valueOf error』でエラー発生\nここまで\n" ++
+        "E回\nここまで\n" ++
+        "エラーならば\n「捕捉:{エラーメッセージ}」を表示\nここまで\n" ++
+        "エラー監視\n" ++
+        "K={}\nK[\"n\"]=0\n" ++
+        "K[\"valueOf\"]=関数()\nK[\"n\"]=K[\"n\"]+1\nもしK[\"n\"]>2ならば\n『late error』でエラー発生\nここまで\nそれは5\nここまで\n" ++
+        "K回\n「K{回数}」を表示\nここまで\n" ++
+        "エラーならば\n「捕捉2:{エラーメッセージ}」を表示\nここまで\n" ++
+        "H={}\n" ++
+        "H[\"valueOf\"]=1\n" ++
+        "H[\"toString\"]=関数()それは「4」;ここまで\n" ++
+        "H回\n「H{回数}」を表示\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("done\n捕捉:valueOf error\nK1\nK2\n捕捉2:late error\nH1\nH2\nH3\nH4\n", host.written());
+}
+
 test "連文の各文は直前結果を『それ』へ伝播し先行文の出力を欠落させない" {
     // Issue #114: `。`区切りの中間呼出し結果が『それ』に繋がり、
     // 先行する文の出力も保持されることを固定する。『戻り値無し』を

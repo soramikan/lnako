@@ -809,5 +809,9 @@
   {
     "id": "repeat-times-per-iteration-coercion-issue165",
     "source": "D={}\nD[\"valueOf\"]=関数()「call」と表示;それは2;ここまで\nD回\n回数を表示\nここまで\nE={}\nE[\"valueOf\"]=関数()それは2n;ここまで\nE回\n「E{回数}」を表示\nここまで\nF={}\nF[\"n\"]=3\nF[\"valueOf\"]=関数()F[\"n\"]=F[\"n\"]-2;それはF[\"n\"]+1;ここまで\nF回\n「F{回数}」を表示\nここまで\n"
+  },
+  {
+    "id": "repeat-times-guard-exception-and-noncallable-issue165",
+    "source": "D={}\nD[\"valueOf\"]=1\nD回\n「D{回数}」を表示\nここまで\n「done」と表示\nエラー監視\nE={}\nE[\"valueOf\"]=関数()\n『valueOf error』でエラー発生\nここまで\nE回\nここまで\nエラーならば\n「捕捉:{エラーメッセージ}」を表示\nここまで\nエラー監視\nK={}\nK[\"n\"]=0\nK[\"valueOf\"]=関数()\nK[\"n\"]=K[\"n\"]+1\nもしK[\"n\"]>2ならば\n『late error』でエラー発生\nここまで\nそれは5\nここまで\nK回\n「K{回数}」を表示\nここまで\nエラーならば\n「捕捉2:{エラーメッセージ}」を表示\nここまで\nH={}\nH[\"valueOf\"]=1\nH[\"toString\"]=関数()それは「4」;ここまで\nH回\n「H{回数}」を表示\nここまで\n"
   }
 ]
