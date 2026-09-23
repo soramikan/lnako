@@ -453,6 +453,33 @@ test "反復ガードはiterator_has_next直後にexception_pendingで監視配�
     try std.testing.expect(found);
 }
 
+test "範囲繰り返しはiterator_beginとiterator_next直後にexception_pendingをemitする" {
+    // Issue #175: 範囲終端の変換はカスタムvalueOfを呼び得るため、begin失敗時に
+    // 残る保留例外をループへ進む前に検査する。iterator_nextも同様に検査する。
+    var fixture = try lowerSourceForTest(std.testing.allocator, "1から3まで繰り返す\nここまで\n");
+    defer fixture.program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+
+    const entry = fixture.program.findFunction("main__$entry").?;
+    var begin_found = false;
+    var next_found = false;
+    for (entry.blocks) |block| {
+        for (block.instructions, 0..) |instruction, index| {
+            if (instruction.opcode != .iterator_begin and instruction.opcode != .iterator_next) continue;
+            if (instruction.opcode == .iterator_begin) begin_found = true else next_found = true;
+            try std.testing.expect(index + 1 < block.instructions.len);
+            try std.testing.expectEqual(ir.Opcode.exception_pending, block.instructions[index + 1].opcode);
+            try std.testing.expect(block.terminator == .conditional_branch);
+            const pending = block.instructions[index + 1].result.?;
+            try std.testing.expectEqual(pending, block.terminator.conditional_branch.condition);
+        }
+    }
+    try std.testing.expect(begin_found);
+    try std.testing.expect(next_found);
+}
+
 test "監視領域を抜けるループ脱出は抜ける側のtry_endをemitする" {
     // ループ内の監視領域を抜ける経路では、抜ける側のtry_begin分のtry_endを
     // emitしてからループ出口へ分岐する。try_endを欠くとInterpreterの

@@ -4295,6 +4295,40 @@ test "AOT範囲繰り返しは『それ』と繰り返し変数の両方へ束�
     try std.testing.expect(!try runtime.iteratorHasNext(iterator));
 }
 
+test "AOT範囲繰り返しは終端をガード毎に抽象関係比較する" {
+    // Issue #175: 公式convForはvarToをforガード(i <= varTo)で反復ごとに
+    // ToPrimitiveする。文字列・BigInt終端は関係比較として成立し、
+    // 非数値終端はNaN比較で0回反復となる。
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 4;
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    // 文字列終端「3」はガード毎の関係比較で3回反復する。
+    roots[0] = try runtime.createString(&.{'3'});
+    roots[1] = try runtime.createIterator(&.{ numberValue(1), roots[0] }, true, 0, false);
+    try std.testing.expect(try runtime.iteratorHasNext(roots[1]));
+    _ = try runtime.iteratorNext(roots[1], null, null, null, null, null);
+    _ = try runtime.iteratorNext(roots[1], null, null, null, null, null);
+    _ = try runtime.iteratorNext(roots[1], null, null, null, null, null);
+    try std.testing.expect(!try runtime.iteratorHasNext(roots[1]));
+
+    // BigInt終端3nも関係比較として成立し3回反復する。
+    roots[2] = try runtime.createBigInt("3n");
+    roots[3] = try runtime.createIterator(&.{ numberValue(1), roots[2] }, true, 0, false);
+    _ = try runtime.iteratorNext(roots[3], null, null, null, null, null);
+    _ = try runtime.iteratorNext(roots[3], null, null, null, null, null);
+    _ = try runtime.iteratorNext(roots[3], null, null, null, null, null);
+    try std.testing.expect(!try runtime.iteratorHasNext(roots[3]));
+
+    // 非数値終端「あ」はNaN比較で0回反復となる。
+    const non_numeric = try runtime.createString(&.{0x3042});
+    const nan_iterator = try runtime.createIterator(&.{ numberValue(1), non_numeric }, true, 0, false);
+    try std.testing.expect(!try runtime.iteratorHasNext(nan_iterator));
+}
+
 test "AOT反復は開始時の添字・キー集合を列挙し穴と削除済みを飛ばす" {
     // for..in互換: 配列はpresenceが真の添字のみ、辞書は開始時に保持した
     // キー集合のみ列挙する。反復中の短縮・削除済み添字・キーは飛ばし、

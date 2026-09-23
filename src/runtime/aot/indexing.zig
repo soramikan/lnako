@@ -396,7 +396,10 @@ pub fn iteratorHasNext(self: *Runtime, value: Value) !bool {
             const order = (try relationalOrder(self, numberValue(@floatFromInt(iterator.index + 1)), iterator.source)) orelse break :blk false;
             break :blk order != .gt;
         },
-        .range => if (iterator.step > 0) iterator.current <= iterator.end else iterator.current >= iterator.end,
+        .range => blk: {
+            const order = (try relationalOrder(self, numberValue(iterator.current), iterator.source)) orelse break :blk false;
+            break :blk if (iterator.step > 0) order != .gt else order != .lt;
+        },
         .array, .bytes, .properties => blk: {
             const keys_len = if (iterator.keys.object()) |keys| keys.payload.array.items.len else 0;
             break :blk iterator.index < iterator.count + keys_len;
@@ -422,9 +425,10 @@ pub fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_
     if (object.payload != .iterator) return .{};
     const iterator = &object.payload.iterator;
     // `N回`のhasNext判定は反復ごとの抽象関係比較であり副作用を持つため、
-    // ここで再評価するとcoercionが二重に走る。生成コードは常に
-    // iterator_has_nextの真経路からのみ呼ぶため、repeatは再検査しない。
-    if (iterator.kind != .repeat and !try iteratorHasNext(self, value)) return .{};
+    // ここで再評価するとcoercionが二重に走る。範囲終端も同じくガード毎の
+    // 関係比較なので同様に再検査しない。生成コードは常にiterator_has_nextの
+    // 真経路からのみ呼ぶため、repeatとrangeは再検査しない。
+    if (iterator.kind != .repeat and iterator.kind != .range and !try iteratorHasNext(self, value)) return .{};
     return switch (iterator.kind) {
         .repeat => blk: {
             iterator.index += 1;

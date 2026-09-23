@@ -587,6 +587,9 @@ const FunctionBuilder = struct {
             if (self.isTerminated()) return null;
         }
         const iterator = try self.emitValue(.iterator_begin, .dynamic, inputs.items, node);
+        // 範囲終端の変換はカスタムvalueOfを呼び得るため、失敗時は
+        // 通常のループ入りではなく例外経路へ送る。
+        try self.lowerExceptionCheck(node);
         const condition_block = try self.createBlock("iterator.cond");
         const body_block = try self.createBlock("iterator.body");
         const exit_block = try self.createBlock("iterator.end");
@@ -600,6 +603,9 @@ const FunctionBuilder = struct {
         self.terminate(.{ .conditional_branch = .{ .condition = has_next, .then_block = body_block, .else_block = exit_block } });
         self.current = body_block;
         _ = try self.emitValue(.iterator_next, .dynamic, &.{iterator}, node);
+        // iterator_nextもpending例外を設定し得る（要素アクセスや将来の
+        // 関係比較失敗）ため、本文実行前に例外経路へ送る。
+        try self.lowerExceptionCheck(node);
         _ = try self.lowerNode(node.children[node.children.len - 1]);
         if (!self.isTerminated()) self.terminate(.{ .branch = condition_block });
         _ = self.loops.pop();

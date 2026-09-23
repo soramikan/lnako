@@ -8,6 +8,7 @@ const operators = @import("../operators.zig");
 
 const Interpreter = istate.Interpreter;
 const Frame = shared.Frame;
+const Runtime = shared.Runtime;
 const IteratorState = shared.IteratorState;
 const Value = shared.Value;
 const String = value_mod.String;
@@ -41,15 +42,19 @@ pub fn iteratorBegin(self: *Interpreter, frame: *Frame, instruction: ir.Instruct
     var state: IteratorState = undefined;
     if (instruction.name.len > 0 and instruction.operands.len >= 2) {
         const start = try self.runtime.valueToNumber(self.operand(frame, instruction, 0));
-        const end = try self.runtime.valueToNumber(self.operand(frame, instruction, 1));
+        // 公式convForは終端式を$nako_toへ一度だけ評価して保持し、forガード
+        // (i <= varTo)で反復ごとに抽象関係比較する。終端値をsourceへ保持し
+        // iteratorHasNextでその都度比較する（カスタムvalueOfは毎回呼ばれ、
+        // BigInt終端も関係比較として成立する）。開始値がNaNを含む場合も
+        // ガード比較がnullとなり公式どおり0回反復で終わる。
+        const end = self.operand(frame, instruction, 1);
         var step: f64 = if (instruction.operands.len >= 3 and self.operand(frame, instruction, 2) != .undefined)
             try self.runtime.valueToNumber(self.operand(frame, instruction, 2))
-        else if (instruction.loop_direction == .down or (instruction.loop_direction == .automatic and start > end)) -1 else 1;
+        else if (instruction.loop_direction == .down or (instruction.loop_direction == .automatic and try descendingOrder(self.runtime, start, end))) -1 else 1;
         if (instruction.loop_direction == .down and step > 0) step = -step;
         if (instruction.loop_direction == .up and step < 0) step = -step;
-        if (!std.math.isFinite(start) or !std.math.isFinite(end)) return error.InvalidIteratorRange;
         if (step == 0 or !std.math.isFinite(step)) return error.InvalidIteratorStep;
-        state = .{ .kind = .range, .current = start, .end = end, .step = step, .variable_name = instruction.name, .variable_local = instruction.local_target };
+        state = .{ .kind = .range, .source = end, .current = start, .step = step, .variable_name = instruction.name, .variable_local = instruction.local_target };
     } else {
         const source = self.operand(frame, instruction, 0);
         if (!instruction.is_foreach) {
@@ -100,6 +105,14 @@ pub fn iteratorBegin(self: *Interpreter, frame: *Frame, instruction: ir.Instruct
     return .{ .number = @floatFromInt(id) };
 }
 
+/// `AからBまで`の自動方向判定。公式convForはvarFrom/varToの関係比較で
+/// 上下を選ぶため、ここでも抽象関係比較を使う（終端のカスタムvalueOfは
+/// この時点でも呼ばれる）。NaNを含む比較はnullとなり上向きを選ぶ。
+fn descendingOrder(runtime: *Runtime, start: f64, end: Value) !bool {
+    const order = (try operators.compare(runtime, .{ .number = start }, end)) orelse return false;
+    return order == .gt;
+}
+
 pub fn iteratorHasNext(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !bool {
     const id = instruction.operands[0];
     const state = frame.iterators.getPtr(id) orelse return error.InvalidIterator;
@@ -134,7 +147,10 @@ pub fn iteratorHasNext(self: *Interpreter, frame: *Frame, instruction: ir.Instru
             const order = (try operators.compare(self.runtime, .{ .number = next_index }, state.source)) orelse break :blk false;
             break :blk order != .gt;
         },
-        .range => if (state.step > 0) state.current <= state.end else state.current >= state.end,
+        .range => blk: {
+            const order = (try operators.compare(self.runtime, .{ .number = state.current }, state.source)) orelse break :blk false;
+            break :blk if (state.step > 0) order != .gt else order != .lt;
+        },
         .array, .bytes, .properties => blk: {
             const keys: []const *String = state.keys orelse &.{};
             break :blk state.index < state.count + keys.len;
