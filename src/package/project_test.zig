@@ -420,13 +420,66 @@ test "mutable=trueのpath依存はhashを記録しない" {
             try testing.expect(artifact.sha256 == null);
         }
     }
-    // 内容変更しても lock は fresh のまま（live reference 契約）。
+    // mutable path digest が lock input に記録されている。
+    try testing.expect(outcome.lock.input.mutable_paths.len == 1);
+    // 内容変更は mutablePaths digest 不一致で lock が stale になり
+    // 再解決される（manifest 同一でも dir の変更を検出する契約）。
     const index_path = try std.fs.path.join(testing.allocator, &.{ app_root, "lib", "src", "index.nako3" });
     defer testing.allocator.free(index_path);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = index_path, .data = "●表示とは\n  「x」を表示。\nここまで\n" });
     var second = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
     defer second.deinit();
-    try testing.expect(!second.wrote);
+    try testing.expect(second.report != null);
+    // 無変更なら fresh のまま再解決しない。
+    var third = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
+    defer third.deinit();
+    try testing.expect(third.report == null);
+    try testing.expect(!third.wrote);
+}
+
+test "path依存の./前置表記はlock内で正規化される" {
+    // `./lib` と `lib` は同じ dir を指す宣言。lock の source.path・
+    // mutablePaths・解決 id は正規形 `lib` に揃える（表記違いで別
+    // package 扱い・別 digest 名にならないようにする）。
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/lib/src");
+    try writeLibPackage(temporary.dir, io, "app/lib", "lib");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/nako.toml",
+        .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\lib = { path = "./lib", mutable = true }
+        \\
+        ,
+    });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    defer loaded.deinit();
+    var outcome = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
+    defer outcome.deinit();
+
+    var found = false;
+    for (outcome.lock.packages) |entry| {
+        const source = entry.source orelse continue;
+        if (source.kind == .path) {
+            found = true;
+            try testing.expectEqualStrings("lib", source.path.?);
+        }
+    }
+    try testing.expect(found);
+    try testing.expectEqual(@as(usize, 1), outcome.lock.input.mutable_paths.len);
+    try testing.expectEqualStrings("lib", outcome.lock.input.mutable_paths[0].path);
 }
 
 test "存在しないpath依存の取得失敗はdep名を含む診断を出す" {
@@ -993,9 +1046,9 @@ test "環境metadataのprofile/runtime欠落・型違いは不一致とする" {
 }
 
 test "mutableなpath依存のmanifest変更はfreshなlockを再利用せず再解決する" {
-    // `mutable = true` の path 依存は宣言 dir の manifest 変更（version・
-    // exports・推移的依存）を次回解決へ反映する契約。root manifest が
-    // 変わらなくても fresh 判定を素通しせず毎回再解決する。
+    // `mutable = true` の path 依存は宣言 dir の内容変更（manifest の
+    // version・exports・推移的依存・ソース）を mutablePaths digest 不一致
+    // として検出し、root manifest が変わらなくても再解決する契約。
     const io = testing.io;
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
@@ -1064,11 +1117,11 @@ test "mutableなpath依存のmanifest変更はfreshなlockを再利用せず再�
     try testing.expect(second.report != null);
     try testing.expectEqualStrings("2.0.0", libVersion(&second.lock).?);
 
-    // 無変更の再解決は内容同一の lock を書き換えない（mtime を無駄に
-    // 変えない）。早期 return ではなく再解決経路なので report は存在する。
+    // 無変更なら lock は fresh のまま再解決しない（mutable path の
+    // digest も一致するため）。
     var third = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
     defer third.deinit();
-    try testing.expect(third.report != null);
+    try testing.expect(third.report == null);
     try testing.expect(!third.wrote);
 }
 
@@ -1130,4 +1183,127 @@ test "直接指定した依存aliasはlock入力のfeaturesに記録される" {
     const info = try project.inspectForCheck(arena_impl.allocator(), io, &loaded, &.{}, &diagnostics);
     try testing.expect(info.lock_state == .stale);
     try testing.expect(info.freshness != .fresh);
+}
+
+test "環境metadataのmutablePaths記録は宣言dirのmetadata変更を検出する" {
+    // `mutable = true` な path 依存は exports/commands を環境へ snapshot
+    // する。dir の変更が lock バイト列を変えなくても（version・依存が
+    // 同一の exports 変更）、環境側に記録した digest と現行 dir を照合
+    // して陳腐化を検出する。`mutablePaths` を記録しない旧環境は
+    // metadata 変更を検出できないため不一致とする。
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/lib/src");
+    const writeDepManifest = struct {
+        fn run(dir: std.Io.Dir, exports_path: []const u8) !void {
+            const source = try std.fmt.allocPrint(testing.allocator,
+                \\[package]
+                \\name = "lib"
+                \\version = "1.0.0"
+                \\license = "MIT"
+                \\
+                \\[[exports]]
+                \\name = "lib"
+                \\path = "{s}"
+                \\
+            , .{exports_path});
+            defer testing.allocator.free(source);
+            try dir.writeFile(io, .{ .sub_path = "app/lib/nako.toml", .data = source });
+        }
+    }.run;
+    try writeDepManifest(temporary.dir, "src/index.nako3");
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/lib/src/index.nako3", .data = "●表示とは\nここまで\n" });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/nako.toml",
+        .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\lib = { path = "lib", mutable = true }
+        \\
+        ,
+    });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    defer loaded.deinit();
+    var outcome = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
+    defer outcome.deinit();
+    try testing.expectEqual(@as(usize, 1), outcome.lock.input.mutable_paths.len);
+    const recorded = outcome.lock.input.mutable_paths[0];
+
+    const lib_id = blk: {
+        for (outcome.lock.packages) |entry| {
+            if (entry.source != null and entry.source.?.kind == .path) break :blk entry.id;
+        }
+        return error.TestExpectedEqual;
+    };
+    var digest: [32]u8 = undefined;
+    try testing.expect(try project.lockDigest(testing.allocator, io, app_root, &digest));
+    const lock_hex = std.fmt.bytesToHex(digest, .lower);
+    try temporary.dir.createDirPath(io, "app/.nako/env/gen-1");
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/current", .data = "gen-1\n" });
+    const writeEnv = struct {
+        fn run(dir: std.Io.Dir, mutable_json: []const u8, lock_hex_: []const u8, lib_id_: []const u8) !void {
+            const source = try std.fmt.allocPrint(testing.allocator,
+                \\{{"schemaVersion":1,"lockSha256":"sha256:{s}","profile":"default","runtime":"lnako",{s}"generation":"gen-1","packages":{{"{s}":{{"name":"lib","version":"1.0.0","id":"{s}","path":"lib"}}}}}}
+                \\
+            , .{ lock_hex_, mutable_json, lib_id_, lib_id_ });
+            defer testing.allocator.free(source);
+            try dir.writeFile(io, .{ .sub_path = "app/.nako/environment.json", .data = source });
+        }
+    }.run;
+    const envCurrent = struct {
+        fn run(loaded_: *const project.Project, diagnostics_: *diag.List) !bool {
+            var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+            defer arena_impl.deinit();
+            const info = try project.inspectForCheck(arena_impl.allocator(), io, loaded_, &.{}, diagnostics_);
+            return info.environment_current;
+        }
+    }.run;
+
+    // `mutablePaths` を記録しない旧環境は不一致（metadata 変更を検出
+    // できないため）。
+    try writeEnv(temporary.dir, "", &lock_hex, lib_id);
+    try testing.expect(!try envCurrent(&loaded, &diagnostics));
+
+    // sync 時点の digest を記録した環境は一致。
+    const mutable_json = try std.fmt.allocPrint(testing.allocator,
+        \\"mutablePaths":[{{"path":"{s}","sha256":"{s}"}}],
+        \\
+    , .{ recorded.path, recorded.sha256 });
+    defer testing.allocator.free(mutable_json);
+    try writeEnv(temporary.dir, mutable_json, &lock_hex, lib_id);
+    try testing.expect(try envCurrent(&loaded, &diagnostics));
+
+    // 宣言 dir の metadata（exports）を変えると lock も再解決される。
+    // 再解決後の lock digest で環境を作っても、記録された mutablePaths
+    // が sync 時点より古い digest のままなら環境は陳腐（exports/commands
+    // の snapshot が古い）と判定される。lockSha256 一致と分離して検査する。
+    try writeDepManifest(temporary.dir, "src/other.nako3");
+    var second = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
+    defer second.deinit();
+    try testing.expectEqual(@as(usize, 1), second.lock.input.mutable_paths.len);
+    const recorded2 = second.lock.input.mutable_paths[0];
+    var digest2: [32]u8 = undefined;
+    try testing.expect(try project.lockDigest(testing.allocator, io, app_root, &digest2));
+    const lock_hex2 = std.fmt.bytesToHex(digest2, .lower);
+    // env: 新 lockSha256 + 旧 mutable digest → 不一致。
+    try writeEnv(temporary.dir, mutable_json, &lock_hex2, lib_id);
+    try testing.expect(!try envCurrent(&loaded, &diagnostics));
+    // env: 新 lockSha256 + 新 mutable digest → 一致。
+    const mutable_json2 = try std.fmt.allocPrint(testing.allocator,
+        \\"mutablePaths":[{{"path":"{s}","sha256":"{s}"}}],
+        \\
+    , .{ recorded2.path, recorded2.sha256 });
+    defer testing.allocator.free(mutable_json2);
+    try writeEnv(temporary.dir, mutable_json2, &lock_hex2, lib_id);
+    try testing.expect(try envCurrent(&loaded, &diagnostics));
 }

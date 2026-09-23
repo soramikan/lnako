@@ -275,14 +275,16 @@ fn removeEntry(a: Allocator, source: []const u8, section: []const u8, name: []co
     }
 
     // 2) 単一行 `key = ...` 形式 — position の行をそのまま除去する。
+    // `[dependencies] path.lib = { ... }` のような dotted key 宣言も
+    // 対象とする（manifest parser は同一の依存として読む）。
+    const kind = section[(std.mem.lastIndexOfScalar(u8, section, '.') orelse return null) + 1 ..];
     const start = lineStart(source, position.line) orelse return null;
     const end = lineEnd(source, start);
     // 安全確認: その行に `=` とキー名が含まれること。
     const text = source[start..end];
     const eq = std.mem.indexOfScalar(u8, text, '=') orelse return null;
     const lhs = std.mem.trim(u8, text[0..eq], " \t");
-    const bare = std.mem.trim(u8, lhs, "\"'");
-    if (!std.mem.eql(u8, bare, name)) return null;
+    if (!lhsMatchesDecl(lhs, kind, name)) return null;
     // 複数行に跨る inline table/array は閉じるまでまとめて除去する。
     const stmt_end = statementEnd(source, start);
     const remove_end = if (stmt_end < source.len) stmt_end + 1 else stmt_end;
@@ -290,6 +292,28 @@ fn removeEntry(a: Allocator, source: []const u8, section: []const u8, name: []co
     try output.appendSlice(a, source[0..start]);
     try output.appendSlice(a, source[remove_end..]);
     return output.items;
+}
+
+/// 代入文の左辺が dep 宣言 `name` を指すか。`lib = ...` の単一 key と
+/// `[dependencies] path.lib = ...` の dotted key（先頭セグメントが dep
+/// kind と一致し、末尾セグメントが dep 名）の両方を受理する。
+/// 各セグメントの引用は剥がす。dep 名は `.` を含めないため
+/// `name` への分割照合で曖昧にならない。
+fn lhsMatchesDecl(lhs: []const u8, kind: []const u8, name: []const u8) bool {
+    var first: ?[]const u8 = null;
+    var last: []const u8 = "";
+    var count: usize = 0;
+    var it = std.mem.splitScalar(u8, lhs, '.');
+    while (it.next()) |seg_raw| {
+        const bare = std.mem.trim(u8, std.mem.trim(u8, seg_raw, " \t"), "\"'");
+        if (bare.len == 0) return false;
+        if (first == null) first = bare;
+        last = bare;
+        count += 1;
+    }
+    if (!std.mem.eql(u8, last, name)) return false;
+    if (count == 1) return true;
+    return std.mem.eql(u8, first.?, kind);
 }
 
 // ---------------------------------------------------------------------------
@@ -329,15 +353,24 @@ const lib_test_template =
     \\
 ;
 
+/// `sub_path` へ新規 file を排他作成して書き込む。既存・symlink・
+/// reparse point には `PathAlreadyExists`/`SymLinkLoop` で失敗し、
+/// 既存ファイルや symlink 先を上書きしない（`access` 検査と書込の
+/// 間に置かれた symlink も `exclusive` で捕捉できる）。
 fn writeInitFile(io: std.Io, dir: std.Io.Dir, sub_path: []const u8, contents: []const u8) !void {
     if (std.fs.path.dirname(sub_path)) |parent| {
         try dir.createDirPath(io, parent);
     }
-    try dir.writeFile(io, .{ .sub_path = sub_path, .data = contents });
+    var file = try dir.createFile(io, sub_path, .{ .exclusive = true });
+    defer file.close(io);
+    try file.writeStreamingAll(io, contents);
 }
 
+/// `path` が存在するか。`access`（symlink 追従）ではリンク切れの
+/// symlink を見逃して対象を上書きし得るため、no-follow stat で
+/// symlink/reparse point そのものも「存在する」と判定する。
 fn initTargetExists(io: std.Io, path: []const u8) !bool {
-    std.Io.Dir.cwd().access(io, path, .{}) catch |err| switch (err) {
+    _ = std.Io.Dir.cwd().statFile(io, path, .{ .follow_symlinks = false }) catch |err| switch (err) {
         error.FileNotFound => return false,
         else => return err,
     };
@@ -423,7 +456,14 @@ pub fn runInit(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []
             \\
         , .{name_toml}));
     }
-    try cwd.writeFile(io, .{ .sub_path = manifest_path, .data = manifest_text.items });
+    // 事前検査と書込の間に置かれた file/symlink も `exclusive` で拒否
+    // する（symlink 先の外部 file を上書きしない）。
+    var manifest_file = cwd.createFile(io, manifest_path, .{ .exclusive = true }) catch |err| switch (err) {
+        error.PathAlreadyExists => return fail(stderr, "init: {s} は既に存在します\n", .{manifest_path}),
+        else => return err,
+    };
+    defer manifest_file.close(io);
+    try manifest_file.writeStreamingAll(io, manifest_text.items);
 
     if (lib) {
         const lib_source = try std.mem.replaceOwned(u8, a, lib_source_template, "<name>", name);
@@ -914,4 +954,41 @@ test "removeEntry は複数行 inline table を丸ごと除去する" {
     try std.testing.expect(std.mem.indexOf(u8, removed, "lib = ") == null);
     // `}` や `lib2` の行が残らないこと。
     try std.testing.expect(std.mem.indexOf(u8, removed, "lib2") != null);
+}
+
+test "removeEntry は dotted key 宣言も除去する" {
+    // `[dependencies] path.lib = { ... }` は `[dependencies.path]` 表と
+    // 同じ宣言。remove が単一行形式しか消せないと宣言が残るため、
+    // 先頭セグメントが dep kind・末尾が dep 名の dotted key も除去対象。
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const source =
+        \\[dependencies]
+        \\path.lib = { path = "lib" }
+        \\git.tool = { url = "https://example.com/t" }
+        \\
+    ;
+    const removed = (try removeEntry(a, source, "dependencies.path", "lib", .{ .line = 2 })).?;
+    try std.testing.expect(std.mem.indexOf(u8, removed, "path.lib") == null);
+    try std.testing.expect(std.mem.indexOf(u8, removed, "git.tool") != null);
+    // kind が違う dotted key（git.lib）は path.lib の除去対象にしない。
+    const other = try removeEntry(a, source, "dependencies.git", "lib", .{ .line = 2 });
+    try std.testing.expect(other == null);
+}
+
+test "initTargetExists は symlink も存在として検出する" {
+    // `access`（symlink 追従）ではリンク切れの symlink を見逃し、init が
+    // link 先を上書きし得る。no-follow stat で symlink 本体を検出する。
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.symLink(io, "missing-target", "nako.toml", .{});
+    // リンク切れの symlink は realPathFileAlloc では解決できないため
+    // tmpdir の実 path と連結する。
+    const tmp_abs = try temporary.dir.realPathFileAlloc(io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(tmp_abs);
+    const link_abs = try std.fs.path.join(std.testing.allocator, &.{ tmp_abs, "nako.toml" });
+    defer std.testing.allocator.free(link_abs);
+    try std.testing.expect(try initTargetExists(io, link_abs));
 }

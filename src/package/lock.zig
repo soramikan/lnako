@@ -418,7 +418,7 @@ fn parseProfile(parser: *Parser, value: std.json.Value, path: []const u8) !?Prof
 
 fn parseInput(parser: *Parser, value: std.json.Value, path: []const u8) !?Input {
     const object = (try parser.asObject(value, path)) orelse return null;
-    try parser.rejectUnknown(object, &.{ "manifestSha256", "profile", "features", "target" }, path);
+    try parser.rejectUnknown(object, &.{ "manifestSha256", "profile", "features", "target", "mutablePaths" }, path);
     const manifest_value = object.get("manifestSha256") orelse {
         try parser.report(diag.E019_REQUIRED_FIELD_MISSING, path, "missing required field \"manifestSha256\"", .{});
         return null;
@@ -449,6 +449,29 @@ fn parseInput(parser: *Parser, value: std.json.Value, path: []const u8) !?Input 
         try parser.report(diag.E019_REQUIRED_FIELD_MISSING, path, "missing required field \"target.abi\"", .{});
         return null;
     };
+    var mutable_paths: std.ArrayList(model.MutablePath) = .empty;
+    if (object.get("mutablePaths")) |mutable_value| {
+        const mutable_path = try std.fmt.allocPrint(parser.arena, "{s}.mutablePaths", .{path});
+        if (try parser.asArray(mutable_value, mutable_path)) |array| {
+            for (array.items, 0..) |item, index| {
+                const item_path = try std.fmt.allocPrint(parser.arena, "{s}[{d}]", .{ mutable_path, index });
+                const item_object = (try parser.asObject(item, item_path)) orelse return null;
+                try parser.rejectUnknown(item_object, &.{ "path", "sha256" }, item_path);
+                const path_value = item_object.get("path") orelse {
+                    try parser.report(diag.E019_REQUIRED_FIELD_MISSING, item_path, "missing required field \"path\"", .{});
+                    return null;
+                };
+                const sha_value = item_object.get("sha256") orelse {
+                    try parser.report(diag.E019_REQUIRED_FIELD_MISSING, item_path, "missing required field \"sha256\"", .{});
+                    return null;
+                };
+                try mutable_paths.append(parser.arena, .{
+                    .path = try parser.duplicate((try parser.asString(path_value, item_path)) orelse return null),
+                    .sha256 = try parser.duplicate((try parser.asString(sha_value, item_path)) orelse return null),
+                });
+            }
+        }
+    }
     return Input{
         .manifest_sha256 = try parser.duplicate((try parser.asString(manifest_value, path)) orelse return null),
         .profile = try parser.duplicate((try parser.asString(profile_value, path)) orelse return null),
@@ -458,6 +481,7 @@ fn parseInput(parser: *Parser, value: std.json.Value, path: []const u8) !?Input 
             .cpu = try parser.duplicate((try parser.asString(cpu_value, path)) orelse return null),
             .abi = try parser.duplicate((try parser.asString(abi_value, path)) orelse return null),
         },
+        .mutable_paths = mutable_paths.items,
     };
 }
 
@@ -1289,6 +1313,7 @@ pub fn build(gpa: Allocator, input: Input, profiles: []const NamedProfile, nodes
             .cpu = try allocator.dupe(u8, input.target.cpu),
             .abi = try allocator.dupe(u8, input.target.abi),
         },
+        .mutable_paths = try canonicalMutablePaths(allocator, input.mutable_paths),
     };
 
     var owned_profiles: std.ArrayList(NamedProfile) = .empty;
@@ -1368,6 +1393,30 @@ pub const ProfileInput = struct {
     profile: []const u8,
     nodes: []const resolver.PackageNode,
 };
+
+/// mutable path digest を複製し、path 昇順ソートと重複除去を行う。
+/// 同じ依存集合から常に同じ lock バイト列を得るための正規化。
+fn canonicalMutablePaths(allocator: Allocator, items: []const model.MutablePath) ![]const model.MutablePath {
+    const out = try allocator.alloc(model.MutablePath, items.len);
+    for (items, 0..) |item, index| {
+        out[index] = .{
+            .path = try allocator.dupe(u8, item.path),
+            .sha256 = try allocator.dupe(u8, item.sha256),
+        };
+    }
+    std.mem.sort(model.MutablePath, out, {}, struct {
+        fn lt(_: void, a: model.MutablePath, b: model.MutablePath) bool {
+            return std.mem.order(u8, a.path, b.path) == .lt;
+        }
+    }.lt);
+    var unique_len: usize = 0;
+    for (out) |item| {
+        if (unique_len > 0 and std.mem.eql(u8, out[unique_len - 1].path, item.path)) continue;
+        out[unique_len] = item;
+        unique_len += 1;
+    }
+    return out[0..unique_len];
+}
 
 /// feature 名を複製し、昇順ソートと重複除去を行う。同じ feature 集合から
 /// 常に同じ lock バイト列を得るための正規化。

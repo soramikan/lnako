@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const environment = @import("environment.zig");
 const fetch = @import("fetch.zig");
 
 const Allocator = std.mem.Allocator;
@@ -46,18 +47,22 @@ fn digestEntryLessThan(_: void, a: DigestEntry, b: DigestEntry) bool {
     return std.mem.order(u8, a.rel, b.rel) == .lt;
 }
 
-fn collectDigestEntries(io: std.Io, gpa: Allocator, root_abs: []const u8, rel: []const u8, entries: *std.ArrayListUnmanaged(DigestEntry)) !void {
+fn collectDigestEntries(io: std.Io, gpa: Allocator, root_abs: []const u8, rel: []const u8, exclude_names: []const []const u8, entries: *std.ArrayListUnmanaged(DigestEntry)) !void {
     const abs = if (rel.len == 0) try gpa.dupe(u8, root_abs) else try std.fs.path.join(gpa, &.{ root_abs, rel });
     defer gpa.free(abs);
     var dir = try std.Io.Dir.cwd().openDir(io, abs, .{ .iterate = true });
     defer dir.close(io);
     var it = dir.iterate();
     while (try it.next(io)) |entry| {
-        // `.nako`（lnako が生成する依存環境）と `.git`（VCS メタデータ）は
-        // source 内容ではないため digest から除く。`mutable = false` の
-        // path 依存 pin では、依存先で sync/build しただけで親 lock が
-        // 陳腐化しないようこの除外が必要。
-        if (std.mem.eql(u8, entry.name, ".nako") or std.mem.eql(u8, entry.name, ".git")) continue;
+        // 呼出し側指定の除外名（source pin では `.nako`/`.git`）を除く。
+        var excluded = false;
+        for (exclude_names) |excluded_name| {
+            if (std.mem.eql(u8, entry.name, excluded_name)) {
+                excluded = true;
+                break;
+            }
+        }
+        if (excluded) continue;
         const child_rel = if (rel.len == 0)
             try gpa.dupe(u8, entry.name)
         else
@@ -71,7 +76,7 @@ fn collectDigestEntries(io: std.Io, gpa: Allocator, root_abs: []const u8, rel: [
             },
             .directory => {
                 try entries.append(gpa, .{ .rel = child_rel, .kind = .directory });
-                try collectDigestEntries(io, gpa, root_abs, child_rel, entries);
+                try collectDigestEntries(io, gpa, root_abs, child_rel, exclude_names, entries);
             },
             // symlink 等は内容アドレス tree に存在しない（publish 前の
             // materialize 検証で拒否済み）。存在したら digest 不能として失敗。
@@ -80,16 +85,25 @@ fn collectDigestEntries(io: std.Io, gpa: Allocator, root_abs: []const u8, rel: [
     }
 }
 
+/// source tree の digest から除く名前。`.nako`（lnako が生成する依存
+/// 環境）と `.git`（VCS メタデータ）は source 内容ではないため、path
+/// 依存 pin・mutable path の内容 digest ではこの除外が必要（依存先で
+/// sync/build しただけで親 lock が陳腐化しないため）。cache entry の
+/// integrity digest では `.nako/**` を明示的に同梱した package を正しく
+/// 識別できるよう除外しない。
+pub const source_pin_exclude = [_][]const u8{ ".nako", ".git" };
+
 /// `tree/` の内容 digest。path・種別・size・内容を決定順で hash するため
 /// 同一 tree は常に同一 digest。marker 記録と hit 時の再検証に使う。
 /// `mutable = false` の path 依存 pin でも同じ digest を利用する。
-pub fn digestTree(io: std.Io, gpa: Allocator, tree_abs: []const u8) ![32]u8 {
+/// `exclude_names` に列挙した dir/file 名は digest 対象から除く。
+pub fn digestTree(io: std.Io, gpa: Allocator, tree_abs: []const u8, exclude_names: []const []const u8) ![32]u8 {
     var entries = std.ArrayListUnmanaged(DigestEntry).empty;
     defer {
         for (entries.items) |entry| gpa.free(entry.rel);
         entries.deinit(gpa);
     }
-    try collectDigestEntries(io, gpa, tree_abs, "", &entries);
+    try collectDigestEntries(io, gpa, tree_abs, "", exclude_names, &entries);
     std.mem.sort(DigestEntry, entries.items, {}, digestEntryLessThan);
 
     var hasher = std.crypto.hash.sha2.Sha256.init(.{});
@@ -192,20 +206,7 @@ pub const Store = struct {
     /// が、管理 dir 自身の symlink は openDir が追従して cache 外を
     /// 走査・削除し得るため、ここで排除する。
     fn ensureManagedDir(io: std.Io, path: []const u8) !void {
-        var opened = std.Io.Dir.cwd().openDir(io, path, .{ .follow_symlinks = false }) catch |err| switch (err) {
-            error.FileNotFound => {
-                try std.Io.Dir.cwd().createDirPath(io, path);
-                return;
-            },
-            error.SymLinkLoop, error.NotDir => {
-                // symlink・実ファイルの除去は対象本体を消さないため安全。
-                std.Io.Dir.cwd().deleteFile(io, path) catch {};
-                try std.Io.Dir.cwd().createDirPath(io, path);
-                return;
-            },
-            else => return err,
-        };
-        opened.close(io);
+        return environment.ensureManagedDir(io, path);
     }
 
     /// `root` を開き、必要な下位 dir を作成する。
@@ -266,7 +267,9 @@ pub const Store = struct {
         defer gpa.free(expected);
         const tree = std.fs.path.join(gpa, &.{ entry, "tree" }) catch return false;
         defer gpa.free(tree);
-        const actual = digestTree(self.io, gpa, tree) catch return false;
+        // integrity digest は展開物全体（明示同梱の `.nako/**` 含む）を
+        // 対象にするため除外名は空。
+        const actual = digestTree(self.io, gpa, tree, &.{}) catch return false;
         var expected_bytes: [32]u8 = undefined;
         return parseMarkerDigest(expected, &expected_bytes) and std.mem.eql(u8, &expected_bytes, &actual);
     }
@@ -275,7 +278,7 @@ pub const Store = struct {
     pub fn removeEntry(self: *const Store, key: []const u8) !void {
         const entry = (try self.entryPath(self.gpa, key)) orelse return error.InvalidKey;
         defer self.gpa.free(entry);
-        try std.Io.Dir.cwd().deleteTree(self.io, entry);
+        try environment.deleteTreeChecked(std.Io.Dir.cwd(), self.io, entry);
     }
 
     /// 完了 marker の無い entry（公開途中で中断した残骸）を削除する。
@@ -294,7 +297,7 @@ pub const Store = struct {
         while (try it.next(self.io)) |entry| {
             if (entry.kind != .directory) continue;
             if (self.entryExists(entry.name)) continue;
-            dir.deleteTree(self.io, entry.name) catch continue;
+            environment.deleteTreeChecked(dir, self.io, entry.name) catch continue;
         }
         // staging の残留も回収する。
         const staging = try std.fs.path.join(self.gpa, &.{ self.root, staging_dir });
@@ -303,7 +306,7 @@ pub const Store = struct {
         defer sdir.close(self.io);
         var sit = sdir.iterate();
         while (try sit.next(self.io)) |entry| {
-            sdir.deleteTree(self.io, entry.name) catch continue;
+            environment.deleteTreeChecked(sdir, self.io, entry.name) catch continue;
         }
     }
 
@@ -321,7 +324,7 @@ pub const Store = struct {
         // （共有 cache を改変されても marker だけで信頼しない契約）。
         const tree = try std.fs.path.join(self.gpa, &.{ staging_abs, "tree" });
         defer self.gpa.free(tree);
-        const digest = try digestTree(self.io, self.gpa, tree);
+        const digest = try digestTree(self.io, self.gpa, tree, &.{});
         var marker: [7 + 64 + 1]u8 = undefined;
         @memcpy(marker[0..7], "sha256:");
         @memcpy(marker[7..71], &std.fmt.bytesToHex(digest, .lower));
@@ -335,7 +338,7 @@ pub const Store = struct {
             // 同名 dir が既に存在する（同一 key の entry が先に公開された）。
             // 内容アドレスなので内容は同一とみなし、重複した staging は破棄する。
             error.IsDir, error.NotDir, error.DirNotEmpty => {
-                std.Io.Dir.cwd().deleteTree(self.io, staging_abs) catch {};
+                environment.deleteTreeChecked(std.Io.Dir.cwd(), self.io, staging_abs) catch {};
             },
             else => return err,
         };
@@ -343,15 +346,10 @@ pub const Store = struct {
 
     /// 管理 dir を symlink 非追従で開く。管理 dir 自身が symlink なら
     /// リンクのみ除去して実 dir を作り直す（cache 外を走査しないため）。
+    /// Windows reparse point も open 後の stat で検出する（実装は
+    /// `environment.openManagedDir`）。
     fn openManagedDir(io: std.Io, path: []const u8) !std.Io.Dir {
-        return std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true, .follow_symlinks = false }) catch |err| switch (err) {
-            error.SymLinkLoop, error.NotDir => blk: {
-                std.Io.Dir.cwd().deleteFile(io, path) catch {};
-                try std.Io.Dir.cwd().createDirPath(io, path);
-                break :blk try std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true, .follow_symlinks = false });
-            },
-            else => return err,
-        };
+        return environment.openManagedDir(io, path, true);
     }
 
     /// `keep` に含まれない entry を削除する。呼出し側が cache lock を保持
@@ -377,7 +375,7 @@ pub const Store = struct {
                 }
             }
             if (!keep_it) {
-                dir.deleteTree(self.io, entry.name) catch continue;
+                environment.deleteTreeChecked(dir, self.io, entry.name) catch continue;
                 removed += 1;
             }
         }
@@ -402,7 +400,7 @@ pub const Store = struct {
             defer dir.close(self.io);
             var it = dir.iterate();
             while (try it.next(self.io)) |entry| {
-                dir.deleteTree(self.io, entry.name) catch continue;
+                environment.deleteTreeChecked(dir, self.io, entry.name) catch continue;
                 removed += 1;
             }
         }
@@ -412,23 +410,23 @@ pub const Store = struct {
     /// `cache.lock` を排他取得する。別 process が保持中は `error.Busy`。
     /// OS の advisory lock は process 終了で自動解放されるため、中断後に
     /// stale lock が残らない。
-    pub fn lock(self: *const Store) (Error || std.Io.File.OpenError)!LockGuard {
+    pub fn lock(self: *const Store) !LockGuard {
         return self.lockImpl(true);
     }
 
     /// `lock` の blocking 版。保持中の処理が終わるまで待つ。
-    pub fn lockWait(self: *const Store) (Error || std.Io.File.OpenError)!LockGuard {
+    pub fn lockWait(self: *const Store) !LockGuard {
         return self.lockImpl(false);
     }
 
-    fn lockImpl(self: *const Store, nonblocking: bool) (Error || std.Io.File.OpenError)!LockGuard {
-        const path = try std.fs.path.join(self.gpa, &.{ self.root, lock_name });
-        defer self.gpa.free(path);
-        var file = std.Io.Dir.cwd().createFile(self.io, path, .{
-            .read = true,
-            .lock = .exclusive,
-            .lock_nonblocking = nonblocking,
-        }) catch |err| switch (err) {
+    fn lockImpl(self: *const Store, nonblocking: bool) !LockGuard {
+        // cache root ハンドル相対で `cache.lock` を開く。leaf symlink は
+        // openManagedLockFile がリンク本体のみ除去して作り直す。
+        var root_dir = std.Io.Dir.cwd().openDir(self.io, self.root, .{
+            .follow_symlinks = false,
+        }) catch |err| return err;
+        defer root_dir.close(self.io);
+        var file = environment.openManagedLockFile(root_dir, self.io, lock_name, nonblocking) catch |err| switch (err) {
             error.WouldBlock => return error.Busy,
             else => return err,
         };

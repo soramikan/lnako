@@ -144,11 +144,25 @@ pub const PackageEntry = struct {
     }
 };
 
+/// `mutable = true` path 依存の内容 digest。mutable は宣言 dir を生参照
+/// する契約のため、manifest だけでなく exports・commands・推移的宣言を
+/// 含む内容変更を鮮度入力として記録する。pin（`mutable = false`）と違い
+/// 変更自体は許容するが、変更時の lock・環境再生成を駆動する。
+pub const MutablePath = struct {
+    /// lock `source.path`（project 相対または絶対 path、正規化済み）。
+    path: []const u8,
+    /// 依存 dir の tree digest（`sha256:<hex>`、`.nako`/`.git` 除外）。
+    sha256: []const u8,
+};
+
 pub const Input = struct {
     manifest_sha256: []const u8,
     profile: []const u8,
     features: []const []const u8 = &.{},
     target: Target,
+    /// mutable path 依存の内容 digest（path 昇順）。`mutable` が無い
+    /// lock では空。
+    mutable_paths: []const MutablePath = &.{},
 
     /// features を集合として比較する（順序・重複を無視）。
     pub fn sameFeatures(a: Input, b: Input) bool {
@@ -597,6 +611,20 @@ pub fn serialize(lock: *const Lock, writer: *std.Io.Writer) !void {
     try writeIndent(writer, 2);
     try writer.writeAll("\"target\": ");
     try writeTarget(writer, lock.input.target);
+    if (lock.input.mutable_paths.len > 0) {
+        try writer.writeAll(",\n");
+        try writeIndent(writer, 2);
+        try writer.writeAll("\"mutablePaths\": [");
+        for (lock.input.mutable_paths, 0..) |mutable, index| {
+            if (index > 0) try writer.writeAll(", ");
+            try writer.writeAll("{\"path\": ");
+            try writeString(writer, mutable.path);
+            try writer.writeAll(", \"sha256\": ");
+            try writeString(writer, mutable.sha256);
+            try writer.writeByte('}');
+        }
+        try writer.writeByte(']');
+    }
     try writer.writeByte('\n');
     try writeIndent(writer, 1);
     try writer.writeAll("},\n");

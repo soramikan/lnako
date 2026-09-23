@@ -447,6 +447,29 @@ test "add の bare 名は table 形式の候補を生成し解決段階まで進
     try testing.expect(std.mem.indexOf(u8, manifest, "somepkg") == null);
 }
 
+test "update は dep key を解決済み id へ写像して再解決する" {
+    // source 依存の lock entry id は `pkg:<32hex>` で dep key と別名
+    // 空間。dep key 指定を解決済み id へ正規化しないと、対象固有の
+    // 更新（宣言変更許容・pin 解除）が効かない。
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const app_root = try newAppFixture(a, &temporary);
+    try appManifest(a, app_root,
+        \\[dependencies.path]
+        \\lib = { path = "lib" }
+        \\
+    );
+
+    var cli = Cli.init(a);
+    try cli.run(a, "lock", &.{}, app_root);
+    // dep key 指定の update が受理される（id 写像済み）。
+    try cli.run(a, "update", &.{"lib"}, app_root);
+    try testing.expect(std.mem.indexOf(u8, cli.err.written(), "update:") != null);
+}
+
 test "update は未宣言の依存名を拒否する" {
     var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_impl.deinit();
@@ -688,9 +711,13 @@ test "check --locked は陳腐な lock を拒否し --locked 無しでは検査�
     );
 
     // --locked 無しの check は失敗せず stale と必要操作を報告する。
+    // lock が陳腐なら環境も再構築が必要なため `lnako lock` に加えて
+    // `lnako sync` も案内する。
     var plain = Cli.init(a);
     try plain.run(a, "check", &.{"--json"}, app_root);
     try testing.expect(std.mem.indexOf(u8, plain.out.written(), "stale") != null);
+    try testing.expect(std.mem.indexOf(u8, plain.out.written(), "lnako lock") != null);
+    try testing.expect(std.mem.indexOf(u8, plain.out.written(), "lnako sync") != null);
 
     // --locked 付きは verifyLocked が陳腐を拒否する。
     var locked = Cli.init(a);

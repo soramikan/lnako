@@ -126,6 +126,15 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, e
             .registry_url = registry_url orelse if (environ_map) |map| map.get("LNAKO_REGISTRY") else null,
             .cache_root = options.cache_root,
             .policy = options.policy,
+            // manifest が profile を宣言しない場合の合成 profile runtime
+            // と環境 runtime の照合に使う（`--runtime cnako` の lock が
+            // lnako 専用にならないようにする）。
+            .requested_runtime = options.runtime.name(),
+            .nako_version = lnako.package.semver.Version.parse(project.compat_nako_version) catch null,
+            // `--runtime cnako` の engines 照合対象は公式処理系
+            // （互換対象 tag と同一 version）。
+            .cnako_version = lnako.package.semver.Version.parse(project.compat_nako_version) catch null,
+            .lnako_version = lnako.package.semver.Version.parse(lnako.version) catch null,
         };
         if (locked) {
             project.verifyLocked(allocator, io, &found, &prepare, &list) catch |err| {

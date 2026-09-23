@@ -122,6 +122,30 @@ fn pinnedSourceHash(entry: *const lock_model.PackageEntry) ?[]const u8 {
     return null;
 }
 
+/// lock `input.mutablePaths` に記録された mutable path 依存の内容
+/// digest を tree 再計算で照合する。不一致（内容変更・dir 欠落）が
+/// あれば最初の記録 path を返す。`mutable = true` は宣言 dir を生参照
+/// する契約のため、manifest が同じでも dir 内容が変われば lock・環境を
+/// 再生成する必要がある。
+pub fn mutablePathMismatch(gpa: Allocator, io: std.Io, project_root: []const u8, lock: *const lock_model.Lock) Error!?[]const u8 {
+    return mutablePathsMismatch(gpa, io, project_root, lock.input.mutable_paths);
+}
+
+/// `mutablePathMismatch` の記録配列版。`environment.json` に記録された
+/// digest など lock 以外の出典にも使う。
+pub fn mutablePathsMismatch(gpa: Allocator, io: std.Io, project_root: []const u8, recorded: []const lock_model.MutablePath) Error!?[]const u8 {
+    for (recorded) |mutable| {
+        const abs = if (provider.isAbsoluteDepPath(mutable.path))
+            mutable.path
+        else
+            try std.fs.path.join(gpa, &.{ project_root, mutable.path });
+        const digest = cache.digestTree(io, gpa, abs, &cache.source_pin_exclude) catch return mutable.path;
+        const actual = try std.fmt.allocPrint(gpa, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
+        if (!std.mem.eql(u8, actual, mutable.sha256)) return mutable.path;
+    }
+    return null;
+}
+
 /// lock 内 `mutable = false` path 依存の pin hash を tree 再計算で照合する。
 /// 不一致（内容変更・hash 未記録・tree 破損・dir 欠落）があれば最初の
 /// dep 名を返す。path は `project_root` 基準で解決する。
@@ -141,7 +165,7 @@ pub fn pathPinMismatch(gpa: Allocator, io: std.Io, project_root: []const u8, loc
                 rel
             else
                 try std.fs.path.join(gpa, &.{ project_root, rel });
-            const digest = cache.digestTree(io, gpa, abs) catch return entry.name;
+            const digest = cache.digestTree(io, gpa, abs, &cache.source_pin_exclude) catch return entry.name;
             const actual = try std.fmt.allocPrint(gpa, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
             if (!std.mem.eql(u8, actual, recorded)) return entry.name;
         }
@@ -240,6 +264,13 @@ pub fn run(
         try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "content of pinned path dependency \"{s}\" does not match nako.lock; re-resolve the lock before sync", .{name});
         return error.StaleLock;
     }
+    // `mutable = true` の path 依存も内容 digest で照合する。宣言 dir の
+    // 内容が lock 記録時と変わっていれば、記録時のグラフを前提にした環境
+    // は構築しない。
+    if (try mutablePathMismatch(arena, io, project_abs, &lock)) |path| {
+        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "content of mutable path dependency \"{s}\" does not match nako.lock; re-resolve the lock before sync", .{path});
+        return error.StaleLock;
+    }
 
     const profile = options.profile orelse lock.input.profile;
     const entries = lock.packagesForProfile(profile) orelse {
@@ -331,6 +362,10 @@ pub fn run(
         .profile = profile,
         .runtime = options.runtime.name(),
         .packages = records.items,
+        // mutable path 依存の metadata（exports/commands）は環境へ
+        // snapshot するため、宣言 dir の digest を記録して再解決を要さない
+        // metadata-only 変更でも環境の陳腐化を検出できるようにする。
+        .mutable_paths = lock.input.mutable_paths,
     }, &json_buffer.writer) catch |err| switch (err) {
         // Allocating writer の WriteFailed は arena 確保の失敗。
         error.WriteFailed => return error.OutOfMemory,

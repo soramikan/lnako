@@ -21,7 +21,20 @@
         "manifestSha256": { "type": "string" },
         "profile": { "type": "string" },
         "features": { "$ref": "common.schema.json#/$defs/featureList" },
-        "target": { "$ref": "common.schema.json#/$defs/target" }
+        "target": { "$ref": "common.schema.json#/$defs/target" },
+        "mutablePaths": {
+          "description": "mutable = true path 依存の内容 digest（path 昇順）。宣言 dir の内容変更を lock 鮮度入力として記録する。",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "sha256"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string" },
+              "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+            }
+          }
+        }
       }
     },
     "packages": { "$ref": "#/$defs/packageMap" },

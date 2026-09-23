@@ -13,6 +13,7 @@
 
 const std = @import("std");
 const fetch = @import("fetch.zig");
+const lock_model = @import("lock_model.zig");
 const npkg_commands = @import("npkg_commands.zig");
 
 const Allocator = std.mem.Allocator;
@@ -57,6 +58,11 @@ pub const Document = struct {
     profile: []const u8,
     runtime: []const u8,
     packages: []const PackageRecord,
+    /// lock `input.mutablePaths` の写し。mutable path 依存の metadata
+    /// （exports/commands）を環境へ snapshot するため、宣言 dir の内容が
+    /// lock 再生成を要しない範囲で変わっても環境の陳腐化を検出できる
+    /// ようにする。
+    mutable_paths: []const lock_model.MutablePath = &.{},
 };
 
 fn writeJsonString(writer: *std.Io.Writer, text: []const u8) !void {
@@ -79,7 +85,16 @@ pub fn emit(gpa: Allocator, doc: Document, writer: *std.Io.Writer) !void {
     try writeJsonString(writer, doc.profile);
     try writer.writeAll(",\"runtime\":");
     try writeJsonString(writer, doc.runtime);
-    try writer.writeAll(",\"packages\":{");
+    try writer.writeAll(",\"mutablePaths\":[");
+    for (doc.mutable_paths, 0..) |mutable, index| {
+        if (index > 0) try writer.writeByte(',');
+        try writer.writeAll("{\"path\":");
+        try writeJsonString(writer, mutable.path);
+        try writer.writeAll(",\"sha256\":");
+        try writeJsonString(writer, mutable.sha256);
+        try writer.writeByte('}');
+    }
+    try writer.writeAll("],\"packages\":{");
     for (sorted, 0..) |package, index| {
         if (index > 0) try writer.writeByte(',');
         try writeJsonString(writer, package.key);
@@ -156,21 +171,144 @@ pub const LockGuard = struct {
 /// して実 dir を作り直す。`deleteTree` 等は entry 内の symlink を
 /// 追従しないが、管理 dir 自身の symlink は openDir が追従して管理外
 /// を走査・削除し得るため、ここで排除する。
+/// Windows は `OPEN_REPARSE_POINT` が symlink 本体を正常に開くため、
+/// open 後の stat で `.sym_link` も検出する。
 pub fn ensureManagedDir(io: std.Io, path: []const u8) !void {
-    var opened = std.Io.Dir.cwd().openDir(io, path, .{ .follow_symlinks = false }) catch |err| switch (err) {
-        error.FileNotFound => {
-            try std.Io.Dir.cwd().createDirPath(io, path);
-            return;
-        },
-        error.SymLinkLoop, error.NotDir => {
-            // symlink・実ファイルの除去は対象本体を消さないため安全。
-            std.Io.Dir.cwd().deleteFile(io, path) catch {};
-            try std.Io.Dir.cwd().createDirPath(io, path);
-            return;
+    var opened = try openManagedDir(io, path, false);
+    opened.close(io);
+}
+
+/// 管理 dir を no-follow で開き、open 後の stat で leaf symlink/reparse
+/// point を検出したらリンク本体のみ除去して作り直す。`iterate` 指定は
+/// 走査目的の呼出し側で立てる。
+pub fn openManagedDir(io: std.Io, path: []const u8, iterate: bool) !std.Io.Dir {
+    while (true) {
+        var dir = std.Io.Dir.cwd().openDir(io, path, .{
+            .follow_symlinks = false,
+            .iterate = iterate,
+        }) catch |err| switch (err) {
+            error.FileNotFound => {
+                try std.Io.Dir.cwd().createDirPath(io, path);
+                continue;
+            },
+            error.SymLinkLoop, error.NotDir => {
+                // leaf symlink・実ファイルはリンク/ファイル本体のみ除去する
+                // （対象の中身は消えない）。
+                removeManagedLeaf(io, path) catch {};
+                try std.Io.Dir.cwd().createDirPath(io, path);
+                continue;
+            },
+            else => return err,
+        };
+        const stat = dir.stat(io) catch |err| {
+            dir.close(io);
+            return err;
+        };
+        if (stat.kind != .sym_link) return dir;
+        dir.close(io);
+        // リンク本体だけを消す。Windows の directory reparse point は
+        // unlink 系でなく rmdir 系が必要なため両方を試す。
+        removeManagedLeaf(io, path) catch {};
+        try std.Io.Dir.cwd().createDirPath(io, path);
+    }
+}
+
+/// symlink として確定した leaf をリンク本体だけ削除する。Windows の
+/// directory reparse point は `DeleteFile` 系でなく `RemoveDirectory`
+/// 系が必要なため `IsDir`/`AccessDenied` では `deleteDir` に切替える。
+fn removeManagedLeaf(io: std.Io, path: []const u8) !void {
+    std.Io.Dir.cwd().deleteFile(io, path) catch |err| switch (err) {
+        error.IsDir, error.AccessDenied => return std.Io.Dir.cwd().deleteDir(io, path),
+        else => return err,
+    };
+}
+
+/// 管理 dir ハンドル相対で lock file を排他 lock 付きで開く。
+/// `createFile` は leaf symlink を追従して対象を truncate し得るため
+/// 使わず、no-follow open（POSIX では `SymLinkLoop` で検出）と
+/// `exclusive` 作成を往復させる。open と create の隙間に置かれた
+/// symlink も `PathAlreadyExists` → 次周の no-follow open で検出し、
+/// リンク本体のみ除去するため安全側に倒れる。
+/// Windows では `OPEN_REPARSE_POINT` が symlink 本体を正常に開くため、
+/// open 後の stat で `.sym_link` を検出して同じ経路へ合流させる。
+/// `edit.lock`（env_state.zig）と `sync.lock`（Store.lockImpl）で共有する。
+pub fn openManagedLockFile(dir: std.Io.Dir, io: std.Io, name: []const u8, nonblocking: bool) !std.Io.File {
+    while (true) {
+        if (dir.openFile(io, name, .{
+            .mode = .read_write,
+            .follow_symlinks = false,
+            .resolve_beneath = true,
+            .lock = .exclusive,
+            .lock_nonblocking = nonblocking,
+        })) |file| {
+            const stat = file.stat(io) catch |err| {
+                file.close(io);
+                return err;
+            };
+            if (stat.kind == .sym_link) {
+                file.close(io);
+                try dir.deleteFile(io, name);
+                continue;
+            }
+            return file;
+        } else |err| switch (err) {
+            error.FileNotFound => {
+                if (dir.createFile(io, name, .{
+                    .read = true,
+                    .exclusive = true,
+                    .resolve_beneath = true,
+                    .lock = .exclusive,
+                    .lock_nonblocking = nonblocking,
+                })) |file| {
+                    return file;
+                } else |create_err| switch (create_err) {
+                    error.PathAlreadyExists => continue,
+                    else => return create_err,
+                }
+            },
+            error.SymLinkLoop => {
+                try dir.deleteFile(io, name);
+            },
+            else => return err,
+        }
+    }
+}
+
+/// `dir` ハンドル相対で `sub_path` 以下を削除する。各段で no-follow
+/// stat を行い、symlink はリンク本体のみ除去して中身を再帰削除しない。
+/// `std.Io.Dir.deleteTree` は各 entry を no-follow で開くが、Windows の
+/// reparse point は no-follow open でも本体を開き得て中身を列挙して
+/// しまうため、管理 dir 配下では stat 確認付きのこれを使う。
+pub fn deleteTreeChecked(dir: std.Io.Dir, io: std.Io, sub_path: []const u8) !void {
+    const stat = dir.statFile(io, sub_path, .{ .follow_symlinks = false }) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+    if (stat.kind == .directory) {
+        var child = dir.openDir(io, sub_path, .{ .follow_symlinks = false, .iterate = true }) catch |err| switch (err) {
+            error.FileNotFound, error.NotDir => return,
+            else => return err,
+        };
+        defer child.close(io);
+        var it = child.iterate();
+        while (try it.next(io)) |entry| {
+            try deleteTreeChecked(child, io, entry.name);
+        }
+        dir.deleteDir(io, sub_path) catch |err| switch (err) {
+            error.FileNotFound, error.NotDir => {},
+            else => return err,
+        };
+        return;
+    }
+    dir.deleteFile(io, sub_path) catch |err| switch (err) {
+        error.FileNotFound => {},
+        // Windows の directory reparse point は unlink 系でなく rmdir 系。
+        error.IsDir, error.AccessDenied => dir.deleteDir(io, sub_path) catch |e2| switch (e2) {
+            error.FileNotFound, error.NotDir => {},
+            else => return e2,
         },
         else => return err,
     };
-    opened.close(io);
 }
 
 pub const Store = struct {
@@ -216,13 +354,14 @@ pub const Store = struct {
     }
 
     fn lockImpl(self: *const Store, nonblocking: bool) !LockGuard {
-        const path = try std.fs.path.join(self.gpa, &.{ self.root, lock_name });
-        defer self.gpa.free(path);
-        var file = std.Io.Dir.cwd().createFile(self.io, path, .{
-            .read = true,
-            .lock = .exclusive,
-            .lock_nonblocking = nonblocking,
-        }) catch |err| switch (err) {
+        // `.nako` dir ハンドル相対で `sync.lock` を開く。leaf symlink は
+        // openManagedLockFile がリンク本体のみ除去して作り直すため、外部
+        // file への truncate・lock を防げる。
+        var nako_dir = std.Io.Dir.cwd().openDir(self.io, self.root, .{
+            .follow_symlinks = false,
+        }) catch |err| return err;
+        defer nako_dir.close(self.io);
+        var file = openManagedLockFile(nako_dir, self.io, lock_name, nonblocking) catch |err| switch (err) {
             error.WouldBlock => return error.Busy,
             else => return err,
         };
@@ -294,22 +433,15 @@ pub const Store = struct {
     pub fn recoverStaging(self: *const Store) !void {
         const staging = try std.fs.path.join(self.gpa, &.{ self.root, staging_dir });
         defer self.gpa.free(staging);
-        var dir = std.Io.Dir.cwd().openDir(self.io, staging, .{ .iterate = true, .follow_symlinks = false }) catch |err| switch (err) {
-            error.FileNotFound => return,
-            error.SymLinkLoop, error.NotDir => {
-                // symlink/実ファイルを除去して作り直す（対象本体は消えない）。
-                std.Io.Dir.cwd().deleteFile(self.io, staging) catch {};
-                try std.Io.Dir.cwd().createDirPath(self.io, staging);
-                return;
-            },
-            else => return err,
-        };
+        // `staging/` 自身が symlink（Windows reparse point 含む）なら
+        // openManagedDir がリンクのみ除去して実 dir を作り直す。
+        var dir = try openManagedDir(self.io, staging, true);
         defer dir.close(self.io);
         var it = dir.iterate();
         while (try it.next(self.io)) |entry| {
-            // 開いた dir ハンドル相対で削除する。deleteTree は entry 内の
-            // symlink を追従せずリンク自体を消すため管理外へ逸脱しない。
-            dir.deleteTree(self.io, entry.name) catch continue;
+            // 開いた dir ハンドル相対で削除する。各段で no-follow stat を
+            // 行うため entry が symlink/reparse point でも中身を辿らない。
+            deleteTreeChecked(dir, self.io, entry.name) catch continue;
         }
     }
 
@@ -361,10 +493,9 @@ pub const Store = struct {
     pub fn pruneGenerations(self: *const Store, keep: []const []const u8) !usize {
         const env_path = try std.fs.path.join(self.gpa, &.{ self.root, env_dir });
         defer self.gpa.free(env_path);
-        var dir = std.Io.Dir.cwd().openDir(self.io, env_path, .{ .iterate = true }) catch |err| switch (err) {
-            error.FileNotFound => return 0,
-            else => return err,
-        };
+        // `env/` 自身が symlink/reparse point の場合もリンクのみ除去して
+        // 作り直す（`.nako/env -> ../..` で管理外を走査・削除しないため）。
+        var dir = try openManagedDir(self.io, env_path, true);
         defer dir.close(self.io);
         var removed: usize = 0;
         var it = dir.iterate();
@@ -378,9 +509,9 @@ pub const Store = struct {
                 }
             }
             if (!keep_it) {
-                const victim = try std.fs.path.join(self.gpa, &.{ env_path, entry.name });
-                defer self.gpa.free(victim);
-                std.Io.Dir.cwd().deleteTree(self.io, victim) catch continue;
+                // dir ハンドル相対 + 各段 no-follow stat で削除する。
+                // Windows reparse point の世代 dir でもリンク本体のみ消す。
+                deleteTreeChecked(dir, self.io, entry.name) catch continue;
                 removed += 1;
             }
         }

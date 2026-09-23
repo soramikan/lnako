@@ -64,6 +64,13 @@ pub const PrepFlags = struct {
             .no_default_features = self.no_default_features,
             .registry_url = self.registry,
             .cache_root = self.cache_dir,
+            // run/test/build・lock 系の要求 runtime は lnako（`lnako sync
+            // --runtime` は cli/commands/sync.zig が別途設定する）。
+            .requested_runtime = "lnako",
+            // engines 照合にこの処理系の version を供給する。未供給だと
+            // `engines.nako`/`engines.lnako` 制約が解決へ効かない。
+            .nako_version = lnako.package.semver.Version.parse(project.compat_nako_version) catch null,
+            .lnako_version = lnako.package.semver.Version.parse(lnako.version) catch null,
         };
         options.policy.offline = self.offline;
         options.policy.allow_plaintext_http = self.allow_plaintext_http;
@@ -377,7 +384,12 @@ fn runUpdate(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []co
         if (!declared.contains(target)) {
             return fail(stderr, "update: {s} は依存にありません\n", .{target});
         }
-        try targets.append(a, alias_to_key.get(target) orelse target);
+        const dep_key = alias_to_key.get(target) orelse target;
+        // 解決済み public id へ正規化する。dep key 名空間と lock entry の
+        // id 名空間が異なる（source 依存は `pkg:<32hex>`、pkg 依存は
+        // `public-id` 明示の場合がある）ため、dep key のまま渡すと
+        // source 依存の版固定解除・宣言変更許容が効かない。
+        try targets.append(a, try resolvedIdForDecl(a, &loaded.manifest, loaded.root, dep_key));
     }
     options.update_targets = targets.items;
     options.update_all = parsed.rest.len == 0;
@@ -395,6 +407,28 @@ fn runUpdate(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []co
     }
     try stderr.print("update: {d} 個の package を更新しました\n", .{updated});
     try stderr.flush();
+}
+
+/// 宣言 dep key が解決後に持つ lock entry id（public id）を返す。
+/// `update` の対象指定を id 名空間へ写像するために使う。npm 依存や
+/// 未宣言 key には到達しない前提（呼出し側が宣言集合で検証済み）。
+fn resolvedIdForDecl(a: Allocator, manifest: *const manifest_mod.Manifest, root: []const u8, dep_key: []const u8) ![]const u8 {
+    for ([_]*const manifest_mod.DependencyGroup{ &manifest.dependencies, &manifest.dev_dependencies }) |group| {
+        if (group.path.get(dep_key)) |dep| {
+            return project.publicIdForSourceDecl(a, .{ .path = dep }, root, root);
+        }
+        if (group.git.get(dep_key)) |dep| {
+            return project.publicIdForSourceDecl(a, .{ .git = dep }, root, root);
+        }
+        if (group.http.get(dep_key)) |dep| {
+            return project.publicIdForSourceDecl(a, .{ .http = dep }, root, root);
+        }
+        if (group.pkg.get(dep_key)) |dep| {
+            // pkg 依存の解決 id は `public-id` 明示または package 名。
+            return dep.public_id orelse dep.name;
+        }
+    }
+    return dep_key;
 }
 
 // ---------------------------------------------------------------------------
@@ -691,27 +725,40 @@ fn runWhy(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const
     defer outcome.deinit();
 
     const packages = outcome.lock.packagesForProfile(outcome.profile) orelse outcome.lock.packages;
+    // 宣言 dep key・alias の対応表を優先する。package 名がたまたま他の
+    // 宣言 dep key と一致する場合に、名前一致で誤った entry を拾わない
+    // ようにする。
+    var maps = try depKeyIdMap(a, &loaded.manifest, loaded.root, packages);
+    defer maps.deinit();
     var target: ?lock_model.PackageEntry = null;
-    for (packages) |entry| {
-        if (std.mem.eql(u8, entry.name, name) or std.mem.eql(u8, entry.id, name)) {
-            target = entry;
-            break;
-        }
+    if (maps.by_name.get(name)) |id| {
+        target = findEntry(packages, id);
     }
     if (target == null) {
-        // 宣言 dep key や alias（プログラム側の参照名）でも引ける
-        // ようにする。
-        var maps = try depKeyIdMap(a, &loaded.manifest, loaded.root, packages);
-        defer maps.deinit();
-        if (maps.by_name.get(name)) |id| {
-            target = findEntry(packages, id);
+        for (packages) |entry| {
+            if (std.mem.eql(u8, entry.name, name) or std.mem.eql(u8, entry.id, name)) {
+                target = entry;
+                break;
+            }
         }
     }
     const entry = target orelse return fail(stderr, "why: {s} は解決済み依存にありません\n", .{name});
 
+    // 選択 profile・feature 集合で無効化される宣言は「直接宣言」の
+    // 理由として報告しない（その宣言は今回のグラフを導入していない）。
+    var diagnostics = diag.List.init(a);
+    defer diagnostics.deinit();
+    const query_options = flags.toOptions(environ_map);
+    var gated = try project.gatedDepNames(a, &loaded.manifest);
+    defer gated.deinit();
+    var expanded = project.expandRootFeatures(a, &loaded.manifest, query_options.features, !query_options.no_default_features, &diagnostics) catch |err| {
+        return failProject(stderr, "why", err, &diagnostics, loaded.manifest_path);
+    };
+    defer expanded.deinit();
+
     try stdout.print("{s} {s} [{s}{s}]\n", .{ entry.name, entry.version, sourceTag(entry), if (entry.implementation) |impl| std.fmt.allocPrint(a, ", {s}", .{impl}) catch "" else "" });
     // manifest の直接宣言かを確認する。
-    const declared_section = try manifestDeclares(a, &loaded.manifest, loaded.root, packages, &entry, name);
+    const declared_section = try manifestDeclares(a, &loaded.manifest, loaded.root, packages, &entry, name, outcome.profile, &gated, &expanded.dependency_aliases);
     if (declared_section) |declared| {
         try stdout.print("  理由: {s}（直接宣言）\n", .{declared});
     }
@@ -733,7 +780,9 @@ fn runWhy(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const
 /// manifest が `name`（dep key または解決済み package 名）を直接宣言
 /// しているか。宣言されていれば `dependencies.path` のような節名を返す。
 /// dep key と package 名が異なる場合は `dep key` を併記する。
-fn manifestDeclares(a: Allocator, manifest: *const manifest_mod.Manifest, root: []const u8, packages: []const lock_model.PackageEntry, resolved: *const lock_model.PackageEntry, name: []const u8) !?[]const u8 {
+/// 選択 profile・feature で無効化される宣言（`dep:` gated で未活性、
+/// `profile` 制約が不一致）は導入理由にならないため除外する。
+fn manifestDeclares(a: Allocator, manifest: *const manifest_mod.Manifest, root: []const u8, packages: []const lock_model.PackageEntry, resolved: *const lock_model.PackageEntry, name: []const u8, profile: []const u8, gated: *const std.StringHashMap(void), activated: *const std.StringHashMap(void)) !?[]const u8 {
     const groups = [_]struct { prefix: []const u8, group: *const manifest_mod.DependencyGroup }{
         .{ .prefix = "dependencies", .group = &manifest.dependencies },
         .{ .prefix = "dev-dependencies", .group = &manifest.dev_dependencies },
@@ -742,28 +791,41 @@ fn manifestDeclares(a: Allocator, manifest: *const manifest_mod.Manifest, root: 
         const group = item.group;
         var path_it = group.path.iterator();
         while (path_it.next()) |dep| {
-            if (try declaredMatch(a, packages, .{ .path = dep.value_ptr.* }, "path", item.prefix, dep.key_ptr.*, null, name, resolved.id, root)) |text| return text;
+            const d = dep.value_ptr.*;
+            if (project.depIsGated(gated, d.name, null) and !project.depIsActivated(activated, d.name, null)) continue;
+            if (try declaredMatch(a, packages, .{ .path = d }, "path", item.prefix, dep.key_ptr.*, null, name, resolved.id, root)) |text| return text;
         }
         var git_it = group.git.iterator();
         while (git_it.next()) |dep| {
-            if (try declaredMatch(a, packages, .{ .git = dep.value_ptr.* }, "git", item.prefix, dep.key_ptr.*, dep.value_ptr.alias, name, resolved.id, root)) |text| return text;
+            const d = dep.value_ptr.*;
+            if (project.depIsGated(gated, d.name, d.alias) and !project.depIsActivated(activated, d.name, d.alias)) continue;
+            if (try declaredMatch(a, packages, .{ .git = d }, "git", item.prefix, dep.key_ptr.*, d.alias, name, resolved.id, root)) |text| return text;
         }
         var http_it = group.http.iterator();
         while (http_it.next()) |dep| {
-            if (try declaredMatch(a, packages, .{ .http = dep.value_ptr.* }, "http", item.prefix, dep.key_ptr.*, dep.value_ptr.alias, name, resolved.id, root)) |text| return text;
+            const d = dep.value_ptr.*;
+            if (project.depIsGated(gated, d.name, d.alias) and !project.depIsActivated(activated, d.name, d.alias)) continue;
+            if (try declaredMatch(a, packages, .{ .http = d }, "http", item.prefix, dep.key_ptr.*, d.alias, name, resolved.id, root)) |text| return text;
         }
         var pkg_it = group.pkg.iterator();
         while (pkg_it.next()) |dep| {
+            const d = dep.value_ptr.*;
+            // rootDeps と同じく `profile` 制約が選択 profile と一致しない
+            // 宣言・feature-gated で未活性の宣言は除外する。
+            if (d.profile) |p| {
+                if (!std.mem.eql(u8, p, profile)) continue;
+            }
+            if (project.depIsGated(gated, d.name, d.alias) and !project.depIsActivated(activated, d.name, d.alias)) continue;
             // pkg の dep key は宣言 package 名そのもの。alias は
             // プログラム側の参照名なので別名として照合する。
             // `why pkg:<id>` で引かれた場合も entry の name/public_id
             // で直接宣言と判定する。
             if (std.mem.eql(u8, dep.key_ptr.*, name) or std.mem.eql(u8, dep.key_ptr.*, resolved.name))
                 return try std.fmt.allocPrint(a, "{s}.pkg", .{item.prefix});
-            if (dep.value_ptr.public_id) |public_id| {
+            if (d.public_id) |public_id| {
                 if (std.mem.eql(u8, public_id, resolved.id)) return try std.fmt.allocPrint(a, "{s}.pkg", .{item.prefix});
             }
-            if (dep.value_ptr.alias) |alias| {
+            if (d.alias) |alias| {
                 if (std.mem.eql(u8, alias, name)) return try std.fmt.allocPrint(a, "{s}.pkg（alias: {s} → {s}）", .{ item.prefix, alias, dep.key_ptr.* });
             }
         }
@@ -844,7 +906,9 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
 
     var needed: std.ArrayList([]const u8) = .empty;
     if (inspect.lock_state != .fresh) try needed.append(a, "lnako lock");
-    if (!inspect.environment_current) try needed.append(a, "lnako sync");
+    // lock が陳腐なら環境も再構築が必要（lock だけ更新して環境が旧
+    // グラフを指し続ける状態を「同期済み」と案内しない）。
+    if (inspect.lock_state != .fresh or !inspect.environment_current) try needed.append(a, "lnako sync");
 
     if (flags.json) {
         var needed_json: std.ArrayList(u8) = .empty;
@@ -1006,7 +1070,10 @@ fn ensureEnvironmentUsable(a: Allocator, io: std.Io, loaded: *project.Project, o
         // 参照世代 dir が消えた環境は不一致とする。
         (env.?.generation != null and project.generationExists(io, loaded.root, env.?.generation.?)) and
         // packages 記録・実体の欠落も不一致とする（内容検証）。
-        (project.environmentPackagesUsable(a, io, loaded.root, &outcome.lock, outcome.profile) catch false);
+        (project.environmentPackagesUsable(a, io, loaded.root, &outcome.lock, outcome.profile) catch false) and
+        // metadata-only な mutable path 変更で環境 snapshot が陳腐化した
+        // 場合も不一致とする（環境記録の digest と現行 dir を照合）。
+        (project.environmentMutablePathsUsable(a, io, loaded.root, env.?, &outcome.lock) catch false);
     if (!env_ok) {
         if (env == null) {
             return fail(stderr, "{s}: .nako 環境がありません（--no-sync のため自動準備しません。`lnako sync` を実行してください）\n", .{verb});
