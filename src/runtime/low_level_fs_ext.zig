@@ -286,6 +286,10 @@ fn seekExtentLinux(io: std.Io, file: std.Io.File, offset: i64, extent: SeekExten
                 }
             }
         }
+        // SEEK_DATA/SEEK_HOLEを実装しないFSはEINVALを返す。whenceは固定定数、
+        // offsetは負でないことを検証済みのため、EINVALはFS未対応を意味し
+        // 契約のENOTSUPへ丸める（EINVAL入力と区別できるようにする）。
+        if (errno == .INVAL) return error.OperationUnsupported;
         return low_level_fs.linuxErrno(errno);
     }
 }
@@ -346,6 +350,14 @@ pub fn reflink(io: std.Io, source: []const u8, destination: []const u8, mode: ?u
     // する（Linux側はopenしたfdのstatxで再検査し、権限継承もfd由来）。
     const metadata = try low_level_fs.stat(io, source, true);
     if (metadata.kind != .file) return error.OperationUnsupported;
+    // 既存DSTを契約どおりEEXISTで早く返す。no-followで実体を確認し、これより
+    // 後のclone失敗（FS未対応・容量不足等）がEEXISTを隠さないようにする。
+    // 最終的な排他はNOREPLACEなrenameが競合安全に保証する。
+    const destination_stat = low_level_fs.stat(io, destination, false) catch |failure| switch (failure) {
+        error.FileNotFound => null,
+        else => return failure,
+    };
+    if (destination_stat != null) return error.PathAlreadyExists;
     return switch (builtin.os.tag) {
         .linux => cloneFileLinux(io, source, destination, mode),
         .macos => cloneFileDarwin(io, source, destination, mode),
