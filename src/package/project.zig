@@ -463,7 +463,6 @@ fn gitCheckoutDir(gpa: Allocator, io: std.Io, ctx: *ResolveContext, dep: manifes
         else
             try std.fs.path.join(gpa, &.{ ctx.project_root, ".nako", "cache" });
         ctx.cache_store = cache.Store.open(ctx.gpa, io, root) catch |err| return mapFs(err);
-        ctx.cache_root = root;
     }
     var hasher = std.crypto.hash.sha2.Sha256.init(.{});
     hasher.update("git");
@@ -480,19 +479,30 @@ fn gitCheckoutDir(gpa: Allocator, io: std.Io, ctx: *ResolveContext, dep: manifes
     return dir;
 }
 
-/// 既存 lock から `id_text` の package entry の source を探す（git の
-/// commit 固定・source collision 検査用）。
-fn lockedSourceFor(existing: ?*const lock_model.Lock, id_text: []const u8) ?lock_model.Source {
+/// 既存 lock から public id（`pkg:<32hex>`）の package entry の source を
+/// 探す（git の commit 固定・declared-vs-locked source 衝突検査用）。
+/// 仮想 id（`git:<key>` 等）ではなく lock 記録上の public id で引く。
+fn lockedSourceFor(existing: ?*const lock_model.Lock, public_id: []const u8) ?lock_model.Source {
     const lock = existing orelse return null;
     for (lock.packages) |*entry| {
-        if (std.mem.eql(u8, entry.id, id_text)) return entry.source;
+        if (std.mem.eql(u8, entry.id, public_id)) return entry.source;
     }
     for (lock.profile_packages) |profile| {
         for (profile.packages) |*entry| {
-            if (std.mem.eql(u8, entry.id, id_text)) return entry.source;
+            if (std.mem.eql(u8, entry.id, public_id)) return entry.source;
         }
     }
     return null;
+}
+
+/// `dep_name`（dep key）が明示的な update 対象か。update 対象の source
+/// 宣言変更は lock との衝突ではなく意図した更新として許容する。
+fn isUpdateTarget(opts: *const PrepareOptions, dep_name: []const u8) bool {
+    if (opts.update_all) return true;
+    for (opts.update_targets) |target| {
+        if (std.mem.eql(u8, target, dep_name)) return true;
+    }
+    return false;
 }
 
 /// session arena 上の `Source` を outcome arena へ複製する。lock に記録
@@ -518,7 +528,6 @@ const ResolveContext = struct {
     locals: std.StringHashMap(*LocalPackage),
     source_index: provider.SourceIndex = .{},
     cache_store: ?cache.Store = null,
-    cache_root: ?[]const u8 = null,
     needs_registry: bool = false,
     diagnostics: *diag.List,
 
@@ -637,7 +646,20 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
             .git => {
                 const dep = work.git_dep.?;
                 const checkout = try gitCheckoutDir(gpa, ctx.io, ctx, dep);
-                const locked = lockedSourceFor(ctx.existing_lock, id_text);
+                const locked = lockedSourceFor(ctx.existing_lock, local.public_id);
+                if (locked) |locked_source| {
+                    // dep key が同じまま url/commit/subdir が変わった宣言は
+                    // 別 source への暗黙切替として衝突とする。明示的な
+                    // update 対象は宣言変更を許容する。
+                    if (!isUpdateTarget(ctx.opts, dep_name)) {
+                        try provider.checkLockedSource(ctx.session, .{
+                            .kind = .git,
+                            .url = dep.url,
+                            .commit = dep.commit,
+                            .path = dep.path,
+                        }, locked_source, dep_name);
+                    }
+                }
                 const acquired = try provider.acquireGit(ctx.session, dep, checkout, locked);
                 local.source = try copySource(gpa, acquired.source);
                 local.manifest = acquired.manifest;
@@ -650,6 +672,15 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
             },
             .http => {
                 const dep = work.http_dep.?;
+                if (lockedSourceFor(ctx.existing_lock, local.public_id)) |locked_source| {
+                    if (!isUpdateTarget(ctx.opts, dep_name)) {
+                        try provider.checkLockedSource(ctx.session, .{
+                            .kind = .http,
+                            .url = dep.url,
+                            .hash = dep.hash,
+                        }, locked_source, dep_name);
+                    }
+                }
                 const acquired = try provider.acquireHttp(ctx.session, dep);
                 local.source = try copySource(gpa, acquired.source);
                 local.manifest = acquired.manifest;
@@ -747,13 +778,17 @@ fn declaredSourceMatches(ctx: *ResolveContext, existing: *const LocalPackage, wo
         },
         .git => {
             const dep = work.git_dep.?;
-            return source.kind == .git and
-                optEql(source.url, dep.url) and
-                optEql(source.path, dep.path);
+            if (source.kind != .git or !optEql(source.url, dep.url) or !optEql(source.path, dep.path)) return false;
+            // 記録 commit は完全 SHA、宣言は prefix（[0-9a-f]{7,40}）の
+            // ため前方一致で比較する（acquireGit の pin 判定と同じ契約）。
+            const stored_commit = source.commit orelse return false;
+            return std.mem.startsWith(u8, stored_commit, dep.commit);
         },
         .http => {
             const dep = work.http_dep.?;
-            return source.kind == .http and optEql(source.url, dep.url);
+            return source.kind == .http and
+                optEql(source.url, dep.url) and
+                optEql(source.hash, dep.hash);
         },
     }
 }
@@ -1062,14 +1097,27 @@ pub fn verifyLocked(
 
     var existing = try loadExistingLock(a, io, project.root, diagnostics);
     defer if (existing) |*lock| lock.deinit();
-    lock_mod.requireFresh(if (existing) |*l| l else null, input) catch {
-        if (hasMutablePathDep(&project.manifest)) {
+    const freshness = lock_mod.checkFreshness(if (existing) |*l| l else null, input);
+    if (freshness != .fresh) {
+        // E016 は manifest 変更により mutable path 依存の再解決が必要に
+        // なる場合に限定する（lock 欠落・target/features 変更は E029）。
+        if (freshness == .stale_manifest and hasMutablePathDep(&project.manifest)) {
             try diagnostics.addFmt(diag.E016_UNLOCKED_MUTABLE_PATH, .err, "nako.toml", .{}, "a mutable path dependency requires re-resolution but --locked forbids it", .{});
         } else {
-            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, lock_name, .{}, "nako.lock is missing or stale and --locked forbids updating it", .{});
+            const reason: []const u8 = switch (freshness) {
+                .missing => "nako.lock is missing",
+                .stale_schema => "nako.lock has an unknown schemaVersion",
+                .stale_resolver => "nako.lock was written by a different resolver version",
+                .stale_manifest => "nako.toml changed since nako.lock was written",
+                .stale_profile => "the selected profile differs from nako.lock",
+                .stale_features => "the selected features differ from nako.lock",
+                .stale_target => "the resolved target differs from nako.lock",
+                .fresh => unreachable,
+            };
+            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, lock_name, .{}, "{s} and --locked forbids updating it", .{reason});
         }
         return error.LockedNotSatisfied;
-    };
+    }
     // `mutable = false` の pin hash も検証する（内容変更は --locked で
     // 再記録できないため失敗とする）。
     if (existing) |*l| {
@@ -1234,6 +1282,8 @@ pub fn ensureLock(
         var reg: ?registry.StaticRegistry = null;
         defer if (reg) |*r| r.deinit();
         if (ctx.needs_registry) {
+            // index 取得は lazy（loadIndex）で instance ごとに1度。target
+            // が profile ごとに異なるため instance は共有できない。
             reg = registry.StaticRegistry.init(&session, opts.registry_url.?, target) catch |err| {
                 session.reportDiagnostics(diagnostics) catch {};
                 return err;
@@ -1251,6 +1301,10 @@ pub fn ensureLock(
         composite.locked_index = if (locked_index) |*index| index else null;
 
         const root_deps = try rootDeps(a, &ctx, &project.manifest, named.name, &gated_root, &expanded.dependency_aliases);
+        // `resolution` は `a`（outcome arena）で確保される。`defer deinit`
+        // は各 profile 反復で実行されるが、arena の部分 free は no-op な
+        // ため、`primary_nodes`/`per_profile` が参照する node の
+        // `dependencies`/`id`/`version`/`features` は loop 後も有効。
         var resolution = resolver.resolve(a, composite.provider(), root_deps, .{
             .target = target,
             .prefer_oldest = opts.prefer_oldest,
@@ -1301,6 +1355,8 @@ pub fn ensureLock(
     var reg_details: ?registry.StaticRegistry = null;
     defer if (reg_details) |*r| r.deinit();
     if (ctx.needs_registry) {
+        // lock 詳細取得用は target 非依存（`.{}`）。index は lazy 取得で
+        // details 呼出しが無ければ fetch も発生しない。
         reg_details = registry.StaticRegistry.init(&session, opts.registry_url.?, .{}) catch |err| {
             session.reportDiagnostics(diagnostics) catch {};
             return err;
@@ -1563,9 +1619,13 @@ pub fn inspectForCheck(
     info.environment = try readEnvironmentInfo(gpa, io, project.root);
     var digest: [32]u8 = undefined;
     const has_lock = try lockDigest(gpa, io, project.root, &digest);
+    // ensureEnvironment と同じ整合条件で判定する（lock digest・schema・
+    // 選択 profile・runtime・参照世代 dir の実在）。
     info.environment_current = has_lock and info.environment != null and
         environmentMatchesLock(info.environment.?, &digest) and
         info.environment.?.schema_version == 1 and
+        (info.environment.?.profile == null or std.mem.eql(u8, info.environment.?.profile.?, profile)) and
+        (info.environment.?.runtime == null or std.mem.eql(u8, info.environment.?.runtime.?, "lnako")) and
         // 参照世代 dir が消えた環境は不一致とする。
         (info.environment.?.generation != null and generationExists(io, project.root, info.environment.?.generation.?));
     return info;

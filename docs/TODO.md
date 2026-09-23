@@ -73,7 +73,7 @@
 ## 進行中および今後の継続課題
 
 - **パッケージシステムの実装**：
-  - なでしこ3向け共通パッケージシステム仕様案（[SPECIFICATION.md](package-system/SPECIFICATION.md)）に基づく、PubGrub依存解決器、マニフェスト解析を実装済み。`nako.lock` の決定的生成、複数profile集約、既存版優先、部分更新と変更理由説明、lock鮮度判定、`--locked` の無変更失敗を実装した。取得provider・cache・CLI（#47〜#49）は未実装。
+  - なでしこ3向け共通パッケージシステム仕様案（[SPECIFICATION.md](package-system/SPECIFICATION.md)）に基づく、PubGrub依存解決器、マニフェスト解析、取得provider・package cache・環境同期（#47・#48）、依存管理CLIと `run`/`test`/`build` 前の自動準備（#49）を実装済み。`nako.lock` の決定的生成、複数profile集約、既存版優先、部分更新と変更理由説明、lock鮮度判定、`--locked` の無変更失敗、path 依存 pin hash・依存 cycle 検出を実装した。npm 依存の解決は未実装（manifest 宣言は lock 不可として明示拒否）。
 - **低レイヤーAPI・ストリームI/O**：
   - 構造化エラーハンドリング、生I/Oストリーム、逐次ハッシュ計算、ファイルシステム低層APIの拡充。
 - **性能・最適化の継続管理**：

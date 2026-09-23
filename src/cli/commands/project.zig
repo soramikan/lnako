@@ -85,19 +85,11 @@ fn flagValue(args: []const []const u8, index: *usize, verb: []const u8, flag: []
     return args[index.*];
 }
 
-/// 値を取るプロジェクト系オプション名（`--profile x` の値を位置引数と
-/// 誤認しないため）。
-const value_flags = [_][]const u8{ "--profile", "--features", "--registry", "--package-cache-dir", "-o" };
-const flag_names = [_][]const u8{
-    "--locked",   "--offline",           "--no-sync",
-    "--profile",  "--features",          "--no-default-features",
-    "--registry", "--package-cache-dir", "--allow-plaintext-http",
-    "--json",
-};
+const PrepParseResult = struct { flags: PrepFlags, rest: []const []const u8 };
 
-/// `args` から共通フラグを取り出す。`consume_positionals` が真なら残りの
-/// 位置引数を返す。未知オプションは failUsage。
-fn parsePrepFlags(a: Allocator, args: []const []const u8, verb: []const u8, stderr: *std.Io.Writer) CliError!struct { flags: PrepFlags, rest: []const []const u8 } {
+/// `args` から共通フラグを取り出し、残りの位置引数を返す。
+/// 未知オプションは failUsage。
+fn parsePrepFlags(a: Allocator, args: []const []const u8, verb: []const u8, stderr: *std.Io.Writer) (CliError || error{OutOfMemory})!PrepParseResult {
     var flags = PrepFlags{};
     var rest: std.ArrayList([]const u8) = .empty;
     var index: usize = 0;
@@ -116,7 +108,7 @@ fn parsePrepFlags(a: Allocator, args: []const []const u8, verb: []const u8, stde
             var it = std.mem.splitScalar(u8, spec, ',');
             while (it.next()) |name| {
                 const trimmed = std.mem.trim(u8, name, " ");
-                if (trimmed.len > 0) flags.features.append(a, trimmed) catch return .{ .flags = flags, .rest = rest.items };
+                if (trimmed.len > 0) try flags.features.append(a, trimmed);
             }
         } else if (std.mem.eql(u8, argument, "--no-default-features")) {
             flags.no_default_features = true;
@@ -131,10 +123,51 @@ fn parsePrepFlags(a: Allocator, args: []const []const u8, verb: []const u8, stde
         } else if (std.mem.startsWith(u8, argument, "-")) {
             return failUsage(stderr, "{s}: 不明なオプションです: {s}\n", .{ verb, argument });
         } else {
-            rest.append(a, argument) catch {};
+            try rest.append(a, argument);
         }
     }
     return .{ .flags = flags, .rest = rest.items };
+}
+
+/// verb ごとに意味を持つフラグの許可集合。許可外のフラグが指定された
+/// 場合は黙って無視せず用法エラーとする。
+const FlagMask = struct {
+    locked: bool = false,
+    offline: bool = false,
+    no_sync: bool = false,
+    profile: bool = false,
+    features: bool = false,
+    no_default_features: bool = false,
+    registry: bool = false,
+    cache_dir: bool = false,
+    allow_plaintext_http: bool = false,
+    json: bool = false,
+};
+
+fn rejectInertFlags(flags: *const PrepFlags, verb: []const u8, comptime allowed: FlagMask, stderr: *std.Io.Writer) CliError!void {
+    const bad: ?[]const u8 = if (!allowed.locked and flags.locked)
+        "--locked"
+    else if (!allowed.offline and flags.offline)
+        "--offline"
+    else if (!allowed.no_sync and flags.no_sync)
+        "--no-sync"
+    else if (!allowed.profile and flags.profile != null)
+        "--profile"
+    else if (!allowed.features and flags.features.items.len > 0)
+        "--features"
+    else if (!allowed.no_default_features and flags.no_default_features)
+        "--no-default-features"
+    else if (!allowed.registry and flags.registry != null)
+        "--registry"
+    else if (!allowed.cache_dir and flags.cache_dir != null)
+        "--package-cache-dir"
+    else if (!allowed.allow_plaintext_http and flags.allow_plaintext_http)
+        "--allow-plaintext-http"
+    else if (!allowed.json and flags.json)
+        "--json"
+    else
+        null;
+    if (bad) |flag| return failUsage(stderr, "{s}: {s} はこのコマンドでは使えません\n", .{ verb, flag });
 }
 
 /// prep 系フラグを `args` から `flags` へ移し、残りの引数配列を返す。
@@ -182,36 +215,6 @@ pub fn extractPrepFlags(a: Allocator, args: []const []const u8, flags: *PrepFlag
         }
     }
     return rest.items;
-}
-
-/// `--profile x` のような値を取るオプションを考慮しつつ、位置引数でない
-/// 未知の `-` オプションを検出する。run/test/build 統合用。
-pub fn findUnknownPrepFlag(args: []const []const u8) ?[]const u8 {
-    var index: usize = 0;
-    while (index < args.len) : (index += 1) {
-        const argument = args[index];
-        var is_value_flag = false;
-        for (value_flags) |name| {
-            if (std.mem.eql(u8, argument, name)) {
-                is_value_flag = true;
-                break;
-            }
-        }
-        if (is_value_flag) {
-            index += 1;
-            continue;
-        }
-        if (!std.mem.startsWith(u8, argument, "-")) continue;
-        var known = false;
-        for (flag_names) |name| {
-            if (std.mem.eql(u8, argument, name)) {
-                known = true;
-                break;
-            }
-        }
-        if (!known) return argument;
-    }
-    return null;
 }
 
 /// プロジェクトを `start_dir` から上方探索して読み込む。見つからない・
@@ -398,32 +401,84 @@ fn insertEntry(a: Allocator, source: []const u8, section: []const u8, name: []co
 
 /// `offset` から始まる代入文（`key = value`）の終端 offset を返す。
 /// inline table/array が行を跨ぐ場合は brace が閉じるまで読み進める。
-/// 文字列リテラル内の bracket は数えない。
+/// 文字列リテラル（`"`・`'`・`"""`・`'''`）と `#` コメント内の
+/// bracket は数えない。
 fn statementEnd(source: []const u8, offset: usize) usize {
+    const StringKind = enum { none, basic, literal, multi_basic, multi_literal };
     var index = offset;
     var depth: usize = 0;
-    var in_string = false;
-    var in_literal = false;
+    var string: StringKind = .none;
+    var in_comment = false;
     while (index < source.len) {
         const ch = source[index];
-        if (in_string) {
-            if (ch == '\\') {
-                index += 2;
-                continue;
-            }
-            if (ch == '"') in_string = false;
-        } else if (in_literal) {
-            if (ch == '\'') in_literal = false;
-        } else switch (ch) {
-            '"' => in_string = true,
-            '\'' => in_literal = true,
-            '{', '[' => depth += 1,
-            '}', ']' => {
-                if (depth == 0) return index;
-                depth -= 1;
+        switch (string) {
+            .basic => {
+                if (ch == '\\') {
+                    index += 2;
+                    continue;
+                }
+                if (ch == '"') string = .none;
             },
-            '\n' => if (depth == 0) return index,
-            else => {},
+            .literal => if (ch == '\'') {
+                string = .none;
+            },
+            .multi_basic => {
+                if (ch == '\\') {
+                    index += 2;
+                    continue;
+                }
+                if (ch == '"' and index + 2 < source.len and
+                    source[index + 1] == '"' and source[index + 2] == '"')
+                {
+                    string = .none;
+                    index += 2;
+                }
+            },
+            .multi_literal => if (ch == '\'' and index + 2 < source.len and
+                source[index + 1] == '\'' and source[index + 2] == '\'')
+            {
+                string = .none;
+                index += 2;
+            },
+            .none => {
+                if (in_comment) {
+                    if (ch == '\n') {
+                        // コメントを閉じる改行は文の終端でもある。
+                        in_comment = false;
+                        if (depth == 0) return index;
+                    }
+                } else switch (ch) {
+                    '#' => in_comment = true,
+                    '"' => {
+                        // `"""`（multiline basic string）を先に判定する。
+                        if (index + 2 < source.len and
+                            source[index + 1] == '"' and source[index + 2] == '"')
+                        {
+                            string = .multi_basic;
+                            index += 2;
+                        } else {
+                            string = .basic;
+                        }
+                    },
+                    '\'' => {
+                        if (index + 2 < source.len and
+                            source[index + 1] == '\'' and source[index + 2] == '\'')
+                        {
+                            string = .multi_literal;
+                            index += 2;
+                        } else {
+                            string = .literal;
+                        }
+                    },
+                    '{', '[' => depth += 1,
+                    '}', ']' => {
+                        if (depth == 0) return index;
+                        depth -= 1;
+                    },
+                    '\n' => if (depth == 0) return index,
+                    else => {},
+                }
+            },
         }
         index += 1;
     }
@@ -550,19 +605,19 @@ fn runInit(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []cons
         }
     }
     const cwd = std.Io.Dir.cwd();
-    const dir_abs = if (dir_arg) |dir| blk: {
-        const resolved = try project_abs(a, io, dir, start_dir);
-        try cwd.createDirPath(io, resolved);
-        break :blk resolved;
-    } else blk: {
-        break :blk try std.Io.Dir.cwd().realPathFileAlloc(io, start_dir, a);
-    };
+    // dir 作成より先に package 名を検証する（basename が規則外で失敗
+    // した場合に空 dir を残さない）。
+    const dir_abs = if (dir_arg) |dir|
+        try project_abs(a, io, dir, start_dir)
+    else
+        try std.Io.Dir.cwd().realPathFileAlloc(io, start_dir, a);
     const name = name_opt orelse std.fs.path.basename(dir_abs);
     // パッケージ名規則を先に検証する。dir 名が規則外の場合は --name で
     // 明示してもらう。
     if (!manifest_mod.isPackageName(name)) {
         return failUsage(stderr, "init: パッケージ名が規則に合いません: {s}（[a-z][a-z0-9-]{{0,63}}。--name で指定してください）\n", .{name});
     }
+    if (dir_arg != null) try cwd.createDirPath(io, dir_abs);
     const manifest_path = try std.fs.path.join(a, &.{ dir_abs, project.manifest_name });
     if (try initTargetExists(io, manifest_path)) {
         return fail(stderr, "init: {s} は既に存在します\n", .{manifest_path});
@@ -781,38 +836,71 @@ fn runAdd(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const
     var flags = PrepFlags{};
     defer flags.deinit(a);
     var positional: ?[]const u8 = null;
+    // `--path`/`--git`/`--http`/`--npm` は排他。先に指定されたフラグ名を
+    // 記録して後勝ち・併用を防ぐ。
+    var source_flag: ?[]const u8 = null;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
         const argument = args[index];
         if (std.mem.eql(u8, argument, "--dev")) {
             request.dev = true;
-        } else if (std.mem.eql(u8, argument, "--path")) {
-            request.kind = .path;
-            request.path = try flagValue(args, &index, "add", "--path", stderr);
-        } else if (std.mem.eql(u8, argument, "--git")) {
-            request.kind = .git;
-            request.git_url = try flagValue(args, &index, "add", "--git", stderr);
+        } else if (std.mem.eql(u8, argument, "--path") or
+            std.mem.eql(u8, argument, "--git") or
+            std.mem.eql(u8, argument, "--http"))
+        {
+            if (source_flag != null) {
+                return failUsage(stderr, "add: --path/--git/--http/--npm は併用・重複指定できません（{s} と {s}）\n", .{ source_flag.?, argument });
+            }
+            source_flag = argument;
+            if (std.mem.eql(u8, argument, "--path")) {
+                request.kind = .path;
+                request.path = try flagValue(args, &index, "add", "--path", stderr);
+            } else if (std.mem.eql(u8, argument, "--git")) {
+                request.kind = .git;
+                request.git_url = try flagValue(args, &index, "add", "--git", stderr);
+            } else {
+                request.kind = .http;
+                request.http_url = try flagValue(args, &index, "add", "--http", stderr);
+            }
+        } else if (std.mem.eql(u8, argument, "--npm")) {
+            if (source_flag != null) {
+                return failUsage(stderr, "add: --path/--git/--http/--npm は併用・重複指定できません（{s} と --npm）\n", .{source_flag.?});
+            }
+            source_flag = "--npm";
+            request.kind = .npm;
         } else if (std.mem.eql(u8, argument, "--commit")) {
             request.commit = try flagValue(args, &index, "add", "--commit", stderr);
         } else if (std.mem.eql(u8, argument, "--dep-path")) {
             request.dep_path = try flagValue(args, &index, "add", "--dep-path", stderr);
-        } else if (std.mem.eql(u8, argument, "--http")) {
-            request.kind = .http;
-            request.http_url = try flagValue(args, &index, "add", "--http", stderr);
         } else if (std.mem.eql(u8, argument, "--hash")) {
             request.hash = try flagValue(args, &index, "add", "--hash", stderr);
-        } else if (std.mem.eql(u8, argument, "--npm")) {
-            request.kind = .npm;
         } else if (std.mem.eql(u8, argument, "--mutable")) {
             request.mutable = true;
         } else if (std.mem.eql(u8, argument, "--locked")) {
             flags.locked = true;
         } else if (std.mem.eql(u8, argument, "--offline")) {
             flags.offline = true;
+        } else if (std.mem.eql(u8, argument, "--profile")) {
+            flags.profile = try flagValue(args, &index, "add", "--profile", stderr);
+        } else if (std.mem.eql(u8, argument, "--features")) {
+            const spec = try flagValue(args, &index, "add", "--features", stderr);
+            var it = std.mem.splitScalar(u8, spec, ',');
+            while (it.next()) |feature| {
+                const trimmed = std.mem.trim(u8, feature, " ");
+                if (trimmed.len > 0) try flags.features.append(a, trimmed);
+            }
+        } else if (std.mem.eql(u8, argument, "--no-default-features")) {
+            flags.no_default_features = true;
         } else if (std.mem.eql(u8, argument, "--registry")) {
             flags.registry = try flagValue(args, &index, "add", "--registry", stderr);
         } else if (std.mem.eql(u8, argument, "--package-cache-dir")) {
             flags.cache_dir = try flagValue(args, &index, "add", "--package-cache-dir", stderr);
+        } else if (std.mem.eql(u8, argument, "--allow-plaintext-http")) {
+            flags.allow_plaintext_http = true;
+        } else if (std.mem.eql(u8, argument, "--json")) {
+            return failUsage(stderr, "add: --json は add では使えません\n", .{});
+        } else if (std.mem.eql(u8, argument, "--no-sync")) {
+            return failUsage(stderr, "add: --no-sync は add では使えません\n", .{});
         } else if (std.mem.startsWith(u8, argument, "-")) {
             return failUsage(stderr, "add: 不明なオプションです: {s}\n", .{argument});
         } else if (positional == null) {
@@ -830,6 +918,20 @@ fn runAdd(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const
     }
     if (flags.locked) {
         return failUsage(stderr, "add: --locked は add では使えません（manifest を変更するため lock は必ず更新されます）\n", .{});
+    }
+    // kind 固有オプションの組み合わせを検証する（別 kind への指定は
+    // 黙って捨てず用法エラーとする）。
+    if (request.commit != null and request.kind != .git) {
+        return failUsage(stderr, "add: --commit は --git と併用してください\n", .{});
+    }
+    if (request.dep_path != null and request.kind != .git) {
+        return failUsage(stderr, "add: --dep-path は --git と併用してください\n", .{});
+    }
+    if (request.hash != null and request.kind != .http) {
+        return failUsage(stderr, "add: --hash は --http と併用してください\n", .{});
+    }
+    if (request.mutable and request.kind != .path) {
+        return failUsage(stderr, "add: --mutable は --path と併用してください\n", .{});
     }
 
     switch (request.kind) {
@@ -902,8 +1004,27 @@ fn runRemove(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []co
             flags.locked = true;
         } else if (std.mem.eql(u8, argument, "--offline")) {
             flags.offline = true;
+        } else if (std.mem.eql(u8, argument, "--profile")) {
+            flags.profile = try flagValue(args, &index, "remove", "--profile", stderr);
+        } else if (std.mem.eql(u8, argument, "--features")) {
+            const spec = try flagValue(args, &index, "remove", "--features", stderr);
+            var it = std.mem.splitScalar(u8, spec, ',');
+            while (it.next()) |feature| {
+                const trimmed = std.mem.trim(u8, feature, " ");
+                if (trimmed.len > 0) try flags.features.append(a, trimmed);
+            }
+        } else if (std.mem.eql(u8, argument, "--no-default-features")) {
+            flags.no_default_features = true;
         } else if (std.mem.eql(u8, argument, "--registry")) {
             flags.registry = try flagValue(args, &index, "remove", "--registry", stderr);
+        } else if (std.mem.eql(u8, argument, "--package-cache-dir")) {
+            flags.cache_dir = try flagValue(args, &index, "remove", "--package-cache-dir", stderr);
+        } else if (std.mem.eql(u8, argument, "--allow-plaintext-http")) {
+            flags.allow_plaintext_http = true;
+        } else if (std.mem.eql(u8, argument, "--json")) {
+            return failUsage(stderr, "remove: --json は remove では使えません\n", .{});
+        } else if (std.mem.eql(u8, argument, "--no-sync")) {
+            return failUsage(stderr, "remove: --no-sync は remove では使えません\n", .{});
         } else if (std.mem.startsWith(u8, argument, "-")) {
             return failUsage(stderr, "remove: 不明なオプションです: {s}\n", .{argument});
         } else if (positional == null) {
@@ -950,6 +1071,18 @@ fn runLock(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []cons
     var flags = parsed.flags;
     defer flags.deinit(a);
     if (parsed.rest.len > 0) return failUsage(stderr, "lock: 不明な引数です: {s}\n", .{parsed.rest[0]});
+    // lock は環境構築を行わないため --no-sync は意味を持たない。
+    try rejectInertFlags(&flags, "lock", .{
+        .locked = true,
+        .offline = true,
+        .profile = true,
+        .features = true,
+        .no_default_features = true,
+        .registry = true,
+        .cache_dir = true,
+        .allow_plaintext_http = true,
+        .json = true,
+    }, stderr);
 
     var loaded = try loadProjectOrFail(a, io, start_dir, stderr);
     defer loaded.deinit();
@@ -968,8 +1101,11 @@ fn runLock(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []cons
     if (flags.json) {
         try stdout.print("{{\"profile\":\"{s}\",\"packages\":{d},\"wrote\":{s}}}\n", .{ outcome.profile, outcome.lock.packages.len, if (outcome.wrote) "true" else "false" });
         try stdout.flush();
-    } else {
+    } else if (outcome.wrote) {
         try stderr.print("lock: {d} 個の package を {s} に記録しました（profile: {s}）\n", .{ outcome.lock.packages.len, project.lock_name, outcome.profile });
+        try stderr.flush();
+    } else {
+        try stderr.print("lock: {s} は最新です（{d} 個の package, profile: {s}）\n", .{ project.lock_name, outcome.lock.packages.len, outcome.profile });
         try stderr.flush();
     }
 }
@@ -979,6 +1115,15 @@ fn runUpdate(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []co
     var flags = parsed.flags;
     defer flags.deinit(a);
     if (flags.locked) return failUsage(stderr, "update: --locked と update は両立しません\n", .{});
+    try rejectInertFlags(&flags, "update", .{
+        .offline = true,
+        .profile = true,
+        .features = true,
+        .no_default_features = true,
+        .registry = true,
+        .cache_dir = true,
+        .allow_plaintext_http = true,
+    }, stderr);
 
     var loaded = try loadProjectOrFail(a, io, start_dir, stderr);
     defer loaded.deinit();
@@ -1042,42 +1187,64 @@ fn sourceTag(entry: lock_model.PackageEntry) []const u8 {
     };
 }
 
-/// 宣言 dep key → 解決済み entry id の対応表。dep key と package 名が
-/// 異なる（alias・同名 package）ときに宣言側の名前を表示・検索できる
-/// ようにする。呼出し側が `deinit` する。
-fn depKeyIdMap(a: Allocator, manifest: *const manifest_mod.Manifest, packages: []const lock_model.PackageEntry) !std.StringHashMap([]const u8) {
-    var key_by_id = std.StringHashMap([]const u8).init(a);
-    errdefer key_by_id.deinit();
+/// 宣言 dep key・alias と解決済み entry id の対応表。dep key と
+/// package 名が異なる（alias・同名 package）ときに宣言側の名前を
+/// 表示・検索できるようにする。呼出し側が `deinit` する。
+const DepKeyMaps = struct {
+    /// 解決済み entry id → 宣言 dep key（tree の表示用）。
+    by_id: std.StringHashMap([]const u8),
+    /// dep key または alias → 解決済み entry id（why の検索用）。
+    by_name: std.StringHashMap([]const u8),
+
+    fn deinit(self: *DepKeyMaps) void {
+        self.by_id.deinit();
+        self.by_name.deinit();
+    }
+};
+
+fn depKeyIdMap(a: Allocator, manifest: *const manifest_mod.Manifest, packages: []const lock_model.PackageEntry) !DepKeyMaps {
+    var maps = DepKeyMaps{
+        .by_id = std.StringHashMap([]const u8).init(a),
+        .by_name = std.StringHashMap([]const u8).init(a),
+    };
+    errdefer maps.deinit();
     for ([_]*const manifest_mod.DependencyGroup{ &manifest.dependencies, &manifest.dev_dependencies }) |group| {
         var path_it = group.path.iterator();
         while (path_it.next()) |item| {
             const id = try project.publicIdForDepKey(a, "path", item.key_ptr.*);
-            try key_by_id.put(id, item.key_ptr.*);
+            try maps.by_id.put(id, item.key_ptr.*);
+            try maps.by_name.put(item.key_ptr.*, id);
         }
         var git_it = group.git.iterator();
         while (git_it.next()) |item| {
             const id = try project.publicIdForDepKey(a, "git", item.key_ptr.*);
-            try key_by_id.put(id, item.key_ptr.*);
+            try maps.by_id.put(id, item.key_ptr.*);
+            try maps.by_name.put(item.key_ptr.*, id);
+            if (item.value_ptr.alias) |alias| try maps.by_name.put(alias, id);
         }
         var http_it = group.http.iterator();
         while (http_it.next()) |item| {
             const id = try project.publicIdForDepKey(a, "http", item.key_ptr.*);
-            try key_by_id.put(id, item.key_ptr.*);
+            try maps.by_id.put(id, item.key_ptr.*);
+            try maps.by_name.put(item.key_ptr.*, id);
+            if (item.value_ptr.alias) |alias| try maps.by_name.put(alias, id);
         }
         var pkg_it = group.pkg.iterator();
         while (pkg_it.next()) |item| {
             // pkg 依存は public id を manifest から導出できないため、
-            // 解決済み package 名（alias 指定時はその実名）で対応付ける。
-            const resolved = item.value_ptr.alias orelse item.key_ptr.*;
+            // 解決済み package 名（宣言名 `name`。`alias` はプログラム側の
+            // 参照名で package 名ではない）で対応付ける。
             for (packages) |entry| {
-                if (std.mem.eql(u8, entry.name, resolved)) {
-                    try key_by_id.put(entry.id, item.key_ptr.*);
+                if (std.mem.eql(u8, entry.name, item.value_ptr.name)) {
+                    try maps.by_id.put(entry.id, item.key_ptr.*);
+                    try maps.by_name.put(item.key_ptr.*, entry.id);
+                    if (item.value_ptr.alias) |alias| try maps.by_name.put(alias, entry.id);
                     break;
                 }
             }
         }
     }
-    return key_by_id;
+    return maps;
 }
 
 fn runTree(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const u8, environ_map: ?*const std.process.Environ.Map, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !void {
@@ -1085,6 +1252,14 @@ fn runTree(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []cons
     var flags = parsed.flags;
     defer flags.deinit(a);
     if (parsed.rest.len > 0) return failUsage(stderr, "tree: 不明な引数です: {s}\n", .{parsed.rest[0]});
+    // tree は読み取り専用の問い合わせ。lock 鮮度入力と検証に関係する
+    // フラグのみ受け付ける。
+    try rejectInertFlags(&flags, "tree", .{
+        .locked = true,
+        .profile = true,
+        .features = true,
+        .no_default_features = true,
+    }, stderr);
 
     var loaded = try loadProjectOrFail(a, io, start_dir, stderr);
     defer loaded.deinit();
@@ -1099,20 +1274,20 @@ fn runTree(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []cons
     for (packages) |entry| {
         for (entry.dependencies) |dep_id| try referenced.put(dep_id, {});
     }
-    var key_by_id = try depKeyIdMap(a, &loaded.manifest, packages);
-    defer key_by_id.deinit();
+    var maps = try depKeyIdMap(a, &loaded.manifest, packages);
+    defer maps.deinit();
     try stdout.print("{s} {f} (profile: {s})\n", .{ loaded.manifest.package.name, loaded.manifest.package.version, outcome.profile });
     var printed_any = false;
     for (packages) |entry| {
         if (referenced.contains(entry.id)) continue;
         printed_any = true;
-        try printTreeNode(a, stdout, packages, entry, "", true, &.{}, key_by_id.get(entry.id));
+        try printTreeNode(a, stdout, packages, entry, "", true, &.{}, maps.by_id.get(entry.id));
     }
     // 全 package が相互参照している純粋な循環では root が空になり
     // ヘッダしか出ないため、全 package を列挙して辺を表示する。
     if (!printed_any) {
         for (packages) |entry| {
-            try printTreeNode(a, stdout, packages, entry, "", true, &.{}, key_by_id.get(entry.id));
+            try printTreeNode(a, stdout, packages, entry, "", true, &.{}, maps.by_id.get(entry.id));
         }
     }
     try stdout.flush();
@@ -1124,6 +1299,12 @@ fn findEntry(packages: []const lock_model.PackageEntry, id: []const u8) ?lock_mo
     }
     return null;
 }
+
+/// tree 表示の再帰深さ上限。`seen` は経路上の祖先 id なので
+/// `seen.len` がそのまま深さになる。resolver 生成の graph では
+/// 実際にこの深さへ達しないが、細工した lock でも stack を使い切ら
+/// ないよう上限を設ける。
+const max_tree_depth = 128;
 
 fn printTreeNode(a: Allocator, stdout: *std.Io.Writer, packages: []const lock_model.PackageEntry, entry: lock_model.PackageEntry, prefix: []const u8, last: bool, seen: []const []const u8, label: ?[]const u8) !void {
     const branch = if (last) "└── " else "├── ";
@@ -1139,6 +1320,10 @@ fn printTreeNode(a: Allocator, stdout: *std.Io.Writer, packages: []const lock_mo
     var next_seen: std.ArrayList([]const u8) = .empty;
     try next_seen.appendSlice(a, seen);
     try next_seen.append(a, entry.id);
+    if (next_seen.items.len >= max_tree_depth) {
+        try stdout.print("{s}    └── … (深さ上限)\n", .{prefix});
+        return;
+    }
     const child_prefix = try std.fmt.allocPrint(a, "{s}{s}", .{ prefix, if (last) "    " else "│   " });
     for (entry.dependencies, 0..) |dep_id, i| {
         const child = findEntry(packages, dep_id) orelse continue;
@@ -1166,6 +1351,12 @@ fn runWhy(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const
     defer flags.deinit(a);
     if (parsed.rest.len == 0) return failUsage(stderr, "why: パッケージ名が必要です\n", .{});
     if (parsed.rest.len > 1) return failUsage(stderr, "why: 不明な引数です: {s}\n", .{parsed.rest[1]});
+    try rejectInertFlags(&flags, "why", .{
+        .locked = true,
+        .profile = true,
+        .features = true,
+        .no_default_features = true,
+    }, stderr);
     const name = parsed.rest[0];
 
     var loaded = try loadProjectOrFail(a, io, start_dir, stderr);
@@ -1182,19 +1373,12 @@ fn runWhy(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const
         }
     }
     if (target == null) {
-        // 宣言 dep key（alias・宣言名）でも引けるようにする。
-        var key_by_id = try depKeyIdMap(a, &loaded.manifest, packages);
-        defer key_by_id.deinit();
-        var it = key_by_id.iterator();
-        while (it.next()) |item| {
-            if (!std.mem.eql(u8, item.value_ptr.*, name)) continue;
-            for (packages) |entry| {
-                if (std.mem.eql(u8, entry.id, item.key_ptr.*)) {
-                    target = entry;
-                    break;
-                }
-            }
-            break;
+        // 宣言 dep key や alias（プログラム側の参照名）でも引ける
+        // ようにする。
+        var maps = try depKeyIdMap(a, &loaded.manifest, packages);
+        defer maps.deinit();
+        if (maps.by_name.get(name)) |id| {
+            target = findEntry(packages, id);
         }
     }
     const entry = target orelse return fail(stderr, "why: {s} は解決済み依存にありません\n", .{name});
@@ -1232,25 +1416,24 @@ fn manifestDeclares(a: Allocator, manifest: *const manifest_mod.Manifest, packag
         const group = item.group;
         var path_it = group.path.iterator();
         while (path_it.next()) |dep| {
-            if (try declaredMatch(a, packages, "path", item.prefix, dep.key_ptr.*, name)) |text| return text;
+            if (try declaredMatch(a, packages, "path", item.prefix, dep.key_ptr.*, null, name)) |text| return text;
         }
         var git_it = group.git.iterator();
         while (git_it.next()) |dep| {
-            const resolved = dep.value_ptr.alias orelse dep.key_ptr.*;
-            if (std.mem.eql(u8, dep.key_ptr.*, name)) return try std.fmt.allocPrint(a, "{s}.git", .{item.prefix});
-            if (std.mem.eql(u8, resolved, name)) return try std.fmt.allocPrint(a, "{s}.git（dep key: {s}）", .{ item.prefix, dep.key_ptr.* });
+            if (try declaredMatch(a, packages, "git", item.prefix, dep.key_ptr.*, dep.value_ptr.alias, name)) |text| return text;
         }
         var http_it = group.http.iterator();
         while (http_it.next()) |dep| {
-            const resolved = dep.value_ptr.alias orelse dep.key_ptr.*;
-            if (std.mem.eql(u8, dep.key_ptr.*, name)) return try std.fmt.allocPrint(a, "{s}.http", .{item.prefix});
-            if (std.mem.eql(u8, resolved, name)) return try std.fmt.allocPrint(a, "{s}.http（dep key: {s}）", .{ item.prefix, dep.key_ptr.* });
+            if (try declaredMatch(a, packages, "http", item.prefix, dep.key_ptr.*, dep.value_ptr.alias, name)) |text| return text;
         }
         var pkg_it = group.pkg.iterator();
         while (pkg_it.next()) |dep| {
-            const resolved = dep.value_ptr.alias orelse dep.key_ptr.*;
+            // pkg の dep key は宣言 package 名そのもの。alias は
+            // プログラム側の参照名なので別名として照合する。
             if (std.mem.eql(u8, dep.key_ptr.*, name)) return try std.fmt.allocPrint(a, "{s}.pkg", .{item.prefix});
-            if (std.mem.eql(u8, resolved, name)) return try std.fmt.allocPrint(a, "{s}.pkg（dep key: {s}）", .{ item.prefix, dep.key_ptr.* });
+            if (dep.value_ptr.alias) |alias| {
+                if (std.mem.eql(u8, alias, name)) return try std.fmt.allocPrint(a, "{s}.pkg（alias: {s} → {s}）", .{ item.prefix, alias, dep.key_ptr.* });
+            }
         }
         var npm_it = group.npm.iterator();
         while (npm_it.next()) |dep| {
@@ -1260,14 +1443,17 @@ fn manifestDeclares(a: Allocator, manifest: *const manifest_mod.Manifest, packag
     return null;
 }
 
-/// path 依存の dep key が `name` と一致するか、またはその解決済み
-/// package 名が `name` と一致するかを調べる。
-fn declaredMatch(a: Allocator, packages: []const lock_model.PackageEntry, kind: []const u8, prefix: []const u8, dep_key: []const u8, name: []const u8) !?[]const u8 {
-    if (std.mem.eql(u8, dep_key, name)) return try std.fmt.allocPrint(a, "{s}.path", .{prefix});
+/// source 系 dep（path/git/http）の dep key・alias・解決済み package 名が
+/// `name` と一致するか調べ、該当すれば節名テキストを返す。
+fn declaredMatch(a: Allocator, packages: []const lock_model.PackageEntry, kind: []const u8, prefix: []const u8, dep_key: []const u8, alias: ?[]const u8, name: []const u8) !?[]const u8 {
+    if (std.mem.eql(u8, dep_key, name)) return try std.fmt.allocPrint(a, "{s}.{s}", .{ prefix, kind });
+    if (alias) |al| {
+        if (std.mem.eql(u8, al, name)) return try std.fmt.allocPrint(a, "{s}.{s}（alias: {s} → {s}）", .{ prefix, kind, al, dep_key });
+    }
     const id = try project.publicIdForDepKey(a, kind, dep_key);
     const entry = findEntry(packages, id) orelse return null;
     if (!std.mem.eql(u8, entry.name, name)) return null;
-    return try std.fmt.allocPrint(a, "{s}.path（dep key: {s}）", .{ prefix, dep_key });
+    return try std.fmt.allocPrint(a, "{s}.{s}（dep key: {s}）", .{ prefix, kind, dep_key });
 }
 
 // ---------------------------------------------------------------------------
@@ -1280,6 +1466,15 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
     var flags = parsed.flags;
     defer flags.deinit(a);
     if (parsed.rest.len > 0) return failUsage(stderr, "check: 不明な引数です: {s}\n", .{parsed.rest[0]});
+    // check は副作用なしの検査コマンド。sync・取得系フラグは意味を持た
+    // ないため拒否する。
+    try rejectInertFlags(&flags, "check", .{
+        .locked = true,
+        .profile = true,
+        .features = true,
+        .no_default_features = true,
+        .json = true,
+    }, stderr);
 
     var diagnostics = diag.List.init(a);
     defer diagnostics.deinit();
@@ -1295,6 +1490,13 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
     }
 
     var options = flags.toOptions(environ_map);
+    // --locked は lock の無変更検証を強制する（check 自体は書き込まない
+    // ため verifyLocked と矛盾しない）。
+    if (flags.locked) {
+        project.verifyLocked(a, io, &project_var, &options, &diagnostics) catch |err| {
+            return failProject(stderr, "check", err, &diagnostics, project_var.manifest_path);
+        };
+    }
     const inspect = project.inspectForCheck(a, io, &project_var, &options, &diagnostics) catch |err| {
         return failProject(stderr, "check", err, &diagnostics, project_var.manifest_path);
     };
@@ -1423,7 +1625,7 @@ pub fn prepareForExecution(
     }
     if (flags.no_sync) {
         // 自動準備禁止: 既存環境だけを静的検査する。
-        try ensureEnvironmentUsable(a, io, &project_var, &diagnostics, verb, stderr);
+        try ensureEnvironmentUsable(a, io, &project_var, options.profile orelse "default", &diagnostics, verb, stderr);
         return;
     }
     const outcome = project.ensureEnvironment(a, io, &project_var, &options, &diagnostics) catch |err| {
@@ -1436,14 +1638,18 @@ pub fn prepareForExecution(
 }
 
 /// `--no-sync` 時の静的環境検査。lock 存在・鮮度と `.nako` の整合を確認
-/// し、不足があれば必要な操作を診断して失敗する。
-fn ensureEnvironmentUsable(a: Allocator, io: std.Io, loaded: *project.Project, diagnostics: *diag.List, verb: []const u8, stderr: *std.Io.Writer) !void {
+/// し、不足があれば必要な操作を診断して失敗する。`expected_profile` は
+/// 選択 profile（未指定時は default）。`ensureEnvironment` と同じ
+/// profile・runtime 条件で環境を照合する。
+fn ensureEnvironmentUsable(a: Allocator, io: std.Io, loaded: *project.Project, expected_profile: []const u8, diagnostics: *diag.List, verb: []const u8, stderr: *std.Io.Writer) !void {
     var digest: [32]u8 = undefined;
     const has_lock = project.lockDigest(a, io, loaded.root, &digest) catch false;
     const env = project.readEnvironmentInfo(a, io, loaded.root) catch null;
     const env_ok = has_lock and env != null and
         project.environmentMatchesLock(env.?, &digest) and
         env.?.schema_version == 1 and
+        (env.?.profile == null or std.mem.eql(u8, env.?.profile.?, expected_profile)) and
+        (env.?.runtime == null or std.mem.eql(u8, env.?.runtime.?, "lnako")) and
         // 参照世代 dir が消えた環境は不一致とする。
         (env.?.generation != null and project.generationExists(io, loaded.root, env.?.generation.?));
     if (!env_ok) {

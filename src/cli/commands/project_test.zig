@@ -624,3 +624,155 @@ test "cache dir はキャッシュルートを出力する" {
     try testing.expect(out.len > 0);
     try testing.expect(std.mem.indexOf(u8, out, "\n") != null);
 }
+
+test "各コマンドは意味を持たないフラグを用法エラーで拒否する" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const app_root = try newAppFixture(a, &temporary);
+
+    const Case = struct { verb: []const u8, args: []const []const u8 };
+    const cases = [_]Case{
+        // lock は環境を構築しないため --no-sync は不活性。
+        .{ .verb = "lock", .args = &.{"--no-sync"} },
+        // tree/why は読み取り専用。json/no-sync/取得系フラグは不活性。
+        .{ .verb = "tree", .args = &.{"--json"} },
+        .{ .verb = "tree", .args = &.{"--no-sync"} },
+        .{ .verb = "tree", .args = &.{"--offline"} },
+        .{ .verb = "why", .args = &.{ "lib", "--json" } },
+        .{ .verb = "why", .args = &.{ "lib", "--no-sync" } },
+        // update に json/no-sync は無い。
+        .{ .verb = "update", .args = &.{"--json"} },
+        .{ .verb = "update", .args = &.{"--no-sync"} },
+        // check は副作用なし。環境構築・取得系フラグは不活性。
+        .{ .verb = "check", .args = &.{"--no-sync"} },
+        .{ .verb = "check", .args = &.{"--offline"} },
+        .{ .verb = "check", .args = &.{ "--registry", "https://example.com" } },
+        // add/remove も同様。
+        .{ .verb = "add", .args = &.{ "lib", "--path", "lib", "--json" } },
+        .{ .verb = "add", .args = &.{ "lib", "--path", "lib", "--no-sync" } },
+        .{ .verb = "remove", .args = &.{ "lib", "--json" } },
+        .{ .verb = "remove", .args = &.{ "lib", "--no-sync" } },
+    };
+    for (cases) |case| {
+        var cli = Cli.init(a);
+        try expectFail(error.Usage, a, &cli, case.verb, case.args, app_root);
+    }
+}
+
+test "check --locked は陳腐な lock を拒否し --locked 無しでは検査結果を返す" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const app_root = try newAppFixture(a, &temporary);
+    try appManifest(a, app_root,
+        \\[dependencies.path]
+        \\lib = { path = "lib" }
+        \\
+    );
+
+    var lock_cli = Cli.init(a);
+    try lock_cli.run(a, "lock", &.{}, app_root);
+
+    // manifest を変更して lock を陳腐化させる。
+    try appManifest(a, app_root,
+        \\[dependencies.path]
+        \\lib = { path = "lib", mutable = true }
+        \\
+    );
+
+    // --locked 無しの check は失敗せず stale と必要操作を報告する。
+    var plain = Cli.init(a);
+    try plain.run(a, "check", &.{"--json"}, app_root);
+    try testing.expect(std.mem.indexOf(u8, plain.out.written(), "stale") != null);
+
+    // --locked 付きは verifyLocked が陳腐を拒否する。
+    var locked = Cli.init(a);
+    try expectFail(error.Failed, a, &locked, "check", &.{"--locked"}, app_root);
+}
+
+test "add は競合する source フラグと kind に合わないオプションを拒否する" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const app_root = try newAppFixture(a, &temporary);
+
+    const cases = [_][]const []const u8{
+        // source kind フラグは排他。
+        &.{ "lib", "--path", "lib", "--git", "https://example.com/x.git" },
+        &.{ "lib", "--git", "https://example.com/x.git", "--http", "https://example.com/x.tgz" },
+        &.{ "lib", "--path", "lib", "--npm" },
+        &.{ "lib", "--path", "lib", "--path", "other" },
+        // kind 固有オプションの混在は黙って捨てず拒否する。
+        &.{ "lib", "--commit", "abcdef0" },
+        &.{ "lib", "--dep-path", "sub" },
+        &.{ "lib", "--hash", "sha256:00" },
+        &.{ "lib", "--mutable" },
+        &.{ "lib", "--path", "lib", "--commit", "abcdef0" },
+        &.{ "lib", "--path", "lib", "--dep-path", "sub" },
+        &.{ "lib", "--git", "https://example.com/x.git", "--commit", "abcdef0", "--hash", "sha256:00" },
+    };
+    for (cases) |args| {
+        var cli = Cli.init(a);
+        try expectFail(error.Usage, a, &cli, "add", args, app_root);
+        // 用法エラーは manifest を変更しない。
+        const manifest = try readFile(a, app_root, "nako.toml");
+        try testing.expect(std.mem.indexOf(u8, manifest, "[dependencies") == null);
+    }
+}
+
+test "remove はコメント内の開き brace で文を延長せず後続宣言を保持する" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const app_root = try newAppFixture(a, &temporary);
+    // 行末コメント内の `{` を文の開き brace と誤計上すると、除去範囲が
+    // 次行の `other` 宣言まで延びて消し込む（または EOF まで延びる）。
+    try appManifest(a, app_root,
+        \\[dependencies.path]
+        \\lib = { path = "lib" } # { はコメント内の brace
+        \\other = { path = "lib" }
+        \\
+    );
+
+    var cli = Cli.init(a);
+    try cli.run(a, "remove", &.{"lib"}, app_root);
+    const manifest = try readFile(a, app_root, "nako.toml");
+    try testing.expect(std.mem.indexOf(u8, manifest, "lib = {") == null);
+    // 無関係な `other` 宣言は残り、manifest は再 parse 可能（remove が
+    // candidate を再検証して成功した証左）。
+    try testing.expect(std.mem.indexOf(u8, manifest, "other = { path = \"lib\" }") != null);
+}
+
+test "remove は引用符3連を含む行で文終端を誤らない" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const app_root = try newAppFixture(a, &temporary);
+    // 単一引用が3連すると multiline literal の開始になる。`'` 単独の
+    // on/off 追跡では3個目以降が文字列内扱いになり、文が閉じず末尾まで
+    // 除去範囲が延びる。dep 値として合法な形にするため git 依存の
+    // alias 文字列で検証する。
+    try appManifest(a, app_root,
+        \\[dependencies.path]
+        \\lib = { path = "lib" } # ''' は literal ではなくコメント
+        \\other = { path = "lib" }
+        \\
+    );
+
+    var cli = Cli.init(a);
+    try cli.run(a, "remove", &.{"lib"}, app_root);
+    const manifest = try readFile(a, app_root, "nako.toml");
+    try testing.expect(std.mem.indexOf(u8, manifest, "lib = {") == null);
+    try testing.expect(std.mem.indexOf(u8, manifest, "other = { path = \"lib\" }") != null);
+}

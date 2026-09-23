@@ -196,21 +196,23 @@ pub fn usage(writer: *std.Io.Writer) !void {
         \\  lnako package build [<dir>] [-o <output.npkg>]
         \\  lnako package verify <file.npkg> [--runtime lnako|cnako] [--os <os>] [--cpu <cpu>] [--abi <abi>] [--os-version <v>] [--libc <libc>] [--optimize <level>] [--feature <name>] [--no-default-features] [--nako-version <v>] [--cnako-version <v>] [--lnako-version <v>] [--compat-js]
         \\  lnako package cache dir|clean [--package-cache-dir <path>]
-        \\  lnako sync [<dir>] [--profile <name>] [--runtime lnako|cnako] [--locked] [--offline] [--json] [--package-cache-dir <path>] [--package-cache-clean] [--allow-plaintext-http]
+        \\  lnako sync [<dir>] [--profile <name>] [--runtime lnako|cnako] [--locked] [--offline] [--features <a,b>] [--no-default-features] [--registry <url>] [--json] [--package-cache-dir <path>] [--package-cache-clean] [--allow-plaintext-http]
         \\  lnako init [<dir>] [--lib] [--name <name>]
-        \\  lnako add <name[@range]> [--dev] [--path <dir>|--git <url>|--http <url>|--npm] [--commit <id>] [--dep-path <path>] [--hash <sha256>] [--mutable] [--locked] [--offline]
-        \\  lnako remove <name> [--dev] [--locked] [--offline]
+        \\  lnako add <name[@range]> [--dev] [--path <dir>|--git <url>|--http <url>|--npm] [--commit <id>] [--dep-path <path>] [--hash <sha256>] [--mutable] [--offline] [--profile <name>] [--features <a,b>] [--registry <url>]
+        \\  lnako remove <name> [--dev] [--offline] [--profile <name>] [--features <a,b>] [--registry <url>]
         \\  lnako lock [--locked] [--offline] [--profile <name>] [--features <a,b>] [--json]
         \\  lnako update [<name>...] [--offline] [--registry <url>]
-        \\  lnako tree [--profile <name>] [--locked] [--offline]
-        \\  lnako why <name> [--profile <name>] [--locked] [--offline]
-        \\  lnako check [--json]                    プロジェクトの依存・環境状態を検査（副作用なし）
+        \\  lnako tree [--profile <name>] [--features <a,b>] [--locked]
+        \\  lnako why <name> [--profile <name>] [--features <a,b>] [--locked]
+        \\  lnako check [--locked] [--profile <name>] [--json]    プロジェクトの依存・環境状態を検査（副作用なし）
         \\  lnako cache dir|clean [--package-cache-dir <path>]
         \\
-        \\依存準備オプション（run/test/build/lock/tree/why/add/remove で有効）:
-        \\  --locked         nako.lock を変更せず、不足・陳腐なら失敗
+        \\依存準備オプション（run/test/build で有効。lock/tree/why/check/add/remove/update でも対応するものを使用可）:
+        \\  --locked         nako.lock を変更せず、不足・陳腐なら失敗（add/remove/update では使用不可）
         \\  --offline        ネットワーク取得を禁止
         \\  --no-sync        run/test/build での .nako 自動準備を禁止（既存環境のみ使用）
+        \\  --profile <name> 使用する profile
+        \\  --features <a,b> 有効化する feature（カンマ区切り）
         \\  --registry <url> pkg 依存解決用 registry（既定: LNAKO_REGISTRY）
         \\
         \\共通オプション:
