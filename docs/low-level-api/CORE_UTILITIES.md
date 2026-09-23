@@ -12,7 +12,7 @@ Core Utilities系コマンドが、どの低レイヤー命令と capability を
 | `tee` | raw_stdio, stream_file_io | ファイル開く, ファイルバイト読む, ファイルバイト書く, ファイル同期, 標準出力バイト書く, ファイル閉じる |
 | `dd` | stream_file_io | ファイル開く, ファイルバイト読む, ファイルバイト書く, ファイル閉じる, ファイル位置変更, ファイル位置取得 |
 | `md5sum` / `sha*sum` | incremental_hash, stream_file_io, raw_stdio | ハッシュ開始, ハッシュ追加, ハッシュ完了, ハッシュ破棄, ファイル開く, ファイルバイト読む, ファイル閉じる, 標準入力バイト読む |
-| `ls` | dir_iterator, lstat | ディレクトリ開く, ディレクトリ次取得, ディレクトリ閉じる, シンボリックリンク情報取得 |
+| `ls` | dir_iterator, lstat, display_width | ディレクトリ開く, ディレクトリ次取得, ディレクトリ閉じる, シンボリックリンク情報取得, 文字表示幅取得 |
 | `du` | dir_iterator, lstat, stat | ディレクトリ開く, ディレクトリ次取得, ディレクトリ閉じる, シンボリックリンク情報取得, ファイル詳細情報取得 |
 | `rm -r` | dir_iterator, unlink, rmdir | ディレクトリ開く, ディレクトリ次取得, ディレクトリ閉じる, ファイルリンク削除, 空フォルダ削除 |
 | `cp -r` | stream_file_io, stat, dir_iterator, realpath, readlink | ファイル開く, ファイルバイト読む, ファイルバイト書く, ファイル閉じる, ファイル詳細情報取得, ディレクトリ開く, ディレクトリ次取得, ディレクトリ閉じる, 実体パス取得, シンボリックリンク先取得 |
@@ -32,6 +32,8 @@ Core Utilities系コマンドが、どの低レイヤー命令と capability を
 | `kill` | signal | シグナル送信, プロセスID取得 |
 | `tty` | tty_isatty | 端末判定, 端末サイズ取得 |
 | `stty` | tty_isatty, termios | 端末サイズ取得 |
+| `sort` | locale_collate | ロケール文字列比較 |
+| `fmt` | display_width | 文字表示幅取得 |
 | `id` | uid_gid | UID取得, GID取得, EUID取得, EGID取得, 所属グループID一覧取得 |
 | `groups` | uid_gid | 所属グループID一覧取得 |
 | `whoami` | uid_gid | UID取得, 所属グループID一覧取得 |

@@ -1,6 +1,6 @@
 # G0 / Foundation API Freeze
 
-低レイヤー命令（Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github.com/soramikan/lnako/issues/36)）が共有する型・エラー・capability・命名・実行経路契約を固定する。機械可読な正本は [`src/runtime/low_level_foundation.zig`](../../src/runtime/low_level_foundation.zig) である。本書は人間向けの契約説明であり、Zig正本と矛盾する場合はZigを優先して修正する。
+低レイヤー命令（Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#38](https://github.com/soramikan/lnako/issues/38)）が共有する型・エラー・capability・命名・実行経路契約を固定する。機械可読な正本は [`src/runtime/low_level_foundation.zig`](../../src/runtime/low_level_foundation.zig) である。本書は人間向けの契約説明であり、Zig正本と矛盾する場合はZigを優先して修正する。
 
 この文書は命令カタログ全体・OS別matrix・Core Utilities逆引きを含まない。それらはIssue [#37](https://github.com/soramikan/lnako/issues/37)の後続作業である。既存の標準cnako 527命令の互換契約は変更しない。命令ごとの助詞・引数・戻り値・エラー契約とOS別/実行経路別matrixは [`catalog.json`](catalog.json) を正本とし、本書の型契約はその前提である。
 
@@ -15,7 +15,7 @@
 | portable error code | 構造化エラーの形と初期code集合 | 527命令の文字列例外 |
 | capability | 識別子・分類・照会・失敗形 | 全OSの真偽matrix |
 | unsupported | 登録は共通、実行時に機械判定 | コンパイラのIR未対応検出 |
-| 命令命名規則 | 衝突禁止・plugin・助詞・語彙 | #27〜#36の命令名一覧 |
+| 命令命名規則 | 衝突禁止・plugin・助詞・語彙 | #27〜#38の命令名一覧 |
 | 共通契約 | Interpreter / AOT / cnakoの一致条件 | 各命令のoracle fixture |
 
 対象ランタイムは lnako Interpreter、lnako AOT（O0〜O3）、cnako（Node）である。正式環境は macOS arm64、Linux x86_64 GNU、Windows x86_64 MSVC である。

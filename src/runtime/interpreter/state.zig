@@ -769,6 +769,10 @@ pub const Interpreter = struct {
         return entry_name[0 .. entry_name.len - suffix.len];
     }
 
+    pub fn executionProgram(self: *const Interpreter) *const ir.Program {
+        return self.active_program_owner orelse &self.program;
+    }
+
     pub fn currentProgramOwner(self: *const Interpreter) *const ir.Program {
         if (self.active_program_owner) |owner| return owner;
         if (self.active_frame) |frame| return frame.owner_program;

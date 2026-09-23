@@ -431,8 +431,8 @@ pub fn initializeSystem(self: *Interpreter) !void {
     if (self.host.node_context) |node_context| try plugin_node.install(self.runtime, node_context, .{ .context = self, .setFn = installSystemConstant });
     if (self.host.http_server_context != null) try plugin_http_server.install(self.runtime, .{ .context = self, .setFn = installSystemConstant });
     try plugin_caniuse.install(self.runtime, &self.caniuse_state, .{ .context = self, .setFn = installSystemConstant });
-    try plugin_native.install(self.runtime, &self.native_plugin_state, self.program.native_plugin_paths, self.nativePluginEffects());
-    try quickjs.installModules(self.runtime, &self.quickjs_state, self.program.javascript_modules, self.quickJsEffects());
+    try plugin_native.install(self.runtime, &self.native_plugin_state, self.executionProgram().native_plugin_paths, self.nativePluginEffects());
+    try quickjs.installModules(self.runtime, &self.quickjs_state, self.executionProgram().javascript_modules, self.quickJsEffects());
     try self.setGlobal("名前空間", try self.runtime.stringUtf8(self.primaryModuleName()));
     self.system_initialized = true;
 }

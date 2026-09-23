@@ -793,6 +793,35 @@ test "例外監視と動的ななでしこ実行を処理する" {
     try std.testing.expectEqualStrings("失敗\n3\n", host.written());
 }
 
+test "動的実行の失敗後も登録済みIRの所有権を保持する" {
+    const FailingHost = struct {
+        fn write(_: *anyopaque, _: []const u8) anyerror!void {
+            return error.TestHostFailure;
+        }
+    };
+
+    var fixture = try compileForTest(std.testing.allocator, "0を表示\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host_context: u8 = 0;
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, .{
+        .context = &host_context,
+        .writeFn = FailingHost.write,
+    });
+    defer interpreter.deinit();
+    try interpreter.initializeSystem();
+
+    const dynamic_source = try runtime.stringUtf8("1を表示");
+    try std.testing.expectError(error.TestHostFailure, interpreter.executeDynamicValue(dynamic_source));
+    try std.testing.expectEqual(@as(usize, 1), interpreter.dynamic_programs.items.len);
+    try std.testing.expect(interpreter.active_program_owner == null);
+    try std.testing.expect(interpreter.executionProgram() == &interpreter.program);
+}
+
 test "global read traceはbuiltin dispatch traceと分離される" {
     const source = "PIを表示\n永遠を表示\n";
     var fixture = try compileForTest(std.testing.allocator, source);
@@ -1246,6 +1275,32 @@ test "変数省略の範囲繰り返しは専用のそれへ束縛する" {
     try std.testing.expectEqualStrings("3\n1\n2\n2\n", host.written());
 }
 
+test "関数スコープのそれ復元は既存グローバル更新だけで完了する" {
+    var fixture = try compileForTest(std.testing.allocator, "1を表示\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+
+    try interpreter.setGlobal("それ", .{ .number = 7 });
+    const saved_allocator = interpreter.allocator;
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    interpreter.allocator = failing.allocator();
+    defer interpreter.allocator = saved_allocator;
+
+    // executeFunctionの入口で「それ」をundefinedにしてもMapの既存エントリは保たれ、
+    // deferの復元は新しい確保なしに値を書き換えられる。
+    try interpreter.setGlobal("それ", .undefined);
+    try interpreter.setGlobal("それ", .{ .number = 7 });
+    try std.testing.expectEqual(@as(f64, 7), interpreter.getGlobal("それ").?.number);
+}
+
 test "関数からの例外伝播で呼び出し側のそれを復元する" {
     const source = "それは7\n●Fとは\nそれは1\n「失敗」のエラー発生\nここまで\nエラー監視\nF()\nエラーならば\nそれを表示\nここまで\n";
     var fixture = try compileForTest(std.testing.allocator, source);
@@ -1319,6 +1374,133 @@ test "Promiseの成功・失敗・処理・終了コールバックを順に実�
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("9\nfalse\n5\n完了\n", host.written());
+}
+
+test "束の割り当て失敗はstateを放棄しハンドラ不変条件を保つ" {
+    var fixture = try compileForTest(std.testing.allocator, "1を表示\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    // run()相当のroot providerを登録し、追跡中stateの中身をGCから守る。
+    try runtime.registerRootProvider(.{ .context = &interpreter, .traceFn = istate.traceRoots });
+    defer runtime.unregisterRootProvider(&interpreter);
+
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var settled = try runtime.createPromise();
+    try roots.protect(&settled);
+    try runtime.resolvePromise(settled.promise, .{ .number = 3 });
+    var pending = try runtime.createPromise();
+    try roots.protect(&pending);
+
+    const saved_allocator = interpreter.allocator;
+    var injected_failures: usize = 0;
+    var fail_index: usize = 0;
+    while (fail_index < 64) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        interpreter.allocator = failing.allocator();
+        const bundled = interpreter.bundlePromises(&.{ settled, pending, settled });
+        interpreter.allocator = saved_allocator;
+        if (bundled) |_| {} else |_| injected_failures += 1;
+        // map上のハンドラは必ず追跡中のstateを指す（放棄stateも追跡は外れない）。
+        var iterator = interpreter.promise_all_handlers.iterator();
+        while (iterator.next()) |entry| {
+            var tracked = false;
+            for (interpreter.promise_all_states.items) |state| {
+                if (state == entry.value_ptr.state) tracked = true;
+            }
+            try std.testing.expect(tracked);
+        }
+        // 放棄・完了どちら向きのハンドラ発火もpanicしない。
+        try interpreter.drainPromiseTasks();
+    }
+    try std.testing.expect(injected_failures > 0);
+    // pending側に残ったハンドラ（放棄分を含む）を一括発火させる。
+    try runtime.resolvePromise(pending.promise, .{ .number = 1 });
+    try interpreter.drainPromiseTasks();
+}
+
+test "destroyPromiseAllStateは追跡外のstateを無害に無視する" {
+    var fixture = try compileForTest(std.testing.allocator, "1を表示\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    try runtime.registerRootProvider(.{ .context = &interpreter, .traceFn = istate.traceRoots });
+    defer runtime.unregisterRootProvider(&interpreter);
+
+    var orphan: shared.PromiseAllState = undefined;
+    interpreter.destroyPromiseAllState(&orphan);
+    try std.testing.expectEqual(@as(usize, 0), interpreter.promise_all_states.items.len);
+}
+
+test "放棄・完了済みstateへの束ハンドラ発火は副作用を持たない" {
+    var fixture = try compileForTest(std.testing.allocator, "1を表示\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    try runtime.registerRootProvider(.{ .context = &interpreter, .traceFn = istate.traceRoots });
+    defer runtime.unregisterRootProvider(&interpreter);
+
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var promise = try runtime.createPromise();
+    try roots.protect(&promise);
+    var results = try runtime.createArray();
+    try roots.protect(&results);
+    var fulfilled_name = try runtime.stringUtf8("Promise.all fulfilled");
+    try roots.protect(&fulfilled_name);
+    var fulfilled = try runtime.createNativeFunction(fulfilled_name.string, 1, shared.promiseAllSentinel, &.{});
+    try roots.protect(&fulfilled);
+    var rejected_name = try runtime.stringUtf8("Promise.all rejected");
+    try roots.protect(&rejected_name);
+    var rejected = try runtime.createNativeFunction(rejected_name.string, 1, shared.promiseAllSentinel, &.{});
+    try roots.protect(&rejected);
+
+    const state = try std.testing.allocator.create(shared.PromiseAllState);
+    state.* = .{ .promise = promise.promise, .results = results.array, .remaining = 1, .abandoned = true };
+    try interpreter.promise_all_states.append(std.testing.allocator, state);
+    try interpreter.promise_all_handlers.put(std.testing.allocator, fulfilled.function, .{ .state = state, .index = 0, .rejected = false, .peer = rejected.function });
+    try interpreter.promise_all_handlers.put(std.testing.allocator, rejected.function, .{ .state = state, .index = 0, .rejected = true, .peer = fulfilled.function });
+
+    const handler = interpreter.promise_all_handlers.get(fulfilled.function).?;
+    const result = try interpreter.handlePromiseAll(fulfilled.function, handler, &.{.{ .number = 9 }});
+    try std.testing.expect(result == .undefined);
+    try std.testing.expectEqual(@as(usize, 1), state.remaining);
+    try std.testing.expectEqual(@as(usize, 0), results.array.items.items.len);
+    try std.testing.expect(promise.promise.state == .pending);
+    try std.testing.expect(interpreter.promise_all_handlers.get(fulfilled.function) == null);
+    try std.testing.expect(interpreter.promise_all_handlers.get(rejected.function) == null);
+
+    state.abandoned = false;
+    state.remaining = 0;
+    try interpreter.promise_all_handlers.put(std.testing.allocator, fulfilled.function, .{ .state = state, .index = 0, .rejected = false, .peer = rejected.function });
+    const done_handler = interpreter.promise_all_handlers.get(fulfilled.function).?;
+    const done_result = try interpreter.handlePromiseAll(fulfilled.function, done_handler, &.{.{ .number = 9 }});
+    try std.testing.expect(done_result == .undefined);
+    try std.testing.expectEqual(@as(usize, 0), results.array.items.items.len);
+    try std.testing.expect(promise.promise.state == .pending);
+    try std.testing.expectEqual(@as(usize, 1), interpreter.promise_all_states.items.len);
 }
 
 test "GCストレス中もタイマーからPromiseを解決する" {

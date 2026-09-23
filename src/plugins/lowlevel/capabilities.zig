@@ -60,6 +60,9 @@ pub fn capabilitySupported(arguments: []const Value, context: Context) bool {
         .signal => context.hasSignal(),
         .tty_isatty => context.hasTty(),
         .priority => context.hasProcessPriority(),
+        .locale_collate => context.hasLocaleCollate(),
+        // 表示幅はホスト非依存の純粋計算のためcallbackを要求しない。
+        .display_width => true,
         else => false,
     };
 }

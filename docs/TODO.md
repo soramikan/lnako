@@ -5,7 +5,7 @@
 
 `verified: 527` は、追跡されたfixture・dispatch・公式比較・3 OS attestationに基づく命令entryの実行証拠です。全ての入力値、Node/ECMAScript APIの全境界、実ネットワーク・外部アプリ・任意の外部toolまで完全同値であることを意味しません。未検証境界は本書と [互換性の概要](COMPATIBILITY.md) に明示します。
 
-## リリース済みの状態（v0.1.0 / v0.1.1 / v0.2.0 / v0.2.1）
+## リリース済みの状態（v0.1.0 / v0.1.1 / v0.2.0 / v0.2.1 / v0.2.2）
 
 - **v0.1.0（初回正式リリース）**：
   - 標準cnako 527 entry（native 523、compat-js 4、blocked 0）の実装と、macOS arm64・Linux x86_64・Windows x86_64の3 OSにおけるCI 54/54全job成功・attestation検証を達成。
@@ -24,6 +24,28 @@
   - 先頭のUTF-8 BOM読み飛ばしによるBOM付きソースコード実行への対応（[#94](https://github.com/soramikan/lnako/pull/94)）。
   - インデント構文における『エラーならば』が『違えば』同様にエラー監視スコープを閉じないよう構文解析を修正（[#81](https://github.com/soramikan/lnako/issues/81), [#95](https://github.com/soramikan/lnako/pull/95)）。
   - CI/CDパイプライン改善（変更分類Stage 2、Windows producer最適化、クリティカルパス平準化、GitHub Attestations移行）。
+- **v0.2.2（言語互換性・パッケージシステム・低レイヤーAPI拡充）**：
+  - **なでしこ3言語構文・セマンティクス改善**：
+    - 「それ」の関数ローカルスコープ分離（[#116](https://github.com/soramikan/lnako/issues/116), [#150](https://github.com/soramikan/lnako/pull/150)）、助詞呼出し時の省略引数補完（[#105](https://github.com/soramikan/lnako/issues/105), [#106](https://github.com/soramikan/lnako/pull/106)）、連文伝播と戻り値無し連鎖（[#114](https://github.com/soramikan/lnako/issues/114), [#162](https://github.com/soramikan/lnako/pull/162)）、反復・範囲繰り返しでの束縛とシステム変数復元（[#112](https://github.com/soramikan/lnako/issues/112), [#149](https://github.com/soramikan/lnako/pull/149), [#113](https://github.com/soramikan/lnako/issues/113), [#154](https://github.com/soramikan/lnako/pull/154)）、復元失敗の検出（[#180](https://github.com/soramikan/lnako/pull/180)）。
+    - 制御構文の引数助詞照合（[#118](https://github.com/soramikan/lnako/issues/118), [#158](https://github.com/soramikan/lnako/pull/158)）、単文「もし〜ならば」と「違えば」の連結（[#138](https://github.com/soramikan/lnako/pull/138), [#137](https://github.com/soramikan/lnako/pull/137)）、条件式助詞呼出し（[#132](https://github.com/soramikan/lnako/pull/132)）、初期値省略宣言・公開属性（[#122](https://github.com/soramikan/lnako/issues/122), [#135](https://github.com/soramikan/lnako/pull/135)）、区切り式内呼出し（[#143](https://github.com/soramikan/lnako/pull/143)）、「。。。」ブロック終端（[#121](https://github.com/soramikan/lnako/issues/121), [#133](https://github.com/soramikan/lnako/pull/133)）。
+    - 「〜こと」語尾（[#116](https://github.com/soramikan/lnako/issues/116), [#150](https://github.com/soramikan/lnako/pull/150)）、「{関数}名」参照（[#124](https://github.com/soramikan/lnako/issues/124), [#145](https://github.com/soramikan/lnako/pull/145)）、暗黙配列『引数』（[#123](https://github.com/soramikan/lnako/issues/123), [#136](https://github.com/soramikan/lnako/pull/136)）、呼出し直後『戻る』（[#151](https://github.com/soramikan/lnako/pull/151)）、値・連鎖位置組み込み命令の暗黙呼出し（[#111](https://github.com/soramikan/lnako/issues/111), [#153](https://github.com/soramikan/lnako/pull/153)）、範囲オブジェクト反復（[#117](https://github.com/soramikan/lnako/issues/117), [#157](https://github.com/soramikan/lnako/pull/157)）、「N回」非数値比較（[#165](https://github.com/soramikan/lnako/issues/165), [#174](https://github.com/soramikan/lnako/pull/174)）、「定める」助詞受理（[#115](https://github.com/soramikan/lnako/pull/115)）、助詞付きcall_value直後『[』（[#163](https://github.com/soramikan/lnako/issues/163), [#171](https://github.com/soramikan/lnako/pull/171)）、多段『(』連鎖（[#128](https://github.com/soramikan/lnako/issues/128), [#160](https://github.com/soramikan/lnako/pull/160)）。
+    - 構文診断強化：ループ外『抜ける』『続ける』コンパイル時診断（[#166](https://github.com/soramikan/lnako/issues/166), [#173](https://github.com/soramikan/lnako/pull/173)）、助詞不一致引数の『未解決の単語』診断（[#108](https://github.com/soramikan/lnako/issues/108), [#161](https://github.com/soramikan/lnako/pull/161)）、裸式文エラー（[#125](https://github.com/soramikan/lnako/issues/125), [#156](https://github.com/soramikan/lnako/pull/156)）、命令名代入拒否（[#126](https://github.com/soramikan/lnako/issues/126), [#141](https://github.com/soramikan/lnako/pull/141)）、「!厳しくチェック」警告化（[#127](https://github.com/soramikan/lnako/issues/127), [#144](https://github.com/soramikan/lnako/pull/144)）、合成AST深さ超過拒否（[#109](https://github.com/soramikan/lnako/issues/109), [#159](https://github.com/soramikan/lnako/pull/159)）。
+    - 実行エンジン安定化：監視領域脱出時のtry_end emitによる例外ハンドラ残留解消（[#164](https://github.com/soramikan/lnako/issues/164), [#172](https://github.com/soramikan/lnako/pull/172)）、動的IR所有権管理（[#177](https://github.com/soramikan/lnako/pull/177)）、「束」エラー経路のPromise併合state解放済み参照防止（[#179](https://github.com/soramikan/lnako/pull/179)）。
+  - **パッケージマネージャー基盤の拡充（`lnako pkg`）**：
+    - `nako.lock` の複数profile対応・生成・既存版優先・部分更新・ロック鮮度判定（[#46](https://github.com/soramikan/lnako/issues/46), [#102](https://github.com/soramikan/lnako/pull/102)）。
+    - パッケージキャッシュ管理、検証済み実体化、環境同期、環境復旧、CLIフェーズ（[#48](https://github.com/soramikan/lnako/issues/48), [#152](https://github.com/soramikan/lnako/pull/152)）。
+    - path・Git・URL・静的registryの取得provider（[#47](https://github.com/soramikan/lnako/issues/47), [#146](https://github.com/soramikan/lnako/pull/146), [#148](https://github.com/soramikan/lnako/pull/148)）。
+    - なでしこパッケージアーカイブ `.npkg` の生成・検証、metadata・ファイルhash一覧（[#142](https://github.com/soramikan/lnako/pull/142)）。
+  - **低レイヤーAPIの拡充**：
+    - ファイル時刻・truncate・高精度メタデータ更新（[#31](https://github.com/soramikan/lnako/issues/31), [#100](https://github.com/soramikan/lnako/pull/100)）。
+    - 逐次ディレクトリ列挙（[#33](https://github.com/soramikan/lnako/issues/33), [#101](https://github.com/soramikan/lnako/pull/101)）。
+    - POSIX権限・所有者・UID/GID・access判定（[#34](https://github.com/soramikan/lnako/issues/34), [#99](https://github.com/soramikan/lnako/pull/99)）。
+    - argv型プロセス起動・signal・priority・TTY（[#35](https://github.com/soramikan/lnako/issues/35), [#103](https://github.com/soramikan/lnako/pull/103)）。
+    - ロケール比較・表示幅API（[#38](https://github.com/soramikan/lnako/issues/38), [#178](https://github.com/soramikan/lnako/pull/178)）。
+    - 低レベルAPI基盤のリファクタリング・ドメイン分割（[#96](https://github.com/soramikan/lnako/issues/96), [#98](https://github.com/soramikan/lnako/pull/98)）。
+  - **CI/CD・開発基盤**：
+    - CI改善計画2の全Phase実装（cache identity分離、worker=2、AOT compiler共有等）（[#104](https://github.com/soramikan/lnako/pull/104)）。
+    - 非コード変更時のpre-push最適化、Issue/PRテンプレート導入。
 
 ## 明示的に非対応とする境界（意図的制限・後続課題）
 
@@ -48,7 +70,7 @@
 | TODO識別子 | 分類 | Issue |
 | --- | --- | --- |
 | `official-dncl-all-elements-tail` | 上流バグ候補。非ブロッカー | #10 |
-| `josi-signature-argument-match` | 助詞が宣言と一致しない引数を位置引数として受理してしまう（公式は未解決語の文法エラー）。引数の助詞シグネチャ照合が必要 | #108 |
+| `josi-signature-argument-match` | 対応済み（v0.2.2にて助詞不一致引数の『未解決の単語』診断を実装） | #108 |
 | `sparse-array-presence` | 部分対応、一般境界は保証外 | #5 |
 | `table-inherited-properties` | 保証外 | #5 |
 | `regexp-unicode-flags` | 部分対応 | #4 |
@@ -75,7 +97,7 @@
 - **パッケージシステムの実装**：
   - なでしこ3向け共通パッケージシステム仕様案（[SPECIFICATION.md](package-system/SPECIFICATION.md)）に基づく、PubGrub依存解決器、マニフェスト解析、取得provider・package cache・環境同期（#47・#48）、依存管理CLIと `run`/`test`/`build` 前の自動準備（#49）を実装済み。`nako.lock` の決定的生成、複数profile集約、既存版優先、部分更新と変更理由説明、lock鮮度判定、`--locked` の無変更失敗、path 依存 pin hash・依存 cycle 検出を実装した。npm 依存の解決は未実装（manifest 宣言は lock 不可として明示拒否）。
 - **低レイヤーAPI・ストリームI/O**：
-  - 構造化エラーハンドリング、生I/Oストリーム、逐次ハッシュ計算、ファイルシステム低層APIの拡充。
+  - 構造化エラーハンドリング、生I/Oストリーム、逐次ハッシュ計算、ファイルシステム低層API、ファイル時刻・truncate・高精度メタデータ、逐次ディレクトリ列挙、POSIX権限・所有者・access判定、argv型プロセス起動・signal・priority・TTY、ロケール比較・表示幅APIを実装済み（#31, #33, #34, #35, #38）。追加の低水準OS機能や周辺APIの拡充を継続する。
 - **性能・最適化の継続管理**：
   - Interpreterの実行速度向上、文字列連結・正規表現の最適化、Windowsバイナリサイズの削減（[#12](https://github.com/soramikan/lnako/issues/12)）。
 - **Windowsのsocket teardown時panic（CIのテスト結果では検知できない）**：
