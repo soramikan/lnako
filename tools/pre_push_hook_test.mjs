@@ -170,7 +170,6 @@ test("successful validation runs all required read-only checks", () => {
 test("non-code changes skip zig build and test", () => {
   const environment = makeFakeEnvironment({
     diffOutput: "docs/COMPATIBILITY.md\n",
-    classifierLevel: "light",
   });
   try {
     const result = runHook(environment, pushInput);
@@ -180,6 +179,28 @@ test("non-code changes skip zig build and test", () => {
     assert.equal(lines.some((line) => line.startsWith("zig ")), false);
     assert.deepEqual(lines.filter((line) => line.startsWith("node ")), [
       "node tools/check_docs_current.mjs",
+      "node tools/check_source_structure.mjs",
+      "node tools/sync_compat_evidence.mjs --check",
+      "node tools/check_interpreter_only_classification.mjs --check",
+    ]);
+    assertNoGitMutation(environment);
+  } finally {
+    rmSync(environment.directory, { recursive: true, force: true });
+  }
+});
+
+test("code changes run zig build and test", () => {
+  const environment = makeFakeEnvironment({
+    diffOutput: "src/main.zig\n",
+  });
+  try {
+    const result = runHook(environment, pushInput);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(/non-code changes detected/.test(result.stderr), false);
+    const lines = logLines(environment);
+    assert.equal(lines.includes("zig build fmt-check"), true);
+    assert.equal(lines.includes("zig build test --test-timeout 5m"), true);
+    assert.deepEqual(lines.filter((line) => line.startsWith("node ")), [
       "node tools/check_source_structure.mjs",
       "node tools/sync_compat_evidence.mjs --check",
       "node tools/check_interpreter_only_classification.mjs --check",

@@ -103,15 +103,23 @@ done <<EOF
 $pushed_input
 EOF
 
-change_level="full"
+code_changed=false
 if [ -s "$changed_files" ]; then
-    classifier_output=$("$NODE" tools/classify_changes.mjs --files "$changed_files" 2>/dev/null || true)
-    case "$classifier_output" in
-        *level=light*) change_level="light" ;;
-    esac
+    while IFS= read -r file_path; do
+        [ -z "$file_path" ] && continue
+        case "$file_path" in
+            src/*|tests/*|build.zig|build.zig.zon)
+                code_changed=true
+                break
+                ;;
+        esac
+    done < "$changed_files"
+else
+    # Fallback to full verification if changed files could not be inspected.
+    code_changed=true
 fi
 
-if [ "$change_level" = "light" ]; then
+if [ "$code_changed" != "true" ]; then
     echo "pre-push: non-code changes detected; skipping zig build and test..." >&2
     echo "pre-push: checking documentation consistency..." >&2
     "$NODE" tools/check_docs_current.mjs
