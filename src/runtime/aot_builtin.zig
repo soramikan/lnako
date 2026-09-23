@@ -459,6 +459,8 @@ pub const Command = enum(u16) {
     low_level_seek_data,
     low_level_seek_hole,
     low_level_fallocate,
+    low_level_locale_compare,
+    low_level_display_width,
 };
 
 /// `エラー発生` is lowered to an IR throw terminator, not to the generic
@@ -539,6 +541,8 @@ pub const low_level_bindings = [_]LowLevelBinding{
     .{ .command = .low_level_seek_data, .name = "ファイルデータ領域検索" },
     .{ .command = .low_level_seek_hole, .name = "ファイル空洞領域検索" },
     .{ .command = .low_level_fallocate, .name = "ファイル領域確保" },
+    .{ .command = .low_level_locale_compare, .name = low_level_foundation.locale_commands.compare },
+    .{ .command = .low_level_display_width, .name = low_level_foundation.locale_commands.display_width },
 };
 
 comptime {

@@ -42,5 +42,6 @@ test {
     _ = @import("lowlevel/process.zig");
     _ = @import("lowlevel/dir.zig");
     _ = @import("lowlevel/posix.zig");
+    _ = @import("lowlevel/locale.zig");
     _ = @import("lowlevel/call.zig");
 }
