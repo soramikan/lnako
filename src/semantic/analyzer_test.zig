@@ -349,6 +349,75 @@ test "宣言助詞に一致しない引数は公式の未解決の単語診断�
     }
 }
 
+test "繰り返しの外の『抜ける』『続ける』を文法エラーにする" {
+    // Issue #166: 公式convCheckLoopはflagLoopの立たない位置の文を
+    // 『それは繰り返しの中で利用してください』の文法エラーにする。
+    // 関数境界で文脈は区切られるため、呼ばれない関数内や繰り返し内で
+    // 定義された関数の中の文も同じ診断になる。
+    const parser = @import("../frontend/parser.zig");
+    const invalid = [_]struct { source: []const u8, line: usize, message: []const u8 }{
+        .{ .source = "抜ける。\n", .line = 0, .message = "『抜ける』文がありますが、それは繰り返しの中で利用してください。" },
+        .{ .source = "続ける。\n", .line = 0, .message = "『続ける』文がありますが、それは繰り返しの中で利用してください。" },
+        .{ .source = "●Fとは\n抜ける。\nここまで\n", .line = 1, .message = "『抜ける』文がありますが、それは繰り返しの中で利用してください。" },
+        .{ .source = "●Fとは\n続ける。\nここまで\n", .line = 1, .message = "『続ける』文がありますが、それは繰り返しの中で利用してください。" },
+        .{ .source = "F=関数()\n抜ける。\nここまで\n", .line = 1, .message = "『抜ける』文がありますが、それは繰り返しの中で利用してください。" },
+        // 繰り返し内で定義された関数の本体も別文脈（公式は生成JSの評価時に
+        // Illegal break statementで異常終了するだけなので診断する）。
+        .{ .source = "3回\n●Fとは\n抜ける。\nここまで\nここまで\n", .line = 2, .message = "『抜ける』文がありますが、それは繰り返しの中で利用してください。" },
+        .{ .source = "もし1=1ならば\n抜ける。\nここまで\n", .line = 1, .message = "『抜ける』文がありますが、それは繰り返しの中で利用してください。" },
+        .{ .source = "エラー監視\n抜ける。\nエラーならば\n「x」を表示\nここまで\n", .line = 1, .message = "『抜ける』文がありますが、それは繰り返しの中で利用してください。" },
+        // 『違えば』節は公式もflagLoopを立てないため文法エラーになる。
+        .{ .source = "Aで条件分岐\n1ならば\n「x」を表示\nここまで\n違えば\n抜ける。\nここまで\nここまで\n", .line = 5, .message = "『抜ける』文がありますが、それは繰り返しの中で利用してください。" },
+        // case節の『続ける』はループを必要とする（公式はeval時SyntaxError）。
+        .{ .source = "Aで条件分岐\n1ならば\n続ける。\nここまで\nここまで\n", .line = 2, .message = "『続ける』文がありますが、それは繰り返しの中で利用してください。" },
+        .{ .source = "3回\n回数を表示\nここまで\n抜ける。\n", .line = 3, .message = "『抜ける』文がありますが、それは繰り返しの中で利用してください。" },
+    };
+    for (invalid) |case| {
+        var parsed = try parser.parse(std.testing.allocator, case.source, "loop-context.nako3");
+        defer parsed.deinit();
+        var program = try analyze(std.testing.allocator, parsed.root.?, "loop-context.nako3");
+        defer program.deinit();
+        try std.testing.expect(!program.succeeded());
+        try std.testing.expectEqual(diagnostic.Code.invalid_control_statement, program.diagnostics[0].code);
+        try std.testing.expectEqual(case.line, program.diagnostics[0].span.line);
+        try std.testing.expectEqualStrings(case.message, program.diagnostics[0].message);
+    }
+}
+
+test "繰り返しと条件分岐のcase節の『抜ける』『続ける』は受理する" {
+    const parser = @import("../frontend/parser.zig");
+    const valid = [_][]const u8{
+        "3回\n抜ける。\nここまで\n",
+        "3回\n続ける。\nここまで\n",
+        "(真)の間\n抜ける。\nここまで\n",
+        "後判定\n続ける。\nここまで偽になるまで\n",
+        "Iを1から3まで繰り返す\n抜ける。\nここまで\n",
+        "[1,2]を反復\n抜ける。\nここまで\n",
+        // 入れ子の繰り返しの内側
+        "2回\n(真)の間\n抜ける。\nここまで\nここまで\n",
+        // 条件分岐のcase節の『抜ける』はその条件分岐を抜ける
+        "Aで条件分岐\n1ならば\n抜ける。\nここまで\nここまで\n",
+        // case節内の繰り返しの『抜ける』『続ける』はその繰り返しが対象
+        "Aで条件分岐\n1ならば\n3回\n抜ける。\nここまで\nここまで\nここまで\n",
+        "Aで条件分岐\n1ならば\n3回\n続ける。\nここまで\nここまで\nここまで\n",
+        // ループ内の条件分岐ではcase節・『違えば』節どちらも『抜ける』『続ける』可
+        "3回\nAで条件分岐\n1ならば\n抜ける。\nここまで\n違えば\n続ける。\nここまで\nここまで\nここまで\n",
+        // ループ内のもし・エラー監視の内側
+        "3回\nもし1=1ならば\n抜ける。\nここまで\nここまで\n",
+        "3回\nエラー監視\n抜ける。\nエラーならば\n「x」を表示\nここまで\nここまで\n",
+        // 関数本体内の繰り返しは独立して有効
+        "●Fとは\n3回\n抜ける。\nここまで\nここまで\n",
+        "●Fとは\nAで条件分岐\n1ならば\n抜ける。\nここまで\nここまで\nここまで\n",
+    };
+    for (valid) |source| {
+        var parsed = try parser.parse(std.testing.allocator, source, "loop-context-ok.nako3");
+        defer parsed.deinit();
+        var program = try analyze(std.testing.allocator, parsed.root.?, "loop-context-ok.nako3");
+        defer program.deinit();
+        try std.testing.expect(program.succeeded());
+    }
+}
+
 test "助詞が正しい呼出しと暗黙『それ』連文は未解決語にしない" {
     const parser = @import("../frontend/parser.zig");
     const sources = [_][]const u8{

@@ -781,5 +781,25 @@
   {
     "id": "renbun-sore-propagation-issue114",
     "source": "A=それに5を足す。2を掛ける。それを表示\n1と2を足す。3を掛ける。それを表示\n前=1。中=前に1を足す。後=中に1を足す。「{前},{中},{後}」を表示\n●(誰に)挨拶とは\n　それは戻り値無し\nここまで\n「友人」に挨拶して表示\n●Fとは\n　入=1。出=入に1を足す。それは出\nここまで\nFを表示\n●Gとは\n　入=1。出=入に1を足す。戻る\nここまで\nGを表示\n"
+  },
+  {
+    "id": "switch-case-break",
+    "source": "A=1\nAで条件分岐\n1ならば\n抜ける。\n「あ」を表示。\nここまで\nここまで\n「い」を表示。\n"
+  },
+  {
+    "id": "switch-case-break-in-loop",
+    "source": "3回\nA=1\nAで条件分岐\n1ならば\n抜ける。\nここまで\nここまで\n「loop」を表示\nここまで\n「い」を表示。\n"
+  },
+  {
+    "id": "switch-case-continue-in-loop",
+    "source": "3回\nA=1\nAで条件分岐\n1ならば\n続ける。\nここまで\nここまで\n「loop」を表示\nここまで\n「い」を表示。\n"
+  },
+  {
+    "id": "switch-default-break-in-loop",
+    "source": "3回\nA=2\nAで条件分岐\n1ならば\n「x」を表示\nここまで\n違えば\n抜ける。\n「で」を表示\nここまで\nここまで\n「loop」を表示\nここまで\n「い」を表示。\n"
+  },
+  {
+    "id": "loop-in-switch-break",
+    "source": "A=1\nAで条件分岐\n1ならば\n3回\n抜ける。\n「in」を表示\nここまで\n「after」を表示\nここまで\nここまで\n「い」を表示。\n"
   }
 ]
