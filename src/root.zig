@@ -122,6 +122,7 @@ pub const package = struct {
     pub const materialize = @import("package/materialize.zig");
     pub const unpack = @import("package/unpack.zig");
     pub const sync = @import("package/sync.zig");
+    pub const project = @import("package/project.zig");
 };
 
 pub const Command = enum {
@@ -134,6 +135,14 @@ pub const Command = enum {
     toolchain,
     package,
     sync,
+    init,
+    add,
+    remove,
+    lock,
+    update,
+    tree,
+    why,
+    cache,
     help,
     version,
 };
@@ -157,6 +166,14 @@ pub fn parseCommand(args: []const []const u8) ParseError!Command {
     if (std.mem.eql(u8, first, "toolchain")) return .toolchain;
     if (std.mem.eql(u8, first, "package")) return .package;
     if (std.mem.eql(u8, first, "sync")) return .sync;
+    if (std.mem.eql(u8, first, "init")) return .init;
+    if (std.mem.eql(u8, first, "add")) return .add;
+    if (std.mem.eql(u8, first, "remove") or std.mem.eql(u8, first, "rm")) return .remove;
+    if (std.mem.eql(u8, first, "lock")) return .lock;
+    if (std.mem.eql(u8, first, "update")) return .update;
+    if (std.mem.eql(u8, first, "tree")) return .tree;
+    if (std.mem.eql(u8, first, "why")) return .why;
+    if (std.mem.eql(u8, first, "cache")) return .cache;
     if (std.mem.eql(u8, first, "compat")) {
         if (args.len < 2 or !std.mem.eql(u8, args[1], "report")) return error.MissingCompatAction;
         return .compat;
@@ -179,7 +196,22 @@ pub fn usage(writer: *std.Io.Writer) !void {
         \\  lnako package build [<dir>] [-o <output.npkg>]
         \\  lnako package verify <file.npkg> [--runtime lnako|cnako] [--os <os>] [--cpu <cpu>] [--abi <abi>] [--os-version <v>] [--libc <libc>] [--optimize <level>] [--feature <name>] [--no-default-features] [--nako-version <v>] [--cnako-version <v>] [--lnako-version <v>] [--compat-js]
         \\  lnako package cache dir|clean [--package-cache-dir <path>]
-        \\  lnako sync [<dir>] [--profile <name>] [--runtime lnako|cnako] [--offline] [--json] [--package-cache-dir <path>] [--package-cache-clean] [--allow-plaintext-http]
+        \\  lnako sync [<dir>] [--profile <name>] [--runtime lnako|cnako] [--locked] [--offline] [--json] [--package-cache-dir <path>] [--package-cache-clean] [--allow-plaintext-http]
+        \\  lnako init [<dir>] [--lib] [--name <name>]
+        \\  lnako add <name[@range]> [--dev] [--path <dir>|--git <url>|--http <url>|--npm] [--commit <id>] [--dep-path <path>] [--hash <sha256>] [--mutable] [--locked] [--offline]
+        \\  lnako remove <name> [--dev] [--locked] [--offline]
+        \\  lnako lock [--locked] [--offline] [--profile <name>] [--features <a,b>] [--json]
+        \\  lnako update [<name>...] [--offline] [--registry <url>]
+        \\  lnako tree [--profile <name>] [--locked] [--offline]
+        \\  lnako why <name> [--profile <name>] [--locked] [--offline]
+        \\  lnako check [--json]                    プロジェクトの依存・環境状態を検査（副作用なし）
+        \\  lnako cache dir|clean [--package-cache-dir <path>]
+        \\
+        \\依存準備オプション（run/test/build/lock/tree/why/add/remove で有効）:
+        \\  --locked         nako.lock を変更せず、不足・陳腐なら失敗
+        \\  --offline        ネットワーク取得を禁止
+        \\  --no-sync        run/test/build での .nako 自動準備を禁止（既存環境のみ使用）
+        \\  --registry <url> pkg 依存解決用 registry（既定: LNAKO_REGISTRY）
         \\
         \\共通オプション:
         \\  -h, --help       このヘルプを表示
@@ -276,6 +308,7 @@ test {
     std.testing.refAllDecls(package.materialize);
     std.testing.refAllDecls(package.unpack);
     std.testing.refAllDecls(package.sync);
+    std.testing.refAllDecls(package.project);
 }
 
 test "コマンドを解析できる" {

@@ -1,12 +1,14 @@
-//! `lnako sync` — `nako.lock` を読み、package を取得・検証して `.nako/`
-//! 環境を構築する。`--json` は `environment.json` と同じバイト列を標準出力
-//! へ書く（cnako の委譲呼出しがそのまま検証に使える）。
+//! `lnako sync` — プロジェクトを検出して `nako.lock` を最新化した上で、
+//! package を取得・検証して `.nako/` 環境を構築する。`--json` は
+//! `environment.json` と同じバイト列を標準出力へ書く（cnako の委譲呼出し
+//! がそのまま検証に使える）。`--locked` は lock の変更を禁止する。
 
 const std = @import("std");
 const lnako = @import("lnako");
 
 const diag = lnako.package.diagnostics;
 const cache = lnako.package.cache;
+const project = lnako.package.project;
 const sync = lnako.package.sync;
 
 fn fail(stderr: *std.Io.Writer, comptime fmt: []const u8, args: anytype) noreturn {
@@ -19,6 +21,11 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, s
     var options = sync.Options{};
     var json = false;
     var clean = false;
+    var locked = false;
+    var features: std.ArrayList([]const u8) = .empty;
+    defer features.deinit(allocator);
+    var no_default_features = false;
+    var registry_url: ?[]const u8 = null;
     var root_set = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
@@ -39,6 +46,22 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, s
             }
         } else if (std.mem.eql(u8, argument, "--offline")) {
             options.policy.offline = true;
+        } else if (std.mem.eql(u8, argument, "--locked")) {
+            locked = true;
+        } else if (std.mem.eql(u8, argument, "--features")) {
+            index += 1;
+            if (index >= args.len) fail(stderr, "sync: --features には名前（カンマ区切り）が必要です\n", .{});
+            var it = std.mem.splitScalar(u8, args[index], ',');
+            while (it.next()) |name| {
+                const trimmed = std.mem.trim(u8, name, " ");
+                if (trimmed.len > 0) try features.append(allocator, trimmed);
+            }
+        } else if (std.mem.eql(u8, argument, "--no-default-features")) {
+            no_default_features = true;
+        } else if (std.mem.eql(u8, argument, "--registry")) {
+            index += 1;
+            if (index >= args.len) fail(stderr, "sync: --registry には URL が必要です\n", .{});
+            registry_url = args[index];
         } else if (std.mem.eql(u8, argument, "--json")) {
             json = true;
         } else if (std.mem.eql(u8, argument, "--package-cache-dir")) {
@@ -61,6 +84,38 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, s
 
     var list = diag.List.init(allocator);
     defer list.deinit();
+
+    // プロジェクトが見つかれば lock を最新化してから sync する（依存解決
+    // から環境構築まで一貫させる）。--locked はここで検証する。
+    const discovered = project.discoverAndLoad(allocator, io, options.project_root, &list) catch |err| {
+        if (list.errorCount() > 0) try list.render(stderr, options.project_root);
+        fail(stderr, "sync: プロジェクトを読み込めません: {s}\n", .{@errorName(err)});
+    };
+    if (discovered) |loaded| {
+        var found = loaded;
+        defer found.deinit();
+        options.project_root = found.root;
+        var prepare = project.PrepareOptions{
+            .profile = options.profile,
+            .features = features.items,
+            .no_default_features = no_default_features,
+            .registry_url = registry_url,
+            .cache_root = options.cache_root,
+            .policy = options.policy,
+        };
+        if (locked) {
+            project.verifyLocked(allocator, io, &found, &prepare, &list) catch |err| {
+                if (list.errorCount() > 0) try list.render(stderr, found.manifest_path);
+                fail(stderr, "sync: nako.lock が不足・陳腐のため --locked を満たせません: {s}\n", .{@errorName(err)});
+            };
+        }
+        var lock_outcome = project.ensureLock(allocator, io, &found, &prepare, &list) catch |err| {
+            if (list.errorCount() > 0) try list.render(stderr, found.manifest_path);
+            fail(stderr, "sync: 依存解決に失敗しました: {s}\n", .{@errorName(err)});
+        };
+        lock_outcome.deinit();
+    }
+
     var report = sync.run(allocator, io, options, &list) catch |err| {
         if (list.errorCount() > 0) {
             try list.render(stderr, options.project_root);
