@@ -369,11 +369,17 @@ pub fn depIsActivated(aliases: *const std.StringHashMap(void), name: []const u8,
     return false;
 }
 
-/// 展開済み feature 名（昇順・重複除去）。`lock.Input.features` の記録用。
+/// 展開済み feature 名と有効化された依存 alias 名（昇順・重複除去）。
+/// `lock.Input.features` の記録用。`--features req` のように依存 alias を
+/// 直接指定した要求は `expanded.features` に残らず `dependency_aliases`
+/// へ入るため、併記しないと直接 alias 有無の差分が鮮度入力から抜け、
+/// 別グラフの lock を fresh と誤認する。
 pub fn expandedFeatureNames(gpa: Allocator, expanded: *const features_mod.Expanded) Error![]const []const u8 {
     var list: std.ArrayList([]const u8) = .empty;
     var iterator = expanded.features.keyIterator();
     while (iterator.next()) |key| try list.append(gpa, key.*);
+    var alias_iterator = expanded.dependency_aliases.keyIterator();
+    while (alias_iterator.next()) |key| try list.append(gpa, key.*);
     std.mem.sort([]const u8, list.items, {}, struct {
         fn lt(_: void, a: []const u8, b: []const u8) bool {
             return std.mem.order(u8, a, b) == .lt;
@@ -1130,6 +1136,8 @@ fn readLockBytes(gpa: Allocator, io: std.Io, project_root: []const u8) Error!?[]
 /// `InvalidLock`。
 pub fn loadExistingLock(gpa: Allocator, io: std.Io, project_root: []const u8, diagnostics: *diag.List) Error!?lock_model.Lock {
     const bytes = (try readLockBytes(gpa, io, project_root)) orelse return null;
+    // parse は全値を lock 所有 arena へ複製するため生バイトは即解放できる。
+    defer gpa.free(bytes);
     const errors_before = diagnostics.errorCount();
     var parsed = lock_mod.parse(gpa, bytes, diagnostics) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -1323,7 +1331,10 @@ pub fn ensureLock(
             freshness = .stale_manifest;
         }
     }
-    if (freshness == .fresh and !opts.force_resolve) {
+    // `mutable = true` の path 依存は宣言 dir の manifest 変更（version・
+    // exports・推移的依存）を即時反映する契約のため、fresh 判定を素通し
+    // せず毎回再解決する。内容 pin は行わない（mutable の意図どおり）。
+    if (freshness == .fresh and !opts.force_resolve and !lockHasMutablePathSource(&existing.?)) {
         const moved = existing.?;
         existing = null; // 所有権は戻り値へ。defer の deinit を防ぐ。
         return .{
@@ -1511,16 +1522,47 @@ pub fn ensureLock(
         error.OutOfMemory => return error.OutOfMemory,
         else => return error.FileSystem,
     };
-    try writeAtomic(io, try std.fs.path.join(a, &.{ project.root, lock_name }), bytes);
+    const lock_path = try std.fs.path.join(a, &.{ project.root, lock_name });
+    // mutable path 依存を持つ lock は毎回再解決するが、結果が同一なら
+    // 書き換えない。mtime だけ変わると環境の lockSha256 照合を無意味に
+    // 再評価させ、writer 間の edit.lock 競合も増やすため。
+    const wrote = blk: {
+        if (std.Io.Dir.cwd().readFileAlloc(io, lock_path, a, .limited(64 * 1024 * 1024)) catch null) |old_bytes| {
+            if (std.mem.eql(u8, old_bytes, bytes)) break :blk false;
+        }
+        try writeAtomic(io, lock_path, bytes);
+        break :blk true;
+    };
 
     return .{
         .arena = arena_impl,
         .lock = built,
-        .wrote = true,
+        .wrote = wrote,
         .report = report,
         .freshness = freshness,
         .profile = try a.dupe(u8, profile),
     };
+}
+
+/// lock graph に `mutable = true` の path 依存が含まれるか。
+/// mutable path は宣言 dir を生参照するため、dir 内 manifest の変更を
+/// 次回解決へ反映しなければならず、fresh な lock の早期再利用対象から
+/// 外す判定に使う。
+fn lockHasMutablePathSource(lock: *const lock_model.Lock) bool {
+    for (lock.packages) |*entry| {
+        if (isMutablePathSource(entry)) return true;
+    }
+    for (lock.profile_packages) |profile| {
+        for (profile.packages) |*entry| {
+            if (isMutablePathSource(entry)) return true;
+        }
+    }
+    return false;
+}
+
+fn isMutablePathSource(entry: *const lock_model.PackageEntry) bool {
+    const source = entry.source orelse return false;
+    return source.kind == .path and (source.mutable orelse false);
 }
 
 /// root manifest の依存宣言から solver の root deps を組み立てる。
@@ -1600,6 +1642,7 @@ fn writeAtomic(io: std.Io, path: []const u8, bytes: []const u8) Error!void {
 /// `nako.lock` ファイル本体の SHA-256（正規化済み 32byte digest）。
 pub fn lockDigest(gpa: Allocator, io: std.Io, project_root: []const u8, out: *[32]u8) Error!bool {
     const bytes = (try readLockBytes(gpa, io, project_root)) orelse return false;
+    defer gpa.free(bytes);
     std.crypto.hash.sha2.Sha256.hash(bytes, out, .{});
     return true;
 }

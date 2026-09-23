@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const diag = @import("diagnostics.zig");
+const environment_mod = @import("environment.zig");
 const lock_mod = @import("lock.zig");
 const lock_model = @import("lock_model.zig");
 const project = @import("project.zig");
@@ -39,19 +40,56 @@ pub const EditLock = struct {
 };
 
 /// `project_root` の編集 lock を blocking で取得する。`.nako` は管理 dir
-/// として作られる（symlink 等は `NotDir` 系エラーで失敗し追従しない）。
+/// として確保し、lock file はその dir ハンドル相対で no-follow に開く。
+/// `.nako/edit.lock` が symlink の場合はリンク本体のみ除去して作り直し、
+/// 外部 file への truncate・lock を防ぐ。
 pub fn acquireEditLock(gpa: Allocator, io: std.Io, project_root: []const u8) Error!EditLock {
-    const lock_path = try std.fs.path.join(gpa, &.{ project_root, ".nako", "edit.lock" });
-    defer gpa.free(lock_path);
-    if (std.fs.path.dirname(lock_path)) |dir| {
-        std.Io.Dir.cwd().createDirPath(io, dir) catch |err| return project.mapFs(err);
-    }
-    const file = std.Io.Dir.cwd().createFile(io, lock_path, .{
-        .read = true,
-        .lock = .exclusive,
-        .lock_nonblocking = false,
+    const nako_path = try std.fs.path.join(gpa, &.{ project_root, ".nako" });
+    defer gpa.free(nako_path);
+    environment_mod.ensureManagedDir(io, nako_path) catch |err| return project.mapFs(err);
+    var nako_dir = std.Io.Dir.cwd().openDir(io, nako_path, .{
+        .follow_symlinks = false,
     }) catch |err| return project.mapFs(err);
-    return .{ .file = file, .io = io };
+    defer nako_dir.close(io);
+    return .{ .file = try openEditLockFile(nako_dir, io), .io = io };
+}
+
+/// `.nako` dir ハンドル相対で `edit.lock` を排他 lock 付きで開く。
+/// `createFile` は leaf symlink を追従して対象を truncate し得るため
+/// 使わず、no-follow open（symlink は `SymLinkLoop` で検出）と
+/// `exclusive` 作成を往復させる。open と create の隙間に置かれた
+/// symlink も `PathAlreadyExists` → 次周の no-follow open で検出し、
+/// リンク本体のみ除去するため安全側に倒れる。
+fn openEditLockFile(nako_dir: std.Io.Dir, io: std.Io) Error!std.Io.File {
+    while (true) {
+        if (nako_dir.openFile(io, "edit.lock", .{
+            .mode = .read_write,
+            .follow_symlinks = false,
+            .resolve_beneath = true,
+            .lock = .exclusive,
+        })) |file| {
+            return file;
+        } else |err| switch (err) {
+            error.FileNotFound => {
+                if (nako_dir.createFile(io, "edit.lock", .{
+                    .read = true,
+                    .exclusive = true,
+                    .resolve_beneath = true,
+                    .lock = .exclusive,
+                })) |file| {
+                    return file;
+                } else |create_err| switch (create_err) {
+                    error.PathAlreadyExists => continue,
+                    else => return project.mapFs(create_err),
+                }
+            },
+            error.SymLinkLoop => {
+                // leaf symlink は追従対象ではなくリンク本体だけを消す。
+                nako_dir.deleteFile(io, "edit.lock") catch |del_err| return project.mapFs(del_err);
+            },
+            else => return project.mapFs(err),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -191,8 +229,10 @@ pub fn inspectForCheck(
     info.environment_current = has_lock and info.environment != null and
         environmentMatchesLock(info.environment.?, &digest) and
         info.environment.?.schema_version == 1 and
-        (info.environment.?.profile == null or std.mem.eql(u8, info.environment.?.profile.?, profile)) and
-        (info.environment.?.runtime == null or std.mem.eql(u8, info.environment.?.runtime.?, "lnako")) and
+        // schema v1 の profile/runtime は必須項目。欠落・型違いで読め
+        // なかった環境は選択 profile/runtime を証明できず不一致とする。
+        (info.environment.?.profile != null and std.mem.eql(u8, info.environment.?.profile.?, profile)) and
+        (info.environment.?.runtime != null and std.mem.eql(u8, info.environment.?.runtime.?, "lnako")) and
         // 参照世代 dir が消えた環境は不一致とする。
         (info.environment.?.generation != null and generationExists(io, project_.root, info.environment.?.generation.?)) and
         // packages 記録・実体の欠落も不一致とする。
@@ -203,7 +243,10 @@ pub fn inspectForCheck(
 /// `environment.json` の `packages` 記録が lock graph と一致し、記録された
 /// package path が実在するか。ヘッダ（lockSha256・profile 等）だけ一致して
 /// いて packages map が欠落・破損している環境を「最新」と誤認しないための
-/// 内容検査。記録 path が project 外を指すものは不一致として扱う。
+/// 内容検査。`.nako` 展開物の記録が project 外を指すものは不一致として
+/// 扱う。path 依存は宣言 path（`../shared`・絶対 path も正式な宣言形）を
+/// そのまま記録するため、格納値が lock の `source.path` と一致することと
+/// dir の実在だけを要求する。
 pub fn environmentPackagesUsable(gpa: Allocator, io: std.Io, project_root: []const u8, lock: *const lock_model.Lock, profile: []const u8) Error!bool {
     const path = try std.fs.path.join(gpa, &.{ project_root, ".nako", "environment.json" });
     defer gpa.free(path);
@@ -229,9 +272,23 @@ pub fn environmentPackagesUsable(gpa: Allocator, io: std.Io, project_root: []con
         if (record != .object) return false;
         const path_value = record.object.get("path") orelse return false;
         if (path_value != .string) return false;
+        if (entry.source != null and entry.source.?.kind == .path) {
+            // path 依存の記録値は lock の `source.path` と一致することが
+            // 正当性の根拠。project 外（`../`・絶対 path）は宣言者の
+            // 正当な選択であり、一致しない任意 path だけを拒否する。
+            const declared = entry.source.?.path orelse return false;
+            if (!std.mem.eql(u8, path_value.string, declared)) return false;
+            const abs = std.fs.path.resolve(gpa, &.{ root_abs, path_value.string }) catch return error.FileSystem;
+            defer gpa.free(abs);
+            // 宣言 path 自身が symlink の正当構成もあるためここでは
+            // 追従して実在だけを見る（信任境界は lock の宣言値）。
+            const stat = std.Io.Dir.cwd().statFile(io, abs, .{}) catch return false;
+            if (stat.kind != .directory) return false;
+            continue;
+        }
         const abs = std.fs.path.resolve(gpa, &.{ root_abs, path_value.string }) catch return error.FileSystem;
         defer gpa.free(abs);
-        // project 外を指す記録は環境破損として扱う。
+        // env/staging 展開物の記録が project 外を指す場合は環境破損。
         if (!std.mem.startsWith(u8, abs, root_abs) or abs.len == root_abs.len or
             (abs[root_abs.len] != '/' and abs[root_abs.len] != std.fs.path.sep)) return false;
         const stat = std.Io.Dir.cwd().statFile(io, abs, .{ .follow_symlinks = false }) catch return false;
@@ -289,8 +346,10 @@ pub fn ensureEnvironment(
     const env_ok = has_lock and env != null and
         environmentMatchesLock(env.?, &digest) and
         env.?.schema_version == 1 and
-        (env.?.profile == null or std.mem.eql(u8, env.?.profile.?, lock_outcome.profile)) and
-        (env.?.runtime == null or std.mem.eql(u8, env.?.runtime.?, "lnako")) and
+        // schema v1 の profile/runtime は必須項目。欠落・型違いなら選択
+        // profile/runtime を証明できないため不一致として sync し直す。
+        (env.?.profile != null and std.mem.eql(u8, env.?.profile.?, lock_outcome.profile)) and
+        (env.?.runtime != null and std.mem.eql(u8, env.?.runtime.?, "lnako")) and
         // 参照世代 dir が消えた環境は不一致として sync し直す。
         (env.?.generation != null and generationExists(io, project_.root, env.?.generation.?)) and
         // packages 記録の欠落・実体の欠如も不一致（内容検証）。

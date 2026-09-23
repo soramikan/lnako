@@ -809,3 +809,39 @@ test "why は解決済みの public id でも直接宣言を特定する" {
     try testing.expect(std.mem.indexOf(u8, why, "直接宣言") != null);
     try testing.expect(std.mem.indexOf(u8, why, "dep key: lib") != null);
 }
+
+test "depKeyIdMapはpublic-id宣言を同名entryの先頭一致より優先する" {
+    // 同名 package が複数解決された lock では name 照合の先頭一致が
+    // 誤った entry を返す。`public-id` 宣言は解決済み ID で直接照合する。
+    const a = testing.allocator;
+    const lnako = @import("lnako");
+    const diag = lnako.package.diagnostics;
+    const manifest_mod = lnako.package.manifest;
+    const lock_model = lnako.package.lock;
+    var diagnostics = diag.List.init(a);
+    defer diagnostics.deinit();
+    var manifest = try manifest_mod.parse(a,
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\dup = { version = "1.0.0", public-id = "pkg:22222222222222222222222222222222" }
+        \\plain = { version = "1.0.0" }
+        \\
+    , &diagnostics);
+    defer manifest.deinit();
+    const packages = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:11111111111111111111111111111111", .name = "dup", .version = "1.0.0" },
+        .{ .id = "pkg:22222222222222222222222222222222", .name = "dup", .version = "2.0.0" },
+        .{ .id = "pkg:33333333333333333333333333333333", .name = "plain", .version = "1.0.0" },
+    };
+    var maps = try project_cmd.depKeyIdMap(a, &manifest, "/nonexistent", &packages);
+    defer maps.deinit();
+    // `public-id` 宣言は同名先頭 entry（pkg:111）ではなく指定 ID へ写像。
+    try testing.expectEqualStrings("pkg:22222222222222222222222222222222", maps.by_name.get("dup").?);
+    try testing.expectEqualStrings("dup", maps.by_id.get("pkg:22222222222222222222222222222222").?);
+    // `public-id` 未指定は従来どおり name 照合で写像する。
+    try testing.expectEqualStrings("pkg:33333333333333333333333333333333", maps.by_name.get("plain").?);
+}

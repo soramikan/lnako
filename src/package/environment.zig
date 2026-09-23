@@ -156,7 +156,7 @@ pub const LockGuard = struct {
 /// して実 dir を作り直す。`deleteTree` 等は entry 内の symlink を
 /// 追従しないが、管理 dir 自身の symlink は openDir が追従して管理外
 /// を走査・削除し得るため、ここで排除する。
-fn ensureManagedDir(io: std.Io, path: []const u8) !void {
+pub fn ensureManagedDir(io: std.Io, path: []const u8) !void {
     var opened = std.Io.Dir.cwd().openDir(io, path, .{ .follow_symlinks = false }) catch |err| switch (err) {
         error.FileNotFound => {
             try std.Io.Dir.cwd().createDirPath(io, path);

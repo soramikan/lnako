@@ -792,7 +792,129 @@ test "feature-gatedな推移的pkg依存が非活性ならregistryを要求し�
 
 test "environmentPackagesUsableはpackages記録と実体を検証する" {
     // ヘッダ（lockSha256 等）だけ一致していて packages map が破損した
-    // 環境を「最新」と誤認しないための内容検査。
+    // 環境を「最新」と誤認しないための内容検査。`../`・絶対 path の
+    // 宣言 path 依存は正式な宣言形で、記録が lock の source.path と
+    // 一致すれば project 外でも許容される。
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/lib/src");
+    try writeLibPackage(temporary.dir, io, "app/lib", "lib");
+    try temporary.dir.createDirPath(io, "shared/outside/src");
+    try writeLibPackage(temporary.dir, io, "shared/outside", "outside");
+    try temporary.dir.createDirPath(io, "shared/abslib/src");
+    try writeLibPackage(temporary.dir, io, "shared/abslib", "abslib");
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+    const abslib_path = try temporary.dir.realPathFileAlloc(io, "shared/abslib", testing.allocator);
+    defer testing.allocator.free(abslib_path);
+    const manifest_src = try std.fmt.allocPrint(testing.allocator,
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\lib = {{ path = "lib" }}
+        \\outside = {{ path = "../shared/outside" }}
+        \\abslib = {{ path = '{s}' }}
+        \\
+    , .{abslib_path});
+    defer testing.allocator.free(manifest_src);
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/nako.toml", .data = manifest_src });
+
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    defer loaded.deinit();
+    var outcome = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
+    defer outcome.deinit();
+
+    const writeEnv = struct {
+        fn run(dir: std.Io.Dir, packages_json: []const u8) !void {
+            const source = try std.fmt.allocPrint(testing.allocator,
+                \\{{"schemaVersion":1,"lockSha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000","profile":"default","runtime":"lnako","generation":"gen-1","packages":{s}}}
+                \\
+            , .{packages_json});
+            defer testing.allocator.free(source);
+            try dir.writeFile(io, .{ .sub_path = "app/.nako/environment.json", .data = source });
+        }
+    }.run;
+
+    // `.nako` は sync 以外では作られないため、記録の器だけ先に用意する。
+    try temporary.dir.createDirPath(io, "app/.nako");
+    // 全 path 依存の宣言 path をそのまま記録した環境は有効
+    // （`../`・絶対 path の外部参照を含む）。
+    var json_buf: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer json_buf.deinit();
+    const writer = &json_buf.writer;
+    try writer.writeAll("{");
+    var lib_id: ?[]const u8 = null;
+    var first = true;
+    for (outcome.lock.packages) |entry| {
+        const source = entry.source orelse continue;
+        if (source.kind != .path) continue;
+        if (!first) try writer.writeAll(",");
+        first = false;
+        if (std.mem.eql(u8, entry.name, "lib")) lib_id = entry.id;
+        const quoted = try std.json.Stringify.valueAlloc(testing.allocator, source.path.?, .{});
+        defer testing.allocator.free(quoted);
+        try writer.print("\"{s}\":{{\"name\":\"{s}\",\"version\":\"{s}\",\"id\":\"{s}\",\"path\":{s}}}", .{ entry.id, entry.name, entry.version, entry.id, quoted });
+    }
+    try writer.writeAll("}");
+    try testing.expect(lib_id != null);
+    try writeEnv(temporary.dir, json_buf.written());
+    try testing.expect(try project.environmentPackagesUsable(testing.allocator, io, app_root, &outcome.lock, "default"));
+
+    // 記録 key の欠落は無効。
+    try writeEnv(temporary.dir, "{}");
+    try testing.expect(!try project.environmentPackagesUsable(testing.allocator, io, app_root, &outcome.lock, "default"));
+
+    // 宣言と一致しない無関係な外部 path を指す記録は無効。
+    const escaped = try std.fmt.allocPrint(testing.allocator, "{{\"{s}\":{{\"name\":\"lib\",\"version\":\"1.0.0\",\"id\":\"{s}\",\"path\":\"../unrelated\"}}}}", .{ lib_id.?, lib_id.? });
+    defer testing.allocator.free(escaped);
+    try writeEnv(temporary.dir, escaped);
+    try testing.expect(!try project.environmentPackagesUsable(testing.allocator, io, app_root, &outcome.lock, "default"));
+
+    // 宣言と一致しない project 内 path（展開物風）の記録も無効。
+    const materialized = try std.fmt.allocPrint(testing.allocator, "{{\"{s}\":{{\"name\":\"lib\",\"version\":\"1.0.0\",\"id\":\"{s}\",\"path\":\".nako/env/gen-1/deps/lib\"}}}}", .{ lib_id.?, lib_id.? });
+    defer testing.allocator.free(materialized);
+    try writeEnv(temporary.dir, materialized);
+    try testing.expect(!try project.environmentPackagesUsable(testing.allocator, io, app_root, &outcome.lock, "default"));
+}
+
+test "edit.lockのleaf symlinkは外部fileを変更せずリンクのみ置き換える" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/.nako");
+    try temporary.dir.writeFile(io, .{ .sub_path = "victim.txt", .data = "keep" });
+    const victim_abs = try temporary.dir.realPathFileAlloc(io, "victim.txt", testing.allocator);
+    defer testing.allocator.free(victim_abs);
+    temporary.dir.symLink(io, victim_abs, "app/.nako/edit.lock", .{}) catch |err| switch (err) {
+        // Windows等でlink作成権限がない環境では検証を省略する。
+        error.AccessDenied, error.PermissionDenied, error.FileSystem => return error.SkipZigTest,
+        else => return err,
+    };
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+
+    // leaf symlink は追従せず、リンク本体のみ置き換えて lock を取得する。
+    var edit_lock = try project.acquireEditLock(testing.allocator, io, app_root);
+    edit_lock.unlock();
+
+    // 外部 file は無傷で、edit.lock は実 file として作り直されている。
+    const bytes = try temporary.dir.readFileAlloc(io, "victim.txt", testing.allocator, .limited(64));
+    defer testing.allocator.free(bytes);
+    try testing.expectEqualStrings("keep", bytes);
+    const stat = try temporary.dir.statFile(io, "app/.nako/edit.lock", .{ .follow_symlinks = false });
+    try testing.expect(stat.kind == .file);
+}
+
+test "環境metadataのprofile/runtime欠落・型違いは不一致とする" {
+    // schema v1 の environment.json は profile/runtime を必須とする。
+    // 欠落・型違いで読めなかった項目は選択 profile/runtime を証明できず、
+    // 照合を「不明＝一致」と緩めない。
     const io = testing.io;
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
@@ -827,38 +949,185 @@ test "environmentPackagesUsableはpackages記録と実体を検証する" {
         }
         return error.TestExpectedEqual;
     };
-
+    var digest: [32]u8 = undefined;
+    try testing.expect(try project.lockDigest(testing.allocator, io, app_root, &digest));
+    const lock_hex = std.fmt.bytesToHex(digest, .lower);
+    // 世代 dir と packages 記録を整えた環境を用意する。
+    try temporary.dir.createDirPath(io, "app/.nako/env/gen-1");
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/current", .data = "gen-1\n" });
     const writeEnv = struct {
-        fn run(dir: std.Io.Dir, packages_json: []const u8) !void {
+        fn run(dir: std.Io.Dir, extra_fields: []const u8, lock_hex_: []const u8, lib_id_: []const u8) !void {
             const source = try std.fmt.allocPrint(testing.allocator,
-                \\{{"schemaVersion":1,"lockSha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000","profile":"default","runtime":"lnako","generation":"gen-1","packages":{s}}}
+                \\{{"schemaVersion":1,"lockSha256":"sha256:{s}",{s}"generation":"gen-1","packages":{{"{s}":{{"name":"lib","version":"1.0.0","id":"{s}","path":"lib"}}}}}}
                 \\
-            , .{packages_json});
+            , .{ lock_hex_, extra_fields, lib_id_, lib_id_ });
             defer testing.allocator.free(source);
             try dir.writeFile(io, .{ .sub_path = "app/.nako/environment.json", .data = source });
         }
     }.run;
+    const check = struct {
+        fn run(loaded_: *const project.Project, diagnostics_: *diag.List) !bool {
+            // `readEnvironmentInfo` の複製は呼出し側 allocator 所有のため
+            // arena でまとめて解放する。
+            var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+            defer arena_impl.deinit();
+            const info = try project.inspectForCheck(arena_impl.allocator(), io, loaded_, &.{}, diagnostics_);
+            return info.environment_current;
+        }
+    }.run;
 
-    // 実在する dir を指す記録は有効。
-    try temporary.dir.createDirPath(io, "app/.nako/env/gen-1/deps/lib");
-    const valid = try std.fmt.allocPrint(testing.allocator, "{{\"{s}\":{{\"name\":\"lib\",\"version\":\"1.0.0\",\"id\":\"{s}\",\"path\":\".nako/env/gen-1/deps/lib\"}}}}", .{ lib_id, lib_id });
-    defer testing.allocator.free(valid);
-    try writeEnv(temporary.dir, valid);
-    try testing.expect(try project.environmentPackagesUsable(testing.allocator, io, app_root, &outcome.lock, "default"));
+    // 正規の profile/runtime は一致。
+    try writeEnv(temporary.dir, "\"profile\":\"default\",\"runtime\":\"lnako\",", &lock_hex, lib_id);
+    try testing.expect(try check(&loaded, &diagnostics));
+    // profile 欠落は不一致。
+    try writeEnv(temporary.dir, "\"runtime\":\"lnako\",", &lock_hex, lib_id);
+    try testing.expect(!try check(&loaded, &diagnostics));
+    // runtime 欠落は不一致。
+    try writeEnv(temporary.dir, "\"profile\":\"default\",", &lock_hex, lib_id);
+    try testing.expect(!try check(&loaded, &diagnostics));
+    // 型違い（数値）も不一致。
+    try writeEnv(temporary.dir, "\"profile\":1,\"runtime\":\"lnako\",", &lock_hex, lib_id);
+    try testing.expect(!try check(&loaded, &diagnostics));
+    try writeEnv(temporary.dir, "\"profile\":\"default\",\"runtime\":0,", &lock_hex, lib_id);
+    try testing.expect(!try check(&loaded, &diagnostics));
+}
 
-    // 記録 key の欠落は無効。
-    try writeEnv(temporary.dir, "{}");
-    try testing.expect(!try project.environmentPackagesUsable(testing.allocator, io, app_root, &outcome.lock, "default"));
+test "mutableなpath依存のmanifest変更はfreshなlockを再利用せず再解決する" {
+    // `mutable = true` の path 依存は宣言 dir の manifest 変更（version・
+    // exports・推移的依存）を次回解決へ反映する契約。root manifest が
+    // 変わらなくても fresh 判定を素通しせず毎回再解決する。
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/lib/src");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/lib/src/index.nako3",
+        .data = "●表示とは\nここまで\n",
+    });
+    const writeDepManifest = struct {
+        fn run(dir: std.Io.Dir, version: []const u8) !void {
+            const source = try std.fmt.allocPrint(testing.allocator,
+                \\[package]
+                \\name = "lib"
+                \\version = "{s}"
+                \\license = "MIT"
+                \\
+                \\[[exports]]
+                \\name = "lib"
+                \\path = "src/index.nako3"
+                \\
+            , .{version});
+            defer testing.allocator.free(source);
+            try dir.writeFile(io, .{ .sub_path = "app/lib/nako.toml", .data = source });
+        }
+    }.run;
+    try writeDepManifest(temporary.dir, "1.0.0");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/nako.toml",
+        .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\lib = { path = "lib", mutable = true }
+        \\
+        ,
+    });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
 
-    // project 外を指す記録は無効。
-    const escaped = try std.fmt.allocPrint(testing.allocator, "{{\"{s}\":{{\"name\":\"lib\",\"version\":\"1.0.0\",\"id\":\"{s}\",\"path\":\"../outside\"}}}}", .{ lib_id, lib_id });
-    defer testing.allocator.free(escaped);
-    try writeEnv(temporary.dir, escaped);
-    try testing.expect(!try project.environmentPackagesUsable(testing.allocator, io, app_root, &outcome.lock, "default"));
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    defer loaded.deinit();
 
-    // dir ではなく file を指す記録は無効。
-    const file_record = try std.fmt.allocPrint(testing.allocator, "{{\"{s}\":{{\"name\":\"lib\",\"version\":\"1.0.0\",\"id\":\"{s}\",\"path\":\"nako.lock\"}}}}", .{ lib_id, lib_id });
-    defer testing.allocator.free(file_record);
-    try writeEnv(temporary.dir, file_record);
-    try testing.expect(!try project.environmentPackagesUsable(testing.allocator, io, app_root, &outcome.lock, "default"));
+    const libVersion = struct {
+        fn run(lock: *const lock_model.Lock) ?[]const u8 {
+            for (lock.packages) |entry| {
+                if (std.mem.eql(u8, entry.name, "lib")) return entry.version;
+            }
+            return null;
+        }
+    }.run;
+
+    var first = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
+    defer first.deinit();
+    try testing.expectEqualStrings("1.0.0", libVersion(&first.lock).?);
+
+    // dep manifest の version だけを更新。root manifest は無変更でも
+    // 再解決され、lock の version が追従する。
+    try writeDepManifest(temporary.dir, "2.0.0");
+    var second = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
+    defer second.deinit();
+    try testing.expect(second.report != null);
+    try testing.expectEqualStrings("2.0.0", libVersion(&second.lock).?);
+
+    // 無変更の再解決は内容同一の lock を書き換えない（mtime を無駄に
+    // 変えない）。早期 return ではなく再解決経路なので report は存在する。
+    var third = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
+    defer third.deinit();
+    try testing.expect(third.report != null);
+    try testing.expect(!third.wrote);
+}
+
+test "直接指定した依存aliasはlock入力のfeaturesに記録される" {
+    // `req` は feature 定義の item に登場するため gated な依存。
+    // `--features req` で直接有効化した場合、展開 feature 集合は空で
+    // 有効化は dependency_aliases 側にのみ残る。lock 入力が alias を
+    // 記録しないと features 無指定の lock と鮮度上区別できない。
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/req/src");
+    try writeLibPackage(temporary.dir, io, "app/req", "req");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/nako.toml",
+        .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[features]
+        \\opt = ["req"]
+        \\
+        \\[dependencies.path]
+        \\req = { path = "req" }
+        \\
+        ,
+    });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    defer loaded.deinit();
+
+    // 直接 alias 指定で lock を生成すると、graph と lock 入力の両方に
+    // `req` が記録される。
+    var outcome = try project.ensureLock(testing.allocator, io, &loaded, &.{
+        .features = &.{"req"},
+    }, &diagnostics);
+    defer outcome.deinit();
+    var found_req = false;
+    for (outcome.lock.packages) |entry| {
+        if (std.mem.eql(u8, entry.name, "req")) found_req = true;
+    }
+    try testing.expect(found_req);
+    var input_has_req = false;
+    for (outcome.lock.input.features) |name| {
+        if (std.mem.eql(u8, name, "req")) input_has_req = true;
+    }
+    try testing.expect(input_has_req);
+
+    // features 無指定の鮮度検査は stale（記録入力が `req` 有りなのに
+    // 再計算入力が無指定）となり、別グラフの lock を fresh と誤認しない。
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const info = try project.inspectForCheck(arena_impl.allocator(), io, &loaded, &.{}, &diagnostics);
+    try testing.expect(info.lock_state == .stale);
+    try testing.expect(info.freshness != .fresh);
 }

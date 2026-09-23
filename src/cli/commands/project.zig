@@ -447,19 +447,19 @@ fn acquireProjectEditLock(a: Allocator, io: std.Io, start_dir: []const u8, verb:
 /// 宣言 dep key・alias と解決済み entry id の対応表。dep key と
 /// package 名が異なる（alias・同名 package）ときに宣言側の名前を
 /// 表示・検索できるようにする。呼出し側が `deinit` する。
-const DepKeyMaps = struct {
+pub const DepKeyMaps = struct {
     /// 解決済み entry id → 宣言 dep key（tree の表示用）。
     by_id: std.StringHashMap([]const u8),
     /// dep key または alias → 解決済み entry id（why の検索用）。
     by_name: std.StringHashMap([]const u8),
 
-    fn deinit(self: *DepKeyMaps) void {
+    pub fn deinit(self: *DepKeyMaps) void {
         self.by_id.deinit();
         self.by_name.deinit();
     }
 };
 
-fn depKeyIdMap(a: Allocator, manifest: *const manifest_mod.Manifest, root: []const u8, packages: []const lock_model.PackageEntry) !DepKeyMaps {
+pub fn depKeyIdMap(a: Allocator, manifest: *const manifest_mod.Manifest, root: []const u8, packages: []const lock_model.PackageEntry) !DepKeyMaps {
     var maps = DepKeyMaps{
         .by_id = std.StringHashMap([]const u8).init(a),
         .by_name = std.StringHashMap([]const u8).init(a),
@@ -488,9 +488,23 @@ fn depKeyIdMap(a: Allocator, manifest: *const manifest_mod.Manifest, root: []con
         }
         var pkg_it = group.pkg.iterator();
         while (pkg_it.next()) |item| {
-            // pkg 依存は public id を manifest から導出できないため、
-            // 解決済み package 名（宣言名 `name`。`alias` はプログラム側の
-            // 参照名で package 名ではない）で対応付ける。
+            // `public-id` 明示宣言は解決済み entry を ID で直接照合する。
+            // name 照合では同名 package が複数解決された際に先頭一致を
+            // 誤って対応付けてしまうため。
+            if (item.value_ptr.public_id) |public_id| {
+                for (packages) |entry| {
+                    if (!std.mem.eql(u8, entry.id, public_id)) continue;
+                    try maps.by_id.put(entry.id, item.key_ptr.*);
+                    try maps.by_name.put(item.key_ptr.*, entry.id);
+                    if (item.value_ptr.alias) |alias| try maps.by_name.put(alias, entry.id);
+                    break;
+                }
+                continue;
+            }
+            // `public-id` 未指定の pkg 依存は manifest から public id を
+            // 導出できないため、解決済み package 名（宣言名 `name`。
+            // `alias` はプログラム側の参照名で package 名ではない）で
+            // 対応付ける。
             for (packages) |entry| {
                 if (std.mem.eql(u8, entry.name, item.value_ptr.name)) {
                     try maps.by_id.put(entry.id, item.key_ptr.*);
@@ -985,8 +999,10 @@ fn ensureEnvironmentUsable(a: Allocator, io: std.Io, loaded: *project.Project, o
     const env_ok = has_lock and env != null and
         project.environmentMatchesLock(env.?, &digest) and
         env.?.schema_version == 1 and
-        (env.?.profile == null or std.mem.eql(u8, env.?.profile.?, outcome.profile)) and
-        (env.?.runtime == null or std.mem.eql(u8, env.?.runtime.?, "lnako")) and
+        // schema v1 の profile/runtime は必須項目。欠落・型違いの環境は
+        // 選択 profile/runtime を証明できないため不一致として拒否する。
+        (env.?.profile != null and std.mem.eql(u8, env.?.profile.?, outcome.profile)) and
+        (env.?.runtime != null and std.mem.eql(u8, env.?.runtime.?, "lnako")) and
         // 参照世代 dir が消えた環境は不一致とする。
         (env.?.generation != null and project.generationExists(io, loaded.root, env.?.generation.?)) and
         // packages 記録・実体の欠落も不一致とする（内容検証）。
