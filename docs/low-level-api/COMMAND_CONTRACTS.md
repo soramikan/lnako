@@ -149,9 +149,9 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 - `ロケール文字列比較`（ll-locale-compare）助詞 `AをBとOPTIONSで/AをBと`、戻り `number`、capability `locale_collate`、エラー EINVAL/ENOTSUP
 - `文字表示幅取得`（ll-display-width）助詞 `TEXTの`、戻り `number`、capability `display_width`、エラー EINVAL
 
-`ロケール文字列比較` は `A` と `B` の文字列を比較し、負/0/正を表す `-1`/`0`/`1` を返す（`Intl.Collator.prototype.compare` と同じ三値契約）。`OPTIONS` は `locale` キーのみを解釈し、未知キーは無視する。`locale` を省略・`null`・`undefined` にするか、`C` / `POSIX` / `C.UTF-8` / `C.utf8` 等のCロケール名を指定した場合はCロケールbytewise（UTF-8バイト列の辞書順）比較を行い、macOS/Linux/Windows・Interpreter/AOTで同一結果を返すポータブル基準となる。それ以外のlocale名（`ja_JP.UTF-8` やBCP47風の `ja-JP` 等）はOSの照合機能へ委譲し、結果はOS・ロケールデータに依存する（`Intl.Collator` のlocale依存と同じ位置づけ。OS差は契約違反ではない）。OSがそのlocaleを照合できない場合は構造化 `ENOTSUP`（`capability=locale_collate`）を投げ、Cロケールへfallbackするかは呼び出し側が `code` で分岐する。A/Bが文字列でない場合は `EINVAL`。
+`ロケール文字列比較` は `A` と `B` の文字列を比較し、負/0/正を表す `-1`/`0`/`1` を返す（`Intl.Collator.prototype.compare` と同じ三値契約）。`OPTIONS` は `locale` キーのみを解釈し、未知キーは無視する。`locale` を省略・`null`・`undefined` にするか、`C` / `POSIX` / `C.UTF-8` / `C.utf8` 等のCロケール名を指定した場合はCロケールbytewise（UTF-8バイト列の辞書順）比較を行い、macOS/Linux/Windows・Interpreter/AOTで同一結果を返すポータブル基準となる。それ以外のlocale名（`ja_JP.UTF-8` やBCP47風の `ja-JP` 等）はOSの照合機能へ委譲し、結果はOS・ロケールデータに依存する（`Intl.Collator` のlocale依存と同じ位置づけ。OS差は契約違反ではない）。委譲時のcodesetはUTF-8に限り、`.` で非UTF-8のcodesetを明示したlocale名（`ja_JP.EUC-JP` 等）はA/BがUTF-8バイト列である本APIの契約と両立しないため `EINVAL` で拒否する。OSがそのlocaleを照合できない場合は構造化 `ENOTSUP`（`capability=locale_collate`）を投げ、Cロケールへfallbackするかは呼び出し側が `code` で分岐する。A/Bが文字列でない場合は `EINVAL`。
 
-`文字表示幅取得` は文字列の端末表示セル幅を返す（コードポイント数ではない）。East Asian WidthのFullwidth/Wide・Emoji_Presentation・地域指標は2セル、結合文字・異体字セレクタ・絵文字修飾子・ZWJ/ZWNJ・制御文字（C0/C1/DEL）・その他書式文字は0セル、連続する地域指標はペアごとに2セル、ZWJで連結された絵文字列は全体で2セルと数える。不正UTF-8バイト列は欠損単位ごとに1セルで処理を継続する。ホスト非依存の共有アルゴリズムのためInterpreter/AOTで常に同一値を返し、TEXTが文字列でない場合のみ `EINVAL`。
+`文字表示幅取得` は文字列の端末表示セル幅を返す（コードポイント数ではない）。East Asian WidthのFullwidth/Wide・Emoji_Presentation・地域指標は2セル、結合文字・異体字セレクタ・ZWJ/ZWNJ・制御文字（C0/C1/DEL）・その他書式文字は0セルと数える。絵文字修飾子は直前基底がEmoji_Modifier_Baseのときだけ0セルへ吸収し、それ以外は単独2セル。連続する地域指標はペアごとに2セルだが、結合文字・修飾子・ZWJ等が間に挟まるとペアにならず各2セル。絵文字適格な基底と絵文字メンバーだけがZWJで連結された列は全体で2セル、それ以外のZWJ列はZWJを0幅で終端して基底幅の合計とする（`中‍文` は4セル）。不正UTF-8バイト列は欠損単位ごとに1セルで処理を継続する。ホスト非依存の共有アルゴリズムのためInterpreter/AOTで常に同一値を返し、TEXTが文字列でない場合のみ `EINVAL`。
 
 ## 対応付け
 

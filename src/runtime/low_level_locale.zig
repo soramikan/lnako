@@ -44,9 +44,30 @@ pub const CollateError = error{
 /// 打ち切る（C APIの文字列契約に一致）。
 pub fn collate(allocator: std.mem.Allocator, name: []const u8, a: []const u8, b: []const u8) CollateError!i8 {
     if (isCLocaleName(name)) return compareBytewise(a, b);
+    if (!hasUtf8Codeset(name)) return error.InvalidLocale;
     if (comptime builtin.os.tag == .windows) return collateWindows(allocator, name, a, b);
     if (comptime hasPosixCollation()) return collatePosix(allocator, name, a, b);
     return error.LocaleCollateUnsupported;
+}
+
+/// locale名の `.` 指定codesetがUTF-8系か。比較対象は常にUTF-8バイト列
+/// なので、`ja_JP.EUC-JP` 等の非UTF-8ロケールへ委譲するとOSがバイト列を
+/// 別encodingとして解釈し不正な照合結果になる。受理側が変換しない本API
+/// では非UTF-8 codeset指定をlocale名不正（EINVAL）として拒否する。
+/// `.` が無ければ実装側が `.UTF-8` を補うためUTF-8とみなす。
+fn hasUtf8Codeset(name: []const u8) bool {
+    const dot = std.mem.indexOfScalar(u8, name, '.') orelse return true;
+    var codeset = name[dot + 1 ..];
+    if (std.mem.indexOfScalar(u8, codeset, '@')) |at| codeset = codeset[0..at];
+    var normalized: [8]u8 = undefined;
+    var n: usize = 0;
+    for (codeset) |byte| {
+        if (byte == '-' or byte == '_') continue;
+        if (n >= normalized.len) return false;
+        normalized[n] = std.ascii.toLower(byte);
+        n += 1;
+    }
+    return std.mem.eql(u8, normalized[0..n], "utf8");
 }
 
 /// OSのロケール照合がコンパイル時点で提供可能か。WASIはロケールAPIを
@@ -89,18 +110,24 @@ fn posixLocaleName(buffer: []u8, name: []const u8) ?[:0]const u8 {
     var len: usize = 0;
     var has_encoding = false;
     var in_tag = true;
+    var at_pos: ?usize = null;
     for (name) |byte| {
         const ok = std.ascii.isAlphanumeric(byte) or byte == '.' or byte == '_' or byte == '@' or byte == '-';
         if (!ok) return null;
         if (byte == '.' or byte == '@') in_tag = false;
         if (byte == '.') has_encoding = true;
+        if (byte == '@' and at_pos == null) at_pos = len;
         // BCP47の`-`→`_`変換は言語タグ部（エンコーディング・修飾より前）
         // だけに適用する。`.UTF-8` のハイフンまで潰すと不正名になる。
         buffer[len] = if (byte == '-' and in_tag) '_' else byte;
         len += 1;
     }
     if (!has_encoding) {
-        @memcpy(buffer[len..][0..6], ".UTF-8");
+        // POSIX名は `language[_territory][.codeset][@modifier]` の順。
+        // @modifier があればその直前へcodesetを挿入する。
+        const insert_at = at_pos orelse len;
+        std.mem.copyBackwards(u8, buffer[insert_at + 6 .. len + 6], buffer[insert_at..len]);
+        @memcpy(buffer[insert_at..][0..6], ".UTF-8");
         len += 6;
     }
     buffer[len] = 0;
@@ -131,7 +158,7 @@ const kernel32 = struct {
         len2: c_int,
         version_info: ?*anyopaque,
         reserved: ?*anyopaque,
-        param: ?isize,
+        param: isize,
     ) c_int;
 };
 
@@ -165,7 +192,7 @@ fn collateWindows(allocator: std.mem.Allocator, name: []const u8, a: []const u8,
         error.InvalidWtf8 => return error.InvalidLocale,
     };
     defer allocator.free(b_w);
-    const order = kernel32.CompareStringEx(locale_name.ptr, 0, a_w.ptr, -1, b_w.ptr, -1, null, null, null);
+    const order = kernel32.CompareStringEx(locale_name.ptr, 0, a_w.ptr, -1, b_w.ptr, -1, null, null, 0);
     // CSTR_LESS_THAN=1 / CSTR_EQUAL=2 / CSTR_GREATER_THAN=3。0はエラーで、
     // 未知ロケール名（ERROR_INVALID_PARAMETER等）をENOTSUPへ写す。
     return switch (order) {
@@ -183,9 +210,12 @@ fn collateWindows(allocator: std.mem.Allocator, name: []const u8, a: []const u8,
 ///   制御・書式・区切り文字、Default_Ignorableは0セル
 /// - VS16( U+FE0F )は直前基底が絵文字適格なら幅を2へ、VS15( U+FE0E )は
 ///   全角でない基底の幅を1へ戻す（キーキャップ・テキスト絵文字対応）
-/// - 連続する地域指標は2個で1旗グリフ（計2セル、奇数個目は単体2セル）
-/// - ZWJで連結された拡張書記素クラスタは、絵文字系メンバーを含めば
-///   全体で2セル、含まなければメンバー基底幅の合計
+/// - 連続する地域指標は2個で1旗グリフ（計2セル、奇数個目は単体2セル）。
+///   結合文字・修飾子・ZWJ等が間に挟まるとペアにならず各2セル
+/// - 絵文字適格基底と絵文字メンバーだけがZWJで連結されたクラスタは
+///   全体で2セル。絵文字でないZWJ列はZWJを0幅で終端し基底幅の合計
+/// - 絵文字修飾子は直前基底がEmoji_Modifier_Baseのときだけ0セルへ
+///   吸収し、それ以外は単独2セル
 /// - それ以外は1セル。不正UTF-8（打ち切り・overlong・孤立サロゲート・
 ///   単独継続byte）は欠損単位1セル（単独継続byteは各1セル）
 pub fn displayWidth(text: []const u8) u32 {
@@ -203,18 +233,23 @@ pub fn displayWidth(text: []const u8) u32 {
             continue;
         };
         if (cp == zwj) {
+            ri_odd = false;
             if (cluster.has_base) cluster.zwj_pending = true;
             continue;
         }
         if (contains(.join_control, cp)) {
+            ri_odd = false;
             // ZWNJ等は0幅だが、ZWJの連結保留は切る。
             cluster.zwj_pending = false;
             continue;
         }
         // 結合文字・VS等は基底へ吸収。絵文字修飾子（肌色）は
-        // Grapheme_ExtendではなくGCB=Extend側のため別途扱い、
-        // 基底が無い先頭では単独絵文字（2セル）として残す。
-        if (isExtend(cp) or (isEmojiModifier(cp) and cluster.has_base)) {
+        // Grapheme_ExtendではなくGCB=Extend側のため別途扱い、直前基底が
+        // Emoji_Modifier_Baseのときだけ吸収し、それ以外や先頭では
+        // 単独絵文字（2セル）として残す。これらの0幅文字が間に挟まった
+        // 地域指標は旗ペアにならないためri_oddを切る。
+        if (isExtend(cp) or (isEmojiModifier(cp) and cluster.has_base and cluster.modifier_base)) {
+            ri_odd = false;
             cluster.extend(cp);
             continue;
         }
@@ -226,11 +261,17 @@ pub fn displayWidth(text: []const u8) u32 {
             }
             ri_odd = true;
             total += cluster.finish();
-            cluster = .{ .has_base = true, .width = 2, .wide_or_emoji = true, .first = cp };
+            // 地域指標は絵文字ZWJシーケンスの構成員にはならないため、
+            // ZWJ連結可能を示す wide_or_emoji は立てない。
+            cluster = .{ .has_base = true, .width = 2, .first = cp };
             continue;
         }
         ri_odd = false;
-        if (cluster.zwj_pending) {
+        // ZWJ連結は絵文字シーケンスのみ縮退する。基底が絵文字適格
+        // （wide_or_emoji）で後続も絵文字メンバーのときだけ1グリフへ
+        // 連結し、それ以外はZWJを0幅で終端して前後を別々に加算する
+        // （`中‍A` は3セル、`中‍文` は4セル）。
+        if (cluster.zwj_pending and cluster.wide_or_emoji and isEmojiMember(cp)) {
             cluster.addJoined(cp);
         } else {
             total += cluster.finish();
@@ -253,6 +294,7 @@ const Cluster = struct {
     has_base: bool = false,
     zwj_pending: bool = false,
     wide_or_emoji: bool = false,
+    modifier_base: bool = false,
     first: u21 = 0,
 
     fn finish(self: Cluster) u32 {
@@ -266,6 +308,7 @@ const Cluster = struct {
         self.first = cp;
         self.has_base = true;
         self.zwj_pending = false;
+        self.modifier_base = isEmojiModifierBase(cp);
         if (isEmojiMember(cp)) self.wide_or_emoji = true;
     }
 
@@ -273,6 +316,7 @@ const Cluster = struct {
         self.joined = true;
         self.zwj_pending = false;
         self.width += cellWidth(cp);
+        self.modifier_base = isEmojiModifierBase(cp);
         if (isEmojiMember(cp)) self.wide_or_emoji = true;
     }
 
@@ -303,9 +347,18 @@ fn isEmojiModifier(cp: u21) bool {
 }
 
 /// ZWJ連結クラスタを1絵文字グリフ（2セル）へ縮退させるメンバー判定。
+/// East Asian Wideは含めない。全角文字は絵文字ZWJシーケンスの構成員
+/// ではないため、`中‍文` のような列を2セルへ縮退させない。
 fn isEmojiMember(cp: u21) bool {
-    return eastAsianWide(cp) or contains(.emoji_presentation, cp) or
-        contains(.extended_pictographic, cp) or isRegionalIndicator(cp);
+    return contains(.emoji_presentation, cp) or
+        contains(.extended_pictographic, cp);
+}
+
+/// 肌色修飾子（U+1F3FB..U+1F3FF）を受け付ける基底判定。
+/// Emoji_Modifier_Baseでない基底に続く修飾子は0セルへ吸収せず、
+/// 単独の修飾子（2セル）として数える。
+fn isEmojiModifierBase(cp: u21) bool {
+    return contains(.emoji_modifier_base, cp);
 }
 
 /// VS16で絵文字表示へ昇格する基底判定。数字・#・*（キーキャップ）や
@@ -401,7 +454,9 @@ test "POSIXロケール名はUTF-8補完と-→_正規化を行う" {
     // エンコーディング部のハイフンは潰さない（UTF-8→UTF_8の化けを防ぐ）。
     try std.testing.expectEqualStrings("ja_JP.UTF-8", posixLocaleName(&buffer, "ja_JP.UTF-8").?);
     try std.testing.expectEqualStrings("zh_Hans_CN.UTF-8", posixLocaleName(&buffer, "zh-Hans-CN.UTF-8").?);
-    try std.testing.expectEqualStrings("de_DE@euro.UTF-8", posixLocaleName(&buffer, "de_DE@euro").?);
+    // @modifier はcodesetの後ろに来るPOSIX順（language.codeset@modifier）。
+    try std.testing.expectEqualStrings("de_DE.UTF-8@euro", posixLocaleName(&buffer, "de_DE@euro").?);
+    try std.testing.expectEqualStrings("de_DE.UTF-8@euro", posixLocaleName(&buffer, "de_DE.UTF-8@euro").?);
     try std.testing.expect(posixLocaleName(&buffer, "ja;rm") == null);
     try std.testing.expect(posixLocaleName(&buffer, "") == null);
 }
@@ -415,6 +470,13 @@ test "非CロケールはOS照合またはENOTSUPになる" {
     // Cロケール名はcallback非依存でbytewise比較。
     try std.testing.expectEqual(@as(i8, -1), try collate(std.testing.allocator, "C", "a", "b"));
     try std.testing.expectEqual(@as(i8, -1), try collate(std.testing.allocator, "C.UTF-8", "a", "b"));
+    // 非UTF-8 codesetはOS照合へ委譲できないためEINVAL（OS共通の拒否）。
+    try std.testing.expectError(error.InvalidLocale, collate(std.testing.allocator, "ja_JP.EUC-JP", "あ", "い"));
+    try std.testing.expectError(error.InvalidLocale, collate(std.testing.allocator, "de_DE.ISO-8859-1", "a", "b"));
+    try std.testing.expect(hasUtf8Codeset("ja_JP.UTF-8"));
+    try std.testing.expect(hasUtf8Codeset("ja_JP.utf8"));
+    try std.testing.expect(hasUtf8Codeset("ja_JP"));
+    try std.testing.expect(hasUtf8Codeset("de_DE@euro"));
 }
 
 test "表示幅はASCII・全角・結合文字・VSを処理する" {
@@ -450,6 +512,23 @@ test "表示幅は絵文字・修飾子・旗・ZWJ列を1グリフへ集約す�
     try std.testing.expectEqual(@as(u32, 2), displayWidth("ab"));
     try std.testing.expectEqual(@as(u32, 2), displayWidth("a\u{200d}b"));
     try std.testing.expectEqual(@as(u32, 2), displayWidth("a\u{200c}b"));
+}
+
+test "表示幅は絵文字でないZWJ列・修飾子・分断された旗を縮退させない" {
+    // 非絵文字のZWJ列は縮退しない（基底幅の合計、ZWJ自体は0セル）。
+    try std.testing.expectEqual(@as(u32, 4), displayWidth("中\u{200d}文"));
+    try std.testing.expectEqual(@as(u32, 3), displayWidth("中\u{200d}A"));
+    try std.testing.expectEqual(@as(u32, 3), displayWidth("a\u{200d}👨"));
+    // Emoji_Modifier_Baseでない基底の後の肌色修飾子は単独2セル。
+    try std.testing.expectEqual(@as(u32, 3), displayWidth("A🏽"));
+    try std.testing.expectEqual(@as(u32, 4), displayWidth("中🏽"));
+    // Emoji_Modifier_Baseの後では吸収される。
+    try std.testing.expectEqual(@as(u32, 2), displayWidth("👋🏽"));
+    try std.testing.expectEqual(@as(u32, 2), displayWidth("👨🏽"));
+    // 結合文字・修飾子・ZWJ等が挟まると地域指標はペアにならない。
+    try std.testing.expectEqual(@as(u32, 4), displayWidth("🇯\u{301}🇵"));
+    try std.testing.expectEqual(@as(u32, 4), displayWidth("🇯\u{200d}🇵"));
+    try std.testing.expectEqual(@as(u32, 5), displayWidth("🇯a🇵"));
 }
 
 test "表示幅は制御文字と不正UTF-8を規則通りに処理する" {

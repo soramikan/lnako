@@ -113,7 +113,7 @@ test "AOT低レイヤーのロケール比較はInterpreterと同じ契約で返
 
     // 未インストールの可能性が高いロケールは、照合できれば結果、
     // 未対応なら構造化ENOTSUP（capability付き）になる。
-    rooted[3] = try runtimeUtf8String(&runtime, "zz_ZZ");
+    rooted[3] = try runtimeUtf8String(&runtime, "locale");
     try runtime.setDictionary(&rooted[2].object().?.payload.dictionary, rooted[3], try runtimeUtf8String(&runtime, "zz_ZZ"));
     const maybe = lowLevelLocaleBuiltin(&runtime, aot_builtin_command, &args) catch |failure| blk: {
         try std.testing.expect(failure == error.NakoException);
