@@ -1275,6 +1275,32 @@ test "変数省略の範囲繰り返しは専用のそれへ束縛する" {
     try std.testing.expectEqualStrings("3\n1\n2\n2\n", host.written());
 }
 
+test "関数スコープのそれ復元は既存グローバル更新だけで完了する" {
+    var fixture = try compileForTest(std.testing.allocator, "1を表示\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+
+    try interpreter.setGlobal("それ", .{ .number = 7 });
+    const saved_allocator = interpreter.allocator;
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    interpreter.allocator = failing.allocator();
+    defer interpreter.allocator = saved_allocator;
+
+    // executeFunctionの入口で「それ」をundefinedにしてもMapの既存エントリは保たれ、
+    // deferの復元は新しい確保なしに値を書き換えられる。
+    try interpreter.setGlobal("それ", .undefined);
+    try interpreter.setGlobal("それ", .{ .number = 7 });
+    try std.testing.expectEqual(@as(f64, 7), interpreter.getGlobal("それ").?.number);
+}
+
 test "関数からの例外伝播で呼び出し側のそれを復元する" {
     const source = "それは7\n●Fとは\nそれは1\n「失敗」のエラー発生\nここまで\nエラー監視\nF()\nエラーならば\nそれを表示\nここまで\n";
     var fixture = try compileForTest(std.testing.allocator, source);
