@@ -193,7 +193,8 @@ fn truncatePathPosix(path: []const u8, size: u64) anyerror!void {
 /// `typeSchemas.fsInfo` の全フィールドを保持する。文字列2本は固定長
 /// バッファ＋長さで持ち、呼び出し側にallocatorを要求しない。
 pub const FsInfo = struct {
-    /// 基本ブロックサイズ（POSIXの `f_bsize`。`df` のブロック単位）。
+    /// `blocks`/`free`/`available` の単位となるブロックサイズ。
+    /// Linuxは `f_frsize`（無ければ `f_bsize`）、macOSは `f_bsize`。
     block_size: u64 = 0,
     /// 全ブロック数（`f_blocks`）。
     blocks: u64 = 0,
@@ -252,21 +253,29 @@ pub fn statfs(io: std.Io, path: []const u8) anyerror!FsInfo {
     };
 }
 
-/// Linuxカーネルの `struct statfs`。`__statfs_word` はLP64で `long`。
+/// Linuxカーネルの `struct statfs`。`__statfs_word` は `long`、
+/// fsblkcnt_t/fsfilcnt_t は `unsigned long`（LP64で64bit、ILP32で32bit）。
 const LinuxStatfs = extern struct {
-    f_type: i64 = 0,
-    f_bsize: i64 = 0,
-    f_blocks: u64 = 0,
-    f_bfree: u64 = 0,
-    f_bavail: u64 = 0,
-    f_files: u64 = 0,
-    f_ffree: u64 = 0,
+    f_type: c_long = 0,
+    f_bsize: c_long = 0,
+    f_blocks: c_ulong = 0,
+    f_bfree: c_ulong = 0,
+    f_bavail: c_ulong = 0,
+    f_files: c_ulong = 0,
+    f_ffree: c_ulong = 0,
     f_fsid: extern struct { val: [2]i32 = .{ 0, 0 } } = .{},
-    f_namelen: i64 = 0,
-    f_frsize: i64 = 0,
-    f_flags: i64 = 0,
-    f_spare: [4]i64 = .{ 0, 0, 0, 0 },
+    f_namelen: c_long = 0,
+    f_frsize: c_long = 0,
+    f_flags: c_long = 0,
+    f_spare: [4]c_long = .{ 0, 0, 0, 0 },
 };
+
+comptime {
+    // 手書きのカーネルABIなのでLP64 Linuxターゲットでは宣言サイズを検証する。
+    if (builtin.os.tag == .linux and (builtin.cpu.arch == .x86_64 or builtin.cpu.arch == .aarch64)) {
+        std.debug.assert(@sizeOf(LinuxStatfs) == 120);
+    }
+}
 
 fn statfsLinux(path: []const u8) anyerror!FsInfo {
     const posix_path = try std.posix.toPosixPath(path);
@@ -279,7 +288,10 @@ fn statfsLinux(path: []const u8) anyerror!FsInfo {
         return linuxErrno(errno);
     }
     var info = FsInfo{
-        .block_size = @intCast(@max(raw.f_bsize, 0)),
+        // f_blocks/f_bfree/f_bavailはf_frsize単位のため、容量計算と
+        // 整合するfrsizeを優先し0ならf_bsizeへ退避する（現行kernelでは
+        // 両者一致が普通で、NFS等の一部FSのみ差が出る）。
+        .block_size = @intCast(@max(if (raw.f_frsize > 0) raw.f_frsize else raw.f_bsize, 0)),
         .blocks = raw.f_blocks,
         .free = raw.f_bfree,
         .available = raw.f_bavail,
@@ -291,7 +303,7 @@ fn statfsLinux(path: []const u8) anyerror!FsInfo {
         setFsType(&info, type_name);
     } else {
         // 未知のFS magicは16進数表記で返し、空文字にはしない。
-        const text = std.fmt.bufPrint(&info.filesystem_type, "0x{x:0>8}", .{@as(u64, @bitCast(raw.f_type))}) catch unreachable;
+        const text = std.fmt.bufPrint(&info.filesystem_type, "0x{x:0>8}", .{@as(u64, @bitCast(@as(i64, raw.f_type)))}) catch unreachable;
         info.filesystem_type_len = text.len;
     }
     setFsId(&info, raw.f_fsid.val[0], raw.f_fsid.val[1]);
@@ -473,13 +485,13 @@ const ficlone: u32 = 0x4004_9409;
 
 fn cloneFileLinux(source: []const u8, destination: []const u8, mode: u32) anyerror!void {
     const source_fd = try std.posix.openat(std.posix.AT.FDCWD, source, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
-    defer std.posix.close(source_fd);
+    defer _ = std.os.linux.close(source_fd);
     // O_EXCLで既存DSTをEEXISTにする。生成権限は0o600固定で、複製後に
     // SRC権限/明示MODEへ揃える（生成時のumaskに結果を左右させない）。
     const destination_fd = try std.posix.openat(std.posix.AT.FDCWD, destination, .{ .ACCMODE = .WRONLY, .CREAT = true, .EXCL = true, .CLOEXEC = true }, 0o600);
     var keep = false;
     defer {
-        std.posix.close(destination_fd);
+        _ = std.os.linux.close(destination_fd);
         // 複製・権限適用の途中失敗では半端なDSTを残さない。
         if (!keep) unlinkPosixPath(destination) catch {};
     }
@@ -488,6 +500,9 @@ fn cloneFileLinux(source: []const u8, destination: []const u8, mode: u32) anyerr
         const errno = std.os.linux.errno(result);
         if (errno == .SUCCESS) break;
         if (errno == .INTR) continue;
+        // この時点の引数は検証済みfdのみのため、EINVALはFICLONE未対応
+        // （古いkernel/FS）を意味し、契約のENOTSUPへ丸める。
+        if (errno == .INVAL) return error.OperationUnsupported;
         return linuxErrno(errno);
     }
     const apply: std.os.linux.mode_t = @intCast(mode);
@@ -510,6 +525,9 @@ fn cloneFileDarwin(source: []const u8, destination: []const u8, mode: ?u32) anye
     }.clonefile;
     const source_path = try std.posix.toPosixPath(source);
     const destination_path = try std.posix.toPosixPath(destination);
+    var keep = false;
+    // 複製・権限適用の途中失敗では半端なDSTを残さない（Linux側と同じ）。
+    defer if (!keep) unlinkPosixPath(destination) catch {};
     while (true) {
         const result = c_clonefile(&source_path, &destination_path, 0);
         if (result == 0) break;
@@ -522,22 +540,23 @@ fn cloneFileDarwin(source: []const u8, destination: []const u8, mode: ?u32) anye
         const apply = std.math.cast(std.c.mode_t, value) orelse return error.InvalidArgument;
         while (true) {
             const result = std.c.fchmodat(std.c.AT.FDCWD, &destination_path, apply, 0);
-            if (result == 0) return;
+            if (result == 0) break;
             const errno = std.c.errno(result);
             if (errno == .INTR) continue;
             return fsPosixErrno(errno);
         }
     }
+    keep = true;
 }
 
 fn unlinkPosixPath(path: []const u8) !void {
     const posix_path = try std.posix.toPosixPath(path);
     while (true) {
-        const result = std.os.linux.unlinkat(std.os.linux.AT.FDCWD, &posix_path, 0);
-        const errno = std.os.linux.errno(result);
-        if (errno == .SUCCESS) return;
+        const result = std.c.unlink(&posix_path);
+        if (result == 0) return;
+        const errno = std.c.errno(result);
         if (errno == .INTR) continue;
-        return linuxErrno(errno);
+        return fsPosixErrno(errno);
     }
 }
 
@@ -587,6 +606,11 @@ fn allocateDarwin(io: std.Io, file: std.Io.File, offset: i64, size: u64) anyerro
         else => return failure,
     };
     // 範囲がEOF内なら新規確保は不要（fallocate同様に成功のまま返す）。
+    // 分岐: LinuxはEOF内のholeにもブロックを確保し、読取専用handleは
+    // EBADFを返すが、macOSのF_PREALLOCATEはF_PEOFPOSMODE（EOF以降）と
+    // F_VOLPOSMODE（ボリューム先頭からの確保）しか範囲を指定できず、
+    // EOF内の任意位置を指せない。file-position modeは存在しないため
+    // ここはno-opとし、契約上の差分として許容する。
     if (end <= current) return;
     const extra = std.math.cast(i64, end - current) orelse return error.InvalidSize;
     var store = DarwinFstore{
