@@ -427,6 +427,54 @@ test "manifest/profile/features/target変更を鮮度判定で検出する" {
     try T.expectEqual(lock.Freshness.missing, lock.checkFreshness(null, sampleInput()));
 }
 
+test "runtime・engines version の変更は stale_target として検出する" {
+    // 解決 runtime・engines 照合 version は lock の鮮度鍵。`--runtime`
+    // 切替やコンパイラ更新は package 選択を変え得るため、記録と異なる
+    // 入力は stale として再解決する。これらを記録しない旧 lock は
+    // null ≠ 値で stale となり、再生成で記録付き lock へ移行する。
+    const nodes = [_]resolver.PackageNode{
+        try node(sqlite_id, "1.2.3", &.{.{ .pkg = req_id }}, &.{"default"}),
+        try node(req_id, "2.0.1", &.{}, &.{ "default", "http" }),
+    };
+    var versioned = sampleInput();
+    versioned.runtime = "lnako";
+    versioned.nako_version = "3.7.24";
+    versioned.lnako_version = "0.2.2";
+    var value = try lock.build(T.allocator, versioned, &.{default_profile}, &nodes, default_fixtures.details());
+    defer value.deinit();
+
+    try T.expectEqual(lock.Freshness.fresh, lock.checkFreshness(&value, versioned));
+
+    var runtime_changed = versioned;
+    runtime_changed.runtime = "cnako";
+    try T.expectEqual(lock.Freshness.stale_target, lock.checkFreshness(&value, runtime_changed));
+
+    var version_changed = versioned;
+    version_changed.lnako_version = "9.9.9";
+    try T.expectEqual(lock.Freshness.stale_target, lock.checkFreshness(&value, version_changed));
+
+    // 記録を持たない入力（version 未供給の呼出し側）も不一致。
+    try T.expectEqual(lock.Freshness.stale_target, lock.checkFreshness(&value, sampleInput()));
+
+    // 逆に runtime/version を記録しない旧 lock は、記録付きの入力で
+    // stale となり再生成される（同一の旧入力では fresh のまま）。
+    var legacy = try sampleLock(T.allocator);
+    defer legacy.deinit();
+    try T.expectEqual(lock.Freshness.fresh, lock.checkFreshness(&legacy, sampleInput()));
+    try T.expectEqual(lock.Freshness.stale_target, lock.checkFreshness(&legacy, versioned));
+
+    // serialize/parse でも runtime・version が保存・復元される。
+    const bytes = try lock.toBytes(&value, T.allocator);
+    defer T.allocator.free(bytes);
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    var parsed = try lock.parse(T.allocator, bytes, &diagnostics);
+    defer parsed.deinit();
+    try T.expectEqualStrings("lnako", parsed.input.runtime.?);
+    try T.expectEqualStrings("3.7.24", parsed.input.nako_version.?);
+    try T.expectEqualStrings("0.2.2", parsed.input.lnako_version.?);
+}
+
 test "features順序と重複は鮮度に影響しない" {
     var value = try sampleLock(T.allocator);
     defer value.deinit();

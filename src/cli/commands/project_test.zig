@@ -872,3 +872,105 @@ test "depKeyIdMapはpublic-id宣言を同名entryの先頭一致より優先す�
     // `public-id` 未指定は従来どおり name 照合で写像する。
     try testing.expectEqualStrings("pkg:33333333333333333333333333333333", maps.by_name.get("plain").?);
 }
+
+test "manifestDeclaresはpublic-id宣言を解決idで照合し同名推移的entryを直接宣言としない" {
+    // 直接宣言が public-id = pkg:222 を指し、推移的に同名 entry
+    // pkg:111 も解決された場合、`why pkg:111` は dep key の名前一致で
+    // 直接宣言と誤報してはいけない。public-id 宣言は解決 id 一致を
+    // 必須とする。
+    const a = testing.allocator;
+    const lnako = @import("lnako");
+    const diag = lnako.package.diagnostics;
+    const manifest_mod = lnako.package.manifest;
+    const lock_model = lnako.package.lock;
+    var diagnostics = diag.List.init(a);
+    defer diagnostics.deinit();
+    var manifest = try manifest_mod.parse(a,
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\dup = { version = "1.0.0", public-id = "pkg:22222222222222222222222222222222" }
+        \\
+    , &diagnostics);
+    defer manifest.deinit();
+    const packages = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:11111111111111111111111111111111", .name = "dup", .version = "1.0.0" },
+        .{ .id = "pkg:22222222222222222222222222222222", .name = "dup", .version = "2.0.0" },
+    };
+    var gated = std.StringHashMap(void).init(a);
+    defer gated.deinit();
+    var activated = std.StringHashMap(void).init(a);
+    defer activated.deinit();
+
+    // 同名の推移的 entry（pkg:111）→ public-id が一致しないため
+    // 直接宣言と報告しない。
+    var transitive = packages[0];
+    const none = try project_cmd.manifestDeclares(a, &manifest, "/nonexistent", &packages, &transitive, "dup", "default", &gated, &activated);
+    try testing.expect(none == null);
+
+    // public-id が指す entry（pkg:222）→ 直接宣言と報告する。
+    var direct = packages[1];
+    const found = try project_cmd.manifestDeclares(a, &manifest, "/nonexistent", &packages, &direct, "dup", "default", &gated, &activated);
+    defer a.free(found.?);
+    try testing.expectEqualStrings("dependencies.pkg", found.?);
+}
+
+test "init --lib は親dirがsymlinkの場合に追随せず失敗する" {
+    // `src` が symlink の dir で init --lib を実行しても、リンク先へ
+    // scaffold file を書き込まない（親 dir を no-follow で開く）。
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    // 外部 dir（リンク先）と project dir を用意する。
+    try temporary.dir.createDirPath(io, "outside");
+    try temporary.dir.writeFile(io, .{ .sub_path = "outside/marker.txt", .data = "keep" });
+    try temporary.dir.createDirPath(io, "proj");
+    try temporary.dir.symLink(io, "../outside", "proj/src", .{ .is_directory = true });
+    const proj_root = try temporary.dir.realPathFileAlloc(io, "proj", a);
+    const outside_root = try temporary.dir.realPathFileAlloc(io, "outside", a);
+
+    var cli = Cli.init(a);
+    try expectFail(error.Failed, a, &cli, "init", &.{ "--lib", "--name", "mylib" }, proj_root);
+    // リンク先へ書き込まれていないこと（symlink 経由の外部書込み防止）。
+    try testing.expect(!try dirFileExists(a, outside_root, "lib.nako3"));
+    try testing.expect(std.mem.indexOf(u8, cli.err.written(), "symlink") != null);
+}
+
+test "依存テーブルヘッダの行末コメントを許容する" {
+    // `[dependencies.path] # comment` は TOML 上有効なヘッダ。
+    // add が同じテーブルへ追記し、remove が宣言を除去できる。
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const app_root = try newAppFixture(a, &temporary);
+    try appManifest(a, app_root,
+        \\[dependencies.path] # local packages
+        \\lib = { path = "lib" }
+        \\
+    );
+
+    var cli = Cli.init(a);
+    try cli.run(a, "add", &.{ "other", "--path", "lib" }, app_root);
+    const manifest = try readFile(a, app_root, "nako.toml");
+    // コメント付きヘッダを再利用し、2つ目の [dependencies.path] を
+    // 追加しない。
+    try testing.expect(std.mem.indexOf(u8, manifest, "other = { path = \"lib\" }") != null);
+    var header_count: usize = 0;
+    var scan = manifest;
+    while (std.mem.indexOf(u8, scan, "[dependencies.path]")) |at| {
+        header_count += 1;
+        scan = scan[at + 1 ..];
+    }
+    try testing.expectEqual(@as(usize, 1), header_count);
+
+    try cli.run(a, "remove", &.{"other"}, app_root);
+    const removed = try readFile(a, app_root, "nako.toml");
+    try testing.expect(std.mem.indexOf(u8, removed, "other = { path") == null);
+}

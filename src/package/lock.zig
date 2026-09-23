@@ -418,7 +418,7 @@ fn parseProfile(parser: *Parser, value: std.json.Value, path: []const u8) !?Prof
 
 fn parseInput(parser: *Parser, value: std.json.Value, path: []const u8) !?Input {
     const object = (try parser.asObject(value, path)) orelse return null;
-    try parser.rejectUnknown(object, &.{ "manifestSha256", "profile", "features", "target", "mutablePaths" }, path);
+    try parser.rejectUnknown(object, &.{ "manifestSha256", "profile", "features", "target", "runtime", "nakoVersion", "cnakoVersion", "lnakoVersion", "mutablePaths" }, path);
     const manifest_value = object.get("manifestSha256") orelse {
         try parser.report(diag.E019_REQUIRED_FIELD_MISSING, path, "missing required field \"manifestSha256\"", .{});
         return null;
@@ -472,7 +472,7 @@ fn parseInput(parser: *Parser, value: std.json.Value, path: []const u8) !?Input 
             }
         }
     }
-    return Input{
+    var input = Input{
         .manifest_sha256 = try parser.duplicate((try parser.asString(manifest_value, path)) orelse return null),
         .profile = try parser.duplicate((try parser.asString(profile_value, path)) orelse return null),
         .features = (try parseFeatureList(parser, features_value, path)) orelse &.{},
@@ -483,6 +483,20 @@ fn parseInput(parser: *Parser, value: std.json.Value, path: []const u8) !?Input 
         },
         .mutable_paths = mutable_paths.items,
     };
+    // 解決 runtime・engines 照合 version は任意項目（旧 lock では欠落）。
+    if (object.get("runtime")) |runtime_value| {
+        if (try parser.asString(runtime_value, path)) |runtime| input.runtime = try parser.duplicate(runtime);
+    }
+    if (object.get("nakoVersion")) |version_value| {
+        if (try parser.asString(version_value, path)) |version| input.nako_version = try parser.duplicate(version);
+    }
+    if (object.get("cnakoVersion")) |version_value| {
+        if (try parser.asString(version_value, path)) |version| input.cnako_version = try parser.duplicate(version);
+    }
+    if (object.get("lnakoVersion")) |version_value| {
+        if (try parser.asString(version_value, path)) |version| input.lnako_version = try parser.duplicate(version);
+    }
+    return input;
 }
 
 /// `nako.lock` バイト列を解析して `Lock` を構築する。構造エラーは診断へ記録し
@@ -826,6 +840,14 @@ pub fn checkFreshness(existing: ?*const Lock, current: Input) Freshness {
     if (!std.mem.eql(u8, lock.input.profile, current.profile)) return .stale_profile;
     if (!Input.sameFeatures(lock.input, current)) return .stale_features;
     if (!Target.eql(lock.input.target, current.target)) return .stale_target;
+    // 解決 runtime・engines 照合 version も鮮度鍵。`--runtime` 切替や
+    // コンパイラ更新は engines 照合結果・package 選択を変え得るため、
+    // 記録と一致しなければ stale として再解決する（未記録の旧 lock も
+    // null ≠ 値で不一致になる）。
+    if (!model.optEql(lock.input.runtime, current.runtime) or
+        !model.optEql(lock.input.nako_version, current.nako_version) or
+        !model.optEql(lock.input.cnako_version, current.cnako_version) or
+        !model.optEql(lock.input.lnako_version, current.lnako_version)) return .stale_target;
     return .fresh;
 }
 
@@ -1313,6 +1335,10 @@ pub fn build(gpa: Allocator, input: Input, profiles: []const NamedProfile, nodes
             .cpu = try allocator.dupe(u8, input.target.cpu),
             .abi = try allocator.dupe(u8, input.target.abi),
         },
+        .runtime = try dupeOpt(allocator, input.runtime),
+        .nako_version = try dupeOpt(allocator, input.nako_version),
+        .cnako_version = try dupeOpt(allocator, input.cnako_version),
+        .lnako_version = try dupeOpt(allocator, input.lnako_version),
         .mutable_paths = try canonicalMutablePaths(allocator, input.mutable_paths),
     };
 
@@ -1431,6 +1457,10 @@ fn canonicalFeatures(allocator: Allocator, items: []const []const u8) ![]const [
         unique_len += 1;
     }
     return out[0..unique_len];
+}
+
+fn dupeOpt(allocator: Allocator, value: ?[]const u8) !?[]const u8 {
+    return if (value) |v| try allocator.dupe(u8, v) else null;
 }
 
 fn dupProfile(allocator: Allocator, record: ProfileRecord) !ProfileRecord {

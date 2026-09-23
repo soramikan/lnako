@@ -72,13 +72,46 @@ fn emitKey(a: Allocator, name: []const u8) ![]const u8 {
     return std.fmt.allocPrint(a, "\"{s}\"", .{name});
 }
 
+/// 行末の TOML コメントを除去する。`#` が基本文字列・literal 文字列の
+/// 内側にある場合はコメント開始とみなさない（`"a#b"]` のような細工
+/// をヘッダとして誤認しない）。
+fn stripTomlComment(text: []const u8) []const u8 {
+    const String = enum { none, basic, literal };
+    var string: String = .none;
+    var index: usize = 0;
+    while (index < text.len) : (index += 1) {
+        const ch = text[index];
+        switch (string) {
+            .basic => {
+                if (ch == '\\') {
+                    index += 1;
+                    continue;
+                }
+                if (ch == '"') string = .none;
+            },
+            .literal => if (ch == '\'') {
+                string = .none;
+            },
+            .none => switch (ch) {
+                '#' => return text[0..index],
+                '"' => string = .basic,
+                '\'' => string = .literal,
+                else => {},
+            },
+        }
+    }
+    return text;
+}
+
 /// 行テキストが `[<section>]` ヘッダか判定する。`[ dependencies.path ]`
 /// のような空白や、`[dependencies."path"]` のようなセグメント引用は
 /// TOML 上同一のテーブルなので正規化して比較する。
 /// `["dependencies.path"]`（名前全体の引用）は別名テーブルなので一致
 /// させない（セグメント分割で引用が崩れた場合は不一致）。
+/// `[dependencies.path] # comment` のような行末コメントは除去して
+/// から比較する。
 fn headerMatches(text: []const u8, section: []const u8, buf: []u8) bool {
-    const t = std.mem.trim(u8, text, " \t\r");
+    const t = std.mem.trim(u8, stripTomlComment(text), " \t\r");
     if (t.len < 3 or t[0] != '[' or t[t.len - 1] != ']') return false;
     const inner = t[1 .. t.len - 1];
     var out: usize = 0;
@@ -353,15 +386,51 @@ const lib_test_template =
     \\
 ;
 
+/// scaffold の親 dir（`src`/`examples`/`tests`）を no-follow で開く。
+/// 既存の実 dir はそのまま使い、無ければ作成する。leaf symlink・
+/// reparse point・実 file は追随せず `error.InvalidScaffoldDir` と
+/// する（init は既存物を置き換えず、symlink 経由で外部へ書かない）。
+fn openScaffoldDir(io: std.Io, dir: std.Io.Dir, rel: []const u8) !std.Io.Dir {
+    while (true) {
+        var opened = dir.openDir(io, rel, .{ .follow_symlinks = false }) catch |err| switch (err) {
+            error.FileNotFound => {
+                dir.createDirPath(io, rel) catch |create_err| switch (create_err) {
+                    error.PathAlreadyExists => {},
+                    else => return create_err,
+                };
+                continue;
+            },
+            // leaf symlink・実 file は追随せず init 失敗とする。
+            error.SymLinkLoop, error.NotDir => return error.InvalidScaffoldDir,
+            else => return err,
+        };
+        const stat = opened.stat(io) catch |err| {
+            opened.close(io);
+            return err;
+        };
+        if (stat.kind == .directory) return opened;
+        opened.close(io);
+        return error.InvalidScaffoldDir;
+    }
+}
+
 /// `sub_path` へ新規 file を排他作成して書き込む。既存・symlink・
 /// reparse point には `PathAlreadyExists`/`SymLinkLoop` で失敗し、
 /// 既存ファイルや symlink 先を上書きしない（`access` 検査と書込の
-/// 間に置かれた symlink も `exclusive` で捕捉できる）。
+/// 間に置かれた symlink も `exclusive` で捕捉できる）。親 dir は
+/// no-follow で開いたハンドル相対で作成し、親が symlink の場合も
+/// リンク先へ書き込まない。
 fn writeInitFile(io: std.Io, dir: std.Io.Dir, sub_path: []const u8, contents: []const u8) !void {
+    var target_dir = dir;
+    var leaf = sub_path;
+    var owned_dir: ?std.Io.Dir = null;
+    defer if (owned_dir) |*owned| owned.close(io);
     if (std.fs.path.dirname(sub_path)) |parent| {
-        try dir.createDirPath(io, parent);
+        owned_dir = try openScaffoldDir(io, dir, parent);
+        target_dir = owned_dir.?;
+        leaf = std.fs.path.basename(sub_path);
     }
-    var file = try dir.createFile(io, sub_path, .{ .exclusive = true });
+    var file = try target_dir.createFile(io, leaf, .{ .exclusive = true });
     defer file.close(io);
     try file.writeStreamingAll(io, contents);
 }
@@ -469,9 +538,14 @@ pub fn runInit(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []
         const lib_source = try std.mem.replaceOwned(u8, a, lib_source_template, "<name>", name);
         const example = try std.mem.replaceOwned(u8, a, lib_example_template, "<name>", name);
         const test_source = try std.mem.replaceOwned(u8, a, lib_test_template, "<name>", name);
-        try writeInitFile(io, cwd, try std.fs.path.join(a, &.{ dir_abs, scaffold_paths[0] }), lib_source);
-        try writeInitFile(io, cwd, try std.fs.path.join(a, &.{ dir_abs, scaffold_paths[1] }), example);
-        try writeInitFile(io, cwd, try std.fs.path.join(a, &.{ dir_abs, scaffold_paths[2] }), test_source);
+        for ([_][]const u8{ lib_source, example, test_source }, scaffold_paths) |contents, rel| {
+            const target = try std.fs.path.join(a, &.{ dir_abs, rel });
+            writeInitFile(io, cwd, target, contents) catch |err| switch (err) {
+                error.InvalidScaffoldDir => return fail(stderr, "init: {s} の親 dir は symlink またはファイルのため作成できません\n", .{target}),
+                error.PathAlreadyExists => return fail(stderr, "init: {s} は既に存在します（既存ファイルを上書きしません）\n", .{target}),
+                else => return err,
+            };
+        }
     }
     try stderr.print("init: {s} にプロジェクトを作成しました\n", .{dir_abs});
     try stderr.flush();

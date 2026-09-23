@@ -160,6 +160,14 @@ pub const Input = struct {
     profile: []const u8,
     features: []const []const u8 = &.{},
     target: Target,
+    /// 解決に使った runtime と engines 照合 version。`--runtime` の
+    /// 切替やコンパイラ更新は package 選択を変え得るため鮮度鍵に
+    /// 含める。これらを記録しない旧 lock は欠落（null）となり、
+    /// 比較で不一致 → 再解決される。
+    runtime: ?[]const u8 = null,
+    nako_version: ?[]const u8 = null,
+    cnako_version: ?[]const u8 = null,
+    lnako_version: ?[]const u8 = null,
     /// mutable path 依存の内容 digest（path 昇順）。`mutable` が無い
     /// lock では空。
     mutable_paths: []const MutablePath = &.{},
@@ -611,6 +619,20 @@ pub fn serialize(lock: *const Lock, writer: *std.Io.Writer) !void {
     try writeIndent(writer, 2);
     try writer.writeAll("\"target\": ");
     try writeTarget(writer, lock.input.target);
+    const version_fields = [_]struct { key: []const u8, value: ?[]const u8 }{
+        .{ .key = "runtime", .value = lock.input.runtime },
+        .{ .key = "nakoVersion", .value = lock.input.nako_version },
+        .{ .key = "cnakoVersion", .value = lock.input.cnako_version },
+        .{ .key = "lnakoVersion", .value = lock.input.lnako_version },
+    };
+    for (version_fields) |field| {
+        if (field.value) |value| {
+            try writer.writeAll(",\n");
+            try writeIndent(writer, 2);
+            try writer.print("\"{s}\": ", .{field.key});
+            try writeString(writer, value);
+        }
+    }
     if (lock.input.mutable_paths.len > 0) {
         try writer.writeAll(",\n");
         try writeIndent(writer, 2);

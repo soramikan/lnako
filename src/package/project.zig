@@ -302,7 +302,7 @@ pub fn recordOf(profiles: []const lock_model.NamedProfile, name: []const u8) ?lo
 /// 解決 runtime。`any`/`common` は lnako として解決し、provider 側で
 /// source 実装のみを許容する（共有 profile の package 集合は両処理系で
 /// 動く実装に限定されるべきため）。
-fn resolveRuntime(record: lock_model.ProfileRecord) []const u8 {
+pub fn resolveRuntime(record: lock_model.ProfileRecord) []const u8 {
     const runtime = record.runtime orelse "any";
     if (std.mem.eql(u8, runtime, "lnako") or std.mem.eql(u8, runtime, "cnako")) return runtime;
     return "lnako";
@@ -312,6 +312,13 @@ fn resolveRuntime(record: lock_model.ProfileRecord) []const u8 {
 fn sourceOnly(record: lock_model.ProfileRecord) bool {
     const runtime = record.runtime orelse "any";
     return !(std.mem.eql(u8, runtime, "lnako") or std.mem.eql(u8, runtime, "cnako"));
+}
+
+/// engines 照合 version を lock `input` 記録用の文字列へ整形する。
+/// 未指定は null（`optEql` で欠落どうしの一致として扱われる）。
+pub fn resolveVersionText(a: Allocator, version: ?semver.Version) Error!?[]const u8 {
+    const v = version orelse return null;
+    return try std.fmt.allocPrint(a, "{f}", .{v});
 }
 
 fn resolveTarget(record: lock_model.ProfileRecord, opts: *const PrepareOptions) resolver.Target {
@@ -1232,6 +1239,12 @@ pub fn ensureLock(
             .cpu = try a.dupe(u8, record.cpu),
             .abi = try a.dupe(u8, record.abi),
         },
+        // 解決 runtime・engines 照合 version を鮮度鍵へ含める。
+        // `--runtime` 切替・コンパイラ更新で lock を再解決するため。
+        .runtime = try a.dupe(u8, resolveRuntime(record)),
+        .nako_version = try resolveVersionText(a, opts.nako_version),
+        .cnako_version = try resolveVersionText(a, opts.cnako_version),
+        .lnako_version = try resolveVersionText(a, opts.lnako_version),
     };
 
     var existing = try loadExistingLock(a, io, project.root, diagnostics);

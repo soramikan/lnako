@@ -782,7 +782,7 @@ fn runWhy(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const
 /// dep key と package 名が異なる場合は `dep key` を併記する。
 /// 選択 profile・feature で無効化される宣言（`dep:` gated で未活性、
 /// `profile` 制約が不一致）は導入理由にならないため除外する。
-fn manifestDeclares(a: Allocator, manifest: *const manifest_mod.Manifest, root: []const u8, packages: []const lock_model.PackageEntry, resolved: *const lock_model.PackageEntry, name: []const u8, profile: []const u8, gated: *const std.StringHashMap(void), activated: *const std.StringHashMap(void)) !?[]const u8 {
+pub fn manifestDeclares(a: Allocator, manifest: *const manifest_mod.Manifest, root: []const u8, packages: []const lock_model.PackageEntry, resolved: *const lock_model.PackageEntry, name: []const u8, profile: []const u8, gated: *const std.StringHashMap(void), activated: *const std.StringHashMap(void)) !?[]const u8 {
     const groups = [_]struct { prefix: []const u8, group: *const manifest_mod.DependencyGroup }{
         .{ .prefix = "dependencies", .group = &manifest.dependencies },
         .{ .prefix = "dev-dependencies", .group = &manifest.dev_dependencies },
@@ -816,15 +816,20 @@ fn manifestDeclares(a: Allocator, manifest: *const manifest_mod.Manifest, root: 
                 if (!std.mem.eql(u8, p, profile)) continue;
             }
             if (project.depIsGated(gated, d.name, d.alias) and !project.depIsActivated(activated, d.name, d.alias)) continue;
+            // `public-id` 明示の宣言は解決 id が一致する場合のみ直接
+            // 宣言とする。同名の推移的 package（別 public id）を dep
+            // key の名前一致で直接宣言と誤報しないため、名前照合より
+            // 先に public-id を確認する。
+            if (d.public_id) |public_id| {
+                if (!std.mem.eql(u8, public_id, resolved.id)) continue;
+                return try std.fmt.allocPrint(a, "{s}.pkg", .{item.prefix});
+            }
             // pkg の dep key は宣言 package 名そのもの。alias は
             // プログラム側の参照名なので別名として照合する。
-            // `why pkg:<id>` で引かれた場合も entry の name/public_id
-            // で直接宣言と判定する。
+            // `why pkg:<id>` で引かれた場合も entry の name で直接宣言
+            // と判定する。
             if (std.mem.eql(u8, dep.key_ptr.*, name) or std.mem.eql(u8, dep.key_ptr.*, resolved.name))
                 return try std.fmt.allocPrint(a, "{s}.pkg", .{item.prefix});
-            if (d.public_id) |public_id| {
-                if (std.mem.eql(u8, public_id, resolved.id)) return try std.fmt.allocPrint(a, "{s}.pkg", .{item.prefix});
-            }
             if (d.alias) |alias| {
                 if (std.mem.eql(u8, alias, name)) return try std.fmt.allocPrint(a, "{s}.pkg（alias: {s} → {s}）", .{ item.prefix, alias, dep.key_ptr.* });
             }

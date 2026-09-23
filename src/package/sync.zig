@@ -128,6 +128,26 @@ fn pinnedSourceHash(entry: *const lock_model.PackageEntry) ?[]const u8 {
 /// する契約のため、manifest が同じでも dir 内容が変われば lock・環境を
 /// 再生成する必要がある。
 pub fn mutablePathMismatch(gpa: Allocator, io: std.Io, project_root: []const u8, lock: *const lock_model.Lock) Error!?[]const u8 {
+    // `mutable = true` path source を持つ package は全て
+    // `input.mutablePaths` に digest を記録済みでなければならない。
+    // 記録の無い旧 schema lock は dir 変更を検出できないため、該当
+    // entry があれば不一致として lock・環境の再生成を要求する。
+    var sets: std.ArrayList([]const lock_model.PackageEntry) = .empty;
+    defer sets.deinit(gpa);
+    try sets.append(gpa, lock.packages);
+    for (lock.profile_packages) |profile| try sets.append(gpa, profile.packages);
+    for (sets.items) |set| {
+        for (set) |*entry| {
+            const source = entry.source orelse continue;
+            if (source.kind != .path or !(source.mutable orelse false)) continue;
+            const rel = source.path orelse return entry.name;
+            var recorded = false;
+            for (lock.input.mutable_paths) |mutable| {
+                if (std.mem.eql(u8, mutable.path, rel)) recorded = true;
+            }
+            if (!recorded) return rel;
+        }
+    }
     return mutablePathsMismatch(gpa, io, project_root, lock.input.mutable_paths);
 }
 
@@ -1029,7 +1049,9 @@ const lib_manifest =
 ;
 
 /// path 依存1件を持つ最小プロジェクトを作る。戻り値は lock 本文。
-fn fixtureLock(allocator: Allocator, manifest_sha: []const u8) ![]u8 {
+/// `mutable_sha` は `deps/lib` の tree digest（`sha256:<hex>`）。
+/// `mutable = true` の source は `input.mutablePaths` の記録が必須。
+fn fixtureLock(allocator: Allocator, manifest_sha: []const u8, mutable_sha: []const u8) ![]u8 {
     return try std.fmt.allocPrint(allocator,
         \\{{
         \\  "schemaVersion": 1,
@@ -1038,7 +1060,8 @@ fn fixtureLock(allocator: Allocator, manifest_sha: []const u8) ![]u8 {
         \\    "manifestSha256": "sha256:{s}",
         \\    "profile": "default",
         \\    "features": [],
-        \\    "target": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu" }}
+        \\    "target": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu" }},
+        \\    "mutablePaths": [{{ "path": "deps/lib", "sha256": "{s}" }}]
         \\  }},
         \\  "packages": {{
         \\    "pkg:11111111111111111111111111111111": {{
@@ -1056,7 +1079,7 @@ fn fixtureLock(allocator: Allocator, manifest_sha: []const u8) ![]u8 {
         \\    "default": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu", "runtime": "lnako" }}
         \\  }}
         \\}}
-    , .{manifest_sha});
+    , .{ manifest_sha, mutable_sha });
 }
 
 fn writeFixtureProject(temporary: *std.testing.TmpDir, manifest_sha: []const u8) !void {
@@ -1068,9 +1091,75 @@ fn writeFixtureProject(temporary: *std.testing.TmpDir, manifest_sha: []const u8)
         .sub_path = "deps/lib/src/index.nako3",
         .data = "●テストとは\n  戻る\nここまで\n",
     });
-    const lock = try fixtureLock(testing.allocator, manifest_sha);
+    // mutable path 依存の内容 digest を実 dir から計算して lock へ記録する。
+    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const lib_abs = try std.fs.path.join(testing.allocator, &.{ root, "deps/lib" });
+    defer testing.allocator.free(lib_abs);
+    const digest = try cache.digestTree(io, testing.allocator, lib_abs, &cache.source_pin_exclude);
+    const mutable_sha = try std.fmt.allocPrint(testing.allocator, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
+    defer testing.allocator.free(mutable_sha);
+    const lock = try fixtureLock(testing.allocator, manifest_sha, mutable_sha);
     defer testing.allocator.free(lock);
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
+}
+
+test "mutable source の digest 未記録 lock は sync が stale として拒否する" {
+    // `mutablePaths` 導入前の旧 lock は `mutable = true` の source を
+    // 持ちながら内容 digest を記録しない。dir 変更を検出できないため、
+    // sync はそのまま使わず StaleLock として再解決を要求する。
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const manifest_sha = try sha256HexAlloc(testing.allocator, app_manifest);
+    defer testing.allocator.free(manifest_sha);
+    try temporary.dir.createDirPath(io, "deps/lib/src");
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.toml", .data = app_manifest });
+    try temporary.dir.writeFile(io, .{ .sub_path = "deps/lib/nako.toml", .data = lib_manifest });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "deps/lib/src/index.nako3",
+        .data = "●テストとは\n  戻る\nここまで\n",
+    });
+    // mutablePaths を記録しない旧形式 lock を書く。
+    const legacy = try std.fmt.allocPrint(testing.allocator,
+        \\{{
+        \\  "schemaVersion": 1,
+        \\  "resolverVersion": 1,
+        \\  "input": {{
+        \\    "manifestSha256": "sha256:{s}",
+        \\    "profile": "default",
+        \\    "features": [],
+        \\    "target": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu" }}
+        \\  }},
+        \\  "packages": {{
+        \\    "pkg:11111111111111111111111111111111": {{
+        \\      "id": "pkg:11111111111111111111111111111111",
+        \\      "name": "lib",
+        \\      "version": "1.0.0",
+        \\      "source": {{ "type": "path", "path": "deps/lib", "mutable": true }},
+        \\      "dependencies": [],
+        \\      "features": [],
+        \\      "artifacts": {{ "source": {{ "kind": "source", "type": "raw" }} }}
+        \\    }}
+        \\  }},
+        \\  "profiles": {{
+        \\    "default": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu", "runtime": "lnako" }}
+        \\  }}
+        \\}}
+    , .{manifest_sha});
+    defer testing.allocator.free(legacy);
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = legacy });
+
+    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const cache_root = try std.fs.path.join(testing.allocator, &.{ root, "cache" });
+    defer testing.allocator.free(cache_root);
+    var list = diag.List.init(testing.allocator);
+    defer list.deinit();
+    try testing.expectError(error.StaleLock, run(testing.allocator, io, .{
+        .project_root = root,
+        .cache_root = cache_root,
+    }, &list));
 }
 
 test "sync は path 依存を参照して schema v1 の環境を構築する" {

@@ -75,11 +75,9 @@ pub const EnvironmentInfo = struct {
     /// `.nako/current` の世代名（あれば）。
     generation: ?[]const u8 = null,
     packages: usize = 0,
-    /// `mutablePaths` フィールドが存在したか（旧環境との区別用）。
-    mutable_paths_present: bool = false,
     /// sync 時点の mutable path 依存の内容 digest（lock `input.mutablePaths`
     /// の写し）。宣言 dir の metadata-only 変更で環境が陳腐化したかの
-    /// 判定に使う。
+    /// 判定に使う。旧環境では空。
     mutable_paths: []const lock_model.MutablePath = &.{},
 };
 
@@ -116,7 +114,6 @@ pub fn readEnvironmentInfo(gpa: Allocator, io: std.Io, project_root: []const u8)
     }
     if (obj.get("mutablePaths")) |v| {
         if (v == .array) {
-            info.mutable_paths_present = true;
             var list: std.ArrayList(lock_model.MutablePath) = .empty;
             for (v.array.items) |item| {
                 if (item != .object) continue;
@@ -148,7 +145,16 @@ pub fn readEnvironmentInfo(gpa: Allocator, io: std.Io, project_root: []const u8)
 /// 宣言するのに環境が `mutablePaths` を記録していない旧環境は、その
 /// 変更を検出できないため不一致とする。
 pub fn environmentMutablePathsUsable(gpa: Allocator, io: std.Io, project_root: []const u8, info: EnvironmentInfo, lock: *const lock_model.Lock) Error!bool {
-    if (lock.input.mutable_paths.len > 0 and !info.mutable_paths_present) return false;
+    // lock が記録する全 mutable path について環境側にも記録が必要。
+    // `mutablePaths` 自体が無い旧環境、または一部 entry が欠けた環境は
+    // 対応する dir の変更を検出できないため不一致とする。
+    for (lock.input.mutable_paths) |mutable| {
+        var recorded = false;
+        for (info.mutable_paths) |item| {
+            if (std.mem.eql(u8, item.path, mutable.path)) recorded = true;
+        }
+        if (!recorded) return false;
+    }
     return (try sync_mod.mutablePathsMismatch(gpa, io, project_root, info.mutable_paths)) == null;
 }
 
@@ -203,6 +209,10 @@ pub fn inspectForCheck(
         .profile = profile,
         .features = try project.expandedFeatureNames(gpa, &expanded),
         .target = .{ .os = record.os, .cpu = record.cpu, .abi = record.abi },
+        .runtime = project.resolveRuntime(record),
+        .nako_version = try project.resolveVersionText(gpa, opts.nako_version),
+        .cnako_version = try project.resolveVersionText(gpa, opts.cnako_version),
+        .lnako_version = try project.resolveVersionText(gpa, opts.lnako_version),
     };
 
     var existing = project.loadExistingLock(gpa, io, project_.root, diagnostics) catch |err| switch (err) {
@@ -455,6 +465,10 @@ fn lockInputFor(a: Allocator, project_: *const project.Project, opts: *const pro
         .profile = profile,
         .features = try project.expandedFeatureNames(a, &expanded),
         .target = .{ .os = record.os, .cpu = record.cpu, .abi = record.abi },
+        .runtime = project.resolveRuntime(record),
+        .nako_version = try project.resolveVersionText(a, opts.nako_version),
+        .cnako_version = try project.resolveVersionText(a, opts.cnako_version),
+        .lnako_version = try project.resolveVersionText(a, opts.lnako_version),
     };
 }
 
