@@ -247,7 +247,9 @@ fn setFsId(info: *FsInfo, first: i32, second: i32) void {
 pub fn statfs(io: std.Io, path: []const u8) anyerror!FsInfo {
     _ = io;
     return switch (builtin.os.tag) {
-        .linux => statfsLinux(path),
+        // ILP32 Linuxはf_blocks等が32bit幅でstatfs64側のABIが必要になるため、
+        // LP64のみ対応とし他アーチでは失敗側へ倒す。
+        .linux => if (builtin.target.ptrBitWidth() == 64) statfsLinux(path) else error.OperationUnsupported,
         .macos => statfsDarwin(path),
         else => error.OperationUnsupported,
     };
@@ -570,10 +572,14 @@ fn cloneFileDarwin(source: []const u8, destination: []const u8, mode: ?u32) anye
     var keep = false;
     defer if (!keep) unlinkPosixPath(destination) catch {};
     // 明示MODEのみ適用する。省略時はclonefileがSRCの権限をそのまま複製する。
+    // fchmodatのパス再解決で差し替えsymlinkへchmodしないよう、O_NOFOLLOWで
+    // fdを取りfdへfchmodする（Linux側と同じくfdベースで権限を適用する）。
     if (mode) |value| {
         const apply = std.math.cast(std.c.mode_t, value) orelse return error.InvalidArgument;
+        const dst_fd = try openDarwinReadOnlyNoFollow(&destination_path);
+        defer _ = std.c.close(dst_fd);
         while (true) {
-            const result = std.c.fchmodat(std.c.AT.FDCWD, &destination_path, apply, 0);
+            const result = std.c.fchmod(dst_fd, apply);
             if (result == 0) break;
             const errno = std.c.errno(result);
             if (errno == .INTR) continue;
@@ -581,6 +587,18 @@ fn cloneFileDarwin(source: []const u8, destination: []const u8, mode: ?u32) anye
         }
     }
     keep = true;
+}
+
+// O_NOFOLLOWでsymlink差し替えを拒否してfdを取る補助。clonefileが作った
+// DSTの権限適用をfdベースで行うために使う。
+fn openDarwinReadOnlyNoFollow(path: [*:0]const u8) !std.c.fd_t {
+    while (true) {
+        const result = std.c.open(path, .{ .ACCMODE = .RDONLY, .NOFOLLOW = true, .CLOEXEC = true });
+        if (result >= 0) return result;
+        const errno = std.c.errno(result);
+        if (errno == .INTR) continue;
+        return fsPosixErrno(errno);
+    }
 }
 
 fn unlinkPosixPath(path: []const u8) !void {
@@ -654,12 +672,18 @@ fn allocateDarwin(io: std.Io, file: std.Io.File, offset: i64, size: u64) anyerro
         else => return failure,
     };
     // 範囲がEOF内なら新規確保は不要（fallocate同様に成功のまま返す）。
-    // 分岐: LinuxはEOF内のholeにもブロックを確保し、読取専用handleは
-    // EBADFを返すが、macOSのF_PREALLOCATEはF_PEOFPOSMODE（EOF以降）と
+    // 分岐: macOSのF_PREALLOCATEはF_PEOFPOSMODE（EOF以降）と
     // F_VOLPOSMODE（ボリューム先頭からの確保）しか範囲を指定できず、
     // EOF内の任意位置を指せない。file-position modeは存在しないため
-    // ここはno-opとし、契約上の差分として許容する。
-    if (end <= current) return;
+    // 物理確保はno-opとし、契約上の差分として許容する。ただしLinux同様に
+    // 書込不可fdのEBADFはopenモードで検査して返す。
+    if (end <= current) {
+        const flags = std.c.fcntl(file.handle, std.c.F.GETFL);
+        if (flags < 0) return fsPosixErrno(std.c.errno(flags));
+        // O_ACCMODE==3、O_RDONLY==0。
+        if ((flags & 3) == 0) return error.BadFileDescriptor;
+        return;
+    }
     const extra = std.math.cast(i64, end - current) orelse return error.InvalidSize;
     var store = DarwinFstore{
         .fst_flags = f_allocateall,
@@ -1078,8 +1102,11 @@ fn linuxErrno(errno: std.os.linux.E) anyerror {
         .DQUOT => error.DiskQuota,
         .NOSYS => error.Unsupported,
         .OPNOTSUPP, .NOTTY => error.OperationUnsupported,
-        // lseek SEEK_DATA/HOLEのENXIO（offsetが末尾以降）やESPIPEはEINVAL相当。
-        .SPIPE, .NXIO, .OVERFLOW => error.InvalidArgument,
+        // lseek SEEK_DATA/HOLEのENXIO（offsetが末尾以降）はemulated経路と
+        // 同じInvalidOffset（EINVAL）にする。呼出側でENXIOを返し得るのは
+        // lseekのみのためここで一括して写す。ESPIPE/EOVERFLOWはEINVAL相当。
+        .NXIO => error.InvalidOffset,
+        .SPIPE, .OVERFLOW => error.InvalidArgument,
         else => error.Unexpected,
     };
 }
@@ -1621,7 +1648,9 @@ test "statfsは実在パスのファイルシステム統計を返し、不正�
     try std.testing.expect(info.free > 0);
     // 非特権ユーザの空きは特権分を含む空き以下になる。
     try std.testing.expect(info.available <= info.free);
-    try std.testing.expect(info.files > 0);
+    // inode管理を持たないFS（FAT等）はfiles=0を返すため、厳密な正値ではなく
+    // free_files <= filesの不変条件のみを確認する。
+    try std.testing.expect(info.free_files <= info.files);
     try std.testing.expect(info.filesystemType().len > 0);
     try std.testing.expect(info.filesystemId().len > 0);
     if (builtin.os.tag == .macos) {
