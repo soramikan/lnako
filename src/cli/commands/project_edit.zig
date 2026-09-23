@@ -21,6 +21,46 @@ const renderOrFail = shared.renderOrFail;
 const failProject = shared.failProject;
 const loadProjectOrFail = shared.loadProjectOrFail;
 
+/// manifest 編集をプロジェクト単位で直列化する OS file lock。
+/// `nako.toml` の読込→候補生成→原子的置換→lock 更新を同じロック区間
+/// に入れ、同時に走る add/remove が互いの変更を上書きしないように
+/// する。`nako.toml` 自体は原子的置換で inode が入れ替わるため、
+/// 専用の `.nako/edit.lock`（rename されないファイル）を使う。
+const EditLock = struct {
+    file: std.Io.File,
+    io: std.Io,
+
+    fn unlock(self: *EditLock) void {
+        self.file.unlock(self.io);
+        self.file.close(self.io);
+    }
+};
+
+/// `start_dir` からプロジェクトルートを特定し、編集ロックを取得する。
+/// 非プロジェクトなら null（`loadProjectOrFail` の診断に委ねる）。
+/// `loadProjectOrFail` より前に呼ぶこと。
+fn acquireEditLock(a: Allocator, io: std.Io, start_dir: []const u8, verb: []const u8, stderr: *std.Io.Writer) !?EditLock {
+    const root = project.findRoot(a, io, start_dir) catch |err| {
+        return fail(stderr, "{s}: プロジェクトルートを探索できません: {s}\n", .{ verb, @errorName(err) });
+    } orelse return null;
+    defer a.free(root);
+    const lock_path = try std.fs.path.join(a, &.{ root, ".nako", "edit.lock" });
+    defer a.free(lock_path);
+    if (std.fs.path.dirname(lock_path)) |dir| {
+        std.Io.Dir.cwd().createDirPath(io, dir) catch |err| {
+            return fail(stderr, "{s}: .nako を作成できません: {s}\n", .{ verb, @errorName(err) });
+        };
+    }
+    const file = std.Io.Dir.cwd().createFile(io, lock_path, .{
+        .read = true,
+        .lock = .exclusive,
+        .lock_nonblocking = false,
+    }) catch |err| {
+        return fail(stderr, "{s}: 編集ロックを取得できません: {s}\n", .{ verb, @errorName(err) });
+    };
+    return .{ .file = file, .io = io };
+}
+
 // ---------------------------------------------------------------------------
 // nako.toml の原子的編集
 // ---------------------------------------------------------------------------
@@ -700,6 +740,10 @@ pub fn runAdd(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []c
         else => {},
     }
 
+    // manifest の読込・候補生成・置換・lock 更新を同一ロック区間に入れ、
+    // 同時実行の add/remove による変更喪失を防ぐ。
+    var guard = try acquireEditLock(a, io, start_dir, "add", stderr);
+    defer if (guard) |*g| g.unlock();
     var loaded = try loadProjectOrFail(a, io, start_dir, stderr);
     defer loaded.deinit();
 
@@ -787,6 +831,8 @@ pub fn runRemove(a: Allocator, io: std.Io, args: []const []const u8, start_dir: 
         return failUsage(stderr, "remove: --locked は remove では使えません（manifest を変更するため lock は必ず更新されます）\n", .{});
     }
 
+    var guard = try acquireEditLock(a, io, start_dir, "remove", stderr);
+    defer if (guard) |*g| g.unlock();
     var loaded = try loadProjectOrFail(a, io, start_dir, stderr);
     defer loaded.deinit();
 

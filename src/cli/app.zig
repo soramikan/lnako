@@ -396,7 +396,7 @@ pub fn run(
             };
         },
         .sync => {
-            sync_command.run(allocator, io, args[1..], stdout, stderr) catch |err| {
+            sync_command.run(allocator, io, args[1..], init.environ_map, stdout, stderr) catch |err| {
                 try stderr.print("sync: {s}\n", .{@errorName(err)});
                 try stderr.flush();
                 std.process.exit(1);

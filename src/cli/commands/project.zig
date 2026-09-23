@@ -344,12 +344,34 @@ fn runUpdate(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []co
     // 対象名は manifest の宣言依存に限る。未宣言名を黙って成功させない。
     var declared = loaded.manifest.dependencyAliases(a) catch return error.OutOfMemory;
     defer declared.deinit();
+    // resolver は dep key（宣言テーブルキー）で照合するため、alias で
+    // 指定された対象は dep key へ正規化する（`update <alias>` が実際に
+    // その依存の版固定を解除するように）。
+    var alias_to_key = std.StringHashMap([]const u8).init(a);
+    defer alias_to_key.deinit();
+    for ([_]*const manifest_mod.DependencyGroup{ &loaded.manifest.dependencies, &loaded.manifest.dev_dependencies }) |group| {
+        var it = group.git.iterator();
+        while (it.next()) |item| {
+            if (item.value_ptr.alias) |alias| try alias_to_key.put(alias, item.key_ptr.*);
+        }
+        var http_it = group.http.iterator();
+        while (http_it.next()) |item| {
+            if (item.value_ptr.alias) |alias| try alias_to_key.put(alias, item.key_ptr.*);
+        }
+        var pkg_it = group.pkg.iterator();
+        while (pkg_it.next()) |item| {
+            if (item.value_ptr.alias) |alias| try alias_to_key.put(alias, item.key_ptr.*);
+        }
+    }
+    var targets: std.ArrayList([]const u8) = .empty;
+    defer targets.deinit(a);
     for (parsed.rest) |target| {
         if (!declared.contains(target)) {
             return fail(stderr, "update: {s} は依存にありません\n", .{target});
         }
+        try targets.append(a, alias_to_key.get(target) orelse target);
     }
-    options.update_targets = parsed.rest;
+    options.update_targets = targets.items;
     options.update_all = parsed.rest.len == 0;
     // fresh な lock でも再解決して新版を拾うのが update の契約。
     options.force_resolve = true;
@@ -413,7 +435,7 @@ const DepKeyMaps = struct {
     }
 };
 
-fn depKeyIdMap(a: Allocator, manifest: *const manifest_mod.Manifest, packages: []const lock_model.PackageEntry) !DepKeyMaps {
+fn depKeyIdMap(a: Allocator, manifest: *const manifest_mod.Manifest, root: []const u8, packages: []const lock_model.PackageEntry) !DepKeyMaps {
     var maps = DepKeyMaps{
         .by_id = std.StringHashMap([]const u8).init(a),
         .by_name = std.StringHashMap([]const u8).init(a),
@@ -422,20 +444,20 @@ fn depKeyIdMap(a: Allocator, manifest: *const manifest_mod.Manifest, packages: [
     for ([_]*const manifest_mod.DependencyGroup{ &manifest.dependencies, &manifest.dev_dependencies }) |group| {
         var path_it = group.path.iterator();
         while (path_it.next()) |item| {
-            const id = try project.publicIdForDepKey(a, "path", item.key_ptr.*);
+            const id = try project.publicIdForSourceDecl(a, .{ .path = item.value_ptr.* }, root, root);
             try maps.by_id.put(id, item.key_ptr.*);
             try maps.by_name.put(item.key_ptr.*, id);
         }
         var git_it = group.git.iterator();
         while (git_it.next()) |item| {
-            const id = try project.publicIdForDepKey(a, "git", item.key_ptr.*);
+            const id = try project.publicIdForSourceDecl(a, .{ .git = item.value_ptr.* }, root, root);
             try maps.by_id.put(id, item.key_ptr.*);
             try maps.by_name.put(item.key_ptr.*, id);
             if (item.value_ptr.alias) |alias| try maps.by_name.put(alias, id);
         }
         var http_it = group.http.iterator();
         while (http_it.next()) |item| {
-            const id = try project.publicIdForDepKey(a, "http", item.key_ptr.*);
+            const id = try project.publicIdForSourceDecl(a, .{ .http = item.value_ptr.* }, root, root);
             try maps.by_id.put(id, item.key_ptr.*);
             try maps.by_name.put(item.key_ptr.*, id);
             if (item.value_ptr.alias) |alias| try maps.by_name.put(alias, id);
@@ -478,24 +500,44 @@ fn runTree(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []cons
     defer outcome.deinit();
 
     const packages = outcome.lock.packagesForProfile(outcome.profile) orelse outcome.lock.packages;
-    // 被参照でない package を root として表示する（lock は全 package の
-    // 和集合で、直接依存は他の依存から参照されない）。
-    var referenced = std.StringHashMap(void).init(a);
-    defer referenced.deinit();
-    for (packages) |entry| {
-        for (entry.dependencies) |dep_id| try referenced.put(dep_id, {});
-    }
-    var maps = try depKeyIdMap(a, &loaded.manifest, packages);
+    var maps = try depKeyIdMap(a, &loaded.manifest, loaded.root, packages);
     defer maps.deinit();
     try stdout.print("{s} {f} (profile: {s})\n", .{ loaded.manifest.package.name, loaded.manifest.package.version, outcome.profile });
+    // root は manifest の宣言依存から決める。直接依存が他の直接依存の
+    // 子でもある場合に「被参照だから非 root」で落とすと宣言 graph が
+    // 歪むため、dep key → 解決済み entry の対応表で列挙する。
+    var root_keys: std.ArrayList([]const u8) = .empty;
+    defer root_keys.deinit(a);
+    for ([_]*const manifest_mod.DependencyGroup{ &loaded.manifest.dependencies, &loaded.manifest.dev_dependencies }) |group| {
+        var it = group.path.iterator();
+        while (it.next()) |item| try root_keys.append(a, item.key_ptr.*);
+        var git_it = group.git.iterator();
+        while (git_it.next()) |item| try root_keys.append(a, item.key_ptr.*);
+        var http_it = group.http.iterator();
+        while (http_it.next()) |item| try root_keys.append(a, item.key_ptr.*);
+        var pkg_it = group.pkg.iterator();
+        while (pkg_it.next()) |item| try root_keys.append(a, item.key_ptr.*);
+    }
+    std.mem.sort([]const u8, root_keys.items, {}, struct {
+        fn lt(_: void, lhs: []const u8, rhs: []const u8) bool {
+            return std.mem.order(u8, lhs, rhs) == .lt;
+        }
+    }.lt);
     var printed_any = false;
-    for (packages) |entry| {
-        if (referenced.contains(entry.id)) continue;
+    var seen_roots = std.StringHashMap(void).init(a);
+    defer seen_roots.deinit();
+    for (root_keys.items) |key| {
+        const id = maps.by_name.get(key) orelse continue;
+        // 同一 entry を指す dep key が複数あっても root は一度だけ出す。
+        if (seen_roots.contains(id)) continue;
+        try seen_roots.put(id, {});
+        const entry = findEntry(packages, id) orelse continue;
         printed_any = true;
         try printTreeNode(a, stdout, packages, entry, "", true, &.{}, maps.by_id.get(entry.id));
     }
-    // 全 package が相互参照している純粋な循環では root が空になり
-    // ヘッダしか出ないため、全 package を列挙して辺を表示する。
+    // manifest に宣言の無い package（純粋な推移的 graph のみ等）や
+    // 宣言と lock が食い違う場合の fallback として、root が一つも
+    // 出なければ全 package を列挙する。
     if (!printed_any) {
         for (packages) |entry| {
             try printTreeNode(a, stdout, packages, entry, "", true, &.{}, maps.by_id.get(entry.id));
@@ -586,7 +628,7 @@ fn runWhy(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const
     if (target == null) {
         // 宣言 dep key や alias（プログラム側の参照名）でも引ける
         // ようにする。
-        var maps = try depKeyIdMap(a, &loaded.manifest, packages);
+        var maps = try depKeyIdMap(a, &loaded.manifest, loaded.root, packages);
         defer maps.deinit();
         if (maps.by_name.get(name)) |id| {
             target = findEntry(packages, id);
@@ -596,7 +638,7 @@ fn runWhy(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const
 
     try stdout.print("{s} {s} [{s}{s}]\n", .{ entry.name, entry.version, sourceTag(entry), if (entry.implementation) |impl| std.fmt.allocPrint(a, ", {s}", .{impl}) catch "" else "" });
     // manifest の直接宣言かを確認する。
-    const declared_section = try manifestDeclares(a, &loaded.manifest, packages, name);
+    const declared_section = try manifestDeclares(a, &loaded.manifest, loaded.root, packages, name);
     if (declared_section) |declared| {
         try stdout.print("  理由: {s}（直接宣言）\n", .{declared});
     }
@@ -618,7 +660,7 @@ fn runWhy(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const
 /// manifest が `name`（dep key または解決済み package 名）を直接宣言
 /// しているか。宣言されていれば `dependencies.path` のような節名を返す。
 /// dep key と package 名が異なる場合は `dep key` を併記する。
-fn manifestDeclares(a: Allocator, manifest: *const manifest_mod.Manifest, packages: []const lock_model.PackageEntry, name: []const u8) !?[]const u8 {
+fn manifestDeclares(a: Allocator, manifest: *const manifest_mod.Manifest, root: []const u8, packages: []const lock_model.PackageEntry, name: []const u8) !?[]const u8 {
     const groups = [_]struct { prefix: []const u8, group: *const manifest_mod.DependencyGroup }{
         .{ .prefix = "dependencies", .group = &manifest.dependencies },
         .{ .prefix = "dev-dependencies", .group = &manifest.dev_dependencies },
@@ -627,15 +669,15 @@ fn manifestDeclares(a: Allocator, manifest: *const manifest_mod.Manifest, packag
         const group = item.group;
         var path_it = group.path.iterator();
         while (path_it.next()) |dep| {
-            if (try declaredMatch(a, packages, "path", item.prefix, dep.key_ptr.*, null, name)) |text| return text;
+            if (try declaredMatch(a, packages, .{ .path = dep.value_ptr.* }, "path", item.prefix, dep.key_ptr.*, null, name, root)) |text| return text;
         }
         var git_it = group.git.iterator();
         while (git_it.next()) |dep| {
-            if (try declaredMatch(a, packages, "git", item.prefix, dep.key_ptr.*, dep.value_ptr.alias, name)) |text| return text;
+            if (try declaredMatch(a, packages, .{ .git = dep.value_ptr.* }, "git", item.prefix, dep.key_ptr.*, dep.value_ptr.alias, name, root)) |text| return text;
         }
         var http_it = group.http.iterator();
         while (http_it.next()) |dep| {
-            if (try declaredMatch(a, packages, "http", item.prefix, dep.key_ptr.*, dep.value_ptr.alias, name)) |text| return text;
+            if (try declaredMatch(a, packages, .{ .http = dep.value_ptr.* }, "http", item.prefix, dep.key_ptr.*, dep.value_ptr.alias, name, root)) |text| return text;
         }
         var pkg_it = group.pkg.iterator();
         while (pkg_it.next()) |dep| {
@@ -656,12 +698,12 @@ fn manifestDeclares(a: Allocator, manifest: *const manifest_mod.Manifest, packag
 
 /// source 系 dep（path/git/http）の dep key・alias・解決済み package 名が
 /// `name` と一致するか調べ、該当すれば節名テキストを返す。
-fn declaredMatch(a: Allocator, packages: []const lock_model.PackageEntry, kind: []const u8, prefix: []const u8, dep_key: []const u8, alias: ?[]const u8, name: []const u8) !?[]const u8 {
+fn declaredMatch(a: Allocator, packages: []const lock_model.PackageEntry, decl: project.SourceDecl, kind: []const u8, prefix: []const u8, dep_key: []const u8, alias: ?[]const u8, name: []const u8, root: []const u8) !?[]const u8 {
     if (std.mem.eql(u8, dep_key, name)) return try std.fmt.allocPrint(a, "{s}.{s}", .{ prefix, kind });
     if (alias) |al| {
         if (std.mem.eql(u8, al, name)) return try std.fmt.allocPrint(a, "{s}.{s}（alias: {s} → {s}）", .{ prefix, kind, al, dep_key });
     }
-    const id = try project.publicIdForDepKey(a, kind, dep_key);
+    const id = try project.publicIdForSourceDecl(a, decl, root, root);
     const entry = findEntry(packages, id) orelse return null;
     if (!std.mem.eql(u8, entry.name, name)) return null;
     return try std.fmt.allocPrint(a, "{s}.{s}（dep key: {s}）", .{ prefix, kind, dep_key });
@@ -836,7 +878,7 @@ pub fn prepareForExecution(
     }
     if (flags.no_sync) {
         // 自動準備禁止: 既存環境だけを静的検査する。
-        try ensureEnvironmentUsable(a, io, &project_var, options.profile orelse "default", &diagnostics, verb, stderr);
+        try ensureEnvironmentUsable(a, io, &project_var, &options, &diagnostics, verb, stderr);
         return;
     }
     const outcome = project.ensureEnvironment(a, io, &project_var, &options, &diagnostics) catch |err| {
@@ -848,18 +890,27 @@ pub fn prepareForExecution(
     }
 }
 
-/// `--no-sync` 時の静的環境検査。lock 存在・鮮度と `.nako` の整合を確認
-/// し、不足があれば必要な操作を診断して失敗する。`expected_profile` は
-/// 選択 profile（未指定時は default）。`ensureEnvironment` と同じ
-/// profile・runtime 条件で環境を照合する。
-fn ensureEnvironmentUsable(a: Allocator, io: std.Io, loaded: *project.Project, expected_profile: []const u8, diagnostics: *diag.List, verb: []const u8, stderr: *std.Io.Writer) !void {
+/// `--no-sync` 時の静的環境検査。lock が現在の manifest/profile/features/
+/// target に対して fresh であること（読み取り専用）と `.nako` の整合を
+/// 確認し、不足があれば必要な操作を診断して失敗する。
+/// `ensureEnvironment` と同じ profile・runtime 条件で環境を照合する
+/// （profile は `loadFreshLock` が manifest から解決した実 profile）。
+fn ensureEnvironmentUsable(a: Allocator, io: std.Io, loaded: *project.Project, options: *const project.PrepareOptions, diagnostics: *diag.List, verb: []const u8, stderr: *std.Io.Writer) !void {
+    // lock の意味検証と manifest/profile/features/target に対する鮮度検査
+    // を書き込みなしで行う（pin hash 不一致もここで検出される）。
+    // lock だけを見て env を受理すると manifest 変更後の古い lock+env を
+    // そのまま通してしまうため、鮮度検証は省略できない。
+    var outcome = project.loadFreshLock(a, io, loaded, options, diagnostics) catch |err| {
+        return failProject(stderr, verb, err, diagnostics, loaded.manifest_path);
+    };
+    defer outcome.deinit();
     var digest: [32]u8 = undefined;
     const has_lock = project.lockDigest(a, io, loaded.root, &digest) catch false;
     const env = project.readEnvironmentInfo(a, io, loaded.root) catch null;
     const env_ok = has_lock and env != null and
         project.environmentMatchesLock(env.?, &digest) and
         env.?.schema_version == 1 and
-        (env.?.profile == null or std.mem.eql(u8, env.?.profile.?, expected_profile)) and
+        (env.?.profile == null or std.mem.eql(u8, env.?.profile.?, outcome.profile)) and
         (env.?.runtime == null or std.mem.eql(u8, env.?.runtime.?, "lnako")) and
         // 参照世代 dir が消えた環境は不一致とする。
         (env.?.generation != null and project.generationExists(io, loaded.root, env.?.generation.?));
@@ -869,15 +920,6 @@ fn ensureEnvironmentUsable(a: Allocator, io: std.Io, loaded: *project.Project, e
         } else {
             return fail(stderr, "{s}: .nako 環境が nako.lock と一致しません（`lnako sync` で再構築してください）\n", .{verb});
         }
-    }
-    // `mutable = false` の path 依存は pin hash も照合する。不一致なら
-    // 環境が古い内容を参照しているため --no-sync でも失敗とする。
-    const pin_bad = project.pinnedPathMismatch(a, io, loaded, diagnostics) catch |err| switch (err) {
-        error.OutOfMemory => return fail(stderr, "{s}: OutOfMemory\n", .{verb}),
-        else => null,
-    };
-    if (pin_bad) |name| {
-        return fail(stderr, "{s}: path 依存 \"{s}\" の内容が nako.lock の pin hash と一致しません（`lnako lock` で更新してください）\n", .{ verb, name });
     }
 }
 

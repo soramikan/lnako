@@ -37,7 +37,7 @@ fn flagValue(args: []const []const u8, index: *usize, flag: []const u8, stderr: 
     return args[index.*];
 }
 
-pub fn run(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !void {
+pub fn run(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, environ_map: ?*const std.process.Environ.Map, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !void {
     var options = sync.Options{};
     var json = false;
     var clean = false;
@@ -111,7 +111,9 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, s
             .profile = options.profile,
             .features = features.items,
             .no_default_features = no_default_features,
-            .registry_url = registry_url,
+            // project コマンドの PrepareOptions と同じ優先順位:
+            // --registry が無ければ LNAKO_REGISTRY を参照する。
+            .registry_url = registry_url orelse if (environ_map) |map| map.get("LNAKO_REGISTRY") else null,
             .cache_root = options.cache_root,
             .policy = options.policy,
         };
@@ -181,11 +183,11 @@ test "値を取るフラグは次のオプションを値として消費せず�
     const flags = [_][]const u8{ "--profile", "--runtime", "--features", "--registry", "--package-cache-dir" };
     for (flags) |flag| {
         err.clearRetainingCapacity();
-        try testing.expectError(error.Usage, run(a, testing.io, &.{flag}, &out.writer, &err.writer));
+        try testing.expectError(error.Usage, run(a, testing.io, &.{flag}, null, &out.writer, &err.writer));
         try testing.expect(std.mem.indexOf(u8, err.written(), "には値が必要です") != null);
 
         err.clearRetainingCapacity();
-        try testing.expectError(error.Usage, run(a, testing.io, &.{ flag, "--json" }, &out.writer, &err.writer));
+        try testing.expectError(error.Usage, run(a, testing.io, &.{ flag, "--json" }, null, &out.writer, &err.writer));
         try testing.expect(std.mem.indexOf(u8, err.written(), "には値が必要です") != null);
     }
 }

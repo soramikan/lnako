@@ -53,6 +53,11 @@ fn collectDigestEntries(io: std.Io, gpa: Allocator, root_abs: []const u8, rel: [
     defer dir.close(io);
     var it = dir.iterate();
     while (try it.next(io)) |entry| {
+        // `.nako`（lnako が生成する依存環境）と `.git`（VCS メタデータ）は
+        // source 内容ではないため digest から除く。`mutable = false` の
+        // path 依存 pin では、依存先で sync/build しただけで親 lock が
+        // 陳腐化しないようこの除外が必要。
+        if (std.mem.eql(u8, entry.name, ".nako") or std.mem.eql(u8, entry.name, ".git")) continue;
         const child_rel = if (rel.len == 0)
             try gpa.dupe(u8, entry.name)
         else
@@ -181,19 +186,41 @@ pub const Store = struct {
     /// `objects/`・`staging/`・`cache.lock` を持つ cache ルートの絶対 path。
     root: []const u8,
 
+    /// cache 管理下の dir を実 dir として開く。管理 dir 自体が symlink
+    /// （共有 cache を別主体が改変した場合等）なら、リンクのみを除去して
+    /// 実 dir を作り直す。`deleteTree` は entry 内の symlink を追従しない
+    /// が、管理 dir 自身の symlink は openDir が追従して cache 外を
+    /// 走査・削除し得るため、ここで排除する。
+    fn ensureManagedDir(io: std.Io, path: []const u8) !void {
+        var opened = std.Io.Dir.cwd().openDir(io, path, .{ .follow_symlinks = false }) catch |err| switch (err) {
+            error.FileNotFound => {
+                try std.Io.Dir.cwd().createDirPath(io, path);
+                return;
+            },
+            error.SymLinkLoop, error.NotDir => {
+                // symlink・実ファイルの除去は対象本体を消さないため安全。
+                std.Io.Dir.cwd().deleteFile(io, path) catch {};
+                try std.Io.Dir.cwd().createDirPath(io, path);
+                return;
+            },
+            else => return err,
+        };
+        opened.close(io);
+    }
+
     /// `root` を開き、必要な下位 dir を作成する。
     pub fn open(gpa: Allocator, io: std.Io, root: []const u8) !Store {
         const owned = try gpa.dupe(u8, root);
         errdefer gpa.free(owned);
         const objects = try std.fs.path.join(gpa, &.{ owned, objects_dir });
         defer gpa.free(objects);
-        try std.Io.Dir.cwd().createDirPath(io, objects);
+        try ensureManagedDir(io, objects);
         const staging = try std.fs.path.join(gpa, &.{ owned, staging_dir });
         defer gpa.free(staging);
-        try std.Io.Dir.cwd().createDirPath(io, staging);
+        try ensureManagedDir(io, staging);
         const checkouts = try std.fs.path.join(gpa, &.{ owned, checkouts_dir });
         defer gpa.free(checkouts);
-        try std.Io.Dir.cwd().createDirPath(io, checkouts);
+        try ensureManagedDir(io, checkouts);
         return .{ .gpa = gpa, .io = io, .root = owned };
     }
 
@@ -253,10 +280,12 @@ pub const Store = struct {
 
     /// 完了 marker の無い entry（公開途中で中断した残骸）を削除する。
     /// cache lock 保持中に呼ぶこと。
+    /// 管理 dir は symlink 非追従で開き、削除は dir ハンドル相対で行う
+    /// （管理 dir 自身の symlink による cache 外への逸脱を防ぐ）。
     pub fn pruneIncomplete(self: *const Store) !void {
         const objects = try std.fs.path.join(self.gpa, &.{ self.root, objects_dir });
         defer self.gpa.free(objects);
-        var dir = std.Io.Dir.cwd().openDir(self.io, objects, .{ .iterate = true }) catch |err| switch (err) {
+        var dir = openManagedDir(self.io, objects) catch |err| switch (err) {
             error.FileNotFound => return,
             else => return err,
         };
@@ -265,20 +294,16 @@ pub const Store = struct {
         while (try it.next(self.io)) |entry| {
             if (entry.kind != .directory) continue;
             if (self.entryExists(entry.name)) continue;
-            const victim = try std.fs.path.join(self.gpa, &.{ objects, entry.name });
-            defer self.gpa.free(victim);
-            std.Io.Dir.cwd().deleteTree(self.io, victim) catch continue;
+            dir.deleteTree(self.io, entry.name) catch continue;
         }
         // staging の残留も回収する。
         const staging = try std.fs.path.join(self.gpa, &.{ self.root, staging_dir });
         defer self.gpa.free(staging);
-        var sdir = std.Io.Dir.cwd().openDir(self.io, staging, .{ .iterate = true }) catch return;
+        var sdir = openManagedDir(self.io, staging) catch return;
         defer sdir.close(self.io);
         var sit = sdir.iterate();
         while (try sit.next(self.io)) |entry| {
-            const victim = try std.fs.path.join(self.gpa, &.{ staging, entry.name });
-            defer self.gpa.free(victim);
-            std.Io.Dir.cwd().deleteTree(self.io, victim) catch continue;
+            sdir.deleteTree(self.io, entry.name) catch continue;
         }
     }
 
@@ -316,6 +341,19 @@ pub const Store = struct {
         };
     }
 
+    /// 管理 dir を symlink 非追従で開く。管理 dir 自身が symlink なら
+    /// リンクのみ除去して実 dir を作り直す（cache 外を走査しないため）。
+    fn openManagedDir(io: std.Io, path: []const u8) !std.Io.Dir {
+        return std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true, .follow_symlinks = false }) catch |err| switch (err) {
+            error.SymLinkLoop, error.NotDir => blk: {
+                std.Io.Dir.cwd().deleteFile(io, path) catch {};
+                try std.Io.Dir.cwd().createDirPath(io, path);
+                break :blk try std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true, .follow_symlinks = false });
+            },
+            else => return err,
+        };
+    }
+
     /// `keep` に含まれない entry を削除する。呼出し側が cache lock を保持
     /// している前提で、使用中 entry を消さない協調を実現する。staging と
     /// 未完了 entry も回収する。戻り値は削除した entry 数。
@@ -323,7 +361,7 @@ pub const Store = struct {
         const objects = try std.fs.path.join(self.gpa, &.{ self.root, objects_dir });
         defer self.gpa.free(objects);
         var removed: usize = 0;
-        var dir = std.Io.Dir.cwd().openDir(self.io, objects, .{ .iterate = true }) catch |err| switch (err) {
+        var dir = openManagedDir(self.io, objects) catch |err| switch (err) {
             error.FileNotFound => return 0,
             else => return err,
         };
@@ -339,9 +377,7 @@ pub const Store = struct {
                 }
             }
             if (!keep_it) {
-                const victim = try std.fs.path.join(self.gpa, &.{ objects, entry.name });
-                defer self.gpa.free(victim);
-                std.Io.Dir.cwd().deleteTree(self.io, victim) catch continue;
+                dir.deleteTree(self.io, entry.name) catch continue;
                 removed += 1;
             }
         }
@@ -351,22 +387,22 @@ pub const Store = struct {
 
     /// objects・checkouts・staging の全内容を削除する（cache の完全初期化）。
     /// cache lock 保持中に呼ぶこと。戻り値は削除したトップレ項目数。
+    /// 管理 dir は symlink 非追従で開き、削除は dir ハンドル相対で行う
+    /// （管理 dir 自身の symlink による cache 外への逸脱を防ぐ）。
     pub fn cleanAll(self: *const Store) !usize {
         var removed: usize = 0;
         const subdirs = [_][]const u8{ objects_dir, staging_dir, checkouts_dir };
         for (subdirs) |sub| {
             const base = try std.fs.path.join(self.gpa, &.{ self.root, sub });
             defer self.gpa.free(base);
-            var dir = std.Io.Dir.cwd().openDir(self.io, base, .{ .iterate = true }) catch |err| switch (err) {
+            var dir = openManagedDir(self.io, base) catch |err| switch (err) {
                 error.FileNotFound => continue,
                 else => return err,
             };
             defer dir.close(self.io);
             var it = dir.iterate();
             while (try it.next(self.io)) |entry| {
-                const victim = try std.fs.path.join(self.gpa, &.{ base, entry.name });
-                defer self.gpa.free(victim);
-                std.Io.Dir.cwd().deleteTree(self.io, victim) catch continue;
+                dir.deleteTree(self.io, entry.name) catch continue;
                 removed += 1;
             }
         }

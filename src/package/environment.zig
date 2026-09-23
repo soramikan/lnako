@@ -151,6 +151,28 @@ pub const LockGuard = struct {
     }
 };
 
+/// `.nako` 管理下の dir を実 dir として開く。管理 dir 自体が symlink
+/// （攻撃的なプロジェクトや他主体による改変）なら、リンクのみを除去
+/// して実 dir を作り直す。`deleteTree` 等は entry 内の symlink を
+/// 追従しないが、管理 dir 自身の symlink は openDir が追従して管理外
+/// を走査・削除し得るため、ここで排除する。
+fn ensureManagedDir(io: std.Io, path: []const u8) !void {
+    var opened = std.Io.Dir.cwd().openDir(io, path, .{ .follow_symlinks = false }) catch |err| switch (err) {
+        error.FileNotFound => {
+            try std.Io.Dir.cwd().createDirPath(io, path);
+            return;
+        },
+        error.SymLinkLoop, error.NotDir => {
+            // symlink・実ファイルの除去は対象本体を消さないため安全。
+            std.Io.Dir.cwd().deleteFile(io, path) catch {};
+            try std.Io.Dir.cwd().createDirPath(io, path);
+            return;
+        },
+        else => return err,
+    };
+    opened.close(io);
+}
+
 pub const Store = struct {
     gpa: Allocator,
     io: std.Io,
@@ -167,13 +189,13 @@ pub const Store = struct {
         defer gpa.free(project_abs);
         const root = try std.fs.path.join(gpa, &.{ project_abs, dir_name });
         errdefer gpa.free(root);
-        try std.Io.Dir.cwd().createDirPath(io, root);
+        try ensureManagedDir(io, root);
         const env_path = try std.fs.path.join(gpa, &.{ root, env_dir });
         defer gpa.free(env_path);
-        try std.Io.Dir.cwd().createDirPath(io, env_path);
+        try ensureManagedDir(io, env_path);
         const staging_path = try std.fs.path.join(gpa, &.{ root, staging_dir });
         defer gpa.free(staging_path);
-        try std.Io.Dir.cwd().createDirPath(io, staging_path);
+        try ensureManagedDir(io, staging_path);
         return .{ .gpa = gpa, .io = io, .root = root };
     }
 
@@ -267,19 +289,27 @@ pub const Store = struct {
 
     /// 中断残留の staging dir を回収する。`staging/` の中身を全て削除する。
     /// lock 保持中に呼ぶこと（並行する構築中の staging を消さないため）。
+    /// `staging/` 自身が symlink なら追従せずリンクのみ除去して作り直す
+    /// （管理外の dir を走査して削除しないため）。
     pub fn recoverStaging(self: *const Store) !void {
         const staging = try std.fs.path.join(self.gpa, &.{ self.root, staging_dir });
         defer self.gpa.free(staging);
-        var dir = std.Io.Dir.cwd().openDir(self.io, staging, .{ .iterate = true }) catch |err| switch (err) {
+        var dir = std.Io.Dir.cwd().openDir(self.io, staging, .{ .iterate = true, .follow_symlinks = false }) catch |err| switch (err) {
             error.FileNotFound => return,
+            error.SymLinkLoop, error.NotDir => {
+                // symlink/実ファイルを除去して作り直す（対象本体は消えない）。
+                std.Io.Dir.cwd().deleteFile(self.io, staging) catch {};
+                try std.Io.Dir.cwd().createDirPath(self.io, staging);
+                return;
+            },
             else => return err,
         };
         defer dir.close(self.io);
         var it = dir.iterate();
         while (try it.next(self.io)) |entry| {
-            const victim = try std.fs.path.join(self.gpa, &.{ staging, entry.name });
-            defer self.gpa.free(victim);
-            std.Io.Dir.cwd().deleteTree(self.io, victim) catch continue;
+            // 開いた dir ハンドル相対で削除する。deleteTree は entry 内の
+            // symlink を追従せずリンク自体を消すため管理外へ逸脱しない。
+            dir.deleteTree(self.io, entry.name) catch continue;
         }
     }
 

@@ -257,6 +257,77 @@ test "path依存の循環はDependencyCycleとして診断する" {
     try testing.expectError(error.FileNotFound, temporary.dir.access(io, "app/nako.lock", .{}));
 }
 
+test "異なる親の同名dep keyは別sourceとして解決される" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    // app → pkgs/a, pkgs/b。a と b がどちらも `common` という dep key
+    // を宣言するが、指す source が異なる。dep key は親 manifest 内の
+    // 名前空間なので衝突にならず、source identity の異なる2 package
+    // として解決される必要がある。
+    try temporary.dir.createDirPath(io, "app/pkgs/common-a/src");
+    try temporary.dir.createDirPath(io, "app/pkgs/common-b/src");
+    try writeLibPackage(temporary.dir, io, "app/pkgs/common-a", "common-a");
+    try writeLibPackage(temporary.dir, io, "app/pkgs/common-b", "common-b");
+    for ([_][]const u8{ "a", "b" }) |name| {
+        const dir_path = try std.fmt.allocPrint(testing.allocator, "app/pkgs/{s}", .{name});
+        defer testing.allocator.free(dir_path);
+        const src_dir = try std.fmt.allocPrint(testing.allocator, "{s}/src", .{dir_path});
+        defer testing.allocator.free(src_dir);
+        try temporary.dir.createDirPath(io, src_dir);
+        const manifest_path = try std.fmt.allocPrint(testing.allocator, "{s}/nako.toml", .{dir_path});
+        defer testing.allocator.free(manifest_path);
+        const manifest = try std.fmt.allocPrint(testing.allocator,
+            \\[package]
+            \\name = "{s}"
+            \\version = "1.0.0"
+            \\license = "MIT"
+            \\
+            \\[[exports]]
+            \\name = "{s}"
+            \\path = "src/index.nako3"
+            \\
+            \\[dependencies.path]
+            \\common = {{ path = "../common-{s}" }}
+            \\
+        , .{ name, name, name });
+        defer testing.allocator.free(manifest);
+        try temporary.dir.writeFile(io, .{ .sub_path = manifest_path, .data = manifest });
+        const index_path = try std.fmt.allocPrint(testing.allocator, "{s}/src/index.nako3", .{dir_path});
+        defer testing.allocator.free(index_path);
+        try temporary.dir.writeFile(io, .{ .sub_path = index_path, .data = "●表示とは\nここまで\n" });
+    }
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/nako.toml",
+        .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\a = { path = "pkgs/a" }
+        \\b = { path = "pkgs/b" }
+        \\
+        ,
+    });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    defer loaded.deinit();
+    var outcome = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
+    defer outcome.deinit();
+    // a, b, common-a, common-b の4つの path entry が記録される。
+    var path_entries: usize = 0;
+    for (outcome.lock.packages) |entry| {
+        if (entry.source != null and entry.source.?.kind == .path) path_entries += 1;
+    }
+    try testing.expectEqual(@as(usize, 4), path_entries);
+}
+
 test "mutable=falseのpath依存はtree hashでpinし内容変更を検出する" {
     const io = testing.io;
     var temporary = std.testing.tmpDir(.{});
@@ -516,7 +587,7 @@ fn createGitRepo(temporary: *std.testing.TmpDir, io: std.Io) !struct { path: [:0
     return .{ .path = repo, .url = url, .commit = commit };
 }
 
-test "ensureLockはlockのgit sourceを再利用し宣言の暗黙切替を衝突として拒否する" {
+test "ensureLockはlockのgit sourceを再利用しcommit変更は別packageとして解決する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
     var temporary = std.testing.tmpDir(.{});
@@ -574,24 +645,24 @@ test "ensureLockはlockのgit sourceを再利用し宣言の暗黙切替を衝�
     }
     try testing.expect(found_git);
 
-    // repo に別 commit を進め、manifest の commit-ish をそちらへ書き換える
-    // と、dep key が同じままの暗黙 source 切替は衝突として拒否される。
-    // lock entry は public id（`pkg:<hex>`）で引くため、仮想 id（`git:<key>`）
-    // での照合ミスがあるとこの検査自体が dead code になる。
+    // manifest を変更せず再 lock しても、lock entry は public id
+    // （source identity 由来の `pkg:<hex>`）で引かれ、locked の完全 SHA
+    // が宣言 prefix と整合するため解決は成功する。
+    loaded.deinit();
+    loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    var relocked = try project.ensureLock(testing.allocator, io, &loaded, &options, &diagnostics);
+    defer relocked.deinit();
+
+    // repo に別 commit を進め、manifest の commit-ish をそちらへ書き換える。
+    // source identity が変わるため別 package として解決され、旧 entry は
+    // lock から取り除かれる（dep key が同じでも source が異なれば別物）。
     try temporary.dir.writeFile(io, .{ .sub_path = "repo/second.txt", .data = "second\n" });
     const second_commit = try gitCommitAll(io, repo.path, "second");
     defer testing.allocator.free(second_commit);
     loaded.deinit();
     try writeApp(testing.allocator, temporary.dir, repo.url, second_commit[0..7]);
     loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
-    try testing.expectError(error.SourceCollision, project.ensureLock(testing.allocator, io, &loaded, &options, &diagnostics));
-    try testing.expect(diagnostics.find(diag.E046_SOURCE_COLLISION) != null);
-
-    // 明示的な update 対象なら宣言の変更を許容し、新 commit を記録する。
-    var updated = try project.ensureLock(testing.allocator, io, &loaded, &.{
-        .cache_root = cache_dir,
-        .update_targets = &.{"gdep"},
-    }, &diagnostics);
+    var updated = try project.ensureLock(testing.allocator, io, &loaded, &options, &diagnostics);
     defer updated.deinit();
     found_git = false;
     for (updated.lock.packages) |entry| {

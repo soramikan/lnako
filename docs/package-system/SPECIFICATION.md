@@ -296,6 +296,8 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
 - `artifacts`: artifact kind (`source`/`native`/`ESM`) ごとに記録。
 - `npmInstances`: npm 補助依存のインスタンス。キーは `<npm-name>@<version>` または context-specific ID。
 
+`path`/`git`/`http` source 依存の Public ID は、宣言キーではなく正規化済み source identity（path は宣言 manifest 基準で解決した正規 path、git は url・commit・path、http は url・hash）から導出する。これにより、異なる親 manifest が同じローカル名（dep key）で別 source を宣言しても衝突せず、同一 source を指す宣言は同じ package に集約される。source の一部（git の commit 等）を変更した宣言は別 package として解決され、lock は旧 entry の削除と新 entry の追加として差分記録される。
+
 ### 4.4 artifact レコード
 
 | フィールド | 型 | 説明 |

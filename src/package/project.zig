@@ -405,16 +405,61 @@ const DepWork = struct {
     base_dir: ?[]const u8,
 };
 
-fn virtualId(gpa: Allocator, kind: LocalKind, key: []const u8) ![]const u8 {
-    const prefix: []const u8 = switch (kind) {
-        .path => "path:",
-        .git => "git:",
-        .http => "http:",
-    };
-    return std.fmt.allocPrint(gpa, "{s}{s}", .{ prefix, key });
+/// 宣言された source 依存。virtual id / public id 導出の入力。
+pub const SourceDecl = union(enum) {
+    path: manifest_mod.PathDependency,
+    git: manifest_mod.GitDependency,
+    http: manifest_mod.HttpDependency,
+};
+
+/// dep の宣言 path を id 用に正規化する。`base_dir`（宣言 manifest の
+/// dir）基準で解決し、project 配下なら project 相対・外なら絶対 path
+/// へ揃える。`./deps/a` と `deps/a` のような綴り差や、異なる親 manifest
+/// からの宣言が同一 dir を指す場合に同じ identity へ集約される。
+fn canonicalPathForId(gpa: Allocator, declared: []const u8, base_dir: ?[]const u8, project_root: []const u8) Error![]const u8 {
+    const abs = if (provider.isAbsoluteDepPath(declared))
+        std.fs.path.resolve(gpa, &.{declared}) catch return error.FileSystem
+    else
+        std.fs.path.resolve(gpa, &.{ base_dir orelse project_root, declared }) catch return error.FileSystem;
+    errdefer gpa.free(abs);
+    const root = std.fs.path.resolve(gpa, &.{project_root}) catch return error.FileSystem;
+    defer gpa.free(root);
+    if (std.mem.startsWith(u8, abs, root) and abs.len > root.len and
+        (abs[root.len] == '/' or abs[root.len] == std.fs.path.sep))
+    {
+        const rel = try gpa.dupe(u8, abs[root.len + 1 ..]);
+        gpa.free(abs);
+        return rel;
+    }
+    return abs;
 }
 
-/// `path:<key>` 等の仮想 id から `pkg:<32hex>` public id を派生する。
+/// source 宣言の正規化 identity（virtual id）。宣言キーではなく解決済み
+/// source identity から導くため、異なる親 manifest が同じローカル名で
+/// 別 source を宣言しても衝突せず、同一 source を指す宣言は同じ
+/// package に集約される（推移的 dep key の名前空間分離）。
+fn virtualIdForDecl(gpa: Allocator, decl: SourceDecl, base_dir: ?[]const u8, project_root: []const u8) Error![]const u8 {
+    const identity_source: lock_model.Source = switch (decl) {
+        .path => |dep| .{
+            .kind = .path,
+            .path = try canonicalPathForId(gpa, dep.path, base_dir, project_root),
+        },
+        .git => |dep| .{ .kind = .git, .url = dep.url, .commit = dep.commit, .path = dep.path },
+        .http => |dep| .{ .kind = .http, .url = dep.url, .hash = dep.hash },
+    };
+    return provider.identityText(gpa, identity_source);
+}
+
+fn virtualIdForWork(gpa: Allocator, work: DepWork, project_root: []const u8) Error![]const u8 {
+    const decl: SourceDecl = switch (work.kind) {
+        .path => .{ .path = work.path_dep.? },
+        .git => .{ .git = work.git_dep.? },
+        .http => .{ .http = work.http_dep.? },
+    };
+    return virtualIdForDecl(gpa, decl, work.base_dir, project_root);
+}
+
+/// virtual id（source identity）から `pkg:<32hex>` public id を派生する。
 fn publicIdFor(gpa: Allocator, id_text: []const u8) ![]const u8 {
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(id_text, &digest, .{});
@@ -422,12 +467,12 @@ fn publicIdFor(gpa: Allocator, id_text: []const u8) ![]const u8 {
     return std.fmt.allocPrint(gpa, "pkg:{s}", .{hex[0..32]});
 }
 
-/// 宣言 dep key から lock 内の public id を導出する。`tree`/`why` が
-/// 宣言名と解決済み package を対応付けるために使う。kind は
-/// `"path"`/`"git"`/`"http"`。
-pub fn publicIdForDepKey(gpa: Allocator, kind: []const u8, key: []const u8) ![]const u8 {
-    const virtual = try std.fmt.allocPrint(gpa, "{s}:{s}", .{ kind, key });
-    return publicIdFor(gpa, virtual);
+/// 宣言 source から lock 内の public id を導出する。`tree`/`why` が
+/// 宣言 dep key と解決済み package を対応付けるために使う。
+/// `base_dir` は宣言 manifest の dir（root 直下の宣言は project_root）。
+pub fn publicIdForSourceDecl(gpa: Allocator, decl: SourceDecl, base_dir: ?[]const u8, project_root: []const u8) Error![]const u8 {
+    const id_text = try virtualIdForDecl(gpa, decl, base_dir, project_root);
+    return publicIdFor(gpa, id_text);
 }
 
 fn isVirtualId(id_text: []const u8) bool {
@@ -463,6 +508,10 @@ fn gitCheckoutDir(gpa: Allocator, io: std.Io, ctx: *ResolveContext, dep: manifes
         else
             try std.fs.path.join(gpa, &.{ ctx.project_root, ".nako", "cache" });
         ctx.cache_store = cache.Store.open(ctx.gpa, io, root) catch |err| return mapFs(err);
+        // checkout dir を変異させる（clone/fetch/checkout）間は共有 cache
+        // の OS lock を保持し、並行する lock/update の解決と直列化する。
+        // sync 側が既に取っている契約と同じにする。
+        ctx.cache_guard = ctx.cache_store.?.lockWait() catch |err| return mapFs(err);
     }
     var hasher = std.crypto.hash.sha2.Sha256.init(.{});
     hasher.update("git");
@@ -526,14 +575,14 @@ const ResolveContext = struct {
     opts: *const PrepareOptions,
     existing_lock: ?*const lock_model.Lock,
     locals: std.StringHashMap(*LocalPackage),
-    source_index: provider.SourceIndex = .{},
     cache_store: ?cache.Store = null,
+    /// git checkout を共有 cache 内で変異させる間の排他 guard。
+    cache_guard: ?cache.LockGuard = null,
     needs_registry: bool = false,
     diagnostics: *diag.List,
 
     fn deinit(self: *ResolveContext) void {
-        // add 時の確保 allocator は session.gpa。
-        self.source_index.deinit(self.session.gpa);
+        if (self.cache_guard) |*guard| guard.unlock();
         if (self.cache_store) |*store| store.deinit();
     }
 };
@@ -593,12 +642,18 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
             .git => work.git_dep.?.name,
             .http => work.http_dep.?.name,
         };
-        const id_text = try virtualId(gpa, work.kind, dep_name);
+        // virtual id は宣言キーでなく正規化済み source identity。同名 dep
+        // key を別 source に割り当てる推移的宣言は別 package として解決
+        // され、同一 source は同じ id に集約される（E012 は同一 id に
+        // mutable 等の矛盾する宣言が来た場合のみ）。
+        const id_text = try virtualIdForWork(gpa, work, ctx.project_root);
 
         if (ctx.locals.get(id_text)) |existing| {
-            // 再訪問: 宣言 source が同一なら diamond（子辺は親側で記録済み
-            // なのでスキップ）。source が違えば同名 dep への別割当てで衝突。
-            // 再取得を伴わず宣言値だけで比較するため cycle でも有限に止まる。
+            // 再訪問（diamond・cycle）: 同一 source identity への再宣言
+            // なら既存 local を再利用する。id は source identity 由来な
+            // のでここに来る宣言の source は一致済みで、残る差分（path
+            // の mutable フラグ等）だけ比較する。再取得を伴わないため
+            // cycle でも有限に止まる。
             if (!try declaredSourceMatches(ctx, existing, work)) {
                 try ctx.diagnostics.addFmt(diag.E012_ALIAS_COLLISION, .err, dep_name, .{}, "dependency \"{s}\" resolves to different sources", .{dep_name});
                 return error.ResolveFailed;
@@ -729,20 +784,13 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
                 if (child.kind == .path and work.kind == .git) {
                     return ctx.session.fail(.invalid_source, .package, dep_name, "git dependency \"{s}\" declares a path dependency, which cannot be locked", .{dep_name});
                 }
-                const child_key = switch (child.kind) {
-                    .path => child.path_dep.?.name,
-                    .git => child.git_dep.?.name,
-                    .http => child.http_dep.?.name,
-                };
-                const child_id = try virtualId(gpa, child.kind, child_key);
+                const child_id = try virtualIdForWork(gpa, child, ctx.project_root);
                 try children.append(gpa, .{ .pkg = child_id });
                 try queue.append(gpa, child);
             }
             local.child_ids = children.items;
         }
 
-        // 同一 id への別 source 割当て（衝突）を検出する。
-        try ctx.source_index.add(ctx.session, id_text, local.source);
         const entry = try gpa.create(LocalPackage);
         entry.* = local;
         try ctx.locals.put(id_text, entry);
@@ -1528,18 +1576,6 @@ pub fn readEnvironmentInfo(gpa: Allocator, io: std.Io, project_root: []const u8)
         if (name.len > 0) info.generation = try gpa.dupe(u8, name);
     }
     return info;
-}
-
-/// `--no-sync` 用の静的検査: 既存 lock を読み、`mutable = false` の path
-/// 依存 pin を照合する。lock が無い・読めない場合は null（環境判定側の
-/// lock 不在分岐で扱う）。pin 不一致なら dep 名を返す。
-pub fn pinnedPathMismatch(gpa: Allocator, io: std.Io, project: *const Project, diagnostics: *diag.List) Error!?[]const u8 {
-    var existing = loadExistingLock(gpa, io, project.root, diagnostics) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return null,
-    } orelse return null;
-    defer existing.deinit();
-    return try sync_mod.pathPinMismatch(gpa, io, project.root, &existing);
 }
 
 /// `.nako/env/<generation>` dir が実在するか。`environment.json` だけ残って
