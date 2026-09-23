@@ -99,6 +99,16 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, e
 
     // プロジェクトが見つかれば lock を最新化してから sync する（依存解決
     // から環境構築まで一貫させる）。--locked はここで検証する。
+    // manifest 読込〜lock 公開まで編集 lock を保持し、並行する
+    // add/remove/lock/update/自動準備と直列化する。
+    var edit_guard: ?project.EditLock = null;
+    defer if (edit_guard) |*g| g.unlock();
+    if (project.findRoot(allocator, io, options.project_root) catch null) |root| {
+        defer allocator.free(root);
+        edit_guard = project.acquireEditLock(allocator, io, root) catch |err| {
+            return fail(stderr, "sync: 編集ロックを取得できません: {s}\n", .{@errorName(err)});
+        };
+    }
     const discovered = project.discoverAndLoad(allocator, io, options.project_root, &list) catch |err| {
         if (list.errorCount() > 0) try list.render(stderr, options.project_root);
         return fail(stderr, "sync: プロジェクトを読み込めません: {s}\n", .{@errorName(err)});

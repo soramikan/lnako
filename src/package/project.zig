@@ -14,6 +14,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const diag = @import("diagnostics.zig");
 const cache = @import("cache.zig");
+const env_state = @import("env_state.zig");
 const features_mod = @import("features.zig");
 const fetch = @import("fetch.zig");
 const lock_mod = @import("lock.zig");
@@ -50,13 +51,28 @@ pub const Error = error{
     Canceled,
 } || fetch.Error || sync_mod.Error;
 
-fn mapFs(err: anyerror) Error {
+pub fn mapFs(err: anyerror) Error {
     return switch (err) {
         error.OutOfMemory => error.OutOfMemory,
         error.Canceled => error.Canceled,
         else => error.FileSystem,
     };
 }
+
+// 環境状態の読み取り検査・manifest/lock 編集の排他 lock・環境準備
+// orchestration は `env_state.zig` に分離する。呼出し側が従来どおり
+// `project.X` で参照できるよう再エクスポートする。
+pub const EditLock = env_state.EditLock;
+pub const acquireEditLock = env_state.acquireEditLock;
+pub const EnvironmentInfo = env_state.EnvironmentInfo;
+pub const readEnvironmentInfo = env_state.readEnvironmentInfo;
+pub const generationExists = env_state.generationExists;
+pub const CheckInfo = env_state.CheckInfo;
+pub const inspectForCheck = env_state.inspectForCheck;
+pub const environmentPackagesUsable = env_state.environmentPackagesUsable;
+pub const environmentMatchesLock = env_state.environmentMatchesLock;
+pub const PrepOutcome = env_state.PrepOutcome;
+pub const ensureEnvironment = env_state.ensureEnvironment;
 
 // ---------------------------------------------------------------------------
 // プロジェクト検出・読込
@@ -258,7 +274,7 @@ pub fn selectProfile(profiles: []const lock_model.NamedProfile, requested: ?[]co
     return error.UnknownProfile;
 }
 
-fn recordOf(profiles: []const lock_model.NamedProfile, name: []const u8) ?lock_model.ProfileRecord {
+pub fn recordOf(profiles: []const lock_model.NamedProfile, name: []const u8) ?lock_model.ProfileRecord {
     for (profiles) |profile| {
         if (std.mem.eql(u8, profile.name, name)) return profile.record;
     }
@@ -302,7 +318,7 @@ fn resolveTarget(record: lock_model.ProfileRecord, opts: *const PrepareOptions) 
 /// root manifest の feature 要求を展開する。`expanded.features` のキー集合
 /// が lock `input.features` に記録される。失敗は E027/E028 診断付きで
 /// `ResolveFailed`。
-fn expandRootFeatures(
+pub fn expandRootFeatures(
     gpa: Allocator,
     manifest: *const manifest_mod.Manifest,
     requested: []const []const u8,
@@ -328,7 +344,7 @@ fn expandRootFeatures(
 /// feature 定義から参照される依存 alias 名（= 無効化可能な gated 依存の
 /// 名前空間）を集める。`item` が定義済み feature 名のものは feature 参照
 /// なので対象外。
-fn gatedDepNames(gpa: Allocator, manifest: *const manifest_mod.Manifest) Error!std.StringHashMap(void) {
+pub fn gatedDepNames(gpa: Allocator, manifest: *const manifest_mod.Manifest) Error!std.StringHashMap(void) {
     var gated = std.StringHashMap(void).init(gpa);
     errdefer gated.deinit();
     var iterator = manifest.features.iterator();
@@ -341,20 +357,20 @@ fn gatedDepNames(gpa: Allocator, manifest: *const manifest_mod.Manifest) Error!s
     return gated;
 }
 
-fn depIsGated(gated: *const std.StringHashMap(void), name: []const u8, alias: ?[]const u8) bool {
+pub fn depIsGated(gated: *const std.StringHashMap(void), name: []const u8, alias: ?[]const u8) bool {
     if (gated.contains(name)) return true;
     if (alias) |a| return gated.contains(a);
     return false;
 }
 
-fn depIsActivated(aliases: *const std.StringHashMap(void), name: []const u8, alias: ?[]const u8) bool {
+pub fn depIsActivated(aliases: *const std.StringHashMap(void), name: []const u8, alias: ?[]const u8) bool {
     if (aliases.contains(name)) return true;
     if (alias) |a| return aliases.contains(a);
     return false;
 }
 
 /// 展開済み feature 名（昇順・重複除去）。`lock.Input.features` の記録用。
-fn expandedFeatureNames(gpa: Allocator, expanded: *const features_mod.Expanded) Error![]const []const u8 {
+pub fn expandedFeatureNames(gpa: Allocator, expanded: *const features_mod.Expanded) Error![]const []const u8 {
     var list: std.ArrayList([]const u8) = .empty;
     var iterator = expanded.features.keyIterator();
     while (iterator.next()) |key| try list.append(gpa, key.*);
@@ -392,6 +408,10 @@ const LocalPackage = struct {
     child_ids: []const resolver.PackageId,
     /// この dep manifest が pkg 依存を持つか（registry 必要性の判定用）。
     needs_registry: bool = false,
+    /// dep manifest の feature-gated 依存名集合（manifest があるときのみ有効）。
+    gated_deps: std.StringHashMap(void) = undefined,
+    /// dep manifest の default feature 展開で有効化された依存名集合。
+    activated_deps: std.StringHashMap(void) = undefined,
 };
 
 const DepWork = struct {
@@ -617,12 +637,6 @@ fn pushGroupDeps(
     }
 }
 
-/// manifest 内 package が持つ依存のうち pkg 依存が1つでもあれば true。
-fn hasPkgDeps(manifest: *const manifest_mod.Manifest) bool {
-    var it = manifest.dependencies.pkg.iterator();
-    return it.next() != null;
-}
-
 /// source 依存の取得 closure を構築する。root manifest の依存（通常・dev）
 /// から開始し、取得した dep manifest の source 依存を推移的にたどる。
 /// feature gate は宣言元 manifest の有効 feature（依存側は default のみ）
@@ -754,25 +768,43 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
         if (local.manifest) |*dep_manifest| {
             local.package_name = try gpa.dupe(u8, dep_manifest.package.name);
             local.version_text = try std.fmt.allocPrint(gpa, "{f}", .{dep_manifest.package.version});
-            if (hasPkgDeps(dep_manifest)) local.needs_registry = true;
+            // 取得した依存 manifest の npm 宣言も root と同じく lock
+            // 不可能なため拒否する（metaFromManifest は npm 辺を黙って
+            // 落とすため、ここで明示失敗させないと必要な推移的依存が
+            // lock/環境から欠落する）。
+            try rejectNpmDeps(dep_manifest, ctx.diagnostics);
 
             // 依存側 manifest の source 依存を default feature 展開で評価し
             // closure に追加する（依存側に features 指定口はないため default
             // 展開のみ。dev-dependencies は対象外）。
             var dep_aliases = dep_manifest.dependencyAliases(gpa) catch return error.OutOfMemory;
-            var gated = try gatedDepNames(gpa, dep_manifest);
-            defer gated.deinit();
+            // gated/activated は versionMeta で推移的 pkg 辺を絞る際にも
+            // 使うため local へ保持する（領域は解決 arena が一括解放）。
+            local.gated_deps = try gatedDepNames(gpa, dep_manifest);
             var offender: ?[]const u8 = null;
             var expanded = features_mod.expand(gpa, &dep_manifest.features, &.{}, true, &dep_aliases, &offender) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
+                error.UnknownFeature => {
+                    try ctx.diagnostics.addFmt(diag.E028_UNKNOWN_FEATURE, .err, offender orelse dep_name, .{}, "unknown feature \"{s}\" in dependency \"{s}\"", .{ offender orelse "?", dep_name });
+                    return error.ResolveFailed;
+                },
                 else => {
                     try ctx.diagnostics.addFmt(diag.E027_FEATURE_CYCLE, .err, dep_name, .{}, "invalid feature graph in dependency \"{s}\"", .{dep_name});
                     return error.ResolveFailed;
                 },
             };
+            local.activated_deps = expanded.dependency_aliases;
+            // feature-gated で未 activated の pkg 依存は現行 feature 集合
+            // では解決されないため registry を要求しない。
+            var pkg_it = dep_manifest.dependencies.pkg.iterator();
+            while (pkg_it.next()) |entry| {
+                const dep = entry.value_ptr.*;
+                if (depIsGated(&local.gated_deps, dep.name, dep.alias) and !depIsActivated(&local.activated_deps, dep.name, dep.alias)) continue;
+                local.needs_registry = true;
+            }
             var children: std.ArrayList(resolver.PackageId) = .empty;
             var child_queue: std.ArrayList(DepWork) = .empty;
-            try pushGroupDeps(gpa, &child_queue, &dep_manifest.dependencies, &gated, &expanded.dependency_aliases, child_base_dir);
+            try pushGroupDeps(gpa, &child_queue, &dep_manifest.dependencies, &local.gated_deps, &expanded.dependency_aliases, child_base_dir);
             for (child_queue.items) |child| {
                 // .npkg（http 由来）内の path 依存は lock が project 相対で
                 // 表現できないため拒否する。
@@ -912,6 +944,9 @@ const Composite = struct {
     locked_index: ?*const lock_mod.LockedIndex,
     /// `metaFromManifest` 用の profile target。
     target: resolver.Target,
+    /// 解決中の profile 名。推移的 pkg 依存の `profile` 制約を
+    /// `rootDeps` と同じ条件で絞るために使う。
+    profile_name: []const u8 = "",
 
     fn provider(self: *Composite) resolver.Provider {
         return .{
@@ -966,6 +1001,26 @@ const Composite = struct {
             var meta: resolver.VersionMeta = undefined;
             if (local.manifest) |*dep_manifest| {
                 meta = try resolver.metaFromManifest(gpa, dep_manifest, self.target);
+                // 推移的 pkg 辺を rootDeps と同じ条件で絞る。`dep.profile`
+                // は現行 profile 名と一致する場合のみ有効で、feature-gated
+                // で未 activated の宣言は除外する。metaFromManifest は両方
+                // を評価しないため orchestration 側で落とす。
+                if (meta.dependencies.len != 0) {
+                    var kept: std.ArrayList(resolver.Dependency) = .empty;
+                    for (meta.dependencies) |d| {
+                        const decl = dep_manifest.dependencies.pkg.get(d.name) orelse {
+                            try kept.append(gpa, d);
+                            continue;
+                        };
+                        if (decl.profile) |p| {
+                            if (!std.mem.eql(u8, p, self.profile_name)) continue;
+                        }
+                        if (depIsGated(&local.gated_deps, decl.name, decl.alias) and
+                            !depIsActivated(&local.activated_deps, decl.name, decl.alias)) continue;
+                        try kept.append(gpa, d);
+                    }
+                    meta.dependencies = kept.items;
+                }
             } else {
                 // manifest を持たない取得（raw http 等）は source 実装のみ。
                 meta = .{ .has_source = true };
@@ -1073,7 +1128,7 @@ fn readLockBytes(gpa: Allocator, io: std.Io, project_root: []const u8) Error!?[]
 
 /// 既存 lock を parse+validate する。無ければ null。破損は診断付きで
 /// `InvalidLock`。
-fn loadExistingLock(gpa: Allocator, io: std.Io, project_root: []const u8, diagnostics: *diag.List) Error!?lock_model.Lock {
+pub fn loadExistingLock(gpa: Allocator, io: std.Io, project_root: []const u8, diagnostics: *diag.List) Error!?lock_model.Lock {
     const bytes = (try readLockBytes(gpa, io, project_root)) orelse return null;
     const errors_before = diagnostics.errorCount();
     var parsed = lock_mod.parse(gpa, bytes, diagnostics) catch |err| switch (err) {
@@ -1300,21 +1355,39 @@ pub fn ensureLock(
         return err;
     };
 
-    // root の pkg 依存があれば registry が必要。
+    // --- profile ごとに解決 -------------------------------------------------
+    var gated_root = try gatedDepNames(a, &project.manifest);
+    defer gated_root.deinit();
+
+    // root の有効な pkg 依存があれば registry が必要。feature-gated で
+    // 未 activated の宣言は解決対象外なので registry を要求しない。
+    // `profile` 制約は rootDeps と同じく「いずれかの profile で有効化
+    // される宣言のみ」を数える（全 profile と不一致の宣言は解決され
+    // ないため registry を要求しない）。
     var root_needs_registry = false;
     for ([_]*const manifest_mod.DependencyGroup{ &project.manifest.dependencies, &project.manifest.dev_dependencies }) |group| {
         var it = group.pkg.iterator();
-        if (it.next() != null) root_needs_registry = true;
+        while (it.next()) |entry| {
+            const dep = entry.value_ptr.*;
+            if (dep.profile) |p| {
+                var any_profile = false;
+                for (profiles) |named| {
+                    if (std.mem.eql(u8, named.name, p)) {
+                        any_profile = true;
+                        break;
+                    }
+                }
+                if (!any_profile) continue;
+            }
+            if (depIsGated(&gated_root, dep.name, dep.alias) and !depIsActivated(&expanded.dependency_aliases, dep.name, dep.alias)) continue;
+            root_needs_registry = true;
+        }
     }
     if (root_needs_registry or ctx.needs_registry) ctx.needs_registry = true;
     if (ctx.needs_registry and opts.registry_url == null) {
         try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml", .{}, "registry dependencies require a registry url (--registry or LNAKO_REGISTRY)", .{});
         return error.RegistryRequired;
     }
-
-    // --- profile ごとに解決 -------------------------------------------------
-    var gated_root = try gatedDepNames(a, &project.manifest);
-    defer gated_root.deinit();
 
     var per_profile: std.ArrayList(lock_mod.ProfileInput) = .empty;
     var primary_nodes: []const resolver.PackageNode = &.{};
@@ -1326,6 +1399,7 @@ pub fn ensureLock(
             .source_only = sourceOnly(named.record),
             .locked_index = null,
             .target = target,
+            .profile_name = named.name,
         };
         var reg: ?registry.StaticRegistry = null;
         defer if (reg) |*r| r.deinit();
@@ -1523,229 +1597,11 @@ fn writeAtomic(io: std.Io, path: []const u8, bytes: []const u8) Error!void {
     atomic.replace(io) catch |err| return mapFs(err);
 }
 
-// ---------------------------------------------------------------------------
-// 環境状態の検査（副作用なし）
-// ---------------------------------------------------------------------------
-
-pub const EnvironmentInfo = struct {
-    schema_version: i64 = 0,
-    lock_sha256: ?[]const u8 = null,
-    profile: ?[]const u8 = null,
-    runtime: ?[]const u8 = null,
-    /// `.nako/current` の世代名（あれば）。
-    generation: ?[]const u8 = null,
-    packages: usize = 0,
-};
-
-/// `.nako/environment.json` を読む。無ければ null。読み取りのみで
-/// `.nako` を作成しない（check/--no-sync の副作用なし契約）。
-pub fn readEnvironmentInfo(gpa: Allocator, io: std.Io, project_root: []const u8) Error!?EnvironmentInfo {
-    const path = try std.fs.path.join(gpa, &.{ project_root, ".nako", "environment.json" });
-    defer gpa.free(path);
-    const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(4 * 1024 * 1024)) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.FileNotFound => return null,
-        else => return mapFs(err),
-    };
-    defer gpa.free(bytes);
-    var info = EnvironmentInfo{};
-    var parsed = std.json.parseFromSlice(std.json.Value, gpa, bytes, .{}) catch return error.InvalidLock;
-    defer parsed.deinit();
-    if (parsed.value != .object) return error.InvalidLock;
-    const obj = parsed.value.object;
-    if (obj.get("schemaVersion")) |v| {
-        if (v == .integer) info.schema_version = v.integer;
-    }
-    if (obj.get("lockSha256")) |v| {
-        if (v == .string) info.lock_sha256 = try gpa.dupe(u8, v.string);
-    }
-    if (obj.get("profile")) |v| {
-        if (v == .string) info.profile = try gpa.dupe(u8, v.string);
-    }
-    if (obj.get("runtime")) |v| {
-        if (v == .string) info.runtime = try gpa.dupe(u8, v.string);
-    }
-    if (obj.get("packages")) |v| {
-        if (v == .object) info.packages = v.object.count();
-    }
-    const current_path = try std.fs.path.join(gpa, &.{ project_root, ".nako", "current" });
-    defer gpa.free(current_path);
-    if (std.Io.Dir.cwd().readFileAlloc(io, current_path, gpa, .limited(4096)) catch null) |current| {
-        defer gpa.free(current);
-        const name = std.mem.trim(u8, current, " \t\r\n");
-        if (name.len > 0) info.generation = try gpa.dupe(u8, name);
-    }
-    return info;
-}
-
-/// `.nako/env/<generation>` dir が実在するか。`environment.json` だけ残って
-/// 参照世代が消えた状態を stale として扱うための検査。世代名に path 成分が
-/// 混じった細工した `current` は拒否する。
-pub fn generationExists(io: std.Io, project_root: []const u8, generation: []const u8) bool {
-    if (generation.len == 0 or generation.len > 256) return false;
-    for (generation) |ch| {
-        // `.` を含む世代名は存在しない（`..` による dir 外参照を拒否）。
-        if (!std.ascii.isAlphanumeric(ch) and ch != '-' and ch != '_') return false;
-    }
-    var buffer: [512]u8 = undefined;
-    const rel = std.fmt.bufPrint(&buffer, ".nako" ++ std.fs.path.sep_str ++ "env" ++ std.fs.path.sep_str ++ "{s}", .{generation}) catch return false;
-    var path_buffer: [4096]u8 = undefined;
-    const abs = std.fmt.bufPrint(&path_buffer, "{s}" ++ std.fs.path.sep_str ++ "{s}", .{ project_root, rel }) catch return false;
-    std.Io.Dir.cwd().access(io, abs, .{}) catch return false;
-    return true;
-}
-
-/// `lnako check` / cnako `--no-sync` のための静的検査結果。
-/// ファイルシステムを一切変更しない。
-pub const CheckInfo = struct {
-    /// `nako.lock` の状態。
-    lock_state: enum { missing, invalid, fresh, stale },
-    /// 読めた lock の鮮度（invalid/missing では未使用）。
-    freshness: lock_mod.Freshness = .missing,
-    /// `.nako/environment.json` の内容。無ければ null。
-    environment: ?EnvironmentInfo,
-    /// 環境が現行 lock と整合するか。
-    environment_current: bool,
-};
-
-/// manifest・lock・環境を読み取り専用で検査する。`.nako` を含め
-/// ファイルシステムへ一切書き込まない。
-pub fn inspectForCheck(
-    gpa: Allocator,
-    io: std.Io,
-    project: *const Project,
-    opts: *const PrepareOptions,
-    diagnostics: *diag.List,
-) Error!CheckInfo {
-    var info = CheckInfo{ .lock_state = .missing, .environment = null, .environment_current = false };
-
-    const profiles = try profilesOf(gpa, project);
-    const profile = try selectProfile(profiles, opts.profile, diagnostics);
-    const record = recordOf(profiles, profile) orelse return error.UnknownProfile;
-    var expanded = try expandRootFeatures(gpa, &project.manifest, opts.features, !opts.no_default_features, diagnostics);
-    defer expanded.deinit();
-    const input = lock_model.Input{
-        .manifest_sha256 = project.manifest_sha256,
-        .profile = profile,
-        .features = try expandedFeatureNames(gpa, &expanded),
-        .target = .{ .os = record.os, .cpu = record.cpu, .abi = record.abi },
-    };
-
-    var existing = loadExistingLock(gpa, io, project.root, diagnostics) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => {
-            info.lock_state = .invalid;
-            return info;
-        },
-    };
-    defer if (existing) |*l| l.deinit();
-    if (existing == null) {
-        info.freshness = .missing;
-    } else {
-        info.freshness = lock_mod.checkFreshness(&existing.?, input);
-        // `mutable = false` の pin hash 不一致も stale とする。
-        if (info.freshness == .fresh and
-            (try sync_mod.pathPinMismatch(gpa, io, project.root, &existing.?)) != null)
-        {
-            info.freshness = .stale_manifest;
-        }
-        info.lock_state = if (info.freshness == .fresh) .fresh else .stale;
-    }
-
-    info.environment = try readEnvironmentInfo(gpa, io, project.root);
-    var digest: [32]u8 = undefined;
-    const has_lock = try lockDigest(gpa, io, project.root, &digest);
-    // ensureEnvironment と同じ整合条件で判定する（lock digest・schema・
-    // 選択 profile・runtime・参照世代 dir の実在）。
-    info.environment_current = has_lock and info.environment != null and
-        environmentMatchesLock(info.environment.?, &digest) and
-        info.environment.?.schema_version == 1 and
-        (info.environment.?.profile == null or std.mem.eql(u8, info.environment.?.profile.?, profile)) and
-        (info.environment.?.runtime == null or std.mem.eql(u8, info.environment.?.runtime.?, "lnako")) and
-        // 参照世代 dir が消えた環境は不一致とする。
-        (info.environment.?.generation != null and generationExists(io, project.root, info.environment.?.generation.?));
-    return info;
-}
-
 /// `nako.lock` ファイル本体の SHA-256（正規化済み 32byte digest）。
 pub fn lockDigest(gpa: Allocator, io: std.Io, project_root: []const u8, out: *[32]u8) Error!bool {
     const bytes = (try readLockBytes(gpa, io, project_root)) orelse return false;
     std.crypto.hash.sha2.Sha256.hash(bytes, out, .{});
     return true;
-}
-
-/// 環境の `lockSha256` が現行 `nako.lock` と一致するか。
-pub fn environmentMatchesLock(info: EnvironmentInfo, lock_digest: *const [32]u8) bool {
-    const recorded = info.lock_sha256 orelse return false;
-    var expected: [32]u8 = undefined;
-    return lock_model.normalizeSha256(recorded, &expected) and
-        std.mem.eql(u8, &expected, lock_digest);
-}
-
-// ---------------------------------------------------------------------------
-// 環境準備（ensureLock → 必要なら sync）
-// ---------------------------------------------------------------------------
-
-pub const PrepOutcome = struct {
-    /// lock が新規書込・更新されたか。
-    lock_wrote: bool = false,
-    /// 今回 sync を実行したか。
-    synced: bool = false,
-    /// `.nako` の絶対 path（環境が存在する場合）。
-    environment_root: ?[]const u8 = null,
-    /// sync の世代名。
-    generation: ?[]const u8 = null,
-    profile: []const u8 = "",
-    /// 直前の環境が不足・不一致だったか。
-    was_stale: bool = false,
-};
-
-/// lock を最新化し、`.nako` 環境が現行 lock と一致しない場合のみ
-/// `sync.run` を実行する。`--no-sync` 呼び出し側は本関数を呼ばず
-/// `readEnvironmentInfo` で既存環境を検査する。
-pub fn ensureEnvironment(
-    gpa: Allocator,
-    io: std.Io,
-    project: *const Project,
-    opts: *const PrepareOptions,
-    diagnostics: *diag.List,
-) Error!PrepOutcome {
-    var outcome = PrepOutcome{};
-    var lock_outcome = try ensureLock(gpa, io, project, opts, diagnostics);
-    defer lock_outcome.deinit();
-    outcome.lock_wrote = lock_outcome.wrote;
-    // lock_outcome の arena は defer で破棄されるため、gpa 側へ複製する。
-    outcome.profile = try gpa.dupe(u8, lock_outcome.profile);
-
-    var digest: [32]u8 = undefined;
-    const has_lock = try lockDigest(gpa, io, project.root, &digest);
-    const env = try readEnvironmentInfo(gpa, io, project.root);
-    const env_ok = has_lock and env != null and
-        environmentMatchesLock(env.?, &digest) and
-        env.?.schema_version == 1 and
-        (env.?.profile == null or std.mem.eql(u8, env.?.profile.?, lock_outcome.profile)) and
-        (env.?.runtime == null or std.mem.eql(u8, env.?.runtime.?, "lnako")) and
-        // 参照世代 dir が消えた環境は不一致として sync し直す。
-        (env.?.generation != null and generationExists(io, project.root, env.?.generation.?));
-    if (env_ok) {
-        outcome.environment_root = try std.fs.path.join(gpa, &.{ project.root, ".nako" });
-        outcome.generation = env.?.generation;
-        return outcome;
-    }
-    outcome.was_stale = env != null;
-
-    var report = try sync_mod.run(gpa, io, .{
-        .project_root = project.root,
-        .profile = lock_outcome.profile,
-        .runtime = .lnako,
-        .cache_root = opts.cache_root,
-        .policy = opts.policy,
-    }, diagnostics);
-    outcome.synced = true;
-    outcome.environment_root = try gpa.dupe(u8, report.environment_root);
-    outcome.generation = try gpa.dupe(u8, report.generation);
-    report.deinit();
-    return outcome;
 }
 
 test {

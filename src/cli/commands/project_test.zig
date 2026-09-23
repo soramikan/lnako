@@ -171,12 +171,14 @@ test "lock は nako.lock を生成し tree/why/check が参照できる" {
     try testing.expect(std.mem.indexOf(u8, why, "lib") != null);
     try testing.expect(std.mem.indexOf(u8, why, "直接宣言") != null);
 
-    // check は静的で副作用を持たない（.nako を作らない）。
+    // check は静的で副作用を持たない（環境を構築しない。`.nako` 自体は
+    // lock verb が作る `edit.lock` のために既に存在し得る）。
     try cli.run(a, "check", &.{}, app_root);
     const report = cli.out.written();
     try testing.expect(std.mem.indexOf(u8, report, "nako.lock") != null);
     try testing.expect(std.mem.indexOf(u8, report, "fresh") != null);
-    try testing.expect(!try dirFileExists(a, app_root, ".nako"));
+    try testing.expect(!try dirFileExists(a, app_root, ".nako/environment.json"));
+    try testing.expect(!try dirFileExists(a, app_root, ".nako/env"));
 }
 
 test "check --json は機械可読な検査結果を stdout へ出す" {
@@ -775,4 +777,35 @@ test "remove は引用符3連を含む行で文終端を誤らない" {
     const manifest = try readFile(a, app_root, "nako.toml");
     try testing.expect(std.mem.indexOf(u8, manifest, "lib = {") == null);
     try testing.expect(std.mem.indexOf(u8, manifest, "other = { path = \"lib\" }") != null);
+}
+
+test "why は解決済みの public id でも直接宣言を特定する" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const app_root = try newAppFixture(a, &temporary);
+    try appManifest(a, app_root,
+        \\[dependencies.path]
+        \\lib = { path = "lib" }
+        \\
+    );
+
+    var cli = Cli.init(a);
+    try cli.run(a, "lock", &.{}, app_root);
+    // lock から解決済み entry の public id（`pkg:<32hex>`）を取り出す。
+    const lock_text = try readFile(a, app_root, "nako.lock");
+    const needle = "\"id\": \"pkg:";
+    const at = std.mem.indexOf(u8, lock_text, needle) orelse return error.TestExpectedEqual;
+    const id_start = at + needle.len - 4; // "pkg:" から始める
+    const id_end = std.mem.indexOfScalarPos(u8, lock_text, id_start, '"') orelse return error.TestExpectedEqual;
+    const public_id = lock_text[id_start..id_end];
+
+    // `why pkg:<id>` は宣言 source 由来の id と一致するため
+    // 「解決グラフに含まれます」ではなく直接宣言として報告する。
+    try cli.run(a, "why", &.{public_id}, app_root);
+    const why = cli.out.written();
+    try testing.expect(std.mem.indexOf(u8, why, "直接宣言") != null);
+    try testing.expect(std.mem.indexOf(u8, why, "dep key: lib") != null);
 }
