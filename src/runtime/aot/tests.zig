@@ -6645,6 +6645,106 @@ test "AOT Promiseは解決・連鎖・失敗・束ねをマイクロタスクで
     try std.testing.expectEqual(@as(f64, 1), valueToNumber(bundled.object().?.payload.array.items[2]));
 }
 
+test "AOT 束の割り当て失敗はstateを放棄しハンドラ発火とGC markを無害化する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    var roots = [_]Value{.{}} ** 8;
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+
+    roots[0] = try createAotPromise(active);
+    roots[1] = try createAotPromiseResolver(active, roots[0].object().?, false);
+    var ignored = Value{};
+    var seven = numberValue(7);
+    lnako_aot_function_call(&ignored, &roots[1], @ptrCast(&seven), 1);
+    roots[2] = try createAotPromise(active);
+    roots[3] = try createAotPromiseResolver(active, roots[2].object().?, false);
+
+    var injected_failures: usize = 0;
+    var fail_index: usize = 0;
+    while (fail_index < 64) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        active.allocator = failing.allocator();
+        const bundled = bundleAotPromises(active, &.{ roots[0], roots[2], roots[0] }, null);
+        active.allocator = std.testing.allocator;
+        if (bundled) |_| {} else |_| injected_failures += 1;
+        // 放棄・完了どちら向きのハンドラ発火とmarkもpanicしない。
+        try state.drainAotPromiseTasks(active);
+        _ = active.collect();
+    }
+    try std.testing.expect(injected_failures > 0);
+    // pending側に残ったハンドラ（放棄分を含む）を一括発火させる。
+    var five = numberValue(5);
+    lnako_aot_function_call(&ignored, &roots[3], @ptrCast(&five), 1);
+    try state.drainAotPromiseTasks(active);
+    _ = active.collect();
+}
+
+test "AOT 束ハンドラのGC markは破棄済みstateを参照しない" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+
+    roots[0] = try createAotPromise(active);
+    roots[1] = try active.createArray(&.{});
+    const bundle_state = try active.allocator.create(state.AotPromiseAllState);
+    bundle_state.* = .{ .promise = roots[0].object().?, .results = roots[1] };
+    try active.promise_all_states.append(active.allocator, bundle_state);
+    roots[2] = try state.createAotPromiseAllHandler(active, bundle_state, 0, false);
+    state.destroyAotPromiseAllState(active, bundle_state);
+    // roots[2]のhandlerは破棄済みstateを指すが、markでderefしてはいけない。
+    _ = active.collect();
+    try std.testing.expectEqual(@as(usize, 0), active.promise_all_states.items.len);
+}
+
+test "AOT 放棄・追跡外stateへの束ハンドラ発火は副作用を持たない" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+
+    roots[0] = try createAotPromise(active);
+    roots[1] = try active.createArray(&.{});
+    const bundle_state = try active.allocator.create(state.AotPromiseAllState);
+    bundle_state.* = .{ .promise = roots[0].object().?, .results = roots[1], .remaining = 1, .abandoned = true };
+    try active.promise_all_states.append(active.allocator, bundle_state);
+    const abandoned_out = try state.handleAotPromiseAll(active, .{ .state = bundle_state, .index = 0, .rejected = false }, numberValue(9));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(abandoned_out.tag)));
+    try std.testing.expectEqual(@as(usize, 1), bundle_state.remaining);
+    try std.testing.expectEqual(@as(usize, 0), roots[1].object().?.payload.array.items.len);
+    try std.testing.expectEqual(AotPromiseState.pending, roots[0].object().?.payload.promise.state);
+
+    var orphan: state.AotPromiseAllState = .{ .promise = roots[0].object().?, .results = roots[1], .remaining = 1 };
+    const orphan_out = try state.handleAotPromiseAll(active, .{ .state = &orphan, .index = 0, .rejected = false }, numberValue(9));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(orphan_out.tag)));
+    try std.testing.expectEqual(@as(usize, 1), orphan.remaining);
+    try std.testing.expectEqual(@as(usize, 0), roots[1].object().?.payload.array.items.len);
+}
+
 test "AOTネイティブABI橋渡しは関数とPromiseをAOT値へ変換する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();

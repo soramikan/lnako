@@ -213,10 +213,19 @@ pub fn bundlePromises(self: *Interpreter, arguments: []const Value) !Value {
     for (arguments) |_| _ = try results.array.push(.undefined);
 
     const state = try self.allocator.create(PromiseAllState);
-    errdefer self.allocator.destroy(state);
+    // エラー経路では登録済みハンドラやキュー済みタスクがstateを参照した
+    // まま残りうるため、追跡中のstateは解放せずabandonedを立てて残す。
+    var state_cleanup: enum { destroy, abandon, none } = .destroy;
+    errdefer switch (state_cleanup) {
+        .destroy => self.allocator.destroy(state),
+        .abandon => {
+            state.abandoned = true;
+        },
+        .none => {},
+    };
     state.* = .{ .promise = promise.promise, .results = results.array };
     try self.promise_all_states.append(self.allocator, state);
-    errdefer _ = self.promise_all_states.pop();
+    state_cleanup = .abandon;
 
     for (arguments, 0..) |argument, index| {
         if (argument != .promise) {
@@ -235,14 +244,13 @@ pub fn bundlePromises(self: *Interpreter, arguments: []const Value) !Value {
         var rejected = try self.runtime.createNativeFunction(rejected_name.string, 1, promiseAllSentinel, &.{});
         try handler_roots.protect(&rejected);
         try self.promise_all_handlers.put(self.allocator, fulfilled.function, .{ .state = state, .index = index, .rejected = false, .peer = rejected.function });
-        errdefer _ = self.promise_all_handlers.remove(fulfilled.function);
         try self.promise_all_handlers.put(self.allocator, rejected.function, .{ .state = state, .index = index, .rejected = true, .peer = fulfilled.function });
-        errdefer _ = self.promise_all_handlers.remove(rejected.function);
         _ = try self.runtime.promiseThen(argument.promise, fulfilled, rejected);
     }
     if (state.remaining == 0) {
         if (promise.promise.state == .pending) try self.runtime.resolvePromise(promise.promise, results);
         self.destroyPromiseAllState(state);
+        state_cleanup = .none;
     }
     try self.setGlobal("そ", promise);
     return promise;
@@ -251,15 +259,16 @@ pub fn bundlePromises(self: *Interpreter, arguments: []const Value) !Value {
 pub fn handlePromiseAll(self: *Interpreter, function: *value_mod.Function, handler: PromiseAllHandler, arguments: []const Value) !Value {
     _ = self.promise_all_handlers.remove(function);
     _ = self.promise_all_handlers.remove(handler.peer);
+    const state = handler.state;
+    if (state.abandoned or state.remaining == 0) return .undefined;
     const settled = if (arguments.len > 0) arguments[0] else Value.undefined;
     if (handler.rejected) {
-        try self.runtime.rejectPromise(handler.state.promise, settled);
-    } else try handler.state.results.set(handler.index, settled);
-    std.debug.assert(handler.state.remaining > 0);
-    handler.state.remaining -= 1;
-    if (handler.state.remaining == 0) {
-        if (handler.state.promise.state == .pending) try self.runtime.resolvePromise(handler.state.promise, .{ .array = handler.state.results });
-        self.destroyPromiseAllState(handler.state);
+        try self.runtime.rejectPromise(state.promise, settled);
+    } else try state.results.set(handler.index, settled);
+    state.remaining -= 1;
+    if (state.remaining == 0) {
+        if (state.promise.state == .pending) try self.runtime.resolvePromise(state.promise, .{ .array = state.results });
+        self.destroyPromiseAllState(state);
     }
     return .undefined;
 }
@@ -271,7 +280,6 @@ pub fn destroyPromiseAllState(self: *Interpreter, state: *PromiseAllState) void 
         self.allocator.destroy(state);
         return;
     }
-    unreachable;
 }
 
 pub fn drainEventLoop(self: *Interpreter) !void {
