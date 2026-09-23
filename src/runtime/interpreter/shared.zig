@@ -428,6 +428,10 @@ pub const PromiseAllState = struct {
     promise: *value_mod.Promise,
     results: *value_mod.Array,
     remaining: usize = 0,
+    /// bundlePromisesのエラーパスで立つ。登録済みハンドラやキュー済み
+    /// タスクがstateを参照しうるため、解放せず追跡リストへ残したまま
+    /// 発火を無害化する（解放は完了時またはdeinitに委ねる）。
+    abandoned: bool = false,
 };
 
 pub const PromiseAllHandler = struct {

@@ -1077,10 +1077,9 @@ pub const Runtime = struct {
                     switch (function.promise_kind) {
                         .none => {},
                         .resolver => |resolver| self.markValue(.{ .tag = @intFromEnum(Tag.promise), .payload = @intFromPtr(resolver.promise) }),
-                        .all_handler => |handler| {
-                            self.markValue(.{ .tag = @intFromEnum(Tag.promise), .payload = @intFromPtr(handler.state.promise) });
-                            self.markValue(handler.state.results);
-                        },
+                        // stateの中身はpromise_all_states側でmark済み。破棄済み
+                        // stateを指す残留ハンドラをderefしないよう何もしない。
+                        .all_handler => {},
                     }
                 },
                 .binding_cell => |value| self.markValue(value),

@@ -65,6 +65,10 @@ pub fn PromiseAllState(comptime Value: type, comptime Object: type) type {
         promise: *Object,
         results: Value,
         remaining: usize = 0,
+        /// bundleAotPromisesのエラーパスで立つ。登録済みハンドラやキュー済み
+        /// タスクがstateを参照しうるため、解放せず追跡リストへ残したまま
+        /// 発火を無害化する（解放は完了時またはdeinitに委ねる）。
+        abandoned: bool = false,
     };
 }
 
