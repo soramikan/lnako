@@ -137,7 +137,11 @@ const BlockBuilder = struct {
     terminator: ir.Terminator = .none,
 };
 
-const LoopTargets = struct { continue_block: ir.BlockId, break_block: ir.BlockId };
+/// 非局所分岐の飛び先。handler_depthはその文脈へ入った時点の
+/// exception_handlers深さで、分岐時に飛び越す『エラー監視』の個数を
+/// 数える基準（文脈を外側から囲む監視領域は脱出先でも有効なため対象外）。
+const LoopTargets = struct { continue_block: ir.BlockId, break_block: ir.BlockId, handler_depth: usize };
+const BreakTarget = struct { block: ir.BlockId, handler_depth: usize };
 
 const FunctionBuilder = struct {
     allocator: std.mem.Allocator,
@@ -148,6 +152,10 @@ const FunctionBuilder = struct {
     current: ir.BlockId = 0,
     next_value: ir.ValueId,
     loops: std.ArrayList(LoopTargets) = .empty,
+    /// 『抜ける』の飛び先スタック。繰り返しの出口に加えて条件分岐の合流点も
+    /// 積む（公式はcase節の`break`がその条件分岐を抜けるJSコードを生成する）。
+    /// 『続ける』は条件分岐をまたいで直近の繰り返しへ飛ぶため対象外。
+    breakables: std.ArrayList(BreakTarget) = .empty,
     exception_handlers: std.ArrayList(ir.BlockId) = .empty,
 
     fn finish(self: *FunctionBuilder) !ir.Function {
@@ -539,7 +547,9 @@ const FunctionBuilder = struct {
         const body_block = try self.createBlock("loop.body");
         const exit_block = try self.createBlock("loop.end");
         self.terminate(.{ .branch = if (post_test) body_block else condition_block });
-        try self.loops.append(self.allocator, .{ .continue_block = condition_block, .break_block = exit_block });
+        try self.loops.append(self.allocator, .{ .continue_block = condition_block, .break_block = exit_block, .handler_depth = self.exception_handlers.items.len });
+        try self.breakables.append(self.allocator, .{ .block = exit_block, .handler_depth = self.exception_handlers.items.len });
+        defer _ = self.breakables.pop();
 
         self.current = body_block;
         _ = try self.lowerNode(node.children[1]);
@@ -584,16 +594,27 @@ const FunctionBuilder = struct {
             if (self.isTerminated()) return null;
         }
         const iterator = try self.emitValue(.iterator_begin, .dynamic, inputs.items, node);
+        // 範囲終端の変換はカスタムvalueOfを呼び得るため、失敗時は
+        // 通常のループ入りではなく例外経路へ送る。
+        try self.lowerExceptionCheck(node);
         const condition_block = try self.createBlock("iterator.cond");
         const body_block = try self.createBlock("iterator.body");
         const exit_block = try self.createBlock("iterator.end");
         self.terminate(.{ .branch = condition_block });
-        try self.loops.append(self.allocator, .{ .continue_block = condition_block, .break_block = exit_block });
+        try self.loops.append(self.allocator, .{ .continue_block = condition_block, .break_block = exit_block, .handler_depth = self.exception_handlers.items.len });
+        try self.breakables.append(self.allocator, .{ .block = exit_block, .handler_depth = self.exception_handlers.items.len });
+        defer _ = self.breakables.pop();
         self.current = condition_block;
         const has_next = try self.emitValue(.iterator_has_next, .boolean, &.{iterator}, node);
+        // `N回`ガードの抽象関係比較は反復ごとにカスタムvalueOfを呼び得る
+        // ため、失敗時は通常のループ脱出ではなく例外経路へ送る。
+        try self.lowerExceptionCheck(node);
         self.terminate(.{ .conditional_branch = .{ .condition = has_next, .then_block = body_block, .else_block = exit_block } });
         self.current = body_block;
         _ = try self.emitValue(.iterator_next, .dynamic, &.{iterator}, node);
+        // iterator_nextもpending例外を設定し得る（要素アクセスや将来の
+        // 関係比較失敗）ため、本文実行前に例外経路へ送る。
+        try self.lowerExceptionCheck(node);
         _ = try self.lowerNode(node.children[node.children.len - 1]);
         if (!self.isTerminated()) self.terminate(.{ .branch = condition_block });
         _ = self.loops.pop();
@@ -629,24 +650,44 @@ const FunctionBuilder = struct {
     fn lowerReturn(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
         const value = if (node.children.len > 0) try self.lowerNode(node.children[0]) else null;
         if (self.isTerminated()) return null;
+        // 関数を抜ける経路でも残りの監視ハンドラを畳く。フレーム解体で
+        // スタック自体は消えるが、try_begin/try_endを全経路で対に保ち、
+        // 「ブロックを抜けるとハンドラ深さが戻る」不変条件を維持する。
+        try self.unwindExceptionHandlers(0, node);
         self.terminate(.{ .return_value = value });
         return value;
     }
 
     fn lowerBreak(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
-        _ = node;
-        if (self.loops.items.len == 0) {
-            self.terminate(.unreachable_terminator);
-        } else self.terminate(.{ .branch = self.loops.items[self.loops.items.len - 1].break_block });
+        // 意味解析が文脈外の『抜ける』を診断で拒否するため、ここへ来るのは
+        // 解析を通らないHIRを直接下ろした場合だけ。実行時クラッシュにせず
+        // コンパイル時エラーにする。
+        if (self.breakables.items.len == 0) return error.InvalidHir;
+        const target = self.breakables.items[self.breakables.items.len - 1];
+        try self.unwindExceptionHandlers(target.handler_depth, node);
+        self.terminate(.{ .branch = target.block });
         return null;
     }
 
     fn lowerContinue(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
-        _ = node;
-        if (self.loops.items.len == 0) {
-            self.terminate(.unreachable_terminator);
-        } else self.terminate(.{ .branch = self.loops.items[self.loops.items.len - 1].continue_block });
+        if (self.loops.items.len == 0) return error.InvalidHir;
+        const target = self.loops.items[self.loops.items.len - 1];
+        try self.unwindExceptionHandlers(target.handler_depth, node);
+        self.terminate(.{ .branch = target.continue_block });
         return null;
+    }
+
+    /// ループ脱出・関数脱出で監視領域を横切る経路へ、抜ける側のtry_begin分の
+    /// try_endをemitする。Interpreterはtry_beginでハンドラをフレームの
+    /// スタックへ積みtry_endで降ろすため、try_endを欠く脱出経路は終了済みの
+    /// ハンドラを残し、後続の例外を死んだ監視ブロックへ誤配送する（ループ内
+    /// ハンドラなら本体のゾンビ再実行になる）。静的な深さの記録
+    /// （exception_handlers）は構造上まだtry内のため、ここでは変更しない。
+    fn unwindExceptionHandlers(self: *FunctionBuilder, target_depth: usize, node: hir.Node) !void {
+        std.debug.assert(self.exception_handlers.items.len >= target_depth);
+        for (0..self.exception_handlers.items.len -| target_depth) |_| {
+            try self.emitVoid(.try_end, &.{}, node);
+        }
     }
 
     fn lowerTry(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
@@ -690,6 +731,10 @@ const FunctionBuilder = struct {
         const discriminant = (try self.lowerNode(node.children[0])) orelse try self.emitUndefined(node);
         if (self.isTerminated()) return null;
         const merge_block = try self.createBlock("switch.end");
+        // 公式convSwitchはcase節をflagLoopを立てて生成し、節内の`break`は
+        // 条件分岐を抜ける。ループ外case節の『続ける』は意味解析で診断済み。
+        try self.breakables.append(self.allocator, .{ .block = merge_block, .handler_depth = self.exception_handlers.items.len });
+        defer _ = self.breakables.pop();
         var index: usize = 2;
         while (index + 1 < node.children.len) : (index += 2) {
             const case_value = (try self.lowerNode(node.children[index])) orelse try self.emitUndefined(node);
@@ -858,434 +903,4 @@ fn dupeStrings(allocator: std.mem.Allocator, strings: []const []const u8) ![]con
     return result;
 }
 
-test "ユーザー関数は『それ』を呼び出しごとのスコープで扱う" {
-    const parser = @import("../frontend/parser.zig");
-    const semantic = @import("../semantic/analyzer.zig");
-    var parsed = try parser.parse(std.testing.allocator, "●Fとは\n1に2を足す\nここまで\nF\n", "main.nako3");
-    defer parsed.deinit();
-    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
-    defer analyzed.deinit();
-    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
-    defer hir_program.deinit();
-    var program = try lower(std.testing.allocator, hir_program);
-    defer program.deinit();
-    var user_function: ?ir.Function = null;
-    for (program.functions) |function| {
-        if (!std.mem.endsWith(u8, function.name, "$entry")) user_function = function;
-    }
-    const function = user_function.?;
-    // ユーザー関数はsore_scope=true。呼出しごとの『それ』スコープは実行側が
-    // 入口で退避・初期化し全終端で復元するため、IRの命令列にはスコープ管理を
-    // 混ぜない（typed ABIやresult_store解析の対象命令を増やさない）。
-    try std.testing.expect(function.sore_scope);
-    for (function.blocks) |block| {
-        for (block.instructions) |instruction| {
-            try std.testing.expect(!std.mem.eql(u8, instruction.name, "$それ"));
-        }
-    }
-    // 末尾が命令呼出しの場合、暗黙戻り値は`null`（=実行側が現在の『それ』を返す）。
-    const last_block = function.blocks[function.blocks.len - 1];
-    try std.testing.expect(last_block.terminator == .return_value);
-    try std.testing.expect(last_block.terminator.return_value == null);
-    // モジュールエントリは呼び出し側と同じスコープで動くため対象外。
-    const entry = program.findFunction("main__$entry").?;
-    try std.testing.expect(!entry.sore_scope);
-}
-
-test "HIRから分岐とループを含むSSA IRを生成する" {
-    const parser = @import("../frontend/parser.zig");
-    const semantic = @import("../semantic/analyzer.zig");
-    var parsed = try parser.parse(std.testing.allocator, "A=0\nA<3の間\nもしA=1ならば\nA=A+1\n違えば\nA=A+2\nここまで\nここまで\n", "main.nako3");
-    defer parsed.deinit();
-    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
-    defer analyzed.deinit();
-    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
-    defer hir_program.deinit();
-    var program = try lower(std.testing.allocator, hir_program);
-    defer program.deinit();
-    const entry = program.findFunction("main__$entry").?;
-    try std.testing.expect(entry.blocks.len >= 7);
-    try std.testing.expect(entry.blocks[0].terminator == .branch);
-}
-
-test "論理演算の右辺を短絡分岐とPHIへ変換する" {
-    const parser = @import("../frontend/parser.zig");
-    const semantic = @import("../semantic/analyzer.zig");
-    var parsed = try parser.parse(std.testing.allocator, "A=0かつ表示(\"NG\")\nB=1または表示(\"NG\")\n", "logical.nako3");
-    defer parsed.deinit();
-    try std.testing.expect(parsed.succeeded());
-    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "logical.nako3");
-    defer analyzed.deinit();
-    try std.testing.expect(analyzed.succeeded());
-    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "logical", "logical.nako3", analyzed);
-    defer hir_program.deinit();
-    var program = try lower(std.testing.allocator, hir_program);
-    defer program.deinit();
-    const entry = program.findFunction("logical__$entry").?;
-    var phi_count: usize = 0;
-    var logical_binary_count: usize = 0;
-    var display_blocks: usize = 0;
-    for (entry.blocks) |block| {
-        var has_display = false;
-        for (block.instructions) |instruction| {
-            if (instruction.opcode == .phi) phi_count += 1;
-            if (instruction.opcode == .binary and isLogicalOperator(instruction.operator)) logical_binary_count += 1;
-            if (instruction.opcode == .call and std.mem.eql(u8, instruction.name, "表示")) has_display = true;
-        }
-        if (has_display) display_blocks += 1;
-    }
-    try std.testing.expectEqual(@as(usize, 2), phi_count);
-    try std.testing.expectEqual(@as(usize, 0), logical_binary_count);
-    try std.testing.expectEqual(@as(usize, 2), display_blocks);
-}
-
-test "条件分岐と例外監視を明示的な制御フローへ変換する" {
-    const parser = @import("../frontend/parser.zig");
-    const semantic = @import("../semantic/analyzer.zig");
-    const source = "A=1\nAで条件分岐\n1ならば\nB=1\nここまで\n違えば\nB=2\nここまで\nここまで\nエラー監視\nA=2\nエラーならば\nB=3\nここまで\n";
-    var parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
-    defer parsed.deinit();
-    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
-    defer analyzed.deinit();
-    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
-    defer hir_program.deinit();
-    var program = try lower(std.testing.allocator, hir_program);
-    defer program.deinit();
-    const entry = program.findFunction("main__$entry").?;
-    var saw_equality = false;
-    var saw_exception_edge = false;
-    for (entry.blocks) |block| for (block.instructions) |instruction| {
-        if (instruction.opcode == .binary and std.mem.eql(u8, instruction.operator, "==")) saw_equality = true;
-        if (instruction.opcode == .try_begin and instruction.exception_target != null) saw_exception_edge = true;
-    };
-    try std.testing.expect(saw_equality);
-    try std.testing.expect(saw_exception_edge);
-}
-
-test "エラー発生を最内側の例外分岐先付きthrowへ変換する" {
-    const parser = @import("../frontend/parser.zig");
-    const semantic = @import("../semantic/analyzer.zig");
-    const source = "エラー監視\nエラー監視\n『内』のエラー発生\nエラーならば\nここまで\nエラーならば\nここまで\n";
-    var parsed = try parser.parse(std.testing.allocator, source, "exception.nako3");
-    defer parsed.deinit();
-    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "exception.nako3");
-    defer analyzed.deinit();
-    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "exception", "exception.nako3", analyzed);
-    defer hir_program.deinit();
-    var program = try lower(std.testing.allocator, hir_program);
-    defer program.deinit();
-    const entry = program.findFunction("exception__$entry").?;
-    var throw_count: usize = 0;
-    for (entry.blocks) |block| switch (block.terminator) {
-        .throw_value => |throw_value| {
-            throw_count += 1;
-            try std.testing.expect(throw_value.target != null);
-            try std.testing.expect(throw_value.target.? < entry.blocks.len);
-            try std.testing.expect(throw_value.site_id != null);
-            try std.testing.expect((throw_value.site_id.? & 0x8000_0000) != 0);
-            try std.testing.expect(throw_value.coerce_to_error_message);
-        },
-        else => {},
-    };
-    try std.testing.expectEqual(@as(usize, 1), throw_count);
-}
-
-test "失敗し得る二項演算の直後に例外分岐を生成する" {
-    const parser = @import("../frontend/parser.zig");
-    const semantic = @import("../semantic/analyzer.zig");
-    const source = "エラー監視\nA=1n+1\nエラーならば\nエラーメッセージを表示\nここまで\n";
-    var parsed = try parser.parse(std.testing.allocator, source, "arithmetic-exception.nako3");
-    defer parsed.deinit();
-    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "arithmetic-exception.nako3");
-    defer analyzed.deinit();
-    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "arithmetic_exception", "arithmetic-exception.nako3", analyzed);
-    defer hir_program.deinit();
-    var program = try lower(std.testing.allocator, hir_program);
-    defer program.deinit();
-    const entry = program.findFunction("arithmetic_exception__$entry").?;
-    var saw_checked_binary = false;
-    for (entry.blocks) |block| for (block.instructions, 0..) |instruction, index| {
-        if (instruction.opcode != .binary) continue;
-        try std.testing.expect(index + 1 < block.instructions.len);
-        try std.testing.expectEqual(ir.Opcode.exception_pending, block.instructions[index + 1].opcode);
-        try std.testing.expect(block.terminator == .conditional_branch);
-        saw_checked_binary = true;
-    };
-    try std.testing.expect(saw_checked_binary);
-}
-
-test "失敗し得る添字代入の直後に例外分岐を生成する" {
-    const parser = @import("../frontend/parser.zig");
-    const semantic = @import("../semantic/analyzer.zig");
-    const source = "エラー監視\nNULL[0]=2\nエラーならば\nエラーメッセージを表示\nここまで\n";
-    var parsed = try parser.parse(std.testing.allocator, source, "assignment-exception.nako3");
-    defer parsed.deinit();
-    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "assignment-exception.nako3");
-    defer analyzed.deinit();
-    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "assignment_exception", "assignment-exception.nako3", analyzed);
-    defer hir_program.deinit();
-    var program = try lower(std.testing.allocator, hir_program);
-    defer program.deinit();
-    const entry = program.findFunction("assignment_exception__$entry").?;
-    var saw_checked_assignment = false;
-    for (entry.blocks) |block| for (block.instructions, 0..) |instruction, index| {
-        if (instruction.opcode != .element_set) continue;
-        try std.testing.expect(index + 1 < block.instructions.len);
-        try std.testing.expectEqual(ir.Opcode.exception_pending, block.instructions[index + 1].opcode);
-        try std.testing.expect(block.terminator == .conditional_branch);
-        saw_checked_assignment = true;
-    };
-    try std.testing.expect(saw_checked_assignment);
-}
-
-test "単項演算の変換失敗を直後の例外分岐で捕捉する" {
-    const parser = @import("../frontend/parser.zig");
-    const semantic = @import("../semantic/analyzer.zig");
-    // The frontend rejects unary plus and lowers minus to multiplication.
-    // Substitute arithmetic unary HIR to exercise its exception boundary.
-    const source = "A=1n\nエラー監視\nB=!(A)\n「到達してはいけない」を表示\nエラーならば\nエラーメッセージを表示\nここまで\n";
-    var parsed = try parser.parse(std.testing.allocator, source, "unary-exception.nako3");
-    defer parsed.deinit();
-    try std.testing.expect(parsed.succeeded());
-    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "unary-exception.nako3");
-    defer analyzed.deinit();
-    try std.testing.expect(analyzed.succeeded());
-    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "unary_exception", "unary-exception.nako3", analyzed);
-    defer hir_program.deinit();
-    for (hir_program.nodes) |*node| {
-        if (node.kind == .unary) {
-            node.operator = "+";
-            node.type_hint = .dynamic;
-        }
-    }
-    var program = try lower(std.testing.allocator, hir_program);
-    defer program.deinit();
-    const entry = program.findFunction("unary_exception__$entry").?;
-    var checked: usize = 0;
-    for (entry.blocks) |block| for (block.instructions, 0..) |instruction, index| {
-        if (instruction.opcode != .unary) continue;
-        try std.testing.expect(index + 1 < block.instructions.len);
-        try std.testing.expectEqual(ir.Opcode.exception_pending, block.instructions[index + 1].opcode);
-        try std.testing.expect(block.terminator == .conditional_branch);
-        const handler = entry.blocks[block.terminator.conditional_branch.then_block];
-        try std.testing.expect(handler.instructions.len > 0);
-        try std.testing.expectEqual(ir.Opcode.exception_take, handler.instructions[0].opcode);
-        checked += 1;
-    };
-    try std.testing.expectEqual(@as(usize, 1), checked);
-}
-
-test "速度優先領域の本体と境界をIRへ保持する" {
-    const parser = @import("../frontend/parser.zig");
-    const semantic = @import("../semantic/analyzer.zig");
-    var parsed = try parser.parse(std.testing.allocator, "「全て」で実行速度優先\nA=1\nここまで\n", "main.nako3");
-    defer parsed.deinit();
-    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
-    defer analyzed.deinit();
-    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
-    defer hir_program.deinit();
-    var program = try lower(std.testing.allocator, hir_program);
-    defer program.deinit();
-    const entry = program.findFunction("main__$entry").?;
-    var begin_index: ?usize = null;
-    var store_index: ?usize = null;
-    var end_index: ?usize = null;
-    for (entry.blocks[0].instructions, 0..) |instruction, index| {
-        if (instruction.opcode == .speed_mode_begin) begin_index = index;
-        if (instruction.opcode == .store_global) store_index = index;
-        if (instruction.opcode == .speed_mode_end) end_index = index;
-    }
-    try std.testing.expect(begin_index != null and store_index != null and end_index != null);
-    try std.testing.expect(begin_index.? < store_index.? and store_index.? < end_index.?);
-}
-
-test "dispatch site IDはパス非依存で一意かつclone後も保持する" {
-    const parser = @import("../frontend/parser.zig");
-    const semantic = @import("../semantic/analyzer.zig");
-    const source = "1を表示\n2を表示\n";
-    var first_parsed = try parser.parse(std.testing.allocator, source, "first.nako3");
-    defer first_parsed.deinit();
-    var first_analyzed = try semantic.analyze(std.testing.allocator, first_parsed.root.?, "first.nako3");
-    defer first_analyzed.deinit();
-    var first_hir = try hir.lowerSingle(std.testing.allocator, first_parsed.root.?, "main", "first.nako3", first_analyzed);
-    defer first_hir.deinit();
-    var first = try lower(std.testing.allocator, first_hir);
-    defer first.deinit();
-
-    var second_parsed = try parser.parse(std.testing.allocator, source, "/tmp/other.nako3");
-    defer second_parsed.deinit();
-    var second_analyzed = try semantic.analyze(std.testing.allocator, second_parsed.root.?, "/tmp/other.nako3");
-    defer second_analyzed.deinit();
-    var second_hir = try hir.lowerSingle(std.testing.allocator, second_parsed.root.?, "main", "/tmp/other.nako3", second_analyzed);
-    defer second_hir.deinit();
-    var second = try lower(std.testing.allocator, second_hir);
-    defer second.deinit();
-
-    const first_entry = first.findFunction("main__$entry").?;
-    const second_entry = second.findFunction("main__$entry").?;
-    var first_sites: [2]u64 = undefined;
-    var second_sites: [2]u64 = undefined;
-    var first_count: usize = 0;
-    var second_count: usize = 0;
-    for (first_entry.blocks) |block| for (block.instructions) |instruction| if (instruction.site_id) |site_id| {
-        try std.testing.expect(first_count < first_sites.len);
-        first_sites[first_count] = site_id;
-        first_count += 1;
-    };
-    for (second_entry.blocks) |block| for (block.instructions) |instruction| if (instruction.site_id) |site_id| {
-        try std.testing.expect(second_count < second_sites.len);
-        second_sites[second_count] = site_id;
-        second_count += 1;
-    };
-    try std.testing.expectEqual(@as(usize, 2), first_count);
-    try std.testing.expectEqualSlices(u64, first_sites[0..first_count], second_sites[0..second_count]);
-    try std.testing.expect(first_sites[0] != first_sites[1]);
-
-    var cloned = try first.clone(std.testing.allocator);
-    defer cloned.deinit();
-    const cloned_entry = cloned.findFunction("main__$entry").?;
-    var clone_count: usize = 0;
-    for (cloned_entry.blocks) |block| for (block.instructions) |instruction| if (instruction.site_id) |site_id| {
-        try std.testing.expectEqual(first_sites[clone_count], site_id);
-        clone_count += 1;
-    };
-    try std.testing.expectEqual(first_count, clone_count);
-}
-
-test "builtin dispatchとglobal readのsite IDを別namespaceで安定化する" {
-    const parser = @import("../frontend/parser.zig");
-    const semantic = @import("../semantic/analyzer.zig");
-    var parsed = try parser.parse(std.testing.allocator, "PIを表示\n永遠を表示\n", "global-sites.nako3");
-    defer parsed.deinit();
-    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "global-sites.nako3");
-    defer analyzed.deinit();
-    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "global-sites.nako3", analyzed);
-    defer hir_program.deinit();
-    var program = try lower(std.testing.allocator, hir_program);
-    defer program.deinit();
-
-    const entry = program.findFunction("main__$entry").?;
-    var dispatch_sites: [2]u64 = undefined;
-    var global_sites: [2]u64 = undefined;
-    var dispatch_count: usize = 0;
-    var global_count: usize = 0;
-    for (entry.blocks) |block| for (block.instructions) |instruction| {
-        if (instruction.site_id) |site_id| {
-            try std.testing.expectEqual(ir.Opcode.call, instruction.opcode);
-            try std.testing.expect(dispatch_count < dispatch_sites.len);
-            dispatch_sites[dispatch_count] = site_id;
-            dispatch_count += 1;
-        }
-        if (instruction.global_site_id) |site_id| {
-            try std.testing.expectEqual(ir.Opcode.load_global, instruction.opcode);
-            try std.testing.expect(global_count < global_sites.len);
-            global_sites[global_count] = site_id;
-            global_count += 1;
-        }
-    };
-    try std.testing.expectEqual(@as(usize, 2), dispatch_count);
-    try std.testing.expectEqual(@as(usize, 2), global_count);
-    try std.testing.expectEqual(@as(u64, 1), dispatch_sites[0]);
-    try std.testing.expectEqual(@as(u64, 2), dispatch_sites[1]);
-    try std.testing.expectEqual(@as(u64, 1), global_sites[0]);
-    try std.testing.expectEqual(@as(u64, 2), global_sites[1]);
-}
-
-test "global read/writeのsite IDを同じaccess namespaceで安定化する" {
-    const parser = @import("../frontend/parser.zig");
-    const semantic = @import("../semantic/analyzer.zig");
-    const source = "ファイルコピーデフォルト動作を表示\nファイルコピーデフォルト動作=\"上書\"\nファイルコピーデフォルト動作を表示\n";
-    var parsed = try parser.parse(std.testing.allocator, source, "global-binding-sites.nako3");
-    defer parsed.deinit();
-    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "global-binding-sites.nako3");
-    defer analyzed.deinit();
-    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "global-binding-sites.nako3", analyzed);
-    defer hir_program.deinit();
-    var program = try lower(std.testing.allocator, hir_program);
-    defer program.deinit();
-
-    const entry = program.findFunction("main__$entry").?;
-    const expected_opcodes = [_]ir.Opcode{ .load_global, .store_global, .load_global };
-    var access_count: usize = 0;
-    for (entry.blocks) |block| for (block.instructions) |instruction| {
-        if (instruction.global_site_id) |site_id| {
-            try std.testing.expect(access_count < expected_opcodes.len);
-            try std.testing.expectEqual(expected_opcodes[access_count], instruction.opcode);
-            try std.testing.expectEqual(@as(u64, access_count + 1), site_id);
-            access_count += 1;
-        }
-    };
-    try std.testing.expectEqual(expected_opcodes.len, access_count);
-}
-
-test "catalog literalのsite IDをglobal readと別namespaceで付与する" {
-    const parser = @import("../frontend/parser.zig");
-    const semantic = @import("../semantic/analyzer.zig");
-    const source = "はいを表示\nいいえを表示\n真を表示\n偽を表示\nオンを表示\nオフを表示\nNULLを表示\n";
-    var parsed = try parser.parse(std.testing.allocator, source, "literal-sites.nako3");
-    defer parsed.deinit();
-    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "literal-sites.nako3");
-    defer analyzed.deinit();
-    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "literal-sites.nako3", analyzed);
-    defer hir_program.deinit();
-    var program = try lower(std.testing.allocator, hir_program);
-    defer program.deinit();
-
-    const entry = program.findFunction("main__$entry").?;
-    var literal_count: usize = 0;
-    var expected_id: u64 = 1;
-    for (entry.blocks) |block| for (block.instructions) |instruction| {
-        if (instruction.literal_site_id) |site_id| {
-            try std.testing.expect(instruction.opcode == .const_boolean or instruction.opcode == .const_null);
-            try std.testing.expectEqual(expected_id, site_id);
-            try std.testing.expect(instruction.global_site_id == null);
-            literal_count += 1;
-            expected_id += 1;
-        }
-    };
-    try std.testing.expectEqual(@as(usize, 7), literal_count);
-}
-
-test "利用者関数名のbuiltin衝突と動的plugin命令にはsite IDを付けない" {
-    const parser = @import("../frontend/parser.zig");
-    const semantic = @import("../semantic/analyzer.zig");
-
-    var collision_parsed = try parser.parse(std.testing.allocator, "●表示とは\n99で戻る\nここまで\n表示()を表示\n", "collision.nako3");
-    defer collision_parsed.deinit();
-    var collision_analyzed = try semantic.analyze(std.testing.allocator, collision_parsed.root.?, "collision.nako3");
-    defer collision_analyzed.deinit();
-    var collision_hir = try hir.lowerSingle(std.testing.allocator, collision_parsed.root.?, "collision", "collision.nako3", collision_analyzed);
-    defer collision_hir.deinit();
-    var collision = try lower(std.testing.allocator, collision_hir);
-    defer collision.deinit();
-    var collision_calls: usize = 0;
-    for (collision.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
-        if (instruction.opcode != .call) continue;
-        collision_calls += 1;
-        try std.testing.expect(!instruction.is_builtin_call);
-        try std.testing.expect(instruction.site_id == null);
-    };
-    try std.testing.expect(collision_calls > 0);
-
-    var dynamic_parsed = try parser.parse(std.testing.allocator, "外部追加()\n", "dynamic-plugin.nako3");
-    defer dynamic_parsed.deinit();
-    var dynamic_analyzed = try semantic.analyzeModules(std.testing.allocator, &.{.{
-        .name = "dynamic-plugin",
-        .path = "dynamic-plugin.nako3",
-        .root = dynamic_parsed.root.?,
-        .allows_dynamic_commands = true,
-    }});
-    defer dynamic_analyzed.deinit();
-    var dynamic_hir = try hir.lower(std.testing.allocator, &.{dynamic_parsed.root.?}, &.{"dynamic-plugin"}, &.{"dynamic-plugin.nako3"}, &.{&.{}}, dynamic_analyzed);
-    defer dynamic_hir.deinit();
-    var dynamic = try lower(std.testing.allocator, dynamic_hir);
-    defer dynamic.deinit();
-    var dynamic_calls: usize = 0;
-    for (dynamic.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
-        if (instruction.opcode != .call) continue;
-        dynamic_calls += 1;
-        try std.testing.expect(!instruction.is_builtin_call);
-        try std.testing.expect(instruction.site_id == null);
-    };
-    try std.testing.expectEqual(@as(usize, 1), dynamic_calls);
-}
+pub const tests = @import("lower_ssa_test.zig");

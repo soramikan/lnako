@@ -1,0 +1,38 @@
+name: "質問・相談 / Question"
+description: "lnako の使い方、構文仕様、ビルド環境などについての質問や相談を行います / Ask questions or seek guidance regarding lnako"
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        lnako についてのご質問・ご相談ありがとうございます。
+        ※よくある使い方や導入手順については [使い始める (GETTING_STARTED.md)](https://github.com/soramikan/lnako/blob/main/docs/GETTING_STARTED.md) や [開発・検証手順 (DEVELOPMENT.md)](https://github.com/soramikan/lnako/blob/main/docs/DEVELOPMENT.md) もご参照ください。
+        *(You may ask questions in Japanese or English.)*
+
+  - type: textarea
+    id: question_content
+    attributes:
+      label: "質問・相談内容 / Question Details"
+      description: "質問の背景、行いたいこと、疑問点を具体的に記載してください / What would you like to know or accomplish?"
+      placeholder: "例: macOS環境でネイティブプラグインをビルドして利用する方法について確認したい点があります。"
+    validations:
+      required: true
+
+  - type: textarea
+    id: attempted
+    attributes:
+      label: "試したこと・確認したドキュメント / What You Have Tried"
+      description: "すでに試したコードや、参照したドキュメントがあれば記載してください / What have you tried so far?"
+      placeholder: |
+        - `docs/NATIVE_PLUGIN_ABI.md` を確認した
+        - 以下のコードを試したが〜〜
+      render: markdown
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: "環境情報 / Environment"
+      description: "関係する環境情報があれば記載してください / Relevant environment details"
+      placeholder: |
+        - OS: [e.g. macOS 15.0 arm64 / Ubuntu 24.04 / Windows 11]
+        - lnako version:

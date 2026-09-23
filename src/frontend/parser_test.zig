@@ -456,6 +456,14 @@ test "命令呼出しを構成しない裸の式文は不完全な文として�
         .{ .source = "{「a」:1}\n", .message = "不完全な文です。『json_obj』が解決していません" },
         .{ .source = "A[0]\n", .message = "不完全な文です。『ref_array』が解決していません" },
         .{ .source = "A.B\n", .message = "不完全な文です。『ref_prop』が解決していません" },
+        // 公式のref_array/ref_propは裸のword起点だけ。括弧済み・値への
+        // 後置アクセスはref_array_value（`『@』`/`『$』`）、`A[0].B`は
+        // 公式では同一ref_arrayへ吸収される。
+        .{ .source = "[1,2][0]\n", .message = "不完全な文です。『@』が解決していません" },
+        .{ .source = "[{x:1}].x\n", .message = "不完全な文です。『$』が解決していません" },
+        .{ .source = "(A)[0]\n", .message = "不完全な文です。『@』が解決していません" },
+        .{ .source = "(A).x\n", .message = "不完全な文です。『$』が解決していません" },
+        .{ .source = "A[0].B\n", .message = "不完全な文です。『ref_array』が解決していません" },
         .{ .source = "!A\n", .message = "不完全な文です。演算子『not』が解決していません" },
         .{ .source = "「a」と「b」\n", .message = "不完全な文です。文字列『a』、文字列『b』が解決していません" },
         .{ .source = "1 2\n", .message = "不完全な文です。数値1、数値2が解決していません" },
@@ -1808,10 +1816,24 @@ test "関数値呼出しは『(』の数だけ多段に連鎖する" {
 test "call_valueの直後の『@』『[』『.』はcall_value未解決の構文エラー" {
     // 公式`yCallValue`はcall_valueの結果へ添字・プロパティを続けず、
     // 『不完全な文です。『call_value』が解決していません』で拒否する。
+    // 『@』『.』は式を開始できないため、助詞付きのcall_valueの直後でも
+    // 公式は同じ診断で拒否する（`F()()と@0`・`F()()を.x`も同様）。
+    // 条件助詞（なら・たら等）は公式では文レベルの条件構文でcall_valueが
+    // その境界で先に失敗するため、直後の『[』も引数として読まれず拒否する。
     const cases = [_][]const u8{
         "F()()@0を表示\n",
         "F()()[0]を表示\n",
         "F()().xを表示\n",
+        "F()()と@0を表示\n",
+        "F()()と.xを表示\n",
+        "F()()を@0を表示\n",
+        "F()()を.xを表示\n",
+        "F()()なら[0]を表示\n",
+        "F()()ならば[0]を表示\n",
+        "F()()たら[0]を表示\n",
+        "F()()れば[0]を表示\n",
+        "F()()でなければ[0]を表示\n",
+        "F()()なければ[0]を表示\n",
     };
     for (cases) |source| {
         var result = try parse(std.testing.allocator, source, "call-value-postfix.nako3");
@@ -1820,6 +1842,39 @@ test "call_valueの直後の『@』『[』『.』はcall_value未解決の構文
         try std.testing.expectEqual(diagnostic.Code.incomplete_statement, result.diagnostics[0].code);
         try std.testing.expectEqualStrings("不完全な文です。『call_value』が解決していません", result.diagnostics[0].message);
     }
+}
+
+test "助詞付きcall_valueの直後の『[』は配列リテラル引数の開始として読む" {
+    // 公式`yCallValue`は助詞付きcall_valueを解決済みの実引数として扱うため、
+    // 直後の`[`は新たな配列リテラル引数の開始になる（Issue #163:
+    // `F()()と[1,2]を連結して表示`は`x1,2`を表示する）。
+    var result = try parse(std.testing.allocator, "F()()と[1,2]を連結して表示\n", "call-value-josi-array.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const block = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.block, block.kind);
+    const concat = block.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, concat.kind);
+    try std.testing.expectEqualStrings("連結", concat.name);
+    try std.testing.expectEqual(@as(usize, 2), concat.children.len);
+    try std.testing.expectEqual(ast.Kind.call_value, concat.children[0].kind);
+    try std.testing.expectEqualStrings("と", concat.children[0].josi);
+    try std.testing.expectEqual(ast.Kind.array_literal, concat.children[1].kind);
+    try std.testing.expectEqualStrings("を", concat.children[1].josi);
+
+    // 『を』助詞でも同様（`F()()を[A]に追加`）。
+    var append_result = try parse(std.testing.allocator, "A=[9]\nF()()を[A]に追加して表示\n", "call-value-josi-array-wo.nako3");
+    defer append_result.deinit();
+    try std.testing.expect(append_result.succeeded());
+    const append_block = append_result.root.?.children[2];
+    try std.testing.expectEqual(ast.Kind.block, append_block.kind);
+    const append = append_block.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, append.kind);
+    try std.testing.expectEqualStrings("追加", append.name);
+    try std.testing.expectEqual(ast.Kind.call_value, append.children[0].kind);
+    try std.testing.expectEqualStrings("を", append.children[0].josi);
+    try std.testing.expectEqual(ast.Kind.array_literal, append.children[1].kind);
+    try std.testing.expectEqualStrings("に", append.children[1].josi);
 }
 
 test "括弧で括ったcall_valueには添字・プロパティを適用できる" {

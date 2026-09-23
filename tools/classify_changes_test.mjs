@@ -23,6 +23,18 @@ test("docs/** と root *.md と attestation snapshot のみの変更はlight", (
   assert.deepEqual(result.heavyPaths, []);
 });
 
+test("Issue/PRテンプレートと .gitmessage のみの変更はlight", () => {
+  const result = classify([
+    ".github/ISSUE_TEMPLATE/bug_report.yml",
+    ".github/ISSUE_TEMPLATE/config.yml",
+    ".github/PULL_REQUEST_TEMPLATE/feature.md",
+    ".gitmessage",
+  ]);
+  assert.equal(result.level, "light");
+  assert.equal(result.reason, "allow-list");
+  assert.deepEqual(result.heavyPaths, []);
+});
+
 test("full CIが必要なパスが1件でも混ざればfull", () => {
   const result = classify(["docs/COMPATIBILITY.md", "src/main.zig"]);
   assert.equal(result.level, "full");

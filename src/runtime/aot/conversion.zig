@@ -327,8 +327,9 @@ pub fn hostObjectToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitive
     for ([_][]const u16{ first, second }) |name| {
         const method = runtime.aotObjectOwnPropertyGetUnits(object, name) orelse aotCustomObjectPrototypeProperty(roots[0], name);
         if (method) |callable| {
-            if (callable.tag == @intFromEnum(Tag.undefined) or callable.tag == @intFromEnum(Tag.null_value)) continue;
-            if (callable.tag != @intFromEnum(Tag.function)) return error.NotCallable;
+            // ECMAScriptのGetMethod相当: 呼び出し不可の値（undefined/null
+            // 以外の非関数を含む）はメソッド不在として次の候補へ進む。
+            if (callable.tag != @intFromEnum(Tag.function)) continue;
             roots[1] = try invokeAotCallback(runtime, callable, null, 0);
             if (!isAotObjectValue(roots[1])) return roots[1];
             continue;
@@ -380,8 +381,9 @@ pub fn arrayToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint)
     for ([_][]const u16{ first, second }) |name| {
         const method = runtime.aotArrayOwnPropertyGetUnits(roots[0].object().?, name) orelse arrayPrototypeProperty(roots[0], name);
         if (method) |callable| {
-            if (callable.tag == @intFromEnum(Tag.undefined) or callable.tag == @intFromEnum(Tag.null_value)) continue;
-            if (callable.tag != @intFromEnum(Tag.function)) return error.NotCallable;
+            // ECMAScriptのGetMethod相当: 呼び出し不可の値（undefined/null
+            // 以外の非関数を含む）はメソッド不在として次の候補へ進む。
+            if (callable.tag != @intFromEnum(Tag.function)) continue;
             roots[1] = try invokeAotCallback(runtime, callable, null, 0);
             if (!isAotObjectValue(roots[1])) return roots[1];
             continue;
@@ -409,8 +411,9 @@ pub fn dictionaryToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitive
     for ([_][]const u16{ first, second }) |name| {
         const method = dictionaryOwnProperty(roots[0], name) orelse dictionaryPrototypeProperty(roots[0], name);
         if (method) |callable| {
-            if (callable.tag == @intFromEnum(Tag.undefined) or callable.tag == @intFromEnum(Tag.null_value)) continue;
-            if (callable.tag != @intFromEnum(Tag.function)) return error.NotCallable;
+            // ECMAScriptのGetMethod相当: 呼び出し不可の値（undefined/null
+            // 以外の非関数を含む）はメソッド不在として次の候補へ進む。
+            if (callable.tag != @intFromEnum(Tag.function)) continue;
             roots[1] = try invokeAotCallback(runtime, callable, null, 0);
             if (!isAotObjectValue(roots[1])) return roots[1];
             continue;

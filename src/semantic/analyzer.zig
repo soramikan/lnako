@@ -229,6 +229,12 @@ pub const Analyzer = struct {
     /// プロパティ代入ノードの走査順位。暗黙の`引数`が使用文までに変数登録
     /// 済みか（公式convLetPropのfindVar相当）を位置比較で判定するために使う。
     property_assignment_order: std.AutoHashMapUnmanaged(*ast.Node, usize) = .{},
+    /// 繰り返し本体の内側にある深さ（公式のflagLoop相当）。『続ける』は
+    /// この深さが正のときだけ有効で、条件分岐のcase節は繰り返しに数えない。
+    loop_depth: usize = 0,
+    /// 『抜ける』が有効な内側の深さ。繰り返し本体に加えて条件分岐のcase節も
+    /// 数える（公式convSwitchはcase節の生成でflagLoopを立て、`break`を発行する）。
+    breakable_depth: usize = 0,
 
     fn run(self: *Analyzer) !void {
         try self.loadBuiltins();
@@ -441,8 +447,16 @@ pub const Analyzer = struct {
                 try self.function_scopes.append(self.allocator, .{ .node = node, .scope = function_scope });
                 try self.declareParameters(module_index, function_scope, node.arguments);
                 try self.declareImplicitArguments(module_index, function_scope, node.span);
+                // 関数本体は呼出し元の繰り返し・条件分岐の外で実行されるため、
+                // 『抜ける』『続ける』の文脈は関数境界で区切る。
+                const saved_loop_depth = self.loop_depth;
+                const saved_breakable_depth = self.breakable_depth;
+                self.loop_depth = 0;
+                self.breakable_depth = 0;
                 for (node.children) |child| try self.predeclareBlock(child, module_index, function_scope, false);
                 for (node.children) |child| try self.resolveBlock(child, module_index, function_scope);
+                self.loop_depth = saved_loop_depth;
+                self.breakable_depth = saved_breakable_depth;
                 return;
             },
             .anonymous_function => {
@@ -450,8 +464,14 @@ pub const Analyzer = struct {
                 try self.function_scopes.append(self.allocator, .{ .node = node, .scope = function_scope });
                 try self.declareParameters(module_index, function_scope, node.arguments);
                 try self.declareImplicitArguments(module_index, function_scope, node.span);
+                const saved_loop_depth = self.loop_depth;
+                const saved_breakable_depth = self.breakable_depth;
+                self.loop_depth = 0;
+                self.breakable_depth = 0;
                 for (node.children) |child| try self.predeclareBlock(child, module_index, function_scope, false);
                 for (node.children) |child| try self.resolveBlock(child, module_index, function_scope);
+                self.loop_depth = saved_loop_depth;
+                self.breakable_depth = saved_breakable_depth;
                 return;
             },
             .assignment, .array_assignment, .property_assignment, .increment, .increment_indexed, .variable_definition => try self.resolveDeclaration(node, module_index, scope),
@@ -463,6 +483,7 @@ pub const Analyzer = struct {
             .word => try self.resolveReference(node, module_index, scope, false),
             .function_call => try self.resolveReference(node, module_index, scope, true),
             .function_pointer => try self.resolveFunctionPointer(node, module_index, scope),
+            .break_statement, .continue_statement => try self.checkLoopContext(node, module_index),
             .for_statement, .foreach_statement => if (node.name.len > 0 and !std.mem.eql(u8, node.name, "それ")) {
                 if (self.lookupLexical(scope, node.name)) |symbol| try self.bind(node, .declaration, node.name, symbol.qualified_name, symbol.id);
             },
@@ -494,10 +515,39 @@ pub const Analyzer = struct {
             },
             else => {},
         }
-        for (node.children) |child| try self.resolveBlock(child, module_index, scope);
+        for (node.children, 0..) |child, index| {
+            // 繰り返し本体と条件分岐のcase節だけが『抜ける』『続ける』を有効に
+            // する文脈（公式はその節のコード生成中だけflagLoopを立てる）。
+            // 条件・反復対象・『違えば』節・case値は対象外。
+            const loop_body = switch (node.kind) {
+                .while_statement, .post_test_loop => index == 1,
+                .repeat_times, .for_statement, .foreach_statement => index + 1 == node.children.len,
+                else => false,
+            };
+            const breakable_body = loop_body or
+                (node.kind == .switch_statement and index >= 3 and index % 2 == 1);
+            if (loop_body) self.loop_depth += 1;
+            if (breakable_body) self.breakable_depth += 1;
+            try self.resolveBlock(child, module_index, scope);
+            if (loop_body) self.loop_depth -= 1;
+            if (breakable_body) self.breakable_depth -= 1;
+        }
         // 助詞不一致引数の未解決語報告は、引数側の呼出しが解決し終わる
         // まで遅延する（公式は引数のfunc tokenを先に処理する）。
         try unresolved_words.drainDeferredUnresolved(self, node);
+    }
+
+    /// 公式convCheckLoopはflagLoopの立たない位置の『抜ける』『続ける』を
+    /// 文法エラーにする。条件分岐のcase節でループ外の『続ける』は公式だと
+    /// 生成JSの評価時にSyntaxErrorで異常終了するだけなので、こちらも
+    /// コンパイル時診断にする。関数境界で深さは区切られるため、呼ばれない
+    /// 関数内や繰り返し内で定義された関数の中の文も同じく診断される。
+    fn checkLoopContext(self: *Analyzer, node: *ast.Node, module_index: u32) !void {
+        const depth = if (node.kind == .break_statement) self.breakable_depth else self.loop_depth;
+        if (depth > 0) return;
+        const command = if (node.kind == .break_statement) "抜ける" else "続ける";
+        const message = try std.fmt.allocPrint(self.allocator, "『{s}』文がありますが、それは繰り返しの中で利用してください。", .{command});
+        try self.addDiagnostic(.invalid_control_statement, node.span, self.modules.items[module_index].path, message);
     }
 
     fn resolveDeclaration(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId) !void {

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "セキュリティ脆弱性の報告 / Security Vulnerability Reporting"
+    url: "https://github.com/soramikan/lnako/security/advisories/new"
+    about: "セキュリティ上の脆弱性は公開Issueではなく非公開でご報告ください。 / Please report security vulnerabilities privately."
+  - name: "lnako ドキュメント / Documentation"
+    url: "https://github.com/soramikan/lnako/tree/main/docs"
+    about: "仕様、互換性情報、開発手順などの公式ドキュメントはこちら / Official documentation for lnako."

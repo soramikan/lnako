@@ -19,7 +19,6 @@ pub fn Iterator(comptime Value: type) type {
         index: usize = 0,
         count: usize = 0,
         current: f64 = 0,
-        end: f64 = 0,
         step: f64 = 1,
         // 反復開始時のキー列をGC配列として保持する。辞書はownキー全体、
         // 配列・bytesは添字領域の後に続くownプロパティ名、properties種別は

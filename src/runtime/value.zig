@@ -1300,7 +1300,8 @@ pub const Runtime = struct {
     }
 
     /// 明示的な `Number(value)` 相当が必要な範囲終端だけで使う。
-    /// 通常の暗黙BigInt数値変換は公式どおりエラーのままにする。
+    /// BigIntも数学値へ写す。通常の暗黙BigInt数値変換は公式どおり
+    /// エラーのままにする。
     pub fn valueToExplicitRangeNumber(self: *Runtime, value: Value) !f64 {
         if (value == .bigint) return value.bigint.toF64();
         return self.valueToNumber(value);
