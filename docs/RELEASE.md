@@ -51,6 +51,7 @@ standard版やHomebrew環境では、`lnako toolchain install` を実行する�
 6. **Release workflowの実行と公開**：
    - タグpushをトリガーに `.github/workflows/release.yml` が起動します。
    - preflightジョブが、タグ署名・バージョン一致・同一commitのCI 47 job構成でfull matrix全成功（軽量runのskippedは成功とみなさない）・canonical attestation完全検証を確認した上で、3 OSのstandard/full両バリアントおよびベンチマーク結果をビルド・検証し、GitHub Releaseとして公開します。
+   - 公開時、`docs/releases/vX.Y.Z.md` が存在すればRelease本文へ自動適用されます。また、リポジトリに `HOMEBREW_TAP_TOKEN` シークレットが設定されている場合、`soramikan/homebrew-tap` の更新ワークフロー（`bump-formula.yml`）が自動で呼び出され、Formula更新およびBottleバイナリ生成が連動します。
 
 ### ローカルでの配布物生成・検証
 

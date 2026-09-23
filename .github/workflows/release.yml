@@ -365,9 +365,30 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          notes_args=(--generate-notes)
+          release_notes="docs/releases/v${{ needs.preflight.outputs.version }}.md"
+          if [[ -f "$release_notes" ]]; then
+            notes_args=(--notes-file "$release_notes")
+          fi
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --title "lnako ${{ needs.preflight.outputs.version }}" \
-            --generate-notes \
+            "${notes_args[@]}" \
             "$RUNNER_TEMP"/release-assets/*
+      - name: Trigger Homebrew tap formula bump
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${HOMEBREW_TAP_TOKEN:-}" ]]; then
+            echo "Homebrew tap (soramikan/homebrew-tap) の更新ワークフローを起動します: tag=$TAG_NAME"
+            GH_TOKEN="$HOMEBREW_TAP_TOKEN" gh workflow run bump-formula.yml \
+              --repo soramikan/homebrew-tap \
+              -f tag="$TAG_NAME"
+          else
+            echo "::notice ::HOMEBREW_TAP_TOKEN が未設定のため、tap更新の自動起動をスキップしました（毎時cronまたは手動で検出されます）"
+          fi
+
