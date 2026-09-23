@@ -38,12 +38,15 @@ const forgetHandleId = shared.forgetHandleId;
 const fileFor = shared.fileFor;
 const pathStringFromBytes = shared.pathStringFromBytes;
 const sizeArgument = shared.sizeArgument;
+const offsetArgument = shared.offsetArgument;
 const setTimeArgument = shared.setTimeArgument;
 const bytesArgument = shared.bytesArgument;
 const publicSizeValue = shared.publicSizeValue;
+const publicOffsetValue = shared.publicOffsetValue;
 const setField = shared.setField;
 const throwIo = shared.throwIo;
 const throwIoAs = shared.throwIoAs;
+const throwIoMapped = shared.throwIoMapped;
 const throwStructured = shared.throwStructured;
 const aotThrownCode = shared.aotThrownCode;
 const pendingErrorCode = shared.pendingErrorCode;
@@ -248,6 +251,79 @@ pub fn pluginSetTimestampsFile(context: *anyopaque, raw: u64, atime: foundation.
     return low_level_fs.setTimestampsHandle(io(runtime), entry.file, atime, mtime);
 }
 
+pub fn pluginSeekDataFile(context: *anyopaque, raw: u64, offset: i64) anyerror!i64 {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    const entry = table(runtime).find(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+    return low_level_fs.seekExtent(io(runtime), entry.file, offset, .data);
+}
+
+pub fn pluginSeekHoleFile(context: *anyopaque, raw: u64, offset: i64) anyerror!i64 {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    const entry = table(runtime).find(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+    return low_level_fs.seekExtent(io(runtime), entry.file, offset, .hole);
+}
+
+pub fn pluginAllocateFile(context: *anyopaque, raw: u64, offset: i64, size: u64) anyerror!void {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    const entry = table(runtime).find(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+    return low_level_fs.allocate(io(runtime), entry.file, offset, size);
+}
+
+/// `ファイルデータ領域検索`（SEEK_DATA相当）。offset以降のデータ位置を返す。
+pub fn seekDataBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    return seekExtentBuiltin(runtime, arguments, .data);
+}
+
+/// `ファイル空洞領域検索`（SEEK_HOLE相当）。offset以降の空洞位置を返す。
+pub fn seekHoleBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    return seekExtentBuiltin(runtime, arguments, .hole);
+}
+
+fn seekExtentBuiltin(runtime: *Runtime, arguments: []const Value, extent: low_level_fs.SeekExtent) !Value {
+    const operation = foundation.stream_operations.lseek;
+    const capability: foundation.Capability = if (extent == .data) .seek_data else .seek_hole;
+    if (arguments.len < 1) {
+        return throwStructured(runtime, .EBADF, operation, null, null, "無効なハンドルです");
+    }
+    const entry = fileFor(runtime, arguments[0]) orelse {
+        return throwStructured(runtime, .EBADF, operation, null, null, "無効なハンドルです");
+    };
+    if (arguments.len < 2) {
+        return throwStructured(runtime, .EINVAL, operation, null, null, "検索位置が不正です");
+    }
+    const offset = offsetArgument(runtime, arguments[1]) catch {
+        return throwStructured(runtime, .EINVAL, operation, null, null, "検索位置が不正です");
+    };
+    const result = low_level_fs.seekExtent(io(runtime), entry.file, offset, extent) catch |failure| {
+        return throwIoMapped(runtime, failure, foundation.seekErrorCode(failure), operation, null, capability);
+    };
+    return publicOffsetValue(runtime, result);
+}
+
+/// `ファイル領域確保`（fallocate相当）。offsetからsizeバイトを事前確保する。
+pub fn allocateBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    const operation = foundation.stream_operations.fallocate;
+    if (arguments.len < 1) {
+        return throwStructured(runtime, .EBADF, operation, null, null, "無効なハンドルです");
+    }
+    const entry = fileFor(runtime, arguments[0]) orelse {
+        return throwStructured(runtime, .EBADF, operation, null, null, "無効なハンドルです");
+    };
+    if (arguments.len < 3) {
+        return throwStructured(runtime, .EINVAL, operation, null, null, "確保位置が不正です");
+    }
+    const offset = offsetArgument(runtime, arguments[1]) catch {
+        return throwStructured(runtime, .EINVAL, operation, null, null, "確保位置が不正です");
+    };
+    const size = sizeArgument(runtime, arguments[2]) catch {
+        return throwStructured(runtime, .EINVAL, operation, null, null, "確保する大きさが不正です");
+    };
+    low_level_fs.allocate(io(runtime), entry.file, offset, size) catch |failure| {
+        return throwIoMapped(runtime, failure, foundation.fallocateErrorCode(failure), operation, null, .fallocate);
+    };
+    return .{};
+}
+
 test "AOT低レイヤーはread/write/truncate/closeをハンドル同一性で扱う" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -341,4 +417,81 @@ test "AOT低レイヤーのappendは切詰め後も末尾へ書く" {
     const output = try temporary.dir.readFileAlloc(std.testing.io, "aot-append.txt", std.testing.allocator, .limited(16));
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualSlices(u8, "abxy", output);
+}
+
+test "AOT低レイヤーの領域検索・領域確保はハンドル経由で動作する" {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "sparse.bin", .data = "data" });
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const path = try std.fs.path.join(std.testing.allocator, &.{ directory, "sparse.bin" });
+    defer std.testing.allocator.free(path);
+    // 先頭4byteがデータ、8192以降にデータがあるsparseファイル。
+    {
+        const raw = try std.Io.Dir.cwd().openFile(std.testing.io, path, .{ .mode = .read_write });
+        defer raw.close(std.testing.io);
+        try raw.writePositionalAll(std.testing.io, "tail", 8192);
+    }
+
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+    roots[0] = try runtimeUtf8String(active, path);
+    roots[1] = try runtimeUtf8String(active, "r+");
+    const handle = try openBuiltin(active, &.{ roots[0], roots[1] });
+
+    // data検索は0を返し、hole検索は実hole（Linux）または末尾の仮想空洞
+    // （emulated経路）を返す。
+    const data_at = try state.lowLevelFileBuiltin(active, .low_level_seek_data, &.{ handle, numberValue(0) });
+    try std.testing.expectEqual(@as(f64, 0), valueToNumber(data_at));
+    const hole_at = try state.lowLevelFileBuiltin(active, .low_level_seek_hole, &.{ handle, numberValue(0) });
+    if (builtin.os.tag == .linux) {
+        const at = valueToNumber(hole_at);
+        try std.testing.expect(at >= 4 and at <= 8196);
+    } else {
+        try std.testing.expectEqual(@as(f64, 8196), valueToNumber(hole_at));
+    }
+    // 末尾以降のdata検索はEINVAL。
+    try std.testing.expectError(error.NakoException, state.lowLevelFileBuiltin(active, .low_level_seek_data, &.{ handle, numberValue(99999) }));
+    try expectPendingCode(active, "EINVAL");
+    // 負のoffsetと小数はEINVAL。
+    try std.testing.expectError(error.NakoException, state.lowLevelFileBuiltin(active, .low_level_seek_data, &.{ handle, numberValue(-1) }));
+    try expectPendingCode(active, "EINVAL");
+    try std.testing.expectError(error.NakoException, state.lowLevelFileBuiltin(active, .low_level_seek_hole, &.{ handle, numberValue(1.5) }));
+    try expectPendingCode(active, "EINVAL");
+
+    // 領域確保: EOFを超える範囲はサイズを伸ばす。非対応FSはENOTSUPを許容する。
+    _ = state.lowLevelFileBuiltin(active, .low_level_fallocate, &.{ handle, numberValue(16384), numberValue(128) }) catch |failure| {
+        try std.testing.expectEqual(error.NakoException, failure);
+        try expectPendingCode(active, "ENOTSUP");
+        // size=0・無効ハンドルの契約はENOTSUPでも検査できる。
+        try std.testing.expectError(error.NakoException, state.lowLevelFileBuiltin(active, .low_level_fallocate, &.{ handle, numberValue(0), numberValue(0) }));
+        try expectPendingCode(active, "EINVAL");
+        try std.testing.expectError(error.NakoException, state.lowLevelFileBuiltin(active, .low_level_seek_data, &.{ numberValue(1), numberValue(0) }));
+        try expectPendingCode(active, "EBADF");
+        return;
+    };
+    const info = try state.lowLevelFileBuiltin(active, .low_level_file_stat, &.{roots[0]});
+    try std.testing.expectEqual(@as(f64, 16512), valueToNumber(dictionaryProperty(info, &.{ 's', 'i', 'z', 'e' })));
+
+    // size=0はEINVAL、無効ハンドルはEBADF、close後ハンドルもEBADF。
+    try std.testing.expectError(error.NakoException, state.lowLevelFileBuiltin(active, .low_level_fallocate, &.{ handle, numberValue(0), numberValue(0) }));
+    try expectPendingCode(active, "EINVAL");
+    try std.testing.expectError(error.NakoException, state.lowLevelFileBuiltin(active, .low_level_fallocate, &.{ numberValue(1), numberValue(0), numberValue(1) }));
+    try expectPendingCode(active, "EBADF");
+    _ = try closeBuiltin(active, &.{handle});
+    try std.testing.expectError(error.NakoException, state.lowLevelFileBuiltin(active, .low_level_seek_hole, &.{ handle, numberValue(0) }));
+    try expectPendingCode(active, "EBADF");
 }

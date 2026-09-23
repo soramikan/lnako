@@ -189,6 +189,434 @@ fn truncatePathPosix(path: []const u8, size: u64) anyerror!void {
     }
 }
 
+/// `ファイルシステム情報取得` が返す容量・inode統計。カタログ
+/// `typeSchemas.fsInfo` の全フィールドを保持する。文字列2本は固定長
+/// バッファ＋長さで持ち、呼び出し側にallocatorを要求しない。
+pub const FsInfo = struct {
+    /// 基本ブロックサイズ（POSIXの `f_bsize`。`df` のブロック単位）。
+    block_size: u64 = 0,
+    /// 全ブロック数（`f_blocks`）。
+    blocks: u64 = 0,
+    /// 空きブロック数。特権分を含む `f_bfree`。
+    free: u64 = 0,
+    /// 非特権ユーザが使える空きブロック数（`f_bavail`）。
+    available: u64 = 0,
+    /// 全inode数（`f_files`）。
+    files: u64 = 0,
+    /// 空きinode数（`f_ffree`）。
+    free_files: u64 = 0,
+    filesystem_type_len: usize = 0,
+    filesystem_type: [fs_type_max]u8 = [_]u8{0} ** fs_type_max,
+    filesystem_id_len: usize = 0,
+    filesystem_id: [fs_id_max]u8 = [_]u8{0} ** fs_id_max,
+
+    /// `filesystemType` の有効部分。macOSは `f_fstypename`（"apfs"等）、
+    /// LinuxはFS magicの対応名。未知のmagicは `"0x????????"` 表記になる。
+    pub fn filesystemType(self: *const FsInfo) []const u8 {
+        return self.filesystem_type[0..self.filesystem_type_len];
+    }
+
+    /// `filesystemId` の有効部分。`f_fsid` の2本の32bit値を
+    /// `"xxxxxxxx:xxxxxxxx"` 形式にしたもの。
+    pub fn filesystemId(self: *const FsInfo) []const u8 {
+        return self.filesystem_id[0..self.filesystem_id_len];
+    }
+};
+
+const fs_type_max = 64;
+const fs_id_max = 32;
+
+fn setFsType(info: *FsInfo, name: []const u8) void {
+    std.debug.assert(name.len <= fs_type_max);
+    @memcpy(info.filesystem_type[0..name.len], name);
+    info.filesystem_type_len = name.len;
+}
+
+fn setFsId(info: *FsInfo, first: i32, second: i32) void {
+    const text = std.fmt.bufPrint(&info.filesystem_id, "{x:0>8}:{x:0>8}", .{
+        @as(u32, @bitCast(first)),
+        @as(u32, @bitCast(second)),
+    }) catch unreachable;
+    info.filesystem_id_len = text.len;
+}
+
+/// POSIXの `statfs` 相当。`path` が属するファイルシステムの容量・inode統計を
+/// 返す。Linuxは `statfs(2)`、macOSは `statfs(2)` を使う。Windows/WASIは
+/// 契約を満たす共通表現が無いため `error.OperationUnsupported`。
+pub fn statfs(io: std.Io, path: []const u8) anyerror!FsInfo {
+    _ = io;
+    return switch (builtin.os.tag) {
+        .linux => statfsLinux(path),
+        .macos => statfsDarwin(path),
+        else => error.OperationUnsupported,
+    };
+}
+
+/// Linuxカーネルの `struct statfs`。`__statfs_word` はLP64で `long`。
+const LinuxStatfs = extern struct {
+    f_type: i64 = 0,
+    f_bsize: i64 = 0,
+    f_blocks: u64 = 0,
+    f_bfree: u64 = 0,
+    f_bavail: u64 = 0,
+    f_files: u64 = 0,
+    f_ffree: u64 = 0,
+    f_fsid: extern struct { val: [2]i32 = .{ 0, 0 } } = .{},
+    f_namelen: i64 = 0,
+    f_frsize: i64 = 0,
+    f_flags: i64 = 0,
+    f_spare: [4]i64 = .{ 0, 0, 0, 0 },
+};
+
+fn statfsLinux(path: []const u8) anyerror!FsInfo {
+    const posix_path = try std.posix.toPosixPath(path);
+    var raw: LinuxStatfs = std.mem.zeroes(LinuxStatfs);
+    while (true) {
+        const result = std.os.linux.syscall2(.statfs, @intFromPtr(&posix_path), @intFromPtr(&raw));
+        const errno = std.os.linux.errno(result);
+        if (errno == .SUCCESS) break;
+        if (errno == .INTR) continue;
+        return linuxErrno(errno);
+    }
+    var info = FsInfo{
+        .block_size = @intCast(@max(raw.f_bsize, 0)),
+        .blocks = raw.f_blocks,
+        .free = raw.f_bfree,
+        .available = raw.f_bavail,
+        .files = raw.f_files,
+        .free_files = raw.f_ffree,
+    };
+    const type_name = linuxFsTypeName(raw.f_type);
+    if (type_name.len != 0) {
+        setFsType(&info, type_name);
+    } else {
+        // 未知のFS magicは16進数表記で返し、空文字にはしない。
+        const text = std.fmt.bufPrint(&info.filesystem_type, "0x{x:0>8}", .{@as(u64, @bitCast(raw.f_type))}) catch unreachable;
+        info.filesystem_type_len = text.len;
+    }
+    setFsId(&info, raw.f_fsid.val[0], raw.f_fsid.val[1]);
+    return info;
+}
+
+/// Linux `statfs` の `f_type`（FS magic）をファイルシステム名へ写す。
+/// 同一magicを共有するFS群（ext2/3/4等）は識別できないため共通名を返す。
+/// 未知は空文字を返し、呼び出し側が16進数表記へする。
+fn linuxFsTypeName(magic: i64) []const u8 {
+    return switch (@as(u64, @bitCast(magic))) {
+        0xEF53 => "ext",
+        0x01021994 => "tmpfs",
+        0x9123683E => "btrfs",
+        0x58465342 => "xfs",
+        0x794C7630 => "overlayfs",
+        0x9FA0 => "proc",
+        0x62656572 => "sysfs",
+        0x1CD1 => "devpts",
+        0x6969 => "nfs",
+        0x2FC12FC1 => "zfs",
+        0xF2F52010 => "f2fs",
+        0x2011BAB0 => "exfat",
+        0x5346544E => "ntfs",
+        0x65735546 => "fuse",
+        0x4D44 => "vfat",
+        0x858458F6 => "ramfs",
+        0x73717368 => "squashfs",
+        0xFF534D42 => "smb3",
+        0x517B => "smb",
+        0x63677270 => "cgroup2",
+        0x0027E0EB => "cgroup",
+        0x0187 => "autofs",
+        0x64626720 => "debugfs",
+        0x74726163 => "tracefs",
+        0x4253584E => "apfs",
+        0x482B => "hfsplus",
+        0x4244 => "hfs",
+        0x958458F6 => "hugetlbfs",
+        0x19800202 => "mqueue",
+        0xC36400 => "ceph",
+        else => "",
+    };
+}
+
+/// macOSの `struct statfs`（arm64は64bit inode版のみ存在）。
+/// レイアウトはSDKの `sys/mount.h` で実測確認済み。
+const DarwinStatfs = extern struct {
+    f_bsize: u32 = 0,
+    f_iosize: i32 = 0,
+    f_blocks: u64 = 0,
+    f_bfree: u64 = 0,
+    f_bavail: u64 = 0,
+    f_files: u64 = 0,
+    f_ffree: u64 = 0,
+    f_fsid: extern struct { val: [2]i32 = .{ 0, 0 } } = .{},
+    f_owner: u32 = 0,
+    f_type: u32 = 0,
+    f_flags: u32 = 0,
+    f_fssubtype: u32 = 0,
+    f_fstypename: [16]u8 = [_]u8{0} ** 16,
+    f_mntonname: [1024]u8 = [_]u8{0} ** 1024,
+    f_mntfromname: [1024]u8 = [_]u8{0} ** 1024,
+    f_flags_ext: u32 = 0,
+    f_reserved: [7]u32 = .{0} ** 7,
+};
+
+comptime {
+    std.debug.assert(@sizeOf(DarwinStatfs) == 2168);
+}
+
+fn statfsDarwin(path: []const u8) anyerror!FsInfo {
+    // `statfs(2)` はZig 0.16 stdに宣言が無いためここで宣言する。
+    const c_statfs = struct {
+        extern "c" fn statfs(path: [*:0]const u8, buf: *DarwinStatfs) c_int;
+    }.statfs;
+    const posix_path = try std.posix.toPosixPath(path);
+    var raw: DarwinStatfs = std.mem.zeroes(DarwinStatfs);
+    while (true) {
+        const result = c_statfs(&posix_path, &raw);
+        if (result == 0) break;
+        const errno = std.c.errno(result);
+        if (errno == .INTR) continue;
+        return fsPosixErrno(errno);
+    }
+    var info = FsInfo{
+        .block_size = raw.f_bsize,
+        .blocks = raw.f_blocks,
+        .free = raw.f_bfree,
+        .available = raw.f_bavail,
+        .files = raw.f_files,
+        .free_files = raw.f_ffree,
+    };
+    setFsType(&info, std.mem.sliceTo(&raw.f_fstypename, 0));
+    setFsId(&info, raw.f_fsid.val[0], raw.f_fsid.val[1]);
+    return info;
+}
+
+/// `ファイルデータ領域検索` / `ファイル空洞領域検索` の対象。
+pub const SeekExtent = enum {
+    /// `SEEK_DATA` 相当。`offset` 以降で最初にデータがある位置。
+    data,
+    /// `SEEK_HOLE` 相当。`offset` 以降で最初に空洞がある位置。
+    hole,
+};
+
+/// オープン済み `file` のsparse領域を検索し、`offset` 以降の `extent`
+/// 位置を返す。Linuxは `lseek(SEEK_DATA/SEEK_HOLE)`。macOS等ネイティブAPIを
+/// 持たないPOSIXは「ファイル全体がデータ・空洞は末尾のみ」の保守的応答を
+/// 返す（sparseをデータとみなすため読み出し結果は正しく、効率のみ落ちる）。
+/// Windows/WASIは `error.OperationUnsupported`。負の `offset` や、
+/// data検索で `offset` がファイル末尾以降の場合はPOSIXのENXIO相当として
+/// `error.InvalidOffset`（EINVAL）。
+pub fn seekExtent(io: std.Io, file: std.Io.File, offset: i64, extent: SeekExtent) anyerror!i64 {
+    return switch (builtin.os.tag) {
+        .linux => seekExtentLinux(file, offset, extent),
+        .windows, .wasi => error.OperationUnsupported,
+        else => seekExtentEmulated(io, file, offset, extent),
+    };
+}
+
+// asm-generic unistd.h の SEEK_DATA/SEEK_HOLE。
+const linux_seek_data: usize = 3;
+const linux_seek_hole: usize = 4;
+
+fn seekExtentLinux(file: std.Io.File, offset: i64, extent: SeekExtent) anyerror!i64 {
+    if (offset < 0) return error.InvalidOffset;
+    const whence: usize = switch (extent) {
+        .data => linux_seek_data,
+        .hole => linux_seek_hole,
+    };
+    while (true) {
+        const result = std.os.linux.lseek(file.handle, offset, whence);
+        const errno = std.os.linux.errno(result);
+        if (errno == .SUCCESS) return @bitCast(result);
+        if (errno == .INTR) continue;
+        return linuxErrno(errno);
+    }
+}
+
+fn seekExtentEmulated(io: std.Io, file: std.Io.File, offset: i64, extent: SeekExtent) anyerror!i64 {
+    if (offset < 0) return error.InvalidOffset;
+    const end = file.length(io) catch |failure| switch (failure) {
+        error.AccessDenied => return error.OperationUnsupported,
+        else => return failure,
+    };
+    const end_i64 = std.math.cast(i64, end) orelse return error.InvalidOffset;
+    return switch (extent) {
+        // sparse非対応とみなせるFSでは全領域がデータで、空洞はファイル末尾に
+        // のみ存在するというPOSIX最小モデル。data検索でoffsetが末尾以降なら
+        // SEEK_DATAのENXIO相当（EINVAL）、hole検索は末尾の仮想的な空洞を返す
+        // （offsetが末尾を超える場合のみENXIO相当）。
+        .data => if (offset >= end_i64) error.InvalidOffset else offset,
+        .hole => if (offset > end_i64) error.InvalidOffset else end_i64,
+    };
+}
+
+/// `ファイルクローン`。reflink/CoWクローンを `source` から `destination`
+/// へ作る。`destination` が存在する場合は `error.PathAlreadyExists`
+/// （EEXIST）。`mode` が null なら `source` の権限を継承し、指定時はその
+/// 権限を適用する。非対応OS/FSでは `error.OperationUnsupported`（ENOTSUP）
+/// で、通常コピーへのフォールバックは行わない（reflinkでない成功を返さ
+/// ない）。FSを跨ぐ場合は `error.CrossDevice`（EXDEV）。
+pub fn reflink(io: std.Io, source: []const u8, destination: []const u8, mode: ?u32) anyerror!void {
+    // 「MODE省略時はSRCの権限」をLinux FICLONE（DSTは生成時modeのまま）でも
+    // 満たすため先にstatを取る。ディレクトリはファイルクローン契約外のため
+    // ENOTSUPとする（FICLONEはEISDIR/EINVALを返し、clonefileはdirも複製する）。
+    const metadata = try stat(io, source, true);
+    if (metadata.kind == .directory) return error.OperationUnsupported;
+    return switch (builtin.os.tag) {
+        .linux => cloneFileLinux(source, destination, mode orelse metadata.mode),
+        .macos => cloneFileDarwin(source, destination, mode),
+        else => error.OperationUnsupported,
+    };
+}
+
+// Linux `FICLONE` ioctl。dst fdへsrc fdのデータをCoW複製する。
+const ficlone: u32 = 0x4004_9409;
+
+fn cloneFileLinux(source: []const u8, destination: []const u8, mode: u32) anyerror!void {
+    const source_fd = try std.posix.openat(std.posix.AT.FDCWD, source, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
+    defer std.posix.close(source_fd);
+    // O_EXCLで既存DSTをEEXISTにする。生成権限は0o600固定で、複製後に
+    // SRC権限/明示MODEへ揃える（生成時のumaskに結果を左右させない）。
+    const destination_fd = try std.posix.openat(std.posix.AT.FDCWD, destination, .{ .ACCMODE = .WRONLY, .CREAT = true, .EXCL = true, .CLOEXEC = true }, 0o600);
+    var keep = false;
+    defer {
+        std.posix.close(destination_fd);
+        // 複製・権限適用の途中失敗では半端なDSTを残さない。
+        if (!keep) unlinkPosixPath(destination) catch {};
+    }
+    while (true) {
+        const result = std.os.linux.ioctl(destination_fd, ficlone, @intCast(source_fd));
+        const errno = std.os.linux.errno(result);
+        if (errno == .SUCCESS) break;
+        if (errno == .INTR) continue;
+        return linuxErrno(errno);
+    }
+    const apply: std.os.linux.mode_t = @intCast(mode);
+    while (true) {
+        const result = std.os.linux.fchmod(destination_fd, apply);
+        const errno = std.os.linux.errno(result);
+        if (errno == .SUCCESS) break;
+        if (errno == .INTR) continue;
+        return linuxErrno(errno);
+    }
+    keep = true;
+}
+
+fn cloneFileDarwin(source: []const u8, destination: []const u8, mode: ?u32) anyerror!void {
+    // macOS固有の `clonefile(2)`。APFSではCoWクローンを作り、既存DSTは
+    // EEXIST、非対応FSはENOTSUPを返す。Zig 0.16 stdに宣言が無いためここで
+    // 宣言する。
+    const c_clonefile = struct {
+        extern "c" fn clonefile(source: [*:0]const u8, destination: [*:0]const u8, flags: c_int) c_int;
+    }.clonefile;
+    const source_path = try std.posix.toPosixPath(source);
+    const destination_path = try std.posix.toPosixPath(destination);
+    while (true) {
+        const result = c_clonefile(&source_path, &destination_path, 0);
+        if (result == 0) break;
+        const errno = std.c.errno(result);
+        if (errno == .INTR) continue;
+        return fsPosixErrno(errno);
+    }
+    // 明示MODEのみ適用する。省略時はclonefileがSRCの権限をそのまま複製する。
+    if (mode) |value| {
+        const apply = std.math.cast(std.c.mode_t, value) orelse return error.InvalidArgument;
+        while (true) {
+            const result = std.c.fchmodat(std.c.AT.FDCWD, &destination_path, apply, 0);
+            if (result == 0) return;
+            const errno = std.c.errno(result);
+            if (errno == .INTR) continue;
+            return fsPosixErrno(errno);
+        }
+    }
+}
+
+fn unlinkPosixPath(path: []const u8) !void {
+    const posix_path = try std.posix.toPosixPath(path);
+    while (true) {
+        const result = std.os.linux.unlinkat(std.os.linux.AT.FDCWD, &posix_path, 0);
+        const errno = std.os.linux.errno(result);
+        if (errno == .SUCCESS) return;
+        if (errno == .INTR) continue;
+        return linuxErrno(errno);
+    }
+}
+
+/// `ファイル領域確保`。`offset` から `size` バイトの領域を事前確保する。
+/// 範囲がファイル末尾を超える場合はファイルサイズを伸ばす（fallocate相当）。
+/// Linuxは `fallocate(2)`、macOSは `fcntl(F_PREALLOCATE)` で物理領域を確保し
+/// `ftruncate` で論理サイズを合わせる。`size == 0` は `error.InvalidSize`
+/// （EINVAL）。Windows/WASIは `error.OperationUnsupported`。
+pub fn allocate(io: std.Io, file: std.Io.File, offset: i64, size: u64) anyerror!void {
+    if (offset < 0) return error.InvalidOffset;
+    if (size == 0) return error.InvalidSize;
+    return switch (builtin.os.tag) {
+        .linux => allocateLinux(file, offset, size),
+        .macos => allocateDarwin(io, file, offset, size),
+        else => error.OperationUnsupported,
+    };
+}
+
+fn allocateLinux(file: std.Io.File, offset: i64, size: u64) anyerror!void {
+    const length = std.math.cast(i64, size) orelse return error.InvalidSize;
+    while (true) {
+        const result = std.os.linux.fallocate(file.handle, 0, offset, length);
+        const errno = std.os.linux.errno(result);
+        if (errno == .SUCCESS) return;
+        if (errno == .INTR) continue;
+        return linuxErrno(errno);
+    }
+}
+
+// `fcntl(F_PREALLOCATE)` の `fstore_t`。
+const DarwinFstore = extern struct {
+    fst_flags: u32 = 0,
+    fst_posmode: i32 = 0,
+    fst_offset: i64 = 0,
+    fst_length: i64 = 0,
+    fst_bytesalloc: i64 = 0,
+};
+
+// fcntl.h の F_PREALLOCATE 用定数。
+const f_allocateall: u32 = 0x00000004;
+const f_peofposmode: i32 = 3;
+
+fn allocateDarwin(io: std.Io, file: std.Io.File, offset: i64, size: u64) anyerror!void {
+    const end = std.math.cast(u64, @as(u128, @intCast(offset)) + @as(u128, size)) orelse return error.InvalidSize;
+    const current = file.length(io) catch |failure| switch (failure) {
+        error.AccessDenied => return error.OperationUnsupported,
+        else => return failure,
+    };
+    // 範囲がEOF内なら新規確保は不要（fallocate同様に成功のまま返す）。
+    if (end <= current) return;
+    const extra = std.math.cast(i64, end - current) orelse return error.InvalidSize;
+    var store = DarwinFstore{
+        .fst_flags = f_allocateall,
+        .fst_posmode = f_peofposmode,
+        .fst_offset = 0,
+        .fst_length = extra,
+        .fst_bytesalloc = 0,
+    };
+    while (true) {
+        const result = std.c.fcntl(file.handle, std.c.F.PREALLOCATE, @intFromPtr(&store));
+        if (result == 0) break;
+        const errno = std.c.errno(result);
+        if (errno == .INTR) continue;
+        return fsPosixErrno(errno);
+    }
+    // F_ALLOCATEALLでも不足し得るため、実確保量を確認する。
+    if (store.fst_bytesalloc < extra) return error.NoSpaceLeft;
+    // F_PREALLOCATEは論理EOFを動かさないため、fallocateと同じく範囲末尾まで
+    // 論理サイズを伸ばす。
+    const new_length = std.math.cast(std.c.off_t, end) orelse return error.InvalidSize;
+    while (true) {
+        const result = std.c.ftruncate(file.handle, new_length);
+        if (result == 0) return;
+        const errno = std.c.errno(result);
+        if (errno == .INTR) continue;
+        return fsPosixErrno(errno);
+    }
+}
+
 /// パス指定の時刻設定（utimes/utimensat相当）。POSIXでは `utimensat`、Windowsでは
 /// FILE_WRITE_ATTRIBUTESを持つ書込みハンドルを開いて `NtSetInformationFile` を使う。
 /// ATIME/MTIMEは `SetTime` 契約（null=既存値維持 / "now"=現在時刻 / ナノ秒明示）。
@@ -404,6 +832,11 @@ fn fsPosixErrno(errno: std.c.E) anyerror {
         .ISDIR => error.IsDir,
         .LOOP => error.SymLinkLoop,
         .NAMETOOLONG => error.NameTooLong,
+        .EXIST => error.PathAlreadyExists,
+        .XDEV => error.CrossDevice,
+        .MLINK => error.LinkQuotaExceeded,
+        .TXTBSY => error.FileBusy,
+        .NOMEM => error.SystemResources,
         .INVAL, .FAULT => error.InvalidArgument,
         .ROFS => error.ReadOnlyFileSystem,
         .BADF => error.BadFileDescriptor,
@@ -411,7 +844,7 @@ fn fsPosixErrno(errno: std.c.E) anyerror {
         .NOSPC => error.NoSpaceLeft,
         .DQUOT => error.DiskQuota,
         .NOSYS => error.Unsupported,
-        .OPNOTSUPP => error.OperationUnsupported,
+        .OPNOTSUPP, .NOTTY => error.OperationUnsupported,
         else => error.Unexpected,
     };
 }
@@ -557,12 +990,24 @@ fn linuxErrno(errno: std.os.linux.E) anyerror {
         .PERM => error.PermissionDenied,
         .NOENT => error.FileNotFound,
         .NOTDIR => error.NotDir,
+        .ISDIR => error.IsDir,
         .LOOP => error.SymLinkLoop,
         .NAMETOOLONG => error.NameTooLong,
+        .EXIST => error.PathAlreadyExists,
+        .XDEV => error.CrossDevice,
+        .MLINK => error.LinkQuotaExceeded,
+        .TXTBSY => error.FileBusy,
         .NOMEM => error.SystemResources,
         .INVAL => error.InvalidArgument,
+        .ROFS => error.ReadOnlyFileSystem,
+        .BADF => error.BadFileDescriptor,
+        .FBIG => error.FileTooBig,
+        .NOSPC => error.NoSpaceLeft,
+        .DQUOT => error.DiskQuota,
         .NOSYS => error.Unsupported,
-        .OPNOTSUPP => error.OperationUnsupported,
+        .OPNOTSUPP, .NOTTY => error.OperationUnsupported,
+        // lseek SEEK_DATA/HOLEのENXIO（offsetが末尾以降）やESPIPEはEINVAL相当。
+        .SPIPE, .NXIO, .OVERFLOW => error.InvalidArgument,
         else => error.Unexpected,
     };
 }
@@ -1084,4 +1529,148 @@ test "windowsFiletimeFromNsは1601以前と範囲外をInvalidTimestampにする
     try std.testing.expectError(error.InvalidTimestamp, windowsFiletimeFromNs(-11644473600000000000));
     try std.testing.expectError(error.InvalidTimestamp, windowsFiletimeFromNs(std.math.minInt(i128)));
     try std.testing.expectError(error.InvalidTimestamp, windowsFiletimeFromNs(std.math.maxInt(i128)));
+}
+
+test "statfsは実在パスのファイルシステム統計を返し、不正パスを拒否する" {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+
+    const info = try statfs(std.testing.io, directory);
+    try std.testing.expect(info.block_size > 0);
+    try std.testing.expect(info.blocks > 0);
+    try std.testing.expect(info.free > 0);
+    // 非特権ユーザの空きは特権分を含む空き以下になる。
+    try std.testing.expect(info.available <= info.free);
+    try std.testing.expect(info.files > 0);
+    try std.testing.expect(info.filesystemType().len > 0);
+    try std.testing.expect(info.filesystemId().len > 0);
+    if (builtin.os.tag == .macos) {
+        // APFS/HFS+ではfstypenameが埋まる。
+        try std.testing.expect(std.mem.eql(u8, info.filesystemType(), "apfs") or
+            std.mem.eql(u8, info.filesystemType(), "hfs"));
+    }
+
+    // 不在パスはENOENT、ファイルの中を潜るパスはENOTDIR。
+    const missing = try tmpPath(&temporary, "missing-dir");
+    defer std.testing.allocator.free(missing);
+    try std.testing.expectError(error.FileNotFound, statfs(std.testing.io, missing));
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "leaf.txt", .data = "x" });
+    const leaf = try tmpPath(&temporary, "leaf.txt");
+    defer std.testing.allocator.free(leaf);
+    const under_file = try std.fs.path.join(std.testing.allocator, &.{ leaf, "child" });
+    defer std.testing.allocator.free(under_file);
+    try std.testing.expectError(error.NotDir, statfs(std.testing.io, under_file));
+}
+
+test "reflinkはCoW複製を作り、既存DST・不在SRC・ディレクトリを拒否する" {
+    if (builtin.os.tag != .linux and builtin.os.tag != .macos) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "src.txt", .data = "clone me" });
+    const source = try tmpPath(&temporary, "src.txt");
+    defer std.testing.allocator.free(source);
+    const destination = try tmpPath(&temporary, "dst.txt");
+    defer std.testing.allocator.free(destination);
+
+    reflink(std.testing.io, source, destination, null) catch |failure| {
+        // tmpfs等のCoW非対応FSではENOTSUPになる。
+        if (failure == error.OperationUnsupported) return error.SkipZigTest;
+        return failure;
+    };
+    const original = try stat(std.testing.io, source, true);
+    const cloned = try stat(std.testing.io, destination, true);
+    try std.testing.expectEqual(@as(u64, 8), cloned.size);
+    // MODE省略時はSRCの権限を継承する。
+    try std.testing.expectEqual(original.mode, cloned.mode);
+    // 複製は独立したinode（CoW共有はextent単位で、inodeは別）。
+    try std.testing.expect(cloned.inode != original.inode);
+    const data = try temporary.dir.readFileAlloc(std.testing.io, "dst.txt", std.testing.allocator, .limited(64));
+    defer std.testing.allocator.free(data);
+    try std.testing.expectEqualStrings("clone me", data);
+
+    // 既存DSTはEEXIST。
+    try std.testing.expectError(error.PathAlreadyExists, reflink(std.testing.io, source, destination, null));
+    // 不在SRCはENOENT。
+    const missing = try tmpPath(&temporary, "missing.txt");
+    defer std.testing.allocator.free(missing);
+    const other = try tmpPath(&temporary, "other.txt");
+    defer std.testing.allocator.free(other);
+    try std.testing.expectError(error.FileNotFound, reflink(std.testing.io, missing, other, null));
+    // ディレクトリSRCはファイルクローン契約外のためENOTSUP。
+    const dir_path = try tmpPath(&temporary, ".");
+    defer std.testing.allocator.free(dir_path);
+    const dir_dst = try tmpPath(&temporary, "dir-clone");
+    defer std.testing.allocator.free(dir_dst);
+    try std.testing.expectError(error.OperationUnsupported, reflink(std.testing.io, dir_path, dir_dst, null));
+
+    // 明示MODEはSRCの権限を上書きする。
+    const third = try tmpPath(&temporary, "third.txt");
+    defer std.testing.allocator.free(third);
+    reflink(std.testing.io, source, third, 0o777) catch |failure| {
+        if (failure == error.OperationUnsupported) return error.SkipZigTest;
+        return failure;
+    };
+    try std.testing.expectEqual(@as(u32, 0o777), (try stat(std.testing.io, third, true)).mode);
+}
+
+test "seekExtentはsparseファイルのデータ・空洞位置を返す" {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    // 先頭4byteにデータ、[4, 8192)が空洞、8192以降にデータのsparseファイル。
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "sparse.bin", .data = "data" });
+    const path = try tmpPath(&temporary, "sparse.bin");
+    defer std.testing.allocator.free(path);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, path, .{ .mode = .read_write });
+    defer file.close(std.testing.io);
+    try file.writePositionalAll(std.testing.io, "tail", 8192);
+
+    // data: offset 0ではデータ開始0を返す。offsetが末尾以降はENXIO相当。
+    try std.testing.expectEqual(@as(i64, 0), try seekExtent(std.testing.io, file, 0, .data));
+    try std.testing.expectError(error.InvalidOffset, seekExtent(std.testing.io, file, 8196, .data));
+    try std.testing.expectError(error.InvalidOffset, seekExtent(std.testing.io, file, 99999, .data));
+    // hole: Linuxの実holeはブロック境界（4KiB）に揃うため[4, 8196]の範囲で検証し、
+    // emulated経路（macOS等）は末尾の仮想空洞8196を返す。
+    const hole_at = try seekExtent(std.testing.io, file, 0, .hole);
+    if (builtin.os.tag == .linux) {
+        try std.testing.expect(hole_at >= 4 and hole_at <= 8196);
+    } else {
+        try std.testing.expectEqual(@as(i64, 8196), hole_at);
+    }
+    try std.testing.expectEqual(@as(i64, 8196), try seekExtent(std.testing.io, file, 8196, .hole));
+    // 負のoffsetはEINVAL。
+    try std.testing.expectError(error.InvalidOffset, seekExtent(std.testing.io, file, -1, .data));
+    try std.testing.expectError(error.InvalidOffset, seekExtent(std.testing.io, file, -1, .hole));
+}
+
+test "allocateは領域を確保し末尾以降の範囲でサイズを伸ばす" {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "alloc.bin", .data = "xy" });
+    const path = try tmpPath(&temporary, "alloc.bin");
+    defer std.testing.allocator.free(path);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, path, .{ .mode = .read_write });
+    defer file.close(std.testing.io);
+
+    // EOF内の確保はサイズを変えない。
+    try allocate(std.testing.io, file, 0, 2);
+    try std.testing.expectEqual(@as(u64, 2), try file.length(std.testing.io));
+    // EOFを超える範囲の確保はサイズを伸ばす（fallocate相当）。
+    try allocate(std.testing.io, file, 0, 4096);
+    try std.testing.expectEqual(@as(u64, 4096), try file.length(std.testing.io));
+    try allocate(std.testing.io, file, 8192, 128);
+    try std.testing.expectEqual(@as(u64, 8320), try file.length(std.testing.io));
+    // 確保した領域は0埋めで読める。
+    var buffer: [8]u8 = undefined;
+    const read_count = try file.readPositionalAll(std.testing.io, &buffer, 4096);
+    try std.testing.expectEqual(@as(usize, 8), read_count);
+    for (buffer) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
+
+    // 負のoffsetとsize=0はEINVAL。
+    try std.testing.expectError(error.InvalidOffset, allocate(std.testing.io, file, -1, 8));
+    try std.testing.expectError(error.InvalidSize, allocate(std.testing.io, file, 0, 0));
 }

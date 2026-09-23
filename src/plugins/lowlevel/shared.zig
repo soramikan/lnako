@@ -108,6 +108,51 @@ pub fn publicSizeValue(runtime: *Runtime, size: u64) !Value {
     };
 }
 
+/// lseek系のoffset引数。安全整数Numberまたはi64範囲のBigInt。
+pub fn offsetArgument(value: Value) !i64 {
+    return switch (value) {
+        .number => |number| foundation.offsetFromNumber(number),
+        .bigint => |bigint| foundation.offsetFromSigned(bigint.toI128() catch return error.InvalidOffset),
+        else => error.InvalidOffset,
+    };
+}
+
+/// lseek系の公開offset値。i64を安全整数NumberまたはBigIntへ写す。
+pub fn publicOffsetValue(runtime: *Runtime, offset: i64) !Value {
+    return switch (foundation.publicOffset(offset)) {
+        .number => .{ .number = @floatFromInt(offset) },
+        .bigint => runtime.ownBigInt(try value_mod.BigInt.init(runtime.allocator(), offset)),
+    };
+}
+
+/// mode/umask等の上限付きu32引数。範囲外・非数値は構造化EINVAL。
+/// posix系（chmod/access/umask）とreflinkのMODEが共有する。
+pub fn unsignedArgument(
+    runtime: *Runtime,
+    effects: Effects,
+    value: Value,
+    operation: []const u8,
+    max: u32,
+    message: []const u8,
+) !u32 {
+    const signed: i128 = switch (value) {
+        .number => |number| blk: {
+            if (!foundation.isSafeInteger(number)) {
+                return throwStructured(runtime, effects, .EINVAL, operation, null, null, message);
+            }
+            break :blk @intFromFloat(number);
+        },
+        .bigint => |bigint| bigint.toI128() catch {
+            return throwStructured(runtime, effects, .EINVAL, operation, null, null, message);
+        },
+        else => return throwStructured(runtime, effects, .EINVAL, operation, null, null, message),
+    };
+    if (signed < 0 or signed > @as(i128, max)) {
+        return throwStructured(runtime, effects, .EINVAL, operation, null, null, message);
+    }
+    return @intCast(signed);
+}
+
 /// readlink/realpathが返すOSパス（WTF-8）を可逆になでしこ文字列へ戻す。
 /// 孤立サロゲートを保持し、WTF-8として不正な任意バイト列（POSIXの非UTF-8名など）
 /// は既存のlossy変換へフォールバックする。fs/AOTの同名処理と同じ規則。
@@ -203,6 +248,23 @@ pub fn throwIoMapped(
     if (failure == error.OutOfMemory) return failure;
     const capability_name: ?[]const u8 = if (code == .ENOTSUP) capability.id() else null;
     return throwStructured(runtime, effects, code, operation, path, capability_name, failureMessage(failure));
+}
+
+/// `throwIoMapped` の2パス版。SRC/DSTを持つ命令（reflink等）が契約codeへ
+/// 丸めるときに使う。OOMは内部エラーとして伝播する。
+pub fn throwIoMappedPair(
+    runtime: *Runtime,
+    effects: Effects,
+    failure: anyerror,
+    code: foundation.PortableErrorCode,
+    operation: []const u8,
+    path: ?[]const u8,
+    path2: ?[]const u8,
+    capability: foundation.Capability,
+) anyerror {
+    if (failure == error.OutOfMemory) return failure;
+    const capability_name: ?[]const u8 = if (code == .ENOTSUP) capability.id() else null;
+    return throwStructuredAt(runtime, effects, code, operation, path, path2, capability_name, failureMessage(failure));
 }
 
 pub fn throwStructured(

@@ -339,6 +339,11 @@ test "implementedフラグは実装済み命令の既知集合と一致する" {
         "ll-process-priority-set",
         "ll-tty-isatty",
         "ll-tty-size",
+        "ll-statfs",
+        "ll-reflink",
+        "ll-seek-data",
+        "ll-seek-hole",
+        "ll-fallocate",
     };
     var count: usize = 0;
     for (foundation.catalog_commands) |command| {

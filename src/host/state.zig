@@ -451,6 +451,37 @@ pub const CliHost = struct {
         return lnako.runtime.low_level_fs.setTimestampsHandle(self.io, entry.file, atime, mtime);
     }
 
+    fn lowLevelStatfs(context: *anyopaque, path: []const u8) anyerror!lnako.runtime.low_level_fs.FsInfo {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return lnako.runtime.low_level_fs.statfs(self.io, path);
+    }
+
+    fn lowLevelReflink(context: *anyopaque, source: []const u8, destination: []const u8, mode: ?u32) anyerror!void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return lnako.runtime.low_level_fs.reflink(self.io, source, destination, mode);
+    }
+
+    fn lowLevelSeekDataFile(context: *anyopaque, raw: u64, offset: i64) anyerror!i64 {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const id = lnako.runtime.low_level_foundation.HandleId.fromRaw(raw);
+        const entry = self.lowLevelTable().find(id) orelse return error.BadFileDescriptor;
+        return lnako.runtime.low_level_fs.seekExtent(self.io, entry.file, offset, .data);
+    }
+
+    fn lowLevelSeekHoleFile(context: *anyopaque, raw: u64, offset: i64) anyerror!i64 {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const id = lnako.runtime.low_level_foundation.HandleId.fromRaw(raw);
+        const entry = self.lowLevelTable().find(id) orelse return error.BadFileDescriptor;
+        return lnako.runtime.low_level_fs.seekExtent(self.io, entry.file, offset, .hole);
+    }
+
+    fn lowLevelAllocateFile(context: *anyopaque, raw: u64, offset: i64, size: u64) anyerror!void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const id = lnako.runtime.low_level_foundation.HandleId.fromRaw(raw);
+        const entry = self.lowLevelTable().find(id) orelse return error.BadFileDescriptor;
+        return lnako.runtime.low_level_fs.allocate(self.io, entry.file, offset, size);
+    }
+
     fn lowLevelProcessTable(self: *CliHost) *lnako.runtime.low_level_process.ProcessTable {
         if (self.low_level_processes == null) {
             self.low_level_processes = lnako.runtime.low_level_process.ProcessTable.init(std.heap.page_allocator);
@@ -590,6 +621,9 @@ pub const CliHost = struct {
                 .syncFileFn = lowLevelSyncFile,
                 .truncateFileFn = lowLevelTruncateFile,
                 .setTimestampsFileFn = lowLevelSetTimestampsFile,
+                .seekDataFileFn = lowLevelSeekDataFile,
+                .seekHoleFileFn = lowLevelSeekHoleFile,
+                .allocateFileFn = lowLevelAllocateFile,
             },
             .hash = .{
                 .context = self,
@@ -610,6 +644,8 @@ pub const CliHost = struct {
                 .rmdirFn = lowLevelRmdir,
                 .truncatePathFn = lowLevelTruncatePath,
                 .utimePathFn = lowLevelUtimePath,
+                .statfsFn = lowLevelStatfs,
+                .reflinkFn = lowLevelReflink,
             },
             .dir = .{
                 .context = self,

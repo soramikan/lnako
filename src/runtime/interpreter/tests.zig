@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const istate = @import("state.zig");
 const shared = @import("shared.zig");
 const value_mod = @import("../value.zig");
@@ -14,6 +15,7 @@ const low_level_foundation = @import("../low_level_foundation.zig");
 const low_level_io = @import("../low_level_io.zig");
 const low_level_hash = @import("../low_level_hash.zig");
 const low_level_dir = @import("../low_level_dir.zig");
+const low_level_fs = @import("../low_level_fs.zig");
 const prepared = @import("prepared.zig");
 
 const Interpreter = istate.Interpreter;
@@ -2687,6 +2689,34 @@ const LowLevelTestHost = struct {
         return low_level_io.setLength(self.io, entry.file, size);
     }
 
+    fn statfs(pointer: *anyopaque, path: []const u8) anyerror!low_level_fs.FsInfo {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        return low_level_fs.statfs(self.io, path);
+    }
+
+    fn reflink(pointer: *anyopaque, source: []const u8, destination: []const u8, mode: ?u32) anyerror!void {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        return low_level_fs.reflink(self.io, source, destination, mode);
+    }
+
+    fn seekDataFile(pointer: *anyopaque, raw: u64, offset: i64) anyerror!i64 {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        const entry = self.table.find(low_level_foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+        return low_level_fs.seekExtent(self.io, entry.file, offset, .data);
+    }
+
+    fn seekHoleFile(pointer: *anyopaque, raw: u64, offset: i64) anyerror!i64 {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        const entry = self.table.find(low_level_foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+        return low_level_fs.seekExtent(self.io, entry.file, offset, .hole);
+    }
+
+    fn allocateFile(pointer: *anyopaque, raw: u64, offset: i64, size: u64) anyerror!void {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        const entry = self.table.find(low_level_foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+        return low_level_fs.allocate(self.io, entry.file, offset, size);
+    }
+
     fn createHash(pointer: *anyopaque, algorithm: []const u8) anyerror!u64 {
         const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
         return (try self.hash_table.insert(try low_level_hash.startNamed(algorithm))).raw();
@@ -2782,6 +2812,14 @@ const LowLevelTestHost = struct {
                 .writeFileBytesFn = writeFileBytes,
                 .syncFileFn = syncFile,
                 .truncateFileFn = truncateFile,
+                .seekDataFileFn = seekDataFile,
+                .seekHoleFileFn = seekHoleFile,
+                .allocateFileFn = allocateFile,
+            },
+            .fs = .{
+                .context = self,
+                .statfsFn = statfs,
+                .reflinkFn = reflink,
             },
             .hash = .{
                 .context = self,
@@ -3532,4 +3570,95 @@ test "値位置・連鎖位置の組み込み命令語を暗黙呼出しとし�
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("abc\n0\nについて\nくらい\nなのか\nまでを\nまでの\nによる\nとして\nとは\nから\nまで\nだけ\nより\nほど\nなど\nいて\nえて\nきて\nけて\nして\nって\nにて\nみて\nめて\nねて\nでは\nには\nんで\nずつ\nは\nを\nに\nへ\nで\nと\nが\nの\nでなければ\nなければ\nならば\nなら\nたら\nれば\nこと\nである\nです\nします\nでした\nにゃん\n1\n2\n3\n", host.written());
+}
+
+test "Interpreter低レイヤーのstatfs/reflink/領域検索/領域確保は実ファイルで動作する" {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(directory);
+    const source_path = try std.fs.path.join(allocator, &.{ directory, "src.bin" });
+    defer allocator.free(source_path);
+    const clone_path = try std.fs.path.join(allocator, &.{ directory, "clone.bin" });
+    defer allocator.free(clone_path);
+    // 先頭4byteがデータ、8192以降にデータがあるsparseファイル。
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "src.bin", .data = "data" });
+    {
+        const raw = try std.Io.Dir.cwd().openFile(std.testing.io, source_path, .{ .mode = .read_write });
+        defer raw.close(std.testing.io);
+        try raw.writePositionalAll(std.testing.io, "tail", 8192);
+    }
+
+    const source = try std.fmt.allocPrint(allocator,
+        \\低レイヤー機能対応判定("statfs")を表示
+        \\低レイヤー機能対応判定("reflink")を表示
+        \\低レイヤー機能対応判定("seek_data")を表示
+        \\低レイヤー機能対応判定("seek_hole")を表示
+        \\低レイヤー機能対応判定("fallocate")を表示
+        \\I=ファイルシステム情報取得("{s}")
+        \\I["blockSize"]を表示
+        \\I["filesystemType"]を表示
+        \\エラー監視
+        \\ファイルクローン("{s}","{s}")
+        \\エラーならば
+        \\エラーメッセージ["code"]を表示
+        \\ここまで
+        \\H=ファイル開("{s}","r+")
+        \\ファイルデータ領域検索(H,0)を表示
+        \\ファイル空洞領域検索(H,8196)を表示
+        \\エラー監視
+        \\ファイル領域確保(H,16384,128)
+        \\エラーならば
+        \\エラーメッセージ["code"]を表示
+        \\ここまで
+        \\エラー監視
+        \\ファイルデータ領域検索(H,-1)
+        \\エラーならば
+        \\エラーメッセージ["code"]を表示
+        \\ここまで
+        \\ファイル閉(H)
+        \\エラー監視
+        \\ファイルデータ領域検索(H,0)
+        \\エラーならば
+        \\エラーメッセージ["code"]を表示
+        \\ここまで
+        \\
+    , .{ directory, source_path, clone_path, source_path });
+    defer allocator.free(source);
+
+    var fixture_compiled = try compileForTest(allocator, source);
+    defer fixture_compiled.ir_program.deinit();
+    defer fixture_compiled.hir_program.deinit();
+    defer fixture_compiled.analyzed.deinit();
+    defer fixture_compiled.parsed.deinit();
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = allocator };
+    defer host.deinit();
+    var low_host = LowLevelTestHost.init(allocator);
+    defer low_host.deinit();
+    var runtime_host = host.host();
+    runtime_host.lowlevel_context = low_host.context();
+    var interpreter = Interpreter.init(allocator, &runtime, fixture_compiled.ir_program, runtime_host);
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+
+    const output = host.written();
+    // capability照会は5件ともtrue。statfsのblockSize/filesystemTypeが表示され、
+    // 領域検索は0/8196、負offsetはEINVAL、close後ハンドルはEBADF。reflink/
+    // fallocateはFS依存でENOTSUPを返す場合があるため成功・失敗どちらも契約内
+    // として検査する（blockSizeは環境依存のため数値は緩く確認する）。
+    try std.testing.expect(std.mem.indexOf(u8, output, "true\ntrue\ntrue\ntrue\ntrue\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "0\n8196\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "EINVAL\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "EBADF\n") != null);
+    if (std.mem.indexOf(u8, output, "ENOTSUP") == null) {
+        // 対応FSではreflinkが実際に複製を作り、fallocateはsrc.binの末尾へ伸ばす。
+        const cloned_stat = try low_level_fs.stat(std.testing.io, clone_path, true);
+        try std.testing.expectEqual(@as(u64, 8196), cloned_stat.size);
+        const source_stat = try low_level_fs.stat(std.testing.io, source_path, true);
+        try std.testing.expectEqual(@as(u64, 16512), source_stat.size);
+    }
 }

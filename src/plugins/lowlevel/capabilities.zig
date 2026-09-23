@@ -60,6 +60,11 @@ pub fn capabilitySupported(arguments: []const Value, context: Context) bool {
         .signal => context.hasSignal(),
         .tty_isatty => context.hasTty(),
         .priority => context.hasProcessPriority(),
+        .statfs => context.hasStatfs(),
+        .reflink => context.hasReflink(),
+        .seek_data => context.hasSeekData(),
+        .seek_hole => context.hasSeekHole(),
+        .fallocate => context.hasFallocate(),
         else => false,
     };
 }

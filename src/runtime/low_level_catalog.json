@@ -1107,7 +1107,7 @@
         "ENOTSUP"
       ],
       "notes": "blockSize/blocks/free/available/files/freeFiles/filesystemType/filesystemId。OS固有フィールドはoptional",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-reflink",
@@ -1128,7 +1128,7 @@
         "ENOTSUP"
       ],
       "notes": "reflink/CoW。非対応FSはENOTSUP",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-seek-data",
@@ -1146,7 +1146,7 @@
         "ENOTSUP"
       ],
       "notes": "SEEK_DATA相当",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-seek-hole",
@@ -1164,7 +1164,7 @@
         "ENOTSUP"
       ],
       "notes": "SEEK_HOLE相当",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-fallocate",
@@ -1183,7 +1183,7 @@
         "ENOTSUP"
       ],
       "notes": "fallocate相当",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-capability-supported",
@@ -1817,13 +1817,13 @@
       "id": "statfs",
       "class": "posix_extension",
       "os": {
-        "linux": false,
-        "macos": false,
+        "linux": true,
+        "macos": true,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1843,13 +1843,13 @@
       "id": "reflink",
       "class": "posix_extension",
       "os": {
-        "linux": false,
-        "macos": false,
+        "linux": "conditional",
+        "macos": "conditional",
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1869,13 +1869,13 @@
       "id": "seek_data",
       "class": "lnako_native",
       "os": {
-        "linux": false,
-        "macos": false,
+        "linux": true,
+        "macos": true,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1895,13 +1895,13 @@
       "id": "seek_hole",
       "class": "lnako_native",
       "os": {
-        "linux": false,
-        "macos": false,
+        "linux": true,
+        "macos": true,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1921,13 +1921,13 @@
       "id": "fallocate",
       "class": "lnako_native",
       "os": {
-        "linux": false,
-        "macos": false,
+        "linux": true,
+        "macos": "conditional",
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {

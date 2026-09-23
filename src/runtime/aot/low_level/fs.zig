@@ -45,6 +45,9 @@ const publicSizeValue = shared.publicSizeValue;
 const setField = shared.setField;
 const throwIo = shared.throwIo;
 const throwIoAs = shared.throwIoAs;
+const throwIoMapped = shared.throwIoMapped;
+const throwIoMappedPair = shared.throwIoMappedPair;
+const unsignedArgument = shared.unsignedArgument;
 const throwStructured = shared.throwStructured;
 const aotThrownCode = shared.aotThrownCode;
 const pendingErrorCode = shared.pendingErrorCode;
@@ -244,4 +247,193 @@ pub fn pluginTruncatePath(context: *anyopaque, path: []const u8, size: u64) anye
 pub fn pluginUtimePath(context: *anyopaque, path: []const u8, atime: foundation.SetTime, mtime: foundation.SetTime) anyerror!void {
     const runtime: *Runtime = @ptrCast(@alignCast(context));
     return low_level_fs.setTimestampsPath(io(runtime), path, atime, mtime);
+}
+
+pub fn pluginStatfs(context: *anyopaque, path: []const u8) anyerror!low_level_fs.FsInfo {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    return low_level_fs.statfs(io(runtime), path);
+}
+
+pub fn pluginReflink(context: *anyopaque, source: []const u8, destination: []const u8, mode: ?u32) anyerror!void {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    return low_level_fs.reflink(io(runtime), source, destination, mode);
+}
+
+/// `ファイルシステム情報取得`（statfs相当）。`path` が属するFSの容量・inode
+/// 統計を `fsInfo` 契約の辞書で返す。
+pub fn statfsBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    const operation = foundation.filesystem_operations.statfs;
+    const path = try pathArgument(runtime, arguments[0], operation);
+    defer runtime.allocator.free(path);
+    const info = low_level_fs.statfs(io(runtime), path) catch |failure| {
+        return throwIoMapped(runtime, failure, foundation.statfsErrorCode(failure), operation, path, .statfs);
+    };
+    return fsInfoValue(runtime, info);
+}
+
+fn fsInfoValue(runtime: *Runtime, info: low_level_fs.FsInfo) !Value {
+    var result = try runtime.createDictionary(&.{});
+    var roots = RootFrame{};
+    runtime.pushRoots(&roots, @ptrCast(&result), 1);
+    defer runtime.popRoots(&roots);
+    try setField(runtime, result, foundation.fs_info_keys.block_size, numberValue(@floatFromInt(info.block_size)));
+    try setField(runtime, result, foundation.fs_info_keys.blocks, try publicSizeValue(runtime, info.blocks));
+    try setField(runtime, result, foundation.fs_info_keys.free, try publicSizeValue(runtime, info.free));
+    try setField(runtime, result, foundation.fs_info_keys.available, try publicSizeValue(runtime, info.available));
+    try setField(runtime, result, foundation.fs_info_keys.files, try publicSizeValue(runtime, info.files));
+    try setField(runtime, result, foundation.fs_info_keys.free_files, try publicSizeValue(runtime, info.free_files));
+    try setField(runtime, result, foundation.fs_info_keys.filesystem_type, try runtimeUtf8String(runtime, info.filesystemType()));
+    try setField(runtime, result, foundation.fs_info_keys.filesystem_id, try runtimeUtf8String(runtime, info.filesystemId()));
+    return result;
+}
+
+/// `ファイルクローン`。MODE省略はSRC権限継承、明示時は `0..=0o7777` の
+/// 数値権限を適用する。非対応OS/FSは構造化ENOTSUP。
+pub fn reflinkBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    const operation = foundation.filesystem_operations.reflink;
+    const source = try pathArgument(runtime, arguments[0], operation);
+    defer runtime.allocator.free(source);
+    const destination = try pathArgument(runtime, arguments[1], operation);
+    defer runtime.allocator.free(destination);
+    const mode: ?u32 = if (arguments.len > 2 and arguments[2].tag != @intFromEnum(Tag.undefined))
+        try unsignedArgument(runtime, arguments[2], operation, foundation.max_permission_mode, "modeは0〜0o7777の整数である必要があります")
+    else
+        null;
+    low_level_fs.reflink(io(runtime), source, destination, mode) catch |failure| {
+        return throwIoMappedPair(runtime, failure, foundation.reflinkErrorCode(failure), operation, source, destination, .reflink);
+    };
+    return .{};
+}
+
+test "AOT低レイヤーのstatfsはfsInfo辞書を返し契約エラーを丸める" {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+    roots[0] = try runtimeUtf8String(active, directory);
+
+    const info = try state.lowLevelFileBuiltin(active, .low_level_statfs, &.{roots[0]});
+    // typeSchemas.fsInfo の全8フィールドが辞書に存在する。
+    inline for (foundation.fs_info_key_list) |key| {
+        var units: [32]u16 = undefined;
+        for (key, 0..) |character, index| units[index] = character;
+        const field = dictionaryProperty(info, units[0..key.len]);
+        try std.testing.expect(field.tag != @intFromEnum(Tag.undefined));
+    }
+    try std.testing.expect(valueToNumber(dictionaryProperty(info, &.{ 'b', 'l', 'o', 'c', 'k', 'S', 'i', 'z', 'e' })) > 0);
+
+    // 非文字列pathはEINVAL、不在パスはENOENT。
+    try std.testing.expectError(error.NakoException, state.lowLevelFileBuiltin(active, .low_level_statfs, &.{numberValue(1)}));
+    try expectPendingCode(active, "EINVAL");
+    const missing = try std.fs.path.join(std.testing.allocator, &.{ directory, "missing" });
+    defer std.testing.allocator.free(missing);
+    roots[1] = try runtimeUtf8String(active, missing);
+    try std.testing.expectError(error.NakoException, state.lowLevelFileBuiltin(active, .low_level_statfs, &.{roots[1]}));
+    try expectPendingCode(active, "ENOENT");
+}
+
+test "AOT低レイヤーのreflinkは複製を作り契約エラーを返す" {
+    if (builtin.os.tag != .linux and builtin.os.tag != .macos) return error.SkipZigTest;
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "src.txt", .data = "clone me" });
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const source_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "src.txt" });
+    defer std.testing.allocator.free(source_path);
+    const destination_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "dst.txt" });
+    defer std.testing.allocator.free(destination_path);
+
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+    roots[0] = try runtimeUtf8String(active, source_path);
+    roots[1] = try runtimeUtf8String(active, destination_path);
+
+    // 非対応FSは構造化ENOTSUP（capability=reflink）になる。
+    _ = state.lowLevelFileBuiltin(active, .low_level_reflink, &.{ roots[0], roots[1] }) catch |failure| {
+        try std.testing.expectEqual(error.NakoException, failure);
+        try expectPendingCode(active, "ENOTSUP");
+        return error.SkipZigTest;
+    };
+    const cloned = try temporary.dir.readFileAlloc(std.testing.io, "dst.txt", std.testing.allocator, .limited(64));
+    defer std.testing.allocator.free(cloned);
+    try std.testing.expectEqualStrings("clone me", cloned);
+
+    // 既存DSTはEEXISTでpath/path2を持つ。
+    try std.testing.expectError(error.NakoException, state.lowLevelFileBuiltin(active, .low_level_reflink, &.{ roots[0], roots[1] }));
+    try expectPendingCode(active, "EEXIST");
+
+    // MODE境界: 0o10000はEINVAL、0o700は適用される。
+    const third_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "third.txt" });
+    defer std.testing.allocator.free(third_path);
+    roots[2] = try runtimeUtf8String(active, third_path);
+    try std.testing.expectError(error.NakoException, state.lowLevelFileBuiltin(active, .low_level_reflink, &.{ roots[0], roots[2], numberValue(0o10000) }));
+    try expectPendingCode(active, "EINVAL");
+    _ = try state.lowLevelFileBuiltin(active, .low_level_reflink, &.{ roots[0], roots[2], numberValue(0o700) });
+    const info = try state.lowLevelFileBuiltin(active, .low_level_file_stat, &.{roots[2]});
+    try std.testing.expectEqual(@as(f64, 0o700), valueToNumber(dictionaryProperty(info, &.{ 'm', 'o', 'd', 'e' })));
+
+    // 不在SRCはENOENT。
+    const missing = try std.fs.path.join(std.testing.allocator, &.{ directory, "missing.txt" });
+    defer std.testing.allocator.free(missing);
+    roots[3] = try runtimeUtf8String(active, missing);
+    try std.testing.expectError(error.NakoException, state.lowLevelFileBuiltin(active, .low_level_reflink, &.{ roots[3], roots[2] }));
+    try expectPendingCode(active, "ENOENT");
+}
+
+test "AOT低レイヤーのIssue #36命令はWindowsで照会false・実行ENOTSUPになる" {
+    if (builtin.os.tag != .windows and builtin.os.tag != .wasi) return error.SkipZigTest;
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+
+    inline for (.{ "statfs", "reflink", "seek_data", "seek_hole", "fallocate" }) |capability_id| {
+        roots[0] = try runtimeUtf8String(active, capability_id);
+        const supported = try state.lowLevelCapabilitySupportedBuiltin(active, roots[0..1]);
+        try std.testing.expectEqual(@intFromEnum(Tag.boolean), supported.tag);
+        try std.testing.expect(supported.payload == 0);
+    }
+
+    roots[0] = try runtimeUtf8String(active, "x");
+    roots[1] = try runtimeUtf8String(active, "y");
+    try std.testing.expectError(error.NakoException, state.lowLevelFileBuiltin(active, .low_level_statfs, &.{roots[0]}));
+    try expectPendingCode(active, "ENOTSUP");
+    try std.testing.expectError(error.NakoException, state.lowLevelFileBuiltin(active, .low_level_reflink, &.{ roots[0], roots[1] }));
+    try expectPendingCode(active, "ENOTSUP");
 }

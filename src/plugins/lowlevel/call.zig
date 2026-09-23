@@ -77,6 +77,11 @@ pub fn call(
     if (std.mem.eql(u8, name, foundation.filesystem_commands.truncate_path)) return @as(?Value, try fs.truncatePath(runtime, state, context, effects, arguments));
     if (std.mem.eql(u8, name, foundation.filesystem_commands.utime_path)) return @as(?Value, try fs.utimePath(runtime, state, context, effects, arguments));
     if (std.mem.eql(u8, name, foundation.filesystem_commands.utime_handle)) return @as(?Value, try fs.utimeHandle(runtime, state, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.filesystem_commands.statfs)) return @as(?Value, try fs.statfsPath(runtime, state, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.filesystem_commands.reflink)) return @as(?Value, try fs.reflinkPath(runtime, state, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.filesystem_commands.seek_data)) return @as(?Value, try stream.seekData(runtime, state, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.filesystem_commands.seek_hole)) return @as(?Value, try stream.seekHole(runtime, state, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.filesystem_commands.fallocate)) return @as(?Value, try stream.allocateFile(runtime, state, context, effects, arguments));
     if (matches(name, foundation.dir_commands.open, foundation.dir_commands.open_user)) return @as(?Value, try dir.openDirectory(runtime, state, context, effects, arguments));
     if (std.mem.eql(u8, name, foundation.dir_commands.next)) return @as(?Value, try dir.nextEntry(runtime, state, context, effects, arguments));
     if (matches(name, foundation.dir_commands.close, foundation.dir_commands.close_user)) return @as(?Value, try dir.closeDirectory(runtime, state, context, effects, arguments));
@@ -175,7 +180,7 @@ test "未実装命令はdispatch名と利用者名の両形で構造化ENOTSUP�
             }
         }
     }
-    try std.testing.expectEqual(@as(usize, 9), covered);
+    try std.testing.expectEqual(@as(usize, 4), covered);
 }
 
 test "実装済み命令の引数不足はEINVALで未知capability照会はfalse" {

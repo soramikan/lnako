@@ -27,6 +27,11 @@ pub const StreamContext = struct {
     /// Issue #31: オープン済みハンドルの時刻設定（futimens相当）。atime/mtimeは
     /// `foundation.SetTime`（null=既存値維持 / "now"=現在時刻 / ナノ秒明示）。
     setTimestampsFileFn: ?*const fn (context: *anyopaque, raw: u64, atime: foundation.SetTime, mtime: foundation.SetTime) anyerror!void = null,
+    /// Issue #36: オープン済みハンドルのsparse探索（SEEK_DATA/SEEK_HOLE相当）と
+    /// 領域確保（fallocate相当）。非対応OS/FSはENOTSUPを返す。
+    seekDataFileFn: ?*const fn (context: *anyopaque, raw: u64, offset: i64) anyerror!i64 = null,
+    seekHoleFileFn: ?*const fn (context: *anyopaque, raw: u64, offset: i64) anyerror!i64 = null,
+    allocateFileFn: ?*const fn (context: *anyopaque, raw: u64, offset: i64, size: u64) anyerror!void = null,
 
     pub fn openFile(self: StreamContext, path: []const u8, mode: foundation.OpenMode, exclusive: bool, sync: bool) !u64 {
         const function = self.openFileFn orelse return error.LowLevelIoUnavailable;
@@ -63,6 +68,21 @@ pub const StreamContext = struct {
         return function(self.context, raw, atime, mtime);
     }
 
+    pub fn seekDataFile(self: StreamContext, raw: u64, offset: i64) !i64 {
+        const function = self.seekDataFileFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, raw, offset);
+    }
+
+    pub fn seekHoleFile(self: StreamContext, raw: u64, offset: i64) !i64 {
+        const function = self.seekHoleFileFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, raw, offset);
+    }
+
+    pub fn allocateFile(self: StreamContext, raw: u64, offset: i64, size: u64) !void {
+        const function = self.allocateFileFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, raw, offset, size);
+    }
+
     pub fn hasStreamFileIo(self: StreamContext) bool {
         return self.openFileFn != null and self.closeFileFn != null and self.readFileBytesFn != null and self.writeFileBytesFn != null and self.syncFileFn != null;
     }
@@ -73,6 +93,18 @@ pub const StreamContext = struct {
 
     pub fn hasSetTimestamps(self: StreamContext) bool {
         return self.setTimestampsFileFn != null;
+    }
+
+    pub fn hasSeekData(self: StreamContext) bool {
+        return self.seekDataFileFn != null;
+    }
+
+    pub fn hasSeekHole(self: StreamContext) bool {
+        return self.seekHoleFileFn != null;
+    }
+
+    pub fn hasFallocate(self: StreamContext) bool {
+        return self.allocateFileFn != null;
     }
 };
 
@@ -123,6 +155,11 @@ pub const FsContext = struct {
     /// Issue #31: パス指定のtruncateと時刻設定（truncate / utimes相当）。
     truncatePathFn: ?*const fn (context: *anyopaque, path: []const u8, size: u64) anyerror!void = null,
     utimePathFn: ?*const fn (context: *anyopaque, path: []const u8, atime: foundation.SetTime, mtime: foundation.SetTime) anyerror!void = null,
+    /// Issue #36: ファイルシステム統計（statfs相当）とreflink/CoWクローン。
+    /// `mode` は権限bit（0..0o7777）で、nullならSRCの権限を継承する。
+    /// 非対応OS/FSはENOTSUPを返す。
+    statfsFn: ?*const fn (context: *anyopaque, path: []const u8) anyerror!low_level_fs.FsInfo = null,
+    reflinkFn: ?*const fn (context: *anyopaque, source: []const u8, destination: []const u8, mode: ?u32) anyerror!void = null,
 
     pub fn stat(self: FsContext, path: []const u8, follow: bool) !low_level_fs.Metadata {
         const function = self.statFn orelse return error.LowLevelIoUnavailable;
@@ -174,6 +211,16 @@ pub const FsContext = struct {
         return function(self.context, path, atime, mtime);
     }
 
+    pub fn statfs(self: FsContext, path: []const u8) !low_level_fs.FsInfo {
+        const function = self.statfsFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, path);
+    }
+
+    pub fn reflink(self: FsContext, source: []const u8, destination: []const u8, mode: ?u32) !void {
+        const function = self.reflinkFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, source, destination, mode);
+    }
+
     pub fn hasStat(self: FsContext) bool {
         return self.statFn != null;
     }
@@ -212,6 +259,14 @@ pub const FsContext = struct {
 
     pub fn hasUtimePath(self: FsContext) bool {
         return self.utimePathFn != null;
+    }
+
+    pub fn hasStatfs(self: FsContext) bool {
+        return self.statfsFn != null;
+    }
+
+    pub fn hasReflink(self: FsContext) bool {
+        return self.reflinkFn != null;
     }
 };
 
@@ -490,6 +545,18 @@ pub const Context = struct {
         return self.stream.setTimestampsFile(raw, atime, mtime);
     }
 
+    pub fn seekDataFile(self: Context, raw: u64, offset: i64) !i64 {
+        return self.stream.seekDataFile(raw, offset);
+    }
+
+    pub fn seekHoleFile(self: Context, raw: u64, offset: i64) !i64 {
+        return self.stream.seekHoleFile(raw, offset);
+    }
+
+    pub fn allocateFile(self: Context, raw: u64, offset: i64, size: u64) !void {
+        return self.stream.allocateFile(raw, offset, size);
+    }
+
     pub fn createHash(self: Context, algorithm: []const u8) !u64 {
         return self.hash.createHash(algorithm);
     }
@@ -544,6 +611,14 @@ pub const Context = struct {
 
     pub fn utimePath(self: Context, path: []const u8, atime: foundation.SetTime, mtime: foundation.SetTime) !void {
         return self.fs.utimePath(path, atime, mtime);
+    }
+
+    pub fn statfs(self: Context, path: []const u8) !low_level_fs.FsInfo {
+        return self.fs.statfs(path);
+    }
+
+    pub fn reflink(self: Context, source: []const u8, destination: []const u8, mode: ?u32) !void {
+        return self.fs.reflink(source, destination, mode);
     }
 
     pub fn openDir(self: Context, path: []const u8) !u64 {
@@ -614,6 +689,26 @@ pub const Context = struct {
 
     pub fn hasUtime(self: Context) bool {
         return self.fs.hasUtimePath() and self.stream.hasSetTimestamps();
+    }
+
+    pub fn hasStatfs(self: Context) bool {
+        return self.fs.hasStatfs();
+    }
+
+    pub fn hasReflink(self: Context) bool {
+        return self.fs.hasReflink();
+    }
+
+    pub fn hasSeekData(self: Context) bool {
+        return self.stream.hasSeekData();
+    }
+
+    pub fn hasSeekHole(self: Context) bool {
+        return self.stream.hasSeekHole();
+    }
+
+    pub fn hasFallocate(self: Context) bool {
+        return self.stream.hasFallocate();
     }
 
     pub fn hasIncrementalHash(self: Context) bool {
@@ -750,6 +845,9 @@ pub const FlatContext = struct {
     syncFileFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
     truncateFileFn: ?*const fn (context: *anyopaque, raw: u64, size: u64) anyerror!void = null,
     setTimestampsFileFn: ?*const fn (context: *anyopaque, raw: u64, atime: foundation.SetTime, mtime: foundation.SetTime) anyerror!void = null,
+    seekDataFileFn: ?*const fn (context: *anyopaque, raw: u64, offset: i64) anyerror!i64 = null,
+    seekHoleFileFn: ?*const fn (context: *anyopaque, raw: u64, offset: i64) anyerror!i64 = null,
+    allocateFileFn: ?*const fn (context: *anyopaque, raw: u64, offset: i64, size: u64) anyerror!void = null,
     createHashFn: ?*const fn (context: *anyopaque, algorithm: []const u8) anyerror!u64 = null,
     updateHashFn: ?*const fn (context: *anyopaque, raw: u64, bytes: []const u8) anyerror!void = null,
     digestHashFn: ?*const fn (context: *anyopaque, raw: u64, allocator: std.mem.Allocator) anyerror![]u8 = null,
@@ -764,6 +862,8 @@ pub const FlatContext = struct {
     rmdirFn: ?*const fn (context: *anyopaque, path: []const u8) anyerror!void = null,
     truncatePathFn: ?*const fn (context: *anyopaque, path: []const u8, size: u64) anyerror!void = null,
     utimePathFn: ?*const fn (context: *anyopaque, path: []const u8, atime: foundation.SetTime, mtime: foundation.SetTime) anyerror!void = null,
+    statfsFn: ?*const fn (context: *anyopaque, path: []const u8) anyerror!low_level_fs.FsInfo = null,
+    reflinkFn: ?*const fn (context: *anyopaque, source: []const u8, destination: []const u8, mode: ?u32) anyerror!void = null,
     openDirFn: ?*const fn (context: *anyopaque, path: []const u8) anyerror!u64 = null,
     nextDirFn: ?*const fn (context: *anyopaque, raw: u64, allocator: std.mem.Allocator) anyerror!?low_level_dir.Entry = null,
     closeDirFn: ?*const fn (context: *anyopaque, raw: u64) anyerror!void = null,
@@ -801,6 +901,9 @@ pub const FlatContext = struct {
                 .syncFileFn = self.syncFileFn,
                 .truncateFileFn = self.truncateFileFn,
                 .setTimestampsFileFn = self.setTimestampsFileFn,
+                .seekDataFileFn = self.seekDataFileFn,
+                .seekHoleFileFn = self.seekHoleFileFn,
+                .allocateFileFn = self.allocateFileFn,
             },
             .hash = .{
                 .context = self.context,
@@ -821,6 +924,8 @@ pub const FlatContext = struct {
                 .rmdirFn = self.rmdirFn,
                 .truncatePathFn = self.truncatePathFn,
                 .utimePathFn = self.utimePathFn,
+                .statfsFn = self.statfsFn,
+                .reflinkFn = self.reflinkFn,
             },
             .dir = .{
                 .context = self.context,
