@@ -276,7 +276,7 @@ fn fsInfoValue(runtime: *Runtime, info: low_level_fs.FsInfo) !Value {
     var roots = RootFrame{};
     runtime.pushRoots(&roots, @ptrCast(&result), 1);
     defer runtime.popRoots(&roots);
-    try setField(runtime, result, foundation.fs_info_keys.block_size, numberValue(@floatFromInt(info.block_size)));
+    try setField(runtime, result, foundation.fs_info_keys.block_size, try publicSizeValue(runtime, info.block_size));
     try setField(runtime, result, foundation.fs_info_keys.blocks, try publicSizeValue(runtime, info.blocks));
     try setField(runtime, result, foundation.fs_info_keys.free, try publicSizeValue(runtime, info.free));
     try setField(runtime, result, foundation.fs_info_keys.available, try publicSizeValue(runtime, info.available));

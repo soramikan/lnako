@@ -243,7 +243,7 @@ fn fsInfoValue(runtime: *Runtime, info: low_level_fs.FsInfo) !Value {
     var roots = runtime.rootFrame();
     defer roots.deinit();
     try roots.protect(&dictionary);
-    try node_shared.setDictionary(runtime, dictionary.dictionary, foundation.fs_info_keys.block_size, .{ .number = @floatFromInt(info.block_size) });
+    try node_shared.setDictionary(runtime, dictionary.dictionary, foundation.fs_info_keys.block_size, try publicSizeValue(runtime, info.block_size));
     try node_shared.setDictionary(runtime, dictionary.dictionary, foundation.fs_info_keys.blocks, try publicSizeValue(runtime, info.blocks));
     try node_shared.setDictionary(runtime, dictionary.dictionary, foundation.fs_info_keys.free, try publicSizeValue(runtime, info.free));
     try node_shared.setDictionary(runtime, dictionary.dictionary, foundation.fs_info_keys.available, try publicSizeValue(runtime, info.available));

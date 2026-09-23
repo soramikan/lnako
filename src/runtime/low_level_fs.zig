@@ -332,7 +332,7 @@ fn linuxFsTypeName(magic: i64) []const u8 {
         0x4D44 => "vfat",
         0x858458F6 => "ramfs",
         0x73717368 => "squashfs",
-        0xFF534D42 => "smb3",
+        0xFF534D42 => "cifs",
         0x517B => "smb",
         0x63677270 => "cgroup2",
         0x0027E0EB => "cgroup",
@@ -418,6 +418,7 @@ pub const SeekExtent = enum {
 /// data検索で `offset` がファイル末尾以降の場合はPOSIXのENXIO相当として
 /// `error.InvalidOffset`（EINVAL）。
 pub fn seekExtent(io: std.Io, file: std.Io.File, offset: i64, extent: SeekExtent) anyerror!i64 {
+    if (offset < 0) return error.InvalidOffset;
     return switch (builtin.os.tag) {
         .linux => seekExtentLinux(file, offset, extent),
         .windows, .wasi => error.OperationUnsupported,
@@ -430,7 +431,6 @@ const linux_seek_data: usize = 3;
 const linux_seek_hole: usize = 4;
 
 fn seekExtentLinux(file: std.Io.File, offset: i64, extent: SeekExtent) anyerror!i64 {
-    if (offset < 0) return error.InvalidOffset;
     const whence: usize = switch (extent) {
         .data => linux_seek_data,
         .hole => linux_seek_hole,
@@ -445,7 +445,6 @@ fn seekExtentLinux(file: std.Io.File, offset: i64, extent: SeekExtent) anyerror!
 }
 
 fn seekExtentEmulated(io: std.Io, file: std.Io.File, offset: i64, extent: SeekExtent) anyerror!i64 {
-    if (offset < 0) return error.InvalidOffset;
     const end = file.length(io) catch |failure| switch (failure) {
         error.AccessDenied => return error.OperationUnsupported,
         else => return failure,
@@ -469,10 +468,13 @@ fn seekExtentEmulated(io: std.Io, file: std.Io.File, offset: i64, extent: SeekEx
 /// ない）。FSを跨ぐ場合は `error.CrossDevice`（EXDEV）。
 pub fn reflink(io: std.Io, source: []const u8, destination: []const u8, mode: ?u32) anyerror!void {
     // 「MODE省略時はSRCの権限」をLinux FICLONE（DSTは生成時modeのまま）でも
-    // 満たすため先にstatを取る。ディレクトリはファイルクローン契約外のため
-    // ENOTSUPとする（FICLONEはEISDIR/EINVALを返し、clonefileはdirも複製する）。
+    // 満たすため先にstatを取る。
     const metadata = try stat(io, source, true);
-    if (metadata.kind == .directory) return error.OperationUnsupported;
+    // 通常ファイル以外（ディレクトリ・fifo・socket・device等）はファイル
+    // クローン契約外のためENOTSUPとする。FICLONEはEISDIR/EINVALを返し、
+    // clonefileはdirも複製する上、fifoのopenat(O_RDONLY)はwriter待ちで
+    // 無限ブロックし得るため、開く前に種別で拒否する。
+    if (metadata.kind != .file) return error.OperationUnsupported;
     return switch (builtin.os.tag) {
         .linux => cloneFileLinux(source, destination, mode orelse metadata.mode),
         .macos => cloneFileDarwin(source, destination, mode),
@@ -525,16 +527,18 @@ fn cloneFileDarwin(source: []const u8, destination: []const u8, mode: ?u32) anye
     }.clonefile;
     const source_path = try std.posix.toPosixPath(source);
     const destination_path = try std.posix.toPosixPath(destination);
-    var keep = false;
-    // 複製・権限適用の途中失敗では半端なDSTを残さない（Linux側と同じ）。
-    defer if (!keep) unlinkPosixPath(destination) catch {};
     while (true) {
         const result = c_clonefile(&source_path, &destination_path, 0);
         if (result == 0) break;
         const errno = std.c.errno(result);
         if (errno == .INTR) continue;
+        // clonefile自体の失敗（既存DSTのEEXIST等）ではDSTに触れない。
         return fsPosixErrno(errno);
     }
+    // ここから先はclonefileが作ったDSTへの操作。権限適用の途中失敗では
+    // 半端なDSTを残さない（Linux側と同じ）。
+    var keep = false;
+    defer if (!keep) unlinkPosixPath(destination) catch {};
     // 明示MODEのみ適用する。省略時はclonefileがSRCの権限をそのまま複製する。
     if (mode) |value| {
         const apply = std.math.cast(std.c.mode_t, value) orelse return error.InvalidArgument;
@@ -1157,6 +1161,11 @@ fn tmpPath(temporary: *std.testing.TmpDir, name: []const u8) ![]u8 {
     return std.fs.path.join(std.testing.allocator, &.{ directory, name });
 }
 
+// Zig 0.16 std.cに宣言が無いためテスト用にここで宣言する。
+const test_mkfifo = struct {
+    extern "c" fn mkfifo(path: [*:0]const u8, mode: std.c.mode_t) c_int;
+}.mkfifo;
+
 /// テスト用にread-only属性/権限を切り替える。POSIXはwrite bit、Windowsは
 /// `FILE_ATTRIBUTE_READONLY` を操作する。Windowsは現在の属性をqueryするため
 /// `FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES` で開く。
@@ -1615,8 +1624,11 @@ test "reflinkはCoW複製を作り、既存DST・不在SRC・ディレクトリ�
     defer std.testing.allocator.free(data);
     try std.testing.expectEqualStrings("clone me", data);
 
-    // 既存DSTはEEXIST。
+    // 既存DSTはEEXIST。失敗しても既存DSTの内容は破壊されない。
     try std.testing.expectError(error.PathAlreadyExists, reflink(std.testing.io, source, destination, null));
+    const surviving = try temporary.dir.readFileAlloc(std.testing.io, "dst.txt", std.testing.allocator, .limited(64));
+    defer std.testing.allocator.free(surviving);
+    try std.testing.expectEqualStrings("clone me", surviving);
     // 不在SRCはENOENT。
     const missing = try tmpPath(&temporary, "missing.txt");
     defer std.testing.allocator.free(missing);
@@ -1629,6 +1641,15 @@ test "reflinkはCoW複製を作り、既存DST・不在SRC・ディレクトリ�
     const dir_dst = try tmpPath(&temporary, "dir-clone");
     defer std.testing.allocator.free(dir_dst);
     try std.testing.expectError(error.OperationUnsupported, reflink(std.testing.io, dir_path, dir_dst, null));
+    // fifo等の通常ファイル以外もENOTSUP。Linuxのopenat(O_RDONLY)はfifoで
+    // writer待ちに無限ブロックするため、種別で事前拒否する必要がある。
+    const fifo_path = try tmpPath(&temporary, "pipe.fifo");
+    defer std.testing.allocator.free(fifo_path);
+    const posix_fifo = try std.posix.toPosixPath(fifo_path);
+    try std.testing.expectEqual(@as(c_int, 0), test_mkfifo(&posix_fifo, 0o600));
+    const fifo_dst = try tmpPath(&temporary, "fifo-clone");
+    defer std.testing.allocator.free(fifo_dst);
+    try std.testing.expectError(error.OperationUnsupported, reflink(std.testing.io, fifo_path, fifo_dst, null));
 
     // 明示MODEはSRCの権限を上書きする。
     const third = try tmpPath(&temporary, "third.txt");
