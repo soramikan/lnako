@@ -980,6 +980,22 @@
     "source": "「未捕捉」のエラー発生\n"
   },
   {
+    "id": "native-exception-monitor-break-unwinds-handler",
+    "source": "エラー監視\n3回\nエラー監視\n「到達した」を表示\n抜ける\nエラーならば\n「捕捉:{エラーメッセージ}」を表示\nここまで\nここまで\n「後続」を表示\n「最後」のエラー発生\nエラーならば\n「外捕捉:{エラーメッセージ}」を表示\nここまで\n"
+  },
+  {
+    "id": "native-exception-monitor-continue-unwinds-handler",
+    "source": "エラー監視\n3回\nエラー監視\nもし、回数=2ならば\n続ける\nここまで\n回数を表示\nエラーならば\n「捕捉:{回数}」を表示\nここまで\nここまで\n「後続」を表示\n「最後」のエラー発生\nエラーならば\n「外捕捉:{エラーメッセージ}」を表示\nここまで\n"
+  },
+  {
+    "id": "native-exception-monitor-return-unwinds-handler",
+    "source": "●Fとは\nエラー監視\n「F内」で戻る\nエラーならば\n「F捕捉」を表示\nここまで\nここまで\nF()を表示\nエラー監視\n「最後」のエラー発生\nエラーならば\n「外捕捉:{エラーメッセージ}」を表示\nここまで\n"
+  },
+  {
+    "id": "native-exception-monitor-nested-break-unwinds-handlers",
+    "source": "エラー監視\n3回\nエラー監視\nエラー監視\n「到達した」を表示\n抜ける\nエラーならば\n「内捕捉:{エラーメッセージ}」を表示\nここまで\nエラーならば\n「中捕捉」を表示\nここまで\nここまで\n「後続」を表示\n「最後」のエラー発生\nエラーならば\n「外捕捉:{エラーメッセージ}」を表示\nここまで\n"
+  },
+  {
     "id": "native-system-error-raise",
     "dispatchExpectations": [
       {
