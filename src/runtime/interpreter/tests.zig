@@ -793,6 +793,35 @@ test "例外監視と動的ななでしこ実行を処理する" {
     try std.testing.expectEqualStrings("失敗\n3\n", host.written());
 }
 
+test "動的実行の失敗後も登録済みIRの所有権を保持する" {
+    const FailingHost = struct {
+        fn write(_: *anyopaque, _: []const u8) anyerror!void {
+            return error.TestHostFailure;
+        }
+    };
+
+    var fixture = try compileForTest(std.testing.allocator, "0を表示\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host_context: u8 = 0;
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, .{
+        .context = &host_context,
+        .writeFn = FailingHost.write,
+    });
+    defer interpreter.deinit();
+    try interpreter.initializeSystem();
+
+    const dynamic_source = try runtime.stringUtf8("1を表示");
+    try std.testing.expectError(error.TestHostFailure, interpreter.executeDynamicValue(dynamic_source));
+    try std.testing.expectEqual(@as(usize, 1), interpreter.dynamic_programs.items.len);
+    try std.testing.expect(interpreter.active_program_owner == null);
+    try std.testing.expect(interpreter.executionProgram() == &interpreter.program);
+}
+
 test "global read traceはbuiltin dispatch traceと分離される" {
     const source = "PIを表示\n永遠を表示\n";
     var fixture = try compileForTest(std.testing.allocator, source);
