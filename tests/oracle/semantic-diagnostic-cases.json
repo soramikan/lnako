@@ -223,5 +223,55 @@
     "id": "semantic-diagnostic-unresolved-sore",
     "source": "●Fとは\n9で戻る\nここまで\nそれをF\n",
     "code": "unresolved_word"
+  },
+  {
+    "id": "semantic-diagnostic-unresolved-call-value-josi",
+    "source": "●Gとは\n「x」で戻る\nここまで\n●Fとは\nそれは{関数}G\nここまで\nA=[9]\nF()()が[A]を表示\n",
+    "code": "unresolved_word"
+  },
+  {
+    "id": "semantic-diagnostic-unresolved-ref-array",
+    "source": "A=[1]\nA[0]が[1]を表示\n",
+    "code": "unresolved_word"
+  },
+  {
+    "id": "semantic-diagnostic-unresolved-ref-prop",
+    "source": "A={x:1}\nA.xが[1]を表示\n",
+    "code": "unresolved_word"
+  },
+  {
+    "id": "semantic-diagnostic-unresolved-json-array",
+    "source": "[1,2]が[1]を表示\n",
+    "code": "unresolved_word"
+  },
+  {
+    "id": "semantic-diagnostic-unresolved-json-obj",
+    "source": "{x:1}が[1]を表示\n",
+    "code": "unresolved_word"
+  },
+  {
+    "id": "semantic-diagnostic-unresolved-grouped-ref-array",
+    "source": "A=[1]\n(A)[0]が[1]を表示\n",
+    "code": "unresolved_word"
+  },
+  {
+    "id": "semantic-diagnostic-unresolved-grouped-ref-prop",
+    "source": "A={x:1}\n(A).xが[1]を表示\n",
+    "code": "unresolved_word"
+  },
+  {
+    "id": "semantic-diagnostic-unresolved-ref-array-prop",
+    "source": "A=[1]\nA[0].xが[1]を表示\n",
+    "code": "unresolved_word"
+  },
+  {
+    "id": "semantic-diagnostic-unresolved-value-index",
+    "source": "[1,2][0]が[1]を表示\n",
+    "code": "unresolved_word"
+  },
+  {
+    "id": "semantic-diagnostic-unresolved-value-prop",
+    "source": "[{x:1}].xが[1]を表示\n",
+    "code": "unresolved_word"
   }
 ]
