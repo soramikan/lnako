@@ -795,6 +795,35 @@ test "例外監視と動的ななでしこ実行を処理する" {
     try std.testing.expectEqualStrings("失敗\n3\n", host.written());
 }
 
+test "動的実行の失敗後も登録済みIRの所有権を保持する" {
+    const FailingHost = struct {
+        fn write(_: *anyopaque, _: []const u8) anyerror!void {
+            return error.TestHostFailure;
+        }
+    };
+
+    var fixture = try compileForTest(std.testing.allocator, "0を表示\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host_context: u8 = 0;
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, .{
+        .context = &host_context,
+        .writeFn = FailingHost.write,
+    });
+    defer interpreter.deinit();
+    try interpreter.initializeSystem();
+
+    const dynamic_source = try runtime.stringUtf8("1を表示");
+    try std.testing.expectError(error.TestHostFailure, interpreter.executeDynamicValue(dynamic_source));
+    try std.testing.expectEqual(@as(usize, 1), interpreter.dynamic_programs.items.len);
+    try std.testing.expect(interpreter.active_program_owner == null);
+    try std.testing.expect(interpreter.executionProgram() == &interpreter.program);
+}
+
 test "global read traceはbuiltin dispatch traceと分離される" {
     const source = "PIを表示\n永遠を表示\n";
     var fixture = try compileForTest(std.testing.allocator, source);
@@ -1248,6 +1277,32 @@ test "変数省略の範囲繰り返しは専用のそれへ束縛する" {
     try std.testing.expectEqualStrings("3\n1\n2\n2\n", host.written());
 }
 
+test "関数スコープのそれ復元は既存グローバル更新だけで完了する" {
+    var fixture = try compileForTest(std.testing.allocator, "1を表示\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+
+    try interpreter.setGlobal("それ", .{ .number = 7 });
+    const saved_allocator = interpreter.allocator;
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    interpreter.allocator = failing.allocator();
+    defer interpreter.allocator = saved_allocator;
+
+    // executeFunctionの入口で「それ」をundefinedにしてもMapの既存エントリは保たれ、
+    // deferの復元は新しい確保なしに値を書き換えられる。
+    try interpreter.setGlobal("それ", .undefined);
+    try interpreter.setGlobal("それ", .{ .number = 7 });
+    try std.testing.expectEqual(@as(f64, 7), interpreter.getGlobal("それ").?.number);
+}
+
 test "関数からの例外伝播で呼び出し側のそれを復元する" {
     const source = "それは7\n●Fとは\nそれは1\n「失敗」のエラー発生\nここまで\nエラー監視\nF()\nエラーならば\nそれを表示\nここまで\n";
     var fixture = try compileForTest(std.testing.allocator, source);
@@ -1321,6 +1376,133 @@ test "Promiseの成功・失敗・処理・終了コールバックを順に実�
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("9\nfalse\n5\n完了\n", host.written());
+}
+
+test "束の割り当て失敗はstateを放棄しハンドラ不変条件を保つ" {
+    var fixture = try compileForTest(std.testing.allocator, "1を表示\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    // run()相当のroot providerを登録し、追跡中stateの中身をGCから守る。
+    try runtime.registerRootProvider(.{ .context = &interpreter, .traceFn = istate.traceRoots });
+    defer runtime.unregisterRootProvider(&interpreter);
+
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var settled = try runtime.createPromise();
+    try roots.protect(&settled);
+    try runtime.resolvePromise(settled.promise, .{ .number = 3 });
+    var pending = try runtime.createPromise();
+    try roots.protect(&pending);
+
+    const saved_allocator = interpreter.allocator;
+    var injected_failures: usize = 0;
+    var fail_index: usize = 0;
+    while (fail_index < 64) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        interpreter.allocator = failing.allocator();
+        const bundled = interpreter.bundlePromises(&.{ settled, pending, settled });
+        interpreter.allocator = saved_allocator;
+        if (bundled) |_| {} else |_| injected_failures += 1;
+        // map上のハンドラは必ず追跡中のstateを指す（放棄stateも追跡は外れない）。
+        var iterator = interpreter.promise_all_handlers.iterator();
+        while (iterator.next()) |entry| {
+            var tracked = false;
+            for (interpreter.promise_all_states.items) |state| {
+                if (state == entry.value_ptr.state) tracked = true;
+            }
+            try std.testing.expect(tracked);
+        }
+        // 放棄・完了どちら向きのハンドラ発火もpanicしない。
+        try interpreter.drainPromiseTasks();
+    }
+    try std.testing.expect(injected_failures > 0);
+    // pending側に残ったハンドラ（放棄分を含む）を一括発火させる。
+    try runtime.resolvePromise(pending.promise, .{ .number = 1 });
+    try interpreter.drainPromiseTasks();
+}
+
+test "destroyPromiseAllStateは追跡外のstateを無害に無視する" {
+    var fixture = try compileForTest(std.testing.allocator, "1を表示\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    try runtime.registerRootProvider(.{ .context = &interpreter, .traceFn = istate.traceRoots });
+    defer runtime.unregisterRootProvider(&interpreter);
+
+    var orphan: shared.PromiseAllState = undefined;
+    interpreter.destroyPromiseAllState(&orphan);
+    try std.testing.expectEqual(@as(usize, 0), interpreter.promise_all_states.items.len);
+}
+
+test "放棄・完了済みstateへの束ハンドラ発火は副作用を持たない" {
+    var fixture = try compileForTest(std.testing.allocator, "1を表示\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    try runtime.registerRootProvider(.{ .context = &interpreter, .traceFn = istate.traceRoots });
+    defer runtime.unregisterRootProvider(&interpreter);
+
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var promise = try runtime.createPromise();
+    try roots.protect(&promise);
+    var results = try runtime.createArray();
+    try roots.protect(&results);
+    var fulfilled_name = try runtime.stringUtf8("Promise.all fulfilled");
+    try roots.protect(&fulfilled_name);
+    var fulfilled = try runtime.createNativeFunction(fulfilled_name.string, 1, shared.promiseAllSentinel, &.{});
+    try roots.protect(&fulfilled);
+    var rejected_name = try runtime.stringUtf8("Promise.all rejected");
+    try roots.protect(&rejected_name);
+    var rejected = try runtime.createNativeFunction(rejected_name.string, 1, shared.promiseAllSentinel, &.{});
+    try roots.protect(&rejected);
+
+    const state = try std.testing.allocator.create(shared.PromiseAllState);
+    state.* = .{ .promise = promise.promise, .results = results.array, .remaining = 1, .abandoned = true };
+    try interpreter.promise_all_states.append(std.testing.allocator, state);
+    try interpreter.promise_all_handlers.put(std.testing.allocator, fulfilled.function, .{ .state = state, .index = 0, .rejected = false, .peer = rejected.function });
+    try interpreter.promise_all_handlers.put(std.testing.allocator, rejected.function, .{ .state = state, .index = 0, .rejected = true, .peer = fulfilled.function });
+
+    const handler = interpreter.promise_all_handlers.get(fulfilled.function).?;
+    const result = try interpreter.handlePromiseAll(fulfilled.function, handler, &.{.{ .number = 9 }});
+    try std.testing.expect(result == .undefined);
+    try std.testing.expectEqual(@as(usize, 1), state.remaining);
+    try std.testing.expectEqual(@as(usize, 0), results.array.items.items.len);
+    try std.testing.expect(promise.promise.state == .pending);
+    try std.testing.expect(interpreter.promise_all_handlers.get(fulfilled.function) == null);
+    try std.testing.expect(interpreter.promise_all_handlers.get(rejected.function) == null);
+
+    state.abandoned = false;
+    state.remaining = 0;
+    try interpreter.promise_all_handlers.put(std.testing.allocator, fulfilled.function, .{ .state = state, .index = 0, .rejected = false, .peer = rejected.function });
+    const done_handler = interpreter.promise_all_handlers.get(fulfilled.function).?;
+    const done_result = try interpreter.handlePromiseAll(fulfilled.function, done_handler, &.{.{ .number = 9 }});
+    try std.testing.expect(done_result == .undefined);
+    try std.testing.expectEqual(@as(usize, 0), results.array.items.items.len);
+    try std.testing.expect(promise.promise.state == .pending);
+    try std.testing.expectEqual(@as(usize, 1), interpreter.promise_all_states.items.len);
 }
 
 test "GCストレス中もタイマーからPromiseを解決する" {
@@ -1932,6 +2114,136 @@ test "回数繰り返しはそれを回数へ束縛し退避値を復元する" 
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("1\n2\n3\n1\n2\n後:\n回数:\n", host.written());
+}
+
+test "N回繰り返しは非数値オペランドを公式の抽象関係比較で数値化する" {
+    // Issue #165: 公式convRepeatTimesはfor (i = 1; i <= count; i++)でcountを
+    // 抽象関係比較するため、"3"→3・[1,2]→NaN→0回・真→1・[3]→"3"→3・
+    // BigInt→数学値の回数で実行し、コレクション反復へはディスパッチしない。
+    const source =
+        "「3」回\n回数を表示\nここまで\n" ++
+        "[1,2]回\n回数を表示\nここまで\n" ++
+        "「A」を表示\n" ++
+        "(真)回繰り返す\n回数を表示\nここまで\n" ++
+        "(偽)回\n回数を表示\nここまで\n" ++
+        "「あいう」回\n回数を表示\nここまで\n" ++
+        "[3]回\n回数を表示\nここまで\n" ++
+        "1n回\n回数を表示\nここまで\n" ++
+        "それ=9\n回数=7\n「2」回\nここまで\n「後:{それ}」を表示\n「回数:{回数}」を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("1\n2\n3\nA\n1\n1\n2\n3\n1\n後:7\n回数:7\n", host.written());
+}
+
+test "N回繰り返しはオペランドを反復ごとに抽象関係比較する" {
+    // Issue #165: 公式convRepeatTimesはlet varCount = <式>; for (i = 1; i <= varCount; i++)
+    // でガード評価ごとにcountをToPrimitiveする。カスタムvalueOfは反復+1回呼ばれ、
+    // BigInt返却や反復中に返り値が変わる動的境界も公式どおりとなる。
+    const source =
+        "D={}\n" ++
+        "D[\"valueOf\"]=関数()「call」と表示;それは2;ここまで\n" ++
+        "D回\n回数を表示\nここまで\n" ++
+        "E={}\n" ++
+        "E[\"valueOf\"]=関数()それは2n;ここまで\n" ++
+        "E回\n「E{回数}」を表示\nここまで\n" ++
+        "F={}\nF[\"n\"]=3\n" ++
+        "F[\"valueOf\"]=関数()F[\"n\"]=F[\"n\"]-2;それはF[\"n\"]+1;ここまで\n" ++
+        "F回\n「F{回数}」を表示\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("call\n1\ncall\n2\ncall\nE1\nE2\nF1\n", host.written());
+}
+
+test "N回繰り返しのガードは非callable変換メソッドを飛ばし例外を監視へ配送する" {
+    // Issue #165: ECMAScriptのGetMethod相当で非callableのvalueOf/toStringは
+    // メソッド不在として次候補へ進む（{"valueOf":1}→既定toString→NaN→0回）。
+    // ガードのcoercionが投げた例外は通常のループ脱出ではなく最内の
+    // エラー監視ハンドラへ配送され、コールバック由来の元例外が保持される。
+    const source =
+        "D={}\n" ++
+        "D[\"valueOf\"]=1\n" ++
+        "D回\n「D{回数}」を表示\nここまで\n" ++
+        "「done」と表示\n" ++
+        "エラー監視\n" ++
+        "E={}\n" ++
+        "E[\"valueOf\"]=関数()\n『valueOf error』でエラー発生\nここまで\n" ++
+        "E回\nここまで\n" ++
+        "エラーならば\n「捕捉:{エラーメッセージ}」を表示\nここまで\n" ++
+        "エラー監視\n" ++
+        "K={}\nK[\"n\"]=0\n" ++
+        "K[\"valueOf\"]=関数()\nK[\"n\"]=K[\"n\"]+1\nもしK[\"n\"]>2ならば\n『late error』でエラー発生\nここまで\nそれは5\nここまで\n" ++
+        "K回\n「K{回数}」を表示\nここまで\n" ++
+        "エラーならば\n「捕捉2:{エラーメッセージ}」を表示\nここまで\n" ++
+        "H={}\n" ++
+        "H[\"valueOf\"]=1\n" ++
+        "H[\"toString\"]=関数()それは「4」;ここまで\n" ++
+        "H回\n「H{回数}」を表示\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("done\n捕捉:valueOf error\nK1\nK2\n捕捉2:late error\nH1\nH2\nH3\nH4\n", host.written());
+}
+
+test "範囲繰り返しは終端を反復ごとに抽象関係比較する" {
+    // Issue #175: 公式convForはconst varTo = <終端式>; for (i = varFrom; i <= varTo; i += inc)
+    // でガード評価ごとに終端をToPrimitiveする。カスタムvalueOfは方向判定を含め
+    // 反復+2回呼ばれ、BigInt終端や非数値終端の0回反復も公式どおりとなる。
+    // ガードのcoercionが投げた例外は最内のエラー監視ハンドラへ配送される。
+    const source =
+        "D={}\n" ++
+        "D[\"valueOf\"]=関数()「call」と表示;それは2;ここまで\n" ++
+        "1からDまで繰り返す\n「{それ}」を表示\nここまで\n" ++
+        "1から「あ」まで繰り返す\n「x」を表示\nここまで\n" ++
+        "「d1」を表示\n" ++
+        "「あ」から3まで繰り返す\n「x」を表示\nここまで\n" ++
+        "「d2」を表示\n" ++
+        "1から3nまで繰り返す\n「{それ}」を表示\nここまで\n" ++
+        "E={}\n" ++
+        "E[\"valueOf\"]=関数()『range error』でエラー発生;ここまで\n" ++
+        "エラー監視\n1からEまで繰り返す\nここまで\nエラーならば\n「捕捉:{エラーメッセージ}」を表示\nここまで\n" ++
+        "エラー監視\n1から3まで0ずつ増やして繰り返す\nここまで\nエラーならば\n「捕捉2:{エラーメッセージ}」を表示\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("call\ncall\n1\ncall\n2\ncall\nd1\nd2\n1\n2\n3\n捕捉:range error\n捕捉2:InvalidIteratorStep\n", host.written());
 }
 
 test "連文の各文は直前結果を『それ』へ伝播し先行文の出力を欠落させない" {

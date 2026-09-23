@@ -104,7 +104,7 @@ pub fn runTests(self: *Interpreter) ![]const TestResult {
     try self.runtime.registerRootProvider(.{ .context = self, .traceFn = traceRoots });
     defer self.runtime.unregisterRootProvider(self);
     try self.initializeSystem();
-    for (self.program.functions) |*function| {
+    for (self.executionProgram().functions) |*function| {
         if (!function.is_test) continue;
         // A test is an independent execution boundary.  A previous test (or
         // an event callback drained by it) may have left a pending exception
@@ -170,8 +170,10 @@ pub fn objectToPrimitive(self: *Interpreter, value: Value, hint: value_mod.Primi
     for ([_][]const u16{ first, second }) |name| {
         if (objectPrimitiveMethod(rooted_value, name)) |method| {
             custom_method_seen = true;
-            if (method == .undefined or method == .null_value) continue;
-            if (method != .function) return error.NotCallable;
+            // ECMAScriptのGetMethod相当: 呼び出し不可の値（undefined/null
+            // 以外の非関数を含む）はメソッド不在として次の候補へ進む。
+            // {"valueOf":1}は既定toStringへ委譲され「[object Object]」となる。
+            if (method != .function) continue;
             var rooted_method = method;
             try roots.protect(&rooted_method);
             var result = try self.callFunctionValue(rooted_method.function, &.{});
@@ -194,8 +196,9 @@ pub fn objectToPrimitive(self: *Interpreter, value: Value, hint: value_mod.Primi
 pub fn runEntries(self: *Interpreter) !Value {
     // 取り込み先のトップレベルは取り込み文位置での呼び出しとしてIRへ
     // 埋め込まれているため、起動時に実行するのはルートのエントリのみ。
-    if (self.program.module_entries.len == 0) return .undefined;
-    return self.executeFunction(&self.program.functions[self.program.module_entries[0]], &.{}, null, self.currentProgramOwner());
+    const program = self.executionProgram();
+    if (program.module_entries.len == 0) return .undefined;
+    return self.executeFunction(&program.functions[program.module_entries[0]], &.{}, null, self.currentProgramOwner());
 }
 
 pub fn executeFunction(self: *Interpreter, function: *const ir.Function, arguments: []const Value, closure: ?*value_mod.Function, owner_program: *const ir.Program) anyerror!Value {
@@ -253,7 +256,11 @@ pub fn executeFunction(self: *Interpreter, function: *const ir.Function, argumen
         frame.sore_backup = self.getGlobal("それ") orelse .undefined;
         try self.setGlobal("それ", .undefined);
     }
-    defer if (frame.sore_backup) |backup| self.setGlobal("それ", backup) catch {};
+    defer if (frame.sore_backup) |backup| {
+        // 入口のsetGlobal成功後は「それ」のMapエントリが存在し、復元は既存値の
+        // 上書きだけで確保しない。この不変条件が崩れた場合は黙殺せず検出する。
+        self.setGlobal("それ", backup) catch unreachable;
+    };
 
     var current_block = function.entry;
     var predecessor: ?ir.BlockId = null;
@@ -889,7 +896,7 @@ pub fn callFunctionValue(self: *Interpreter, function: *value_mod.Function, argu
 }
 
 pub fn callIrFunctionValue(self: *Interpreter, function_id: ir.FunctionId, function: *value_mod.Function, arguments: []const Value) !Value {
-    const owner_program: *const ir.Program = if (function.ir_program) |pointer| @ptrCast(@alignCast(pointer)) else &self.program;
+    const owner_program: *const ir.Program = if (function.ir_program) |pointer| @ptrCast(@alignCast(pointer)) else self.executionProgram();
     if (function_id >= owner_program.functions.len) return error.InvalidIrFunction;
     const target = &owner_program.functions[function_id];
     // 実引数列はそのままexecuteFunctionへ渡す。仮引数個数へのパディングは
@@ -1357,19 +1364,14 @@ pub fn executeDynamicValue(self: *Interpreter, source_value: Value) !Value {
     if (!report.succeeded()) return error.DynamicIrFailed;
     const owned_program = try self.allocator.create(ir.Program);
     owned_program.* = dynamic_program;
-    errdefer {
+    self.dynamic_programs.append(self.allocator, owned_program) catch |err| {
         owned_program.deinit();
         self.allocator.destroy(owned_program);
-    }
-    try self.dynamic_programs.append(self.allocator, owned_program);
-    const saved_program = self.program;
+        return err;
+    };
     const saved_program_owner = self.active_program_owner;
-    self.program = owned_program.*;
     self.active_program_owner = owned_program;
-    defer {
-        self.program = saved_program;
-        self.active_program_owner = saved_program_owner;
-    }
+    defer self.active_program_owner = saved_program_owner;
     var capture: std.ArrayList(u8) = .empty;
     defer capture.deinit(self.allocator);
     try self.output_captures.append(self.allocator, &capture);

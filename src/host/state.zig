@@ -610,6 +610,11 @@ pub const CliHost = struct {
         return lnako.runtime.low_level_posix.umask(mode);
     }
 
+    // Issue #38: 非Cロケールの照合をOS実装へ委譲（C判定はlow_level_locale側）。
+    fn lowLevelCollate(_: *anyopaque, allocator: std.mem.Allocator, locale: []const u8, a: []const u8, b: []const u8) anyerror!i8 {
+        return lnako.runtime.low_level_locale.collate(allocator, locale, a, b);
+    }
+
     fn lowLevelContext(self: *CliHost) lnako.runtime.low_level_context.Context {
         return .{
             .stream = .{
@@ -683,6 +688,10 @@ pub const CliHost = struct {
                 .prioritySetFn = lowLevelPrioritySet,
                 .isattyFn = lowLevelIsatty,
                 .ttySizeFn = lowLevelTtySize,
+            },
+            .locale = .{
+                .context = self,
+                .collateFn = lowLevelCollate,
             },
         };
     }

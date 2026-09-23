@@ -9,6 +9,7 @@ const fs = @import("low_level/fs.zig");
 const process = @import("low_level/process.zig");
 const dir = @import("low_level/dir.zig");
 const posix = @import("low_level/posix.zig");
+const locale = @import("low_level/locale.zig");
 const foundation = @import("../low_level_foundation.zig");
 const low_level_context = @import("../low_level/context.zig");
 
@@ -93,6 +94,10 @@ pub fn pluginContext(runtime: *Runtime) low_level_context.Context {
             .prioritySetFn = process.pluginPrioritySet,
             .isattyFn = process.pluginIsatty,
             .ttySizeFn = process.pluginTtySize,
+        },
+        .locale = .{
+            .context = runtime,
+            .collateFn = locale.pluginCollate,
         },
     };
 }
@@ -216,6 +221,24 @@ pub fn lowLevelPosixBuiltin(runtime: *Runtime, command: aot_builtin.Command, arg
     };
 }
 
+/// Issue #38のロケール比較・端末表示幅命令。arity検査は
+/// `lowLevelFileBuiltin` と同じ契約（実装済み命令の下限未満はEINVAL）で行う。
+pub fn lowLevelLocaleBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    if (aot_builtin.lowLevelCatalogCommand(command)) |spec| {
+        if (arguments.len > spec.max) {
+            return throwStructured(runtime, .EINVAL, spec.operation, null, null, "引数の数が不正です");
+        }
+        if (spec.implemented and arguments.len < spec.min) {
+            return throwStructured(runtime, .EINVAL, spec.operation, null, null, "引数の数が不正です");
+        }
+    }
+    return switch (command) {
+        .low_level_locale_compare => locale.localeCompareBuiltin(runtime, arguments),
+        .low_level_display_width => locale.displayWidthBuiltin(runtime, arguments),
+        else => lowLevelUnsupportedBuiltin(runtime, command, arguments),
+    };
+}
+
 pub fn lowLevelCapabilitySupportedBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     const spec = aot_builtin.lowLevelCatalogCommand(.low_level_capability_supported) orelse return error.UnknownCommand;
     // 実装済み命令の引数不足は引数数エラー（Interpreterのcallと同じ契約）。
@@ -300,4 +323,5 @@ test {
     _ = @import("low_level/process.zig");
     _ = @import("low_level/dir.zig");
     _ = @import("low_level/posix.zig");
+    _ = @import("low_level/locale.zig");
 }

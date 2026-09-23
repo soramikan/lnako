@@ -56,7 +56,7 @@ test "低レイヤー命令はplugin_lowlevelへdispatchする" {
 }
 
 test "カタログの低レイヤー命令はdispatch名と利用者向け表記の両方でlookupできる" {
-    try std.testing.expectEqual(@as(usize, 61), low_level_bindings.len);
+    try std.testing.expectEqual(@as(usize, 63), low_level_bindings.len);
     for (low_level_bindings) |binding| {
         try std.testing.expectEqual(binding.command, lookup(binding.name).?);
         const spec = low_level_foundation.catalogCommandFor(binding.name).?;

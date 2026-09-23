@@ -3223,5 +3223,41 @@
   {
     "id": "native-renbun-sore-propagation-issue114",
     "source": "A=それに5を足す。2を掛ける。それを表示\n1と2を足す。3を掛ける。それを表示\n前=1。中=前に1を足す。後=中に1を足す。「{前},{中},{後}」を表示\n●(誰に)挨拶とは\n　それは戻り値無し\nここまで\n「友人」に挨拶して表示\n●Fとは\n　入=1。出=入に1を足す。それは出\nここまで\nFを表示\n●Gとは\n　入=1。出=入に1を足す。戻る\nここまで\nGを表示\n"
+  },
+  {
+    "id": "native-switch-case-break",
+    "source": "A=1\nAで条件分岐\n1ならば\n抜ける。\n「あ」を表示。\nここまで\nここまで\n「い」を表示。\n"
+  },
+  {
+    "id": "native-switch-case-break-in-loop",
+    "source": "3回\nA=1\nAで条件分岐\n1ならば\n抜ける。\nここまで\nここまで\n「loop」を表示\nここまで\n「い」を表示。\n"
+  },
+  {
+    "id": "native-switch-case-continue-in-loop",
+    "source": "3回\nA=1\nAで条件分岐\n1ならば\n続ける。\nここまで\nここまで\n「loop」を表示\nここまで\n「い」を表示。\n"
+  },
+  {
+    "id": "native-switch-default-break-in-loop",
+    "source": "3回\nA=2\nAで条件分岐\n1ならば\n「x」を表示\nここまで\n違えば\n抜ける。\n「で」を表示\nここまで\nここまで\n「loop」を表示\nここまで\n「い」を表示。\n"
+  },
+  {
+    "id": "native-loop-in-switch-break",
+    "source": "A=1\nAで条件分岐\n1ならば\n3回\n抜ける。\n「in」を表示\nここまで\n「after」を表示\nここまで\nここまで\n「い」を表示。\n"
+  },
+  {
+    "id": "native-repeat-times-non-number-count-issue165",
+    "source": "「3」回\n回数を表示\nここまで\n[1,2]回\n回数を表示\nここまで\n「A」を表示\n(真)回繰り返す\n回数を表示\nここまで\n(偽)回\n回数を表示\nここまで\n「あいう」回\n回数を表示\nここまで\n[3]回\n回数を表示\nここまで\n1n回\n回数を表示\nここまで\nそれ=9\n回数=7\n「2」回\nここまで\n「後:{それ}」を表示\n「回数:{回数}」を表示\n"
+  },
+  {
+    "id": "native-repeat-times-per-iteration-coercion-issue165",
+    "source": "D={}\nD[\"valueOf\"]=関数()「call」と表示;それは2;ここまで\nD回\n回数を表示\nここまで\nE={}\nE[\"valueOf\"]=関数()それは2n;ここまで\nE回\n「E{回数}」を表示\nここまで\nF={}\nF[\"n\"]=3\nF[\"valueOf\"]=関数()F[\"n\"]=F[\"n\"]-2;それはF[\"n\"]+1;ここまで\nF回\n「F{回数}」を表示\nここまで\n"
+  },
+  {
+    "id": "native-repeat-times-guard-exception-and-noncallable-issue165",
+    "source": "D={}\nD[\"valueOf\"]=1\nD回\n「D{回数}」を表示\nここまで\n「done」と表示\nエラー監視\nE={}\nE[\"valueOf\"]=関数()\n『valueOf error』でエラー発生\nここまで\nE回\nここまで\nエラーならば\n「捕捉:{エラーメッセージ}」を表示\nここまで\nエラー監視\nK={}\nK[\"n\"]=0\nK[\"valueOf\"]=関数()\nK[\"n\"]=K[\"n\"]+1\nもしK[\"n\"]>2ならば\n『late error』でエラー発生\nここまで\nそれは5\nここまで\nK回\n「K{回数}」を表示\nここまで\nエラーならば\n「捕捉2:{エラーメッセージ}」を表示\nここまで\nH={}\nH[\"valueOf\"]=1\nH[\"toString\"]=関数()それは「4」;ここまで\nH回\n「H{回数}」を表示\nここまで\n"
+  },
+  {
+    "id": "native-range-loop-per-iteration-coercion-issue175",
+    "source": "D={}\nD[\"valueOf\"]=関数()「call」と表示;それは2;ここまで\n1からDまで繰り返す\n「{それ}」を表示\nここまで\n1から「あ」まで繰り返す\n「x」を表示\nここまで\n「d1」を表示\n「あ」から3まで繰り返す\n「x」を表示\nここまで\n「d2」を表示\n1から3nまで繰り返す\n「{それ}」を表示\nここまで\n1から「3」まで繰り返す\n「{それ}」を表示\nここまで\nE={}\nE[\"valueOf\"]=関数()『range error』でエラー発生;ここまで\nエラー監視\n1からEまで繰り返す\nここまで\nエラーならば\n「捕捉:{エラーメッセージ}」を表示\nここまで\n"
   }
 ]

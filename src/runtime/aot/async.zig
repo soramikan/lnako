@@ -727,8 +727,18 @@ pub fn destroyAotPromiseAllState(runtime: *Runtime, state: *AotPromiseAllState) 
     }
 }
 
+fn promiseAllStateTracked(runtime: *Runtime, state: *AotPromiseAllState) bool {
+    for (runtime.promise_all_states.items) |candidate| {
+        if (candidate == state) return true;
+    }
+    return false;
+}
+
 pub fn handleAotPromiseAll(runtime: *Runtime, handler: AotPromiseAllHandler, settled: Value) !Value {
     const state = handler.state;
+    // 追跡外（破棄済み）・放棄済みのstateを指す残留ハンドラは無害化する。
+    // state自体は比較のみで、derefは追跡確認後に限る。
+    if (!promiseAllStateTracked(runtime, state) or state.abandoned) return .{};
     if (handler.rejected) {
         try rejectAotPromise(runtime, state.promise, settled);
     } else {
@@ -771,10 +781,19 @@ pub fn bundleAotPromises(runtime: *Runtime, arguments: []const Value, last_promi
     for (arguments) |_| try result_items.append(runtime.allocator, .{});
 
     const state = try runtime.allocator.create(AotPromiseAllState);
+    // エラー経路では登録済みハンドラやキュー済みタスクがstateを参照した
+    // まま残りうるため、追跡中のstateは解放せずabandonedを立てて残す。
+    var state_cleanup: enum { destroy, abandon, none } = .destroy;
+    errdefer switch (state_cleanup) {
+        .destroy => runtime.allocator.destroy(state),
+        .abandon => {
+            state.abandoned = true;
+        },
+        .none => {},
+    };
     state.* = .{ .promise = roots[promise_index].object().?, .results = roots[results_index] };
     try runtime.promise_all_states.append(runtime.allocator, state);
-    var state_active = true;
-    errdefer if (state_active) destroyAotPromiseAllState(runtime, state);
+    state_cleanup = .abandon;
 
     for (arguments, 0..) |argument, index| {
         if (aotPromiseObject(argument)) |source| {
@@ -787,7 +806,7 @@ pub fn bundleAotPromises(runtime: *Runtime, arguments: []const Value, last_promi
     if (state.remaining == 0) {
         try resolveAotPromise(runtime, state.promise, state.results);
         destroyAotPromiseAllState(runtime, state);
-        state_active = false;
+        state_cleanup = .none;
     }
     if (last_promise) |target| target.* = roots[promise_index];
     return roots[promise_index];

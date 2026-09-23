@@ -339,6 +339,8 @@ pub const Capability = enum {
     acl,
     xattr,
     selinux,
+    locale_collate,
+    display_width,
 
     pub fn id(self: Capability) []const u8 {
         return @tagName(self);
@@ -371,6 +373,8 @@ pub const Capability = enum {
             .signal,
             .tty_isatty,
             .hardlink,
+            .locale_collate,
+            .display_width,
             => .portable_core,
             .chmod,
             .chown,
@@ -422,6 +426,8 @@ pub fn capabilityImplemented(capability: Capability) bool {
         .signal,
         .tty_isatty,
         .priority,
+        .locale_collate,
+        .display_width,
         .statfs,
         .reflink,
         .seek_data,
@@ -459,6 +465,10 @@ pub fn capabilitySupportedOnCurrentOs(capability: Capability) bool {
     if (builtin.os.tag == .wasi) {
         return switch (capability) {
             .utime => false,
+            // WASIはロケールAPIを持たないため、非Cロケールの照合は提供
+            // しない。Cロケールのbytewise比較とdisplay_widthは純粋計算で
+            // 動作するため対象外。
+            .locale_collate => false,
             else => capabilitySupportedOnOs(capability, .windows),
         };
     }
@@ -712,6 +722,27 @@ pub const tty_size_keys = struct {
     pub const columns = "columns";
 };
 
+/// Issue #38のロケール比較・端末表示幅命令名。カタログ・Interpreter
+/// dispatch・AOT bindingが共通で参照する正本である。
+pub const locale_commands = struct {
+    pub const compare = "ロケール文字列比較";
+    pub const display_width = "文字表示幅取得";
+};
+
+/// Issue #38のロケール命令が失敗したときに返す構造化エラーの操作名
+/// （ASCII）。カタログ `operation` と揃える。
+pub const locale_operations = struct {
+    pub const collate = "collate";
+    pub const width = "width";
+};
+
+/// `ロケール文字列比較` のOPTIONS辞書キー。`locale`のみを解釈し、
+/// 未知キーは無視する（cnako側のIntl.Collatorオプション拡張と共存
+/// させるための契約）。
+pub const collate_option_keys = struct {
+    pub const locale = "locale";
+};
+
 /// `waitResult.signal` が正常終了時に取る値。
 pub const signal_on_normal_exit_is_null = true;
 
@@ -743,7 +774,7 @@ pub const CatalogCommand = struct {
     implemented: bool = false,
 };
 
-/// カタログ掲載61命令の実行時正本。`catalog.json` の `commands` と同じ順序で、
+/// カタログ掲載63命令の実行時正本。`catalog.json` の `commands` と同じ順序で、
 /// `src/runtime/low_level_catalog.zig` のテストが id/name/arity/operation/
 /// capability の一致を埋め込みJSONへ照合する。
 pub const catalog_commands = [_]CatalogCommand{
@@ -808,6 +839,8 @@ pub const catalog_commands = [_]CatalogCommand{
     .{ .id = "ll-fallocate", .name = filesystem_commands.fallocate, .min = 3, .max = 3, .operation = stream_operations.fallocate, .capability = .fallocate, .implemented = true },
     .{ .id = "ll-capability-supported", .name = capability_supported_command, .min = 1, .max = 1, .operation = "capability", .capability = null, .implemented = true },
     .{ .id = "ll-capability-list", .name = capability_list_command, .min = 0, .max = 0, .operation = "capability", .capability = null, .implemented = true },
+    .{ .id = "ll-locale-compare", .name = locale_commands.compare, .min = 2, .max = 3, .operation = locale_operations.collate, .capability = .locale_collate, .implemented = true },
+    .{ .id = "ll-display-width", .name = locale_commands.display_width, .min = 1, .max = 1, .operation = locale_operations.width, .capability = .display_width, .implemented = true },
 };
 
 /// dispatch名または利用者向け表記からカタログ定義を引く。`ファイル開` と
@@ -828,7 +861,7 @@ pub fn commandArity(name: []const u8) ?CommandArity {
 }
 
 /// 解析器のbuiltin解決と `システム関数存在` が参照する拡張命令名の一覧。
-/// カタログ61命令のdispatch名と利用者向け表記を全て含む。
+/// カタログ63命令のdispatch名と利用者向け表記を全て含む。
 pub const extension_command_names = blk: {
     @setEvalBranchQuota(100_000);
     var names: []const []const u8 = &.{};

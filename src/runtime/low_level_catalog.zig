@@ -34,7 +34,7 @@ test "カタログJSONのschemaと件数がヘッダと一致する" {
     defer parsed.deinit();
     const root = parsed.value.object;
     try std.testing.expectEqualStrings("lnako.low-level-catalog.v1", getString(root, "schema"));
-    try std.testing.expectEqual(@as(i64, 37), getInt(root, "issue"));
+    try std.testing.expectEqual(@as(i64, 38), getInt(root, "issue"));
     const commands = root.get("commands").?.array.items;
     try std.testing.expectEqual(@as(usize, @intCast(getInt(root, "commandCount"))), commands.len);
     const capabilities = root.get("capabilities").?.array.items;
@@ -45,7 +45,7 @@ test "カタログJSONのschemaと件数がヘッダと一致する" {
             .integer => |integer| integer,
             else => unreachable,
         };
-        try std.testing.expect(n >= 27 and n <= 37);
+        try std.testing.expect(n >= 27 and n <= 38);
     }
 }
 
@@ -70,7 +70,7 @@ test "カタログの命令IDと名前は一意で、capability参照とclassが
         try id_set.put(id, {});
         try std.testing.expect(!name_set.contains(name));
         try name_set.put(name, {});
-        try std.testing.expect(issue >= 27 and issue <= 37);
+        try std.testing.expect(issue >= 27 and issue <= 38);
         try std.testing.expect(name.len > 0 and id.len > 0);
         try std.testing.expect(getInt(map, "maxArgs") >= getInt(map, "minArgs"));
 
@@ -339,6 +339,8 @@ test "implementedフラグは実装済み命令の既知集合と一致する" {
         "ll-process-priority-set",
         "ll-tty-isatty",
         "ll-tty-size",
+        "ll-locale-compare",
+        "ll-display-width",
         "ll-statfs",
         "ll-reflink",
         "ll-seek-data",

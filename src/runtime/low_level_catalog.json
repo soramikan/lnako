@@ -5,7 +5,7 @@
     "nadesiko3Commit": "aa18c7e640523938c680958fe731418cc6f7a58f",
     "g0Foundation": "G0_FOUNDATION.md"
   },
-  "issue": 37,
+  "issue": 38,
   "generatedForIssues": [
     27,
     28,
@@ -17,10 +17,11 @@
     34,
     35,
     36,
-    37
+    37,
+    38
   ],
-  "commandCount": 61,
-  "capabilityCount": 33,
+  "commandCount": 63,
+  "capabilityCount": 35,
   "commands": [
     {
       "id": "ll-file-open",
@@ -1212,6 +1213,42 @@
       "errors": [],
       "notes": "既知capability IDの文字列の配列",
       "implemented": true
+    },
+    {
+      "id": "ll-locale-compare",
+      "name": "ロケール文字列比較",
+      "issue": 38,
+      "particles": "AをBとOPTIONSで/AをBと",
+      "minArgs": 2,
+      "maxArgs": 3,
+      "returns": "number",
+      "capability": "locale_collate",
+      "operation": "collate",
+      "errors": [
+        "EINVAL",
+        "ENOTSUP"
+      ],
+      "notes": "OPTIONS省略・locale=C/POSIX/C.UTF-8系はCロケールbytewise比較で3OS一致。非C localeはOS照合機能（POSIX newlocale/strcoll_l・Windows CompareStringEx）へ委譲し結果はOS/ロケールデータ依存、未対応localeはENOTSUP。委譲codesetはUTF-8限定で非UTF-8 codeset指定はEINVAL。OPTIONSはlocaleキーのみ解釈し未知キーは無視。返り値は負/0/正の-1/0/1。AとBは文字列",
+      "paramTypes": {
+        "OPTIONS": "collateOptions"
+      },
+      "implemented": true
+    },
+    {
+      "id": "ll-display-width",
+      "name": "文字表示幅取得",
+      "issue": 38,
+      "particles": "TEXTの",
+      "minArgs": 1,
+      "maxArgs": 1,
+      "returns": "number",
+      "capability": "display_width",
+      "operation": "width",
+      "errors": [
+        "EINVAL"
+      ],
+      "notes": "端末表示セル幅（コードポイント数ではない）。East Asian Width Fullwidth/Wide・Emoji_Presentation・地域指標は2セル、結合文字・異体字セレクタ・ZWJ/ZWNJ・制御/書式文字は0セル、絵文字修飾子はEmoji_Modifier_Base直後のみ0セル・他は単独2セル、連続地域指標はペアで2セル（介在文字で分断されれば各2セル）、絵文字同士のZWJ連結列のみ全体で2セル、不正UTF-8は欠損単位1セル。Interpreter/AOT同一規則",
+      "implemented": true
     }
   ],
   "capabilities": [
@@ -2072,6 +2109,58 @@
           "cnako_node": false
         }
       }
+    },
+    {
+      "id": "locale_collate",
+      "class": "portable_core",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": true
+      },
+      "runtimes": {
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": true
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
+      }
+    },
+    {
+      "id": "display_width",
+      "class": "portable_core",
+      "os": {
+        "linux": true,
+        "macos": true,
+        "windows": true
+      },
+      "runtimes": {
+        "lnako_interpreter": true,
+        "lnako_aot": true,
+        "cnako_node": false
+      },
+      "planned": {
+        "os": {
+          "linux": true,
+          "macos": true,
+          "windows": true
+        },
+        "runtimes": {
+          "lnako_interpreter": true,
+          "lnako_aot": true,
+          "cnako_node": true
+        }
+      }
     }
   ],
   "types": {
@@ -2106,7 +2195,8 @@
     "hashAlgorithm": "ハッシュアルゴリズム名。string。既存ハッシュ値計算と同一正規化",
     "hashEncoding": "ハッシュ出力encoding。省略時およびrawはbytes、hex/base64/base64url/latin1/binary/utf8は既存ハッシュ値計算と同一の文字列",
     "hashDigest": "ハッシュdigest。rawはbytes、hexはstring（ENCODING依存）",
-    "function": "関数（CALLBACK）"
+    "function": "関数（CALLBACK）",
+    "collateOptions": "ロケール文字列比較のOPTIONS辞書。localeキーのみを解釈し未知キーは無視。locale省略またはC/POSIX/C.UTF-8系はCロケールbytewise比較"
   },
   "coreUtilities": [
     {
@@ -2192,13 +2282,15 @@
       "utility": "ls",
       "capabilities": [
         "dir_iterator",
-        "lstat"
+        "lstat",
+        "display_width"
       ],
       "commands": [
         "ll-dir-open",
         "ll-dir-next",
         "ll-dir-close",
-        "ll-file-lstat"
+        "ll-file-lstat",
+        "ll-display-width"
       ]
     },
     {
@@ -2536,6 +2628,24 @@
       "commands": [
         "ll-path-rmdir"
       ]
+    },
+    {
+      "utility": "sort",
+      "capabilities": [
+        "locale_collate"
+      ],
+      "commands": [
+        "ll-locale-compare"
+      ]
+    },
+    {
+      "utility": "fmt",
+      "capabilities": [
+        "display_width"
+      ],
+      "commands": [
+        "ll-display-width"
+      ]
     }
   ],
   "parameterTypes": {
@@ -2563,7 +2673,10 @@
     "MTIME": "timestamp",
     "CALLBACK": "function",
     "PID": "pid",
-    "NAME": "string"
+    "NAME": "string",
+    "A": "string",
+    "B": "string",
+    "TEXT": "string"
   },
   "typeSchemas": {
     "stat": {
@@ -2619,6 +2732,12 @@
         "filesystemId": "string"
       },
       "note": "OS固有フィールドはoptional"
+    },
+    "collateOptions": {
+      "fields": {
+        "locale": "string"
+      },
+      "note": "localeはC/POSIX/C.UTF-8系またはOSロケール名（ja_JP.UTF-8、ja-JP等BCP47風も受理）。省略・null・undefinedはCロケール。非UTF-8 codeset指定はEINVAL"
     }
   },
   "matrixRule": "os/runtimesは現在の実装状況で、foundation.capabilityImplementedと実行経路に一致する（実装済みcapabilityでもInterpreterはホストがI/Oを提供しない場合は照会がfalseになるためlnako_interpreterはconditional。AOTはpluginContextが常に全関数を提供するためlnako_aotはtrue）。planned.os/planned.runtimesは将来計画値。成立判定は os[os] && runtimes[runtime]。falseが優先（どちらかがfalseならfalse）。両方がtrue/conditionalのときだけconditionalで環境依存になり、不成立はENOTSUP。"

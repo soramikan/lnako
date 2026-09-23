@@ -17,6 +17,7 @@ const fs = @import("fs.zig");
 const process = @import("process.zig");
 const dir = @import("dir.zig");
 const posix = @import("posix.zig");
+const locale = @import("locale.zig");
 
 const Value = shared.Value;
 const Runtime = shared.Runtime;
@@ -110,6 +111,8 @@ pub fn call(
     if (std.mem.eql(u8, name, foundation.process_commands.priority_set)) return @as(?Value, try process.prioritySet(runtime, context, effects, arguments));
     if (std.mem.eql(u8, name, foundation.process_commands.tty_isatty)) return @as(?Value, try process.ttyIsatty(runtime, context, effects, arguments));
     if (std.mem.eql(u8, name, foundation.process_commands.tty_size)) return @as(?Value, try process.ttySize(runtime, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.locale_commands.compare)) return @as(?Value, try locale.localeCompare(runtime, state, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.locale_commands.display_width)) return @as(?Value, try locale.displayWidth(runtime, state, context, effects, arguments));
     // カタログ掲載済みだが未実装の命令は、capabilityとoperationを設定した
     // 構造化 ENOTSUP で応答する（G0の未対応契約）。実装済み命令がここへ
     // 到達するのはdispatch腕の書き忘れなので、開発時に検出する。

@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const version = "0.2.1";
+pub const version = "0.2.2";
 
 pub const frontend = struct {
     pub const source = @import("frontend/source.zig");
@@ -45,6 +45,7 @@ pub const runtime = struct {
     pub const low_level_process = @import("runtime/low_level_process.zig");
     pub const low_level_dir = @import("runtime/low_level_dir.zig");
     pub const low_level_posix = @import("runtime/low_level_posix.zig");
+    pub const low_level_locale = @import("runtime/low_level_locale.zig");
     pub const low_level_catalog = @import("runtime/low_level_catalog.zig");
     pub const structured_error = @import("runtime/structured_error.zig");
     pub const structured_error_value = @import("runtime/structured_error_value.zig");
@@ -223,6 +224,7 @@ test {
     std.testing.refAllDecls(runtime.low_level_process);
     std.testing.refAllDecls(runtime.low_level_dir);
     std.testing.refAllDecls(runtime.low_level_posix);
+    std.testing.refAllDecls(runtime.low_level_locale);
     std.testing.refAllDecls(runtime.low_level_catalog);
     std.testing.refAllDecls(runtime.structured_error);
     std.testing.refAllDecls(runtime.structured_error_value);
