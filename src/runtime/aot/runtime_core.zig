@@ -35,6 +35,7 @@ const staticStringValue = aot_state.staticStringValue;
 const runtimeFailure = aot_state.runtimeFailure;
 const valueToNumber = aot_state.valueToNumber;
 const valueToNumberRuntime = aot_state.valueToNumberRuntime;
+const explicitRangeNumber = aot_state.explicitRangeNumber;
 const valueUtf16Alloc = aot_state.valueUtf16Alloc;
 const valueIndex = aot_state.valueIndex;
 const aotCanonicalArrayIndex = aot_state.aotCanonicalArrayIndex;
@@ -748,7 +749,9 @@ pub const Runtime = struct {
 
     /// `is_foreach`は反復構文（`反復`）由来の生成で真。公式はfor..inで
     /// 列挙可能なプロパティを持たない値（数値など）を空反復するため、
-    /// 数値を`N回`の回数として扱わず0回実行とする。
+    /// 数値を`N回`の回数として扱わず0回実行とする。範囲・反復でない
+    /// 単一オペランドは`N回`で、公式convRepeatTimesの`i <= count`抽象関係
+    /// 比較どおり全型を数値化（BigIntは数学値）して回数とする。
     pub fn createIterator(self: *Runtime, values: []const Value, is_range: bool, direction: u8, is_foreach: bool) !Value {
         if (values.len == 0) return error.InvalidIterator;
         try self.beforeAllocation();
@@ -764,8 +767,10 @@ pub const Runtime = struct {
             if (!std.math.isFinite(start) or !std.math.isFinite(end)) return error.InvalidIteratorRange;
             if (!std.math.isFinite(step) or step == 0) return error.InvalidIteratorStep;
             break :blk .{ .kind = .range, .current = start, .end = end, .step = step };
-        } else switch (@as(Tag, @enumFromInt(values[0].tag))) {
-            .number => .{ .kind = .repeat, .count = if (is_foreach) 0 else try repeatCount(valueToNumber(values[0])) },
+        } else if (!is_foreach)
+            .{ .kind = .repeat, .count = try repeatCount(try explicitRangeNumber(self, values[0])) }
+        else switch (@as(Tag, @enumFromInt(values[0].tag))) {
+            .number => .{ .kind = .repeat, .count = 0 },
             .utf16_string => .{ .kind = .string, .source = values[0], .count = values[0].object().?.payload.utf16_string.len },
             // for..in互換: 配列・bytesは添字領域の後にownプロパティ名を、
             // 関数・Promiseはownプロパティ名のみを列挙する。キー列は開始時の

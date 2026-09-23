@@ -3686,7 +3686,7 @@ test "UTF-16文字列の添字と反復をコード単位で処理する" {
     runtime.pushRoots(&frame, &values, values.len);
     const high = runtime.indexGet(values[0], numberValue(1));
     try std.testing.expectEqualSlices(u16, &.{0xd83d}, high.object().?.payload.utf16_string);
-    values[0] = try runtime.createIterator(&.{values[0]}, false, 0, false);
+    values[0] = try runtime.createIterator(&.{values[0]}, false, 0, true);
     var target: Value = .{};
     var key: Value = .{};
     _ = runtime.iteratorNext(values[0], null, &target, &key, null, null);
@@ -4204,7 +4204,7 @@ test "回数・範囲・配列・辞書の反復状態と元コレクション�
     var values = [_]Value{try runtime.createArray(&.{ numberValue(3), numberValue(4) })};
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &values, values.len);
-    values[0] = try runtime.createIterator(&.{values[0]}, false, 0, false);
+    values[0] = try runtime.createIterator(&.{values[0]}, false, 0, true);
     try std.testing.expectEqual(@as(usize, 0), runtime.collect());
     try std.testing.expectEqual(@as(usize, 2), runtime.object_count);
     var target: Value = .{};
@@ -4223,8 +4223,19 @@ test "回数・範囲・配列・辞書の反復状態と元コレクション�
     _ = runtime.iteratorNext(repeat, &repeat_target, null, null, null, null);
     try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 1))), repeat_target.payload);
     runtime.popRoots(&frame);
-    const non_iterable = try runtime.createIterator(&.{try runtime.createBigInt("1n")}, false, 0, false);
-    try std.testing.expect(!runtime.iteratorHasNext(non_iterable));
+    // Issue #165: `N回`の非数値オペランドは公式convRepeatTimesの`i <= count`
+    // 抽象関係比較どおり数値化する。文字列はToNumber、配列はNaN→0回、
+    // 真は1、BigIntは数学値へ写す。
+    const repeat_string = try runtime.createIterator(&.{try runtime.createString(&.{'3'})}, false, 0, false);
+    try std.testing.expect(runtime.iteratorHasNext(repeat_string));
+    const repeat_boolean = try runtime.createIterator(&.{.{ .tag = @intFromEnum(Tag.boolean), .payload = 1 }}, false, 0, false);
+    try std.testing.expect(runtime.iteratorHasNext(repeat_boolean));
+    const repeat_bigint = try runtime.createIterator(&.{try runtime.createBigInt("1n")}, false, 0, false);
+    try std.testing.expect(runtime.iteratorHasNext(repeat_bigint));
+    const repeat_array = try runtime.createIterator(&.{try runtime.createArray(&.{ numberValue(1), numberValue(2) })}, false, 0, false);
+    try std.testing.expect(!runtime.iteratorHasNext(repeat_array));
+    const repeat_nan_text = try runtime.createIterator(&.{try runtime.createString(&.{ 0x3042, 0x3044, 0x3046 })}, false, 0, false);
+    try std.testing.expect(!runtime.iteratorHasNext(repeat_nan_text));
 }
 
 test "AOT反復構文は「それ」と指定変数へ束縛し指定変数ありで「対象」を更新しない" {
@@ -4995,7 +5006,7 @@ test "AOT Node暗号はバイト値の型と境界を保持する" {
     try std.testing.expectEqual(@as(u16, '4'), uuid[14]);
     try std.testing.expect(uuid[19] == '8' or uuid[19] == '9' or uuid[19] == 'a' or uuid[19] == 'b');
 
-    roots[6] = try state.active_runtime.?.createIterator(&.{roots[4]}, false, 0, false);
+    roots[6] = try state.active_runtime.?.createIterator(&.{roots[4]}, false, 0, true);
     var iterator_value = Value{};
     var iterator_key = Value{};
     _ = state.active_runtime.?.iteratorNext(roots[6], null, &iterator_value, &iterator_key, null, null);

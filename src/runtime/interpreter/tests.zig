@@ -1932,6 +1932,35 @@ test "回数繰り返しはそれを回数へ束縛し退避値を復元する" 
     try std.testing.expectEqualStrings("1\n2\n3\n1\n2\n後:\n回数:\n", host.written());
 }
 
+test "N回繰り返しは非数値オペランドを公式の抽象関係比較で数値化する" {
+    // Issue #165: 公式convRepeatTimesはfor (i = 1; i <= count; i++)でcountを
+    // 抽象関係比較するため、"3"→3・[1,2]→NaN→0回・真→1・[3]→"3"→3・
+    // BigInt→数学値の回数で実行し、コレクション反復へはディスパッチしない。
+    const source =
+        "「3」回\n回数を表示\nここまで\n" ++
+        "[1,2]回\n回数を表示\nここまで\n" ++
+        "「A」を表示\n" ++
+        "(真)回繰り返す\n回数を表示\nここまで\n" ++
+        "(偽)回\n回数を表示\nここまで\n" ++
+        "「あいう」回\n回数を表示\nここまで\n" ++
+        "[3]回\n回数を表示\nここまで\n" ++
+        "1n回\n回数を表示\nここまで\n" ++
+        "それ=9\n回数=7\n「2」回\nここまで\n「後:{それ}」を表示\n「回数:{回数}」を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("1\n2\n3\nA\n1\n1\n2\n3\n1\n後:7\n回数:7\n", host.written());
+}
+
 test "連文の各文は直前結果を『それ』へ伝播し先行文の出力を欠落させない" {
     // Issue #114: `。`区切りの中間呼出し結果が『それ』に繋がり、
     // 先行する文の出力も保持されることを固定する。『戻り値無し』を

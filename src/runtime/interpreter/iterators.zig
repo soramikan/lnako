@@ -51,10 +51,15 @@ pub fn iteratorBegin(self: *Interpreter, frame: *Frame, instruction: ir.Instruct
         state = .{ .kind = .range, .current = start, .end = end, .step = step, .variable_name = instruction.name, .variable_local = instruction.local_target };
     } else {
         const source = self.operand(frame, instruction, 0);
-        state = switch (source) {
+        if (!instruction.is_foreach) {
+            // 公式convRepeatTimesはfor (i = 1; i <= count; i++)の抽象関係
+            // 比較で回数を評価するため、全型を数値化して回数へ写す
+            // （"3"→3、[1,2]→NaN→0回、真→1、BigInt→数学値）。
+            state = .{ .kind = .repeat, .count = try repeatCount(try self.runtime.valueToExplicitRangeNumber(source)) };
+        } else state = switch (source) {
             // 反復構文の対象が数値・非反復値のときは0回実行（公式はfor..inで
             // 列挙可能なプロパティを持たない値を空反復する）。
-            .number => |number| .{ .kind = .repeat, .count = if (instruction.is_foreach) 0 else try repeatCount(number) },
+            .number => .{ .kind = .repeat, .count = 0 },
             // for..in互換: 配列・bytesは添字領域の後にownプロパティ名を、
             // 関数・Promiseはownプロパティ名のみを列挙する。いずれも開始時の
             // キー列を保持し、削除済みキーはiteratorHasNextで飛ばす。
