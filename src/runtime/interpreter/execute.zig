@@ -170,8 +170,10 @@ pub fn objectToPrimitive(self: *Interpreter, value: Value, hint: value_mod.Primi
     for ([_][]const u16{ first, second }) |name| {
         if (objectPrimitiveMethod(rooted_value, name)) |method| {
             custom_method_seen = true;
-            if (method == .undefined or method == .null_value) continue;
-            if (method != .function) return error.NotCallable;
+            // ECMAScriptのGetMethod相当: 呼び出し不可の値（undefined/null
+            // 以外の非関数を含む）はメソッド不在として次の候補へ進む。
+            // {"valueOf":1}は既定toStringへ委譲され「[object Object]」となる。
+            if (method != .function) continue;
             var rooted_method = method;
             try roots.protect(&rooted_method);
             var result = try self.callFunctionValue(rooted_method.function, &.{});

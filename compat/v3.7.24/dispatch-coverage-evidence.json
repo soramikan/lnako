@@ -10893,7 +10893,7 @@
         "expectedFailureSiteCount": 0,
         "expectedFailureDispatchCount": 0,
         "staticSiteWithoutAotManifestCount": 0,
-        "traceSha256": "9525b4867eb149ac6e3eb83e80da084d2f71b69e3eab3dd6d9544db0e9fc7440"
+        "traceSha256": "4540c160d035f65a6f2c544398d8bb6c4345ad7db56bdfe682941f655b03fe26"
       },
       "aot": {
         "manifestEntryCount": 7,
@@ -10903,8 +10903,8 @@
         "expectedFailureSiteCount": 0,
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
-        "traceSha256": "17567c3b6d94d7ff68b55403a19a633733c6c6bc66ba9768a0a86b67cefb08cf",
-        "compileManifestSha256": "f9443a5554e9ef1d04fde39458ef882c05c88258f53677d020ddde0bba6bc459"
+        "traceSha256": "55f937e57fbc63accb2ed7aa693f80a1fe3095e404bdb93131e63e6d53e820a1",
+        "compileManifestSha256": "bd3f7e9597e8e0cd2a4e788f7b13b929ee164d7d815d107690449c9143c90690"
       }
     },
     {
@@ -20444,7 +20444,7 @@
         "expectedFailureSiteCount": 0,
         "expectedFailureDispatchCount": 0,
         "staticSiteWithoutAotManifestCount": 0,
-        "traceSha256": "8758a27f509366cd97d3a743e3c6f5b483aa8a5cd4904b8d802367115cbc3b29"
+        "traceSha256": "729af159f3e294957507b7b143ace52a568a74eaa71826ee5e688f0ff996891d"
       },
       "aot": {
         "manifestEntryCount": 17,
@@ -20454,8 +20454,8 @@
         "expectedFailureSiteCount": 0,
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
-        "traceSha256": "7208eaa7fc730bb550081514b3355f65be3ab93926bc3a7484f0bb8b7f351521",
-        "compileManifestSha256": "aaad668664ab0246b4f170c363ed0042d037f74393ea9ff276bce33b0129c88b"
+        "traceSha256": "6904025917723f3fbe64a0363f9d471bc0f5b472e417f89b12b233dd34d6ee9c",
+        "compileManifestSha256": "00a342cb05799b60535714f2017967f01e8c738ba1cb6a9db364602ca8fcfcf4"
       }
     },
     {
@@ -60952,30 +60952,6 @@
       "fixtureId": "native-system-array-callback-order",
       "file": "native-cases.json",
       "siteId": "0x0000000100000002",
-      "sourceName": "配列検索",
-      "canonicalOpcode": "array_search",
-      "opcode": 58,
-      "route": "builtin",
-      "runtimeRoutes": [
-        "builtin"
-      ],
-      "interpreterRoutes": [
-        "plugin_system"
-      ],
-      "interpreterCount": 3,
-      "aotCount": 3,
-      "result": "success",
-      "catalogId": "command-0179",
-      "name": "配列検索",
-      "plugin": "plugin_system",
-      "catalogStatus": "native",
-      "resolution": "unique-name",
-      "selectedOracleEquivalent": true
-    },
-    {
-      "fixtureId": "native-system-array-callback-order",
-      "file": "native-cases.json",
-      "siteId": "0x0000000100000003",
       "sourceName": "配列ソート",
       "canonicalOpcode": "array_sort",
       "opcode": 59,
@@ -60991,6 +60967,30 @@
       "result": "success",
       "catalogId": "command-0185",
       "name": "配列ソート",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-system-array-callback-order",
+      "file": "native-cases.json",
+      "siteId": "0x0000000100000003",
+      "sourceName": "配列検索",
+      "canonicalOpcode": "array_search",
+      "opcode": 58,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 3,
+      "aotCount": 3,
+      "result": "success",
+      "catalogId": "command-0179",
+      "name": "配列検索",
       "plugin": "plugin_system",
       "catalogStatus": "native",
       "resolution": "unique-name",
@@ -99136,30 +99136,6 @@
       "fixtureId": "native-system-table-sort-callback-order",
       "file": "native-cases.json",
       "siteId": "0x0000000300000002",
-      "sourceName": "配列検索",
-      "canonicalOpcode": "array_search",
-      "opcode": 58,
-      "route": "builtin",
-      "runtimeRoutes": [
-        "builtin"
-      ],
-      "interpreterRoutes": [
-        "plugin_system"
-      ],
-      "interpreterCount": 6,
-      "aotCount": 6,
-      "result": "success",
-      "catalogId": "command-0179",
-      "name": "配列検索",
-      "plugin": "plugin_system",
-      "catalogStatus": "native",
-      "resolution": "unique-name",
-      "selectedOracleEquivalent": true
-    },
-    {
-      "fixtureId": "native-system-table-sort-callback-order",
-      "file": "native-cases.json",
-      "siteId": "0x0000000300000003",
       "sourceName": "配列ソート",
       "canonicalOpcode": "array_sort",
       "opcode": 59,
@@ -99175,6 +99151,30 @@
       "result": "success",
       "catalogId": "command-0185",
       "name": "配列ソート",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-system-table-sort-callback-order",
+      "file": "native-cases.json",
+      "siteId": "0x0000000300000003",
+      "sourceName": "配列検索",
+      "canonicalOpcode": "array_search",
+      "opcode": 58,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 6,
+      "aotCount": 6,
+      "result": "success",
+      "catalogId": "command-0179",
+      "name": "配列検索",
       "plugin": "plugin_system",
       "catalogStatus": "native",
       "resolution": "unique-name",
@@ -99304,30 +99304,6 @@
       "fixtureId": "native-system-table-sort-callback-order",
       "file": "native-cases.json",
       "siteId": "0x0000000300000009",
-      "sourceName": "配列検索",
-      "canonicalOpcode": "array_search",
-      "opcode": 58,
-      "route": "builtin",
-      "runtimeRoutes": [
-        "builtin"
-      ],
-      "interpreterRoutes": [
-        "plugin_system"
-      ],
-      "interpreterCount": 6,
-      "aotCount": 6,
-      "result": "success",
-      "catalogId": "command-0179",
-      "name": "配列検索",
-      "plugin": "plugin_system",
-      "catalogStatus": "native",
-      "resolution": "unique-name",
-      "selectedOracleEquivalent": true
-    },
-    {
-      "fixtureId": "native-system-table-sort-callback-order",
-      "file": "native-cases.json",
-      "siteId": "0x000000030000000a",
       "sourceName": "配列ソート",
       "canonicalOpcode": "array_sort",
       "opcode": 59,
@@ -99343,6 +99319,30 @@
       "result": "success",
       "catalogId": "command-0185",
       "name": "配列ソート",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-system-table-sort-callback-order",
+      "file": "native-cases.json",
+      "siteId": "0x000000030000000a",
+      "sourceName": "配列検索",
+      "canonicalOpcode": "array_search",
+      "opcode": 58,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_system"
+      ],
+      "interpreterCount": 6,
+      "aotCount": 6,
+      "result": "success",
+      "catalogId": "command-0179",
+      "name": "配列検索",
       "plugin": "plugin_system",
       "catalogStatus": "native",
       "resolution": "unique-name",

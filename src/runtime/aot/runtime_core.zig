@@ -35,6 +35,7 @@ const staticStringValue = aot_state.staticStringValue;
 const runtimeFailure = aot_state.runtimeFailure;
 const valueToNumber = aot_state.valueToNumber;
 const valueToNumberRuntime = aot_state.valueToNumberRuntime;
+const relationalOrder = aot_state.relationalOrder;
 const valueUtf16Alloc = aot_state.valueUtf16Alloc;
 const valueIndex = aot_state.valueIndex;
 const aotCanonicalArrayIndex = aot_state.aotCanonicalArrayIndex;
@@ -42,7 +43,6 @@ const sameKey = aot_state.sameKey;
 const isString = aot_state.isString;
 const staticUtf8 = aot_state.staticUtf8;
 const staticUtf8EqualsUtf16 = aot_state.staticUtf8EqualsUtf16;
-const repeatCount = aot_state.repeatCount;
 const aotByteBufferAllowsStandardPrototype = aot_state.aotByteBufferAllowsStandardPrototype;
 const aotByteBufferScalarProperty = aot_state.aotByteBufferScalarProperty;
 const aotByteBufferReadOnlyProperty = aot_state.aotByteBufferReadOnlyProperty;
@@ -748,24 +748,45 @@ pub const Runtime = struct {
 
     /// `is_foreach`は反復構文（`反復`）由来の生成で真。公式はfor..inで
     /// 列挙可能なプロパティを持たない値（数値など）を空反復するため、
-    /// 数値を`N回`の回数として扱わず0回実行とする。
+    /// 数値を`N回`の回数として扱わず0回実行とする。範囲・反復でない
+    /// 単一オペランドは`N回`で、公式convRepeatTimesの`i <= count`抽象関係
+    /// 比較どおり全型を数値化（BigIntは数学値）して回数とする。
     pub fn createIterator(self: *Runtime, values: []const Value, is_range: bool, direction: u8, is_foreach: bool) !Value {
         if (values.len == 0) return error.InvalidIterator;
         try self.beforeAllocation();
         const iterator: Iterator = if (is_range) blk: {
             if (values.len < 2) return error.InvalidIterator;
-            const start = valueToNumber(values[0]);
-            const end = valueToNumber(values[1]);
-            var step: f64 = if (values.len >= 3 and values[2].tag != @intFromEnum(Tag.undefined))
-                valueToNumber(values[2])
-            else if (direction == 2 or (direction == 0 and start > end)) -1 else 1;
+            // 変換でコールバック（カスタムvalueOf等）が走り得るため、
+            // オペランドを先にルート化してGCから守る。
+            var roots = [_]Value{ values[0], values[1], if (values.len >= 3) values[2] else .{} };
+            var roots_frame = RootFrame{};
+            self.pushRoots(&roots_frame, &roots, roots.len);
+            defer self.popRoots(&roots_frame);
+            const start = try valueToNumberRuntime(self, roots[0]);
+            // 公式convForは終端式を$nako_toへ一度だけ評価して保持し、
+            // forガード(i <= varTo)で反復ごとに抽象関係比較する。終端値を
+            // sourceへ保持しiteratorHasNextでその都度比較する（カスタム
+            // valueOfは毎回呼ばれ、BigInt終端も関係比較として成立する）。
+            // 開始値がNaNを含む場合もガード比較がnullとなり公式どおり
+            // 0回反復で終わる。
+            var step: f64 = if (values.len >= 3 and roots[2].tag != @intFromEnum(Tag.undefined))
+                try valueToNumberRuntime(self, roots[2])
+            else if (direction == 2 or (direction == 0 and descending: {
+                const order = (try relationalOrder(self, numberValue(start), roots[1])) orelse break :descending false;
+                break :descending order == .gt;
+            })) -1 else 1;
             if (direction == 2 and step > 0) step = -step;
             if (direction == 1 and step < 0) step = -step;
-            if (!std.math.isFinite(start) or !std.math.isFinite(end)) return error.InvalidIteratorRange;
             if (!std.math.isFinite(step) or step == 0) return error.InvalidIteratorStep;
-            break :blk .{ .kind = .range, .current = start, .end = end, .step = step };
-        } else switch (@as(Tag, @enumFromInt(values[0].tag))) {
-            .number => .{ .kind = .repeat, .count = if (is_foreach) 0 else try repeatCount(valueToNumber(values[0])) },
+            break :blk .{ .kind = .range, .source = roots[1], .current = start, .step = step };
+        } else if (!is_foreach)
+            // 公式convRepeatTimesはfor (i = 1; i <= count; i++)の抽象関係
+            // 比較を反復ごとに評価するため、オペランド値を保持し
+            // iteratorHasNextでその都度比較する（カスタムvalueOfは毎回
+            // 呼ばれ、BigInt返却も関係比較として成立する）。
+            .{ .kind = .repeat, .source = values[0] }
+        else switch (@as(Tag, @enumFromInt(values[0].tag))) {
+            .number => .{ .kind = .repeat, .count = 0 },
             .utf16_string => .{ .kind = .string, .source = values[0], .count = values[0].object().?.payload.utf16_string.len },
             // for..in互換: 配列・bytesは添字領域の後にownプロパティ名を、
             // 関数・Promiseはownプロパティ名のみを列挙する。キー列は開始時の
@@ -1323,11 +1344,11 @@ pub const Runtime = struct {
         return indexing.aotCanonicalArrayIndexUnits(self, units);
     }
 
-    pub fn iteratorHasNext(self: *Runtime, value: Value) bool {
+    pub fn iteratorHasNext(self: *Runtime, value: Value) !bool {
         return indexing.iteratorHasNext(self, value);
     }
 
-    pub fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_target: ?*Value, key_target: ?*Value, range_target: ?*Value, sore_target: ?*Value) Value {
+    pub fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_target: ?*Value, key_target: ?*Value, range_target: ?*Value, sore_target: ?*Value) !Value {
         return indexing.iteratorNext(self, value, repeat_target, value_target, key_target, range_target, sore_target);
     }
 
