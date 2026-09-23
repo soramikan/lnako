@@ -5,6 +5,8 @@
 const std = @import("std");
 const testing = std.testing;
 const project_cmd = @import("project.zig");
+const compiler_pipeline = @import("../../compiler_pipeline.zig");
+const test_command = @import("test.zig");
 
 const io = std.testing.io;
 
@@ -212,7 +214,7 @@ test "prepareForExecution は lock と .nako 環境を自動準備する" {
 
     var cli = Cli.init(a);
     var flags = project_cmd.PrepFlags{};
-    project_cmd.prepareForExecution(a, io, main_path, &flags, &cli.env, "run", &cli.err.writer);
+    try project_cmd.prepareForExecution(a, io, main_path, &flags, &cli.env, "run", &cli.err.writer);
 
     try testing.expect(try dirFileExists(a, app_root, "nako.lock"));
     try testing.expect(try dirFileExists(a, app_root, ".nako/environment.json"));
@@ -230,7 +232,7 @@ test "prepareForExecution はプロジェクト外では何もしない" {
 
     var cli = Cli.init(a);
     var flags = project_cmd.PrepFlags{};
-    project_cmd.prepareForExecution(a, io, outside, &flags, &cli.env, "run", &cli.err.writer);
+    try project_cmd.prepareForExecution(a, io, outside, &flags, &cli.env, "run", &cli.err.writer);
     temporary.dir.access(io, "nako.lock", .{}) catch |err| {
         try testing.expectEqual(error.FileNotFound, err);
         return;
@@ -243,11 +245,12 @@ test "extractPrepFlags は prep フラグを分離し残りを保持する" {
     defer arena_impl.deinit();
     const a = arena_impl.allocator();
     var flags = project_cmd.PrepFlags{};
+    var sink = std.Io.Writer.Allocating.init(a);
     const rest = try project_cmd.extractPrepFlags(a, &.{
         "--locked",   "--offline",   "--no-sync",   "--profile",  "release",
         "--features", "a,b",         "--dncl",      "main.nako3", "--compat-js",
         "--registry", "https://reg", "--unknown-x",
-    }, &flags);
+    }, &flags, "test", &sink.writer);
     try testing.expect(flags.locked);
     try testing.expect(flags.offline);
     try testing.expect(flags.no_sync);
@@ -260,6 +263,355 @@ test "extractPrepFlags は prep フラグを分離し残りを保持する" {
     try testing.expectEqualStrings("main.nako3", rest[1]);
     try testing.expectEqualStrings("--compat-js", rest[2]);
     try testing.expectEqualStrings("--unknown-x", rest[3]);
+}
+
+// ---------------------------------------------------------------------------
+// レビュー指摘のリグレッションテスト（異常路は CliError で検証する）
+// ---------------------------------------------------------------------------
+
+fn expectFail(expected: anyerror, a: std.mem.Allocator, cli: *Cli, verb: []const u8, args: []const []const u8, start_dir: []const u8) !void {
+    const result = cli.run(a, verb, args, start_dir);
+    try testing.expectError(expected, result);
+}
+
+test "init --name の不正なパッケージ名は用法エラーで拒否する" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const proj_root = try temporary.dir.realPathFileAlloc(io, ".", a);
+
+    var cli = Cli.init(a);
+    try expectFail(error.Usage, a, &cli, "init", &.{ "--name", "evil\"inj" }, proj_root);
+    try testing.expect(std.mem.indexOf(u8, cli.err.written(), "規則に合いません") != null);
+    // 拒否したので manifest は書かれない。
+    try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "nako.toml", .{}));
+}
+
+test "init --lib は既存の雛形ファイルを上書きしない" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "proj/src");
+    try temporary.dir.writeFile(io, .{ .sub_path = "proj/src/lib.nako3", .data = "「既存コード」と表示する。\n" });
+    const proj_root = try temporary.dir.realPathFileAlloc(io, "proj", a);
+
+    var cli = Cli.init(a);
+    try expectFail(error.Failed, a, &cli, "init", &.{ "--lib", "--name", "mylib" }, proj_root);
+    try testing.expect(std.mem.indexOf(u8, cli.err.written(), "既に存在します") != null);
+    // ユーザーのファイルは保持される。
+    const kept = try readFile(a, proj_root, "src/lib.nako3");
+    try testing.expectEqualStrings("「既存コード」と表示する。\n", kept);
+    // 事前検査で失敗したため manifest も書かれない。
+    try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "proj/nako.toml", .{}));
+}
+
+test "init --lib の雛形はコンパイルできテストも通る" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "proj");
+    const proj_root = try temporary.dir.realPathFileAlloc(io, "proj", a);
+
+    var cli = Cli.init(a);
+    try cli.run(a, "init", &.{ "--lib", "--name", "samplelib" }, proj_root);
+
+    // <name> が実名で置き換えられていること。
+    const lib_src = try readFile(a, proj_root, "src/lib.nako3");
+    try testing.expect(std.mem.indexOf(u8, lib_src, "<name>") == null);
+    try testing.expect(std.mem.indexOf(u8, lib_src, "samplelib") != null);
+
+    // examples/main.nako3 がそのままコンパイルできること。
+    const example = try std.fs.path.join(a, &.{ proj_root, "examples", "main.nako3" });
+    var compile_err: std.Io.Writer.Allocating = .init(a);
+    const program = try compiler_pipeline.compileInput(a, io, example, .{}, &compile_err.writer);
+    try testing.expect(program != null);
+
+    // tests/lib_test.nako3 がそのまま実行・成功すること。
+    const test_file = try std.fs.path.join(a, &.{ proj_root, "tests", "lib_test.nako3" });
+    var test_out: std.Io.Writer.Allocating = .init(a);
+    var test_err: std.Io.Writer.Allocating = .init(a);
+    const ok = try test_command.runTestTarget(a, io, test_file, .{}, &test_out.writer, &test_err.writer);
+    try testing.expect(ok);
+}
+
+test "add --npm は未対応として拒否し manifest を変更しない" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const app_root = try newAppFixture(a, &temporary);
+
+    var cli = Cli.init(a);
+    try expectFail(error.Failed, a, &cli, "add", &.{ "escape", "--npm" }, app_root);
+    try testing.expect(std.mem.indexOf(u8, cli.err.written(), "npm") != null);
+    try testing.expect(std.mem.indexOf(u8, cli.err.written(), "escape") != null);
+    const manifest = try readFile(a, app_root, "nako.toml");
+    try testing.expect(std.mem.indexOf(u8, manifest, "escape") == null);
+}
+
+test "manifest の npm 依存宣言は lock 時に診断付きで拒否される" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const app_root = try newAppFixture(a, &temporary);
+    try appManifest(a, app_root,
+        \\[dependencies.npm]
+        \\escape = "^1.0.0"
+        \\
+    );
+
+    var cli = Cli.init(a);
+    try expectFail(error.Failed, a, &cli, "lock", &.{}, app_root);
+    try testing.expect(std.mem.indexOf(u8, cli.err.written(), "escape") != null);
+    try testing.expect(std.mem.indexOf(u8, cli.err.written(), "npm") != null);
+    // 不完全な lock は残さない。
+    try testing.expect(!try dirFileExists(a, app_root, "nako.lock"));
+}
+
+test "add --locked と remove --locked と update --locked は用法エラー" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const app_root = try newAppFixture(a, &temporary);
+
+    var cli = Cli.init(a);
+    try expectFail(error.Usage, a, &cli, "add", &.{ "lib", "--path", "lib", "--locked" }, app_root);
+    try expectFail(error.Usage, a, &cli, "remove", &.{ "lib", "--locked" }, app_root);
+    try expectFail(error.Usage, a, &cli, "update", &.{"--locked"}, app_root);
+}
+
+test "add --git は --commit 必須、add --http は --hash 必須" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const app_root = try newAppFixture(a, &temporary);
+
+    var cli = Cli.init(a);
+    try expectFail(error.Usage, a, &cli, "add", &.{ "lib", "--git", "https://example.com/x.git" }, app_root);
+    try testing.expect(std.mem.indexOf(u8, cli.err.written(), "--commit") != null);
+    var cli2 = Cli.init(a);
+    try expectFail(error.Usage, a, &cli2, "add", &.{ "lib", "--http", "https://example.com/x.tgz" }, app_root);
+    try testing.expect(std.mem.indexOf(u8, cli2.err.written(), "--hash") != null);
+}
+
+test "add は依存名を検証し重複を報告する" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const app_root = try newAppFixture(a, &temporary);
+
+    var cli = Cli.init(a);
+    try expectFail(error.Usage, a, &cli, "add", &.{ "Bad_Name", "--path", "lib" }, app_root);
+    try testing.expect(std.mem.indexOf(u8, cli.err.written(), "規則に合いません") != null);
+
+    var cli2 = Cli.init(a);
+    try cli2.run(a, "add", &.{ "lib", "--path", "lib" }, app_root);
+    var cli3 = Cli.init(a);
+    try expectFail(error.Failed, a, &cli3, "add", &.{ "lib", "--path", "lib" }, app_root);
+    try testing.expect(std.mem.indexOf(u8, cli3.err.written(), "既に") != null);
+}
+
+test "add の bare 名は table 形式の候補を生成し解決段階まで進む" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const app_root = try newAppFixture(a, &temporary);
+
+    var cli = Cli.init(a);
+    // registry が無いので解決は失敗するが、「生成した manifest が不正」
+    // ではなく registry 必須エラーであること（候補 manifest が有効だった証左）。
+    try expectFail(error.Failed, a, &cli, "add", &.{"somepkg"}, app_root);
+    try testing.expect(std.mem.indexOf(u8, cli.err.written(), "生成した manifest が不正") == null);
+    try testing.expect(std.mem.indexOf(u8, cli.err.written(), "registry") != null);
+    // 失敗時は manifest が復元される。
+    const manifest = try readFile(a, app_root, "nako.toml");
+    try testing.expect(std.mem.indexOf(u8, manifest, "somepkg") == null);
+}
+
+test "update は未宣言の依存名を拒否する" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const app_root = try newAppFixture(a, &temporary);
+
+    var cli = Cli.init(a);
+    try expectFail(error.Failed, a, &cli, "update", &.{"no-such-dep"}, app_root);
+    try testing.expect(std.mem.indexOf(u8, cli.err.written(), "依存にありません") != null);
+}
+
+test "extractPrepFlags は値取りこぼしを用法エラーにする" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var flags = project_cmd.PrepFlags{};
+    var sink: std.Io.Writer.Allocating = .init(a);
+    // `--profile` の値として `--dncl` を消費しない。
+    try testing.expectError(error.Usage, project_cmd.extractPrepFlags(a, &.{ "--profile", "--dncl", "main.nako3" }, &flags, "run", &sink.writer));
+    // 末尾で値が切れても用法エラー。
+    try testing.expectError(error.Usage, project_cmd.extractPrepFlags(a, &.{ "main.nako3", "--features" }, &flags, "run", &sink.writer));
+}
+
+test "prepareForExecution は --locked --no-sync でも lock 検証する" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const app_root = try newAppFixture(a, &temporary);
+    try appManifest(a, app_root,
+        \\[dependencies.path]
+        \\lib = { path = "lib" }
+        \\
+    );
+    const main_path = try std.fs.path.join(a, &.{ app_root, "main.nako3" });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = main_path, .data = "「ok」を表示\n" });
+
+    var cli = Cli.init(a);
+    var flags = project_cmd.PrepFlags{ .locked = true, .no_sync = true };
+    // nako.lock が無い状態で --locked --no-sync: no_sync より先に
+    // verifyLocked が走り LockedNotSatisfied で失敗する。
+    try testing.expectError(error.Failed, project_cmd.prepareForExecution(a, io, main_path, &flags, &cli.env, "run", &cli.err.writer));
+    try testing.expect(std.mem.indexOf(u8, cli.err.written(), "nako.lock") != null);
+}
+
+test "prepareForExecution --no-sync は消えた生成環境を検出する" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const app_root = try newAppFixture(a, &temporary);
+    try appManifest(a, app_root,
+        \\[dependencies.path]
+        \\lib = { path = "lib" }
+        \\
+    );
+    const main_path = try std.fs.path.join(a, &.{ app_root, "main.nako3" });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = main_path, .data = "「ok」を表示\n" });
+
+    var cli = Cli.init(a);
+    var flags = project_cmd.PrepFlags{};
+    try project_cmd.prepareForExecution(a, io, main_path, &flags, &cli.env, "run", &cli.err.writer);
+
+    // generation ディレクトリを消しても environment.json と current は残る。
+    const current_text = try readFile(a, app_root, ".nako/current");
+    const generation = std.mem.trim(u8, current_text, " \r\n\t");
+    const env_path = try std.fs.path.join(a, &.{ ".nako", "env", generation });
+    var app_dir = try std.Io.Dir.cwd().openDir(io, app_root, .{});
+    defer app_dir.close(io);
+    try app_dir.deleteTree(io, env_path);
+
+    // メタデータだけを信じず、実在しない generation を検出して失敗する。
+    var cli2 = Cli.init(a);
+    flags = .{ .no_sync = true };
+    try testing.expectError(error.Failed, project_cmd.prepareForExecution(a, io, main_path, &flags, &cli2.env, "run", &cli2.err.writer));
+    try testing.expect(std.mem.indexOf(u8, cli2.err.written(), ".nako 環境") != null);
+}
+
+test "tree と why は lock を書き換えず不足時は案内して失敗する" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const app_root = try newAppFixture(a, &temporary);
+    try appManifest(a, app_root,
+        \\[dependencies.path]
+        \\lib = { path = "lib" }
+        \\
+    );
+
+    // lock が無い状態で tree/why は失敗し、nako.lock を生成しない。
+    var cli = Cli.init(a);
+    try expectFail(error.Failed, a, &cli, "tree", &.{}, app_root);
+    try testing.expect(std.mem.indexOf(u8, cli.err.written(), "lnako lock") != null);
+    var cli2 = Cli.init(a);
+    try expectFail(error.Failed, a, &cli2, "why", &.{"lib"}, app_root);
+    try testing.expect(!try dirFileExists(a, app_root, "nako.lock"));
+
+    // lock 生成後は tree/why が読み取り専用で表示する。
+    var cli3 = Cli.init(a);
+    try cli3.run(a, "lock", &.{}, app_root);
+    const lock_bytes = try readFile(a, app_root, "nako.lock");
+    var cli4 = Cli.init(a);
+    try cli4.run(a, "tree", &.{}, app_root);
+    const lock_after = try readFile(a, app_root, "nako.lock");
+    try testing.expectEqualStrings(lock_bytes, lock_after);
+
+    // manifest を変更して lock を陳腐化させると tree は stale で失敗する。
+    try appManifest(a, app_root,
+        \\[dependencies.path]
+        \\lib = { path = "lib", mutable = true }
+        \\
+    );
+    var cli5 = Cli.init(a);
+    try expectFail(error.Failed, a, &cli5, "tree", &.{}, app_root);
+    try testing.expect(std.mem.indexOf(u8, cli5.err.written(), "lnako lock") != null);
+}
+
+test "path 依存の循環は lock 生成時点で cycle として診断される" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    // A↔B の path 依存循環は lock 生成時点で E004 で失敗する。
+    try temporary.dir.createDirPath(io, "app/a/src");
+    try writeLibPackage(a, temporary.dir, "app/a", "a");
+    try temporary.dir.createDirPath(io, "app/b/src");
+    try writeLibPackage(a, temporary.dir, "app/b", "b");
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/a/nako.toml", .data =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\b = { path = "../b" }
+        \\
+    });
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/b/nako.toml", .data =
+        \\[package]
+        \\name = "b"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\a = { path = "../a" }
+        \\
+    });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", a);
+    try appManifest(a, app_root,
+        \\[dependencies.path]
+        \\a = { path = "a" }
+        \\
+    );
+
+    var cli = Cli.init(a);
+    try expectFail(error.Failed, a, &cli, "lock", &.{}, app_root);
+    const err_text = cli.err.written();
+    try testing.expect(std.mem.indexOf(u8, err_text, "E004") != null or
+        std.mem.indexOf(u8, err_text, "cycle") != null or
+        std.mem.indexOf(u8, err_text, "循環") != null);
 }
 
 test "cache dir はキャッシュルートを出力する" {

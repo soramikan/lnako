@@ -163,6 +163,249 @@ test "manifest変更で--lockedは失敗する" {
     try testing.expectError(error.LockedNotSatisfied, project.verifyLocked(testing.allocator, io, &loaded, &.{}, &diagnostics));
 }
 
+test "npm依存はlock化できないためUnsupportedDependencyで拒否する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/nako.toml",
+        .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.npm]
+        \\escape = "^1.0.0"
+        \\
+        ,
+    });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    defer loaded.deinit();
+
+    // npm 依存を黙って lock から落とさず、明示的な診断付きで失敗する。
+    try testing.expectError(error.UnsupportedDependency, project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics));
+    const item = diagnostics.find(diag.E029_INVALID_VALUE) orelse return error.TestExpectedEqual;
+    try testing.expect(std.mem.indexOf(u8, item.message, "escape") != null);
+    // 不完全な lock は書かれない。
+    try testing.expectError(error.FileNotFound, temporary.dir.access(io, "app/nako.lock", .{}));
+}
+
+test "path依存の循環はDependencyCycleとして診断する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    // app → pkgs/a → pkgs/b → pkgs/a の path 依存 cycle。
+    try temporary.dir.createDirPath(io, "app/pkgs/a/src");
+    try temporary.dir.createDirPath(io, "app/pkgs/b/src");
+    const a_manifest =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\b = { path = "../b" }
+        \\
+    ;
+    const b_manifest =
+        \\[package]
+        \\name = "b"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\a = { path = "../a" }
+        \\
+    ;
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/pkgs/a/nako.toml", .data = a_manifest });
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/pkgs/b/nako.toml", .data = b_manifest });
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/pkgs/a/src/index.nako3", .data = "●表示とは\nここまで\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/pkgs/b/src/index.nako3", .data = "●表示とは\nここまで\n" });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/nako.toml",
+        .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\a = { path = "pkgs/a" }
+        \\
+        ,
+    });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    defer loaded.deinit();
+
+    // 無限に再取得せず E004_DEPENDENCY_CYCLE で失敗する。
+    try testing.expectError(error.DependencyCycle, project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics));
+    try testing.expect(diagnostics.find(diag.E004_DEPENDENCY_CYCLE) != null);
+    try testing.expectError(error.FileNotFound, temporary.dir.access(io, "app/nako.lock", .{}));
+}
+
+test "mutable=falseのpath依存はtree hashでpinし内容変更を検出する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/lib/src");
+    try writeLibPackage(temporary.dir, io, "app/lib", "lib");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/nako.toml",
+        .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\lib = { path = "lib", mutable = false }
+        \\
+        ,
+    });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    defer loaded.deinit();
+
+    var outcome = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
+    defer outcome.deinit();
+    // source artifact に sha256 が記録される（spec §3.4.3）。
+    var recorded: ?[]const u8 = null;
+    for (outcome.lock.packages) |entry| {
+        if (entry.source != null and entry.source.?.kind == .path) {
+            const artifact = entry.artifact("source") orelse return error.TestExpectedEqual;
+            recorded = artifact.sha256 orelse return error.TestExpectedEqual;
+            try testing.expect(std.mem.startsWith(u8, recorded.?, "sha256:"));
+        }
+    }
+    try testing.expect(recorded != null);
+    try project.verifyLocked(testing.allocator, io, &loaded, &.{}, &diagnostics);
+
+    // 内容を変えると pin 不一致で --locked が拒否し、通常解決は再記録する。
+    const index_path = try std.fs.path.join(testing.allocator, &.{ app_root, "lib", "src", "index.nako3" });
+    defer testing.allocator.free(index_path);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = index_path, .data = "●表示とは\n  「changed」を表示。\nここまで\n" });
+    try testing.expectError(error.LockedNotSatisfied, project.verifyLocked(testing.allocator, io, &loaded, &.{}, &diagnostics));
+    var second = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
+    defer second.deinit();
+    try testing.expect(second.wrote);
+    for (second.lock.packages) |entry| {
+        if (entry.source != null and entry.source.?.kind == .path) {
+            const artifact = entry.artifact("source") orelse return error.TestExpectedEqual;
+            try testing.expect(!std.mem.eql(u8, artifact.sha256.?, recorded.?));
+        }
+    }
+}
+
+test "mutable=trueのpath依存はhashを記録しない" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/lib/src");
+    try writeLibPackage(temporary.dir, io, "app/lib", "lib");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/nako.toml",
+        .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\lib = { path = "lib", mutable = true }
+        \\
+        ,
+    });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    defer loaded.deinit();
+    var outcome = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
+    defer outcome.deinit();
+    for (outcome.lock.packages) |entry| {
+        if (entry.source != null and entry.source.?.kind == .path) {
+            try testing.expectEqual(@as(?bool, true), entry.source.?.mutable);
+            const artifact = entry.artifact("source") orelse return error.TestExpectedEqual;
+            try testing.expect(artifact.sha256 == null);
+        }
+    }
+    // 内容変更しても lock は fresh のまま（live reference 契約）。
+    const index_path = try std.fs.path.join(testing.allocator, &.{ app_root, "lib", "src", "index.nako3" });
+    defer testing.allocator.free(index_path);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = index_path, .data = "●表示とは\n  「x」を表示。\nここまで\n" });
+    var second = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
+    defer second.deinit();
+    try testing.expect(!second.wrote);
+}
+
+test "存在しないpath依存の取得失敗はdep名を含む診断を出す" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/nako.toml",
+        .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\missing = { path = "missing" }
+        \\
+        ,
+    });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    defer loaded.deinit();
+
+    // 裸のエラー名だけでなく session.failures 由来の詳細診断が出る。
+    try testing.expectError(error.NotFound, project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics));
+    try testing.expect(diagnostics.errorCount() > 0);
+    var found_detail = false;
+    for (diagnostics.items.items) |item| {
+        if (std.mem.indexOf(u8, item.message, "missing") != null) found_detail = true;
+    }
+    try testing.expect(found_detail);
+}
+
+test "generationExistsは.nako/env/<gen>の実在を検査する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/.nako/env/g1");
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+
+    try testing.expect(project.generationExists(io, app_root, "g1"));
+    try testing.expect(!project.generationExists(io, app_root, "gone"));
+    try testing.expect(!project.generationExists(io, app_root, "../escape"));
+    try testing.expect(!project.generationExists(io, app_root, ""));
+}
+
 test "check相当の環境検査は.nakoを作成しない" {
     const io = testing.io;
     var temporary = std.testing.tmpDir(.{});

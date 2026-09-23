@@ -114,6 +114,41 @@ fn mapTreeError(ctx: *Context, err: anyerror, subject: []const u8) Error {
     };
 }
 
+/// lock entry の `mutable = false` path source に記録された pin hash。
+fn pinnedSourceHash(entry: *const lock_model.PackageEntry) ?[]const u8 {
+    for (entry.artifacts) |artifact| {
+        if (std.mem.eql(u8, artifact.key, "source") and artifact.sha256 != null) return artifact.sha256.?;
+    }
+    return null;
+}
+
+/// lock 内 `mutable = false` path 依存の pin hash を tree 再計算で照合する。
+/// 不一致（内容変更・hash 未記録・tree 破損・dir 欠落）があれば最初の
+/// dep 名を返す。path は `project_root` 基準で解決する。
+pub fn pathPinMismatch(gpa: Allocator, io: std.Io, project_root: []const u8, lock: *const lock_model.Lock) Error!?[]const u8 {
+    var sets: std.ArrayList([]const lock_model.PackageEntry) = .empty;
+    defer sets.deinit(gpa);
+    try sets.append(gpa, lock.packages);
+    for (lock.profile_packages) |profile| try sets.append(gpa, profile.packages);
+    // profile 間で同じ entry が重複しても照合結果は同じため dedupe しない。
+    for (sets.items) |set| {
+        for (set) |*entry| {
+            const source = entry.source orelse continue;
+            if (source.kind != .path or (source.mutable orelse false)) continue;
+            const rel = source.path orelse return entry.name;
+            const recorded = pinnedSourceHash(entry) orelse return entry.name;
+            const abs = if (provider.isAbsoluteDepPath(rel))
+                rel
+            else
+                try std.fs.path.join(gpa, &.{ project_root, rel });
+            const digest = cache.digestTree(io, gpa, abs) catch return entry.name;
+            const actual = try std.fmt.allocPrint(gpa, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
+            if (!std.mem.eql(u8, actual, recorded)) return entry.name;
+        }
+    }
+    return null;
+}
+
 const Context = struct {
     gpa: Allocator,
     arena: Allocator,
@@ -196,6 +231,14 @@ pub fn run(
             try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "lock input manifestSha256 does not match nako.toml; re-resolve the lock before sync", .{});
             return error.StaleLock;
         }
+    }
+
+    // `mutable = false` の path pin も照合する。pin 不一致の lock で環境を
+    // 構築すると lock が pin した内容と異なる tree を参照するため stale
+    // として拒否する（`lnako lock` で再解決してから sync する）。
+    if (try pathPinMismatch(arena, io, project_abs, &lock)) |name| {
+        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "content of pinned path dependency \"{s}\" does not match nako.lock; re-resolve the lock before sync", .{name});
+        return error.StaleLock;
     }
 
     const profile = options.profile orelse lock.input.profile;

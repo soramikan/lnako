@@ -88,7 +88,7 @@ pub fn run(
         .build => {
             var prep = project_command.PrepFlags{};
             defer prep.deinit(allocator);
-            const build_args = project_command.extractPrepFlags(allocator, args[1..], &prep) catch args[1..];
+            const build_args = project_command.extractPrepFlags(allocator, args[1..], &prep, "build", stderr) catch args[1..];
             const options = arguments.parseBuildOptions(build_args) catch |err| {
                 if (err == error.ConflictingDnclModes)
                     try stderr.writeAll("build: --dnclと--dncl2は同時に指定できません\n")
@@ -114,7 +114,7 @@ pub fn run(
                 std.process.exit(2);
             }
             // プロジェクト内の入力なら依存環境を自動準備する。
-            project_command.prepareForExecution(allocator, io, options.input, &prep, init.environ_map, "build", stderr);
+            try project_command.prepareForExecution(allocator, io, options.input, &prep, init.environ_map, "build", stderr);
             var ir_program = (try compiler_pipeline.compileInputTraced(allocator, io, options.input, .{ .compat_js = options.compat_js, .forced_mode = options.forced_mode }, stderr, init.environ_map.get("LNAKO_LLVM_TRACE") != null)) orelse {
                 try stderr.flush();
                 std.process.exit(1);
@@ -154,7 +154,7 @@ pub fn run(
             // prep 系フラグ（--locked/--profile 等）を除いた残りを検査する。
             var check_prep = project_command.PrepFlags{};
             defer check_prep.deinit(allocator);
-            const check_args = project_command.extractPrepFlags(allocator, args[1..], &check_prep) catch args[1..];
+            const check_args = project_command.extractPrepFlags(allocator, args[1..], &check_prep, "check", stderr) catch args[1..];
             var check_file: ?[]const u8 = null;
             var file_index: usize = 0;
             for (check_args, 0..) |argument, i| {
@@ -171,6 +171,18 @@ pub fn run(
                     std.process.exit(1);
                 };
                 return;
+            }
+            // ファイル検査ではプロジェクト準備フラグ（--locked/--profile 等）
+            // は適用先が無いため用法エラーとする（黙って捨てない）。
+            if (check_prep.locked or check_prep.offline or check_prep.no_sync or
+                check_prep.profile != null or check_prep.features.items.len > 0 or
+                check_prep.no_default_features or check_prep.registry != null or
+                check_prep.cache_dir != null or check_prep.allow_plaintext_http or
+                check_prep.json)
+            {
+                try stderr.writeAll("check: ファイル指定時はプロジェクト準備フラグ（--locked/--profile 等）は使えません\n");
+                try stderr.flush();
+                std.process.exit(2);
             }
             // ファイル以外の引数を従来どおり dncl 系オプションだけに限定する。
             var option_args: std.ArrayList([]const u8) = .empty;
@@ -211,7 +223,7 @@ pub fn run(
             const run_options = arguments.splitRunArguments(args[1..]);
             var run_prep = project_command.PrepFlags{};
             defer run_prep.deinit(allocator);
-            const run_lnako_args = project_command.extractPrepFlags(allocator, run_options.lnako, &run_prep) catch run_options.lnako;
+            const run_lnako_args = project_command.extractPrepFlags(allocator, run_options.lnako, &run_prep, "run", stderr) catch run_options.lnako;
             // 位置引数（入力ファイル）は prep 系フラグと前後してもよい。
             var run_file: ?[]const u8 = null;
             var run_file_index: usize = 0;
@@ -249,7 +261,7 @@ pub fn run(
                 std.process.exit(2);
             };
             // プロジェクト内の入力なら依存環境を自動準備する。
-            project_command.prepareForExecution(allocator, io, input, &run_prep, init.environ_map, "run", stderr);
+            try project_command.prepareForExecution(allocator, io, input, &run_prep, init.environ_map, "run", stderr);
             var ir_program = (compiler_pipeline.compileInput(allocator, io, input, .{ .compat_js = compat_js, .forced_mode = run_mode }, stderr) catch |err| {
                 if (err == error.ConflictingDnclModes) {
                     try stderr.writeAll("run: 拡張子と--dncl/--dncl2が異なるDNCL方言を要求しています\n");
@@ -304,7 +316,7 @@ pub fn run(
             }
             var test_prep = project_command.PrepFlags{};
             defer test_prep.deinit(allocator);
-            const test_args = project_command.extractPrepFlags(allocator, args[1..], &test_prep) catch args[1..];
+            const test_args = project_command.extractPrepFlags(allocator, args[1..], &test_prep, "test", stderr) catch args[1..];
             // 位置引数（入力ファイル/ディレクトリ）は prep 系フラグと前後してもよい。
             var test_input: ?[]const u8 = null;
             var test_input_index: usize = 0;
@@ -336,7 +348,7 @@ pub fn run(
                 std.process.exit(2);
             };
             // プロジェクト内の入力なら依存環境を自動準備する。
-            project_command.prepareForExecution(allocator, io, input, &test_prep, init.environ_map, "test", stderr);
+            try project_command.prepareForExecution(allocator, io, input, &test_prep, init.environ_map, "test", stderr);
             const succeeded = test_command.runTestTarget(allocator, io, input, test_mode, stdout, stderr) catch |err| {
                 if (err == error.ConflictingDnclModes) {
                     try stderr.writeAll("test: 拡張子と--dncl/--dncl2が異なるDNCL方言を要求しています\n");

@@ -77,7 +77,8 @@ fn collectDigestEntries(io: std.Io, gpa: Allocator, root_abs: []const u8, rel: [
 
 /// `tree/` の内容 digest。path・種別・size・内容を決定順で hash するため
 /// 同一 tree は常に同一 digest。marker 記録と hit 時の再検証に使う。
-fn digestTree(io: std.Io, gpa: Allocator, tree_abs: []const u8) ![32]u8 {
+/// `mutable = false` の path 依存 pin でも同じ digest を利用する。
+pub fn digestTree(io: std.Io, gpa: Allocator, tree_abs: []const u8) ![32]u8 {
     var entries = std.ArrayListUnmanaged(DigestEntry).empty;
     defer {
         for (entries.items) |entry| gpa.free(entry.rel);

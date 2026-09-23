@@ -7,6 +7,9 @@ const diag = @import("diagnostics.zig");
 const manifest_validate = @import("manifest_validate.zig");
 
 pub const Position = diag.Position;
+/// パッケージ名規則（`[a-z][a-z0-9-]{0,63}`）の検証。manifest 検証と
+/// CLI（`init --name`/`add`）で共有する。
+pub const isPackageName = manifest_validate.isPackageName;
 pub const FeatureDefinition = features_mod.Definition;
 pub const FeatureDefinitions = features_mod.Definitions;
 pub const FeatureExpanded = features_mod.Expanded;

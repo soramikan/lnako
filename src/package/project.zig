@@ -422,6 +422,14 @@ fn publicIdFor(gpa: Allocator, id_text: []const u8) ![]const u8 {
     return std.fmt.allocPrint(gpa, "pkg:{s}", .{hex[0..32]});
 }
 
+/// 宣言 dep key から lock 内の public id を導出する。`tree`/`why` が
+/// 宣言名と解決済み package を対応付けるために使う。kind は
+/// `"path"`/`"git"`/`"http"`。
+pub fn publicIdForDepKey(gpa: Allocator, kind: []const u8, key: []const u8) ![]const u8 {
+    const virtual = try std.fmt.allocPrint(gpa, "{s}:{s}", .{ kind, key });
+    return publicIdFor(gpa, virtual);
+}
+
 fn isVirtualId(id_text: []const u8) bool {
     return std.mem.startsWith(u8, id_text, "path:") or
         std.mem.startsWith(u8, id_text, "git:") or
@@ -578,6 +586,17 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
         };
         const id_text = try virtualId(gpa, work.kind, dep_name);
 
+        if (ctx.locals.get(id_text)) |existing| {
+            // 再訪問: 宣言 source が同一なら diamond（子辺は親側で記録済み
+            // なのでスキップ）。source が違えば同名 dep への別割当てで衝突。
+            // 再取得を伴わず宣言値だけで比較するため cycle でも有限に止まる。
+            if (!try declaredSourceMatches(ctx, existing, work)) {
+                try ctx.diagnostics.addFmt(diag.E012_ALIAS_COLLISION, .err, dep_name, .{}, "dependency \"{s}\" resolves to different sources", .{dep_name});
+                return error.ResolveFailed;
+            }
+            continue;
+        }
+
         var local = LocalPackage{
             .id_text = id_text,
             .public_id = try publicIdFor(gpa, id_text),
@@ -605,6 +624,15 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
                     try gpa.dupe(u8, dep.path)
                 else
                     try std.fs.path.join(gpa, &.{ work.base_dir.?, dep.path });
+                // `mutable = false` は tree 内容を hash pin する（spec §3.4.3）。
+                // 後の内容変更は lock の鮮度判定・sync 検証で検出される。
+                if (!dep.mutable) {
+                    const digest = cache.digestTree(ctx.io, gpa, child_base_dir.?) catch |err| switch (err) {
+                        error.OutOfMemory => return error.OutOfMemory,
+                        else => return ctx.session.fail(.invalid_source, .package, dep_name, "cannot hash path dependency \"{s}\" tree: {s}", .{ dep_name, @errorName(err) }),
+                    };
+                    local.artifact.sha256 = try std.fmt.allocPrint(gpa, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
+                }
             },
             .git => {
                 const dep = work.git_dep.?;
@@ -688,6 +716,104 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
         entry.* = local;
         try ctx.locals.put(id_text, entry);
         if (local.needs_registry) ctx.needs_registry = true;
+    }
+
+    try detectLocalCycles(gpa, ctx);
+}
+
+/// 再訪問した dep の宣言 source が既存 local と一致するかを、取得を伴わず
+/// 宣言値から比較する。path は解決後の絶対 path、git は url+subdir、
+/// http は url(+hash) で比較する。
+fn declaredSourceMatches(ctx: *ResolveContext, existing: *const LocalPackage, work: DepWork) Error!bool {
+    const gpa = ctx.gpa;
+    const source = existing.source;
+    switch (work.kind) {
+        .path => {
+            const dep = work.path_dep.?;
+            if (source.kind != .path) return false;
+            // 記録形式が宣言位置で異なるため（root 直下は宣言値、推移的は
+            // project 相対/絶対へ正規化）、解決後の絶対 path で比較する。
+            const stored = source.path orelse return false;
+            const stored_abs = if (provider.isAbsoluteDepPath(stored))
+                std.fs.path.resolve(gpa, &.{stored}) catch return error.FileSystem
+            else
+                std.fs.path.resolve(gpa, &.{ ctx.project_root, stored }) catch return error.FileSystem;
+            const revisit_abs = if (provider.isAbsoluteDepPath(dep.path))
+                std.fs.path.resolve(gpa, &.{dep.path}) catch return error.FileSystem
+            else
+                std.fs.path.resolve(gpa, &.{ work.base_dir orelse ctx.project_root, dep.path }) catch return error.FileSystem;
+            return std.mem.eql(u8, stored_abs, revisit_abs) and
+                (source.mutable orelse false) == dep.mutable;
+        },
+        .git => {
+            const dep = work.git_dep.?;
+            return source.kind == .git and
+                optEql(source.url, dep.url) and
+                optEql(source.path, dep.path);
+        },
+        .http => {
+            const dep = work.http_dep.?;
+            return source.kind == .http and optEql(source.url, dep.url);
+        },
+    }
+}
+
+fn optEql(a: ?[]const u8, b: ?[]const u8) bool {
+    if (a == null and b == null) return true;
+    if (a == null or b == null) return false;
+    return std.mem.eql(u8, a.?, b.?);
+}
+
+/// locals の子辺 graph 上で依存 cycle を検出する。path 依存同士の相互
+/// 参照等は solver node に到達しないためここで E004 とする。
+fn detectLocalCycles(gpa: Allocator, ctx: *ResolveContext) Error!void {
+    // 1=gray（探索中）/2=black（完了）
+    var state = std.StringHashMap(u8).init(gpa);
+    defer state.deinit();
+    const Frame = struct { id: []const u8, next: usize };
+    var frames: std.ArrayList(Frame) = .empty;
+
+    var it = ctx.locals.iterator();
+    while (it.next()) |entry| {
+        if (state.contains(entry.key_ptr.*)) continue;
+        try state.put(entry.key_ptr.*, 1);
+        frames.clearRetainingCapacity();
+        try frames.append(gpa, .{ .id = entry.key_ptr.*, .next = 0 });
+        while (frames.items.len > 0) {
+            const top = &frames.items[frames.items.len - 1];
+            const local = ctx.locals.get(top.id) orelse {
+                _ = frames.pop();
+                continue;
+            };
+            if (top.next >= local.child_ids.len) {
+                try state.put(top.id, 2);
+                _ = frames.pop();
+                continue;
+            }
+            const child_text = try std.fmt.allocPrint(gpa, "{f}", .{local.child_ids[top.next]});
+            top.next += 1;
+            if (state.get(child_text)) |s| {
+                if (s == 1) {
+                    // 後退辺 = cycle。frames 上の当該 node からの経路を出す。
+                    var start: usize = 0;
+                    for (frames.items, 0..) |f, i| {
+                        if (std.mem.eql(u8, f.id, child_text)) start = i;
+                    }
+                    var message: std.ArrayList(u8) = .empty;
+                    for (frames.items[start..], 0..) |f, i| {
+                        if (i > 0) try message.appendSlice(gpa, " -> ");
+                        try message.appendSlice(gpa, f.id);
+                    }
+                    try message.appendSlice(gpa, " -> ");
+                    try message.appendSlice(gpa, child_text);
+                    try ctx.diagnostics.addFmt(diag.E004_DEPENDENCY_CYCLE, .err, child_text, .{}, "dependency cycle: {s}", .{message.items});
+                    return error.DependencyCycle;
+                }
+                continue;
+            }
+            try state.put(child_text, 1);
+            try frames.append(gpa, .{ .id = child_text, .next = 0 });
+        }
     }
 }
 
@@ -878,6 +1004,18 @@ fn loadExistingLock(gpa: Allocator, io: std.Io, project_root: []const u8, diagno
     return parsed;
 }
 
+/// manifest の npm 依存宣言を拒否する。npm 解決器は未実装のため、lock
+/// へ黙って落とすのではなく診断で明示して失敗にする。
+fn rejectNpmDeps(manifest: *const manifest_mod.Manifest, diagnostics: *diag.List) Error!void {
+    for ([_]*const manifest_mod.DependencyGroup{ &manifest.dependencies, &manifest.dev_dependencies }) |group| {
+        var it = group.npm.iterator();
+        while (it.next()) |entry| {
+            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, entry.key_ptr.*, .{}, "npm dependency \"{s}\" cannot be locked (npm dependencies are not supported)", .{entry.key_ptr.*});
+            return error.UnsupportedDependency;
+        }
+    }
+}
+
 /// `nako.toml` の依存宣言のうち mutable path 依存があれば true（--locked
 /// 時の E016 説明用）。
 fn hasMutablePathDep(manifest: *const manifest_mod.Manifest) bool {
@@ -888,6 +1026,23 @@ fn hasMutablePathDep(manifest: *const manifest_mod.Manifest) bool {
         }
     }
     return false;
+}
+
+/// lock の freshness 判定に使う入力（manifest hash・profile・features・
+/// target）を組み立てる。features の各名前は manifest の定義を指すため
+/// `project` が生きている間だけ有効。
+fn lockInputFor(a: Allocator, project: *const Project, opts: *const PrepareOptions, diagnostics: *diag.List) Error!lock_model.Input {
+    const profiles = try profilesOf(a, project);
+    const profile = try selectProfile(profiles, opts.profile, diagnostics);
+    const record = recordOf(profiles, profile) orelse return error.UnknownProfile;
+    var expanded = try expandRootFeatures(a, &project.manifest, opts.features, !opts.no_default_features, diagnostics);
+    defer expanded.deinit();
+    return .{
+        .manifest_sha256 = project.manifest_sha256,
+        .profile = profile,
+        .features = try expandedFeatureNames(a, &expanded),
+        .target = .{ .os = record.os, .cpu = record.cpu, .abi = record.abi },
+    };
 }
 
 /// `--locked` の契約を検証する。lock 不足・陳腐・schema/resolver 不一致は
@@ -903,27 +1058,71 @@ pub fn verifyLocked(
     var arena_impl = std.heap.ArenaAllocator.init(gpa);
     defer arena_impl.deinit();
     const a = arena_impl.allocator();
-    const profiles = try profilesOf(a, project);
-    const profile = try selectProfile(profiles, opts.profile, diagnostics);
-    const record = recordOf(profiles, profile) orelse return error.UnknownProfile;
-    var expanded = try expandRootFeatures(a, &project.manifest, opts.features, !opts.no_default_features, diagnostics);
-    defer expanded.deinit();
-    const input = lock_model.Input{
-        .manifest_sha256 = project.manifest_sha256,
-        .profile = profile,
-        .features = try expandedFeatureNames(a, &expanded),
-        .target = .{ .os = record.os, .cpu = record.cpu, .abi = record.abi },
-    };
+    const input = try lockInputFor(a, project, opts, diagnostics);
 
     var existing = try loadExistingLock(a, io, project.root, diagnostics);
     defer if (existing) |*lock| lock.deinit();
     lock_mod.requireFresh(if (existing) |*l| l else null, input) catch {
         if (hasMutablePathDep(&project.manifest)) {
-            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml", .{}, "a mutable path dependency requires re-resolution but --locked forbids it", .{});
+            try diagnostics.addFmt(diag.E016_UNLOCKED_MUTABLE_PATH, .err, "nako.toml", .{}, "a mutable path dependency requires re-resolution but --locked forbids it", .{});
         } else {
             try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, lock_name, .{}, "nako.lock is missing or stale and --locked forbids updating it", .{});
         }
         return error.LockedNotSatisfied;
+    };
+    // `mutable = false` の pin hash も検証する（内容変更は --locked で
+    // 再記録できないため失敗とする）。
+    if (existing) |*l| {
+        if (try sync_mod.pathPinMismatch(a, io, project.root, l)) |name| {
+            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, lock_name, .{}, "content of pinned path dependency \"{s}\" changed and --locked forbids re-locking", .{name});
+            return error.LockedNotSatisfied;
+        }
+    }
+}
+
+/// `tree`/`why` など問い合わせ系コマンドのための読み取り専用 lock 取得。
+/// `nako.lock` を一切書き換えない。lock 不在は `LockNotFound`、陳腐
+/// （manifest/feature/target 不一致・pin hash 不一致）は `StaleLock` を
+/// 診断付きで返す。`--locked` 指定時は呼出し側で先に `verifyLocked` を
+/// 実行すること（両者とも書き込みを伴わない）。
+pub fn loadFreshLock(
+    gpa: Allocator,
+    io: std.Io,
+    project: *const Project,
+    opts: *const PrepareOptions,
+    diagnostics: *diag.List,
+) Error!LockOutcome {
+    const arena_impl = try gpa.create(std.heap.ArenaAllocator);
+    arena_impl.* = std.heap.ArenaAllocator.init(gpa);
+    errdefer {
+        arena_impl.deinit();
+        gpa.destroy(arena_impl);
+    }
+    const a = arena_impl.allocator();
+
+    const input = try lockInputFor(a, project, opts, diagnostics);
+    var existing = try loadExistingLock(a, io, project.root, diagnostics);
+    if (existing == null) {
+        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, lock_name, .{}, "nako.lock is missing; run `lnako lock` first", .{});
+        return error.LockNotFound;
+    }
+    const freshness = lock_mod.checkFreshness(&existing.?, input);
+    if (freshness != .fresh) {
+        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, lock_name, .{}, "nako.lock is stale; run `lnako lock` to update it", .{});
+        return error.StaleLock;
+    }
+    if (try sync_mod.pathPinMismatch(a, io, project.root, &existing.?)) |name| {
+        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, lock_name, .{}, "content of pinned path dependency \"{s}\" does not match nako.lock; run `lnako lock`", .{name});
+        return error.StaleLock;
+    }
+    const moved = existing.?;
+    existing = null; // 所有権は戻り値へ。
+    return .{
+        .arena = arena_impl,
+        .lock = moved,
+        .wrote = false,
+        .freshness = .fresh,
+        .profile = input.profile,
     };
 }
 
@@ -950,6 +1149,8 @@ pub fn ensureLock(
     const record = recordOf(profiles, profile) orelse return error.UnknownProfile;
     var expanded = try expandRootFeatures(a, &project.manifest, opts.features, !opts.no_default_features, diagnostics);
     defer expanded.deinit();
+    // npm 依存は lock に表現できないため解決開始前に拒否する。
+    try rejectNpmDeps(&project.manifest, diagnostics);
     const input = lock_model.Input{
         .manifest_sha256 = try a.dupe(u8, project.manifest_sha256),
         .profile = try a.dupe(u8, profile),
@@ -963,7 +1164,14 @@ pub fn ensureLock(
 
     var existing = try loadExistingLock(a, io, project.root, diagnostics);
     defer if (existing) |*l| l.deinit();
-    const freshness = lock_mod.checkFreshness(if (existing) |*l| l else null, input);
+    var freshness = lock_mod.checkFreshness(if (existing) |*l| l else null, input);
+    // `mutable = false` の path 依存は内容 hash で pin する。fresh であっても
+    // pin 不一致なら lock を作り直す。
+    if (freshness == .fresh) {
+        if (try sync_mod.pathPinMismatch(a, io, project.root, &existing.?) != null) {
+            freshness = .stale_manifest;
+        }
+    }
     if (freshness == .fresh and !opts.force_resolve) {
         const moved = existing.?;
         existing = null; // 所有権は戻り値へ。defer の deinit を防ぐ。
@@ -991,7 +1199,10 @@ pub fn ensureLock(
         .diagnostics = diagnostics,
     };
     defer ctx.deinit();
-    try collectLocals(&ctx, &project.manifest, &expanded.dependency_aliases);
+    collectLocals(&ctx, &project.manifest, &expanded.dependency_aliases) catch |err| {
+        session.reportDiagnostics(diagnostics) catch {};
+        return err;
+    };
 
     // root の pkg 依存があれば registry が必要。
     var root_needs_registry = false;
@@ -1023,7 +1234,10 @@ pub fn ensureLock(
         var reg: ?registry.StaticRegistry = null;
         defer if (reg) |*r| r.deinit();
         if (ctx.needs_registry) {
-            reg = try registry.StaticRegistry.init(&session, opts.registry_url.?, target);
+            reg = registry.StaticRegistry.init(&session, opts.registry_url.?, target) catch |err| {
+                session.reportDiagnostics(diagnostics) catch {};
+                return err;
+            };
         }
         composite.registry = if (reg) |*r| r else null;
         var locked_index: ?lock_mod.LockedIndex = null;
@@ -1087,7 +1301,10 @@ pub fn ensureLock(
     var reg_details: ?registry.StaticRegistry = null;
     defer if (reg_details) |*r| r.deinit();
     if (ctx.needs_registry) {
-        reg_details = try registry.StaticRegistry.init(&session, opts.registry_url.?, .{});
+        reg_details = registry.StaticRegistry.init(&session, opts.registry_url.?, .{}) catch |err| {
+            session.reportDiagnostics(diagnostics) catch {};
+            return err;
+        };
     }
     composite_details.registry = if (reg_details) |*r| r else null;
 
@@ -1226,6 +1443,7 @@ pub fn readEnvironmentInfo(gpa: Allocator, io: std.Io, project_root: []const u8)
         error.FileNotFound => return null,
         else => return mapFs(err),
     };
+    defer gpa.free(bytes);
     var info = EnvironmentInfo{};
     var parsed = std.json.parseFromSlice(std.json.Value, gpa, bytes, .{}) catch return error.InvalidLock;
     defer parsed.deinit();
@@ -1249,10 +1467,40 @@ pub fn readEnvironmentInfo(gpa: Allocator, io: std.Io, project_root: []const u8)
     const current_path = try std.fs.path.join(gpa, &.{ project_root, ".nako", "current" });
     defer gpa.free(current_path);
     if (std.Io.Dir.cwd().readFileAlloc(io, current_path, gpa, .limited(4096)) catch null) |current| {
+        defer gpa.free(current);
         const name = std.mem.trim(u8, current, " \t\r\n");
         if (name.len > 0) info.generation = try gpa.dupe(u8, name);
     }
     return info;
+}
+
+/// `--no-sync` 用の静的検査: 既存 lock を読み、`mutable = false` の path
+/// 依存 pin を照合する。lock が無い・読めない場合は null（環境判定側の
+/// lock 不在分岐で扱う）。pin 不一致なら dep 名を返す。
+pub fn pinnedPathMismatch(gpa: Allocator, io: std.Io, project: *const Project, diagnostics: *diag.List) Error!?[]const u8 {
+    var existing = loadExistingLock(gpa, io, project.root, diagnostics) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return null,
+    } orelse return null;
+    defer existing.deinit();
+    return try sync_mod.pathPinMismatch(gpa, io, project.root, &existing);
+}
+
+/// `.nako/env/<generation>` dir が実在するか。`environment.json` だけ残って
+/// 参照世代が消えた状態を stale として扱うための検査。世代名に path 成分が
+/// 混じった細工した `current` は拒否する。
+pub fn generationExists(io: std.Io, project_root: []const u8, generation: []const u8) bool {
+    if (generation.len == 0 or generation.len > 256) return false;
+    for (generation) |ch| {
+        // `.` を含む世代名は存在しない（`..` による dir 外参照を拒否）。
+        if (!std.ascii.isAlphanumeric(ch) and ch != '-' and ch != '_') return false;
+    }
+    var buffer: [512]u8 = undefined;
+    const rel = std.fmt.bufPrint(&buffer, ".nako" ++ std.fs.path.sep_str ++ "env" ++ std.fs.path.sep_str ++ "{s}", .{generation}) catch return false;
+    var path_buffer: [4096]u8 = undefined;
+    const abs = std.fmt.bufPrint(&path_buffer, "{s}" ++ std.fs.path.sep_str ++ "{s}", .{ project_root, rel }) catch return false;
+    std.Io.Dir.cwd().access(io, abs, .{}) catch return false;
+    return true;
 }
 
 /// `lnako check` / cnako `--no-sync` のための静的検査結果。
@@ -1303,6 +1551,12 @@ pub fn inspectForCheck(
         info.freshness = .missing;
     } else {
         info.freshness = lock_mod.checkFreshness(&existing.?, input);
+        // `mutable = false` の pin hash 不一致も stale とする。
+        if (info.freshness == .fresh and
+            (try sync_mod.pathPinMismatch(gpa, io, project.root, &existing.?)) != null)
+        {
+            info.freshness = .stale_manifest;
+        }
         info.lock_state = if (info.freshness == .fresh) .fresh else .stale;
     }
 
@@ -1311,7 +1565,9 @@ pub fn inspectForCheck(
     const has_lock = try lockDigest(gpa, io, project.root, &digest);
     info.environment_current = has_lock and info.environment != null and
         environmentMatchesLock(info.environment.?, &digest) and
-        info.environment.?.schema_version == 1;
+        info.environment.?.schema_version == 1 and
+        // 参照世代 dir が消えた環境は不一致とする。
+        (info.environment.?.generation != null and generationExists(io, project.root, info.environment.?.generation.?));
     return info;
 }
 
@@ -1372,7 +1628,9 @@ pub fn ensureEnvironment(
         environmentMatchesLock(env.?, &digest) and
         env.?.schema_version == 1 and
         (env.?.profile == null or std.mem.eql(u8, env.?.profile.?, lock_outcome.profile)) and
-        (env.?.runtime == null or std.mem.eql(u8, env.?.runtime.?, "lnako"));
+        (env.?.runtime == null or std.mem.eql(u8, env.?.runtime.?, "lnako")) and
+        // 参照世代 dir が消えた環境は不一致として sync し直す。
+        (env.?.generation != null and generationExists(io, project.root, env.?.generation.?));
     if (env_ok) {
         outcome.environment_root = try std.fs.path.join(gpa, &.{ project.root, ".nako" });
         outcome.generation = env.?.generation;
