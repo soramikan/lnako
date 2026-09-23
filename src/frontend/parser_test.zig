@@ -456,6 +456,14 @@ test "命令呼出しを構成しない裸の式文は不完全な文として�
         .{ .source = "{「a」:1}\n", .message = "不完全な文です。『json_obj』が解決していません" },
         .{ .source = "A[0]\n", .message = "不完全な文です。『ref_array』が解決していません" },
         .{ .source = "A.B\n", .message = "不完全な文です。『ref_prop』が解決していません" },
+        // 公式のref_array/ref_propは裸のword起点だけ。括弧済み・値への
+        // 後置アクセスはref_array_value（`『@』`/`『$』`）、`A[0].B`は
+        // 公式では同一ref_arrayへ吸収される。
+        .{ .source = "[1,2][0]\n", .message = "不完全な文です。『@』が解決していません" },
+        .{ .source = "[{x:1}].x\n", .message = "不完全な文です。『$』が解決していません" },
+        .{ .source = "(A)[0]\n", .message = "不完全な文です。『@』が解決していません" },
+        .{ .source = "(A).x\n", .message = "不完全な文です。『$』が解決していません" },
+        .{ .source = "A[0].B\n", .message = "不完全な文です。『ref_array』が解決していません" },
         .{ .source = "!A\n", .message = "不完全な文です。演算子『not』が解決していません" },
         .{ .source = "「a」と「b」\n", .message = "不完全な文です。文字列『a』、文字列『b』が解決していません" },
         .{ .source = "1 2\n", .message = "不完全な文です。数値1、数値2が解決していません" },

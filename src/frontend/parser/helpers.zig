@@ -115,6 +115,40 @@ pub fn isVariableReference(kind: ast.Kind) bool {
     return kind == .word or kind == .array_reference or kind == .property_reference;
 }
 
+/// 公式`nodeToStr`がref系ノードへ付ける表示名（『』内の文字列）を返す。
+/// 公式の`ref_array`/`ref_prop`は裸のwordを起点とする参照だけに付く
+/// 型名で、括弧済みの語や値への後置アクセスは`ref_array_value`
+/// （`name`が`'@'`/`'$'`のため`『@』`/`『$』`と表示）になる。
+/// また公式は`A[0].x`の`$`プロパティを同一`ref_array`の添字列へ
+/// 吸収するため、array_referenceを含む連鎖は`『ref_array』`と出す。
+/// `.array_value_reference`は生成時に`name`へ`'@'`/`'$'`を記録済み。
+pub fn referenceTypeName(node: *const ast.Node) []const u8 {
+    if (node.kind == .array_value_reference) return node.name;
+    // レシーバ鎖を裸のwordまで降りる。groupedノードは括弧化された値
+    // なので公式ではref_array_valueのレシーバになり、それ以上降りない。
+    var saw_array_reference = false;
+    var base = node.children[0];
+    while ((base.kind == .array_reference or base.kind == .property_reference) and !base.grouped) {
+        saw_array_reference = saw_array_reference or base.kind == .array_reference;
+        base = base.children[0];
+    }
+    const bare_word_root = base.kind == .word and !base.grouped;
+    return switch (node.kind) {
+        // 裸のword起点の添字参照だけが公式のref_array。括弧済みの語への
+        // 添字適用は公式ではref_array_value（『@』）になる。
+        // （`(A[0])[1]`のように括弧済み参照が子へ畳まれる形はAST上
+        // `A[0][1]`と区別できず`ref_array`と出る既知の差分がある。）
+        .array_reference => if (bare_word_root) "ref_array" else "@",
+        // 裸のword起点のプロパティ参照はref_prop。途中に配列参照を含む
+        // 連鎖（`A[0].x`）は公式では同一ref_arrayへ吸収される。
+        // 裸のword以外が起点なら括弧済みの値へのプロパティ適用（『$』）。
+        // （`(A.x).y`のように括弧済み参照が子へ畳まれる形はAST上
+        // `A.x.y`と区別できず`ref_prop`と出る既知の差分がある。）
+        .property_reference => if (!bare_word_root) "$" else if (saw_array_reference) "ref_array" else "ref_prop",
+        else => unreachable,
+    };
+}
+
 pub fn clearConditionalJosi(node: *ast.Node) void {
     node.josi = "";
     node.raw_josi = "";

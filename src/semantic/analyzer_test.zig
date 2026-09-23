@@ -342,6 +342,14 @@ test "宣言助詞に一致しない引数は公式の未解決の単語診断�
         .{ .source = "A={x:1}\nA.xが[1]を表示\n", .line = 2, .message = "未解決の単語があります: [『ref_prop』が]" },
         .{ .source = "[1,2]が[1]を表示\n", .line = 1, .message = "未解決の単語があります: [『json_array』が]" },
         .{ .source = "{x:1}が[1]を表示\n", .line = 1, .message = "未解決の単語があります: [『json_obj』が]" },
+        // 公式のref_array/ref_propは裸のword起点の参照だけ。括弧済みの
+        // 語や値への後置アクセスはref_array_value（`『@』`/`『$』`）、
+        // `A[0].x`のプロパティは公式では同一ref_arrayへ吸収される。
+        .{ .source = "A=[1]\n(A)[0]が[1]を表示\n", .line = 2, .message = "未解決の単語があります: [『@』が]" },
+        .{ .source = "A={x:1}\n(A).xが[1]を表示\n", .line = 2, .message = "未解決の単語があります: [『$』が]" },
+        .{ .source = "A=[1]\nA[0].xが[1]を表示\n", .line = 2, .message = "未解決の単語があります: [『ref_array』が]" },
+        .{ .source = "[1,2][0]が[1]を表示\n", .line = 1, .message = "未解決の単語があります: [『@』が]" },
+        .{ .source = "[{x:1}].xが[1]を表示\n", .line = 1, .message = "未解決の単語があります: [『$』が]" },
     };
     for (cases) |case| {
         var parsed = try parser.parse(std.testing.allocator, case.source, "main.nako3");
