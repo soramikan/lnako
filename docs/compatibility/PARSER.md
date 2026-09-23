@@ -137,13 +137,22 @@
 - 差分テストID: なし
 - TODO識別子: `TODO: call-result-index-statement`
 
+## 参照ノードの診断表示名（『未解決の単語』『不完全な文』）
+
+- 公式実測・source根拠: 公式`nodeToStr`は裸のwordを起点とする添字参照だけを`『ref_array』`、プロパティ参照だけを`『ref_prop』`と表示し、括弧済みの語や値への後置アクセスは`ref_array_value`（`name`が`'@'`/`'$'`）として`『@』`/`『$』`と表示します。`A[0].x`のように配列参照へ続くプロパティは同一`ref_array`の添字列へ吸収されるため`『ref_array』`になります（例: `A[0]が…`→`『ref_array』が`、`A.xが…`→`『ref_prop』が`、`(A)[0]が…`→`『@』が`、`(A).xが…`→`『$』が`、`A[0].xが…`→`『ref_array』が`、`[1,2][0]が…`→`『@』が`、`[{x:1}].xが…`→`『$』が`）。
+- lnakoの現在動作: 参照ノードのレシーバ鎖を裸のwordまで遡って同じ表示名を選びます。`.array_value_reference`は生成時に`name`へ`'@'`/`'$'`を記録済みで、そのまま表示します。既知の差分として、`(A[0])[1]`や`(A.x).y`のように括弧済みの参照が後置適用で子へ畳まれる形はAST上`A[0][1]`・`A.x.y`と区別できず、公式の`『@』`/`『$』`ではなく`『ref_array』`/`『ref_prop』`と表示します。
+- 判定: 仕様（畳み込み形の既知差分あり）
+- 対象経路: Parser / Analyzer
+- 差分テストID: `semantic-diagnostic-cases.json`（`semantic-diagnostic-unresolved-grouped-ref-array`、`semantic-diagnostic-unresolved-grouped-ref-prop`、`semantic-diagnostic-unresolved-ref-array-prop`、`semantic-diagnostic-unresolved-value-index`、`semantic-diagnostic-unresolved-value-prop`）
+- TODO識別子: なし
+
 ## 関数値呼出し（call_value）の連鎖とpostfix
 
-- 公式実測・source根拠: `F(1)(2)`・`G()()()`のように呼出し結果の直後の`(`は関数値呼出し（call_value）として連鎖し、`(`の数だけ多段に評価されます（`G()()()を表示`は各段の戻り値を順に呼んで`6`を出力します）。call_valueの直後の`@`・`[`・`.`はpostfixとして続けず、`F()()@0`・`F()().x`は『不完全な文です。『call_value』が解決していません』、`F()()[0]`は未解決の単語になります。括弧で括ったcall_valueは通常の値として扱われ、`(F()())[0]`・`(F()())@0`・`(F()()).x`は受理されます。括弧で括った呼出しや語の直後の`(`はcall_valueへ結合せず、`(F())()`は`(...)の解析エラー`、`(F)(3)`は未解決の単語になります。
-- lnakoの現在動作: 同じ構造で解析します。助詞を持たない`function_call`・`call_value`の直後の`(`はcall_valueとして連鎖し、`(`の数だけ入れ子のcall_valueを作ります。括弧済みノード（`grouped`）の直後の`(`は連鎖せず次の括弧式として読み、call_valueの直後の`@`・`[`・`.`は『不完全な文です。『call_value』が解決していません』で拒否します。`F()()[0]`だけは公式が別の診断（未解決の単語・文末位置）で拒否するため、メッセージは『call_value』未解決としますが拒否一致です。
+- 公式実測・source根拠: `F(1)(2)`・`G()()()`のように呼出し結果の直後の`(`は関数値呼出し（call_value）として連鎖し、`(`の数だけ多段に評価されます（`G()()()を表示`は各段の戻り値を順に呼んで`6`を出力します）。call_valueの直後の`@`・`[`・`.`はpostfixとして続けず、`F()()@0`・`F()().x`は『不完全な文です。『call_value』が解決していません』、`F()()[0]`は未解決の単語になります。`@`・`.`は式を開始できないため、助詞付きcall_valueの直後でも同じ診断で拒否します（`F()()と@0`・`F()()を.x`も『call_value』未解決）。一方、助詞付きcall_valueは解決済みの実引数のため、直後の`[`は新たな配列リテラル引数の開始として読まれます（`F()()と[1,2]を連結して表示`は`x1,2`、`F()()を[A]に追加してそれを表示`は`9,9,x`を表示します）。ただし条件助詞（`なら`・`ならば`・`たら`・`れば`・`でなければ`・`なければ`）は公式では文レベルの条件構文でcall_valueがその境界で先に失敗するため、直後の`[`は引数として読まれず`F()()なら[1]を表示`も『call_value』未解決になります。括弧で括ったcall_valueは通常の値として扱われ、`(F()())[0]`・`(F()())@0`・`(F()()).x`は受理されます。括弧で括った呼出しや語の直後の`(`はcall_valueへ結合せず、`(F())()`は`(...)の解析エラー`、`(F)(3)`は未解決の単語になります。
+- lnakoの現在動作: 同じ構造で解析します。助詞を持たない`function_call`・`call_value`の直後の`(`はcall_valueとして連鎖し、`(`の数だけ入れ子のcall_valueを作ります。括弧済みノード（`grouped`）の直後の`(`は連鎖せず次の括弧式として読みます。非グループcall_valueの直後の`@`・`.`は助詞の有無に関わらず『不完全な文です。『call_value』が解決していません』で拒否し、`[`は助詞を持たないcall_valueまたは条件助詞を持つcall_valueの直後だけ同診断で拒否します（通常の引数助詞・連文助詞付きなら`[`は次の配列リテラル引数の開始）。`F()()[0]`だけは公式が別の診断（未解決の単語・文末位置）で拒否するため、メッセージは『call_value』未解決としますが拒否一致です。
 - 判定: 仕様
 - 対象経路: Parser / Interpreter / AOT
-- 差分テストID: `call-value-multi-chain`、`native-call-value-multi-chain`、`parser-diagnostic-cases.json`（`F()()@0を表示`、`F()().xを表示`、`(F())()を表示`）
+- 差分テストID: `call-value-multi-chain`、`native-call-value-multi-chain`、`call-value-josi-array-arg-issue163`、`native-call-value-josi-array-arg-issue163`、`parser-diagnostic-cases.json`（`F()()@0を表示`、`F()().xを表示`、`(F())()を表示`）
 - TODO識別子: なし
 
 ## 「の」助詞の関数呼出し

@@ -34,7 +34,7 @@
 | `trace-confirmed-unattested` | 527 |
 | `unverified` | 0 |
 
-fixture coverageは `paired: 523`、`compat-js-only: 4`、その他の状態は0です。fixture inventoryは合計725件、native AOT 421件、Interpreter 314件、QuickJS 9件です。inventoryの分類は重複するため、数値を足してfixture総数にしません。
+fixture coverageは `paired: 523`、`compat-js-only: 4`、その他の状態は0です。fixture inventoryは合計745件、native AOT 426件、Interpreter 329件、QuickJS 9件です。inventoryの分類は重複するため、数値を足してfixture総数にしません。
 
 ## canonical形とmeasured形
 

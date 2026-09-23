@@ -141,6 +141,10 @@ fn unresolvedWordDescription(self: *Analyzer, module_index: u32, scope: ScopeId,
         .string, .string_template => try std.fmt.allocPrint(self.allocator, "文字列『{s}』", .{node.value}),
         .word, .boolean, .null_value => try unresolvedWordName(self, module_index, scope, node),
         .function_call => try std.fmt.allocPrint(self.allocator, "関数『{s}』", .{try unresolvedFunctionName(self, module_index, scope, node.name)}),
+        .call_value => "『call_value』",
+        .array_reference, .array_value_reference, .property_reference => try std.fmt.allocPrint(self.allocator, "『{s}』", .{parser_helpers.referenceTypeName(node)}),
+        .array_literal => "『json_array』",
+        .object_literal => "『json_obj』",
         else => "式",
     };
     return try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ base, node.josi });
