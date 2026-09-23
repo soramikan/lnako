@@ -8,12 +8,19 @@ root=$(git rev-parse --show-toplevel)
 cd "$root"
 
 zero_sha=0000000000000000000000000000000000000000
+pushed_input=$(cat)
+
+if [ -z "$pushed_input" ]; then
+    exit 0
+fi
+
 pushing_branch=false
 
 # Validate every branch ref in this push. Tags and other refs do not run the
 # repository validation, but a non-fast-forward branch update is always
 # rejected before any expensive command starts.
 while read -r local_ref local_sha remote_ref remote_sha; do
+    [ -z "$local_ref" ] && continue
     case "$remote_ref" in
         refs/heads/*)
             pushing_branch=true
@@ -27,7 +34,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
             fi
             ;;
     esac
-done
+done <<EOF
+$pushed_input
+EOF
 
 if [ "$pushing_branch" != "true" ]; then
     exit 0
@@ -41,11 +50,6 @@ status_output=$(git status --porcelain=v1 --untracked-files=all) || {
 }
 if [ -n "$status_output" ]; then
     echo "pre-push: working tree is not clean; commit or stash changes first" >&2
-    exit 1
-fi
-
-if ! ZIG=$(command -v zig 2>/dev/null); then
-    echo "pre-push: zig not found in PATH" >&2
     exit 1
 fi
 
@@ -69,11 +73,60 @@ if [ -z "$NODE" ]; then
     fi
 fi
 
-echo "pre-push: running zig build fmt-check..." >&2
-"$ZIG" build fmt-check
+# Collect changed paths across all pushed branches to decide whether expensive
+# compiler build and unit test steps can be skipped.
+changed_files=$(mktemp 2>/dev/null || mktemp -t 'lnako-prepush')
+trap 'rm -f "$changed_files"' EXIT INT TERM
 
-echo "pre-push: running zig build test..." >&2
-"$ZIG" build test --test-timeout 5m
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ -z "$local_ref" ] && continue
+    case "$remote_ref" in
+        refs/heads/*)
+            if [ "$remote_sha" = "$zero_sha" ]; then
+                base_commit=""
+                if git rev-parse --verify refs/remotes/origin/main >/dev/null 2>&1; then
+                    base_commit=$(git merge-base refs/remotes/origin/main "$local_sha" 2>/dev/null || true)
+                elif git rev-parse --verify main >/dev/null 2>&1; then
+                    base_commit=$(git merge-base main "$local_sha" 2>/dev/null || true)
+                fi
+                if [ -n "$base_commit" ] && [ "$base_commit" != "$local_sha" ]; then
+                    git diff --name-only --no-renames "$base_commit" "$local_sha" >> "$changed_files" 2>/dev/null || true
+                else
+                    git diff-tree --no-commit-id --name-only -r "$local_sha" >> "$changed_files" 2>/dev/null || true
+                fi
+            else
+                git diff --name-only --no-renames "$remote_sha" "$local_sha" >> "$changed_files" 2>/dev/null || true
+            fi
+            ;;
+    esac
+done <<EOF
+$pushed_input
+EOF
+
+change_level="full"
+if [ -s "$changed_files" ]; then
+    classifier_output=$("$NODE" tools/classify_changes.mjs --files "$changed_files" 2>/dev/null || true)
+    case "$classifier_output" in
+        *level=light*) change_level="light" ;;
+    esac
+fi
+
+if [ "$change_level" = "light" ]; then
+    echo "pre-push: non-code changes detected; skipping zig build and test..." >&2
+    echo "pre-push: checking documentation consistency..." >&2
+    "$NODE" tools/check_docs_current.mjs
+else
+    if ! ZIG=$(command -v zig 2>/dev/null); then
+        echo "pre-push: zig not found in PATH" >&2
+        exit 1
+    fi
+
+    echo "pre-push: running zig build fmt-check..." >&2
+    "$ZIG" build fmt-check
+
+    echo "pre-push: running zig build test..." >&2
+    "$ZIG" build test --test-timeout 5m
+fi
 
 echo "pre-push: checking source structure..." >&2
 "$NODE" tools/check_source_structure.mjs

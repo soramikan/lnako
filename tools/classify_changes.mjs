@@ -10,6 +10,8 @@ const LIGHT_PATTERNS = [
   { category: "docs", pattern: /^docs\// },
   { category: "root-markdown", pattern: /^[^/]+\.md$/ },
   { category: "attestation-snapshot", pattern: /^compat\/[^/]+\/attestations\// },
+  { category: "github-templates", pattern: /^\.github\/(ISSUE_TEMPLATE|PULL_REQUEST_TEMPLATE)\// },
+  { category: "gitmessage", pattern: /^\.gitmessage$/ },
 ];
 
 export function isLightPath(path) {
