@@ -56,10 +56,12 @@ pub fn acquireEditLock(gpa: Allocator, io: std.Io, project_root: []const u8) Err
 
 /// `.nako` dir ハンドル相対で `edit.lock` を排他 lock 付きで開く。
 /// `createFile` は leaf symlink を追従して対象を truncate し得るため
-/// 使わず、no-follow open（symlink は `SymLinkLoop` で検出）と
+/// 使わず、no-follow open（POSIX では `SymLinkLoop` で検出）と
 /// `exclusive` 作成を往復させる。open と create の隙間に置かれた
 /// symlink も `PathAlreadyExists` → 次周の no-follow open で検出し、
 /// リンク本体のみ除去するため安全側に倒れる。
+/// Windows では `OPEN_REPARSE_POINT` が symlink 本体を正常に開くため、
+/// open 後の stat で `.sym_link` を検出して同じ経路へ合流させる。
 fn openEditLockFile(nako_dir: std.Io.Dir, io: std.Io) Error!std.Io.File {
     while (true) {
         if (nako_dir.openFile(io, "edit.lock", .{
@@ -68,6 +70,17 @@ fn openEditLockFile(nako_dir: std.Io.Dir, io: std.Io) Error!std.Io.File {
             .resolve_beneath = true,
             .lock = .exclusive,
         })) |file| {
+            // Windows は symlink（reparse point）本体を開いて返す。
+            // stat で検出してリンク本体のみ除去して作り直す。
+            const stat = file.stat(io) catch |stat_err| {
+                file.close(io);
+                return project.mapFs(stat_err);
+            };
+            if (stat.kind == .sym_link) {
+                file.close(io);
+                nako_dir.deleteFile(io, "edit.lock") catch |del_err| return project.mapFs(del_err);
+                continue;
+            }
             return file;
         } else |err| switch (err) {
             error.FileNotFound => {
