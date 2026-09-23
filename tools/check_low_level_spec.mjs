@@ -24,7 +24,7 @@ const catalog = JSON.parse(doc);
 const standard = await readJson("compat/v3.7.24/standard-cnako.json");
 
 if (catalog.schema !== "lnako.low-level-catalog.v1") fail(`schemaが不正です: ${catalog.schema}`);
-if (catalog.issue !== 37) fail("issueが37ではありません");
+if (catalog.issue !== 38) fail("issueが38ではありません");
 
 const capabilityEnum = /pub const Capability = enum \{([\s\S]*?)\n\s+pub fn/.exec(foundation)?.[1];
 if (capabilityEnum === undefined) fail("low_level_foundation.zigからCapability enumを抽出できません");
@@ -131,7 +131,7 @@ for (const command of catalog.commands) {
   if (commandNames.has(command.name)) fail(`command.nameが重複しています: ${command.name}`);
   commandNames.add(command.name);
   if (standardNames.has(command.name)) fail(`標準cnako 527件と衝突する名前があります: ${command.name}`);
-  if (command.issue < 27 || command.issue > 37) fail(`${command.id}のissueが範囲外です`);
+  if (command.issue < 27 || command.issue > 38) fail(`${command.id}のissueが範囲外です`);
   if (command.maxArgs < command.minArgs || command.minArgs < 0) fail(`${command.id}のarityが不正です`);
   if (!typeSet.has(command.returns)) fail(`${command.id}のreturns型がtypesにありません: ${command.returns}`);
   if (command.capability !== null && !catalogCapabilityIds.has(command.capability)) {

@@ -442,6 +442,25 @@ pub const ProcessContext = struct {
     }
 };
 
+/// Issue #38のロケール照合ドメインのHostコールバック。非Cロケール名の
+/// 照合をOS/ICU等の実装へ委譲する。Cロケール系名はcallbackを通らず
+/// `low_level_locale.compareBytewise` で処理されるため、callback未提供でも
+/// `ロケール文字列比較` のCロケール経路と `文字表示幅取得` は動作する。
+/// `locale` は正規化済み名ではなくOPTIONS入力値で、`a`/`b` はUTF-8バイト列。
+pub const LocaleContext = struct {
+    context: *anyopaque,
+    collateFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, locale: []const u8, a: []const u8, b: []const u8) anyerror!i8 = null,
+
+    pub fn collate(self: LocaleContext, allocator: std.mem.Allocator, locale: []const u8, a: []const u8, b: []const u8) !i8 {
+        const function = self.collateFn orelse return error.LocaleCollateUnavailable;
+        return function(self.context, allocator, locale, a, b);
+    }
+
+    pub fn hasCollate(self: LocaleContext) bool {
+        return self.collateFn != null;
+    }
+};
+
 const empty_stream: StreamContext = .{ .context = default_host };
 const empty_hash: HashContext = .{ .context = default_host };
 const empty_fs: FsContext = .{ .context = default_host };
@@ -449,6 +468,7 @@ const empty_dir: DirContext = .{ .context = default_host };
 const empty_posix: PosixContext = .{ .context = default_host };
 const empty_stdio: StdioContext = .{ .context = default_host };
 const empty_process: ProcessContext = .{ .context = default_host };
+const empty_locale: LocaleContext = .{ .context = default_host };
 
 /// 各ランタイム（Interpreter/AOT）がHostから受け取る低レイヤーI/O契約。
 /// ドメイン別サブContextへ分割し、Hostはドメインごとに関数を実装する。
@@ -461,6 +481,7 @@ pub const Context = struct {
     posix: PosixContext = empty_posix,
     stdio: StdioContext = empty_stdio,
     process: ProcessContext = empty_process,
+    locale: LocaleContext = empty_locale,
 
     pub fn openFile(self: Context, path: []const u8, mode: foundation.OpenMode, exclusive: bool, sync: bool) !u64 {
         return self.stream.openFile(path, mode, exclusive, sync);
@@ -731,6 +752,14 @@ pub const Context = struct {
     pub fn hasTty(self: Context) bool {
         return self.process.hasTty();
     }
+
+    pub fn collateLocale(self: Context, allocator: std.mem.Allocator, locale: []const u8, a: []const u8, b: []const u8) !i8 {
+        return self.locale.collate(allocator, locale, a, b);
+    }
+
+    pub fn hasLocaleCollate(self: Context) bool {
+        return self.locale.hasCollate();
+    }
 };
 
 /// lnako 0.2.0までのフラットなHost契約（`.context`, `.openFileFn`, `.statFn` …）。
@@ -789,6 +818,7 @@ pub const FlatContext = struct {
     prioritySetFn: ?*const fn (context: *anyopaque, pid: u32, value: i32) anyerror!void = null,
     isattyFn: ?*const fn (context: *anyopaque, stream: foundation.ProcessStream) anyerror!bool = null,
     ttySizeFn: ?*const fn (context: *anyopaque, stream: foundation.ProcessStream) anyerror!low_level_process.TtySize = null,
+    collateFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, locale: []const u8, a: []const u8, b: []const u8) anyerror!i8 = null,
 
     pub fn toContext(self: FlatContext) Context {
         return .{
@@ -859,6 +889,10 @@ pub const FlatContext = struct {
                 .isattyFn = self.isattyFn,
                 .ttySizeFn = self.ttySizeFn,
             },
+            .locale = .{
+                .context = self.context,
+                .collateFn = self.collateFn,
+            },
         };
     }
 };
@@ -883,12 +917,18 @@ test "FlatContextは旧フラット契約をドメイン別Contextへ詰め替�
             return 0;
         }
     }.call;
+    const collateFn = struct {
+        fn call(_: *anyopaque, _: std.mem.Allocator, _: []const u8, _: []const u8, _: []const u8) anyerror!i8 {
+            return 0;
+        }
+    }.call;
     var host: u8 = 0;
     const flat = FlatContext{
         .context = @ptrCast(&host),
         .statFn = statFn,
         .writeStdoutBytesFn = writeFn,
         .openDirFn = openDirFn,
+        .collateFn = collateFn,
     };
     const converted = flat.toContext();
     try std.testing.expect(converted.fs.statFn == statFn);
@@ -898,6 +938,8 @@ test "FlatContextは旧フラット契約をドメイン別Contextへ詰め替�
     try std.testing.expect(converted.stream.openFileFn == null);
     try std.testing.expect(converted.hasStat());
     try std.testing.expect(!converted.hasStreamFileIo());
+    try std.testing.expect(converted.locale.collateFn == collateFn);
+    try std.testing.expect(converted.hasLocaleCollate());
     // dirは3関数が揃うまでcapability成立にしない。
     try std.testing.expect(!converted.hasDirIterator());
 }

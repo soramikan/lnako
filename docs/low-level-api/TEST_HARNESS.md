@@ -20,7 +20,7 @@ Issue [#37](https://github.com/soramikan/lnako/issues/37) の受け入れ条件�
 | portable code | 構造化エラーの `code` を3経路で一致させる |
 | capability | 同一OSのlnako InterpreterとAOTで `低レイヤー機能対応判定` の真偽を一致させる |
 
-## case追加の手順（#27〜#36向け）
+## case追加の手順（#27〜#38向け）
 
 1. `tests/oracle/low-level-cases.json` へ case を追加する。
 2. caseの `commands` は [`catalog.json`](catalog.json) の命令名のみを使い、`catalogIds` に `ll-*` ID を書く。

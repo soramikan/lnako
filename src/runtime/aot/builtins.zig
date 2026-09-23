@@ -478,6 +478,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
+        .low_level_locale_compare, .low_level_display_width => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = state.lowLevelLocaleBuiltin(runtime, command, actual) catch |failure| {
+                if (!runtime.has_pending_exception) runtime.setFailure(failure);
+                return;
+            };
+        },
         // カタログ掲載済みだが未実装の低レイヤー命令。構造化 ENOTSUP を投げる
         // 共通stub。実装済み命令を追加するときは対応するcaseを上へ置く。
         .low_level_file_seek, .low_level_file_tell, .low_level_file_pread, .low_level_file_pwrite, .low_level_statfs, .low_level_reflink, .low_level_seek_data, .low_level_seek_hole, .low_level_fallocate => {
