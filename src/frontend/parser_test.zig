@@ -1808,10 +1808,16 @@ test "関数値呼出しは『(』の数だけ多段に連鎖する" {
 test "call_valueの直後の『@』『[』『.』はcall_value未解決の構文エラー" {
     // 公式`yCallValue`はcall_valueの結果へ添字・プロパティを続けず、
     // 『不完全な文です。『call_value』が解決していません』で拒否する。
+    // 『@』『.』は式を開始できないため、助詞付きのcall_valueの直後でも
+    // 公式は同じ診断で拒否する（`F()()と@0`・`F()()を.x`も同様）。
     const cases = [_][]const u8{
         "F()()@0を表示\n",
         "F()()[0]を表示\n",
         "F()().xを表示\n",
+        "F()()と@0を表示\n",
+        "F()()と.xを表示\n",
+        "F()()を@0を表示\n",
+        "F()()を.xを表示\n",
     };
     for (cases) |source| {
         var result = try parse(std.testing.allocator, source, "call-value-postfix.nako3");
@@ -1820,6 +1826,39 @@ test "call_valueの直後の『@』『[』『.』はcall_value未解決の構文
         try std.testing.expectEqual(diagnostic.Code.incomplete_statement, result.diagnostics[0].code);
         try std.testing.expectEqualStrings("不完全な文です。『call_value』が解決していません", result.diagnostics[0].message);
     }
+}
+
+test "助詞付きcall_valueの直後の『[』は配列リテラル引数の開始として読む" {
+    // 公式`yCallValue`は助詞付きcall_valueを解決済みの実引数として扱うため、
+    // 直後の`[`は新たな配列リテラル引数の開始になる（Issue #163:
+    // `F()()と[1,2]を連結して表示`は`x1,2`を表示する）。
+    var result = try parse(std.testing.allocator, "F()()と[1,2]を連結して表示\n", "call-value-josi-array.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const block = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.block, block.kind);
+    const concat = block.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, concat.kind);
+    try std.testing.expectEqualStrings("連結", concat.name);
+    try std.testing.expectEqual(@as(usize, 2), concat.children.len);
+    try std.testing.expectEqual(ast.Kind.call_value, concat.children[0].kind);
+    try std.testing.expectEqualStrings("と", concat.children[0].josi);
+    try std.testing.expectEqual(ast.Kind.array_literal, concat.children[1].kind);
+    try std.testing.expectEqualStrings("を", concat.children[1].josi);
+
+    // 『を』助詞でも同様（`F()()を[A]に追加`）。
+    var append_result = try parse(std.testing.allocator, "A=[9]\nF()()を[A]に追加して表示\n", "call-value-josi-array-wo.nako3");
+    defer append_result.deinit();
+    try std.testing.expect(append_result.succeeded());
+    const append_block = append_result.root.?.children[2];
+    try std.testing.expectEqual(ast.Kind.block, append_block.kind);
+    const append = append_block.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, append.kind);
+    try std.testing.expectEqualStrings("追加", append.name);
+    try std.testing.expectEqual(ast.Kind.call_value, append.children[0].kind);
+    try std.testing.expectEqualStrings("を", append.children[0].josi);
+    try std.testing.expectEqual(ast.Kind.array_literal, append.children[1].kind);
+    try std.testing.expectEqualStrings("に", append.children[1].josi);
 }
 
 test "括弧で括ったcall_valueには添字・プロパティを適用できる" {

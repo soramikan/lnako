@@ -956,9 +956,13 @@ pub const Parser = struct {
             // 未解決の文法エラー）。括弧で括ったcall_valueは通常の値なので
             // postfixを許すため、ここでは非グループのcall_valueだけを対象に
             // 公式と同じ『不完全な文です。『call_value』が解決していません』
-            // で拒否する。
+            // で拒否する。『@』『.』は式を開始できないため助詞の有無に関わらず
+            // 拒否するが、『[』は助詞付きcall_valueの直後では新たな配列
+            // リテラル引数の開始になるため（`F()()と[1,2]を連結`）、助詞を
+            // 持たないcall_valueの直後だけを拒否対象にする。
             if (expression.kind == .call_value and !expression.grouped and
-                (self.at(.at) or self.at(.left_bracket) or self.at(.property)))
+                (self.at(.at) or self.at(.property) or
+                    (self.at(.left_bracket) and expression.josi.len == 0)))
             {
                 const leftovers = [_]*ast.Node{expression};
                 return self.failIncompleteStatement(start, &leftovers);

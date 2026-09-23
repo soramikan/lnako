@@ -335,6 +335,13 @@ test "宣言助詞に一致しない引数は公式の未解決の単語診断�
         .{ .source = "5を7を表示\n", .line = 1, .message = "未解決の単語があります: [数値5を]" },
         .{ .source = "●Fとは\n9で戻る\nここまで\nそれをF\n", .line = 4, .message = "未解決の単語があります: [単語『それ』を]" },
         .{ .source = "●(XにYを)Fとは\nX+Yで戻る\nここまで\nAがBをF\n", .line = 4, .message = "未解決の単語があります: [単語『main__A』が]" },
+        // 公式`nodeToStr`と同じくcall_value・配列/プロパティ参照・
+        // 配列/辞書リテラルも型名『…』で報告する（`式`へ畳まない）。
+        .{ .source = "●Gとは\n「x」で戻る\nここまで\n●Fとは\nそれは{関数}G\nここまで\nA=[9]\nF()()が[A]を表示\n", .line = 8, .message = "未解決の単語があります: [『call_value』が]" },
+        .{ .source = "A=[1]\nA[0]が[1]を表示\n", .line = 2, .message = "未解決の単語があります: [『ref_array』が]" },
+        .{ .source = "A={x:1}\nA.xが[1]を表示\n", .line = 2, .message = "未解決の単語があります: [『ref_prop』が]" },
+        .{ .source = "[1,2]が[1]を表示\n", .line = 1, .message = "未解決の単語があります: [『json_array』が]" },
+        .{ .source = "{x:1}が[1]を表示\n", .line = 1, .message = "未解決の単語があります: [『json_obj』が]" },
     };
     for (cases) |case| {
         var parsed = try parser.parse(std.testing.allocator, case.source, "main.nako3");
