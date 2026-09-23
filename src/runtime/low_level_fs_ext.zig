@@ -276,8 +276,13 @@ fn seekExtentLinux(io: std.Io, file: std.Io.File, offset: i64, extent: SeekExten
             };
             if (std.math.cast(i64, end)) |end_i64| {
                 if (offset == end_i64) {
-                    const pos = std.os.linux.lseek(file.handle, end_i64, std.os.linux.SEEK.SET);
-                    if (std.os.linux.errno(pos) == .SUCCESS) return end_i64;
+                    while (true) {
+                        const pos = std.os.linux.lseek(file.handle, end_i64, std.os.linux.SEEK.SET);
+                        const pos_errno = std.os.linux.errno(pos);
+                        if (pos_errno == .SUCCESS) return end_i64;
+                        if (pos_errno == .INTR) continue;
+                        break;
+                    }
                 }
             }
         }
@@ -342,33 +347,40 @@ pub fn reflink(io: std.Io, source: []const u8, destination: []const u8, mode: ?u
     const metadata = try low_level_fs.stat(io, source, true);
     if (metadata.kind != .file) return error.OperationUnsupported;
     return switch (builtin.os.tag) {
-        .linux => cloneFileLinux(source, destination, mode),
-        .macos => cloneFileDarwin(source, destination, mode),
+        .linux => cloneFileLinux(io, source, destination, mode),
+        .macos => cloneFileDarwin(io, source, destination, mode),
         else => unreachable,
     };
 }
 
-// 複製中間物に使う一時名の連番。pidと組み合わせて同一ディレクトリ内で
-// 他プロセスとも衝突しない名前にする。
+// 複製中間物に使う一時名の連番。pid・乱数と組み合わせて同一ディレクトリ内で
+// 他プロセスとも衝突しにくい推測困難な名前にする。
 var clone_temp_sequence = std.atomic.Value(u32).init(0);
 
 /// DSTの親ディレクトリ内に作る非公開の一時名。同じFS内に置くことで
 /// renameでの原子公開が成立し、失敗時のcleanupがこの一意名だけを対象に
 /// するため既存・差し替え済みのDSTを誤って消すことがない。
-fn cloneTempPath(buffer: []u8, destination: []const u8) ![]u8 {
+fn cloneTempPath(io: std.Io, buffer: []u8, destination: []const u8) ![]u8 {
     const parent = std.fs.path.dirname(destination) orelse ".";
     const sequence = clone_temp_sequence.fetchAdd(1, .monotonic);
     const pid: u32 = switch (builtin.os.tag) {
         .linux => @intCast(std.os.linux.getpid()),
         else => @intCast(std.c.getpid()),
     };
-    return std.fmt.bufPrint(buffer, "{s}{c}.lnako-clone-{d}-{d}", .{ parent, std.fs.path.sep, pid, sequence }) catch return error.NameTooLong;
+    // pid+連番だけだと推測可能かつpid再利用・crash残存物と衝突し得るため、
+    // 推測困難な乱数も混ぜる。
+    var random: u32 = undefined;
+    io.random(std.mem.asBytes(&random));
+    return std.fmt.bufPrint(buffer, "{s}{c}.lnako-clone-{d}-{d}-{x}", .{ parent, std.fs.path.sep, pid, sequence, random }) catch return error.NameTooLong;
 }
+
+// 一時名のEEXIST衝突（crash残存物・pid再利用）で再試行する上限。
+const clone_temp_max_attempts = 8;
 
 // Linux `FICLONE` ioctl。dst fdへsrc fdのデータをCoW複製する。
 const ficlone: u32 = 0x4004_9409;
 
-fn cloneFileLinux(source: []const u8, destination: []const u8, mode: ?u32) anyerror!void {
+fn cloneFileLinux(io: std.Io, source: []const u8, destination: []const u8, mode: ?u32) anyerror!void {
     // statからopenの間にSRCがfifo等へ差し替えられるTOCTOUを塞ぐため、
     // NONBLOCKで開きfd上の種別を再検査する（fifo O_RDONLYのwriter待ち
     // ブロックを防ぐ。通常ファイルではNONBLOCKは無害）。
@@ -390,10 +402,26 @@ fn cloneFileLinux(source: []const u8, destination: []const u8, mode: ?u32) anyer
     // 一意の一時名だけを対象にするため、差し替え済みの無関係なDSTを消さない。
     // 生成権限は0o600固定で、複製後にSRC権限/明示MODEへ揃える。
     var temp_buffer: [std.fs.max_path_bytes]u8 = undefined;
-    const temp = try cloneTempPath(&temp_buffer, destination);
+    var temp: []u8 = undefined;
+    var destination_fd: std.posix.fd_t = undefined;
+    var attempt: u32 = 0;
+    while (true) {
+        temp = try cloneTempPath(io, &temp_buffer, destination);
+        // openatはパスを[]const u8で取る（sentinel配列をそのまま渡すと
+        // 内部NUL以降のゴミまでスライスされruntime assertに達する）。
+        destination_fd = std.posix.openat(std.posix.AT.FDCWD, temp, .{ .ACCMODE = .WRONLY, .CREAT = true, .EXCL = true, .CLOEXEC = true }, 0o600) catch |failure| switch (failure) {
+            // 残存の同名一時物との衝突は新しい一時名で再試行する。
+            error.PathAlreadyExists => {
+                attempt += 1;
+                if (attempt < clone_temp_max_attempts) continue;
+                return failure;
+            },
+            else => return failure,
+        };
+        break;
+    }
     const temp_path = try std.posix.toPosixPath(temp);
     const destination_path = try std.posix.toPosixPath(destination);
-    const destination_fd = try std.posix.openat(std.posix.AT.FDCWD, &temp_path, .{ .ACCMODE = .WRONLY, .CREAT = true, .EXCL = true, .CLOEXEC = true }, 0o600);
     var keep = false;
     defer {
         _ = std.os.linux.close(destination_fd);
@@ -430,31 +458,54 @@ fn cloneFileLinux(source: []const u8, destination: []const u8, mode: ?u32) anyer
     keep = true;
 }
 
-fn cloneFileDarwin(source: []const u8, destination: []const u8, mode: ?u32) anyerror!void {
-    // macOS固有の `clonefile(2)` と `renamex_np(RENAME_EXCL)`。APFSでは
+fn cloneFileDarwin(io: std.Io, source: []const u8, destination: []const u8, mode: ?u32) anyerror!void {
+    // macOS固有の `fclonefileat(2)` と `renamex_np(RENAME_EXCL)`。APFSでは
     // CoWクローンを作り、既存DSTはEEXIST、非対応FSはENOTSUPを返す。
     // Zig 0.16 stdに宣言が無いためここで宣言する。
-    const c_clonefile = struct {
-        extern "c" fn clonefile(source: [*:0]const u8, destination: [*:0]const u8, flags: c_int) c_int;
-    }.clonefile;
+    const c_fclonefileat = struct {
+        extern "c" fn fclonefileat(srcfd: c_int, dst_dirfd: c_int, dst: [*:0]const u8, flags: u32) c_int;
+    }.fclonefileat;
     const c_renamex = struct {
         extern "c" fn renamex_np(from: [*:0]const u8, to: [*:0]const u8, flags: c_uint) c_int;
     }.renamex_np;
     const rename_excl: c_uint = 0x0004;
     const source_path = try std.posix.toPosixPath(source);
     const destination_path = try std.posix.toPosixPath(destination);
-    // Linux側と同じく一時名へ複製して原子公開する。
-    var temp_buffer: [std.fs.max_path_bytes]u8 = undefined;
-    const temp = try cloneTempPath(&temp_buffer, destination);
-    const temp_path = try std.posix.toPosixPath(temp);
+    // clonefile(2)はパスベースでdirも複製するため、stat→複製の間にSRCが
+    // file→dir等へ差し替えられるTOCTOUがある。SRCをfdで開いて種別を検査し、
+    // fclonefileatでそのfd自身を複製する（Linux側のstatx検証+FICLONEと
+    // 同じ構造）。NONBLOCKはfifo openのwriter待ちブロックを防ぐ。
+    const source_fd = try openDarwinReadOnlyNonBlock(&source_path);
+    defer _ = std.c.close(source_fd);
+    var source_stat: std.c.Stat = undefined;
     while (true) {
-        const result = c_clonefile(&source_path, &temp_path, 0);
+        const result = std.c.fstat(source_fd, &source_stat);
         if (result == 0) break;
         const errno = std.c.errno(result);
         if (errno == .INTR) continue;
-        // clonefile自体の失敗ではDST・一時名ともに作成されていない。
         return low_level_fs.fsPosixErrno(errno);
     }
+    if (!std.c.S.ISREG(source_stat.mode)) return error.OperationUnsupported;
+    // Linux側と同じく一時名へ複製して原子公開する。残存物とのEEXIST衝突は
+    // 新しい一時名で再試行する。
+    var temp_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    var temp: []u8 = undefined;
+    var attempt: u32 = 0;
+    while (true) {
+        temp = try cloneTempPath(io, &temp_buffer, destination);
+        const candidate = try std.posix.toPosixPath(temp);
+        const result = c_fclonefileat(source_fd, std.posix.AT.FDCWD, &candidate, 0);
+        if (result == 0) break;
+        const errno = std.c.errno(result);
+        if (errno == .INTR) continue;
+        if (errno == .EXIST) {
+            attempt += 1;
+            if (attempt < clone_temp_max_attempts) continue;
+        }
+        // 複製自体の失敗ではDST・一時名ともに作成されていない。
+        return low_level_fs.fsPosixErrno(errno);
+    }
+    const temp_path = try std.posix.toPosixPath(temp);
     // ここから先はclonefileが作った一時物への操作。権限適用・公開の途中
     // 失敗では自作物の一時名のみ除去する（差し替え済みDSTを消さない）。
     var keep = false;
@@ -485,6 +536,18 @@ fn cloneFileDarwin(source: []const u8, destination: []const u8, mode: ?u32) anye
         return low_level_fs.fsPosixErrno(errno);
     }
     keep = true;
+}
+
+// SRCをfd検証するためのopen補助。NONBLOCKはfifo openのwriter待ちブロック
+// を防ぎ、symlinkは契約どおり追跡する（NOFOLLOWは付けない）。
+fn openDarwinReadOnlyNonBlock(path: [*:0]const u8) !std.c.fd_t {
+    while (true) {
+        const result = std.c.open(path, .{ .ACCMODE = .RDONLY, .NONBLOCK = true, .CLOEXEC = true });
+        if (result >= 0) return result;
+        const errno = std.c.errno(result);
+        if (errno == .INTR) continue;
+        return low_level_fs.fsPosixErrno(errno);
+    }
 }
 
 // O_NOFOLLOWでsymlink差し替えを拒否してfdを取る補助。clonefileが作った
@@ -752,6 +815,21 @@ test "seekExtentはsparseファイルのデータ・空洞位置を返す" {
     // 負のoffsetはEINVAL。
     try std.testing.expectError(error.InvalidOffset, seekExtent(std.testing.io, file, -1, .data));
     try std.testing.expectError(error.InvalidOffset, seekExtent(std.testing.io, file, -1, .hole));
+}
+
+test "cloneTempPathはDSTの親dir内の推測困難な一意名を返す" {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
+    var first_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    var second_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const first = try cloneTempPath(std.testing.io, &first_buffer, "parent/sub/dst.bin");
+    const second = try cloneTempPath(std.testing.io, &second_buffer, "parent/sub/dst.bin");
+    // 同一DSTでも連番・乱数で異なる名前になり、親dirはDSTの親を使う。
+    try std.testing.expect(!std.mem.eql(u8, first, second));
+    try std.testing.expect(std.mem.startsWith(u8, first, "parent/sub" ++ std.fs.path.sep_str ++ ".lnako-clone-"));
+    // 親dirを持たないDSTはカレントの "." 配下になる。
+    var bare_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const bare = try cloneTempPath(std.testing.io, &bare_buffer, "dst.bin");
+    try std.testing.expect(std.mem.startsWith(u8, bare, "." ++ std.fs.path.sep_str ++ ".lnako-clone-"));
 }
 
 test "seekExtentは空ファイルのhole検索でEOFを返しfd位置を揃える" {
