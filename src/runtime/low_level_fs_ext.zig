@@ -233,6 +233,9 @@ pub const SeekExtent = enum {
 /// Windows/WASIは `error.OperationUnsupported`。負の `offset` や、
 /// data検索で `offset` がファイル末尾以降の場合はPOSIXのENXIO相当として
 /// `error.InvalidOffset`（EINVAL）。
+///
+/// lseek相当の契約として、成功時は `file` のfd位置が結果位置へ移動する
+/// （emulated経路も同じ副作用を持つ）。失敗時は位置を変えない。
 pub fn seekExtent(io: std.Io, file: std.Io.File, offset: i64, extent: SeekExtent) anyerror!i64 {
     // 非対応OSは引数に関わらずENOTSUP（OS判定を先に行う）。
     switch (builtin.os.tag) {
@@ -241,7 +244,7 @@ pub fn seekExtent(io: std.Io, file: std.Io.File, offset: i64, extent: SeekExtent
     }
     if (offset < 0) return error.InvalidOffset;
     return switch (builtin.os.tag) {
-        .linux => seekExtentLinux(file, offset, extent),
+        .linux => seekExtentLinux(io, file, offset, extent),
         .windows, .wasi => unreachable,
         else => seekExtentEmulated(io, file, offset, extent),
     };
@@ -251,7 +254,7 @@ pub fn seekExtent(io: std.Io, file: std.Io.File, offset: i64, extent: SeekExtent
 const linux_seek_data: usize = 3;
 const linux_seek_hole: usize = 4;
 
-fn seekExtentLinux(file: std.Io.File, offset: i64, extent: SeekExtent) anyerror!i64 {
+fn seekExtentLinux(io: std.Io, file: std.Io.File, offset: i64, extent: SeekExtent) anyerror!i64 {
     const whence: usize = switch (extent) {
         .data => linux_seek_data,
         .hole => linux_seek_hole,
@@ -262,6 +265,22 @@ fn seekExtentLinux(file: std.Io.File, offset: i64, extent: SeekExtent) anyerror!
         // errno確認済みのため負値は来ず、32bitでもusize→i64が安全に入る。
         if (errno == .SUCCESS) return @intCast(result);
         if (errno == .INTR) continue;
+        // SEEK_HOLEでoffset==EOFのとき、固定長llseekの `offset >= size` 分岐を
+        // 持つFS（ext4等）はENXIOを返す。POSIXの暗黙の末尾空洞としてemulated
+        // 経路と同じくEOF位置を返し、fd位置も成功相当へ揃える。offsetがEOFを
+        // 超える場合とSEEK_DATAのENXIOは従来どおりInvalidOffset。
+        if (errno == .NXIO and extent == .hole) {
+            const end = file.length(io) catch |failure| switch (failure) {
+                error.AccessDenied => return error.OperationUnsupported,
+                else => return failure,
+            };
+            if (std.math.cast(i64, end)) |end_i64| {
+                if (offset == end_i64) {
+                    const pos = std.os.linux.lseek(file.handle, end_i64, std.os.linux.SEEK.SET);
+                    if (std.os.linux.errno(pos) == .SUCCESS) return end_i64;
+                }
+            }
+        }
         return low_level_fs.linuxErrno(errno);
     }
 }
@@ -272,22 +291,36 @@ fn seekExtentEmulated(io: std.Io, file: std.Io.File, offset: i64, extent: SeekEx
         else => return failure,
     };
     const end_i64 = std.math.cast(i64, end) orelse return error.InvalidOffset;
-    return switch (extent) {
+    const result = switch (extent) {
         // sparse非対応とみなせるFSでは全領域がデータで、空洞はファイル末尾に
         // のみ存在するというPOSIX最小モデル。data検索でoffsetが末尾以降なら
         // SEEK_DATAのENXIO相当（EINVAL）、hole検索は末尾の仮想的な空洞を返す
         // （offsetが末尾を超える場合のみENXIO相当）。
-        .data => if (offset >= end_i64) error.InvalidOffset else offset,
-        .hole => if (offset > end_i64) error.InvalidOffset else end_i64,
+        .data => if (offset >= end_i64) return error.InvalidOffset else offset,
+        .hole => if (offset > end_i64) return error.InvalidOffset else end_i64,
     };
+    // lseek相当の契約としてfd位置を結果位置へ揃える（Linux経路と同じ副作用）。
+    // 失敗時は位置を変えない。
+    const posix_result = std.math.cast(std.c.off_t, result) orelse return error.InvalidOffset;
+    while (true) {
+        const seeked = std.c.lseek(file.handle, posix_result, std.c.SEEK.SET);
+        if (seeked >= 0) break;
+        const errno = std.c.errno(seeked);
+        if (errno == .INTR) continue;
+        return low_level_fs.fsPosixErrno(errno);
+    }
+    return result;
 }
 
 /// `ファイルクローン`。reflink/CoWクローンを `source` から `destination`
 /// へ作る。`destination` が存在する場合は `error.PathAlreadyExists`
 /// （EEXIST）。`mode` が null なら `source` の権限を継承し、指定時はその
-/// 権限を適用する。非対応OS/FSでは `error.OperationUnsupported`（ENOTSUP）
-/// で、通常コピーへのフォールバックは行わない（reflinkでない成功を返さ
-/// ない）。FSを跨ぐ場合は `error.CrossDevice`（EXDEV）。
+/// 権限を適用する。複製は `destination` の親ディレクトリ内の一時名へ行い、
+/// 権限適用後にno-replaceなrenameで原子的に公開するため、途中失敗しても
+/// 既存・第三者の `destination` を破壊しない。非対応OS/FSでは
+/// `error.OperationUnsupported`（ENOTSUP）で、通常コピーへのフォール
+/// バックは行わない（reflinkでない成功を返さない）。FSを跨ぐ場合は
+/// `error.CrossDevice`（EXDEV）。
 pub fn reflink(io: std.Io, source: []const u8, destination: []const u8, mode: ?u32) anyerror!void {
     // 非対応OSはSRCの有無・種別・MODEに関わらずENOTSUPとする。低レイヤー
     // POSIX命令と同じくOS判定を先に行い、SRC不在のENOENT等がENOTSUPを
@@ -301,25 +334,41 @@ pub fn reflink(io: std.Io, source: []const u8, destination: []const u8, mode: ?u
     if (mode) |value| {
         if (value > foundation.max_permission_mode) return error.InvalidArgument;
     }
-    // 「MODE省略時はSRCの権限」をLinux FICLONE（DSTは生成時modeのまま）でも
-    // 満たすため先にstatを取る。
+    // 不在SRCのENOENTを早く返し、通常ファイル以外（ディレクトリ・fifo・
+    // socket・device等）をファイルクローン契約外として開く前に拒否する。
+    // FICLONEはEISDIR/EINVALを返し、clonefileはdirも複製する上、fifoの
+    // openat(O_RDONLY)はwriter待ちで無限ブロックし得るため種別で事前拒否
+    // する（Linux側はopenしたfdのstatxで再検査し、権限継承もfd由来）。
     const metadata = try low_level_fs.stat(io, source, true);
-    // 通常ファイル以外（ディレクトリ・fifo・socket・device等）はファイル
-    // クローン契約外のためENOTSUPとする。FICLONEはEISDIR/EINVALを返し、
-    // clonefileはdirも複製する上、fifoのopenat(O_RDONLY)はwriter待ちで
-    // 無限ブロックし得るため、開く前に種別で拒否する。
     if (metadata.kind != .file) return error.OperationUnsupported;
     return switch (builtin.os.tag) {
-        .linux => cloneFileLinux(source, destination, mode orelse metadata.mode),
+        .linux => cloneFileLinux(source, destination, mode),
         .macos => cloneFileDarwin(source, destination, mode),
         else => unreachable,
     };
 }
 
+// 複製中間物に使う一時名の連番。pidと組み合わせて同一ディレクトリ内で
+// 他プロセスとも衝突しない名前にする。
+var clone_temp_sequence = std.atomic.Value(u32).init(0);
+
+/// DSTの親ディレクトリ内に作る非公開の一時名。同じFS内に置くことで
+/// renameでの原子公開が成立し、失敗時のcleanupがこの一意名だけを対象に
+/// するため既存・差し替え済みのDSTを誤って消すことがない。
+fn cloneTempPath(buffer: []u8, destination: []const u8) ![]u8 {
+    const parent = std.fs.path.dirname(destination) orelse ".";
+    const sequence = clone_temp_sequence.fetchAdd(1, .monotonic);
+    const pid: u32 = switch (builtin.os.tag) {
+        .linux => @intCast(std.os.linux.getpid()),
+        else => @intCast(std.c.getpid()),
+    };
+    return std.fmt.bufPrint(buffer, "{s}{c}.lnako-clone-{d}-{d}", .{ parent, std.fs.path.sep, pid, sequence }) catch return error.NameTooLong;
+}
+
 // Linux `FICLONE` ioctl。dst fdへsrc fdのデータをCoW複製する。
 const ficlone: u32 = 0x4004_9409;
 
-fn cloneFileLinux(source: []const u8, destination: []const u8, mode: u32) anyerror!void {
+fn cloneFileLinux(source: []const u8, destination: []const u8, mode: ?u32) anyerror!void {
     // statからopenの間にSRCがfifo等へ差し替えられるTOCTOUを塞ぐため、
     // NONBLOCKで開きfd上の種別を再検査する（fifo O_RDONLYのwriter待ち
     // ブロックを防ぐ。通常ファイルではNONBLOCKは無害）。
@@ -327,21 +376,29 @@ fn cloneFileLinux(source: []const u8, destination: []const u8, mode: u32) anyerr
     defer _ = std.os.linux.close(source_fd);
     var raw: std.os.linux.Statx = std.mem.zeroes(std.os.linux.Statx);
     while (true) {
-        const result = std.os.linux.statx(source_fd, "", std.os.linux.AT.EMPTY_PATH, .{ .TYPE = true }, &raw);
+        const result = std.os.linux.statx(source_fd, "", std.os.linux.AT.EMPTY_PATH, .{ .TYPE = true, .MODE = true }, &raw);
         const errno = std.os.linux.errno(result);
         if (errno == .SUCCESS) break;
         if (errno == .INTR) continue;
         return low_level_fs.linuxErrno(errno);
     }
     if (low_level_fs.linuxKind(raw.mode) != .file) return error.OperationUnsupported;
-    // O_EXCLで既存DSTをEEXISTにする。生成権限は0o600固定で、複製後に
-    // SRC権限/明示MODEへ揃える（生成時のumaskに結果を左右させない）。
-    const destination_fd = try std.posix.openat(std.posix.AT.FDCWD, destination, .{ .ACCMODE = .WRONLY, .CREAT = true, .EXCL = true, .CLOEXEC = true }, 0o600);
+    // MODE省略時は「実際に複製したfd」の権限を継承する。statからopenの間に
+    // SRCが別ファイルへ置換された場合でも、内容と権限が別由来にならない。
+    const apply: std.os.linux.mode_t = mode orelse @as(u32, raw.mode) & 0o7777;
+    // 一時名で作成しrenameat2(NOREPLACE)で原子公開する。途中失敗のcleanupは
+    // 一意の一時名だけを対象にするため、差し替え済みの無関係なDSTを消さない。
+    // 生成権限は0o600固定で、複製後にSRC権限/明示MODEへ揃える。
+    var temp_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const temp = try cloneTempPath(&temp_buffer, destination);
+    const temp_path = try std.posix.toPosixPath(temp);
+    const destination_path = try std.posix.toPosixPath(destination);
+    const destination_fd = try std.posix.openat(std.posix.AT.FDCWD, &temp_path, .{ .ACCMODE = .WRONLY, .CREAT = true, .EXCL = true, .CLOEXEC = true }, 0o600);
     var keep = false;
     defer {
         _ = std.os.linux.close(destination_fd);
-        // 複製・権限適用の途中失敗では半端なDSTを残さない。
-        if (!keep) unlinkPosixPath(destination) catch {};
+        // 複製・権限適用・公開の途中失敗では自作物の一時名のみ除去する。
+        if (!keep) unlinkPosixPath(temp) catch {};
     }
     while (true) {
         const result = std.os.linux.ioctl(destination_fd, ficlone, @intCast(source_fd));
@@ -353,7 +410,6 @@ fn cloneFileLinux(source: []const u8, destination: []const u8, mode: u32) anyerr
         if (errno == .INVAL) return error.OperationUnsupported;
         return low_level_fs.linuxErrno(errno);
     }
-    const apply: std.os.linux.mode_t = @intCast(mode);
     while (true) {
         const result = std.os.linux.fchmod(destination_fd, apply);
         const errno = std.os.linux.errno(result);
@@ -361,36 +417,54 @@ fn cloneFileLinux(source: []const u8, destination: []const u8, mode: u32) anyerr
         if (errno == .INTR) continue;
         return low_level_fs.linuxErrno(errno);
     }
+    while (true) {
+        const result = std.os.linux.renameat2(std.posix.AT.FDCWD, &temp_path, std.posix.AT.FDCWD, &destination_path, .{ .NOREPLACE = true });
+        const errno = std.os.linux.errno(result);
+        if (errno == .SUCCESS) break;
+        if (errno == .INTR) continue;
+        // NOREPLACEのEEXISTに加え、既存DSTがディレクトリのEISDIRも
+        // 「既存DSTがある」契約のEEXISTとして扱う。
+        if (errno == .EXIST or errno == .ISDIR) return error.PathAlreadyExists;
+        return low_level_fs.linuxErrno(errno);
+    }
     keep = true;
 }
 
 fn cloneFileDarwin(source: []const u8, destination: []const u8, mode: ?u32) anyerror!void {
-    // macOS固有の `clonefile(2)`。APFSではCoWクローンを作り、既存DSTは
-    // EEXIST、非対応FSはENOTSUPを返す。Zig 0.16 stdに宣言が無いためここで
-    // 宣言する。
+    // macOS固有の `clonefile(2)` と `renamex_np(RENAME_EXCL)`。APFSでは
+    // CoWクローンを作り、既存DSTはEEXIST、非対応FSはENOTSUPを返す。
+    // Zig 0.16 stdに宣言が無いためここで宣言する。
     const c_clonefile = struct {
         extern "c" fn clonefile(source: [*:0]const u8, destination: [*:0]const u8, flags: c_int) c_int;
     }.clonefile;
+    const c_renamex = struct {
+        extern "c" fn renamex_np(from: [*:0]const u8, to: [*:0]const u8, flags: c_uint) c_int;
+    }.renamex_np;
+    const rename_excl: c_uint = 0x0004;
     const source_path = try std.posix.toPosixPath(source);
     const destination_path = try std.posix.toPosixPath(destination);
+    // Linux側と同じく一時名へ複製して原子公開する。
+    var temp_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const temp = try cloneTempPath(&temp_buffer, destination);
+    const temp_path = try std.posix.toPosixPath(temp);
     while (true) {
-        const result = c_clonefile(&source_path, &destination_path, 0);
+        const result = c_clonefile(&source_path, &temp_path, 0);
         if (result == 0) break;
         const errno = std.c.errno(result);
         if (errno == .INTR) continue;
-        // clonefile自体の失敗（既存DSTのEEXIST等）ではDSTに触れない。
+        // clonefile自体の失敗ではDST・一時名ともに作成されていない。
         return low_level_fs.fsPosixErrno(errno);
     }
-    // ここから先はclonefileが作ったDSTへの操作。権限適用の途中失敗では
-    // 半端なDSTを残さない（Linux側と同じ）。
+    // ここから先はclonefileが作った一時物への操作。権限適用・公開の途中
+    // 失敗では自作物の一時名のみ除去する（差し替え済みDSTを消さない）。
     var keep = false;
-    defer if (!keep) unlinkPosixPath(destination) catch {};
+    defer if (!keep) unlinkPosixPath(temp) catch {};
     // 明示MODEのみ適用する。省略時はclonefileがSRCの権限をそのまま複製する。
     // fchmodatのパス再解決で差し替えsymlinkへchmodしないよう、O_NOFOLLOWで
     // fdを取りfdへfchmodする（Linux側と同じくfdベースで権限を適用する）。
     if (mode) |value| {
         const apply = std.math.cast(std.c.mode_t, value) orelse return error.InvalidArgument;
-        const dst_fd = try openDarwinReadOnlyNoFollow(&destination_path);
+        const dst_fd = try openDarwinReadOnlyNoFollow(&temp_path);
         defer _ = std.c.close(dst_fd);
         while (true) {
             const result = std.c.fchmod(dst_fd, apply);
@@ -399,6 +473,16 @@ fn cloneFileDarwin(source: []const u8, destination: []const u8, mode: ?u32) anye
             if (errno == .INTR) continue;
             return low_level_fs.fsPosixErrno(errno);
         }
+    }
+    while (true) {
+        const result = c_renamex(&temp_path, &destination_path, rename_excl);
+        if (result == 0) break;
+        const errno = std.c.errno(result);
+        if (errno == .INTR) continue;
+        // EXCLのEEXISTに加え、既存DSTがディレクトリのEISDIRも「既存DSTが
+        // ある」契約のEEXISTとして扱う。
+        if (errno == .EXIST or errno == .ISDIR) return error.PathAlreadyExists;
+        return low_level_fs.fsPosixErrno(errno);
     }
     keep = true;
 }
@@ -439,7 +523,10 @@ fn unlinkPosixPath(path: []const u8) !void {
 /// 範囲がファイル末尾を超える場合はファイルサイズを伸ばす（fallocate相当）。
 /// Linuxは `fallocate(2)`、macOSは `fcntl(F_PREALLOCATE)` で物理領域を確保し
 /// `ftruncate` で論理サイズを合わせる。`size == 0` は `error.InvalidSize`
-/// （EINVAL）。Windows/WASIは `error.OperationUnsupported`。
+/// （EINVAL）。Windows/WASIは `error.OperationUnsupported`。macOSでは
+/// `F_PREALLOCATE` がEOFからの連続確保しか表現できないため、`offset` が
+/// 現在のEOFを超えるsparse確保は隙間全域を過剰予約せず
+/// `error.OperationUnsupported` で返す。
 pub fn allocate(io: std.Io, file: std.Io.File, offset: i64, size: u64) anyerror!void {
     // 非対応OSは引数に関わらずENOTSUP（OS判定を先に行う）。
     switch (builtin.os.tag) {
@@ -480,6 +567,11 @@ const f_allocateall: u32 = 0x00000004;
 const f_peofposmode: i32 = 3;
 
 fn allocateDarwin(io: std.Io, file: std.Io.File, offset: i64, size: u64) anyerror!void {
+    // Linux同様に書込不可fdのEBADFを返す（全経路共通でopenモードを検査）。
+    const flags = std.c.fcntl(file.handle, std.c.F.GETFL);
+    if (flags < 0) return low_level_fs.fsPosixErrno(std.c.errno(flags));
+    // O_ACCMODE==3、O_RDONLY==0。
+    if ((flags & 3) == 0) return error.BadFileDescriptor;
     const end = std.math.cast(u64, @as(u128, @intCast(offset)) + @as(u128, size)) orelse return error.InvalidSize;
     const current = file.length(io) catch |failure| switch (failure) {
         error.AccessDenied => return error.OperationUnsupported,
@@ -489,15 +581,13 @@ fn allocateDarwin(io: std.Io, file: std.Io.File, offset: i64, size: u64) anyerro
     // 分岐: macOSのF_PREALLOCATEはF_PEOFPOSMODE（EOF以降）と
     // F_VOLPOSMODE（ボリューム先頭からの確保）しか範囲を指定できず、
     // EOF内の任意位置を指せない。file-position modeは存在しないため
-    // 物理確保はno-opとし、契約上の差分として許容する。ただしLinux同様に
-    // 書込不可fdのEBADFはopenモードで検査して返す。
-    if (end <= current) {
-        const flags = std.c.fcntl(file.handle, std.c.F.GETFL);
-        if (flags < 0) return low_level_fs.fsPosixErrno(std.c.errno(flags));
-        // O_ACCMODE==3、O_RDONLY==0。
-        if ((flags & 3) == 0) return error.BadFileDescriptor;
-        return;
-    }
+    // 物理確保はno-opとし、契約上の差分として許容する。
+    if (end <= current) return;
+    // offsetがEOFを超えるsparse確保はF_PREALLOCATEで表現できない。
+    // EOFからの連続確保しか指せず、要求範囲を覆うには隙間全域
+    // [current, end) を予約するしかないが、大きな隙間では要求sizeを
+    // 大きく超過しENOSPCになり得るため、契約を満たせずENOTSUPへ倒す。
+    if (offset > current) return error.OperationUnsupported;
     const extra = std.math.cast(i64, end - current) orelse return error.InvalidSize;
     var store = DarwinFstore{
         .fst_flags = f_allocateall,
@@ -656,9 +746,54 @@ test "seekExtentはsparseファイルのデータ・空洞位置を返す" {
         try std.testing.expectEqual(@as(i64, 8196), hole_at);
     }
     try std.testing.expectEqual(@as(i64, 8196), try seekExtent(std.testing.io, file, 8196, .hole));
+    // hole検索でoffsetがEOFを超える場合はENXIO相当（ちょうどEOFは末尾の
+    // 仮想空洞としてEOFを返す契約）。
+    try std.testing.expectError(error.InvalidOffset, seekExtent(std.testing.io, file, 8197, .hole));
     // 負のoffsetはEINVAL。
     try std.testing.expectError(error.InvalidOffset, seekExtent(std.testing.io, file, -1, .data));
     try std.testing.expectError(error.InvalidOffset, seekExtent(std.testing.io, file, -1, .hole));
+}
+
+test "seekExtentは空ファイルのhole検索でEOFを返しfd位置を揃える" {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "empty.bin", .data = "" });
+    const path = try low_level_fs.tmpPath(&temporary, "empty.bin");
+    defer std.testing.allocator.free(path);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, path, .{ .mode = .read_write });
+    defer file.close(std.testing.io);
+    // 空ファイルのoffset 0はちょうどEOF。POSIXの暗黙の末尾空洞としてEOF=0
+    // を返す（FSによってはENXIOになるLinux経路もこの結果に正規化する）。
+    try std.testing.expectEqual(@as(i64, 0), try seekExtent(std.testing.io, file, 0, .hole));
+    // offsetがEOFを超える場合はENXIO相当。data検索はoffset 0でもENXIO相当。
+    try std.testing.expectError(error.InvalidOffset, seekExtent(std.testing.io, file, 1, .hole));
+    try std.testing.expectError(error.InvalidOffset, seekExtent(std.testing.io, file, 0, .data));
+}
+
+test "seekExtentは成功時にfd位置を結果位置へ揃える" {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "cursor.bin", .data = "0123456789" });
+    const path = try low_level_fs.tmpPath(&temporary, "cursor.bin");
+    defer std.testing.allocator.free(path);
+    const file = try std.Io.Dir.cwd().openFile(std.testing.io, path, .{ .mode = .read_write });
+    defer file.close(std.testing.io);
+
+    // 非denseファイルのdata検索はoffsetをそのまま返し、fd位置もそこへ
+    // 移る。直後のシーケンシャルreadが結果位置から始まることを確認する。
+    try std.testing.expectEqual(@as(i64, 4), try seekExtent(std.testing.io, file, 4, .data));
+    var buffer: [3]u8 = undefined;
+    const read_count = std.c.read(file.handle, &buffer, buffer.len);
+    try std.testing.expectEqual(@as(isize, 3), read_count);
+    try std.testing.expectEqualStrings("456", &buffer);
+    // hole検索で末尾へ揃った場合はEOFとしてreadが0を返す。
+    try std.testing.expectEqual(@as(i64, 10), try seekExtent(std.testing.io, file, 0, .hole));
+    try std.testing.expectEqual(@as(isize, 0), std.c.read(file.handle, &buffer, buffer.len));
+    // 失敗時はfd位置を変えない（直前のEOF位置のまま）。
+    try std.testing.expectError(error.InvalidOffset, seekExtent(std.testing.io, file, 99, .data));
+    try std.testing.expectEqual(@as(isize, 0), std.c.read(file.handle, &buffer, buffer.len));
 }
 
 test "allocateは領域を確保し末尾以降の範囲でサイズを伸ばす" {
@@ -677,13 +812,21 @@ test "allocateは領域を確保し末尾以降の範囲でサイズを伸ばす
     // EOFを超える範囲の確保はサイズを伸ばす（fallocate相当）。
     try allocate(std.testing.io, file, 0, 4096);
     try std.testing.expectEqual(@as(u64, 4096), try file.length(std.testing.io));
-    try allocate(std.testing.io, file, 8192, 128);
-    try std.testing.expectEqual(@as(u64, 8320), try file.length(std.testing.io));
-    // 確保した領域は0埋めで読める。
-    var buffer: [8]u8 = undefined;
-    const read_count = try file.readPositionalAll(std.testing.io, &buffer, 4096);
-    try std.testing.expectEqual(@as(usize, 8), read_count);
-    for (buffer) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
+    // offsetがEOFを超えるsparse確保: macOSのF_PREALLOCATEはEOFからの連続
+    // 確保しか表現できず、隙間全域を過剰予約しない契約としたためENOTSUP。
+    // Linux等のfallocateはsparse範囲をそのまま確保しサイズを伸ばす。
+    const sparse = allocate(std.testing.io, file, 8192, 128);
+    if (builtin.os.tag == .macos) {
+        try std.testing.expectError(error.OperationUnsupported, sparse);
+    } else {
+        try sparse;
+        try std.testing.expectEqual(@as(u64, 8320), try file.length(std.testing.io));
+        // 確保した領域は0埋めで読める。
+        var buffer: [8]u8 = undefined;
+        const read_count = try file.readPositionalAll(std.testing.io, &buffer, 4096);
+        try std.testing.expectEqual(@as(usize, 8), read_count);
+        for (buffer) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
+    }
 
     // 負のoffsetとsize=0はEINVAL。
     try std.testing.expectError(error.InvalidOffset, allocate(std.testing.io, file, -1, 8));
