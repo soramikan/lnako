@@ -1932,6 +1932,136 @@ test "回数繰り返しはそれを回数へ束縛し退避値を復元する" 
     try std.testing.expectEqualStrings("1\n2\n3\n1\n2\n後:\n回数:\n", host.written());
 }
 
+test "N回繰り返しは非数値オペランドを公式の抽象関係比較で数値化する" {
+    // Issue #165: 公式convRepeatTimesはfor (i = 1; i <= count; i++)でcountを
+    // 抽象関係比較するため、"3"→3・[1,2]→NaN→0回・真→1・[3]→"3"→3・
+    // BigInt→数学値の回数で実行し、コレクション反復へはディスパッチしない。
+    const source =
+        "「3」回\n回数を表示\nここまで\n" ++
+        "[1,2]回\n回数を表示\nここまで\n" ++
+        "「A」を表示\n" ++
+        "(真)回繰り返す\n回数を表示\nここまで\n" ++
+        "(偽)回\n回数を表示\nここまで\n" ++
+        "「あいう」回\n回数を表示\nここまで\n" ++
+        "[3]回\n回数を表示\nここまで\n" ++
+        "1n回\n回数を表示\nここまで\n" ++
+        "それ=9\n回数=7\n「2」回\nここまで\n「後:{それ}」を表示\n「回数:{回数}」を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("1\n2\n3\nA\n1\n1\n2\n3\n1\n後:7\n回数:7\n", host.written());
+}
+
+test "N回繰り返しはオペランドを反復ごとに抽象関係比較する" {
+    // Issue #165: 公式convRepeatTimesはlet varCount = <式>; for (i = 1; i <= varCount; i++)
+    // でガード評価ごとにcountをToPrimitiveする。カスタムvalueOfは反復+1回呼ばれ、
+    // BigInt返却や反復中に返り値が変わる動的境界も公式どおりとなる。
+    const source =
+        "D={}\n" ++
+        "D[\"valueOf\"]=関数()「call」と表示;それは2;ここまで\n" ++
+        "D回\n回数を表示\nここまで\n" ++
+        "E={}\n" ++
+        "E[\"valueOf\"]=関数()それは2n;ここまで\n" ++
+        "E回\n「E{回数}」を表示\nここまで\n" ++
+        "F={}\nF[\"n\"]=3\n" ++
+        "F[\"valueOf\"]=関数()F[\"n\"]=F[\"n\"]-2;それはF[\"n\"]+1;ここまで\n" ++
+        "F回\n「F{回数}」を表示\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("call\n1\ncall\n2\ncall\nE1\nE2\nF1\n", host.written());
+}
+
+test "N回繰り返しのガードは非callable変換メソッドを飛ばし例外を監視へ配送する" {
+    // Issue #165: ECMAScriptのGetMethod相当で非callableのvalueOf/toStringは
+    // メソッド不在として次候補へ進む（{"valueOf":1}→既定toString→NaN→0回）。
+    // ガードのcoercionが投げた例外は通常のループ脱出ではなく最内の
+    // エラー監視ハンドラへ配送され、コールバック由来の元例外が保持される。
+    const source =
+        "D={}\n" ++
+        "D[\"valueOf\"]=1\n" ++
+        "D回\n「D{回数}」を表示\nここまで\n" ++
+        "「done」と表示\n" ++
+        "エラー監視\n" ++
+        "E={}\n" ++
+        "E[\"valueOf\"]=関数()\n『valueOf error』でエラー発生\nここまで\n" ++
+        "E回\nここまで\n" ++
+        "エラーならば\n「捕捉:{エラーメッセージ}」を表示\nここまで\n" ++
+        "エラー監視\n" ++
+        "K={}\nK[\"n\"]=0\n" ++
+        "K[\"valueOf\"]=関数()\nK[\"n\"]=K[\"n\"]+1\nもしK[\"n\"]>2ならば\n『late error』でエラー発生\nここまで\nそれは5\nここまで\n" ++
+        "K回\n「K{回数}」を表示\nここまで\n" ++
+        "エラーならば\n「捕捉2:{エラーメッセージ}」を表示\nここまで\n" ++
+        "H={}\n" ++
+        "H[\"valueOf\"]=1\n" ++
+        "H[\"toString\"]=関数()それは「4」;ここまで\n" ++
+        "H回\n「H{回数}」を表示\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("done\n捕捉:valueOf error\nK1\nK2\n捕捉2:late error\nH1\nH2\nH3\nH4\n", host.written());
+}
+
+test "範囲繰り返しは終端を反復ごとに抽象関係比較する" {
+    // Issue #175: 公式convForはconst varTo = <終端式>; for (i = varFrom; i <= varTo; i += inc)
+    // でガード評価ごとに終端をToPrimitiveする。カスタムvalueOfは方向判定を含め
+    // 反復+2回呼ばれ、BigInt終端や非数値終端の0回反復も公式どおりとなる。
+    // ガードのcoercionが投げた例外は最内のエラー監視ハンドラへ配送される。
+    const source =
+        "D={}\n" ++
+        "D[\"valueOf\"]=関数()「call」と表示;それは2;ここまで\n" ++
+        "1からDまで繰り返す\n「{それ}」を表示\nここまで\n" ++
+        "1から「あ」まで繰り返す\n「x」を表示\nここまで\n" ++
+        "「d1」を表示\n" ++
+        "「あ」から3まで繰り返す\n「x」を表示\nここまで\n" ++
+        "「d2」を表示\n" ++
+        "1から3nまで繰り返す\n「{それ}」を表示\nここまで\n" ++
+        "E={}\n" ++
+        "E[\"valueOf\"]=関数()『range error』でエラー発生;ここまで\n" ++
+        "エラー監視\n1からEまで繰り返す\nここまで\nエラーならば\n「捕捉:{エラーメッセージ}」を表示\nここまで\n" ++
+        "エラー監視\n1から3まで0ずつ増やして繰り返す\nここまで\nエラーならば\n「捕捉2:{エラーメッセージ}」を表示\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("call\ncall\n1\ncall\n2\ncall\nd1\nd2\n1\n2\n3\n捕捉:range error\n捕捉2:InvalidIteratorStep\n", host.written());
+}
+
 test "連文の各文は直前結果を『それ』へ伝播し先行文の出力を欠落させない" {
     // Issue #114: `。`区切りの中間呼出し結果が『それ』に繋がり、
     // 先行する文の出力も保持されることを固定する。『戻り値無し』を
