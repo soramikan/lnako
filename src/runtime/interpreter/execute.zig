@@ -256,7 +256,11 @@ pub fn executeFunction(self: *Interpreter, function: *const ir.Function, argumen
         frame.sore_backup = self.getGlobal("それ") orelse .undefined;
         try self.setGlobal("それ", .undefined);
     }
-    defer if (frame.sore_backup) |backup| self.setGlobal("それ", backup) catch {};
+    defer if (frame.sore_backup) |backup| {
+        // 入口のsetGlobal成功後は「それ」のMapエントリが存在し、復元は既存値の
+        // 上書きだけで確保しない。この不変条件が崩れた場合は黙殺せず検出する。
+        self.setGlobal("それ", backup) catch unreachable;
+    };
 
     var current_block = function.entry;
     var predecessor: ?ir.BlockId = null;
