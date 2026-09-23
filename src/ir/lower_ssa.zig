@@ -137,7 +137,11 @@ const BlockBuilder = struct {
     terminator: ir.Terminator = .none,
 };
 
-const LoopTargets = struct { continue_block: ir.BlockId, break_block: ir.BlockId };
+/// 非局所分岐の飛び先。handler_depthはその文脈へ入った時点の
+/// exception_handlers深さで、分岐時に飛び越す『エラー監視』の個数を
+/// 数えるために使う。
+const LoopTargets = struct { continue_block: ir.BlockId, break_block: ir.BlockId, handler_depth: usize };
+const BreakTarget = struct { block: ir.BlockId, handler_depth: usize };
 
 const FunctionBuilder = struct {
     allocator: std.mem.Allocator,
@@ -151,7 +155,7 @@ const FunctionBuilder = struct {
     /// 『抜ける』の飛び先スタック。繰り返しの出口に加えて条件分岐の合流点も
     /// 積む（公式はcase節の`break`がその条件分岐を抜けるJSコードを生成する）。
     /// 『続ける』は条件分岐をまたいで直近の繰り返しへ飛ぶため対象外。
-    breakables: std.ArrayList(ir.BlockId) = .empty,
+    breakables: std.ArrayList(BreakTarget) = .empty,
     exception_handlers: std.ArrayList(ir.BlockId) = .empty,
 
     fn finish(self: *FunctionBuilder) !ir.Function {
@@ -543,8 +547,8 @@ const FunctionBuilder = struct {
         const body_block = try self.createBlock("loop.body");
         const exit_block = try self.createBlock("loop.end");
         self.terminate(.{ .branch = if (post_test) body_block else condition_block });
-        try self.loops.append(self.allocator, .{ .continue_block = condition_block, .break_block = exit_block });
-        try self.breakables.append(self.allocator, exit_block);
+        try self.loops.append(self.allocator, .{ .continue_block = condition_block, .break_block = exit_block, .handler_depth = self.exception_handlers.items.len });
+        try self.breakables.append(self.allocator, .{ .block = exit_block, .handler_depth = self.exception_handlers.items.len });
         defer _ = self.breakables.pop();
 
         self.current = body_block;
@@ -594,8 +598,8 @@ const FunctionBuilder = struct {
         const body_block = try self.createBlock("iterator.body");
         const exit_block = try self.createBlock("iterator.end");
         self.terminate(.{ .branch = condition_block });
-        try self.loops.append(self.allocator, .{ .continue_block = condition_block, .break_block = exit_block });
-        try self.breakables.append(self.allocator, exit_block);
+        try self.loops.append(self.allocator, .{ .continue_block = condition_block, .break_block = exit_block, .handler_depth = self.exception_handlers.items.len });
+        try self.breakables.append(self.allocator, .{ .block = exit_block, .handler_depth = self.exception_handlers.items.len });
         defer _ = self.breakables.pop();
         self.current = condition_block;
         const has_next = try self.emitValue(.iterator_has_next, .boolean, &.{iterator}, node);
@@ -642,20 +646,33 @@ const FunctionBuilder = struct {
     }
 
     fn lowerBreak(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
-        _ = node;
         // 意味解析が文脈外の『抜ける』を診断で拒否するため、ここへ来るのは
         // 解析を通らないHIRを直接下ろした場合だけ。実行時クラッシュにせず
         // コンパイル時エラーにする。
         if (self.breakables.items.len == 0) return error.InvalidHir;
-        self.terminate(.{ .branch = self.breakables.items[self.breakables.items.len - 1] });
+        const target = self.breakables.items[self.breakables.items.len - 1];
+        try self.unwindExceptionHandlers(target.handler_depth, node);
+        self.terminate(.{ .branch = target.block });
         return null;
     }
 
     fn lowerContinue(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
-        _ = node;
         if (self.loops.items.len == 0) return error.InvalidHir;
-        self.terminate(.{ .branch = self.loops.items[self.loops.items.len - 1].continue_block });
+        const target = self.loops.items[self.loops.items.len - 1];
+        try self.unwindExceptionHandlers(target.handler_depth, node);
+        self.terminate(.{ .branch = target.continue_block });
         return null;
+    }
+
+    /// 『抜ける』『続ける』が飛び越す『エラー監視』のhandlerを実行時
+    /// スタックから外すtry_endをemitする。飛び越したままだとInterpreterの
+    /// frame.handlersに取り残され、後続の例外を古いhandlerが捕捉して
+    /// 静的なexception_targetを使うAOTと分岐が生じる。lowering側の
+    /// exception_handlersはpopしない（lowerTryが自分のentryをpopする
+    /// ため、ここで消すと外側のentryを壊す）。
+    fn unwindExceptionHandlers(self: *FunctionBuilder, depth: usize, node: hir.Node) !void {
+        var remaining = self.exception_handlers.items.len -| depth;
+        while (remaining > 0) : (remaining -= 1) try self.emitVoid(.try_end, &.{}, node);
     }
 
     fn lowerTry(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
@@ -701,7 +718,7 @@ const FunctionBuilder = struct {
         const merge_block = try self.createBlock("switch.end");
         // 公式convSwitchはcase節をflagLoopを立てて生成し、節内の`break`は
         // 条件分岐を抜ける。ループ外case節の『続ける』は意味解析で診断済み。
-        try self.breakables.append(self.allocator, merge_block);
+        try self.breakables.append(self.allocator, .{ .block = merge_block, .handler_depth = self.exception_handlers.items.len });
         defer _ = self.breakables.pop();
         var index: usize = 2;
         while (index + 1 < node.children.len) : (index += 2) {
@@ -1086,6 +1103,50 @@ test "単項演算の変換失敗を直後の例外分岐で捕捉する" {
         checked += 1;
     };
     try std.testing.expectEqual(@as(usize, 1), checked);
+}
+
+test "エラー監視を飛び越す抜ける・続けるはtry_endでhandlerを外す" {
+    const parser = @import("../frontend/parser.zig");
+    const semantic = @import("../semantic/analyzer.zig");
+    // 『抜ける』『続ける』が『エラー監視』本体を非局所分岐で抜けるとき、
+    // 分岐経路にtry_endをemitしてInterpreterのframe.handlersから外す。
+    // 外さないと取り残されたhandlerが後続の例外を捕捉し、静的な
+    // exception_targetを使うAOTと分岐する（PR #173レビュー指摘）。
+    const sources = [_]struct { source: []const u8, unwinds: usize }{
+        .{ .source = "3回\nエラー監視\n抜ける。\nエラーならば\n「h」を表示\nここまで\nここまで\n", .unwinds = 1 },
+        .{ .source = "3回\nエラー監視\n続ける。\nエラーならば\n「h」を表示\nここまで\nここまで\n", .unwinds = 1 },
+        .{ .source = "3回\nエラー監視\nエラー監視\n抜ける。\nエラーならば\nここまで\nエラーならば\nここまで\nここまで\n", .unwinds = 2 },
+        // 条件分岐のcase節の『抜ける』も同じく監視を飛び越す
+        .{ .source = "A=1\nAで条件分岐\n1ならば\nエラー監視\n抜ける。\nエラーならば\n「h」を表示\nここまで\nここまで\nここまで\n", .unwinds = 1 },
+    };
+    for (sources) |case| {
+        var parsed = try parser.parse(std.testing.allocator, case.source, "unwind.nako3");
+        defer parsed.deinit();
+        var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "unwind.nako3");
+        defer analyzed.deinit();
+        try std.testing.expect(analyzed.succeeded());
+        var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "unwind", "unwind.nako3", analyzed);
+        defer hir_program.deinit();
+        var program = try lower(std.testing.allocator, hir_program);
+        defer program.deinit();
+        const entry = program.findFunction("unwind__$entry").?;
+        var unwind_blocks: usize = 0;
+        var unwind_total: usize = 0;
+        for (entry.blocks) |block| {
+            var try_ends: usize = 0;
+            for (block.instructions) |instruction| {
+                if (instruction.opcode == .try_end) try_ends += 1;
+            }
+            if (try_ends == 0 or block.terminator != .branch) continue;
+            // 監視本体の正常出口もtry_end+branchなので、try.endへ向かう
+            // 経路は除外し、繰り返し・条件分岐の境界へ向かう経路だけ数える。
+            if (std.mem.startsWith(u8, entry.blocks[block.terminator.branch].name, "try.end")) continue;
+            unwind_blocks += 1;
+            unwind_total += try_ends;
+        }
+        try std.testing.expectEqual(@as(usize, 1), unwind_blocks);
+        try std.testing.expectEqual(case.unwinds, unwind_total);
+    }
 }
 
 test "速度優先領域の本体と境界をIRへ保持する" {
