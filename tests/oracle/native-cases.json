@@ -3225,6 +3225,26 @@
     "source": "A=それに5を足す。2を掛ける。それを表示\n1と2を足す。3を掛ける。それを表示\n前=1。中=前に1を足す。後=中に1を足す。「{前},{中},{後}」を表示\n●(誰に)挨拶とは\n　それは戻り値無し\nここまで\n「友人」に挨拶して表示\n●Fとは\n　入=1。出=入に1を足す。それは出\nここまで\nFを表示\n●Gとは\n　入=1。出=入に1を足す。戻る\nここまで\nGを表示\n"
   },
   {
+    "id": "native-switch-case-break",
+    "source": "A=1\nAで条件分岐\n1ならば\n抜ける。\n「あ」を表示。\nここまで\nここまで\n「い」を表示。\n"
+  },
+  {
+    "id": "native-switch-case-break-in-loop",
+    "source": "3回\nA=1\nAで条件分岐\n1ならば\n抜ける。\nここまで\nここまで\n「loop」を表示\nここまで\n「い」を表示。\n"
+  },
+  {
+    "id": "native-switch-case-continue-in-loop",
+    "source": "3回\nA=1\nAで条件分岐\n1ならば\n続ける。\nここまで\nここまで\n「loop」を表示\nここまで\n「い」を表示。\n"
+  },
+  {
+    "id": "native-switch-default-break-in-loop",
+    "source": "3回\nA=2\nAで条件分岐\n1ならば\n「x」を表示\nここまで\n違えば\n抜ける。\n「で」を表示\nここまで\nここまで\n「loop」を表示\nここまで\n「い」を表示。\n"
+  },
+  {
+    "id": "native-loop-in-switch-break",
+    "source": "A=1\nAで条件分岐\n1ならば\n3回\n抜ける。\n「in」を表示\nここまで\n「after」を表示\nここまで\nここまで\n「い」を表示。\n"
+  },
+  {
     "id": "native-repeat-times-non-number-count-issue165",
     "source": "「3」回\n回数を表示\nここまで\n[1,2]回\n回数を表示\nここまで\n「A」を表示\n(真)回繰り返す\n回数を表示\nここまで\n(偽)回\n回数を表示\nここまで\n「あいう」回\n回数を表示\nここまで\n[3]回\n回数を表示\nここまで\n1n回\n回数を表示\nここまで\nそれ=9\n回数=7\n「2」回\nここまで\n「後:{それ}」を表示\n「回数:{回数}」を表示\n"
   },

@@ -225,6 +225,66 @@
     "code": "unresolved_word"
   },
   {
+    "id": "semantic-diagnostic-break-outside-loop",
+    "source": "抜ける。\n「到達」を表示。\n",
+    "code": "invalid_control_statement",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-continue-outside-loop",
+    "source": "続ける。\n",
+    "code": "invalid_control_statement",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-break-in-uncalled-function",
+    "source": "●Fとは\n抜ける。\nここまで\n「到達」を表示\n",
+    "code": "invalid_control_statement",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-continue-in-uncalled-function",
+    "source": "●Fとは\n続ける。\nここまで\n",
+    "code": "invalid_control_statement",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-break-in-anonymous-function",
+    "source": "F=関数()\n抜ける。\nここまで\n",
+    "code": "invalid_control_statement",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-break-in-switch-default",
+    "source": "Aで条件分岐\n1ならば\n「x」を表示\nここまで\n違えば\n抜ける。\nここまで\nここまで\n",
+    "code": "invalid_control_statement",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-continue-in-switch-default",
+    "source": "Aで条件分岐\n1ならば\n「x」を表示\nここまで\n違えば\n続ける。\nここまで\nここまで\n",
+    "code": "invalid_control_statement",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-break-in-if",
+    "source": "もし1=1ならば\n抜ける。\nここまで\n",
+    "code": "invalid_control_statement",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-break-after-loop",
+    "source": "3回\n回数を表示\nここまで\n抜ける。\n",
+    "code": "invalid_control_statement",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-break-in-try",
+    "source": "エラー監視\n抜ける。\nエラーならば\n「x」を表示\nここまで\n",
+    "code": "invalid_control_statement",
+    "checkMessage": true
+  },
+  {
     "id": "semantic-diagnostic-unresolved-call-value-josi",
     "source": "●Gとは\n「x」で戻る\nここまで\n●Fとは\nそれは{関数}G\nここまで\nA=[9]\nF()()が[A]を表示\n",
     "code": "unresolved_word"

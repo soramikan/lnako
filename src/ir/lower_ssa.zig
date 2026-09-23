@@ -137,10 +137,11 @@ const BlockBuilder = struct {
     terminator: ir.Terminator = .none,
 };
 
-/// ループ脱出先のブロックと、ループ突入時点の例外ハンドラ深さ。
-/// handler_depthはループ本体の内側で開始した監視領域だけを脱出時に
-/// 畳くための基準で、ループを外側から囲む監視領域は対象外とする。
+/// 非局所分岐の飛び先。handler_depthはその文脈へ入った時点の
+/// exception_handlers深さで、分岐時に飛び越す『エラー監視』の個数を
+/// 数える基準（文脈を外側から囲む監視領域は脱出先でも有効なため対象外）。
 const LoopTargets = struct { continue_block: ir.BlockId, break_block: ir.BlockId, handler_depth: usize };
+const BreakTarget = struct { block: ir.BlockId, handler_depth: usize };
 
 const FunctionBuilder = struct {
     allocator: std.mem.Allocator,
@@ -151,6 +152,10 @@ const FunctionBuilder = struct {
     current: ir.BlockId = 0,
     next_value: ir.ValueId,
     loops: std.ArrayList(LoopTargets) = .empty,
+    /// 『抜ける』の飛び先スタック。繰り返しの出口に加えて条件分岐の合流点も
+    /// 積む（公式はcase節の`break`がその条件分岐を抜けるJSコードを生成する）。
+    /// 『続ける』は条件分岐をまたいで直近の繰り返しへ飛ぶため対象外。
+    breakables: std.ArrayList(BreakTarget) = .empty,
     exception_handlers: std.ArrayList(ir.BlockId) = .empty,
 
     fn finish(self: *FunctionBuilder) !ir.Function {
@@ -543,6 +548,8 @@ const FunctionBuilder = struct {
         const exit_block = try self.createBlock("loop.end");
         self.terminate(.{ .branch = if (post_test) body_block else condition_block });
         try self.loops.append(self.allocator, .{ .continue_block = condition_block, .break_block = exit_block, .handler_depth = self.exception_handlers.items.len });
+        try self.breakables.append(self.allocator, .{ .block = exit_block, .handler_depth = self.exception_handlers.items.len });
+        defer _ = self.breakables.pop();
 
         self.current = body_block;
         _ = try self.lowerNode(node.children[1]);
@@ -595,6 +602,8 @@ const FunctionBuilder = struct {
         const exit_block = try self.createBlock("iterator.end");
         self.terminate(.{ .branch = condition_block });
         try self.loops.append(self.allocator, .{ .continue_block = condition_block, .break_block = exit_block, .handler_depth = self.exception_handlers.items.len });
+        try self.breakables.append(self.allocator, .{ .block = exit_block, .handler_depth = self.exception_handlers.items.len });
+        defer _ = self.breakables.pop();
         self.current = condition_block;
         const has_next = try self.emitValue(.iterator_has_next, .boolean, &.{iterator}, node);
         // `N回`ガードの抽象関係比較は反復ごとにカスタムvalueOfを呼び得る
@@ -650,24 +659,21 @@ const FunctionBuilder = struct {
     }
 
     fn lowerBreak(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
-        if (self.loops.items.len == 0) {
-            self.terminate(.unreachable_terminator);
-        } else {
-            const targets = self.loops.items[self.loops.items.len - 1];
-            try self.unwindExceptionHandlers(targets.handler_depth, node);
-            self.terminate(.{ .branch = targets.break_block });
-        }
+        // 意味解析が文脈外の『抜ける』を診断で拒否するため、ここへ来るのは
+        // 解析を通らないHIRを直接下ろした場合だけ。実行時クラッシュにせず
+        // コンパイル時エラーにする。
+        if (self.breakables.items.len == 0) return error.InvalidHir;
+        const target = self.breakables.items[self.breakables.items.len - 1];
+        try self.unwindExceptionHandlers(target.handler_depth, node);
+        self.terminate(.{ .branch = target.block });
         return null;
     }
 
     fn lowerContinue(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
-        if (self.loops.items.len == 0) {
-            self.terminate(.unreachable_terminator);
-        } else {
-            const targets = self.loops.items[self.loops.items.len - 1];
-            try self.unwindExceptionHandlers(targets.handler_depth, node);
-            self.terminate(.{ .branch = targets.continue_block });
-        }
+        if (self.loops.items.len == 0) return error.InvalidHir;
+        const target = self.loops.items[self.loops.items.len - 1];
+        try self.unwindExceptionHandlers(target.handler_depth, node);
+        self.terminate(.{ .branch = target.continue_block });
         return null;
     }
 
@@ -725,6 +731,10 @@ const FunctionBuilder = struct {
         const discriminant = (try self.lowerNode(node.children[0])) orelse try self.emitUndefined(node);
         if (self.isTerminated()) return null;
         const merge_block = try self.createBlock("switch.end");
+        // 公式convSwitchはcase節をflagLoopを立てて生成し、節内の`break`は
+        // 条件分岐を抜ける。ループ外case節の『続ける』は意味解析で診断済み。
+        try self.breakables.append(self.allocator, .{ .block = merge_block, .handler_depth = self.exception_handlers.items.len });
+        defer _ = self.breakables.pop();
         var index: usize = 2;
         while (index + 1 < node.children.len) : (index += 2) {
             const case_value = (try self.lowerNode(node.children[index])) orelse try self.emitUndefined(node);

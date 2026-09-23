@@ -693,3 +693,47 @@ test "利用者関数名のbuiltin衝突と動的plugin命令にはsite IDを付
     };
     try std.testing.expectEqual(@as(usize, 1), dynamic_calls);
 }
+
+test "エラー監視を飛び越す抜ける・続けるはtry_endでhandlerを外す" {
+    const parser = @import("../frontend/parser.zig");
+    const semantic = @import("../semantic/analyzer.zig");
+    // 『抜ける』『続ける』が『エラー監視』本体を非局所分岐で抜けるとき、
+    // 分岐経路にtry_endをemitしてInterpreterのframe.handlersから外す。
+    // 外さないと取り残されたhandlerが後続の例外を捕捉し、静的な
+    // exception_targetを使うAOTと分岐する（PR #173レビュー指摘）。
+    const sources = [_]struct { source: []const u8, unwinds: usize }{
+        .{ .source = "3回\nエラー監視\n抜ける。\nエラーならば\n「h」を表示\nここまで\nここまで\n", .unwinds = 1 },
+        .{ .source = "3回\nエラー監視\n続ける。\nエラーならば\n「h」を表示\nここまで\nここまで\n", .unwinds = 1 },
+        .{ .source = "3回\nエラー監視\nエラー監視\n抜ける。\nエラーならば\nここまで\nエラーならば\nここまで\nここまで\n", .unwinds = 2 },
+        // 条件分岐のcase節の『抜ける』も同じく監視を飛び越す
+        .{ .source = "A=1\nAで条件分岐\n1ならば\nエラー監視\n抜ける。\nエラーならば\n「h」を表示\nここまで\nここまで\nここまで\n", .unwinds = 1 },
+    };
+    for (sources) |case| {
+        var parsed = try parser.parse(std.testing.allocator, case.source, "unwind.nako3");
+        defer parsed.deinit();
+        var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "unwind.nako3");
+        defer analyzed.deinit();
+        try std.testing.expect(analyzed.succeeded());
+        var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "unwind", "unwind.nako3", analyzed);
+        defer hir_program.deinit();
+        var program = try lower_ssa.lower(std.testing.allocator, hir_program);
+        defer program.deinit();
+        const entry = program.findFunction("unwind__$entry").?;
+        var unwind_blocks: usize = 0;
+        var unwind_total: usize = 0;
+        for (entry.blocks) |block| {
+            var try_ends: usize = 0;
+            for (block.instructions) |instruction| {
+                if (instruction.opcode == .try_end) try_ends += 1;
+            }
+            if (try_ends == 0 or block.terminator != .branch) continue;
+            // 監視本体の正常出口もtry_end+branchなので、try.endへ向かう
+            // 経路は除外し、繰り返し・条件分岐の境界へ向かう経路だけ数える。
+            if (std.mem.startsWith(u8, entry.blocks[block.terminator.branch].name, "try.end")) continue;
+            unwind_blocks += 1;
+            unwind_total += try_ends;
+        }
+        try std.testing.expectEqual(@as(usize, 1), unwind_blocks);
+        try std.testing.expectEqual(case.unwinds, unwind_total);
+    }
+}
