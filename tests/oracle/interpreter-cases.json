@@ -805,5 +805,9 @@
   {
     "id": "repeat-times-non-number-count-issue165",
     "source": "「3」回\n回数を表示\nここまで\n[1,2]回\n回数を表示\nここまで\n「A」を表示\n(真)回繰り返す\n回数を表示\nここまで\n(偽)回\n回数を表示\nここまで\n「あいう」回\n回数を表示\nここまで\n[3]回\n回数を表示\nここまで\n1n回\n回数を表示\nここまで\nそれ=9\n回数=7\n「2」回\nここまで\n「後:{それ}」を表示\n「回数:{回数}」を表示\n"
+  },
+  {
+    "id": "repeat-times-per-iteration-coercion-issue165",
+    "source": "D={}\nD[\"valueOf\"]=関数()「call」と表示;それは2;ここまで\nD回\n回数を表示\nここまで\nE={}\nE[\"valueOf\"]=関数()それは2n;ここまで\nE回\n「E{回数}」を表示\nここまで\nF={}\nF[\"n\"]=3\nF[\"valueOf\"]=関数()F[\"n\"]=F[\"n\"]-2;それはF[\"n\"]+1;ここまで\nF回\n「F{回数}」を表示\nここまで\n"
   }
 ]

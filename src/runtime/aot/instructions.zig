@@ -217,11 +217,20 @@ pub export fn lnako_aot_iterator_new(out: *state.Value, values: ?[*]const state.
 }
 
 pub export fn lnako_aot_iterator_has_next(iterator: *const state.Value) callconv(.c) c_int {
-    return if (state.active_runtime) |*runtime| @intFromBool(runtime.iteratorHasNext(iterator.*)) else 0;
+    const runtime = if (state.active_runtime) |*value| value else return 0;
+    return @intFromBool(runtime.iteratorHasNext(iterator.*) catch |failure| {
+        runtime.setFailure(failure);
+        return 0;
+    });
 }
 
 pub export fn lnako_aot_iterator_next(out: *state.Value, iterator: *const state.Value, repeat_target: ?*state.Value, value_target: ?*state.Value, key_target: ?*state.Value, range_target: ?*state.Value, sore_target: ?*state.Value) callconv(.c) void {
-    out.* = if (state.active_runtime) |*runtime| runtime.iteratorNext(iterator.*, repeat_target, value_target, key_target, range_target, sore_target) else .{};
+    out.* = .{};
+    const runtime = if (state.active_runtime) |*value| value else return;
+    out.* = runtime.iteratorNext(iterator.*, repeat_target, value_target, key_target, range_target, sore_target) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
 }
 
 pub export fn lnako_aot_binding_cell_new(out: *state.Value, initial: ?*const state.Value) callconv(.c) void {

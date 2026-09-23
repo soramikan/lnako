@@ -35,7 +35,6 @@ const staticStringValue = aot_state.staticStringValue;
 const runtimeFailure = aot_state.runtimeFailure;
 const valueToNumber = aot_state.valueToNumber;
 const valueToNumberRuntime = aot_state.valueToNumberRuntime;
-const explicitRangeNumber = aot_state.explicitRangeNumber;
 const valueUtf16Alloc = aot_state.valueUtf16Alloc;
 const valueIndex = aot_state.valueIndex;
 const aotCanonicalArrayIndex = aot_state.aotCanonicalArrayIndex;
@@ -43,7 +42,6 @@ const sameKey = aot_state.sameKey;
 const isString = aot_state.isString;
 const staticUtf8 = aot_state.staticUtf8;
 const staticUtf8EqualsUtf16 = aot_state.staticUtf8EqualsUtf16;
-const repeatCount = aot_state.repeatCount;
 const aotByteBufferAllowsStandardPrototype = aot_state.aotByteBufferAllowsStandardPrototype;
 const aotByteBufferScalarProperty = aot_state.aotByteBufferScalarProperty;
 const aotByteBufferReadOnlyProperty = aot_state.aotByteBufferReadOnlyProperty;
@@ -768,7 +766,11 @@ pub const Runtime = struct {
             if (!std.math.isFinite(step) or step == 0) return error.InvalidIteratorStep;
             break :blk .{ .kind = .range, .current = start, .end = end, .step = step };
         } else if (!is_foreach)
-            .{ .kind = .repeat, .count = try repeatCount(try explicitRangeNumber(self, values[0])) }
+            // 公式convRepeatTimesはfor (i = 1; i <= count; i++)の抽象関係
+            // 比較を反復ごとに評価するため、オペランド値を保持し
+            // iteratorHasNextでその都度比較する（カスタムvalueOfは毎回
+            // 呼ばれ、BigInt返却も関係比較として成立する）。
+            .{ .kind = .repeat, .source = values[0] }
         else switch (@as(Tag, @enumFromInt(values[0].tag))) {
             .number => .{ .kind = .repeat, .count = 0 },
             .utf16_string => .{ .kind = .string, .source = values[0], .count = values[0].object().?.payload.utf16_string.len },
@@ -1328,11 +1330,11 @@ pub const Runtime = struct {
         return indexing.aotCanonicalArrayIndexUnits(self, units);
     }
 
-    pub fn iteratorHasNext(self: *Runtime, value: Value) bool {
+    pub fn iteratorHasNext(self: *Runtime, value: Value) !bool {
         return indexing.iteratorHasNext(self, value);
     }
 
-    pub fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_target: ?*Value, key_target: ?*Value, range_target: ?*Value, sore_target: ?*Value) Value {
+    pub fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_target: ?*Value, key_target: ?*Value, range_target: ?*Value, sore_target: ?*Value) !Value {
         return indexing.iteratorNext(self, value, repeat_target, value_target, key_target, range_target, sore_target);
     }
 

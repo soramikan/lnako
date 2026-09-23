@@ -4,12 +4,13 @@ const value_mod = @import("../value.zig");
 const shared = @import("shared.zig");
 const istate = @import("state.zig");
 
+const operators = @import("../operators.zig");
+
 const Interpreter = istate.Interpreter;
 const Frame = shared.Frame;
 const IteratorState = shared.IteratorState;
 const Value = shared.Value;
 const String = value_mod.String;
-const repeatCount = shared.repeatCount;
 
 /// for..in互換の列挙順: 整数添字相当のキーを昇順で先に列挙し、
 /// それ以外のキーは挿入順を保つ。安定ソートで非整数キーの順序を維持する。
@@ -53,9 +54,10 @@ pub fn iteratorBegin(self: *Interpreter, frame: *Frame, instruction: ir.Instruct
         const source = self.operand(frame, instruction, 0);
         if (!instruction.is_foreach) {
             // 公式convRepeatTimesはfor (i = 1; i <= count; i++)の抽象関係
-            // 比較で回数を評価するため、全型を数値化して回数へ写す
-            // （"3"→3、[1,2]→NaN→0回、真→1、BigInt→数学値）。
-            state = .{ .kind = .repeat, .count = try repeatCount(try self.runtime.valueToExplicitRangeNumber(source)) };
+            // 比較を反復ごとに評価するため、オペランド値を保持し
+            // iteratorHasNextでその都度比較する（カスタムvalueOfは毎回
+            // 呼ばれ、BigInt返却も関係比較として成立する）。
+            state = .{ .kind = .repeat, .source = source };
         } else state = switch (source) {
             // 反復構文の対象が数値・非反復値のときは0回実行（公式はfor..inで
             // 列挙可能なプロパティを持たない値を空反復する）。
@@ -99,7 +101,6 @@ pub fn iteratorBegin(self: *Interpreter, frame: *Frame, instruction: ir.Instruct
 }
 
 pub fn iteratorHasNext(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !bool {
-    _ = self;
     const id = instruction.operands[0];
     const state = frame.iterators.getPtr(id) orelse return error.InvalidIterator;
     // for..in互換: 反復開始時の添字・キー集合を上限とし、配列の穴や反復中に
@@ -126,6 +127,13 @@ pub fn iteratorHasNext(self: *Interpreter, frame: *Frame, instruction: ir.Instru
         else => {},
     }
     return switch (state.kind) {
+        // `N回`は公式convRepeatTimesの$i <= $timesどおり、反復ごとに
+        // 抽象関係比較で判定する。NaNを含む比較はnullとなり偽を返す。
+        .repeat => blk: {
+            const next_index: f64 = @floatFromInt(state.index + 1);
+            const order = (try operators.compare(self.runtime, .{ .number = next_index }, state.source)) orelse break :blk false;
+            break :blk order != .gt;
+        },
         .range => if (state.step > 0) state.current <= state.end else state.current >= state.end,
         .array, .bytes, .properties => blk: {
             const keys: []const *String = state.keys orelse &.{};

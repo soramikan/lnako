@@ -1961,6 +1961,35 @@ test "N回繰り返しは非数値オペランドを公式の抽象関係比較�
     try std.testing.expectEqualStrings("1\n2\n3\nA\n1\n1\n2\n3\n1\n後:7\n回数:7\n", host.written());
 }
 
+test "N回繰り返しはオペランドを反復ごとに抽象関係比較する" {
+    // Issue #165: 公式convRepeatTimesはlet varCount = <式>; for (i = 1; i <= varCount; i++)
+    // でガード評価ごとにcountをToPrimitiveする。カスタムvalueOfは反復+1回呼ばれ、
+    // BigInt返却や反復中に返り値が変わる動的境界も公式どおりとなる。
+    const source =
+        "D={}\n" ++
+        "D[\"valueOf\"]=関数()「call」と表示;それは2;ここまで\n" ++
+        "D回\n回数を表示\nここまで\n" ++
+        "E={}\n" ++
+        "E[\"valueOf\"]=関数()それは2n;ここまで\n" ++
+        "E回\n「E{回数}」を表示\nここまで\n" ++
+        "F={}\nF[\"n\"]=3\n" ++
+        "F[\"valueOf\"]=関数()F[\"n\"]=F[\"n\"]-2;それはF[\"n\"]+1;ここまで\n" ++
+        "F回\n「F{回数}」を表示\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("call\n1\ncall\n2\ncall\nE1\nE2\nF1\n", host.written());
+}
+
 test "連文の各文は直前結果を『それ』へ伝播し先行文の出力を欠落させない" {
     // Issue #114: `。`区切りの中間呼出し結果が『それ』に繋がり、
     // 先行する文の出力も保持されることを固定する。『戻り値無し』を

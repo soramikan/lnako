@@ -6,6 +6,7 @@ const Tag = aot_state.Tag;
 const numberValue = aot_state.numberValue;
 const staticStringValue = aot_state.staticStringValue;
 const valueToNumberRuntime = aot_state.valueToNumberRuntime;
+const relationalOrder = aot_state.relationalOrder;
 const valueUtf16Alloc = aot_state.valueUtf16Alloc;
 const valueIndex = aot_state.valueIndex;
 const aotCanonicalArrayIndex = aot_state.aotCanonicalArrayIndex;
@@ -361,7 +362,7 @@ pub fn aotCanonicalArrayIndexUnits(_: *Runtime, units: []const u16) ?usize {
     return if (result <= 4_294_967_294) result else null;
 }
 
-pub fn iteratorHasNext(self: *Runtime, value: Value) bool {
+pub fn iteratorHasNext(self: *Runtime, value: Value) !bool {
     const object = value.object() orelse return false;
     if (object.payload != .iterator) return false;
     const iterator = &object.payload.iterator;
@@ -389,6 +390,12 @@ pub fn iteratorHasNext(self: *Runtime, value: Value) bool {
         else => {},
     }
     return switch (iterator.kind) {
+        // `N回`は公式convRepeatTimesの$i <= $timesどおり、反復ごとに
+        // 抽象関係比較で判定する。NaNを含む比較はnullとなり偽を返す。
+        .repeat => blk: {
+            const order = (try relationalOrder(self, numberValue(@floatFromInt(iterator.index + 1)), iterator.source)) orelse break :blk false;
+            break :blk order != .gt;
+        },
         .range => if (iterator.step > 0) iterator.current <= iterator.end else iterator.current >= iterator.end,
         .array, .bytes, .properties => blk: {
             const keys_len = if (iterator.keys.object()) |keys| keys.payload.array.items.len else 0;
@@ -410,11 +417,14 @@ fn bindForeachElement(result: Value, sore_target: ?*Value, value_target: ?*Value
     }
 }
 
-pub fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_target: ?*Value, key_target: ?*Value, range_target: ?*Value, sore_target: ?*Value) Value {
+pub fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_target: ?*Value, key_target: ?*Value, range_target: ?*Value, sore_target: ?*Value) !Value {
     const object = value.object() orelse return .{};
     if (object.payload != .iterator) return .{};
     const iterator = &object.payload.iterator;
-    if (!iteratorHasNext(self, value)) return .{};
+    // `N回`のhasNext判定は反復ごとの抽象関係比較であり副作用を持つため、
+    // ここで再評価するとcoercionが二重に走る。生成コードは常に
+    // iterator_has_nextの真経路からのみ呼ぶため、repeatは再検査しない。
+    if (iterator.kind != .repeat and !try iteratorHasNext(self, value)) return .{};
     return switch (iterator.kind) {
         .repeat => blk: {
             iterator.index += 1;
