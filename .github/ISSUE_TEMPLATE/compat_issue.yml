@@ -1,0 +1,92 @@
+name: "公式なでしこ3互換性の不具合 / Compatibility Issue"
+description: "公式なでしこ3（cnako v3.7.24）と lnako の挙動の差異や互換性の問題を報告します / Report behavioral differences between official cnako (v3.7.24) and lnako"
+labels: ["compatibility", "bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        lnako は公式なでしこ3（**v3.7.24 / commit `aa18c7e`**）との高水準な互換性を目標としています。
+        公式処理系（cnako）と lnako で実行結果が異なる場合や、動作すべき命令でエラーになる場合はこちらからご報告ください。
+        ※既知の互換性境界については [互換性と保証範囲](https://github.com/soramikan/lnako/blob/main/docs/COMPATIBILITY.md) および [公式処理系との挙動差](https://github.com/soramikan/lnako/blob/main/docs/COMPATIBILITY_QUIRKS.md) も併せてご参照ください。
+        *(You may submit this issue in Japanese or English.)*
+
+  - type: dropdown
+    id: execution_mode
+    attributes:
+      label: "問題が発生する実行経路 / Execution Mode"
+      description: "どの実行モードで差分が発生しているか選択してください / In which execution mode does the difference occur?"
+      options:
+        - "インタプリタ実行のみ (`lnako run`) / Interpreter only"
+        - "ネイティブAOTコンパイルのみ (`lnako build`) / Native AOT only"
+        - "インタプリタ・AOT両方 / Both Interpreter and Native AOT"
+        - "QuickJS互換モード (`--compat-js`) / QuickJS compatibility mode"
+        - "構文・意味チェック (`lnako check`) / Syntax or semantic check"
+        - "未確認・不明 / Unsure"
+    validations:
+      required: true
+
+  - type: input
+    id: target_command
+    attributes:
+      label: "対象の命令・構文 / Target Command or Syntax"
+      description: "関連するなでしこ命令や構文要素を記載してください / Name of the related nadesiko command or syntax"
+      placeholder: "例: 「配列結合」「文字列分解」「条件分岐」など"
+    validations:
+      required: true
+
+  - type: textarea
+    id: minimal_code
+    attributes:
+      label: "最小再現コード / Minimal Reproducible Code"
+      description: "差分を再現できる、最小限のなでしこ3コードを貼り付けてください / Paste minimal nadesiko3 code reproducing the difference"
+      placeholder: |
+        A = [1, 2, 3]
+        B = [4, 5]
+        AとBを配列結合して表示。
+      render: nako3
+    validations:
+      required: true
+
+  - type: textarea
+    id: cnako_behavior
+    attributes:
+      label: "公式なでしこ3（cnako）の実行結果 / Official cnako Behavior"
+      description: "公式 cnako で実行した際の標準出力・戻り値・挙動を記載してください / Output or behavior on official cnako"
+      placeholder: |
+        [1, 2, 3, 4, 5]
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: lnako_behavior
+    attributes:
+      label: "lnako の実行結果 / lnako Behavior"
+      description: "lnako で実行した際の出力・エラー・挙動を記載してください / Output or behavior on lnako"
+      placeholder: |
+        エラー: 配列結合の引数型が不正です (あるいは予期しない出力)
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: "環境情報 / Environment Information"
+      description: "お使いの環境について記載してください / Environment details"
+      value: |
+        - OS: [e.g. macOS 15.0 arm64 / Ubuntu 24.04 x86_64 / Windows 11]
+        - lnako version (`lnako --version`):
+        - cnako version (`cnako -v`):
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: "確認事項 / Checklist"
+      options:
+        - label: "[docs/COMPATIBILITY_QUIRKS.md](https://github.com/soramikan/lnako/blob/main/docs/COMPATIBILITY_QUIRKS.md) の既知の挙動差一覧を確認しました / I have checked known quirks in COMPATIBILITY_QUIRKS.md"
+          required: true
+        - label: "既存の [Issues](https://github.com/soramikan/lnako/issues) に同一の報告がないことを確認しました / I have checked existing issues for duplicates"
+          required: true

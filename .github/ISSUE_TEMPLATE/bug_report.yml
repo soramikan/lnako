@@ -1,0 +1,95 @@
+name: "バグ報告 / Bug Report"
+description: "lnako の予期せぬクラッシュ、ビルド失敗、エラーなどを報告します / Report an unexpected crash, build failure, or error in lnako"
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        lnako のバグ報告ありがとうございます。
+        ※公式なでしこ3（cnako）との動作差分については、専用の「**公式なでしこ3互換性の不具合 / Compatibility Issue**」をご利用ください。
+        ※セキュリティ上の脆弱性は公開Issueではなく、[Security Advisories](https://github.com/soramikan/lnako/security/advisories/new) から非公開で報告してください。
+        *(You may submit this issue in Japanese or English.)*
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: "問題の分類 / Category"
+      description: "発生している問題の種類を選択してください / Select the type of issue"
+      options:
+        - "クラッシュ・パニック / Crash or Panic"
+        - "コンパイル失敗（LLVM/AOT） / Native AOT compilation failure"
+        - "インタプリタ実行エラー / Interpreter runtime error"
+        - "CLI・オプションの異常 / CLI or argument parsing issue"
+        - "ツールチェーン・環境セットアップ / Toolchain or setup issue"
+        - "その他 / Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: "問題の説明 / Description"
+      description: "どのような問題が発生しているか簡潔に記載してください / Briefly describe what is happening"
+      placeholder: "例: lnako build で以下のコードをコンパイルするとコンパイラがセグメンテーション違反で停止します。"
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: "再現手順と最小コード / Steps to Reproduce and Minimal Code"
+      description: "問題を再現するための手順と、可能な限り最小限の `.nako3` コードを提示してください / Provide minimal steps and .nako3 code to reproduce the issue"
+      placeholder: |
+        1. 以下の `example.nako3` を作成
+        ```nako3
+        「テスト」と表示する。
+        ```
+        2. `lnako build example.nako3` を実行
+        3. エラーが発生
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_vs_actual
+    attributes:
+      label: "期待する動作と実際の動作 / Expected vs Actual Behavior"
+      description: "期待される正常な動作と、実際に発生した動作を記載してください / What did you expect to happen, and what actually happened?"
+      placeholder: |
+        **期待する動作 / Expected:**
+        正常にコンパイルが完了し、実行バイナリが生成される。
+
+        **実際の動作 / Actual:**
+        panic: reached unreachable code ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: "エラーログ・出力 / Error Output or Logs"
+      description: "コンソールに出力された完全なエラーメッセージやスタックトレースを貼り付けてください / Paste the full console error message or stack trace"
+      render: text
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: "環境情報 / Environment Information"
+      description: "お使いの環境について教えてください (`lnako --version` の結果など) / Details of your environment"
+      value: |
+        - OS: [e.g. macOS 15.0 arm64 / Ubuntu 24.04 x86_64 / Windows 11]
+        - lnako version (`lnako --version`):
+        - Zig version (`zig version`, if building from source):
+        - LLVM version (if applicable):
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: "確認事項 / Checklist"
+      options:
+        - label: "既存の [Issues](https://github.com/soramikan/lnako/issues) に同一の報告がないことを検索・確認しました / I have searched existing issues to ensure this is not a duplicate"
+          required: true
+        - label: "この報告にはパスワードや機密情報、未公表のセキュリティ脆弱性が含まれていません / This report does not contain secrets or undisclosed security vulnerabilities"
+          required: true
