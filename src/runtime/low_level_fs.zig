@@ -418,10 +418,15 @@ pub const SeekExtent = enum {
 /// data検索で `offset` がファイル末尾以降の場合はPOSIXのENXIO相当として
 /// `error.InvalidOffset`（EINVAL）。
 pub fn seekExtent(io: std.Io, file: std.Io.File, offset: i64, extent: SeekExtent) anyerror!i64 {
+    // 非対応OSは引数に関わらずENOTSUP（OS判定を先に行う）。
+    switch (builtin.os.tag) {
+        .windows, .wasi => return error.OperationUnsupported,
+        else => {},
+    }
     if (offset < 0) return error.InvalidOffset;
     return switch (builtin.os.tag) {
         .linux => seekExtentLinux(file, offset, extent),
-        .windows, .wasi => error.OperationUnsupported,
+        .windows, .wasi => unreachable,
         else => seekExtentEmulated(io, file, offset, extent),
     };
 }
@@ -438,7 +443,8 @@ fn seekExtentLinux(file: std.Io.File, offset: i64, extent: SeekExtent) anyerror!
     while (true) {
         const result = std.os.linux.lseek(file.handle, offset, whence);
         const errno = std.os.linux.errno(result);
-        if (errno == .SUCCESS) return @bitCast(result);
+        // errno確認済みのため負値は来ず、32bitでもusize→i64が安全に入る。
+        if (errno == .SUCCESS) return @intCast(result);
         if (errno == .INTR) continue;
         return linuxErrno(errno);
     }
@@ -467,6 +473,18 @@ fn seekExtentEmulated(io: std.Io, file: std.Io.File, offset: i64, extent: SeekEx
 /// で、通常コピーへのフォールバックは行わない（reflinkでない成功を返さ
 /// ない）。FSを跨ぐ場合は `error.CrossDevice`（EXDEV）。
 pub fn reflink(io: std.Io, source: []const u8, destination: []const u8, mode: ?u32) anyerror!void {
+    // 非対応OSはSRCの有無・種別・MODEに関わらずENOTSUPとする。低レイヤー
+    // POSIX命令と同じくOS判定を先に行い、SRC不在のENOENT等がENOTSUPを
+    // 隠さないようにする（statはOS依存のため後置できない）。
+    switch (builtin.os.tag) {
+        .linux, .macos => {},
+        else => return error.OperationUnsupported,
+    }
+    // MODE上限は全OSで共通に検証する。plugin層も検証するが、直接呼出しでは
+    // Linuxが下位bitを黙って使いDarwinがInvalidArgumentになる非対称があった。
+    if (mode) |value| {
+        if (value > foundation.max_permission_mode) return error.InvalidArgument;
+    }
     // 「MODE省略時はSRCの権限」をLinux FICLONE（DSTは生成時modeのまま）でも
     // 満たすため先にstatを取る。
     const metadata = try stat(io, source, true);
@@ -478,7 +496,7 @@ pub fn reflink(io: std.Io, source: []const u8, destination: []const u8, mode: ?u
     return switch (builtin.os.tag) {
         .linux => cloneFileLinux(source, destination, mode orelse metadata.mode),
         .macos => cloneFileDarwin(source, destination, mode),
-        else => error.OperationUnsupported,
+        else => unreachable,
     };
 }
 
@@ -486,8 +504,20 @@ pub fn reflink(io: std.Io, source: []const u8, destination: []const u8, mode: ?u
 const ficlone: u32 = 0x4004_9409;
 
 fn cloneFileLinux(source: []const u8, destination: []const u8, mode: u32) anyerror!void {
-    const source_fd = try std.posix.openat(std.posix.AT.FDCWD, source, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
+    // statからopenの間にSRCがfifo等へ差し替えられるTOCTOUを塞ぐため、
+    // NONBLOCKで開きfd上の種別を再検査する（fifo O_RDONLYのwriter待ち
+    // ブロックを防ぐ。通常ファイルではNONBLOCKは無害）。
+    const source_fd = try std.posix.openat(std.posix.AT.FDCWD, source, .{ .ACCMODE = .RDONLY, .NONBLOCK = true, .CLOEXEC = true }, 0);
     defer _ = std.os.linux.close(source_fd);
+    var raw: std.os.linux.Statx = std.mem.zeroes(std.os.linux.Statx);
+    while (true) {
+        const result = std.os.linux.statx(source_fd, "", std.os.linux.AT.EMPTY_PATH, .{ .TYPE = true }, &raw);
+        const errno = std.os.linux.errno(result);
+        if (errno == .SUCCESS) break;
+        if (errno == .INTR) continue;
+        return linuxErrno(errno);
+    }
+    if (linuxKind(raw.mode) != .file) return error.OperationUnsupported;
     // O_EXCLで既存DSTをEEXISTにする。生成権限は0o600固定で、複製後に
     // SRC権限/明示MODEへ揃える（生成時のumaskに結果を左右させない）。
     const destination_fd = try std.posix.openat(std.posix.AT.FDCWD, destination, .{ .ACCMODE = .WRONLY, .CREAT = true, .EXCL = true, .CLOEXEC = true }, 0o600);
@@ -555,6 +585,15 @@ fn cloneFileDarwin(source: []const u8, destination: []const u8, mode: ?u32) anye
 
 fn unlinkPosixPath(path: []const u8) !void {
     const posix_path = try std.posix.toPosixPath(path);
+    if (builtin.os.tag == .linux) {
+        while (true) {
+            const result = std.os.linux.unlink(&posix_path);
+            const errno = std.os.linux.errno(result);
+            if (errno == .SUCCESS) return;
+            if (errno == .INTR) continue;
+            return linuxErrno(errno);
+        }
+    }
     while (true) {
         const result = std.c.unlink(&posix_path);
         if (result == 0) return;
@@ -570,12 +609,17 @@ fn unlinkPosixPath(path: []const u8) !void {
 /// `ftruncate` で論理サイズを合わせる。`size == 0` は `error.InvalidSize`
 /// （EINVAL）。Windows/WASIは `error.OperationUnsupported`。
 pub fn allocate(io: std.Io, file: std.Io.File, offset: i64, size: u64) anyerror!void {
+    // 非対応OSは引数に関わらずENOTSUP（OS判定を先に行う）。
+    switch (builtin.os.tag) {
+        .linux, .macos => {},
+        else => return error.OperationUnsupported,
+    }
     if (offset < 0) return error.InvalidOffset;
     if (size == 0) return error.InvalidSize;
     return switch (builtin.os.tag) {
         .linux => allocateLinux(file, offset, size),
         .macos => allocateDarwin(io, file, offset, size),
-        else => error.OperationUnsupported,
+        else => unreachable,
     };
 }
 
@@ -625,7 +669,7 @@ fn allocateDarwin(io: std.Io, file: std.Io.File, offset: i64, size: u64) anyerro
         .fst_bytesalloc = 0,
     };
     while (true) {
-        const result = std.c.fcntl(file.handle, std.c.F.PREALLOCATE, @intFromPtr(&store));
+        const result = std.c.fcntl(file.handle, std.c.F.PREALLOCATE, &store);
         if (result == 0) break;
         const errno = std.c.errno(result);
         if (errno == .INTR) continue;
