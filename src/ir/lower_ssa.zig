@@ -139,7 +139,7 @@ const BlockBuilder = struct {
 
 /// 非局所分岐の飛び先。handler_depthはその文脈へ入った時点の
 /// exception_handlers深さで、分岐時に飛び越す『エラー監視』の個数を
-/// 数えるために使う。
+/// 数える基準（文脈を外側から囲む監視領域は脱出先でも有効なため対象外）。
 const LoopTargets = struct { continue_block: ir.BlockId, break_block: ir.BlockId, handler_depth: usize };
 const BreakTarget = struct { block: ir.BlockId, handler_depth: usize };
 
@@ -641,6 +641,10 @@ const FunctionBuilder = struct {
     fn lowerReturn(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
         const value = if (node.children.len > 0) try self.lowerNode(node.children[0]) else null;
         if (self.isTerminated()) return null;
+        // 関数を抜ける経路でも残りの監視ハンドラを畳く。フレーム解体で
+        // スタック自体は消えるが、try_begin/try_endを全経路で対に保ち、
+        // 「ブロックを抜けるとハンドラ深さが戻る」不変条件を維持する。
+        try self.unwindExceptionHandlers(0, node);
         self.terminate(.{ .return_value = value });
         return value;
     }
@@ -664,15 +668,17 @@ const FunctionBuilder = struct {
         return null;
     }
 
-    /// 『抜ける』『続ける』が飛び越す『エラー監視』のhandlerを実行時
-    /// スタックから外すtry_endをemitする。飛び越したままだとInterpreterの
-    /// frame.handlersに取り残され、後続の例外を古いhandlerが捕捉して
-    /// 静的なexception_targetを使うAOTと分岐が生じる。lowering側の
-    /// exception_handlersはpopしない（lowerTryが自分のentryをpopする
-    /// ため、ここで消すと外側のentryを壊す）。
-    fn unwindExceptionHandlers(self: *FunctionBuilder, depth: usize, node: hir.Node) !void {
-        var remaining = self.exception_handlers.items.len -| depth;
-        while (remaining > 0) : (remaining -= 1) try self.emitVoid(.try_end, &.{}, node);
+    /// ループ脱出・関数脱出で監視領域を横切る経路へ、抜ける側のtry_begin分の
+    /// try_endをemitする。Interpreterはtry_beginでハンドラをフレームの
+    /// スタックへ積みtry_endで降ろすため、try_endを欠く脱出経路は終了済みの
+    /// ハンドラを残し、後続の例外を死んだ監視ブロックへ誤配送する（ループ内
+    /// ハンドラなら本体のゾンビ再実行になる）。静的な深さの記録
+    /// （exception_handlers）は構造上まだtry内のため、ここでは変更しない。
+    fn unwindExceptionHandlers(self: *FunctionBuilder, target_depth: usize, node: hir.Node) !void {
+        std.debug.assert(self.exception_handlers.items.len >= target_depth);
+        for (0..self.exception_handlers.items.len -| target_depth) |_| {
+            try self.emitVoid(.try_end, &.{}, node);
+        }
     }
 
     fn lowerTry(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
@@ -1318,6 +1324,202 @@ test "catalog literalのsite IDをglobal readと別namespaceで付与する" {
         }
     };
     try std.testing.expectEqual(@as(usize, 7), literal_count);
+}
+
+fn lowerSourceForTest(allocator: std.mem.Allocator, source: []const u8) !struct {
+    parsed: @import("../frontend/parser.zig").ParseResult,
+    analyzed: @import("../semantic/analyzer.zig").Program,
+    hir_program: hir.Program,
+    program: ir.Program,
+} {
+    const parser = @import("../frontend/parser.zig");
+    const semantic = @import("../semantic/analyzer.zig");
+    const parsed = try parser.parse(allocator, source, "lower-test.nako3");
+    const analyzed = try semantic.analyze(allocator, parsed.root.?, "lower-test.nako3");
+    const hir_program = try hir.lowerSingle(allocator, parsed.root.?, "main", "lower-test.nako3", analyzed);
+    const program = try lower(allocator, hir_program);
+    return .{ .parsed = parsed, .analyzed = analyzed, .hir_program = hir_program, .program = program };
+}
+
+/// ループ条件ブロック（iterator_has_nextを持つ）から繰り返しの出口を特定する。
+fn findIteratorLoopExit(function: ir.Function) ?ir.BlockId {
+    for (function.blocks) |block| {
+        if (block.terminator != .conditional_branch) continue;
+        for (block.instructions) |instruction| {
+            if (instruction.opcode == .iterator_has_next) return block.terminator.conditional_branch.else_block;
+        }
+    }
+    return null;
+}
+
+test "監視領域を抜けるループ脱出は抜ける側のtry_endをemitする" {
+    // ループ内の監視領域を抜ける経路では、抜ける側のtry_begin分のtry_endを
+    // emitしてからループ出口へ分岐する。try_endを欠くとInterpreterの
+    // frame.handlersへ終了済みハンドラが残り、後続例外を死んだ監視
+    // ブロックへ誤配送する。ループを囲む外側の監視は脱出先でも有効なため
+    // 畳まない。
+    var fixture = try lowerSourceForTest(std.testing.allocator, "エラー監視\n" ++
+        "3回\n" ++
+        "エラー監視\n" ++
+        "エラー監視\n" ++
+        "抜ける\n" ++
+        "エラーならば\nここまで\n" ++
+        "エラーならば\nここまで\n" ++
+        "ここまで\n" ++
+        "エラーならば\nここまで\n");
+    defer fixture.program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+
+    const entry = fixture.program.findFunction("main__$entry").?;
+    const loop_exit = findIteratorLoopExit(entry).?;
+    var try_begin_count: usize = 0;
+    var try_end_count: usize = 0;
+    var break_block: ?ir.BasicBlock = null;
+    for (entry.blocks) |block| {
+        for (block.instructions) |instruction| {
+            if (instruction.opcode == .try_begin) try_begin_count += 1;
+            if (instruction.opcode == .try_end) try_end_count += 1;
+        }
+        switch (block.terminator) {
+            .branch => |target| {
+                if (target == loop_exit) break_block = block;
+            },
+            else => {},
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 3), try_begin_count);
+    // 抜ける経路の2つ（内側・中間の監視）+ 中間・外側の監視の正常終了経路
+    // それぞれ1つずつ。
+    try std.testing.expectEqual(@as(usize, 4), try_end_count);
+    const edge = break_block.?;
+    try std.testing.expect(edge.instructions.len >= 2);
+    try std.testing.expectEqual(ir.Opcode.try_end, edge.instructions[edge.instructions.len - 1].opcode);
+    try std.testing.expectEqual(ir.Opcode.try_end, edge.instructions[edge.instructions.len - 2].opcode);
+}
+
+test "監視領域を続ける経路は抜ける側のtry_endをemitする" {
+    // 続けるもループ脱出と同じく監視領域を横切るため、抜ける側のtry_endを
+    // emitしてからループ条件ブロックへ分岐する。
+    var fixture = try lowerSourceForTest(std.testing.allocator, "3回\n" ++
+        "エラー監視\n" ++
+        "もし回数=2ならば\n" ++
+        "続ける\n" ++
+        "ここまで\n" ++
+        "回数を表示\n" ++
+        "エラーならば\nここまで\n" ++
+        "ここまで\n");
+    defer fixture.program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+
+    const entry = fixture.program.findFunction("main__$entry").?;
+    var condition_block: ?ir.BlockId = null;
+    var try_begin_count: usize = 0;
+    var try_end_count: usize = 0;
+    var continue_has_try_end = false;
+    for (entry.blocks) |block| {
+        for (block.instructions) |instruction| {
+            if (instruction.opcode == .try_begin) try_begin_count += 1;
+            if (instruction.opcode == .try_end) try_end_count += 1;
+            if (instruction.opcode == .iterator_has_next) condition_block = block.id;
+        }
+    }
+    try std.testing.expect(condition_block != null);
+    for (entry.blocks) |block| switch (block.terminator) {
+        .branch => |target| {
+            if (target == condition_block.? and
+                block.instructions.len > 0 and
+                block.instructions[block.instructions.len - 1].opcode == .try_end)
+            {
+                continue_has_try_end = true;
+            }
+        },
+        else => {},
+    };
+    try std.testing.expectEqual(@as(usize, 1), try_begin_count);
+    // 続ける経路と監視本体の正常終了経路の2箇所へtry_endをemitする。
+    try std.testing.expectEqual(@as(usize, 2), try_end_count);
+    try std.testing.expect(continue_has_try_end);
+}
+
+test "監視領域を戻るで抜ける経路はreturnの前にtry_endをemitする" {
+    // 関数脱出でも残りの監視ハンドラを畳み、try_begin/try_endを全経路で
+    // 対に保つ。
+    var fixture = try lowerSourceForTest(std.testing.allocator, "●Fとは\n" ++
+        "エラー監視\n" ++
+        "1で戻る\n" ++
+        "エラーならば\nここまで\n" ++
+        "ここまで\n" ++
+        "F()\n");
+    defer fixture.program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+
+    var user_function: ?ir.Function = null;
+    for (fixture.program.functions) |function| {
+        if (!std.mem.endsWith(u8, function.name, "$entry")) user_function = function;
+    }
+    const function = user_function.?;
+    var try_begin_count: usize = 0;
+    var try_end_count: usize = 0;
+    var return_has_try_end = false;
+    for (function.blocks) |block| {
+        for (block.instructions) |instruction| {
+            if (instruction.opcode == .try_begin) try_begin_count += 1;
+            if (instruction.opcode == .try_end) try_end_count += 1;
+        }
+        if (block.terminator == .return_value and
+            block.instructions.len > 0 and
+            block.instructions[block.instructions.len - 1].opcode == .try_end)
+        {
+            return_has_try_end = true;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 1), try_begin_count);
+    try std.testing.expectEqual(@as(usize, 1), try_end_count);
+    try std.testing.expect(return_has_try_end);
+}
+
+test "ループを囲む監視領域はループ脱出で畳まない" {
+    // 監視領域の内側にあるループから抜けても監視領域自体は続くため、
+    // 脱出経路へtry_endをemitしない（emitすると有効なハンドラを剥がし、
+    // 監視内の後続例外が捕捉されなくなる）。
+    var fixture = try lowerSourceForTest(std.testing.allocator, "エラー監視\n" ++
+        "3回\n" ++
+        "抜ける\n" ++
+        "ここまで\n" ++
+        "エラーならば\nここまで\n");
+    defer fixture.program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+
+    const entry = fixture.program.findFunction("main__$entry").?;
+    const loop_exit = findIteratorLoopExit(entry).?;
+    var try_begin_count: usize = 0;
+    var try_end_count: usize = 0;
+    var break_has_try_end = false;
+    for (entry.blocks) |block| {
+        for (block.instructions) |instruction| {
+            if (instruction.opcode == .try_begin) try_begin_count += 1;
+            if (instruction.opcode == .try_end) try_end_count += 1;
+        }
+        switch (block.terminator) {
+            .branch => |target| if (target == loop_exit) {
+                for (block.instructions) |instruction| {
+                    if (instruction.opcode == .try_end) break_has_try_end = true;
+                }
+            },
+            else => {},
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 1), try_begin_count);
+    try std.testing.expectEqual(@as(usize, 1), try_end_count);
+    try std.testing.expect(!break_has_try_end);
 }
 
 test "利用者関数名のbuiltin衝突と動的plugin命令にはsite IDを付けない" {

@@ -980,6 +980,22 @@
     "source": "「未捕捉」のエラー発生\n"
   },
   {
+    "id": "native-exception-monitor-break-unwinds-handler",
+    "source": "エラー監視\n3回\nエラー監視\n「到達した」を表示\n抜ける\nエラーならば\n「捕捉:{エラーメッセージ}」を表示\nここまで\nここまで\n「後続」を表示\n「最後」のエラー発生\nエラーならば\n「外捕捉:{エラーメッセージ}」を表示\nここまで\n"
+  },
+  {
+    "id": "native-exception-monitor-continue-unwinds-handler",
+    "source": "エラー監視\n3回\nエラー監視\nもし、回数=2ならば\n続ける\nここまで\n回数を表示\nエラーならば\n「捕捉:{回数}」を表示\nここまで\nここまで\n「後続」を表示\n「最後」のエラー発生\nエラーならば\n「外捕捉:{エラーメッセージ}」を表示\nここまで\n"
+  },
+  {
+    "id": "native-exception-monitor-return-unwinds-handler",
+    "source": "●Fとは\nエラー監視\n「F内」で戻る\nエラーならば\n「F捕捉」を表示\nここまで\nここまで\nF()を表示\nエラー監視\n「最後」のエラー発生\nエラーならば\n「外捕捉:{エラーメッセージ}」を表示\nここまで\n"
+  },
+  {
+    "id": "native-exception-monitor-nested-break-unwinds-handlers",
+    "source": "エラー監視\n3回\nエラー監視\nエラー監視\n「到達した」を表示\n抜ける\nエラーならば\n「内捕捉:{エラーメッセージ}」を表示\nここまで\nエラーならば\n「中捕捉」を表示\nここまで\nここまで\n「後続」を表示\n「最後」のエラー発生\nエラーならば\n「外捕捉:{エラーメッセージ}」を表示\nここまで\n"
+  },
+  {
     "id": "native-system-error-raise",
     "dispatchExpectations": [
       {
@@ -3199,6 +3215,10 @@
   {
     "id": "native-for-josi-arg-order-issue118",
     "source": "Nを3まで1から繰り返す\nNを表示\nここまで\n1からNで3まで繰り返す\nNを表示\nここまで\n1までNで5から減繰返す\nNを表示\nここまで\nA=1\nNでAからA+2まで繰り返す\nNを表示\nここまで\n2ずつ1からNで5まで増繰返す\nNを表示\nここまで\nそれ=9\n3回繰り返す\n「{それ}」を表示\nここまで\n「後:{それ}」を表示\n「回数:{回数}」を表示\n"
+  },
+  {
+    "id": "native-call-value-josi-array-arg-issue163",
+    "source": "●Gとは\n　それは「x」\nここまで\n●Fとは\n　それは{関数}G\nここまで\nF()()と[1,2]を連結して表示\nA=[9,9]\nF()()を[A]に追加してそれを表示\n"
   },
   {
     "id": "native-renbun-sore-propagation-issue114",

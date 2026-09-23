@@ -1,0 +1,61 @@
+name: "機能提案・改善要望 / Feature Request"
+description: "lnako への新機能追加や既存機能の改善を提案します / Propose a new feature or improvement for lnako"
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        lnako への機能提案・改善要望ありがとうございます。
+        提案の背景や、あると嬉しい具体的なユースケースを教えてください。
+        *(You may submit this proposal in Japanese or English.)*
+
+  - type: dropdown
+    id: proposal_type
+    attributes:
+      label: "提案の分類 / Proposal Category"
+      description: "提案内容に該当する分類を選択してください / Select the category that best matches your proposal"
+      options:
+        - "CLI機能・開発ツール（サブコマンド等） / CLI or Developer tooling"
+        - "lnako独自拡張・低レイヤーAPI / lnako extension or Low-level API"
+        - "標準命令・ライブラリの拡張 / Standard library extension"
+        - "最適化・実行性能改善 / Optimization or Performance"
+        - "エラーメッセージ・診断の改善 / Diagnostics or Error messages"
+        - "ドキュメント・ビルド手順 / Documentation or Build process"
+        - "その他 / Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: "解決したい課題・背景 / Problem or Motivation"
+      description: "どのような課題や困りごとがあり、なぜこの機能が必要なのかを記載してください / What problem are you trying to solve?"
+      placeholder: "現在、〇〇を行う際に△△という制限があり、□□が困難になっています。"
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: "提案する仕様・解決案 / Proposed Solution or Specification"
+      description: "どのような機能やコマンド、シンタックスを想定しているか記載してください / Describe the solution or new behavior you propose"
+      placeholder: |
+        以下のようなCLIオプション（または命令）の追加を提案します:
+        ```nako3
+        // コード例
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    id: compatibility_impact
+    attributes:
+      label: "公式なでしこ3との互換性への考慮 / Compatibility Considerations"
+      description: "公式なでしこ3との互換性や、既存の `.nako3` スクリプトへの影響があれば記載してください / Any impact on official nadesiko3 compatibility or existing scripts?"
+      placeholder: "公式cnakoには同等機能がないためlnako独自拡張となります。既存構文との衝突はありません。"
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "検討した代替案 / Alternatives Considered"
+      description: "他に検討した代替方法やワークアラウンドがあれば記載してください / Any alternative solutions or workarounds considered?"
