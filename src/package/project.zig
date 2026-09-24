@@ -20,6 +20,7 @@ const fetch = @import("fetch.zig");
 const lock_mod = @import("lock.zig");
 const lock_model = @import("lock_model.zig");
 const manifest_mod = @import("manifest.zig");
+const project_identity = @import("project_identity.zig");
 const provider = @import("provider.zig");
 const registry = @import("registry.zig");
 const resolver = @import("resolver.zig");
@@ -469,70 +470,7 @@ const DepWork = struct {
     base_dir: ?[]const u8,
 };
 
-/// 宣言された source 依存。virtual id / public id 導出の入力。
-pub const SourceDecl = union(enum) {
-    path: manifest_mod.PathDependency,
-    git: manifest_mod.GitDependency,
-    http: manifest_mod.HttpDependency,
-};
-
-/// dep の宣言 path を id 用に正規化する。`base_dir`（宣言 manifest の
-/// dir）基準で解決し、project 配下なら project 相対・外なら絶対 path
-/// へ揃える。`./deps/a` と `deps/a` のような綴り差や、異なる親 manifest
-/// からの宣言が同一 dir を指す場合に同じ identity へ集約される。
-fn canonicalPathForId(gpa: Allocator, declared: []const u8, base_dir: ?[]const u8, project_root: []const u8) Error![]const u8 {
-    const abs = if (provider.isAbsoluteDepPath(declared))
-        std.fs.path.resolve(gpa, &.{declared}) catch return error.FileSystem
-    else
-        std.fs.path.resolve(gpa, &.{ base_dir orelse project_root, declared }) catch return error.FileSystem;
-    errdefer gpa.free(abs);
-    const root = std.fs.path.resolve(gpa, &.{project_root}) catch return error.FileSystem;
-    defer gpa.free(root);
-    if (std.mem.startsWith(u8, abs, root) and abs.len > root.len and
-        (abs[root.len] == '/' or abs[root.len] == std.fs.path.sep))
-    {
-        const rel = try gpa.dupe(u8, abs[root.len + 1 ..]);
-        gpa.free(abs);
-        return rel;
-    }
-    return abs;
-}
-
-/// source 宣言から得られる暫定 identity。実際の lock/solver identity は
-/// acquisition 後の canonical source から virtualIdForResolvedSource で作る。
-fn virtualIdForDecl(gpa: Allocator, decl: SourceDecl, base_dir: ?[]const u8, project_root: []const u8) Error![]const u8 {
-    const identity_source: lock_model.Source = switch (decl) {
-        .path => |dep| .{
-            .kind = .path,
-            .path = try canonicalPathForId(gpa, dep.path, base_dir, project_root),
-        },
-        .git => |dep| .{ .kind = .git, .url = dep.url, .commit = dep.commit, .path = dep.path },
-        .http => |dep| .{ .kind = .http, .url = dep.url, .hash = dep.hash },
-    };
-    return provider.identityText(gpa, identity_source);
-}
-
-fn canonicalHttpHash(gpa: Allocator, text: []const u8) ![]const u8 {
-    if (fetch.normalizeSha256(text)) |digest| {
-        return std.fmt.allocPrint(gpa, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
-    }
-    if (fetch.normalizeSha512(text)) |digest| {
-        return std.fmt.allocPrint(gpa, "sha512:{s}", .{std.fmt.bytesToHex(digest, .lower)});
-    }
-    return gpa.dupe(u8, text);
-}
-
-/// 取得後の source pin から仮想 id を作る。git は完全 commit SHA、HTTP
-/// は digest 表記を正規化し、path は project 基準の canonical spelling にする。
-fn virtualIdForResolvedSource(gpa: Allocator, source: lock_model.Source, project_root: []const u8) Error![]const u8 {
-    var canonical = try copySource(gpa, source);
-    if (canonical.kind == .path) {
-        canonical.path = try canonicalPathForId(gpa, canonical.path orelse return error.ResolveFailed, null, project_root);
-    } else if (canonical.kind == .http) {
-        canonical.hash = try canonicalHttpHash(gpa, canonical.hash orelse return error.ResolveFailed);
-    }
-    return provider.identityText(gpa, canonical);
-}
+pub const SourceDecl = project_identity.SourceDecl;
 
 /// virtual id（source identity）から `pkg:<32hex>` public id を派生する。
 fn publicIdFor(gpa: Allocator, id_text: []const u8) ![]const u8 {
@@ -542,37 +480,8 @@ fn publicIdFor(gpa: Allocator, id_text: []const u8) ![]const u8 {
     return std.fmt.allocPrint(gpa, "pkg:{s}", .{hex[0..32]});
 }
 
-/// 宣言だけから暫定 public id を導出する。resolved lock package の照合には
-/// `publicIdForSourceDeclInPackages` を使うこと。
-pub fn publicIdForSourceDecl(gpa: Allocator, decl: SourceDecl, base_dir: ?[]const u8, project_root: []const u8) Error![]const u8 {
-    const id_text = try virtualIdForDecl(gpa, decl, base_dir, project_root);
-    return publicIdFor(gpa, id_text);
-}
-
-/// 既存 lock source と宣言を照合し、解決済み canonical public id を返す。
-/// git prefix/full SHA と HTTP digest encoding をまたぐCLIの表示・検索用。
-pub fn publicIdForSourceDeclInPackages(gpa: Allocator, decl: SourceDecl, base_dir: ?[]const u8, project_root: []const u8, packages: []const lock_model.PackageEntry) Error!?[]const u8 {
-    for (packages) |entry| {
-        const source = entry.source orelse continue;
-        const matches = switch (decl) {
-            .path => |dep| blk: {
-                if (source.kind != .path) break :blk false;
-                const declared = try canonicalPathForId(gpa, dep.path, base_dir, project_root);
-                const locked = try canonicalPathForId(gpa, source.path orelse break :blk false, null, project_root);
-                break :blk std.mem.eql(u8, declared, locked);
-            },
-            .git => |dep| source.kind == .git and
-                std.mem.eql(u8, source.url orelse "", dep.url) and
-                std.mem.eql(u8, source.path orelse "", dep.path orelse "") and
-                std.mem.startsWith(u8, source.commit orelse "", dep.commit),
-            .http => |dep| source.kind == .http and
-                std.mem.eql(u8, source.url orelse "", dep.url) and
-                provider.sourceHashEql(source.hash, dep.hash),
-        };
-        if (matches) return try gpa.dupe(u8, entry.id);
-    }
-    return null;
-}
+pub const publicIdForSourceDecl = project_identity.publicIdForSourceDecl;
+pub const publicIdForSourceDeclInPackages = project_identity.publicIdForSourceDeclInPackages;
 
 fn isVirtualId(id_text: []const u8) bool {
     return std.mem.startsWith(u8, id_text, "path:") or
@@ -900,7 +809,7 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
                 const checkout = try gitCheckoutDir(gpa, ctx.io, ctx, dep);
                 const locked = try lockedSourceForWork(ctx, work);
                 const locked_public_id = if (locked) |source|
-                    try publicIdFor(gpa, try virtualIdForResolvedSource(gpa, source, ctx.project_root))
+                    try publicIdFor(gpa, try project_identity.virtualIdForResolvedSource(gpa, source, ctx.project_root))
                 else
                     "";
                 const updating = isUpdateTarget(ctx.opts, dep_name, locked_public_id);
@@ -926,7 +835,7 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
                 const dep = work.http_dep.?;
                 const locked = try lockedSourceForWork(ctx, work);
                 const locked_public_id = if (locked) |source|
-                    try publicIdFor(gpa, try virtualIdForResolvedSource(gpa, source, ctx.project_root))
+                    try publicIdFor(gpa, try project_identity.virtualIdForResolvedSource(gpa, source, ctx.project_root))
                 else
                     "";
                 const updating = isUpdateTarget(ctx.opts, dep_name, locked_public_id);
@@ -939,7 +848,7 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
                 }
                 const acquired = try provider.acquireHttp(ctx.session, dep);
                 local.source = try copySource(gpa, acquired.source);
-                local.source.hash = try canonicalHttpHash(gpa, local.source.hash orelse return error.ResolveFailed);
+                local.source.hash = try project_identity.canonicalHttpHash(gpa, local.source.hash orelse return error.ResolveFailed);
                 local.manifest = acquired.manifest;
                 if (acquired.artifact_sha256) |sha| {
                     local.artifact = .{
@@ -953,7 +862,7 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
             },
         }
 
-        local.id_text = try virtualIdForResolvedSource(gpa, local.source, ctx.project_root);
+        local.id_text = try project_identity.virtualIdForResolvedSource(gpa, local.source, ctx.project_root);
         local.public_id = try publicIdFor(gpa, local.id_text);
         if (ctx.locals.get(local.id_text)) |existing| {
             if (!try declaredSourceMatches(ctx, existing.source, work)) {
