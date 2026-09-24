@@ -103,7 +103,74 @@ fn stripTomlComment(text: []const u8) []const u8 {
     return text;
 }
 
-/// 行テキストが `[<section>]` ヘッダか判定する。`[ dependencies.path ]`
+const TomlLexState = enum { normal, basic, literal, multiline_basic, multiline_literal };
+
+fn tomlLineStartsInMultiline(state: TomlLexState) bool {
+    return state == .multiline_basic or state == .multiline_literal;
+}
+
+/// TOML の1行を走査して multiline string 状態を更新する。
+fn advanceTomlLexState(line: []const u8, state: *TomlLexState) void {
+    var index: usize = 0;
+    while (index < line.len) {
+        const ch = line[index];
+        switch (state.*) {
+            .normal => switch (ch) {
+                '#' => break,
+                '"' => {
+                    if (index + 2 < line.len and line[index + 1] == '"' and line[index + 2] == '"') {
+                        state.* = .multiline_basic;
+                        index += 3;
+                        continue;
+                    }
+                    state.* = .basic;
+                },
+                '\'' => {
+                    if (index + 2 < line.len and line[index + 1] == '\'' and line[index + 2] == '\'') {
+                        state.* = .multiline_literal;
+                        index += 3;
+                        continue;
+                    }
+                    state.* = .literal;
+                },
+                else => {},
+            },
+            .basic => switch (ch) {
+                '\\' => {
+                    index += @min(2, line.len - index);
+                    continue;
+                },
+                '"' => state.* = .normal,
+                else => {},
+            },
+            .literal => if (ch == '\'') {
+                state.* = .normal;
+            },
+            .multiline_basic => {
+                if (ch == '\\') {
+                    index += @min(2, line.len - index);
+                    continue;
+                }
+                if (ch == '"' and index + 2 < line.len and line[index + 1] == '"' and line[index + 2] == '"') {
+                    state.* = .normal;
+                    index += 3;
+                    continue;
+                }
+            },
+            .multiline_literal => if (ch == '\'' and index + 2 < line.len and line[index + 1] == '\'' and line[index + 2] == '\'') {
+                state.* = .normal;
+                index += 3;
+                continue;
+            },
+        }
+        index += 1;
+    }
+    // TOML single-line strings cannot cross a line boundary. Invalid TOML is
+    // rejected by the manifest parser; reset here to keep later scans bounded.
+    if (state.* == .basic or state.* == .literal) state.* = .normal;
+}
+
+/// 行テキストが `[<section>]` ヘッダか判定する。`[ dependencies.path ]
 /// のような空白や、`[dependencies."path"]` のようなセグメント引用は
 /// TOML 上同一のテーブルなので正規化して比較する。
 /// `["dependencies.path"]`（名前全体の引用）は別名テーブルなので一致
@@ -148,10 +215,12 @@ fn headerMatches(text: []const u8, section: []const u8, buf: []u8) bool {
 fn findTableHeader(source: []const u8, section: []const u8) ?usize {
     var index: usize = 0;
     var buf: [1024]u8 = undefined;
+    var state: TomlLexState = .normal;
     while (index < source.len) {
         const end = lineEnd(source, index);
         const text = source[index..end];
-        if (headerMatches(text, section, &buf)) return index;
+        if (!tomlLineStartsInMultiline(state) and headerMatches(text, section, &buf)) return index;
+        advanceTomlLexState(text, &state);
         index = if (end < source.len) end + 1 else source.len;
     }
     return null;
@@ -160,13 +229,18 @@ fn findTableHeader(source: []const u8, section: []const u8) ?usize {
 /// `header_offset` 以降で次の `[` ヘッダ（または `[[`）の行開始 offset。
 /// 無ければ source.len。
 fn nextHeader(source: []const u8, header_offset: usize) usize {
-    var index = lineEnd(source, header_offset);
+    var state: TomlLexState = .normal;
+    var index = header_offset;
+    const first_end = lineEnd(source, index);
+    advanceTomlLexState(source[index..first_end], &state);
+    index = first_end;
     while (index < source.len) {
         index += 1; // '\n' を越える
         if (index >= source.len) break;
         const end = lineEnd(source, index);
         const text = std.mem.trimStart(u8, source[index..end], " \t");
-        if (text.len > 0 and text[0] == '[') return index;
+        if (!tomlLineStartsInMultiline(state) and text.len > 0 and text[0] == '[') return index;
+        advanceTomlLexState(source[index..end], &state);
         index = end;
     }
     return source.len;
@@ -218,26 +292,31 @@ fn insertDottedEntry(a: Allocator, source: []const u8, section: []const u8, key:
     // A) `[<parent>]` 表内の `kind.<x> = ...`。
     if (findTableHeader(source, parent)) |header| {
         const boundary = nextHeader(source, header);
+        var state: TomlLexState = .normal;
         var index = lineEnd(source, header);
+        advanceTomlLexState(source[header..index], &state);
         while (index < boundary) {
             index += 1;
             if (index >= boundary) break;
             const end = lineEnd(source, index);
-            if (assignmentLhs(source[index..@min(end, boundary)])) |lhs| {
-                if (lhsHasPrefix(lhs, &.{kind})) {
-                    const line = try std.fmt.allocPrint(a, "{s}.{s} = {s}\n", .{ kind, key, value });
-                    var output: std.ArrayList(u8) = .empty;
-                    try output.appendSlice(a, source[0..boundary]);
-                    while (output.items.len > 0 and (output.items[output.items.len - 1] == '\n' or output.items[output.items.len - 1] == ' ' or output.items[output.items.len - 1] == '\t' or output.items[output.items.len - 1] == '\r')) {
-                        _ = output.pop();
+            if (!tomlLineStartsInMultiline(state)) {
+                if (assignmentLhs(source[index..@min(end, boundary)])) |lhs| {
+                    if (lhsHasPrefix(lhs, &.{kind})) {
+                        const line = try std.fmt.allocPrint(a, "{s}.{s} = {s}\n", .{ kind, key, value });
+                        var output: std.ArrayList(u8) = .empty;
+                        try output.appendSlice(a, source[0..boundary]);
+                        while (output.items.len > 0 and (output.items[output.items.len - 1] == '\n' or output.items[output.items.len - 1] == ' ' or output.items[output.items.len - 1] == '\t' or output.items[output.items.len - 1] == '\r')) {
+                            _ = output.pop();
+                        }
+                        try output.append(a, '\n');
+                        try output.appendSlice(a, line);
+                        try output.append(a, '\n');
+                        try output.appendSlice(a, source[boundary..]);
+                        return output.items;
                     }
-                    try output.append(a, '\n');
-                    try output.appendSlice(a, line);
-                    try output.append(a, '\n');
-                    try output.appendSlice(a, source[boundary..]);
-                    return output.items;
                 }
             }
+            advanceTomlLexState(source[index..end], &state);
             index = end;
         }
         return null;
@@ -247,13 +326,17 @@ fn insertDottedEntry(a: Allocator, source: []const u8, section: []const u8, key:
     //    `<parent>.<kind>.<x> = ...`。最後の宣言の直後へ挿入する。
     var last_end: ?usize = null;
     var index: usize = 0;
+    var state: TomlLexState = .normal;
     while (index < source.len) {
         const end = lineEnd(source, index);
         const text = std.mem.trimStart(u8, source[index..end], " \t");
-        if (text.len > 0 and text[0] == '[') break;
-        if (assignmentLhs(source[index..end])) |lhs| {
-            if (lhsHasPrefix(lhs, &.{ parent, kind })) last_end = end;
+        if (!tomlLineStartsInMultiline(state) and text.len > 0 and text[0] == '[') break;
+        if (!tomlLineStartsInMultiline(state)) {
+            if (assignmentLhs(source[index..end])) |lhs| {
+                if (lhsHasPrefix(lhs, &.{ parent, kind })) last_end = end;
+            }
         }
+        advanceTomlLexState(source[index..end], &state);
         index = if (end < source.len) end + 1 else source.len;
     }
     if (last_end == null) return null;
@@ -392,19 +475,12 @@ fn removeEntry(a: Allocator, source: []const u8, section: []const u8, name: []co
     // 1) `[<section>.<name>]` サブテーブル形式（空白・引用も正規化して照合）
     {
         const target = try std.fmt.allocPrint(a, "{s}.{s}", .{ section, name });
-        var buf: [1024]u8 = undefined;
-        var index: usize = 0;
-        while (index < source.len) {
-            const end = lineEnd(source, index);
-            const text = source[index..end];
-            if (headerMatches(text, target, &buf)) {
-                const table_end = nextHeader(source, index);
-                var output: std.ArrayList(u8) = .empty;
-                try output.appendSlice(a, source[0..index]);
-                try output.appendSlice(a, source[table_end..]);
-                return output.items;
-            }
-            index = if (end < source.len) end + 1 else source.len;
+        if (findTableHeader(source, target)) |header| {
+            const table_end = nextHeader(source, header);
+            var output: std.ArrayList(u8) = .empty;
+            try output.appendSlice(a, source[0..header]);
+            try output.appendSlice(a, source[table_end..]);
+            return output.items;
         }
     }
 
@@ -1187,6 +1263,27 @@ test "insertEntry は空白・引用セグメントの既存テーブルへ挿�
     const lit_lib_pos = std.mem.indexOf(u8, literal, "lib =").?;
     const lit_lib2_pos = std.mem.indexOf(u8, literal, "lib2").?;
     try std.testing.expect(lit_lib_pos < lit_lib2_pos);
+}
+
+test "insertEntry は multiline string内の偽headerを依存tableと誤認しない" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const source =
+        \\[package]
+        \\name = "app"
+        \\description = """
+        \\[dependencies.path]
+        \\説明文中のheader風テキスト
+        \\"""
+        \\
+    ;
+    const inserted = try insertEntry(a, source, "dependencies.path", "lib", "{ path = \"lib\" }");
+    const opening = std.mem.indexOf(u8, inserted, "description = \"\"\"").?;
+    const fake_header = std.mem.indexOf(u8, inserted[opening..], "[dependencies.path]").? + opening;
+    const closing = std.mem.indexOf(u8, inserted[fake_header..], "\"\"\"").? + fake_header + 3;
+    const real_header = inserted[closing..];
+    try std.testing.expect(std.mem.startsWith(u8, real_header, "\n\n[dependencies.path]\nlib = { path = \"lib\" }"));
 }
 
 test "insertEntry は dotted key 宣言の既存 table を再定義しない" {

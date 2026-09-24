@@ -550,15 +550,11 @@ fn isVirtualId(id_text: []const u8) bool {
 /// 正当な選択（`../shared`）として保持し、絶対 path の先頭
 /// separator も保持する。
 fn canonicalDepSpelling(gpa: Allocator, decl: []const u8) ![]const u8 {
+    if (std.fs.path.isAbsoluteWindows(decl)) return try canonicalWindowsDepSpelling(gpa, decl);
     var text = try gpa.dupe(u8, decl);
     while (std.mem.startsWith(u8, text, "./")) text = text[2..];
-    if (!std.fs.path.isAbsoluteWindows(text)) {
-        for (text) |*char| {
-            if (char.* == '\\') char.* = '/';
-        }
-    } else {
-        // Windows 絶対 path（`C:\x`・UNC）は `\` を維持する。
-        return text;
+    for (text) |*char| {
+        if (char.* == '\\') char.* = '/';
     }
     var output: std.ArrayList(u8) = .empty;
     if (text.len > 0 and text[0] == '/') try output.append(gpa, '/');
@@ -572,6 +568,46 @@ fn canonicalDepSpelling(gpa: Allocator, decl: []const u8) ![]const u8 {
     }
     if (output.items.len == 0) try output.append(gpa, '.');
     return output.items;
+}
+
+fn canonicalWindowsDepSpelling(gpa: Allocator, text: []const u8) ![]const u8 {
+    var output: std.ArrayList(u8) = .empty;
+    var start: usize = 0;
+    if (text.len >= 2 and isWindowsSeparator(text[0]) and isWindowsSeparator(text[1])) {
+        // UNC/device paths retain exactly the leading double separator.
+        try output.appendSlice(gpa, "\\\\");
+        start = 2;
+        while (start < text.len and isWindowsSeparator(text[start])) : (start += 1) {}
+    } else if (text.len >= 3 and std.ascii.isAlphabetic(text[0]) and text[1] == ':' and isWindowsSeparator(text[2])) {
+        try output.appendSlice(gpa, text[0..2]);
+        try output.append(gpa, '\\');
+        start = 3;
+        while (start < text.len and isWindowsSeparator(text[start])) : (start += 1) {}
+    } else {
+        return try gpa.dupe(u8, text);
+    }
+
+    var components = std.mem.splitAny(u8, text[start..], "/\\");
+    while (components.next()) |component| {
+        if (component.len == 0 or std.mem.eql(u8, component, ".")) continue;
+        if (output.items.len > 0 and output.items[output.items.len - 1] != '\\') try output.append(gpa, '\\');
+        try output.appendSlice(gpa, component);
+    }
+    return output.toOwnedSlice(gpa);
+}
+
+fn isWindowsSeparator(char: u8) bool {
+    return char == '/' or char == '\\';
+}
+
+test "canonicalDepSpelling normalizes Windows absolute paths" {
+    const drive = try canonicalDepSpelling(std.testing.allocator, "C:\\deps\\\\.\\lib\\");
+    defer std.testing.allocator.free(drive);
+    try std.testing.expectEqualStrings("C:\\deps\\lib", drive);
+
+    const unc = try canonicalDepSpelling(std.testing.allocator, "\\\\server\\share\\\\lib\\.");
+    defer std.testing.allocator.free(unc);
+    try std.testing.expectEqualStrings("\\\\server\\share\\lib", unc);
 }
 
 /// dep の宣言 path を lock 記録用に正規化する。宣言が `base_dir` 相対の

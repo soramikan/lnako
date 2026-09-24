@@ -333,14 +333,21 @@ pub fn environmentPackagesUsable(gpa: Allocator, io: std.Io, project_root: []con
             if (stat.kind != .directory) return false;
             continue;
         }
+        // environment.json の path separator は host 形式で書かれる環境と
+        // `/` 形式の fixture/移植データの双方を受け、検査前にhost形式へ揃える。
+        const host_path = try gpa.dupe(u8, recorded_path);
+        defer gpa.free(host_path);
+        for (host_path) |*char| {
+            if (char.* == '/' or char.* == '\\') char.* = std.fs.path.sep;
+        }
         // registry/git/http 等の非-path package は必ずこの generation の
         // 管理下に materialize される。project 内の任意 dir（例: src）を
         // environment.json が指しても package payload として信頼しない。
-        if (!std.mem.startsWith(u8, recorded_path, managed_deps) or recorded_path.len <= managed_deps.len or
-            (recorded_path[managed_deps.len] != '/' and recorded_path[managed_deps.len] != std.fs.path.sep)) return false;
-        const package_dir = recorded_path[managed_deps.len + 1 ..];
-        if (package_dir.len == 0 or std.mem.indexOfAny(u8, package_dir, "/\\") != null) return false;
-        const abs = std.fs.path.resolve(gpa, &.{ root_abs, recorded_path }) catch return error.FileSystem;
+        if (!std.mem.startsWith(u8, host_path, managed_deps) or host_path.len <= managed_deps.len or
+            host_path[managed_deps.len] != std.fs.path.sep) return false;
+        const package_dir = host_path[managed_deps.len + 1 ..];
+        if (package_dir.len == 0 or std.mem.indexOfScalar(u8, package_dir, std.fs.path.sep) != null) return false;
+        const abs = std.fs.path.resolve(gpa, &.{ root_abs, host_path }) catch return error.FileSystem;
         defer gpa.free(abs);
         // env/staging 展開物の記録が project 外を指す場合は環境破損.
         if (!std.mem.startsWith(u8, abs, root_abs) or abs.len == root_abs.len or

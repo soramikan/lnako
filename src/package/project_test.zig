@@ -1484,6 +1484,11 @@ test "environmentPackagesUsableは余分なrecordと形状違反と中間symlink
     ;
     try writeEnv(temporary.dir, valid);
     try testing.expect(try usable(&lock, app_root));
+    const windows_separators =
+        \\{"pkg:11111111111111111111111111111111":{"name":"lib","version":"1.0.0","id":"pkg:11111111111111111111111111111111","path":".nako\\env\\gen-1\\deps\\lib","exports":[{"name":"lib","path":"src/index.nako3"}],"commands":[{"name":"テスト","args":["x"],"josi":[]}]}}
+    ;
+    try writeEnv(temporary.dir, windows_separators);
+    try testing.expect(try usable(&lock, app_root));
 
     // 現行世代は environment.json ではなく `.nako/current` で識別する。
     try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/current", .data = "gen-missing\n" });
