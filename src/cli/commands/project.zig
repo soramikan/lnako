@@ -399,11 +399,9 @@ fn runUpdate(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []co
             return fail(stderr, "update: {s} は依存にありません\n", .{target});
         }
         const dep_key = alias_to_key.get(target) orelse target;
-        // 解決済み public id へ正規化する。dep key 名空間と lock entry の
-        // id 名空間が異なる（source 依存は `pkg:<32hex>`、pkg 依存は
-        // `public-id` 明示の場合がある）ため、dep key のまま渡すと
-        // source 依存の版固定解除・宣言変更許容が効かない。
-        try targets.append(a, try resolvedIdForDecl(a, &loaded.manifest, loaded.root, dep_key));
+        // source dependency は dep key を渡す（canonical ID は acquisition
+        // 後に決まる）。pkg dependency は public-id/name を resolver へ渡す。
+        try targets.append(a, try resolvedIdForDecl(&loaded.manifest, dep_key));
     }
     options.update_targets = targets.items;
     options.update_all = parsed.rest.len == 0;
@@ -423,20 +421,14 @@ fn runUpdate(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []co
     try stderr.flush();
 }
 
-/// 宣言 dep key が解決後に持つ lock entry id（public id）を返す。
-/// `update` の対象指定を id 名空間へ写像するために使う。npm 依存や
+/// update 対象として使う識別子を返す。source dependency は dep key を
+/// `isUpdateTarget` に渡し、pkg dependency は resolver の public id/name を使う。
 /// 未宣言 key には到達しない前提（呼出し側が宣言集合で検証済み）。
-fn resolvedIdForDecl(a: Allocator, manifest: *const manifest_mod.Manifest, root: []const u8, dep_key: []const u8) ![]const u8 {
+fn resolvedIdForDecl(manifest: *const manifest_mod.Manifest, dep_key: []const u8) ![]const u8 {
     for ([_]*const manifest_mod.DependencyGroup{ &manifest.dependencies, &manifest.dev_dependencies }) |group| {
-        if (group.path.get(dep_key)) |dep| {
-            return project.publicIdForSourceDecl(a, .{ .path = dep }, root, root);
-        }
-        if (group.git.get(dep_key)) |dep| {
-            return project.publicIdForSourceDecl(a, .{ .git = dep }, root, root);
-        }
-        if (group.http.get(dep_key)) |dep| {
-            return project.publicIdForSourceDecl(a, .{ .http = dep }, root, root);
-        }
+        if (group.path.contains(dep_key)) return dep_key;
+        if (group.git.contains(dep_key)) return dep_key;
+        if (group.http.contains(dep_key)) return dep_key;
         if (group.pkg.get(dep_key)) |dep| {
             // pkg 依存の解決 id は `public-id` 明示または package 名。
             return dep.public_id orelse dep.name;
@@ -516,20 +508,20 @@ pub fn depKeyIdMap(a: Allocator, manifest: *const manifest_mod.Manifest, root: [
     for ([_]*const manifest_mod.DependencyGroup{ &manifest.dependencies, &manifest.dev_dependencies }) |group| {
         var path_it = group.path.iterator();
         while (path_it.next()) |item| {
-            const id = try project.publicIdForSourceDecl(a, .{ .path = item.value_ptr.* }, root, root);
+            const id = (try project.publicIdForSourceDeclInPackages(a, .{ .path = item.value_ptr.* }, root, root, packages)) orelse continue;
             try maps.by_id.put(id, item.key_ptr.*);
             try maps.by_name.put(item.key_ptr.*, id);
         }
         var git_it = group.git.iterator();
         while (git_it.next()) |item| {
-            const id = try project.publicIdForSourceDecl(a, .{ .git = item.value_ptr.* }, root, root);
+            const id = (try project.publicIdForSourceDeclInPackages(a, .{ .git = item.value_ptr.* }, root, root, packages)) orelse continue;
             try maps.by_id.put(id, item.key_ptr.*);
             try maps.by_name.put(item.key_ptr.*, id);
             if (item.value_ptr.alias) |alias| try maps.by_name.put(alias, id);
         }
         var http_it = group.http.iterator();
         while (http_it.next()) |item| {
-            const id = try project.publicIdForSourceDecl(a, .{ .http = item.value_ptr.* }, root, root);
+            const id = (try project.publicIdForSourceDeclInPackages(a, .{ .http = item.value_ptr.* }, root, root, packages)) orelse continue;
             try maps.by_id.put(id, item.key_ptr.*);
             try maps.by_name.put(item.key_ptr.*, id);
             if (item.value_ptr.alias) |alias| try maps.by_name.put(alias, id);
@@ -863,7 +855,7 @@ fn declaredMatch(a: Allocator, packages: []const lock_model.PackageEntry, decl: 
     if (alias) |al| {
         if (std.mem.eql(u8, al, name)) return try std.fmt.allocPrint(a, "{s}.{s}（alias: {s} → {s}）", .{ prefix, kind, al, dep_key });
     }
-    const id = try project.publicIdForSourceDecl(a, decl, root, root);
+    const id = (try project.publicIdForSourceDeclInPackages(a, decl, root, root, packages)) orelse return null;
     // `why pkg:<id>` のように解決済み id で照合された場合も直接宣言と
     // 判定する（id が宣言 source と一致すれば dep key 併記で返す）。
     if (std.mem.eql(u8, id, resolved_id)) return try std.fmt.allocPrint(a, "{s}.{s}（dep key: {s}）", .{ prefix, kind, dep_key });

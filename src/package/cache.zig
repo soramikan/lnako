@@ -274,6 +274,22 @@ pub const Store = struct {
         return parseMarkerDigest(expected, &expected_bytes) and std.mem.eql(u8, &expected_bytes, &actual);
     }
 
+    /// Destination entry が marker と実 tree の両方で指定 digest に一致するか。
+    fn verifyEntryDigest(self: *const Store, gpa: Allocator, key: []const u8, digest: [32]u8) !bool {
+        const entry = (try self.entryPath(gpa, key)) orelse return false;
+        defer gpa.free(entry);
+        const marker_file = std.fs.path.join(gpa, &.{ entry, complete_marker }) catch return false;
+        defer gpa.free(marker_file);
+        const marker = std.Io.Dir.cwd().readFileAlloc(self.io, marker_file, gpa, .limited(4096)) catch return false;
+        defer gpa.free(marker);
+        var recorded: [32]u8 = undefined;
+        if (!parseMarkerDigest(marker, &recorded) or !std.mem.eql(u8, &recorded, &digest)) return false;
+        const tree = std.fs.path.join(gpa, &.{ entry, "tree" }) catch return false;
+        defer gpa.free(tree);
+        const actual = digestTree(self.io, gpa, tree, &.{}) catch return false;
+        return std.mem.eql(u8, &actual, &digest);
+    }
+
     /// entry（改変検出・不完全など）を削除する。cache lock 保持中に呼ぶこと。
     pub fn removeEntry(self: *const Store, key: []const u8) !void {
         const entry = (try self.entryPath(self.gpa, key)) orelse return error.InvalidKey;
@@ -311,8 +327,9 @@ pub const Store = struct {
     }
 
     /// `staging_abs`（検証済みの dir 木）を `objects/<key>` として原子的に
-    /// 公開する。既に同名 entry があれば staging を破棄して成功とする
-    /// （内容アドレスなので同一 key = 同一内容）。
+    /// 公開する。同名 entry があれば、marker と tree digest が staging の
+    /// 内容と一致する場合だけ staging を破棄し、不一致なら既存 entry を
+    /// 除去して公開を再試行する。
     /// `staging_abs` は cache root の `staging/` 内でなくてもよいが、
     /// rename が同じ volume 内で成立する必要がある（跨ぐ場合は呼出し側が
     /// cache 内 staging を使う）。
@@ -334,13 +351,22 @@ pub const Store = struct {
         try std.Io.Dir.cwd().writeFile(self.io, .{ .sub_path = marker_file, .data = &marker });
         const dest = try std.fs.path.join(self.gpa, &.{ self.root, objects_dir, key });
         defer self.gpa.free(dest);
-        std.Io.Dir.renameAbsolute(staging_abs, dest, self.io) catch |err| switch (err) {
-            // 同名 dir が既に存在する（同一 key の entry が先に公開された）。
-            // 内容アドレスなので内容は同一とみなし、重複した staging は破棄する。
-            error.IsDir, error.NotDir, error.DirNotEmpty => {
-                environment.deleteTreeChecked(std.Io.Dir.cwd(), self.io, staging_abs) catch {};
+        std.Io.Dir.renameAbsolute(staging_abs, dest, self.io) catch |rename_err| switch (rename_err) {
+            // Destination exists (or was concurrently created). Do not assume a
+            // matching key proves its contents: verify both its marker and tree
+            // against this already-verified staging digest before discarding data.
+            error.IsDir, error.NotDir, error.DirNotEmpty, error.AccessDenied => {
+                if (try self.verifyEntryDigest(self.gpa, key, digest)) {
+                    try environment.deleteTreeChecked(std.Io.Dir.cwd(), self.io, staging_abs);
+                } else {
+                    self.removeEntry(key) catch |remove_err| switch (remove_err) {
+                        error.FileNotFound => {},
+                        else => return remove_err,
+                    };
+                    try std.Io.Dir.renameAbsolute(staging_abs, dest, self.io);
+                }
             },
-            else => return err,
+            else => return rename_err,
         };
     }
 
@@ -472,7 +498,7 @@ test "cache store は staging を publish で原子的に公開する" {
     try testing.expectEqualStrings("●テストとは\n", bytes);
 }
 
-test "cache store は同一 key の再公開で既存 entry を維持する" {
+test "cache store は同一 key の再公開で既存 entry の内容を検証する" {
     const io = testing.io;
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
@@ -496,7 +522,32 @@ test "cache store は同一 key の再公開で既存 entry を維持する" {
     defer testing.allocator.free(file);
     const bytes = try std.Io.Dir.cwd().readFileAlloc(io, file, testing.allocator, .unlimited);
     defer testing.allocator.free(bytes);
-    try testing.expectEqualStrings("1", bytes);
+    try testing.expectEqualStrings("2", bytes);
+
+    // marker を残したまま destination tree を改変した競合も拒否し、
+    // 検証済み staging を捨てずに destination を置き換える。
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = file, .data = "tampered" });
+    try temporary.dir.createDirPath(io, "third/tree");
+    try temporary.dir.writeFile(io, .{ .sub_path = "third/tree/a", .data = "3" });
+    const third = try temporary.dir.realPathFileAlloc(io, "third", testing.allocator);
+    defer testing.allocator.free(third);
+    try store.publish("same", third);
+    const repaired = try std.Io.Dir.cwd().readFileAlloc(io, file, testing.allocator, .unlimited);
+    defer testing.allocator.free(repaired);
+    try testing.expectEqualStrings("3", repaired);
+
+    // markerless destination は key が同じでも検証済み staging を優先する。
+    const marker = try std.fs.path.join(testing.allocator, &.{ entry, complete_marker });
+    defer testing.allocator.free(marker);
+    try std.Io.Dir.cwd().deleteFile(io, marker);
+    try temporary.dir.createDirPath(io, "fourth/tree");
+    try temporary.dir.writeFile(io, .{ .sub_path = "fourth/tree/a", .data = "4" });
+    const fourth = try temporary.dir.realPathFileAlloc(io, "fourth", testing.allocator);
+    defer testing.allocator.free(fourth);
+    try store.publish("same", fourth);
+    const final_bytes = try std.Io.Dir.cwd().readFileAlloc(io, file, testing.allocator, .unlimited);
+    defer testing.allocator.free(final_bytes);
+    try testing.expectEqualStrings("4", final_bytes);
 }
 
 test "cache store は marker の無い不完全 entry と staging 残留を回収する" {

@@ -478,7 +478,7 @@ pub fn checkLockedSource(session: *Session, declared: lock_model.Source, locked:
             }
         },
         .http => {
-            if (!optEql(declared.hash, locked.hash)) {
+            if (!sourceHashEql(declared.hash, locked.hash)) {
                 return session.fail(.source_collision, .artifact, name, "http hash of \"{s}\" does not match the lock", .{name});
             }
         },
@@ -541,11 +541,34 @@ pub const SourceIndex = struct {
     }
 };
 
+pub fn sourceHashEql(a: ?[]const u8, b: ?[]const u8) bool {
+    if (a == null or b == null) return a == null and b == null;
+    const left = a.?;
+    const right = b.?;
+    if (fetch.normalizeSha256(left)) |left_digest| {
+        if (fetch.normalizeSha256(right)) |right_digest| return std.mem.eql(u8, &left_digest, &right_digest);
+    }
+    if (fetch.normalizeSha512(left)) |left_digest| {
+        if (fetch.normalizeSha512(right)) |right_digest| return std.mem.eql(u8, &left_digest, &right_digest);
+    }
+    return std.mem.eql(u8, left, right);
+}
+
+fn canonicalHashPin(gpa: Allocator, hash: []const u8) ![]const u8 {
+    if (fetch.normalizeSha256(hash)) |digest| return std.fmt.allocPrint(gpa, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
+    if (fetch.normalizeSha512(hash)) |digest| return std.fmt.allocPrint(gpa, "sha512:{s}", .{std.fmt.bytesToHex(digest, .lower)});
+    return gpa.dupe(u8, hash);
+}
+
 /// source identity の正準表現（衝突判定用キー）。
 pub fn identityText(gpa: Allocator, source: lock_model.Source) ![]u8 {
     return switch (source.kind) {
         .git => std.fmt.allocPrint(gpa, "git:{s}@{s}:{s}", .{ source.url orelse "", source.commit orelse "", source.path orelse "" }),
-        .http => std.fmt.allocPrint(gpa, "http:{s}#{s}", .{ source.url orelse "", source.hash orelse "" }),
+        .http => blk: {
+            const hash = try canonicalHashPin(gpa, source.hash orelse "");
+            defer gpa.free(hash);
+            break :blk try std.fmt.allocPrint(gpa, "http:{s}#{s}", .{ source.url orelse "", hash });
+        },
         .path => std.fmt.allocPrint(gpa, "path:{s}", .{source.path orelse ""}),
         .registry, .static => std.fmt.allocPrint(gpa, "{s}:{s}", .{ @tagName(source.kind), source.url orelse "" }),
     };
@@ -601,6 +624,32 @@ test "classifyGitUrl は Windows の file:// drive 形式と UNC をローカル
         .local => return error.TestUnexpectedResult,
         .remote => {},
     }
+}
+
+test "HTTP source identity は同一 digest のhexとSRI表記を正規化する" {
+    const gpa = std.testing.allocator;
+    const zeros = [_]u8{0} ** 32;
+    var encoded: [44]u8 = undefined;
+    _ = std.base64.standard.Encoder.encode(&encoded, &zeros);
+    const sri = try std.fmt.allocPrint(gpa, "sha256-{s}", .{encoded[0..]});
+    defer gpa.free(sri);
+
+    const hex_source = lock_model.Source{
+        .kind = .http,
+        .url = "https://example.test/archive",
+        .hash = "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    };
+    const sri_source = lock_model.Source{
+        .kind = .http,
+        .url = "https://example.test/archive",
+        .hash = sri,
+    };
+    const hex_id = try identityText(gpa, hex_source);
+    defer gpa.free(hex_id);
+    const sri_id = try identityText(gpa, sri_source);
+    defer gpa.free(sri_id);
+    try std.testing.expectEqualStrings(hex_id, sri_id);
+    try std.testing.expect(sourceHashEql(hex_source.hash, sri_source.hash));
 }
 
 test {

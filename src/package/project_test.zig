@@ -537,6 +537,46 @@ test "path依存の繰り返し separator・. 成分は lock 記録前に正規�
     try testing.expect(found);
 }
 
+test "POSIX path依存のbackslashは通常のファイル名文字としてlockへ保持する" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/deps\\lib/src");
+    try writeLibPackage(temporary.dir, io, "app/deps\\lib", "lib");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/nako.toml",
+        .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\lib = { path = "deps\\lib" }
+        \\
+        ,
+    });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    defer loaded.deinit();
+    var outcome = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
+    defer outcome.deinit();
+
+    var found = false;
+    for (outcome.lock.packages) |entry| {
+        const source = entry.source orelse continue;
+        if (source.kind != .path) continue;
+        found = true;
+        try testing.expectEqualStrings("deps\\lib", source.path.?);
+    }
+    try testing.expect(found);
+}
+
 test "存在しないpath依存の取得失敗はdep名を含む診断を出す" {
     const io = testing.io;
     var temporary = std.testing.tmpDir(.{});
@@ -713,7 +753,7 @@ test "ensureLockはlockのgit sourceを再利用しcommit変更は別packageと�
     try temporary.dir.createDirPath(io, "app/lib/src");
     try writeLibPackage(temporary.dir, io, "app/lib", "lib");
     const writeApp = struct {
-        fn run(a: std.mem.Allocator, dir: std.Io.Dir, url: []const u8, commit: []const u8) !void {
+        fn run(a: std.mem.Allocator, dir: std.Io.Dir, url: []const u8, commit: []const u8, full_commit: []const u8) !void {
             const source = try std.fmt.allocPrint(a,
                 \\[package]
                 \\name = "app"
@@ -725,13 +765,14 @@ test "ensureLockはlockのgit sourceを再利用しcommit変更は別packageと�
                 \\
                 \\[dependencies.git]
                 \\gdep = {{ url = "{s}", commit = "{s}" }}
+                \\gdep_full = {{ url = "{s}", commit = "{s}" }}
                 \\
-            , .{ url, commit });
+            , .{ url, commit, url, full_commit });
             defer a.free(source);
             try dir.writeFile(io, .{ .sub_path = "app/nako.toml", .data = source });
         }
     }.run;
-    try writeApp(testing.allocator, temporary.dir, repo.url, repo.commit[0..7]);
+    try writeApp(testing.allocator, temporary.dir, repo.url, repo.commit[0..7], repo.commit);
     const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
     defer testing.allocator.free(app_root);
 
@@ -745,13 +786,19 @@ test "ensureLockはlockのgit sourceを再利用しcommit変更は別packageと�
     defer first.deinit();
     // git source は lock の完全 SHA で記録される。
     var found_git = false;
+    var git_package_count: usize = 0;
+    var first_git_id: ?[]u8 = null;
+    defer if (first_git_id) |id| testing.allocator.free(id);
     for (first.lock.packages) |entry| {
         if (entry.source != null and entry.source.?.kind == .git) {
             found_git = true;
+            git_package_count += 1;
             try testing.expectEqualStrings(repo.commit, entry.source.?.commit.?);
+            first_git_id = try testing.allocator.dupe(u8, entry.id);
         }
     }
     try testing.expect(found_git);
+    try testing.expectEqual(@as(usize, 1), git_package_count);
 
     // manifest を変更せず再 lock しても、lock entry は public id
     // （source identity 由来の `pkg:<hex>`）で引かれ、locked の完全 SHA
@@ -761,6 +808,19 @@ test "ensureLockはlockのgit sourceを再利用しcommit変更は別packageと�
     var relocked = try project.ensureLock(testing.allocator, io, &loaded, &options, &diagnostics);
     defer relocked.deinit();
 
+    // 同じ pin の abbreviated/full SHA は同じ canonical source public id。
+    loaded.deinit();
+    try writeApp(testing.allocator, temporary.dir, repo.url, repo.commit, repo.commit);
+    loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    var full_pinned = try project.ensureLock(testing.allocator, io, &loaded, &options, &diagnostics);
+    defer full_pinned.deinit();
+    var full_id: ?[]const u8 = null;
+    for (full_pinned.lock.packages) |entry| {
+        if (entry.source != null and entry.source.?.kind == .git) full_id = entry.id;
+    }
+    try testing.expect(full_id != null);
+    try testing.expectEqualStrings(first_git_id.?, full_id.?);
+
     // repo に別 commit を進め、manifest の commit-ish をそちらへ書き換える。
     // source identity が変わるため別 package として解決され、旧 entry は
     // lock から取り除かれる（dep key が同じでも source が異なれば別物）。
@@ -768,7 +828,7 @@ test "ensureLockはlockのgit sourceを再利用しcommit変更は別packageと�
     const second_commit = try gitCommitAll(io, repo.path, "second");
     defer testing.allocator.free(second_commit);
     loaded.deinit();
-    try writeApp(testing.allocator, temporary.dir, repo.url, second_commit[0..7]);
+    try writeApp(testing.allocator, temporary.dir, repo.url, second_commit[0..7], second_commit);
     loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
     var updated = try project.ensureLock(testing.allocator, io, &loaded, &options, &diagnostics);
     defer updated.deinit();

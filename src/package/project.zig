@@ -433,8 +433,8 @@ const LocalKind = enum { path, git, http };
 /// として解決に参加し、lock entry の source/artifact もここから作る。
 const LocalPackage = struct {
     id_text: []const u8,
-    /// lock に記録する `pkg:<32hex>` public id。宣言キーから決定論的に
-    /// 派生させ、同一宣言の版更新では id が変わらないようにする。
+    /// lock に記録する `pkg:<32hex>` public id。取得済み canonical source
+    /// identity から派生させるため、同じ pin の表記揺れは同一 id になる。
     public_id: []const u8,
     dep_key: []const u8,
     kind: LocalKind,
@@ -445,7 +445,10 @@ const LocalPackage = struct {
     version_text: []const u8,
     manifest: ?manifest_mod.Manifest,
     artifact: lock_model.Artifact,
-    /// この dep 自身が宣言する source 依存の仮想 id（lock `dependencies` へ追加）。
+    /// 依存元 manifest の source 宣言。取得 closure 完了後に解決済み
+    /// canonical id へ対応付けて lock `dependencies` を構築する。
+    child_works: []const DepWork,
+    /// この dep 自身が宣言する source 依存の仮想 id。
     child_ids: []const resolver.PackageId,
     /// この dep manifest が pkg 依存を持つか（registry 必要性の判定用）。
     needs_registry: bool = false,
@@ -495,10 +498,8 @@ fn canonicalPathForId(gpa: Allocator, declared: []const u8, base_dir: ?[]const u
     return abs;
 }
 
-/// source 宣言の正規化 identity（virtual id）。宣言キーではなく解決済み
-/// source identity から導くため、異なる親 manifest が同じローカル名で
-/// 別 source を宣言しても衝突せず、同一 source を指す宣言は同じ
-/// package に集約される（推移的 dep key の名前空間分離）。
+/// source 宣言から得られる暫定 identity。実際の lock/solver identity は
+/// acquisition 後の canonical source から virtualIdForResolvedSource で作る。
 fn virtualIdForDecl(gpa: Allocator, decl: SourceDecl, base_dir: ?[]const u8, project_root: []const u8) Error![]const u8 {
     const identity_source: lock_model.Source = switch (decl) {
         .path => |dep| .{
@@ -511,13 +512,26 @@ fn virtualIdForDecl(gpa: Allocator, decl: SourceDecl, base_dir: ?[]const u8, pro
     return provider.identityText(gpa, identity_source);
 }
 
-fn virtualIdForWork(gpa: Allocator, work: DepWork, project_root: []const u8) Error![]const u8 {
-    const decl: SourceDecl = switch (work.kind) {
-        .path => .{ .path = work.path_dep.? },
-        .git => .{ .git = work.git_dep.? },
-        .http => .{ .http = work.http_dep.? },
-    };
-    return virtualIdForDecl(gpa, decl, work.base_dir, project_root);
+fn canonicalHttpHash(gpa: Allocator, text: []const u8) ![]const u8 {
+    if (fetch.normalizeSha256(text)) |digest| {
+        return std.fmt.allocPrint(gpa, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
+    }
+    if (fetch.normalizeSha512(text)) |digest| {
+        return std.fmt.allocPrint(gpa, "sha512:{s}", .{std.fmt.bytesToHex(digest, .lower)});
+    }
+    return gpa.dupe(u8, text);
+}
+
+/// 取得後の source pin から仮想 id を作る。git は完全 commit SHA、HTTP
+/// は digest 表記を正規化し、path は project 基準の canonical spelling にする。
+fn virtualIdForResolvedSource(gpa: Allocator, source: lock_model.Source, project_root: []const u8) Error![]const u8 {
+    var canonical = try copySource(gpa, source);
+    if (canonical.kind == .path) {
+        canonical.path = try canonicalPathForId(gpa, canonical.path orelse return error.ResolveFailed, null, project_root);
+    } else if (canonical.kind == .http) {
+        canonical.hash = try canonicalHttpHash(gpa, canonical.hash orelse return error.ResolveFailed);
+    }
+    return provider.identityText(gpa, canonical);
 }
 
 /// virtual id（source identity）から `pkg:<32hex>` public id を派生する。
@@ -528,12 +542,36 @@ fn publicIdFor(gpa: Allocator, id_text: []const u8) ![]const u8 {
     return std.fmt.allocPrint(gpa, "pkg:{s}", .{hex[0..32]});
 }
 
-/// 宣言 source から lock 内の public id を導出する。`tree`/`why` が
-/// 宣言 dep key と解決済み package を対応付けるために使う。
-/// `base_dir` は宣言 manifest の dir（root 直下の宣言は project_root）。
+/// 宣言だけから暫定 public id を導出する。resolved lock package の照合には
+/// `publicIdForSourceDeclInPackages` を使うこと。
 pub fn publicIdForSourceDecl(gpa: Allocator, decl: SourceDecl, base_dir: ?[]const u8, project_root: []const u8) Error![]const u8 {
     const id_text = try virtualIdForDecl(gpa, decl, base_dir, project_root);
     return publicIdFor(gpa, id_text);
+}
+
+/// 既存 lock source と宣言を照合し、解決済み canonical public id を返す。
+/// git prefix/full SHA と HTTP digest encoding をまたぐCLIの表示・検索用。
+pub fn publicIdForSourceDeclInPackages(gpa: Allocator, decl: SourceDecl, base_dir: ?[]const u8, project_root: []const u8, packages: []const lock_model.PackageEntry) Error!?[]const u8 {
+    for (packages) |entry| {
+        const source = entry.source orelse continue;
+        const matches = switch (decl) {
+            .path => |dep| blk: {
+                if (source.kind != .path) break :blk false;
+                const declared = try canonicalPathForId(gpa, dep.path, base_dir, project_root);
+                const locked = try canonicalPathForId(gpa, source.path orelse break :blk false, null, project_root);
+                break :blk std.mem.eql(u8, declared, locked);
+            },
+            .git => |dep| source.kind == .git and
+                std.mem.eql(u8, source.url orelse "", dep.url) and
+                std.mem.eql(u8, source.path orelse "", dep.path orelse "") and
+                std.mem.startsWith(u8, source.commit orelse "", dep.commit),
+            .http => |dep| source.kind == .http and
+                std.mem.eql(u8, source.url orelse "", dep.url) and
+                provider.sourceHashEql(source.hash, dep.hash),
+        };
+        if (matches) return try gpa.dupe(u8, entry.id);
+    }
+    return null;
 }
 
 fn isVirtualId(id_text: []const u8) bool {
@@ -553,8 +591,12 @@ fn canonicalDepSpelling(gpa: Allocator, decl: []const u8) ![]const u8 {
     if (std.fs.path.isAbsoluteWindows(decl)) return try canonicalWindowsDepSpelling(gpa, decl);
     var text = try gpa.dupe(u8, decl);
     while (std.mem.startsWith(u8, text, "./")) text = text[2..];
-    for (text) |*char| {
-        if (char.* == '\\') char.* = '/';
+    // POSIX では backslash は通常のファイル名文字なので、separator に
+    // 読み替えない。Windows だけ両形式を host path separator に統一する。
+    if (builtin.os.tag == .windows) {
+        for (text) |*char| {
+            if (char.* == '\\') char.* = '/';
+        }
     }
     var output: std.ArrayList(u8) = .empty;
     if (text.len > 0 and text[0] == '/') try output.append(gpa, '/');
@@ -662,14 +704,16 @@ fn gitCheckoutDir(gpa: Allocator, io: std.Io, ctx: *ResolveContext, dep: manifes
 /// 既存 lock から public id（`pkg:<32hex>`）の package entry の source を
 /// 探す（git の commit 固定・declared-vs-locked source 衝突検査用）。
 /// 仮想 id（`git:<key>` 等）ではなく lock 記録上の public id で引く。
-fn lockedSourceFor(existing: ?*const lock_model.Lock, public_id: []const u8) ?lock_model.Source {
-    const lock = existing orelse return null;
-    for (lock.packages) |*entry| {
-        if (std.mem.eql(u8, entry.id, public_id)) return entry.source;
+fn lockedSourceForWork(ctx: *ResolveContext, work: DepWork) Error!?lock_model.Source {
+    const lock = ctx.existing_lock orelse return null;
+    for (lock.packages) |entry| {
+        const source = entry.source orelse continue;
+        if (try declaredSourceIdentityMatches(ctx, source, work)) return source;
     }
     for (lock.profile_packages) |profile| {
-        for (profile.packages) |*entry| {
-            if (std.mem.eql(u8, entry.id, public_id)) return entry.source;
+        for (profile.packages) |entry| {
+            const source = entry.source orelse continue;
+            if (try declaredSourceIdentityMatches(ctx, source, work)) return source;
         }
     }
     return null;
@@ -677,8 +721,8 @@ fn lockedSourceFor(existing: ?*const lock_model.Lock, public_id: []const u8) ?lo
 
 /// `dep_name`（dep key）または解決済み `public_id` が明示的な update
 /// 対象か。update 対象の source 宣言変更は lock との衝突ではなく意図
-/// した更新として許容する。CLI はユーザ指定を解決済み public id へ
-/// 正規化して渡すが、dep key・package 名指定も後方互換で受理する。
+/// した更新として許容する。CLI は source dependency の dep key、または
+/// 既存 lock source の canonical public id を渡す。
 fn isUpdateTarget(opts: *const PrepareOptions, dep_name: []const u8, public_id: []const u8) bool {
     if (opts.update_all) return true;
     for (opts.update_targets) |target| {
@@ -784,28 +828,25 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
             .git => work.git_dep.?.name,
             .http => work.http_dep.?.name,
         };
-        // virtual id は宣言キーでなく正規化済み source identity。同名 dep
-        // key を別 source に割り当てる推移的宣言は別 package として解決
-        // され、同一 source は同じ id に集約される（E012 は同一 id に
-        // mutable 等の矛盾する宣言が来た場合のみ）。
-        const id_text = try virtualIdForWork(gpa, work, ctx.project_root);
-
-        if (ctx.locals.get(id_text)) |existing| {
-            // 再訪問（diamond・cycle）: 同一 source identity への再宣言
-            // なら既存 local を再利用する。id は source identity 由来な
-            // のでここに来る宣言の source は一致済みで、残る差分（path
-            // の mutable フラグ等）だけ比較する。再取得を伴わないため
-            // cycle でも有限に止まる。
-            if (!try declaredSourceMatches(ctx, existing, work)) {
+        // 解決済み source をもつ既存ノードと照合する。Git abbreviated/full
+        // commit や HTTP hash encoding が異なっても同じ pin は再取得しない。
+        var existing_it = ctx.locals.iterator();
+        var already_present = false;
+        while (existing_it.next()) |entry| {
+            const source = entry.value_ptr.*.source;
+            if (!try declaredSourceIdentityMatches(ctx, source, work)) continue;
+            if (!try declaredSourceMatches(ctx, source, work)) {
                 try ctx.diagnostics.addFmt(diag.E012_ALIAS_COLLISION, .err, dep_name, .{}, "dependency \"{s}\" resolves to different sources", .{dep_name});
                 return error.ResolveFailed;
             }
-            continue;
+            already_present = true;
+            break;
         }
+        if (already_present) continue;
 
         var local = LocalPackage{
-            .id_text = id_text,
-            .public_id = try publicIdFor(gpa, id_text),
+            .id_text = "",
+            .public_id = "",
             // 推移的依存では宣言文字列が session arena 由来のため複製する。
             .dep_key = try gpa.dupe(u8, dep_name),
             .kind = work.kind,
@@ -814,6 +855,7 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
             .version_text = "0.0.0",
             .manifest = null,
             .artifact = .{ .key = "source", .kind = "source" },
+            .child_works = &.{},
             .child_ids = &.{},
         };
 
@@ -821,15 +863,22 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
         switch (work.kind) {
             .path => {
                 const dep = work.path_dep.?;
-                const acquired = try provider.acquirePath(ctx.session, dep, work.base_dir.?);
-                const normalized = try normalizePathSource(gpa, dep.path, work.base_dir, ctx.project_root);
+                // separator・`.` 成分の正規化は取得前にも適用する。POSIX の
+                // backslash は canonicalDepSpelling が通常文字として保持する。
+                const acquired_path = try canonicalDepSpelling(gpa, dep.path);
+                const acquired = try provider.acquirePath(ctx.session, .{
+                    .name = dep.name,
+                    .path = acquired_path,
+                    .mutable = dep.mutable,
+                }, work.base_dir.?);
+                const normalized = try normalizePathSource(gpa, acquired_path, work.base_dir, ctx.project_root);
                 local.source = .{ .kind = .path, .path = normalized, .mutable = dep.mutable };
                 local.manifest = acquired.manifest;
                 // path 依存の manifest dir が推移的依存の基準 dir。
-                child_base_dir = if (provider.isAbsoluteDepPath(dep.path))
-                    try gpa.dupe(u8, dep.path)
+                child_base_dir = if (provider.isAbsoluteDepPath(acquired_path))
+                    try gpa.dupe(u8, acquired_path)
                 else
-                    try std.fs.path.join(gpa, &.{ work.base_dir.?, dep.path });
+                    try std.fs.path.join(gpa, &.{ work.base_dir.?, acquired_path });
                 // `mutable = true` は宣言 dir を生参照する契約のため、
                 // manifest だけでなく exports・commands・推移的宣言を含む
                 // 内容変更を lock 鮮度入力へ記録する。
@@ -849,21 +898,21 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
             .git => {
                 const dep = work.git_dep.?;
                 const checkout = try gitCheckoutDir(gpa, ctx.io, ctx, dep);
-                const locked = lockedSourceFor(ctx.existing_lock, local.public_id);
+                const locked = try lockedSourceForWork(ctx, work);
+                const locked_public_id = if (locked) |source|
+                    try publicIdFor(gpa, try virtualIdForResolvedSource(gpa, source, ctx.project_root))
+                else
+                    "";
+                const updating = isUpdateTarget(ctx.opts, dep_name, locked_public_id);
                 if (locked) |locked_source| {
-                    // dep key が同じまま url/commit/subdir が変わった宣言は
-                    // 別 source への暗黙切替として衝突とする。明示的な
-                    // update 対象は宣言変更を許容する。
-                    if (!isUpdateTarget(ctx.opts, dep_name, local.public_id)) {
-                        try provider.checkLockedSource(ctx.session, .{
-                            .kind = .git,
-                            .url = dep.url,
-                            .commit = dep.commit,
-                            .path = dep.path,
-                        }, locked_source, dep_name);
-                    }
+                    if (!updating) try provider.checkLockedSource(ctx.session, .{
+                        .kind = .git,
+                        .url = dep.url,
+                        .commit = dep.commit,
+                        .path = dep.path,
+                    }, locked_source, dep_name);
                 }
-                const acquired = try provider.acquireGit(ctx.session, dep, checkout, locked);
+                const acquired = try provider.acquireGit(ctx.session, dep, checkout, if (updating) null else locked);
                 local.source = try copySource(gpa, acquired.source);
                 local.manifest = acquired.manifest;
                 // git 内 package の git/http 依存は取得できるが、path 依存は
@@ -875,17 +924,22 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
             },
             .http => {
                 const dep = work.http_dep.?;
-                if (lockedSourceFor(ctx.existing_lock, local.public_id)) |locked_source| {
-                    if (!isUpdateTarget(ctx.opts, dep_name, local.public_id)) {
-                        try provider.checkLockedSource(ctx.session, .{
-                            .kind = .http,
-                            .url = dep.url,
-                            .hash = dep.hash,
-                        }, locked_source, dep_name);
-                    }
+                const locked = try lockedSourceForWork(ctx, work);
+                const locked_public_id = if (locked) |source|
+                    try publicIdFor(gpa, try virtualIdForResolvedSource(gpa, source, ctx.project_root))
+                else
+                    "";
+                const updating = isUpdateTarget(ctx.opts, dep_name, locked_public_id);
+                if (locked) |locked_source| {
+                    if (!updating) try provider.checkLockedSource(ctx.session, .{
+                        .kind = .http,
+                        .url = dep.url,
+                        .hash = dep.hash,
+                    }, locked_source, dep_name);
                 }
                 const acquired = try provider.acquireHttp(ctx.session, dep);
                 local.source = try copySource(gpa, acquired.source);
+                local.source.hash = try canonicalHttpHash(gpa, local.source.hash orelse return error.ResolveFailed);
                 local.manifest = acquired.manifest;
                 if (acquired.artifact_sha256) |sha| {
                     local.artifact = .{
@@ -897,6 +951,16 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
                     };
                 }
             },
+        }
+
+        local.id_text = try virtualIdForResolvedSource(gpa, local.source, ctx.project_root);
+        local.public_id = try publicIdFor(gpa, local.id_text);
+        if (ctx.locals.get(local.id_text)) |existing| {
+            if (!try declaredSourceMatches(ctx, existing.source, work)) {
+                try ctx.diagnostics.addFmt(diag.E012_ALIAS_COLLISION, .err, dep_name, .{}, "dependency \"{s}\" resolves to different sources", .{dep_name});
+                return error.ResolveFailed;
+            }
+            continue;
         }
 
         if (local.manifest) |*dep_manifest| {
@@ -941,7 +1005,6 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
                 if (depIsGated(&local.gated_deps, dep.name, dep.alias) and !depIsActivated(&local.activated_deps, dep.name, dep.alias)) continue;
                 local.needs_registry = true;
             }
-            var children: std.ArrayList(resolver.PackageId) = .empty;
             var child_queue: std.ArrayList(DepWork) = .empty;
             try pushGroupDeps(gpa, &child_queue, &dep_manifest.dependencies, &local.gated_deps, &expanded.dependency_aliases, child_base_dir);
             for (child_queue.items) |child| {
@@ -955,34 +1018,49 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
                 if (child.kind == .path and work.kind == .git) {
                     return ctx.session.fail(.invalid_source, .package, dep_name, "git dependency \"{s}\" declares a path dependency, which cannot be locked", .{dep_name});
                 }
-                const child_id = try virtualIdForWork(gpa, child, ctx.project_root);
-                try children.append(gpa, .{ .pkg = child_id });
                 try queue.append(gpa, child);
             }
-            local.child_ids = children.items;
+            local.child_works = child_queue.items;
         }
 
         const entry = try gpa.create(LocalPackage);
         entry.* = local;
-        try ctx.locals.put(id_text, entry);
+        try ctx.locals.put(local.id_text, entry);
         if (local.needs_registry) ctx.needs_registry = true;
+    }
+
+    // 依存辺も取得済み canonical source id へ解決する。特に Git の
+    // abbreviated/full commit 表記や HTTP hash encoding が異なる場合、
+    // 宣言段階で id を作ると実ノードと edge が別 id になってしまう。
+    var locals_it = ctx.locals.iterator();
+    while (locals_it.next()) |entry| {
+        var children: std.ArrayList(resolver.PackageId) = .empty;
+        for (entry.value_ptr.*.child_works) |child_works| {
+            var child_id: ?[]const u8 = null;
+            var candidates = ctx.locals.iterator();
+            while (candidates.next()) |candidate| {
+                if (try declaredSourceMatches(ctx, candidate.value_ptr.*.source, child_works)) {
+                    child_id = candidate.key_ptr.*;
+                    break;
+                }
+            }
+            const resolved_id = child_id orelse return ctx.session.fail(.invalid_source, .package, entry.value_ptr.*.dep_key, "dependency \"{s}\" was not resolved", .{entry.value_ptr.*.dep_key});
+            try children.append(gpa, .{ .pkg = resolved_id });
+        }
+        entry.value_ptr.*.child_ids = children.items;
     }
 
     try detectLocalCycles(gpa, ctx);
 }
 
-/// 再訪問した dep の宣言 source が既存 local と一致するかを、取得を伴わず
-/// 宣言値から比較する。path は解決後の絶対 path、git は url+subdir、
-/// http は url(+hash) で比較する。
-fn declaredSourceMatches(ctx: *ResolveContext, existing: *const LocalPackage, work: DepWork) Error!bool {
+/// 宣言 source と取得済み source が同じ pin を指すかを取得なしで比較する。
+/// Git は完全 commit を宣言 prefix と、HTTP は digest の正規形と比較する。
+fn declaredSourceIdentityMatches(ctx: *ResolveContext, source: lock_model.Source, work: DepWork) Error!bool {
     const gpa = ctx.gpa;
-    const source = existing.source;
     switch (work.kind) {
         .path => {
             const dep = work.path_dep.?;
             if (source.kind != .path) return false;
-            // 記録形式が宣言位置で異なるため（root 直下は宣言値、推移的は
-            // project 相対/絶対へ正規化）、解決後の絶対 path で比較する。
             const stored = source.path orelse return false;
             const stored_abs = if (provider.isAbsoluteDepPath(stored))
                 std.fs.path.resolve(gpa, &.{stored}) catch return error.FileSystem
@@ -992,24 +1070,33 @@ fn declaredSourceMatches(ctx: *ResolveContext, existing: *const LocalPackage, wo
                 std.fs.path.resolve(gpa, &.{dep.path}) catch return error.FileSystem
             else
                 std.fs.path.resolve(gpa, &.{ work.base_dir orelse ctx.project_root, dep.path }) catch return error.FileSystem;
-            return std.mem.eql(u8, stored_abs, revisit_abs) and
-                (source.mutable orelse false) == dep.mutable;
+            return std.mem.eql(u8, stored_abs, revisit_abs);
         },
         .git => {
             const dep = work.git_dep.?;
             if (source.kind != .git or !optEql(source.url, dep.url) or !optEql(source.path, dep.path)) return false;
-            // 記録 commit は完全 SHA、宣言は prefix（[0-9a-f]{7,40}）の
-            // ため前方一致で比較する（acquireGit の pin 判定と同じ契約）。
             const stored_commit = source.commit orelse return false;
             return std.mem.startsWith(u8, stored_commit, dep.commit);
         },
         .http => {
             const dep = work.http_dep.?;
-            return source.kind == .http and
-                optEql(source.url, dep.url) and
-                optEql(source.hash, dep.hash);
+            if (source.kind != .http or !optEql(source.url, dep.url)) return false;
+            const stored_hash = source.hash orelse return false;
+            const declared_hash = dep.hash;
+            if (fetch.normalizeSha256(stored_hash)) |stored| {
+                if (fetch.normalizeSha256(declared_hash)) |declared| return std.mem.eql(u8, &stored, &declared);
+            }
+            if (fetch.normalizeSha512(stored_hash)) |stored| {
+                if (fetch.normalizeSha512(declared_hash)) |declared| return std.mem.eql(u8, &stored, &declared);
+            }
+            return std.mem.eql(u8, stored_hash, declared_hash);
         },
     }
+}
+
+fn declaredSourceMatches(ctx: *ResolveContext, source: lock_model.Source, work: DepWork) Error!bool {
+    if (!try declaredSourceIdentityMatches(ctx, source, work)) return false;
+    return work.kind != .path or (source.mutable orelse false) == work.path_dep.?.mutable;
 }
 
 fn optEql(a: ?[]const u8, b: ?[]const u8) bool {
