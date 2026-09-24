@@ -834,6 +834,37 @@ test "低レイヤーのstatfsはContext経由でfsInfo辞書を返し契約エ�
     try expectThrownCode(&runtime, thrown, "EINVAL");
 }
 
+test "低レイヤーのstatfsは2^53境界でカウンタをNumber/BigIntへ分ける" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    // typeSchemas.fsInfo のカウンタ6フィールドはsize型で、
+    // 安全整数の境界でNumber/BigIntが分かれる必要がある。
+    const max_safe: u64 = @intCast(foundation.max_safe_integer);
+    const info: low_level_fs.FsInfo = .{
+        .block_size = 4096,
+        .blocks = max_safe + 1,
+        .free = max_safe,
+        .available = 0,
+        .files = max_safe + 1,
+        .free_files = 7,
+    };
+    var result = try fsInfoValue(&runtime, info);
+    try roots.protect(&result);
+    const blocks = node_shared.dictionaryGetAscii(result.dictionary, foundation.fs_info_keys.blocks) orelse return error.TestExpectedEqual;
+    try std.testing.expect(blocks == .bigint);
+    try std.testing.expectEqual(@as(u128, max_safe + 1), try blocks.bigint.toU128());
+    const free = node_shared.dictionaryGetAscii(result.dictionary, foundation.fs_info_keys.free) orelse return error.TestExpectedEqual;
+    try std.testing.expect(free == .number);
+    try std.testing.expectEqual(@as(f64, @floatFromInt(max_safe)), free.number);
+    const files = node_shared.dictionaryGetAscii(result.dictionary, foundation.fs_info_keys.files) orelse return error.TestExpectedEqual;
+    try std.testing.expect(files == .bigint);
+    const free_files = node_shared.dictionaryGetAscii(result.dictionary, foundation.fs_info_keys.free_files) orelse return error.TestExpectedEqual;
+    try std.testing.expect(free_files == .number);
+}
+
 test "低レイヤーのreflinkはContext経由でCoW複製を作り契約エラーを返す" {
     if (builtin.os.tag != .linux and builtin.os.tag != .macos) return error.SkipZigTest;
     var runtime = Runtime.init(std.testing.allocator);

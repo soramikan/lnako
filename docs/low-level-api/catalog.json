@@ -1107,7 +1107,7 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "blockSize/blocks/free/available/files/freeFiles/filesystemType/filesystemId。OS固有フィールドはoptional",
+      "notes": "blockSize/blocks/free/available/files/freeFiles/filesystemType/filesystemId。OS固有フィールドはoptional。カウンタはsize型（2^53-1超過はBigInt）",
       "implemented": true
     },
     {
@@ -2722,16 +2722,16 @@
     },
     "fsInfo": {
       "fields": {
-        "blockSize": "number",
-        "blocks": "number",
-        "free": "number",
-        "available": "number",
-        "files": "number",
-        "freeFiles": "number",
+        "blockSize": "size",
+        "blocks": "size",
+        "free": "size",
+        "available": "size",
+        "files": "size",
+        "freeFiles": "size",
         "filesystemType": "string",
         "filesystemId": "string"
       },
-      "note": "OS固有フィールドはoptional"
+      "note": "OS固有フィールドはoptional。カウンタ6フィールドはsize型（安全整数ならNumber、2^53-1超過はBigInt）"
     },
     "collateOptions": {
       "fields": {

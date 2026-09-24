@@ -347,6 +347,41 @@ test "AOT低レイヤーのstatfsはfsInfo辞書を返し契約エラーを丸�
     try expectPendingCode(active, "ENOENT");
 }
 
+test "AOT低レイヤーのstatfsは2^53境界でカウンタをNumber/BigIntへ分ける" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    // typeSchemas.fsInfo のカウンタ6フィールドはsize型で、
+    // 安全整数の境界でNumber/BigIntが分かれる必要がある。
+    const max_safe: u64 = @intCast(foundation.max_safe_integer);
+    const info: low_level_fs.FsInfo = .{
+        .block_size = 4096,
+        .blocks = max_safe + 1,
+        .free = max_safe,
+        .files = max_safe + 1,
+        .free_files = 7,
+    };
+    var roots = [_]Value{.{}};
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+    roots[0] = try fsInfoValue(active, info);
+
+    const blocks = dictionaryProperty(roots[0], &.{ 'b', 'l', 'o', 'c', 'k', 's' });
+    try std.testing.expect(blocks.tag == @intFromEnum(Tag.bigint));
+    try std.testing.expectEqual(@as(u128, max_safe + 1), try blocks.object().?.payload.bigint.toU128());
+    const free = dictionaryProperty(roots[0], &.{ 'f', 'r', 'e', 'e' });
+    try std.testing.expectEqual(@as(f64, @floatFromInt(max_safe)), valueToNumber(free));
+    const free_files = dictionaryProperty(roots[0], &.{ 'f', 'r', 'e', 'e', 'F', 'i', 'l', 'e', 's' });
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(free_files));
+}
+
 test "AOT低レイヤーのreflinkは複製を作り契約エラーを返す" {
     if (builtin.os.tag != .linux and builtin.os.tag != .macos) return error.SkipZigTest;
     var runtime = Runtime{ .allocator = std.testing.allocator };
