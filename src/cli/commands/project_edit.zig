@@ -170,7 +170,10 @@ fn nextHeader(source: []const u8, header_offset: usize) usize {
 }
 
 /// `[<section>]` 内に `key = <value>` 行を挿入した新しい source を返す。
-/// テーブルが無ければ末尾へ新設する。
+/// テーブルが無ければ末尾へ新設する。ただし `[dependencies] path.lib = ...`
+/// や文書 root の `dependencies.path.lib = ...` のような dotted key で
+/// `<section>` が暗黙に定義済みの場合、`[section]` ヘッダの追加は TOML
+/// table 再定義になるため、互換の dotted 代入として挿入する。
 fn insertEntry(a: Allocator, source: []const u8, section: []const u8, name: []const u8, value: []const u8) ![]const u8 {
     const key = try emitKey(a, name);
     const line = try std.fmt.allocPrint(a, "{s} = {s}\n", .{ key, value });
@@ -189,6 +192,7 @@ fn insertEntry(a: Allocator, source: []const u8, section: []const u8, name: []co
         try output.appendSlice(a, source[boundary..]);
         return output.items;
     }
+    if (try insertDottedEntry(a, source, section, key, value)) |inserted| return inserted;
     var output: std.ArrayList(u8) = .empty;
     try output.appendSlice(a, source);
     while (output.items.len > 0 and output.items[output.items.len - 1] == '\n') {
@@ -196,6 +200,100 @@ fn insertEntry(a: Allocator, source: []const u8, section: []const u8, name: []co
     }
     try output.appendSlice(a, try std.fmt.allocPrint(a, "\n\n[{s}]\n{s}", .{ section, line }));
     return output.items;
+}
+
+/// dotted key 宣言により `<parent>.<kind>`（例: `dependencies.path`）が
+/// 既に定義されている manifest へ、互換の dotted 代入を挿入する。
+/// A) `[<parent>]` 表内の `kind.<x> = ...` → 同表末尾へ `kind.<key> = v`。
+/// B) 文書 root の `<parent>.<kind>.<x> = ...` → 宣言群の末尾へ
+///    `<parent>.<kind>.<key> = v`。どちらも無ければ null。
+fn insertDottedEntry(a: Allocator, source: []const u8, section: []const u8, key: []const u8, value: []const u8) !?[]const u8 {
+    const dot = std.mem.lastIndexOfScalar(u8, section, '.') orelse return null;
+    const parent = section[0..dot];
+    const kind = section[dot + 1 ..];
+
+    // A) `[<parent>]` 表内の `kind.<x> = ...`。
+    if (findTableHeader(source, parent)) |header| {
+        const boundary = nextHeader(source, header);
+        var index = lineEnd(source, header);
+        while (index < boundary) {
+            index += 1;
+            if (index >= boundary) break;
+            const end = lineEnd(source, index);
+            if (assignmentLhs(source[index..@min(end, boundary)])) |lhs| {
+                if (lhsHasPrefix(lhs, &.{kind})) {
+                    const line = try std.fmt.allocPrint(a, "{s}.{s} = {s}\n", .{ kind, key, value });
+                    var output: std.ArrayList(u8) = .empty;
+                    try output.appendSlice(a, source[0..boundary]);
+                    while (output.items.len > 0 and (output.items[output.items.len - 1] == '\n' or output.items[output.items.len - 1] == ' ' or output.items[output.items.len - 1] == '\t' or output.items[output.items.len - 1] == '\r')) {
+                        _ = output.pop();
+                    }
+                    try output.append(a, '\n');
+                    try output.appendSlice(a, line);
+                    try output.append(a, '\n');
+                    try output.appendSlice(a, source[boundary..]);
+                    return output.items;
+                }
+            }
+            index = end;
+        }
+        return null;
+    }
+
+    // B) 文書 root（最初の `[` ヘッダより前）の
+    //    `<parent>.<kind>.<x> = ...`。最後の宣言の直後へ挿入する。
+    var last_end: ?usize = null;
+    var index: usize = 0;
+    while (index < source.len) {
+        const end = lineEnd(source, index);
+        const text = std.mem.trimStart(u8, source[index..end], " \t");
+        if (text.len > 0 and text[0] == '[') break;
+        if (assignmentLhs(source[index..end])) |lhs| {
+            if (lhsHasPrefix(lhs, &.{ parent, kind })) last_end = end;
+        }
+        index = if (end < source.len) end + 1 else source.len;
+    }
+    if (last_end == null) return null;
+    const pos = if (last_end.? < source.len) last_end.? + 1 else last_end.?;
+    const line = try std.fmt.allocPrint(a, "{s}.{s}.{s} = {s}\n", .{ parent, kind, key, value });
+    var output: std.ArrayList(u8) = .empty;
+    try output.appendSlice(a, source[0..pos]);
+    try output.appendSlice(a, line);
+    try output.appendSlice(a, source[pos..]);
+    return output.items;
+}
+
+/// 行テキストが `lhs = ...` 形式なら左辺を返す。ヘッダ・コメント・
+/// 空行は null。引用 key 内の `=` まで考慮した完全な TOML 字句解析
+/// ではないが、dep 宣言の検出には十分（`lhsMatchesDecl` と同じ前提）。
+fn assignmentLhs(text: []const u8) ?[]const u8 {
+    const trimmed = std.mem.trimStart(u8, text, " \t");
+    if (trimmed.len == 0 or trimmed[0] == '[' or trimmed[0] == '#') return null;
+    const eq = std.mem.indexOfScalar(u8, trimmed, '=') orelse return null;
+    const lhs = std.mem.trim(u8, trimmed[0..eq], " \t");
+    if (lhs.len == 0) return null;
+    return lhs;
+}
+
+/// 代入左辺が `prefix` セグメント列で始まり、さらに後続セグメントを
+/// 持つ dotted key か。各セグメントの引用は剥がす。
+/// `path.lib` は `&.{"path"}`、`dependencies.path.lib` は
+/// `&.{"dependencies", "path"}` に一致する。
+fn lhsHasPrefix(lhs: []const u8, prefix: []const []const u8) bool {
+    var it = std.mem.splitScalar(u8, lhs, '.');
+    var matched: usize = 0;
+    var extra = false;
+    while (it.next()) |seg_raw| {
+        const bare = std.mem.trim(u8, std.mem.trim(u8, seg_raw, " \t"), "\"'");
+        if (bare.len == 0) return false;
+        if (matched < prefix.len) {
+            if (!std.mem.eql(u8, bare, prefix[matched])) return false;
+            matched += 1;
+        } else {
+            extra = true;
+        }
+    }
+    return matched == prefix.len and extra;
 }
 
 /// `offset` から始まる代入文（`key = value`）の終端 offset を返す。
@@ -1000,6 +1098,60 @@ test "insertEntry は空白・引用セグメントの既存テーブルへ挿�
         \\
     , "dependencies.path", "lib2", "{ path = \"lib2\" }");
     try std.testing.expect(std.mem.indexOf(u8, quoted, "lib2") != null);
+}
+
+test "insertEntry は dotted key 宣言の既存 table を再定義しない" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // `[dependencies] path.lib = ...` は `dependencies.path` 表を暗黙に
+    // 定義するため、`[dependencies.path]` ヘッダの追加は TOML の table
+    // 再定義になる。同じ dotted 形式 `path.lib2 = ...` として挿入する。
+    const dotted = try insertEntry(a,
+        \\[package]
+        \\name = "app"
+        \\
+        \\[dependencies]
+        \\path.lib = { path = "lib" }
+        \\pkg.http = { version = "1" }
+        \\
+    , "dependencies.path", "lib2", "{ path = \"lib2\" }");
+    try std.testing.expect(std.mem.indexOf(u8, dotted, "[dependencies.path]") == null);
+    try std.testing.expect(std.mem.indexOf(u8, dotted, "path.lib2 = { path = \"lib2\" }") != null);
+    const lib_pos = std.mem.indexOf(u8, dotted, "path.lib =").?;
+    const lib2_pos = std.mem.indexOf(u8, dotted, "path.lib2 =").?;
+    try std.testing.expect(lib_pos < lib2_pos);
+
+    // 文書 root（最初の `[` ヘッダより前）の `dependencies.path.lib` も
+    // 同じ table 定義。宣言群の直後へ同じ dotted 形式で挿入する。
+    const rooted = try insertEntry(a,
+        \\dependencies.path.lib = { path = "lib" }
+        \\
+        \\[package]
+        \\name = "app"
+        \\
+        \\[profiles]
+        \\default = {}
+        \\
+    , "dependencies.path", "lib2", "{ path = \"lib2\" }");
+    try std.testing.expect(std.mem.indexOf(u8, rooted, "[dependencies.path]") == null);
+    try std.testing.expect(std.mem.indexOf(u8, rooted, "dependencies.path.lib2 = { path = \"lib2\" }") != null);
+    const package_pos = std.mem.indexOf(u8, rooted, "[package]").?;
+    const new_pos = std.mem.indexOf(u8, rooted, "dependencies.path.lib2").?;
+    // root セクション内（[package] より前）に挿入される。
+    try std.testing.expect(new_pos < package_pos);
+
+    // `[dependencies]` があっても `path` の dotted 宣言が無ければ
+    // `[dependencies.path]` ヘッダを新設する（暗黙親の再定義ではない）。
+    const plain = try insertEntry(a,
+        \\[package]
+        \\name = "app"
+        \\
+        \\[dependencies]
+        \\pkg.http = { version = "1" }
+        \\
+    , "dependencies.path", "lib2", "{ path = \"lib2\" }");
+    try std.testing.expect(std.mem.indexOf(u8, plain, "[dependencies.path]") != null);
 }
 
 test "headerMatches は名前全体の引用を別テーブルとして区別する" {

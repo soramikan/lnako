@@ -191,9 +191,24 @@ pub fn openManagedDir(io: std.Io, path: []const u8, iterate: bool) !std.Io.Dir {
                 try std.Io.Dir.cwd().createDirPath(io, path);
                 continue;
             },
-            error.SymLinkLoop, error.NotDir => {
-                // leaf symlink・実ファイルはリンク/ファイル本体のみ除去する
-                // （対象の中身は消えない）。
+            error.SymLinkLoop => {
+                // leaf symlink はリンク本体のみ除去する（対象の中身は消えない）。
+                removeManagedLeaf(io, path) catch {};
+                try std.Io.Dir.cwd().createDirPath(io, path);
+                continue;
+            },
+            error.NotDir => {
+                // leaf が通常 file の場合は symlink 除去と見做さずそのまま
+                // 失敗させる。管理 path を占める利用者 file を add/run/sync
+                // や cache 操作が黙って消去しないため。no-follow stat で
+                // symlink/reparse point を確定した時だけ除去する。
+                const leaf = std.Io.Dir.cwd().statFile(io, path, .{
+                    .follow_symlinks = false,
+                }) catch |stat_err| switch (stat_err) {
+                    error.FileNotFound => continue,
+                    else => return stat_err,
+                };
+                if (leaf.kind != .sym_link) return error.NotDir;
                 removeManagedLeaf(io, path) catch {};
                 try std.Io.Dir.cwd().createDirPath(io, path);
                 continue;
@@ -535,6 +550,7 @@ pub fn validGenerationName(name: []const u8) bool {
 // ---------------------------------------------------------------------------
 
 const testing = std.testing;
+const builtin = @import("builtin");
 
 fn openTempStore(temporary: *std.testing.TmpDir) !Store {
     const root = try temporary.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
@@ -720,4 +736,34 @@ test "environment store は readPublishedGeneration で公開環境の参照世�
     defer testing.allocator.free(json_path);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = json_path, .data = "{\"packages\":[]}\n" });
     try testing.expect((try store.readPublishedGeneration(testing.allocator)) == null);
+}
+
+test "openManagedDir は通常 file を保持し symlink のみ置き換える" {
+    // `.nako`・`.nako/env`・cache の管理 path に既に通常 file がある
+    // 場合、openDir の NotDir で file を消して dir に作り替えては
+    // いけない（add/run/sync や cache 操作が利用者 file を黙って
+    // 消去しない）。symlink/reparse point はリンク本体のみ置き換える。
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(io, .{ .sub_path = "managed", .data = "keep" });
+    const managed = try temporary.dir.realPathFileAlloc(io, "managed", testing.allocator);
+    defer testing.allocator.free(managed);
+    try testing.expectError(error.NotDir, ensureManagedDir(io, managed));
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, managed, testing.allocator, .limited(64));
+    defer testing.allocator.free(bytes);
+    try testing.expectEqualStrings("keep", bytes);
+
+    // leaf symlink はリンク本体のみ除去して実 dir を作り直す。
+    if (builtin.os.tag == .windows) return;
+    try temporary.dir.createDirPath(io, "target/inner");
+    try temporary.dir.deleteFile(io, "managed");
+    const target = try temporary.dir.realPathFileAlloc(io, "target", testing.allocator);
+    defer testing.allocator.free(target);
+    try temporary.dir.symLink(io, target, "managed", .{ .is_directory = true });
+    try ensureManagedDir(io, managed);
+    const stat = try temporary.dir.statFile(io, "managed", .{ .follow_symlinks = false });
+    try testing.expect(stat.kind == .directory);
+    // symlink の指先 dir は無傷で残る。
+    try temporary.dir.access(io, "target/inner", .{});
 }

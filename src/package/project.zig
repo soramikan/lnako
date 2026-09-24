@@ -536,7 +536,12 @@ fn isVirtualId(id_text: []const u8) bool {
 }
 
 /// lock `source.path` と同じ正規化を TOML の宣言文字列へ適用する。
-/// `./deps/lib` → `deps/lib`、区切りを `/` に揃える。絶対 path は触らない。
+/// `./deps/lib` → `deps/lib`、区切りを `/` に揃え、繰り返し separator・
+/// `.` 成分・末尾 separator も畳む。`deps//lib` のような非規範形を
+/// lock へ記録すると sync の `isCanonicalDepPath` が拒否し、
+/// lock 成功・実行失敗の不整合になるため。`..` 成分は宣言者の
+/// 正当な選択（`../shared`）として保持し、絶対 path の先頭
+/// separator も保持する。
 fn canonicalDepSpelling(gpa: Allocator, decl: []const u8) ![]const u8 {
     var text = try gpa.dupe(u8, decl);
     while (std.mem.startsWith(u8, text, "./")) text = text[2..];
@@ -544,8 +549,22 @@ fn canonicalDepSpelling(gpa: Allocator, decl: []const u8) ![]const u8 {
         for (text) |*char| {
             if (char.* == '\\') char.* = '/';
         }
+    } else {
+        // Windows 絶対 path（`C:\x`・UNC）は `\` を維持する。
+        return text;
     }
-    return text;
+    var output: std.ArrayList(u8) = .empty;
+    if (text.len > 0 and text[0] == '/') try output.append(gpa, '/');
+    var components = std.mem.splitScalar(u8, text, '/');
+    var first = output.items.len == 0;
+    while (components.next()) |component| {
+        if (component.len == 0 or std.mem.eql(u8, component, ".")) continue;
+        if (!first) try output.append(gpa, '/');
+        try output.appendSlice(gpa, component);
+        first = false;
+    }
+    if (output.items.len == 0) try output.append(gpa, '.');
+    return output.items;
 }
 
 /// dep の宣言 path を lock 記録用に正規化する。宣言が `base_dir` 相対の

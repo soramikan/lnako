@@ -482,6 +482,49 @@ test "path依存の./前置表記はlock内で正規化される" {
     try testing.expectEqualStrings("lib", outcome.lock.input.mutable_paths[0].path);
 }
 
+test "path依存の繰り返し separator・. 成分は lock 記録前に正規形へ畳む" {
+    // `deps//lib`・`deps/./lib` のような非規範宣言を lock の
+    // source.path へそのまま記録すると、sync の isCanonicalDepPath が
+    // 拒否して lock 成功・実行失敗の不整合になる。
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/deps/lib/src");
+    try writeLibPackage(temporary.dir, io, "app/deps/lib", "lib");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/nako.toml",
+        .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\lib = { path = "deps//./lib" }
+        \\
+        ,
+    });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    defer loaded.deinit();
+    var outcome = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
+    defer outcome.deinit();
+
+    var found = false;
+    for (outcome.lock.packages) |entry| {
+        const source = entry.source orelse continue;
+        if (source.kind == .path) {
+            found = true;
+            try testing.expectEqualStrings("deps/lib", source.path.?);
+        }
+    }
+    try testing.expect(found);
+}
+
 test "存在しないpath依存の取得失敗はdep名を含む診断を出す" {
     const io = testing.io;
     var temporary = std.testing.tmpDir(.{});

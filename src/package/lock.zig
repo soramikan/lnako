@@ -481,8 +481,12 @@ fn parseInput(parser: *Parser, value: std.json.Value, path: []const u8) !?Input 
             .cpu = try parser.duplicate((try parser.asString(cpu_value, path)) orelse return null),
             .abi = try parser.duplicate((try parser.asString(abi_value, path)) orelse return null),
             // `--compat-js` で解決した lock のみ記録する任意項目。
-            // 欠落は false と同等。
-            .compat_js = if (target_object.get("compatJs")) |v| v == .bool and v.bool else false,
+            // 欠落は false と同等。記録される場合は bool のみ許容し、
+            // 文字列 `"true"` 等を黙って false へ落とさない。
+            .compat_js = if (target_object.get("compatJs")) |v|
+                (try parser.asBool(v, path)) orelse return null
+            else
+                false,
         },
         .mutable_paths = mutable_paths.items,
     };

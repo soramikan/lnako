@@ -127,7 +127,7 @@ npm 補助依存。同一 name/version の npm package が複数文脈で使わ�
 
 | キー | 型 | 必須 | 説明 |
 |------|------|------|------|
-| `path` | string | yes | 相対・絶対パス。 |
+| `path` | string | yes | 相対・絶対パス。lock へは区切りを `/` に揃え、繰り返し separator・`.` 成分・先頭 `./`・末尾 separator を畳んだ規範形で記録する（`deps//lib` は `deps/lib`）。`..` 成分は宣言どおり保持する。 |
 | `mutable` | boolean | no | `false` の場合 hash も記録する。パブリッシュ時は `true` を禁止。 |
 
 #### 3.4.4 `dependencies.git` / `dependencies.http`

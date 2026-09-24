@@ -512,6 +512,23 @@ test "compatJs も target 鮮度鍵として stale_target を検出する" {
     try T.expectEqual(lock.Freshness.fresh, lock.checkFreshness(&plain, sampleInput()));
 }
 
+test "compatJs の非 bool 値は型エラーで拒否する" {
+    // `"compatJs": "true"` のような非 bool 値を黙って false へ落とすと、
+    // compat 用に作られた lock が非 compat 入力へ fresh と誤判定される。
+    const text =
+        \\{
+        \\  "schemaVersion": 1,
+        \\  "resolverVersion": 1,
+        \\  "input": { "manifestSha256": "sha256:aa", "profile": "default", "features": [], "target": { "os": "macos", "cpu": "aarch64", "abi": "gnu", "compatJs": "true" } },
+        \\  "packages": {}
+        \\}
+    ;
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    try T.expectError(error.InvalidLock, lock.parse(T.allocator, text, &diagnostics));
+    try T.expect(diagnostics.find(diag.E023_INVALID_TYPE) != null);
+}
+
 test "features順序と重複は鮮度に影響しない" {
     var value = try sampleLock(T.allocator);
     defer value.deinit();
