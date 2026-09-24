@@ -613,9 +613,12 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
 /// 絶対の双方を許容するため `..` 成分や絶対 path は正当な入力（path 依存は
 /// 宣言者が選ぶ局所 source であり、lock の契約でも禁止されない）。
 /// ここでは細工した lock が混入させ得る非規範の形式だけを拒否する:
-/// 空・末尾 separator・`.` 成分・途中の空成分・制御文字。
+/// 空・末尾 separator（POSIX root `/` を除く）・`.` 成分・途中の空成分・制御文字。
 fn isCanonicalDepPath(path: []const u8) bool {
     if (path.len == 0) return false;
+    // POSIX filesystem root is the sole canonical path whose complete spelling
+    // is a trailing separator; it cannot be normalized by trimming that byte.
+    if (std.mem.eql(u8, path, "/")) return true;
     if (path[path.len - 1] == '/' or path[path.len - 1] == '\\') return false;
     const starts_sep = path[0] == '/' or path[0] == '\\';
     var components = std.mem.splitAny(u8, path, "/\\");
@@ -633,6 +636,13 @@ fn isCanonicalDepPath(path: []const u8) bool {
         }
     }
     return true;
+}
+
+test "canonical dependency path admits POSIX root" {
+    try std.testing.expect(isCanonicalDepPath("/"));
+    try std.testing.expect(isCanonicalDepPath("/deps/lib"));
+    try std.testing.expect(!isCanonicalDepPath("/deps/"));
+    try std.testing.expect(!isCanonicalDepPath("deps/"));
 }
 
 /// git source の repo 内 subdir が規範的な相対 path か。repo 境界内だけを

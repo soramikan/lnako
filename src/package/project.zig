@@ -327,17 +327,16 @@ pub fn resolveVersionText(a: Allocator, version: ?semver.Version) Error!?[]const
     return try std.fmt.allocPrint(a, "{f}", .{v});
 }
 
-fn resolveTarget(record: lock_model.ProfileRecord, opts: *const PrepareOptions) resolver.Target {
+fn resolveTarget(record: lock_model.ProfileRecord, opts: *const PrepareOptions, selected_profile: bool) resolver.Target {
     return .{
         .runtime = resolveRuntime(record),
         .os = record.os,
         .cpu = record.cpu,
         .abi = record.abi,
         .os_version = opts.os_version,
-        // `--compat-js` 実行は profile 宣言が無くても ESM 実装を許容する
-        // （profile-less プロジェクトの合成 record は compat-js を持た
-        // ないため、CLI 側の compat 実行を解決へ伝える必要がある）。
-        .compat_js = (record.compat_js orelse false) or opts.compat_js,
+        // CLI の `--compat-js` は選択中 profile の解決だけを変える。
+        // profile 宣言の compat-js は、それぞれの profile に適用する。
+        .compat_js = (record.compat_js orelse false) or (selected_profile and opts.compat_js),
         // `build -O` は実際に生成するコードのレベルなので profile 宣言
         // より優先する。未指定なら profile の `optimize` を使う。
         .optimize = opts.optimize orelse record.optimize orelse "O0",
@@ -559,6 +558,29 @@ test "canonicalDepSpelling normalizes Windows absolute paths" {
     const unc = try canonicalDepSpelling(std.testing.allocator, "\\\\server\\share\\\\lib\\.");
     defer std.testing.allocator.free(unc);
     try std.testing.expectEqualStrings("\\\\server\\share\\lib", unc);
+}
+
+test "resolveTarget は CLI compat-js を選択 profile だけに適用する" {
+    const opts = PrepareOptions{ .compat_js = true };
+    const normal_record = lock_model.ProfileRecord{
+        .runtime = "lnako",
+        .os = "linux",
+        .cpu = "x86_64",
+        .abi = "gnu",
+    };
+
+    try std.testing.expect(resolveTarget(normal_record, &opts, true).compat_js);
+    try std.testing.expect(!resolveTarget(normal_record, &opts, false).compat_js);
+
+    // 明示的な profile 宣言はCLIの選択対象とは独立して維持される。
+    const declared_compat = lock_model.ProfileRecord{
+        .runtime = "lnako",
+        .os = "linux",
+        .cpu = "x86_64",
+        .abi = "gnu",
+        .compat_js = true,
+    };
+    try std.testing.expect(resolveTarget(declared_compat, &opts, false).compat_js);
 }
 
 /// dep の宣言 path を lock 記録用に正規化する。宣言が `base_dir` 相対の
@@ -1441,7 +1463,7 @@ pub fn ensureLock(
     var per_profile: std.ArrayList(lock_mod.ProfileInput) = .empty;
     var primary_nodes: []const resolver.PackageNode = &.{};
     for (profiles) |named| {
-        var target = resolveTarget(named.record, opts);
+        var target = resolveTarget(named.record, opts, std.mem.eql(u8, named.name, profile));
         // CLI の `-O` は選択中 profile の実装選択にのみ効く。他 profile
         // は manifest の `optimize` 宣言で解決する（この build の条件を
         // 別 profile の契約へ持ち込まない）。
