@@ -132,7 +132,7 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 ### Issue 36 statfs・reflink・sparse file
 
 - `ファイルシステム情報取得`（ll-statfs）助詞 `PATHを/PATHの`、戻り `fsInfo`、capability `statfs`、エラー ENOENT/EACCES/EPERM/ENOTDIR/EINVAL/ENOTSUP
-- `ファイルクローン`（ll-reflink）助詞 `SRCをDSTへMODEで/SRCをDSTに`、戻り `void`、capability `reflink`、エラー ENOENT/EEXIST/EACCES/EPERM/EXDEV/ENOTSUP
+- `ファイルクローン`（ll-reflink）助詞 `SRCをDSTへMODEで/SRCをDSTに`、戻り `void`、capability `reflink`、エラー ENOENT/EEXIST/EACCES/EPERM/EXDEV/ENOTSUP/EINVAL
 - `ファイルデータ領域検索`（ll-seek-data）助詞 `HANDLEをOFFSETで/HANDLEをOFFSETから`、戻り `offset`、capability `seek_data`、エラー EBADF/EINVAL/ENOTSUP
 - `ファイル空洞領域検索`（ll-seek-hole）助詞 `HANDLEをOFFSETで/HANDLEをOFFSETから`、戻り `offset`、capability `seek_hole`、エラー EBADF/EINVAL/ENOTSUP
 - `ファイル領域確保`（ll-fallocate）助詞 `HANDLEをOFFSETにSIZEで/HANDLEをOFFSETとSIZEで`、戻り `void`、capability `fallocate`、エラー EBADF/EINVAL/ENOSPC/ENOTSUP

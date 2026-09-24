@@ -3917,6 +3917,7 @@ test "Interpreter低レイヤーのstatfs/reflink/領域検索/領域確保は�
         \\エラーならば
         \\エラーメッセージ["code"]を表示
         \\ここまで
+        \\「clone-end」を表示
         \\H=ファイル開("{s}","r+")
         \\ファイルデータ領域検索(H,0)を表示
         \\ファイル空洞領域検索(H,8196)を表示
@@ -3925,6 +3926,7 @@ test "Interpreter低レイヤーのstatfs/reflink/領域検索/領域確保は�
         \\エラーならば
         \\エラーメッセージ["code"]を表示
         \\ここまで
+        \\「alloc-end」を表示
         \\エラー監視
         \\ファイルデータ領域検索(H,-1)
         \\エラーならば
@@ -3966,10 +3968,19 @@ test "Interpreter低レイヤーのstatfs/reflink/領域検索/領域確保は�
     try std.testing.expect(std.mem.indexOf(u8, output, "0\n8196\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "EINVAL\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "EBADF\n") != null);
-    if (std.mem.indexOf(u8, output, "ENOTSUP") == null) {
-        // 対応FSではreflinkが実際に複製を作り、fallocateはsrc.binの末尾へ伸ばす。
+    // reflinkとfallocateは別のエラー監視区間のため、それぞれの成否を独立に
+    // 検証する（macOSではallocateがsparse-gap ENOTSUPを常に返す一方、APFSの
+    // reflinkは成功するので、まとめてENOTSUPで分岐するとreflinkの結果が
+    // 未検証になる）。
+    const clone_end = std.mem.indexOf(u8, output, "clone-end\n") orelse return error.TestExpectedEqual;
+    if (std.mem.indexOf(u8, output[0..clone_end], "ENOTSUP") == null) {
+        // reflinkが成功した場合、clone.binは実際に複製されている必要がある。
         const cloned_stat = try low_level_fs.stat(std.testing.io, clone_path, true);
         try std.testing.expectEqual(@as(u64, 8196), cloned_stat.size);
+    }
+    const alloc_end = std.mem.indexOf(u8, output, "alloc-end\n") orelse return error.TestExpectedEqual;
+    if (std.mem.indexOf(u8, output[clone_end..alloc_end], "ENOTSUP") == null) {
+        // fallocateが成功した場合、src.binは末尾へ伸びている必要がある。
         const source_stat = try low_level_fs.stat(std.testing.io, source_path, true);
         try std.testing.expectEqual(@as(u64, 16512), source_stat.size);
     }

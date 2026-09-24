@@ -1126,7 +1126,8 @@
         "EACCES",
         "EPERM",
         "EXDEV",
-        "ENOTSUP"
+        "ENOTSUP",
+        "EINVAL"
       ],
       "notes": "reflink/CoW。非対応FSはENOTSUP",
       "implemented": true
