@@ -294,11 +294,18 @@ pub fn environmentPackagesUsable(gpa: Allocator, io: std.Io, project_root: []con
     if (parsed.value != .object) return false;
     const packages_value = parsed.value.object.get("packages") orelse return false;
     if (packages_value != .object) return false;
-    const generation_value = parsed.value.object.get("generation") orelse return false;
-    if (generation_value != .string or generation_value.string.len == 0 or
-        std.mem.indexOfAny(u8, generation_value.string, "/\\") != null or
-        std.mem.eql(u8, generation_value.string, ".") or std.mem.eql(u8, generation_value.string, "..")) return false;
-    const managed_deps = std.fs.path.join(gpa, &.{ ".nako", "env", generation_value.string, "deps" }) catch return error.OutOfMemory;
+    // `environment.json` には generation は記録されない。同期が公開する
+    // `.nako/current` を唯一の現行世代情報として使い、symlink の current
+    // や実体のない世代は受理しない。
+    const current_path = std.fs.path.join(gpa, &.{ project_root, ".nako", "current" }) catch return error.OutOfMemory;
+    defer gpa.free(current_path);
+    const current_stat = std.Io.Dir.cwd().statFile(io, current_path, .{ .follow_symlinks = false }) catch return false;
+    if (current_stat.kind != .file) return false;
+    const current_bytes = std.Io.Dir.cwd().readFileAlloc(io, current_path, gpa, .limited(4096)) catch return false;
+    defer gpa.free(current_bytes);
+    const generation = std.mem.trim(u8, current_bytes, " \t\r\n");
+    if (!generationExists(io, project_root, generation)) return false;
+    const managed_deps = std.fs.path.join(gpa, &.{ ".nako", "env", generation, "deps" }) catch return error.OutOfMemory;
     defer gpa.free(managed_deps);
     const records = packages_value.object;
 

@@ -941,7 +941,7 @@ test "environmentPackagesUsableはpackages記録と実体を検証する" {
     const writeEnv = struct {
         fn run(dir: std.Io.Dir, packages_json: []const u8) !void {
             const source = try std.fmt.allocPrint(testing.allocator,
-                \\{{"schemaVersion":1,"lockSha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000","profile":"default","runtime":"lnako","generation":"gen-1","packages":{s}}}
+                \\{{"schemaVersion":1,"lockSha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000","profile":"default","runtime":"lnako","packages":{s}}}
                 \\
             , .{packages_json});
             defer testing.allocator.free(source);
@@ -950,7 +950,8 @@ test "environmentPackagesUsableはpackages記録と実体を検証する" {
     }.run;
 
     // `.nako` は sync 以外では作られないため、記録の器だけ先に用意する。
-    try temporary.dir.createDirPath(io, "app/.nako");
+    try temporary.dir.createDirPath(io, "app/.nako/env/gen-1");
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/current", .data = "gen-1\n" });
     // 全 path 依存の宣言 path をそのまま記録した環境は有効
     // （`../`・絶対 path の外部参照を含む）。
     var json_buf: std.Io.Writer.Allocating = .init(testing.allocator);
@@ -1066,7 +1067,7 @@ test "環境metadataのprofile/runtime欠落・型違いは不一致とする" {
     const writeEnv = struct {
         fn run(dir: std.Io.Dir, extra_fields: []const u8, lock_hex_: []const u8, lib_id_: []const u8) !void {
             const source = try std.fmt.allocPrint(testing.allocator,
-                \\{{"schemaVersion":1,"lockSha256":"sha256:{s}",{s}"generation":"gen-1","packages":{{"{s}":{{"name":"lib","version":"1.0.0","id":"{s}","path":"lib"}}}}}}
+                \\{{"schemaVersion":1,"lockSha256":"sha256:{s}",{s}"packages":{{"{s}":{{"name":"lib","version":"1.0.0","id":"{s}","path":"lib"}}}}}}
                 \\
             , .{ lock_hex_, extra_fields, lib_id_, lib_id_ });
             defer testing.allocator.free(source);
@@ -1308,7 +1309,7 @@ test "環境metadataのmutablePaths記録は宣言dirのmetadata変更を検出�
     const writeEnv = struct {
         fn run(dir: std.Io.Dir, mutable_json: []const u8, lock_hex_: []const u8, lib_id_: []const u8) !void {
             const source = try std.fmt.allocPrint(testing.allocator,
-                \\{{"schemaVersion":1,"lockSha256":"sha256:{s}","profile":"default","runtime":"lnako",{s}"generation":"gen-1","packages":{{"{s}":{{"name":"lib","version":"1.0.0","id":"{s}","path":"lib"}}}}}}
+                \\{{"schemaVersion":1,"lockSha256":"sha256:{s}","profile":"default","runtime":"lnako",{s}"packages":{{"{s}":{{"name":"lib","version":"1.0.0","id":"{s}","path":"lib"}}}}}}
                 \\
             , .{ lock_hex_, mutable_json, lib_id_, lib_id_ });
             defer testing.allocator.free(source);
@@ -1440,6 +1441,7 @@ test "environmentPackagesUsableは余分なrecordと形状違反と中間symlink
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "app/.nako/env/gen-1/deps/lib");
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/current", .data = "gen-1\n" });
     try temporary.dir.createDirPath(io, "app/src");
 
     var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
@@ -1464,7 +1466,7 @@ test "environmentPackagesUsableは余分なrecordと形状違反と中間symlink
     const writeEnv = struct {
         fn run(dir: std.Io.Dir, packages_json: []const u8) !void {
             const source = try std.fmt.allocPrint(testing.allocator,
-                \\{{"schemaVersion":1,"lockSha256":"sha256:00","profile":"default","runtime":"lnako","generation":"gen-1","packages":{s}}}
+                \\{{"schemaVersion":1,"lockSha256":"sha256:00","profile":"default","runtime":"lnako","packages":{s}}}
                 \\
             , .{packages_json});
             defer testing.allocator.free(source);
@@ -1482,6 +1484,11 @@ test "environmentPackagesUsableは余分なrecordと形状違反と中間symlink
     ;
     try writeEnv(temporary.dir, valid);
     try testing.expect(try usable(&lock, app_root));
+
+    // 現行世代は environment.json ではなく `.nako/current` で識別する。
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/current", .data = "gen-missing\n" });
+    try testing.expect(!try usable(&lock, app_root));
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/current", .data = "gen-1\n" });
 
     // project 内に実在する unrelated dir でも managed generation 外なら拒否。
     try writeEnv(temporary.dir,
@@ -1537,7 +1544,7 @@ test "environmentPackagesUsableは余分なrecordと形状違反と中間symlink
     const outside_env = struct {
         fn run(dir: std.Io.Dir, packages_json: []const u8) !void {
             const source = try std.fmt.allocPrint(testing.allocator,
-                \\{{"schemaVersion":1,"lockSha256":"sha256:00","profile":"default","runtime":"lnako","generation":"gen-1","packages":{s}}}
+                \\{{"schemaVersion":1,"lockSha256":"sha256:00","profile":"default","runtime":"lnako","packages":{s}}}
                 \\
             , .{packages_json});
             defer testing.allocator.free(source);

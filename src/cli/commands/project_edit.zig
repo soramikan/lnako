@@ -411,14 +411,16 @@ fn removeEntry(a: Allocator, source: []const u8, section: []const u8, name: []co
     // 2) 単一行 `key = ...` 形式 — position の行をそのまま除去する。
     // `[dependencies] path.lib = { ... }` のような dotted key 宣言も
     // 対象とする（manifest parser は同一の依存として読む）。
-    const kind = section[(std.mem.lastIndexOfScalar(u8, section, '.') orelse return null) + 1 ..];
+    const section_dot = std.mem.lastIndexOfScalar(u8, section, '.') orelse return null;
+    const parent = section[0..section_dot];
+    const kind = section[section_dot + 1 ..];
     const start = lineStart(source, position.line) orelse return null;
     const end = lineEnd(source, start);
     // 安全確認: その行に `=` とキー名が含まれること。
     const text = source[start..end];
     const eq = std.mem.indexOfScalar(u8, text, '=') orelse return null;
     const lhs = std.mem.trim(u8, text[0..eq], " \t");
-    if (!lhsMatchesDecl(lhs, kind, name)) return null;
+    if (!lhsMatchesDecl(lhs, parent, kind, name)) return null;
     // 複数行に跨る inline table/array は閉じるまでまとめて除去する。
     const stmt_end = statementEnd(source, start);
     const remove_end = if (stmt_end < source.len) stmt_end + 1 else stmt_end;
@@ -428,34 +430,29 @@ fn removeEntry(a: Allocator, source: []const u8, section: []const u8, name: []co
     return output.items;
 }
 
-/// 代入文の左辺が dep 宣言 `name` を指すか。`lib = ...` の単一 key と
-/// `[dependencies] path.lib = ...` の dotted key（先頭セグメントが dep
-/// kind と一致し、末尾セグメントが dep 名）の両方を受理する。
+/// 代入文の左辺が dep 宣言 `name` を指すか。`lib = ...` の単一 key、
+/// `[dependencies] path.lib = ...`、document-root の
+/// `dev-dependencies.path.lib = ...` を parent/kind/name で照合する。
 /// 各セグメントの引用は剥がす。dep 名は `.` を含めないため
 /// `name` への分割照合で曖昧にならない。
-fn lhsMatchesDecl(lhs: []const u8, kind: []const u8, name: []const u8) bool {
+fn lhsMatchesDecl(lhs: []const u8, parent: []const u8, kind: []const u8, name: []const u8) bool {
     var first: ?[]const u8 = null;
+    var second: ?[]const u8 = null;
     var last: []const u8 = "";
     var count: usize = 0;
     var it = std.mem.splitScalar(u8, lhs, '.');
     while (it.next()) |seg_raw| {
         const bare = std.mem.trim(u8, std.mem.trim(u8, seg_raw, " \t"), "\"'");
         if (bare.len == 0) return false;
-        if (first == null) first = bare;
+        if (count == 0) first = bare else if (count == 1) second = bare;
         last = bare;
         count += 1;
     }
     if (!std.mem.eql(u8, last, name)) return false;
     if (count == 1) return true;
-    if (std.mem.eql(u8, first.?, kind)) return true;
-    // document-root 形式 `dependencies.path.lib = ...`。
-    if (count == 3 and std.mem.eql(u8, first.?, "dependencies")) {
-        var segments = std.mem.splitScalar(u8, lhs, '.');
-        _ = segments.next();
-        const second = segments.next() orelse return false;
-        return std.mem.eql(u8, std.mem.trim(u8, second, " \t\"'"), kind);
-    }
-    return false;
+    if (count == 2 and std.mem.eql(u8, first.?, kind)) return true;
+    return count == 3 and std.mem.eql(u8, first.?, parent) and
+        std.mem.eql(u8, second.?, kind);
 }
 
 // ---------------------------------------------------------------------------
@@ -1304,11 +1301,16 @@ test "removeEntry は dotted key 宣言も除去する" {
     const root_source =
         \\dependencies.path.lib = { path = "lib" }
         \\dependencies.git.tool = { url = "https://example.invalid/tool" }
+        \\dev-dependencies.path.lib = { path = "test-lib" }
         \\
     ;
     const root_removed = (try removeEntry(a, root_source, "dependencies.path", "lib", .{ .line = 1 })).?;
-    try std.testing.expect(std.mem.indexOf(u8, root_removed, "dependencies.path.lib") == null);
+    try std.testing.expect(std.mem.indexOf(u8, root_removed, "\ndependencies.path.lib") == null);
     try std.testing.expect(std.mem.indexOf(u8, root_removed, "dependencies.git.tool") != null);
+    try std.testing.expect(std.mem.indexOf(u8, root_removed, "dev-dependencies.path.lib") != null);
+    const dev_removed = (try removeEntry(a, root_source, "dev-dependencies.path", "lib", .{ .line = 3 })).?;
+    try std.testing.expect(std.mem.indexOf(u8, dev_removed, "\ndev-dependencies.path.lib") == null);
+    try std.testing.expect(std.mem.startsWith(u8, dev_removed, "dependencies.path.lib"));
 }
 
 test "initTargetExists は symlink も存在として検出する" {

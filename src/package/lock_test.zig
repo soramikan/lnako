@@ -326,6 +326,29 @@ test "source artifactは選択native実装のcontainerとして扱う" {
     try T.expect(diagnostics.find(diag.E008_MISSING_ARTIFACT) == null);
 }
 
+test "source ESM実装の正規表記を受理し通常profileではE006で拒否する" {
+    const text = try lockWithPackages(
+        \\    "pkg:10000000000000000000000000000000": {
+        \\      "id": "pkg:10000000000000000000000000000000",
+        \\      "name": "source-esm",
+        \\      "version": "1.0.0",
+        \\      "implementation": "ESM",
+        \\      "source": { "type": "path", "path": "lib", "mutable": true },
+        \\      "dependencies": [],
+        \\      "features": [],
+        \\      "artifacts": { "source": { "kind": "source" } }
+        \\    }
+    , "\"runtime\": \"lnako\", \"os\": \"macos\", \"cpu\": \"aarch64\", \"abi\": \"gnu\", \"compat-js\": false");
+    defer T.allocator.free(text);
+    var value = try parseValid(text);
+    defer value.deinit();
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    try lock.validate(&value, &diagnostics);
+    try T.expect(diagnostics.find(diag.E006_JS_IN_NORMAL_MODE) != null);
+    try T.expect(diagnostics.find(diag.E029_INVALID_VALUE) == null);
+}
+
 test "未知artifact kindをE007で拒否する" {
     const text = try lockWithPackages(
         \\    "pkg:10000000000000000000000000000000": {
