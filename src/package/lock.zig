@@ -628,8 +628,8 @@ fn isValidPublicId(text: []const u8) bool {
     return true;
 }
 
-fn validatePackageSet(packages: []const PackageEntry, exists: *const std.StringHashMapUnmanaged(void), profile: ?ProfileRecord, path: []const u8, diagnostics: *diag.List) !void {
-    const esm_allowed = if (profile) |record| record.allowsEsm() else false;
+fn validatePackageSet(packages: []const PackageEntry, exists: *const std.StringHashMapUnmanaged(void), profile: ?ProfileRecord, target_compat_js: bool, path: []const u8, diagnostics: *diag.List) !void {
+    const esm_allowed = target_compat_js or (if (profile) |record| record.allowsEsm() else false);
     for (packages) |package| {
         const package_path = try std.fmt.allocPrint(diagnostics.allocator, "{s}.{s}", .{ path, package.id });
         defer diagnostics.allocator.free(package_path);
@@ -666,7 +666,10 @@ fn validatePackageSet(packages: []const PackageEntry, exists: *const std.StringH
         // source dependency の source artifact は取得済み tree 全体を指す
         // container。native/ESM export はその tree 内 manifest から sync が
         // 選び直すため、個別 download artifact の一致を要求しない。
-        const source_container = package.source != null and package.hasKind("source");
+        const source_container = if (package.source) |source|
+            (source.kind == .path or source.kind == .git or source.kind == .http) and package.hasKind("source")
+        else
+            false;
         // 選択された実装種別に対応する artifact が存在しなければ同期できない。
         if (package.implementation) |implementation| {
             if (!containsString(&known_implementations, implementation)) {
@@ -748,6 +751,15 @@ fn validateTarget(target: Target, path: []const u8, diagnostics: *diag.List) !vo
     }, path, "input.target", diagnostics);
 }
 
+fn validateInputEngineVersion(version: ?[]const u8, field: []const u8, diagnostics: *diag.List) !void {
+    const value = version orelse return;
+    _ = semver.Version.parse(value) catch {
+        const path = try std.fmt.allocPrint(diagnostics.allocator, "nako.lock.input.{s}", .{field});
+        defer diagnostics.allocator.free(path);
+        try diagnostics.addFmt(diag.E024_INVALID_SEMVER, .err, path, .{}, "invalid engine version \"{s}\" (not semver)", .{value});
+    };
+}
+
 /// lock の意味的な整合性を検証する。既知の診断は SPECIFICATION.md §8 と対応する。
 pub fn validate(lock: *const Lock, diagnostics: *diag.List) !void {
     if (lock.schema_version != lock_schema_version) {
@@ -768,6 +780,9 @@ pub fn validate(lock: *const Lock, diagnostics: *diag.List) !void {
 
     // `input.target` も profile と同じ既知値集合で検証する。
     try validateTarget(lock.input.target, "nako.lock.input.target", diagnostics);
+    try validateInputEngineVersion(lock.input.nako_version, "nakoVersion", diagnostics);
+    try validateInputEngineVersion(lock.input.cnako_version, "cnakoVersion", diagnostics);
+    try validateInputEngineVersion(lock.input.lnako_version, "lnakoVersion", diagnostics);
 
     var id_set = try buildIdSet(diagnostics.allocator, lock.packages);
     defer id_set.deinit(diagnostics.allocator);
@@ -785,7 +800,7 @@ pub fn validate(lock: *const Lock, diagnostics: *diag.List) !void {
             try diagnostics.addFmt(diag.E014_INVALID_PROFILE, .err, "nako.lock.input.target", .{}, "input.target does not match profile \"{s}\" os/cpu/abi", .{lock.input.profile});
         }
     }
-    try validatePackageSet(lock.packages, &id_set, if (selected) |record| record.* else null, "nako.lock.packages", diagnostics);
+    try validatePackageSet(lock.packages, &id_set, if (selected) |record| record.* else null, lock.input.target.compat_js, "nako.lock.packages", diagnostics);
 
     var profile_package_names: std.StringHashMapUnmanaged(void) = .empty;
     defer profile_package_names.deinit(diagnostics.allocator);
@@ -807,7 +822,8 @@ pub fn validate(lock: *const Lock, diagnostics: *diag.List) !void {
         if (record != null and std.mem.eql(u8, profile.profile, lock.input.profile) and !packageMapsEql(lock.packages, profile.packages)) {
             try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, profile_path, .{}, "profilePackages.{s} does not match packages", .{profile.profile});
         }
-        try validatePackageSet(profile.packages, &profile_id_set, if (record) |value| value.* else null, profile_path, diagnostics);
+        const target_compat_js = std.mem.eql(u8, profile.profile, lock.input.profile) and lock.input.target.compat_js;
+        try validatePackageSet(profile.packages, &profile_id_set, if (record) |value| value.* else null, target_compat_js, profile_path, diagnostics);
     }
 
     // 複数 profile 形式では `profiles` と `profilePackages` の名前集合が一致

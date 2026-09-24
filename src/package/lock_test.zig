@@ -326,6 +326,28 @@ test "source artifactは選択native実装のcontainerとして扱う" {
     try T.expect(diagnostics.find(diag.E008_MISSING_ARTIFACT) == null);
 }
 
+test "registry source artifactはnative implementationの欠落を許容しない" {
+    const text = try lockWithPackages(
+        \\    "pkg:10000000000000000000000000000000": {
+        \\      "id": "pkg:10000000000000000000000000000000",
+        \\      "name": "registry-lib",
+        \\      "version": "1.0.0",
+        \\      "implementation": "native",
+        \\      "source": { "type": "registry", "url": "https://registry.example.com/registry-lib" },
+        \\      "dependencies": [],
+        \\      "features": [],
+        \\      "artifacts": { "source": { "kind": "source" } }
+        \\    }
+    , "\"runtime\": \"lnako\", \"os\": \"macos\", \"cpu\": \"aarch64\", \"abi\": \"gnu\"");
+    defer T.allocator.free(text);
+    var value = try parseValid(text);
+    defer value.deinit();
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    try lock.validate(&value, &diagnostics);
+    try T.expect(diagnostics.find(diag.E008_MISSING_ARTIFACT) != null);
+}
+
 test "source ESM実装の正規表記を受理し通常profileではE006で拒否する" {
     const text = try lockWithPackages(
         \\    "pkg:10000000000000000000000000000000": {
@@ -347,6 +369,14 @@ test "source ESM実装の正規表記を受理し通常profileではE006で拒�
     try lock.validate(&value, &diagnostics);
     try T.expect(diagnostics.find(diag.E006_JS_IN_NORMAL_MODE) != null);
     try T.expect(diagnostics.find(diag.E029_INVALID_VALUE) == null);
+
+    // 明示的 --compat-js はprofile宣言より優先してESM sourceを許容する。
+    value.input.target.compat_js = true;
+    var compat_diagnostics = diag.List.init(T.allocator);
+    defer compat_diagnostics.deinit();
+    try lock.validate(&value, &compat_diagnostics);
+    try T.expect(compat_diagnostics.find(diag.E006_JS_IN_NORMAL_MODE) == null);
+    try T.expect(compat_diagnostics.find(diag.E008_MISSING_ARTIFACT) == null);
 }
 
 test "未知artifact kindをE007で拒否する" {
@@ -1623,6 +1653,46 @@ test "不正なversionはvalidateでE024となり優先固定も失敗する" {
     try lock.validate(&value, &diagnostics);
     try T.expect(diagnostics.find(diag.E024_INVALID_SEMVER) != null);
     try T.expectError(error.InvalidLockVersion, lock.buildLockedIndex(T.allocator, &value, "default", &.{}));
+}
+
+test "lock input engine versionsはSemVerとして検証する" {
+    const text =
+        \\{
+        \\  "schemaVersion": 1,
+        \\  "resolverVersion": 1,
+        \\  "input": {
+        \\    "manifestSha256": "sha256:aa",
+        \\    "profile": "default",
+        \\    "features": [],
+        \\    "target": { "os": "macos", "cpu": "aarch64", "abi": "gnu" },
+        \\    "runtime": "lnako",
+        \\    "nakoVersion": "invalid",
+        \\    "cnakoVersion": "3.7",
+        \\    "lnakoVersion": "not-semver"
+        \\  },
+        \\  "packages": {},
+        \\  "profiles": {
+        \\    "default": { "runtime": "lnako", "os": "macos", "cpu": "aarch64", "abi": "gnu" }
+        \\  }
+        \\}
+    ;
+    var value = try parseValid(text);
+    defer value.deinit();
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    try lock.validate(&value, &diagnostics);
+    try T.expectEqual(@as(usize, 3), diagnostics.errorCount());
+    var invalid_fields: usize = 0;
+    for (diagnostics.items.items) |item| {
+        if (std.mem.eql(u8, item.code, diag.E024_INVALID_SEMVER) and
+            (std.mem.eql(u8, item.path, "nako.lock.input.nakoVersion") or
+                std.mem.eql(u8, item.path, "nako.lock.input.cnakoVersion") or
+                std.mem.eql(u8, item.path, "nako.lock.input.lnakoVersion")))
+        {
+            invalid_fields += 1;
+        }
+    }
+    try T.expectEqual(@as(usize, 3), invalid_fields);
 }
 
 fn multiProfileLock(scope: std.mem.Allocator, cnako_version: []const u8) !lock.Lock {
