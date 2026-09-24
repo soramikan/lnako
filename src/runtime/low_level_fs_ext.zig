@@ -465,6 +465,9 @@ fn cloneFileLinux(io: std.Io, source: []const u8, destination: []const u8, mode:
         // NOREPLACEのEEXISTに加え、既存DSTがディレクトリのEISDIRも
         // 「既存DSTがある」契約のEEXISTとして扱う。
         if (errno == .EXIST or errno == .ISDIR) return error.PathAlreadyExists;
+        // flag・パスは検証済みのため、EINVALはFS/カーネルのRENAME_NOREPLACE
+        // 未対応を意味し契約のENOTSUPへ丸める。
+        if (errno == .INVAL) return error.OperationUnsupported;
         return low_level_fs.linuxErrno(errno);
     }
     keep = true;
@@ -681,7 +684,17 @@ fn allocateDarwin(io: std.Io, file: std.Io.File, offset: i64, size: u64) anyerro
     // F_ALLOCATEALLでも不足し得るため、実確保量を確認する。
     if (store.fst_bytesalloc < extra) return error.NoSpaceLeft;
     // F_PREALLOCATEは論理EOFを動かさないため、fallocateと同じく範囲末尾まで
-    // 論理サイズを伸ばす。
+    // 論理サイズを伸ばす。最初のlengthスナップショット後に他のwriterが
+    // endを超えて伸ばした場合、ftruncateで縮めてその書込みを捨てないよう
+    // 直前に再確認し、伸長が残る場合だけftruncateする（Linux fallocateは
+    // 既により大きいファイルを縮めない）。再確認後の競合窓は残るが、
+    // POSIXに「より小さい場合のみ伸ばす」原子操作は無く、posix_fallocate
+    // 実装でも同じ制約を持つため許容する。
+    const latest = file.length(io) catch |failure| switch (failure) {
+        error.AccessDenied => return error.OperationUnsupported,
+        else => return failure,
+    };
+    if (end <= latest) return;
     const new_length = std.math.cast(std.c.off_t, end) orelse return error.InvalidSize;
     while (true) {
         const result = std.c.ftruncate(file.handle, new_length);

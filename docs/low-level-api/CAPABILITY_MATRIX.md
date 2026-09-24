@@ -2,7 +2,7 @@
 
 Issue [#37](https://github.com/soramikan/lnako/issues/37) のcapability方針に従い、命令の登録有無をOSごとに変えず、対応状況を capability で機械判定する。機械可読な正本は [`catalog.json`](catalog.json) の `capabilities` であり、本書はその解釈と計画値を示す。
 
-`catalog.json` の各capabilityは2層のmatrixを持つ。正本の `os` / `runtimes` は**現在の実装状況**で、`low_level_foundation.zig` の `capabilityImplemented` と実行経路に一致する（未実装は全てfalse、cnako側に低レイヤー命令は存在しないため `cnako_node` は常にfalse）。`planned.os` / `planned.runtimes` と本書の表は**将来計画値**で、#27〜#36 の実装が進むにつれ正本へ反映する。実装済み30件（`stream_file_io` / `raw_stdio` / `stat` / `lstat` / `symlink` / `readlink` / `hardlink` / `realpath` / `rename` / `unlink` / `rmdir` / `truncate` / `utime` / `dir_iterator` / `chmod` / `chown` / `access` / `uid_gid` / `argv_spawn` / `signal` / `tty_isatty` / `priority` / `incremental_hash` / `locale_collate` / `display_width` / `statfs` / `reflink` / `seek_data` / `seek_hole` / `fallocate`）の経路別値は実際の判定実装に一致する: Interpreterはホストが対象の関数を提供しない場合 `低レイヤー機能対応判定` がfalseを返すため `lnako_interpreter` は `conditional`、AOTは `pluginContext` が常に全関数を提供するため `lnako_aot` は `true`。`priority` とIssue #36の5件はPOSIX専用でWindowsは `ENOTSUP`（照会false）のため `os.windows` はfalse。`locale_collate` はOSの照合機能（POSIX `newlocale`/`strcoll_l`、Windows `CompareStringEx`）へ委譲するためInterpreterではホストcallback依存の `conditional`。`display_width` はホスト非依存の共有アルゴリズムのため `lnako_interpreter` も `true`。WASIでは `locale_collate` の非Cロケール照合は `ENOTSUP` になる（Cロケールbytewise比較と `display_width` は利用可能）。`reflink` は対応FS（btrfs/XFS/APFS等）でのみ成立し、macOSの `fallocate`（`F_PREALLOCATE`）もFS依存のため、それぞれの `os` 値は `conditional` になる。なおmacOSの `fallocate` は `F_PREALLOCATE` がEOFからの連続確保しか表現できない制約から、`offset` が現在のEOFを超えるsparse確保は隙間全域の過剰予約を避けるため `ENOTSUP` で返す。`seek_data` / `seek_hole` はmacOS等のネイティブ非対応環境で保守的emulated応答（全領域をデータ・空洞は末尾のみ）を返すが、成功時にfd位置が結果位置へ移動する点はLinuxの `lseek` と同じ契約である。
+`catalog.json` の各capabilityは2層のmatrixを持つ。正本の `os` / `runtimes` は**現在の実装状況**で、`low_level_foundation.zig` の `capabilityImplemented` と実行経路に一致する（未実装は全てfalse、cnako側に低レイヤー命令は存在しないため `cnako_node` は常にfalse）。`planned.os` / `planned.runtimes` と本書の表は**将来計画値**で、#27〜#36 の実装が進むにつれ正本へ反映する。実装済み30件（`stream_file_io` / `raw_stdio` / `stat` / `lstat` / `symlink` / `readlink` / `hardlink` / `realpath` / `rename` / `unlink` / `rmdir` / `truncate` / `utime` / `dir_iterator` / `chmod` / `chown` / `access` / `uid_gid` / `argv_spawn` / `signal` / `tty_isatty` / `priority` / `incremental_hash` / `locale_collate` / `display_width` / `statfs` / `reflink` / `seek_data` / `seek_hole` / `fallocate`）の経路別値は実際の判定実装に一致する: Interpreterはホストが対象の関数を提供しない場合 `低レイヤー機能対応判定` がfalseを返すため `lnako_interpreter` は `conditional`、AOTは `pluginContext` が常に全関数を提供するため `lnako_aot` は `true`。`priority` とIssue #36の5件はPOSIX専用でWindowsは `ENOTSUP`（照会false）のため `os.windows` はfalse。`locale_collate` はOSの照合機能（POSIX `newlocale`/`strcoll_l`、Windows `CompareStringEx`）へ委譲するためInterpreterではホストcallback依存の `conditional`。`display_width` はホスト非依存の共有アルゴリズムのため `lnako_interpreter` も `true`。WASIでは `locale_collate` の非Cロケール照合は `ENOTSUP` になる（Cロケールbytewise比較と `display_width` は利用可能）。`reflink` は対応FS（btrfs/XFS/APFS等）でのみ成立し、`fallocate` もFS依存（Linux `fallocate(2)` のEOPNOTSUPP・macOS `F_PREALLOCATE`）のため、それぞれの `os` 値は `conditional` になる。Linuxの `seek_data` / `seek_hole` は `lseek(SEEK_DATA/SEEK_HOLE)` をFSが実装しない場合 `ENOTSUP` になるため `os.linux` も `conditional` で、macOS等のネイティブ非対応環境は保守的emulated応答を常に返せるため `true` のままとする。なおmacOSの `fallocate` は `F_PREALLOCATE` がEOFからの連続確保しか表現できない制約から、`offset` が現在のEOFを超えるsparse確保は隙間全域の過剰予約を避けるため `ENOTSUP` で返す。`seek_data` / `seek_hole` はmacOS等のネイティブ非対応環境で保守的emulated応答（全領域をデータ・空洞は末尾のみ）を返すが、成功時にfd位置が結果位置へ移動する点はLinuxの `lseek` と同じ契約である。
 
 ## 分類
 
@@ -49,9 +49,9 @@ Issue [#37](https://github.com/soramikan/lnako/issues/37) のcapability方針に
 | priority | true | true | false |
 | statfs | true | true | false |
 | reflink | conditional | conditional | conditional |
-| seek_data | true | true | false |
-| seek_hole | true | true | false |
-| fallocate | true | conditional | false |
+| seek_data | conditional | true | false |
+| seek_hole | conditional | true | false |
+| fallocate | conditional | conditional | false |
 | termios | true | true | false |
 | nss | true | true | false |
 | acl | true | true | false |

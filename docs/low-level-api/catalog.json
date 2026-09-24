@@ -1906,7 +1906,7 @@
       "id": "seek_data",
       "class": "lnako_native",
       "os": {
-        "linux": true,
+        "linux": "conditional",
         "macos": true,
         "windows": false
       },
@@ -1917,7 +1917,7 @@
       },
       "planned": {
         "os": {
-          "linux": true,
+          "linux": "conditional",
           "macos": true,
           "windows": false
         },
@@ -1932,7 +1932,7 @@
       "id": "seek_hole",
       "class": "lnako_native",
       "os": {
-        "linux": true,
+        "linux": "conditional",
         "macos": true,
         "windows": false
       },
@@ -1943,7 +1943,7 @@
       },
       "planned": {
         "os": {
-          "linux": true,
+          "linux": "conditional",
           "macos": true,
           "windows": false
         },
@@ -1958,7 +1958,7 @@
       "id": "fallocate",
       "class": "lnako_native",
       "os": {
-        "linux": true,
+        "linux": "conditional",
         "macos": "conditional",
         "windows": false
       },
@@ -1969,7 +1969,7 @@
       },
       "planned": {
         "os": {
-          "linux": true,
+          "linux": "conditional",
           "macos": "conditional",
           "windows": false
         },
