@@ -657,7 +657,7 @@ fn isCanonicalRepoPath(path: []const u8) bool {
     return true;
 }
 
-fn isPackageId(id: []const u8) bool {
+pub fn isPackageId(id: []const u8) bool {
     if (id.len != 36 or !std.mem.startsWith(u8, id, "pkg:")) return false;
     for (id[4..]) |c| {
         if (!std.ascii.isHex(c) or (c >= 'A' and c <= 'F')) return false;

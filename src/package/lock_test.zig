@@ -475,6 +475,43 @@ test "runtime・engines version の変更は stale_target として検出する"
     try T.expectEqualStrings("0.2.2", parsed.input.lnako_version.?);
 }
 
+test "compatJs も target 鮮度鍵として stale_target を検出する" {
+    // `run`/`build --compat-js` は ESM 実装の可否を変えるため target の
+    // 鮮度鍵。compat 実行で作った lock は非 compat 入力へ stale となり、
+    // serialize/parse でも保存・復元される。非 compat lock は compatJs
+    // を書かず、欠落は false と同等に扱う。
+    const nodes = [_]resolver.PackageNode{
+        try node(sqlite_id, "1.2.3", &.{.{ .pkg = req_id }}, &.{"default"}),
+        try node(req_id, "2.0.1", &.{}, &.{ "default", "http" }),
+    };
+    var compat = sampleInput();
+    compat.target.compat_js = true;
+    var value = try lock.build(T.allocator, compat, &.{default_profile}, &nodes, default_fixtures.details());
+    defer value.deinit();
+
+    try T.expectEqual(lock.Freshness.fresh, lock.checkFreshness(&value, compat));
+    // compat-js なしの入力は不一致（target 不一致 → stale_target）。
+    try T.expectEqual(lock.Freshness.stale_target, lock.checkFreshness(&value, sampleInput()));
+
+    // serialize/parse で compatJs が保存・復元される。
+    const bytes = try lock.toBytes(&value, T.allocator);
+    defer T.allocator.free(bytes);
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    var parsed = try lock.parse(T.allocator, bytes, &diagnostics);
+    defer parsed.deinit();
+    try T.expect(parsed.input.target.compat_js);
+
+    // 非 compat lock は compatJs を書かず、旧 lock の欠落は false と
+    // 同等に扱われて fresh のまま。
+    var plain = try sampleLock(T.allocator);
+    defer plain.deinit();
+    const plain_bytes = try lock.toBytes(&plain, T.allocator);
+    defer T.allocator.free(plain_bytes);
+    try T.expect(std.mem.indexOf(u8, plain_bytes, "compatJs") == null);
+    try T.expectEqual(lock.Freshness.fresh, lock.checkFreshness(&plain, sampleInput()));
+}
+
 test "features順序と重複は鮮度に影響しない" {
     var value = try sampleLock(T.allocator);
     defer value.deinit();

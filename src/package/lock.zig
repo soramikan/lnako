@@ -436,7 +436,7 @@ fn parseInput(parser: *Parser, value: std.json.Value, path: []const u8) !?Input 
         return null;
     };
     const target_object = (try parser.asObject(target_value, path)) orelse return null;
-    try parser.rejectUnknown(target_object, &.{ "os", "cpu", "abi" }, path);
+    try parser.rejectUnknown(target_object, &.{ "os", "cpu", "abi", "compatJs" }, path);
     const os_value = target_object.get("os") orelse {
         try parser.report(diag.E019_REQUIRED_FIELD_MISSING, path, "missing required field \"target.os\"", .{});
         return null;
@@ -480,6 +480,9 @@ fn parseInput(parser: *Parser, value: std.json.Value, path: []const u8) !?Input 
             .os = try parser.duplicate((try parser.asString(os_value, path)) orelse return null),
             .cpu = try parser.duplicate((try parser.asString(cpu_value, path)) orelse return null),
             .abi = try parser.duplicate((try parser.asString(abi_value, path)) orelse return null),
+            // `--compat-js` で解決した lock のみ記録する任意項目。
+            // 欠落は false と同等。
+            .compat_js = if (target_object.get("compatJs")) |v| v == .bool and v.bool else false,
         },
         .mutable_paths = mutable_paths.items,
     };
@@ -1334,6 +1337,7 @@ pub fn build(gpa: Allocator, input: Input, profiles: []const NamedProfile, nodes
             .os = try allocator.dupe(u8, input.target.os),
             .cpu = try allocator.dupe(u8, input.target.cpu),
             .abi = try allocator.dupe(u8, input.target.abi),
+            .compat_js = input.target.compat_js,
         },
         .runtime = try dupeOpt(allocator, input.runtime),
         .nako_version = try dupeOpt(allocator, input.nako_version),

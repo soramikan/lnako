@@ -46,7 +46,11 @@
       "properties": {
         "os": { "$ref": "#/$defs/osName" },
         "cpu": { "$ref": "#/$defs/cpuName" },
-        "abi": { "$ref": "#/$defs/abiName" }
+        "abi": { "$ref": "#/$defs/abiName" },
+        "compatJs": {
+          "description": "--compat-js または profile compat-js で ESM 実装を許容して解決したか。実装選択を変え得るため lock 鮮度入力に含める。",
+          "type": "boolean"
+        }
       }
     },
     "runtimeName": {

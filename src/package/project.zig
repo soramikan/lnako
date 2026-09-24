@@ -328,7 +328,10 @@ fn resolveTarget(record: lock_model.ProfileRecord, opts: *const PrepareOptions) 
         .cpu = record.cpu,
         .abi = record.abi,
         .os_version = opts.os_version,
-        .compat_js = record.compat_js orelse false,
+        // `--compat-js` 実行は profile 宣言が無くても ESM 実装を許容する
+        // （profile-less プロジェクトの合成 record は compat-js を持た
+        // ないため、CLI 側の compat 実行を解決へ伝える必要がある）。
+        .compat_js = (record.compat_js orelse false) or opts.compat_js,
         .optimize = record.optimize orelse "O0",
         .nako_version = opts.nako_version,
         .cnako_version = opts.cnako_version,
@@ -1075,6 +1078,17 @@ const Composite = struct {
             var meta: resolver.VersionMeta = undefined;
             if (local.manifest) |*dep_manifest| {
                 meta = try resolver.metaFromManifest(gpa, dep_manifest, self.target);
+                // any/common profile は cnako 環境へも materialize され得る
+                // ので、lnako へ coerce した target だけでなく cnako
+                // target にも照合する。`runtimes = ["lnako"]` だけの
+                // package を受理して `sync --runtime cnako` で使えない
+                // 環境を作らないため。
+                if (self.source_only and meta.unavailable_reason == null) {
+                    var cnako_target = self.target;
+                    cnako_target.runtime = "cnako";
+                    const cnako_meta = try resolver.metaFromManifest(gpa, dep_manifest, cnako_target);
+                    if (cnako_meta.unavailable_reason) |reason| meta.unavailable_reason = reason;
+                }
                 // 推移的 pkg 辺を rootDeps と同じ条件で絞る。`dep.profile`
                 // は現行 profile 名と一致する場合のみ有効で、feature-gated
                 // で未 activated の宣言は除外する。metaFromManifest は両方
@@ -1166,6 +1180,9 @@ pub const PrepareOptions = struct {
     /// 要求された sync runtime（`lnako sync --runtime`）。manifest が
     /// profile を宣言しない場合の合成 profile runtime に使う。
     requested_runtime: ?[]const u8 = null,
+    /// `run`/`build --compat-js` の compat 実行。ESM 実装の許容と
+    /// lock 鮮度入力の target に反映する。
+    compat_js: bool = false,
 };
 
 pub const LockOutcome = struct {
@@ -1238,6 +1255,9 @@ pub fn ensureLock(
             .os = try a.dupe(u8, record.os),
             .cpu = try a.dupe(u8, record.cpu),
             .abi = try a.dupe(u8, record.abi),
+            // ESM 許容も実装選択を変える鮮度鍵（resolveTarget と同じ
+            // effective 値を記録する）。
+            .compat_js = (record.compat_js orelse false) or opts.compat_js,
         },
         // 解決 runtime・engines 照合 version を鮮度鍵へ含める。
         // `--runtime` 切替・コンパイラ更新で lock を再解決するため。

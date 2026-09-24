@@ -52,6 +52,10 @@ pub const PrepFlags = struct {
     cache_dir: ?[]const u8 = null,
     allow_plaintext_http: bool = false,
     json: bool = false,
+    /// `run`/`build --compat-js` の compat 実行。依存解決の ESM 許容と
+    /// lock 鮮度入力へ伝える（prep フラグとしては抽出せず呼出し側が
+    /// 設定する）。
+    compat_js: bool = false,
 
     pub fn deinit(self: *PrepFlags, a: Allocator) void {
         self.features.deinit(a);
@@ -69,8 +73,14 @@ pub const PrepFlags = struct {
             .requested_runtime = "lnako",
             // engines 照合にこの処理系の version を供給する。未供給だと
             // `engines.nako`/`engines.lnako` 制約が解決へ効かない。
+            // `cnako_version` も sync と同じ値を供給する。lock input の
+            // version tuple が入口ごとに違うと、`lnako lock` が書いた
+            // lock を `lnako sync` が stale 判定して書き戻す往復に
+            // なるため、どの入口でも同じ組を記録する。
             .nako_version = lnako.package.semver.Version.parse(project.compat_nako_version) catch null,
+            .cnako_version = lnako.package.semver.Version.parse(project.compat_nako_version) catch null,
             .lnako_version = lnako.package.semver.Version.parse(lnako.version) catch null,
+            .compat_js = self.compat_js,
         };
         options.policy.offline = self.offline;
         options.policy.allow_plaintext_http = self.allow_plaintext_http;

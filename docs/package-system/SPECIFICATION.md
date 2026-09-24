@@ -249,7 +249,7 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
     "manifestSha256": "...",
     "profile": "default",
     "features": ["default", "http"],
-    "target": { "os": "macos", "cpu": "aarch64", "abi": "gnu" },
+    "target": { "os": "macos", "cpu": "aarch64", "abi": "gnu", "compatJs": true },
     "runtime": "lnako",
     "nakoVersion": "3.7.24",
     "cnakoVersion": "3.7.24",
@@ -326,7 +326,7 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
 - lnako/cnako が共用する同一 source artifact は、同じ Public ID・版・hash で参照する。profile をまたいで同一 ID・版の source artifact の hash が食い違う lock は不正とする。
 - 通常解決では既存 lock の版を優先する。`update` で指定した package だけ優先固定を解除する。指定外の package が変化した場合は、変更元 package を変更理由（`caused_by`）として説明する。
 - `--locked` は lock 欠落、未知 `schemaVersion`、`resolverVersion` 不一致、manifest/profile/features/target の変更を検出したとき、lock を書き換えず失敗する。呼出し側は先に意味検証（`validate`）を行い、その上で鮮度判定を行う（鮮度判定自体は入力条件のみを比較し、意味検証を含まない）。
-- 鮮度は選択された `input`（`manifestSha256`・`profile`・`features`・`target`・`runtime`・`nakoVersion`・`cnakoVersion`・`lnakoVersion`・`mutablePaths`）で判定する。manifest の変更は全 profile に影響する `manifestSha256` の変化として検出し、別 profile の選択は `input.profile` の変化として検出する。`runtime`・各 version は解決時の runtime と engines 照合値を記録し、`--runtime` 切替やコンパイラ更新で再解決する。これらを記録しない旧 lock は不一致として再解決される。非選択 profile の `profilePackages` は lock の再生成時に更新する。
+- 鮮度は選択された `input`（`manifestSha256`・`profile`・`features`・`target`・`runtime`・`nakoVersion`・`cnakoVersion`・`lnakoVersion`・`mutablePaths`）で判定する。manifest の変更は全 profile に影響する `manifestSha256` の変化として検出し、別 profile の選択は `input.profile` の変化として検出する。`runtime`・各 version は解決時の runtime と engines 照合値を記録し、`--runtime` 切替やコンパイラ更新で再解決する。これらを記録しない旧 lock は不一致として再解決される。`target.compatJs` は `--compat-js` 実行または profile の `compat-js` で ESM 実装を許容したかを記録し（false は省略）、実装選択の違いで再解決する。非選択 profile の `profilePackages` は lock の再生成時に更新する。
 - 生成の決定性は `build`/`buildPackages` が生成したモデルを対象とする。これらは package マップ・profile・features・依存辺・artifact をソートして保持する。serializer はモデルのスライス順をそのまま出力するため、手動構築したモデルは正規化しない限り意味的に同じでもバイト列・SHA-256 が異なり得る。
 - path 依存は `mutable` フラグで二種類に分かれる。`mutable = false`（既定）は宣言 tree の内容 digest で pin し、内容変更は pin 不一致として再解決を要求する。`mutable = true` は宣言 dir を生参照するが、宣言 dir の内容 digest（`.nako`・`.git` を除く tree 全体）を `input.mutablePaths` に path 昇順で記録する。manifest・exports・推移的宣言・ソースのいずれの変更も digest 不一致として検出され、manifest が同一でも lock が陳腐化して再解決される。dir が変わらなければ既存 lock を再利用する。
 
@@ -461,6 +461,7 @@ size = 1234
 - cnako は依存解決・パッケージ同期を `lnako sync --json` へ委譲できる。
 - `lnako sync --json` は解決結果を JSON で標準出力し、解決済み環境メタデータを `.nako/environment.json` に記録する。
 - cnako の `--no-sync` 実行時は lnako を起動せず、`.nako/environment.json` の `lockSha256`・`profile`・各パッケージの `path` と命令メタデータを単独で検証する。`lockSha256` は参照先 `nako.lock` の実 SHA-256 と一致することを検証し、環境情報が欠落・破損・版不一致・lockハッシュ不一致の場合は `E034_INVALID_ENVIRONMENT_REFERENCE` を診断する。`lockSha256` は SHA-256 表現のみを許容し、SRI 形式 `sha256-<43文字Base64>=`、`sha256:` + 64桁 hex、生 64桁 hex のいずれかとする。
+- 環境再利用時は `packages` のキー集合が選択 profile の lock グラフと完全一致することを要求し、欠落・余分な record は不一致とする。各 record は environment schema の形状（必須 `name`/`version`/`path`、任意 `id`/`exports`/`commands`、未知キー禁止）を満たし、`name`/`version`/`id` は lock entry と一致しなければならない。`.nako`・`.nako/env`・世代 dir・package path の各成分は no-follow で辿り、中間成分が symlink/reparse point の環境は管理外を指すものとして再利用しない。
 - 動的呼び出し（文字列指定による動的実行等）で静的に共用性を確認できない機能利用は未検査とし、厳格な共用検査（strict sharing check）において `E033_STRICT_SHARING_FAILED` で拒絶する。共用ライブラリの保証には両処理系での自動テスト実行を必須証拠とする。
 
 ## 8. 診断

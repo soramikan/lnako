@@ -222,6 +222,48 @@ test "prepareForExecution は lock と .nako 環境を自動準備する" {
     try testing.expect(try dirFileExists(a, app_root, ".nako/environment.json"));
 }
 
+test "prepareForExecution は compat_js を lock input target へ記録する" {
+    // `run`/`build --compat-js` は ESM 実装を許容するため、解決結果が
+    // 非 compat 実行と異なり得る。lock input の `target.compatJs` に
+    // 記録して compat 切替を鮮度で検出する。
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const app_root = try newAppFixture(a, &temporary);
+    try appManifest(a, app_root,
+        \\[dependencies.path]
+        \\lib = { path = "lib" }
+        \\
+    );
+    const main_path = try std.fs.path.join(a, &.{ app_root, "main.nako3" });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = main_path, .data = "「ok」を表示\n" });
+
+    const lockCompat = struct {
+        fn run(aa: std.mem.Allocator, root: []const u8) !?bool {
+            const bytes = try std.Io.Dir.cwd().readFileAlloc(io, try std.fs.path.join(aa, &.{ root, "nako.lock" }), aa, .limited(4 * 1024 * 1024));
+            var parsed = try std.json.parseFromSlice(std.json.Value, aa, bytes, .{});
+            defer parsed.deinit();
+            const input = parsed.value.object.get("input") orelse return null;
+            const target = input.object.get("target") orelse return null;
+            const compat = target.object.get("compatJs") orelse return false;
+            return compat == .bool and compat.bool;
+        }
+    }.run;
+
+    var cli = Cli.init(a);
+    var flags = project_cmd.PrepFlags{ .compat_js = true };
+    try project_cmd.prepareForExecution(a, io, main_path, &flags, &cli.env, "run", &cli.err.writer);
+    try testing.expectEqual(@as(?bool, true), try lockCompat(a, app_root));
+
+    // 非 compat 実行では stale_target として再解決し compatJs を外す。
+    var cli2 = Cli.init(a);
+    var plain = project_cmd.PrepFlags{};
+    try project_cmd.prepareForExecution(a, io, main_path, &plain, &cli2.env, "run", &cli2.err.writer);
+    try testing.expectEqual(@as(?bool, false), try lockCompat(a, app_root));
+}
+
 test "prepareForExecution はプロジェクト外では何もしない" {
     var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_impl.deinit();
@@ -973,4 +1015,29 @@ test "依存テーブルヘッダの行末コメントを許容する" {
     try cli.run(a, "remove", &.{"other"}, app_root);
     const removed = try readFile(a, app_root, "nako.toml");
     try testing.expect(std.mem.indexOf(u8, removed, "other = { path") == null);
+}
+
+test "toOptions は sync と同一の version tuple と compat_js を供給する" {
+    // lock/run 系と `lnako sync` で lock input の version tuple が違うと、
+    // 片方が書いた lock をもう片方が stale 判定して書き戻す往復になる。
+    // 全入口で同一の組（nako/cnako/lnako version）を供給する。
+    const project = @import("lnako").package.project;
+    var flags = project_cmd.PrepFlags{};
+    defer flags.deinit(testing.allocator);
+    const options = flags.toOptions(null);
+    const nako = options.nako_version orelse return error.TestExpectedEqual;
+    const cnako = options.cnako_version orelse return error.TestExpectedEqual;
+    const lnako_v = options.lnako_version orelse return error.TestExpectedEqual;
+    const expected = try std.fmt.allocPrint(testing.allocator, "{f}", .{nako});
+    defer testing.allocator.free(expected);
+    try testing.expectEqualStrings(project.compat_nako_version, expected);
+    const cnako_text = try std.fmt.allocPrint(testing.allocator, "{f}", .{cnako});
+    defer testing.allocator.free(cnako_text);
+    try testing.expectEqualStrings(project.compat_nako_version, cnako_text);
+    try testing.expect(lnako_v.major >= 0);
+    // compat_js フラグは options へそのまま写る。
+    try testing.expect(!options.compat_js);
+    var compat_flags = project_cmd.PrepFlags{ .compat_js = true };
+    defer compat_flags.deinit(testing.allocator);
+    try testing.expect(compat_flags.toOptions(null).compat_js);
 }

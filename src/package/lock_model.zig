@@ -28,14 +28,20 @@ pub const known_optimize = [_][]const u8{ "O0", "O1", "O2", "O3" };
 // データモデル
 // ---------------------------------------------------------------------------
 
-/// `input.target`。OS/CPU/ABI のみを固定し、runtime と compat-js は profile が持つ。
+/// `input.target`。OS/CPU/ABI と、実装選択を変え得る `--compat-js` の
+/// 有効状態を固定する。profile 宣言の `compat-js` は profile record が持つ。
 pub const Target = struct {
     os: []const u8,
     cpu: []const u8,
     abi: []const u8,
+    /// `--compat-js` / profile の `compat-js` で ESM 実装を許容したか。
+    /// 実装選択を変え得るため鮮度鍵に含める。false は省略して記録する
+    /// （旧 lock は欠落 → false と同等）。
+    compat_js: bool = false,
 
     pub fn eql(a: Target, b: Target) bool {
-        return std.mem.eql(u8, a.os, b.os) and std.mem.eql(u8, a.cpu, b.cpu) and std.mem.eql(u8, a.abi, b.abi);
+        return std.mem.eql(u8, a.os, b.os) and std.mem.eql(u8, a.cpu, b.cpu) and std.mem.eql(u8, a.abi, b.abi) and
+            a.compat_js == b.compat_js;
     }
 };
 
@@ -349,6 +355,7 @@ fn writeTarget(writer: *std.Io.Writer, target: Target) !void {
     try writeString(writer, target.cpu);
     try writer.writeAll(", \"abi\": ");
     try writeString(writer, target.abi);
+    if (target.compat_js) try writer.writeAll(", \"compatJs\": true");
     try writer.writeAll(" }");
 }
 

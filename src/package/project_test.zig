@@ -1307,3 +1307,183 @@ test "環境metadataのmutablePaths記録は宣言dirのmetadata変更を検出�
     try writeEnv(temporary.dir, mutable_json2, &lock_hex2, lib_id);
     try testing.expect(try envCurrent(&loaded, &diagnostics));
 }
+
+test "any/common profile は依存 manifest を cnako target にも照合する" {
+    // `runtime = "any"` profile の解決 target は lnako へ coerce されるが、
+    // `sync --runtime cnako` でも同じ package 集合を materialize するため、
+    // `runtimes = ["lnako"]` だけの source package は受理できない
+    // （受理すると使えない cnako 環境を生成する）。
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/lib/src");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/lib/src/index.nako3",
+        .data = "●表示とは\nここまで\n",
+    });
+    const writeDep = struct {
+        fn run(dir: std.Io.Dir, runtimes: []const u8) !void {
+            const source = try std.fmt.allocPrint(testing.allocator,
+                \\[package]
+                \\name = "lib"
+                \\version = "1.0.0"
+                \\license = "MIT"
+                \\runtimes = [{s}]
+                \\
+                \\[[exports]]
+                \\name = "lib"
+                \\path = "src/index.nako3"
+                \\
+            , .{runtimes});
+            defer testing.allocator.free(source);
+            try dir.writeFile(io, .{ .sub_path = "app/lib/nako.toml", .data = source });
+        }
+    }.run;
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/nako.toml",
+        .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\lib = { path = "lib" }
+        \\
+        \\[profiles]
+        \\default = { runtime = "any", os = "macos", cpu = "aarch64", abi = "gnu" }
+        \\
+        ,
+    });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+
+    // lnako 専用の source package は any/common profile で受理しない。
+    try writeDep(temporary.dir, "\"lnako\"");
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    defer loaded.deinit();
+    try testing.expectError(error.ResolveFailed, project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics));
+
+    // 両 runtime 対応を宣言する package は受理する。
+    try writeDep(temporary.dir, "\"lnako\", \"cnako\"");
+    var diagnostics2 = newDiagnostics();
+    defer diagnostics2.deinit();
+    var loaded2 = try project.load(testing.allocator, io, app_root, &diagnostics2);
+    defer loaded2.deinit();
+    var outcome = try project.ensureLock(testing.allocator, io, &loaded2, &.{}, &diagnostics2);
+    defer outcome.deinit();
+}
+
+test "environmentPackagesUsableは余分なrecordと形状違反と中間symlinkを拒否する" {
+    // packages map は graph と key 集合が完全一致し、各 record が
+    // environment schema の形状（name/version/id/path/exports/commands）
+    // を満たす必要がある。中間 dir（.nako/env 等）が symlink の環境も
+    // 受理しない。
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/.nako/env/gen-1/deps/lib");
+
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const entries = [_]lock_model.PackageEntry{.{
+        .id = "pkg:11111111111111111111111111111111",
+        .name = "lib",
+        .version = "1.0.0",
+        .source = .{ .kind = .registry },
+    }};
+    var lock = lock_model.Lock{
+        .arena = arena_impl,
+        .input = .{
+            .manifest_sha256 = "sha256:00",
+            .profile = "default",
+            .target = .{ .os = "macos", .cpu = "aarch64", .abi = "gnu" },
+        },
+        .packages = &entries,
+    };
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+    const writeEnv = struct {
+        fn run(dir: std.Io.Dir, packages_json: []const u8) !void {
+            const source = try std.fmt.allocPrint(testing.allocator,
+                \\{{"schemaVersion":1,"lockSha256":"sha256:00","profile":"default","runtime":"lnako","generation":"gen-1","packages":{s}}}
+                \\
+            , .{packages_json});
+            defer testing.allocator.free(source);
+            try dir.writeFile(io, .{ .sub_path = "app/.nako/environment.json", .data = source });
+        }
+    }.run;
+    const usable = struct {
+        fn run(lock_: *lock_model.Lock, root: []const u8) !bool {
+            return try project.environmentPackagesUsable(testing.allocator, io, root, lock_, "default");
+        }
+    }.run;
+
+    const valid =
+        \\{"pkg:11111111111111111111111111111111":{"name":"lib","version":"1.0.0","id":"pkg:11111111111111111111111111111111","path":".nako/env/gen-1/deps/lib","exports":[{"name":"lib","path":"src/index.nako3"}],"commands":[{"name":"テスト","args":["x"],"josi":[]}]}}
+    ;
+    try writeEnv(temporary.dir, valid);
+    try testing.expect(try usable(&lock, app_root));
+
+    // 余分な record を残した環境は不一致（key 集合の完全一致）。
+    try writeEnv(temporary.dir,
+        \\{"pkg:11111111111111111111111111111111":{"name":"lib","version":"1.0.0","id":"pkg:11111111111111111111111111111111","path":".nako/env/gen-1/deps/lib"},"pkg:22222222222222222222222222222222":{"name":"x","version":"1.0.0","path":".nako/env/gen-1/deps/x"}}
+    );
+    try testing.expect(!try usable(&lock, app_root));
+    // name・version が entry と食い違う record は不一致。
+    try writeEnv(temporary.dir,
+        \\{"pkg:11111111111111111111111111111111":{"name":"other","version":"1.0.0","id":"pkg:11111111111111111111111111111111","path":".nako/env/gen-1/deps/lib"}}
+    );
+    try testing.expect(!try usable(&lock, app_root));
+    try writeEnv(temporary.dir,
+        \\{"pkg:11111111111111111111111111111111":{"name":"lib","version":"9.9.9","id":"pkg:11111111111111111111111111111111","path":".nako/env/gen-1/deps/lib"}}
+    );
+    try testing.expect(!try usable(&lock, app_root));
+    // public id entry の id 欠落・未知キー・形状違反は不一致。
+    try writeEnv(temporary.dir,
+        \\{"pkg:11111111111111111111111111111111":{"name":"lib","version":"1.0.0","path":".nako/env/gen-1/deps/lib"}}
+    );
+    try testing.expect(!try usable(&lock, app_root));
+    try writeEnv(temporary.dir,
+        \\{"pkg:11111111111111111111111111111111":{"name":"lib","version":"1.0.0","id":"pkg:11111111111111111111111111111111","path":".nako/env/gen-1/deps/lib","extra":1}}
+    );
+    try testing.expect(!try usable(&lock, app_root));
+    try writeEnv(temporary.dir,
+        \\{"pkg:11111111111111111111111111111111":{"name":"lib","version":"1.0.0","id":"pkg:11111111111111111111111111111111","path":".nako/env/gen-1/deps/lib","commands":[{"args":["x"]}]}}
+    );
+    try testing.expect(!try usable(&lock, app_root));
+
+    // 中間 dir が symlink の環境は不一致。`.nako/env` を外部 dir への
+    // symlink に差し替え、同じ世代 layout を持つ target を指させる。
+    if (builtin.os.tag == .windows) return;
+    try temporary.dir.deleteTree(io, "app/.nako/env");
+    try temporary.dir.createDirPath(io, "outside/env/gen-1/deps/lib");
+    // `app/.nako/env` の親 dir は `app/.nako` のため `../../outside/env`。
+    try temporary.dir.symLink(io, "../../outside/env", "app/.nako/env", .{ .is_directory = true });
+    try writeEnv(temporary.dir, valid);
+    try testing.expect(!try usable(&lock, app_root));
+    // 現行世代の実在検査も中間 symlink を追従しない。
+    try testing.expect(!project.generationExists(io, app_root, "gen-1"));
+
+    // `.nako` 自体が symlink の場合も environment.json は管理外から
+    // 供給されるため不一致（外部 target は変更しない）。
+    try temporary.dir.deleteTree(io, "app/.nako");
+    try temporary.dir.createDirPath(io, "outside2/env/gen-1/deps/lib");
+    try temporary.dir.symLink(io, "../outside2", "app/.nako", .{ .is_directory = true });
+    const outside_env = struct {
+        fn run(dir: std.Io.Dir, packages_json: []const u8) !void {
+            const source = try std.fmt.allocPrint(testing.allocator,
+                \\{{"schemaVersion":1,"lockSha256":"sha256:00","profile":"default","runtime":"lnako","generation":"gen-1","packages":{s}}}
+                \\
+            , .{packages_json});
+            defer testing.allocator.free(source);
+            try dir.writeFile(io, .{ .sub_path = "outside2/environment.json", .data = source });
+        }
+    }.run;
+    try outside_env(temporary.dir, valid);
+    try testing.expect(!try usable(&lock, app_root));
+    const outside_stat = try temporary.dir.statFile(io, "app/.nako", .{ .follow_symlinks = false });
+    try testing.expect(outside_stat.kind == .sym_link);
+}

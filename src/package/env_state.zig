@@ -169,10 +169,10 @@ pub fn generationExists(io: std.Io, project_root: []const u8, generation: []cons
     }
     var buffer: [512]u8 = undefined;
     const rel = std.fmt.bufPrint(&buffer, ".nako" ++ std.fs.path.sep_str ++ "env" ++ std.fs.path.sep_str ++ "{s}", .{generation}) catch return false;
-    var path_buffer: [4096]u8 = undefined;
-    const abs = std.fmt.bufPrint(&path_buffer, "{s}" ++ std.fs.path.sep_str ++ "{s}", .{ project_root, rel }) catch return false;
-    std.Io.Dir.cwd().access(io, abs, .{}) catch return false;
-    return true;
+    // `.nako`・`env`・`<gen>` の各成分を no-follow で辿る。中間 dir が
+    // symlink/reparse point へ差し替えられていると、管理外の dir を
+    // 現行世代として受理してしまう。
+    return managedPathIsDirectory(io, project_root, rel);
 }
 
 /// `lnako check` / cnako `--no-sync` のための静的検査結果。
@@ -208,7 +208,7 @@ pub fn inspectForCheck(
         .manifest_sha256 = project_.manifest_sha256,
         .profile = profile,
         .features = try project.expandedFeatureNames(gpa, &expanded),
-        .target = .{ .os = record.os, .cpu = record.cpu, .abi = record.abi },
+        .target = .{ .os = record.os, .cpu = record.cpu, .abi = record.abi, .compat_js = (record.compat_js orelse false) or opts.compat_js },
         .runtime = project.resolveRuntime(record),
         .nako_version = try project.resolveVersionText(gpa, opts.nako_version),
         .cnako_version = try project.resolveVersionText(gpa, opts.cnako_version),
@@ -271,11 +271,17 @@ pub fn inspectForCheck(
 /// `environment.json` の `packages` 記録が lock graph と一致し、記録された
 /// package path が実在するか。ヘッダ（lockSha256・profile 等）だけ一致して
 /// いて packages map が欠落・破損している環境を「最新」と誤認しないための
-/// 内容検査。`.nako` 展開物の記録が project 外を指すものは不一致として
-/// 扱う。path 依存は宣言 path（`../shared`・絶対 path も正式な宣言形）を
-/// そのまま記録するため、格納値が lock の `source.path` と一致することと
-/// dir の実在だけを要求する。
+/// 内容検査。key 集合は graph と完全一致を要求し（余分な記録を残した環境は
+/// graph に無い package の exports/commands を consumer が読み得る）、
+/// 各 record の name/version/id/path/exports/commands を environment
+/// schema の形状に照合する。`.nako` 展開物の記録が project 外を指すものは
+/// 不一致として扱う。path 依存は宣言 path（`../shared`・絶対 path も正式な
+/// 宣言形）をそのまま記録するため、格納値が lock の `source.path` と一致
+/// することと dir の実在だけを要求する。
 pub fn environmentPackagesUsable(gpa: Allocator, io: std.Io, project_root: []const u8, lock: *const lock_model.Lock, profile: []const u8) Error!bool {
+    // `.nako` 自体が symlink/reparse point の場合 environment.json が
+    // 管理外から供給されるため先に拒否する（record 検査の前）。
+    if (!managedPathIsDirectory(io, project_root, ".nako")) return false;
     const path = try std.fs.path.join(gpa, &.{ project_root, ".nako", "environment.json" });
     defer gpa.free(path);
     const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(4 * 1024 * 1024)) catch |err| switch (err) {
@@ -293,20 +299,20 @@ pub fn environmentPackagesUsable(gpa: Allocator, io: std.Io, project_root: []con
     const root_abs = std.fs.path.resolve(gpa, &.{project_root}) catch return error.FileSystem;
     defer gpa.free(root_abs);
     const entries = lock.packagesForProfile(profile) orelse lock.packages;
+    if (records.count() != entries.len) return false;
     for (entries) |entry| {
         // packages map は record.key（Public ID、source では一意キー）を
         // キーにするため id → name の順で引く。
         const record = records.get(entry.id) orelse records.get(entry.name) orelse return false;
-        if (record != .object) return false;
-        const path_value = record.object.get("path") orelse return false;
-        if (path_value != .string) return false;
+        if (!envRecordMatchesEntry(record, &entry)) return false;
+        const recorded_path = record.object.get("path").?.string;
         if (entry.source != null and entry.source.?.kind == .path) {
             // path 依存の記録値は lock の `source.path` と一致することが
             // 正当性の根拠。project 外（`../`・絶対 path）は宣言者の
             // 正当な選択であり、一致しない任意 path だけを拒否する。
             const declared = entry.source.?.path orelse return false;
-            if (!std.mem.eql(u8, path_value.string, declared)) return false;
-            const abs = std.fs.path.resolve(gpa, &.{ root_abs, path_value.string }) catch return error.FileSystem;
+            if (!std.mem.eql(u8, recorded_path, declared)) return false;
+            const abs = std.fs.path.resolve(gpa, &.{ root_abs, recorded_path }) catch return error.FileSystem;
             defer gpa.free(abs);
             // 宣言 path 自身が symlink の正当構成もあるためここでは
             // 追従して実在だけを見る（信任境界は lock の宣言値）。
@@ -314,14 +320,122 @@ pub fn environmentPackagesUsable(gpa: Allocator, io: std.Io, project_root: []con
             if (stat.kind != .directory) return false;
             continue;
         }
-        const abs = std.fs.path.resolve(gpa, &.{ root_abs, path_value.string }) catch return error.FileSystem;
+        const abs = std.fs.path.resolve(gpa, &.{ root_abs, recorded_path }) catch return error.FileSystem;
         defer gpa.free(abs);
         // env/staging 展開物の記録が project 外を指す場合は環境破損。
         if (!std.mem.startsWith(u8, abs, root_abs) or abs.len == root_abs.len or
             (abs[root_abs.len] != '/' and abs[root_abs.len] != std.fs.path.sep)) return false;
-        const stat = std.Io.Dir.cwd().statFile(io, abs, .{ .follow_symlinks = false }) catch return false;
-        if (stat.kind != .directory) return false;
+        // 末端だけでなく `.nako`/`env`/`<gen>` 等の中間成分も no-follow
+        // で辿る。中間 dir が symlink/reparse point へ差し替えられて
+        // いると、lexical な prefix 一致だけでは project 外を指す
+        // 展開物を環境として受理してしまう。
+        if (!managedPathIsDirectory(io, root_abs, abs[root_abs.len + 1 ..])) return false;
     }
+    return true;
+}
+
+/// `environment.json` の1 record が lock entry と整合し、environment
+/// schema の形状を満たすか。`name`/`version`/`path` は必須 string で
+/// name・version は entry と一致、`id` は public id entry で必須・
+/// それ以外では記録されても entry.id と一致が条件。`exports`/`commands`
+/// は schema の item 形状を要求し、未知のキーを持つ record は拒否する。
+fn envRecordMatchesEntry(record: std.json.Value, entry: *const lock_model.PackageEntry) bool {
+    if (record != .object) return false;
+    var it = record.object.iterator();
+    while (it.next()) |field| {
+        const known = std.mem.eql(u8, field.key_ptr.*, "name") or
+            std.mem.eql(u8, field.key_ptr.*, "version") or
+            std.mem.eql(u8, field.key_ptr.*, "id") or
+            std.mem.eql(u8, field.key_ptr.*, "path") or
+            std.mem.eql(u8, field.key_ptr.*, "exports") or
+            std.mem.eql(u8, field.key_ptr.*, "commands");
+        if (!known) return false;
+    }
+    const name_value = record.object.get("name") orelse return false;
+    if (name_value != .string or !std.mem.eql(u8, name_value.string, entry.name)) return false;
+    const version_value = record.object.get("version") orelse return false;
+    if (version_value != .string or !std.mem.eql(u8, version_value.string, entry.version)) return false;
+    const path_value = record.object.get("path") orelse return false;
+    if (path_value != .string) return false;
+    if (record.object.get("id")) |id_value| {
+        if (id_value != .string or !std.mem.eql(u8, id_value.string, entry.id)) return false;
+    } else if (sync_mod.isPackageId(entry.id)) return false;
+    if (record.object.get("exports")) |exports| {
+        if (exports != .array) return false;
+        for (exports.array.items) |item| {
+            if (!envExportRecordValid(item)) return false;
+        }
+    }
+    if (record.object.get("commands")) |commands| {
+        if (commands != .array) return false;
+        for (commands.array.items) |item| {
+            if (!envCommandRecordValid(item)) return false;
+        }
+    }
+    return true;
+}
+
+/// env record の `exports` item。name は必須 string、path/alias は
+/// 記録されるなら string。native/esm の artifactRef は sync が環境
+/// record へ書かないため受理しない。
+fn envExportRecordValid(item: std.json.Value) bool {
+    if (item != .object) return false;
+    var it = item.object.iterator();
+    while (it.next()) |field| {
+        const known = std.mem.eql(u8, field.key_ptr.*, "name") or
+            std.mem.eql(u8, field.key_ptr.*, "path") or
+            std.mem.eql(u8, field.key_ptr.*, "alias");
+        if (!known or field.value_ptr.* != .string) return false;
+    }
+    return item.object.get("name") != null;
+}
+
+/// env record の `commands` item。name は必須 string、args/josi は
+/// string 配列、fn/return は string、variable/async は bool。
+fn envCommandRecordValid(item: std.json.Value) bool {
+    if (item != .object) return false;
+    var it = item.object.iterator();
+    while (it.next()) |field| {
+        const key = field.key_ptr.*;
+        const value = field.value_ptr.*;
+        if (std.mem.eql(u8, key, "name") or std.mem.eql(u8, key, "fn") or std.mem.eql(u8, key, "return")) {
+            if (value != .string) return false;
+        } else if (std.mem.eql(u8, key, "args") or std.mem.eql(u8, key, "josi")) {
+            if (value != .array) return false;
+            for (value.array.items) |arg| {
+                if (arg != .string) return false;
+            }
+        } else if (std.mem.eql(u8, key, "variable") or std.mem.eql(u8, key, "async")) {
+            if (value != .bool) return false;
+        } else return false;
+    }
+    return item.object.get("name") != null;
+}
+
+/// project root 相対 path の各成分を no-follow で辿り、末端が dir か。
+/// 中間成分の symlink/reparse point も検出する（Windows では open が
+/// reparse point 本体を開くため open 後の stat で判定する）。
+/// 読み取り専用で、リンクを除去したり dir を作成したりしない。
+fn managedPathIsDirectory(io: std.Io, root_abs: []const u8, rel: []const u8) bool {
+    var dir = std.Io.Dir.cwd().openDir(io, root_abs, .{}) catch return false;
+    var it = std.mem.tokenizeAny(u8, rel, "/\\");
+    while (it.next()) |component| {
+        const next = dir.openDir(io, component, .{ .follow_symlinks = false }) catch {
+            dir.close(io);
+            return false;
+        };
+        dir.close(io);
+        dir = next;
+        const stat = dir.stat(io) catch {
+            dir.close(io);
+            return false;
+        };
+        if (stat.kind != .directory) {
+            dir.close(io);
+            return false;
+        }
+    }
+    dir.close(io);
     return true;
 }
 
@@ -464,7 +578,7 @@ fn lockInputFor(a: Allocator, project_: *const project.Project, opts: *const pro
         .manifest_sha256 = project_.manifest_sha256,
         .profile = profile,
         .features = try project.expandedFeatureNames(a, &expanded),
-        .target = .{ .os = record.os, .cpu = record.cpu, .abi = record.abi },
+        .target = .{ .os = record.os, .cpu = record.cpu, .abi = record.abi, .compat_js = (record.compat_js orelse false) or opts.compat_js },
         .runtime = project.resolveRuntime(record),
         .nako_version = try project.resolveVersionText(a, opts.nako_version),
         .cnako_version = try project.resolveVersionText(a, opts.cnako_version),
