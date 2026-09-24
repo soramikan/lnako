@@ -42,6 +42,14 @@
         "reason": "表・クローン等のAOT実装（監視対象・hard limit内）",
         "limitKb": 80
       },
+      "src/host/state.zig": {
+        "reason": "CliHostのコマンドcallback配線とhandle表（監視対象・hard limit内）",
+        "limitKb": 84
+      },
+      "src/runtime/low_level_foundation.zig": {
+        "reason": "低レイヤー命令契約・capability・errno写像の共有正本（監視対象・hard limit内）",
+        "limitKb": 86
+      },
       "src/runtime/value.zig": {
         "reason": "Value・Runtime中心のコア値表現（監視対象・hard limit内）",
         "limitKb": 81

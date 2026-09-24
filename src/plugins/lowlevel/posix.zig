@@ -110,30 +110,11 @@ fn operationForId(kind: low_level_posix.IdKind) []const u8 {
 }
 
 fn permissionModeArgument(runtime: *Runtime, effects: Effects, value: Value, operation: []const u8) !u32 {
-    return unsignedArgument(runtime, effects, value, operation, foundation.max_permission_mode, "modeは0〜0o7777の整数である必要があります");
+    return shared.unsignedArgument(runtime, effects, value, operation, foundation.max_permission_mode, "modeは0〜0o7777の整数である必要があります");
 }
 
 fn accessModeArgument(runtime: *Runtime, effects: Effects, value: Value, operation: []const u8) !u32 {
-    return unsignedArgument(runtime, effects, value, operation, foundation.access_mode.all, "modeはF_OK/R_OK/W_OK/X_OKのビット和である必要があります");
-}
-
-fn unsignedArgument(runtime: *Runtime, effects: Effects, value: Value, operation: []const u8, max: u32, message: []const u8) !u32 {
-    const signed: i128 = switch (value) {
-        .number => |number| blk: {
-            if (!foundation.isSafeInteger(number)) {
-                return throwStructured(runtime, effects, .EINVAL, operation, null, null, message);
-            }
-            break :blk @intFromFloat(number);
-        },
-        .bigint => |bigint| bigint.toI128() catch {
-            return throwStructured(runtime, effects, .EINVAL, operation, null, null, message);
-        },
-        else => return throwStructured(runtime, effects, .EINVAL, operation, null, null, message),
-    };
-    if (signed < 0 or signed > @as(i128, max)) {
-        return throwStructured(runtime, effects, .EINVAL, operation, null, null, message);
-    }
-    return @intCast(signed);
+    return shared.unsignedArgument(runtime, effects, value, operation, foundation.access_mode.all, "modeはF_OK/R_OK/W_OK/X_OKのビット和である必要があります");
 }
 
 /// chown/lchownのUID/GID引数。`-1` は「変更しない」を表す `null` へ写す。

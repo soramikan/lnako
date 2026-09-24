@@ -132,10 +132,12 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 ### Issue 36 statfs・reflink・sparse file
 
 - `ファイルシステム情報取得`（ll-statfs）助詞 `PATHを/PATHの`、戻り `fsInfo`、capability `statfs`、エラー ENOENT/EACCES/EPERM/ENOTDIR/EINVAL/ENOTSUP
-- `ファイルクローン`（ll-reflink）助詞 `SRCをDSTへMODEで/SRCをDSTに`、戻り `void`、capability `reflink`、エラー ENOENT/EEXIST/EACCES/EPERM/EXDEV/ENOTSUP
+- `ファイルクローン`（ll-reflink）助詞 `SRCをDSTへMODEで/SRCをDSTに`、戻り `void`、capability `reflink`、エラー ENOENT/EEXIST/EACCES/EPERM/EXDEV/ENOTSUP/EINVAL
 - `ファイルデータ領域検索`（ll-seek-data）助詞 `HANDLEをOFFSETで/HANDLEをOFFSETから`、戻り `offset`、capability `seek_data`、エラー EBADF/EINVAL/ENOTSUP
 - `ファイル空洞領域検索`（ll-seek-hole）助詞 `HANDLEをOFFSETで/HANDLEをOFFSETから`、戻り `offset`、capability `seek_hole`、エラー EBADF/EINVAL/ENOTSUP
 - `ファイル領域確保`（ll-fallocate）助詞 `HANDLEをOFFSETにSIZEで/HANDLEをOFFSETとSIZEで`、戻り `void`、capability `fallocate`、エラー EBADF/EINVAL/ENOSPC/ENOTSUP
+
+`ファイルデータ領域検索` / `ファイル空洞領域検索` は成功時にハンドルのfd位置を結果位置へ移動する（`lseek` 相当の契約。emulated応答の環境も同じ副作用を持ち、失敗時は位置を変えない）。Linuxでは `SEEK_DATA`/`SEEK_HOLE` を実装しないファイルシステム（EINVAL）を `ENOTSUP` で返す（capabilityの `os.linux` は `conditional`）。`ファイル領域確保` もFSが `fallocate` を拒否する場合（EOPNOTSUPP等）は `ENOTSUP` で返す（`os.linux` は `conditional`）。`ファイル空洞領域検索` で `OFFSET` がちょうどEOFの場合はPOSIXの暗黙の末尾空洞としてEOF位置を返し、EOFを超える場合のみ `EINVAL`（ENXIO相当）。`ファイルクローン` はSRCをfdで開いて種別を検査してからそのfd自身を複製する（Linux `FICLONE`、macOS `fclonefileat`）ため、statから複製までの間にSRCが差し替えられても検証外の種別を複製しない。`MODE` 省略時は実際に複製したソースfdの権限を継承し、複製はDSTの親ディレクトリ内の一時名へ行ってから原子的に公開するため、失敗しても既存・第三者のDSTを破壊しない。`ファイル領域確保` はmacOSで `OFFSET` が現在のEOFを超えるsparse確保を表現できない（`F_PREALLOCATE` はEOFからの連続確保のみ）ため、隙間全域を過剰予約せず `ENOTSUP` で返す。
 
 ### Issue 37 capability照会（メタ命令）
 

@@ -22,12 +22,15 @@ const emptyContext = low_level_context.emptyContext;
 
 const throwStructured = shared.throwStructured;
 const throwIo = shared.throwIo;
+const throwIoMapped = shared.throwIoMapped;
 const lookupHandle = shared.lookupHandle;
 const forgetHandle = shared.forgetHandle;
 const rememberHandle = shared.rememberHandle;
 const sizeArgument = shared.sizeArgument;
+const offsetArgument = shared.offsetArgument;
 const bytesArgument = shared.bytesArgument;
 const publicSizeValue = shared.publicSizeValue;
+const publicOffsetValue = shared.publicOffsetValue;
 const read_chunk_bytes = shared.read_chunk_bytes;
 
 const captureThrow = shared.captureThrow;
@@ -139,6 +142,54 @@ pub fn truncateFile(runtime: *Runtime, state: *State, context: Context, effects:
     };
     context.truncateFile(id.raw(), size) catch |failure| {
         return throwIo(runtime, effects, failure, foundation.stream_operations.ftruncate, null, null, .truncate);
+    };
+    return .undefined;
+}
+
+/// `ファイルデータ領域検索`（SEEK_DATA相当）。offset以降のデータ位置を返す。
+pub fn seekData(runtime: *Runtime, state: *State, context: Context, effects: Effects, arguments: []const Value) !Value {
+    return seekExtentFile(runtime, state, context, effects, arguments, .data);
+}
+
+/// `ファイル空洞領域検索`（SEEK_HOLE相当）。offset以降の空洞位置を返す。
+pub fn seekHole(runtime: *Runtime, state: *State, context: Context, effects: Effects, arguments: []const Value) !Value {
+    return seekExtentFile(runtime, state, context, effects, arguments, .hole);
+}
+
+fn seekExtentFile(runtime: *Runtime, state: *State, context: Context, effects: Effects, arguments: []const Value, extent: low_level_fs.SeekExtent) !Value {
+    const operation = foundation.stream_operations.lseek;
+    const capability: foundation.Capability = if (extent == .data) .seek_data else .seek_hole;
+    const handle = common.argument(arguments, 0);
+    const id = lookupHandle(state, handle) orelse {
+        return throwStructured(runtime, effects, .EBADF, operation, null, null, "無効なハンドルです");
+    };
+    const offset = offsetArgument(common.argument(arguments, 1)) catch {
+        return throwStructured(runtime, effects, .EINVAL, operation, null, null, "検索位置が不正です");
+    };
+    const result = (if (extent == .data)
+        context.seekDataFile(id.raw(), offset)
+    else
+        context.seekHoleFile(id.raw(), offset)) catch |failure| {
+        return throwIoMapped(runtime, effects, failure, foundation.seekErrorCode(failure), operation, null, capability);
+    };
+    return publicOffsetValue(runtime, result);
+}
+
+/// `ファイル領域確保`（fallocate相当）。offsetからsizeバイトを事前確保する。
+pub fn allocateFile(runtime: *Runtime, state: *State, context: Context, effects: Effects, arguments: []const Value) !Value {
+    const operation = foundation.stream_operations.fallocate;
+    const handle = common.argument(arguments, 0);
+    const id = lookupHandle(state, handle) orelse {
+        return throwStructured(runtime, effects, .EBADF, operation, null, null, "無効なハンドルです");
+    };
+    const offset = offsetArgument(common.argument(arguments, 1)) catch {
+        return throwStructured(runtime, effects, .EINVAL, operation, null, null, "確保位置が不正です");
+    };
+    const size = sizeArgument(runtime, common.argument(arguments, 2)) catch {
+        return throwStructured(runtime, effects, .EINVAL, operation, null, null, "確保する大きさが不正です");
+    };
+    context.allocateFile(id.raw(), offset, size) catch |failure| {
+        return throwIoMapped(runtime, effects, failure, foundation.fallocateErrorCode(failure), operation, null, .fallocate);
     };
     return .undefined;
 }

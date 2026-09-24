@@ -1107,8 +1107,8 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "blockSize/blocks/free/available/files/freeFiles/filesystemType/filesystemId。OS固有フィールドはoptional",
-      "implemented": false
+      "notes": "blockSize/blocks/free/available/files/freeFiles/filesystemType/filesystemId。OS固有フィールドはoptional。カウンタはsize型（2^53-1超過はBigInt）",
+      "implemented": true
     },
     {
       "id": "ll-reflink",
@@ -1126,10 +1126,11 @@
         "EACCES",
         "EPERM",
         "EXDEV",
-        "ENOTSUP"
+        "ENOTSUP",
+        "EINVAL"
       ],
       "notes": "reflink/CoW。非対応FSはENOTSUP",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-seek-data",
@@ -1147,7 +1148,7 @@
         "ENOTSUP"
       ],
       "notes": "SEEK_DATA相当",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-seek-hole",
@@ -1165,7 +1166,7 @@
         "ENOTSUP"
       ],
       "notes": "SEEK_HOLE相当",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-fallocate",
@@ -1184,7 +1185,7 @@
         "ENOTSUP"
       ],
       "notes": "fallocate相当",
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "ll-capability-supported",
@@ -1854,13 +1855,13 @@
       "id": "statfs",
       "class": "posix_extension",
       "os": {
-        "linux": false,
-        "macos": false,
+        "linux": true,
+        "macos": true,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1880,13 +1881,13 @@
       "id": "reflink",
       "class": "posix_extension",
       "os": {
-        "linux": false,
-        "macos": false,
+        "linux": "conditional",
+        "macos": "conditional",
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
@@ -1906,18 +1907,18 @@
       "id": "seek_data",
       "class": "lnako_native",
       "os": {
-        "linux": false,
-        "macos": false,
+        "linux": "conditional",
+        "macos": true,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
         "os": {
-          "linux": true,
+          "linux": "conditional",
           "macos": true,
           "windows": false
         },
@@ -1932,18 +1933,18 @@
       "id": "seek_hole",
       "class": "lnako_native",
       "os": {
-        "linux": false,
-        "macos": false,
+        "linux": "conditional",
+        "macos": true,
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
         "os": {
-          "linux": true,
+          "linux": "conditional",
           "macos": true,
           "windows": false
         },
@@ -1958,18 +1959,18 @@
       "id": "fallocate",
       "class": "lnako_native",
       "os": {
-        "linux": false,
-        "macos": false,
+        "linux": "conditional",
+        "macos": "conditional",
         "windows": false
       },
       "runtimes": {
-        "lnako_interpreter": false,
-        "lnako_aot": false,
+        "lnako_interpreter": "conditional",
+        "lnako_aot": true,
         "cnako_node": false
       },
       "planned": {
         "os": {
-          "linux": true,
+          "linux": "conditional",
           "macos": "conditional",
           "windows": false
         },
@@ -2722,16 +2723,16 @@
     },
     "fsInfo": {
       "fields": {
-        "blockSize": "number",
-        "blocks": "number",
-        "free": "number",
-        "available": "number",
-        "files": "number",
-        "freeFiles": "number",
+        "blockSize": "size",
+        "blocks": "size",
+        "free": "size",
+        "available": "size",
+        "files": "size",
+        "freeFiles": "size",
         "filesystemType": "string",
         "filesystemId": "string"
       },
-      "note": "OS固有フィールドはoptional"
+      "note": "OS固有フィールドはoptional。カウンタ6フィールドはsize型（安全整数ならNumber、2^53-1超過はBigInt）"
     },
     "collateOptions": {
       "fields": {

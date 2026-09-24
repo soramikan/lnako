@@ -341,6 +341,11 @@ test "implementedフラグは実装済み命令の既知集合と一致する" {
         "ll-tty-size",
         "ll-locale-compare",
         "ll-display-width",
+        "ll-statfs",
+        "ll-reflink",
+        "ll-seek-data",
+        "ll-seek-hole",
+        "ll-fallocate",
     };
     var count: usize = 0;
     for (foundation.catalog_commands) |command| {

@@ -156,6 +156,50 @@ pub fn sizeArgument(_: *Runtime, value: Value) !u64 {
     };
 }
 
+/// lseek系のOFFSET引数。安全整数Numberまたはi64範囲のBigInt。
+/// 契約外は `error.InvalidOffset` を返し、呼び出し側が構造化EINVALへ写す。
+pub fn offsetArgument(_: *Runtime, value: Value) !i64 {
+    return switch (value.tag) {
+        @intFromEnum(Tag.number) => foundation.offsetFromNumber(valueToNumber(value)),
+        @intFromEnum(Tag.bigint) => foundation.offsetFromSigned(value.object().?.payload.bigint.toI128() catch return error.InvalidOffset),
+        else => error.InvalidOffset,
+    };
+}
+
+/// lseek系の戻りoffsetを公開表現へ写す。安全整数はNumber、超過分はBigInt。
+pub fn publicOffsetValue(runtime: *Runtime, offset: i64) !Value {
+    return switch (foundation.publicOffset(offset)) {
+        .number => numberValue(@floatFromInt(offset)),
+        .bigint => runtime.ownBigInt(try BigInt.init(runtime.allocator, offset)),
+    };
+}
+
+/// mode/umask等の上限付きu32引数。安全整数Numberまたはu32範囲のBigIntを
+/// `0..=max` へ検証する。契約外は `operation` を載せた構造化EINVALを投げる。
+/// posix系（chmod/access/umask）とreflinkのMODEが共有する。
+pub fn unsignedArgument(runtime: *Runtime, value: Value, operation: []const u8, max: u32, message: []const u8) !u32 {
+    var signed: i128 = undefined;
+    switch (value.tag) {
+        @intFromEnum(Tag.number) => {
+            const number = valueToNumber(value);
+            if (!foundation.isSafeInteger(number)) {
+                return throwStructured(runtime, .EINVAL, operation, null, null, message);
+            }
+            signed = @intFromFloat(number);
+        },
+        @intFromEnum(Tag.bigint) => {
+            signed = value.object().?.payload.bigint.toI128() catch {
+                return throwStructured(runtime, .EINVAL, operation, null, null, message);
+            };
+        },
+        else => return throwStructured(runtime, .EINVAL, operation, null, null, message),
+    }
+    if (signed < 0 or signed > @as(i128, max)) {
+        return throwStructured(runtime, .EINVAL, operation, null, null, message);
+    }
+    return @intCast(signed);
+}
+
 /// `ファイル時刻設定` / `ファイル時刻設定済` のATIME/MTIME引数を `SetTime` 契約へ
 /// 変換する。nullは既存値維持、文字列 `"now"` は現在時刻、Number/BigIntは
 /// ナノ秒の明示値。契約外は `operation` を載せた `EINVAL` を投げる。
@@ -292,6 +336,23 @@ pub fn throwIoMapped(
     if (failure == error.OutOfMemory) return failure;
     const capability_name: ?[]const u8 = if (code == .ENOTSUP) capability.id() else null;
     return throwStructured(runtime, code, operation, path, capability_name, failureMessage(failure));
+}
+
+/// `throwIoMapped` の2パス版。SRC/DSTを持つ命令（reflink等）が
+/// コマンド契約のcodeへ丸めつつ `path` と `path2` の両方をエラーへ載せる。
+/// OOMは内部エラーとして伝播する。
+pub fn throwIoMappedPair(
+    runtime: *Runtime,
+    failure: anyerror,
+    code: foundation.PortableErrorCode,
+    operation: []const u8,
+    path: ?[]const u8,
+    path2: ?[]const u8,
+    capability: foundation.Capability,
+) anyerror {
+    if (failure == error.OutOfMemory) return failure;
+    const capability_name: ?[]const u8 = if (code == .ENOTSUP) capability.id() else null;
+    return throwStructuredAt(runtime, code, operation, path, path2, capability_name, failureMessage(failure));
 }
 
 pub fn throwStructured(

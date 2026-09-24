@@ -20,6 +20,8 @@ const Effects = shared.Effects;
 const Context = low_level_context.Context;
 
 const throwIo = shared.throwIo;
+const throwIoMapped = shared.throwIoMapped;
+const throwIoMappedPair = shared.throwIoMappedPair;
 const throwStructured = shared.throwStructured;
 const publicSizeValue = shared.publicSizeValue;
 const pathStringFromBytes = shared.pathStringFromBytes;
@@ -222,6 +224,52 @@ pub fn utimeHandle(runtime: *Runtime, state: *State, context: Context, effects: 
     return .undefined;
 }
 
+pub fn statfsPath(runtime: *Runtime, state: *State, context: Context, effects: Effects, arguments: []const Value) !Value {
+    _ = state;
+    const operation = foundation.filesystem_operations.statfs;
+    const path = try requirePath(runtime, effects, common.argument(arguments, 0), operation);
+    defer runtime.allocator().free(path);
+    const info = context.statfs(path) catch |failure| {
+        return throwIoMapped(runtime, effects, failure, foundation.statfsErrorCode(failure), operation, path, .statfs);
+    };
+    return fsInfoValue(runtime, info);
+}
+
+/// `fsInfo`辞書を組み立てる。カタログ `typeSchemas.fsInfo` の全8フィールドを
+/// `fs_info_key_list` と同じ順序で入れる。ブロック・inode数はu64全体を
+/// 保持するため安全整数を超える値はBigIntへ写す。
+fn fsInfoValue(runtime: *Runtime, info: low_level_fs.FsInfo) !Value {
+    var dictionary = try runtime.createDictionary();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&dictionary);
+    try node_shared.setDictionary(runtime, dictionary.dictionary, foundation.fs_info_keys.block_size, try publicSizeValue(runtime, info.block_size));
+    try node_shared.setDictionary(runtime, dictionary.dictionary, foundation.fs_info_keys.blocks, try publicSizeValue(runtime, info.blocks));
+    try node_shared.setDictionary(runtime, dictionary.dictionary, foundation.fs_info_keys.free, try publicSizeValue(runtime, info.free));
+    try node_shared.setDictionary(runtime, dictionary.dictionary, foundation.fs_info_keys.available, try publicSizeValue(runtime, info.available));
+    try node_shared.setDictionary(runtime, dictionary.dictionary, foundation.fs_info_keys.files, try publicSizeValue(runtime, info.files));
+    try node_shared.setDictionary(runtime, dictionary.dictionary, foundation.fs_info_keys.free_files, try publicSizeValue(runtime, info.free_files));
+    try node_shared.setDictionary(runtime, dictionary.dictionary, foundation.fs_info_keys.filesystem_type, try runtime.stringUtf8(info.filesystemType()));
+    try node_shared.setDictionary(runtime, dictionary.dictionary, foundation.fs_info_keys.filesystem_id, try runtime.stringUtf8(info.filesystemId()));
+    return dictionary;
+}
+
+pub fn reflinkPath(runtime: *Runtime, state: *State, context: Context, effects: Effects, arguments: []const Value) !Value {
+    _ = state;
+    const operation = foundation.filesystem_operations.reflink;
+    const source = try requirePath(runtime, effects, common.argument(arguments, 0), operation);
+    defer runtime.allocator().free(source);
+    const destination = try requirePath(runtime, effects, common.argument(arguments, 1), operation);
+    defer runtime.allocator().free(destination);
+    // MODEは省略時null（SRC権限継承）。指定時は0〜0o7777の権限bit。
+    const mode_value = common.argument(arguments, 2);
+    const mode: ?u32 = if (mode_value == .undefined) null else try shared.unsignedArgument(runtime, effects, mode_value, operation, foundation.max_permission_mode, "modeは0〜0o7777の整数である必要があります");
+    context.reflink(source, destination, mode) catch |failure| {
+        return throwIoMappedPair(runtime, effects, failure, foundation.reflinkErrorCode(failure), operation, source, destination, .reflink);
+    };
+    return .undefined;
+}
+
 /// Issue #29/#31のパス操作を実OSで検証するためのContext。InterpreterのHostと
 /// 同じ `low_level_fs` 実装を共有し、dispatchと値組み立てだけを単体で検査する。
 /// `ファイル時刻設定済` のhandle解決は実ファイル表を持つため、開閉callbackも
@@ -300,6 +348,32 @@ const FsTestHost = struct {
         return low_level_fs.setTimestampsPath(std.testing.io, path, atime, mtime);
     }
 
+    fn statfsCallback(_: *anyopaque, path: []const u8) anyerror!low_level_fs.FsInfo {
+        return low_level_fs.statfs(std.testing.io, path);
+    }
+
+    fn reflinkCallback(_: *anyopaque, source: []const u8, destination: []const u8, mode: ?u32) anyerror!void {
+        return low_level_fs.reflink(std.testing.io, source, destination, mode);
+    }
+
+    fn seekDataCallback(pointer: *anyopaque, raw: u64, offset: i64) anyerror!i64 {
+        const self: *FsTestHost = @ptrCast(@alignCast(pointer));
+        const entry = self.table.find(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+        return low_level_fs.seekExtent(std.testing.io, entry.file, offset, .data);
+    }
+
+    fn seekHoleCallback(pointer: *anyopaque, raw: u64, offset: i64) anyerror!i64 {
+        const self: *FsTestHost = @ptrCast(@alignCast(pointer));
+        const entry = self.table.find(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+        return low_level_fs.seekExtent(std.testing.io, entry.file, offset, .hole);
+    }
+
+    fn allocateCallback(pointer: *anyopaque, raw: u64, offset: i64, size: u64) anyerror!void {
+        const self: *FsTestHost = @ptrCast(@alignCast(pointer));
+        const entry = self.table.find(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+        return low_level_fs.allocate(std.testing.io, entry.file, offset, size);
+    }
+
     fn context(self: *FsTestHost) Context {
         return .{
             .stream = .{
@@ -308,6 +382,9 @@ const FsTestHost = struct {
                 .closeFileFn = closeCallback,
                 .truncateFileFn = truncateFileCallback,
                 .setTimestampsFileFn = setTimestampsCallback,
+                .seekDataFileFn = seekDataCallback,
+                .seekHoleFileFn = seekHoleCallback,
+                .allocateFileFn = allocateCallback,
             },
             .fs = .{
                 .context = self,
@@ -321,6 +398,8 @@ const FsTestHost = struct {
                 .rmdirFn = rmdirCallback,
                 .truncatePathFn = truncatePathCallback,
                 .utimePathFn = utimePathCallback,
+                .statfsFn = statfsCallback,
+                .reflinkFn = reflinkCallback,
             },
         };
     }
@@ -699,4 +778,292 @@ test "低レイヤーのtruncate/utimeはContext経由で反映され契約違�
     try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイルサイズ変更", &.{ missing, .{ .number = 1 } }));
     try roots.protect(&thrown);
     try expectThrownCode(&runtime, thrown, "ENOENT");
+}
+
+test "低レイヤーのstatfsはContext経由でfsInfo辞書を返し契約エラーを丸める" {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var host = FsTestHost.init();
+    defer host.deinit();
+    const context = host.context();
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    var path = try runtime.stringUtf8(directory);
+    try roots.protect(&path);
+
+    var capability_name = try runtime.stringUtf8("statfs");
+    try roots.protect(&capability_name);
+    const supported = (try call(&runtime, &state, context, effects, foundation.capability_supported_command, &.{capability_name})) orelse return error.TestExpectedEqual;
+    try std.testing.expect(supported == .boolean and supported.boolean);
+
+    var result = (try call(&runtime, &state, context, effects, "ファイルシステム情報取得", &.{path})) orelse return error.TestExpectedEqual;
+    try roots.protect(&result);
+    // カタログ typeSchemas.fsInfo の全8フィールドが辞書に存在する。
+    inline for (foundation.fs_info_key_list) |key| {
+        try std.testing.expect(node_shared.dictionaryGetAscii(result.dictionary, key) != null);
+    }
+    const block_size = node_shared.dictionaryGetAscii(result.dictionary, foundation.fs_info_keys.block_size) orelse return error.TestExpectedEqual;
+    try std.testing.expect(block_size.number > 0);
+    const fs_type = node_shared.dictionaryGetAscii(result.dictionary, foundation.fs_info_keys.filesystem_type) orelse return error.TestExpectedEqual;
+    const fs_type_text = try node_shared.valueUtf8(&runtime, fs_type);
+    defer runtime.allocator().free(fs_type_text);
+    try std.testing.expect(fs_type_text.len > 0);
+
+    // 不在パスはENOENT、非文字列pathはEINVAL。
+    const missing_bytes = try std.fs.path.join(std.testing.allocator, &.{ directory, "missing-statfs" });
+    defer std.testing.allocator.free(missing_bytes);
+    var missing = try runtime.stringUtf8(missing_bytes);
+    try roots.protect(&missing);
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイルシステム情報取得", &.{missing}));
+    try roots.protect(&thrown);
+    try expectThrownCode(&runtime, thrown, "ENOENT");
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイルシステム情報取得", &.{.{ .number = 1 }}));
+    try roots.protect(&thrown);
+    try expectThrownCode(&runtime, thrown, "EINVAL");
+}
+
+test "低レイヤーのstatfsは2^53境界でカウンタをNumber/BigIntへ分ける" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    // typeSchemas.fsInfo のカウンタ6フィールドはsize型で、
+    // 安全整数の境界でNumber/BigIntが分かれる必要がある。
+    const max_safe: u64 = @intCast(foundation.max_safe_integer);
+    const info: low_level_fs.FsInfo = .{
+        .block_size = 4096,
+        .blocks = max_safe + 1,
+        .free = max_safe,
+        .available = 0,
+        .files = max_safe + 1,
+        .free_files = 7,
+    };
+    var result = try fsInfoValue(&runtime, info);
+    try roots.protect(&result);
+    const blocks = node_shared.dictionaryGetAscii(result.dictionary, foundation.fs_info_keys.blocks) orelse return error.TestExpectedEqual;
+    try std.testing.expect(blocks == .bigint);
+    try std.testing.expectEqual(@as(u128, max_safe + 1), try blocks.bigint.toU128());
+    const free = node_shared.dictionaryGetAscii(result.dictionary, foundation.fs_info_keys.free) orelse return error.TestExpectedEqual;
+    try std.testing.expect(free == .number);
+    try std.testing.expectEqual(@as(f64, @floatFromInt(max_safe)), free.number);
+    const files = node_shared.dictionaryGetAscii(result.dictionary, foundation.fs_info_keys.files) orelse return error.TestExpectedEqual;
+    try std.testing.expect(files == .bigint);
+    const free_files = node_shared.dictionaryGetAscii(result.dictionary, foundation.fs_info_keys.free_files) orelse return error.TestExpectedEqual;
+    try std.testing.expect(free_files == .number);
+}
+
+test "低レイヤーのreflinkはContext経由でCoW複製を作り契約エラーを返す" {
+    if (builtin.os.tag != .linux and builtin.os.tag != .macos) return error.SkipZigTest;
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var host = FsTestHost.init();
+    defer host.deinit();
+    const context = host.context();
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "src.txt", .data = "clone me" });
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const source_bytes = try std.fs.path.join(std.testing.allocator, &.{ directory, "src.txt" });
+    defer std.testing.allocator.free(source_bytes);
+    const destination_bytes = try std.fs.path.join(std.testing.allocator, &.{ directory, "dst.txt" });
+    defer std.testing.allocator.free(destination_bytes);
+    var source = try runtime.stringUtf8(source_bytes);
+    try roots.protect(&source);
+    var destination = try runtime.stringUtf8(destination_bytes);
+    try roots.protect(&destination);
+
+    var capability_name = try runtime.stringUtf8("reflink");
+    try roots.protect(&capability_name);
+    const supported = (try call(&runtime, &state, context, effects, foundation.capability_supported_command, &.{capability_name})) orelse return error.TestExpectedEqual;
+    try std.testing.expect(supported == .boolean and supported.boolean);
+
+    // MODE省略はSRC権限を継承する。非対応FSはENOTSUPを返すので、
+    // 契約コードの確認（capability=reflink）に留めて成功系のみスキップする。
+    _ = call(&runtime, &state, context, effects, "ファイルクローン", &.{ source, destination }) catch |failure| {
+        try std.testing.expectEqual(error.NakoException, failure);
+        try roots.protect(&thrown);
+        try expectThrownCode(&runtime, thrown, "ENOTSUP");
+        try expectThrownField(&runtime, thrown, foundation.error_object_keys.capability, "reflink");
+        return error.SkipZigTest;
+    };
+    const cloned = try temporary.dir.readFileAlloc(std.testing.io, "dst.txt", std.testing.allocator, .limited(64));
+    defer std.testing.allocator.free(cloned);
+    try std.testing.expectEqualStrings("clone me", cloned);
+
+    // 明示MODEは権限を上書きする。
+    const third_bytes = try std.fs.path.join(std.testing.allocator, &.{ directory, "third.txt" });
+    defer std.testing.allocator.free(third_bytes);
+    var third = try runtime.stringUtf8(third_bytes);
+    try roots.protect(&third);
+    _ = (try call(&runtime, &state, context, effects, "ファイルクローン", &.{ source, third, .{ .number = 0o777 } })) orelse return error.TestExpectedEqual;
+    var info = (try call(&runtime, &state, context, effects, "ファイル詳細情報取得", &.{third})) orelse return error.TestExpectedEqual;
+    try roots.protect(&info);
+    const mode_field = node_shared.dictionaryGetAscii(info.dictionary, foundation.stat_field_keys.mode) orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(@as(f64, 0o777), mode_field.number);
+
+    // 既存DSTはEEXISTでpath/path2を持つ。
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイルクローン", &.{ source, destination }));
+    try roots.protect(&thrown);
+    try expectThrownPathPair(&runtime, thrown, "EEXIST", "reflink", source_bytes, destination_bytes);
+
+    // MODE境界: 0o10000・負数・小数・文字列はEINVAL。
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイルクローン", &.{ source, third, .{ .number = 0o10000 } }));
+    try roots.protect(&thrown);
+    try expectThrownCode(&runtime, thrown, "EINVAL");
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイルクローン", &.{ source, third, .{ .number = -1 } }));
+    try roots.protect(&thrown);
+    try expectThrownCode(&runtime, thrown, "EINVAL");
+    var mode_text = try runtime.stringUtf8("u+rwx");
+    try roots.protect(&mode_text);
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイルクローン", &.{ source, third, mode_text }));
+    try roots.protect(&thrown);
+    try expectThrownCode(&runtime, thrown, "EINVAL");
+
+    // 不在SRCはENOENT。
+    const missing_bytes = try std.fs.path.join(std.testing.allocator, &.{ directory, "missing.txt" });
+    defer std.testing.allocator.free(missing_bytes);
+    var missing = try runtime.stringUtf8(missing_bytes);
+    try roots.protect(&missing);
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイルクローン", &.{ missing, third }));
+    try roots.protect(&thrown);
+    try expectThrownCode(&runtime, thrown, "ENOENT");
+}
+
+test "低レイヤーの領域検索・領域確保はContext経由で動作し契約エラーを返す" {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var host = FsTestHost.init();
+    defer host.deinit();
+    const context = host.context();
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "sparse.bin", .data = "data" });
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const path_bytes = try std.fs.path.join(std.testing.allocator, &.{ directory, "sparse.bin" });
+    defer std.testing.allocator.free(path_bytes);
+    // 先頭4byteがデータ、8192以降にデータがあるsparseファイルを作る。
+    // Linuxでは実SEEK_DATA/SEEK_HOLE、macOSでは保守的emulated経路になる。
+    {
+        const raw = try std.Io.Dir.cwd().openFile(std.testing.io, path_bytes, .{ .mode = .read_write });
+        defer raw.close(std.testing.io);
+        try raw.writePositionalAll(std.testing.io, "tail", 8192);
+    }
+    var path = try runtime.stringUtf8(path_bytes);
+    try roots.protect(&path);
+    var mode = try runtime.stringUtf8("r+");
+    try roots.protect(&mode);
+    var handle = (try call(&runtime, &state, context, effects, "ファイル開く", &.{ path, mode })) orelse return error.TestExpectedEqual;
+    try roots.protect(&handle);
+
+    inline for (.{ "seek_data", "seek_hole" }) |capability_id| {
+        var capability_name = try runtime.stringUtf8(capability_id);
+        try roots.protect(&capability_name);
+        const supported = (try call(&runtime, &state, context, effects, foundation.capability_supported_command, &.{capability_name})) orelse return error.TestExpectedEqual;
+        try std.testing.expect(supported == .boolean and supported.boolean);
+    }
+
+    var data_at = (try call(&runtime, &state, context, effects, "ファイルデータ領域検索", &.{ handle, .{ .number = 0 } })) orelse return error.TestExpectedEqual;
+    try roots.protect(&data_at);
+    try std.testing.expectEqual(@as(f64, 0), data_at.number);
+    var hole_at = (try call(&runtime, &state, context, effects, "ファイル空洞領域検索", &.{ handle, .{ .number = 0 } })) orelse return error.TestExpectedEqual;
+    try roots.protect(&hole_at);
+    // Linuxはブロック境界の実hole、emulated経路は末尾の仮想空洞8196を返す。
+    if (builtin.os.tag == .linux) {
+        try std.testing.expect(hole_at.number >= 4 and hole_at.number <= 8196);
+    } else {
+        try std.testing.expectEqual(@as(f64, 8196), hole_at.number);
+    }
+    // 末尾位置のhole検索は両経路で末尾8196を返し、末尾以降のdata検索はEINVAL。
+    var end_hole = (try call(&runtime, &state, context, effects, "ファイル空洞領域検索", &.{ handle, .{ .number = 8196 } })) orelse return error.TestExpectedEqual;
+    try roots.protect(&end_hole);
+    try std.testing.expectEqual(@as(f64, 8196), end_hole.number);
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイルデータ領域検索", &.{ handle, .{ .number = 99999 } }));
+    try roots.protect(&thrown);
+    try expectThrownCode(&runtime, thrown, "EINVAL");
+
+    // 負のoffset・非整数・小数はEINVAL。
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイルデータ領域検索", &.{ handle, .{ .number = -1 } }));
+    try roots.protect(&thrown);
+    try expectThrownCode(&runtime, thrown, "EINVAL");
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイル空洞領域検索", &.{ handle, .{ .number = 1.5 } }));
+    try roots.protect(&thrown);
+    try expectThrownCode(&runtime, thrown, "EINVAL");
+
+    // 領域確保: EOFを超える範囲はサイズを伸ばす。非対応FSはENOTSUPを許容する。
+    var capability_name = try runtime.stringUtf8("fallocate");
+    try roots.protect(&capability_name);
+    const supported = (try call(&runtime, &state, context, effects, foundation.capability_supported_command, &.{capability_name})) orelse return error.TestExpectedEqual;
+    try std.testing.expect(supported == .boolean and supported.boolean);
+    const allocated = call(&runtime, &state, context, effects, "ファイル領域確保", &.{ handle, .{ .number = 16384 }, .{ .number = 128 } }) catch |failure| blk: {
+        try std.testing.expectEqual(error.NakoException, failure);
+        try roots.protect(&thrown);
+        try expectThrownCode(&runtime, thrown, "ENOTSUP");
+        try expectThrownField(&runtime, thrown, foundation.error_object_keys.capability, "fallocate");
+        break :blk null;
+    };
+    if (allocated != null) {
+        var info = (try call(&runtime, &state, context, effects, "ファイル詳細情報取得", &.{path})) orelse return error.TestExpectedEqual;
+        try roots.protect(&info);
+        const size_field = node_shared.dictionaryGetAscii(info.dictionary, foundation.stat_field_keys.size) orelse return error.TestExpectedEqual;
+        try std.testing.expectEqual(@as(f64, 16512), size_field.number);
+    }
+
+    // size=0と無効ハンドルはEINVAL/EBADF。
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイル領域確保", &.{ handle, .{ .number = 0 }, .{ .number = 0 } }));
+    try roots.protect(&thrown);
+    try expectThrownCode(&runtime, thrown, "EINVAL");
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイルデータ領域検索", &.{ .{ .number = 1 }, .{ .number = 0 } }));
+    try roots.protect(&thrown);
+    try expectThrownCode(&runtime, thrown, "EBADF");
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイル領域確保", &.{ .{ .number = 1 }, .{ .number = 0 }, .{ .number = 1 } }));
+    try roots.protect(&thrown);
+    try expectThrownCode(&runtime, thrown, "EBADF");
+
+    _ = (try call(&runtime, &state, context, effects, "ファイル閉じる", &.{handle})) orelse return error.TestExpectedEqual;
+    // close後ハンドルはEBADF。
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイル空洞領域検索", &.{ handle, .{ .number = 0 } }));
+    try roots.protect(&thrown);
+    try expectThrownCode(&runtime, thrown, "EBADF");
 }

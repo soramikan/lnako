@@ -1,6 +1,17 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const foundation = @import("low_level_foundation.zig");
+const fs_ext = @import("low_level_fs_ext.zig");
+
+// Issue #36（statfs/reflink/sparse seek/fallocate）の実装は姉妹ファイル
+// low_level_fs_ext.zig に置き、ここから再エクスポートして
+// `low_level_fs.*` の既存の入口を維持する。
+pub const FsInfo = fs_ext.FsInfo;
+pub const SeekExtent = fs_ext.SeekExtent;
+pub const statfs = fs_ext.statfs;
+pub const reflink = fs_ext.reflink;
+pub const seekExtent = fs_ext.seekExtent;
+pub const allocate = fs_ext.allocate;
 
 /// `stat` / `lstat` が返すファイル種別。カタログの `stat.kind` の語彙と一致する。
 /// `dirEntry.type` と同じ file/directory/symlink/other/unknown を使う。
@@ -395,7 +406,7 @@ fn timespecFromSetTime(time: foundation.SetTime) anyerror!std.c.timespec {
     };
 }
 
-fn fsPosixErrno(errno: std.c.E) anyerror {
+pub fn fsPosixErrno(errno: std.c.E) anyerror {
     return switch (errno) {
         .ACCES => error.AccessDenied,
         .PERM => error.PermissionDenied,
@@ -404,6 +415,11 @@ fn fsPosixErrno(errno: std.c.E) anyerror {
         .ISDIR => error.IsDir,
         .LOOP => error.SymLinkLoop,
         .NAMETOOLONG => error.NameTooLong,
+        .EXIST => error.PathAlreadyExists,
+        .XDEV => error.CrossDevice,
+        .MLINK => error.LinkQuotaExceeded,
+        .TXTBSY => error.FileBusy,
+        .NOMEM => error.SystemResources,
         .INVAL, .FAULT => error.InvalidArgument,
         .ROFS => error.ReadOnlyFileSystem,
         .BADF => error.BadFileDescriptor,
@@ -411,7 +427,7 @@ fn fsPosixErrno(errno: std.c.E) anyerror {
         .NOSPC => error.NoSpaceLeft,
         .DQUOT => error.DiskQuota,
         .NOSYS => error.Unsupported,
-        .OPNOTSUPP => error.OperationUnsupported,
+        .OPNOTSUPP, .NOTTY => error.OperationUnsupported,
         else => error.Unexpected,
     };
 }
@@ -538,7 +554,7 @@ fn statLinux(path: []const u8, follow: bool) anyerror!Metadata {
     return metadata;
 }
 
-fn linuxKind(mode: u16) FileKind {
+pub fn linuxKind(mode: u16) FileKind {
     return switch (mode & std.os.linux.S.IFMT) {
         std.os.linux.S.IFDIR => .directory,
         std.os.linux.S.IFREG => .file,
@@ -551,18 +567,33 @@ fn linuxKind(mode: u16) FileKind {
 /// (ENOENT/EACCES/EPERM/ENOTDIR/ELOOP/EINVAL/ENOTSUP) を網羅する。statxが
 /// 返し得る残り（EFAULT/EOVERFLOW等）はportable codeに対応が無いため、
 /// 呼び出し側の `portableCodeForFailure` でEINVALへ丸める（G0の未写像エラー方針）。
-fn linuxErrno(errno: std.os.linux.E) anyerror {
+pub fn linuxErrno(errno: std.os.linux.E) anyerror {
     return switch (errno) {
         .ACCES => error.AccessDenied,
         .PERM => error.PermissionDenied,
         .NOENT => error.FileNotFound,
         .NOTDIR => error.NotDir,
+        .ISDIR => error.IsDir,
         .LOOP => error.SymLinkLoop,
         .NAMETOOLONG => error.NameTooLong,
+        .EXIST => error.PathAlreadyExists,
+        .XDEV => error.CrossDevice,
+        .MLINK => error.LinkQuotaExceeded,
+        .TXTBSY => error.FileBusy,
         .NOMEM => error.SystemResources,
         .INVAL => error.InvalidArgument,
+        .ROFS => error.ReadOnlyFileSystem,
+        .BADF => error.BadFileDescriptor,
+        .FBIG => error.FileTooBig,
+        .NOSPC => error.NoSpaceLeft,
+        .DQUOT => error.DiskQuota,
         .NOSYS => error.Unsupported,
-        .OPNOTSUPP => error.OperationUnsupported,
+        .OPNOTSUPP, .NOTTY => error.OperationUnsupported,
+        // lseek SEEK_DATA/HOLEのENXIO（offsetが末尾以降）はemulated経路と
+        // 同じInvalidOffset（EINVAL）にする。呼出側でENXIOを返し得るのは
+        // lseekのみのためここで一括して写す。ESPIPE/EOVERFLOWはEINVAL相当。
+        .NXIO => error.InvalidOffset,
+        .SPIPE, .OVERFLOW => error.InvalidArgument,
         else => error.Unexpected,
     };
 }
@@ -682,7 +713,7 @@ fn currentGid() u32 {
 }
 
 /// Symlinkを解決せずにテスト用一時ディレクトリ内の絶対パスを作る。
-fn tmpPath(temporary: *std.testing.TmpDir, name: []const u8) ![]u8 {
+pub fn tmpPath(temporary: *std.testing.TmpDir, name: []const u8) ![]u8 {
     const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
     defer std.testing.allocator.free(directory);
     return std.fs.path.join(std.testing.allocator, &.{ directory, name });
@@ -1084,4 +1115,9 @@ test "windowsFiletimeFromNsは1601以前と範囲外をInvalidTimestampにする
     try std.testing.expectError(error.InvalidTimestamp, windowsFiletimeFromNs(-11644473600000000000));
     try std.testing.expectError(error.InvalidTimestamp, windowsFiletimeFromNs(std.math.minInt(i128)));
     try std.testing.expectError(error.InvalidTimestamp, windowsFiletimeFromNs(std.math.maxInt(i128)));
+}
+
+test {
+    // low_level_fs_ext.zig の全decl（実装とテスト）を引き込む。
+    std.testing.refAllDecls(fs_ext);
 }

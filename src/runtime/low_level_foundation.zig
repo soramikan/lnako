@@ -428,6 +428,11 @@ pub fn capabilityImplemented(capability: Capability) bool {
         .priority,
         .locale_collate,
         .display_width,
+        .statfs,
+        .reflink,
+        .seek_data,
+        .seek_hole,
+        .fallocate,
         => true,
         else => false,
     };
@@ -444,6 +449,9 @@ pub fn capabilitySupportedOnOs(capability: Capability, os: OsKind) bool {
         // posix_extensionと、Zig 0.16 stdがWindowsで未対応のhardlinkは
         // Windowsでは提供しない（catalogの `os.windows` はfalse）。
         .chmod, .chown, .access, .uid_gid, .hardlink, .priority => os != .windows,
+        // Issue #36はPOSIXのみ。WindowsはネイティブAPIが契約を満たさないため
+        // 照会false・実行時ENOTSUPにする（reflink/seek/fallocate）。
+        .statfs, .reflink, .seek_data, .seek_hole, .fallocate => os != .windows,
         else => true,
     };
 }
@@ -569,6 +577,13 @@ pub const filesystem_commands = struct {
     pub const truncate_path = "ファイルサイズ変更";
     pub const utime_path = "ファイル時刻設定";
     pub const utime_handle = "ファイル時刻設定済";
+    /// Issue #36: statfs・reflink・sparse file・fallocate。名詞形のため
+    /// dispatch名はカタログ `name` と同一（送り仮名で落ちる語幹が無い）。
+    pub const statfs = "ファイルシステム情報取得";
+    pub const reflink = "ファイルクローン";
+    pub const seek_data = "ファイルデータ領域検索";
+    pub const seek_hole = "ファイル空洞領域検索";
+    pub const fallocate = "ファイル領域確保";
 };
 
 /// Issue #33の逐次ディレクトリ列挙命令名。カタログ・Interpreter dispatch・
@@ -817,11 +832,11 @@ pub const catalog_commands = [_]CatalogCommand{
     .{ .id = "ll-process-priority-set", .name = process_commands.priority_set, .min = 2, .max = 2, .operation = process_operations.setpriority, .capability = .priority, .implemented = true },
     .{ .id = "ll-tty-isatty", .name = process_commands.tty_isatty, .min = 1, .max = 1, .operation = process_operations.isatty, .capability = .tty_isatty, .implemented = true },
     .{ .id = "ll-tty-size", .name = process_commands.tty_size, .min = 1, .max = 1, .operation = process_operations.winsize, .capability = .tty_isatty, .implemented = true },
-    .{ .id = "ll-statfs", .name = "ファイルシステム情報取得", .min = 1, .max = 1, .operation = "statfs", .capability = .statfs },
-    .{ .id = "ll-reflink", .name = "ファイルクローン", .min = 2, .max = 3, .operation = "reflink", .capability = .reflink },
-    .{ .id = "ll-seek-data", .name = "ファイルデータ領域検索", .min = 2, .max = 2, .operation = "lseek", .capability = .seek_data },
-    .{ .id = "ll-seek-hole", .name = "ファイル空洞領域検索", .min = 2, .max = 2, .operation = "lseek", .capability = .seek_hole },
-    .{ .id = "ll-fallocate", .name = "ファイル領域確保", .min = 3, .max = 3, .operation = "fallocate", .capability = .fallocate },
+    .{ .id = "ll-statfs", .name = filesystem_commands.statfs, .min = 1, .max = 1, .operation = filesystem_operations.statfs, .capability = .statfs, .implemented = true },
+    .{ .id = "ll-reflink", .name = filesystem_commands.reflink, .min = 2, .max = 3, .operation = filesystem_operations.reflink, .capability = .reflink, .implemented = true },
+    .{ .id = "ll-seek-data", .name = filesystem_commands.seek_data, .min = 2, .max = 2, .operation = stream_operations.lseek, .capability = .seek_data, .implemented = true },
+    .{ .id = "ll-seek-hole", .name = filesystem_commands.seek_hole, .min = 2, .max = 2, .operation = stream_operations.lseek, .capability = .seek_hole, .implemented = true },
+    .{ .id = "ll-fallocate", .name = filesystem_commands.fallocate, .min = 3, .max = 3, .operation = stream_operations.fallocate, .capability = .fallocate, .implemented = true },
     .{ .id = "ll-capability-supported", .name = capability_supported_command, .min = 1, .max = 1, .operation = "capability", .capability = null, .implemented = true },
     .{ .id = "ll-capability-list", .name = capability_list_command, .min = 0, .max = 0, .operation = "capability", .capability = null, .implemented = true },
     .{ .id = "ll-locale-compare", .name = locale_commands.compare, .min = 2, .max = 3, .operation = locale_operations.collate, .capability = .locale_collate, .implemented = true },
@@ -868,6 +883,10 @@ pub const stream_operations = struct {
     pub const write = "write";
     pub const fsync = "fsync";
     pub const ftruncate = "ftruncate";
+    /// Issue #36のハンドル操作のsyscall名。領域検索2命令はSEEK_DATA/SEEK_HOLEを
+    /// 指定した `lseek`、領域確保は `fallocate`。
+    pub const lseek = "lseek";
+    pub const fallocate = "fallocate";
 };
 
 /// Issue #32のincremental hash命令が失敗したときに返す構造化エラーの操作名
@@ -891,6 +910,9 @@ pub const filesystem_operations = struct {
     pub const truncate = "truncate";
     pub const utime = "utime";
     pub const futime = "futime";
+    /// Issue #36のファイルシステム統計とCoWクローンのsyscall名。
+    pub const statfs = "statfs";
+    pub const reflink = "reflink";
 };
 
 /// Issue #33の逐次ディレクトリ列挙が失敗したときに返す構造化エラーの操作名
@@ -983,6 +1005,32 @@ pub const stat_field_key_list = [_][]const u8{
     stat_field_keys.mtime_ns,
     stat_field_keys.ctime_ns,
     stat_field_keys.birthtime_ns,
+};
+
+/// `fsInfo`辞書のフィールド名。カタログ `typeSchemas.fsInfo` と一致させる。
+/// Issue #36の `ファイルシステム情報取得` が返す容量・inode統計。
+pub const fs_info_keys = struct {
+    pub const block_size = "blockSize";
+    pub const blocks = "blocks";
+    pub const free = "free";
+    pub const available = "available";
+    pub const files = "files";
+    pub const free_files = "freeFiles";
+    pub const filesystem_type = "filesystemType";
+    pub const filesystem_id = "filesystemId";
+};
+
+/// `fs_info_keys` の全8フィールド。辞書構築の網羅テストが参照する。
+/// カタログ `typeSchemas.fsInfo` と同じ順序。
+pub const fs_info_key_list = [_][]const u8{
+    fs_info_keys.block_size,
+    fs_info_keys.blocks,
+    fs_info_keys.free,
+    fs_info_keys.available,
+    fs_info_keys.files,
+    fs_info_keys.free_files,
+    fs_info_keys.filesystem_type,
+    fs_info_keys.filesystem_id,
 };
 
 /// 開くときのアクセス様式。`ファイル開く` のmode引数から決まる。
@@ -1197,6 +1245,71 @@ pub fn dirCloseErrorCode(_: anyerror) PortableErrorCode {
     return .EBADF;
 }
 
+/// `ファイルシステム情報取得` が投げ得るcode。カタログのエラー集合は
+/// ENOENT/EACCES/EPERM/ENOTDIR/EINVAL/ENOTSUP。ELOOP等の契約外はEINVAL。
+pub fn statfsErrorCode(failure: anyerror) PortableErrorCode {
+    return switch (portableCodeForFailure(failure) orelse .EINVAL) {
+        .ENOENT, .EACCES, .EPERM, .ENOTDIR, .EINVAL, .ENOTSUP => |code| code,
+        else => .EINVAL,
+    };
+}
+
+/// `ファイルクローン` が投げ得るcode。カタログのエラー集合は
+/// ENOENT/EEXIST/EACCES/EPERM/EXDEV/ENOTSUP。非対応FSや通常コピーへ
+/// フォールバックしない条件はENOTSUP、それ以外の契約外はEINVAL。
+pub fn reflinkErrorCode(failure: anyerror) PortableErrorCode {
+    return switch (portableCodeForFailure(failure) orelse .EINVAL) {
+        .ENOENT, .EEXIST, .EACCES, .EPERM, .EXDEV, .ENOTSUP => |code| code,
+        else => .EINVAL,
+    };
+}
+
+/// `ファイルデータ領域検索` / `ファイル空洞領域検索` が投げ得るcode。
+/// カタログのエラー集合はEBADF/EINVAL/ENOTSUP（offset負値・ENXIOはEINVAL）。
+pub fn seekErrorCode(failure: anyerror) PortableErrorCode {
+    return switch (portableCodeForFailure(failure) orelse .EINVAL) {
+        .EBADF, .EINVAL, .ENOTSUP => |code| code,
+        else => .EINVAL,
+    };
+}
+
+/// `ファイル領域確保` が投げ得るcode。カタログのエラー集合は
+/// EBADF/EINVAL/ENOSPC/ENOTSUP（EFBIG/EDQUOTはENOSPCへ既に写像済み）。
+pub fn fallocateErrorCode(failure: anyerror) PortableErrorCode {
+    return switch (portableCodeForFailure(failure) orelse .EINVAL) {
+        .EBADF, .EINVAL, .ENOSPC, .ENOTSUP => |code| code,
+        else => .EINVAL,
+    };
+}
+
+test "Issue #36の命令は契約のportable code集合へ丸められる" {
+    // statfs: 契約集合はそのまま、契約外（ELOOP）はEINVAL。
+    try std.testing.expectEqual(PortableErrorCode.ENOENT, statfsErrorCode(error.FileNotFound));
+    try std.testing.expectEqual(PortableErrorCode.ENOTDIR, statfsErrorCode(error.NotDir));
+    try std.testing.expectEqual(PortableErrorCode.ENOTSUP, statfsErrorCode(error.OperationUnsupported));
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, statfsErrorCode(error.SymLinkLoop));
+
+    // reflink: EXDEVを保持し、契約外（ENOSPC/EROFS/ENOTDIR）はEINVAL。
+    try std.testing.expectEqual(PortableErrorCode.EXDEV, reflinkErrorCode(error.CrossDevice));
+    try std.testing.expectEqual(PortableErrorCode.EEXIST, reflinkErrorCode(error.PathAlreadyExists));
+    try std.testing.expectEqual(PortableErrorCode.ENOTSUP, reflinkErrorCode(error.OperationUnsupported));
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, reflinkErrorCode(error.NoSpaceLeft));
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, reflinkErrorCode(error.NotDir));
+
+    // seek: EBADF/EINVAL/ENOTSUPのみ。契約外（EACCES）はEINVAL。
+    try std.testing.expectEqual(PortableErrorCode.EBADF, seekErrorCode(error.BadFileDescriptor));
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, seekErrorCode(error.InvalidOffset));
+    try std.testing.expectEqual(PortableErrorCode.ENOTSUP, seekErrorCode(error.OperationUnsupported));
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, seekErrorCode(error.AccessDenied));
+
+    // fallocate: ENOSPCを保持し、契約外（EACCES）はEINVAL。
+    try std.testing.expectEqual(PortableErrorCode.EBADF, fallocateErrorCode(error.BadFileDescriptor));
+    try std.testing.expectEqual(PortableErrorCode.ENOSPC, fallocateErrorCode(error.NoSpaceLeft));
+    try std.testing.expectEqual(PortableErrorCode.ENOSPC, fallocateErrorCode(error.DiskQuota));
+    try std.testing.expectEqual(PortableErrorCode.ENOTSUP, fallocateErrorCode(error.OperationUnsupported));
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, fallocateErrorCode(error.AccessDenied));
+}
+
 test "ディレクトリ命令の失敗は契約のportable code集合へ丸められる" {
     try std.testing.expectEqual(PortableErrorCode.ENOENT, dirOpenErrorCode(error.FileNotFound));
     try std.testing.expectEqual(PortableErrorCode.ENOTDIR, dirOpenErrorCode(error.NotDir));
@@ -1356,13 +1469,19 @@ test "非対応OSのcapabilityは照会falseになる" {
         try std.testing.expect(capabilitySupportedOnOs(capability, .linux));
         try std.testing.expect(capabilitySupportedOnOs(capability, .macos));
     }
+    // Issue #36はPOSIXのみで、Windowsは照会false・実行時ENOTSUP。
+    inline for (.{ .statfs, .reflink, .seek_data, .seek_hole, .fallocate }) |capability| {
+        try std.testing.expect(!capabilitySupportedOnOs(capability, .windows));
+        try std.testing.expect(capabilitySupportedOnOs(capability, .linux));
+        try std.testing.expect(capabilitySupportedOnOs(capability, .macos));
+    }
     // Windowsでも成立するcapabilityはOSで落とさない。
     inline for (.{ .stream_file_io, .stat, .lstat, .unlink, .rename }) |capability| {
         try std.testing.expect(capabilitySupportedOnOs(capability, .windows));
     }
     // 未実装capabilityは指定OSに関わらずfalse。
     try std.testing.expect(!capabilitySupportedOnOs(.termios, .linux));
-    try std.testing.expect(!capabilitySupportedOnOs(.statfs, .macos));
+    try std.testing.expect(!capabilitySupportedOnOs(.xattr, .macos));
 }
 
 test "WASIではutime capabilityがfalseになる" {
