@@ -294,6 +294,12 @@ pub fn environmentPackagesUsable(gpa: Allocator, io: std.Io, project_root: []con
     if (parsed.value != .object) return false;
     const packages_value = parsed.value.object.get("packages") orelse return false;
     if (packages_value != .object) return false;
+    const generation_value = parsed.value.object.get("generation") orelse return false;
+    if (generation_value != .string or generation_value.string.len == 0 or
+        std.mem.indexOfAny(u8, generation_value.string, "/\\") != null or
+        std.mem.eql(u8, generation_value.string, ".") or std.mem.eql(u8, generation_value.string, "..")) return false;
+    const managed_deps = std.fs.path.join(gpa, &.{ ".nako", "env", generation_value.string, "deps" }) catch return error.OutOfMemory;
+    defer gpa.free(managed_deps);
     const records = packages_value.object;
 
     const root_abs = std.fs.path.resolve(gpa, &.{project_root}) catch return error.FileSystem;
@@ -320,9 +326,16 @@ pub fn environmentPackagesUsable(gpa: Allocator, io: std.Io, project_root: []con
             if (stat.kind != .directory) return false;
             continue;
         }
+        // registry/git/http 等の非-path package は必ずこの generation の
+        // 管理下に materialize される。project 内の任意 dir（例: src）を
+        // environment.json が指しても package payload として信頼しない。
+        if (!std.mem.startsWith(u8, recorded_path, managed_deps) or recorded_path.len <= managed_deps.len or
+            (recorded_path[managed_deps.len] != '/' and recorded_path[managed_deps.len] != std.fs.path.sep)) return false;
+        const package_dir = recorded_path[managed_deps.len + 1 ..];
+        if (package_dir.len == 0 or std.mem.indexOfAny(u8, package_dir, "/\\") != null) return false;
         const abs = std.fs.path.resolve(gpa, &.{ root_abs, recorded_path }) catch return error.FileSystem;
         defer gpa.free(abs);
-        // env/staging 展開物の記録が project 外を指す場合は環境破損。
+        // env/staging 展開物の記録が project 外を指す場合は環境破損.
         if (!std.mem.startsWith(u8, abs, root_abs) or abs.len == root_abs.len or
             (abs[root_abs.len] != '/' and abs[root_abs.len] != std.fs.path.sep)) return false;
         // 末端だけでなく `.nako`/`env`/`<gen>` 等の中間成分も no-follow

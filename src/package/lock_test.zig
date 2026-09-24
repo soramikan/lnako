@@ -304,6 +304,28 @@ test "artifact無しをE008で拒否する" {
     try T.expect(diagnostics.find(diag.E008_MISSING_ARTIFACT) != null);
 }
 
+test "source artifactは選択native実装のcontainerとして扱う" {
+    const text = try lockWithPackages(
+        \\    "pkg:10000000000000000000000000000000": {
+        \\      "id": "pkg:10000000000000000000000000000000",
+        \\      "name": "source-lib",
+        \\      "version": "1.0.0",
+        \\      "implementation": "native",
+        \\      "source": { "type": "path", "path": "lib", "mutable": true },
+        \\      "dependencies": [],
+        \\      "features": [],
+        \\      "artifacts": { "source": { "kind": "source" } }
+        \\    }
+    , "\"os\": \"macos\", \"cpu\": \"aarch64\", \"abi\": \"gnu\"");
+    defer T.allocator.free(text);
+    var value = try parseValid(text);
+    defer value.deinit();
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    try lock.validate(&value, &diagnostics);
+    try T.expect(diagnostics.find(diag.E008_MISSING_ARTIFACT) == null);
+}
+
 test "未知artifact kindをE007で拒否する" {
     const text = try lockWithPackages(
         \\    "pkg:10000000000000000000000000000000": {

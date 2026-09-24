@@ -447,7 +447,15 @@ fn lhsMatchesDecl(lhs: []const u8, kind: []const u8, name: []const u8) bool {
     }
     if (!std.mem.eql(u8, last, name)) return false;
     if (count == 1) return true;
-    return std.mem.eql(u8, first.?, kind);
+    if (std.mem.eql(u8, first.?, kind)) return true;
+    // document-root 形式 `dependencies.path.lib = ...`。
+    if (count == 3 and std.mem.eql(u8, first.?, "dependencies")) {
+        var segments = std.mem.splitScalar(u8, lhs, '.');
+        _ = segments.next();
+        const second = segments.next() orelse return false;
+        return std.mem.eql(u8, std.mem.trim(u8, second, " \t\"'"), kind);
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1291,6 +1299,16 @@ test "removeEntry は dotted key 宣言も除去する" {
     // kind が違う dotted key（git.lib）は path.lib の除去対象にしない。
     const other = try removeEntry(a, source, "dependencies.git", "lib", .{ .line = 2 });
     try std.testing.expect(other == null);
+
+    // 文書 root の完全修飾 dotted 宣言も同じ依存として除去する。
+    const root_source =
+        \\dependencies.path.lib = { path = "lib" }
+        \\dependencies.git.tool = { url = "https://example.invalid/tool" }
+        \\
+    ;
+    const root_removed = (try removeEntry(a, root_source, "dependencies.path", "lib", .{ .line = 1 })).?;
+    try std.testing.expect(std.mem.indexOf(u8, root_removed, "dependencies.path.lib") == null);
+    try std.testing.expect(std.mem.indexOf(u8, root_removed, "dependencies.git.tool") != null);
 }
 
 test "initTargetExists は symlink も存在として検出する" {

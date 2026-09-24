@@ -65,6 +65,18 @@ test "プロジェクトを検出して読み込める" {
     try testing.expectEqualStrings(app_root, found);
 }
 
+test "findRootはmanifest候補が通常fileでない場合に拒否する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/sub/nako.toml");
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/nako.toml", .data = "[package]\\n" });
+    const nested = try temporary.dir.realPathFileAlloc(io, "app/sub", testing.allocator);
+    defer testing.allocator.free(nested);
+    // 欠落候補だけ親へ進み、存在する非fileは不正候補として拒否する。
+    try testing.expectError(error.InvalidManifest, project.findRoot(testing.allocator, io, nested));
+}
+
 test "path依存のみのプロジェクトでensureLockがnako.lockを生成する" {
     const io = testing.io;
     var temporary = std.testing.tmpDir(.{});
@@ -1428,6 +1440,7 @@ test "environmentPackagesUsableは余分なrecordと形状違反と中間symlink
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "app/.nako/env/gen-1/deps/lib");
+    try temporary.dir.createDirPath(io, "app/src");
 
     var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_impl.deinit();
@@ -1469,6 +1482,12 @@ test "environmentPackagesUsableは余分なrecordと形状違反と中間symlink
     ;
     try writeEnv(temporary.dir, valid);
     try testing.expect(try usable(&lock, app_root));
+
+    // project 内に実在する unrelated dir でも managed generation 外なら拒否。
+    try writeEnv(temporary.dir,
+        \\{"pkg:11111111111111111111111111111111":{"name":"lib","version":"1.0.0","id":"pkg:11111111111111111111111111111111","path":"src"}}
+    );
+    try testing.expect(!try usable(&lock, app_root));
 
     // 余分な record を残した環境は不一致（key 集合の完全一致）。
     try writeEnv(temporary.dir,

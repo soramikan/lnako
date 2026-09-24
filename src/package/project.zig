@@ -120,7 +120,12 @@ pub fn findRoot(gpa: Allocator, io: std.Io, start_dir: []const u8) Error!?[]cons
     while (true) {
         const candidate = try std.fs.path.join(gpa, &.{ dir, manifest_name });
         defer gpa.free(candidate);
-        if (fileExists(io, candidate)) {
+        const candidate_stat = std.Io.Dir.cwd().statFile(io, candidate, .{ .follow_symlinks = false }) catch |err| switch (err) {
+            error.FileNotFound => null,
+            else => return mapFs(err),
+        };
+        if (candidate_stat) |stat| {
+            if (stat.kind != .file) return error.InvalidManifest;
             return try gpa.dupe(u8, dir);
         }
         const parent = std.fs.path.dirname(dir) orelse return null;

@@ -663,11 +663,17 @@ fn validatePackageSet(packages: []const PackageEntry, exists: *const std.StringH
         if (has_esm and !esm_allowed) {
             try diagnostics.addFmt(diag.E006_JS_IN_NORMAL_MODE, .err, artifacts_path, .{}, "ESM artifact selected without compat-js profile", .{});
         }
+        // source dependency の source artifact は取得済み tree 全体を指す
+        // container。native/ESM export はその tree 内 manifest から sync が
+        // 選び直すため、個別 download artifact の一致を要求しない。
+        const source_container = package.source != null and package.hasKind("source");
         // 選択された実装種別に対応する artifact が存在しなければ同期できない。
         if (package.implementation) |implementation| {
             if (!containsString(&known_implementations, implementation)) {
                 try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, package_path, .{}, "unknown implementation \"{s}\"", .{implementation});
-            } else if (!std.mem.eql(u8, implementation, "none") and !package.hasKind(implementation)) {
+            } else if (std.mem.eql(u8, implementation, "esm") and source_container and !esm_allowed) {
+                try diagnostics.addFmt(diag.E006_JS_IN_NORMAL_MODE, .err, artifacts_path, .{}, "ESM implementation selected without compat-js profile", .{});
+            } else if (!std.mem.eql(u8, implementation, "none") and !package.hasKind(implementation) and !source_container) {
                 try diagnostics.addFmt(diag.E008_MISSING_ARTIFACT, .err, artifacts_path, .{}, "selected implementation \"{s}\" has no matching artifact", .{implementation});
             }
         }
