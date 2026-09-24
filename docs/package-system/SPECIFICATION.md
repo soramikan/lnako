@@ -326,7 +326,7 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
 - lnako/cnako が共用する同一 source artifact は、同じ Public ID・版・hash で参照する。profile をまたいで同一 ID・版の source artifact の hash が食い違う lock は不正とする。
 - 通常解決では既存 lock の版を優先する。`update` で指定した package だけ優先固定を解除する。指定外の package が変化した場合は、変更元 package を変更理由（`caused_by`）として説明する。
 - `--locked` は lock 欠落、未知 `schemaVersion`、`resolverVersion` 不一致、manifest/profile/features/target の変更を検出したとき、lock を書き換えず失敗する。呼出し側は先に意味検証（`validate`）を行い、その上で鮮度判定を行う（鮮度判定自体は入力条件のみを比較し、意味検証を含まない）。
-- 鮮度は選択された `input`（`manifestSha256`・`profile`・`features`・`target`・`runtime`・`nakoVersion`・`cnakoVersion`・`lnakoVersion`・`mutablePaths`）で判定する。manifest の変更は全 profile に影響する `manifestSha256` の変化として検出し、別 profile の選択は `input.profile` の変化として検出する。`runtime`・各 version は解決時の runtime と engines 照合値を記録し、`--runtime` 切替やコンパイラ更新で再解決する。これらを記録しない旧 lock は不一致として再解決される。`target.compatJs` は `--compat-js` 実行または profile の `compat-js` で ESM 実装を許容したかを記録し（false は省略）、実装選択の違いで再解決する。非選択 profile の `profilePackages` は lock の再生成時に更新する。
+- 鮮度は選択された `input`（`manifestSha256`・`profile`・`features`・`target`・`runtime`・`nakoVersion`・`cnakoVersion`・`lnakoVersion`・`mutablePaths`）で判定する。manifest の変更は全 profile に影響する `manifestSha256` の変化として検出し、別 profile の選択は `input.profile` の変化として検出する。`runtime`・各 version は解決時の runtime と engines 照合値を記録し、`--runtime` 切替やコンパイラ更新で再解決する。これらを記録しない旧 lock は不一致として再解決される。`target.compatJs` は `--compat-js` 実行または profile の `compat-js` で ESM 実装を許容したかを記録し（false は省略）、`target.optimize` は `build -O` または profile の `optimize` で解決した実効レベルを記録し（`O0` は省略、`-O` は選択中 profile のみに適用する）、それぞれ実装選択の違いで再解決する。非選択 profile の `profilePackages` は lock の再生成時に更新する。
 - 生成の決定性は `build`/`buildPackages` が生成したモデルを対象とする。これらは package マップ・profile・features・依存辺・artifact をソートして保持する。serializer はモデルのスライス順をそのまま出力するため、手動構築したモデルは正規化しない限り意味的に同じでもバイト列・SHA-256 が異なり得る。
 - path 依存は `mutable` フラグで二種類に分かれる。`mutable = false`（既定）は宣言 tree の内容 digest で pin し、内容変更は pin 不一致として再解決を要求する。`mutable = true` は宣言 dir を生参照するが、宣言 dir の内容 digest（`.nako`・`.git` を除く tree 全体）を `input.mutablePaths` に path 昇順で記録する。manifest・exports・推移的宣言・ソースのいずれの変更も digest 不一致として検出され、manifest が同一でも lock が陳腐化して再解決される。dir が変わらなければ既存 lock を再利用する。
 
@@ -455,6 +455,7 @@ size = 1234
 - `pkg:` import は resolver によって lock 済みのパスまたは artifact に解決される。
 - JavaScript/ESM artifact の import は `--compat-js` 指定時のみ許可する。
 - 通常モードで JS/ESM 依存を解決しようとした場合は `E006_JS_IN_NORMAL_MODE` 診断。
+- 環境の materialize（`sync`・自動準備の `.npkg` 検証と export 解決）は、解決時の実効 target を lock の `input` から再現する。`target.compatJs`・`target.optimize`・`runtime`・`nakoVersion`/`cnakoVersion`/`lnakoVersion` をそのまま使うため、`--compat-js` や `build -O` で選択した artifact が環境構築時の検証で reject されない。`--profile` で別 profile を指定した場合は、その profile record が宣言する `optimize` を使う（CLI の `-O` は入力 profile にのみ適用されるため）。
 
 ### 7.3 cnako 委譲と環境参照契約
 

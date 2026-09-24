@@ -120,11 +120,14 @@ fn headerMatches(text: []const u8, section: []const u8, buf: []u8) bool {
     while (it.next()) |seg_raw| {
         const seg = std.mem.trim(u8, seg_raw, " \t");
         var name = seg;
-        if (seg.len >= 2 and seg[0] == '"' and seg[seg.len - 1] == '"') {
-            // 引用セグメント。内部に '.' や escape が来る入力は依存
-            // セクション名に現れないため単純に剥がす。
+        if (seg.len >= 2 and ((seg[0] == '"' and seg[seg.len - 1] == '"') or
+            (seg[0] == '\'' and seg[seg.len - 1] == '\'')))
+        {
+            // 引用セグメント（basic `"x"`・literal `'x'` 両方）。
+            // 内部に '.' や escape が来る入力は依存セクション名に現れない
+            // ため単純に剥がす。
             name = seg[1 .. seg.len - 1];
-        } else if (seg.len >= 1 and seg[0] == '"') {
+        } else if (seg.len >= 1 and (seg[0] == '"' or seg[0] == '\'')) {
             return false; // 引用がドットを跨ぐ → 別名テーブル
         }
         if (name.len == 0) return false;
@@ -544,6 +547,42 @@ fn initTargetExists(io: std.Io, path: []const u8) !bool {
     return true;
 }
 
+/// `init` が今回の呼出しで作成した出力だけを取り消す。scaffold 途中の
+/// 失敗で manifest や部分的な生成物が残ると再試行が「既に存在」で
+/// 拒否されるため、作成済みの file/dir を登録して失敗時に除去する。
+/// 既存の file/dir は登録しないため一切触れない。個々の削除失敗は
+/// 無視する（ロールバックの失敗で元の error を隠さない）。
+const InitRollback = struct {
+    io: std.Io,
+    /// 今回作成した `nako.toml`。createFile 成功後に登録する。
+    manifest_path: ?[]const u8 = null,
+    /// 今回作成したプロジェクト dir。dir が既存だった場合は null。
+    dir_abs: ?[]const u8 = null,
+    /// 今回作成した scaffold file（絶対 path、作成順）。
+    files: std.ArrayList([]const u8) = .empty,
+    /// 今回作成した scaffold 親 dir（絶対 path、作成順）。
+    dirs: std.ArrayList([]const u8) = .empty,
+
+    fn deinit(self: *InitRollback, a: Allocator) void {
+        self.files.deinit(a);
+        self.dirs.deinit(a);
+    }
+
+    /// 登録済みの生成物を作成の逆順で削除する。dir は空の場合のみ
+    /// 消えるため、作成後に他の file が置かれていれば残る。
+    fn run(self: *InitRollback) void {
+        const cwd = std.Io.Dir.cwd();
+        for (self.files.items) |path| cwd.deleteFile(self.io, path) catch {};
+        var i = self.dirs.items.len;
+        while (i > 0) {
+            i -= 1;
+            cwd.deleteDir(self.io, self.dirs.items[i]) catch {};
+        }
+        if (self.manifest_path) |path| cwd.deleteFile(self.io, path) catch {};
+        if (self.dir_abs) |path| cwd.deleteDir(self.io, path) catch {};
+    }
+};
+
 pub fn runInit(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const u8, stderr: *std.Io.Writer) !void {
     var lib = false;
     var name_opt: ?[]const u8 = null;
@@ -583,7 +622,17 @@ pub fn runInit(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []
     if (!manifest_mod.isPackageName(name)) {
         return failUsage(stderr, "init: パッケージ名が規則に合いません: {s}（[a-z][a-z0-9-]{{0,63}}。--name で指定してください）\n", .{name});
     }
-    if (dir_arg != null) try cwd.createDirPath(io, dir_abs);
+    // scaffold 作成の途中失敗で `nako.toml` や部分的な生成物が残り
+    // 再試行を妨げないよう、今回作成した出力だけを追跡して失敗時に
+    // 除去する。既存の file/dir は対象に含めない。
+    var rollback = InitRollback{ .io = io };
+    defer rollback.deinit(a);
+    errdefer rollback.run();
+    if (dir_arg != null) {
+        const dir_existed = try initTargetExists(io, dir_abs);
+        try cwd.createDirPath(io, dir_abs);
+        if (!dir_existed) rollback.dir_abs = dir_abs;
+    }
     const manifest_path = try std.fs.path.join(a, &.{ dir_abs, project.manifest_name });
     if (try initTargetExists(io, manifest_path)) {
         return fail(stderr, "init: {s} は既に存在します\n", .{manifest_path});
@@ -629,8 +678,14 @@ pub fn runInit(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []
         error.PathAlreadyExists => return fail(stderr, "init: {s} は既に存在します\n", .{manifest_path}),
         else => return err,
     };
-    defer manifest_file.close(io);
-    try manifest_file.writeStreamingAll(io, manifest_text.items);
+    rollback.manifest_path = manifest_path;
+    // Windows では open 中の file を削除できないため、ロールバックが
+    // manifest を除去できるよう書込直後に閉じる。
+    manifest_file.writeStreamingAll(io, manifest_text.items) catch |err| {
+        manifest_file.close(io);
+        return err;
+    };
+    manifest_file.close(io);
 
     if (lib) {
         const lib_source = try std.mem.replaceOwned(u8, a, lib_source_template, "<name>", name);
@@ -638,11 +693,23 @@ pub fn runInit(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []
         const test_source = try std.mem.replaceOwned(u8, a, lib_test_template, "<name>", name);
         for ([_][]const u8{ lib_source, example, test_source }, scaffold_paths) |contents, rel| {
             const target = try std.fs.path.join(a, &.{ dir_abs, rel });
-            writeInitFile(io, cwd, target, contents) catch |err| switch (err) {
-                error.InvalidScaffoldDir => return fail(stderr, "init: {s} の親 dir は symlink またはファイルのため作成できません\n", .{target}),
-                error.PathAlreadyExists => return fail(stderr, "init: {s} は既に存在します（既存ファイルを上書きしません）\n", .{target}),
-                else => return err,
+            // writeInitFile が親 dir を新規作成する場合に備え、生成前に
+            // 存在しなかった dir はロールバック対象へ登録する。既存の
+            // dir は登録しないためロールバックで残る。
+            if (std.fs.path.dirname(target)) |parent| {
+                if (!try initTargetExists(io, parent)) try rollback.dirs.append(a, parent);
+            }
+            writeInitFile(io, cwd, target, contents) catch |err| {
+                // 実 CLI の fail は exit するため errdefer が走らない。
+                // 明示的にロールバックしてから失敗を返す。
+                rollback.run();
+                return switch (err) {
+                    error.InvalidScaffoldDir => fail(stderr, "init: {s} の親 dir は symlink またはファイルのため作成できません\n", .{target}),
+                    error.PathAlreadyExists => fail(stderr, "init: {s} は既に存在します（既存ファイルを上書きしません）\n", .{target}),
+                    else => err,
+                };
             };
+            try rollback.files.append(a, target);
         }
     }
     try stderr.print("init: {s} にプロジェクトを作成しました\n", .{dir_abs});
@@ -1098,6 +1165,23 @@ test "insertEntry は空白・引用セグメントの既存テーブルへ挿�
         \\
     , "dependencies.path", "lib2", "{ path = \"lib2\" }");
     try std.testing.expect(std.mem.indexOf(u8, quoted, "lib2") != null);
+
+    // literal 引用 `[dependencies.'path']` も TOML 上は同一テーブル。
+    // 正規化しないと add が重複テーブルを追記して manifest を壊す。
+    const literal = try insertEntry(a,
+        \\[package]
+        \\name = "app"
+        \\
+        \\[dependencies.'path']
+        \\lib = { path = "lib" }
+        \\
+    , "dependencies.path", "lib2", "{ path = \"lib2\" }");
+    try std.testing.expect(std.mem.indexOf(u8, literal, "lib2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, literal, "[dependencies.path]") == null);
+    // 引用を含む既存テーブル内に挿入される（重複ヘッダを追加しない）。
+    const lit_lib_pos = std.mem.indexOf(u8, literal, "lib =").?;
+    const lit_lib2_pos = std.mem.indexOf(u8, literal, "lib2").?;
+    try std.testing.expect(lit_lib_pos < lit_lib2_pos);
 }
 
 test "insertEntry は dotted key 宣言の既存 table を再定義しない" {
@@ -1161,6 +1245,12 @@ test "headerMatches は名前全体の引用を別テーブルとして区別す
     try std.testing.expect(!headerMatches("[ \"dependencies.path\" ]", "dependencies.path", &buf));
     try std.testing.expect(headerMatches("[ dependencies.\"path\" ]", "dependencies.path", &buf));
     try std.testing.expect(headerMatches("[dependencies.path]", "dependencies.path", &buf));
+    // literal 引用も同一テーブル。ドットを跨ぐ literal 引用は別名。
+    try std.testing.expect(headerMatches("[ dependencies.'path' ]", "dependencies.path", &buf));
+    try std.testing.expect(headerMatches("[dependencies.'path']", "dependencies.path", &buf));
+    try std.testing.expect(headerMatches("[dev-dependencies.'pkg']", "dev-dependencies.pkg", &buf));
+    try std.testing.expect(!headerMatches("['dependencies.path']", "dependencies.path", &buf));
+    try std.testing.expect(!headerMatches("[dependencies.'path.x']", "dependencies.path", &buf));
     try std.testing.expect(!headerMatches("[[dependencies.path]]", "dependencies.path", &buf));
 }
 
@@ -1217,4 +1307,65 @@ test "initTargetExists は symlink も存在として検出する" {
     const link_abs = try std.fs.path.join(std.testing.allocator, &.{ tmp_abs, "nako.toml" });
     defer std.testing.allocator.free(link_abs);
     try std.testing.expect(try initTargetExists(io, link_abs));
+}
+
+test "init --lib は scaffold 失敗時に今回作成した生成物だけをロールバックする" {
+    // `src` が symlink のため scaffold 作成は InvalidScaffoldDir で失敗する。
+    // 途中まで作成した nako.toml が残ると再試行が「既に存在」で拒否される
+    // ため、今回作成した file/dir を除去する。既存の symlink・file・dir
+    // は対象に含めず残す。
+    const io = std.testing.io;
+    var arena_impl = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const root = try temporary.dir.realPathFileAlloc(io, ".", a);
+
+    // `src` を symlink、`examples` を中身付きの実 dir にして、1 件目の
+    // scaffold（src/lib.nako3）は親が symlink で失敗、2 件目の
+    // examples/main.nako3 まで進まない構成と既存物保護を両方検証する
+    // ため、別の fixture で両パターンを試す。
+    try temporary.dir.symLink(io, "elsewhere", "src", .{});
+    try temporary.dir.createDirPath(io, "examples");
+    try temporary.dir.writeFile(io, .{ .sub_path = "examples/keep.txt", .data = "keep" });
+
+    var err: std.Io.Writer.Allocating = .init(a);
+    try std.testing.expectError(error.Failed, runInit(a, io, &.{ "--lib", "--name", "testlib" }, root, &err.writer));
+
+    // 作成した nako.toml は残さない。
+    const manifest_abs = try std.fs.path.join(a, &.{ root, "nako.toml" });
+    try std.testing.expect(!try initTargetExists(io, manifest_abs));
+    // 既存の src symlink と examples/keep.txt は無傷で残る。
+    const src_stat = try temporary.dir.statFile(io, "src", .{ .follow_symlinks = false });
+    try std.testing.expect(src_stat.kind == .sym_link);
+    try std.testing.expect(try initTargetExists(io, try std.fs.path.join(a, &.{ root, "examples", "keep.txt" })));
+
+    // symlink を取り除けば再試行が成功する。
+    try temporary.dir.deleteFile(io, "src");
+    try runInit(a, io, &.{ "--lib", "--name", "testlib" }, root, &err.writer);
+    try std.testing.expect(try initTargetExists(io, manifest_abs));
+    try std.testing.expect(try initTargetExists(io, try std.fs.path.join(a, &.{ root, "src", "lib.nako3" })));
+}
+
+test "init --lib は scaffold 途中の失敗で先行 file と dir もロールバックする" {
+    // `examples` が symlink のため、1 件目（src/lib.nako3）は成功してから
+    // 2 件目で失敗する。先行して作成した src/lib.nako3・src dir・
+    // nako.toml を全て除去し、既存の symlink は残す。
+    const io = std.testing.io;
+    var arena_impl = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const root = try temporary.dir.realPathFileAlloc(io, ".", a);
+    try temporary.dir.symLink(io, "elsewhere", "examples", .{});
+
+    var err: std.Io.Writer.Allocating = .init(a);
+    try std.testing.expectError(error.Failed, runInit(a, io, &.{ "--lib", "--name", "testlib" }, root, &err.writer));
+
+    try std.testing.expect(!try initTargetExists(io, try std.fs.path.join(a, &.{ root, "nako.toml" })));
+    try std.testing.expect(!try initTargetExists(io, try std.fs.path.join(a, &.{ root, "src" })));
+    const examples_stat = try temporary.dir.statFile(io, "examples", .{ .follow_symlinks = false });
+    try std.testing.expect(examples_stat.kind == .sym_link);
 }

@@ -29,7 +29,8 @@ pub const known_optimize = [_][]const u8{ "O0", "O1", "O2", "O3" };
 // ---------------------------------------------------------------------------
 
 /// `input.target`。OS/CPU/ABI と、実装選択を変え得る `--compat-js` の
-/// 有効状態を固定する。profile 宣言の `compat-js` は profile record が持つ。
+/// 有効状態・`build -O` の最適化レベルを固定する。profile 宣言の
+/// `compat-js`/`optimize` は profile record が持つ。
 pub const Target = struct {
     os: []const u8,
     cpu: []const u8,
@@ -38,10 +39,14 @@ pub const Target = struct {
     /// 実装選択を変え得るため鮮度鍵に含める。false は省略して記録する
     /// （旧 lock は欠落 → false と同等）。
     compat_js: bool = false,
+    /// `build -O` / profile の `optimize` で解決した実効レベル。
+    /// optimize-gated artifact の選択を変え得るため鮮度鍵に含める。
+    /// `O0` は省略して記録する（旧 lock は欠落 → O0 と同等）。
+    optimize: []const u8 = "O0",
 
     pub fn eql(a: Target, b: Target) bool {
         return std.mem.eql(u8, a.os, b.os) and std.mem.eql(u8, a.cpu, b.cpu) and std.mem.eql(u8, a.abi, b.abi) and
-            a.compat_js == b.compat_js;
+            a.compat_js == b.compat_js and std.mem.eql(u8, a.optimize, b.optimize);
     }
 };
 
@@ -356,6 +361,10 @@ fn writeTarget(writer: *std.Io.Writer, target: Target) !void {
     try writer.writeAll(", \"abi\": ");
     try writeString(writer, target.abi);
     if (target.compat_js) try writer.writeAll(", \"compatJs\": true");
+    if (!std.mem.eql(u8, target.optimize, "O0")) {
+        try writer.writeAll(", \"optimize\": ");
+        try writeString(writer, target.optimize);
+    }
     try writer.writeAll(" }");
 }
 

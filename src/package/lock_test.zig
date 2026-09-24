@@ -512,6 +512,60 @@ test "compatJs も target 鮮度鍵として stale_target を検出する" {
     try T.expectEqual(lock.Freshness.fresh, lock.checkFreshness(&plain, sampleInput()));
 }
 
+test "optimize も target 鮮度鍵として stale_target を検出する" {
+    // `build -O3` は optimize-gated artifact の選択を変えるため target
+    // の鮮度鍵。O3 で作った lock は O0 の入力へ stale となり、
+    // serialize/parse でも保存・復元される。O0 の lock は optimize を
+    // 書かず、旧 lock の欠落は O0 と同等に扱う。
+    const nodes = [_]resolver.PackageNode{
+        try node(sqlite_id, "1.2.3", &.{.{ .pkg = req_id }}, &.{"default"}),
+        try node(req_id, "2.0.1", &.{}, &.{ "default", "http" }),
+    };
+    var optimized = sampleInput();
+    optimized.target.optimize = "O3";
+    var value = try lock.build(T.allocator, optimized, &.{default_profile}, &nodes, default_fixtures.details());
+    defer value.deinit();
+
+    try T.expectEqual(lock.Freshness.fresh, lock.checkFreshness(&value, optimized));
+    // 既定 O0 の入力は不一致（target 不一致 → stale_target）。
+    try T.expectEqual(lock.Freshness.stale_target, lock.checkFreshness(&value, sampleInput()));
+
+    // serialize/parse で optimize が保存・復元される。
+    const bytes = try lock.toBytes(&value, T.allocator);
+    defer T.allocator.free(bytes);
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    var parsed = try lock.parse(T.allocator, bytes, &diagnostics);
+    defer parsed.deinit();
+    try T.expectEqualStrings("O3", parsed.input.target.optimize);
+
+    // O0 の lock は optimize を書かず、旧 lock の欠落は O0 と同等に
+    // 扱われて fresh のまま。
+    var plain = try sampleLock(T.allocator);
+    defer plain.deinit();
+    const plain_bytes = try lock.toBytes(&plain, T.allocator);
+    defer T.allocator.free(plain_bytes);
+    try T.expect(std.mem.indexOf(u8, plain_bytes, "\"optimize\"") == null);
+    try T.expectEqual(lock.Freshness.fresh, lock.checkFreshness(&plain, sampleInput()));
+}
+
+test "input.target.optimize の既知外の値は拒否する" {
+    // schema の enum と同じ既知集合に限定する。未知値を記録した lock を
+    // 黙って読むと optimize-gated artifact の選択条件が曖昧になる。
+    const text =
+        \\{
+        \\  "schemaVersion": 1,
+        \\  "resolverVersion": 1,
+        \\  "input": { "manifestSha256": "sha256:aa", "profile": "default", "features": [], "target": { "os": "macos", "cpu": "aarch64", "abi": "gnu", "optimize": "Ofast" } },
+        \\  "packages": {}
+        \\}
+    ;
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    try T.expectError(error.InvalidLock, lock.parse(T.allocator, text, &diagnostics));
+    try T.expect(diagnostics.find(diag.E029_INVALID_VALUE) != null);
+}
+
 test "compatJs の非 bool 値は型エラーで拒否する" {
     // `"compatJs": "true"` のような非 bool 値を黙って false へ落とすと、
     // compat 用に作られた lock が非 compat 入力へ fresh と誤判定される。

@@ -113,10 +113,16 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, e
         if (list.errorCount() > 0) try list.render(stderr, options.project_root);
         return fail(stderr, "sync: プロジェクトを読み込めません: {s}\n", .{@errorName(err)});
     };
+    // `found.root` は Project の arena が所有し `found.deinit()` で解放
+    // される。`sync.run` が `options.project_root` を使うのは deinit 後
+    // なので、呼出し側 allocator へ複製して関数末尾まで生存させる。
+    var discovered_root: ?[]u8 = null;
+    defer if (discovered_root) |root| allocator.free(root);
     if (discovered) |loaded| {
         var found = loaded;
         defer found.deinit();
-        options.project_root = found.root;
+        discovered_root = try allocator.dupe(u8, found.root);
+        options.project_root = discovered_root.?;
         var prepare = project.PrepareOptions{
             .profile = options.profile,
             .features = features.items,
@@ -209,4 +215,39 @@ test "値を取るフラグは次のオプションを値として消費せず�
         try testing.expectError(error.Usage, run(a, testing.io, &.{ flag, "--json" }, null, &out.writer, &err.writer));
         try testing.expect(std.mem.indexOf(u8, err.written(), "には値が必要です") != null);
     }
+}
+
+test "sync はサブ dir から親プロジェクトを発見して環境を構築する" {
+    // discoverAndLoad が返す `found.root` は Project の arena が所有し、
+    // `found.deinit()` で解放される。sync.run は deinit 後に
+    // `options.project_root` を使うため、呼出し側 allocator へ複製して
+    // 生存させる必要がある。サブ dir 指定で発見経路を通し、root が
+    // deinit 後も正しく使えることを確認する。
+    const io = std.testing.io;
+    var arena_impl = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const root = try temporary.dir.realPathFileAlloc(io, ".", a);
+    const subdir = try std.fs.path.join(a, &.{ root, "sub", "dir" });
+    const cache_root = try std.fs.path.join(a, &.{ root, "cache" });
+    try temporary.dir.createDirPath(io, "sub/dir");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "nako.toml",
+        .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        ,
+    });
+
+    var out: std.Io.Writer.Allocating = .init(a);
+    var err: std.Io.Writer.Allocating = .init(a);
+    try run(a, io, &.{ "--package-cache-dir", cache_root, subdir }, null, &out.writer, &err.writer);
+    // 発見した親 root 配下に環境が構築される。
+    try std.Io.Dir.cwd().access(io, try std.fs.path.join(a, &.{ root, "nako.lock" }), .{});
+    try std.Io.Dir.cwd().access(io, try std.fs.path.join(a, &.{ root, ".nako", "environment.json" }), .{});
 }

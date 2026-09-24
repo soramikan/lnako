@@ -436,7 +436,7 @@ fn parseInput(parser: *Parser, value: std.json.Value, path: []const u8) !?Input 
         return null;
     };
     const target_object = (try parser.asObject(target_value, path)) orelse return null;
-    try parser.rejectUnknown(target_object, &.{ "os", "cpu", "abi", "compatJs" }, path);
+    try parser.rejectUnknown(target_object, &.{ "os", "cpu", "abi", "compatJs", "optimize" }, path);
     const os_value = target_object.get("os") orelse {
         try parser.report(diag.E019_REQUIRED_FIELD_MISSING, path, "missing required field \"target.os\"", .{});
         return null;
@@ -487,6 +487,16 @@ fn parseInput(parser: *Parser, value: std.json.Value, path: []const u8) !?Input 
                 (try parser.asBool(v, path)) orelse return null
             else
                 false,
+            // `-O` で解決した lock のみ記録する任意項目。欠落は O0 と
+            // 同等。値は profile の optimize と同じ既知集合に限定する。
+            .optimize = if (target_object.get("optimize")) |v| blk: {
+                const optimize = (try parser.asString(v, path)) orelse return null;
+                if (!containsString(&model.known_optimize, optimize)) {
+                    try parser.report(diag.E029_INVALID_VALUE, path, "invalid optimize: {s}", .{optimize});
+                    return null;
+                }
+                break :blk try parser.duplicate(optimize);
+            } else "O0",
         },
         .mutable_paths = mutable_paths.items,
     };
@@ -1342,6 +1352,7 @@ pub fn build(gpa: Allocator, input: Input, profiles: []const NamedProfile, nodes
             .cpu = try allocator.dupe(u8, input.target.cpu),
             .abi = try allocator.dupe(u8, input.target.abi),
             .compat_js = input.target.compat_js,
+            .optimize = try allocator.dupe(u8, input.target.optimize),
         },
         .runtime = try dupeOpt(allocator, input.runtime),
         .nako_version = try dupeOpt(allocator, input.nako_version),

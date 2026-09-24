@@ -56,6 +56,9 @@ pub const PrepFlags = struct {
     /// lock 鮮度入力へ伝える（prep フラグとしては抽出せず呼出し側が
     /// 設定する）。
     compat_js: bool = false,
+    /// `build -O` の実効レベル（`"O0"`〜`"O3"`）。依存解決の
+    /// optimize-gated 実装選択と lock 鮮度入力へ伝える。null は未指定。
+    optimize: ?[]const u8 = null,
 
     pub fn deinit(self: *PrepFlags, a: Allocator) void {
         self.features.deinit(a);
@@ -81,6 +84,7 @@ pub const PrepFlags = struct {
             .cnako_version = lnako.package.semver.Version.parse(project.compat_nako_version) catch null,
             .lnako_version = lnako.package.semver.Version.parse(lnako.version) catch null,
             .compat_js = self.compat_js,
+            .optimize = self.optimize,
         };
         options.policy.offline = self.offline;
         options.policy.allow_plaintext_http = self.allow_plaintext_http;

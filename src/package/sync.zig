@@ -27,6 +27,7 @@ const npkg_commands_gen = @import("npkg_commands_gen.zig");
 const npkg_verify = @import("npkg_verify.zig");
 const provider = @import("provider.zig");
 const resolver = @import("resolver.zig");
+const semver = @import("semver.zig");
 const unpack = @import("unpack.zig");
 
 const Allocator = std.mem.Allocator;
@@ -354,14 +355,7 @@ pub fn run(
         .deps_abs = deps_abs,
         .generation_rel = generation_rel,
         .runtime = options.runtime,
-        .target = .{
-            .runtime = options.runtime.name(),
-            .os = if (record) |r| r.os else lock.input.target.os,
-            .cpu = if (record) |r| r.cpu else lock.input.target.cpu,
-            .abi = if (record) |r| r.abi else lock.input.target.abi,
-            .compat_js = if (record) |r| r.compat_js orelse false else false,
-            .optimize = if (record) |r| r.optimize orelse "O0" else "O0",
-        },
+        .target = materializeTarget(profile, record, &lock.input, options.runtime),
     };
 
     // --- package の取得・検証・materialize ---------------------------------
@@ -729,6 +723,37 @@ const PreparedArtifact = struct {
 fn applyPrepared(manifest: *?manifest_mod.Manifest, commands: *?[]const npkg_commands.Command, prepared: PreparedArtifact) void {
     if (prepared.manifest) |m| manifest.* = m;
     if (prepared.commands) |c| commands.* = c;
+}
+
+/// lock `input` が記録した engine version 文字列を `resolver.Target` の
+/// semver へ戻す。欠落・解析不能は null（未検査）として扱う。
+fn inputVersion(text: ?[]const u8) ?semver.Version {
+    const value = text orelse return null;
+    return semver.Version.parse(value) catch null;
+}
+
+/// materialize（`.npkg` 検証・export 解決）用の target を組み立てる。
+/// 解決時の実効 target を引き継ぐ。`--compat-js` で選択した ESM
+/// artifact や `-O` で選択した実装を検証が別条件で reject しないよう、
+/// lock の `input.target` に記録済みの値を使う。engines 制約・
+/// version-gated export の評価も同じ version tuple で行う。
+/// `--profile` で別 profile を指定した場合は、その record が宣言した
+/// `optimize` を優先する（解決時と同じく CLI の `-O` は入力 profile
+/// にしか適用しない）。
+fn materializeTarget(profile: []const u8, record: ?*const lock_model.ProfileRecord, input: *const lock_model.Input, runtime: Runtime) resolver.Target {
+    return .{
+        .runtime = runtime.name(),
+        .os = if (record) |r| r.os else input.target.os,
+        .cpu = if (record) |r| r.cpu else input.target.cpu,
+        .abi = if (record) |r| r.abi else input.target.abi,
+        .compat_js = (if (record) |r| r.compat_js orelse false else false) or input.target.compat_js,
+        .optimize = if (std.mem.eql(u8, profile, input.profile))
+            input.target.optimize
+        else if (record) |r| r.optimize orelse "O0" else "O0",
+        .nako_version = inputVersion(input.nako_version),
+        .cnako_version = inputVersion(input.cnako_version),
+        .lnako_version = inputVersion(input.lnako_version),
+    };
 }
 
 /// `.npkg` 検証用の target。profile/runtime・有効 feature・実環境条件を
@@ -1394,4 +1419,61 @@ test "sync は再実行で世代を更新し直前世代を保持する" {
     const previous = try std.fs.path.join(testing.allocator, &.{ root, ".nako", "env", first_gen });
     defer testing.allocator.free(previous);
     try std.Io.Dir.cwd().access(io, previous, .{});
+}
+
+test "materialize target は lock input の compatJs・optimize・engine version を引き継ぐ" {
+    // 解決時に --compat-js/-O/engine version で選択した artifact を、
+    // materialize 側の検証が別条件で reject しないよう、lock の
+    // input.target/input.* に記録済みの実効値を再現する。
+    var input = lock_model.Input{
+        .manifest_sha256 = "sha256:aa",
+        .profile = "default",
+        .target = .{ .os = "macos", .cpu = "aarch64", .abi = "gnu", .compat_js = true, .optimize = "O3" },
+        .nako_version = "3.7.24",
+        .cnako_version = "3.7.24",
+        .lnako_version = "0.2.2",
+    };
+    // profile 宣言に compat-js/optimize が無くても input.target の
+    // 実効値を使う（profile-less・compat-js=false の profile でも
+    // --compat-js で解決した ESM artifact を保持する）。
+    const record = lock_model.ProfileRecord{
+        .runtime = "lnako",
+        .os = "macos",
+        .cpu = "aarch64",
+        .abi = "gnu",
+    };
+    const target = materializeTarget("default", &record, &input, .lnako);
+    try testing.expect(target.compat_js);
+    try testing.expectEqualStrings("O3", target.optimize);
+    try testing.expectEqual(@as(u64, 3), target.nako_version.?.major);
+    try testing.expectEqual(@as(u64, 7), target.nako_version.?.minor);
+    try testing.expectEqual(@as(u64, 24), target.nako_version.?.patch);
+    try testing.expectEqual(@as(u64, 0), target.lnako_version.?.major);
+    try testing.expectEqual(@as(u64, 2), target.lnako_version.?.minor);
+    try testing.expectEqual(@as(u64, 2), target.lnako_version.?.patch);
+    try testing.expect(target.cnako_version != null);
+
+    // 別 profile を --profile で指定した場合はその record の optimize
+    // 宣言を使う（CLI の -O は入力 profile にのみ適用される）。
+    const other = lock_model.ProfileRecord{
+        .os = "linux",
+        .cpu = "x86_64",
+        .abi = "gnu",
+        .optimize = "O1",
+    };
+    const other_target = materializeTarget("release", &other, &input, .lnako);
+    try testing.expectEqualStrings("O1", other_target.optimize);
+    try testing.expect(other_target.compat_js); // input の --compat-js は維持
+    try testing.expectEqualStrings("linux", other_target.os);
+
+    // version を記録しない旧 lock は null（未検査）のまま。
+    var legacy = lock_model.Input{
+        .manifest_sha256 = "sha256:aa",
+        .profile = "default",
+        .target = .{ .os = "macos", .cpu = "aarch64", .abi = "gnu" },
+    };
+    const legacy_target = materializeTarget("default", &record, &legacy, .lnako);
+    try testing.expect(!legacy_target.compat_js);
+    try testing.expectEqualStrings("O0", legacy_target.optimize);
+    try testing.expect(legacy_target.nako_version == null);
 }

@@ -50,6 +50,11 @@
         "compatJs": {
           "description": "--compat-js または profile compat-js で ESM 実装を許容して解決したか。実装選択を変え得るため lock 鮮度入力に含める。",
           "type": "boolean"
+        },
+        "optimize": {
+          "description": "build -O または profile optimize で解決した実効レベル。optimize-gated artifact の選択を変え得るため lock 鮮度入力に含める。省略は O0。",
+          "type": "string",
+          "enum": ["O0", "O1", "O2", "O3"]
         }
       }
     },

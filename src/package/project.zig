@@ -332,7 +332,9 @@ fn resolveTarget(record: lock_model.ProfileRecord, opts: *const PrepareOptions) 
         // （profile-less プロジェクトの合成 record は compat-js を持た
         // ないため、CLI 側の compat 実行を解決へ伝える必要がある）。
         .compat_js = (record.compat_js orelse false) or opts.compat_js,
-        .optimize = record.optimize orelse "O0",
+        // `build -O` は実際に生成するコードのレベルなので profile 宣言
+        // より優先する。未指定なら profile の `optimize` を使う。
+        .optimize = opts.optimize orelse record.optimize orelse "O0",
         .nako_version = opts.nako_version,
         .cnako_version = opts.cnako_version,
         .lnako_version = opts.lnako_version,
@@ -1202,6 +1204,9 @@ pub const PrepareOptions = struct {
     /// `run`/`build --compat-js` の compat 実行。ESM 実装の許容と
     /// lock 鮮度入力の target に反映する。
     compat_js: bool = false,
+    /// `build -O` の最適化レベル（`"O0"`〜`"O3"`）。実装選択と lock
+    /// 鮮度入力の target に反映する。null は未指定（profile 宣言を使う）。
+    optimize: ?[]const u8 = null,
 };
 
 pub const LockOutcome = struct {
@@ -1274,9 +1279,10 @@ pub fn ensureLock(
             .os = try a.dupe(u8, record.os),
             .cpu = try a.dupe(u8, record.cpu),
             .abi = try a.dupe(u8, record.abi),
-            // ESM 許容も実装選択を変える鮮度鍵（resolveTarget と同じ
-            // effective 値を記録する）。
+            // ESM 許容・最適化レベルも実装選択を変える鮮度鍵
+            // （resolveTarget と同じ effective 値を記録する）。
             .compat_js = (record.compat_js orelse false) or opts.compat_js,
+            .optimize = try a.dupe(u8, opts.optimize orelse record.optimize orelse "O0"),
         },
         // 解決 runtime・engines 照合 version を鮮度鍵へ含める。
         // `--runtime` 切替・コンパイラ更新で lock を再解決するため。
@@ -1398,7 +1404,13 @@ pub fn ensureLock(
     var per_profile: std.ArrayList(lock_mod.ProfileInput) = .empty;
     var primary_nodes: []const resolver.PackageNode = &.{};
     for (profiles) |named| {
-        const target = resolveTarget(named.record, opts);
+        var target = resolveTarget(named.record, opts);
+        // CLI の `-O` は選択中 profile の実装選択にのみ効く。他 profile
+        // は manifest の `optimize` 宣言で解決する（この build の条件を
+        // 別 profile の契約へ持ち込まない）。
+        if (opts.optimize != null and !std.mem.eql(u8, named.name, profile)) {
+            target.optimize = named.record.optimize orelse "O0";
+        }
         var composite = Composite{
             .ctx = &ctx,
             .registry = null,

@@ -114,8 +114,15 @@ pub fn run(
                 std.process.exit(2);
             }
             // プロジェクト内の入力なら依存環境を自動準備する。
-            // --compat-js は ESM 実装の許容へ効くため解決へ伝える。
+            // --compat-js は ESM 実装の許容へ、-O は optimize-gated
+            // artifact の選択へ効くため解決へ伝える。
             prep.compat_js = options.compat_js;
+            prep.optimize = switch (options.optimization) {
+                .o0 => "O0",
+                .o1 => "O1",
+                .o2 => "O2",
+                .o3 => "O3",
+            };
             try project_command.prepareForExecution(allocator, io, options.input, &prep, init.environ_map, "build", stderr);
             var ir_program = (try compiler_pipeline.compileInputTraced(allocator, io, options.input, .{ .compat_js = options.compat_js, .forced_mode = options.forced_mode }, stderr, init.environ_map.get("LNAKO_LLVM_TRACE") != null)) orelse {
                 try stderr.flush();
