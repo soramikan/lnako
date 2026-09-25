@@ -4,6 +4,7 @@ const testing = std.testing;
 const diag = @import("diagnostics.zig");
 const fetch = @import("fetch.zig");
 const lock_model = @import("lock_model.zig");
+const manifest_mod = @import("manifest.zig");
 const project = @import("project.zig");
 
 fn writeLibPackage(dir: std.Io.Dir, io: std.Io, root: []const u8, name: []const u8) !void {
@@ -29,6 +30,56 @@ fn writeLibPackage(dir: std.Io.Dir, io: std.Io, root: []const u8, name: []const 
 
 fn newDiagnostics() diag.List {
     return diag.List.init(testing.allocator);
+}
+
+test "path pin用manifest snapshot検査は変更後の内容を拒否する" {
+    const original =
+        \\[package]
+        \\name = "old"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+    ;
+    const changed =
+        \\[package]
+        \\name = "new"
+        \\version = "2.0.0"
+        \\license = "MIT"
+        \\
+    ;
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, original, &diagnostics);
+    defer manifest.deinit();
+    try testing.expect(project.manifestSnapshotMatches(&manifest, original));
+    try testing.expect(!project.manifestSnapshotMatches(&manifest, changed));
+}
+
+test "tree pin対象外dir配下のexportは検出する" {
+    const source =
+        \\[package]
+        \\name = "lib"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[[exports]]
+        \\name = "hidden"
+        \\path = "src/.git/hidden.nako3"
+        \\
+    ;
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &diagnostics);
+    defer manifest.deinit();
+    try testing.expect(project.hasExcludedExport(&manifest));
+}
+
+test "tree pinのnested relative nameはslash canonical formに揃う" {
+    const forward = try project.canonicalTreePath(testing.allocator, "nested/deep/file.nako3");
+    defer testing.allocator.free(forward);
+    const backslash = try project.canonicalTreePath(testing.allocator, "nested\\\\deep\\\\file.nako3");
+    defer testing.allocator.free(backslash);
+    try testing.expectEqualStrings(forward, backslash);
 }
 
 test "プロジェクトを検出して読み込める" {

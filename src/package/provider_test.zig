@@ -203,7 +203,7 @@ test "path provider の絶対判定はhost pathと完全なUNCを区別する" {
         try testing.expect(!provider.isAbsoluteDepPath("\\lib"));
         try testing.expect(!provider.isAbsoluteDepPath("\\\\lib"));
     }
-    try testing.expect(provider.isAbsoluteDepPath("C:\\"));
+    try testing.expectEqual(builtin.os.tag == .windows, provider.isAbsoluteDepPath("C:\\"));
     try testing.expect(provider.isAbsoluteDepPath("\\\\server\\share\\lib"));
 }
 
@@ -221,6 +221,27 @@ test "path provider はPOSIX上の先頭backslashを相対pathとして取得す
     defer session.deinit();
     const acquired = try provider.acquirePath(&session, .{ .name = "demo", .path = "\\lib" }, base);
     try testing.expectEqualStrings("demo", acquired.manifest.?.package.name);
+}
+
+test "path provider はPOSIX上のdrive-looking pathをbase_dir相対で取得する" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "base/C:/deps/src");
+    try temporary.dir.createDirPath(io, "base/C:\\deps/src");
+    try writePackage(temporary.dir, io, "base/C:/deps");
+    try writePackage(temporary.dir, io, "base/C:\\deps");
+    const base = try temporary.dir.realPathFileAlloc(io, "base", testing.allocator);
+    defer testing.allocator.free(base);
+
+    var session = newSession(.{});
+    defer session.deinit();
+    for ([_][]const u8{ "C:/deps", "C:\\deps" }) |dep_path| {
+        const acquired = try provider.acquirePath(&session, .{ .name = "demo", .path = dep_path }, base);
+        try testing.expectEqualStrings(dep_path, acquired.source.path.?);
+        try testing.expectEqualStrings("demo", acquired.manifest.?.package.name);
+    }
 }
 
 test "path provider は Unicode path を扱える" {
@@ -653,6 +674,65 @@ test "git provider はローカル repo を clone して commit に固定する"
     try testing.expectEqual(lock_model.SourceKind.git, acquired.source.kind);
     try testing.expectEqualStrings(repo.commit, acquired.source.commit.?);
     try testing.expectEqualStrings("demo", acquired.manifest.?.package.name);
+}
+
+test "git provider は既定で非loopback平文HTTPをclone前に拒否する" {
+    const io = testing.io;
+    if (!gitAvailable(io)) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const checkout = try std.fs.path.join(testing.allocator, &.{ root, "checkout" });
+    defer testing.allocator.free(checkout);
+
+    var session = newSession(.{});
+    defer session.deinit();
+    try testing.expectError(error.InvalidSource, provider.acquireGit(&session, .{ .name = "demo", .url = "http://example.invalid/repo", .commit = "0123456" }, checkout, null));
+    try testing.expectEqual(fetch.FailureKind.invalid_source, session.lastFailure().?.kind);
+    try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "checkout/.git", .{}));
+}
+
+test "git provider は既存checkoutからのfetch前にも非loopback平文HTTPを拒否する" {
+    const io = testing.io;
+    if (!gitAvailable(io)) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const repo = try createGitRepo(&temporary, io);
+    defer testing.allocator.free(repo.path);
+    defer testing.allocator.free(repo.url);
+    defer testing.allocator.free(repo.commit);
+    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const checkout = try std.fs.path.join(testing.allocator, &.{ root, "checkout" });
+    defer testing.allocator.free(checkout);
+    try gitRun(io, &.{ "git", "clone", "--quiet", repo.path, checkout });
+    try gitRun(io, &.{ "git", "-C", checkout, "remote", "set-url", "origin", "http://example.invalid/repo" });
+
+    var session = newSession(.{});
+    defer session.deinit();
+    try testing.expectError(error.InvalidSource, provider.acquireGit(&session, .{ .name = "demo", .url = "http://example.invalid/repo", .commit = "deadbee" }, checkout, null));
+    try testing.expectEqual(fetch.FailureKind.invalid_source, session.lastFailure().?.kind);
+}
+
+test "git provider permits loopback HTTP and explicit plaintext override" {
+    const io = testing.io;
+    if (!gitAvailable(io)) return error.SkipZigTest;
+    for ([_]struct { url: []const u8, policy: fetch.Policy }{
+        .{ .url = "http://127.0.0.1:1/repo", .policy = .{} },
+        .{ .url = "http://example.invalid/repo", .policy = .{ .allow_plaintext_http = true } },
+    }) |test_case| {
+        var temporary = std.testing.tmpDir(.{});
+        defer temporary.cleanup();
+        const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+        defer testing.allocator.free(root);
+        const checkout = try std.fs.path.join(testing.allocator, &.{ root, "checkout" });
+        defer testing.allocator.free(checkout);
+        var session = newSession(test_case.policy);
+        defer session.deinit();
+        try testing.expectError(error.Network, provider.acquireGit(&session, .{ .name = "demo", .url = test_case.url, .commit = "0123456" }, checkout, null));
+        try testing.expectEqual(fetch.FailureKind.network, session.lastFailure().?.kind);
+    }
 }
 
 test "git provider は dirty cached checkout を pinned commit へ戻してから読む" {

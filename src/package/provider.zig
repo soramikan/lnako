@@ -47,11 +47,7 @@ pub fn isAbsoluteDepPath(path: []const u8) bool {
     const double_separator = path.len >= 2 and isWindowsSeparator(path[0]) and isWindowsSeparator(path[1]);
     if (double_separator) return isCompleteWindowsUnc(path);
     if (builtin.os.tag == .windows) return std.fs.path.isAbsoluteWindows(path);
-    return isWindowsDriveRoot(path);
-}
-
-fn isWindowsDriveRoot(path: []const u8) bool {
-    return path.len >= 3 and std.ascii.isAlphabetic(path[0]) and path[1] == ':' and isWindowsSeparator(path[2]);
+    return false;
 }
 
 fn isCompleteWindowsUnc(path: []const u8) bool {
@@ -166,6 +162,7 @@ pub fn acquireGit(
         if (session.policy.offline) {
             return session.fail(.offline, .repository, dep.url, "offline mode: git repository \"{s}\" is not available locally", .{dep.url});
         }
+        try checkGitUrlPolicy(session, dep.url);
         try gitRun(session, &.{ "git", "clone", "--quiet", "--no-checkout", dep.url, checkout_dir }, null);
     } else {
         // 共有 checkout の config / info attributes は攻撃者が編集できる。
@@ -183,6 +180,7 @@ pub fn acquireGit(
         if (session.policy.offline) {
             return session.fail(.offline, .repository, dep.url, "offline mode: commit-ish \"{s}\" of \"{s}\" is not available locally", .{ dep.commit, dep.url });
         }
+        try checkGitUrlPolicy(session, dep.url);
         try gitRun(session, &.{ "git", "-C", checkout_dir, "fetch", "--quiet", "origin" }, dep.url);
         if (try resolveCommit(session, checkout_dir, dep.commit)) |commit| break :blk commit;
         return session.fail(.not_found, .repository, dep.url, "commit \"{s}\" of \"{s}\" was not found", .{ dep.commit, dep.url });
@@ -196,6 +194,7 @@ pub fn acquireGit(
             if (session.policy.offline) {
                 return session.fail(.offline, .repository, dep.url, "offline mode: commit {s} of \"{s}\" is not available locally", .{ full_commit, dep.url });
             }
+            try checkGitUrlPolicy(session, dep.url);
             try gitRun(session, &.{ "git", "-C", checkout_dir, "fetch", "--quiet", "origin", full_commit }, dep.url);
             const retry = try gitRunAllowFailure(session, gpa, &.{ "git", "-C", checkout_dir, "cat-file", "-e", verify_arg });
             if (!retry.succeeded) {
@@ -231,6 +230,28 @@ pub fn acquireGit(
         },
         .manifest = parsed,
     };
+}
+
+/// Git の network fetch も HTTP provider と同じ平文通信 policy に従う。
+/// local/file・SSH など HTTP 以外の Git URL は対象外。
+fn checkGitUrlPolicy(session: *Session, url: []const u8) Error!void {
+    if (session.policy.allow_plaintext_http) return;
+    if (!std.ascii.startsWithIgnoreCase(url, "http://")) return;
+    const uri = std.Uri.parse(url) catch return session.fail(.invalid_source, .repository, url, "invalid git http url: {s}", .{url});
+    if (!std.ascii.eqlIgnoreCase(uri.scheme, "http")) return;
+    const host_component = uri.host orelse return session.fail(.invalid_source, .repository, url, "git http url has no host: {s}", .{url});
+    const host = switch (host_component) {
+        .raw, .percent_encoded => |text| text,
+    };
+    if (std.ascii.eqlIgnoreCase(host, "localhost") or std.ascii.endsWithIgnoreCase(host, ".localhost")) return;
+    if (std.Io.net.Ip4Address.parse(host, 0)) |ip4| {
+        if (ip4.bytes[0] == 127) return;
+    } else |_| {}
+    const ipv6_host = if (host.len >= 2 and host[0] == '[' and host[host.len - 1] == ']') host[1 .. host.len - 1] else host;
+    if (std.Io.net.Ip6Address.parse(ipv6_host, 0)) |ip6| {
+        if (std.mem.eql(u8, &ip6.bytes, &std.Io.net.Ip6Address.loopback(0).bytes)) return;
+    } else |_| {}
+    return session.fail(.invalid_source, .repository, url, "plaintext http git url \"{s}\" is only allowed for loopback hosts (set allow_plaintext_http to opt in)", .{url});
 }
 
 /// commit-ish（7–40 桁 hex）を完全な commit SHA へ解決する。

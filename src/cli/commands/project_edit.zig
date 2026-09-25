@@ -742,8 +742,22 @@ pub fn runInit(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []
     errdefer rollback.run();
     if (dir_arg != null) {
         const dir_existed = try initTargetExists(io, dir_abs);
-        try cwd.createDirPath(io, dir_abs);
-        if (!dir_existed) rollback.dir_abs = dir_abs;
+        if (!dir_existed) {
+            try cwd.createDirPath(io, dir_abs);
+            rollback.dir_abs = dir_abs;
+        }
+    }
+    // Hold a no-follow handle to the destination root. Besides rejecting an
+    // explicit root symlink/junction, all writes below are relative to this
+    // handle so replacing the path after validation cannot redirect them.
+    var root_dir = cwd.openDir(io, dir_abs, .{ .follow_symlinks = false }) catch |err| switch (err) {
+        error.SymLinkLoop, error.NotDir => return fail(stderr, "init: {s} は symlink またはディレクトリではありません\n", .{dir_abs}),
+        else => return err,
+    };
+    defer root_dir.close(io);
+    const root_stat = try root_dir.stat(io);
+    if (root_stat.kind != .directory) {
+        return fail(stderr, "init: {s} は symlink またはディレクトリではありません\n", .{dir_abs});
     }
     const manifest_path = try std.fs.path.join(a, &.{ dir_abs, project.manifest_name });
     if (try initTargetExists(io, manifest_path)) {
@@ -786,7 +800,7 @@ pub fn runInit(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []
     }
     // 事前検査と書込の間に置かれた file/symlink も `exclusive` で拒否
     // する（symlink 先の外部 file を上書きしない）。
-    var manifest_file = cwd.createFile(io, manifest_path, .{ .exclusive = true }) catch |err| switch (err) {
+    var manifest_file = root_dir.createFile(io, project.manifest_name, .{ .exclusive = true }) catch |err| switch (err) {
         error.PathAlreadyExists => return fail(stderr, "init: {s} は既に存在します\n", .{manifest_path}),
         else => return err,
     };
@@ -811,7 +825,7 @@ pub fn runInit(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []
             if (std.fs.path.dirname(target)) |parent| {
                 if (!try initTargetExists(io, parent)) try rollback.dirs.append(a, parent);
             }
-            writeInitFile(io, cwd, target, contents) catch |err| {
+            writeInitFile(io, root_dir, rel, contents) catch |err| {
                 // 実 CLI の fail は exit するため errdefer が走らない。
                 // 明示的にロールバックしてから失敗を返す。
                 rollback.run();

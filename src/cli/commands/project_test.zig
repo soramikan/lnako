@@ -353,6 +353,27 @@ test "init --lib は既存の雛形ファイルを上書きしない" {
     try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "proj/nako.toml", .{}));
 }
 
+test "init --lib は明示された symlink root を拒否しリンク先へ書かない" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "outside");
+    try temporary.dir.symLink(io, "outside", "link", .{});
+    const root = try temporary.dir.realPathFileAlloc(io, ".", a);
+    const outside_path = try std.fs.path.join(a, &.{ root, "outside" });
+
+    var cli = Cli.init(a);
+    try expectFail(error.Failed, a, &cli, "init", &.{ "link", "--lib", "--name", "safe" }, root);
+    try testing.expect(std.mem.indexOf(u8, cli.err.written(), "symlink") != null);
+    try testing.expect(!try dirFileExists(a, outside_path, "nako.toml"));
+    try testing.expect(!try dirFileExists(a, outside_path, "src/lib.nako3"));
+    // The explicit destination remains the original link.
+    const stat = try temporary.dir.statFile(io, "link", .{ .follow_symlinks = false });
+    try testing.expect(stat.kind == .sym_link);
+}
+
 test "init --lib の雛形はコンパイルできテストも通る" {
     var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_impl.deinit();

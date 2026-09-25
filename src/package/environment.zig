@@ -483,36 +483,46 @@ pub const Store = struct {
     }
 
     /// 公開済み `environment.json` が参照している世代名を復元する。
-    /// package の `path` に記録された `.nako/env/<gen>` を走査して最初に
-    /// 見つかった世代名を返す。`current` と不一致の場合でも公開環境が
-    /// 実際に使っている世代を特定できる（中断復旧時の保守的な世代保持用）。
+    /// `packages` の managed non-path package の `path` だけを調べる。
+    /// `current` と不一致の場合でも公開環境が実際に使っている世代を
+    /// 特定できる（中断復旧時の保守的な世代保持用）。
     /// env.json が無い・読めない・世代参照を含まない場合は null。
     pub fn readPublishedGeneration(self: *const Store, gpa: Allocator) !?[]u8 {
         const bytes = (try self.readEnvironmentJson(gpa)) orelse return null;
         defer gpa.free(bytes);
-        // POSIX path と、JSON 内で `\\` に escape された Windows path の
-        // どちらも認識する。generation 名自体は両形式で同じ文字列。
-        const markers = [_][]const u8{
-            dir_name ++ "/" ++ env_dir ++ "/",
-            dir_name ++ "\\\\" ++ env_dir ++ "\\\\",
+        var parsed = std.json.parseFromSlice(std.json.Value, gpa, bytes, .{}) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return null,
         };
-        var found_at: ?usize = null;
-        var marker_len: usize = 0;
-        for (markers) |marker| {
-            if (std.mem.indexOf(u8, bytes, marker)) |at| {
-                if (found_at == null or at < found_at.?) {
-                    found_at = at;
-                    marker_len = marker.len;
-                }
+        defer parsed.deinit();
+        if (parsed.value != .object) return null;
+        const packages_value = parsed.value.object.get("packages") orelse return null;
+        if (packages_value != .object) return null;
+        var iterator = packages_value.object.iterator();
+        while (iterator.next()) |entry| {
+            if (entry.value_ptr.* != .object) continue;
+            const path_value = entry.value_ptr.object.get("path") orelse continue;
+            if (path_value != .string) continue;
+            if (managedPackageGeneration(path_value.string)) |generation| {
+                return try gpa.dupe(u8, generation);
             }
         }
-        const at = found_at orelse return null;
-        const start = at + marker_len;
-        if (!std.mem.startsWith(u8, bytes[start..], generation_prefix)) return null;
-        var end = start + generation_prefix.len;
-        while (end < bytes.len and std.ascii.isHex(bytes[end])) end += 1;
-        if (end == start + generation_prefix.len) return null;
-        return try gpa.dupe(u8, bytes[start..end]);
+        return null;
+    }
+
+    /// Returns a generation only for a package path rooted in `.nako/env`.
+    /// Accept both POSIX and Windows separators after JSON decoding.
+    fn managedPackageGeneration(path: []const u8) ?[]const u8 {
+        const markers = [_][]const u8{ dir_name ++ "/" ++ env_dir ++ "/", dir_name ++ "\\" ++ env_dir ++ "\\" };
+        for (markers) |marker| {
+            if (!std.mem.startsWith(u8, path, marker)) continue;
+            const start = marker.len;
+            const end = std.mem.indexOfAnyPos(u8, path, start, "/\\") orelse return null;
+            const generation = path[start..end];
+            if (validGenerationName(generation)) return generation;
+            return null;
+        }
+        return null;
     }
 
     /// 中断残留の staging dir を回収する。`staging/` の中身を全て削除する。
@@ -685,6 +695,26 @@ test "environment emit は schema v1 の決定的 JSON を key 順で生成す�
         .packages = &packages,
     }, &second_buffer.writer);
     try testing.expectEqualStrings(text, second_buffer.writer.buffered());
+}
+
+test "published generation は unrelated field の偽 generation より managed package path を優先する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var store = try openTempStore(&temporary);
+    defer store.deinit();
+
+    var file = try store.root_dir.createFile(io, environment_file, .{});
+    defer file.close(io);
+    try file.writeStreamingAll(
+        io,
+        "{\"mutablePaths\":[{\"path\":\".nako/env/gen-fake/deps/dep\"}]," ++
+            "\"packages\":{\"pkg\":{\"path\":\".nako/env/gen-actual/deps/pkg\"}}}\n",
+    );
+
+    const generation = (try store.readPublishedGeneration(testing.allocator)).?;
+    defer testing.allocator.free(generation);
+    try testing.expectEqualStrings("gen-actual", generation);
 }
 
 test "environment store は reader limit を超える JSON を公開しない" {
