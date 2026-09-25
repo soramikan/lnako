@@ -346,10 +346,16 @@ pub fn run(
     // 読み取り途中の consumer を壊すため新・旧の双方を残す。
     const previous_generation = env_store.readCurrent(arena) catch |err| return mapFs(err);
     var generation = env_store.newGeneration(arena) catch |err| return mapFs(err);
-    defer generation.dir.close(io);
+    var generation_dir_open = true;
+    defer {
+        if (generation_dir_open) generation.dir.close(io);
+    }
     generation.dir.createDirPath(io, "deps") catch |err| return mapFs(err);
     var deps_dir = generation.dir.openDir(io, "deps", .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
-    defer deps_dir.close(io);
+    var deps_dir_open = true;
+    defer {
+        if (deps_dir_open) deps_dir.close(io);
+    }
     const generation_rel = try std.fs.path.join(arena, &.{ environment.dir_name, environment.env_dir, generation.generation });
     var project_dir = std.Io.Dir.cwd().openDir(io, project_abs, .{ .follow_symlinks = false }) catch |err| return mapFs(err);
     defer project_dir.close(io);
@@ -410,6 +416,13 @@ pub fn run(
     // env.json 公開後・current 更新前の中断では current が古い世代を
     // 指したまま残るため、両者を keep して実際の直前世代を消さない。
     const published_generation = env_store.readPublishedGeneration(arena) catch null;
+
+    // Windowsは開いたdirectory handleをrenameできないため、staging世代と
+    // 子のdeps handleを先に閉じる。commit失敗時にもdeferで二重closeしない。
+    deps_dir.close(io);
+    deps_dir_open = false;
+    generation.dir.close(io);
+    generation_dir_open = false;
 
     // staging 世代 dir と environment.json を commit する。commit 前に失敗すれば
     // 既存環境は無変更。current は別ファイルなので、この2操作は一括 atomic ではない。

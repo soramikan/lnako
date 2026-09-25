@@ -53,11 +53,13 @@ const FixtureServer = struct {
         if (self.listener) |*listener| {
             self.stopping.store(true, .release);
             // listen socket への shutdown は accept の並行 cancel 機構として
-            // Zig が規定する方法。deinit（close）だけでは accept が解除されず、
-            // close 後の accept は BADF で panic するため join より先に行う。
-            const wake: std.Io.net.Stream = .{ .socket = listener.socket };
-            wake.shutdown(self.io, .both) catch {};
-            // shutdown が accept を解除しない環境向けに自接続でも起こす。
+            // Zig が規定する方法だが、Zig 0.16 Windows は listening socket の
+            // shutdown で INVALID_PARAMETER を panic するため、自接続で解除する。
+            if (builtin.os.tag != .windows) {
+                const wake: std.Io.net.Stream = .{ .socket = listener.socket };
+                wake.shutdown(self.io, .both) catch {};
+            }
+            // shutdown が accept を解除しない環境向けにも自接続で起こす。
             if (listener.socket.address.connect(self.io, .{ .mode = .stream })) |stream| {
                 stream.close(self.io);
             } else |_| {}

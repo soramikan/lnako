@@ -557,6 +557,7 @@ pub const Store = struct {
     /// `environment.json` を原子的に書き換えて公開する。
     /// `environment_bytes` は `emit` の出力。
     /// 失敗時は env.json を変更しない（直前の有効環境がそのまま使える）。
+    /// Windowsではrename対象とその子のdirectory handleを呼び出し側で閉じておくこと。
     pub fn commit(self: *const Store, generation: []const u8, environment_bytes: []const u8) !void {
         if (environment_bytes.len > max_environment_bytes) return error.EnvironmentTooLarge;
         if (!validGenerationName(generation)) return error.InvalidGeneration;
@@ -713,10 +714,16 @@ test "environment store は commit で世代 dir と environment.json を切り�
 
     var generation = try store.newGeneration(testing.allocator);
     defer testing.allocator.free(generation.generation);
-    defer generation.dir.close(io);
+    var generation_dir_open = true;
+    defer {
+        if (generation_dir_open) generation.dir.close(io);
+    }
     // staging に内容を作る（固定 dir handle 相対）。
     try generation.dir.createDirPath(io, "deps/a");
 
+    // Windowsでdirectory renameできるよう、staging handleをcloseしてからcommit。
+    generation.dir.close(io);
+    generation_dir_open = false;
     try store.commit(generation.generation, "{\"schemaVersion\":1}\n");
     try store.writeCurrent(generation.generation);
 
@@ -912,7 +919,10 @@ test "environment store は readPublishedGeneration で公開環境の参照世�
 
     var generation = try store.newGeneration(testing.allocator);
     defer testing.allocator.free(generation.generation);
-    defer generation.dir.close(io);
+    var generation_dir_open = true;
+    defer {
+        if (generation_dir_open) generation.dir.close(io);
+    }
     try generation.dir.createDirPath(io, "deps/a");
     var json_buffer: std.Io.Writer.Allocating = .init(testing.allocator);
     defer json_buffer.deinit();
@@ -921,6 +931,8 @@ test "environment store は readPublishedGeneration で公開環境の参照世�
     };
     defer testing.allocator.free(pkgs[0].path);
     try emit(testing.allocator, .{ .lock_sha256 = "sha256:00", .profile = "default", .runtime = "lnako", .packages = &pkgs }, &json_buffer.writer);
+    generation.dir.close(io);
+    generation_dir_open = false;
     try store.commit(generation.generation, json_buffer.written());
 
     const published = (try store.readPublishedGeneration(testing.allocator)).?;
