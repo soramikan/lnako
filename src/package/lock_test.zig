@@ -410,6 +410,7 @@ test "通常lnako profileのESMをE006で拒否する" {
         \\      "id": "pkg:10000000000000000000000000000000",
         \\      "name": "esm-only",
         \\      "version": "1.0.0",
+        \\      "implementation": "ESM",
         \\      "dependencies": [],
         \\      "features": ["default"],
         \\      "artifacts": { "esm": { "kind": "ESM", "type": "npm-tarball", "sha256": "sha256:00", "url": "https://ex/index.mjs" } }
@@ -437,6 +438,7 @@ test "cnako profileのESMは許容する" {
         \\      "id": "pkg:10000000000000000000000000000000",
         \\      "name": "esm-only",
         \\      "version": "1.0.0",
+        \\      "implementation": "ESM",
         \\      "dependencies": [],
         \\      "features": ["default"],
         \\      "artifacts": { "esm": { "kind": "ESM", "type": "npm-tarball", "sha256": "sha256:00", "url": "https://ex/index.mjs" } }

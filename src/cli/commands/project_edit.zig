@@ -506,29 +506,60 @@ fn removeEntry(a: Allocator, source: []const u8, section: []const u8, name: []co
     return output.items;
 }
 
-/// 代入文の左辺が dep 宣言 `name` を指すか。`lib = ...` の単一 key、
-/// `[dependencies] path.lib = ...`、document-root の
-/// `dev-dependencies.path.lib = ...` を parent/kind/name で照合する。
-/// 各セグメントの引用は剥がす。dep 名は `.` を含めないため
-/// `name` への分割照合で曖昧にならない。
-fn lhsMatchesDecl(lhs: []const u8, parent: []const u8, kind: []const u8, name: []const u8) bool {
-    var first: ?[]const u8 = null;
-    var second: ?[]const u8 = null;
-    var last: []const u8 = "";
-    var count: usize = 0;
-    var it = std.mem.splitScalar(u8, lhs, '.');
-    while (it.next()) |seg_raw| {
-        const bare = std.mem.trim(u8, std.mem.trim(u8, seg_raw, " \t"), "\"'");
-        if (bare.len == 0) return false;
-        if (count == 0) first = bare else if (count == 1) second = bare;
-        last = bare;
-        count += 1;
+/// TOML dotted key の1 segmentを、引用形式を保ったまま比較する。
+/// escape を含む basic key は誤削除を避けて不一致にする。
+fn tomlKeySegmentEquals(raw: []const u8, expected: []const u8) bool {
+    const segment = std.mem.trim(u8, raw, " \t");
+    if (segment.len == 0) return false;
+    if (segment[0] == '\"' or segment[0] == '\'') {
+        if (segment.len < 2 or segment[segment.len - 1] != segment[0]) return false;
+        const inner = segment[1 .. segment.len - 1];
+        if (segment[0] == '\"' and std.mem.indexOfScalar(u8, inner, '\\') != null) return false;
+        return std.mem.eql(u8, inner, expected);
     }
-    if (!std.mem.eql(u8, last, name)) return false;
-    if (count == 1) return true;
-    if (count == 2 and std.mem.eql(u8, first.?, kind)) return true;
-    return count == 3 and std.mem.eql(u8, first.?, parent) and
-        std.mem.eql(u8, second.?, kind);
+    return std.mem.eql(u8, segment, expected);
+}
+
+/// 代入文の左辺が dep 宣言 `name` を指すか。`lib = ...` の単一 key、
+/// `[dependencies] path.lib = ...`、document-root の dotted key を照合する。
+/// TOML の引用 segment 内にある `.` は区切りとして扱わない。
+fn lhsMatchesDecl(lhs: []const u8, parent: []const u8, kind: []const u8, name: []const u8) bool {
+    var segments: [3][]const u8 = undefined;
+    var count: usize = 0;
+    var segment_start: usize = 0;
+    var quote: u8 = 0;
+    var escaped = false;
+    for (lhs, 0..) |ch, index| {
+        if (quote != 0) {
+            if (quote == '\"' and escaped) {
+                escaped = false;
+                continue;
+            }
+            if (quote == '\"' and ch == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (ch == quote) quote = 0;
+            continue;
+        }
+        if (ch == '\"' or ch == '\'') {
+            quote = ch;
+        } else if (ch == '.') {
+            if (count == segments.len) return false;
+            segments[count] = lhs[segment_start..index];
+            count += 1;
+            segment_start = index + 1;
+        }
+    }
+    if (quote != 0 or count == segments.len) return false;
+    segments[count] = lhs[segment_start..];
+    count += 1;
+
+    if (count == 1) return tomlKeySegmentEquals(segments[0], name);
+    if (count == 2) return tomlKeySegmentEquals(segments[0], kind) and
+        tomlKeySegmentEquals(segments[1], name);
+    return count == 3 and tomlKeySegmentEquals(segments[0], parent) and
+        tomlKeySegmentEquals(segments[1], kind) and tomlKeySegmentEquals(segments[2], name);
 }
 
 // ---------------------------------------------------------------------------
@@ -1372,6 +1403,21 @@ test "removeEntry は複数行 inline table を丸ごと除去する" {
     try std.testing.expect(std.mem.indexOf(u8, removed, "lib = ") == null);
     // `}` や `lib2` の行が残らないこと。
     try std.testing.expect(std.mem.indexOf(u8, removed, "lib2") != null);
+}
+
+test "removeEntry は引用key内のドットを区切りと誤認しない" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const source =
+        \\[dependencies.path]
+        \\"foo.bar" = { path = "foo-bar" }
+        \\other = { path = "other" }
+        \\
+    ;
+    const removed = (try removeEntry(a, source, "dependencies.path", "foo.bar", .{ .line = 2 })).?;
+    try std.testing.expect(std.mem.indexOf(u8, removed, "foo.bar") == null);
+    try std.testing.expect(std.mem.indexOf(u8, removed, "other") != null);
 }
 
 test "removeEntry は dotted key 宣言も除去する" {

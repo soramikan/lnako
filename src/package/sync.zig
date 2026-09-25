@@ -170,6 +170,11 @@ pub fn mutablePathsMismatch(gpa: Allocator, io: std.Io, project_root: []const u8
 /// lock 内 `mutable = false` path 依存の pin hash を tree 再計算で照合する。
 /// 不一致（内容変更・hash 未記録・tree 破損・dir 欠落）があれば最初の
 /// dep 名を返す。path は `project_root` 基準で解決する。
+fn pinHashMatches(actual: [32]u8, recorded: []const u8) bool {
+    var normalized: [32]u8 = undefined;
+    return lock_model.normalizeSha256(recorded, &normalized) and std.mem.eql(u8, &actual, &normalized);
+}
+
 pub fn pathPinMismatch(gpa: Allocator, io: std.Io, project_root: []const u8, lock: *const lock_model.Lock) Error!?[]const u8 {
     var sets: std.ArrayList([]const lock_model.PackageEntry) = .empty;
     defer sets.deinit(gpa);
@@ -187,8 +192,7 @@ pub fn pathPinMismatch(gpa: Allocator, io: std.Io, project_root: []const u8, loc
             else
                 try std.fs.path.join(gpa, &.{ project_root, rel });
             const digest = cache.digestTree(io, gpa, abs, &cache.source_pin_exclude) catch return entry.name;
-            const actual = try std.fmt.allocPrint(gpa, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
-            if (!std.mem.eql(u8, actual, recorded)) return entry.name;
+            if (!pinHashMatches(digest, recorded)) return entry.name;
         }
     }
     return null;
@@ -625,7 +629,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
     // `.npkg` を verify した経路では検証済み model をそのまま使う。
     var exports = std.ArrayListUnmanaged(environment.ExportRecord).empty;
     if (manifest) |*m| {
-        exports = try resolveExports(ctx, m, entry.implementation);
+        exports = try resolveExports(ctx, m, entry);
     }
     const commands: []const npkg_commands.Command = verified_commands orelse blk: {
         if (manifest) |*m| break :blk try collectCommands(ctx, tree_abs, tree_dir, m);
@@ -674,6 +678,49 @@ fn isCanonicalDepPath(path: []const u8) bool {
         }
     }
     return true;
+}
+
+test "immutable path pin hash comparison normalizes lock representations" {
+    const digest = [_]u8{0x5a} ** 32;
+    const hex = std.fmt.bytesToHex(digest, .lower);
+    try testing.expect(pinHashMatches(digest, &hex));
+
+    var encoded: [44]u8 = undefined;
+    _ = std.base64.standard.Encoder.encode(&encoded, &digest);
+    var sri_buffer: ["sha256-".len + 44]u8 = undefined;
+    const sri = try std.fmt.bufPrint(&sri_buffer, "sha256-{s}", .{encoded});
+    try testing.expect(pinHashMatches(digest, sri));
+
+    var other = digest;
+    other[0] ^= 1;
+    try testing.expect(!pinHashMatches(other, &hex));
+    try testing.expect(!pinHashMatches(digest, "invalid"));
+}
+
+test "source export target preserves resolved features and Nako version" {
+    const features = [_][]const u8{"native"};
+    const current_target = exportArtifactTarget("lnako", .{
+        .runtime = "lnako",
+        .nako_version = try semver.Version.parse("3.7.24"),
+    }, &features);
+    const declaration = manifest_mod.ArtifactDecl{
+        .path = "native.nako3",
+        .when = "\"native\" in features and version >= \"3.7.0\"",
+        .features = &features,
+    };
+    try testing.expect(try declaration.matchesTarget(testing.allocator, current_target, true));
+
+    const older_target = exportArtifactTarget("lnako", .{
+        .runtime = "lnako",
+        .nako_version = try semver.Version.parse("3.6.9"),
+    }, &features);
+    try testing.expect(!try declaration.matchesTarget(testing.allocator, older_target, true));
+
+    const missing_feature_target = exportArtifactTarget("lnako", .{
+        .runtime = "lnako",
+        .nako_version = try semver.Version.parse("3.7.24"),
+    }, &.{});
+    try testing.expect(!try declaration.matchesTarget(testing.allocator, missing_feature_target, true));
 }
 
 test "canonical dependency path admits filesystem roots only" {
@@ -1027,24 +1074,31 @@ fn materializeIntoGeneration(ctx: *Context, package_name: []const u8, source: *s
     };
 }
 
-/// manifest の export を `implementation`（lock が記録した解決結果）に合わせて
-/// 選択し、env.json の `exports` 配列へ変換する。`native` は prefer-native
-/// として resolve へ渡し、ESM は profile が許可する場合のみ含める。`none`
-/// は実装を持たないため空を返す。
-fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, implementation: ?[]const u8) Error!std.ArrayListUnmanaged(environment.ExportRecord) {
+/// export 宣言の選択に使う条件を、実際に解決された lock entry から構築する。
+fn exportArtifactTarget(runtime: []const u8, target: resolver.Target, features: []const []const u8) manifest_mod.ArtifactTarget {
+    return .{
+        .runtime = runtime,
+        .os = target.os,
+        .cpu = target.cpu,
+        .abi = target.abi,
+        .compat_js = target.compat_js,
+        .optimize = target.optimize,
+        .version = target.nako_version,
+        .features = features,
+    };
+}
+
+/// manifest の export を lock entry の解決結果に合わせて選択し、env.json の
+/// `exports` 配列へ変換する。`native` は prefer-native として resolve へ渡し、
+/// ESM は profile が許可する場合のみ含める。`none` は空を返す。
+fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, entry: *const lock_model.PackageEntry) Error!std.ArrayListUnmanaged(environment.ExportRecord) {
+    const implementation = entry.implementation;
     var exports = std.ArrayListUnmanaged(environment.ExportRecord).empty;
     if (implementation) |impl| {
         if (std.mem.eql(u8, impl, "none")) return exports;
     }
     const prefer_native = if (implementation) |impl| std.mem.eql(u8, impl, "native") else false;
-    const target = manifest_mod.ArtifactTarget{
-        .runtime = ctx.runtime.name(),
-        .os = ctx.target.os,
-        .cpu = ctx.target.cpu,
-        .abi = ctx.target.abi,
-        .compat_js = ctx.target.compat_js,
-        .optimize = ctx.target.optimize,
-    };
+    const target = exportArtifactTarget(ctx.runtime.name(), ctx.target, entry.features);
     for (manifest.exports) |*export_decl| {
         const resolution = export_decl.resolve(ctx.arena, target, prefer_native, ctx.session.diagnostics) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,

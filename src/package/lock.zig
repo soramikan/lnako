@@ -644,14 +644,12 @@ fn validatePackageSet(packages: []const PackageEntry, exists: *const std.StringH
         if (package.artifacts.len == 0) {
             try diagnostics.addFmt(diag.E008_MISSING_ARTIFACT, .err, artifacts_path, .{}, "package {s} has no artifacts", .{package.id});
         }
-        var has_esm = false;
         for (package.artifacts) |artifact| {
             if (!artifact.isKnownKind()) {
                 const artifact_path = try std.fmt.allocPrint(diagnostics.allocator, "{s}.artifacts.{s}", .{ package_path, artifact.key });
                 defer diagnostics.allocator.free(artifact_path);
                 try diagnostics.addFmt(diag.E007_UNKNOWN_ARTIFACT_KIND, .err, artifact_path, .{}, "unknown artifact kind \"{s}\" at {s}.artifacts.{s}", .{ artifact.kind, package_path, artifact.key });
             }
-            if (std.mem.eql(u8, artifact.kind, "ESM")) has_esm = true;
             if (artifact.type) |artifact_type| {
                 if (!containsString(&known_artifact_types, artifact_type)) {
                     const artifact_path = try std.fmt.allocPrint(diagnostics.allocator, "{s}.artifacts.{s}", .{ package_path, artifact.key });
@@ -659,9 +657,6 @@ fn validatePackageSet(packages: []const PackageEntry, exists: *const std.StringH
                     try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, artifact_path, .{}, "unknown artifact type \"{s}\"", .{artifact_type});
                 }
             }
-        }
-        if (has_esm and !esm_allowed) {
-            try diagnostics.addFmt(diag.E006_JS_IN_NORMAL_MODE, .err, artifacts_path, .{}, "ESM artifact selected without compat-js profile", .{});
         }
         // source dependency の source artifact は取得済み tree 全体を指す
         // container。native/ESM export はその tree 内 manifest から sync が
@@ -674,7 +669,7 @@ fn validatePackageSet(packages: []const PackageEntry, exists: *const std.StringH
         if (package.implementation) |implementation| {
             if (!containsString(&known_implementations, implementation)) {
                 try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, package_path, .{}, "unknown implementation \"{s}\"", .{implementation});
-            } else if (std.mem.eql(u8, implementation, "ESM") and source_container and !esm_allowed) {
+            } else if (std.mem.eql(u8, implementation, "ESM") and !esm_allowed) {
                 try diagnostics.addFmt(diag.E006_JS_IN_NORMAL_MODE, .err, artifacts_path, .{}, "ESM implementation selected without compat-js profile", .{});
             } else if (!std.mem.eql(u8, implementation, "none") and !package.hasKind(implementation) and !source_container) {
                 try diagnostics.addFmt(diag.E008_MISSING_ARTIFACT, .err, artifacts_path, .{}, "selected implementation \"{s}\" has no matching artifact", .{implementation});
@@ -1518,6 +1513,35 @@ fn dupProfile(allocator: Allocator, record: ProfileRecord) !ProfileRecord {
 // ---------------------------------------------------------------------------
 // 複数 profile の共用 artifact 整合性
 // ---------------------------------------------------------------------------
+
+test "normal profile permits unselected ESM artifact when native is selected" {
+    const testing = std.testing;
+    const artifacts = [_]Artifact{
+        .{ .key = "native", .kind = "native" },
+        .{ .key = "esm", .kind = "ESM" },
+    };
+    const packages = [_]PackageEntry{
+        .{
+            .id = "pkg:11111111111111111111111111111111",
+            .name = "dual",
+            .version = "1.0.0",
+            .implementation = "native",
+            .artifacts = &artifacts,
+        },
+    };
+    var exists: std.StringHashMapUnmanaged(void) = .empty;
+    defer exists.deinit(testing.allocator);
+    var diagnostics = diag.List.init(testing.allocator);
+    defer diagnostics.deinit();
+
+    try validatePackageSet(&packages, &exists, .{
+        .runtime = "lnako",
+        .os = "macos",
+        .cpu = "aarch64",
+        .abi = "gnu",
+    }, false, "packages", &diagnostics);
+    try testing.expect(!diagnostics.hasErrors());
+}
 
 test "path source mutable defaults to immutable and preserves explicit values" {
     const testing = std.testing;

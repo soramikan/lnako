@@ -466,10 +466,24 @@ pub const Store = struct {
     pub fn readPublishedGeneration(self: *const Store, gpa: Allocator) !?[]u8 {
         const bytes = (try self.readEnvironmentJson(gpa)) orelse return null;
         defer gpa.free(bytes);
-        // 世代 dir を参照する path は `.nako/env/gen-<hex>/...` 形式。
-        const marker = dir_name ++ "/" ++ env_dir ++ "/";
-        const at = std.mem.indexOf(u8, bytes, marker) orelse return null;
-        const start = at + marker.len;
+        // POSIX path と、JSON 内で `\\` に escape された Windows path の
+        // どちらも認識する。generation 名自体は両形式で同じ文字列。
+        const markers = [_][]const u8{
+            dir_name ++ "/" ++ env_dir ++ "/",
+            dir_name ++ "\\\\" ++ env_dir ++ "\\\\",
+        };
+        var found_at: ?usize = null;
+        var marker_len: usize = 0;
+        for (markers) |marker| {
+            if (std.mem.indexOf(u8, bytes, marker)) |at| {
+                if (found_at == null or at < found_at.?) {
+                    found_at = at;
+                    marker_len = marker.len;
+                }
+            }
+        }
+        const at = found_at orelse return null;
+        const start = at + marker_len;
         if (!std.mem.startsWith(u8, bytes[start..], generation_prefix)) return null;
         var end = start + generation_prefix.len;
         while (end < bytes.len and std.ascii.isHex(bytes[end])) end += 1;
@@ -851,9 +865,23 @@ test "environment store は readPublishedGeneration で公開環境の参照世�
     defer testing.allocator.free(published);
     try testing.expectEqualStrings(generation.generation, published);
 
-    // 世代参照を含まない env.json では null（保守判定で prune を見送る側）。
+    // Windows の path separator は JSON bytes 上では `\\` と二重化される。
+    const windows_path = try std.fmt.allocPrint(testing.allocator, ".nako\\env\\{s}\\deps\\a", .{generation.generation});
+    defer testing.allocator.free(windows_path);
+    const windows_pkgs = [_]PackageRecord{
+        .{ .key = "k", .name = "a", .version = "1.0.0", .id = null, .path = windows_path },
+    };
+    var windows_json: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer windows_json.deinit();
+    try emit(testing.allocator, .{ .lock_sha256 = "sha256:00", .profile = "default", .runtime = "lnako", .packages = &windows_pkgs }, &windows_json.writer);
     const json_path = try std.fs.path.join(testing.allocator, &.{ store.root, environment_file });
     defer testing.allocator.free(json_path);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = json_path, .data = windows_json.written() });
+    const windows_published = (try store.readPublishedGeneration(testing.allocator)).?;
+    defer testing.allocator.free(windows_published);
+    try testing.expectEqualStrings(generation.generation, windows_published);
+
+    // 世代参照を含まない env.json では null（保守判定で prune を見送る側）。
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = json_path, .data = "{\"packages\":[]}\n" });
     try testing.expect((try store.readPublishedGeneration(testing.allocator)) == null);
 }
