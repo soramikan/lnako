@@ -708,6 +708,9 @@ fn portablePathDigest(io: std.Io, gpa: Allocator, root: []const u8) Error![32]u8
         hasher.update(&size_le);
         var file = try openPortableTreeFile(io, dir, entry.rel);
         defer file.close(io);
+        // Zig 0.16 の Windows no-follow open は実handleを非同期で作るが、
+        // File.flags.nonblocking は false のまま返る。positional readerへ実modeを伝える。
+        if (builtin.os.tag == .windows) file.flags.nonblocking = true;
         var buffer: [8192]u8 = undefined;
         var reader = file.reader(io, &buffer);
         while (true) {
@@ -720,6 +723,24 @@ fn portablePathDigest(io: std.Io, gpa: Allocator, root: []const u8) Error![32]u8
     var digest: [32]u8 = undefined;
     hasher.final(&digest);
     return digest;
+}
+
+test "portable path digest reads no-follow files through the streamed reader" {
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const payload = try std.testing.allocator.alloc(u8, 16 * 1024);
+    defer std.testing.allocator.free(payload);
+    @memset(payload, 'x');
+    try temporary.dir.writeFile(io, .{ .sub_path = "large.nako3", .data = payload });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(root);
+
+    const first = try portablePathDigest(io, std.testing.allocator, root);
+    const second = try portablePathDigest(io, std.testing.allocator, root);
+    try std.testing.expectEqual(first, second);
+    const first_hex = std.fmt.bytesToHex(first, .lower);
+    try std.testing.expectEqualStrings("52197339e75b1cba9cd9c35f5bf4ce7f31bc00ab19b34b8151074aa0205ba8e4", &first_hex);
 }
 
 fn openPortableTreeFile(io: std.Io, root: std.Io.Dir, rel: []const u8) Error!std.Io.File {

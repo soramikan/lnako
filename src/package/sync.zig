@@ -1156,7 +1156,11 @@ fn collectCommands(ctx: *Context, tree_abs: ?[]const u8, tree_dir: ?std.Io.Dir, 
                 else => return ctx.session.fail(.invalid_metadata, .manifest, display_root, "commands.json in package failed validation", .{}),
             };
             return parsed.commands;
-        } else |_| {}
+        } else |err| switch (err) {
+            error.FileNotFound => {},
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return ctx.session.fail(.invalid_metadata, .manifest, display_root, "commands.json in package is unreadable: {s}", .{@errorName(err)}),
+        }
     } else if (tree_abs) |root| {
         const commands_path = try std.fs.path.join(arena, &.{ root, "NAKO-PKG/commands.json" });
         if (std.Io.Dir.cwd().readFileAlloc(ctx.io, commands_path, arena, .limited(16 * 1024 * 1024))) |bytes| {
@@ -1167,7 +1171,11 @@ fn collectCommands(ctx: *Context, tree_abs: ?[]const u8, tree_dir: ?std.Io.Dir, 
                 else => return ctx.session.fail(.invalid_metadata, .manifest, commands_path, "commands.json in package failed validation", .{}),
             };
             return parsed.commands;
-        } else |_| {}
+        } else |err| switch (err) {
+            error.FileNotFound => {},
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return ctx.session.fail(.invalid_metadata, .manifest, commands_path, "commands.json in package is unreadable: {s}", .{@errorName(err)}),
+        }
     }
     const m = manifest orelse return &.{};
     if (tree_abs == null and tree_dir == null) return &.{};
@@ -1419,6 +1427,44 @@ test "sync は path 依存を参照して schema v1 の環境を構築する" {
     const written = try temporary.dir.readFileAlloc(io, ".nako/environment.json", testing.allocator, .unlimited);
     defer testing.allocator.free(written);
     try testing.expectEqualStrings(report.environment_json, written);
+}
+
+test "sync は読み取り不能な commands.json を生成fallbackへ黙って落とさない" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const manifest_sha = try sha256HexAlloc(testing.allocator, app_manifest);
+    defer testing.allocator.free(manifest_sha);
+
+    // commands.json の場所が directory だと readFileAlloc は IsDir を返す。
+    // これは「index が無い」と同じではなく、sync を失敗させる必要がある。
+    try temporary.dir.createDirPath(io, "deps/lib/src");
+    try temporary.dir.createDirPath(io, "deps/lib/NAKO-PKG/commands.json");
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.toml", .data = app_manifest });
+    try temporary.dir.writeFile(io, .{ .sub_path = "deps/lib/nako.toml", .data = lib_manifest });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "deps/lib/src/index.nako3",
+        .data = "●テストとは\n  戻る\nここまで\n",
+    });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const lib_abs = try std.fs.path.join(testing.allocator, &.{ root, "deps/lib" });
+    defer testing.allocator.free(lib_abs);
+    const digest = try cache.digestTree(io, testing.allocator, lib_abs, &cache.source_pin_exclude);
+    const mutable_sha = try std.fmt.allocPrint(testing.allocator, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
+    defer testing.allocator.free(mutable_sha);
+    const lock_bytes = try fixtureLock(testing.allocator, manifest_sha, mutable_sha);
+    defer testing.allocator.free(lock_bytes);
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock_bytes });
+
+    const cache_root = try std.fs.path.join(testing.allocator, &.{ root, "cache" });
+    defer testing.allocator.free(cache_root);
+    var diagnostics = diag.List.init(testing.allocator);
+    defer diagnostics.deinit();
+    try testing.expectError(error.InvalidMetadata, run(testing.allocator, io, .{
+        .project_root = root,
+        .cache_root = cache_root,
+    }, &diagnostics));
 }
 
 test "sync は manifest との不整合な lock を StaleLock で拒否する" {
