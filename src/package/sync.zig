@@ -5,9 +5,9 @@
 //!   する。どちらも process 終了で自動解放される。
 //! - package 内容は staging で検証・展開を完了してから cache `objects/` へ
 //!   原子的に公開する。環境は `.nako/staging/<gen>` に構築し、世代 dir への
-//!   rename と `environment.json` の原子書換で一度に切り替える。
-//! - 失敗時は `environment.json`・`current`・前世代が一切変わらず、直前の
-//!   有効環境がそのまま使える。
+//!   rename と `environment.json` の原子書換で公開後、`current` を別途更新する。
+//! - commit 前の失敗は既存環境を変更しない。commit 後の `current` 公開失敗は
+//!   error を返し、state 検査で stale として再試行させる。
 //! - `path` 依存は mutable source として宣言 dir をそのまま参照する
 //!   （環境側へ複製しない）。cache・他プロジェクトへの波及は copy 経由の
 //!   immutable entry 側で防ぐ。
@@ -201,10 +201,11 @@ const Context = struct {
     session: *fetch.Session,
     cache_store: *const cache.Store,
     project_abs: []const u8,
-    /// `<.nako>/staging/<gen>`。
-    generation_abs: []const u8,
-    /// `<gen>/deps`（materialize 先）。
-    deps_abs: []const u8,
+    /// `<gen>/deps`（materialize 先）、generation dir handle 相対で開いたもの。
+    deps_dir: std.Io.Dir,
+    /// path-only external tooling の一時 workspace。`.nako` 配下には置かない。
+    workspace_abs: []const u8,
+    workspace_dir: std.Io.Dir,
     /// `.nako/env/<gen>`（env.json の path に使う前置）。
     generation_rel: []const u8,
     runtime: Runtime,
@@ -218,7 +219,8 @@ const Context = struct {
 };
 
 /// `nako.lock` を読み、環境を同期する。失敗時は `session` 由来の診断を
-/// `diagnostics` へ転写してから error を返す（直前の環境は変更されない）。
+/// `diagnostics` へ転写して error を返す。commit 前の失敗は直前環境を変更しない。
+/// commit 後の current 公開失敗では error を返し、state 検査で stale として再試行させる。
 pub fn run(
     gpa: Allocator,
     io: std.Io,
@@ -338,10 +340,19 @@ pub fn run(
     // 直前の現行世代を覚えておく。切替え直後に直前世代を削除すると、
     // 読み取り途中の consumer を壊すため新・旧の双方を残す。
     const previous_generation = env_store.readCurrent(arena) catch |err| return mapFs(err);
-    const generation = env_store.newGeneration(arena) catch |err| return mapFs(err);
-    const deps_abs = try std.fs.path.join(arena, &.{ generation.abs_path, "deps" });
-    std.Io.Dir.cwd().createDirPath(io, deps_abs) catch |err| return mapFs(err);
+    var generation = env_store.newGeneration(arena) catch |err| return mapFs(err);
+    defer generation.dir.close(io);
+    generation.dir.createDirPath(io, "deps") catch |err| return mapFs(err);
+    var deps_dir = generation.dir.openDir(io, "deps", .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+    defer deps_dir.close(io);
     const generation_rel = try std.fs.path.join(arena, &.{ environment.dir_name, environment.env_dir, generation.generation });
+    var project_dir = std.Io.Dir.cwd().openDir(io, project_abs, .{ .follow_symlinks = false }) catch |err| return mapFs(err);
+    defer project_dir.close(io);
+    const workspace_name = try std.fmt.allocPrint(arena, ".lnako-work-{s}", .{generation.generation});
+    var workspace_dir = environment.openManagedChildDir(project_dir, io, workspace_name, true) catch |err| return mapFs(err);
+    defer environment.deleteTreeChecked(project_dir, io, workspace_name) catch {};
+    defer workspace_dir.close(io);
+    const workspace_abs = try std.fs.path.join(arena, &.{ project_abs, workspace_name });
 
     var ctx = Context{
         .gpa = gpa,
@@ -350,8 +361,9 @@ pub fn run(
         .session = &session,
         .cache_store = &cache_store,
         .project_abs = project_abs,
-        .generation_abs = generation.abs_path,
-        .deps_abs = deps_abs,
+        .deps_dir = deps_dir,
+        .workspace_abs = workspace_abs,
+        .workspace_dir = workspace_dir,
         .generation_rel = generation_rel,
         .runtime = options.runtime,
         .target = materializeTarget(profile, record, &lock.input, options.runtime),
@@ -390,14 +402,12 @@ pub fn run(
     // 指したまま残るため、両者を keep して実際の直前世代を消さない。
     const published_generation = env_store.readPublishedGeneration(arena) catch null;
 
-    // staging 世代 dir を env/ へ rename し、environment.json・current を
-    // 原子的に切り替える。ここまで来る前に失敗した場合、既存環境は無変更。
+    // staging 世代 dir と environment.json を commit する。commit 前に失敗すれば
+    // 既存環境は無変更。current は別ファイルなので、この2操作は一括 atomic ではない。
     env_store.commit(generation.generation, json_buffer.written()) catch |err| return mapFs(err);
-    // environment.json 公開後に current の更新だけ失敗しても、公開済み環境を
-    // 巻き戻せない。current は世代整理と次回 sync のヒントに過ぎず、実際の
-    // 参照世代は environment.json から復元する（中断時と同じ状態）ため、
-    // ここでの失敗は成功扱いとする。
-    env_store.writeCurrent(generation.generation) catch {};
+    // env_state は current が公開済み世代を指すことを要求する。公開失敗は
+    // 成功扱いせず伝播し、state 検査で stale として後続 sync に再試行させる。
+    env_store.writeCurrent(generation.generation) catch |err| return mapFs(err);
 
     // 前世代は使用中の可能性があるため、現行・直前・公開環境の参照世代を
     // 残して整理する。参照世代を特定できない場合（env.json 破損等）は
@@ -447,6 +457,8 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
     var env_path: []const u8 = undefined;
     var manifest: ?manifest_mod.Manifest = null;
     var tree_abs: ?[]const u8 = null;
+    var tree_dir: ?std.Io.Dir = null;
+    defer if (tree_dir) |*dir| dir.close(ctx.io);
     var verified_commands: ?[]const npkg_commands.Command = null;
 
     switch (source.kind) {
@@ -503,9 +515,12 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                 // 既存 checkout は pinned handle から複製し、取得後に同じ handle
                 // 経由で cache へ戻すことで root 置換による書込先差替えを防ぐ。
                 const checkout_key = try shortKey(arena, "git", &.{ url, source.path orelse "" });
-                const checkout_dir = try std.fs.path.join(arena, &.{ ctx.generation_abs, "git-checkouts", checkout_key });
-                std.Io.Dir.cwd().createDirPath(ctx.io, checkout_dir) catch |err| return mapFs(err);
-                defer std.Io.Dir.cwd().deleteTree(ctx.io, checkout_dir) catch {};
+                var checkouts = environment.openManagedChildDir(ctx.workspace_dir, ctx.io, "git-checkouts", true) catch |err| return mapFs(err);
+                defer checkouts.close(ctx.io);
+                var checkout = environment.openManagedChildDir(checkouts, ctx.io, checkout_key, true) catch |err| return mapFs(err);
+                defer environment.deleteTreeChecked(checkouts, ctx.io, checkout_key) catch {};
+                defer checkout.close(ctx.io);
+                const checkout_dir = try std.fs.path.join(arena, &.{ ctx.workspace_abs, "git-checkouts", checkout_key });
                 const cached_checkout_opt = ctx.cache_store.openCheckout(checkout_key) catch |err| return mapFs(err);
                 if (cached_checkout_opt) |cached_checkout| {
                     var cached = cached_checkout;
@@ -537,7 +552,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
             if (tree_handle == null) return error.FileSystem;
             defer tree_handle.?.close(ctx.io);
             const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?);
-            tree_abs = materialized.tree_abs;
+            tree_dir = materialized.tree_dir;
             env_path = materialized.env_path;
         },
         .http => {
@@ -569,7 +584,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
             if (tree_handle == null) return error.FileSystem;
             defer tree_handle.?.close(ctx.io);
             const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?);
-            tree_abs = materialized.tree_abs;
+            tree_dir = materialized.tree_dir;
             env_path = materialized.env_path;
         },
         .registry, .static => {
@@ -601,7 +616,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
             if (tree_handle == null) return error.FileSystem;
             defer tree_handle.?.close(ctx.io);
             const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?);
-            tree_abs = materialized.tree_abs;
+            tree_dir = materialized.tree_dir;
             env_path = materialized.env_path;
         },
     }
@@ -613,8 +628,8 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
         exports = try resolveExports(ctx, m, entry.implementation);
     }
     const commands: []const npkg_commands.Command = verified_commands orelse blk: {
-        if (manifest) |*m| break :blk try collectCommands(ctx, tree_abs, m);
-        if (tree_abs) |tree| break :blk try collectCommands(ctx, tree, null);
+        if (manifest) |*m| break :blk try collectCommands(ctx, tree_abs, tree_dir, m);
+        if (tree_abs != null or tree_dir != null) break :blk try collectCommands(ctx, tree_abs, tree_dir, null);
         break :blk &.{};
     };
 
@@ -858,7 +873,7 @@ fn buildArtifactObject(ctx: *Context, key: []const u8, bytes: []const u8, artifa
     var tree = staging.openDir(ctx.io, "tree", .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
     var tree_open = true;
     defer if (tree_open) tree.close(ctx.io);
-    const temp_base = try std.fmt.allocPrint(arena, "{s}.artifact-{s}", .{ ctx.generation_abs, key });
+    const temp_base = try std.fmt.allocPrint(arena, "{s}/artifact-{s}", .{ ctx.workspace_abs, key });
     var prepared = PreparedArtifact{};
     if (std.mem.eql(u8, artifact_type, ".npkg")) {
         // 公開前に package 検証を通す。hash 照合済みでも必須 metadata・
@@ -973,7 +988,7 @@ fn selectArtifact(ctx: *Context, entry: *const lock_model.PackageEntry) ?*const 
 
 /// package 名を `.nako` 内 dir 名へ変換する。`[a-z0-9-]` 以外は `-` へ畳み、
 /// 空なら hash 名を使う。同一世代内での重複には `-2`・`-3`…を付ける。
-const MaterializedPackage = struct { env_path: []const u8, tree_abs: []const u8 };
+const MaterializedPackage = struct { env_path: []const u8, tree_dir: std.Io.Dir };
 
 fn materializeIntoGeneration(ctx: *Context, package_name: []const u8, source: *std.Io.Dir) Error!MaterializedPackage {
     const arena = ctx.arena;
@@ -1000,14 +1015,15 @@ fn materializeIntoGeneration(ctx: *Context, package_name: []const u8, source: *s
     }
     try ctx.used_names.put(arena, try arena.dupe(u8, final_name), {});
 
-    const dest = try std.fs.path.join(arena, &.{ ctx.deps_abs, final_name });
-    std.Io.Dir.cwd().createDirPath(ctx.io, dest) catch |err| return mapFs(err);
-    var destination = std.Io.Dir.cwd().openDir(ctx.io, dest, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
-    defer destination.close(ctx.io);
-    _ = materialize.copyTreeFromDirs(ctx.gpa, ctx.io, source, &destination, .{}) catch |err| return mapTreeError(ctx, err, package_name);
+    ctx.deps_dir.createDirPath(ctx.io, final_name) catch |err| return mapFs(err);
+    var destination = ctx.deps_dir.openDir(ctx.io, final_name, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+    _ = materialize.copyTreeFromDirs(ctx.gpa, ctx.io, source, &destination, .{}) catch |err| {
+        destination.close(ctx.io);
+        return mapTreeError(ctx, err, package_name);
+    };
     return .{
         .env_path = try std.fs.path.join(arena, &.{ ctx.generation_rel, "deps", final_name }),
-        .tree_abs = dest,
+        .tree_dir = destination,
     };
 }
 
@@ -1052,10 +1068,21 @@ fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, impleme
 
 /// commands.json を package dir から読むか、manifest export の source を
 /// 静的走査して生成する。どちらも無い場合は空。
-fn collectCommands(ctx: *Context, tree_abs: ?[]const u8, manifest: ?*const manifest_mod.Manifest) Error![]const npkg_commands.Command {
+fn collectCommands(ctx: *Context, tree_abs: ?[]const u8, tree_dir: ?std.Io.Dir, manifest: ?*const manifest_mod.Manifest) Error![]const npkg_commands.Command {
     const arena = ctx.arena;
-    if (tree_abs) |tree| {
-        const commands_path = try std.fs.path.join(arena, &.{ tree, "NAKO-PKG/commands.json" });
+    const display_root = tree_abs orelse ctx.generation_rel;
+    if (tree_dir) |tree| {
+        if (tree.readFileAlloc(ctx.io, "NAKO-PKG/commands.json", arena, .limited(16 * 1024 * 1024))) |bytes| {
+            var scratch = diag.List.init(ctx.gpa);
+            defer scratch.deinit();
+            const parsed = npkg_commands.parse(arena, bytes, ctx.session.diagSink(&scratch)) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return ctx.session.fail(.invalid_metadata, .manifest, display_root, "commands.json in package failed validation", .{}),
+            };
+            return parsed.commands;
+        } else |_| {}
+    } else if (tree_abs) |root| {
+        const commands_path = try std.fs.path.join(arena, &.{ root, "NAKO-PKG/commands.json" });
         if (std.Io.Dir.cwd().readFileAlloc(ctx.io, commands_path, arena, .limited(16 * 1024 * 1024))) |bytes| {
             var scratch = diag.List.init(ctx.gpa);
             defer scratch.deinit();
@@ -1067,7 +1094,7 @@ fn collectCommands(ctx: *Context, tree_abs: ?[]const u8, manifest: ?*const manif
         } else |_| {}
     }
     const m = manifest orelse return &.{};
-    if (tree_abs == null) return &.{};
+    if (tree_abs == null and tree_dir == null) return &.{};
 
     // export の source path を entry として静的に走査する。
     var entry_paths = std.ArrayListUnmanaged([]const u8).empty;
@@ -1076,7 +1103,11 @@ fn collectCommands(ctx: *Context, tree_abs: ?[]const u8, manifest: ?*const manif
     }
     if (entry_paths.items.len == 0) return &.{};
 
-    var provider_state = DirSourceProvider{ .io = ctx.io, .root = try arena.dupe(u8, tree_abs.?) };
+    var provider_state = DirSourceProvider{
+        .io = ctx.io,
+        .root = if (tree_abs) |root| try arena.dupe(u8, root) else null,
+        .dir = tree_dir,
+    };
     var scratch = diag.List.init(ctx.gpa);
     defer scratch.deinit();
     const generated = npkg_commands_gen.generate(arena, provider_state.provider(), entry_paths.items, ctx.session.diagSink(&scratch)) catch |err| switch (err) {
@@ -1089,7 +1120,8 @@ fn collectCommands(ctx: *Context, tree_abs: ?[]const u8, manifest: ?*const manif
 /// package dir からファイルを読む `npkg_commands_gen.SourceProvider`。
 const DirSourceProvider = struct {
     io: std.Io,
-    root: []const u8,
+    root: ?[]const u8,
+    dir: ?std.Io.Dir,
 
     fn provider(self: *DirSourceProvider) npkg_commands_gen.SourceProvider {
         return .{ .context = self, .readFn = read };
@@ -1097,11 +1129,18 @@ const DirSourceProvider = struct {
 
     fn read(context: *anyopaque, allocator: Allocator, path: []const u8) anyerror!?[]u8 {
         const self: *DirSourceProvider = @ptrCast(@alignCast(context));
-        const abs = try std.fs.path.join(allocator, &.{ self.root, path });
-        defer allocator.free(abs);
-        const bytes = std.Io.Dir.cwd().readFileAlloc(self.io, abs, allocator, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
-            error.FileNotFound => return null,
-            else => return err,
+        const bytes = if (self.dir) |dir|
+            dir.readFileAlloc(self.io, path, allocator, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
+                error.FileNotFound => return null,
+                else => return err,
+            }
+        else blk: {
+            const abs = try std.fs.path.join(allocator, &.{ self.root.?, path });
+            defer allocator.free(abs);
+            break :blk std.Io.Dir.cwd().readFileAlloc(self.io, abs, allocator, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
+                error.FileNotFound => return null,
+                else => return err,
+            };
         };
         return bytes;
     }

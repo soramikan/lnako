@@ -496,9 +496,42 @@ fn isVirtualId(id_text: []const u8) bool {
 /// lock 成功・実行失敗の不整合になるため。`..` 成分は宣言者の
 /// 正当な選択（`../shared`）として保持し、絶対 path の先頭
 /// separator も保持する。
+fn isAbsoluteDependencyPath(path: []const u8) bool {
+    return provider.isAbsoluteDepPath(path);
+}
+
+fn isWindowsDriveRoot(path: []const u8) bool {
+    return path.len >= 3 and std.ascii.isAlphabetic(path[0]) and path[1] == ':' and isWindowsSeparator(path[2]);
+}
+
+/// POSIXでは2つの先頭backslashだけではUNCとみなさない。
+fn isCompleteBackslashUnc(path: []const u8) bool {
+    if (path.len < 5 or path[0] != '\\' or path[1] != '\\') return false;
+    var i: usize = 2;
+    while (i < path.len and isWindowsSeparator(path[i])) : (i += 1) {}
+    const server_start = i;
+    while (i < path.len and !isWindowsSeparator(path[i])) : (i += 1) {}
+    if (i == server_start or i == path.len) return false;
+    while (i < path.len and isWindowsSeparator(path[i])) : (i += 1) {}
+    const share_start = i;
+    while (i < path.len and !isWindowsSeparator(path[i])) : (i += 1) {}
+    return i > share_start;
+}
+
 fn canonicalDepSpelling(gpa: Allocator, decl: []const u8) ![]const u8 {
-    if (std.fs.path.isAbsoluteWindows(decl)) return try canonicalWindowsDepSpelling(gpa, decl);
-    var text = try gpa.dupe(u8, decl);
+    const windows_drive_root = isWindowsDriveRoot(decl);
+    const windows_unc_prefix = decl.len >= 2 and isWindowsSeparator(decl[0]) and isWindowsSeparator(decl[1]);
+    const windows_unc_root = windows_unc_prefix and isAbsoluteDependencyPath(decl) and
+        (builtin.os.tag == .windows or decl[0] == '\\');
+    if ((builtin.os.tag == .windows and isAbsoluteDependencyPath(decl)) or windows_drive_root or windows_unc_root) {
+        return try canonicalWindowsDepSpelling(gpa, decl);
+    }
+    if (windows_unc_prefix and !windows_unc_root and (builtin.os.tag == .windows or decl[0] == '\\')) {
+        return try gpa.dupe(u8, decl);
+    }
+    const text_storage = try gpa.dupe(u8, decl);
+    defer gpa.free(text_storage);
+    var text = text_storage;
     while (std.mem.startsWith(u8, text, "./")) text = text[2..];
     // POSIX では backslash は通常のファイル名文字なので、separator に
     // 読み替えない。Windows だけ両形式を host path separator に統一する。
@@ -518,7 +551,7 @@ fn canonicalDepSpelling(gpa: Allocator, decl: []const u8) ![]const u8 {
         first = false;
     }
     if (output.items.len == 0) try output.append(gpa, '.');
-    return output.items;
+    return try output.toOwnedSlice(gpa);
 }
 
 fn canonicalWindowsDepSpelling(gpa: Allocator, text: []const u8) ![]const u8 {
@@ -549,6 +582,22 @@ fn canonicalWindowsDepSpelling(gpa: Allocator, text: []const u8) ![]const u8 {
 
 fn isWindowsSeparator(char: u8) bool {
     return char == '/' or char == '\\';
+}
+
+test "canonicalDepSpelling keeps a leading backslash relative on POSIX" {
+    if (builtin.os.tag == .windows) return;
+    const path = try canonicalDepSpelling(std.testing.allocator, "\\lib");
+    defer std.testing.allocator.free(path);
+    try std.testing.expectEqualStrings("\\lib", path);
+    try std.testing.expect(!isAbsoluteDependencyPath("\\lib"));
+    const incomplete_unc = try canonicalDepSpelling(std.testing.allocator, "\\\\lib");
+    defer std.testing.allocator.free(incomplete_unc);
+    try std.testing.expectEqualStrings("\\\\lib", incomplete_unc);
+    try std.testing.expect(!isAbsoluteDependencyPath(incomplete_unc));
+    const complete_unc = try canonicalDepSpelling(std.testing.allocator, "\\\\server\\share\\lib");
+    defer std.testing.allocator.free(complete_unc);
+    try std.testing.expectEqualStrings("\\\\server\\share\\lib", complete_unc);
+    try std.testing.expect(isAbsoluteDependencyPath(complete_unc));
 }
 
 test "canonicalDepSpelling normalizes Windows absolute paths" {
@@ -590,7 +639,7 @@ test "resolveTarget は CLI compat-js を選択 profile だけに適用する" {
 /// （`./deps/lib` と `deps/lib` が lock・mutablePaths で同一表記になる
 /// ようにする）。
 fn normalizePathSource(gpa: Allocator, declared: []const u8, base_dir: ?[]const u8, project_root: []const u8) Error![]const u8 {
-    if (base_dir == null or provider.isAbsoluteDepPath(declared)) return canonicalDepSpelling(gpa, declared);
+    if (base_dir == null or isAbsoluteDependencyPath(declared)) return canonicalDepSpelling(gpa, declared);
     const root = std.fs.path.resolve(gpa, &.{project_root}) catch return error.FileSystem;
     const base = std.fs.path.resolve(gpa, &.{base_dir.?}) catch return error.FileSystem;
     if (std.mem.eql(u8, root, base)) return canonicalDepSpelling(gpa, declared);
@@ -603,7 +652,97 @@ fn normalizePathSource(gpa: Allocator, declared: []const u8, base_dir: ?[]const 
     return joined;
 }
 
-const GitCheckoutWorkspace = struct { key: []const u8, path: []const u8 };
+fn cleanGitCheckout(gpa: Allocator, io: std.Io, path: []const u8) Error!void {
+    const dot_git = try std.fs.path.join(gpa, &.{ path, ".git" });
+    defer gpa.free(dot_git);
+    std.Io.Dir.cwd().access(io, dot_git, .{}) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return mapFs(err),
+    };
+    const reset = std.process.run(gpa, io, .{
+        .argv = &.{ "git", "-C", path, "reset", "--hard", "HEAD" },
+        .stdout_limit = .limited(1024 * 1024),
+        .stderr_limit = .limited(1024 * 1024),
+    }) catch |err| return mapFs(err);
+    defer gpa.free(reset.stdout);
+    defer gpa.free(reset.stderr);
+    if (reset.term != .exited or reset.term.exited != 0) return error.FileSystem;
+    const clean = std.process.run(gpa, io, .{
+        .argv = &.{ "git", "-C", path, "clean", "-ffdx" },
+        .stdout_limit = .limited(1024 * 1024),
+        .stderr_limit = .limited(1024 * 1024),
+    }) catch |err| return mapFs(err);
+    defer gpa.free(clean.stdout);
+    defer gpa.free(clean.stderr);
+    if (clean.term != .exited or clean.term.exited != 0) return error.FileSystem;
+}
+
+test "cleanGitCheckout discards tracked edits and untracked files" {
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDir(io, "checkout", .default_dir);
+    const checkout = try temporary.dir.realPathFileAlloc(io, "checkout", std.testing.allocator);
+    defer std.testing.allocator.free(checkout);
+    for ([_][]const []const u8{
+        &.{ "git", "-C", checkout, "init", "-q" },
+        &.{ "git", "-C", checkout, "config", "user.email", "test@example.invalid" },
+        &.{ "git", "-C", checkout, "config", "user.name", "Test" },
+    }) |argv| {
+        const result = try std.process.run(std.testing.allocator, io, .{ .argv = argv });
+        defer std.testing.allocator.free(result.stdout);
+        defer std.testing.allocator.free(result.stderr);
+        try std.testing.expect(result.term == .exited);
+        try std.testing.expectEqual(@as(u8, 0), result.term.exited);
+    }
+    try temporary.dir.writeFile(io, .{ .sub_path = "checkout/tracked", .data = "pinned" });
+    const add = try std.process.run(std.testing.allocator, io, .{ .argv = &.{ "git", "-C", checkout, "add", "tracked" } });
+    defer std.testing.allocator.free(add.stdout);
+    defer std.testing.allocator.free(add.stderr);
+    try std.testing.expect(add.term == .exited);
+    try std.testing.expectEqual(@as(u8, 0), add.term.exited);
+    const commit = try std.process.run(std.testing.allocator, io, .{ .argv = &.{ "git", "-C", checkout, "commit", "-q", "-m", "pin" } });
+    defer std.testing.allocator.free(commit.stdout);
+    defer std.testing.allocator.free(commit.stderr);
+    try std.testing.expect(commit.term == .exited);
+    try std.testing.expectEqual(@as(u8, 0), commit.term.exited);
+
+    try temporary.dir.writeFile(io, .{ .sub_path = "checkout/tracked", .data = "modified" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "checkout/untracked", .data = "discard" });
+    try cleanGitCheckout(std.testing.allocator, io, checkout);
+    const restored = try temporary.dir.readFileAlloc(io, "checkout/tracked", std.testing.allocator, .limited(32));
+    defer std.testing.allocator.free(restored);
+    try std.testing.expectEqualStrings("pinned", restored);
+    try std.testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "checkout/untracked", .{}));
+}
+
+fn openGitWorkspaceRoot(io: std.Io, parent_dir: std.Io.Dir) Error!std.Io.Dir {
+    parent_dir.createDir(io, ".lnako-git-workspaces", .default_dir) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => return mapFs(err),
+    };
+    return parent_dir.openDir(io, ".lnako-git-workspaces", .{ .iterate = true, .follow_symlinks = false }) catch |err| mapFs(err);
+}
+
+test "git workspace root refuses a symlinked parent" {
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDir(io, "outside", .default_dir);
+    try temporary.dir.writeFile(io, .{ .sub_path = "outside/sentinel", .data = "untouched" });
+    try temporary.dir.symLink(io, "outside", ".lnako-git-workspaces", .{ .is_directory = true });
+    try std.testing.expectError(error.FileSystem, openGitWorkspaceRoot(io, temporary.dir));
+    const sentinel = try temporary.dir.readFileAlloc(io, "outside/sentinel", std.testing.allocator, .limited(32));
+    defer std.testing.allocator.free(sentinel);
+    try std.testing.expectEqualStrings("untouched", sentinel);
+}
+
+const GitCheckoutWorkspace = struct {
+    key: []const u8,
+    path: []const u8,
+    root_dir: std.Io.Dir,
+    workspace_dir: std.Io.Dir,
+};
 
 /// Git workspaceはcache外、checkout読書きはpinned handle経由。
 fn gitCheckoutWorkspace(gpa: Allocator, io: std.Io, ctx: *ResolveContext, dep: manifest_mod.GitDependency) Error!GitCheckoutWorkspace {
@@ -629,21 +768,26 @@ fn gitCheckoutWorkspace(gpa: Allocator, io: std.Io, ctx: *ResolveContext, dep: m
     const key = try std.fmt.allocPrint(gpa, "git-{s}", .{hex[0..16]});
 
     // root置換後もGitが別treeを更新しないよう sibling workspaceを使う。
+    // workspace親とrootをno-follow handleで固定し、攻撃者がsymlinkで差し替えた
+    // `.lnako-git-workspaces` を通じた削除・複製を防ぐ。
     const parent = std.fs.path.dirname(ctx.cache_store.?.root) orelse ctx.project_root;
-    const workspace_root = try std.fs.path.join(gpa, &.{ parent, ".lnako-git-workspaces" });
-    std.Io.Dir.cwd().createDirPath(io, workspace_root) catch |err| return mapFs(err);
-    const workspace = try std.fs.path.join(gpa, &.{ workspace_root, key });
-    std.Io.Dir.cwd().deleteTree(io, workspace) catch |err| return mapFs(err);
-    std.Io.Dir.cwd().createDirPath(io, workspace) catch |err| return mapFs(err);
+    var parent_dir = std.Io.Dir.cwd().openDir(io, parent, .{ .follow_symlinks = false }) catch |err| return mapFs(err);
+    defer parent_dir.close(io);
+    var workspace_root_dir = try openGitWorkspaceRoot(io, parent_dir);
+    errdefer workspace_root_dir.close(io);
+    workspace_root_dir.deleteTree(io, key) catch |err| return mapFs(err);
+    workspace_root_dir.createDir(io, key, .default_dir) catch |err| return mapFs(err);
+    var workspace_dir = workspace_root_dir.openDir(io, key, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+    errdefer workspace_dir.close(io);
 
+    const workspace_root = try std.fs.path.join(gpa, &.{ parent, ".lnako-git-workspaces" });
+    const workspace = try std.fs.path.join(gpa, &.{ workspace_root, key });
     if (ctx.cache_store.?.openCheckout(key) catch |err| return mapFs(err)) |cached_checkout| {
         var cached = cached_checkout;
         defer cached.close(io);
-        var destination = std.Io.Dir.cwd().openDir(io, workspace, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
-        defer destination.close(io);
-        _ = materialize.copyTreeFromDirs(gpa, io, &cached, &destination, .{}) catch |err| return mapFs(err);
+        _ = materialize.copyTreeFromDirs(gpa, io, &cached, &workspace_dir, .{}) catch |err| return mapFs(err);
     }
-    return .{ .key = key, .path = workspace };
+    return .{ .key = key, .path = workspace, .root_dir = workspace_root_dir, .workspace_dir = workspace_dir };
 }
 
 /// 既存 lock から public id（`pkg:<32hex>`）の package entry の source を
@@ -820,7 +964,7 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
                 local.source = .{ .kind = .path, .path = normalized, .mutable = dep.mutable };
                 local.manifest = acquired.manifest;
                 // path 依存の manifest dir が推移的依存の基準 dir。
-                child_base_dir = if (provider.isAbsoluteDepPath(acquired_path))
+                child_base_dir = if (isAbsoluteDependencyPath(acquired_path))
                     try gpa.dupe(u8, acquired_path)
                 else
                     try std.fs.path.join(gpa, &.{ work.base_dir.?, acquired_path });
@@ -842,8 +986,14 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
             },
             .git => {
                 const dep = work.git_dep.?;
-                const checkout = try gitCheckoutWorkspace(gpa, ctx.io, ctx, dep);
-                defer std.Io.Dir.cwd().deleteTree(ctx.io, checkout.path) catch {};
+                var checkout = try gitCheckoutWorkspace(gpa, ctx.io, ctx, dep);
+                defer checkout.root_dir.close(ctx.io);
+                defer checkout.root_dir.deleteTree(ctx.io, checkout.key) catch {};
+                defer checkout.workspace_dir.close(ctx.io);
+                // cache checkout は以前の失敗や外部変更で dirty の可能性がある。
+                // provider が同じ commit を checkout しても作業ツリー変更は残るため、
+                // manifest を読む前に tracked/untracked 内容を破棄する。
+                try cleanGitCheckout(gpa, ctx.io, checkout.path);
                 const locked = try lockedSourceForWork(ctx, work);
                 const locked_public_id = if (locked) |source|
                     try publicIdFor(gpa, try project_identity.virtualIdForResolvedSource(gpa, source, ctx.project_root))
@@ -859,9 +1009,7 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
                     }, locked_source, dep_name);
                 }
                 const acquired = try provider.acquireGit(ctx.session, dep, checkout.path, if (updating) null else locked);
-                var checkout_source = std.Io.Dir.cwd().openDir(ctx.io, checkout.path, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
-                defer checkout_source.close(ctx.io);
-                _ = ctx.cache_store.?.replaceCheckout(checkout.key, &checkout_source, .{}) catch |err| return mapFs(err);
+                _ = ctx.cache_store.?.replaceCheckout(checkout.key, &checkout.workspace_dir, .{}) catch |err| return mapFs(err);
                 local.source = try copySource(gpa, acquired.source);
                 local.manifest = acquired.manifest;
                 // git 内 package の git/http 依存は取得できるが、path 依存は
@@ -1011,11 +1159,11 @@ fn declaredSourceIdentityMatches(ctx: *ResolveContext, source: lock_model.Source
             const dep = work.path_dep.?;
             if (source.kind != .path) return false;
             const stored = source.path orelse return false;
-            const stored_abs = if (provider.isAbsoluteDepPath(stored))
+            const stored_abs = if (isAbsoluteDependencyPath(stored))
                 std.fs.path.resolve(gpa, &.{stored}) catch return error.FileSystem
             else
                 std.fs.path.resolve(gpa, &.{ ctx.project_root, stored }) catch return error.FileSystem;
-            const revisit_abs = if (provider.isAbsoluteDepPath(dep.path))
+            const revisit_abs = if (isAbsoluteDependencyPath(dep.path))
                 std.fs.path.resolve(gpa, &.{dep.path}) catch return error.FileSystem
             else
                 std.fs.path.resolve(gpa, &.{ work.base_dir orelse ctx.project_root, dep.path }) catch return error.FileSystem;

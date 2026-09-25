@@ -37,16 +37,37 @@ pub const Acquired = struct {
 // path provider
 // ---------------------------------------------------------------------------
 
-/// path 依存の宣言 path が絶対 path か。spec §3.4.3 は相対・絶対の双方を
-/// 許容する。実行環境の `std.fs.path.isAbsolute` だけでは判定できない
-/// Windows 形式（`C:/x`・`C:\x`・`\\srv\sh`）も全環境で絶対扱いする
-/// （lock は生成環境の path をそのまま保持するため）。
+/// path 依存の宣言 path が絶対 path か。POSIX の先頭 backslash は通常文字、
+/// Windows の単一 rooted path は絶対 path。UNC は server/share が揃う場合だけ
+/// 絶対扱いし、生成環境をまたぐ lock の文字列も正しく保持する。
 pub fn isAbsoluteDepPath(path: []const u8) bool {
     if (path.len == 0) return false;
-    if (path[0] == '/' or path[0] == '\\') return true;
-    if (path.len >= 3 and std.ascii.isAlphabetic(path[0]) and path[1] == ':' and
-        (path[2] == '/' or path[2] == '\\')) return true;
-    return std.fs.path.isAbsolute(path);
+    if (builtin.os.tag != .windows and std.fs.path.isAbsolute(path)) return true;
+    const double_separator = path.len >= 2 and isWindowsSeparator(path[0]) and isWindowsSeparator(path[1]);
+    if (double_separator) return isCompleteWindowsUnc(path);
+    if (builtin.os.tag == .windows) return std.fs.path.isAbsoluteWindows(path);
+    return isWindowsDriveRoot(path);
+}
+
+fn isWindowsDriveRoot(path: []const u8) bool {
+    return path.len >= 3 and std.ascii.isAlphabetic(path[0]) and path[1] == ':' and isWindowsSeparator(path[2]);
+}
+
+fn isCompleteWindowsUnc(path: []const u8) bool {
+    if (path.len < 5 or !isWindowsSeparator(path[0]) or !isWindowsSeparator(path[1])) return false;
+    var i: usize = 2;
+    while (i < path.len and isWindowsSeparator(path[i])) : (i += 1) {}
+    const server_start = i;
+    while (i < path.len and !isWindowsSeparator(path[i])) : (i += 1) {}
+    if (i == server_start or i == path.len) return false;
+    while (i < path.len and isWindowsSeparator(path[i])) : (i += 1) {}
+    const share_start = i;
+    while (i < path.len and !isWindowsSeparator(path[i])) : (i += 1) {}
+    return i > share_start;
+}
+
+fn isWindowsSeparator(char: u8) bool {
+    return char == '/' or char == '\\';
 }
 
 /// path 依存の取得。path は編集可能な参照であり、ディレクトリ内の
@@ -178,7 +199,12 @@ pub fn acquireGit(
             }
         }
     }
-    try gitRun(session, &.{ "git", "-C", checkout_dir, "checkout", "--quiet", full_commit }, dep.url);
+    // 同じ commit に対する checkout は通常 dirty worktree を保持するため、
+    // tracked/untracked の変更を除去してから pinned commit を強制 checkout する。
+    // 既存 cache checkout が汚染されていても manifest は commit tree から読む。
+    try gitRun(session, &.{ "git", "-C", checkout_dir, "clean", "-ffdx" }, dep.url);
+    try gitRun(session, &.{ "git", "-C", checkout_dir, "checkout", "--quiet", "--force", full_commit }, dep.url);
+    try gitRun(session, &.{ "git", "-C", checkout_dir, "clean", "-ffdx" }, dep.url);
 
     // `dep.path` は checkout 内の subdirectory。`..`・絶対 path などで
     // checkout 境界の外へ出る指定は拒否する（npkg の規範 path 規則と同じ）。

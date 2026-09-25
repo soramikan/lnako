@@ -192,6 +192,34 @@ test "path provider はローカル manifest を取得して source identity を
     try testing.expectEqualStrings("demo", parsed.package.name);
 }
 
+test "path provider の絶対判定はhost pathと完全なUNCを区別する" {
+    if (builtin.os.tag == .windows) {
+        try testing.expect(provider.isAbsoluteDepPath("\\lib"));
+        try testing.expect(!provider.isAbsoluteDepPath("\\\\lib"));
+    } else {
+        try testing.expect(!provider.isAbsoluteDepPath("\\lib"));
+        try testing.expect(!provider.isAbsoluteDepPath("\\\\lib"));
+    }
+    try testing.expect(provider.isAbsoluteDepPath("C:\\"));
+    try testing.expect(provider.isAbsoluteDepPath("\\\\server\\share\\lib"));
+}
+
+test "path provider はPOSIX上の先頭backslashを相対pathとして取得する" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "base/\\lib/src");
+    try writePackage(temporary.dir, io, "base/\\lib");
+    const base = try temporary.dir.realPathFileAlloc(io, "base", testing.allocator);
+    defer testing.allocator.free(base);
+
+    var session = newSession(.{});
+    defer session.deinit();
+    const acquired = try provider.acquirePath(&session, .{ .name = "demo", .path = "\\lib" }, base);
+    try testing.expectEqualStrings("demo", acquired.manifest.?.package.name);
+}
+
 test "path provider は Unicode path を扱える" {
     const io = testing.io;
     var temporary = std.testing.tmpDir(.{});
@@ -622,6 +650,40 @@ test "git provider はローカル repo を clone して commit に固定する"
     try testing.expectEqual(lock_model.SourceKind.git, acquired.source.kind);
     try testing.expectEqualStrings(repo.commit, acquired.source.commit.?);
     try testing.expectEqualStrings("demo", acquired.manifest.?.package.name);
+}
+
+test "git provider は dirty cached checkout を pinned commit へ戻してから読む" {
+    const io = testing.io;
+    if (!gitAvailable(io)) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const repo = try createGitRepo(&temporary, io);
+    defer testing.allocator.free(repo.path);
+    defer testing.allocator.free(repo.url);
+    defer testing.allocator.free(repo.commit);
+    const tmp_root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(tmp_root);
+    const checkout = try std.fs.path.join(testing.allocator, &.{ tmp_root, "checkout" });
+    defer testing.allocator.free(checkout);
+    const dep = manifest_mod.GitDependency{ .name = "demo", .url = repo.url, .commit = repo.commit[0..7] };
+
+    var session = newSession(.{});
+    defer session.deinit();
+    const first = try provider.acquireGit(&session, dep, checkout, null);
+    try temporary.dir.writeFile(io, .{ .sub_path = "checkout/nako.toml", .data = "[package]\nname = \"attacker\"\nversion = \"9.9.9\"\nlicense = \"MIT\"\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "checkout/src/index.nako3", .data = "attacker source" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "checkout/untracked.nako3", .data = "attacker file" });
+    try gitRun(io, &.{ "git", "-C", checkout, "init", "--quiet", "nested-untracked" });
+
+    session.policy.offline = true;
+    const recovered = try provider.acquireGit(&session, dep, checkout, first.source);
+    try testing.expectEqualStrings(repo.commit, recovered.source.commit.?);
+    try testing.expectEqualStrings("demo", recovered.manifest.?.package.name);
+    const source = try temporary.dir.readFileAlloc(io, "checkout/src/index.nako3", testing.allocator, .limited(128));
+    defer testing.allocator.free(source);
+    try testing.expectEqualStrings("●表示とは\nここまで\n", source);
+    try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "checkout/untracked.nako3", .{}));
+    try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "checkout/nested-untracked/.git", .{}));
 }
 
 test "git provider は commit-ish と同名の移動した tag に誤解されない" {

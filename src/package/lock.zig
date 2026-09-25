@@ -211,8 +211,8 @@ fn parseSource(parser: *Parser, value: std.json.Value, path: []const u8) !?Sourc
         if (object.get("mutable")) |mutable_value| {
             if (try parser.asBool(mutable_value, path)) |mutable| source.mutable = mutable;
         }
-        // path 依存は可変参照が既定。
-        if (source.mutable == null) source.mutable = true;
+        // path source は immutable が既定。
+        if (source.mutable == null) source.mutable = false;
     }
     return source;
 }
@@ -1286,8 +1286,8 @@ fn implementationName(implementation: resolver.Impl) []const u8 {
     };
 }
 
-/// `Source` の全文字列を `allocator` へ複製する。path 依存は可変参照が既定
-/// のため、`mutable` 未指定なら true を補う。
+/// `Source` の全文字列を `allocator` へ複製する。path source は immutable が既定
+/// のため、`mutable` 未指定なら false を補う。
 fn dupSourceOwned(allocator: Allocator, source: Source) !Source {
     return .{
         .kind = source.kind,
@@ -1295,7 +1295,7 @@ fn dupSourceOwned(allocator: Allocator, source: Source) !Source {
         .hash = if (source.hash) |value| try allocator.dupe(u8, value) else null,
         .commit = if (source.commit) |value| try allocator.dupe(u8, value) else null,
         .path = if (source.path) |value| try allocator.dupe(u8, value) else null,
-        .mutable = if (source.kind == .path) source.mutable orelse true else source.mutable,
+        .mutable = if (source.kind == .path) source.mutable orelse false else source.mutable,
     };
 }
 
@@ -1518,6 +1518,29 @@ fn dupProfile(allocator: Allocator, record: ProfileRecord) !ProfileRecord {
 // ---------------------------------------------------------------------------
 // 複数 profile の共用 artifact 整合性
 // ---------------------------------------------------------------------------
+
+test "path source mutable defaults to immutable and preserves explicit values" {
+    const testing = std.testing;
+    const cases = .{
+        .{ .json = "{\"type\":\"path\",\"path\":\"lib\"}", .expected = false },
+        .{ .json = "{\"type\":\"path\",\"path\":\"lib\",\"mutable\":true}", .expected = true },
+        .{ .json = "{\"type\":\"path\",\"path\":\"lib\",\"mutable\":false}", .expected = false },
+    };
+    inline for (cases) |case| {
+        var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        var diagnostics = diag.List.init(arena);
+        defer diagnostics.deinit();
+        var parsed = try std.json.parseFromSlice(std.json.Value, arena, case.json, .{});
+        defer parsed.deinit();
+        var parser = Parser{ .arena = arena, .diagnostics = &diagnostics };
+        const source = (try parseSource(&parser, parsed.value, "source")).?;
+        try testing.expectEqual(case.expected, source.mutable.?);
+        const owned = try dupSourceOwned(arena, source);
+        try testing.expectEqual(case.expected, owned.mutable.?);
+    }
+}
 
 test {
     _ = @import("lock_test.zig");

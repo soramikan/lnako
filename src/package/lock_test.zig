@@ -1009,7 +1009,7 @@ test "resolverVersion不一致は鮮度判定で検出する" {
     try T.expectEqual(lock.Freshness.stale_resolver, lock.checkFreshness(&value, sampleInput()));
 }
 
-test "pathソースはmutable既定で記録する" {
+test "pathソースはimmutableを既定としてlockへ記録する" {
     const local_id = "pkg:50000000000000000000000000000000";
     const local_source = lock.Source{ .kind = .path, .path = "../local" };
     const fixtures = Fixtures{ .entries = &.{
@@ -1020,7 +1020,7 @@ test "pathソースはmutable既定で記録する" {
     defer value.deinit();
     const bytes = try lock.toBytes(&value, T.allocator);
     defer T.allocator.free(bytes);
-    try T.expect(std.mem.indexOf(u8, bytes, "\"mutable\": true") != null);
+    try T.expect(std.mem.indexOf(u8, bytes, "\"mutable\": false") != null);
 }
 
 test "npmInstancesのpeer依存順序を正規化して決定化する" {
