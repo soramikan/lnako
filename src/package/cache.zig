@@ -162,8 +162,9 @@ fn digestTreeFromDir(io: std.Io, gpa: Allocator, tree_dir: std.Io.Dir, exclude_n
                 var file = try openRelativeFile(io, tree_dir, entry.rel);
                 defer file.close(io);
                 var read_buffer: [8192]u8 = undefined;
-                // Windows の非同期 handle は positional read が PENDING になり
-                // unreachable になるため、固定位置依存のない streaming reader を使う。
+                // Zig 0.16 の Windows no-follow open は実際には非同期 handle を作るが
+                // File.flags.nonblocking を false で返す。reader に実際のmodeを伝える。
+                if (builtin.os.tag == .windows) file.flags.nonblocking = true;
                 var reader = file.readerStreaming(io, &read_buffer);
                 while (true) {
                     var chunk: [8192]u8 = undefined;
