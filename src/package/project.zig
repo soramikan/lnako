@@ -655,12 +655,15 @@ fn normalizePathSource(gpa: Allocator, declared: []const u8, base_dir: ?[]const 
 fn cleanGitCheckout(gpa: Allocator, io: std.Io, path: []const u8) Error!void {
     const dot_git = try std.fs.path.join(gpa, &.{ path, ".git" });
     defer gpa.free(dot_git);
+    var env_map = try fetch.sanitizedGitEnvMap(gpa);
+    defer if (env_map) |*map| map.deinit();
     std.Io.Dir.cwd().access(io, dot_git, .{}) catch |err| switch (err) {
         error.FileNotFound => return,
         else => return mapFs(err),
     };
     const reset = std.process.run(gpa, io, .{
         .argv = &.{ "git", "-C", path, "reset", "--hard", "HEAD" },
+        .environ_map = if (env_map) |*map| map else null,
         .stdout_limit = .limited(1024 * 1024),
         .stderr_limit = .limited(1024 * 1024),
     }) catch |err| return mapFs(err);
@@ -669,12 +672,27 @@ fn cleanGitCheckout(gpa: Allocator, io: std.Io, path: []const u8) Error!void {
     if (reset.term != .exited or reset.term.exited != 0) return error.FileSystem;
     const clean = std.process.run(gpa, io, .{
         .argv = &.{ "git", "-C", path, "clean", "-ffdx" },
+        .environ_map = if (env_map) |*map| map else null,
         .stdout_limit = .limited(1024 * 1024),
         .stderr_limit = .limited(1024 * 1024),
     }) catch |err| return mapFs(err);
     defer gpa.free(clean.stdout);
     defer gpa.free(clean.stderr);
     if (clean.term != .exited or clean.term.exited != 0) return error.FileSystem;
+}
+
+fn runProjectTestGit(gpa: Allocator, io: std.Io, argv: []const []const u8) !void {
+    var env_map = try fetch.sanitizedGitEnvMap(gpa);
+    defer if (env_map) |*map| map.deinit();
+    const result = try std.process.run(gpa, io, .{
+        .argv = argv,
+        .environ_map = if (env_map) |*map| map else null,
+        .stdout_limit = .limited(1024 * 1024),
+        .stderr_limit = .limited(1024 * 1024),
+    });
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+    if (result.term != .exited or result.term.exited != 0) return error.GitFailed;
 }
 
 test "cleanGitCheckout discards tracked edits and untracked files" {
@@ -688,24 +706,10 @@ test "cleanGitCheckout discards tracked edits and untracked files" {
         &.{ "git", "-C", checkout, "init", "-q" },
         &.{ "git", "-C", checkout, "config", "user.email", "test@example.invalid" },
         &.{ "git", "-C", checkout, "config", "user.name", "Test" },
-    }) |argv| {
-        const result = try std.process.run(std.testing.allocator, io, .{ .argv = argv });
-        defer std.testing.allocator.free(result.stdout);
-        defer std.testing.allocator.free(result.stderr);
-        try std.testing.expect(result.term == .exited);
-        try std.testing.expectEqual(@as(u8, 0), result.term.exited);
-    }
+    }) |argv| try runProjectTestGit(std.testing.allocator, io, argv);
     try temporary.dir.writeFile(io, .{ .sub_path = "checkout/tracked", .data = "pinned" });
-    const add = try std.process.run(std.testing.allocator, io, .{ .argv = &.{ "git", "-C", checkout, "add", "tracked" } });
-    defer std.testing.allocator.free(add.stdout);
-    defer std.testing.allocator.free(add.stderr);
-    try std.testing.expect(add.term == .exited);
-    try std.testing.expectEqual(@as(u8, 0), add.term.exited);
-    const commit = try std.process.run(std.testing.allocator, io, .{ .argv = &.{ "git", "-C", checkout, "commit", "-q", "-m", "pin" } });
-    defer std.testing.allocator.free(commit.stdout);
-    defer std.testing.allocator.free(commit.stderr);
-    try std.testing.expect(commit.term == .exited);
-    try std.testing.expectEqual(@as(u8, 0), commit.term.exited);
+    try runProjectTestGit(std.testing.allocator, io, &.{ "git", "-C", checkout, "add", "tracked" });
+    try runProjectTestGit(std.testing.allocator, io, &.{ "git", "-C", checkout, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "pin" });
 
     try temporary.dir.writeFile(io, .{ .sub_path = "checkout/tracked", .data = "modified" });
     try temporary.dir.writeFile(io, .{ .sub_path = "checkout/untracked", .data = "discard" });
