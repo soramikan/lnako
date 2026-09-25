@@ -13,6 +13,7 @@ const environment_mod = @import("environment.zig");
 const lock_mod = @import("lock.zig");
 const lock_model = @import("lock_model.zig");
 const manifest_mod = @import("manifest.zig");
+const marker_mod = @import("marker.zig");
 const project = @import("project.zig");
 const sync_mod = @import("sync.zig");
 
@@ -98,7 +99,7 @@ fn hasValidMutablePaths(object: std.json.ObjectMap) bool {
         if (item != .object or item.object.count() != 2) return false;
         const path = item.object.get("path") orelse return false;
         const sha256 = item.object.get("sha256") orelse return false;
-        if (path != .string or sha256 != .string) return false;
+        if (path != .string or path.string.len == 0 or sha256 != .string) return false;
         if (sha256.string.len != 7 + 64 or !std.mem.startsWith(u8, sha256.string, "sha256:")) return false;
         for (sha256.string[7..]) |digit| {
             if (!std.ascii.isDigit(digit) and !(digit >= 'a' and digit <= 'f')) return false;
@@ -129,15 +130,16 @@ pub fn readEnvironmentInfo(gpa: Allocator, io: std.Io, project_root: []const u8)
     const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(environment_mod.max_environment_bytes)) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.FileNotFound => return null,
+        error.StreamTooLong => return EnvironmentInfo{},
         else => return project.mapFs(err),
     };
     defer gpa.free(bytes);
     var info = EnvironmentInfo{};
-    var parsed = std.json.parseFromSlice(std.json.Value, gpa, bytes, .{}) catch return error.InvalidLock;
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, bytes, .{}) catch return info;
     defer parsed.deinit();
-    if (parsed.value != .object) return error.InvalidLock;
+    if (parsed.value != .object) return info;
     const obj = parsed.value.object;
-    if (!hasOnlyEnvironmentRootFields(obj) or !hasValidMutablePaths(obj)) return null;
+    if (!hasOnlyEnvironmentRootFields(obj) or !hasValidMutablePaths(obj)) return info;
     if (obj.get("schemaVersion")) |v| {
         if (v == .integer) info.schema_version = v.integer;
     }
@@ -194,6 +196,15 @@ pub fn environmentMutablePathsUsable(gpa: Allocator, io: std.Io, project_root: [
             if (std.mem.eql(u8, item.path, mutable.path)) recorded = true;
         }
         if (!recorded) return false;
+    }
+    // environment.json は書き換え可能なローカル状態なので、lock に存在しない
+    // path を追加して任意の project 外 tree をdigest対象にさせない。
+    for (info.mutable_paths) |item| {
+        var declared = false;
+        for (lock.input.mutable_paths) |mutable| {
+            if (std.mem.eql(u8, item.path, mutable.path)) declared = true;
+        }
+        if (!declared) return false;
     }
     return (try sync_mod.mutablePathsMismatch(gpa, io, project_root, info.mutable_paths)) == null;
 }
@@ -443,19 +454,76 @@ fn envRecordMatchesEntry(record: std.json.Value, entry: *const lock_model.Packag
     return true;
 }
 
-/// env record の `exports` item。name は必須 string、path/alias は
-/// 記録されるなら string。native/esm の artifactRef は sync が環境
-/// record へ書かないため受理しない。
+fn envFeatureNameValid(name: []const u8) bool {
+    if (name.len < 2 or name[0] < 'a' or name[0] > 'z') return false;
+    for (name[1..]) |ch| {
+        if (!std.ascii.isLower(ch) and !std.ascii.isDigit(ch) and ch != '-') return false;
+    }
+    return true;
+}
+
+fn envOsVersionValid(version: []const u8) bool {
+    return manifest_mod.compareDottedVersion(version, version) != null;
+}
+
+fn envArtifactDeclValid(value: std.json.Value) bool {
+    if (value != .object) return false;
+    const path = value.object.get("path") orelse return false;
+    if (path != .string or path.string.len == 0) return false;
+    var it = value.object.iterator();
+    while (it.next()) |field| {
+        if (std.mem.eql(u8, field.key_ptr.*, "path")) {
+            if (field.value_ptr.* != .string or field.value_ptr.string.len == 0) return false;
+        } else if (std.mem.eql(u8, field.key_ptr.*, "when")) {
+            if (field.value_ptr.* != .string) return false;
+            var parsed = marker_mod.parse(std.heap.page_allocator, field.value_ptr.string) catch return false;
+            switch (parsed) {
+                .ok => |*marker| marker.deinit(),
+                .err => return false,
+            }
+        } else if (std.mem.eql(u8, field.key_ptr.*, "min-os")) {
+            if (field.value_ptr.* != .string or !envOsVersionValid(field.value_ptr.string)) return false;
+        } else if (std.mem.eql(u8, field.key_ptr.*, "libc")) {
+            if (field.value_ptr.* != .string) return false;
+            const libc = field.value_ptr.string;
+            if (!std.mem.eql(u8, libc, "gnu") and !std.mem.eql(u8, libc, "msvc") and
+                !std.mem.eql(u8, libc, "musl") and !std.mem.eql(u8, libc, "none")) return false;
+        } else if (std.mem.eql(u8, field.key_ptr.*, "features")) {
+            if (field.value_ptr.* != .array) return false;
+            for (field.value_ptr.array.items) |feature| {
+                if (feature != .string or !envFeatureNameValid(feature.string)) return false;
+            }
+        } else return false;
+    }
+    return true;
+}
+
+fn envArtifactRefValid(value: std.json.Value) bool {
+    if (value == .string) return value.string.len > 0;
+    if (value == .object) return envArtifactDeclValid(value);
+    if (value != .array or value.array.items.len == 0) return false;
+    for (value.array.items) |item| {
+        if (item == .string) {
+            if (item.string.len == 0) return false;
+        } else if (!envArtifactDeclValid(item)) return false;
+    }
+    return true;
+}
+
+/// `exportEntry` follows the package schema, including native/esm `artifactRef`.
 fn envExportRecordValid(item: std.json.Value) bool {
     if (item != .object) return false;
     var it = item.object.iterator();
     while (it.next()) |field| {
-        const known = std.mem.eql(u8, field.key_ptr.*, "name") or
-            std.mem.eql(u8, field.key_ptr.*, "path") or
-            std.mem.eql(u8, field.key_ptr.*, "alias");
-        if (!known or field.value_ptr.* != .string) return false;
+        const key = field.key_ptr.*;
+        if (std.mem.eql(u8, key, "name") or std.mem.eql(u8, key, "path") or std.mem.eql(u8, key, "alias")) {
+            if (field.value_ptr.* != .string) return false;
+        } else if (std.mem.eql(u8, key, "native") or std.mem.eql(u8, key, "esm")) {
+            if (!envArtifactRefValid(field.value_ptr.*)) return false;
+        } else return false;
     }
-    return item.object.get("name") != null;
+    const name = item.object.get("name") orelse return false;
+    return name == .string;
 }
 
 /// env record の `commands` item。name は必須 string、args/josi は

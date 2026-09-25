@@ -22,6 +22,7 @@ pub const lock_name = "cache.lock";
 pub const objects_dir = "objects";
 pub const staging_dir = "staging";
 pub const checkouts_dir = "checkouts";
+pub const git_workspaces_dir = "git-workspaces";
 
 pub const Error = error{
     Busy,
@@ -161,7 +162,9 @@ fn digestTreeFromDir(io: std.Io, gpa: Allocator, tree_dir: std.Io.Dir, exclude_n
                 var file = try openRelativeFile(io, tree_dir, entry.rel);
                 defer file.close(io);
                 var read_buffer: [8192]u8 = undefined;
-                var reader = file.reader(io, &read_buffer);
+                // Windows の非同期 handle は positional read が PENDING になり
+                // unreachable になるため、固定位置依存のない streaming reader を使う。
+                var reader = file.readerStreaming(io, &read_buffer);
                 while (true) {
                     var chunk: [8192]u8 = undefined;
                     const length = try reader.interface.readSliceShort(&chunk);
@@ -269,6 +272,18 @@ pub const Store = struct {
         return current;
     }
 
+    /// Git 作業領域を選択された cache root の下から no-follow で開く。
+    pub fn openGitWorkspaceRoot(self: *const Store) !std.Io.Dir {
+        return self.openRootChild(git_workspaces_dir, true);
+    }
+
+    /// path-based Git subprocess 向け workspace path。root が open 時と同じ
+    /// directory である場合だけ返す。更新/削除は pinned handle を使うこと。
+    pub fn gitWorkspacePath(self: *const Store, gpa: Allocator, key: []const u8) Allocator.Error!?[]u8 {
+        if (!validKey(key) or !self.rootPathStillPinned()) return null;
+        return try std.fs.path.join(gpa, &.{ self.root, git_workspaces_dir, key });
+    }
+
     /// root 内の managed directory を root handle 相対で no-follow open する。
     fn openRootChild(self: *const Store, name: []const u8, iterate: bool) !std.Io.Dir {
         self.root_dir.createDir(self.io, name, .default_dir) catch |err| switch (err) {
@@ -293,7 +308,7 @@ pub const Store = struct {
         var root_dir = try std.Io.Dir.cwd().openDir(io, owned, .{ .follow_symlinks = false });
         errdefer root_dir.close(io);
         const store = Store{ .gpa = gpa, .io = io, .root = owned, .root_dir = root_dir };
-        for ([_][]const u8{ objects_dir, staging_dir, checkouts_dir }) |name| {
+        for ([_][]const u8{ objects_dir, staging_dir, checkouts_dir, git_workspaces_dir }) |name| {
             var child = try store.openRootChild(name, false);
             child.close(io);
         }
@@ -614,16 +629,21 @@ pub const Store = struct {
             }
         }
         defer if (owns_parent) staging_parent.close(self.io);
-        var staging_dir_handle = try staging_parent.openDir(self.io, staging_name, .{ .iterate = true, .follow_symlinks = false });
-        defer staging_dir_handle.close(self.io);
-        var tree = try staging_dir_handle.openDir(self.io, "tree", .{ .iterate = true, .follow_symlinks = false });
-        defer tree.close(self.io);
-        const digest = try digestTreeFromDir(self.io, self.gpa, tree, &.{});
-        var marker: [7 + 64 + 1]u8 = undefined;
-        @memcpy(marker[0..7], "sha256:");
-        @memcpy(marker[7..71], &std.fmt.bytesToHex(digest, .lower));
-        marker[71] = '\n';
-        try staging_dir_handle.writeFile(self.io, .{ .sub_path = complete_marker, .data = &marker });
+        var digest: [32]u8 = undefined;
+        {
+            // Windows cannot rename this directory while its child directory handles
+            // remain open; close them before publishing staging into objects/.
+            var staging_dir_handle = try staging_parent.openDir(self.io, staging_name, .{ .iterate = true, .follow_symlinks = false });
+            defer staging_dir_handle.close(self.io);
+            var tree = try staging_dir_handle.openDir(self.io, "tree", .{ .iterate = true, .follow_symlinks = false });
+            defer tree.close(self.io);
+            digest = try digestTreeFromDir(self.io, self.gpa, tree, &.{});
+            var marker: [7 + 64 + 1]u8 = undefined;
+            @memcpy(marker[0..7], "sha256:");
+            @memcpy(marker[7..71], &std.fmt.bytesToHex(digest, .lower));
+            marker[71] = '\n';
+            try staging_dir_handle.writeFile(self.io, .{ .sub_path = complete_marker, .data = &marker });
+        }
 
         var objects = try self.openRootChild(objects_dir, false);
         defer objects.close(self.io);
@@ -682,13 +702,13 @@ pub const Store = struct {
         return removed;
     }
 
-    /// objects・checkouts・staging の全内容を削除する（cache の完全初期化）。
+    /// objects・checkouts・staging・git-workspaces を削除する（cache の完全初期化）。
     /// cache lock 保持中に呼ぶこと。戻り値は削除したトップレ項目数。
     /// 管理 dir は symlink 非追従で開き、削除は dir ハンドル相対で行う
     /// （管理 dir 自身の symlink による cache 外への逸脱を防ぐ）。
     pub fn cleanAll(self: *const Store) !usize {
         var removed: usize = 0;
-        const subdirs = [_][]const u8{ objects_dir, staging_dir, checkouts_dir };
+        const subdirs = [_][]const u8{ objects_dir, staging_dir, checkouts_dir, git_workspaces_dir };
         for (subdirs) |sub| {
             var dir = self.openRootChild(sub, true) catch |err| switch (err) {
                 error.FileNotFound => continue,
@@ -1069,6 +1089,59 @@ test "cache store の cleanKeep は keep 以外の entry を削除する" {
     try testing.expect(store.entryExists("keep-a"));
     try testing.expect(!store.entryExists("drop-b"));
     try testing.expect(!store.entryExists("drop-c"));
+}
+
+test "Git workspace paths are isolated under each selected cache root" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "cache-a");
+    try temporary.dir.createDirPath(io, "cache-b");
+    const root_a = try temporary.dir.realPathFileAlloc(io, "cache-a", testing.allocator);
+    defer testing.allocator.free(root_a);
+    const root_b = try temporary.dir.realPathFileAlloc(io, "cache-b", testing.allocator);
+    defer testing.allocator.free(root_b);
+    var store_a = try Store.open(testing.allocator, io, root_a);
+    defer store_a.deinit();
+    var store_b = try Store.open(testing.allocator, io, root_b);
+    defer store_b.deinit();
+
+    const path_a = (try store_a.gitWorkspacePath(testing.allocator, "git-abc123")).?;
+    defer testing.allocator.free(path_a);
+    const path_b = (try store_b.gitWorkspacePath(testing.allocator, "git-abc123")).?;
+    defer testing.allocator.free(path_b);
+    try testing.expect(!std.mem.eql(u8, path_a, path_b));
+    try testing.expect(std.mem.startsWith(u8, path_a, root_a));
+    try testing.expect(std.mem.startsWith(u8, path_b, root_b));
+}
+
+test "Git workspace root refuses a symlink under a selected cache" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "cache");
+    try temporary.dir.createDirPath(io, "outside");
+    try temporary.dir.writeFile(io, .{ .sub_path = "outside/sentinel", .data = "untouched" });
+    const root = try temporary.dir.realPathFileAlloc(io, "cache", testing.allocator);
+    defer testing.allocator.free(root);
+    var store = try Store.open(testing.allocator, io, root);
+    defer store.deinit();
+    try store.root_dir.deleteTree(io, git_workspaces_dir);
+    store.root_dir.symLink(io, "../outside", git_workspaces_dir, .{ .is_directory = true }) catch |err| switch (err) {
+        error.AccessDenied, error.PermissionDenied, error.FileSystem => return error.SkipZigTest,
+        else => return err,
+    };
+    if (store.openGitWorkspaceRoot()) |workspace| {
+        var opened = workspace;
+        opened.close(io);
+        return error.TestUnexpectedResult;
+    } else |err| switch (err) {
+        error.SymLinkLoop, error.NotDir, error.AccessDenied, error.PermissionDenied => {},
+        else => return err,
+    }
+    const sentinel = try temporary.dir.readFileAlloc(io, "outside/sentinel", testing.allocator, .limited(32));
+    defer testing.allocator.free(sentinel);
+    try testing.expectEqualStrings("untouched", sentinel);
 }
 
 test "cache store の排他 lock は保持中に Busy を返し解放後に取得できる" {

@@ -958,6 +958,46 @@ test "feature-gatedな推移的pkg依存が非活性ならregistryを要求し�
     try testing.expect(found_lib);
 }
 
+test "malformed environment.json is stale and automatic preparation repairs it" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app");
+    try temporary.dir.createDirPath(io, "cache");
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/nako.toml", .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+    });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", testing.allocator);
+    defer testing.allocator.free(cache_root);
+
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var diagnostics = diag.List.init(a);
+    defer diagnostics.deinit();
+    var loaded = try project.load(a, io, app_root, &diagnostics);
+    defer loaded.deinit();
+    const opts = project.PrepareOptions{ .cache_root = cache_root };
+
+    const initial = try project.ensureEnvironment(a, io, &loaded, &opts, &diagnostics);
+    try testing.expect(initial.synced);
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/environment.json", .data = "{\"schemaVersion\":1" });
+
+    const info = try project.inspectForCheck(a, io, &loaded, &opts, &diagnostics);
+    try testing.expect(!info.environment_current);
+    const repaired = try project.ensureEnvironment(a, io, &loaded, &opts, &diagnostics);
+    try testing.expect(repaired.synced);
+    try testing.expect(repaired.was_stale);
+    const environment = (try project.readEnvironmentInfo(a, io, app_root)).?;
+    try testing.expectEqual(@as(i64, 1), environment.schema_version);
+}
+
 test "environmentPackagesUsableはpackages記録と実体を検証する" {
     // ヘッダ（lockSha256 等）だけ一致していて packages map が破損した
     // 環境を「最新」と誤認しないための内容検査。`../`・絶対 path の
@@ -1540,10 +1580,40 @@ test "environmentPackagesUsableは余分なrecordと形状違反と中間symlink
     }.run;
 
     const valid =
-        \\{"pkg:11111111111111111111111111111111":{"name":"lib","version":"1.0.0","id":"pkg:11111111111111111111111111111111","path":".nako/env/gen-1/deps/lib","exports":[{"name":"lib","path":"src/index.nako3"}],"commands":[{"name":"テスト","args":["x"],"josi":[]}]}}
+        \\{"pkg:11111111111111111111111111111111":{"name":"lib","version":"1.0.0","id":"pkg:11111111111111111111111111111111","path":".nako/env/gen-1/deps/lib","exports":[{"name":"lib","path":"src/index.nako3","native":{"path":"bin/lib.dll","libc":"msvc","features":["win32"]},"esm":["index.mjs",{"path":"node.mjs","min-os":"1.0"}]}],"commands":[{"name":"テスト","args":["x"],"josi":[]}]}}
     ;
     try writeEnv(temporary.dir, valid);
     try testing.expect(try usable(&lock, app_root));
+    const invalid_artifact_ref =
+        \\{"pkg:11111111111111111111111111111111":{"name":"lib","version":"1.0.0","id":"pkg:11111111111111111111111111111111","path":".nako/env/gen-1/deps/lib","exports":[{"name":"lib","native":[]}]}}
+    ;
+    try writeEnv(temporary.dir, invalid_artifact_ref);
+    try testing.expect(!try usable(&lock, app_root));
+    const invalid_empty_artifact =
+        \\{"pkg:11111111111111111111111111111111":{"name":"lib","version":"1.0.0","id":"pkg:11111111111111111111111111111111","path":".nako/env/gen-1/deps/lib","exports":[{"name":"lib","native":""}]}}
+    ;
+    try writeEnv(temporary.dir, invalid_empty_artifact);
+    try testing.expect(!try usable(&lock, app_root));
+    const invalid_empty_artifact_path =
+        \\{"pkg:11111111111111111111111111111111":{"name":"lib","version":"1.0.0","id":"pkg:11111111111111111111111111111111","path":".nako/env/gen-1/deps/lib","exports":[{"name":"lib","native":{"path":""}}]}}
+    ;
+    try writeEnv(temporary.dir, invalid_empty_artifact_path);
+    try testing.expect(!try usable(&lock, app_root));
+    const invalid_artifact_when =
+        \\{"pkg:11111111111111111111111111111111":{"name":"lib","version":"1.0.0","id":"pkg:11111111111111111111111111111111","path":".nako/env/gen-1/deps/lib","exports":[{"name":"lib","native":{"path":"lib.dll","when":"os =="}}]}}
+    ;
+    try writeEnv(temporary.dir, invalid_artifact_when);
+    try testing.expect(!try usable(&lock, app_root));
+    const invalid_array_artifact_path =
+        \\{"pkg:11111111111111111111111111111111":{"name":"lib","version":"1.0.0","id":"pkg:11111111111111111111111111111111","path":".nako/env/gen-1/deps/lib","exports":[{"name":"lib","native":[""]}]}}
+    ;
+    try writeEnv(temporary.dir, invalid_array_artifact_path);
+    try testing.expect(!try usable(&lock, app_root));
+    const invalid_artifact_version_overflow =
+        \\{"pkg:11111111111111111111111111111111":{"name":"lib","version":"1.0.0","id":"pkg:11111111111111111111111111111111","path":".nako/env/gen-1/deps/lib","exports":[{"name":"lib","native":{"path":"lib.dll","min-os":"999999999999999999999999999999999999"}}]}}
+    ;
+    try writeEnv(temporary.dir, invalid_artifact_version_overflow);
+    try testing.expect(!try usable(&lock, app_root));
 
     const unknown_root = try std.fmt.allocPrint(testing.allocator,
         \\{{"schemaVersion":1,"lockSha256":"sha256:00","profile":"default","runtime":"lnako","packages":{s},"generation":"gen-1"}}
@@ -1551,19 +1621,32 @@ test "environmentPackagesUsableは余分なrecordと形状違反と中間symlink
     , .{valid});
     defer testing.allocator.free(unknown_root);
     try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/environment.json", .data = unknown_root });
-    try testing.expect((try project.readEnvironmentInfo(testing.allocator, io, app_root)) == null);
+    const unknown_info = (try project.readEnvironmentInfo(testing.allocator, io, app_root)).?;
+    try testing.expectEqual(@as(i64, 0), unknown_info.schema_version);
     try testing.expect(!try usable(&lock, app_root));
 
     // mutablePaths は schema に合わない item が1つでもあれば文書全体を無効化。
     try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/environment.json", .data =
         \\{"schemaVersion":1,"lockSha256":"sha256:00","profile":"default","runtime":"lnako","mutablePaths":[{"bogus":1}],"packages":{}}
     });
-    try testing.expect((try project.readEnvironmentInfo(testing.allocator, io, app_root)) == null);
+    try testing.expect((try project.readEnvironmentInfo(testing.allocator, io, app_root)).?.schema_version == 0);
     try testing.expect(!try usable(&lock, app_root));
     try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/environment.json", .data =
         \\{"schemaVersion":1,"lockSha256":"sha256:00","profile":"default","runtime":"lnako","mutablePaths":[{"path":"pkg","sha256":"sha256:bad"}],"packages":{}}
     });
-    try testing.expect((try project.readEnvironmentInfo(testing.allocator, io, app_root)) == null);
+    try testing.expect((try project.readEnvironmentInfo(testing.allocator, io, app_root)).?.schema_version == 0);
+    try testing.expect(!try usable(&lock, app_root));
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/environment.json", .data =
+        \\{"schemaVersion":1,"lockSha256":"sha256:00","profile":"default","runtime":"lnako","mutablePaths":[{"path":"","sha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}],"packages":{}}
+    });
+    try testing.expect((try project.readEnvironmentInfo(testing.allocator, io, app_root)).?.schema_version == 0);
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/environment.json", .data =
+        \\{"schemaVersion":1,"lockSha256":"sha256:00","profile":"default","runtime":"lnako","mutablePaths":[{"path":"./pkg","sha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}],"packages":{}}
+    });
+    try testing.expect(!try usable(&lock, app_root));
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/environment.json", .data =
+        \\{"schemaVersion":1,"lockSha256":"sha256:00","profile":"default","runtime":"lnako","mutablePaths":[{"path":"../outside","sha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}],"packages":{}}
+    });
     try testing.expect(!try usable(&lock, app_root));
 
     const windows_separators =

@@ -780,6 +780,12 @@ test "add は競合する source フラグと kind に合わないオプショ�
         &.{ "lib", "--git", "https://example.com/x.git", "--http", "https://example.com/x.tgz" },
         &.{ "lib", "--path", "lib", "--npm" },
         &.{ "lib", "--path", "lib", "--path", "other" },
+        // version range は pkg 依存専用で、source 依存には適用できない。
+        &.{ "lib@^1.2.3", "--path", "lib" },
+        &.{ "lib@^1.2.3", "--git", "https://example.com/x.git", "--commit", "abcdef0" },
+        &.{ "lib@^1.2.3", "--http", "https://example.com/x.tgz", "--hash", "sha256:00" },
+        &.{ "lib@^1.2.3", "--npm" },
+        &.{ "lib@", "--path", "lib" },
         // kind 固有オプションの混在は黙って捨てず拒否する。
         &.{ "lib", "--commit", "abcdef0" },
         &.{ "lib", "--dep-path", "sub" },

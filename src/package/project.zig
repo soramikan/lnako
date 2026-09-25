@@ -652,27 +652,6 @@ fn normalizePathSource(gpa: Allocator, declared: []const u8, base_dir: ?[]const 
     return joined;
 }
 
-fn openGitWorkspaceRoot(io: std.Io, parent_dir: std.Io.Dir) Error!std.Io.Dir {
-    parent_dir.createDir(io, ".lnako-git-workspaces", .default_dir) catch |err| switch (err) {
-        error.PathAlreadyExists => {},
-        else => return mapFs(err),
-    };
-    return parent_dir.openDir(io, ".lnako-git-workspaces", .{ .iterate = true, .follow_symlinks = false }) catch |err| mapFs(err);
-}
-
-test "git workspace root refuses a symlinked parent" {
-    const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
-    try temporary.dir.createDir(io, "outside", .default_dir);
-    try temporary.dir.writeFile(io, .{ .sub_path = "outside/sentinel", .data = "untouched" });
-    try temporary.dir.symLink(io, "outside", ".lnako-git-workspaces", .{ .is_directory = true });
-    try std.testing.expectError(error.FileSystem, openGitWorkspaceRoot(io, temporary.dir));
-    const sentinel = try temporary.dir.readFileAlloc(io, "outside/sentinel", std.testing.allocator, .limited(32));
-    defer std.testing.allocator.free(sentinel);
-    try std.testing.expectEqualStrings("untouched", sentinel);
-}
-
 const GitCheckoutWorkspace = struct {
     key: []const u8,
     path: []const u8,
@@ -703,21 +682,17 @@ fn gitCheckoutWorkspace(gpa: Allocator, io: std.Io, ctx: *ResolveContext, dep: m
     const hex = std.fmt.bytesToHex(digest, .lower);
     const key = try std.fmt.allocPrint(gpa, "git-{s}", .{hex[0..16]});
 
-    // root置換後もGitが別treeを更新しないよう sibling workspaceを使う。
-    // workspace親とrootをno-follow handleで固定し、攻撃者がsymlinkで差し替えた
-    // `.lnako-git-workspaces` を通じた削除・複製を防ぐ。
-    const parent = std.fs.path.dirname(ctx.cache_store.?.root) orelse ctx.project_root;
-    var parent_dir = std.Io.Dir.cwd().openDir(io, parent, .{ .follow_symlinks = false }) catch |err| return mapFs(err);
-    defer parent_dir.close(io);
-    var workspace_root_dir = try openGitWorkspaceRoot(io, parent_dir);
+    // Workspace を選択 cache root の下へ namespaced し、その root handle から
+    // no-follow で削除・作成する。別 cache roots が同じ親を共有しても衝突せず、
+    // cache root の ACL/permission も継承する。
+    var workspace_root_dir = ctx.cache_store.?.openGitWorkspaceRoot() catch |err| return mapFs(err);
     errdefer workspace_root_dir.close(io);
     workspace_root_dir.deleteTree(io, key) catch |err| return mapFs(err);
     workspace_root_dir.createDir(io, key, .default_dir) catch |err| return mapFs(err);
     var workspace_dir = workspace_root_dir.openDir(io, key, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
     errdefer workspace_dir.close(io);
 
-    const workspace_root = try std.fs.path.join(gpa, &.{ parent, ".lnako-git-workspaces" });
-    const workspace = try std.fs.path.join(gpa, &.{ workspace_root, key });
+    const workspace = (try ctx.cache_store.?.gitWorkspacePath(gpa, key)) orelse return error.FileSystem;
     if (ctx.cache_store.?.openCheckout(key) catch |err| return mapFs(err)) |cached_checkout| {
         var cached = cached_checkout;
         defer cached.close(io);

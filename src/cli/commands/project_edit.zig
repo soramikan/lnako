@@ -858,11 +858,11 @@ const AddRequest = struct {
 };
 
 /// `name[@range]` を分解する。`@` の後ろを version range とする。
-fn splitNameRange(spec: []const u8) struct { name: []const u8, range: []const u8 } {
+fn splitNameRange(spec: []const u8) struct { name: []const u8, range: []const u8, has_range: bool } {
     if (std.mem.indexOfScalar(u8, spec, '@')) |at| {
-        if (at > 0) return .{ .name = spec[0..at], .range = spec[at + 1 ..] };
+        if (at > 0) return .{ .name = spec[0..at], .range = spec[at + 1 ..], .has_range = true };
     }
-    return .{ .name = spec, .range = "*" };
+    return .{ .name = spec, .range = "*", .has_range = false };
 }
 
 /// TOML 基本文字列の中身として安全な形へエスケープする。`"`・`\`・
@@ -1068,6 +1068,12 @@ pub fn runAdd(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []c
     }
     const spec = positional orelse return failUsage(stderr, "add: パッケージ名（または name@range）が必要です\n", .{});
     const parts = splitNameRange(spec);
+    if (parts.has_range and parts.range.len == 0) {
+        return failUsage(stderr, "add: @ の後ろに version range が必要です\n", .{});
+    }
+    if (parts.has_range and request.kind != .pkg) {
+        return failUsage(stderr, "add: name@range は pkg 依存のみで使用できます（source dependency と併用できません）\n", .{});
+    }
     request.name = parts.name;
     if (parts.range.len > 0) request.range = parts.range;
     if (!manifest_mod.isPackageName(request.name)) {
