@@ -212,9 +212,8 @@ const Context = struct {
     used_keys: std.ArrayListUnmanaged([]const u8) = .empty,
     used_names: std.StringHashMapUnmanaged(void) = .empty,
 
-    fn objectTree(self: *const Context, key: []const u8) !?[]const u8 {
-        const entry = (try self.cache_store.entryPath(self.arena, key)) orelse return null;
-        return try std.fs.path.join(self.arena, &.{ entry, "tree" });
+    fn objectTree(self: *const Context, key: []const u8) Error!?std.Io.Dir {
+        return self.cache_store.openVerifiedTree(self.gpa, key) catch |err| return mapFs(err);
     }
 };
 
@@ -493,17 +492,28 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
             // 経由せず materialize できる（offline でも checkout 不要）。
             const object_key = try shortKey(arena, "git", &.{ url, commit, source.path orelse "" });
             try rememberKey(ctx, object_key);
-            const tree = (try ctx.objectTree(object_key)).?;
-            const verified_hit = (ctx.cache_store.verifyEntry(arena, object_key) catch false) and ctx.cache_store.entryExists(object_key);
-            if (!verified_hit) {
+            var tree_handle = try ctx.objectTree(object_key);
+            if (tree_handle == null) {
                 // digest 不一致（改変）または不完全な entry は除去して再構築。
                 if (ctx.cache_store.entryExists(object_key)) {
                     ctx.cache_store.removeEntry(object_key) catch |err| return mapFs(err);
                 }
-                // checkout は可変の作業 dir。repo+subdir 単位で再利用する。
+                // Git は filesystem path を作業 dir として要求するため、cache
+                // root 配下ではなく、この generation の一時 workspace で実行する。
+                // 既存 checkout は pinned handle から複製し、取得後に同じ handle
+                // 経由で cache へ戻すことで root 置換による書込先差替えを防ぐ。
                 const checkout_key = try shortKey(arena, "git", &.{ url, source.path orelse "" });
-                const checkout_dir = (try ctx.cache_store.checkoutPath(arena, checkout_key)) orelse
-                    return ctx.session.fail(.invalid_source, .package, entry.name, "cannot derive checkout dir", .{});
+                const checkout_dir = try std.fs.path.join(arena, &.{ ctx.generation_abs, "git-checkouts", checkout_key });
+                std.Io.Dir.cwd().createDirPath(ctx.io, checkout_dir) catch |err| return mapFs(err);
+                defer std.Io.Dir.cwd().deleteTree(ctx.io, checkout_dir) catch {};
+                const cached_checkout_opt = ctx.cache_store.openCheckout(checkout_key) catch |err| return mapFs(err);
+                if (cached_checkout_opt) |cached_checkout| {
+                    var cached = cached_checkout;
+                    defer cached.close(ctx.io);
+                    var workspace = std.Io.Dir.cwd().openDir(ctx.io, checkout_dir, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+                    defer workspace.close(ctx.io);
+                    _ = materialize.copyTreeFromDirs(ctx.gpa, ctx.io, &cached, &workspace, .{}) catch |err| return mapTreeError(ctx, err, entry.name);
+                }
                 const acquired = try provider.acquireGit(ctx.session, .{
                     .name = entry.name,
                     .url = url,
@@ -516,13 +526,19 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                 if (!std.mem.eql(u8, resolved_commit, commit)) {
                     return ctx.session.fail(.source_collision, .repository, url, "git source of \"{s}\" resolved to {s}, lock expects {s}", .{ entry.name, resolved_commit, commit });
                 }
+                var checkout_source = std.Io.Dir.cwd().openDir(ctx.io, checkout_dir, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+                defer checkout_source.close(ctx.io);
+                _ = ctx.cache_store.replaceCheckout(checkout_key, &checkout_source, .{}) catch |err| return mapTreeError(ctx, err, entry.name);
                 try buildGitObject(ctx, object_key, checkout_dir, source.path);
             } else {
                 manifest = if (try cachedManifest(ctx, object_key)) |cached| cached.manifest else null;
             }
-            tree_abs = tree;
-            const dest = try materializeIntoGeneration(ctx, entry.name, tree);
-            env_path = dest;
+            if (tree_handle == null) tree_handle = try ctx.objectTree(object_key);
+            if (tree_handle == null) return error.FileSystem;
+            defer tree_handle.?.close(ctx.io);
+            const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?);
+            tree_abs = materialized.tree_abs;
+            env_path = materialized.env_path;
         },
         .http => {
             const url = source.url orelse
@@ -531,9 +547,8 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                 return ctx.session.fail(.invalid_source, .package, entry.name, "http source of \"{s}\" has no hash", .{entry.name});
             const object_key = try artifactKey(arena, "http", declared_hash, url);
             try rememberKey(ctx, object_key);
-            const tree = (try ctx.objectTree(object_key)).?;
-            const verified_hit = (ctx.cache_store.verifyEntry(arena, object_key) catch false) and ctx.cache_store.entryExists(object_key);
-            if (!verified_hit) {
+            var tree_handle = try ctx.objectTree(object_key);
+            if (tree_handle == null) {
                 if (ctx.cache_store.entryExists(object_key)) {
                     ctx.cache_store.removeEntry(object_key) catch |err| return mapFs(err);
                 }
@@ -550,9 +565,12 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
             // 公開時と今回の target が異なり得るため適合を再検証する（miss の
             // tar.gz/raw でも公開済み tree から manifest を拾う）。
             manifest = manifest orelse try checkedCachedManifest(ctx, object_key, entry);
-            tree_abs = tree;
-            const dest = try materializeIntoGeneration(ctx, entry.name, tree);
-            env_path = dest;
+            if (tree_handle == null) tree_handle = try ctx.objectTree(object_key);
+            if (tree_handle == null) return error.FileSystem;
+            defer tree_handle.?.close(ctx.io);
+            const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?);
+            tree_abs = materialized.tree_abs;
+            env_path = materialized.env_path;
         },
         .registry, .static => {
             // lock が記録する `source.url` は package 固有 URL であり、
@@ -564,9 +582,8 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                 return ctx.session.fail(.invalid_source, .artifact, entry.name, "artifact \"{s}\" of \"{s}\" has no url", .{ artifact.key, entry.name });
             const object_key = try artifactKey(arena, "artifact", artifact.sha256 orelse artifact.key, url);
             try rememberKey(ctx, object_key);
-            const tree = (try ctx.objectTree(object_key)).?;
-            const verified_hit = (ctx.cache_store.verifyEntry(arena, object_key) catch false) and ctx.cache_store.entryExists(object_key);
-            if (!verified_hit) {
+            var tree_handle = try ctx.objectTree(object_key);
+            if (tree_handle == null) {
                 if (ctx.cache_store.entryExists(object_key)) {
                     ctx.cache_store.removeEntry(object_key) catch |err| return mapFs(err);
                 }
@@ -580,9 +597,12 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
             // http 経路と同じく cache 命中の `.npkg` 由来 manifest は現在
             // target への適合を再検証する。
             manifest = manifest orelse try checkedCachedManifest(ctx, object_key, entry);
-            tree_abs = tree;
-            const dest = try materializeIntoGeneration(ctx, entry.name, tree);
-            env_path = dest;
+            if (tree_handle == null) tree_handle = try ctx.objectTree(object_key);
+            if (tree_handle == null) return error.FileSystem;
+            defer tree_handle.?.close(ctx.io);
+            const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?);
+            tree_abs = materialized.tree_abs;
+            env_path = materialized.env_path;
         },
     }
 
@@ -613,12 +633,15 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
 /// 絶対の双方を許容するため `..` 成分や絶対 path は正当な入力（path 依存は
 /// 宣言者が選ぶ局所 source であり、lock の契約でも禁止されない）。
 /// ここでは細工した lock が混入させ得る非規範の形式だけを拒否する:
-/// 空・末尾 separator（POSIX root `/` を除く）・`.` 成分・途中の空成分・制御文字。
+/// 空・末尾 separator（filesystem root を除く）・`.` 成分・途中の空成分・制御文字。
 fn isCanonicalDepPath(path: []const u8) bool {
     if (path.len == 0) return false;
-    // POSIX filesystem root is the sole canonical path whose complete spelling
-    // is a trailing separator; it cannot be normalized by trimming that byte.
+    // Filesystem roots are the only canonical paths whose complete spelling
+    // is a trailing separator; they cannot be normalized by trimming that byte.
     if (std.mem.eql(u8, path, "/")) return true;
+    if (path.len == 3 and
+        std.ascii.isAlphabetic(path[0]) and
+        path[1] == ':' and path[2] == '\\') return true;
     if (path[path.len - 1] == '/' or path[path.len - 1] == '\\') return false;
     const starts_sep = path[0] == '/' or path[0] == '\\';
     var components = std.mem.splitAny(u8, path, "/\\");
@@ -638,11 +661,14 @@ fn isCanonicalDepPath(path: []const u8) bool {
     return true;
 }
 
-test "canonical dependency path admits POSIX root" {
+test "canonical dependency path admits filesystem roots only" {
     try std.testing.expect(isCanonicalDepPath("/"));
+    try std.testing.expect(isCanonicalDepPath("C:\\"));
     try std.testing.expect(isCanonicalDepPath("/deps/lib"));
     try std.testing.expect(!isCanonicalDepPath("/deps/"));
     try std.testing.expect(!isCanonicalDepPath("deps/"));
+    try std.testing.expect(!isCanonicalDepPath("C:/"));
+    try std.testing.expect(!isCanonicalDepPath("C:\\deps\\"));
 }
 
 /// git source の repo 内 subdir が規範的な相対 path か。repo 境界内だけを
@@ -715,12 +741,22 @@ fn buildGitObject(ctx: *Context, key: []const u8, checkout_dir: []const u8, sub_
         try std.fs.path.join(arena, &.{ checkout_dir, sub })
     else
         try arena.dupe(u8, checkout_dir);
-    const staging = try std.fs.path.join(arena, &.{ ctx.cache_store.root, cache.staging_dir, key });
-    const staging_tree = try std.fs.path.join(arena, &.{ staging, "tree" });
-    _ = materialize.copyTree(ctx.gpa, ctx.io, src, staging_tree, .{
+    // Checkout path acquisition remains intentionally isolated here; the checkout
+    // itself is still path-based pending the separate Git-cache migration.
+    var source = std.Io.Dir.cwd().openDir(ctx.io, src, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+    defer source.close(ctx.io);
+    var staging = ctx.cache_store.openStaging(key) catch |err| return mapFs(err);
+    var staging_open = true;
+    defer if (staging_open) staging.close(ctx.io);
+    staging.createDir(ctx.io, "tree", .default_dir) catch |err| return mapFs(err);
+    var destination = staging.openDir(ctx.io, "tree", .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+    _ = materialize.copyTreeFromDirs(ctx.gpa, ctx.io, &source, &destination, .{
         .exclude_names = &.{".git"},
     }) catch |err| return mapTreeError(ctx, err, key);
-    ctx.cache_store.publish(key, staging) catch |err| return mapFs(err);
+    destination.close(ctx.io);
+    staging.close(ctx.io);
+    staging_open = false;
+    ctx.cache_store.publishStaging(key) catch |err| return mapFs(err);
 }
 
 /// `.npkg` を検証した場合に返す検証済み model。manifest・commands は
@@ -756,7 +792,8 @@ fn materializeTarget(profile: []const u8, record: ?*const lock_model.ProfileReco
         .os = if (record) |r| r.os else input.target.os,
         .cpu = if (record) |r| r.cpu else input.target.cpu,
         .abi = if (record) |r| r.abi else input.target.abi,
-        .compat_js = (if (record) |r| r.compat_js orelse false else false) or input.target.compat_js,
+        .compat_js = (if (record) |r| r.compat_js orelse false else false) or
+            (std.mem.eql(u8, profile, input.profile) and input.target.compat_js),
         .optimize = if (std.mem.eql(u8, profile, input.profile))
             input.target.optimize
         else if (record) |r| r.optimize orelse "O0" else "O0",
@@ -814,9 +851,14 @@ fn mapUnpackError(ctx: *Context, err: anyerror, subject: []const u8) Error {
 /// の規則（規範 path・重複・大小文字衝突・量上限）を通して `tree/` へ入れる。
 fn buildArtifactObject(ctx: *Context, key: []const u8, bytes: []const u8, artifact_type: []const u8, entry: *const lock_model.PackageEntry) Error!PreparedArtifact {
     const arena = ctx.arena;
-    const staging = try std.fs.path.join(arena, &.{ ctx.cache_store.root, cache.staging_dir, key });
-    const tree = try std.fs.path.join(arena, &.{ staging, "tree" });
-    std.Io.Dir.cwd().createDirPath(ctx.io, tree) catch |err| return mapFs(err);
+    var staging = ctx.cache_store.openStaging(key) catch |err| return mapFs(err);
+    var staging_open = true;
+    defer if (staging_open) staging.close(ctx.io);
+    staging.createDir(ctx.io, "tree", .default_dir) catch |err| return mapFs(err);
+    var tree = staging.openDir(ctx.io, "tree", .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+    var tree_open = true;
+    defer if (tree_open) tree.close(ctx.io);
+    const temp_base = try std.fmt.allocPrint(arena, "{s}.artifact-{s}", .{ ctx.generation_abs, key });
     var prepared = PreparedArtifact{};
     if (std.mem.eql(u8, artifact_type, ".npkg")) {
         // 公開前に package 検証を通す。hash 照合済みでも必須 metadata・
@@ -829,33 +871,39 @@ fn buildArtifactObject(ctx: *Context, key: []const u8, bytes: []const u8, artifa
         };
         prepared.manifest = verified.manifest;
         prepared.commands = verified.commands;
-        // 一時アーカイブ・展開先は公開対象の staging dir 外（兄弟 path）へ
-        // 置く。残った場合も staging 配下なので次回の回収で消える。
-        const archive_path = try std.fmt.allocPrint(arena, "{s}.archive", .{staging});
+        // 一時アーカイブ・展開先は cache root 外の generation-scoped path に置く。
+        const archive_path = try std.fmt.allocPrint(arena, "{s}.archive", .{temp_base});
         std.Io.Dir.cwd().writeFile(ctx.io, .{ .sub_path = archive_path, .data = bytes }) catch |err| return mapFs(err);
         defer std.Io.Dir.cwd().deleteFile(ctx.io, archive_path) catch {};
-        const extract_dir = try std.fmt.allocPrint(arena, "{s}.extract", .{staging});
+        const extract_dir = try std.fmt.allocPrint(arena, "{s}.extract", .{temp_base});
         defer std.Io.Dir.cwd().deleteTree(ctx.io, extract_dir) catch {};
         zip.extract(ctx.io, archive_path, extract_dir) catch |err| {
             return ctx.session.fail(.invalid_metadata, .artifact, key, "artifact archive failed boundary-checked extraction: {s}", .{@errorName(err)});
         };
-        _ = materialize.copyTree(ctx.gpa, ctx.io, extract_dir, tree, .{}) catch |err| return mapTreeError(ctx, err, key);
+        var extracted = std.Io.Dir.cwd().openDir(ctx.io, extract_dir, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+        defer extracted.close(ctx.io);
+        _ = materialize.copyTreeFromDirs(ctx.gpa, ctx.io, &extracted, &tree, .{}) catch |err| return mapTreeError(ctx, err, key);
     } else if (std.mem.eql(u8, artifact_type, "tar.gz") or std.mem.eql(u8, artifact_type, "npm-tarball")) {
         // npm-tarball は `package/` 前置を持つため先頭成分を除外する。
-        const extract_dir = try std.fmt.allocPrint(arena, "{s}.extract", .{staging});
+        const extract_dir = try std.fmt.allocPrint(arena, "{s}.extract", .{temp_base});
         defer std.Io.Dir.cwd().deleteTree(ctx.io, extract_dir) catch {};
         unpack.extractTarGz(arena, ctx.io, bytes, extract_dir, .{
             .strip_components = if (std.mem.eql(u8, artifact_type, "npm-tarball")) 1 else 0,
         }) catch |err| return mapUnpackError(ctx, err, key);
-        _ = materialize.copyTree(ctx.gpa, ctx.io, extract_dir, tree, .{}) catch |err| return mapTreeError(ctx, err, key);
+        var extracted = std.Io.Dir.cwd().openDir(ctx.io, extract_dir, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+        defer extracted.close(ctx.io);
+        _ = materialize.copyTreeFromDirs(ctx.gpa, ctx.io, &extracted, &tree, .{}) catch |err| return mapTreeError(ctx, err, key);
     } else if (std.mem.eql(u8, artifact_type, "raw")) {
-        const blob = try std.fs.path.join(arena, &.{ tree, "blob" });
-        std.Io.Dir.cwd().writeFile(ctx.io, .{ .sub_path = blob, .data = bytes }) catch |err| return mapFs(err);
+        tree.writeFile(ctx.io, .{ .sub_path = "blob", .data = bytes }) catch |err| return mapFs(err);
     } else {
         // lock が受理する既知 type でも未対応のものは成功扱いにしない。
         return ctx.session.fail(.invalid_metadata, .artifact, key, "unsupported artifact type \"{s}\" for \"{s}\"", .{ artifact_type, key });
     }
-    ctx.cache_store.publish(key, staging) catch |err| return mapFs(err);
+    tree.close(ctx.io);
+    tree_open = false;
+    staging.close(ctx.io);
+    staging_open = false;
+    ctx.cache_store.publishStaging(key) catch |err| return mapFs(err);
     return prepared;
 }
 
@@ -870,16 +918,17 @@ const CachedManifest = struct {
 /// を優先し、無ければ `tree/nako.toml` を探す。どちらも無ければ null。
 fn cachedManifest(ctx: *Context, key: []const u8) Error!?CachedManifest {
     const arena = ctx.arena;
-    const tree = (try ctx.objectTree(key)).?;
+    var tree = (ctx.cache_store.openVerifiedTree(ctx.gpa, key) catch |err| return mapFs(err)) orelse return null;
+    defer tree.close(ctx.io);
     // 両方ある package では配布向け正規化済みの METADATA.toml が正本。
     const candidates = [_]struct { rel: []const u8, npkg: bool }{
         .{ .rel = "NAKO-PKG/METADATA.toml", .npkg = true },
         .{ .rel = "nako.toml", .npkg = false },
     };
     for (candidates) |candidate| {
-        const path = try std.fs.path.join(arena, &.{ tree, candidate.rel });
+        const path = candidate.rel;
         const limit: std.Io.Limit = if (ctx.session.policy.max_bytes == 0) .unlimited else .limited(ctx.session.policy.max_bytes);
-        const bytes = std.Io.Dir.cwd().readFileAlloc(ctx.io, path, arena, limit) catch continue;
+        const bytes = tree.readFileAlloc(ctx.io, path, arena, limit) catch continue;
         var scratch = diag.List.init(ctx.gpa);
         defer scratch.deinit();
         const parsed = if (candidate.npkg)
@@ -924,7 +973,9 @@ fn selectArtifact(ctx: *Context, entry: *const lock_model.PackageEntry) ?*const 
 
 /// package 名を `.nako` 内 dir 名へ変換する。`[a-z0-9-]` 以外は `-` へ畳み、
 /// 空なら hash 名を使う。同一世代内での重複には `-2`・`-3`…を付ける。
-fn materializeIntoGeneration(ctx: *Context, package_name: []const u8, tree_abs: []const u8) Error![]const u8 {
+const MaterializedPackage = struct { env_path: []const u8, tree_abs: []const u8 };
+
+fn materializeIntoGeneration(ctx: *Context, package_name: []const u8, source: *std.Io.Dir) Error!MaterializedPackage {
     const arena = ctx.arena;
     var sanitized: std.ArrayListUnmanaged(u8) = .empty;
     for (package_name) |c| {
@@ -950,8 +1001,14 @@ fn materializeIntoGeneration(ctx: *Context, package_name: []const u8, tree_abs: 
     try ctx.used_names.put(arena, try arena.dupe(u8, final_name), {});
 
     const dest = try std.fs.path.join(arena, &.{ ctx.deps_abs, final_name });
-    _ = materialize.copyTree(ctx.gpa, ctx.io, tree_abs, dest, .{}) catch |err| return mapTreeError(ctx, err, package_name);
-    return try std.fs.path.join(arena, &.{ ctx.generation_rel, "deps", final_name });
+    std.Io.Dir.cwd().createDirPath(ctx.io, dest) catch |err| return mapFs(err);
+    var destination = std.Io.Dir.cwd().openDir(ctx.io, dest, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+    defer destination.close(ctx.io);
+    _ = materialize.copyTreeFromDirs(ctx.gpa, ctx.io, source, &destination, .{}) catch |err| return mapTreeError(ctx, err, package_name);
+    return .{
+        .env_path = try std.fs.path.join(arena, &.{ ctx.generation_rel, "deps", final_name }),
+        .tree_abs = dest,
+    };
 }
 
 /// manifest の export を `implementation`（lock が記録した解決結果）に合わせて
@@ -1443,9 +1500,8 @@ test "materialize target は lock input の compatJs・optimize・engine version
         .cnako_version = "3.7.24",
         .lnako_version = "0.2.2",
     };
-    // profile 宣言に compat-js/optimize が無くても input.target の
-    // 実効値を使う（profile-less・compat-js=false の profile でも
-    // --compat-js で解決した ESM artifact を保持する）。
+    // 入力 profile では profile 宣言に compat-js/optimize がなくても
+    // input.target の実効値を使い、解決した ESM artifact を保持する。
     const record = lock_model.ProfileRecord{
         .runtime = "lnako",
         .os = "macos",
@@ -1473,8 +1529,17 @@ test "materialize target は lock input の compatJs・optimize・engine version
     };
     const other_target = materializeTarget("release", &other, &input, .lnako);
     try testing.expectEqualStrings("O1", other_target.optimize);
-    try testing.expect(other_target.compat_js); // input の --compat-js は維持
+    try testing.expect(!other_target.compat_js); // input の --compat-js は別 profile に漏らさない
     try testing.expectEqualStrings("linux", other_target.os);
+
+    const other_declared_compat = lock_model.ProfileRecord{
+        .os = "linux",
+        .cpu = "x86_64",
+        .abi = "gnu",
+        .compat_js = true,
+    };
+    const other_declared_target = materializeTarget("release", &other_declared_compat, &input, .lnako);
+    try testing.expect(other_declared_target.compat_js); // record 宣言は維持する
 
     // version を記録しない旧 lock は null（未検査）のまま。
     var legacy = lock_model.Input{

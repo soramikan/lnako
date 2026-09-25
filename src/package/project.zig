@@ -20,6 +20,7 @@ const fetch = @import("fetch.zig");
 const lock_mod = @import("lock.zig");
 const lock_model = @import("lock_model.zig");
 const manifest_mod = @import("manifest.zig");
+const materialize = @import("materialize.zig");
 const project_identity = @import("project_identity.zig");
 const provider = @import("provider.zig");
 const registry = @import("registry.zig");
@@ -602,8 +603,10 @@ fn normalizePathSource(gpa: Allocator, declared: []const u8, base_dir: ?[]const 
     return joined;
 }
 
-/// 解決に必要な git checkout dir。cache を必要なときだけ開く。
-fn gitCheckoutDir(gpa: Allocator, io: std.Io, ctx: *ResolveContext, dep: manifest_mod.GitDependency) Error![]const u8 {
+const GitCheckoutWorkspace = struct { key: []const u8, path: []const u8 };
+
+/// Git workspaceはcache外、checkout読書きはpinned handle経由。
+fn gitCheckoutWorkspace(gpa: Allocator, io: std.Io, ctx: *ResolveContext, dep: manifest_mod.GitDependency) Error!GitCheckoutWorkspace {
     if (ctx.cache_store == null) {
         const root = if (ctx.opts.cache_root) |root|
             try gpa.dupe(u8, root)
@@ -612,9 +615,6 @@ fn gitCheckoutDir(gpa: Allocator, io: std.Io, ctx: *ResolveContext, dep: manifes
         else
             try std.fs.path.join(gpa, &.{ ctx.project_root, ".nako", "cache" });
         ctx.cache_store = cache.Store.open(ctx.gpa, io, root) catch |err| return mapFs(err);
-        // checkout dir を変異させる（clone/fetch/checkout）間は共有 cache
-        // の OS lock を保持し、並行する lock/update の解決と直列化する。
-        // sync 側が既に取っている契約と同じにする。
         ctx.cache_guard = ctx.cache_store.?.lockWait() catch |err| return mapFs(err);
     }
     var hasher = std.crypto.hash.sha2.Sha256.init(.{});
@@ -627,9 +627,23 @@ fn gitCheckoutDir(gpa: Allocator, io: std.Io, ctx: *ResolveContext, dep: manifes
     hasher.final(&digest);
     const hex = std.fmt.bytesToHex(digest, .lower);
     const key = try std.fmt.allocPrint(gpa, "git-{s}", .{hex[0..16]});
-    const dir = (try ctx.cache_store.?.checkoutPath(gpa, key)) orelse
-        return error.FileSystem;
-    return dir;
+
+    // root置換後もGitが別treeを更新しないよう sibling workspaceを使う。
+    const parent = std.fs.path.dirname(ctx.cache_store.?.root) orelse ctx.project_root;
+    const workspace_root = try std.fs.path.join(gpa, &.{ parent, ".lnako-git-workspaces" });
+    std.Io.Dir.cwd().createDirPath(io, workspace_root) catch |err| return mapFs(err);
+    const workspace = try std.fs.path.join(gpa, &.{ workspace_root, key });
+    std.Io.Dir.cwd().deleteTree(io, workspace) catch |err| return mapFs(err);
+    std.Io.Dir.cwd().createDirPath(io, workspace) catch |err| return mapFs(err);
+
+    if (ctx.cache_store.?.openCheckout(key) catch |err| return mapFs(err)) |cached_checkout| {
+        var cached = cached_checkout;
+        defer cached.close(io);
+        var destination = std.Io.Dir.cwd().openDir(io, workspace, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+        defer destination.close(io);
+        _ = materialize.copyTreeFromDirs(gpa, io, &cached, &destination, .{}) catch |err| return mapFs(err);
+    }
+    return .{ .key = key, .path = workspace };
 }
 
 /// 既存 lock から public id（`pkg:<32hex>`）の package entry の source を
@@ -828,7 +842,8 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
             },
             .git => {
                 const dep = work.git_dep.?;
-                const checkout = try gitCheckoutDir(gpa, ctx.io, ctx, dep);
+                const checkout = try gitCheckoutWorkspace(gpa, ctx.io, ctx, dep);
+                defer std.Io.Dir.cwd().deleteTree(ctx.io, checkout.path) catch {};
                 const locked = try lockedSourceForWork(ctx, work);
                 const locked_public_id = if (locked) |source|
                     try publicIdFor(gpa, try project_identity.virtualIdForResolvedSource(gpa, source, ctx.project_root))
@@ -843,15 +858,18 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
                         .path = dep.path,
                     }, locked_source, dep_name);
                 }
-                const acquired = try provider.acquireGit(ctx.session, dep, checkout, if (updating) null else locked);
+                const acquired = try provider.acquireGit(ctx.session, dep, checkout.path, if (updating) null else locked);
+                var checkout_source = std.Io.Dir.cwd().openDir(ctx.io, checkout.path, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+                defer checkout_source.close(ctx.io);
+                _ = ctx.cache_store.?.replaceCheckout(checkout.key, &checkout_source, .{}) catch |err| return mapFs(err);
                 local.source = try copySource(gpa, acquired.source);
                 local.manifest = acquired.manifest;
                 // git 内 package の git/http 依存は取得できるが、path 依存は
                 // lock が project 相対で表現できないため後段で拒否する。
                 child_base_dir = if (dep.path) |sub|
-                    try std.fs.path.join(gpa, &.{ checkout, sub })
+                    try std.fs.path.join(gpa, &.{ checkout.path, sub })
                 else
-                    checkout;
+                    checkout.path;
             },
             .http => {
                 const dep = work.http_dep.?;

@@ -11,6 +11,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const environment = @import("environment.zig");
 const fetch = @import("fetch.zig");
+const materialize = @import("materialize.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -47,11 +48,7 @@ fn digestEntryLessThan(_: void, a: DigestEntry, b: DigestEntry) bool {
     return std.mem.order(u8, a.rel, b.rel) == .lt;
 }
 
-fn collectDigestEntries(io: std.Io, gpa: Allocator, root_abs: []const u8, rel: []const u8, exclude_names: []const []const u8, entries: *std.ArrayListUnmanaged(DigestEntry)) !void {
-    const abs = if (rel.len == 0) try gpa.dupe(u8, root_abs) else try std.fs.path.join(gpa, &.{ root_abs, rel });
-    defer gpa.free(abs);
-    var dir = try std.Io.Dir.cwd().openDir(io, abs, .{ .iterate = true });
-    defer dir.close(io);
+fn collectDigestEntries(io: std.Io, gpa: Allocator, dir: std.Io.Dir, rel: []const u8, exclude_names: []const []const u8, entries: *std.ArrayListUnmanaged(DigestEntry)) !void {
     var it = dir.iterate();
     while (try it.next(io)) |entry| {
         // 呼出し側指定の除外名（source pin では `.nako`/`.git`）を除く。
@@ -69,17 +66,15 @@ fn collectDigestEntries(io: std.Io, gpa: Allocator, root_abs: []const u8, rel: [
             try std.fs.path.join(gpa, &.{ rel, entry.name });
         switch (entry.kind) {
             .file => {
-                const file_abs = try std.fs.path.join(gpa, &.{ root_abs, child_rel });
-                defer gpa.free(file_abs);
-                const stat = try std.Io.Dir.cwd().statFile(io, file_abs, .{});
+                const stat = try dir.statFile(io, entry.name, .{});
                 try entries.append(gpa, .{ .rel = child_rel, .kind = .file, .size = stat.size });
             },
             .directory => {
                 try entries.append(gpa, .{ .rel = child_rel, .kind = .directory });
-                try collectDigestEntries(io, gpa, root_abs, child_rel, exclude_names, entries);
+                var child = try dir.openDir(io, entry.name, .{ .iterate = true, .follow_symlinks = false });
+                defer child.close(io);
+                try collectDigestEntries(io, gpa, child, child_rel, exclude_names, entries);
             },
-            // symlink 等は内容アドレス tree に存在しない（publish 前の
-            // materialize 検証で拒否済み）。存在したら digest 不能として失敗。
             else => return error.UnsupportedEntry,
         }
     }
@@ -93,17 +88,48 @@ fn collectDigestEntries(io: std.Io, gpa: Allocator, root_abs: []const u8, rel: [
 /// 識別できるよう除外しない。
 pub const source_pin_exclude = [_][]const u8{ ".nako", ".git" };
 
+/// Root-relative file open. Each directory component is opened without following
+/// symlinks, rather than letting an absolute path traversal escape the pinned tree.
+fn openRelativeFile(io: std.Io, root: std.Io.Dir, rel: []const u8) !std.Io.File {
+    var current = root;
+    var owns_current = false;
+    errdefer if (owns_current) current.close(io);
+    var parts = std.mem.splitScalar(u8, rel, std.fs.path.sep);
+    while (parts.next()) |part| {
+        if (part.len == 0) continue;
+        if (parts.peek() == null) {
+            const file = try current.openFile(io, part, .{ .follow_symlinks = false });
+            if (owns_current) current.close(io);
+            owns_current = false;
+            return file;
+        }
+        const next = try current.openDir(io, part, .{ .follow_symlinks = false });
+        if (owns_current) current.close(io);
+        current = next;
+        owns_current = true;
+    }
+    if (owns_current) current.close(io);
+    owns_current = false;
+    return error.InvalidPath;
+}
+
 /// `tree/` の内容 digest。path・種別・size・内容を決定順で hash するため
 /// 同一 tree は常に同一 digest。marker 記録と hit 時の再検証に使う。
 /// `mutable = false` の path 依存 pin でも同じ digest を利用する。
 /// `exclude_names` に列挙した dir/file 名は digest 対象から除く。
 pub fn digestTree(io: std.Io, gpa: Allocator, tree_abs: []const u8, exclude_names: []const []const u8) ![32]u8 {
+    var tree_dir = try std.Io.Dir.cwd().openDir(io, tree_abs, .{ .iterate = true, .follow_symlinks = false });
+    defer tree_dir.close(io);
+    return digestTreeFromDir(io, gpa, tree_dir, exclude_names);
+}
+
+fn digestTreeFromDir(io: std.Io, gpa: Allocator, tree_dir: std.Io.Dir, exclude_names: []const []const u8) ![32]u8 {
     var entries = std.ArrayListUnmanaged(DigestEntry).empty;
     defer {
         for (entries.items) |entry| gpa.free(entry.rel);
         entries.deinit(gpa);
     }
-    try collectDigestEntries(io, gpa, tree_abs, "", exclude_names, &entries);
+    try collectDigestEntries(io, gpa, tree_dir, "", exclude_names, &entries);
     std.mem.sort(DigestEntry, entries.items, {}, digestEntryLessThan);
 
     var hasher = std.crypto.hash.sha2.Sha256.init(.{});
@@ -117,11 +143,9 @@ pub fn digestTree(io: std.Io, gpa: Allocator, tree_abs: []const u8, exclude_name
                 var size_le: [8]u8 = undefined;
                 std.mem.writeInt(u64, &size_le, entry.size, .little);
                 hasher.update(&size_le);
-                const abs = try std.fs.path.join(gpa, &.{ tree_abs, entry.rel });
-                defer gpa.free(abs);
                 // 大きな file を一括確保しないよう、固定 buffer で
                 // ストリーミング読み出しして hash を更新する。
-                var file = try std.Io.Dir.cwd().openFile(io, abs, .{});
+                var file = try openRelativeFile(io, tree_dir, entry.rel);
                 defer file.close(io);
                 var read_buffer: [8192]u8 = undefined;
                 var reader = file.reader(io, &read_buffer);
@@ -197,8 +221,11 @@ pub const LockGuard = struct {
 pub const Store = struct {
     gpa: Allocator,
     io: std.Io,
-    /// `objects/`・`staging/`・`cache.lock` を持つ cache ルートの絶対 path。
+    /// `objects/`・`staging/`・`cache.lock` を持つ cache ルートの絶対 path
+    /// （パス返却 API との互換用。ファイル操作の基準には使用しない）。
     root: []const u8,
+    /// open 時点の cache ルートを固定する no-follow directory handle。
+    root_dir: std.Io.Dir,
 
     /// cache 管理下の dir を実 dir として開く。管理 dir 自体が symlink
     /// （共有 cache を別主体が改変した場合等）なら、リンクのみを除去して
@@ -209,48 +236,229 @@ pub const Store = struct {
         return environment.ensureManagedDir(io, path);
     }
 
+    fn openRootRelativeDir(self: *const Store, rel: []const u8, iterate: bool) !std.Io.Dir {
+        var current = self.root_dir;
+        var owns_current = false;
+        errdefer if (owns_current) current.close(self.io);
+        var parts = std.mem.splitScalar(u8, rel, std.fs.path.sep);
+        while (parts.next()) |part| {
+            if (part.len == 0 or std.mem.eql(u8, part, ".")) continue;
+            if (std.mem.eql(u8, part, "..")) return error.InvalidPath;
+            const next = try current.openDir(self.io, part, .{
+                .follow_symlinks = false,
+                .iterate = if (parts.peek() == null) iterate else false,
+            });
+            if (owns_current) current.close(self.io);
+            current = next;
+            owns_current = true;
+        }
+        if (!owns_current) return error.InvalidPath;
+        return current;
+    }
+
+    /// root 内の managed directory を root handle 相対で no-follow open する。
+    fn openRootChild(self: *const Store, name: []const u8, iterate: bool) !std.Io.Dir {
+        self.root_dir.createDir(self.io, name, .default_dir) catch |err| switch (err) {
+            error.PathAlreadyExists => {},
+            else => return err,
+        };
+        var child = try self.root_dir.openDir(self.io, name, .{
+            .follow_symlinks = false,
+            .iterate = iterate,
+        });
+        errdefer child.close(self.io);
+        const stat = try child.stat(self.io);
+        if (stat.kind == .sym_link) return error.SymLinkLoop;
+        return child;
+    }
+
     /// `root` を開き、必要な下位 dir を作成する。
     pub fn open(gpa: Allocator, io: std.Io, root: []const u8) !Store {
         const owned = try gpa.dupe(u8, root);
         errdefer gpa.free(owned);
-        const objects = try std.fs.path.join(gpa, &.{ owned, objects_dir });
-        defer gpa.free(objects);
-        try ensureManagedDir(io, objects);
-        const staging = try std.fs.path.join(gpa, &.{ owned, staging_dir });
-        defer gpa.free(staging);
-        try ensureManagedDir(io, staging);
-        const checkouts = try std.fs.path.join(gpa, &.{ owned, checkouts_dir });
-        defer gpa.free(checkouts);
-        try ensureManagedDir(io, checkouts);
-        return .{ .gpa = gpa, .io = io, .root = owned };
+        try ensureManagedDir(io, owned);
+        var root_dir = try std.Io.Dir.cwd().openDir(io, owned, .{ .follow_symlinks = false });
+        errdefer root_dir.close(io);
+        const store = Store{ .gpa = gpa, .io = io, .root = owned, .root_dir = root_dir };
+        for ([_][]const u8{ objects_dir, staging_dir, checkouts_dir }) |name| {
+            var child = try store.openRootChild(name, false);
+            child.close(io);
+        }
+        return store;
     }
 
     pub fn deinit(self: *Store) void {
+        self.root_dir.close(self.io);
         self.gpa.free(self.root);
         self.* = undefined;
     }
 
-    /// `objects/<key>` の絶対 path。key 不正は null。
+    /// Path-returning API guard only: Zig's portable stat exposes an inode but
+    /// no cross-platform volume identity here, and the check/use pair is TOCTOU.
+    /// Destructive/internal operations must use root_dir instead.
+    fn rootPathStillPinned(self: *const Store) bool {
+        const pinned = self.root_dir.stat(self.io) catch return false;
+        var current = std.Io.Dir.cwd().openDir(self.io, self.root, .{ .follow_symlinks = false }) catch return false;
+        defer current.close(self.io);
+        const resolved = current.stat(self.io) catch return false;
+        return resolved.kind == .directory and resolved.inode == pinned.inode;
+    }
+
+    /// `objects/<key>` の絶対 path。key 不正/root path が pinned root でない場合は null。
+    /// 戻り値は path-based な既存 caller 向けであり、root の rename/置換後は
+    /// pinned cache を指す保証がない。Store 操作にはこの path を使わないこと。
     pub fn entryPath(self: *const Store, gpa: Allocator, key: []const u8) Allocator.Error!?[]u8 {
-        if (!validKey(key)) return null;
+        if (!validKey(key) or !self.rootPathStillPinned()) return null;
         return try std.fs.path.join(gpa, &.{ self.root, objects_dir, key });
     }
 
     /// `checkouts/<key>` の絶対 path。git checkout 等の再利用作業 dir。
+    /// root の rename/置換後は pinned cache を指す保証がないため使用しないこと。
     pub fn checkoutPath(self: *const Store, gpa: Allocator, key: []const u8) Allocator.Error!?[]u8 {
-        if (!validKey(key)) return null;
+        if (!validKey(key) or !self.rootPathStillPinned()) return null;
         return try std.fs.path.join(gpa, &.{ self.root, checkouts_dir, key });
+    }
+
+    fn openEntryDir(self: *const Store, key: []const u8) !std.Io.Dir {
+        if (!validKey(key)) return error.InvalidKey;
+        var objects = try self.openRootChild(objects_dir, false);
+        defer objects.close(self.io);
+        return objects.openDir(self.io, key, .{ .follow_symlinks = false });
+    }
+
+    /// Open the verified immutable object's tree as an independently owned handle.
+    /// `null` means missing, incomplete, or digest-invalid; no root-derived path is
+    /// constructed, so the returned handle remains pinned across root replacement.
+    pub fn openVerifiedTree(self: *const Store, gpa: Allocator, key: []const u8) !?std.Io.Dir {
+        if (!validKey(key)) return error.InvalidKey;
+        var entry = self.openEntryDir(key) catch return null;
+        defer entry.close(self.io);
+        const expected = entry.readFileAlloc(self.io, complete_marker, gpa, .limited(4096)) catch return null;
+        defer gpa.free(expected);
+        var tree = entry.openDir(self.io, "tree", .{ .iterate = true, .follow_symlinks = false }) catch return null;
+        var expected_digest: [32]u8 = undefined;
+        if (!parseMarkerDigest(expected, &expected_digest)) {
+            tree.close(self.io);
+            return null;
+        }
+        const actual_digest = digestTreeFromDir(self.io, gpa, tree, &.{}) catch {
+            tree.close(self.io);
+            return null;
+        };
+        if (!std.mem.eql(u8, &expected_digest, &actual_digest)) {
+            tree.close(self.io);
+            return null;
+        }
+        return tree;
+    }
+
+    /// Create a fresh root-relative staging directory for `key`, removing any
+    /// stale stage without following symlinks. Caller owns the returned handle.
+    pub fn openStaging(self: *const Store, key: []const u8) !std.Io.Dir {
+        if (!validKey(key)) return error.InvalidKey;
+        var parent = try self.openRootChild(staging_dir, false);
+        defer parent.close(self.io);
+        environment.deleteTreeChecked(parent, self.io, key) catch |err| switch (err) {
+            error.FileNotFound => {},
+            else => return err,
+        };
+        try parent.createDir(self.io, key, .default_dir);
+        return parent.openDir(self.io, key, .{ .iterate = true, .follow_symlinks = false });
+    }
+
+    /// Publish staging/<key> through handles rooted at the pinned cache root.
+    pub fn publishStaging(self: *const Store, key: []const u8) !void {
+        if (!validKey(key)) return error.InvalidKey;
+        var staging = try self.openRootChild(staging_dir, false);
+        defer staging.close(self.io);
+        var stage_dir = try staging.openDir(self.io, key, .{ .iterate = true, .follow_symlinks = false });
+        defer stage_dir.close(self.io);
+        var tree = try stage_dir.openDir(self.io, "tree", .{ .iterate = true, .follow_symlinks = false });
+        defer tree.close(self.io);
+        const digest = try digestTreeFromDir(self.io, self.gpa, tree, &.{});
+        var marker: [72]u8 = undefined;
+        @memcpy(marker[0..7], "sha256:");
+        @memcpy(marker[7..71], &std.fmt.bytesToHex(digest, .lower));
+        marker[71] = '\n';
+        try stage_dir.writeFile(self.io, .{ .sub_path = complete_marker, .data = &marker });
+
+        var objects = try self.openRootChild(objects_dir, false);
+        defer objects.close(self.io);
+        staging.rename(key, objects, key, self.io) catch |rename_err| switch (rename_err) {
+            error.IsDir, error.NotDir, error.DirNotEmpty, error.AccessDenied => {
+                if (try self.verifyEntryDigest(self.gpa, key, digest)) {
+                    try environment.deleteTreeChecked(staging, self.io, key);
+                } else {
+                    self.removeEntry(key) catch |remove_err| switch (remove_err) {
+                        error.FileNotFound => {},
+                        else => return remove_err,
+                    };
+                    try staging.rename(key, objects, key, self.io);
+                }
+            },
+            else => return rename_err,
+        };
+    }
+
+    /// Open an existing checkout by key. The returned handle is owned by caller.
+    pub fn openCheckout(self: *const Store, key: []const u8) !?std.Io.Dir {
+        if (!validKey(key)) return error.InvalidKey;
+        var checkouts = try self.openRootChild(checkouts_dir, false);
+        defer checkouts.close(self.io);
+        return checkouts.openDir(self.io, key, .{ .iterate = true, .follow_symlinks = false }) catch |err| switch (err) {
+            error.FileNotFound => null,
+            else => return err,
+        };
+    }
+
+    /// Replace a checkout with a copy from a caller-opened source directory.
+    /// Copy and cleanup/rename remain relative to pinned cache handles.
+    pub fn replaceCheckout(self: *const Store, key: []const u8, source: *std.Io.Dir, options: materialize.Options) !materialize.Result {
+        if (!validKey(key)) return error.InvalidKey;
+        var checkouts = try self.openRootChild(checkouts_dir, false);
+        defer checkouts.close(self.io);
+        const stage_name = try std.fmt.allocPrint(self.gpa, ".{s}-staging", .{key});
+        defer self.gpa.free(stage_name);
+        const backup_name = try std.fmt.allocPrint(self.gpa, ".{s}-backup", .{key});
+        defer self.gpa.free(backup_name);
+        for ([_][]const u8{ stage_name, backup_name }) |name| {
+            environment.deleteTreeChecked(checkouts, self.io, name) catch |err| switch (err) {
+                error.FileNotFound => {},
+                else => return err,
+            };
+        }
+        try checkouts.createDir(self.io, stage_name, .default_dir);
+        errdefer environment.deleteTreeChecked(checkouts, self.io, stage_name) catch {};
+        var destination = try checkouts.openDir(self.io, stage_name, .{ .iterate = true, .follow_symlinks = false });
+        const result = materialize.copyTreeFromDirs(self.gpa, self.io, source, &destination, options) catch |err| {
+            destination.close(self.io);
+            return err;
+        };
+        destination.close(self.io);
+        if (checkouts.openDir(self.io, key, .{ .follow_symlinks = false })) |old| {
+            var old_dir = old;
+            old_dir.close(self.io);
+            try checkouts.rename(key, checkouts, backup_name, self.io);
+        } else |err| switch (err) {
+            error.FileNotFound => {},
+            else => return err,
+        }
+        errdefer checkouts.rename(backup_name, checkouts, key, self.io) catch {};
+        try checkouts.rename(stage_name, checkouts, key, self.io);
+        environment.deleteTreeChecked(checkouts, self.io, backup_name) catch |err| switch (err) {
+            error.FileNotFound => {},
+            else => return err,
+        };
+        return result;
     }
 
     /// 完了 marker まで存在する完全な entry があるか。
     /// marker の有無だけを見る軽量版。内容を信頼して利用する判断は
     /// `verifyEntry` を使うこと。
     pub fn entryExists(self: *const Store, key: []const u8) bool {
-        const entry = (self.entryPath(self.gpa, key) catch return false) orelse return false;
-        defer self.gpa.free(entry);
-        const marker_file = std.fs.path.join(self.gpa, &.{ entry, complete_marker }) catch return false;
-        defer self.gpa.free(marker_file);
-        std.Io.Dir.cwd().access(self.io, marker_file, .{}) catch return false;
+        var entry = self.openEntryDir(key) catch return false;
+        defer entry.close(self.io);
+        entry.access(self.io, complete_marker, .{}) catch return false;
         return true;
     }
 
@@ -259,42 +467,39 @@ pub const Store = struct {
     /// 検出するため、hit した entry を消費する前に必ず呼ぶこと。
     /// 戻り値は「marker あり・digest 一致」のみ true。IO 失敗も false。
     pub fn verifyEntry(self: *const Store, gpa: Allocator, key: []const u8) !bool {
-        const entry = (try self.entryPath(gpa, key)) orelse return false;
-        defer gpa.free(entry);
-        const marker_file = std.fs.path.join(gpa, &.{ entry, complete_marker }) catch return false;
-        defer gpa.free(marker_file);
-        const expected = std.Io.Dir.cwd().readFileAlloc(self.io, marker_file, gpa, .limited(4096)) catch return false;
+        var entry = self.openEntryDir(key) catch return false;
+        defer entry.close(self.io);
+        const expected = entry.readFileAlloc(self.io, complete_marker, gpa, .limited(4096)) catch return false;
         defer gpa.free(expected);
-        const tree = std.fs.path.join(gpa, &.{ entry, "tree" }) catch return false;
-        defer gpa.free(tree);
+        var tree = entry.openDir(self.io, "tree", .{ .iterate = true, .follow_symlinks = false }) catch return false;
+        defer tree.close(self.io);
         // integrity digest は展開物全体（明示同梱の `.nako/**` 含む）を
         // 対象にするため除外名は空。
-        const actual = digestTree(self.io, gpa, tree, &.{}) catch return false;
+        const actual = digestTreeFromDir(self.io, gpa, tree, &.{}) catch return false;
         var expected_bytes: [32]u8 = undefined;
         return parseMarkerDigest(expected, &expected_bytes) and std.mem.eql(u8, &expected_bytes, &actual);
     }
 
     /// Destination entry が marker と実 tree の両方で指定 digest に一致するか。
     fn verifyEntryDigest(self: *const Store, gpa: Allocator, key: []const u8, digest: [32]u8) !bool {
-        const entry = (try self.entryPath(gpa, key)) orelse return false;
-        defer gpa.free(entry);
-        const marker_file = std.fs.path.join(gpa, &.{ entry, complete_marker }) catch return false;
-        defer gpa.free(marker_file);
-        const marker = std.Io.Dir.cwd().readFileAlloc(self.io, marker_file, gpa, .limited(4096)) catch return false;
+        var entry = self.openEntryDir(key) catch return false;
+        defer entry.close(self.io);
+        const marker = entry.readFileAlloc(self.io, complete_marker, gpa, .limited(4096)) catch return false;
         defer gpa.free(marker);
         var recorded: [32]u8 = undefined;
         if (!parseMarkerDigest(marker, &recorded) or !std.mem.eql(u8, &recorded, &digest)) return false;
-        const tree = std.fs.path.join(gpa, &.{ entry, "tree" }) catch return false;
-        defer gpa.free(tree);
-        const actual = digestTree(self.io, gpa, tree, &.{}) catch return false;
+        var tree = entry.openDir(self.io, "tree", .{ .iterate = true, .follow_symlinks = false }) catch return false;
+        defer tree.close(self.io);
+        const actual = digestTreeFromDir(self.io, gpa, tree, &.{}) catch return false;
         return std.mem.eql(u8, &actual, &digest);
     }
 
     /// entry（改変検出・不完全など）を削除する。cache lock 保持中に呼ぶこと。
     pub fn removeEntry(self: *const Store, key: []const u8) !void {
-        const entry = (try self.entryPath(self.gpa, key)) orelse return error.InvalidKey;
-        defer self.gpa.free(entry);
-        try environment.deleteTreeChecked(std.Io.Dir.cwd(), self.io, entry);
+        if (!validKey(key)) return error.InvalidKey;
+        var objects = try self.openRootChild(objects_dir, false);
+        defer objects.close(self.io);
+        try environment.deleteTreeChecked(objects, self.io, key);
     }
 
     /// 完了 marker の無い entry（公開途中で中断した残骸）を削除する。
@@ -302,9 +507,7 @@ pub const Store = struct {
     /// 管理 dir は symlink 非追従で開き、削除は dir ハンドル相対で行う
     /// （管理 dir 自身の symlink による cache 外への逸脱を防ぐ）。
     pub fn pruneIncomplete(self: *const Store) !void {
-        const objects = try std.fs.path.join(self.gpa, &.{ self.root, objects_dir });
-        defer self.gpa.free(objects);
-        var dir = openManagedDir(self.io, objects) catch |err| switch (err) {
+        var dir = self.openRootChild(objects_dir, true) catch |err| switch (err) {
             error.FileNotFound => return,
             else => return err,
         };
@@ -316,9 +519,7 @@ pub const Store = struct {
             environment.deleteTreeChecked(dir, self.io, entry.name) catch continue;
         }
         // staging の残留も回収する。
-        const staging = try std.fs.path.join(self.gpa, &.{ self.root, staging_dir });
-        defer self.gpa.free(staging);
-        var sdir = openManagedDir(self.io, staging) catch return;
+        var sdir = self.openRootChild(staging_dir, true) catch return;
         defer sdir.close(self.io);
         var sit = sdir.iterate();
         while (try sit.next(self.io)) |entry| {
@@ -335,35 +536,63 @@ pub const Store = struct {
     /// cache 内 staging を使う）。
     pub fn publish(self: *const Store, key: []const u8, staging_abs: []const u8) !void {
         if (!validKey(key)) return error.InvalidKey;
-        // 完了 marker を staging 内に書いてから rename する。rename は atomic
-        // なので、観測される entry は常に marker 付きの完全なものになる。
-        // marker には `tree/` の内容 digest を記録し、hit 時の再検証に使う
-        // （共有 cache を改変されても marker だけで信頼しない契約）。
-        const tree = try std.fs.path.join(self.gpa, &.{ staging_abs, "tree" });
-        defer self.gpa.free(tree);
-        const digest = try digestTree(self.io, self.gpa, tree, &.{});
+
+        // Paths lexically under the cache root must resolve through the pinned
+        // staging handle; never reopen a replaced root path supplied by a caller.
+        const expected_staging = try std.fs.path.join(self.gpa, &.{ self.root, staging_dir, key });
+        defer self.gpa.free(expected_staging);
+        var staging_parent: std.Io.Dir = undefined;
+        var owns_parent = false;
+        var staging_name: []const u8 = undefined;
+        if (std.mem.eql(u8, staging_abs, expected_staging)) {
+            staging_parent = try self.openRootChild(staging_dir, false);
+            owns_parent = true;
+            staging_name = key;
+        } else {
+            const root_prefix = try std.fmt.allocPrint(self.gpa, "{s}{c}", .{ self.root, std.fs.path.sep });
+            defer self.gpa.free(root_prefix);
+            staging_name = std.fs.path.basename(staging_abs);
+            if (staging_name.len == 0 or std.mem.eql(u8, staging_name, ".") or std.mem.eql(u8, staging_name, "..")) return error.InvalidStagingPath;
+            if (std.mem.startsWith(u8, staging_abs, root_prefix)) {
+                const rel = staging_abs[root_prefix.len..];
+                if (std.fs.path.dirname(rel)) |parent_rel| {
+                    staging_parent = try self.openRootRelativeDir(parent_rel, false);
+                    owns_parent = true;
+                } else {
+                    staging_parent = self.root_dir;
+                }
+            } else {
+                const parent_path = std.fs.path.dirname(staging_abs) orelse return error.InvalidStagingPath;
+                staging_parent = try std.Io.Dir.cwd().openDir(self.io, parent_path, .{});
+                owns_parent = true;
+            }
+        }
+        defer if (owns_parent) staging_parent.close(self.io);
+        var staging_dir_handle = try staging_parent.openDir(self.io, staging_name, .{ .iterate = true, .follow_symlinks = false });
+        defer staging_dir_handle.close(self.io);
+        var tree = try staging_dir_handle.openDir(self.io, "tree", .{ .iterate = true, .follow_symlinks = false });
+        defer tree.close(self.io);
+        const digest = try digestTreeFromDir(self.io, self.gpa, tree, &.{});
         var marker: [7 + 64 + 1]u8 = undefined;
         @memcpy(marker[0..7], "sha256:");
         @memcpy(marker[7..71], &std.fmt.bytesToHex(digest, .lower));
         marker[71] = '\n';
-        const marker_file = try std.fs.path.join(self.gpa, &.{ staging_abs, complete_marker });
-        defer self.gpa.free(marker_file);
-        try std.Io.Dir.cwd().writeFile(self.io, .{ .sub_path = marker_file, .data = &marker });
-        const dest = try std.fs.path.join(self.gpa, &.{ self.root, objects_dir, key });
-        defer self.gpa.free(dest);
-        std.Io.Dir.renameAbsolute(staging_abs, dest, self.io) catch |rename_err| switch (rename_err) {
-            // Destination exists (or was concurrently created). Do not assume a
-            // matching key proves its contents: verify both its marker and tree
-            // against this already-verified staging digest before discarding data.
+        try staging_dir_handle.writeFile(self.io, .{ .sub_path = complete_marker, .data = &marker });
+
+        var objects = try self.openRootChild(objects_dir, false);
+        defer objects.close(self.io);
+        staging_parent.rename(staging_name, objects, key, self.io) catch |rename_err| switch (rename_err) {
+            // Destination exists (or was concurrently created). Verify from the
+            // pinned root before discarding or replacing it.
             error.IsDir, error.NotDir, error.DirNotEmpty, error.AccessDenied => {
                 if (try self.verifyEntryDigest(self.gpa, key, digest)) {
-                    try environment.deleteTreeChecked(std.Io.Dir.cwd(), self.io, staging_abs);
+                    try environment.deleteTreeChecked(staging_parent, self.io, staging_name);
                 } else {
                     self.removeEntry(key) catch |remove_err| switch (remove_err) {
                         error.FileNotFound => {},
                         else => return remove_err,
                     };
-                    try std.Io.Dir.renameAbsolute(staging_abs, dest, self.io);
+                    try staging_parent.rename(staging_name, objects, key, self.io);
                 }
             },
             else => return rename_err,
@@ -382,10 +611,8 @@ pub const Store = struct {
     /// している前提で、使用中 entry を消さない協調を実現する。staging と
     /// 未完了 entry も回収する。戻り値は削除した entry 数。
     pub fn cleanKeep(self: *const Store, keep: []const []const u8) !usize {
-        const objects = try std.fs.path.join(self.gpa, &.{ self.root, objects_dir });
-        defer self.gpa.free(objects);
         var removed: usize = 0;
-        var dir = openManagedDir(self.io, objects) catch |err| switch (err) {
+        var dir = self.openRootChild(objects_dir, true) catch |err| switch (err) {
             error.FileNotFound => return 0,
             else => return err,
         };
@@ -417,9 +644,7 @@ pub const Store = struct {
         var removed: usize = 0;
         const subdirs = [_][]const u8{ objects_dir, staging_dir, checkouts_dir };
         for (subdirs) |sub| {
-            const base = try std.fs.path.join(self.gpa, &.{ self.root, sub });
-            defer self.gpa.free(base);
-            var dir = openManagedDir(self.io, base) catch |err| switch (err) {
+            var dir = self.openRootChild(sub, true) catch |err| switch (err) {
                 error.FileNotFound => continue,
                 else => return err,
             };
@@ -446,13 +671,9 @@ pub const Store = struct {
     }
 
     fn lockImpl(self: *const Store, nonblocking: bool) !LockGuard {
-        // cache root ハンドル相対で `cache.lock` を開く。leaf symlink は
-        // openManagedLockFile がリンク本体のみ除去して作り直す。
-        var root_dir = std.Io.Dir.cwd().openDir(self.io, self.root, .{
-            .follow_symlinks = false,
-        }) catch |err| return err;
-        defer root_dir.close(self.io);
-        var file = environment.openManagedLockFile(root_dir, self.io, lock_name, nonblocking) catch |err| switch (err) {
+        // open 時に固定した cache root handle 相対で `cache.lock` を開く。
+        // leaf symlink は openManagedLockFile がリンク本体のみ除去して作り直す。
+        var file = environment.openManagedLockFile(self.root_dir, self.io, lock_name, nonblocking) catch |err| switch (err) {
             error.WouldBlock => return error.Busy,
             else => return err,
         };
@@ -471,6 +692,181 @@ fn openTempStore(temporary: *std.testing.TmpDir) !Store {
     const root = try temporary.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
     defer testing.allocator.free(root);
     return try Store.open(testing.allocator, testing.io, root);
+}
+
+test "cache cleanAll は open 後に root が symlink へ置換されても別 root を削除しない" {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "root/objects/victim");
+    try temporary.dir.createDirPath(io, "root/staging/poison/tree");
+    try temporary.dir.writeFile(io, .{ .sub_path = "root/objects/victim/pinned", .data = "pinned" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "root/staging/poison/tree/payload", .data = "pinned" });
+    try temporary.dir.createDirPath(io, "attacker/objects/keep");
+    try temporary.dir.createDirPath(io, "attacker/staging/keep");
+    try temporary.dir.createDirPath(io, "attacker/checkouts/keep");
+    try temporary.dir.createDirPath(io, "attacker/objects/victim");
+    try temporary.dir.createDirPath(io, "attacker/staging/poison/tree");
+    try temporary.dir.writeFile(io, .{ .sub_path = "attacker/objects/victim/sentinel", .data = "safe" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "attacker/staging/poison/tree/payload", .data = "attacker" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "attacker/objects/keep/sentinel", .data = "safe" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "attacker/staging/keep/sentinel", .data = "safe" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "attacker/checkouts/keep/sentinel", .data = "safe" });
+    const root = try temporary.dir.realPathFileAlloc(io, "root", testing.allocator);
+    defer testing.allocator.free(root);
+    const attacker = try temporary.dir.realPathFileAlloc(io, "attacker", testing.allocator);
+    defer testing.allocator.free(attacker);
+
+    var store = try Store.open(testing.allocator, io, root);
+    defer store.deinit();
+    var guard = try store.lock();
+    defer guard.unlock();
+
+    // Store が pinned handle と lock を保持した後で root path を置換する。
+    const moved = try std.fmt.allocPrint(testing.allocator, "{s}-moved", .{root});
+    defer testing.allocator.free(moved);
+    try std.Io.Dir.renameAbsolute(root, moved, io);
+    temporary.dir.symLink(io, attacker, "root", .{}) catch return error.SkipZigTest;
+
+    // Root-derived staging paths and same-key deletions must also stay pinned.
+    const poison_staging = try std.fs.path.join(testing.allocator, &.{ root, staging_dir, "poison" });
+    defer testing.allocator.free(poison_staging);
+    try store.publish("poison", poison_staging);
+    try store.removeEntry("victim");
+    try testing.expect((try store.entryPath(testing.allocator, "keep")) == null);
+
+    for ([_][]const u8{
+        "attacker/objects/keep/sentinel",
+        "attacker/staging/keep/sentinel",
+        "attacker/checkouts/keep/sentinel",
+        "attacker/objects/victim/sentinel",
+    }) |path| {
+        const bytes = try temporary.dir.readFileAlloc(io, path, testing.allocator, .unlimited);
+        defer testing.allocator.free(bytes);
+        try testing.expectEqualStrings("safe", bytes);
+    }
+    const attacker_staging = try temporary.dir.readFileAlloc(io, "attacker/staging/poison/tree/payload", testing.allocator, .unlimited);
+    defer testing.allocator.free(attacker_staging);
+    try testing.expectEqualStrings("attacker", attacker_staging);
+    const published = try std.fs.path.join(testing.allocator, &.{ moved, objects_dir, "poison", "tree", "payload" });
+    defer testing.allocator.free(published);
+    const published_bytes = try std.Io.Dir.cwd().readFileAlloc(io, published, testing.allocator, .unlimited);
+    defer testing.allocator.free(published_bytes);
+    try testing.expectEqualStrings("pinned", published_bytes);
+    _ = try store.cleanAll();
+    const after_clean = try temporary.dir.readFileAlloc(io, "attacker/objects/keep/sentinel", testing.allocator, .unlimited);
+    defer testing.allocator.free(after_clean);
+    try testing.expectEqualStrings("safe", after_clean);
+}
+
+test "cache verified tree handle は root replacement 後も pinned entry を読む" {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "cache");
+    const root = try temporary.dir.realPathFileAlloc(io, "cache", testing.allocator);
+    defer testing.allocator.free(root);
+    var store = try Store.open(testing.allocator, io, root);
+    defer store.deinit();
+    var stage = try store.openStaging("object");
+    try stage.createDir(io, "tree", .default_dir);
+    var tree = try stage.openDir(io, "tree", .{});
+    try tree.writeFile(io, .{ .sub_path = "payload", .data = "pinned" });
+    tree.close(io);
+    stage.close(io);
+    try store.publishStaging("object");
+    var opened = (try store.openVerifiedTree(testing.allocator, "object")).?;
+    defer opened.close(io);
+
+    const moved = try std.fmt.allocPrint(testing.allocator, "{s}-moved", .{root});
+    defer testing.allocator.free(moved);
+    try std.Io.Dir.renameAbsolute(root, moved, io);
+    const bytes = try opened.readFileAlloc(io, "payload", testing.allocator, .unlimited);
+    defer testing.allocator.free(bytes);
+    try testing.expectEqualStrings("pinned", bytes);
+}
+
+test "cache materialize は root replacement 後も pinned tree を複製する" {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "cache");
+    try temporary.dir.createDirPath(io, "attacker");
+    try temporary.dir.createDirPath(io, "dest");
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", testing.allocator);
+    defer testing.allocator.free(cache_root);
+    const attacker_root = try temporary.dir.realPathFileAlloc(io, "attacker", testing.allocator);
+    defer testing.allocator.free(attacker_root);
+
+    var store = try Store.open(testing.allocator, io, cache_root);
+    defer store.deinit();
+    var guard = try store.lock();
+    defer guard.unlock();
+    var staging = try store.openStaging("victim");
+    try staging.createDir(io, "tree", .default_dir);
+    var tree = try staging.openDir(io, "tree", .{ .iterate = true, .follow_symlinks = false });
+    try tree.writeFile(io, .{ .sub_path = "payload", .data = "pinned" });
+    tree.close(io);
+    staging.close(io);
+    try store.publishStaging("victim");
+
+    {
+        var attacker = try Store.open(testing.allocator, io, attacker_root);
+        defer attacker.deinit();
+        var attacker_stage = try attacker.openStaging("victim");
+        try attacker_stage.createDir(io, "tree", .default_dir);
+        var attacker_tree = try attacker_stage.openDir(io, "tree", .{ .iterate = true, .follow_symlinks = false });
+        try attacker_tree.writeFile(io, .{ .sub_path = "payload", .data = "attacker" });
+        attacker_tree.close(io);
+        attacker_stage.close(io);
+        try attacker.publishStaging("victim");
+    }
+
+    const moved = try std.fmt.allocPrint(testing.allocator, "{s}-moved", .{cache_root});
+    defer testing.allocator.free(moved);
+    try std.Io.Dir.renameAbsolute(cache_root, moved, io);
+    temporary.dir.symLink(io, attacker_root, "cache", .{}) catch return error.SkipZigTest;
+
+    var source = (try store.openVerifiedTree(testing.allocator, "victim")).?;
+    defer source.close(io);
+    var destination = try temporary.dir.openDir(io, "dest", .{ .iterate = true, .follow_symlinks = false });
+    defer destination.close(io);
+    _ = try materialize.copyTreeFromDirs(testing.allocator, io, &source, &destination, .{});
+    const copied = try temporary.dir.readFileAlloc(io, "dest/payload", testing.allocator, .unlimited);
+    defer testing.allocator.free(copied);
+    try testing.expectEqualStrings("pinned", copied);
+    const attacker_payload = try temporary.dir.readFileAlloc(io, "attacker/objects/victim/tree/payload", testing.allocator, .unlimited);
+    defer testing.allocator.free(attacker_payload);
+    try testing.expectEqualStrings("attacker", attacker_payload);
+}
+
+test "cache staging は stale stage を除去し checkout を handle 経由で置換する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var store = try openTempStore(&temporary);
+    defer store.deinit();
+    var stale = try store.openStaging("stage-key");
+    try stale.writeFile(io, .{ .sub_path = "stale", .data = "old" });
+    stale.close(io);
+    var fresh = try store.openStaging("stage-key");
+    try testing.expectError(error.FileNotFound, fresh.openFile(io, "stale", .{}));
+    fresh.close(io);
+
+    try temporary.dir.createDirPath(io, "source/sub");
+    try temporary.dir.writeFile(io, .{ .sub_path = "source/sub/file", .data = "new" });
+    var source = try temporary.dir.openDir(io, "source", .{ .iterate = true });
+    defer source.close(io);
+    _ = try store.replaceCheckout("checkout-key", &source, .{});
+    var checkout = (try store.openCheckout("checkout-key")).?;
+    defer checkout.close(io);
+    const bytes = try checkout.readFileAlloc(io, "sub/file", testing.allocator, .unlimited);
+    defer testing.allocator.free(bytes);
+    try testing.expectEqualStrings("new", bytes);
+    _ = try store.replaceCheckout("checkout-key", &source, .{});
 }
 
 test "cache store は staging を publish で原子的に公開する" {
