@@ -67,6 +67,30 @@ fn openEditLockFile(nako_dir: std.Io.Dir, io: std.Io) Error!std.Io.File {
 // 環境状態の検査（副作用なし）
 // ---------------------------------------------------------------------------
 
+const environment_root_fields = [_][]const u8{
+    "schemaVersion",
+    "lockSha256",
+    "profile",
+    "runtime",
+    "mutablePaths",
+    "packages",
+};
+
+fn hasOnlyEnvironmentRootFields(object: std.json.ObjectMap) bool {
+    var iterator = object.iterator();
+    while (iterator.next()) |field| {
+        var known = false;
+        for (environment_root_fields) |name| {
+            if (std.mem.eql(u8, field.key_ptr.*, name)) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) return false;
+    }
+    return true;
+}
+
 pub const EnvironmentInfo = struct {
     schema_version: i64 = 0,
     lock_sha256: ?[]const u8 = null,
@@ -97,6 +121,7 @@ pub fn readEnvironmentInfo(gpa: Allocator, io: std.Io, project_root: []const u8)
     defer parsed.deinit();
     if (parsed.value != .object) return error.InvalidLock;
     const obj = parsed.value.object;
+    if (!hasOnlyEnvironmentRootFields(obj)) return null;
     if (obj.get("schemaVersion")) |v| {
         if (v == .integer) info.schema_version = v.integer;
     }
@@ -292,6 +317,7 @@ pub fn environmentPackagesUsable(gpa: Allocator, io: std.Io, project_root: []con
     var parsed = std.json.parseFromSlice(std.json.Value, gpa, bytes, .{}) catch return false;
     defer parsed.deinit();
     if (parsed.value != .object) return false;
+    if (!hasOnlyEnvironmentRootFields(parsed.value.object)) return false;
     const packages_value = parsed.value.object.get("packages") orelse return false;
     if (packages_value != .object) return false;
     // `environment.json` には generation は記録されない。同期が公開する

@@ -8,6 +8,7 @@ const npkg_files = @import("npkg_files.zig");
 const npkg_verify = @import("npkg_verify.zig");
 
 const Allocator = std.mem.Allocator;
+var git_hooks_nonce: std.atomic.Value(u64) = .init(0);
 
 pub const Session = fetch.Session;
 pub const Policy = fetch.Policy;
@@ -395,8 +396,43 @@ const GitResult = struct {
 fn gitRunAllowFailure(session: *Session, gpa: Allocator, argv: []const []const u8) Error!GitResult {
     var env_map = try fetch.sanitizedGitEnvMap(gpa);
     defer if (env_map) |*m| m.deinit();
+
+    // Cached checkout の .git/config は信頼しない。各 `git -C` に command
+    // config で hooks と fsmonitor を無効化し、空の hooks dir は checkout の
+    // sibling に exclusive create する（既存なら実行せず失敗する）。
+    var protected_argv: ?[][]const u8 = null;
+    var hooks_dir: ?[]const u8 = null;
+    defer if (hooks_dir) |dir| std.Io.Dir.cwd().deleteDir(session.io, dir) catch {};
+    if (argv.len >= 3 and std.mem.eql(u8, argv[1], "-C")) {
+        const parent = std.fs.path.dirname(argv[2]) orelse ".";
+        const nonce = git_hooks_nonce.fetchAdd(1, .monotonic);
+        const dir_name = try std.fmt.allocPrint(gpa, ".lnako-empty-git-hooks-{d}", .{nonce});
+        const dir = try std.fs.path.join(gpa, &.{ parent, dir_name });
+        std.Io.Dir.cwd().createDir(session.io, dir, .default_dir) catch |err| switch (err) {
+            else => return session.fail(.unavailable, .repository, argv[2], "cannot create protected git hooks directory: {s}", .{@errorName(err)}),
+        };
+        hooks_dir = dir;
+
+        // Git for Windows は config 値中の `\\` を escape と解釈し得るため、
+        // command-line config では同じ絶対 path を `/` 区切りで渡す。
+        const git_hooks_path = try gpa.dupe(u8, dir);
+        if (builtin.os.tag == .windows) {
+            for (git_hooks_path) |*ch| {
+                if (ch.* == '\\') ch.* = '/';
+            }
+        }
+        const hook_config = try std.fmt.allocPrint(gpa, "core.hooksPath={s}", .{git_hooks_path});
+        const safe_argv = try gpa.alloc([]const u8, argv.len + 4);
+        safe_argv[0] = argv[0];
+        safe_argv[1] = "-c";
+        safe_argv[2] = hook_config;
+        safe_argv[3] = "-c";
+        safe_argv[4] = "core.fsmonitor=false";
+        @memcpy(safe_argv[5..], argv[1..]);
+        protected_argv = safe_argv;
+    }
     const result = std.process.run(gpa, session.io, .{
-        .argv = argv,
+        .argv = if (protected_argv) |safe| safe else argv,
         .environ_map = if (env_map) |*m| m else null,
         .stdout_limit = .limited(64 * 1024 * 1024),
         .stderr_limit = .limited(4 * 1024 * 1024),

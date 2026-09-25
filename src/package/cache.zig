@@ -64,13 +64,17 @@ fn collectDigestEntries(io: std.Io, gpa: Allocator, dir: std.Io.Dir, rel: []cons
             try gpa.dupe(u8, entry.name)
         else
             try std.fs.path.join(gpa, &.{ rel, entry.name });
+        var owns_child_rel = true;
+        defer if (owns_child_rel) gpa.free(child_rel);
         switch (entry.kind) {
             .file => {
                 const stat = try dir.statFile(io, entry.name, .{});
                 try entries.append(gpa, .{ .rel = child_rel, .kind = .file, .size = stat.size });
+                owns_child_rel = false;
             },
             .directory => {
                 try entries.append(gpa, .{ .rel = child_rel, .kind = .directory });
+                owns_child_rel = false;
                 var child = try dir.openDir(io, entry.name, .{ .iterate = true, .follow_symlinks = false });
                 defer child.close(io);
                 try collectDigestEntries(io, gpa, child, child_rel, exclude_names, entries);
@@ -119,6 +123,15 @@ fn openRelativeFile(io: std.Io, root: std.Io.Dir, rel: []const u8) !std.Io.File 
 /// `exclude_names` に列挙した dir/file 名は digest 対象から除く。
 pub fn digestTree(io: std.Io, gpa: Allocator, tree_abs: []const u8, exclude_names: []const []const u8) ![32]u8 {
     var tree_dir = try std.Io.Dir.cwd().openDir(io, tree_abs, .{ .iterate = true, .follow_symlinks = false });
+    defer tree_dir.close(io);
+    return digestTreeFromDir(io, gpa, tree_dir, exclude_names);
+}
+
+/// Path dependency では宣言された root 自体が symlink の場合を許す。
+/// root を handle 化した後の走査は `digestTreeFromDir` が従来どおり no-follow
+/// で行うため、package tree 内部の symlink は引き続き拒否される。
+pub fn digestTreeFollowingRoot(io: std.Io, gpa: Allocator, tree_abs: []const u8, exclude_names: []const []const u8) ![32]u8 {
+    var tree_dir = try std.Io.Dir.cwd().openDir(io, tree_abs, .{ .iterate = true, .follow_symlinks = true });
     defer tree_dir.close(io);
     return digestTreeFromDir(io, gpa, tree_dir, exclude_names);
 }
@@ -687,6 +700,30 @@ pub const Store = struct {
 // ---------------------------------------------------------------------------
 
 const testing = std.testing;
+
+test "digestTreeFollowingRoot follows only the declared root symlink" {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "tree/sub");
+    try temporary.dir.writeFile(io, .{ .sub_path = "tree/sub/file", .data = "payload" });
+    try temporary.dir.symLink(io, "tree", "root-link", .{ .is_directory = true });
+    const tmp_root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(tmp_root);
+    const tree_path = try std.fs.path.join(testing.allocator, &.{ tmp_root, "tree" });
+    defer testing.allocator.free(tree_path);
+    const link_path = try std.fs.path.join(testing.allocator, &.{ tmp_root, "root-link" });
+    defer testing.allocator.free(link_path);
+
+    const expected = try digestTree(io, testing.allocator, tree_path, &.{});
+    const through_link = try digestTreeFollowingRoot(io, testing.allocator, link_path, &.{});
+    try testing.expectEqualSlices(u8, &expected, &through_link);
+
+    try temporary.dir.createDirPath(io, "outside");
+    try temporary.dir.symLink(io, "../../outside", "tree/sub/external", .{ .is_directory = true });
+    try testing.expectError(error.UnsupportedEntry, digestTreeFollowingRoot(io, testing.allocator, link_path, &.{}));
+}
 
 fn openTempStore(temporary: *std.testing.TmpDir) !Store {
     const root = try temporary.dir.realPathFileAlloc(testing.io, ".", testing.allocator);

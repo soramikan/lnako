@@ -686,6 +686,51 @@ test "git provider は dirty cached checkout を pinned commit へ戻してか�
     try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "checkout/nested-untracked/.git", .{}));
 }
 
+test "git provider は cached repository の post-checkout hook を実行しない" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = testing.io;
+    if (!gitAvailable(io)) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const repo = try createGitRepo(&temporary, io);
+    defer testing.allocator.free(repo.path);
+    defer testing.allocator.free(repo.url);
+    defer testing.allocator.free(repo.commit);
+    const tmp_root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(tmp_root);
+    const checkout = try std.fs.path.join(testing.allocator, &.{ tmp_root, "checkout" });
+    defer testing.allocator.free(checkout);
+    const hook_dir = try std.fs.path.join(testing.allocator, &.{ tmp_root, "attacker-hooks" });
+    defer testing.allocator.free(hook_dir);
+    const hook_path = try std.fs.path.join(testing.allocator, &.{ hook_dir, "post-checkout" });
+    defer testing.allocator.free(hook_path);
+    const marker = try std.fs.path.join(testing.allocator, &.{ tmp_root, "hook-ran" });
+    defer testing.allocator.free(marker);
+
+    var session = newSession(.{});
+    defer session.deinit();
+    const dep = manifest_mod.GitDependency{ .name = "demo", .url = repo.url, .commit = repo.commit[0..7] };
+    _ = try provider.acquireGit(&session, dep, checkout, null);
+
+    // 確実に post-checkout を発火させるため、hook を仕込む前に別 commit へ移す。
+    try temporary.dir.writeFile(io, .{ .sub_path = "repo/second.txt", .data = "second" });
+    try gitRun(io, &.{ "git", "-C", repo.path, "-c", "user.email=test@example.com", "-c", "user.name=test", "add", "-A" });
+    try gitRun(io, &.{ "git", "-C", repo.path, "-c", "user.email=test@example.com", "-c", "user.name=test", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "second" });
+    const second_commit = try gitStdout(io, &.{ "git", "-C", repo.path, "rev-parse", "HEAD" });
+    defer testing.allocator.free(second_commit);
+    try gitRun(io, &.{ "git", "-C", checkout, "fetch", "--quiet", "origin", second_commit });
+    try gitRun(io, &.{ "git", "-C", checkout, "checkout", "--quiet", "--force", second_commit });
+
+    try temporary.dir.createDir(io, "attacker-hooks", .default_dir);
+    const hook_script = try std.fmt.allocPrint(testing.allocator, "#!/bin/sh\nprintf owned > '{s}'\n", .{marker});
+    defer testing.allocator.free(hook_script);
+    try temporary.dir.writeFile(io, .{ .sub_path = "attacker-hooks/post-checkout", .data = hook_script });
+    try gitRun(io, &.{ "chmod", "+x", hook_path });
+    try gitRun(io, &.{ "git", "-C", checkout, "config", "core.hooksPath", hook_dir });
+    _ = try provider.acquireGit(&session, dep, checkout, null);
+    try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "hook-ran", .{}));
+}
+
 test "git provider は commit-ish と同名の移動した tag に誤解されない" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;

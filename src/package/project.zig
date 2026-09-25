@@ -652,74 +652,6 @@ fn normalizePathSource(gpa: Allocator, declared: []const u8, base_dir: ?[]const 
     return joined;
 }
 
-fn cleanGitCheckout(gpa: Allocator, io: std.Io, path: []const u8) Error!void {
-    const dot_git = try std.fs.path.join(gpa, &.{ path, ".git" });
-    defer gpa.free(dot_git);
-    var env_map = try fetch.sanitizedGitEnvMap(gpa);
-    defer if (env_map) |*map| map.deinit();
-    std.Io.Dir.cwd().access(io, dot_git, .{}) catch |err| switch (err) {
-        error.FileNotFound => return,
-        else => return mapFs(err),
-    };
-    const reset = std.process.run(gpa, io, .{
-        .argv = &.{ "git", "-C", path, "reset", "--hard", "HEAD" },
-        .environ_map = if (env_map) |*map| map else null,
-        .stdout_limit = .limited(1024 * 1024),
-        .stderr_limit = .limited(1024 * 1024),
-    }) catch |err| return mapFs(err);
-    defer gpa.free(reset.stdout);
-    defer gpa.free(reset.stderr);
-    if (reset.term != .exited or reset.term.exited != 0) return error.FileSystem;
-    const clean = std.process.run(gpa, io, .{
-        .argv = &.{ "git", "-C", path, "clean", "-ffdx" },
-        .environ_map = if (env_map) |*map| map else null,
-        .stdout_limit = .limited(1024 * 1024),
-        .stderr_limit = .limited(1024 * 1024),
-    }) catch |err| return mapFs(err);
-    defer gpa.free(clean.stdout);
-    defer gpa.free(clean.stderr);
-    if (clean.term != .exited or clean.term.exited != 0) return error.FileSystem;
-}
-
-fn runProjectTestGit(gpa: Allocator, io: std.Io, argv: []const []const u8) !void {
-    var env_map = try fetch.sanitizedGitEnvMap(gpa);
-    defer if (env_map) |*map| map.deinit();
-    const result = try std.process.run(gpa, io, .{
-        .argv = argv,
-        .environ_map = if (env_map) |*map| map else null,
-        .stdout_limit = .limited(1024 * 1024),
-        .stderr_limit = .limited(1024 * 1024),
-    });
-    defer gpa.free(result.stdout);
-    defer gpa.free(result.stderr);
-    if (result.term != .exited or result.term.exited != 0) return error.GitFailed;
-}
-
-test "cleanGitCheckout discards tracked edits and untracked files" {
-    const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
-    try temporary.dir.createDir(io, "checkout", .default_dir);
-    const checkout = try temporary.dir.realPathFileAlloc(io, "checkout", std.testing.allocator);
-    defer std.testing.allocator.free(checkout);
-    for ([_][]const []const u8{
-        &.{ "git", "-C", checkout, "init", "-q" },
-        &.{ "git", "-C", checkout, "config", "user.email", "test@example.invalid" },
-        &.{ "git", "-C", checkout, "config", "user.name", "Test" },
-    }) |argv| try runProjectTestGit(std.testing.allocator, io, argv);
-    try temporary.dir.writeFile(io, .{ .sub_path = "checkout/tracked", .data = "pinned" });
-    try runProjectTestGit(std.testing.allocator, io, &.{ "git", "-C", checkout, "add", "tracked" });
-    try runProjectTestGit(std.testing.allocator, io, &.{ "git", "-C", checkout, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "pin" });
-
-    try temporary.dir.writeFile(io, .{ .sub_path = "checkout/tracked", .data = "modified" });
-    try temporary.dir.writeFile(io, .{ .sub_path = "checkout/untracked", .data = "discard" });
-    try cleanGitCheckout(std.testing.allocator, io, checkout);
-    const restored = try temporary.dir.readFileAlloc(io, "checkout/tracked", std.testing.allocator, .limited(32));
-    defer std.testing.allocator.free(restored);
-    try std.testing.expectEqualStrings("pinned", restored);
-    try std.testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "checkout/untracked", .{}));
-}
-
 fn openGitWorkspaceRoot(io: std.Io, parent_dir: std.Io.Dir) Error!std.Io.Dir {
     parent_dir.createDir(io, ".lnako-git-workspaces", .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
@@ -981,7 +913,7 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
                 // `mutable = false` は tree 内容を hash pin する（spec §3.4.3）。
                 // 後の内容変更は lock の鮮度判定・sync 検証で検出される。
                 if (!dep.mutable) {
-                    const digest = cache.digestTree(ctx.io, gpa, child_base_dir.?, &cache.source_pin_exclude) catch |err| switch (err) {
+                    const digest = cache.digestTreeFollowingRoot(ctx.io, gpa, child_base_dir.?, &cache.source_pin_exclude) catch |err| switch (err) {
                         error.OutOfMemory => return error.OutOfMemory,
                         else => return ctx.session.fail(.invalid_source, .package, dep_name, "cannot hash path dependency \"{s}\" tree: {s}", .{ dep_name, @errorName(err) }),
                     };
@@ -994,10 +926,8 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
                 defer checkout.root_dir.close(ctx.io);
                 defer checkout.root_dir.deleteTree(ctx.io, checkout.key) catch {};
                 defer checkout.workspace_dir.close(ctx.io);
-                // cache checkout は以前の失敗や外部変更で dirty の可能性がある。
-                // provider が同じ commit を checkout しても作業ツリー変更は残るため、
-                // manifest を読む前に tracked/untracked 内容を破棄する。
-                try cleanGitCheckout(gpa, ctx.io, checkout.path);
+                // cache checkout の検証・清掃・checkout は provider が安全な
+                // Git config override の下で実行してから manifest を読む。
                 const locked = try lockedSourceForWork(ctx, work);
                 const locked_public_id = if (locked) |source|
                     try publicIdFor(gpa, try project_identity.virtualIdForResolvedSource(gpa, source, ctx.project_root))
@@ -1581,7 +1511,7 @@ pub fn ensureLock(
     if (ctx.mutable_deps.items.len > 0) {
         var mutable: std.ArrayList(lock_model.MutablePath) = .empty;
         for (ctx.mutable_deps.items) |dep| {
-            const digest = cache.digestTree(io, a, dep.dir, &cache.source_pin_exclude) catch |err| switch (err) {
+            const digest = cache.digestTreeFollowingRoot(io, a, dep.dir, &cache.source_pin_exclude) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => {
                     try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml", .{}, "cannot hash mutable path dependency \"{s}\" tree: {s}", .{ dep.path, @errorName(err) });

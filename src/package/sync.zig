@@ -13,6 +13,7 @@
 //!   immutable entry 側で防ぐ。
 
 const std = @import("std");
+const builtin = @import("builtin");
 const zip = @import("../archive/zip.zig");
 const cache = @import("cache.zig");
 const diag = @import("diagnostics.zig");
@@ -160,7 +161,7 @@ pub fn mutablePathsMismatch(gpa: Allocator, io: std.Io, project_root: []const u8
             mutable.path
         else
             try std.fs.path.join(gpa, &.{ project_root, mutable.path });
-        const digest = cache.digestTree(io, gpa, abs, &cache.source_pin_exclude) catch return mutable.path;
+        const digest = cache.digestTreeFollowingRoot(io, gpa, abs, &cache.source_pin_exclude) catch return mutable.path;
         const actual = try std.fmt.allocPrint(gpa, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
         if (!std.mem.eql(u8, actual, mutable.sha256)) return mutable.path;
     }
@@ -191,7 +192,7 @@ pub fn pathPinMismatch(gpa: Allocator, io: std.Io, project_root: []const u8, loc
                 rel
             else
                 try std.fs.path.join(gpa, &.{ project_root, rel });
-            const digest = cache.digestTree(io, gpa, abs, &cache.source_pin_exclude) catch return entry.name;
+            const digest = cache.digestTreeFollowingRoot(io, gpa, abs, &cache.source_pin_exclude) catch return entry.name;
             if (!pinHashMatches(digest, recorded)) return entry.name;
         }
     }
@@ -655,15 +656,17 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
 /// 空・末尾 separator（filesystem root を除く）・`.` 成分・途中の空成分・制御文字。
 fn isCanonicalDepPath(path: []const u8) bool {
     if (path.len == 0) return false;
+    const is_windows = builtin.os.tag == .windows;
+    const separators = if (is_windows) "/\\" else "/";
     // Filesystem roots are the only canonical paths whose complete spelling
     // is a trailing separator; they cannot be normalized by trimming that byte.
     if (std.mem.eql(u8, path, "/")) return true;
-    if (path.len == 3 and
+    if (is_windows and path.len == 3 and
         std.ascii.isAlphabetic(path[0]) and
-        path[1] == ':' and path[2] == '\\') return true;
-    if (path[path.len - 1] == '/' or path[path.len - 1] == '\\') return false;
-    const starts_sep = path[0] == '/' or path[0] == '\\';
-    var components = std.mem.splitAny(u8, path, "/\\");
+        path[1] == ':' and (path[2] == '/' or path[2] == '\\')) return true;
+    if (std.mem.indexOfScalar(u8, separators, path[path.len - 1]) != null) return false;
+    const starts_sep = std.mem.indexOfScalar(u8, separators, path[0]) != null;
+    var components = std.mem.splitAny(u8, path, separators);
     var index: usize = 0;
     while (components.next()) |component| : (index += 1) {
         if (component.len == 0) {
@@ -723,14 +726,22 @@ test "source export target preserves resolved features and Nako version" {
     try testing.expect(!try declaration.matchesTarget(testing.allocator, missing_feature_target, true));
 }
 
-test "canonical dependency path admits filesystem roots only" {
+test "canonical dependency path uses host separators and admits filesystem roots" {
     try std.testing.expect(isCanonicalDepPath("/"));
-    try std.testing.expect(isCanonicalDepPath("C:\\"));
     try std.testing.expect(isCanonicalDepPath("/deps/lib"));
     try std.testing.expect(!isCanonicalDepPath("/deps/"));
     try std.testing.expect(!isCanonicalDepPath("deps/"));
-    try std.testing.expect(!isCanonicalDepPath("C:/"));
-    try std.testing.expect(!isCanonicalDepPath("C:\\deps\\"));
+    if (builtin.os.tag == .windows) {
+        try std.testing.expect(isCanonicalDepPath("C:\\"));
+        try std.testing.expect(isCanonicalDepPath("C:/"));
+        try std.testing.expect(isCanonicalDepPath("C:\\deps\\lib"));
+        try std.testing.expect(!isCanonicalDepPath("C:\\deps\\"));
+    } else {
+        // POSIX dependency names may contain or end with backslashes.
+        try std.testing.expect(isCanonicalDepPath("lib\\"));
+        try std.testing.expect(isCanonicalDepPath("lib\\\\part"));
+        try std.testing.expect(!isCanonicalDepPath("lib//part"));
+    }
 }
 
 /// git source の repo 内 subdir が規範的な相対 path か。repo 境界内だけを

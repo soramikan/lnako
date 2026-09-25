@@ -429,6 +429,13 @@ pub const Store = struct {
     /// `.nako/current` に記録された現行世代名を返す。無ければ null。
     /// 世代名として不正な内容は null として扱う（余分な世代を残す方向）。
     pub fn readCurrent(self: *const Store, gpa: Allocator) !?[]u8 {
+        const stat = self.root_dir.statFile(self.io, current_file, .{ .follow_symlinks = false }) catch |err| switch (err) {
+            error.FileNotFound => return null,
+            else => return err,
+        };
+        // Directory・symlink・その他の特殊 entry は無効な pointer として扱う。
+        // 特に directory を readFile して IsDir で sync を永久停止させない。
+        if (stat.kind != .file) return null;
         const bytes = self.root_dir.readFileAlloc(self.io, current_file, gpa, .limited(4096)) catch |err| switch (err) {
             error.FileNotFound => return null,
             else => return err,
@@ -442,6 +449,21 @@ pub const Store = struct {
     /// `.nako/current` を原子的に書き換える。`commit` の環境公開後に呼ぶ。
     pub fn writeCurrent(self: *const Store, generation: []const u8) !void {
         if (!validGenerationName(generation)) return error.InvalidGeneration;
+        const current_stat = self.root_dir.statFile(self.io, current_file, .{ .follow_symlinks = false }) catch |err| switch (err) {
+            error.FileNotFound => null,
+            else => return err,
+        };
+        if (current_stat) |stat| {
+            if (stat.kind == .directory) {
+                // directory の中身を消さず、固定 root handle 相対で staging へ
+                // 退避する。次回 recoverStaging が no-follow で回収できる。
+                var staging = try openManagedChildDir(self.root_dir, self.io, staging_dir, false);
+                defer staging.close(self.io);
+                const quarantine = try std.fmt.allocPrint(self.gpa, "invalid-current-{s}", .{generation});
+                defer self.gpa.free(quarantine);
+                try self.root_dir.rename(current_file, staging, quarantine, self.io);
+            }
+        }
         var atomic = try self.root_dir.createFileAtomic(self.io, current_file, .{ .replace = true });
         defer atomic.deinit(self.io);
         try atomic.file.writeStreamingAll(self.io, generation);
@@ -770,14 +792,33 @@ test "Store.open の dir handle により recoverStaging は .nako replacement �
     try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(io, replacement_payload, .{}));
 }
 
-test "environment store は current 公開失敗を返す" {
+test "environment store は directory の current を安全に退避して再公開できる" {
     const io = testing.io;
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     var store = try openTempStore(&temporary);
     defer store.deinit();
-    try store.root_dir.createDirPath(io, current_file);
-    try testing.expectError(error.IsDir, store.writeCurrent("gen-1234"));
+    try store.root_dir.createDirPath(io, current_file ++ "/sentinel");
+    try testing.expect((try store.readCurrent(testing.allocator)) == null);
+
+    try store.writeCurrent("gen-1234");
+    const current = (try store.readCurrent(testing.allocator)).?;
+    defer testing.allocator.free(current);
+    try testing.expectEqualStrings("gen-1234", current);
+
+    {
+        var staging = try store.root_dir.openDir(io, staging_dir, .{ .iterate = true, .follow_symlinks = false });
+        defer staging.close(io);
+        var quarantined = try staging.openDir(io, "invalid-current-gen-1234", .{ .iterate = true, .follow_symlinks = false });
+        defer quarantined.close(io);
+        try quarantined.access(io, "sentinel", .{});
+    }
+    try store.recoverStaging();
+    {
+        var staging = try store.root_dir.openDir(io, staging_dir, .{ .iterate = true, .follow_symlinks = false });
+        defer staging.close(io);
+        try testing.expectError(error.FileNotFound, staging.access(io, "invalid-current-gen-1234", .{}));
+    }
 }
 
 test "environment store の lock は保持中に Busy を返し解放後に取得できる" {
