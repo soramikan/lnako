@@ -434,16 +434,19 @@ pub const Store = struct {
         if (!validKey(key)) return error.InvalidKey;
         var staging = try self.openRootChild(staging_dir, false);
         defer staging.close(self.io);
-        var stage_dir = try staging.openDir(self.io, key, .{ .iterate = true, .follow_symlinks = false });
-        defer stage_dir.close(self.io);
-        var tree = try stage_dir.openDir(self.io, "tree", .{ .iterate = true, .follow_symlinks = false });
-        defer tree.close(self.io);
-        const digest = try digestTreeFromDir(self.io, self.gpa, tree, &.{});
-        var marker: [72]u8 = undefined;
-        @memcpy(marker[0..7], "sha256:");
-        @memcpy(marker[7..71], &std.fmt.bytesToHex(digest, .lower));
-        marker[71] = '\n';
-        try stage_dir.writeFile(self.io, .{ .sub_path = complete_marker, .data = &marker });
+        const digest = blk: {
+            var stage_dir = try staging.openDir(self.io, key, .{ .iterate = true, .follow_symlinks = false });
+            defer stage_dir.close(self.io);
+            var tree = try stage_dir.openDir(self.io, "tree", .{ .iterate = true, .follow_symlinks = false });
+            defer tree.close(self.io);
+            const tree_digest = try digestTreeFromDir(self.io, self.gpa, tree, &.{});
+            var marker: [72]u8 = undefined;
+            @memcpy(marker[0..7], "sha256:");
+            @memcpy(marker[7..71], &std.fmt.bytesToHex(tree_digest, .lower));
+            marker[71] = '\n';
+            try stage_dir.writeFile(self.io, .{ .sub_path = complete_marker, .data = &marker });
+            break :blk tree_digest;
+        };
 
         var objects = try self.openRootChild(objects_dir, false);
         defer objects.close(self.io);

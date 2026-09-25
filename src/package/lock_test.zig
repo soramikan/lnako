@@ -1567,6 +1567,21 @@ test "選択実装に対応するartifactの欠落をE008で拒否する" {
     try lock.validate(&value, &diagnostics);
     try T.expect(diagnostics.find(diag.E008_MISSING_ARTIFACT) != null);
 
+    const none_implementation = [_]lock.PackageEntry{
+        .{ .id = sqlite_id, .name = sqlite_name, .version = "1.0.0", .implementation = "none", .artifacts = &.{sqlite_source_artifact} },
+    };
+    var none_value = lock.Lock{
+        .arena = std.heap.ArenaAllocator.init(T.allocator),
+        .input = sampleInput(),
+        .packages = &none_implementation,
+        .profiles = &profiles,
+    };
+    defer none_value.deinit();
+    var none_diagnostics = diag.List.init(T.allocator);
+    defer none_diagnostics.deinit();
+    try lock.validate(&none_value, &none_diagnostics);
+    try T.expect(none_diagnostics.find(diag.E008_MISSING_ARTIFACT) != null);
+
     const matching = [_]lock.PackageEntry{
         .{ .id = sqlite_id, .name = sqlite_name, .version = "1.0.0", .implementation = "source", .artifacts = &.{sqlite_source_artifact} },
     };

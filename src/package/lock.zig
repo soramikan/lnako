@@ -671,7 +671,9 @@ fn validatePackageSet(packages: []const PackageEntry, exists: *const std.StringH
                 try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, package_path, .{}, "unknown implementation \"{s}\"", .{implementation});
             } else if (std.mem.eql(u8, implementation, "ESM") and !esm_allowed) {
                 try diagnostics.addFmt(diag.E006_JS_IN_NORMAL_MODE, .err, artifacts_path, .{}, "ESM implementation selected without compat-js profile", .{});
-            } else if (!std.mem.eql(u8, implementation, "none") and !package.hasKind(implementation) and !source_container) {
+            } else if (std.mem.eql(u8, implementation, "none")) {
+                try diagnostics.addFmt(diag.E008_MISSING_ARTIFACT, .err, artifacts_path, .{}, "implementation \"none\" has no materializable artifact", .{});
+            } else if (!package.hasKind(implementation) and !source_container) {
                 try diagnostics.addFmt(diag.E008_MISSING_ARTIFACT, .err, artifacts_path, .{}, "selected implementation \"{s}\" has no matching artifact", .{implementation});
             }
         }
