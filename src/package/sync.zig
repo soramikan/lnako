@@ -1142,8 +1142,7 @@ fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, entry: 
     return exports;
 }
 
-/// commands.json を package dir から読むか、manifest export の source を
-/// 静的走査して生成する。どちらも無い場合は空。
+/// commands.json が無い場合は manifest exports から生成する。
 fn collectCommands(ctx: *Context, tree_abs: ?[]const u8, tree_dir: ?std.Io.Dir, manifest: ?*const manifest_mod.Manifest) Error![]const npkg_commands.Command {
     const arena = ctx.arena;
     const display_root = tree_abs orelse ctx.generation_rel;
@@ -1230,10 +1229,6 @@ const DirSourceProvider = struct {
     }
 };
 
-// ---------------------------------------------------------------------------
-// tests
-// ---------------------------------------------------------------------------
-
 const testing = std.testing;
 
 fn sha256HexAlloc(allocator: Allocator, bytes: []const u8) ![]u8 {
@@ -1263,9 +1258,7 @@ const lib_manifest =
     \\
 ;
 
-/// path 依存1件を持つ最小プロジェクトを作る。戻り値は lock 本文。
-/// `mutable_sha` は `deps/lib` の tree digest（`sha256:<hex>`）。
-/// `mutable = true` の source は `input.mutablePaths` の記録が必須。
+/// path 依存 fixture のlockを生成する。
 fn fixtureLock(allocator: Allocator, manifest_sha: []const u8, mutable_sha: []const u8) ![]u8 {
     return try std.fmt.allocPrint(allocator,
         \\{{
@@ -1427,44 +1420,6 @@ test "sync は path 依存を参照して schema v1 の環境を構築する" {
     const written = try temporary.dir.readFileAlloc(io, ".nako/environment.json", testing.allocator, .unlimited);
     defer testing.allocator.free(written);
     try testing.expectEqualStrings(report.environment_json, written);
-}
-
-test "sync は読み取り不能な commands.json を生成fallbackへ黙って落とさない" {
-    const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
-    const manifest_sha = try sha256HexAlloc(testing.allocator, app_manifest);
-    defer testing.allocator.free(manifest_sha);
-
-    // commands.json の場所が directory だと readFileAlloc は IsDir を返す。
-    // これは「index が無い」と同じではなく、sync を失敗させる必要がある。
-    try temporary.dir.createDirPath(io, "deps/lib/src");
-    try temporary.dir.createDirPath(io, "deps/lib/NAKO-PKG/commands.json");
-    try temporary.dir.writeFile(io, .{ .sub_path = "nako.toml", .data = app_manifest });
-    try temporary.dir.writeFile(io, .{ .sub_path = "deps/lib/nako.toml", .data = lib_manifest });
-    try temporary.dir.writeFile(io, .{
-        .sub_path = "deps/lib/src/index.nako3",
-        .data = "●テストとは\n  戻る\nここまで\n",
-    });
-    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
-    defer testing.allocator.free(root);
-    const lib_abs = try std.fs.path.join(testing.allocator, &.{ root, "deps/lib" });
-    defer testing.allocator.free(lib_abs);
-    const digest = try cache.digestTree(io, testing.allocator, lib_abs, &cache.source_pin_exclude);
-    const mutable_sha = try std.fmt.allocPrint(testing.allocator, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
-    defer testing.allocator.free(mutable_sha);
-    const lock_bytes = try fixtureLock(testing.allocator, manifest_sha, mutable_sha);
-    defer testing.allocator.free(lock_bytes);
-    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock_bytes });
-
-    const cache_root = try std.fs.path.join(testing.allocator, &.{ root, "cache" });
-    defer testing.allocator.free(cache_root);
-    var diagnostics = diag.List.init(testing.allocator);
-    defer diagnostics.deinit();
-    try testing.expectError(error.InvalidMetadata, run(testing.allocator, io, .{
-        .project_root = root,
-        .cache_root = cache_root,
-    }, &diagnostics));
 }
 
 test "sync は manifest との不整合な lock を StaleLock で拒否する" {
@@ -1712,4 +1667,8 @@ test "materialize target は lock input の compatJs・optimize・engine version
     try testing.expect(!legacy_target.compat_js);
     try testing.expectEqualStrings("O0", legacy_target.optimize);
     try testing.expect(legacy_target.nako_version == null);
+}
+
+test {
+    _ = @import("sync_test.zig");
 }
