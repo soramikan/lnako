@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const cache_mod = @import("cache.zig");
 const diag = @import("diagnostics.zig");
 const fetch = @import("fetch.zig");
 const lock_model = @import("lock_model.zig");
@@ -706,6 +707,8 @@ test "git provider は cached repository の post-checkout hook を実行しな�
     defer testing.allocator.free(hook_path);
     const marker = try std.fs.path.join(testing.allocator, &.{ tmp_root, "hook-ran" });
     defer testing.allocator.free(marker);
+    const filter_marker = try std.fs.path.join(testing.allocator, &.{ tmp_root, "filter-ran" });
+    defer testing.allocator.free(filter_marker);
 
     var session = newSession(.{});
     defer session.deinit();
@@ -727,8 +730,13 @@ test "git provider は cached repository の post-checkout hook を実行しな�
     try temporary.dir.writeFile(io, .{ .sub_path = "attacker-hooks/post-checkout", .data = hook_script });
     try gitRun(io, &.{ "chmod", "+x", hook_path });
     try gitRun(io, &.{ "git", "-C", checkout, "config", "core.hooksPath", hook_dir });
+    const filter_command = try std.fmt.allocPrint(testing.allocator, "sh -c 'cat > {s}'", .{filter_marker});
+    defer testing.allocator.free(filter_command);
+    try gitRun(io, &.{ "git", "-C", checkout, "config", "filter.evil.smudge", filter_command });
+    try temporary.dir.writeFile(io, .{ .sub_path = "checkout/.git/info/attributes", .data = "nako.toml filter=evil\\n" });
     _ = try provider.acquireGit(&session, dep, checkout, null);
     try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "hook-ran", .{}));
+    try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "filter-ran", .{}));
 }
 
 test "git provider は commit-ish と同名の移動した tag に誤解されない" {
@@ -1659,9 +1667,45 @@ test "sync は lock の implementation で選択した artifact を取得する"
     const exports = pkg.get("exports").?.array;
     try testing.expectEqual(@as(usize, 1), exports.items.len);
     try testing.expectEqualStrings("lib/demo.so", exports.items[0].object.get("path").?.string);
+
+    // attacker が cache tree・marker・source.archive を差し替えても、
+    // lock hash に合わない archive は破棄して再取得する。
+    const objects_path = try std.fs.path.join(testing.allocator, &.{ cache_root, "objects" });
+    defer testing.allocator.free(objects_path);
+    var objects = try std.Io.Dir.cwd().openDir(io, objects_path, .{ .iterate = true, .follow_symlinks = false });
+    defer objects.close(io);
+    var iterator = objects.iterate();
+    const object = (try iterator.next(io)).?;
+    const object_root = try std.fs.path.join(testing.allocator, &.{ objects_path, object.name });
+    defer testing.allocator.free(object_root);
+    const cache_tree = try std.fs.path.join(testing.allocator, &.{ object_root, "tree" });
+    defer testing.allocator.free(cache_tree);
+    const cached_binary = try std.fs.path.join(testing.allocator, &.{ cache_tree, "lib", "demo.so" });
+    defer testing.allocator.free(cached_binary);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = cached_binary, .data = "ATTACKER-BINARY" });
+    const digest = try cache_mod.digestTree(io, testing.allocator, cache_tree, &.{});
+    var marker: [72]u8 = undefined;
+    @memcpy(marker[0..7], "sha256:");
+    @memcpy(marker[7..71], &std.fmt.bytesToHex(digest, .lower));
+    marker[71] = '\n';
+    const marker_path = try std.fs.path.join(testing.allocator, &.{ object_root, cache_mod.complete_marker });
+    defer testing.allocator.free(marker_path);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = marker_path, .data = &marker });
+    const source_archive = try std.fs.path.join(testing.allocator, &.{ object_root, "source.archive" });
+    defer testing.allocator.free(source_archive);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = source_archive, .data = "ATTACKER-ARCHIVE" });
+
+    var second = try sync_mod.run(testing.allocator, io, .{ .project_root = project_abs, .cache_root = cache_root }, &list);
+    defer second.deinit();
+    try testing.expectEqual(@as(usize, 2), server.requests.load(.acquire));
+    const rebuilt_binary = try std.fs.path.join(testing.allocator, &.{ project_abs, ".nako", "env", second.generation, "deps", "demo", "lib", "demo.so" });
+    defer testing.allocator.free(rebuilt_binary);
+    const rebuilt = try std.Io.Dir.cwd().readFileAlloc(io, rebuilt_binary, testing.allocator, .unlimited);
+    defer testing.allocator.free(rebuilt);
+    try testing.expectEqualStrings("NATIVE-BINARY", rebuilt);
 }
 
-test "sync は検証済み git object があれば checkout 無しで offline 同期する" {
+test "sync は lock commit を cached checkout で再検証して offline 同期する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
     var temporary = std.testing.tmpDir(.{});
@@ -1699,11 +1743,8 @@ test "sync は検証済み git object があれば checkout 無しで offline �
     }, &list);
     first.deinit();
 
-    // 可変 checkout と upstream repo を消しても、検証済み object だけで
-    // materialize できる（offline で Git 起動・clone/fetch を要求しない）。
-    const checkouts = try std.fs.path.join(testing.allocator, &.{ cache_root, "checkouts" });
-    defer testing.allocator.free(checkouts);
-    try std.Io.Dir.cwd().deleteTree(io, checkouts);
+    // upstream が消えていても cached checkout の Git object DB から lock の
+    // commit を再検証できるため、offline で checkout/fetch 不要。
     try std.Io.Dir.cwd().deleteTree(io, repo.path);
 
     var second = try sync_mod.run(testing.allocator, io, .{

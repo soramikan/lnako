@@ -168,9 +168,12 @@ pub fn acquireGit(
         }
         try gitRun(session, &.{ "git", "clone", "--quiet", "--no-checkout", dep.url, checkout_dir }, null);
     } else {
+        // 共有 checkout の config / info attributes は攻撃者が編集できる。
+        // checkout 前に filter driver を全て外し、info attributes も破棄する。
         // 既存 checkout の origin が宣言 URL と一致するか検証する。別 repo の
         // checkout を再利用して別 URL の内容を読み違えないようにする。
         try verifyCheckoutOrigin(session, checkout_dir, dep);
+        try disableCheckoutFilters(session, checkout_dir, dep.url);
     }
 
     // 既存 checkout に commit-ish が無ければ、オンラインではリモートを
@@ -393,9 +396,57 @@ const GitResult = struct {
     stderr: []const u8,
 };
 
+/// 共有 checkout のローカル filter driver を除去する。Git config 自身の読み書き
+/// だけを実行し、checkout/filter 処理に入る前に repository config を無害化する。
+fn disableCheckoutFilters(session: *Session, checkout_dir: []const u8, origin_url: []const u8) Error!void {
+    const gpa = session.allocator();
+    const config_path = try std.fs.path.join(gpa, &.{ checkout_dir, ".git", "config" });
+    defer gpa.free(config_path);
+    // Do not try to selectively parse untrusted config (including include.*). Replace
+    // it with a minimal config that retains only the declared origin and repo basics.
+    std.Io.Dir.cwd().deleteFile(session.io, config_path) catch |err| switch (err) {
+        error.FileNotFound => {},
+        else => return session.fail(.unavailable, .repository, checkout_dir, "cannot reset cached Git config: {s}", .{@errorName(err)}),
+    };
+    const settings = [_]struct { key: []const u8, value: []const u8 }{
+        .{ .key = "core.repositoryformatversion", .value = "0" },
+        .{ .key = "core.filemode", .value = "true" },
+        .{ .key = "core.bare", .value = "false" },
+        .{ .key = "core.logallrefupdates", .value = "true" },
+        .{ .key = "remote.origin.url", .value = origin_url },
+        .{ .key = "remote.origin.fetch", .value = "+refs/heads/*:refs/remotes/origin/*" },
+    };
+    for (settings) |setting| {
+        const configured = std.process.run(gpa, session.io, .{
+            .argv = &.{ "git", "config", "--file", config_path, setting.key, setting.value },
+            .stdout_limit = .limited(1024),
+            .stderr_limit = .limited(1024 * 1024),
+            .timeout = if (session.policy.timeout_ns == 0) .none else .{ .duration = .{ .raw = .fromNanoseconds(@intCast(session.policy.timeout_ns)), .clock = .awake } },
+        }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return session.fail(.unavailable, .repository, checkout_dir, "cannot reset cached Git config: {s}", .{@errorName(err)}),
+        };
+        defer gpa.free(configured.stdout);
+        defer gpa.free(configured.stderr);
+        if (configured.term != .exited or configured.term.exited != 0) {
+            return session.fail(.unavailable, .repository, checkout_dir, "cannot reset cached Git config", .{});
+        }
+    }
+    const info_attributes = try std.fs.path.join(gpa, &.{ checkout_dir, ".git", "info", "attributes" });
+    defer gpa.free(info_attributes);
+    std.Io.Dir.cwd().deleteFile(session.io, info_attributes) catch |err| switch (err) {
+        error.FileNotFound => {},
+        else => return session.fail(.unavailable, .repository, checkout_dir, "cannot discard cached Git info attributes: {s}", .{@errorName(err)}),
+    };
+}
+
 fn gitRunAllowFailure(session: *Session, gpa: Allocator, argv: []const []const u8) Error!GitResult {
     var env_map = try fetch.sanitizedGitEnvMap(gpa);
     defer if (env_map) |*m| m.deinit();
+    if (env_map) |*m| {
+        try m.put("GIT_CONFIG_NOSYSTEM", "1");
+        try m.put("GIT_CONFIG_GLOBAL", if (builtin.os.tag == .windows) "NUL" else "/dev/null");
+    }
 
     // Cached checkout の .git/config は信頼しない。各 `git -C` に command
     // config で hooks と fsmonitor を無効化し、空の hooks dir は checkout の
@@ -464,6 +515,10 @@ fn gitRun(session: *Session, argv: []const []const u8, target: ?[]const u8) Erro
 // HTTP provider
 // ---------------------------------------------------------------------------
 
+pub fn httpArtifactType(bytes: []const u8) []const u8 {
+    return if (bytes.len >= 4 and std.mem.eql(u8, bytes[0..4], "PK\x03\x04")) ".npkg" else "raw";
+}
+
 /// HTTP URL 依存の取得。`dep.hash` で内容を照合し、`.npkg`（ZIP）であれば
 /// `npkg_verify` で検証して manifest を取り出す。別 source への暗黙切替や
 /// hash 未検証の受理は行わない。
@@ -487,8 +542,7 @@ pub fn acquireHttp(session: *Session, dep: manifest_mod.HttpDependency) Error!Ac
         .artifact_type = "raw",
     };
 
-    // `.npkg`（ZIP 格納形式）は先頭が local file header 署名 `PK\x03\x04`。
-    if (bytes.len >= 4 and std.mem.eql(u8, bytes[0..4], "PK\x03\x04")) {
+    if (std.mem.eql(u8, httpArtifactType(bytes), ".npkg")) {
         var scratch = diag.List.init(session.gpa);
         defer scratch.deinit();
         // `Verified` の arena は session arena を backing にするため、deinit

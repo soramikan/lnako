@@ -91,6 +91,22 @@ fn hasOnlyEnvironmentRootFields(object: std.json.ObjectMap) bool {
     return true;
 }
 
+fn hasValidMutablePaths(object: std.json.ObjectMap) bool {
+    const value = object.get("mutablePaths") orelse return true;
+    if (value != .array) return false;
+    for (value.array.items) |item| {
+        if (item != .object or item.object.count() != 2) return false;
+        const path = item.object.get("path") orelse return false;
+        const sha256 = item.object.get("sha256") orelse return false;
+        if (path != .string or sha256 != .string) return false;
+        if (sha256.string.len != 7 + 64 or !std.mem.startsWith(u8, sha256.string, "sha256:")) return false;
+        for (sha256.string[7..]) |digit| {
+            if (!std.ascii.isDigit(digit) and !(digit >= 'a' and digit <= 'f')) return false;
+        }
+    }
+    return true;
+}
+
 pub const EnvironmentInfo = struct {
     schema_version: i64 = 0,
     lock_sha256: ?[]const u8 = null,
@@ -110,7 +126,7 @@ pub const EnvironmentInfo = struct {
 pub fn readEnvironmentInfo(gpa: Allocator, io: std.Io, project_root: []const u8) Error!?EnvironmentInfo {
     const path = try std.fs.path.join(gpa, &.{ project_root, ".nako", "environment.json" });
     defer gpa.free(path);
-    const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(4 * 1024 * 1024)) catch |err| switch (err) {
+    const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(environment_mod.max_environment_bytes)) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.FileNotFound => return null,
         else => return project.mapFs(err),
@@ -121,7 +137,7 @@ pub fn readEnvironmentInfo(gpa: Allocator, io: std.Io, project_root: []const u8)
     defer parsed.deinit();
     if (parsed.value != .object) return error.InvalidLock;
     const obj = parsed.value.object;
-    if (!hasOnlyEnvironmentRootFields(obj)) return null;
+    if (!hasOnlyEnvironmentRootFields(obj) or !hasValidMutablePaths(obj)) return null;
     if (obj.get("schemaVersion")) |v| {
         if (v == .integer) info.schema_version = v.integer;
     }
@@ -138,20 +154,19 @@ pub fn readEnvironmentInfo(gpa: Allocator, io: std.Io, project_root: []const u8)
         if (v == .object) info.packages = v.object.count();
     }
     if (obj.get("mutablePaths")) |v| {
-        if (v == .array) {
-            var list: std.ArrayList(lock_model.MutablePath) = .empty;
-            for (v.array.items) |item| {
-                if (item != .object) continue;
-                const path_v = item.object.get("path") orelse continue;
-                const sha_v = item.object.get("sha256") orelse continue;
-                if (path_v != .string or sha_v != .string) continue;
-                try list.append(gpa, .{
-                    .path = try gpa.dupe(u8, path_v.string),
-                    .sha256 = try gpa.dupe(u8, sha_v.string),
-                });
-            }
-            info.mutable_paths = list.items;
+        if (v != .array) return null;
+        var list: std.ArrayList(lock_model.MutablePath) = .empty;
+        for (v.array.items) |item| {
+            if (item != .object or item.object.count() != 2) return null;
+            const path_v = item.object.get("path") orelse return null;
+            const sha_v = item.object.get("sha256") orelse return null;
+            if (path_v != .string or sha_v != .string) return null;
+            try list.append(gpa, .{
+                .path = try gpa.dupe(u8, path_v.string),
+                .sha256 = try gpa.dupe(u8, sha_v.string),
+            });
         }
+        info.mutable_paths = list.items;
     }
     const current_path = try std.fs.path.join(gpa, &.{ project_root, ".nako", "current" });
     defer gpa.free(current_path);
@@ -309,7 +324,7 @@ pub fn environmentPackagesUsable(gpa: Allocator, io: std.Io, project_root: []con
     if (!managedPathIsDirectory(io, project_root, ".nako")) return false;
     const path = try std.fs.path.join(gpa, &.{ project_root, ".nako", "environment.json" });
     defer gpa.free(path);
-    const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(4 * 1024 * 1024)) catch |err| switch (err) {
+    const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(environment_mod.max_environment_bytes)) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => return false,
     };
@@ -317,7 +332,7 @@ pub fn environmentPackagesUsable(gpa: Allocator, io: std.Io, project_root: []con
     var parsed = std.json.parseFromSlice(std.json.Value, gpa, bytes, .{}) catch return false;
     defer parsed.deinit();
     if (parsed.value != .object) return false;
-    if (!hasOnlyEnvironmentRootFields(parsed.value.object)) return false;
+    if (!hasOnlyEnvironmentRootFields(parsed.value.object) or !hasValidMutablePaths(parsed.value.object)) return false;
     const packages_value = parsed.value.object.get("packages") orelse return false;
     if (packages_value != .object) return false;
     // `environment.json` には generation は記録されない。同期が公開する

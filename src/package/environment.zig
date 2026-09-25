@@ -28,6 +28,8 @@ pub const environment_file = "environment.json";
 /// 余分な世代を残すだけで安全性には影響しない。
 pub const current_file = "current";
 pub const schema_version: u32 = 1;
+/// Reader 側の制限と一致させ、公開後に自己読込不能な環境を作らない。
+pub const max_environment_bytes: usize = 4 * 1024 * 1024;
 
 /// 世代 dir 名の前置。`env/gen-<hex>`。
 pub const generation_prefix = "gen-";
@@ -473,7 +475,7 @@ pub const Store = struct {
 
     /// `.nako/environment.json` の内容を読む。無ければ null。
     pub fn readEnvironmentJson(self: *const Store, gpa: Allocator) !?[]u8 {
-        const bytes = self.root_dir.readFileAlloc(self.io, environment_file, gpa, .limited(4 * 1024 * 1024)) catch |err| switch (err) {
+        const bytes = self.root_dir.readFileAlloc(self.io, environment_file, gpa, .limited(max_environment_bytes)) catch |err| switch (err) {
             error.FileNotFound => return null,
             else => return err,
         };
@@ -556,6 +558,7 @@ pub const Store = struct {
     /// `environment_bytes` は `emit` の出力。
     /// 失敗時は env.json を変更しない（直前の有効環境がそのまま使える）。
     pub fn commit(self: *const Store, generation: []const u8, environment_bytes: []const u8) !void {
+        if (environment_bytes.len > max_environment_bytes) return error.EnvironmentTooLarge;
         if (!validGenerationName(generation)) return error.InvalidGeneration;
         var staging = try openManagedChildDir(self.root_dir, self.io, staging_dir, false);
         defer staging.close(self.io);
@@ -681,6 +684,24 @@ test "environment emit は schema v1 の決定的 JSON を key 順で生成す�
         .packages = &packages,
     }, &second_buffer.writer);
     try testing.expectEqualStrings(text, second_buffer.writer.buffered());
+}
+
+test "environment store は reader limit を超える JSON を公開しない" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var store = try openTempStore(&temporary);
+    defer store.deinit();
+    var generation = try store.newGeneration(testing.allocator);
+    defer testing.allocator.free(generation.generation);
+    defer generation.dir.close(io);
+
+    const oversized = try testing.allocator.alloc(u8, max_environment_bytes + 1);
+    defer testing.allocator.free(oversized);
+    @memset(oversized, ' ');
+    try testing.expectError(error.EnvironmentTooLarge, store.commit(generation.generation, oversized));
+    try testing.expect((try store.readEnvironmentJson(testing.allocator)) == null);
+    try generation.dir.access(io, ".", .{});
 }
 
 test "environment store は commit で世代 dir と environment.json を切り替える" {

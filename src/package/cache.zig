@@ -339,6 +339,39 @@ pub const Store = struct {
         return objects.openDir(self.io, key, .{ .follow_symlinks = false });
     }
 
+    /// Lock/source-bound archive bytes are stored beside `tree/` and revalidated
+    /// by the caller against the external artifact hash before use.
+    pub fn readSourceArchive(self: *const Store, gpa: Allocator, key: []const u8) !?[]u8 {
+        if (!validKey(key)) return error.InvalidKey;
+        var entry = self.openEntryDir(key) catch return null;
+        defer entry.close(self.io);
+        const bytes = entry.readFileAlloc(self.io, "source.archive", gpa, .limited(128 * 1024 * 1024)) catch |err| switch (err) {
+            error.FileNotFound => return null,
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return null,
+        };
+        return bytes;
+    }
+
+    pub fn readVerifiedSourceArchive(self: *const Store, gpa: Allocator, key: []const u8, expected_hash: []const u8) !?[]u8 {
+        const bytes = (try self.readSourceArchive(gpa, key)) orelse return null;
+        var valid = false;
+        if (fetch.normalizeSha256(expected_hash)) |expected| {
+            var actual: [32]u8 = undefined;
+            std.crypto.hash.sha2.Sha256.hash(bytes, &actual, .{});
+            valid = std.mem.eql(u8, &expected, &actual);
+        } else if (fetch.normalizeSha512(expected_hash)) |expected| {
+            var actual: [64]u8 = undefined;
+            std.crypto.hash.sha2.Sha512.hash(bytes, &actual, .{});
+            valid = std.mem.eql(u8, &expected, &actual);
+        }
+        if (!valid) {
+            gpa.free(bytes);
+            return null;
+        }
+        return bytes;
+    }
+
     /// Open the verified immutable object's tree as an independently owned handle.
     /// `null` means missing, incomplete, or digest-invalid; no root-derived path is
     /// constructed, so the returned handle remains pinned across root replacement.

@@ -402,6 +402,10 @@ pub fn run(
         else => return mapFs(err),
     };
 
+    if (json_buffer.written().len > environment.max_environment_bytes) {
+        return session.fail(.too_large, .package, "environment.json", "generated environment.json exceeds the {d} byte reader limit", .{environment.max_environment_bytes});
+    }
+
     // 直前の公開環境が参照する世代を environment.json からも復元する。
     // env.json 公開後・current 更新前の中断では current が古い世代を
     // 指したまま残るため、両者を keep して実際の直前世代を消さない。
@@ -504,56 +508,42 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                     return ctx.session.fail(.invalid_source, .package, entry.name, "git subdir of \"{s}\" is not a repo-relative path: \"{s}\"", .{ entry.name, sub });
                 }
             }
-            // lock の固定 commit から決定的な object key を先に計算する。
-            // 検証済み object があれば checkout・Git 起動・clone/fetch を
-            // 経由せず materialize できる（offline でも checkout 不要）。
+            // Cache の tree/marker は同じ攻撃者が書き換えられるため、Git object
+            // cache hit でも必ず lock commit を Git object database で再検証し、
+            // pinned checkout から package tree を再生成する。
             const object_key = try shortKey(arena, "git", &.{ url, commit, source.path orelse "" });
             try rememberKey(ctx, object_key);
-            var tree_handle = try ctx.objectTree(object_key);
-            if (tree_handle == null) {
-                // digest 不一致（改変）または不完全な entry は除去して再構築。
-                if (ctx.cache_store.entryExists(object_key)) {
-                    ctx.cache_store.removeEntry(object_key) catch |err| return mapFs(err);
-                }
-                // Git は filesystem path を作業 dir として要求するため、cache
-                // root 配下ではなく、この generation の一時 workspace で実行する。
-                // 既存 checkout は pinned handle から複製し、取得後に同じ handle
-                // 経由で cache へ戻すことで root 置換による書込先差替えを防ぐ。
-                const checkout_key = try shortKey(arena, "git", &.{ url, source.path orelse "" });
-                var checkouts = environment.openManagedChildDir(ctx.workspace_dir, ctx.io, "git-checkouts", true) catch |err| return mapFs(err);
-                defer checkouts.close(ctx.io);
-                var checkout = environment.openManagedChildDir(checkouts, ctx.io, checkout_key, true) catch |err| return mapFs(err);
-                defer environment.deleteTreeChecked(checkouts, ctx.io, checkout_key) catch {};
-                defer checkout.close(ctx.io);
-                const checkout_dir = try std.fs.path.join(arena, &.{ ctx.workspace_abs, "git-checkouts", checkout_key });
-                const cached_checkout_opt = ctx.cache_store.openCheckout(checkout_key) catch |err| return mapFs(err);
-                if (cached_checkout_opt) |cached_checkout| {
-                    var cached = cached_checkout;
-                    defer cached.close(ctx.io);
-                    var workspace = std.Io.Dir.cwd().openDir(ctx.io, checkout_dir, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
-                    defer workspace.close(ctx.io);
-                    _ = materialize.copyTreeFromDirs(ctx.gpa, ctx.io, &cached, &workspace, .{}) catch |err| return mapTreeError(ctx, err, entry.name);
-                }
-                const acquired = try provider.acquireGit(ctx.session, .{
-                    .name = entry.name,
-                    .url = url,
-                    .commit = commit,
-                    .path = source.path,
-                }, checkout_dir, source);
-                manifest = acquired.manifest;
-                // 取得結果が lock の固定 commit と一致することを確認する。
-                const resolved_commit = acquired.source.commit orelse commit;
-                if (!std.mem.eql(u8, resolved_commit, commit)) {
-                    return ctx.session.fail(.source_collision, .repository, url, "git source of \"{s}\" resolved to {s}, lock expects {s}", .{ entry.name, resolved_commit, commit });
-                }
-                var checkout_source = std.Io.Dir.cwd().openDir(ctx.io, checkout_dir, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
-                defer checkout_source.close(ctx.io);
-                _ = ctx.cache_store.replaceCheckout(checkout_key, &checkout_source, .{}) catch |err| return mapTreeError(ctx, err, entry.name);
-                try buildGitObject(ctx, object_key, checkout_dir, source.path);
-            } else {
-                manifest = if (try cachedManifest(ctx, object_key)) |cached| cached.manifest else null;
+            const checkout_key = try shortKey(arena, "git", &.{ url, source.path orelse "" });
+            var checkouts = environment.openManagedChildDir(ctx.workspace_dir, ctx.io, "git-checkouts", true) catch |err| return mapFs(err);
+            defer checkouts.close(ctx.io);
+            var checkout = environment.openManagedChildDir(checkouts, ctx.io, checkout_key, true) catch |err| return mapFs(err);
+            defer environment.deleteTreeChecked(checkouts, ctx.io, checkout_key) catch {};
+            defer checkout.close(ctx.io);
+            const checkout_dir = try std.fs.path.join(arena, &.{ ctx.workspace_abs, "git-checkouts", checkout_key });
+            const cached_checkout_opt = ctx.cache_store.openCheckout(checkout_key) catch |err| return mapFs(err);
+            if (cached_checkout_opt) |cached_checkout| {
+                var cached = cached_checkout;
+                defer cached.close(ctx.io);
+                var workspace = std.Io.Dir.cwd().openDir(ctx.io, checkout_dir, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+                defer workspace.close(ctx.io);
+                _ = materialize.copyTreeFromDirs(ctx.gpa, ctx.io, &cached, &workspace, .{}) catch |err| return mapTreeError(ctx, err, entry.name);
             }
-            if (tree_handle == null) tree_handle = try ctx.objectTree(object_key);
+            const acquired = try provider.acquireGit(ctx.session, .{
+                .name = entry.name,
+                .url = url,
+                .commit = commit,
+                .path = source.path,
+            }, checkout_dir, source);
+            manifest = acquired.manifest;
+            const resolved_commit = acquired.source.commit orelse commit;
+            if (!std.mem.eql(u8, resolved_commit, commit)) {
+                return ctx.session.fail(.source_collision, .repository, url, "git source of \"{s}\" resolved to {s}, lock expects {s}", .{ entry.name, resolved_commit, commit });
+            }
+            var checkout_source = std.Io.Dir.cwd().openDir(ctx.io, checkout_dir, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+            defer checkout_source.close(ctx.io);
+            _ = ctx.cache_store.replaceCheckout(checkout_key, &checkout_source, .{}) catch |err| return mapTreeError(ctx, err, entry.name);
+            try buildGitObject(ctx, object_key, checkout_dir, source.path);
+            var tree_handle = try ctx.objectTree(object_key);
             if (tree_handle == null) return error.FileSystem;
             defer tree_handle.?.close(ctx.io);
             const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?);
@@ -567,8 +557,9 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                 return ctx.session.fail(.invalid_source, .package, entry.name, "http source of \"{s}\" has no hash", .{entry.name});
             const object_key = try artifactKey(arena, "http", declared_hash, url);
             try rememberKey(ctx, object_key);
-            var tree_handle = try ctx.objectTree(object_key);
-            if (tree_handle == null) {
+            var archive: ?[]const u8 = try ctx.cache_store.readVerifiedSourceArchive(arena, object_key, declared_hash);
+            var artifact_type: []const u8 = if (archive) |cached| provider.httpArtifactType(cached) else "raw";
+            if (archive == null) {
                 if (ctx.cache_store.entryExists(object_key)) {
                     ctx.cache_store.removeEntry(object_key) catch |err| return mapFs(err);
                 }
@@ -577,15 +568,16 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                     .url = url,
                     .hash = declared_hash,
                 });
+                archive = acquired.artifact_bytes.?;
+                artifact_type = acquired.artifact_type orelse "raw";
                 manifest = acquired.manifest;
-                const prepared = try buildArtifactObject(ctx, object_key, acquired.artifact_bytes.?, acquired.artifact_type orelse "raw", entry);
-                applyPrepared(&manifest, &verified_commands, prepared);
             }
-            // cache 命中時は object から manifest を読み直す。`.npkg` 由来なら
-            // 公開時と今回の target が異なり得るため適合を再検証する（miss の
-            // tar.gz/raw でも公開済み tree から manifest を拾う）。
+            // Cache tree/marker は自己認証に過ぎない。毎回 lock hash を検証した
+            // raw bytes から tree を再構築し、derived tree を信頼根拠にしない。
+            const prepared = try buildArtifactObject(ctx, object_key, archive.?, artifact_type, entry);
+            applyPrepared(&manifest, &verified_commands, prepared);
             manifest = manifest orelse try checkedCachedManifest(ctx, object_key, entry);
-            if (tree_handle == null) tree_handle = try ctx.objectTree(object_key);
+            var tree_handle = try ctx.objectTree(object_key);
             if (tree_handle == null) return error.FileSystem;
             defer tree_handle.?.close(ctx.io);
             const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?);
@@ -602,8 +594,11 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                 return ctx.session.fail(.invalid_source, .artifact, entry.name, "artifact \"{s}\" of \"{s}\" has no url", .{ artifact.key, entry.name });
             const object_key = try artifactKey(arena, "artifact", artifact.sha256 orelse artifact.key, url);
             try rememberKey(ctx, object_key);
-            var tree_handle = try ctx.objectTree(object_key);
-            if (tree_handle == null) {
+            var archive: ?[]const u8 = null;
+            if (artifact.sha256) |expected| {
+                archive = try ctx.cache_store.readVerifiedSourceArchive(arena, object_key, expected);
+            }
+            if (archive == null) {
                 if (ctx.cache_store.entryExists(object_key)) {
                     ctx.cache_store.removeEntry(object_key) catch |err| return mapFs(err);
                 }
@@ -611,13 +606,14 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                 if (artifact.sha256) |expected| {
                     try fetch.verifyHash(ctx.session, bytes, expected, url, .artifact);
                 }
-                const prepared = try buildArtifactObject(ctx, object_key, bytes, artifact.type orelse "raw", entry);
-                applyPrepared(&manifest, &verified_commands, prepared);
+                archive = bytes;
             }
-            // http 経路と同じく cache 命中の `.npkg` 由来 manifest は現在
-            // target への適合を再検証する。
+            // lock artifact hash と一致した raw archive から毎回展開する。
+            // hash の無い artifact は cache bytes を一切信頼せず再取得する。
+            const prepared = try buildArtifactObject(ctx, object_key, archive.?, artifact.type orelse "raw", entry);
+            applyPrepared(&manifest, &verified_commands, prepared);
             manifest = manifest orelse try checkedCachedManifest(ctx, object_key, entry);
-            if (tree_handle == null) tree_handle = try ctx.objectTree(object_key);
+            var tree_handle = try ctx.objectTree(object_key);
             if (tree_handle == null) return error.FileSystem;
             defer tree_handle.?.close(ctx.io);
             const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?);
@@ -782,7 +778,6 @@ fn shortKey(arena: Allocator, prefix: []const u8, parts: []const []const u8) ![]
     return try std.fmt.allocPrint(arena, "{s}-{s}", .{ prefix, hex[0..16] });
 }
 
-/// hash 宣言から内容アドレス key を作る。sha256 に正規化できる場合は実ダイ
 /// ジェストを key に使う。そうでなければ宣言 hash を key 材料へ含める。
 /// sha256 以外（sha512 等）でも lock の hash 更新が必ず別 entry になるよう
 /// URL だけを key にしない（同じ URL で配布物が更新される通常ケースで
@@ -928,6 +923,9 @@ fn buildArtifactObject(ctx: *Context, key: []const u8, bytes: []const u8, artifa
     var staging_open = true;
     defer if (staging_open) staging.close(ctx.io);
     staging.createDir(ctx.io, "tree", .default_dir) catch |err| return mapFs(err);
+    // Keep the original bytes outside tree/ so a future hit can validate them
+    // against the lock's artifact hash before rebuilding the derived tree.
+    staging.writeFile(ctx.io, .{ .sub_path = "source.archive", .data = bytes }) catch |err| return mapFs(err);
     var tree = staging.openDir(ctx.io, "tree", .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
     var tree_open = true;
     defer if (tree_open) tree.close(ctx.io);

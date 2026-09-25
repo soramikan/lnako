@@ -1554,6 +1554,18 @@ test "environmentPackagesUsableは余分なrecordと形状違反と中間symlink
     try testing.expect((try project.readEnvironmentInfo(testing.allocator, io, app_root)) == null);
     try testing.expect(!try usable(&lock, app_root));
 
+    // mutablePaths は schema に合わない item が1つでもあれば文書全体を無効化。
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/environment.json", .data =
+        \\{"schemaVersion":1,"lockSha256":"sha256:00","profile":"default","runtime":"lnako","mutablePaths":[{"bogus":1}],"packages":{}}
+    });
+    try testing.expect((try project.readEnvironmentInfo(testing.allocator, io, app_root)) == null);
+    try testing.expect(!try usable(&lock, app_root));
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/environment.json", .data =
+        \\{"schemaVersion":1,"lockSha256":"sha256:00","profile":"default","runtime":"lnako","mutablePaths":[{"path":"pkg","sha256":"sha256:bad"}],"packages":{}}
+    });
+    try testing.expect((try project.readEnvironmentInfo(testing.allocator, io, app_root)) == null);
+    try testing.expect(!try usable(&lock, app_root));
+
     const windows_separators =
         \\{"pkg:11111111111111111111111111111111":{"name":"lib","version":"1.0.0","id":"pkg:11111111111111111111111111111111","path":".nako\\env\\gen-1\\deps\\lib","exports":[{"name":"lib","path":"src/index.nako3"}],"commands":[{"name":"テスト","args":["x"],"josi":[]}]}}
     ;
