@@ -7,6 +7,7 @@ const model = @import("lock_model.zig");
 const Allocator = std.mem.Allocator;
 
 pub const lock_schema_version = model.lock_schema_version;
+pub const legacy_lock_schema_version = model.legacy_lock_schema_version;
 pub const resolver_version = model.resolver_version;
 pub const known_artifact_kinds = model.known_artifact_kinds;
 pub const known_profile_runtimes = model.known_profile_runtimes;
@@ -27,6 +28,7 @@ pub const NpmInstance = model.NpmInstance;
 pub const PackageEntry = model.PackageEntry;
 pub const Input = model.Input;
 pub const ProfilePackages = model.ProfilePackages;
+pub const ProfileRootDependencies = model.ProfileRootDependencies;
 pub const Lock = model.Lock;
 pub const SharedMismatch = model.SharedMismatch;
 pub const serialize = model.serialize;
@@ -377,6 +379,33 @@ fn parsePackageMap(parser: *Parser, value: std.json.Value, path: []const u8) !?[
     return list.items;
 }
 
+fn parseRootDependencies(parser: *Parser, value: std.json.Value, path: []const u8) !?[]const ProfileRootDependencies {
+    const object = (try parser.asObject(value, path)) orelse return null;
+    var entries: std.ArrayList(ProfileRootDependencies) = .empty;
+    var iterator = object.iterator();
+    while (iterator.next()) |item| {
+        const entry_path = try std.fmt.allocPrint(parser.arena, "{s}.{s}", .{ path, item.key_ptr.* });
+        const array = (try parser.asArray(item.value_ptr.*, entry_path)) orelse continue;
+        var dependencies: std.ArrayList([]const u8) = .empty;
+        for (array.items, 0..) |dependency, index| {
+            const dependency_path = try std.fmt.allocPrint(parser.arena, "{s}[{d}]", .{ entry_path, index });
+            const id = (try parser.asString(dependency, dependency_path)) orelse continue;
+            try dependencies.append(parser.arena, try parser.duplicate(id));
+        }
+        std.mem.sort([]const u8, dependencies.items, {}, stringLessThan);
+        try entries.append(parser.arena, .{
+            .profile = try parser.duplicate(item.key_ptr.*),
+            .dependencies = dependencies.items,
+        });
+    }
+    std.mem.sort(ProfileRootDependencies, entries.items, {}, struct {
+        fn lt(_: void, a: ProfileRootDependencies, b: ProfileRootDependencies) bool {
+            return std.mem.order(u8, a.profile, b.profile) == .lt;
+        }
+    }.lt);
+    return entries.items;
+}
+
 fn parseProfile(parser: *Parser, value: std.json.Value, path: []const u8) !?ProfileRecord {
     const object = (try parser.asObject(value, path)) orelse return null;
     const known = [_][]const u8{ "runtime", "os", "cpu", "abi", "compat-js", "optimize" };
@@ -477,7 +506,7 @@ pub fn parse(gpa: Allocator, bytes: []const u8, diagnostics: *diag.List) ParseEr
     var parser = Parser{ .arena = arena.allocator(), .diagnostics = diagnostics };
 
     const root = (try parser.asObject(parsed.value, "nako.lock")) orelse return error.InvalidLock;
-    const known_root = [_][]const u8{ "schemaVersion", "resolverVersion", "input", "packages", "profiles", "profilePackages" };
+    const known_root = [_][]const u8{ "schemaVersion", "resolverVersion", "input", "packages", "profiles", "profilePackages", "rootDependencies" };
     var key_iterator = root.iterator();
     while (key_iterator.next()) |entry| {
         if (!containsString(&known_root, entry.key_ptr.*)) {
@@ -544,6 +573,14 @@ pub fn parse(gpa: Allocator, bytes: []const u8, diagnostics: *diag.List) ParseEr
     }
     std.mem.sort(ProfilePackages, profile_packages.items, {}, profilePackageLessThan);
 
+    var root_dependencies: []const ProfileRootDependencies = &.{};
+    if (root.get("rootDependencies")) |value| {
+        root_dependencies = (try parseRootDependencies(&parser, value, "nako.lock.rootDependencies")) orelse return error.InvalidLock;
+    } else if (schema_version == lock_schema_version) {
+        try parser.report(diag.E019_REQUIRED_FIELD_MISSING, "nako.lock", "missing required field \"rootDependencies\"", .{});
+        return error.InvalidLock;
+    }
+
     if (diagnostics.errorCount() > initial_errors) return error.InvalidLock;
 
     return .{
@@ -554,6 +591,7 @@ pub fn parse(gpa: Allocator, bytes: []const u8, diagnostics: *diag.List) ParseEr
         .packages = packages,
         .profiles = profiles.items,
         .profile_packages = profile_packages.items,
+        .root_dependencies = root_dependencies,
     };
 }
 
@@ -689,7 +727,7 @@ fn validateTarget(target: Target, path: []const u8, diagnostics: *diag.List) !vo
 
 /// lock の意味的な整合性を検証する。既知の診断は SPECIFICATION.md §8 と対応する。
 pub fn validate(lock: *const Lock, diagnostics: *diag.List) !void {
-    if (lock.schema_version != lock_schema_version) {
+    if (lock.schema_version != lock_schema_version and lock.schema_version != legacy_lock_schema_version) {
         try diagnostics.addFmt(diag.E002_UNKNOWN_LOCK_SCHEMA, .err, "nako.lock.schemaVersion", .{}, "unknown lock schema version {d}", .{lock.schema_version});
     }
 
@@ -747,6 +785,46 @@ pub fn validate(lock: *const Lock, diagnostics: *diag.List) !void {
             try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, profile_path, .{}, "profilePackages.{s} does not match packages", .{profile.profile});
         }
         try validatePackageSet(profile.packages, &profile_id_set, if (record) |value| value.* else null, profile_path, diagnostics);
+    }
+
+    var root_profile_names: std.StringHashMapUnmanaged(void) = .empty;
+    defer root_profile_names.deinit(diagnostics.allocator);
+    for (lock.root_dependencies) |root_profile| {
+        const path = try std.fmt.allocPrint(diagnostics.allocator, "nako.lock.rootDependencies.{s}", .{root_profile.profile});
+        defer diagnostics.allocator.free(path);
+        const gop = try root_profile_names.getOrPut(diagnostics.allocator, root_profile.profile);
+        if (gop.found_existing) try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, path, .{}, "duplicate rootDependencies profile \"{s}\"", .{root_profile.profile});
+        const packages = lock.packagesForProfile(root_profile.profile) orelse {
+            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, path, .{}, "rootDependencies references profile without package graph \"{s}\"", .{root_profile.profile});
+            continue;
+        };
+        for (root_profile.dependencies, 0..) |dependency_id, index| {
+            const id_path = try std.fmt.allocPrint(diagnostics.allocator, "{s}[{d}]", .{ path, index });
+            defer diagnostics.allocator.free(id_path);
+            if (containsString(root_profile.dependencies[0..index], dependency_id)) {
+                try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, id_path, .{}, "duplicate root dependency id \"{s}\"", .{dependency_id});
+                continue;
+            }
+            var found_package = false;
+            for (packages) |package| {
+                if (std.mem.eql(u8, package.id, dependency_id)) {
+                    found_package = true;
+                    break;
+                }
+            }
+            if (!found_package) try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, id_path, .{}, "unknown root dependency id \"{s}\"", .{dependency_id});
+        }
+    }
+    if (lock.schema_version == lock_schema_version) {
+        const selected_roots = lock.rootDependenciesForProfile(lock.input.profile);
+        if (selected_roots == null) try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock.rootDependencies", .{}, "rootDependencies is missing selected profile \"{s}\"", .{lock.input.profile});
+        for (lock.profile_packages) |profile| {
+            if (lock.rootDependenciesForProfile(profile.profile) == null) {
+                const path = try std.fmt.allocPrint(diagnostics.allocator, "nako.lock.rootDependencies.{s}", .{profile.profile});
+                defer diagnostics.allocator.free(path);
+                try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, path, .{}, "rootDependencies is missing profile \"{s}\"", .{profile.profile});
+            }
+        }
     }
 
     // 複数 profile 形式では `profiles` と `profilePackages` の名前集合が一致
@@ -1274,8 +1352,105 @@ fn sortedNpmInstances(allocator: Allocator, items: []const NpmInstance) ![]const
     return out;
 }
 
+fn rootPublicIdsFromNodes(
+    allocator: Allocator,
+    nodes: []const resolver.PackageNode,
+    details: DetailsSource,
+) ![]const []const u8 {
+    var root_package_ids: std.ArrayList(resolver.PackageId) = .empty;
+    for (nodes) |node| if (node.is_root_dependency) try root_package_ids.append(allocator, node.id);
+    if (root_package_ids.items.len == 0) {
+        if (nodes.len != 0) return error.MissingRootDependencies;
+        return &.{};
+    }
+    return try publicRootIdsForResolverRoots(allocator, nodes, root_package_ids.items, details);
+}
+
+fn canonicalRootIds(allocator: Allocator, packages: []const PackageEntry, requested: []const []const u8) ![]const []const u8 {
+    var result: std.ArrayList([]const u8) = .empty;
+    for (requested) |id| {
+        var found: ?[]const u8 = null;
+        for (packages) |entry| if (std.mem.eql(u8, entry.id, id)) {
+            found = entry.id;
+            break;
+        };
+        const canonical = found orelse return error.InvalidRootDependency;
+        if (!containsString(result.items, canonical)) try result.append(allocator, canonical);
+    }
+    std.mem.sort([]const u8, result.items, {}, stringLessThan);
+    return result.items;
+}
+
 /// 単一 profile の lock を構築する。`profiles` は収録する profile 条件。
 pub fn build(gpa: Allocator, input: Input, profiles: []const NamedProfile, nodes: []const resolver.PackageNode, details: DetailsSource) !Lock {
+    return buildInternal(gpa, input, profiles, nodes, null, details);
+}
+
+/// resolver が保持するroot edgeをPublic IDで明示してlockへ記録する。
+pub fn buildWithRootPublicIds(
+    gpa: Allocator,
+    input: Input,
+    profiles: []const NamedProfile,
+    nodes: []const resolver.PackageNode,
+    root_public_ids: []const []const u8,
+    details: DetailsSource,
+) !Lock {
+    return buildInternal(gpa, input, profiles, nodes, root_public_ids, details);
+}
+
+/// Resolver root edges are resolver PackageIds; map them to the exact Public IDs
+/// emitted by buildPackages so lock.rootDependencies references package-map keys.
+pub fn publicRootIdsForResolverRoots(
+    allocator: Allocator,
+    nodes: []const resolver.PackageNode,
+    root_package_ids: []const resolver.PackageId,
+    details: DetailsSource,
+) ![]const []const u8 {
+    var result: std.ArrayList([]const u8) = .empty;
+    for (root_package_ids) |root_id| {
+        var found = false;
+        for (nodes) |node| {
+            if (!resolver.PackageId.eql(node.id, root_id)) continue;
+            const id_text = try formatPackageId(allocator, node.id);
+            const version_text = try std.fmt.allocPrint(allocator, "{f}", .{node.version});
+            const detail = try details.get(allocator, id_text, version_text);
+            const public_id = if (detail) |value| value.public_id orelse id_text else id_text;
+            if (!containsString(result.items, public_id)) try result.append(allocator, try allocator.dupe(u8, public_id));
+            found = true;
+            break;
+        }
+        if (!found) return error.InvalidRootDependency;
+    }
+    std.mem.sort([]const u8, result.items, {}, stringLessThan);
+    return result.items;
+}
+
+/// Resolution直後のroot edgeを失わず単一profile lockへ書き込む。
+pub fn buildFromResolution(
+    gpa: Allocator,
+    input: Input,
+    profiles: []const NamedProfile,
+    resolution: *const resolver.Resolution,
+    details: DetailsSource,
+) !Lock {
+    const nodes = switch (resolution.result) {
+        .resolved => |value| value,
+        else => return error.UnresolvedPackages,
+    };
+    var temporary = std.heap.ArenaAllocator.init(gpa);
+    defer temporary.deinit();
+    const root_public_ids = try publicRootIdsForResolverRoots(temporary.allocator(), nodes, resolution.root_dependencies, details);
+    return buildWithRootPublicIds(gpa, input, profiles, nodes, root_public_ids, details);
+}
+
+fn buildInternal(
+    gpa: Allocator,
+    input: Input,
+    profiles: []const NamedProfile,
+    nodes: []const resolver.PackageNode,
+    root_public_ids: ?[]const []const u8,
+    details: DetailsSource,
+) !Lock {
     var arena = std.heap.ArenaAllocator.init(gpa);
     errdefer arena.deinit();
     const allocator = arena.allocator();
@@ -1301,12 +1476,18 @@ pub fn build(gpa: Allocator, input: Input, profiles: []const NamedProfile, nodes
     std.mem.sort(NamedProfile, owned_profiles.items, {}, namedProfileLessThan);
 
     const packages = try buildPackages(allocator, nodes, details);
+    const effective_roots = root_public_ids orelse try rootPublicIdsFromNodes(allocator, nodes, details);
+    const root_ids = try canonicalRootIds(allocator, packages, effective_roots);
+    const root_dependencies = try allocator.alloc(ProfileRootDependencies, 1);
+    root_dependencies[0] = .{ .profile = owned_input.profile, .dependencies = root_ids };
 
     return .{
         .arena = arena,
+        .schema_version = lock_schema_version,
         .input = owned_input,
         .packages = packages,
         .profiles = owned_profiles.items,
+        .root_dependencies = root_dependencies,
     };
 }
 
@@ -1361,12 +1542,30 @@ pub fn buildMulti(
     }
     std.mem.sort(ProfilePackages, profile_packages.items, {}, profilePackageLessThan);
     lock.profile_packages = profile_packages.items;
+    var root_dependencies: std.ArrayList(ProfileRootDependencies) = .empty;
+    for (per_profile) |profile_input| {
+        const packages = lock.packagesForProfile(profile_input.profile) orelse return error.UnknownProfilePackageGraph;
+        const effective_roots = profile_input.root_public_ids orelse try rootPublicIdsFromNodes(allocator, profile_input.nodes, details);
+        const root_ids = try canonicalRootIds(allocator, packages, effective_roots);
+        try root_dependencies.append(allocator, .{
+            .profile = try allocator.dupe(u8, profile_input.profile),
+            .dependencies = root_ids,
+        });
+    }
+    std.mem.sort(ProfileRootDependencies, root_dependencies.items, {}, struct {
+        fn lt(_: void, a: ProfileRootDependencies, b: ProfileRootDependencies) bool {
+            return std.mem.order(u8, a.profile, b.profile) == .lt;
+        }
+    }.lt);
+    lock.root_dependencies = root_dependencies.items;
     return lock;
 }
 
 pub const ProfileInput = struct {
     profile: []const u8,
     nodes: []const resolver.PackageNode,
+    /// Profileのroot direct edgesを表すPublic ID。nullならPackageNodeの明示root edgeを使う。
+    root_public_ids: ?[]const []const u8 = null,
 };
 
 /// feature 名を複製し、昇順ソートと重複除去を行う。同じ feature 集合から

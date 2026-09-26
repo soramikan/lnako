@@ -43,7 +43,15 @@ pub const PackageRecord = struct {
     /// path 依存では宣言された相対 path）。
     path: []const u8,
     exports: []const ExportRecord = &.{},
+    /// Dependencies visible from this package's import scope.
+    dependencies: []const ImportDependency = &.{},
     commands: []const npkg_commands.Command = &.{},
+};
+
+/// A package import alias resolved within one dependency scope.
+pub const ImportDependency = struct {
+    alias: []const u8,
+    package_key: []const u8,
 };
 
 pub const ExportRecord = struct {
@@ -57,13 +65,38 @@ pub const Document = struct {
     profile: []const u8,
     runtime: []const u8,
     packages: []const PackageRecord,
+    /// Dependencies visible from the project root import scope.
+    dependencies: []const ImportDependency = &.{},
 };
 
 fn writeJsonString(writer: *std.Io.Writer, text: []const u8) !void {
     try std.json.Stringify.value(text, .{}, writer);
 }
 
-/// `environment.json` の本文を決定的に生成する。packages は key 順。
+fn writeDependencies(gpa: Allocator, dependencies: []const ImportDependency, writer: *std.Io.Writer) !void {
+    const sorted = try gpa.dupe(ImportDependency, dependencies);
+    defer gpa.free(sorted);
+    std.mem.sort(ImportDependency, sorted, {}, struct {
+        fn lessThan(_: void, a: ImportDependency, b: ImportDependency) bool {
+            const alias_order = std.mem.order(u8, a.alias, b.alias);
+            if (alias_order != .eq) return alias_order == .lt;
+            return std.mem.order(u8, a.package_key, b.package_key) == .lt;
+        }
+    }.lessThan);
+
+    try writer.writeByte('[');
+    for (sorted, 0..) |dependency, index| {
+        if (index > 0) try writer.writeByte(',');
+        try writer.writeAll("{\"alias\":");
+        try writeJsonString(writer, dependency.alias);
+        try writer.writeAll(",\"package\":");
+        try writeJsonString(writer, dependency.package_key);
+        try writer.writeByte('}');
+    }
+    try writer.writeByte(']');
+}
+
+/// `environment.json` の本文を決定的に生成する。packages/dependencies は順序固定。
 pub fn emit(gpa: Allocator, doc: Document, writer: *std.Io.Writer) !void {
     const sorted = try gpa.dupe(PackageRecord, doc.packages);
     defer gpa.free(sorted);
@@ -79,6 +112,10 @@ pub fn emit(gpa: Allocator, doc: Document, writer: *std.Io.Writer) !void {
     try writeJsonString(writer, doc.profile);
     try writer.writeAll(",\"runtime\":");
     try writeJsonString(writer, doc.runtime);
+    if (doc.dependencies.len != 0) {
+        try writer.writeAll(",\"dependencies\":");
+        try writeDependencies(gpa, doc.dependencies, writer);
+    }
     try writer.writeAll(",\"packages\":{");
     for (sorted, 0..) |package, index| {
         if (index > 0) try writer.writeByte(',');
@@ -108,6 +145,10 @@ pub fn emit(gpa: Allocator, doc: Document, writer: *std.Io.Writer) !void {
                 try writer.writeByte('}');
             }
             try writer.writeByte(']');
+        }
+        if (package.dependencies.len != 0) {
+            try writer.writeAll(",\"dependencies\":");
+            try writeDependencies(gpa, package.dependencies, writer);
         }
         if (package.commands.len != 0) {
             try writer.writeAll(",\"commands\":[");
@@ -388,15 +429,20 @@ test "environment emit は schema v1 の決定的 JSON を key 順で生成す�
         .{ .name = "テスト", .args = &.{"A"}, .josi = &.{"を"} },
         .{ .name = "値", .variable = true },
     };
+    const root_dependencies = [_]ImportDependency{
+        .{ .alias = "z", .package_key = "pkg:22222222222222222222222222222222" },
+        .{ .alias = "same", .package_key = "pkg:11111111111111111111111111111111" },
+    };
     const packages = [_]PackageRecord{
         .{ .key = "pkg:22222222222222222222222222222222", .name = "b", .version = "2.0.0", .id = null, .path = "deps/b" },
-        .{ .key = "pkg:11111111111111111111111111111111", .name = "a", .version = "1.0.0", .id = "pkg:11111111111111111111111111111111", .path = ".nako/env/gen-aa/deps/a", .exports = &.{.{ .name = "a", .path = "src/a.nako3" }}, .commands = &commands },
+        .{ .key = "pkg:11111111111111111111111111111111", .name = "a", .version = "1.0.0", .id = "pkg:11111111111111111111111111111111", .path = ".nako/env/gen-aa/deps/a", .exports = &.{.{ .name = "a", .path = "src/a.nako3" }}, .dependencies = &.{.{ .alias = "same", .package_key = "pkg:22222222222222222222222222222222" }}, .commands = &commands },
     };
     try emit(testing.allocator, .{
         .lock_sha256 = "sha256:0000000000000000000000000000000000000000000000000000000000000000",
         .profile = "default",
         .runtime = "lnako",
         .packages = &packages,
+        .dependencies = &root_dependencies,
     }, &buffer.writer);
 
     const text = buffer.writer.buffered();
@@ -418,6 +464,15 @@ test "environment emit は schema v1 の決定的 JSON を key 順で生成す�
     try testing.expectEqualStrings("a", a.get("name").?.string);
     try testing.expectEqualStrings("1.0.0", a.get("version").?.string);
     try testing.expectEqualStrings(".nako/env/gen-aa/deps/a", a.get("path").?.string);
+    const root_dependencies_json = root.get("dependencies").?.array;
+    try testing.expectEqual(@as(usize, 2), root_dependencies_json.items.len);
+    try testing.expectEqualStrings("same", root_dependencies_json.items[0].object.get("alias").?.string);
+    try testing.expectEqualStrings("pkg:11111111111111111111111111111111", root_dependencies_json.items[0].object.get("package").?.string);
+    try testing.expectEqualStrings("z", root_dependencies_json.items[1].object.get("alias").?.string);
+    const package_dependencies = a.get("dependencies").?.array;
+    try testing.expectEqual(@as(usize, 1), package_dependencies.items.len);
+    try testing.expectEqualStrings("same", package_dependencies.items[0].object.get("alias").?.string);
+    try testing.expectEqualStrings("pkg:22222222222222222222222222222222", package_dependencies.items[0].object.get("package").?.string);
     const commands_value = a.get("commands").?.array;
     try testing.expectEqual(@as(usize, 2), commands_value.items.len);
     try testing.expectEqualStrings("テスト", commands_value.items[0].object.get("name").?.string);
@@ -435,8 +490,20 @@ test "environment emit は schema v1 の決定的 JSON を key 順で生成す�
         .profile = "default",
         .runtime = "lnako",
         .packages = &packages,
+        .dependencies = &root_dependencies,
     }, &second_buffer.writer);
     try testing.expectEqualStrings(text, second_buffer.writer.buffered());
+}
+
+test "environment の旧 JSON は scoped dependencies なしでも parse できる" {
+    const old_json = "{\"schemaVersion\":1,\"lockSha256\":\"sha256:00\",\"profile\":\"default\",\"runtime\":\"lnako\",\"packages\":{\"legacy\":{\"name\":\"legacy\",\"version\":\"1.0.0\",\"path\":\"deps/legacy\"}}}";
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, old_json, .{});
+    defer parsed.deinit();
+    const document = parsed.value.object;
+    try testing.expect(document.get("dependencies") == null);
+    const packages = document.get("packages").?.object;
+    const legacy = packages.get("legacy").?.object;
+    try testing.expect(legacy.get("dependencies") == null);
 }
 
 test "environment store は commit で世代 dir と environment.json を切り替える" {

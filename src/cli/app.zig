@@ -26,7 +26,11 @@ pub fn run(
             try stderr.flush();
             std.process.exit(1);
         }
-        var ir_program = (compiler_pipeline.compileInputWithProvider(allocator, package.entry_path, .{ .compat_js = true, .forced_mode = package.forced_mode }, stderr, package.sourceProvider()) catch |err| {
+        var ir_program = (compiler_pipeline.compileInputWithProvider(allocator, package.entry_path, .{
+            .compat_js = true,
+            .forced_mode = package.forced_mode,
+            .package_resolver = package.packageResolver(),
+        }, stderr, package.sourceProvider()) catch |err| {
             if (err == error.ConflictingDnclModes) {
                 try stderr.writeAll("拡張子と埋め込みDNCLモードが異なるDNCL方言を要求しています\n");
                 try stderr.flush();

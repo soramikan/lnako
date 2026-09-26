@@ -19,6 +19,13 @@ pub const BindingKind = enum { declaration, reference, call, builtin };
 /// 実効取り込み文1件に対応する呼び出し先モジュールのエントリ名。
 /// 公式は取り込み文位置へ取り込み先トークンを展開するため、実行時にも
 /// その位置で取り込み先のトップレベルが動く必要がある。
+pub const NamespaceAlias = struct {
+    source_namespace: []const u8,
+    internal_namespace: []const u8,
+    target_module: u32,
+    is_explicit: bool,
+};
+
 pub const ImportEntry = struct {
     position: usize,
     entry_name: []const u8,
@@ -65,6 +72,12 @@ pub const ModuleInput = struct {
     /// 公式では取り込み先の変数宣言が関数ローカルになるため、
     /// このモジュールの変数系モジュールシンボルはグローバルに存在しない。
     expands_in_function: bool = false,
+    /// 明示package namespaceが別module名と衝突する場合、暗黙代入を
+    /// modList上の別moduleへ解決せず、このmodule自身へ束縛する。
+    owns_scoped_namespace_collision: bool = false,
+    /// Package specifier aliases scoped to this module. Source prefixes remain
+    /// user-facing while symbols can use a unique internal namespace.
+    namespace_aliases: []const NamespaceAlias = &.{},
     /// 循環再展開の文脈別パース（Issue #73）。同じモジュールスコープで
     /// 解析され、変数・関数シンボルは本体と共有される。
     variants: []const VariantInput = &.{},
@@ -568,6 +581,15 @@ pub const Analyzer = struct {
             if (symbol) |found| try self.bind(node, .declaration, node.name, found.qualified_name, found.id);
             return;
         }
+        if (self.inputs[module_index].owns_scoped_namespace_collision and
+            self.enclosingFunctionScope(scope) == null and
+            (node.kind == .assignment or node.kind == .increment or node.kind == .increment_indexed or node.kind == .array_assignment))
+        {
+            if (self.lookupDeclSite(module_index, scope, node.name, node.span)) |own_symbol| {
+                try self.bind(node, .declaration, node.name, own_symbol.qualified_name, own_symbol.id);
+                return;
+            }
+        }
         // 公式findVarの書き込み側解決: ローカル→自身mod__→modList順。
         var resolved: ?Symbol = self.lookupAssignmentTarget(scope, node.name, node.span) orelse
             self.lookupVisibleModule(module_index, scope, node.name, node.span) orelse
@@ -818,6 +840,11 @@ pub const Analyzer = struct {
     }
 
     pub fn resolveSymbol(self: *Analyzer, module_index: u32, scope: ScopeId, name: []const u8, use_span: ast.Span) ?Symbol {
+        // 明示package aliasは同じ修飾名を持つlocal moduleより優先する。
+        // 通常の字句スコープ探索の後ではlocal側に先取りされてしまう。
+        if (std.mem.indexOf(u8, name, "__") != null) {
+            if (self.resolveScopedNamespaceAlias(module_index, name, use_span, true)) |symbol| return symbol;
+        }
         var current: ?ScopeId = scope;
         while (current) |id| : (current = self.scopes.items[id].parent) {
             if (self.lookupLexical(id, name)) |symbol| {
@@ -834,6 +861,7 @@ pub const Analyzer = struct {
         // 公式findVarは `__` 名を funclist 完全一致でのみ検索し、
         // modList 検索には進まない。
         if (std.mem.indexOf(u8, name, "__") != null) {
+            if (self.resolveScopedNamespaceAlias(module_index, name, use_span, false)) |symbol| return symbol;
             for (self.symbols.items) |symbol| {
                 if (self.scopes.items[symbol.scope].kind != .module or symbol.shadowed or self.hiddenModuleVar(symbol)) continue;
                 if (!std.mem.eql(u8, symbol.qualified_name, name)) continue;
@@ -844,6 +872,31 @@ pub const Analyzer = struct {
             return null;
         }
         return self.lookupModList(module_index, scope, name, use_span);
+    }
+
+    fn resolveScopedNamespaceAlias(self: *Analyzer, module_index: u32, name: []const u8, use_span: ast.Span, explicit_only: bool) ?Symbol {
+        if (module_index >= self.inputs.len) return null;
+        var selected: ?NamespaceAlias = null;
+        for (self.inputs[module_index].namespace_aliases) |alias| {
+            if (explicit_only and !alias.is_explicit) continue;
+            if (name.len <= alias.source_namespace.len + 2 or
+                !std.mem.startsWith(u8, name, alias.source_namespace) or
+                !std.mem.startsWith(u8, name[alias.source_namespace.len..], "__")) continue;
+            if (selected == null or alias.source_namespace.len > selected.?.source_namespace.len) selected = alias;
+        }
+        const alias = selected orelse return null;
+        const suffix = name[alias.source_namespace.len..];
+        for (self.symbols.items) |symbol| {
+            if (symbol.module_index != alias.target_module or
+                self.scopes.items[symbol.scope].kind != .module or symbol.shadowed or self.hiddenModuleVar(symbol)) continue;
+            if (symbol.qualified_name.len != alias.internal_namespace.len + suffix.len or
+                !std.mem.startsWith(u8, symbol.qualified_name, alias.internal_namespace) or
+                !std.mem.eql(u8, symbol.qualified_name[alias.internal_namespace.len..], suffix)) continue;
+            if (!self.moduleSymbolVisible(self.modules.items[module_index].scope, symbol)) continue;
+            if (self.isDeclSiteSymbol(symbol, module_index, use_span)) continue;
+            return symbol;
+        }
+        return null;
     }
 
     /// 公式findVarのmodList検索: 結合ストリームの展開マーカー順に各

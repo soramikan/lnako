@@ -243,7 +243,7 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "resolverVersion": 1,
   "input": {
     "manifestSha256": "...",
@@ -252,7 +252,8 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
     "target": { "os": "macos", "cpu": "aarch64", "abi": "gnu" }
   },
   "packages": { ... },
-  "profiles": { ... }
+  "profiles": { ... },
+  "rootDependencies": { "default": ["pkg:<direct-dependency-id>"] }
 }
 ```
 
@@ -266,6 +267,7 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
 | `packages` | object | yes | Public ID をキーとする解決済 package マップ。`input.profile` に対応する選択済みグラフ。 |
 | `profiles` | object | yes | 使用した profile 条件のマップ。 |
 | `profilePackages` | object | no | profile 名をキーとする解決済 package マップ。複数 profile を一つの lock に収録するときに使う。 |
+| `rootDependencies` | object | schema v2 | profile 名をキーとし、root nodeから出る直接依存のPublic IDを配列で記録する。推移依存と同じpackage IDでもroot edgeを保持する。 |
 
 ### 4.3 package エントリ
 
@@ -442,15 +444,17 @@ size = 1234
 
 ### 7.2 Import
 
-- `!「pkg:sqlite」を取り込む` のような構文を将来導入する。
-- `pkg:` import は resolver によって lock 済みのパスまたは artifact に解決される。
+- ソース上の標準表記は `!「パッケージ:sqlite」を取り込む` とする。旧表記 `!「pkg:sqlite」を取り込む` も同じ意味の互換aliasとして受理する。
+- `パッケージ:<alias>` と `パッケージ:<alias>/<subpath>` は、取り込み元の依存scope（プロジェクトrootまたはpackage自身）にあるdependency aliasからlock済みPublic ID/環境package keyへ解決し、公開exportだけを選択する。公開module namespaceはimport alias（先頭の `@` を除去し、`/` を `__` に、識別子に使えないASCII文字を `_` に正規化。subpath付きでは `alias__subpath`）に対応付け、exportの `alias` はsubpath選択にのみ使う。module canonical ID は `package key/export name`、物理pathは選択artifactの実pathとして別々に保持する。version指定・未宣言alias・非公開subpathは拒否する。
+- `.nako/environment.json` はrootと各packageの依存scopeごとに `{ alias, package }` 対応を任意に記録できる。旧環境で対応表が無い場合、package importは利用不可として明示的に失敗する。
+- パッケージaliasは通常ファイル、拡張プラグインおよびnpm/JavaScript取り込みとは別resolverで解決し、相互に曖昧なfallbackをしない。
 - JavaScript/ESM artifact の import は `--compat-js` 指定時のみ許可する。
 - 通常モードで JS/ESM 依存を解決しようとした場合は `E006_JS_IN_NORMAL_MODE` 診断。
 
 ### 7.3 cnako 委譲と環境参照契約
 
 - cnako は依存解決・パッケージ同期を `lnako sync --json` へ委譲できる。
-- `lnako sync --json` は解決結果を JSON で標準出力し、解決済み環境メタデータを `.nako/environment.json` に記録する。
+- `lnako sync --json` は解決結果を JSON で標準出力し、解決済み環境メタデータを `.nako/environment.json` に記録する。package import用に、rootと各packageの依存scopeで `{ "alias", "package" }` の対応表を任意で保持する。`package` は同JSONの `packages` map key を指し、export aliasとは別の情報である。
 - cnako の `--no-sync` 実行時は lnako を起動せず、`.nako/environment.json` の `lockSha256`・`profile`・各パッケージの `path` と命令メタデータを単独で検証する。`lockSha256` は参照先 `nako.lock` の実 SHA-256 と一致することを検証し、環境情報が欠落・破損・版不一致・lockハッシュ不一致の場合は `E034_INVALID_ENVIRONMENT_REFERENCE` を診断する。`lockSha256` は SHA-256 表現のみを許容し、SRI 形式 `sha256-<43文字Base64>=`、`sha256:` + 64桁 hex、生 64桁 hex のいずれかとする。
 - 動的呼び出し（文字列指定による動的実行等）で静的に共用性を確認できない機能利用は未検査とし、厳格な共用検査（strict sharing check）において `E033_STRICT_SHARING_FAILED` で拒絶する。共用ライブラリの保証には両処理系での自動テスト実行を必須証拠とする。
 

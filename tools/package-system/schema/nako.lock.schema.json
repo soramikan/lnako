@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/soramikan/lnako/package-system/schema/nako.lock/v1",
+  "$id": "https://github.com/soramikan/lnako/package-system/schema/nako.lock/v2",
   "type": "object",
   "required": ["schemaVersion", "resolverVersion", "input", "packages"],
   "additionalProperties": false,
@@ -35,8 +35,24 @@
       "type": "object",
       "additionalProperties": { "$ref": "#/$defs/packageMap" },
       "propertyNames": { "$ref": "common.schema.json#/$defs/featureName" }
+    },
+    "rootDependencies": {
+      "description": "profileごとのroot nodeからの直接依存辺。依存package IDの配列。",
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "$ref": "common.schema.json#/$defs/packageId" },
+        "uniqueItems": true
+      },
+      "propertyNames": { "$ref": "common.schema.json#/$defs/featureName" }
     }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "schemaVersion": { "const": 2 } }, "required": ["schemaVersion"] },
+      "then": { "required": ["rootDependencies"] }
+    }
+  ],
   "$defs": {
     "packageMap": {
       "type": "object",

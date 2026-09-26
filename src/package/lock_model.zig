@@ -3,7 +3,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 /// `nako.lock` schema version。`SCHEMA_VERSIONS.md` §4 と対応する。
-pub const lock_schema_version: u32 = 1;
+pub const lock_schema_version: u32 = 2;
+pub const legacy_lock_schema_version: u32 = 1;
 /// 依存 resolver algorithm version。resolver の決定論的結果が変わると bump する。
 pub const resolver_version: u32 = 1;
 
@@ -166,10 +167,16 @@ pub const ProfilePackages = struct {
     packages: []const PackageEntry,
 };
 
+/// 1 profile 分の root からの直接依存辺。IDs は packages map の public ID。
+pub const ProfileRootDependencies = struct {
+    profile: []const u8,
+    dependencies: []const []const u8,
+};
+
 /// 解析・生成済みの lock 文書。全メモリは内蔵 arena が所有する。
 pub const Lock = struct {
     arena: std.heap.ArenaAllocator,
-    schema_version: u32 = lock_schema_version,
+    schema_version: u32 = legacy_lock_schema_version,
     resolver_version: u32 = resolver_version,
     input: Input,
     /// `input.profile` に対応する選択済み package グラフ。
@@ -178,6 +185,8 @@ pub const Lock = struct {
     profiles: []const NamedProfile = &.{},
     /// profile ごとの解決済 package グラフ（複数 profile 収録時）。
     profile_packages: []const ProfilePackages = &.{},
+    /// profile ごとのroot直接依存ID（schema v2）。v1 lockでは空。
+    root_dependencies: []const ProfileRootDependencies = &.{},
 
     pub fn deinit(self: *Lock) void {
         self.arena.deinit();
@@ -191,6 +200,14 @@ pub const Lock = struct {
             if (std.mem.eql(u8, entry.profile, profile)) return entry.packages;
         }
         if (std.mem.eql(u8, profile, self.input.profile)) return self.packages;
+        return null;
+    }
+
+    /// profileのroot直接依存ID。v1 lockなど未記録の場合はnull。
+    pub fn rootDependenciesForProfile(self: *const Lock, profile: []const u8) ?[]const []const u8 {
+        for (self.root_dependencies) |entry| {
+            if (std.mem.eql(u8, entry.profile, profile)) return entry.dependencies;
+        }
         return null;
     }
 
@@ -635,6 +652,22 @@ pub fn serialize(lock: *const Lock, writer: *std.Io.Writer) !void {
         try writeIndent(writer, 1);
         try writer.writeByte('}');
         try writer.writeByte('\n');
+    }
+    if (lock.schema_version >= lock_schema_version) {
+        try writer.writeAll(",\n");
+        try writeIndent(writer, 1);
+        try writer.writeAll("\"rootDependencies\": {");
+        if (lock.root_dependencies.len > 0) try writer.writeByte('\n');
+        for (lock.root_dependencies, 0..) |profile, index| {
+            try writeIndent(writer, 2);
+            try writeString(writer, profile.profile);
+            try writer.writeAll(": ");
+            try writeInlineStrings(writer, profile.dependencies);
+            if (index + 1 < lock.root_dependencies.len) try writer.writeByte(',');
+            try writer.writeByte('\n');
+        }
+        if (lock.root_dependencies.len > 0) try writeIndent(writer, 1);
+        try writer.writeAll("}\n");
     }
     try writer.writeAll("}\n");
 }
