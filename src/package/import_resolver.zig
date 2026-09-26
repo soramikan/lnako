@@ -270,7 +270,7 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
     defer materialized_directories.deinit();
 
     const runtime_value = get(environment, "runtime") orelse return error.InvalidEnvironment;
-    if (runtime_value != .string) return error.InvalidEnvironment;
+    if (runtime_value != .string or !std.mem.eql(u8, runtime_value.string, "lnako")) return error.InvalidEnvironment;
     const artifact_target = try artifactTargetForProfile(allocator, lock_root, lock_input, profile_value.string, runtime_value.string);
 
     var root_dependency_ids: ?std.json.Array = null;
@@ -302,7 +302,7 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
         if (environment_path != .string) return error.InvalidEnvironment;
         const source_value = get(lock_entry, "source") orelse get(lock_entry, "resolvedFrom") orelse return error.InvalidEnvironment;
         const source = asObject(source_value) orelse return error.InvalidEnvironment;
-        const source_kind = get(source, "kind") orelse return error.InvalidEnvironment;
+        const source_kind = get(source, "type") orelse return error.InvalidEnvironment;
         if (source_kind != .string) return error.InvalidEnvironment;
         const package_root = if (std.mem.eql(u8, source_kind.string, "path")) blk: {
             const declared_path = get(source, "path") orelse return error.InvalidEnvironment;
@@ -368,7 +368,7 @@ fn expectedMaterializedDirectories(allocator: Allocator, locked_packages: std.js
         const lock_entry = asObject(entry.value) orelse return error.InvalidEnvironment;
         const source_value = get(lock_entry, "source") orelse get(lock_entry, "resolvedFrom") orelse return error.InvalidEnvironment;
         const source = asObject(source_value) orelse return error.InvalidEnvironment;
-        const kind = get(source, "kind") orelse return error.InvalidEnvironment;
+        const kind = get(source, "type") orelse return error.InvalidEnvironment;
         if (kind != .string) return error.InvalidEnvironment;
         if (std.mem.eql(u8, kind.string, "path")) continue;
 
@@ -655,7 +655,7 @@ fn matchesManifestDependency(
 ) bool {
     const source_value = get(lock_entry, "source") orelse get(lock_entry, "resolvedFrom") orelse return false;
     const source = asObject(source_value) orelse return false;
-    const kind = requiredString(source, "kind") orelse return false;
+    const kind = requiredString(source, "type") orelse return false;
     return switch (constraint) {
         .pkg => |dependency| {
             if (!std.mem.eql(u8, kind, "registry") and !std.mem.eql(u8, kind, "static")) return false;
@@ -688,7 +688,7 @@ fn matchesManifestDependency(
             if (!std.mem.eql(u8, kind, "http")) return false;
             const url = requiredString(source, "url") orelse return false;
             const hash = requiredString(source, "hash") orelse return false;
-            return std.mem.eql(u8, url, dependency.url) and std.mem.eql(u8, hash, dependency.hash);
+            return std.mem.eql(u8, url, dependency.url) and lock_model.hashEql(hash, dependency.hash);
         },
     };
 }
@@ -989,7 +989,7 @@ test "package dependency照合は選択profileのlock edge外を候補にしな�
     defer arena.deinit();
     const allocator = arena.allocator();
     const locked_json =
-        \\{"pkg:other-profile":{"name":"conditional-lib","version":"2.0.0","source":{"kind":"registry","url":"https://example.invalid/conditional-lib"},"dependencies":[]},"pkg:current-edge":{"name":"unrelated","version":"1.0.0","source":{"kind":"registry","url":"https://example.invalid/unrelated"},"dependencies":[]}}
+        \\{"pkg:other-profile":{"name":"conditional-lib","version":"2.0.0","source":{"type":"registry","url":"https://example.invalid/conditional-lib"},"dependencies":[]},"pkg:current-edge":{"name":"unrelated","version":"1.0.0","source":{"type":"registry","url":"https://example.invalid/unrelated"},"dependencies":[]}}
     ;
     const parsed_lock = try std.json.parseFromSlice(Value, allocator, locked_json, .{});
     defer parsed_lock.deinit();
@@ -1092,7 +1092,7 @@ test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hash�
     var root_manifest_digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(root_manifest, &root_manifest_digest, .{});
     const root_manifest_sha256 = std.fmt.bytesToHex(root_manifest_digest, .lower);
-    const lock_json_template = "{\"schemaVersion\":2,\"resolverVersion\":1,\"input\":{\"manifestSha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"profile\":\"default\",\"features\":[],\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:11111111111111111111111111111111\":{\"id\":\"pkg:11111111111111111111111111111111\",\"name\":\"math\",\"version\":\"1.0.0\",\"source\":{\"kind\":\"registry\",\"url\":\"https://example.invalid/math\"},\"dependencies\":[\"pkg:22222222222222222222222222222222\",\"pkg:33333333333333333333333333333333\"]},\"pkg:22222222222222222222222222222222\":{\"id\":\"pkg:22222222222222222222222222222222\",\"name\":\"dependency\",\"version\":\"1.0.0\",\"source\":{\"kind\":\"registry\",\"url\":\"https://example.invalid/dependency\"},\"dependencies\":[]},\"pkg:33333333333333333333333333333333\":{\"id\":\"pkg:33333333333333333333333333333333\",\"name\":\"missing\",\"version\":\"1.0.0\",\"source\":{\"kind\":\"registry\",\"url\":\"https://example.invalid/missing\"},\"dependencies\":[]}},\"rootDependencies\":{\"default\":[\"pkg:11111111111111111111111111111111\",\"pkg:22222222222222222222222222222222\"]}}";
+    const lock_json_template = "{\"schemaVersion\":2,\"resolverVersion\":1,\"input\":{\"manifestSha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"profile\":\"default\",\"features\":[],\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:11111111111111111111111111111111\":{\"id\":\"pkg:11111111111111111111111111111111\",\"name\":\"math\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/math\"},\"dependencies\":[\"pkg:22222222222222222222222222222222\",\"pkg:33333333333333333333333333333333\"]},\"pkg:22222222222222222222222222222222\":{\"id\":\"pkg:22222222222222222222222222222222\",\"name\":\"dependency\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/dependency\"},\"dependencies\":[]},\"pkg:33333333333333333333333333333333\":{\"id\":\"pkg:33333333333333333333333333333333\",\"name\":\"missing\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/missing\"},\"dependencies\":[]}},\"rootDependencies\":{\"default\":[\"pkg:11111111111111111111111111111111\",\"pkg:22222222222222222222222222222222\"]}}";
     const lock_json = try std.mem.replaceOwned(u8, allocator, lock_json_template, "0000000000000000000000000000000000000000000000000000000000000000", &root_manifest_sha256);
     defer allocator.free(lock_json);
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock_json });
@@ -1196,6 +1196,10 @@ test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hash�
         var hash_resolver = try Resolver.load(allocator, io, project_root);
         hash_resolver.deinit();
     }
+    const cnako_environment = try std.mem.replaceOwned(u8, allocator, json, "\"runtime\":\"lnako\"", "\"runtime\":\"cnako\"");
+    defer allocator.free(cnako_environment);
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = cnako_environment });
+    try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, project_root));
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = json });
     temporary.dir.symLink(io, project_root, ".project-link", .{}) catch |err| switch (err) {
         error.AccessDenied, error.PermissionDenied, error.FileSystem => return error.SkipZigTest,
@@ -1298,7 +1302,7 @@ test "同名packageのmaterialized pathを別versionへ差し替えたenvironmen
         try temporary.dir.writeFile(io, .{ .sub_path = source_path, .data = "" });
     }
     const lock_json =
-        \\{"schemaVersion":2,"input":{"profile":"default","target":{"os":"macos","cpu":"aarch64","abi":"none"}},"packages":{"pkg:math-v2":{"id":"pkg:math-v2","name":"math","version":"2.0.0","source":{"kind":"registry","url":"https://example.invalid/math-v2"},"dependencies":[]},"pkg:math-v1":{"id":"pkg:math-v1","name":"math","version":"1.0.0","source":{"kind":"registry","url":"https://example.invalid/math-v1"},"dependencies":[]}},"rootDependencies":{"default":["pkg:math-v1"]}}
+        \\{"schemaVersion":2,"input":{"profile":"default","target":{"os":"macos","cpu":"aarch64","abi":"none"}},"packages":{"pkg:math-v2":{"id":"pkg:math-v2","name":"math","version":"2.0.0","source":{"type":"registry","url":"https://example.invalid/math-v2"},"dependencies":[]},"pkg:math-v1":{"id":"pkg:math-v1","name":"math","version":"1.0.0","source":{"type":"registry","url":"https://example.invalid/math-v1"},"dependencies":[]}},"rootDependencies":{"default":["pkg:math-v1"]}}
     ;
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock_json });
     var digest: [32]u8 = undefined;
@@ -1367,7 +1371,7 @@ test "realpath importerとproject entry優先でancestor package scopeを誤選�
         \\path = "index.nako3"
         \\
     });
-    const lock_json = "{\"schemaVersion\":2,\"resolverVersion\":1,\"input\":{\"manifestSha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"profile\":\"default\",\"features\":[],\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:ancestor\":{\"id\":\"pkg:ancestor\",\"name\":\"ancestor\",\"version\":\"1.0.0\",\"source\":{\"kind\":\"path\",\"path\":\"..\"},\"dependencies\":[\"pkg:parent-util\"]},\"pkg:root-util\":{\"id\":\"pkg:root-util\",\"name\":\"root-util\",\"version\":\"1.0.0\",\"source\":{\"kind\":\"registry\",\"url\":\"https://example.invalid/root-util\"},\"dependencies\":[]},\"pkg:parent-util\":{\"id\":\"pkg:parent-util\",\"name\":\"parent-util\",\"version\":\"1.0.0\",\"source\":{\"kind\":\"path\",\"path\":\"../parent-util\"},\"dependencies\":[]}},\"rootDependencies\":{\"default\":[\"pkg:root-util\"]}}";
+    const lock_json = "{\"schemaVersion\":2,\"resolverVersion\":1,\"input\":{\"manifestSha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"profile\":\"default\",\"features\":[],\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:ancestor\":{\"id\":\"pkg:ancestor\",\"name\":\"ancestor\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\"..\"},\"dependencies\":[\"pkg:parent-util\"]},\"pkg:root-util\":{\"id\":\"pkg:root-util\",\"name\":\"root-util\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/root-util\"},\"dependencies\":[]},\"pkg:parent-util\":{\"id\":\"pkg:parent-util\",\"name\":\"parent-util\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\"../parent-util\"},\"dependencies\":[]}},\"rootDependencies\":{\"default\":[\"pkg:root-util\"]}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "repo/examples/nako.lock", .data = lock_json });
     const parent_entry = try temporary.dir.realPathFileAlloc(io, "repo/index.nako3", allocator);
     defer allocator.free(parent_entry);

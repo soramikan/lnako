@@ -257,6 +257,58 @@ fn hexToBytes(text: []const u8, out: *[32]u8) bool {
     return true;
 }
 
+fn normalizeSha512(text: []const u8, out: *[64]u8) bool {
+    if (text.len == "sha512:".len + 128 and std.mem.startsWith(u8, text, "sha512:")) {
+        _ = std.fmt.hexToBytes(out[0..], text["sha512:".len..]) catch return false;
+        return true;
+    }
+    if (text.len == "sha512-".len + 88 and std.mem.startsWith(u8, text, "sha512-")) {
+        const encoded = text["sha512-".len..];
+        if (!std.mem.endsWith(u8, encoded, "==")) return false;
+        const size = std.base64.standard.Decoder.calcSizeForSlice(encoded) catch return false;
+        if (size != out.len) return false;
+        std.base64.standard.Decoder.decode(out[0..], encoded) catch return false;
+        return true;
+    }
+    return false;
+}
+
+/// 同じSHA-256/SHA-512 digestをhex・SRI表記に関わらず比較する。
+pub fn hashEql(a: []const u8, b: []const u8) bool {
+    var sha256_a: [32]u8 = undefined;
+    var sha256_b: [32]u8 = undefined;
+    const is_sha256_a = normalizeSha256(a, &sha256_a);
+    const is_sha256_b = normalizeSha256(b, &sha256_b);
+    if (is_sha256_a or is_sha256_b) return is_sha256_a and is_sha256_b and std.mem.eql(u8, &sha256_a, &sha256_b);
+
+    var sha512_a: [64]u8 = undefined;
+    var sha512_b: [64]u8 = undefined;
+    const is_sha512_a = normalizeSha512(a, &sha512_a);
+    const is_sha512_b = normalizeSha512(b, &sha512_b);
+    if (is_sha512_a or is_sha512_b) return is_sha512_a and is_sha512_b and std.mem.eql(u8, &sha512_a, &sha512_b);
+    return std.mem.eql(u8, a, b);
+}
+
+test "HTTP hashはsha256/sha512のhexとSRIを同じdigestとして比較する" {
+    var sha256_digest = [_]u8{0} ** 32;
+    const sha256_base64_buf = try std.testing.allocator.alloc(u8, std.base64.standard.Encoder.calcSize(sha256_digest.len));
+    defer std.testing.allocator.free(sha256_base64_buf);
+    const sha256_base64 = std.base64.standard.Encoder.encode(sha256_base64_buf, &sha256_digest);
+    const sha256_sri = try std.fmt.allocPrint(std.testing.allocator, "sha256-{s}", .{sha256_base64});
+    defer std.testing.allocator.free(sha256_sri);
+    try std.testing.expect(hashEql("sha256:0000000000000000000000000000000000000000000000000000000000000000", sha256_sri));
+    try std.testing.expect(!hashEql(sha256_sri, "sha256:1111111111111111111111111111111111111111111111111111111111111111"));
+
+    var sha512_digest = [_]u8{0} ** 64;
+    const sha512_base64_buf = try std.testing.allocator.alloc(u8, std.base64.standard.Encoder.calcSize(sha512_digest.len));
+    defer std.testing.allocator.free(sha512_base64_buf);
+    const sha512_base64 = std.base64.standard.Encoder.encode(sha512_base64_buf, &sha512_digest);
+    const sha512_sri = try std.fmt.allocPrint(std.testing.allocator, "sha512-{s}", .{sha512_base64});
+    defer std.testing.allocator.free(sha512_sri);
+    try std.testing.expect(hashEql("sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000", sha512_sri));
+    try std.testing.expect(!hashEql(sha256_sri, sha512_sri));
+}
+
 /// 表現の違い（hex/base64）を正規化して SHA-256 を比較する。
 fn sha256Eql(a: ?[]const u8, b: ?[]const u8) bool {
     if (a == null and b == null) return true;

@@ -74,7 +74,7 @@ test "compat-js package import resolverを生成payloadと起動時compileへ引
         \\path = "index.nako3"
         \\
     });
-    const lock_bytes = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\"},\"packages\":{\"pkg:math-id\":{\"id\":\"pkg:math-id\",\"name\":\"math\",\"version\":\"1.0.0\",\"source\":{\"kind\":\"registry\",\"url\":\"https://example.invalid/math\"},\"dependencies\":[]}}}";
+    const lock_bytes = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\"},\"packages\":{\"pkg:math-id\":{\"id\":\"pkg:math-id\",\"name\":\"math\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/math\"},\"dependencies\":[]}}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock_bytes });
     try temporary.dir.writeFile(io, .{ .sub_path = "compiler.bin", .data = "EXE" });
 

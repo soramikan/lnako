@@ -114,6 +114,7 @@ pub const Symbol = struct {
     span: ast.Span,
     is_export: bool,
     is_mutable: bool,
+    explicit_definition: bool = false,
     argument_count: usize = 0,
     /// 仮引数の助詞（宣言順）。公式`yCallFunc`と同じ助詞補完で、
     /// どのスロットへ引数を割り当てるかの判定に使う。
@@ -318,7 +319,7 @@ pub const Analyzer = struct {
                 arguments_binding_seen = true;
                 continue;
             }
-            _ = try self.declare(module_index, scope, argument.name, .parameter, argument.span, false, true, 0, false);
+            _ = try self.declare(module_index, scope, argument.name, .parameter, argument.span, false, true, 0, true);
         }
     }
 
@@ -374,6 +375,7 @@ pub const Analyzer = struct {
                         const message = try std.fmt.allocPrint(self.allocator, "定数『{s}』は既に定義済みなので、値を代入することはできません。", .{name.name});
                         try self.addDiagnostic(.assign_to_constant, name.span, self.modules.items[module_index].path, message);
                     }
+                    self.symbols.items[symbol.id].explicit_definition = true;
                     if (self.symbols.items[symbol.id].arguments_registered_at == null)
                         self.symbols.items[symbol.id].arguments_registered_at = self.stream_order;
                     if (node.is_const) {
@@ -840,32 +842,30 @@ pub const Analyzer = struct {
     }
 
     pub fn resolveSymbol(self: *Analyzer, module_index: u32, scope: ScopeId, name: []const u8, use_span: ast.Span) ?Symbol {
-        // 明示package aliasは同じ修飾名を持つlocal moduleより優先する。
-        // 通常の字句スコープ探索の後ではlocal側に先取りされてしまう。
-        if (std.mem.indexOf(u8, name, "__") != null) {
-            if (self.resolveScopedNamespaceAlias(module_index, name, use_span, true)) |symbol| return symbol;
-        }
         var current: ?ScopeId = scope;
         while (current) |id| : (current = self.scopes.items[id].parent) {
             if (self.lookupLexical(id, name)) |symbol| {
+                if (module_index < self.modules.items.len and self.scopes.items[id].kind == .module and id == self.modules.items[module_index].scope and
+                    std.mem.indexOf(u8, name, "__") != null)
+                {
+                    if (self.resolveScopedNamespaceAlias(module_index, scope, name, use_span, true)) |aliased| return aliased;
+                }
                 if (self.scopes.items[id].kind == .module and
                     (!self.moduleSymbolVisible(scope, symbol) or self.hiddenModuleVar(symbol))) continue;
                 if (self.isDeclSiteSymbol(symbol, module_index, use_span)) continue;
+                if (self.anonymousShadowedModuleSymbol(module_index, scope, id, symbol, name, use_span)) |global| return global;
                 return symbol;
             }
         }
-        // 修飾名（mod__A）は取り込み・公開設定に関わらず全モジュールの
-        // モジュール変数に一致する（公式は __varslist[2] を修飾名キーで
-        // 共有する）。関数スコープの修飾名シンボルは上の字句探索で
-        // 祖先スコープのものだけが解決済みのため、ここでは対象外とする。
-        // 公式findVarは `__` 名を funclist 完全一致でのみ検索し、
-        // modList 検索には進まない。
+        // 明示package aliasは関数・無名関数の字句束縛に譲り、その後に
+        // module scopeの同名衝突より優先して解決する。
         if (std.mem.indexOf(u8, name, "__") != null) {
-            if (self.resolveScopedNamespaceAlias(module_index, name, use_span, false)) |symbol| return symbol;
+            if (self.resolveScopedNamespaceAlias(module_index, scope, name, use_span, true)) |symbol| return symbol;
+            if (self.resolveScopedNamespaceAlias(module_index, scope, name, use_span, false)) |symbol| return symbol;
             for (self.symbols.items) |symbol| {
                 if (self.scopes.items[symbol.scope].kind != .module or symbol.shadowed or self.hiddenModuleVar(symbol)) continue;
                 if (!std.mem.eql(u8, symbol.qualified_name, name)) continue;
-                if (!self.moduleSymbolVisible(scope, symbol)) continue;
+                if (!self.moduleSymbolVisibleAt(module_index, use_span, scope, symbol)) continue;
                 if (self.isDeclSiteSymbol(symbol, module_index, use_span)) continue;
                 return symbol;
             }
@@ -874,7 +874,7 @@ pub const Analyzer = struct {
         return self.lookupModList(module_index, scope, name, use_span);
     }
 
-    fn resolveScopedNamespaceAlias(self: *Analyzer, module_index: u32, name: []const u8, use_span: ast.Span, explicit_only: bool) ?Symbol {
+    fn resolveScopedNamespaceAlias(self: *Analyzer, module_index: u32, scope: ScopeId, name: []const u8, use_span: ast.Span, explicit_only: bool) ?Symbol {
         if (module_index >= self.inputs.len) return null;
         var selected: ?NamespaceAlias = null;
         for (self.inputs[module_index].namespace_aliases) |alias| {
@@ -892,11 +892,44 @@ pub const Analyzer = struct {
             if (symbol.qualified_name.len != alias.internal_namespace.len + suffix.len or
                 !std.mem.startsWith(u8, symbol.qualified_name, alias.internal_namespace) or
                 !std.mem.eql(u8, symbol.qualified_name[alias.internal_namespace.len..], suffix)) continue;
-            if (!self.moduleSymbolVisible(self.modules.items[module_index].scope, symbol)) continue;
+            if (!self.moduleSymbolVisibleAt(module_index, use_span, scope, symbol)) continue;
             if (self.isDeclSiteSymbol(symbol, module_index, use_span)) continue;
             return symbol;
         }
         return null;
+    }
+
+    /// cnako v3.7.24の無名関数は自身のローカル以外の名前をモジュール変数
+    /// （__varslist[2]）へ解決するため、外側スコープの明示ローカル・仮引数は
+    /// 同名の可視モジュール変数に負ける。一致するモジュール変数を返す。
+    fn anonymousShadowedModuleSymbol(
+        self: *Analyzer,
+        module_index: u32,
+        use_scope: ScopeId,
+        binding_scope: ScopeId,
+        symbol: Symbol,
+        name: []const u8,
+        use_span: ast.Span,
+    ) ?Symbol {
+        if (!symbol.explicit_definition or
+            (symbol.kind != .variable and symbol.kind != .constant and symbol.kind != .parameter) or
+            self.scopes.items[binding_scope].kind == .module)
+        {
+            return null;
+        }
+
+        var current: ?ScopeId = use_scope;
+        var crossed_anonymous = false;
+        while (current) |scope_id| : (current = self.scopes.items[scope_id].parent) {
+            if (scope_id == binding_scope) break;
+            if (self.scopes.items[scope_id].kind == .anonymous_function) crossed_anonymous = true;
+        }
+        if (!crossed_anonymous) return null;
+
+        const global = self.lookupVisibleModule(module_index, use_scope, name, use_span) orelse
+            self.lookupModList(module_index, use_scope, name, use_span) orelse return null;
+        if (global.kind != .variable and global.kind != .constant and global.kind != .loop_variable) return null;
+        return global;
     }
 
     /// 公式findVarのmodList検索: 結合ストリームの展開マーカー順に各
@@ -928,6 +961,7 @@ pub const Analyzer = struct {
             if (existing.implicit_arguments) {
                 if (!explicit_def) return existing.id;
                 if (existing.arguments_registered_at == null) {
+                    self.symbols.items[existing.id].explicit_definition = true;
                     self.symbols.items[existing.id].kind = kind;
                     self.symbols.items[existing.id].is_mutable = is_mutable;
                     self.symbols.items[existing.id].arguments_registered_at = self.stream_order;
@@ -956,6 +990,7 @@ pub const Analyzer = struct {
             .span = span,
             .is_export = is_export,
             .is_mutable = is_mutable,
+            .explicit_definition = explicit_def,
             .argument_count = argument_count,
         });
         return id;
@@ -1088,13 +1123,14 @@ pub const Analyzer = struct {
         return null;
     }
 
-    /// 代入先の探索は公式scopeVar同様に外側スコープまで遡る。
-    /// 名前付き関数内でもモジュール変数への代入はグローバルを更新する。
-    /// ただし『それ』等のbuiltin名は関数ごとのローカルなので遡らない。
+    /// 公式scopeVar同様に外側スコープまで遡り、builtin名は遡らない。
     fn lookupAssignmentTarget(self: *Analyzer, scope: ScopeId, name: []const u8, use_span: ast.Span) ?Symbol {
         const use_module = self.scopes.items[scope].module_index;
         if (self.lookupLexical(scope, name)) |symbol| {
-            if (!self.isDeclSiteSymbol(symbol, use_module, use_span)) return symbol;
+            if (!self.isDeclSiteSymbol(symbol, use_module, use_span)) {
+                if (self.anonymousShadowedModuleSymbol(use_module, scope, scope, symbol, name, use_span)) |global| return global;
+                return symbol;
+            }
         }
         if (self.builtins.get(name) != null) return null;
         var current = self.scopes.items[scope].parent;
@@ -1103,6 +1139,7 @@ pub const Analyzer = struct {
                 if (self.scopes.items[parent].kind == .module and
                     (!self.moduleSymbolVisible(scope, symbol) or self.hiddenModuleVar(symbol))) continue;
                 if (self.isDeclSiteSymbol(symbol, use_module, use_span)) continue;
+                if (self.anonymousShadowedModuleSymbol(use_module, scope, parent, symbol, name, use_span)) |global| return global;
                 return symbol;
             }
         }

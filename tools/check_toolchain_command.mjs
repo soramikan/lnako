@@ -38,6 +38,9 @@ try {
   // install --from-dir: 構造検証＋管理登録。
   const install = runWithToolchainDir(["toolchain", "install", "--from-dir", fakeLlvm], toolchainDir);
   if (install.status !== 0) throw new Error(`toolchain install --from-dirに失敗しました: ${install.stderr}`);
+  if (!install.stderr.includes("LLVMを複製しています") || !install.stdout.includes("LLVM ")) {
+    throw new Error(`toolchain installの進捗または完了表示が不足しています: ${install.stdout}${install.stderr}`);
+  }
   const statusAfter = runWithToolchainDir(["toolchain", "status"], toolchainDir);
   if (statusAfter.status !== 0 || !statusAfter.stdout.includes("導入済み")) throw new Error("toolchain statusが導入済みを報告しません");
 

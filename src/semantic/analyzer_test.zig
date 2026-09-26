@@ -449,3 +449,60 @@ test "助詞が正しい呼出しと暗黙『それ』連文は未解決語に�
         try std.testing.expect(program.succeeded());
     }
 }
+
+test "package aliasは関数parameterの同名qualified localより優先されない" {
+    const parser = @import("../frontend/parser.zig");
+    var package = try parser.parse(std.testing.allocator, "値=1\n", "package.nako3");
+    defer package.deinit();
+    var main = try parser.parse(std.testing.allocator, "●(math__値を)Fとは\nmath__値を表示\nここまで\nF(10)\n", "main.nako3");
+    defer main.deinit();
+    const aliases = [_]analyzer.NamespaceAlias{.{
+        .source_namespace = "math",
+        .internal_namespace = "package",
+        .target_module = 0,
+        .is_explicit = true,
+    }};
+    var program = try analyzeModules(std.testing.allocator, &.{
+        .{ .name = "package", .path = "package.nako3", .root = package.root.? },
+        .{ .name = "main", .path = "main.nako3", .root = main.root.?, .namespace_aliases = &aliases },
+    });
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+
+    var found_local_parameter = false;
+    for (program.bindings) |binding| {
+        if (binding.kind != .reference or !std.mem.eql(u8, binding.name, "math__値")) continue;
+        const symbol = program.symbols[binding.symbol.?];
+        if (symbol.kind == .parameter) found_local_parameter = true;
+    }
+    try std.testing.expect(found_local_parameter);
+}
+
+test "package aliasはimportより前のpackage globalを可視にしない" {
+    const parser = @import("../frontend/parser.zig");
+    var package = try parser.parse(std.testing.allocator, "値=1\n", "package.nako3");
+    defer package.deinit();
+    var main = try parser.parse(std.testing.allocator, "math__値を表示\n●Fとは\nmath__値を表示\nここまで\nF\n", "main.nako3");
+    defer main.deinit();
+    const aliases = [_]analyzer.NamespaceAlias{.{
+        .source_namespace = "math",
+        .internal_namespace = "package",
+        .target_module = 0,
+        .is_explicit = true,
+    }};
+    const package_ranks = [_]usize{2};
+    const main_ranks = [_]usize{ 0, 0, 1 };
+    var program = try analyzeModules(std.testing.allocator, &.{
+        .{ .name = "package", .path = "package.nako3", .root = package.root.?, .stmt_ranks = &package_ranks, .marker_rank = 2 },
+        .{ .name = "main", .path = "main.nako3", .root = main.root.?, .namespace_aliases = &aliases, .stmt_ranks = &main_ranks, .marker_rank = 0 },
+    });
+    defer program.deinit();
+
+    var found_reference = false;
+    for (program.bindings) |binding| {
+        if (binding.kind != .reference or !std.mem.eql(u8, binding.name, "math__値")) continue;
+        found_reference = true;
+        if (binding.symbol) |symbol_id| try std.testing.expect(program.symbols[symbol_id].module_index != 0);
+    }
+    try std.testing.expect(found_reference);
+}

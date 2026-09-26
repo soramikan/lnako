@@ -286,48 +286,70 @@ pub fn writeStatus(allocator: std.mem.Allocator, io: std.Io, environ: *const std
     }
 }
 
-fn copyTree(allocator: std.mem.Allocator, io: std.Io, source_root: []const u8, destination_root: []const u8) !void {
+const copy_progress_interval: u64 = 128 * 1024 * 1024;
+const copy_buffer_size = 1024 * 1024;
+
+const CopyBuffers = struct {
+    storage: []u8,
+    read: []u8,
+    write: []u8,
+    chunk: []u8,
+
+    fn init(allocator: std.mem.Allocator) !CopyBuffers {
+        const storage = try allocator.alloc(u8, copy_buffer_size * 3);
+        return .{
+            .storage = storage,
+            .read = storage[0..copy_buffer_size],
+            .write = storage[copy_buffer_size .. copy_buffer_size * 2],
+            .chunk = storage[copy_buffer_size * 2 ..],
+        };
+    }
+
+    fn deinit(self: CopyBuffers, allocator: std.mem.Allocator) void {
+        allocator.free(self.storage);
+    }
+};
+
+const CopyProgress = struct {
+    stderr: *std.Io.Writer,
+    copied: u64 = 0,
+    next_report: u64 = copy_progress_interval,
+
+    fn add(self: *CopyProgress, count: usize) !void {
+        self.copied = std.math.add(u64, self.copied, count) catch return error.ToolchainCopyTooLarge;
+        if (self.copied >= self.next_report) {
+            try self.stderr.print("toolchain: コピー済み {d} MiB\n", .{@divTrunc(self.copied, 1024 * 1024)});
+            try self.stderr.flush();
+            self.next_report = self.copied + copy_progress_interval;
+        }
+    }
+};
+
+fn copyTree(allocator: std.mem.Allocator, io: std.Io, source_root: []const u8, destination_root: []const u8, stderr: *std.Io.Writer) !void {
     var source = try std.Io.Dir.cwd().openDir(io, source_root, .{ .iterate = true });
     defer source.close(io);
     try std.Io.Dir.cwd().createDirPath(io, destination_root);
     var destination = try std.Io.Dir.cwd().openDir(io, destination_root, .{});
     defer destination.close(io);
-    try copyTreeInner(allocator, io, source, destination);
+    var progress = CopyProgress{ .stderr = stderr };
+    const buffers = try CopyBuffers.init(allocator);
+    defer buffers.deinit(allocator);
+    try copyTreeInner(allocator, io, source, destination, &progress, buffers);
+    if (progress.copied > 0) {
+        try stderr.print("toolchain: コピー完了 ({d} MiB)\n", .{@divTrunc(progress.copied, 1024 * 1024)});
+        try stderr.flush();
+    }
 }
 
-fn copyTreeInner(allocator: std.mem.Allocator, io: std.Io, source: std.Io.Dir, destination: std.Io.Dir) !void {
+fn copyTreeInner(allocator: std.mem.Allocator, io: std.Io, source: std.Io.Dir, destination: std.Io.Dir, progress: *CopyProgress, buffers: CopyBuffers) anyerror!void {
     var iterator = source.iterate();
     while (try iterator.next(io)) |entry| {
         switch (entry.kind) {
             .directory => {
                 try destination.createDirPath(io, entry.name);
-                var child_source = try source.openDir(io, entry.name, .{ .iterate = true });
-                defer child_source.close(io);
-                var child_destination = try destination.openDir(io, entry.name, .{});
-                defer child_destination.close(io);
-                try copyTreeInner(allocator, io, child_source, child_destination);
+                try copyDirectoryEntry(allocator, io, source, destination, entry.name, progress, buffers);
             },
-            .file => {
-                var child_source = try source.openFile(io, entry.name, .{});
-                defer child_source.close(io);
-                const stat = try source.statFile(io, entry.name, .{});
-                var child_destination = try destination.createFile(io, entry.name, .{ .truncate = true });
-                defer child_destination.close(io);
-                var read_buffer: [64 * 1024]u8 = undefined;
-                var write_buffer: [64 * 1024]u8 = undefined;
-                var reader = child_source.reader(io, &read_buffer);
-                var writer = child_destination.writer(io, &write_buffer);
-                var chunk: [64 * 1024]u8 = undefined;
-                while (true) {
-                    const count = try reader.interface.readSliceShort(&chunk);
-                    if (count == 0) break;
-                    try writer.interface.writeAll(chunk[0..count]);
-                }
-                try writer.interface.flush();
-                if (std.Io.File.Permissions.has_executable_bit and stat.permissions.toMode() & 0o111 != 0) {
-                    try child_destination.setPermissions(io, .executable_file);
-                }
-            },
+            .file => try copyFileEntry(io, source, destination, entry.name, progress, buffers),
             .sym_link => {
                 var link_buffer: [std.fs.max_path_bytes]u8 = undefined;
                 const length = try source.readLink(io, entry.name, &link_buffer);
@@ -335,6 +357,34 @@ fn copyTreeInner(allocator: std.mem.Allocator, io: std.Io, source: std.Io.Dir, d
             },
             else => {},
         }
+    }
+}
+
+fn copyDirectoryEntry(allocator: std.mem.Allocator, io: std.Io, source: std.Io.Dir, destination: std.Io.Dir, name: []const u8, progress: *CopyProgress, buffers: CopyBuffers) anyerror!void {
+    var child_source = try source.openDir(io, name, .{ .iterate = true });
+    defer child_source.close(io);
+    var child_destination = try destination.openDir(io, name, .{});
+    defer child_destination.close(io);
+    try copyTreeInner(allocator, io, child_source, child_destination, progress, buffers);
+}
+
+fn copyFileEntry(io: std.Io, source: std.Io.Dir, destination: std.Io.Dir, name: []const u8, progress: *CopyProgress, buffers: CopyBuffers) !void {
+    var child_source = try source.openFile(io, name, .{});
+    defer child_source.close(io);
+    const stat = try source.statFile(io, name, .{});
+    var child_destination = try destination.createFile(io, name, .{ .truncate = true });
+    defer child_destination.close(io);
+    var reader = child_source.reader(io, buffers.read);
+    var writer = child_destination.writer(io, buffers.write);
+    while (true) {
+        const count = try reader.interface.readSliceShort(buffers.chunk);
+        if (count == 0) break;
+        try writer.interface.writeAll(buffers.chunk[0..count]);
+        try progress.add(count);
+    }
+    try writer.interface.flush();
+    if (std.Io.File.Permissions.has_executable_bit and stat.permissions.toMode() & 0o111 != 0) {
+        try child_destination.setPermissions(io, .executable_file);
     }
 }
 
@@ -375,7 +425,7 @@ fn sha256FileHex(io: std.Io, path: []const u8) ![64]u8 {
     return hex;
 }
 
-fn download(allocator: std.mem.Allocator, io: std.Io, url: []const u8, destination: []const u8) !void {
+fn download(allocator: std.mem.Allocator, io: std.Io, url: []const u8, destination: []const u8, stderr: *std.Io.Writer) !void {
     var client: std.http.Client = .{ .allocator = allocator, .io = io };
     defer client.deinit();
     const uri = try std.Uri.parse(url);
@@ -392,6 +442,7 @@ fn download(allocator: std.mem.Allocator, io: std.Io, url: []const u8, destinati
     var transfer_buffer: [64 * 1024]u8 = undefined;
     const reader = response.reader(&transfer_buffer);
     var total: u64 = 0;
+    var next_report: u64 = 128 * 1024 * 1024;
     var chunk: [64 * 1024]u8 = undefined;
     while (true) {
         const count = try reader.readSliceShort(&chunk);
@@ -399,8 +450,15 @@ fn download(allocator: std.mem.Allocator, io: std.Io, url: []const u8, destinati
         total = std.math.add(u64, total, count) catch return error.ToolchainDownloadTooLarge;
         if (total > max_download_bytes) return error.ToolchainDownloadTooLarge;
         try writer.interface.writeAll(chunk[0..count]);
+        if (total >= next_report) {
+            try stderr.print("toolchain: ダウンロード済み {d} MiB\n", .{@divTrunc(total, 1024 * 1024)});
+            try stderr.flush();
+            next_report = total + 128 * 1024 * 1024;
+        }
     }
     try writer.interface.flush();
+    try stderr.print("toolchain: ダウンロード完了 ({d} MiB)\n", .{@divTrunc(total, 1024 * 1024)});
+    try stderr.flush();
 }
 
 /// tarを外部コマンドで展開する。3正式OSはいずれもOS同梱のtar（bsdtar/GNU tar）が
@@ -725,11 +783,12 @@ pub fn installLlvm(allocator: std.mem.Allocator, io: std.Io, environ: *const std
     defer if (marker_sha256) |value| allocator.free(value);
     if (options.from_dir) |source_dir| {
         marker_source = "directory";
-        try stdout.print("toolchain: LLVMを複製しています: {s}\n", .{source_dir});
+        try stderr.print("toolchain: LLVMを複製しています: {s}\n", .{source_dir});
+        try stderr.flush();
         const clang_rel = try std.fmt.allocPrint(allocator, "bin/{s}", .{clangFileName()});
         defer allocator.free(clang_rel);
         if (!fileExists(io, source_dir, clang_rel)) return error.ToolchainSourceInvalid;
-        try copyTree(allocator, io, source_dir, pending);
+        try copyTree(allocator, io, source_dir, pending, stderr);
     } else {
         const archive_path: []const u8 = if (options.archive_path) |path| blk: {
             marker_source = "archive";
@@ -738,18 +797,22 @@ pub fn installLlvm(allocator: std.mem.Allocator, io: std.Io, environ: *const std
             const url = options.url_override orelse lock.url;
             const destination = try std.fmt.allocPrint(allocator, "{s}/llvm-archive", .{staging});
             try stderr.print("toolchain: LLVM {s} をダウンロードしています: {s}\n", .{ lock.version, url });
-            try download(allocator, io, url, destination);
+            try stderr.flush();
+            try download(allocator, io, url, destination, stderr);
             break :blk destination;
         };
         defer allocator.free(archive_path);
         const expected_sha = options.sha256_override orelse lock.sha256;
+        try stderr.writeAll("toolchain: アーカイブのSHA-256を検証しています\n");
+        try stderr.flush();
         const actual = try sha256FileHex(io, archive_path);
         if (!std.ascii.eqlIgnoreCase(&actual, expected_sha)) {
             try stderr.print("toolchain: SHA-256不一致 expected={s} actual={s}\n", .{ expected_sha, actual });
             return error.ToolchainChecksumMismatch;
         }
         marker_sha256 = try allocator.dupe(u8, &actual);
-        try stdout.print("toolchain: アーカイブを展開しています\n", .{});
+        try stderr.writeAll("toolchain: アーカイブを展開しています（LLVMアーカイブは数分かかる場合があります）\n");
+        try stderr.flush();
         const inner_root_name = try extractTarball(allocator, io, archive_path, staging_inner);
         defer allocator.free(inner_root_name);
         const extracted = try std.fs.path.join(allocator, &.{ staging_inner, inner_root_name });
@@ -761,7 +824,8 @@ pub fn installLlvm(allocator: std.mem.Allocator, io: std.Io, environ: *const std
 
     // libLLVM-C構築後にAOT最小構成へ縮小する（llvm-config/clang++/静的libはここで削除）。
     if (options.from_dir == null) {
-        try stdout.print("toolchain: AOT最小構成へ縮小しています\n", .{});
+        try stderr.writeAll("toolchain: AOT最小構成へ縮小しています\n");
+        try stderr.flush();
         try pruneLlvmTree(allocator, io, pending);
     }
 

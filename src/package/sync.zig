@@ -403,7 +403,7 @@ const ImportConstraint = union(enum) {
             .http => |dependency| {
                 const source = candidate.source orelse candidate.resolved_from orelse return false;
                 return source.kind == .http and source.url != null and source.hash != null and
-                    std.mem.eql(u8, source.url.?, dependency.url) and std.mem.eql(u8, source.hash.?, dependency.hash);
+                    std.mem.eql(u8, source.url.?, dependency.url) and lock_model.hashEql(source.hash.?, dependency.hash);
             },
         }
     }
