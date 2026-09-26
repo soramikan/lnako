@@ -499,6 +499,18 @@ fn normalizeSha512(text: []const u8) ?[64]u8 {
     return null;
 }
 
+/// Return whether a declared artifact digest is in a format the verifier accepts.
+pub fn isSupportedHash(text: []const u8) bool {
+    return normalizeSha256(text) != null or normalizeSha512(text) != null;
+}
+
+test "isSupportedHash accepts verifier SHA-256/SHA-512 encodings only" {
+    try std.testing.expect(isSupportedHash("sha256:0000000000000000000000000000000000000000000000000000000000000000"));
+    try std.testing.expect(isSupportedHash("sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"));
+    try std.testing.expect(!isSupportedHash("sha256:not-a-digest"));
+    try std.testing.expect(!isSupportedHash(""));
+}
+
 pub fn sha256Hex(gpa: Allocator, bytes: []const u8) ![]u8 {
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});

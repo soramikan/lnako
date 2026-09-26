@@ -16,6 +16,28 @@ pub const SourceProvider = struct {
     }
 };
 
+/// PackageResolver returns all fields allocated from its supplied allocator;
+/// the loader retains them in its graph arena.
+pub const ResolvedPackageImport = struct {
+    path: []u8,
+    /// Stable package identity plus canonical export name; independent of disk path.
+    canonical_id: []const u8,
+    /// Public namespace from the source import alias, independent of canonical ID.
+    namespace: []const u8,
+};
+
+/// Lock/environment-backed package specifier resolver. The callback returns the
+/// selected export path and public namespace; selection policy stays outside the
+/// module graph so CLI, tests, and embedded callers share the same loader.
+pub const PackageResolver = struct {
+    context: *anyopaque,
+    resolveFn: *const fn (context: *anyopaque, allocator: std.mem.Allocator, importer: []const u8, specifier: []const u8) anyerror!ResolvedPackageImport,
+
+    pub fn resolve(self: PackageResolver, allocator: std.mem.Allocator, importer: []const u8, specifier: []const u8) !ResolvedPackageImport {
+        return self.resolveFn(self.context, allocator, importer, specifier);
+    }
+};
+
 pub const FileProvider = struct {
     io: std.Io,
     max_bytes: usize = 128 * 1024 * 1024,
@@ -32,6 +54,8 @@ pub const FileProvider = struct {
 
 pub const Options = struct {
     compat_js: bool = false,
+    /// 同期済み環境に基づく `パッケージ:` / `pkg:` import resolver。
+    package_resolver: ?PackageResolver = null,
     /// エントリモジュールへ強制する構文モード（--dncl / --dncl2）。
     forced_mode: token_mod.Mode = .{},
 };
@@ -41,6 +65,8 @@ pub const LoadState = enum { loading, loaded };
 pub const Import = struct {
     requested: []const u8,
     resolved_path: []const u8,
+    canonical_id: ?[]const u8 = null,
+    namespace: ?[]const u8 = null,
     target: ?u32,
     span: ast.Span,
     cyclic: bool = false,
@@ -77,6 +103,9 @@ pub const LoadedModule = struct {
     kind: ModuleKind,
     state: LoadState,
     path: []const u8,
+    canonical_id: ?[]const u8 = null,
+    /// Source-level package namespace alias used in this importer's scope.
+    source_namespace: ?[]const u8 = null,
     name: []const u8,
     source: []u8,
     parsed: ?parser.ParseResult,
@@ -149,11 +178,67 @@ pub const ModuleGraph = struct {
         // 同名モジュール（d1/lib と d2/lib）が共に "lib__$entry" を名乗る
         // 名前解決の衝突を避け、実行時は module_entries から直接引く。
         const loader_to_input = try temp.alloc(u32, self.modules.len);
+        const internal_module_names = try temp.alloc([]const u8, self.modules.len);
+        const runtime_module_names = try temp.alloc([]const u8, self.modules.len);
+        const internal_name_assigned = try temp.alloc(bool, self.modules.len);
+        @memset(internal_name_assigned, false);
         var input_count: u32 = 0;
         for (self.modules) |module| {
             if (module.kind != .nako3 or module.parsed == null or module.parsed.?.root == null) continue;
             loader_to_input[module.index] = input_count;
             input_count += 1;
+        }
+        for (self.modules) |module| {
+            const source_namespace = module.source_namespace;
+            if (source_namespace) |namespace| {
+                var collision = false;
+                for (self.modules) |candidate| {
+                    if (candidate == module) continue;
+                    if (candidate.canonical_id == null) {
+                        if (std.mem.eql(u8, namespace, candidate.name)) {
+                            collision = true;
+                            break;
+                        }
+                        continue;
+                    }
+                    const candidate_namespace = candidate.source_namespace orelse continue;
+                    if (std.mem.eql(u8, namespace, candidate_namespace) and
+                        !std.mem.eql(u8, module.canonical_id.?, candidate.canonical_id.?))
+                    {
+                        collision = true;
+                        break;
+                    }
+                }
+                runtime_module_names[module.index] = if (collision)
+                    try uniqueInternalModuleName(temp, self.modules, runtime_module_names, internal_name_assigned, module.index, namespace, "pkg")
+                else
+                    namespace;
+                internal_module_names[module.index] = try uniqueInternalModuleName(
+                    temp,
+                    self.modules,
+                    internal_module_names,
+                    internal_name_assigned,
+                    module.index,
+                    "package",
+                    "pkg",
+                );
+                internal_name_assigned[module.index] = true;
+            } else {
+                var collision = false;
+                for (self.modules) |candidate| {
+                    if (candidate == module or candidate.canonical_id != null) continue;
+                    if (std.mem.eql(u8, module.name, candidate.name) and !std.mem.eql(u8, module.path, candidate.path)) {
+                        collision = true;
+                        break;
+                    }
+                }
+                internal_module_names[module.index] = if (collision)
+                    try uniqueInternalModuleName(temp, self.modules, internal_module_names, internal_name_assigned, module.index, module.name, "local")
+                else
+                    module.name;
+                runtime_module_names[module.index] = internal_module_names[module.index];
+                internal_name_assigned[module.index] = true;
+            }
         }
         var inputs: std.ArrayList(analyzer.ModuleInput) = .empty;
         for (self.modules) |module| {
@@ -167,7 +252,7 @@ pub const ModuleGraph = struct {
                 if (item.effective and target_module.kind == .nako3) {
                     try import_entries.append(temp, .{
                         .position = item.span.start,
-                        .entry_name = try std.fmt.allocPrint(temp, "{s}__$entry", .{target_module.name}),
+                        .entry_name = try std.fmt.allocPrint(temp, "{s}__$entry", .{runtime_module_names[target]}),
                         .site_module = loader_to_input[module.index],
                         .site_order = module.expand_order,
                         .callee_module = loader_to_input[target],
@@ -185,7 +270,7 @@ pub const ModuleGraph = struct {
                     if (vitem.effective and target_module.kind == .nako3) {
                         try ventries.append(temp, .{
                             .position = vitem.span.start,
-                            .entry_name = try std.fmt.allocPrint(temp, "{s}__$entry", .{target_module.name}),
+                            .entry_name = try std.fmt.allocPrint(temp, "{s}__$entry", .{runtime_module_names[target]}),
                             .site_module = loader_to_input[module.index],
                             .site_order = module.expand_order,
                             .callee_module = loader_to_input[target],
@@ -199,13 +284,72 @@ pub const ModuleGraph = struct {
                     .import_entries = try ventries.toOwnedSlice(temp),
                 });
             }
+            var namespace_aliases: std.ArrayList(analyzer.NamespaceAlias) = .empty;
+            for (module.imports) |item| if (item.target) |target| {
+                const source_namespace = item.namespace orelse continue;
+                if (self.modules[target].kind != .nako3) continue;
+                const namespace_alias = analyzer.NamespaceAlias{
+                    .source_namespace = source_namespace,
+                    .internal_namespace = internal_module_names[target],
+                    .target_module = loader_to_input[target],
+                    .is_explicit = item.canonical_id != null,
+                };
+                var already_added = false;
+                for (namespace_aliases.items, 0..) |existing, index| {
+                    if (!std.mem.eql(u8, existing.source_namespace, source_namespace)) continue;
+                    // A package alias is explicit and takes precedence over a
+                    // relative import's filename-derived namespace on collision.
+                    if (namespace_alias.is_explicit and !existing.is_explicit) namespace_aliases.items[index] = namespace_alias;
+                    already_added = true;
+                    break;
+                }
+                if (!already_added) try namespace_aliases.append(temp, namespace_alias);
+            };
+            const owns_scoped_namespace_collision = if (module.canonical_id) |canonical_id| collision: {
+                var has_scoped_alias_collision = false;
+                for (self.modules) |candidate| {
+                    if (candidate == module) continue;
+                    if (candidate.canonical_id == null) {
+                        if (module.source_namespace) |namespace| {
+                            if (std.mem.eql(u8, namespace, candidate.name)) {
+                                has_scoped_alias_collision = true;
+                                break;
+                            }
+                        }
+                        continue;
+                    }
+                    const same_namespace_different_export = if (module.source_namespace) |namespace|
+                        if (candidate.source_namespace) |candidate_namespace|
+                            std.mem.eql(u8, namespace, candidate_namespace) and !std.mem.eql(u8, canonical_id, candidate.canonical_id.?)
+                        else
+                            false
+                    else
+                        false;
+                    if (same_namespace_different_export) {
+                        has_scoped_alias_collision = true;
+                        break;
+                    }
+                }
+                break :collision has_scoped_alias_collision;
+            } else collision: {
+                for (self.modules) |candidate| {
+                    if (candidate == module) continue;
+                    const candidate_namespace = candidate.source_namespace orelse continue;
+                    if (std.mem.eql(u8, module.name, candidate_namespace)) break :collision true;
+                }
+                break :collision false;
+            };
             try inputs.append(temp, .{
-                .name = module.name,
+                .name = runtime_module_names[module.index],
+                .internal_namespace = internal_module_names[module.index],
                 .path = module.path,
                 .root = module.parsed.?.root.?,
                 .normalized_source = module.parsed.?.stream.source.text,
                 .allows_dynamic_commands = allows_dynamic_commands,
+                .is_package = module.canonical_id != null,
                 .expands_in_function = module.expands_in_function,
+                .owns_scoped_namespace_collision = owns_scoped_namespace_collision,
+                .namespace_aliases = try namespace_aliases.toOwnedSlice(temp),
                 .variants = try variant_inputs.toOwnedSlice(temp),
                 .stmt_ranks = if (module.index < self.expansion.stmt_ranks.len) self.expansion.stmt_ranks[module.index] else &.{},
                 .marker_rank = if (module.index < self.expansion.marker_ranks.len) self.expansion.marker_ranks[module.index] else std.math.maxInt(usize),
@@ -215,6 +359,35 @@ pub const ModuleGraph = struct {
         return analyzer.analyzeModules(allocator, inputs.items);
     }
 };
+
+fn uniqueInternalModuleName(
+    allocator: std.mem.Allocator,
+    modules: []*LoadedModule,
+    internal_names: []const []const u8,
+    assigned: []const bool,
+    module_index: u32,
+    base_name: []const u8,
+    kind: []const u8,
+) std.mem.Allocator.Error![]const u8 {
+    var attempt: usize = 0;
+    while (true) : (attempt += 1) {
+        const candidate = if (attempt == 0)
+            try std.fmt.allocPrint(allocator, "{s}__lnako_{s}_{d}", .{ base_name, kind, module_index })
+        else
+            try std.fmt.allocPrint(allocator, "{s}__lnako_{s}_{d}_{d}", .{ base_name, kind, module_index, attempt });
+        var collision = false;
+        for (modules) |other| {
+            if (other.index == module_index) continue;
+            if (std.mem.eql(u8, candidate, other.name) or
+                (assigned[other.index] and std.mem.eql(u8, candidate, internal_names[other.index])))
+            {
+                collision = true;
+                break;
+            }
+        }
+        if (!collision) return candidate;
+    }
+}
 
 /// パスの拡張子が強制するDNCL方言モード（.dncl→dncl、.dncl2→dncl2、大小文字無視）。
 /// CLI強制フラグとの競合検査（埋め込み実行ファイル生成時の事前検査など）に使う。
@@ -237,7 +410,7 @@ pub fn load(backing_allocator: std.mem.Allocator, entry_path: []const u8, provid
     };
     errdefer loader.deinitModules();
     const normalized_entry = try normalizePath(loader.allocator, entry_path);
-    const entry = try loader.loadOne(normalized_entry, null, null);
+    const entry = try loader.loadOne(normalized_entry, null, null, null, null);
     // 実効辺の決定とモード伝搬は全モジュール読み込み後に行う。
     // 公式のreplaceRequireStatementsは取り込み文を逆順に処理し、filePath単位の
     // include guardで最初に処理された辺だけへ内容を展開する（同一ファイルの
@@ -247,6 +420,12 @@ pub fn load(backing_allocator: std.mem.Allocator, entry_path: []const u8, provid
     try variants.buildCopyVariants(&loader);
     try variants.attachInlineExpansions(&loader, entry);
     const modules = try loader.modules.toOwnedSlice(loader.allocator);
+    errdefer for (modules) |module| {
+        if (module.parsed) |*parsed| parsed.deinit();
+        for (module.variants.items) |*variant| variant.parse.deinit();
+        backing_allocator.free(module.source);
+        backing_allocator.destroy(module);
+    };
     const diagnostics = try loader.diagnostics.toOwnedSlice(loader.allocator);
     // arenaを返却値へコピーする前に確保を済ませる。リテラル内で呼ぶと
     // コピー後のarena状態へ確保が記録されずリークする。
@@ -282,8 +461,16 @@ pub const Loader = struct {
 
     /// `initial` は取り込み文位置で有効だったパーサモード（取り込み元からの継承）。
     /// 字句変換には波及せず、添字・自動初期化の意味づけのみに効く。
-    fn loadOne(self: *Loader, path: []const u8, import_node: ?*ast.Node, initial: ?token_mod.Mode) anyerror!u32 {
-        if (self.find(path)) |existing| return existing;
+    fn loadOne(self: *Loader, path: []const u8, import_node: ?*ast.Node, initial: ?token_mod.Mode, namespace_override: ?[]const u8, canonical_id: ?[]const u8) anyerror!u32 {
+        if (canonical_id) |id| {
+            if (self.findCanonical(id)) |existing| return existing;
+            // A package export may resolve to a file already loaded by a relative
+            // import. Reuse that module without changing its established name or
+            // identity; the Import edge carries the package alias separately.
+            if (self.findLocalPath(path)) |existing| return existing;
+        } else if (self.find(path)) |existing| {
+            return existing;
+        }
         const extension = std.fs.path.extension(path);
         const extension_mode = extensionForcedMode(path);
         const is_dncl = extension_mode.dncl;
@@ -330,12 +517,17 @@ pub const Loader = struct {
         errdefer if (!registered) self.backing_allocator.free(source);
         const module = try self.backing_allocator.create(LoadedModule);
         errdefer if (!registered) self.backing_allocator.destroy(module);
-        const name = try analyzer.moduleName(self.allocator, path);
+        const name = if (namespace_override) |namespace|
+            try self.allocator.dupe(u8, namespace)
+        else
+            try analyzer.moduleName(self.allocator, path);
         module.* = .{
             .index = @intCast(self.modules.items.len),
             .kind = kind,
             .state = .loading,
             .path = try self.allocator.dupe(u8, path),
+            .canonical_id = if (canonical_id) |id| try self.allocator.dupe(u8, id) else null,
+            .source_namespace = if (namespace_override) |namespace| try self.allocator.dupe(u8, namespace) else null,
             .name = name,
             .source = source,
             .parsed = null,
@@ -369,7 +561,7 @@ pub const Loader = struct {
                 if (existing) |index| {
                     cyclic = self.modules.items[index].state == .loading;
                 } else {
-                    target = self.loadOne(resolved, import_node, null) catch |err| switch (err) {
+                    target = self.loadOne(resolved, import_node, null, null, null) catch |err| switch (err) {
                         error.OutOfMemory => return err,
                         else => null,
                     };
@@ -405,11 +597,29 @@ pub const Loader = struct {
             // 先行する取り込み先の終端モードの暫定累積（実効辺未確定のため近似値）
             var cumulative: token_mod.Mode = .{};
             for (import_nodes.items) |node| {
-                const resolved = resolveImport(self.allocator, path, node.value) catch |err| {
+                const resolved_import = resolveRequestedImport(self.allocator, path, node.value, self.options.package_resolver) catch |err| {
                     if (err == error.OutOfMemory) return err;
-                    try self.importDiagnostic(node, path, "相対取り込みパスが不正です");
+                    const message = if (isPackageSpecifier(node.value))
+                        "パッケージ参照を解決できません（同期済み環境・公開export・aliasを確認してください）"
+                    else
+                        "相対取り込みパスが不正です";
+                    try self.importDiagnostic(node, path, message);
                     continue;
                 };
+                if (resolved_import.canonical_id) |resolved_canonical_id| {
+                    if (resolved_import.namespace) |namespace| {
+                        for (imports.items) |previous| {
+                            const previous_id = previous.canonical_id orelse continue;
+                            const previous_namespace = previous.namespace orelse continue;
+                            if (std.mem.eql(u8, namespace, previous_namespace) and
+                                !std.mem.eql(u8, resolved_canonical_id, previous_id))
+                            {
+                                try self.importDiagnostic(node, path, "異なるpackage exportが同じ公開namespaceを使用しています");
+                                break;
+                            }
+                        }
+                    }
+                }
                 var site_mode = cumulative;
                 for (module.parsed.?.import_modes) |record| {
                     if (record.position == node.span.start) {
@@ -417,13 +627,13 @@ pub const Loader = struct {
                         break;
                     }
                 }
-                const existing = self.find(resolved);
+                const existing = self.findImport(resolved_import.path, resolved_import.canonical_id);
                 var target: ?u32 = existing;
                 var cyclic = false;
                 if (existing) |index| {
                     cyclic = self.modules.items[index].state == .loading;
                 } else {
-                    target = self.loadOne(resolved, node, site_mode) catch |err| switch (err) {
+                    target = self.loadOne(resolved_import.path, node, site_mode, resolved_import.namespace, resolved_import.canonical_id) catch |err| switch (err) {
                         error.OutOfMemory => return err,
                         else => null,
                     };
@@ -436,7 +646,9 @@ pub const Loader = struct {
                 }
                 try imports.append(self.allocator, .{
                     .requested = try self.allocator.dupe(u8, node.value),
-                    .resolved_path = resolved,
+                    .resolved_path = resolved_import.path,
+                    .canonical_id = resolved_import.canonical_id,
+                    .namespace = resolved_import.namespace orelse try analyzer.moduleName(self.allocator, resolved_import.path),
                     .target = target,
                     .span = node.span,
                     .cyclic = cyclic,
@@ -468,6 +680,8 @@ pub const Loader = struct {
             const target = item.target orelse continue;
             const target_module = self.modules.items[target];
             if (target_module.kind != .nako3 or target_module.parsed == null) continue;
+            // Namespace aliases point at a shared loaded module. The effective
+            // edge guard ensures each canonical export (or local file) is initialized once.
             if (guarded[target]) continue;
             guarded[target] = true;
             target_module.expand_order = order_counter.*;
@@ -565,6 +779,28 @@ pub const Loader = struct {
     fn find(self: *Loader, path: []const u8) ?u32 {
         for (self.modules.items) |module| if (std.mem.eql(u8, module.path, path)) return module.index;
         return null;
+    }
+
+    fn findLocalPath(self: *Loader, path: []const u8) ?u32 {
+        for (self.modules.items) |module| {
+            if (module.canonical_id == null and std.mem.eql(u8, module.path, path)) return module.index;
+        }
+        return null;
+    }
+
+    fn findCanonical(self: *Loader, canonical_id: []const u8) ?u32 {
+        for (self.modules.items) |module| {
+            const id = module.canonical_id orelse continue;
+            if (std.mem.eql(u8, id, canonical_id)) return module.index;
+        }
+        return null;
+    }
+
+    fn findImport(self: *Loader, path: []const u8, canonical_id: ?[]const u8) ?u32 {
+        if (canonical_id) |id| {
+            return self.findCanonical(id) orelse self.findLocalPath(path);
+        }
+        return self.find(path);
     }
 
     fn importDiagnostic(self: *Loader, node: ?*ast.Node, file: []const u8, message: []const u8) !void {
@@ -793,6 +1029,23 @@ fn isNativePluginExtension(extension: []const u8) bool {
         std.ascii.eqlIgnoreCase(extension, ".dll");
 }
 
+fn isPackageSpecifier(requested: []const u8) bool {
+    return std.mem.startsWith(u8, requested, "パッケージ:") or std.mem.startsWith(u8, requested, "pkg:");
+}
+
+const ResolvedImport = struct {
+    path: []u8,
+    canonical_id: ?[]const u8 = null,
+    namespace: ?[]const u8 = null,
+};
+
+fn resolveRequestedImport(allocator: std.mem.Allocator, importer: []const u8, requested: []const u8, package_resolver: ?PackageResolver) !ResolvedImport {
+    if (!isPackageSpecifier(requested)) return .{ .path = try resolveImport(allocator, importer, requested) };
+    const resolver = package_resolver orelse return error.PackageResolverUnavailable;
+    const selected = try resolver.resolve(allocator, importer, requested);
+    return .{ .path = try normalizePath(allocator, selected.path), .canonical_id = selected.canonical_id, .namespace = selected.namespace };
+}
+
 fn resolveImport(allocator: std.mem.Allocator, importer: []const u8, requested: []const u8) ![]u8 {
     if (std.mem.indexOfScalar(u8, requested, ':') != null and !std.fs.path.isAbsolute(requested)) return error.UnsupportedImport;
     if (std.fs.path.isAbsolute(requested)) return normalizePath(allocator, requested);
@@ -810,10 +1063,324 @@ const MemoryProvider = struct {
 
     fn read(context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
         const self: *MemoryProvider = @ptrCast(@alignCast(context));
-        for (self.files) |file| if (std.mem.endsWith(u8, path, file.suffix)) return allocator.dupe(u8, file.source);
+        for (self.files) |file| if (pathHasSuffix(path, file.suffix)) return allocator.dupe(u8, file.source);
         return error.FileNotFound;
     }
 };
+
+fn pathHasSuffix(path: []const u8, suffix: []const u8) bool {
+    if (suffix.len > path.len) return false;
+    const start = path.len - suffix.len;
+    if (start > 0 and path[start - 1] != '/' and path[start - 1] != '\\') return false;
+    for (suffix, 0..) |char, index| {
+        const path_char = path[start + index];
+        const normalized_path_char: u8 = if (path_char == '\\') '/' else path_char;
+        const normalized_suffix_char: u8 = if (char == '\\') '/' else char;
+        if (normalized_path_char != normalized_suffix_char) return false;
+    }
+    return true;
+}
+
+const PackageTestResolver = struct {
+    fn resolver(self: *PackageTestResolver) PackageResolver {
+        return .{ .context = self, .resolveFn = resolve };
+    }
+
+    fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !ResolvedPackageImport {
+        const reference = if (std.mem.startsWith(u8, specifier, "パッケージ:"))
+            specifier["パッケージ:".len..]
+        else if (std.mem.startsWith(u8, specifier, "pkg:"))
+            specifier["pkg:".len..]
+        else
+            return error.InvalidPackageSpecifier;
+        const path = if (std.mem.eql(u8, reference, "math") or std.mem.eql(u8, reference, "math-alt"))
+            "packages/math/index.nako3"
+        else if (std.mem.eql(u8, reference, "util"))
+            "packages/util/index.nako3"
+        else if (std.mem.eql(u8, reference, "math/vector"))
+            "packages/math/vector.nako3"
+        else if (std.mem.eql(u8, reference, "geometry"))
+            "packages/geometry/index.nako3"
+        else
+            return error.PackageNotFound;
+        const namespace = if (std.mem.eql(u8, reference, "math"))
+            "math"
+        else if (std.mem.eql(u8, reference, "math-alt"))
+            "math_alt"
+        else if (std.mem.eql(u8, reference, "util"))
+            "util"
+        else if (std.mem.eql(u8, reference, "math/vector"))
+            "math__vector"
+        else
+            "geometry";
+        const canonical_id = if (std.mem.eql(u8, reference, "math") or std.mem.eql(u8, reference, "math-alt"))
+            "pkg:math-id/main"
+        else if (std.mem.eql(u8, reference, "util"))
+            "pkg:util-id/main"
+        else if (std.mem.eql(u8, reference, "math/vector"))
+            "pkg:math-id/vector"
+        else
+            "pkg:geometry-id/main";
+        return .{
+            .path = try std.fs.path.resolve(allocator, &.{path}),
+            .canonical_id = try allocator.dupe(u8, canonical_id),
+            .namespace = namespace,
+        };
+    }
+};
+
+const NamespaceCollisionPackageResolver = struct {
+    fn resolver(self: *NamespaceCollisionPackageResolver) PackageResolver {
+        return .{ .context = self, .resolveFn = resolve };
+    }
+
+    fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !ResolvedPackageImport {
+        const path = if (std.mem.eql(u8, specifier, "pkg:scoped"))
+            "packages/scoped/main.nako3"
+        else if (std.mem.eql(u8, specifier, "pkg:flat"))
+            "packages/flat/main.nako3"
+        else
+            return error.PackageNotFound;
+        const canonical_id = if (std.mem.eql(u8, specifier, "pkg:scoped")) "pkg:scoped/main" else "pkg:flat/main";
+        return .{
+            .path = try std.fs.path.resolve(allocator, &.{path}),
+            .canonical_id = try allocator.dupe(u8, canonical_id),
+            .namespace = try allocator.dupe(u8, "alice__tool"),
+        };
+    }
+};
+
+test "正規化後に同じnamespaceとなる別package importを診断する" {
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:scoped」を取り込む\n!「pkg:flat」を取り込む\n" },
+        .{ .suffix = "packages/scoped/main.nako3", .source = "値=1\n" },
+        .{ .suffix = "packages/flat/main.nako3", .source = "値=2\n" },
+    } };
+    var package_resolver = NamespaceCollisionPackageResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .package_resolver = package_resolver.resolver() });
+    defer graph.deinit();
+    try std.testing.expect(!graph.succeeded());
+    var reported_namespace_collision = false;
+    for (graph.diagnostics) |item| {
+        if (std.mem.indexOf(u8, item.message, "同じ公開namespace") != null) reported_namespace_collision = true;
+    }
+    try std.testing.expect(reported_namespace_collision);
+}
+
+test "日本語パッケージ:とpkg:を注入resolverでsource exportへ解決する" {
+    const cases = [_]struct { specifier: []const u8, suffix: []const u8 }{
+        .{ .specifier = "パッケージ:math", .suffix = "packages/math/index.nako3" },
+        .{ .specifier = "パッケージ:math/vector", .suffix = "packages/math/vector.nako3" },
+        .{ .specifier = "pkg:math", .suffix = "packages/math/index.nako3" },
+    };
+    for (cases) |case| {
+        const source = try std.fmt.allocPrint(std.testing.allocator, "!「{s}」を取り込む\n", .{case.specifier});
+        defer std.testing.allocator.free(source);
+        var memory = MemoryProvider{ .files = &.{
+            .{ .suffix = "main.nako3", .source = source },
+            .{ .suffix = case.suffix, .source = "A=1\n" },
+        } };
+        var package_resolver = PackageTestResolver{};
+        var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .package_resolver = package_resolver.resolver() });
+        defer graph.deinit();
+        try std.testing.expect(graph.succeeded());
+        try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
+        try std.testing.expect(pathHasSuffix(graph.modules[1].path, case.suffix));
+        const expected_namespace = if (std.mem.eql(u8, case.specifier, "パッケージ:math/vector")) "math__vector" else "math";
+        try std.testing.expectEqualStrings(expected_namespace, graph.modules[1].name);
+        const expected_id = if (std.mem.eql(u8, case.specifier, "パッケージ:math/vector")) "pkg:math-id/vector" else "pkg:math-id/main";
+        try std.testing.expectEqualStrings(expected_id, graph.modules[1].canonical_id.?);
+    }
+}
+
+test "package resolver未設定ではpackage specifierを拒否する" {
+    var memory = MemoryProvider{ .files = &.{.{ .suffix = "main.nako3", .source = "!「パッケージ:missing」を取り込む\n" }} };
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{});
+    defer graph.deinit();
+    try std.testing.expect(!graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 1), graph.diagnostics.len);
+    try std.testing.expect(std.mem.indexOf(u8, graph.diagnostics[0].message, "パッケージ参照") != null);
+}
+
+const TestLocalPackageResolver = struct {
+    fn resolver(self: *TestLocalPackageResolver) PackageResolver {
+        return .{ .context = self, .resolveFn = resolve };
+    }
+
+    fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !ResolvedPackageImport {
+        if (!std.mem.eql(u8, specifier, "パッケージ:lib")) return error.PackageNotFound;
+        return .{
+            .path = try std.fs.path.resolve(allocator, &.{"lib/index.nako3"}),
+            .canonical_id = try allocator.dupe(u8, "pkg:lib/main"),
+            .namespace = "lib",
+        };
+    }
+};
+
+test "package namespace aliasは取り込み順に関係なく同名local moduleより優先する" {
+    const import_orders = [_][]const u8{
+        "!「lib/util.nako3」を取り込む\n!「pkg:util」を取り込む\nutil__値を表示\n",
+        "!「pkg:util」を取り込む\n!「lib/util.nako3」を取り込む\nutil__値を表示\n",
+    };
+    for (import_orders) |main_source| {
+        var memory = MemoryProvider{ .files = &.{
+            .{ .suffix = "main.nako3", .source = main_source },
+            .{ .suffix = "lib/util.nako3", .source = "値=1\n" },
+            .{ .suffix = "packages/util/index.nako3", .source = "値=2\n" },
+        } };
+        var package_resolver = PackageTestResolver{};
+        var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .package_resolver = package_resolver.resolver() });
+        defer graph.deinit();
+        try std.testing.expect(graph.succeeded());
+        const package_module = if (std.mem.eql(u8, graph.modules[1].canonical_id orelse "", "pkg:util-id/main")) graph.modules[1] else graph.modules[2];
+        var program = try graph.analyze(std.testing.allocator);
+        defer program.deinit();
+        try std.testing.expect(program.succeeded());
+        var found_package_binding = false;
+        for (program.bindings) |binding| {
+            if (!std.mem.eql(u8, binding.name, "util__値")) continue;
+            const symbol_id = binding.symbol orelse continue;
+            found_package_binding = program.symbols[symbol_id].module_index == package_module.index;
+            break;
+        }
+        try std.testing.expect(found_package_binding);
+    }
+}
+
+test "canonical package exportは複数aliasから同じmoduleと状態を共有する" {
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:math」を取り込む\n!「pkg:math-alt」を取り込む\nmath__値を表示\nmath_alt__値を表示\n" },
+        .{ .suffix = "packages/math/index.nako3", .source = "値=1\n" },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .package_resolver = package_resolver.resolver() });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
+    try std.testing.expectEqual(graph.modules[0].imports[0].target, graph.modules[0].imports[1].target);
+    try std.testing.expect(graph.modules[0].imports[0].effective != graph.modules[0].imports[1].effective);
+
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var math_resolved: ?[]const u8 = null;
+    var math_alt_resolved: ?[]const u8 = null;
+    for (program.bindings) |binding| {
+        if (std.mem.eql(u8, binding.name, "math__値")) math_resolved = binding.resolved_name;
+        if (std.mem.eql(u8, binding.name, "math_alt__値")) math_alt_resolved = binding.resolved_name;
+    }
+    try std.testing.expect(math_resolved != null and math_alt_resolved != null);
+    try std.testing.expectEqualStrings(math_resolved.?, math_alt_resolved.?);
+}
+
+test "package importは相対取り込み済みmoduleの名前を変えずloading中の循環辺を認識する" {
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「other/index.nako3」を取り込む\n!「lib/index.nako3」を取り込む\n!「パッケージ:lib」を取り込む\nlib__値を表示。\n" },
+        .{ .suffix = "other/index.nako3", .source = "値=20\n" },
+        .{ .suffix = "lib/index.nako3", .source = "!「パッケージ:lib」を取り込む\n値=7\n" },
+    } };
+    var package_resolver = TestLocalPackageResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .package_resolver = package_resolver.resolver() });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 3), graph.modules.len);
+    const other_module = graph.modules[1];
+    const local_module = graph.modules[2];
+    try std.testing.expectEqualStrings("index", other_module.name);
+    try std.testing.expectEqualStrings("index", local_module.name);
+    try std.testing.expect(local_module.canonical_id == null);
+    try std.testing.expectEqual(@as(usize, 1), local_module.imports.len);
+    try std.testing.expect(local_module.imports[0].cyclic);
+    try std.testing.expectEqual(@as(u32, local_module.index), local_module.imports[0].target.?);
+    try std.testing.expectEqual(@as(u32, local_module.index), graph.modules[0].imports[2].target.?);
+
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var resolved_local_alias = false;
+    for (program.bindings) |binding| {
+        if (!std.mem.eql(u8, binding.name, "lib__値")) continue;
+        const symbol_id = binding.symbol orelse continue;
+        const symbol = program.symbols[symbol_id];
+        if (std.mem.startsWith(u8, binding.resolved_name, "index__lnako_local_") and
+            std.mem.endsWith(u8, binding.resolved_name, "__値") and symbol.module_index == local_module.index) resolved_local_alias = true;
+    }
+    try std.testing.expect(resolved_local_alias);
+}
+
+test "package import後の相対importはファイル名namespaceを維持する" {
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「パッケージ:lib」を取り込む\n!「lib/index.nako3」を取り込む\nindex__値を表示。\n" },
+        .{ .suffix = "lib/index.nako3", .source = "値=7\n" },
+    } };
+    var package_resolver = TestLocalPackageResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .package_resolver = package_resolver.resolver() });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
+    const package_module = graph.modules[1];
+    try std.testing.expectEqualStrings("lib", package_module.name);
+    try std.testing.expectEqual(@as(usize, 2), graph.modules[0].imports.len);
+    try std.testing.expectEqualStrings("lib", graph.modules[0].imports[0].namespace.?);
+    try std.testing.expectEqualStrings("index", graph.modules[0].imports[1].namespace.?);
+    try std.testing.expectEqual(@as(u32, package_module.index), graph.modules[0].imports[1].target.?);
+
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var found_binding = false;
+    for (program.bindings) |binding| {
+        if (!std.mem.eql(u8, binding.name, "index__値")) continue;
+        const symbol_id = binding.symbol orelse continue;
+        const symbol = program.symbols[symbol_id];
+        found_binding = std.mem.eql(u8, binding.resolved_name, symbol.qualified_name) and
+            std.mem.startsWith(u8, symbol.qualified_name, "package__") and symbol.module_index == package_module.index;
+    }
+    try std.testing.expect(found_binding);
+}
+
+test "合成されたlocal module名は自然なbasenameとも衝突しない" {
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「one/lib.nako3」を取り込む\n!「two/lib.nako3」を取り込む\n!「lib__lnako_local_1.nako3」を取り込む\n" },
+        .{ .suffix = "one/lib.nako3", .source = "値=1\n" },
+        .{ .suffix = "two/lib.nako3", .source = "値=2\n" },
+        .{ .suffix = "lib__lnako_local_1.nako3", .source = "値=3\n" },
+    } };
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{});
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    for (program.modules, 0..) |module, index| {
+        for (program.modules[index + 1 ..]) |other| {
+            try std.testing.expect(!std.mem.eql(u8, module.name, other.name));
+        }
+    }
+}
+
+test "同名index.nako3を持つ2 packageを別moduleとして同時取り込める" {
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「パッケージ:math」を取り込む\n!「パッケージ:geometry」を取り込む\n" },
+        .{ .suffix = "packages/math/index.nako3", .source = "●MathValueとは\n  1で戻る\nここまで\n" },
+        .{ .suffix = "packages/geometry/index.nako3", .source = "●GeometryValueとは\n  2で戻る\nここまで\n" },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .package_resolver = package_resolver.resolver() });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 3), graph.modules.len);
+    try std.testing.expect(!std.mem.eql(u8, graph.modules[1].path, graph.modules[2].path));
+    try std.testing.expect(pathHasSuffix(graph.modules[1].path, "packages/math/index.nako3"));
+    try std.testing.expect(pathHasSuffix(graph.modules[2].path, "packages/geometry/index.nako3"));
+    try std.testing.expectEqualStrings("math", graph.modules[1].name);
+    try std.testing.expectEqualStrings("geometry", graph.modules[2].name);
+    try std.testing.expectEqualStrings("pkg:math-id/main", graph.modules[1].canonical_id.?);
+    try std.testing.expectEqualStrings("pkg:geometry-id/main", graph.modules[2].canonical_id.?);
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+}
 
 fn checkInvalidModuleCleanup(allocator: std.mem.Allocator, imported: bool) !void {
     var memory = MemoryProvider{ .files = &.{

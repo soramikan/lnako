@@ -16,7 +16,7 @@
 ## 2. 初期バージョン
 
 - `manifestSchemaVersion`: 1
-- `lockSchemaVersion`: 1
+- `lockSchemaVersion`: 2 (v1 read-only compatibility)
 - `resolverVersion`: 1
 - `npkgMetadataSchemaVersion`: 1
 - `npkgFilesSchemaVersion`: 1
@@ -63,15 +63,16 @@ schema-version = 1
 
 ### 4.1 バージョン表記
 
-lock ファイルはトップレベルに `schemaVersion` と `resolverVersion` を必ず含む。
+lock ファイルはトップレベルに `schemaVersion` と `resolverVersion` を必ず含む。schema v2ではprofileごとのroot直接依存IDを `rootDependencies` に記録する。
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "resolverVersion": 1,
   "input": { ... },
   "packages": { ... },
-  "profiles": { ... }
+  "profiles": { ... },
+  "rootDependencies": { "default": ["pkg:<direct-id>"] }
 }
 ```
 
@@ -80,6 +81,7 @@ lock ファイルはトップレベルに `schemaVersion` と `resolverVersion` 
 `lockSchemaVersion` の bump:
 
 - lock ファイルの必須フィールドを変更する。
+- root direct dependency IDなど、packageグラフの解釈に必要な辺を追加する。
 - `packages` エントリの構造を変更する。
 - `artifact` レコードの必須フィールドを変更する。
 - `input` セクションを変更する。
@@ -90,9 +92,9 @@ lock ファイルはトップレベルに `schemaVersion` と `resolverVersion` 
 - feature unification、diamond dependency、prerelease、partial update の扱いが変わる。
 - 診断コードや重大度が変わる。
 
-複数 profile を一つの lock に収録するための任意のトップレベルフィールド `profilePackages`（profile 名をキーとする解決済 package マップ）と、package エントリの任意フィールド `implementation`（選択された実装種別 `source`/`native`/`ESM`/`none`）を同一 schema version に追加した。いずれも任意フィールドであり、既存の必須フィールド・必須サブ構造・`input` の意味を変えないため version bump しない。
+`profilePackages` と `implementation` は任意情報の追加であり、旧readerに対しては互換性を持たないもののv1実装が一般流通していなかったためv1内で導入した。root直接依存はsync時のalias解決に必須のグラフ辺であり、推移依存との区別を正確に保持するためschema v2で必須化する。
 
-ただし現行 schema は `additionalProperties: false` で未知フィールドを拒否するため、これらのフィールドを追加した lock は、同フィールドを知らない旧リーダーでは `E022_UNKNOWN_FIELD` 相当として拒否される。v1 は実運用・一般流通していないため、後方互換レイヤーや v2 移行は設けず、単一正本スキーマのインプレース改定として扱う（Issue #69 の方針と同一）。書き手・読み手は同一 schema version の実装を揃えることを前提とする。
+v1 lockは読み取り可能だが、直接辺が欠落するため互換モードではlock graphのroot nodeから推定する。推定できない複数候補は曖昧なまま捨てず `LockInvalid` とし、v2 lockの再生成を促す。新規生成lockはv2で `rootDependencies` を出力する。旧readerはv2を拒否するため、lock書き手・読み手を同一schema versionへ揃えること。
 
 ### 4.3 下位互換
 
@@ -117,7 +119,7 @@ lock ファイルはトップレベルに `schemaVersion` と `resolverVersion` 
 ## 6. JSON Schema ファイルの version
 
 - `tools/package-system/schema/*.schema.json` は `$id` URL に version を含める。
-- 例: `https://github.com/soramikan/lnako/package-system/schema/nako.toml/v1`
+- 例: `https://github.com/soramikan/lnako/package-system/schema/nako.toml/v1`、`https://github.com/soramikan/lnako/package-system/schema/nako.lock/v2`
 - schema ファイル自身は `required`/`additionalProperties` で厳密に version を縛る。
 
 ## 7. レジストリ応答の version

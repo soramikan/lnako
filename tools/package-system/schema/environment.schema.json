@@ -4,6 +4,20 @@
   "type": "object",
   "required": ["schemaVersion", "lockSha256", "profile", "runtime", "packages"],
   "additionalProperties": false,
+  "$defs": {
+    "importDependencies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["alias", "package"],
+        "additionalProperties": false,
+        "properties": {
+          "alias": { "type": "string" },
+          "package": { "type": "string" }
+        }
+      }
+    }
+  },
   "properties": {
     "schemaVersion": {
       "type": "integer",
@@ -17,6 +31,9 @@
     },
     "runtime": {
       "$ref": "common.schema.json#/$defs/packageRuntimeName"
+    },
+    "dependencies": {
+      "$ref": "#/$defs/importDependencies"
     },
     "packages": {
       "type": "object",
@@ -32,6 +49,9 @@
           "exports": {
             "type": "array",
             "items": { "$ref": "common.schema.json#/$defs/exportEntry" }
+          },
+          "dependencies": {
+            "$ref": "#/$defs/importDependencies"
           },
           "commands": {
             "type": "array",

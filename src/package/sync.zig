@@ -15,6 +15,7 @@
 const std = @import("std");
 const zip = @import("../archive/zip.zig");
 const cache = @import("cache.zig");
+const cache_key = @import("cache_key.zig");
 const diag = @import("diagnostics.zig");
 const environment = @import("environment.zig");
 const fetch = @import("fetch.zig");
@@ -22,11 +23,13 @@ const lock_mod = @import("lock.zig");
 const lock_model = @import("lock_model.zig");
 const manifest_mod = @import("manifest.zig");
 const materialize = @import("materialize.zig");
+const native_store = @import("native_store.zig");
 const npkg_commands = @import("npkg_commands.zig");
 const npkg_commands_gen = @import("npkg_commands_gen.zig");
 const npkg_verify = @import("npkg_verify.zig");
 const provider = @import("provider.zig");
 const resolver = @import("resolver.zig");
+const semver = @import("semver.zig");
 const unpack = @import("unpack.zig");
 
 const Allocator = std.mem.Allocator;
@@ -128,7 +131,11 @@ const Context = struct {
     /// `.nako/env/<gen>`（env.json の path に使う前置）。
     generation_rel: []const u8,
     runtime: Runtime,
+    selected_profile: []const u8,
     target: resolver.Target,
+    diagnostics: *diag.List,
+    lock_entries: []const lock_model.PackageEntry,
+    root_dependencies: []const environment.ImportDependency = &.{},
     used_keys: std.ArrayListUnmanaged([]const u8) = .empty,
     used_names: std.StringHashMapUnmanaged(void) = .empty,
 
@@ -183,6 +190,8 @@ pub fn run(
     // 不整合になるのを防ぐ。manifest が無い lock 駆動の用途（fixture 等）
     // では検査を省略する。
     const manifest_path = try std.fs.path.join(arena, &.{ project_abs, "nako.toml" });
+    var root_manifest: ?manifest_mod.Manifest = null;
+    defer if (root_manifest) |*manifest| manifest.deinit();
     if (std.Io.Dir.cwd().readFileAlloc(io, manifest_path, arena, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => null,
@@ -196,6 +205,10 @@ pub fn run(
             try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "lock input manifestSha256 does not match nako.toml; re-resolve the lock before sync", .{});
             return error.StaleLock;
         }
+        root_manifest = manifest_mod.parse(arena, manifest_bytes, diagnostics) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.LockInvalid,
+        };
     }
 
     const profile = options.profile orelse lock.input.profile;
@@ -249,6 +262,19 @@ pub fn run(
     std.Io.Dir.cwd().createDirPath(io, deps_abs) catch |err| return mapFs(err);
     const generation_rel = try std.fs.path.join(arena, &.{ environment.dir_name, environment.env_dir, generation.generation });
 
+    const root_dependencies = if (root_manifest) |*manifest| blk: {
+        const direct_ids = if (lock.rootDependenciesForProfile(profile)) |ids|
+            ids
+        else
+            collectRootDependencyIdsForProfile(arena, entries, manifest, profile, diagnostics) catch |err| switch (err) {
+                error.LockInvalid => {
+                    if (!diagnostics.hasErrors()) try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock.rootDependencies", .{}, "legacy lock does not record the root dependency edge and has multiple matching package nodes; regenerate the lock with schema v2", .{});
+                    return error.LockInvalid;
+                },
+                else => return err,
+            };
+        break :blk try collectImportDependenciesForProfile(arena, entries, direct_ids, manifest, profile, diagnostics);
+    } else &.{};
     var ctx = Context{
         .gpa = gpa,
         .arena = arena,
@@ -260,6 +286,10 @@ pub fn run(
         .deps_abs = deps_abs,
         .generation_rel = generation_rel,
         .runtime = options.runtime,
+        .selected_profile = profile,
+        .diagnostics = diagnostics,
+        .lock_entries = entries,
+        .root_dependencies = root_dependencies,
         .target = .{
             .runtime = options.runtime.name(),
             .os = if (record) |r| r.os else lock.input.target.os,
@@ -288,6 +318,7 @@ pub fn run(
         .profile = profile,
         .runtime = options.runtime.name(),
         .packages = records.items,
+        .dependencies = ctx.root_dependencies,
     }, &json_buffer.writer) catch |err| switch (err) {
         // Allocating writer の WriteFailed は arena 確保の失敗。
         error.WriteFailed => return error.OutOfMemory,
@@ -347,6 +378,347 @@ pub fn run(
 // package 取得
 // ---------------------------------------------------------------------------
 
+const ImportConstraint = union(enum) {
+    version: semver.Range,
+    path: []const u8,
+    git: GitConstraint,
+    http: HttpConstraint,
+
+    fn matches(self: ImportConstraint, candidate: lock_model.PackageEntry) bool {
+        switch (self) {
+            .version => |range| {
+                const source = candidate.source orelse candidate.resolved_from orelse return false;
+                if (source.kind != .registry and source.kind != .static) return false;
+                const version = semver.Version.parse(candidate.version) catch return false;
+                return range.satisfies(version);
+            },
+            .path => |path| {
+                const source = candidate.source orelse candidate.resolved_from orelse return false;
+                return source.kind == .path and source.path != null and std.mem.eql(u8, source.path.?, path);
+            },
+            .git => |dependency| {
+                const source = candidate.source orelse candidate.resolved_from orelse return false;
+                if (source.kind != .git or source.url == null or source.commit == null) return false;
+                if (!std.mem.eql(u8, source.url.?, dependency.url) or !std.mem.startsWith(u8, source.commit.?, dependency.commit)) return false;
+                return optionalStringEql(source.path, dependency.path);
+            },
+            .http => |dependency| {
+                const source = candidate.source orelse candidate.resolved_from orelse return false;
+                return source.kind == .http and source.url != null and source.hash != null and
+                    std.mem.eql(u8, source.url.?, dependency.url) and lock_model.hashEql(source.hash.?, dependency.hash);
+            },
+        }
+    }
+};
+
+fn matchesDependency(
+    candidate: lock_model.PackageEntry,
+    manifest_key: []const u8,
+    constraint: ImportConstraint,
+    public_id: ?[]const u8,
+) bool {
+    if (!constraint.matches(candidate)) return false;
+    if (public_id) |id| return std.mem.eql(u8, candidate.id, id);
+    return switch (constraint) {
+        .version => registryNameMatches(candidate, manifest_key),
+        // Non-registry dependency identity is fully determined by its source
+        // constraints. The manifest table key need not match [package].name.
+        .path, .git, .http => true,
+    };
+}
+
+fn registryNamePart(manifest_key: []const u8) []const u8 {
+    const unscoped = if (std.mem.startsWith(u8, manifest_key, "@")) manifest_key[1..] else manifest_key;
+    const slash = std.mem.lastIndexOfScalar(u8, unscoped, '/') orelse return manifest_key;
+    return unscoped[slash + 1 ..];
+}
+
+fn registryNameMatches(candidate: lock_model.PackageEntry, manifest_key: []const u8) bool {
+    if (std.mem.indexOfScalar(u8, manifest_key, '/') == null) return std.mem.eql(u8, candidate.name, manifest_key);
+    if (!std.mem.eql(u8, candidate.name, registryNamePart(manifest_key))) return false;
+    const source = candidate.source orelse candidate.resolved_from orelse return false;
+    if (source.kind != .registry and source.kind != .static) return false;
+    const url = source.url orelse return false;
+    const owner_name = if (std.mem.startsWith(u8, manifest_key, "@")) manifest_key[1..] else manifest_key;
+    if (!std.mem.endsWith(u8, url, owner_name)) return false;
+    const prefix_len = url.len - owner_name.len;
+    return prefix_len > 0 and url[prefix_len - 1] == '/';
+}
+
+fn defaultImportAlias(manifest_key: []const u8, constraint: ImportConstraint) []const u8 {
+    return switch (constraint) {
+        .version => registryNamePart(manifest_key),
+        .path, .git, .http => manifest_key,
+    };
+}
+
+const GitConstraint = struct { url: []const u8, commit: []const u8, path: ?[]const u8 };
+const HttpConstraint = struct { url: []const u8, hash: []const u8 };
+
+fn optionalStringEql(a: ?[]const u8, b: ?[]const u8) bool {
+    if (a) |value| return if (b) |other| std.mem.eql(u8, value, other) else false;
+    return b == null;
+}
+
+/// Build the root scope's package key set from root-manifest declarations first.
+/// Transitive lock entries are not candidates for root aliases unless they match
+/// the direct declaration's package identity/source/version constraints.
+fn collectRootDependencyIds(
+    allocator: Allocator,
+    lock_entries: []const lock_model.PackageEntry,
+    manifest: *const manifest_mod.Manifest,
+    diagnostics: *diag.List,
+) Error![]const []const u8 {
+    return collectRootDependencyIdsForProfile(allocator, lock_entries, manifest, null, diagnostics);
+}
+
+fn collectRootDependencyIdsForProfile(
+    allocator: Allocator,
+    lock_entries: []const lock_model.PackageEntry,
+    manifest: *const manifest_mod.Manifest,
+    active_profile: ?[]const u8,
+    diagnostics: *diag.List,
+) Error![]const []const u8 {
+    var ids = std.ArrayListUnmanaged([]const u8).empty;
+    var pkg = manifest.dependencies.pkg.iterator();
+    while (pkg.next()) |item| {
+        const dependency = item.value_ptr.*;
+        if (!dependencyMatchesProfile(dependency.profile, active_profile)) continue;
+        try appendCandidateIds(allocator, &ids, lock_entries, dependency.name, .{ .version = dependency.version }, dependency.public_id, diagnostics);
+    }
+    var path = manifest.dependencies.path.iterator();
+    while (path.next()) |item| {
+        const dependency = item.value_ptr.*;
+        try appendCandidateIds(allocator, &ids, lock_entries, dependency.name, .{ .path = dependency.path }, null, diagnostics);
+    }
+    var git = manifest.dependencies.git.iterator();
+    while (git.next()) |item| {
+        const dependency = item.value_ptr.*;
+        try appendCandidateIds(allocator, &ids, lock_entries, dependency.name, .{ .git = .{ .url = dependency.url, .commit = dependency.commit, .path = dependency.path } }, null, diagnostics);
+    }
+    var http = manifest.dependencies.http.iterator();
+    while (http.next()) |item| {
+        const dependency = item.value_ptr.*;
+        try appendCandidateIds(allocator, &ids, lock_entries, dependency.name, .{ .http = .{ .url = dependency.url, .hash = dependency.hash } }, null, diagnostics);
+    }
+    return try ids.toOwnedSlice(allocator);
+}
+
+fn appendCandidateIds(
+    allocator: Allocator,
+    ids: *std.ArrayListUnmanaged([]const u8),
+    lock_entries: []const lock_model.PackageEntry,
+    name: []const u8,
+    constraint: ImportConstraint,
+    public_id: ?[]const u8,
+    diagnostics: *diag.List,
+) Error!void {
+    var root_matches = std.ArrayListUnmanaged([]const u8).empty;
+    defer root_matches.deinit(allocator);
+    var all_matches = std.ArrayListUnmanaged([]const u8).empty;
+    defer all_matches.deinit(allocator);
+    for (lock_entries) |candidate| {
+        if (!matchesDependency(candidate, name, constraint, public_id)) continue;
+        try all_matches.append(allocator, candidate.id);
+        if (!hasIncomingLockEdge(lock_entries, candidate.id)) try root_matches.append(allocator, candidate.id);
+    }
+
+    // A v1 lock encodes the resolved graph as package->dependency IDs, without
+    // a synthetic root node. Its root direct package IDs are therefore graph
+    // roots (IDs with no incoming package edge). Prefer those IDs over matching
+    // every transitive entry by the manifest's broad version range. If a single
+    // matching lock node is shared transitively, it is still unambiguous.
+    if (root_matches.items.len == 0 and all_matches.items.len > 1) {
+        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml.dependencies", .{}, "dependency key \"{s}\" matches multiple lock packages {s} and {s}; regenerate the lock with schema v2 or specify a public ID", .{ name, all_matches.items[0], all_matches.items[1] });
+        return error.LockInvalid;
+    }
+    const candidates = if (root_matches.items.len != 0) root_matches.items else if (all_matches.items.len == 1) all_matches.items else &.{};
+    for (candidates) |candidate_id| {
+        var already_added = false;
+        for (ids.items) |existing| if (std.mem.eql(u8, existing, candidate_id)) {
+            already_added = true;
+            break;
+        };
+        if (!already_added) try ids.append(allocator, candidate_id);
+    }
+}
+
+fn dependencyMatchesProfile(dependency_profile: ?[]const u8, active_profile: ?[]const u8) bool {
+    const selected = active_profile orelse return true;
+    const required = dependency_profile orelse return true;
+    return std.mem.eql(u8, required, selected);
+}
+
+fn hasIncomingLockEdge(lock_entries: []const lock_model.PackageEntry, package_id: []const u8) bool {
+    for (lock_entries) |entry| for (entry.dependencies) |dependency_id| {
+        if (std.mem.eql(u8, dependency_id, package_id)) return true;
+    };
+    return false;
+}
+
+/// Declared package-like dependencies are emitted into the owning import scope.
+/// NPM dependencies do not provide Nako exports and are intentionally omitted.
+fn collectImportDependencies(
+    allocator: Allocator,
+    lock_entries: []const lock_model.PackageEntry,
+    allowed_ids: ?[]const []const u8,
+    manifest: *const manifest_mod.Manifest,
+    diagnostics: *diag.List,
+) Error![]const environment.ImportDependency {
+    return collectImportDependenciesForProfile(allocator, lock_entries, allowed_ids, manifest, null, diagnostics);
+}
+
+fn collectImportDependenciesForProfile(
+    allocator: Allocator,
+    lock_entries: []const lock_model.PackageEntry,
+    allowed_ids: ?[]const []const u8,
+    manifest: *const manifest_mod.Manifest,
+    active_profile: ?[]const u8,
+    diagnostics: *diag.List,
+) Error![]const environment.ImportDependency {
+    var result = std.ArrayListUnmanaged(environment.ImportDependency).empty;
+    var pkg = manifest.dependencies.pkg.iterator();
+    while (pkg.next()) |item| {
+        const dependency = item.value_ptr.*;
+        if (!dependencyMatchesProfile(dependency.profile, active_profile)) continue;
+        try appendImportDependency(allocator, &result, lock_entries, allowed_ids, dependency.name, .{ .version = dependency.version }, dependency.public_id, dependency.alias, hasOwnerNameAliasCollision(manifest, dependency.name, active_profile), diagnostics);
+    }
+    var path = manifest.dependencies.path.iterator();
+    while (path.next()) |item| {
+        const dependency = item.value_ptr.*;
+        try appendImportDependency(allocator, &result, lock_entries, allowed_ids, dependency.name, .{ .path = dependency.path }, null, null, false, diagnostics);
+    }
+    var git = manifest.dependencies.git.iterator();
+    while (git.next()) |item| {
+        const dependency = item.value_ptr.*;
+        try appendImportDependency(allocator, &result, lock_entries, allowed_ids, dependency.name, .{ .git = .{ .url = dependency.url, .commit = dependency.commit, .path = dependency.path } }, null, dependency.alias, false, diagnostics);
+    }
+    var http = manifest.dependencies.http.iterator();
+    while (http.next()) |item| {
+        const dependency = item.value_ptr.*;
+        try appendImportDependency(allocator, &result, lock_entries, allowed_ids, dependency.name, .{ .http = .{ .url = dependency.url, .hash = dependency.hash } }, null, dependency.alias, false, diagnostics);
+    }
+    return try result.toOwnedSlice(allocator);
+}
+
+fn hasOwnerNameAliasCollision(manifest: *const manifest_mod.Manifest, name: []const u8, active_profile: ?[]const u8) bool {
+    if (std.mem.indexOfScalar(u8, name, '/') == null) return false;
+    const derived_alias = registryNamePart(name);
+    return mapHasAliasCollision(manifest_mod.PkgDependency, manifest.dependencies.pkg, name, derived_alias, true, active_profile) or
+        mapHasAliasCollision(manifest_mod.PathDependency, manifest.dependencies.path, null, derived_alias, false, active_profile) or
+        mapHasAliasCollision(manifest_mod.GitDependency, manifest.dependencies.git, null, derived_alias, false, active_profile) or
+        mapHasAliasCollision(manifest_mod.HttpDependency, manifest.dependencies.http, null, derived_alias, false, active_profile);
+}
+
+fn mapHasAliasCollision(comptime Dependency: type, dependencies: std.StringHashMapUnmanaged(Dependency), current_key: ?[]const u8, alias: []const u8, scoped_registry_keys: bool, active_profile: ?[]const u8) bool {
+    var iterator = dependencies.iterator();
+    while (iterator.next()) |item| {
+        if (comptime @hasField(Dependency, "profile")) {
+            if (!dependencyMatchesProfile(item.value_ptr.profile, active_profile)) continue;
+        }
+        if (current_key) |key| if (std.mem.eql(u8, item.key_ptr.*, key)) continue;
+        if (std.mem.eql(u8, item.key_ptr.*, alias)) return true;
+        if (comptime @hasField(Dependency, "alias")) {
+            if (@field(item.value_ptr.*, "alias")) |explicit_alias| {
+                if (std.mem.eql(u8, explicit_alias, alias)) return true;
+            }
+        }
+        if (scoped_registry_keys and std.mem.indexOfScalar(u8, item.key_ptr.*, '/') != null and
+            std.mem.eql(u8, registryNamePart(item.key_ptr.*), alias)) return true;
+    }
+    return false;
+}
+
+fn appendImportDependency(
+    allocator: Allocator,
+    result: *std.ArrayListUnmanaged(environment.ImportDependency),
+    lock_entries: []const lock_model.PackageEntry,
+    allowed_ids: ?[]const []const u8,
+    name: []const u8,
+    constraint: ImportConstraint,
+    public_id: ?[]const u8,
+    extra_alias: ?[]const u8,
+    suppress_derived_alias: bool,
+    diagnostics: *diag.List,
+) Error!void {
+    var target: ?[]const u8 = null;
+    var ambiguous_with: ?[]const u8 = null;
+    for (lock_entries) |candidate| {
+        if (allowed_ids) |ids| {
+            var direct = false;
+            for (ids) |id| if (std.mem.eql(u8, id, candidate.id)) {
+                direct = true;
+                break;
+            };
+            if (!direct) continue;
+        }
+        if (!matchesDependency(candidate, name, constraint, public_id)) continue;
+        if (target) |previous| {
+            if (!std.mem.eql(u8, previous, candidate.id) and ambiguous_with == null) ambiguous_with = candidate.id;
+        } else {
+            target = candidate.id;
+        }
+    }
+    if (ambiguous_with) |other_id| {
+        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml.dependencies", .{}, "dependency key \"{s}\" matches multiple lock packages {s} and {s}", .{ name, target.?, other_id });
+        return error.LockInvalid;
+    }
+    if (target == null) {
+        // In schema-v2, the root edge list is authoritative. A matching package
+        // omitted from it means the lock cannot bind a declared root dependency.
+        if (allowed_ids != null) for (lock_entries) |candidate| {
+            if (!matchesDependency(candidate, name, constraint, public_id)) continue;
+            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock.rootDependencies", .{}, "root dependency key \"{s}\" matches lock package {s}, but that package is not declared in rootDependencies for the active profile", .{ name, candidate.id });
+            return error.LockInvalid;
+        };
+        return; // feature-gated or absent dependency
+    }
+    const package_key = target.?;
+    // Manifest table keys are valid dependency aliases in their own right.
+    // Preserve them even when an explicit alias is also declared.
+    try appendScopedAlias(allocator, result, name, package_key, diagnostics);
+    if (extra_alias) |alias| {
+        try appendScopedAlias(allocator, result, alias, package_key, diagnostics);
+    } else if (!suppress_derived_alias) {
+        try appendDerivedScopedAlias(allocator, result, defaultImportAlias(name, constraint), package_key, diagnostics);
+    }
+}
+
+fn appendDerivedScopedAlias(
+    allocator: Allocator,
+    result: *std.ArrayListUnmanaged(environment.ImportDependency),
+    alias: []const u8,
+    package_key: []const u8,
+    diagnostics: *diag.List,
+) Error!void {
+    for (result.items) |existing| {
+        if (!std.mem.eql(u8, existing.alias, alias)) continue;
+        if (std.mem.eql(u8, existing.package_key, package_key)) return;
+        // Never replace a table key or explicit alias with a derived short
+        // alias. The manifest-level collision check suppresses ambiguous
+        // derived aliases before this point.
+        return;
+    }
+    try appendScopedAlias(allocator, result, alias, package_key, diagnostics);
+}
+
+fn appendScopedAlias(
+    allocator: Allocator,
+    result: *std.ArrayListUnmanaged(environment.ImportDependency),
+    alias: []const u8,
+    package_key: []const u8,
+    diagnostics: *diag.List,
+) Error!void {
+    for (result.items) |existing| {
+        if (std.mem.eql(u8, existing.alias, alias)) {
+            if (std.mem.eql(u8, existing.package_key, package_key)) return;
+            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml.dependencies", .{}, "dependency alias \"{s}\" conflicts between lock packages {s} and {s}", .{ alias, existing.package_key, package_key });
+            return error.LockInvalid;
+        }
+    }
+    try result.append(allocator, .{ .alias = alias, .package_key = package_key });
+}
+
 fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!environment.PackageRecord {
     const arena = ctx.arena;
     const source = entry.source orelse entry.resolved_from orelse {
@@ -356,6 +728,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
     var env_path: []const u8 = undefined;
     var manifest: ?manifest_mod.Manifest = null;
     var tree_abs: ?[]const u8 = null;
+    var stable_native_key: ?[]const u8 = null;
     var verified_commands: ?[]const npkg_commands.Command = null;
 
     switch (source.kind) {
@@ -399,7 +772,8 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
             // lock の固定 commit から決定的な object key を先に計算する。
             // 検証済み object があれば checkout・Git 起動・clone/fetch を
             // 経由せず materialize できる（offline でも checkout 不要）。
-            const object_key = try shortKey(arena, "git", &.{ url, commit, source.path orelse "" });
+            const object_key = try cache_key.shortKey(arena, "git", &.{ url, commit, source.path orelse "" });
+            stable_native_key = object_key;
             try rememberKey(ctx, object_key);
             const tree = (try ctx.objectTree(object_key)).?;
             const verified_hit = (ctx.cache_store.verifyEntry(arena, object_key) catch false) and ctx.cache_store.entryExists(object_key);
@@ -409,7 +783,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                     ctx.cache_store.removeEntry(object_key) catch |err| return mapFs(err);
                 }
                 // checkout は可変の作業 dir。repo+subdir 単位で再利用する。
-                const checkout_key = try shortKey(arena, "git", &.{ url, source.path orelse "" });
+                const checkout_key = try cache_key.shortKey(arena, "git", &.{ url, source.path orelse "" });
                 const checkout_dir = (try ctx.cache_store.checkoutPath(arena, checkout_key)) orelse
                     return ctx.session.fail(.invalid_source, .package, entry.name, "cannot derive checkout dir", .{});
                 const acquired = try provider.acquireGit(ctx.session, .{
@@ -437,7 +811,8 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                 return ctx.session.fail(.invalid_source, .package, entry.name, "http source of \"{s}\" has no url", .{entry.name});
             const declared_hash = source.hash orelse
                 return ctx.session.fail(.invalid_source, .package, entry.name, "http source of \"{s}\" has no hash", .{entry.name});
-            const object_key = try artifactKey(arena, "http", declared_hash, url);
+            const object_key = try cache_key.artifactKey(arena, "http", declared_hash, url);
+            stable_native_key = object_key;
             try rememberKey(ctx, object_key);
             const tree = (try ctx.objectTree(object_key)).?;
             const verified_hit = (ctx.cache_store.verifyEntry(arena, object_key) catch false) and ctx.cache_store.entryExists(object_key);
@@ -470,7 +845,13 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                 return ctx.session.fail(.not_found, .artifact, entry.name, "package \"{s}\" has no artifact for runtime \"{s}\"", .{ entry.name, ctx.runtime.name() });
             const url = artifact.url orelse
                 return ctx.session.fail(.invalid_source, .artifact, entry.name, "artifact \"{s}\" of \"{s}\" has no url", .{ artifact.key, entry.name });
-            const object_key = try artifactKey(arena, "artifact", artifact.sha256 orelse artifact.key, url);
+            const declared_hash = artifact.sha256 orelse
+                return ctx.session.fail(.invalid_source, .artifact, entry.name, "artifact \"{s}\" of \"{s}\" has no integrity hash", .{ artifact.key, entry.name });
+            if (!fetch.isSupportedHash(declared_hash)) {
+                return ctx.session.fail(.invalid_source, .artifact, entry.name, "artifact \"{s}\" of \"{s}\" has an unsupported integrity hash", .{ artifact.key, entry.name });
+            }
+            const object_key = try cache_key.artifactKey(arena, "artifact", declared_hash, url);
+            stable_native_key = object_key;
             try rememberKey(ctx, object_key);
             const tree = (try ctx.objectTree(object_key)).?;
             const verified_hit = (ctx.cache_store.verifyEntry(arena, object_key) catch false) and ctx.cache_store.entryExists(object_key);
@@ -479,9 +860,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                     ctx.cache_store.removeEntry(object_key) catch |err| return mapFs(err);
                 }
                 const bytes = try fetch.fetchBytes(ctx.session, url, .artifact);
-                if (artifact.sha256) |expected| {
-                    try fetch.verifyHash(ctx.session, bytes, expected, url, .artifact);
-                }
+                try fetch.verifyHash(ctx.session, bytes, declared_hash, url, .artifact);
                 const prepared = try buildArtifactObject(ctx, object_key, bytes, artifact.type orelse "raw", entry);
                 applyPrepared(&manifest, &verified_commands, prepared);
             }
@@ -494,11 +873,29 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
         },
     }
 
+    // Every resolved package manifest must identify the exact locked package
+    // before exports are resolved or the generation is published. This also
+    // applies to mutable path sources and cached Git objects.
+    if (manifest) |*resolved| {
+        if (!native_store.manifestMatchesLock(resolved, entry.name, entry.version)) {
+            return ctx.session.fail(.invalid_metadata, .package, entry.name, "resolved manifest identity does not match lock entry for \"{s}\"", .{entry.name});
+        }
+    }
+
     // exports・commands は manifest がある場合だけ記録する。
     // `.npkg` を verify した経路では検証済み model をそのまま使う。
     var exports = std.ArrayListUnmanaged(environment.ExportRecord).empty;
     if (manifest) |*m| {
         exports = try resolveExports(ctx, m, entry.implementation);
+    }
+    if (entry.implementation) |implementation| {
+        if (std.mem.eql(u8, implementation, "native") and exports.items.len != 0) {
+            if (stable_native_key) |key| {
+                if (tree_abs) |tree| {
+                    env_path = native_store.materialize(ctx.arena, ctx.io, ctx.project_abs, tree, key, std.fs.path.basename(ctx.generation_abs)) catch |err| return mapTreeError(ctx, err, key);
+                }
+            }
+        }
     }
     const commands: []const npkg_commands.Command = verified_commands orelse blk: {
         if (manifest) |*m| break :blk try collectCommands(ctx, tree_abs, m);
@@ -513,6 +910,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
         .id = if (isPackageId(entry.id)) try arena.dupe(u8, entry.id) else null,
         .path = env_path,
         .exports = exports.items,
+        .dependencies = if (manifest) |*m| try collectImportDependenciesForProfile(arena, ctx.lock_entries, entry.dependencies, m, ctx.selected_profile, ctx.diagnostics) else &.{},
         .commands = commands,
     };
 }
@@ -565,37 +963,6 @@ fn isPackageId(id: []const u8) bool {
         if (!std.ascii.isHex(c) or (c >= 'A' and c <= 'F')) return false;
     }
     return true;
-}
-
-/// `source.<field>` 群から決定的な cache key を作る。`prefix-<sha256先頭16>`。
-fn shortKey(arena: Allocator, prefix: []const u8, parts: []const []const u8) ![]const u8 {
-    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
-    hasher.update(prefix);
-    for (parts) |part| {
-        hasher.update(&[_]u8{0});
-        hasher.update(part);
-    }
-    var digest: [32]u8 = undefined;
-    hasher.final(&digest);
-    const hex = std.fmt.bytesToHex(digest, .lower);
-    return try std.fmt.allocPrint(arena, "{s}-{s}", .{ prefix, hex[0..16] });
-}
-
-/// hash 宣言から内容アドレス key を作る。sha256 に正規化できる場合は実ダイ
-/// ジェストを key に使う。そうでなければ宣言 hash を key 材料へ含める。
-/// sha256 以外（sha512 等）でも lock の hash 更新が必ず別 entry になるよう
-/// URL だけを key にしない（同じ URL で配布物が更新される通常ケースで
-/// 古い内容を復元しないため）。
-fn artifactKey(arena: Allocator, prefix: []const u8, declared_hash: []const u8, identity: []const u8) ![]const u8 {
-    var digest: [32]u8 = undefined;
-    if (lock_model.normalizeSha256(declared_hash, &digest)) {
-        const hex = std.fmt.bytesToHex(digest, .lower);
-        return try std.fmt.allocPrint(arena, "{s}-{s}", .{ prefix, hex[0..32] });
-    }
-    if (declared_hash.len != 0) {
-        return try shortKey(arena, prefix, &.{ declared_hash, identity });
-    }
-    return try shortKey(arena, prefix, &.{identity});
 }
 
 fn rememberKey(ctx: *Context, key: []const u8) !void {
@@ -936,6 +1303,9 @@ const app_manifest =
     \\version = "0.1.0"
     \\license = "MIT"
     \\
+    \\[dependencies.path]
+    \\lib = { path = "deps/lib" }
+    \\
 ;
 
 const lib_manifest =
@@ -1023,6 +1393,10 @@ test "sync は path 依存を参照して schema v1 の環境を構築する" {
     try testing.expectEqual(@as(i64, 1), document.get("schemaVersion").?.integer);
     try testing.expectEqualStrings("default", document.get("profile").?.string);
     try testing.expectEqualStrings("lnako", document.get("runtime").?.string);
+    const root_dependencies = document.get("dependencies").?.array;
+    try testing.expectEqual(@as(usize, 1), root_dependencies.items.len);
+    try testing.expectEqualStrings("lib", root_dependencies.items[0].object.get("alias").?.string);
+    try testing.expectEqualStrings("pkg:11111111111111111111111111111111", root_dependencies.items[0].object.get("package").?.string);
     const lib = document.get("packages").?.object.get("pkg:11111111111111111111111111111111").?.object;
     // path 依存は宣言 dir をそのまま参照する。
     try testing.expectEqualStrings("deps/lib", lib.get("path").?.string);
@@ -1154,17 +1528,17 @@ test "artifactKey は宣言 hash を key 材料へ含める" {
     const allocator = arena_impl.allocator();
     const url = "https://example.test/pkg.tar.gz";
     // sha256 は digest 自体が key になるため表記が違っても同一 key。
-    const a = try artifactKey(allocator, "http", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", url);
-    const b = try artifactKey(allocator, "http", "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", url);
+    const a = try cache_key.artifactKey(allocator, "http", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", url);
+    const b = try cache_key.artifactKey(allocator, "http", "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", url);
     try testing.expectEqualStrings(a, b);
     // sha256 以外の表記でも宣言 hash が key 材料へ入る。同じ URL で lock の
     // hash が更新されれば必ず別 entry になり、古い内容を復元しない。
-    const c = try artifactKey(allocator, "http", "sha512:aaaa", url);
-    const d = try artifactKey(allocator, "http", "sha512:bbbb", url);
+    const c = try cache_key.artifactKey(allocator, "http", "sha512:aaaa", url);
+    const d = try cache_key.artifactKey(allocator, "http", "sha512:bbbb", url);
     try testing.expect(!std.mem.eql(u8, c, d));
     try testing.expect(!std.mem.eql(u8, a, c));
     // 同じ hash 宣言でも取得元が違えば別 entry。
-    const e = try artifactKey(allocator, "http", "sha512:aaaa", "https://other.test/pkg.tar.gz");
+    const e = try cache_key.artifactKey(allocator, "http", "sha512:aaaa", "https://other.test/pkg.tar.gz");
     try testing.expect(!std.mem.eql(u8, c, e));
 }
 
@@ -1227,4 +1601,361 @@ test "sync は再実行で世代を更新し直前世代を保持する" {
     const previous = try std.fs.path.join(testing.allocator, &.{ root, ".nako", "env", first_gen });
     defer testing.allocator.free(previous);
     try std.Io.Dir.cwd().access(io, previous, .{});
+}
+
+test "Git package import constraintは短縮commitをlockのfull SHA prefixで照合する" {
+    const full_commit = "abc1234def567890123456789012345678901234";
+    const candidate = lock_model.PackageEntry{
+        .id = "pkg:git-lib",
+        .name = "lib",
+        .version = "1.0.0",
+        .source = .{ .kind = .git, .url = "https://example.test/lib.git", .commit = full_commit },
+    };
+    try testing.expect((ImportConstraint{ .git = .{ .url = "https://example.test/lib.git", .commit = "abc1234", .path = null } }).matches(candidate));
+    try testing.expect(!(ImportConstraint{ .git = .{ .url = "https://example.test/lib.git", .commit = "abc1235", .path = null } }).matches(candidate));
+    try testing.expect(!(ImportConstraint{ .git = .{ .url = "https://other.test/lib.git", .commit = "abc1234", .path = null } }).matches(candidate));
+}
+
+test "profile限定package import aliasは共有package IDでも選択profile外で公開しない" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\"@alice/shared" = { version = "1.0.0", public-id = "pkg:11111111111111111111111111111111" }
+        \\shared = { version = "1.0.0", public-id = "pkg:11111111111111111111111111111111", profile = "windows", alias = "win-shared" }
+        \\
+        \\[profiles.windows]
+        \\os = "windows"
+        \\cpu = "x86_64"
+        \\abi = "msvc"
+        \\
+    ;
+    var diagnostics = diag.List.init(testing.allocator);
+    defer diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &diagnostics);
+    defer manifest.deinit();
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:11111111111111111111111111111111", .name = "shared", .version = "1.0.0", .source = .{ .kind = .registry } },
+    };
+    const allowed_ids = [_][]const u8{"pkg:11111111111111111111111111111111"};
+
+    const aliases = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, &allowed_ids, &manifest, "linux", &diagnostics);
+    defer testing.allocator.free(aliases);
+    try testing.expectEqual(@as(usize, 2), aliases.len);
+    try testing.expect(containsImportDependency(aliases, "@alice/shared", "pkg:11111111111111111111111111111111"));
+    try testing.expect(containsImportDependency(aliases, "shared", "pkg:11111111111111111111111111111111"));
+    try testing.expect(!containsImportDependency(aliases, "win-shared", "pkg:11111111111111111111111111111111"));
+
+    var missing_edge_diagnostics = diag.List.init(testing.allocator);
+    defer missing_edge_diagnostics.deinit();
+    const no_root_edges: [0][]const u8 = .{};
+    try testing.expectError(
+        error.LockInvalid,
+        collectImportDependenciesForProfile(testing.allocator, &lock_entries, &no_root_edges, &manifest, "linux", &missing_edge_diagnostics),
+    );
+    try testing.expect(missing_edge_diagnostics.hasErrors());
+}
+
+test "root package import候補は直接依存のversion rangeで絞る" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\lib = { version = ">=1.0.0" }
+        \\
+    ;
+    var diagnostics = diag.List.init(testing.allocator);
+    defer diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &diagnostics);
+    defer manifest.deinit();
+
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:direct-lib", .name = "lib", .version = "1.4.0", .source = .{ .kind = .registry } },
+        .{ .id = "pkg:transitive-lib", .name = "lib", .version = "1.2.0", .source = .{ .kind = .registry } },
+        .{ .id = "pkg:parent", .name = "parent", .version = "1.0.0", .source = .{ .kind = .registry }, .dependencies = &.{"pkg:transitive-lib"} },
+    };
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+    const direct_ids = try collectRootDependencyIds(testing.allocator, &lock_entries, &manifest, &sync_diagnostics);
+    defer testing.allocator.free(direct_ids);
+    try testing.expectEqual(@as(usize, 1), direct_ids.len);
+    try testing.expectEqualStrings("pkg:direct-lib", direct_ids[0]);
+
+    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, direct_ids, &manifest, &sync_diagnostics);
+    defer testing.allocator.free(aliases);
+    try testing.expectEqual(@as(usize, 1), aliases.len);
+    try testing.expectEqualStrings("pkg:direct-lib", aliases[0].package_key);
+}
+
+test "package import aliasはmanifest依存scopeごとにlock keyへ解決される" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\source-dep = { path = "../dep" }
+        \\
+    ;
+    var diagnostics = diag.List.init(testing.allocator);
+    defer diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &diagnostics);
+    defer manifest.deinit();
+
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:dep-id", .name = "package-manifest-name", .version = "1.0.0", .source = .{ .kind = .path, .path = "../dep" } },
+        .{ .id = "pkg:other-id", .name = "other", .version = "1.0.0", .source = .{ .kind = .path, .path = "../other" } },
+    };
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+    const root_aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, &manifest, &sync_diagnostics);
+    defer testing.allocator.free(root_aliases);
+    try testing.expectEqual(@as(usize, 1), root_aliases.len);
+
+    const package_dependencies = [_][]const u8{"pkg:dep-id"};
+    const scoped_aliases = try collectImportDependencies(testing.allocator, &lock_entries, &package_dependencies, &manifest, &sync_diagnostics);
+    defer testing.allocator.free(scoped_aliases);
+    try testing.expectEqual(@as(usize, 1), scoped_aliases.len);
+    try testing.expectEqualStrings("source-dep", scoped_aliases[0].alias);
+    try testing.expectEqualStrings("pkg:dep-id", scoped_aliases[0].package_key);
+}
+
+fn containsSyncString(items: []const []const u8, expected: []const u8) bool {
+    for (items) |item| if (std.mem.eql(u8, item, expected)) return true;
+    return false;
+}
+
+fn containsImportDependency(items: []const environment.ImportDependency, alias: []const u8, package_key: []const u8) bool {
+    for (items) |item| if (std.mem.eql(u8, item.alias, alias) and std.mem.eql(u8, item.package_key, package_key)) return true;
+    return false;
+}
+
+fn containsImportAlias(items: []const environment.ImportDependency, alias: []const u8) bool {
+    for (items) |item| if (std.mem.eql(u8, item.alias, alias)) return true;
+    return false;
+}
+
+test "registry owner/name keyはownerとexplicit aliasでlock entryへ対応する" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\"alice/lib" = { version = "^1.0.0", alias = "alice-lib" }
+        \\"bob/lib" = { version = "^1.0.0", alias = "bob-lib" }
+        \\"@alice/tool" = { version = "^2.0.0" }
+        \\
+    ;
+    var parse_diagnostics = diag.List.init(testing.allocator);
+    defer parse_diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &parse_diagnostics);
+    defer manifest.deinit();
+
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:alice-lib", .name = "lib", .version = "1.4.0", .source = .{ .kind = .static, .url = "https://registry.test/alice/lib" } },
+        .{ .id = "pkg:bob-lib", .name = "lib", .version = "1.2.0", .source = .{ .kind = .static, .url = "https://registry.test/bob/lib" } },
+        .{ .id = "pkg:alice-tool", .name = "tool", .version = "2.1.0", .source = .{ .kind = .static, .url = "https://registry.test/alice/tool" } },
+    };
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+    const roots = try collectRootDependencyIds(testing.allocator, &lock_entries, &manifest, &sync_diagnostics);
+    defer testing.allocator.free(roots);
+    try testing.expectEqual(@as(usize, 3), roots.len);
+    try testing.expect(containsSyncString(roots, "pkg:alice-lib"));
+    try testing.expect(containsSyncString(roots, "pkg:bob-lib"));
+    try testing.expect(containsSyncString(roots, "pkg:alice-tool"));
+
+    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, roots, &manifest, &sync_diagnostics);
+    defer testing.allocator.free(aliases);
+    try testing.expectEqual(@as(usize, 6), aliases.len);
+    try testing.expect(containsImportDependency(aliases, "alice-lib", "pkg:alice-lib"));
+    try testing.expect(containsImportDependency(aliases, "alice/lib", "pkg:alice-lib"));
+    try testing.expect(containsImportDependency(aliases, "bob-lib", "pkg:bob-lib"));
+    try testing.expect(containsImportDependency(aliases, "bob/lib", "pkg:bob-lib"));
+    try testing.expect(containsImportDependency(aliases, "tool", "pkg:alice-tool"));
+    try testing.expect(containsImportDependency(aliases, "@alice/tool", "pkg:alice-tool"));
+    try testing.expect(!containsImportAlias(aliases, "lib"));
+}
+
+test "owner/nameのderived aliasは通常の依存キーとの衝突順に依存しない" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\"alice/lib" = { version = "^2.0.0" }
+        \\lib = { version = "^1.0.0" }
+        \\
+    ;
+    var parse_diagnostics = diag.List.init(testing.allocator);
+    defer parse_diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &parse_diagnostics);
+    defer manifest.deinit();
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:alice-lib", .name = "lib", .version = "2.4.0", .source = .{ .kind = .static, .url = "https://registry.test/alice/lib" } },
+        .{ .id = "pkg:plain-lib", .name = "lib", .version = "1.2.0", .source = .{ .kind = .static, .url = "https://registry.test/lib" } },
+    };
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, &manifest, &sync_diagnostics);
+    defer testing.allocator.free(aliases);
+    try testing.expectEqual(@as(usize, 2), aliases.len);
+    try testing.expect(containsImportDependency(aliases, "alice/lib", "pkg:alice-lib"));
+    try testing.expect(containsImportDependency(aliases, "lib", "pkg:plain-lib"));
+}
+
+test "owner/nameのderived aliasは他依存のexplicit aliasに優先しない" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\"alice/lib" = { version = "^1.0.0" }
+        \\plain-key = { version = "^1.0.0", alias = "lib" }
+        \\
+    ;
+    var parse_diagnostics = diag.List.init(testing.allocator);
+    defer parse_diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &parse_diagnostics);
+    defer manifest.deinit();
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:alice-lib", .name = "lib", .version = "1.4.0", .source = .{ .kind = .static, .url = "https://registry.test/alice/lib" } },
+        .{ .id = "pkg:plain", .name = "plain-key", .version = "1.2.0", .source = .{ .kind = .static, .url = "https://registry.test/plain-key" } },
+    };
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, &manifest, &sync_diagnostics);
+    defer testing.allocator.free(aliases);
+    try testing.expectEqual(@as(usize, 3), aliases.len);
+    try testing.expect(containsImportDependency(aliases, "alice/lib", "pkg:alice-lib"));
+    try testing.expect(containsImportDependency(aliases, "plain-key", "pkg:plain"));
+    try testing.expect(containsImportDependency(aliases, "lib", "pkg:plain"));
+}
+
+test "同じleafを持つregistry owner/nameのderived aliasだけを省く" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\"alice/lib" = { version = "^1.0.0" }
+        \\"bob/lib" = { version = "^1.0.0" }
+        \\
+    ;
+    var parse_diagnostics = diag.List.init(testing.allocator);
+    defer parse_diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &parse_diagnostics);
+    defer manifest.deinit();
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:alice-lib", .name = "lib", .version = "1.4.0", .source = .{ .kind = .static, .url = "https://registry.test/alice/lib" } },
+        .{ .id = "pkg:bob-lib", .name = "lib", .version = "1.2.0", .source = .{ .kind = .static, .url = "https://registry.test/bob/lib" } },
+    };
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, &manifest, &sync_diagnostics);
+    defer testing.allocator.free(aliases);
+    try testing.expectEqual(@as(usize, 2), aliases.len);
+    try testing.expect(containsImportDependency(aliases, "alice/lib", "pkg:alice-lib"));
+    try testing.expect(containsImportDependency(aliases, "bob/lib", "pkg:bob-lib"));
+    try testing.expect(!containsImportAlias(aliases, "lib"));
+}
+
+test "path git http dependencyはtable keyとpackage nameが異なってもsource条件で解決する" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\local-key = { path = "../local" }
+        \\
+        \\[dependencies.git]
+        \\git-key = { url = "https://example.test/git.git", commit = "abc1234", alias = "git-alias" }
+        \\
+        \\[dependencies.http]
+        \\http-key = { url = "https://example.test/archive.tar", hash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", alias = "http-alias" }
+        \\
+    ;
+    var parse_diagnostics = diag.List.init(testing.allocator);
+    defer parse_diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &parse_diagnostics);
+    defer manifest.deinit();
+
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:path-id", .name = "some-other-path-name", .version = "1.0.0", .source = .{ .kind = .path, .path = "../local" } },
+        .{ .id = "pkg:git-id", .name = "some-other-git-name", .version = "1.0.0", .source = .{ .kind = .git, .url = "https://example.test/git.git", .commit = "abc1234ff" } },
+        .{ .id = "pkg:http-id", .name = "some-other-http-name", .version = "1.0.0", .source = .{ .kind = .http, .url = "https://example.test/archive.tar", .hash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } },
+    };
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, &manifest, &sync_diagnostics);
+    defer testing.allocator.free(aliases);
+    const expectations = [_]struct { alias: []const u8, id: []const u8 }{
+        .{ .alias = "local-key", .id = "pkg:path-id" },
+        .{ .alias = "git-alias", .id = "pkg:git-id" },
+        .{ .alias = "http-alias", .id = "pkg:http-id" },
+    };
+    for (expectations) |expected| {
+        var found = false;
+        for (aliases) |dependency| if (std.mem.eql(u8, dependency.alias, expected.alias) and std.mem.eql(u8, dependency.package_key, expected.id)) {
+            found = true;
+            break;
+        };
+        try testing.expect(found);
+    }
+}
+
+test "syncは曖昧なlock候補とalias衝突を診断する" {
+    const ambiguous_source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\local = { path = "../local" }
+        \\
+    ;
+    var parse_diagnostics = diag.List.init(testing.allocator);
+    defer parse_diagnostics.deinit();
+    var ambiguous_manifest = try manifest_mod.parse(testing.allocator, ambiguous_source, &parse_diagnostics);
+    defer ambiguous_manifest.deinit();
+    const ambiguous_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:local-one", .name = "one", .version = "1.0.0", .source = .{ .kind = .path, .path = "../local" } },
+        .{ .id = "pkg:local-two", .name = "two", .version = "1.0.0", .source = .{ .kind = .path, .path = "../local" } },
+    };
+    const allowed = [_][]const u8{ "pkg:local-one", "pkg:local-two" };
+    var ambiguous_diagnostics = diag.List.init(testing.allocator);
+    defer ambiguous_diagnostics.deinit();
+    try testing.expectError(error.LockInvalid, collectImportDependencies(testing.allocator, &ambiguous_entries, &allowed, &ambiguous_manifest, &ambiguous_diagnostics));
+    try testing.expectEqual(@as(usize, 1), ambiguous_diagnostics.items.items.len);
+    try testing.expect(std.mem.indexOf(u8, ambiguous_diagnostics.items.items[0].message, "local-one") != null);
+    try testing.expect(std.mem.indexOf(u8, ambiguous_diagnostics.items.items[0].message, "local-two") != null);
+
+    var collision_result: std.ArrayListUnmanaged(environment.ImportDependency) = .empty;
+    defer collision_result.deinit(testing.allocator);
+    var collision_diagnostics = diag.List.init(testing.allocator);
+    defer collision_diagnostics.deinit();
+    try appendScopedAlias(testing.allocator, &collision_result, "shared", "pkg:git-a", &collision_diagnostics);
+    try testing.expectError(error.LockInvalid, appendScopedAlias(testing.allocator, &collision_result, "shared", "pkg:http-b", &collision_diagnostics));
+    try testing.expectEqual(@as(usize, 1), collision_diagnostics.items.items.len);
+    try testing.expect(std.mem.indexOf(u8, collision_diagnostics.items.items[0].message, "shared") != null);
+    try testing.expect(std.mem.indexOf(u8, collision_diagnostics.items.items[0].message, "pkg:git-a") != null);
+    try testing.expect(std.mem.indexOf(u8, collision_diagnostics.items.items[0].message, "pkg:http-b") != null);
 }

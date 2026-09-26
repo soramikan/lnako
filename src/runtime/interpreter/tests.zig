@@ -2421,15 +2421,35 @@ const ModuleTestProvider = struct {
 
     fn read(context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
         const self: *ModuleTestProvider = @ptrCast(@alignCast(context));
-        for (self.files) |file| if (std.mem.endsWith(u8, path, file.suffix)) return allocator.dupe(u8, file.source);
+        for (self.files) |file| if (pathHasSuffix(path, file.suffix)) return allocator.dupe(u8, file.source);
         return error.FileNotFound;
     }
 };
 
+fn pathHasSuffix(path: []const u8, suffix: []const u8) bool {
+    if (path.len < suffix.len) return false;
+    const tail = path[path.len - suffix.len ..];
+    for (tail, suffix) |actual, expected| {
+        const actual_separator = actual == '/' or actual == '\\';
+        const expected_separator = expected == '/' or expected == '\\';
+        if (actual_separator and expected_separator) continue;
+        if (actual != expected) return false;
+    }
+    return true;
+}
+
 /// 複数ファイルを使う取り込み実行の確認用。返す出力は allocator 所有。
 fn runModulesForTest(allocator: std.mem.Allocator, files: []const ModuleTestFile) ![]const u8 {
+    return runModulesForTestWithPackageResolver(allocator, files, null);
+}
+
+fn runModulesForTestWithPackageResolver(
+    allocator: std.mem.Allocator,
+    files: []const ModuleTestFile,
+    package_resolver: ?module_graph.PackageResolver,
+) ![]const u8 {
     var provider = ModuleTestProvider{ .files = files };
-    var graph = try module_graph.load(allocator, "main.nako3", .{ .context = &provider, .readFn = ModuleTestProvider.read }, .{});
+    var graph = try module_graph.load(allocator, "main.nako3", .{ .context = &provider, .readFn = ModuleTestProvider.read }, .{ .package_resolver = package_resolver });
     defer graph.deinit();
     try std.testing.expect(graph.succeeded());
     var analyzed = try graph.analyze(allocator);
@@ -2440,6 +2460,7 @@ fn runModulesForTest(allocator: std.mem.Allocator, files: []const ModuleTestFile
     var paths: std.ArrayList([]const u8) = .empty;
     var variant_roots: std.ArrayList(*ast_mod.Node) = .empty;
     var variant_counts: std.ArrayList(usize) = .empty;
+    var semantic_module_index: usize = 0;
     defer roots.deinit(allocator);
     defer names.deinit(allocator);
     defer paths.deinit(allocator);
@@ -2448,7 +2469,8 @@ fn runModulesForTest(allocator: std.mem.Allocator, files: []const ModuleTestFile
     for (graph.modules) |module| {
         if (module.kind != .nako3) continue;
         try roots.append(allocator, module.parsed.?.root.?);
-        try names.append(allocator, module.name);
+        try names.append(allocator, analyzed.modules[semantic_module_index].name);
+        semantic_module_index += 1;
         try paths.append(allocator, module.path);
         var variant_count: usize = 0;
         for (module.variants.items) |variant| {
@@ -2479,7 +2501,239 @@ fn runModulesForTest(allocator: std.mem.Allocator, files: []const ModuleTestFile
     var interpreter = Interpreter.init(allocator, &runtime, ir_program, host.host());
     defer interpreter.deinit();
     _ = try interpreter.run();
+    if (ir_program.module_names.len == 3 and std.mem.eql(u8, ir_program.module_names[1], "demo")) {
+        const package_value = interpreter.globals.get("package__lnako_pkg_1__値") orelse .undefined;
+        try std.testing.expectEqual(.number, std.meta.activeTag(package_value));
+        try std.testing.expectEqual(@as(f64, 5), package_value.number);
+    }
     return allocator.dupe(u8, host.written());
+}
+
+const TestScopedAliasResolver = struct {
+    fn packageResolver(self: *TestScopedAliasResolver) module_graph.PackageResolver {
+        return .{ .context = self, .resolveFn = resolve };
+    }
+
+    fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !module_graph.ResolvedPackageImport {
+        const resolved: struct { path: []const u8, canonical_id: []const u8, namespace: []const u8 } = if (std.mem.eql(u8, specifier, "pkg:util-root")) .{
+            .path = "packages/root-util/index.nako3",
+            .canonical_id = "pkg:root-util/main",
+            .namespace = "util",
+        } else if (std.mem.eql(u8, specifier, "pkg:math")) .{
+            .path = "packages/math/index.nako3",
+            .canonical_id = "pkg:math/main",
+            .namespace = "math",
+        } else if (std.mem.eql(u8, specifier, "pkg:util-nested")) .{
+            .path = "packages/nested-util/index.nako3",
+            .canonical_id = "pkg:nested-util/main",
+            .namespace = "util",
+        } else if (std.mem.eql(u8, specifier, "pkg:orphan")) .{
+            .path = "packages/orphan/index.nako3",
+            .canonical_id = "pkg:orphan/main",
+            .namespace = "orphan",
+        } else return error.PackageNotFound;
+        return .{
+            .path = try std.fs.path.resolve(allocator, &.{resolved.path}),
+            .canonical_id = try allocator.dupe(u8, resolved.canonical_id),
+            .namespace = resolved.namespace,
+        };
+    }
+};
+
+const TestLocalMathPackageResolver = struct {
+    fn packageResolver(self: *TestLocalMathPackageResolver) module_graph.PackageResolver {
+        return .{ .context = self, .resolveFn = resolve };
+    }
+
+    fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !module_graph.ResolvedPackageImport {
+        if (!std.mem.eql(u8, specifier, "pkg:math-package")) return error.PackageNotFound;
+        return .{
+            .path = try std.fs.path.resolve(allocator, &.{"packages/package-math/index.nako3"}),
+            .canonical_id = try allocator.dupe(u8, "pkg:math-package/main"),
+            .namespace = "math",
+        };
+    }
+};
+
+const TestPackageResolver = struct {
+    fn packageResolver(self: *TestPackageResolver) module_graph.PackageResolver {
+        return .{ .context = self, .resolveFn = resolve };
+    }
+
+    fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !module_graph.ResolvedPackageImport {
+        const is_demo = std.mem.eql(u8, specifier, "パッケージ:demo") or std.mem.eql(u8, specifier, "pkg:demo");
+        const is_other = std.mem.eql(u8, specifier, "パッケージ:other");
+        if (!is_demo and !is_other) return error.PackageNotFound;
+        return .{
+            .path = try std.fs.path.resolve(allocator, &.{"packages/demo/index.nako3"}),
+            .canonical_id = try allocator.dupe(u8, "pkg:demo-id/main"),
+            .namespace = if (is_other) "other" else "demo",
+        };
+    }
+};
+
+test "パッケージ:取り込みはInterpreterでexport moduleを実行する" {
+    var resolver = TestPackageResolver{};
+    const output = try runModulesForTestWithPackageResolver(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "「A」と表示。\n!「パッケージ:demo」を取り込む\n「B」と表示。\n!「pkg:demo」を取り込む\n「C」と表示。\n" },
+        .{ .suffix = "packages/demo/index.nako3", .source = "「from package」と表示。\n" },
+    }, resolver.packageResolver());
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("A\nB\nfrom package\nC\n", output);
+}
+
+test "同じcanonical exportの別aliasはmoduleと状態を共有し初期化は一度だけ" {
+    var resolver = TestPackageResolver{};
+    const files = [_]ModuleTestFile{
+        .{ .suffix = "main.nako3", .source = "!「パッケージ:demo」を取り込む\n!「パッケージ:other」を取り込む\ndemo__値を表示。\nother__値を表示。\n" },
+        .{ .suffix = "packages/demo/index.nako3", .source = "値=5\n「from package」と表示。\n" },
+    };
+    var provider = ModuleTestProvider{ .files = &files };
+    var graph = try module_graph.load(std.testing.allocator, "main.nako3", .{ .context = &provider, .readFn = ModuleTestProvider.read }, .{ .package_resolver = resolver.packageResolver() });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
+    try std.testing.expectEqual(graph.modules[0].imports[0].target, graph.modules[0].imports[1].target);
+    try std.testing.expect(graph.modules[0].imports[0].effective != graph.modules[0].imports[1].effective);
+
+    var semantic_program = try graph.analyze(std.testing.allocator);
+    defer semantic_program.deinit();
+    var package_value_name: ?[]const u8 = null;
+    var saw_demo_assignment = false;
+    var saw_other_reference = false;
+    for (semantic_program.symbols) |symbol| {
+        if (symbol.module_index == 1 and std.mem.eql(u8, symbol.name, "値")) package_value_name = symbol.qualified_name;
+        if (std.mem.eql(u8, symbol.qualified_name, "other__値")) try std.testing.expect(false);
+    }
+    const internal_value_name = package_value_name orelse return error.PackageValueNotFound;
+    try std.testing.expect(std.mem.startsWith(u8, internal_value_name, "package__"));
+    for (semantic_program.bindings) |binding| {
+        if (std.mem.eql(u8, binding.name, "値") and std.mem.eql(u8, binding.resolved_name, internal_value_name)) saw_demo_assignment = true;
+        if (std.mem.eql(u8, binding.name, "other__値") and std.mem.eql(u8, binding.resolved_name, internal_value_name)) saw_other_reference = true;
+    }
+    try std.testing.expect(saw_demo_assignment);
+    try std.testing.expect(saw_other_reference);
+
+    const output = try runModulesForTestWithPackageResolver(std.testing.allocator, &files, resolver.packageResolver());
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("from package\n5\n5\n", output);
+}
+
+test "別package scopeの同じaliasはnamespaceと参照を分離する" {
+    var resolver = TestScopedAliasResolver{};
+    const files = [_]ModuleTestFile{
+        .{ .suffix = "main.nako3", .source = "!「pkg:util-root」を取り込む\n!「pkg:math」を取り込む\nutil__値を表示。\n" },
+        .{ .suffix = "packages/root-util/index.nako3", .source = "値=10\n" },
+        .{ .suffix = "packages/math/index.nako3", .source = "!「pkg:util-nested」を取り込む\nutil__値を表示。\n" },
+        .{ .suffix = "packages/nested-util/index.nako3", .source = "値=20\n" },
+    };
+    var graph_provider = ModuleTestProvider{ .files = &files };
+    var graph = try module_graph.load(std.testing.allocator, "main.nako3", .{ .context = &graph_provider, .readFn = ModuleTestProvider.read }, .{ .package_resolver = resolver.packageResolver() });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+
+    var semantic_program = try graph.analyze(std.testing.allocator);
+    defer semantic_program.deinit();
+    try std.testing.expect(!std.mem.eql(u8, semantic_program.modules[1].name, semantic_program.modules[3].name));
+    var root_alias_bound = false;
+    var nested_alias_bound = false;
+    for (semantic_program.bindings) |binding| {
+        if (binding.kind != .reference or !std.mem.eql(u8, binding.name, "util__値")) continue;
+        if (std.mem.startsWith(u8, binding.resolved_name, "package__lnako_pkg_1__")) root_alias_bound = true;
+        if (std.mem.startsWith(u8, binding.resolved_name, "package__lnako_pkg_3__")) nested_alias_bound = true;
+    }
+    try std.testing.expect(root_alias_bound);
+    try std.testing.expect(nested_alias_bound);
+    const output = try runModulesForTestWithPackageResolver(std.testing.allocator, &files, resolver.packageResolver());
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("20\n10\n", output);
+}
+
+test "undeclared package scope cannot resolve another package export" {
+    var resolver = TestScopedAliasResolver{};
+    const files = [_]ModuleTestFile{
+        .{ .suffix = "main.nako3", .source = "!「pkg:math」を取り込む\n!「pkg:orphan」を取り込む\n" },
+        .{ .suffix = "packages/math/index.nako3", .source = "値=42\n" },
+        .{ .suffix = "packages/orphan/index.nako3", .source = "math__値を表示。\n" },
+    };
+    var provider = ModuleTestProvider{ .files = &files };
+    var graph = try module_graph.load(std.testing.allocator, "main.nako3", .{
+        .context = &provider,
+        .readFn = ModuleTestProvider.read,
+    }, .{ .package_resolver = resolver.packageResolver() });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+
+    // A package export loaded elsewhere in the graph must not satisfy a qualified
+    // reference from an importer that did not declare that package dependency.
+    for (program.bindings) |binding| {
+        if (binding.kind != .reference or !std.mem.eql(u8, binding.name, "math__値")) continue;
+        if (binding.symbol) |symbol_id| try std.testing.expect(program.symbols[symbol_id].module_index != 1);
+    }
+    if (program.succeeded()) {
+        const output = try runModulesForTestWithPackageResolver(std.testing.allocator, &files, resolver.packageResolver());
+        defer std.testing.allocator.free(output);
+        try std.testing.expect(!std.mem.eql(u8, output, "42\\n"));
+    }
+}
+
+test "package aliasは同名ローカルmoduleと衝突しない" {
+    var resolver = TestLocalMathPackageResolver{};
+    const files = [_]ModuleTestFile{
+        .{ .suffix = "main.nako3", .source = "!「./math.nako3」を取り込む\n!「pkg:math-package」を取り込む\nmath__値を表示。\n" },
+        .{ .suffix = "math.nako3", .source = "値=10\n" },
+        .{ .suffix = "packages/package-math/index.nako3", .source = "値=20\n" },
+    };
+    var provider = ModuleTestProvider{ .files = &files };
+    var graph = try module_graph.load(std.testing.allocator, "main.nako3", .{ .context = &provider, .readFn = ModuleTestProvider.read }, .{ .package_resolver = resolver.packageResolver() });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    var semantic_program = try graph.analyze(std.testing.allocator);
+    defer semantic_program.deinit();
+    try std.testing.expectEqualStrings("math", semantic_program.modules[1].name);
+    try std.testing.expect(!std.mem.eql(u8, semantic_program.modules[1].name, semantic_program.modules[2].name));
+    var package_alias_reference = false;
+    for (semantic_program.bindings) |binding| {
+        if (binding.kind == .reference and std.mem.eql(u8, binding.name, "math__値") and
+            std.mem.startsWith(u8, binding.resolved_name, "package__lnako_pkg_2__")) package_alias_reference = true;
+    }
+    try std.testing.expect(package_alias_reference);
+
+    const output = try runModulesForTestWithPackageResolver(std.testing.allocator, &files, resolver.packageResolver());
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("20\n", output);
+
+    const reversed_files = [_]ModuleTestFile{
+        .{ .suffix = "main.nako3", .source = "!「pkg:math-package」を取り込む\n!「./math.nako3」を取り込む\nmath__値を表示。\n" },
+        .{ .suffix = "math.nako3", .source = "値=10\n" },
+        .{ .suffix = "packages/package-math/index.nako3", .source = "値=20\n" },
+    };
+    const reversed_output = try runModulesForTestWithPackageResolver(std.testing.allocator, &reversed_files, resolver.packageResolver());
+    defer std.testing.allocator.free(reversed_output);
+    try std.testing.expectEqualStrings("20\n", reversed_output);
+}
+
+test "同じbasenameのローカルmoduleは実行時global namespaceを共有しない" {
+    const files = [_]ModuleTestFile{
+        .{ .suffix = "main.nako3", .source = "!「./one/lib.nako3」を取り込む\n!「./two/lib.nako3」を取り込む\n" },
+        .{ .suffix = "one/lib.nako3", .source = "値=10\n値を表示。\n" },
+        .{ .suffix = "two/lib.nako3", .source = "値=20\n値を表示。\n" },
+    };
+    var provider = ModuleTestProvider{ .files = &files };
+    var graph = try module_graph.load(std.testing.allocator, "main.nako3", .{ .context = &provider, .readFn = ModuleTestProvider.read }, .{});
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    try std.testing.expect(!std.mem.eql(u8, program.modules[1].name, program.modules[2].name));
+
+    const output = try runModulesForTest(std.testing.allocator, &files);
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("10\n20\n", output);
 }
 
 test "取り込み文の位置で取り込み先のトップレベルを実行する" {

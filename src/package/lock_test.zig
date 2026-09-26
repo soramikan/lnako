@@ -87,7 +87,14 @@ fn node(id: []const u8, version: []const u8, dependencies: []const resolver.Pack
         .implementation = .source,
         .prefer_native = false,
         .dependencies = dependencies,
+        .is_root_dependency = true,
     };
+}
+
+fn transitiveNode(id: []const u8, version: []const u8, dependencies: []const resolver.PackageId, features: []const []const u8) !resolver.PackageNode {
+    var result = try node(id, version, dependencies, features);
+    result.is_root_dependency = false;
+    return result;
 }
 
 fn sampleInput() lock.Input {
@@ -107,7 +114,7 @@ const default_profile = lock.NamedProfile{
 fn sampleLock(gpa: std.mem.Allocator) !lock.Lock {
     const nodes = [_]resolver.PackageNode{
         try node(sqlite_id, "1.2.3", &.{.{ .pkg = req_id }}, &.{"default"}),
-        try node(req_id, "2.0.1", &.{}, &.{ "default", "http" }),
+        try transitiveNode(req_id, "2.0.1", &.{}, &.{ "default", "http" }),
     };
     return lock.build(gpa, sampleInput(), &.{default_profile}, &nodes, default_fixtures.details());
 }
@@ -590,8 +597,8 @@ test "差分は直接・間接・追加・削除の理由を説明する" {
     // req の版を上げ、newdep を追加し、sqlite を更新対象にする。
     const nodes = [_]resolver.PackageNode{
         try node(sqlite_id, "1.2.4", &.{ .{ .pkg = req_id }, .{ .pkg = "pkg:30000000000000000000000000000000" } }, &.{"default"}),
-        try node(req_id, "2.0.2", &.{}, &.{ "default", "http" }),
-        try node("pkg:30000000000000000000000000000000", "0.1.0", &.{}, &.{"default"}),
+        try transitiveNode(req_id, "2.0.2", &.{}, &.{ "default", "http" }),
+        try transitiveNode("pkg:30000000000000000000000000000000", "0.1.0", &.{}, &.{"default"}),
     };
     const extra = FixtureEntry{ .id = "pkg:30000000000000000000000000000000", .name = "newdep", .source = sqlite_source, .resolved_from = sqlite_source, .artifacts = &.{sqlite_source_artifact} };
     const fixtures = Fixtures{ .entries = &.{ default_fixtures.entries[0], default_fixtures.entries[1], extra } };
@@ -754,8 +761,8 @@ test "lockのsha256は同一入力で一致する" {
 
 test "選択された実装をlockへ記録し往復で保持する" {
     const nodes = [_]resolver.PackageNode{
-        .{ .id = .{ .pkg = sqlite_id }, .version = try Version.parse("1.2.3"), .features = &.{"default"}, .implementation = .source, .prefer_native = false, .dependencies = &.{} },
-        .{ .id = .{ .pkg = req_id }, .version = try Version.parse("2.0.1"), .features = &.{"default"}, .implementation = .native, .prefer_native = true, .dependencies = &.{} },
+        .{ .id = .{ .pkg = sqlite_id }, .version = try Version.parse("1.2.3"), .features = &.{"default"}, .implementation = .source, .prefer_native = false, .dependencies = &.{}, .is_root_dependency = true },
+        .{ .id = .{ .pkg = req_id }, .version = try Version.parse("2.0.1"), .features = &.{"default"}, .implementation = .native, .prefer_native = true, .dependencies = &.{}, .is_root_dependency = true },
     };
     var value = try lock.build(T.allocator, sampleInput(), &.{default_profile}, &nodes, default_fixtures.details());
     defer value.deinit();
@@ -1048,7 +1055,7 @@ test "排他的profileの版ごとに異なるartifactを記録する" {
 test "UpdateReportは元lockの解放後も独立して使える" {
     const nodes = [_]resolver.PackageNode{
         try node(sqlite_id, "1.2.4", &.{.{ .pkg = req_id }}, &.{"default"}),
-        try node(req_id, "2.0.2", &.{}, &.{ "default", "http" }),
+        try transitiveNode(req_id, "2.0.2", &.{}, &.{ "default", "http" }),
     };
     var previous = try sampleLock(T.allocator);
     var next = try lock.build(T.allocator, sampleInput(), &.{default_profile}, &nodes, default_fixtures.details());
@@ -1072,7 +1079,7 @@ test "version不変でもfeature統合の変化を差分で報告する" {
     defer previous.deinit();
     const nodes = [_]resolver.PackageNode{
         try node(sqlite_id, "1.2.3", &.{.{ .pkg = req_id }}, &.{"default"}),
-        try node(req_id, "2.0.1", &.{}, &.{"default"}),
+        try transitiveNode(req_id, "2.0.1", &.{}, &.{"default"}),
     };
     var next = try lock.build(T.allocator, sampleInput(), &.{default_profile}, &nodes, default_fixtures.details());
     defer next.deinit();
@@ -1169,13 +1176,13 @@ test "間接更新の原因は未変更の中間packageを越えて辿る" {
 
     const prev_nodes = [_]resolver.PackageNode{
         try node(a_id, "1.0.0", &.{.{ .pkg = b_id }}, &.{"default"}),
-        try node(b_id, "1.0.0", &.{.{ .pkg = c_id }}, &.{"default"}),
-        try node(c_id, "1.0.0", &.{}, &.{"default"}),
+        try transitiveNode(b_id, "1.0.0", &.{.{ .pkg = c_id }}, &.{"default"}),
+        try transitiveNode(c_id, "1.0.0", &.{}, &.{"default"}),
     };
     const next_nodes = [_]resolver.PackageNode{
         try node(a_id, "1.1.0", &.{.{ .pkg = b_id }}, &.{"default"}),
-        try node(b_id, "1.0.0", &.{.{ .pkg = c_id }}, &.{"default"}),
-        try node(c_id, "2.0.0", &.{}, &.{"default"}),
+        try transitiveNode(b_id, "1.0.0", &.{.{ .pkg = c_id }}, &.{"default"}),
+        try transitiveNode(c_id, "2.0.0", &.{}, &.{"default"}),
     };
 
     var previous = try lock.build(T.allocator, sampleInput(), &.{default_profile}, &prev_nodes, fixtures.details());
@@ -1213,15 +1220,15 @@ test "切れた旧依存経路を間接更新の原因に使わない" {
     const prev_nodes = [_]resolver.PackageNode{
         try node(a_id, "1.0.0", &.{.{ .pkg = b_id }}, &.{"default"}),
         try node(x_id, "1.0.0", &.{.{ .pkg = b_id }}, &.{"default"}),
-        try node(b_id, "1.0.0", &.{.{ .pkg = c_id }}, &.{"default"}),
-        try node(c_id, "1.0.0", &.{}, &.{"default"}),
+        try transitiveNode(b_id, "1.0.0", &.{.{ .pkg = c_id }}, &.{"default"}),
+        try transitiveNode(c_id, "1.0.0", &.{}, &.{"default"}),
     };
     const next_nodes = [_]resolver.PackageNode{
         try node(a_id, "1.1.0", &.{.{ .pkg = d_id }}, &.{"default"}),
         try node(x_id, "1.0.0", &.{.{ .pkg = b_id }}, &.{"default"}),
-        try node(b_id, "1.0.0", &.{.{ .pkg = c_id }}, &.{"default"}),
-        try node(c_id, "2.0.0", &.{}, &.{"default"}),
-        try node(d_id, "1.0.0", &.{}, &.{"default"}),
+        try transitiveNode(b_id, "1.0.0", &.{.{ .pkg = c_id }}, &.{"default"}),
+        try transitiveNode(c_id, "2.0.0", &.{}, &.{"default"}),
+        try transitiveNode(d_id, "1.0.0", &.{}, &.{"default"}),
     };
 
     var previous = try lock.build(T.allocator, sampleInput(), &.{default_profile}, &prev_nodes, fixtures.details());
@@ -1350,6 +1357,52 @@ test "選択実装に対応するartifactの欠落をE008で拒否する" {
     try T.expect(ok_diagnostics.find(diag.E008_MISSING_ARTIFACT) == null);
 }
 
+test "lock schema v2 persists direct root edge even when package has incoming edges" {
+    var direct_req = try node(req_id, "2.0.1", &.{}, &.{ "default", "http" });
+    direct_req.is_root_dependency = true;
+    const nodes = [_]resolver.PackageNode{
+        try node(sqlite_id, "1.2.3", &.{.{ .pkg = req_id }}, &.{"default"}),
+        direct_req,
+    };
+    var resolution = resolver.Resolution{
+        .arena = std.heap.ArenaAllocator.init(T.allocator),
+        .root_dependencies = &.{ .{ .pkg = sqlite_id }, .{ .pkg = req_id } },
+        .result = .{ .resolved = &nodes },
+    };
+    defer resolution.deinit();
+    var generated = try lock.buildFromResolution(T.allocator, sampleInput(), &.{default_profile}, &resolution, default_fixtures.details());
+    defer generated.deinit();
+    try T.expectEqual(lock.lock_schema_version, generated.schema_version);
+    const bytes = try lock.toBytes(&generated, T.allocator);
+    defer T.allocator.free(bytes);
+
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    var parsed = try lock.parse(T.allocator, bytes, &diagnostics);
+    defer parsed.deinit();
+    try lock.validate(&parsed, &diagnostics);
+    try T.expect(!diagnostics.hasErrors());
+    const roots = parsed.rootDependenciesForProfile("default").?;
+    try T.expectEqual(@as(usize, 2), roots.len);
+    try T.expectEqualStrings(sqlite_id, roots[0]);
+    try T.expectEqualStrings(req_id, roots[1]);
+
+    var built_from_nodes = try lock.build(T.allocator, sampleInput(), &.{default_profile}, &nodes, default_fixtures.details());
+    defer built_from_nodes.deinit();
+    const node_roots = built_from_nodes.rootDependenciesForProfile("default").?;
+    try T.expectEqual(@as(usize, 2), node_roots.len);
+    try T.expectEqualStrings(sqlite_id, node_roots[0]);
+    try T.expectEqualStrings(req_id, node_roots[1]);
+}
+
+test "root edge markerが無いlock graphは直接依存を推測せず失敗する" {
+    const nodes = [_]resolver.PackageNode{
+        try transitiveNode(sqlite_id, "1.2.3", &.{.{ .pkg = req_id }}, &.{"default"}),
+        try transitiveNode(req_id, "2.0.1", &.{}, &.{"default"}),
+    };
+    try T.expectError(error.MissingRootDependencies, lock.build(T.allocator, sampleInput(), &.{default_profile}, &nodes, default_fixtures.details()));
+}
+
 test "buildPackagesはPublic IDの衝突を拒否する" {
     const shared_public = "pkg:90000000000000000000000000000000";
     const fixtures = Fixtures{ .entries = &.{
@@ -1372,7 +1425,7 @@ test "public idがresolver idと異なっても依存辺をpublic idへ張り替
     } };
     const nodes = [_]resolver.PackageNode{
         try node("a", "1.0.0", &.{.{ .pkg = "b" }}, &.{"default"}),
-        try node("b", "1.0.0", &.{}, &.{"default"}),
+        try transitiveNode("b", "1.0.0", &.{}, &.{"default"}),
     };
     var value = try lock.build(T.allocator, sampleInput(), &.{default_profile}, &nodes, fixtures.details());
     defer value.deinit();
@@ -1535,7 +1588,7 @@ test "32バイトへ復号しない不正SRIを未初期化比較に使わない
 test "feature順序と重複を正規化して同一バイト列にする" {
     const nodes = [_]resolver.PackageNode{
         try node(sqlite_id, "1.2.3", &.{.{ .pkg = req_id }}, &.{"default"}),
-        try node(req_id, "2.0.1", &.{}, &.{ "default", "http" }),
+        try transitiveNode(req_id, "2.0.1", &.{}, &.{ "default", "http" }),
     };
     var input_a = sampleInput();
     input_a.features = &.{ "http", "default" };

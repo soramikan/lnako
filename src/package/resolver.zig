@@ -239,6 +239,8 @@ pub const ResolveOptions = struct {
 pub const PackageNode = struct {
     id: PackageId,
     version: Version,
+    /// root nodeから直接参照されたpackageか。
+    is_root_dependency: bool = false,
     /// 有効化された feature（展開済み・昇順）。
     features: []const []const u8,
     /// 選択された実装種別（共通 source 既定・native 明示）。
@@ -258,6 +260,8 @@ pub const Failure = struct {
 
 pub const Resolution = struct {
     arena: std.heap.ArenaAllocator,
+    /// 解決されたrootからの直接依存ID。lock builderがroot edgeを保持する。
+    root_dependencies: []const PackageId = &.{},
     result: union(enum) {
         resolved: []const PackageNode,
         failed: Failure,
@@ -671,6 +675,12 @@ pub fn resolve(gpa: Allocator, provider: Provider, root_deps: []const Dependency
             return PackageId.lessThan(x.id, y.id);
         }
     }.lt);
+    var root_dependency_ids: std.ArrayList(PackageId) = .empty;
+    for (sorted_root) |dep| {
+        const id = try interner.id(a, dep.id);
+        if (root_dependency_ids.items.len > 0 and PackageId.eql(root_dependency_ids.items[root_dependency_ids.items.len - 1], id)) continue;
+        try root_dependency_ids.append(a, id);
+    }
     var solver_root_deps: std.ArrayList(Solver.Dependency) = .empty;
     for (sorted_root) |dep| {
         try solver_root_deps.append(a, .{
@@ -727,6 +737,7 @@ pub fn resolve(gpa: Allocator, provider: Provider, root_deps: []const Dependency
                     }
                     return .{
                         .arena = arena,
+                        .root_dependencies = root_dependency_ids.items,
                         .result = .{ .resolved = nodes },
                     };
                 }
@@ -802,8 +813,14 @@ fn buildGraph(
         }.lt);
 
         const prefer_native = if (request) |req| req.prefer_native else false;
+        var is_root_dependency = false;
+        for (root_deps) |root_dependency| if (PackageId.eql(root_dependency.id, selection.package)) {
+            is_root_dependency = true;
+            break;
+        };
         try nodes.append(gpa, .{
             .id = try interner.id(gpa, selection.package),
+            .is_root_dependency = is_root_dependency,
             .version = try interner.version(gpa, selection.version),
             .features = feature_names.items,
             .implementation = chooseImplementation(meta, target, prefer_native),
