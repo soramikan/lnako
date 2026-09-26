@@ -23,6 +23,7 @@ test {
     _ = @import("cli/arguments.zig");
     _ = @import("cli/commands/test.zig");
     _ = @import("cli/commands/sync.zig");
+    _ = @import("cli/commands/project.zig");
 
     _ = @import("lnako").package.diagnostics;
     _ = @import("lnako").package.toml;

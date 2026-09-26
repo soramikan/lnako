@@ -30,6 +30,18 @@
       "reason": "命令dispatchファサード（arrays/へ実装移譲済み・テストはファサードに集約）",
       "limitKb": 40
     },
+      "src/package/project.zig": {
+        "reason": "path/git/http依存解決とlock生成の統合オーケストレーション（分割を継続検討・90KB上限）",
+        "limitKb": 90
+      },
+      "src/package/sync.zig": {
+        "reason": "cache/environment同期とhandle相対materializeの統合処理（分割を継続検討・85KB上限）",
+        "limitKb": 85
+      },
+      "src/cli/commands/project_edit.zig": {
+        "reason": "TOML構造を保持する依存表編集（explicit/dotted/inline tableの統合スキャン）とinit/add/removeロールバック（分割を継続検討・90KB上限）",
+        "limitKb": 90
+      },
       "src/runtime/aot/collection.zig": {
         "reason": "コレクション操作群の密集した共有ヘルパー（監視対象・hard limit内）",
         "limitKb": 80

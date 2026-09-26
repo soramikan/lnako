@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const fetch = @import("fetch.zig");
 const diag = @import("diagnostics.zig");
 const lock_model = @import("lock_model.zig");
+const environment = @import("environment.zig");
 const manifest_mod = @import("manifest.zig");
 const npkg_files = @import("npkg_files.zig");
 const npkg_verify = @import("npkg_verify.zig");
@@ -37,16 +38,37 @@ pub const Acquired = struct {
 // path provider
 // ---------------------------------------------------------------------------
 
-/// path 依存の宣言 path が絶対 path か。spec §3.4.3 は相対・絶対の双方を
-/// 許容する。実行環境の `std.fs.path.isAbsolute` だけでは判定できない
-/// Windows 形式（`C:/x`・`C:\x`・`\\srv\sh`）も全環境で絶対扱いする
-/// （lock は生成環境の path をそのまま保持するため）。
+/// path 依存の宣言 path が絶対 path か。POSIX の先頭 backslash は通常文字、
+/// Windows の単一 rooted path は絶対 path。UNC は server/share が揃う場合だけ
+/// 絶対扱いし、生成環境をまたぐ lock の文字列も正しく保持する。
 pub fn isAbsoluteDepPath(path: []const u8) bool {
     if (path.len == 0) return false;
-    if (path[0] == '/' or path[0] == '\\') return true;
-    if (path.len >= 3 and std.ascii.isAlphabetic(path[0]) and path[1] == ':' and
-        (path[2] == '/' or path[2] == '\\')) return true;
-    return std.fs.path.isAbsolute(path);
+    if (builtin.os.tag != .windows) {
+        // POSIX では `\\server\share` は backslash を含む正当な相対名。
+        // drive-letter 判定と同じく UNC 解釈も Windows のみで行い、
+        // POSIX 上の正規ファイル名を絶対 path と誤認しない。
+        return std.fs.path.isAbsolute(path);
+    }
+    const double_separator = path.len >= 2 and isWindowsSeparator(path[0]) and isWindowsSeparator(path[1]);
+    if (double_separator) return isCompleteWindowsUnc(path);
+    return std.fs.path.isAbsoluteWindows(path);
+}
+
+fn isCompleteWindowsUnc(path: []const u8) bool {
+    if (path.len < 5 or !isWindowsSeparator(path[0]) or !isWindowsSeparator(path[1])) return false;
+    var i: usize = 2;
+    while (i < path.len and isWindowsSeparator(path[i])) : (i += 1) {}
+    const server_start = i;
+    while (i < path.len and !isWindowsSeparator(path[i])) : (i += 1) {}
+    if (i == server_start or i == path.len) return false;
+    while (i < path.len and isWindowsSeparator(path[i])) : (i += 1) {}
+    const share_start = i;
+    while (i < path.len and !isWindowsSeparator(path[i])) : (i += 1) {}
+    return i > share_start;
+}
+
+fn isWindowsSeparator(char: u8) bool {
+    return char == '/' or char == '\\';
 }
 
 /// path 依存の取得。path は編集可能な参照であり、ディレクトリ内の
@@ -83,13 +105,37 @@ fn readDependencyManifest(session: *Session, manifest_path: []const u8, dep_name
     const bytes = std.Io.Dir.cwd().readFileAlloc(session.io, manifest_path, gpa, limit) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Canceled => return error.Canceled,
-        error.FileNotFound => return session.fail(.not_found, .manifest, manifest_path, "{s} dependency \"{s}\" has no nako.toml at \"{s}\"", .{ dep_kind, dep_name, manifest_path }),
-        error.StreamTooLong => return session.fail(.too_large, .manifest, manifest_path, "manifest at \"{s}\" exceeds the {d} byte limit", .{ manifest_path, session.policy.max_bytes }),
-        else => return session.fail(.network, .manifest, manifest_path, "cannot read \"{s}\": {s}", .{ manifest_path, @errorName(err) }),
+        else => return mapManifestReadError(session, err, manifest_path, dep_name, dep_kind),
     };
+    return parseDependencyManifest(session, bytes, manifest_path);
+}
+
+/// pinned workspace handle 相対の manifest 読み取り（git provider 用）。
+/// `dir` は checkout（またはその subdir）の handle、`sub_path` はそこからの
+/// `nako.toml` までの相対 path。診断表示には `display_path` を使う。
+fn readDependencyManifestDir(session: *Session, dir: std.Io.Dir, sub_path: []const u8, display_path: []const u8, dep_name: []const u8, dep_kind: []const u8) Error!manifest_mod.Manifest {
+    const gpa = session.allocator();
+    const limit: std.Io.Limit = if (session.policy.max_bytes == 0) .unlimited else .limited(session.policy.max_bytes);
+    const bytes = dir.readFileAlloc(session.io, sub_path, gpa, limit) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Canceled => return error.Canceled,
+        else => return mapManifestReadError(session, err, display_path, dep_name, dep_kind),
+    };
+    return parseDependencyManifest(session, bytes, display_path);
+}
+
+fn mapManifestReadError(session: *Session, err: anyerror, manifest_path: []const u8, dep_name: []const u8, dep_kind: []const u8) Error {
+    return switch (err) {
+        error.FileNotFound => session.fail(.not_found, .manifest, manifest_path, "{s} dependency \"{s}\" has no nako.toml at \"{s}\"", .{ dep_kind, dep_name, manifest_path }),
+        error.StreamTooLong => session.fail(.too_large, .manifest, manifest_path, "manifest at \"{s}\" exceeds the {d} byte limit", .{ manifest_path, session.policy.max_bytes }),
+        else => session.fail(.network, .manifest, manifest_path, "cannot read \"{s}\": {s}", .{ manifest_path, @errorName(err) }),
+    };
+}
+
+fn parseDependencyManifest(session: *Session, bytes: []const u8, manifest_path: []const u8) Error!manifest_mod.Manifest {
     var scratch = diag.List.init(session.gpa);
     defer scratch.deinit();
-    return manifest_mod.parse(gpa, bytes, session.diagSink(&scratch)) catch |err| switch (err) {
+    return manifest_mod.parse(session.allocator(), bytes, session.diagSink(&scratch)) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.InvalidManifest => return session.fail(.invalid_metadata, .manifest, manifest_path, "manifest at \"{s}\" is invalid", .{manifest_path}),
     };
@@ -103,9 +149,12 @@ fn readDependencyManifest(session: *Session, manifest_path: []const u8, dep_name
 /// 40 桁 commit SHA へ固定し、manifest を読み込む。Git 実行ファイルは
 /// Git 依存を処理するときだけ要求する。
 ///
-/// `checkout_dir` はこの依存専用の作業 dir。`<checkout_dir>/.git` が既に
-/// 存在する場合は clone を省略して再利用する（offline 時も object があれば
-/// 参照できる）。
+/// `workspace` はこの依存専用の作業 dir の pinned handle。`<workspace>/.git`
+/// が既に存在する場合は clone を省略して再利用する（offline 時も object
+/// があれば参照できる）。全ての Git subprocess はこの handle を cwd として
+/// 起動する。`git -C <絶対path>` は cache root の rename/置換で path が別
+/// tree を指し得るため使わず、`clean -ffdx` 等の破壊的操作は置換不能な
+/// handle 相対の名前空間へ固定する。
 ///
 /// `locked` に既存 lock の source を渡すと、宣言の `commit` が lock の
 /// commit 接頭辞と一致する限り lock 側の完全 SHA を使う。リモート参照が
@@ -113,7 +162,7 @@ fn readDependencyManifest(session: *Session, manifest_path: []const u8, dep_name
 pub fn acquireGit(
     session: *Session,
     dep: manifest_mod.GitDependency,
-    checkout_dir: []const u8,
+    workspace: std.Io.Dir,
     locked: ?lock_model.Source,
 ) Error!Acquired {
     const gpa = session.allocator();
@@ -131,54 +180,65 @@ pub fn acquireGit(
         }
     }
 
-    const dot_git = try std.fs.path.join(gpa, &.{ checkout_dir, ".git" });
+    // `.git` が実 dir として開ける場合のみ既存 checkout とみなす。
+    // symlink・gitfile・通常 file は再利用せず、clone で拒否される形に倒す。
     const has_checkout = blk: {
-        std.Io.Dir.cwd().access(io, dot_git, .{}) catch |err| switch (err) {
-            error.FileNotFound => break :blk false,
-            else => break :blk true,
-        };
-        break :blk true;
+        var dot_git = workspace.openDir(io, ".git", .{ .follow_symlinks = false }) catch break :blk false;
+        defer dot_git.close(io);
+        const stat = dot_git.stat(io) catch break :blk false;
+        break :blk stat.kind == .directory;
     };
 
     if (!has_checkout) {
         if (session.policy.offline) {
             return session.fail(.offline, .repository, dep.url, "offline mode: git repository \"{s}\" is not available locally", .{dep.url});
         }
-        try gitRun(session, &.{ "git", "clone", "--quiet", "--no-checkout", dep.url, checkout_dir }, null);
+        try checkGitUrlPolicy(session, dep.url);
+        try gitRun(session, &.{ "git", "clone", "--quiet", "--no-checkout", dep.url, "." }, dep.url, .{ .cwd = workspace });
     } else {
+        // 共有 checkout の config / info attributes は攻撃者が編集できる。
+        // checkout 前に filter driver を全て外し、info attributes も破棄する。
         // 既存 checkout の origin が宣言 URL と一致するか検証する。別 repo の
         // checkout を再利用して別 URL の内容を読み違えないようにする。
-        try verifyCheckoutOrigin(session, checkout_dir, dep);
+        try verifyCheckoutOrigin(session, workspace, dep);
+        try disableCheckoutFilters(session, workspace, dep.url);
     }
 
     // 既存 checkout に commit-ish が無ければ、オンラインではリモートを
     // fetch してから再解決する（clone 後に追加された commit を拾う）。
     const full_commit = pinned orelse blk: {
-        if (try resolveCommit(session, checkout_dir, dep.commit)) |commit| break :blk commit;
+        if (try resolveCommit(session, workspace, dep.commit)) |commit| break :blk commit;
         if (session.policy.offline) {
             return session.fail(.offline, .repository, dep.url, "offline mode: commit-ish \"{s}\" of \"{s}\" is not available locally", .{ dep.commit, dep.url });
         }
-        try gitRun(session, &.{ "git", "-C", checkout_dir, "fetch", "--quiet", "origin" }, dep.url);
-        if (try resolveCommit(session, checkout_dir, dep.commit)) |commit| break :blk commit;
+        try checkGitUrlPolicy(session, dep.url);
+        try gitRun(session, &.{ "git", "fetch", "--quiet", "origin" }, dep.url, .{ .cwd = workspace, .hooks_guard = true });
+        if (try resolveCommit(session, workspace, dep.commit)) |commit| break :blk commit;
         return session.fail(.not_found, .repository, dep.url, "commit \"{s}\" of \"{s}\" was not found", .{ dep.commit, dep.url });
     };
 
     // object が clone 済みか確認し、checkout して manifest を読む。
     {
         const verify_arg = try std.fmt.allocPrint(gpa, "{s}^{{commit}}", .{full_commit});
-        const result = try gitRunAllowFailure(session, gpa, &.{ "git", "-C", checkout_dir, "cat-file", "-e", verify_arg });
+        const result = try gitRunAllowFailure(session, gpa, &.{ "git", "cat-file", "-e", verify_arg }, .{ .cwd = workspace, .hooks_guard = true });
         if (!result.succeeded) {
             if (session.policy.offline) {
                 return session.fail(.offline, .repository, dep.url, "offline mode: commit {s} of \"{s}\" is not available locally", .{ full_commit, dep.url });
             }
-            try gitRun(session, &.{ "git", "-C", checkout_dir, "fetch", "--quiet", "origin", full_commit }, dep.url);
-            const retry = try gitRunAllowFailure(session, gpa, &.{ "git", "-C", checkout_dir, "cat-file", "-e", verify_arg });
+            try checkGitUrlPolicy(session, dep.url);
+            try gitRun(session, &.{ "git", "fetch", "--quiet", "origin", full_commit }, dep.url, .{ .cwd = workspace, .hooks_guard = true });
+            const retry = try gitRunAllowFailure(session, gpa, &.{ "git", "cat-file", "-e", verify_arg }, .{ .cwd = workspace, .hooks_guard = true });
             if (!retry.succeeded) {
                 return session.fail(.not_found, .repository, dep.url, "commit {s} of \"{s}\" was not found", .{ full_commit, dep.url });
             }
         }
     }
-    try gitRun(session, &.{ "git", "-C", checkout_dir, "checkout", "--quiet", full_commit }, dep.url);
+    // 同じ commit に対する checkout は通常 dirty worktree を保持するため、
+    // tracked/untracked の変更を除去してから pinned commit を強制 checkout する。
+    // 既存 cache checkout が汚染されていても manifest は commit tree から読む。
+    try gitRun(session, &.{ "git", "clean", "-ffdx" }, dep.url, .{ .cwd = workspace, .hooks_guard = true });
+    try gitRun(session, &.{ "git", "checkout", "--quiet", "--force", full_commit }, dep.url, .{ .cwd = workspace, .hooks_guard = true });
+    try gitRun(session, &.{ "git", "clean", "-ffdx" }, dep.url, .{ .cwd = workspace, .hooks_guard = true });
 
     // `dep.path` は checkout 内の subdirectory。`..`・絶対 path などで
     // checkout 境界の外へ出る指定は拒否する（npkg の規範 path 規則と同じ）。
@@ -187,9 +247,9 @@ pub fn acquireGit(
             return session.fail(.invalid_source, .repository, sub, "git dependency path \"{s}\" is not a canonical repository-relative path", .{sub});
         }
     }
-    const manifest_dir = if (dep.path) |sub| try std.fs.path.join(gpa, &.{ checkout_dir, sub }) else checkout_dir;
-    const manifest_path = try std.fs.path.join(gpa, &.{ manifest_dir, "nako.toml" });
-    const parsed = try readDependencyManifest(session, manifest_path, dep.name, "git");
+    const manifest_dir = if (dep.path) |sub| try std.fs.path.join(gpa, &.{ sub, "nako.toml" }) else "nako.toml";
+    const manifest_display = try std.fmt.allocPrint(gpa, "git:{s}/{s}", .{ dep.url, manifest_dir });
+    const parsed = try readDependencyManifestDir(session, workspace, manifest_dir, manifest_display, dep.name, "git");
     // source の文字列は全て session arena が所有する。`dep`・lock 由来の
     // pinned commit もここで複製する。
     return .{
@@ -203,23 +263,45 @@ pub fn acquireGit(
     };
 }
 
+/// Git の network fetch も HTTP provider と同じ平文通信 policy に従う。
+/// local/file・SSH など HTTP 以外の Git URL は対象外。
+fn checkGitUrlPolicy(session: *Session, url: []const u8) Error!void {
+    if (session.policy.allow_plaintext_http) return;
+    if (!std.ascii.startsWithIgnoreCase(url, "http://")) return;
+    const uri = std.Uri.parse(url) catch return session.fail(.invalid_source, .repository, url, "invalid git http url: {s}", .{url});
+    if (!std.ascii.eqlIgnoreCase(uri.scheme, "http")) return;
+    const host_component = uri.host orelse return session.fail(.invalid_source, .repository, url, "git http url has no host: {s}", .{url});
+    const host = switch (host_component) {
+        .raw, .percent_encoded => |text| text,
+    };
+    if (std.ascii.eqlIgnoreCase(host, "localhost") or std.ascii.endsWithIgnoreCase(host, ".localhost")) return;
+    if (std.Io.net.Ip4Address.parse(host, 0)) |ip4| {
+        if (ip4.bytes[0] == 127) return;
+    } else |_| {}
+    const ipv6_host = if (host.len >= 2 and host[0] == '[' and host[host.len - 1] == ']') host[1 .. host.len - 1] else host;
+    if (std.Io.net.Ip6Address.parse(ipv6_host, 0)) |ip6| {
+        if (std.mem.eql(u8, &ip6.bytes, &std.Io.net.Ip6Address.loopback(0).bytes)) return;
+    } else |_| {}
+    return session.fail(.invalid_source, .repository, url, "plaintext http git url \"{s}\" is only allowed for loopback hosts (set allow_plaintext_http to opt in)", .{url});
+}
+
 /// commit-ish（7–40 桁 hex）を完全な commit SHA へ解決する。
 /// `--disambiguate` で object を列挙するため、prefix と同名の移動した
 /// tag/branch に衝突して誤った参照を選ばない。
 /// ローカル object に見つからない場合は null を返す（失敗は記録しない。
 /// 呼出し側が fetch 後の再試行や失敗分類を行う）。prefix が複数 commit
 /// へ曖昧な場合は `invalid_source` として記録して失敗する。
-fn resolveCommit(session: *Session, checkout_dir: []const u8, commitish: []const u8) Error!?[]const u8 {
+fn resolveCommit(session: *Session, workspace: std.Io.Dir, commitish: []const u8) Error!?[]const u8 {
     const gpa = session.allocator();
     const arg = try std.fmt.allocPrint(gpa, "--disambiguate={s}", .{commitish});
-    const result = try gitRunAllowFailure(session, gpa, &.{ "git", "-C", checkout_dir, "rev-parse", arg });
+    const result = try gitRunAllowFailure(session, gpa, &.{ "git", "rev-parse", arg }, .{ .cwd = workspace, .hooks_guard = true });
     if (!result.succeeded) return null;
     var commit: ?[]const u8 = null;
     var lines = std.mem.splitScalar(u8, result.stdout, '\n');
     while (lines.next()) |line| {
         const candidate = std.mem.trim(u8, line, " \t\r");
         if (candidate.len != 40) continue;
-        const type_result = try gitRunAllowFailure(session, gpa, &.{ "git", "-C", checkout_dir, "cat-file", "-t", candidate });
+        const type_result = try gitRunAllowFailure(session, gpa, &.{ "git", "cat-file", "-t", candidate }, .{ .cwd = workspace, .hooks_guard = true });
         if (!type_result.succeeded) continue;
         if (!std.mem.eql(u8, std.mem.trim(u8, type_result.stdout, " \t\r\n"), "commit")) continue;
         if (commit != null) {
@@ -234,18 +316,18 @@ fn resolveCommit(session: *Session, checkout_dir: []const u8, commitish: []const
 /// origin が無い checkout（手動 seed 等）には宣言 URL の origin を設定する。
 /// origin が別 URL を指す場合、別 repo の内容を別 source として返さないよう
 /// `source_collision` で拒否する。
-fn verifyCheckoutOrigin(session: *Session, checkout_dir: []const u8, dep: manifest_mod.GitDependency) Error!void {
+fn verifyCheckoutOrigin(session: *Session, workspace: std.Io.Dir, dep: manifest_mod.GitDependency) Error!void {
     const gpa = session.allocator();
-    const result = try gitRunAllowFailure(session, gpa, &.{ "git", "-C", checkout_dir, "remote", "get-url", "origin" });
+    const result = try gitRunAllowFailure(session, gpa, &.{ "git", "remote", "get-url", "origin" }, .{ .cwd = workspace, .hooks_guard = true });
     if (!result.succeeded) {
         // origin remote が無い checkout には宣言 URL を設定して後段の
         // fetch が動くようにする。
-        try gitRun(session, &.{ "git", "-C", checkout_dir, "remote", "add", "origin", dep.url }, dep.url);
+        try gitRun(session, &.{ "git", "remote", "add", "origin", dep.url }, dep.url, .{ .cwd = workspace, .hooks_guard = true });
         return;
     }
     const existing = std.mem.trim(u8, result.stdout, " \t\r\n");
     if (!try gitUrlEql(gpa, existing, dep.url)) {
-        return session.fail(.source_collision, .repository, dep.url, "checkout \"{s}\" belongs to a different repository (origin is \"{s}\")", .{ checkout_dir, existing });
+        return session.fail(.source_collision, .repository, dep.url, "checkout for \"{s}\" belongs to a different repository (origin is \"{s}\")", .{ dep.url, existing });
     }
 }
 
@@ -366,11 +448,117 @@ const GitResult = struct {
     stderr: []const u8,
 };
 
-fn gitRunAllowFailure(session: *Session, gpa: Allocator, argv: []const []const u8) Error!GitResult {
+/// 共有 checkout のローカル filter driver を除去する。Git config 自身の読み書き
+/// だけを実行し、checkout/filter 処理に入る前に repository config を無害化する。
+/// 全操作は `workspace`（pinned handle）相対で行い、cache root の rename/置換
+/// によって対象がすり替わらないようにする。
+fn disableCheckoutFilters(session: *Session, workspace: std.Io.Dir, origin_url: []const u8) Error!void {
+    const gpa = session.allocator();
+    var dot_git = workspace.openDir(session.io, ".git", .{ .follow_symlinks = false }) catch |err| switch (err) {
+        else => return session.fail(.unavailable, .repository, ".git", "cannot open cached Git directory: {s}", .{@errorName(err)}),
+    };
+    defer dot_git.close(session.io);
+    const dot_git_stat = dot_git.stat(session.io) catch |err| switch (err) {
+        else => return session.fail(.unavailable, .repository, ".git", "cannot stat cached Git directory: {s}", .{@errorName(err)}),
+    };
+    if (dot_git_stat.kind == .sym_link) {
+        return session.fail(.unavailable, .repository, ".git", "cached Git directory is a symlink", .{});
+    }
+    // Do not try to selectively parse untrusted config (including include.*). Replace
+    // it with a minimal config that retains only the declared origin and repo basics.
+    dot_git.deleteFile(session.io, "config") catch |err| switch (err) {
+        error.FileNotFound => {},
+        else => return session.fail(.unavailable, .repository, ".git", "cannot reset cached Git config: {s}", .{@errorName(err)}),
+    };
+    const settings = [_]struct { key: []const u8, value: []const u8 }{
+        .{ .key = "core.repositoryformatversion", .value = "0" },
+        .{ .key = "core.filemode", .value = "true" },
+        .{ .key = "core.bare", .value = "false" },
+        .{ .key = "core.logallrefupdates", .value = "true" },
+        .{ .key = "remote.origin.url", .value = origin_url },
+        .{ .key = "remote.origin.fetch", .value = "+refs/heads/*:refs/remotes/origin/*" },
+    };
+    for (settings) |setting| {
+        const configured = std.process.run(gpa, session.io, .{
+            .argv = &.{ "git", "config", "--file", "config", setting.key, setting.value },
+            .cwd = .{ .dir = dot_git },
+            .stdout_limit = .limited(1024),
+            .stderr_limit = .limited(1024 * 1024),
+            .timeout = if (session.policy.timeout_ns == 0) .none else .{ .duration = .{ .raw = .fromNanoseconds(@intCast(session.policy.timeout_ns)), .clock = .awake } },
+        }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return session.fail(.unavailable, .repository, ".git", "cannot reset cached Git config: {s}", .{@errorName(err)}),
+        };
+        defer gpa.free(configured.stdout);
+        defer gpa.free(configured.stderr);
+        if (configured.term != .exited or configured.term.exited != 0) {
+            return session.fail(.unavailable, .repository, ".git", "cannot reset cached Git config", .{});
+        }
+    }
+    if (dot_git.openDir(session.io, "info", .{ .follow_symlinks = false })) |info_dir| {
+        var info = info_dir;
+        defer info.close(session.io);
+        info.deleteFile(session.io, "attributes") catch |err| switch (err) {
+            error.FileNotFound => {},
+            else => return session.fail(.unavailable, .repository, ".git", "cannot discard cached Git info attributes: {s}", .{@errorName(err)}),
+        };
+    } else |open_err| switch (open_err) {
+        // `.git/info` が無ければ attributes も存在し得ない。
+        error.FileNotFound => {},
+        else => {
+            // symlink・file 化・開けない dir 等の場合、follow せず `info`
+            // leaf 自体を除去する。`checkout`/`clean` は `$GIT_DIR/info/
+            // attributes` を無条件で読むため、開けない状態で残すと
+            // filter・encoding attribute が作業木の byte を書き換え得る。
+            environment.deleteTreeChecked(dot_git, session.io, "info") catch |err| {
+                return session.fail(.unavailable, .repository, ".git", "cannot discard cached Git info directory: {s} (open: {s})", .{ @errorName(err), @errorName(open_err) });
+            };
+        },
+    }
+}
+
+/// `gitRunAllowFailure` の実行場所と保護指定。`cwd` は subprocess の
+/// 作業 dir を pinned handle で指定し、起動後の path 解決に path
+/// 文字列を使わない（POSIX では `fchdir` で固定。Windows では handle
+/// が開かれている間は対象 dir の rename/置換が拒否される）。
+const GitRunOptions = struct {
+    /// subprocess の cwd。null なら親プロセスの cwd を継承する。
+    cwd: ?std.Io.Dir = null,
+    /// checkout 配下のコマンドで hooks・fsmonitor を無効化する。
+    /// `core.hooksPath` をプラットフォームの null デバイスへ固定する
+    /// （clone 自体は新規 repo を作るだけで共有 checkout を信頼する
+    /// 必要がないため対象外）。
+    hooks_guard: bool = false,
+};
+
+fn gitRunAllowFailure(session: *Session, gpa: Allocator, argv: []const []const u8, options: GitRunOptions) Error!GitResult {
     var env_map = try fetch.sanitizedGitEnvMap(gpa);
     defer if (env_map) |*m| m.deinit();
+    if (env_map) |*m| {
+        try m.put("GIT_CONFIG_NOSYSTEM", "1");
+        try m.put("GIT_CONFIG_GLOBAL", if (builtin.os.tag == .windows) "NUL" else "/dev/null");
+    }
+
+    // Cached checkout の .git/config は信頼しない。各コマンドに command
+    // config で hooks と fsmonitor を無効化する。hooksPath に workspace 内
+    // dir の相対名を使うと、dir 作成後・checkout 前に同名 dir を hook 入り
+    // へ置換される余地があるため、プラットフォームの null デバイスへ固定
+    // する（hooksPath が dir でなければ hook は一切解決されず、置換不能
+    // な namespace になる）。
+    var protected_argv: ?[][]const u8 = null;
+    if (options.hooks_guard) {
+        const safe_argv = try gpa.alloc([]const u8, argv.len + 4);
+        safe_argv[0] = argv[0];
+        safe_argv[1] = "-c";
+        safe_argv[2] = if (builtin.os.tag == .windows) "core.hooksPath=NUL" else "core.hooksPath=/dev/null";
+        safe_argv[3] = "-c";
+        safe_argv[4] = "core.fsmonitor=false";
+        @memcpy(safe_argv[5..], argv[1..]);
+        protected_argv = safe_argv;
+    }
     const result = std.process.run(gpa, session.io, .{
-        .argv = argv,
+        .argv = if (protected_argv) |safe| safe else argv,
+        .cwd = if (options.cwd) |dir| .{ .dir = dir } else .inherit,
         .environ_map = if (env_map) |*m| m else null,
         .stdout_limit = .limited(64 * 1024 * 1024),
         .stderr_limit = .limited(4 * 1024 * 1024),
@@ -389,9 +577,9 @@ fn gitRunAllowFailure(session: *Session, gpa: Allocator, argv: []const []const u
 }
 
 /// git を実行し、非ゼロ終了・spawn 失敗を分類済み失敗へ写像する。
-fn gitRun(session: *Session, argv: []const []const u8, target: ?[]const u8) Error!void {
+fn gitRun(session: *Session, argv: []const []const u8, target: ?[]const u8, options: GitRunOptions) Error!void {
     const gpa = session.allocator();
-    const result = try gitRunAllowFailure(session, gpa, argv);
+    const result = try gitRunAllowFailure(session, gpa, argv, options);
     if (!result.succeeded) {
         const detail = std.mem.trim(u8, result.stderr, " \t\r\n");
         return session.fail(.network, .repository, target orelse argv[argv.len - 1], "git command failed: {s}", .{detail});
@@ -401,6 +589,10 @@ fn gitRun(session: *Session, argv: []const []const u8, target: ?[]const u8) Erro
 // ---------------------------------------------------------------------------
 // HTTP provider
 // ---------------------------------------------------------------------------
+
+pub fn httpArtifactType(bytes: []const u8) []const u8 {
+    return if (bytes.len >= 4 and std.mem.eql(u8, bytes[0..4], "PK\x03\x04")) ".npkg" else "raw";
+}
 
 /// HTTP URL 依存の取得。`dep.hash` で内容を照合し、`.npkg`（ZIP）であれば
 /// `npkg_verify` で検証して manifest を取り出す。別 source への暗黙切替や
@@ -425,8 +617,7 @@ pub fn acquireHttp(session: *Session, dep: manifest_mod.HttpDependency) Error!Ac
         .artifact_type = "raw",
     };
 
-    // `.npkg`（ZIP 格納形式）は先頭が local file header 署名 `PK\x03\x04`。
-    if (bytes.len >= 4 and std.mem.eql(u8, bytes[0..4], "PK\x03\x04")) {
+    if (std.mem.eql(u8, httpArtifactType(bytes), ".npkg")) {
         var scratch = diag.List.init(session.gpa);
         defer scratch.deinit();
         // `Verified` の arena は session arena を backing にするため、deinit
@@ -478,7 +669,7 @@ pub fn checkLockedSource(session: *Session, declared: lock_model.Source, locked:
             }
         },
         .http => {
-            if (!optEql(declared.hash, locked.hash)) {
+            if (!sourceHashEql(declared.hash, locked.hash)) {
                 return session.fail(.source_collision, .artifact, name, "http hash of \"{s}\" does not match the lock", .{name});
             }
         },
@@ -541,11 +732,34 @@ pub const SourceIndex = struct {
     }
 };
 
+pub fn sourceHashEql(a: ?[]const u8, b: ?[]const u8) bool {
+    if (a == null or b == null) return a == null and b == null;
+    const left = a.?;
+    const right = b.?;
+    if (fetch.normalizeSha256(left)) |left_digest| {
+        if (fetch.normalizeSha256(right)) |right_digest| return std.mem.eql(u8, &left_digest, &right_digest);
+    }
+    if (fetch.normalizeSha512(left)) |left_digest| {
+        if (fetch.normalizeSha512(right)) |right_digest| return std.mem.eql(u8, &left_digest, &right_digest);
+    }
+    return std.mem.eql(u8, left, right);
+}
+
+fn canonicalHashPin(gpa: Allocator, hash: []const u8) ![]const u8 {
+    if (fetch.normalizeSha256(hash)) |digest| return std.fmt.allocPrint(gpa, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
+    if (fetch.normalizeSha512(hash)) |digest| return std.fmt.allocPrint(gpa, "sha512:{s}", .{std.fmt.bytesToHex(digest, .lower)});
+    return gpa.dupe(u8, hash);
+}
+
 /// source identity の正準表現（衝突判定用キー）。
 pub fn identityText(gpa: Allocator, source: lock_model.Source) ![]u8 {
     return switch (source.kind) {
         .git => std.fmt.allocPrint(gpa, "git:{s}@{s}:{s}", .{ source.url orelse "", source.commit orelse "", source.path orelse "" }),
-        .http => std.fmt.allocPrint(gpa, "http:{s}#{s}", .{ source.url orelse "", source.hash orelse "" }),
+        .http => blk: {
+            const hash = try canonicalHashPin(gpa, source.hash orelse "");
+            defer gpa.free(hash);
+            break :blk try std.fmt.allocPrint(gpa, "http:{s}#{s}", .{ source.url orelse "", hash });
+        },
         .path => std.fmt.allocPrint(gpa, "path:{s}", .{source.path orelse ""}),
         .registry, .static => std.fmt.allocPrint(gpa, "{s}:{s}", .{ @tagName(source.kind), source.url orelse "" }),
     };
@@ -601,6 +815,32 @@ test "classifyGitUrl は Windows の file:// drive 形式と UNC をローカル
         .local => return error.TestUnexpectedResult,
         .remote => {},
     }
+}
+
+test "HTTP source identity は同一 digest のhexとSRI表記を正規化する" {
+    const gpa = std.testing.allocator;
+    const zeros = [_]u8{0} ** 32;
+    var encoded: [44]u8 = undefined;
+    _ = std.base64.standard.Encoder.encode(&encoded, &zeros);
+    const sri = try std.fmt.allocPrint(gpa, "sha256-{s}", .{encoded[0..]});
+    defer gpa.free(sri);
+
+    const hex_source = lock_model.Source{
+        .kind = .http,
+        .url = "https://example.test/archive",
+        .hash = "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    };
+    const sri_source = lock_model.Source{
+        .kind = .http,
+        .url = "https://example.test/archive",
+        .hash = sri,
+    };
+    const hex_id = try identityText(gpa, hex_source);
+    defer gpa.free(hex_id);
+    const sri_id = try identityText(gpa, sri_source);
+    defer gpa.free(sri_id);
+    try std.testing.expectEqualStrings(hex_id, sri_id);
+    try std.testing.expect(sourceHashEql(hex_source.hash, sri_source.hash));
 }
 
 test {

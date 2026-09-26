@@ -482,7 +482,7 @@ pub fn normalizeSha256(text: []const u8) ?[32]u8 {
 
 /// SHA-512 表記（`sha512-<base64>=`・`sha512:<hex>`）を 64 バイトへ
 /// 正規化する。解釈できない場合は null。
-fn normalizeSha512(text: []const u8) ?[64]u8 {
+pub fn normalizeSha512(text: []const u8) ?[64]u8 {
     var out: [64]u8 = undefined;
     if (text.len == "sha512:".len + 128 and std.mem.startsWith(u8, text, "sha512:")) {
         _ = std.fmt.hexToBytes(&out, text["sha512:".len..]) catch return null;

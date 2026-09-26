@@ -7,6 +7,7 @@ const arguments = @import("arguments.zig");
 const test_command = @import("commands/test.zig");
 const package_command = @import("commands/package.zig");
 const sync_command = @import("commands/sync.zig");
+const project_command = @import("commands/project.zig");
 
 pub fn run(
     allocator: std.mem.Allocator,
@@ -85,7 +86,10 @@ pub fn run(
         .help => try lnako.usage(stdout),
         .version => try stdout.print("lnako {s}\n", .{lnako.version}),
         .build => {
-            const options = arguments.parseBuildOptions(args[1..]) catch |err| {
+            var prep = project_command.PrepFlags{};
+            defer prep.deinit(allocator);
+            const build_args = project_command.extractPrepFlags(allocator, args[1..], &prep, "build", stderr) catch args[1..];
+            const options = arguments.parseBuildOptions(build_args) catch |err| {
                 if (err == error.ConflictingDnclModes)
                     try stderr.writeAll("build: --dnclと--dncl2は同時に指定できません\n")
                 else
@@ -109,6 +113,17 @@ pub fn run(
                 try stderr.flush();
                 std.process.exit(2);
             }
+            // プロジェクト内の入力なら依存環境を自動準備する。
+            // --compat-js は ESM 実装の許容へ、-O は optimize-gated
+            // artifact の選択へ効くため解決へ伝える。
+            prep.compat_js = options.compat_js;
+            prep.optimize = switch (options.optimization) {
+                .o0 => "O0",
+                .o1 => "O1",
+                .o2 => "O2",
+                .o3 => "O3",
+            };
+            try project_command.prepareForExecution(allocator, io, options.input, &prep, init.environ_map, "build", stderr);
             var ir_program = (try compiler_pipeline.compileInputTraced(allocator, io, options.input, .{ .compat_js = options.compat_js, .forced_mode = options.forced_mode }, stderr, init.environ_map.get("LNAKO_LLVM_TRACE") != null)) orelse {
                 try stderr.flush();
                 std.process.exit(1);
@@ -144,22 +159,57 @@ pub fn run(
             try stdout.print("{s} を生成しました\n", .{options.output});
         },
         .check => {
-            if (args.len < 2) {
-                try stderr.writeAll("check: 入力ファイルを指定してください\n");
+            // 位置引数（入力ファイル）が無ければプロジェクト環境の静的検査。
+            // prep 系フラグ（--locked/--profile 等）を除いた残りを検査する。
+            var check_prep = project_command.PrepFlags{};
+            defer check_prep.deinit(allocator);
+            const check_args = project_command.extractPrepFlags(allocator, args[1..], &check_prep, "check", stderr) catch args[1..];
+            var check_file: ?[]const u8 = null;
+            var file_index: usize = 0;
+            for (check_args, 0..) |argument, i| {
+                if (!std.mem.startsWith(u8, argument, "-")) {
+                    check_file = argument;
+                    file_index = i;
+                    break;
+                }
+            }
+            if (check_file == null) {
+                project_command.checkProject(allocator, io, args[1..], ".", init.environ_map, stdout, stderr) catch |err| {
+                    try stderr.print("check: {s}\n", .{@errorName(err)});
+                    try stderr.flush();
+                    std.process.exit(1);
+                };
+                return;
+            }
+            // ファイル検査ではプロジェクト準備フラグ（--locked/--profile 等）
+            // は適用先が無いため用法エラーとする（黙って捨てない）。
+            if (check_prep.locked or check_prep.offline or check_prep.no_sync or
+                check_prep.profile != null or check_prep.features.items.len > 0 or
+                check_prep.no_default_features or check_prep.registry != null or
+                check_prep.cache_dir != null or check_prep.allow_plaintext_http or
+                check_prep.json)
+            {
+                try stderr.writeAll("check: ファイル指定時はプロジェクト準備フラグ（--locked/--profile 等）は使えません\n");
                 try stderr.flush();
                 std.process.exit(2);
             }
-            if (arguments.findUnknownOption(args[2..], &.{ "--dncl", "--dncl2" })) |unknown| {
+            // ファイル以外の引数を従来どおり dncl 系オプションだけに限定する。
+            var option_args: std.ArrayList([]const u8) = .empty;
+            defer option_args.deinit(allocator);
+            for (check_args, 0..) |argument, i| {
+                if (i != file_index) try option_args.append(allocator, argument);
+            }
+            if (arguments.findUnknownOption(option_args.items, &.{ "--dncl", "--dncl2" })) |unknown| {
                 try stderr.print("check: 不明なオプションです: {s}\n", .{unknown});
                 try stderr.flush();
                 std.process.exit(2);
             }
-            const check_mode = arguments.dnclModeFromArguments(args[2..]) catch {
+            const check_mode = arguments.dnclModeFromArguments(option_args.items) catch {
                 try stderr.writeAll("check: --dnclと--dncl2は同時に指定できません\n");
                 try stderr.flush();
                 std.process.exit(2);
             };
-            var ir_program = (compiler_pipeline.compileInput(allocator, io, args[1], .{ .forced_mode = check_mode }, stderr) catch |err| {
+            var ir_program = (compiler_pipeline.compileInput(allocator, io, check_file.?, .{ .forced_mode = check_mode }, stderr) catch |err| {
                 if (err == error.ConflictingDnclModes) {
                     try stderr.writeAll("check: 拡張子と--dncl/--dncl2が異なるDNCL方言を要求しています\n");
                     try stderr.flush();
@@ -171,7 +221,7 @@ pub fn run(
                 std.process.exit(1);
             };
             defer ir_program.deinit();
-            try stdout.print("{s}: 構文・意味・中間表現に問題はありません\n", .{args[1]});
+            try stdout.print("{s}: 構文・意味・中間表現に問題はありません\n", .{check_file.?});
         },
         .run => {
             if (args.len < 2) {
@@ -179,24 +229,51 @@ pub fn run(
                 try stderr.flush();
                 std.process.exit(2);
             }
-            const run_options = arguments.splitRunArguments(args[2..]);
-            if (arguments.findUnknownFlag(run_options.lnako, &.{ "--compat-js", "--dncl", "--dncl2" })) |unknown| {
+            const run_options = arguments.splitRunArguments(args[1..]);
+            var run_prep = project_command.PrepFlags{};
+            defer run_prep.deinit(allocator);
+            const run_lnako_args = project_command.extractPrepFlags(allocator, run_options.lnako, &run_prep, "run", stderr) catch run_options.lnako;
+            // 位置引数（入力ファイル）は prep 系フラグと前後してもよい。
+            var run_file: ?[]const u8 = null;
+            var run_file_index: usize = 0;
+            for (run_lnako_args, 0..) |argument, i| {
+                if (!std.mem.startsWith(u8, argument, "-")) {
+                    run_file = argument;
+                    run_file_index = i;
+                    break;
+                }
+            }
+            var lnako_flags: std.ArrayList([]const u8) = .empty;
+            defer lnako_flags.deinit(allocator);
+            for (run_lnako_args, 0..) |argument, i| {
+                if (i != run_file_index or run_file == null) try lnako_flags.append(allocator, argument);
+            }
+            if (arguments.findUnknownFlag(lnako_flags.items, &.{ "--compat-js", "--dncl", "--dncl2" })) |unknown| {
                 try stderr.print("run: 不明なオプションです: {s}\n", .{unknown});
                 try stderr.flush();
                 std.process.exit(2);
             }
-            const compat_js = arguments.hasArgument(run_options.lnako, "--compat-js");
+            const input = run_file orelse {
+                try stderr.writeAll("run: 入力ファイルを指定してください\n");
+                try stderr.flush();
+                std.process.exit(2);
+            };
+            const compat_js = arguments.hasArgument(lnako_flags.items, "--compat-js");
             if (compat_js and !lnako.compat.quickjs.available()) {
                 try stderr.writeAll("run: このlnakoはQuickJSなしでビルドされています。zig build -Dcompat-js=trueを使用してください\n");
                 try stderr.flush();
                 std.process.exit(2);
             }
-            const run_mode = arguments.dnclModeFromArguments(run_options.lnako) catch {
+            const run_mode = arguments.dnclModeFromArguments(lnako_flags.items) catch {
                 try stderr.writeAll("run: --dnclと--dncl2は同時に指定できません\n");
                 try stderr.flush();
                 std.process.exit(2);
             };
-            var ir_program = (compiler_pipeline.compileInput(allocator, io, args[1], .{ .compat_js = compat_js, .forced_mode = run_mode }, stderr) catch |err| {
+            // プロジェクト内の入力なら依存環境を自動準備する。
+            // --compat-js は ESM 実装の許容へ効くため解決へ伝える。
+            run_prep.compat_js = compat_js;
+            try project_command.prepareForExecution(allocator, io, input, &run_prep, init.environ_map, "run", stderr);
+            var ir_program = (compiler_pipeline.compileInput(allocator, io, input, .{ .compat_js = compat_js, .forced_mode = run_mode }, stderr) catch |err| {
                 if (err == error.ConflictingDnclModes) {
                     try stderr.writeAll("run: 拡張子と--dncl/--dncl2が異なるDNCL方言を要求しています\n");
                     try stderr.flush();
@@ -216,7 +293,7 @@ pub fn run(
                 .io = io,
                 .program_arguments = process_args,
                 .runtime_path = process_args[0],
-                .source_path = args[1],
+                .source_path = input,
                 .environment_names = init.environ_map.keys(),
                 .environment_values = init.environ_map.values(),
                 .home_directory = host.homeDirectory(init.environ_map),
@@ -248,17 +325,42 @@ pub fn run(
                 try stderr.flush();
                 std.process.exit(2);
             }
-            if (arguments.findUnknownOption(args[2..], &.{ "--dncl", "--dncl2" })) |unknown| {
+            var test_prep = project_command.PrepFlags{};
+            defer test_prep.deinit(allocator);
+            const test_args = project_command.extractPrepFlags(allocator, args[1..], &test_prep, "test", stderr) catch args[1..];
+            // 位置引数（入力ファイル/ディレクトリ）は prep 系フラグと前後してもよい。
+            var test_input: ?[]const u8 = null;
+            var test_input_index: usize = 0;
+            for (test_args, 0..) |argument, i| {
+                if (!std.mem.startsWith(u8, argument, "-")) {
+                    test_input = argument;
+                    test_input_index = i;
+                    break;
+                }
+            }
+            var test_option_args: std.ArrayList([]const u8) = .empty;
+            defer test_option_args.deinit(allocator);
+            for (test_args, 0..) |argument, i| {
+                if (i != test_input_index or test_input == null) try test_option_args.append(allocator, argument);
+            }
+            if (arguments.findUnknownOption(test_option_args.items, &.{ "--dncl", "--dncl2" })) |unknown| {
                 try stderr.print("test: 不明なオプションです: {s}\n", .{unknown});
                 try stderr.flush();
                 std.process.exit(2);
             }
-            const test_mode = arguments.dnclModeFromArguments(args[2..]) catch {
+            const input = test_input orelse {
+                try stderr.writeAll("test: 入力ファイルまたはディレクトリを指定してください\n");
+                try stderr.flush();
+                std.process.exit(2);
+            };
+            const test_mode = arguments.dnclModeFromArguments(test_option_args.items) catch {
                 try stderr.writeAll("test: --dnclと--dncl2は同時に指定できません\n");
                 try stderr.flush();
                 std.process.exit(2);
             };
-            const succeeded = test_command.runTestTarget(allocator, io, args[1], test_mode, stdout, stderr) catch |err| {
+            // プロジェクト内の入力なら依存環境を自動準備する。
+            try project_command.prepareForExecution(allocator, io, input, &test_prep, init.environ_map, "test", stderr);
+            const succeeded = test_command.runTestTarget(allocator, io, input, test_mode, stdout, stderr) catch |err| {
                 if (err == error.ConflictingDnclModes) {
                     try stderr.writeAll("test: 拡張子と--dncl/--dncl2が異なるDNCL方言を要求しています\n");
                     try stderr.flush();
@@ -305,8 +407,25 @@ pub fn run(
             };
         },
         .sync => {
-            sync_command.run(allocator, io, args[1..], stdout, stderr) catch |err| {
+            sync_command.run(allocator, io, args[1..], init.environ_map, stdout, stderr) catch |err| {
                 try stderr.print("sync: {s}\n", .{@errorName(err)});
+                try stderr.flush();
+                std.process.exit(1);
+            };
+        },
+        .init, .add, .remove, .lock, .update, .tree, .why, .cache => {
+            const verb = switch (command) {
+                .init => "init",
+                .add => "add",
+                .remove => "remove",
+                .lock => "lock",
+                .update => "update",
+                .tree => "tree",
+                .why => "why",
+                else => "cache",
+            };
+            project_command.run(allocator, io, verb, args[1..], init.environ_map, stdout, stderr) catch |err| {
+                try stderr.print("{s}: {s}\n", .{ verb, @errorName(err) });
                 try stderr.flush();
                 std.process.exit(1);
             };

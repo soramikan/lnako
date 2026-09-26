@@ -18,6 +18,19 @@
     "runtime": {
       "$ref": "common.schema.json#/$defs/packageRuntimeName"
     },
+    "mutablePaths": {
+      "description": "sync 時点の mutable path 依存の内容 digest（lock input.mutablePaths の写し）。metadata-only 変更による環境陳腐化の検出に使う。",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "sha256"],
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string" },
+          "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+        }
+      }
+    },
     "packages": {
       "type": "object",
       "additionalProperties": {

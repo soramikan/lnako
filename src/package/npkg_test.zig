@@ -619,6 +619,43 @@ test "commands.json 生成はルート外 import を拒否する" {
     try testing.expect(list.find(diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY) != null);
 }
 
+test "commands.json 生成は除外管理 dir 配下への取り込みを拒否する" {
+    const allocator = testing.allocator;
+    // `.nako`/`.git` は tree pin・配布対象の digest から除外される管理 dir。
+    // index 閉包がそこへ依存すると未検証 file 由来の命令を索引化してしまう
+    // ため、直接・推移的の双方の取り込みを拒否する。
+    for ([_][]const u8{ ".nako/helper.nako3", ".git/helper.nako3", "lib/.nako/helper.nako3" }) |hidden| {
+        var provider = try MapProvider.init(allocator);
+        defer provider.deinit();
+        const source = try std.fmt.allocPrint(allocator, "「{s}」を取り込む\n", .{hidden});
+        defer allocator.free(source);
+        try provider.put("index.nako3", source);
+        try provider.put(hidden, "●隠蔽とは\nここまで\n");
+
+        var list = diag.List.init(allocator);
+        defer list.deinit();
+        try testing.expectError(
+            error.InvalidCommands,
+            npkg_commands_gen.generate(allocator, provider.provider(), &.{"index.nako3"}, &list),
+        );
+        try testing.expect(list.find(diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY) != null);
+    }
+
+    // 推移的取り込みでも拒否される（public entry → 中間 file → `.nako`）。
+    var provider = try MapProvider.init(allocator);
+    defer provider.deinit();
+    try provider.put("index.nako3", "「lib/mid.nako3」を取り込む\n");
+    try provider.put("lib/mid.nako3", "「.nako/helper.nako3」を取り込む\n");
+    try provider.put("lib/.nako/helper.nako3", "●隠蔽とは\nここまで\n");
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    try testing.expectError(
+        error.InvalidCommands,
+        npkg_commands_gen.generate(allocator, provider.provider(), &.{"index.nako3"}, &list),
+    );
+    try testing.expect(list.find(diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY) != null);
+}
+
 test "commands.json 生成は欠落ソースとパース失敗を診断する" {
     const allocator = testing.allocator;
     var provider = try MapProvider.init(allocator);

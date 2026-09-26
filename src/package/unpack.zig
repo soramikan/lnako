@@ -57,7 +57,11 @@ fn normalizeEntryName(raw: []const u8, strip_components: u32, gpa: Allocator) (E
         if (component.len == 0 or std.mem.eql(u8, component, ".") or
             std.mem.eql(u8, component, "..")) return error.NonCanonicalPath;
         for (component) |byte| {
-            if (byte < 0x20 or byte == 0x7f or byte == '\\') return error.NonCanonicalPath;
+            // `:` は Windows で drive 前置（`C:/x`）や ADS 区切り
+            // （`a:b`）と解釈される。POSIX の正当なファイル名文字だが、
+            // archive entry 名は全プラットフォームで展開先 dir の内側に
+            // 限定される規範形へ揃えるため拒否する（`\` と同じ扱い）。
+            if (byte < 0x20 or byte == 0x7f or byte == '\\' or byte == ':') return error.NonCanonicalPath;
         }
         depth += 1;
         if (depth <= strip_components) continue;
@@ -72,6 +76,16 @@ fn normalizeEntryName(raw: []const u8, strip_components: u32, gpa: Allocator) (E
 /// `dest_abs` は存在しないか空 dir であること（無ければ作る）。
 pub fn extractTarGz(gpa: Allocator, io: std.Io, archive: []const u8, dest_abs: []const u8, options: Options) !void {
     try std.Io.Dir.cwd().createDirPath(io, dest_abs);
+    var dest = try std.Io.Dir.cwd().openDir(io, dest_abs, .{});
+    defer dest.close(io);
+    try extractTarGzInto(gpa, io, archive, dest, options);
+}
+
+/// `archive`（gzip 圧縮された tar）を open 済み `dest` dir へ handle 相対に
+/// 展開する。`dest` は空 dir を想定する（呼出し側が管理 dir の下へ作成した
+/// pinned handle を渡す）。path 解決を行わないため、展開先 dir を指す path
+/// が rename→symlink 置換されても境界外へ書き込まない。
+pub fn extractTarGzInto(gpa: Allocator, io: std.Io, archive: []const u8, dest: std.Io.Dir, options: Options) !void {
     var input = std.Io.Reader.fixed(archive);
     var window_buf: [std.compress.flate.max_window_len]u8 = undefined;
     var decompress = std.compress.flate.Decompress.init(&input, .gzip, &window_buf);
@@ -112,9 +126,7 @@ pub fn extractTarGz(gpa: Allocator, io: std.Io, archive: []const u8, dest_abs: [
 
         switch (file.kind) {
             .directory => {
-                const abs = try std.fs.path.join(gpa, &.{ dest_abs, rel });
-                defer gpa.free(abs);
-                std.Io.Dir.cwd().createDirPath(io, abs) catch |err| switch (err) {
+                dest.createDirPath(io, rel) catch |err| switch (err) {
                     error.PathAlreadyExists => {},
                     else => return err,
                 };
@@ -123,17 +135,13 @@ pub fn extractTarGz(gpa: Allocator, io: std.Io, archive: []const u8, dest_abs: [
                 if (file.size > options.limits.max_file_bytes) return error.FileTooLarge;
                 total_bytes += file.size;
                 if (total_bytes > options.limits.max_total_bytes) return error.TreeTooLarge;
-                const abs = try std.fs.path.join(gpa, &.{ dest_abs, rel });
-                defer gpa.free(abs);
                 if (std.fs.path.dirname(rel)) |parent| {
-                    const parent_abs = try std.fs.path.join(gpa, &.{ dest_abs, parent });
-                    defer gpa.free(parent_abs);
-                    std.Io.Dir.cwd().createDirPath(io, parent_abs) catch |err| switch (err) {
+                    dest.createDirPath(io, parent) catch |err| switch (err) {
                         error.PathAlreadyExists => {},
                         else => return err,
                     };
                 }
-                var out = std.Io.Dir.cwd().createFile(io, abs, .{ .exclusive = true }) catch |err| switch (err) {
+                var out = dest.createFile(io, rel, .{ .exclusive = true }) catch |err| switch (err) {
                     error.PathAlreadyExists => return error.DuplicatePath,
                     else => return err,
                 };
@@ -252,6 +260,13 @@ test "unpack extractTarGz は symlink・traversal・重複 entry を拒否する
     try testing.expectError(error.NonCanonicalPath, normalizeEntryName("./a", 0, testing.allocator));
     try testing.expectError(error.NonCanonicalPath, normalizeEntryName("a/./b", 0, testing.allocator));
     try testing.expectError(error.NonCanonicalPath, normalizeEntryName("a/b//", 0, testing.allocator));
+
+    // drive 前置・ADS 形式も拒否する（Windows で展開先 dir の外へ
+    // 書き出されないよう `:` を含む成分は全て非規範とする）。
+    try testing.expectError(error.NonCanonicalPath, normalizeEntryName("C:/escape/x.txt", 0, testing.allocator));
+    try testing.expectError(error.NonCanonicalPath, normalizeEntryName("C:\\escape", 0, testing.allocator));
+    try testing.expectError(error.NonCanonicalPath, normalizeEntryName("a:b", 0, testing.allocator));
+    try testing.expectError(error.NonCanonicalPath, normalizeEntryName("C:relative", 0, testing.allocator));
 
     // directory entry の末尾 `/` は dir marker として除去される。
     const dir_name = (try normalizeEntryName("src/dir/", 0, testing.allocator)).?;

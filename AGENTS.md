@@ -15,6 +15,7 @@
 - 機能とテストが完結した単位で、`type(scope): 日本語自然文` 形式（.gitmessage 準拠）の署名付きコミットを作成する。
 - force push、履歴改変、未検証状態のコミットを行わない。
 - 通常モードへJavaScriptランタイムを混入させない。JS実行は明示的な `--compat-js` に限定する。
+- GitHubプルリクエストのレビューは、ツールや作成者を問わず、すべて日本語で記述する。
 - Issue作成時は `.github/ISSUE_TEMPLATE/`、PR作成時は `.github/PULL_REQUEST_TEMPLATE/` 配下の該当テンプレート（または `pull_request_template.md`）を参照して本文を作成する。
 
 ## 互換基準

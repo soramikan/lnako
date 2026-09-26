@@ -12,6 +12,7 @@
       "id": "pkg:00000000000000000000000000000000",
       "name": "source-with-esm",
       "version": "1.0.0",
+      "implementation": "ESM",
       "source": { "type": "registry", "url": "https://registry.example.com/pkg/source-with-esm" },
       "resolvedFrom": { "type": "registry", "url": "https://registry.example.com/pkg/source-with-esm" },
       "dependencies": [],

@@ -1152,7 +1152,7 @@ fn parsePlainVersion(text: []const u8) ?semver.Version {
     return .{ .major = numbers[0], .minor = numbers[1], .patch = numbers[2] };
 }
 
-fn isPackageName(text: []const u8) bool {
+pub fn isPackageName(text: []const u8) bool {
     if (text.len == 0 or text.len > 64) return false;
     if (!std.ascii.isLower(text[0])) return false;
     for (text[1..]) |byte| {

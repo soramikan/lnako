@@ -5,14 +5,15 @@
 //!   する。どちらも process 終了で自動解放される。
 //! - package 内容は staging で検証・展開を完了してから cache `objects/` へ
 //!   原子的に公開する。環境は `.nako/staging/<gen>` に構築し、世代 dir への
-//!   rename と `environment.json` の原子書換で一度に切り替える。
-//! - 失敗時は `environment.json`・`current`・前世代が一切変わらず、直前の
-//!   有効環境がそのまま使える。
+//!   rename と `environment.json` の原子書換で公開後、`current` を別途更新する。
+//! - commit 前の失敗は既存環境を変更しない。commit 後の `current` 公開失敗は
+//!   error を返し、state 検査で stale として再試行させる。
 //! - `path` 依存は mutable source として宣言 dir をそのまま参照する
 //!   （環境側へ複製しない）。cache・他プロジェクトへの波及は copy 経由の
 //!   immutable entry 側で防ぐ。
 
 const std = @import("std");
+const builtin = @import("builtin");
 const zip = @import("../archive/zip.zig");
 const cache = @import("cache.zig");
 const diag = @import("diagnostics.zig");
@@ -25,8 +26,10 @@ const materialize = @import("materialize.zig");
 const npkg_commands = @import("npkg_commands.zig");
 const npkg_commands_gen = @import("npkg_commands_gen.zig");
 const npkg_verify = @import("npkg_verify.zig");
+const path_digest = @import("path_digest.zig");
 const provider = @import("provider.zig");
 const resolver = @import("resolver.zig");
+const semver = @import("semver.zig");
 const unpack = @import("unpack.zig");
 
 const Allocator = std.mem.Allocator;
@@ -114,6 +117,45 @@ fn mapTreeError(ctx: *Context, err: anyerror, subject: []const u8) Error {
     };
 }
 
+/// lock entry の `mutable = false` path source に記録された pin hash。
+fn pinnedSourceHash(entry: *const lock_model.PackageEntry) ?[]const u8 {
+    for (entry.artifacts) |artifact| {
+        if (std.mem.eql(u8, artifact.key, "source") and artifact.sha256 != null) return artifact.sha256.?;
+    }
+    return null;
+}
+
+/// Path source pin validation delegates to the portable digest implementation.
+pub fn mutablePathMismatch(gpa: Allocator, io: std.Io, project_root: []const u8, lock: *const lock_model.Lock) Error!?[]const u8 {
+    return path_digest.mutablePathMismatch(gpa, io, project_root, lock) catch |err| return mapFs(err);
+}
+
+pub fn mutablePathsMismatch(gpa: Allocator, io: std.Io, project_root: []const u8, recorded: []const lock_model.MutablePath) Error!?[]const u8 {
+    return path_digest.mutablePathsMismatch(gpa, io, project_root, recorded) catch |err| return mapFs(err);
+}
+
+pub fn pathPinMismatch(gpa: Allocator, io: std.Io, project_root: []const u8, lock: *const lock_model.Lock) Error!?[]const u8 {
+    return path_digest.pathPinMismatch(gpa, io, project_root, lock) catch |err| return mapFs(err);
+}
+
+/// `manifest_path` の SHA-256 が `lock.input.manifest_sha256` と一致するか。
+/// `FileNotFound` は `.absent`（manifest 無しの lock 駆動用途を区別する
+/// ため呼出し側に返す）。その他の読取失敗は生の error で伝播する。
+const ManifestFreshness = enum { absent, fresh, stale };
+
+fn manifestFreshness(io: std.Io, arena: Allocator, manifest_path: []const u8, lock: *const lock_model.Lock) !ManifestFreshness {
+    const bytes = std.Io.Dir.cwd().readFileAlloc(io, manifest_path, arena, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
+        error.FileNotFound => return .absent,
+        else => return err,
+    };
+    var actual: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(bytes, &actual, .{});
+    var expected: [32]u8 = undefined;
+    if (!lock_model.normalizeSha256(lock.input.manifest_sha256, &expected) or
+        !std.mem.eql(u8, &actual, &expected)) return .stale;
+    return .fresh;
+}
+
 const Context = struct {
     gpa: Allocator,
     arena: Allocator,
@@ -121,10 +163,11 @@ const Context = struct {
     session: *fetch.Session,
     cache_store: *const cache.Store,
     project_abs: []const u8,
-    /// `<.nako>/staging/<gen>`。
-    generation_abs: []const u8,
-    /// `<gen>/deps`（materialize 先）。
-    deps_abs: []const u8,
+    /// `<gen>/deps`（materialize 先）、generation dir handle 相対で開いたもの。
+    deps_dir: std.Io.Dir,
+    /// `.lnako-work-<gen>` の pinned handle。artifact の一時 archive・
+    /// 展開先はこの handle 相対にだけ作る（絶対 path を再解決しない）。
+    workspace_dir: std.Io.Dir,
     /// `.nako/env/<gen>`（env.json の path に使う前置）。
     generation_rel: []const u8,
     runtime: Runtime,
@@ -132,14 +175,14 @@ const Context = struct {
     used_keys: std.ArrayListUnmanaged([]const u8) = .empty,
     used_names: std.StringHashMapUnmanaged(void) = .empty,
 
-    fn objectTree(self: *const Context, key: []const u8) !?[]const u8 {
-        const entry = (try self.cache_store.entryPath(self.arena, key)) orelse return null;
-        return try std.fs.path.join(self.arena, &.{ entry, "tree" });
+    fn objectTree(self: *const Context, key: []const u8) Error!?std.Io.Dir {
+        return self.cache_store.openVerifiedTree(self.gpa, key) catch |err| return mapFs(err);
     }
 };
 
 /// `nako.lock` を読み、環境を同期する。失敗時は `session` 由来の診断を
-/// `diagnostics` へ転写してから error を返す（直前の環境は変更されない）。
+/// `diagnostics` へ転写して error を返す。commit 前の失敗は直前環境を変更しない。
+/// commit 後の current 公開失敗では error を返し、state 検査で stale として再試行させる。
 pub fn run(
     gpa: Allocator,
     io: std.Io,
@@ -180,22 +223,35 @@ pub fn run(
 
     // `nako.toml` が存在する場合、lock が記録した manifest hash と一致する
     // ことを確認する。古い lock で環境を構築して環境参照が manifest と
-    // 不整合になるのを防ぐ。manifest が無い lock 駆動の用途（fixture 等）
-    // では検査を省略する。
+    // 不整合になるのを防ぐ。省略できるのは `FileNotFound`（manifest 無しの
+    // lock 駆動用途）だけで、dir 化・読取不能・size 上限超過などその他の
+    // 失敗は manifest の有無と鮮度を確定できないため同期を失敗させる。
     const manifest_path = try std.fs.path.join(arena, &.{ project_abs, "nako.toml" });
-    if (std.Io.Dir.cwd().readFileAlloc(io, manifest_path, arena, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
+    const manifest_state = manifestFreshness(io, arena, manifest_path, &lock) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
-        else => null,
-    }) |manifest_bytes| {
-        var actual: [32]u8 = undefined;
-        std.crypto.hash.sha2.Sha256.hash(manifest_bytes, &actual, .{});
-        var expected: [32]u8 = undefined;
-        if (!lock_model.normalizeSha256(lock.input.manifest_sha256, &expected) or
-            !std.mem.eql(u8, &actual, &expected))
-        {
-            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "lock input manifestSha256 does not match nako.toml; re-resolve the lock before sync", .{});
-            return error.StaleLock;
-        }
+        else => {
+            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml", .{}, "cannot read nako.toml for lock manifest verification: {s}", .{@errorName(err)});
+            return mapFs(err);
+        },
+    };
+    if (manifest_state == .stale) {
+        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "lock input manifestSha256 does not match nako.toml; re-resolve the lock before sync", .{});
+        return error.StaleLock;
+    }
+
+    // `mutable = false` の path pin も照合する。pin 不一致の lock で環境を
+    // 構築すると lock が pin した内容と異なる tree を参照するため stale
+    // として拒否する（`lnako lock` で再解決してから sync する）。
+    if (try pathPinMismatch(arena, io, project_abs, &lock)) |name| {
+        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "content of pinned path dependency \"{s}\" does not match nako.lock; re-resolve the lock before sync", .{name});
+        return error.StaleLock;
+    }
+    // `mutable = true` の path 依存も内容 digest で照合する。宣言 dir の
+    // 内容が lock 記録時と変わっていれば、記録時のグラフを前提にした環境
+    // は構築しない。
+    if (try mutablePathMismatch(arena, io, project_abs, &lock)) |path| {
+        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "content of mutable path dependency \"{s}\" does not match nako.lock; re-resolve the lock before sync", .{path});
+        return error.StaleLock;
     }
 
     const profile = options.profile orelse lock.input.profile;
@@ -244,11 +300,24 @@ pub fn run(
     // 直前の現行世代を覚えておく。切替え直後に直前世代を削除すると、
     // 読み取り途中の consumer を壊すため新・旧の双方を残す。
     const previous_generation = env_store.readCurrent(arena) catch |err| return mapFs(err);
-    const generation = env_store.newGeneration(arena) catch |err| return mapFs(err);
-    const deps_abs = try std.fs.path.join(arena, &.{ generation.abs_path, "deps" });
-    std.Io.Dir.cwd().createDirPath(io, deps_abs) catch |err| return mapFs(err);
+    var generation = env_store.newGeneration(arena) catch |err| return mapFs(err);
+    var generation_dir_open = true;
+    defer {
+        if (generation_dir_open) generation.dir.close(io);
+    }
+    generation.dir.createDirPath(io, "deps") catch |err| return mapFs(err);
+    var deps_dir = generation.dir.openDir(io, "deps", .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+    var deps_dir_open = true;
+    defer {
+        if (deps_dir_open) deps_dir.close(io);
+    }
     const generation_rel = try std.fs.path.join(arena, &.{ environment.dir_name, environment.env_dir, generation.generation });
-
+    var project_dir = std.Io.Dir.cwd().openDir(io, project_abs, .{ .follow_symlinks = false }) catch |err| return mapFs(err);
+    defer project_dir.close(io);
+    const workspace_name = try std.fmt.allocPrint(arena, ".lnako-work-{s}", .{generation.generation});
+    var workspace_dir = environment.openManagedChildDir(project_dir, io, workspace_name, true) catch |err| return mapFs(err);
+    defer environment.deleteTreeChecked(project_dir, io, workspace_name) catch {};
+    defer workspace_dir.close(io);
     var ctx = Context{
         .gpa = gpa,
         .arena = arena,
@@ -256,18 +325,11 @@ pub fn run(
         .session = &session,
         .cache_store = &cache_store,
         .project_abs = project_abs,
-        .generation_abs = generation.abs_path,
-        .deps_abs = deps_abs,
+        .deps_dir = deps_dir,
+        .workspace_dir = workspace_dir,
         .generation_rel = generation_rel,
         .runtime = options.runtime,
-        .target = .{
-            .runtime = options.runtime.name(),
-            .os = if (record) |r| r.os else lock.input.target.os,
-            .cpu = if (record) |r| r.cpu else lock.input.target.cpu,
-            .abi = if (record) |r| r.abi else lock.input.target.abi,
-            .compat_js = if (record) |r| r.compat_js orelse false else false,
-            .optimize = if (record) |r| r.optimize orelse "O0" else "O0",
-        },
+        .target = materializeTarget(profile, record, &lock.input, options.runtime),
     };
 
     // --- package の取得・検証・materialize ---------------------------------
@@ -281,6 +343,39 @@ pub fn run(
         try records.append(arena, record_value);
     }
 
+    // path 依存の pin/digest は事前にも照合しているが、その後
+    // `preparePackage` が manifest・exports・commands を同じ dir から
+    // 再読している。検査と読取の間（または読取中）に内容が変わると
+    // lock が pin した snapshot と異なる metadata で環境を公開してしまう
+    // ため、構築した metadata が今も pin と一致するか公開直前に再照合する。
+    // 不一致は新環境を公開せず失敗させる（sync を再実行すれば現在内容で
+    // 再照合される）。
+    if (try pathPinMismatch(arena, io, project_abs, &lock)) |name| {
+        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "content of pinned path dependency \"{s}\" changed while syncing; re-resolve the lock before sync", .{name});
+        return error.StaleLock;
+    }
+    if (try mutablePathMismatch(arena, io, project_abs, &lock)) |path| {
+        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "content of mutable path dependency \"{s}\" changed while syncing; re-resolve the lock before sync", .{path});
+        return error.StaleLock;
+    }
+    // root manifest も再照合する。package 取得・展開中に外部エディタ等が
+    // `nako.toml` を保存・削除すると、開始時点の manifest とは別の宣言に
+    // 基づく環境を公開してしまうため。manifest 無しの lock 駆動用途では
+    // 再照合しない。
+    if (manifest_state != .absent) {
+        const current_manifest = manifestFreshness(io, arena, manifest_path, &lock) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {
+                try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml", .{}, "cannot re-read nako.toml for publish-time manifest verification: {s}", .{@errorName(err)});
+                return mapFs(err);
+            },
+        };
+        if (current_manifest != .fresh) {
+            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "nako.toml changed while syncing; re-resolve the lock before sync", .{});
+            return error.StaleLock;
+        }
+    }
+
     // --- 環境の公開 ---------------------------------------------------------
     var json_buffer: std.Io.Writer.Allocating = .init(arena);
     environment.emit(arena, .{
@@ -288,25 +383,38 @@ pub fn run(
         .profile = profile,
         .runtime = options.runtime.name(),
         .packages = records.items,
+        // mutable path 依存の metadata（exports/commands）は環境へ
+        // snapshot するため、宣言 dir の digest を記録して再解決を要さない
+        // metadata-only 変更でも環境の陳腐化を検出できるようにする。
+        .mutable_paths = lock.input.mutable_paths,
     }, &json_buffer.writer) catch |err| switch (err) {
         // Allocating writer の WriteFailed は arena 確保の失敗。
         error.WriteFailed => return error.OutOfMemory,
         else => return mapFs(err),
     };
 
+    if (json_buffer.written().len > environment.max_environment_bytes) {
+        return session.fail(.too_large, .package, "environment.json", "generated environment.json exceeds the {d} byte reader limit", .{environment.max_environment_bytes});
+    }
+
     // 直前の公開環境が参照する世代を environment.json からも復元する。
     // env.json 公開後・current 更新前の中断では current が古い世代を
     // 指したまま残るため、両者を keep して実際の直前世代を消さない。
     const published_generation = env_store.readPublishedGeneration(arena) catch null;
 
-    // staging 世代 dir を env/ へ rename し、environment.json・current を
-    // 原子的に切り替える。ここまで来る前に失敗した場合、既存環境は無変更。
+    // Windowsは開いたdirectory handleをrenameできないため、staging世代と
+    // 子のdeps handleを先に閉じる。commit失敗時にもdeferで二重closeしない。
+    deps_dir.close(io);
+    deps_dir_open = false;
+    generation.dir.close(io);
+    generation_dir_open = false;
+
+    // staging 世代 dir と environment.json を commit する。commit 前に失敗すれば
+    // 既存環境は無変更。current は別ファイルなので、この2操作は一括 atomic ではない。
     env_store.commit(generation.generation, json_buffer.written()) catch |err| return mapFs(err);
-    // environment.json 公開後に current の更新だけ失敗しても、公開済み環境を
-    // 巻き戻せない。current は世代整理と次回 sync のヒントに過ぎず、実際の
-    // 参照世代は environment.json から復元する（中断時と同じ状態）ため、
-    // ここでの失敗は成功扱いとする。
-    env_store.writeCurrent(generation.generation) catch {};
+    // env_state は current が公開済み世代を指すことを要求する。公開失敗は
+    // 成功扱いせず伝播し、state 検査で stale として後続 sync に再試行させる。
+    env_store.writeCurrent(generation.generation) catch |err| return mapFs(err);
 
     // 前世代は使用中の可能性があるため、現行・直前・公開環境の参照世代を
     // 残して整理する。参照世代を特定できない場合（env.json 破損等）は
@@ -356,7 +464,10 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
     var env_path: []const u8 = undefined;
     var manifest: ?manifest_mod.Manifest = null;
     var tree_abs: ?[]const u8 = null;
+    var tree_dir: ?std.Io.Dir = null;
+    defer if (tree_dir) |*dir| dir.close(ctx.io);
     var verified_commands: ?[]const npkg_commands.Command = null;
+    var manifest_from_npkg = false;
 
     switch (source.kind) {
         .path => {
@@ -396,41 +507,46 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                     return ctx.session.fail(.invalid_source, .package, entry.name, "git subdir of \"{s}\" is not a repo-relative path: \"{s}\"", .{ entry.name, sub });
                 }
             }
-            // lock の固定 commit から決定的な object key を先に計算する。
-            // 検証済み object があれば checkout・Git 起動・clone/fetch を
-            // 経由せず materialize できる（offline でも checkout 不要）。
+            // Cache の tree/marker は同じ攻撃者が書き換えられるため、Git object
+            // cache hit でも必ず lock commit を Git object database で再検証し、
+            // pinned checkout から package tree を再生成する。
             const object_key = try shortKey(arena, "git", &.{ url, commit, source.path orelse "" });
             try rememberKey(ctx, object_key);
-            const tree = (try ctx.objectTree(object_key)).?;
-            const verified_hit = (ctx.cache_store.verifyEntry(arena, object_key) catch false) and ctx.cache_store.entryExists(object_key);
-            if (!verified_hit) {
-                // digest 不一致（改変）または不完全な entry は除去して再構築。
-                if (ctx.cache_store.entryExists(object_key)) {
-                    ctx.cache_store.removeEntry(object_key) catch |err| return mapFs(err);
-                }
-                // checkout は可変の作業 dir。repo+subdir 単位で再利用する。
-                const checkout_key = try shortKey(arena, "git", &.{ url, source.path orelse "" });
-                const checkout_dir = (try ctx.cache_store.checkoutPath(arena, checkout_key)) orelse
-                    return ctx.session.fail(.invalid_source, .package, entry.name, "cannot derive checkout dir", .{});
-                const acquired = try provider.acquireGit(ctx.session, .{
-                    .name = entry.name,
-                    .url = url,
-                    .commit = commit,
-                    .path = source.path,
-                }, checkout_dir, source);
-                manifest = acquired.manifest;
-                // 取得結果が lock の固定 commit と一致することを確認する。
-                const resolved_commit = acquired.source.commit orelse commit;
-                if (!std.mem.eql(u8, resolved_commit, commit)) {
-                    return ctx.session.fail(.source_collision, .repository, url, "git source of \"{s}\" resolved to {s}, lock expects {s}", .{ entry.name, resolved_commit, commit });
-                }
-                try buildGitObject(ctx, object_key, checkout_dir, source.path);
-            } else {
-                manifest = if (try cachedManifest(ctx, object_key)) |cached| cached.manifest else null;
+            const checkout_key = try shortKey(arena, "git", &.{ url, source.path orelse "" });
+            var checkouts = environment.openManagedChildDir(ctx.workspace_dir, ctx.io, "git-checkouts", true) catch |err| return mapFs(err);
+            defer checkouts.close(ctx.io);
+            var checkout = environment.openManagedChildDir(checkouts, ctx.io, checkout_key, true) catch |err| return mapFs(err);
+            defer environment.deleteTreeChecked(checkouts, ctx.io, checkout_key) catch {};
+            defer checkout.close(ctx.io);
+            // checkout の読書き・Git subprocess は全てこの pinned handle 相対
+            // で行い、作業 dir の絶対 path は一切使わない。
+            const cached_checkout_opt = ctx.cache_store.openCheckout(checkout_key) catch |err| return mapFs(err);
+            if (cached_checkout_opt) |cached_checkout| {
+                var cached = cached_checkout;
+                defer cached.close(ctx.io);
+                _ = materialize.copyTreeFromDirs(ctx.gpa, ctx.io, &cached, &checkout, cache.checkout_copy_options) catch |err| return mapTreeError(ctx, err, entry.name);
             }
-            tree_abs = tree;
-            const dest = try materializeIntoGeneration(ctx, entry.name, tree);
-            env_path = dest;
+            const acquired = try provider.acquireGit(ctx.session, .{
+                .name = entry.name,
+                .url = url,
+                .commit = commit,
+                .path = source.path,
+            }, checkout, source);
+            manifest = acquired.manifest;
+            const resolved_commit = acquired.source.commit orelse commit;
+            if (!std.mem.eql(u8, resolved_commit, commit)) {
+                return ctx.session.fail(.source_collision, .repository, url, "git source of \"{s}\" resolved to {s}, lock expects {s}", .{ entry.name, resolved_commit, commit });
+            }
+            // repository 全体（object database 含む）の複写なので package
+            // tree 用の上限ではなく checkout 用の緩和済み制限を使う。
+            _ = ctx.cache_store.replaceCheckout(checkout_key, &checkout, cache.checkout_copy_options) catch |err| return mapTreeError(ctx, err, entry.name);
+            try buildGitObject(ctx, object_key, &checkout, source.path);
+            var tree_handle = try ctx.objectTree(object_key);
+            if (tree_handle == null) return error.FileSystem;
+            defer tree_handle.?.close(ctx.io);
+            const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?);
+            tree_dir = materialized.tree_dir;
+            env_path = materialized.env_path;
         },
         .http => {
             const url = source.url orelse
@@ -439,9 +555,9 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                 return ctx.session.fail(.invalid_source, .package, entry.name, "http source of \"{s}\" has no hash", .{entry.name});
             const object_key = try artifactKey(arena, "http", declared_hash, url);
             try rememberKey(ctx, object_key);
-            const tree = (try ctx.objectTree(object_key)).?;
-            const verified_hit = (ctx.cache_store.verifyEntry(arena, object_key) catch false) and ctx.cache_store.entryExists(object_key);
-            if (!verified_hit) {
+            var archive: ?[]const u8 = try ctx.cache_store.readVerifiedSourceArchive(arena, object_key, declared_hash);
+            var artifact_type: []const u8 = if (archive) |cached| provider.httpArtifactType(cached) else "raw";
+            if (archive == null) {
                 if (ctx.cache_store.entryExists(object_key)) {
                     ctx.cache_store.removeEntry(object_key) catch |err| return mapFs(err);
                 }
@@ -450,17 +566,22 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                     .url = url,
                     .hash = declared_hash,
                 });
+                archive = acquired.artifact_bytes.?;
+                artifact_type = acquired.artifact_type orelse "raw";
                 manifest = acquired.manifest;
-                const prepared = try buildArtifactObject(ctx, object_key, acquired.artifact_bytes.?, acquired.artifact_type orelse "raw", entry);
-                applyPrepared(&manifest, &verified_commands, prepared);
             }
-            // cache 命中時は object から manifest を読み直す。`.npkg` 由来なら
-            // 公開時と今回の target が異なり得るため適合を再検証する（miss の
-            // tar.gz/raw でも公開済み tree から manifest を拾う）。
+            manifest_from_npkg = std.mem.eql(u8, artifact_type, ".npkg");
+            // Cache tree/marker は自己認証に過ぎない。毎回 lock hash を検証した
+            // raw bytes から tree を再構築し、derived tree を信頼根拠にしない。
+            const prepared = try buildArtifactObject(ctx, object_key, archive.?, artifact_type, entry);
+            applyPrepared(&manifest, &verified_commands, prepared);
             manifest = manifest orelse try checkedCachedManifest(ctx, object_key, entry);
-            tree_abs = tree;
-            const dest = try materializeIntoGeneration(ctx, entry.name, tree);
-            env_path = dest;
+            var tree_handle = try ctx.objectTree(object_key);
+            if (tree_handle == null) return error.FileSystem;
+            defer tree_handle.?.close(ctx.io);
+            const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?);
+            tree_dir = materialized.tree_dir;
+            env_path = materialized.env_path;
         },
         .registry, .static => {
             // lock が記録する `source.url` は package 固有 URL であり、
@@ -468,13 +589,16 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
             // lock の artifact URL・hash・type を直接使って取得・検証する。
             const artifact = selectArtifact(ctx, entry) orelse
                 return ctx.session.fail(.not_found, .artifact, entry.name, "package \"{s}\" has no artifact for runtime \"{s}\"", .{ entry.name, ctx.runtime.name() });
+            manifest_from_npkg = if (artifact.type) |artifact_type| std.mem.eql(u8, artifact_type, ".npkg") else false;
             const url = artifact.url orelse
                 return ctx.session.fail(.invalid_source, .artifact, entry.name, "artifact \"{s}\" of \"{s}\" has no url", .{ artifact.key, entry.name });
             const object_key = try artifactKey(arena, "artifact", artifact.sha256 orelse artifact.key, url);
             try rememberKey(ctx, object_key);
-            const tree = (try ctx.objectTree(object_key)).?;
-            const verified_hit = (ctx.cache_store.verifyEntry(arena, object_key) catch false) and ctx.cache_store.entryExists(object_key);
-            if (!verified_hit) {
+            var archive: ?[]const u8 = null;
+            if (artifact.sha256) |expected| {
+                archive = try ctx.cache_store.readVerifiedSourceArchive(arena, object_key, expected);
+            }
+            if (archive == null) {
                 if (ctx.cache_store.entryExists(object_key)) {
                     ctx.cache_store.removeEntry(object_key) catch |err| return mapFs(err);
                 }
@@ -482,15 +606,19 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                 if (artifact.sha256) |expected| {
                     try fetch.verifyHash(ctx.session, bytes, expected, url, .artifact);
                 }
-                const prepared = try buildArtifactObject(ctx, object_key, bytes, artifact.type orelse "raw", entry);
-                applyPrepared(&manifest, &verified_commands, prepared);
+                archive = bytes;
             }
-            // http 経路と同じく cache 命中の `.npkg` 由来 manifest は現在
-            // target への適合を再検証する。
+            // lock artifact hash と一致した raw archive から毎回展開する。
+            // hash の無い artifact は cache bytes を一切信頼せず再取得する。
+            const prepared = try buildArtifactObject(ctx, object_key, archive.?, artifact.type orelse "raw", entry);
+            applyPrepared(&manifest, &verified_commands, prepared);
             manifest = manifest orelse try checkedCachedManifest(ctx, object_key, entry);
-            tree_abs = tree;
-            const dest = try materializeIntoGeneration(ctx, entry.name, tree);
-            env_path = dest;
+            var tree_handle = try ctx.objectTree(object_key);
+            if (tree_handle == null) return error.FileSystem;
+            defer tree_handle.?.close(ctx.io);
+            const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?);
+            tree_dir = materialized.tree_dir;
+            env_path = materialized.env_path;
         },
     }
 
@@ -498,11 +626,14 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
     // `.npkg` を verify した経路では検証済み model をそのまま使う。
     var exports = std.ArrayListUnmanaged(environment.ExportRecord).empty;
     if (manifest) |*m| {
-        exports = try resolveExports(ctx, m, entry.implementation);
+        if (manifest_mod.hasUnsafeNonNpkgExportTargets(m, manifest_from_npkg)) {
+            return ctx.session.fail(.invalid_metadata, .manifest, entry.name, "package \"{s}\" has an export target that is not a canonical package-relative path", .{entry.name});
+        }
+        exports = try resolveExports(ctx, m, entry, tree_abs, tree_dir);
     }
     const commands: []const npkg_commands.Command = verified_commands orelse blk: {
-        if (manifest) |*m| break :blk try collectCommands(ctx, tree_abs, m);
-        if (tree_abs) |tree| break :blk try collectCommands(ctx, tree, null);
+        if (manifest) |*m| break :blk try collectCommands(ctx, tree_abs, tree_dir, m);
+        if (tree_abs != null or tree_dir != null) break :blk try collectCommands(ctx, tree_abs, tree_dir, null);
         break :blk &.{};
     };
 
@@ -521,12 +652,20 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
 /// 絶対の双方を許容するため `..` 成分や絶対 path は正当な入力（path 依存は
 /// 宣言者が選ぶ局所 source であり、lock の契約でも禁止されない）。
 /// ここでは細工した lock が混入させ得る非規範の形式だけを拒否する:
-/// 空・末尾 separator・`.` 成分・途中の空成分・制御文字。
+/// 空・末尾 separator（filesystem root を除く）・`.` 成分・途中の空成分・制御文字。
 fn isCanonicalDepPath(path: []const u8) bool {
     if (path.len == 0) return false;
-    if (path[path.len - 1] == '/' or path[path.len - 1] == '\\') return false;
-    const starts_sep = path[0] == '/' or path[0] == '\\';
-    var components = std.mem.splitAny(u8, path, "/\\");
+    const is_windows = builtin.os.tag == .windows;
+    const separators = if (is_windows) "/\\" else "/";
+    // Filesystem roots are the only canonical paths whose complete spelling
+    // is a trailing separator; they cannot be normalized by trimming that byte.
+    if (std.mem.eql(u8, path, "/")) return true;
+    if (is_windows and path.len == 3 and
+        std.ascii.isAlphabetic(path[0]) and
+        path[1] == ':' and (path[2] == '/' or path[2] == '\\')) return true;
+    if (std.mem.indexOfScalar(u8, separators, path[path.len - 1]) != null) return false;
+    const starts_sep = std.mem.indexOfScalar(u8, separators, path[0]) != null;
+    var components = std.mem.splitAny(u8, path, separators);
     var index: usize = 0;
     while (components.next()) |component| : (index += 1) {
         if (component.len == 0) {
@@ -541,6 +680,102 @@ fn isCanonicalDepPath(path: []const u8) bool {
         }
     }
     return true;
+}
+
+test "immutable path pin hash comparison normalizes lock representations" {
+    const digest = [_]u8{0x5a} ** 32;
+    const hex = std.fmt.bytesToHex(digest, .lower);
+    try testing.expect(path_digest.pinHashMatches(digest, &hex));
+
+    var encoded: [44]u8 = undefined;
+    _ = std.base64.standard.Encoder.encode(&encoded, &digest);
+    var sri_buffer: ["sha256-".len + 44]u8 = undefined;
+    const sri = try std.fmt.bufPrint(&sri_buffer, "sha256-{s}", .{encoded});
+    try testing.expect(path_digest.pinHashMatches(digest, sri));
+
+    var other = digest;
+    other[0] ^= 1;
+    try testing.expect(!path_digest.pinHashMatches(other, &hex));
+    try testing.expect(!path_digest.pinHashMatches(digest, "invalid"));
+}
+
+test "sync fails when a selected export has no eligible implementation" {
+    const allocator = testing.allocator;
+    var arena_impl = std.heap.ArenaAllocator.init(allocator);
+    defer arena_impl.deinit();
+    var diagnostics = diag.List.init(allocator);
+    defer diagnostics.deinit();
+    var session = fetch.Session.init(allocator, testing.io, .{});
+    defer session.deinit();
+    session.diagnostics = &diagnostics;
+    var ctx = Context{
+        .gpa = allocator,
+        .arena = arena_impl.allocator(),
+        .io = testing.io,
+        .session = &session,
+        .cache_store = undefined,
+        .project_abs = "",
+        .deps_dir = undefined,
+        .workspace_dir = undefined,
+        .generation_rel = "",
+        .runtime = .lnako,
+        .target = .{},
+    };
+    const requires_feature = [_][]const u8{"native-feature"};
+    const export_decl = manifest_mod.Export{
+        .name = "entry",
+        .native = &.{.{ .path = "entry.native", .features = &requires_feature }},
+    };
+    const target = exportArtifactTarget("lnako", .{
+        .runtime = "lnako",
+        .nako_version = try semver.Version.parse("3.7.24"),
+    }, &.{});
+    try testing.expectError(error.InvalidMetadata, resolveExportForSync(&ctx, &export_decl, target, false));
+    try testing.expect(diagnostics.errorCount() > 0);
+}
+
+test "source export target preserves resolved features and Nako version" {
+    const features = [_][]const u8{"native"};
+    const current_target = exportArtifactTarget("lnako", .{
+        .runtime = "lnako",
+        .nako_version = try semver.Version.parse("3.7.24"),
+    }, &features);
+    const declaration = manifest_mod.ArtifactDecl{
+        .path = "native.nako3",
+        .when = "\"native\" in features and version >= \"3.7.0\"",
+        .features = &features,
+    };
+    try testing.expect(try declaration.matchesTarget(testing.allocator, current_target, true));
+
+    const older_target = exportArtifactTarget("lnako", .{
+        .runtime = "lnako",
+        .nako_version = try semver.Version.parse("3.6.9"),
+    }, &features);
+    try testing.expect(!try declaration.matchesTarget(testing.allocator, older_target, true));
+
+    const missing_feature_target = exportArtifactTarget("lnako", .{
+        .runtime = "lnako",
+        .nako_version = try semver.Version.parse("3.7.24"),
+    }, &.{});
+    try testing.expect(!try declaration.matchesTarget(testing.allocator, missing_feature_target, true));
+}
+
+test "canonical dependency path uses host separators and admits filesystem roots" {
+    try std.testing.expect(isCanonicalDepPath("/"));
+    try std.testing.expect(isCanonicalDepPath("/deps/lib"));
+    try std.testing.expect(!isCanonicalDepPath("/deps/"));
+    try std.testing.expect(!isCanonicalDepPath("deps/"));
+    if (builtin.os.tag == .windows) {
+        try std.testing.expect(isCanonicalDepPath("C:\\"));
+        try std.testing.expect(isCanonicalDepPath("C:/"));
+        try std.testing.expect(isCanonicalDepPath("C:\\deps\\lib"));
+        try std.testing.expect(!isCanonicalDepPath("C:\\deps\\"));
+    } else {
+        // POSIX dependency names may contain or end with backslashes.
+        try std.testing.expect(isCanonicalDepPath("lib\\"));
+        try std.testing.expect(isCanonicalDepPath("lib\\\\part"));
+        try std.testing.expect(!isCanonicalDepPath("lib//part"));
+    }
 }
 
 /// git source の repo 内 subdir が規範的な相対 path か。repo 境界内だけを
@@ -559,7 +794,7 @@ fn isCanonicalRepoPath(path: []const u8) bool {
     return true;
 }
 
-fn isPackageId(id: []const u8) bool {
+pub fn isPackageId(id: []const u8) bool {
     if (id.len != 36 or !std.mem.startsWith(u8, id, "pkg:")) return false;
     for (id[4..]) |c| {
         if (!std.ascii.isHex(c) or (c >= 'A' and c <= 'F')) return false;
@@ -581,7 +816,6 @@ fn shortKey(arena: Allocator, prefix: []const u8, parts: []const []const u8) ![]
     return try std.fmt.allocPrint(arena, "{s}-{s}", .{ prefix, hex[0..16] });
 }
 
-/// hash 宣言から内容アドレス key を作る。sha256 に正規化できる場合は実ダイ
 /// ジェストを key に使う。そうでなければ宣言 hash を key 材料へ含める。
 /// sha256 以外（sha512 等）でも lock の hash 更新が必ず別 entry になるよう
 /// URL だけを key にしない（同じ URL で配布物が更新される通常ケースで
@@ -606,19 +840,27 @@ fn rememberKey(ctx: *Context, key: []const u8) !void {
 }
 
 /// git checkout から cache object を構築する。`.git` を除いた作業木を
-/// staging へ検証付きで複製し、原子的に公開する。
-fn buildGitObject(ctx: *Context, key: []const u8, checkout_dir: []const u8, sub_path: ?[]const u8) Error!void {
-    const arena = ctx.arena;
-    const src = if (sub_path) |sub|
-        try std.fs.path.join(arena, &.{ checkout_dir, sub })
-    else
-        try arena.dupe(u8, checkout_dir);
-    const staging = try std.fs.path.join(arena, &.{ ctx.cache_store.root, cache.staging_dir, key });
-    const staging_tree = try std.fs.path.join(arena, &.{ staging, "tree" });
-    _ = materialize.copyTree(ctx.gpa, ctx.io, src, staging_tree, .{
+/// staging へ検証付きで複製し、原子的に公開する。source は checkout の
+/// pinned handle 相対で開き、絶対 path を再解決しない。
+fn buildGitObject(ctx: *Context, key: []const u8, checkout: *std.Io.Dir, sub_path: ?[]const u8) Error!void {
+    var sub_source: ?std.Io.Dir = null;
+    defer if (sub_source) |*dir| dir.close(ctx.io);
+    if (sub_path) |sub| {
+        sub_source = checkout.openDir(ctx.io, sub, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+    }
+    const source: *std.Io.Dir = if (sub_source) |*dir| dir else checkout;
+    var staging = ctx.cache_store.openStaging(key) catch |err| return mapFs(err);
+    var staging_open = true;
+    defer if (staging_open) staging.close(ctx.io);
+    staging.createDir(ctx.io, "tree", .default_dir) catch |err| return mapFs(err);
+    var destination = staging.openDir(ctx.io, "tree", .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+    _ = materialize.copyTreeFromDirs(ctx.gpa, ctx.io, source, &destination, .{
         .exclude_names = &.{".git"},
     }) catch |err| return mapTreeError(ctx, err, key);
-    ctx.cache_store.publish(key, staging) catch |err| return mapFs(err);
+    destination.close(ctx.io);
+    staging.close(ctx.io);
+    staging_open = false;
+    ctx.cache_store.publishStaging(key) catch |err| return mapFs(err);
 }
 
 /// `.npkg` を検証した場合に返す検証済み model。manifest・commands は
@@ -631,6 +873,38 @@ const PreparedArtifact = struct {
 fn applyPrepared(manifest: *?manifest_mod.Manifest, commands: *?[]const npkg_commands.Command, prepared: PreparedArtifact) void {
     if (prepared.manifest) |m| manifest.* = m;
     if (prepared.commands) |c| commands.* = c;
+}
+
+/// lock `input` が記録した engine version 文字列を `resolver.Target` の
+/// semver へ戻す。欠落・解析不能は null（未検査）として扱う。
+fn inputVersion(text: ?[]const u8) ?semver.Version {
+    const value = text orelse return null;
+    return semver.Version.parse(value) catch null;
+}
+
+/// materialize（`.npkg` 検証・export 解決）用の target を組み立てる。
+/// 解決時の実効 target を引き継ぐ。`--compat-js` で選択した ESM
+/// artifact や `-O` で選択した実装を検証が別条件で reject しないよう、
+/// lock の `input.target` に記録済みの値を使う。engines 制約・
+/// version-gated export の評価も同じ version tuple で行う。
+/// `--profile` で別 profile を指定した場合は、その record が宣言した
+/// `optimize` を優先する（解決時と同じく CLI の `-O` は入力 profile
+/// にしか適用しない）。
+fn materializeTarget(profile: []const u8, record: ?*const lock_model.ProfileRecord, input: *const lock_model.Input, runtime: Runtime) resolver.Target {
+    return .{
+        .runtime = runtime.name(),
+        .os = if (record) |r| r.os else input.target.os,
+        .cpu = if (record) |r| r.cpu else input.target.cpu,
+        .abi = if (record) |r| r.abi else input.target.abi,
+        .compat_js = (if (record) |r| r.compat_js orelse false else false) or
+            (std.mem.eql(u8, profile, input.profile) and input.target.compat_js),
+        .optimize = if (std.mem.eql(u8, profile, input.profile))
+            input.target.optimize
+        else if (record) |r| r.optimize orelse "O0" else "O0",
+        .nako_version = inputVersion(input.nako_version),
+        .cnako_version = inputVersion(input.cnako_version),
+        .lnako_version = inputVersion(input.lnako_version),
+    };
 }
 
 /// `.npkg` 検証用の target。profile/runtime・有効 feature・実環境条件を
@@ -681,9 +955,20 @@ fn mapUnpackError(ctx: *Context, err: anyerror, subject: []const u8) Error {
 /// の規則（規範 path・重複・大小文字衝突・量上限）を通して `tree/` へ入れる。
 fn buildArtifactObject(ctx: *Context, key: []const u8, bytes: []const u8, artifact_type: []const u8, entry: *const lock_model.PackageEntry) Error!PreparedArtifact {
     const arena = ctx.arena;
-    const staging = try std.fs.path.join(arena, &.{ ctx.cache_store.root, cache.staging_dir, key });
-    const tree = try std.fs.path.join(arena, &.{ staging, "tree" });
-    std.Io.Dir.cwd().createDirPath(ctx.io, tree) catch |err| return mapFs(err);
+    var staging = ctx.cache_store.openStaging(key) catch |err| return mapFs(err);
+    var staging_open = true;
+    defer if (staging_open) staging.close(ctx.io);
+    staging.createDir(ctx.io, "tree", .default_dir) catch |err| return mapFs(err);
+    // Keep the original bytes outside tree/ so a future hit can validate them
+    // against the lock's artifact hash before rebuilding the derived tree.
+    staging.writeFile(ctx.io, .{ .sub_path = "source.archive", .data = bytes }) catch |err| return mapFs(err);
+    var tree = staging.openDir(ctx.io, "tree", .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+    var tree_open = true;
+    defer if (tree_open) tree.close(ctx.io);
+    // 一時アーカイブ・展開先は `ctx.workspace_dir`（pinned handle）相対に
+    // だけ作る。`.lnako-work-<gen>` を指す絶対 path が rename→symlink 置換
+    // されても、archive 書込み・展開・cleanup が project 外へ出ない。
+    const extract_name = try std.fmt.allocPrint(arena, "artifact-{s}.extract", .{key});
     var prepared = PreparedArtifact{};
     if (std.mem.eql(u8, artifact_type, ".npkg")) {
         // 公開前に package 検証を通す。hash 照合済みでも必須 metadata・
@@ -696,33 +981,44 @@ fn buildArtifactObject(ctx: *Context, key: []const u8, bytes: []const u8, artifa
         };
         prepared.manifest = verified.manifest;
         prepared.commands = verified.commands;
-        // 一時アーカイブ・展開先は公開対象の staging dir 外（兄弟 path）へ
-        // 置く。残った場合も staging 配下なので次回の回収で消える。
-        const archive_path = try std.fmt.allocPrint(arena, "{s}.archive", .{staging});
-        std.Io.Dir.cwd().writeFile(ctx.io, .{ .sub_path = archive_path, .data = bytes }) catch |err| return mapFs(err);
-        defer std.Io.Dir.cwd().deleteFile(ctx.io, archive_path) catch {};
-        const extract_dir = try std.fmt.allocPrint(arena, "{s}.extract", .{staging});
-        defer std.Io.Dir.cwd().deleteTree(ctx.io, extract_dir) catch {};
-        zip.extract(ctx.io, archive_path, extract_dir) catch |err| {
+        const archive_name = try std.fmt.allocPrint(arena, "artifact-{s}.archive", .{key});
+        ctx.workspace_dir.writeFile(ctx.io, .{ .sub_path = archive_name, .data = bytes }) catch |err| return mapFs(err);
+        defer ctx.workspace_dir.deleteFile(ctx.io, archive_name) catch {};
+        ctx.workspace_dir.createDir(ctx.io, extract_name, .default_dir) catch |err| return mapFs(err);
+        var extracted = ctx.workspace_dir.openDir(ctx.io, extract_name, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+        defer {
+            extracted.close(ctx.io);
+            environment.deleteTreeChecked(ctx.workspace_dir, ctx.io, extract_name) catch {};
+        }
+        var archive_file = ctx.workspace_dir.openFile(ctx.io, archive_name, .{}) catch |err| return mapFs(err);
+        defer archive_file.close(ctx.io);
+        zip.extractOpened(ctx.io, archive_file, bytes.len, extracted) catch |err| {
             return ctx.session.fail(.invalid_metadata, .artifact, key, "artifact archive failed boundary-checked extraction: {s}", .{@errorName(err)});
         };
-        _ = materialize.copyTree(ctx.gpa, ctx.io, extract_dir, tree, .{}) catch |err| return mapTreeError(ctx, err, key);
+        _ = materialize.copyTreeFromDirs(ctx.gpa, ctx.io, &extracted, &tree, .{}) catch |err| return mapTreeError(ctx, err, key);
     } else if (std.mem.eql(u8, artifact_type, "tar.gz") or std.mem.eql(u8, artifact_type, "npm-tarball")) {
         // npm-tarball は `package/` 前置を持つため先頭成分を除外する。
-        const extract_dir = try std.fmt.allocPrint(arena, "{s}.extract", .{staging});
-        defer std.Io.Dir.cwd().deleteTree(ctx.io, extract_dir) catch {};
-        unpack.extractTarGz(arena, ctx.io, bytes, extract_dir, .{
+        ctx.workspace_dir.createDir(ctx.io, extract_name, .default_dir) catch |err| return mapFs(err);
+        var extracted = ctx.workspace_dir.openDir(ctx.io, extract_name, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+        defer {
+            extracted.close(ctx.io);
+            environment.deleteTreeChecked(ctx.workspace_dir, ctx.io, extract_name) catch {};
+        }
+        unpack.extractTarGzInto(arena, ctx.io, bytes, extracted, .{
             .strip_components = if (std.mem.eql(u8, artifact_type, "npm-tarball")) 1 else 0,
         }) catch |err| return mapUnpackError(ctx, err, key);
-        _ = materialize.copyTree(ctx.gpa, ctx.io, extract_dir, tree, .{}) catch |err| return mapTreeError(ctx, err, key);
+        _ = materialize.copyTreeFromDirs(ctx.gpa, ctx.io, &extracted, &tree, .{}) catch |err| return mapTreeError(ctx, err, key);
     } else if (std.mem.eql(u8, artifact_type, "raw")) {
-        const blob = try std.fs.path.join(arena, &.{ tree, "blob" });
-        std.Io.Dir.cwd().writeFile(ctx.io, .{ .sub_path = blob, .data = bytes }) catch |err| return mapFs(err);
+        tree.writeFile(ctx.io, .{ .sub_path = "blob", .data = bytes }) catch |err| return mapFs(err);
     } else {
         // lock が受理する既知 type でも未対応のものは成功扱いにしない。
         return ctx.session.fail(.invalid_metadata, .artifact, key, "unsupported artifact type \"{s}\" for \"{s}\"", .{ artifact_type, key });
     }
-    ctx.cache_store.publish(key, staging) catch |err| return mapFs(err);
+    tree.close(ctx.io);
+    tree_open = false;
+    staging.close(ctx.io);
+    staging_open = false;
+    ctx.cache_store.publishStaging(key) catch |err| return mapFs(err);
     return prepared;
 }
 
@@ -737,16 +1033,24 @@ const CachedManifest = struct {
 /// を優先し、無ければ `tree/nako.toml` を探す。どちらも無ければ null。
 fn cachedManifest(ctx: *Context, key: []const u8) Error!?CachedManifest {
     const arena = ctx.arena;
-    const tree = (try ctx.objectTree(key)).?;
+    var tree = (ctx.cache_store.openVerifiedTree(ctx.gpa, key) catch |err| return mapFs(err)) orelse return null;
+    defer tree.close(ctx.io);
     // 両方ある package では配布向け正規化済みの METADATA.toml が正本。
     const candidates = [_]struct { rel: []const u8, npkg: bool }{
         .{ .rel = "NAKO-PKG/METADATA.toml", .npkg = true },
         .{ .rel = "nako.toml", .npkg = false },
     };
     for (candidates) |candidate| {
-        const path = try std.fs.path.join(arena, &.{ tree, candidate.rel });
+        const path = candidate.rel;
         const limit: std.Io.Limit = if (ctx.session.policy.max_bytes == 0) .unlimited else .limited(ctx.session.policy.max_bytes);
-        const bytes = std.Io.Dir.cwd().readFileAlloc(ctx.io, path, arena, limit) catch continue;
+        // 「manifest が無い」のは FileNotFound のみ。読取不能・dir 化・
+        // 上限超過などは「無いもの」として次候補へ流さず、cache entry の
+        // 破損として invalid_metadata で失敗させる。
+        const bytes = tree.readFileAlloc(ctx.io, path, arena, limit) catch |err| switch (err) {
+            error.FileNotFound => continue,
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return ctx.session.fail(.invalid_metadata, .manifest, path, "cached manifest at \"{s}\" is unreadable: {s}", .{ path, @errorName(err) }),
+        };
         var scratch = diag.List.init(ctx.gpa);
         defer scratch.deinit();
         const parsed = if (candidate.npkg)
@@ -791,7 +1095,9 @@ fn selectArtifact(ctx: *Context, entry: *const lock_model.PackageEntry) ?*const 
 
 /// package 名を `.nako` 内 dir 名へ変換する。`[a-z0-9-]` 以外は `-` へ畳み、
 /// 空なら hash 名を使う。同一世代内での重複には `-2`・`-3`…を付ける。
-fn materializeIntoGeneration(ctx: *Context, package_name: []const u8, tree_abs: []const u8) Error![]const u8 {
+const MaterializedPackage = struct { env_path: []const u8, tree_dir: std.Io.Dir };
+
+fn materializeIntoGeneration(ctx: *Context, package_name: []const u8, source: *std.Io.Dir) Error!MaterializedPackage {
     const arena = ctx.arena;
     var sanitized: std.ArrayListUnmanaged(u8) = .empty;
     for (package_name) |c| {
@@ -816,41 +1122,100 @@ fn materializeIntoGeneration(ctx: *Context, package_name: []const u8, tree_abs: 
     }
     try ctx.used_names.put(arena, try arena.dupe(u8, final_name), {});
 
-    const dest = try std.fs.path.join(arena, &.{ ctx.deps_abs, final_name });
-    _ = materialize.copyTree(ctx.gpa, ctx.io, tree_abs, dest, .{}) catch |err| return mapTreeError(ctx, err, package_name);
-    return try std.fs.path.join(arena, &.{ ctx.generation_rel, "deps", final_name });
+    ctx.deps_dir.createDirPath(ctx.io, final_name) catch |err| return mapFs(err);
+    var destination = ctx.deps_dir.openDir(ctx.io, final_name, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+    _ = materialize.copyTreeFromDirs(ctx.gpa, ctx.io, source, &destination, .{}) catch |err| {
+        destination.close(ctx.io);
+        return mapTreeError(ctx, err, package_name);
+    };
+    return .{
+        .env_path = try std.fs.path.join(arena, &.{ ctx.generation_rel, "deps", final_name }),
+        .tree_dir = destination,
+    };
 }
 
-/// manifest の export を `implementation`（lock が記録した解決結果）に合わせて
-/// 選択し、env.json の `exports` 配列へ変換する。`native` は prefer-native
-/// として resolve へ渡し、ESM は profile が許可する場合のみ含める。`none`
-/// は実装を持たないため空を返す。
-fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, implementation: ?[]const u8) Error!std.ArrayListUnmanaged(environment.ExportRecord) {
+/// export 宣言の選択に使う条件を、実際に解決された lock entry から構築する。
+fn exportArtifactTarget(runtime: []const u8, target: resolver.Target, features: []const []const u8) manifest_mod.ArtifactTarget {
+    return .{
+        .runtime = runtime,
+        .os = target.os,
+        .cpu = target.cpu,
+        .abi = target.abi,
+        .compat_js = target.compat_js,
+        .optimize = target.optimize,
+        .version = target.nako_version,
+        .features = features,
+    };
+}
+
+/// Export.resolve の null は条件不一致（警告なし）と選択実装の失敗（error
+/// diagnostics 付き）の双方を表す。sync では後者を package failure にする。
+fn resolveExportForSync(ctx: *Context, export_decl: *const manifest_mod.Export, target: manifest_mod.ArtifactTarget, prefer_native: bool) Error!?manifest_mod.ExportResolution {
+    var scratch = diag.List.init(ctx.gpa);
+    defer scratch.deinit();
+    const diagnostics = ctx.session.diagSink(&scratch);
+    const prior_errors = diagnostics.errorCount();
+    const resolution = export_decl.resolve(ctx.arena, target, prefer_native, diagnostics) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+    };
+    if (resolution == null and diagnostics.errorCount() > prior_errors) {
+        return ctx.session.fail(.invalid_metadata, .manifest, export_decl.name, "selected implementation for export \"{s}\" is not available for the sync target", .{export_decl.name});
+    }
+    return resolution;
+}
+
+/// 選択された export target が package tree 内に通常 file として存在するか。
+/// `tree_dir`（materialize 済み）は handle 相対で確認する。`tree_abs`
+/// （path 依存）は宣言 dir を開いて export path の各中間成分を no-follow
+/// で辿る。dir・symlink・特殊 file は不適格（symlink 化した中間 dir 経由
+/// で tree 外の file を指す宣言を env.json へ記録しない。宣言 dir 自身へ
+/// の symlink は path pin・digest が担保した宣言位置の解決として辿る）。
+fn exportTargetIsFile(ctx: *Context, tree_abs: ?[]const u8, tree_dir: ?std.Io.Dir, target: []const u8) bool {
+    if (tree_dir) |dir| {
+        const stat = dir.statFile(ctx.io, target, .{ .follow_symlinks = false }) catch return false;
+        return stat.kind == .file;
+    }
+    const root = tree_abs orelse return false;
+    var dir = std.Io.Dir.cwd().openDir(ctx.io, root, .{}) catch return false;
+    defer dir.close(ctx.io);
+    var components = std.mem.splitScalar(u8, target, '/');
+    while (components.next()) |component| {
+        if (components.peek() == null) {
+            const stat = dir.statFile(ctx.io, component, .{ .follow_symlinks = false }) catch return false;
+            return stat.kind == .file;
+        }
+        const child = dir.openDir(ctx.io, component, .{ .follow_symlinks = false }) catch return false;
+        dir.close(ctx.io);
+        dir = child;
+    }
+    return false;
+}
+
+/// manifest の export を lock entry の解決結果に合わせて選択し、env.json の
+/// `exports` 配列へ変換する。`native` は prefer-native として resolve へ渡し、
+/// ESM は profile が許可する場合のみ含める。`none` は空を返す。
+/// 選択された target が package tree 内に実在しない宣言は失敗させる
+/// （明示 `commands.json` 等で source 走査を回避した経路でも env.json が
+/// 不在 file を参照しないようにする）。
+fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, entry: *const lock_model.PackageEntry, tree_abs: ?[]const u8, tree_dir: ?std.Io.Dir) Error!std.ArrayListUnmanaged(environment.ExportRecord) {
+    const implementation = entry.implementation;
     var exports = std.ArrayListUnmanaged(environment.ExportRecord).empty;
     if (implementation) |impl| {
         if (std.mem.eql(u8, impl, "none")) return exports;
     }
     const prefer_native = if (implementation) |impl| std.mem.eql(u8, impl, "native") else false;
-    const target = manifest_mod.ArtifactTarget{
-        .runtime = ctx.runtime.name(),
-        .os = ctx.target.os,
-        .cpu = ctx.target.cpu,
-        .abi = ctx.target.abi,
-        .compat_js = ctx.target.compat_js,
-        .optimize = ctx.target.optimize,
-    };
+    const target = exportArtifactTarget(ctx.runtime.name(), ctx.target, entry.features);
     for (manifest.exports) |*export_decl| {
-        const resolution = export_decl.resolve(ctx.arena, target, prefer_native, ctx.session.diagnostics) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-        } orelse continue;
-        // lock が記録した実装と食い違う export は含めない。`source` 選択の
-        // package で native/ESM を記録すると展開物と env.json が不整合になる。
-        if (implementation) |impl| {
-            if (std.mem.eql(u8, impl, "source") and resolution.kind != .source) continue;
-            if (std.mem.eql(u8, impl, "native") and resolution.kind != .native) continue;
-            if (std.mem.eql(u8, impl, "ESM") and resolution.kind != .esm) continue;
-        }
+        // 代表実装は lock が記録したパッケージ単位の選択結果で、各 export
+        // の個別実装を縛るものではない。`native` 選択は `prefer_native` と
+        // して渡し、export ごとの解決結果（source/native/esm）は個別に
+        // 記録する（kind 不一致で export を捨てると source-only の公開
+        // entry が env.json から消えて runtime 解決できなくなる）。
+        const resolution = try resolveExportForSync(ctx, export_decl, target, prefer_native) orelse continue;
         if (resolution.kind == .esm and !(std.mem.eql(u8, ctx.runtime.name(), "cnako") or ctx.target.compat_js)) continue;
+        if (!exportTargetIsFile(ctx, tree_abs, tree_dir, resolution.target)) {
+            return ctx.session.fail(.invalid_metadata, .manifest, export_decl.name, "export target \"{s}\" of \"{s}\" does not exist as a regular file in the package tree", .{ resolution.target, entry.name });
+        }
         try exports.append(ctx.arena, .{
             .name = try ctx.arena.dupe(u8, export_decl.name),
             .alias = if (export_decl.alias) |alias| try ctx.arena.dupe(u8, alias) else null,
@@ -860,12 +1225,31 @@ fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, impleme
     return exports;
 }
 
-/// commands.json を package dir から読むか、manifest export の source を
-/// 静的走査して生成する。どちらも無い場合は空。
-fn collectCommands(ctx: *Context, tree_abs: ?[]const u8, manifest: ?*const manifest_mod.Manifest) Error![]const npkg_commands.Command {
+/// 明示 `NAKO-PKG/commands.json` があればその index を採用し、無い場合は
+/// manifest exports から生成する。index の有無に関わらず、source export
+/// を起点とした import 閉包は必ず走査して検証する（`commands.json` は
+/// あくまで index であり、閉包走査を省略すると `.nako`/`.git` 配下の未
+/// pin 内容への取り込みを迂回できてしまう）。
+fn collectCommands(ctx: *Context, tree_abs: ?[]const u8, tree_dir: ?std.Io.Dir, manifest: ?*const manifest_mod.Manifest) Error![]const npkg_commands.Command {
     const arena = ctx.arena;
-    if (tree_abs) |tree| {
-        const commands_path = try std.fs.path.join(arena, &.{ tree, "NAKO-PKG/commands.json" });
+    const display_root = tree_abs orelse ctx.generation_rel;
+    var indexed_commands: ?[]const npkg_commands.Command = null;
+    if (tree_dir) |tree| {
+        if (tree.readFileAlloc(ctx.io, "NAKO-PKG/commands.json", arena, .limited(16 * 1024 * 1024))) |bytes| {
+            var scratch = diag.List.init(ctx.gpa);
+            defer scratch.deinit();
+            const parsed = npkg_commands.parse(arena, bytes, ctx.session.diagSink(&scratch)) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return ctx.session.fail(.invalid_metadata, .manifest, display_root, "commands.json in package failed validation", .{}),
+            };
+            indexed_commands = parsed.commands;
+        } else |err| switch (err) {
+            error.FileNotFound => {},
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return ctx.session.fail(.invalid_metadata, .manifest, display_root, "commands.json in package is unreadable: {s}", .{@errorName(err)}),
+        }
+    } else if (tree_abs) |root| {
+        const commands_path = try std.fs.path.join(arena, &.{ root, "NAKO-PKG/commands.json" });
         if (std.Io.Dir.cwd().readFileAlloc(ctx.io, commands_path, arena, .limited(16 * 1024 * 1024))) |bytes| {
             var scratch = diag.List.init(ctx.gpa);
             defer scratch.deinit();
@@ -873,33 +1257,48 @@ fn collectCommands(ctx: *Context, tree_abs: ?[]const u8, manifest: ?*const manif
                 error.OutOfMemory => return error.OutOfMemory,
                 else => return ctx.session.fail(.invalid_metadata, .manifest, commands_path, "commands.json in package failed validation", .{}),
             };
-            return parsed.commands;
-        } else |_| {}
+            indexed_commands = parsed.commands;
+        } else |err| switch (err) {
+            error.FileNotFound => {},
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return ctx.session.fail(.invalid_metadata, .manifest, commands_path, "commands.json in package is unreadable: {s}", .{@errorName(err)}),
+        }
     }
-    const m = manifest orelse return &.{};
-    if (tree_abs == null) return &.{};
+    const m = manifest orelse return indexed_commands orelse &.{};
+    if (tree_abs == null and tree_dir == null) return indexed_commands orelse &.{};
 
-    // export の source path を entry として静的に走査する。
+    // export の source path を entry として静的に走査する。明示 index が
+    // ある経路でも同じ走査を行い、解決した import 先の成分に `.nako`/
+    // `.git` が現れた時点で拒否する（command 一覧の生成が不要でも検査は
+    // 必要）。
     var entry_paths = std.ArrayListUnmanaged([]const u8).empty;
     for (m.exports) |*export_decl| {
         if (export_decl.path) |path| try entry_paths.append(arena, path);
     }
-    if (entry_paths.items.len == 0) return &.{};
+    if (entry_paths.items.len == 0) return indexed_commands orelse &.{};
 
-    var provider_state = DirSourceProvider{ .io = ctx.io, .root = try arena.dupe(u8, tree_abs.?) };
+    var provider_state = DirSourceProvider{
+        .io = ctx.io,
+        .root = if (tree_abs) |root| try arena.dupe(u8, root) else null,
+        .dir = tree_dir,
+    };
     var scratch = diag.List.init(ctx.gpa);
     defer scratch.deinit();
     const generated = npkg_commands_gen.generate(arena, provider_state.provider(), entry_paths.items, ctx.session.diagSink(&scratch)) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => return ctx.session.fail(.invalid_metadata, .manifest, m.package.name, "failed to derive commands for package \"{s}\"", .{m.package.name}),
     };
+    // 明示 index があれば commands の記録内容は index を採用する。
+    // `generate` は import 閉包の妥当性検査として動作した。
+    if (indexed_commands) |commands| return commands;
     return generated.commands;
 }
 
 /// package dir からファイルを読む `npkg_commands_gen.SourceProvider`。
 const DirSourceProvider = struct {
     io: std.Io,
-    root: []const u8,
+    root: ?[]const u8,
+    dir: ?std.Io.Dir,
 
     fn provider(self: *DirSourceProvider) npkg_commands_gen.SourceProvider {
         return .{ .context = self, .readFn = read };
@@ -907,245 +1306,71 @@ const DirSourceProvider = struct {
 
     fn read(context: *anyopaque, allocator: Allocator, path: []const u8) anyerror!?[]u8 {
         const self: *DirSourceProvider = @ptrCast(@alignCast(context));
-        const abs = try std.fs.path.join(allocator, &.{ self.root, path });
-        defer allocator.free(abs);
-        const bytes = std.Io.Dir.cwd().readFileAlloc(self.io, abs, allocator, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
-            error.FileNotFound => return null,
-            else => return err,
+        const bytes = if (self.dir) |dir|
+            dir.readFileAlloc(self.io, path, allocator, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
+                error.FileNotFound => return null,
+                else => return err,
+            }
+        else blk: {
+            const abs = try std.fs.path.join(allocator, &.{ self.root.?, path });
+            defer allocator.free(abs);
+            break :blk std.Io.Dir.cwd().readFileAlloc(self.io, abs, allocator, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
+                error.FileNotFound => return null,
+                else => return err,
+            };
         };
         return bytes;
     }
 };
 
-// ---------------------------------------------------------------------------
-// tests
-// ---------------------------------------------------------------------------
-
 const testing = std.testing;
 
-fn sha256HexAlloc(allocator: Allocator, bytes: []const u8) ![]u8 {
-    var digest: [32]u8 = undefined;
-    std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});
-    const hex = std.fmt.bytesToHex(digest, .lower);
-    return try allocator.dupe(u8, &hex);
-}
-
-const app_manifest =
-    \\[package]
-    \\name = "app"
-    \\version = "0.1.0"
-    \\license = "MIT"
-    \\
-;
-
-const lib_manifest =
-    \\[package]
-    \\name = "lib"
-    \\version = "1.0.0"
-    \\license = "MIT"
-    \\
-    \\[[exports]]
-    \\name = "lib"
-    \\path = "src/index.nako3"
-    \\
-;
-
-/// path 依存1件を持つ最小プロジェクトを作る。戻り値は lock 本文。
-fn fixtureLock(allocator: Allocator, manifest_sha: []const u8) ![]u8 {
-    return try std.fmt.allocPrint(allocator,
-        \\{{
-        \\  "schemaVersion": 1,
-        \\  "resolverVersion": 1,
-        \\  "input": {{
-        \\    "manifestSha256": "sha256:{s}",
-        \\    "profile": "default",
-        \\    "features": [],
-        \\    "target": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu" }}
-        \\  }},
-        \\  "packages": {{
-        \\    "pkg:11111111111111111111111111111111": {{
-        \\      "id": "pkg:11111111111111111111111111111111",
-        \\      "name": "lib",
-        \\      "version": "1.0.0",
-        \\      "source": {{ "type": "path", "path": "deps/lib", "mutable": true }},
-        \\      "resolvedFrom": {{ "type": "path", "path": "deps/lib", "mutable": true }},
-        \\      "dependencies": [],
-        \\      "features": [],
-        \\      "artifacts": {{ "source": {{ "kind": "source", "type": "raw" }} }}
-        \\    }}
-        \\  }},
-        \\  "profiles": {{
-        \\    "default": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu", "runtime": "lnako" }}
-        \\  }}
-        \\}}
-    , .{manifest_sha});
-}
-
-fn writeFixtureProject(temporary: *std.testing.TmpDir, manifest_sha: []const u8) !void {
-    const io = testing.io;
-    try temporary.dir.createDirPath(io, "deps/lib/src");
-    try temporary.dir.writeFile(io, .{ .sub_path = "nako.toml", .data = app_manifest });
-    try temporary.dir.writeFile(io, .{ .sub_path = "deps/lib/nako.toml", .data = lib_manifest });
-    try temporary.dir.writeFile(io, .{
-        .sub_path = "deps/lib/src/index.nako3",
-        .data = "●テストとは\n  戻る\nここまで\n",
-    });
-    const lock = try fixtureLock(testing.allocator, manifest_sha);
-    defer testing.allocator.free(lock);
-    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
-}
-
-test "sync は path 依存を参照して schema v1 の環境を構築する" {
+test "cachedManifest は manifest 欠落と読取不能を区別する" {
     const io = testing.io;
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
-    const manifest_sha = try sha256HexAlloc(testing.allocator, app_manifest);
-    defer testing.allocator.free(manifest_sha);
-    try writeFixtureProject(&temporary, manifest_sha);
-    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
-    defer testing.allocator.free(root);
-    const cache_root = try std.fs.path.join(testing.allocator, &.{ root, "cache" });
+    try temporary.dir.createDirPath(io, "cache");
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", testing.allocator);
     defer testing.allocator.free(cache_root);
+    var store = try cache.Store.open(testing.allocator, io, cache_root);
+    defer store.deinit();
 
-    var list = diag.List.init(testing.allocator);
-    defer list.deinit();
-    var report = try run(testing.allocator, io, .{
-        .project_root = root,
-        .cache_root = cache_root,
-    }, &list);
-    defer report.deinit();
-    try testing.expectEqual(@as(usize, 1), report.package_count);
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    var session = fetch.Session.init(testing.allocator, io, .{});
+    defer session.deinit();
+    var ctx = Context{
+        .gpa = testing.allocator,
+        .arena = arena_impl.allocator(),
+        .io = io,
+        .session = &session,
+        .cache_store = &store,
+        .project_abs = "",
+        .deps_dir = temporary.dir,
+        .workspace_dir = temporary.dir,
+        .generation_rel = "",
+        .runtime = .lnako,
+        .target = .{},
+    };
 
-    // environment.json を parse して契約フィールドを確認する。
-    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, report.environment_json, .{});
-    defer parsed.deinit();
-    const document = parsed.value.object;
-    try testing.expectEqual(@as(i64, 1), document.get("schemaVersion").?.integer);
-    try testing.expectEqualStrings("default", document.get("profile").?.string);
-    try testing.expectEqualStrings("lnako", document.get("runtime").?.string);
-    const lib = document.get("packages").?.object.get("pkg:11111111111111111111111111111111").?.object;
-    // path 依存は宣言 dir をそのまま参照する。
-    try testing.expectEqualStrings("deps/lib", lib.get("path").?.string);
-    // export の source を静的走査して公開命令を記録する（path 依存でも
-    // 宣言 dir を絶対化して commands 生成へ渡す）。
-    const commands = lib.get("commands").?.array;
-    try testing.expectEqual(@as(usize, 1), commands.items.len);
-    try testing.expectEqualStrings("テスト", commands.items[0].object.get("name").?.string);
+    // manifest を持たない完全な entry は null（読取不能とは区別する）。
+    {
+        var staging = try store.openStaging("cached-empty");
+        try staging.createDir(io, "tree", .default_dir);
+        staging.close(io);
+        try store.publishStaging("cached-empty");
+        try testing.expect((try cachedManifest(&ctx, "cached-empty")) == null);
+    }
 
-    // lockSha256 は nako.lock 実バイトの SHA-256 と一致する。
-    const lock_bytes = try temporary.dir.readFileAlloc(io, "nako.lock", testing.allocator, .unlimited);
-    defer testing.allocator.free(lock_bytes);
-    const lock_hex = try sha256HexAlloc(testing.allocator, lock_bytes);
-    defer testing.allocator.free(lock_hex);
-    const expected = try std.fmt.allocPrint(testing.allocator, "sha256:{s}", .{lock_hex});
-    defer testing.allocator.free(expected);
-    try testing.expectEqualStrings(expected, document.get("lockSha256").?.string);
-
-    // `.nako/environment.json` が書かれ、`current` が世代を指す。
-    const written = try temporary.dir.readFileAlloc(io, ".nako/environment.json", testing.allocator, .unlimited);
-    defer testing.allocator.free(written);
-    try testing.expectEqualStrings(report.environment_json, written);
-}
-
-test "sync は manifest との不整合な lock を StaleLock で拒否する" {
-    const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
-    try writeFixtureProject(&temporary, "0000000000000000000000000000000000000000000000000000000000000000");
-    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
-    defer testing.allocator.free(root);
-    const cache_root = try std.fs.path.join(testing.allocator, &.{ root, "cache" });
-    defer testing.allocator.free(cache_root);
-
-    var list = diag.List.init(testing.allocator);
-    defer list.deinit();
-    try testing.expectError(error.StaleLock, run(testing.allocator, io, .{
-        .project_root = root,
-        .cache_root = cache_root,
-    }, &list));
-    // 環境は一切構築されない。
-    try testing.expectError(error.FileNotFound, temporary.dir.access(io, ".nako/environment.json", .{}));
-}
-
-test "sync は失敗時に直前の有効環境を保持する" {
-    const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
-    const manifest_sha = try sha256HexAlloc(testing.allocator, app_manifest);
-    defer testing.allocator.free(manifest_sha);
-    try writeFixtureProject(&temporary, manifest_sha);
-    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
-    defer testing.allocator.free(root);
-    const cache_root = try std.fs.path.join(testing.allocator, &.{ root, "cache" });
-    defer testing.allocator.free(cache_root);
-
-    var list = diag.List.init(testing.allocator);
-    defer list.deinit();
-    var first = try run(testing.allocator, io, .{ .project_root = root, .cache_root = cache_root }, &list);
-    defer first.deinit();
-    const first_json = try testing.allocator.dupe(u8, first.environment_json);
-    defer testing.allocator.free(first_json);
-
-    // 未知の profile を要求して失敗させる。
-    try testing.expectError(error.UnknownProfile, run(testing.allocator, io, .{
-        .project_root = root,
-        .cache_root = cache_root,
-        .profile = "nonexistent",
-    }, &list));
-
-    // 直前の environment.json がそのまま残る。
-    const written = try temporary.dir.readFileAlloc(io, ".nako/environment.json", testing.allocator, .unlimited);
-    defer testing.allocator.free(written);
-    try testing.expectEqualStrings(first_json, written);
-}
-
-test "sync は offline で http 依存の未取得を拒否する" {
-    const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
-    const manifest_sha = try sha256HexAlloc(testing.allocator, app_manifest);
-    defer testing.allocator.free(manifest_sha);
-    const lock = try std.fmt.allocPrint(testing.allocator,
-        \\{{
-        \\  "schemaVersion": 1,
-        \\  "resolverVersion": 1,
-        \\  "input": {{
-        \\    "manifestSha256": "sha256:{s}",
-        \\    "profile": "default",
-        \\    "features": [],
-        \\    "target": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu" }}
-        \\  }},
-        \\  "packages": {{
-        \\    "pkg:22222222222222222222222222222222": {{
-        \\      "id": "pkg:22222222222222222222222222222222",
-        \\      "name": "remote",
-        \\      "version": "1.0.0",
-        \\      "source": {{ "type": "http", "url": "http://127.0.0.1:1/pkg.npkg", "hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" }},
-        \\      "dependencies": [],
-        \\      "features": [],
-        \\      "artifacts": {{ "source": {{ "kind": "source", "type": ".npkg", "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "url": "http://127.0.0.1:1/pkg.npkg" }} }}
-        \\    }}
-        \\  }},
-        \\  "profiles": {{
-        \\    "default": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu", "runtime": "lnako" }}
-        \\  }}
-        \\}}
-    , .{manifest_sha});
-    defer testing.allocator.free(lock);
-    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
-    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
-    defer testing.allocator.free(root);
-    const cache_root = try std.fs.path.join(testing.allocator, &.{ root, "cache" });
-    defer testing.allocator.free(cache_root);
-
-    var list = diag.List.init(testing.allocator);
-    defer list.deinit();
-    try testing.expectError(error.Offline, run(testing.allocator, io, .{
-        .project_root = root,
-        .cache_root = cache_root,
-        .policy = .{ .offline = true },
-    }, &list));
-    try testing.expectError(error.FileNotFound, temporary.dir.access(io, ".nako/environment.json", .{}));
+    // `nako.toml` が file でなく dir 化している entry は「無い」ではなく
+    // 読取不能。次候補へ流さず invalid_metadata で失敗させる。
+    {
+        var staging = try store.openStaging("cached-broken");
+        try staging.createDirPath(io, "tree/nako.toml");
+        staging.close(io);
+        try store.publishStaging("cached-broken");
+        try testing.expectError(error.InvalidMetadata, cachedManifest(&ctx, "cached-broken"));
+    }
 }
 
 test "artifactKey は宣言 hash を key 材料へ含める" {
@@ -1168,63 +1393,71 @@ test "artifactKey は宣言 hash を key 材料へ含める" {
     try testing.expect(!std.mem.eql(u8, c, e));
 }
 
-test "sync は current が欠損しても公開済み世代を environment.json から保持する" {
-    const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
-    const manifest_sha = try sha256HexAlloc(testing.allocator, app_manifest);
-    defer testing.allocator.free(manifest_sha);
-    try writeFixtureProject(&temporary, manifest_sha);
-    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
-    defer testing.allocator.free(root);
-    const cache_root = try std.fs.path.join(testing.allocator, &.{ root, "cache" });
-    defer testing.allocator.free(cache_root);
+test "materialize target は lock input の compatJs・optimize・engine version を引き継ぐ" {
+    // 解決時に --compat-js/-O/engine version で選択した artifact を、
+    // materialize 側の検証が別条件で reject しないよう、lock の
+    // input.target/input.* に記録済みの実効値を再現する。
+    var input = lock_model.Input{
+        .manifest_sha256 = "sha256:aa",
+        .profile = "default",
+        .target = .{ .os = "macos", .cpu = "aarch64", .abi = "gnu", .compat_js = true, .optimize = "O3" },
+        .nako_version = "3.7.24",
+        .cnako_version = "3.7.24",
+        .lnako_version = "0.2.2",
+    };
+    // 入力 profile では profile 宣言に compat-js/optimize がなくても
+    // input.target の実効値を使い、解決した ESM artifact を保持する。
+    const record = lock_model.ProfileRecord{
+        .runtime = "lnako",
+        .os = "macos",
+        .cpu = "aarch64",
+        .abi = "gnu",
+    };
+    const target = materializeTarget("default", &record, &input, .lnako);
+    try testing.expect(target.compat_js);
+    try testing.expectEqualStrings("O3", target.optimize);
+    try testing.expectEqual(@as(u64, 3), target.nako_version.?.major);
+    try testing.expectEqual(@as(u64, 7), target.nako_version.?.minor);
+    try testing.expectEqual(@as(u64, 24), target.nako_version.?.patch);
+    try testing.expectEqual(@as(u64, 0), target.lnako_version.?.major);
+    try testing.expectEqual(@as(u64, 2), target.lnako_version.?.minor);
+    try testing.expectEqual(@as(u64, 2), target.lnako_version.?.patch);
+    try testing.expect(target.cnako_version != null);
 
-    var list = diag.List.init(testing.allocator);
-    defer list.deinit();
-    var first = try run(testing.allocator, io, .{ .project_root = root, .cache_root = cache_root }, &list);
-    const first_gen = try testing.allocator.dupe(u8, first.generation);
-    defer testing.allocator.free(first_gen);
-    first.deinit();
+    // 別 profile を --profile で指定した場合はその record の optimize
+    // 宣言を使う（CLI の -O は入力 profile にのみ適用される）。
+    const other = lock_model.ProfileRecord{
+        .os = "linux",
+        .cpu = "x86_64",
+        .abi = "gnu",
+        .optimize = "O1",
+    };
+    const other_target = materializeTarget("release", &other, &input, .lnako);
+    try testing.expectEqualStrings("O1", other_target.optimize);
+    try testing.expect(!other_target.compat_js); // input の --compat-js は別 profile に漏らさない
+    try testing.expectEqualStrings("linux", other_target.os);
 
-    // current 更新失敗・中断と同等の状態（公開済みだが current が無い）。
-    try temporary.dir.deleteFile(io, ".nako/current");
+    const other_declared_compat = lock_model.ProfileRecord{
+        .os = "linux",
+        .cpu = "x86_64",
+        .abi = "gnu",
+        .compat_js = true,
+    };
+    const other_declared_target = materializeTarget("release", &other_declared_compat, &input, .lnako);
+    try testing.expect(other_declared_target.compat_js); // record 宣言は維持する
 
-    var second = try run(testing.allocator, io, .{ .project_root = root, .cache_root = cache_root }, &list);
-    defer second.deinit();
-    try testing.expect(!std.mem.eql(u8, first_gen, second.generation));
-
-    // current が無くても environment.json の参照から前世代が保持される。
-    const previous = try std.fs.path.join(testing.allocator, &.{ root, ".nako", "env", first_gen });
-    defer testing.allocator.free(previous);
-    try std.Io.Dir.cwd().access(io, previous, .{});
+    // version を記録しない旧 lock は null（未検査）のまま。
+    var legacy = lock_model.Input{
+        .manifest_sha256 = "sha256:aa",
+        .profile = "default",
+        .target = .{ .os = "macos", .cpu = "aarch64", .abi = "gnu" },
+    };
+    const legacy_target = materializeTarget("default", &record, &legacy, .lnako);
+    try testing.expect(!legacy_target.compat_js);
+    try testing.expectEqualStrings("O0", legacy_target.optimize);
+    try testing.expect(legacy_target.nako_version == null);
 }
 
-test "sync は再実行で世代を更新し直前世代を保持する" {
-    const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
-    const manifest_sha = try sha256HexAlloc(testing.allocator, app_manifest);
-    defer testing.allocator.free(manifest_sha);
-    try writeFixtureProject(&temporary, manifest_sha);
-    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
-    defer testing.allocator.free(root);
-    const cache_root = try std.fs.path.join(testing.allocator, &.{ root, "cache" });
-    defer testing.allocator.free(cache_root);
-
-    var list = diag.List.init(testing.allocator);
-    defer list.deinit();
-    var first = try run(testing.allocator, io, .{ .project_root = root, .cache_root = cache_root }, &list);
-    const first_gen = try testing.allocator.dupe(u8, first.generation);
-    defer testing.allocator.free(first_gen);
-    first.deinit();
-
-    var second = try run(testing.allocator, io, .{ .project_root = root, .cache_root = cache_root }, &list);
-    defer second.deinit();
-    try testing.expect(!std.mem.eql(u8, first_gen, second.generation));
-
-    // 直前世代 dir が残っている。
-    const previous = try std.fs.path.join(testing.allocator, &.{ root, ".nako", "env", first_gen });
-    defer testing.allocator.free(previous);
-    try std.Io.Dir.cwd().access(io, previous, .{});
+test {
+    _ = @import("sync_test.zig");
 }

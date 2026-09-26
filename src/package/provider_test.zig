@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const cache_mod = @import("cache.zig");
 const diag = @import("diagnostics.zig");
 const fetch = @import("fetch.zig");
 const lock_model = @import("lock_model.zig");
@@ -52,11 +53,13 @@ const FixtureServer = struct {
         if (self.listener) |*listener| {
             self.stopping.store(true, .release);
             // listen socket への shutdown は accept の並行 cancel 機構として
-            // Zig が規定する方法。deinit（close）だけでは accept が解除されず、
-            // close 後の accept は BADF で panic するため join より先に行う。
-            const wake: std.Io.net.Stream = .{ .socket = listener.socket };
-            wake.shutdown(self.io, .both) catch {};
-            // shutdown が accept を解除しない環境向けに自接続でも起こす。
+            // Zig が規定する方法だが、Zig 0.16 Windows は listening socket の
+            // shutdown で INVALID_PARAMETER を panic するため、自接続で解除する。
+            if (builtin.os.tag != .windows) {
+                const wake: std.Io.net.Stream = .{ .socket = listener.socket };
+                wake.shutdown(self.io, .both) catch {};
+            }
+            // shutdown が accept を解除しない環境向けにも自接続で起こす。
             if (listener.socket.address.connect(self.io, .{ .mode = .stream })) |stream| {
                 stream.close(self.io);
             } else |_| {}
@@ -190,6 +193,57 @@ test "path provider はローカル manifest を取得して source identity を
     try testing.expectEqual(true, acquired.source.mutable.?);
     const parsed = acquired.manifest.?;
     try testing.expectEqualStrings("demo", parsed.package.name);
+}
+
+test "path provider の絶対判定はhost pathと完全なUNCを区別する" {
+    if (builtin.os.tag == .windows) {
+        try testing.expect(provider.isAbsoluteDepPath("\\lib"));
+        try testing.expect(!provider.isAbsoluteDepPath("\\\\lib"));
+    } else {
+        try testing.expect(!provider.isAbsoluteDepPath("\\lib"));
+        try testing.expect(!provider.isAbsoluteDepPath("\\\\lib"));
+    }
+    try testing.expectEqual(builtin.os.tag == .windows, provider.isAbsoluteDepPath("C:\\"));
+    // UNC 判定は Windows 限定。POSIX では `\\` 始まりも backslash を含む
+    // 正当な相対名として扱う。
+    try testing.expectEqual(builtin.os.tag == .windows, provider.isAbsoluteDepPath("\\\\server\\share\\lib"));
+}
+
+test "path provider はPOSIX上の先頭backslashを相対pathとして取得する" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "base/\\lib/src");
+    try writePackage(temporary.dir, io, "base/\\lib");
+    const base = try temporary.dir.realPathFileAlloc(io, "base", testing.allocator);
+    defer testing.allocator.free(base);
+
+    var session = newSession(.{});
+    defer session.deinit();
+    const acquired = try provider.acquirePath(&session, .{ .name = "demo", .path = "\\lib" }, base);
+    try testing.expectEqualStrings("demo", acquired.manifest.?.package.name);
+}
+
+test "path provider はPOSIX上のdrive-looking pathをbase_dir相対で取得する" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "base/C:/deps/src");
+    try temporary.dir.createDirPath(io, "base/C:\\deps/src");
+    try writePackage(temporary.dir, io, "base/C:/deps");
+    try writePackage(temporary.dir, io, "base/C:\\deps");
+    const base = try temporary.dir.realPathFileAlloc(io, "base", testing.allocator);
+    defer testing.allocator.free(base);
+
+    var session = newSession(.{});
+    defer session.deinit();
+    for ([_][]const u8{ "C:/deps", "C:\\deps" }) |dep_path| {
+        const acquired = try provider.acquirePath(&session, .{ .name = "demo", .path = dep_path }, base);
+        try testing.expectEqualStrings(dep_path, acquired.source.path.?);
+        try testing.expectEqualStrings("demo", acquired.manifest.?.package.name);
+    }
 }
 
 test "path provider は Unicode path を扱える" {
@@ -567,6 +621,17 @@ fn gitStdout(io: std.Io, argv: []const []const u8) ![]u8 {
     return owned;
 }
 
+/// `acquireGit` へ渡す pinned workspace handle。`name` の dir を（無ければ）
+/// 作って no-follow で開く。Git subprocess の cwd はこの handle で固定
+/// されるため、呼出し側は path 文字列を Git へ渡さない。
+fn openGitWorkspace(temporary: *std.testing.TmpDir, io: std.Io, name: []const u8) !std.Io.Dir {
+    temporary.dir.createDir(io, name, .default_dir) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => return err,
+    };
+    return temporary.dir.openDir(io, name, .{ .iterate = true, .follow_symlinks = false });
+}
+
 /// ローカル git repo を作り、HEAD の完全 SHA を返す。
 /// `path` は `realPathFileAlloc` 由来の sentinel 付き領域を保持する。
 /// commit は `commit.gpgsign=false` で実行し、呼出し側の git 設定
@@ -614,14 +679,219 @@ test "git provider はローカル repo を clone して commit に固定する"
     defer testing.allocator.free(tmp_root);
     const checkout = try std.fs.path.join(testing.allocator, &.{ tmp_root, "checkout" });
     defer testing.allocator.free(checkout);
+    var workspace = try openGitWorkspace(&temporary, io, "checkout");
+    defer workspace.close(io);
 
     var session = newSession(.{});
     defer session.deinit();
     const short = repo.commit[0..7];
-    const acquired = try provider.acquireGit(&session, .{ .name = "demo", .url = repo.url, .commit = short }, checkout, null);
+    const acquired = try provider.acquireGit(&session, .{ .name = "demo", .url = repo.url, .commit = short }, workspace, null);
     try testing.expectEqual(lock_model.SourceKind.git, acquired.source.kind);
     try testing.expectEqualStrings(repo.commit, acquired.source.commit.?);
     try testing.expectEqualStrings("demo", acquired.manifest.?.package.name);
+}
+
+test "git provider は既定で非loopback平文HTTPをclone前に拒否する" {
+    const io = testing.io;
+    if (!gitAvailable(io)) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const checkout = try std.fs.path.join(testing.allocator, &.{ root, "checkout" });
+    defer testing.allocator.free(checkout);
+    var workspace = try openGitWorkspace(&temporary, io, "checkout");
+    defer workspace.close(io);
+
+    var session = newSession(.{});
+    defer session.deinit();
+    try testing.expectError(error.InvalidSource, provider.acquireGit(&session, .{ .name = "demo", .url = "http://example.invalid/repo", .commit = "0123456" }, workspace, null));
+    try testing.expectEqual(fetch.FailureKind.invalid_source, session.lastFailure().?.kind);
+    try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "checkout/.git", .{}));
+}
+
+test "git provider は既存checkoutからのfetch前にも非loopback平文HTTPを拒否する" {
+    const io = testing.io;
+    if (!gitAvailable(io)) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const repo = try createGitRepo(&temporary, io);
+    defer testing.allocator.free(repo.path);
+    defer testing.allocator.free(repo.url);
+    defer testing.allocator.free(repo.commit);
+    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const checkout = try std.fs.path.join(testing.allocator, &.{ root, "checkout" });
+    defer testing.allocator.free(checkout);
+    try gitRun(io, &.{ "git", "clone", "--quiet", repo.path, checkout });
+    try gitRun(io, &.{ "git", "-C", checkout, "remote", "set-url", "origin", "http://example.invalid/repo" });
+    var workspace = try openGitWorkspace(&temporary, io, "checkout");
+    defer workspace.close(io);
+
+    var session = newSession(.{});
+    defer session.deinit();
+    try testing.expectError(error.InvalidSource, provider.acquireGit(&session, .{ .name = "demo", .url = "http://example.invalid/repo", .commit = "deadbee" }, workspace, null));
+    try testing.expectEqual(fetch.FailureKind.invalid_source, session.lastFailure().?.kind);
+}
+
+test "git provider permits loopback HTTP and explicit plaintext override" {
+    const io = testing.io;
+    if (!gitAvailable(io)) return error.SkipZigTest;
+    for ([_]struct { url: []const u8, policy: fetch.Policy }{
+        .{ .url = "http://127.0.0.1:1/repo", .policy = .{} },
+        .{ .url = "http://example.invalid/repo", .policy = .{ .allow_plaintext_http = true } },
+    }) |test_case| {
+        var temporary = std.testing.tmpDir(.{});
+        defer temporary.cleanup();
+        const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+        defer testing.allocator.free(root);
+        const checkout = try std.fs.path.join(testing.allocator, &.{ root, "checkout" });
+        defer testing.allocator.free(checkout);
+        var workspace = try openGitWorkspace(&temporary, io, "checkout");
+        defer workspace.close(io);
+        var session = newSession(test_case.policy);
+        defer session.deinit();
+        try testing.expectError(error.Network, provider.acquireGit(&session, .{ .name = "demo", .url = test_case.url, .commit = "0123456" }, workspace, null));
+        try testing.expectEqual(fetch.FailureKind.network, session.lastFailure().?.kind);
+    }
+}
+
+test "git provider は dirty cached checkout を pinned commit へ戻してから読む" {
+    const io = testing.io;
+    if (!gitAvailable(io)) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const repo = try createGitRepo(&temporary, io);
+    defer testing.allocator.free(repo.path);
+    defer testing.allocator.free(repo.url);
+    defer testing.allocator.free(repo.commit);
+    const tmp_root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(tmp_root);
+    const checkout = try std.fs.path.join(testing.allocator, &.{ tmp_root, "checkout" });
+    defer testing.allocator.free(checkout);
+    var workspace = try openGitWorkspace(&temporary, io, "checkout");
+    defer workspace.close(io);
+    const dep = manifest_mod.GitDependency{ .name = "demo", .url = repo.url, .commit = repo.commit[0..7] };
+
+    var session = newSession(.{});
+    defer session.deinit();
+    const first = try provider.acquireGit(&session, dep, workspace, null);
+    try temporary.dir.writeFile(io, .{ .sub_path = "checkout/nako.toml", .data = "[package]\nname = \"attacker\"\nversion = \"9.9.9\"\nlicense = \"MIT\"\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "checkout/src/index.nako3", .data = "attacker source" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "checkout/untracked.nako3", .data = "attacker file" });
+    try gitRun(io, &.{ "git", "-C", checkout, "init", "--quiet", "nested-untracked" });
+
+    session.policy.offline = true;
+    const recovered = try provider.acquireGit(&session, dep, workspace, first.source);
+    try testing.expectEqualStrings(repo.commit, recovered.source.commit.?);
+    try testing.expectEqualStrings("demo", recovered.manifest.?.package.name);
+    const source = try temporary.dir.readFileAlloc(io, "checkout/src/index.nako3", testing.allocator, .limited(128));
+    defer testing.allocator.free(source);
+    try testing.expectEqualStrings("●表示とは\nここまで\n", source);
+    try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "checkout/untracked.nako3", .{}));
+    try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "checkout/nested-untracked/.git", .{}));
+}
+
+test "git provider は cached repository の post-checkout hook を実行しない" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = testing.io;
+    if (!gitAvailable(io)) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const repo = try createGitRepo(&temporary, io);
+    defer testing.allocator.free(repo.path);
+    defer testing.allocator.free(repo.url);
+    defer testing.allocator.free(repo.commit);
+    const tmp_root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(tmp_root);
+    const checkout = try std.fs.path.join(testing.allocator, &.{ tmp_root, "checkout" });
+    defer testing.allocator.free(checkout);
+    const hook_dir = try std.fs.path.join(testing.allocator, &.{ tmp_root, "attacker-hooks" });
+    defer testing.allocator.free(hook_dir);
+    const hook_path = try std.fs.path.join(testing.allocator, &.{ hook_dir, "post-checkout" });
+    defer testing.allocator.free(hook_path);
+    const marker = try std.fs.path.join(testing.allocator, &.{ tmp_root, "hook-ran" });
+    defer testing.allocator.free(marker);
+    const filter_marker = try std.fs.path.join(testing.allocator, &.{ tmp_root, "filter-ran" });
+    defer testing.allocator.free(filter_marker);
+    var workspace = try openGitWorkspace(&temporary, io, "checkout");
+    defer workspace.close(io);
+
+    var session = newSession(.{});
+    defer session.deinit();
+    const dep = manifest_mod.GitDependency{ .name = "demo", .url = repo.url, .commit = repo.commit[0..7] };
+    _ = try provider.acquireGit(&session, dep, workspace, null);
+
+    // 確実に post-checkout を発火させるため、hook を仕込む前に別 commit へ移す。
+    try temporary.dir.writeFile(io, .{ .sub_path = "repo/second.txt", .data = "second" });
+    try gitRun(io, &.{ "git", "-C", repo.path, "-c", "user.email=test@example.com", "-c", "user.name=test", "add", "-A" });
+    try gitRun(io, &.{ "git", "-C", repo.path, "-c", "user.email=test@example.com", "-c", "user.name=test", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "second" });
+    const second_commit = try gitStdout(io, &.{ "git", "-C", repo.path, "rev-parse", "HEAD" });
+    defer testing.allocator.free(second_commit);
+    try gitRun(io, &.{ "git", "-C", checkout, "fetch", "--quiet", "origin", second_commit });
+    try gitRun(io, &.{ "git", "-C", checkout, "checkout", "--quiet", "--force", second_commit });
+
+    try temporary.dir.createDir(io, "attacker-hooks", .default_dir);
+    const hook_script = try std.fmt.allocPrint(testing.allocator, "#!/bin/sh\nprintf owned > '{s}'\n", .{marker});
+    defer testing.allocator.free(hook_script);
+    try temporary.dir.writeFile(io, .{ .sub_path = "attacker-hooks/post-checkout", .data = hook_script });
+    try gitRun(io, &.{ "chmod", "+x", hook_path });
+    try gitRun(io, &.{ "git", "-C", checkout, "config", "core.hooksPath", hook_dir });
+    const filter_command = try std.fmt.allocPrint(testing.allocator, "sh -c 'cat > {s}'", .{filter_marker});
+    defer testing.allocator.free(filter_command);
+    try gitRun(io, &.{ "git", "-C", checkout, "config", "filter.evil.smudge", filter_command });
+    try temporary.dir.writeFile(io, .{ .sub_path = "checkout/.git/info/attributes", .data = "nako.toml filter=evil\\n" });
+    _ = try provider.acquireGit(&session, dep, workspace, null);
+    try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "hook-ran", .{}));
+    try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "filter-ran", .{}));
+}
+
+test "git provider は symlink 化された .git/info を leaf ごと除去して attributes を無効化する" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = testing.io;
+    if (!gitAvailable(io)) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const repo = try createGitRepo(&temporary, io);
+    defer testing.allocator.free(repo.path);
+    defer testing.allocator.free(repo.url);
+    defer testing.allocator.free(repo.commit);
+
+    // `ident` は config 不要で `$Id$` を checkout 時に展開する attribute。
+    // 検証用の目印として HEAD に `$Id$` 入りの file を積む。
+    try temporary.dir.writeFile(io, .{ .sub_path = "repo/marker.txt", .data = "$Id$\n" });
+    try gitRun(io, &.{ "git", "-C", repo.path, "-c", "user.email=test@example.com", "-c", "user.name=test", "add", "-A" });
+    try gitRun(io, &.{ "git", "-C", repo.path, "-c", "user.email=test@example.com", "-c", "user.name=test", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "marker" });
+    const commit = try gitStdout(io, &.{ "git", "-C", repo.path, "rev-parse", "HEAD" });
+    defer testing.allocator.free(commit);
+
+    var workspace = try openGitWorkspace(&temporary, io, "checkout");
+    defer workspace.close(io);
+    var session = newSession(.{});
+    defer session.deinit();
+    const dep = manifest_mod.GitDependency{ .name = "demo", .url = repo.url, .commit = commit[0..7] };
+    _ = try provider.acquireGit(&session, dep, workspace, null);
+
+    // clone 後の `.git/info` を外部 dir への symlink に置き換える。
+    // attributes を残したまま checkout/clean が走ると `ident` で
+    // 作業木の byte が pin commit と食い違う内容へ書き換わる。
+    const tmp_root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(tmp_root);
+    try temporary.dir.createDir(io, "attacker-info", .default_dir);
+    try temporary.dir.writeFile(io, .{ .sub_path = "attacker-info/attributes", .data = "* ident\n" });
+    try temporary.dir.deleteTree(io, "checkout/.git/info");
+    const link_target = try std.fs.path.join(testing.allocator, &.{ tmp_root, "attacker-info" });
+    defer testing.allocator.free(link_target);
+    try temporary.dir.symLink(io, link_target, "checkout/.git/info", .{ .is_directory = true });
+
+    session.policy.offline = true;
+    _ = try provider.acquireGit(&session, dep, workspace, null);
+
+    // symlink leaf は除去され、再 checkout でも `$Id$` は展開されない。
+    try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "checkout/.git/info", .{ .follow_symlinks = false }));
+    const marker = try temporary.dir.readFileAlloc(io, "checkout/marker.txt", testing.allocator, .limited(64));
+    defer testing.allocator.free(marker);
+    try testing.expectEqualStrings("$Id$\n", marker);
 }
 
 test "git provider は commit-ish と同名の移動した tag に誤解されない" {
@@ -650,9 +920,11 @@ test "git provider は commit-ish と同名の移動した tag に誤解され�
     const checkout = try std.fs.path.join(testing.allocator, &.{ tmp_root, "checkout" });
     defer testing.allocator.free(checkout);
 
+    var workspace = try openGitWorkspace(&temporary, io, "checkout");
+    defer workspace.close(io);
     var session = newSession(.{});
     defer session.deinit();
-    const acquired = try provider.acquireGit(&session, .{ .name = "demo", .url = repo.url, .commit = short }, checkout, null);
+    const acquired = try provider.acquireGit(&session, .{ .name = "demo", .url = repo.url, .commit = short }, workspace, null);
     try testing.expectEqualStrings(repo.commit, acquired.source.commit.?);
 }
 
@@ -681,9 +953,11 @@ test "git provider は既存 lock の commit を tag 移動後も使う" {
     const checkout = try std.fs.path.join(testing.allocator, &.{ tmp_root, "checkout" });
     defer testing.allocator.free(checkout);
 
+    var workspace = try openGitWorkspace(&temporary, io, "checkout");
+    defer workspace.close(io);
     var session = newSession(.{});
     defer session.deinit();
-    const acquired = try provider.acquireGit(&session, .{ .name = "demo", .url = repo.url, .commit = short }, checkout, locked);
+    const acquired = try provider.acquireGit(&session, .{ .name = "demo", .url = repo.url, .commit = short }, workspace, locked);
     try testing.expectEqualStrings(repo.commit, acquired.source.commit.?);
 }
 
@@ -703,9 +977,11 @@ test "git provider は lock と矛盾する source 変更を拒否する" {
     const checkout = try std.fs.path.join(testing.allocator, &.{ tmp_root, "checkout" });
     defer testing.allocator.free(checkout);
 
+    var workspace = try openGitWorkspace(&temporary, io, "checkout");
+    defer workspace.close(io);
     var session = newSession(.{});
     defer session.deinit();
-    try testing.expectError(error.SourceCollision, provider.acquireGit(&session, .{ .name = "demo", .url = repo.url, .commit = repo.commit[0..7] }, checkout, locked));
+    try testing.expectError(error.SourceCollision, provider.acquireGit(&session, .{ .name = "demo", .url = repo.url, .commit = repo.commit[0..7] }, workspace, locked));
     try testing.expectEqual(fetch.FailureKind.source_collision, session.lastFailure().?.kind);
 }
 
@@ -725,9 +1001,11 @@ test "git provider は既存 checkout に無い commit を fetch して解決す
     defer testing.allocator.free(checkout);
 
     // 先に clone しておく。
+    var workspace = try openGitWorkspace(&temporary, io, "checkout");
+    defer workspace.close(io);
     var session = newSession(.{});
     defer session.deinit();
-    _ = try provider.acquireGit(&session, .{ .name = "demo", .url = repo.url, .commit = repo.commit[0..7] }, checkout, null);
+    _ = try provider.acquireGit(&session, .{ .name = "demo", .url = repo.url, .commit = repo.commit[0..7] }, workspace, null);
 
     // clone 後にリモートへ commit を追加する。
     try temporary.dir.writeFile(io, .{ .sub_path = "repo/second.txt", .data = "second" });
@@ -738,7 +1016,7 @@ test "git provider は既存 checkout に無い commit を fetch して解決す
 
     // 既存 checkout のローカル object に無い commit-ish でも fetch 経由で
     // 解決できる。
-    const acquired = try provider.acquireGit(&session, .{ .name = "demo", .url = repo.url, .commit = second[0..7] }, checkout, null);
+    const acquired = try provider.acquireGit(&session, .{ .name = "demo", .url = repo.url, .commit = second[0..7] }, workspace, null);
     try testing.expectEqualStrings(second, acquired.source.commit.?);
 }
 
@@ -757,9 +1035,11 @@ test "git provider は checkout 境界の外を指す path を拒否する" {
     const checkout = try std.fs.path.join(testing.allocator, &.{ tmp_root, "checkout" });
     defer testing.allocator.free(checkout);
 
+    var workspace = try openGitWorkspace(&temporary, io, "checkout");
+    defer workspace.close(io);
     var session = newSession(.{});
     defer session.deinit();
-    try testing.expectError(error.InvalidSource, provider.acquireGit(&session, .{ .name = "demo", .url = repo.url, .commit = repo.commit[0..7], .path = "../escape" }, checkout, null));
+    try testing.expectError(error.InvalidSource, provider.acquireGit(&session, .{ .name = "demo", .url = repo.url, .commit = repo.commit[0..7], .path = "../escape" }, workspace, null));
     try testing.expectEqual(fetch.FailureKind.invalid_source, session.lastFailure().?.kind);
 }
 
@@ -786,10 +1066,12 @@ test "git provider は別 repository の既存 checkout を拒否する" {
 
     var session = newSession(.{});
     defer session.deinit();
-    // repo A の checkout を作った後、同じ checkout_dir を repo B の URL で
+    // repo A の checkout を作った後、同じ workspace を repo B の URL で
     // 再利用すると origin 不一致として拒否する。
-    _ = try provider.acquireGit(&session, .{ .name = "demo", .url = repo_a.url, .commit = repo_a.commit[0..7] }, checkout, null);
-    try testing.expectError(error.SourceCollision, provider.acquireGit(&session, .{ .name = "demo", .url = repo_b.url, .commit = repo_b.commit[0..7] }, checkout, null));
+    var workspace = try openGitWorkspace(&temporary, io, "checkout");
+    defer workspace.close(io);
+    _ = try provider.acquireGit(&session, .{ .name = "demo", .url = repo_a.url, .commit = repo_a.commit[0..7] }, workspace, null);
+    try testing.expectError(error.SourceCollision, provider.acquireGit(&session, .{ .name = "demo", .url = repo_b.url, .commit = repo_b.commit[0..7] }, workspace, null));
     try testing.expectEqual(fetch.FailureKind.source_collision, session.lastFailure().?.kind);
 }
 
@@ -811,9 +1093,11 @@ test "git provider は bare path origin と file:// URL を同一視する" {
     // bare path で clone すると origin は bare path のまま記録される。
     // `file://` 表記の宣言 URL と同一 repo として扱えることを確認する。
     try gitRun(io, &.{ "git", "clone", "--quiet", "--no-checkout", repo.path, checkout });
+    var workspace = try openGitWorkspace(&temporary, io, "checkout");
+    defer workspace.close(io);
     var session = newSession(.{});
     defer session.deinit();
-    const acquired = try provider.acquireGit(&session, .{ .name = "demo", .url = repo.url, .commit = repo.commit[0..7] }, checkout, null);
+    const acquired = try provider.acquireGit(&session, .{ .name = "demo", .url = repo.url, .commit = repo.commit[0..7] }, workspace, null);
     try testing.expectEqualStrings(repo.commit, acquired.source.commit.?);
 }
 
@@ -845,9 +1129,11 @@ test "git provider は末尾 .git だけが異なる別 repo を拒否する" {
     // 名の一部であり除去しないため、別 repo の宣言として拒否する。
     const declared = try std.fmt.allocPrint(testing.allocator, "{s}/lib", .{tmp_root});
     defer testing.allocator.free(declared);
+    var workspace = try openGitWorkspace(&temporary, io, "checkout");
+    defer workspace.close(io);
     var session = newSession(.{});
     defer session.deinit();
-    try testing.expectError(error.SourceCollision, provider.acquireGit(&session, .{ .name = "demo", .url = declared, .commit = commit[0..7] }, checkout, null));
+    try testing.expectError(error.SourceCollision, provider.acquireGit(&session, .{ .name = "demo", .url = declared, .commit = commit[0..7] }, workspace, null));
     try testing.expectEqual(fetch.FailureKind.source_collision, session.lastFailure().?.kind);
 }
 
@@ -879,7 +1165,9 @@ test "git provider は percent-encoded な file:// URL と bare path を同一�
     defer testing.allocator.free(declared);
     var session = newSession(.{});
     defer session.deinit();
-    const acquired = try provider.acquireGit(&session, .{ .name = "demo", .url = declared, .commit = commit[0..7] }, checkout, null);
+    var workspace = try openGitWorkspace(&temporary, io, "checkout");
+    defer workspace.close(io);
+    const acquired = try provider.acquireGit(&session, .{ .name = "demo", .url = declared, .commit = commit[0..7] }, workspace, null);
     try testing.expectEqualStrings(commit, acquired.source.commit.?);
 }
 
@@ -1552,9 +1840,45 @@ test "sync は lock の implementation で選択した artifact を取得する"
     const exports = pkg.get("exports").?.array;
     try testing.expectEqual(@as(usize, 1), exports.items.len);
     try testing.expectEqualStrings("lib/demo.so", exports.items[0].object.get("path").?.string);
+
+    // attacker が cache tree・marker・source.archive を差し替えても、
+    // lock hash に合わない archive は破棄して再取得する。
+    const objects_path = try std.fs.path.join(testing.allocator, &.{ cache_root, "objects" });
+    defer testing.allocator.free(objects_path);
+    var objects = try std.Io.Dir.cwd().openDir(io, objects_path, .{ .iterate = true, .follow_symlinks = false });
+    defer objects.close(io);
+    var iterator = objects.iterate();
+    const object = (try iterator.next(io)).?;
+    const object_root = try std.fs.path.join(testing.allocator, &.{ objects_path, object.name });
+    defer testing.allocator.free(object_root);
+    const cache_tree = try std.fs.path.join(testing.allocator, &.{ object_root, "tree" });
+    defer testing.allocator.free(cache_tree);
+    const cached_binary = try std.fs.path.join(testing.allocator, &.{ cache_tree, "lib", "demo.so" });
+    defer testing.allocator.free(cached_binary);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = cached_binary, .data = "ATTACKER-BINARY" });
+    const digest = try cache_mod.digestTree(io, testing.allocator, cache_tree, &.{});
+    var marker: [72]u8 = undefined;
+    @memcpy(marker[0..7], "sha256:");
+    @memcpy(marker[7..71], &std.fmt.bytesToHex(digest, .lower));
+    marker[71] = '\n';
+    const marker_path = try std.fs.path.join(testing.allocator, &.{ object_root, cache_mod.complete_marker });
+    defer testing.allocator.free(marker_path);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = marker_path, .data = &marker });
+    const source_archive = try std.fs.path.join(testing.allocator, &.{ object_root, "source.archive" });
+    defer testing.allocator.free(source_archive);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = source_archive, .data = "ATTACKER-ARCHIVE" });
+
+    var second = try sync_mod.run(testing.allocator, io, .{ .project_root = project_abs, .cache_root = cache_root }, &list);
+    defer second.deinit();
+    try testing.expectEqual(@as(usize, 2), server.requests.load(.acquire));
+    const rebuilt_binary = try std.fs.path.join(testing.allocator, &.{ project_abs, ".nako", "env", second.generation, "deps", "demo", "lib", "demo.so" });
+    defer testing.allocator.free(rebuilt_binary);
+    const rebuilt = try std.Io.Dir.cwd().readFileAlloc(io, rebuilt_binary, testing.allocator, .unlimited);
+    defer testing.allocator.free(rebuilt);
+    try testing.expectEqualStrings("NATIVE-BINARY", rebuilt);
 }
 
-test "sync は検証済み git object があれば checkout 無しで offline 同期する" {
+test "sync は lock commit を cached checkout で再検証して offline 同期する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
     var temporary = std.testing.tmpDir(.{});
@@ -1592,11 +1916,8 @@ test "sync は検証済み git object があれば checkout 無しで offline �
     }, &list);
     first.deinit();
 
-    // 可変 checkout と upstream repo を消しても、検証済み object だけで
-    // materialize できる（offline で Git 起動・clone/fetch を要求しない）。
-    const checkouts = try std.fs.path.join(testing.allocator, &.{ cache_root, "checkouts" });
-    defer testing.allocator.free(checkouts);
-    try std.Io.Dir.cwd().deleteTree(io, checkouts);
+    // upstream が消えていても cached checkout の Git object DB から lock の
+    // commit を再検証できるため、offline で checkout/fetch 不要。
     try std.Io.Dir.cwd().deleteTree(io, repo.path);
 
     var second = try sync_mod.run(testing.allocator, io, .{

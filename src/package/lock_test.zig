@@ -222,6 +222,25 @@ test "未知schemaをE002で拒否する" {
     try T.expect(diagnostics.find(diag.E002_UNKNOWN_LOCK_SCHEMA) != null);
 }
 
+test "未知resolverVersionをE002で拒否する" {
+    // nako.toml の無い lock 駆動 project では manifest 再解決を経由しない
+    // ため、sync 経路でも検証段階で未対応版を受理しない。
+    var value = try parseValid(
+        \\{
+        \\  "schemaVersion": 1,
+        \\  "resolverVersion": 999,
+        \\  "input": { "manifestSha256": "sha256:aa", "profile": "default", "features": [], "target": { "os": "macos", "cpu": "aarch64", "abi": "gnu" } },
+        \\  "packages": {},
+        \\  "profiles": { "default": { "os": "macos", "cpu": "aarch64", "abi": "gnu" } }
+        \\}
+    );
+    defer value.deinit();
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    try lock.validate(&value, &diagnostics);
+    try T.expect(diagnostics.find(diag.E002_UNKNOWN_LOCK_SCHEMA) != null);
+}
+
 test "未知profileをE030で拒否する" {
     var value = try parseValid(
         \\{
@@ -304,6 +323,81 @@ test "artifact無しをE008で拒否する" {
     try T.expect(diagnostics.find(diag.E008_MISSING_ARTIFACT) != null);
 }
 
+test "source artifactは選択native実装のcontainerとして扱う" {
+    const text = try lockWithPackages(
+        \\    "pkg:10000000000000000000000000000000": {
+        \\      "id": "pkg:10000000000000000000000000000000",
+        \\      "name": "source-lib",
+        \\      "version": "1.0.0",
+        \\      "implementation": "native",
+        \\      "source": { "type": "path", "path": "lib", "mutable": true },
+        \\      "dependencies": [],
+        \\      "features": [],
+        \\      "artifacts": { "source": { "kind": "source" } }
+        \\    }
+    , "\"os\": \"macos\", \"cpu\": \"aarch64\", \"abi\": \"gnu\"");
+    defer T.allocator.free(text);
+    var value = try parseValid(text);
+    defer value.deinit();
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    try lock.validate(&value, &diagnostics);
+    try T.expect(diagnostics.find(diag.E008_MISSING_ARTIFACT) == null);
+}
+
+test "registry source artifactはnative implementationの欠落を許容しない" {
+    const text = try lockWithPackages(
+        \\    "pkg:10000000000000000000000000000000": {
+        \\      "id": "pkg:10000000000000000000000000000000",
+        \\      "name": "registry-lib",
+        \\      "version": "1.0.0",
+        \\      "implementation": "native",
+        \\      "source": { "type": "registry", "url": "https://registry.example.com/registry-lib" },
+        \\      "dependencies": [],
+        \\      "features": [],
+        \\      "artifacts": { "source": { "kind": "source" } }
+        \\    }
+    , "\"runtime\": \"lnako\", \"os\": \"macos\", \"cpu\": \"aarch64\", \"abi\": \"gnu\"");
+    defer T.allocator.free(text);
+    var value = try parseValid(text);
+    defer value.deinit();
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    try lock.validate(&value, &diagnostics);
+    try T.expect(diagnostics.find(diag.E008_MISSING_ARTIFACT) != null);
+}
+
+test "source ESM実装の正規表記を受理し通常profileではE006で拒否する" {
+    const text = try lockWithPackages(
+        \\    "pkg:10000000000000000000000000000000": {
+        \\      "id": "pkg:10000000000000000000000000000000",
+        \\      "name": "source-esm",
+        \\      "version": "1.0.0",
+        \\      "implementation": "ESM",
+        \\      "source": { "type": "path", "path": "lib", "mutable": true },
+        \\      "dependencies": [],
+        \\      "features": [],
+        \\      "artifacts": { "source": { "kind": "source" } }
+        \\    }
+    , "\"runtime\": \"lnako\", \"os\": \"macos\", \"cpu\": \"aarch64\", \"abi\": \"gnu\", \"compat-js\": false");
+    defer T.allocator.free(text);
+    var value = try parseValid(text);
+    defer value.deinit();
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    try lock.validate(&value, &diagnostics);
+    try T.expect(diagnostics.find(diag.E006_JS_IN_NORMAL_MODE) != null);
+    try T.expect(diagnostics.find(diag.E029_INVALID_VALUE) == null);
+
+    // 明示的 --compat-js はprofile宣言より優先してESM sourceを許容する。
+    value.input.target.compat_js = true;
+    var compat_diagnostics = diag.List.init(T.allocator);
+    defer compat_diagnostics.deinit();
+    try lock.validate(&value, &compat_diagnostics);
+    try T.expect(compat_diagnostics.find(diag.E006_JS_IN_NORMAL_MODE) == null);
+    try T.expect(compat_diagnostics.find(diag.E008_MISSING_ARTIFACT) == null);
+}
+
 test "未知artifact kindをE007で拒否する" {
     const text = try lockWithPackages(
         \\    "pkg:10000000000000000000000000000000": {
@@ -335,6 +429,7 @@ test "通常lnako profileのESMをE006で拒否する" {
         \\      "id": "pkg:10000000000000000000000000000000",
         \\      "name": "esm-only",
         \\      "version": "1.0.0",
+        \\      "implementation": "ESM",
         \\      "dependencies": [],
         \\      "features": ["default"],
         \\      "artifacts": { "esm": { "kind": "ESM", "type": "npm-tarball", "sha256": "sha256:00", "url": "https://ex/index.mjs" } }
@@ -362,6 +457,7 @@ test "cnako profileのESMは許容する" {
         \\      "id": "pkg:10000000000000000000000000000000",
         \\      "name": "esm-only",
         \\      "version": "1.0.0",
+        \\      "implementation": "ESM",
         \\      "dependencies": [],
         \\      "features": ["default"],
         \\      "artifacts": { "esm": { "kind": "ESM", "type": "npm-tarball", "sha256": "sha256:00", "url": "https://ex/index.mjs" } }
@@ -425,6 +521,162 @@ test "manifest/profile/features/target変更を鮮度判定で検出する" {
     try T.expectEqual(lock.Freshness.stale_target, lock.checkFreshness(&value, target_changed));
 
     try T.expectEqual(lock.Freshness.missing, lock.checkFreshness(null, sampleInput()));
+}
+
+test "runtime・engines version の変更は stale_target として検出する" {
+    // 解決 runtime・engines 照合 version は lock の鮮度鍵。`--runtime`
+    // 切替やコンパイラ更新は package 選択を変え得るため、記録と異なる
+    // 入力は stale として再解決する。これらを記録しない旧 lock は
+    // null ≠ 値で stale となり、再生成で記録付き lock へ移行する。
+    const nodes = [_]resolver.PackageNode{
+        try node(sqlite_id, "1.2.3", &.{.{ .pkg = req_id }}, &.{"default"}),
+        try node(req_id, "2.0.1", &.{}, &.{ "default", "http" }),
+    };
+    var versioned = sampleInput();
+    versioned.runtime = "lnako";
+    versioned.nako_version = "3.7.24";
+    versioned.lnako_version = "0.2.2";
+    var value = try lock.build(T.allocator, versioned, &.{default_profile}, &nodes, default_fixtures.details());
+    defer value.deinit();
+
+    try T.expectEqual(lock.Freshness.fresh, lock.checkFreshness(&value, versioned));
+
+    var runtime_changed = versioned;
+    runtime_changed.runtime = "cnako";
+    try T.expectEqual(lock.Freshness.stale_target, lock.checkFreshness(&value, runtime_changed));
+
+    var version_changed = versioned;
+    version_changed.lnako_version = "9.9.9";
+    try T.expectEqual(lock.Freshness.stale_target, lock.checkFreshness(&value, version_changed));
+
+    // 記録を持たない入力（version 未供給の呼出し側）も不一致。
+    try T.expectEqual(lock.Freshness.stale_target, lock.checkFreshness(&value, sampleInput()));
+
+    // 逆に runtime/version を記録しない旧 lock は、記録付きの入力で
+    // stale となり再生成される（同一の旧入力では fresh のまま）。
+    var legacy = try sampleLock(T.allocator);
+    defer legacy.deinit();
+    try T.expectEqual(lock.Freshness.fresh, lock.checkFreshness(&legacy, sampleInput()));
+    try T.expectEqual(lock.Freshness.stale_target, lock.checkFreshness(&legacy, versioned));
+
+    // serialize/parse でも runtime・version が保存・復元される。
+    const bytes = try lock.toBytes(&value, T.allocator);
+    defer T.allocator.free(bytes);
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    var parsed = try lock.parse(T.allocator, bytes, &diagnostics);
+    defer parsed.deinit();
+    try T.expectEqualStrings("lnako", parsed.input.runtime.?);
+    try T.expectEqualStrings("3.7.24", parsed.input.nako_version.?);
+    try T.expectEqualStrings("0.2.2", parsed.input.lnako_version.?);
+}
+
+test "compatJs も target 鮮度鍵として stale_target を検出する" {
+    // `run`/`build --compat-js` は ESM 実装の可否を変えるため target の
+    // 鮮度鍵。compat 実行で作った lock は非 compat 入力へ stale となり、
+    // serialize/parse でも保存・復元される。非 compat lock は compatJs
+    // を書かず、欠落は false と同等に扱う。
+    const nodes = [_]resolver.PackageNode{
+        try node(sqlite_id, "1.2.3", &.{.{ .pkg = req_id }}, &.{"default"}),
+        try node(req_id, "2.0.1", &.{}, &.{ "default", "http" }),
+    };
+    var compat = sampleInput();
+    compat.target.compat_js = true;
+    var value = try lock.build(T.allocator, compat, &.{default_profile}, &nodes, default_fixtures.details());
+    defer value.deinit();
+
+    try T.expectEqual(lock.Freshness.fresh, lock.checkFreshness(&value, compat));
+    // compat-js なしの入力は不一致（target 不一致 → stale_target）。
+    try T.expectEqual(lock.Freshness.stale_target, lock.checkFreshness(&value, sampleInput()));
+
+    // serialize/parse で compatJs が保存・復元される。
+    const bytes = try lock.toBytes(&value, T.allocator);
+    defer T.allocator.free(bytes);
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    var parsed = try lock.parse(T.allocator, bytes, &diagnostics);
+    defer parsed.deinit();
+    try T.expect(parsed.input.target.compat_js);
+
+    // 非 compat lock は compatJs を書かず、旧 lock の欠落は false と
+    // 同等に扱われて fresh のまま。
+    var plain = try sampleLock(T.allocator);
+    defer plain.deinit();
+    const plain_bytes = try lock.toBytes(&plain, T.allocator);
+    defer T.allocator.free(plain_bytes);
+    try T.expect(std.mem.indexOf(u8, plain_bytes, "compatJs") == null);
+    try T.expectEqual(lock.Freshness.fresh, lock.checkFreshness(&plain, sampleInput()));
+}
+
+test "optimize も target 鮮度鍵として stale_target を検出する" {
+    // `build -O3` は optimize-gated artifact の選択を変えるため target
+    // の鮮度鍵。O3 で作った lock は O0 の入力へ stale となり、
+    // serialize/parse でも保存・復元される。O0 の lock は optimize を
+    // 書かず、旧 lock の欠落は O0 と同等に扱う。
+    const nodes = [_]resolver.PackageNode{
+        try node(sqlite_id, "1.2.3", &.{.{ .pkg = req_id }}, &.{"default"}),
+        try node(req_id, "2.0.1", &.{}, &.{ "default", "http" }),
+    };
+    var optimized = sampleInput();
+    optimized.target.optimize = "O3";
+    var value = try lock.build(T.allocator, optimized, &.{default_profile}, &nodes, default_fixtures.details());
+    defer value.deinit();
+
+    try T.expectEqual(lock.Freshness.fresh, lock.checkFreshness(&value, optimized));
+    // 既定 O0 の入力は不一致（target 不一致 → stale_target）。
+    try T.expectEqual(lock.Freshness.stale_target, lock.checkFreshness(&value, sampleInput()));
+
+    // serialize/parse で optimize が保存・復元される。
+    const bytes = try lock.toBytes(&value, T.allocator);
+    defer T.allocator.free(bytes);
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    var parsed = try lock.parse(T.allocator, bytes, &diagnostics);
+    defer parsed.deinit();
+    try T.expectEqualStrings("O3", parsed.input.target.optimize);
+
+    // O0 の lock は optimize を書かず、旧 lock の欠落は O0 と同等に
+    // 扱われて fresh のまま。
+    var plain = try sampleLock(T.allocator);
+    defer plain.deinit();
+    const plain_bytes = try lock.toBytes(&plain, T.allocator);
+    defer T.allocator.free(plain_bytes);
+    try T.expect(std.mem.indexOf(u8, plain_bytes, "\"optimize\"") == null);
+    try T.expectEqual(lock.Freshness.fresh, lock.checkFreshness(&plain, sampleInput()));
+}
+
+test "input.target.optimize の既知外の値は拒否する" {
+    // schema の enum と同じ既知集合に限定する。未知値を記録した lock を
+    // 黙って読むと optimize-gated artifact の選択条件が曖昧になる。
+    const text =
+        \\{
+        \\  "schemaVersion": 1,
+        \\  "resolverVersion": 1,
+        \\  "input": { "manifestSha256": "sha256:aa", "profile": "default", "features": [], "target": { "os": "macos", "cpu": "aarch64", "abi": "gnu", "optimize": "Ofast" } },
+        \\  "packages": {}
+        \\}
+    ;
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    try T.expectError(error.InvalidLock, lock.parse(T.allocator, text, &diagnostics));
+    try T.expect(diagnostics.find(diag.E029_INVALID_VALUE) != null);
+}
+
+test "compatJs の非 bool 値は型エラーで拒否する" {
+    // `"compatJs": "true"` のような非 bool 値を黙って false へ落とすと、
+    // compat 用に作られた lock が非 compat 入力へ fresh と誤判定される。
+    const text =
+        \\{
+        \\  "schemaVersion": 1,
+        \\  "resolverVersion": 1,
+        \\  "input": { "manifestSha256": "sha256:aa", "profile": "default", "features": [], "target": { "os": "macos", "cpu": "aarch64", "abi": "gnu", "compatJs": "true" } },
+        \\  "packages": {}
+        \\}
+    ;
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    try T.expectError(error.InvalidLock, lock.parse(T.allocator, text, &diagnostics));
+    try T.expect(diagnostics.find(diag.E023_INVALID_TYPE) != null);
 }
 
 test "features順序と重複は鮮度に影響しない" {
@@ -778,7 +1030,7 @@ test "resolverVersion不一致は鮮度判定で検出する" {
     try T.expectEqual(lock.Freshness.stale_resolver, lock.checkFreshness(&value, sampleInput()));
 }
 
-test "pathソースはmutable既定で記録する" {
+test "pathソースはimmutableを既定としてlockへ記録する" {
     const local_id = "pkg:50000000000000000000000000000000";
     const local_source = lock.Source{ .kind = .path, .path = "../local" };
     const fixtures = Fixtures{ .entries = &.{
@@ -789,7 +1041,7 @@ test "pathソースはmutable既定で記録する" {
     defer value.deinit();
     const bytes = try lock.toBytes(&value, T.allocator);
     defer T.allocator.free(bytes);
-    try T.expect(std.mem.indexOf(u8, bytes, "\"mutable\": true") != null);
+    try T.expect(std.mem.indexOf(u8, bytes, "\"mutable\": false") != null);
 }
 
 test "npmInstancesのpeer依存順序を正規化して決定化する" {
@@ -1334,6 +1586,21 @@ test "選択実装に対応するartifactの欠落をE008で拒否する" {
     try lock.validate(&value, &diagnostics);
     try T.expect(diagnostics.find(diag.E008_MISSING_ARTIFACT) != null);
 
+    const none_implementation = [_]lock.PackageEntry{
+        .{ .id = sqlite_id, .name = sqlite_name, .version = "1.0.0", .implementation = "none", .artifacts = &.{sqlite_source_artifact} },
+    };
+    var none_value = lock.Lock{
+        .arena = std.heap.ArenaAllocator.init(T.allocator),
+        .input = sampleInput(),
+        .packages = &none_implementation,
+        .profiles = &profiles,
+    };
+    defer none_value.deinit();
+    var none_diagnostics = diag.List.init(T.allocator);
+    defer none_diagnostics.deinit();
+    try lock.validate(&none_value, &none_diagnostics);
+    try T.expect(none_diagnostics.find(diag.E008_MISSING_ARTIFACT) != null);
+
     const matching = [_]lock.PackageEntry{
         .{ .id = sqlite_id, .name = sqlite_name, .version = "1.0.0", .implementation = "source", .artifacts = &.{sqlite_source_artifact} },
     };
@@ -1422,6 +1689,46 @@ test "不正なversionはvalidateでE024となり優先固定も失敗する" {
     try lock.validate(&value, &diagnostics);
     try T.expect(diagnostics.find(diag.E024_INVALID_SEMVER) != null);
     try T.expectError(error.InvalidLockVersion, lock.buildLockedIndex(T.allocator, &value, "default", &.{}));
+}
+
+test "lock input engine versionsはSemVerとして検証する" {
+    const text =
+        \\{
+        \\  "schemaVersion": 1,
+        \\  "resolverVersion": 1,
+        \\  "input": {
+        \\    "manifestSha256": "sha256:aa",
+        \\    "profile": "default",
+        \\    "features": [],
+        \\    "target": { "os": "macos", "cpu": "aarch64", "abi": "gnu" },
+        \\    "runtime": "lnako",
+        \\    "nakoVersion": "invalid",
+        \\    "cnakoVersion": "3.7",
+        \\    "lnakoVersion": "not-semver"
+        \\  },
+        \\  "packages": {},
+        \\  "profiles": {
+        \\    "default": { "runtime": "lnako", "os": "macos", "cpu": "aarch64", "abi": "gnu" }
+        \\  }
+        \\}
+    ;
+    var value = try parseValid(text);
+    defer value.deinit();
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    try lock.validate(&value, &diagnostics);
+    try T.expectEqual(@as(usize, 3), diagnostics.errorCount());
+    var invalid_fields: usize = 0;
+    for (diagnostics.items.items) |item| {
+        if (std.mem.eql(u8, item.code, diag.E024_INVALID_SEMVER) and
+            (std.mem.eql(u8, item.path, "nako.lock.input.nakoVersion") or
+                std.mem.eql(u8, item.path, "nako.lock.input.cnakoVersion") or
+                std.mem.eql(u8, item.path, "nako.lock.input.lnakoVersion")))
+        {
+            invalid_fields += 1;
+        }
+    }
+    try T.expectEqual(@as(usize, 3), invalid_fields);
 }
 
 fn multiProfileLock(scope: std.mem.Allocator, cnako_version: []const u8) !lock.Lock {
