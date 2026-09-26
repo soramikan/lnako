@@ -205,12 +205,17 @@ pub fn run(
 
     // `nako.toml` が存在する場合、lock が記録した manifest hash と一致する
     // ことを確認する。古い lock で環境を構築して環境参照が manifest と
-    // 不整合になるのを防ぐ。manifest が無い lock 駆動の用途（fixture 等）
-    // では検査を省略する。
+    // 不整合になるのを防ぐ。省略できるのは `FileNotFound`（manifest 無しの
+    // lock 駆動用途）だけで、dir 化・読取不能・size 上限超過などその他の
+    // 失敗は manifest の有無と鮮度を確定できないため同期を失敗させる。
     const manifest_path = try std.fs.path.join(arena, &.{ project_abs, "nako.toml" });
     if (std.Io.Dir.cwd().readFileAlloc(io, manifest_path, arena, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
+        error.FileNotFound => null,
         error.OutOfMemory => return error.OutOfMemory,
-        else => null,
+        else => {
+            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml", .{}, "cannot read nako.toml for lock manifest verification: {s}", .{@errorName(err)});
+            return mapFs(err);
+        },
     }) |manifest_bytes| {
         var actual: [32]u8 = undefined;
         std.crypto.hash.sha2.Sha256.hash(manifest_bytes, &actual, .{});

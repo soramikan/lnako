@@ -592,6 +592,32 @@ test "sync は代表実装と個別解決が異なる export を両方記録す�
     try testing.expectEqualStrings("native/dual.so", exports.items[1].object.get("path").?.string);
 }
 
+test "sync は読取不能な nako.toml を欠落扱いせず失敗する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
+    defer testing.allocator.free(manifest_sha);
+    try writeFixtureProject(&temporary, manifest_sha);
+    // manifest 無し（FileNotFound）のみ hash 検証を省略できる。dir 化
+    // した `nako.toml` は存在するのに読めないため、検証を省略して古い
+    // lock のまま環境を公開しない。
+    try temporary.dir.deleteFile(io, "nako.toml");
+    try temporary.dir.createDirPath(io, "nako.toml");
+
+    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const cache_root = try std.fs.path.join(testing.allocator, &.{ root, "cache" });
+    defer testing.allocator.free(cache_root);
+    var list = diag.List.init(testing.allocator);
+    defer list.deinit();
+    try testing.expectError(error.FileSystem, sync.run(testing.allocator, io, .{
+        .project_root = root,
+        .cache_root = cache_root,
+    }, &list));
+    try testing.expectError(error.FileNotFound, temporary.dir.access(io, ".nako/environment.json", .{}));
+}
+
 test "sync は再実行で世代を更新し直前世代を保持する" {
     const io = testing.io;
     var temporary = std.testing.tmpDir(.{});
