@@ -179,6 +179,7 @@ pub const ModuleGraph = struct {
         // 名前解決の衝突を避け、実行時は module_entries から直接引く。
         const loader_to_input = try temp.alloc(u32, self.modules.len);
         const internal_module_names = try temp.alloc([]const u8, self.modules.len);
+        const runtime_module_names = try temp.alloc([]const u8, self.modules.len);
         const internal_name_assigned = try temp.alloc(bool, self.modules.len);
         @memset(internal_name_assigned, false);
         var input_count: u32 = 0;
@@ -208,10 +209,19 @@ pub const ModuleGraph = struct {
                         break;
                     }
                 }
-                internal_module_names[module.index] = if (collision)
-                    try uniqueInternalModuleName(temp, self.modules, internal_module_names, internal_name_assigned, module.index, namespace, "pkg")
+                runtime_module_names[module.index] = if (collision)
+                    try uniqueInternalModuleName(temp, self.modules, runtime_module_names, internal_name_assigned, module.index, namespace, "pkg")
                 else
                     namespace;
+                internal_module_names[module.index] = try uniqueInternalModuleName(
+                    temp,
+                    self.modules,
+                    internal_module_names,
+                    internal_name_assigned,
+                    module.index,
+                    "package",
+                    "pkg",
+                );
                 internal_name_assigned[module.index] = true;
             } else {
                 var collision = false;
@@ -226,6 +236,7 @@ pub const ModuleGraph = struct {
                     try uniqueInternalModuleName(temp, self.modules, internal_module_names, internal_name_assigned, module.index, module.name, "local")
                 else
                     module.name;
+                runtime_module_names[module.index] = internal_module_names[module.index];
                 internal_name_assigned[module.index] = true;
             }
         }
@@ -241,7 +252,7 @@ pub const ModuleGraph = struct {
                 if (item.effective and target_module.kind == .nako3) {
                     try import_entries.append(temp, .{
                         .position = item.span.start,
-                        .entry_name = try std.fmt.allocPrint(temp, "{s}__$entry", .{internal_module_names[target]}),
+                        .entry_name = try std.fmt.allocPrint(temp, "{s}__$entry", .{runtime_module_names[target]}),
                         .site_module = loader_to_input[module.index],
                         .site_order = module.expand_order,
                         .callee_module = loader_to_input[target],
@@ -259,7 +270,7 @@ pub const ModuleGraph = struct {
                     if (vitem.effective and target_module.kind == .nako3) {
                         try ventries.append(temp, .{
                             .position = vitem.span.start,
-                            .entry_name = try std.fmt.allocPrint(temp, "{s}__$entry", .{internal_module_names[target]}),
+                            .entry_name = try std.fmt.allocPrint(temp, "{s}__$entry", .{runtime_module_names[target]}),
                             .site_module = loader_to_input[module.index],
                             .site_order = module.expand_order,
                             .callee_module = loader_to_input[target],
@@ -329,11 +340,13 @@ pub const ModuleGraph = struct {
                 break :collision false;
             };
             try inputs.append(temp, .{
-                .name = internal_module_names[module.index],
+                .name = runtime_module_names[module.index],
+                .internal_namespace = internal_module_names[module.index],
                 .path = module.path,
                 .root = module.parsed.?.root.?,
                 .normalized_source = module.parsed.?.stream.source.text,
                 .allows_dynamic_commands = allows_dynamic_commands,
+                .is_package = module.canonical_id != null,
                 .expands_in_function = module.expands_in_function,
                 .owns_scoped_namespace_collision = owns_scoped_namespace_collision,
                 .namespace_aliases = try namespace_aliases.toOwnedSlice(temp),
@@ -1050,10 +1063,23 @@ const MemoryProvider = struct {
 
     fn read(context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
         const self: *MemoryProvider = @ptrCast(@alignCast(context));
-        for (self.files) |file| if (std.mem.endsWith(u8, path, file.suffix)) return allocator.dupe(u8, file.source);
+        for (self.files) |file| if (pathHasSuffix(path, file.suffix)) return allocator.dupe(u8, file.source);
         return error.FileNotFound;
     }
 };
+
+fn pathHasSuffix(path: []const u8, suffix: []const u8) bool {
+    if (suffix.len > path.len) return false;
+    const start = path.len - suffix.len;
+    if (start > 0 and path[start - 1] != '/' and path[start - 1] != '\\') return false;
+    for (suffix, 0..) |char, index| {
+        const path_char = path[start + index];
+        const normalized_path_char: u8 = if (path_char == '\\') '/' else path_char;
+        const normalized_suffix_char: u8 = if (char == '\\') '/' else char;
+        if (normalized_path_char != normalized_suffix_char) return false;
+    }
+    return true;
+}
 
 const PackageTestResolver = struct {
     fn resolver(self: *PackageTestResolver) PackageResolver {
@@ -1159,7 +1185,7 @@ test "日本語パッケージ:とpkg:を注入resolverでsource exportへ解決
         defer graph.deinit();
         try std.testing.expect(graph.succeeded());
         try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
-        try std.testing.expect(std.mem.endsWith(u8, graph.modules[1].path, case.suffix));
+        try std.testing.expect(pathHasSuffix(graph.modules[1].path, case.suffix));
         const expected_namespace = if (std.mem.eql(u8, case.specifier, "パッケージ:math/vector")) "math__vector" else "math";
         try std.testing.expectEqualStrings(expected_namespace, graph.modules[1].name);
         const expected_id = if (std.mem.eql(u8, case.specifier, "パッケージ:math/vector")) "pkg:math-id/vector" else "pkg:math-id/main";
@@ -1306,7 +1332,9 @@ test "package import後の相対importはファイル名namespaceを維持する
     for (program.bindings) |binding| {
         if (!std.mem.eql(u8, binding.name, "index__値")) continue;
         const symbol_id = binding.symbol orelse continue;
-        found_binding = std.mem.eql(u8, binding.resolved_name, "lib__値") and program.symbols[symbol_id].module_index == package_module.index;
+        const symbol = program.symbols[symbol_id];
+        found_binding = std.mem.eql(u8, binding.resolved_name, symbol.qualified_name) and
+            std.mem.startsWith(u8, symbol.qualified_name, "package__") and symbol.module_index == package_module.index;
     }
     try std.testing.expect(found_binding);
 }

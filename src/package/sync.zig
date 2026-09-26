@@ -663,7 +663,17 @@ fn appendImportDependency(
         try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml.dependencies", .{}, "dependency key \"{s}\" matches multiple lock packages {s} and {s}", .{ name, target.?, other_id });
         return error.LockInvalid;
     }
-    const package_key = target orelse return; // feature-gated or absent dependency
+    if (target == null) {
+        // In schema-v2, the root edge list is authoritative. A matching package
+        // omitted from it means the lock cannot bind a declared root dependency.
+        if (allowed_ids != null) for (lock_entries) |candidate| {
+            if (!matchesDependency(candidate, name, constraint, public_id)) continue;
+            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock.rootDependencies", .{}, "root dependency key \"{s}\" matches lock package {s}, but that package is not declared in rootDependencies for the active profile", .{ name, candidate.id });
+            return error.LockInvalid;
+        };
+        return; // feature-gated or absent dependency
+    }
+    const package_key = target.?;
     // Manifest table keys are valid dependency aliases in their own right.
     // Preserve them even when an explicit alias is also declared.
     try appendScopedAlias(allocator, result, name, package_key, diagnostics);
@@ -1640,6 +1650,15 @@ test "profile限定package import aliasは共有package IDでも選択profile外
     try testing.expect(containsImportDependency(aliases, "@alice/shared", "pkg:11111111111111111111111111111111"));
     try testing.expect(containsImportDependency(aliases, "shared", "pkg:11111111111111111111111111111111"));
     try testing.expect(!containsImportDependency(aliases, "win-shared", "pkg:11111111111111111111111111111111"));
+
+    var missing_edge_diagnostics = diag.List.init(testing.allocator);
+    defer missing_edge_diagnostics.deinit();
+    const no_root_edges: [0][]const u8 = .{};
+    try testing.expectError(
+        error.LockInvalid,
+        collectImportDependenciesForProfile(testing.allocator, &lock_entries, &no_root_edges, &manifest, "linux", &missing_edge_diagnostics),
+    );
+    try testing.expect(missing_edge_diagnostics.hasErrors());
 }
 
 test "root package import候補は直接依存のversion rangeで絞る" {
@@ -1685,7 +1704,6 @@ test "package import aliasはmanifest依存scopeごとにlock keyへ解決され
         \\
         \\[dependencies.path]
         \\source-dep = { path = "../dep" }
-        \\other = { path = "../other" }
         \\
     ;
     var diagnostics = diag.List.init(testing.allocator);
@@ -1701,7 +1719,7 @@ test "package import aliasはmanifest依存scopeごとにlock keyへ解決され
     defer sync_diagnostics.deinit();
     const root_aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, &manifest, &sync_diagnostics);
     defer testing.allocator.free(root_aliases);
-    try testing.expectEqual(@as(usize, 2), root_aliases.len);
+    try testing.expectEqual(@as(usize, 1), root_aliases.len);
 
     const package_dependencies = [_][]const u8{"pkg:dep-id"};
     const scoped_aliases = try collectImportDependencies(testing.allocator, &lock_entries, &package_dependencies, &manifest, &sync_diagnostics);

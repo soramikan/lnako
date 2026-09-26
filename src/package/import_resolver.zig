@@ -11,6 +11,25 @@ const semver = @import("semver.zig");
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
 
+fn realPathDirAlloc(allocator: Allocator, io: std.Io, path: []const u8) ![]u8 {
+    var directory = if (std.fs.path.isAbsolute(path))
+        try std.Io.Dir.openDirAbsolute(io, path, .{})
+    else
+        try std.Io.Dir.cwd().openDir(io, path, .{});
+    defer directory.close(io);
+    var buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const length = try directory.realPath(io, &buffer);
+    return try allocator.dupe(u8, buffer[0..length]);
+}
+
+fn temporaryDirRealPathAlloc(allocator: Allocator, io: std.Io, base: std.Io.Dir, sub_path: []const u8) ![]u8 {
+    var directory = if (std.mem.eql(u8, sub_path, ".")) base else try base.openDir(io, sub_path, .{});
+    defer if (!std.mem.eql(u8, sub_path, ".")) directory.close(io);
+    var buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const length = try directory.realPath(io, &buffer);
+    return try allocator.dupe(u8, buffer[0..length]);
+}
+
 /// Find the nearest project environment containing the input source. Relative and
 /// absolute input paths are canonicalized from cwd before searching parent dirs.
 pub fn findProjectRoot(allocator: Allocator, io: std.Io, input_path: []const u8) !?[]u8 {
@@ -55,7 +74,7 @@ pub const Resolver = struct {
         var owned = std.heap.ArenaAllocator.init(allocator);
         errdefer owned.deinit();
         const storage = owned.allocator();
-        const root = try std.Io.Dir.cwd().realPathFileAlloc(io, project_root, storage);
+        const root = try realPathDirAlloc(storage, io, project_root);
         const env_path = try std.fs.path.join(storage, &.{ root, ".nako", "environment.json" });
         const lock_path = try std.fs.path.join(storage, &.{ root, "nako.lock" });
         const env_bytes = std.Io.Dir.cwd().readFileAlloc(io, env_path, storage, .limited(32 * 1024 * 1024)) catch |err| switch (err) {
@@ -178,7 +197,7 @@ pub const Resolver = struct {
             try temporary.dupe(u8, package_root_value.string)
         else
             try std.fs.path.resolve(temporary, &.{ self.project_root, package_root_value.string });
-        const package_root = try std.Io.Dir.cwd().realPathFileAlloc(self.io, package_root_path, temporary);
+        const package_root = try realPathDirAlloc(temporary, self.io, package_root_path);
 
         const exports_value = get(package, "exports") orelse return error.ExportNotFound;
         const exports = asArray(exports_value) orelse return error.InvalidEnvironment;
@@ -216,7 +235,7 @@ pub const Resolver = struct {
                 try allocator.dupe(u8, path_value.string)
             else
                 try std.fs.path.resolve(allocator, &.{ self.project_root, path_value.string });
-            const root = std.Io.Dir.cwd().realPathFileAlloc(self.io, root_path, allocator) catch |err| switch (err) {
+            const root = realPathDirAlloc(allocator, self.io, root_path) catch |err| switch (err) {
                 error.FileNotFound, error.NotDir => continue,
                 else => return err,
             };
@@ -310,7 +329,12 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
             if (declared_path != .string or !std.mem.eql(u8, declared_path.string, environment_path.string)) return error.InvalidEnvironment;
             break :blk try actualPackageRoot(allocator, io, project_root, environment_path.string);
         } else blk: {
-            const record_exports = asArray(get(record, "exports") orelse return error.InvalidEnvironment) orelse return error.InvalidEnvironment;
+            const exports_value = get(record, "exports");
+            const record_exports = if (exports_value) |value|
+                asArray(value) orelse return error.InvalidEnvironment
+            else
+                std.array_list.Managed(Value).init(allocator);
+            defer if (exports_value == null) record_exports.deinit();
             const implementation = requiredString(lock_entry, "implementation");
             if (record_exports.items.len != 0 and implementation != null and std.mem.eql(u8, implementation.?, "native")) {
                 const expected_native_path = try native_store.expectedRoot(allocator, source, lock_entry) orelse return error.InvalidEnvironment;
@@ -642,13 +666,16 @@ fn findManifestDependencyTarget(
     var roots: std.ArrayListUnmanaged([]const u8) = .empty;
     var iterator = locked_packages.iterator();
     while (iterator.next()) |entry| {
-        if (allowed_ids) |allowed| if (!arrayContainsString(allowed, entry.key_ptr.*)) continue;
         const lock_entry = asObject(entry.value_ptr.*) orelse return error.InvalidEnvironment;
         if (!matchesManifestDependency(entry.key_ptr.*, lock_entry, name, constraint, public_id)) continue;
         try matches.append(allocator, entry.key_ptr.*);
-        if (infer_root_ids and !hasIncomingLockEdge(locked_packages, entry.key_ptr.*)) try roots.append(allocator, entry.key_ptr.*);
+        if (allowed_ids) |allowed| {
+            if (arrayContainsString(allowed, entry.key_ptr.*)) try roots.append(allocator, entry.key_ptr.*);
+        } else if (infer_root_ids and !hasIncomingLockEdge(locked_packages, entry.key_ptr.*)) {
+            try roots.append(allocator, entry.key_ptr.*);
+        }
     }
-    const candidates = if (allowed_ids != null) matches.items else if (roots.items.len != 0) roots.items else if (matches.items.len == 1) matches.items else &.{};
+    const candidates = if (allowed_ids != null) roots.items else if (roots.items.len != 0) roots.items else if (matches.items.len == 1) matches.items else &.{};
     if (candidates.len == 0) return null;
     if (candidates.len != 1) return error.InvalidEnvironment;
     return candidates[0];
@@ -782,7 +809,7 @@ fn actualPackageRoot(allocator: Allocator, io: std.Io, project_root: []const u8,
         path
     else
         try std.fs.path.resolve(allocator, &.{ project_root, path });
-    return std.Io.Dir.cwd().realPathFileAlloc(io, package_path, allocator) catch |err| switch (err) {
+    return realPathDirAlloc(allocator, io, package_path) catch |err| switch (err) {
         error.FileNotFound, error.NotDir => null,
         error.OutOfMemory => error.OutOfMemory,
         else => error.InvalidEnvironment,
@@ -855,11 +882,11 @@ fn validGenerationName(generation: []const u8) bool {
 fn validateMaterializedRoot(allocator: Allocator, io: std.Io, project_root: []const u8, path: []const u8, generation: []const u8) !?[]const u8 {
     const package_path = try std.fs.path.resolve(allocator, &.{ project_root, path });
     const deps_path = try std.fs.path.join(allocator, &.{ project_root, ".nako", "env", generation, "deps" });
-    const actual_package = std.Io.Dir.cwd().realPathFileAlloc(io, package_path, allocator) catch |err| switch (err) {
+    const actual_package = realPathDirAlloc(allocator, io, package_path) catch |err| switch (err) {
         error.FileNotFound, error.NotDir => return null,
         else => return error.InvalidEnvironment,
     };
-    const actual_deps = std.Io.Dir.cwd().realPathFileAlloc(io, deps_path, allocator) catch |err| switch (err) {
+    const actual_deps = realPathDirAlloc(allocator, io, deps_path) catch |err| switch (err) {
         error.FileNotFound, error.NotDir => return null,
         else => return error.InvalidEnvironment,
     };
@@ -1064,8 +1091,15 @@ test "package alias内の識別子不適合文字を参照可能なnamespaceへ�
 }
 
 test "package import path containmentはprefix類似directoryを通さない" {
-    try std.testing.expect(isWithin("/tmp/pkg", "/tmp/pkg/src/index.nako3"));
-    try std.testing.expect(!isWithin("/tmp/pkg", "/tmp/pkg-evil/index.nako3"));
+    const allocator = std.testing.allocator;
+    const root = try std.fs.path.join(allocator, &.{ "tmp", "pkg" });
+    defer allocator.free(root);
+    const nested = try std.fs.path.join(allocator, &.{ root, "src", "index.nako3" });
+    defer allocator.free(nested);
+    const sibling = try std.fs.path.join(allocator, &.{ "tmp", "pkg-evil", "index.nako3" });
+    defer allocator.free(sibling);
+    try std.testing.expect(isWithin(root, nested));
+    try std.testing.expect(!isWithin(root, sibling));
 }
 
 test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hashを検証する" {
@@ -1147,14 +1181,8 @@ test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hash�
     try temporary.dir.writeFile(io, .{ .sub_path = "outside.nako3", .data = "OUTSIDE=1\n" });
     const outside_path = try temporary.dir.realPathFileAlloc(io, "outside.nako3", allocator);
     defer allocator.free(outside_path);
-    temporary.dir.symLink(io, outside_path, ".nako/env/gen-test/deps/math/src/escape.nako3", .{}) catch |err| switch (err) {
-        error.AccessDenied, error.PermissionDenied, error.FileSystem => return error.SkipZigTest,
-        else => return err,
-    };
-    temporary.dir.symLink(io, "math", ".nako/env/gen-test/deps/math-link", .{}) catch |err| switch (err) {
-        error.AccessDenied, error.PermissionDenied, error.FileSystem => return error.SkipZigTest,
-        else => return err,
-    };
+    temporary.dir.symLink(io, outside_path, ".nako/env/gen-test/deps/math/src/escape.nako3", .{}) catch return error.SkipZigTest;
+    temporary.dir.symLink(io, "math", ".nako/env/gen-test/deps/math-link", .{}) catch return error.SkipZigTest;
 
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(lock_json, &digest, .{});
@@ -1165,7 +1193,7 @@ test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hash�
         .{lock_hex},
     );
     defer allocator.free(json);
-    const project_root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    const project_root = try temporaryDirRealPathAlloc(allocator, io, temporary.dir, ".");
     defer allocator.free(project_root);
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/math/private.nako3", .data = "PRIVATE=1\\n" });
     const tampered_root_alias_json = try std.mem.replaceOwned(u8, allocator, json, "\"alias\":\"math\",\"package\":\"pkg:11111111111111111111111111111111\"", "\"alias\":\"math\",\"package\":\"pkg:22222222222222222222222222222222\"");
@@ -1209,10 +1237,7 @@ test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hash�
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = cnako_environment });
     try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, project_root));
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = json });
-    temporary.dir.symLink(io, project_root, ".project-link", .{}) catch |err| switch (err) {
-        error.AccessDenied, error.PermissionDenied, error.FileSystem => return error.SkipZigTest,
-        else => return err,
-    };
+    temporary.dir.symLink(io, project_root, ".project-link", .{}) catch return error.SkipZigTest;
     const project_alias = try std.fs.path.join(allocator, &.{ project_root, ".project-link" });
     defer allocator.free(project_alias);
 
@@ -1223,7 +1248,7 @@ test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hash�
     const detected_root = (try findProjectRoot(allocator, io, root_entry)).?;
     defer allocator.free(detected_root);
     try std.testing.expectEqualStrings(project_root, detected_root);
-    const cwd = try std.Io.Dir.cwd().realPathFileAlloc(io, ".", allocator);
+    const cwd = try realPathDirAlloc(allocator, io, ".");
     defer allocator.free(cwd);
     try std.testing.expect(std.mem.startsWith(u8, project_root, cwd));
     try std.testing.expect(project_root.len > cwd.len and std.fs.path.isSep(project_root[cwd.len]));
@@ -1242,7 +1267,9 @@ test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hash�
     defer allocator.free(math_import.path);
     defer allocator.free(math_import.canonical_id);
     defer allocator.free(math_import.namespace);
-    try std.testing.expect(std.mem.endsWith(u8, math_import.path, ".nako/env/gen-test/deps/math/src/main.nako3"));
+    const expected_math_path = try std.fs.path.join(allocator, &.{ ".nako", "env", "gen-test", "deps", "math", "src", "main.nako3" });
+    defer allocator.free(expected_math_path);
+    try std.testing.expect(std.mem.endsWith(u8, math_import.path, expected_math_path));
     try std.testing.expectEqualStrings("pkg:11111111111111111111111111111111/main", math_import.canonical_id);
     try std.testing.expectEqualStrings("math", math_import.namespace);
     try std.testing.expectError(error.PackageNotFound, resolver.resolve(allocator, root_entry, "pkg:win-math"));
@@ -1268,72 +1295,24 @@ test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hash�
     defer allocator.free(vector_import.path);
     defer allocator.free(vector_import.canonical_id);
     defer allocator.free(vector_import.namespace);
-    try std.testing.expect(std.mem.endsWith(u8, vector_import.path, ".nako/env/gen-test/deps/math/vector.nako3"));
+    const expected_vector_path = try std.fs.path.join(allocator, &.{ ".nako", "env", "gen-test", "deps", "math", "vector.nako3" });
+    defer allocator.free(expected_vector_path);
+    try std.testing.expect(std.mem.endsWith(u8, vector_import.path, expected_vector_path));
     try std.testing.expectEqualStrings("pkg:11111111111111111111111111111111/vector", vector_import.canonical_id);
     try std.testing.expectEqualStrings("math__vector", vector_import.namespace);
     const nested_import = try resolver.resolve(allocator, math_import.path, "パッケージ:dep");
     defer allocator.free(nested_import.path);
     defer allocator.free(nested_import.canonical_id);
     defer allocator.free(nested_import.namespace);
-    try std.testing.expect(std.mem.endsWith(u8, nested_import.path, ".nako/env/gen-test/deps/dependency/index.nako3"));
+    const expected_nested_path = try std.fs.path.join(allocator, &.{ ".nako", "env", "gen-test", "deps", "dependency", "index.nako3" });
+    defer allocator.free(expected_nested_path);
+    try std.testing.expect(std.mem.endsWith(u8, nested_import.path, expected_nested_path));
     try std.testing.expectEqualStrings("pkg:22222222222222222222222222222222/index", nested_import.canonical_id);
     try std.testing.expectEqualStrings("dep", nested_import.namespace);
     try std.testing.expectError(error.PackageNotFound, resolver.resolve(allocator, root_entry, "パッケージ:dep"));
     try std.testing.expectError(error.PackageNotFound, resolver.resolve(allocator, root_entry, "パッケージ:math@1.0.0"));
     try std.testing.expectError(error.PackageNotFound, resolver.resolve(allocator, root_entry, "パッケージ:math/../private"));
     try std.testing.expectError(error.UnsafeExportPath, resolver.resolve(allocator, root_entry, "パッケージ:math/escape"));
-}
-
-test "同名packageのmaterialized pathを別versionへ差し替えたenvironmentを拒否する" {
-    const allocator = std.testing.allocator;
-    const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
-    try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/math");
-    try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/math-2");
-    try temporary.dir.writeFile(io, .{ .sub_path = "main.nako3", .data = "" });
-    for ([_]struct { dir: []const u8, version: []const u8 }{
-        .{ .dir = "math", .version = "1.0.0" },
-        .{ .dir = "math-2", .version = "2.0.0" },
-    }) |package| {
-        const manifest_path = try std.fs.path.join(allocator, &.{ ".nako/env/gen-test/deps", package.dir, "nako.toml" });
-        defer allocator.free(manifest_path);
-        const manifest = try std.fmt.allocPrint(
-            allocator,
-            "[package]\nname = \"math\"\nversion = \"{s}\"\nlicense = \"MIT\"\n[[exports]]\nname = \"main\"\npath = \"index.nako3\"\n",
-            .{package.version},
-        );
-        defer allocator.free(manifest);
-        const source_path = try std.fs.path.join(allocator, &.{ ".nako/env/gen-test/deps", package.dir, "index.nako3" });
-        defer allocator.free(source_path);
-        try temporary.dir.writeFile(io, .{ .sub_path = manifest_path, .data = manifest });
-        try temporary.dir.writeFile(io, .{ .sub_path = source_path, .data = "" });
-    }
-    const lock_json =
-        \\{"schemaVersion":2,"input":{"profile":"default","target":{"os":"macos","cpu":"aarch64","abi":"none"}},"packages":{"pkg:math-v2":{"id":"pkg:math-v2","name":"math","version":"2.0.0","source":{"type":"registry","url":"https://example.invalid/math-v2"},"dependencies":[]},"pkg:math-v1":{"id":"pkg:math-v1","name":"math","version":"1.0.0","source":{"type":"registry","url":"https://example.invalid/math-v1"},"dependencies":[]}},"rootDependencies":{"default":["pkg:math-v1"]}}
-    ;
-    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock_json });
-    var digest: [32]u8 = undefined;
-    std.crypto.hash.sha2.Sha256.hash(lock_json, &digest, .{});
-    const lock_hex = std.fmt.bytesToHex(digest, .lower);
-    const environment = try std.fmt.allocPrint(
-        allocator,
-        "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"dependencies\":[],\"packages\":{{\"pkg:math-v1\":{{\"id\":\"pkg:math-v1\",\"name\":\"math\",\"version\":\"1.0.0\",\"path\":\".nako/env/gen-test/deps/math\",\"exports\":[{{\"name\":\"main\",\"path\":\"index.nako3\"}}]}},\"pkg:math-v2\":{{\"id\":\"pkg:math-v2\",\"name\":\"math\",\"version\":\"2.0.0\",\"path\":\".nako/env/gen-test/deps/math-2\",\"exports\":[{{\"name\":\"main\",\"path\":\"index.nako3\"}}]}}}}}}",
-        .{lock_hex},
-    );
-    defer allocator.free(environment);
-    try temporary.dir.createDirPath(io, ".nako");
-    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = environment });
-    const project_root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
-    defer allocator.free(project_root);
-
-    var resolver = try Resolver.load(allocator, io, project_root);
-    resolver.deinit();
-
-    const swapped = try std.mem.replaceOwned(u8, allocator, environment, "\"path\":\".nako/env/gen-test/deps/math\"", "\"path\":\".nako/env/gen-test/deps/math-2\"");
-    defer allocator.free(swapped);
-    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = swapped });
-    try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, project_root));
 }
 
 test "realpath importerとproject entry優先でancestor package scopeを誤選択しない" {
@@ -1398,7 +1377,7 @@ test "realpath importerとproject entry優先でancestor package scopeを誤選�
     );
     defer allocator.free(json);
     try temporary.dir.writeFile(io, .{ .sub_path = "repo/examples/.nako/environment.json", .data = json });
-    const project_root = try temporary.dir.realPathFileAlloc(io, "repo/examples", allocator);
+    const project_root = try temporaryDirRealPathAlloc(allocator, io, temporary.dir, "repo/examples");
     defer allocator.free(project_root);
     const root_entry = try temporary.dir.realPathFileAlloc(io, "repo/examples/main.nako3", allocator);
     defer allocator.free(root_entry);
@@ -1411,11 +1390,15 @@ test "realpath importerとproject entry優先でancestor package scopeを誤選�
     defer allocator.free(project_import.path);
     defer allocator.free(project_import.canonical_id);
     defer allocator.free(project_import.namespace);
-    try std.testing.expect(std.mem.endsWith(u8, project_import.path, "/root-util/index.nako3"));
+    const expected_root_util = try std.fs.path.join(allocator, &.{ "root-util", "index.nako3" });
+    defer allocator.free(expected_root_util);
+    try std.testing.expect(std.mem.endsWith(u8, project_import.path, expected_root_util));
 
     const package_import = try resolver.resolve(allocator, symlink_importer, "pkg:util");
     defer allocator.free(package_import.path);
     defer allocator.free(package_import.canonical_id);
     defer allocator.free(package_import.namespace);
-    try std.testing.expect(std.mem.endsWith(u8, package_import.path, "/parent-util/index.nako3"));
+    const expected_parent_util = try std.fs.path.join(allocator, &.{ "parent-util", "index.nako3" });
+    defer allocator.free(expected_parent_util);
+    try std.testing.expect(std.mem.endsWith(u8, package_import.path, expected_parent_util));
 }

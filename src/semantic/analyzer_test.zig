@@ -450,6 +450,48 @@ test "助詞が正しい呼出しと暗黙『それ』連文は未解決語に�
     }
 }
 
+test "package qualified symbolは宣言したimporter以外から解決されない" {
+    const parser = @import("../frontend/parser.zig");
+    var package = try parser.parse(std.testing.allocator, "値=1\n", "math.nako3");
+    defer package.deinit();
+    var declared = try parser.parse(std.testing.allocator, "math__値を表示\n", "declared.nako3");
+    defer declared.deinit();
+    var undeclared = try parser.parse(std.testing.allocator, "math__値を表示\n", "undeclared.nako3");
+    defer undeclared.deinit();
+    const aliases = [_]analyzer.NamespaceAlias{.{
+        .source_namespace = "math",
+        .internal_namespace = "opaque_pkg_0",
+        .target_module = 0,
+        .is_explicit = true,
+    }};
+
+    // Package symbols use an opaque internal prefix; source alias lookup is scoped
+    // to this importer and translates math__Value to the internal key.
+    var declared_program = try analyzeModules(std.testing.allocator, &.{
+        .{ .name = "math", .internal_namespace = "opaque_pkg_0", .path = "math.nako3", .root = package.root.?, .is_package = true },
+        .{ .name = "declared", .path = "declared.nako3", .root = declared.root.?, .namespace_aliases = &aliases },
+    });
+    defer declared_program.deinit();
+    var declared_resolved = false;
+    for (declared_program.bindings) |binding| {
+        if (binding.kind != .reference or !std.mem.eql(u8, binding.name, "math__値")) continue;
+        if (binding.symbol) |symbol_id| {
+            if (declared_program.symbols[symbol_id].module_index == 0) declared_resolved = true;
+        }
+    }
+    try std.testing.expect(declared_resolved);
+
+    var undeclared_program = try analyzeModules(std.testing.allocator, &.{
+        .{ .name = "math", .path = "math.nako3", .root = package.root.?, .is_package = true },
+        .{ .name = "undeclared", .path = "undeclared.nako3", .root = undeclared.root.? },
+    });
+    defer undeclared_program.deinit();
+    for (undeclared_program.bindings) |binding| {
+        if (binding.kind != .reference or !std.mem.eql(u8, binding.name, "math__値")) continue;
+        if (binding.symbol) |symbol_id| try std.testing.expect(undeclared_program.symbols[symbol_id].module_index != 0);
+    }
+}
+
 test "package aliasは関数parameterの同名qualified localより優先されない" {
     const parser = @import("../frontend/parser.zig");
     var package = try parser.parse(std.testing.allocator, "値=1\n", "package.nako3");

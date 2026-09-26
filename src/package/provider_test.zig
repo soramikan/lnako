@@ -52,12 +52,9 @@ const FixtureServer = struct {
     fn stop(self: *FixtureServer) void {
         if (self.listener) |*listener| {
             self.stopping.store(true, .release);
-            // listen socket への shutdown は accept の並行 cancel 機構として
-            // Zig が規定する方法。deinit（close）だけでは accept が解除されず、
-            // close 後の accept は BADF で panic するため join より先に行う。
-            const wake: std.Io.net.Stream = .{ .socket = listener.socket };
-            wake.shutdown(self.io, .both) catch {};
-            // shutdown が accept を解除しない環境向けに自接続でも起こす。
+            // Do not shutdown the listening socket: on Windows this can panic
+            // with WSAEINVAL. The self-connection wakes accept portably; the
+            // loop observes `stopping`, closes that connection, and then exits.
             if (listener.socket.address.connect(self.io, .{ .mode = .stream })) |stream| {
                 stream.close(self.io);
             } else |_| {}
@@ -1681,4 +1678,8 @@ test "sync は検証済み git object があれば checkout 無しで offline �
     const bytes = try std.Io.Dir.cwd().readFileAlloc(io, index_path, testing.allocator, .unlimited);
     defer testing.allocator.free(bytes);
     try testing.expectEqualStrings("●表示とは\nここまで\n", bytes);
+}
+
+test {
+    _ = @import("import_resolver_test.zig");
 }

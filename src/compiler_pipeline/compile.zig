@@ -172,8 +172,8 @@ fn sourceForDiagnostic(graph: lnako.semantic.module_graph.ModuleGraph, file: []c
 test "package importは共通compile経路からAOT用IR module metadataへ到達する" {
     const TestProvider = struct {
         fn read(_: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-            if (std.mem.endsWith(u8, path, "main.nako3")) return allocator.dupe(u8, "!「パッケージ:math」を取り込む\n");
-            if (std.mem.endsWith(u8, path, "packages/math/index.nako3")) return allocator.dupe(u8, "A=1\n");
+            if (pathHasSuffix(path, "main.nako3")) return allocator.dupe(u8, "!「パッケージ:math」を取り込む\n");
+            if (pathHasSuffix(path, "packages/math/index.nako3")) return allocator.dupe(u8, "A=1\n");
             return error.FileNotFound;
         }
     };
@@ -228,6 +228,69 @@ test "package importは共通compile経路からAOT用IR module metadataへ到�
         try std.testing.expect(std.mem.indexOf(u8, llvm_ir, "target triple") != null);
         try std.testing.expect(std.mem.indexOf(u8, llvm_ir, "define") != null);
     }
+}
+
+test "AOT compile permits unresolved qualified names outside package dependency scope" {
+    const TestProvider = struct {
+        fn read(_: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+            if (pathHasSuffix(path, "main.nako3")) return allocator.dupe(u8, "!「pkg:math」を取り込む\n!「pkg:orphan」を取り込む\n");
+            if (pathHasSuffix(path, "packages/math/index.nako3")) return allocator.dupe(u8, "値=42\n");
+            if (pathHasSuffix(path, "packages/orphan/index.nako3")) return allocator.dupe(u8, "math__値を表示。\n");
+            return error.FileNotFound;
+        }
+    };
+    const TestResolver = struct {
+        const Package = struct { path: []const u8, canonical_id: []const u8, namespace: []const u8 };
+
+        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+            const package: Package = if (std.mem.eql(u8, specifier, "pkg:math")) .{
+                .path = "packages/math/index.nako3",
+                .canonical_id = "pkg:math/main",
+                .namespace = "math",
+            } else if (std.mem.eql(u8, specifier, "pkg:orphan")) .{
+                .path = "packages/orphan/index.nako3",
+                .canonical_id = "pkg:orphan/main",
+                .namespace = "orphan",
+            } else return error.PackageNotFound;
+            return .{
+                .path = try std.fs.path.resolve(allocator, &.{package.path}),
+                .canonical_id = try allocator.dupe(u8, package.canonical_id),
+                .namespace = package.namespace,
+            };
+        }
+    };
+    var context: u8 = 0;
+    var stderr: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer stderr.deinit();
+    const program = try compileInputWithProvider(
+        std.testing.allocator,
+        "main.nako3",
+        .{ .package_resolver = .{ .context = &context, .resolveFn = TestResolver.resolve } },
+        &stderr.writer,
+        .{ .context = &context, .readFn = TestProvider.read },
+    );
+    var compiled = program orelse return error.UnexpectedCompileFailure;
+    defer compiled.deinit();
+    var saw_unresolved_qualified_load = false;
+    for (compiled.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
+        if (instruction.opcode == .load_global and std.mem.eql(u8, instruction.name, "math__値")) {
+            saw_unresolved_qualified_load = true;
+        }
+    };
+    try std.testing.expect(saw_unresolved_qualified_load);
+}
+
+fn pathHasSuffix(path: []const u8, suffix: []const u8) bool {
+    if (suffix.len > path.len) return false;
+    const start = path.len - suffix.len;
+    if (start > 0 and path[start - 1] != '/' and path[start - 1] != '\\') return false;
+    for (suffix, 0..) |char, index| {
+        const path_char = path[start + index];
+        const normalized_path_char: u8 = if (path_char == '\\') '/' else path_char;
+        const normalized_suffix_char: u8 = if (char == '\\') '/' else char;
+        if (normalized_path_char != normalized_suffix_char) return false;
+    }
+    return true;
 }
 
 const FrontendTimer = struct {

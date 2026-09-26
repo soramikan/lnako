@@ -53,12 +53,16 @@ pub const ImportEntry = struct {
 
 pub const ModuleInput = struct {
     name: []const u8,
+    /// Symbol namespace may differ from the public module name (notably packages).
+    internal_namespace: ?[]const u8 = null,
     path: []const u8,
     root: *ast.Node,
     /// 字句解析が使った正規化済み本文。span の source 位置はこの本文を
     /// 指す。文区切り（`;`／改行）の種別判定などに使う。
     normalized_source: []const u8 = "",
     allows_dynamic_commands: bool = false,
+    /// Package symbols are resolvable only through an importer's namespace aliases.
+    is_package: bool = false,
     /// root.children と同じ長さの、結合ストリーム上の文順位。
     /// 空ならモジュール内位置をファイル内のspan順で比較する。
     stmt_ranks: []const usize = &.{},
@@ -864,6 +868,7 @@ pub const Analyzer = struct {
             if (self.resolveScopedNamespaceAlias(module_index, scope, name, use_span, false)) |symbol| return symbol;
             for (self.symbols.items) |symbol| {
                 if (self.scopes.items[symbol.scope].kind != .module or symbol.shadowed or self.hiddenModuleVar(symbol)) continue;
+                if (symbol.module_index < self.inputs.len and self.inputs[symbol.module_index].is_package) continue;
                 if (!std.mem.eql(u8, symbol.qualified_name, name)) continue;
                 if (!self.moduleSymbolVisibleAt(module_index, use_span, scope, symbol)) continue;
                 if (self.isDeclSiteSymbol(symbol, module_index, use_span)) continue;
@@ -977,7 +982,7 @@ pub const Analyzer = struct {
         // 公式は __varslist[2] のキーをそのままの名前で持つため、
         // 修飾名はそれ自体がグローバルキーになる。
         const qualified = if (self.scopes.items[scope].kind == .module and std.mem.indexOf(u8, name, "__") == null)
-            try std.fmt.allocPrint(self.allocator, "{s}__{s}", .{ self.modules.items[module_index].name, name })
+            try std.fmt.allocPrint(self.allocator, "{s}__{s}", .{ self.inputs[module_index].internal_namespace orelse self.modules.items[module_index].name, name })
         else
             try self.allocator.dupe(u8, name);
         try self.symbols.append(self.allocator, .{
@@ -1053,7 +1058,7 @@ pub const Analyzer = struct {
 
     /// qualified が「{module}__{name}」の形かをアロケーション無しで判定する。
     fn moduleQualifiedEql(self: *Analyzer, module_index: u32, qualified: []const u8, name: []const u8) bool {
-        const module_name = self.modules.items[module_index].name;
+        const module_name = self.inputs[module_index].internal_namespace orelse self.modules.items[module_index].name;
         return qualified.len == module_name.len + 2 + name.len and
             std.mem.startsWith(u8, qualified, module_name) and
             std.mem.eql(u8, qualified[module_name.len .. module_name.len + 2], "__") and
