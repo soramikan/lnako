@@ -44,11 +44,15 @@ pub const Acquired = struct {
 /// 絶対扱いし、生成環境をまたぐ lock の文字列も正しく保持する。
 pub fn isAbsoluteDepPath(path: []const u8) bool {
     if (path.len == 0) return false;
-    if (builtin.os.tag != .windows and std.fs.path.isAbsolute(path)) return true;
+    if (builtin.os.tag != .windows) {
+        // POSIX では `\\server\share` は backslash を含む正当な相対名。
+        // drive-letter 判定と同じく UNC 解釈も Windows のみで行い、
+        // POSIX 上の正規ファイル名を絶対 path と誤認しない。
+        return std.fs.path.isAbsolute(path);
+    }
     const double_separator = path.len >= 2 and isWindowsSeparator(path[0]) and isWindowsSeparator(path[1]);
     if (double_separator) return isCompleteWindowsUnc(path);
-    if (builtin.os.tag == .windows) return std.fs.path.isAbsoluteWindows(path);
-    return false;
+    return std.fs.path.isAbsoluteWindows(path);
 }
 
 fn isCompleteWindowsUnc(path: []const u8) bool {

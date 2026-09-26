@@ -506,20 +506,6 @@ fn isWindowsDriveRoot(path: []const u8) bool {
     return path.len >= 3 and std.ascii.isAlphabetic(path[0]) and path[1] == ':' and isWindowsSeparator(path[2]);
 }
 
-/// POSIXでは2つの先頭backslashだけではUNCとみなさない。
-fn isCompleteBackslashUnc(path: []const u8) bool {
-    if (path.len < 5 or path[0] != '\\' or path[1] != '\\') return false;
-    var i: usize = 2;
-    while (i < path.len and isWindowsSeparator(path[i])) : (i += 1) {}
-    const server_start = i;
-    while (i < path.len and !isWindowsSeparator(path[i])) : (i += 1) {}
-    if (i == server_start or i == path.len) return false;
-    while (i < path.len and isWindowsSeparator(path[i])) : (i += 1) {}
-    const share_start = i;
-    while (i < path.len and !isWindowsSeparator(path[i])) : (i += 1) {}
-    return i > share_start;
-}
-
 fn canonicalDepSpelling(gpa: Allocator, decl: []const u8) ![]const u8 {
     // `C:/deps` 形は Windows でのみ drive path。POSIX では `:` を含む
     // 正当な相対 path 名であり、`\` への置換を行うと別の file を指す。
@@ -601,7 +587,9 @@ test "canonicalDepSpelling keeps a leading backslash relative on POSIX" {
     const complete_unc = try canonicalDepSpelling(std.testing.allocator, "\\\\server\\share\\lib");
     defer std.testing.allocator.free(complete_unc);
     try std.testing.expectEqualStrings("\\\\server\\share\\lib", complete_unc);
-    try std.testing.expect(isAbsoluteDependencyPath(complete_unc));
+    // UNC 判定は Windows 限定。POSIX では `\\` 始まりも backslash を含む
+    // 正当な相対名で、project 相対として扱う。
+    try std.testing.expect(!isAbsoluteDependencyPath(complete_unc));
 }
 
 test "canonicalDepSpelling normalizes Windows absolute paths" {
@@ -735,7 +723,17 @@ fn normalizePathSource(gpa: Allocator, declared: []const u8, base_dir: ?[]const 
     if (std.mem.startsWith(u8, joined, root) and joined.len > root.len and
         (joined[root.len] == '/' or joined[root.len] == std.fs.path.sep))
     {
-        return joined[root.len + 1 ..];
+        const relative = joined[root.len + 1 ..];
+        // Windows の resolve は `\` 区切りを返す。`source.path`/
+        // `mutablePaths` が lock 越しに他環境へ持ち出されても展開できる
+        // よう、project 相対部分は `/` 区切りへ揃える（POSIX は変換
+        // しない。`\` は正当なファイル名文字のため別名へ化ける）。
+        if (builtin.os.tag == .windows) {
+            for (relative) |*ch| {
+                if (ch.* == '\\') ch.* = '/';
+            }
+        }
+        return relative;
     }
     return joined;
 }
@@ -1759,6 +1757,28 @@ pub fn ensureLock(
         else => return error.FileSystem,
     };
     const lock_path = try std.fs.path.join(a, &.{ project.root, lock_name });
+    // registry/Git 解決の最中に root manifest が書き換わると、古い
+    // manifest に対応する lock を新しい manifest へ原子公開して即座に
+    // 陳腐化する。公開前に bytes/hash を再読して input と照合し、
+    // 変わっていれば lock を公開せず失敗させる（再実行で現在の
+    // manifest に対する lock が作り直される）。
+    {
+        const current = std.Io.Dir.cwd().readFileAlloc(io, project.manifest_path, a, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.FileNotFound => {
+                try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml", .{}, "manifest was removed while resolving the lock", .{});
+                return error.StaleLock;
+            },
+            else => return mapFs(err),
+        };
+        var digest: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(current, &digest, .{});
+        const current_sha = try std.fmt.allocPrint(a, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
+        if (!std.mem.eql(u8, current_sha, input.manifest_sha256)) {
+            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml", .{}, "manifest changed while resolving the lock; re-run to regenerate it", .{});
+            return error.StaleLock;
+        }
+    }
     // mutable path 依存を持つ lock は毎回再解決するが、結果が同一なら
     // 書き換えない。mtime だけ変わると環境の lockSha256 照合を無意味に
     // 再評価させ、writer 間の edit.lock 競合も増やすため。

@@ -23,6 +23,27 @@ pub fn canonicalPath(gpa: std.mem.Allocator, path: []const u8) ![]const u8 {
     return normalized.toOwnedSlice(gpa);
 }
 
+const ResolvedKind = enum { file, directory, other };
+
+/// readdir が返した kind を digest 用の分類へ正規化する。NFS/FUSE 等
+/// `DT_UNKNOWN` を返す fs では `.unknown` のままなので、no-follow stat
+/// で実体を判定する。symlink・特殊 file は `.other`（拒否側）へ分類する。
+fn resolveEntryKind(io: std.Io, dir: std.Io.Dir, name: []const u8, reported: std.Io.File.Kind) !ResolvedKind {
+    return switch (reported) {
+        .file => .file,
+        .directory => .directory,
+        .unknown => blk: {
+            const stat = try dir.statFile(io, name, .{ .follow_symlinks = false });
+            break :blk switch (stat.kind) {
+                .file => .file,
+                .directory => .directory,
+                else => .other,
+            };
+        },
+        else => .other,
+    };
+}
+
 fn appendEntries(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, rel: []const u8, entries: *std.ArrayList(Entry)) !void {
     var it = dir.iterate();
     while (it.next(io) catch |err| return err) |entry| {
@@ -30,7 +51,8 @@ fn appendEntries(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, rel: []con
         const joined = if (rel.len == 0) try gpa.dupe(u8, entry.name) else try std.fs.path.join(gpa, &.{ rel, entry.name });
         const child_rel = try canonicalPath(gpa, joined);
         gpa.free(joined);
-        switch (entry.kind) {
+        const kind = try resolveEntryKind(io, dir, entry.name, entry.kind);
+        switch (kind) {
             .file => {
                 const stat = try dir.statFile(io, entry.name, .{});
                 try entries.append(gpa, .{ .rel = child_rel, .kind = .file, .size = stat.size });
@@ -41,8 +63,26 @@ fn appendEntries(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, rel: []con
                 defer child.close(io);
                 try appendEntries(io, gpa, child, child_rel, entries);
             },
-            else => return error.UnsupportedEntry,
+            .other => return error.UnsupportedEntry,
         }
+    }
+}
+
+test "resolveEntryKind は DT_UNKNOWN 相当の entry を stat で判定する" {
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(io, .{ .sub_path = "a.txt", .data = "x" });
+    try temporary.dir.createDir(io, "sub", .default_dir);
+    // readdir が kind を返せない fs でも stat 由来の実体で分類される。
+    try std.testing.expectEqual(ResolvedKind.file, try resolveEntryKind(io, temporary.dir, "a.txt", .unknown));
+    try std.testing.expectEqual(ResolvedKind.directory, try resolveEntryKind(io, temporary.dir, "sub", .unknown));
+    // symlink・特殊 file 報告は従来どおり拒否側（.other）のまま。
+    try std.testing.expectEqual(ResolvedKind.other, try resolveEntryKind(io, temporary.dir, "a.txt", .sym_link));
+    if (builtin.os.tag != .windows) {
+        try temporary.dir.symLink(io, "a.txt", "link.txt", .{});
+        // unknown 報告された symlink も stat が .sym_link を返して拒否側。
+        try std.testing.expectEqual(ResolvedKind.other, try resolveEntryKind(io, temporary.dir, "link.txt", .unknown));
     }
 }
 

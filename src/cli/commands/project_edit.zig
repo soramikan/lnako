@@ -270,12 +270,197 @@ fn insertEntry(a: Allocator, source: []const u8, section: []const u8, name: []co
         return output.items;
     }
     if (try insertDottedEntry(a, source, section, key, value)) |inserted| return inserted;
+    if (try insertInlineEntry(a, source, section, key, value)) |inserted| return inserted;
     var output: std.ArrayList(u8) = .empty;
     try output.appendSlice(a, source);
     while (output.items.len > 0 and output.items[output.items.len - 1] == '\n') {
         _ = output.pop();
     }
     try output.appendSlice(a, try std.fmt.allocPrint(a, "\n\n[{s}]\n{s}", .{ section, line }));
+    return output.items;
+}
+
+/// `dependencies = { path = { lib = { path = "lib" } } }` のような
+/// 文書 root の inline table 形式で `<parent>` が宣言済みの場合、
+/// inline table の内側へ `<key> = <value>` を追記する。inline table
+/// は自足宣言のため `[<section>]` ヘッダの追加は table 再定義になる。
+/// 見つからなければ null。
+fn insertInlineEntry(a: Allocator, source: []const u8, section: []const u8, key: []const u8, value: []const u8) !?[]const u8 {
+    const dot = std.mem.lastIndexOfScalar(u8, section, '.') orelse return null;
+    const parent = section[0..dot];
+    const kind = section[dot + 1 ..];
+
+    // 文書 root（最初の `[` ヘッダより前）で `<parent> = {` を探す。
+    var index: usize = 0;
+    var state: TomlLexState = .normal;
+    while (index < source.len) {
+        const end = lineEnd(source, index);
+        const text = std.mem.trimStart(u8, source[index..end], " \t");
+        if (!tomlLineStartsInMultiline(state) and text.len > 0 and text[0] == '[') break;
+        if (!tomlLineStartsInMultiline(state)) {
+            if (assignmentLhs(source[index..end])) |lhs| {
+                if (tomlKeySegmentEquals(lhs, parent)) {
+                    const eq = index + (std.mem.indexOfScalar(u8, source[index..end], '=') orelse unreachable);
+                    var value_start = eq + 1;
+                    while (value_start < end and (source[value_start] == ' ' or source[value_start] == '\t')) value_start += 1;
+                    // `<parent>` が inline table でなければ編集対象外
+                    // （scalar 宣言は `[section]` 追加と両立しない）。
+                    if (value_start >= end or source[value_start] != '{') return null;
+                    const close = inlineTableClose(source, value_start, end) orelse return null;
+                    if (findInlineKindOpen(source, value_start, close, kind)) |kind_open| {
+                        const kind_close = inlineTableClose(source, kind_open, end) orelse return null;
+                        const entry = try std.fmt.allocPrint(a, "{s} = {s}", .{ key, value });
+                        return try spliceInlineTableEntry(a, source, kind_open, kind_close, entry);
+                    }
+                    const entry = try std.fmt.allocPrint(a, "{s} = {{ {s} = {s} }}", .{ kind, key, value });
+                    return try spliceInlineTableEntry(a, source, value_start, close, entry);
+                }
+            }
+        }
+        advanceTomlLexState(source[index..end], &state);
+        index = if (end < source.len) end + 1 else source.len;
+    }
+    return null;
+}
+
+/// `source[open]` の `{` に対応する `}` の位置を返す。basic/literal
+/// string 内の brace は無視する。`limit`（行末）までに閉じなければ
+/// null（TOML の inline table は単一行に限定される）。
+fn inlineTableClose(source: []const u8, open: usize, limit: usize) ?usize {
+    var depth: usize = 0;
+    var index = open;
+    while (index < limit) : (index += 1) {
+        switch (source[index]) {
+            '"' => {
+                index += 1;
+                while (index < limit and source[index] != '"') : (index += 1) {
+                    if (source[index] == '\\') index += 1;
+                }
+            },
+            '\'' => {
+                index += 1;
+                while (index < limit and source[index] != '\'') : (index += 1) {}
+            },
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if (depth == 0) return index;
+            },
+            else => {},
+        }
+    }
+    return null;
+}
+
+fn skipInlineWs(source: []const u8, index: usize, limit: usize) usize {
+    var i = index;
+    while (i < limit and (source[i] == ' ' or source[i] == '\t')) : (i += 1) {}
+    return i;
+}
+
+fn skipInlineSep(source: []const u8, index: usize, limit: usize) usize {
+    var i = index;
+    while (i < limit and (source[i] == ' ' or source[i] == '\t' or source[i] == ',')) : (i += 1) {}
+    return i;
+}
+
+/// `<parent> = {` の inline table 内（`open`/`close` 間）の top-level で
+/// `kind` key を探し、その値の `{` 位置を返す。`kind` が非 table 値で
+/// 宣言済み、または dotted key（`path.lib = ...`）を含む場合は inline
+/// 編集を断念して null。
+fn findInlineKindOpen(source: []const u8, open: usize, close: usize, kind: []const u8) ?usize {
+    var index = open + 1;
+    while (index < close) {
+        index = skipInlineSep(source, index, close);
+        if (index >= close) return null;
+        const key_start = index;
+        var key: []const u8 = undefined;
+        if (source[index] == '"' or source[index] == '\'') {
+            const quote = source[index];
+            index += 1;
+            const content_start = index;
+            while (index < close and source[index] != quote) : (index += 1) {
+                if (quote == '"' and source[index] == '\\') index += 1;
+            }
+            key = source[content_start..index];
+            index += 1;
+        } else {
+            while (index < close and isBareKeyChar(source[index])) : (index += 1) {}
+            key = source[key_start..index];
+        }
+        index = skipInlineWs(source, index, close);
+        if (index >= close or source[index] != '=') return null;
+        index += 1;
+        index = skipInlineWs(source, index, close);
+        if (index >= close) return null;
+        if (std.mem.eql(u8, key, kind)) {
+            // 値が inline table でなければ追記先を作れない。
+            if (source[index] != '{') return null;
+            return index;
+        }
+        switch (source[index]) {
+            '{' => index = (inlineTableClose(source, index, close) orelse return null) + 1,
+            '[' => index = (inlineBracketClose(source, index, close) orelse return null) + 1,
+            '"', '\'' => {
+                const quote = source[index];
+                index += 1;
+                while (index < close and source[index] != quote) : (index += 1) {
+                    if (quote == '"' and source[index] == '\\') index += 1;
+                }
+                index += 1;
+            },
+            else => while (index < close and source[index] != ',') : (index += 1) {},
+        }
+    }
+    return null;
+}
+
+/// `source[open]` の `[` に対応する `]` の位置を返す（array 値の
+/// skip 用）。string 内の bracket は無視する。
+fn inlineBracketClose(source: []const u8, open: usize, limit: usize) ?usize {
+    var depth: usize = 0;
+    var index = open;
+    while (index < limit) : (index += 1) {
+        switch (source[index]) {
+            '"' => {
+                index += 1;
+                while (index < limit and source[index] != '"') : (index += 1) {
+                    if (source[index] == '\\') index += 1;
+                }
+            },
+            '\'' => {
+                index += 1;
+                while (index < limit and source[index] != '\'') : (index += 1) {}
+            },
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if (depth == 0) return index;
+            },
+            else => {},
+        }
+    }
+    return null;
+}
+
+fn isBareKeyChar(ch: u8) bool {
+    return std.ascii.isAlphanumeric(ch) or ch == '_' or ch == '-';
+}
+
+/// `open`/`close`（`{`/`}` の index）の inline table 末尾へ `entry` を
+/// 追加した新 source を返す。
+fn spliceInlineTableEntry(a: Allocator, source: []const u8, open: usize, close: usize, entry: []const u8) ![]const u8 {
+    const inner = std.mem.trim(u8, source[open + 1 .. close], " \t");
+    var tail = close;
+    while (tail > open + 1 and (source[tail - 1] == ' ' or source[tail - 1] == '\t')) tail -= 1;
+    var output: std.ArrayList(u8) = .empty;
+    try output.appendSlice(a, source[0..tail]);
+    if (inner.len == 0) {
+        try output.appendSlice(a, try std.fmt.allocPrint(a, " {s} ", .{entry}));
+    } else {
+        try output.appendSlice(a, try std.fmt.allocPrint(a, ", {s} ", .{entry}));
+    }
+    try output.appendSlice(a, source[close..]);
     return output.items;
 }
 
@@ -664,34 +849,58 @@ fn initTargetExists(io: std.Io, path: []const u8) !bool {
 /// 拒否されるため、作成済みの file/dir を登録して失敗時に除去する。
 /// 既存の file/dir は登録しないため一切触れない。個々の削除失敗は
 /// 無視する（ロールバックの失敗で元の error を隠さない）。
+/// 削除は常に pinned handle 相対で行う。登録した path の中間成分が
+/// rollback 前に symlink へ置換されても、絶対 path 再解決で project
+/// 外の file を消さない。
 const InitRollback = struct {
     io: std.Io,
+    /// init 対象 dir の pinned handle（所有しない。caller が close する
+    /// 前に `run` が呼ばれるよう errdefer の宣言順で制御する）。
+    root_dir: std.Io.Dir = std.Io.Dir.cwd(),
     /// 今回作成した `nako.toml`。createFile 成功後に登録する。
-    manifest_path: ?[]const u8 = null,
-    /// 今回作成したプロジェクト dir。dir が既存だった場合は null。
-    dir_abs: ?[]const u8 = null,
-    /// 今回作成した scaffold file（絶対 path、作成順）。
+    manifest_created: bool = false,
+    /// 今回作成したプロジェクト dir の親 handle（所有する）と basename。
+    /// dir が既存だった場合は null。
+    new_dir_parent: ?std.Io.Dir = null,
+    new_dir_name: []const u8 = "",
+    /// 今回作成した scaffold file（root_dir 相対、作成順）。
     files: std.ArrayList([]const u8) = .empty,
-    /// 今回作成した scaffold 親 dir（絶対 path、作成順）。
+    /// 今回作成した scaffold 親 dir（root_dir 相対、作成順）。
     dirs: std.ArrayList([]const u8) = .empty,
 
     fn deinit(self: *InitRollback, a: Allocator) void {
         self.files.deinit(a);
         self.dirs.deinit(a);
+        if (self.new_dir_parent) |*parent| {
+            parent.close(self.io);
+            self.new_dir_parent = null;
+        }
     }
 
-    /// 登録済みの生成物を作成の逆順で削除する。dir は空の場合のみ
-    /// 消えるため、作成後に他の file が置かれていれば残る。
+    /// 登録済みの生成物を作成の逆順で削除する。file は親 dir を
+    /// no-follow で開いてから leaf を消し、dir は空の場合のみ消える
+    /// （`deleteDir` は leaf symlink を辿らない）。
     fn run(self: *InitRollback) void {
-        const cwd = std.Io.Dir.cwd();
-        for (self.files.items) |path| cwd.deleteFile(self.io, path) catch {};
+        for (self.files.items) |rel| {
+            if (std.fs.path.dirname(rel)) |parent_rel| {
+                var parent = self.root_dir.openDir(self.io, parent_rel, .{ .follow_symlinks = false }) catch continue;
+                defer parent.close(self.io);
+                parent.deleteFile(self.io, std.fs.path.basename(rel)) catch {};
+            } else {
+                self.root_dir.deleteFile(self.io, rel) catch {};
+            }
+        }
         var i = self.dirs.items.len;
         while (i > 0) {
             i -= 1;
-            cwd.deleteDir(self.io, self.dirs.items[i]) catch {};
+            self.root_dir.deleteDir(self.io, self.dirs.items[i]) catch {};
         }
-        if (self.manifest_path) |path| cwd.deleteFile(self.io, path) catch {};
-        if (self.dir_abs) |path| cwd.deleteDir(self.io, path) catch {};
+        if (self.manifest_created) self.root_dir.deleteFile(self.io, project.manifest_name) catch {};
+        if (self.new_dir_parent) |*parent| {
+            parent.deleteDir(self.io, self.new_dir_name) catch {};
+            parent.close(self.io);
+            self.new_dir_parent = null;
+        }
     }
 };
 
@@ -734,17 +943,12 @@ pub fn runInit(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []
     if (!manifest_mod.isPackageName(name)) {
         return failUsage(stderr, "init: パッケージ名が規則に合いません: {s}（[a-z][a-z0-9-]{{0,63}}。--name で指定してください）\n", .{name});
     }
-    // scaffold 作成の途中失敗で `nako.toml` や部分的な生成物が残り
-    // 再試行を妨げないよう、今回作成した出力だけを追跡して失敗時に
-    // 除去する。既存の file/dir は対象に含めない。
-    var rollback = InitRollback{ .io = io };
-    defer rollback.deinit(a);
-    errdefer rollback.run();
+    var created_dir = false;
     if (dir_arg != null) {
         const dir_existed = try initTargetExists(io, dir_abs);
         if (!dir_existed) {
             try cwd.createDirPath(io, dir_abs);
-            rollback.dir_abs = dir_abs;
+            created_dir = true;
         }
     }
     // Hold a no-follow handle to the destination root. Besides rejecting an
@@ -755,6 +959,26 @@ pub fn runInit(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []
         else => return err,
     };
     defer root_dir.close(io);
+    // scaffold 作成の途中失敗で `nako.toml` や部分的な生成物が残り
+    // 再試行を妨げないよう、今回作成した出力だけを追跡して失敗時に
+    // 除去する。既存の file/dir は対象に含めない。削除は `root_dir` の
+    // pinned handle 相対で行うため、errdefer は close より後（=先に実行）
+    // に登録する。
+    var rollback = InitRollback{ .io = io, .root_dir = root_dir };
+    defer rollback.deinit(a);
+    errdefer rollback.run();
+    if (created_dir) {
+        // `dir_abs` 自身の削除は親 handle 相対で行う。親をここで pin
+        // しておけば、rollback までに path が置換されても作成した dir
+        // 以外を消さない。
+        if (std.fs.path.dirname(dir_abs)) |parent_path| {
+            const maybe_parent = cwd.openDir(io, parent_path, .{ .follow_symlinks = false }) catch null;
+            if (maybe_parent) |parent| {
+                rollback.new_dir_parent = parent;
+                rollback.new_dir_name = std.fs.path.basename(dir_abs);
+            }
+        }
+    }
     const root_stat = try root_dir.stat(io);
     if (root_stat.kind != .directory) {
         return fail(stderr, "init: {s} は symlink またはディレクトリではありません\n", .{dir_abs});
@@ -804,7 +1028,7 @@ pub fn runInit(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []
         error.PathAlreadyExists => return fail(stderr, "init: {s} は既に存在します\n", .{manifest_path}),
         else => return err,
     };
-    rollback.manifest_path = manifest_path;
+    rollback.manifest_created = true;
     // Windows では open 中の file を削除できないため、ロールバックが
     // manifest を除去できるよう書込直後に閉じる。
     manifest_file.writeStreamingAll(io, manifest_text.items) catch |err| {
@@ -821,9 +1045,11 @@ pub fn runInit(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []
             const target = try std.fs.path.join(a, &.{ dir_abs, rel });
             // writeInitFile が親 dir を新規作成する場合に備え、生成前に
             // 存在しなかった dir はロールバック対象へ登録する。既存の
-            // dir は登録しないためロールバックで残る。
-            if (std.fs.path.dirname(target)) |parent| {
-                if (!try initTargetExists(io, parent)) try rollback.dirs.append(a, parent);
+            // dir は登録しないためロールバックで残る。登録は root_dir
+            // 相対で行う（rollback 中の path 置換に追随しない）。
+            if (std.fs.path.dirname(rel)) |parent_rel| {
+                const parent_abs = try std.fs.path.join(a, &.{ dir_abs, parent_rel });
+                if (!try initTargetExists(io, parent_abs)) try rollback.dirs.append(a, parent_rel);
             }
             writeInitFile(io, root_dir, rel, contents) catch |err| {
                 // 実 CLI の fail は exit するため errdefer が走らない。
@@ -835,7 +1061,7 @@ pub fn runInit(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []
                     else => err,
                 };
             };
-            try rollback.files.append(a, target);
+            try rollback.files.append(a, rel);
         }
     }
     try stderr.print("init: {s} にプロジェクトを作成しました\n", .{dir_abs});
@@ -1551,4 +1777,98 @@ test "init --lib は scaffold 途中の失敗で先行 file と dir もロール
     try std.testing.expect(!try initTargetExists(io, try std.fs.path.join(a, &.{ root, "src" })));
     const examples_stat = try temporary.dir.statFile(io, "examples", .{ .follow_symlinks = false });
     try std.testing.expect(examples_stat.kind == .sym_link);
+}
+
+test "insertEntry は inline table 形式の依存表の内側へ追記する" {
+    // `dependencies = { path = { lib = {...} } }` のような inline table
+    // 宣言へ `[dependencies.path]` ヘッダを追加すると TOML の table 再定義
+    // になるため、inline table の内側へ `key = value` を挿入する。
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const source =
+        \\dependencies = { path = { lib = { path = "lib" } } }
+        \\
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+    ;
+    const edited = try insertEntry(a, source, "dependencies.path", "other", "{ path = \"other\" }");
+    try std.testing.expect(std.mem.indexOf(u8, edited, "[dependencies.path]") == null);
+    try std.testing.expect(std.mem.indexOf(u8, edited, "lib = { path = \"lib\" }, other = { path = \"other\" }") != null);
+    var diagnostics = diag.List.init(a);
+    defer diagnostics.deinit();
+    var manifest = try manifest_mod.parse(a, edited, &diagnostics);
+    defer manifest.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics.errorCount());
+    try std.testing.expect(manifest.dependencies.path.get("other") != null);
+    try std.testing.expect(manifest.dependencies.path.get("lib") != null);
+
+    // `<parent>` inline table に `<kind>` が無い場合は kind の表ごと挿入。
+    const no_kind = try insertEntry(a,
+        \\dependencies = { git = { tool = { url = "https://example.com/tool.git", commit = "0123456789abcdef0123456789abcdef01234567" } } }
+        \\
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+    , "dependencies.path", "other", "{ path = \"other\" }");
+    try std.testing.expect(std.mem.indexOf(u8, no_kind, "[dependencies.path]") == null);
+    var diagnostics2 = diag.List.init(a);
+    defer diagnostics2.deinit();
+    var manifest2 = try manifest_mod.parse(a, no_kind, &diagnostics2);
+    defer manifest2.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics2.errorCount());
+    try std.testing.expect(manifest2.dependencies.path.get("other") != null);
+    try std.testing.expect(manifest2.dependencies.git.get("tool") != null);
+
+    // 空の inline table でも同じく内側へ入る。
+    const edited3 = try insertEntry(a,
+        \\dependencies = {}
+        \\
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+    , "dependencies.path", "other", "{ path = \"other\" }");
+    try std.testing.expect(std.mem.indexOf(u8, edited3, "[dependencies.path]") == null);
+    var diagnostics3 = diag.List.init(a);
+    defer diagnostics3.deinit();
+    var manifest3 = try manifest_mod.parse(a, edited3, &diagnostics3);
+    defer manifest3.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics3.errorCount());
+    try std.testing.expect(manifest3.dependencies.path.get("other") != null);
+}
+
+test "InitRollback は symlink 置換された親 dir を辿らず project 外を消さない" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    // init 先と project 外の victim を用意する。
+    try temporary.dir.createDirPath(io, "outside");
+    try temporary.dir.writeFile(io, .{ .sub_path = "outside/victim.txt", .data = "keep" });
+    var root = try temporary.dir.openDir(io, ".", .{ .follow_symlinks = false });
+    defer root.close(io);
+    // init が作成した生成物（manifest + src/lib.nako3 + src dir）を再現。
+    try root.writeFile(io, .{ .sub_path = "nako.toml", .data = "[package]\n" });
+    try root.createDirPath(io, "src");
+    try root.writeFile(io, .{ .sub_path = "src/lib.nako3", .data = "x" });
+    var rollback = InitRollback{ .io = io, .root_dir = root, .manifest_created = true };
+    defer rollback.deinit(std.testing.allocator);
+    try rollback.files.append(std.testing.allocator, "src/lib.nako3");
+    try rollback.dirs.append(std.testing.allocator, "src");
+    // rollback 前に `src` が outside への symlink へ置換された想定。
+    // 絶対 path で `src/lib.nako3` を消すと outside 側まで辿って消える。
+    try root.deleteTree(io, "src");
+    try root.symLink(io, "../outside", "src", .{});
+    rollback.run();
+    try temporary.dir.access(io, "outside/victim.txt", .{});
+    try std.testing.expectError(error.FileNotFound, root.access(io, "nako.toml", .{}));
+    const src_stat = try root.statFile(io, "src", .{ .follow_symlinks = false });
+    try std.testing.expect(src_stat.kind == .sym_link);
 }

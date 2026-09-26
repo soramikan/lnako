@@ -204,7 +204,9 @@ test "path provider の絶対判定はhost pathと完全なUNCを区別する" {
         try testing.expect(!provider.isAbsoluteDepPath("\\\\lib"));
     }
     try testing.expectEqual(builtin.os.tag == .windows, provider.isAbsoluteDepPath("C:\\"));
-    try testing.expect(provider.isAbsoluteDepPath("\\\\server\\share\\lib"));
+    // UNC 判定は Windows 限定。POSIX では `\\` 始まりも backslash を含む
+    // 正当な相対名として扱う。
+    try testing.expectEqual(builtin.os.tag == .windows, provider.isAbsoluteDepPath("\\\\server\\share\\lib"));
 }
 
 test "path provider はPOSIX上の先頭backslashを相対pathとして取得する" {

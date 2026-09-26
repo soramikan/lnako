@@ -431,7 +431,12 @@ test "異なる親の同名dep keyは別sourceとして解決される" {
     // a, b, common-a, common-b の4つの path entry が記録される。
     var path_entries: usize = 0;
     for (outcome.lock.packages) |entry| {
-        if (entry.source != null and entry.source.?.kind == .path) path_entries += 1;
+        if (entry.source != null and entry.source.?.kind == .path) {
+            path_entries += 1;
+            // 推移的 path 依存の project 相対 `source.path` は Windows で
+            // も `\` を含まない（`/` 区切りへ揃えて環境間共有可能にする）。
+            try testing.expect(std.mem.indexOfScalar(u8, entry.source.?.path.?, '\\') == null);
+        }
     }
     try testing.expectEqual(@as(usize, 4), path_entries);
 }
@@ -989,6 +994,59 @@ test "推移的manifestのnpm宣言もlock化を拒否する" {
     const item = diagnostics.find(diag.E029_INVALID_VALUE) orelse return error.TestExpectedEqual;
     try testing.expect(std.mem.indexOf(u8, item.message, "escape") != null);
     // 不完全な lock は書かれない。
+    try testing.expectError(error.FileNotFound, temporary.dir.access(io, "app/nako.lock", .{}));
+}
+
+test "ensureLockは解決中のmanifest変更を検出してlockを公開しない" {
+    // `project.load` が読んだ bytes/hash と解決完了時の manifest が
+    // 異なる場合、古い manifest に対応する lock を新 manifest へ原子
+    // 公開すると即座に陳腐化する。公開前に hash を再照合して失敗する。
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/lib/src");
+    try writeLibPackage(temporary.dir, io, "app/lib", "lib");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/nako.toml",
+        .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\lib = { path = "lib" }
+        \\
+        ,
+    });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    defer loaded.deinit();
+
+    // 読込と解決の間に manifest が書き換わった状態を再現する（load 後に
+    // 別内容へ上書き。bytes が変われば hash 照合で検出される）。
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/nako.toml",
+        .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.2.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\lib = { path = "lib" }
+        \\
+        ,
+    });
+
+    try testing.expectError(error.StaleLock, project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics));
+    const item = diagnostics.find(diag.E029_INVALID_VALUE) orelse return error.TestExpectedEqual;
+    try testing.expect(std.mem.indexOf(u8, item.message, "manifest changed") != null);
+    // 古い manifest に対応する lock は公開されない。
     try testing.expectError(error.FileNotFound, temporary.dir.access(io, "app/nako.lock", .{}));
 }
 

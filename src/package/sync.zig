@@ -147,8 +147,8 @@ const Context = struct {
     project_abs: []const u8,
     /// `<gen>/deps`（materialize 先）、generation dir handle 相対で開いたもの。
     deps_dir: std.Io.Dir,
-    /// path-only external tooling の一時 workspace。`.nako` 配下には置かない。
-    workspace_abs: []const u8,
+    /// `.lnako-work-<gen>` の pinned handle。artifact の一時 archive・
+    /// 展開先はこの handle 相対にだけ作る（絶対 path を再解決しない）。
     workspace_dir: std.Io.Dir,
     /// `.nako/env/<gen>`（env.json の path に使う前置）。
     generation_rel: []const u8,
@@ -307,8 +307,6 @@ pub fn run(
     var workspace_dir = environment.openManagedChildDir(project_dir, io, workspace_name, true) catch |err| return mapFs(err);
     defer environment.deleteTreeChecked(project_dir, io, workspace_name) catch {};
     defer workspace_dir.close(io);
-    const workspace_abs = try std.fs.path.join(arena, &.{ project_abs, workspace_name });
-
     var ctx = Context{
         .gpa = gpa,
         .arena = arena,
@@ -317,7 +315,6 @@ pub fn run(
         .cache_store = &cache_store,
         .project_abs = project_abs,
         .deps_dir = deps_dir,
-        .workspace_abs = workspace_abs,
         .workspace_dir = workspace_dir,
         .generation_rel = generation_rel,
         .runtime = options.runtime,
@@ -691,7 +688,6 @@ test "sync fails when a selected export has no eligible implementation" {
         .cache_store = undefined,
         .project_abs = "",
         .deps_dir = undefined,
-        .workspace_abs = "",
         .workspace_dir = undefined,
         .generation_rel = "",
         .runtime = .lnako,
@@ -941,7 +937,10 @@ fn buildArtifactObject(ctx: *Context, key: []const u8, bytes: []const u8, artifa
     var tree = staging.openDir(ctx.io, "tree", .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
     var tree_open = true;
     defer if (tree_open) tree.close(ctx.io);
-    const temp_base = try std.fmt.allocPrint(arena, "{s}/artifact-{s}", .{ ctx.workspace_abs, key });
+    // 一時アーカイブ・展開先は `ctx.workspace_dir`（pinned handle）相対に
+    // だけ作る。`.lnako-work-<gen>` を指す絶対 path が rename→symlink 置換
+    // されても、archive 書込み・展開・cleanup が project 外へ出ない。
+    const extract_name = try std.fmt.allocPrint(arena, "artifact-{s}.extract", .{key});
     var prepared = PreparedArtifact{};
     if (std.mem.eql(u8, artifact_type, ".npkg")) {
         // 公開前に package 検証を通す。hash 照合済みでも必須 metadata・
@@ -954,27 +953,32 @@ fn buildArtifactObject(ctx: *Context, key: []const u8, bytes: []const u8, artifa
         };
         prepared.manifest = verified.manifest;
         prepared.commands = verified.commands;
-        // 一時アーカイブ・展開先は cache root 外の generation-scoped path に置く。
-        const archive_path = try std.fmt.allocPrint(arena, "{s}.archive", .{temp_base});
-        std.Io.Dir.cwd().writeFile(ctx.io, .{ .sub_path = archive_path, .data = bytes }) catch |err| return mapFs(err);
-        defer std.Io.Dir.cwd().deleteFile(ctx.io, archive_path) catch {};
-        const extract_dir = try std.fmt.allocPrint(arena, "{s}.extract", .{temp_base});
-        defer std.Io.Dir.cwd().deleteTree(ctx.io, extract_dir) catch {};
-        zip.extract(ctx.io, archive_path, extract_dir) catch |err| {
+        const archive_name = try std.fmt.allocPrint(arena, "artifact-{s}.archive", .{key});
+        ctx.workspace_dir.writeFile(ctx.io, .{ .sub_path = archive_name, .data = bytes }) catch |err| return mapFs(err);
+        defer ctx.workspace_dir.deleteFile(ctx.io, archive_name) catch {};
+        ctx.workspace_dir.createDir(ctx.io, extract_name, .default_dir) catch |err| return mapFs(err);
+        var extracted = ctx.workspace_dir.openDir(ctx.io, extract_name, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+        defer {
+            extracted.close(ctx.io);
+            environment.deleteTreeChecked(ctx.workspace_dir, ctx.io, extract_name) catch {};
+        }
+        var archive_file = ctx.workspace_dir.openFile(ctx.io, archive_name, .{}) catch |err| return mapFs(err);
+        defer archive_file.close(ctx.io);
+        zip.extractOpened(ctx.io, archive_file, bytes.len, extracted) catch |err| {
             return ctx.session.fail(.invalid_metadata, .artifact, key, "artifact archive failed boundary-checked extraction: {s}", .{@errorName(err)});
         };
-        var extracted = std.Io.Dir.cwd().openDir(ctx.io, extract_dir, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
-        defer extracted.close(ctx.io);
         _ = materialize.copyTreeFromDirs(ctx.gpa, ctx.io, &extracted, &tree, .{}) catch |err| return mapTreeError(ctx, err, key);
     } else if (std.mem.eql(u8, artifact_type, "tar.gz") or std.mem.eql(u8, artifact_type, "npm-tarball")) {
         // npm-tarball は `package/` 前置を持つため先頭成分を除外する。
-        const extract_dir = try std.fmt.allocPrint(arena, "{s}.extract", .{temp_base});
-        defer std.Io.Dir.cwd().deleteTree(ctx.io, extract_dir) catch {};
-        unpack.extractTarGz(arena, ctx.io, bytes, extract_dir, .{
+        ctx.workspace_dir.createDir(ctx.io, extract_name, .default_dir) catch |err| return mapFs(err);
+        var extracted = ctx.workspace_dir.openDir(ctx.io, extract_name, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+        defer {
+            extracted.close(ctx.io);
+            environment.deleteTreeChecked(ctx.workspace_dir, ctx.io, extract_name) catch {};
+        }
+        unpack.extractTarGzInto(arena, ctx.io, bytes, extracted, .{
             .strip_components = if (std.mem.eql(u8, artifact_type, "npm-tarball")) 1 else 0,
         }) catch |err| return mapUnpackError(ctx, err, key);
-        var extracted = std.Io.Dir.cwd().openDir(ctx.io, extract_dir, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
-        defer extracted.close(ctx.io);
         _ = materialize.copyTreeFromDirs(ctx.gpa, ctx.io, &extracted, &tree, .{}) catch |err| return mapTreeError(ctx, err, key);
     } else if (std.mem.eql(u8, artifact_type, "raw")) {
         tree.writeFile(ctx.io, .{ .sub_path = "blob", .data = bytes }) catch |err| return mapFs(err);
@@ -1315,7 +1319,6 @@ test "cachedManifest は manifest 欠落と読取不能を区別する" {
         .cache_store = &store,
         .project_abs = "",
         .deps_dir = temporary.dir,
-        .workspace_abs = "",
         .workspace_dir = temporary.dir,
         .generation_rel = "",
         .runtime = .lnako,
