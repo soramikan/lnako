@@ -762,6 +762,12 @@ pub fn validate(lock: *const Lock, diagnostics: *diag.List) !void {
     if (lock.schema_version != lock_schema_version) {
         try diagnostics.addFmt(diag.E002_UNKNOWN_LOCK_SCHEMA, .err, "nako.lock.schemaVersion", .{}, "unknown lock schema version {d}", .{lock.schema_version});
     }
+    // 未対応の resolverVersion も受理しない。nako.toml の無い lock 駆動
+    // project では manifest 再解決の入口を経由しないため、`sync --locked`
+    // が未知版の lock をそのまま環境へ適用しないようここで拒否する。
+    if (lock.resolver_version != resolver_version) {
+        try diagnostics.addFmt(diag.E002_UNKNOWN_LOCK_SCHEMA, .err, "nako.lock.resolverVersion", .{}, "unknown lock resolver version {d}", .{lock.resolver_version});
+    }
 
     var profile_names: std.StringHashMapUnmanaged(void) = .empty;
     defer profile_names.deinit(diagnostics.allocator);

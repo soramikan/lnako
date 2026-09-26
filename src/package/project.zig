@@ -521,7 +521,9 @@ fn isCompleteBackslashUnc(path: []const u8) bool {
 }
 
 fn canonicalDepSpelling(gpa: Allocator, decl: []const u8) ![]const u8 {
-    const windows_drive_root = isWindowsDriveRoot(decl);
+    // `C:/deps` 形は Windows でのみ drive path。POSIX では `:` を含む
+    // 正当な相対 path 名であり、`\` への置換を行うと別の file を指す。
+    const windows_drive_root = builtin.os.tag == .windows and isWindowsDriveRoot(decl);
     const windows_unc_prefix = decl.len >= 2 and isWindowsSeparator(decl[0]) and isWindowsSeparator(decl[1]);
     const windows_unc_root = windows_unc_prefix and isAbsoluteDependencyPath(decl) and
         (builtin.os.tag == .windows or decl[0] == '\\');
@@ -603,6 +605,9 @@ test "canonicalDepSpelling keeps a leading backslash relative on POSIX" {
 }
 
 test "canonicalDepSpelling normalizes Windows absolute paths" {
+    // drive/UNC 形式の正規化は Windows のみで有効。POSIX では `C:\deps` は
+    // `:`・`\` を含む正当な相対 path 名であり、Windows path へ変換しない。
+    if (builtin.os.tag != .windows) return;
     const drive = try canonicalDepSpelling(std.testing.allocator, "C:\\deps\\\\.\\lib\\");
     defer std.testing.allocator.free(drive);
     try std.testing.expectEqualStrings("C:\\deps\\lib", drive);
@@ -610,6 +615,23 @@ test "canonicalDepSpelling normalizes Windows absolute paths" {
     const unc = try canonicalDepSpelling(std.testing.allocator, "\\\\server\\share\\\\lib\\.");
     defer std.testing.allocator.free(unc);
     try std.testing.expectEqualStrings("\\\\server\\share\\lib", unc);
+}
+
+test "canonicalDepSpelling keeps drive-like spellings as POSIX relative names" {
+    // POSIX では `C:/deps` は drive path ではなく `:` を含む相対 path。
+    // 先頭が `/` でないため POSIX の成分正規化だけが適用され、backslash は
+    // 通常のファイル名文字として保持される。
+    if (builtin.os.tag == .windows) return;
+    const drive_like = try canonicalDepSpelling(std.testing.allocator, "C:/deps/./lib/");
+    defer std.testing.allocator.free(drive_like);
+    try std.testing.expectEqualStrings("C:/deps/lib", drive_like);
+    try std.testing.expect(!isAbsoluteDependencyPath(drive_like));
+    try std.testing.expect(!isAbsoluteDependencyPath("C:/deps"));
+
+    const backslash_name = try canonicalDepSpelling(std.testing.allocator, "C:\\deps");
+    defer std.testing.allocator.free(backslash_name);
+    try std.testing.expectEqualStrings("C:\\deps", backslash_name);
+    try std.testing.expect(!isAbsoluteDependencyPath(backslash_name));
 }
 
 test "resolveTarget は CLI compat-js を選択 profile だけに適用する" {
@@ -720,12 +742,13 @@ fn normalizePathSource(gpa: Allocator, declared: []const u8, base_dir: ?[]const 
 
 const GitCheckoutWorkspace = struct {
     key: []const u8,
-    path: []const u8,
     root_dir: std.Io.Dir,
     workspace_dir: std.Io.Dir,
 };
 
 /// Git workspaceはcache外、checkout読書きはpinned handle経由。
+/// path 文字列は一切返さない。`workspace_dir` が clone・checkout・
+/// 削除の起点で、全て handle 相対の名前空間に固定される。
 fn gitCheckoutWorkspace(gpa: Allocator, io: std.Io, ctx: *ResolveContext, dep: manifest_mod.GitDependency) Error!GitCheckoutWorkspace {
     if (ctx.cache_store == null) {
         const root = if (ctx.opts.cache_root) |root|
@@ -758,13 +781,12 @@ fn gitCheckoutWorkspace(gpa: Allocator, io: std.Io, ctx: *ResolveContext, dep: m
     var workspace_dir = workspace_root_dir.openDir(io, key, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
     errdefer workspace_dir.close(io);
 
-    const workspace = (try ctx.cache_store.?.gitWorkspacePath(gpa, key)) orelse return error.FileSystem;
     if (ctx.cache_store.?.openCheckout(key) catch |err| return mapFs(err)) |cached_checkout| {
         var cached = cached_checkout;
         defer cached.close(io);
-        _ = materialize.copyTreeFromDirs(gpa, io, &cached, &workspace_dir, .{}) catch |err| return mapFs(err);
+        _ = materialize.copyTreeFromDirs(gpa, io, &cached, &workspace_dir, cache.checkout_copy_options) catch |err| return mapFs(err);
     }
-    return .{ .key = key, .path = workspace, .root_dir = workspace_root_dir, .workspace_dir = workspace_dir };
+    return .{ .key = key, .root_dir = workspace_root_dir, .workspace_dir = workspace_dir };
 }
 
 /// 既存 lock から public id（`pkg:<32hex>`）の package entry の source を
@@ -990,16 +1012,16 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
                         .path = dep.path,
                     }, locked_source, dep_name);
                 }
-                const acquired = try provider.acquireGit(ctx.session, dep, checkout.path, if (updating) null else locked);
-                _ = ctx.cache_store.?.replaceCheckout(checkout.key, &checkout.workspace_dir, .{}) catch |err| return mapFs(err);
+                const acquired = try provider.acquireGit(ctx.session, dep, checkout.workspace_dir, if (updating) null else locked);
+                // Git checkout（object database 含む）は package tree ではなく
+                // repository 全体のため、cache への複写は大容量 pack file を
+                // 許容する緩和済み制限で行う。symlink・特殊 entry の拒否など
+                // 構造検査は package payload と同じ規則を維持する。
+                _ = ctx.cache_store.?.replaceCheckout(checkout.key, &checkout.workspace_dir, cache.checkout_copy_options) catch |err| return mapFs(err);
                 local.source = try copySource(gpa, acquired.source);
                 local.manifest = acquired.manifest;
                 // git 内 package の git/http 依存は取得できるが、path 依存は
                 // lock が project 相対で表現できないため後段で拒否する。
-                child_base_dir = if (dep.path) |sub|
-                    try std.fs.path.join(gpa, &.{ checkout.path, sub })
-                else
-                    checkout.path;
             },
             .http => {
                 const dep = work.http_dep.?;

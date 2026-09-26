@@ -222,6 +222,25 @@ test "未知schemaをE002で拒否する" {
     try T.expect(diagnostics.find(diag.E002_UNKNOWN_LOCK_SCHEMA) != null);
 }
 
+test "未知resolverVersionをE002で拒否する" {
+    // nako.toml の無い lock 駆動 project では manifest 再解決を経由しない
+    // ため、sync 経路でも検証段階で未対応版を受理しない。
+    var value = try parseValid(
+        \\{
+        \\  "schemaVersion": 1,
+        \\  "resolverVersion": 999,
+        \\  "input": { "manifestSha256": "sha256:aa", "profile": "default", "features": [], "target": { "os": "macos", "cpu": "aarch64", "abi": "gnu" } },
+        \\  "packages": {},
+        \\  "profiles": { "default": { "os": "macos", "cpu": "aarch64", "abi": "gnu" } }
+        \\}
+    );
+    defer value.deinit();
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    try lock.validate(&value, &diagnostics);
+    try T.expect(diagnostics.find(diag.E002_UNKNOWN_LOCK_SCHEMA) != null);
+}
+
 test "未知profileをE030で拒否する" {
     var value = try parseValid(
         \\{

@@ -24,6 +24,21 @@ pub const staging_dir = "staging";
 pub const checkouts_dir = "checkouts";
 pub const git_workspaces_dir = "git-workspaces";
 
+/// Git checkout（object database・worktree 全体）を cache へ複写する際の
+/// 制限。複写対象は package tree ではなく repository 全体なので、package
+/// payload 向けの既定上限（file 64MiB・tree 256MiB）は pack file で容易に
+/// 超過する。package 用の厳しい上限は `.git` を除いた object materialize
+/// 側で引き続き適用し、ここでは量の上限のみ緩和する。symlink・特殊
+/// entry・規範外名の拒否など構造検査は package と同じ規則が残る。
+pub const checkout_copy_options: materialize.Options = .{
+    .limits = .{
+        .max_entries = 1 << 22,
+        .max_total_bytes = std.math.maxInt(u64),
+        .max_file_bytes = std.math.maxInt(u64),
+        .max_depth = 128,
+    },
+};
+
 pub const Error = error{
     Busy,
     InvalidKey,
@@ -275,15 +290,11 @@ pub const Store = struct {
     }
 
     /// Git 作業領域を選択された cache root の下から no-follow で開く。
+    /// Git subprocess・checkout の読書きはこの pinned handle 相対で行い、
+    /// root path 文字列を subprocess の `-C` 等へ渡さない（root の rename/
+    /// 置換で path が別 tree を指し得るため）。
     pub fn openGitWorkspaceRoot(self: *const Store) !std.Io.Dir {
         return self.openRootChild(git_workspaces_dir, true);
-    }
-
-    /// path-based Git subprocess 向け workspace path。root が open 時と同じ
-    /// directory である場合だけ返す。更新/削除は pinned handle を使うこと。
-    pub fn gitWorkspacePath(self: *const Store, gpa: Allocator, key: []const u8) Allocator.Error!?[]u8 {
-        if (!validKey(key) or !self.rootPathStillPinned()) return null;
-        return try std.fs.path.join(gpa, &.{ self.root, git_workspaces_dir, key });
     }
 
     /// root 内の managed directory を root handle 相対で no-follow open する。
@@ -335,18 +346,11 @@ pub const Store = struct {
     }
 
     /// `objects/<key>` の絶対 path。key 不正/root path が pinned root でない場合は null。
-    /// 戻り値は path-based な既存 caller 向けであり、root の rename/置換後は
-    /// pinned cache を指す保証がない。Store 操作にはこの path を使わないこと。
+    /// 戻り値は path-based なテスト用補助であり、root の rename/置換後は
+    /// pinned cache を指す保証がない。Store 操作・subprocess には使わないこと。
     pub fn entryPath(self: *const Store, gpa: Allocator, key: []const u8) Allocator.Error!?[]u8 {
         if (!validKey(key) or !self.rootPathStillPinned()) return null;
         return try std.fs.path.join(gpa, &.{ self.root, objects_dir, key });
-    }
-
-    /// `checkouts/<key>` の絶対 path。git checkout 等の再利用作業 dir。
-    /// root の rename/置換後は pinned cache を指す保証がないため使用しないこと。
-    pub fn checkoutPath(self: *const Store, gpa: Allocator, key: []const u8) Allocator.Error!?[]u8 {
-        if (!validKey(key) or !self.rootPathStillPinned()) return null;
-        return try std.fs.path.join(gpa, &.{ self.root, checkouts_dir, key });
     }
 
     fn openEntryDir(self: *const Store, key: []const u8) !std.Io.Dir {
@@ -1096,7 +1100,51 @@ test "cache store の cleanKeep は keep 以外の entry を削除する" {
     try testing.expect(!store.entryExists("drop-c"));
 }
 
-test "Git workspace paths are isolated under each selected cache root" {
+test "checkout_copy_options は repository 全体の大容量複写を許容し構造検査を維持する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    // package 用の既定上限（file 64MiB）を超える pack file 相当の単一 file。
+    const payload = try testing.allocator.alloc(u8, 64 * 1024 * 1024 + 1);
+    defer testing.allocator.free(payload);
+    @memset(payload, 0);
+    try temporary.dir.createDirPath(io, "src/.git/objects/pack");
+    try temporary.dir.writeFile(io, .{ .sub_path = "src/.git/objects/pack/pack-big", .data = payload });
+    try temporary.dir.writeFile(io, .{ .sub_path = "src/index.nako3", .data = "x" });
+    try temporary.dir.createDir(io, "dst-default", .default_dir);
+    try temporary.dir.createDir(io, "dst-checkout", .default_dir);
+
+    var source = try temporary.dir.openDir(io, "src", .{ .iterate = true, .follow_symlinks = false });
+    defer source.close(io);
+
+    // package tree 向け既定上限では pack file が上限超過で失敗する。
+    {
+        var dst = try temporary.dir.openDir(io, "dst-default", .{ .iterate = true, .follow_symlinks = false });
+        defer dst.close(io);
+        try testing.expectError(error.FileTooLarge, materialize.copyTreeFromDirs(testing.allocator, io, &source, &dst, .{}));
+    }
+    // checkout 用の緩和済み制限では repository 全体を複写できる。
+    {
+        var dst = try temporary.dir.openDir(io, "dst-checkout", .{ .iterate = true, .follow_symlinks = false });
+        defer dst.close(io);
+        _ = try materialize.copyTreeFromDirs(testing.allocator, io, &source, &dst, checkout_copy_options);
+        const stat = try dst.statFile(io, ".git/objects/pack/pack-big", .{});
+        try testing.expectEqual(@as(u64, payload.len), stat.size);
+    }
+    // 量の緩和でも構造検査は残る（symlink は引き続き拒否）。
+    source.symLink(io, "outside", "escape", .{}) catch |err| switch (err) {
+        error.AccessDenied, error.PermissionDenied, error.FileSystem => return error.SkipZigTest,
+        else => return err,
+    };
+    {
+        try temporary.dir.createDir(io, "dst-symlink", .default_dir);
+        var dst = try temporary.dir.openDir(io, "dst-symlink", .{ .iterate = true, .follow_symlinks = false });
+        defer dst.close(io);
+        try testing.expectError(error.SymlinkEncountered, materialize.copyTreeFromDirs(testing.allocator, io, &source, &dst, checkout_copy_options));
+    }
+}
+
+test "Git workspace roots are isolated under each selected cache root" {
     const io = testing.io;
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
@@ -1111,13 +1159,14 @@ test "Git workspace paths are isolated under each selected cache root" {
     var store_b = try Store.open(testing.allocator, io, root_b);
     defer store_b.deinit();
 
-    const path_a = (try store_a.gitWorkspacePath(testing.allocator, "git-abc123")).?;
-    defer testing.allocator.free(path_a);
-    const path_b = (try store_b.gitWorkspacePath(testing.allocator, "git-abc123")).?;
-    defer testing.allocator.free(path_b);
-    try testing.expect(!std.mem.eql(u8, path_a, path_b));
-    try testing.expect(std.mem.startsWith(u8, path_a, root_a));
-    try testing.expect(std.mem.startsWith(u8, path_b, root_b));
+    var workspaces_a = try store_a.openGitWorkspaceRoot();
+    defer workspaces_a.close(io);
+    var workspaces_b = try store_b.openGitWorkspaceRoot();
+    defer workspaces_b.close(io);
+
+    // 同名 key の workspace は選択 cache root ごとに独立している。
+    try workspaces_a.createDir(io, "git-abc123", .default_dir);
+    try testing.expectError(error.FileNotFound, workspaces_b.access(io, "git-abc123", .{}));
 }
 
 test "Git workspace root refuses a symlink under a selected cache" {
