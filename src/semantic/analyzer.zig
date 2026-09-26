@@ -362,6 +362,7 @@ pub const Analyzer = struct {
                         const message = try std.fmt.allocPrint(self.allocator, "定数『{s}』は既に定義済みなので、値を代入することはできません。", .{name.name});
                         try self.addDiagnostic(.assign_to_constant, name.span, self.modules.items[module_index].path, message);
                     }
+                    self.symbols.items[symbol.id].explicit_definition = true;
                     if (self.symbols.items[symbol.id].arguments_registered_at == null)
                         self.symbols.items[symbol.id].arguments_registered_at = self.stream_order;
                     if (node.is_const) {
@@ -825,16 +826,11 @@ pub const Analyzer = struct {
                 if (self.scopes.items[id].kind == .module and
                     (!self.moduleSymbolVisible(scope, symbol) or self.hiddenModuleVar(symbol))) continue;
                 if (self.isDeclSiteSymbol(symbol, module_index, use_span)) continue;
-                if (self.explicitShadowedLocalFromAnonymousFunction(module_index, scope, id, symbol, name, use_span)) continue;
+                if (self.anonymousShadowedModuleSymbol(module_index, scope, id, symbol, name, use_span) != null) continue;
                 return symbol;
             }
         }
-        // 修飾名（mod__A）は取り込み・公開設定に関わらず全モジュールの
-        // モジュール変数に一致する（公式は __varslist[2] を修飾名キーで
-        // 共有する）。関数スコープの修飾名シンボルは上の字句探索で
-        // 祖先スコープのものだけが解決済みのため、ここでは対象外とする。
-        // 公式findVarは `__` 名を funclist 完全一致でのみ検索し、
-        // modList 検索には進まない。
+        // 修飾名は全モジュールのqualified globalのみ検索し、公式findVar同様modListは検索しない。
         if (std.mem.indexOf(u8, name, "__") != null) {
             for (self.symbols.items) |symbol| {
                 if (self.scopes.items[symbol.scope].kind != .module or symbol.shadowed or self.hiddenModuleVar(symbol)) continue;
@@ -848,10 +844,8 @@ pub const Analyzer = struct {
         return self.lookupModList(module_index, scope, name, use_span);
     }
 
-    /// cnako v3.7.24 の無名関数では、既存のモジュール変数と同名の明示的な
-    /// 関数ローカル宣言があると、その名前を外側のローカル捕捉ではなく
-    /// モジュール変数として解決する（公式生成JSは __varslist[2] を参照）。
-    fn explicitShadowedLocalFromAnonymousFunction(
+    /// cnako v3.7.24では無名関数内の明示ローカルが同名モジュール変数に解決される。
+    fn anonymousShadowedModuleSymbol(
         self: *Analyzer,
         module_index: u32,
         use_scope: ScopeId,
@@ -859,12 +853,12 @@ pub const Analyzer = struct {
         symbol: Symbol,
         name: []const u8,
         use_span: ast.Span,
-    ) bool {
+    ) ?Symbol {
         if (!symbol.explicit_definition or
             (symbol.kind != .variable and symbol.kind != .constant) or
             self.scopes.items[binding_scope].kind == .module)
         {
-            return false;
+            return null;
         }
 
         var current: ?ScopeId = use_scope;
@@ -873,10 +867,12 @@ pub const Analyzer = struct {
             if (scope_id == binding_scope) break;
             if (self.scopes.items[scope_id].kind == .anonymous_function) crossed_anonymous = true;
         }
-        if (!crossed_anonymous) return false;
+        if (!crossed_anonymous) return null;
 
-        const global = self.lookupVisibleModule(module_index, use_scope, name, use_span) orelse return false;
-        return global.kind == .variable or global.kind == .constant or global.kind == .loop_variable;
+        const global = self.lookupVisibleModule(module_index, use_scope, name, use_span) orelse
+            self.lookupModList(module_index, use_scope, name, use_span) orelse return null;
+        if (global.kind != .variable and global.kind != .constant and global.kind != .loop_variable) return null;
+        return global;
     }
 
     /// 公式findVarのmodList検索: 結合ストリームの展開マーカー順に各
@@ -908,6 +904,7 @@ pub const Analyzer = struct {
             if (existing.implicit_arguments) {
                 if (!explicit_def) return existing.id;
                 if (existing.arguments_registered_at == null) {
+                    self.symbols.items[existing.id].explicit_definition = true;
                     self.symbols.items[existing.id].kind = kind;
                     self.symbols.items[existing.id].is_mutable = is_mutable;
                     self.symbols.items[existing.id].arguments_registered_at = self.stream_order;
@@ -1069,13 +1066,14 @@ pub const Analyzer = struct {
         return null;
     }
 
-    /// 代入先の探索は公式scopeVar同様に外側スコープまで遡る。
-    /// 名前付き関数内でもモジュール変数への代入はグローバルを更新する。
-    /// ただし『それ』等のbuiltin名は関数ごとのローカルなので遡らない。
+    /// 公式scopeVar同様に外側スコープまで遡り、builtin名は遡らない。
     fn lookupAssignmentTarget(self: *Analyzer, scope: ScopeId, name: []const u8, use_span: ast.Span) ?Symbol {
         const use_module = self.scopes.items[scope].module_index;
         if (self.lookupLexical(scope, name)) |symbol| {
-            if (!self.isDeclSiteSymbol(symbol, use_module, use_span)) return symbol;
+            if (!self.isDeclSiteSymbol(symbol, use_module, use_span)) {
+                if (self.anonymousShadowedModuleSymbol(use_module, scope, scope, symbol, name, use_span)) |global| return global;
+                return symbol;
+            }
         }
         if (self.builtins.get(name) != null) return null;
         var current = self.scopes.items[scope].parent;
@@ -1084,6 +1082,7 @@ pub const Analyzer = struct {
                 if (self.scopes.items[parent].kind == .module and
                     (!self.moduleSymbolVisible(scope, symbol) or self.hiddenModuleVar(symbol))) continue;
                 if (self.isDeclSiteSymbol(symbol, use_module, use_span)) continue;
+                if (self.anonymousShadowedModuleSymbol(use_module, scope, parent, symbol, name, use_span)) |global| return global;
                 return symbol;
             }
         }

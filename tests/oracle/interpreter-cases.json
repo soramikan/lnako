@@ -116,6 +116,17 @@
     "source": "C=1\n●試すとは\nF=関数()\nCとは変数＝10\nG=関数()\nCを表示\nここまで\nG()を実行\nここまで\nF()を実行\nここまで\n試す\n"
   },
   {
+    "id": "closure-explicit-local-shadow-global-write",
+    "source": "C=1\n●実験：\n　Cとは変数＝10\n　Dとは変数＝関数：\n　　　C=C+1\n　　　Cを表示\n　Dを実行\n実験\n"
+  },
+  {
+    "id": "closure-explicit-local-shadow-imported-global-write",
+    "files": {
+      "shadow-lib.nako3": "C=2\n"
+    },
+    "source": "!「./shadow-lib.nako3」を取り込む\n●実験：\n　Cとは変数＝10\n　Dとは変数＝関数：\n　　　C=C+1\n　　　Cを表示\n　Dを実行\n実験\n"
+  },
+  {
     "id": "closure-variable-self-initializer",
     "source": "●実験4：\n　Fとは変数＝関数：\n　　　Fの変数型確認して表示\n　Fを実行\n実験4\n"
   },
@@ -517,6 +528,14 @@
   {
     "id": "arguments-array-local-declaration",
     "source": "●(Aの)Fとは\n変数 引数=7\n引数を表示\nここまで\n1のF\n"
+  },
+  {
+    "id": "arguments-array-explicit-variable-initializer-capture",
+    "source": "●(Aの)Fとは\n引数とは変数＝関数()引数を表示\n引数を実行\nここまで\nここまで\n5のF\n"
+  },
+  {
+    "id": "arguments-array-explicit-varlist-capture",
+    "source": "●(Aの)Fとは\n変数 引数\n引数=関数()引数を表示\n引数を実行\nここまで\nここまで\n5のF\n"
   },
   {
     "id": "arguments-array-indexed-write-only",

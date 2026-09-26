@@ -553,7 +553,7 @@ const Lowerer = struct {
             if (self.semantic_program.scopes[symbol.scope].kind == .module) continue;
             if (!self.scopeIsAncestor(symbol.scope, function_scope)) continue;
             if (!nodeContains(node, binding.node)) continue;
-            if (self.isVariableInitializerSelfReference(node, symbol_id)) continue;
+            if (!symbol.implicit_arguments and self.isVariableInitializerSelfReference(node, symbol_id)) continue;
             if (nameIndex(captures.items, symbol.qualified_name) != null) continue;
             try captures.append(self.allocator, try self.allocator.dupe(u8, symbol.qualified_name));
         }
