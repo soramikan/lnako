@@ -1369,6 +1369,65 @@ fn writeSyncProject(temporary: *std.testing.TmpDir, comptime lock_fmt: []const u
     return try temporary.dir.realPathFileAlloc(io, "proj", testing.allocator);
 }
 
+test "sync rejects a path manifest identity mismatch before publishing the environment" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "proj/deps/lib");
+    try temporary.dir.writeFile(io, .{ .sub_path = "proj/deps/lib/nako.toml", .data = "[package]\nname = \"renamed-lib\"\nversion = \"2.0.0\"\nlicense = \"MIT\"\n" });
+    const project_abs = try writeSyncProject(&temporary,
+        \\{{
+        \\  "schemaVersion": 1, "resolverVersion": 1,
+        \\  "input": {{ "manifestSha256": "sha256:{s}", "profile": "default", "features": [], "target": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu" }} }},
+        \\  "packages": {{
+        \\    "pkg:path": {{ "id": "pkg:path", "name": "lib", "version": "1.0.0", "source": {{ "type": "path", "path": "deps/lib", "mutable": true }}, "dependencies": [], "features": [], "artifacts": {{ "source": {{ "kind": "source", "type": "raw" }} }} }}
+        \\  }},
+        \\  "profiles": {{ "default": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu", "runtime": "lnako" }} }}
+        \\}}
+    , .{});
+    defer testing.allocator.free(project_abs);
+    const cache_root = try std.fs.path.join(testing.allocator, &.{ project_abs, "cache" });
+    defer testing.allocator.free(cache_root);
+    var list = diag.List.init(testing.allocator);
+    defer list.deinit();
+    try testing.expectError(error.LockInvalid, sync_mod.run(testing.allocator, io, .{ .project_root = project_abs, .cache_root = cache_root }, &list));
+    try testing.expect(list.hasErrors());
+    const environment_path = try std.fs.path.join(testing.allocator, &.{ project_abs, ".nako", "environment.json" });
+    defer testing.allocator.free(environment_path);
+    try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(io, environment_path, .{}));
+}
+
+test "sync rejects a git manifest identity mismatch before publishing the environment" {
+    const io = testing.io;
+    if (!gitAvailable(io)) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const repo = try createGitRepo(&temporary, io);
+    defer testing.allocator.free(repo.path);
+    defer testing.allocator.free(repo.url);
+    defer testing.allocator.free(repo.commit);
+    const project_abs = try writeSyncProject(&temporary,
+        \\{{
+        \\  "schemaVersion": 1, "resolverVersion": 1,
+        \\  "input": {{ "manifestSha256": "sha256:{s}", "profile": "default", "features": [], "target": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu" }} }},
+        \\  "packages": {{
+        \\    "pkg:git": {{ "id": "pkg:git", "name": "demo", "version": "2.0.0", "source": {{ "type": "git", "url": "{s}", "commit": "{s}" }}, "dependencies": [], "features": [], "artifacts": {{ "source": {{ "kind": "source", "type": "raw" }} }} }}
+        \\  }},
+        \\  "profiles": {{ "default": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu", "runtime": "lnako" }} }}
+        \\}}
+    , .{ repo.url, repo.commit });
+    defer testing.allocator.free(project_abs);
+    const cache_root = try std.fs.path.join(testing.allocator, &.{ project_abs, "cache" });
+    defer testing.allocator.free(cache_root);
+    var list = diag.List.init(testing.allocator);
+    defer list.deinit();
+    try testing.expectError(error.LockInvalid, sync_mod.run(testing.allocator, io, .{ .project_root = project_abs, .cache_root = cache_root }, &list));
+    try testing.expect(list.hasErrors());
+    const environment_path = try std.fs.path.join(testing.allocator, &.{ project_abs, ".nako", "environment.json" });
+    defer testing.allocator.free(environment_path);
+    try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(io, environment_path, .{}));
+}
+
 /// tar entry を gzip 圧縮した byte 列を作る（unpack.zig の検査対象を供給）。
 fn buildTarGz(gpa: std.mem.Allocator, files: []const struct { path: []const u8, content: []const u8 }) ![]u8 {
     var tar_buffer: std.Io.Writer.Allocating = .init(gpa);

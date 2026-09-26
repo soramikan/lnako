@@ -63,6 +63,32 @@ test "同名packageのmaterialized path差し替えを拒否する" {
     try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, root));
 }
 
+test "exportsを持つpackageのmissing materialized rootを拒否しno-export support packageは許可する" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps");
+    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"support\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/support\"},\"dependencies\":[]}}}";
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
+    const lock_hex = std.fmt.bytesToHex(digest, .lower);
+    const with_exports = try std.fmt.allocPrint(allocator, "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"packages\":{{\"pkg:test\":{{\"name\":\"support\",\"version\":\"1.0.0\",\"path\":\".nako/env/gen-test/deps/support\",\"exports\":[{{\"name\":\"main\",\"path\":\"index.nako3\"}}]}}}}}}", .{lock_hex});
+    defer allocator.free(with_exports);
+    try temporary.dir.createDirPath(io, ".nako");
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = with_exports });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, root));
+
+    const without_exports = try std.mem.replaceOwned(u8, allocator, with_exports, ",\"exports\":[{\"name\":\"main\",\"path\":\"index.nako3\"}]", "");
+    defer allocator.free(without_exports);
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = without_exports });
+    var resolver = try Resolver.load(allocator, io, root);
+    resolver.deinit();
+}
+
 test "schema-v2のroot edge省略はenvironment dependencyを拒否する" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;

@@ -64,8 +64,10 @@ pub fn expectedRoot(allocator: Allocator, source: std.json.ObjectMap, lock_entry
         var iterator = artifacts.iterator();
         while (iterator.next()) |item| {
             const artifact = asObject(item.value_ptr.*) orelse return error.InvalidEnvironment;
-            if (!std.mem.eql(u8, requiredString(artifact, "kind") orelse return error.InvalidEnvironment, implementation)) continue;
-            if (selected != null) return error.InvalidEnvironment;
+            const kind = requiredString(artifact, "kind") orelse return error.InvalidEnvironment;
+            if (selected != null or !std.mem.eql(u8, kind, implementation)) continue;
+            // Match PackageEntry.artifact: use the first record with this kind
+            // in the lock's deterministic object order when kinds are repeated.
             selected = artifact;
         }
         const artifact = selected orelse return error.InvalidEnvironment;
@@ -234,16 +236,19 @@ fn temporaryRootAlloc(allocator: Allocator, io: std.Io, directory: std.Io.Dir) !
     return try allocator.dupe(u8, buffer[0..length]);
 }
 
-test "native artifact root selects by record kind despite non-kind key" {
+test "native artifact root selects first matching kind despite platform keys and duplicates" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const allocator = arena_state.allocator();
     const parsed = try std.json.parseFromSlice(Value, allocator,
-        \\{"source":{"type":"registry"},"implementation":"native","artifacts":{"download":{"kind":"native","url":"https://example.invalid/pkg","sha256":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
+        \\{"source":{"type":"registry"},"implementation":"native","artifacts":{"linux-x86_64":{"kind":"native","url":"https://example.invalid/first","sha256":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"macos-arm64":{"kind":"native","url":"https://example.invalid/second","sha256":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}}
     , .{});
     defer parsed.deinit();
-    const root = try expectedRoot(allocator, asObject(parsed.value).?.get("source").?.object, asObject(parsed.value).?);
-    try testing.expect(std.mem.startsWith(u8, root.?, ".nako/native/"));
+    const entry = asObject(parsed.value).?;
+    const root = try expectedRoot(allocator, entry.get("source").?.object, entry);
+    const first_key = try cache_key.artifactKey(allocator, "artifact", "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "https://example.invalid/first");
+    const expected = try relativeRoot(allocator, first_key);
+    try testing.expectEqualStrings(expected, root.?);
 }
 
 test "native materialize reuses an equivalent root and rejects a changed file" {

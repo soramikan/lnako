@@ -873,14 +873,12 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
         },
     }
 
-    // Remote artifact metadata must identify the exact locked package before its
-    // exports can be resolved or the generation can be published. Apply this to
-    // both fresh acquisitions and cache hits.
-    if (source.kind == .http or source.kind == .registry or source.kind == .static) {
-        if (manifest) |*resolved| {
-            if (!native_store.manifestMatchesLock(resolved, entry.name, entry.version)) {
-                return ctx.session.fail(.invalid_metadata, .artifact, entry.name, "artifact manifest identity does not match lock entry for \"{s}\"", .{entry.name});
-            }
+    // Every resolved package manifest must identify the exact locked package
+    // before exports are resolved or the generation is published. This also
+    // applies to mutable path sources and cached Git objects.
+    if (manifest) |*resolved| {
+        if (!native_store.manifestMatchesLock(resolved, entry.name, entry.version)) {
+            return ctx.session.fail(.invalid_metadata, .package, entry.name, "resolved manifest identity does not match lock entry for \"{s}\"", .{entry.name});
         }
     }
 

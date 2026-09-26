@@ -350,8 +350,18 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
             }
             break :blk try validateMaterializedRoot(allocator, io, project_root, environment_path.string, generation);
         };
+        const exports_value = get(record, "exports");
+        const record_exports = if (exports_value) |value|
+            asArray(value) orelse return error.InvalidEnvironment
+        else
+            null;
         if (package_root) |root| {
             try validateEnvironmentExports(allocator, io, root, record, lock_entry, locked_packages, artifact_target, profile_value.string);
+        } else if (record_exports) |exports| {
+            // A missing materialization is tolerable only for support packages
+            // that expose no imports. Exports pointing at absent files would
+            // create an environment that validates but cannot resolve imports.
+            if (exports.items.len != 0) return error.InvalidEnvironment;
         }
 
         if (get(record, "dependencies")) |dependencies_value| {
