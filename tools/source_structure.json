@@ -30,6 +30,14 @@
       "reason": "命令dispatchファサード（arrays/へ実装移譲済み・テストはファサードに集約）",
       "limitKb": 40
     },
+      "src/package/import_resolver.zig": {
+        "reason": "manifest・lock・environment・filesystemを同一Resolverで相互検証する境界（監視対象・hard limit内）",
+        "limitKb": 84
+      },
+      "src/package/sync.zig": {
+        "reason": "package materializeとgeneration公開をまとめる同期transaction（監視対象・hard limit内）",
+        "limitKb": 100
+      },
       "src/runtime/aot/collection.zig": {
         "reason": "コレクション操作群の密集した共有ヘルパー（監視対象・hard limit内）",
         "limitKb": 80
@@ -53,6 +61,14 @@
       "src/runtime/value.zig": {
         "reason": "Value・Runtime中心のコア値表現（監視対象・hard limit内）",
         "limitKb": 81
+      },
+      "src/semantic/analyzer.zig": {
+        "reason": "namespace alias lookupはprivate symbol tableとscope stateに依存（監視対象・hard limit内）",
+        "limitKb": 84
+      },
+      "src/semantic/module_graph.zig": {
+        "reason": "canonical export identityとimport edgeをLoader state内で統合（監視対象・hard limit内）",
+        "limitKb": 92
       }
     }
   },
