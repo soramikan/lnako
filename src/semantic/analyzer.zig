@@ -851,7 +851,6 @@ pub const Analyzer = struct {
     /// cnako v3.7.24 の無名関数では、既存のモジュール変数と同名の明示的な
     /// 関数ローカル宣言があると、その名前を外側のローカル捕捉ではなく
     /// モジュール変数として解決する（公式生成JSは __varslist[2] を参照）。
-    /// 明示宣言が無い場合やグローバルが無い場合は通常の字句捕捉を維持する。
     fn explicitShadowedLocalFromAnonymousFunction(
         self: *Analyzer,
         module_index: u32,
