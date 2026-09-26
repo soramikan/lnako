@@ -5,6 +5,7 @@
 const std = @import("std");
 const lnako = @import("lnako");
 const shared = @import("project.zig");
+const toml_inline = @import("toml_inline.zig");
 
 const diag = lnako.package.diagnostics;
 const project = lnako.package.project;
@@ -299,21 +300,21 @@ fn insertInlineEntry(a: Allocator, source: []const u8, section: []const u8, key:
         if (!tomlLineStartsInMultiline(state) and text.len > 0 and text[0] == '[') break;
         if (!tomlLineStartsInMultiline(state)) {
             if (assignmentLhs(source[index..end])) |lhs| {
-                if (tomlKeySegmentEquals(lhs, parent)) {
+                if (toml_inline.tomlKeySegmentEquals(lhs, parent)) {
                     const eq = index + (std.mem.indexOfScalar(u8, source[index..end], '=') orelse unreachable);
                     var value_start = eq + 1;
                     while (value_start < end and (source[value_start] == ' ' or source[value_start] == '\t')) value_start += 1;
                     // `<parent>` が inline table でなければ編集対象外
                     // （scalar 宣言は `[section]` 追加と両立しない）。
                     if (value_start >= end or source[value_start] != '{') return null;
-                    const close = inlineTableClose(source, value_start, end) orelse return null;
-                    if (findInlineKindOpen(source, value_start, close, kind)) |kind_open| {
-                        const kind_close = inlineTableClose(source, kind_open, end) orelse return null;
+                    const close = toml_inline.inlineTableClose(source, value_start, end) orelse return null;
+                    if (toml_inline.findInlineKindOpen(source, value_start, close, kind)) |kind_open| {
+                        const kind_close = toml_inline.inlineTableClose(source, kind_open, end) orelse return null;
                         const entry = try std.fmt.allocPrint(a, "{s} = {s}", .{ key, value });
-                        return try spliceInlineTableEntry(a, source, kind_open, kind_close, entry);
+                        return try toml_inline.spliceInlineTableEntry(a, source, kind_open, kind_close, entry);
                     }
                     const entry = try std.fmt.allocPrint(a, "{s} = {{ {s} = {s} }}", .{ kind, key, value });
-                    return try spliceInlineTableEntry(a, source, value_start, close, entry);
+                    return try toml_inline.spliceInlineTableEntry(a, source, value_start, close, entry);
                 }
             }
         }
@@ -321,147 +322,6 @@ fn insertInlineEntry(a: Allocator, source: []const u8, section: []const u8, key:
         index = if (end < source.len) end + 1 else source.len;
     }
     return null;
-}
-
-/// `source[open]` の `{` に対応する `}` の位置を返す。basic/literal
-/// string 内の brace は無視する。`limit`（行末）までに閉じなければ
-/// null（TOML の inline table は単一行に限定される）。
-fn inlineTableClose(source: []const u8, open: usize, limit: usize) ?usize {
-    var depth: usize = 0;
-    var index = open;
-    while (index < limit) : (index += 1) {
-        switch (source[index]) {
-            '"' => {
-                index += 1;
-                while (index < limit and source[index] != '"') : (index += 1) {
-                    if (source[index] == '\\') index += 1;
-                }
-            },
-            '\'' => {
-                index += 1;
-                while (index < limit and source[index] != '\'') : (index += 1) {}
-            },
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if (depth == 0) return index;
-            },
-            else => {},
-        }
-    }
-    return null;
-}
-
-fn skipInlineWs(source: []const u8, index: usize, limit: usize) usize {
-    var i = index;
-    while (i < limit and (source[i] == ' ' or source[i] == '\t')) : (i += 1) {}
-    return i;
-}
-
-fn skipInlineSep(source: []const u8, index: usize, limit: usize) usize {
-    var i = index;
-    while (i < limit and (source[i] == ' ' or source[i] == '\t' or source[i] == ',')) : (i += 1) {}
-    return i;
-}
-
-/// `<parent> = {` の inline table 内（`open`/`close` 間）の top-level で
-/// `kind` key を探し、その値の `{` 位置を返す。`kind` が非 table 値で
-/// 宣言済み、または dotted key（`path.lib = ...`）を含む場合は inline
-/// 編集を断念して null。
-fn findInlineKindOpen(source: []const u8, open: usize, close: usize, kind: []const u8) ?usize {
-    var index = open + 1;
-    while (index < close) {
-        index = skipInlineSep(source, index, close);
-        if (index >= close) return null;
-        const key_start = index;
-        var key: []const u8 = undefined;
-        if (source[index] == '"' or source[index] == '\'') {
-            const quote = source[index];
-            index += 1;
-            const content_start = index;
-            while (index < close and source[index] != quote) : (index += 1) {
-                if (quote == '"' and source[index] == '\\') index += 1;
-            }
-            key = source[content_start..index];
-            index += 1;
-        } else {
-            while (index < close and isBareKeyChar(source[index])) : (index += 1) {}
-            key = source[key_start..index];
-        }
-        index = skipInlineWs(source, index, close);
-        if (index >= close or source[index] != '=') return null;
-        index += 1;
-        index = skipInlineWs(source, index, close);
-        if (index >= close) return null;
-        if (std.mem.eql(u8, key, kind)) {
-            // 値が inline table でなければ追記先を作れない。
-            if (source[index] != '{') return null;
-            return index;
-        }
-        switch (source[index]) {
-            '{' => index = (inlineTableClose(source, index, close) orelse return null) + 1,
-            '[' => index = (inlineBracketClose(source, index, close) orelse return null) + 1,
-            '"', '\'' => {
-                const quote = source[index];
-                index += 1;
-                while (index < close and source[index] != quote) : (index += 1) {
-                    if (quote == '"' and source[index] == '\\') index += 1;
-                }
-                index += 1;
-            },
-            else => while (index < close and source[index] != ',') : (index += 1) {},
-        }
-    }
-    return null;
-}
-
-/// `source[open]` の `[` に対応する `]` の位置を返す（array 値の
-/// skip 用）。string 内の bracket は無視する。
-fn inlineBracketClose(source: []const u8, open: usize, limit: usize) ?usize {
-    var depth: usize = 0;
-    var index = open;
-    while (index < limit) : (index += 1) {
-        switch (source[index]) {
-            '"' => {
-                index += 1;
-                while (index < limit and source[index] != '"') : (index += 1) {
-                    if (source[index] == '\\') index += 1;
-                }
-            },
-            '\'' => {
-                index += 1;
-                while (index < limit and source[index] != '\'') : (index += 1) {}
-            },
-            '[' => depth += 1,
-            ']' => {
-                depth -= 1;
-                if (depth == 0) return index;
-            },
-            else => {},
-        }
-    }
-    return null;
-}
-
-fn isBareKeyChar(ch: u8) bool {
-    return std.ascii.isAlphanumeric(ch) or ch == '_' or ch == '-';
-}
-
-/// `open`/`close`（`{`/`}` の index）の inline table 末尾へ `entry` を
-/// 追加した新 source を返す。
-fn spliceInlineTableEntry(a: Allocator, source: []const u8, open: usize, close: usize, entry: []const u8) ![]const u8 {
-    const inner = std.mem.trim(u8, source[open + 1 .. close], " \t");
-    var tail = close;
-    while (tail > open + 1 and (source[tail - 1] == ' ' or source[tail - 1] == '\t')) tail -= 1;
-    var output: std.ArrayList(u8) = .empty;
-    try output.appendSlice(a, source[0..tail]);
-    if (inner.len == 0) {
-        try output.appendSlice(a, try std.fmt.allocPrint(a, " {s} ", .{entry}));
-    } else {
-        try output.appendSlice(a, try std.fmt.allocPrint(a, ", {s} ", .{entry}));
-    }
-    try output.appendSlice(a, source[close..]);
-    return output.items;
 }
 
 /// dotted key 宣言により `<parent>.<kind>`（例: `dependencies.path`）が
@@ -681,7 +541,12 @@ fn removeEntry(a: Allocator, source: []const u8, section: []const u8, name: []co
     const text = source[start..end];
     const eq = std.mem.indexOfScalar(u8, text, '=') orelse return null;
     const lhs = std.mem.trim(u8, text[0..eq], " \t");
-    if (!lhsMatchesDecl(lhs, parent, kind, name)) return null;
+    if (!lhsMatchesDecl(lhs, parent, kind, name)) {
+        // `dependencies = { path = { lib = ... } }` の inline table 宣言は
+        // lhs が `<parent>` 自身なので行単位の除去は適用できない。内側の
+        // `<kind>` table から `<name>` entry だけを取り除く。
+        return try toml_inline.removeInlineEntry(a, source, parent, kind, name, start, end);
+    }
     // 複数行に跨る inline table/array は閉じるまでまとめて除去する。
     const stmt_end = statementEnd(source, start);
     const remove_end = if (stmt_end < source.len) stmt_end + 1 else stmt_end;
@@ -689,20 +554,6 @@ fn removeEntry(a: Allocator, source: []const u8, section: []const u8, name: []co
     try output.appendSlice(a, source[0..start]);
     try output.appendSlice(a, source[remove_end..]);
     return output.items;
-}
-
-/// TOML dotted key の1 segmentを、引用形式を保ったまま比較する。
-/// escape を含む basic key は誤削除を避けて不一致にする。
-fn tomlKeySegmentEquals(raw: []const u8, expected: []const u8) bool {
-    const segment = std.mem.trim(u8, raw, " \t");
-    if (segment.len == 0) return false;
-    if (segment[0] == '\"' or segment[0] == '\'') {
-        if (segment.len < 2 or segment[segment.len - 1] != segment[0]) return false;
-        const inner = segment[1 .. segment.len - 1];
-        if (segment[0] == '\"' and std.mem.indexOfScalar(u8, inner, '\\') != null) return false;
-        return std.mem.eql(u8, inner, expected);
-    }
-    return std.mem.eql(u8, segment, expected);
 }
 
 /// 代入文の左辺が dep 宣言 `name` を指すか。`lib = ...` の単一 key、
@@ -740,11 +591,11 @@ fn lhsMatchesDecl(lhs: []const u8, parent: []const u8, kind: []const u8, name: [
     segments[count] = lhs[segment_start..];
     count += 1;
 
-    if (count == 1) return tomlKeySegmentEquals(segments[0], name);
-    if (count == 2) return tomlKeySegmentEquals(segments[0], kind) and
-        tomlKeySegmentEquals(segments[1], name);
-    return count == 3 and tomlKeySegmentEquals(segments[0], parent) and
-        tomlKeySegmentEquals(segments[1], kind) and tomlKeySegmentEquals(segments[2], name);
+    if (count == 1) return toml_inline.tomlKeySegmentEquals(segments[0], name);
+    if (count == 2) return toml_inline.tomlKeySegmentEquals(segments[0], kind) and
+        toml_inline.tomlKeySegmentEquals(segments[1], name);
+    return count == 3 and toml_inline.tomlKeySegmentEquals(segments[0], parent) and
+        toml_inline.tomlKeySegmentEquals(segments[1], kind) and toml_inline.tomlKeySegmentEquals(segments[2], name);
 }
 
 // ---------------------------------------------------------------------------
@@ -1700,6 +1551,105 @@ test "removeEntry は dotted key 宣言も除去する" {
     const dev_removed = (try removeEntry(a, root_source, "dev-dependencies.path", "lib", .{ .line = 3 })).?;
     try std.testing.expect(std.mem.indexOf(u8, dev_removed, "\ndev-dependencies.path.lib") == null);
     try std.testing.expect(std.mem.startsWith(u8, dev_removed, "dependencies.path.lib"));
+}
+
+test "removeEntry は inline table 形式の依存表から entry を除去する" {
+    // `dependencies = { path = { lib = ... } }` の inline table 宣言では
+    // 依存の位置が `<parent> = {` の行を指し、lhs は `dependencies`
+    // 自身。行ごと消すと依存表全体が失われるため、内側の `<name>`
+    // entry だけを除去する。
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // kind 内の先頭 entry を除去 → 残り entry と別 kind は保持する。
+    const source =
+        \\dependencies = { path = { lib = { path = "lib" }, other = { path = "other" } }, git = { tool = { url = "https://example.com/tool.git", commit = "0123456789abcdef0123456789abcdef01234567" } } }
+        \\
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+    ;
+    const removed = (try removeEntry(a, source, "dependencies.path", "lib", .{ .line = 1 })).?;
+    try std.testing.expect(std.mem.indexOf(u8, removed, "lib = { path = \"lib\" }") == null);
+    var diagnostics = diag.List.init(a);
+    defer diagnostics.deinit();
+    var manifest = try manifest_mod.parse(a, removed, &diagnostics);
+    defer manifest.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics.errorCount());
+    try std.testing.expect(manifest.dependencies.path.get("lib") == null);
+    try std.testing.expect(manifest.dependencies.path.get("other") != null);
+    try std.testing.expect(manifest.dependencies.git.get("tool") != null);
+
+    // kind 内の末尾 entry を除去 → 先行 `,` ごと切って構文を保つ。
+    const tail_removed = (try removeEntry(a, source, "dependencies.path", "other", .{ .line = 1 })).?;
+    var diagnostics2 = diag.List.init(a);
+    defer diagnostics2.deinit();
+    var manifest2 = try manifest_mod.parse(a, tail_removed, &diagnostics2);
+    defer manifest2.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics2.errorCount());
+    try std.testing.expect(manifest2.dependencies.path.get("lib") != null);
+    try std.testing.expect(manifest2.dependencies.path.get("other") == null);
+
+    // `<kind>` の唯一の entry を消すと `<kind> = {}` を残さず pair ごと除去。
+    const only_kind =
+        \\dependencies = { path = { lib = { path = "lib" } }, git = { tool = { url = "https://example.com/tool.git", commit = "0123456789abcdef0123456789abcdef01234567" } } }
+        \\
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+    ;
+    const kind_removed = (try removeEntry(a, only_kind, "dependencies.path", "lib", .{ .line = 1 })).?;
+    var diagnostics3 = diag.List.init(a);
+    defer diagnostics3.deinit();
+    var manifest3 = try manifest_mod.parse(a, kind_removed, &diagnostics3);
+    defer manifest3.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics3.errorCount());
+    try std.testing.expectEqual(@as(usize, 0), manifest3.dependencies.path.count());
+    try std.testing.expect(manifest3.dependencies.git.get("tool") != null);
+
+    // `<parent>` の唯一の kind なら空の `dependencies = {}` を残さず行ごと除去。
+    const only_dep =
+        \\dependencies = { path = { lib = { path = "lib" } } }
+        \\
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+    ;
+    const line_removed = (try removeEntry(a, only_dep, "dependencies.path", "lib", .{ .line = 1 })).?;
+    try std.testing.expect(std.mem.indexOf(u8, line_removed, "dependencies") == null);
+    var diagnostics4 = diag.List.init(a);
+    defer diagnostics4.deinit();
+    var manifest4 = try manifest_mod.parse(a, line_removed, &diagnostics4);
+    defer manifest4.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics4.errorCount());
+    try std.testing.expectEqual(@as(usize, 0), manifest4.dependencies.path.count());
+
+    // `<parent>.<kind> = { lib = ... }` の dotted key + inline table も
+    // value の top-level entry から除去する。
+    const dotted_inline =
+        \\dependencies.path = { lib = { path = "lib" }, other = { path = "other" } }
+        \\
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+    ;
+    const dotted_removed = (try removeEntry(a, dotted_inline, "dependencies.path", "lib", .{ .line = 1 })).?;
+    var diagnostics5 = diag.List.init(a);
+    defer diagnostics5.deinit();
+    var manifest5 = try manifest_mod.parse(a, dotted_removed, &diagnostics5);
+    defer manifest5.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics5.errorCount());
+    try std.testing.expect(manifest5.dependencies.path.get("lib") == null);
+    try std.testing.expect(manifest5.dependencies.path.get("other") != null);
 }
 
 test "initTargetExists は symlink も存在として検出する" {

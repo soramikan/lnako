@@ -757,15 +757,32 @@ fn validateInputEngineVersion(version: ?[]const u8, field: []const u8, diagnosti
     };
 }
 
+pub const ValidateOptions = struct {
+    /// project 側の更新経路（`loadExistingLock`）では旧 resolver の lock
+    /// を再生成対象として読み込むため、resolverVersion 差は
+    /// `checkFreshness` の `stale_resolver` へ委ねてここでは拒否しない。
+    /// manifest 無しの lock 駆動 `sync` は既定の strict を使う。
+    allow_stale_resolver: bool = false,
+};
+
 /// lock の意味的な整合性を検証する。既知の診断は SPECIFICATION.md §8 と対応する。
+/// 未対応の resolverVersion を含め全項目を strict に検査する。
 pub fn validate(lock: *const Lock, diagnostics: *diag.List) !void {
+    return validateWith(lock, diagnostics, .{});
+}
+
+/// `options` で緩和しつつ lock の意味的な整合性を検証する。
+pub fn validateWith(lock: *const Lock, diagnostics: *diag.List, options: ValidateOptions) !void {
     if (lock.schema_version != lock_schema_version) {
         try diagnostics.addFmt(diag.E002_UNKNOWN_LOCK_SCHEMA, .err, "nako.lock.schemaVersion", .{}, "unknown lock schema version {d}", .{lock.schema_version});
     }
     // 未対応の resolverVersion も受理しない。nako.toml の無い lock 駆動
     // project では manifest 再解決の入口を経由しないため、`sync --locked`
     // が未知版の lock をそのまま環境へ適用しないようここで拒否する。
-    if (lock.resolver_version != resolver_version) {
+    // project 側（manifest あり・非 --locked）では `loadExistingLock` が
+    // `allow_stale_resolver` で読み込み、鮮度検査の `stale_resolver` が
+    // 再解決へ回す。
+    if (lock.resolver_version != resolver_version and !options.allow_stale_resolver) {
         try diagnostics.addFmt(diag.E002_UNKNOWN_LOCK_SCHEMA, .err, "nako.lock.resolverVersion", .{}, "unknown lock resolver version {d}", .{lock.resolver_version});
     }
 

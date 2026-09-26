@@ -330,7 +330,7 @@ pub fn resolveVersionText(a: Allocator, version: ?semver.Version) Error!?[]const
     return try std.fmt.allocPrint(a, "{f}", .{v});
 }
 
-fn resolveTarget(record: lock_model.ProfileRecord, opts: *const PrepareOptions, selected_profile: bool) resolver.Target {
+pub fn resolveTarget(record: lock_model.ProfileRecord, opts: *const PrepareOptions, selected_profile: bool) resolver.Target {
     return .{
         .runtime = resolveRuntime(record),
         .os = record.os,
@@ -498,7 +498,7 @@ fn isVirtualId(id_text: []const u8) bool {
 /// lock 成功・実行失敗の不整合になるため。`..` 成分は宣言者の
 /// 正当な選択（`../shared`）として保持し、絶対 path の先頭
 /// separator も保持する。
-fn isAbsoluteDependencyPath(path: []const u8) bool {
+pub fn isAbsoluteDependencyPath(path: []const u8) bool {
     return provider.isAbsoluteDepPath(path);
 }
 
@@ -506,7 +506,7 @@ fn isWindowsDriveRoot(path: []const u8) bool {
     return path.len >= 3 and std.ascii.isAlphabetic(path[0]) and path[1] == ':' and isWindowsSeparator(path[2]);
 }
 
-fn canonicalDepSpelling(gpa: Allocator, decl: []const u8) ![]const u8 {
+pub fn canonicalDepSpelling(gpa: Allocator, decl: []const u8) ![]const u8 {
     // `C:/deps` 形は Windows でのみ drive path。POSIX では `:` を含む
     // 正当な相対 path 名であり、`\` への置換を行うと別の file を指す。
     const windows_drive_root = builtin.os.tag == .windows and isWindowsDriveRoot(decl);
@@ -574,80 +574,19 @@ fn isWindowsSeparator(char: u8) bool {
     return char == '/' or char == '\\';
 }
 
-test "canonicalDepSpelling keeps a leading backslash relative on POSIX" {
-    if (builtin.os.tag == .windows) return;
-    const path = try canonicalDepSpelling(std.testing.allocator, "\\lib");
-    defer std.testing.allocator.free(path);
-    try std.testing.expectEqualStrings("\\lib", path);
-    try std.testing.expect(!isAbsoluteDependencyPath("\\lib"));
-    const incomplete_unc = try canonicalDepSpelling(std.testing.allocator, "\\\\lib");
-    defer std.testing.allocator.free(incomplete_unc);
-    try std.testing.expectEqualStrings("\\\\lib", incomplete_unc);
-    try std.testing.expect(!isAbsoluteDependencyPath(incomplete_unc));
-    const complete_unc = try canonicalDepSpelling(std.testing.allocator, "\\\\server\\share\\lib");
-    defer std.testing.allocator.free(complete_unc);
-    try std.testing.expectEqualStrings("\\\\server\\share\\lib", complete_unc);
-    // UNC 判定は Windows 限定。POSIX では `\\` 始まりも backslash を含む
-    // 正当な相対名で、project 相対として扱う。
-    try std.testing.expect(!isAbsoluteDependencyPath(complete_unc));
-}
-
-test "canonicalDepSpelling normalizes Windows absolute paths" {
-    // drive/UNC 形式の正規化は Windows のみで有効。POSIX では `C:\deps` は
-    // `:`・`\` を含む正当な相対 path 名であり、Windows path へ変換しない。
-    if (builtin.os.tag != .windows) return;
-    const drive = try canonicalDepSpelling(std.testing.allocator, "C:\\deps\\\\.\\lib\\");
-    defer std.testing.allocator.free(drive);
-    try std.testing.expectEqualStrings("C:\\deps\\lib", drive);
-
-    const unc = try canonicalDepSpelling(std.testing.allocator, "\\\\server\\share\\\\lib\\.");
-    defer std.testing.allocator.free(unc);
-    try std.testing.expectEqualStrings("\\\\server\\share\\lib", unc);
-}
-
-test "canonicalDepSpelling keeps drive-like spellings as POSIX relative names" {
-    // POSIX では `C:/deps` は drive path ではなく `:` を含む相対 path。
-    // 先頭が `/` でないため POSIX の成分正規化だけが適用され、backslash は
-    // 通常のファイル名文字として保持される。
-    if (builtin.os.tag == .windows) return;
-    const drive_like = try canonicalDepSpelling(std.testing.allocator, "C:/deps/./lib/");
-    defer std.testing.allocator.free(drive_like);
-    try std.testing.expectEqualStrings("C:/deps/lib", drive_like);
-    try std.testing.expect(!isAbsoluteDependencyPath(drive_like));
-    try std.testing.expect(!isAbsoluteDependencyPath("C:/deps"));
-
-    const backslash_name = try canonicalDepSpelling(std.testing.allocator, "C:\\deps");
-    defer std.testing.allocator.free(backslash_name);
-    try std.testing.expectEqualStrings("C:\\deps", backslash_name);
-    try std.testing.expect(!isAbsoluteDependencyPath(backslash_name));
-}
-
-test "resolveTarget は CLI compat-js を選択 profile だけに適用する" {
-    const opts = PrepareOptions{ .compat_js = true };
-    const normal_record = lock_model.ProfileRecord{
-        .runtime = "lnako",
-        .os = "linux",
-        .cpu = "x86_64",
-        .abi = "gnu",
-    };
-
-    try std.testing.expect(resolveTarget(normal_record, &opts, true).compat_js);
-    try std.testing.expect(!resolveTarget(normal_record, &opts, false).compat_js);
-
-    // 明示的な profile 宣言はCLIの選択対象とは独立して維持される。
-    const declared_compat = lock_model.ProfileRecord{
-        .runtime = "lnako",
-        .os = "linux",
-        .cpu = "x86_64",
-        .abi = "gnu",
-        .compat_js = true,
-    };
-    try std.testing.expect(resolveTarget(declared_compat, &opts, false).compat_js);
-}
-
 /// Exported manifest metadata and a tree pin must describe one manifest snapshot.
 pub fn manifestSnapshotMatches(manifest: *const manifest_mod.Manifest, bytes: []const u8) bool {
     return std.mem.eql(u8, manifest.document.source, bytes);
+}
+
+/// mutable path 依存の `nako.toml` が、取得時に解析した `expected_source`
+/// のまま（digest 対象 tree と同一 snapshot）かを返す。
+pub fn mutableDepManifestUnchanged(io: std.Io, gpa: Allocator, dep_dir: []const u8, expected_source: []const u8) !bool {
+    const manifest_path = try std.fs.path.join(gpa, &.{ dep_dir, manifest_name });
+    defer gpa.free(manifest_path);
+    const current = try std.Io.Dir.cwd().readFileAlloc(io, manifest_path, gpa, .limited(16 * 1024 * 1024));
+    defer gpa.free(current);
+    return std.mem.eql(u8, current, expected_source);
 }
 
 /// Compatibility API retained for project tests and callers.
@@ -661,48 +600,6 @@ pub fn portablePathDigest(io: std.Io, gpa: Allocator, root: []const u8) Error![3
         error.UnsupportedEntry => error.UnsupportedDependency,
         else => mapFs(err),
     };
-}
-
-test "portable path digest reads no-follow files through the streamed reader" {
-    const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
-    const payload = try std.testing.allocator.alloc(u8, 16 * 1024);
-    defer std.testing.allocator.free(payload);
-    @memset(payload, 'x');
-    try temporary.dir.writeFile(io, .{ .sub_path = "large.nako3", .data = payload });
-    const root = try temporary.dir.realPathFileAlloc(io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(root);
-    const digest = try portablePathDigest(io, std.testing.allocator, root);
-    const digest_hex = std.fmt.bytesToHex(digest, .lower);
-    try std.testing.expectEqualStrings("52197339e75b1cba9cd9c35f5bf4ce7f31bc00ab19b34b8151074aa0205ba8e4", &digest_hex);
-}
-
-test "portable path digest keeps POSIX backslash filename distinct from slash path" {
-    const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
-    if (builtin.os.tag == .windows) {
-        try temporary.dir.createDir(io, "foo", .default_dir);
-        try temporary.dir.writeFile(io, .{ .sub_path = "foo/bar", .data = "payload" });
-        try temporary.dir.writeFile(io, .{ .sub_path = "other", .data = "different" });
-    } else {
-        try temporary.dir.writeFile(io, .{ .sub_path = "foo\\bar", .data = "payload" });
-        try temporary.dir.createDir(io, "foo", .default_dir);
-        try temporary.dir.writeFile(io, .{ .sub_path = "foo/bar", .data = "different" });
-    }
-    const root = try temporary.dir.realPathFileAlloc(io, ".", std.testing.allocator);
-    defer std.testing.allocator.free(root);
-    const canonical = try canonicalTreePath(std.testing.allocator, "foo\\bar");
-    defer std.testing.allocator.free(canonical);
-    if (builtin.os.tag == .windows) {
-        try std.testing.expectEqualStrings("foo/bar", canonical);
-    } else {
-        try std.testing.expectEqualStrings("foo\\bar", canonical);
-    }
-    const digest = try portablePathDigest(io, std.testing.allocator, root);
-    const digest_hex = std.fmt.bytesToHex(digest, .lower);
-    if (builtin.os.tag != .windows) try std.testing.expectEqualStrings("f775c35cd7ea08036f1e4e37ea1e63591f70e30480b5314638d434217f8d4304", &digest_hex);
 }
 
 pub fn hasExcludedExport(manifest: *const manifest_mod.Manifest) bool {
@@ -831,10 +728,13 @@ fn copySource(a: Allocator, source: lock_model.Source) Error!lock_model.Source {
 }
 
 /// mutable path 依存の digest 記録対象。`path` は lock `source.path`
-/// と同じ表記、`dir` は宣言 dir の絶対 path。
+/// と同じ表記、`dir` は宣言 dir の絶対 path。`manifest_source` は取得時に
+/// 解析した `nako.toml` の bytes で、tree digest の計算後に再読して同一
+/// snapshot か照合する（session arena 所有・解決完了まで生存する）。
 const MutableDep = struct {
     path: []const u8,
     dir: []const u8,
+    manifest_source: []const u8,
 };
 
 const ResolveContext = struct {
@@ -970,9 +870,13 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
                     try std.fs.path.join(gpa, &.{ work.base_dir.?, acquired_path });
                 // `mutable = true` は宣言 dir を生参照する契約のため、
                 // manifest だけでなく exports・commands・推移的宣言を含む
-                // 内容変更を lock 鮮度入力へ記録する。
+                // 内容変更を lock 鮮度入力へ記録する。digest 計算は
+                // collectLocals 完了後にまとめて行うため、その間に manifest
+                // が書き換わると旧 graph + 新 digest の lock になる。
+                // 取得時点の manifest bytes を保持して計算後に照合する。
                 if (dep.mutable) {
-                    try ctx.mutable_deps.append(gpa, .{ .path = normalized, .dir = child_base_dir.? });
+                    const manifest_source = (local.manifest orelse return error.ResolveFailed).document.source;
+                    try ctx.mutable_deps.append(gpa, .{ .path = normalized, .dir = child_base_dir.?, .manifest_source = manifest_source });
                 }
                 // `mutable = false` は tree 内容を hash pin する（spec §3.4.3）。
                 // 後の内容変更は lock の鮮度判定・sync 検証で検出される。
@@ -1586,6 +1490,23 @@ pub fn ensureLock(
                     return error.ResolveFailed;
                 },
             };
+            // 取得時に解析した manifest と digest を計算した tree が同一
+            // snapshot であることを確認する。間に `nako.toml` が保存
+            // されると、旧 graph と新 manifest を含む digest が同じ lock
+            // に記録され、以後の鮮度検査が新 digest と一致して誤った旧
+            // グラフを fresh として使い続ける。immutable path 依存と同様に
+            // manifest bytes を再読して照合する。
+            const unchanged = mutableDepManifestUnchanged(io, a, dep.dir, dep.manifest_source) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {
+                    try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, manifest_name, .{}, "cannot re-read mutable path dependency \"{s}\" manifest: {s}", .{ dep.path, @errorName(err) });
+                    return error.ResolveFailed;
+                },
+            };
+            if (!unchanged) {
+                try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, manifest_name, .{}, "mutable path dependency \"{s}\" changed while its tree pin was computed; retry resolution", .{dep.path});
+                return error.ResolveFailed;
+            }
             try mutable.append(a, .{
                 .path = dep.path,
                 .sha256 = try std.fmt.allocPrint(a, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)}),

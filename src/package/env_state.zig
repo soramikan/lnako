@@ -689,7 +689,12 @@ pub fn loadExistingLock(gpa: Allocator, io: std.Io, project_root: []const u8, di
         else => return error.InvalidLock,
     };
     errdefer parsed.deinit();
-    lock_mod.validate(&parsed, diagnostics) catch return error.OutOfMemory;
+    // project 側（manifest あり）では旧 resolver の lock を再解決対象
+    // として読み込む。resolverVersion 不一致は `checkFreshness` の
+    // `stale_resolver` が処理するため、ここで InvalidLock にしない
+    // （schemaVersion など構造の破損は従来どおり拒否）。manifest 無しの
+    // lock 駆動 sync は `lock_mod.validate` を直接呼び strict を維持する。
+    lock_mod.validateWith(&parsed, diagnostics, .{ .allow_stale_resolver = true }) catch return error.OutOfMemory;
     // errorCount は累積のため、この検査が追加した分だけを見る。
     if (diagnostics.errorCount() > errors_before) return error.InvalidLock;
     return parsed;

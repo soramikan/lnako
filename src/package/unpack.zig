@@ -57,7 +57,11 @@ fn normalizeEntryName(raw: []const u8, strip_components: u32, gpa: Allocator) (E
         if (component.len == 0 or std.mem.eql(u8, component, ".") or
             std.mem.eql(u8, component, "..")) return error.NonCanonicalPath;
         for (component) |byte| {
-            if (byte < 0x20 or byte == 0x7f or byte == '\\') return error.NonCanonicalPath;
+            // `:` は Windows で drive 前置（`C:/x`）や ADS 区切り
+            // （`a:b`）と解釈される。POSIX の正当なファイル名文字だが、
+            // archive entry 名は全プラットフォームで展開先 dir の内側に
+            // 限定される規範形へ揃えるため拒否する（`\` と同じ扱い）。
+            if (byte < 0x20 or byte == 0x7f or byte == '\\' or byte == ':') return error.NonCanonicalPath;
         }
         depth += 1;
         if (depth <= strip_components) continue;
@@ -256,6 +260,13 @@ test "unpack extractTarGz は symlink・traversal・重複 entry を拒否する
     try testing.expectError(error.NonCanonicalPath, normalizeEntryName("./a", 0, testing.allocator));
     try testing.expectError(error.NonCanonicalPath, normalizeEntryName("a/./b", 0, testing.allocator));
     try testing.expectError(error.NonCanonicalPath, normalizeEntryName("a/b//", 0, testing.allocator));
+
+    // drive 前置・ADS 形式も拒否する（Windows で展開先 dir の外へ
+    // 書き出されないよう `:` を含む成分は全て非規範とする）。
+    try testing.expectError(error.NonCanonicalPath, normalizeEntryName("C:/escape/x.txt", 0, testing.allocator));
+    try testing.expectError(error.NonCanonicalPath, normalizeEntryName("C:\\escape", 0, testing.allocator));
+    try testing.expectError(error.NonCanonicalPath, normalizeEntryName("a:b", 0, testing.allocator));
+    try testing.expectError(error.NonCanonicalPath, normalizeEntryName("C:relative", 0, testing.allocator));
 
     // directory entry の末尾 `/` は dir marker として除去される。
     const dir_name = (try normalizeEntryName("src/dir/", 0, testing.allocator)).?;

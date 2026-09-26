@@ -1901,3 +1901,201 @@ test "environmentPackagesUsableは余分なrecordと形状違反と中間symlink
     const outside_stat = try temporary.dir.statFile(io, "app/.nako", .{ .follow_symlinks = false });
     try testing.expect(outside_stat.kind == .sym_link);
 }
+
+test "mutableDepManifestUnchanged は digest 対象 tree と manifest の同一 snapshot を検査する" {
+    // mutable path 依存は宣言 dir の生 tree を digest pin する。manifest
+    // 解析と digest 計算の間に `nako.toml` が保存されると旧 graph と新
+    // manifest を含む digest が混在した lock になるため、digest 計算後に
+    // manifest bytes を再読して照合する。
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "dep");
+    const original = "[package]\nname = \"lib\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n";
+    try temporary.dir.writeFile(io, .{ .sub_path = "dep/nako.toml", .data = original });
+    const dep_dir = try temporary.dir.realPathFileAlloc(io, "dep", testing.allocator);
+    defer testing.allocator.free(dep_dir);
+
+    try testing.expect(try project.mutableDepManifestUnchanged(io, testing.allocator, dep_dir, original));
+
+    // 解決途中に manifest が書き換わった場合は不一致を返す。
+    try temporary.dir.writeFile(io, .{ .sub_path = "dep/nako.toml", .data = "[package]\nname = \"changed\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });
+    try testing.expect(!try project.mutableDepManifestUnchanged(io, testing.allocator, dep_dir, original));
+
+    // manifest 消失は変更扱いではなく読み取りエラーとして伝播する。
+    try temporary.dir.deleteFile(io, "dep/nako.toml");
+    try testing.expectError(error.FileNotFound, project.mutableDepManifestUnchanged(io, testing.allocator, dep_dir, original));
+}
+
+test "ensureLockは旧resolverVersionのlockをstaleとして再解決し--lockedは拒否する" {
+    // `loadExistingLock` は resolverVersion 不一致を InvalidLock にせず
+    // `stale_resolver` として返す。project 側（manifest あり）の非
+    // --locked 経路はそのまま再解決して lock を更新する。manifest 無しの
+    // lock 駆動 sync は strict を維持して拒否する（sync_test 側で検証）。
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/lib/src");
+    try writeLibPackage(temporary.dir, io, "app/lib", "lib");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/nako.toml",
+        .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\lib = { path = "lib" }
+        \\
+        ,
+    });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    defer loaded.deinit();
+
+    var first = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
+    first.deinit();
+
+    // 旧 resolver が書いた lock を模して resolverVersion を下げる。
+    const lock_bytes = try temporary.dir.readFileAlloc(io, "app/nako.lock", testing.allocator, .limited(1 * 1024 * 1024));
+    defer testing.allocator.free(lock_bytes);
+    const stale_text = "\"resolverVersion\": " ++ std.fmt.comptimePrint("{d}", .{lock_model.resolver_version});
+    const replaced = try std.mem.replaceOwned(u8, testing.allocator, lock_bytes, stale_text, "\"resolverVersion\": 0");
+    defer testing.allocator.free(replaced);
+    try testing.expect(!std.mem.eql(u8, lock_bytes, replaced));
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/nako.lock", .data = replaced });
+
+    // --locked は再生成せず stale_resolver として失敗する。
+    try testing.expectError(error.LockedNotSatisfied, project.verifyLocked(testing.allocator, io, &loaded, &.{}, &diagnostics));
+
+    // 非 --locked の project 側経路は InvalidLock ではなく再解決して
+    // 現行 resolverVersion の lock を書き直す。
+    var second = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
+    defer second.deinit();
+    try testing.expect(second.wrote);
+    try testing.expectEqual(lock_model.resolver_version, second.lock.resolver_version);
+
+    // 書き直し後は fresh として再利用・--locked も受理する。
+    var third = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
+    defer third.deinit();
+    try testing.expect(!third.wrote);
+    try project.verifyLocked(testing.allocator, io, &loaded, &.{}, &diagnostics);
+}
+
+test "canonicalDepSpelling keeps a leading backslash relative on POSIX" {
+    if (builtin.os.tag == .windows) return;
+    const path = try project.canonicalDepSpelling(testing.allocator, "\\lib");
+    defer testing.allocator.free(path);
+    try testing.expectEqualStrings("\\lib", path);
+    try testing.expect(!project.isAbsoluteDependencyPath("\\lib"));
+    const incomplete_unc = try project.canonicalDepSpelling(testing.allocator, "\\\\lib");
+    defer testing.allocator.free(incomplete_unc);
+    try testing.expectEqualStrings("\\\\lib", incomplete_unc);
+    try testing.expect(!project.isAbsoluteDependencyPath(incomplete_unc));
+    const complete_unc = try project.canonicalDepSpelling(testing.allocator, "\\\\server\\share\\lib");
+    defer testing.allocator.free(complete_unc);
+    try testing.expectEqualStrings("\\\\server\\share\\lib", complete_unc);
+    // UNC 判定は Windows 限定。POSIX では `\\` 始まりも backslash を含む
+    // 正当な相対名で、project 相対として扱う。
+    try testing.expect(!project.isAbsoluteDependencyPath(complete_unc));
+}
+
+test "canonicalDepSpelling normalizes Windows absolute paths" {
+    // drive/UNC 形式の正規化は Windows のみで有効。POSIX では `C:\deps` は
+    // `:`・`\` を含む正当な相対 path 名であり、Windows path へ変換しない。
+    if (builtin.os.tag != .windows) return;
+    const drive = try project.canonicalDepSpelling(testing.allocator, "C:\\deps\\\\.\\lib\\");
+    defer testing.allocator.free(drive);
+    try testing.expectEqualStrings("C:\\deps\\lib", drive);
+
+    const unc = try project.canonicalDepSpelling(testing.allocator, "\\\\server\\share\\\\lib\\.");
+    defer testing.allocator.free(unc);
+    try testing.expectEqualStrings("\\\\server\\share\\lib", unc);
+}
+
+test "canonicalDepSpelling keeps drive-like spellings as POSIX relative names" {
+    // POSIX では `C:/deps` は drive path ではなく `:` を含む相対 path。
+    // 先頭が `/` でないため POSIX の成分正規化だけが適用され、backslash は
+    // 通常のファイル名文字として保持される。
+    if (builtin.os.tag == .windows) return;
+    const drive_like = try project.canonicalDepSpelling(testing.allocator, "C:/deps/./lib/");
+    defer testing.allocator.free(drive_like);
+    try testing.expectEqualStrings("C:/deps/lib", drive_like);
+    try testing.expect(!project.isAbsoluteDependencyPath(drive_like));
+    try testing.expect(!project.isAbsoluteDependencyPath("C:/deps"));
+
+    const backslash_name = try project.canonicalDepSpelling(testing.allocator, "C:\\deps");
+    defer testing.allocator.free(backslash_name);
+    try testing.expectEqualStrings("C:\\deps", backslash_name);
+    try testing.expect(!project.isAbsoluteDependencyPath(backslash_name));
+}
+
+test "resolveTarget は CLI compat-js を選択 profile だけに適用する" {
+    const opts = project.PrepareOptions{ .compat_js = true };
+    const normal_record = lock_model.ProfileRecord{
+        .runtime = "lnako",
+        .os = "linux",
+        .cpu = "x86_64",
+        .abi = "gnu",
+    };
+
+    try testing.expect(project.resolveTarget(normal_record, &opts, true).compat_js);
+    try testing.expect(!project.resolveTarget(normal_record, &opts, false).compat_js);
+
+    // 明示的な profile 宣言はCLIの選択対象とは独立して維持される。
+    const declared_compat = lock_model.ProfileRecord{
+        .runtime = "lnako",
+        .os = "linux",
+        .cpu = "x86_64",
+        .abi = "gnu",
+        .compat_js = true,
+    };
+    try testing.expect(project.resolveTarget(declared_compat, &opts, false).compat_js);
+}
+
+test "portable path digest reads no-follow files through the streamed reader" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const payload = try testing.allocator.alloc(u8, 16 * 1024);
+    defer testing.allocator.free(payload);
+    @memset(payload, 'x');
+    try temporary.dir.writeFile(io, .{ .sub_path = "large.nako3", .data = payload });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const digest = try project.portablePathDigest(io, testing.allocator, root);
+    const digest_hex = std.fmt.bytesToHex(digest, .lower);
+    try testing.expectEqualStrings("52197339e75b1cba9cd9c35f5bf4ce7f31bc00ab19b34b8151074aa0205ba8e4", &digest_hex);
+}
+
+test "portable path digest keeps POSIX backslash filename distinct from slash path" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    if (builtin.os.tag == .windows) {
+        try temporary.dir.createDir(io, "foo", .default_dir);
+        try temporary.dir.writeFile(io, .{ .sub_path = "foo/bar", .data = "payload" });
+        try temporary.dir.writeFile(io, .{ .sub_path = "other", .data = "different" });
+    } else {
+        try temporary.dir.writeFile(io, .{ .sub_path = "foo\\bar", .data = "payload" });
+        try temporary.dir.createDir(io, "foo", .default_dir);
+        try temporary.dir.writeFile(io, .{ .sub_path = "foo/bar", .data = "different" });
+    }
+    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const canonical = try project.canonicalTreePath(testing.allocator, "foo\\bar");
+    defer testing.allocator.free(canonical);
+    if (builtin.os.tag == .windows) {
+        try testing.expectEqualStrings("foo/bar", canonical);
+    } else {
+        try testing.expectEqualStrings("foo\\bar", canonical);
+    }
+    const digest = try project.portablePathDigest(io, testing.allocator, root);
+    const digest_hex = std.fmt.bytesToHex(digest, .lower);
+    if (builtin.os.tag != .windows) try testing.expectEqualStrings("f775c35cd7ea08036f1e4e37ea1e63591f70e30480b5314638d434217f8d4304", &digest_hex);
+}
