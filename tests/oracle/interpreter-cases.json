@@ -104,6 +104,22 @@
     "source": "●(Aを)加算器作成とは\nF=関数(B)それはA+B\nここまで\nFで戻る\nここまで\nG=加算器作成(10)\nG(5)を表示\n"
   },
   {
+    "id": "closure-explicit-local-shadow-global",
+    "source": "C=1\n●実験2：\n　Cとは変数＝10\n　Dとは変数＝関数：\n　　　Cを表示\n　Dを実行\n実験2\n"
+  },
+  {
+    "id": "closure-explicit-local-without-global",
+    "source": "●実験：\n　Cとは変数＝10\n　Dとは変数＝関数：\n　　　Cを表示\n　Dを実行\n実験\n"
+  },
+  {
+    "id": "closure-explicit-local-shadow-global-nested-anonymous",
+    "source": "C=1\n●試すとは\nF=関数()\nCとは変数＝10\nG=関数()\nCを表示\nここまで\nG()を実行\nここまで\nF()を実行\nここまで\n試す\n"
+  },
+  {
+    "id": "closure-variable-self-initializer",
+    "source": "●実験4：\n　Fとは変数＝関数：\n　　　Fの変数型確認して表示\n　Fを実行\n実験4\n"
+  },
+  {
     "id": "closure-shared-mutable-binding",
     "source": "●(Aを)作るとは\nF=関数()\nA=A+1\nAで戻る\nここまで\nH=関数()それはA\nここまで\nA=4\n[F,H]で戻る\nここまで\nP=作る(1)\nG=P[0]\nH=P[1]\nG()を表示\nH()を表示\nG()を表示\n"
   },

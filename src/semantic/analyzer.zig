@@ -101,6 +101,7 @@ pub const Symbol = struct {
     span: ast.Span,
     is_export: bool,
     is_mutable: bool,
+    explicit_definition: bool = false,
     argument_count: usize = 0,
     /// 仮引数の助詞（宣言順）。公式`yCallFunc`と同じ助詞補完で、
     /// どのスロットへ引数を割り当てるかの判定に使う。
@@ -824,6 +825,7 @@ pub const Analyzer = struct {
                 if (self.scopes.items[id].kind == .module and
                     (!self.moduleSymbolVisible(scope, symbol) or self.hiddenModuleVar(symbol))) continue;
                 if (self.isDeclSiteSymbol(symbol, module_index, use_span)) continue;
+                if (self.explicitShadowedLocalFromAnonymousFunction(module_index, scope, id, symbol, name, use_span)) continue;
                 return symbol;
             }
         }
@@ -844,6 +846,38 @@ pub const Analyzer = struct {
             return null;
         }
         return self.lookupModList(module_index, scope, name, use_span);
+    }
+
+    /// cnako v3.7.24 の無名関数では、既存のモジュール変数と同名の明示的な
+    /// 関数ローカル宣言があると、その名前を外側のローカル捕捉ではなく
+    /// モジュール変数として解決する（公式生成JSは __varslist[2] を参照）。
+    /// 明示宣言が無い場合やグローバルが無い場合は通常の字句捕捉を維持する。
+    fn explicitShadowedLocalFromAnonymousFunction(
+        self: *Analyzer,
+        module_index: u32,
+        use_scope: ScopeId,
+        binding_scope: ScopeId,
+        symbol: Symbol,
+        name: []const u8,
+        use_span: ast.Span,
+    ) bool {
+        if (!symbol.explicit_definition or
+            (symbol.kind != .variable and symbol.kind != .constant) or
+            self.scopes.items[binding_scope].kind == .module)
+        {
+            return false;
+        }
+
+        var current: ?ScopeId = use_scope;
+        var crossed_anonymous = false;
+        while (current) |scope_id| : (current = self.scopes.items[scope_id].parent) {
+            if (scope_id == binding_scope) break;
+            if (self.scopes.items[scope_id].kind == .anonymous_function) crossed_anonymous = true;
+        }
+        if (!crossed_anonymous) return false;
+
+        const global = self.lookupVisibleModule(module_index, use_scope, name, use_span) orelse return false;
+        return global.kind == .variable or global.kind == .constant or global.kind == .loop_variable;
     }
 
     /// 公式findVarのmodList検索: 結合ストリームの展開マーカー順に各
@@ -903,6 +937,7 @@ pub const Analyzer = struct {
             .span = span,
             .is_export = is_export,
             .is_mutable = is_mutable,
+            .explicit_definition = explicit_def,
             .argument_count = argument_count,
         });
         return id;

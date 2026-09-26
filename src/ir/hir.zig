@@ -553,10 +553,25 @@ const Lowerer = struct {
             if (self.semantic_program.scopes[symbol.scope].kind == .module) continue;
             if (!self.scopeIsAncestor(symbol.scope, function_scope)) continue;
             if (!nodeContains(node, binding.node)) continue;
+            if (self.isVariableInitializerSelfReference(node, symbol_id)) continue;
             if (nameIndex(captures.items, symbol.qualified_name) != null) continue;
             try captures.append(self.allocator, try self.allocator.dupe(u8, symbol.qualified_name));
         }
         return captures.toOwnedSlice(self.allocator);
+    }
+
+    /// cnako evaluates a variable-definition initializer before registering its
+    /// name. A reference from a function literal nested in that initializer is
+    /// therefore not a closure capture of the not-yet-initialized outer local;
+    /// preserve the official undefined value instead of requesting a cell that
+    /// does not exist yet.
+    fn isVariableInitializerSelfReference(self: Lowerer, function_node: *ast.Node, symbol_id: semantic.SymbolId) bool {
+        for (self.semantic_program.bindings) |declaration| {
+            if (declaration.kind != .declaration or declaration.symbol != symbol_id) continue;
+            if (declaration.node.kind != .variable_definition) continue;
+            if (nodeContains(declaration.node, function_node)) return true;
+        }
+        return false;
     }
 
     fn scopeIsAncestor(self: Lowerer, ancestor: semantic.ScopeId, descendant: semantic.ScopeId) bool {
@@ -797,6 +812,79 @@ test "入れ子の無名関数へ自由変数捕捉を中継する" {
         try std.testing.expectEqualStrings("A", function.captures[0]);
     }
     try std.testing.expectEqual(@as(usize, 2), closure_count);
+}
+
+test "明示ローカルと同名のグローバルは無名関数内で公式どおり優先される" {
+    const parser = @import("../frontend/parser.zig");
+    const source = "C=1\n●実験2：\n　Cとは変数＝10\n　Dとは変数＝関数：\n　　　Cを表示\n　Dを実行\n実験2\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var program = try lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
+    defer program.deinit();
+
+    var closure_count: usize = 0;
+    for (program.functions) |function| {
+        if (std.mem.indexOf(u8, function.name, "__lambda$") == null) continue;
+        closure_count += 1;
+        try std.testing.expectEqual(@as(usize, 0), function.captures.len);
+    }
+    try std.testing.expectEqual(@as(usize, 1), closure_count);
+    var loads_global_c = false;
+    for (program.nodes) |node| {
+        if (node.kind == .load_global and std.mem.eql(u8, node.name, "main__C")) loads_global_c = true;
+    }
+    try std.testing.expect(loads_global_c);
+}
+
+test "外側の無名関数内の明示ローカルと同名グローバルは公式どおり解決する" {
+    const parser = @import("../frontend/parser.zig");
+    const source = "C=1\n●試すとは\nF=関数()\nCとは変数＝10\nG=関数()\nCを表示\nここまで\nG()を実行\nここまで\nF()を実行\nここまで\n試す\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var program = try lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
+    defer program.deinit();
+
+    var closure_count: usize = 0;
+    for (program.functions) |function| {
+        if (std.mem.indexOf(u8, function.name, "__lambda$") == null) continue;
+        closure_count += 1;
+        try std.testing.expectEqual(@as(usize, 0), function.captures.len);
+    }
+    try std.testing.expectEqual(@as(usize, 2), closure_count);
+    var loads_global_c = false;
+    for (program.nodes) |node| {
+        if (node.kind == .load_global and std.mem.eql(u8, node.name, "main__C")) loads_global_c = true;
+    }
+    try std.testing.expect(loads_global_c);
+}
+
+test "変数定義の初期化式内にある自己参照をクロージャ捕捉しない" {
+    const parser = @import("../frontend/parser.zig");
+    const source = "●実験4：\n　Fとは変数＝関数：\n　　　Fの変数型確認して表示\n　Fを実行\n実験4\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var program = try lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
+    defer program.deinit();
+
+    var closure_count: usize = 0;
+    for (program.functions) |function| {
+        if (std.mem.indexOf(u8, function.name, "__lambda$") == null) continue;
+        closure_count += 1;
+        try std.testing.expectEqual(@as(usize, 0), function.captures.len);
+    }
+    try std.testing.expectEqual(@as(usize, 1), closure_count);
 }
 
 test "分割代入と増減とループ属性をHIRへ保持する" {
