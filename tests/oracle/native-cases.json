@@ -72,6 +72,22 @@
     "source": "F=関数(A,B)\nAを表示\nBを表示\nここまで\nF()\nF(1)\nF(2,3,4)\nG=関数(A)それはA;ここまで\nX=G()\nY=G()\nXを表示\nX===Yを表示\n"
   },
   {
+    "id": "native-closure-explicit-local-shadow-global",
+    "source": "C=1\n●実験2：\n　Cとは変数＝10\n　Dとは変数＝関数：\n　　　Cを表示\n　Dを実行\n実験2\n"
+  },
+  {
+    "id": "native-closure-explicit-local-without-global",
+    "source": "●実験：\n　Cとは変数＝10\n　Dとは変数＝関数：\n　　　Cを表示\n　Dを実行\n実験\n"
+  },
+  {
+    "id": "native-closure-explicit-local-shadow-global-nested-anonymous",
+    "source": "C=1\n●試すとは\nF=関数()\nCとは変数＝10\nG=関数()\nCを表示\nここまで\nG()を実行\nここまで\nF()を実行\nここまで\n試す\n"
+  },
+  {
+    "id": "native-closure-variable-self-initializer",
+    "source": "●実験4：\n　Fとは変数＝関数：\n　　　Fの変数型確認して表示\n　Fを実行\n実験4\n"
+  },
+  {
     "id": "native-closure-shared-mutable-binding",
     "source": "●(Aを)作るとは\nF=関数()\nA=A+1\nAで戻る\nここまで\nH=関数()それはA\nここまで\nA=4\n[F,H]で戻る\nここまで\nP=作る(1)\nG=P[0]\nH=P[1]\nG()を表示\nH()を表示\nG()を表示\n"
   },
