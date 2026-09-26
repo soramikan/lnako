@@ -306,7 +306,7 @@ pub const Analyzer = struct {
                 arguments_binding_seen = true;
                 continue;
             }
-            _ = try self.declare(module_index, scope, argument.name, .parameter, argument.span, false, true, 0, false);
+            _ = try self.declare(module_index, scope, argument.name, .parameter, argument.span, false, true, 0, true);
         }
     }
 
@@ -826,7 +826,7 @@ pub const Analyzer = struct {
                 if (self.scopes.items[id].kind == .module and
                     (!self.moduleSymbolVisible(scope, symbol) or self.hiddenModuleVar(symbol))) continue;
                 if (self.isDeclSiteSymbol(symbol, module_index, use_span)) continue;
-                if (self.anonymousShadowedModuleSymbol(module_index, scope, id, symbol, name, use_span) != null) continue;
+                if (self.anonymousShadowedModuleSymbol(module_index, scope, id, symbol, name, use_span)) |global| return global;
                 return symbol;
             }
         }
@@ -844,7 +844,9 @@ pub const Analyzer = struct {
         return self.lookupModList(module_index, scope, name, use_span);
     }
 
-    /// cnako v3.7.24では無名関数内の明示ローカルが同名モジュール変数に解決される。
+    /// cnako v3.7.24の無名関数は自身のローカル以外の名前をモジュール変数
+    /// （__varslist[2]）へ解決するため、外側スコープの明示ローカル・仮引数は
+    /// 同名の可視モジュール変数に負ける。一致するモジュール変数を返す。
     fn anonymousShadowedModuleSymbol(
         self: *Analyzer,
         module_index: u32,
@@ -855,7 +857,7 @@ pub const Analyzer = struct {
         use_span: ast.Span,
     ) ?Symbol {
         if (!symbol.explicit_definition or
-            (symbol.kind != .variable and symbol.kind != .constant) or
+            (symbol.kind != .variable and symbol.kind != .constant and symbol.kind != .parameter) or
             self.scopes.items[binding_scope].kind == .module)
         {
             return null;
