@@ -15,12 +15,14 @@ const builtin = @import("builtin");
 const diag = @import("diagnostics.zig");
 const cache = @import("cache.zig");
 const env_state = @import("env_state.zig");
+const environment_mod = @import("environment.zig");
 const features_mod = @import("features.zig");
 const fetch = @import("fetch.zig");
 const lock_mod = @import("lock.zig");
 const lock_model = @import("lock_model.zig");
 const manifest_mod = @import("manifest.zig");
 const materialize = @import("materialize.zig");
+const path_digest = @import("path_digest.zig");
 const project_identity = @import("project_identity.zig");
 const provider = @import("provider.zig");
 const registry = @import("registry.zig");
@@ -638,91 +640,17 @@ pub fn manifestSnapshotMatches(manifest: *const manifest_mod.Manifest, bytes: []
     return std.mem.eql(u8, manifest.document.source, bytes);
 }
 
-const PortableTreeEntry = struct { rel: []const u8, kind: std.Io.File.Kind, size: u64 = 0 };
-
+/// Compatibility API retained for project tests and callers.
 pub fn canonicalTreePath(gpa: Allocator, path: []const u8) Error![]const u8 {
-    var normalized: std.ArrayList(u8) = .empty;
-    var previous_separator = false;
-    for (path) |byte| {
-        const is_separator = byte == '/' or byte == '\\';
-        if (is_separator) {
-            if (previous_separator) continue;
-            try normalized.append(gpa, '/');
-        } else {
-            try normalized.append(gpa, byte);
-        }
-        previous_separator = is_separator;
-    }
-    return normalized.toOwnedSlice(gpa) catch return error.OutOfMemory;
+    return path_digest.canonicalPath(gpa, path) catch |err| return mapFs(err);
 }
 
-fn portableTreeEntries(io: std.Io, gpa: Allocator, dir: std.Io.Dir, rel: []const u8, entries: *std.ArrayList(PortableTreeEntry)) Error!void {
-    var it = dir.iterate();
-    while (it.next(io) catch |err| return mapFs(err)) |entry| {
-        if (std.mem.eql(u8, entry.name, ".nako") or std.mem.eql(u8, entry.name, ".git")) continue;
-        const joined = if (rel.len == 0) try gpa.dupe(u8, entry.name) else try std.fs.path.join(gpa, &.{ rel, entry.name });
-        const child_rel = try canonicalTreePath(gpa, joined);
-        gpa.free(joined);
-        switch (entry.kind) {
-            .file => {
-                const stat = dir.statFile(io, entry.name, .{}) catch |err| return mapFs(err);
-                try entries.append(gpa, .{ .rel = child_rel, .kind = .file, .size = stat.size });
-            },
-            .directory => {
-                try entries.append(gpa, .{ .rel = child_rel, .kind = .directory });
-                var child = dir.openDir(io, entry.name, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
-                defer child.close(io);
-                try portableTreeEntries(io, gpa, child, child_rel, entries);
-            },
-            else => return error.UnsupportedDependency,
-        }
-    }
-}
-
-/// Tree pin hashing uses canonical `/` relative names independent of host OS.
-fn portablePathDigest(io: std.Io, gpa: Allocator, root: []const u8) Error![32]u8 {
-    var dir = std.Io.Dir.cwd().openDir(io, root, .{ .iterate = true, .follow_symlinks = true }) catch |err| return mapFs(err);
-    defer dir.close(io);
-    var entries: std.ArrayList(PortableTreeEntry) = .empty;
-    defer {
-        for (entries.items) |entry| gpa.free(entry.rel);
-        entries.deinit(gpa);
-    }
-    try portableTreeEntries(io, gpa, dir, "", &entries);
-    std.mem.sort(PortableTreeEntry, entries.items, {}, struct {
-        fn less(_: void, a: PortableTreeEntry, b: PortableTreeEntry) bool {
-            return std.mem.order(u8, a.rel, b.rel) == .lt;
-        }
-    }.less);
-    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
-    for (entries.items) |entry| {
-        hasher.update(entry.rel);
-        hasher.update(&.{0});
-        if (entry.kind == .directory) {
-            hasher.update("D");
-            continue;
-        }
-        hasher.update("F");
-        var size_le: [8]u8 = undefined;
-        std.mem.writeInt(u64, &size_le, entry.size, .little);
-        hasher.update(&size_le);
-        var file = try openPortableTreeFile(io, dir, entry.rel);
-        defer file.close(io);
-        // Zig 0.16 の Windows no-follow open は実handleを非同期で作るが、
-        // File.flags.nonblocking は false のまま返る。positional readerへ実modeを伝える。
-        if (builtin.os.tag == .windows) file.flags.nonblocking = true;
-        var buffer: [8192]u8 = undefined;
-        var reader = file.reader(io, &buffer);
-        while (true) {
-            var chunk: [8192]u8 = undefined;
-            const n = reader.interface.readSliceShort(&chunk) catch |err| return mapFs(err);
-            if (n == 0) break;
-            hasher.update(chunk[0..n]);
-        }
-    }
-    var digest: [32]u8 = undefined;
-    hasher.final(&digest);
-    return digest;
+/// Shared portable tree digest used by both lock generation and sync validation.
+pub fn portablePathDigest(io: std.Io, gpa: Allocator, root: []const u8) Error![32]u8 {
+    return path_digest.digest(io, gpa, root) catch |err| switch (err) {
+        error.UnsupportedEntry => error.UnsupportedDependency,
+        else => mapFs(err),
+    };
 }
 
 test "portable path digest reads no-follow files through the streamed reader" {
@@ -735,42 +663,58 @@ test "portable path digest reads no-follow files through the streamed reader" {
     try temporary.dir.writeFile(io, .{ .sub_path = "large.nako3", .data = payload });
     const root = try temporary.dir.realPathFileAlloc(io, ".", std.testing.allocator);
     defer std.testing.allocator.free(root);
-
-    const first = try portablePathDigest(io, std.testing.allocator, root);
-    const second = try portablePathDigest(io, std.testing.allocator, root);
-    try std.testing.expectEqual(first, second);
-    const first_hex = std.fmt.bytesToHex(first, .lower);
-    try std.testing.expectEqualStrings("52197339e75b1cba9cd9c35f5bf4ce7f31bc00ab19b34b8151074aa0205ba8e4", &first_hex);
+    const digest = try portablePathDigest(io, std.testing.allocator, root);
+    const digest_hex = std.fmt.bytesToHex(digest, .lower);
+    try std.testing.expectEqualStrings("52197339e75b1cba9cd9c35f5bf4ce7f31bc00ab19b34b8151074aa0205ba8e4", &digest_hex);
 }
 
-fn openPortableTreeFile(io: std.Io, root: std.Io.Dir, rel: []const u8) Error!std.Io.File {
-    var current = root;
-    var owns = false;
-    var parts = std.mem.splitScalar(u8, rel, '/');
-    while (parts.next()) |part| {
-        if (parts.peek() == null) {
-            const file = current.openFile(io, part, .{ .follow_symlinks = false }) catch |err| return mapFs(err);
-            if (owns) current.close(io);
-            return file;
-        }
-        const next = current.openDir(io, part, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
-        if (owns) current.close(io);
-        current = next;
-        owns = true;
+test "portable path digest keeps POSIX backslash filename distinct from slash path" {
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    if (builtin.os.tag == .windows) {
+        try temporary.dir.createDir(io, "foo", .default_dir);
+        try temporary.dir.writeFile(io, .{ .sub_path = "foo/bar", .data = "payload" });
+        try temporary.dir.writeFile(io, .{ .sub_path = "other", .data = "different" });
+    } else {
+        try temporary.dir.writeFile(io, .{ .sub_path = "foo\\bar", .data = "payload" });
+        try temporary.dir.createDir(io, "foo", .default_dir);
+        try temporary.dir.writeFile(io, .{ .sub_path = "foo/bar", .data = "different" });
     }
-    if (owns) current.close(io);
-    return error.FileSystem;
+    const root = try temporary.dir.realPathFileAlloc(io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(root);
+    const canonical = try canonicalTreePath(std.testing.allocator, "foo\\bar");
+    defer std.testing.allocator.free(canonical);
+    if (builtin.os.tag == .windows) {
+        try std.testing.expectEqualStrings("foo/bar", canonical);
+    } else {
+        try std.testing.expectEqualStrings("foo\\bar", canonical);
+    }
+    const digest = try portablePathDigest(io, std.testing.allocator, root);
+    const digest_hex = std.fmt.bytesToHex(digest, .lower);
+    if (builtin.os.tag != .windows) try std.testing.expectEqualStrings("f775c35cd7ea08036f1e4e37ea1e63591f70e30480b5314638d434217f8d4304", &digest_hex);
 }
 
-/// Export paths inside excluded management/VCS directories are rejected so their
-/// contents cannot affect package behavior without affecting the pin.
+/// Export targets must stay within the package root so the path-tree pin covers
+/// every published file. Management/VCS directories are excluded from that pin.
+fn unsafeExportPath(path: []const u8) bool {
+    if (path.len == 0 or path[0] == '/' or
+        (builtin.os.tag == .windows and path[0] == '\\') or
+        (path.len >= 2 and std.ascii.isAlphabetic(path[0]) and path[1] == ':')) return true;
+    const separators = if (builtin.os.tag == .windows) "/\\" else "/";
+    var components = std.mem.splitAny(u8, path, separators);
+    while (components.next()) |component| {
+        if (component.len == 0 or std.mem.eql(u8, component, ".") or std.mem.eql(u8, component, "..") or
+            std.mem.eql(u8, component, ".nako") or std.mem.eql(u8, component, ".git")) return true;
+    }
+    return false;
+}
+
 pub fn hasExcludedExport(manifest: *const manifest_mod.Manifest) bool {
     for (manifest.exports) |item| {
-        const path = item.path orelse continue;
-        var components = std.mem.tokenizeAny(u8, path, "/\\");
-        while (components.next()) |component| {
-            if (std.mem.eql(u8, component, ".nako") or std.mem.eql(u8, component, ".git")) return true;
-        }
+        if (item.path) |path| if (unsafeExportPath(path)) return true;
+        for (item.native) |artifact| if (unsafeExportPath(artifact.path)) return true;
+        for (item.esm) |artifact| if (unsafeExportPath(artifact.path)) return true;
     }
     return false;
 }
@@ -829,7 +773,7 @@ fn gitCheckoutWorkspace(gpa: Allocator, io: std.Io, ctx: *ResolveContext, dep: m
     // cache root の ACL/permission も継承する。
     var workspace_root_dir = ctx.cache_store.?.openGitWorkspaceRoot() catch |err| return mapFs(err);
     errdefer workspace_root_dir.close(io);
-    workspace_root_dir.deleteTree(io, key) catch |err| return mapFs(err);
+    environment_mod.deleteTreeChecked(workspace_root_dir, io, key) catch |err| return mapFs(err);
     workspace_root_dir.createDir(io, key, .default_dir) catch |err| return mapFs(err);
     var workspace_dir = workspace_root_dir.openDir(io, key, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
     errdefer workspace_dir.close(io);
@@ -1017,7 +961,7 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
                 local.source = .{ .kind = .path, .path = normalized, .mutable = dep.mutable };
                 local.manifest = acquired.manifest;
                 if (local.manifest) |*manifest| {
-                    if (hasExcludedExport(manifest)) return ctx.session.fail(.invalid_source, .manifest, dep_name, "path dependency \"{s}\" exports a file beneath excluded .nako/.git directory", .{dep_name});
+                    if (hasExcludedExport(manifest)) return ctx.session.fail(.invalid_source, .manifest, dep_name, "path dependency \"{s}\" has an export target outside its pinned package tree or beneath excluded .nako/.git directory", .{dep_name});
                 }
                 // path 依存の manifest dir が推移的依存の基準 dir.
                 child_base_dir = if (isAbsoluteDependencyPath(acquired_path))
@@ -1048,7 +992,7 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
                 const dep = work.git_dep.?;
                 var checkout = try gitCheckoutWorkspace(gpa, ctx.io, ctx, dep);
                 defer checkout.root_dir.close(ctx.io);
-                defer checkout.root_dir.deleteTree(ctx.io, checkout.key) catch {};
+                defer environment_mod.deleteTreeChecked(checkout.root_dir, ctx.io, checkout.key) catch {};
                 defer checkout.workspace_dir.close(ctx.io);
                 // cache checkout の検証・清掃・checkout は provider が安全な
                 // Git config override の下で実行してから manifest を読む。
@@ -1635,7 +1579,7 @@ pub fn ensureLock(
     if (ctx.mutable_deps.items.len > 0) {
         var mutable: std.ArrayList(lock_model.MutablePath) = .empty;
         for (ctx.mutable_deps.items) |dep| {
-            const digest = cache.digestTreeFollowingRoot(io, a, dep.dir, &cache.source_pin_exclude) catch |err| switch (err) {
+            const digest = path_digest.digest(io, a, dep.dir) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => {
                     try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml", .{}, "cannot hash mutable path dependency \"{s}\" tree: {s}", .{ dep.path, @errorName(err) });

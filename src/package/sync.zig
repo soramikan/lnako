@@ -26,6 +26,7 @@ const materialize = @import("materialize.zig");
 const npkg_commands = @import("npkg_commands.zig");
 const npkg_commands_gen = @import("npkg_commands_gen.zig");
 const npkg_verify = @import("npkg_verify.zig");
+const path_digest = @import("path_digest.zig");
 const provider = @import("provider.zig");
 const resolver = @import("resolver.zig");
 const semver = @import("semver.zig");
@@ -124,79 +125,17 @@ fn pinnedSourceHash(entry: *const lock_model.PackageEntry) ?[]const u8 {
     return null;
 }
 
-/// lock `input.mutablePaths` に記録された mutable path 依存の内容
-/// digest を tree 再計算で照合する。不一致（内容変更・dir 欠落）が
-/// あれば最初の記録 path を返す。`mutable = true` は宣言 dir を生参照
-/// する契約のため、manifest が同じでも dir 内容が変われば lock・環境を
-/// 再生成する必要がある。
+/// Path source pin validation delegates to the portable digest implementation.
 pub fn mutablePathMismatch(gpa: Allocator, io: std.Io, project_root: []const u8, lock: *const lock_model.Lock) Error!?[]const u8 {
-    // `mutable = true` path source を持つ package は全て
-    // `input.mutablePaths` に digest を記録済みでなければならない。
-    // 記録の無い旧 schema lock は dir 変更を検出できないため、該当
-    // entry があれば不一致として lock・環境の再生成を要求する。
-    var sets: std.ArrayList([]const lock_model.PackageEntry) = .empty;
-    defer sets.deinit(gpa);
-    try sets.append(gpa, lock.packages);
-    for (lock.profile_packages) |profile| try sets.append(gpa, profile.packages);
-    for (sets.items) |set| {
-        for (set) |*entry| {
-            const source = entry.source orelse continue;
-            if (source.kind != .path or !(source.mutable orelse false)) continue;
-            const rel = source.path orelse return entry.name;
-            var recorded = false;
-            for (lock.input.mutable_paths) |mutable| {
-                if (std.mem.eql(u8, mutable.path, rel)) recorded = true;
-            }
-            if (!recorded) return rel;
-        }
-    }
-    return mutablePathsMismatch(gpa, io, project_root, lock.input.mutable_paths);
+    return path_digest.mutablePathMismatch(gpa, io, project_root, lock) catch |err| return mapFs(err);
 }
 
-/// `mutablePathMismatch` の記録配列版。`environment.json` に記録された
-/// digest など lock 以外の出典にも使う。
 pub fn mutablePathsMismatch(gpa: Allocator, io: std.Io, project_root: []const u8, recorded: []const lock_model.MutablePath) Error!?[]const u8 {
-    for (recorded) |mutable| {
-        const abs = if (provider.isAbsoluteDepPath(mutable.path))
-            mutable.path
-        else
-            try std.fs.path.join(gpa, &.{ project_root, mutable.path });
-        const digest = cache.digestTreeFollowingRoot(io, gpa, abs, &cache.source_pin_exclude) catch return mutable.path;
-        const actual = try std.fmt.allocPrint(gpa, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
-        if (!std.mem.eql(u8, actual, mutable.sha256)) return mutable.path;
-    }
-    return null;
-}
-
-/// lock 内 `mutable = false` path 依存の pin hash を tree 再計算で照合する。
-/// 不一致（内容変更・hash 未記録・tree 破損・dir 欠落）があれば最初の
-/// dep 名を返す。path は `project_root` 基準で解決する。
-fn pinHashMatches(actual: [32]u8, recorded: []const u8) bool {
-    var normalized: [32]u8 = undefined;
-    return lock_model.normalizeSha256(recorded, &normalized) and std.mem.eql(u8, &actual, &normalized);
+    return path_digest.mutablePathsMismatch(gpa, io, project_root, recorded) catch |err| return mapFs(err);
 }
 
 pub fn pathPinMismatch(gpa: Allocator, io: std.Io, project_root: []const u8, lock: *const lock_model.Lock) Error!?[]const u8 {
-    var sets: std.ArrayList([]const lock_model.PackageEntry) = .empty;
-    defer sets.deinit(gpa);
-    try sets.append(gpa, lock.packages);
-    for (lock.profile_packages) |profile| try sets.append(gpa, profile.packages);
-    // profile 間で同じ entry が重複しても照合結果は同じため dedupe しない。
-    for (sets.items) |set| {
-        for (set) |*entry| {
-            const source = entry.source orelse continue;
-            if (source.kind != .path or (source.mutable orelse false)) continue;
-            const rel = source.path orelse return entry.name;
-            const recorded = pinnedSourceHash(entry) orelse return entry.name;
-            const abs = if (provider.isAbsoluteDepPath(rel))
-                rel
-            else
-                try std.fs.path.join(gpa, &.{ project_root, rel });
-            const digest = cache.digestTreeFollowingRoot(io, gpa, abs, &cache.source_pin_exclude) catch return entry.name;
-            if (!pinHashMatches(digest, recorded)) return entry.name;
-        }
-    }
-    return null;
+    return path_digest.pathPinMismatch(gpa, io, project_root, lock) catch |err| return mapFs(err);
 }
 
 const Context = struct {
@@ -695,18 +634,54 @@ fn isCanonicalDepPath(path: []const u8) bool {
 test "immutable path pin hash comparison normalizes lock representations" {
     const digest = [_]u8{0x5a} ** 32;
     const hex = std.fmt.bytesToHex(digest, .lower);
-    try testing.expect(pinHashMatches(digest, &hex));
+    try testing.expect(path_digest.pinHashMatches(digest, &hex));
 
     var encoded: [44]u8 = undefined;
     _ = std.base64.standard.Encoder.encode(&encoded, &digest);
     var sri_buffer: ["sha256-".len + 44]u8 = undefined;
     const sri = try std.fmt.bufPrint(&sri_buffer, "sha256-{s}", .{encoded});
-    try testing.expect(pinHashMatches(digest, sri));
+    try testing.expect(path_digest.pinHashMatches(digest, sri));
 
     var other = digest;
     other[0] ^= 1;
-    try testing.expect(!pinHashMatches(other, &hex));
-    try testing.expect(!pinHashMatches(digest, "invalid"));
+    try testing.expect(!path_digest.pinHashMatches(other, &hex));
+    try testing.expect(!path_digest.pinHashMatches(digest, "invalid"));
+}
+
+test "sync fails when a selected export has no eligible implementation" {
+    const allocator = testing.allocator;
+    var arena_impl = std.heap.ArenaAllocator.init(allocator);
+    defer arena_impl.deinit();
+    var diagnostics = diag.List.init(allocator);
+    defer diagnostics.deinit();
+    var session = fetch.Session.init(allocator, testing.io, .{});
+    defer session.deinit();
+    session.diagnostics = &diagnostics;
+    var ctx = Context{
+        .gpa = allocator,
+        .arena = arena_impl.allocator(),
+        .io = testing.io,
+        .session = &session,
+        .cache_store = undefined,
+        .project_abs = "",
+        .deps_dir = undefined,
+        .workspace_abs = "",
+        .workspace_dir = undefined,
+        .generation_rel = "",
+        .runtime = .lnako,
+        .target = .{},
+    };
+    const requires_feature = [_][]const u8{"native-feature"};
+    const export_decl = manifest_mod.Export{
+        .name = "entry",
+        .native = &.{.{ .path = "entry.native", .features = &requires_feature }},
+    };
+    const target = exportArtifactTarget("lnako", .{
+        .runtime = "lnako",
+        .nako_version = try semver.Version.parse("3.7.24"),
+    }, &.{});
+    try testing.expectError(error.InvalidMetadata, resolveExportForSync(&ctx, &export_decl, target, false));
+    try testing.expect(diagnostics.errorCount() > 0);
 }
 
 test "source export target preserves resolved features and Nako version" {
@@ -1110,6 +1085,22 @@ fn exportArtifactTarget(runtime: []const u8, target: resolver.Target, features: 
     };
 }
 
+/// Export.resolve の null は条件不一致（警告なし）と選択実装の失敗（error
+/// diagnostics 付き）の双方を表す。sync では後者を package failure にする。
+fn resolveExportForSync(ctx: *Context, export_decl: *const manifest_mod.Export, target: manifest_mod.ArtifactTarget, prefer_native: bool) Error!?manifest_mod.ExportResolution {
+    var scratch = diag.List.init(ctx.gpa);
+    defer scratch.deinit();
+    const diagnostics = ctx.session.diagSink(&scratch);
+    const prior_errors = diagnostics.errorCount();
+    const resolution = export_decl.resolve(ctx.arena, target, prefer_native, diagnostics) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+    };
+    if (resolution == null and diagnostics.errorCount() > prior_errors) {
+        return ctx.session.fail(.invalid_metadata, .manifest, export_decl.name, "selected implementation for export \"{s}\" is not available for the sync target", .{export_decl.name});
+    }
+    return resolution;
+}
+
 /// manifest の export を lock entry の解決結果に合わせて選択し、env.json の
 /// `exports` 配列へ変換する。`native` は prefer-native として resolve へ渡し、
 /// ESM は profile が許可する場合のみ含める。`none` は空を返す。
@@ -1122,9 +1113,7 @@ fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, entry: 
     const prefer_native = if (implementation) |impl| std.mem.eql(u8, impl, "native") else false;
     const target = exportArtifactTarget(ctx.runtime.name(), ctx.target, entry.features);
     for (manifest.exports) |*export_decl| {
-        const resolution = export_decl.resolve(ctx.arena, target, prefer_native, ctx.session.diagnostics) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-        } orelse continue;
+        const resolution = try resolveExportForSync(ctx, export_decl, target, prefer_native) orelse continue;
         // lock が記録した実装と食い違う export は含めない。`source` 選択の
         // package で native/ESM を記録すると展開物と env.json が不整合になる。
         if (implementation) |impl| {
@@ -1304,7 +1293,7 @@ fn writeFixtureProject(temporary: *std.testing.TmpDir, manifest_sha: []const u8)
     defer testing.allocator.free(root);
     const lib_abs = try std.fs.path.join(testing.allocator, &.{ root, "deps/lib" });
     defer testing.allocator.free(lib_abs);
-    const digest = try cache.digestTree(io, testing.allocator, lib_abs, &cache.source_pin_exclude);
+    const digest = try path_digest.digest(io, testing.allocator, lib_abs);
     const mutable_sha = try std.fmt.allocPrint(testing.allocator, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
     defer testing.allocator.free(mutable_sha);
     const lock = try fixtureLock(testing.allocator, manifest_sha, mutable_sha);

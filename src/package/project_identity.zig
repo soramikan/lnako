@@ -15,6 +15,17 @@ pub const SourceDecl = union(enum) {
     http: manifest_mod.HttpDependency,
 };
 
+/// Convert only the host-native separator in a project-relative spelling to
+/// `/`. On POSIX, backslashes are valid filename characters and stay intact.
+fn normalizeProjectRelativePath(gpa: Allocator, path: []const u8, native_sep: u8) Error![]const u8 {
+    if (native_sep == '/') return gpa.dupe(u8, path);
+    const normalized = try gpa.dupe(u8, path);
+    for (@constCast(normalized)) |*char| {
+        if (char.* == native_sep) char.* = '/';
+    }
+    return normalized;
+}
+
 /// Resolve a declared path against its manifest directory and return a
 /// project-relative spelling when it remains inside the project.
 fn canonicalPathForId(gpa: Allocator, declared: []const u8, base_dir: ?[]const u8, project_root: []const u8) Error![]const u8 {
@@ -28,7 +39,7 @@ fn canonicalPathForId(gpa: Allocator, declared: []const u8, base_dir: ?[]const u
     if (std.mem.startsWith(u8, abs, root) and abs.len > root.len and
         (abs[root.len] == '/' or abs[root.len] == std.fs.path.sep))
     {
-        const rel = try gpa.dupe(u8, abs[root.len + 1 ..]);
+        const rel = try normalizeProjectRelativePath(gpa, abs[root.len + 1 ..], std.fs.path.sep);
         gpa.free(abs);
         return rel;
     }
@@ -99,4 +110,27 @@ pub fn publicIdForSourceDeclInPackages(gpa: Allocator, decl: SourceDecl, base_di
         if (matches) return try gpa.dupe(u8, entry.id);
     }
     return null;
+}
+
+test "project-relative path IDs use slash spelling across host separators" {
+    const gpa = std.testing.allocator;
+    const windows_path = try normalizeProjectRelativePath(gpa, "packages\\demo", '\\');
+    defer gpa.free(windows_path);
+    const posix_path = try normalizeProjectRelativePath(gpa, "packages/demo", '/');
+    defer gpa.free(posix_path);
+
+    const windows_text = try provider.identityText(gpa, .{ .kind = .path, .path = windows_path });
+    defer gpa.free(windows_text);
+    const posix_text = try provider.identityText(gpa, .{ .kind = .path, .path = posix_path });
+    defer gpa.free(posix_text);
+    const windows_id = try publicIdFor(gpa, windows_text);
+    defer gpa.free(windows_id);
+    const posix_id = try publicIdFor(gpa, posix_text);
+    defer gpa.free(posix_id);
+    try std.testing.expectEqualStrings(posix_id, windows_id);
+
+    // Backslash is an ordinary character in POSIX filenames, not a separator.
+    const posix_filename = try normalizeProjectRelativePath(gpa, "packages\\demo", '/');
+    defer gpa.free(posix_filename);
+    try std.testing.expectEqualStrings("packages\\demo", posix_filename);
 }

@@ -1,5 +1,5 @@
 const std = @import("std");
-const cache = @import("cache.zig");
+const path_digest = @import("path_digest.zig");
 const diag = @import("diagnostics.zig");
 const sync = @import("sync.zig");
 
@@ -49,7 +49,7 @@ test "sync は読み取り不能な commands.json を生成fallbackへ黙って�
     defer allocator.free(root);
     const lib_abs = try std.fs.path.join(allocator, &.{ root, "deps/lib" });
     defer allocator.free(lib_abs);
-    const tree_digest = try cache.digestTree(io, allocator, lib_abs, &cache.source_pin_exclude);
+    const tree_digest = try path_digest.digest(io, allocator, lib_abs);
     const mutable_sha = try std.fmt.allocPrint(allocator, "sha256:{s}", .{std.fmt.bytesToHex(tree_digest, .lower)});
     defer allocator.free(mutable_sha);
     const manifest_sha = try sha256Hex(allocator, app_manifest);

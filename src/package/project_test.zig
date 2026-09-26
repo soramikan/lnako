@@ -74,12 +74,57 @@ test "tree pin対象外dir配下のexportは検出する" {
     try testing.expect(project.hasExcludedExport(&manifest));
 }
 
-test "tree pinのnested relative nameはslash canonical formに揃う" {
+test "path dependency export target must stay inside the pinned package tree" {
+    const cases = [_][]const u8{ "../shared.nako3", "/tmp/shared.nako3", "src/../shared.nako3", "src/.nako/private.nako3" };
+    for (cases) |path| {
+        const source = try std.fmt.allocPrint(testing.allocator,
+            \\[package]
+            \\name = "lib"
+            \\version = "1.0.0"
+            \\license = "MIT"
+            \\
+            \\[[exports]]
+            \\name = "entry"
+            \\path = "{s}"
+            \\
+        , .{path});
+        defer testing.allocator.free(source);
+        var diagnostics = newDiagnostics();
+        defer diagnostics.deinit();
+        var manifest = try manifest_mod.parse(testing.allocator, source, &diagnostics);
+        defer manifest.deinit();
+        try testing.expect(project.hasExcludedExport(&manifest));
+    }
+
+    const safe_source =
+        \\[package]
+        \\name = "lib"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[[exports]]
+        \\name = "entry"
+        \\path = "src/index.nako3"
+        \\
+    ;
+    var safe_diagnostics = newDiagnostics();
+    defer safe_diagnostics.deinit();
+    var safe_manifest = try manifest_mod.parse(testing.allocator, safe_source, &safe_diagnostics);
+    defer safe_manifest.deinit();
+    try testing.expect(!project.hasExcludedExport(&safe_manifest));
+}
+
+test "tree pinはhost separatorだけをslash canonical formへ揃える" {
     const forward = try project.canonicalTreePath(testing.allocator, "nested/deep/file.nako3");
     defer testing.allocator.free(forward);
-    const backslash = try project.canonicalTreePath(testing.allocator, "nested\\\\deep\\\\file.nako3");
+    const backslash = try project.canonicalTreePath(testing.allocator, "nested\\deep\\file.nako3");
     defer testing.allocator.free(backslash);
-    try testing.expectEqualStrings(forward, backslash);
+    if (builtin.os.tag == .windows) {
+        try testing.expectEqualStrings(forward, backslash);
+    } else {
+        try testing.expectEqualStrings("nested\\deep\\file.nako3", backslash);
+        try testing.expect(!std.mem.eql(u8, forward, backslash));
+    }
 }
 
 test "プロジェクトを検出して読み込める" {
@@ -1125,6 +1170,27 @@ test "environmentPackagesUsableはpackages記録と実体を検証する" {
     try testing.expect(lib_id != null);
     try writeEnv(temporary.dir, json_buf.written());
     try testing.expect(try project.environmentPackagesUsable(testing.allocator, io, app_root, &outcome.lock, "default"));
+
+    // Public ID付きrecordをname keyへ置いてもlegacy fallbackでは受理しない。
+    var wrong_key_json: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer wrong_key_json.deinit();
+    try wrong_key_json.writer.writeAll("{");
+    var wrong_key_first = true;
+    for (outcome.lock.packages) |entry| {
+        const source = entry.source orelse continue;
+        if (source.kind != .path) continue;
+        if (!wrong_key_first) try wrong_key_json.writer.writeAll(",");
+        wrong_key_first = false;
+        const key = if (std.mem.eql(u8, entry.name, "lib")) entry.name else entry.id;
+        const quoted_key = try std.json.Stringify.valueAlloc(testing.allocator, key, .{});
+        defer testing.allocator.free(quoted_key);
+        const quoted_path = try std.json.Stringify.valueAlloc(testing.allocator, source.path.?, .{});
+        defer testing.allocator.free(quoted_path);
+        try wrong_key_json.writer.print("{s}:{{\"name\":\"{s}\",\"version\":\"{s}\",\"id\":\"{s}\",\"path\":{s}}}", .{ quoted_key, entry.name, entry.version, entry.id, quoted_path });
+    }
+    try wrong_key_json.writer.writeAll("}");
+    try writeEnv(temporary.dir, wrong_key_json.written());
+    try testing.expect(!try project.environmentPackagesUsable(testing.allocator, io, app_root, &outcome.lock, "default"));
 
     // 記録 key の欠落は無効。
     try writeEnv(temporary.dir, "{}");

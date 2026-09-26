@@ -368,7 +368,13 @@ pub fn environmentPackagesUsable(gpa: Allocator, io: std.Io, project_root: []con
     for (entries) |entry| {
         // packages map は record.key（Public ID、source では一意キー）を
         // キーにするため id → name の順で引く。
-        const record = records.get(entry.id) orelse records.get(entry.name) orelse return false;
+        const record = records.get(entry.id) orelse blk: {
+            const legacy = records.get(entry.name) orelse return false;
+            // Name-key fallback is reserved for genuinely ID-less legacy entries;
+            // an explicit Public ID must also be the map key.
+            if (legacy != .object or legacy.object.get("id") != null) return false;
+            break :blk legacy;
+        };
         if (!envRecordMatchesEntry(record, &entry)) return false;
         const recorded_path = record.object.get("path").?.string;
         if (entry.source != null and entry.source.?.kind == .path) {
