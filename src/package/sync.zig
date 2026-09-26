@@ -1128,18 +1128,30 @@ fn resolveExportForSync(ctx: *Context, export_decl: *const manifest_mod.Export, 
 }
 
 /// 選択された export target が package tree 内に通常 file として存在するか。
-/// `tree_dir`（materialize 済み）は handle 相対、`tree_abs`（path 依存）は
-/// 宣言 dir の絶対 path で確認する。dir・symlink・特殊 file は不適格
-/// （symlink 先は pin・環境が担保する実体を持たないため env.json へ記録
-/// しない）。
+/// `tree_dir`（materialize 済み）は handle 相対で確認する。`tree_abs`
+/// （path 依存）は宣言 dir を開いて export path の各中間成分を no-follow
+/// で辿る。dir・symlink・特殊 file は不適格（symlink 化した中間 dir 経由
+/// で tree 外の file を指す宣言を env.json へ記録しない。宣言 dir 自身へ
+/// の symlink は path pin・digest が担保した宣言位置の解決として辿る）。
 fn exportTargetIsFile(ctx: *Context, tree_abs: ?[]const u8, tree_dir: ?std.Io.Dir, target: []const u8) bool {
-    const stat = if (tree_dir) |dir|
-        dir.statFile(ctx.io, target, .{ .follow_symlinks = false }) catch return false
-    else if (tree_abs) |root| blk: {
-        const path = std.fs.path.join(ctx.arena, &.{ root, target }) catch return false;
-        break :blk std.Io.Dir.cwd().statFile(ctx.io, path, .{ .follow_symlinks = false }) catch return false;
-    } else return false;
-    return stat.kind == .file;
+    if (tree_dir) |dir| {
+        const stat = dir.statFile(ctx.io, target, .{ .follow_symlinks = false }) catch return false;
+        return stat.kind == .file;
+    }
+    const root = tree_abs orelse return false;
+    var dir = std.Io.Dir.cwd().openDir(ctx.io, root, .{}) catch return false;
+    defer dir.close(ctx.io);
+    var components = std.mem.splitScalar(u8, target, '/');
+    while (components.next()) |component| {
+        if (components.peek() == null) {
+            const stat = dir.statFile(ctx.io, component, .{ .follow_symlinks = false }) catch return false;
+            return stat.kind == .file;
+        }
+        const child = dir.openDir(ctx.io, component, .{ .follow_symlinks = false }) catch return false;
+        dir.close(ctx.io);
+        dir = child;
+    }
+    return false;
 }
 
 /// manifest の export を lock entry の解決結果に合わせて選択し、env.json の
@@ -1157,14 +1169,12 @@ fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, entry: 
     const prefer_native = if (implementation) |impl| std.mem.eql(u8, impl, "native") else false;
     const target = exportArtifactTarget(ctx.runtime.name(), ctx.target, entry.features);
     for (manifest.exports) |*export_decl| {
+        // 代表実装は lock が記録したパッケージ単位の選択結果で、各 export
+        // の個別実装を縛るものではない。`native` 選択は `prefer_native` と
+        // して渡し、export ごとの解決結果（source/native/esm）は個別に
+        // 記録する（kind 不一致で export を捨てると source-only の公開
+        // entry が env.json から消えて runtime 解決できなくなる）。
         const resolution = try resolveExportForSync(ctx, export_decl, target, prefer_native) orelse continue;
-        // lock が記録した実装と食い違う export は含めない。`source` 選択の
-        // package で native/ESM を記録すると展開物と env.json が不整合になる。
-        if (implementation) |impl| {
-            if (std.mem.eql(u8, impl, "source") and resolution.kind != .source) continue;
-            if (std.mem.eql(u8, impl, "native") and resolution.kind != .native) continue;
-            if (std.mem.eql(u8, impl, "ESM") and resolution.kind != .esm) continue;
-        }
         if (resolution.kind == .esm and !(std.mem.eql(u8, ctx.runtime.name(), "cnako") or ctx.target.compat_js)) continue;
         if (!exportTargetIsFile(ctx, tree_abs, tree_dir, resolution.target)) {
             return ctx.session.fail(.invalid_metadata, .manifest, export_decl.name, "export target \"{s}\" of \"{s}\" does not exist as a regular file in the package tree", .{ resolution.target, entry.name });
@@ -1178,10 +1188,15 @@ fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, entry: 
     return exports;
 }
 
-/// commands.json が無い場合は manifest exports から生成する。
+/// 明示 `NAKO-PKG/commands.json` があればその index を採用し、無い場合は
+/// manifest exports から生成する。index の有無に関わらず、source export
+/// を起点とした import 閉包は必ず走査して検証する（`commands.json` は
+/// あくまで index であり、閉包走査を省略すると `.nako`/`.git` 配下の未
+/// pin 内容への取り込みを迂回できてしまう）。
 fn collectCommands(ctx: *Context, tree_abs: ?[]const u8, tree_dir: ?std.Io.Dir, manifest: ?*const manifest_mod.Manifest) Error![]const npkg_commands.Command {
     const arena = ctx.arena;
     const display_root = tree_abs orelse ctx.generation_rel;
+    var indexed_commands: ?[]const npkg_commands.Command = null;
     if (tree_dir) |tree| {
         if (tree.readFileAlloc(ctx.io, "NAKO-PKG/commands.json", arena, .limited(16 * 1024 * 1024))) |bytes| {
             var scratch = diag.List.init(ctx.gpa);
@@ -1190,7 +1205,7 @@ fn collectCommands(ctx: *Context, tree_abs: ?[]const u8, tree_dir: ?std.Io.Dir, 
                 error.OutOfMemory => return error.OutOfMemory,
                 else => return ctx.session.fail(.invalid_metadata, .manifest, display_root, "commands.json in package failed validation", .{}),
             };
-            return parsed.commands;
+            indexed_commands = parsed.commands;
         } else |err| switch (err) {
             error.FileNotFound => {},
             error.OutOfMemory => return error.OutOfMemory,
@@ -1205,22 +1220,25 @@ fn collectCommands(ctx: *Context, tree_abs: ?[]const u8, tree_dir: ?std.Io.Dir, 
                 error.OutOfMemory => return error.OutOfMemory,
                 else => return ctx.session.fail(.invalid_metadata, .manifest, commands_path, "commands.json in package failed validation", .{}),
             };
-            return parsed.commands;
+            indexed_commands = parsed.commands;
         } else |err| switch (err) {
             error.FileNotFound => {},
             error.OutOfMemory => return error.OutOfMemory,
             else => return ctx.session.fail(.invalid_metadata, .manifest, commands_path, "commands.json in package is unreadable: {s}", .{@errorName(err)}),
         }
     }
-    const m = manifest orelse return &.{};
-    if (tree_abs == null and tree_dir == null) return &.{};
+    const m = manifest orelse return indexed_commands orelse &.{};
+    if (tree_abs == null and tree_dir == null) return indexed_commands orelse &.{};
 
-    // export の source path を entry として静的に走査する。
+    // export の source path を entry として静的に走査する。明示 index が
+    // ある経路でも同じ走査を行い、解決した import 先の成分に `.nako`/
+    // `.git` が現れた時点で拒否する（command 一覧の生成が不要でも検査は
+    // 必要）。
     var entry_paths = std.ArrayListUnmanaged([]const u8).empty;
     for (m.exports) |*export_decl| {
         if (export_decl.path) |path| try entry_paths.append(arena, path);
     }
-    if (entry_paths.items.len == 0) return &.{};
+    if (entry_paths.items.len == 0) return indexed_commands orelse &.{};
 
     var provider_state = DirSourceProvider{
         .io = ctx.io,
@@ -1233,6 +1251,9 @@ fn collectCommands(ctx: *Context, tree_abs: ?[]const u8, tree_dir: ?std.Io.Dir, 
         error.OutOfMemory => return error.OutOfMemory,
         else => return ctx.session.fail(.invalid_metadata, .manifest, m.package.name, "failed to derive commands for package \"{s}\"", .{m.package.name}),
     };
+    // 明示 index があれば commands の記録内容は index を採用する。
+    // `generate` は import 閉包の妥当性検査として動作した。
+    if (indexed_commands) |commands| return commands;
     return generated.commands;
 }
 

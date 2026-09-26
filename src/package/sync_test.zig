@@ -470,6 +470,128 @@ test "sync は current が欠損しても公開済み世代を environment.json 
     try std.Io.Dir.cwd().access(io, previous, .{});
 }
 
+test "sync は明示 commands.json 同梱でも source の .nako import を拒否する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    // `commands.json` は index であり、同梱しても source export 起点の
+    // import 閉包走査を迂回しない。`.nako` は pin・digest 対象外のため、
+    // index 経由で未 pin 内容への取り込みを隠せてはいけない。
+    try temporary.dir.createDirPath(io, "deps/lib/src/.nako");
+    try temporary.dir.createDirPath(io, "deps/lib/NAKO-PKG");
+    try temporary.dir.writeFile(io, .{ .sub_path = "deps/lib/nako.toml", .data = lib_manifest });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "deps/lib/src/index.nako3",
+        .data = "「.nako/helper.nako3」を取り込む\n●テストとは\n  戻る\nここまで\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "deps/lib/src/.nako/helper.nako3",
+        .data = "●補助とは\n  戻る\nここまで\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "deps/lib/NAKO-PKG/commands.json",
+        .data = "{\"schemaVersion\":1,\"commands\":[]}\n",
+    });
+    try writeMutableLibLock(&temporary);
+
+    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const cache_root = try std.fs.path.join(testing.allocator, &.{ root, "cache" });
+    defer testing.allocator.free(cache_root);
+    var list = diag.List.init(testing.allocator);
+    defer list.deinit();
+    try testing.expectError(error.InvalidMetadata, sync.run(testing.allocator, io, .{
+        .project_root = root,
+        .cache_root = cache_root,
+    }, &list));
+    try testing.expectError(error.FileNotFound, temporary.dir.access(io, ".nako/environment.json", .{}));
+}
+
+test "sync は代表実装と個別解決が異なる export を両方記録する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    // lock の代表実装 `native` は artifact 選択と `prefer-native` 方針を
+    // 示すだけで、個別 export の解決結果を縛らない。source-only export
+    // （pure）と native 併記 export（dual）を両方 env.json へ記録する。
+    const dual_manifest =
+        \\[package]
+        \\name = "lib"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[[exports]]
+        \\name = "pure"
+        \\path = "src/pure.nako3"
+        \\
+        \\[[exports]]
+        \\name = "dual"
+        \\path = "src/dual.nako3"
+        \\native = "native/dual.so"
+        \\
+    ;
+    try temporary.dir.createDirPath(io, "deps/lib/src");
+    try temporary.dir.createDirPath(io, "deps/lib/native");
+    try temporary.dir.writeFile(io, .{ .sub_path = "deps/lib/nako.toml", .data = dual_manifest });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "deps/lib/src/pure.nako3",
+        .data = "●ピュアとは\n  戻る\nここまで\n",
+    });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "deps/lib/src/dual.nako3",
+        .data = "●デュアルとは\n  戻る\nここまで\n",
+    });
+    try temporary.dir.writeFile(io, .{ .sub_path = "deps/lib/native/dual.so", .data = "stub-native\n" });
+
+    const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
+    defer testing.allocator.free(manifest_sha);
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.toml", .data = app_manifest });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const lib_abs = try std.fs.path.join(testing.allocator, &.{ root, "deps/lib" });
+    defer testing.allocator.free(lib_abs);
+    const tree_digest = try path_digest.digest(io, testing.allocator, lib_abs);
+    const mutable_sha = try std.fmt.allocPrint(testing.allocator, "sha256:{s}", .{std.fmt.bytesToHex(tree_digest, .lower)});
+    defer testing.allocator.free(mutable_sha);
+    const lock_bytes = try std.fmt.allocPrint(testing.allocator,
+        \\{{
+        \\  "schemaVersion": 1, "resolverVersion": 1,
+        \\  "input": {{ "manifestSha256": "sha256:{s}", "profile": "default", "features": [], "target": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu" }}, "mutablePaths": [{{ "path": "deps/lib", "sha256": "{s}" }}] }},
+        \\  "packages": {{ "pkg:11111111111111111111111111111111": {{
+        \\    "id": "pkg:11111111111111111111111111111111", "name": "lib", "version": "1.0.0",
+        \\    "source": {{ "type": "path", "path": "deps/lib", "mutable": true }},
+        \\    "resolvedFrom": {{ "type": "path", "path": "deps/lib", "mutable": true }},
+        \\    "dependencies": [], "features": [], "implementation": "native",
+        \\    "artifacts": {{ "source": {{ "kind": "source", "type": "raw" }} }}
+        \\  }} }},
+        \\  "profiles": {{ "default": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu", "runtime": "lnako" }} }}
+        \\}}
+    , .{ manifest_sha, mutable_sha });
+    defer testing.allocator.free(lock_bytes);
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock_bytes });
+
+    const cache_root = try std.fs.path.join(testing.allocator, &.{ root, "cache" });
+    defer testing.allocator.free(cache_root);
+    var list = diag.List.init(testing.allocator);
+    defer list.deinit();
+    var report = try sync.run(testing.allocator, io, .{
+        .project_root = root,
+        .cache_root = cache_root,
+    }, &list);
+    defer report.deinit();
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, report.environment_json, .{});
+    defer parsed.deinit();
+    const lib = parsed.value.object.get("packages").?.object.get("pkg:11111111111111111111111111111111").?.object;
+    const exports = lib.get("exports").?.array;
+    try testing.expectEqual(@as(usize, 2), exports.items.len);
+    try testing.expectEqualStrings("pure", exports.items[0].object.get("name").?.string);
+    try testing.expectEqualStrings("src/pure.nako3", exports.items[0].object.get("path").?.string);
+    // `prefer-native` 方針で dual は native target へ解決される。
+    try testing.expectEqualStrings("dual", exports.items[1].object.get("name").?.string);
+    try testing.expectEqualStrings("native/dual.so", exports.items[1].object.get("path").?.string);
+}
+
 test "sync は再実行で世代を更新し直前世代を保持する" {
     const io = testing.io;
     var temporary = std.testing.tmpDir(.{});

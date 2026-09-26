@@ -844,6 +844,54 @@ test "git provider は cached repository の post-checkout hook を実行しな�
     try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "filter-ran", .{}));
 }
 
+test "git provider は symlink 化された .git/info を leaf ごと除去して attributes を無効化する" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = testing.io;
+    if (!gitAvailable(io)) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const repo = try createGitRepo(&temporary, io);
+    defer testing.allocator.free(repo.path);
+    defer testing.allocator.free(repo.url);
+    defer testing.allocator.free(repo.commit);
+
+    // `ident` は config 不要で `$Id$` を checkout 時に展開する attribute。
+    // 検証用の目印として HEAD に `$Id$` 入りの file を積む。
+    try temporary.dir.writeFile(io, .{ .sub_path = "repo/marker.txt", .data = "$Id$\n" });
+    try gitRun(io, &.{ "git", "-C", repo.path, "-c", "user.email=test@example.com", "-c", "user.name=test", "add", "-A" });
+    try gitRun(io, &.{ "git", "-C", repo.path, "-c", "user.email=test@example.com", "-c", "user.name=test", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "marker" });
+    const commit = try gitStdout(io, &.{ "git", "-C", repo.path, "rev-parse", "HEAD" });
+    defer testing.allocator.free(commit);
+
+    var workspace = try openGitWorkspace(&temporary, io, "checkout");
+    defer workspace.close(io);
+    var session = newSession(.{});
+    defer session.deinit();
+    const dep = manifest_mod.GitDependency{ .name = "demo", .url = repo.url, .commit = commit[0..7] };
+    _ = try provider.acquireGit(&session, dep, workspace, null);
+
+    // clone 後の `.git/info` を外部 dir への symlink に置き換える。
+    // attributes を残したまま checkout/clean が走ると `ident` で
+    // 作業木の byte が pin commit と食い違う内容へ書き換わる。
+    const tmp_root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(tmp_root);
+    try temporary.dir.createDir(io, "attacker-info", .default_dir);
+    try temporary.dir.writeFile(io, .{ .sub_path = "attacker-info/attributes", .data = "* ident\n" });
+    try temporary.dir.deleteTree(io, "checkout/.git/info");
+    const link_target = try std.fs.path.join(testing.allocator, &.{ tmp_root, "attacker-info" });
+    defer testing.allocator.free(link_target);
+    try temporary.dir.symLink(io, link_target, "checkout/.git/info", .{ .is_directory = true });
+
+    session.policy.offline = true;
+    _ = try provider.acquireGit(&session, dep, workspace, null);
+
+    // symlink leaf は除去され、再 checkout でも `$Id$` は展開されない。
+    try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "checkout/.git/info", .{ .follow_symlinks = false }));
+    const marker = try temporary.dir.readFileAlloc(io, "checkout/marker.txt", testing.allocator, .limited(64));
+    defer testing.allocator.free(marker);
+    try testing.expectEqualStrings("$Id$\n", marker);
+}
+
 test "git provider は commit-ish と同名の移動した tag に誤解されない" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;

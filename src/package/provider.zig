@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const fetch = @import("fetch.zig");
 const diag = @import("diagnostics.zig");
 const lock_model = @import("lock_model.zig");
+const environment = @import("environment.zig");
 const manifest_mod = @import("manifest.zig");
 const npkg_files = @import("npkg_files.zig");
 const npkg_verify = @import("npkg_verify.zig");
@@ -498,7 +499,19 @@ fn disableCheckoutFilters(session: *Session, workspace: std.Io.Dir, origin_url: 
             error.FileNotFound => {},
             else => return session.fail(.unavailable, .repository, ".git", "cannot discard cached Git info attributes: {s}", .{@errorName(err)}),
         };
-    } else |_| {}
+    } else |open_err| switch (open_err) {
+        // `.git/info` が無ければ attributes も存在し得ない。
+        error.FileNotFound => {},
+        else => {
+            // symlink・file 化・開けない dir 等の場合、follow せず `info`
+            // leaf 自体を除去する。`checkout`/`clean` は `$GIT_DIR/info/
+            // attributes` を無条件で読むため、開けない状態で残すと
+            // filter・encoding attribute が作業木の byte を書き換え得る。
+            environment.deleteTreeChecked(dot_git, session.io, "info") catch |err| {
+                return session.fail(.unavailable, .repository, ".git", "cannot discard cached Git info directory: {s} (open: {s})", .{ @errorName(err), @errorName(open_err) });
+            };
+        },
+    }
 }
 
 /// `gitRunAllowFailure` の実行場所と保護指定。`cwd` は subprocess の
