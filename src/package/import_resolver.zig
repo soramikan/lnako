@@ -4,6 +4,7 @@ const module_graph = @import("../semantic/module_graph.zig");
 const npkg_files = @import("npkg_files.zig");
 const lock_model = @import("lock_model.zig");
 const manifest_mod = @import("manifest.zig");
+const native_store = @import("native_store.zig");
 const diag = @import("diagnostics.zig");
 const semver = @import("semver.zig");
 
@@ -309,6 +310,13 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
             if (declared_path != .string or !std.mem.eql(u8, declared_path.string, environment_path.string)) return error.InvalidEnvironment;
             break :blk try actualPackageRoot(allocator, io, project_root, environment_path.string);
         } else blk: {
+            const record_exports = asArray(get(record, "exports") orelse return error.InvalidEnvironment) orelse return error.InvalidEnvironment;
+            const implementation = requiredString(lock_entry, "implementation");
+            if (record_exports.items.len != 0 and implementation != null and std.mem.eql(u8, implementation.?, "native")) {
+                const expected_native_path = try native_store.expectedRoot(allocator, source, lock_entry) orelse return error.InvalidEnvironment;
+                if (!std.mem.eql(u8, environment_path.string, expected_native_path)) return error.InvalidEnvironment;
+                break :blk try native_store.validateRoot(allocator, io, project_root, environment_path.string);
+            }
             const expected_directory = materialized_directories.get(environment_entry.key_ptr.*) orelse return error.InvalidEnvironment;
             const generation = materializedGeneration(environment_path.string, expected_directory) orelse return error.InvalidEnvironment;
             if (shared_generation) |expected| {

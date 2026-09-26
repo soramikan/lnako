@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const diag = @import("diagnostics.zig");
 const fetch = @import("fetch.zig");
+const import_resolver = @import("import_resolver.zig");
 const lock_model = @import("lock_model.zig");
 const manifest_mod = @import("manifest.zig");
 const npkg_build = @import("npkg_build.zig");
@@ -1482,16 +1483,26 @@ test "sync は lock の implementation で選択した artifact を取得する"
         .{ .path = "src/index.nako3", .content = "SOURCE-DECOY" },
     });
     defer testing.allocator.free(source_tgz);
+    const impostor_manifest = try std.mem.replaceOwned(u8, testing.allocator, native_manifest, "name = \"demo\"", "name = \"impostor\"");
+    defer testing.allocator.free(impostor_manifest);
+    const impostor_tgz = try buildTarGz(testing.allocator, &.{
+        .{ .path = "nako.toml", .content = impostor_manifest },
+        .{ .path = "lib/demo.so", .content = "NATIVE-BINARY" },
+    });
+    defer testing.allocator.free(impostor_tgz);
     const native_hash = try fetch.sha256Hex(testing.allocator, native_tgz);
     defer testing.allocator.free(native_hash);
     const source_hash = try fetch.sha256Hex(testing.allocator, source_tgz);
     defer testing.allocator.free(source_hash);
+    const impostor_hash = try fetch.sha256Hex(testing.allocator, impostor_tgz);
+    defer testing.allocator.free(impostor_hash);
 
     var server = FixtureServer{ .io = testing.io, .allocator = testing.allocator };
-    try server.start(&.{
+    var routes = [_]Route{
         .{ .path = "/alice/demo/native.tar.gz", .body = native_tgz },
         .{ .path = "/alice/demo/source.tar.gz", .body = source_tgz },
-    });
+    };
+    try server.start(&routes);
     defer server.stop();
     const native_url = try server.url("/alice/demo/native.tar.gz");
     defer testing.allocator.free(native_url);
@@ -1528,30 +1539,90 @@ test "sync は lock の implementation で選択した artifact を取得する"
 
     var list = diag.List.init(testing.allocator);
     defer list.deinit();
+    const lock_path = try std.fs.path.join(testing.allocator, &.{ project_abs, "nako.lock" });
+    defer testing.allocator.free(lock_path);
+    const original_lock = try std.Io.Dir.cwd().readFileAlloc(io, lock_path, testing.allocator, .unlimited);
+    defer testing.allocator.free(original_lock);
+
+    // A remote artifact without an integrity digest is rejected before any request.
+    const missing_hash_marker = try std.fmt.allocPrint(testing.allocator, "\"sha256\": \"sha256:{s}\", \"url\": \"{s}\"", .{ native_hash, native_url });
+    defer testing.allocator.free(missing_hash_marker);
+    const no_hash_replacement = try std.fmt.allocPrint(testing.allocator, "\"url\": \"{s}\"", .{native_url});
+    defer testing.allocator.free(no_hash_replacement);
+    const no_hash_lock = try std.mem.replaceOwned(u8, testing.allocator, original_lock, missing_hash_marker, no_hash_replacement);
+    defer testing.allocator.free(no_hash_lock);
+    try testing.expect(no_hash_lock.len < original_lock.len);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = lock_path, .data = no_hash_lock });
+    try testing.expectError(error.InvalidSource, sync_mod.run(testing.allocator, io, .{
+        .project_root = project_abs,
+        .cache_root = cache_root,
+    }, &list));
+    try testing.expectEqual(@as(usize, 0), server.requests.load(.acquire));
+    list.deinit();
+    list = diag.List.init(testing.allocator);
+
+    // A valid, hash-verified artifact with a different manifest identity must not publish.
+    const expected_hash = try std.fmt.allocPrint(testing.allocator, "sha256:{s}", .{native_hash});
+    defer testing.allocator.free(expected_hash);
+    const impostor_digest = try std.fmt.allocPrint(testing.allocator, "sha256:{s}", .{impostor_hash});
+    defer testing.allocator.free(impostor_digest);
+    const wrong_identity_lock = try std.mem.replaceOwned(u8, testing.allocator, original_lock, expected_hash, impostor_digest);
+    defer testing.allocator.free(wrong_identity_lock);
+    try testing.expect(!std.mem.eql(u8, wrong_identity_lock, original_lock));
+    routes[0].body = impostor_tgz;
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = lock_path, .data = wrong_identity_lock });
+    try testing.expectError(error.InvalidMetadata, sync_mod.run(testing.allocator, io, .{
+        .project_root = project_abs,
+        .cache_root = cache_root,
+    }, &list));
+    routes[0].body = native_tgz;
+    try testing.expectEqual(@as(usize, 1), server.requests.load(.acquire));
+    const environment_path = try std.fs.path.join(testing.allocator, &.{ project_abs, ".nako", "environment.json" });
+    defer testing.allocator.free(environment_path);
+    try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(io, environment_path, .{}));
+    list.deinit();
+    list = diag.List.init(testing.allocator);
+
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = lock_path, .data = original_lock });
     var report = try sync_mod.run(testing.allocator, io, .{
         .project_root = project_abs,
         .cache_root = cache_root,
     }, &list);
     defer report.deinit();
 
-    // native artifact のみ取得され、その内容が materialize される。
-    try testing.expectEqual(@as(usize, 1), server.requests.load(.acquire));
-    const native_path = try std.fs.path.join(testing.allocator, &.{ project_abs, ".nako", "env", report.generation, "deps", "demo", "lib", "demo.so" });
+    // Native package roots live outside rotating generations. The rejected identity
+    // used a distinct hash, so the valid lock fetches its own artifact exactly once.
+    try testing.expectEqual(@as(usize, 2), server.requests.load(.acquire));
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, report.environment_json, .{});
+    defer parsed.deinit();
+    const pkg = parsed.value.object.get("packages").?.object.get("pkg:44444444444444444444444444444444").?.object;
+    const package_path = pkg.get("path").?.string;
+    try testing.expect(std.mem.startsWith(u8, package_path, ".nako/native/artifact-"));
+    const stable_root = try std.fs.path.join(testing.allocator, &.{ project_abs, package_path });
+    defer testing.allocator.free(stable_root);
+    const native_path = try std.fs.path.join(testing.allocator, &.{ stable_root, "lib", "demo.so" });
     defer testing.allocator.free(native_path);
     const bytes = try std.Io.Dir.cwd().readFileAlloc(io, native_path, testing.allocator, .unlimited);
     defer testing.allocator.free(bytes);
     try testing.expectEqualStrings("NATIVE-BINARY", bytes);
-    const decoy_path = try std.fs.path.join(testing.allocator, &.{ project_abs, ".nako", "env", report.generation, "deps", "demo", "src", "index.nako3" });
-    defer testing.allocator.free(decoy_path);
-    try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(io, decoy_path, .{}));
-
-    // exports は lock の "native" 選択に合わせて native path を記録する。
-    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, report.environment_json, .{});
-    defer parsed.deinit();
-    const pkg = parsed.value.object.get("packages").?.object.get("pkg:44444444444444444444444444444444").?.object;
     const exports = pkg.get("exports").?.array;
     try testing.expectEqual(@as(usize, 1), exports.items.len);
     try testing.expectEqualStrings("lib/demo.so", exports.items[0].object.get("path").?.string);
+
+    var second = try sync_mod.run(testing.allocator, io, .{ .project_root = project_abs, .cache_root = cache_root }, &list);
+    defer second.deinit();
+    var third = try sync_mod.run(testing.allocator, io, .{ .project_root = project_abs, .cache_root = cache_root }, &list);
+    defer third.deinit();
+    const old_generation = try std.fs.path.join(testing.allocator, &.{ project_abs, ".nako", "env", report.generation });
+    defer testing.allocator.free(old_generation);
+    try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(io, old_generation, .{}));
+    const bytes_after_prune = try std.Io.Dir.cwd().readFileAlloc(io, native_path, testing.allocator, .unlimited);
+    defer testing.allocator.free(bytes_after_prune);
+    try testing.expectEqualStrings("NATIVE-BINARY", bytes_after_prune);
+    try testing.expectEqual(@as(usize, 2), server.requests.load(.acquire));
+
+    var loaded = try import_resolver.Resolver.load(testing.allocator, io, project_abs);
+    defer loaded.deinit();
 }
 
 test "sync は検証済み git object があれば checkout 無しで offline 同期する" {

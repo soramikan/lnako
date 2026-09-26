@@ -15,6 +15,7 @@
 const std = @import("std");
 const zip = @import("../archive/zip.zig");
 const cache = @import("cache.zig");
+const cache_key = @import("cache_key.zig");
 const diag = @import("diagnostics.zig");
 const environment = @import("environment.zig");
 const fetch = @import("fetch.zig");
@@ -22,6 +23,7 @@ const lock_mod = @import("lock.zig");
 const lock_model = @import("lock_model.zig");
 const manifest_mod = @import("manifest.zig");
 const materialize = @import("materialize.zig");
+const native_store = @import("native_store.zig");
 const npkg_commands = @import("npkg_commands.zig");
 const npkg_commands_gen = @import("npkg_commands_gen.zig");
 const npkg_verify = @import("npkg_verify.zig");
@@ -716,6 +718,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
     var env_path: []const u8 = undefined;
     var manifest: ?manifest_mod.Manifest = null;
     var tree_abs: ?[]const u8 = null;
+    var stable_native_key: ?[]const u8 = null;
     var verified_commands: ?[]const npkg_commands.Command = null;
 
     switch (source.kind) {
@@ -759,7 +762,8 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
             // lock の固定 commit から決定的な object key を先に計算する。
             // 検証済み object があれば checkout・Git 起動・clone/fetch を
             // 経由せず materialize できる（offline でも checkout 不要）。
-            const object_key = try shortKey(arena, "git", &.{ url, commit, source.path orelse "" });
+            const object_key = try cache_key.shortKey(arena, "git", &.{ url, commit, source.path orelse "" });
+            stable_native_key = object_key;
             try rememberKey(ctx, object_key);
             const tree = (try ctx.objectTree(object_key)).?;
             const verified_hit = (ctx.cache_store.verifyEntry(arena, object_key) catch false) and ctx.cache_store.entryExists(object_key);
@@ -769,7 +773,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                     ctx.cache_store.removeEntry(object_key) catch |err| return mapFs(err);
                 }
                 // checkout は可変の作業 dir。repo+subdir 単位で再利用する。
-                const checkout_key = try shortKey(arena, "git", &.{ url, source.path orelse "" });
+                const checkout_key = try cache_key.shortKey(arena, "git", &.{ url, source.path orelse "" });
                 const checkout_dir = (try ctx.cache_store.checkoutPath(arena, checkout_key)) orelse
                     return ctx.session.fail(.invalid_source, .package, entry.name, "cannot derive checkout dir", .{});
                 const acquired = try provider.acquireGit(ctx.session, .{
@@ -797,7 +801,8 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                 return ctx.session.fail(.invalid_source, .package, entry.name, "http source of \"{s}\" has no url", .{entry.name});
             const declared_hash = source.hash orelse
                 return ctx.session.fail(.invalid_source, .package, entry.name, "http source of \"{s}\" has no hash", .{entry.name});
-            const object_key = try artifactKey(arena, "http", declared_hash, url);
+            const object_key = try cache_key.artifactKey(arena, "http", declared_hash, url);
+            stable_native_key = object_key;
             try rememberKey(ctx, object_key);
             const tree = (try ctx.objectTree(object_key)).?;
             const verified_hit = (ctx.cache_store.verifyEntry(arena, object_key) catch false) and ctx.cache_store.entryExists(object_key);
@@ -830,7 +835,13 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                 return ctx.session.fail(.not_found, .artifact, entry.name, "package \"{s}\" has no artifact for runtime \"{s}\"", .{ entry.name, ctx.runtime.name() });
             const url = artifact.url orelse
                 return ctx.session.fail(.invalid_source, .artifact, entry.name, "artifact \"{s}\" of \"{s}\" has no url", .{ artifact.key, entry.name });
-            const object_key = try artifactKey(arena, "artifact", artifact.sha256 orelse artifact.key, url);
+            const declared_hash = artifact.sha256 orelse
+                return ctx.session.fail(.invalid_source, .artifact, entry.name, "artifact \"{s}\" of \"{s}\" has no integrity hash", .{ artifact.key, entry.name });
+            if (!fetch.isSupportedHash(declared_hash)) {
+                return ctx.session.fail(.invalid_source, .artifact, entry.name, "artifact \"{s}\" of \"{s}\" has an unsupported integrity hash", .{ artifact.key, entry.name });
+            }
+            const object_key = try cache_key.artifactKey(arena, "artifact", declared_hash, url);
+            stable_native_key = object_key;
             try rememberKey(ctx, object_key);
             const tree = (try ctx.objectTree(object_key)).?;
             const verified_hit = (ctx.cache_store.verifyEntry(arena, object_key) catch false) and ctx.cache_store.entryExists(object_key);
@@ -839,9 +850,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                     ctx.cache_store.removeEntry(object_key) catch |err| return mapFs(err);
                 }
                 const bytes = try fetch.fetchBytes(ctx.session, url, .artifact);
-                if (artifact.sha256) |expected| {
-                    try fetch.verifyHash(ctx.session, bytes, expected, url, .artifact);
-                }
+                try fetch.verifyHash(ctx.session, bytes, declared_hash, url, .artifact);
                 const prepared = try buildArtifactObject(ctx, object_key, bytes, artifact.type orelse "raw", entry);
                 applyPrepared(&manifest, &verified_commands, prepared);
             }
@@ -854,11 +863,31 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
         },
     }
 
+    // Remote artifact metadata must identify the exact locked package before its
+    // exports can be resolved or the generation can be published. Apply this to
+    // both fresh acquisitions and cache hits.
+    if (source.kind == .http or source.kind == .registry or source.kind == .static) {
+        if (manifest) |*resolved| {
+            if (!native_store.manifestMatchesLock(resolved, entry.name, entry.version)) {
+                return ctx.session.fail(.invalid_metadata, .artifact, entry.name, "artifact manifest identity does not match lock entry for \"{s}\"", .{entry.name});
+            }
+        }
+    }
+
     // exports・commands は manifest がある場合だけ記録する。
     // `.npkg` を verify した経路では検証済み model をそのまま使う。
     var exports = std.ArrayListUnmanaged(environment.ExportRecord).empty;
     if (manifest) |*m| {
         exports = try resolveExports(ctx, m, entry.implementation);
+    }
+    if (entry.implementation) |implementation| {
+        if (std.mem.eql(u8, implementation, "native") and exports.items.len != 0) {
+            if (stable_native_key) |key| {
+                if (tree_abs) |tree| {
+                    env_path = native_store.materialize(ctx.arena, ctx.io, ctx.project_abs, tree, key, std.fs.path.basename(ctx.generation_abs)) catch |err| return mapTreeError(ctx, err, key);
+                }
+            }
+        }
     }
     const commands: []const npkg_commands.Command = verified_commands orelse blk: {
         if (manifest) |*m| break :blk try collectCommands(ctx, tree_abs, m);
@@ -926,37 +955,6 @@ fn isPackageId(id: []const u8) bool {
         if (!std.ascii.isHex(c) or (c >= 'A' and c <= 'F')) return false;
     }
     return true;
-}
-
-/// `source.<field>` 群から決定的な cache key を作る。`prefix-<sha256先頭16>`。
-fn shortKey(arena: Allocator, prefix: []const u8, parts: []const []const u8) ![]const u8 {
-    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
-    hasher.update(prefix);
-    for (parts) |part| {
-        hasher.update(&[_]u8{0});
-        hasher.update(part);
-    }
-    var digest: [32]u8 = undefined;
-    hasher.final(&digest);
-    const hex = std.fmt.bytesToHex(digest, .lower);
-    return try std.fmt.allocPrint(arena, "{s}-{s}", .{ prefix, hex[0..16] });
-}
-
-/// hash 宣言から内容アドレス key を作る。sha256 に正規化できる場合は実ダイ
-/// ジェストを key に使う。そうでなければ宣言 hash を key 材料へ含める。
-/// sha256 以外（sha512 等）でも lock の hash 更新が必ず別 entry になるよう
-/// URL だけを key にしない（同じ URL で配布物が更新される通常ケースで
-/// 古い内容を復元しないため）。
-fn artifactKey(arena: Allocator, prefix: []const u8, declared_hash: []const u8, identity: []const u8) ![]const u8 {
-    var digest: [32]u8 = undefined;
-    if (lock_model.normalizeSha256(declared_hash, &digest)) {
-        const hex = std.fmt.bytesToHex(digest, .lower);
-        return try std.fmt.allocPrint(arena, "{s}-{s}", .{ prefix, hex[0..32] });
-    }
-    if (declared_hash.len != 0) {
-        return try shortKey(arena, prefix, &.{ declared_hash, identity });
-    }
-    return try shortKey(arena, prefix, &.{identity});
 }
 
 fn rememberKey(ctx: *Context, key: []const u8) !void {
@@ -1522,17 +1520,17 @@ test "artifactKey は宣言 hash を key 材料へ含める" {
     const allocator = arena_impl.allocator();
     const url = "https://example.test/pkg.tar.gz";
     // sha256 は digest 自体が key になるため表記が違っても同一 key。
-    const a = try artifactKey(allocator, "http", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", url);
-    const b = try artifactKey(allocator, "http", "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", url);
+    const a = try cache_key.artifactKey(allocator, "http", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", url);
+    const b = try cache_key.artifactKey(allocator, "http", "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", url);
     try testing.expectEqualStrings(a, b);
     // sha256 以外の表記でも宣言 hash が key 材料へ入る。同じ URL で lock の
     // hash が更新されれば必ず別 entry になり、古い内容を復元しない。
-    const c = try artifactKey(allocator, "http", "sha512:aaaa", url);
-    const d = try artifactKey(allocator, "http", "sha512:bbbb", url);
+    const c = try cache_key.artifactKey(allocator, "http", "sha512:aaaa", url);
+    const d = try cache_key.artifactKey(allocator, "http", "sha512:bbbb", url);
     try testing.expect(!std.mem.eql(u8, c, d));
     try testing.expect(!std.mem.eql(u8, a, c));
     // 同じ hash 宣言でも取得元が違えば別 entry。
-    const e = try artifactKey(allocator, "http", "sha512:aaaa", "https://other.test/pkg.tar.gz");
+    const e = try cache_key.artifactKey(allocator, "http", "sha512:aaaa", "https://other.test/pkg.tar.gz");
     try testing.expect(!std.mem.eql(u8, c, e));
 }
 
