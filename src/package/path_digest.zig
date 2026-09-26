@@ -173,16 +173,37 @@ pub fn mutablePathMismatch(gpa: std.mem.Allocator, io: std.Io, project_root: []c
     defer sets.deinit(gpa);
     try sets.append(gpa, lock.packages);
     for (lock.profile_packages) |profile| try sets.append(gpa, profile.packages);
+    var declared: std.ArrayList([]const u8) = .empty;
+    defer declared.deinit(gpa);
     for (sets.items) |set| for (set) |*entry| {
         const source = entry.source orelse continue;
         if (source.kind != .path or !(source.mutable orelse false)) continue;
-        const rel = source.path orelse return entry.name;
-        var recorded = false;
-        for (lock.input.mutable_paths) |mutable| if (std.mem.eql(u8, mutable.path, rel)) {
-            recorded = true;
-        };
-        if (!recorded) return rel;
+        try declared.append(gpa, source.path orelse return entry.name);
     };
+    // `mutablePaths` が宣言済み package の mutable path source 集合と
+    // 完全一致することを digest 計算より先に検証する。片方向だけの
+    // 照合では、細工した lock に `..` や絶対 path の余分な record を
+    // 混ぜて任意 dir の tree digest（深い再帰読取）を強要できる。
+    for (lock.input.mutable_paths) |mutable| {
+        var known = false;
+        for (declared.items) |rel| {
+            if (std.mem.eql(u8, mutable.path, rel)) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) return mutable.path;
+    }
+    for (declared.items) |rel| {
+        var recorded = false;
+        for (lock.input.mutable_paths) |mutable| {
+            if (std.mem.eql(u8, mutable.path, rel)) {
+                recorded = true;
+                break;
+            }
+        }
+        if (!recorded) return rel;
+    }
     return mutablePathsMismatch(gpa, io, project_root, lock.input.mutable_paths);
 }
 

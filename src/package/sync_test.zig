@@ -646,3 +646,139 @@ test "sync は再実行で世代を更新し直前世代を保持する" {
     defer testing.allocator.free(previous);
     try std.Io.Dir.cwd().access(io, previous, .{});
 }
+
+test "sync は package 宣言に無い mutablePaths record を含む lock を拒否する" {
+    // `mutablePaths` は lock 作者が任意に追記できる。宣言済み package の
+    // mutable path source 集合と完全一致するかを digest 前に検証しない
+    // と、`..`/絶対 path の余分な record で任意 dir の深い再帰読取を
+    // 強要される。digest が一致する実在 dir への record であっても
+    // 受理してはいけない。
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
+    defer testing.allocator.free(manifest_sha);
+    try writeFixtureProject(&temporary, manifest_sha);
+    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+
+    // project 外に実在する dir を用意し、その正しい digest を持つ
+    // `../outside` record を差し込む。
+    try temporary.dir.createDirPath(io, "outside");
+    try temporary.dir.writeFile(io, .{ .sub_path = "outside/payload.txt", .data = "payload" });
+    const outside_abs = try temporary.dir.realPathFileAlloc(io, "outside", testing.allocator);
+    defer testing.allocator.free(outside_abs);
+    const outside_digest = try path_digest.digest(io, testing.allocator, outside_abs);
+    const outside_sha = try std.fmt.allocPrint(testing.allocator, "sha256:{s}", .{std.fmt.bytesToHex(outside_digest, .lower)});
+    defer testing.allocator.free(outside_sha);
+    const lib_abs = try std.fs.path.join(testing.allocator, &.{ root, "deps/lib" });
+    defer testing.allocator.free(lib_abs);
+    const lib_digest = try path_digest.digest(io, testing.allocator, lib_abs);
+    const lib_sha = try std.fmt.allocPrint(testing.allocator, "sha256:{s}", .{std.fmt.bytesToHex(lib_digest, .lower)});
+    defer testing.allocator.free(lib_sha);
+    const lock = try std.fmt.allocPrint(testing.allocator,
+        \\{{
+        \\  "schemaVersion": 1,
+        \\  "resolverVersion": 1,
+        \\  "input": {{
+        \\    "manifestSha256": "sha256:{s}",
+        \\    "profile": "default",
+        \\    "features": [],
+        \\    "target": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu" }},
+        \\    "mutablePaths": [
+        \\      {{ "path": "deps/lib", "sha256": "{s}" }},
+        \\      {{ "path": "../outside", "sha256": "{s}" }}
+        \\    ]
+        \\  }},
+        \\  "packages": {{
+        \\    "pkg:11111111111111111111111111111111": {{
+        \\      "id": "pkg:11111111111111111111111111111111",
+        \\      "name": "lib",
+        \\      "version": "1.0.0",
+        \\      "source": {{ "type": "path", "path": "deps/lib", "mutable": true }},
+        \\      "resolvedFrom": {{ "type": "path", "path": "deps/lib", "mutable": true }},
+        \\      "dependencies": [],
+        \\      "features": [],
+        \\      "artifacts": {{ "source": {{ "kind": "source", "type": "raw" }} }}
+        \\    }}
+        \\  }},
+        \\  "profiles": {{
+        \\    "default": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu", "runtime": "lnako" }}
+        \\  }}
+        \\}}
+    , .{ manifest_sha, lib_sha, outside_sha });
+    defer testing.allocator.free(lock);
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
+    const cache_root = try std.fs.path.join(testing.allocator, &.{ root, "cache" });
+    defer testing.allocator.free(cache_root);
+
+    var list = diag.List.init(testing.allocator);
+    defer list.deinit();
+    try testing.expectError(error.StaleLock, sync.run(testing.allocator, io, .{
+        .project_root = root,
+        .cache_root = cache_root,
+    }, &list));
+    try testing.expectError(error.FileNotFound, temporary.dir.access(io, ".nako/environment.json", .{}));
+}
+
+test "sync は構築中に nako.toml が変更されると環境を公開しない" {
+    // 開始時の manifestSha256 照合だけでは、package 取得・展開中に
+    // 外部エディタが manifest を保存した変更を拾えず、旧 lock に対応
+    // する環境を公開してしまう。`.lnako-work-<gen>`（公開直前の検査より
+    // 前にだけ存在する workspace dir）の出現を合図に別 thread から
+    // manifest を上書きし、公開直前の再照合で StaleLock に至ることと
+    // 環境が公開されないことを検証する。
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
+    defer testing.allocator.free(manifest_sha);
+    try writeFixtureProject(&temporary, manifest_sha);
+    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const cache_root = try std.fs.path.join(testing.allocator, &.{ root, "cache" });
+    defer testing.allocator.free(cache_root);
+
+    var stop = std.atomic.Value(bool).init(false);
+    var written = std.atomic.Value(bool).init(false);
+    const Watcher = struct {
+        root_path: []const u8,
+        stop_flag: *std.atomic.Value(bool),
+        wrote: *std.atomic.Value(bool),
+        fn run(self: *const @This()) void {
+            // sync.run の testing.io と直列化しないよう実 io を使う。
+            const wio = std.Io.Threaded.global_single_threaded.io();
+            var dir = std.Io.Dir.cwd().openDir(wio, self.root_path, .{ .iterate = true }) catch return;
+            defer dir.close(wio);
+            while (!self.stop_flag.load(.acquire)) {
+                var iterator = dir.iterate();
+                while (iterator.next(wio) catch null) |entry| {
+                    if (entry.kind == .directory and std.mem.startsWith(u8, entry.name, ".lnako-work-")) {
+                        dir.writeFile(wio, .{
+                            .sub_path = "nako.toml",
+                            .data = "[package]\nname = \"tampered\"\nversion = \"9.9.9\"\nlicense = \"MIT\"\n",
+                        }) catch {};
+                        self.wrote.store(true, .release);
+                        return;
+                    }
+                }
+            }
+        }
+    };
+    const watcher = Watcher{ .root_path = root, .stop_flag = &stop, .wrote = &written };
+    const thread = std.Thread.spawn(.{}, Watcher.run, .{&watcher}) catch null;
+    defer if (thread) |t| t.join();
+    defer stop.store(true, .release);
+
+    var list = diag.List.init(testing.allocator);
+    defer list.deinit();
+    if (thread == null) return error.SkipZigTest;
+    try testing.expectError(error.StaleLock, sync.run(testing.allocator, io, .{
+        .project_root = root,
+        .cache_root = cache_root,
+    }, &list));
+    // watcher が workspace 出現中に書込みに成功した（= 公開直前の
+    // 再照合が実行区間内だった）ことを確認する。
+    try testing.expect(written.load(.acquire));
+    try testing.expectError(error.FileNotFound, temporary.dir.access(io, ".nako/environment.json", .{}));
+}

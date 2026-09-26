@@ -1,5 +1,6 @@
 //! Project package sources: declaration-to-lock identity helpers.
 const std = @import("std");
+const builtin = @import("builtin");
 const fetch = @import("fetch.zig");
 const lock_model = @import("lock_model.zig");
 const manifest_mod = @import("manifest.zig");
@@ -26,24 +27,45 @@ fn normalizeProjectRelativePath(gpa: Allocator, path: []const u8, native_sep: u8
     return normalized;
 }
 
+/// Fold a path into its identity form: native separators become `/` and, on
+/// Windows (case-insensitive filesystems), ASCII letters are lowercased so
+/// that `deps/lib` and `DEPS/lib` refer to the same identity. POSIX paths
+/// are returned verbatim because case and backslashes are significant.
+fn identityFoldedPath(gpa: Allocator, path: []const u8, windows_fs: bool) Error![]const u8 {
+    const sep: u8 = if (windows_fs) '\\' else '/';
+    const normalized = try normalizeProjectRelativePath(gpa, path, sep);
+    if (!windows_fs) return normalized;
+    for (@constCast(normalized)) |*char| char.* = std.ascii.toLower(char.*);
+    return normalized;
+}
+
+fn canonicalPathForId(gpa: Allocator, declared: []const u8, base_dir: ?[]const u8, project_root: []const u8) Error![]const u8 {
+    return canonicalPathForIdOs(gpa, declared, base_dir, project_root, builtin.os.tag == .windows);
+}
+
 /// Resolve a declared path against its manifest directory and return a
 /// project-relative spelling when it remains inside the project.
-fn canonicalPathForId(gpa: Allocator, declared: []const u8, base_dir: ?[]const u8, project_root: []const u8) Error![]const u8 {
+fn canonicalPathForIdOs(gpa: Allocator, declared: []const u8, base_dir: ?[]const u8, project_root: []const u8, windows_fs: bool) Error![]const u8 {
     const abs = if (provider.isAbsoluteDepPath(declared))
         std.fs.path.resolve(gpa, &.{declared}) catch return error.FileSystem
     else
         std.fs.path.resolve(gpa, &.{ base_dir orelse project_root, declared }) catch return error.FileSystem;
-    errdefer gpa.free(abs);
+    defer gpa.free(abs);
     const root = std.fs.path.resolve(gpa, &.{project_root}) catch return error.FileSystem;
     defer gpa.free(root);
-    if (std.mem.startsWith(u8, abs, root) and abs.len > root.len and
-        (abs[root.len] == '/' or abs[root.len] == std.fs.path.sep))
+    // On Windows the same directory can be spelled `DEPS\lib` or `deps\lib`;
+    // fold case and separators before the containment check and in the
+    // returned identity so spelling alone cannot fork a public package ID.
+    const abs_norm = try identityFoldedPath(gpa, abs, windows_fs);
+    defer gpa.free(abs_norm);
+    const root_norm = try identityFoldedPath(gpa, root, windows_fs);
+    defer gpa.free(root_norm);
+    if (std.mem.startsWith(u8, abs_norm, root_norm) and abs_norm.len > root_norm.len and
+        abs_norm[root_norm.len] == '/')
     {
-        const rel = try normalizeProjectRelativePath(gpa, abs[root.len + 1 ..], std.fs.path.sep);
-        gpa.free(abs);
-        return rel;
+        return gpa.dupe(u8, abs_norm[root_norm.len + 1 ..]);
     }
-    return abs;
+    return gpa.dupe(u8, abs_norm);
 }
 
 pub fn canonicalHttpHash(gpa: Allocator, text: []const u8) ![]const u8 {
@@ -133,4 +155,35 @@ test "project-relative path IDs use slash spelling across host separators" {
     const posix_filename = try normalizeProjectRelativePath(gpa, "packages\\demo", '/');
     defer gpa.free(posix_filename);
     try std.testing.expectEqualStrings("packages\\demo", posix_filename);
+}
+
+test "windows identity folds path case and separators" {
+    const gpa = std.testing.allocator;
+    // Same directory spelled `DEPS/lib` vs `deps/lib` (and absolute forms
+    // differing only by case) must collapse to one identity on Windows.
+    const upper = try canonicalPathForIdOs(gpa, "DEPS/lib", null, "/proj", true);
+    defer gpa.free(upper);
+    const lower = try canonicalPathForIdOs(gpa, "deps/lib", null, "/proj", true);
+    defer gpa.free(lower);
+    try std.testing.expectEqualStrings("deps/lib", upper);
+    try std.testing.expectEqualStrings("deps/lib", lower);
+    const upper_abs = try canonicalPathForIdOs(gpa, "/PROJ/DEPS/lib", null, "/Proj", true);
+    defer gpa.free(upper_abs);
+    try std.testing.expectEqualStrings("deps/lib", upper_abs);
+
+    // Outside the project root the folded absolute path is still stable
+    // across case-only respellings.
+    const ext_a = try canonicalPathForIdOs(gpa, "/Elsewhere/Lib", null, "/proj", true);
+    defer gpa.free(ext_a);
+    const ext_b = try canonicalPathForIdOs(gpa, "/elsewhere/lib", null, "/proj", true);
+    defer gpa.free(ext_b);
+    try std.testing.expectEqualStrings(ext_b, ext_a);
+
+    // POSIX keeps case and backslashes significant.
+    const posix = try canonicalPathForIdOs(gpa, "DEPS/lib", null, "/proj", false);
+    defer gpa.free(posix);
+    try std.testing.expectEqualStrings("DEPS/lib", posix);
+    const posix_abs = try canonicalPathForIdOs(gpa, "/PROJ/DEPS/lib", null, "/Proj", false);
+    defer gpa.free(posix_abs);
+    try std.testing.expectEqualStrings("/PROJ/DEPS/lib", posix_abs);
 }

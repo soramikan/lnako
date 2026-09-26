@@ -138,6 +138,24 @@ pub fn pathPinMismatch(gpa: Allocator, io: std.Io, project_root: []const u8, loc
     return path_digest.pathPinMismatch(gpa, io, project_root, lock) catch |err| return mapFs(err);
 }
 
+/// `manifest_path` の SHA-256 が `lock.input.manifest_sha256` と一致するか。
+/// `FileNotFound` は `.absent`（manifest 無しの lock 駆動用途を区別する
+/// ため呼出し側に返す）。その他の読取失敗は生の error で伝播する。
+const ManifestFreshness = enum { absent, fresh, stale };
+
+fn manifestFreshness(io: std.Io, arena: Allocator, manifest_path: []const u8, lock: *const lock_model.Lock) !ManifestFreshness {
+    const bytes = std.Io.Dir.cwd().readFileAlloc(io, manifest_path, arena, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
+        error.FileNotFound => return .absent,
+        else => return err,
+    };
+    var actual: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(bytes, &actual, .{});
+    var expected: [32]u8 = undefined;
+    if (!lock_model.normalizeSha256(lock.input.manifest_sha256, &expected) or
+        !std.mem.eql(u8, &actual, &expected)) return .stale;
+    return .fresh;
+}
+
 const Context = struct {
     gpa: Allocator,
     arena: Allocator,
@@ -209,23 +227,16 @@ pub fn run(
     // lock 駆動用途）だけで、dir 化・読取不能・size 上限超過などその他の
     // 失敗は manifest の有無と鮮度を確定できないため同期を失敗させる。
     const manifest_path = try std.fs.path.join(arena, &.{ project_abs, "nako.toml" });
-    if (std.Io.Dir.cwd().readFileAlloc(io, manifest_path, arena, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
-        error.FileNotFound => null,
+    const manifest_state = manifestFreshness(io, arena, manifest_path, &lock) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
             try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml", .{}, "cannot read nako.toml for lock manifest verification: {s}", .{@errorName(err)});
             return mapFs(err);
         },
-    }) |manifest_bytes| {
-        var actual: [32]u8 = undefined;
-        std.crypto.hash.sha2.Sha256.hash(manifest_bytes, &actual, .{});
-        var expected: [32]u8 = undefined;
-        if (!lock_model.normalizeSha256(lock.input.manifest_sha256, &expected) or
-            !std.mem.eql(u8, &actual, &expected))
-        {
-            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "lock input manifestSha256 does not match nako.toml; re-resolve the lock before sync", .{});
-            return error.StaleLock;
-        }
+    };
+    if (manifest_state == .stale) {
+        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "lock input manifestSha256 does not match nako.toml; re-resolve the lock before sync", .{});
+        return error.StaleLock;
     }
 
     // `mutable = false` の path pin も照合する。pin 不一致の lock で環境を
@@ -346,6 +357,23 @@ pub fn run(
     if (try mutablePathMismatch(arena, io, project_abs, &lock)) |path| {
         try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "content of mutable path dependency \"{s}\" changed while syncing; re-resolve the lock before sync", .{path});
         return error.StaleLock;
+    }
+    // root manifest も再照合する。package 取得・展開中に外部エディタ等が
+    // `nako.toml` を保存・削除すると、開始時点の manifest とは別の宣言に
+    // 基づく環境を公開してしまうため。manifest 無しの lock 駆動用途では
+    // 再照合しない。
+    if (manifest_state != .absent) {
+        const current_manifest = manifestFreshness(io, arena, manifest_path, &lock) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {
+                try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml", .{}, "cannot re-read nako.toml for publish-time manifest verification: {s}", .{@errorName(err)});
+                return mapFs(err);
+            },
+        };
+        if (current_manifest != .fresh) {
+            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "nako.toml changed while syncing; re-resolve the lock before sync", .{});
+            return error.StaleLock;
+        }
     }
 
     // --- 環境の公開 ---------------------------------------------------------

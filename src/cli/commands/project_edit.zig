@@ -6,6 +6,7 @@ const std = @import("std");
 const lnako = @import("lnako");
 const shared = @import("project.zig");
 const toml_inline = @import("toml_inline.zig");
+const manifest_rollback = @import("manifest_rollback.zig");
 
 const diag = lnako.package.diagnostics;
 const project = lnako.package.project;
@@ -1045,40 +1046,25 @@ fn writeAndLock(
     }
 
     const original = try a.dupe(u8, loaded.manifest_bytes);
-    writeAtomic(io, loaded.manifest_path, new_source) catch |err| {
+    manifest_rollback.writeAtomic(io, loaded.manifest_path, new_source) catch |err| {
         return fail(stderr, "{s}: nako.toml を書き込めません: {s}\n", .{ verb, @errorName(err) });
     };
 
     // manifest を再読込して lock を最新化する。失敗したら manifest を復元。
     var reloaded = project.load(a, io, loaded.root, &diagnostics) catch |err| {
-        _ = restoreManifest(io, loaded.manifest_path, original);
-        return failProject(stderr, verb, err, &diagnostics, loaded.manifest_path);
+        return manifest_rollback.failLockedEdit(a, io, loaded.manifest_path, new_source, original, verb, err, &diagnostics, stderr);
     };
     defer reloaded.deinit();
     var options = flags.toOptions(environ_map);
     if (flags.locked) {
         project.verifyLocked(a, io, &reloaded, &options, &diagnostics) catch |err| {
-            _ = restoreManifest(io, loaded.manifest_path, original);
-            return failProject(stderr, verb, err, &diagnostics, loaded.manifest_path);
+            return manifest_rollback.failLockedEdit(a, io, loaded.manifest_path, new_source, original, verb, err, &diagnostics, stderr);
         };
     }
     const outcome = project.ensureLock(a, io, &reloaded, &options, &diagnostics) catch |err| {
-        _ = restoreManifest(io, loaded.manifest_path, original);
-        return failProject(stderr, verb, err, &diagnostics, loaded.manifest_path);
+        return manifest_rollback.failLockedEdit(a, io, loaded.manifest_path, new_source, original, verb, err, &diagnostics, stderr);
     };
     return outcome;
-}
-
-fn restoreManifest(io: std.Io, path: []const u8, original: []const u8) bool {
-    writeAtomic(io, path, original) catch return false;
-    return true;
-}
-
-fn writeAtomic(io: std.Io, path: []const u8, bytes: []const u8) !void {
-    var atomic = try std.Io.Dir.cwd().createFileAtomic(io, path, .{ .replace = true });
-    defer atomic.deinit(io);
-    try atomic.file.writeStreamingAll(io, bytes);
-    try atomic.replace(io);
 }
 
 pub fn runAdd(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const u8, environ_map: ?*const std.process.Environ.Map, stderr: *std.Io.Writer) !void {
