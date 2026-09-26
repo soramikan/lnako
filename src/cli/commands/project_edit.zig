@@ -707,7 +707,9 @@ const InitRollback = struct {
     io: std.Io,
     /// init 対象 dir の pinned handle（所有しない。caller が close する
     /// 前に `run` が呼ばれるよう errdefer の宣言順で制御する）。
-    root_dir: std.Io.Dir = std.Io.Dir.cwd(),
+    /// Windows では `std.Io.Dir.cwd()` が comptime 評価できないため
+    /// 既定値は持たず必須とする。
+    root_dir: std.Io.Dir,
     /// 今回作成した `nako.toml`。createFile 成功後に登録する。
     manifest_created: bool = false,
     /// 今回作成したプロジェクト dir の親 handle（所有する）と basename。
