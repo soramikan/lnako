@@ -421,6 +421,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
     var tree_dir: ?std.Io.Dir = null;
     defer if (tree_dir) |*dir| dir.close(ctx.io);
     var verified_commands: ?[]const npkg_commands.Command = null;
+    var manifest_from_npkg = false;
 
     switch (source.kind) {
         .path => {
@@ -524,6 +525,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                 artifact_type = acquired.artifact_type orelse "raw";
                 manifest = acquired.manifest;
             }
+            manifest_from_npkg = std.mem.eql(u8, artifact_type, ".npkg");
             // Cache tree/marker は自己認証に過ぎない。毎回 lock hash を検証した
             // raw bytes から tree を再構築し、derived tree を信頼根拠にしない。
             const prepared = try buildArtifactObject(ctx, object_key, archive.?, artifact_type, entry);
@@ -542,6 +544,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
             // lock の artifact URL・hash・type を直接使って取得・検証する。
             const artifact = selectArtifact(ctx, entry) orelse
                 return ctx.session.fail(.not_found, .artifact, entry.name, "package \"{s}\" has no artifact for runtime \"{s}\"", .{ entry.name, ctx.runtime.name() });
+            manifest_from_npkg = if (artifact.type) |artifact_type| std.mem.eql(u8, artifact_type, ".npkg") else false;
             const url = artifact.url orelse
                 return ctx.session.fail(.invalid_source, .artifact, entry.name, "artifact \"{s}\" of \"{s}\" has no url", .{ artifact.key, entry.name });
             const object_key = try artifactKey(arena, "artifact", artifact.sha256 orelse artifact.key, url);
@@ -578,6 +581,9 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
     // `.npkg` を verify した経路では検証済み model をそのまま使う。
     var exports = std.ArrayListUnmanaged(environment.ExportRecord).empty;
     if (manifest) |*m| {
+        if (manifest_mod.hasUnsafeNonNpkgExportTargets(m, manifest_from_npkg)) {
+            return ctx.session.fail(.invalid_metadata, .manifest, entry.name, "package \"{s}\" has an export target that is not a canonical package-relative path", .{entry.name});
+        }
         exports = try resolveExports(ctx, m, entry);
     }
     const commands: []const npkg_commands.Command = verified_commands orelse blk: {

@@ -695,28 +695,8 @@ test "portable path digest keeps POSIX backslash filename distinct from slash pa
     if (builtin.os.tag != .windows) try std.testing.expectEqualStrings("f775c35cd7ea08036f1e4e37ea1e63591f70e30480b5314638d434217f8d4304", &digest_hex);
 }
 
-/// Export targets must stay within the package root so the path-tree pin covers
-/// every published file. Management/VCS directories are excluded from that pin.
-fn unsafeExportPath(path: []const u8) bool {
-    if (path.len == 0 or path[0] == '/' or
-        (builtin.os.tag == .windows and path[0] == '\\') or
-        (path.len >= 2 and std.ascii.isAlphabetic(path[0]) and path[1] == ':')) return true;
-    const separators = if (builtin.os.tag == .windows) "/\\" else "/";
-    var components = std.mem.splitAny(u8, path, separators);
-    while (components.next()) |component| {
-        if (component.len == 0 or std.mem.eql(u8, component, ".") or std.mem.eql(u8, component, "..") or
-            std.mem.eql(u8, component, ".nako") or std.mem.eql(u8, component, ".git")) return true;
-    }
-    return false;
-}
-
 pub fn hasExcludedExport(manifest: *const manifest_mod.Manifest) bool {
-    for (manifest.exports) |item| {
-        if (item.path) |path| if (unsafeExportPath(path)) return true;
-        for (item.native) |artifact| if (unsafeExportPath(artifact.path)) return true;
-        for (item.esm) |artifact| if (unsafeExportPath(artifact.path)) return true;
-    }
-    return false;
+    return manifest_mod.hasUnsafeExportTargets(manifest);
 }
 
 /// dep の宣言 path を lock 記録用に正規化する。宣言が `base_dir` 相対の

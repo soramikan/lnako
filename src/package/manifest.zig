@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const toml = @import("toml.zig");
 const semver = @import("semver.zig");
 const marker_mod = @import("marker.zig");
@@ -374,6 +375,36 @@ pub const Export = struct {
         return null;
     }
 };
+
+/// export targetがパッケージtree内の規範的な相対pathでないかを判定する。
+/// 管理/VCS directoryはtree pin・package公開対象から除外するため拒否する。
+fn unsafeExportTarget(path: []const u8) bool {
+    if (path.len == 0 or path[0] == '/' or
+        (builtin.os.tag == .windows and path[0] == '\\') or
+        (path.len >= 2 and std.ascii.isAlphabetic(path[0]) and path[1] == ':')) return true;
+    const separators = if (builtin.os.tag == .windows) "/\\" else "/";
+    var components = std.mem.splitAny(u8, path, separators);
+    while (components.next()) |component| {
+        if (component.len == 0 or std.mem.eql(u8, component, ".") or std.mem.eql(u8, component, "..") or
+            std.mem.eql(u8, component, ".nako") or std.mem.eql(u8, component, ".git")) return true;
+    }
+    return false;
+}
+
+/// source/native/esmを含む全export targetを調べる。Git・archive等の
+/// 非`.npkg` manifestは、同期前にこの判定でpackage境界を保証する。
+pub fn hasUnsafeExportTargets(manifest: *const Manifest) bool {
+    for (manifest.exports) |item| {
+        if (item.path) |path| if (unsafeExportTarget(path)) return true;
+        for (item.native) |artifact| if (unsafeExportTarget(artifact.path)) return true;
+        for (item.esm) |artifact| if (unsafeExportTarget(artifact.path)) return true;
+    }
+    return false;
+}
+
+pub fn hasUnsafeNonNpkgExportTargets(manifest: *const Manifest, from_npkg: bool) bool {
+    return !from_npkg and hasUnsafeExportTargets(manifest);
+}
 
 /// 型付き manifest。`document` のアリーナが全文字列・コンテナ
 /// （`Range` の内部バッファ、feature 定義、依存 map 等）を所有する。
