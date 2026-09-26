@@ -1371,8 +1371,8 @@ test "同名index.nako3を持つ2 packageを別moduleとして同時取り込め
     try std.testing.expect(graph.succeeded());
     try std.testing.expectEqual(@as(usize, 3), graph.modules.len);
     try std.testing.expect(!std.mem.eql(u8, graph.modules[1].path, graph.modules[2].path));
-    try std.testing.expect(std.mem.endsWith(u8, graph.modules[1].path, "packages/math/index.nako3"));
-    try std.testing.expect(std.mem.endsWith(u8, graph.modules[2].path, "packages/geometry/index.nako3"));
+    try std.testing.expect(pathHasSuffix(graph.modules[1].path, "packages/math/index.nako3"));
+    try std.testing.expect(pathHasSuffix(graph.modules[2].path, "packages/geometry/index.nako3"));
     try std.testing.expectEqualStrings("math", graph.modules[1].name);
     try std.testing.expectEqualStrings("geometry", graph.modules[2].name);
     try std.testing.expectEqualStrings("pkg:math-id/main", graph.modules[1].canonical_id.?);

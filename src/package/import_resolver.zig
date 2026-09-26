@@ -1237,7 +1237,7 @@ test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hash�
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = cnako_environment });
     try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, project_root));
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = json });
-    temporary.dir.symLink(io, project_root, ".project-link", .{}) catch return error.SkipZigTest;
+    temporary.dir.symLink(io, project_root, ".project-link", .{ .is_directory = true }) catch return error.SkipZigTest;
     const project_alias = try std.fs.path.join(allocator, &.{ project_root, ".project-link" });
     defer allocator.free(project_alias);
 
