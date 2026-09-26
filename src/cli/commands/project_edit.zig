@@ -188,29 +188,80 @@ fn headerMatches(text: []const u8, section: []const u8, buf: []u8) bool {
     var first = true;
     while (it.next()) |seg_raw| {
         const seg = std.mem.trim(u8, seg_raw, " \t");
-        var name = seg;
-        if (seg.len >= 2 and ((seg[0] == '"' and seg[seg.len - 1] == '"') or
-            (seg[0] == '\'' and seg[seg.len - 1] == '\'')))
-        {
-            // 引用セグメント（basic `"x"`・literal `'x'` 両方）。
-            // 内部に '.' や escape が来る入力は依存セクション名に現れない
-            // ため単純に剥がす。
-            name = seg[1 .. seg.len - 1];
-        } else if (seg.len >= 1 and (seg[0] == '"' or seg[0] == '\'')) {
-            return false; // 引用がドットを跨ぐ → 別名テーブル
-        }
-        if (name.len == 0) return false;
         if (!first) {
             if (out >= buf.len) return false;
             buf[out] = '.';
             out += 1;
         }
-        if (out + name.len > buf.len) return false;
-        @memcpy(buf[out .. out + name.len], name);
-        out += name.len;
+        if (seg.len >= 2 and seg[0] == '"' and seg[seg.len - 1] == '"') {
+            // basic quoted key は escape を復号して比較する
+            // （`"pa\u0074h"` は `path` と同一テーブル）。
+            const n = decodeBasicKey(seg[1 .. seg.len - 1], buf[out..]) orelse return false;
+            if (n == 0) return false;
+            out += n;
+        } else if (seg.len >= 2 and seg[0] == '\'' and seg[seg.len - 1] == '\'') {
+            // literal quoted key は escape なし。そのまま比較する。
+            const name = seg[1 .. seg.len - 1];
+            if (name.len == 0 or out + name.len > buf.len) return false;
+            @memcpy(buf[out .. out + name.len], name);
+            out += name.len;
+        } else if (seg.len >= 1 and (seg[0] == '"' or seg[0] == '\'')) {
+            return false; // 引用がドットを跨ぐ → 別名テーブル
+        } else {
+            if (seg.len == 0 or out + seg.len > buf.len) return false;
+            @memcpy(buf[out .. out + seg.len], seg);
+            out += seg.len;
+        }
         first = false;
     }
     return std.mem.eql(u8, buf[0..out], section);
+}
+
+/// `"..."` 形式の quoted key の内部を TOML basic string の規則で復号する。
+/// malformed なら null（該当 manifest は parser 側でも拒否される）。
+fn decodeBasicKey(inner: []const u8, buf: []u8) ?usize {
+    var out: usize = 0;
+    var index: usize = 0;
+    while (index < inner.len) {
+        const ch = inner[index];
+        index += 1;
+        if (ch != '\\') {
+            if (out >= buf.len) return null;
+            buf[out] = ch;
+            out += 1;
+            continue;
+        }
+        if (index >= inner.len) return null;
+        const esc = inner[index];
+        index += 1;
+        const byte: u8 = switch (esc) {
+            'b' => 0x08,
+            't' => '\t',
+            'n' => '\n',
+            'f' => 0x0c,
+            'r' => '\r',
+            '"' => '"',
+            '\\' => '\\',
+            else => {
+                const digits: usize = switch (esc) {
+                    'u' => 4,
+                    'U' => 8,
+                    else => return null,
+                };
+                if (index + digits > inner.len) return null;
+                const codepoint = std.fmt.parseInt(u21, inner[index .. index + digits], 16) catch return null;
+                index += digits;
+                if (out + 4 > buf.len) return null;
+                const len = std.unicode.utf8Encode(codepoint, buf[out..][0..4]) catch return null;
+                out += len;
+                continue;
+            },
+        };
+        if (out >= buf.len) return null;
+        buf[out] = byte;
+        out += 1;
+    }
+    return out;
 }
 
 /// `[<section>]` テーブルヘッダの行開始 offset を探す。
@@ -1470,6 +1521,43 @@ test "headerMatches は名前全体の引用を別テーブルとして区別す
     try std.testing.expect(!headerMatches("['dependencies.path']", "dependencies.path", &buf));
     try std.testing.expect(!headerMatches("[dependencies.'path.x']", "dependencies.path", &buf));
     try std.testing.expect(!headerMatches("[[dependencies.path]]", "dependencies.path", &buf));
+}
+
+test "headerMatches は basic 引用 key のエスケープを復号して比較する" {
+    var buf: [1024]u8 = undefined;
+    // `\uXXXX` は復号後に比較する（"pa\u0074h" == "path"）。
+    try std.testing.expect(headerMatches("[dependencies.\"pa\\u0074h\"]", "dependencies.path", &buf));
+    try std.testing.expect(headerMatches("[dependencies.\"\\u0070ath\"]", "dependencies.path", &buf));
+    try std.testing.expect(headerMatches("[dependencies.\"pa\\U00000074h\"]", "dependencies.path", &buf));
+    // 制御文字 escape も復号される（"pa\th" != "path"）。
+    try std.testing.expect(!headerMatches("[dependencies.\"pa\\th\"]", "dependencies.path", &buf));
+    // 復号しても別名なら不一致。全体引用の別名化も変わらない。
+    try std.testing.expect(!headerMatches("[dependencies.\"pa\\u0074h.x\"]", "dependencies.path", &buf));
+    try std.testing.expect(!headerMatches("[\"dependencies.path\"]", "dependencies.path", &buf));
+    // 壊れた escape / 閉じない引用は一致とみなさない。
+    try std.testing.expect(!headerMatches("[dependencies.\"pa\\x\"]", "dependencies.path", &buf));
+    try std.testing.expect(!headerMatches("[dependencies.\"pa\\u0\"]", "dependencies.path", &buf));
+    try std.testing.expect(!headerMatches("[dependencies.\"pa\\u0074h", "dependencies.path", &buf));
+}
+
+test "insertEntry はエスケープを含む引用 key の依存 table を認識する" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // `[dependencies."pa\u0074h"]` は `[dependencies.path]` と同一 table。
+    // 復号しないと add が重複 table を追記して manifest を壊す。
+    const inserted = try insertEntry(a,
+        \\[package]
+        \\name = "app"
+        \\
+        \\[dependencies."pa\u0074h"]
+        \\lib = { path = "lib" }
+        \\
+    , "dependencies.path", "lib2", "{ path = \"lib2\" }");
+    const lib_pos = std.mem.indexOf(u8, inserted, "lib =").?;
+    const lib2_pos = std.mem.indexOf(u8, inserted, "lib2").?;
+    try std.testing.expect(lib_pos < lib2_pos);
+    try std.testing.expect(std.mem.indexOf(u8, inserted, "[dependencies.path]") == null);
 }
 
 test "removeEntry は複数行 inline table を丸ごと除去する" {

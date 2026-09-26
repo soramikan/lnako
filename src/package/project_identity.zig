@@ -43,6 +43,17 @@ fn canonicalPathForId(gpa: Allocator, declared: []const u8, base_dir: ?[]const u
     return canonicalPathForIdOs(gpa, declared, base_dir, project_root, builtin.os.tag == .windows);
 }
 
+/// Fold a path into the OS-native identity form (`/` separators and, on
+/// Windows, ASCII-lowercased). Use to compare paths that must match by
+/// filesystem identity rather than spelling.
+pub fn foldPathForOs(gpa: Allocator, path: []const u8) Error![]const u8 {
+    return foldPathWith(gpa, path, builtin.os.tag == .windows);
+}
+
+fn foldPathWith(gpa: Allocator, path: []const u8, windows_fs: bool) Error![]const u8 {
+    return identityFoldedPath(gpa, path, windows_fs);
+}
+
 /// Resolve a declared path against its manifest directory and return a
 /// project-relative spelling when it remains inside the project.
 fn canonicalPathForIdOs(gpa: Allocator, declared: []const u8, base_dir: ?[]const u8, project_root: []const u8, windows_fs: bool) Error![]const u8 {
@@ -190,4 +201,20 @@ test "windows identity folds path case and separators" {
         defer gpa.free(posix_abs);
         try std.testing.expectEqualStrings("/PROJ/DEPS/lib", posix_abs);
     }
+}
+
+test "foldPathWith は Windows で大小文字と区切りを畳む" {
+    const gpa = std.testing.allocator;
+    // `deps/lib` と `DEPS/lib` の再宣言は同一 source として照合される
+    // 必要がある（Windows FS は大小文字を区別しない）。
+    const upper = try foldPathWith(gpa, "C:\\proj\\DEPS\\lib", true);
+    defer gpa.free(upper);
+    const lower = try foldPathWith(gpa, "c:/proj/deps/lib", true);
+    defer gpa.free(lower);
+    try std.testing.expectEqualStrings("c:/proj/deps/lib", upper);
+    try std.testing.expectEqualStrings(lower, upper);
+    // POSIX では大小文字・backslash はそのまま（別 path）。
+    const posix = try foldPathWith(gpa, "DEPS\\lib", false);
+    defer gpa.free(posix);
+    try std.testing.expectEqualStrings("DEPS\\lib", posix);
 }

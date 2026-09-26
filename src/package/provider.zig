@@ -9,7 +9,6 @@ const npkg_files = @import("npkg_files.zig");
 const npkg_verify = @import("npkg_verify.zig");
 
 const Allocator = std.mem.Allocator;
-var git_hooks_nonce: std.atomic.Value(u64) = .init(0);
 
 pub const Session = fetch.Session;
 pub const Policy = fetch.Policy;
@@ -526,9 +525,9 @@ const GitRunOptions = struct {
     /// subprocess の cwd。null なら親プロセスの cwd を継承する。
     cwd: ?std.Io.Dir = null,
     /// checkout 配下のコマンドで hooks・fsmonitor を無効化する。
-    /// `<workspace>/.git` 内に空の hooks dir を作り相対 path の
-    /// `core.hooksPath` で指す（clone 自体は新規 repo を作るだけで
-    /// 共有 checkout を信頼する必要がないため対象外）。
+    /// `core.hooksPath` をプラットフォームの null デバイスへ固定する
+    /// （clone 自体は新規 repo を作るだけで共有 checkout を信頼する
+    /// 必要がないため対象外）。
     hooks_guard: bool = false,
 };
 
@@ -541,48 +540,17 @@ fn gitRunAllowFailure(session: *Session, gpa: Allocator, argv: []const []const u
     }
 
     // Cached checkout の .git/config は信頼しない。各コマンドに command
-    // config で hooks と fsmonitor を無効化し、空の hooks dir は workspace の
-    // `.git` 内に exclusive create する（`.git` 自体は `clean -ffdx` の
-    // 対象外なので、コマンド実行中も空 dir を指し続ける）。
+    // config で hooks と fsmonitor を無効化する。hooksPath に workspace 内
+    // dir の相対名を使うと、dir 作成後・checkout 前に同名 dir を hook 入り
+    // へ置換される余地があるため、プラットフォームの null デバイスへ固定
+    // する（hooksPath が dir でなければ hook は一切解決されず、置換不能
+    // な namespace になる）。
     var protected_argv: ?[][]const u8 = null;
-    var hooks_parent: ?std.Io.Dir = null;
-    defer if (hooks_parent) |*dir| dir.close(session.io);
-    var hooks_dir_name: ?[]const u8 = null;
-    defer {
-        if (hooks_parent != null and hooks_dir_name != null)
-            hooks_parent.?.deleteDir(session.io, hooks_dir_name.?) catch {};
-    }
     if (options.hooks_guard) {
-        const cwd = options.cwd orelse return session.fail(.unavailable, .repository, argv[argv.len - 1], "git hooks guard requires a pinned working directory", .{});
-        var dot_git = cwd.openDir(session.io, ".git", .{ .follow_symlinks = false }) catch |err| switch (err) {
-            else => return session.fail(.unavailable, .repository, argv[argv.len - 1], "cannot open cached Git directory: {s}", .{@errorName(err)}),
-        };
-        const dot_git_stat = dot_git.stat(session.io) catch |err| switch (err) {
-            else => {
-                dot_git.close(session.io);
-                return session.fail(.unavailable, .repository, argv[argv.len - 1], "cannot stat cached Git directory: {s}", .{@errorName(err)});
-            },
-        };
-        if (dot_git_stat.kind == .sym_link) {
-            dot_git.close(session.io);
-            return session.fail(.unavailable, .repository, argv[argv.len - 1], "cached Git directory is a symlink", .{});
-        }
-        hooks_parent = dot_git;
-
-        const nonce = git_hooks_nonce.fetchAdd(1, .monotonic);
-        const dir_name = try std.fmt.allocPrint(gpa, ".lnako-empty-git-hooks-{d}", .{nonce});
-        dot_git.createDir(session.io, dir_name, .default_dir) catch |err| switch (err) {
-            else => return session.fail(.unavailable, .repository, argv[argv.len - 1], "cannot create protected git hooks directory: {s}", .{@errorName(err)}),
-        };
-        hooks_dir_name = dir_name;
-
-        // hooksPath は cwd（pinned workspace）相対の `.git` 内を指し、
-        // cache root の rename/置換で別 dir を参照しない。
-        const hook_config = try std.fmt.allocPrint(gpa, "core.hooksPath=.git/{s}", .{dir_name});
         const safe_argv = try gpa.alloc([]const u8, argv.len + 4);
         safe_argv[0] = argv[0];
         safe_argv[1] = "-c";
-        safe_argv[2] = hook_config;
+        safe_argv[2] = if (builtin.os.tag == .windows) "core.hooksPath=NUL" else "core.hooksPath=/dev/null";
         safe_argv[3] = "-c";
         safe_argv[4] = "core.fsmonitor=false";
         @memcpy(safe_argv[5..], argv[1..]);

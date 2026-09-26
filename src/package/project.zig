@@ -130,7 +130,13 @@ pub fn findRoot(gpa: Allocator, io: std.Io, start_dir: []const u8) Error!?[]cons
         };
         if (candidate_stat) |stat| {
             if (stat.kind != .file) return error.InvalidManifest;
-            return try gpa.dupe(u8, dir);
+            // symlink 経由で見つけた実在 root は realPath で固定する。
+            // alias 側の綴りが残ると依存 identity・lock が実行入口ごとに
+            // 分かれる（lexical 正規化は非実在 path 用の init でのみ使う）。
+            // sentinel 付き確保なので、API の非 sentinel slice へ写し直す。
+            const resolved = std.Io.Dir.cwd().realPathFileAlloc(io, dir, gpa) catch |err| return mapFs(err);
+            defer gpa.free(resolved);
+            return try gpa.dupe(u8, resolved);
         }
         const parent = std.fs.path.dirname(dir) orelse return null;
         if (std.mem.eql(u8, parent, dir)) return null;
@@ -166,7 +172,13 @@ pub fn load(gpa: Allocator, io: std.Io, root: []const u8, diagnostics: *diag.Lis
     }
     const a = arena.allocator();
 
-    const root_abs = try absPath(a, io, root);
+    const root_lexical = try absPath(a, io, root);
+    // 実在 root は realPath に正規化して symlink alias の綴り違いで
+    // project identity が揺れないようにする。
+    const root_abs = std.Io.Dir.cwd().realPathFileAlloc(io, root_lexical, a) catch |err| switch (err) {
+        error.FileNotFound => return error.ProjectNotFound,
+        else => return mapFs(err),
+    };
     const manifest_path = try std.fs.path.join(a, &.{ root_abs, manifest_name });
     const bytes = std.Io.Dir.cwd().readFileAlloc(io, manifest_path, a, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -1073,7 +1085,12 @@ fn declaredSourceIdentityMatches(ctx: *ResolveContext, source: lock_model.Source
                 std.fs.path.resolve(gpa, &.{dep.path}) catch return error.FileSystem
             else
                 std.fs.path.resolve(gpa, &.{ work.base_dir orelse ctx.project_root, dep.path }) catch return error.FileSystem;
-            return std.mem.eql(u8, stored_abs, revisit_abs);
+            // Public ID 生成と同じく、Windows では大小文字・区切りを畳んだ
+            // 正規形で比較する。byte 一致のままだと `deps/lib` と `DEPS/lib`
+            // が別 source とみなされ、同一 ID への重複取得で失敗する。
+            const stored_folded = try project_identity.foldPathForOs(gpa, stored_abs);
+            const revisit_folded = try project_identity.foldPathForOs(gpa, revisit_abs);
+            return std.mem.eql(u8, stored_folded, revisit_folded);
         },
         .git => {
             const dep = work.git_dep.?;

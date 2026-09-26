@@ -2099,3 +2099,51 @@ test "portable path digest keeps POSIX backslash filename distinct from slash pa
     const digest_hex = std.fmt.bytesToHex(digest, .lower);
     if (builtin.os.tag != .windows) try testing.expectEqualStrings("f775c35cd7ea08036f1e4e37ea1e63591f70e30480b5314638d434217f8d4304", &digest_hex);
 }
+
+test "findRootとloadはsymlink経由のrootを実pathへ正規化する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/sub");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/nako.toml",
+        .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        ,
+    });
+    temporary.dir.symLink(io, "app", "alias", .{ .is_directory = true }) catch |err| switch (err) {
+        // Windows等でlink作成権限がない環境では検証を省略する。
+        error.AccessDenied, error.PermissionDenied, error.FileSystem => return error.SkipZigTest,
+        else => return err,
+    };
+    const tmp_real = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(tmp_real);
+    const app_real = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_real);
+    const alias_abs = try std.fs.path.join(testing.allocator, &.{ tmp_real, "alias" });
+    defer testing.allocator.free(alias_abs);
+
+    // alias 経由で見つけた root は実 path に正規化される（alias 綴りの
+    // ままだと path 依存の絶対 identity が入口ごとに揺れて lock が
+    // 分岐する）。
+    const found = (try project.findRoot(testing.allocator, io, alias_abs)).?;
+    defer testing.allocator.free(found);
+    try testing.expectEqualStrings(app_real, found);
+    // alias の子dir から遡った場合も同じ。
+    const alias_sub = try std.fs.path.join(testing.allocator, &.{ alias_abs, "sub" });
+    defer testing.allocator.free(alias_sub);
+    const found_sub = (try project.findRoot(testing.allocator, io, alias_sub)).?;
+    defer testing.allocator.free(found_sub);
+    try testing.expectEqualStrings(app_real, found_sub);
+
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var loaded = try project.load(testing.allocator, io, alias_abs, &diagnostics);
+    defer loaded.deinit();
+    try testing.expectEqualStrings(app_real, loaded.root);
+    try testing.expectEqualStrings(app_real, std.fs.path.dirname(loaded.manifest_path).?);
+}

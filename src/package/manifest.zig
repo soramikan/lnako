@@ -379,14 +379,24 @@ pub const Export = struct {
 /// export targetがパッケージtree内の規範的な相対pathでないかを判定する。
 /// 管理/VCS directoryはtree pin・package公開対象から除外するため拒否する。
 fn unsafeExportTarget(path: []const u8) bool {
+    return unsafeExportTargetOs(path, builtin.os.tag == .windows);
+}
+
+fn unsafeExportTargetOs(path: []const u8, windows_fs: bool) bool {
     if (path.len == 0 or path[0] == '/' or
-        (builtin.os.tag == .windows and path[0] == '\\') or
+        (windows_fs and path[0] == '\\') or
         (path.len >= 2 and std.ascii.isAlphabetic(path[0]) and path[1] == ':')) return true;
-    const separators = if (builtin.os.tag == .windows) "/\\" else "/";
+    const separators = if (windows_fs) "/\\" else "/";
     var components = std.mem.splitAny(u8, path, separators);
     while (components.next()) |component| {
-        if (component.len == 0 or std.mem.eql(u8, component, ".") or std.mem.eql(u8, component, "..") or
-            std.mem.eql(u8, component, ".nako") or std.mem.eql(u8, component, ".git")) return true;
+        if (component.len == 0 or std.mem.eql(u8, component, ".") or std.mem.eql(u8, component, "..")) return true;
+        // Windows では `.GIT` と `.git`、`.NAKO` と `.nako` が同じ dir を
+        // 指すため、管理 dir 名は大小文字を畳んで比較する。
+        const managed = if (windows_fs)
+            std.ascii.eqlIgnoreCase(component, ".nako") or std.ascii.eqlIgnoreCase(component, ".git")
+        else
+            std.mem.eql(u8, component, ".nako") or std.mem.eql(u8, component, ".git");
+        if (managed) return true;
     }
     return false;
 }
@@ -649,6 +659,18 @@ pub fn containsString(list: []const []const u8, text: []const u8) bool {
         if (std.mem.eql(u8, item, text)) return true;
     }
     return false;
+}
+
+test "unsafeExportTargetOs は Windows で管理 dir 名を大小文字を畳んで拒否する" {
+    const expect = std.testing.expect;
+    // Windows: `.GIT` / `.NAKO` は `.git` / `.nako` と同一 dir を指す。
+    try expect(unsafeExportTargetOs(".GIT/config", true));
+    try expect(unsafeExportTargetOs("src/.Nako/helper.nako3", true));
+    try expect(unsafeExportTargetOs(".git\\hooks\\x", true));
+    try expect(!unsafeExportTargetOs("src/main.nako3", true));
+    // POSIX: 大小文字が違えば別 dir なので byte 比較を維持する。
+    try expect(!unsafeExportTargetOs(".GIT/config", false));
+    try expect(unsafeExportTargetOs(".git/config", false));
 }
 
 test {
