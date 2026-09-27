@@ -2259,3 +2259,41 @@ test "ensureLockは--lockedで再検出したstaleを書換えずLockedNotSatisf
     defer testing.allocator.free(after);
     try testing.expectEqualStrings(before, after);
 }
+
+test "loadFromDir は rename 置換後も pin した dir の manifest を読む" {
+    // add/remove は manifest の読取り・候補公開・復元を読込時に pin した
+    // project dir handle 相対に行う。path 再解決だと rename で置換された
+    // 別 dir の nako.toml を上書きし得るため、pinned handle が置換後も
+    // 元 dir を指し続けることを検証する。
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "root_a");
+    try temporary.dir.writeFile(io, .{ .sub_path = "root_a/nako.toml", .data =
+        \\[package]
+        \\name = "pinned"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+    });
+    const pinned = try temporary.dir.openDir(io, "root_a", .{});
+    // 所有権は loadFromDir が引き継ぐ（失敗時もそこで close される）。
+    const display = try temporary.dir.realPathFileAlloc(io, "root_a", testing.allocator);
+    defer testing.allocator.free(display);
+    try temporary.dir.rename("root_a", temporary.dir, "root_b", io);
+    try temporary.dir.createDirPath(io, "root_a");
+    try temporary.dir.writeFile(io, .{ .sub_path = "root_a/nako.toml", .data =
+        \\[package]
+        \\name = "swapped"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+    });
+    var diagnostics = diag.List.init(testing.allocator);
+    defer diagnostics.deinit();
+    var loaded = try project.loadFromDir(testing.allocator, io, display, pinned, &diagnostics);
+    defer loaded.deinit();
+    // 同じ path でも pinned handle は旧 dir を指し、置換先は読まない。
+    try testing.expectEqualStrings("pinned", loaded.manifest.package.name);
+}

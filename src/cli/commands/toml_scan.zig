@@ -4,6 +4,34 @@
 
 const std = @import("std");
 
+const Allocator = std.mem.Allocator;
+
+/// TOML 基本文字列の中身として安全な形へエスケープする。`"`・`\`・
+/// 制御文字をエスケープシーケンスへ変換する（Windows path の `\` や
+/// URL 中の `"` が manifest を壊さないようにするため）。
+pub fn tomlEscape(a: Allocator, text: []const u8) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    for (text) |ch| {
+        switch (ch) {
+            '"' => try out.appendSlice(a, "\\\""),
+            '\\' => try out.appendSlice(a, "\\\\"),
+            '\n' => try out.appendSlice(a, "\\n"),
+            '\r' => try out.appendSlice(a, "\\r"),
+            '\t' => try out.appendSlice(a, "\\t"),
+            0x08 => try out.appendSlice(a, "\\b"),
+            0x0C => try out.appendSlice(a, "\\f"),
+            else => {
+                if (ch < 0x20 or ch == 0x7F) {
+                    try out.appendSlice(a, try std.fmt.allocPrint(a, "\\u{X:0>4}", .{ch}));
+                } else {
+                    try out.append(a, ch);
+                }
+            },
+        }
+    }
+    return out.items;
+}
+
 /// `offset` 以降の最初の `\n` の位置（なければ source.len）。
 pub fn lineEnd(source: []const u8, offset: usize) usize {
     var index = offset;
@@ -235,4 +263,43 @@ pub fn nextHeader(source: []const u8, header_offset: usize) usize {
         index = end;
     }
     return source.len;
+}
+
+/// 行テキスト内で引用符外の最初の `=`（代入演算子）の位置を返す。
+/// `"foo=bar"` のような引用 key 内の `=` は区切りとみなさない。
+/// basic quoted key の `\` escape と literal quoted key を考慮する。
+/// 引用が閉じない場合も null（左辺として扱えない）。
+pub fn assignmentOperatorIndex(text: []const u8) ?usize {
+    var quote: u8 = 0;
+    var escaped = false;
+    for (text, 0..) |ch, index| {
+        if (quote != 0) {
+            if (quote == '"' and escaped) {
+                escaped = false;
+                continue;
+            }
+            if (quote == '"' and ch == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (ch == quote) quote = 0;
+            continue;
+        }
+        switch (ch) {
+            '"', '\'' => quote = ch,
+            '=' => return index,
+            else => {},
+        }
+    }
+    return null;
+}
+
+test "tomlEscape は quote・backslash・制御文字を逃がす" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try std.testing.expectEqualStrings("C:\\\\new\\\\dir", try tomlEscape(a, "C:\\new\\dir"));
+    try std.testing.expectEqualStrings("say \\\"hi\\\"", try tomlEscape(a, "say \"hi\""));
+    try std.testing.expectEqualStrings("a\\nb", try tomlEscape(a, "a\nb"));
+    try std.testing.expectEqualStrings("plain", try tomlEscape(a, "plain"));
 }

@@ -24,6 +24,7 @@ const manifest_mod = @import("manifest.zig");
 const materialize = @import("materialize.zig");
 const path_digest = @import("path_digest.zig");
 const project_identity = @import("project_identity.zig");
+const project_load = @import("project_load.zig");
 const provider = @import("provider.zig");
 const registry = @import("registry.zig");
 const resolver = @import("resolver.zig");
@@ -87,134 +88,13 @@ pub const verifyLocked = env_state.verifyLocked;
 pub const loadFreshLock = env_state.loadFreshLock;
 pub const lockDigest = env_state.lockDigest;
 
-// ---------------------------------------------------------------------------
-// プロジェクト検出・読込
-// ---------------------------------------------------------------------------
-
-/// `nako.toml` を持つプロジェクト。全メモリは内蔵 arena が所有する。
-/// arena はヒープ上に確保する。内部オブジェクト（`manifest.document` の
-/// arena 等）の child_allocator が arena 自身を指すため、スタック上の
-/// arena を返すと関数 return 後に dangling pointer になる。
-pub const Project = struct {
-    arena: *std.heap.ArenaAllocator,
-    /// プロジェクトルートの絶対 path（末尾 separator なし）。
-    root: []const u8,
-    manifest_path: []const u8,
-    manifest_bytes: []const u8,
-    /// `sha256:<64hex>`。`lock.Input.manifest_sha256` と同じ表現。
-    manifest_sha256: []const u8,
-    manifest: manifest_mod.Manifest,
-
-    pub fn deinit(self: *Project) void {
-        self.manifest.deinit();
-        const arena = self.arena;
-        const gpa = arena.child_allocator;
-        arena.deinit();
-        gpa.destroy(arena);
-        self.* = undefined;
-    }
-};
-
-/// `start_dir` から親 dir へ `nako.toml` を探す。見つかった dir の絶対
-/// path を `gpa` で返す。見つからなければ null。`start_dir` は存在する
-/// dir を想定（存在しない場合は FileSystem 相当の error を返す）。
-pub fn findRoot(gpa: Allocator, io: std.Io, start_dir: []const u8) Error!?[]const u8 {
-    var dir = try absPath(gpa, io, start_dir);
-    defer gpa.free(dir);
-    while (true) {
-        const candidate = try std.fs.path.join(gpa, &.{ dir, manifest_name });
-        defer gpa.free(candidate);
-        const candidate_stat = std.Io.Dir.cwd().statFile(io, candidate, .{ .follow_symlinks = false }) catch |err| switch (err) {
-            error.FileNotFound => null,
-            else => return mapFs(err),
-        };
-        if (candidate_stat) |stat| {
-            if (stat.kind != .file) return error.InvalidManifest;
-            // symlink 経由で見つけた実在 root は realPath で固定する。
-            // alias 側の綴りが残ると依存 identity・lock が実行入口ごとに
-            // 分かれる（lexical 正規化は非実在 path 用の init でのみ使う）。
-            // sentinel 付き確保なので、API の非 sentinel slice へ写し直す。
-            const resolved = std.Io.Dir.cwd().realPathFileAlloc(io, dir, gpa) catch |err| return mapFs(err);
-            defer gpa.free(resolved);
-            return try gpa.dupe(u8, resolved);
-        }
-        const parent = std.fs.path.dirname(dir) orelse return null;
-        if (std.mem.eql(u8, parent, dir)) return null;
-        const next = try gpa.dupe(u8, parent);
-        gpa.free(dir);
-        dir = next;
-    }
-}
-
-fn fileExists(io: std.Io, path: []const u8) bool {
-    std.Io.Dir.cwd().access(io, path, .{}) catch return false;
-    return true;
-}
-
-/// 相対 path を cwd 基準の絶対 path へ正規化する。実在しない成分を含んで
-/// いてもよい（lexical 正規化のみ）。
-fn absPath(gpa: Allocator, io: std.Io, path: []const u8) Error![]const u8 {
-    if (std.fs.path.isAbsolute(path)) {
-        return std.fs.path.resolve(gpa, &.{path}) catch return error.FileSystem;
-    }
-    const cwd = std.Io.Dir.cwd().realPathFileAlloc(io, ".", gpa) catch |err| return mapFs(err);
-    defer gpa.free(cwd);
-    return std.fs.path.resolve(gpa, &.{ cwd, path }) catch return error.FileSystem;
-}
-
-/// `root`（`nako.toml` を持つ dir）のプロジェクトを読み込む。
-pub fn load(gpa: Allocator, io: std.Io, root: []const u8, diagnostics: *diag.List) Error!Project {
-    const arena = try gpa.create(std.heap.ArenaAllocator);
-    arena.* = std.heap.ArenaAllocator.init(gpa);
-    errdefer {
-        arena.deinit();
-        gpa.destroy(arena);
-    }
-    const a = arena.allocator();
-
-    const root_lexical = try absPath(a, io, root);
-    // 実在 root は realPath に正規化して symlink alias の綴り違いで
-    // project identity が揺れないようにする。
-    const root_abs = std.Io.Dir.cwd().realPathFileAlloc(io, root_lexical, a) catch |err| switch (err) {
-        error.FileNotFound => return error.ProjectNotFound,
-        else => return mapFs(err),
-    };
-    const manifest_path = try std.fs.path.join(a, &.{ root_abs, manifest_name });
-    const bytes = std.Io.Dir.cwd().readFileAlloc(io, manifest_path, a, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.FileNotFound => return error.ProjectNotFound,
-        else => return mapFs(err),
-    };
-    var digest: [32]u8 = undefined;
-    std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});
-    const sha_text = try std.fmt.allocPrint(a, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
-
-    const errors_before = diagnostics.errorCount();
-    var manifest = manifest_mod.parse(a, bytes, diagnostics) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return error.InvalidManifest,
-    };
-    errdefer manifest.deinit();
-    // errorCount は累積のため、この parse が追加した分だけを見る。
-    if (diagnostics.errorCount() > errors_before) return error.InvalidManifest;
-
-    return .{
-        .arena = arena,
-        .root = root_abs,
-        .manifest_path = manifest_path,
-        .manifest_bytes = bytes,
-        .manifest_sha256 = sha_text,
-        .manifest = manifest,
-    };
-}
-
-/// `start_dir` から `nako.toml` を遡ってプロジェクトを読み込む。
-/// 見つからなければ null。
-pub fn discoverAndLoad(gpa: Allocator, io: std.Io, start_dir: []const u8, diagnostics: *diag.List) Error!?Project {
-    const root = (try findRoot(gpa, io, start_dir)) orelse return null;
-    defer gpa.free(root);
-    return try load(gpa, io, root, diagnostics);
-}
+// プロジェクト検出・読込（dir handle pin 済み）は `project_load.zig` に
+// 分離する。呼出し側は従来どおり `project.X` で参照できる。
+pub const Project = project_load.Project;
+pub const findRoot = project_load.findRoot;
+pub const load = project_load.load;
+pub const loadFromDir = project_load.loadFromDir;
+pub const discoverAndLoad = project_load.discoverAndLoad;
 
 // ---------------------------------------------------------------------------
 // profile 選択・target
@@ -1718,14 +1598,15 @@ pub fn ensureLock(
         error.OutOfMemory => return error.OutOfMemory,
         else => return error.FileSystem,
     };
-    const lock_path = try std.fs.path.join(a, &.{ project.root, lock_name });
     // registry/Git 解決の最中に root manifest が書き換わると、古い
     // manifest に対応する lock を新しい manifest へ原子公開して即座に
     // 陳腐化する。公開前に bytes/hash を再読して input と照合し、
     // 変わっていれば lock を公開せず失敗させる（再実行で現在の
-    // manifest に対する lock が作り直される）。
+    // manifest に対する lock が作り直される）。`project.root` path で
+    // はなく読込時に pin した dir handle 相対に読むため、rename/置換で
+    // 別 dir の manifest を拾うことはない。
     {
-        const current = std.Io.Dir.cwd().readFileAlloc(io, project.manifest_path, a, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
+        const current = project.root_dir.readFileAlloc(io, manifest_name, a, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             error.FileNotFound => {
                 try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml", .{}, "manifest was removed while resolving the lock", .{});
@@ -1745,10 +1626,10 @@ pub fn ensureLock(
     // 書き換えない。mtime だけ変わると環境の lockSha256 照合を無意味に
     // 再評価させ、writer 間の edit.lock 競合も増やすため。
     const wrote = blk: {
-        if (std.Io.Dir.cwd().readFileAlloc(io, lock_path, a, .limited(64 * 1024 * 1024)) catch null) |old_bytes| {
+        if (project.root_dir.readFileAlloc(io, lock_name, a, .limited(64 * 1024 * 1024)) catch null) |old_bytes| {
             if (std.mem.eql(u8, old_bytes, bytes)) break :blk false;
         }
-        try writeAtomic(io, lock_path, bytes);
+        try writeAtomic(io, project.root_dir, bytes);
         break :blk true;
     };
 
@@ -1829,8 +1710,8 @@ fn appendSourceEdges(gpa: Allocator, ctx: *ResolveContext, nodes: []const resolv
 }
 
 /// ファイルを原子的に書き換える（tmp + rename）。
-fn writeAtomic(io: std.Io, path: []const u8, bytes: []const u8) Error!void {
-    var atomic = std.Io.Dir.cwd().createFileAtomic(io, path, .{ .replace = true }) catch |err| return mapFs(err);
+fn writeAtomic(io: std.Io, project_dir: std.Io.Dir, bytes: []const u8) Error!void {
+    var atomic = project_dir.createFileAtomic(io, lock_name, .{ .replace = true }) catch |err| return mapFs(err);
     defer atomic.deinit(io);
     atomic.file.writeStreamingAll(io, bytes) catch |err| return mapFs(err);
     atomic.replace(io) catch |err| return mapFs(err);

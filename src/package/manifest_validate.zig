@@ -1180,7 +1180,9 @@ fn isPublicId(text: []const u8) bool {
     return true;
 }
 
-fn isCommitId(text: []const u8) bool {
+/// commit-ish の形式検証（7–40 桁 lowercase hex）。manifest の宣言・
+/// lock の git source・provider の Git argv 注入防御で共用する。
+pub fn isCommitId(text: []const u8) bool {
     if (text.len < 7 or text.len > 40) return false;
     for (text) |byte| {
         if (!(std.ascii.isDigit(byte) or (byte >= 'a' and byte <= 'f'))) return false;

@@ -254,6 +254,36 @@ pub fn inlineEntryCutRange(source: []const u8, bounds: InlineEntryBounds, close:
     return .{ .start = bounds.start, .end = bounds.end };
 }
 
+/// dotted key の先頭 segment と、`.` 以降の残りを返す。
+/// `"a.b"` のような引用 segment 内の `.` は区切りにしない（basic
+/// quoted key の `\` escape は quote を越えないとして処理する）。
+/// 引用が閉じない場合は null。`rest` は先頭 `.` の後（無ければ空）。
+pub fn nextKeySegment(text: []const u8) ?struct { segment: []const u8, rest: []const u8 } {
+    var quote: u8 = 0;
+    var escaped = false;
+    for (text, 0..) |ch, index| {
+        if (quote != 0) {
+            if (quote == '"' and escaped) {
+                escaped = false;
+                continue;
+            }
+            if (quote == '"' and ch == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (ch == quote) quote = 0;
+            continue;
+        }
+        if (ch == '"' or ch == '\'') {
+            quote = ch;
+        } else if (ch == '.') {
+            return .{ .segment = text[0..index], .rest = text[index + 1 ..] };
+        }
+    }
+    if (quote != 0) return null;
+    return .{ .segment = text, .rest = text[text.len..] };
+}
+
 /// TOML dotted key の1 segmentを、意味上の文字列で比較する。basic
 /// quoted key は escape を復号し、literal quoted key はそのまま比較
 /// する。復号不能な basic key は不一致。
@@ -290,7 +320,8 @@ fn lhsIsDottedPair(lhs: []const u8, first: []const u8, second: []const u8) bool 
 /// ば null。
 pub fn removeInlineEntry(a: Allocator, source: []const u8, parent: []const u8, kind: []const u8, name: []const u8, line_start: usize, line_end: usize) !?[]const u8 {
     const text = source[line_start..line_end];
-    const eq = std.mem.indexOfScalar(u8, text, '=') orelse return null;
+    // `"foo=bar"` のような引用 key 内の `=` は代入区切りではない。
+    const eq = toml_scan.assignmentOperatorIndex(text) orelse return null;
     const lhs = std.mem.trim(u8, text[0..eq], " \t");
     var value_start = line_start + eq + 1;
     while (value_start < line_end and (source[value_start] == ' ' or source[value_start] == '\t')) value_start += 1;

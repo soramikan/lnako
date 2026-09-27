@@ -5,6 +5,7 @@ const diag = @import("diagnostics.zig");
 const lock_model = @import("lock_model.zig");
 const environment = @import("environment.zig");
 const manifest_mod = @import("manifest.zig");
+const manifest_validate = @import("manifest_validate.zig");
 const npkg_files = @import("npkg_files.zig");
 const npkg_verify = @import("npkg_verify.zig");
 
@@ -168,13 +169,20 @@ pub fn acquireGit(
     const gpa = session.allocator();
     const io = session.io;
 
+    // `dep.commit` は Git argv（fetch refspec・rev-parse 等）へそのまま
+    // 渡る。`-` 始まりの値は option 注入（`--upload-pack=` 等）になる
+    // ため、manifest/lock 側の検証とは別にここでも形式を必須化する。
+    if (!manifest_validate.isCommitId(dep.commit)) {
+        return session.fail(.invalid_source, .repository, dep.url, "invalid git commit-ish \"{s}\" for \"{s}\"", .{ dep.commit, dep.name });
+    }
+
     var pinned: ?[]const u8 = null;
     if (locked) |source| {
         if (source.kind != .git or !optEql(source.url, dep.url) or !optEql(source.path, dep.path)) {
             return session.fail(.source_collision, .repository, dep.url, "git dependency \"{s}\" conflicts with the locked source", .{dep.name});
         }
         if (source.commit) |commit| {
-            if (commit.len == 40 and std.mem.startsWith(u8, commit, dep.commit)) {
+            if (commit.len == 40 and manifest_validate.isCommitId(commit) and std.mem.startsWith(u8, commit, dep.commit)) {
                 pinned = commit;
             }
         }
@@ -207,6 +215,24 @@ pub fn acquireGit(
     // 既存 checkout に commit-ish が無ければ、オンラインではリモートを
     // fetch してから再解決する（clone 後に追加された commit を拾う）。
     const full_commit = pinned orelse blk: {
+        if (dep.commit.len < 40) {
+            // 短縮 commit はローカル object だけでは確定しない。共有
+            // checkout の objects/ へ同 prefix の別 commit を注入されると
+            // 任意 tree を正規の完全 SHA として lock され得るため、origin
+            // から取得して remote-tracking ref への到達性を確認してから
+            // 確定する（既存 lock の完全 SHA 一致＝pinned は上で処理済み）。
+            if (session.policy.offline) {
+                return session.fail(.offline, .repository, dep.url, "offline mode: abbreviated commit \"{s}\" of \"{s}\" cannot be verified without fetching", .{ dep.commit, dep.url });
+            }
+            try checkGitUrlPolicy(session, dep.url);
+            try fetchOriginRefsForVerify(session, workspace, dep.url);
+            const commit = (try resolveCommit(session, workspace, dep.commit)) orelse
+                return session.fail(.not_found, .repository, dep.url, "commit \"{s}\" of \"{s}\" was not found", .{ dep.commit, dep.url });
+            if (!try remoteContainsCommit(session, gpa, workspace, commit)) {
+                return session.fail(.not_found, .repository, dep.url, "abbreviated commit \"{s}\" of \"{s}\" is not reachable from origin", .{ dep.commit, dep.url });
+            }
+            break :blk commit;
+        }
         if (try resolveCommit(session, workspace, dep.commit)) |commit| break :blk commit;
         if (session.policy.offline) {
             return session.fail(.offline, .repository, dep.url, "offline mode: commit-ish \"{s}\" of \"{s}\" is not available locally", .{ dep.commit, dep.url });
@@ -226,7 +252,9 @@ pub fn acquireGit(
                 return session.fail(.offline, .repository, dep.url, "offline mode: commit {s} of \"{s}\" is not available locally", .{ full_commit, dep.url });
             }
             try checkGitUrlPolicy(session, dep.url);
-            try gitRun(session, &.{ "git", "fetch", "--quiet", "origin", full_commit }, dep.url, .{ .cwd = workspace, .hooks_guard = true });
+            // 動的 revision は `--` の後へ渡し、将来の呼出し変更でも
+            // refspec が option として解釈されないようにする。
+            try gitRun(session, &.{ "git", "fetch", "--quiet", "origin", "--", full_commit }, dep.url, .{ .cwd = workspace, .hooks_guard = true });
             const retry = try gitRunAllowFailure(session, gpa, &.{ "git", "cat-file", "-e", verify_arg }, .{ .cwd = workspace, .hooks_guard = true });
             if (!retry.succeeded) {
                 return session.fail(.not_found, .repository, dep.url, "commit {s} of \"{s}\" was not found", .{ full_commit, dep.url });
@@ -300,7 +328,7 @@ fn resolveCommit(session: *Session, workspace: std.Io.Dir, commitish: []const u8
     var lines = std.mem.splitScalar(u8, result.stdout, '\n');
     while (lines.next()) |line| {
         const candidate = std.mem.trim(u8, line, " \t\r");
-        if (candidate.len != 40) continue;
+        if (candidate.len != 40 or !manifest_validate.isCommitId(candidate)) continue;
         const type_result = try gitRunAllowFailure(session, gpa, &.{ "git", "cat-file", "-t", candidate }, .{ .cwd = workspace, .hooks_guard = true });
         if (!type_result.succeeded) continue;
         if (!std.mem.eql(u8, std.mem.trim(u8, type_result.stdout, " \t\r\n"), "commit")) continue;
@@ -310,6 +338,31 @@ fn resolveCommit(session: *Session, workspace: std.Io.Dir, commitish: []const u8
         commit = try gpa.dupe(u8, candidate);
     }
     return commit;
+}
+
+/// 短縮 commit 検証用に remote-tracking ref 名前空間を remote 真値へ
+/// 更新する。`+` 強制 refspec と `--prune` で、cache 内へ細工された
+/// remote-tracking ref を除去し現在の remote の値に揃える。tag は
+/// private な `refs/lnako-verify-tags/` へ取得する（ローカルの
+/// `refs/tags/` は共有 cache 内で書換えられるため到達性の根拠にしない）。
+fn fetchOriginRefsForVerify(session: *Session, workspace: std.Io.Dir, url: []const u8) Error!void {
+    try gitRun(session, &.{
+        "git",                                 "fetch",                                 "--quiet", "--prune", "origin",
+        "+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:refs/lnako-verify-tags/*",
+    }, url, .{ .cwd = workspace, .hooks_guard = true });
+}
+
+/// `commit` が remote-tracking ref のいずれかから到達可能か。
+/// `fetchOriginRefsForVerify` 直後の ref だけを見るため、cache 内へ
+/// 細工した object・ref があっても remote 由来の履歴に含まれない
+/// commit はここで落とせる。
+fn remoteContainsCommit(session: *Session, gpa: Allocator, workspace: std.Io.Dir, commit: []const u8) Error!bool {
+    const result = try gitRunAllowFailure(session, gpa, &.{
+        "git",                  "for-each-ref",            "--contains", commit,
+        "refs/remotes/origin/", "refs/lnako-verify-tags/",
+    }, .{ .cwd = workspace, .hooks_guard = true });
+    if (!result.succeeded) return false;
+    return std.mem.trim(u8, result.stdout, " \t\r\n").len > 0;
 }
 
 /// 既存 checkout の origin が宣言 URL を指しているか検証する。

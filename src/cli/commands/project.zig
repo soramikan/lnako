@@ -8,6 +8,7 @@
 const std = @import("std");
 const lnako = @import("lnako");
 const edit = @import("project_edit.zig");
+const init_cmd = @import("project_init.zig");
 
 const diag = lnako.package.diagnostics;
 const project = lnako.package.project;
@@ -1142,7 +1143,7 @@ pub fn runIn(
     stdout: *std.Io.Writer,
     stderr: *std.Io.Writer,
 ) !void {
-    if (std.mem.eql(u8, verb, "init")) return edit.runInit(allocator, io, args, start_dir, stderr);
+    if (std.mem.eql(u8, verb, "init")) return init_cmd.runInit(allocator, io, args, start_dir, stderr);
     if (std.mem.eql(u8, verb, "add")) return edit.runAdd(allocator, io, args, start_dir, environ_map, stderr);
     if (std.mem.eql(u8, verb, "remove") or std.mem.eql(u8, verb, "rm")) return edit.runRemove(allocator, io, args, start_dir, environ_map, stderr);
     if (std.mem.eql(u8, verb, "lock")) return runLock(allocator, io, args, start_dir, environ_map, stdout, stderr);

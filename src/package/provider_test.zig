@@ -930,8 +930,11 @@ test "git provider は symlink 化された .git/info を leaf ごと除去し�
     defer testing.allocator.free(link_target);
     try temporary.dir.symLink(io, link_target, "checkout/.git/info", .{ .is_directory = true });
 
+    // offline 再取得は resolve 済みの full commit（lock が保持する形）
+    // で行われる。短縮 commit は offline では origin 到達性を検証できず
+    // 拒否される。
     session.policy.offline = true;
-    _ = try provider.acquireGit(&session, dep, workspace, null);
+    _ = try provider.acquireGit(&session, .{ .name = "demo", .url = repo.url, .commit = commit }, workspace, null);
 
     // symlink leaf は除去され、再 checkout でも `$Id$` は展開されない。
     try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "checkout/.git/info", .{ .follow_symlinks = false }));
@@ -1977,4 +1980,36 @@ test "sync は lock commit を cached checkout で再検証して offline 同期
     const bytes = try std.Io.Dir.cwd().readFileAlloc(io, index_path, testing.allocator, .unlimited);
     defer testing.allocator.free(bytes);
     try testing.expectEqualStrings("●表示とは\nここまで\n", bytes);
+}
+
+test "git provider は短縮 commit が origin へ到達不能なら拒否する" {
+    // ローカル object に一意に解決できても remote-tracking ref から到達
+    // 不能な短縮 commit は、共有 checkout へ注入された任意 tree を正規
+    // の完全 SHA として lock しないよう拒否する。
+    const io = testing.io;
+    if (!gitAvailable(io)) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const repo = try createGitRepo(&temporary, io);
+    defer testing.allocator.free(repo.path);
+    defer testing.allocator.free(repo.url);
+    defer testing.allocator.free(repo.commit);
+
+    var workspace = try openGitWorkspace(&temporary, io, "checkout");
+    defer workspace.close(io);
+    var session = newSession(.{});
+    defer session.deinit();
+    const dep = manifest_mod.GitDependency{ .name = "demo", .url = repo.url, .commit = repo.commit[0..7] };
+    _ = try provider.acquireGit(&session, dep, workspace, null);
+
+    // workspace 内だけに存在し origin へ push されていない commit を作る。
+    const tmp_root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(tmp_root);
+    const checkout = try std.fs.path.join(testing.allocator, &.{ tmp_root, "checkout" });
+    defer testing.allocator.free(checkout);
+    try gitRun(io, &.{ "git", "-C", checkout, "-c", "user.email=test@example.com", "-c", "user.name=test", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "--quiet", "-m", "local-only" });
+    const local = try gitStdout(io, &.{ "git", "-C", checkout, "rev-parse", "HEAD" });
+    defer testing.allocator.free(local);
+    const bad_dep = manifest_mod.GitDependency{ .name = "demo", .url = repo.url, .commit = local[0..7] };
+    try testing.expectError(error.NotFound, provider.acquireGit(&session, bad_dep, workspace, null));
 }

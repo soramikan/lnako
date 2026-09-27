@@ -3,6 +3,7 @@ const resolver = @import("resolver.zig");
 const semver = @import("semver.zig");
 const diag = @import("diagnostics.zig");
 const manifest_mod = @import("manifest.zig");
+const manifest_validate = @import("manifest_validate.zig");
 const model = @import("lock_model.zig");
 
 const Allocator = std.mem.Allocator;
@@ -192,7 +193,16 @@ fn parseSource(parser: *Parser, value: std.json.Value, path: []const u8) !?Sourc
         },
         .git => {
             if (try parser.requiredString(object, "url", path)) |url| source.url = try parser.duplicate(url);
-            if (try parser.requiredString(object, "commit", path)) |commit| source.commit = try parser.duplicate(commit);
+            if (try parser.requiredString(object, "commit", path)) |commit| {
+                // commit は `git fetch origin <commit>` 等の argv へ渡る。
+                // hex 以外（`-` 始まり等）を含む細工した lock は option
+                // 注入になり得るため、manifest と同じ 7–40 桁 hex を必須化する。
+                if (!manifest_validate.isCommitId(commit)) {
+                    try parser.report(diag.E029_INVALID_VALUE, path, "invalid git commit \"{s}\" (expected 7-40 lowercase hex)", .{commit});
+                    return null;
+                }
+                source.commit = try parser.duplicate(commit);
+            }
         },
         .http => {
             if (try parser.requiredString(object, "url", path)) |url| source.url = try parser.duplicate(url);
