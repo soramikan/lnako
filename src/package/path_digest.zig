@@ -47,7 +47,13 @@ fn resolveEntryKind(io: std.Io, dir: std.Io.Dir, name: []const u8, reported: std
 fn appendEntries(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, rel: []const u8, entries: *std.ArrayList(Entry)) !void {
     var it = dir.iterate();
     while (it.next(io) catch |err| return err) |entry| {
-        if (std.mem.eql(u8, entry.name, ".nako") or std.mem.eql(u8, entry.name, ".git")) continue;
+        // `.nako`/`.git` は digest 対象外。Windows では `.NAKO`/`.GIT`
+        // が同一 dir を指すため大小文字非依存で比較する。
+        const managed = if (builtin.os.tag == .windows)
+            std.ascii.eqlIgnoreCase(entry.name, ".nako") or std.ascii.eqlIgnoreCase(entry.name, ".git")
+        else
+            std.mem.eql(u8, entry.name, ".nako") or std.mem.eql(u8, entry.name, ".git");
+        if (managed) continue;
         const joined = if (rel.len == 0) try gpa.dupe(u8, entry.name) else try std.fs.path.join(gpa, &.{ rel, entry.name });
         const child_rel = try canonicalPath(gpa, joined);
         gpa.free(joined);
@@ -86,6 +92,38 @@ test "resolveEntryKind は DT_UNKNOWN 相当の entry を stat で判定する" 
     }
 }
 
+test "digest は管理 dir を除外し POSIX では大小文字違いを別名として数える" {
+    const io = std.testing.io;
+    const a = std.testing.allocator;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(io, .{ .sub_path = "a.txt", .data = "x" });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", a);
+    defer a.free(root);
+    const base = try digest(io, a, root);
+
+    // `.nako`/`.git` は digest 対象外（依存先で sync/build しても
+    // 親 lock が陳腐化しない契約）。
+    try temporary.dir.createDirPath(io, ".nako/env");
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/x", .data = "y" });
+    try temporary.dir.createDir(io, ".git", .default_dir);
+    try temporary.dir.writeFile(io, .{ .sub_path = ".git/HEAD", .data = "ref" });
+    try std.testing.expectEqual(base, try digest(io, a, root));
+
+    // `.NAKO` は Windows（および大小文字非区別 FS）では `.nako` と同一
+    // dir なので、先に `.nako` を消してから作成する。Windows では除外、
+    // POSIX では別名の通常 entry として digest に乗る。
+    try temporary.dir.deleteTree(io, ".nako");
+    try temporary.dir.createDir(io, ".NAKO", .default_dir);
+    try temporary.dir.writeFile(io, .{ .sub_path = ".NAKO/z", .data = "z" });
+    const folded = try digest(io, a, root);
+    if (builtin.os.tag == .windows) {
+        try std.testing.expectEqual(base, folded);
+    } else {
+        try std.testing.expect(!std.mem.eql(u8, &base, &folded));
+    }
+}
+
 fn openFile(io: std.Io, root: std.Io.Dir, rel: []const u8) !std.Io.File {
     var current = root;
     var owns = false;
@@ -115,6 +153,12 @@ fn openFile(io: std.Io, root: std.Io.Dir, rel: []const u8) !std.Io.File {
 pub fn digest(io: std.Io, gpa: std.mem.Allocator, root: []const u8) ![32]u8 {
     var dir = try std.Io.Dir.cwd().openDir(io, root, .{ .iterate = true, .follow_symlinks = true });
     defer dir.close(io);
+    return digestDir(io, gpa, dir);
+}
+
+/// `digest` の dir handle 版。root の開き方（declared root の symlink
+/// follow 等）は呼出し側が済ませる。内部 entry は変わらず no-follow。
+pub fn digestDir(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir) ![32]u8 {
     var entries: std.ArrayList(Entry) = .empty;
     defer {
         for (entries.items) |entry| gpa.free(entry.rel);
@@ -156,7 +200,9 @@ pub fn digest(io: std.Io, gpa: std.mem.Allocator, root: []const u8) ![32]u8 {
     return result;
 }
 
-fn pinnedSourceHash(entry: *const lock_model.PackageEntry) ?[]const u8 {
+/// lock entry の source artifact に記録された pin hash（`sha256:...` または
+/// SRI 表記）。path 依存 pin・materialize 結果の照合に使う。
+pub fn pinnedSourceHash(entry: *const lock_model.PackageEntry) ?[]const u8 {
     for (entry.artifacts) |artifact| {
         if (std.mem.eql(u8, artifact.key, "source") and artifact.sha256 != null) return artifact.sha256.?;
     }

@@ -229,7 +229,8 @@ fn assignmentLhs(text: []const u8) ?[]const u8 {
 }
 
 /// 代入左辺が `prefix` セグメント列で始まり、さらに後続セグメントを
-/// 持つ dotted key か。各セグメントの引用は剥がす。
+/// 持つ dotted key か。prefix の比較は引用・escape を意味上の文字列へ
+/// 正規化して行う（`"pa\u0074h".lib` は `&.{"path"}` に一致）。
 /// `path.lib` は `&.{"path"}`、`dependencies.path.lib` は
 /// `&.{"dependencies", "path"}` に一致する。
 fn lhsHasPrefix(lhs: []const u8, prefix: []const []const u8) bool {
@@ -237,10 +238,12 @@ fn lhsHasPrefix(lhs: []const u8, prefix: []const []const u8) bool {
     var matched: usize = 0;
     var extra = false;
     while (it.next()) |seg_raw| {
-        const bare = std.mem.trim(u8, std.mem.trim(u8, seg_raw, " \t"), "\"'");
-        if (bare.len == 0) return false;
+        const seg = std.mem.trim(u8, seg_raw, " \t");
+        if (seg.len == 0) return false;
         if (matched < prefix.len) {
-            if (!std.mem.eql(u8, bare, prefix[matched])) return false;
+            // `"pa\u0074h"` のような basic quoted key は escape を復号
+            // して比較する（toml_inline.tomlKeySegmentEquals と同じ基準）。
+            if (!toml_inline.tomlKeySegmentEquals(seg_raw, prefix[matched])) return false;
             matched += 1;
         } else {
             extra = true;
@@ -1328,6 +1331,52 @@ test "insertEntry はエスケープを含む引用 key の依存 table を認�
     const lib2_pos = std.mem.indexOf(u8, inserted, "lib2").?;
     try std.testing.expect(lib_pos < lib2_pos);
     try std.testing.expect(std.mem.indexOf(u8, inserted, "[dependencies.path]") == null);
+}
+
+test "insertEntry は escape を含む引用セグメントの dotted 宣言を同一 table とみなす" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // `[dependencies]` 内の `"pa\u0074h".lib` は `path.lib` と同じ
+    // `dependencies.path` 表を暗黙に定義する。セグメントの escape を
+    // 復号しないと `[dependencies.path]` を追加して TOML の table
+    // 再定義になる。
+    const inserted = try insertEntry(a,
+        \\[package]
+        \\name = "app"
+        \\
+        \\[dependencies]
+        \\"pa\u0074h".lib = { path = "lib" }
+        \\
+    , "dependencies.path", "lib2", "{ path = \"lib2\" }");
+    try std.testing.expect(std.mem.indexOf(u8, inserted, "[dependencies.path]") == null);
+    try std.testing.expect(std.mem.indexOf(u8, inserted, "path.lib2 = { path = \"lib2\" }") != null);
+
+    // 文書 root の `dependencies."pa\u0074h".lib` も同じ table。
+    const rooted = try insertEntry(a,
+        \\dependencies."pa\u0074h".lib = { path = "lib" }
+        \\
+        \\[package]
+        \\name = "app"
+        \\
+    , "dependencies.path", "lib2", "{ path = \"lib2\" }");
+    try std.testing.expect(std.mem.indexOf(u8, rooted, "[dependencies.path]") == null);
+    try std.testing.expect(std.mem.indexOf(u8, rooted, "dependencies.path.lib2 = { path = \"lib2\" }") != null);
+    const package_pos = std.mem.indexOf(u8, rooted, "[package]").?;
+    const new_pos = std.mem.indexOf(u8, rooted, "dependencies.path.lib2").?;
+    try std.testing.expect(new_pos < package_pos);
+
+    // 復号不能な escape を含むセグメントは別 key として扱い、
+    // `[dependencies.path]` を新設する（不正 TOML を同名扱いしない）。
+    const malformed = try insertEntry(a,
+        \\[package]
+        \\name = "app"
+        \\
+        \\[dependencies]
+        \\"pa\x".lib = { path = "lib" }
+        \\
+    , "dependencies.path", "lib2", "{ path = \"lib2\" }");
+    try std.testing.expect(std.mem.indexOf(u8, malformed, "[dependencies.path]") != null);
 }
 
 test "removeEntry は複数行 inline table を丸ごと除去する" {

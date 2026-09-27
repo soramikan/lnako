@@ -155,7 +155,14 @@ const State = struct {
 
     fn excluded(self: *State, name: []const u8) bool {
         for (self.options.exclude_names) |item| {
-            if (std.mem.eql(u8, item, name)) return true;
+            // Windows では `.NAKO`/`.GIT` のような大小文字違いも同一
+            // entry を指すため、除外名は大小文字非依存で比較する
+            // （path_digest の除外判定と揃える）。
+            if (builtin.os.tag == .windows) {
+                if (std.ascii.eqlIgnoreCase(item, name)) return true;
+            } else {
+                if (std.mem.eql(u8, item, name)) return true;
+            }
         }
         return false;
     }

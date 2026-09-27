@@ -117,12 +117,17 @@ fn mapTreeError(ctx: *Context, err: anyerror, subject: []const u8) Error {
     };
 }
 
-/// lock entry の `mutable = false` path source に記録された pin hash。
-fn pinnedSourceHash(entry: *const lock_model.PackageEntry) ?[]const u8 {
-    for (entry.artifacts) |artifact| {
-        if (std.mem.eql(u8, artifact.key, "source") and artifact.sha256 != null) return artifact.sha256.?;
+/// materialize 済みの generation tree を lock の pin と照合する。
+/// 宣言 dir の前後照合だけでは、検査通過後に内容を差し替えて copy
+/// させてから元へ戻す挟み撃ちで未 pin の bytes が環境へ残るため、
+/// 公開対象の複製 tree 自身を pin と照合して塞ぐ。
+fn verifyMaterializedPathPin(ctx: *const Context, entry: *const lock_model.PackageEntry, tree_dir: std.Io.Dir) Error!void {
+    const pin = path_digest.pinnedSourceHash(entry) orelse
+        return ctx.session.fail(.invalid_source, .package, entry.name, "path dependency \"{s}\" has no source pin", .{entry.name});
+    const copied_digest = path_digest.digestDir(ctx.io, ctx.gpa, tree_dir) catch |err| return mapFs(err);
+    if (!path_digest.pinHashMatches(copied_digest, pin)) {
+        return ctx.session.fail(.hash_mismatch, .package, entry.name, "materialized path dependency \"{s}\" does not match nako.lock pin", .{entry.name});
     }
-    return null;
 }
 
 /// Path source pin validation delegates to the portable digest implementation.
@@ -518,6 +523,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                 const materialized = try materializeIntoGeneration(ctx, entry.name, &dep_dir, .{ .exclude_names = &cache.source_pin_exclude });
                 tree_dir = materialized.tree_dir;
                 env_path = materialized.env_path;
+                try verifyMaterializedPathPin(ctx, entry, materialized.tree_dir);
             }
         },
         .git => {
@@ -723,6 +729,57 @@ test "immutable path pin hash comparison normalizes lock representations" {
     other[0] ^= 1;
     try testing.expect(!path_digest.pinHashMatches(other, &hex));
     try testing.expect(!path_digest.pinHashMatches(digest, "invalid"));
+}
+
+test "verifyMaterializedPathPin は generation 複製 tree を lock pin と照合する" {
+    // 宣言 dir の前後照合の隙間（copy 中の差し替え→復元）で混入する
+    // 未 pin bytes を塞ぐため、複製後の tree 自身を pin と照合する。
+    const allocator = testing.allocator;
+    var arena_impl = std.heap.ArenaAllocator.init(allocator);
+    defer arena_impl.deinit();
+    var diagnostics = diag.List.init(allocator);
+    defer diagnostics.deinit();
+    var session = fetch.Session.init(allocator, testing.io, .{});
+    defer session.deinit();
+    session.diagnostics = &diagnostics;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+
+    try temporary.dir.createDir(testing.io, "tree", .default_dir);
+    try temporary.dir.writeFile(testing.io, .{ .sub_path = "tree/a.txt", .data = "pinned" });
+    var tree_dir = try temporary.dir.openDir(testing.io, "tree", .{ .iterate = true });
+    defer tree_dir.close(testing.io);
+
+    var ctx = Context{
+        .gpa = allocator,
+        .arena = arena_impl.allocator(),
+        .io = testing.io,
+        .session = &session,
+        .cache_store = undefined,
+        .project_abs = "",
+        .deps_dir = undefined,
+        .workspace_dir = undefined,
+        .generation_rel = "",
+        .runtime = .lnako,
+        .target = .{},
+    };
+
+    const digest = try path_digest.digestDir(testing.io, allocator, tree_dir);
+    const pin = try std.fmt.allocPrint(arena_impl.allocator(), "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
+    const ok_artifacts = [_]lock_model.Artifact{.{ .key = "source", .kind = "source", .type = "raw", .sha256 = pin }};
+    const ok_entry = lock_model.PackageEntry{ .id = "pkg:11111111111111111111111111111111", .name = "lib", .version = "1.0.0", .artifacts = &ok_artifacts };
+    try verifyMaterializedPathPin(&ctx, &ok_entry, tree_dir);
+
+    // 複製結果が pin と異なる tree（copy 中の改変相当）を拒否する。
+    const wrong_digest = [_]u8{0x5a} ** 32;
+    const wrong_pin = try std.fmt.allocPrint(arena_impl.allocator(), "sha256:{s}", .{std.fmt.bytesToHex(wrong_digest, .lower)});
+    const bad_artifacts = [_]lock_model.Artifact{.{ .key = "source", .kind = "source", .type = "raw", .sha256 = wrong_pin }};
+    const bad_entry = lock_model.PackageEntry{ .id = "pkg:11111111111111111111111111111111", .name = "lib", .version = "1.0.0", .artifacts = &bad_artifacts };
+    try testing.expectError(error.HashMismatch, verifyMaterializedPathPin(&ctx, &bad_entry, tree_dir));
+
+    // pin 自体が無い immutable path entry は source 定義不全。
+    const unpinned = lock_model.PackageEntry{ .id = "pkg:11111111111111111111111111111111", .name = "lib", .version = "1.0.0" };
+    try testing.expectError(error.InvalidSource, verifyMaterializedPathPin(&ctx, &unpinned, tree_dir));
 }
 
 test "sync fails when a selected export has no eligible implementation" {

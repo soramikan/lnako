@@ -64,6 +64,17 @@ fn digestEntryLessThan(_: void, a: DigestEntry, b: DigestEntry) bool {
     return std.mem.order(u8, a.rel, b.rel) == .lt;
 }
 
+/// readdir が DT_UNKNOWN 相当（`.unknown`）を返した entry の実 kind を
+/// no-follow stat で解決する。NFS/FUSE 等で発生し、symlink は辿らない
+/// （stat 結果の `.sym_link` は呼出し側で拒否される）。既知の kind は
+/// そのまま返し、余分な stat を呼ばない。
+fn resolveEntryKind(io: std.Io, dir: std.Io.Dir, name: []const u8, reported: std.Io.File.Kind) !std.Io.File.Kind {
+    return switch (reported) {
+        .unknown => (try dir.statFile(io, name, .{ .follow_symlinks = false })).kind,
+        else => reported,
+    };
+}
+
 fn collectDigestEntries(io: std.Io, gpa: Allocator, dir: std.Io.Dir, rel: []const u8, exclude_names: []const []const u8, entries: *std.ArrayListUnmanaged(DigestEntry)) !void {
     var it = dir.iterate();
     while (try it.next(io)) |entry| {
@@ -82,7 +93,8 @@ fn collectDigestEntries(io: std.Io, gpa: Allocator, dir: std.Io.Dir, rel: []cons
             try std.fs.path.join(gpa, &.{ rel, entry.name });
         var owns_child_rel = true;
         defer if (owns_child_rel) gpa.free(child_rel);
-        switch (entry.kind) {
+        const kind = try resolveEntryKind(io, dir, entry.name, entry.kind);
+        switch (kind) {
             .file => {
                 const stat = try dir.statFile(io, entry.name, .{});
                 try entries.append(gpa, .{ .rel = child_rel, .kind = .file, .size = stat.size });
@@ -796,6 +808,27 @@ pub const Store = struct {
 // ---------------------------------------------------------------------------
 
 const testing = std.testing;
+
+test "digest entry kind は DT_UNKNOWN 相当の entry を stat で判定する" {
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(io, .{ .sub_path = "a.txt", .data = "x" });
+    try temporary.dir.createDir(io, "sub", .default_dir);
+    // NFS/FUSE のように readdir が kind を返せない fs でも stat 由来の
+    // 実体で分類される。
+    try std.testing.expectEqual(std.Io.File.Kind.file, try resolveEntryKind(io, temporary.dir, "a.txt", .unknown));
+    try std.testing.expectEqual(std.Io.File.Kind.directory, try resolveEntryKind(io, temporary.dir, "sub", .unknown));
+    // 既知 kind は stat せずそのまま返す。
+    try std.testing.expectEqual(std.Io.File.Kind.file, try resolveEntryKind(io, temporary.dir, "a.txt", .file));
+    // symlink は拒否側の kind のまま返る（collectDigestEntries の
+    // switch が UnsupportedEntry に倒す）。
+    if (builtin.os.tag != .windows) {
+        try temporary.dir.symLink(io, "a.txt", "link.txt", .{});
+        try std.testing.expectEqual(std.Io.File.Kind.sym_link, try resolveEntryKind(io, temporary.dir, "link.txt", .unknown));
+        try std.testing.expectEqual(std.Io.File.Kind.sym_link, try resolveEntryKind(io, temporary.dir, "link.txt", .sym_link));
+    }
+}
 
 test "digestTreeFollowingRoot follows only the declared root symlink" {
     if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
