@@ -124,6 +124,9 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, e
         discovered_root = try allocator.dupe(u8, found.root);
         options.project_root = discovered_root.?;
         var prepare = project.PrepareOptions{
+            // --locked: verifyLocked 通過後の競合編集で ensureLock が
+            // lock を書き換えないよう、stale 検出を失敗へ写像する。
+            .locked = locked,
             .profile = options.profile,
             .features = features.items,
             .no_default_features = no_default_features,

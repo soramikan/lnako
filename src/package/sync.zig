@@ -479,20 +479,38 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
             if (!isCanonicalDepPath(rel)) {
                 return ctx.session.fail(.invalid_source, .package, entry.name, "path of \"{s}\" is not a canonical dependency path: \"{s}\"", .{ entry.name, rel });
             }
+            const mutable = source.mutable orelse false;
             const acquired = try provider.acquirePath(ctx.session, .{
                 .name = entry.name,
                 .path = rel,
-                .mutable = source.mutable orelse false,
+                .mutable = mutable,
             }, ctx.project_abs);
             manifest = acquired.manifest;
-            // mutable source は宣言 dir を生参照する。環境側へ複製すると
-            // 編集が反映されず mutable の契約を壊す。
-            env_path = try arena.dupe(u8, rel);
             // commands 走査用には絶対 path を使う（env.json には宣言 path）。
-            tree_abs = if (provider.isAbsoluteDepPath(rel))
+            const dep_abs = if (provider.isAbsoluteDepPath(rel))
                 try arena.dupe(u8, rel)
             else
                 try std.fs.path.join(arena, &.{ ctx.project_abs, rel });
+            if (mutable) {
+                // mutable source は宣言 dir を生参照する。環境側へ複製すると
+                // 編集が反映されず mutable の契約を壊す。
+                env_path = try arena.dupe(u8, rel);
+                tree_abs = dep_abs;
+            } else {
+                // immutable path 依存は内容 pin した snapshot を generation
+                // 内へ複製してその path を記録する。宣言 dir を生参照したまま
+                // 公開すると、sync 後の編集が lock を変えずに `--no-sync`
+                // 消費者へ届いてしまうため。digest 対象外の `.nako`/`.git`
+                // は複製しない。
+                var dep_dir = std.Io.Dir.cwd().openDir(ctx.io, dep_abs, .{ .iterate = true, .follow_symlinks = false }) catch |err| switch (err) {
+                    error.Canceled => return error.Canceled,
+                    else => return ctx.session.fail(.unavailable, .package, dep_abs, "cannot open path dependency \"{s}\" directory: {s}", .{ entry.name, @errorName(err) }),
+                };
+                defer dep_dir.close(ctx.io);
+                const materialized = try materializeIntoGeneration(ctx, entry.name, &dep_dir, .{ .exclude_names = &cache.source_pin_exclude });
+                tree_dir = materialized.tree_dir;
+                env_path = materialized.env_path;
+            }
         },
         .git => {
             const url = source.url orelse
@@ -544,7 +562,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
             var tree_handle = try ctx.objectTree(object_key);
             if (tree_handle == null) return error.FileSystem;
             defer tree_handle.?.close(ctx.io);
-            const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?);
+            const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?, .{});
             tree_dir = materialized.tree_dir;
             env_path = materialized.env_path;
         },
@@ -579,7 +597,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
             var tree_handle = try ctx.objectTree(object_key);
             if (tree_handle == null) return error.FileSystem;
             defer tree_handle.?.close(ctx.io);
-            const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?);
+            const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?, .{});
             tree_dir = materialized.tree_dir;
             env_path = materialized.env_path;
         },
@@ -616,7 +634,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
             var tree_handle = try ctx.objectTree(object_key);
             if (tree_handle == null) return error.FileSystem;
             defer tree_handle.?.close(ctx.io);
-            const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?);
+            const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?, .{});
             tree_dir = materialized.tree_dir;
             env_path = materialized.env_path;
         },
@@ -1097,7 +1115,7 @@ fn selectArtifact(ctx: *Context, entry: *const lock_model.PackageEntry) ?*const 
 /// 空なら hash 名を使う。同一世代内での重複には `-2`・`-3`…を付ける。
 const MaterializedPackage = struct { env_path: []const u8, tree_dir: std.Io.Dir };
 
-fn materializeIntoGeneration(ctx: *Context, package_name: []const u8, source: *std.Io.Dir) Error!MaterializedPackage {
+fn materializeIntoGeneration(ctx: *Context, package_name: []const u8, source: *std.Io.Dir, options: materialize.Options) Error!MaterializedPackage {
     const arena = ctx.arena;
     var sanitized: std.ArrayListUnmanaged(u8) = .empty;
     for (package_name) |c| {
@@ -1124,7 +1142,7 @@ fn materializeIntoGeneration(ctx: *Context, package_name: []const u8, source: *s
 
     ctx.deps_dir.createDirPath(ctx.io, final_name) catch |err| return mapFs(err);
     var destination = ctx.deps_dir.openDir(ctx.io, final_name, .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
-    _ = materialize.copyTreeFromDirs(ctx.gpa, ctx.io, source, &destination, .{}) catch |err| {
+    _ = materialize.copyTreeFromDirs(ctx.gpa, ctx.io, source, &destination, options) catch |err| {
         destination.close(ctx.io);
         return mapTreeError(ctx, err, package_name);
     };

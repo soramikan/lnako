@@ -66,6 +66,7 @@ pub const PrepFlags = struct {
 
     pub fn toOptions(self: *const PrepFlags, environ_map: ?*const std.process.Environ.Map) project.PrepareOptions {
         var options = project.PrepareOptions{
+            .locked = self.locked,
             .profile = self.profile,
             .features = self.features.items,
             .no_default_features = self.no_default_features,
@@ -1094,13 +1095,20 @@ fn ensureEnvironmentUsable(a: Allocator, io: std.Io, loaded: *project.Project, o
     }
 }
 
-fn inputDir(a: Allocator, io: std.Io, input: []const u8) ![]const u8 {
+pub fn inputDir(a: Allocator, io: std.Io, input: []const u8) ![]const u8 {
     const stat = std.Io.Dir.cwd().statFile(io, input, .{}) catch {
         const dir = std.fs.path.dirname(input) orelse return a.dupe(u8, ".");
         return a.dupe(u8, dir);
     };
     if (stat.kind == .directory) return a.dupe(u8, input);
-    const dir = std.fs.path.dirname(input) orelse return a.dupe(u8, ".");
+    // 実在する file は symlink の可能性があるため実体へ解決してから
+    // dirname を求める。表記側の親 dir は別 project（または project 外）
+    // を指し得るため、そのまま探索すると誤った lock/環境を準備する。
+    const resolved = std.Io.Dir.cwd().realPathFileAlloc(io, input, a) catch {
+        const dir = std.fs.path.dirname(input) orelse return a.dupe(u8, ".");
+        return a.dupe(u8, dir);
+    };
+    const dir = std.fs.path.dirname(resolved) orelse return a.dupe(u8, ".");
     return a.dupe(u8, dir);
 }
 

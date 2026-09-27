@@ -1324,6 +1324,9 @@ const Composite = struct {
 // ---------------------------------------------------------------------------
 
 pub const PrepareOptions = struct {
+    /// `--locked` 指定（lock を一切書き換えない契約）。stale な lock を
+    /// 検出しても再解決せず `LockedNotSatisfied` で失敗する。
+    locked: bool = false,
     /// 選択 profile。null なら default。
     profile: ?[]const u8 = null,
     /// 要求 feature 名。
@@ -1395,8 +1398,9 @@ fn rejectNpmDeps(manifest: *const manifest_mod.Manifest, diagnostics: *diag.List
 }
 
 /// 既存 lock の鮮度を確認し、stale/missing なら全 profile を解決して
-/// `nako.lock` を原子的に書き換える。`opts.locked` は呼出し側で先に
-/// `verifyLocked` へ流すこと（ここでは解決を行わない）。
+/// `nako.lock` を原子的に書き換える。`opts.locked` が真なら stale 検出を
+/// 書換へ繋げず `LockedNotSatisfied` で失敗させる（呼出し側の
+/// `verifyLocked` 通過後に依存が編集された競合でも lock を変えない）。
 pub fn ensureLock(
     gpa: Allocator,
     io: std.Io,
@@ -1458,6 +1462,23 @@ pub fn ensureLock(
         if (try sync_mod.mutablePathMismatch(a, io, project.root, &existing.?) != null) {
             freshness = .stale_manifest;
         }
+    }
+    // `--locked` は lock を一切変更しない契約。呼出し側の verifyLocked
+    // 通過後に依存が編集される（外部エディタは edit.lock に従わない）と
+    // ここで再度 stale を検出するが、書換ではなく失敗へ写像する。
+    if (opts.locked and freshness != .fresh) {
+        const reason: []const u8 = switch (freshness) {
+            .missing => "nako.lock is missing",
+            .stale_schema => "nako.lock has an unknown schemaVersion",
+            .stale_resolver => "nako.lock was written by a different resolver version",
+            .stale_manifest => "nako.toml or a path dependency changed since nako.lock was written",
+            .stale_profile => "the selected profile differs from nako.lock",
+            .stale_features => "the selected features differ from nako.lock",
+            .stale_target => "the resolved target differs from nako.lock",
+            .fresh => unreachable,
+        };
+        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, lock_name, .{}, "{s} and --locked forbids updating it", .{reason});
+        return error.LockedNotSatisfied;
     }
     if (freshness == .fresh and !opts.force_resolve) {
         const moved = existing.?;

@@ -1068,3 +1068,27 @@ test "toOptions は sync と同一の version tuple と compat_js を供給す�
     defer compat_flags.deinit(testing.allocator);
     try testing.expect(compat_flags.toOptions(null).compat_js);
 }
+
+test "inputDir は file symlink の実体側 dir を返す" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    // project 内の file へ project 外から symlink を張る。表記側の dir
+    // （`outside`）ではなく実体側（`app`）を返す必要がある。
+    try temporary.dir.createDirPath(io, "app");
+    try temporary.dir.createDirPath(io, "outside");
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/main.nako3", .data = "ok\n" });
+    const target_abs = try temporary.dir.realPathFileAlloc(io, "app/main.nako3", a);
+    temporary.dir.symLink(io, target_abs, "outside/link.nako3", .{}) catch |err| switch (err) {
+        error.AccessDenied, error.PermissionDenied, error.FileSystem => return error.SkipZigTest,
+        else => return err,
+    };
+    const outside_abs = try temporary.dir.realPathFileAlloc(io, "outside", a);
+    const link_abs = try std.fs.path.join(a, &.{ outside_abs, "link.nako3" });
+    const app_abs = try temporary.dir.realPathFileAlloc(io, "app", a);
+
+    const dir = try project_cmd.inputDir(a, io, link_abs);
+    try testing.expectEqualStrings(app_abs, dir);
+}

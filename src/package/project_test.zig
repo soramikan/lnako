@@ -2147,3 +2147,56 @@ test "findRootとloadはsymlink経由のrootを実pathへ正規化する" {
     try testing.expectEqualStrings(app_real, loaded.root);
     try testing.expectEqualStrings(app_real, std.fs.path.dirname(loaded.manifest_path).?);
 }
+
+test "ensureLockは--lockedで再検出したstaleを書換えずLockedNotSatisfiedで失敗する" {
+    // verifyLocked 通過後に（edit.lock を介さない外部編集で）依存内容が
+    // 変わると二度目の鮮度検査が stale を検出する。--locked は lock を
+    // 一切変更しない契約なので、再解決・書換へ進まず失敗しなければ
+    // ならない。
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/lib/src");
+    try writeLibPackage(temporary.dir, io, "app/lib", "lib");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/nako.toml",
+        .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\lib = { path = "lib" }
+        \\
+        ,
+    });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    defer loaded.deinit();
+
+    var first = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
+    first.deinit();
+    const before = try temporary.dir.readFileAlloc(io, "app/nako.lock", testing.allocator, .limited(1 * 1024 * 1024));
+    defer testing.allocator.free(before);
+
+    // verifyLocked は現状で通る。
+    try project.verifyLocked(testing.allocator, io, &loaded, &.{ .locked = true }, &diagnostics);
+
+    // pin 対象の依存 content を外部から書き換える（immutable path 依存の
+    // tree digest が変わる）。
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/lib/src/index.nako3",
+        .data = "●表示とは\n「changed」を表示\nここまで\n",
+    });
+
+    // --locked 付き ensureLock は書換ではなく失敗し、lock は不変。
+    try testing.expectError(error.LockedNotSatisfied, project.ensureLock(testing.allocator, io, &loaded, &.{ .locked = true }, &diagnostics));
+    const after = try temporary.dir.readFileAlloc(io, "app/nako.lock", testing.allocator, .limited(1 * 1024 * 1024));
+    defer testing.allocator.free(after);
+    try testing.expectEqualStrings(before, after);
+}

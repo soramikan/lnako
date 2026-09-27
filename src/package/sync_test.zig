@@ -782,3 +782,80 @@ test "sync は構築中に nako.toml が変更されると環境を公開しな�
     try testing.expect(written.load(.acquire));
     try testing.expectError(error.FileNotFound, temporary.dir.access(io, ".nako/environment.json", .{}));
 }
+
+test "sync は immutable path 依存を世代内へ materialize する" {
+    // `mutable = false` の path 依存は pin 済み snapshot を
+    // `.nako/env/<gen>/deps` へ複製し environment.json がそちらを指す。
+    // 宣言 dir を生参照したままだと sync 後の編集が lock を変えずに
+    // `--no-sync` 消費者へ未 pin の内容を届けてしまう。
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+
+    try temporary.dir.createDirPath(io, "deps/lib/src");
+    // digest 対象外の管理 dir は複製されないことの確認用に置く。
+    try temporary.dir.createDirPath(io, "deps/lib/.git");
+    try temporary.dir.writeFile(io, .{ .sub_path = "deps/lib/.git/HEAD", .data = "ref\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.toml", .data = app_manifest });
+    try temporary.dir.writeFile(io, .{ .sub_path = "deps/lib/nako.toml", .data = lib_manifest });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "deps/lib/src/index.nako3",
+        .data = "●テストとは\n  戻る\nここまで\n",
+    });
+
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    const lib_abs = try std.fs.path.join(allocator, &.{ root, "deps/lib" });
+    defer allocator.free(lib_abs);
+    const tree_digest = try path_digest.digest(io, allocator, lib_abs);
+    const pin_sha = try std.fmt.allocPrint(allocator, "sha256:{s}", .{std.fmt.bytesToHex(tree_digest, .lower)});
+    defer allocator.free(pin_sha);
+    const manifest_sha = try sha256Hex(allocator, app_manifest);
+    defer allocator.free(manifest_sha);
+
+    const lock_bytes = try std.fmt.allocPrint(allocator,
+        \\{{
+        \\  "schemaVersion": 1, "resolverVersion": 1,
+        \\  "input": {{ "manifestSha256": "sha256:{s}", "profile": "default", "features": [], "target": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu" }} }},
+        \\  "packages": {{ "pkg:11111111111111111111111111111111": {{
+        \\    "id": "pkg:11111111111111111111111111111111", "name": "lib", "version": "1.0.0",
+        \\    "source": {{ "type": "path", "path": "deps/lib", "mutable": false }},
+        \\    "resolvedFrom": {{ "type": "path", "path": "deps/lib", "mutable": false }},
+        \\    "dependencies": [], "features": [], "artifacts": {{ "source": {{ "kind": "source", "type": "raw", "sha256": "{s}" }} }}
+        \\  }} }},
+        \\  "profiles": {{ "default": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu", "runtime": "lnako" }} }}
+        \\}}
+    , .{ manifest_sha, pin_sha });
+    defer allocator.free(lock_bytes);
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock_bytes });
+
+    const cache_root = try std.fs.path.join(allocator, &.{ root, "cache" });
+    defer allocator.free(cache_root);
+    var diagnostics = diag.List.init(allocator);
+    defer diagnostics.deinit();
+    var report = try sync.run(allocator, io, .{
+        .project_root = root,
+        .cache_root = cache_root,
+    }, &diagnostics);
+    defer report.deinit();
+    try std.testing.expectEqual(@as(usize, 1), report.package_count);
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, report.environment_json, .{});
+    defer parsed.deinit();
+    const lib = parsed.value.object.get("packages").?.object.get("pkg:11111111111111111111111111111111").?.object;
+    const env_path = lib.get("path").?.string;
+    // 宣言 dir `deps/lib` ではなく世代内の複製を指す。
+    try std.testing.expect(!std.mem.eql(u8, env_path, "deps/lib"));
+    try std.testing.expect(std.mem.indexOf(u8, env_path, ".nako") != null);
+    try std.testing.expect(std.mem.indexOf(u8, env_path, "deps") != null);
+    // 複製先に source があり、digest 対象外の `.git` は持ち込まれない。
+    const copied_index = try std.fs.path.join(allocator, &.{ env_path, "src", "index.nako3" });
+    defer allocator.free(copied_index);
+    const copied = try temporary.dir.readFileAlloc(io, copied_index, allocator, .unlimited);
+    defer allocator.free(copied);
+    try std.testing.expectEqualStrings("●テストとは\n  戻る\nここまで\n", copied);
+    const git_dir = try std.fs.path.join(allocator, &.{ env_path, ".git" });
+    defer allocator.free(git_dir);
+    try std.testing.expectError(error.FileNotFound, temporary.dir.access(io, git_dir, .{}));
+}
