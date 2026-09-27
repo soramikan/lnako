@@ -1071,8 +1071,11 @@ fn ensureEnvironmentUsable(a: Allocator, io: std.Io, loaded: *project.Project, o
     };
     defer outcome.deinit();
     var digest: [32]u8 = undefined;
-    const has_lock = project.lockDigest(a, io, loaded.root, &digest) catch false;
-    const env = project.readEnvironmentInfo(a, io, loaded.root) catch null;
+    // `loaded.root_dir`（pinned handle）相対で検査する。path 文字列の
+    // 再解決では root の rename/replace 競合で別 dir の `.nako` を読み
+    // 得る。
+    const has_lock = project.lockDigestDir(a, io, loaded.root_dir, &digest) catch false;
+    const env = project.readEnvironmentInfoDir(a, io, loaded.root_dir) catch null;
     const env_ok = has_lock and env != null and
         project.environmentMatchesLock(env.?, &digest) and
         env.?.schema_version == 1 and
@@ -1081,12 +1084,12 @@ fn ensureEnvironmentUsable(a: Allocator, io: std.Io, loaded: *project.Project, o
         (env.?.profile != null and std.mem.eql(u8, env.?.profile.?, outcome.profile)) and
         (env.?.runtime != null and std.mem.eql(u8, env.?.runtime.?, "lnako")) and
         // 参照世代 dir が消えた環境は不一致とする。
-        (env.?.generation != null and project.generationExists(io, loaded.root, env.?.generation.?)) and
+        (env.?.generation != null and project.generationExistsDir(io, loaded.root_dir, env.?.generation.?)) and
         // packages 記録・実体の欠落も不一致とする（内容検証）。
-        (project.environmentPackagesUsable(a, io, loaded.root, &outcome.lock, outcome.profile) catch false) and
+        (project.environmentPackagesUsableDir(a, io, loaded.root_dir, &outcome.lock, outcome.profile) catch false) and
         // metadata-only な mutable path 変更で環境 snapshot が陳腐化した
         // 場合も不一致とする（環境記録の digest と現行 dir を照合）。
-        (project.environmentMutablePathsUsable(a, io, loaded.root, env.?, &outcome.lock) catch false);
+        (project.environmentMutablePathsUsableDir(a, io, loaded.root_dir, env.?, &outcome.lock) catch false);
     if (!env_ok) {
         if (env == null) {
             return fail(stderr, "{s}: .nako 環境がありません（--no-sync のため自動準備しません。`lnako sync` を実行してください）\n", .{verb});

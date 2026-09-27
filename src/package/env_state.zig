@@ -15,6 +15,7 @@ const lock_model = @import("lock_model.zig");
 const manifest_mod = @import("manifest.zig");
 const marker_mod = @import("marker.zig");
 const project = @import("project.zig");
+const provider = @import("provider.zig");
 const sync_mod = @import("sync.zig");
 
 const Allocator = std.mem.Allocator;
@@ -125,9 +126,23 @@ pub const EnvironmentInfo = struct {
 /// `.nako/environment.json` を読む。無ければ null。読み取りのみで
 /// `.nako` を作成しない（check/--no-sync の副作用なし契約）。
 pub fn readEnvironmentInfo(gpa: Allocator, io: std.Io, project_root: []const u8) Error!?EnvironmentInfo {
-    const path = try std.fs.path.join(gpa, &.{ project_root, ".nako", "environment.json" });
-    defer gpa.free(path);
-    const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(environment_mod.max_environment_bytes)) catch |err| switch (err) {
+    var dir = std.Io.Dir.cwd().openDir(io, project_root, .{}) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return project.mapFs(err),
+    };
+    defer dir.close(io);
+    return readEnvironmentInfoDir(gpa, io, dir);
+}
+
+/// `readEnvironmentInfo` の pinned `root_dir` handle 版。root の
+/// rename/replace 競合に追従しない。
+pub fn readEnvironmentInfoDir(gpa: Allocator, io: std.Io, root_dir: std.Io.Dir) Error!?EnvironmentInfo {
+    var nako_dir = root_dir.openDir(io, ".nako", .{}) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return project.mapFs(err),
+    };
+    defer nako_dir.close(io);
+    const bytes = nako_dir.readFileAlloc(io, "environment.json", gpa, .limited(environment_mod.max_environment_bytes)) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.FileNotFound => return null,
         error.StreamTooLong => return EnvironmentInfo{},
@@ -170,9 +185,7 @@ pub fn readEnvironmentInfo(gpa: Allocator, io: std.Io, project_root: []const u8)
         }
         info.mutable_paths = list.items;
     }
-    const current_path = try std.fs.path.join(gpa, &.{ project_root, ".nako", "current" });
-    defer gpa.free(current_path);
-    if (std.Io.Dir.cwd().readFileAlloc(io, current_path, gpa, .limited(4096)) catch null) |current| {
+    if (nako_dir.readFileAlloc(io, "current", gpa, .limited(4096)) catch null) |current| {
         defer gpa.free(current);
         const name = std.mem.trim(u8, current, " \t\r\n");
         if (name.len > 0) info.generation = try gpa.dupe(u8, name);
@@ -209,6 +222,27 @@ pub fn environmentMutablePathsUsable(gpa: Allocator, io: std.Io, project_root: [
     return (try sync_mod.mutablePathsMismatch(gpa, io, project_root, info.mutable_paths)) == null;
 }
 
+/// `environmentMutablePathsUsable` の pinned `root_dir` handle 版。
+/// `Project.root_dir` を持つ呼出し側はこちらを使い、root の
+/// rename/replace 競合で別 dir の内容を検査しない。
+pub fn environmentMutablePathsUsableDir(gpa: Allocator, io: std.Io, root_dir: std.Io.Dir, info: EnvironmentInfo, lock: *const lock_model.Lock) Error!bool {
+    for (lock.input.mutable_paths) |mutable| {
+        var recorded = false;
+        for (info.mutable_paths) |item| {
+            if (std.mem.eql(u8, item.path, mutable.path)) recorded = true;
+        }
+        if (!recorded) return false;
+    }
+    for (info.mutable_paths) |item| {
+        var declared = false;
+        for (lock.input.mutable_paths) |mutable| {
+            if (std.mem.eql(u8, item.path, mutable.path)) declared = true;
+        }
+        if (!declared) return false;
+    }
+    return (try sync_mod.mutablePathsMismatchDir(gpa, io, root_dir, info.mutable_paths)) == null;
+}
+
 /// `.nako/env/<generation>` dir が実在するか。`environment.json` だけ残って
 /// 参照世代が消えた状態を stale として扱うための検査。世代名に path 成分が
 /// 混じった細工した `current` は拒否する。
@@ -224,6 +258,17 @@ pub fn generationExists(io: std.Io, project_root: []const u8, generation: []cons
     // symlink/reparse point へ差し替えられていると、管理外の dir を
     // 現行世代として受理してしまう。
     return managedPathIsDirectory(io, project_root, rel);
+}
+
+/// `generationExists` の pinned `root_dir` handle 版。
+pub fn generationExistsDir(io: std.Io, root_dir: std.Io.Dir, generation: []const u8) bool {
+    if (generation.len == 0 or generation.len > 256) return false;
+    for (generation) |ch| {
+        if (!std.ascii.isAlphanumeric(ch) and ch != '-' and ch != '_') return false;
+    }
+    var buffer: [512]u8 = undefined;
+    const rel = std.fmt.bufPrint(&buffer, ".nako" ++ std.fs.path.sep_str ++ "env" ++ std.fs.path.sep_str ++ "{s}", .{generation}) catch return false;
+    return managedDirPathIsDirectory(io, root_dir, rel);
 }
 
 /// `lnako check` / cnako `--no-sync` のための静的検査結果。
@@ -266,7 +311,7 @@ pub fn inspectForCheck(
         .lnako_version = try project.resolveVersionText(gpa, opts.lnako_version),
     };
 
-    var existing = project.loadExistingLock(gpa, io, project_.root, diagnostics) catch |err| switch (err) {
+    var existing = loadExistingLockDir(gpa, io, project_.root_dir, diagnostics) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
             info.lock_state = .invalid;
@@ -280,23 +325,23 @@ pub fn inspectForCheck(
         info.freshness = lock_mod.checkFreshness(&existing.?, input);
         // `mutable = false` の pin hash 不一致も stale とする。
         if (info.freshness == .fresh and
-            (try sync_mod.pathPinMismatch(gpa, io, project_.root, &existing.?)) != null)
+            (try sync_mod.pathPinMismatchDir(gpa, io, project_.root_dir, &existing.?)) != null)
         {
             info.freshness = .stale_manifest;
         }
         // `mutable = true` path 依存の内容 digest 変更も stale とする
         // （manifest が同じでも宣言 dir の中身で lock が陳腐化する）。
         if (info.freshness == .fresh and
-            (try sync_mod.mutablePathMismatch(gpa, io, project_.root, &existing.?)) != null)
+            (try sync_mod.mutablePathMismatchDir(gpa, io, project_.root_dir, &existing.?)) != null)
         {
             info.freshness = .stale_manifest;
         }
         info.lock_state = if (info.freshness == .fresh) .fresh else .stale;
     }
 
-    info.environment = try readEnvironmentInfo(gpa, io, project_.root);
+    info.environment = try readEnvironmentInfoDir(gpa, io, project_.root_dir);
     var digest: [32]u8 = undefined;
-    const has_lock = try project.lockDigest(gpa, io, project_.root, &digest);
+    const has_lock = try lockDigestDir(gpa, io, project_.root_dir, &digest);
     // ensureEnvironment と同じ整合条件で判定する（lock digest・schema・
     // 選択 profile・runtime・参照世代 dir の実在）。runtime は要求
     // runtime（未指定は lnako）との一致を要求する。
@@ -309,13 +354,13 @@ pub fn inspectForCheck(
         (info.environment.?.profile != null and std.mem.eql(u8, info.environment.?.profile.?, profile)) and
         (info.environment.?.runtime != null and std.mem.eql(u8, info.environment.?.runtime.?, expected_runtime)) and
         // 参照世代 dir が消えた環境は不一致とする。
-        (info.environment.?.generation != null and generationExists(io, project_.root, info.environment.?.generation.?)) and
+        (info.environment.?.generation != null and generationExistsDir(io, project_.root_dir, info.environment.?.generation.?)) and
         // packages 記録・実体の欠落も不一致とする。
-        (existing == null or try environmentPackagesUsable(gpa, io, project_.root, &existing.?, profile)) and
+        (existing == null or try environmentPackagesUsableDir(gpa, io, project_.root_dir, &existing.?, profile)) and
         // 環境記録の mutablePaths digest が現行 dir と一致する
         // （metadata-only 変更でも exports/commands snapshot が陳腐化
         // するため）。
-        (existing == null or try environmentMutablePathsUsable(gpa, io, project_.root, info.environment.?, &existing.?));
+        (existing == null or try environmentMutablePathsUsableDir(gpa, io, project_.root_dir, info.environment.?, &existing.?));
     return info;
 }
 
@@ -330,12 +375,29 @@ pub fn inspectForCheck(
 /// 宣言形）をそのまま記録するため、格納値が lock の `source.path` と一致
 /// することと dir の実在だけを要求する。
 pub fn environmentPackagesUsable(gpa: Allocator, io: std.Io, project_root: []const u8, lock: *const lock_model.Lock, profile: []const u8) Error!bool {
+    var dir = std.Io.Dir.cwd().openDir(io, project_root, .{}) catch return false;
+    defer dir.close(io);
+    const root_abs = std.fs.path.resolve(gpa, &.{project_root}) catch return error.FileSystem;
+    defer gpa.free(root_abs);
+    return environmentPackagesUsableImpl(gpa, io, dir, root_abs, lock, profile);
+}
+
+/// `environmentPackagesUsable` の pinned `root_dir` handle 版。`.nako`
+/// 以下の file 読取・管理 path の走査を全て handle 相対で行い、root の
+/// rename/replace 競合に追従しない。
+pub fn environmentPackagesUsableDir(gpa: Allocator, io: std.Io, root_dir: std.Io.Dir, lock: *const lock_model.Lock, profile: []const u8) Error!bool {
+    const root_abs = root_dir.realPathFileAlloc(io, ".", gpa) catch return error.FileSystem;
+    defer gpa.free(root_abs);
+    return environmentPackagesUsableImpl(gpa, io, root_dir, root_abs, lock, profile);
+}
+
+fn environmentPackagesUsableImpl(gpa: Allocator, io: std.Io, root_dir: std.Io.Dir, root_abs: []const u8, lock: *const lock_model.Lock, profile: []const u8) Error!bool {
     // `.nako` 自体が symlink/reparse point の場合 environment.json が
     // 管理外から供給されるため先に拒否する（record 検査の前）。
-    if (!managedPathIsDirectory(io, project_root, ".nako")) return false;
-    const path = try std.fs.path.join(gpa, &.{ project_root, ".nako", "environment.json" });
-    defer gpa.free(path);
-    const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(environment_mod.max_environment_bytes)) catch |err| switch (err) {
+    if (!managedDirPathIsDirectory(io, root_dir, ".nako")) return false;
+    var nako_dir = root_dir.openDir(io, ".nako", .{ .follow_symlinks = false }) catch return false;
+    defer nako_dir.close(io);
+    const bytes = nako_dir.readFileAlloc(io, "environment.json", gpa, .limited(environment_mod.max_environment_bytes)) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => return false,
     };
@@ -349,20 +411,16 @@ pub fn environmentPackagesUsable(gpa: Allocator, io: std.Io, project_root: []con
     // `environment.json` には generation は記録されない。同期が公開する
     // `.nako/current` を唯一の現行世代情報として使い、symlink の current
     // や実体のない世代は受理しない。
-    const current_path = std.fs.path.join(gpa, &.{ project_root, ".nako", "current" }) catch return error.OutOfMemory;
-    defer gpa.free(current_path);
-    const current_stat = std.Io.Dir.cwd().statFile(io, current_path, .{ .follow_symlinks = false }) catch return false;
+    const current_stat = nako_dir.statFile(io, "current", .{ .follow_symlinks = false }) catch return false;
     if (current_stat.kind != .file) return false;
-    const current_bytes = std.Io.Dir.cwd().readFileAlloc(io, current_path, gpa, .limited(4096)) catch return false;
+    const current_bytes = nako_dir.readFileAlloc(io, "current", gpa, .limited(4096)) catch return false;
     defer gpa.free(current_bytes);
     const generation = std.mem.trim(u8, current_bytes, " \t\r\n");
-    if (!generationExists(io, project_root, generation)) return false;
+    if (!generationExistsDir(io, root_dir, generation)) return false;
     const managed_deps = std.fs.path.join(gpa, &.{ ".nako", "env", generation, "deps" }) catch return error.OutOfMemory;
     defer gpa.free(managed_deps);
     const records = packages_value.object;
 
-    const root_abs = std.fs.path.resolve(gpa, &.{project_root}) catch return error.FileSystem;
-    defer gpa.free(root_abs);
     const entries = lock.packagesForProfile(profile) orelse lock.packages;
     if (records.count() != entries.len) return false;
     for (entries) |entry| {
@@ -386,11 +444,13 @@ pub fn environmentPackagesUsable(gpa: Allocator, io: std.Io, project_root: []con
             // あり、一致しない任意 path だけを拒否する。
             const declared = entry.source.?.path orelse return false;
             if (!std.mem.eql(u8, recorded_path, declared)) return false;
-            const abs = std.fs.path.resolve(gpa, &.{ root_abs, recorded_path }) catch return error.FileSystem;
-            defer gpa.free(abs);
             // 宣言 path 自身が symlink の正当構成もあるためここでは
-            // 追従して実在だけを見る（信任境界は lock の宣言値）。
-            const stat = std.Io.Dir.cwd().statFile(io, abs, .{}) catch return false;
+            // 追従して実在だけを見る（信任境界は lock の宣言値）。絶対
+            // path 宣言は root の外なので path 解決する。
+            const stat = if (provider.isAbsoluteDepPath(recorded_path))
+                std.Io.Dir.cwd().statFile(io, recorded_path, .{}) catch return false
+            else
+                root_dir.statFile(io, recorded_path, .{}) catch return false;
             if (stat.kind != .directory) return false;
             continue;
         }
@@ -420,7 +480,7 @@ pub fn environmentPackagesUsable(gpa: Allocator, io: std.Io, project_root: []con
         // で辿る。中間 dir が symlink/reparse point へ差し替えられて
         // いると、lexical な prefix 一致だけでは project 外を指す
         // 展開物を環境として受理してしまう。
-        if (!managedPathIsDirectory(io, root_abs, abs[root_abs.len + 1 ..])) return false;
+        if (!managedDirPathIsDirectory(io, root_dir, abs[root_abs.len + 1 ..])) return false;
     }
     return true;
 }
@@ -587,6 +647,36 @@ fn managedPathIsDirectory(io: std.Io, root_abs: []const u8, rel: []const u8) boo
     return true;
 }
 
+/// `managedPathIsDirectory` の pinned `root_dir` handle 版。各成分を
+/// no-follow で辿り、root の rename/replace に追従しない。`.`/`..`
+/// 成分は root の外を指し得るため拒否する。
+fn managedDirPathIsDirectory(io: std.Io, root_dir: std.Io.Dir, rel: []const u8) bool {
+    var dir = root_dir.openDir(io, ".", .{ .follow_symlinks = false }) catch return false;
+    var it = std.mem.tokenizeAny(u8, rel, "/\\");
+    while (it.next()) |component| {
+        if (std.mem.eql(u8, component, ".") or std.mem.eql(u8, component, "..")) {
+            dir.close(io);
+            return false;
+        }
+        const next = dir.openDir(io, component, .{ .follow_symlinks = false }) catch {
+            dir.close(io);
+            return false;
+        };
+        dir.close(io);
+        dir = next;
+        const stat = dir.stat(io) catch {
+            dir.close(io);
+            return false;
+        };
+        if (stat.kind != .directory) {
+            dir.close(io);
+            return false;
+        }
+    }
+    dir.close(io);
+    return true;
+}
+
 /// 環境の `lockSha256` が現行 `nako.lock` と一致するか。
 pub fn environmentMatchesLock(info: EnvironmentInfo, lock_digest: *const [32]u8) bool {
     const recorded = info.lock_sha256 orelse return false;
@@ -631,8 +721,8 @@ pub fn ensureEnvironment(
     outcome.profile = try gpa.dupe(u8, lock_outcome.profile);
 
     var digest: [32]u8 = undefined;
-    const has_lock = try project.lockDigest(gpa, io, project_.root, &digest);
-    const env = try readEnvironmentInfo(gpa, io, project_.root);
+    const has_lock = try lockDigestDir(gpa, io, project_.root_dir, &digest);
+    const env = try readEnvironmentInfoDir(gpa, io, project_.root_dir);
     const expected_runtime = opts.requested_runtime orelse "lnako";
     const env_ok = has_lock and env != null and
         environmentMatchesLock(env.?, &digest) and
@@ -642,13 +732,13 @@ pub fn ensureEnvironment(
         (env.?.profile != null and std.mem.eql(u8, env.?.profile.?, lock_outcome.profile)) and
         (env.?.runtime != null and std.mem.eql(u8, env.?.runtime.?, expected_runtime)) and
         // 参照世代 dir が消えた環境は不一致として sync し直す。
-        (env.?.generation != null and generationExists(io, project_.root, env.?.generation.?)) and
+        (env.?.generation != null and generationExistsDir(io, project_.root_dir, env.?.generation.?)) and
         // packages 記録の欠落・実体の欠如も不一致（内容検証）。
-        try environmentPackagesUsable(gpa, io, project_.root, &lock_outcome.lock, lock_outcome.profile) and
+        try environmentPackagesUsableDir(gpa, io, project_.root_dir, &lock_outcome.lock, lock_outcome.profile) and
         // metadata-only な mutable path 変更（exports/commands のみ変更、
         // lock バイト列は同一）は環境の snapshot が陳腐化するため、環境
         // 記録の digest と現行 dir を照合する。
-        try environmentMutablePathsUsable(gpa, io, project_.root, env.?, &lock_outcome.lock);
+        try environmentMutablePathsUsableDir(gpa, io, project_.root_dir, env.?, &lock_outcome.lock);
     if (env_ok) {
         outcome.environment_root = try std.fs.path.join(gpa, &.{ project_.root, ".nako" });
         outcome.generation = env.?.generation;
@@ -658,6 +748,11 @@ pub fn ensureEnvironment(
 
     var report = try sync_mod.run(gpa, io, .{
         .project_root = project_.root,
+        // `Project` が所有する pinned root handle を渡し、lock・manifest・
+        // `.nako`・相対 path 依存の解決を handle 相対に固定する。path
+        // 文字列だけ渡すと root の rename/replace 競合で別 dir を読み
+        // 書きし得る。
+        .project_dir = project_.root_dir,
         .profile = lock_outcome.profile,
         .runtime = .lnako,
         .cache_root = opts.cache_root,
@@ -683,12 +778,32 @@ fn readLockBytes(gpa: Allocator, io: std.Io, project_root: []const u8) Error!?[]
     };
 }
 
+/// `readLockBytes` の pinned `root_dir` handle 版。
+fn readLockBytesDir(gpa: Allocator, io: std.Io, root_dir: std.Io.Dir) Error!?[]const u8 {
+    return root_dir.readFileAlloc(io, project.lock_name, gpa, .limited(64 * 1024 * 1024)) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.FileNotFound => return null,
+        else => return project.mapFs(err),
+    };
+}
+
 /// 既存 lock を parse+validate する。無ければ null。破損は診断付きで
 /// `InvalidLock`。
 pub fn loadExistingLock(gpa: Allocator, io: std.Io, project_root: []const u8, diagnostics: *diag.List) Error!?lock_model.Lock {
     const bytes = (try readLockBytes(gpa, io, project_root)) orelse return null;
     // parse は全値を lock 所有 arena へ複製するため生バイトは即解放できる。
     defer gpa.free(bytes);
+    return try parseExistingLock(gpa, bytes, diagnostics);
+}
+
+/// `loadExistingLock` の pinned `root_dir` handle 版。
+pub fn loadExistingLockDir(gpa: Allocator, io: std.Io, root_dir: std.Io.Dir, diagnostics: *diag.List) Error!?lock_model.Lock {
+    const bytes = (try readLockBytesDir(gpa, io, root_dir)) orelse return null;
+    defer gpa.free(bytes);
+    return try parseExistingLock(gpa, bytes, diagnostics);
+}
+
+fn parseExistingLock(gpa: Allocator, bytes: []const u8, diagnostics: *diag.List) Error!lock_model.Lock {
     const errors_before = diagnostics.errorCount();
     var parsed = lock_mod.parse(gpa, bytes, diagnostics) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -754,7 +869,7 @@ pub fn verifyLocked(
     const a = arena_impl.allocator();
     const input = try lockInputFor(a, project_, opts, diagnostics);
 
-    var existing = try loadExistingLock(a, io, project_.root, diagnostics);
+    var existing = try loadExistingLockDir(a, io, project_.root_dir, diagnostics);
     defer if (existing) |*lock| lock.deinit();
     const freshness = lock_mod.checkFreshness(if (existing) |*l| l else null, input);
     if (freshness != .fresh) {
@@ -780,14 +895,14 @@ pub fn verifyLocked(
     // `mutable = false` の pin hash も検証する（内容変更は --locked で
     // 再記録できないため失敗とする）。
     if (existing) |*l| {
-        if (try sync_mod.pathPinMismatch(a, io, project_.root, l)) |name| {
+        if (try sync_mod.pathPinMismatchDir(a, io, project_.root_dir, l)) |name| {
             try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, project.lock_name, .{}, "content of pinned path dependency \"{s}\" changed and --locked forbids re-locking", .{name});
             return error.LockedNotSatisfied;
         }
         // mutable path 依存の内容 digest も照合する。manifest が同じでも
         // 宣言 dir の中身が変われば再解決が必要で、--locked はそれを
         // 認めない。
-        if (try sync_mod.mutablePathMismatch(a, io, project_.root, l)) |path| {
+        if (try sync_mod.mutablePathMismatchDir(a, io, project_.root_dir, l)) |path| {
             try diagnostics.addFmt(diag.E016_UNLOCKED_MUTABLE_PATH, .err, "nako.toml", .{}, "content of mutable path dependency \"{s}\" requires re-resolution but --locked forbids it", .{path});
             return error.LockedNotSatisfied;
         }
@@ -815,7 +930,7 @@ pub fn loadFreshLock(
     const a = arena_impl.allocator();
 
     const input = try lockInputFor(a, project_, opts, diagnostics);
-    var existing = try loadExistingLock(a, io, project_.root, diagnostics);
+    var existing = try loadExistingLockDir(a, io, project_.root_dir, diagnostics);
     if (existing == null) {
         try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, project.lock_name, .{}, "nako.lock is missing; run `lnako lock` first", .{});
         return error.LockNotFound;
@@ -825,11 +940,11 @@ pub fn loadFreshLock(
         try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, project.lock_name, .{}, "nako.lock is stale; run `lnako lock` to update it", .{});
         return error.StaleLock;
     }
-    if (try sync_mod.pathPinMismatch(a, io, project_.root, &existing.?)) |name| {
+    if (try sync_mod.pathPinMismatchDir(a, io, project_.root_dir, &existing.?)) |name| {
         try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, project.lock_name, .{}, "content of pinned path dependency \"{s}\" does not match nako.lock; run `lnako lock`", .{name});
         return error.StaleLock;
     }
-    if (try sync_mod.mutablePathMismatch(a, io, project_.root, &existing.?)) |path| {
+    if (try sync_mod.mutablePathMismatchDir(a, io, project_.root_dir, &existing.?)) |path| {
         try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, project.lock_name, .{}, "content of mutable path dependency \"{s}\" does not match nako.lock; run `lnako lock`", .{path});
         return error.StaleLock;
     }
@@ -847,6 +962,14 @@ pub fn loadFreshLock(
 /// `nako.lock` ファイル本体の SHA-256（正規化済み 32byte digest）。
 pub fn lockDigest(gpa: Allocator, io: std.Io, project_root: []const u8, out: *[32]u8) Error!bool {
     const bytes = (try readLockBytes(gpa, io, project_root)) orelse return false;
+    defer gpa.free(bytes);
+    std.crypto.hash.sha2.Sha256.hash(bytes, out, .{});
+    return true;
+}
+
+/// `lockDigest` の pinned `root_dir` handle 版。
+pub fn lockDigestDir(gpa: Allocator, io: std.Io, root_dir: std.Io.Dir, out: *[32]u8) Error!bool {
+    const bytes = (try readLockBytesDir(gpa, io, root_dir)) orelse return false;
     defer gpa.free(bytes);
     std.crypto.hash.sha2.Sha256.hash(bytes, out, .{});
     return true;

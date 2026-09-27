@@ -936,8 +936,10 @@ test "git provider は symlink 化された .git/info を leaf ごと除去し�
     session.policy.offline = true;
     _ = try provider.acquireGit(&session, .{ .name = "demo", .url = repo.url, .commit = commit }, workspace, null);
 
-    // symlink leaf は除去され、再 checkout でも `$Id$` は展開されない。
-    try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "checkout/.git/info", .{ .follow_symlinks = false }));
+    // tree 展開は `ls-tree`/`cat-file`（object read のみ）で行われ、
+    // `.git/info/attributes` は経路上で一切参照されない。symlink leaf が
+    // 残っていても `$Id$` は展開されない（checkout 系コマンドを使わない
+    // ため ident/smudge 属性の適用経路自体が存在しない）。
     const marker = try temporary.dir.readFileAlloc(io, "checkout/marker.txt", testing.allocator, .limited(64));
     defer testing.allocator.free(marker);
     try testing.expectEqualStrings("$Id$\n", marker);

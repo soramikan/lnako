@@ -75,18 +75,24 @@ pub const EditLock = env_state.EditLock;
 pub const acquireEditLock = env_state.acquireEditLock;
 pub const EnvironmentInfo = env_state.EnvironmentInfo;
 pub const readEnvironmentInfo = env_state.readEnvironmentInfo;
+pub const readEnvironmentInfoDir = env_state.readEnvironmentInfoDir;
 pub const generationExists = env_state.generationExists;
+pub const generationExistsDir = env_state.generationExistsDir;
 pub const CheckInfo = env_state.CheckInfo;
 pub const inspectForCheck = env_state.inspectForCheck;
 pub const environmentPackagesUsable = env_state.environmentPackagesUsable;
+pub const environmentPackagesUsableDir = env_state.environmentPackagesUsableDir;
 pub const environmentMutablePathsUsable = env_state.environmentMutablePathsUsable;
+pub const environmentMutablePathsUsableDir = env_state.environmentMutablePathsUsableDir;
 pub const environmentMatchesLock = env_state.environmentMatchesLock;
 pub const PrepOutcome = env_state.PrepOutcome;
 pub const ensureEnvironment = env_state.ensureEnvironment;
 pub const loadExistingLock = env_state.loadExistingLock;
+pub const loadExistingLockDir = env_state.loadExistingLockDir;
 pub const verifyLocked = env_state.verifyLocked;
 pub const loadFreshLock = env_state.loadFreshLock;
 pub const lockDigest = env_state.lockDigest;
+pub const lockDigestDir = env_state.lockDigestDir;
 
 // プロジェクト検出・読込（dir handle pin 済み）は `project_load.zig` に
 // 分離する。呼出し側は従来どおり `project.X` で参照できる。
@@ -1327,13 +1333,13 @@ pub fn ensureLock(
         .lnako_version = try resolveVersionText(a, opts.lnako_version),
     };
 
-    var existing = try loadExistingLock(a, io, project.root, diagnostics);
+    var existing = try env_state.loadExistingLockDir(a, io, project.root_dir, diagnostics);
     defer if (existing) |*l| l.deinit();
     var freshness = lock_mod.checkFreshness(if (existing) |*l| l else null, input);
     // `mutable = false` の path 依存は内容 hash で pin する。fresh であっても
     // pin 不一致なら lock を作り直す。
     if (freshness == .fresh) {
-        if (try sync_mod.pathPinMismatch(a, io, project.root, &existing.?) != null) {
+        if (try sync_mod.pathPinMismatchDir(a, io, project.root_dir, &existing.?) != null) {
             freshness = .stale_manifest;
         }
     }
@@ -1342,7 +1348,7 @@ pub fn ensureLock(
     // 内容が変わっていれば（manifest・exports・推移的宣言・ソースのいずれ
     // でも）再解決し、同一なら既存 lock を再利用する。
     if (freshness == .fresh) {
-        if (try sync_mod.mutablePathMismatch(a, io, project.root, &existing.?) != null) {
+        if (try sync_mod.mutablePathMismatchDir(a, io, project.root_dir, &existing.?) != null) {
             freshness = .stale_manifest;
         }
     }

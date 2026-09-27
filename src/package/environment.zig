@@ -399,6 +399,22 @@ pub const Store = struct {
         return .{ .gpa = gpa, .io = io, .root = root, .root_dir = root_dir };
     }
 
+    /// pinned `project_dir` handle 相対で `.nako` を開く。
+    /// `open` との差異は `.nako` の作成・解決を全て handle 相対で行う点で、
+    /// project root の rename/replace 競合に追従しない。`project_abs` は
+    /// 診断表示・record 用の絶対 path（handle の実体 path）を受け取る。
+    pub fn openDir(gpa: Allocator, io: std.Io, project_dir: std.Io.Dir, project_abs: []const u8) !Store {
+        const root = try std.fs.path.join(gpa, &.{ project_abs, dir_name });
+        errdefer gpa.free(root);
+        var root_dir = try openManagedChildDir(project_dir, io, dir_name, false);
+        errdefer root_dir.close(io);
+        var env = try openManagedChildDir(root_dir, io, env_dir, false);
+        env.close(io);
+        var staging = try openManagedChildDir(root_dir, io, staging_dir, false);
+        staging.close(io);
+        return .{ .gpa = gpa, .io = io, .root = root, .root_dir = root_dir };
+    }
+
     pub fn deinit(self: *Store) void {
         self.root_dir.close(self.io);
         self.gpa.free(self.root);

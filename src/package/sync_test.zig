@@ -66,26 +66,30 @@ fn fixtureLock(allocator: std.mem.Allocator, manifest_sha: []const u8, mutable_s
     , .{ manifest_sha, mutable_sha });
 }
 
-fn writeFixtureProject(temporary: *std.testing.TmpDir, manifest_sha: []const u8) !void {
+/// `dir`（project root の handle）相対で path 依存 fixture を書く。
+/// mutable path 依存の内容 digest は opened dir handle から計算するため
+/// path 文字列の再解決を挟まない。
+fn writeFixtureProjectDir(dir: std.Io.Dir, manifest_sha: []const u8) !void {
     const io = testing.io;
-    try temporary.dir.createDirPath(io, "deps/lib/src");
-    try temporary.dir.writeFile(io, .{ .sub_path = "nako.toml", .data = app_manifest });
-    try temporary.dir.writeFile(io, .{ .sub_path = "deps/lib/nako.toml", .data = lib_manifest });
-    try temporary.dir.writeFile(io, .{
+    try dir.createDirPath(io, "deps/lib/src");
+    try dir.writeFile(io, .{ .sub_path = "nako.toml", .data = app_manifest });
+    try dir.writeFile(io, .{ .sub_path = "deps/lib/nako.toml", .data = lib_manifest });
+    try dir.writeFile(io, .{
         .sub_path = "deps/lib/src/index.nako3",
         .data = "●テストとは\n  戻る\nここまで\n",
     });
-    // mutable path 依存の内容 digest を実 dir から計算して lock へ記録する。
-    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
-    defer testing.allocator.free(root);
-    const lib_abs = try std.fs.path.join(testing.allocator, &.{ root, "deps/lib" });
-    defer testing.allocator.free(lib_abs);
-    const digest = try path_digest.digest(io, testing.allocator, lib_abs);
+    var lib_dir = try dir.openDir(io, "deps/lib", .{ .iterate = true, .follow_symlinks = true });
+    defer lib_dir.close(io);
+    const digest = try path_digest.digestDir(io, testing.allocator, lib_dir);
     const mutable_sha = try std.fmt.allocPrint(testing.allocator, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
     defer testing.allocator.free(mutable_sha);
     const lock = try fixtureLock(testing.allocator, manifest_sha, mutable_sha);
     defer testing.allocator.free(lock);
-    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
+    try dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
+}
+
+fn writeFixtureProject(temporary: *std.testing.TmpDir, manifest_sha: []const u8) !void {
+    try writeFixtureProjectDir(temporary.dir, manifest_sha);
 }
 
 /// deps/lib の現在内容から mutable path 用 lock を書く共通補助。
@@ -267,6 +271,51 @@ test "sync は path 依存を参照して schema v1 の環境を構築する" {
     const written = try temporary.dir.readFileAlloc(io, ".nako/environment.json", testing.allocator, .unlimited);
     defer testing.allocator.free(written);
     try testing.expectEqualStrings(report.environment_json, written);
+}
+
+test "sync は pinned project_dir handle 相対で入力を解決し root rename に追従しない" {
+    // `Options.project_dir` が渡された場合、lock・manifest・`.nako`・
+    // 相対 path 依存の宣言 dir は全て handle 相対で解決する。handle を
+    // 開いた後に root を rename しても同じ directory を読み書きする
+    // ことを確認する（path 文字列の再解決では別 dir・消失 dir へ書き
+    // 得る）。
+    const allocator = testing.allocator;
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const manifest_sha = try sha256Hex(allocator, app_manifest);
+    defer allocator.free(manifest_sha);
+
+    try temporary.dir.createDirPath(io, "proj");
+    var project_dir = try temporary.dir.openDir(io, "proj", .{ .iterate = true, .follow_symlinks = false });
+    defer project_dir.close(io);
+    try writeFixtureProjectDir(project_dir, manifest_sha);
+
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    const cache_root = try std.fs.path.join(allocator, &.{ root, "cache" });
+    defer allocator.free(cache_root);
+    const stale_root = try std.fs.path.join(allocator, &.{ root, "proj" });
+    defer allocator.free(stale_root);
+
+    // pinned handle を開いた後に root を rename する。
+    try std.Io.Dir.rename(temporary.dir, "proj", temporary.dir, "proj2", io);
+
+    var list = diag.List.init(allocator);
+    defer list.deinit();
+    var report = try sync.run(allocator, io, .{
+        .project_root = stale_root,
+        .project_dir = project_dir,
+        .cache_root = cache_root,
+    }, &list);
+    defer report.deinit();
+    try testing.expectEqual(@as(usize, 1), report.package_count);
+    // 環境は rename 後の dir（pinned handle 配下）に公開され、
+    // 古い path 側へは何も書かれない。
+    const written = try temporary.dir.readFileAlloc(io, "proj2/.nako/environment.json", allocator, .unlimited);
+    defer allocator.free(written);
+    try testing.expectEqualStrings(report.environment_json, written);
+    try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "proj", .{}));
 }
 
 test "sync は実在しない export target を環境へ公開せず拒否する" {

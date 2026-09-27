@@ -263,6 +263,63 @@ pub fn mutablePathsMismatch(gpa: std.mem.Allocator, io: std.Io, project_root: []
     return null;
 }
 
+/// `root_dir`（pinned handle）相対で `rel` を開き digest する。
+/// 宣言 root が directory symlink の場合も `digest` と同じく root のみ
+/// follow する。絶対 path 宣言は project root の外なので path 解決する。
+fn digestDeclaredDir(io: std.Io, gpa: std.mem.Allocator, root_dir: std.Io.Dir, rel: []const u8) ![32]u8 {
+    if (provider.isAbsoluteDepPath(rel)) return digest(io, gpa, rel);
+    var dir = try root_dir.openDir(io, rel, .{ .iterate = true, .follow_symlinks = true });
+    defer dir.close(io);
+    return digestDir(io, gpa, dir);
+}
+
+/// `mutablePathsMismatch` の pinned `root_dir` handle 版。rename/replace
+/// 競合時も検査対象は pinned root 配下に留まる。
+pub fn mutablePathsMismatchDir(gpa: std.mem.Allocator, io: std.Io, root_dir: std.Io.Dir, recorded: []const lock_model.MutablePath) !?[]const u8 {
+    for (recorded) |mutable| {
+        const actual_digest = digestDeclaredDir(io, gpa, root_dir, mutable.path) catch return mutable.path;
+        const actual = try std.fmt.allocPrint(gpa, "sha256:{s}", .{std.fmt.bytesToHex(actual_digest, .lower)});
+        if (!std.mem.eql(u8, actual, mutable.sha256)) return mutable.path;
+    }
+    return null;
+}
+
+/// `mutablePathMismatch` の pinned `root_dir` handle 版。
+pub fn mutablePathMismatchDir(gpa: std.mem.Allocator, io: std.Io, root_dir: std.Io.Dir, lock: *const lock_model.Lock) !?[]const u8 {
+    var sets: std.ArrayList([]const lock_model.PackageEntry) = .empty;
+    defer sets.deinit(gpa);
+    try sets.append(gpa, lock.packages);
+    for (lock.profile_packages) |profile| try sets.append(gpa, profile.packages);
+    var declared: std.ArrayList([]const u8) = .empty;
+    defer declared.deinit(gpa);
+    for (sets.items) |set| for (set) |*entry| {
+        const source = entry.source orelse continue;
+        if (source.kind != .path or !(source.mutable orelse false)) continue;
+        try declared.append(gpa, source.path orelse return entry.name);
+    };
+    for (lock.input.mutable_paths) |mutable| {
+        var known = false;
+        for (declared.items) |rel| {
+            if (std.mem.eql(u8, mutable.path, rel)) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) return mutable.path;
+    }
+    for (declared.items) |rel| {
+        var recorded = false;
+        for (lock.input.mutable_paths) |mutable| {
+            if (std.mem.eql(u8, mutable.path, rel)) {
+                recorded = true;
+                break;
+            }
+        }
+        if (!recorded) return rel;
+    }
+    return mutablePathsMismatchDir(gpa, io, root_dir, lock.input.mutable_paths);
+}
+
 pub fn pathPinMismatch(gpa: std.mem.Allocator, io: std.Io, project_root: []const u8, lock: *const lock_model.Lock) !?[]const u8 {
     var sets: std.ArrayList([]const lock_model.PackageEntry) = .empty;
     defer sets.deinit(gpa);
@@ -275,6 +332,24 @@ pub fn pathPinMismatch(gpa: std.mem.Allocator, io: std.Io, project_root: []const
         const recorded = pinnedSourceHash(entry) orelse return entry.name;
         const abs = if (provider.isAbsoluteDepPath(rel)) rel else try std.fs.path.join(gpa, &.{ project_root, rel });
         const actual = digest(io, gpa, abs) catch return entry.name;
+        if (!pinHashMatches(actual, recorded)) return entry.name;
+    };
+    return null;
+}
+
+/// `pathPinMismatch` の pinned `root_dir` handle 版。rename/replace 競合時も
+/// 検査対象は pinned root 配下に留まる。
+pub fn pathPinMismatchDir(gpa: std.mem.Allocator, io: std.Io, root_dir: std.Io.Dir, lock: *const lock_model.Lock) !?[]const u8 {
+    var sets: std.ArrayList([]const lock_model.PackageEntry) = .empty;
+    defer sets.deinit(gpa);
+    try sets.append(gpa, lock.packages);
+    for (lock.profile_packages) |profile| try sets.append(gpa, profile.packages);
+    for (sets.items) |set| for (set) |*entry| {
+        const source = entry.source orelse continue;
+        if (source.kind != .path or (source.mutable orelse false)) continue;
+        const rel = source.path orelse return entry.name;
+        const recorded = pinnedSourceHash(entry) orelse return entry.name;
+        const actual = digestDeclaredDir(io, gpa, root_dir, rel) catch return entry.name;
         if (!pinHashMatches(actual, recorded)) return entry.name;
     };
     return null;

@@ -718,13 +718,40 @@ pub fn runAdd(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []c
     try stderr.flush();
 }
 
-fn findDepPosition(manifest: *const manifest_mod.Manifest, name: []const u8, dev: bool) ?struct { kind: []const u8, position: diag.Position } {
+/// `findDepPosition` の結果。`key` は TOML 上の宣言キー（`name` が
+/// alias の場合は解決済みの宣言キー）で、`removeEntry` はこの key で
+/// 該当行・テーブルを特定する。
+const DepFound = struct { kind: []const u8, key: []const u8, position: diag.Position };
+
+/// `name` に対応する依存を探す。まず宣言キーそのものとして検索し、
+/// 見つからなければ `alias` フィールドを走査して宣言キーへ解決する
+/// （`lib = { ..., alias = "req" }` の宣言を `remove req` で除去できる
+/// ようにする）。npm/path 依存は alias を持たない。
+fn findDepPosition(manifest: *const manifest_mod.Manifest, name: []const u8, dev: bool) ?DepFound {
     const group = if (dev) &manifest.dev_dependencies else &manifest.dependencies;
-    if (group.pkg.get(name)) |dep| return .{ .kind = "pkg", .position = dep.position };
-    if (group.npm.get(name)) |dep| return .{ .kind = "npm", .position = dep.position };
-    if (group.path.get(name)) |dep| return .{ .kind = "path", .position = dep.position };
-    if (group.git.get(name)) |dep| return .{ .kind = "git", .position = dep.position };
-    if (group.http.get(name)) |dep| return .{ .kind = "http", .position = dep.position };
+    if (group.pkg.get(name)) |dep| return .{ .kind = "pkg", .key = name, .position = dep.position };
+    if (group.npm.get(name)) |dep| return .{ .kind = "npm", .key = name, .position = dep.position };
+    if (group.path.get(name)) |dep| return .{ .kind = "path", .key = name, .position = dep.position };
+    if (group.git.get(name)) |dep| return .{ .kind = "git", .key = name, .position = dep.position };
+    if (group.http.get(name)) |dep| return .{ .kind = "http", .key = name, .position = dep.position };
+    var pkg_it = group.pkg.iterator();
+    while (pkg_it.next()) |entry| {
+        if (entry.value_ptr.alias) |alias| {
+            if (std.mem.eql(u8, alias, name)) return .{ .kind = "pkg", .key = entry.key_ptr.*, .position = entry.value_ptr.position };
+        }
+    }
+    var git_it = group.git.iterator();
+    while (git_it.next()) |entry| {
+        if (entry.value_ptr.alias) |alias| {
+            if (std.mem.eql(u8, alias, name)) return .{ .kind = "git", .key = entry.key_ptr.*, .position = entry.value_ptr.position };
+        }
+    }
+    var http_it = group.http.iterator();
+    while (http_it.next()) |entry| {
+        if (entry.value_ptr.alias) |alias| {
+            if (std.mem.eql(u8, alias, name)) return .{ .kind = "http", .key = entry.key_ptr.*, .position = entry.value_ptr.position };
+        }
+    }
     return null;
 }
 
@@ -809,7 +836,9 @@ pub fn runRemove(a: Allocator, io: std.Io, args: []const []const u8, start_dir: 
         if (actual_dev) "dev-dependencies" else "dependencies",
         dep.kind,
     });
-    const new_source = (try removeEntry(a, loaded.manifest_bytes, section, name, dep.position)) orelse
+    // `dep.key` は宣言キー（`name` が alias の場合は解決済み）。TOML の
+    // 該当行・テーブルは宣言キーで特定する。
+    const new_source = (try removeEntry(a, loaded.manifest_bytes, section, dep.key, dep.position)) orelse
         return fail(stderr, "remove: nako.toml の編集位置を特定できませんでした（{s}）\n", .{name});
     var outcome = try writeAndLock(a, io, &loaded, new_source, &flags, environ_map, "remove", stderr);
     defer outcome.deinit();
@@ -1359,6 +1388,52 @@ test "remove -- は以降を位置引数として扱う" {
     try runRemove(a, io, &.{ "--", "-local" }, root, null, &err.writer);
     const manifest = try temporary.dir.readFileAlloc(io, "app/nako.toml", a, .limited(4096));
     try std.testing.expect(std.mem.indexOf(u8, manifest, "-local") == null);
+}
+
+test "findDepPosition は依存 alias を宣言キーへ解決する" {
+    // `lib = { ..., alias = "req" }` の宣言を `remove req` で除去
+    // できるよう、宣言キーに無い名前は alias を走査して宣言キーへ
+    // 解決する。
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var diagnostics = diag.List.init(a);
+    defer diagnostics.deinit();
+    var manifest = try manifest_mod.parse(a,
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\one = { version = "^1", alias = "shared" }
+        \\
+        \\[dependencies.git]
+        \\lib = { url = "https://example.com/lib.git", commit = "0123456789abcdef0123456789abcdef01234567", alias = "req" }
+        \\
+        \\[dependencies.http]
+        \\blob = { url = "https://example.com/b.tar", hash = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", alias = "data" }
+        \\
+    , &diagnostics);
+    defer manifest.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics.errorCount());
+
+    // 宣言キーで見つかる従来契約は維持する。
+    const by_key = findDepPosition(&manifest, "one", false).?;
+    try std.testing.expectEqualStrings("one", by_key.key);
+    try std.testing.expectEqualStrings("pkg", by_key.kind);
+    // alias は宣言キー・kind・宣言位置へ解決する。
+    const by_alias = findDepPosition(&manifest, "shared", false).?;
+    try std.testing.expectEqualStrings("one", by_alias.key);
+    try std.testing.expectEqualStrings("pkg", by_alias.kind);
+    const git_alias = findDepPosition(&manifest, "req", false).?;
+    try std.testing.expectEqualStrings("lib", git_alias.key);
+    try std.testing.expectEqualStrings("git", git_alias.kind);
+    const http_alias = findDepPosition(&manifest, "data", false).?;
+    try std.testing.expectEqualStrings("blob", http_alias.key);
+    try std.testing.expectEqualStrings("http", http_alias.kind);
+    // 宣言キー・alias のどちらにも無い名前は従来どおり null。
+    try std.testing.expect(findDepPosition(&manifest, "missing", false) == null);
 }
 
 test "insertEntry は inline table 形式の依存表の内側へ追記する" {
