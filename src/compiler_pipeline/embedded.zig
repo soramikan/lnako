@@ -62,6 +62,8 @@ test "compat-js package import resolverを生成payloadと起動時compileへ引
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/math");
+    const root_manifest = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nlicense = \"MIT\"\n\n[dependencies.pkg]\nmath = { version = \"1.0.0\", public-id = \"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" }\n";
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.toml", .data = root_manifest });
     try temporary.dir.writeFile(io, .{ .sub_path = "main.nako3", .data = "!「.nako/env/gen-test/deps/math/index.nako3」を取り込む\n!「パッケージ:math」を取り込む\nmath__値を表示。\n" });
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/math/index.nako3", .data = "値=5\n" });
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/math/nako.toml", .data =
@@ -74,7 +76,11 @@ test "compat-js package import resolverを生成payloadと起動時compileへ引
         \\path = "index.nako3"
         \\
     });
-    const lock_bytes = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\"},\"packages\":{\"pkg:math-id\":{\"id\":\"pkg:math-id\",\"name\":\"math\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/math\"},\"dependencies\":[]}}}";
+    var manifest_digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(root_manifest, &manifest_digest, .{});
+    const manifest_hex = std.fmt.bytesToHex(manifest_digest, .lower);
+    const lock_bytes = try std.fmt.allocPrint(allocator, "{{\"schemaVersion\":1,\"input\":{{\"manifestSha256\":\"sha256:{s}\",\"profile\":\"default\"}},\"packages\":{{\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\":{{\"id\":\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"name\":\"math\",\"version\":\"1.0.0\",\"source\":{{\"type\":\"registry\",\"url\":\"https://example.invalid/math\"}},\"dependencies\":[]}}}}}}", .{manifest_hex});
+    defer allocator.free(lock_bytes);
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock_bytes });
     try temporary.dir.writeFile(io, .{ .sub_path = "compiler.bin", .data = "EXE" });
 
@@ -92,11 +98,13 @@ test "compat-js package import resolverを生成payloadと起動時compileへ引
     const lock_hex = std.fmt.bytesToHex(digest, .lower);
     const environment = try std.fmt.allocPrint(
         allocator,
-        "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"dependencies\":[{{\"alias\":\"math\",\"package\":\"pkg:math-id\"}}],\"packages\":{{\"pkg:math-id\":{{\"name\":\"math\",\"version\":\"1.0.0\",\"path\":\".nako/env/gen-test/deps/math\",\"exports\":[{{\"name\":\"main\",\"path\":\"index.nako3\"}}],\"dependencies\":[]}}}}}}",
+        "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"dependencies\":[{{\"alias\":\"math\",\"package\":\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}],\"packages\":{{\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\":{{\"name\":\"math\",\"version\":\"1.0.0\",\"path\":\".nako/env/gen-test/deps/math\",\"exports\":[{{\"name\":\"main\",\"path\":\"index.nako3\"}}],\"dependencies\":[]}}}}}}",
         .{lock_hex},
     );
     defer allocator.free(environment);
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = environment });
+    var checked_environment = try lnako.package.import_resolver.Resolver.load(allocator, io, root);
+    defer checked_environment.deinit();
 
     try writeCompatExecutable(allocator, io, executable_path, input_path, output_path, .{});
     var package = (try lnako.compat.embedded.readExecutable(allocator, io, output_path)).?;

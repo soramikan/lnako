@@ -7,6 +7,7 @@ const manifest_mod = @import("manifest.zig");
 const native_store = @import("native_store.zig");
 const diag = @import("diagnostics.zig");
 const semver = @import("semver.zig");
+const project_discovery = @import("project_discovery.zig");
 
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
@@ -30,29 +31,9 @@ fn temporaryDirRealPathAlloc(allocator: Allocator, io: std.Io, base: std.Io.Dir,
     return try allocator.dupe(u8, buffer[0..length]);
 }
 
-/// Find the nearest project environment containing the input source. Relative and
-/// absolute input paths are canonicalized from cwd before searching parent dirs.
+/// Find the environment matching the nearest trusted project manifest.
 pub fn findProjectRoot(allocator: Allocator, io: std.Io, input_path: []const u8) !?[]u8 {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const temporary = arena.allocator();
-    // resolve() canonicalizes components but does not anchor a relative path at
-    // cwd. realPathFileAlloc both makes it absolute and follows directory links.
-    const absolute_input = try std.Io.Dir.cwd().realPathFileAlloc(io, input_path, temporary);
-    var current = std.fs.path.dirname(absolute_input) orelse absolute_input;
-    while (true) {
-        const environment_path = try std.fs.path.join(temporary, &.{ current, ".nako", "environment.json" });
-        if (std.Io.Dir.cwd().access(io, environment_path, .{})) |_| {
-            return try allocator.dupe(u8, current);
-        } else |err| switch (err) {
-            error.FileNotFound => {},
-            else => return err,
-        }
-        const parent = std.fs.path.dirname(current) orelse break;
-        if (std.mem.eql(u8, parent, current)) break;
-        current = parent;
-    }
-    return null;
+    return project_discovery.findProjectRoot(allocator, io, input_path);
 }
 
 pub const Error = error{
@@ -673,7 +654,9 @@ fn findManifestDependencyTarget(
     public_id: ?[]const u8,
 ) !?[]const u8 {
     var matches: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer matches.deinit(allocator);
     var roots: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer roots.deinit(allocator);
     var iterator = locked_packages.iterator();
     while (iterator.next()) |entry| {
         const lock_entry = asObject(entry.value_ptr.*) orelse return error.InvalidEnvironment;
@@ -685,6 +668,7 @@ fn findManifestDependencyTarget(
             try roots.append(allocator, entry.key_ptr.*);
         }
     }
+    if (allowed_ids != null and matches.items.len != 0 and roots.items.len == 0) return error.InvalidEnvironment;
     const candidates = if (allowed_ids != null) roots.items else if (roots.items.len != 0) roots.items else if (matches.items.len == 1) matches.items else &.{};
     if (candidates.len == 0) return null;
     if (candidates.len != 1) return error.InvalidEnvironment;
@@ -1029,7 +1013,7 @@ fn get(object: std.json.ObjectMap, key: []const u8) ?Value {
     return object.get(key);
 }
 
-test "package dependency照合は選択profileのlock edge外を候補にしない" {
+test "manifest dependency lock edge不整合はenvironment validationで拒否する" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -1051,7 +1035,7 @@ test "package dependency照合は選択profileのlock edge外を候補にしな�
         .profile = "windows",
     };
 
-    const target = try findManifestDependencyTarget(
+    try std.testing.expectError(error.InvalidEnvironment, findManifestDependencyTarget(
         allocator,
         locked_packages,
         allowed_edges,
@@ -1059,8 +1043,7 @@ test "package dependency照合は選択profileのlock edge外を候補にしな�
         dependency.name,
         .{ .pkg = dependency },
         null,
-    );
-    try std.testing.expectEqual(@as(?[]const u8, null), target);
+    ));
 }
 
 test "package importは公開export名とaliasだけを選択しpath traversalを拒否する" {

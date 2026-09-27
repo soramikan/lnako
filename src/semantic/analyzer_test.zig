@@ -520,6 +520,35 @@ test "package aliasは関数parameterの同名qualified localより優先され�
     try std.testing.expect(found_local_parameter);
 }
 
+test "package aliasは同一targetへの別aliasの先行展開で早期可視化されない" {
+    const parser = @import("../frontend/parser.zig");
+    var package = try parser.parse(std.testing.allocator, "値=1\n", "package.nako3");
+    defer package.deinit();
+    var main = try parser.parse(std.testing.allocator, "first__値を表示\nmath__値を表示\n", "main.nako3");
+    defer main.deinit();
+    const aliases = [_]analyzer.NamespaceAlias{
+        .{ .source_namespace = "first", .internal_namespace = "package", .target_module = 0, .import_position = 0, .is_explicit = true },
+        .{ .source_namespace = "math", .internal_namespace = "package", .target_module = 0, .import_position = 100, .is_explicit = true },
+    };
+    const package_ranks = [_]usize{0};
+    const main_ranks = [_]usize{ 1, 1 };
+    var program = try analyzeModules(std.testing.allocator, &.{
+        .{ .name = "package", .path = "package.nako3", .root = package.root.?, .stmt_ranks = &package_ranks, .marker_rank = 0 },
+        .{ .name = "main", .path = "main.nako3", .root = main.root.?, .namespace_aliases = &aliases, .stmt_ranks = &main_ranks, .marker_rank = 1 },
+    });
+    defer program.deinit();
+
+    var first_alias_resolved = false;
+    var second_alias_resolved = false;
+    for (program.bindings) |binding| {
+        if (binding.kind != .reference or binding.symbol == null) continue;
+        if (std.mem.eql(u8, binding.name, "first__値")) first_alias_resolved = program.symbols[binding.symbol.?].module_index == 0;
+        if (std.mem.eql(u8, binding.name, "math__値")) second_alias_resolved = program.symbols[binding.symbol.?].module_index == 0;
+    }
+    try std.testing.expect(first_alias_resolved);
+    try std.testing.expect(!second_alias_resolved);
+}
+
 test "package aliasはimportより前のpackage globalを可視にしない" {
     const parser = @import("../frontend/parser.zig");
     var package = try parser.parse(std.testing.allocator, "値=1\n", "package.nako3");

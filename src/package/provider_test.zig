@@ -1369,6 +1369,51 @@ fn writeSyncProject(temporary: *std.testing.TmpDir, comptime lock_fmt: []const u
     return try temporary.dir.realPathFileAlloc(io, "proj", testing.allocator);
 }
 
+test "sync rejects root manifest semantic diagnostics before publishing the environment" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const project_abs = try writeSyncProject(&temporary,
+        \\{{
+        \\  "schemaVersion": 1, "resolverVersion": 1,
+        \\  "input": {{ "manifestSha256": "sha256:{s}", "profile": "default", "features": [], "target": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu" }} }},
+        \\  "packages": {{}},
+        \\  "profiles": {{ "default": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu", "runtime": "lnako" }} }}
+        \\}}
+    , .{});
+    defer testing.allocator.free(project_abs);
+
+    const invalid_manifest = sync_app_manifest ++ "\\n[unexpected]\\nvalue = true\\n";
+    const new_hash = try fetch.sha256Hex(testing.allocator, invalid_manifest);
+    defer testing.allocator.free(new_hash);
+    const manifest_path = try std.fs.path.join(testing.allocator, &.{ project_abs, "nako.toml" });
+    defer testing.allocator.free(manifest_path);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = manifest_path, .data = invalid_manifest });
+    const lock_path = try std.fs.path.join(testing.allocator, &.{ project_abs, "nako.lock" });
+    defer testing.allocator.free(lock_path);
+    const old_lock = try std.Io.Dir.cwd().readFileAlloc(io, lock_path, testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(old_lock);
+    const old_hash = try fetch.sha256Hex(testing.allocator, sync_app_manifest);
+    defer testing.allocator.free(old_hash);
+    const old_binding = try std.fmt.allocPrint(testing.allocator, "sha256:{s}", .{old_hash});
+    defer testing.allocator.free(old_binding);
+    const new_binding = try std.fmt.allocPrint(testing.allocator, "sha256:{s}", .{new_hash});
+    defer testing.allocator.free(new_binding);
+    const new_lock = try std.mem.replaceOwned(u8, testing.allocator, old_lock, old_binding, new_binding);
+    defer testing.allocator.free(new_lock);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = lock_path, .data = new_lock });
+
+    const cache_root = try std.fs.path.join(testing.allocator, &.{ project_abs, "cache" });
+    defer testing.allocator.free(cache_root);
+    var list = diag.List.init(testing.allocator);
+    defer list.deinit();
+    try testing.expectError(error.LockInvalid, sync_mod.run(testing.allocator, io, .{ .project_root = project_abs, .cache_root = cache_root }, &list));
+    try testing.expect(list.hasErrors());
+    const environment_path = try std.fs.path.join(testing.allocator, &.{ project_abs, ".nako", "environment.json" });
+    defer testing.allocator.free(environment_path);
+    try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(io, environment_path, .{}));
+}
+
 test "sync rejects a path manifest identity mismatch before publishing the environment" {
     const io = testing.io;
     var temporary = std.testing.tmpDir(.{});
@@ -1537,6 +1582,7 @@ test "sync は lock の implementation で選択した artifact を取得する"
     const source_tgz = try buildTarGz(testing.allocator, &.{
         .{ .path = "nako.toml", .content = native_manifest },
         .{ .path = "src/index.nako3", .content = "SOURCE-DECOY" },
+        .{ .path = "lib/demo.so", .content = "NATIVE-SOURCE-ARTIFACT" },
     });
     defer testing.allocator.free(source_tgz);
     const impostor_manifest = try std.mem.replaceOwned(u8, testing.allocator, native_manifest, "name = \"demo\"", "name = \"impostor\"");
@@ -1679,6 +1725,28 @@ test "sync は lock の implementation で選択した artifact を取得する"
 
     var loaded = try import_resolver.Resolver.load(testing.allocator, io, project_abs);
     defer loaded.deinit();
+
+    // A legacy lock without implementation may still resolve a native-only
+    // export. Its package root must be stable just like an explicit native lock.
+    const legacy_lock = try std.mem.replaceOwned(u8, testing.allocator, original_lock, "\"implementation\": \"native\",", "");
+    defer testing.allocator.free(legacy_lock);
+    try testing.expect(!std.mem.eql(u8, legacy_lock, original_lock));
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = lock_path, .data = legacy_lock });
+    list.deinit();
+    list = diag.List.init(testing.allocator);
+    var legacy_report = try sync_mod.run(testing.allocator, io, .{ .project_root = project_abs, .cache_root = cache_root }, &list);
+    defer legacy_report.deinit();
+    try testing.expectEqual(@as(usize, 3), server.requests.load(.acquire));
+    const legacy_parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, legacy_report.environment_json, .{});
+    defer legacy_parsed.deinit();
+    const legacy_pkg = legacy_parsed.value.object.get("packages").?.object.get("pkg:44444444444444444444444444444444").?.object;
+    const legacy_path = legacy_pkg.get("path").?.string;
+    try testing.expect(std.mem.startsWith(u8, legacy_path, ".nako/native/artifact-"));
+    const legacy_binary_path = try std.fs.path.join(testing.allocator, &.{ project_abs, legacy_path, "lib", "demo.so" });
+    defer testing.allocator.free(legacy_binary_path);
+    const legacy_binary = try std.Io.Dir.cwd().readFileAlloc(io, legacy_binary_path, testing.allocator, .unlimited);
+    defer testing.allocator.free(legacy_binary);
+    try testing.expectEqualStrings("NATIVE-SOURCE-ARTIFACT", legacy_binary);
 }
 
 test "sync は検証済み git object があれば checkout 無しで offline 同期する" {

@@ -1,5 +1,6 @@
 const std = @import("std");
 const Resolver = @import("import_resolver.zig").Resolver;
+const resolver = @import("import_resolver.zig");
 
 test "environment entryのexports省略は空exportとして検証する" {
     const allocator = std.testing.allocator;
@@ -23,8 +24,8 @@ test "environment entryのexports省略は空exportとして検証する" {
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = environment });
     const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(root);
-    var resolver = try Resolver.load(allocator, io, root);
-    resolver.deinit();
+    var loaded = try Resolver.load(allocator, io, root);
+    loaded.deinit();
 }
 
 test "同名packageのmaterialized path差し替えを拒否する" {
@@ -55,8 +56,8 @@ test "同名packageのmaterialized path差し替えを拒否する" {
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = environment });
     const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(root);
-    var resolver = try Resolver.load(allocator, io, root);
-    resolver.deinit();
+    var loaded = try Resolver.load(allocator, io, root);
+    loaded.deinit();
     const swapped = try std.mem.replaceOwned(u8, allocator, environment, "\"path\":\".nako/env/gen-test/deps/math\"", "\"path\":\".nako/env/gen-test/deps/math-2\"");
     defer allocator.free(swapped);
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = swapped });
@@ -81,12 +82,11 @@ test "exportsを持つpackageのmissing materialized rootを拒否しno-export s
     const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(root);
     try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, root));
-
     const without_exports = try std.mem.replaceOwned(u8, allocator, with_exports, ",\"exports\":[{\"name\":\"main\",\"path\":\"index.nako3\"}]", "");
     defer allocator.free(without_exports);
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = without_exports });
-    var resolver = try Resolver.load(allocator, io, root);
-    resolver.deinit();
+    var loaded = try Resolver.load(allocator, io, root);
+    loaded.deinit();
 }
 
 test "schema-v2のroot edge省略はenvironment dependencyを拒否する" {
@@ -111,4 +111,43 @@ test "schema-v2のroot edge省略はenvironment dependencyを拒否する" {
     const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(root);
     try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, root));
+}
+
+test "project environment lookup does not cross the nearest manifest boundary" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "parent/.nako");
+    try temporary.dir.createDirPath(io, "parent/victim/src");
+    try temporary.dir.writeFile(io, .{ .sub_path = "parent/.nako/environment.json", .data = "{}" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "parent/victim/nako.toml", .data = "[package]\nname = \"victim\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "parent/victim/src/main.nako3", .data = "" });
+    const input = try temporary.dir.realPathFileAlloc(io, "parent/victim/src/main.nako3", allocator);
+    defer allocator.free(input);
+    try std.testing.expect((try resolver.findProjectRoot(allocator, io, input)) == null);
+
+    try temporary.dir.createDirPath(io, "parent/victim/.nako");
+    try temporary.dir.writeFile(io, .{ .sub_path = "parent/victim/.nako/environment.json", .data = "{}" });
+    const found_root = (try resolver.findProjectRoot(allocator, io, input)) orelse return error.ProjectRootNotFound;
+    defer allocator.free(found_root);
+    const expected_root = try temporary.dir.realPathFileAlloc(io, "parent/victim", allocator);
+    defer allocator.free(expected_root);
+    try std.testing.expectEqualStrings(expected_root, found_root);
+}
+
+test "project environment lookup rejects a .nako symlink outside the manifest root" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "parent/.nako");
+    try temporary.dir.createDirPath(io, "parent/victim");
+    try temporary.dir.writeFile(io, .{ .sub_path = "parent/.nako/environment.json", .data = "{}" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "parent/victim/nako.toml", .data = "[package]\nname = \"victim\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "parent/victim/main.nako3", .data = "" });
+    temporary.dir.symLink(io, "../.nako", "parent/victim/.nako", .{ .is_directory = true }) catch return error.SkipZigTest;
+    const input = try temporary.dir.realPathFileAlloc(io, "parent/victim/main.nako3", allocator);
+    defer allocator.free(input);
+    try std.testing.expect((try resolver.findProjectRoot(allocator, io, input)) == null);
 }

@@ -230,6 +230,51 @@ test "package importは共通compile経路からAOT用IR module metadataへ到�
     }
 }
 
+test "AOT compile gates a shared-target package alias on its own import position" {
+    const TestProvider = struct {
+        fn read(_: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+            if (pathHasSuffix(path, "main.nako3")) return allocator.dupe(u8, "!「./math.nako3」を取り込む\nmath_alt__値=30\n!「pkg:math」を取り込む\nmath__値を表示\nmath_alt__値を表示\n!「pkg:math-alt」を取り込む\nmath_alt__値を表示\n");
+            if (pathHasSuffix(path, "math.nako3")) return allocator.dupe(u8, "値=10\n");
+            if (pathHasSuffix(path, "packages/math/index.nako3")) return allocator.dupe(u8, "値=20\n");
+            return error.FileNotFound;
+        }
+    };
+    const TestResolver = struct {
+        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+            const namespace = if (std.mem.eql(u8, specifier, "pkg:math"))
+                "math"
+            else if (std.mem.eql(u8, specifier, "pkg:math-alt"))
+                "math_alt"
+            else
+                return error.PackageNotFound;
+            return .{
+                .path = try std.fs.path.resolve(allocator, &.{"packages/math/index.nako3"}),
+                .canonical_id = try allocator.dupe(u8, "pkg:math/main"),
+                .namespace = namespace,
+            };
+        }
+    };
+    var context: u8 = 0;
+    var stderr: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer stderr.deinit();
+    const maybe_program = try compileInputWithProvider(
+        std.testing.allocator,
+        "main.nako3",
+        .{ .package_resolver = .{ .context = &context, .resolveFn = TestResolver.resolve } },
+        &stderr.writer,
+        .{ .context = &context, .readFn = TestProvider.read },
+    );
+    var program = maybe_program orelse return error.CompileFailed;
+    defer program.deinit();
+
+    try std.testing.expectEqual(@as(usize, 3), program.module_names.len);
+    var pre_import_local_load = false;
+    for (program.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
+        if (instruction.opcode == .load_global and std.mem.eql(u8, instruction.name, "math_alt__値")) pre_import_local_load = true;
+    };
+    try std.testing.expect(pre_import_local_load);
+}
+
 test "AOT compile permits unresolved qualified names outside package dependency scope" {
     const TestProvider = struct {
         fn read(_: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {

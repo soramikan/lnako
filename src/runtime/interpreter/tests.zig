@@ -2546,11 +2546,16 @@ const TestLocalMathPackageResolver = struct {
     }
 
     fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !module_graph.ResolvedPackageImport {
-        if (!std.mem.eql(u8, specifier, "pkg:math-package")) return error.PackageNotFound;
+        const namespace = if (std.mem.eql(u8, specifier, "pkg:math-package"))
+            "math"
+        else if (std.mem.eql(u8, specifier, "pkg:math-package-alt"))
+            "math_alt"
+        else
+            return error.PackageNotFound;
         return .{
             .path = try std.fs.path.resolve(allocator, &.{"packages/package-math/index.nako3"}),
             .canonical_id = try allocator.dupe(u8, "pkg:math-package/main"),
-            .namespace = "math",
+            .namespace = namespace,
         };
     }
 };
@@ -2713,6 +2718,22 @@ test "package aliasは同名ローカルmoduleと衝突しない" {
     const reversed_output = try runModulesForTestWithPackageResolver(std.testing.allocator, &reversed_files, resolver.packageResolver());
     defer std.testing.allocator.free(reversed_output);
     try std.testing.expectEqualStrings("20\n", reversed_output);
+}
+
+test "package aliasは同一targetの後発importより前に使えない" {
+    // pkg:math-packageとpkg:math-package-altは同一canonical exportへ解決するため、
+    // 実効辺のガードによりpackage moduleは最後の取り込み文位置で一度だけ展開される。
+    // 1回目のmath__値はpackage展開前なのでlocal moduleの値が見え、
+    // 1回目のmath_alt__値は自身のimportより前なのでaliasは適用されない。
+    var resolver = TestLocalMathPackageResolver{};
+    const files = [_]ModuleTestFile{
+        .{ .suffix = "main.nako3", .source = "!「./math.nako3」を取り込む\nmath_alt__値=30\n!「pkg:math-package」を取り込む\nmath__値を表示。\nmath_alt__値を表示。\n!「pkg:math-package-alt」を取り込む\nmath_alt__値を表示。\n" },
+        .{ .suffix = "math.nako3", .source = "値=10\n" },
+        .{ .suffix = "packages/package-math/index.nako3", .source = "値=20\n" },
+    };
+    const output = try runModulesForTestWithPackageResolver(std.testing.allocator, &files, resolver.packageResolver());
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("10\n30\n20\n", output);
 }
 
 test "同じbasenameのローカルmoduleは実行時global namespaceを共有しない" {

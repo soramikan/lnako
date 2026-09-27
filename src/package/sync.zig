@@ -194,7 +194,8 @@ pub fn run(
     defer if (root_manifest) |*manifest| manifest.deinit();
     if (std.Io.Dir.cwd().readFileAlloc(io, manifest_path, arena, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
-        else => null,
+        error.FileNotFound, error.NotDir => null,
+        else => return mapFs(err),
     }) |manifest_bytes| {
         var actual: [32]u8 = undefined;
         std.crypto.hash.sha2.Sha256.hash(manifest_bytes, &actual, .{});
@@ -209,6 +210,7 @@ pub fn run(
             error.OutOfMemory => return error.OutOfMemory,
             else => return error.LockInvalid,
         };
+        if (diagnostics.errorCount() > 0) return error.LockInvalid;
     }
 
     const profile = options.profile orelse lock.input.profile;
@@ -885,15 +887,14 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
     // exports・commands は manifest がある場合だけ記録する。
     // `.npkg` を verify した経路では検証済み model をそのまま使う。
     var exports = std.ArrayListUnmanaged(environment.ExportRecord).empty;
+    var has_native_export = false;
     if (manifest) |*m| {
-        exports = try resolveExports(ctx, m, entry.implementation);
+        exports = try resolveExports(ctx, m, entry.implementation, &has_native_export);
     }
-    if (entry.implementation) |implementation| {
-        if (std.mem.eql(u8, implementation, "native") and exports.items.len != 0) {
-            if (stable_native_key) |key| {
-                if (tree_abs) |tree| {
-                    env_path = native_store.materialize(ctx.arena, ctx.io, ctx.project_abs, tree, key, std.fs.path.basename(ctx.generation_abs)) catch |err| return mapTreeError(ctx, err, key);
-                }
+    if (has_native_export) {
+        if (stable_native_key) |key| {
+            if (tree_abs) |tree| {
+                env_path = native_store.materialize(ctx.arena, ctx.io, ctx.project_abs, tree, key, std.fs.path.basename(ctx.generation_abs)) catch |err| return mapTreeError(ctx, err, key);
             }
         }
     }
@@ -1192,7 +1193,7 @@ fn materializeIntoGeneration(ctx: *Context, package_name: []const u8, tree_abs: 
 /// 選択し、env.json の `exports` 配列へ変換する。`native` は prefer-native
 /// として resolve へ渡し、ESM は profile が許可する場合のみ含める。`none`
 /// は実装を持たないため空を返す。
-fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, implementation: ?[]const u8) Error!std.ArrayListUnmanaged(environment.ExportRecord) {
+fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, implementation: ?[]const u8, has_native_export: *bool) Error!std.ArrayListUnmanaged(environment.ExportRecord) {
     var exports = std.ArrayListUnmanaged(environment.ExportRecord).empty;
     if (implementation) |impl| {
         if (std.mem.eql(u8, impl, "none")) return exports;
@@ -1218,6 +1219,7 @@ fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, impleme
             if (std.mem.eql(u8, impl, "ESM") and resolution.kind != .esm) continue;
         }
         if (resolution.kind == .esm and !(std.mem.eql(u8, ctx.runtime.name(), "cnako") or ctx.target.compat_js)) continue;
+        if (resolution.kind == .native) has_native_export.* = true;
         try exports.append(ctx.arena, .{
             .name = try ctx.arena.dupe(u8, export_decl.name),
             .alias = if (export_decl.alias) |alias| try ctx.arena.dupe(u8, alias) else null,

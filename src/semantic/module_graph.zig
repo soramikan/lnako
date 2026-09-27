@@ -292,6 +292,7 @@ pub const ModuleGraph = struct {
                     .source_namespace = source_namespace,
                     .internal_namespace = internal_module_names[target],
                     .target_module = loader_to_input[target],
+                    .import_position = item.span.start,
                     .is_explicit = item.canonical_id != null,
                 };
                 var already_added = false;

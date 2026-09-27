@@ -23,6 +23,8 @@ pub const NamespaceAlias = struct {
     source_namespace: []const u8,
     internal_namespace: []const u8,
     target_module: u32,
+    /// Source position of the import that introduces this alias.
+    import_position: usize = 0,
     is_explicit: bool,
 };
 
@@ -884,6 +886,7 @@ pub const Analyzer = struct {
         var selected: ?NamespaceAlias = null;
         for (self.inputs[module_index].namespace_aliases) |alias| {
             if (explicit_only and !alias.is_explicit) continue;
+            if (use_span.start < alias.import_position) continue;
             if (name.len <= alias.source_namespace.len + 2 or
                 !std.mem.startsWith(u8, name, alias.source_namespace) or
                 !std.mem.startsWith(u8, name[alias.source_namespace.len..], "__")) continue;
