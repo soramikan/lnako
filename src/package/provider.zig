@@ -537,6 +537,10 @@ fn gitRunAllowFailure(session: *Session, gpa: Allocator, argv: []const []const u
     if (env_map) |*m| {
         try m.put("GIT_CONFIG_NOSYSTEM", "1");
         try m.put("GIT_CONFIG_GLOBAL", if (builtin.os.tag == .windows) "NUL" else "/dev/null");
+        // cached repo に混入した refs/replace/* は pin 済み commit の実体を
+        // 別 object へ見せ替え得るため、参照・checkout・clean を含む全
+        // コマンドで replace object 解決を無効化する。
+        try m.put("GIT_NO_REPLACE_OBJECTS", "1");
     }
 
     // Cached checkout の .git/config は信頼しない。各コマンドに command

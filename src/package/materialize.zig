@@ -179,7 +179,7 @@ const State = struct {
         }.lessThan);
 
         for (names.items) |name| {
-            const kind = kinds.get(name).?;
+            const kind = try resolveEntryKind(self.io, src_dir.*, name, kinds.get(name).?);
             if (self.excluded(name)) continue;
             // entry 名は単一成分。規範 path として妥当か検査する
             // （`.`・`..`・`\`・制御文字を含む名を拒否）。
@@ -227,6 +227,20 @@ const State = struct {
         }
     }
 };
+
+/// `readdir` が DT_UNKNOWN を返す fs（NFS/FUSE 等）では報告 kind が
+/// `.unknown` になるため、no-follow stat で実体を解決する。
+/// （`path_digest.resolveEntryKind` と同じ判定。symlink は stat でも
+/// `.sym_link` のまま判別され、`SymlinkEncountered` で拒否する。）
+fn resolveEntryKind(io: std.Io, dir: std.Io.Dir, name: []const u8, reported: std.Io.File.Kind) !std.Io.File.Kind {
+    if (reported != .unknown) return reported;
+    const stat = try dir.statFile(io, name, .{ .follow_symlinks = false });
+    return switch (stat.kind) {
+        .file, .directory => stat.kind,
+        .sym_link => error.SymlinkEncountered,
+        else => error.UnsupportedEntry,
+    };
+}
 
 // ---------------------------------------------------------------------------
 // tests
@@ -456,4 +470,22 @@ test "materialize copyTree は exclude_names を任意の深さで除外する" 
     try testing.expectError(error.FileNotFound, temporary.dir.access(io, "dest/.git", .{}));
     try testing.expectError(error.FileNotFound, temporary.dir.access(io, "dest/sub/.git", .{}));
     try temporary.dir.access(io, "dest/sub/keep.txt", .{});
+}
+
+test "resolveEntryKind は unknown 報告を no-follow stat で解決する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(io, .{ .sub_path = "a.txt", .data = "x" });
+    try temporary.dir.createDir(io, "sub", .default_dir);
+
+    try testing.expectEqual(std.Io.File.Kind.file, try resolveEntryKind(io, temporary.dir, "a.txt", .unknown));
+    try testing.expectEqual(std.Io.File.Kind.directory, try resolveEntryKind(io, temporary.dir, "sub", .unknown));
+    // 既知 kind はそのまま（stat しない）。
+    try testing.expectEqual(std.Io.File.Kind.file, try resolveEntryKind(io, temporary.dir, "missing", .file));
+
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
+    temporary.dir.symLink(io, "a.txt", "link.txt", .{}) catch return;
+    // unknown 報告の symlink は stat で .sym_link と判別して拒否する。
+    try testing.expectError(error.SymlinkEncountered, resolveEntryKind(io, temporary.dir, "link.txt", .unknown));
 }

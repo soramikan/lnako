@@ -645,6 +645,51 @@ test "optimize も target 鮮度鍵として stale_target を検出する" {
     try T.expectEqual(lock.Freshness.fresh, lock.checkFreshness(&plain, sampleInput()));
 }
 
+test "osVersion も target 鮮度鍵として stale_target を検出する" {
+    // `min-os` 付き artifact 宣言の照合に使う要求 OS バージョンも実装
+    // 選択を変えるため target の鮮度鍵。別バージョンの入力は stale と
+    // なり、serialize/parse でも保存・復元される。未記録の旧 lock は
+    // null と同等（同じく未指定の入力では fresh のまま）。
+    const nodes = [_]resolver.PackageNode{
+        try node(sqlite_id, "1.2.3", &.{.{ .pkg = req_id }}, &.{"default"}),
+        try node(req_id, "2.0.1", &.{}, &.{ "default", "http" }),
+    };
+    var versioned = sampleInput();
+    versioned.target.os_version = "15";
+    var value = try lock.build(T.allocator, versioned, &.{default_profile}, &nodes, default_fixtures.details());
+    defer value.deinit();
+
+    try T.expectEqual(lock.Freshness.fresh, lock.checkFreshness(&value, versioned));
+
+    var version_changed = versioned;
+    version_changed.target.os_version = "16";
+    try T.expectEqual(lock.Freshness.stale_target, lock.checkFreshness(&value, version_changed));
+
+    // os_version を要求しない入力は記録と不一致 → stale_target。
+    try T.expectEqual(lock.Freshness.stale_target, lock.checkFreshness(&value, sampleInput()));
+
+    // serialize/parse で osVersion が保存・復元される。
+    const bytes = try lock.toBytes(&value, T.allocator);
+    defer T.allocator.free(bytes);
+    try T.expect(std.mem.indexOf(u8, bytes, "\"osVersion\"") != null);
+    var diagnostics = diag.List.init(T.allocator);
+    defer diagnostics.deinit();
+    var parsed = try lock.parse(T.allocator, bytes, &diagnostics);
+    defer parsed.deinit();
+    try T.expectEqualStrings("15", parsed.input.target.os_version.?);
+
+    // os_version を記録しない lock は osVersion を書かず、旧 lock の
+    // 欠落は null と同等に扱われて fresh のまま。
+    var plain = try sampleLock(T.allocator);
+    defer plain.deinit();
+    const plain_bytes = try lock.toBytes(&plain, T.allocator);
+    defer T.allocator.free(plain_bytes);
+    try T.expect(std.mem.indexOf(u8, plain_bytes, "\"osVersion\"") == null);
+    try T.expectEqual(lock.Freshness.fresh, lock.checkFreshness(&plain, sampleInput()));
+    // 逆に旧 lock へ os_version 付き入力を当てると stale → 再解決。
+    try T.expectEqual(lock.Freshness.stale_target, lock.checkFreshness(&plain, versioned));
+}
+
 test "input.target.optimize の既知外の値は拒否する" {
     // schema の enum と同じ既知集合に限定する。未知値を記録した lock を
     // 黙って読むと optimize-gated artifact の選択条件が曖昧になる。

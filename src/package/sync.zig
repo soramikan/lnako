@@ -175,7 +175,7 @@ const Context = struct {
     used_keys: std.ArrayListUnmanaged([]const u8) = .empty,
     used_names: std.StringHashMapUnmanaged(void) = .empty,
 
-    fn objectTree(self: *const Context, key: []const u8) Error!?std.Io.Dir {
+    fn objectTree(self: *const Context, key: []const u8) Error!?cache.Store.VerifiedTree {
         return self.cache_store.openVerifiedTree(self.gpa, key) catch |err| return mapFs(err);
     }
 };
@@ -561,8 +561,8 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
             try buildGitObject(ctx, object_key, &checkout, source.path);
             var tree_handle = try ctx.objectTree(object_key);
             if (tree_handle == null) return error.FileSystem;
-            defer tree_handle.?.close(ctx.io);
-            const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?, .{});
+            defer tree_handle.?.close();
+            const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?.dir, .{});
             tree_dir = materialized.tree_dir;
             env_path = materialized.env_path;
         },
@@ -596,8 +596,8 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
             manifest = manifest orelse try checkedCachedManifest(ctx, object_key, entry);
             var tree_handle = try ctx.objectTree(object_key);
             if (tree_handle == null) return error.FileSystem;
-            defer tree_handle.?.close(ctx.io);
-            const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?, .{});
+            defer tree_handle.?.close();
+            const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?.dir, .{});
             tree_dir = materialized.tree_dir;
             env_path = materialized.env_path;
         },
@@ -633,8 +633,8 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
             manifest = manifest orelse try checkedCachedManifest(ctx, object_key, entry);
             var tree_handle = try ctx.objectTree(object_key);
             if (tree_handle == null) return error.FileSystem;
-            defer tree_handle.?.close(ctx.io);
-            const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?, .{});
+            defer tree_handle.?.close();
+            const materialized = try materializeIntoGeneration(ctx, entry.name, &tree_handle.?.dir, .{});
             tree_dir = materialized.tree_dir;
             env_path = materialized.env_path;
         },
@@ -919,6 +919,9 @@ fn materializeTarget(profile: []const u8, record: ?*const lock_model.ProfileReco
         .optimize = if (std.mem.eql(u8, profile, input.profile))
             input.target.optimize
         else if (record) |r| r.optimize orelse "O0" else "O0",
+        // `min-os` 照合は解決時に lock へ記録した要求 OS バージョンと同一で
+        // 行う（未記録の旧 lock では null = 不明、min-os 付き宣言は不適合）。
+        .os_version = input.target.os_version,
         .nako_version = inputVersion(input.nako_version),
         .cnako_version = inputVersion(input.cnako_version),
         .lnako_version = inputVersion(input.lnako_version),
@@ -1052,7 +1055,7 @@ const CachedManifest = struct {
 fn cachedManifest(ctx: *Context, key: []const u8) Error!?CachedManifest {
     const arena = ctx.arena;
     var tree = (ctx.cache_store.openVerifiedTree(ctx.gpa, key) catch |err| return mapFs(err)) orelse return null;
-    defer tree.close(ctx.io);
+    defer tree.close();
     // 両方ある package では配布向け正規化済みの METADATA.toml が正本。
     const candidates = [_]struct { rel: []const u8, npkg: bool }{
         .{ .rel = "NAKO-PKG/METADATA.toml", .npkg = true },
@@ -1064,7 +1067,7 @@ fn cachedManifest(ctx: *Context, key: []const u8) Error!?CachedManifest {
         // 「manifest が無い」のは FileNotFound のみ。読取不能・dir 化・
         // 上限超過などは「無いもの」として次候補へ流さず、cache entry の
         // 破損として invalid_metadata で失敗させる。
-        const bytes = tree.readFileAlloc(ctx.io, path, arena, limit) catch |err| switch (err) {
+        const bytes = tree.dir.readFileAlloc(ctx.io, path, arena, limit) catch |err| switch (err) {
             error.FileNotFound => continue,
             error.OutOfMemory => return error.OutOfMemory,
             else => return ctx.session.fail(.invalid_metadata, .manifest, path, "cached manifest at \"{s}\" is unreadable: {s}", .{ path, @errorName(err) }),
@@ -1418,7 +1421,7 @@ test "materialize target は lock input の compatJs・optimize・engine version
     var input = lock_model.Input{
         .manifest_sha256 = "sha256:aa",
         .profile = "default",
-        .target = .{ .os = "macos", .cpu = "aarch64", .abi = "gnu", .compat_js = true, .optimize = "O3" },
+        .target = .{ .os = "macos", .cpu = "aarch64", .abi = "gnu", .compat_js = true, .optimize = "O3", .os_version = "15" },
         .nako_version = "3.7.24",
         .cnako_version = "3.7.24",
         .lnako_version = "0.2.2",
@@ -1434,6 +1437,7 @@ test "materialize target は lock input の compatJs・optimize・engine version
     const target = materializeTarget("default", &record, &input, .lnako);
     try testing.expect(target.compat_js);
     try testing.expectEqualStrings("O3", target.optimize);
+    try testing.expectEqualStrings("15", target.os_version.?);
     try testing.expectEqual(@as(u64, 3), target.nako_version.?.major);
     try testing.expectEqual(@as(u64, 7), target.nako_version.?.minor);
     try testing.expectEqual(@as(u64, 24), target.nako_version.?.patch);
@@ -1474,6 +1478,7 @@ test "materialize target は lock input の compatJs・optimize・engine version
     try testing.expect(!legacy_target.compat_js);
     try testing.expectEqualStrings("O0", legacy_target.optimize);
     try testing.expect(legacy_target.nako_version == null);
+    try testing.expect(legacy_target.os_version == null);
 }
 
 test {

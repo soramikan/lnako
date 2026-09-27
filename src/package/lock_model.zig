@@ -43,10 +43,13 @@ pub const Target = struct {
     /// optimize-gated artifact の選択を変え得るため鮮度鍵に含める。
     /// `O0` は省略して記録する（旧 lock は欠落 → O0 と同等）。
     optimize: []const u8 = "O0",
+    /// `min-os` 付き artifact 宣言の照合に使った OS バージョン。選択を
+    /// 変え得るため鮮度鍵に含める。欠落（旧 lock）は null と同等。
+    os_version: ?[]const u8 = null,
 
     pub fn eql(a: Target, b: Target) bool {
         return std.mem.eql(u8, a.os, b.os) and std.mem.eql(u8, a.cpu, b.cpu) and std.mem.eql(u8, a.abi, b.abi) and
-            a.compat_js == b.compat_js and std.mem.eql(u8, a.optimize, b.optimize);
+            a.compat_js == b.compat_js and std.mem.eql(u8, a.optimize, b.optimize) and optEql(a.os_version, b.os_version);
     }
 };
 
@@ -364,6 +367,10 @@ fn writeTarget(writer: *std.Io.Writer, target: Target) !void {
     if (!std.mem.eql(u8, target.optimize, "O0")) {
         try writer.writeAll(", \"optimize\": ");
         try writeString(writer, target.optimize);
+    }
+    if (target.os_version) |os_version| {
+        try writer.writeAll(", \"osVersion\": ");
+        try writeString(writer, os_version);
     }
     try writer.writeAll(" }");
 }

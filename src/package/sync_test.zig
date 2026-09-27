@@ -1,6 +1,8 @@
 const std = @import("std");
 const path_digest = @import("path_digest.zig");
 const diag = @import("diagnostics.zig");
+const env_state = @import("env_state.zig");
+const lock_mod = @import("lock.zig");
 const sync = @import("sync.zig");
 
 const testing = std.testing;
@@ -858,4 +860,11 @@ test "sync は immutable path 依存を世代内へ materialize する" {
     const git_dir = try std.fs.path.join(allocator, &.{ env_path, ".git" });
     defer allocator.free(git_dir);
     try std.testing.expectError(error.FileNotFound, temporary.dir.access(io, git_dir, .{}));
+
+    // 生成した環境は packages 検査を通過する。immutable path 依存の記録
+    // path は宣言 dir ではなく現行世代の管理 dir を指す契約のため、
+    // sync 直後から usable でなければならない。
+    var parsed_lock = try lock_mod.parse(allocator, lock_bytes, &diagnostics);
+    defer parsed_lock.deinit();
+    try std.testing.expect(try env_state.environmentPackagesUsable(allocator, io, root, &parsed_lock, "default"));
 }

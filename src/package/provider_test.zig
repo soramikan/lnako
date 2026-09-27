@@ -846,6 +846,52 @@ test "git provider は cached repository の post-checkout hook を実行しな�
     try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "filter-ran", .{}));
 }
 
+test "git provider は cached checkout の refs/replace を無視して pin commit を取得する" {
+    // cached repo に `refs/replace/<pinned>` を仕込まれても、取得する
+    // manifest・作業木は pin commit の内容のまま。GIT_NO_REPLACE_OBJECTS
+    // で cat-file・checkout・clean を含む全コマンドが replace object
+    // 解決を無視するため。
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = testing.io;
+    if (!gitAvailable(io)) return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const repo = try createGitRepo(&temporary, io);
+    defer testing.allocator.free(repo.path);
+    defer testing.allocator.free(repo.url);
+    defer testing.allocator.free(repo.commit);
+    const checkout = blk: {
+        const tmp_root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+        defer testing.allocator.free(tmp_root);
+        break :blk try std.fs.path.join(testing.allocator, &.{ tmp_root, "checkout" });
+    };
+    defer testing.allocator.free(checkout);
+    var workspace = try openGitWorkspace(&temporary, io, "checkout");
+    defer workspace.close(io);
+    const dep = manifest_mod.GitDependency{ .name = "demo", .url = repo.url, .commit = repo.commit[0..7] };
+
+    var session = newSession(.{});
+    defer session.deinit();
+    const first = try provider.acquireGit(&session, dep, workspace, null);
+
+    // 作業木の manifest を改竄した別 commit を cached checkout 内に作り、
+    // pin 済み commit をそれで replace する。
+    try temporary.dir.writeFile(io, .{ .sub_path = "checkout/nako.toml", .data = "[package]\nname = \"attacker\"\nversion = \"9.9.9\"\nlicense = \"MIT\"\n" });
+    try gitRun(io, &.{ "git", "-C", checkout, "-c", "user.email=test@example.com", "-c", "user.name=test", "-c", "commit.gpgsign=false", "commit", "--quiet", "-am", "attacker" });
+    const attacker = try gitStdout(io, &.{ "git", "-C", checkout, "rev-parse", "HEAD" });
+    defer testing.allocator.free(attacker);
+    try gitRun(io, &.{ "git", "-C", checkout, "replace", repo.commit, attacker });
+
+    session.policy.offline = true;
+    const recovered = try provider.acquireGit(&session, dep, workspace, first.source);
+    try testing.expectEqualStrings(repo.commit, recovered.source.commit.?);
+    try testing.expectEqualStrings("demo", recovered.manifest.?.package.name);
+    const bytes = try temporary.dir.readFileAlloc(io, "checkout/nako.toml", testing.allocator, .limited(4096));
+    defer testing.allocator.free(bytes);
+    try testing.expect(std.mem.indexOf(u8, bytes, "\"attacker\"") == null);
+    try testing.expect(std.mem.indexOf(u8, bytes, "\"demo\"") != null);
+}
+
 test "git provider は symlink 化された .git/info を leaf ごと除去して attributes を無効化する" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const io = testing.io;

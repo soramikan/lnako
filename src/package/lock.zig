@@ -2,6 +2,7 @@ const std = @import("std");
 const resolver = @import("resolver.zig");
 const semver = @import("semver.zig");
 const diag = @import("diagnostics.zig");
+const manifest_mod = @import("manifest.zig");
 const model = @import("lock_model.zig");
 
 const Allocator = std.mem.Allocator;
@@ -436,7 +437,7 @@ fn parseInput(parser: *Parser, value: std.json.Value, path: []const u8) !?Input 
         return null;
     };
     const target_object = (try parser.asObject(target_value, path)) orelse return null;
-    try parser.rejectUnknown(target_object, &.{ "os", "cpu", "abi", "compatJs", "optimize" }, path);
+    try parser.rejectUnknown(target_object, &.{ "os", "cpu", "abi", "compatJs", "optimize", "osVersion" }, path);
     const os_value = target_object.get("os") orelse {
         try parser.report(diag.E019_REQUIRED_FIELD_MISSING, path, "missing required field \"target.os\"", .{});
         return null;
@@ -497,6 +498,11 @@ fn parseInput(parser: *Parser, value: std.json.Value, path: []const u8) !?Input 
                 }
                 break :blk try parser.duplicate(optimize);
             } else "O0",
+            // `min-os` 照合に使った OS バージョン。欠落（旧 lock）は null。
+            .os_version = if (target_object.get("osVersion")) |v|
+                try parser.duplicate((try parser.asString(v, path)) orelse return null)
+            else
+                null,
         },
         .mutable_paths = mutable_paths.items,
     };
@@ -746,6 +752,13 @@ fn validateTarget(target: Target, path: []const u8, diagnostics: *diag.List) !vo
         .{ .name = "cpu", .value = target.cpu, .known = &known_profile_cpu },
         .{ .name = "abi", .value = target.abi, .known = &known_profile_abi },
     }, path, "input.target", diagnostics);
+    if (target.os_version) |os_version| {
+        if (manifest_mod.compareDottedVersion(os_version, os_version) == null) {
+            const os_path = try std.fmt.allocPrint(diagnostics.allocator, "{s}.osVersion", .{path});
+            defer diagnostics.allocator.free(os_path);
+            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, os_path, .{}, "invalid osVersion \"{s}\" (expected dotted numeric version)", .{os_version});
+        }
+    }
 }
 
 fn validateInputEngineVersion(version: ?[]const u8, field: []const u8, diagnostics: *diag.List) !void {
@@ -1395,6 +1408,7 @@ pub fn build(gpa: Allocator, input: Input, profiles: []const NamedProfile, nodes
             .abi = try allocator.dupe(u8, input.target.abi),
             .compat_js = input.target.compat_js,
             .optimize = try allocator.dupe(u8, input.target.optimize),
+            .os_version = try dupeOpt(allocator, input.target.os_version),
         },
         .runtime = try dupeOpt(allocator, input.runtime),
         .nako_version = try dupeOpt(allocator, input.nako_version),

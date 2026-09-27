@@ -259,7 +259,7 @@ pub fn inspectForCheck(
         .manifest_sha256 = project_.manifest_sha256,
         .profile = profile,
         .features = try project.expandedFeatureNames(gpa, &expanded),
-        .target = .{ .os = record.os, .cpu = record.cpu, .abi = record.abi, .compat_js = (record.compat_js orelse false) or opts.compat_js, .optimize = opts.optimize orelse record.optimize orelse "O0" },
+        .target = .{ .os = record.os, .cpu = record.cpu, .abi = record.abi, .compat_js = (record.compat_js orelse false) or opts.compat_js, .optimize = opts.optimize orelse record.optimize orelse "O0", .os_version = opts.os_version },
         .runtime = project.resolveRuntime(record),
         .nako_version = try project.resolveVersionText(gpa, opts.nako_version),
         .cnako_version = try project.resolveVersionText(gpa, opts.cnako_version),
@@ -377,10 +377,13 @@ pub fn environmentPackagesUsable(gpa: Allocator, io: std.Io, project_root: []con
         };
         if (!envRecordMatchesEntry(record, &entry)) return false;
         const recorded_path = record.object.get("path").?.string;
-        if (entry.source != null and entry.source.?.kind == .path) {
-            // path 依存の記録値は lock の `source.path` と一致することが
-            // 正当性の根拠。project 外（`../`・絶対 path）は宣言者の
-            // 正当な選択であり、一致しない任意 path だけを拒否する。
+        if (entry.source != null and entry.source.?.kind == .path and
+            (entry.source.?.mutable orelse false))
+        {
+            // `mutable = true` の path 依存は宣言 dir を生参照する契約の
+            // ため、記録値は lock の `source.path` と一致することが正当性の
+            // 根拠。project 外（`../`・絶対 path）は宣言者の正当な選択で
+            // あり、一致しない任意 path だけを拒否する。
             const declared = entry.source.?.path orelse return false;
             if (!std.mem.eql(u8, recorded_path, declared)) return false;
             const abs = std.fs.path.resolve(gpa, &.{ root_abs, recorded_path }) catch return error.FileSystem;
@@ -391,6 +394,9 @@ pub fn environmentPackagesUsable(gpa: Allocator, io: std.Io, project_root: []con
             if (stat.kind != .directory) return false;
             continue;
         }
+        // `mutable = false` の path 依存は他の package と同じく現行
+        // generation の `deps/` へ materialize されるため、以降の管理
+        // path 検査で受理する（宣言 dir の生参照はしない）。
         // environment.json の path separator は host 形式で書かれる環境と
         // `/` 形式の fixture/移植データの双方を受け、検査前にhost形式へ揃える。
         const host_path = try gpa.dupe(u8, recorded_path);
@@ -725,7 +731,7 @@ fn lockInputFor(a: Allocator, project_: *const project.Project, opts: *const pro
         .manifest_sha256 = project_.manifest_sha256,
         .profile = profile,
         .features = try project.expandedFeatureNames(a, &expanded),
-        .target = .{ .os = record.os, .cpu = record.cpu, .abi = record.abi, .compat_js = (record.compat_js orelse false) or opts.compat_js, .optimize = opts.optimize orelse record.optimize orelse "O0" },
+        .target = .{ .os = record.os, .cpu = record.cpu, .abi = record.abi, .compat_js = (record.compat_js orelse false) or opts.compat_js, .optimize = opts.optimize orelse record.optimize orelse "O0", .os_version = opts.os_version },
         .runtime = project.resolveRuntime(record),
         .nako_version = try project.resolveVersionText(a, opts.nako_version),
         .cnako_version = try project.resolveVersionText(a, opts.cnako_version),

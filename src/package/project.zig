@@ -1435,6 +1435,9 @@ pub fn ensureLock(
             // （resolveTarget と同じ effective 値を記録する）。
             .compat_js = (record.compat_js orelse false) or opts.compat_js,
             .optimize = try a.dupe(u8, opts.optimize orelse record.optimize orelse "O0"),
+            // `min-os` 照合は artifact/export 選択を変えるため、要求 OS
+            // バージョンも鮮度鍵へ記録する（欠落時 null）。
+            .os_version = if (opts.os_version) |v| try a.dupe(u8, v) else null,
         },
         // 解決 runtime・engines 照合 version を鮮度鍵へ含める。
         // `--runtime` 切替・コンパイラ更新で lock を再解決するため。

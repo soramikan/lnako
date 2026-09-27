@@ -393,30 +393,61 @@ pub const Store = struct {
         return bytes;
     }
 
-    /// Open the verified immutable object's tree as an independently owned handle.
-    /// `null` means missing, incomplete, or digest-invalid; no root-derived path is
-    /// constructed, so the returned handle remains pinned across root replacement.
-    pub fn openVerifiedTree(self: *const Store, gpa: Allocator, key: []const u8) !?std.Io.Dir {
+    /// `openVerifiedTree` が返す検証済み tree の private snapshot。
+    /// `dir` で読み、`close` で handle を閉じて staging を除去する。
+    pub const VerifiedTree = struct {
+        dir: std.Io.Dir,
+        parent: std.Io.Dir,
+        name: []u8,
+        io: std.Io,
+        gpa: Allocator,
+
+        pub fn close(self: *VerifiedTree) void {
+            self.dir.close(self.io);
+            environment.deleteTreeChecked(self.parent, self.io, self.name) catch {};
+            self.gpa.free(self.name);
+            self.parent.close(self.io);
+            self.* = undefined;
+        }
+    };
+
+    /// 検証済み object の tree を private staging へ snapshot して返す。
+    /// `null` means missing, incomplete, or digest-invalid。
+    /// marker の digest と objects tree を照合した後、snapshot 側の digest
+    /// も marker と再照合する。照合〜複製の間に objects tree の通常 file
+    /// が差し替えられても snapshot digest は marker と一致せず、改変後の
+    /// bytes は利用側へ届かない（handle 固定だけでは file 内容の
+    /// TOCTOU を防げないため mutable な objects tree は直接返さない）。
+    pub fn openVerifiedTree(self: *const Store, gpa: Allocator, key: []const u8) !?VerifiedTree {
         if (!validKey(key)) return error.InvalidKey;
         var entry = self.openEntryDir(key) catch return null;
         defer entry.close(self.io);
         const expected = entry.readFileAlloc(self.io, complete_marker, gpa, .limited(4096)) catch return null;
         defer gpa.free(expected);
         var tree = entry.openDir(self.io, "tree", .{ .iterate = true, .follow_symlinks = false }) catch return null;
+        defer tree.close(self.io);
         var expected_digest: [32]u8 = undefined;
-        if (!parseMarkerDigest(expected, &expected_digest)) {
-            tree.close(self.io);
-            return null;
-        }
-        const actual_digest = digestTreeFromDir(self.io, gpa, tree, &.{}) catch {
-            tree.close(self.io);
-            return null;
-        };
-        if (!std.mem.eql(u8, &expected_digest, &actual_digest)) {
-            tree.close(self.io);
-            return null;
-        }
-        return tree;
+        if (!parseMarkerDigest(expected, &expected_digest)) return null;
+        const actual_digest = digestTreeFromDir(self.io, gpa, tree, &.{}) catch return null;
+        if (!std.mem.eql(u8, &expected_digest, &actual_digest)) return null;
+
+        var parent = self.openRootChild(staging_dir, false) catch return null;
+        var keep = false;
+        defer if (!keep) parent.close(self.io);
+        var rand: [8]u8 = undefined;
+        std.Io.random(self.io, &rand);
+        const snap_name = try std.fmt.allocPrint(gpa, "verify-{s}", .{std.fmt.bytesToHex(rand, .lower)});
+        defer if (!keep) gpa.free(snap_name);
+        environment.deleteTreeChecked(parent, self.io, snap_name) catch {};
+        parent.createDir(self.io, snap_name, .default_dir) catch return null;
+        defer if (!keep) environment.deleteTreeChecked(parent, self.io, snap_name) catch {};
+        var snap = parent.openDir(self.io, snap_name, .{ .iterate = true, .follow_symlinks = false }) catch return null;
+        defer if (!keep) snap.close(self.io);
+        _ = materialize.copyTreeFromDirs(gpa, self.io, &tree, &snap, .{}) catch return null;
+        const snap_digest = digestTreeFromDir(self.io, gpa, snap, &.{}) catch return null;
+        if (!std.mem.eql(u8, &expected_digest, &snap_digest)) return null;
+        keep = true;
+        return .{ .dir = snap, .parent = parent, .name = snap_name, .io = self.io, .gpa = gpa };
     }
 
     /// Create a fresh root-relative staging directory for `key`, removing any
@@ -877,12 +908,12 @@ test "cache verified tree handle は root replacement 後も pinned entry を読
     stage.close(io);
     try store.publishStaging("object");
     var opened = (try store.openVerifiedTree(testing.allocator, "object")).?;
-    defer opened.close(io);
+    defer opened.close();
 
     const moved = try std.fmt.allocPrint(testing.allocator, "{s}-moved", .{root});
     defer testing.allocator.free(moved);
     try std.Io.Dir.renameAbsolute(root, moved, io);
-    const bytes = try opened.readFileAlloc(io, "payload", testing.allocator, .unlimited);
+    const bytes = try opened.dir.readFileAlloc(io, "payload", testing.allocator, .unlimited);
     defer testing.allocator.free(bytes);
     try testing.expectEqualStrings("pinned", bytes);
 }
@@ -930,16 +961,46 @@ test "cache materialize は root replacement 後も pinned tree を複製する"
     temporary.dir.symLink(io, attacker_root, "cache", .{}) catch return error.SkipZigTest;
 
     var source = (try store.openVerifiedTree(testing.allocator, "victim")).?;
-    defer source.close(io);
+    defer source.close();
     var destination = try temporary.dir.openDir(io, "dest", .{ .iterate = true, .follow_symlinks = false });
     defer destination.close(io);
-    _ = try materialize.copyTreeFromDirs(testing.allocator, io, &source, &destination, .{});
+    _ = try materialize.copyTreeFromDirs(testing.allocator, io, &source.dir, &destination, .{});
     const copied = try temporary.dir.readFileAlloc(io, "dest/payload", testing.allocator, .unlimited);
     defer testing.allocator.free(copied);
     try testing.expectEqualStrings("pinned", copied);
     const attacker_payload = try temporary.dir.readFileAlloc(io, "attacker/objects/victim/tree/payload", testing.allocator, .unlimited);
     defer testing.allocator.free(attacker_payload);
     try testing.expectEqualStrings("attacker", attacker_payload);
+}
+
+test "openVerifiedTree は snapshot を返し objects tree の事後改変を遮断する" {
+    // 検証済み handle が objects tree を直接指すと、照合後〜materialize
+    // 前に file を差し替えられる（TOCTOU）。snapshot 返却なら改変後の
+    // bytes は利用側へ届かず、改変済み entry の再 open も不一致で拒否。
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var store = try openTempStore(&temporary);
+    defer store.deinit();
+    var stage = try store.openStaging("victim");
+    try stage.createDir(io, "tree", .default_dir);
+    var tree = try stage.openDir(io, "tree", .{});
+    try tree.writeFile(io, .{ .sub_path = "payload", .data = "pinned" });
+    tree.close(io);
+    stage.close(io);
+    try store.publishStaging("victim");
+
+    var opened = (try store.openVerifiedTree(testing.allocator, "victim")).?;
+    defer opened.close();
+    // snapshot が private staging へ複製された後に objects tree を改竄
+    // しても、返却済み handle は照合済み bytes を読み続ける。
+    try temporary.dir.writeFile(io, .{ .sub_path = "objects/victim/tree/payload", .data = "evil!!" });
+    const bytes = try opened.dir.readFileAlloc(io, "payload", testing.allocator, .unlimited);
+    defer testing.allocator.free(bytes);
+    try testing.expectEqualStrings("pinned", bytes);
+
+    // 改変済みの objects tree は marker digest と不一致 → null を返す。
+    try testing.expect((try store.openVerifiedTree(testing.allocator, "victim")) == null);
 }
 
 test "cache staging は stale stage を除去し checkout を handle 経由で置換する" {

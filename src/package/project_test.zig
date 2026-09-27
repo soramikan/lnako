@@ -226,6 +226,63 @@ test "path依存のみのプロジェクトでensureLockがnako.lockを生成す
     try project.verifyLocked(testing.allocator, io, &loaded, &.{}, &diagnostics);
 }
 
+test "ensureLockはos_versionをinput.targetへ記録し鮮度鍵に含める" {
+    // `PrepareOptions.os_version` は min-os 照合・artifact 選択を変える
+    // ため lock の input.target に記録する。記録しないと osVersion 付き
+    // で解決した lock が sync 側で null に落ち、min-os 適合済みの実装を
+    // 不適合として直後に失敗する。
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/lib/src");
+    try writeLibPackage(temporary.dir, io, "app/lib", "lib");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/nako.toml",
+        .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\lib = { path = "lib", mutable = true }
+        \\
+        ,
+    });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    defer loaded.deinit();
+
+    var outcome = try project.ensureLock(testing.allocator, io, &loaded, &.{ .os_version = "15" }, &diagnostics);
+    defer outcome.deinit();
+    try testing.expect(outcome.wrote);
+    try testing.expectEqualStrings("15", outcome.lock.input.target.os_version.?);
+    const lock_bytes = try temporary.dir.readFileAlloc(io, "app/nako.lock", testing.allocator, .limited(1 * 1024 * 1024));
+    defer testing.allocator.free(lock_bytes);
+    try testing.expect(std.mem.indexOf(u8, lock_bytes, "\"osVersion\"") != null);
+
+    // 同一 os_version では fresh（書き換えなし）。
+    var second = try project.ensureLock(testing.allocator, io, &loaded, &.{ .os_version = "15" }, &diagnostics);
+    defer second.deinit();
+    try testing.expect(!second.wrote);
+
+    // 別 os_version の入力は stale_target として再解決・書き換える。
+    var third = try project.ensureLock(testing.allocator, io, &loaded, &.{ .os_version = "16" }, &diagnostics);
+    defer third.deinit();
+    try testing.expect(third.wrote);
+    try testing.expectEqualStrings("16", third.lock.input.target.os_version.?);
+
+    // os_version を記録しない呼出しは stale_target として再解決する。
+    var fourth = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
+    defer fourth.deinit();
+    try testing.expect(fourth.wrote);
+    try testing.expect(fourth.lock.input.target.os_version == null);
+}
+
 test "manifest変更で--lockedは失敗する" {
     const io = testing.io;
     var temporary = std.testing.tmpDir(.{});
@@ -1177,9 +1234,9 @@ test "environmentPackagesUsableはpackages記録と実体を検証する" {
         \\license = "MIT"
         \\
         \\[dependencies.path]
-        \\lib = {{ path = "lib" }}
-        \\outside = {{ path = "../shared/outside" }}
-        \\abslib = {{ path = '{s}' }}
+        \\lib = {{ path = "lib", mutable = true }}
+        \\outside = {{ path = "../shared/outside", mutable = true }}
+        \\abslib = {{ path = '{s}', mutable = true }}
         \\
     , .{abslib_path});
     defer testing.allocator.free(manifest_src);
@@ -1336,13 +1393,15 @@ test "環境metadataのprofile/runtime欠落・型違いは不一致とする" {
     var digest: [32]u8 = undefined;
     try testing.expect(try project.lockDigest(testing.allocator, io, app_root, &digest));
     const lock_hex = std.fmt.bytesToHex(digest, .lower);
-    // 世代 dir と packages 記録を整えた環境を用意する。
-    try temporary.dir.createDirPath(io, "app/.nako/env/gen-1");
+    // 世代 dir と packages 記録を整えた環境を用意する。`mutable` 未指定の
+    // path 依存は世代内 `deps/` へ materialize され、記録 path もそちら
+    // を指す（sync が実際に書き込む形式）。
+    try temporary.dir.createDirPath(io, "app/.nako/env/gen-1/deps/lib");
     try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/current", .data = "gen-1\n" });
     const writeEnv = struct {
         fn run(dir: std.Io.Dir, extra_fields: []const u8, lock_hex_: []const u8, lib_id_: []const u8) !void {
             const source = try std.fmt.allocPrint(testing.allocator,
-                \\{{"schemaVersion":1,"lockSha256":"sha256:{s}",{s}"packages":{{"{s}":{{"name":"lib","version":"1.0.0","id":"{s}","path":"lib"}}}}}}
+                \\{{"schemaVersion":1,"lockSha256":"sha256:{s}",{s}"packages":{{"{s}":{{"name":"lib","version":"1.0.0","id":"{s}","path":".nako/env/gen-1/deps/lib"}}}}}}
                 \\
             , .{ lock_hex_, extra_fields, lib_id_, lib_id_ });
             defer testing.allocator.free(source);
