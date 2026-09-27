@@ -88,6 +88,8 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
     defer roots.deinit(allocator);
     var names: std.ArrayList([]const u8) = .empty;
     defer names.deinit(allocator);
+    var internal_names: std.ArrayList([]const u8) = .empty;
+    defer internal_names.deinit(allocator);
     var paths: std.ArrayList([]const u8) = .empty;
     defer paths.deinit(allocator);
     var variant_roots: std.ArrayList(*lnako.frontend.ast.Node) = .empty;
@@ -99,6 +101,7 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
         if (module.kind != .nako3) continue;
         try roots.append(allocator, module.parsed.?.root.?);
         try names.append(allocator, program.modules[semantic_module_index].name);
+        try internal_names.append(allocator, graph.internal_module_names[module.index]);
         semantic_module_index += 1;
         try paths.append(allocator, module.path);
         for (module.variants.items) |variant| try variant_roots.append(allocator, variant.parse.root.?);
@@ -146,6 +149,11 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
     }
     ir_program.javascript_modules = try javascript_modules.toOwnedSlice(ir_program.arena.allocator());
     ir_program.http_server_plugin_imported = http_server_plugin_imported;
+    // シンボル修飾namespace（package moduleでは公開module名と異なる）を
+    // エラー位置・デバッグ情報の逆引き用に実行時名と並列で保持する。
+    const internal_module_names = try ir_program.arena.allocator().alloc([]const u8, internal_names.items.len);
+    for (internal_names.items, 0..) |name, index| internal_module_names[index] = try ir_program.arena.allocator().dupe(u8, name);
+    ir_program.internal_module_names = internal_module_names;
     var native_plugin_paths: std.ArrayList([]const u8) = .empty;
     for (graph.modules) |module| {
         if (module.kind != .native_plugin) continue;
@@ -228,6 +236,57 @@ test "package importは共通compile経路からAOT用IR module metadataへ到�
         try std.testing.expect(std.mem.indexOf(u8, llvm_ir, "target triple") != null);
         try std.testing.expect(std.mem.indexOf(u8, llvm_ir, "define") != null);
     }
+}
+
+test "package関数の内部namespaceはerror/debug位置をpackage source pathへ解決する" {
+    const TestProvider = struct {
+        fn read(_: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+            if (pathHasSuffix(path, "main.nako3")) return allocator.dupe(u8, "!「パッケージ:demo」を取り込む\n");
+            if (pathHasSuffix(path, "packages/demo/index.nako3")) return allocator.dupe(u8, "●報告とは\nデバッグ表示(\"pkg\")\nここまで\n");
+            return error.FileNotFound;
+        }
+    };
+    const TestResolver = struct {
+        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+            if (!std.mem.eql(u8, specifier, "パッケージ:demo")) return error.PackageNotFound;
+            return .{
+                .path = try std.fs.path.resolve(allocator, &.{"packages/demo/index.nako3"}),
+                .canonical_id = try allocator.dupe(u8, "pkg:demo-id/main"),
+                .namespace = "demo",
+            };
+        }
+    };
+
+    var resolver_context: u8 = 0;
+    var stderr: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer stderr.deinit();
+    var program = (try compileInputWithProvider(
+        std.testing.allocator,
+        "main.nako3",
+        .{ .package_resolver = .{ .context = &resolver_context, .resolveFn = TestResolver.resolve } },
+        &stderr.writer,
+        .{ .context = &resolver_context, .readFn = TestProvider.read },
+    )) orelse return error.CompileFailed;
+    defer program.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), program.module_names.len);
+    try std.testing.expectEqual(@as(usize, 2), program.internal_module_names.len);
+    try std.testing.expectEqualStrings("demo", program.module_names[1]);
+    try std.testing.expect(std.mem.startsWith(u8, program.internal_module_names[1], "package__"));
+
+    const package_path = program.module_paths[1];
+    const report_name = try std.fmt.allocPrint(std.testing.allocator, "{s}__報告", .{program.internal_module_names[1]});
+    defer std.testing.allocator.free(report_name);
+    try std.testing.expectEqual(@as(?usize, 1), program.moduleIndexForFunctionName(report_name));
+    try std.testing.expect(pathHasSuffix(package_path, "packages/demo/index.nako3"));
+    // エントリ関数（実行時module名）は引き続き公開名で解決される。
+    try std.testing.expectEqual(@as(?usize, 1), program.moduleIndexForFunctionName("demo__$entry"));
+
+    var generated = try lnako.backend.llvm.module.generate(std.testing.allocator, program, "main.nako3", false);
+    defer generated.deinit(std.testing.allocator);
+    // debug path定数はi8列で出力される。"index.nako3" のbyte列が
+    // package関数のデバッグ表示locationとして含まれることを検証する。
+    try std.testing.expect(std.mem.indexOf(u8, generated.text, "i8 105, i8 110, i8 100, i8 101, i8 120, i8 46, i8 110, i8 97, i8 107, i8 111, i8 51") != null);
 }
 
 test "AOT compile gates a shared-target package alias on its own import position" {

@@ -147,6 +147,10 @@ pub const ModuleGraph = struct {
     entry: u32,
     diagnostics: []diagnostic.Diagnostic,
     expansion: Expansion = .{},
+    /// `analyze` で確定したモジュールごとのシンボル修飾namespace
+    /// （`{namespace}__{name}` の prefix）。`modules` の index と揃える。
+    /// package moduleでは公開実行時名と異なるため、エラー位置逆引き用に保持する。
+    internal_module_names: []const []const u8 = &.{},
 
     pub fn deinit(self: *ModuleGraph) void {
         for (self.modules) |module| {
@@ -170,7 +174,7 @@ pub const ModuleGraph = struct {
         return true;
     }
 
-    pub fn analyze(self: ModuleGraph, allocator: std.mem.Allocator) !analyzer.Program {
+    pub fn analyze(self: *ModuleGraph, allocator: std.mem.Allocator) !analyzer.Program {
         var temporary = std.heap.ArenaAllocator.init(allocator);
         defer temporary.deinit();
         const temp = temporary.allocator();
@@ -357,6 +361,10 @@ pub const ModuleGraph = struct {
                 .import_entries = try import_entries.toOwnedSlice(temp),
             });
         }
+        const graph_allocator = self.arena.allocator();
+        const persisted_names = try graph_allocator.alloc([]const u8, internal_module_names.len);
+        for (internal_module_names, persisted_names) |name, *slot| slot.* = try graph_allocator.dupe(u8, name);
+        self.internal_module_names = persisted_names;
         return analyzer.analyzeModules(allocator, inputs.items);
     }
 };

@@ -2457,12 +2457,14 @@ fn runModulesForTestWithPackageResolver(
     try std.testing.expect(analyzed.succeeded());
     var roots: std.ArrayList(*ast_mod.Node) = .empty;
     var names: std.ArrayList([]const u8) = .empty;
+    var internal_names: std.ArrayList([]const u8) = .empty;
     var paths: std.ArrayList([]const u8) = .empty;
     var variant_roots: std.ArrayList(*ast_mod.Node) = .empty;
     var variant_counts: std.ArrayList(usize) = .empty;
     var semantic_module_index: usize = 0;
     defer roots.deinit(allocator);
     defer names.deinit(allocator);
+    defer internal_names.deinit(allocator);
     defer paths.deinit(allocator);
     defer variant_roots.deinit(allocator);
     defer variant_counts.deinit(allocator);
@@ -2470,6 +2472,7 @@ fn runModulesForTestWithPackageResolver(
         if (module.kind != .nako3) continue;
         try roots.append(allocator, module.parsed.?.root.?);
         try names.append(allocator, analyzed.modules[semantic_module_index].name);
+        try internal_names.append(allocator, graph.internal_module_names[module.index]);
         semantic_module_index += 1;
         try paths.append(allocator, module.path);
         var variant_count: usize = 0;
@@ -2491,6 +2494,9 @@ fn runModulesForTestWithPackageResolver(
     defer hir_program.deinit();
     var ir_program = try lower_ssa.lower(allocator, hir_program);
     defer ir_program.deinit();
+    const internal_module_names = try ir_program.arena.allocator().alloc([]const u8, internal_names.items.len);
+    for (internal_names.items, 0..) |name, index| internal_module_names[index] = try ir_program.arena.allocator().dupe(u8, name);
+    ir_program.internal_module_names = internal_module_names;
     var verification = try verifier.verify(allocator, ir_program);
     defer verification.deinit();
     try std.testing.expect(verification.succeeded());
@@ -2585,6 +2591,18 @@ test "パッケージ:取り込みはInterpreterでexport moduleを実行する"
     }, resolver.packageResolver());
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualStrings("A\nB\nfrom package\nC\n", output);
+}
+
+test "package関数内のデバッグ表示はpackage source pathを報告する" {
+    var resolver = TestPackageResolver{};
+    const output = try runModulesForTestWithPackageResolver(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "!「パッケージ:demo」を取り込む\ndemo__報告()。\n" },
+        .{ .suffix = "packages/demo/index.nako3", .source = "●報告とは\nデバッグ表示(\"pkg-origin\")\nここまで\n" },
+    }, resolver.packageResolver());
+    defer std.testing.allocator.free(output);
+    try std.testing.expect(std.mem.indexOf(u8, output, "index.nako3(") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "pkg-origin") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "main.nako3(") == null);
 }
 
 test "同じcanonical exportの別aliasはmoduleと状態を共有し初期化は一度だけ" {

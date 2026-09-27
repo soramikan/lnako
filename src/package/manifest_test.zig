@@ -287,6 +287,7 @@ test "exportの規範外pathを診断する" {
     try parseErrCode(allocator, header ++ "path = \"/abs/main.nako3\"\n", diag.E029_INVALID_VALUE);
     try parseErrCode(allocator, header ++ "native = \"../lib/x.so\"\n", diag.E029_INVALID_VALUE);
     try parseErrCode(allocator, header ++ "esm = [{ path = \"sub/../../out.mjs\" }]\n", diag.E029_INVALID_VALUE);
+    try parseErrCode(allocator, header ++ "native = [\"../outside.so\"]\n", diag.E029_INVALID_VALUE);
 }
 
 test "同一public-idの衝突するversion制約を診断する" {

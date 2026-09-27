@@ -60,7 +60,11 @@ pub fn findProjectRoot(allocator: Allocator, io: std.Io, input_path: []const u8)
             const nako_path = try std.fs.path.join(temporary, &.{ current, ".nako" });
             const canonical_nako = realPathDirAlloc(temporary, io, nako_path) catch return null;
             const canonical_environment = std.Io.Dir.cwd().realPathFileAlloc(io, environment_path, temporary) catch return null;
+            // `.nako` dir 自体が共有writableなら、その下の materialized tree
+            // を差し替えて同一 manifest identity を装うことができるため、
+            // file だけでなく dir の書き込み権限も検証する。
             if (!isPathWithin(root, canonical_nako) or !isPathWithin(canonical_nako, canonical_environment) or
+                try project_trust.isUnsafeWritablePath(temporary, io, canonical_nako) or
                 try project_trust.isUnsafeWritablePath(temporary, io, canonical_environment)) return null;
             const lock_path = try std.fs.path.join(temporary, &.{ root, "nako.lock" });
             if (std.Io.Dir.cwd().access(io, lock_path, .{})) |_| {

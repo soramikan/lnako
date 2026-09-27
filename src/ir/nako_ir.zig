@@ -214,6 +214,10 @@ pub const Program = struct {
     /// v 番変体の関数index。
     variant_entries: []const []const FunctionId = &.{},
     module_names: []const []const u8 = &.{},
+    /// モジュール内シンボルの修飾名namespace（`{namespace}__{name}`）。
+    /// `module_names`（実行時module名＝エントリ関数名）とindexを揃える。
+    /// package moduleでは公開名と内部名が異なるため別系統で保持する。
+    internal_module_names: []const []const u8 = &.{},
     module_paths: []const []const u8 = &.{},
     compat_js: bool = false,
     javascript_modules: []JavaScriptModule = &.{},
@@ -270,6 +274,7 @@ pub const Program = struct {
         for (self.variant_entries, variant_entries) |source_entries, *target_entries|
             target_entries.* = try allocator.dupe(FunctionId, source_entries);
         const module_names = try cloneStrings(allocator, self.module_names);
+        const internal_module_names = try cloneStrings(allocator, self.internal_module_names);
         const module_paths = try cloneStrings(allocator, self.module_paths);
         return .{
             .arena = arena,
@@ -277,12 +282,38 @@ pub const Program = struct {
             .module_entries = module_entries,
             .variant_entries = variant_entries,
             .module_names = module_names,
+            .internal_module_names = internal_module_names,
             .module_paths = module_paths,
             .compat_js = self.compat_js,
             .javascript_modules = javascript_modules,
             .native_plugin_paths = native_plugin_paths,
             .http_server_plugin_imported = self.http_server_plugin_imported,
         };
+    }
+
+    /// 関数の修飾名（`{namespace}__{name}`）から所属モジュールのindexを引く。
+    /// `module_names`（実行時名＝エントリ関数 `{name}__$entry`）と
+    /// `internal_module_names`（シンボル修飾namespace）の両方を照合し、
+    /// 最長prefix一致を返す。
+    pub fn moduleIndexForFunctionName(self: Program, function_name: []const u8) ?usize {
+        var best: ?usize = null;
+        var best_len: usize = 0;
+        for (self.module_paths, 0..) |_, index| {
+            const candidates = [_][]const u8{
+                if (index < self.module_names.len) self.module_names[index] else "",
+                if (index < self.internal_module_names.len) self.internal_module_names[index] else "",
+            };
+            for (candidates) |prefix| {
+                if (prefix.len == 0 or !std.mem.startsWith(u8, function_name, prefix)) continue;
+                if (function_name.len < prefix.len + 2 or
+                    !std.mem.eql(u8, function_name[prefix.len .. prefix.len + 2], "__")) continue;
+                if (best == null or prefix.len > best_len) {
+                    best = index;
+                    best_len = prefix.len;
+                }
+            }
+        }
+        return best;
     }
 
     pub fn findFunction(self: Program, name: []const u8) ?Function {

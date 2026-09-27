@@ -292,6 +292,8 @@ const Validator = struct {
             .string => |text| {
                 if (text.len == 0) {
                     try self.report(diag.E029_INVALID_VALUE, field_path, value.position, "\"{s}\" must not be an empty path", .{field_path});
+                } else {
+                    try self.rejectNonCanonicalPath(text, field_path, value.position);
                 }
                 return .{ .path = text, .position = value.position };
             },

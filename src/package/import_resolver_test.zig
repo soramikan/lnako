@@ -151,3 +151,21 @@ test "project environment lookup rejects a .nako symlink outside the manifest ro
     defer allocator.free(input);
     try std.testing.expect((try resolver.findProjectRoot(allocator, io, input)) == null);
 }
+
+test "project environment lookup rejects a group/world-writable .nako directory" {
+    if (@import("builtin").os.tag == .windows or @import("builtin").os.tag == .wasi) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "victim/.nako");
+    try temporary.dir.writeFile(io, .{ .sub_path = "victim/nako.toml", .data = "[package]\nname = \"victim\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "victim/main.nako3", .data = "" });
+    // environment.json 自体は read-only でも、dir が共有writableなら
+    // materialized tree の差し替えが可能なため採用できない。
+    try temporary.dir.writeFile(io, .{ .sub_path = "victim/.nako/environment.json", .data = "{}" });
+    try temporary.dir.setFilePermissions(io, "victim/.nako", std.Io.File.Permissions.fromMode(0o777), .{});
+    const input = try temporary.dir.realPathFileAlloc(io, "victim/main.nako3", allocator);
+    defer allocator.free(input);
+    try std.testing.expect((try resolver.findProjectRoot(allocator, io, input)) == null);
+}

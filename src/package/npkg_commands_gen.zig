@@ -237,11 +237,11 @@ fn isWithin(root: []const u8, path: []const u8) bool {
 /// （import_resolver.resolve）と同じ二重検査で境界を閉じる。
 pub const DirSourceProvider = struct {
     io: std.Io,
-    root: []const u8,
     real_root: []const u8,
 
     /// `root` の実 path を境界として確定する。`allocator` は provider と
-    /// 同寿命であること。
+    /// 同寿命であること。`root` が symlink 成分を含む spelling の場合も
+    /// canonical 化した実 path 側へ join するため正当な読み取りを妨げない。
     pub fn init(allocator: Allocator, io: std.Io, root: []const u8) !DirSourceProvider {
         var directory = if (std.fs.path.isAbsolute(root))
             try std.Io.Dir.openDirAbsolute(io, root, .{})
@@ -252,7 +252,6 @@ pub const DirSourceProvider = struct {
         const length = try directory.realPath(io, &buffer);
         return .{
             .io = io,
-            .root = try allocator.dupe(u8, root),
             .real_root = try allocator.dupe(u8, buffer[0..length]),
         };
     }
@@ -264,7 +263,7 @@ pub const DirSourceProvider = struct {
     fn read(context: *anyopaque, allocator: Allocator, path: []const u8) anyerror!?[]u8 {
         const self: *DirSourceProvider = @ptrCast(@alignCast(context));
         if (!npkg_files.isCanonicalPath(path)) return null;
-        const resolved = try std.fs.path.resolve(allocator, &.{ self.root, path });
+        const resolved = try std.fs.path.resolve(allocator, &.{ self.real_root, path });
         defer allocator.free(resolved);
         if (!isWithin(self.real_root, resolved)) return null;
         const actual = std.Io.Dir.cwd().realPathFileAlloc(self.io, resolved, allocator) catch |err| switch (err) {
@@ -323,10 +322,7 @@ test "DirSourceProvider は規範外 path と symlink 脱出を拒否する" {
 
     var provider_state = try DirSourceProvider.init(testing.allocator, io, root);
     const provider = provider_state.provider();
-    defer {
-        testing.allocator.free(provider_state.root);
-        testing.allocator.free(provider_state.real_root);
-    }
+    defer testing.allocator.free(provider_state.real_root);
 
     const contents = (try provider.read(testing.allocator, "main.nako3")).?;
     defer testing.allocator.free(contents);
@@ -337,11 +333,28 @@ test "DirSourceProvider は規範外 path と symlink 脱出を拒否する" {
     try testing.expectEqual(@as(?[]u8, null), try provider.read(testing.allocator, "missing.nako3"));
 
     // package 内の symlink が境界外を指す場合も realpath 検査で拒否する。
+    // root 自体が symlink 化された path であっても canonical 側へ join して
+    // 正当な読み取りを継続する。
     if (@import("builtin").os.tag != .windows) {
         temporary.dir.symLink(io, "../secret.txt", "pkg/link.txt", .{}) catch |err| switch (err) {
             error.AccessDenied => return error.SkipZigTest,
             else => return err,
         };
         try testing.expectEqual(@as(?[]u8, null), try provider.read(testing.allocator, "link.txt"));
+
+        temporary.dir.symLink(io, "pkg", "pkg-link", .{ .is_directory = true }) catch |err| switch (err) {
+            error.AccessDenied => return error.SkipZigTest,
+            else => return err,
+        };
+        const temporary_root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+        defer testing.allocator.free(temporary_root);
+        const linked_root = try std.fs.path.join(testing.allocator, &.{ temporary_root, "pkg-link" });
+        defer testing.allocator.free(linked_root);
+        var linked_state = try DirSourceProvider.init(testing.allocator, io, linked_root);
+        defer testing.allocator.free(linked_state.real_root);
+        const linked_provider = linked_state.provider();
+        const linked_contents = (try linked_provider.read(testing.allocator, "main.nako3")).?;
+        defer testing.allocator.free(linked_contents);
+        try testing.expectEqualStrings("x", linked_contents);
     }
 }
