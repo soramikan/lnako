@@ -836,6 +836,39 @@ export function validateLock(lock, fixturePath) {
     }
   }
 
+  // v2 `rootDependencies` の参照整合（Zig 側 lock.zig の検証と同じ条件）。
+  // JSON Schema は形状と一意性のみ検査するため、profile の package グラフ
+  // 存在と各 id のメンバ所属はここで検証する。
+  const graphForProfile = (name) => {
+    const extra = (lock.profilePackages ?? {})[name];
+    if (extra) return extra;
+    if (name === lock.input?.profile) return lock.packages ?? null;
+    return null;
+  };
+  const rootDeps = lock.rootDependencies ?? {};
+  for (const [profileName, ids] of Object.entries(rootDeps)) {
+    const rootPath = `${fixturePath}.rootDependencies.${profileName}`;
+    const graph = graphForProfile(profileName);
+    if (!graph) {
+      fail("E029_INVALID_VALUE", `rootDependencies references profile without package graph "${profileName}"`, rootPath);
+    }
+    for (let index = 0; index < ids.length; index++) {
+      if (!Object.hasOwn(graph, ids[index])) {
+        fail("E029_INVALID_VALUE", `unknown root dependency id "${ids[index]}"`, `${rootPath}[${index}]`);
+      }
+    }
+  }
+  if (lock.schemaVersion === 2) {
+    if (!Object.hasOwn(rootDeps, lock.input?.profile ?? "")) {
+      fail("E029_INVALID_VALUE", `rootDependencies is missing selected profile "${lock.input?.profile}"`, `${fixturePath}.rootDependencies`);
+    }
+    for (const profileName of profilePackageNames) {
+      if (!Object.hasOwn(rootDeps, profileName)) {
+        fail("E029_INVALID_VALUE", `rootDependencies is missing profile "${profileName}"`, `${fixturePath}.rootDependencies.${profileName}`);
+      }
+    }
+  }
+
   // lnako/cnako が共用する同一 ID・版の source artifact は同じ hash で参照する。
   const mismatch = sharedArtifactMismatch(lock);
   if (mismatch) {

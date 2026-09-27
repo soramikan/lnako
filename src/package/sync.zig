@@ -686,7 +686,16 @@ fn appendImportDependency(
             }
             return error.LockInvalid;
         };
-        return; // feature-gated or absent dependency
+        // 一致候補が lock 内に一つも無い場合も同様に不整合。宣言が有効な依存
+        // （profile 不一致は呼出し側が既に skip）に対して lock が package を
+        // 提供しないのは manifest と lock の乖離であり、alias を欠落させた
+        // 環境を公開してはならない。
+        if (edge_owner) |owner| {
+            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "dependency key \"{s}\" has no matching lock package for the dependencies of package \"{s}\"", .{ name, owner });
+        } else {
+            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock.rootDependencies", .{}, "root dependency key \"{s}\" has no matching lock package", .{name});
+        }
+        return error.LockInvalid;
     }
     const package_key = target.?;
     // Manifest table keys are valid dependency aliases in their own right.
@@ -913,7 +922,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
     var exports = std.ArrayListUnmanaged(environment.ExportRecord).empty;
     var has_native_export = false;
     if (manifest) |*m| {
-        exports = try resolveExports(ctx, m, entry.implementation, entry.features, &has_native_export);
+        exports = try resolveExports(ctx, m, entry.implementation, entry.features, tree_abs, entry.name, &has_native_export);
     }
     if (has_native_export) {
         if (stable_native_key) |key| {
@@ -1233,7 +1242,7 @@ fn materializeEmptyPackage(ctx: *Context, package_name: []const u8) Error![]cons
 /// 選択し、env.json の `exports` 配列へ変換する。`native` は prefer-native
 /// として resolve へ渡し、ESM は profile が許可する場合のみ含める。`none`
 /// は実装を持たないため空を返す。
-fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, implementation: ?[]const u8, features: []const []const u8, has_native_export: *bool) Error!std.ArrayListUnmanaged(environment.ExportRecord) {
+fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, implementation: ?[]const u8, features: []const []const u8, tree_abs: ?[]const u8, package_name: []const u8, has_native_export: *bool) Error!std.ArrayListUnmanaged(environment.ExportRecord) {
     var exports = std.ArrayListUnmanaged(environment.ExportRecord).empty;
     if (implementation) |impl| {
         if (std.mem.eql(u8, impl, "none")) return exports;
@@ -1250,6 +1259,7 @@ fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, impleme
         // artifact 宣言がすべて不適合となり export を欠落させる。
         .features = features,
     };
+    var export_provider: ?npkg_commands_gen.DirSourceProvider = null;
     for (manifest.exports) |*export_decl| {
         const resolution = export_decl.resolve(ctx.arena, target, prefer_native, ctx.session.diagnostics) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -1262,6 +1272,18 @@ fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, impleme
             if (std.mem.eql(u8, impl, "ESM") and resolution.kind != .esm) continue;
         }
         if (resolution.kind == .esm and !(std.mem.eql(u8, ctx.runtime.name(), "cnako") or ctx.target.compat_js)) continue;
+        // env へ記録する export は対象 file が package root 境界内に実在する
+        // ことを確認する。prebuilt commands.json はソース走査を迂回するため、
+        // source/native/ESM 全 kind で実体検証を行う。
+        if (tree_abs) |tree| {
+            if (export_provider == null) {
+                export_provider = npkg_commands_gen.DirSourceProvider.init(ctx.arena, ctx.io, tree) catch |err| return mapFs(err);
+            }
+            const export_exists = export_provider.?.exists(ctx.arena, resolution.target) catch |err| return mapFs(err);
+            if (!export_exists) {
+                return ctx.session.fail(.invalid_source, .package, package_name, "export \"{s}\" of \"{s}\" resolves to missing file \"{s}\"", .{ export_decl.name, package_name, resolution.target });
+            }
+        }
         if (resolution.kind == .native) has_native_export.* = true;
         try exports.append(ctx.arena, .{
             .name = try ctx.arena.dupe(u8, export_decl.name),

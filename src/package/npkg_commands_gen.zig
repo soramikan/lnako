@@ -260,6 +260,28 @@ pub const DirSourceProvider = struct {
         return .{ .context = self, .readFn = read };
     }
 
+    /// `path` が root 境界内の正規 file として存在するか。`read` と同じく
+    /// lexical・realpath の二重検査を通し、境界外・symlink 脱出・非 file は
+    /// 全て false。export 対象 file の存在を公開・環境検証で確認するための
+    /// 判定で、内容は読まない。
+    pub fn exists(self: *DirSourceProvider, allocator: Allocator, path: []const u8) !bool {
+        if (!npkg_files.isCanonicalPath(path)) return false;
+        const resolved = try std.fs.path.resolve(allocator, &.{ self.real_root, path });
+        defer allocator.free(resolved);
+        if (!isWithin(self.real_root, resolved)) return false;
+        const actual = std.Io.Dir.cwd().realPathFileAlloc(self.io, resolved, allocator) catch |err| switch (err) {
+            error.FileNotFound, error.NotDir => return false,
+            else => return err,
+        };
+        defer allocator.free(actual);
+        if (!isWithin(self.real_root, actual)) return false;
+        const stat = std.Io.Dir.cwd().statFile(self.io, actual, .{}) catch |err| switch (err) {
+            error.FileNotFound, error.NotDir => return false,
+            else => return err,
+        };
+        return stat.kind == .file;
+    }
+
     fn read(context: *anyopaque, allocator: Allocator, path: []const u8) anyerror!?[]u8 {
         const self: *DirSourceProvider = @ptrCast(@alignCast(context));
         if (!npkg_files.isCanonicalPath(path)) return null;

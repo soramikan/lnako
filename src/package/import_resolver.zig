@@ -2,6 +2,7 @@
 const std = @import("std");
 const module_graph = @import("../semantic/module_graph.zig");
 const npkg_files = @import("npkg_files.zig");
+const npkg_commands_gen = @import("npkg_commands_gen.zig");
 const lock_model = @import("lock_model.zig");
 const manifest_mod = @import("manifest.zig");
 const native_store = @import("native_store.zig");
@@ -11,22 +12,14 @@ const project_discovery = @import("project_discovery.zig");
 const project_trust = @import("project_trust.zig");
 
 const Allocator = std.mem.Allocator;
-const Value = std.json.Value;
+pub const Value = std.json.Value;
 
-fn realPathDirAlloc(allocator: Allocator, io: std.Io, path: []const u8) ![]u8 {
+pub fn realPathDirAlloc(allocator: Allocator, io: std.Io, path: []const u8) ![]u8 {
     var directory = if (std.fs.path.isAbsolute(path))
         try std.Io.Dir.openDirAbsolute(io, path, .{})
     else
         try std.Io.Dir.cwd().openDir(io, path, .{});
     defer directory.close(io);
-    var buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    const length = try directory.realPath(io, &buffer);
-    return try allocator.dupe(u8, buffer[0..length]);
-}
-
-fn temporaryDirRealPathAlloc(allocator: Allocator, io: std.Io, base: std.Io.Dir, sub_path: []const u8) ![]u8 {
-    var directory = if (std.mem.eql(u8, sub_path, ".")) base else try base.openDir(io, sub_path, .{});
-    defer if (!std.mem.eql(u8, sub_path, ".")) directory.close(io);
     var buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const length = try directory.realPath(io, &buffer);
     return try allocator.dupe(u8, buffer[0..length]);
@@ -111,7 +104,7 @@ pub const Resolver = struct {
         return self.resolve(allocator, importer, specifier);
     }
 
-    fn resolve(self: *Resolver, allocator: Allocator, importer: []const u8, specifier: []const u8) !module_graph.ResolvedPackageImport {
+    pub fn resolve(self: *Resolver, allocator: Allocator, importer: []const u8, specifier: []const u8) !module_graph.ResolvedPackageImport {
         var temporary_arena = std.heap.ArenaAllocator.init(allocator);
         defer temporary_arena.deinit();
         const temporary = temporary_arena.allocator();
@@ -201,7 +194,10 @@ pub const Resolver = struct {
         const namespace = try namespaceFor(allocator, alias, subpath);
         errdefer allocator.free(namespace);
         const selected_path = try allocator.dupe(u8, actual_export);
-        return .{ .path = selected_path, .canonical_id = canonical_id, .namespace = namespace };
+        errdefer allocator.free(selected_path);
+        const resolved_package_root = try allocator.dupe(u8, package_root);
+        errdefer allocator.free(resolved_package_root);
+        return .{ .path = selected_path, .canonical_id = canonical_id, .namespace = namespace, .package_root = resolved_package_root };
     }
 
     fn packageForImporter(self: *Resolver, allocator: Allocator, packages: std.json.ObjectMap, importer: []const u8) !?Value {
@@ -517,6 +513,7 @@ fn validateEnvironmentExports(
     }
 
     var expected_index: usize = 0;
+    var export_provider: ?npkg_commands_gen.DirSourceProvider = null;
     if (manifest) |*value| {
         if (implementation == null or !std.mem.eql(u8, implementation.?, "none")) {
             const prefer_native = if (implementation) |kind| std.mem.eql(u8, kind, "native") else false;
@@ -539,6 +536,14 @@ fn validateEnvironmentExports(
                 } else if (get(actual, "alias") != null) {
                     return error.InvalidEnvironment;
                 }
+                // 選択 export の対象 file が package root 境界内に実在することを
+                // 確認する。commands.json 経路や native/ESM 宣言はファイル走査を
+                // 迂回し得るため、宣言と実体の乖離した環境を受理しない。
+                if (export_provider == null) {
+                    export_provider = npkg_commands_gen.DirSourceProvider.init(allocator, io, package_root) catch return error.InvalidEnvironment;
+                }
+                const export_exists = export_provider.?.exists(allocator, resolution.target) catch return error.InvalidEnvironment;
+                if (!export_exists) return error.InvalidEnvironment;
                 expected_index += 1;
             }
         }
@@ -677,7 +682,7 @@ fn validateManifestDependencyBindings(
     }
 }
 
-fn findManifestDependencyTarget(
+pub fn findManifestDependencyTarget(
     allocator: Allocator,
     locked_packages: std.json.ObjectMap,
     allowed_ids: ?std.json.Array,
@@ -701,7 +706,11 @@ fn findManifestDependencyTarget(
             try roots.append(allocator, entry.key_ptr.*);
         }
     }
-    if (allowed_ids != null and matches.items.len != 0 and roots.items.len == 0) return error.InvalidEnvironment;
+    // 有効な依存宣言に対して lock 側の一致候補が一つも無いのは lock・環境・
+    // manifest の不整合（profile 不一致の依存は呼出し側が既に skip 済み）。
+    // alias 欠落の環境を「依存なし」として受理しない。
+    if (matches.items.len == 0) return error.InvalidEnvironment;
+    if (allowed_ids != null and roots.items.len == 0) return error.InvalidEnvironment;
     const candidates = if (allowed_ids != null) roots.items else if (roots.items.len != 0) roots.items else if (matches.items.len == 1) matches.items else &.{};
     if (candidates.len == 0) return null;
     if (candidates.len != 1) return error.InvalidEnvironment;
@@ -921,7 +930,7 @@ fn validateMaterializedRoot(allocator: Allocator, io: std.Io, project_root: []co
     return actual_package;
 }
 
-fn selectExport(exports: []const Value, subpath: ?[]const u8) !Value {
+pub fn selectExport(exports: []const Value, subpath: ?[]const u8) !Value {
     var selected: ?Value = null;
     var count: usize = 0;
     for (exports) |export_value| {
@@ -978,7 +987,7 @@ fn selectExport(exports: []const Value, subpath: ?[]const u8) !Value {
     return error.ExportNotFound;
 }
 
-fn namespaceFor(allocator: Allocator, alias: []const u8, subpath: ?[]const u8) Allocator.Error![]u8 {
+pub fn namespaceFor(allocator: Allocator, alias: []const u8, subpath: ?[]const u8) Allocator.Error![]u8 {
     var result: std.ArrayList(u8) = .empty;
     errdefer result.deinit(allocator);
     const namespace_alias = if (std.mem.startsWith(u8, alias, "@")) alias[1..] else alias;
@@ -1022,409 +1031,30 @@ fn isSourceOrPluginExtension(extension: []const u8) bool {
         std.ascii.eqlIgnoreCase(extension, ".dll");
 }
 
-fn isWithin(root: []const u8, path: []const u8) bool {
+pub fn isWithin(root: []const u8, path: []const u8) bool {
     if (std.mem.eql(u8, root, path)) return true;
     if (!std.mem.startsWith(u8, path, root) or path.len <= root.len) return false;
     return path[root.len] == std.fs.path.sep;
 }
 
-fn asObject(value: Value) ?std.json.ObjectMap {
+pub fn asObject(value: Value) ?std.json.ObjectMap {
     return switch (value) {
         .object => |object| object,
         else => null,
     };
 }
 
-fn asArray(value: Value) ?std.array_list.Managed(Value) {
+pub fn asArray(value: Value) ?std.array_list.Managed(Value) {
     return switch (value) {
         .array => |array| array,
         else => null,
     };
 }
 
-fn get(object: std.json.ObjectMap, key: []const u8) ?Value {
+pub fn get(object: std.json.ObjectMap, key: []const u8) ?Value {
     return object.get(key);
 }
 
-test "manifest dependency lock edge不整合はenvironment validationで拒否する" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-    const locked_json =
-        \\{"pkg:other-profile":{"name":"conditional-lib","version":"2.0.0","source":{"type":"registry","url":"https://example.invalid/conditional-lib"},"dependencies":[]},"pkg:current-edge":{"name":"unrelated","version":"1.0.0","source":{"type":"registry","url":"https://example.invalid/unrelated"},"dependencies":[]}}
-    ;
-    const parsed_lock = try std.json.parseFromSlice(Value, allocator, locked_json, .{});
-    defer parsed_lock.deinit();
-    const locked_packages = asObject(parsed_lock.value).?;
-    const edges_json = "[\"pkg:current-edge\"]";
-    const parsed_edges = try std.json.parseFromSlice(Value, allocator, edges_json, .{});
-    defer parsed_edges.deinit();
-    const allowed_edges = asArray(parsed_edges.value).?;
-    const version_range = try semver.Range.parse(allocator, "2.0.0");
-    const dependency = manifest_mod.PkgDependency{
-        .name = "conditional-lib",
-        .version = version_range,
-        .version_text = "2.0.0",
-        .profile = "windows",
-    };
-
-    try std.testing.expectError(error.InvalidEnvironment, findManifestDependencyTarget(
-        allocator,
-        locked_packages,
-        allowed_edges,
-        false,
-        dependency.name,
-        .{ .pkg = dependency },
-        null,
-    ));
-}
-
-test "package importは公開export名とaliasだけを選択しpath traversalを拒否する" {
-    const json =
-        \\[ {"name":"main","path":"src/main.nako3"},{"name":"utility","alias":"math","path":"src/utility.nako3"},{"name":"vector","path":"src/vector.nako3"}]
-    ;
-    const parsed = try std.json.parseFromSlice(Value, std.testing.allocator, json, .{});
-    defer parsed.deinit();
-    const exports = asArray(parsed.value).?.items;
-    const main = try selectExport(exports, null);
-    try std.testing.expectEqualStrings("src/main.nako3", get(asObject(main).?, "path").?.string);
-    const utility = try selectExport(exports, "math");
-    try std.testing.expectEqualStrings("src/utility.nako3", get(asObject(utility).?, "path").?.string);
-    const vector = try selectExport(exports, "vector");
-    try std.testing.expectEqualStrings("src/vector.nako3", get(asObject(vector).?, "path").?.string);
-    try std.testing.expectError(error.ExportNotFound, selectExport(exports, "private"));
-    try std.testing.expect(!npkg_files.isCanonicalPath("../outside.nako3"));
-}
-
-test "既定exportはmainまたはindexという公開名をファイル名より優先する" {
-    const json =
-        \\[ {"name":"main","path":"src/main.nako3"}, {"name":"helpers","path":"helpers/index.nako3"} ]
-    ;
-    const parsed = try std.json.parseFromSlice(Value, std.testing.allocator, json, .{});
-    defer parsed.deinit();
-    const selected = try selectExport(asArray(parsed.value).?.items, null);
-    try std.testing.expectEqualStrings("main", get(asObject(selected).?, "name").?.string);
-}
-
-test "package alias内の識別子不適合文字を参照可能なnamespaceへ変換する" {
-    const normalized = try namespaceFor(std.testing.allocator, "my-util", null);
-    defer std.testing.allocator.free(normalized);
-    try std.testing.expectEqualStrings("my_util", normalized);
-
-    const scoped = try namespaceFor(std.testing.allocator, "@alice/my-util", "sub-path");
-    defer std.testing.allocator.free(scoped);
-    try std.testing.expectEqualStrings("alice__my_util__sub_path", scoped);
-}
-
-test "package import path containmentはprefix類似directoryを通さない" {
-    const allocator = std.testing.allocator;
-    const root = try std.fs.path.join(allocator, &.{ "tmp", "pkg" });
-    defer allocator.free(root);
-    const nested = try std.fs.path.join(allocator, &.{ root, "src", "index.nako3" });
-    defer allocator.free(nested);
-    const sibling = try std.fs.path.join(allocator, &.{ "tmp", "pkg-evil", "index.nako3" });
-    defer allocator.free(sibling);
-    try std.testing.expect(isWithin(root, nested));
-    try std.testing.expect(!isWithin(root, sibling));
-}
-
-test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hashを検証する" {
-    const allocator = std.testing.allocator;
-    const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
-    try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/math/src");
-    try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/dependency");
-    try temporary.dir.createDirPath(io, "src");
-    try temporary.dir.writeFile(io, .{ .sub_path = "main.nako3", .data = "" });
-    try temporary.dir.writeFile(io, .{ .sub_path = "src/main.nako3", .data = "" });
-    const root_manifest =
-        \\[package]
-        \\name = "app"
-        \\version = "1.0.0"
-        \\license = "MIT"
-        \\[dependencies.pkg]
-        \\math = { version = "1.0.0", public-id = "pkg:11111111111111111111111111111111" }
-        \\windows-math = { version = "1.0.0", public-id = "pkg:11111111111111111111111111111111", profile = "windows", alias = "win-math" }
-        \\"alice/lib" = { version = "1.0.0", public-id = "pkg:11111111111111111111111111111111" }
-        \\alice = { version = "1.0.0", public-id = "pkg:22222222222222222222222222222222" }
-        \\"@alice/tool" = { version = "1.0.0", public-id = "pkg:11111111111111111111111111111111" }
-        \\
-        \\[profiles.windows]
-        \\os = "windows"
-        \\cpu = "x86_64"
-        \\abi = "msvc"
-        \\
-    ;
-    try temporary.dir.writeFile(io, .{ .sub_path = "nako.toml", .data = root_manifest });
-    var root_manifest_digest: [32]u8 = undefined;
-    std.crypto.hash.sha2.Sha256.hash(root_manifest, &root_manifest_digest, .{});
-    const root_manifest_sha256 = std.fmt.bytesToHex(root_manifest_digest, .lower);
-    const lock_json_template = "{\"schemaVersion\":2,\"resolverVersion\":1,\"input\":{\"manifestSha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"profile\":\"default\",\"features\":[],\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:11111111111111111111111111111111\":{\"id\":\"pkg:11111111111111111111111111111111\",\"name\":\"math\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/math\"},\"dependencies\":[\"pkg:22222222222222222222222222222222\",\"pkg:33333333333333333333333333333333\"]},\"pkg:22222222222222222222222222222222\":{\"id\":\"pkg:22222222222222222222222222222222\",\"name\":\"dependency\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/dependency\"},\"dependencies\":[]},\"pkg:33333333333333333333333333333333\":{\"id\":\"pkg:33333333333333333333333333333333\",\"name\":\"missing\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/missing\"},\"dependencies\":[]}},\"rootDependencies\":{\"default\":[\"pkg:11111111111111111111111111111111\",\"pkg:22222222222222222222222222222222\"]}}";
-    const lock_json = try std.mem.replaceOwned(u8, allocator, lock_json_template, "0000000000000000000000000000000000000000000000000000000000000000", &root_manifest_sha256);
-    defer allocator.free(lock_json);
-    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock_json });
-    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/math/nako.toml", .data =
-        \\[package]
-        \\name = "math"
-        \\version = "1.0.0"
-        \\license = "MIT"
-        \\[dependencies.pkg]
-        \\dependency = { version = "1.0.0", public-id = "pkg:22222222222222222222222222222222", alias = "dep" }
-        \\windows-dependency = { version = "1.0.0", public-id = "pkg:22222222222222222222222222222222", profile = "windows", alias = "win-dependency" }
-        \\missing = { version = "1.0.0", public-id = "pkg:33333333333333333333333333333333" }
-        \\
-        \\[profiles.windows]
-        \\os = "windows"
-        \\cpu = "x86_64"
-        \\abi = "msvc"
-        \\
-        \\[[exports]]
-        \\name = "main"
-        \\alias = "math"
-        \\path = "src/main.nako3"
-        \\[[exports]]
-        \\name = "vector"
-        \\path = "vector.nako3"
-        \\[[exports]]
-        \\name = "escape"
-        \\path = "src/escape.nako3"
-        \\
-    });
-    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/dependency/nako.toml", .data =
-        \\[package]
-        \\name = "dependency"
-        \\version = "1.0.0"
-        \\license = "MIT"
-        \\[[exports]]
-        \\name = "index"
-        \\path = "index.nako3"
-        \\
-    });
-    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/math/src/main.nako3", .data = "A=1\n" });
-    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/math/vector.nako3", .data = "B=2\n" });
-    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/dependency/index.nako3", .data = "C=3\n" });
-    try temporary.dir.writeFile(io, .{ .sub_path = "outside.nako3", .data = "OUTSIDE=1\n" });
-    const outside_path = try temporary.dir.realPathFileAlloc(io, "outside.nako3", allocator);
-    defer allocator.free(outside_path);
-    temporary.dir.symLink(io, outside_path, ".nako/env/gen-test/deps/math/src/escape.nako3", .{}) catch return error.SkipZigTest;
-    temporary.dir.symLink(io, "math", ".nako/env/gen-test/deps/math-link", .{}) catch return error.SkipZigTest;
-
-    var digest: [32]u8 = undefined;
-    std.crypto.hash.sha2.Sha256.hash(lock_json, &digest, .{});
-    const lock_hex = std.fmt.bytesToHex(digest, .lower);
-    const json = try std.fmt.allocPrint(
-        allocator,
-        "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"dependencies\":[{{\"alias\":\"math\",\"package\":\"pkg:11111111111111111111111111111111\"}},{{\"alias\":\"alice/lib\",\"package\":\"pkg:11111111111111111111111111111111\"}},{{\"alias\":\"lib\",\"package\":\"pkg:11111111111111111111111111111111\"}},{{\"alias\":\"alice\",\"package\":\"pkg:22222222222222222222222222222222\"}},{{\"alias\":\"@alice/tool\",\"package\":\"pkg:11111111111111111111111111111111\"}},{{\"alias\":\"tool\",\"package\":\"pkg:11111111111111111111111111111111\"}}],\"packages\":{{\"pkg:11111111111111111111111111111111\":{{\"id\":\"pkg:11111111111111111111111111111111\",\"name\":\"math\",\"version\":\"1.0.0\",\"path\":\".nako/env/gen-test/deps/math\",\"exports\":[{{\"name\":\"main\",\"alias\":\"math\",\"path\":\"src/main.nako3\"}},{{\"name\":\"vector\",\"path\":\"vector.nako3\"}},{{\"name\":\"escape\",\"path\":\"src/escape.nako3\"}}],\"dependencies\":[{{\"alias\":\"dependency\",\"package\":\"pkg:22222222222222222222222222222222\"}},{{\"alias\":\"dep\",\"package\":\"pkg:22222222222222222222222222222222\"}},{{\"alias\":\"missing\",\"package\":\"pkg:33333333333333333333333333333333\"}}]}},\"pkg:22222222222222222222222222222222\":{{\"id\":\"pkg:22222222222222222222222222222222\",\"name\":\"dependency\",\"version\":\"1.0.0\",\"path\":\".nako/env/gen-test/deps/dependency\",\"exports\":[{{\"name\":\"index\",\"path\":\"index.nako3\"}}]}},\"pkg:33333333333333333333333333333333\":{{\"id\":\"pkg:33333333333333333333333333333333\",\"name\":\"missing\",\"version\":\"1.0.0\",\"path\":\".nako/env/gen-test/deps/missing\",\"exports\":[],\"dependencies\":[]}}}}}}",
-        .{lock_hex},
-    );
-    defer allocator.free(json);
-    const project_root = try temporaryDirRealPathAlloc(allocator, io, temporary.dir, ".");
-    defer allocator.free(project_root);
-    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/math/private.nako3", .data = "PRIVATE=1\\n" });
-    const tampered_root_alias_json = try std.mem.replaceOwned(u8, allocator, json, "\"alias\":\"math\",\"package\":\"pkg:11111111111111111111111111111111\"", "\"alias\":\"math\",\"package\":\"pkg:22222222222222222222222222222222\"");
-    defer allocator.free(tampered_root_alias_json);
-    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = tampered_root_alias_json });
-    try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, project_root));
-    const tampered_package_alias_json = try std.mem.replaceOwned(u8, allocator, json, "\"alias\":\"dep\",\"package\":\"pkg:22222222222222222222222222222222\"", "\"alias\":\"dep\",\"package\":\"pkg:33333333333333333333333333333333\"");
-    defer allocator.free(tampered_package_alias_json);
-    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = tampered_package_alias_json });
-    try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, project_root));
-    const tampered_export_json = try std.mem.replaceOwned(u8, allocator, json, "\"path\":\"src/main.nako3\"", "\"path\":\"private.nako3\"");
-    defer allocator.free(tampered_export_json);
-    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = tampered_export_json });
-    try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, project_root));
-    const tampered_json = try std.mem.replaceOwned(u8, allocator, json, ".nako/env/gen-test/deps/math", "../outside");
-    defer allocator.free(tampered_json);
-    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = tampered_json });
-    try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, project_root));
-    const tampered_id_json = try std.mem.replaceOwned(u8, allocator, json, "pkg:11111111111111111111111111111111", "pkg:not-locked-id");
-    defer allocator.free(tampered_id_json);
-    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = tampered_id_json });
-    try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, project_root));
-    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = json });
-    const canonical_hash = try std.fmt.allocPrint(allocator, "sha256:{s}", .{lock_hex});
-    defer allocator.free(canonical_hash);
-    const base64_buffer = try allocator.alloc(u8, std.base64.standard.Encoder.calcSize(digest.len));
-    defer allocator.free(base64_buffer);
-    const base64_hash = std.base64.standard.Encoder.encode(base64_buffer, &digest);
-    const sri_hash = try std.fmt.allocPrint(allocator, "sha256-{s}", .{base64_hash});
-    defer allocator.free(sri_hash);
-    const hash_variants = [_][]const u8{ canonical_hash, lock_hex[0..], sri_hash };
-    for (hash_variants) |hash_text| {
-        const variant_json = try std.mem.replaceOwned(u8, allocator, json, canonical_hash, hash_text);
-        defer allocator.free(variant_json);
-        try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = variant_json });
-        var hash_resolver = try Resolver.load(allocator, io, project_root);
-        hash_resolver.deinit();
-    }
-    const cnako_environment = try std.mem.replaceOwned(u8, allocator, json, "\"runtime\":\"lnako\"", "\"runtime\":\"cnako\"");
-    defer allocator.free(cnako_environment);
-    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = cnako_environment });
-    try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, project_root));
-    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = json });
-    temporary.dir.symLink(io, project_root, ".project-link", .{ .is_directory = true }) catch return error.SkipZigTest;
-    const project_alias = try std.fs.path.join(allocator, &.{ project_root, ".project-link" });
-    defer allocator.free(project_alias);
-
-    var resolver = try Resolver.load(allocator, io, project_alias);
-    defer resolver.deinit();
-    const root_entry = try std.fs.path.join(allocator, &.{ project_root, "main.nako3" });
-    defer allocator.free(root_entry);
-    const detected_root = (try findProjectRoot(allocator, io, root_entry)).?;
-    defer allocator.free(detected_root);
-    try std.testing.expectEqualStrings(project_root, detected_root);
-    const cwd = try realPathDirAlloc(allocator, io, ".");
-    defer allocator.free(cwd);
-    try std.testing.expect(std.mem.startsWith(u8, project_root, cwd));
-    try std.testing.expect(project_root.len > cwd.len and std.fs.path.isSep(project_root[cwd.len]));
-    const relative_directory = project_root[cwd.len + 1 ..];
-    const relative_main = try std.fs.path.join(allocator, &.{ relative_directory, "main.nako3" });
-    defer allocator.free(relative_main);
-    const relative_nested = try std.fs.path.join(allocator, &.{ relative_directory, "src", "main.nako3" });
-    defer allocator.free(relative_nested);
-    const relative_inputs = [_][]const u8{ relative_main, relative_nested };
-    for (relative_inputs) |relative_input| {
-        const found_root = (try findProjectRoot(allocator, io, relative_input)) orelse return error.ProjectRootNotFound;
-        defer allocator.free(found_root);
-        try std.testing.expectEqualStrings(project_root, found_root);
-    }
-    const math_import = try resolver.resolve(allocator, root_entry, "パッケージ:math");
-    defer allocator.free(math_import.path);
-    defer allocator.free(math_import.canonical_id);
-    defer allocator.free(math_import.namespace);
-    const expected_math_path = try std.fs.path.join(allocator, &.{ ".nako", "env", "gen-test", "deps", "math", "src", "main.nako3" });
-    defer allocator.free(expected_math_path);
-    try std.testing.expect(std.mem.endsWith(u8, math_import.path, expected_math_path));
-    try std.testing.expectEqualStrings("pkg:11111111111111111111111111111111/main", math_import.canonical_id);
-    try std.testing.expectEqualStrings("math", math_import.namespace);
-    try std.testing.expectError(error.PackageNotFound, resolver.resolve(allocator, root_entry, "pkg:win-math"));
-    try std.testing.expectError(error.PackageNotFound, resolver.resolve(allocator, math_import.path, "pkg:win-dependency"));
-    const owner_name_import = try resolver.resolve(allocator, root_entry, "pkg:alice/lib");
-    defer allocator.free(owner_name_import.path);
-    defer allocator.free(owner_name_import.canonical_id);
-    defer allocator.free(owner_name_import.namespace);
-    try std.testing.expectEqualStrings("pkg:11111111111111111111111111111111/main", owner_name_import.canonical_id);
-    try std.testing.expectEqualStrings("alice__lib", owner_name_import.namespace);
-    const scoped_owner_import = try resolver.resolve(allocator, root_entry, "pkg:@alice/tool");
-    defer allocator.free(scoped_owner_import.path);
-    defer allocator.free(scoped_owner_import.canonical_id);
-    defer allocator.free(scoped_owner_import.namespace);
-    try std.testing.expectEqualStrings("alice__tool", scoped_owner_import.namespace);
-    const scoped_subpath_import = try resolver.resolve(allocator, root_entry, "pkg:alice/lib/vector");
-    defer allocator.free(scoped_subpath_import.path);
-    defer allocator.free(scoped_subpath_import.canonical_id);
-    defer allocator.free(scoped_subpath_import.namespace);
-    try std.testing.expectEqualStrings("pkg:11111111111111111111111111111111/vector", scoped_subpath_import.canonical_id);
-    try std.testing.expectEqualStrings("alice__lib__vector", scoped_subpath_import.namespace);
-    const vector_import = try resolver.resolve(allocator, root_entry, "pkg:math/vector");
-    defer allocator.free(vector_import.path);
-    defer allocator.free(vector_import.canonical_id);
-    defer allocator.free(vector_import.namespace);
-    const expected_vector_path = try std.fs.path.join(allocator, &.{ ".nako", "env", "gen-test", "deps", "math", "vector.nako3" });
-    defer allocator.free(expected_vector_path);
-    try std.testing.expect(std.mem.endsWith(u8, vector_import.path, expected_vector_path));
-    try std.testing.expectEqualStrings("pkg:11111111111111111111111111111111/vector", vector_import.canonical_id);
-    try std.testing.expectEqualStrings("math__vector", vector_import.namespace);
-    const nested_import = try resolver.resolve(allocator, math_import.path, "パッケージ:dep");
-    defer allocator.free(nested_import.path);
-    defer allocator.free(nested_import.canonical_id);
-    defer allocator.free(nested_import.namespace);
-    const expected_nested_path = try std.fs.path.join(allocator, &.{ ".nako", "env", "gen-test", "deps", "dependency", "index.nako3" });
-    defer allocator.free(expected_nested_path);
-    try std.testing.expect(std.mem.endsWith(u8, nested_import.path, expected_nested_path));
-    try std.testing.expectEqualStrings("pkg:22222222222222222222222222222222/index", nested_import.canonical_id);
-    try std.testing.expectEqualStrings("dep", nested_import.namespace);
-    try std.testing.expectError(error.PackageNotFound, resolver.resolve(allocator, root_entry, "パッケージ:dep"));
-    try std.testing.expectError(error.PackageNotFound, resolver.resolve(allocator, root_entry, "パッケージ:math@1.0.0"));
-    try std.testing.expectError(error.PackageNotFound, resolver.resolve(allocator, root_entry, "パッケージ:math/../private"));
-    try std.testing.expectError(error.UnsafeExportPath, resolver.resolve(allocator, root_entry, "パッケージ:math/escape"));
-}
-
-test "realpath importerとproject entry優先でancestor package scopeを誤選択しない" {
-    const allocator = std.testing.allocator;
-    const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
-    try temporary.dir.createDirPath(io, "repo/examples/.nako/env/gen-test/deps/root-util");
-    try temporary.dir.createDirPath(io, "repo/parent-util");
-    try temporary.dir.writeFile(io, .{ .sub_path = "repo/examples/main.nako3", .data = "" });
-    try temporary.dir.writeFile(io, .{ .sub_path = "repo/index.nako3", .data = "" });
-    try temporary.dir.writeFile(io, .{ .sub_path = "repo/parent-util/index.nako3", .data = "" });
-    try temporary.dir.writeFile(io, .{ .sub_path = "repo/examples/.nako/env/gen-test/deps/root-util/index.nako3", .data = "" });
-    try temporary.dir.writeFile(io, .{ .sub_path = "repo/nako.toml", .data =
-        \\[package]
-        \\name = "ancestor"
-        \\version = "1.0.0"
-        \\license = "MIT"
-        \\[dependencies.path]
-        \\util = { path = "../parent-util" }
-        \\[[exports]]
-        \\name = "main"
-        \\path = "index.nako3"
-        \\
-    });
-    try temporary.dir.writeFile(io, .{ .sub_path = "repo/parent-util/nako.toml", .data =
-        \\[package]
-        \\name = "parent-util"
-        \\version = "1.0.0"
-        \\license = "MIT"
-        \\[[exports]]
-        \\name = "index"
-        \\path = "index.nako3"
-        \\
-    });
-    try temporary.dir.writeFile(io, .{ .sub_path = "repo/examples/.nako/env/gen-test/deps/root-util/nako.toml", .data =
-        \\[package]
-        \\name = "root-util"
-        \\version = "1.0.0"
-        \\license = "MIT"
-        \\[[exports]]
-        \\name = "index"
-        \\path = "index.nako3"
-        \\
-    });
-    const lock_json = "{\"schemaVersion\":2,\"resolverVersion\":1,\"input\":{\"manifestSha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"profile\":\"default\",\"features\":[],\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:ancestor\":{\"id\":\"pkg:ancestor\",\"name\":\"ancestor\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\"..\"},\"dependencies\":[\"pkg:parent-util\"]},\"pkg:root-util\":{\"id\":\"pkg:root-util\",\"name\":\"root-util\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/root-util\"},\"dependencies\":[]},\"pkg:parent-util\":{\"id\":\"pkg:parent-util\",\"name\":\"parent-util\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\"../parent-util\"},\"dependencies\":[]}},\"rootDependencies\":{\"default\":[\"pkg:root-util\"]}}";
-    try temporary.dir.writeFile(io, .{ .sub_path = "repo/examples/nako.lock", .data = lock_json });
-    const parent_entry = try temporary.dir.realPathFileAlloc(io, "repo/index.nako3", allocator);
-    defer allocator.free(parent_entry);
-    temporary.dir.symLink(io, parent_entry, "repo/examples/parent-link.nako3", .{}) catch |err| switch (err) {
-        error.AccessDenied, error.PermissionDenied, error.FileSystem => return error.SkipZigTest,
-        else => return err,
-    };
-
-    var digest: [32]u8 = undefined;
-    std.crypto.hash.sha2.Sha256.hash(lock_json, &digest, .{});
-    const lock_hex = std.fmt.bytesToHex(digest, .lower);
-    const json = try std.fmt.allocPrint(
-        allocator,
-        "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"dependencies\":[{{\"alias\":\"util\",\"package\":\"pkg:root-util\"}}],\"packages\":{{\"pkg:ancestor\":{{\"id\":\"pkg:ancestor\",\"name\":\"ancestor\",\"version\":\"1.0.0\",\"path\":\"..\",\"exports\":[{{\"name\":\"main\",\"path\":\"index.nako3\"}}],\"dependencies\":[{{\"alias\":\"util\",\"package\":\"pkg:parent-util\"}}]}},\"pkg:root-util\":{{\"id\":\"pkg:root-util\",\"name\":\"root-util\",\"version\":\"1.0.0\",\"path\":\".nako/env/gen-test/deps/root-util\",\"exports\":[{{\"name\":\"index\",\"path\":\"index.nako3\"}}],\"dependencies\":[]}},\"pkg:parent-util\":{{\"id\":\"pkg:parent-util\",\"name\":\"parent-util\",\"version\":\"1.0.0\",\"path\":\"../parent-util\",\"exports\":[{{\"name\":\"index\",\"path\":\"index.nako3\"}}],\"dependencies\":[]}}}}}}",
-        .{lock_hex},
-    );
-    defer allocator.free(json);
-    try temporary.dir.writeFile(io, .{ .sub_path = "repo/examples/.nako/environment.json", .data = json });
-    const project_root = try temporaryDirRealPathAlloc(allocator, io, temporary.dir, "repo/examples");
-    defer allocator.free(project_root);
-    const root_entry = try temporary.dir.realPathFileAlloc(io, "repo/examples/main.nako3", allocator);
-    defer allocator.free(root_entry);
-    const symlink_importer = try std.fs.path.join(allocator, &.{ project_root, "parent-link.nako3" });
-    defer allocator.free(symlink_importer);
-
-    var resolver = try Resolver.load(allocator, io, project_root);
-    defer resolver.deinit();
-    const project_import = try resolver.resolve(allocator, root_entry, "pkg:util");
-    defer allocator.free(project_import.path);
-    defer allocator.free(project_import.canonical_id);
-    defer allocator.free(project_import.namespace);
-    const expected_root_util = try std.fs.path.join(allocator, &.{ "root-util", "index.nako3" });
-    defer allocator.free(expected_root_util);
-    try std.testing.expect(std.mem.endsWith(u8, project_import.path, expected_root_util));
-
-    const package_import = try resolver.resolve(allocator, symlink_importer, "pkg:util");
-    defer allocator.free(package_import.path);
-    defer allocator.free(package_import.canonical_id);
-    defer allocator.free(package_import.namespace);
-    const expected_parent_util = try std.fs.path.join(allocator, &.{ "parent-util", "index.nako3" });
-    defer allocator.free(expected_parent_util);
-    try std.testing.expect(std.mem.endsWith(u8, package_import.path, expected_parent_util));
+test {
+    _ = @import("import_resolver_test.zig");
 }

@@ -2562,6 +2562,7 @@ const TestLocalMathPackageResolver = struct {
             .path = try std.fs.path.resolve(allocator, &.{"packages/package-math/index.nako3"}),
             .canonical_id = try allocator.dupe(u8, "pkg:math-package/main"),
             .namespace = namespace,
+            .package_root = try std.fs.path.resolve(allocator, &.{"packages/package-math"}),
         };
     }
 };
@@ -2579,6 +2580,7 @@ const TestPackageResolver = struct {
             .path = try std.fs.path.resolve(allocator, &.{"packages/demo/index.nako3"}),
             .canonical_id = try allocator.dupe(u8, "pkg:demo-id/main"),
             .namespace = if (is_other) "other" else "demo",
+            .package_root = try std.fs.path.resolve(allocator, &.{"packages/demo"}),
         };
     }
 };
@@ -2591,6 +2593,20 @@ test "パッケージ:取り込みはInterpreterでexport moduleを実行する"
     }, resolver.packageResolver());
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualStrings("A\nB\nfrom package\nC\n", output);
+}
+
+test "package内の相対import helperはpackage内部から呼べ外部の修飾名参照はpackage値を返さない" {
+    var resolver = TestLocalMathPackageResolver{};
+    const output = try runModulesForTestWithPackageResolver(std.testing.allocator, &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:math-package」を取り込む\nmath__報告()。\nhelper__内部値を表示。\n" },
+        .{ .suffix = "packages/package-math/index.nako3", .source = "!「./helper.nako3」を取り込む\n●報告とは\nhelper__内部処理()\nここまで\n" },
+        .{ .suffix = "packages/package-math/helper.nako3", .source = "内部値=7\n●内部処理とは\n「内部helper」と表示\nここまで\n" },
+    }, resolver.packageResolver());
+    defer std.testing.allocator.free(output);
+    // package indexからのhelper呼出しは成功し、main側の `helper__内部値` は
+    // package所有moduleへ解決されずpackageの値7を返さない。
+    try std.testing.expect(std.mem.startsWith(u8, output, "内部helper\n"));
+    try std.testing.expect(std.mem.indexOf(u8, output, "7") == null);
 }
 
 test "package関数内のデバッグ表示はpackage source pathを報告する" {

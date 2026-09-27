@@ -384,6 +384,55 @@ test "AOT compile permits unresolved qualified names outside package dependency 
     try std.testing.expect(saw_unresolved_qualified_load);
 }
 
+test "package内の相対import helperはAOT IRでもopaqueなpackage内部namespaceを維持する" {
+    const TestProvider = struct {
+        fn read(_: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+            if (pathHasSuffix(path, "main.nako3")) return allocator.dupe(u8, "!「pkg:math」を取り込む\nmath__報告()\n");
+            if (pathHasSuffix(path, "packages/math/index.nako3")) return allocator.dupe(u8, "!「./helper.nako3」を取り込む\n●報告とは\nhelper__内部処理()\nここまで\n");
+            if (pathHasSuffix(path, "packages/math/helper.nako3")) return allocator.dupe(u8, "●内部処理とは\nここまで\n");
+            return error.FileNotFound;
+        }
+    };
+    const TestResolver = struct {
+        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+            if (!std.mem.eql(u8, specifier, "pkg:math")) return error.PackageNotFound;
+            return .{
+                .path = try std.fs.path.resolve(allocator, &.{"packages/math/index.nako3"}),
+                .canonical_id = try allocator.dupe(u8, "pkg:math/main"),
+                .namespace = "math",
+                .package_root = try std.fs.path.resolve(allocator, &.{"packages/math"}),
+            };
+        }
+    };
+    var context: u8 = 0;
+    var stderr: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer stderr.deinit();
+    const program = try compileInputWithProvider(
+        std.testing.allocator,
+        "main.nako3",
+        .{ .package_resolver = .{ .context = &context, .resolveFn = TestResolver.resolve } },
+        &stderr.writer,
+        .{ .context = &context, .readFn = TestProvider.read },
+    );
+    var compiled = program orelse return error.UnexpectedCompileFailure;
+    defer compiled.deinit();
+
+    try std.testing.expectEqual(@as(usize, 3), compiled.module_names.len);
+    try std.testing.expectEqual(@as(usize, 3), compiled.internal_module_names.len);
+    // helperはcanonical exportではないが、実行時module名（ファイルstem）と
+    // opaqueな内部namespaceを別々に保持する。推測可能な `helper__` prefixの
+    // 関数名は存在せず、内部名経由ではsource pathへ逆引きできる。
+    try std.testing.expectEqualStrings("helper", compiled.module_names[2]);
+    try std.testing.expect(std.mem.startsWith(u8, compiled.internal_module_names[2], "package__"));
+    // stem名 `helper__` の照合は診断pathの逆引きとしてmoduleへ帰属させる
+    // （IR内の実関数名は内部namespace修飾なのでglobal keyとしては露出しない）。
+    try std.testing.expectEqual(@as(?usize, 2), compiled.moduleIndexForFunctionName("helper__内部処理"));
+    const internal_call = try std.fmt.allocPrint(std.testing.allocator, "{s}__内部処理", .{compiled.internal_module_names[2]});
+    defer std.testing.allocator.free(internal_call);
+    try std.testing.expectEqual(@as(?usize, 2), compiled.moduleIndexForFunctionName(internal_call));
+    try std.testing.expect(pathHasSuffix(compiled.module_paths[2], "packages/math/helper.nako3"));
+}
+
 fn pathHasSuffix(path: []const u8, suffix: []const u8) bool {
     if (suffix.len > path.len) return false;
     const start = path.len - suffix.len;

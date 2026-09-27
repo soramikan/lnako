@@ -592,6 +592,47 @@ test "lock edge外のdependency診断はroot scopeとtransitive scopeを区別�
     try testing.expect(std.mem.indexOf(u8, transitive_diagnostics.items.items[0].message, "rootDependencies") == null);
 }
 
+test "一致候補を持たない有効依存はroot scopeとtransitive scopeでLockInvalidになる" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\shared = { version = "1.0.0" }
+        \\
+    ;
+    var diagnostics = diag.List.init(testing.allocator);
+    defer diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &diagnostics);
+    defer manifest.deinit();
+    // lock 内に "shared" に一致する package が一つも無い（edge list 省略の
+    // schema-v1相当）。宣言された有効な依存に対して lock が候補を提供しない
+    // のは不整合であり、alias を欠落させた環境を公開してはならない。
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:99999999999999999999999999999999", .name = "other", .version = "1.0.0", .source = .{ .kind = .registry } },
+    };
+
+    var root_diagnostics = diag.List.init(testing.allocator);
+    defer root_diagnostics.deinit();
+    try testing.expectError(
+        error.LockInvalid,
+        collectImportDependenciesForProfile(testing.allocator, &lock_entries, null, null, &manifest, null, &root_diagnostics),
+    );
+    try testing.expectEqualStrings("nako.lock.rootDependencies", root_diagnostics.items.items[0].path);
+    try testing.expect(std.mem.indexOf(u8, root_diagnostics.items.items[0].message, "no matching lock package") != null);
+
+    var transitive_diagnostics = diag.List.init(testing.allocator);
+    defer transitive_diagnostics.deinit();
+    try testing.expectError(
+        error.LockInvalid,
+        collectImportDependenciesForProfile(testing.allocator, &lock_entries, null, "consumer", &manifest, null, &transitive_diagnostics),
+    );
+    try testing.expectEqualStrings("nako.lock", transitive_diagnostics.items.items[0].path);
+    try testing.expect(std.mem.indexOf(u8, transitive_diagnostics.items.items[0].message, "\"consumer\"") != null);
+}
+
 test "root package import候補は直接依存のversion rangeで絞る" {
     const source =
         \\[package]
