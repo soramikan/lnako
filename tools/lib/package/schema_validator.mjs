@@ -10,7 +10,7 @@ const projectRoot = join(__dirname, "..", "..", "..");
 const schemaDir = join(projectRoot, "tools", "package-system", "schema");
 
 const knownManifestSchemaVersions = new Set([1]);
-const knownLockSchemaVersions = new Set([1]);
+const knownLockSchemaVersions = new Set([1, 2]);
 const knownArtifactKinds = new Set(["source", "native", "ESM"]);
 const knownProfileRuntime = new Set(["lnako", "cnako", "any", "common"]);
 const knownPackageRuntime = new Set(["lnako", "cnako"]);
@@ -430,6 +430,21 @@ function validateSchema(value, schema, path) {
     for (const sub of schema.allOf) {
       validateSchema(value, sub, path);
     }
+  }
+
+  // draft-2020-12 の if/then/else。条件枝の診断は捨てて成否だけ使い、
+  // 本枝（then/else）の診断コードだけを報告する。schema 定義自体の
+  // 不整合（SCHEMA_ERROR）は条件評価でも握りつぶさず伝播させる。
+  if (schema.if) {
+    let cond = false;
+    try {
+      validateSchema(value, schema.if, path);
+      cond = true;
+    } catch (e) {
+      if (e && e.code === "SCHEMA_ERROR") throw e;
+    }
+    if (cond && schema.then) validateSchema(value, schema.then, path);
+    if (!cond && schema.else) validateSchema(value, schema.else, path);
   }
 }
 

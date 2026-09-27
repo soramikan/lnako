@@ -8,6 +8,7 @@ const native_store = @import("native_store.zig");
 const diag = @import("diagnostics.zig");
 const semver = @import("semver.zig");
 const project_discovery = @import("project_discovery.zig");
+const project_trust = @import("project_trust.zig");
 
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
@@ -348,6 +349,10 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
         else
             null;
         if (package_root) |root| {
+            // `.nako` 自体がprivateでも、materialized rootまたは配下dirが
+            // 共有writableなら export 対象を差し替えて同一 manifest identity
+            // を装える。package tree 末端まで書き込み権限を検証する。
+            if (try project_trust.hasUnsafeWritableDirectory(allocator, io, root)) return error.InvalidEnvironment;
             try validateEnvironmentExports(allocator, io, root, record, lock_entry, locked_packages, artifact_target, profile_value.string);
         } else if (record_exports) |exports| {
             // A missing materialization is tolerable only for support packages
@@ -497,6 +502,20 @@ fn validateEnvironmentExports(
             !std.mem.eql(u8, kind, "ESM") and !std.mem.eql(u8, kind, "none")) return error.InvalidEnvironment;
     }
 
+    // lock が記録した package 単位の有効 feature を artifact 照合へ反映する。
+    // sync 側の `resolveExports` と同じ feature 集合を使わないと、feature
+    // 必須の artifact を経由する export が「宣言なし」として不一致になる。
+    var package_target = target;
+    if (get(lock_entry, "features")) |features_value| {
+        const feature_items = asArray(features_value) orelse return error.InvalidEnvironment;
+        const feature_names = try allocator.alloc([]const u8, feature_items.items.len);
+        for (feature_items.items, 0..) |item, index| {
+            if (item != .string) return error.InvalidEnvironment;
+            feature_names[index] = item.string;
+        }
+        package_target.features = feature_names;
+    }
+
     var expected_index: usize = 0;
     if (manifest) |*value| {
         if (implementation == null or !std.mem.eql(u8, implementation.?, "none")) {
@@ -504,13 +523,13 @@ fn validateEnvironmentExports(
             var diagnostics = diag.List.init(allocator);
             defer diagnostics.deinit();
             for (value.exports) |*export_decl| {
-                const resolution = try export_decl.resolve(allocator, target, prefer_native, &diagnostics) orelse continue;
+                const resolution = try export_decl.resolve(allocator, package_target, prefer_native, &diagnostics) orelse continue;
                 if (implementation) |kind| {
                     if (std.mem.eql(u8, kind, "source") and resolution.kind != .source) continue;
                     if (std.mem.eql(u8, kind, "native") and resolution.kind != .native) continue;
                     if (std.mem.eql(u8, kind, "ESM") and resolution.kind != .esm) continue;
                 }
-                if (resolution.kind == .esm and !std.mem.eql(u8, target.runtime, "cnako") and !target.compat_js) continue;
+                if (resolution.kind == .esm and !std.mem.eql(u8, package_target.runtime, "cnako") and !package_target.compat_js) continue;
                 if (expected_index >= environment_exports.items.len) return error.InvalidEnvironment;
                 const actual = asObject(environment_exports.items[expected_index]) orelse return error.InvalidEnvironment;
                 if (!std.mem.eql(u8, requiredString(actual, "name") orelse return error.InvalidEnvironment, export_decl.name) or

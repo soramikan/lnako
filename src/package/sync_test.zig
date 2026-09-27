@@ -255,6 +255,166 @@ test "sync は offline で http 依存の未取得を拒否する" {
     try testing.expectError(error.FileNotFound, temporary.dir.access(io, ".nako/environment.json", .{}));
 }
 
+test "sync は implementation=none の support package を空dirで公開しimport検証を通過する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const support_manifest =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\support = { version = "1.0.0" }
+        \\
+    ;
+    const manifest_sha = try sha256HexAlloc(testing.allocator, support_manifest);
+    defer testing.allocator.free(manifest_sha);
+    const lock = try std.fmt.allocPrint(testing.allocator,
+        \\{{
+        \\  "schemaVersion": 1,
+        \\  "resolverVersion": 1,
+        \\  "input": {{
+        \\    "manifestSha256": "sha256:{s}",
+        \\    "profile": "default",
+        \\    "features": [],
+        \\    "target": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu" }}
+        \\  }},
+        \\  "packages": {{
+        \\    "pkg:22222222222222222222222222222222": {{
+        \\      "id": "pkg:22222222222222222222222222222222",
+        \\      "name": "support",
+        \\      "version": "1.0.0",
+        \\      "source": {{ "type": "static", "url": "https://registry.test/support" }},
+        \\      "resolvedFrom": {{ "type": "static", "url": "https://registry.test/support" }},
+        \\      "dependencies": [],
+        \\      "implementation": "none",
+        \\      "artifacts": {{ "source": {{ "kind": "source", "type": "tar.gz", "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "url": "https://registry.test/support/source.tar.gz" }} }}
+        \\    }}
+        \\  }},
+        \\  "profiles": {{
+        \\    "default": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu", "runtime": "lnako" }}
+        \\  }}
+        \\}}
+    , .{manifest_sha});
+    defer testing.allocator.free(lock);
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.toml", .data = support_manifest });
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const cache_root = try std.fs.path.join(testing.allocator, &.{ root, "cache" });
+    defer testing.allocator.free(cache_root);
+
+    var list = diag.List.init(testing.allocator);
+    defer list.deinit();
+    var report = try run(testing.allocator, io, .{ .project_root = root, .cache_root = cache_root }, &list);
+    defer report.deinit();
+
+    // `none` は artifact を取得せず空の materialized dir を公開する。
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, report.environment_json, .{});
+    defer parsed.deinit();
+    const support = parsed.value.object.get("packages").?.object.get("pkg:22222222222222222222222222222222").?.object;
+    const env_path = support.get("path").?.string;
+    try testing.expect(std.mem.startsWith(u8, env_path, ".nako/env/"));
+    try testing.expect(std.mem.endsWith(u8, env_path, "/deps/support"));
+    if (support.get("exports")) |exports| {
+        try testing.expectEqual(@as(usize, 0), exports.array.items.len);
+    }
+    try temporary.dir.access(io, env_path, .{});
+
+    // import 解決も lock の support record と一致して受理する。
+    var loaded = try @import("import_resolver.zig").Resolver.load(testing.allocator, io, root);
+    defer loaded.deinit();
+}
+
+test "sync/import双方がlockのpackage featuresをexport解決へ反映する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const feature_manifest =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\lib = { path = "deps/lib" }
+        \\
+    ;
+    const feature_lib_manifest =
+        \\[package]
+        \\name = "lib"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[features]
+        \\simd = []
+        \\
+        \\[[exports]]
+        \\name = "lib"
+        \\esm = [{ path = "x.mjs", features = ["simd"] }]
+        \\
+    ;
+    const manifest_sha = try sha256HexAlloc(testing.allocator, feature_manifest);
+    defer testing.allocator.free(manifest_sha);
+    const lock = try std.fmt.allocPrint(testing.allocator,
+        \\{{
+        \\  "schemaVersion": 1,
+        \\  "resolverVersion": 1,
+        \\  "input": {{
+        \\    "manifestSha256": "sha256:{s}",
+        \\    "profile": "default",
+        \\    "features": [],
+        \\    "target": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu" }}
+        \\  }},
+        \\  "packages": {{
+        \\    "pkg:11111111111111111111111111111111": {{
+        \\      "id": "pkg:11111111111111111111111111111111",
+        \\      "name": "lib",
+        \\      "version": "1.0.0",
+        \\      "source": {{ "type": "path", "path": "deps/lib", "mutable": true }},
+        \\      "resolvedFrom": {{ "type": "path", "path": "deps/lib", "mutable": true }},
+        \\      "dependencies": [],
+        \\      "features": ["simd"],
+        \\      "artifacts": {{ "source": {{ "kind": "source", "type": "raw" }} }}
+        \\    }}
+        \\  }},
+        \\  "profiles": {{
+        \\    "default": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu", "runtime": "lnako", "compat-js": true }}
+        \\  }}
+        \\}}
+    , .{manifest_sha});
+    defer testing.allocator.free(lock);
+    try temporary.dir.createDirPath(io, "deps/lib");
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.toml", .data = feature_manifest });
+    try temporary.dir.writeFile(io, .{ .sub_path = "deps/lib/nako.toml", .data = feature_lib_manifest });
+    try temporary.dir.writeFile(io, .{ .sub_path = "deps/lib/x.mjs", .data = "export {};\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const cache_root = try std.fs.path.join(testing.allocator, &.{ root, "cache" });
+    defer testing.allocator.free(cache_root);
+
+    var list = diag.List.init(testing.allocator);
+    defer list.deinit();
+    var report = try run(testing.allocator, io, .{ .project_root = root, .cache_root = cache_root }, &list);
+    defer report.deinit();
+
+    // feature "simd" が lock に記録されているため、feature 必須の ESM
+    // 宣言が適合して export が公開される。
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, report.environment_json, .{});
+    defer parsed.deinit();
+    const lib = parsed.value.object.get("packages").?.object.get("pkg:11111111111111111111111111111111").?.object;
+    const exports = lib.get("exports").?.array;
+    try testing.expectEqual(@as(usize, 1), exports.items.len);
+    try testing.expectEqualStrings("x.mjs", exports.items[0].object.get("path").?.string);
+
+    // import 検証も同じ feature 集合で一致しなければ拒否される。
+    var loaded = try @import("import_resolver.zig").Resolver.load(testing.allocator, io, root);
+    defer loaded.deinit();
+}
+
 test "artifactKey は宣言 hash を key 材料へ含める" {
     var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_impl.deinit();

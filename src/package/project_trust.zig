@@ -12,6 +12,29 @@ pub fn isUnsafeWritablePath(allocator: Allocator, io: std.Io, path: []const u8) 
     return @intFromEnum(stat.permissions) & 0o022 != 0;
 }
 
+/// `root` 自体と配下の全ディレクトリを走査し、共有writableなディレクトリが
+/// あれば true を返す。materialized tree は `.nako` 直下の権限がprivateでも
+/// 配下dirが共有writableなら中身を差し替えられるため、末端まで検査する。
+/// 走査・権限取得の失敗は fail-closed で unsafe 扱いにする。
+pub fn hasUnsafeWritableDirectory(allocator: Allocator, io: std.Io, root: []const u8) !bool {
+    if (try isUnsafeWritablePath(allocator, io, root)) return true;
+    var directory = std.Io.Dir.cwd().openDir(io, root, .{ .iterate = true }) catch return true;
+    defer directory.close(io);
+    var walker = try directory.walk(allocator);
+    defer walker.deinit();
+    while (walker.next(io) catch return true) |entry| {
+        if (entry.kind != .directory) continue;
+        const full = try std.fs.path.join(allocator, &.{ root, entry.path });
+        defer allocator.free(full);
+        const unsafe = isUnsafeWritablePath(allocator, io, full) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            return true;
+        };
+        if (unsafe) return true;
+    }
+    return false;
+}
+
 fn windowsPathHasUntrustedWriteAccess(allocator: Allocator, path: []const u8) !bool {
     const Api = struct {
         const Handle = ?*anyopaque;

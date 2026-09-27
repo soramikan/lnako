@@ -61,15 +61,19 @@ pub fn expectedRoot(allocator: Allocator, source: std.json.ObjectMap, lock_entry
         // sync の selectArtifact と同じく、implementation 省略は source 扱い。
         const implementation = requiredString(lock_entry, "implementation") orelse "source";
         const artifacts = asObject(get(lock_entry, "artifacts") orelse return error.InvalidEnvironment) orelse return error.InvalidEnvironment;
+        // lock.zig は artifacts を key 昇順に parse してから kind 一致の先頭を
+        // 選ぶため、ここでも挿入順ではなく最小 key の kind 一致 record を選ぶ。
         var selected: ?std.json.ObjectMap = null;
+        var selected_key: []const u8 = "";
         var iterator = artifacts.iterator();
         while (iterator.next()) |item| {
             const artifact = asObject(item.value_ptr.*) orelse return error.InvalidEnvironment;
             const kind = requiredString(artifact, "kind") orelse return error.InvalidEnvironment;
-            if (selected != null or !std.mem.eql(u8, kind, implementation)) continue;
-            // Match PackageEntry.artifact: use the first record with this kind
-            // in the lock's deterministic object order when kinds are repeated.
-            selected = artifact;
+            if (!std.mem.eql(u8, kind, implementation)) continue;
+            if (selected == null or std.mem.order(u8, item.key_ptr.*, selected_key) == .lt) {
+                selected = artifact;
+                selected_key = item.key_ptr.*;
+            }
         }
         const artifact = selected orelse return error.InvalidEnvironment;
         const url = requiredString(artifact, "url") orelse return error.InvalidEnvironment;
@@ -248,6 +252,23 @@ test "native artifact root selects first matching kind despite platform keys and
     const entry = asObject(parsed.value).?;
     const root = try expectedRoot(allocator, entry.get("source").?.object, entry);
     const first_key = try cache_key.artifactKey(allocator, "artifact", "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "https://example.invalid/first");
+    const expected = try relativeRoot(allocator, first_key);
+    try testing.expectEqualStrings(expected, root.?);
+}
+
+test "native artifact rootは同kind複数recordをkey昇順で選択する" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const allocator = arena_state.allocator();
+    // lock.zig の parse は artifacts を key 昇順に並べ替えてから kind 一致の
+    // 先頭を選ぶ。逆順の挿入順でも "aaa" record と一致しなければならない。
+    const parsed = try std.json.parseFromSlice(Value, allocator,
+        \\{"source":{"type":"registry"},"implementation":"native","artifacts":{"zzz":{"kind":"native","url":"https://example.invalid/last","sha256":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"aaa":{"kind":"native","url":"https://example.invalid/first","sha256":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}}
+    , .{});
+    defer parsed.deinit();
+    const entry = asObject(parsed.value).?;
+    const root = try expectedRoot(allocator, entry.get("source").?.object, entry);
+    const first_key = try cache_key.artifactKey(allocator, "artifact", "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "https://example.invalid/first");
     const expected = try relativeRoot(allocator, first_key);
     try testing.expectEqualStrings(expected, root.?);
 }

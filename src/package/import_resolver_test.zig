@@ -89,6 +89,37 @@ test "exportsを持つpackageのmissing materialized rootを拒否しno-export s
     loaded.deinit();
 }
 
+test "materialized package内の共有writable dirを拒否する" {
+    if (@import("builtin").os.tag == .windows or @import("builtin").os.tag == .wasi) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/pkg/lib");
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/pkg/nako.toml", .data = "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });
+    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/pkg\"},\"dependencies\":[]}}}";
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
+    const lock_hex = std.fmt.bytesToHex(digest, .lower);
+    const environment = try std.fmt.allocPrint(
+        allocator,
+        "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"packages\":{{\"pkg:test\":{{\"name\":\"pkg\",\"version\":\"1.0.0\",\"path\":\".nako/env/gen-test/deps/pkg\",\"exports\":[]}}}}}}",
+        .{lock_hex},
+    );
+    defer allocator.free(environment);
+    try temporary.dir.createDirPath(io, ".nako");
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = environment });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    var loaded = try Resolver.load(allocator, io, root);
+    loaded.deinit();
+    // materialized tree 配下の dir が共有writableなら export 対象を
+    // 差し替えられるため private な `.nako` でも採用できない。
+    try temporary.dir.setFilePermissions(io, ".nako/env/gen-test/deps/pkg/lib", std.Io.File.Permissions.fromMode(0o777), .{});
+    try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, root));
+}
+
 test "schema-v2のroot edge省略はenvironment dependencyを拒否する" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;

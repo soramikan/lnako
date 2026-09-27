@@ -856,35 +856,46 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
             // lock が記録する `source.url` は package 固有 URL であり、
             // registry ルートではない。同期時は index を引き直さず、
             // lock の artifact URL・hash・type を直接使って取得・検証する。
-            const artifact = selectArtifact(ctx, entry) orelse
+            const selected_artifact = selectArtifact(ctx, entry);
+            if (selected_artifact == null and
+                !std.mem.eql(u8, entry.implementation orelse "source", "none"))
+            {
                 return ctx.session.fail(.not_found, .artifact, entry.name, "package \"{s}\" has no artifact for runtime \"{s}\"", .{ entry.name, ctx.runtime.name() });
-            const url = artifact.url orelse
-                return ctx.session.fail(.invalid_source, .artifact, entry.name, "artifact \"{s}\" of \"{s}\" has no url", .{ artifact.key, entry.name });
-            const declared_hash = artifact.sha256 orelse
-                return ctx.session.fail(.invalid_source, .artifact, entry.name, "artifact \"{s}\" of \"{s}\" has no integrity hash", .{ artifact.key, entry.name });
-            if (!fetch.isSupportedHash(declared_hash)) {
-                return ctx.session.fail(.invalid_source, .artifact, entry.name, "artifact \"{s}\" of \"{s}\" has an unsupported integrity hash", .{ artifact.key, entry.name });
             }
-            const object_key = try cache_key.artifactKey(arena, "artifact", declared_hash, url);
-            stable_native_key = object_key;
-            try rememberKey(ctx, object_key);
-            const tree = (try ctx.objectTree(object_key)).?;
-            const verified_hit = (ctx.cache_store.verifyEntry(arena, object_key) catch false) and ctx.cache_store.entryExists(object_key);
-            if (!verified_hit) {
-                if (ctx.cache_store.entryExists(object_key)) {
-                    ctx.cache_store.removeEntry(object_key) catch |err| return mapFs(err);
+            if (selected_artifact) |artifact| {
+                const url = artifact.url orelse
+                    return ctx.session.fail(.invalid_source, .artifact, entry.name, "artifact \"{s}\" of \"{s}\" has no url", .{ artifact.key, entry.name });
+                const declared_hash = artifact.sha256 orelse
+                    return ctx.session.fail(.invalid_source, .artifact, entry.name, "artifact \"{s}\" of \"{s}\" has no integrity hash", .{ artifact.key, entry.name });
+                if (!fetch.isSupportedHash(declared_hash)) {
+                    return ctx.session.fail(.invalid_source, .artifact, entry.name, "artifact \"{s}\" of \"{s}\" has an unsupported integrity hash", .{ artifact.key, entry.name });
                 }
-                const bytes = try fetch.fetchBytes(ctx.session, url, .artifact);
-                try fetch.verifyHash(ctx.session, bytes, declared_hash, url, .artifact);
-                const prepared = try buildArtifactObject(ctx, object_key, bytes, artifact.type orelse "raw", entry);
-                applyPrepared(&manifest, &verified_commands, prepared);
+                const object_key = try cache_key.artifactKey(arena, "artifact", declared_hash, url);
+                stable_native_key = object_key;
+                try rememberKey(ctx, object_key);
+                const tree = (try ctx.objectTree(object_key)).?;
+                const verified_hit = (ctx.cache_store.verifyEntry(arena, object_key) catch false) and ctx.cache_store.entryExists(object_key);
+                if (!verified_hit) {
+                    if (ctx.cache_store.entryExists(object_key)) {
+                        ctx.cache_store.removeEntry(object_key) catch |err| return mapFs(err);
+                    }
+                    const bytes = try fetch.fetchBytes(ctx.session, url, .artifact);
+                    try fetch.verifyHash(ctx.session, bytes, declared_hash, url, .artifact);
+                    const prepared = try buildArtifactObject(ctx, object_key, bytes, artifact.type orelse "raw", entry);
+                    applyPrepared(&manifest, &verified_commands, prepared);
+                }
+                // http 経路と同じく cache 命中の `.npkg` 由来 manifest は現在
+                // target への適合を再検証する。
+                manifest = manifest orelse try checkedCachedManifest(ctx, object_key, entry);
+                tree_abs = tree;
+                const dest = try materializeIntoGeneration(ctx, entry.name, tree);
+                env_path = dest;
+            } else {
+                // implementation "none" は target に適合する artifact を持たない
+                // support package。lock validation が許容するため取得せず
+                // 空の materialized dir を公開する。
+                env_path = try materializeEmptyPackage(ctx, entry.name);
             }
-            // http 経路と同じく cache 命中の `.npkg` 由来 manifest は現在
-            // target への適合を再検証する。
-            manifest = manifest orelse try checkedCachedManifest(ctx, object_key, entry);
-            tree_abs = tree;
-            const dest = try materializeIntoGeneration(ctx, entry.name, tree);
-            env_path = dest;
         },
     }
 
@@ -902,7 +913,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
     var exports = std.ArrayListUnmanaged(environment.ExportRecord).empty;
     var has_native_export = false;
     if (manifest) |*m| {
-        exports = try resolveExports(ctx, m, entry.implementation, &has_native_export);
+        exports = try resolveExports(ctx, m, entry.implementation, entry.features, &has_native_export);
     }
     if (has_native_export) {
         if (stable_native_key) |key| {
@@ -1172,7 +1183,7 @@ fn selectArtifact(ctx: *Context, entry: *const lock_model.PackageEntry) ?*const 
 
 /// package 名を `.nako` 内 dir 名へ変換する。`[a-z0-9-]` 以外は `-` へ畳み、
 /// 空なら hash 名を使う。同一世代内での重複には `-2`・`-3`…を付ける。
-fn materializeIntoGeneration(ctx: *Context, package_name: []const u8, tree_abs: []const u8) Error![]const u8 {
+fn allocateDepsName(ctx: *Context, package_name: []const u8) Error![]const u8 {
     const arena = ctx.arena;
     var sanitized: std.ArrayListUnmanaged(u8) = .empty;
     for (package_name) |c| {
@@ -1196,9 +1207,25 @@ fn materializeIntoGeneration(ctx: *Context, package_name: []const u8, tree_abs: 
         suffix += 1;
     }
     try ctx.used_names.put(arena, try arena.dupe(u8, final_name), {});
+    return final_name;
+}
 
+fn materializeIntoGeneration(ctx: *Context, package_name: []const u8, tree_abs: []const u8) Error![]const u8 {
+    const arena = ctx.arena;
+    const final_name = try allocateDepsName(ctx, package_name);
     const dest = try std.fs.path.join(arena, &.{ ctx.deps_abs, final_name });
     _ = materialize.copyTree(ctx.gpa, ctx.io, tree_abs, dest, .{}) catch |err| return mapTreeError(ctx, err, package_name);
+    return try std.fs.path.join(arena, &.{ ctx.generation_rel, "deps", final_name });
+}
+
+/// `implementation` が "none"（選択 target に適合する artifact を持たない）
+/// の support package 用に、世代 deps 配下の空 dir を公開し相対 path を返す。
+/// 名前確保は実packageと同じ順序で行い、env path の期待値と一致させる。
+fn materializeEmptyPackage(ctx: *Context, package_name: []const u8) Error![]const u8 {
+    const arena = ctx.arena;
+    const final_name = try allocateDepsName(ctx, package_name);
+    const dest = try std.fs.path.join(arena, &.{ ctx.deps_abs, final_name });
+    std.Io.Dir.cwd().createDirPath(ctx.io, dest) catch |err| return mapFs(err);
     return try std.fs.path.join(arena, &.{ ctx.generation_rel, "deps", final_name });
 }
 
@@ -1206,7 +1233,7 @@ fn materializeIntoGeneration(ctx: *Context, package_name: []const u8, tree_abs: 
 /// 選択し、env.json の `exports` 配列へ変換する。`native` は prefer-native
 /// として resolve へ渡し、ESM は profile が許可する場合のみ含める。`none`
 /// は実装を持たないため空を返す。
-fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, implementation: ?[]const u8, has_native_export: *bool) Error!std.ArrayListUnmanaged(environment.ExportRecord) {
+fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, implementation: ?[]const u8, features: []const []const u8, has_native_export: *bool) Error!std.ArrayListUnmanaged(environment.ExportRecord) {
     var exports = std.ArrayListUnmanaged(environment.ExportRecord).empty;
     if (implementation) |impl| {
         if (std.mem.eql(u8, impl, "none")) return exports;
@@ -1219,6 +1246,9 @@ fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, impleme
         .abi = ctx.target.abi,
         .compat_js = ctx.target.compat_js,
         .optimize = ctx.target.optimize,
+        // lock が記録した package 単位の有効 feature。空だと feature 必須の
+        // artifact 宣言がすべて不適合となり export を欠落させる。
+        .features = features,
     };
     for (manifest.exports) |*export_decl| {
         const resolution = export_decl.resolve(ctx.arena, target, prefer_native, ctx.session.diagnostics) catch |err| switch (err) {
