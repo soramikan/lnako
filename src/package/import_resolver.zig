@@ -322,6 +322,17 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
                 if (!std.mem.eql(u8, environment_path.string, expected_native_path)) return error.InvalidEnvironment;
                 break :blk try native_store.validateRoot(allocator, io, project_root, environment_path.string);
             }
+            // implementation 省略の lock でも、選択 export が native なら sync は
+            // stable native root を発行する。`.nako/native/` を名乗る環境 path は
+            // lock 由来の期待 root と一致する場合に限り native store として検証し、
+            // そうでなければ拒否する（任意 path を native 検証へ通さない）。
+            if (implementation == null and record_exports.items.len != 0 and
+                std.mem.startsWith(u8, environment_path.string, ".nako/native/"))
+            {
+                const expected_native_path = try native_store.expectedRoot(allocator, source, lock_entry) orelse return error.InvalidEnvironment;
+                if (!std.mem.eql(u8, environment_path.string, expected_native_path)) return error.InvalidEnvironment;
+                break :blk try native_store.validateRoot(allocator, io, project_root, environment_path.string);
+            }
             const expected_directory = materialized_directories.get(environment_entry.key_ptr.*) orelse return error.InvalidEnvironment;
             const generation = materializedGeneration(environment_path.string, expected_directory) orelse return error.InvalidEnvironment;
             if (shared_generation) |expected| {

@@ -275,7 +275,7 @@ pub fn run(
                 },
                 else => return err,
             };
-        break :blk try collectImportDependenciesForProfile(arena, entries, direct_ids, manifest, profile, diagnostics);
+        break :blk try collectImportDependenciesForProfile(arena, entries, direct_ids, null, manifest, profile, diagnostics);
     } else &.{};
     var ctx = Context{
         .gpa = gpa,
@@ -564,16 +564,18 @@ fn collectImportDependencies(
     allocator: Allocator,
     lock_entries: []const lock_model.PackageEntry,
     allowed_ids: ?[]const []const u8,
+    edge_owner: ?[]const u8,
     manifest: *const manifest_mod.Manifest,
     diagnostics: *diag.List,
 ) Error![]const environment.ImportDependency {
-    return collectImportDependenciesForProfile(allocator, lock_entries, allowed_ids, manifest, null, diagnostics);
+    return collectImportDependenciesForProfile(allocator, lock_entries, allowed_ids, edge_owner, manifest, null, diagnostics);
 }
 
 fn collectImportDependenciesForProfile(
     allocator: Allocator,
     lock_entries: []const lock_model.PackageEntry,
     allowed_ids: ?[]const []const u8,
+    edge_owner: ?[]const u8,
     manifest: *const manifest_mod.Manifest,
     active_profile: ?[]const u8,
     diagnostics: *diag.List,
@@ -583,22 +585,22 @@ fn collectImportDependenciesForProfile(
     while (pkg.next()) |item| {
         const dependency = item.value_ptr.*;
         if (!dependencyMatchesProfile(dependency.profile, active_profile)) continue;
-        try appendImportDependency(allocator, &result, lock_entries, allowed_ids, dependency.name, .{ .version = dependency.version }, dependency.public_id, dependency.alias, hasOwnerNameAliasCollision(manifest, dependency.name, active_profile), diagnostics);
+        try appendImportDependency(allocator, &result, lock_entries, allowed_ids, edge_owner, dependency.name, .{ .version = dependency.version }, dependency.public_id, dependency.alias, hasOwnerNameAliasCollision(manifest, dependency.name, active_profile), diagnostics);
     }
     var path = manifest.dependencies.path.iterator();
     while (path.next()) |item| {
         const dependency = item.value_ptr.*;
-        try appendImportDependency(allocator, &result, lock_entries, allowed_ids, dependency.name, .{ .path = dependency.path }, null, null, false, diagnostics);
+        try appendImportDependency(allocator, &result, lock_entries, allowed_ids, edge_owner, dependency.name, .{ .path = dependency.path }, null, null, false, diagnostics);
     }
     var git = manifest.dependencies.git.iterator();
     while (git.next()) |item| {
         const dependency = item.value_ptr.*;
-        try appendImportDependency(allocator, &result, lock_entries, allowed_ids, dependency.name, .{ .git = .{ .url = dependency.url, .commit = dependency.commit, .path = dependency.path } }, null, dependency.alias, false, diagnostics);
+        try appendImportDependency(allocator, &result, lock_entries, allowed_ids, edge_owner, dependency.name, .{ .git = .{ .url = dependency.url, .commit = dependency.commit, .path = dependency.path } }, null, dependency.alias, false, diagnostics);
     }
     var http = manifest.dependencies.http.iterator();
     while (http.next()) |item| {
         const dependency = item.value_ptr.*;
-        try appendImportDependency(allocator, &result, lock_entries, allowed_ids, dependency.name, .{ .http = .{ .url = dependency.url, .hash = dependency.hash } }, null, dependency.alias, false, diagnostics);
+        try appendImportDependency(allocator, &result, lock_entries, allowed_ids, edge_owner, dependency.name, .{ .http = .{ .url = dependency.url, .hash = dependency.hash } }, null, dependency.alias, false, diagnostics);
     }
     return try result.toOwnedSlice(allocator);
 }
@@ -636,6 +638,7 @@ fn appendImportDependency(
     result: *std.ArrayListUnmanaged(environment.ImportDependency),
     lock_entries: []const lock_model.PackageEntry,
     allowed_ids: ?[]const []const u8,
+    edge_owner: ?[]const u8,
     name: []const u8,
     constraint: ImportConstraint,
     public_id: ?[]const u8,
@@ -666,11 +669,16 @@ fn appendImportDependency(
         return error.LockInvalid;
     }
     if (target == null) {
-        // In schema-v2, the root edge list is authoritative. A matching package
-        // omitted from it means the lock cannot bind a declared root dependency.
+        // In schema-v2, the allowed edge list is authoritative. A matching
+        // package omitted from it means the lock cannot bind that declared
+        // dependency for the owning manifest scope.
         if (allowed_ids != null) for (lock_entries) |candidate| {
             if (!matchesDependency(candidate, name, constraint, public_id)) continue;
-            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock.rootDependencies", .{}, "root dependency key \"{s}\" matches lock package {s}, but that package is not declared in rootDependencies for the active profile", .{ name, candidate.id });
+            if (edge_owner) |owner| {
+                try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "dependency key \"{s}\" matches lock package {s}, but that package is not declared in the dependencies of package \"{s}\"", .{ name, candidate.id, owner });
+            } else {
+                try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock.rootDependencies", .{}, "root dependency key \"{s}\" matches lock package {s}, but that package is not declared in rootDependencies for the active profile", .{ name, candidate.id });
+            }
             return error.LockInvalid;
         };
         return; // feature-gated or absent dependency
@@ -911,7 +919,7 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
         .id = if (isPackageId(entry.id)) try arena.dupe(u8, entry.id) else null,
         .path = env_path,
         .exports = exports.items,
-        .dependencies = if (manifest) |*m| try collectImportDependenciesForProfile(arena, ctx.lock_entries, entry.dependencies, m, ctx.selected_profile, ctx.diagnostics) else &.{},
+        .dependencies = if (manifest) |*m| try collectImportDependenciesForProfile(arena, ctx.lock_entries, entry.dependencies, entry.name, m, ctx.selected_profile, ctx.diagnostics) else &.{},
         .commands = commands,
     };
 }
@@ -1644,7 +1652,7 @@ test "profile限定package import aliasは共有package IDでも選択profile外
     };
     const allowed_ids = [_][]const u8{"pkg:11111111111111111111111111111111"};
 
-    const aliases = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, &allowed_ids, &manifest, "linux", &diagnostics);
+    const aliases = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, &allowed_ids, null, &manifest, "linux", &diagnostics);
     defer testing.allocator.free(aliases);
     try testing.expectEqual(@as(usize, 2), aliases.len);
     try testing.expect(containsImportDependency(aliases, "@alice/shared", "pkg:11111111111111111111111111111111"));
@@ -1656,9 +1664,49 @@ test "profile限定package import aliasは共有package IDでも選択profile外
     const no_root_edges: [0][]const u8 = .{};
     try testing.expectError(
         error.LockInvalid,
-        collectImportDependenciesForProfile(testing.allocator, &lock_entries, &no_root_edges, &manifest, "linux", &missing_edge_diagnostics),
+        collectImportDependenciesForProfile(testing.allocator, &lock_entries, &no_root_edges, null, &manifest, "linux", &missing_edge_diagnostics),
     );
     try testing.expect(missing_edge_diagnostics.hasErrors());
+}
+
+test "lock edge外のdependency診断はroot scopeとtransitive scopeを区別する" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\shared = { version = "1.0.0" }
+        \\
+    ;
+    var diagnostics = diag.List.init(testing.allocator);
+    defer diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &diagnostics);
+    defer manifest.deinit();
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:11111111111111111111111111111111", .name = "shared", .version = "1.0.0", .source = .{ .kind = .registry } },
+    };
+    const empty_edges: [0][]const u8 = .{};
+
+    var root_diagnostics = diag.List.init(testing.allocator);
+    defer root_diagnostics.deinit();
+    try testing.expectError(
+        error.LockInvalid,
+        collectImportDependenciesForProfile(testing.allocator, &lock_entries, &empty_edges, null, &manifest, null, &root_diagnostics),
+    );
+    try testing.expectEqualStrings("nako.lock.rootDependencies", root_diagnostics.items.items[0].path);
+    try testing.expect(std.mem.indexOf(u8, root_diagnostics.items.items[0].message, "rootDependencies") != null);
+
+    var transitive_diagnostics = diag.List.init(testing.allocator);
+    defer transitive_diagnostics.deinit();
+    try testing.expectError(
+        error.LockInvalid,
+        collectImportDependenciesForProfile(testing.allocator, &lock_entries, &empty_edges, "consumer", &manifest, null, &transitive_diagnostics),
+    );
+    try testing.expectEqualStrings("nako.lock", transitive_diagnostics.items.items[0].path);
+    try testing.expect(std.mem.indexOf(u8, transitive_diagnostics.items.items[0].message, "\"consumer\"") != null);
+    try testing.expect(std.mem.indexOf(u8, transitive_diagnostics.items.items[0].message, "rootDependencies") == null);
 }
 
 test "root package import候補は直接依存のversion rangeで絞る" {
@@ -1689,7 +1737,7 @@ test "root package import候補は直接依存のversion rangeで絞る" {
     try testing.expectEqual(@as(usize, 1), direct_ids.len);
     try testing.expectEqualStrings("pkg:direct-lib", direct_ids[0]);
 
-    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, direct_ids, &manifest, &sync_diagnostics);
+    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, direct_ids, null, &manifest, &sync_diagnostics);
     defer testing.allocator.free(aliases);
     try testing.expectEqual(@as(usize, 1), aliases.len);
     try testing.expectEqualStrings("pkg:direct-lib", aliases[0].package_key);
@@ -1717,12 +1765,12 @@ test "package import aliasはmanifest依存scopeごとにlock keyへ解決され
     };
     var sync_diagnostics = diag.List.init(testing.allocator);
     defer sync_diagnostics.deinit();
-    const root_aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, &manifest, &sync_diagnostics);
+    const root_aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, null, &manifest, &sync_diagnostics);
     defer testing.allocator.free(root_aliases);
     try testing.expectEqual(@as(usize, 1), root_aliases.len);
 
     const package_dependencies = [_][]const u8{"pkg:dep-id"};
-    const scoped_aliases = try collectImportDependencies(testing.allocator, &lock_entries, &package_dependencies, &manifest, &sync_diagnostics);
+    const scoped_aliases = try collectImportDependencies(testing.allocator, &lock_entries, &package_dependencies, "owner-pkg", &manifest, &sync_diagnostics);
     defer testing.allocator.free(scoped_aliases);
     try testing.expectEqual(@as(usize, 1), scoped_aliases.len);
     try testing.expectEqualStrings("source-dep", scoped_aliases[0].alias);
@@ -1776,7 +1824,7 @@ test "registry owner/name keyはownerとexplicit aliasでlock entryへ対応す�
     try testing.expect(containsSyncString(roots, "pkg:bob-lib"));
     try testing.expect(containsSyncString(roots, "pkg:alice-tool"));
 
-    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, roots, &manifest, &sync_diagnostics);
+    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, roots, null, &manifest, &sync_diagnostics);
     defer testing.allocator.free(aliases);
     try testing.expectEqual(@as(usize, 6), aliases.len);
     try testing.expect(containsImportDependency(aliases, "alice-lib", "pkg:alice-lib"));
@@ -1810,7 +1858,7 @@ test "owner/nameのderived aliasは通常の依存キーとの衝突順に依存
     };
     var sync_diagnostics = diag.List.init(testing.allocator);
     defer sync_diagnostics.deinit();
-    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, &manifest, &sync_diagnostics);
+    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, null, &manifest, &sync_diagnostics);
     defer testing.allocator.free(aliases);
     try testing.expectEqual(@as(usize, 2), aliases.len);
     try testing.expect(containsImportDependency(aliases, "alice/lib", "pkg:alice-lib"));
@@ -1839,7 +1887,7 @@ test "owner/nameのderived aliasは他依存のexplicit aliasに優先しない"
     };
     var sync_diagnostics = diag.List.init(testing.allocator);
     defer sync_diagnostics.deinit();
-    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, &manifest, &sync_diagnostics);
+    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, null, &manifest, &sync_diagnostics);
     defer testing.allocator.free(aliases);
     try testing.expectEqual(@as(usize, 3), aliases.len);
     try testing.expect(containsImportDependency(aliases, "alice/lib", "pkg:alice-lib"));
@@ -1869,7 +1917,7 @@ test "同じleafを持つregistry owner/nameのderived aliasだけを省く" {
     };
     var sync_diagnostics = diag.List.init(testing.allocator);
     defer sync_diagnostics.deinit();
-    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, &manifest, &sync_diagnostics);
+    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, null, &manifest, &sync_diagnostics);
     defer testing.allocator.free(aliases);
     try testing.expectEqual(@as(usize, 2), aliases.len);
     try testing.expect(containsImportDependency(aliases, "alice/lib", "pkg:alice-lib"));
@@ -1906,7 +1954,7 @@ test "path git http dependencyはtable keyとpackage nameが異なってもsourc
     };
     var sync_diagnostics = diag.List.init(testing.allocator);
     defer sync_diagnostics.deinit();
-    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, &manifest, &sync_diagnostics);
+    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, null, &manifest, &sync_diagnostics);
     defer testing.allocator.free(aliases);
     const expectations = [_]struct { alias: []const u8, id: []const u8 }{
         .{ .alias = "local-key", .id = "pkg:path-id" },
@@ -1945,7 +1993,7 @@ test "syncは曖昧なlock候補とalias衝突を診断する" {
     const allowed = [_][]const u8{ "pkg:local-one", "pkg:local-two" };
     var ambiguous_diagnostics = diag.List.init(testing.allocator);
     defer ambiguous_diagnostics.deinit();
-    try testing.expectError(error.LockInvalid, collectImportDependencies(testing.allocator, &ambiguous_entries, &allowed, &ambiguous_manifest, &ambiguous_diagnostics));
+    try testing.expectError(error.LockInvalid, collectImportDependencies(testing.allocator, &ambiguous_entries, &allowed, null, &ambiguous_manifest, &ambiguous_diagnostics));
     try testing.expectEqual(@as(usize, 1), ambiguous_diagnostics.items.items.len);
     try testing.expect(std.mem.indexOf(u8, ambiguous_diagnostics.items.items[0].message, "local-one") != null);
     try testing.expect(std.mem.indexOf(u8, ambiguous_diagnostics.items.items[0].message, "local-two") != null);

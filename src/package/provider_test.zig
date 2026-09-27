@@ -1747,6 +1747,11 @@ test "sync は lock の implementation で選択した artifact を取得する"
     const legacy_binary = try std.Io.Dir.cwd().readFileAlloc(io, legacy_binary_path, testing.allocator, .unlimited);
     defer testing.allocator.free(legacy_binary);
     try testing.expectEqualStrings("NATIVE-SOURCE-ARTIFACT", legacy_binary);
+
+    // The resolver must accept the stable native root that sync emitted for the
+    // legacy lock, rather than forcing it through generation-path validation.
+    var legacy_loaded = try import_resolver.Resolver.load(testing.allocator, io, project_abs);
+    defer legacy_loaded.deinit();
 }
 
 test "sync は検証済み git object があれば checkout 無しで offline 同期する" {

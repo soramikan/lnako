@@ -58,7 +58,8 @@ pub fn expectedRoot(allocator: Allocator, source: std.json.ObjectMap, lock_entry
         const hash = requiredString(source, "hash") orelse return error.InvalidEnvironment;
         break :blk try cache_key.artifactKey(allocator, "http", hash, url);
     } else if (std.mem.eql(u8, source_kind, "registry") or std.mem.eql(u8, source_kind, "static")) blk: {
-        const implementation = requiredString(lock_entry, "implementation") orelse return error.InvalidEnvironment;
+        // sync の selectArtifact と同じく、implementation 省略は source 扱い。
+        const implementation = requiredString(lock_entry, "implementation") orelse "source";
         const artifacts = asObject(get(lock_entry, "artifacts") orelse return error.InvalidEnvironment) orelse return error.InvalidEnvironment;
         var selected: ?std.json.ObjectMap = null;
         var iterator = artifacts.iterator();
@@ -248,6 +249,21 @@ test "native artifact root selects first matching kind despite platform keys and
     const root = try expectedRoot(allocator, entry.get("source").?.object, entry);
     const first_key = try cache_key.artifactKey(allocator, "artifact", "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "https://example.invalid/first");
     const expected = try relativeRoot(allocator, first_key);
+    try testing.expectEqualStrings(expected, root.?);
+}
+
+test "native artifact rootはimplementation省略時にsync同様source artifactを選ぶ" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const allocator = arena_state.allocator();
+    const parsed = try std.json.parseFromSlice(Value, allocator,
+        \\{"source":{"type":"registry"},"artifacts":{"bin":{"kind":"native","url":"https://example.invalid/native","sha256":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},"src":{"kind":"source","url":"https://example.invalid/source","sha256":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}}
+    , .{});
+    defer parsed.deinit();
+    const entry = asObject(parsed.value).?;
+    const root = try expectedRoot(allocator, entry.get("source").?.object, entry);
+    const source_key = try cache_key.artifactKey(allocator, "artifact", "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "https://example.invalid/source");
+    const expected = try relativeRoot(allocator, source_key);
     try testing.expectEqualStrings(expected, root.?);
 }
 
