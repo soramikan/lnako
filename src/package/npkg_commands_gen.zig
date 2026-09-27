@@ -16,6 +16,7 @@ const parser = @import("../frontend/parser.zig");
 const token_mod = @import("../frontend/token.zig");
 const diag = @import("diagnostics.zig");
 const npkg_commands = @import("npkg_commands.zig");
+const npkg_files = @import("npkg_files.zig");
 
 const Allocator = std.mem.Allocator;
 pub const Command = npkg_commands.Command;
@@ -223,6 +224,63 @@ const Collector = struct {
     }
 };
 
+fn isWithin(root: []const u8, path: []const u8) bool {
+    if (std.mem.eql(u8, root, path)) return true;
+    if (!std.mem.startsWith(u8, path, root) or path.len <= root.len) return false;
+    return path[root.len] == std.fs.path.sep;
+}
+
+/// package dir からファイルを読む `SourceProvider`。要求される path は
+/// package 相対の規範 path のみで、lexical・realpath の両方で root 内に
+/// 留まることを確認する。manifest の `exports[].path` は信頼しない入力
+/// （`..` や絶対 path、symlink 経由で境界外を読める）ため、import 解決側
+/// （import_resolver.resolve）と同じ二重検査で境界を閉じる。
+pub const DirSourceProvider = struct {
+    io: std.Io,
+    root: []const u8,
+    real_root: []const u8,
+
+    /// `root` の実 path を境界として確定する。`allocator` は provider と
+    /// 同寿命であること。
+    pub fn init(allocator: Allocator, io: std.Io, root: []const u8) !DirSourceProvider {
+        var directory = if (std.fs.path.isAbsolute(root))
+            try std.Io.Dir.openDirAbsolute(io, root, .{})
+        else
+            try std.Io.Dir.cwd().openDir(io, root, .{});
+        defer directory.close(io);
+        var buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const length = try directory.realPath(io, &buffer);
+        return .{
+            .io = io,
+            .root = try allocator.dupe(u8, root),
+            .real_root = try allocator.dupe(u8, buffer[0..length]),
+        };
+    }
+
+    pub fn provider(self: *DirSourceProvider) SourceProvider {
+        return .{ .context = self, .readFn = read };
+    }
+
+    fn read(context: *anyopaque, allocator: Allocator, path: []const u8) anyerror!?[]u8 {
+        const self: *DirSourceProvider = @ptrCast(@alignCast(context));
+        if (!npkg_files.isCanonicalPath(path)) return null;
+        const resolved = try std.fs.path.resolve(allocator, &.{ self.root, path });
+        defer allocator.free(resolved);
+        if (!isWithin(self.real_root, resolved)) return null;
+        const actual = std.Io.Dir.cwd().realPathFileAlloc(self.io, resolved, allocator) catch |err| switch (err) {
+            error.FileNotFound, error.NotDir => return null,
+            else => return err,
+        };
+        defer allocator.free(actual);
+        if (!isWithin(self.real_root, actual)) return null;
+        const bytes = std.Io.Dir.cwd().readFileAlloc(self.io, actual, allocator, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
+            error.FileNotFound => return null,
+            else => return err,
+        };
+        return bytes;
+    }
+};
+
 /// `entry_paths`（パッケージ相対の公開ソース path 群）とその import 閉包から
 /// 公開命令一覧を生成する。全メモリは返却 `Result` の arena が所有する。
 /// 失敗時は diagnostics へ記録して `error.InvalidCommands` を返す。
@@ -249,4 +307,41 @@ pub fn generate(
     if (diagnostics.errorCount() > prior_errors) return error.InvalidCommands;
     // 全割当が完了した後に arena を移す。
     return .{ .arena = arena, .commands = collector.commands.items };
+}
+
+const testing = std.testing;
+
+test "DirSourceProvider は規範外 path と symlink 脱出を拒否する" {
+    const io = testing.io;
+    var temporary = testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "pkg/sub");
+    try temporary.dir.writeFile(io, .{ .sub_path = "pkg/main.nako3", .data = "x" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "secret.txt", .data = "secret" });
+    const root = try temporary.dir.realPathFileAlloc(io, "pkg", testing.allocator);
+    defer testing.allocator.free(root);
+
+    var provider_state = try DirSourceProvider.init(testing.allocator, io, root);
+    const provider = provider_state.provider();
+    defer {
+        testing.allocator.free(provider_state.root);
+        testing.allocator.free(provider_state.real_root);
+    }
+
+    const contents = (try provider.read(testing.allocator, "main.nako3")).?;
+    defer testing.allocator.free(contents);
+    try testing.expectEqualStrings("x", contents);
+    try testing.expectEqual(@as(?[]u8, null), try provider.read(testing.allocator, "../secret.txt"));
+    try testing.expectEqual(@as(?[]u8, null), try provider.read(testing.allocator, "/etc/passwd"));
+    try testing.expectEqual(@as(?[]u8, null), try provider.read(testing.allocator, "sub/../../secret.txt"));
+    try testing.expectEqual(@as(?[]u8, null), try provider.read(testing.allocator, "missing.nako3"));
+
+    // package 内の symlink が境界外を指す場合も realpath 検査で拒否する。
+    if (@import("builtin").os.tag != .windows) {
+        temporary.dir.symLink(io, "../secret.txt", "pkg/link.txt", .{}) catch |err| switch (err) {
+            error.AccessDenied => return error.SkipZigTest,
+            else => return err,
+        };
+        try testing.expectEqual(@as(?[]u8, null), try provider.read(testing.allocator, "link.txt"));
+    }
 }

@@ -8,6 +8,7 @@ const marker_mod = @import("marker.zig");
 const features_mod = @import("features.zig");
 const diag = @import("diagnostics.zig");
 const manifest_mod = @import("manifest.zig");
+const npkg_files = @import("npkg_files.zig");
 
 const Manifest = manifest_mod.Manifest;
 const Npkg = manifest_mod.Npkg;
@@ -240,6 +241,14 @@ const Validator = struct {
         return try items.toOwnedSlice(self.arena);
     }
 
+    /// export の `path`・artifact の `path` は package 相対の規範 path が
+    /// 契約。規範外（`..`・絶対 path・`\`・制御文字等）は commands 索引や
+    /// import 解決で package 境界外を読めるため受理しない。
+    fn rejectNonCanonicalPath(self: *Validator, text: []const u8, field_path: []const u8, position: Position) Error!void {
+        if (npkg_files.isCanonicalPath(text)) return;
+        try self.report(diag.E029_INVALID_VALUE, field_path, position, "\"{s}\" must be a canonical package-relative path: \"{s}\"", .{ field_path, text });
+    }
+
     /// `native`/`esm` フィールドを artifact 宣言列へ変換する。受理する形は
     /// 文字列省略形、宣言テーブル、またはその配列。戻り値のスライスと
     /// 各 `features` は arena 確保。
@@ -248,6 +257,7 @@ const Validator = struct {
         const field_path = try self.pathOf(path, key);
         switch (value.kind) {
             .string => |text| {
+                try self.rejectNonCanonicalPath(text, field_path, value.position);
                 const decls = try self.arena.alloc(ArtifactDecl, 1);
                 decls[0] = .{ .path = text, .position = value.position };
                 return decls;
@@ -293,9 +303,11 @@ const Validator = struct {
                     .position = value.position,
                 };
                 if (try self.requireString(decl_table, "path", field_path, value.position)) |text| {
+                    const item_path = try self.pathOf(field_path, "path");
                     if (text.len == 0) {
-                        const item_path = try self.pathOf(field_path, "path");
                         try self.report(diag.E029_INVALID_VALUE, item_path, value.position, "\"{s}.path\" must not be empty", .{field_path});
+                    } else {
+                        try self.rejectNonCanonicalPath(text, item_path, value.position);
                     }
                     decl.path = text;
                 }
@@ -895,6 +907,10 @@ const Validator = struct {
                 }
             }
             export_entry.path = try self.expectString(export_table, "path", "exports");
+            if (export_entry.path) |text| {
+                const item_path = try self.pathOf("exports", "path");
+                try self.rejectNonCanonicalPath(text, item_path, item.position);
+            }
             export_entry.alias = try self.expectString(export_table, "alias", "exports");
             export_entry.native = try self.expectArtifactDecls(export_table, "native", "exports");
             export_entry.esm = try self.expectArtifactDecls(export_table, "esm", "exports");

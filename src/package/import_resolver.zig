@@ -540,6 +540,9 @@ const DependencyConstraint = union(enum) {
 
 const DependencyBinding = struct { alias: []const u8, package_id: []const u8 };
 
+/// `active_profile == null` は「無profile環境の検証」を意味し、profile 要求を
+/// 持つ依存は一致しない（fail-closed）。sync.zig 側の同名述語は
+/// 「profile 選択なしの sync」と解釈して全一致するため null 意味は対称でない。
 fn dependencyMatchesProfile(dependency_profile: ?[]const u8, active_profile: ?[]const u8) bool {
     const required = dependency_profile orelse return true;
     const selected = active_profile orelse return false;

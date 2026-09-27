@@ -448,6 +448,7 @@ size = 1234
 - `パッケージ:<alias>` と `パッケージ:<alias>/<subpath>` は、取り込み元の依存scope（プロジェクトrootまたはpackage自身）にあるdependency aliasからlock済みPublic ID/環境package keyへ解決し、公開exportだけを選択する。公開module namespaceはimport alias（先頭の `@` を除去し、`/` を `__` に、識別子に使えないASCII文字を `_` に正規化。subpath付きでは `alias__subpath`）に対応付け、exportの `alias` はsubpath選択にのみ使う。module canonical ID は `package key/export name`、物理pathは選択artifactの実pathとして別々に保持する。version指定・未宣言alias・非公開subpathは拒否する。
 - `.nako/environment.json` はrootと各packageの依存scopeごとに `{ alias, package }` 対応を任意に記録できる。旧環境で対応表が無い場合、package importは利用不可として明示的に失敗する。
 - パッケージaliasは通常ファイル、拡張プラグインおよびnpm/JavaScript取り込みとは別resolverで解決し、相互に曖昧なfallbackをしない。
+- 同一の物理ファイルが package export と相対pathの双方で取り込まれた場合、module identity（canonical ID・package由来フラグ）は最初に取り込まれた側で確定し、後の取り込みはその identity を共有する。修飾名は両経路の namespace で解決できるが、package module としての扱い（implicit lookup の適用範囲等）は先発の取り込み方に従う。
 - JavaScript/ESM artifact の import は `--compat-js` 指定時のみ許可する。
 - 通常モードで JS/ESM 依存を解決しようとした場合は `E006_JS_IN_NORMAL_MODE` 診断。
 
