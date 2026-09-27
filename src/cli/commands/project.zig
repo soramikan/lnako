@@ -1100,15 +1100,17 @@ pub fn inputDir(a: Allocator, io: std.Io, input: []const u8) ![]const u8 {
         const dir = std.fs.path.dirname(input) orelse return a.dupe(u8, ".");
         return a.dupe(u8, dir);
     };
-    if (stat.kind == .directory) return a.dupe(u8, input);
-    // 実在する file は symlink の可能性があるため実体へ解決してから
-    // dirname を求める。表記側の親 dir は別 project（または project 外）
-    // を指し得るため、そのまま探索すると誤った lock/環境を準備する。
-    const resolved = std.Io.Dir.cwd().realPathFileAlloc(io, input, a) catch {
+    // 実在する入力は symlink の可能性があるため実体へ解決してから扱う。
+    // 表記側の dir/親 dir は別 project（または project 外）を指し得る
+    // ため、そのまま探索すると誤った lock/環境を準備する（file 入力は
+    // リンク先の親、directory 入力はリンク先自身が正しい起点）。
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const resolved = std.Io.Dir.cwd().realPathFile(io, input, &path_buf) catch {
         const dir = std.fs.path.dirname(input) orelse return a.dupe(u8, ".");
         return a.dupe(u8, dir);
     };
-    const dir = std.fs.path.dirname(resolved) orelse return a.dupe(u8, ".");
+    if (stat.kind == .directory) return a.dupe(u8, path_buf[0..resolved]);
+    const dir = std.fs.path.dirname(path_buf[0..resolved]) orelse return a.dupe(u8, ".");
     return a.dupe(u8, dir);
 }
 

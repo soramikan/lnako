@@ -1092,3 +1092,27 @@ test "inputDir は file symlink の実体側 dir を返す" {
     const dir = try project_cmd.inputDir(a, io, link_abs);
     try testing.expectEqualStrings(app_abs, dir);
 }
+
+test "inputDir は directory symlink の実体側 dir を返す" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    // project 内 dir への symlink を project 外から渡した場合、表記側の
+    // 親 dir（`outside`）ではなくリンク先 dir 自身（`app`）を起点に
+    // する必要がある。file symlink と同じく実体へ解決する。
+    try temporary.dir.createDirPath(io, "app");
+    try temporary.dir.createDirPath(io, "outside");
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/nako.toml", .data = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n" });
+    const target_abs = try temporary.dir.realPathFileAlloc(io, "app", a);
+    temporary.dir.symLink(io, target_abs, "outside/linkdir", .{}) catch |err| switch (err) {
+        error.AccessDenied, error.PermissionDenied, error.FileSystem => return error.SkipZigTest,
+        else => return err,
+    };
+    const outside_abs = try temporary.dir.realPathFileAlloc(io, "outside", a);
+    const link_abs = try std.fs.path.join(a, &.{ outside_abs, "linkdir" });
+
+    const dir = try project_cmd.inputDir(a, io, link_abs);
+    try testing.expectEqualStrings(target_abs, dir);
+}

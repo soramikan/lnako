@@ -175,8 +175,12 @@ const Context = struct {
     used_keys: std.ArrayListUnmanaged([]const u8) = .empty,
     used_names: std.StringHashMapUnmanaged(void) = .empty,
 
+    /// 検証済み cache tree の snapshot は `workspace_dir`（同期専有の
+    /// project 内 workspace）へ置く。共有 cache `staging/` 内だと別の
+    /// cache 書込主体が列挙・差替えできるため、snapshot 親 dir は
+    /// workspace handle で固定する。
     fn objectTree(self: *const Context, key: []const u8) Error!?cache.Store.VerifiedTree {
-        return self.cache_store.openVerifiedTree(self.gpa, key) catch |err| return mapFs(err);
+        return self.cache_store.openVerifiedTree(self.gpa, key, self.workspace_dir) catch |err| return mapFs(err);
     }
 };
 
@@ -502,7 +506,11 @@ fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!en
                 // 公開すると、sync 後の編集が lock を変えずに `--no-sync`
                 // 消費者へ届いてしまうため。digest 対象外の `.nako`/`.git`
                 // は複製しない。
-                var dep_dir = std.Io.Dir.cwd().openDir(ctx.io, dep_abs, .{ .iterate = true, .follow_symlinks = false }) catch |err| switch (err) {
+                // 宣言 root が directory symlink の場合も path_digest
+                // （root のみ follow）と同じ契約で受理するため root は
+                // follow して開く。内部 entry の no-follow 制約は
+                // materialize 側の走査で維持される。
+                var dep_dir = std.Io.Dir.cwd().openDir(ctx.io, dep_abs, .{ .iterate = true, .follow_symlinks = true }) catch |err| switch (err) {
                     error.Canceled => return error.Canceled,
                     else => return ctx.session.fail(.unavailable, .package, dep_abs, "cannot open path dependency \"{s}\" directory: {s}", .{ entry.name, @errorName(err) }),
                 };
@@ -1054,7 +1062,7 @@ const CachedManifest = struct {
 /// を優先し、無ければ `tree/nako.toml` を探す。どちらも無ければ null。
 fn cachedManifest(ctx: *Context, key: []const u8) Error!?CachedManifest {
     const arena = ctx.arena;
-    var tree = (ctx.cache_store.openVerifiedTree(ctx.gpa, key) catch |err| return mapFs(err)) orelse return null;
+    var tree = (ctx.cache_store.openVerifiedTree(ctx.gpa, key, ctx.workspace_dir) catch |err| return mapFs(err)) orelse return null;
     defer tree.close();
     // 両方ある package では配布向け正規化済みの METADATA.toml が正本。
     const candidates = [_]struct { rel: []const u8, npkg: bool }{

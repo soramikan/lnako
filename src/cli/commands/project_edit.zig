@@ -6,6 +6,7 @@ const std = @import("std");
 const lnako = @import("lnako");
 const shared = @import("project.zig");
 const toml_inline = @import("toml_inline.zig");
+const toml_scan = @import("toml_scan.zig");
 const manifest_rollback = @import("manifest_rollback.zig");
 
 const diag = lnako.package.diagnostics;
@@ -55,12 +56,6 @@ fn lineStart(source: []const u8, line: usize) ?usize {
     return if (current == line) index else null;
 }
 
-fn lineEnd(source: []const u8, offset: usize) usize {
-    var index = offset;
-    while (index < source.len and source[index] != '\n') index += 1;
-    return index;
-}
-
 fn isBareKey(name: []const u8) bool {
     if (name.len == 0) return false;
     for (name) |ch| {
@@ -74,231 +69,6 @@ fn emitKey(a: Allocator, name: []const u8) ![]const u8 {
     return std.fmt.allocPrint(a, "\"{s}\"", .{name});
 }
 
-/// 行末の TOML コメントを除去する。`#` が基本文字列・literal 文字列の
-/// 内側にある場合はコメント開始とみなさない（`"a#b"]` のような細工
-/// をヘッダとして誤認しない）。
-fn stripTomlComment(text: []const u8) []const u8 {
-    const String = enum { none, basic, literal };
-    var string: String = .none;
-    var index: usize = 0;
-    while (index < text.len) : (index += 1) {
-        const ch = text[index];
-        switch (string) {
-            .basic => {
-                if (ch == '\\') {
-                    index += 1;
-                    continue;
-                }
-                if (ch == '"') string = .none;
-            },
-            .literal => if (ch == '\'') {
-                string = .none;
-            },
-            .none => switch (ch) {
-                '#' => return text[0..index],
-                '"' => string = .basic,
-                '\'' => string = .literal,
-                else => {},
-            },
-        }
-    }
-    return text;
-}
-
-const TomlLexState = enum { normal, basic, literal, multiline_basic, multiline_literal };
-
-fn tomlLineStartsInMultiline(state: TomlLexState) bool {
-    return state == .multiline_basic or state == .multiline_literal;
-}
-
-/// TOML の1行を走査して multiline string 状態を更新する。
-fn advanceTomlLexState(line: []const u8, state: *TomlLexState) void {
-    var index: usize = 0;
-    while (index < line.len) {
-        const ch = line[index];
-        switch (state.*) {
-            .normal => switch (ch) {
-                '#' => break,
-                '"' => {
-                    if (index + 2 < line.len and line[index + 1] == '"' and line[index + 2] == '"') {
-                        state.* = .multiline_basic;
-                        index += 3;
-                        continue;
-                    }
-                    state.* = .basic;
-                },
-                '\'' => {
-                    if (index + 2 < line.len and line[index + 1] == '\'' and line[index + 2] == '\'') {
-                        state.* = .multiline_literal;
-                        index += 3;
-                        continue;
-                    }
-                    state.* = .literal;
-                },
-                else => {},
-            },
-            .basic => switch (ch) {
-                '\\' => {
-                    index += @min(2, line.len - index);
-                    continue;
-                },
-                '"' => state.* = .normal,
-                else => {},
-            },
-            .literal => if (ch == '\'') {
-                state.* = .normal;
-            },
-            .multiline_basic => {
-                if (ch == '\\') {
-                    index += @min(2, line.len - index);
-                    continue;
-                }
-                if (ch == '"' and index + 2 < line.len and line[index + 1] == '"' and line[index + 2] == '"') {
-                    state.* = .normal;
-                    index += 3;
-                    continue;
-                }
-            },
-            .multiline_literal => if (ch == '\'' and index + 2 < line.len and line[index + 1] == '\'' and line[index + 2] == '\'') {
-                state.* = .normal;
-                index += 3;
-                continue;
-            },
-        }
-        index += 1;
-    }
-    // TOML single-line strings cannot cross a line boundary. Invalid TOML is
-    // rejected by the manifest parser; reset here to keep later scans bounded.
-    if (state.* == .basic or state.* == .literal) state.* = .normal;
-}
-
-/// 行テキストが `[<section>]` ヘッダか判定する。`[ dependencies.path ]
-/// のような空白や、`[dependencies."path"]` のようなセグメント引用は
-/// TOML 上同一のテーブルなので正規化して比較する。
-/// `["dependencies.path"]`（名前全体の引用）は別名テーブルなので一致
-/// させない（セグメント分割で引用が崩れた場合は不一致）。
-/// `[dependencies.path] # comment` のような行末コメントは除去して
-/// から比較する。
-fn headerMatches(text: []const u8, section: []const u8, buf: []u8) bool {
-    const t = std.mem.trim(u8, stripTomlComment(text), " \t\r");
-    if (t.len < 3 or t[0] != '[' or t[t.len - 1] != ']') return false;
-    const inner = t[1 .. t.len - 1];
-    var out: usize = 0;
-    var it = std.mem.splitScalar(u8, inner, '.');
-    var first = true;
-    while (it.next()) |seg_raw| {
-        const seg = std.mem.trim(u8, seg_raw, " \t");
-        if (!first) {
-            if (out >= buf.len) return false;
-            buf[out] = '.';
-            out += 1;
-        }
-        if (seg.len >= 2 and seg[0] == '"' and seg[seg.len - 1] == '"') {
-            // basic quoted key は escape を復号して比較する
-            // （`"pa\u0074h"` は `path` と同一テーブル）。
-            const n = decodeBasicKey(seg[1 .. seg.len - 1], buf[out..]) orelse return false;
-            if (n == 0) return false;
-            out += n;
-        } else if (seg.len >= 2 and seg[0] == '\'' and seg[seg.len - 1] == '\'') {
-            // literal quoted key は escape なし。そのまま比較する。
-            const name = seg[1 .. seg.len - 1];
-            if (name.len == 0 or out + name.len > buf.len) return false;
-            @memcpy(buf[out .. out + name.len], name);
-            out += name.len;
-        } else if (seg.len >= 1 and (seg[0] == '"' or seg[0] == '\'')) {
-            return false; // 引用がドットを跨ぐ → 別名テーブル
-        } else {
-            if (seg.len == 0 or out + seg.len > buf.len) return false;
-            @memcpy(buf[out .. out + seg.len], seg);
-            out += seg.len;
-        }
-        first = false;
-    }
-    return std.mem.eql(u8, buf[0..out], section);
-}
-
-/// `"..."` 形式の quoted key の内部を TOML basic string の規則で復号する。
-/// malformed なら null（該当 manifest は parser 側でも拒否される）。
-fn decodeBasicKey(inner: []const u8, buf: []u8) ?usize {
-    var out: usize = 0;
-    var index: usize = 0;
-    while (index < inner.len) {
-        const ch = inner[index];
-        index += 1;
-        if (ch != '\\') {
-            if (out >= buf.len) return null;
-            buf[out] = ch;
-            out += 1;
-            continue;
-        }
-        if (index >= inner.len) return null;
-        const esc = inner[index];
-        index += 1;
-        const byte: u8 = switch (esc) {
-            'b' => 0x08,
-            't' => '\t',
-            'n' => '\n',
-            'f' => 0x0c,
-            'r' => '\r',
-            '"' => '"',
-            '\\' => '\\',
-            else => {
-                const digits: usize = switch (esc) {
-                    'u' => 4,
-                    'U' => 8,
-                    else => return null,
-                };
-                if (index + digits > inner.len) return null;
-                const codepoint = std.fmt.parseInt(u21, inner[index .. index + digits], 16) catch return null;
-                index += digits;
-                if (out + 4 > buf.len) return null;
-                const len = std.unicode.utf8Encode(codepoint, buf[out..][0..4]) catch return null;
-                out += len;
-                continue;
-            },
-        };
-        if (out >= buf.len) return null;
-        buf[out] = byte;
-        out += 1;
-    }
-    return out;
-}
-
-/// `[<section>]` テーブルヘッダの行開始 offset を探す。
-fn findTableHeader(source: []const u8, section: []const u8) ?usize {
-    var index: usize = 0;
-    var buf: [1024]u8 = undefined;
-    var state: TomlLexState = .normal;
-    while (index < source.len) {
-        const end = lineEnd(source, index);
-        const text = source[index..end];
-        if (!tomlLineStartsInMultiline(state) and headerMatches(text, section, &buf)) return index;
-        advanceTomlLexState(text, &state);
-        index = if (end < source.len) end + 1 else source.len;
-    }
-    return null;
-}
-
-/// `header_offset` 以降で次の `[` ヘッダ（または `[[`）の行開始 offset。
-/// 無ければ source.len。
-fn nextHeader(source: []const u8, header_offset: usize) usize {
-    var state: TomlLexState = .normal;
-    var index = header_offset;
-    const first_end = lineEnd(source, index);
-    advanceTomlLexState(source[index..first_end], &state);
-    index = first_end;
-    while (index < source.len) {
-        index += 1; // '\n' を越える
-        if (index >= source.len) break;
-        const end = lineEnd(source, index);
-        const text = std.mem.trimStart(u8, source[index..end], " \t");
-        if (!tomlLineStartsInMultiline(state) and text.len > 0 and text[0] == '[') return index;
-        advanceTomlLexState(source[index..end], &state);
-        index = end;
-    }
-    return source.len;
-}
-
 /// `[<section>]` 内に `key = <value>` 行を挿入した新しい source を返す。
 /// テーブルが無ければ末尾へ新設する。ただし `[dependencies] path.lib = ...`
 /// や文書 root の `dependencies.path.lib = ...` のような dotted key で
@@ -307,9 +77,9 @@ fn nextHeader(source: []const u8, header_offset: usize) usize {
 fn insertEntry(a: Allocator, source: []const u8, section: []const u8, name: []const u8, value: []const u8) ![]const u8 {
     const key = try emitKey(a, name);
     const line = try std.fmt.allocPrint(a, "{s} = {s}\n", .{ key, value });
-    if (findTableHeader(source, section)) |header| {
+    if (toml_scan.findTableHeader(source, section)) |header| {
         // テーブル末尾（次のヘッダ直前）へ挿入する。
-        const boundary = nextHeader(source, header);
+        const boundary = toml_scan.nextHeader(source, header);
         var output: std.ArrayList(u8) = .empty;
         try output.appendSlice(a, source[0..boundary]);
         // 末尾の空白行をまとめてから追記する。
@@ -345,12 +115,12 @@ fn insertInlineEntry(a: Allocator, source: []const u8, section: []const u8, key:
 
     // 文書 root（最初の `[` ヘッダより前）で `<parent> = {` を探す。
     var index: usize = 0;
-    var state: TomlLexState = .normal;
+    var state: toml_scan.TomlLexState = .normal;
     while (index < source.len) {
-        const end = lineEnd(source, index);
+        const end = toml_scan.lineEnd(source, index);
         const text = std.mem.trimStart(u8, source[index..end], " \t");
-        if (!tomlLineStartsInMultiline(state) and text.len > 0 and text[0] == '[') break;
-        if (!tomlLineStartsInMultiline(state)) {
+        if (!toml_scan.tomlLineStartsInMultiline(state) and text.len > 0 and text[0] == '[') break;
+        if (!toml_scan.tomlLineStartsInMultiline(state)) {
             if (assignmentLhs(source[index..end])) |lhs| {
                 if (toml_inline.tomlKeySegmentEquals(lhs, parent)) {
                     const eq = index + (std.mem.indexOfScalar(u8, source[index..end], '=') orelse unreachable);
@@ -370,7 +140,7 @@ fn insertInlineEntry(a: Allocator, source: []const u8, section: []const u8, key:
                 }
             }
         }
-        advanceTomlLexState(source[index..end], &state);
+        toml_scan.advanceTomlLexState(source[index..end], &state);
         index = if (end < source.len) end + 1 else source.len;
     }
     return null;
@@ -387,16 +157,16 @@ fn insertDottedEntry(a: Allocator, source: []const u8, section: []const u8, key:
     const kind = section[dot + 1 ..];
 
     // A) `[<parent>]` 表内の `kind.<x> = ...`。
-    if (findTableHeader(source, parent)) |header| {
-        const boundary = nextHeader(source, header);
-        var state: TomlLexState = .normal;
-        var index = lineEnd(source, header);
-        advanceTomlLexState(source[header..index], &state);
+    if (toml_scan.findTableHeader(source, parent)) |header| {
+        const boundary = toml_scan.nextHeader(source, header);
+        var state: toml_scan.TomlLexState = .normal;
+        var index = toml_scan.lineEnd(source, header);
+        toml_scan.advanceTomlLexState(source[header..index], &state);
         while (index < boundary) {
             index += 1;
             if (index >= boundary) break;
-            const end = lineEnd(source, index);
-            if (!tomlLineStartsInMultiline(state)) {
+            const end = toml_scan.lineEnd(source, index);
+            if (!toml_scan.tomlLineStartsInMultiline(state)) {
                 if (assignmentLhs(source[index..@min(end, boundary)])) |lhs| {
                     if (lhsHasPrefix(lhs, &.{kind})) {
                         const line = try std.fmt.allocPrint(a, "{s}.{s} = {s}\n", .{ kind, key, value });
@@ -413,7 +183,7 @@ fn insertDottedEntry(a: Allocator, source: []const u8, section: []const u8, key:
                     }
                 }
             }
-            advanceTomlLexState(source[index..end], &state);
+            toml_scan.advanceTomlLexState(source[index..end], &state);
             index = end;
         }
         return null;
@@ -423,17 +193,17 @@ fn insertDottedEntry(a: Allocator, source: []const u8, section: []const u8, key:
     //    `<parent>.<kind>.<x> = ...`。最後の宣言の直後へ挿入する。
     var last_end: ?usize = null;
     var index: usize = 0;
-    var state: TomlLexState = .normal;
+    var state: toml_scan.TomlLexState = .normal;
     while (index < source.len) {
-        const end = lineEnd(source, index);
+        const end = toml_scan.lineEnd(source, index);
         const text = std.mem.trimStart(u8, source[index..end], " \t");
-        if (!tomlLineStartsInMultiline(state) and text.len > 0 and text[0] == '[') break;
-        if (!tomlLineStartsInMultiline(state)) {
+        if (!toml_scan.tomlLineStartsInMultiline(state) and text.len > 0 and text[0] == '[') break;
+        if (!toml_scan.tomlLineStartsInMultiline(state)) {
             if (assignmentLhs(source[index..end])) |lhs| {
                 if (lhsHasPrefix(lhs, &.{ parent, kind })) last_end = end;
             }
         }
-        advanceTomlLexState(source[index..end], &state);
+        toml_scan.advanceTomlLexState(source[index..end], &state);
         index = if (end < source.len) end + 1 else source.len;
     }
     if (last_end == null) return null;
@@ -572,8 +342,8 @@ fn removeEntry(a: Allocator, source: []const u8, section: []const u8, name: []co
     // 1) `[<section>.<name>]` サブテーブル形式（空白・引用も正規化して照合）
     {
         const target = try std.fmt.allocPrint(a, "{s}.{s}", .{ section, name });
-        if (findTableHeader(source, target)) |header| {
-            const table_end = nextHeader(source, header);
+        if (toml_scan.findTableHeader(source, target)) |header| {
+            const table_end = toml_scan.nextHeader(source, header);
             var output: std.ArrayList(u8) = .empty;
             try output.appendSlice(a, source[0..header]);
             try output.appendSlice(a, source[table_end..]);
@@ -588,7 +358,7 @@ fn removeEntry(a: Allocator, source: []const u8, section: []const u8, name: []co
     const parent = section[0..section_dot];
     const kind = section[section_dot + 1 ..];
     const start = lineStart(source, position.line) orelse return null;
-    const end = lineEnd(source, start);
+    const end = toml_scan.lineEnd(source, start);
     // 安全確認: その行に `=` とキー名が含まれること。
     const text = source[start..end];
     const eq = std.mem.indexOfScalar(u8, text, '=') orelse return null;
@@ -1511,33 +1281,33 @@ test "headerMatches は名前全体の引用を別テーブルとして区別す
     var buf: [1024]u8 = undefined;
     // `["dependencies.path"]` は `dependencies.path` という名前のテーブル
     // であり `dependencies` → `path` の入れ子ではない（一致させない）。
-    try std.testing.expect(!headerMatches("[ \"dependencies.path\" ]", "dependencies.path", &buf));
-    try std.testing.expect(headerMatches("[ dependencies.\"path\" ]", "dependencies.path", &buf));
-    try std.testing.expect(headerMatches("[dependencies.path]", "dependencies.path", &buf));
+    try std.testing.expect(!toml_scan.headerMatches("[ \"dependencies.path\" ]", "dependencies.path", &buf));
+    try std.testing.expect(toml_scan.headerMatches("[ dependencies.\"path\" ]", "dependencies.path", &buf));
+    try std.testing.expect(toml_scan.headerMatches("[dependencies.path]", "dependencies.path", &buf));
     // literal 引用も同一テーブル。ドットを跨ぐ literal 引用は別名。
-    try std.testing.expect(headerMatches("[ dependencies.'path' ]", "dependencies.path", &buf));
-    try std.testing.expect(headerMatches("[dependencies.'path']", "dependencies.path", &buf));
-    try std.testing.expect(headerMatches("[dev-dependencies.'pkg']", "dev-dependencies.pkg", &buf));
-    try std.testing.expect(!headerMatches("['dependencies.path']", "dependencies.path", &buf));
-    try std.testing.expect(!headerMatches("[dependencies.'path.x']", "dependencies.path", &buf));
-    try std.testing.expect(!headerMatches("[[dependencies.path]]", "dependencies.path", &buf));
+    try std.testing.expect(toml_scan.headerMatches("[ dependencies.'path' ]", "dependencies.path", &buf));
+    try std.testing.expect(toml_scan.headerMatches("[dependencies.'path']", "dependencies.path", &buf));
+    try std.testing.expect(toml_scan.headerMatches("[dev-dependencies.'pkg']", "dev-dependencies.pkg", &buf));
+    try std.testing.expect(!toml_scan.headerMatches("['dependencies.path']", "dependencies.path", &buf));
+    try std.testing.expect(!toml_scan.headerMatches("[dependencies.'path.x']", "dependencies.path", &buf));
+    try std.testing.expect(!toml_scan.headerMatches("[[dependencies.path]]", "dependencies.path", &buf));
 }
 
 test "headerMatches は basic 引用 key のエスケープを復号して比較する" {
     var buf: [1024]u8 = undefined;
     // `\uXXXX` は復号後に比較する（"pa\u0074h" == "path"）。
-    try std.testing.expect(headerMatches("[dependencies.\"pa\\u0074h\"]", "dependencies.path", &buf));
-    try std.testing.expect(headerMatches("[dependencies.\"\\u0070ath\"]", "dependencies.path", &buf));
-    try std.testing.expect(headerMatches("[dependencies.\"pa\\U00000074h\"]", "dependencies.path", &buf));
+    try std.testing.expect(toml_scan.headerMatches("[dependencies.\"pa\\u0074h\"]", "dependencies.path", &buf));
+    try std.testing.expect(toml_scan.headerMatches("[dependencies.\"\\u0070ath\"]", "dependencies.path", &buf));
+    try std.testing.expect(toml_scan.headerMatches("[dependencies.\"pa\\U00000074h\"]", "dependencies.path", &buf));
     // 制御文字 escape も復号される（"pa\th" != "path"）。
-    try std.testing.expect(!headerMatches("[dependencies.\"pa\\th\"]", "dependencies.path", &buf));
+    try std.testing.expect(!toml_scan.headerMatches("[dependencies.\"pa\\th\"]", "dependencies.path", &buf));
     // 復号しても別名なら不一致。全体引用の別名化も変わらない。
-    try std.testing.expect(!headerMatches("[dependencies.\"pa\\u0074h.x\"]", "dependencies.path", &buf));
-    try std.testing.expect(!headerMatches("[\"dependencies.path\"]", "dependencies.path", &buf));
+    try std.testing.expect(!toml_scan.headerMatches("[dependencies.\"pa\\u0074h.x\"]", "dependencies.path", &buf));
+    try std.testing.expect(!toml_scan.headerMatches("[\"dependencies.path\"]", "dependencies.path", &buf));
     // 壊れた escape / 閉じない引用は一致とみなさない。
-    try std.testing.expect(!headerMatches("[dependencies.\"pa\\x\"]", "dependencies.path", &buf));
-    try std.testing.expect(!headerMatches("[dependencies.\"pa\\u0\"]", "dependencies.path", &buf));
-    try std.testing.expect(!headerMatches("[dependencies.\"pa\\u0074h", "dependencies.path", &buf));
+    try std.testing.expect(!toml_scan.headerMatches("[dependencies.\"pa\\x\"]", "dependencies.path", &buf));
+    try std.testing.expect(!toml_scan.headerMatches("[dependencies.\"pa\\u0\"]", "dependencies.path", &buf));
+    try std.testing.expect(!toml_scan.headerMatches("[dependencies.\"pa\\u0074h", "dependencies.path", &buf));
 }
 
 test "insertEntry はエスケープを含む引用 key の依存 table を認識する" {
@@ -1726,6 +1496,72 @@ test "removeEntry は inline table 形式の依存表から entry を除去す�
     try std.testing.expectEqual(@as(usize, 0), diagnostics5.errorCount());
     try std.testing.expect(manifest5.dependencies.path.get("lib") == null);
     try std.testing.expect(manifest5.dependencies.path.get("other") != null);
+}
+
+test "inline table の引用 key も escape を復号して比較する" {
+    // `dependencies = { "pa\u0074h" = {...} }` の引用 key は `path` と
+    // 同義。復号せず byte 比較すると add が重複 `path` pair を挿入して
+    // TOML の重複 key エラーになり、remove も対象を見つけられない。
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // insert: 既存の `"pa\u0074h"` table の内側へ入り `path` を重複させない。
+    const source =
+        \\dependencies = { "pa\u0074h" = { lib = { path = "lib" } } }
+        \\
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+    ;
+    const edited = try insertEntry(a, source, "dependencies.path", "other", "{ path = \"other\" }");
+    var diagnostics = diag.List.init(a);
+    defer diagnostics.deinit();
+    var manifest = try manifest_mod.parse(a, edited, &diagnostics);
+    defer manifest.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics.errorCount());
+    try std.testing.expect(manifest.dependencies.path.get("lib") != null);
+    try std.testing.expect(manifest.dependencies.path.get("other") != null);
+
+    // remove: escape 付き kind/name の entry も特定して除去できる。
+    const escaped_name =
+        \\dependencies = { "pa\u0074h" = { "l\u0069b" = { path = "lib" }, other = { path = "other" } } }
+        \\
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+    ;
+    const removed = (try removeEntry(a, escaped_name, "dependencies.path", "lib", .{ .line = 1 })).?;
+    var diagnostics2 = diag.List.init(a);
+    defer diagnostics2.deinit();
+    var manifest2 = try manifest_mod.parse(a, removed, &diagnostics2);
+    defer manifest2.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics2.errorCount());
+    try std.testing.expect(manifest2.dependencies.path.get("lib") == null);
+    try std.testing.expect(manifest2.dependencies.path.get("other") != null);
+
+    // dotted key + inline table の引用 segment も復号して除去する。
+    const dotted_escaped =
+        \\dependencies."pa\u0074h" = { lib = { path = "lib" }, other = { path = "other" } }
+        \\
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+    ;
+    const dotted_removed = (try removeEntry(a, dotted_escaped, "dependencies.path", "lib", .{ .line = 1 })).?;
+    var diagnostics3 = diag.List.init(a);
+    defer diagnostics3.deinit();
+    var manifest3 = try manifest_mod.parse(a, dotted_removed, &diagnostics3);
+    defer manifest3.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics3.errorCount());
+    try std.testing.expect(manifest3.dependencies.path.get("lib") == null);
+    try std.testing.expect(manifest3.dependencies.path.get("other") != null);
 }
 
 test "initTargetExists は symlink も存在として検出する" {

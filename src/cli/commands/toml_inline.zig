@@ -3,6 +3,7 @@
 //! 使う純粋な字句レベルの操作で、行・section 単位の文脈は持たない。
 
 const std = @import("std");
+const toml_scan = @import("toml_scan.zig");
 const Allocator = std.mem.Allocator;
 
 /// `source[open]` の `{` に対応する `}` の位置を返す。basic/literal
@@ -52,6 +53,7 @@ fn skipInlineSep(source: []const u8, index: usize, limit: usize) usize {
 /// 編集を断念して null。
 pub fn findInlineKindOpen(source: []const u8, open: usize, close: usize, kind: []const u8) ?usize {
     var index = open + 1;
+    var key_buf: [1024]u8 = undefined;
     while (index < close) {
         index = skipInlineSep(source, index, close);
         if (index >= close) return null;
@@ -64,7 +66,9 @@ pub fn findInlineKindOpen(source: []const u8, open: usize, close: usize, kind: [
             while (index < close and source[index] != quote) : (index += 1) {
                 if (quote == '"' and source[index] == '\\') index += 1;
             }
-            key = source[content_start..index];
+            // basic quoted key は escape を復号して比較する
+            // （`"pa\u0074h"` は `path` と同一 key）。
+            key = inlineKeyText(source[content_start..index], quote, &key_buf) orelse source[key_start..index];
             index += 1;
         } else {
             while (index < close and isBareKeyChar(source[index])) : (index += 1) {}
@@ -142,6 +146,15 @@ fn isBareKeyChar(ch: u8) bool {
     return std.ascii.isAlphanumeric(ch) or ch == '_' or ch == '-';
 }
 
+/// quoted key の内容を意味上の文字列へ正規化して返す。basic quoted key
+/// は escape を復号し（`"pa\u0074h"` は `path` と同一 key）、literal
+/// quoted key はそのまま。復号不能な basic key は null。
+fn inlineKeyText(raw: []const u8, quote: u8, buf: []u8) ?[]const u8 {
+    if (quote == '\'') return raw;
+    const n = toml_scan.decodeBasicKey(raw, buf) orelse return null;
+    return buf[0..n];
+}
+
 /// `open`/`close`（`{`/`}` の index）の inline table 末尾へ `entry` を
 /// 追加した新 source を返す。
 pub fn spliceInlineTableEntry(a: Allocator, source: []const u8, open: usize, close: usize, entry: []const u8) ![]const u8 {
@@ -160,8 +173,7 @@ pub fn spliceInlineTableEntry(a: Allocator, source: []const u8, open: usize, clo
 }
 
 /// inline table（`open`/`close` が `{`/`}` の位置）内 top-level の
-/// `key = value` entry の範囲。escape を含む basic key は誤対応を
-/// 避けて一致させない。
+/// `key = value` entry の範囲。
 const InlineEntryBounds = struct {
     /// key の開始位置（先行 separator・空白の直後）。
     start: usize,
@@ -179,6 +191,7 @@ const InlineEntryBounds = struct {
 pub fn findInlineEntry(source: []const u8, open: usize, close: usize, want: []const u8) ?InlineEntryBounds {
     var index = open + 1;
     var leading_comma: ?usize = null;
+    var key_buf: [1024]u8 = undefined;
     while (index < close) {
         index = skipInlineWs(source, index, close);
         if (index >= close) return null;
@@ -190,20 +203,18 @@ pub fn findInlineEntry(source: []const u8, open: usize, close: usize, want: []co
         const start = index;
         const my_leading = leading_comma;
         leading_comma = null;
-        var escaped_key = false;
         var key: []const u8 = undefined;
         if (source[index] == '"' or source[index] == '\'') {
             const quote = source[index];
             index += 1;
             const content_start = index;
             while (index < close and source[index] != quote) : (index += 1) {
-                if (quote == '"' and source[index] == '\\') {
-                    escaped_key = true;
-                    index += 1;
-                }
+                if (quote == '"' and source[index] == '\\') index += 1;
             }
             if (index >= close) return null;
-            key = source[content_start..index];
+            // basic quoted key は escape を復号して比較する。復号不能な
+            // key は引用符込み表記へ倒し、bare key と一致しない形にする。
+            key = inlineKeyText(source[content_start..index], quote, &key_buf) orelse source[start .. index + 1];
             index += 1;
         } else {
             while (index < close and isBareKeyChar(source[index])) : (index += 1) {}
@@ -217,7 +228,7 @@ pub fn findInlineEntry(source: []const u8, open: usize, close: usize, want: []co
         if (index >= close) return null;
         const value_start = index;
         const value_end = skipInlineValue(source, index, close) orelse return null;
-        if (!escaped_key and std.mem.eql(u8, key, want)) {
+        if (std.mem.eql(u8, key, want)) {
             const after = skipInlineWs(source, value_end, close);
             return .{
                 .start = start,
@@ -243,16 +254,18 @@ pub fn inlineEntryCutRange(source: []const u8, bounds: InlineEntryBounds, close:
     return .{ .start = bounds.start, .end = bounds.end };
 }
 
-/// TOML dotted key の1 segmentを、引用形式を保ったまま比較する。
-/// escape を含む basic key は誤削除を避けて不一致にする。
+/// TOML dotted key の1 segmentを、意味上の文字列で比較する。basic
+/// quoted key は escape を復号し、literal quoted key はそのまま比較
+/// する。復号不能な basic key は不一致。
 pub fn tomlKeySegmentEquals(raw: []const u8, expected: []const u8) bool {
     const segment = std.mem.trim(u8, raw, " \t");
     if (segment.len == 0) return false;
     if (segment[0] == '"' or segment[0] == '\'') {
         if (segment.len < 2 or segment[segment.len - 1] != segment[0]) return false;
         const inner = segment[1 .. segment.len - 1];
-        if (segment[0] == '"' and std.mem.indexOfScalar(u8, inner, '\\') != null) return false;
-        return std.mem.eql(u8, inner, expected);
+        var buf: [1024]u8 = undefined;
+        const text = inlineKeyText(inner, segment[0], &buf) orelse return false;
+        return std.mem.eql(u8, text, expected);
     }
     return std.mem.eql(u8, segment, expected);
 }

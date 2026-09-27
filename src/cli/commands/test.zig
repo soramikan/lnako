@@ -11,7 +11,13 @@ fn isManagedPath(path: []const u8) bool {
     const separators = if (builtin.os.tag == .windows) "/\\" else "/";
     var components = std.mem.splitAny(u8, path, separators);
     while (components.next()) |component| {
-        if (std.mem.eql(u8, component, ".nako") or std.mem.eql(u8, component, ".git")) return true;
+        if (builtin.os.tag == .windows) {
+            // Windows では `.NAKO`/`.GIT` も同じ dir を指すため大小文字
+            // 非依存で比較する。
+            if (std.ascii.eqlIgnoreCase(component, ".nako") or std.ascii.eqlIgnoreCase(component, ".git")) return true;
+        } else {
+            if (std.mem.eql(u8, component, ".nako") or std.mem.eql(u8, component, ".git")) return true;
+        }
     }
     return false;
 }
@@ -90,9 +96,14 @@ test "isManagedPath は .nako/.git 配下を除外する" {
     try std.testing.expect(isManagedPath("src/.nako/hidden.nako3"));
     if (builtin.os.tag == .windows) {
         try std.testing.expect(isManagedPath(".nako\\env\\1\\deps\\lib.nako3"));
+        // Windows では `.NAKO`/`.GIT` も同じ dir を指す。
+        try std.testing.expect(isManagedPath(".NAKO/env/1/deps/lib.nako3"));
+        try std.testing.expect(isManagedPath("src/.GIT/objects/ab/cd"));
     } else {
         // POSIX では backslash はファイル名文字（1 component で `.nako` ではない）。
         try std.testing.expect(!isManagedPath(".nako\\env\\1\\deps\\lib.nako3"));
+        // POSIX では `.NAKO` は別名の dir（管理 dir ではない）。
+        try std.testing.expect(!isManagedPath(".NAKO/env/1/deps/lib.nako3"));
     }
     try std.testing.expect(isManagedPath(".git/objects/ab/cd"));
     try std.testing.expect(!isManagedPath("src/ok.nako3"));

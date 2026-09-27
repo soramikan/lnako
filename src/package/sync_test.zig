@@ -868,3 +868,74 @@ test "sync は immutable path 依存を世代内へ materialize する" {
     defer parsed_lock.deinit();
     try std.testing.expect(try env_state.environmentPackagesUsable(allocator, io, root, &parsed_lock, "default"));
 }
+
+test "sync は directory symlink 宣言の immutable path 依存を受理する" {
+    // path_digest は宣言 root のみ symlink を follow するため、root が
+    // directory symlink の immutable path 依存は lock 生成・鮮度検査で
+    // 正当な構成として扱われる。materialize 時も root のみ follow して
+    // 固定 handle 化し、内部 entry は no-follow のまま複製する。
+    if (@import("builtin").os.tag == .windows or @import("builtin").os.tag == .wasi) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+
+    try temporary.dir.createDirPath(io, "deps/lib/src");
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.toml", .data = app_manifest });
+    try temporary.dir.writeFile(io, .{ .sub_path = "deps/lib/nako.toml", .data = lib_manifest });
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "deps/lib/src/index.nako3",
+        .data = "●テストとは\n  戻る\nここまで\n",
+    });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    const lib_abs = try std.fs.path.join(allocator, &.{ root, "deps/lib" });
+    defer allocator.free(lib_abs);
+    temporary.dir.symLink(io, lib_abs, "deps/lib-link", .{}) catch return error.SkipZigTest;
+
+    // digest は宣言 root（symlink）を follow して実体 tree と一致する。
+    const link_abs = try std.fs.path.join(allocator, &.{ root, "deps/lib-link" });
+    defer allocator.free(link_abs);
+    const tree_digest = try path_digest.digest(io, allocator, link_abs);
+    const pin_sha = try std.fmt.allocPrint(allocator, "sha256:{s}", .{std.fmt.bytesToHex(tree_digest, .lower)});
+    defer allocator.free(pin_sha);
+    const manifest_sha = try sha256Hex(allocator, app_manifest);
+    defer allocator.free(manifest_sha);
+
+    const lock_bytes = try std.fmt.allocPrint(allocator,
+        \\{{
+        \\  "schemaVersion": 1, "resolverVersion": 1,
+        \\  "input": {{ "manifestSha256": "sha256:{s}", "profile": "default", "features": [], "target": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu" }} }},
+        \\  "packages": {{ "pkg:11111111111111111111111111111111": {{
+        \\    "id": "pkg:11111111111111111111111111111111", "name": "lib", "version": "1.0.0",
+        \\    "source": {{ "type": "path", "path": "deps/lib-link", "mutable": false }},
+        \\    "resolvedFrom": {{ "type": "path", "path": "deps/lib-link", "mutable": false }},
+        \\    "dependencies": [], "features": [], "artifacts": {{ "source": {{ "kind": "source", "type": "raw", "sha256": "{s}" }} }}
+        \\  }} }},
+        \\  "profiles": {{ "default": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu", "runtime": "lnako" }} }}
+        \\}}
+    , .{ manifest_sha, pin_sha });
+    defer allocator.free(lock_bytes);
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock_bytes });
+
+    const cache_root = try std.fs.path.join(allocator, &.{ root, "cache" });
+    defer allocator.free(cache_root);
+    var diagnostics = diag.List.init(allocator);
+    defer diagnostics.deinit();
+    var report = try sync.run(allocator, io, .{
+        .project_root = root,
+        .cache_root = cache_root,
+    }, &diagnostics);
+    defer report.deinit();
+    try std.testing.expectEqual(@as(usize, 1), report.package_count);
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, report.environment_json, .{});
+    defer parsed.deinit();
+    const lib = parsed.value.object.get("packages").?.object.get("pkg:11111111111111111111111111111111").?.object;
+    const env_path = lib.get("path").?.string;
+    const copied_index = try std.fs.path.join(allocator, &.{ env_path, "src", "index.nako3" });
+    defer allocator.free(copied_index);
+    const copied = try temporary.dir.readFileAlloc(io, copied_index, allocator, .unlimited);
+    defer allocator.free(copied);
+    try std.testing.expectEqualStrings("●テストとは\n  戻る\nここまで\n", copied);
+}
