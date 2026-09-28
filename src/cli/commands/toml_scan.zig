@@ -245,6 +245,91 @@ pub fn findTableHeader(source: []const u8, section: []const u8) ?usize {
     return null;
 }
 
+/// dotted key の先頭 segment と、`.` 以降の残りを返す。
+/// `"a.b"` のような引用 segment 内の `.` は区切りにしない（basic
+/// quoted key の `\` escape は quote を越えないとして処理する）。
+/// 引用が閉じない場合は null。`rest` は先頭 `.` の後（無ければ空）。
+pub fn nextKeySegment(text: []const u8) ?struct { segment: []const u8, rest: []const u8 } {
+    var quote: u8 = 0;
+    var escaped = false;
+    for (text, 0..) |ch, index| {
+        if (quote != 0) {
+            if (quote == '"' and escaped) {
+                escaped = false;
+                continue;
+            }
+            if (quote == '"' and ch == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (ch == quote) quote = 0;
+            continue;
+        }
+        if (ch == '"' or ch == '\'') {
+            quote = ch;
+        } else if (ch == '.') {
+            return .{ .segment = text[0..index], .rest = text[index + 1 ..] };
+        }
+    }
+    if (quote != 0) return null;
+    return .{ .segment = text, .rest = text[text.len..] };
+}
+
+/// ヘッダ内の1 segment が期待値と一致するか。basic quoted key は escape
+/// を復号し、literal quoted key はそのまま比較する。引用がドットを
+/// 跨いで崩れた segment（`"foo` 等）は不一致。
+fn headerSegmentMatches(segment: []const u8, expected: []const u8, buf: []u8) bool {
+    const seg = std.mem.trim(u8, segment, " \t");
+    if (seg.len >= 2 and seg[0] == '"' and seg[seg.len - 1] == '"') {
+        const n = decodeBasicKey(seg[1 .. seg.len - 1], buf) orelse return false;
+        return std.mem.eql(u8, buf[0..n], expected);
+    }
+    if (seg.len >= 2 and seg[0] == '\'' and seg[seg.len - 1] == '\'') {
+        const name = seg[1 .. seg.len - 1];
+        return name.len > 0 and std.mem.eql(u8, name, expected);
+    }
+    if (seg.len >= 1 and (seg[0] == '"' or seg[0] == '\'')) return false;
+    if (seg.len == 0) return false;
+    return std.mem.eql(u8, seg, expected);
+}
+
+/// `headerMatches` の segment 列版。`[dependencies.path."foo.bar"]` の
+/// ように key 自体に `.` を含むテーブルを、引用内ドットを区切らない
+/// segment 分割で照合するため、期待 segment 数の異なる
+/// `[dependencies.path.foo.bar]`（4 segment・別テーブル）とは一致しない。
+pub fn headerMatchesSegments(text: []const u8, expected: []const []const u8, buf: []u8) bool {
+    const t = std.mem.trim(u8, stripTomlComment(text), " \t\r");
+    if (t.len < 3 or t[0] != '[' or t[t.len - 1] != ']') return false;
+    var rest = t[1 .. t.len - 1];
+    var matched: usize = 0;
+    while (rest.len > 0) {
+        const step = nextKeySegment(rest) orelse return false;
+        if (matched >= expected.len) return false;
+        if (!headerSegmentMatches(step.segment, expected[matched], buf)) return false;
+        matched += 1;
+        rest = step.rest;
+    }
+    return matched == expected.len;
+}
+
+/// `[<a>.<b>.<c>]` テーブルヘッダの行開始 offset を segment 列で探す。
+/// `findTableHeader` と異なり結合済み文字列へ潰さないため、依存 key
+/// 自体に `.` を含むサブテーブル（`[dependencies.path."foo.bar"]`）を
+/// 正しく発見できる。
+pub fn findTableHeaderSegments(source: []const u8, expected: []const []const u8) ?usize {
+    var index: usize = 0;
+    var buf: [1024]u8 = undefined;
+    var state: TomlLexState = .normal;
+    while (index < source.len) {
+        const end = lineEnd(source, index);
+        const text = source[index..end];
+        if (!tomlLineStartsInMultiline(state) and headerMatchesSegments(text, expected, &buf)) return index;
+        advanceTomlLexState(text, &state);
+        index = if (end < source.len) end + 1 else source.len;
+    }
+    return null;
+}
+
 /// `header_offset` 以降で次の `[` ヘッダ（または `[[`）の行開始 offset。
 /// 無ければ source.len。
 pub fn nextHeader(source: []const u8, header_offset: usize) usize {
@@ -302,4 +387,41 @@ test "tomlEscape は quote・backslash・制御文字を逃がす" {
     try std.testing.expectEqualStrings("say \\\"hi\\\"", try tomlEscape(a, "say \"hi\""));
     try std.testing.expectEqualStrings("a\\nb", try tomlEscape(a, "a\nb"));
     try std.testing.expectEqualStrings("plain", try tomlEscape(a, "plain"));
+}
+
+test "findTableHeaderSegments は引用でドットを含む key を1 segment として照合する" {
+    const source =
+        \\[dependencies.path."foo.bar"]
+        \\path = "lib"
+        \\
+        \\[dependencies.path.foo.bar]
+        \\path = "other"
+        \\
+    ;
+    // 引用名 `foo.bar`（3 segment）は前半テーブルにだけ一致する。
+    const expected = [_][]const u8{ "dependencies", "path", "foo.bar" };
+    const found = findTableHeaderSegments(source, &expected).?;
+    try std.testing.expect(std.mem.startsWith(u8, source[found..], "[dependencies.path.\"foo.bar\"]"));
+    // 4 segment の裸 key テーブルは `{dependencies, path, foo, bar}`。
+    const bare = [_][]const u8{ "dependencies", "path", "foo", "bar" };
+    const bare_found = findTableHeaderSegments(source, &bare).?;
+    try std.testing.expect(std.mem.startsWith(u8, source[bare_found..], "[dependencies.path.foo.bar]"));
+    // 相互に誤爆しない（引用名は裸4 segment に、裸名は引用3 segment に非一致）。
+    const bare_name = [_][]const u8{ "dependencies", "path", "bar" };
+    try std.testing.expect(findTableHeaderSegments(source, &bare_name) == null);
+
+    // basic quoted key の escape は復号して照合する。
+    const escaped =
+        \\[dependencies.path."foo\u002Ebar"]
+        \\path = "lib"
+        \\
+    ;
+    try std.testing.expect(findTableHeaderSegments(escaped, &expected) != null);
+    // literal quoted key も照合できる。
+    const literal =
+        \\[dependencies.path.'foo.bar']
+        \\path = "lib"
+        \\
+    ;
+    try std.testing.expect(findTableHeaderSegments(literal, &expected) != null);
 }

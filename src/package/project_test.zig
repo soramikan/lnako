@@ -2383,3 +2383,68 @@ test "loadFromDir は rename 置換後も pin した dir の manifest を読む"
     // 同じ path でも pinned handle は旧 dir を指し、置換先は読まない。
     try testing.expectEqualStrings("pinned", loaded.manifest.package.name);
 }
+
+test "path依存はpin済みroot handle相対で解決しroot置換に追従しない" {
+    // lock 生成は読込時に pin した root dir handle 相対で path 依存を
+    // 開き manifest・tree digest を計算する。path 文字列を再解決すると
+    // rename で置換された別 project の dep tree を pin し得るため、
+    // pinned handle が置換後も元 tree を指し続けることを検証する。
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/lib/src");
+    try writeLibPackage(temporary.dir, io, "app/lib", "lib");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/nako.toml",
+        .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\lib = { path = "lib", mutable = false }
+        \\
+        ,
+    });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    defer loaded.deinit();
+
+    // load 後に root を rename し、同じ path へ別内容の tree を置く。
+    // 置換先にも有効な lib を置くため、path 再解決だと「成功するが別
+    // tree を pin する」結果になり差分が検出できる。
+    try temporary.dir.rename("app", temporary.dir, "app_moved", io);
+    const moved_lib = try temporary.dir.realPathFileAlloc(io, "app_moved/lib", testing.allocator);
+    defer testing.allocator.free(moved_lib);
+    try temporary.dir.createDirPath(io, "app/lib/src");
+    try writeLibPackage(temporary.dir, io, "app/lib", "swapped");
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/lib/extra.txt", .data = "swapped" });
+
+    var outcome = try project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics);
+    defer outcome.deinit();
+    try testing.expect(outcome.wrote);
+
+    // 記録された tree pin は元 dir（rename 後の `app_moved/lib`）の
+    // digest であり、置換先 `app/lib` の digest ではない。
+    const expected = try project.portablePathDigest(io, testing.allocator, moved_lib);
+    const expected_hex = try std.fmt.allocPrint(testing.allocator, "sha256:{s}", .{std.fmt.bytesToHex(expected, .lower)});
+    defer testing.allocator.free(expected_hex);
+    var recorded = false;
+    for (outcome.lock.packages) |entry| {
+        if (entry.source != null and entry.source.?.kind == .path) {
+            const artifact = entry.artifact("source") orelse return error.TestExpectedEqual;
+            try testing.expectEqualStrings(expected_hex, artifact.sha256.?);
+            recorded = true;
+        }
+    }
+    try testing.expect(recorded);
+    // lock も pin 済み handle 側（`app_moved`）へ書かれ、置換先には出ない。
+    _ = try temporary.dir.statFile(io, "app_moved/nako.lock", .{});
+    try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "app/nako.lock", .{}));
+}

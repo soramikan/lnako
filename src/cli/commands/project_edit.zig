@@ -226,7 +226,7 @@ fn lhsHasPrefix(lhs: []const u8, prefix: []const []const u8) bool {
     while (rest.len > 0) {
         // 引用 segment 内の `.` は区切りにしない（lhsMatchesDecl と同じ
         // 走査）。`"pa.th".lib` は1 segment `"pa.th"` として扱う。
-        const step = toml_inline.nextKeySegment(rest) orelse return false;
+        const step = toml_scan.nextKeySegment(rest) orelse return false;
         const seg = std.mem.trim(u8, step.segment, " \t");
         if (seg.len == 0) return false;
         if (matched < prefix.len) {
@@ -332,10 +332,16 @@ fn statementEnd(source: []const u8, offset: usize) usize {
 /// source から除去する。`position` は manifest が記録した dep value の
 /// byte offset。
 fn removeEntry(a: Allocator, source: []const u8, section: []const u8, name: []const u8, position: diag.Position) !?[]const u8 {
-    // 1) `[<section>.<name>]` サブテーブル形式（空白・引用も正規化して照合）
+    const section_dot = std.mem.lastIndexOfScalar(u8, section, '.') orelse return null;
+    const parent = section[0..section_dot];
+    const kind = section[section_dot + 1 ..];
+
+    // 1) `[<section>.<name>]` サブテーブル形式（空白・引用も正規化して照合）。
+    // `name` 自体に `.` を含む宣言（`[dependencies.path."foo.bar"]`）は
+    // 結合文字列では4 segment の別テーブルと区別が付かないため、
+    // segment 列 `{parent, kind, name}` で照合する。
     {
-        const target = try std.fmt.allocPrint(a, "{s}.{s}", .{ section, name });
-        if (toml_scan.findTableHeader(source, target)) |header| {
+        if (toml_scan.findTableHeaderSegments(source, &.{ parent, kind, name })) |header| {
             const table_end = toml_scan.nextHeader(source, header);
             var output: std.ArrayList(u8) = .empty;
             try output.appendSlice(a, source[0..header]);
@@ -347,9 +353,6 @@ fn removeEntry(a: Allocator, source: []const u8, section: []const u8, name: []co
     // 2) 単一行 `key = ...` 形式 — position の行をそのまま除去する。
     // `[dependencies] path.lib = { ... }` のような dotted key 宣言も
     // 対象とする（manifest parser は同一の依存として読む）。
-    const section_dot = std.mem.lastIndexOfScalar(u8, section, '.') orelse return null;
-    const parent = section[0..section_dot];
-    const kind = section[section_dot + 1 ..];
     const start = lineStart(source, position.line) orelse return null;
     const end = toml_scan.lineEnd(source, start);
     // 安全確認: その行に `=` とキー名が含まれること。
@@ -1334,18 +1337,58 @@ test "removeEntry は引用 key 内の = を代入区切りと誤認しない" {
     try std.testing.expect(std.mem.indexOf(u8, removed_dotted, "path.other") != null);
 }
 
+test "removeEntry は引用でドットを含む依存名のサブテーブルを除去する" {
+    // `[dependencies.path."foo.bar"]` の `"foo.bar"` は引用された1
+    // segment の依存名。結合文字列で照合すると4 segment の別テーブル
+    // `[dependencies.path.foo.bar]` と区別が付かないため、segment 列で
+    // 照合する。
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const source =
+        \\[dependencies.path."foo.bar"]
+        \\path = "lib"
+        \\
+        \\[dependencies.path.other]
+        \\path = "other"
+        \\
+    ;
+    const removed = (try removeEntry(a, source, "dependencies.path", "foo.bar", .{ .line = 1 })).?;
+    try std.testing.expect(std.mem.indexOf(u8, removed, "\"foo.bar\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, removed, "other") != null);
+
+    // escape を含む basic quoted key も復号後の名前で一致する。
+    const escaped_source =
+        \\[dependencies.path."foo\u002Ebar"]
+        \\path = "lib"
+        \\
+    ;
+    const removed_escaped = (try removeEntry(a, escaped_source, "dependencies.path", "foo.bar", .{ .line = 1 })).?;
+    try std.testing.expect(std.mem.indexOf(u8, removed_escaped, "dependencies.path") == null);
+
+    // 4 segment の別テーブルは引用名 `foo.bar` の照合に一致せず、
+    // 引用テーブルは裸名 `bar` の照合に一致しない（相互に誤爆しない）。
+    const bare_dotted =
+        \\[dependencies.path.foo.bar]
+        \\path = "lib"
+        \\
+    ;
+    try std.testing.expect((try removeEntry(a, bare_dotted, "dependencies.path", "foo.bar", .{ .line = 1 })) == null);
+    try std.testing.expect((try removeEntry(a, source, "dependencies.path", "bar", .{ .line = 1 })) == null);
+}
+
 test "nextKeySegment は引用 segment 内のドットを区切りにしない" {
-    const first = toml_inline.nextKeySegment("\"a.b\".lib").?;
+    const first = toml_scan.nextKeySegment("\"a.b\".lib").?;
     try std.testing.expectEqualStrings("\"a.b\"", first.segment);
     try std.testing.expectEqualStrings("lib", first.rest);
     // `\` で逃げた引用符は segment を閉じない。
-    const escaped = toml_inline.nextKeySegment("\"a\\\".b\".lib").?;
+    const escaped = toml_scan.nextKeySegment("\"a\\\".b\".lib").?;
     try std.testing.expectEqualStrings("\"a\\\".b\"", escaped.segment);
     try std.testing.expectEqualStrings("lib", escaped.rest);
-    const single = toml_inline.nextKeySegment("lib").?;
+    const single = toml_scan.nextKeySegment("lib").?;
     try std.testing.expectEqualStrings("lib", single.segment);
     try std.testing.expectEqualStrings("", single.rest);
-    try std.testing.expect(toml_inline.nextKeySegment("\"a.b") == null);
+    try std.testing.expect(toml_scan.nextKeySegment("\"a.b") == null);
 }
 
 test "remove -- は以降を位置引数として扱う" {

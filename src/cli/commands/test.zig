@@ -28,6 +28,16 @@ fn isManagedPath(path: []const u8) bool {
     return false;
 }
 
+/// walker entry の kind を file/directory/other へ解決する。NFS/FUSE 等
+/// `DT_UNKNOWN` を返す fs では `.unknown` のまま報告されるため、
+/// no-follow stat で実体を判定する。symlink は follow せず `.sym_link`
+/// のまま返る（走査・収集の双方から除外される）。
+fn resolveWalkKind(io: std.Io, dir: std.Io.Dir, basename: []const u8, reported: std.Io.File.Kind) !std.Io.File.Kind {
+    if (reported != .unknown) return reported;
+    const stat = try dir.statFile(io, basename, .{ .follow_symlinks = false });
+    return stat.kind;
+}
+
 pub fn runTestTarget(allocator: std.mem.Allocator, io: std.Io, path: []const u8, forced_mode: lnako.frontend.token.Mode, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !bool {
     const stat = std.Io.Dir.cwd().statFile(io, path, .{}) catch |err| {
         try stderr.print("{s}: テスト対象を確認できません: {s}\n", .{ path, @errorName(err) });
@@ -49,11 +59,18 @@ pub fn runTestTarget(allocator: std.mem.Allocator, io: std.Io, path: []const u8,
         // 内部はテスト対象にしない。file 単位で除外すると管理 dir の
         // 中身まで走査してしまい、大量の file 走査コストや読み取り不可
         // dir での走査失敗を招くため、dir entry 段階で降りない。
-        if (entry.kind == .directory) {
-            if (!isManagedDirName(entry.basename)) try walker.enter(io, entry);
+        // NFS/FUSE 等 `DT_UNKNOWN` を返す fs では no-follow stat で実
+        // kind を解決する。symlink・特殊 file は対象外のまま。
+        const kind = try resolveWalkKind(io, entry.dir, entry.basename, entry.kind);
+        if (kind == .directory) {
+            if (!isManagedDirName(entry.basename)) {
+                var dir_entry = entry;
+                dir_entry.kind = .directory;
+                try walker.enter(io, dir_entry);
+            }
             continue;
         }
-        if (entry.kind != .file) continue;
+        if (kind != .file) continue;
         if (isManagedPath(entry.path)) continue;
         const extension = std.fs.path.extension(entry.path);
         if (!std.ascii.eqlIgnoreCase(extension, ".nako3") and !std.ascii.eqlIgnoreCase(extension, ".dncl") and !std.ascii.eqlIgnoreCase(extension, ".dncl2")) continue;
@@ -120,4 +137,23 @@ test "isManagedPath は .nako/.git 配下を除外する" {
     try std.testing.expect(!isManagedPath("src/ok.nako3"));
     try std.testing.expect(!isManagedPath("vendor/nako-tools/x.nako3"));
     try std.testing.expect(!isManagedPath("main.nako3"));
+}
+
+test "resolveWalkKind は DT_UNKNOWN 相当の entry を stat で判定する" {
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(io, .{ .sub_path = "a.nako3", .data = "" });
+    try temporary.dir.createDir(io, "sub", .default_dir);
+    // readdir が kind を返せない fs でも stat 由来の実体で分類される。
+    try std.testing.expectEqual(std.Io.File.Kind.file, try resolveWalkKind(io, temporary.dir, "a.nako3", .unknown));
+    try std.testing.expectEqual(std.Io.File.Kind.directory, try resolveWalkKind(io, temporary.dir, "sub", .unknown));
+    // 報告済み kind はそのまま通す。
+    try std.testing.expectEqual(std.Io.File.Kind.file, try resolveWalkKind(io, temporary.dir, "a.nako3", .file));
+    if (builtin.os.tag != .windows) {
+        try temporary.dir.symLink(io, "a.nako3", "link.nako3", .{});
+        // unknown 報告された symlink も no-follow stat が .sym_link を返し
+        // 走査・収集対象から外れる。
+        try std.testing.expectEqual(std.Io.File.Kind.sym_link, try resolveWalkKind(io, temporary.dir, "link.nako3", .unknown));
+    }
 }

@@ -254,36 +254,6 @@ pub fn inlineEntryCutRange(source: []const u8, bounds: InlineEntryBounds, close:
     return .{ .start = bounds.start, .end = bounds.end };
 }
 
-/// dotted key の先頭 segment と、`.` 以降の残りを返す。
-/// `"a.b"` のような引用 segment 内の `.` は区切りにしない（basic
-/// quoted key の `\` escape は quote を越えないとして処理する）。
-/// 引用が閉じない場合は null。`rest` は先頭 `.` の後（無ければ空）。
-pub fn nextKeySegment(text: []const u8) ?struct { segment: []const u8, rest: []const u8 } {
-    var quote: u8 = 0;
-    var escaped = false;
-    for (text, 0..) |ch, index| {
-        if (quote != 0) {
-            if (quote == '"' and escaped) {
-                escaped = false;
-                continue;
-            }
-            if (quote == '"' and ch == '\\') {
-                escaped = true;
-                continue;
-            }
-            if (ch == quote) quote = 0;
-            continue;
-        }
-        if (ch == '"' or ch == '\'') {
-            quote = ch;
-        } else if (ch == '.') {
-            return .{ .segment = text[0..index], .rest = text[index + 1 ..] };
-        }
-    }
-    if (quote != 0) return null;
-    return .{ .segment = text, .rest = text[text.len..] };
-}
-
 /// TOML dotted key の1 segmentを、意味上の文字列で比較する。basic
 /// quoted key は escape を復号し、literal quoted key はそのまま比較
 /// する。復号不能な basic key は不一致。

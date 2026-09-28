@@ -30,6 +30,7 @@ const registry = @import("registry.zig");
 const resolver = @import("resolver.zig");
 const semver = @import("semver.zig");
 const sync_mod = @import("sync.zig");
+const resolve_provider = @import("resolve_provider.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -333,7 +334,7 @@ const LocalKind = enum { path, git, http };
 
 /// 取得済みの source 依存。仮想 package id `path:<key>` 等で solver node
 /// として解決に参加し、lock entry の source/artifact もここから作る。
-const LocalPackage = struct {
+pub const LocalPackage = struct {
     id_text: []const u8,
     /// lock に記録する `pkg:<32hex>` public id。取得済み canonical source
     /// identity から派生させるため、同じ pin の表記揺れは同一 id になる。
@@ -369,6 +370,11 @@ const DepWork = struct {
     /// path 解決・lock source 正規化の基準 dir。null は http 内 package 等
     /// ファイル位置を持たない宣言元。
     base_dir: ?[]const u8,
+    /// `base_dir` に対応する pin 済み dir handle（借用・所有は
+    /// `ResolveContext.dep_dir_handles` または `Project.root_dir`）。
+    /// project root の rename/置換後も宣言 tree を同じ handle 相対で
+    /// 解決するために使う。null なら文字列 path 経由にフォールバック。
+    base_dir_handle: ?std.Io.Dir = null,
 };
 
 pub const SourceDecl = project_identity.SourceDecl;
@@ -383,12 +389,6 @@ fn publicIdFor(gpa: Allocator, id_text: []const u8) ![]const u8 {
 
 pub const publicIdForSourceDecl = project_identity.publicIdForSourceDecl;
 pub const publicIdForSourceDeclInPackages = project_identity.publicIdForSourceDeclInPackages;
-
-fn isVirtualId(id_text: []const u8) bool {
-    return std.mem.startsWith(u8, id_text, "path:") or
-        std.mem.startsWith(u8, id_text, "git:") or
-        std.mem.startsWith(u8, id_text, "http:");
-}
 
 /// lock `source.path` と同じ正規化を TOML の宣言文字列へ適用する。
 /// `./deps/lib` → `deps/lib`、区切りを `/` に揃え、繰り返し separator・
@@ -488,6 +488,13 @@ pub fn mutableDepManifestUnchanged(io: std.Io, gpa: Allocator, dep_dir: []const 
     return std.mem.eql(u8, current, expected_source);
 }
 
+/// `mutableDepManifestUnchanged` の pin 済み handle 版。
+pub fn mutableDepManifestUnchangedDir(io: std.Io, gpa: Allocator, dep_dir: std.Io.Dir, expected_source: []const u8) !bool {
+    const current = try dep_dir.readFileAlloc(io, manifest_name, gpa, .limited(16 * 1024 * 1024));
+    defer gpa.free(current);
+    return std.mem.eql(u8, current, expected_source);
+}
+
 /// Compatibility API retained for project tests and callers.
 pub fn canonicalTreePath(gpa: Allocator, path: []const u8) Error![]const u8 {
     return path_digest.canonicalPath(gpa, path) catch |err| return mapFs(err);
@@ -496,6 +503,15 @@ pub fn canonicalTreePath(gpa: Allocator, path: []const u8) Error![]const u8 {
 /// Shared portable tree digest used by both lock generation and sync validation.
 pub fn portablePathDigest(io: std.Io, gpa: Allocator, root: []const u8) Error![32]u8 {
     return path_digest.digest(io, gpa, root) catch |err| switch (err) {
+        error.UnsupportedEntry => error.UnsupportedDependency,
+        else => mapFs(err),
+    };
+}
+
+/// `portablePathDigest` の pin 済み handle 版。`dir` が指す tree を
+/// 直接 digest する（path 再解決を挟まない）。
+pub fn portablePathDigestDir(io: std.Io, gpa: Allocator, dir: std.Io.Dir) Error![32]u8 {
+    return path_digest.digestDir(io, gpa, dir) catch |err| switch (err) {
         error.UnsupportedEntry => error.UnsupportedDependency,
         else => mapFs(err),
     };
@@ -633,14 +649,20 @@ fn copySource(a: Allocator, source: lock_model.Source) Error!lock_model.Source {
 const MutableDep = struct {
     path: []const u8,
     dir: []const u8,
+    /// `dir` の pin 済み handle（借用・`ctx.dep_dir_handles` が所有）。
+    /// あれば digest・manifest 再読は handle 相対で行う。
+    dir_handle: ?std.Io.Dir = null,
     manifest_source: []const u8,
 };
 
-const ResolveContext = struct {
+pub const ResolveContext = struct {
     gpa: Allocator,
     io: std.Io,
     session: *fetch.Session,
     project_root: []const u8,
+    /// `project_root` を指す pin 済み handle。root の rename/置換後も
+    /// 相対 path 依存を元 dir 相対で解決するために work queue へ渡す。
+    project_root_dir: ?std.Io.Dir = null,
     opts: *const PrepareOptions,
     existing_lock: ?*const lock_model.Lock,
     locals: std.StringHashMap(*LocalPackage),
@@ -656,9 +678,13 @@ const ResolveContext = struct {
     /// `mutable = true` path 依存の宣言 dir。lock `input.mutablePaths`
     /// に記録する内容 digest の計算対象（`{記録 path, 宣言 dir}`）。
     mutable_deps: std.ArrayList(MutableDep) = .empty,
+    /// 依存解決中に開いた path 依存 dir の handle（`deinit` で一括 close）。
+    dep_dir_handles: std.ArrayList(std.Io.Dir) = .empty,
     diagnostics: *diag.List,
 
     fn deinit(self: *ResolveContext) void {
+        for (self.dep_dir_handles.items) |handle| handle.close(self.io);
+        self.dep_dir_handles.deinit(self.gpa);
         if (self.cache_guard) |*guard| guard.unlock();
         if (self.cache_store) |*store| store.deinit();
     }
@@ -673,12 +699,13 @@ fn pushGroupDeps(
     gated: *const std.StringHashMap(void),
     activated: *const std.StringHashMap(void),
     base_dir: ?[]const u8,
+    base_dir_handle: ?std.Io.Dir,
 ) Error!void {
     var path_it = group.path.iterator();
     while (path_it.next()) |entry| {
         const dep = entry.value_ptr.*;
         if (depIsGated(gated, dep.name, null) and !depIsActivated(activated, dep.name, null)) continue;
-        try queue.append(gpa, .{ .kind = .path, .path_dep = dep, .base_dir = base_dir });
+        try queue.append(gpa, .{ .kind = .path, .path_dep = dep, .base_dir = base_dir, .base_dir_handle = base_dir_handle });
     }
     var git_it = group.git.iterator();
     while (git_it.next()) |entry| {
@@ -703,8 +730,8 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
     var queue: std.ArrayList(DepWork) = .empty;
     var gated_root = try gatedDepNames(gpa, root);
     defer gated_root.deinit();
-    try pushGroupDeps(gpa, &queue, &root.dependencies, &gated_root, activated_root, ctx.project_root);
-    try pushGroupDeps(gpa, &queue, &root.dev_dependencies, &gated_root, activated_root, ctx.project_root);
+    try pushGroupDeps(gpa, &queue, &root.dependencies, &gated_root, activated_root, ctx.project_root, ctx.project_root_dir);
+    try pushGroupDeps(gpa, &queue, &root.dev_dependencies, &gated_root, activated_root, ctx.project_root, ctx.project_root_dir);
 
     while (queue.items.len > 0) {
         const work = queue.pop().?;
@@ -745,28 +772,52 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
         };
 
         var child_base_dir: ?[]const u8 = null;
+        var child_dir_handle: ?std.Io.Dir = null;
         switch (work.kind) {
             .path => {
                 const dep = work.path_dep.?;
                 // separator・`.` 成分の正規化は取得前にも適用する。POSIX の
                 // backslash は canonicalDepSpelling が通常文字として保持する。
                 const acquired_path = try canonicalDepSpelling(gpa, dep.path);
-                const acquired = try provider.acquirePath(ctx.session, .{
-                    .name = dep.name,
-                    .path = acquired_path,
-                    .mutable = dep.mutable,
-                }, work.base_dir.?);
-                const normalized = try normalizePathSource(gpa, acquired_path, work.base_dir, ctx.project_root);
-                local.source = .{ .kind = .path, .path = normalized, .mutable = dep.mutable };
-                local.manifest = acquired.manifest;
-                if (local.manifest) |*manifest| {
-                    if (hasExcludedExport(manifest)) return ctx.session.fail(.invalid_source, .manifest, dep_name, "path dependency \"{s}\" has an export target outside its pinned package tree or beneath excluded .nako/.git directory", .{dep_name});
-                }
                 // path 依存の manifest dir が推移的依存の基準 dir.
                 child_base_dir = if (isAbsoluteDependencyPath(acquired_path))
                     try gpa.dupe(u8, acquired_path)
                 else
                     try std.fs.path.join(gpa, &.{ work.base_dir.?, acquired_path });
+                const manifest_path = try std.fs.path.join(gpa, &.{ child_base_dir.?, "nako.toml" });
+                // pin 済み base handle 相対で dep dir を開く。project root の
+                // rename/置換後も manifest・tree digest・推移的宣言は
+                // lock・manifest と同じ元 tree を指す。`.iterate` は tree
+                // digest が同じ handle を走査するために必要。相対 path の
+                // open 失敗は診断で失敗させる（path 再解決で置換先 tree を
+                // 読まない）。
+                var dep_dir: ?std.Io.Dir = null;
+                if (work.base_dir_handle) |base| {
+                    if (isAbsoluteDependencyPath(acquired_path)) {
+                        dep_dir = std.Io.Dir.openDirAbsolute(ctx.io, acquired_path, .{ .iterate = true }) catch null;
+                    } else {
+                        dep_dir = base.openDir(ctx.io, acquired_path, .{ .iterate = true }) catch |err| switch (err) {
+                            error.Canceled => return error.Canceled,
+                            error.FileNotFound, error.NotDir => return ctx.session.fail(.not_found, .manifest, manifest_path, "path dependency \"{s}\" has no directory at \"{s}\"", .{ dep_name, child_base_dir.? }),
+                            else => return ctx.session.fail(.network, .manifest, manifest_path, "cannot open path dependency \"{s}\" at \"{s}\": {s}", .{ dep_name, child_base_dir.?, @errorName(err) }),
+                        };
+                    }
+                    if (dep_dir) |handle| try ctx.dep_dir_handles.append(gpa, handle);
+                }
+                const normalized = try normalizePathSource(gpa, acquired_path, work.base_dir, ctx.project_root);
+                local.source = .{ .kind = .path, .path = normalized, .mutable = dep.mutable };
+                local.manifest = if (dep_dir) |handle|
+                    try provider.readDependencyManifestDir(ctx.session, handle, "nako.toml", manifest_path, dep.name, "path")
+                else
+                    (try provider.acquirePath(ctx.session, .{
+                        .name = dep.name,
+                        .path = acquired_path,
+                        .mutable = dep.mutable,
+                    }, work.base_dir.?)).manifest;
+                if (local.manifest) |*manifest| {
+                    if (hasExcludedExport(manifest)) return ctx.session.fail(.invalid_source, .manifest, dep_name, "path dependency \"{s}\" has an export target outside its pinned package tree or beneath excluded .nako/.git directory", .{dep_name});
+                }
+                child_dir_handle = dep_dir;
                 // `mutable = true` は宣言 dir を生参照する契約のため、
                 // manifest だけでなく exports・commands・推移的宣言を含む
                 // 内容変更を lock 鮮度入力へ記録する。digest 計算は
@@ -775,18 +826,26 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
                 // 取得時点の manifest bytes を保持して計算後に照合する。
                 if (dep.mutable) {
                     const manifest_source = (local.manifest orelse return error.ResolveFailed).document.source;
-                    try ctx.mutable_deps.append(gpa, .{ .path = normalized, .dir = child_base_dir.?, .manifest_source = manifest_source });
+                    try ctx.mutable_deps.append(gpa, .{ .path = normalized, .dir = child_base_dir.?, .dir_handle = dep_dir, .manifest_source = manifest_source });
                 }
                 // `mutable = false` は tree 内容を hash pin する（spec §3.4.3）。
                 // 後の内容変更は lock の鮮度判定・sync 検証で検出される。
                 if (!dep.mutable) {
-                    const digest = portablePathDigest(ctx.io, gpa, child_base_dir.?) catch |err| switch (err) {
-                        error.OutOfMemory => return error.OutOfMemory,
-                        else => return ctx.session.fail(.invalid_source, .package, dep_name, "cannot hash path dependency \"{s}\" tree: {s}", .{ dep_name, @errorName(err) }),
-                    };
+                    const digest = if (dep_dir) |handle|
+                        portablePathDigestDir(ctx.io, gpa, handle) catch |err| switch (err) {
+                            error.OutOfMemory => return error.OutOfMemory,
+                            else => return ctx.session.fail(.invalid_source, .package, dep_name, "cannot hash path dependency \"{s}\" tree: {s}", .{ dep_name, @errorName(err) }),
+                        }
+                    else
+                        portablePathDigest(ctx.io, gpa, child_base_dir.?) catch |err| switch (err) {
+                            error.OutOfMemory => return error.OutOfMemory,
+                            else => return ctx.session.fail(.invalid_source, .package, dep_name, "cannot hash path dependency \"{s}\" tree: {s}", .{ dep_name, @errorName(err) }),
+                        };
                     const manifest = &(local.manifest orelse return error.ResolveFailed);
-                    const manifest_path = try std.fs.path.join(gpa, &.{ child_base_dir.?, "nako.toml" });
-                    const after_hash = std.Io.Dir.cwd().readFileAlloc(ctx.io, manifest_path, gpa, .limited(16 * 1024 * 1024)) catch |err| return ctx.session.fail(.invalid_source, .manifest, dep_name, "cannot re-read path dependency manifest \"{s}\": {s}", .{ dep_name, @errorName(err) });
+                    const after_hash = if (dep_dir) |handle|
+                        handle.readFileAlloc(ctx.io, "nako.toml", gpa, .limited(16 * 1024 * 1024)) catch |err| return ctx.session.fail(.invalid_source, .manifest, dep_name, "cannot re-read path dependency manifest \"{s}\": {s}", .{ dep_name, @errorName(err) })
+                    else
+                        std.Io.Dir.cwd().readFileAlloc(ctx.io, manifest_path, gpa, .limited(16 * 1024 * 1024)) catch |err| return ctx.session.fail(.invalid_source, .manifest, dep_name, "cannot re-read path dependency manifest \"{s}\": {s}", .{ dep_name, @errorName(err) });
                     if (!manifestSnapshotMatches(manifest, after_hash)) return ctx.session.fail(.invalid_source, .manifest, dep_name, "path dependency \"{s}\" changed while its tree pin was computed; retry resolution", .{dep_name});
                     local.artifact.sha256 = try std.fmt.allocPrint(gpa, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
                 }
@@ -908,7 +967,7 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
                 local.needs_registry = true;
             }
             var child_queue: std.ArrayList(DepWork) = .empty;
-            try pushGroupDeps(gpa, &child_queue, &dep_manifest.dependencies, &local.gated_deps, &expanded.dependency_aliases, child_base_dir);
+            try pushGroupDeps(gpa, &child_queue, &dep_manifest.dependencies, &local.gated_deps, &expanded.dependency_aliases, child_base_dir, child_dir_handle);
             for (child_queue.items) |child| {
                 // .npkg（http 由来）内の path 依存は lock が project 相対で
                 // 表現できないため拒否する。
@@ -1064,147 +1123,6 @@ fn detectLocalCycles(gpa: Allocator, ctx: *ResolveContext) Error!void {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// composite provider / details source
-// ---------------------------------------------------------------------------
-
-const Composite = struct {
-    ctx: *ResolveContext,
-    registry: ?*registry.StaticRegistry,
-    /// 解決対象 profile で source 実装のみ許容するか（any/common）。
-    source_only: bool,
-    locked_index: ?*const lock_mod.LockedIndex,
-    /// `metaFromManifest` 用の profile target。
-    target: resolver.Target,
-    /// 解決中の profile 名。推移的 pkg 依存の `profile` 制約を
-    /// `rootDeps` と同じ条件で絞るために使う。
-    profile_name: []const u8 = "",
-
-    fn provider(self: *Composite) resolver.Provider {
-        return .{
-            .ptr = self,
-            .vtable = &.{
-                .listVersions = listVersions,
-                .versionMeta = versionMeta,
-                .lockedVersion = lockedVersion,
-            },
-        };
-    }
-
-    fn detailsSource(self: *Composite) lock_mod.DetailsSource {
-        return .{ .context = self, .getFn = getDetails };
-    }
-
-    fn stripImpls(self: *const Composite, meta: *resolver.VersionMeta) void {
-        if (!self.source_only) return;
-        meta.has_native = false;
-        meta.has_esm = false;
-        if (!meta.has_source and meta.unavailable_reason == null) {
-            meta.unavailable_reason = "package has no shared source implementation for an any/common profile";
-        }
-    }
-
-    fn listVersions(ptr: *anyopaque, gpa: Allocator, id: resolver.PackageId) anyerror![]const resolver.Version {
-        const self: *Composite = @ptrCast(@alignCast(ptr));
-        const name = switch (id) {
-            .pkg => |pkg| pkg,
-            .npm => return error.PackageNotFound,
-        };
-        if (isVirtualId(name)) {
-            const local = self.ctx.locals.get(name) orelse return error.PackageNotFound;
-            const version = resolver.Version.parse(local.version_text) catch return error.PackageNotFound;
-            const out = try gpa.alloc(resolver.Version, 1);
-            out[0] = version;
-            return out;
-        }
-        const reg = self.registry orelse return error.RegistryRequired;
-        return reg.provider().listVersions(gpa, id);
-    }
-
-    fn versionMeta(ptr: *anyopaque, gpa: Allocator, id: resolver.PackageId, version: resolver.Version) anyerror!resolver.VersionMeta {
-        const self: *Composite = @ptrCast(@alignCast(ptr));
-        const name = switch (id) {
-            .pkg => |pkg| pkg,
-            .npm => return .{ .unavailable_reason = "npm dependencies are not resolved by the project resolver" },
-        };
-        if (isVirtualId(name)) {
-            const local = self.ctx.locals.get(name) orelse
-                return .{ .unavailable_reason = "dependency source was not acquired" };
-            var meta: resolver.VersionMeta = undefined;
-            if (local.manifest) |*dep_manifest| {
-                meta = try resolver.metaFromManifest(gpa, dep_manifest, self.target);
-                // any/common profile は cnako 環境へも materialize され得る
-                // ので、lnako へ coerce した target だけでなく cnako
-                // target にも照合する。`runtimes = ["lnako"]` だけの
-                // package を受理して `sync --runtime cnako` で使えない
-                // 環境を作らないため。
-                if (self.source_only and meta.unavailable_reason == null) {
-                    var cnako_target = self.target;
-                    cnako_target.runtime = "cnako";
-                    const cnako_meta = try resolver.metaFromManifest(gpa, dep_manifest, cnako_target);
-                    if (cnako_meta.unavailable_reason) |reason| meta.unavailable_reason = reason;
-                }
-                // 推移的 pkg 辺を rootDeps と同じ条件で絞る。`dep.profile`
-                // は現行 profile 名と一致する場合のみ有効で、feature-gated
-                // で未 activated の宣言は除外する。metaFromManifest は両方
-                // を評価しないため orchestration 側で落とす。
-                if (meta.dependencies.len != 0) {
-                    var kept: std.ArrayList(resolver.Dependency) = .empty;
-                    for (meta.dependencies) |d| {
-                        const decl = dep_manifest.dependencies.pkg.get(d.name) orelse {
-                            try kept.append(gpa, d);
-                            continue;
-                        };
-                        if (decl.profile) |p| {
-                            if (!std.mem.eql(u8, p, self.profile_name)) continue;
-                        }
-                        if (depIsGated(&local.gated_deps, decl.name, decl.alias) and
-                            !depIsActivated(&local.activated_deps, decl.name, decl.alias)) continue;
-                        try kept.append(gpa, d);
-                    }
-                    meta.dependencies = kept.items;
-                }
-            } else {
-                // manifest を持たない取得（raw http 等）は source 実装のみ。
-                meta = .{ .has_source = true };
-            }
-            self.stripImpls(&meta);
-            return meta;
-        }
-        const reg = self.registry orelse return error.RegistryRequired;
-        var meta = try reg.provider().versionMeta(gpa, id, version);
-        self.stripImpls(&meta);
-        return meta;
-    }
-
-    fn lockedVersion(ptr: *anyopaque, id: resolver.PackageId) ?resolver.Version {
-        const self: *Composite = @ptrCast(@alignCast(ptr));
-        if (isVirtualId(switch (id) {
-            .pkg => |pkg| pkg,
-            .npm => return null,
-        })) return null;
-        const index = self.locked_index orelse return null;
-        return index.get(id);
-    }
-
-    fn getDetails(context: *anyopaque, gpa: Allocator, id: []const u8, version: []const u8) anyerror!?lock_mod.PackageDetails {
-        const self: *Composite = @ptrCast(@alignCast(context));
-        if (isVirtualId(id)) {
-            const local = self.ctx.locals.get(id) orelse return null;
-            const artifacts = try gpa.alloc(lock_model.Artifact, 1);
-            artifacts[0] = local.artifact;
-            return .{
-                .public_id = local.public_id,
-                .name = local.package_name,
-                .source = local.source,
-                .artifacts = artifacts,
-            };
-        }
-        const reg = self.registry orelse return null;
-        return reg.detailsSource().get(gpa, id, version);
-    }
-};
 
 // ---------------------------------------------------------------------------
 // lock 生成
@@ -1393,6 +1311,7 @@ pub fn ensureLock(
         .io = io,
         .session = &session,
         .project_root = project.root,
+        .project_root_dir = project.root_dir,
         .opts = opts,
         .existing_lock = if (existing) |*l| l else null,
         .locals = std.StringHashMap(*LocalPackage).init(a),
@@ -1411,26 +1330,44 @@ pub fn ensureLock(
     if (ctx.mutable_deps.items.len > 0) {
         var mutable: std.ArrayList(lock_model.MutablePath) = .empty;
         for (ctx.mutable_deps.items) |dep| {
-            const digest = path_digest.digest(io, a, dep.dir) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                else => {
-                    try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml", .{}, "cannot hash mutable path dependency \"{s}\" tree: {s}", .{ dep.path, @errorName(err) });
-                    return error.ResolveFailed;
-                },
-            };
+            const digest = if (dep.dir_handle) |handle|
+                path_digest.digestDir(io, a, handle) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => {
+                        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml", .{}, "cannot hash mutable path dependency \"{s}\" tree: {s}", .{ dep.path, @errorName(err) });
+                        return error.ResolveFailed;
+                    },
+                }
+            else
+                path_digest.digest(io, a, dep.dir) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => {
+                        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml", .{}, "cannot hash mutable path dependency \"{s}\" tree: {s}", .{ dep.path, @errorName(err) });
+                        return error.ResolveFailed;
+                    },
+                };
             // 取得時に解析した manifest と digest を計算した tree が同一
             // snapshot であることを確認する。間に `nako.toml` が保存
             // されると、旧 graph と新 manifest を含む digest が同じ lock
             // に記録され、以後の鮮度検査が新 digest と一致して誤った旧
             // グラフを fresh として使い続ける。immutable path 依存と同様に
             // manifest bytes を再読して照合する。
-            const unchanged = mutableDepManifestUnchanged(io, a, dep.dir, dep.manifest_source) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                else => {
-                    try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, manifest_name, .{}, "cannot re-read mutable path dependency \"{s}\" manifest: {s}", .{ dep.path, @errorName(err) });
-                    return error.ResolveFailed;
-                },
-            };
+            const unchanged = if (dep.dir_handle) |handle|
+                mutableDepManifestUnchangedDir(io, a, handle, dep.manifest_source) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => {
+                        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, manifest_name, .{}, "cannot re-read mutable path dependency \"{s}\" manifest: {s}", .{ dep.path, @errorName(err) });
+                        return error.ResolveFailed;
+                    },
+                }
+            else
+                mutableDepManifestUnchanged(io, a, dep.dir, dep.manifest_source) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => {
+                        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, manifest_name, .{}, "cannot re-read mutable path dependency \"{s}\" manifest: {s}", .{ dep.path, @errorName(err) });
+                        return error.ResolveFailed;
+                    },
+                };
             if (!unchanged) {
                 try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, manifest_name, .{}, "mutable path dependency \"{s}\" changed while its tree pin was computed; retry resolution", .{dep.path});
                 return error.ResolveFailed;
@@ -1487,7 +1424,7 @@ pub fn ensureLock(
         if (opts.optimize != null and !std.mem.eql(u8, named.name, profile)) {
             target.optimize = named.record.optimize orelse "O0";
         }
-        var composite = Composite{
+        var composite = resolve_provider.Composite{
             .ctx = &ctx,
             .registry = null,
             .source_only = sourceOnly(named.record),
@@ -1561,7 +1498,7 @@ pub fn ensureLock(
     }
 
     // --- lock 生成・書込 ----------------------------------------------------
-    var composite_details = Composite{
+    var composite_details = resolve_provider.Composite{
         .ctx = &ctx,
         .registry = null,
         .source_only = false,
