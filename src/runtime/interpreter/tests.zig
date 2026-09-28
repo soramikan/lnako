@@ -2609,6 +2609,20 @@ test "package内の相対import helperはpackage内部から呼べ外部の修�
     try std.testing.expect(std.mem.indexOf(u8, output, "7") == null);
 }
 
+test "package所有moduleがroot外を取り込むとcompileが失敗し境界外moduleは実行されない" {
+    var resolver = TestPackageResolver{};
+    var provider = ModuleTestProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「パッケージ:demo」を取り込む\n「B」と表示。\n" },
+        .{ .suffix = "packages/demo/index.nako3", .source = "!「../outside.nako3」を取り込む\n" },
+        .{ .suffix = "packages/outside.nako3", .source = "「秘密」と表示。\n" },
+    } };
+    var graph = try module_graph.load(std.testing.allocator, "main.nako3", .{ .context = &provider, .readFn = ModuleTestProvider.read }, .{ .package_resolver = resolver.packageResolver() });
+    defer graph.deinit();
+    // module graph構築時点で拒否されるため、境界外moduleはInterpreterへ到達しない。
+    try std.testing.expect(!graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
+}
+
 test "package関数内のデバッグ表示はpackage source pathを報告する" {
     var resolver = TestPackageResolver{};
     const output = try runModulesForTestWithPackageResolver(std.testing.allocator, &.{

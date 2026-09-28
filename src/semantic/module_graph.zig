@@ -600,6 +600,10 @@ pub const Loader = struct {
                 };
                 const imported_extension = std.fs.path.extension(resolved);
                 if (!std.ascii.eqlIgnoreCase(imported_extension, ".js") and !std.ascii.eqlIgnoreCase(imported_extension, ".mjs")) continue;
+                if (module.package_root != null and !pathWithinRoot(module.package_root.?, resolved)) {
+                    try self.importDiagnostic(import_node, path, "package内の取り込み先がpackage rootの外です");
+                    continue;
+                }
                 const descendant_inheritance = descendantInheritance(module, resolved);
                 const existing = self.find(resolved);
                 var target: ?u32 = existing;
@@ -656,6 +660,16 @@ pub const Loader = struct {
                     continue;
                 };
                 defer if (resolved_import.package_root) |resolved_package_root| self.allocator.free(resolved_package_root);
+                // package所有moduleからの相対・絶対取り込みがcanonical rootの外へ
+                // 逃げる場合は辺を作らない。prebuilt commands.jsonはsource走査を
+                // 迂回するため、依存解決を経ない境界外参照を許すと宣言なしで
+                // 別packageの非公開fileを読み込めてしまう。
+                if (module.package_root != null and resolved_import.canonical_id == null and
+                    !pathWithinRoot(module.package_root.?, resolved_import.path))
+                {
+                    try self.importDiagnostic(node, path, "package内の取り込み先がpackage rootの外です");
+                    continue;
+                }
                 if (resolved_import.canonical_id) |resolved_canonical_id| {
                     if (resolved_import.namespace) |namespace| {
                         for (imports.items) |previous| {

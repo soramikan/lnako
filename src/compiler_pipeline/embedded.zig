@@ -41,6 +41,7 @@ pub fn writeCompatExecutable(allocator: std.mem.Allocator, io: std.Io, executabl
                 .path = item.resolved_path,
                 .canonical_id = canonical_id,
                 .namespace = item.namespace orelse graph.modules[target].name,
+                .package_root = graph.modules[target].package_root orelse "",
             });
         }
     }
@@ -121,4 +122,81 @@ test "compat-js package import resolverを生成payloadと起動時compileへ引
     defer ir_program.deinit();
     try std.testing.expectEqual(@as(usize, 2), ir_program.module_names.len);
     try std.testing.expectEqualStrings("index", ir_program.module_names[1]);
+}
+
+test "埋め込みpayload再compileでもpackage内helperはpackage所有のままopaqueな内部namespaceを維持する" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/math");
+    const root_manifest = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nlicense = \"MIT\"\n\n[dependencies.pkg]\nmath = { version = \"1.0.0\", public-id = \"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" }\n";
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.toml", .data = root_manifest });
+    try temporary.dir.writeFile(io, .{ .sub_path = "main.nako3", .data = "!「パッケージ:math」を取り込む\nmath__報告()\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/math/index.nako3", .data = "!「./helper.nako3」を取り込む\n●報告とは\nhelper__内部処理()\nここまで\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/math/helper.nako3", .data = "●内部処理とは\nここまで\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/math/nako.toml", .data =
+        \\[package]
+        \\name = "math"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "main"
+        \\path = "index.nako3"
+        \\
+    });
+    var manifest_digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(root_manifest, &manifest_digest, .{});
+    const manifest_hex = std.fmt.bytesToHex(manifest_digest, .lower);
+    const lock_bytes = try std.fmt.allocPrint(allocator, "{{\"schemaVersion\":1,\"input\":{{\"manifestSha256\":\"sha256:{s}\",\"profile\":\"default\"}},\"packages\":{{\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\":{{\"id\":\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"name\":\"math\",\"version\":\"1.0.0\",\"source\":{{\"type\":\"registry\",\"url\":\"https://example.invalid/math\"}},\"dependencies\":[]}}}}}}", .{manifest_hex});
+    defer allocator.free(lock_bytes);
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock_bytes });
+    try temporary.dir.writeFile(io, .{ .sub_path = "compiler.bin", .data = "EXE" });
+
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    const input_path = try std.fs.path.join(allocator, &.{ root, "main.nako3" });
+    defer allocator.free(input_path);
+    const executable_path = try std.fs.path.join(allocator, &.{ root, "compiler.bin" });
+    defer allocator.free(executable_path);
+    const output_path = try std.fs.path.join(allocator, &.{ root, "app.bin" });
+    defer allocator.free(output_path);
+
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(lock_bytes, &digest, .{});
+    const lock_hex = std.fmt.bytesToHex(digest, .lower);
+    const environment = try std.fmt.allocPrint(
+        allocator,
+        "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"dependencies\":[{{\"alias\":\"math\",\"package\":\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}],\"packages\":{{\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\":{{\"name\":\"math\",\"version\":\"1.0.0\",\"path\":\".nako/env/gen-test/deps/math\",\"exports\":[{{\"name\":\"main\",\"path\":\"index.nako3\"}}],\"dependencies\":[]}}}}}}",
+        .{lock_hex},
+    );
+    defer allocator.free(environment);
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = environment });
+    var checked_environment = try lnako.package.import_resolver.Resolver.load(allocator, io, root);
+    defer checked_environment.deinit();
+
+    try writeCompatExecutable(allocator, io, executable_path, input_path, output_path, .{});
+    var package = (try lnako.compat.embedded.readExecutable(allocator, io, output_path)).?;
+    defer package.deinit();
+    try std.testing.expectEqual(@as(usize, 1), package.package_imports.len);
+    // build時に確定したpackage rootがpayloadへ保存される（空文字でないこと）。
+    try std.testing.expect(package.package_imports[0].package_root.len != 0);
+
+    var stderr: std.Io.Writer.Allocating = .init(allocator);
+    defer stderr.deinit();
+    var ir_program = (try compile_pipeline.compileInputWithProvider(allocator, package.entry_path, .{
+        .compat_js = true,
+        .package_resolver = package.packageResolver(),
+    }, &stderr.writer, package.sourceProvider())) orelse return error.EmbeddedPackageCompileFailed;
+    defer ir_program.deinit();
+
+    // package rootが復元されていればhelperはpackage所有のままopaqueな内部名を持ち、
+    // `helper__内部処理` のような推測可能な修飾名の実関数はIR上に存在しない。
+    try std.testing.expectEqual(@as(usize, 3), ir_program.module_names.len);
+    try std.testing.expectEqualStrings("helper", ir_program.module_names[2]);
+    try std.testing.expect(std.mem.startsWith(u8, ir_program.internal_module_names[2], "package__"));
+    try std.testing.expect(ir_program.findFunction("helper__内部処理") == null);
+    const internal_call = try std.fmt.allocPrint(allocator, "{s}__内部処理", .{ir_program.internal_module_names[2]});
+    defer allocator.free(internal_call);
+    try std.testing.expect(ir_program.findFunction(internal_call) != null);
 }

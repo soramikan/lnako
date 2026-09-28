@@ -4,7 +4,7 @@ const token_mod = @import("../frontend/token.zig");
 
 const magic = "LNAKOQJSBUNDLE1!";
 const trailer_length = @sizeOf(u64) + magic.len;
-const format_version: u32 = 3;
+const format_version: u32 = 4;
 const minimum_supported_format_version: u32 = 2;
 const maximum_payload_size: u64 = 512 * 1024 * 1024;
 
@@ -19,6 +19,8 @@ pub const PackageImport = struct {
     path: []const u8,
     canonical_id: []const u8,
     namespace: []const u8,
+    /// format v4以降。空文字はpackage root未保持（旧payloadとの互換）を意味する。
+    package_root: []const u8 = "",
 };
 
 fn packMode(mode: token_mod.Mode) u8 {
@@ -70,7 +72,12 @@ pub const Package = struct {
             const canonical_id = try allocator.dupe(u8, item.canonical_id);
             errdefer allocator.free(canonical_id);
             const namespace = try allocator.dupe(u8, item.namespace);
-            return .{ .path = path, .canonical_id = canonical_id, .namespace = namespace };
+            errdefer allocator.free(namespace);
+            const package_root: ?[]u8 = if (item.package_root.len != 0)
+                try allocator.dupe(u8, item.package_root)
+            else
+                null;
+            return .{ .path = path, .canonical_id = canonical_id, .namespace = namespace, .package_root = package_root };
         }
         return error.PackageNotFound;
     }
@@ -115,6 +122,7 @@ pub fn createExecutableWithImports(
         try appendBytes(&output, allocator, item.path);
         try appendBytes(&output, allocator, item.canonical_id);
         try appendBytes(&output, allocator, item.namespace);
+        try appendBytes(&output, allocator, item.package_root);
     }
     try appendInteger(&output, allocator, u64, @intCast(output.items.len - payload_start));
     try output.appendSlice(allocator, magic);
@@ -160,6 +168,7 @@ fn parsePayload(allocator: std.mem.Allocator, payload: []u8) !Package {
             item.path = try readBytes(payload, &cursor);
             item.canonical_id = try readBytes(payload, &cursor);
             item.namespace = try readBytes(payload, &cursor);
+            item.package_root = if (version >= 4) try readBytes(payload, &cursor) else "";
         }
         break :blk imports;
     } else try allocator.alloc(PackageImport, 0);
@@ -201,6 +210,7 @@ test "埋め込みpackage import resolver metadataを復元する" {
         .path = "/packages/math/index.nako3",
         .canonical_id = "pkg:math-id/main",
         .namespace = "math",
+        .package_root = "/packages/math",
     }};
     const executable = try createExecutableWithImports(std.testing.allocator, "EXE", "/src/main.nako3", &.{
         .{ .path = "/src/main.nako3", .source = "!「パッケージ:math」を取り込む\n" },
@@ -217,9 +227,11 @@ test "埋め込みpackage import resolver metadataを復元する" {
     defer std.testing.allocator.free(resolved.path);
     defer std.testing.allocator.free(resolved.canonical_id);
     defer std.testing.allocator.free(resolved.namespace);
+    defer if (resolved.package_root) |package_root| std.testing.allocator.free(package_root);
     try std.testing.expectEqualStrings("/packages/math/index.nako3", resolved.path);
     try std.testing.expectEqualStrings("pkg:math-id/main", resolved.canonical_id);
     try std.testing.expectEqualStrings("math", resolved.namespace);
+    try std.testing.expectEqualStrings("/packages/math", resolved.package_root.?);
 }
 
 test "QuickJS埋め込み実行形式を往復する" {

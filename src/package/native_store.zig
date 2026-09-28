@@ -198,19 +198,46 @@ fn treesEquivalent(allocator: Allocator, io: std.Io, left: []const u8, right: []
         switch (left_entry.kind) {
             .directory => if (!try treesEquivalent(arena, io, left_path, right_path)) return false,
             .file => {
-                if (left_entry.size != right_entry.size) {
-                    return false;
-                }
+                if (left_entry.size != right_entry.size) return false;
                 if (left_entry.size == std.math.maxInt(u64)) return false;
-                const limit = left_entry.size + 1;
-                const left_bytes = std.Io.Dir.cwd().readFileAlloc(io, left_path, arena, .limited(limit)) catch return false;
-                const right_bytes = std.Io.Dir.cwd().readFileAlloc(io, right_path, arena, .limited(limit)) catch return false;
-                if (!std.mem.eql(u8, left_bytes, right_bytes)) return false;
+                // ツリー全体をarenaへ保持しないよう固定bufferでchunk比較する。
+                if (!try filesEquivalent(io, left_path, right_path)) return false;
             },
             else => return false,
         }
     }
     return true;
+}
+
+fn filesEquivalent(io: std.Io, left: []const u8, right: []const u8) !bool {
+    var left_file = std.Io.Dir.cwd().openFile(io, left, .{}) catch return false;
+    defer left_file.close(io);
+    var right_file = std.Io.Dir.cwd().openFile(io, right, .{}) catch return false;
+    defer right_file.close(io);
+    var left_buffer: [8192]u8 = undefined;
+    var right_buffer: [8192]u8 = undefined;
+    var left_reader = left_file.reader(io, &left_buffer);
+    var right_reader = right_file.reader(io, &right_buffer);
+    while (true) {
+        var left_chunk: [8192]u8 = undefined;
+        var right_chunk: [8192]u8 = undefined;
+        // 側ごとにbuffer満杯まで読み進めて短尺読みの差を正規化する。
+        const left_length = fillChunk(&left_reader.interface, &left_chunk) catch return false;
+        const right_length = fillChunk(&right_reader.interface, &right_chunk) catch return false;
+        if (left_length != right_length) return false;
+        if (left_length == 0) return true;
+        if (!std.mem.eql(u8, left_chunk[0..left_length], right_chunk[0..right_length])) return false;
+    }
+}
+
+fn fillChunk(reader: *std.Io.Reader, buffer: []u8) !usize {
+    var total: usize = 0;
+    while (total < buffer.len) {
+        const length = try reader.readSliceShort(buffer[total..]);
+        if (length == 0) break;
+        total += length;
+    }
+    return total;
 }
 
 fn sortNames(names: [][]const u8) void {

@@ -433,6 +433,42 @@ test "package内の相対import helperはAOT IRでもopaqueなpackage内部names
     try std.testing.expect(pathHasSuffix(compiled.module_paths[2], "packages/math/helper.nako3"));
 }
 
+test "package所有moduleのroot外への相対importはAOT compileでも拒否される" {
+    const TestProvider = struct {
+        fn read(_: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+            if (pathHasSuffix(path, "main.nako3")) return allocator.dupe(u8, "!「pkg:math」を取り込む\nmath__報告()\n");
+            if (pathHasSuffix(path, "packages/math/index.nako3")) return allocator.dupe(u8, "!「../outside.nako3」を取り込む\n●報告とは\nここまで\n");
+            if (pathHasSuffix(path, "packages/outside.nako3")) return allocator.dupe(u8, "●外部処理とは\nここまで\n");
+            return error.FileNotFound;
+        }
+    };
+    const TestResolver = struct {
+        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+            if (!std.mem.eql(u8, specifier, "pkg:math")) return error.PackageNotFound;
+            return .{
+                .path = try std.fs.path.resolve(allocator, &.{"packages/math/index.nako3"}),
+                .canonical_id = try allocator.dupe(u8, "pkg:math/main"),
+                .namespace = "math",
+                .package_root = try std.fs.path.resolve(allocator, &.{"packages/math"}),
+            };
+        }
+    };
+    var context: u8 = 0;
+    var stderr: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer stderr.deinit();
+    const program = try compileInputWithProvider(
+        std.testing.allocator,
+        "main.nako3",
+        .{ .package_resolver = .{ .context = &context, .resolveFn = TestResolver.resolve } },
+        &stderr.writer,
+        .{ .context = &context, .readFn = TestProvider.read },
+    );
+    // module graph構築で境界外importが診断され、compile全体が失敗する
+    // （境界外fileはIRへ到達しない）。
+    try std.testing.expect(program == null);
+    try std.testing.expect(std.mem.indexOf(u8, stderr.writer.buffered(), "package rootの外") != null);
+}
+
 fn pathHasSuffix(path: []const u8, suffix: []const u8) bool {
     if (suffix.len > path.len) return false;
     const start = path.len - suffix.len;

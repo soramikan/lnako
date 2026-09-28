@@ -408,6 +408,33 @@ test "packageより先に相対importされたhelperは後から所有へ取り�
     try std.testing.expect(resolved_to_helper);
 }
 
+test "package所有moduleからroot外への相対・絶対importは診断され読み込まれない" {
+    for ([_][]const u8{
+        "!「../outside.nako3」を取り込む\n",
+        "!「/packages/outside.nako3」を取り込む\n",
+    }) |escaping_source| {
+        var memory = MemoryProvider{
+            .files = &.{
+                .{ .suffix = "main.nako3", .source = "!「pkg:math」を取り込む\n" },
+                .{ .suffix = "packages/math/index.nako3", .source = escaping_source },
+                // 境界外のfileは存在しても読み込んではいけない。
+                .{ .suffix = "packages/outside.nako3", .source = "秘密値=7\n" },
+            },
+        };
+        var package_resolver = PackageTestResolver{};
+        var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .package_resolver = package_resolver.resolver() });
+        defer graph.deinit();
+        try std.testing.expect(!graph.succeeded());
+        // 境界外fileはmodule graphへ追加されない。
+        try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
+        var reported_escape = false;
+        for (graph.diagnostics) |item| {
+            if (std.mem.indexOf(u8, item.message, "package rootの外") != null) reported_escape = true;
+        }
+        try std.testing.expect(reported_escape);
+    }
+}
+
 test "合成されたlocal module名は自然なbasenameとも衝突しない" {
     var memory = MemoryProvider{ .files = &.{
         .{ .suffix = "main.nako3", .source = "!「one/lib.nako3」を取り込む\n!「two/lib.nako3」を取り込む\n!「lib__lnako_local_1.nako3」を取り込む\n" },
