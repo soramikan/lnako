@@ -5,48 +5,54 @@
 //!   する。どちらも process 終了で自動解放される。
 //! - package 内容は staging で検証・展開を完了してから cache `objects/` へ
 //!   原子的に公開する。環境は `.nako/staging/<gen>` に構築し、世代 dir への
-//!   rename と `environment.json` の原子書換で一度に切り替える。
-//! - 失敗時は `environment.json`・`current`・前世代が一切変わらず、直前の
-//!   有効環境がそのまま使える。
+//!   rename と `environment.json` の原子書換で公開後、`current` を別途更新する。
+//! - commit 前の失敗は既存環境を変更しない。commit 後の `current` 公開失敗は
+//!   error を返し、state 検査で stale として再試行させる。
 //! - `path` 依存は mutable source として宣言 dir をそのまま参照する
 //!   （環境側へ複製しない）。cache・他プロジェクトへの波及は copy 経由の
 //!   immutable entry 側で防ぐ。
 
 const std = @import("std");
-const zip = @import("../archive/zip.zig");
 const cache = @import("cache.zig");
-const cache_key = @import("cache_key.zig");
 const diag = @import("diagnostics.zig");
 const environment = @import("environment.zig");
 const fetch = @import("fetch.zig");
-const import_resolver = @import("import_resolver.zig");
 const lock_mod = @import("lock.zig");
 const lock_model = @import("lock_model.zig");
 const manifest_mod = @import("manifest.zig");
-const materialize = @import("materialize.zig");
-const native_store = @import("native_store.zig");
-const npkg_commands = @import("npkg_commands.zig");
-const npkg_commands_gen = @import("npkg_commands_gen.zig");
-const npkg_verify = @import("npkg_verify.zig");
-const provider = @import("provider.zig");
-const resolver = @import("resolver.zig");
-const semver = @import("semver.zig");
-const unpack = @import("unpack.zig");
+const path_digest = @import("path_digest.zig");
+const prepare = @import("sync_prepare.zig");
 
 const Allocator = std.mem.Allocator;
 
-pub const Runtime = enum {
-    lnako,
-    cnako,
+/// 同期対象 runtime。実体は `sync_prepare.zig` にある。
+pub const Runtime = prepare.Runtime;
+/// 同期エラー集合。実体は `sync_prepare.zig` にある。
+pub const Error = prepare.Error;
+/// package id 形式の検証。実体は `sync_prepare.zig` にある。
+pub const isPackageId = prepare.isPackageId;
+/// manifest 依存宣言の lock 照合制約。実体は `sync_prepare.zig` にある。
+pub const ImportConstraint = prepare.ImportConstraint;
+/// manifest 依存宣言から import 依存（alias → lock key）を集める。
+/// 実体は `sync_prepare.zig` にある。
+pub const collectRootDependencyIds = prepare.collectRootDependencyIds;
+pub const collectImportDependencies = prepare.collectImportDependencies;
+pub const collectImportDependenciesForProfile = prepare.collectImportDependenciesForProfile;
+/// scoped alias の重複・namespace 正規化衝突検査付き追加。
+/// 実体は `sync_prepare.zig` にある。
+pub const appendScopedAlias = prepare.appendScopedAlias;
 
-    pub fn name(self: Runtime) []const u8 {
-        return @tagName(self);
-    }
-};
-
+const mapFs = prepare.mapFs;
+const testing = std.testing;
 pub const Options = struct {
     /// `nako.lock` と `nako.toml` を持つプロジェクトルート。
     project_root: []const u8 = ".",
+    /// pinned プロジェクトルート handle。設定すると lock・manifest・
+    /// `.nako`・相対 path 依存の解決を全てこの handle 相対で行い、
+    /// `project_root` 文字列は診断表示用としてのみ使う。project root の
+    /// rename/replace 競合で別 dir を読み書きしないため、handle を
+    /// 持つ呼出し側は必ず渡す。
+    project_dir: ?std.Io.Dir = null,
     /// 構築対象の lock profile。null なら `lock.input.profile`。
     profile: ?[]const u8 = null,
     /// `environment.json` の `runtime` に記録する処理系。
@@ -77,77 +83,56 @@ pub const Report = struct {
     }
 };
 
-pub const Error = error{
-    LockNotFound,
-    LockInvalid,
-    /// `nako.toml` が存在するのに lock の `manifestSha256` と一致しない。
-    StaleLock,
-    UnknownProfile,
-    InvalidProfile,
-    MissingSource,
-    MissingArtifact,
-    Busy,
-    InvalidKey,
-    InvalidGeneration,
-    /// cache・環境 dir の作成・rename・削除など予期しない IO 失敗。
-    FileSystem,
-    OutOfMemory,
-} || fetch.Error;
-
-/// fs 由来の広いエラーセットを `Error` へ畳み込む。OOM・Canceled・Busy は
-/// そのまま伝え、それ以外の IO 失敗は `FileSystem` にまとめる。
-fn mapFs(err: anyerror) Error {
-    return switch (err) {
-        error.OutOfMemory => error.OutOfMemory,
-        error.Canceled => error.Canceled,
-        error.Busy => error.Busy,
-        else => error.FileSystem,
-    };
+/// Path source pin validation delegates to the portable digest implementation.
+pub fn mutablePathMismatch(gpa: Allocator, io: std.Io, project_root: []const u8, lock: *const lock_model.Lock) Error!?[]const u8 {
+    return path_digest.mutablePathMismatch(gpa, io, project_root, lock) catch |err| return mapFs(err);
 }
 
-/// `materialize.copyTree` の失敗を診断付き `Error` へ変換する。規範外・
-/// symlink・重複は unsafe な package 内容として `invalid_source`、量の
-/// 上限超過は `too_large`、残る IO 失敗は `FileSystem`。
-fn mapTreeError(ctx: *Context, err: anyerror, subject: []const u8) Error {
-    return switch (err) {
-        error.OutOfMemory => error.OutOfMemory,
-        error.Canceled => error.Canceled,
-        error.SymlinkEncountered, error.UnsupportedEntry, error.NonCanonicalPath, error.DuplicatePath, error.CaseCollision => ctx.session.fail(.invalid_source, .package, subject, "package tree for \"{s}\" is not safe to materialize: {s}", .{ subject, @errorName(err) }),
-        error.TooManyEntries, error.FileTooLarge, error.TreeTooLarge, error.TreeTooDeep => ctx.session.fail(.too_large, .package, subject, "package tree for \"{s}\" exceeds materialize limits: {s}", .{ subject, @errorName(err) }),
-        else => error.FileSystem,
-    };
+pub fn mutablePathsMismatch(gpa: Allocator, io: std.Io, project_root: []const u8, recorded: []const lock_model.MutablePath) Error!?[]const u8 {
+    return path_digest.mutablePathsMismatch(gpa, io, project_root, recorded) catch |err| return mapFs(err);
 }
 
-const Context = struct {
-    gpa: Allocator,
-    arena: Allocator,
-    io: std.Io,
-    session: *fetch.Session,
-    cache_store: *const cache.Store,
-    project_abs: []const u8,
-    /// `<.nako>/staging/<gen>`。
-    generation_abs: []const u8,
-    /// `<gen>/deps`（materialize 先）。
-    deps_abs: []const u8,
-    /// `.nako/env/<gen>`（env.json の path に使う前置）。
-    generation_rel: []const u8,
-    runtime: Runtime,
-    selected_profile: []const u8,
-    target: resolver.Target,
-    diagnostics: *diag.List,
-    lock_entries: []const lock_model.PackageEntry,
-    root_dependencies: []const environment.ImportDependency = &.{},
-    used_keys: std.ArrayListUnmanaged([]const u8) = .empty,
-    used_names: std.StringHashMapUnmanaged(void) = .empty,
+pub fn pathPinMismatch(gpa: Allocator, io: std.Io, project_root: []const u8, lock: *const lock_model.Lock) Error!?[]const u8 {
+    return path_digest.pathPinMismatch(gpa, io, project_root, lock) catch |err| return mapFs(err);
+}
 
-    fn objectTree(self: *const Context, key: []const u8) !?[]const u8 {
-        const entry = (try self.cache_store.entryPath(self.arena, key)) orelse return null;
-        return try std.fs.path.join(self.arena, &.{ entry, "tree" });
-    }
-};
+/// pinned `root_dir` handle 相対版。rename/replace 競合時も検査対象は
+/// pinned root 配下に留まるため、handle を持つ呼出し側はこちらを使う。
+pub fn mutablePathMismatchDir(gpa: Allocator, io: std.Io, root_dir: std.Io.Dir, lock: *const lock_model.Lock) Error!?[]const u8 {
+    return path_digest.mutablePathMismatchDir(gpa, io, root_dir, lock) catch |err| return mapFs(err);
+}
+
+pub fn mutablePathsMismatchDir(gpa: Allocator, io: std.Io, root_dir: std.Io.Dir, recorded: []const lock_model.MutablePath) Error!?[]const u8 {
+    return path_digest.mutablePathsMismatchDir(gpa, io, root_dir, recorded) catch |err| return mapFs(err);
+}
+
+pub fn pathPinMismatchDir(gpa: Allocator, io: std.Io, root_dir: std.Io.Dir, lock: *const lock_model.Lock) Error!?[]const u8 {
+    return path_digest.pathPinMismatchDir(gpa, io, root_dir, lock) catch |err| return mapFs(err);
+}
+
+/// `project_dir` 相対の `nako.toml` の SHA-256 が
+/// `lock.input.manifest_sha256` と一致するか。`FileNotFound` は `.absent`
+/// （manifest 無しの lock 駆動用途を区別するため呼出し側に返す）。その他の
+/// 読取失敗は生の error で伝播する。pinned handle 相対で読むため、
+/// project root の rename/replace に追従しない。
+const ManifestFreshness = enum { absent, fresh, stale };
+
+fn manifestFreshness(io: std.Io, arena: Allocator, project_dir: std.Io.Dir, lock: *const lock_model.Lock) !ManifestFreshness {
+    const bytes = project_dir.readFileAlloc(io, "nako.toml", arena, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
+        error.FileNotFound => return .absent,
+        else => return err,
+    };
+    var actual: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(bytes, &actual, .{});
+    var expected: [32]u8 = undefined;
+    if (!lock_model.normalizeSha256(lock.input.manifest_sha256, &expected) or
+        !std.mem.eql(u8, &actual, &expected)) return .stale;
+    return .fresh;
+}
 
 /// `nako.lock` を読み、環境を同期する。失敗時は `session` 由来の診断を
-/// `diagnostics` へ転写してから error を返す（直前の環境は変更されない）。
+/// `diagnostics` へ転写して error を返す。commit 前の失敗は直前環境を変更しない。
+/// commit 後の current 公開失敗では error を返し、state 検査で stale として再試行させる。
 pub fn run(
     gpa: Allocator,
     io: std.Io,
@@ -159,15 +144,21 @@ pub fn run(
     const arena = arena_impl.allocator();
 
     // --- lock の読み込みと profile 選択 ------------------------------------
-    const project_abs: []const u8 = if (std.fs.path.isAbsolute(options.project_root))
-        try arena.dupe(u8, options.project_root)
+    // `project_dir` が指定された場合、以降の lock・manifest・`.nako`・
+    // 相対 path 依存の全操作をこの pinned handle 相対で行う。`project_abs`
+    // は診断表示・lock 内絶対 path 記録用で、handle の実体 path から取る。
+    var project_dir = if (options.project_dir) |dir|
+        dir.openDir(io, ".", .{ .follow_symlinks = false }) catch |err| return mapFs(err)
     else
-        std.Io.Dir.cwd().realPathFileAlloc(io, options.project_root, arena) catch |err| switch (err) {
+        std.Io.Dir.cwd().openDir(io, options.project_root, .{ .follow_symlinks = false }) catch |err| switch (err) {
             error.FileNotFound, error.NotDir => return error.LockNotFound,
             else => return mapFs(err),
         };
-    const lock_path = try std.fs.path.join(arena, &.{ project_abs, "nako.lock" });
-    const lock_bytes = std.Io.Dir.cwd().readFileAlloc(io, lock_path, arena, .limited(64 * 1024 * 1024)) catch |err| switch (err) {
+    defer project_dir.close(io);
+    const project_abs: []const u8 = project_dir.realPathFileAlloc(io, ".", arena) catch |err| switch (err) {
+        else => return mapFs(err),
+    };
+    const lock_bytes = project_dir.readFileAlloc(io, "nako.lock", arena, .limited(64 * 1024 * 1024)) catch |err| switch (err) {
         error.FileNotFound => return error.LockNotFound,
         error.OutOfMemory => return error.OutOfMemory,
         error.Canceled => return error.Canceled,
@@ -188,25 +179,46 @@ pub fn run(
 
     // `nako.toml` が存在する場合、lock が記録した manifest hash と一致する
     // ことを確認する。古い lock で環境を構築して環境参照が manifest と
-    // 不整合になるのを防ぐ。manifest が無い lock 駆動の用途（fixture 等）
-    // では検査を省略する。
-    const manifest_path = try std.fs.path.join(arena, &.{ project_abs, "nako.toml" });
+    // 不整合になるのを防ぐ。省略できるのは `FileNotFound`（manifest 無しの
+    // lock 駆動用途）だけで、dir 化・読取不能・size 上限超過などその他の
+    // 失敗は manifest の有無と鮮度を確定できないため同期を失敗させる。
+    const manifest_state = manifestFreshness(io, arena, project_dir, &lock) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {
+            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml", .{}, "cannot read nako.toml for lock manifest verification: {s}", .{@errorName(err)});
+            return mapFs(err);
+        },
+    };
+    if (manifest_state == .stale) {
+        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "lock input manifestSha256 does not match nako.toml; re-resolve the lock before sync", .{});
+        return error.StaleLock;
+    }
+
+    // `mutable = false` の path pin も照合する。pin 不一致の lock で環境を
+    // 構築すると lock が pin した内容と異なる tree を参照するため stale
+    // として拒否する（`lnako lock` で再解決してから sync する）。
+    if (try pathPinMismatchDir(arena, io, project_dir, &lock)) |name| {
+        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "content of pinned path dependency \"{s}\" does not match nako.lock; re-resolve the lock before sync", .{name});
+        return error.StaleLock;
+    }
+    // `mutable = true` の path 依存も内容 digest で照合する。宣言 dir の
+    // 内容が lock 記録時と変わっていれば、記録時のグラフを前提にした環境
+    // は構築しない。
+    if (try mutablePathMismatchDir(arena, io, project_dir, &lock)) |path| {
+        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "content of mutable path dependency \"{s}\" does not match nako.lock; re-resolve the lock before sync", .{path});
+        return error.StaleLock;
+    }
+
+    // root manifest は鮮度が確定した場合だけ parse する。依存宣言から
+    // import 依存（alias → lock key）を収集して環境へ記録するため。
+    // 読取と parse の間の書換えは公開直前の再照合で検出する。
     var root_manifest: ?manifest_mod.Manifest = null;
     defer if (root_manifest) |*manifest| manifest.deinit();
-    if (std.Io.Dir.cwd().readFileAlloc(io, manifest_path, arena, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.FileNotFound, error.NotDir => null,
-        else => return mapFs(err),
-    }) |manifest_bytes| {
-        var actual: [32]u8 = undefined;
-        std.crypto.hash.sha2.Sha256.hash(manifest_bytes, &actual, .{});
-        var expected: [32]u8 = undefined;
-        if (!lock_model.normalizeSha256(lock.input.manifest_sha256, &expected) or
-            !std.mem.eql(u8, &actual, &expected))
-        {
-            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "lock input manifestSha256 does not match nako.toml; re-resolve the lock before sync", .{});
-            return error.StaleLock;
-        }
+    if (manifest_state == .fresh) {
+        const manifest_bytes = project_dir.readFileAlloc(io, "nako.toml", arena, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return mapFs(err),
+        };
         root_manifest = manifest_mod.parse(arena, manifest_bytes, diagnostics) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => return error.LockInvalid,
@@ -234,7 +246,7 @@ pub fn run(
     }
 
     // --- 排他 --------------------------------------------------------------
-    var env_store = environment.Store.open(gpa, io, project_abs) catch |err| return mapFs(err);
+    var env_store = environment.Store.openDir(gpa, io, project_dir, project_abs) catch |err| return mapFs(err);
     defer env_store.deinit();
     var env_lock = env_store.lockWait() catch |err| return mapFs(err);
     defer env_lock.unlock();
@@ -260,58 +272,101 @@ pub fn run(
     // 直前の現行世代を覚えておく。切替え直後に直前世代を削除すると、
     // 読み取り途中の consumer を壊すため新・旧の双方を残す。
     const previous_generation = env_store.readCurrent(arena) catch |err| return mapFs(err);
-    const generation = env_store.newGeneration(arena) catch |err| return mapFs(err);
-    const deps_abs = try std.fs.path.join(arena, &.{ generation.abs_path, "deps" });
-    std.Io.Dir.cwd().createDirPath(io, deps_abs) catch |err| return mapFs(err);
+    var generation = env_store.newGeneration(arena) catch |err| return mapFs(err);
+    var generation_dir_open = true;
+    defer {
+        if (generation_dir_open) generation.dir.close(io);
+    }
+    generation.dir.createDirPath(io, "deps") catch |err| return mapFs(err);
+    var deps_dir = generation.dir.openDir(io, "deps", .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapFs(err);
+    var deps_dir_open = true;
+    defer {
+        if (deps_dir_open) deps_dir.close(io);
+    }
     const generation_rel = try std.fs.path.join(arena, &.{ environment.dir_name, environment.env_dir, generation.generation });
+    const workspace_name = try std.fmt.allocPrint(arena, ".lnako-work-{s}", .{generation.generation});
+    var workspace_dir = environment.openManagedChildDir(project_dir, io, workspace_name, true) catch |err| return mapFs(err);
+    defer environment.deleteTreeChecked(project_dir, io, workspace_name) catch {};
+    defer workspace_dir.close(io);
 
+    // root manifest の依存宣言を import 依存へ集める。schema v2 の lock
+    // は rootDependencies で宣言順序を記録する。v1 lock（記録無し）は
+    // lock entry 走査で再構成し、一意に定まらない場合は拒否する。
     const root_dependencies = if (root_manifest) |*manifest| blk: {
         const direct_ids = if (lock.rootDependenciesForProfile(profile)) |ids|
             ids
         else
-            collectRootDependencyIdsForProfile(arena, entries, manifest, profile, diagnostics) catch |err| switch (err) {
+            prepare.collectRootDependencyIdsForProfile(arena, entries, manifest, profile, diagnostics) catch |err| switch (err) {
                 error.LockInvalid => {
                     if (!diagnostics.hasErrors()) try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock.rootDependencies", .{}, "legacy lock does not record the root dependency edge and has multiple matching package nodes; regenerate the lock with schema v2", .{});
                     return error.LockInvalid;
                 },
                 else => return err,
             };
-        break :blk try collectImportDependenciesForProfile(arena, entries, direct_ids, null, manifest, profile, diagnostics);
+        break :blk try prepare.collectImportDependenciesForProfile(arena, entries, direct_ids, null, manifest, profile, diagnostics);
     } else &.{};
-    var ctx = Context{
+    var ctx = prepare.Context{
         .gpa = gpa,
         .arena = arena,
         .io = io,
         .session = &session,
         .cache_store = &cache_store,
         .project_abs = project_abs,
-        .generation_abs = generation.abs_path,
-        .deps_abs = deps_abs,
+        .project_dir = project_dir,
+        .lock = &lock,
+        .deps_dir = deps_dir,
+        .workspace_dir = workspace_dir,
         .generation_rel = generation_rel,
         .runtime = options.runtime,
         .selected_profile = profile,
         .diagnostics = diagnostics,
         .lock_entries = entries,
         .root_dependencies = root_dependencies,
-        .target = .{
-            .runtime = options.runtime.name(),
-            .os = if (record) |r| r.os else lock.input.target.os,
-            .cpu = if (record) |r| r.cpu else lock.input.target.cpu,
-            .abi = if (record) |r| r.abi else lock.input.target.abi,
-            .compat_js = if (record) |r| r.compat_js orelse false else false,
-            .optimize = if (record) |r| r.optimize orelse "O0" else "O0",
-        },
+        .target = prepare.materializeTarget(profile, record, &lock.input, options.runtime),
     };
 
     // --- package の取得・検証・materialize ---------------------------------
     var records = std.ArrayListUnmanaged(environment.PackageRecord).empty;
     for (entries) |*entry| {
-        const record_value = preparePackage(&ctx, entry) catch |err| {
+        const record_value = prepare.preparePackage(&ctx, entry) catch |err| {
             // provider 由来の失敗は session.failures に分類付きで記録済み。
             session.reportDiagnostics(diagnostics) catch {};
             return err;
         };
         try records.append(arena, record_value);
+    }
+
+    // path 依存の pin/digest は事前にも照合しているが、その後
+    // `preparePackage` が manifest・exports・commands を同じ dir から
+    // 再読している。検査と読取の間（または読取中）に内容が変わると
+    // lock が pin した snapshot と異なる metadata で環境を公開してしまう
+    // ため、構築した metadata が今も pin と一致するか公開直前に再照合する。
+    // 不一致は新環境を公開せず失敗させる（sync を再実行すれば現在内容で
+    // 再照合される）。
+    if (try pathPinMismatchDir(arena, io, project_dir, &lock)) |name| {
+        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "content of pinned path dependency \"{s}\" changed while syncing; re-resolve the lock before sync", .{name});
+        return error.StaleLock;
+    }
+    if (try mutablePathMismatchDir(arena, io, project_dir, &lock)) |path| {
+        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "content of mutable path dependency \"{s}\" changed while syncing; re-resolve the lock before sync", .{path});
+        return error.StaleLock;
+    }
+    // root manifest も再照合する。package 取得・展開中に外部エディタ等が
+    // `nako.toml` を保存・削除すると、開始時点の manifest とは別の宣言に
+    // 基づく環境を公開してしまうため。manifest 無しの lock 駆動用途では
+    // 再照合しない。
+    if (manifest_state != .absent) {
+        const current_manifest = manifestFreshness(io, arena, project_dir, &lock) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {
+                try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml", .{}, "cannot re-read nako.toml for publish-time manifest verification: {s}", .{@errorName(err)});
+                return mapFs(err);
+            },
+        };
+        if (current_manifest != .fresh) {
+            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "nako.toml changed while syncing; re-resolve the lock before sync", .{});
+            return error.StaleLock;
+        }
     }
 
     // --- 環境の公開 ---------------------------------------------------------
@@ -322,25 +377,38 @@ pub fn run(
         .runtime = options.runtime.name(),
         .packages = records.items,
         .dependencies = ctx.root_dependencies,
+        // mutable path 依存の metadata（exports/commands）は環境へ
+        // snapshot するため、宣言 dir の digest を記録して再解決を要さない
+        // metadata-only 変更でも環境の陳腐化を検出できるようにする。
+        .mutable_paths = lock.input.mutable_paths,
     }, &json_buffer.writer) catch |err| switch (err) {
         // Allocating writer の WriteFailed は arena 確保の失敗。
         error.WriteFailed => return error.OutOfMemory,
         else => return mapFs(err),
     };
 
+    if (json_buffer.written().len > environment.max_environment_bytes) {
+        return session.fail(.too_large, .package, "environment.json", "generated environment.json exceeds the {d} byte reader limit", .{environment.max_environment_bytes});
+    }
+
     // 直前の公開環境が参照する世代を environment.json からも復元する。
     // env.json 公開後・current 更新前の中断では current が古い世代を
     // 指したまま残るため、両者を keep して実際の直前世代を消さない。
     const published_generation = env_store.readPublishedGeneration(arena) catch null;
 
-    // staging 世代 dir を env/ へ rename し、environment.json・current を
-    // 原子的に切り替える。ここまで来る前に失敗した場合、既存環境は無変更。
+    // Windowsは開いたdirectory handleをrenameできないため、staging世代と
+    // 子のdeps handleを先に閉じる。commit失敗時にもdeferで二重closeしない。
+    deps_dir.close(io);
+    deps_dir_open = false;
+    generation.dir.close(io);
+    generation_dir_open = false;
+
+    // staging 世代 dir と environment.json を commit する。commit 前に失敗すれば
+    // 既存環境は無変更。current は別ファイルなので、この2操作は一括 atomic ではない。
     env_store.commit(generation.generation, json_buffer.written()) catch |err| return mapFs(err);
-    // environment.json 公開後に current の更新だけ失敗しても、公開済み環境を
-    // 巻き戻せない。current は世代整理と次回 sync のヒントに過ぎず、実際の
-    // 参照世代は environment.json から復元する（中断時と同じ状態）ため、
-    // ここでの失敗は成功扱いとする。
-    env_store.writeCurrent(generation.generation) catch {};
+    // env_state は current が公開済み世代を指すことを要求する。公開失敗は
+    // 成功扱いせず伝播し、state 検査で stale として後続 sync に再試行させる。
+    env_store.writeCurrent(generation.generation) catch |err| return mapFs(err);
 
     // 前世代は使用中の可能性があるため、現行・直前・公開環境の参照世代を
     // 残して整理する。参照世代を特定できない場合（env.json 破損等）は
@@ -377,976 +445,22 @@ pub fn run(
     };
 }
 
-// ---------------------------------------------------------------------------
-// package 取得
-// ---------------------------------------------------------------------------
+test "immutable path pin hash comparison normalizes lock representations" {
+    const digest = [_]u8{0x5a} ** 32;
+    const hex = std.fmt.bytesToHex(digest, .lower);
+    try testing.expect(path_digest.pinHashMatches(digest, &hex));
 
-pub const ImportConstraint = union(enum) {
-    version: semver.Range,
-    path: []const u8,
-    git: GitConstraint,
-    http: HttpConstraint,
+    var encoded: [44]u8 = undefined;
+    _ = std.base64.standard.Encoder.encode(&encoded, &digest);
+    var sri_buffer: ["sha256-".len + 44]u8 = undefined;
+    const sri = try std.fmt.bufPrint(&sri_buffer, "sha256-{s}", .{encoded});
+    try testing.expect(path_digest.pinHashMatches(digest, sri));
 
-    pub fn matches(self: ImportConstraint, candidate: lock_model.PackageEntry) bool {
-        switch (self) {
-            .version => |range| {
-                const source = candidate.source orelse candidate.resolved_from orelse return false;
-                if (source.kind != .registry and source.kind != .static) return false;
-                const version = semver.Version.parse(candidate.version) catch return false;
-                return range.satisfies(version);
-            },
-            .path => |path| {
-                const source = candidate.source orelse candidate.resolved_from orelse return false;
-                return source.kind == .path and source.path != null and std.mem.eql(u8, source.path.?, path);
-            },
-            .git => |dependency| {
-                const source = candidate.source orelse candidate.resolved_from orelse return false;
-                if (source.kind != .git or source.url == null or source.commit == null) return false;
-                if (!std.mem.eql(u8, source.url.?, dependency.url) or !std.mem.startsWith(u8, source.commit.?, dependency.commit)) return false;
-                return optionalStringEql(source.path, dependency.path);
-            },
-            .http => |dependency| {
-                const source = candidate.source orelse candidate.resolved_from orelse return false;
-                return source.kind == .http and source.url != null and source.hash != null and
-                    std.mem.eql(u8, source.url.?, dependency.url) and lock_model.hashEql(source.hash.?, dependency.hash);
-            },
-        }
-    }
-};
-
-fn matchesDependency(
-    candidate: lock_model.PackageEntry,
-    manifest_key: []const u8,
-    constraint: ImportConstraint,
-    public_id: ?[]const u8,
-) bool {
-    if (!constraint.matches(candidate)) return false;
-    if (public_id) |id| return std.mem.eql(u8, candidate.id, id);
-    return switch (constraint) {
-        .version => registryNameMatches(candidate, manifest_key),
-        // Non-registry dependency identity is fully determined by its source
-        // constraints. The manifest table key need not match [package].name.
-        .path, .git, .http => true,
-    };
+    var other = digest;
+    other[0] ^= 1;
+    try testing.expect(!path_digest.pinHashMatches(other, &hex));
+    try testing.expect(!path_digest.pinHashMatches(digest, "invalid"));
 }
-
-fn registryNamePart(manifest_key: []const u8) []const u8 {
-    const unscoped = if (std.mem.startsWith(u8, manifest_key, "@")) manifest_key[1..] else manifest_key;
-    const slash = std.mem.lastIndexOfScalar(u8, unscoped, '/') orelse return manifest_key;
-    return unscoped[slash + 1 ..];
-}
-
-fn registryNameMatches(candidate: lock_model.PackageEntry, manifest_key: []const u8) bool {
-    if (std.mem.indexOfScalar(u8, manifest_key, '/') == null) return std.mem.eql(u8, candidate.name, manifest_key);
-    if (!std.mem.eql(u8, candidate.name, registryNamePart(manifest_key))) return false;
-    const source = candidate.source orelse candidate.resolved_from orelse return false;
-    if (source.kind != .registry and source.kind != .static) return false;
-    const url = source.url orelse return false;
-    const owner_name = if (std.mem.startsWith(u8, manifest_key, "@")) manifest_key[1..] else manifest_key;
-    if (!std.mem.endsWith(u8, url, owner_name)) return false;
-    const prefix_len = url.len - owner_name.len;
-    return prefix_len > 0 and url[prefix_len - 1] == '/';
-}
-
-fn defaultImportAlias(manifest_key: []const u8, constraint: ImportConstraint) []const u8 {
-    return switch (constraint) {
-        .version => registryNamePart(manifest_key),
-        .path, .git, .http => manifest_key,
-    };
-}
-
-const GitConstraint = struct { url: []const u8, commit: []const u8, path: ?[]const u8 };
-const HttpConstraint = struct { url: []const u8, hash: []const u8 };
-
-fn optionalStringEql(a: ?[]const u8, b: ?[]const u8) bool {
-    if (a) |value| return if (b) |other| std.mem.eql(u8, value, other) else false;
-    return b == null;
-}
-
-/// Build the root scope's package key set from root-manifest declarations first.
-/// Transitive lock entries are not candidates for root aliases unless they match
-/// the direct declaration's package identity/source/version constraints.
-pub fn collectRootDependencyIds(
-    allocator: Allocator,
-    lock_entries: []const lock_model.PackageEntry,
-    manifest: *const manifest_mod.Manifest,
-    diagnostics: *diag.List,
-) Error![]const []const u8 {
-    return collectRootDependencyIdsForProfile(allocator, lock_entries, manifest, null, diagnostics);
-}
-
-fn collectRootDependencyIdsForProfile(
-    allocator: Allocator,
-    lock_entries: []const lock_model.PackageEntry,
-    manifest: *const manifest_mod.Manifest,
-    active_profile: ?[]const u8,
-    diagnostics: *diag.List,
-) Error![]const []const u8 {
-    var ids = std.ArrayListUnmanaged([]const u8).empty;
-    var pkg = manifest.dependencies.pkg.iterator();
-    while (pkg.next()) |item| {
-        const dependency = item.value_ptr.*;
-        if (!dependencyMatchesProfile(dependency.profile, active_profile)) continue;
-        try appendCandidateIds(allocator, &ids, lock_entries, dependency.name, .{ .version = dependency.version }, dependency.public_id, diagnostics);
-    }
-    var path = manifest.dependencies.path.iterator();
-    while (path.next()) |item| {
-        const dependency = item.value_ptr.*;
-        try appendCandidateIds(allocator, &ids, lock_entries, dependency.name, .{ .path = dependency.path }, null, diagnostics);
-    }
-    var git = manifest.dependencies.git.iterator();
-    while (git.next()) |item| {
-        const dependency = item.value_ptr.*;
-        try appendCandidateIds(allocator, &ids, lock_entries, dependency.name, .{ .git = .{ .url = dependency.url, .commit = dependency.commit, .path = dependency.path } }, null, diagnostics);
-    }
-    var http = manifest.dependencies.http.iterator();
-    while (http.next()) |item| {
-        const dependency = item.value_ptr.*;
-        try appendCandidateIds(allocator, &ids, lock_entries, dependency.name, .{ .http = .{ .url = dependency.url, .hash = dependency.hash } }, null, diagnostics);
-    }
-    return try ids.toOwnedSlice(allocator);
-}
-
-fn appendCandidateIds(
-    allocator: Allocator,
-    ids: *std.ArrayListUnmanaged([]const u8),
-    lock_entries: []const lock_model.PackageEntry,
-    name: []const u8,
-    constraint: ImportConstraint,
-    public_id: ?[]const u8,
-    diagnostics: *diag.List,
-) Error!void {
-    var root_matches = std.ArrayListUnmanaged([]const u8).empty;
-    defer root_matches.deinit(allocator);
-    var all_matches = std.ArrayListUnmanaged([]const u8).empty;
-    defer all_matches.deinit(allocator);
-    for (lock_entries) |candidate| {
-        if (!matchesDependency(candidate, name, constraint, public_id)) continue;
-        try all_matches.append(allocator, candidate.id);
-        if (!hasIncomingLockEdge(lock_entries, candidate.id)) try root_matches.append(allocator, candidate.id);
-    }
-
-    // A v1 lock encodes the resolved graph as package->dependency IDs, without
-    // a synthetic root node. Its root direct package IDs are therefore graph
-    // roots (IDs with no incoming package edge). Prefer those IDs over matching
-    // every transitive entry by the manifest's broad version range. If a single
-    // matching lock node is shared transitively, it is still unambiguous.
-    if (root_matches.items.len == 0 and all_matches.items.len > 1) {
-        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml.dependencies", .{}, "dependency key \"{s}\" matches multiple lock packages {s} and {s}; regenerate the lock with schema v2 or specify a public ID", .{ name, all_matches.items[0], all_matches.items[1] });
-        return error.LockInvalid;
-    }
-    const candidates = if (root_matches.items.len != 0) root_matches.items else if (all_matches.items.len == 1) all_matches.items else &.{};
-    for (candidates) |candidate_id| {
-        var already_added = false;
-        for (ids.items) |existing| if (std.mem.eql(u8, existing, candidate_id)) {
-            already_added = true;
-            break;
-        };
-        if (!already_added) try ids.append(allocator, candidate_id);
-    }
-}
-
-/// `active_profile == null` は「profile 選択なしの sync」を意味し、宣言側の
-/// profile 制約を適用せず全てに一致する。import_resolver 側の同名述語は
-/// 「環境検証時の active profile」で null = 無profile環境とみなし、profile
-/// 要求を持つ依存は一致しない（fail-closed）。呼出し側はどちらも現状
-/// 非null を渡すため実害はないが、null 意味は対称でない点に注意。
-fn dependencyMatchesProfile(dependency_profile: ?[]const u8, active_profile: ?[]const u8) bool {
-    const selected = active_profile orelse return true;
-    const required = dependency_profile orelse return true;
-    return std.mem.eql(u8, required, selected);
-}
-
-fn hasIncomingLockEdge(lock_entries: []const lock_model.PackageEntry, package_id: []const u8) bool {
-    for (lock_entries) |entry| for (entry.dependencies) |dependency_id| {
-        if (std.mem.eql(u8, dependency_id, package_id)) return true;
-    };
-    return false;
-}
-
-/// Declared package-like dependencies are emitted into the owning import scope.
-/// NPM dependencies do not provide Nako exports and are intentionally omitted.
-pub fn collectImportDependencies(
-    allocator: Allocator,
-    lock_entries: []const lock_model.PackageEntry,
-    allowed_ids: ?[]const []const u8,
-    edge_owner: ?[]const u8,
-    manifest: *const manifest_mod.Manifest,
-    diagnostics: *diag.List,
-) Error![]const environment.ImportDependency {
-    return collectImportDependenciesForProfile(allocator, lock_entries, allowed_ids, edge_owner, manifest, null, diagnostics);
-}
-
-pub fn collectImportDependenciesForProfile(
-    allocator: Allocator,
-    lock_entries: []const lock_model.PackageEntry,
-    allowed_ids: ?[]const []const u8,
-    edge_owner: ?[]const u8,
-    manifest: *const manifest_mod.Manifest,
-    active_profile: ?[]const u8,
-    diagnostics: *diag.List,
-) Error![]const environment.ImportDependency {
-    var result = std.ArrayListUnmanaged(environment.ImportDependency).empty;
-    var pkg = manifest.dependencies.pkg.iterator();
-    while (pkg.next()) |item| {
-        const dependency = item.value_ptr.*;
-        if (!dependencyMatchesProfile(dependency.profile, active_profile)) continue;
-        try appendImportDependency(allocator, &result, lock_entries, allowed_ids, edge_owner, dependency.name, .{ .version = dependency.version }, dependency.public_id, dependency.alias, hasOwnerNameAliasCollision(manifest, dependency.name, active_profile), diagnostics);
-    }
-    var path = manifest.dependencies.path.iterator();
-    while (path.next()) |item| {
-        const dependency = item.value_ptr.*;
-        try appendImportDependency(allocator, &result, lock_entries, allowed_ids, edge_owner, dependency.name, .{ .path = dependency.path }, null, null, false, diagnostics);
-    }
-    var git = manifest.dependencies.git.iterator();
-    while (git.next()) |item| {
-        const dependency = item.value_ptr.*;
-        try appendImportDependency(allocator, &result, lock_entries, allowed_ids, edge_owner, dependency.name, .{ .git = .{ .url = dependency.url, .commit = dependency.commit, .path = dependency.path } }, null, dependency.alias, false, diagnostics);
-    }
-    var http = manifest.dependencies.http.iterator();
-    while (http.next()) |item| {
-        const dependency = item.value_ptr.*;
-        try appendImportDependency(allocator, &result, lock_entries, allowed_ids, edge_owner, dependency.name, .{ .http = .{ .url = dependency.url, .hash = dependency.hash } }, null, dependency.alias, false, diagnostics);
-    }
-    return try result.toOwnedSlice(allocator);
-}
-
-fn hasOwnerNameAliasCollision(manifest: *const manifest_mod.Manifest, name: []const u8, active_profile: ?[]const u8) bool {
-    if (std.mem.indexOfScalar(u8, name, '/') == null) return false;
-    const derived_alias = registryNamePart(name);
-    return mapHasAliasCollision(manifest_mod.PkgDependency, manifest.dependencies.pkg, name, derived_alias, true, active_profile) or
-        mapHasAliasCollision(manifest_mod.PathDependency, manifest.dependencies.path, null, derived_alias, false, active_profile) or
-        mapHasAliasCollision(manifest_mod.GitDependency, manifest.dependencies.git, null, derived_alias, false, active_profile) or
-        mapHasAliasCollision(manifest_mod.HttpDependency, manifest.dependencies.http, null, derived_alias, false, active_profile);
-}
-
-fn mapHasAliasCollision(comptime Dependency: type, dependencies: std.StringHashMapUnmanaged(Dependency), current_key: ?[]const u8, alias: []const u8, scoped_registry_keys: bool, active_profile: ?[]const u8) bool {
-    var iterator = dependencies.iterator();
-    while (iterator.next()) |item| {
-        if (comptime @hasField(Dependency, "profile")) {
-            if (!dependencyMatchesProfile(item.value_ptr.profile, active_profile)) continue;
-        }
-        if (current_key) |key| if (std.mem.eql(u8, item.key_ptr.*, key)) continue;
-        if (std.mem.eql(u8, item.key_ptr.*, alias)) return true;
-        if (comptime @hasField(Dependency, "alias")) {
-            if (@field(item.value_ptr.*, "alias")) |explicit_alias| {
-                if (std.mem.eql(u8, explicit_alias, alias)) return true;
-            }
-        }
-        if (scoped_registry_keys and std.mem.indexOfScalar(u8, item.key_ptr.*, '/') != null and
-            std.mem.eql(u8, registryNamePart(item.key_ptr.*), alias)) return true;
-    }
-    return false;
-}
-
-fn appendImportDependency(
-    allocator: Allocator,
-    result: *std.ArrayListUnmanaged(environment.ImportDependency),
-    lock_entries: []const lock_model.PackageEntry,
-    allowed_ids: ?[]const []const u8,
-    edge_owner: ?[]const u8,
-    name: []const u8,
-    constraint: ImportConstraint,
-    public_id: ?[]const u8,
-    extra_alias: ?[]const u8,
-    suppress_derived_alias: bool,
-    diagnostics: *diag.List,
-) Error!void {
-    var target: ?[]const u8 = null;
-    var ambiguous_with: ?[]const u8 = null;
-    for (lock_entries) |candidate| {
-        if (allowed_ids) |ids| {
-            var direct = false;
-            for (ids) |id| if (std.mem.eql(u8, id, candidate.id)) {
-                direct = true;
-                break;
-            };
-            if (!direct) continue;
-        }
-        if (!matchesDependency(candidate, name, constraint, public_id)) continue;
-        if (target) |previous| {
-            if (!std.mem.eql(u8, previous, candidate.id) and ambiguous_with == null) ambiguous_with = candidate.id;
-        } else {
-            target = candidate.id;
-        }
-    }
-    if (ambiguous_with) |other_id| {
-        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml.dependencies", .{}, "dependency key \"{s}\" matches multiple lock packages {s} and {s}", .{ name, target.?, other_id });
-        return error.LockInvalid;
-    }
-    if (target == null) {
-        // In schema-v2, the allowed edge list is authoritative. A matching
-        // package omitted from it means the lock cannot bind that declared
-        // dependency for the owning manifest scope.
-        if (allowed_ids != null) for (lock_entries) |candidate| {
-            if (!matchesDependency(candidate, name, constraint, public_id)) continue;
-            if (edge_owner) |owner| {
-                try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "dependency key \"{s}\" matches lock package {s}, but that package is not declared in the dependencies of package \"{s}\"", .{ name, candidate.id, owner });
-            } else {
-                try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock.rootDependencies", .{}, "root dependency key \"{s}\" matches lock package {s}, but that package is not declared in rootDependencies for the active profile", .{ name, candidate.id });
-            }
-            return error.LockInvalid;
-        };
-        // 一致候補が lock 内に一つも無い場合も同様に不整合。宣言が有効な依存
-        // （profile 不一致は呼出し側が既に skip）に対して lock が package を
-        // 提供しないのは manifest と lock の乖離であり、alias を欠落させた
-        // 環境を公開してはならない。
-        if (edge_owner) |owner| {
-            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock", .{}, "dependency key \"{s}\" has no matching lock package for the dependencies of package \"{s}\"", .{ name, owner });
-        } else {
-            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock.rootDependencies", .{}, "root dependency key \"{s}\" has no matching lock package", .{name});
-        }
-        return error.LockInvalid;
-    }
-    const package_key = target.?;
-    // Manifest table keys are valid dependency aliases in their own right.
-    // Preserve them even when an explicit alias is also declared.
-    try appendScopedAlias(allocator, result, name, package_key, diagnostics);
-    if (extra_alias) |alias| {
-        try appendScopedAlias(allocator, result, alias, package_key, diagnostics);
-    } else if (!suppress_derived_alias) {
-        try appendDerivedScopedAlias(allocator, result, defaultImportAlias(name, constraint), package_key, diagnostics);
-    }
-}
-
-fn appendDerivedScopedAlias(
-    allocator: Allocator,
-    result: *std.ArrayListUnmanaged(environment.ImportDependency),
-    alias: []const u8,
-    package_key: []const u8,
-    diagnostics: *diag.List,
-) Error!void {
-    for (result.items) |existing| {
-        if (!std.mem.eql(u8, existing.alias, alias)) continue;
-        if (std.mem.eql(u8, existing.package_key, package_key)) return;
-        // Never replace a table key or explicit alias with a derived short
-        // alias. The manifest-level collision check suppresses ambiguous
-        // derived aliases before this point.
-        return;
-    }
-    try appendScopedAlias(allocator, result, alias, package_key, diagnostics);
-}
-
-pub fn appendScopedAlias(
-    allocator: Allocator,
-    result: *std.ArrayListUnmanaged(environment.ImportDependency),
-    alias: []const u8,
-    package_key: []const u8,
-    diagnostics: *diag.List,
-) Error!void {
-    // 公開namespaceはaliasを識別子化して生成するため、正規化後に一致する異名
-    // alias（`my-util` と `my_util` など）は同じ修飾名namespaceを占有する。
-    // 別packageを指す正規化衝突は環境側で `{ns}__{名}` が両packageに解釈
-    // され得るため、発行段階で拒否する。
-    const normalized = try import_resolver.namespaceFor(allocator, alias, null);
-    defer allocator.free(normalized);
-    for (result.items) |existing| {
-        if (std.mem.eql(u8, existing.alias, alias)) {
-            if (std.mem.eql(u8, existing.package_key, package_key)) return;
-            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml.dependencies", .{}, "dependency alias \"{s}\" conflicts between lock packages {s} and {s}", .{ alias, existing.package_key, package_key });
-            return error.LockInvalid;
-        }
-        const existing_normalized = try import_resolver.namespaceFor(allocator, existing.alias, null);
-        defer allocator.free(existing_normalized);
-        if (!std.mem.eql(u8, existing_normalized, normalized)) continue;
-        if (std.mem.eql(u8, existing.package_key, package_key)) continue;
-        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml.dependencies", .{}, "dependency alias \"{s}\" conflicts with \"{s}\" between lock packages {s} and {s}", .{ alias, existing.alias, existing.package_key, package_key });
-        return error.LockInvalid;
-    }
-    try result.append(allocator, .{ .alias = alias, .package_key = package_key });
-}
-
-fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Error!environment.PackageRecord {
-    const arena = ctx.arena;
-    const source = entry.source orelse entry.resolved_from orelse {
-        return ctx.session.fail(.invalid_source, .package, entry.name, "package \"{s}\" has no source in the lock", .{entry.name});
-    };
-
-    var env_path: []const u8 = undefined;
-    var manifest: ?manifest_mod.Manifest = null;
-    var tree_abs: ?[]const u8 = null;
-    var stable_native_key: ?[]const u8 = null;
-    var verified_commands: ?[]const npkg_commands.Command = null;
-
-    switch (source.kind) {
-        .path => {
-            const rel = source.path orelse
-                return ctx.session.fail(.invalid_source, .package, entry.name, "path source of \"{s}\" has no path", .{entry.name});
-            // 非規範の形式（空成分・`.` 成分・末尾 separator・制御文字）だけ
-            // 拒否する。spec §3.4.3 は相対・絶対の双方を許容するため `..` や
-            // 絶対 path は宣言者の正当な選択であり、lock の契約でも禁止されない。
-            if (!isCanonicalDepPath(rel)) {
-                return ctx.session.fail(.invalid_source, .package, entry.name, "path of \"{s}\" is not a canonical dependency path: \"{s}\"", .{ entry.name, rel });
-            }
-            const acquired = try provider.acquirePath(ctx.session, .{
-                .name = entry.name,
-                .path = rel,
-                .mutable = source.mutable orelse false,
-            }, ctx.project_abs);
-            manifest = acquired.manifest;
-            // mutable source は宣言 dir を生参照する。環境側へ複製すると
-            // 編集が反映されず mutable の契約を壊す。
-            env_path = try arena.dupe(u8, rel);
-            // commands 走査用には絶対 path を使う（env.json には宣言 path）。
-            tree_abs = if (provider.isAbsoluteDepPath(rel))
-                try arena.dupe(u8, rel)
-            else
-                try std.fs.path.join(arena, &.{ ctx.project_abs, rel });
-        },
-        .git => {
-            const url = source.url orelse
-                return ctx.session.fail(.invalid_source, .package, entry.name, "git source of \"{s}\" has no url", .{entry.name});
-            const commit = source.commit orelse
-                return ctx.session.fail(.invalid_source, .package, entry.name, "git source of \"{s}\" has no commit", .{entry.name});
-            // repo 内 subdir は repo 境界内の相対 path のみ許容する。`..` や
-            // 絶対 path で checkout の外を指す細工した lock を拒否する
-            // （path 依存と違い repo 外参照は契約に無い）。
-            if (source.path) |sub| {
-                if (!isCanonicalRepoPath(sub)) {
-                    return ctx.session.fail(.invalid_source, .package, entry.name, "git subdir of \"{s}\" is not a repo-relative path: \"{s}\"", .{ entry.name, sub });
-                }
-            }
-            // lock の固定 commit から決定的な object key を先に計算する。
-            // 検証済み object があれば checkout・Git 起動・clone/fetch を
-            // 経由せず materialize できる（offline でも checkout 不要）。
-            const object_key = try cache_key.shortKey(arena, "git", &.{ url, commit, source.path orelse "" });
-            stable_native_key = object_key;
-            try rememberKey(ctx, object_key);
-            const tree = (try ctx.objectTree(object_key)).?;
-            const verified_hit = (ctx.cache_store.verifyEntry(arena, object_key) catch false) and ctx.cache_store.entryExists(object_key);
-            if (!verified_hit) {
-                // digest 不一致（改変）または不完全な entry は除去して再構築。
-                if (ctx.cache_store.entryExists(object_key)) {
-                    ctx.cache_store.removeEntry(object_key) catch |err| return mapFs(err);
-                }
-                // checkout は可変の作業 dir。repo+subdir 単位で再利用する。
-                const checkout_key = try cache_key.shortKey(arena, "git", &.{ url, source.path orelse "" });
-                const checkout_dir = (try ctx.cache_store.checkoutPath(arena, checkout_key)) orelse
-                    return ctx.session.fail(.invalid_source, .package, entry.name, "cannot derive checkout dir", .{});
-                const acquired = try provider.acquireGit(ctx.session, .{
-                    .name = entry.name,
-                    .url = url,
-                    .commit = commit,
-                    .path = source.path,
-                }, checkout_dir, source);
-                manifest = acquired.manifest;
-                // 取得結果が lock の固定 commit と一致することを確認する。
-                const resolved_commit = acquired.source.commit orelse commit;
-                if (!std.mem.eql(u8, resolved_commit, commit)) {
-                    return ctx.session.fail(.source_collision, .repository, url, "git source of \"{s}\" resolved to {s}, lock expects {s}", .{ entry.name, resolved_commit, commit });
-                }
-                try buildGitObject(ctx, object_key, checkout_dir, source.path);
-            } else {
-                manifest = if (try cachedManifest(ctx, object_key)) |cached| cached.manifest else null;
-            }
-            tree_abs = tree;
-            const dest = try materializeIntoGeneration(ctx, entry.name, tree);
-            env_path = dest;
-        },
-        .http => {
-            const url = source.url orelse
-                return ctx.session.fail(.invalid_source, .package, entry.name, "http source of \"{s}\" has no url", .{entry.name});
-            const declared_hash = source.hash orelse
-                return ctx.session.fail(.invalid_source, .package, entry.name, "http source of \"{s}\" has no hash", .{entry.name});
-            const object_key = try cache_key.artifactKey(arena, "http", declared_hash, url);
-            stable_native_key = object_key;
-            try rememberKey(ctx, object_key);
-            const tree = (try ctx.objectTree(object_key)).?;
-            const verified_hit = (ctx.cache_store.verifyEntry(arena, object_key) catch false) and ctx.cache_store.entryExists(object_key);
-            if (!verified_hit) {
-                if (ctx.cache_store.entryExists(object_key)) {
-                    ctx.cache_store.removeEntry(object_key) catch |err| return mapFs(err);
-                }
-                const acquired = try provider.acquireHttp(ctx.session, .{
-                    .name = entry.name,
-                    .url = url,
-                    .hash = declared_hash,
-                });
-                manifest = acquired.manifest;
-                const prepared = try buildArtifactObject(ctx, object_key, acquired.artifact_bytes.?, acquired.artifact_type orelse "raw", entry);
-                applyPrepared(&manifest, &verified_commands, prepared);
-            }
-            // cache 命中時は object から manifest を読み直す。`.npkg` 由来なら
-            // 公開時と今回の target が異なり得るため適合を再検証する（miss の
-            // tar.gz/raw でも公開済み tree から manifest を拾う）。
-            manifest = manifest orelse try checkedCachedManifest(ctx, object_key, entry);
-            tree_abs = tree;
-            const dest = try materializeIntoGeneration(ctx, entry.name, tree);
-            env_path = dest;
-        },
-        .registry, .static => {
-            // lock が記録する `source.url` は package 固有 URL であり、
-            // registry ルートではない。同期時は index を引き直さず、
-            // lock の artifact URL・hash・type を直接使って取得・検証する。
-            const selected_artifact = selectArtifact(ctx, entry);
-            if (selected_artifact == null and
-                !std.mem.eql(u8, entry.implementation orelse "source", "none"))
-            {
-                return ctx.session.fail(.not_found, .artifact, entry.name, "package \"{s}\" has no artifact for runtime \"{s}\"", .{ entry.name, ctx.runtime.name() });
-            }
-            if (selected_artifact) |artifact| {
-                const url = artifact.url orelse
-                    return ctx.session.fail(.invalid_source, .artifact, entry.name, "artifact \"{s}\" of \"{s}\" has no url", .{ artifact.key, entry.name });
-                const declared_hash = artifact.sha256 orelse
-                    return ctx.session.fail(.invalid_source, .artifact, entry.name, "artifact \"{s}\" of \"{s}\" has no integrity hash", .{ artifact.key, entry.name });
-                if (!fetch.isSupportedHash(declared_hash)) {
-                    return ctx.session.fail(.invalid_source, .artifact, entry.name, "artifact \"{s}\" of \"{s}\" has an unsupported integrity hash", .{ artifact.key, entry.name });
-                }
-                const object_key = try cache_key.artifactKey(arena, "artifact", declared_hash, url);
-                stable_native_key = object_key;
-                try rememberKey(ctx, object_key);
-                const tree = (try ctx.objectTree(object_key)).?;
-                const verified_hit = (ctx.cache_store.verifyEntry(arena, object_key) catch false) and ctx.cache_store.entryExists(object_key);
-                if (!verified_hit) {
-                    if (ctx.cache_store.entryExists(object_key)) {
-                        ctx.cache_store.removeEntry(object_key) catch |err| return mapFs(err);
-                    }
-                    const bytes = try fetch.fetchBytes(ctx.session, url, .artifact);
-                    try fetch.verifyHash(ctx.session, bytes, declared_hash, url, .artifact);
-                    const prepared = try buildArtifactObject(ctx, object_key, bytes, artifact.type orelse "raw", entry);
-                    applyPrepared(&manifest, &verified_commands, prepared);
-                }
-                // http 経路と同じく cache 命中の `.npkg` 由来 manifest は現在
-                // target への適合を再検証する。
-                manifest = manifest orelse try checkedCachedManifest(ctx, object_key, entry);
-                tree_abs = tree;
-                const dest = try materializeIntoGeneration(ctx, entry.name, tree);
-                env_path = dest;
-            } else {
-                // implementation "none" は target に適合する artifact を持たない
-                // support package。lock validation が許容するため取得せず
-                // 空の materialized dir を公開する。
-                env_path = try materializeEmptyPackage(ctx, entry.name);
-            }
-        },
-    }
-
-    // Every resolved package manifest must identify the exact locked package
-    // before exports are resolved or the generation is published. This also
-    // applies to mutable path sources and cached Git objects.
-    if (manifest) |*resolved| {
-        if (!native_store.manifestMatchesLock(resolved, entry.name, entry.version)) {
-            return ctx.session.fail(.invalid_metadata, .package, entry.name, "resolved manifest identity does not match lock entry for \"{s}\"", .{entry.name});
-        }
-    }
-
-    // exports・commands は manifest がある場合だけ記録する。
-    // `.npkg` を verify した経路では検証済み model をそのまま使う。
-    var exports = std.ArrayListUnmanaged(environment.ExportRecord).empty;
-    var has_native_export = false;
-    if (manifest) |*m| {
-        exports = try resolveExports(ctx, m, entry.implementation, entry.features, tree_abs, entry.name, &has_native_export);
-    }
-    if (has_native_export) {
-        if (stable_native_key) |key| {
-            if (tree_abs) |tree| {
-                env_path = native_store.materialize(ctx.arena, ctx.io, ctx.project_abs, tree, key, std.fs.path.basename(ctx.generation_abs)) catch |err| return mapTreeError(ctx, err, key);
-            }
-        }
-    }
-    const commands: []const npkg_commands.Command = verified_commands orelse blk: {
-        if (manifest) |*m| break :blk try collectCommands(ctx, tree_abs, m);
-        if (tree_abs) |tree| break :blk try collectCommands(ctx, tree, null);
-        break :blk &.{};
-    };
-
-    return .{
-        .key = try arena.dupe(u8, entry.id),
-        .name = try arena.dupe(u8, entry.name),
-        .version = try arena.dupe(u8, entry.version),
-        .id = if (isPackageId(entry.id)) try arena.dupe(u8, entry.id) else null,
-        .path = env_path,
-        .exports = exports.items,
-        .dependencies = if (manifest) |*m| try collectImportDependenciesForProfile(arena, ctx.lock_entries, entry.dependencies, entry.name, m, ctx.selected_profile, ctx.diagnostics) else &.{},
-        .commands = commands,
-    };
-}
-
-/// path 依存の宣言 path が byte 列として規範的か。spec §3.4.3 は相対・
-/// 絶対の双方を許容するため `..` 成分や絶対 path は正当な入力（path 依存は
-/// 宣言者が選ぶ局所 source であり、lock の契約でも禁止されない）。
-/// ここでは細工した lock が混入させ得る非規範の形式だけを拒否する:
-/// 空・末尾 separator・`.` 成分・途中の空成分・制御文字。
-fn isCanonicalDepPath(path: []const u8) bool {
-    if (path.len == 0) return false;
-    if (path[path.len - 1] == '/' or path[path.len - 1] == '\\') return false;
-    const starts_sep = path[0] == '/' or path[0] == '\\';
-    var components = std.mem.splitAny(u8, path, "/\\");
-    var index: usize = 0;
-    while (components.next()) |component| : (index += 1) {
-        if (component.len == 0) {
-            // 先頭 separator（`/x`・`\\srv` の UNC 相当前置）のみ許容する。
-            // `a//b` のような途中の空成分は非規範として拒否する。
-            if (!(starts_sep and index <= 1)) return false;
-            continue;
-        }
-        if (std.mem.eql(u8, component, ".")) return false;
-        for (component) |byte| {
-            if (byte < 0x20 or byte == 0x7f) return false;
-        }
-    }
-    return true;
-}
-
-/// git source の repo 内 subdir が規範的な相対 path か。repo 境界内だけを
-/// 指す契約のため `..`・`.`・空成分・`\`・制御文字・絶対形式を拒否する。
-fn isCanonicalRepoPath(path: []const u8) bool {
-    if (path.len == 0 or path[path.len - 1] == '/') return false;
-    if (provider.isAbsoluteDepPath(path)) return false;
-    var components = std.mem.splitScalar(u8, path, '/');
-    while (components.next()) |component| {
-        if (component.len == 0) return false;
-        if (std.mem.eql(u8, component, ".") or std.mem.eql(u8, component, "..")) return false;
-        for (component) |byte| {
-            if (byte < 0x20 or byte == 0x7f or byte == '\\') return false;
-        }
-    }
-    return true;
-}
-
-fn isPackageId(id: []const u8) bool {
-    if (id.len != 36 or !std.mem.startsWith(u8, id, "pkg:")) return false;
-    for (id[4..]) |c| {
-        if (!std.ascii.isHex(c) or (c >= 'A' and c <= 'F')) return false;
-    }
-    return true;
-}
-
-fn rememberKey(ctx: *Context, key: []const u8) !void {
-    for (ctx.used_keys.items) |item| {
-        if (std.mem.eql(u8, item, key)) return;
-    }
-    try ctx.used_keys.append(ctx.arena, key);
-}
-
-/// git checkout から cache object を構築する。`.git` を除いた作業木を
-/// staging へ検証付きで複製し、原子的に公開する。
-fn buildGitObject(ctx: *Context, key: []const u8, checkout_dir: []const u8, sub_path: ?[]const u8) Error!void {
-    const arena = ctx.arena;
-    const src = if (sub_path) |sub|
-        try std.fs.path.join(arena, &.{ checkout_dir, sub })
-    else
-        try arena.dupe(u8, checkout_dir);
-    const staging = try std.fs.path.join(arena, &.{ ctx.cache_store.root, cache.staging_dir, key });
-    const staging_tree = try std.fs.path.join(arena, &.{ staging, "tree" });
-    _ = materialize.copyTree(ctx.gpa, ctx.io, src, staging_tree, .{
-        .exclude_names = &.{".git"},
-    }) catch |err| return mapTreeError(ctx, err, key);
-    ctx.cache_store.publish(key, staging) catch |err| return mapFs(err);
-}
-
-/// `.npkg` を検証した場合に返す検証済み model。manifest・commands は
-/// `ctx.arena`（または検証 arena）が所有する。
-const PreparedArtifact = struct {
-    manifest: ?manifest_mod.Manifest = null,
-    commands: ?[]const npkg_commands.Command = null,
-};
-
-fn applyPrepared(manifest: *?manifest_mod.Manifest, commands: *?[]const npkg_commands.Command, prepared: PreparedArtifact) void {
-    if (prepared.manifest) |m| manifest.* = m;
-    if (prepared.commands) |c| commands.* = c;
-}
-
-/// `.npkg` 検証用の target。profile/runtime・有効 feature・実環境条件を
-/// 使って必須 metadata・FILES.toml・artifact 適合を検査する。
-fn npkgTarget(ctx: *Context, entry: *const lock_model.PackageEntry) npkg_verify.Target {
-    var default_features = false;
-    for (entry.features) |feature| {
-        if (std.mem.eql(u8, feature, "default")) default_features = true;
-    }
-    return .{
-        .runtime = ctx.runtime.name(),
-        .os = ctx.target.os,
-        .cpu = ctx.target.cpu,
-        .abi = ctx.target.abi,
-        .os_version = ctx.target.os_version,
-        .libc = ctx.target.libc,
-        .compat_js = ctx.target.compat_js,
-        .optimize = ctx.target.optimize,
-        .features = entry.features,
-        .default_features = default_features,
-        .nako_version = ctx.target.nako_version,
-        .cnako_version = ctx.target.cnako_version,
-        .lnako_version = ctx.target.lnako_version,
-    };
-}
-
-/// `unpack` の失敗を診断付き `Error` へ変換する。archive 破損・規範外・
-/// symlink・重複は unsafe な内容として `invalid_source`、量の上限超過は
-/// `too_large`、残る IO 失敗は `FileSystem`。
-fn mapUnpackError(ctx: *Context, err: anyerror, subject: []const u8) Error {
-    return switch (err) {
-        error.OutOfMemory => error.OutOfMemory,
-        error.Canceled => error.Canceled,
-        error.InvalidArchive, error.UnsupportedEntry, error.SymlinkEncountered, error.NonCanonicalPath, error.DuplicatePath, error.CaseCollision => ctx.session.fail(.invalid_source, .artifact, subject, "artifact archive \"{s}\" is not safe to extract: {s}", .{ subject, @errorName(err) }),
-        error.TooManyEntries, error.FileTooLarge, error.TreeTooLarge, error.TreeTooDeep => ctx.session.fail(.too_large, .artifact, subject, "artifact archive \"{s}\" exceeds extraction limits: {s}", .{ subject, @errorName(err) }),
-        else => error.FileSystem,
-    };
-}
-
-/// 取得 bytes から cache object を構築する。`tree/` の内容は artifact
-/// type ごとに決まる:
-/// - `.npkg`: 実 target で `npkg_verify.verify` してから ZIP 展開する。
-///   必須 metadata・FILES.toml・対象環境の不整合も公開しない。
-/// - `tar.gz` / `npm-tarball`: gzip 解除して検証付き tar 展開。
-/// - `raw`: `tree/blob` として保存。
-/// - その他の有効宣言済み type は未対応として明示的に失敗する。
-/// アーカイブ系は staging の兄弟 dir へ展開してから `materialize.copyTree`
-/// の規則（規範 path・重複・大小文字衝突・量上限）を通して `tree/` へ入れる。
-fn buildArtifactObject(ctx: *Context, key: []const u8, bytes: []const u8, artifact_type: []const u8, entry: *const lock_model.PackageEntry) Error!PreparedArtifact {
-    const arena = ctx.arena;
-    const staging = try std.fs.path.join(arena, &.{ ctx.cache_store.root, cache.staging_dir, key });
-    const tree = try std.fs.path.join(arena, &.{ staging, "tree" });
-    std.Io.Dir.cwd().createDirPath(ctx.io, tree) catch |err| return mapFs(err);
-    var prepared = PreparedArtifact{};
-    if (std.mem.eql(u8, artifact_type, ".npkg")) {
-        // 公開前に package 検証を通す。hash 照合済みでも必須 metadata・
-        // ファイル索引・対象環境の不整合を staging から出さない。
-        var scratch = diag.List.init(ctx.gpa);
-        defer scratch.deinit();
-        const verified = npkg_verify.verify(arena, bytes, npkgTarget(ctx, entry), ctx.session.diagSink(&scratch)) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => return ctx.session.fail(.invalid_metadata, .artifact, key, ".npkg artifact \"{s}\" failed package verification", .{key}),
-        };
-        prepared.manifest = verified.manifest;
-        prepared.commands = verified.commands;
-        // 一時アーカイブ・展開先は公開対象の staging dir 外（兄弟 path）へ
-        // 置く。残った場合も staging 配下なので次回の回収で消える。
-        const archive_path = try std.fmt.allocPrint(arena, "{s}.archive", .{staging});
-        std.Io.Dir.cwd().writeFile(ctx.io, .{ .sub_path = archive_path, .data = bytes }) catch |err| return mapFs(err);
-        defer std.Io.Dir.cwd().deleteFile(ctx.io, archive_path) catch {};
-        const extract_dir = try std.fmt.allocPrint(arena, "{s}.extract", .{staging});
-        defer std.Io.Dir.cwd().deleteTree(ctx.io, extract_dir) catch {};
-        zip.extract(ctx.io, archive_path, extract_dir) catch |err| {
-            return ctx.session.fail(.invalid_metadata, .artifact, key, "artifact archive failed boundary-checked extraction: {s}", .{@errorName(err)});
-        };
-        _ = materialize.copyTree(ctx.gpa, ctx.io, extract_dir, tree, .{}) catch |err| return mapTreeError(ctx, err, key);
-    } else if (std.mem.eql(u8, artifact_type, "tar.gz") or std.mem.eql(u8, artifact_type, "npm-tarball")) {
-        // npm-tarball は `package/` 前置を持つため先頭成分を除外する。
-        const extract_dir = try std.fmt.allocPrint(arena, "{s}.extract", .{staging});
-        defer std.Io.Dir.cwd().deleteTree(ctx.io, extract_dir) catch {};
-        unpack.extractTarGz(arena, ctx.io, bytes, extract_dir, .{
-            .strip_components = if (std.mem.eql(u8, artifact_type, "npm-tarball")) 1 else 0,
-        }) catch |err| return mapUnpackError(ctx, err, key);
-        _ = materialize.copyTree(ctx.gpa, ctx.io, extract_dir, tree, .{}) catch |err| return mapTreeError(ctx, err, key);
-    } else if (std.mem.eql(u8, artifact_type, "raw")) {
-        const blob = try std.fs.path.join(arena, &.{ tree, "blob" });
-        std.Io.Dir.cwd().writeFile(ctx.io, .{ .sub_path = blob, .data = bytes }) catch |err| return mapFs(err);
-    } else {
-        // lock が受理する既知 type でも未対応のものは成功扱いにしない。
-        return ctx.session.fail(.invalid_metadata, .artifact, key, "unsupported artifact type \"{s}\" for \"{s}\"", .{ artifact_type, key });
-    }
-    ctx.cache_store.publish(key, staging) catch |err| return mapFs(err);
-    return prepared;
-}
-
-/// cache object から読み直した manifest。`from_npkg` は `NAKO-PKG/
-/// METADATA.toml` 由来（= `.npkg` artifact の展開物）の場合に真。
-const CachedManifest = struct {
-    manifest: manifest_mod.Manifest,
-    from_npkg: bool,
-};
-
-/// cache object 内の manifest を読み直す。`tree/NAKO-PKG/METADATA.toml`
-/// を優先し、無ければ `tree/nako.toml` を探す。どちらも無ければ null。
-fn cachedManifest(ctx: *Context, key: []const u8) Error!?CachedManifest {
-    const arena = ctx.arena;
-    const tree = (try ctx.objectTree(key)).?;
-    // 両方ある package では配布向け正規化済みの METADATA.toml が正本。
-    const candidates = [_]struct { rel: []const u8, npkg: bool }{
-        .{ .rel = "NAKO-PKG/METADATA.toml", .npkg = true },
-        .{ .rel = "nako.toml", .npkg = false },
-    };
-    for (candidates) |candidate| {
-        const path = try std.fs.path.join(arena, &.{ tree, candidate.rel });
-        const limit: std.Io.Limit = if (ctx.session.policy.max_bytes == 0) .unlimited else .limited(ctx.session.policy.max_bytes);
-        const bytes = std.Io.Dir.cwd().readFileAlloc(ctx.io, path, arena, limit) catch continue;
-        var scratch = diag.List.init(ctx.gpa);
-        defer scratch.deinit();
-        const parsed = if (candidate.npkg)
-            manifest_mod.parseNpkgMetadata(arena, bytes, ctx.session.diagSink(&scratch))
-        else
-            manifest_mod.parse(arena, bytes, ctx.session.diagSink(&scratch));
-        const manifest = parsed catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => return ctx.session.fail(.invalid_metadata, .manifest, path, "cached manifest at \"{s}\" is invalid", .{path}),
-        };
-        return .{ .manifest = manifest, .from_npkg = candidate.npkg };
-    }
-    return null;
-}
-
-/// cache object から manifest を読み、`.npkg` 由来なら現在 target への適合を
-/// 再検証する。展開済み object は公開時に検証済みだが、公開時と今回の
-/// profile/target が異なり得るため hit 経路でも適合判定を省略しない。
-/// manifest が無ければ null。不適合なら `invalid_metadata` で失敗する。
-fn checkedCachedManifest(ctx: *Context, key: []const u8, entry: *const lock_model.PackageEntry) Error!?manifest_mod.Manifest {
-    const cached = (try cachedManifest(ctx, key)) orelse return null;
-    if (!cached.from_npkg) return cached.manifest;
-    var manifest = cached.manifest;
-    var scratch = diag.List.init(ctx.gpa);
-    defer scratch.deinit();
-    npkg_verify.checkManifestTarget(ctx.arena, &manifest, npkgTarget(ctx, entry), ctx.session.diagSink(&scratch)) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return ctx.session.fail(.invalid_metadata, .artifact, key, "cached .npkg object \"{s}\" does not fit the requested target", .{key}),
-    };
-    return manifest;
-}
-
-/// registry artifact の選択。lock が記録した `implementation`（解決時に
-/// 固定された実装種別）に従う。記録が無い古い lock は `source` 扱い。
-/// `none` は実装を持たないため null。
-fn selectArtifact(ctx: *Context, entry: *const lock_model.PackageEntry) ?*const lock_model.Artifact {
-    _ = ctx;
-    const implementation = entry.implementation orelse "source";
-    if (std.mem.eql(u8, implementation, "none")) return null;
-    return entry.artifact(implementation);
-}
-
-/// package 名を `.nako` 内 dir 名へ変換する。`[a-z0-9-]` 以外は `-` へ畳み、
-/// 空なら hash 名を使う。同一世代内での重複には `-2`・`-3`…を付ける。
-fn allocateDepsName(ctx: *Context, package_name: []const u8) Error![]const u8 {
-    const arena = ctx.arena;
-    var sanitized: std.ArrayListUnmanaged(u8) = .empty;
-    for (package_name) |c| {
-        if (std.ascii.isAlphanumeric(c) or c == '-' or c == '_') {
-            try sanitized.append(arena, std.ascii.toLower(c));
-        } else {
-            try sanitized.append(arena, '-');
-        }
-    }
-    var dir_name = std.mem.trim(u8, sanitized.items, "-");
-    if (dir_name.len == 0) {
-        var digest: [32]u8 = undefined;
-        std.crypto.hash.sha2.Sha256.hash(package_name, &digest, .{});
-        const hex = std.fmt.bytesToHex(digest, .lower);
-        dir_name = try std.fmt.allocPrint(arena, "pkg-{s}", .{hex[0..8]});
-    }
-    var final_name = dir_name;
-    var suffix: u32 = 2;
-    while (ctx.used_names.contains(final_name)) {
-        final_name = try std.fmt.allocPrint(arena, "{s}-{d}", .{ dir_name, suffix });
-        suffix += 1;
-    }
-    try ctx.used_names.put(arena, try arena.dupe(u8, final_name), {});
-    return final_name;
-}
-
-fn materializeIntoGeneration(ctx: *Context, package_name: []const u8, tree_abs: []const u8) Error![]const u8 {
-    const arena = ctx.arena;
-    const final_name = try allocateDepsName(ctx, package_name);
-    const dest = try std.fs.path.join(arena, &.{ ctx.deps_abs, final_name });
-    _ = materialize.copyTree(ctx.gpa, ctx.io, tree_abs, dest, .{}) catch |err| return mapTreeError(ctx, err, package_name);
-    return try std.fs.path.join(arena, &.{ ctx.generation_rel, "deps", final_name });
-}
-
-/// `implementation` が "none"（選択 target に適合する artifact を持たない）
-/// の support package 用に、世代 deps 配下の空 dir を公開し相対 path を返す。
-/// 名前確保は実packageと同じ順序で行い、env path の期待値と一致させる。
-fn materializeEmptyPackage(ctx: *Context, package_name: []const u8) Error![]const u8 {
-    const arena = ctx.arena;
-    const final_name = try allocateDepsName(ctx, package_name);
-    const dest = try std.fs.path.join(arena, &.{ ctx.deps_abs, final_name });
-    std.Io.Dir.cwd().createDirPath(ctx.io, dest) catch |err| return mapFs(err);
-    return try std.fs.path.join(arena, &.{ ctx.generation_rel, "deps", final_name });
-}
-
-/// manifest の export を `implementation`（lock が記録した解決結果）に合わせて
-/// 選択し、env.json の `exports` 配列へ変換する。`native` は prefer-native
-/// として resolve へ渡し、ESM は profile が許可する場合のみ含める。`none`
-/// は実装を持たないため空を返す。
-fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, implementation: ?[]const u8, features: []const []const u8, tree_abs: ?[]const u8, package_name: []const u8, has_native_export: *bool) Error!std.ArrayListUnmanaged(environment.ExportRecord) {
-    var exports = std.ArrayListUnmanaged(environment.ExportRecord).empty;
-    if (implementation) |impl| {
-        if (std.mem.eql(u8, impl, "none")) return exports;
-    }
-    const prefer_native = if (implementation) |impl| std.mem.eql(u8, impl, "native") else false;
-    const target = manifest_mod.ArtifactTarget{
-        .runtime = ctx.runtime.name(),
-        .os = ctx.target.os,
-        .cpu = ctx.target.cpu,
-        .abi = ctx.target.abi,
-        .compat_js = ctx.target.compat_js,
-        .optimize = ctx.target.optimize,
-        // lock が記録した package 単位の有効 feature。空だと feature 必須の
-        // artifact 宣言がすべて不適合となり export を欠落させる。
-        .features = features,
-    };
-    var export_provider: ?npkg_commands_gen.DirSourceProvider = null;
-    for (manifest.exports) |*export_decl| {
-        const resolution = export_decl.resolve(ctx.arena, target, prefer_native, ctx.session.diagnostics) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-        } orelse {
-            // targetに適合しないexportをsilent dropしない。宣言と実体の乖離
-            // した環境を書き出すとload時検証や使用時解決へ失敗が遅延する。
-            return ctx.session.fail(.invalid_metadata, .package, package_name, "export \"{s}\" of \"{s}\" has no implementation usable on this target", .{ export_decl.name, package_name });
-        };
-        // lock が記録した実装と食い違う export は含めない。`source` 選択の
-        // package で native/ESM を記録すると展開物と env.json が不整合になる。
-        if (implementation) |impl| {
-            if (std.mem.eql(u8, impl, "source") and resolution.kind != .source) continue;
-            if (std.mem.eql(u8, impl, "native") and resolution.kind != .native) continue;
-            if (std.mem.eql(u8, impl, "ESM") and resolution.kind != .esm) continue;
-        }
-        if (resolution.kind == .esm and !(std.mem.eql(u8, ctx.runtime.name(), "cnako") or ctx.target.compat_js)) continue;
-        // env へ記録する export は対象 file が package root 境界内に実在する
-        // ことを確認する。prebuilt commands.json はソース走査を迂回するため、
-        // source/native/ESM 全 kind で実体検証を行う。
-        if (tree_abs) |tree| {
-            if (export_provider == null) {
-                export_provider = npkg_commands_gen.DirSourceProvider.init(ctx.arena, ctx.io, tree) catch |err| return mapFs(err);
-            }
-            const export_exists = export_provider.?.exists(ctx.arena, resolution.target) catch |err| return mapFs(err);
-            if (!export_exists) {
-                return ctx.session.fail(.invalid_source, .package, package_name, "export \"{s}\" of \"{s}\" resolves to missing file \"{s}\"", .{ export_decl.name, package_name, resolution.target });
-            }
-        }
-        if (resolution.kind == .native) has_native_export.* = true;
-        try exports.append(ctx.arena, .{
-            .name = try ctx.arena.dupe(u8, export_decl.name),
-            .alias = if (export_decl.alias) |alias| try ctx.arena.dupe(u8, alias) else null,
-            .path = try ctx.arena.dupe(u8, resolution.target),
-        });
-    }
-    return exports;
-}
-
-/// commands.json を package dir から読むか、manifest export の source を
-/// 静的走査して生成する。どちらも無い場合は空。
-fn collectCommands(ctx: *Context, tree_abs: ?[]const u8, manifest: ?*const manifest_mod.Manifest) Error![]const npkg_commands.Command {
-    const arena = ctx.arena;
-    if (tree_abs) |tree| {
-        const commands_path = try std.fs.path.join(arena, &.{ tree, "NAKO-PKG/commands.json" });
-        if (std.Io.Dir.cwd().readFileAlloc(ctx.io, commands_path, arena, .limited(16 * 1024 * 1024))) |bytes| {
-            var scratch = diag.List.init(ctx.gpa);
-            defer scratch.deinit();
-            const parsed = npkg_commands.parse(arena, bytes, ctx.session.diagSink(&scratch)) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                else => return ctx.session.fail(.invalid_metadata, .manifest, commands_path, "commands.json in package failed validation", .{}),
-            };
-            return parsed.commands;
-        } else |_| {}
-    }
-    const m = manifest orelse return &.{};
-    if (tree_abs == null) return &.{};
-
-    // export の source path を entry として静的に走査する。
-    var entry_paths = std.ArrayListUnmanaged([]const u8).empty;
-    for (m.exports) |*export_decl| {
-        if (export_decl.path) |path| try entry_paths.append(arena, path);
-    }
-    if (entry_paths.items.len == 0) return &.{};
-
-    var provider_state = npkg_commands_gen.DirSourceProvider.init(arena, ctx.io, tree_abs.?) catch |err| return mapFs(err);
-    var scratch = diag.List.init(ctx.gpa);
-    defer scratch.deinit();
-    const generated = npkg_commands_gen.generate(arena, provider_state.provider(), entry_paths.items, ctx.session.diagSink(&scratch)) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return ctx.session.fail(.invalid_metadata, .manifest, m.package.name, "failed to derive commands for package \"{s}\"", .{m.package.name}),
-    };
-    return generated.commands;
-}
-
 test {
     _ = @import("sync_test.zig");
 }

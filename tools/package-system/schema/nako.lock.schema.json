@@ -21,7 +21,36 @@
         "manifestSha256": { "type": "string" },
         "profile": { "type": "string" },
         "features": { "$ref": "common.schema.json#/$defs/featureList" },
-        "target": { "$ref": "common.schema.json#/$defs/target" }
+        "target": { "$ref": "common.schema.json#/$defs/target" },
+        "runtime": {
+          "description": "解決に使った runtime（lnako/cnako）。--runtime 切替を lock 鮮度で検出するための入力。",
+          "type": "string"
+        },
+        "nakoVersion": {
+          "description": "engines 照合に使った互換なでしこ version。バイナリ更新時の再解決に使う鮮度入力。",
+          "type": "string"
+        },
+        "cnakoVersion": {
+          "description": "engines 照合に使った cnako version。",
+          "type": "string"
+        },
+        "lnakoVersion": {
+          "description": "engines 照合に使った lnako version。",
+          "type": "string"
+        },
+        "mutablePaths": {
+          "description": "mutable = true path 依存の内容 digest（path 昇順）。宣言 dir の内容変更を lock 鮮度入力として記録する。",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "sha256"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string" },
+              "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+            }
+          }
+        }
       }
     },
     "packages": { "$ref": "#/$defs/packageMap" },

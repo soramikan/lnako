@@ -123,6 +123,17 @@ pub fn extract(io: std.Io, source: []const u8, destination: []const u8) !void {
     try std.Io.Dir.cwd().createDirPath(io, destination);
     var destination_directory = try std.Io.Dir.cwd().openDir(io, destination, .{});
     defer destination_directory.close(io);
+    const archive_stat = try std.Io.Dir.cwd().statFile(io, source, .{});
+    const file = try std.Io.Dir.cwd().openFile(io, source, .{});
+    defer file.close(io);
+    try extractOpened(io, file, archive_stat.size, destination_directory);
+}
+
+/// `source`（open 済みの zip archive file）を open 済み `destination` dir
+/// へ展開する。呼出し側が pin した handle 相対で展開するため、この関数は
+/// path 解決を一切行わない。`destination` は空 dir を想定する。
+pub fn extractOpened(io: std.Io, source: std.Io.File, archive_size: u64, destination: std.Io.Dir) !void {
+    const destination_directory = destination;
     // 展開はまず出力先の内側に作った隔離dirへ行い、検証済みの結果だけを
     // no-followのdirectory handle経由で公開する。新規dirの内部には既存linkが
     // 存在しないため、std側の展開がlinkを追跡して境界の外へ書き出す余地がない。
@@ -133,10 +144,7 @@ pub fn extract(io: std.Io, source: []const u8, destination: []const u8) !void {
         staging_directory.close(io);
         destination_directory.deleteTree(io, staging_name) catch {};
     }
-    const archive_stat = try std.Io.Dir.cwd().statFile(io, source, .{});
-    const archive_size = archive_stat.size;
-    const file = try std.Io.Dir.cwd().openFile(io, source, .{});
-    defer file.close(io);
+    const file = source;
     var buffer: [8192]u8 = undefined;
     var reader = file.reader(io, &buffer);
     var iterator = try std.zip.Iterator.init(&reader);

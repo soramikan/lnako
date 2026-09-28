@@ -2,6 +2,9 @@ const std = @import("std");
 const resolver = @import("resolver.zig");
 const semver = @import("semver.zig");
 const diag = @import("diagnostics.zig");
+const lock_validate = @import("lock_validate.zig");
+const manifest_mod = @import("manifest.zig");
+const manifest_validate = @import("manifest_validate.zig");
 const model = @import("lock_model.zig");
 
 const Allocator = std.mem.Allocator;
@@ -193,7 +196,16 @@ fn parseSource(parser: *Parser, value: std.json.Value, path: []const u8) !?Sourc
         },
         .git => {
             if (try parser.requiredString(object, "url", path)) |url| source.url = try parser.duplicate(url);
-            if (try parser.requiredString(object, "commit", path)) |commit| source.commit = try parser.duplicate(commit);
+            if (try parser.requiredString(object, "commit", path)) |commit| {
+                // commit は `git fetch origin <commit>` 等の argv へ渡る。
+                // hex 以外（`-` 始まり等）を含む細工した lock は option
+                // 注入になり得るため、manifest と同じ 7–40 桁 hex を必須化する。
+                if (!manifest_validate.isCommitId(commit)) {
+                    try parser.report(diag.E029_INVALID_VALUE, path, "invalid git commit \"{s}\" (expected 7-40 lowercase hex)", .{commit});
+                    return null;
+                }
+                source.commit = try parser.duplicate(commit);
+            }
         },
         .http => {
             if (try parser.requiredString(object, "url", path)) |url| source.url = try parser.duplicate(url);
@@ -213,8 +225,8 @@ fn parseSource(parser: *Parser, value: std.json.Value, path: []const u8) !?Sourc
         if (object.get("mutable")) |mutable_value| {
             if (try parser.asBool(mutable_value, path)) |mutable| source.mutable = mutable;
         }
-        // path 依存は可変参照が既定。
-        if (source.mutable == null) source.mutable = true;
+        // path source は immutable が既定。
+        if (source.mutable == null) source.mutable = false;
     }
     return source;
 }
@@ -447,7 +459,7 @@ fn parseProfile(parser: *Parser, value: std.json.Value, path: []const u8) !?Prof
 
 fn parseInput(parser: *Parser, value: std.json.Value, path: []const u8) !?Input {
     const object = (try parser.asObject(value, path)) orelse return null;
-    try parser.rejectUnknown(object, &.{ "manifestSha256", "profile", "features", "target" }, path);
+    try parser.rejectUnknown(object, &.{ "manifestSha256", "profile", "features", "target", "runtime", "nakoVersion", "cnakoVersion", "lnakoVersion", "mutablePaths" }, path);
     const manifest_value = object.get("manifestSha256") orelse {
         try parser.report(diag.E019_REQUIRED_FIELD_MISSING, path, "missing required field \"manifestSha256\"", .{});
         return null;
@@ -465,7 +477,7 @@ fn parseInput(parser: *Parser, value: std.json.Value, path: []const u8) !?Input 
         return null;
     };
     const target_object = (try parser.asObject(target_value, path)) orelse return null;
-    try parser.rejectUnknown(target_object, &.{ "os", "cpu", "abi" }, path);
+    try parser.rejectUnknown(target_object, &.{ "os", "cpu", "abi", "compatJs", "optimize", "osVersion" }, path);
     const os_value = target_object.get("os") orelse {
         try parser.report(diag.E019_REQUIRED_FIELD_MISSING, path, "missing required field \"target.os\"", .{});
         return null;
@@ -478,7 +490,30 @@ fn parseInput(parser: *Parser, value: std.json.Value, path: []const u8) !?Input 
         try parser.report(diag.E019_REQUIRED_FIELD_MISSING, path, "missing required field \"target.abi\"", .{});
         return null;
     };
-    return Input{
+    var mutable_paths: std.ArrayList(model.MutablePath) = .empty;
+    if (object.get("mutablePaths")) |mutable_value| {
+        const mutable_path = try std.fmt.allocPrint(parser.arena, "{s}.mutablePaths", .{path});
+        if (try parser.asArray(mutable_value, mutable_path)) |array| {
+            for (array.items, 0..) |item, index| {
+                const item_path = try std.fmt.allocPrint(parser.arena, "{s}[{d}]", .{ mutable_path, index });
+                const item_object = (try parser.asObject(item, item_path)) orelse return null;
+                try parser.rejectUnknown(item_object, &.{ "path", "sha256" }, item_path);
+                const path_value = item_object.get("path") orelse {
+                    try parser.report(diag.E019_REQUIRED_FIELD_MISSING, item_path, "missing required field \"path\"", .{});
+                    return null;
+                };
+                const sha_value = item_object.get("sha256") orelse {
+                    try parser.report(diag.E019_REQUIRED_FIELD_MISSING, item_path, "missing required field \"sha256\"", .{});
+                    return null;
+                };
+                try mutable_paths.append(parser.arena, .{
+                    .path = try parser.duplicate((try parser.asString(path_value, item_path)) orelse return null),
+                    .sha256 = try parser.duplicate((try parser.asString(sha_value, item_path)) orelse return null),
+                });
+            }
+        }
+    }
+    var input = Input{
         .manifest_sha256 = try parser.duplicate((try parser.asString(manifest_value, path)) orelse return null),
         .profile = try parser.duplicate((try parser.asString(profile_value, path)) orelse return null),
         .features = (try parseFeatureList(parser, features_value, path)) orelse &.{},
@@ -486,8 +521,45 @@ fn parseInput(parser: *Parser, value: std.json.Value, path: []const u8) !?Input 
             .os = try parser.duplicate((try parser.asString(os_value, path)) orelse return null),
             .cpu = try parser.duplicate((try parser.asString(cpu_value, path)) orelse return null),
             .abi = try parser.duplicate((try parser.asString(abi_value, path)) orelse return null),
+            // `--compat-js` で解決した lock のみ記録する任意項目。
+            // 欠落は false と同等。記録される場合は bool のみ許容し、
+            // 文字列 `"true"` 等を黙って false へ落とさない。
+            .compat_js = if (target_object.get("compatJs")) |v|
+                (try parser.asBool(v, path)) orelse return null
+            else
+                false,
+            // `-O` で解決した lock のみ記録する任意項目。欠落は O0 と
+            // 同等。値は profile の optimize と同じ既知集合に限定する。
+            .optimize = if (target_object.get("optimize")) |v| blk: {
+                const optimize = (try parser.asString(v, path)) orelse return null;
+                if (!containsString(&model.known_optimize, optimize)) {
+                    try parser.report(diag.E029_INVALID_VALUE, path, "invalid optimize: {s}", .{optimize});
+                    return null;
+                }
+                break :blk try parser.duplicate(optimize);
+            } else "O0",
+            // `min-os` 照合に使った OS バージョン。欠落（旧 lock）は null。
+            .os_version = if (target_object.get("osVersion")) |v|
+                try parser.duplicate((try parser.asString(v, path)) orelse return null)
+            else
+                null,
         },
+        .mutable_paths = mutable_paths.items,
     };
+    // 解決 runtime・engines 照合 version は任意項目（旧 lock では欠落）。
+    if (object.get("runtime")) |runtime_value| {
+        if (try parser.asString(runtime_value, path)) |runtime| input.runtime = try parser.duplicate(runtime);
+    }
+    if (object.get("nakoVersion")) |version_value| {
+        if (try parser.asString(version_value, path)) |version| input.nako_version = try parser.duplicate(version);
+    }
+    if (object.get("cnakoVersion")) |version_value| {
+        if (try parser.asString(version_value, path)) |version| input.cnako_version = try parser.duplicate(version);
+    }
+    if (object.get("lnakoVersion")) |version_value| {
+        if (try parser.asString(version_value, path)) |version| input.lnako_version = try parser.duplicate(version);
+    }
+    return input;
 }
 
 /// `nako.lock` バイト列を解析して `Lock` を構築する。構造エラーは診断へ記録し
@@ -596,264 +668,12 @@ pub fn parse(gpa: Allocator, bytes: []const u8, diagnostics: *diag.List) ParseEr
 }
 
 // ---------------------------------------------------------------------------
-// 意味検証
+// 意味検証（`lock_validate.zig` への移動済み。API は re-export で維持）
 // ---------------------------------------------------------------------------
 
-/// `pkg:<32桁小文字16進>` 形式かを判定する。JSON Schema の packageId pattern と
-/// 同じ受理集合を Zig 側でも要求する。
-fn isValidPublicId(text: []const u8) bool {
-    if (!std.mem.startsWith(u8, text, "pkg:") or text.len != "pkg:".len + 32) return false;
-    for (text["pkg:".len..]) |ch| {
-        const digit = ch >= '0' and ch <= '9';
-        const lower_hex = ch >= 'a' and ch <= 'f';
-        if (!digit and !lower_hex) return false;
-    }
-    return true;
-}
-
-fn validatePackageSet(packages: []const PackageEntry, exists: *const std.StringHashMapUnmanaged(void), profile: ?ProfileRecord, path: []const u8, diagnostics: *diag.List) !void {
-    const esm_allowed = if (profile) |record| record.allowsEsm() else false;
-    for (packages) |package| {
-        const package_path = try std.fmt.allocPrint(diagnostics.allocator, "{s}.{s}", .{ path, package.id });
-        defer diagnostics.allocator.free(package_path);
-        const artifacts_path = try std.fmt.allocPrint(diagnostics.allocator, "{s}.artifacts", .{package_path});
-        defer diagnostics.allocator.free(artifacts_path);
-        if (!isValidPublicId(package.id)) {
-            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, package_path, .{}, "invalid package id \"{s}\" (expected pkg:<32hex>)", .{package.id});
-        }
-        _ = semver.Version.parse(package.version) catch {
-            try diagnostics.addFmt(diag.E024_INVALID_SEMVER, .err, package_path, .{}, "invalid package version \"{s}\" (not semver)", .{package.version});
-        };
-        if (package.artifacts.len == 0) {
-            try diagnostics.addFmt(diag.E008_MISSING_ARTIFACT, .err, artifacts_path, .{}, "package {s} has no artifacts", .{package.id});
-        }
-        var has_esm = false;
-        for (package.artifacts) |artifact| {
-            if (!artifact.isKnownKind()) {
-                const artifact_path = try std.fmt.allocPrint(diagnostics.allocator, "{s}.artifacts.{s}", .{ package_path, artifact.key });
-                defer diagnostics.allocator.free(artifact_path);
-                try diagnostics.addFmt(diag.E007_UNKNOWN_ARTIFACT_KIND, .err, artifact_path, .{}, "unknown artifact kind \"{s}\" at {s}.artifacts.{s}", .{ artifact.kind, package_path, artifact.key });
-            }
-            if (std.mem.eql(u8, artifact.kind, "ESM")) has_esm = true;
-            if (artifact.type) |artifact_type| {
-                if (!containsString(&known_artifact_types, artifact_type)) {
-                    const artifact_path = try std.fmt.allocPrint(diagnostics.allocator, "{s}.artifacts.{s}", .{ package_path, artifact.key });
-                    defer diagnostics.allocator.free(artifact_path);
-                    try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, artifact_path, .{}, "unknown artifact type \"{s}\"", .{artifact_type});
-                }
-            }
-        }
-        if (has_esm and !esm_allowed) {
-            try diagnostics.addFmt(diag.E006_JS_IN_NORMAL_MODE, .err, artifacts_path, .{}, "ESM artifact selected without compat-js profile", .{});
-        }
-        // 選択された実装種別に対応する artifact が存在しなければ同期できない。
-        if (package.implementation) |implementation| {
-            if (!containsString(&known_implementations, implementation)) {
-                try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, package_path, .{}, "unknown implementation \"{s}\"", .{implementation});
-            } else if (!std.mem.eql(u8, implementation, "none") and !package.hasKind(implementation)) {
-                try diagnostics.addFmt(diag.E008_MISSING_ARTIFACT, .err, artifacts_path, .{}, "selected implementation \"{s}\" has no matching artifact", .{implementation});
-            }
-        }
-        for (package.dependencies) |dependency| {
-            const dependencies_path = try std.fmt.allocPrint(diagnostics.allocator, "{s}.dependencies", .{package_path});
-            defer diagnostics.allocator.free(dependencies_path);
-            if (!isValidPublicId(dependency)) {
-                try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, dependencies_path, .{}, "invalid dependency id \"{s}\" (expected pkg:<32hex>)", .{dependency});
-            }
-            if (!exists.contains(dependency)) {
-                try diagnostics.addFmt(diag.E013_MISSING_PACKAGE, .err, dependencies_path, .{}, "dependency {s} not found in lock packages", .{dependency});
-            }
-        }
-    }
-}
-
-fn buildIdSet(gpa: Allocator, packages: []const PackageEntry) !std.StringHashMapUnmanaged(void) {
-    var set: std.StringHashMapUnmanaged(void) = .empty;
-    for (packages) |package| {
-        try set.put(gpa, package.id, {});
-    }
-    return set;
-}
-
-const KnownField = struct {
-    name: []const u8,
-    value: []const u8,
-    known: []const []const u8,
-};
-
-fn validateKnownFields(fields: []const KnownField, base: []const u8, label: []const u8, diagnostics: *diag.List) !void {
-    for (fields) |field| {
-        if (containsString(field.known, field.value)) continue;
-        const path = try std.fmt.allocPrint(diagnostics.allocator, "{s}.{s}", .{ base, field.name });
-        defer diagnostics.allocator.free(path);
-        try diagnostics.addFmt(diag.E014_INVALID_PROFILE, .err, path, .{}, "{s} has invalid {s}: {s}", .{ label, field.name, field.value });
-    }
-}
-
-/// profile 条件の runtime・os・cpu・abi・optimize を manifest と同じ既知値で検証する。
-fn validateProfileRecord(name: []const u8, record: ProfileRecord, diagnostics: *diag.List) !void {
-    const base = try std.fmt.allocPrint(diagnostics.allocator, "nako.lock.profiles.{s}", .{name});
-    defer diagnostics.allocator.free(base);
-
-    if (record.runtime) |runtime| {
-        if (!containsString(&known_profile_runtimes, runtime)) {
-            const path = try std.fmt.allocPrint(diagnostics.allocator, "{s}.runtime", .{base});
-            defer diagnostics.allocator.free(path);
-            try diagnostics.addFmt(diag.E014_INVALID_PROFILE, .err, path, .{}, "profile \"{s}\" has invalid runtime: {s}", .{ name, runtime });
-        }
-    }
-    try validateKnownFields(&.{
-        .{ .name = "os", .value = record.os, .known = &known_profile_os },
-        .{ .name = "cpu", .value = record.cpu, .known = &known_profile_cpu },
-        .{ .name = "abi", .value = record.abi, .known = &known_profile_abi },
-    }, base, "profile", diagnostics);
-    // optimize は JSON Schema / manifest と同じく E029 で報告する。
-    if (record.optimize) |optimize| {
-        if (!containsString(&known_optimize, optimize)) {
-            const path = try std.fmt.allocPrint(diagnostics.allocator, "{s}.optimize", .{base});
-            defer diagnostics.allocator.free(path);
-            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, path, .{}, "profile \"{s}\" has invalid optimize: {s}", .{ name, optimize });
-        }
-    }
-}
-
-fn validateTarget(target: Target, path: []const u8, diagnostics: *diag.List) !void {
-    try validateKnownFields(&.{
-        .{ .name = "os", .value = target.os, .known = &known_profile_os },
-        .{ .name = "cpu", .value = target.cpu, .known = &known_profile_cpu },
-        .{ .name = "abi", .value = target.abi, .known = &known_profile_abi },
-    }, path, "input.target", diagnostics);
-}
-
-/// lock の意味的な整合性を検証する。既知の診断は SPECIFICATION.md §8 と対応する。
-pub fn validate(lock: *const Lock, diagnostics: *diag.List) !void {
-    if (lock.schema_version != lock_schema_version and lock.schema_version != legacy_lock_schema_version) {
-        try diagnostics.addFmt(diag.E002_UNKNOWN_LOCK_SCHEMA, .err, "nako.lock.schemaVersion", .{}, "unknown lock schema version {d}", .{lock.schema_version});
-    }
-
-    var profile_names: std.StringHashMapUnmanaged(void) = .empty;
-    defer profile_names.deinit(diagnostics.allocator);
-    for (lock.profiles) |profile| {
-        const gop = try profile_names.getOrPut(diagnostics.allocator, profile.name);
-        if (gop.found_existing) {
-            const path = try std.fmt.allocPrint(diagnostics.allocator, "nako.lock.profiles.{s}", .{profile.name});
-            defer diagnostics.allocator.free(path);
-            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, path, .{}, "duplicate profile \"{s}\"", .{profile.name});
-        }
-        try validateProfileRecord(profile.name, profile.record, diagnostics);
-    }
-
-    // `input.target` も profile と同じ既知値集合で検証する。
-    try validateTarget(lock.input.target, "nako.lock.input.target", diagnostics);
-
-    var id_set = try buildIdSet(diagnostics.allocator, lock.packages);
-    defer id_set.deinit(diagnostics.allocator);
-
-    if (lock.profileRecord(lock.input.profile) == null) {
-        try diagnostics.addFmt(diag.E030_UNKNOWN_PROFILE, .err, "nako.lock.input.profile", .{}, "unknown profile \"{s}\"", .{lock.input.profile});
-    }
-    const selected = lock.profileRecord(lock.input.profile);
-    // 選択 profile の環境条件は `input.target` と一致していなければならない。
-    if (selected) |record| {
-        if (!std.mem.eql(u8, record.os, lock.input.target.os) or
-            !std.mem.eql(u8, record.cpu, lock.input.target.cpu) or
-            !std.mem.eql(u8, record.abi, lock.input.target.abi))
-        {
-            try diagnostics.addFmt(diag.E014_INVALID_PROFILE, .err, "nako.lock.input.target", .{}, "input.target does not match profile \"{s}\" os/cpu/abi", .{lock.input.profile});
-        }
-    }
-    try validatePackageSet(lock.packages, &id_set, if (selected) |record| record.* else null, "nako.lock.packages", diagnostics);
-
-    var profile_package_names: std.StringHashMapUnmanaged(void) = .empty;
-    defer profile_package_names.deinit(diagnostics.allocator);
-    for (lock.profile_packages) |profile| {
-        var profile_id_set = try buildIdSet(diagnostics.allocator, profile.packages);
-        defer profile_id_set.deinit(diagnostics.allocator);
-        const profile_path = try std.fmt.allocPrint(diagnostics.allocator, "nako.lock.profilePackages.{s}", .{profile.profile});
-        defer diagnostics.allocator.free(profile_path);
-        const gop = try profile_package_names.getOrPut(diagnostics.allocator, profile.profile);
-        if (gop.found_existing) {
-            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, profile_path, .{}, "duplicate profilePackages entry \"{s}\"", .{profile.profile});
-        }
-        const record = lock.profileRecord(profile.profile);
-        if (record == null) {
-            try diagnostics.addFmt(diag.E030_UNKNOWN_PROFILE, .err, profile_path, .{}, "unknown profile \"{s}\"", .{profile.profile});
-        }
-        // `packages` は選択された `input.profile` のグラフの正本である。
-        // profilePackages に同じ profile がある場合は一致を要求する。
-        if (record != null and std.mem.eql(u8, profile.profile, lock.input.profile) and !packageMapsEql(lock.packages, profile.packages)) {
-            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, profile_path, .{}, "profilePackages.{s} does not match packages", .{profile.profile});
-        }
-        try validatePackageSet(profile.packages, &profile_id_set, if (record) |value| value.* else null, profile_path, diagnostics);
-    }
-
-    var root_profile_names: std.StringHashMapUnmanaged(void) = .empty;
-    defer root_profile_names.deinit(diagnostics.allocator);
-    for (lock.root_dependencies) |root_profile| {
-        const path = try std.fmt.allocPrint(diagnostics.allocator, "nako.lock.rootDependencies.{s}", .{root_profile.profile});
-        defer diagnostics.allocator.free(path);
-        const gop = try root_profile_names.getOrPut(diagnostics.allocator, root_profile.profile);
-        if (gop.found_existing) try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, path, .{}, "duplicate rootDependencies profile \"{s}\"", .{root_profile.profile});
-        const packages = lock.packagesForProfile(root_profile.profile) orelse {
-            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, path, .{}, "rootDependencies references profile without package graph \"{s}\"", .{root_profile.profile});
-            continue;
-        };
-        for (root_profile.dependencies, 0..) |dependency_id, index| {
-            const id_path = try std.fmt.allocPrint(diagnostics.allocator, "{s}[{d}]", .{ path, index });
-            defer diagnostics.allocator.free(id_path);
-            if (containsString(root_profile.dependencies[0..index], dependency_id)) {
-                try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, id_path, .{}, "duplicate root dependency id \"{s}\"", .{dependency_id});
-                continue;
-            }
-            var found_package = false;
-            for (packages) |package| {
-                if (std.mem.eql(u8, package.id, dependency_id)) {
-                    found_package = true;
-                    break;
-                }
-            }
-            if (!found_package) try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, id_path, .{}, "unknown root dependency id \"{s}\"", .{dependency_id});
-        }
-    }
-    if (lock.schema_version == lock_schema_version) {
-        const selected_roots = lock.rootDependenciesForProfile(lock.input.profile);
-        if (selected_roots == null) try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock.rootDependencies", .{}, "rootDependencies is missing selected profile \"{s}\"", .{lock.input.profile});
-        for (lock.profile_packages) |profile| {
-            if (lock.rootDependenciesForProfile(profile.profile) == null) {
-                const path = try std.fmt.allocPrint(diagnostics.allocator, "nako.lock.rootDependencies.{s}", .{profile.profile});
-                defer diagnostics.allocator.free(path);
-                try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, path, .{}, "rootDependencies is missing profile \"{s}\"", .{profile.profile});
-            }
-        }
-    }
-
-    // 複数 profile 形式では `profiles` と `profilePackages` の名前集合が一致
-    // しなければならない（片方向の欠落を許すと既存版取得や差分が空になる）。
-    // 欠落は直前の集合一致検査と同じ E029 に統一する。`input.profile` 自体が
-    // 未定義の場合は上の profileRecord 検査が E030 を報告する。
-    // 単一 profile 形式（profilePackages が空）はこの制約の対象外。
-    if (lock.profile_packages.len > 0) {
-        for (lock.profiles) |profile| {
-            var found = false;
-            for (lock.profile_packages) |entry| {
-                if (std.mem.eql(u8, entry.profile, profile.name)) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock.profilePackages", .{}, "profilePackages is missing profile \"{s}\"", .{profile.name});
-            }
-        }
-    }
-
-    // lnako/cnako が共用する同一 ID・版の source artifact は同じ hash で
-    // 参照しなければならない。
-    if (sharedArtifactMismatch(lock)) |mismatch| {
-        try diagnostics.addFmt(diag.E009_HASH_MISMATCH, .err, "nako.lock.profilePackages", .{}, "source artifact hash differs across profiles for {s}@{s}", .{ mismatch.id, mismatch.version });
-    }
-}
-
+pub const ValidateOptions = lock_validate.ValidateOptions;
+pub const validate = lock_validate.validate;
+pub const validateWith = lock_validate.validateWith;
 // ---------------------------------------------------------------------------
 // 鮮度判定・resolver 互換性
 // ---------------------------------------------------------------------------
@@ -880,6 +700,14 @@ pub fn checkFreshness(existing: ?*const Lock, current: Input) Freshness {
     if (!std.mem.eql(u8, lock.input.profile, current.profile)) return .stale_profile;
     if (!Input.sameFeatures(lock.input, current)) return .stale_features;
     if (!Target.eql(lock.input.target, current.target)) return .stale_target;
+    // 解決 runtime・engines 照合 version も鮮度鍵。`--runtime` 切替や
+    // コンパイラ更新は engines 照合結果・package 選択を変え得るため、
+    // 記録と一致しなければ stale として再解決する（未記録の旧 lock も
+    // null ≠ 値で不一致になる）。
+    if (!model.optEql(lock.input.runtime, current.runtime) or
+        !model.optEql(lock.input.nako_version, current.nako_version) or
+        !model.optEql(lock.input.cnako_version, current.cnako_version) or
+        !model.optEql(lock.input.lnako_version, current.lnako_version)) return .stale_target;
     return .fresh;
 }
 
@@ -1279,8 +1107,8 @@ fn implementationName(implementation: resolver.Impl) []const u8 {
     };
 }
 
-/// `Source` の全文字列を `allocator` へ複製する。path 依存は可変参照が既定
-/// のため、`mutable` 未指定なら true を補う。
+/// `Source` の全文字列を `allocator` へ複製する。path source は immutable が既定
+/// のため、`mutable` 未指定なら false を補う。
 fn dupSourceOwned(allocator: Allocator, source: Source) !Source {
     return .{
         .kind = source.kind,
@@ -1288,7 +1116,7 @@ fn dupSourceOwned(allocator: Allocator, source: Source) !Source {
         .hash = if (source.hash) |value| try allocator.dupe(u8, value) else null,
         .commit = if (source.commit) |value| try allocator.dupe(u8, value) else null,
         .path = if (source.path) |value| try allocator.dupe(u8, value) else null,
-        .mutable = if (source.kind == .path) source.mutable orelse true else source.mutable,
+        .mutable = if (source.kind == .path) source.mutable orelse false else source.mutable,
     };
 }
 
@@ -1463,7 +1291,15 @@ fn buildInternal(
             .os = try allocator.dupe(u8, input.target.os),
             .cpu = try allocator.dupe(u8, input.target.cpu),
             .abi = try allocator.dupe(u8, input.target.abi),
+            .compat_js = input.target.compat_js,
+            .optimize = try allocator.dupe(u8, input.target.optimize),
+            .os_version = try dupeOpt(allocator, input.target.os_version),
         },
+        .runtime = try dupeOpt(allocator, input.runtime),
+        .nako_version = try dupeOpt(allocator, input.nako_version),
+        .cnako_version = try dupeOpt(allocator, input.cnako_version),
+        .lnako_version = try dupeOpt(allocator, input.lnako_version),
+        .mutable_paths = try canonicalMutablePaths(allocator, input.mutable_paths),
     };
 
     var owned_profiles: std.ArrayList(NamedProfile) = .empty;
@@ -1568,6 +1404,30 @@ pub const ProfileInput = struct {
     root_public_ids: ?[]const []const u8 = null,
 };
 
+/// mutable path digest を複製し、path 昇順ソートと重複除去を行う。
+/// 同じ依存集合から常に同じ lock バイト列を得るための正規化。
+fn canonicalMutablePaths(allocator: Allocator, items: []const model.MutablePath) ![]const model.MutablePath {
+    const out = try allocator.alloc(model.MutablePath, items.len);
+    for (items, 0..) |item, index| {
+        out[index] = .{
+            .path = try allocator.dupe(u8, item.path),
+            .sha256 = try allocator.dupe(u8, item.sha256),
+        };
+    }
+    std.mem.sort(model.MutablePath, out, {}, struct {
+        fn lt(_: void, a: model.MutablePath, b: model.MutablePath) bool {
+            return std.mem.order(u8, a.path, b.path) == .lt;
+        }
+    }.lt);
+    var unique_len: usize = 0;
+    for (out) |item| {
+        if (unique_len > 0 and std.mem.eql(u8, out[unique_len - 1].path, item.path)) continue;
+        out[unique_len] = item;
+        unique_len += 1;
+    }
+    return out[0..unique_len];
+}
+
 /// feature 名を複製し、昇順ソートと重複除去を行う。同じ feature 集合から
 /// 常に同じ lock バイト列を得るための正規化。
 fn canonicalFeatures(allocator: Allocator, items: []const []const u8) ![]const []const u8 {
@@ -1583,6 +1443,10 @@ fn canonicalFeatures(allocator: Allocator, items: []const []const u8) ![]const [
     return out[0..unique_len];
 }
 
+fn dupeOpt(allocator: Allocator, value: ?[]const u8) !?[]const u8 {
+    return if (value) |v| try allocator.dupe(u8, v) else null;
+}
+
 fn dupProfile(allocator: Allocator, record: ProfileRecord) !ProfileRecord {
     return .{
         .runtime = if (record.runtime) |value| try allocator.dupe(u8, value) else null,
@@ -1594,9 +1458,28 @@ fn dupProfile(allocator: Allocator, record: ProfileRecord) !ProfileRecord {
     };
 }
 
-// ---------------------------------------------------------------------------
-// 複数 profile の共用 artifact 整合性
-// ---------------------------------------------------------------------------
+test "path source mutable defaults to immutable and preserves explicit values" {
+    const testing = std.testing;
+    const cases = .{
+        .{ .json = "{\"type\":\"path\",\"path\":\"lib\"}", .expected = false },
+        .{ .json = "{\"type\":\"path\",\"path\":\"lib\",\"mutable\":true}", .expected = true },
+        .{ .json = "{\"type\":\"path\",\"path\":\"lib\",\"mutable\":false}", .expected = false },
+    };
+    inline for (cases) |case| {
+        var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        var diagnostics = diag.List.init(arena);
+        defer diagnostics.deinit();
+        var parsed = try std.json.parseFromSlice(std.json.Value, arena, case.json, .{});
+        defer parsed.deinit();
+        var parser = Parser{ .arena = arena, .diagnostics = &diagnostics };
+        const source = (try parseSource(&parser, parsed.value, "source")).?;
+        try testing.expectEqual(case.expected, source.mutable.?);
+        const owned = try dupSourceOwned(arena, source);
+        try testing.expectEqual(case.expected, owned.mutable.?);
+    }
+}
 
 test {
     _ = @import("lock_test.zig");
