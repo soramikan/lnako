@@ -63,7 +63,20 @@ pub fn isNativePluginCall(program: ir.Program, function: ir.Function, instructio
         !instruction.is_builtin_call and
         instruction.name.len > 0 and
         lookupFunction(program, instruction.name) == null and
-        !isDynamicNamedCall(function, instruction.name);
+        (!isDynamicNamedCall(function, instruction.name) or isPackagePluginCommandName(program, instruction.name));
+}
+
+/// `pkg:` import経由native pluginの公開命令名 `{namespace}__{命令}` か。
+/// 修飾名は`isQualifiedGlobal`として動的グローバル参照へ分類されてしまう
+/// ため、plugin dispatchへ流すかどうかをnamespace対応表で判定する。
+pub fn isPackagePluginCommandName(program: ir.Program, name: []const u8) bool {
+    for (program.native_plugin_packages) |package| {
+        const namespace = package.namespace;
+        if (name.len > namespace.len + 2 and
+            std.mem.startsWith(u8, name, namespace) and
+            name[namespace.len] == '_' and name[namespace.len + 1] == '_') return true;
+    }
+    return false;
 }
 
 pub fn hasLocalName(function: ir.Function, name: []const u8) bool {

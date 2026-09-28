@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const value_mod = @import("../runtime/value.zig");
 const builtin_catalog = @import("../semantic/builtin_catalog.zig");
 const common = @import("system/common.zig");
+const nako_ir = @import("../ir/nako_ir.zig");
 
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
@@ -102,6 +103,10 @@ const Box = struct {
 
 const Command = struct {
     name: []u8,
+    /// `pkg:` import経由のpluginが登録した命令の公開namespace。
+    /// 非nullの命令は `{namespace}__{name}` の修飾名でのみ呼べる。
+    /// 直接path importの命令はnullで無修飾名のまま公開する。
+    namespace: ?[]u8 = null,
     particles: []u8,
     flags: u32,
     minimum_arguments: usize,
@@ -136,6 +141,9 @@ pub const State = struct {
     host_initialized: bool = false,
     plugins: std.ArrayList(Plugin) = .empty,
     commands: std.ArrayList(Command) = .empty,
+    /// `initialize`実行中のpluginに割り当てるnamespace。package importの
+    /// pluginが登録する命令へ`registerCommand`が引き継ぐ。
+    pending_namespace: ?[]const u8 = null,
     boxes: std.ArrayList(*Box) = .empty,
     tasks: std.ArrayList(*AsyncTask) = .empty,
 
@@ -162,6 +170,7 @@ pub const State = struct {
         for (self.commands.items) |command| {
             if (command.destroy) |destroy| destroy(command.context);
             allocator.free(command.name);
+            if (command.namespace) |namespace| allocator.free(namespace);
             allocator.free(command.particles);
         }
         self.commands.deinit(allocator);
@@ -248,7 +257,7 @@ pub const State = struct {
         }
     }
 
-    fn loadPlugin(self: *State, path: []const u8) !void {
+    fn loadPlugin(self: *State, path: []const u8, namespace: ?[]const u8) !void {
         const allocator = self.allocator orelse return error.NativePluginStateUnavailable;
         for (self.plugins.items) |plugin| if (std.mem.eql(u8, plugin.path, path)) return;
         var library = NativeLibrary.open(allocator, path) catch return error.NativePluginOpenFailed;
@@ -268,6 +277,8 @@ pub const State = struct {
             .register_command = registerCommand,
         };
         const initialize = descriptor.initialize orelse return error.NativePluginInitializerMissing;
+        self.pending_namespace = namespace;
+        defer self.pending_namespace = null;
         if (initialize(descriptor.plugin_context, &self.host, &registry) != status_ok) return error.NativePluginInitializationFailed;
         errdefer if (descriptor.deinitialize) |deinitialize| deinitialize(descriptor.plugin_context);
         const path_copy = try allocator.dupe(u8, path);
@@ -291,15 +302,40 @@ pub const State = struct {
             const command = self.commands.pop().?;
             if (command.destroy) |destroy| destroy(command.context);
             allocator.free(command.name);
+            if (command.namespace) |namespace| allocator.free(namespace);
             allocator.free(command.particles);
         }
     }
 
+    /// namespace所有の命令は`{namespace}__{name}`への完全一致のみを許し、
+    /// 無修飾名や末尾`__`除去のfallbackではヒットさせない（package namespace
+    /// 契約）。namespace無しの命令は従来どおり無修飾名＋末尾`__`除去で解決する。
     fn findCommand(self: *State, requested: []const u8) ?*Command {
-        for (self.commands.items) |*command| if (std.mem.eql(u8, command.name, requested)) return command;
+        for (self.commands.items) |*command| {
+            if (command.namespace) |namespace| {
+                if (requested.len > namespace.len + 2 and
+                    std.mem.startsWith(u8, requested, namespace) and
+                    requested[namespace.len] == '_' and requested[namespace.len + 1] == '_' and
+                    std.mem.eql(u8, command.name, requested[namespace.len + 2 ..])) return command;
+            } else if (std.mem.eql(u8, command.name, requested)) return command;
+        }
         if (std.mem.lastIndexOf(u8, requested, "__")) |separator| {
             const name = requested[separator + 2 ..];
-            for (self.commands.items) |*command| if (std.mem.eql(u8, command.name, name)) return command;
+            for (self.commands.items) |*command| if (command.namespace == null and std.mem.eql(u8, command.name, name)) return command;
+        }
+        return null;
+    }
+
+    /// 同一plugin識別子の重複登録判定。namespace所有の命令同士は
+    /// `{namespace}__{name}`が等しい場合のみ衝突とみなすため、別packageが
+    /// 同名命令を登録しても互いを隠さない。
+    fn findRegisteredCommand(self: *State, namespace: ?[]const u8, name: []const u8) ?*Command {
+        for (self.commands.items) |*command| {
+            const same_namespace = if (command.namespace) |ns|
+                namespace != null and std.mem.eql(u8, ns, namespace.?)
+            else
+                namespace == null;
+            if (same_namespace and std.mem.eql(u8, command.name, name)) return command;
         }
         return null;
     }
@@ -348,9 +384,17 @@ const WindowsLibrary = struct {
     extern "kernel32" fn FreeLibrary(module: *anyopaque) callconv(.winapi) c_int;
 };
 
-pub fn install(runtime: *Runtime, state: *State, paths: []const []const u8, effects: Effects) !void {
+/// `packages`にあるpathはpackage import由来としてnamespace修飾命令のみ
+/// 公開し、それ以外のpathは無修飾命令として公開する。
+pub fn install(runtime: *Runtime, state: *State, paths: []const []const u8, packages: []const nako_ir.NativePluginPackage, effects: Effects) !void {
     state.configure(runtime, effects);
-    for (paths) |path| try state.loadPlugin(path);
+    for (paths) |path| {
+        const namespace: ?[]const u8 = blk: {
+            for (packages) |package| if (std.mem.eql(u8, package.path, path)) break :blk package.namespace;
+            break :blk null;
+        };
+        try state.loadPlugin(path, namespace);
+    }
 }
 
 pub fn call(runtime: *Runtime, state: *State, effects: Effects, name: []const u8, arguments: []const Value) !?Value {
@@ -497,17 +541,25 @@ fn registerCommand(context: ?*anyopaque, raw: ?*const CommandV1) callconv(.c) c_
     if ((command.flags & ~(flag_sync | flag_async | flag_pure)) != 0 or ((command.flags & flag_sync) == 0) == ((command.flags & flag_async) == 0)) return -1;
     if (command.minimum_arguments > command.maximum_arguments) return -1;
     const name = std.mem.span(command.name.?);
-    if (name.len == 0 or state.findCommand(name) != null or isBuiltinName(name)) return -1;
+    const namespace = state.pending_namespace;
+    if (name.len == 0 or state.findRegisteredCommand(namespace, name) != null or isBuiltinName(name)) return -1;
     const particles = if (command.particles) |text| std.mem.span(text) else "";
     if (!std.unicode.utf8ValidateSlice(name) or !std.unicode.utf8ValidateSlice(particles)) return -1;
+    if (namespace) |ns| if (ns.len == 0 or !std.unicode.utf8ValidateSlice(ns) or std.mem.indexOf(u8, ns, "__") != null) return -1;
     const allocator = state.allocator orelse return -1;
     const name_copy = allocator.dupe(u8, name) catch return -1;
+    const namespace_copy = if (namespace) |ns| allocator.dupe(u8, ns) catch {
+        allocator.free(name_copy);
+        return -1;
+    } else null;
     const particles_copy = allocator.dupe(u8, particles) catch {
         allocator.free(name_copy);
+        if (namespace_copy) |copy| allocator.free(copy);
         return -1;
     };
     state.commands.append(allocator, .{
         .name = name_copy,
+        .namespace = namespace_copy,
         .particles = particles_copy,
         .flags = command.flags,
         .minimum_arguments = command.minimum_arguments,
@@ -790,4 +842,61 @@ test "ネイティブ命令登録の属性と重複を検証する" {
 
 fn testCommandInvoke(_: ?*anyopaque, _: *const HostV1, _: [*c]const *const OpaqueValue, _: usize, _: u64, _: [*c]?*OpaqueValue) callconv(.c) c_int {
     return status_ok;
+}
+
+test "package namespaceの命令は修飾名でのみ解決する" {
+    // package import由来のplugin命令は `{namespace}__{name}` 専用にし、
+    // 無修飾名・別namespace修飾・末尾__除去fallbackでは解決しない。
+    var state = State.init();
+    state.allocator = std.testing.allocator;
+    defer state.deinit();
+    var command = CommandV1{
+        .struct_size = @sizeOf(CommandV1),
+        .abi_version = abi_version,
+        .flags = flag_sync | flag_pure,
+        .name = "外部加算",
+        .particles = "AとBを",
+        .minimum_arguments = 2,
+        .maximum_arguments = 2,
+        .command_context = null,
+        .invoke = testCommandInvoke,
+        .destroy = null,
+    };
+    state.pending_namespace = "math";
+    try std.testing.expectEqual(status_ok, registerCommand(&state, &command));
+    state.pending_namespace = null;
+    // 同じ無修飾名を別packageが登録しても衝突しない
+    state.pending_namespace = "calc";
+    try std.testing.expectEqual(status_ok, registerCommand(&state, &command));
+    state.pending_namespace = null;
+    // 無修飾名では解決しない
+    try std.testing.expect(state.findCommand("外部加算") == null);
+    // 公開namespace修飾名で解決する
+    try std.testing.expect(state.findCommand("math__外部加算") != null);
+    try std.testing.expect(state.findCommand("calc__外部加算") != null);
+    try std.testing.expect(state.findCommand("math__外部加算") != state.findCommand("calc__外部加算"));
+    // 別namespaceや無関係なprefixでは解決しない
+    try std.testing.expect(state.findCommand("other__外部加算") == null);
+    try std.testing.expect(state.findCommand("x__math__外部加算") == null);
+}
+
+test "無修飾の直接plugin命令は従来どおり末尾__除去で解決する" {
+    var state = State.init();
+    state.allocator = std.testing.allocator;
+    defer state.deinit();
+    var command = CommandV1{
+        .struct_size = @sizeOf(CommandV1),
+        .abi_version = abi_version,
+        .flags = flag_sync | flag_pure,
+        .name = "外部加算",
+        .particles = "AとBを",
+        .minimum_arguments = 2,
+        .maximum_arguments = 2,
+        .command_context = null,
+        .invoke = testCommandInvoke,
+        .destroy = null,
+    };
+    try std.testing.expectEqual(status_ok, registerCommand(&state, &command));
+    try std.testing.expect(state.findCommand("外部加算") != null);
+    try std.testing.expect(state.findCommand("main__外部加算") != null);
 }

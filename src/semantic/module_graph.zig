@@ -267,9 +267,29 @@ pub const ModuleGraph = struct {
             if (module.kind != .nako3 or module.parsed == null or module.parsed.?.root == null) continue;
             var import_entries: std.ArrayList(analyzer.ImportEntry) = .empty;
             var allows_dynamic_commands = false;
+            var dynamic_command_aliases: std.ArrayList([]const u8) = .empty;
             for (module.imports) |item| if (item.target) |target| {
                 const target_module = self.modules[target];
-                if (target_module.kind == .native_plugin) allows_dynamic_commands = true;
+                if (target_module.kind == .native_plugin) {
+                    // package経由のnative pluginはalias修飾名のみを公開し、
+                    // 素の命令名は取り込みモジュールへ露出させない
+                    // （package namespace契約）。直接path importは従来どおり
+                    // 無修飾の動的命令を許可する。
+                    if (item.canonical_id != null) {
+                        if (item.namespace) |alias| {
+                            var listed = false;
+                            for (dynamic_command_aliases.items) |existing| {
+                                if (std.mem.eql(u8, existing, alias)) {
+                                    listed = true;
+                                    break;
+                                }
+                            }
+                            if (!listed) try dynamic_command_aliases.append(temp, alias);
+                        }
+                    } else {
+                        allows_dynamic_commands = true;
+                    }
+                }
                 // 実効辺のみ取り込み位置での実行対象になる
                 if (item.effective and target_module.kind == .nako3) {
                     try import_entries.append(temp, .{
@@ -369,6 +389,7 @@ pub const ModuleGraph = struct {
                 .root = module.parsed.?.root.?,
                 .normalized_source = module.parsed.?.stream.source.text,
                 .allows_dynamic_commands = allows_dynamic_commands,
+                .dynamic_command_aliases = try dynamic_command_aliases.toOwnedSlice(temp),
                 .is_package = module.canonical_id != null or module.package_owner != null,
                 .expands_in_function = module.expands_in_function,
                 .owns_scoped_namespace_collision = owns_scoped_namespace_collision,

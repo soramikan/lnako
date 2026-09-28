@@ -63,6 +63,11 @@ pub const ModuleInput = struct {
     /// 指す。文区切り（`;`／改行）の種別判定などに使う。
     normalized_source: []const u8 = "",
     allows_dynamic_commands: bool = false,
+    /// `pkg:` importがnative pluginへ解決した場合の公開namespace。修飾名
+    /// `<alias>__<命令>` だけを動的builtinとして束縛し、素の命令名は
+    /// 取り込みモジュールへ露出しない（package namespace契約）。
+    /// `allows_dynamic_commands` と違い非修飾名は受理しない。
+    dynamic_command_aliases: []const []const u8 = &.{},
     /// Package symbols are resolvable only through an importer's namespace aliases.
     is_package: bool = false,
     /// root.children と同じ長さの、結合ストリーム上の文順位。
@@ -780,7 +785,7 @@ pub const Analyzer = struct {
             try self.bind(node, .builtin, name, name, null);
             return;
         }
-        if (callable and self.inputs[module_index].allows_dynamic_commands) {
+        if (callable and bindsDynamicCommand(self.inputs[module_index], name)) {
             try self.bind(node, .builtin, name, name, null);
             self.bindings.items[self.bindings.items.len - 1].dynamic_builtin = true;
             return;
@@ -827,7 +832,7 @@ pub const Analyzer = struct {
                 return;
             }
         }
-        if (self.inputs[module_index].allows_dynamic_commands) {
+        if (bindsDynamicCommand(self.inputs[module_index], name)) {
             try self.bind(node, .builtin, name, name, null);
             self.bindings.items[self.bindings.items.len - 1].dynamic_builtin = true;
             return;
@@ -1276,6 +1281,18 @@ pub const Analyzer = struct {
     }
 };
 
+/// 動的builtinとして束縛する命令名か判定する。直接取り込んだnative plugin
+/// （`allows_dynamic_commands`）は任意名を受理し、package経由のnative plugin
+/// （`dynamic_command_aliases`）は `<alias>__<命令>` の修飾名のみ受理する。
+fn bindsDynamicCommand(input: ModuleInput, name: []const u8) bool {
+    if (input.allows_dynamic_commands) return true;
+    for (input.dynamic_command_aliases) |alias| {
+        if (std.mem.startsWith(u8, name, alias) and name.len > alias.len + 2 and
+            name[alias.len] == '_' and name[alias.len + 1] == '_') return true;
+    }
+    return false;
+}
+
 fn hasStrictMode(root: *ast.Node) bool {
     if (root.kind == .run_mode and std.mem.eql(u8, root.value, "厳しくチェック")) return true;
     for (root.children) |child| if (hasStrictMode(child)) return true;
@@ -1305,60 +1322,4 @@ pub fn moduleName(allocator: std.mem.Allocator, filename: []const u8) ![]u8 {
 test {
     _ = @import("analyzer_arguments_test.zig");
     _ = @import("analyzer_test.zig");
-}
-
-test "『{関数}名』はユーザー関数と組み込み命令へ束縛する" {
-    const parser = @import("../frontend/parser.zig");
-    const source = "●AAAとは\n30を戻す\nここまで\n{関数}AAAを実行\n{関数}足を実行\n";
-    var parsed = try parser.parse(std.testing.allocator, source, "func-ref.nako3");
-    defer parsed.deinit();
-    try std.testing.expect(parsed.succeeded());
-    var program = try analyze(std.testing.allocator, parsed.root.?, "func-ref.nako3");
-    defer program.deinit();
-    try std.testing.expect(program.succeeded());
-    var saw_user = false;
-    var saw_builtin = false;
-    for (program.bindings) |binding| {
-        if (binding.kind == .call and std.mem.eql(u8, binding.name, "AAA") and std.mem.endsWith(u8, binding.resolved_name, "__AAA")) saw_user = true;
-        if (binding.kind == .builtin and std.mem.eql(u8, binding.resolved_name, "足")) saw_builtin = true;
-    }
-    try std.testing.expect(saw_user);
-    try std.testing.expect(saw_builtin);
-}
-
-test "『{関数}未定義名』は関数として見つからない旨を診断する" {
-    const parser = @import("../frontend/parser.zig");
-    var parsed = try parser.parse(std.testing.allocator, "{関数}ZZZを実行\n", "func-ref-unknown.nako3");
-    defer parsed.deinit();
-    try std.testing.expect(parsed.succeeded());
-    var program = try analyze(std.testing.allocator, parsed.root.?, "func-ref-unknown.nako3");
-    defer program.deinit();
-    try std.testing.expect(!program.succeeded());
-    var count: usize = 0;
-    for (program.diagnostics) |item| {
-        if (item.code == .undefined_symbol) count += 1;
-    }
-    try std.testing.expectEqual(@as(usize, 1), count);
-}
-
-test "『{関数}名』の動的プラグイン命令はdynamic_builtinとして束縛する" {
-    const parser = @import("../frontend/parser.zig");
-    // ネイティブプラグイン取り込みモジュールでは未知の命令名を動的命令と
-    // して束縛する。関数値は実行時にplugin dispatchへ委譲される。
-    var parsed = try parser.parse(std.testing.allocator, "F={関数}外部追加\n", "native-plugin.nako3");
-    defer parsed.deinit();
-    try std.testing.expect(parsed.succeeded());
-    var program = try analyzeModules(std.testing.allocator, &.{.{
-        .name = "native-plugin",
-        .path = "native-plugin.nako3",
-        .root = parsed.root.?,
-        .allows_dynamic_commands = true,
-    }});
-    defer program.deinit();
-    try std.testing.expect(program.succeeded());
-    var saw_dynamic = false;
-    for (program.bindings) |binding| {
-        if (binding.kind == .builtin and binding.dynamic_builtin and std.mem.eql(u8, binding.resolved_name, "外部追加")) saw_dynamic = true;
-    }
-    try std.testing.expect(saw_dynamic);
 }

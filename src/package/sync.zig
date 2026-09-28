@@ -1263,7 +1263,11 @@ fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, impleme
     for (manifest.exports) |*export_decl| {
         const resolution = export_decl.resolve(ctx.arena, target, prefer_native, ctx.session.diagnostics) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
-        } orelse continue;
+        } orelse {
+            // targetに適合しないexportをsilent dropしない。宣言と実体の乖離
+            // した環境を書き出すとload時検証や使用時解決へ失敗が遅延する。
+            return ctx.session.fail(.invalid_metadata, .package, package_name, "export \"{s}\" of \"{s}\" has no implementation usable on this target", .{ export_decl.name, package_name });
+        };
         // lock が記録した実装と食い違う export は含めない。`source` 選択の
         // package で native/ESM を記録すると展開物と env.json が不整合になる。
         if (implementation) |impl| {

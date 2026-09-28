@@ -577,3 +577,59 @@ test "package aliasはimportより前のpackage globalを可視にしない" {
     }
     try std.testing.expect(found_reference);
 }
+
+test "『{関数}名』はユーザー関数と組み込み命令へ束縛する" {
+    const parser = @import("../frontend/parser.zig");
+    const source = "●AAAとは\n30を戻す\nここまで\n{関数}AAAを実行\n{関数}足を実行\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "func-ref.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var program = try analyze(std.testing.allocator, parsed.root.?, "func-ref.nako3");
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var saw_user = false;
+    var saw_builtin = false;
+    for (program.bindings) |binding| {
+        if (binding.kind == .call and std.mem.eql(u8, binding.name, "AAA") and std.mem.endsWith(u8, binding.resolved_name, "__AAA")) saw_user = true;
+        if (binding.kind == .builtin and std.mem.eql(u8, binding.resolved_name, "足")) saw_builtin = true;
+    }
+    try std.testing.expect(saw_user);
+    try std.testing.expect(saw_builtin);
+}
+
+test "『{関数}未定義名』は関数として見つからない旨を診断する" {
+    const parser = @import("../frontend/parser.zig");
+    var parsed = try parser.parse(std.testing.allocator, "{関数}ZZZを実行\n", "func-ref-unknown.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var program = try analyze(std.testing.allocator, parsed.root.?, "func-ref-unknown.nako3");
+    defer program.deinit();
+    try std.testing.expect(!program.succeeded());
+    var count: usize = 0;
+    for (program.diagnostics) |item| {
+        if (item.code == .undefined_symbol) count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), count);
+}
+
+test "『{関数}名』の動的プラグイン命令はdynamic_builtinとして束縛する" {
+    const parser = @import("../frontend/parser.zig");
+    // ネイティブプラグイン取り込みモジュールでは未知の命令名を動的命令と
+    // して束縛する。関数値は実行時にplugin dispatchへ委譲される。
+    var parsed = try parser.parse(std.testing.allocator, "F={関数}外部追加\n", "native-plugin.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var program = try analyzeModules(std.testing.allocator, &.{.{
+        .name = "native-plugin",
+        .path = "native-plugin.nako3",
+        .root = parsed.root.?,
+        .allows_dynamic_commands = true,
+    }});
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var saw_dynamic = false;
+    for (program.bindings) |binding| {
+        if (binding.kind == .builtin and binding.dynamic_builtin and std.mem.eql(u8, binding.resolved_name, "外部追加")) saw_dynamic = true;
+    }
+    try std.testing.expect(saw_dynamic);
+}

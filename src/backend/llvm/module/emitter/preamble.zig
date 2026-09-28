@@ -128,6 +128,7 @@ pub fn emitPreamble(emitter: *Emitter) !void {
             "declare void @lnako_aot_dynamic_global_register(ptr, i64, ptr)\n" ++
             "declare void @lnako_aot_dynamic_call(ptr, ptr, i64, i16, i64)\n" ++
             "declare void @lnako_aot_native_plugin_register(ptr, i64)\n" ++
+            "declare void @lnako_aot_native_plugin_package_register(ptr, i64, ptr, i64)\n" ++
             "declare void @lnako_aot_native_plugin_call(ptr, ptr, i64, ptr, i64, i64)\n" ++
             "declare i64 @lnako_aot_dispatch_display_begin(i64)\n" ++
             "declare i64 @lnako_aot_dispatch_display_begin_with_epoch(i64, ptr)\n" ++
@@ -327,6 +328,19 @@ pub fn emitDeclarations(emitter: *Emitter) !void {
         } else {
             try writer.writeByte('[');
             for (path, 0..) |byte, byte_index| {
+                if (byte_index > 0) try writer.writeAll(", ");
+                try writer.print("i8 {d}", .{byte});
+            }
+            try writer.writeAll("]\n");
+        }
+    }
+    for (emitter.program.native_plugin_packages, 0..) |package, index| {
+        try writer.print("@lnako.native.plugin.namespace.{d} = private unnamed_addr constant [{d} x i8] ", .{ index, package.namespace.len });
+        if (package.namespace.len == 0) {
+            try writer.writeAll("zeroinitializer\n");
+        } else {
+            try writer.writeByte('[');
+            for (package.namespace, 0..) |byte, byte_index| {
                 if (byte_index > 0) try writer.writeAll(", ");
                 try writer.print("i8 {d}", .{byte});
             }

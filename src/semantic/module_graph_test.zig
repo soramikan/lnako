@@ -844,3 +844,71 @@ test "『!モジュール公開既定値』が取り込み先のモジュール�
         if (std.mem.eql(u8, binding.name, "一覧")) try std.testing.expectEqualStrings("main__一覧", binding.resolved_name);
     }
 }
+
+const NativePluginPackageResolver = struct {
+    fn resolver(self: *NativePluginPackageResolver) PackageResolver {
+        return .{ .context = self, .resolveFn = resolve };
+    }
+
+    fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !ResolvedPackageImport {
+        const reference = if (std.mem.startsWith(u8, specifier, "pkg:"))
+            specifier["pkg:".len..]
+        else
+            return error.InvalidPackageSpecifier;
+        if (!std.mem.eql(u8, reference, "nativepkg")) return error.PackageNotFound;
+        const resolved_path = try std.fs.path.resolve(allocator, &.{"packages/nativepkg/plugin.so"});
+        return .{
+            .path = resolved_path,
+            .canonical_id = try allocator.dupe(u8, "pkg:nativepkg/main"),
+            .namespace = "nativepkg",
+            .package_root = try allocator.dupe(u8, std.fs.path.dirname(resolved_path).?),
+        };
+    }
+};
+
+test "package経由のnative plugin命令は公開namespace修飾名のみ動的解決する" {
+    // P1回帰: package経由のnative pluginは無修飾名をimport側のグローバル
+    // 命令空間へ露出させない。`nativepkg__外部追加`のみ動的builtinに束縛し、
+    // 無修飾の`外部追加`は未定義名（local宣言）へ落ちる。
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:nativepkg」を取り込む\nnativepkg__外部追加(1, 2)\n外部追加(1, 2)\n" },
+    } };
+    var package_resolver = NativePluginPackageResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .package_resolver = package_resolver.resolver() });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
+    try std.testing.expectEqual(module_graph.ModuleKind.native_plugin, graph.modules[1].kind);
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var qualified_dynamic = false;
+    var unqualified_dynamic = false;
+    for (program.bindings) |binding| {
+        if (binding.kind == .builtin and binding.dynamic_builtin) {
+            if (std.mem.eql(u8, binding.resolved_name, "nativepkg__外部追加")) qualified_dynamic = true;
+            if (std.mem.eql(u8, binding.resolved_name, "外部追加")) unqualified_dynamic = true;
+        }
+    }
+    try std.testing.expect(qualified_dynamic);
+    try std.testing.expect(!unqualified_dynamic);
+}
+
+test "直接path取り込みのnative plugin命令は従来どおり無修飾で動的解決する" {
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「plugin.so」を取り込む\n外部追加(1, 2)\n" },
+        .{ .suffix = "plugin.so", .source = "" },
+    } };
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{});
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    try std.testing.expectEqual(module_graph.ModuleKind.native_plugin, graph.modules[1].kind);
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var unqualified_dynamic = false;
+    for (program.bindings) |binding| {
+        if (binding.kind == .builtin and binding.dynamic_builtin and std.mem.eql(u8, binding.resolved_name, "外部追加")) unqualified_dynamic = true;
+    }
+    try std.testing.expect(unqualified_dynamic);
+}

@@ -417,6 +417,12 @@ pub fn writeMain(emitter: *Emitter) !void {
     for (emitter.program.native_plugin_paths, 0..) |path, index| {
         try emitter.output.writer.print("  call void @lnako_aot_native_plugin_register(ptr @lnako.native.plugin.path.{d}, i64 {d})\n", .{ index, path.len });
     }
+    for (emitter.program.native_plugin_packages, 0..) |package, package_index| {
+        const path_index = for (emitter.program.native_plugin_paths, 0..) |path, index| {
+            if (std.mem.eql(u8, path, package.path)) break index;
+        } else continue;
+        try emitter.output.writer.print("  call void @lnako_aot_native_plugin_package_register(ptr @lnako.native.plugin.path.{d}, i64 {d}, ptr @lnako.native.plugin.namespace.{d}, i64 {d})\n", .{ path_index, package.path.len, package_index, package.namespace.len });
+    }
     for (emitter.globals.items, 0..) |_, global_index| {
         try emitter.output.writer.print("  %global.root.frame.{d} = alloca %lnako.RootFrame\n", .{global_index});
         try emitter.output.writer.print("  call void @lnako_aot_push_roots(ptr %global.root.frame.{d}, ptr @lnako.global.{d}, i64 1)\n", .{ global_index, global_index });

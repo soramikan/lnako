@@ -199,6 +199,13 @@ pub const Function = struct {
     sore_scope: bool = false,
 };
 
+/// `pkg:` import経由で読み込まれたnative plugin。
+/// 命令は `{namespace}__{命令}` の修飾名でのみ公開する。
+pub const NativePluginPackage = struct {
+    path: []const u8,
+    namespace: []const u8,
+};
+
 pub const JavaScriptModule = struct {
     path: []const u8,
     source: []const u8,
@@ -222,6 +229,10 @@ pub const Program = struct {
     compat_js: bool = false,
     javascript_modules: []JavaScriptModule = &.{},
     native_plugin_paths: []const []const u8 = &.{},
+    /// `pkg:` import経由のnative plugin。命令は `{namespace}__{命令}` の
+    /// 修飾名でのみ公開し、無修飾名では呼べない。直接path importと同じ
+    /// pathを共有する場合は直接取り込み（無修飾）を優先し、ここには載せない。
+    native_plugin_packages: []const NativePluginPackage = &.{},
     http_server_plugin_imported: bool = false,
 
     pub fn deinit(self: *Program) void {
@@ -267,6 +278,11 @@ pub const Program = struct {
         }
         const native_plugin_paths = try allocator.alloc([]const u8, self.native_plugin_paths.len);
         for (self.native_plugin_paths, native_plugin_paths) |source_path, *target_path| target_path.* = try allocator.dupe(u8, source_path);
+        const native_plugin_packages = try allocator.alloc(NativePluginPackage, self.native_plugin_packages.len);
+        for (self.native_plugin_packages, native_plugin_packages) |source_package, *target_package| target_package.* = .{
+            .path = try allocator.dupe(u8, source_package.path),
+            .namespace = try allocator.dupe(u8, source_package.namespace),
+        };
         // arenaを返却値へコピーする前に確保を済ませる。リテラル内で呼ぶと
         // コピー後のarena状態へ確保が記録されずリークする。
         const module_entries = try allocator.dupe(FunctionId, self.module_entries);
@@ -287,6 +303,7 @@ pub const Program = struct {
             .compat_js = self.compat_js,
             .javascript_modules = javascript_modules,
             .native_plugin_paths = native_plugin_paths,
+            .native_plugin_packages = native_plugin_packages,
             .http_server_plugin_imported = self.http_server_plugin_imported,
         };
     }

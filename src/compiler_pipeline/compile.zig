@@ -155,11 +155,50 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
     for (internal_names.items, 0..) |name, index| internal_module_names[index] = try ir_program.arena.allocator().dupe(u8, name);
     ir_program.internal_module_names = internal_module_names;
     var native_plugin_paths: std.ArrayList([]const u8) = .empty;
+    var native_plugin_packages: std.ArrayList(lnako.ir.nako_ir.NativePluginPackage) = .empty;
     for (graph.modules) |module| {
         if (module.kind != .native_plugin) continue;
         try native_plugin_paths.append(ir_program.arena.allocator(), try ir_program.arena.allocator().dupe(u8, module.path));
     }
     ir_program.native_plugin_paths = try native_plugin_paths.toOwnedSlice(ir_program.arena.allocator());
+    // `pkg:` import経由のnative pluginは公開namespaceで修飾した命令のみを
+    // 公開する。同一pathを直接path importでも取り込んでいる場合は直接
+    // 取り込み側の無修飾公開を優先する（修飾名は末尾`__`除去のfallbackで
+    // 引き続き解決できる）。
+    for (graph.modules) |module| {
+        for (module.imports) |item| {
+            const target = item.target orelse continue;
+            const target_module = graph.modules[target];
+            if (target_module.kind != .native_plugin) continue;
+            if (item.canonical_id != null) {
+                const namespace = item.namespace orelse continue;
+                var directly_imported = false;
+                for (graph.modules) |importer| {
+                    for (importer.imports) |direct_item| {
+                        const direct_target = direct_item.target orelse continue;
+                        if (direct_target == target and direct_item.canonical_id == null) {
+                            directly_imported = true;
+                            break;
+                        }
+                    }
+                    if (directly_imported) break;
+                }
+                if (directly_imported) continue;
+                var listed = false;
+                for (native_plugin_packages.items) |package| {
+                    if (std.mem.eql(u8, package.path, target_module.path) and std.mem.eql(u8, package.namespace, namespace)) {
+                        listed = true;
+                        break;
+                    }
+                }
+                if (!listed) try native_plugin_packages.append(ir_program.arena.allocator(), .{
+                    .path = try ir_program.arena.allocator().dupe(u8, target_module.path),
+                    .namespace = try ir_program.arena.allocator().dupe(u8, namespace),
+                });
+            }
+        }
+    }
+    ir_program.native_plugin_packages = try native_plugin_packages.toOwnedSlice(ir_program.arena.allocator());
     if (timer) |t| try t.phase(stderr, "module-metadata");
     var verification = try lnako.ir.verifier.verify(allocator, ir_program);
     defer verification.deinit();
@@ -493,3 +532,60 @@ const FrontendTimer = struct {
         self.last = now;
     }
 };
+
+test "package経由のnative plugin命令は公開namespaceで修飾されAOT dispatchされる" {
+    const TestProvider = struct {
+        fn read(_: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+            if (pathHasSuffix(path, "main.nako3")) return allocator.dupe(u8, "!「pkg:nativepkg」を取り込む\nnativepkg__外部追加(1, 2)\n外部追加(1, 2)\n");
+            return error.FileNotFound;
+        }
+    };
+    const TestResolver = struct {
+        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+            if (!std.mem.eql(u8, specifier, "pkg:nativepkg")) return error.PackageNotFound;
+            return .{
+                .path = try std.fs.path.resolve(allocator, &.{"packages/nativepkg/plugin.so"}),
+                .canonical_id = try allocator.dupe(u8, "pkg:nativepkg/main"),
+                .namespace = "nativepkg",
+                .package_root = try std.fs.path.resolve(allocator, &.{"packages/nativepkg"}),
+            };
+        }
+    };
+    var context: u8 = 0;
+    var stderr: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer stderr.deinit();
+    const program = try compileInputWithProvider(
+        std.testing.allocator,
+        "main.nako3",
+        .{ .package_resolver = .{ .context = &context, .resolveFn = TestResolver.resolve } },
+        &stderr.writer,
+        .{ .context = &context, .readFn = TestProvider.read },
+    );
+    var compiled = program orelse return error.UnexpectedCompileFailure;
+    defer compiled.deinit();
+
+    // package import由来のplugin pathはnamespace対応表に載る
+    try std.testing.expectEqual(@as(usize, 1), compiled.native_plugin_packages.len);
+    try std.testing.expectEqualStrings("nativepkg", compiled.native_plugin_packages[0].namespace);
+    try std.testing.expect(pathHasSuffix(compiled.native_plugin_packages[0].path, "packages/nativepkg/plugin.so"));
+    try std.testing.expectEqual(@as(usize, 1), compiled.native_plugin_paths.len);
+
+    // `nativepkg__外部追加` は修飾名なので isQualifiedGlobal に見えるが、
+    // package対応表により plugin dispatch へ分類される。無修飾の `外部追加`
+    // は動的builtinに束縛されず plugin dispatch にも流れない。
+    const backend_module = lnako.backend.llvm.module;
+    var qualified_plugin_call = false;
+    for (compiled.functions) |function| {
+        for (function.blocks) |block| {
+            for (block.instructions) |instruction| {
+                if (instruction.opcode != .call) continue;
+                if (!backend_module.isNativePluginCall(compiled, function, instruction)) continue;
+                // plugin dispatchへ流れるのはpackage修飾名のみ。無修飾の
+                // `外部追加`はlocal宣言へ束縛されpluginへ届かない。
+                try std.testing.expect(std.mem.startsWith(u8, instruction.name, "nativepkg__"));
+                if (std.mem.eql(u8, instruction.name, "nativepkg__外部追加")) qualified_plugin_call = true;
+            }
+        }
+    }
+    try std.testing.expect(qualified_plugin_call);
+}

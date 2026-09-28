@@ -1,15 +1,20 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const low_level_fs = @import("../runtime/low_level_fs.zig");
 
 const Allocator = std.mem.Allocator;
 
 /// Reject project paths whose owner or ACL/mode permits untrusted modification.
 /// On Windows ACL parsing is deliberately conservative: unknown ACE forms fail closed.
+/// POSIXではモードビットに加えて所有者を検査する — 0644でも別ユーザ所有なら
+/// 所有者が書き換え・chmodできるため、実効ユーザでもrootでもない所有は拒否する。
 pub fn isUnsafeWritablePath(allocator: Allocator, io: std.Io, path: []const u8) !bool {
     if (comptime builtin.os.tag == .windows) return try windowsPathHasUntrustedWriteAccess(allocator, path);
     if (comptime builtin.os.tag == .wasi) return false;
     const stat = try std.Io.Dir.cwd().statFile(io, path, .{});
-    return @intFromEnum(stat.permissions) & 0o022 != 0;
+    if (@intFromEnum(stat.permissions) & 0o022 != 0) return true;
+    const metadata = low_level_fs.stat(io, path, true) catch return true;
+    return metadata.uid != 0 and metadata.uid != std.c.geteuid();
 }
 
 /// `root` 自体と配下の全エントリを走査し、共有writableな箇所があれば true
@@ -168,6 +173,26 @@ fn isWellKnownTrustedWindowsWriter(sid: ?*anyopaque) bool {
         if (second == 544) return true; // Builtin Administrators: S-1-5-32-544
     }
     return false;
+}
+
+test "POSIX owner check accepts current-user-owned non-shared paths" {
+    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.toml", .data = "[package]\nname = \"safe\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    const manifest = try std.fs.path.join(allocator, &.{ root, "nako.toml" });
+    defer allocator.free(manifest);
+    // tmpDir配下は実効ユーザ所有 — 0644/0755系でもowner信頼により安全側。
+    try std.testing.expect(!try isUnsafeWritablePath(allocator, io, root));
+    try std.testing.expect(!try isUnsafeWritablePath(allocator, io, manifest));
+    // root所有の0644 file（共有writableでないシステムpath）は引き続き安全側。
+    if (std.Io.Dir.cwd().statFile(io, "/etc/hosts", .{})) |_| {
+        try std.testing.expect(!try isUnsafeWritablePath(allocator, io, "/etc/hosts"));
+    } else |_| {}
 }
 
 test "Windows ACL check accepts a private temporary project directory and file" {

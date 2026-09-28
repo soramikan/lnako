@@ -546,6 +546,11 @@ fn validateEnvironmentExports(
                 if (!export_exists) return error.InvalidEnvironment;
                 expected_index += 1;
             }
+            // 対象targetで解決できないexportをsilent dropしない。宣言された
+            // exportがnative条件不適合や非compat-js環境のESM等で選べない
+            // packageは環境自体を不適合として拒否する（使用時の
+            // ExportNotFoundへ遅延させない）。
+            if (diagnostics.errorCount() > 0) return error.InvalidEnvironment;
         }
     }
     if (expected_index != environment_exports.items.len) return error.InvalidEnvironment;
