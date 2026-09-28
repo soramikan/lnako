@@ -5,19 +5,25 @@ const host = @import("../../host.zig");
 const compiler_pipeline = @import("../../compiler_pipeline.zig");
 const arguments = @import("../arguments.zig");
 
-/// 走査 path が管理/VCS dir（`.nako`・`.git`）配下か。依存 package の
+/// dir 名が管理/VCS dir（`.nako`・`.git`）か。依存 package の
 /// materialize 先と VCS 内部はテスト収集対象から外す。
+fn isManagedDirName(name: []const u8) bool {
+    if (builtin.os.tag == .windows) {
+        // Windows では `.NAKO`/`.GIT` も同じ dir を指すため大小文字
+        // 非依存で比較する。
+        return std.ascii.eqlIgnoreCase(name, ".nako") or std.ascii.eqlIgnoreCase(name, ".git");
+    }
+    return std.mem.eql(u8, name, ".nako") or std.mem.eql(u8, name, ".git");
+}
+
+/// 走査 path が管理/VCS dir（`.nako`・`.git`）配下か。
+/// `walkSelectively` で管理 dir には降りないため file 側では到達
+/// しないが、entry.path ベースでも除外しておく。
 fn isManagedPath(path: []const u8) bool {
     const separators = if (builtin.os.tag == .windows) "/\\" else "/";
     var components = std.mem.splitAny(u8, path, separators);
     while (components.next()) |component| {
-        if (builtin.os.tag == .windows) {
-            // Windows では `.NAKO`/`.GIT` も同じ dir を指すため大小文字
-            // 非依存で比較する。
-            if (std.ascii.eqlIgnoreCase(component, ".nako") or std.ascii.eqlIgnoreCase(component, ".git")) return true;
-        } else {
-            if (std.mem.eql(u8, component, ".nako") or std.mem.eql(u8, component, ".git")) return true;
-        }
+        if (isManagedDirName(component)) return true;
     }
     return false;
 }
@@ -31,7 +37,7 @@ pub fn runTestTarget(allocator: std.mem.Allocator, io: std.Io, path: []const u8,
 
     var directory = try std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true });
     defer directory.close(io);
-    var walker = try directory.walk(allocator);
+    var walker = try directory.walkSelectively(allocator);
     defer walker.deinit();
     var files: std.ArrayList([]const u8) = .empty;
     defer {
@@ -39,10 +45,15 @@ pub fn runTestTarget(allocator: std.mem.Allocator, io: std.Io, path: []const u8,
         files.deinit(allocator);
     }
     while (try walker.next(io)) |entry| {
+        // `.nako/env/<gen>/deps` 配下の依存 package や残存世代・`.git`
+        // 内部はテスト対象にしない。file 単位で除外すると管理 dir の
+        // 中身まで走査してしまい、大量の file 走査コストや読み取り不可
+        // dir での走査失敗を招くため、dir entry 段階で降りない。
+        if (entry.kind == .directory) {
+            if (!isManagedDirName(entry.basename)) try walker.enter(io, entry);
+            continue;
+        }
         if (entry.kind != .file) continue;
-        // `.nako/env/<gen>/deps` 配下の依存 package や残存世代は対象
-        // ディレクトリ走査のテスト対象にしない（依存の初期化コードや
-        // 単独実行できない module まで実行されてしまう）。
         if (isManagedPath(entry.path)) continue;
         const extension = std.fs.path.extension(entry.path);
         if (!std.ascii.eqlIgnoreCase(extension, ".nako3") and !std.ascii.eqlIgnoreCase(extension, ".dncl") and !std.ascii.eqlIgnoreCase(extension, ".dncl2")) continue;

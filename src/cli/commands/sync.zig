@@ -103,13 +103,31 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, e
     // add/remove/lock/update/自動準備と直列化する。
     var edit_guard: ?project.EditLock = null;
     defer if (edit_guard) |*g| g.unlock();
+    // lock 取得と manifest 読込みを同じ dir に固定するため、root を
+    // open した handle を pin する。path の再解決だと rename/置換競合で
+    // lock 対象と別 dir の manifest を読み得る。
+    var pinned_root: ?[]const u8 = null;
+    defer if (pinned_root) |root| allocator.free(root);
+    var pinned_dir: ?std.Io.Dir = null;
+    defer if (pinned_dir) |*dir| dir.close(io);
     if (project.findRoot(allocator, io, options.project_root) catch null) |root| {
-        defer allocator.free(root);
-        edit_guard = project.acquireEditLock(allocator, io, root) catch |err| {
+        pinned_root = root;
+        const dir = std.Io.Dir.cwd().openDir(io, root, .{ .follow_symlinks = false }) catch |err| {
+            return fail(stderr, "sync: プロジェクトルートを開けません: {s}\n", .{@errorName(err)});
+        };
+        pinned_dir = dir;
+        edit_guard = project.acquireEditLockDir(io, dir) catch |err| {
             return fail(stderr, "sync: 編集ロックを取得できません: {s}\n", .{@errorName(err)});
         };
     }
-    const discovered = project.discoverAndLoad(allocator, io, options.project_root, &list) catch |err| {
+    const discovered: ?project.Project = if (pinned_dir) |dir| blk: {
+        // 所有権は loadFromDir へ移る（成功時は Project、失敗時は内部で close）。
+        pinned_dir = null;
+        break :blk project.loadFromDir(allocator, io, pinned_root.?, dir, &list) catch |err| {
+            if (list.errorCount() > 0) try list.render(stderr, pinned_root.?);
+            return fail(stderr, "sync: プロジェクトを読み込めません: {s}\n", .{@errorName(err)});
+        };
+    } else project.discoverAndLoad(allocator, io, options.project_root, &list) catch |err| {
         if (list.errorCount() > 0) try list.render(stderr, options.project_root);
         return fail(stderr, "sync: プロジェクトを読み込めません: {s}\n", .{@errorName(err)});
     };

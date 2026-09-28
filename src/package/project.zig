@@ -73,6 +73,7 @@ pub fn mapFs(err: anyerror) Error {
 // `project.X` で参照できるよう再エクスポートする。
 pub const EditLock = env_state.EditLock;
 pub const acquireEditLock = env_state.acquireEditLock;
+pub const acquireEditLockDir = env_state.acquireEditLockDir;
 pub const EnvironmentInfo = env_state.EnvironmentInfo;
 pub const readEnvironmentInfo = env_state.readEnvironmentInfo;
 pub const readEnvironmentInfoDir = env_state.readEnvironmentInfoDir;

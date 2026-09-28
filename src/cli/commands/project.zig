@@ -320,9 +320,12 @@ fn runLock(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []cons
 
     // manifest 読込〜lock 公開まで同じ編集 lock を保持し、並行する
     // add/remove/sync/自動準備と lock の書き換えを直列化する。
-    var guard = try acquireProjectEditLock(a, io, start_dir, "lock", stderr);
-    defer if (guard) |*g| g.unlock();
-    var loaded = try loadProjectOrFail(a, io, start_dir, stderr);
+    var locked = try acquireProjectEditLock(a, io, start_dir, "lock", stderr);
+    defer if (locked) |*l| l.deinit(a, io);
+    var loaded = if (locked) |*l|
+        try loadPinnedProjectOrFail(a, io, l, stderr)
+    else
+        try loadProjectOrFail(a, io, start_dir, stderr);
     defer loaded.deinit();
     var diagnostics = diag.List.init(a);
     defer diagnostics.deinit();
@@ -365,9 +368,12 @@ fn runUpdate(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []co
 
     // lock/update も add/remove と同じ編集 lock で直列化する（manifest
     // 読込〜lock 公開まで）。
-    var guard = try acquireProjectEditLock(a, io, start_dir, "update", stderr);
-    defer if (guard) |*g| g.unlock();
-    var loaded = try loadProjectOrFail(a, io, start_dir, stderr);
+    var locked = try acquireProjectEditLock(a, io, start_dir, "update", stderr);
+    defer if (locked) |*l| l.deinit(a, io);
+    var loaded = if (locked) |*l|
+        try loadPinnedProjectOrFail(a, io, l, stderr)
+    else
+        try loadProjectOrFail(a, io, start_dir, stderr);
     defer loaded.deinit();
     var diagnostics = diag.List.init(a);
     defer diagnostics.deinit();
@@ -470,20 +476,72 @@ fn sourceTag(entry: lock_model.PackageEntry) []const u8 {
     };
 }
 
+/// `acquireProjectEditLock` の結果。`guard` が編集 lock、`root`/
+/// `root_dir` は lock 取得時に pin した canonical root。`root_dir` を
+/// `loadPinnedProjectOrFail`/`loadFromDir` へ渡すと所有権が移り、lock
+/// 対象と manifest 読込みが同じ dir に固定される。
+pub const PinnedEditLock = struct {
+    guard: project.EditLock,
+    root: []const u8,
+    root_dir: ?std.Io.Dir,
+
+    /// `loadFromDir` へ渡す root handle を取り出す。所有権は呼出し
+    /// 先（成功時は `Project`、失敗時は `loadFromDir` の errdefer）へ
+    /// 移るため、`deinit` では閉じなくなる。
+    pub fn takeDir(self: *PinnedEditLock) std.Io.Dir {
+        defer self.root_dir = null;
+        return self.root_dir.?;
+    }
+
+    pub fn deinit(self: *PinnedEditLock, a: Allocator, io: std.Io) void {
+        self.guard.unlock();
+        if (self.root_dir) |*dir| dir.close(io);
+        a.free(self.root);
+    }
+};
+
 /// `start_dir` からプロジェクトルートを特定し、manifest/lock 編集の
 /// 排他 lock（`.nako/edit.lock`）を取得する。非プロジェクトなら null
 /// （`loadProjectOrFail`/`discoverAndLoad` の診断に委ねる）。
 /// lock を書き込む全ての verb（lock/update/add/remove/sync/自動準備）は
 /// manifest 読込の前に呼び、lock 公開まで保持する。
-fn acquireProjectEditLock(a: Allocator, io: std.Io, start_dir: []const u8, verb: []const u8, stderr: *std.Io.Writer) !?project.EditLock {
+/// 返す `PinnedEditLock` は root の dir handle を pin 済みのため、root
+/// path が rename/置換されても `loadPinnedProjectOrFail` は lock 対象と
+/// 同じ dir から manifest を読む。
+pub fn acquireProjectEditLock(a: Allocator, io: std.Io, start_dir: []const u8, verb: []const u8, stderr: *std.Io.Writer) !?PinnedEditLock {
     const root = project.findRoot(a, io, start_dir) catch |err| {
         return fail(stderr, "{s}: プロジェクトルートを探索できません: {s}\n", .{ verb, @errorName(err) });
     } orelse return null;
-    defer a.free(root);
-    const guard = project.acquireEditLock(a, io, root) catch |err| {
+    errdefer a.free(root);
+    // lock 取得と manifest 読込みを同じ dir に固定するため、root を
+    // ここで open して pin する。findRoot の返す path は realPath 済み
+    // で leaf が symlink の正当構成はないため no-follow で開く。
+    var root_dir = std.Io.Dir.cwd().openDir(io, root, .{ .follow_symlinks = false }) catch |err| {
+        return fail(stderr, "{s}: プロジェクトルートを開けません: {s}\n", .{ verb, @errorName(err) });
+    };
+    errdefer root_dir.close(io);
+    const guard = project.acquireEditLockDir(io, root_dir) catch |err| {
         return fail(stderr, "{s}: 編集ロックを取得できません: {s}\n", .{ verb, @errorName(err) });
     };
-    return guard;
+    return .{ .guard = guard, .root = root, .root_dir = root_dir };
+}
+
+/// `PinnedEditLock` の pin 済み root handle から Project を読み込む
+/// （`loadProjectOrFail` の pinned 版）。path を再解決しないため、lock
+/// 取得後の root rename/置換で別 dir の manifest を読まない。
+/// `locked.root_dir` の所有権は `loadFromDir` 経由で Project へ移る。
+pub fn loadPinnedProjectOrFail(a: Allocator, io: std.Io, locked: *PinnedEditLock, stderr: *std.Io.Writer) CliError!project.Project {
+    var diagnostics = diag.List.init(a);
+    defer diagnostics.deinit();
+    const result = project.loadFromDir(a, io, locked.root, locked.takeDir(), &diagnostics) catch |err| {
+        renderOrFail(&diagnostics, stderr, locked.root);
+        return fail(stderr, "nako.toml を読み込めません: {s}\n", .{@errorName(err)});
+    };
+    if (diagnostics.errorCount() > 0) {
+        renderOrFail(&diagnostics, stderr, result.manifest_path);
+        return error.Failed;
+    }
+    return result;
 }
 
 /// 宣言 dep key・alias と解決済み entry id の対応表。dep key と
@@ -1016,17 +1074,24 @@ pub fn prepareForExecution(
     defer a.free(start_dir);
     // --no-sync は読み取り専用のため lock 不要。自動準備は lock と
     // manifest を書き換え得るため、読込前に編集 lock を取る。
-    var guard: ?project.EditLock = null;
+    var locked: ?PinnedEditLock = null;
     if (!flags.no_sync) {
-        guard = try acquireProjectEditLock(a, io, start_dir, verb, stderr);
+        locked = try acquireProjectEditLock(a, io, start_dir, verb, stderr);
     }
-    defer if (guard) |*g| g.unlock();
+    defer if (locked) |*l| l.deinit(a, io);
     // 探索自体の失敗（破損した manifest 等）は黙って実行しない。
-    const loaded = project.discoverAndLoad(a, io, start_dir, &diagnostics) catch |err| {
-        renderOrFail(&diagnostics, stderr, start_dir);
-        return fail(stderr, "{s}: プロジェクトを読み込めません: {s}\n", .{ verb, @errorName(err) });
-    };
-    const found = loaded orelse return; // 非プロジェクト: 従来動作
+    // lock を取った経路では pin 済み root handle から読み込み、lock
+    // 対象と別 dir の manifest を読まないようにする。
+    const found = if (locked) |*l|
+        project.loadFromDir(a, io, l.root, l.takeDir(), &diagnostics) catch |err| {
+            renderOrFail(&diagnostics, stderr, l.root);
+            return fail(stderr, "{s}: プロジェクトを読み込めません: {s}\n", .{ verb, @errorName(err) });
+        }
+    else
+        (project.discoverAndLoad(a, io, start_dir, &diagnostics) catch |err| {
+            renderOrFail(&diagnostics, stderr, start_dir);
+            return fail(stderr, "{s}: プロジェクトを読み込めません: {s}\n", .{ verb, @errorName(err) });
+        }) orelse return; // 非プロジェクト: 従来動作
     var project_var = found;
     defer project_var.deinit();
     if (diagnostics.errorCount() > 0) {

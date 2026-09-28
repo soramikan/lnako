@@ -56,6 +56,17 @@ pub fn acquireEditLock(gpa: Allocator, io: std.Io, project_root: []const u8) Err
     return .{ .file = try openEditLockFile(nako_dir, io), .io = io };
 }
 
+/// `acquireEditLock` の pinned `root_dir` handle 版。`.nako` の確保と
+/// `edit.lock` の open を root handle 相対で行うため、root path の
+/// rename/置換に追従しない。lock 対象と後続の manifest 読込みを
+/// 同じ dir に固定する呼出し側はこちらを使う。
+pub fn acquireEditLockDir(io: std.Io, root_dir: std.Io.Dir) Error!EditLock {
+    var nako_dir = environment_mod.openManagedChildDir(root_dir, io, ".nako", false) catch |err|
+        return project.mapFs(err);
+    defer nako_dir.close(io);
+    return .{ .file = try openEditLockFile(nako_dir, io), .io = io };
+}
+
 /// `.nako` dir ハンドル相対で `edit.lock` を排他 lock 付きで開く。
 /// 実装は `environment.openManagedLockFile`（`sync.lock` と共有）。
 /// leaf symlink はリンク本体のみ除去して作り直すため、外部 file への
@@ -480,7 +491,15 @@ fn environmentPackagesUsableImpl(gpa: Allocator, io: std.Io, root_dir: std.Io.Di
         // で辿る。中間 dir が symlink/reparse point へ差し替えられて
         // いると、lexical な prefix 一致だけでは project 外を指す
         // 展開物を環境として受理してしまう。
-        if (!managedDirPathIsDirectory(io, root_dir, abs[root_abs.len + 1 ..])) return false;
+        var package_handle = managedDirPathOpen(io, root_dir, abs[root_abs.len + 1 ..]) orelse return false;
+        defer package_handle.close(io);
+        // package dir の存在だけでなく、record の export 実体
+        // （`exports[].path` や native/esm artifact の path）が通常
+        // file として残っているかも検証する。file だけが削除された
+        // 環境を最新と誤認すると consumer で初めて欠落する。
+        if (record.object.get("exports")) |exports| {
+            if (!envExportTargetsExist(io, package_handle, exports)) return false;
+        }
     }
     return true;
 }
@@ -647,34 +666,98 @@ fn managedPathIsDirectory(io: std.Io, root_abs: []const u8, rel: []const u8) boo
     return true;
 }
 
-/// `managedPathIsDirectory` の pinned `root_dir` handle 版。各成分を
-/// no-follow で辿り、root の rename/replace に追従しない。`.`/`..`
-/// 成分は root の外を指し得るため拒否する。
-fn managedDirPathIsDirectory(io: std.Io, root_dir: std.Io.Dir, rel: []const u8) bool {
-    var dir = root_dir.openDir(io, ".", .{ .follow_symlinks = false }) catch return false;
+/// `managedDirPathIsDirectory` と同じ成分走査を行い、末端 dir の
+/// handle を返す版（呼出し側で close）。各成分を no-follow で辿り、
+/// root の rename/replace に追従しない。`.`/`..` 成分は root の外を
+/// 指し得るため拒否する。
+fn managedDirPathOpen(io: std.Io, root_dir: std.Io.Dir, rel: []const u8) ?std.Io.Dir {
+    var dir = root_dir.openDir(io, ".", .{ .follow_symlinks = false }) catch return null;
     var it = std.mem.tokenizeAny(u8, rel, "/\\");
     while (it.next()) |component| {
         if (std.mem.eql(u8, component, ".") or std.mem.eql(u8, component, "..")) {
             dir.close(io);
-            return false;
+            return null;
         }
         const next = dir.openDir(io, component, .{ .follow_symlinks = false }) catch {
             dir.close(io);
-            return false;
+            return null;
         };
         dir.close(io);
         dir = next;
         const stat = dir.stat(io) catch {
             dir.close(io);
-            return false;
+            return null;
         };
         if (stat.kind != .directory) {
             dir.close(io);
-            return false;
+            return null;
         }
     }
+    return dir;
+}
+
+/// `managedPathIsDirectory` の pinned `root_dir` handle 版。
+fn managedDirPathIsDirectory(io: std.Io, root_dir: std.Io.Dir, rel: []const u8) bool {
+    var dir = managedDirPathOpen(io, root_dir, rel) orelse return false;
     dir.close(io);
     return true;
+}
+
+/// record の `exports` item が指す実体（`path` と `native`/`esm`
+/// artifact の `path`）が package dir 内の通常 file として残るか。
+/// `exports[].path` は emit が必ず書き出すため、欠落・非 string は
+/// 環境破損として受理しない。
+fn envExportTargetsExist(io: std.Io, package_dir: std.Io.Dir, exports: std.json.Value) bool {
+    for (exports.array.items) |item| {
+        const path_value = item.object.get("path") orelse return false;
+        if (path_value != .string) return false;
+        if (!envExportTargetIsFile(io, package_dir, path_value.string)) return false;
+        inline for (.{ "native", "esm" }) |key| {
+            if (item.object.get(key)) |ref| {
+                if (!envArtifactTargetsExist(io, package_dir, ref)) return false;
+            }
+        }
+    }
+    return true;
+}
+
+/// `artifactRef`（string = path、object = `path` 必須、またはその
+/// 配列）の指す file が package dir 内に残るか。
+fn envArtifactTargetsExist(io: std.Io, package_dir: std.Io.Dir, ref: std.json.Value) bool {
+    switch (ref) {
+        .string => |value| return envExportTargetIsFile(io, package_dir, value),
+        .object => {
+            const path_value = ref.object.get("path") orelse return false;
+            return path_value == .string and envExportTargetIsFile(io, package_dir, path_value.string);
+        },
+        .array => |items| {
+            for (items.items) |item| {
+                if (item != .string and item != .object) return false;
+                if (!envArtifactTargetsExist(io, package_dir, item)) return false;
+            }
+            return true;
+        },
+        else => return false,
+    }
+}
+
+/// export/artifact の記録 path が package dir 内の通常 file か。
+/// 絶対 path・`..`/`.`/空成分・symlink を受理しない（package dir の
+/// 外を指す記録や差し替えを環境破損として扱う）。
+fn envExportTargetIsFile(io: std.Io, package_dir: std.Io.Dir, export_path: []const u8) bool {
+    if (export_path.len == 0 or export_path.len > std.fs.max_path_bytes) return false;
+    if (provider.isAbsoluteDepPath(export_path)) return false;
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    for (export_path, 0..) |char, i| {
+        buf[i] = if (char == '/' or char == '\\') std.fs.path.sep else char;
+    }
+    const rel = buf[0..export_path.len];
+    var components = std.mem.splitScalar(u8, rel, std.fs.path.sep);
+    while (components.next()) |component| {
+        if (component.len == 0 or std.mem.eql(u8, component, ".") or std.mem.eql(u8, component, "..")) return false;
+    }
+    const stat = package_dir.statFile(io, rel, .{ .follow_symlinks = false }) catch return false;
+    return stat.kind == .file;
 }
 
 /// 環境の `lockSha256` が現行 `nako.lock` と一致するか。

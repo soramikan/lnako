@@ -23,23 +23,8 @@ const flagValue = shared.flagValue;
 const renderOrFail = shared.renderOrFail;
 const failProject = shared.failProject;
 const loadProjectOrFail = shared.loadProjectOrFail;
-
-/// manifest 編集をプロジェクト単位で直列化する OS file lock の取得。
-/// `nako.toml` の読込→候補生成→原子的置換→lock 更新を同じロック区間
-/// に入れ、同時に走る add/remove/lock/update/sync/自動準備が互いの
-/// 変更を上書きしないようにする。実装は `project.EditLock`。
-/// 非プロジェクトなら null（`loadProjectOrFail` の診断に委ねる）。
-/// `loadProjectOrFail` より前に呼ぶこと。
-fn acquireEditLock(a: Allocator, io: std.Io, start_dir: []const u8, verb: []const u8, stderr: *std.Io.Writer) !?project.EditLock {
-    const root = project.findRoot(a, io, start_dir) catch |err| {
-        return fail(stderr, "{s}: プロジェクトルートを探索できません: {s}\n", .{ verb, @errorName(err) });
-    } orelse return null;
-    defer a.free(root);
-    const guard = project.acquireEditLock(a, io, root) catch |err| {
-        return fail(stderr, "{s}: 編集ロックを取得できません: {s}\n", .{ verb, @errorName(err) });
-    };
-    return guard;
-}
+const loadPinnedProjectOrFail = shared.loadPinnedProjectOrFail;
+const acquireEditLock = shared.acquireProjectEditLock;
 
 // ---------------------------------------------------------------------------
 // nako.toml の原子的編集
@@ -687,9 +672,12 @@ pub fn runAdd(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []c
 
     // manifest の読込・候補生成・置換・lock 更新を同一ロック区間に入れ、
     // 同時実行の add/remove による変更喪失を防ぐ。
-    var guard = try acquireEditLock(a, io, start_dir, "add", stderr);
-    defer if (guard) |*g| g.unlock();
-    var loaded = try loadProjectOrFail(a, io, start_dir, stderr);
+    var locked = try acquireEditLock(a, io, start_dir, "add", stderr);
+    defer if (locked) |*l| l.deinit(a, io);
+    var loaded = if (locked) |*l|
+        try loadPinnedProjectOrFail(a, io, l, stderr)
+    else
+        try loadProjectOrFail(a, io, start_dir, stderr);
     defer loaded.deinit();
 
     // 既存宣言との重複は TOML の duplicate key エラーではなく、明確な
@@ -818,9 +806,12 @@ pub fn runRemove(a: Allocator, io: std.Io, args: []const []const u8, start_dir: 
         return failUsage(stderr, "remove: --locked は remove では使えません（manifest を変更するため lock は必ず更新されます）\n", .{});
     }
 
-    var guard = try acquireEditLock(a, io, start_dir, "remove", stderr);
-    defer if (guard) |*g| g.unlock();
-    var loaded = try loadProjectOrFail(a, io, start_dir, stderr);
+    var locked = try acquireEditLock(a, io, start_dir, "remove", stderr);
+    defer if (locked) |*l| l.deinit(a, io);
+    var loaded = if (locked) |*l|
+        try loadPinnedProjectOrFail(a, io, l, stderr)
+    else
+        try loadProjectOrFail(a, io, start_dir, stderr);
     defer loaded.deinit();
 
     // dev 未指定なら両方のグループを探す。

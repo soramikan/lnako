@@ -1774,7 +1774,15 @@ test "environmentPackagesUsableは余分なrecordと形状違反と中間symlink
     const io = testing.io;
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
-    try temporary.dir.createDirPath(io, "app/.nako/env/gen-1/deps/lib");
+    // `valid` record の exports が指す実体 file を package dir 内に
+    // 用意する。dir の存在だけでなく `exports[].path`・artifact path の
+    // 実在も環境検証に含まれる。
+    try temporary.dir.createDirPath(io, "app/.nako/env/gen-1/deps/lib/src");
+    try temporary.dir.createDirPath(io, "app/.nako/env/gen-1/deps/lib/bin");
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/env/gen-1/deps/lib/src/index.nako3", .data = "●表示とは\nここまで\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/env/gen-1/deps/lib/bin/lib.dll", .data = "stub" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/env/gen-1/deps/lib/index.mjs", .data = "stub" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/env/gen-1/deps/lib/node.mjs", .data = "stub" });
     try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/current", .data = "gen-1\n" });
     try temporary.dir.createDirPath(io, "app/src");
 
@@ -1959,6 +1967,84 @@ test "environmentPackagesUsableは余分なrecordと形状違反と中間symlink
     try testing.expect(!try usable(&lock, app_root));
     const outside_stat = try temporary.dir.statFile(io, "app/.nako", .{ .follow_symlinks = false });
     try testing.expect(outside_stat.kind == .sym_link);
+}
+
+test "environmentPackagesUsableはrecordのexport実体file欠落をstaleと判定する" {
+    // `deps/<pkg>` dir が残っていても `exports[].path` の file が消えた
+    // 環境を最新と誤認しないための回帰テスト（削除した export を参照する
+    // consumer の欠落エラーをここで検出して再同期に回す）。
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/.nako/env/gen-1/deps/lib/src");
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/env/gen-1/deps/lib/src/index.nako3", .data = "●表示とは\nここまで\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/current", .data = "gen-1\n" });
+    try temporary.dir.createDirPath(io, "app/src");
+
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const entries = [_]lock_model.PackageEntry{.{
+        .id = "pkg:11111111111111111111111111111111",
+        .name = "lib",
+        .version = "1.0.0",
+        .source = .{ .kind = .registry },
+    }};
+    var lock = lock_model.Lock{
+        .arena = arena_impl,
+        .input = .{
+            .manifest_sha256 = "sha256:00",
+            .profile = "default",
+            .target = .{ .os = "macos", .cpu = "aarch64", .abi = "gnu" },
+        },
+        .packages = &entries,
+    };
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
+    defer testing.allocator.free(app_root);
+    const writeEnv = struct {
+        fn run(dir: std.Io.Dir, packages_json: []const u8) !void {
+            const source = try std.fmt.allocPrint(testing.allocator,
+                \\{{"schemaVersion":1,"lockSha256":"sha256:00","profile":"default","runtime":"lnako","packages":{s}}}
+                \\
+            , .{packages_json});
+            defer testing.allocator.free(source);
+            try dir.writeFile(io, .{ .sub_path = "app/.nako/environment.json", .data = source });
+        }
+    }.run;
+    const usable = struct {
+        fn run(lock_: *lock_model.Lock, root: []const u8) !bool {
+            return try project.environmentPackagesUsable(testing.allocator, io, root, lock_, "default");
+        }
+    }.run;
+
+    const record =
+        \\{"pkg:11111111111111111111111111111111":{"name":"lib","version":"1.0.0","id":"pkg:11111111111111111111111111111111","path":".nako/env/gen-1/deps/lib","exports":[{"name":"lib","path":"src/index.nako3"}]}}
+    ;
+    try writeEnv(temporary.dir, record);
+    try testing.expect(try usable(&lock, app_root));
+
+    // export 先 file を削除すると環境は stale。
+    try temporary.dir.deleteFile(io, "app/.nako/env/gen-1/deps/lib/src/index.nako3");
+    try testing.expect(!try usable(&lock, app_root));
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/.nako/env/gen-1/deps/lib/src/index.nako3", .data = "●表示とは\nここまで\n" });
+    try testing.expect(try usable(&lock, app_root));
+
+    // package dir の外を指す `..` path 記録は受理しない。
+    try writeEnv(temporary.dir,
+        \\{"pkg:11111111111111111111111111111111":{"name":"lib","version":"1.0.0","id":"pkg:11111111111111111111111111111111","path":".nako/env/gen-1/deps/lib","exports":[{"name":"lib","path":"../../../escape.nako3"}]}}
+    );
+    try testing.expect(!try usable(&lock, app_root));
+
+    // `path` を欠く export record は emit 形式と合わないため受理しない。
+    try writeEnv(temporary.dir,
+        \\{"pkg:11111111111111111111111111111111":{"name":"lib","version":"1.0.0","id":"pkg:11111111111111111111111111111111","path":".nako/env/gen-1/deps/lib","exports":[{"name":"lib"}]}}
+    );
+    try testing.expect(!try usable(&lock, app_root));
+
+    // export 先が dir の record も受理しない。
+    try writeEnv(temporary.dir,
+        \\{"pkg:11111111111111111111111111111111":{"name":"lib","version":"1.0.0","id":"pkg:11111111111111111111111111111111","path":".nako/env/gen-1/deps/lib","exports":[{"name":"lib","path":"src"}]}}
+    );
+    try testing.expect(!try usable(&lock, app_root));
 }
 
 test "mutableDepManifestUnchanged は digest 対象 tree と manifest の同一 snapshot を検査する" {

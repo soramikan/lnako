@@ -3,6 +3,7 @@
 //! 異常路（fail/exit）は対象外で、成功路の状態遷移と入出力分離を検証する。
 
 const std = @import("std");
+const builtin = @import("builtin");
 const testing = std.testing;
 const project_cmd = @import("project.zig");
 const compiler_pipeline = @import("../../compiler_pipeline.zig");
@@ -403,6 +404,80 @@ test "init --lib の雛形はコンパイルできテストも通る" {
     var test_err: std.Io.Writer.Allocating = .init(a);
     const ok = try test_command.runTestTarget(a, io, test_file, .{}, &test_out.writer, &test_err.writer);
     try testing.expect(ok);
+}
+
+test "runTestTarget は .nako/.git に降りず管理 dir の中身を走査しない" {
+    // 管理 dir は file 単位の除外ではなく dir entry 段階で prune する
+    // 回帰テスト。`.nako` 内に実行不能な .nako3 と（POSIX のみ）読み
+    // 取り不可 dir を置いても走査全体が失敗しないことを確認する。
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    // 収集されたら構文エラーで失敗する fixture。
+    try temporary.dir.createDirPath(io, "tests/.nako/env/gen-1/deps/lib");
+    try temporary.dir.writeFile(io, .{ .sub_path = "tests/.nako/env/gen-1/deps/lib/bad.nako3", .data = "●（" });
+    try temporary.dir.createDirPath(io, "tests/.git/objects/ab");
+    try temporary.dir.writeFile(io, .{ .sub_path = "tests/.git/objects/ab/cd.nako3", .data = "●（" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "tests/ok_test.nako3", .data = "1を表示\n" });
+    if (builtin.os.tag != .windows) {
+        // `.nako` 内に権限なし dir を置く。walk が降りると open が
+        // AccessDenied で走査全体を失敗させるが、prune 後は `.nako` を
+        // 開かないため無害。
+        try temporary.dir.createDirPath(io, "tests/.nako/blocked");
+        try temporary.dir.setFilePermissions(io, "tests/.nako/blocked", std.Io.File.Permissions.fromMode(0o000), .{});
+        defer temporary.dir.setFilePermissions(io, "tests/.nako/blocked", .default_dir, .{}) catch {};
+    }
+    const tests_root = try temporary.dir.realPathFileAlloc(io, "tests", a);
+    var stdout: std.Io.Writer.Allocating = .init(a);
+    var stderr: std.Io.Writer.Allocating = .init(a);
+    const ok = try test_command.runTestTarget(a, io, tests_root, .{}, &stdout.writer, &stderr.writer);
+    try testing.expect(ok);
+    try testing.expect(std.mem.indexOf(u8, stdout.written(), "ok_test.nako3") != null);
+    try testing.expect(std.mem.indexOf(u8, stdout.written(), "bad.nako3") == null);
+    try testing.expect(std.mem.indexOf(u8, stdout.written(), "cd.nako3") == null);
+}
+
+test "編集 lock は pin 済み root handle から manifest を読み root 置換に追従しない" {
+    // acquireProjectEditLock 後に root path が別 dir へ置き換わっても、
+    // pin した handle の project が読まれることを確認する（lock 対象と
+    // 読込み先の dir ずれの回帰テスト）。
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app");
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/nako.toml", .data =
+        \\[package]
+        \\name = "original"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+    });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", a);
+    var stderr: std.Io.Writer.Allocating = .init(a);
+    var locked = (try project_cmd.acquireProjectEditLock(a, io, app_root, "test", &stderr.writer)).?;
+    defer locked.deinit(a, io);
+    // root を rename し、同じ path に別 project を置き換える。
+    try temporary.dir.rename("app", temporary.dir, "app_moved", io);
+    try temporary.dir.createDirPath(io, "app");
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/nako.toml", .data =
+        \\[package]
+        \\name = "swapped"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+    });
+    var loaded = try project_cmd.loadPinnedProjectOrFail(a, io, &locked, &stderr.writer);
+    defer loaded.deinit();
+    // pin した元 dir（app_moved 側）の manifest が読まれる。
+    try testing.expectEqualStrings("original", loaded.manifest.package.name);
+    // lock file も pin した元 dir 側にできている。
+    const lock_stat = try temporary.dir.statFile(io, "app_moved/.nako/edit.lock", .{ .follow_symlinks = false });
+    try testing.expect(lock_stat.kind == .file);
+    try testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "app/.nako", .{ .follow_symlinks = false }));
 }
 
 test "add --npm は未対応として拒否し manifest を変更しない" {
