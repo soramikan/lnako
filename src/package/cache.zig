@@ -1030,7 +1030,7 @@ test "openVerifiedTree は snapshot を返し objects tree の事後改変を遮
     stage.close(io);
     try store.publishStaging("victim");
 
-    var snap_parent = std.testing.tmpDir(.{});
+    var snap_parent = std.testing.tmpDir(.{ .iterate = true });
     defer snap_parent.cleanup();
     var opened = (try store.openVerifiedTree(testing.allocator, "victim", snap_parent.dir)).?;
     defer opened.close();

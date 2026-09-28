@@ -1106,7 +1106,7 @@ test "inputDir は directory symlink の実体側 dir を返す" {
     try temporary.dir.createDirPath(io, "outside");
     try temporary.dir.writeFile(io, .{ .sub_path = "app/nako.toml", .data = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n" });
     const target_abs = try temporary.dir.realPathFileAlloc(io, "app", a);
-    temporary.dir.symLink(io, target_abs, "outside/linkdir", .{}) catch |err| switch (err) {
+    temporary.dir.symLink(io, target_abs, "outside/linkdir", .{ .is_directory = true }) catch |err| switch (err) {
         error.AccessDenied, error.PermissionDenied, error.FileSystem => return error.SkipZigTest,
         else => return err,
     };
