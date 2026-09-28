@@ -209,6 +209,18 @@ const Collector = struct {
             try self.report(diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY, path, "import \"{s}\" escapes the package root", .{node.value});
             return;
         };
+        // `.nako`/`.git` 配下は tree pin・配布対象の digest から除外される
+        // 管理 dir であり、その内容は pin が担保しない。index 閉包がそこへ
+        // 依存すると宣言 metadata が未検証の file を参照してしまうため、
+        // 推移的取り込みを含め拒否する（指定自体の非規範は resolveImport が
+        // 既に弾いている）。
+        var components = std.mem.splitScalar(u8, resolved, '/');
+        while (components.next()) |component| {
+            if (std.mem.eql(u8, component, ".nako") or std.mem.eql(u8, component, ".git")) {
+                try self.report(diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY, path, "import \"{s}\" enters an excluded .nako/.git directory", .{node.value});
+                return;
+            }
+        }
         if (!isNakoSource(resolved)) return;
         self.depth += 1;
         defer self.depth -= 1;

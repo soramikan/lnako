@@ -99,10 +99,29 @@ pub fn copyTree(
         else => return error.UnsupportedEntry,
     }
 
+    var src_dir = try std.Io.Dir.openDirAbsolute(io, src_abs, .{ .iterate = true, .follow_symlinks = false });
+    defer src_dir.close(io);
+    try std.Io.Dir.cwd().createDirPath(io, dest_abs);
+    var dest_dir = try std.Io.Dir.openDirAbsolute(io, dest_abs, .{ .follow_symlinks = false });
+    defer dest_dir.close(io);
+
+    return copyTreeFromDirs(gpa, io, &src_dir, &dest_dir, options);
+}
+
+/// 複製を、呼び出し側が既に開いたディレクトリハンドル間で行う。
+/// ハンドルは呼び出し中有効であること。コピー先は空であるか、既存 entry
+/// との衝突がないこと。src root 自体の検証は開く側の責務であり、配下は
+/// `copyTree` と同じ symlink/path/size policy で検証する。
+pub fn copyTreeFromDirs(
+    gpa: Allocator,
+    io: std.Io,
+    src_dir: *std.Io.Dir,
+    dest_dir: *std.Io.Dir,
+    options: Options,
+) !Result {
     var arena_impl = std.heap.ArenaAllocator.init(gpa);
     defer arena_impl.deinit();
     const arena = arena_impl.allocator();
-
     var paths = PathSet.init(arena);
 
     var result: Result = .{};
@@ -114,14 +133,7 @@ pub fn copyTree(
         .paths = &paths,
         .result = &result,
     };
-
-    var src_dir = try std.Io.Dir.openDirAbsolute(io, src_abs, .{ .iterate = true, .follow_symlinks = false });
-    defer src_dir.close(io);
-    try std.Io.Dir.cwd().createDirPath(io, dest_abs);
-    var dest_dir = try std.Io.Dir.openDirAbsolute(io, dest_abs, .{ .follow_symlinks = false });
-    defer dest_dir.close(io);
-
-    try state.walk(&src_dir, &dest_dir, "", 0);
+    try state.walk(src_dir, dest_dir, "", 0);
     return result;
 }
 
@@ -143,7 +155,14 @@ const State = struct {
 
     fn excluded(self: *State, name: []const u8) bool {
         for (self.options.exclude_names) |item| {
-            if (std.mem.eql(u8, item, name)) return true;
+            // Windows では `.NAKO`/`.GIT` のような大小文字違いも同一
+            // entry を指すため、除外名は大小文字非依存で比較する
+            // （path_digest の除外判定と揃える）。
+            if (builtin.os.tag == .windows) {
+                if (std.ascii.eqlIgnoreCase(item, name)) return true;
+            } else {
+                if (std.mem.eql(u8, item, name)) return true;
+            }
         }
         return false;
     }
@@ -167,7 +186,7 @@ const State = struct {
         }.lessThan);
 
         for (names.items) |name| {
-            const kind = kinds.get(name).?;
+            const kind = try resolveEntryKind(self.io, src_dir.*, name, kinds.get(name).?);
             if (self.excluded(name)) continue;
             // entry 名は単一成分。規範 path として妥当か検査する
             // （`.`・`..`・`\`・制御文字を含む名を拒否）。
@@ -215,6 +234,20 @@ const State = struct {
         }
     }
 };
+
+/// `readdir` が DT_UNKNOWN を返す fs（NFS/FUSE 等）では報告 kind が
+/// `.unknown` になるため、no-follow stat で実体を解決する。
+/// （`path_digest.resolveEntryKind` と同じ判定。symlink は stat でも
+/// `.sym_link` のまま判別され、`SymlinkEncountered` で拒否する。）
+fn resolveEntryKind(io: std.Io, dir: std.Io.Dir, name: []const u8, reported: std.Io.File.Kind) !std.Io.File.Kind {
+    if (reported != .unknown) return reported;
+    const stat = try dir.statFile(io, name, .{ .follow_symlinks = false });
+    return switch (stat.kind) {
+        .file, .directory => stat.kind,
+        .sym_link => error.SymlinkEncountered,
+        else => error.UnsupportedEntry,
+    };
+}
 
 // ---------------------------------------------------------------------------
 // tests
@@ -299,6 +332,70 @@ test "materialize copyTree は規範外の entry 名を拒否する" {
     try testing.expectError(error.NonCanonicalPath, copyTree(testing.allocator, io, src, dest, .{}));
 }
 
+test "materialize copyTreeFromDirs は開いた destination にコピーする" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "src/sub");
+    try temporary.dir.createDirPath(io, "dest");
+    try temporary.dir.writeFile(io, .{ .sub_path = "src/sub/data.txt", .data = "handle" });
+
+    var src = try temporary.dir.openDir(io, "src", .{ .iterate = true, .follow_symlinks = false });
+    defer src.close(io);
+    var dest = try temporary.dir.openDir(io, "dest", .{ .follow_symlinks = false });
+    defer dest.close(io);
+    const result = try copyTreeFromDirs(testing.allocator, io, &src, &dest, .{});
+    try testing.expectEqual(@as(u64, 1), result.files);
+    try testing.expectEqual(@as(u64, 1), result.directories);
+    try testing.expectEqual(@as(u64, 6), result.total_bytes);
+    const copied = try temporary.dir.readFileAlloc(io, "dest/sub/data.txt", testing.allocator, .unlimited);
+    defer testing.allocator.free(copied);
+    try testing.expectEqualStrings("handle", copied);
+}
+
+test "materialize copyTreeFromDirs は symlink と規範外 path を拒否する" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "link-src");
+    try temporary.dir.writeFile(io, .{ .sub_path = "link-src/real.txt", .data = "x" });
+    try temporary.dir.symLink(io, "real.txt", "link-src/link.txt", .{});
+    try temporary.dir.createDirPath(io, "path-src");
+    try temporary.dir.writeFile(io, .{ .sub_path = "path-src/a\\b", .data = "x" });
+    try temporary.dir.createDirPath(io, "dest-link");
+    try temporary.dir.createDirPath(io, "dest-path");
+
+    var link_src = try temporary.dir.openDir(io, "link-src", .{ .iterate = true, .follow_symlinks = false });
+    defer link_src.close(io);
+    var dest_link = try temporary.dir.openDir(io, "dest-link", .{ .follow_symlinks = false });
+    defer dest_link.close(io);
+    try testing.expectError(error.SymlinkEncountered, copyTreeFromDirs(testing.allocator, io, &link_src, &dest_link, .{}));
+
+    var path_src = try temporary.dir.openDir(io, "path-src", .{ .iterate = true, .follow_symlinks = false });
+    defer path_src.close(io);
+    var dest_path = try temporary.dir.openDir(io, "dest-path", .{ .follow_symlinks = false });
+    defer dest_path.close(io);
+    try testing.expectError(error.NonCanonicalPath, copyTreeFromDirs(testing.allocator, io, &path_src, &dest_path, .{}));
+}
+
+test "materialize copyTreeFromDirs はサイズ上限を適用する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "src");
+    try temporary.dir.createDirPath(io, "dest");
+    try temporary.dir.writeFile(io, .{ .sub_path = "src/large.txt", .data = "12345" });
+
+    var src = try temporary.dir.openDir(io, "src", .{ .iterate = true, .follow_symlinks = false });
+    defer src.close(io);
+    var dest = try temporary.dir.openDir(io, "dest", .{ .follow_symlinks = false });
+    defer dest.close(io);
+    try testing.expectError(error.FileTooLarge, copyTreeFromDirs(testing.allocator, io, &src, &dest, .{
+        .limits = .{ .max_file_bytes = 4 },
+    }));
+}
+
 test "materialize PathSet は重複と ASCII 大小文字衝突を検出する" {
     var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_impl.deinit();
@@ -380,4 +477,22 @@ test "materialize copyTree は exclude_names を任意の深さで除外する" 
     try testing.expectError(error.FileNotFound, temporary.dir.access(io, "dest/.git", .{}));
     try testing.expectError(error.FileNotFound, temporary.dir.access(io, "dest/sub/.git", .{}));
     try temporary.dir.access(io, "dest/sub/keep.txt", .{});
+}
+
+test "resolveEntryKind は unknown 報告を no-follow stat で解決する" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(io, .{ .sub_path = "a.txt", .data = "x" });
+    try temporary.dir.createDir(io, "sub", .default_dir);
+
+    try testing.expectEqual(std.Io.File.Kind.file, try resolveEntryKind(io, temporary.dir, "a.txt", .unknown));
+    try testing.expectEqual(std.Io.File.Kind.directory, try resolveEntryKind(io, temporary.dir, "sub", .unknown));
+    // 既知 kind はそのまま（stat しない）。
+    try testing.expectEqual(std.Io.File.Kind.file, try resolveEntryKind(io, temporary.dir, "missing", .file));
+
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
+    temporary.dir.symLink(io, "a.txt", "link.txt", .{}) catch return;
+    // unknown 報告の symlink は stat で .sym_link と判別して拒否する。
+    try testing.expectError(error.SymlinkEncountered, resolveEntryKind(io, temporary.dir, "link.txt", .unknown));
 }

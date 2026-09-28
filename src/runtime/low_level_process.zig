@@ -620,8 +620,8 @@ test "waitはpipe出力をdrainしてデッドロックしない" {
     var table = ProcessTable.init(testing.allocator);
     defer table.deinit(testing.io);
     // 256KiBをstdout pipeへ書き、readerがdrainしないとpipe bufferで停止する。
-    // stderrはddのrecords報告がtest runnerのprotocol channel(fd 2)へ漏れて
-    // `zig build test`を破壊しないようnullへ捨てる。
+    // stderr は読まないため null へ捨て、`zig build test` の test-server
+    // プロトコル経路へ dd の統計出力が漏れてプロトコルを壊さないようにする。
     const id = try table.spawn(testing.io, &.{ "/bin/dd", "if=/dev/zero", "bs=1024", "count=256" }, .{ .stdout = .pipe, .stderr = .null_ });
     const result = try table.wait(testing.io, id);
     try testing.expectEqual(@as(i32, 0), result.exit_code);

@@ -19,6 +19,47 @@ fn parseErrCode(allocator: std.mem.Allocator, source: []const u8, code: []const 
     try std.testing.expect(list.find(code) != null);
 }
 
+test "non-npkg export targets must stay in the canonical package-relative tree" {
+    const allocator = std.testing.allocator;
+    const invalid = [_]struct { field: []const u8, target: []const u8 }{
+        .{ .field = "path", .target = "../sibling/file.nako3" },
+        .{ .field = "native", .target = "/tmp/outside.dylib" },
+        .{ .field = "esm", .target = "src/../outside.mjs" },
+    };
+    for (invalid) |case| {
+        const source = try std.fmt.allocPrint(allocator,
+            \\[package]
+            \\name = "lib"
+            \\version = "1.0.0"
+            \\license = "MIT"
+            \\
+            \\[[exports]]
+            \\name = "entry"
+            \\{s} = "{s}"
+            \\
+        , .{ case.field, case.target });
+        defer allocator.free(source);
+        var manifest = try parseOk(allocator, source);
+        defer manifest.deinit();
+        try std.testing.expect(manifest_mod.hasUnsafeNonNpkgExportTargets(&manifest, false));
+        try std.testing.expect(!manifest_mod.hasUnsafeNonNpkgExportTargets(&manifest, true));
+    }
+
+    var safe = try parseOk(allocator,
+        \\[package]
+        \\name = "lib"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[[exports]]
+        \\name = "entry"
+        \\path = "src/entry.nako3"
+        \\
+    );
+    defer safe.deinit();
+    try std.testing.expect(!manifest_mod.hasUnsafeNonNpkgExportTargets(&safe, false));
+}
+
 test "妥当なmanifestを解析する" {
     const allocator = std.testing.allocator;
     const source =

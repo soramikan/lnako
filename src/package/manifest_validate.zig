@@ -1152,7 +1152,7 @@ fn parsePlainVersion(text: []const u8) ?semver.Version {
     return .{ .major = numbers[0], .minor = numbers[1], .patch = numbers[2] };
 }
 
-fn isPackageName(text: []const u8) bool {
+pub fn isPackageName(text: []const u8) bool {
     if (text.len == 0 or text.len > 64) return false;
     if (!std.ascii.isLower(text[0])) return false;
     for (text[1..]) |byte| {
@@ -1180,7 +1180,9 @@ fn isPublicId(text: []const u8) bool {
     return true;
 }
 
-fn isCommitId(text: []const u8) bool {
+/// commit-ish の形式検証（7–40 桁 lowercase hex）。manifest の宣言・
+/// lock の git source・provider の Git argv 注入防御で共用する。
+pub fn isCommitId(text: []const u8) bool {
     if (text.len < 7 or text.len > 40) return false;
     for (text) |byte| {
         if (!(std.ascii.isDigit(byte) or (byte >= 'a' and byte <= 'f'))) return false;
