@@ -270,11 +270,13 @@ pub const ModuleGraph = struct {
             var dynamic_command_aliases: std.ArrayList([]const u8) = .empty;
             for (module.imports) |item| if (item.target) |target| {
                 const target_module = self.modules[target];
-                if (target_module.kind == .native_plugin) {
-                    // package経由のnative pluginはalias修飾名のみを公開し、
-                    // 素の命令名は取り込みモジュールへ露出させない
-                    // （package namespace契約）。直接path importは従来どおり
-                    // 無修飾の動的命令を許可する。
+                if (target_module.kind == .native_plugin or
+                    (target_module.kind == .javascript and item.canonical_id != null))
+                {
+                    // package経由のplugin（native / --compat-jsのESM）はalias
+                    // 修飾名のみを公開し、素の命令名は取り込みモジュールへ露出
+                    // させない（package namespace契約）。直接path importは
+                    // 従来どおり無修飾の動的命令を許可する。
                     if (item.canonical_id != null) {
                         if (item.namespace) |alias| {
                             var listed = false;
@@ -286,7 +288,7 @@ pub const ModuleGraph = struct {
                             }
                             if (!listed) try dynamic_command_aliases.append(temp, alias);
                         }
-                    } else {
+                    } else if (target_module.kind == .native_plugin) {
                         allows_dynamic_commands = true;
                     }
                 }

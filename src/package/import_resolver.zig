@@ -359,6 +359,7 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
 
         if (get(record, "dependencies")) |dependencies_value| {
             const dependencies = asArray(dependencies_value) orelse return error.InvalidEnvironment;
+            try validateUniqueNamespaceAliases(allocator, dependencies.items);
             const locked_dependencies_value = get(lock_entry, "dependencies") orelse return error.InvalidEnvironment;
             const locked_dependencies = asArray(locked_dependencies_value) orelse return error.InvalidEnvironment;
             for (dependencies.items) |dependency_value| {
@@ -372,6 +373,7 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
 
     if (get(environment, "dependencies")) |root_dependencies_value| {
         const dependencies = asArray(root_dependencies_value) orelse return error.InvalidEnvironment;
+        try validateUniqueNamespaceAliases(allocator, dependencies.items);
         for (dependencies.items) |dependency_value| {
             const dependency = asObject(dependency_value) orelse return error.InvalidEnvironment;
             const package = get(dependency, "package") orelse return error.InvalidEnvironment;
@@ -476,16 +478,25 @@ fn validateEnvironmentExports(
         std.array_list.Managed(Value).init(allocator);
     defer if (environment_exports_value == null) environment_exports.deinit();
 
-    var manifest = try readPackageManifest(allocator, io, package_root);
+    // manifest 選択は sync と同じ規則にする。`path` source は宣言 dir の
+    // `nako.toml` を使い、残留する生成物 `NAKO-PKG/METADATA.toml` は読まない。
+    // materialized `.npkg` artifact 側のみ metadata を優先する。
+    const source_kind = blk: {
+        const source_value = get(lock_entry, "source") orelse get(lock_entry, "resolvedFrom") orelse break :blk null;
+        const source = asObject(source_value) orelse return error.InvalidEnvironment;
+        break :blk requiredString(source, "type");
+    };
+    var manifest = try readPackageManifest(allocator, io, package_root, source_kind == null or !std.mem.eql(u8, source_kind.?, "path"));
     defer if (manifest) |*value| value.deinit();
     const lock_name = requiredString(lock_entry, "name") orelse return error.InvalidEnvironment;
     const lock_version = requiredString(lock_entry, "version") orelse return error.InvalidEnvironment;
     if (manifest) |*value| {
         if (!std.mem.eql(u8, value.package.name, lock_name)) return error.InvalidEnvironment;
-        var version_buffer: [64]u8 = undefined;
-        var version_writer: std.Io.Writer = .fixed(&version_buffer);
-        value.package.version.format(&version_writer) catch return error.InvalidEnvironment;
-        if (!std.mem.eql(u8, version_writer.buffered(), lock_version)) return error.InvalidEnvironment;
+        // SemVerは識別子長に上限が無いため、固定bufferへのformatではなく
+        // lock側をparseして `same`（build metadata込みの完全等価）で比較する。
+        // sync側の manifestMatchesLock と同じ判定規則。
+        const locked_version = semver.Version.parse(lock_version) catch return error.InvalidEnvironment;
+        if (!value.package.version.same(locked_version)) return error.InvalidEnvironment;
     }
 
     const implementation = if (get(lock_entry, "implementation")) |value| switch (value) {
@@ -815,11 +826,17 @@ fn registryNamePart(name: []const u8) []const u8 {
     return unscoped[slash + 1 ..];
 }
 
-fn readPackageManifest(allocator: Allocator, io: std.Io, package_root: []const u8) !?manifest_mod.Manifest {
-    const candidates = [_]struct { path: []const u8, npkg: bool }{
-        .{ .path = "NAKO-PKG/METADATA.toml", .npkg = true },
-        .{ .path = "nako.toml", .npkg = false },
-    };
+fn readPackageManifest(allocator: Allocator, io: std.Io, package_root: []const u8, prefer_npkg_metadata: bool) !?manifest_mod.Manifest {
+    const Candidate = struct { path: []const u8, npkg: bool };
+    const candidates: []const Candidate = if (prefer_npkg_metadata)
+        &.{
+            .{ .path = "NAKO-PKG/METADATA.toml", .npkg = true },
+            .{ .path = "nako.toml", .npkg = false },
+        }
+    else
+        &.{
+            .{ .path = "nako.toml", .npkg = false },
+        };
     for (candidates) |candidate| {
         const manifest_path = try std.fs.path.join(allocator, &.{ package_root, candidate.path });
         const bytes = std.Io.Dir.cwd().readFileAlloc(io, manifest_path, allocator, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
@@ -865,6 +882,33 @@ fn optionalStringEql(left: ?[]const u8, right: ?[]const u8) bool {
 fn requiredString(object: std.json.ObjectMap, key: []const u8) ?[]const u8 {
     const value = get(object, key) orelse return null;
     return if (value == .string) value.string else null;
+}
+
+/// 公開namespaceはaliasを識別子化して生成するため、正規化後に一致する異名
+/// alias（`my-util` と `my_util`、`1pkg` と `_1pkg` など）は同じ修飾名
+/// namespace を占有する。同一scope内で正規化aliasが別packageを指すと
+/// `{ns}__{名}` が両packageに解釈され得るため拒否する。同一packageへの
+/// 複数aliasは冗長だが解決結果が一意なため許容する。
+fn validateUniqueNamespaceAliases(allocator: Allocator, dependencies: []Value) !void {
+    var normalized_aliases = std.StringHashMap([]const u8).init(allocator);
+    defer {
+        var keys = normalized_aliases.keyIterator();
+        while (keys.next()) |key| allocator.free(key.*);
+        normalized_aliases.deinit();
+    }
+    for (dependencies) |dependency_value| {
+        const dependency = asObject(dependency_value) orelse return error.InvalidEnvironment;
+        const alias = requiredString(dependency, "alias") orelse return error.InvalidEnvironment;
+        const package = requiredString(dependency, "package") orelse return error.InvalidEnvironment;
+        const normalized = try namespaceFor(allocator, alias, null);
+        const entry = try normalized_aliases.getOrPut(normalized);
+        if (entry.found_existing) {
+            allocator.free(normalized);
+            if (!std.mem.eql(u8, entry.value_ptr.*, package)) return error.InvalidEnvironment;
+        } else {
+            entry.value_ptr.* = package;
+        }
+    }
 }
 
 fn optionalString(object: ?std.json.ObjectMap, key: []const u8) ?[]const u8 {

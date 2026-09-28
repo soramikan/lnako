@@ -449,6 +449,7 @@ size = 1234
 - `.nako/environment.json` はrootと各packageの依存scopeごとに `{ alias, package }` 対応を任意に記録できる。旧環境で対応表が無い場合、package importは利用不可として明示的に失敗する。
 - パッケージaliasは通常ファイル、拡張プラグインおよびnpm/JavaScript取り込みとは別resolverで解決し、相互に曖昧なfallbackをしない。
 - 同一の物理ファイルが package export と相対pathの双方で取り込まれた場合、module identity（canonical ID・package由来フラグ）は最初に取り込まれた側で確定し、後の取り込みはその identity を共有する。修飾名は両経路の namespace で解決できるが、package module としての扱い（implicit lookup の適用範囲等）は先発の取り込み方に従う。
+- package経由で取り込まれた plugin artifact（native および `--compat-js` 時の ESM）は、登録命令を `{namespace}__{命令名}` の修飾名でのみ公開する。namespace は `__` を含み得る（scoped alias・subpath由来の生成形式）が、namespaced 命令の命令名に `__` は使えない（修飾名の一意分解を保つため）。同一package artifactを複数aliasで取り込んだ場合は全namespace分の修飾名を登録する。alias正規化後に同一namespaceへ落ちる異名aliasが別packageを指す環境は拒否する。
 - JavaScript/ESM artifact の import は `--compat-js` 指定時のみ許可する。
 - 通常モードで JS/ESM 依存を解決しようとした場合は `E006_JS_IN_NORMAL_MODE` 診断。
 

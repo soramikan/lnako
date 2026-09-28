@@ -292,18 +292,43 @@ pub const Store = struct {
     /// 見つかった世代名を返す。`current` と不一致の場合でも公開環境が
     /// 実際に使っている世代を特定できる（中断復旧時の保守的な世代保持用）。
     /// env.json が無い・読めない・世代参照を含まない場合は null。
+    /// dependencies の alias など任意文字列が `.nako/env/gen-*` に似た本文を
+    /// 含み得るため、生バイト走査ではなく JSON parse 後に `path` field のみ
+    /// を検査する。
     pub fn readPublishedGeneration(self: *const Store, gpa: Allocator) !?[]u8 {
         const bytes = (try self.readEnvironmentJson(gpa)) orelse return null;
         defer gpa.free(bytes);
+        var arena = std.heap.ArenaAllocator.init(gpa);
+        defer arena.deinit();
+        const parsed = std.json.parseFromSlice(std.json.Value, arena.allocator(), bytes, .{}) catch return null;
+        const root = switch (parsed.value) {
+            .object => |object| object,
+            else => return null,
+        };
+        const packages = switch (root.get("packages") orelse return null) {
+            .object => |object| object,
+            else => return null,
+        };
         // 世代 dir を参照する path は `.nako/env/gen-<hex>/...` 形式。
-        const marker = dir_name ++ "/" ++ env_dir ++ "/";
-        const at = std.mem.indexOf(u8, bytes, marker) orelse return null;
-        const start = at + marker.len;
-        if (!std.mem.startsWith(u8, bytes[start..], generation_prefix)) return null;
-        var end = start + generation_prefix.len;
-        while (end < bytes.len and std.ascii.isHex(bytes[end])) end += 1;
-        if (end == start + generation_prefix.len) return null;
-        return try gpa.dupe(u8, bytes[start..end]);
+        const marker = dir_name ++ "/" ++ env_dir ++ "/" ++ generation_prefix;
+        var iterator = packages.iterator();
+        while (iterator.next()) |entry| {
+            const package = switch (entry.value_ptr.*) {
+                .object => |object| object,
+                else => continue,
+            };
+            const path = switch (package.get("path") orelse continue) {
+                .string => |text| text,
+                else => continue,
+            };
+            const at = std.mem.indexOf(u8, path, marker) orelse continue;
+            const start = at + marker.len;
+            var end = start;
+            while (end < path.len and std.ascii.isHex(path[end])) end += 1;
+            if (end == start) continue;
+            return try gpa.dupe(u8, path[start - generation_prefix.len .. end]);
+        }
+        return null;
     }
 
     /// 中断残留の staging dir を回収する。`staging/` の中身を全て削除する。
@@ -626,4 +651,39 @@ test "environment store は readPublishedGeneration で公開環境の参照世�
     defer testing.allocator.free(json_path);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = json_path, .data = "{\"packages\":[]}\n" });
     try testing.expect((try store.readPublishedGeneration(testing.allocator)) == null);
+}
+
+test "environment store の readPublishedGeneration は alias 等の任意文字列に紛れた世代参照を採用しない" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var store = try openTempStore(&temporary);
+    defer store.deinit();
+
+    // alias 文字列に `.nako/env/gen-c0ffee/` に似た本文を含む env.json。
+    // 生バイト走査だと alias を世代参照と誤認して保持世代を偽装できた
+    // （旧実装は `gen-`+hex を拾うため `gen-c0ffee` が採用される）。
+    // `packages` の実 path field だけを検査するため null。
+    const spoofed =
+        \\{"schemaVersion":1,"lockSha256":"sha256:00","profile":"default","runtime":"lnako",
+        \\"dependencies":[{"alias":"../../.nako/env/gen-c0ffee/deps/x","package":"pkg:a"}],
+        \\"packages":{"pkg:a":{"name":"a","version":"1.0.0","path":"deps/a"}}}
+        \\
+    ;
+    const json_path = try std.fs.path.join(testing.allocator, &.{ store.root, environment_file });
+    defer testing.allocator.free(json_path);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = json_path, .data = spoofed });
+    try testing.expect((try store.readPublishedGeneration(testing.allocator)) == null);
+
+    // 実 path field の世代参照は拾う（path deps は宣言 path を持つため
+    // `.nako/env/...` 形式を持つ path が実在する）。
+    const with_path =
+        \\{"schemaVersion":1,"lockSha256":"sha256:00","profile":"default","runtime":"lnako",
+        \\"packages":{"pkg:a":{"name":"a","version":"1.0.0","path":".nako/env/gen-1234abcd/deps/a"}}}
+        \\
+    ;
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = json_path, .data = with_path });
+    const published = (try store.readPublishedGeneration(testing.allocator)).?;
+    defer testing.allocator.free(published);
+    try testing.expectEqualStrings("gen-1234abcd", published);
 }

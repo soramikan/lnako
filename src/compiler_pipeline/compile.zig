@@ -128,10 +128,31 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
     const plugin_modules = try allocator.alloc(bool, graph.modules.len);
     defer allocator.free(plugin_modules);
     @memset(plugin_modules, false);
+    const plugin_namespaces = try allocator.alloc(std.ArrayList([]const u8), graph.modules.len);
+    defer {
+        for (plugin_namespaces) |*list| list.deinit(allocator);
+        allocator.free(plugin_namespaces);
+    }
+    for (plugin_namespaces) |*list| list.* = .empty;
     for (graph.modules) |module| {
         if (module.kind != .nako3) continue;
         for (module.imports) |item| if (item.target) |target| {
-            if (graph.modules[target].kind == .javascript) plugin_modules[target] = true;
+            if (graph.modules[target].kind != .javascript) continue;
+            plugin_modules[target] = true;
+            // `pkg:` import経由のESM pluginは公開namespaceで修飾した命令のみ
+            // 公開する。同一pathを複数aliasでimportした場合は全namespaceを
+            // 保持する（native pluginの `native_plugin_packages` と同契約）。
+            if (item.canonical_id != null) {
+                const namespace = item.namespace orelse continue;
+                var listed = false;
+                for (plugin_namespaces[target].items) |existing| {
+                    if (std.mem.eql(u8, existing, namespace)) {
+                        listed = true;
+                        break;
+                    }
+                }
+                if (!listed) try plugin_namespaces[target].append(allocator, namespace);
+            }
         };
     }
     for (graph.modules) |module| {
@@ -141,10 +162,13 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
             http_server_plugin_imported = true;
         }
         if (module.source.len == 0) continue;
+        const namespaces = try ir_program.arena.allocator().alloc([]const u8, plugin_namespaces[module.index].items.len);
+        for (plugin_namespaces[module.index].items, namespaces) |namespace, *copy| copy.* = try ir_program.arena.allocator().dupe(u8, namespace);
         try javascript_modules.append(ir_program.arena.allocator(), .{
             .path = try ir_program.arena.allocator().dupe(u8, module.path),
             .source = try ir_program.arena.allocator().dupe(u8, module.source),
             .is_plugin = plugin_modules[module.index],
+            .namespaces = namespaces,
         });
     }
     ir_program.javascript_modules = try javascript_modules.toOwnedSlice(ir_program.arena.allocator());

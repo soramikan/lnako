@@ -1056,6 +1056,24 @@ function validateEnvironmentContract(environment, fixturePath) {
         }
       }
     }
+    // dependencies[].package の参照整合。schema では `package` を単なる
+    // 文字列としてしか制約できないため、参照先 key が `packages` に存在
+    // することをここで検証する（`Resolver.load` と同じ受理規則）。
+    const checkDependencies = (dependencies, depPath) => {
+      if (!Array.isArray(dependencies)) return;
+      dependencies.forEach((dep, index) => {
+        if (typeof dep === "object" && dep !== null && typeof dep.package === "string" &&
+          !Object.hasOwn(environment.packages, dep.package)) {
+          fail("E034_INVALID_ENVIRONMENT_REFERENCE", `dependency package "${dep.package}" not found in packages`, `${depPath}.${index}.package`);
+        }
+      });
+    };
+    checkDependencies(environment.dependencies, `${fixturePath}.dependencies`);
+    for (const [pkgId, pkg] of Object.entries(environment.packages)) {
+      if (typeof pkg === "object" && pkg !== null && !Array.isArray(pkg)) {
+        checkDependencies(pkg.dependencies, `${fixturePath}.packages.${pkgId}.dependencies`);
+      }
+    }
   }
   validateBySchemaFile(environment, "environment.schema.json", fixturePath);
 }

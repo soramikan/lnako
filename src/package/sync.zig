@@ -19,6 +19,7 @@ const cache_key = @import("cache_key.zig");
 const diag = @import("diagnostics.zig");
 const environment = @import("environment.zig");
 const fetch = @import("fetch.zig");
+const import_resolver = @import("import_resolver.zig");
 const lock_mod = @import("lock.zig");
 const lock_model = @import("lock_model.zig");
 const manifest_mod = @import("manifest.zig");
@@ -733,12 +734,24 @@ pub fn appendScopedAlias(
     package_key: []const u8,
     diagnostics: *diag.List,
 ) Error!void {
+    // 公開namespaceはaliasを識別子化して生成するため、正規化後に一致する異名
+    // alias（`my-util` と `my_util` など）は同じ修飾名namespaceを占有する。
+    // 別packageを指す正規化衝突は環境側で `{ns}__{名}` が両packageに解釈
+    // され得るため、発行段階で拒否する。
+    const normalized = try import_resolver.namespaceFor(allocator, alias, null);
+    defer allocator.free(normalized);
     for (result.items) |existing| {
         if (std.mem.eql(u8, existing.alias, alias)) {
             if (std.mem.eql(u8, existing.package_key, package_key)) return;
             try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml.dependencies", .{}, "dependency alias \"{s}\" conflicts between lock packages {s} and {s}", .{ alias, existing.package_key, package_key });
             return error.LockInvalid;
         }
+        const existing_normalized = try import_resolver.namespaceFor(allocator, existing.alias, null);
+        defer allocator.free(existing_normalized);
+        if (!std.mem.eql(u8, existing_normalized, normalized)) continue;
+        if (std.mem.eql(u8, existing.package_key, package_key)) continue;
+        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml.dependencies", .{}, "dependency alias \"{s}\" conflicts with \"{s}\" between lock packages {s} and {s}", .{ alias, existing.alias, existing.package_key, package_key });
+        return error.LockInvalid;
     }
     try result.append(allocator, .{ .alias = alias, .package_key = package_key });
 }

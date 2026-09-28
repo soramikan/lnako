@@ -210,6 +210,11 @@ pub const JavaScriptModule = struct {
     path: []const u8,
     source: []const u8,
     is_plugin: bool = false,
+    /// `pkg:` import経由のESM pluginが命令を公開するnamespace。非空の場合
+    /// 命令は `{namespace}__{命令}` の修飾名でのみ呼べる（native pluginの
+    /// namespace契約と同じ）。同一pathを複数aliasでimportした場合は
+    /// 全namespaceを保持する。空なら無修飾公開（直接path import）。
+    namespaces: []const []const u8 = &.{},
 };
 
 pub const Program = struct {
@@ -275,6 +280,7 @@ pub const Program = struct {
         for (javascript_modules) |*module| {
             module.path = try allocator.dupe(u8, module.path);
             module.source = try allocator.dupe(u8, module.source);
+            module.namespaces = try cloneStrings(allocator, module.namespaces);
         }
         const native_plugin_paths = try allocator.alloc([]const u8, self.native_plugin_paths.len);
         for (self.native_plugin_paths, native_plugin_paths) |source_path, *target_path| target_path.* = try allocator.dupe(u8, source_path);
