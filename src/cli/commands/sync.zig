@@ -118,11 +118,20 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, e
     // なので、呼出し側 allocator へ複製して関数末尾まで生存させる。
     var discovered_root: ?[]u8 = null;
     defer if (discovered_root) |root| allocator.free(root);
+    // `found.root_dir` も `found.deinit()` で閉じられる。lock 更新後に
+    // root が rename/置換されても `sync.run` が同じ dir を開くよう、複製
+    // した handle を sync 完了まで保持し `project_dir` へ渡す。
+    var discovered_dir: ?std.Io.Dir = null;
+    defer if (discovered_dir) |*dir| dir.close(io);
     if (discovered) |loaded| {
         var found = loaded;
         defer found.deinit();
         discovered_root = try allocator.dupe(u8, found.root);
         options.project_root = discovered_root.?;
+        discovered_dir = found.root_dir.openDir(io, ".", .{ .follow_symlinks = false }) catch |err| {
+            return fail(stderr, "sync: プロジェクトルートを開けません: {s}\n", .{@errorName(err)});
+        };
+        options.project_dir = discovered_dir;
         var prepare = project.PrepareOptions{
             // --locked: verifyLocked 通過後の競合編集で ensureLock が
             // lock を書き換えないよう、stale 検出を失敗へ写像する。
