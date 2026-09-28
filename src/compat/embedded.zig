@@ -80,10 +80,12 @@ pub const Package = struct {
                 try allocator.dupe(u8, item.package_root)
             else
                 null;
+            errdefer if (package_root) |owned| allocator.free(owned);
             const dispatch_namespace: ?[]const u8 = if (item.dispatch_namespace.len != 0)
                 try allocator.dupe(u8, item.dispatch_namespace)
             else
                 null;
+            errdefer if (dispatch_namespace) |owned| allocator.free(owned);
             return .{ .path = path, .canonical_id = canonical_id, .namespace = namespace, .dispatch_namespace = dispatch_namespace, .package_root = package_root };
         }
         return error.PackageNotFound;

@@ -904,3 +904,46 @@ test "代表implementation=nativeでもsource-only exportを欠落させない" 
     var loaded = try Resolver.load(allocator, io, root);
     loaded.deinit();
 }
+
+test "選択input profileのtargetはlockのinput.targetからcompatJsを復元する" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    // `sync --compat-js` で解決した lock は input.target.compatJs（camelCase）
+    // に記録する。選択 profile の復元で esm export を含む環境を受理する。
+    try temporary.dir.createDirPath(io, ".nako/env/gen-e5m9/deps/esm-pkg");
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-e5m9/deps/esm-pkg/nako.toml", .data = "[package]\nname = \"esm-pkg\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n[[exports]]\nname = \"web\"\nesm = \"web.mjs\"\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-e5m9/deps/esm-pkg/web.mjs", .data = "export default {};\n" });
+    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\",\"compatJs\":true,\"optimize\":\"O2\"}},\"packages\":{\"pkg:esm\":{\"id\":\"pkg:esm\",\"name\":\"esm-pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/esm\"},\"dependencies\":[]}}}";
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
+    const lock_hex = std.fmt.bytesToHex(digest, .lower);
+    const environment = try std.fmt.allocPrint(
+        allocator,
+        "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"packages\":{{\"pkg:esm\":{{\"name\":\"esm-pkg\",\"version\":\"1.0.0\",\"path\":\".nako/env/gen-e5m9/deps/esm-pkg\",\"exports\":[{{\"name\":\"web\",\"path\":\"web.mjs\"}}]}}}}}}",
+        .{lock_hex},
+    );
+    defer allocator.free(environment);
+    try temporary.dir.createDirPath(io, ".nako");
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = environment });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    var loaded = try Resolver.load(allocator, io, root);
+    loaded.deinit();
+
+    // compatJs を記録していない同一環境は ESM export を解決できず拒否する。
+    const without_compat = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\",\"optimize\":\"O2\"}},\"packages\":{\"pkg:esm\":{\"id\":\"pkg:esm\",\"name\":\"esm-pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/esm\"},\"dependencies\":[]}}}";
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = without_compat });
+    std.crypto.hash.sha2.Sha256.hash(without_compat, &digest, .{});
+    const without_compat_hex = std.fmt.bytesToHex(digest, .lower);
+    const without_compat_env = try std.fmt.allocPrint(
+        allocator,
+        "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"packages\":{{\"pkg:esm\":{{\"name\":\"esm-pkg\",\"version\":\"1.0.0\",\"path\":\".nako/env/gen-e5m9/deps/esm-pkg\",\"exports\":[{{\"name\":\"web\",\"path\":\"web.mjs\"}}]}}}}}}",
+        .{without_compat_hex},
+    );
+    defer allocator.free(without_compat_env);
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = without_compat_env });
+    try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, root));
+}

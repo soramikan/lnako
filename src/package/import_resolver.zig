@@ -486,8 +486,11 @@ fn artifactTargetForProfile(
             compat_js = value.bool;
         }
     }
+    // `input.target` の compat-js は lock schema では camelCase の
+    // `compatJs` として記録される（kebab の `compat-js` は profile record
+    // 側のキー）。sync --compat-js で立てた lock の記録をそのまま復元する。
     if (is_input_profile and input_target != null) {
-        if (get(input_target.?, "compat-js")) |value| {
+        if (get(input_target.?, "compatJs")) |value| {
             if (value != .bool) return error.InvalidEnvironment;
             compat_js = compat_js or value.bool;
         }
