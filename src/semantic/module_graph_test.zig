@@ -435,6 +435,49 @@ test "package所有moduleからroot外への相対・絶対importは診断され
     }
 }
 
+test "package内symlink経由のroot外importは診断され読み込まれない" {
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "packages/math");
+    try temporary.dir.createDirPath(io, "packages/sibling");
+    try temporary.dir.writeFile(io, .{ .sub_path = "main.nako3", .data = "!「pkg:math」を取り込む\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "packages/math/index.nako3", .data = "!「./link/secret.nako3」を取り込む\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "packages/sibling/secret.nako3", .data = "秘密値=7\n" });
+    temporary.dir.symLink(io, "../sibling", "packages/math/link", .{ .is_directory = true }) catch return error.SkipZigTest;
+    const root = try temporary.dir.realPathFileAlloc(io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(root);
+
+    const TestResolver = struct {
+        root_path: []const u8,
+        fn resolve(context: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !ResolvedPackageImport {
+            const self: *const @This() = @ptrCast(@alignCast(context));
+            if (!std.mem.eql(u8, specifier, "pkg:math")) return error.PackageNotFound;
+            return .{
+                .path = try std.fs.path.join(allocator, &.{ self.root_path, "packages/math/index.nako3" }),
+                .canonical_id = try allocator.dupe(u8, "pkg:math-id/main"),
+                .namespace = "math",
+                .package_root = try std.fs.path.join(allocator, &.{ self.root_path, "packages/math" }),
+            };
+        }
+    };
+    const test_resolver = TestResolver{ .root_path = root };
+    const package_resolver = PackageResolver{ .context = @constCast(&test_resolver), .resolveFn = TestResolver.resolve };
+    var provider = module_graph.FileProvider{ .io = io };
+    const entry = try std.fs.path.join(std.testing.allocator, &.{ root, "main.nako3" });
+    defer std.testing.allocator.free(entry);
+    var graph = try load(std.testing.allocator, entry, provider.sourceProvider(), .{ .package_resolver = package_resolver });
+    defer graph.deinit();
+    try std.testing.expect(!graph.succeeded());
+    // symlink 経由で root 外を指す target は module graphへ追加されない。
+    try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
+    var reported_escape = false;
+    for (graph.diagnostics) |item| {
+        if (std.mem.indexOf(u8, item.message, "package rootの外") != null) reported_escape = true;
+    }
+    try std.testing.expect(reported_escape);
+}
+
 test "合成されたlocal module名は自然なbasenameとも衝突しない" {
     var memory = MemoryProvider{ .files = &.{
         .{ .suffix = "main.nako3", .source = "!「one/lib.nako3」を取り込む\n!「two/lib.nako3」を取り込む\n!「lib__lnako_local_1.nako3」を取り込む\n" },

@@ -966,7 +966,7 @@ fn cachedManifest(ctx: *Context, key: []const u8) Error!?CachedManifest {
     };
     for (candidates) |candidate| {
         const path = candidate.rel;
-        const limit: std.Io.Limit = if (ctx.session.policy.max_bytes == 0) .unlimited else .limited(ctx.session.policy.max_bytes);
+        const limit: std.Io.Limit = .limited(provider.manifestByteLimit(ctx.session.policy.max_bytes));
         // 「manifest が無い」のは FileNotFound のみ。読取不能・dir 化・
         // 上限超過などは「無いもの」として次候補へ流さず、cache entry の
         // 破損として invalid_metadata で失敗させる。

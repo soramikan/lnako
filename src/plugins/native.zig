@@ -593,7 +593,9 @@ fn registerCommand(context: ?*anyopaque, raw: ?*const CommandV1) callconv(.c) c_
     if (command.minimum_arguments > command.maximum_arguments) return -1;
     const name = std.mem.span(command.name.?);
     const namespace = state.pending_namespace;
-    if (name.len == 0 or state.findRegisteredCommand(namespace, name) != null or isBuiltinName(name)) return -1;
+    // builtin 名との衝突は無修飾登録のみで問題になる。namespace 付きは
+    // 公開名が `{ns}__{name}` なので raw name が builtin と同名でも衝突しない。
+    if (name.len == 0 or state.findRegisteredCommand(namespace, name) != null or (namespace == null and isBuiltinName(name))) return -1;
     const particles = if (command.particles) |text| std.mem.span(text) else "";
     if (!std.unicode.utf8ValidateSlice(name) or !std.unicode.utf8ValidateSlice(particles)) return -1;
     if (namespace) |ns| {
@@ -897,6 +899,34 @@ test "ネイティブ命令登録の属性と重複を検証する" {
     command.name = "表示";
     command.minimum_arguments = 0;
     command.maximum_arguments = 1;
+    try std.testing.expectEqual(@as(c_int, -1), registerCommand(&state, &command));
+}
+
+test "package namespace付きではbuiltin同名のraw命令を登録できる" {
+    // 公開名は `{ns}__{name}` なので raw name が builtin（表示）と同名でも
+    // 衝突しない。無修飾登録では従来どおり拒否する。
+    var state = State.init();
+    state.allocator = std.testing.allocator;
+    defer state.deinit();
+    var command = CommandV1{
+        .struct_size = @sizeOf(CommandV1),
+        .abi_version = abi_version,
+        .flags = flag_sync | flag_pure,
+        .name = "表示",
+        .particles = "値を",
+        .minimum_arguments = 0,
+        .maximum_arguments = 1,
+        .command_context = null,
+        .invoke = testCommandInvoke,
+        .destroy = null,
+    };
+    state.pending_namespace = "math";
+    try std.testing.expectEqual(status_ok, registerCommand(&state, &command));
+    state.pending_namespace = null;
+    // builtin とは別エントリとして修飾名のみで解決する
+    try std.testing.expect(state.findCommand("math__表示") != null);
+    try std.testing.expect(state.findCommand("表示") == null);
+    // 無修飾登録は builtin 衝突として拒否
     try std.testing.expectEqual(@as(c_int, -1), registerCommand(&state, &command));
 }
 

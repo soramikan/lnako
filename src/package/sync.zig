@@ -118,7 +118,7 @@ pub fn pathPinMismatchDir(gpa: Allocator, io: std.Io, root_dir: std.Io.Dir, lock
 const ManifestFreshness = enum { absent, fresh, stale };
 
 fn manifestFreshness(io: std.Io, arena: Allocator, project_dir: std.Io.Dir, lock: *const lock_model.Lock) !ManifestFreshness {
-    const bytes = project_dir.readFileAlloc(io, "nako.toml", arena, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
+    const bytes = project_dir.readFileAlloc(io, "nako.toml", arena, .limited(manifest_mod.max_manifest_bytes)) catch |err| switch (err) {
         error.FileNotFound => return .absent,
         else => return err,
     };
@@ -215,7 +215,7 @@ pub fn run(
     var root_manifest: ?manifest_mod.Manifest = null;
     defer if (root_manifest) |*manifest| manifest.deinit();
     if (manifest_state == .fresh) {
-        const manifest_bytes = project_dir.readFileAlloc(io, "nako.toml", arena, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
+        const manifest_bytes = project_dir.readFileAlloc(io, "nako.toml", arena, .limited(manifest_mod.max_manifest_bytes)) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => return mapFs(err),
         };

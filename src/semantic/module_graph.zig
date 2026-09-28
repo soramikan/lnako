@@ -10,9 +10,19 @@ const builtin_catalog = @import("builtin_catalog.zig");
 pub const SourceProvider = struct {
     context: *anyopaque,
     readFn: *const fn (context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) anyerror![]u8,
+    /// Optional: resolve `path` to its canonical (symlink-free) filesystem path.
+    /// Real-filesystem providers should implement this so package containment
+    /// checks cannot be bypassed by in-root symlinks. `null` result means the
+    /// path could not be canonicalized and callers fall back to the lexical form.
+    canonicalizeFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) anyerror!?[]u8 = null,
 
     pub fn read(self: SourceProvider, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
         return self.readFn(self.context, allocator, path);
+    }
+
+    pub fn canonicalize(self: SourceProvider, allocator: std.mem.Allocator, path: []const u8) !?[]u8 {
+        const canonicalize_fn = self.canonicalizeFn orelse return null;
+        return canonicalize_fn(self.context, allocator, path);
     }
 };
 
@@ -47,12 +57,24 @@ pub const FileProvider = struct {
     max_bytes: usize = 128 * 1024 * 1024,
 
     pub fn sourceProvider(self: *FileProvider) SourceProvider {
-        return .{ .context = self, .readFn = read };
+        return .{ .context = self, .readFn = read, .canonicalizeFn = canonicalize };
     }
 
     fn read(context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
         const self: *FileProvider = @ptrCast(@alignCast(context));
         return std.Io.Dir.cwd().readFileAlloc(self.io, path, allocator, .limited(self.max_bytes));
+    }
+
+    /// package root の境界検査に供する canonical path。symlink 先や `..` の
+    /// 実体を解決できない場合は null を返し、呼出し側は lexical path で
+    /// 継続する（読込み自体が失敗する経路は read 側の診断に委ねる）。
+    fn canonicalize(context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) !?[]u8 {
+        const self: *FileProvider = @ptrCast(@alignCast(context));
+        const resolved = std.Io.Dir.cwd().realPathFileAlloc(self.io, path, allocator) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return null,
+        };
+        return resolved;
     }
 };
 
@@ -623,12 +645,13 @@ pub const Loader = struct {
                 };
                 const imported_extension = std.fs.path.extension(resolved);
                 if (!std.ascii.eqlIgnoreCase(imported_extension, ".js") and !std.ascii.eqlIgnoreCase(imported_extension, ".mjs")) continue;
-                if (module.package_root != null and !pathWithinRoot(module.package_root.?, resolved)) {
+                const target_path = if (module.package_root != null) try containmentTarget(self, resolved) else resolved;
+                if (module.package_root != null and !pathWithinRoot(module.package_root.?, target_path)) {
                     try self.importDiagnostic(import_node, path, "package内の取り込み先がpackage rootの外です");
                     continue;
                 }
-                const descendant_inheritance = descendantInheritance(module, resolved);
-                const existing = self.find(resolved);
+                const descendant_inheritance = descendantInheritance(module, target_path);
+                const existing = self.find(target_path);
                 var target: ?u32 = existing;
                 var cyclic = false;
                 if (existing) |index| {
@@ -637,14 +660,14 @@ pub const Loader = struct {
                         if (inherited.owner) |owner| try self.adoptIntoPackage(index, owner, inherited.root);
                     }
                 } else {
-                    target = self.loadOne(resolved, import_node, null, null, null, descendant_inheritance) catch |err| switch (err) {
+                    target = self.loadOne(target_path, import_node, null, null, null, descendant_inheritance) catch |err| switch (err) {
                         error.OutOfMemory => return err,
                         else => null,
                     };
                 }
                 try imports.append(self.allocator, .{
                     .requested = try self.allocator.dupe(u8, requested),
-                    .resolved_path = resolved,
+                    .resolved_path = target_path,
                     .target = target,
                     .span = ast.emptySpan(),
                     .cyclic = cyclic,
@@ -687,8 +710,15 @@ pub const Loader = struct {
                 // 逃げる場合は辺を作らない。prebuilt commands.jsonはsource走査を
                 // 迂回するため、依存解決を経ない境界外参照を許すと宣言なしで
                 // 別packageの非公開fileを読み込めてしまう。
+                // 比較はcanonical pathで行う。`./link/x.nako3` のような in-root
+                // symlink 経由は lexical では root 内に見えるが、実体は外部を
+                // 指し得るため、canonicalize した実 path で境界を検証する。
+                const resolved_target = if (module.package_root != null and resolved_import.canonical_id == null)
+                    try containmentTarget(self, resolved_import.path)
+                else
+                    resolved_import.path;
                 if (module.package_root != null and resolved_import.canonical_id == null and
-                    !pathWithinRoot(module.package_root.?, resolved_import.path))
+                    !pathWithinRoot(module.package_root.?, resolved_target))
                 {
                     try self.importDiagnostic(node, path, "package内の取り込み先がpackage rootの外です");
                     continue;
@@ -717,8 +747,8 @@ pub const Loader = struct {
                 const edge_inheritance: ?PackageInheritance = if (resolved_import.canonical_id != null)
                     if (resolved_import.package_root) |resolved_root| .{ .root = resolved_root } else null
                 else
-                    descendantInheritance(module, resolved_import.path);
-                const existing = self.findImport(resolved_import.path, resolved_import.canonical_id);
+                    descendantInheritance(module, resolved_target);
+                const existing = self.findImport(resolved_target, resolved_import.canonical_id);
                 var target: ?u32 = existing;
                 var cyclic = false;
                 if (existing) |index| {
@@ -727,7 +757,7 @@ pub const Loader = struct {
                         if (inherited.owner) |owner| try self.adoptIntoPackage(index, owner, inherited.root);
                     }
                 } else {
-                    target = self.loadOne(resolved_import.path, node, site_mode, resolved_import.namespace, resolved_import.canonical_id, edge_inheritance) catch |err| switch (err) {
+                    target = self.loadOne(resolved_target, node, site_mode, resolved_import.namespace, resolved_import.canonical_id, edge_inheritance) catch |err| switch (err) {
                         error.OutOfMemory => return err,
                         else => null,
                     };
@@ -740,9 +770,9 @@ pub const Loader = struct {
                 }
                 try imports.append(self.allocator, .{
                     .requested = try self.allocator.dupe(u8, node.value),
-                    .resolved_path = resolved_import.path,
+                    .resolved_path = resolved_target,
                     .canonical_id = resolved_import.canonical_id,
-                    .namespace = resolved_import.namespace orelse try analyzer.moduleName(self.allocator, resolved_import.path),
+                    .namespace = resolved_import.namespace orelse try analyzer.moduleName(self.allocator, resolved_target),
                     .target = target,
                     .span = node.span,
                     .cyclic = cyclic,
@@ -1163,6 +1193,18 @@ fn resolveRequestedImport(allocator: std.mem.Allocator, importer: []const u8, re
 fn pathWithinRoot(root: []const u8, path: []const u8) bool {
     if (!std.mem.startsWith(u8, path, root) or path.len <= root.len) return false;
     return path[root.len] == std.fs.path.sep;
+}
+
+/// package 境界検査用の比較対象 path。provider が canonicalize を供給する
+/// 環境（実 FS）では in-root symlink が指す実体まで解決してから
+/// `pathWithinRoot` と組み合わせる。解決不能（欠落・無い provider 等）なら
+/// lexical path を返し、以降の read で個別診断される挙動を維持する。
+fn containmentTarget(self: *Loader, lexical: []const u8) ![]const u8 {
+    const canonical = self.provider.canonicalize(self.allocator, lexical) catch |err| switch (err) {
+        error.OutOfMemory => return err,
+        else => return lexical,
+    };
+    return canonical orelse lexical;
 }
 
 /// Ownership a package module passes to a relative descendant that stays inside

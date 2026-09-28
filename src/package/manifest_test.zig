@@ -21,6 +21,9 @@ fn parseErrCode(allocator: std.mem.Allocator, source: []const u8, code: []const 
 
 test "non-npkg export targets must stay in the canonical package-relative tree" {
     const allocator = std.testing.allocator;
+    // 規範外の export target は manifest parse の段階で拒否される
+    // （manifest_validate の canonical path 検査）。`hasUnsafeNonNpkgExportTargets`
+    // は sync 側の第二防衛線として残る。
     const invalid = [_]struct { field: []const u8, target: []const u8 }{
         .{ .field = "path", .target = "../sibling/file.nako3" },
         .{ .field = "native", .target = "/tmp/outside.dylib" },
@@ -39,10 +42,7 @@ test "non-npkg export targets must stay in the canonical package-relative tree" 
             \\
         , .{ case.field, case.target });
         defer allocator.free(source);
-        var manifest = try parseOk(allocator, source);
-        defer manifest.deinit();
-        try std.testing.expect(manifest_mod.hasUnsafeNonNpkgExportTargets(&manifest, false));
-        try std.testing.expect(!manifest_mod.hasUnsafeNonNpkgExportTargets(&manifest, true));
+        try parseErrCode(allocator, source, diag.E029_INVALID_VALUE);
     }
 
     var safe = try parseOk(allocator,

@@ -1074,8 +1074,62 @@ function validateEnvironmentContract(environment, fixturePath) {
         checkDependencies(pkg.dependencies, `${fixturePath}.packages.${pkgId}.dependencies`);
       }
     }
+    // 正規化 alias の重複。公開namespaceは alias を識別子化して生成する
+    // （`Resolver.namespaceFor`）ため、`my-util` と `my_util` のように
+    // 正規化後に一致する異名 alias が別 package を指すと同じ `{ns}__{名}`
+    // 空間を占有する。同一 package への複数 alias は冗長だが許容する
+    // （`validateUniqueNamespaceAliases` と同じ受理規則）。
+    const checkUniqueAliases = (dependencies, depPath) => {
+      if (!Array.isArray(dependencies)) return;
+      const seen = new Map();
+      dependencies.forEach((dep, index) => {
+        if (typeof dep !== "object" || dep === null || typeof dep.alias !== "string" ||
+          typeof dep.package !== "string") return;
+        const normalized = normalizeNamespace(dep.alias);
+        const existing = seen.get(normalized);
+        if (existing === undefined) {
+          seen.set(normalized, dep.package);
+        } else if (existing !== dep.package) {
+          fail("E034_INVALID_ENVIRONMENT_REFERENCE",
+            `aliases "${dep.alias}" normalize to the same namespace "${normalized}" as another package`, `${depPath}.${index}.alias`);
+        }
+      });
+    };
+    checkUniqueAliases(environment.dependencies, `${fixturePath}.dependencies`);
+    for (const [pkgId, pkg] of Object.entries(environment.packages)) {
+      if (typeof pkg === "object" && pkg !== null && !Array.isArray(pkg)) {
+        checkUniqueAliases(pkg.dependencies, `${fixturePath}.packages.${pkgId}.dependencies`);
+      }
+    }
   }
   validateBySchemaFile(environment, "environment.schema.json", fixturePath);
+}
+
+/// alias から公開namespace名を生成する（`src/package/import_resolver.zig` の
+/// `namespaceFor(alias, null)` の byte-level 移植）。先頭 `@` を除去し、
+/// `/` は `__`、識別子に使えない byte は `_`、先頭が数字なら `_` を前置する。
+/// 比較用の正規化形であり表示名ではないため、非 ASCII byte は Latin-1 として
+/// 保持し決定的な等価判定だけを保証する。
+function normalizeNamespace(alias) {
+  const text = alias.startsWith("@") ? alias.slice(1) : alias;
+  const bytes = Buffer.from(text, "utf8");
+  let result = "";
+  let atStart = true;
+  for (const byte of bytes) {
+    if (byte === 0x2f) {
+      result += "__";
+      atStart = false;
+      continue;
+    }
+    const isIdentifierByte = (byte >= 0x61 && byte <= 0x7a) ||
+      (byte >= 0x41 && byte <= 0x5a) || (byte >= 0x30 && byte <= 0x39) ||
+      byte === 0x5f || byte >= 0x80;
+    const identifierByte = isIdentifierByte ? byte : 0x5f;
+    if (atStart && identifierByte >= 0x30 && identifierByte <= 0x39) result += "_";
+    result += String.fromCharCode(identifierByte);
+    atStart = false;
+  }
+  return result;
 }
 
 /// SHA-256 の各表記（SRI `sha256-<base64>=`、`sha256:<hex>`、生 `<hex>`）を

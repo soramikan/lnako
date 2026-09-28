@@ -600,7 +600,7 @@ fn validateRootDependencyBindings(
     allowed_root_ids: ?std.json.Array,
 ) !void {
     const manifest_path = try std.fs.path.join(allocator, &.{ project_root, "nako.toml" });
-    const bytes = std.Io.Dir.cwd().readFileAlloc(io, manifest_path, allocator, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
+    const bytes = std.Io.Dir.cwd().readFileAlloc(io, manifest_path, allocator, .limited(manifest_mod.max_manifest_bytes)) catch |err| switch (err) {
         error.FileNotFound, error.NotDir => return validateManifestDependencyBindings(allocator, null, environment_value, locked_packages, active_profile, allowed_root_ids, allowed_root_ids == null),
         error.OutOfMemory => return error.OutOfMemory,
         else => return error.InvalidEnvironment,
@@ -839,7 +839,7 @@ fn readPackageManifest(allocator: Allocator, io: std.Io, package_root: []const u
         };
     for (candidates) |candidate| {
         const manifest_path = try std.fs.path.join(allocator, &.{ package_root, candidate.path });
-        const bytes = std.Io.Dir.cwd().readFileAlloc(io, manifest_path, allocator, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
+        const bytes = std.Io.Dir.cwd().readFileAlloc(io, manifest_path, allocator, .limited(manifest_mod.max_manifest_bytes)) catch |err| switch (err) {
             error.FileNotFound, error.NotDir => continue,
             error.OutOfMemory => return error.OutOfMemory,
             else => return error.InvalidEnvironment,
