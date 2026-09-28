@@ -119,7 +119,8 @@ pub const Resolver = struct {
         const root_object = asObject(self.parsed.value) orelse return error.InvalidEnvironment;
         const packages = asObject(get(root_object, "packages") orelse return error.InvalidEnvironment) orelse return error.InvalidEnvironment;
         const canonical_importer = try std.Io.Dir.cwd().realPathFileAlloc(self.io, importer, temporary);
-        const scope_dependencies = if (try self.packageForImporter(temporary, packages, canonical_importer)) |owner|
+        var owner_key: ?[]const u8 = null;
+        const scope_dependencies = if (try self.packageForImporter(temporary, packages, canonical_importer, &owner_key)) |owner|
             get(asObject(owner) orelse return error.InvalidEnvironment, "dependencies")
         else
             get(root_object, "dependencies");
@@ -193,15 +194,24 @@ pub const Resolver = struct {
         errdefer allocator.free(canonical_id);
         const namespace = try namespaceFor(allocator, alias, subpath);
         errdefer allocator.free(namespace);
+        // package内scopeの依存importはruntime登録名を所有者keyで修飾する。
+        // 別packageのscopeで同じaliasが使われても plugin 登録名
+        // （`{owner}__{alias}__{命令}`）が衝突しない。
+        const dispatch_namespace: ?[]const u8 = if (owner_key) |key| blk: {
+            const scoped_alias = try std.fmt.allocPrint(temporary, "{s}__{s}", .{ key, alias });
+            break :blk try namespaceFor(allocator, scoped_alias, subpath);
+        } else null;
+        errdefer if (dispatch_namespace) |dispatch| allocator.free(dispatch);
         const selected_path = try allocator.dupe(u8, actual_export);
         errdefer allocator.free(selected_path);
         const resolved_package_root = try allocator.dupe(u8, package_root);
         errdefer allocator.free(resolved_package_root);
-        return .{ .path = selected_path, .canonical_id = canonical_id, .namespace = namespace, .package_root = resolved_package_root };
+        return .{ .path = selected_path, .canonical_id = canonical_id, .namespace = namespace, .dispatch_namespace = dispatch_namespace, .package_root = resolved_package_root };
     }
 
-    fn packageForImporter(self: *Resolver, allocator: Allocator, packages: std.json.ObjectMap, importer: []const u8) !?Value {
+    fn packageForImporter(self: *Resolver, allocator: Allocator, packages: std.json.ObjectMap, importer: []const u8, owner_key: ?*?[]const u8) !?Value {
         var selected: ?Value = null;
+        var selected_key: ?[]const u8 = null;
         var selected_root_len: usize = 0;
         var package_map = packages;
         var iterator = package_map.iterator();
@@ -226,9 +236,11 @@ pub const Resolver = struct {
             if (importer_is_project_source and !package_is_project_local) continue;
             if (isWithin(root, importer) and root.len > selected_root_len) {
                 selected = entry.value_ptr.*;
+                selected_key = entry.key_ptr.*;
                 selected_root_len = root.len;
             }
         }
+        if (owner_key) |key_out| key_out.* = selected_key;
         return selected;
     }
 };
@@ -302,7 +314,18 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
         const source = asObject(source_value) orelse return error.InvalidEnvironment;
         const source_kind = get(source, "type") orelse return error.InvalidEnvironment;
         if (source_kind != .string) return error.InvalidEnvironment;
-        const package_root = if (std.mem.eql(u8, source_kind.string, "path")) blk: {
+        // `mutable = true` の path 依存だけ宣言 dir を生参照する。
+        // immutable path は pin 照合済み snapshot を世代内へ複製した path を
+        // 記録するため、他の materialized package と同じ世代・境界検証を通す。
+        const source_is_mutable_path = std.mem.eql(u8, source_kind.string, "path") and mutable: {
+            const mutable_value = get(source, "mutable");
+            if (mutable_value) |value| {
+                if (value != .bool) return error.InvalidEnvironment;
+                break :mutable value.bool;
+            }
+            break :mutable false;
+        };
+        const package_root = if (source_is_mutable_path) blk: {
             const declared_path = get(source, "path") orelse return error.InvalidEnvironment;
             if (declared_path != .string or !std.mem.eql(u8, declared_path.string, environment_path.string)) return error.InvalidEnvironment;
             break :blk try actualPackageRoot(allocator, io, project_root, environment_path.string);
@@ -314,21 +337,20 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
                 std.array_list.Managed(Value).init(allocator);
             defer if (exports_value == null) record_exports.deinit();
             const implementation = requiredString(lock_entry, "implementation");
-            if (record_exports.items.len != 0 and implementation != null and std.mem.eql(u8, implementation.?, "native")) {
+            // `.nako/native/` を名乗る環境 path は lock 由来の期待 root と
+            // 一致する場合に限り native store として検証し、そうでなければ
+            // 拒否する（任意 path を native 検証へ通さない）。native export を
+            // 公開した package は代表 implementation が source/path でも sync
+            // が安定 root を発行するため、env path の prefix で判定する。
+            if (std.mem.startsWith(u8, environment_path.string, ".nako/native/")) {
                 const expected_native_path = try native_store.expectedRoot(allocator, source, lock_entry) orelse return error.InvalidEnvironment;
                 if (!std.mem.eql(u8, environment_path.string, expected_native_path)) return error.InvalidEnvironment;
                 break :blk try native_store.validateRoot(allocator, io, project_root, environment_path.string);
             }
-            // implementation 省略の lock でも、選択 export が native なら sync は
-            // stable native root を発行する。`.nako/native/` を名乗る環境 path は
-            // lock 由来の期待 root と一致する場合に限り native store として検証し、
-            // そうでなければ拒否する（任意 path を native 検証へ通さない）。
-            if (implementation == null and record_exports.items.len != 0 and
-                std.mem.startsWith(u8, environment_path.string, ".nako/native/"))
-            {
-                const expected_native_path = try native_store.expectedRoot(allocator, source, lock_entry) orelse return error.InvalidEnvironment;
-                if (!std.mem.eql(u8, environment_path.string, expected_native_path)) return error.InvalidEnvironment;
-                break :blk try native_store.validateRoot(allocator, io, project_root, environment_path.string);
+            if (record_exports.items.len != 0 and implementation != null and std.mem.eql(u8, implementation.?, "native")) {
+                // native 実装の package は sync が常に安定 root を発行する。
+                // 世代 path への代替は環境改ざんでしか起きないため拒否する。
+                return error.InvalidEnvironment;
             }
             const expected_directory = materialized_directories.get(environment_entry.key_ptr.*) orelse return error.InvalidEnvironment;
             const generation = materializedGeneration(environment_path.string, expected_directory) orelse return error.InvalidEnvironment;
@@ -407,7 +429,13 @@ fn expectedMaterializedDirectories(allocator: Allocator, locked_packages: std.js
         const source = asObject(source_value) orelse return error.InvalidEnvironment;
         const kind = get(source, "type") orelse return error.InvalidEnvironment;
         if (kind != .string) return error.InvalidEnvironment;
-        if (std.mem.eql(u8, kind.string, "path")) continue;
+        // 世代内へ複製するのは `mutable = false` の path 依存も同じ。
+        // mutable は宣言 dir を生参照するため deps dir 名を確保しない。
+        if (std.mem.eql(u8, kind.string, "path")) {
+            const mutable_value = get(source, "mutable");
+            const mutable = if (mutable_value) |value| (value == .bool and value.bool) else false;
+            if (mutable) continue;
+        }
 
         const name_value = get(lock_entry, "name") orelse return error.InvalidEnvironment;
         if (name_value != .string) return error.InvalidEnvironment;
@@ -440,17 +468,37 @@ fn artifactTargetForProfile(
         else
             null;
     } else null;
+    // sync の `materializeTarget` と同じ規則: CLI の `--compat-js`/`-O` は
+    // lock input の選択 profile にだけ効く。別 profile record の宣言は
+    // そのまま使う（input.target へ漏らさない）。
+    const input_profile = if (get(lock_input, "profile")) |value|
+        if (value == .string) value.string else return error.InvalidEnvironment
+    else
+        null;
+    const is_input_profile = input_profile != null and std.mem.eql(u8, profile, input_profile.?);
     const os = optionalString(profile_record, "os") orelse optionalString(input_target, "os") orelse "";
     const cpu = optionalString(profile_record, "cpu") orelse optionalString(input_target, "cpu") orelse "";
     const abi = optionalString(profile_record, "abi") orelse optionalString(input_target, "abi") orelse "";
-    const compat_js = if (profile_record) |record| blk: {
+    var compat_js = false;
+    if (profile_record) |record| {
         if (get(record, "compat-js")) |value| {
             if (value != .bool) return error.InvalidEnvironment;
-            break :blk value.bool;
+            compat_js = value.bool;
         }
-        break :blk false;
-    } else false;
-    const optimize = optionalString(profile_record, "optimize") orelse "O0";
+    }
+    if (is_input_profile and input_target != null) {
+        if (get(input_target.?, "compat-js")) |value| {
+            if (value != .bool) return error.InvalidEnvironment;
+            compat_js = compat_js or value.bool;
+        }
+    }
+    const optimize = if (is_input_profile)
+        optionalString(input_target, "optimize") orelse "O0"
+    else
+        optionalString(profile_record, "optimize") orelse "O0";
+    // `min-os` 照合に使った OS バージョンは sync の `materializeTarget` と
+    // 同じく input target 記録からそのまま復元する。
+    const os_version = optionalString(input_target, "osVersion");
     if (profile_record) |record| {
         if (optionalString(record, "runtime")) |declared_runtime| {
             if (!std.mem.eql(u8, declared_runtime, runtime) and
@@ -458,7 +506,7 @@ fn artifactTargetForProfile(
         }
     }
     _ = allocator;
-    return .{ .runtime = runtime, .os = os, .cpu = cpu, .abi = abi, .compat_js = compat_js, .optimize = optimize };
+    return .{ .runtime = runtime, .os = os, .cpu = cpu, .abi = abi, .os_version = os_version, .compat_js = compat_js, .optimize = optimize };
 }
 
 fn validateEnvironmentExports(
@@ -531,12 +579,11 @@ fn validateEnvironmentExports(
             var diagnostics = diag.List.init(allocator);
             defer diagnostics.deinit();
             for (value.exports) |*export_decl| {
+                // 代表実装は各 export の解決結果を縛らない（sync の
+                // `resolveExports` と同じ契約）。`native` 選択は
+                // `prefer_native` としてのみ効き、source-only export と
+                // native export の併記は両方記録される。
                 const resolution = try export_decl.resolve(allocator, package_target, prefer_native, &diagnostics) orelse continue;
-                if (implementation) |kind| {
-                    if (std.mem.eql(u8, kind, "source") and resolution.kind != .source) continue;
-                    if (std.mem.eql(u8, kind, "native") and resolution.kind != .native) continue;
-                    if (std.mem.eql(u8, kind, "ESM") and resolution.kind != .esm) continue;
-                }
                 if (resolution.kind == .esm and !std.mem.eql(u8, package_target.runtime, "cnako") and !package_target.compat_js) continue;
                 if (expected_index >= environment_exports.items.len) return error.InvalidEnvironment;
                 const actual = asObject(environment_exports.items[expected_index]) orelse return error.InvalidEnvironment;

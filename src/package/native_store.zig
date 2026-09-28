@@ -57,6 +57,19 @@ pub fn expectedRoot(allocator: Allocator, source: std.json.ObjectMap, lock_entry
         const url = requiredString(source, "url") orelse return error.InvalidEnvironment;
         const hash = requiredString(source, "hash") orelse return error.InvalidEnvironment;
         break :blk try cache_key.artifactKey(allocator, "http", hash, url);
+    } else if (std.mem.eql(u8, source_kind, "path")) blk: {
+        // immutable path 依存の native export は、世代内複製をさらに
+        // `.nako/native/` の安定 root へ移す。key は sync と同じく内容
+        // pin（`artifacts["source"].sha256`）から導出する。mutable は宣言
+        // path を生参照するため安定 root を持たない。
+        const mutable_value = get(source, "mutable");
+        const mutable = if (mutable_value) |value| (value == .bool and value.bool) else false;
+        if (mutable) return null;
+        const rel = requiredString(source, "path") orelse return error.InvalidEnvironment;
+        const artifacts = asObject(get(lock_entry, "artifacts") orelse return error.InvalidEnvironment) orelse return error.InvalidEnvironment;
+        const artifact = asObject(artifacts.get("source") orelse return error.InvalidEnvironment) orelse return error.InvalidEnvironment;
+        const pin = requiredString(artifact, "sha256") orelse return error.InvalidEnvironment;
+        break :blk try cache_key.artifactKey(allocator, "path", pin, rel);
     } else if (std.mem.eql(u8, source_kind, "registry") or std.mem.eql(u8, source_kind, "static")) blk: {
         // sync の selectArtifact と同じく、implementation 省略は source 扱い。
         const implementation = requiredString(lock_entry, "implementation") orelse "source";
@@ -313,6 +326,31 @@ test "native artifact rootはimplementation省略時にsync同様source artifact
     const source_key = try cache_key.artifactKey(allocator, "artifact", "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "https://example.invalid/source");
     const expected = try relativeRoot(allocator, source_key);
     try testing.expectEqualStrings(expected, root.?);
+}
+
+test "native artifact rootはimmutable path依存を内容pinから導出しmutableは持たない" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const allocator = arena_state.allocator();
+    // immutable path 依存は世代内複製の pin（`artifacts["source"].sha256`）から
+    // sync と同じ `artifactKey("path", pin, rel)` の安定 root を導出する。
+    const parsed = try std.json.parseFromSlice(Value, allocator,
+        \\{"source":{"type":"path","path":"deps/imm"},"artifacts":{"source":{"sha256":"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}}}
+    , .{});
+    defer parsed.deinit();
+    const entry = asObject(parsed.value).?;
+    const root = try expectedRoot(allocator, entry.get("source").?.object, entry);
+    const expected_key = try cache_key.artifactKey(allocator, "path", "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "deps/imm");
+    const expected = try relativeRoot(allocator, expected_key);
+    try testing.expectEqualStrings(expected, root.?);
+
+    // mutable path は宣言 dir を生参照するため安定 root を持たない。
+    const mutable_parsed = try std.json.parseFromSlice(Value, allocator,
+        \\{"source":{"type":"path","path":"deps/mut","mutable":true},"artifacts":{"source":{"sha256":"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}}}
+    , .{});
+    defer mutable_parsed.deinit();
+    const mutable_entry = asObject(mutable_parsed.value).?;
+    try testing.expect((try expectedRoot(allocator, mutable_entry.get("source").?.object, mutable_entry)) == null);
 }
 
 test "native materialize reuses an equivalent root and rejects a changed file" {

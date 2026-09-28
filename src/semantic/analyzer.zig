@@ -7,6 +7,7 @@ const argument_completion = @import("argument_completion.zig");
 const parser_helpers = @import("../frontend/parser/helpers.zig");
 const unresolved_words = @import("unresolved_words.zig");
 const system_constant = @import("../runtime/system_constant.zig");
+const dynamic_commands = @import("dynamic_commands.zig");
 const low_level_foundation = @import("../runtime/low_level_foundation.zig");
 
 pub const ScopeId = u32;
@@ -27,6 +28,8 @@ pub const NamespaceAlias = struct {
     import_position: usize = 0,
     is_explicit: bool,
 };
+
+pub const DynamicCommandAlias = dynamic_commands.DynamicCommandAlias;
 
 pub const ImportEntry = struct {
     position: usize,
@@ -67,7 +70,9 @@ pub const ModuleInput = struct {
     /// `<alias>__<命令>` だけを動的builtinとして束縛し、素の命令名は
     /// 取り込みモジュールへ露出しない（package namespace契約）。
     /// `allows_dynamic_commands` と違い非修飾名は受理しない。
-    dynamic_command_aliases: []const []const u8 = &.{},
+    /// `source_namespace` がソース上の修飾alias、`dispatch_namespace` が
+    /// runtime登録名のprefix（scope修飾を含み得る）。
+    dynamic_command_aliases: []const DynamicCommandAlias = &.{},
     /// Package symbols are resolvable only through an importer's namespace aliases.
     is_package: bool = false,
     /// root.children と同じ長さの、結合ストリーム上の文順位。
@@ -785,10 +790,14 @@ pub const Analyzer = struct {
             try self.bind(node, .builtin, name, name, null);
             return;
         }
-        if (callable and bindsDynamicCommand(self.inputs[module_index], name)) {
-            try self.bind(node, .builtin, name, name, null);
-            self.bindings.items[self.bindings.items.len - 1].dynamic_builtin = true;
-            return;
+        if (callable) {
+            const module_input = self.inputs[module_index];
+            if (dynamic_commands.binds(module_input.allows_dynamic_commands, module_input.dynamic_command_aliases, name)) |alias| {
+                const dispatch_name = try dynamic_commands.dispatchName(self.allocator, alias, name);
+                try self.bind(node, .builtin, name, dispatch_name, null);
+                self.bindings.items[self.bindings.items.len - 1].dynamic_builtin = true;
+                return;
+            }
         }
         if (self.modules.items[module_index].strict) {
             const message = try std.fmt.allocPrint(self.allocator, "未定義の{s}『{s}』です", .{ if (callable) "命令" else "変数", name });
@@ -832,8 +841,10 @@ pub const Analyzer = struct {
                 return;
             }
         }
-        if (bindsDynamicCommand(self.inputs[module_index], name)) {
-            try self.bind(node, .builtin, name, name, null);
+        const function_input = self.inputs[module_index];
+        if (dynamic_commands.binds(function_input.allows_dynamic_commands, function_input.dynamic_command_aliases, name)) |alias| {
+            const dispatch_name = try dynamic_commands.dispatchName(self.allocator, alias, name);
+            try self.bind(node, .builtin, name, dispatch_name, null);
             self.bindings.items[self.bindings.items.len - 1].dynamic_builtin = true;
             return;
         }
@@ -1280,18 +1291,6 @@ pub const Analyzer = struct {
         try self.diagnostics.append(self.allocator, .{ .severity = severity, .code = code, .span = span, .file = file, .message = message });
     }
 };
-
-/// 動的builtinとして束縛する命令名か判定する。直接取り込んだnative plugin
-/// （`allows_dynamic_commands`）は任意名を受理し、package経由のnative plugin
-/// （`dynamic_command_aliases`）は `<alias>__<命令>` の修飾名のみ受理する。
-fn bindsDynamicCommand(input: ModuleInput, name: []const u8) bool {
-    if (input.allows_dynamic_commands) return true;
-    for (input.dynamic_command_aliases) |alias| {
-        if (std.mem.startsWith(u8, name, alias) and name.len > alias.len + 2 and
-            name[alias.len] == '_' and name[alias.len + 1] == '_') return true;
-    }
-    return false;
-}
 
 fn hasStrictMode(root: *ast.Node) bool {
     if (root.kind == .run_mode and std.mem.eql(u8, root.value, "厳しくチェック")) return true;

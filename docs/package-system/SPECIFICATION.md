@@ -459,6 +459,7 @@ size = 1234
 - パッケージaliasは通常ファイル、拡張プラグインおよびnpm/JavaScript取り込みとは別resolverで解決し、相互に曖昧なfallbackをしない。
 - 同一の物理ファイルが package export と相対pathの双方で取り込まれた場合、module identity（canonical ID・package由来フラグ）は最初に取り込まれた側で確定し、後の取り込みはその identity を共有する。修飾名は両経路の namespace で解決できるが、package module としての扱い（implicit lookup の適用範囲等）は先発の取り込み方に従う。
 - package経由で取り込まれた plugin artifact（native および `--compat-js` 時の ESM）は、登録命令を `{namespace}__{命令名}` の修飾名でのみ公開する。namespace は `__` を含み得る（scoped alias・subpath由来の生成形式）が、namespaced 命令の命令名に `__` は使えない（修飾名の一意分解を保つため）。同一package artifactを複数aliasで取り込んだ場合は全namespace分の修飾名を登録する。alias正規化後に同一namespaceへ落ちる異名aliasが別packageを指す環境は拒否する。
+- package内scopeの依存 plugin（推移依存）は、依存 scope の alias が別 package の scope で衝突し得るため、runtime 登録名の namespace を `{所有者 package key}__{alias}` の正規化形式へ修飾する。ソース上の修飾名（`{alias}__{命令名}`）は変わらず、命令呼出しの束縛時に所有者修飾の dispatch 名へ写像する。プロジェクト root scope の直接依存は修飾しない（alias がそのまま登録名）。Interpreter・AOT・`--compat-js` ESM の全経路で同一の dispatch 名を使う。
 - JavaScript/ESM artifact の import は `--compat-js` 指定時のみ許可する。
 - 通常モードで JS/ESM 依存を解決しようとした場合は `E006_JS_IN_NORMAL_MODE` 診断。
 - 環境の materialize（`sync`・自動準備の `.npkg` 検証と export 解決）は、解決時の実効 target を lock の `input` から再現する。`target.compatJs`・`target.optimize`・`runtime`・`nakoVersion`/`cnakoVersion`/`lnakoVersion` をそのまま使うため、`--compat-js` や `build -O` で選択した artifact が環境構築時の検証で reject されない。`--profile` で別 profile を指定した場合は、その profile record が宣言する `optimize` を使う（CLI の `-O` は入力 profile にのみ適用されるため）。

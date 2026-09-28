@@ -5,6 +5,7 @@ const analyze = analyzer.analyze;
 const analyzeModules = analyzer.analyzeModules;
 const moduleName = analyzer.moduleName;
 const SymbolKind = analyzer.SymbolKind;
+const DynamicCommandAlias = analyzer.DynamicCommandAlias;
 
 test "公式と同じファイル名をモジュール名に保つ" {
     const hyphenated = try moduleName(std.testing.allocator, "dir/system-runtime.nako3");
@@ -632,4 +633,29 @@ test "『{関数}名』の動的プラグイン命令はdynamic_builtinとして
         if (binding.kind == .builtin and binding.dynamic_builtin and std.mem.eql(u8, binding.resolved_name, "外部追加")) saw_dynamic = true;
     }
     try std.testing.expect(saw_dynamic);
+}
+
+test "package内scopeの依存命令は所有者修飾のdispatch名へ束縛する" {
+    const parser = @import("../frontend/parser.zig");
+    // 別package scopeで同じaliasを使う推移依存は、ソース上の `util__命令`
+    // を読みやすいまま、runtime登録名は `{owner}__{alias}__命令` へ写す。
+    var parsed = try parser.parse(std.testing.allocator, "util__外部追加(1, 2)を表示\n", "dep-module.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    const aliases = [_]DynamicCommandAlias{.{ .source_namespace = "util", .dispatch_namespace = "pkg_a__util" }};
+    var program = try analyzeModules(std.testing.allocator, &.{.{
+        .name = "dep-module",
+        .path = "dep-module.nako3",
+        .root = parsed.root.?,
+        .dynamic_command_aliases = &aliases,
+    }});
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var saw_scoped_dispatch = false;
+    for (program.bindings) |binding| {
+        if (binding.kind == .builtin and binding.dynamic_builtin and
+            std.mem.eql(u8, binding.name, "util__外部追加") and
+            std.mem.eql(u8, binding.resolved_name, "pkg_a__util__外部追加")) saw_scoped_dispatch = true;
+    }
+    try std.testing.expect(saw_scoped_dispatch);
 }

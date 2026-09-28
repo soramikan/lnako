@@ -34,6 +34,11 @@ pub const ResolvedPackageImport = struct {
     canonical_id: []const u8,
     /// Public namespace from the source import alias, independent of canonical ID.
     namespace: []const u8,
+    /// Runtime dispatch namespace used to register/lookup plugin commands.
+    /// Null means "same as `namespace`". Package-scoped transitive imports are
+    /// scope-qualified so the same alias in different dependency scopes gets a
+    /// distinct dispatch key.
+    dispatch_namespace: ?[]const u8 = null,
     /// Canonical real path of the package root. Relative descendants inside it
     /// keep the package's opaque ownership instead of becoming global modules.
     /// Null disables ownership propagation for that export.
@@ -93,6 +98,9 @@ pub const Import = struct {
     resolved_path: []const u8,
     canonical_id: ?[]const u8 = null,
     namespace: ?[]const u8 = null,
+    /// Runtime dispatch namespace for plugin command registration. Null means
+    /// "same as `namespace`".
+    dispatch_namespace: ?[]const u8 = null,
     target: ?u32,
     span: ast.Span,
     cyclic: bool = false,
@@ -289,7 +297,7 @@ pub const ModuleGraph = struct {
             if (module.kind != .nako3 or module.parsed == null or module.parsed.?.root == null) continue;
             var import_entries: std.ArrayList(analyzer.ImportEntry) = .empty;
             var allows_dynamic_commands = false;
-            var dynamic_command_aliases: std.ArrayList([]const u8) = .empty;
+            var dynamic_command_aliases: std.ArrayList(analyzer.DynamicCommandAlias) = .empty;
             for (module.imports) |item| if (item.target) |target| {
                 const target_module = self.modules[target];
                 if (target_module.kind == .native_plugin or
@@ -303,12 +311,18 @@ pub const ModuleGraph = struct {
                         if (item.namespace) |alias| {
                             var listed = false;
                             for (dynamic_command_aliases.items) |existing| {
-                                if (std.mem.eql(u8, existing, alias)) {
+                                if (std.mem.eql(u8, existing.source_namespace, alias)) {
                                     listed = true;
                                     break;
                                 }
                             }
-                            if (!listed) try dynamic_command_aliases.append(temp, alias);
+                            // package内scopeの依存aliasはimporter固有のdispatch
+                            // namespaceへ写像し、別scopeの同名aliasと登録keyが
+                            // 衝突しないようにする（`{owner}__{alias}` 修飾）。
+                            if (!listed) try dynamic_command_aliases.append(temp, .{
+                                .source_namespace = alias,
+                                .dispatch_namespace = item.dispatch_namespace orelse alias,
+                            });
                         }
                     } else if (target_module.kind == .native_plugin) {
                         allows_dynamic_commands = true;
@@ -773,6 +787,7 @@ pub const Loader = struct {
                     .resolved_path = resolved_target,
                     .canonical_id = resolved_import.canonical_id,
                     .namespace = resolved_import.namespace orelse try analyzer.moduleName(self.allocator, resolved_target),
+                    .dispatch_namespace = resolved_import.dispatch_namespace,
                     .target = target,
                     .span = node.span,
                     .cyclic = cyclic,
@@ -1178,6 +1193,7 @@ const ResolvedImport = struct {
     path: []u8,
     canonical_id: ?[]const u8 = null,
     namespace: ?[]const u8 = null,
+    dispatch_namespace: ?[]const u8 = null,
     package_root: ?[]const u8 = null,
 };
 
@@ -1185,7 +1201,7 @@ fn resolveRequestedImport(allocator: std.mem.Allocator, importer: []const u8, re
     if (!isPackageSpecifier(requested)) return .{ .path = try resolveImport(allocator, importer, requested) };
     const resolver = package_resolver orelse return error.PackageResolverUnavailable;
     const selected = try resolver.resolve(allocator, importer, requested);
-    return .{ .path = try normalizePath(allocator, selected.path), .canonical_id = selected.canonical_id, .namespace = selected.namespace, .package_root = selected.package_root };
+    return .{ .path = try normalizePath(allocator, selected.path), .canonical_id = selected.canonical_id, .namespace = selected.namespace, .dispatch_namespace = selected.dispatch_namespace, .package_root = selected.package_root };
 }
 
 /// Lexical containment of `path` strictly inside `root`. Both sides are

@@ -555,6 +555,7 @@ test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hash�
     defer allocator.free(math_import.path);
     defer allocator.free(math_import.canonical_id);
     defer allocator.free(math_import.namespace);
+    defer if (math_import.dispatch_namespace) |dispatch| allocator.free(dispatch);
     defer if (math_import.package_root) |package_root| allocator.free(package_root);
     const expected_math_path = try std.fs.path.join(allocator, &.{ ".nako", "env", "gen-test", "deps", "math", "src", "main.nako3" });
     defer allocator.free(expected_math_path);
@@ -567,6 +568,7 @@ test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hash�
     defer allocator.free(owner_name_import.path);
     defer allocator.free(owner_name_import.canonical_id);
     defer allocator.free(owner_name_import.namespace);
+    defer if (owner_name_import.dispatch_namespace) |dispatch| allocator.free(dispatch);
     defer if (owner_name_import.package_root) |package_root| allocator.free(package_root);
     try std.testing.expectEqualStrings("pkg:11111111111111111111111111111111/main", owner_name_import.canonical_id);
     try std.testing.expectEqualStrings("alice__lib", owner_name_import.namespace);
@@ -574,12 +576,14 @@ test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hash�
     defer allocator.free(scoped_owner_import.path);
     defer allocator.free(scoped_owner_import.canonical_id);
     defer allocator.free(scoped_owner_import.namespace);
+    defer if (scoped_owner_import.dispatch_namespace) |dispatch| allocator.free(dispatch);
     defer if (scoped_owner_import.package_root) |package_root| allocator.free(package_root);
     try std.testing.expectEqualStrings("alice__tool", scoped_owner_import.namespace);
     const scoped_subpath_import = try package_resolver.resolve(allocator, root_entry, "pkg:alice/lib/vector");
     defer allocator.free(scoped_subpath_import.path);
     defer allocator.free(scoped_subpath_import.canonical_id);
     defer allocator.free(scoped_subpath_import.namespace);
+    defer if (scoped_subpath_import.dispatch_namespace) |dispatch| allocator.free(dispatch);
     defer if (scoped_subpath_import.package_root) |package_root| allocator.free(package_root);
     try std.testing.expectEqualStrings("pkg:11111111111111111111111111111111/vector", scoped_subpath_import.canonical_id);
     try std.testing.expectEqualStrings("alice__lib__vector", scoped_subpath_import.namespace);
@@ -587,6 +591,7 @@ test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hash�
     defer allocator.free(vector_import.path);
     defer allocator.free(vector_import.canonical_id);
     defer allocator.free(vector_import.namespace);
+    defer if (vector_import.dispatch_namespace) |dispatch| allocator.free(dispatch);
     defer if (vector_import.package_root) |package_root| allocator.free(package_root);
     const expected_vector_path = try std.fs.path.join(allocator, &.{ ".nako", "env", "gen-test", "deps", "math", "vector.nako3" });
     defer allocator.free(expected_vector_path);
@@ -597,6 +602,7 @@ test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hash�
     defer allocator.free(nested_import.path);
     defer allocator.free(nested_import.canonical_id);
     defer allocator.free(nested_import.namespace);
+    defer if (nested_import.dispatch_namespace) |dispatch| allocator.free(dispatch);
     defer if (nested_import.package_root) |package_root| allocator.free(package_root);
     const expected_nested_path = try std.fs.path.join(allocator, &.{ ".nako", "env", "gen-test", "deps", "dependency", "index.nako3" });
     defer allocator.free(expected_nested_path);
@@ -652,7 +658,7 @@ test "realpath importerとproject entry優先でancestor package scopeを誤選�
         \\path = "index.nako3"
         \\
     });
-    const lock_json = "{\"schemaVersion\":2,\"resolverVersion\":1,\"input\":{\"manifestSha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"profile\":\"default\",\"features\":[],\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:ancestor\":{\"id\":\"pkg:ancestor\",\"name\":\"ancestor\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\"..\"},\"dependencies\":[\"pkg:parent-util\"]},\"pkg:root-util\":{\"id\":\"pkg:root-util\",\"name\":\"root-util\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/root-util\"},\"dependencies\":[]},\"pkg:parent-util\":{\"id\":\"pkg:parent-util\",\"name\":\"parent-util\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\"../parent-util\"},\"dependencies\":[]}},\"rootDependencies\":{\"default\":[\"pkg:root-util\"]}}";
+    const lock_json = "{\"schemaVersion\":2,\"resolverVersion\":1,\"input\":{\"manifestSha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"profile\":\"default\",\"features\":[],\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:ancestor\":{\"id\":\"pkg:ancestor\",\"name\":\"ancestor\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\"..\",\"mutable\":true},\"dependencies\":[\"pkg:parent-util\"]},\"pkg:root-util\":{\"id\":\"pkg:root-util\",\"name\":\"root-util\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/root-util\"},\"dependencies\":[]},\"pkg:parent-util\":{\"id\":\"pkg:parent-util\",\"name\":\"parent-util\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\"../parent-util\",\"mutable\":true},\"dependencies\":[]}},\"rootDependencies\":{\"default\":[\"pkg:root-util\"]}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "repo/examples/nako.lock", .data = lock_json });
     const parent_entry = try temporary.dir.realPathFileAlloc(io, "repo/index.nako3", allocator);
     defer allocator.free(parent_entry);
@@ -684,19 +690,27 @@ test "realpath importerとproject entry優先でancestor package scopeを誤選�
     defer allocator.free(project_import.path);
     defer allocator.free(project_import.canonical_id);
     defer allocator.free(project_import.namespace);
+    defer if (project_import.dispatch_namespace) |dispatch| allocator.free(dispatch);
     defer if (project_import.package_root) |package_root| allocator.free(package_root);
     const expected_root_util = try std.fs.path.join(allocator, &.{ "root-util", "index.nako3" });
     defer allocator.free(expected_root_util);
     try std.testing.expect(std.mem.endsWith(u8, project_import.path, expected_root_util));
+    // root scope は修飾なし（alias がそのまま runtime 登録名になる）。
+    try std.testing.expect(project_import.dispatch_namespace == null);
 
     const package_import = try package_resolver.resolve(allocator, symlink_importer, "pkg:util");
     defer allocator.free(package_import.path);
     defer allocator.free(package_import.canonical_id);
     defer allocator.free(package_import.namespace);
+    defer if (package_import.dispatch_namespace) |dispatch| allocator.free(dispatch);
     defer if (package_import.package_root) |package_root| allocator.free(package_root);
     const expected_parent_util = try std.fs.path.join(allocator, &.{ "parent-util", "index.nako3" });
     defer allocator.free(expected_parent_util);
     try std.testing.expect(std.mem.endsWith(u8, package_import.path, expected_parent_util));
+    // package 所有 scope の同 alias import は runtime 登録名を所有者 key で
+    // 修飾する（別 package scope の `util` と plugin 登録名が衝突しない）。
+    try std.testing.expectEqualStrings("util", package_import.namespace);
+    try std.testing.expectEqualStrings("pkg_ancestor__util", package_import.dispatch_namespace.?);
 }
 
 test "manifest version比較は64byteを超えるSemVer識別子を受理する" {
@@ -746,7 +760,7 @@ test "path依存の環境検証はnako.tomlを優先し残留METADATA.tomlを読
     // materialized（非path）source側は引き続き生成METADATA.tomlを正本とする。
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/mat/NAKO-PKG");
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/mat/NAKO-PKG/METADATA.toml", .data = "schemaVersion = 1\n[package]\nname = \"mat\"\nversion = \"2.0.0\"\nlicense = \"MIT\"\n" });
-    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:path-dep\":{\"id\":\"pkg:path-dep\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\"deps/pkg\"},\"dependencies\":[]},\"pkg:mat\":{\"id\":\"pkg:mat\",\"name\":\"mat\",\"version\":\"2.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/mat\"},\"dependencies\":[]}}}";
+    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:path-dep\":{\"id\":\"pkg:path-dep\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\"deps/pkg\",\"mutable\":true},\"dependencies\":[]},\"pkg:mat\":{\"id\":\"pkg:mat\",\"name\":\"mat\",\"version\":\"2.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/mat\"},\"dependencies\":[]}}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
@@ -794,6 +808,99 @@ test "正規化後に同一namespaceへ落ちるaliasのpackage混在を拒否�
     const same_target = try std.mem.replaceOwned(u8, allocator, colliding, "\"my_util\",\"package\":\"pkg:b\"", "\"my_util\",\"package\":\"pkg:a\"");
     defer allocator.free(same_target);
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = same_target });
+    var loaded = try Resolver.load(allocator, io, root);
+    loaded.deinit();
+}
+
+test "immutable path依存はgeneration内materialized pathを受理し宣言dir参照を拒否する" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    // sync は immutable path 依存を pin 照合済み snapshot として世代内へ
+    // 複製する。検証側も宣言 dir ではなく世代内 path を要求する。
+    const manifest_toml = "[package]\nname = \"imm\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n";
+    try temporary.dir.createDirPath(io, ".nako/env/gen-a1b2/deps/imm");
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-a1b2/deps/imm/nako.toml", .data = manifest_toml });
+    try temporary.dir.createDirPath(io, "deps/imm");
+    try temporary.dir.writeFile(io, .{ .sub_path = "deps/imm/nako.toml", .data = manifest_toml });
+    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:imm\":{\"id\":\"pkg:imm\",\"name\":\"imm\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\"deps/imm\"},\"dependencies\":[]}}}";
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
+    const lock_hex = std.fmt.bytesToHex(digest, .lower);
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+
+    const materialized = try std.fmt.allocPrint(
+        allocator,
+        "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"packages\":{{\"pkg:imm\":{{\"name\":\"imm\",\"version\":\"1.0.0\",\"path\":\".nako/env/gen-a1b2/deps/imm\",\"exports\":[]}}}}}}",
+        .{lock_hex},
+    );
+    defer allocator.free(materialized);
+    try temporary.dir.createDirPath(io, ".nako");
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = materialized });
+    var loaded = try Resolver.load(allocator, io, root);
+    loaded.deinit();
+
+    // 宣言 dir を直接指す環境記録は immutable path では生成物ではなく
+    // 改ざん/不正記録として拒否する（mutable=true のみ宣言 path 可）。
+    const declared = try std.mem.replaceOwned(u8, allocator, materialized, ".nako/env/gen-a1b2/deps/imm", "deps/imm");
+    defer allocator.free(declared);
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = declared });
+    try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, root));
+}
+
+test "代表implementation=nativeでもsource-only exportを欠落させない" {
+    const cache_key = @import("cache_key.zig");
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    // native 選択の package は `.nako/native/<key>` の安定 root を公開する。
+    // 代表 kind が native でも source-only export（native 宣言を持たない
+    // export）は env 記録へ残る必要がある（kind filter で捨てると
+    // export 数が不一致になり環境が reject される）。
+    const artifact_url = "https://example.invalid/hyb";
+    const artifact_hash = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    const native_key = try cache_key.artifactKey(allocator, "artifact", artifact_hash, artifact_url);
+    defer allocator.free(native_key);
+    const native_root = try std.fmt.allocPrint(allocator, ".nako/native/{s}", .{native_key});
+    defer allocator.free(native_root);
+    try temporary.dir.createDirPath(io, native_root);
+    const manifest_toml =
+        "[package]\nname = \"hyb\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" ++
+        "[[exports]]\nname = \"pure\"\npath = \"lib.nako3\"\n" ++
+        "[[exports]]\nname = \"fast\"\nnative = \"hyb.so\"\n";
+    const manifest_path = try std.fmt.allocPrint(allocator, "{s}/nako.toml", .{native_root});
+    defer allocator.free(manifest_path);
+    const lib_path = try std.fmt.allocPrint(allocator, "{s}/lib.nako3", .{native_root});
+    defer allocator.free(lib_path);
+    const plugin_path = try std.fmt.allocPrint(allocator, "{s}/hyb.so", .{native_root});
+    defer allocator.free(plugin_path);
+    try temporary.dir.writeFile(io, .{ .sub_path = manifest_path, .data = manifest_toml });
+    try temporary.dir.writeFile(io, .{ .sub_path = lib_path, .data = "" });
+    try temporary.dir.writeFile(io, .{ .sub_path = plugin_path, .data = "" });
+    const lock = try std.fmt.allocPrint(
+        allocator,
+        "{{\"schemaVersion\":1,\"input\":{{\"profile\":\"default\",\"target\":{{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}}}},\"packages\":{{\"pkg:hyb\":{{\"id\":\"pkg:hyb\",\"name\":\"hyb\",\"version\":\"1.0.0\",\"implementation\":\"native\",\"source\":{{\"type\":\"registry\",\"url\":\"{s}\"}},\"artifacts\":{{\"bin\":{{\"kind\":\"native\",\"url\":\"{s}\",\"sha256\":\"{s}\"}}}},\"dependencies\":[]}}}}}}",
+        .{ artifact_url, artifact_url, artifact_hash },
+    );
+    defer allocator.free(lock);
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
+    const lock_hex = std.fmt.bytesToHex(digest, .lower);
+    const environment = try std.fmt.allocPrint(
+        allocator,
+        "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"packages\":{{\"pkg:hyb\":{{\"name\":\"hyb\",\"version\":\"1.0.0\",\"path\":\"{s}\",\"exports\":[{{\"name\":\"pure\",\"path\":\"lib.nako3\"}},{{\"name\":\"fast\",\"path\":\"hyb.so\"}}]}}}}}}",
+        .{ lock_hex, native_root },
+    );
+    defer allocator.free(environment);
+    try temporary.dir.createDirPath(io, ".nako");
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = environment });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
     var loaded = try Resolver.load(allocator, io, root);
     loaded.deinit();
 }

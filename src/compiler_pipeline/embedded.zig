@@ -42,6 +42,7 @@ pub fn writeCompatExecutable(allocator: std.mem.Allocator, io: std.Io, executabl
                 .canonical_id = canonical_id,
                 .namespace = item.namespace orelse graph.modules[target].name,
                 .package_root = graph.modules[target].package_root orelse "",
+                .dispatch_namespace = item.dispatch_namespace orelse "",
             });
         }
     }

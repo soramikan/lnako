@@ -1174,7 +1174,7 @@ test "package経由のnative plugin命令を修飾名でemitしnamespace登録�
     var parsed = try parser.parse(std.testing.allocator, "math__外部追加(1, 2)を表示\n", "main.nako3");
     defer parsed.deinit();
     try std.testing.expect(parsed.succeeded());
-    const aliases = [_][]const u8{"math"};
+    const aliases = [_]semantic.DynamicCommandAlias{.{ .source_namespace = "math", .dispatch_namespace = "math" }};
     var analyzed = try semantic.analyzeModules(std.testing.allocator, &.{.{
         .name = "main",
         .path = "main.nako3",

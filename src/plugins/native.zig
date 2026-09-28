@@ -283,8 +283,11 @@ pub const State = struct {
         errdefer if (descriptor.deinitialize) |deinitialize| deinitialize(descriptor.plugin_context);
         // 同一pathを複数alias（依存key＋明示alias等）でimportした場合、
         // 全namespace分の修飾名を登録し、どの修飾名経由でも呼べるようにする。
-        for (namespaces[1..]) |namespace| {
-            self.aliasCommandsForNamespace(command_start, namespace) catch return error.NativePluginInitializationFailed;
+        // 直接path import（namespaces空）ではcloneしない。
+        if (namespaces.len > 1) {
+            for (namespaces[1..]) |namespace| {
+                self.aliasCommandsForNamespace(command_start, namespace) catch return error.NativePluginInitializationFailed;
+            }
         }
         const path_copy = try allocator.dupe(u8, path);
         errdefer allocator.free(path_copy);

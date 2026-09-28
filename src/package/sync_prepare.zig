@@ -6,6 +6,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const zip = @import("../archive/zip.zig");
 const cache = @import("cache.zig");
+const cache_key = @import("cache_key.zig");
 const diag = @import("diagnostics.zig");
 const environment = @import("environment.zig");
 const fetch = @import("fetch.zig");
@@ -247,6 +248,15 @@ pub fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Erro
                 env_path = materialized.env_path;
                 try verifyMaterializedPathPin(ctx, entry, materialized.tree_dir);
                 manifest = try provider.readDependencyManifestDir(ctx.session, materialized.tree_dir, "nako.toml", dep_abs, entry.name, "path");
+                // native export を公開した場合は download artifact と同じく
+                // 世代ローテーションの外（`.nako/native/`）へ置くため、pin
+                // digest から安定 key を導出する。`verifyMaterializedPathPin`
+                // で照合済みの pin が lock の内容同一性を保証する。
+                if (path_digest.pinnedSourceHash(entry)) |pin| {
+                    // native_store.expectedRoot と同じ `cache_key.artifactKey`
+                    // を使い、消費側が同じ安定 root を導出できるようにする。
+                    stable_native_key = try cache_key.artifactKey(arena, "path", pin, rel);
+                }
             }
         },
         .git => {

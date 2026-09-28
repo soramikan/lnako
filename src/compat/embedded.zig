@@ -4,7 +4,7 @@ const token_mod = @import("../frontend/token.zig");
 
 const magic = "LNAKOQJSBUNDLE1!";
 const trailer_length = @sizeOf(u64) + magic.len;
-const format_version: u32 = 4;
+const format_version: u32 = 5;
 const minimum_supported_format_version: u32 = 2;
 const maximum_payload_size: u64 = 512 * 1024 * 1024;
 
@@ -21,6 +21,9 @@ pub const PackageImport = struct {
     namespace: []const u8,
     /// format v4以降。空文字はpackage root未保持（旧payloadとの互換）を意味する。
     package_root: []const u8 = "",
+    /// format v5以降。空文字は `namespace` と同一（scope修飾なし）を意味する。
+    /// package内scopeの推移依存では所有者keyを含む修飾名になる。
+    dispatch_namespace: []const u8 = "",
 };
 
 fn packMode(mode: token_mod.Mode) u8 {
@@ -77,7 +80,11 @@ pub const Package = struct {
                 try allocator.dupe(u8, item.package_root)
             else
                 null;
-            return .{ .path = path, .canonical_id = canonical_id, .namespace = namespace, .package_root = package_root };
+            const dispatch_namespace: ?[]const u8 = if (item.dispatch_namespace.len != 0)
+                try allocator.dupe(u8, item.dispatch_namespace)
+            else
+                null;
+            return .{ .path = path, .canonical_id = canonical_id, .namespace = namespace, .dispatch_namespace = dispatch_namespace, .package_root = package_root };
         }
         return error.PackageNotFound;
     }
@@ -123,6 +130,7 @@ pub fn createExecutableWithImports(
         try appendBytes(&output, allocator, item.canonical_id);
         try appendBytes(&output, allocator, item.namespace);
         try appendBytes(&output, allocator, item.package_root);
+        try appendBytes(&output, allocator, item.dispatch_namespace);
     }
     try appendInteger(&output, allocator, u64, @intCast(output.items.len - payload_start));
     try output.appendSlice(allocator, magic);
@@ -169,6 +177,7 @@ fn parsePayload(allocator: std.mem.Allocator, payload: []u8) !Package {
             item.canonical_id = try readBytes(payload, &cursor);
             item.namespace = try readBytes(payload, &cursor);
             item.package_root = if (version >= 4) try readBytes(payload, &cursor) else "";
+            item.dispatch_namespace = if (version >= 5) try readBytes(payload, &cursor) else "";
         }
         break :blk imports;
     } else try allocator.alloc(PackageImport, 0);

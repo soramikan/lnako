@@ -143,7 +143,9 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
             // 公開する。同一pathを複数aliasでimportした場合は全namespaceを
             // 保持する（native pluginの `native_plugin_packages` と同契約）。
             if (item.canonical_id != null) {
-                const namespace = item.namespace orelse continue;
+                // runtime 登録名は dispatch namespace（scope 修飾済み）を使う。
+                // 推移依存で別ownerの同aliasと登録keyが衝突しないため。
+                const namespace = item.dispatch_namespace orelse item.namespace orelse continue;
                 var listed = false;
                 for (plugin_namespaces[target].items) |existing| {
                     if (std.mem.eql(u8, existing, namespace)) {
@@ -195,7 +197,8 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
             const target_module = graph.modules[target];
             if (target_module.kind != .native_plugin) continue;
             if (item.canonical_id != null) {
-                const namespace = item.namespace orelse continue;
+                // runtime 登録名は dispatch namespace（scope 修飾済み）を使う。
+                const namespace = item.dispatch_namespace orelse item.namespace orelse continue;
                 var directly_imported = false;
                 for (graph.modules) |importer| {
                     for (importer.imports) |direct_item| {
