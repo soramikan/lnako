@@ -443,6 +443,9 @@ test "編集 lock は pin 済み root handle から manifest を読み root 置�
     // acquireProjectEditLock 後に root path が別 dir へ置き換わっても、
     // pin した handle の project が読まれることを確認する（lock 対象と
     // 読込み先の dir ずれの回帰テスト）。
+    // Windows では open handle を持つ dir の rename が拒否されるため、
+    // lock 中の root 置換は OS が防ぎこの再現自体が成立しない。
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
     var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_impl.deinit();
     const a = arena_impl.allocator();
