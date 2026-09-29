@@ -29,7 +29,7 @@ const HostSetFn = *const fn (*anyopaque, [*:0]const u8, *const RawValue) callcon
 const HostInvokeFn = *const fn (*anyopaque, usize, [*c]const *const RawValue, usize) callconv(.c) ?*RawValue;
 const HostExecFn = *const fn (*anyopaque, [*:0]const u8, [*c]const *const RawValue, usize) callconv(.c) ?*RawValue;
 extern fn lnako_qjs_set_host(engine: *Engine, context: *anyopaque, get: HostGetFn, set: HostSetFn, invoke: HostInvokeFn, exec: HostExecFn) void;
-extern fn lnako_qjs_add_module_source(engine: *Engine, name: [*:0]const u8, source: [*]const u8, length: usize) c_int;
+extern fn lnako_qjs_add_module_source(engine: *Engine, name: [*:0]const u8, source: [*]const u8, length: usize, package_root: ?[*:0]const u8) c_int;
 extern fn lnako_qjs_release(engine: *Engine) void;
 extern fn lnako_qjs_take_error(engine: *Engine) ?[*:0]u8;
 extern fn lnako_qjs_free_string(text: [*:0]u8) void;
@@ -353,7 +353,19 @@ pub fn installModules(runtime: *Runtime, state: *State, modules: []const @import
     for (modules) |module| {
         const filename = try moduleFilename(runtime.allocator(), module.path);
         defer runtime.allocator().free(filename);
-        if (lnako_qjs_add_module_source(engine, filename.ptr, module.source.ptr, module.source.len) < 0) return error.QuickJsModuleRegistrationFailed;
+        // package所有moduleはrootも `/` 区切りへ正規化して渡す。bridge側の
+        // module_normalizeが、このmoduleおよびroot配下で読まれたmoduleの
+        // import解決にroot包含を強制し、graph収集の盲点となった形でも
+        // root外へのFS fallbackを拒否する。
+        const package_root: ?[:0]u8 = if (module.package_root) |root| blk: {
+            const normalized = try runtime.allocator().dupeZ(u8, root);
+            for (normalized) |*character| if (character.* == '\\') {
+                character.* = '/';
+            };
+            break :blk normalized;
+        } else null;
+        defer if (package_root) |root| runtime.allocator().free(root);
+        if (lnako_qjs_add_module_source(engine, filename.ptr, module.source.ptr, module.source.len, if (package_root) |root| root.ptr else null) < 0) return error.QuickJsModuleRegistrationFailed;
     }
     for (modules) |module| {
         if (!module.is_plugin) continue;
@@ -892,4 +904,92 @@ test "QuickJSモジュール名のWindows区切りを正規化する" {
     const filename = try moduleFilename(std.testing.allocator, "C:\\work\\plugin\\main.mjs");
     defer std.testing.allocator.free(filename);
     try std.testing.expectEqualStrings("C:/work/plugin/main.mjs", filename);
+}
+
+test "package所有moduleのimport解決はpackage root外へのFS fallbackを拒否する" {
+    if (!build_options.quickjs_enabled) return;
+    // graph側の収集をすり抜けたimport形でも、referrerがpackage所有なら
+    // module_normalizeの段でroot外解決を拒否する — loaderのfopen fallback
+    // が境界の逃げ道にならないことを実FS上のfileで検証する。
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.createDirPath(io, "pkg");
+    try tmp.dir.writeFile(io, .{ .sub_path = "outside.mjs", .data = "export const secret = 1;" });
+    const base_abs = try tmp.dir.realPathFileAlloc(io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base_abs);
+    const pkg_root = try std.fs.path.resolve(std.testing.allocator, &.{ base_abs, "pkg" });
+    defer std.testing.allocator.free(pkg_root);
+    const main_path = try std.fs.path.resolve(std.testing.allocator, &.{ pkg_root, "main.mjs" });
+    defer std.testing.allocator.free(main_path);
+    const inner_path = try std.fs.path.resolve(std.testing.allocator, &.{ pkg_root, "inner.mjs" });
+    defer std.testing.allocator.free(inner_path);
+    const helper_path = try std.fs.path.resolve(std.testing.allocator, &.{ pkg_root, "helper.mjs" });
+    defer std.testing.allocator.free(helper_path);
+    const free_path = try std.fs.path.resolve(std.testing.allocator, &.{ base_abs, "free.mjs" });
+    defer std.testing.allocator.free(free_path);
+    const missing_path = try std.fs.path.resolve(std.testing.allocator, &.{ base_abs, "missing.mjs" });
+    defer std.testing.allocator.free(missing_path);
+
+    const engine = lnako_qjs_new() orelse return error.SkipZigTest;
+    defer lnako_qjs_release(engine);
+    const root_name = try moduleFilename(std.testing.allocator, pkg_root);
+    defer std.testing.allocator.free(root_name);
+    const main_name = try moduleFilename(std.testing.allocator, main_path);
+    defer std.testing.allocator.free(main_name);
+    const inner_name = try moduleFilename(std.testing.allocator, inner_path);
+    defer std.testing.allocator.free(inner_name);
+    const helper_name = try moduleFilename(std.testing.allocator, helper_path);
+    defer std.testing.allocator.free(helper_name);
+    const free_name = try moduleFilename(std.testing.allocator, free_path);
+    defer std.testing.allocator.free(free_name);
+    const missing_name = try moduleFilename(std.testing.allocator, missing_path);
+    defer std.testing.allocator.free(missing_name);
+
+    // package所有として登録されたmoduleのimportがroot外を指す場合、
+    // 静的form・動的formともに実行時のmodule解決は失敗する（fopenへ到達しない）。
+    const escaping = "import { secret } from '../outside.mjs'; export default secret;";
+    try std.testing.expectEqual(@as(c_int, 0), lnako_qjs_add_module_source(engine, main_name.ptr, escaping.ptr, escaping.len, root_name.ptr));
+    try std.testing.expect(lnako_qjs_eval_module(engine, escaping.ptr, escaping.len, main_name.ptr) == null);
+    const message = lnako_qjs_take_error(engine) orelse return error.TestUnexpectedResult;
+    defer lnako_qjs_free_string(message);
+    try std.testing.expect(std.mem.indexOf(u8, std.mem.span(message), "package root") != null);
+
+    // 動的importのrejection経路 — specifierがroot外ならnormalize段で
+    // 例外を投げ、module解決はrejectedになる。
+    const dynamic_escaping = "export default await import('../outside.mjs');";
+    const dynamic_path = try std.fs.path.resolve(std.testing.allocator, &.{ pkg_root, "dynamic.mjs" });
+    defer std.testing.allocator.free(dynamic_path);
+    const dynamic_name = try moduleFilename(std.testing.allocator, dynamic_path);
+    defer std.testing.allocator.free(dynamic_name);
+    try std.testing.expectEqual(@as(c_int, 0), lnako_qjs_add_module_source(engine, dynamic_name.ptr, dynamic_escaping.ptr, dynamic_escaping.len, root_name.ptr));
+    try std.testing.expect(lnako_qjs_eval_module(engine, dynamic_escaping.ptr, dynamic_escaping.len, dynamic_name.ptr) == null);
+    const dynamic_message = lnako_qjs_take_error(engine) orelse return error.TestUnexpectedResult;
+    defer lnako_qjs_free_string(dynamic_message);
+    try std.testing.expect(std.mem.indexOf(u8, std.mem.span(dynamic_message), "package root") != null);
+
+    // root内のspecifierは受理され、登録済みsourceが使われる。
+    const inside = "import { ok } from './helper.mjs'; export default ok;";
+    const helper = "export const ok = 7;";
+    try std.testing.expectEqual(@as(c_int, 0), lnako_qjs_add_module_source(engine, inner_name.ptr, inside.ptr, inside.len, root_name.ptr));
+    try std.testing.expectEqual(@as(c_int, 0), lnako_qjs_add_module_source(engine, helper_name.ptr, helper.ptr, helper.len, root_name.ptr));
+    const inside_result = lnako_qjs_eval_module(engine, inside.ptr, inside.len, inner_name.ptr) orelse return error.TestUnexpectedResult;
+    var actual: f64 = 0;
+    try std.testing.expectEqual(@as(c_int, 0), lnako_qjs_to_number(inside_result, &actual));
+    try std.testing.expectEqual(@as(f64, 7), actual);
+    lnako_qjs_value_free(inside_result);
+
+    // package外module（root未登録）のFS fallbackは従来どおり動く。
+    const free_source = "import { secret } from './outside.mjs'; export default secret;";
+    try std.testing.expectEqual(@as(c_int, 0), lnako_qjs_add_module_source(engine, free_name.ptr, free_source.ptr, free_source.len, null));
+    const free_result = lnako_qjs_eval_module(engine, free_source.ptr, free_source.len, free_name.ptr) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(c_int, 0), lnako_qjs_to_number(free_result, &actual));
+    try std.testing.expectEqual(@as(f64, 1), actual);
+    lnako_qjs_value_free(free_result);
+
+    // root外moduleのroot外import — 未登録fileのfopen失敗は従来の拒否経路。
+    const missing_source = "export default await import('./missing-target.mjs');";
+    try std.testing.expect(lnako_qjs_eval_module(engine, missing_source.ptr, missing_source.len, missing_name.ptr) == null);
+    const missing_message = lnako_qjs_take_error(engine) orelse return error.TestUnexpectedResult;
+    defer lnako_qjs_free_string(missing_message);
 }

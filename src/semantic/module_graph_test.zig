@@ -780,7 +780,7 @@ test "package内JSの非リテラル動的importは拒否し直接importでは�
     try std.testing.expect(!rejected.succeeded());
     var reported = false;
     for (rejected.diagnostics) |item| {
-        if (std.mem.indexOf(u8, item.message, "リテラル指定以外") != null) reported = true;
+        if (std.mem.indexOf(u8, item.message, "静的に解決できない") != null) reported = true;
     }
     try std.testing.expect(reported);
 
@@ -822,7 +822,7 @@ test "package内JSの部分リテラル動的importは誤った辺を記録せ�
         try std.testing.expectEqual(@as(usize, 0), graph.modules[1].imports.len);
         var reported = false;
         for (graph.diagnostics) |item| {
-            if (std.mem.indexOf(u8, item.message, "リテラル指定以外") != null) reported = true;
+            if (std.mem.indexOf(u8, item.message, "静的に解決できない") != null) reported = true;
         }
         try std.testing.expect(reported);
     }
@@ -854,6 +854,196 @@ test "直接importのJSの部分リテラル動的importは収集を諦めても
         .{ .suffix = "ok.mjs", .source = "export const value = 1;" },
     } };
     var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .compat_js = true });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
+    try std.testing.expectEqual(@as(usize, 0), graph.modules[1].imports.len);
+}
+
+test "package内JSのtemplate literal補間内の動的importもpackage境界で検査する" {
+    // tokenizerがtemplate literalをtextごとskipすると `${...}` 内の式まで
+    // 見えなくなり、`` `${await import('../outside.mjs')}` `` のimportが
+    // graphへ記録されず実行時のFS fallbackがroot外を読み得た。補間内の式は
+    // token化して通常の動的importとして収集・検査する。
+    var escaped = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:esm」を取り込む\n" },
+        .{ .suffix = "packages/esm/plugin.mjs", .source = "export default async () => `${await import('../outside.mjs')}`;" },
+        .{ .suffix = "packages/outside.mjs", .source = "export const value = 1;" },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var rejected = try load(std.testing.allocator, "main.nako3", escaped.sourceProvider(), .{ .compat_js = true, .package_resolver = package_resolver.resolver() });
+    defer rejected.deinit();
+    try std.testing.expect(!rejected.succeeded());
+    try std.testing.expectEqual(@as(usize, 2), rejected.modules.len);
+    try std.testing.expectEqual(@as(usize, 0), rejected.modules[1].imports.len);
+    var reported = false;
+    for (rejected.diagnostics) |item| {
+        if (std.mem.indexOf(u8, item.message, "package rootの外") != null) reported = true;
+    }
+    try std.testing.expect(reported);
+
+    // 補間内のin-rootリテラルは通常どおり収集して辺を作る。
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:esm」を取り込む\n" },
+        .{ .suffix = "packages/esm/plugin.mjs", .source = "export default async () => `outer${`nested${await import('./extra.mjs')}`}`;" },
+        .{ .suffix = "packages/esm/extra.mjs", .source = "export const value = 1;" },
+    } };
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .compat_js = true, .package_resolver = package_resolver.resolver() });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 3), graph.modules.len);
+    try std.testing.expectEqual(@as(usize, 1), graph.modules[1].imports.len);
+    try std.testing.expectEqualStrings("./extra.mjs", graph.modules[1].imports[0].requested);
+}
+
+test "package内JSのtemplate補間内の非リテラル動的importは拒否する" {
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:esm」を取り込む\n" },
+        .{ .suffix = "packages/esm/plugin.mjs", .source = "export default async (name) => `${await import(name)}`;" },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var rejected = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .compat_js = true, .package_resolver = package_resolver.resolver() });
+    defer rejected.deinit();
+    try std.testing.expect(!rejected.succeeded());
+    var reported = false;
+    for (rejected.diagnostics) |item| {
+        if (std.mem.indexOf(u8, item.message, "静的に解決できない") != null) reported = true;
+    }
+    try std.testing.expect(reported);
+}
+
+test "export式中の動的importも収集してpackage境界で検査する" {
+    // `export const p = import('./x')` はexport文の走査が `import` tokenを
+    // 消費し、その後の `(` で打ち切るため動的form全体が未検出だった。
+    // object key `{import: 1}` の直後の `import()` も同様に呑まれる。
+    // 式中の `import`/`export` は内側走査で巻き戻して外側loopへ返す。
+    const escaping_sources = [_][]const u8{
+        "export const p = import('../outside.mjs');",
+        "export default await import('../outside.mjs');",
+        "const o = {import: 1, f: () => import('../outside.mjs')}; export default o;",
+    };
+    for (escaping_sources) |plugin_source| {
+        var memory = MemoryProvider{ .files = &.{
+            .{ .suffix = "main.nako3", .source = "!「pkg:esm」を取り込む\n" },
+            .{ .suffix = "packages/esm/plugin.mjs", .source = plugin_source },
+            .{ .suffix = "packages/outside.mjs", .source = "export const value = 1;" },
+        } };
+        var package_resolver = PackageTestResolver{};
+        var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .compat_js = true, .package_resolver = package_resolver.resolver() });
+        defer graph.deinit();
+        try std.testing.expect(!graph.succeeded());
+        // edgeが記録されて境界検査で止まっている（未収集のsilent missではない）
+        try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
+        var reported = false;
+        for (graph.diagnostics) |item| {
+            if (std.mem.indexOf(u8, item.message, "package rootの外") != null) reported = true;
+        }
+        try std.testing.expect(reported);
+    }
+}
+
+test "escape列を含む取り込み指定は診断にしsilentな成功にしない" {
+    // `import x from '\x2e\x2e/outside.mjs'` は復号しないと実pathが定まら
+    // ない。以前はUnsupportedJavaScriptImportEscapeがnested loadの
+    // `else => null` catchで黙殺され、診断なしの成功＋未検査のまま実行時
+    // fallbackへ到達していた。escape列は所有の有無に関わらず診断する。
+    const escaped_sources = [_][]const u8{
+        "import x from '\\x2e\\x2e/outside.mjs'; export default x;",
+        "export default async () => import('\\x2e\\x2e/outside.mjs');",
+        "export * from '\\x2e\\x2e/outside.mjs';",
+    };
+    for (escaped_sources) |plugin_source| {
+        var memory = MemoryProvider{ .files = &.{
+            .{ .suffix = "main.nako3", .source = "!「pkg:esm」を取り込む\n" },
+            .{ .suffix = "packages/esm/plugin.mjs", .source = plugin_source },
+            .{ .suffix = "packages/outside.mjs", .source = "export const value = 1;" },
+        } };
+        var package_resolver = PackageTestResolver{};
+        var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .compat_js = true, .package_resolver = package_resolver.resolver() });
+        defer graph.deinit();
+        try std.testing.expect(!graph.succeeded());
+        try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
+        try std.testing.expectEqual(@as(usize, 0), graph.modules[1].imports.len);
+        var reported = false;
+        for (graph.diagnostics) |item| {
+            if (std.mem.indexOf(u8, item.message, "escape列") != null) reported = true;
+        }
+        try std.testing.expect(reported);
+    }
+
+    // 直接path取り込みの非package moduleでも診断は同じく出る — nested load
+    // で黙殺されていたため、これまでsilentな成功になり得た。
+    var direct_memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「plugin.mjs」を取り込む\n" },
+        .{ .suffix = "plugin.mjs", .source = "import x from '\\x2e\\x2e/outside.mjs'; export default x;" },
+        .{ .suffix = "outside.mjs", .source = "export const value = 1;" },
+    } };
+    var graph = try load(std.testing.allocator, "main.nako3", direct_memory.sourceProvider(), .{ .compat_js = true });
+    defer graph.deinit();
+    try std.testing.expect(!graph.succeeded());
+    var reported = false;
+    for (graph.diagnostics) |item| {
+        if (std.mem.indexOf(u8, item.message, "escape列") != null) reported = true;
+    }
+    try std.testing.expect(reported);
+}
+
+test "多数のnamed bindingを持つ静的importでもspecifierを収集する" {
+    // 以前の内側走査は256tokenで打ち切るため、多数のnamed bindingを持つ
+    // `import {…} from '../x'` のspecifierが未走査のままsilentに消え、
+    // package境界検査がすり抜けていた。上限は撤廃し、走査不能な場合のみ
+    // fail-closedで報告する。
+    const many_bindings = comptime blk: {
+        @setEvalBranchQuota(200_000);
+        var out: []const u8 = "import {";
+        for (0..160) |i| out = out ++ std.fmt.comptimePrint("n{d} as m{d},", .{ i, i });
+        break :blk out ++ "z} from '../outside.mjs'; export default null;";
+    };
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:esm」を取り込む\n" },
+        .{ .suffix = "packages/esm/plugin.mjs", .source = many_bindings },
+        .{ .suffix = "packages/outside.mjs", .source = "export const value = 1;" },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .compat_js = true, .package_resolver = package_resolver.resolver() });
+    defer graph.deinit();
+    try std.testing.expect(!graph.succeeded());
+    var reported = false;
+    for (graph.diagnostics) |item| {
+        if (std.mem.indexOf(u8, item.message, "package rootの外") != null) reported = true;
+    }
+    try std.testing.expect(reported);
+}
+
+test "未終了のtemplate literalは収集不能なimportを残し得るためpackage内で拒否する" {
+    // `` `abc${expr `` のようにsource終端まで閉じないtemplate/
+    // interpolationは残りを未走査にする。閉じ欠落をsilentに成功扱いすると
+    // その先のimportが一切記録されないため、opaqueとして報告する。
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:esm」を取り込む\n" },
+        .{ .suffix = "packages/esm/plugin.mjs", .source = "export default `abc${value" },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var rejected = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .compat_js = true, .package_resolver = package_resolver.resolver() });
+    defer rejected.deinit();
+    try std.testing.expect(!rejected.succeeded());
+    var reported = false;
+    for (rejected.diagnostics) |item| {
+        if (std.mem.indexOf(u8, item.message, "静的に解決できない") != null) reported = true;
+    }
+    try std.testing.expect(reported);
+}
+
+test "obj.importメンバ呼出しとimport.metaは取り込みとして扱わない" {
+    // `o.import('./x')` はメンバ呼出しであってmoduleを読み込まない。
+    // `import` と誤認するとphantomなedgeやpackage codeの誤拒否になる。
+    // `import.meta` も同様にspecifierを持たない。
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:esm」を取り込む\n" },
+        .{ .suffix = "packages/esm/plugin.mjs", .source = "const o = {import: (s) => s}; export const v = o.import('./missing.mjs'); export const u = import.meta.url;" },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .compat_js = true, .package_resolver = package_resolver.resolver() });
     defer graph.deinit();
     try std.testing.expect(graph.succeeded());
     try std.testing.expectEqual(@as(usize, 2), graph.modules.len);

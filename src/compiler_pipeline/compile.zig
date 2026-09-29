@@ -180,6 +180,12 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
         }
         if (merged) |existing| {
             existing.is_plugin = existing.is_plugin or plugin_modules[module.index];
+            // 同一pathの別scope側がpackage所有ならrootを引き継ぐ — moduleが
+            // root配下にある以上、そのimport解決をroot内へ拘束するのは
+            // 直接import側のscopeとも矛盾しない（runtime境界として機能）。
+            if (existing.package_root == null) {
+                existing.package_root = if (module.package_root) |root| try ir_program.arena.allocator().dupe(u8, root) else null;
+            }
             for (plugin_namespaces[module.index].items) |namespace| {
                 var listed = false;
                 for (existing.namespaces) |current| {
@@ -203,6 +209,7 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
             .source = try ir_program.arena.allocator().dupe(u8, module.source),
             .is_plugin = plugin_modules[module.index],
             .namespaces = namespaces,
+            .package_root = if (module.package_root) |root| try ir_program.arena.allocator().dupe(u8, root) else null,
         });
     }
     ir_program.javascript_modules = try javascript_modules.toOwnedSlice(ir_program.arena.allocator());

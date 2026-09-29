@@ -2,7 +2,7 @@
 
 LnakoQuickJs *lnako_qjs_new(void) { return 0; }
 void lnako_qjs_set_host(LnakoQuickJs *engine, void *opaque, LnakoQuickJsHostGet get, LnakoQuickJsHostSet set, LnakoQuickJsHostInvoke invoke, LnakoQuickJsHostExec exec) { (void)engine; (void)opaque; (void)get; (void)set; (void)invoke; (void)exec; }
-int lnako_qjs_add_module_source(LnakoQuickJs *engine, const char *name, const char *source, size_t length) { (void)engine; (void)name; (void)source; (void)length; return -1; }
+int lnako_qjs_add_module_source(LnakoQuickJs *engine, const char *name, const char *source, size_t length, const char *package_root) { (void)engine; (void)name; (void)source; (void)length; (void)package_root; return -1; }
 void lnako_qjs_retain(LnakoQuickJs *engine) { (void)engine; }
 void lnako_qjs_release(LnakoQuickJs *engine) { (void)engine; }
 char *lnako_qjs_take_error(LnakoQuickJs *engine) { (void)engine; return 0; }

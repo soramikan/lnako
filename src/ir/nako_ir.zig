@@ -225,6 +225,11 @@ pub const JavaScriptModule = struct {
     /// path importとpackage importが併存する場合は空エントリを含み、
     /// その分は無修飾登録も行う。
     namespaces: []const []const u8 = &.{},
+    /// このmoduleを所有するpackageのcanonical root。実行時のQuickJS
+    /// module_normalizeがこのmoduleからのimport解決をroot内へ拘束し、
+    /// graph側の収集をすり抜けた形のFS fallbackがroot外を読めないように
+    /// する。package外moduleはnull（無制限の従来挙動）。
+    package_root: ?[]const u8 = null,
 };
 
 pub const Program = struct {
@@ -292,6 +297,7 @@ pub const Program = struct {
             module.path = try allocator.dupe(u8, module.path);
             module.source = try allocator.dupe(u8, module.source);
             module.namespaces = try cloneStrings(allocator, module.namespaces);
+            module.package_root = if (module.package_root) |root| try allocator.dupe(u8, root) else null;
         }
         const native_plugin_paths = try allocator.alloc([]const u8, self.native_plugin_paths.len);
         for (self.native_plugin_paths, native_plugin_paths) |source_path, *target_path| target_path.* = try allocator.dupe(u8, source_path);

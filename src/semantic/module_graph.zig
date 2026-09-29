@@ -678,18 +678,24 @@ pub const Loader = struct {
 
         if (kind == .javascript) {
             var imports: std.ArrayList(Import) = .empty;
-            var has_opaque_dynamic = false;
-            const requested_imports = try collectJavaScriptImports(self.allocator, source, &has_opaque_dynamic);
-            // package所有moduleの `import(expr)` は指定が静的に定まらず、
-            // QuickJS側loaderのFS fallbackがpackage root外を読み得るため
-            // 明示的に拒否する。判定は moduleIsPackageContent — owner/
-            // canonical_idのみを持つmodule（旧payload等）もroot無しで
-            // 境界検査を迂回させない。非package module（直接path import）は
-            // ユーザー自身のfileへの解決として従来挙動を維持する。
-            if (has_opaque_dynamic and moduleIsPackageContent(module)) {
-                try self.importDiagnostic(import_node, path, "package内のJavaScriptでは動的importにリテラル指定以外を使えません");
+            const scan = try collectJavaScriptImports(self.allocator, source);
+            // escape列を含むspecifierは復号しないと実pathが定まらず、収集を
+            // 諦めると実行時のFS fallbackが未検査のpathを読み得る。所有の
+            // 有無に関わらず診断する（nested loadのerror黙殺で graph が
+            // 診断なしの成功にならないようにする）。
+            if (scan.has_unsupported_escape) {
+                try self.importDiagnostic(import_node, path, "JavaScriptの取り込み指定にescape列は使えません");
             }
-            for (requested_imports) |requested| {
+            // package所有moduleで静的に解決できない取り込み指定は、QuickJS側
+            // loaderのFS fallbackがpackage root外を読み得るため明示的に拒否
+            // する。判定は moduleIsPackageContent — owner/canonical_idのみを
+            // 持つmodule（旧payload等）もroot無しで境界検査を迂回させない。
+            // 非package module（直接path import）はユーザー自身のfileへの
+            // 解決として従来挙動を維持する。
+            if (scan.has_opaque_dynamic and moduleIsPackageContent(module)) {
+                try self.importDiagnostic(import_node, path, "package内のJavaScriptでは静的に解決できない取り込み指定は使えません");
+            }
+            for (scan.imports) |requested| {
                 if (!std.fs.path.isAbsolute(requested) and !std.mem.startsWith(u8, requested, ".")) continue;
                 const resolved = resolveImport(self.allocator, path, requested) catch |err| {
                     if (err == error.OutOfMemory) return err;
@@ -1121,46 +1127,208 @@ fn collectImports(node: *ast.Node, output: *std.ArrayList(*ast.Node), allocator:
 const JavaScriptTokenKind = enum { identifier, string, punctuation };
 const JavaScriptToken = struct { kind: JavaScriptTokenKind, text: []const u8 };
 
+/// template literal内で `${` / `{` の対応を追跡する文脈。
+/// `.interpolation` は `${` で開く式領域、`.brace` は式中の `{`。
+const JavaScriptTemplateContext = enum { brace, interpolation };
+
+/// JavaScript sourceの軽量tokenizer。`import` 文の収集が目的のため、
+/// 文字列は内容をtokenとして返し、template literalのtext部分はスキップ
+/// する。ただし `${...}` interpolation内の式は実行時に評価され
+/// `import()` を含み得るためtoken化対象とする — 全体をskipすると補間内の
+/// 動的importがgraphへ記録されず、QuickJS側loaderのFS fallbackが
+/// package root外を読み得る。文字列・template・interpolation・文脈stackが
+/// source終端までに閉じない（または上限を超える）場合は `truncated` を
+/// 立て、呼出し側が収集不能なimportの残存をfail-closedで扱えるようにする。
+const JavaScriptScanner = struct {
+    source: []const u8,
+    index: usize = 0,
+    truncated: bool = false,
+    contexts: [max_context_nesting]JavaScriptTemplateContext = undefined,
+    contexts_len: usize = 0,
+
+    const max_context_nesting = 1024;
+
+    fn pushContext(self: *JavaScriptScanner, context: JavaScriptTemplateContext) void {
+        if (self.contexts_len == max_context_nesting) {
+            // 追跡不能な深さはtruncate扱いにしてfail-closedする。
+            self.truncated = true;
+            return;
+        }
+        self.contexts[self.contexts_len] = context;
+        self.contexts_len += 1;
+    }
+
+    /// `` ` `` 直後、またはinterpolationを閉じた `}` 直後のtemplate textを
+    /// 走査する。`` ` `` で閉じれば通常token化へ戻り、`${` があれば
+    /// interpolation文脈をpushして式のtoken化へ移る。終端まで閉じなければ
+    /// truncatedを立てる。
+    fn scanTemplateText(self: *JavaScriptScanner) void {
+        while (self.index < self.source.len) {
+            const character = self.source[self.index];
+            if (character == '\\') {
+                self.index = @min(self.source.len, self.index + 2);
+                continue;
+            }
+            if (character == '`') {
+                self.index += 1;
+                return;
+            }
+            if (character == '$' and self.index + 1 < self.source.len and self.source[self.index + 1] == '{') {
+                self.index += 2;
+                self.pushContext(.interpolation);
+                return;
+            }
+            self.index += 1;
+        }
+        self.truncated = true;
+    }
+
+    fn next(self: *JavaScriptScanner) ?JavaScriptToken {
+        while (self.index < self.source.len) {
+            const character = self.source[self.index];
+            if (std.ascii.isWhitespace(character)) {
+                self.index += 1;
+                continue;
+            }
+            if (character == '/' and self.index + 1 < self.source.len and self.source[self.index + 1] == '/') {
+                self.index += 2;
+                while (self.index < self.source.len and self.source[self.index] != '\n') self.index += 1;
+                continue;
+            }
+            if (character == '/' and self.index + 1 < self.source.len and self.source[self.index + 1] == '*') {
+                self.index += 2;
+                while (self.index + 1 < self.source.len and !(self.source[self.index] == '*' and self.source[self.index + 1] == '/')) self.index += 1;
+                self.index = @min(self.source.len, self.index + 2);
+                continue;
+            }
+            if (character == '`') {
+                self.index += 1;
+                self.scanTemplateText();
+                continue;
+            }
+            if (character == '{') {
+                self.pushContext(.brace);
+                self.index += 1;
+                return .{ .kind = .punctuation, .text = self.source[self.index - 1 .. self.index] };
+            }
+            if (character == '}') {
+                self.index += 1;
+                if (self.contexts_len > 0) {
+                    const context = self.contexts[self.contexts_len - 1];
+                    self.contexts_len -= 1;
+                    // `${` を閉じる `}` はtemplate text側へ文脈を戻すだけで
+                    // tokenとして返さない。式中の `{` を閉じる `}` のみ返す。
+                    if (context == .interpolation) {
+                        self.scanTemplateText();
+                        continue;
+                    }
+                }
+                return .{ .kind = .punctuation, .text = self.source[self.index - 1 .. self.index] };
+            }
+            if (character == '\'' or character == '"') {
+                const quote = character;
+                const start = self.index + 1;
+                self.index = start;
+                while (self.index < self.source.len) : (self.index += 1) {
+                    if (self.source[self.index] == '\\') {
+                        self.index = @min(self.source.len, self.index + 1);
+                        continue;
+                    }
+                    if (self.source[self.index] == quote) {
+                        const text = self.source[start..self.index];
+                        self.index += 1;
+                        return .{ .kind = .string, .text = text };
+                    }
+                }
+                self.truncated = true;
+                return null;
+            }
+            if (std.ascii.isAlphabetic(character) or character == '_' or character == '$') {
+                const start = self.index;
+                self.index += 1;
+                while (self.index < self.source.len and (std.ascii.isAlphanumeric(self.source[self.index]) or self.source[self.index] == '_' or self.source[self.index] == '$')) self.index += 1;
+                return .{ .kind = .identifier, .text = self.source[start..self.index] };
+            }
+            self.index += 1;
+            return .{ .kind = .punctuation, .text = self.source[self.index - 1 .. self.index] };
+        }
+        // 開いたままのinterpolation文脈が残っていればsourceは構造を閉じずに
+        // 終端へ達している — 残りのtokenが未走査のまま見逃されるため
+        // truncatedとして報告する。
+        if (self.contexts_len > 0) self.truncated = true;
+        return null;
+    }
+};
+
+/// `collectJavaScriptImports` の走査結果。
+const JavaScriptScan = struct {
+    imports: [][]const u8,
+    /// 静的に解決できない取り込み指定（非リテラル `import(expr)`、未終了の
+    /// 構造、走査不能なtemplate/interpolation等）が存在する。記録されない
+    /// importは実行時にQuickJS loaderのFS fallbackを通るため、package所有
+    /// moduleでは呼出し側が境界違反として拒否する。
+    has_opaque_dynamic: bool = false,
+    /// escape列を含む取り込み指定が存在する。復号しないと実pathが定まらず
+    /// `pathWithinRoot` 検査をすり抜けるため、所有の有無に関わらず呼出し側
+    /// が診断する（nested loadでのerror黙殺によるsilentな成功を生じさせない）。
+    has_unsupported_escape: bool = false,
+};
+
 /// JS moduleの `import`/`export … from` と動的 `import("…")` のリテラル
 /// 指定を収集する。動的formも収集しないとQuickJS側module loaderがFSへ
 /// fallbackしてpackage rootの外を読み得るため、リテラル指定は静的同様に
 /// 収集対象とする。ただし動的リテラルは `)` または第二引数の `,` で閉じる
 /// ものに限る — `import("a" + expr)` は実行時評価で別の指定になり得るため
-/// 先頭リテラルを記録すると誤った辺と境界検査のすり抜けになる。記録を
-/// 断念する非リテラル指定は `has_opaque_dynamic` で報告し、package所有
-/// moduleでは呼出し側が境界違反として拒否する。
-fn collectJavaScriptImports(allocator: std.mem.Allocator, source: []const u8, has_opaque_dynamic: *bool) ![][]const u8 {
+/// 先頭リテラルを記録すると誤った辺と境界検査のすり抜けになる。
+///
+/// `import`/`export` をstatementとして読み進める内側loopは、式中に別の
+/// `import`/`export` tokenを見つけた時点で巻き戻して外側loopへ返す —
+/// `export const p = import('./x')` のような式中の動的formや object key
+/// `{import: 1}` 直後の `import()` が内側のskip処理で消えないようにする。
+/// `.import` のようなメンバ呼出しはJSとしてmoduleを読み込まないため除外し、
+/// 誤ったedge記録とpackage codeの誤拒否を防ぐ。
+fn collectJavaScriptImports(allocator: std.mem.Allocator, source: []const u8) !JavaScriptScan {
+    var scan: JavaScriptScan = .{ .imports = &.{} };
     var result: std.ArrayList([]const u8) = .empty;
-    var index: usize = 0;
-    while (nextJavaScriptToken(source, &index)) |token| {
+    var scanner = JavaScriptScanner{ .source = source };
+    // 直前に消費したtokenが `.` か。`o.import(...)` のようなメンバ呼出しを
+    // `import` statement/動的formと誤認しないための判定に使う。
+    var last_was_dot = false;
+    while (scanner.next()) |token| {
+        const dot_member = last_was_dot;
+        last_was_dot = token.kind == .punctuation and std.mem.eql(u8, token.text, ".");
         if (token.kind != .identifier) continue;
         const is_import = std.mem.eql(u8, token.text, "import");
         const is_export = std.mem.eql(u8, token.text, "export");
-        if (!is_import and !is_export) continue;
+        if ((!is_import and !is_export) or dot_member) continue;
         var saw_from = false;
         var dynamic = false;
         var dynamic_literal: ?[]const u8 = null;
-        var scanned: usize = 0;
-        while (scanned < 256) : (scanned += 1) {
-            const candidate = nextJavaScriptToken(source, &index) orelse {
+        var first = true;
+        while (true) {
+            const mark = scanner.index;
+            const candidate = scanner.next() orelse {
                 // 動的formが閉じずにsource終端へ達した場合も記録不能として
                 // 報告する（非package moduleでは従来どおり無視される）。
-                if (dynamic) has_opaque_dynamic.* = true;
+                if (dynamic) scan.has_opaque_dynamic = true;
                 break;
             };
+            const candidate_dot = last_was_dot;
+            last_was_dot = candidate.kind == .punctuation and std.mem.eql(u8, candidate.text, ".");
             if (dynamic) {
                 if (dynamic_literal == null) {
                     // `(` 直後はspecifierリテラル文字列のみ受理する。escape
-                    // 列を含む文字列も記録せずopaque扱いにする（静的指定側の
-                    // UnsupportedJavaScriptImportEscape とは別に、動的formは
-                    // 「収集しない」が安全側の扱いになる）。
-                    if (candidate.kind == .string and
-                        std.mem.indexOfScalar(u8, candidate.text, '\\') == null)
-                    {
+                    // 列を含む文字列は復号しないと実pathが定まらないため
+                    // 収集せず、診断対象として報告する。
+                    if (candidate.kind == .string) {
+                        if (std.mem.indexOfScalar(u8, candidate.text, '\\') != null) {
+                            scan.has_unsupported_escape = true;
+                            break;
+                        }
                         dynamic_literal = candidate.text;
                         continue;
                     }
-                    has_opaque_dynamic.* = true;
+                    scan.has_opaque_dynamic = true;
                     break;
                 }
                 // リテラル直後は `)`（呼出し終了）か `,`（第二引数=options
@@ -1173,92 +1341,70 @@ fn collectJavaScriptImports(allocator: std.mem.Allocator, source: []const u8, ha
                     try result.append(allocator, try allocator.dupe(u8, dynamic_literal.?));
                     dynamic = false;
                 } else {
-                    has_opaque_dynamic.* = true;
+                    scan.has_opaque_dynamic = true;
                 }
+                break;
+            }
+            // 文の内側で別の `import`/`export` を見つけた場合（export式中の
+            // `import()`、object key直後の `import()` 等）、そのtoken自体を
+            // 外側loopで再走査するため巻き戻して内側を抜ける。消費したまま
+            // 進むと式中の動的importが一切記録されない。
+            if (candidate.kind == .identifier and !candidate_dot and
+                (std.mem.eql(u8, candidate.text, "import") or std.mem.eql(u8, candidate.text, "export")))
+            {
+                scanner.index = mark;
                 break;
             }
             if (candidate.kind == .punctuation and std.mem.eql(u8, candidate.text, ";")) break;
             if (candidate.kind == .punctuation and std.mem.eql(u8, candidate.text, "(")) {
                 // `import("…")` の動的formは先頭tokenとして `(` が来る。
-                if (is_import and scanned == 0) {
+                if (is_import and first) {
                     dynamic = true;
+                    first = false;
                     continue;
                 }
                 break;
             }
-            if (candidate.kind == .identifier and std.mem.eql(u8, candidate.text, "from")) {
-                saw_from = true;
-                continue;
-            }
-            if (candidate.kind != .string) continue;
-            if (std.mem.indexOfScalar(u8, candidate.text, '\\') != null) return error.UnsupportedJavaScriptImportEscape;
-            if ((is_import and (saw_from or scanned == 0)) or (is_export and saw_from)) try result.append(allocator, try allocator.dupe(u8, candidate.text));
-            break;
-        }
-        // token走査の上限へ達しても動的formが確定していなければ、記録され
-        // なかったことを呼出し側へ伝える（package moduleでは拒否される）。
-        if (dynamic) has_opaque_dynamic.* = true;
-    }
-    return result.toOwnedSlice(allocator);
-}
-
-fn nextJavaScriptToken(source: []const u8, index: *usize) ?JavaScriptToken {
-    while (index.* < source.len) {
-        const character = source[index.*];
-        if (std.ascii.isWhitespace(character)) {
-            index.* += 1;
-            continue;
-        }
-        if (character == '/' and index.* + 1 < source.len and source[index.* + 1] == '/') {
-            index.* += 2;
-            while (index.* < source.len and source[index.*] != '\n') index.* += 1;
-            continue;
-        }
-        if (character == '/' and index.* + 1 < source.len and source[index.* + 1] == '*') {
-            index.* += 2;
-            while (index.* + 1 < source.len and !(source[index.*] == '*' and source[index.* + 1] == '/')) index.* += 1;
-            index.* = @min(source.len, index.* + 2);
-            continue;
-        }
-        if (character == '`') {
-            index.* += 1;
-            while (index.* < source.len) : (index.* += 1) {
-                if (source[index.*] == '\\') {
-                    index.* = @min(source.len, index.* + 1);
-                } else if (source[index.*] == '`') {
-                    index.* += 1;
+            if (saw_from) {
+                saw_from = false;
+                if (candidate.kind == .string) {
+                    if (std.mem.indexOfScalar(u8, candidate.text, '\\') != null) {
+                        scan.has_unsupported_escape = true;
+                        break;
+                    }
+                    try result.append(allocator, try allocator.dupe(u8, candidate.text));
                     break;
                 }
+                // `from` 直後が文字列でない場合はspecifierではない。
+                // そのtokenを通常どおり評価するため後続の判定へ進む。
             }
-            continue;
-        }
-        if (character == '\'' or character == '"') {
-            const quote = character;
-            const start = index.* + 1;
-            index.* = start;
-            while (index.* < source.len) : (index.* += 1) {
-                if (source[index.*] == '\\') {
-                    index.* = @min(source.len, index.* + 1);
-                    continue;
-                }
-                if (source[index.*] == quote) {
-                    const text = source[start..index.*];
-                    index.* += 1;
-                    return .{ .kind = .string, .text = text };
-                }
+            if (candidate.kind == .identifier and !candidate_dot and std.mem.eql(u8, candidate.text, "from")) {
+                saw_from = true;
+                first = false;
+                continue;
             }
-            return null;
+            if (candidate.kind != .string) {
+                first = false;
+                continue;
+            }
+            // specifier位置の文字列のみ収集する — `from` 直後か `import "…"`
+            // の文頭form。`export default "./x"` のような値としての文字列を
+            // 辺として記録しない。
+            if (is_import and first) {
+                if (std.mem.indexOfScalar(u8, candidate.text, '\\') != null) {
+                    scan.has_unsupported_escape = true;
+                    break;
+                }
+                try result.append(allocator, try allocator.dupe(u8, candidate.text));
+            }
+            break;
         }
-        if (std.ascii.isAlphabetic(character) or character == '_' or character == '$') {
-            const start = index.*;
-            index.* += 1;
-            while (index.* < source.len and (std.ascii.isAlphanumeric(source[index.*]) or source[index.*] == '_' or source[index.*] == '$')) index.* += 1;
-            return .{ .kind = .identifier, .text = source[start..index.*] };
-        }
-        index.* += 1;
-        return .{ .kind = .punctuation, .text = source[index.* - 1 .. index.*] };
     }
-    return null;
+    // source終端までに閉じない文字列・template・interpolationは残りtokenを
+    // 未走査にする — 収集不能なimportが残り得るためopaqueとして報告する。
+    if (scanner.truncated) scan.has_opaque_dynamic = true;
+    scan.imports = try result.toOwnedSlice(allocator);
+    return scan;
 }
 
 fn normalizePath(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
