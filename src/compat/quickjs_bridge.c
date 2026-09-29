@@ -380,24 +380,39 @@ static char *collapse_dot_segments(JSContext *context, const char *path) {
 /// 包含をすり抜ける in-root symlink 経由のroot外読取りを検出できる。
 /// 実在しないpath（embedded payloadや不存在file）ではNULL — その場合は
 /// lexical包含のみで判定し、不在fileはfopen側が失敗させる。
+/// Windows側は _wfullpath ではなく GetFinalPathNameByHandleW を使う —
+/// 前者は絶対化のみでsymlink/junctionを解決しない。
 static char *canonical_module_path(const char *path) {
 #if defined(_WIN32)
     wchar_t *wide_path = utf8_to_wide(path);
     if (!wide_path) return NULL;
-    wchar_t *absolute = _wfullpath(NULL, wide_path, 0);
+    HANDLE handle = CreateFileW(wide_path, 0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
     free(wide_path);
-    if (!absolute) return NULL;
-    int length = WideCharToMultiByte(CP_UTF8, 0, absolute, -1, NULL, 0, NULL, NULL);
-    if (length <= 0) {
-        free(absolute);
+    if (handle == INVALID_HANDLE_VALUE) return NULL;
+    DWORD needed = GetFinalPathNameByHandleW(handle, NULL, 0, FILE_NAME_NORMALIZED);
+    wchar_t *resolved = needed ? malloc(sizeof(*resolved) * needed) : NULL;
+    if (!resolved || !GetFinalPathNameByHandleW(handle, resolved, needed, FILE_NAME_NORMALIZED)) {
+        free(resolved);
+        CloseHandle(handle);
         return NULL;
     }
-    char *result = malloc((size_t)length);
-    if (result && !WideCharToMultiByte(CP_UTF8, 0, absolute, -1, result, length, NULL, NULL)) {
+    CloseHandle(handle);
+    // `\\?\` プレフィックスを落として `C:\...` 形式へ揃える。
+    wchar_t *plain = resolved;
+    if (needed > 4 && !wcsncmp(resolved, L"\\\\?\\", 4)) plain = resolved + 4;
+    int length = WideCharToMultiByte(CP_UTF8, 0, plain, -1, NULL, 0, NULL, NULL);
+    char *result = length > 0 ? malloc((size_t)length) : NULL;
+    if (result && !WideCharToMultiByte(CP_UTF8, 0, plain, -1, result, length, NULL, NULL)) {
         free(result);
         result = NULL;
     }
-    free(absolute);
+    free(resolved);
+    if (result) {
+        for (char *p = result; *p; p++)
+            if (*p == '\\') *p = '/';
+    }
     return result;
 #else
     return realpath(path, NULL);
@@ -450,11 +465,13 @@ static char *module_normalize(JSContext *context, const char *base_name, const c
     if (root) {
         int inside = path_within_root(root, collapsed);
         if (inside) {
+            // canonical側はrootもcanonicalizeして比較する — root自身が
+            // symlinkを含むとlexical rootとのprefix一致が偽陰性になる。
             char *canonical = canonical_module_path(collapsed);
             if (canonical) {
-                for (char *p = canonical; *p; p++)
-                    if (*p == '\\') *p = '/';
-                inside = path_within_root(root, canonical);
+                char *canonical_root = canonical_module_path(root);
+                inside = path_within_root(canonical_root ? canonical_root : root, canonical);
+                free(canonical_root);
                 free(canonical);
             }
         }
@@ -578,13 +595,20 @@ void lnako_qjs_release(LnakoQuickJs *engine) {
 }
 
 /// package rootの登録用文字列を正規化する。module名と同じく `\`→`/` に
-/// 揃え、包含検査が `path_within_root` のprefix一致で正しく働くよう
-/// 末尾の `/` は落とす。
-static char *normalize_package_root(const char *package_root) {
+/// 揃え、`.`/`..` 要素も畳み込んで、包含検査が `path_within_root` の
+/// prefix一致で正しく働くよう末尾の `/` は落とす。
+static char *normalize_package_root(JSContext *context, const char *package_root) {
     char *root = copy_bytes(package_root, strlen(package_root));
     if (!root) return NULL;
     for (char *p = root; *p; p++)
         if (*p == '\\') *p = '/';
+    char *collapsed = collapse_dot_segments(context, root);
+    if (collapsed) {
+        free(root);
+        root = copy_bytes(collapsed, strlen(collapsed));
+        js_free(context, collapsed);
+        if (!root) return NULL;
+    }
     size_t length = strlen(root);
     while (length > 1 && root[length - 1] == '/') root[--length] = '\0';
     return root;
@@ -596,7 +620,7 @@ int lnako_qjs_add_module_source(LnakoQuickJs *engine, const char *name, const ch
         if (!strcmp(item->name, name)) {
             // 同名moduleの再登録ではrootが未設定の場合のみ補完する
             // （IR側で同一pathがscopeを併合したentryを再送り得る）。
-            if (!item->package_root && package_root && package_root[0]) item->package_root = normalize_package_root(package_root);
+            if (!item->package_root && package_root && package_root[0]) item->package_root = normalize_package_root(engine->context, package_root);
             return 0;
         }
     }
@@ -604,7 +628,7 @@ int lnako_qjs_add_module_source(LnakoQuickJs *engine, const char *name, const ch
     if (!item) return -1;
     item->name = copy_bytes(name, strlen(name));
     item->source = copy_bytes(source, length);
-    item->package_root = (package_root && package_root[0]) ? normalize_package_root(package_root) : NULL;
+    item->package_root = (package_root && package_root[0]) ? normalize_package_root(engine->context, package_root) : NULL;
     if (!item->name || !item->source || (package_root && package_root[0] && !item->package_root)) {
         free(item->name);
         free(item->source);
@@ -724,7 +748,9 @@ LnakoQuickJsValue *lnako_qjs_await(LnakoQuickJs *engine, const LnakoQuickJsValue
     if (!engine || !promise || promise->engine != engine) return NULL;
     if (lnako_qjs_drain_jobs(engine) < 0) return NULL;
     JSPromiseStateEnum state = JS_PromiseState(engine->context, promise->value);
-    if (state == JS_PROMISE_FULFILLED) return wrap_owned(engine, JS_DupValue(engine->context, JS_PromiseResult(engine->context, promise->value)));
+    // JS_PromiseResult自体が参照をdupして返すため更にdupすると1参照ずつ
+    // リークする（rejected経路と同じく結果valueは呼出し側で所有する）。
+    if (state == JS_PROMISE_FULFILLED) return wrap_owned(engine, JS_PromiseResult(engine->context, promise->value));
     if (state == JS_PROMISE_REJECTED) {
         JSValue reason = JS_PromiseResult(engine->context, promise->value);
         set_error_value(engine, reason);

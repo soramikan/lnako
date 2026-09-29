@@ -987,6 +987,26 @@ test "package所有moduleのimport解決はpackage root外へのFS fallbackを�
     try std.testing.expectEqual(@as(f64, 1), actual);
     lnako_qjs_value_free(free_result);
 
+    // in-root symlink経由のroot外参照 — lexicalにはroot内だがcanonical
+    // 解決後はroot外になるため、module_normalizeのcanonical検査で拒否
+    // される（symlink非対応環境ではこの経路をskipする）。
+    const link_ok = blk: {
+        tmp.dir.symLink(std.testing.io, "../outside.mjs", "pkg/link.mjs", .{}) catch break :blk false;
+        break :blk true;
+    };
+    if (link_ok) {
+        const link_path = try std.fs.path.resolve(std.testing.allocator, &.{ pkg_root, "via_link.mjs" });
+        defer std.testing.allocator.free(link_path);
+        const link_name = try moduleFilename(std.testing.allocator, link_path);
+        defer std.testing.allocator.free(link_name);
+        const via_link = "import { secret } from './link.mjs'; export default secret;";
+        try std.testing.expectEqual(@as(c_int, 0), lnako_qjs_add_module_source(engine, link_name.ptr, via_link.ptr, via_link.len, root_name.ptr));
+        try std.testing.expect(lnako_qjs_eval_module(engine, via_link.ptr, via_link.len, link_name.ptr) == null);
+        const link_message = lnako_qjs_take_error(engine) orelse return error.TestUnexpectedResult;
+        defer lnako_qjs_free_string(link_message);
+        try std.testing.expect(std.mem.indexOf(u8, std.mem.span(link_message), "package root") != null);
+    }
+
     // root外moduleのroot外import — 未登録fileのfopen失敗は従来の拒否経路。
     const missing_source = "export default await import('./missing-target.mjs');";
     try std.testing.expect(lnako_qjs_eval_module(engine, missing_source.ptr, missing_source.len, missing_name.ptr) == null);

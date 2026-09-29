@@ -1050,6 +1050,67 @@ test "obj.importメンバ呼出しとimport.metaは取り込みとして扱わ�
     try std.testing.expectEqual(@as(usize, 0), graph.modules[1].imports.len);
 }
 
+test "export式内のtemplate補間importはrewind後も文脈を維持して収集する" {
+    // 文内側の走査が `import`/`export` でindexだけ巻き戻すと、その `next`
+    // 呼出し内で行われた文脈遷移（`${` push・`}` pop・template text消費）
+    // が残り、文脈stackが読み位置と不整合になる — `${import('./x')}` で
+    // pushが残ってEOFでtruncated扱いされたり、ASI区切りの後続import文が
+    // template textとして丸ごと呑まれたりしていた。以下はいずれも
+    // 「収集できてopaqueにしない」べき形。
+    const sources = [_][]const u8{
+        // template補間内のimport — 辺を記録しopaqueにしない
+        "export const x = `${import('./extra.mjs')}`;",
+        // 補間内のimport.meta — 辺を作らずopaqueにしない
+        "export const u = `${import.meta.url}`;",
+        // ASI: `export default `...`` の後に `;` なしで続くimport文
+        "export default `${x}`\nimport { v } from './extra.mjs';",
+        // template直後のASIでも同一
+        "export default `${x}`;\nimport { v } from './extra.mjs';",
+    };
+    const expected_edges = [_]usize{ 1, 0, 1, 1 };
+    for (sources, expected_edges) |plugin_source, edge_count| {
+        var memory = MemoryProvider{ .files = &.{
+            .{ .suffix = "main.nako3", .source = "!「pkg:esm」を取り込む\n" },
+            .{ .suffix = "packages/esm/plugin.mjs", .source = plugin_source },
+            .{ .suffix = "packages/esm/extra.mjs", .source = "export const v = 1;" },
+        } };
+        var package_resolver = PackageTestResolver{};
+        var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .compat_js = true, .package_resolver = package_resolver.resolver() });
+        defer graph.deinit();
+        try std.testing.expect(graph.succeeded());
+        try std.testing.expectEqual(@as(usize, 2 + edge_count), graph.modules.len);
+        try std.testing.expectEqual(edge_count, graph.modules[1].imports.len);
+    }
+}
+
+test "regex literal内の記号で文脈が崩れず後続のimportを収集する" {
+    // `/}`・`/['"`}]/` のように `}`・quote・backtickを含むregex literalは
+    // token化すると文脈stackや文字列走査を崩す。operand直後でない `/` は
+    // regexとして一括skipし、中身に含まれるimportらしき文字列も拾わない。
+    const sources = [_][]const u8{
+        // 補間式内のregex引数 — `/}/g` の `}` が文脈を壊さないこと
+        "export default async () => `${s.replace(/}/g, await import('./extra.mjs'))}`;",
+        // statement位置のregexと後続import — regex中の `` ` `` が後続を呑まないこと
+        "const re = /[\"'`}]/g;\nexport default () => import('./extra.mjs');",
+        // 除算とregexの混在 — `a / b / c` は除算として透過すること
+        "const d = a / b / c; const re = /x{2}/g; export default () => import('./extra.mjs');",
+    };
+    for (sources) |plugin_source| {
+        var memory = MemoryProvider{ .files = &.{
+            .{ .suffix = "main.nako3", .source = "!「pkg:esm」を取り込む\n" },
+            .{ .suffix = "packages/esm/plugin.mjs", .source = plugin_source },
+            .{ .suffix = "packages/esm/extra.mjs", .source = "export const v = 1;" },
+        } };
+        var package_resolver = PackageTestResolver{};
+        var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .compat_js = true, .package_resolver = package_resolver.resolver() });
+        defer graph.deinit();
+        try std.testing.expect(graph.succeeded());
+        try std.testing.expectEqual(@as(usize, 3), graph.modules.len);
+        try std.testing.expectEqual(@as(usize, 1), graph.modules[1].imports.len);
+        try std.testing.expectEqualStrings("./extra.mjs", graph.modules[1].imports[0].requested);
+    }
+}
+
 test "ネイティブプラグインをソース読込なしで登録する" {
     var memory = MemoryProvider{ .files = &.{
         .{ .suffix = "main.nako3", .source = "!「plugin.so」を取り込む\n" },
