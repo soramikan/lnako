@@ -30,6 +30,9 @@ struct LnakoQuickJsModuleSource {
     /// NULLはpackage外module。登録名がこのroot配下のmoduleのimportは
     /// module_normalizeでroot内への包含を強制される。
     char *package_root;
+    /// `package_root`のFS上canonical path（symlink解決済み）。
+    /// module_normalizeが遅延でcacheする — import解決毎のdirectory openを避ける。
+    char *package_root_canonical;
     struct LnakoQuickJsModuleSource *next;
 };
 
@@ -270,6 +273,8 @@ static FILE *open_module_file(const char *path) {
 /// 登録時に `\`→`/` 変換される）。
 static int path_within_root(const char *root, const char *path) {
     size_t root_length = strlen(root);
+    // 空rootは任意pathのprefixに一致して境界が無効化されるため拒否する。
+    if (!root_length) return 0;
     size_t path_length = strlen(path);
     return path_length > root_length && !strncmp(path, root, root_length) && path[root_length] == '/';
 }
@@ -392,16 +397,30 @@ static char *canonical_module_path(const char *path) {
     free(wide_path);
     if (handle == INVALID_HANDLE_VALUE) return NULL;
     DWORD needed = GetFinalPathNameByHandleW(handle, NULL, 0, FILE_NAME_NORMALIZED);
-    wchar_t *resolved = needed ? malloc(sizeof(*resolved) * needed) : NULL;
-    if (!resolved || !GetFinalPathNameByHandleW(handle, resolved, needed, FILE_NAME_NORMALIZED)) {
-        free(resolved);
+    if (!needed) {
         CloseHandle(handle);
         return NULL;
     }
+    // W版は環境により必要サイズ返却が終端NULを含まないことがあるため
+    // needed+1を確保する。第2引数側も「戻り値 < バッファサイズ」のみを
+    // 成功とみなす — API契約上 nonzeroでも `>= cchFilePath` は失敗で、
+    // その場合バッファは終端されずOOB readになる（LLVM f684355と同じ
+    // 落とし穴）。境界検査のため contract 厳密に扱う。
+    wchar_t *resolved = malloc(sizeof(*resolved) * (needed + 1));
+    if (!resolved) {
+        CloseHandle(handle);
+        return NULL;
+    }
+    DWORD copied = GetFinalPathNameByHandleW(handle, resolved, needed + 1, FILE_NAME_NORMALIZED);
     CloseHandle(handle);
+    if (!copied || copied > needed) {
+        free(resolved);
+        return NULL;
+    }
+    resolved[copied] = L'\0';
     // `\\?\` プレフィックスを落として `C:\...` 形式へ揃える。
     wchar_t *plain = resolved;
-    if (needed > 4 && !wcsncmp(resolved, L"\\\\?\\", 4)) plain = resolved + 4;
+    if (copied > 4 && !wcsncmp(resolved, L"\\\\?\\", 4)) plain = resolved + 4;
     int length = WideCharToMultiByte(CP_UTF8, 0, plain, -1, NULL, 0, NULL, NULL);
     char *result = length > 0 ? malloc((size_t)length) : NULL;
     if (result && !WideCharToMultiByte(CP_UTF8, 0, plain, -1, result, length, NULL, NULL)) {
@@ -419,17 +438,18 @@ static char *canonical_module_path(const char *path) {
 #endif
 }
 
-/// referrer（base）がpackage所有かを判定し、所有していればそのrootを返す。
+/// referrer（base）がpackage所有かを判定し、所有する登録module entryを返す。
 /// 登録moduleは登録時のroot、その場でFS fallbackから読まれたroot内fileも
 /// 「base名がroot配下」であることから同じ境界へ拘束する（graphで未収集の
-/// in-root moduleが更にroot外へ逃げる連鎖を止める）。
-static const char *package_root_for_base(LnakoQuickJs *engine, const char *base_name) {
+/// in-root moduleが更にroot外へ逃げる連鎖を止める）。canonical rootの
+/// 遅延cache先としてentryそのものを返す。
+static struct LnakoQuickJsModuleSource *package_owner_for_base(LnakoQuickJs *engine, const char *base_name) {
     if (!engine) return NULL;
     for (struct LnakoQuickJsModuleSource *item = engine->module_sources; item; item = item->next) {
-        if (item->package_root && !strcmp(item->name, base_name)) return item->package_root;
+        if (item->package_root && !strcmp(item->name, base_name)) return item;
     }
     for (struct LnakoQuickJsModuleSource *item = engine->module_sources; item; item = item->next) {
-        if (item->package_root && path_within_root(item->package_root, base_name)) return item->package_root;
+        if (item->package_root && path_within_root(item->package_root, base_name)) return item;
     }
     return NULL;
 }
@@ -461,17 +481,20 @@ static char *module_normalize(JSContext *context, const char *base_name, const c
             return NULL;
         }
     }
-    const char *root = collapsed_base ? package_root_for_base(engine, collapsed_base) : NULL;
-    if (root) {
+    struct LnakoQuickJsModuleSource *owner = collapsed_base ? package_owner_for_base(engine, collapsed_base) : NULL;
+    if (owner && owner->package_root) {
+        const char *root = owner->package_root;
         int inside = path_within_root(root, collapsed);
         if (inside) {
             // canonical側はrootもcanonicalizeして比較する — root自身が
             // symlinkを含むとlexical rootとのprefix一致が偽陰性になる。
+            // rootのcanonical化はowner毎に遅延cacheする（import毎の
+            // directory openを避ける）。
             char *canonical = canonical_module_path(collapsed);
             if (canonical) {
-                char *canonical_root = canonical_module_path(root);
-                inside = path_within_root(canonical_root ? canonical_root : root, canonical);
-                free(canonical_root);
+                if (!owner->package_root_canonical)
+                    owner->package_root_canonical = canonical_module_path(root);
+                inside = path_within_root(owner->package_root_canonical ? owner->package_root_canonical : root, canonical);
                 free(canonical);
             }
         }
@@ -586,6 +609,7 @@ void lnako_qjs_release(LnakoQuickJs *engine) {
         free(item->name);
         free(item->source);
         free(item->package_root);
+        free(item->package_root_canonical);
         free(item);
     }
     free(engine->last_error);
@@ -633,6 +657,7 @@ int lnako_qjs_add_module_source(LnakoQuickJs *engine, const char *name, const ch
         free(item->name);
         free(item->source);
         free(item->package_root);
+        free(item->package_root_canonical);
         free(item);
         return -1;
     }

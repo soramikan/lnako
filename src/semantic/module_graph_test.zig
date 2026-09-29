@@ -1094,6 +1094,15 @@ test "regex literal内の記号で文脈が崩れず後続のimportを収集す�
         "const re = /[\"'`}]/g;\nexport default () => import('./extra.mjs');",
         // 除算とregexの混在 — `a / b / c` は除算として透過すること
         "const d = a / b / c; const re = /x{2}/g; export default () => import('./extra.mjs');",
+        // 閉じたtemplate literalはoperand — 直後の `/` は除算
+        "const t = `x` / import('./extra.mjs') / y;",
+        // regex token自体もoperand — 直後の `/` は除算
+        "const r = /re/ / import('./extra.mjs') / y;",
+        // 補閂式の先頭はregexが来得る — `` ` `` を含むregexがnested template
+        // と誤認されて残り全体を呑まないこと
+        "const v = `${/`/}`; const w = import('./extra.mjs');",
+        // 補閂を閉じたtemplateもoperand — 直後の `/` は除算
+        "const u = `${x}` / import('./extra.mjs') / y;",
     };
     for (sources) |plugin_source| {
         var memory = MemoryProvider{ .files = &.{
@@ -1109,6 +1118,22 @@ test "regex literal内の記号で文脈が崩れず後続のimportを収集す�
         try std.testing.expectEqual(@as(usize, 1), graph.modules[1].imports.len);
         try std.testing.expectEqualStrings("./extra.mjs", graph.modules[1].imports[0].requested);
     }
+}
+
+test "export default regexはキーワード位置として解釈し誤って文脈を崩さない" {
+    // `export default /re/g` は有効なES文法 — `default` がキーワード表に
+    // 無いと `/` が除算扱いになり、regex中身がtoken化されて文脈を崩す
+    // （`"`/`}`/`` ` `` を含むとtruncated→package moduleの誤拒否）。
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:esm」を取り込む\n" },
+        .{ .suffix = "packages/esm/plugin.mjs", .source = "export default /[\"'}`]/g;" },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .compat_js = true, .package_resolver = package_resolver.resolver() });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
+    try std.testing.expectEqual(@as(usize, 0), graph.modules[1].imports.len);
 }
 
 test "ネイティブプラグインをソース読込なしで登録する" {

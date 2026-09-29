@@ -1124,7 +1124,10 @@ fn collectImports(node: *ast.Node, output: *std.ArrayList(*ast.Node), allocator:
     for (node.children) |child| try collectImports(child, output, allocator);
 }
 
-const JavaScriptTokenKind = enum { identifier, string, punctuation };
+/// `.operand` は値として評価されるliteral系token（regex literal・閉じた
+/// template literal）で、文字列ではないためspecifierにはならないが、
+/// 直後の `/` が除算となる判定ではoperand扱いされる必要がある。
+const JavaScriptTokenKind = enum { identifier, string, punctuation, operand };
 const JavaScriptToken = struct { kind: JavaScriptTokenKind, text: []const u8 };
 
 /// template literal内で `${` / `{` の対応を追跡する文脈。
@@ -1146,9 +1149,9 @@ const ScannerMark = struct {
 /// regex中身がtoken化されてimport検出漏れになり得る — その場合も
 /// runtime側のmodule_normalize境界が最終防衛になるdocumented制約）。
 const regex_position_keywords = [_][]const u8{
-    "return", "typeof", "instanceof", "in",    "of",    "new",
-    "delete", "void",   "yield",      "await", "throw", "case",
-    "do",     "else",
+    "return", "typeof", "instanceof", "in",       "of",    "new",
+    "delete", "void",   "yield",      "await",    "throw", "case",
+    "do",     "else",   "default",    "debugger",
 };
 
 /// JavaScript sourceの軽量tokenizer。`import` 文の収集が目的のため、
@@ -1208,7 +1211,7 @@ const JavaScriptScanner = struct {
     fn regexPosition(self: *JavaScriptScanner) bool {
         const token = self.last_token orelse return true;
         return switch (token.kind) {
-            .string => false,
+            .string, .operand => false,
             .identifier => for (regex_position_keywords) |keyword| {
                 if (std.mem.eql(u8, token.text, keyword)) break true;
             } else false,
@@ -1300,13 +1303,29 @@ const JavaScriptScanner = struct {
                 if (closed) {
                     self.index += 1;
                     while (self.index < self.source.len and std.ascii.isAlphabetic(self.source[self.index])) self.index += 1;
-                    return self.emit(.{ .kind = .punctuation, .text = self.source[regex_start..self.index] });
+                    // regex literalはoperand — 直後の `/` が除算になるよう
+                    // .operandで発行する（punctuationだとregex開始位置と
+                    // 誤判定され、後続の式が呑まれる）。
+                    return self.emit(.{ .kind = .operand, .text = self.source[regex_start..self.index] });
                 }
                 self.index = regex_start;
             }
             if (character == '`') {
+                const template_start = self.index;
                 self.index += 1;
+                const depth = self.contexts_len;
                 self.scanTemplateText();
+                if (!self.truncated) {
+                    if (self.contexts_len == depth) {
+                        // `` ` `` で閉じたtemplate literalはoperand — 直後の
+                        // `/` が除算と判定されるよう last_token だけ更新する。
+                        self.last_token = .{ .kind = .operand, .text = self.source[template_start..self.index] };
+                    } else {
+                        // `${` で補間へ移行 — 式の先頭はregex literalが
+                        // 来得るため `(` と同じ式開始扱いにする。
+                        self.last_token = .{ .kind = .punctuation, .text = "(" };
+                    }
+                }
                 continue;
             }
             if (character == '{') {
@@ -1322,7 +1341,19 @@ const JavaScriptScanner = struct {
                     // `${` を閉じる `}` はtemplate text側へ文脈を戻すだけで
                     // tokenとして返さない。式中の `{` を閉じる `}` のみ返す。
                     if (context == .interpolation) {
+                        const depth = self.contexts_len;
                         self.scanTemplateText();
+                        if (!self.truncated) {
+                            if (self.contexts_len == depth) {
+                                // templateが `` ` `` で閉じた — 補間込みでも
+                                // template literal全体はoperand。直後の `/` を
+                                // 除算と判定させるため last_token を更新する。
+                                self.last_token = .{ .kind = .operand, .text = self.source[self.index - 1 .. self.index] };
+                            } else {
+                                // 続く `${` で次の補間へ — 式先頭はregexが来得る。
+                                self.last_token = .{ .kind = .punctuation, .text = "(" };
+                            }
+                        }
                         continue;
                     }
                 }
@@ -1547,6 +1578,8 @@ fn resolveRequestedImport(allocator: std.mem.Allocator, importer: []const u8, im
 /// Lexical containment of `path` strictly inside `root`. Both sides are
 /// canonicalized or lexically resolved before comparison by the callers.
 fn pathWithinRoot(root: []const u8, path: []const u8) bool {
+    // 空rootは任意pathのprefixに一致して境界を無効化するため拒否する。
+    if (root.len == 0) return false;
     if (!std.mem.startsWith(u8, path, root) or path.len <= root.len) return false;
     return path[root.len] == std.fs.path.sep;
 }
