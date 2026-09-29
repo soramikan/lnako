@@ -21,6 +21,9 @@ fn parseErrCode(allocator: std.mem.Allocator, source: []const u8, code: []const 
 
 test "non-npkg export targets must stay in the canonical package-relative tree" {
     const allocator = std.testing.allocator;
+    // 規範外の export target は manifest parse の段階で拒否される
+    // （manifest_validate の canonical path 検査）。`hasUnsafeNonNpkgExportTargets`
+    // は sync 側の第二防衛線として残る。
     const invalid = [_]struct { field: []const u8, target: []const u8 }{
         .{ .field = "path", .target = "../sibling/file.nako3" },
         .{ .field = "native", .target = "/tmp/outside.dylib" },
@@ -39,10 +42,7 @@ test "non-npkg export targets must stay in the canonical package-relative tree" 
             \\
         , .{ case.field, case.target });
         defer allocator.free(source);
-        var manifest = try parseOk(allocator, source);
-        defer manifest.deinit();
-        try std.testing.expect(manifest_mod.hasUnsafeNonNpkgExportTargets(&manifest, false));
-        try std.testing.expect(!manifest_mod.hasUnsafeNonNpkgExportTargets(&manifest, true));
+        try parseErrCode(allocator, source, diag.E029_INVALID_VALUE);
     }
 
     var safe = try parseOk(allocator,
@@ -318,6 +318,17 @@ test "export重複とESM制約を診断する" {
     ;
     var manifest = try parseOk(allocator, ok_source);
     defer manifest.deinit();
+}
+
+test "exportの規範外pathを診断する" {
+    const allocator = std.testing.allocator;
+    const header = "[package]\nname = \"a\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n[[exports]]\nname = \"x\"\n";
+    try parseErrCode(allocator, header ++ "path = \"../outside.nako3\"\n", diag.E029_INVALID_VALUE);
+    try parseErrCode(allocator, header ++ "path = \"./main.nako3\"\n", diag.E029_INVALID_VALUE);
+    try parseErrCode(allocator, header ++ "path = \"/abs/main.nako3\"\n", diag.E029_INVALID_VALUE);
+    try parseErrCode(allocator, header ++ "native = \"../lib/x.so\"\n", diag.E029_INVALID_VALUE);
+    try parseErrCode(allocator, header ++ "esm = [{ path = \"sub/../../out.mjs\" }]\n", diag.E029_INVALID_VALUE);
+    try parseErrCode(allocator, header ++ "native = [\"../outside.so\"]\n", diag.E029_INVALID_VALUE);
 }
 
 test "同一public-idの衝突するversion制約を診断する" {
@@ -1455,4 +1466,43 @@ test "不正なartifact宣言を拒否する" {
         \\native = [42]
         \\
     , diag.E023_INVALID_TYPE);
+}
+
+test "正規化後に空になる依存aliasを拒否する" {
+    const allocator = std.testing.allocator;
+    // `@` 単体の alias は namespace 正規化後に空になり、native plugin は空
+    // namespace を登録時に拒否・ESM は無修飾登録へ落ちて解析器の
+    // `{ns}__{名}` 参照と乖離する。発行時に拒否する。
+    const pkg_alias =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[dependencies.pkg]
+        \\one = { version = "^1", alias = "@" }
+        \\
+    ;
+    try parseErrCode(allocator, pkg_alias, diag.E029_INVALID_VALUE);
+
+    const git_alias =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[dependencies.git]
+        \\lib = { url = "https://example.com/lib.git", commit = "0123456", alias = "@" }
+        \\
+    ;
+    try parseErrCode(allocator, git_alias, diag.E029_INVALID_VALUE);
+
+    const http_alias =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[dependencies.http]
+        \\lib = { url = "https://example.com/lib.tar.zst", hash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", alias = "@" }
+        \\
+    ;
+    try parseErrCode(allocator, http_alias, diag.E029_INVALID_VALUE);
 }

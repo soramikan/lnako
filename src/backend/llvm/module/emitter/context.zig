@@ -169,7 +169,7 @@ pub const Emitter = struct {
             for (self.program.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
                 if (isNativePluginCall(self.program, function, instruction)) return true;
                 // 関数値化されたプラグイン命令も実行時に非同期タスクを登録し得る
-                if (instruction.opcode == .make_closure and shared.nativePluginClosure(self.program, instruction.name)) return true;
+                if (instruction.opcode == .make_closure and shared.nativePluginClosure(self.program, instruction)) return true;
             };
         }
         return false;
@@ -188,13 +188,7 @@ pub const Emitter = struct {
     }
 
     pub fn sourcePathForFunction(self: Emitter, function_name: []const u8) []const u8 {
-        var best: ?usize = null;
-        for (self.program.module_names, 0..) |module_name, index| {
-            if (index >= self.program.module_paths.len or !std.mem.startsWith(u8, function_name, module_name)) continue;
-            if (function_name.len <= module_name.len + 1 or !std.mem.eql(u8, function_name[module_name.len .. module_name.len + 2], "__")) continue;
-            if (best == null or module_name.len > self.program.module_names[best.?].len) best = index;
-        }
-        return if (best) |index| self.program.module_paths[index] else self.source_path;
+        return if (self.program.moduleIndexForFunctionName(function_name)) |index| self.program.module_paths[index] else self.source_path;
     }
 
     pub fn debugPathIndex(self: Emitter, path: []const u8) ?usize {

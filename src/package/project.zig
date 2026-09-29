@@ -483,14 +483,14 @@ pub fn manifestSnapshotMatches(manifest: *const manifest_mod.Manifest, bytes: []
 pub fn mutableDepManifestUnchanged(io: std.Io, gpa: Allocator, dep_dir: []const u8, expected_source: []const u8) !bool {
     const manifest_path = try std.fs.path.join(gpa, &.{ dep_dir, manifest_name });
     defer gpa.free(manifest_path);
-    const current = try std.Io.Dir.cwd().readFileAlloc(io, manifest_path, gpa, .limited(16 * 1024 * 1024));
+    const current = try std.Io.Dir.cwd().readFileAlloc(io, manifest_path, gpa, .limited(manifest_mod.max_manifest_bytes));
     defer gpa.free(current);
     return std.mem.eql(u8, current, expected_source);
 }
 
 /// `mutableDepManifestUnchanged` の pin 済み handle 版。
 pub fn mutableDepManifestUnchangedDir(io: std.Io, gpa: Allocator, dep_dir: std.Io.Dir, expected_source: []const u8) !bool {
-    const current = try dep_dir.readFileAlloc(io, manifest_name, gpa, .limited(16 * 1024 * 1024));
+    const current = try dep_dir.readFileAlloc(io, manifest_name, gpa, .limited(manifest_mod.max_manifest_bytes));
     defer gpa.free(current);
     return std.mem.eql(u8, current, expected_source);
 }
@@ -843,9 +843,9 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
                         };
                     const manifest = &(local.manifest orelse return error.ResolveFailed);
                     const after_hash = if (dep_dir) |handle|
-                        handle.readFileAlloc(ctx.io, "nako.toml", gpa, .limited(16 * 1024 * 1024)) catch |err| return ctx.session.fail(.invalid_source, .manifest, dep_name, "cannot re-read path dependency manifest \"{s}\": {s}", .{ dep_name, @errorName(err) })
+                        handle.readFileAlloc(ctx.io, "nako.toml", gpa, .limited(manifest_mod.max_manifest_bytes)) catch |err| return ctx.session.fail(.invalid_source, .manifest, dep_name, "cannot re-read path dependency manifest \"{s}\": {s}", .{ dep_name, @errorName(err) })
                     else
-                        std.Io.Dir.cwd().readFileAlloc(ctx.io, manifest_path, gpa, .limited(16 * 1024 * 1024)) catch |err| return ctx.session.fail(.invalid_source, .manifest, dep_name, "cannot re-read path dependency manifest \"{s}\": {s}", .{ dep_name, @errorName(err) });
+                        std.Io.Dir.cwd().readFileAlloc(ctx.io, manifest_path, gpa, .limited(manifest_mod.max_manifest_bytes)) catch |err| return ctx.session.fail(.invalid_source, .manifest, dep_name, "cannot re-read path dependency manifest \"{s}\": {s}", .{ dep_name, @errorName(err) });
                     if (!manifestSnapshotMatches(manifest, after_hash)) return ctx.session.fail(.invalid_source, .manifest, dep_name, "path dependency \"{s}\" changed while its tree pin was computed; retry resolution", .{dep_name});
                     local.artifact.sha256 = try std.fmt.allocPrint(gpa, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
                 }
@@ -1550,7 +1550,7 @@ pub fn ensureLock(
     // はなく読込時に pin した dir handle 相対に読むため、rename/置換で
     // 別 dir の manifest を拾うことはない。
     {
-        const current = project.root_dir.readFileAlloc(io, manifest_name, a, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
+        const current = project.root_dir.readFileAlloc(io, manifest_name, a, .limited(manifest_mod.max_manifest_bytes)) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             error.FileNotFound => {
                 try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml", .{}, "manifest was removed while resolving the lock", .{});

@@ -1,5 +1,8 @@
 const std = @import("std");
 const lnako = @import("lnako");
+const compile_pipeline = @import("compile.zig");
+
+const test_sandbox = lnako.package.test_sandbox;
 
 pub fn writeCompatExecutable(allocator: std.mem.Allocator, io: std.Io, executable_path: []const u8, input_path: []const u8, output_path: []const u8, forced_mode: lnako.frontend.token.Mode) !void {
     const resolved_output = try std.fs.path.resolve(allocator, &.{output_path});
@@ -8,21 +11,204 @@ pub fn writeCompatExecutable(allocator: std.mem.Allocator, io: std.Io, executabl
     defer allocator.free(resolved_executable);
     if (std.mem.eql(u8, resolved_output, resolved_executable)) return error.OutputOverwritesCompiler;
 
+    var package_root: ?[]u8 = null;
+    defer if (package_root) |root| allocator.free(root);
+    var package_environment: ?lnako.package.import_resolver.Resolver = null;
+    defer if (package_environment) |*environment| environment.deinit();
+    package_root = lnako.package.import_resolver.findProjectRoot(allocator, io, input_path) catch |err| if (err == error.OutOfMemory) return err else null;
+    if (package_root) |root| {
+        package_environment = lnako.package.import_resolver.Resolver.load(allocator, io, root) catch |err| if (err == error.OutOfMemory) return err else null;
+    }
+
     var file_provider = lnako.semantic.module_graph.FileProvider{ .io = io };
-    var graph = try lnako.semantic.module_graph.load(allocator, input_path, file_provider.sourceProvider(), .{ .compat_js = true, .forced_mode = forced_mode });
+    var graph = try lnako.semantic.module_graph.load(allocator, input_path, file_provider.sourceProvider(), .{
+        .compat_js = true,
+        .forced_mode = forced_mode,
+        .package_resolver = if (package_environment) |*environment| environment.packageResolver() else null,
+    });
     defer graph.deinit();
     if (!graph.succeeded()) return error.InvalidCompatSourceGraph;
     const files = try allocator.alloc(lnako.compat.embedded.SourceFile, graph.modules.len);
     defer allocator.free(files);
-    for (graph.modules, files) |module, *file| file.* = .{ .path = module.path, .source = module.source };
+    var package_imports: std.ArrayListUnmanaged(lnako.compat.embedded.PackageImport) = .empty;
+    defer package_imports.deinit(allocator);
+    for (graph.modules, files) |module, *file| {
+        file.* = .{ .path = module.path, .source = module.source };
+        for (module.imports) |item| {
+            const canonical_id = item.canonical_id orelse continue;
+            const target = item.target orelse continue;
+            try package_imports.append(allocator, .{
+                .importer = module.path,
+                .specifier = item.requested,
+                .path = item.resolved_path,
+                .canonical_id = canonical_id,
+                .namespace = item.namespace orelse graph.modules[target].name,
+                .package_root = graph.modules[target].package_root orelse "",
+                .dispatch_namespace = item.dispatch_namespace orelse "",
+                // 同じimporter pathが別scopeのmoduleとして存在し得るため、
+                // edgeのowner scopeも記録して起動時の再解決で同じbindingを
+                // 選択できるようにする（payload v7）。
+                .importer_owner = module.package_owner orelse "",
+                .package_owner = graph.modules[target].package_owner orelse "",
+            });
+        }
+    }
 
     const compiler = try std.Io.Dir.cwd().readFileAlloc(io, executable_path, allocator, .limited(1024 * 1024 * 1024));
     defer allocator.free(compiler);
-    const generated = try lnako.compat.embedded.createExecutable(allocator, compiler, graph.modules[graph.entry].path, files, forced_mode);
+    const generated = try lnako.compat.embedded.createExecutableWithImports(allocator, compiler, graph.modules[graph.entry].path, files, forced_mode, package_imports.items, graph.canonical_aliases);
     defer allocator.free(generated);
     try std.Io.Dir.cwd().writeFile(io, .{
         .sub_path = output_path,
         .data = generated,
         .flags = .{ .permissions = .executable_file },
     });
+}
+
+test "compat-js package import resolverを生成payloadと起動時compileへ引き継ぐ" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/math");
+    const root_manifest = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nlicense = \"MIT\"\n\n[dependencies.pkg]\nmath = { version = \"1.0.0\", public-id = \"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" }\n";
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.toml", .data = root_manifest });
+    try temporary.dir.writeFile(io, .{ .sub_path = "main.nako3", .data = "!「.nako/env/gen-test/deps/math/index.nako3」を取り込む\n!「パッケージ:math」を取り込む\nmath__値を表示。\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/math/index.nako3", .data = "値=5\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/math/nako.toml", .data =
+        \\[package]
+        \\name = "math"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "main"
+        \\path = "index.nako3"
+        \\
+    });
+    var manifest_digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(root_manifest, &manifest_digest, .{});
+    const manifest_hex = std.fmt.bytesToHex(manifest_digest, .lower);
+    const lock_bytes = try std.fmt.allocPrint(allocator, "{{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{{\"manifestSha256\":\"sha256:{s}\",\"profile\":\"default\"}},\"packages\":{{\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\":{{\"id\":\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"name\":\"math\",\"version\":\"1.0.0\",\"source\":{{\"type\":\"registry\",\"url\":\"https://example.invalid/math\"}},\"dependencies\":[]}}}}}}", .{manifest_hex});
+    defer allocator.free(lock_bytes);
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock_bytes });
+    try temporary.dir.writeFile(io, .{ .sub_path = "compiler.bin", .data = "EXE" });
+
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    const input_path = try std.fs.path.join(allocator, &.{ root, "main.nako3" });
+    defer allocator.free(input_path);
+    const executable_path = try std.fs.path.join(allocator, &.{ root, "compiler.bin" });
+    defer allocator.free(executable_path);
+    const output_path = try std.fs.path.join(allocator, &.{ root, "app.bin" });
+    defer allocator.free(output_path);
+
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(lock_bytes, &digest, .{});
+    const lock_hex = std.fmt.bytesToHex(digest, .lower);
+    const environment = try std.fmt.allocPrint(
+        allocator,
+        "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"dependencies\":[{{\"alias\":\"math\",\"package\":\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}],\"packages\":{{\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\":{{\"name\":\"math\",\"version\":\"1.0.0\",\"path\":\".nako/env/gen-test/deps/math\",\"exports\":[{{\"name\":\"main\",\"path\":\"index.nako3\"}}],\"dependencies\":[]}}}}}}",
+        .{lock_hex},
+    );
+    defer allocator.free(environment);
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = environment });
+    var checked_environment = try lnako.package.import_resolver.Resolver.load(allocator, io, root);
+    defer checked_environment.deinit();
+
+    try writeCompatExecutable(allocator, io, executable_path, input_path, output_path, .{});
+    var package = (try lnako.compat.embedded.readExecutable(allocator, io, output_path)).?;
+    defer package.deinit();
+    try std.testing.expectEqual(@as(usize, 1), package.package_imports.len);
+    try std.testing.expectEqualStrings("math", package.package_imports[0].namespace);
+
+    var stderr: std.Io.Writer.Allocating = .init(allocator);
+    defer stderr.deinit();
+    var ir_program = (try compile_pipeline.compileInputWithProvider(allocator, package.entry_path, .{
+        .compat_js = true,
+        .package_resolver = package.packageResolver(),
+    }, &stderr.writer, package.sourceProvider())) orelse return error.EmbeddedPackageCompileFailed;
+    defer ir_program.deinit();
+    // 同一fileへの直接path import（owner無し）とpackage import（owner=pkg key）は
+    // scope別moduleとして分離される — 共有すると依存解決scopeがimport順序で
+    // 変わるため。
+    try std.testing.expectEqual(@as(usize, 3), ir_program.module_names.len);
+    try std.testing.expectEqualStrings("index", ir_program.module_names[1]);
+    try std.testing.expectEqualStrings("math", ir_program.module_names[2]);
+}
+
+test "埋め込みpayload再compileでもpackage内helperはpackage所有のままopaqueな内部namespaceを維持する" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/math");
+    const root_manifest = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nlicense = \"MIT\"\n\n[dependencies.pkg]\nmath = { version = \"1.0.0\", public-id = \"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" }\n";
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.toml", .data = root_manifest });
+    try temporary.dir.writeFile(io, .{ .sub_path = "main.nako3", .data = "!「パッケージ:math」を取り込む\nmath__報告()\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/math/index.nako3", .data = "!「./helper.nako3」を取り込む\n●報告とは\nhelper__内部処理()\nここまで\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/math/helper.nako3", .data = "●内部処理とは\nここまで\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/math/nako.toml", .data =
+        \\[package]
+        \\name = "math"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[[exports]]
+        \\name = "main"
+        \\path = "index.nako3"
+        \\
+    });
+    var manifest_digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(root_manifest, &manifest_digest, .{});
+    const manifest_hex = std.fmt.bytesToHex(manifest_digest, .lower);
+    const lock_bytes = try std.fmt.allocPrint(allocator, "{{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{{\"manifestSha256\":\"sha256:{s}\",\"profile\":\"default\"}},\"packages\":{{\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\":{{\"id\":\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"name\":\"math\",\"version\":\"1.0.0\",\"source\":{{\"type\":\"registry\",\"url\":\"https://example.invalid/math\"}},\"dependencies\":[]}}}}}}", .{manifest_hex});
+    defer allocator.free(lock_bytes);
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock_bytes });
+    try temporary.dir.writeFile(io, .{ .sub_path = "compiler.bin", .data = "EXE" });
+
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    const input_path = try std.fs.path.join(allocator, &.{ root, "main.nako3" });
+    defer allocator.free(input_path);
+    const executable_path = try std.fs.path.join(allocator, &.{ root, "compiler.bin" });
+    defer allocator.free(executable_path);
+    const output_path = try std.fs.path.join(allocator, &.{ root, "app.bin" });
+    defer allocator.free(output_path);
+
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(lock_bytes, &digest, .{});
+    const lock_hex = std.fmt.bytesToHex(digest, .lower);
+    const environment = try std.fmt.allocPrint(
+        allocator,
+        "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"dependencies\":[{{\"alias\":\"math\",\"package\":\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}],\"packages\":{{\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\":{{\"name\":\"math\",\"version\":\"1.0.0\",\"path\":\".nako/env/gen-test/deps/math\",\"exports\":[{{\"name\":\"main\",\"path\":\"index.nako3\"}}],\"dependencies\":[]}}}}}}",
+        .{lock_hex},
+    );
+    defer allocator.free(environment);
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = environment });
+    var checked_environment = try lnako.package.import_resolver.Resolver.load(allocator, io, root);
+    defer checked_environment.deinit();
+
+    try writeCompatExecutable(allocator, io, executable_path, input_path, output_path, .{});
+    var package = (try lnako.compat.embedded.readExecutable(allocator, io, output_path)).?;
+    defer package.deinit();
+    try std.testing.expectEqual(@as(usize, 1), package.package_imports.len);
+    // build時に確定したpackage rootがpayloadへ保存される（空文字でないこと）。
+    try std.testing.expect(package.package_imports[0].package_root.len != 0);
+
+    var stderr: std.Io.Writer.Allocating = .init(allocator);
+    defer stderr.deinit();
+    var ir_program = (try compile_pipeline.compileInputWithProvider(allocator, package.entry_path, .{
+        .compat_js = true,
+        .package_resolver = package.packageResolver(),
+    }, &stderr.writer, package.sourceProvider())) orelse return error.EmbeddedPackageCompileFailed;
+    defer ir_program.deinit();
+
+    // package rootが復元されていればhelperはpackage所有のままopaqueな内部名を持ち、
+    // `helper__内部処理` のような推測可能な修飾名の実関数はIR上に存在しない。
+    try std.testing.expectEqual(@as(usize, 3), ir_program.module_names.len);
+    try std.testing.expectEqualStrings("helper", ir_program.module_names[2]);
+    try std.testing.expect(std.mem.startsWith(u8, ir_program.internal_module_names[2], "package__"));
+    try std.testing.expect(ir_program.findFunction("helper__内部処理") == null);
+    const internal_call = try std.fmt.allocPrint(allocator, "{s}__内部処理", .{ir_program.internal_module_names[2]});
+    defer allocator.free(internal_call);
+    try std.testing.expect(ir_program.findFunction(internal_call) != null);
 }

@@ -27,7 +27,10 @@ enum LnakoQuickJsKind {
 
 LnakoQuickJs *lnako_qjs_new(void);
 void lnako_qjs_set_host(LnakoQuickJs *engine, void *opaque, LnakoQuickJsHostGet get, LnakoQuickJsHostSet set, LnakoQuickJsHostInvoke invoke, LnakoQuickJsHostExec exec);
-int lnako_qjs_add_module_source(LnakoQuickJs *engine, const char *name, const char *source, size_t length);
+/// package_root: このmoduleを所有するpackageのroot。非NULLの場合、この
+/// module（およびroot配下で読まれたmodule）からのimportはroot内への包含が
+/// module_normalizeで強制され、root外へのFS fallbackを拒否する。
+int lnako_qjs_add_module_source(LnakoQuickJs *engine, const char *name, const char *source, size_t length, const char *package_root);
 void lnako_qjs_retain(LnakoQuickJs *engine);
 void lnako_qjs_release(LnakoQuickJs *engine);
 char *lnako_qjs_take_error(LnakoQuickJs *engine);

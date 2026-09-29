@@ -19,6 +19,7 @@ const environment = @import("environment.zig");
 const fetch = @import("fetch.zig");
 const lock_mod = @import("lock.zig");
 const lock_model = @import("lock_model.zig");
+const manifest_mod = @import("manifest.zig");
 const path_digest = @import("path_digest.zig");
 const prepare = @import("sync_prepare.zig");
 
@@ -30,6 +31,16 @@ pub const Runtime = prepare.Runtime;
 pub const Error = prepare.Error;
 /// package id 形式の検証。実体は `sync_prepare.zig` にある。
 pub const isPackageId = prepare.isPackageId;
+/// manifest 依存宣言の lock 照合制約。実体は `sync_prepare.zig` にある。
+pub const ImportConstraint = prepare.ImportConstraint;
+/// manifest 依存宣言から import 依存（alias → lock key）を集める。
+/// 実体は `sync_prepare.zig` にある。
+pub const collectRootDependencyIds = prepare.collectRootDependencyIds;
+pub const collectImportDependencies = prepare.collectImportDependencies;
+pub const collectImportDependenciesForProfile = prepare.collectImportDependenciesForProfile;
+/// scoped alias の重複・namespace 正規化衝突検査付き追加。
+/// 実体は `sync_prepare.zig` にある。
+pub const appendScopedAlias = prepare.appendScopedAlias;
 
 const mapFs = prepare.mapFs;
 const testing = std.testing;
@@ -107,7 +118,7 @@ pub fn pathPinMismatchDir(gpa: Allocator, io: std.Io, root_dir: std.Io.Dir, lock
 const ManifestFreshness = enum { absent, fresh, stale };
 
 fn manifestFreshness(io: std.Io, arena: Allocator, project_dir: std.Io.Dir, lock: *const lock_model.Lock) !ManifestFreshness {
-    const bytes = project_dir.readFileAlloc(io, "nako.toml", arena, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
+    const bytes = project_dir.readFileAlloc(io, "nako.toml", arena, .limited(manifest_mod.max_manifest_bytes)) catch |err| switch (err) {
         error.FileNotFound => return .absent,
         else => return err,
     };
@@ -198,6 +209,23 @@ pub fn run(
         return error.StaleLock;
     }
 
+    // root manifest は鮮度が確定した場合だけ parse する。依存宣言から
+    // import 依存（alias → lock key）を収集して環境へ記録するため。
+    // 読取と parse の間の書換えは公開直前の再照合で検出する。
+    var root_manifest: ?manifest_mod.Manifest = null;
+    defer if (root_manifest) |*manifest| manifest.deinit();
+    if (manifest_state == .fresh) {
+        const manifest_bytes = project_dir.readFileAlloc(io, "nako.toml", arena, .limited(manifest_mod.max_manifest_bytes)) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return mapFs(err),
+        };
+        root_manifest = manifest_mod.parse(arena, manifest_bytes, diagnostics) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.LockInvalid,
+        };
+        if (diagnostics.errorCount() > 0) return error.LockInvalid;
+    }
+
     const profile = options.profile orelse lock.input.profile;
     const entries = lock.packagesForProfile(profile) orelse {
         try diagnostics.addFmt(diag.E030_UNKNOWN_PROFILE, .err, profile, .{}, "lock has no package graph for profile \"{s}\"", .{profile});
@@ -255,11 +283,32 @@ pub fn run(
     defer {
         if (deps_dir_open) deps_dir.close(io);
     }
-    const generation_rel = try std.fs.path.join(arena, &.{ environment.dir_name, environment.env_dir, generation.generation });
+    // env.json に記録する世代相対 path は環境 artifact の canonical 形式として
+    // 常に `/` 区切りで構築する（`std.fs.path.join` は Windows で `\` になり、
+    // resolver の prefix 比較・fixture・lock 記録と不一致になる）。
+    // filesystem 操作には使わず、`.nako/env/<gen>` の論理名として扱う。
+    const generation_rel = try std.fmt.allocPrint(arena, "{s}/{s}/{s}", .{ environment.dir_name, environment.env_dir, generation.generation });
     const workspace_name = try std.fmt.allocPrint(arena, ".lnako-work-{s}", .{generation.generation});
     var workspace_dir = environment.openManagedChildDir(project_dir, io, workspace_name, true) catch |err| return mapFs(err);
     defer environment.deleteTreeChecked(project_dir, io, workspace_name) catch {};
     defer workspace_dir.close(io);
+
+    // root manifest の依存宣言を import 依存へ集める。schema v2 の lock
+    // は rootDependencies で宣言順序を記録する。v1 lock（記録無し）は
+    // lock entry 走査で再構成し、一意に定まらない場合は拒否する。
+    const root_dependencies = if (root_manifest) |*manifest| blk: {
+        const direct_ids = if (lock.rootDependenciesForProfile(profile)) |ids|
+            ids
+        else
+            prepare.collectRootDependencyIdsForProfile(arena, entries, manifest, profile, diagnostics) catch |err| switch (err) {
+                error.LockInvalid => {
+                    if (!diagnostics.hasErrors()) try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock.rootDependencies", .{}, "legacy lock does not record the root dependency edge and has multiple matching package nodes; regenerate the lock with schema v2", .{});
+                    return error.LockInvalid;
+                },
+                else => return err,
+            };
+        break :blk try prepare.collectImportDependenciesForProfile(arena, entries, direct_ids, null, manifest, profile, diagnostics);
+    } else &.{};
     var ctx = prepare.Context{
         .gpa = gpa,
         .arena = arena,
@@ -273,6 +322,10 @@ pub fn run(
         .workspace_dir = workspace_dir,
         .generation_rel = generation_rel,
         .runtime = options.runtime,
+        .selected_profile = profile,
+        .diagnostics = diagnostics,
+        .lock_entries = entries,
+        .root_dependencies = root_dependencies,
         .target = prepare.materializeTarget(profile, record, &lock.input, options.runtime),
     };
 
@@ -327,6 +380,7 @@ pub fn run(
         .profile = profile,
         .runtime = options.runtime.name(),
         .packages = records.items,
+        .dependencies = ctx.root_dependencies,
         // mutable path 依存の metadata（exports/commands）は環境へ
         // snapshot するため、宣言 dir の digest を記録して再解決を要さない
         // metadata-only 変更でも環境の陳腐化を検出できるようにする。

@@ -5,6 +5,7 @@ const analyze = analyzer.analyze;
 const analyzeModules = analyzer.analyzeModules;
 const moduleName = analyzer.moduleName;
 const SymbolKind = analyzer.SymbolKind;
+const DynamicCommandAlias = analyzer.DynamicCommandAlias;
 
 test "公式と同じファイル名をモジュール名に保つ" {
     const hyphenated = try moduleName(std.testing.allocator, "dir/system-runtime.nako3");
@@ -448,4 +449,213 @@ test "助詞が正しい呼出しと暗黙『それ』連文は未解決語に�
         defer program.deinit();
         try std.testing.expect(program.succeeded());
     }
+}
+
+test "package qualified symbolは宣言したimporter以外から解決されない" {
+    const parser = @import("../frontend/parser.zig");
+    var package = try parser.parse(std.testing.allocator, "値=1\n", "math.nako3");
+    defer package.deinit();
+    var declared = try parser.parse(std.testing.allocator, "math__値を表示\n", "declared.nako3");
+    defer declared.deinit();
+    var undeclared = try parser.parse(std.testing.allocator, "math__値を表示\n", "undeclared.nako3");
+    defer undeclared.deinit();
+    const aliases = [_]analyzer.NamespaceAlias{.{
+        .source_namespace = "math",
+        .internal_namespace = "opaque_pkg_0",
+        .target_module = 0,
+        .is_explicit = true,
+    }};
+
+    // Package symbols use an opaque internal prefix; source alias lookup is scoped
+    // to this importer and translates math__Value to the internal key.
+    var declared_program = try analyzeModules(std.testing.allocator, &.{
+        .{ .name = "math", .internal_namespace = "opaque_pkg_0", .path = "math.nako3", .root = package.root.?, .is_package = true },
+        .{ .name = "declared", .path = "declared.nako3", .root = declared.root.?, .namespace_aliases = &aliases },
+    });
+    defer declared_program.deinit();
+    var declared_resolved = false;
+    for (declared_program.bindings) |binding| {
+        if (binding.kind != .reference or !std.mem.eql(u8, binding.name, "math__値")) continue;
+        if (binding.symbol) |symbol_id| {
+            if (declared_program.symbols[symbol_id].module_index == 0) declared_resolved = true;
+        }
+    }
+    try std.testing.expect(declared_resolved);
+
+    var undeclared_program = try analyzeModules(std.testing.allocator, &.{
+        .{ .name = "math", .path = "math.nako3", .root = package.root.?, .is_package = true },
+        .{ .name = "undeclared", .path = "undeclared.nako3", .root = undeclared.root.? },
+    });
+    defer undeclared_program.deinit();
+    for (undeclared_program.bindings) |binding| {
+        if (binding.kind != .reference or !std.mem.eql(u8, binding.name, "math__値")) continue;
+        if (binding.symbol) |symbol_id| try std.testing.expect(undeclared_program.symbols[symbol_id].module_index != 0);
+    }
+}
+
+test "package aliasは関数parameterの同名qualified localより優先されない" {
+    const parser = @import("../frontend/parser.zig");
+    var package = try parser.parse(std.testing.allocator, "値=1\n", "package.nako3");
+    defer package.deinit();
+    var main = try parser.parse(std.testing.allocator, "●(math__値を)Fとは\nmath__値を表示\nここまで\nF(10)\n", "main.nako3");
+    defer main.deinit();
+    const aliases = [_]analyzer.NamespaceAlias{.{
+        .source_namespace = "math",
+        .internal_namespace = "package",
+        .target_module = 0,
+        .is_explicit = true,
+    }};
+    var program = try analyzeModules(std.testing.allocator, &.{
+        .{ .name = "package", .path = "package.nako3", .root = package.root.? },
+        .{ .name = "main", .path = "main.nako3", .root = main.root.?, .namespace_aliases = &aliases },
+    });
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+
+    var found_local_parameter = false;
+    for (program.bindings) |binding| {
+        if (binding.kind != .reference or !std.mem.eql(u8, binding.name, "math__値")) continue;
+        const symbol = program.symbols[binding.symbol.?];
+        if (symbol.kind == .parameter) found_local_parameter = true;
+    }
+    try std.testing.expect(found_local_parameter);
+}
+
+test "package aliasは同一targetへの別aliasの先行展開で早期可視化されない" {
+    const parser = @import("../frontend/parser.zig");
+    var package = try parser.parse(std.testing.allocator, "値=1\n", "package.nako3");
+    defer package.deinit();
+    var main = try parser.parse(std.testing.allocator, "first__値を表示\nmath__値を表示\n", "main.nako3");
+    defer main.deinit();
+    const aliases = [_]analyzer.NamespaceAlias{
+        .{ .source_namespace = "first", .internal_namespace = "package", .target_module = 0, .import_position = 0, .is_explicit = true },
+        .{ .source_namespace = "math", .internal_namespace = "package", .target_module = 0, .import_position = 100, .is_explicit = true },
+    };
+    const package_ranks = [_]usize{0};
+    const main_ranks = [_]usize{ 1, 1 };
+    var program = try analyzeModules(std.testing.allocator, &.{
+        .{ .name = "package", .path = "package.nako3", .root = package.root.?, .stmt_ranks = &package_ranks, .marker_rank = 0 },
+        .{ .name = "main", .path = "main.nako3", .root = main.root.?, .namespace_aliases = &aliases, .stmt_ranks = &main_ranks, .marker_rank = 1 },
+    });
+    defer program.deinit();
+
+    var first_alias_resolved = false;
+    var second_alias_resolved = false;
+    for (program.bindings) |binding| {
+        if (binding.kind != .reference or binding.symbol == null) continue;
+        if (std.mem.eql(u8, binding.name, "first__値")) first_alias_resolved = program.symbols[binding.symbol.?].module_index == 0;
+        if (std.mem.eql(u8, binding.name, "math__値")) second_alias_resolved = program.symbols[binding.symbol.?].module_index == 0;
+    }
+    try std.testing.expect(first_alias_resolved);
+    try std.testing.expect(!second_alias_resolved);
+}
+
+test "package aliasはimportより前のpackage globalを可視にしない" {
+    const parser = @import("../frontend/parser.zig");
+    var package = try parser.parse(std.testing.allocator, "値=1\n", "package.nako3");
+    defer package.deinit();
+    var main = try parser.parse(std.testing.allocator, "math__値を表示\n●Fとは\nmath__値を表示\nここまで\nF\n", "main.nako3");
+    defer main.deinit();
+    const aliases = [_]analyzer.NamespaceAlias{.{
+        .source_namespace = "math",
+        .internal_namespace = "package",
+        .target_module = 0,
+        .is_explicit = true,
+    }};
+    const package_ranks = [_]usize{2};
+    const main_ranks = [_]usize{ 0, 0, 1 };
+    var program = try analyzeModules(std.testing.allocator, &.{
+        .{ .name = "package", .path = "package.nako3", .root = package.root.?, .stmt_ranks = &package_ranks, .marker_rank = 2 },
+        .{ .name = "main", .path = "main.nako3", .root = main.root.?, .namespace_aliases = &aliases, .stmt_ranks = &main_ranks, .marker_rank = 0 },
+    });
+    defer program.deinit();
+
+    var found_reference = false;
+    for (program.bindings) |binding| {
+        if (binding.kind != .reference or !std.mem.eql(u8, binding.name, "math__値")) continue;
+        found_reference = true;
+        if (binding.symbol) |symbol_id| try std.testing.expect(program.symbols[symbol_id].module_index != 0);
+    }
+    try std.testing.expect(found_reference);
+}
+
+test "『{関数}名』はユーザー関数と組み込み命令へ束縛する" {
+    const parser = @import("../frontend/parser.zig");
+    const source = "●AAAとは\n30を戻す\nここまで\n{関数}AAAを実行\n{関数}足を実行\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "func-ref.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var program = try analyze(std.testing.allocator, parsed.root.?, "func-ref.nako3");
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var saw_user = false;
+    var saw_builtin = false;
+    for (program.bindings) |binding| {
+        if (binding.kind == .call and std.mem.eql(u8, binding.name, "AAA") and std.mem.endsWith(u8, binding.resolved_name, "__AAA")) saw_user = true;
+        if (binding.kind == .builtin and std.mem.eql(u8, binding.resolved_name, "足")) saw_builtin = true;
+    }
+    try std.testing.expect(saw_user);
+    try std.testing.expect(saw_builtin);
+}
+
+test "『{関数}未定義名』は関数として見つからない旨を診断する" {
+    const parser = @import("../frontend/parser.zig");
+    var parsed = try parser.parse(std.testing.allocator, "{関数}ZZZを実行\n", "func-ref-unknown.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var program = try analyze(std.testing.allocator, parsed.root.?, "func-ref-unknown.nako3");
+    defer program.deinit();
+    try std.testing.expect(!program.succeeded());
+    var count: usize = 0;
+    for (program.diagnostics) |item| {
+        if (item.code == .undefined_symbol) count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), count);
+}
+
+test "『{関数}名』の動的プラグイン命令はdynamic_builtinとして束縛する" {
+    const parser = @import("../frontend/parser.zig");
+    // ネイティブプラグイン取り込みモジュールでは未知の命令名を動的命令と
+    // して束縛する。関数値は実行時にplugin dispatchへ委譲される。
+    var parsed = try parser.parse(std.testing.allocator, "F={関数}外部追加\n", "native-plugin.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var program = try analyzeModules(std.testing.allocator, &.{.{
+        .name = "native-plugin",
+        .path = "native-plugin.nako3",
+        .root = parsed.root.?,
+        .allows_dynamic_commands = true,
+    }});
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var saw_dynamic = false;
+    for (program.bindings) |binding| {
+        if (binding.kind == .builtin and binding.dynamic_builtin and std.mem.eql(u8, binding.resolved_name, "外部追加")) saw_dynamic = true;
+    }
+    try std.testing.expect(saw_dynamic);
+}
+
+test "package内scopeの依存命令は所有者修飾のdispatch名へ束縛する" {
+    const parser = @import("../frontend/parser.zig");
+    // 別package scopeで同じaliasを使う推移依存は、ソース上の `util__命令`
+    // を読みやすいまま、runtime登録名は `{owner}__{alias}__命令` へ写す。
+    var parsed = try parser.parse(std.testing.allocator, "util__外部追加(1, 2)を表示\n", "dep-module.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    const aliases = [_]DynamicCommandAlias{.{ .source_namespace = "util", .dispatch_namespace = "pkg_a__util" }};
+    var program = try analyzeModules(std.testing.allocator, &.{.{
+        .name = "dep-module",
+        .path = "dep-module.nako3",
+        .root = parsed.root.?,
+        .dynamic_command_aliases = &aliases,
+    }});
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var saw_scoped_dispatch = false;
+    for (program.bindings) |binding| {
+        if (binding.kind == .builtin and binding.dynamic_builtin and
+            std.mem.eql(u8, binding.name, "util__外部追加") and
+            std.mem.eql(u8, binding.resolved_name, "pkg_a__util__外部追加")) saw_scoped_dispatch = true;
+    }
+    try std.testing.expect(saw_scoped_dispatch);
 }

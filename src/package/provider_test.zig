@@ -1,8 +1,11 @@
 const std = @import("std");
+const test_sandbox = @import("test_sandbox.zig");
 const builtin = @import("builtin");
 const cache_mod = @import("cache.zig");
+const cache_key = @import("cache_key.zig");
 const diag = @import("diagnostics.zig");
 const fetch = @import("fetch.zig");
+const import_resolver = @import("import_resolver.zig");
 const lock_model = @import("lock_model.zig");
 const manifest_mod = @import("manifest.zig");
 const npkg_build = @import("npkg_build.zig");
@@ -176,7 +179,7 @@ fn writePackage(dir: std.Io.Dir, io: std.Io, root: []const u8) !void {
 
 test "path provider はローカル manifest を取得して source identity を返す" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "pkg/src");
     try writePackage(temporary.dir, io, "pkg");
@@ -212,7 +215,7 @@ test "path provider の絶対判定はhost pathと完全なUNCを区別する" {
 test "path provider はPOSIX上の先頭backslashを相対pathとして取得する" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "base/\\lib/src");
     try writePackage(temporary.dir, io, "base/\\lib");
@@ -228,7 +231,7 @@ test "path provider はPOSIX上の先頭backslashを相対pathとして取得す
 test "path provider はPOSIX上のdrive-looking pathをbase_dir相対で取得する" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "base/C:/deps/src");
     try temporary.dir.createDirPath(io, "base/C:\\deps/src");
@@ -248,7 +251,7 @@ test "path provider はPOSIX上のdrive-looking pathをbase_dir相対で取得�
 
 test "path provider は Unicode path を扱える" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "テストパッケージ/src");
     try writePackage(temporary.dir, io, "テストパッケージ");
@@ -264,7 +267,7 @@ test "path provider は Unicode path を扱える" {
 
 test "path provider は manifest 不在を not_found と分類する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "empty");
     const base = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
@@ -280,7 +283,7 @@ test "path provider は manifest 不在を not_found と分類する" {
 
 test "path provider は offline でもローカル manifest を取得できる" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "pkg/src");
     try writePackage(temporary.dir, io, "pkg");
@@ -295,7 +298,7 @@ test "path provider は offline でもローカル manifest を取得できる" 
 
 test "path provider は max_bytes=0 を上限なしとし上限超過を too_large と分類する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "pkg/src");
     try writePackage(temporary.dir, io, "pkg");
@@ -317,7 +320,7 @@ test "path provider は max_bytes=0 を上限なしとし上限超過を too_lar
 
 test "provider は返却 source の文字列を session arena へ複製する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "pkg/src");
     try writePackage(temporary.dir, io, "pkg");
@@ -461,7 +464,7 @@ test "http provider は hash 照合済みの artifact を返す" {
 
 test "http provider は .npkg を検証して manifest を取り出す" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "pkg/src");
     try writePackage(temporary.dir, io, "pkg");
@@ -668,7 +671,7 @@ fn createGitRepo(temporary: *std.testing.TmpDir, io: std.Io) !struct { path: [:0
 test "git provider はローカル repo を clone して commit に固定する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -694,7 +697,7 @@ test "git provider はローカル repo を clone して commit に固定する"
 test "git provider は既定で非loopback平文HTTPをclone前に拒否する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
     defer testing.allocator.free(root);
@@ -713,7 +716,7 @@ test "git provider は既定で非loopback平文HTTPをclone前に拒否する" 
 test "git provider は既存checkoutからのfetch前にも非loopback平文HTTPを拒否する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -741,7 +744,7 @@ test "git provider permits loopback HTTP and explicit plaintext override" {
         .{ .url = "http://127.0.0.1:1/repo", .policy = .{} },
         .{ .url = "http://example.invalid/repo", .policy = .{ .allow_plaintext_http = true } },
     }) |test_case| {
-        var temporary = std.testing.tmpDir(.{});
+        var temporary = test_sandbox.tmpDir(.{});
         defer temporary.cleanup();
         const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
         defer testing.allocator.free(root);
@@ -759,7 +762,7 @@ test "git provider permits loopback HTTP and explicit plaintext override" {
 test "git provider は dirty cached checkout を pinned commit へ戻してから読む" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -796,7 +799,7 @@ test "git provider は cached repository の post-checkout hook を実行しな�
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -854,7 +857,7 @@ test "git provider は cached checkout の refs/replace を無視して pin comm
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -896,7 +899,7 @@ test "git provider は symlink 化された .git/info を leaf ごと除去し�
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -948,7 +951,7 @@ test "git provider は symlink 化された .git/info を leaf ごと除去し�
 test "git provider は commit-ish と同名の移動した tag に誤解されない" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -982,7 +985,7 @@ test "git provider は commit-ish と同名の移動した tag に誤解され�
 test "git provider は既存 lock の commit を tag 移動後も使う" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -1015,7 +1018,7 @@ test "git provider は既存 lock の commit を tag 移動後も使う" {
 test "git provider は lock と矛盾する source 変更を拒否する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -1039,7 +1042,7 @@ test "git provider は lock と矛盾する source 変更を拒否する" {
 test "git provider は既存 checkout に無い commit を fetch して解決する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -1074,7 +1077,7 @@ test "git provider は既存 checkout に無い commit を fetch して解決す
 test "git provider は checkout 境界の外を指す path を拒否する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -1097,9 +1100,9 @@ test "git provider は checkout 境界の外を指す path を拒否する" {
 test "git provider は別 repository の既存 checkout を拒否する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
-    var temporary_b = std.testing.tmpDir(.{});
+    var temporary_b = test_sandbox.tmpDir(.{});
     defer temporary_b.cleanup();
     const repo_a = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo_a.path);
@@ -1129,7 +1132,7 @@ test "git provider は別 repository の既存 checkout を拒否する" {
 test "git provider は bare path origin と file:// URL を同一視する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -1155,7 +1158,7 @@ test "git provider は bare path origin と file:// URL を同一視する" {
 test "git provider は末尾 .git だけが異なる別 repo を拒否する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     // 末尾が .git のローカル repo（`/deps/a` と `/deps/a.git` は別物）。
     try temporary.dir.createDirPath(io, "lib.git/src");
@@ -1191,7 +1194,7 @@ test "git provider は末尾 .git だけが異なる別 repo を拒否する" {
 test "git provider は percent-encoded な file:// URL と bare path を同一視する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     // 空白を含むローカル repo。origin の bare path は空白を保持し、
     // file: URL の宣言は %20 で表現される。
@@ -1279,7 +1282,7 @@ const libalpha_package_doc =
 ;
 
 fn buildNpkg(io: std.Io) !struct { dir: std.testing.TmpDir, archive: []u8, sha: []u8 } {
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     errdefer temporary.cleanup();
     try temporary.dir.createDirPath(io, "pkg/src");
     try writePackage(temporary.dir, io, "pkg");
@@ -1710,6 +1713,110 @@ fn writeSyncProject(temporary: *std.testing.TmpDir, comptime lock_fmt: []const u
     return try temporary.dir.realPathFileAlloc(io, "proj", testing.allocator);
 }
 
+test "sync rejects root manifest semantic diagnostics before publishing the environment" {
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    const project_abs = try writeSyncProject(&temporary,
+        \\{{
+        \\  "schemaVersion": 1, "resolverVersion": 1,
+        \\  "input": {{ "manifestSha256": "sha256:{s}", "profile": "default", "features": [], "target": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu" }} }},
+        \\  "packages": {{}},
+        \\  "profiles": {{ "default": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu", "runtime": "lnako" }} }}
+        \\}}
+    , .{});
+    defer testing.allocator.free(project_abs);
+
+    const invalid_manifest = sync_app_manifest ++ "\\n[unexpected]\\nvalue = true\\n";
+    const new_hash = try fetch.sha256Hex(testing.allocator, invalid_manifest);
+    defer testing.allocator.free(new_hash);
+    const manifest_path = try std.fs.path.join(testing.allocator, &.{ project_abs, "nako.toml" });
+    defer testing.allocator.free(manifest_path);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = manifest_path, .data = invalid_manifest });
+    const lock_path = try std.fs.path.join(testing.allocator, &.{ project_abs, "nako.lock" });
+    defer testing.allocator.free(lock_path);
+    const old_lock = try std.Io.Dir.cwd().readFileAlloc(io, lock_path, testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(old_lock);
+    const old_hash = try fetch.sha256Hex(testing.allocator, sync_app_manifest);
+    defer testing.allocator.free(old_hash);
+    const old_binding = try std.fmt.allocPrint(testing.allocator, "sha256:{s}", .{old_hash});
+    defer testing.allocator.free(old_binding);
+    const new_binding = try std.fmt.allocPrint(testing.allocator, "sha256:{s}", .{new_hash});
+    defer testing.allocator.free(new_binding);
+    const new_lock = try std.mem.replaceOwned(u8, testing.allocator, old_lock, old_binding, new_binding);
+    defer testing.allocator.free(new_lock);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = lock_path, .data = new_lock });
+
+    const cache_root = try std.fs.path.join(testing.allocator, &.{ project_abs, "cache" });
+    defer testing.allocator.free(cache_root);
+    var list = diag.List.init(testing.allocator);
+    defer list.deinit();
+    try testing.expectError(error.LockInvalid, sync_mod.run(testing.allocator, io, .{ .project_root = project_abs, .cache_root = cache_root }, &list));
+    try testing.expect(list.hasErrors());
+    const environment_path = try std.fs.path.join(testing.allocator, &.{ project_abs, ".nako", "environment.json" });
+    defer testing.allocator.free(environment_path);
+    try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(io, environment_path, .{}));
+}
+
+test "sync rejects a path manifest identity mismatch before publishing the environment" {
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "proj/deps/lib");
+    try temporary.dir.writeFile(io, .{ .sub_path = "proj/deps/lib/nako.toml", .data = "[package]\nname = \"renamed-lib\"\nversion = \"2.0.0\"\nlicense = \"MIT\"\n" });
+    const project_abs = try writeSyncProject(&temporary,
+        \\{{
+        \\  "schemaVersion": 1, "resolverVersion": 1,
+        \\  "input": {{ "manifestSha256": "sha256:{s}", "profile": "default", "features": [], "target": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu" }} }},
+        \\  "packages": {{
+        \\    "pkg:path": {{ "id": "pkg:path", "name": "lib", "version": "1.0.0", "source": {{ "type": "path", "path": "deps/lib", "mutable": true }}, "dependencies": [], "features": [], "artifacts": {{ "source": {{ "kind": "source", "type": "raw" }} }} }}
+        \\  }},
+        \\  "profiles": {{ "default": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu", "runtime": "lnako" }} }}
+        \\}}
+    , .{});
+    defer testing.allocator.free(project_abs);
+    const cache_root = try std.fs.path.join(testing.allocator, &.{ project_abs, "cache" });
+    defer testing.allocator.free(cache_root);
+    var list = diag.List.init(testing.allocator);
+    defer list.deinit();
+    try testing.expectError(error.LockInvalid, sync_mod.run(testing.allocator, io, .{ .project_root = project_abs, .cache_root = cache_root }, &list));
+    try testing.expect(list.hasErrors());
+    const environment_path = try std.fs.path.join(testing.allocator, &.{ project_abs, ".nako", "environment.json" });
+    defer testing.allocator.free(environment_path);
+    try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(io, environment_path, .{}));
+}
+
+test "sync rejects a git manifest identity mismatch before publishing the environment" {
+    const io = testing.io;
+    if (!gitAvailable(io)) return error.SkipZigTest;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    const repo = try createGitRepo(&temporary, io);
+    defer testing.allocator.free(repo.path);
+    defer testing.allocator.free(repo.url);
+    defer testing.allocator.free(repo.commit);
+    const project_abs = try writeSyncProject(&temporary,
+        \\{{
+        \\  "schemaVersion": 1, "resolverVersion": 1,
+        \\  "input": {{ "manifestSha256": "sha256:{s}", "profile": "default", "features": [], "target": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu" }} }},
+        \\  "packages": {{
+        \\    "pkg:git": {{ "id": "pkg:git", "name": "demo", "version": "2.0.0", "source": {{ "type": "git", "url": "{s}", "commit": "{s}" }}, "dependencies": [], "features": [], "artifacts": {{ "source": {{ "kind": "source", "type": "raw" }} }} }}
+        \\  }},
+        \\  "profiles": {{ "default": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu", "runtime": "lnako" }} }}
+        \\}}
+    , .{ repo.url, repo.commit });
+    defer testing.allocator.free(project_abs);
+    const cache_root = try std.fs.path.join(testing.allocator, &.{ project_abs, "cache" });
+    defer testing.allocator.free(cache_root);
+    var list = diag.List.init(testing.allocator);
+    defer list.deinit();
+    try testing.expectError(error.LockInvalid, sync_mod.run(testing.allocator, io, .{ .project_root = project_abs, .cache_root = cache_root }, &list));
+    try testing.expect(list.hasErrors());
+    const environment_path = try std.fs.path.join(testing.allocator, &.{ project_abs, ".nako", "environment.json" });
+    defer testing.allocator.free(environment_path);
+    try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(io, environment_path, .{}));
+}
+
 /// tar entry を gzip 圧縮した byte 列を作る（unpack.zig の検査対象を供給）。
 fn buildTarGz(gpa: std.mem.Allocator, files: []const struct { path: []const u8, content: []const u8 }) ![]u8 {
     var tar_buffer: std.Io.Writer.Allocating = .init(gpa);
@@ -1731,7 +1838,7 @@ fn buildTarGz(gpa: std.mem.Allocator, files: []const struct { path: []const u8, 
 
 test "sync は static registry の package 固有 URL から .npkg を直接取得する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "pkg/src");
     try writePackage(temporary.dir, io, "pkg");
@@ -1796,7 +1903,7 @@ test "sync は static registry の package 固有 URL から .npkg を直接取�
 
 test "sync は lock の implementation で選択した artifact を取得する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
 
     const native_manifest =
@@ -1819,18 +1926,29 @@ test "sync は lock の implementation で選択した artifact を取得する"
     const source_tgz = try buildTarGz(testing.allocator, &.{
         .{ .path = "nako.toml", .content = native_manifest },
         .{ .path = "src/index.nako3", .content = "SOURCE-DECOY" },
+        .{ .path = "lib/demo.so", .content = "NATIVE-SOURCE-ARTIFACT" },
     });
     defer testing.allocator.free(source_tgz);
+    const impostor_manifest = try std.mem.replaceOwned(u8, testing.allocator, native_manifest, "name = \"demo\"", "name = \"impostor\"");
+    defer testing.allocator.free(impostor_manifest);
+    const impostor_tgz = try buildTarGz(testing.allocator, &.{
+        .{ .path = "nako.toml", .content = impostor_manifest },
+        .{ .path = "lib/demo.so", .content = "NATIVE-BINARY" },
+    });
+    defer testing.allocator.free(impostor_tgz);
     const native_hash = try fetch.sha256Hex(testing.allocator, native_tgz);
     defer testing.allocator.free(native_hash);
     const source_hash = try fetch.sha256Hex(testing.allocator, source_tgz);
     defer testing.allocator.free(source_hash);
+    const impostor_hash = try fetch.sha256Hex(testing.allocator, impostor_tgz);
+    defer testing.allocator.free(impostor_hash);
 
     var server = FixtureServer{ .io = testing.io, .allocator = testing.allocator };
-    try server.start(&.{
+    var routes = [_]Route{
         .{ .path = "/alice/demo/native.tar.gz", .body = native_tgz },
         .{ .path = "/alice/demo/source.tar.gz", .body = source_tgz },
-    });
+    };
+    try server.start(&routes);
     defer server.stop();
     const native_url = try server.url("/alice/demo/native.tar.gz");
     defer testing.allocator.free(native_url);
@@ -1867,40 +1985,85 @@ test "sync は lock の implementation で選択した artifact を取得する"
 
     var list = diag.List.init(testing.allocator);
     defer list.deinit();
+    const lock_path = try std.fs.path.join(testing.allocator, &.{ project_abs, "nako.lock" });
+    defer testing.allocator.free(lock_path);
+    const original_lock = try std.Io.Dir.cwd().readFileAlloc(io, lock_path, testing.allocator, .unlimited);
+    defer testing.allocator.free(original_lock);
+
+    // A remote artifact without an integrity digest is rejected before any request.
+    const missing_hash_marker = try std.fmt.allocPrint(testing.allocator, "\"sha256\": \"sha256:{s}\", \"url\": \"{s}\"", .{ native_hash, native_url });
+    defer testing.allocator.free(missing_hash_marker);
+    const no_hash_replacement = try std.fmt.allocPrint(testing.allocator, "\"url\": \"{s}\"", .{native_url});
+    defer testing.allocator.free(no_hash_replacement);
+    const no_hash_lock = try std.mem.replaceOwned(u8, testing.allocator, original_lock, missing_hash_marker, no_hash_replacement);
+    defer testing.allocator.free(no_hash_lock);
+    try testing.expect(no_hash_lock.len < original_lock.len);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = lock_path, .data = no_hash_lock });
+    try testing.expectError(error.InvalidSource, sync_mod.run(testing.allocator, io, .{
+        .project_root = project_abs,
+        .cache_root = cache_root,
+    }, &list));
+    try testing.expectEqual(@as(usize, 0), server.requests.load(.acquire));
+    list.deinit();
+    list = diag.List.init(testing.allocator);
+
+    // A valid, hash-verified artifact with a different manifest identity must not publish.
+    const expected_hash = try std.fmt.allocPrint(testing.allocator, "sha256:{s}", .{native_hash});
+    defer testing.allocator.free(expected_hash);
+    const impostor_digest = try std.fmt.allocPrint(testing.allocator, "sha256:{s}", .{impostor_hash});
+    defer testing.allocator.free(impostor_digest);
+    const wrong_identity_lock = try std.mem.replaceOwned(u8, testing.allocator, original_lock, expected_hash, impostor_digest);
+    defer testing.allocator.free(wrong_identity_lock);
+    try testing.expect(!std.mem.eql(u8, wrong_identity_lock, original_lock));
+    routes[0].body = impostor_tgz;
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = lock_path, .data = wrong_identity_lock });
+    try testing.expectError(error.InvalidMetadata, sync_mod.run(testing.allocator, io, .{
+        .project_root = project_abs,
+        .cache_root = cache_root,
+    }, &list));
+    routes[0].body = native_tgz;
+    try testing.expectEqual(@as(usize, 1), server.requests.load(.acquire));
+    const environment_path = try std.fs.path.join(testing.allocator, &.{ project_abs, ".nako", "environment.json" });
+    defer testing.allocator.free(environment_path);
+    try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(io, environment_path, .{}));
+    list.deinit();
+    list = diag.List.init(testing.allocator);
+
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = lock_path, .data = original_lock });
     var report = try sync_mod.run(testing.allocator, io, .{
         .project_root = project_abs,
         .cache_root = cache_root,
     }, &list);
     defer report.deinit();
 
-    // native artifact のみ取得され、その内容が materialize される。
-    try testing.expectEqual(@as(usize, 1), server.requests.load(.acquire));
-    const native_path = try std.fs.path.join(testing.allocator, &.{ project_abs, ".nako", "env", report.generation, "deps", "demo", "lib", "demo.so" });
+    // Native package roots live outside rotating generations. The rejected identity
+    // used a distinct hash, so the valid lock fetches its own artifact exactly once.
+    try testing.expectEqual(@as(usize, 2), server.requests.load(.acquire));
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, report.environment_json, .{});
+    defer parsed.deinit();
+    const pkg = parsed.value.object.get("packages").?.object.get("pkg:44444444444444444444444444444444").?.object;
+    const package_path = pkg.get("path").?.string;
+    try testing.expect(std.mem.startsWith(u8, package_path, ".nako/native/artifact-"));
+    const stable_root = try std.fs.path.join(testing.allocator, &.{ project_abs, package_path });
+    defer testing.allocator.free(stable_root);
+    const native_path = try std.fs.path.join(testing.allocator, &.{ stable_root, "lib", "demo.so" });
     defer testing.allocator.free(native_path);
     const bytes = try std.Io.Dir.cwd().readFileAlloc(io, native_path, testing.allocator, .unlimited);
     defer testing.allocator.free(bytes);
     try testing.expectEqualStrings("NATIVE-BINARY", bytes);
-    const decoy_path = try std.fs.path.join(testing.allocator, &.{ project_abs, ".nako", "env", report.generation, "deps", "demo", "src", "index.nako3" });
-    defer testing.allocator.free(decoy_path);
-    try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(io, decoy_path, .{}));
-
-    // exports は lock の "native" 選択に合わせて native path を記録する。
-    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, report.environment_json, .{});
-    defer parsed.deinit();
-    const pkg = parsed.value.object.get("packages").?.object.get("pkg:44444444444444444444444444444444").?.object;
     const exports = pkg.get("exports").?.array;
     try testing.expectEqual(@as(usize, 1), exports.items.len);
     try testing.expectEqualStrings("lib/demo.so", exports.items[0].object.get("path").?.string);
 
     // attacker が cache tree・marker・source.archive を差し替えても、
-    // lock hash に合わない archive は破棄して再取得する。
+    // lock hash に合わない archive は破棄して再取得する。objects/ には
+    // 拒否された impostor entry も残るため、反復順序に依存せず lock の
+    // artifact hash 由来の key で対象 entry を特定する。
     const objects_path = try std.fs.path.join(testing.allocator, &.{ cache_root, "objects" });
     defer testing.allocator.free(objects_path);
-    var objects = try std.Io.Dir.cwd().openDir(io, objects_path, .{ .iterate = true, .follow_symlinks = false });
-    defer objects.close(io);
-    var iterator = objects.iterate();
-    const object = (try iterator.next(io)).?;
-    const object_root = try std.fs.path.join(testing.allocator, &.{ objects_path, object.name });
+    const native_object_key = try cache_key.artifactKey(testing.allocator, "artifact", expected_hash, native_url);
+    defer testing.allocator.free(native_object_key);
+    const object_root = try std.fs.path.join(testing.allocator, &.{ objects_path, native_object_key });
     defer testing.allocator.free(object_root);
     const cache_tree = try std.fs.path.join(testing.allocator, &.{ object_root, "tree" });
     defer testing.allocator.free(cache_tree);
@@ -1921,18 +2084,63 @@ test "sync は lock の implementation で選択した artifact を取得する"
 
     var second = try sync_mod.run(testing.allocator, io, .{ .project_root = project_abs, .cache_root = cache_root }, &list);
     defer second.deinit();
-    try testing.expectEqual(@as(usize, 2), server.requests.load(.acquire));
+    // 破壊された entry は hash 不整合で破棄されるため、lock artifact は
+    // 改めて取得される（native store への公開を待たず fetch が走る）。
+    try testing.expectEqual(@as(usize, 3), server.requests.load(.acquire));
     const rebuilt_binary = try std.fs.path.join(testing.allocator, &.{ project_abs, ".nako", "env", second.generation, "deps", "demo", "lib", "demo.so" });
     defer testing.allocator.free(rebuilt_binary);
     const rebuilt = try std.Io.Dir.cwd().readFileAlloc(io, rebuilt_binary, testing.allocator, .unlimited);
     defer testing.allocator.free(rebuilt);
     try testing.expectEqualStrings("NATIVE-BINARY", rebuilt);
+
+    var third = try sync_mod.run(testing.allocator, io, .{ .project_root = project_abs, .cache_root = cache_root }, &list);
+    defer third.deinit();
+    const old_generation = try std.fs.path.join(testing.allocator, &.{ project_abs, ".nako", "env", report.generation });
+    defer testing.allocator.free(old_generation);
+    try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(io, old_generation, .{}));
+    const bytes_after_prune = try std.Io.Dir.cwd().readFileAlloc(io, native_path, testing.allocator, .unlimited);
+    defer testing.allocator.free(bytes_after_prune);
+    try testing.expectEqualStrings("NATIVE-BINARY", bytes_after_prune);
+    // 再取得で復元した entry は hash 一致するため、以降は cache hit する。
+    try testing.expectEqual(@as(usize, 3), server.requests.load(.acquire));
+
+    var loaded = try import_resolver.Resolver.load(testing.allocator, io, project_abs);
+    defer loaded.deinit();
+
+    // A legacy lock without implementation may still resolve a native-only
+    // export. Its package root must be stable just like an explicit native lock.
+    const legacy_lock = try std.mem.replaceOwned(u8, testing.allocator, original_lock, "\"implementation\": \"native\",", "");
+    defer testing.allocator.free(legacy_lock);
+    try testing.expect(!std.mem.eql(u8, legacy_lock, original_lock));
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = lock_path, .data = legacy_lock });
+    list.deinit();
+    list = diag.List.init(testing.allocator);
+    var legacy_report = try sync_mod.run(testing.allocator, io, .{ .project_root = project_abs, .cache_root = cache_root }, &list);
+    defer legacy_report.deinit();
+    // implementation 省略の legacy lock は source artifact を選ぶため、
+    // native artifact とは別 key で未取得 → fetch が走る。
+    try testing.expectEqual(@as(usize, 4), server.requests.load(.acquire));
+    const legacy_parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, legacy_report.environment_json, .{});
+    defer legacy_parsed.deinit();
+    const legacy_pkg = legacy_parsed.value.object.get("packages").?.object.get("pkg:44444444444444444444444444444444").?.object;
+    const legacy_path = legacy_pkg.get("path").?.string;
+    try testing.expect(std.mem.startsWith(u8, legacy_path, ".nako/native/artifact-"));
+    const legacy_binary_path = try std.fs.path.join(testing.allocator, &.{ project_abs, legacy_path, "lib", "demo.so" });
+    defer testing.allocator.free(legacy_binary_path);
+    const legacy_binary = try std.Io.Dir.cwd().readFileAlloc(io, legacy_binary_path, testing.allocator, .unlimited);
+    defer testing.allocator.free(legacy_binary);
+    try testing.expectEqualStrings("NATIVE-SOURCE-ARTIFACT", legacy_binary);
+
+    // The resolver must accept the stable native root that sync emitted for the
+    // legacy lock, rather than forcing it through generation-path validation.
+    var legacy_loaded = try import_resolver.Resolver.load(testing.allocator, io, project_abs);
+    defer legacy_loaded.deinit();
 }
 
 test "sync は lock commit を cached checkout で再検証して offline 同期する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -1990,7 +2198,7 @@ test "git provider は短縮 commit が origin へ到達不能なら拒否する
     // の完全 SHA として lock しないよう拒否する。
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -2014,4 +2222,8 @@ test "git provider は短縮 commit が origin へ到達不能なら拒否する
     defer testing.allocator.free(local);
     const bad_dep = manifest_mod.GitDependency{ .name = "demo", .url = repo.url, .commit = local[0..7] };
     try testing.expectError(error.NotFound, provider.acquireGit(&session, bad_dep, workspace, null));
+}
+
+test {
+    _ = @import("import_resolver_test.zig");
 }

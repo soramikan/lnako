@@ -31,6 +31,7 @@ pub const writeLiteralManifest = manifest_mod.writeLiteralManifest;
 pub const completeLiteralManifest = manifest_mod.completeLiteralManifest;
 pub const UnsupportedFeature = unsupported_mod.UnsupportedFeature;
 pub const findUnsupported = unsupported_mod.findUnsupported;
+pub const isNativePluginCall = shared.isNativePluginCall;
 
 pub fn generate(allocator: std.mem.Allocator, program: ir.Program, source_path: []const u8, optimized: bool) !GeneratedModule {
     var emitter = Emitter{
@@ -1162,4 +1163,8 @@ test "単項算術は動的ABIとNumberの高速経路をLLVM IRへ出力する"
     try std.testing.expect(std.mem.indexOf(u8, number_module.text, "select i1 true, %lnako.Value") != null);
     try std.testing.expect(std.mem.indexOf(u8, number_module.text, "call void @lnako_aot_unary(ptr %root.slot.") == null);
     try std.testing.expect(std.mem.indexOf(u8, number_module.text, "fadd double") == null);
+}
+
+test {
+    _ = @import("module_test.zig");
 }

@@ -140,7 +140,7 @@ pub fn loadFromDir(gpa: Allocator, io: std.Io, root: []const u8, root_dir: std.I
 
     const root_abs = try a.dupe(u8, root);
     const manifest_path = try std.fs.path.join(a, &.{ root_abs, manifest_name });
-    const bytes = owned_dir.readFileAlloc(io, manifest_name, a, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
+    const bytes = owned_dir.readFileAlloc(io, manifest_name, a, .limited(manifest_mod.max_manifest_bytes)) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.FileNotFound => return error.ProjectNotFound,
         else => return mapFs(err),

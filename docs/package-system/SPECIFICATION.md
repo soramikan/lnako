@@ -243,7 +243,7 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "resolverVersion": 1,
   "input": {
     "manifestSha256": "...",
@@ -259,7 +259,8 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
     ]
   },
   "packages": { ... },
-  "profiles": { ... }
+  "profiles": { ... },
+  "rootDependencies": { "default": ["pkg:<direct-dependency-id>"] }
 }
 ```
 
@@ -273,6 +274,7 @@ field      := runtime | os | cpu | abi | compat-js | optimize | version | featur
 | `packages` | object | yes | Public ID をキーとする解決済 package マップ。`input.profile` に対応する選択済みグラフ。 |
 | `profiles` | object | yes | 使用した profile 条件のマップ。 |
 | `profilePackages` | object | no | profile 名をキーとする解決済 package マップ。複数 profile を一つの lock に収録するときに使う。 |
+| `rootDependencies` | object | schema v2 | profile 名をキーとし、root nodeから出る直接依存のPublic IDを配列で記録する。推移依存と同じpackage IDでもroot edgeを保持する。 |
 
 ### 4.3 package エントリ
 
@@ -451,8 +453,13 @@ size = 1234
 
 ### 7.2 Import
 
-- `!「pkg:sqlite」を取り込む` のような構文を将来導入する。
-- `pkg:` import は resolver によって lock 済みのパスまたは artifact に解決される。
+- ソース上の標準表記は `!「パッケージ:sqlite」を取り込む` とする。旧表記 `!「pkg:sqlite」を取り込む` も同じ意味の互換aliasとして受理する。
+- `パッケージ:<alias>` と `パッケージ:<alias>/<subpath>` は、取り込み元の依存scope（プロジェクトrootまたはpackage自身）にあるdependency aliasからlock済みPublic ID/環境package keyへ解決し、公開exportだけを選択する。公開module namespaceはimport alias（先頭の `@` を除去し、`/` を `__` に、識別子に使えないASCII文字を `_` に正規化。subpath付きでは `alias__subpath`）に対応付け、exportの `alias` はsubpath選択にのみ使う。module canonical ID は `package key/export name`、物理pathは選択artifactの実pathとして別々に保持する。version指定・未宣言alias・非公開subpathは拒否する。公開名は `@` を含み得るため `api@v1` のようなsubpathは合法であり、version指定（`alias` 直後が `/` でない `pkg:lib@1.0.0` 形式）はalias照合で不一致として拒否される。
+- `.nako/environment.json` はrootと各packageの依存scopeごとに `{ alias, package }` 対応を任意に記録できる。旧環境で対応表が無い場合、package importは利用不可として明示的に失敗する。
+- パッケージaliasは通常ファイル、拡張プラグインおよびnpm/JavaScript取り込みとは別resolverで解決し、相互に曖昧なfallbackをしない。
+- 同一の物理ファイルが package export と相対pathの双方で取り込まれた場合、module identity（canonical ID・package由来フラグ）は最初に取り込まれた側で確定し、後の取り込みはその identity を共有する。修飾名は両経路の namespace で解決できるが、package module としての扱い（implicit lookup の適用範囲等）は先発の取り込み方に従う。
+- package経由で取り込まれた plugin artifact（native および `--compat-js` 時の ESM）は、登録命令を `{namespace}__{命令名}` の修飾名でのみ公開する。namespace は `__` を含み得る（scoped alias・subpath由来の生成形式）が、namespaced 命令の命令名に `__` は使えない（修飾名の一意分解を保つため）。同一package artifactを複数aliasで取り込んだ場合は全namespace分の修飾名を登録する。同一 artifact を直接pathとpackage aliasの両方で取り込んだ場合は無修飾名と全修飾名の双方を登録する（native plugin の直接import優先と同契約）。alias正規化後に同一namespaceへ落ちる異名aliasが別packageを指す環境は拒否し、正規化後に空になる alias（`@` 単体等）は発行・環境読込・解決の全経路で拒否する。
+- package内scopeの依存 plugin（推移依存）は、依存 scope の alias が別 package の scope で衝突し得るため、runtime 登録名の namespace を `{所有者 package key}__{alias}` の正規化形式へ修飾する。ソース上の修飾名（`{alias}__{命令名}`）は変わらず、命令呼出しの束縛時に所有者修飾の dispatch 名へ写像する。プロジェクト root scope の直接依存は修飾しない（alias がそのまま登録名）。Interpreter・AOT・`--compat-js` ESM の全経路で同一の dispatch 名を使う。
 - JavaScript/ESM artifact の import は `--compat-js` 指定時のみ許可する。
 - 通常モードで JS/ESM 依存を解決しようとした場合は `E006_JS_IN_NORMAL_MODE` 診断。
 - 環境の materialize（`sync`・自動準備の `.npkg` 検証と export 解決）は、解決時の実効 target を lock の `input` から再現する。`target.compatJs`・`target.optimize`・`runtime`・`nakoVersion`/`cnakoVersion`/`lnakoVersion` をそのまま使うため、`--compat-js` や `build -O` で選択した artifact が環境構築時の検証で reject されない。`--profile` で別 profile を指定した場合は、その profile record が宣言する `optimize` を使う（CLI の `-O` は入力 profile にのみ適用されるため）。
@@ -460,7 +467,7 @@ size = 1234
 ### 7.3 cnako 委譲と環境参照契約
 
 - cnako は依存解決・パッケージ同期を `lnako sync --json` へ委譲できる。
-- `lnako sync --json` は解決結果を JSON で標準出力し、解決済み環境メタデータを `.nako/environment.json` に記録する。
+- `lnako sync --json` は解決結果を JSON で標準出力し、解決済み環境メタデータを `.nako/environment.json` に記録する。package import用に、rootと各packageの依存scopeで `{ "alias", "package" }` の対応表を任意で保持する。`package` は同JSONの `packages` map key を指し、export aliasとは別の情報である。
 - cnako の `--no-sync` 実行時は lnako を起動せず、`.nako/environment.json` の `lockSha256`・`profile`・各パッケージの `path` と命令メタデータを単独で検証する。`lockSha256` は参照先 `nako.lock` の実 SHA-256 と一致することを検証し、環境情報が欠落・破損・版不一致・lockハッシュ不一致の場合は `E034_INVALID_ENVIRONMENT_REFERENCE` を診断する。`lockSha256` は SHA-256 表現のみを許容し、SRI 形式 `sha256-<43文字Base64>=`、`sha256:` + 64桁 hex、生 64桁 hex のいずれかとする。
 - 環境再利用時は `packages` のキー集合が選択 profile の lock グラフと完全一致することを要求し、欠落・余分な record は不一致とする。各 record は environment schema の形状（必須 `name`/`version`/`path`、任意 `id`/`exports`/`commands`、未知キー禁止）を満たし、`name`/`version`/`id` は lock entry と一致しなければならない。`.nako`・`.nako/env`・世代 dir・package path の各成分は no-follow で辿り、中間成分が symlink/reparse point の環境は管理外を指すものとして再利用しない。
 - 動的呼び出し（文字列指定による動的実行等）で静的に共用性を確認できない機能利用は未検査とし、厳格な共用検査（strict sharing check）において `E033_STRICT_SHARING_FAILED` で拒絶する。共用ライブラリの保証には両処理系での自動テスト実行を必須証拠とする。

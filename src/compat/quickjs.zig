@@ -29,7 +29,7 @@ const HostSetFn = *const fn (*anyopaque, [*:0]const u8, *const RawValue) callcon
 const HostInvokeFn = *const fn (*anyopaque, usize, [*c]const *const RawValue, usize) callconv(.c) ?*RawValue;
 const HostExecFn = *const fn (*anyopaque, [*:0]const u8, [*c]const *const RawValue, usize) callconv(.c) ?*RawValue;
 extern fn lnako_qjs_set_host(engine: *Engine, context: *anyopaque, get: HostGetFn, set: HostSetFn, invoke: HostInvokeFn, exec: HostExecFn) void;
-extern fn lnako_qjs_add_module_source(engine: *Engine, name: [*:0]const u8, source: [*]const u8, length: usize) c_int;
+extern fn lnako_qjs_add_module_source(engine: *Engine, name: [*:0]const u8, source: [*]const u8, length: usize, package_root: ?[*:0]const u8) c_int;
 extern fn lnako_qjs_release(engine: *Engine) void;
 extern fn lnako_qjs_take_error(engine: *Engine) ?[*:0]u8;
 extern fn lnako_qjs_free_string(text: [*:0]u8) void;
@@ -105,6 +105,7 @@ pub const State = struct {
     runtime: ?*Runtime = null,
     effects: ?Effects = null,
     host_functions: std.ArrayList(Value) = .empty,
+    package_namespaces: std.ArrayList([]const u8) = .empty,
     syncing: std.AutoHashMapUnmanaged(usize, void) = .empty,
 
     pub fn init(enabled: bool) State {
@@ -115,6 +116,8 @@ pub const State = struct {
         if (build_options.quickjs_enabled) if (self.engine) |engine| lnako_qjs_release(engine);
         if (self.runtime) |runtime| {
             self.host_functions.deinit(runtime.allocator());
+            for (self.package_namespaces.items) |namespace| runtime.allocator().free(namespace);
+            self.package_namespaces.deinit(runtime.allocator());
             self.syncing.deinit(runtime.allocator());
         }
         self.* = undefined;
@@ -164,18 +167,51 @@ pub const State = struct {
             \\sys.tags = Object.create(null);
             \\globalThis.__lnako_commands = Object.create(null);
             \\globalThis.__lnako_plugins = new WeakSet();
-            \\globalThis.__lnako_registerPlugin = function(plugin) {
+            \\globalThis.__lnako_plugin_registrations = new Map();
+            \\globalThis.__lnako_qualified_keys = new Set();
+            \\globalThis.__lnako_active_namespace = undefined;
+            \\globalThis.__lnako_eval_plugins = [];
+            \\globalThis.__lnako_registerPlugin = function(plugin, namespace) {
             \\  if (!plugin || (typeof plugin !== 'object' && typeof plugin !== 'function')) return;
-            \\  if (globalThis.__lnako_plugins.has(plugin)) return;
-            \\  globalThis.__lnako_plugins.add(plugin);
-            \\  for (const name of Object.keys(plugin || {})) {
-            \\    if (name !== 'meta' && name !== '初期化') globalThis.__lnako_commands[name] = plugin[name];
+            \\  const prefix = (typeof namespace === 'string' && namespace.length > 0) ? namespace + '__' : '';
+            \\  let registrations = globalThis.__lnako_plugin_registrations.get(plugin);
+            \\  if (!registrations) {
+            \\    registrations = new Set();
+            \\    globalThis.__lnako_plugin_registrations.set(plugin, registrations);
             \\  }
-            \\  const initializer = plugin['初期化'];
-            \\  if (typeof initializer === 'function') initializer(sys);
-            \\  else if (initializer && typeof initializer.fn === 'function') initializer.fn(sys);
+            \\  if (!registrations.has(prefix)) {
+            \\    registrations.add(prefix);
+            \\    for (const name of Object.keys(plugin || {})) {
+            \\      if (name === 'meta' || name === '初期化') continue;
+            \\      if (prefix.length > 0 && name.indexOf('__') >= 0) continue;
+            \\      const key = prefix + name;
+            \\      // 無修飾登録がpackage修飾keyを上書きしないよう、修飾済みkeyは
+            \\      // raw export による再代入を拒否する。逆方向（修飾がrawを
+            \\      // 上書き）は許容し、登録順序に依らず修飾側を優先させる。
+            \\      if (prefix.length === 0 && globalThis.__lnako_qualified_keys.has(key)) continue;
+            \\      globalThis.__lnako_commands[key] = plugin[name];
+            \\      if (prefix.length > 0) globalThis.__lnako_qualified_keys.add(key);
+            \\    }
+            \\  }
+            \\  if (!globalThis.__lnako_plugins.has(plugin)) {
+            \\    globalThis.__lnako_plugins.add(plugin);
+            \\    const initializer = plugin['初期化'];
+            \\    if (typeof initializer === 'function') initializer(sys);
+            \\    else if (initializer && typeof initializer.fn === 'function') initializer.fn(sys);
+            \\  }
             \\};
-            \\globalThis.navigator = globalThis.navigator || { nako3: { addPluginObject: function(_name, plugin) { globalThis.__lnako_registerPlugin(plugin); } } };
+            \\globalThis.__lnako_beginModuleEval = function(namespace) {
+            \\  globalThis.__lnako_active_namespace = namespace;
+            \\  globalThis.__lnako_eval_plugins = [];
+            \\};
+            \\globalThis.__lnako_reregisterEvalPlugins = function(namespacesJson) {
+            \\  const pending = globalThis.__lnako_eval_plugins;
+            \\  globalThis.__lnako_eval_plugins = [];
+            \\  for (const plugin of pending) {
+            \\    for (const ns of JSON.parse(namespacesJson)) globalThis.__lnako_registerPlugin(plugin, ns);
+            \\  }
+            \\};
+            \\globalThis.navigator = globalThis.navigator || { nako3: { addPluginObject: function(_name, plugin) { globalThis.__lnako_eval_plugins.push(plugin); globalThis.__lnako_registerPlugin(plugin, globalThis.__lnako_active_namespace); } } };
             \\globalThis.console = globalThis.console || { log: function(){}, error: function(){}, warn: function(){} };
         ;
         const result = lnako_qjs_eval(engine, bootstrap, bootstrap.len, "<lnako-bootstrap>") orelse return quickJsError(engine);
@@ -317,19 +353,95 @@ pub fn installModules(runtime: *Runtime, state: *State, modules: []const @import
     for (modules) |module| {
         const filename = try moduleFilename(runtime.allocator(), module.path);
         defer runtime.allocator().free(filename);
-        if (lnako_qjs_add_module_source(engine, filename.ptr, module.source.ptr, module.source.len) < 0) return error.QuickJsModuleRegistrationFailed;
+        // package所有moduleはrootも `/` 区切りへ正規化して渡す。bridge側の
+        // module_normalizeが、このmoduleおよびroot配下で読まれたmoduleの
+        // import解決にroot包含を強制し、graph収集の盲点となった形でも
+        // root外へのFS fallbackを拒否する。
+        const package_root: ?[:0]u8 = if (module.package_root) |root| blk: {
+            const normalized = try runtime.allocator().dupeZ(u8, root);
+            for (normalized) |*character| if (character.* == '\\') {
+                character.* = '/';
+            };
+            break :blk normalized;
+        } else null;
+        defer if (package_root) |root| runtime.allocator().free(root);
+        if (lnako_qjs_add_module_source(engine, filename.ptr, module.source.ptr, module.source.len, if (package_root) |root| root.ptr else null) < 0) return error.QuickJsModuleRegistrationFailed;
     }
     for (modules) |module| {
         if (!module.is_plugin) continue;
         const filename = try moduleFilename(runtime.allocator(), module.path);
         defer runtime.allocator().free(filename);
+        // `pkg:` import経由のESM pluginは修飾名のみ公開する（native pluginの
+        // namespace契約と同じ）。評価中の自己登録（addPluginObject）も修飾名へ
+        // 誘導するため、eval前にactive namespaceを設定する。直接path importと
+        // 併存する module は namespaces に空エントリを含み、それを active
+        // namespace として渡すと shim が無修飾登録する。
+        for (module.namespaces) |namespace| {
+            // 空エントリは「直接path import由来の無修飾公開」を表す sentinel
+            // であり、package namespace 一覧には登録しない（`{ns}__{名}`
+            // 判定で任意の `__x` に一致してしまう）。
+            if (namespace.len == 0) continue;
+            var listed = false;
+            for (state.package_namespaces.items) |existing| {
+                if (std.mem.eql(u8, existing, namespace)) {
+                    listed = true;
+                    break;
+                }
+            }
+            if (!listed) try state.package_namespaces.append(runtime.allocator(), try runtime.allocator().dupe(u8, namespace));
+        }
+        const begin = try globalProperty(engine, "__lnako_beginModuleEval");
+        defer lnako_qjs_value_free(begin);
+        const active_namespace = if (module.namespaces.len > 0)
+            lnako_qjs_string(engine, module.namespaces[0].ptr, module.namespaces[0].len) orelse return quickJsError(engine)
+        else
+            lnako_qjs_undefined(engine) orelse return error.QuickJsEngineUnavailable;
+        defer lnako_qjs_value_free(active_namespace);
+        const begin_arguments = [_]*const RawValue{active_namespace};
+        const begin_result = lnako_qjs_call(engine, begin, &begin_arguments, begin_arguments.len) orelse return quickJsError(engine);
+        lnako_qjs_value_free(begin_result);
         const plugin = lnako_qjs_eval_module(engine, module.source.ptr, module.source.len, filename.ptr) orelse return quickJsError(engine);
         defer lnako_qjs_value_free(plugin);
         const register = try globalProperty(engine, "__lnako_registerPlugin");
         defer lnako_qjs_value_free(register);
-        const arguments = [_]*const RawValue{plugin};
-        const result = lnako_qjs_call(engine, register, &arguments, arguments.len) orelse return quickJsError(engine);
-        lnako_qjs_value_free(result);
+        if (module.namespaces.len == 0) {
+            const arguments = [_]*const RawValue{plugin};
+            const result = lnako_qjs_call(engine, register, &arguments, arguments.len) orelse return quickJsError(engine);
+            lnako_qjs_value_free(result);
+        } else {
+            // 同一pathを複数aliasでimportした場合は全namespace分を登録する。
+            // JS shim側が (plugin, namespace) 単位で重複登録を弾き、`初期化`は
+            // plugin単位で一度だけ実行する。
+            for (module.namespaces) |namespace| {
+                const namespace_value = lnako_qjs_string(engine, namespace.ptr, namespace.len) orelse return quickJsError(engine);
+                defer lnako_qjs_value_free(namespace_value);
+                const arguments = [_]*const RawValue{ plugin, namespace_value };
+                const result = lnako_qjs_call(engine, register, &arguments, arguments.len) orelse return quickJsError(engine);
+                lnako_qjs_value_free(result);
+            }
+        }
+        // eval中に `addPluginObject` で自己登録したpluginは active namespace
+        // （namespaces[0]）にしか登録されていないため、残りのalias namespaceへ
+        // も展開する。listはshim側でdrainされる（namespacesが0/1件の場合は
+        // drainのみ）。
+        var extra_namespaces: std.ArrayList(u8) = .empty;
+        defer extra_namespaces.deinit(runtime.allocator());
+        const extra_slice = if (module.namespaces.len > 1) module.namespaces[1..] else module.namespaces[0..0];
+        try extra_namespaces.appendSlice(runtime.allocator(), "[");
+        for (extra_slice, 0..) |namespace, index| {
+            if (index != 0) try extra_namespaces.append(runtime.allocator(), ',');
+            try extra_namespaces.appendSlice(runtime.allocator(), "\"");
+            try extra_namespaces.appendSlice(runtime.allocator(), namespace);
+            try extra_namespaces.appendSlice(runtime.allocator(), "\"");
+        }
+        try extra_namespaces.appendSlice(runtime.allocator(), "]");
+        const extra_json = lnako_qjs_string(engine, extra_namespaces.items.ptr, extra_namespaces.items.len) orelse return quickJsError(engine);
+        defer lnako_qjs_value_free(extra_json);
+        const reregister = try globalProperty(engine, "__lnako_reregisterEvalPlugins");
+        defer lnako_qjs_value_free(reregister);
+        const reregister_arguments = [_]*const RawValue{extra_json};
+        const reregister_result = lnako_qjs_call(engine, reregister, &reregister_arguments, reregister_arguments.len) orelse return quickJsError(engine);
+        lnako_qjs_value_free(reregister_result);
     }
     state.modules_loaded = true;
     const commands = try globalProperty(engine, "__lnako_commands");
@@ -370,7 +482,7 @@ fn callPlugin(self: *State, runtime: *Runtime, name: []const u8, arguments: []co
     var name_z = try runtime.allocator().dupeZ(u8, lookup_name);
     defer runtime.allocator().free(name_z);
     var definition_value = lnako_qjs_get_property(commands, name_z.ptr) orelse return quickJsError(engine);
-    if (lnako_qjs_kind(definition_value) == .undefined) {
+    if (lnako_qjs_kind(definition_value) == .undefined and !isPackageNamespacedName(self, name)) {
         if (std.mem.lastIndexOf(u8, name, "__")) |separator| {
             lnako_qjs_value_free(definition_value);
             lookup_name = name[separator + 2 ..];
@@ -411,6 +523,20 @@ fn callPlugin(self: *State, runtime: *Runtime, name: []const u8, arguments: []co
         return @as(?Value, .undefined);
     }
     return @as(?Value, try fromRaw(self, runtime, result));
+}
+
+/// `name` がpackage namespaceに属する修飾名か。該当する場合は
+/// `callPlugin` の末尾`__`除去fallbackを適用しない。修飾名がpackage外の
+/// 無修飾命令へ漏れると `{ns}__{名}` 契約が破れるため（native plugin側の
+/// findCommand と同じ規則）。既知namespaceに一致しない `plugin__cmd` 形式は
+/// cnako互換の名前付き呼出しとして従来どおりfallbackを許す。
+fn isPackageNamespacedName(state: *State, name: []const u8) bool {
+    for (state.package_namespaces.items) |namespace| {
+        if (name.len > namespace.len + 2 and
+            std.mem.startsWith(u8, name, namespace) and
+            name[namespace.len] == '_' and name[namespace.len + 1] == '_') return true;
+    }
+    return false;
 }
 
 fn globalProperty(engine: *Engine, name: [:0]const u8) !*RawValue {
@@ -778,4 +904,112 @@ test "QuickJSモジュール名のWindows区切りを正規化する" {
     const filename = try moduleFilename(std.testing.allocator, "C:\\work\\plugin\\main.mjs");
     defer std.testing.allocator.free(filename);
     try std.testing.expectEqualStrings("C:/work/plugin/main.mjs", filename);
+}
+
+test "package所有moduleのimport解決はpackage root外へのFS fallbackを拒否する" {
+    if (!build_options.quickjs_enabled) return;
+    // graph側の収集をすり抜けたimport形でも、referrerがpackage所有なら
+    // module_normalizeの段でroot外解決を拒否する — loaderのfopen fallback
+    // が境界の逃げ道にならないことを実FS上のfileで検証する。
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.createDirPath(io, "pkg");
+    try tmp.dir.writeFile(io, .{ .sub_path = "outside.mjs", .data = "export const secret = 1;" });
+    const base_abs = try tmp.dir.realPathFileAlloc(io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base_abs);
+    const pkg_root = try std.fs.path.resolve(std.testing.allocator, &.{ base_abs, "pkg" });
+    defer std.testing.allocator.free(pkg_root);
+    const main_path = try std.fs.path.resolve(std.testing.allocator, &.{ pkg_root, "main.mjs" });
+    defer std.testing.allocator.free(main_path);
+    const inner_path = try std.fs.path.resolve(std.testing.allocator, &.{ pkg_root, "inner.mjs" });
+    defer std.testing.allocator.free(inner_path);
+    const helper_path = try std.fs.path.resolve(std.testing.allocator, &.{ pkg_root, "helper.mjs" });
+    defer std.testing.allocator.free(helper_path);
+    const free_path = try std.fs.path.resolve(std.testing.allocator, &.{ base_abs, "free.mjs" });
+    defer std.testing.allocator.free(free_path);
+    const missing_path = try std.fs.path.resolve(std.testing.allocator, &.{ base_abs, "missing.mjs" });
+    defer std.testing.allocator.free(missing_path);
+
+    const engine = lnako_qjs_new() orelse return error.SkipZigTest;
+    defer lnako_qjs_release(engine);
+    const root_name = try moduleFilename(std.testing.allocator, pkg_root);
+    defer std.testing.allocator.free(root_name);
+    const main_name = try moduleFilename(std.testing.allocator, main_path);
+    defer std.testing.allocator.free(main_name);
+    const inner_name = try moduleFilename(std.testing.allocator, inner_path);
+    defer std.testing.allocator.free(inner_name);
+    const helper_name = try moduleFilename(std.testing.allocator, helper_path);
+    defer std.testing.allocator.free(helper_name);
+    const free_name = try moduleFilename(std.testing.allocator, free_path);
+    defer std.testing.allocator.free(free_name);
+    const missing_name = try moduleFilename(std.testing.allocator, missing_path);
+    defer std.testing.allocator.free(missing_name);
+
+    // package所有として登録されたmoduleのimportがroot外を指す場合、
+    // 静的form・動的formともに実行時のmodule解決は失敗する（fopenへ到達しない）。
+    const escaping = "import { secret } from '../outside.mjs'; export default secret;";
+    try std.testing.expectEqual(@as(c_int, 0), lnako_qjs_add_module_source(engine, main_name.ptr, escaping.ptr, escaping.len, root_name.ptr));
+    try std.testing.expect(lnako_qjs_eval_module(engine, escaping.ptr, escaping.len, main_name.ptr) == null);
+    const message = lnako_qjs_take_error(engine) orelse return error.TestUnexpectedResult;
+    defer lnako_qjs_free_string(message);
+    try std.testing.expect(std.mem.indexOf(u8, std.mem.span(message), "package root") != null);
+
+    // 動的importのrejection経路 — specifierがroot外ならnormalize段で
+    // 例外を投げ、module解決はrejectedになる。
+    const dynamic_escaping = "export default await import('../outside.mjs');";
+    const dynamic_path = try std.fs.path.resolve(std.testing.allocator, &.{ pkg_root, "dynamic.mjs" });
+    defer std.testing.allocator.free(dynamic_path);
+    const dynamic_name = try moduleFilename(std.testing.allocator, dynamic_path);
+    defer std.testing.allocator.free(dynamic_name);
+    try std.testing.expectEqual(@as(c_int, 0), lnako_qjs_add_module_source(engine, dynamic_name.ptr, dynamic_escaping.ptr, dynamic_escaping.len, root_name.ptr));
+    try std.testing.expect(lnako_qjs_eval_module(engine, dynamic_escaping.ptr, dynamic_escaping.len, dynamic_name.ptr) == null);
+    const dynamic_message = lnako_qjs_take_error(engine) orelse return error.TestUnexpectedResult;
+    defer lnako_qjs_free_string(dynamic_message);
+    try std.testing.expect(std.mem.indexOf(u8, std.mem.span(dynamic_message), "package root") != null);
+
+    // root内のspecifierは受理され、登録済みsourceが使われる。
+    const inside = "import { ok } from './helper.mjs'; export default ok;";
+    const helper = "export const ok = 7;";
+    try std.testing.expectEqual(@as(c_int, 0), lnako_qjs_add_module_source(engine, inner_name.ptr, inside.ptr, inside.len, root_name.ptr));
+    try std.testing.expectEqual(@as(c_int, 0), lnako_qjs_add_module_source(engine, helper_name.ptr, helper.ptr, helper.len, root_name.ptr));
+    const inside_result = lnako_qjs_eval_module(engine, inside.ptr, inside.len, inner_name.ptr) orelse return error.TestUnexpectedResult;
+    var actual: f64 = 0;
+    try std.testing.expectEqual(@as(c_int, 0), lnako_qjs_to_number(inside_result, &actual));
+    try std.testing.expectEqual(@as(f64, 7), actual);
+    lnako_qjs_value_free(inside_result);
+
+    // package外module（root未登録）のFS fallbackは従来どおり動く。
+    const free_source = "import { secret } from './outside.mjs'; export default secret;";
+    try std.testing.expectEqual(@as(c_int, 0), lnako_qjs_add_module_source(engine, free_name.ptr, free_source.ptr, free_source.len, null));
+    const free_result = lnako_qjs_eval_module(engine, free_source.ptr, free_source.len, free_name.ptr) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(c_int, 0), lnako_qjs_to_number(free_result, &actual));
+    try std.testing.expectEqual(@as(f64, 1), actual);
+    lnako_qjs_value_free(free_result);
+
+    // in-root symlink経由のroot外参照 — lexicalにはroot内だがcanonical
+    // 解決後はroot外になるため、module_normalizeのcanonical検査で拒否
+    // される（symlink非対応環境ではこの経路をskipする）。
+    const link_ok = blk: {
+        tmp.dir.symLink(std.testing.io, "../outside.mjs", "pkg/link.mjs", .{}) catch break :blk false;
+        break :blk true;
+    };
+    if (link_ok) {
+        const link_path = try std.fs.path.resolve(std.testing.allocator, &.{ pkg_root, "via_link.mjs" });
+        defer std.testing.allocator.free(link_path);
+        const link_name = try moduleFilename(std.testing.allocator, link_path);
+        defer std.testing.allocator.free(link_name);
+        const via_link = "import { secret } from './link.mjs'; export default secret;";
+        try std.testing.expectEqual(@as(c_int, 0), lnako_qjs_add_module_source(engine, link_name.ptr, via_link.ptr, via_link.len, root_name.ptr));
+        try std.testing.expect(lnako_qjs_eval_module(engine, via_link.ptr, via_link.len, link_name.ptr) == null);
+        const link_message = lnako_qjs_take_error(engine) orelse return error.TestUnexpectedResult;
+        defer lnako_qjs_free_string(link_message);
+        try std.testing.expect(std.mem.indexOf(u8, std.mem.span(link_message), "package root") != null);
+    }
+
+    // root外moduleのroot外import — 未登録fileのfopen失敗は従来の拒否経路。
+    const missing_source = "export default await import('./missing-target.mjs');";
+    try std.testing.expect(lnako_qjs_eval_module(engine, missing_source.ptr, missing_source.len, missing_name.ptr) == null);
+    const missing_message = lnako_qjs_take_error(engine) orelse return error.TestUnexpectedResult;
+    defer lnako_qjs_free_string(missing_message);
 }

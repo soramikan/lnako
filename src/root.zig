@@ -107,6 +107,7 @@ pub const package = struct {
     pub const manifest = @import("package/manifest.zig");
     pub const resolver = @import("package/resolver.zig");
     pub const lock = @import("package/lock.zig");
+    pub const lock_validate = @import("package/lock_validate.zig");
     pub const toml_write = @import("package/toml_write.zig");
     pub const glob = @import("package/glob.zig");
     pub const npkg_metadata = @import("package/npkg_metadata.zig");
@@ -120,10 +121,13 @@ pub const package = struct {
     pub const registry = @import("package/registry.zig");
     pub const cache = @import("package/cache.zig");
     pub const environment = @import("package/environment.zig");
+    pub const import_deps = @import("package/import_deps.zig");
+    pub const import_resolver = @import("package/import_resolver.zig");
     pub const materialize = @import("package/materialize.zig");
     pub const unpack = @import("package/unpack.zig");
     pub const sync = @import("package/sync.zig");
     pub const project = @import("package/project.zig");
+    pub const test_sandbox = @import("package/test_sandbox.zig");
 };
 
 pub const Command = enum {
@@ -309,6 +313,7 @@ test {
     std.testing.refAllDecls(package.registry);
     std.testing.refAllDecls(package.cache);
     std.testing.refAllDecls(package.environment);
+    std.testing.refAllDecls(package.import_resolver);
     std.testing.refAllDecls(package.materialize);
     std.testing.refAllDecls(package.unpack);
     std.testing.refAllDecls(package.sync);

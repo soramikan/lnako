@@ -8,6 +8,8 @@ const marker_mod = @import("marker.zig");
 const features_mod = @import("features.zig");
 const diag = @import("diagnostics.zig");
 const manifest_mod = @import("manifest.zig");
+const npkg_files = @import("npkg_files.zig");
+const import_resolver = @import("import_resolver.zig");
 
 const Manifest = manifest_mod.Manifest;
 const Npkg = manifest_mod.Npkg;
@@ -206,6 +208,17 @@ const Validator = struct {
         };
     }
 
+    /// `alias` 任意フィールド。`@` 単体や空文字列など正規化後に公開
+    /// namespace が空になる alias は plugin 登録名を構成できないため拒否する。
+    fn expectAlias(self: *Validator, table: *std.StringHashMapUnmanaged(toml.Value), path: []const u8) Error!?[]const u8 {
+        const alias = try self.expectString(table, "alias", path) orelse return null;
+        if (try import_resolver.hasEmptyNamespace(self.scratch, alias)) {
+            try self.report(diag.E029_INVALID_VALUE, try self.pathOf(path, "alias"), valuePositionOfKey(table, "alias"), "dependency alias \"{s}\" normalizes to an empty namespace", .{alias});
+            return null;
+        }
+        return alias;
+    }
+
     fn expectBool(self: *Validator, table: *std.StringHashMapUnmanaged(toml.Value), key: []const u8, path: []const u8) Error!?bool {
         const value = table.getPtr(key) orelse return null;
         return switch (value.kind) {
@@ -240,6 +253,14 @@ const Validator = struct {
         return try items.toOwnedSlice(self.arena);
     }
 
+    /// export の `path`・artifact の `path` は package 相対の規範 path が
+    /// 契約。規範外（`..`・絶対 path・`\`・制御文字等）は commands 索引や
+    /// import 解決で package 境界外を読めるため受理しない。
+    fn rejectNonCanonicalPath(self: *Validator, text: []const u8, field_path: []const u8, position: Position) Error!void {
+        if (npkg_files.isCanonicalPath(text)) return;
+        try self.report(diag.E029_INVALID_VALUE, field_path, position, "\"{s}\" must be a canonical package-relative path: \"{s}\"", .{ field_path, text });
+    }
+
     /// `native`/`esm` フィールドを artifact 宣言列へ変換する。受理する形は
     /// 文字列省略形、宣言テーブル、またはその配列。戻り値のスライスと
     /// 各 `features` は arena 確保。
@@ -248,6 +269,7 @@ const Validator = struct {
         const field_path = try self.pathOf(path, key);
         switch (value.kind) {
             .string => |text| {
+                try self.rejectNonCanonicalPath(text, field_path, value.position);
                 const decls = try self.arena.alloc(ArtifactDecl, 1);
                 decls[0] = .{ .path = text, .position = value.position };
                 return decls;
@@ -282,6 +304,8 @@ const Validator = struct {
             .string => |text| {
                 if (text.len == 0) {
                     try self.report(diag.E029_INVALID_VALUE, field_path, value.position, "\"{s}\" must not be an empty path", .{field_path});
+                } else {
+                    try self.rejectNonCanonicalPath(text, field_path, value.position);
                 }
                 return .{ .path = text, .position = value.position };
             },
@@ -293,9 +317,11 @@ const Validator = struct {
                     .position = value.position,
                 };
                 if (try self.requireString(decl_table, "path", field_path, value.position)) |text| {
+                    const item_path = try self.pathOf(field_path, "path");
                     if (text.len == 0) {
-                        const item_path = try self.pathOf(field_path, "path");
                         try self.report(diag.E029_INVALID_VALUE, item_path, value.position, "\"{s}.path\" must not be empty", .{field_path});
+                    } else {
+                        try self.rejectNonCanonicalPath(text, item_path, value.position);
                     }
                     decl.path = text;
                 }
@@ -616,7 +642,7 @@ const Validator = struct {
                 dep.default_features = default_features;
             }
             dep.profile = try self.expectString(dep_table, "profile", field_path);
-            dep.alias = try self.expectString(dep_table, "alias", field_path);
+            dep.alias = try self.expectAlias(dep_table, field_path);
             if (try self.expectString(dep_table, "public-id", field_path)) |public_id| {
                 if (!isPublicId(public_id)) {
                     try self.report(diag.E029_INVALID_VALUE, try self.pathOf(field_path, "public-id"), valuePositionOfKey(dep_table, "public-id"), "invalid public id \"{s}\"", .{public_id});
@@ -758,7 +784,7 @@ const Validator = struct {
                 dep.commit = commit;
             }
             dep.path = try self.expectString(dep_table, "path", field_path);
-            dep.alias = try self.expectString(dep_table, "alias", field_path);
+            dep.alias = try self.expectAlias(dep_table, field_path);
             try map.put(self.arena, name, dep);
         }
     }
@@ -792,7 +818,7 @@ const Validator = struct {
                 }
                 dep.hash = hash;
             }
-            dep.alias = try self.expectString(dep_table, "alias", field_path);
+            dep.alias = try self.expectAlias(dep_table, field_path);
             try map.put(self.arena, name, dep);
         }
     }
@@ -869,6 +895,15 @@ const Validator = struct {
         const known = [_][]const u8{ "name", "path", "alias", "native", "esm" };
         var exports = try std.ArrayList(Export).initCapacity(self.arena, array.items.len);
         var names = std.StringHashMap(void).init(self.scratch);
+        // name/alias はどちらも `pkg:pkg/<sel>` の selector として一致するため、
+        // 全 export で一意でなければならない。衝突すると `pkg:lib/foo` が複数
+        // export に一致して常に AmbiguousExport になり、正常に sync された
+        // 公開 export を読み込めない。
+        var selectors = std.StringHashMap([]const u8).init(self.scratch);
+        // selector の正規化後 namespace も一意にする。`foo-bar` と `foo_bar` は
+        // 同じ `lib__foo_bar` へ畳まれ、native 登録は衝突し ESM は同一 command
+        // key を上書きするため、発行時点で拒否する。
+        var normalized_selectors = std.StringHashMap([]const u8).init(self.scratch);
         var has_compat_js = false;
         var profile_iterator = self.manifest.profiles.valueIterator();
         while (profile_iterator.next()) |profile| {
@@ -895,7 +930,40 @@ const Validator = struct {
                 }
             }
             export_entry.path = try self.expectString(export_table, "path", "exports");
+            if (export_entry.path) |text| {
+                const item_path = try self.pathOf("exports", "path");
+                try self.rejectNonCanonicalPath(text, item_path, item.position);
+                // `path` は共通 nadesiko source のみを指す。JavaScript 実装は
+                // `esm`、native 実装は `native` で宣言する。plugin 拡張子を
+                // 共通 source へ置くと通常モード sync が発行しても module
+                // graph が --compat-js 無しで常に拒否し、発行済み export が
+                // import 不能になる。
+                const extension = std.fs.path.extension(text);
+                if (!std.ascii.eqlIgnoreCase(extension, ".nako3") and
+                    !std.ascii.eqlIgnoreCase(extension, ".dncl") and
+                    !std.ascii.eqlIgnoreCase(extension, ".dncl2"))
+                {
+                    try self.report(diag.E029_INVALID_VALUE, item_path, item.position, "export path \"{s}\" must be a nadesiko source file (.nako3/.dncl/.dncl2); JavaScript or native implementations belong in \"esm\"/\"native\"", .{text});
+                }
+            }
             export_entry.alias = try self.expectString(export_table, "alias", "exports");
+            for ([_]?[]const u8{ export_entry.name, export_entry.alias }) |selector| {
+                const text = selector orelse continue;
+                if (text.len == 0) continue;
+                if (selectors.get(text)) |other_name| {
+                    // 同一 export 内の name==alias 重複は冗長だが一意に解決
+                    // できるため許容する。別 export の selector との衝突のみ拒否。
+                    if (!std.mem.eql(u8, other_name, export_entry.name)) {
+                        try self.report(diag.E011_DUPLICATE_EXPORT, "exports", item.position, "export selector \"{s}\" collides between exports \"{s}\" and \"{s}\"", .{ text, other_name, export_entry.name });
+                    }
+                } else try selectors.put(text, export_entry.name);
+                const normalized = try import_resolver.normalizedExportSubpath(self.arena, text);
+                if (normalized_selectors.get(normalized)) |other_name| {
+                    if (!std.mem.eql(u8, other_name, export_entry.name)) {
+                        try self.report(diag.E012_ALIAS_COLLISION, "exports", item.position, "export selectors \"{s}\" and \"{s}\" normalize to the same package namespace", .{ other_name, export_entry.name });
+                    }
+                } else try normalized_selectors.put(normalized, export_entry.name);
+            }
             export_entry.native = try self.expectArtifactDecls(export_table, "native", "exports");
             export_entry.esm = try self.expectArtifactDecls(export_table, "esm", "exports");
             // artifact の features は [features] で定義済みの名だけを指す。
