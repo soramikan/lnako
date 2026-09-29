@@ -251,8 +251,10 @@ fn windowsPathHasUntrustedWriteAccess(allocator: Allocator, path: []const u8, is
                 // add-only ACE は運用者の意図付与であり既定 layout ではないため
                 // baseline に含めない。package tree 本体（reject_on_tree）では
                 // 新規 file 追加自体が内容侵害になるため baseline 例外を一切適用しない。
+                const baseline_sid = isBuiltinUsersSid(sid) or
+                    (is_filesystem_root and isAuthenticatedUsersSid(sid));
                 if (users_add_only_policy == .allow_inherited_baseline and
-                    is_directory and isBuiltinUsersSid(sid) and
+                    is_directory and baseline_sid and
                     ace.mask & (write_rights & ~add_only_rights) == 0 and
                     (header.ace_flags & Api.InheritedObjectAce != 0 or is_filesystem_root)) continue;
                 return true;
@@ -293,6 +295,20 @@ fn isBuiltinUsersSid(sid: ?*anyopaque) bool {
     return @as(*align(1) const u32, @ptrCast(bytes + 12)).* == 545;
 }
 
+/// NT AUTHORITY\Authenticated Users (S-1-5-11) かどうかを判定する。
+/// `C:\` 等システムdrive root の既定 ACL は BUILTIN\Users ではなく
+/// Authenticated Users へ add-only 権限を直接付与するため、filesystem root の
+/// baseline 例外ではこちらも対象とする。
+fn isAuthenticatedUsersSid(sid: ?*anyopaque) bool {
+    if (sid == null) return false;
+    const bytes: [*]const u8 = @ptrCast(sid.?);
+    if (bytes[0] != 1 or bytes[1] < 1) return false;
+    const authority = bytes[2..8];
+    if (authority[0] != 0 or authority[1] != 0 or authority[2] != 0 or authority[3] != 0 or
+        authority[4] != 0 or authority[5] != 5) return false; // SECURITY_NT_AUTHORITY = 5
+    return @as(*align(1) const u32, @ptrCast(bytes + 8)).* == 11;
+}
+
 fn isWellKnownTrustedWindowsWriter(sid: ?*anyopaque) bool {
     if (sid == null) return false;
     const bytes: [*]const u8 = @ptrCast(sid.?);
@@ -304,6 +320,16 @@ fn isWellKnownTrustedWindowsWriter(sid: ?*anyopaque) bool {
     if (is_nt_authority and sub == 32 and bytes[1] >= 2) {
         const second = @as(*align(1) const u32, @ptrCast(bytes + 12)).*;
         if (second == 544) return true; // Builtin Administrators: S-1-5-32-544
+    }
+    // TrustedInstaller: S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464
+    // （システムdrive root等の既定所有者。対話ログイン不可能な service SID）
+    if (is_nt_authority and sub == 80 and bytes[1] >= 6) {
+        const expected = [_]u32{ 956008885, 3418522649, 1831038044, 1853292631, 2271478464 };
+        for (expected, 0..) |rid, i| {
+            const actual = @as(*align(1) const u32, @ptrCast(bytes + 12 + i * 4)).*;
+            if (actual != rid) return false;
+        }
+        return true;
     }
     return false;
 }
