@@ -44,14 +44,16 @@ const PackageTestResolver = struct {
         return .{ .context = self, .resolveFn = resolve };
     }
 
-    fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !ResolvedPackageImport {
+    fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !ResolvedPackageImport {
         const reference = if (std.mem.startsWith(u8, specifier, "パッケージ:"))
             specifier["パッケージ:".len..]
         else if (std.mem.startsWith(u8, specifier, "pkg:"))
             specifier["pkg:".len..]
         else
             return error.InvalidPackageSpecifier;
-        const path = if (std.mem.eql(u8, reference, "math") or std.mem.eql(u8, reference, "math-alt"))
+        const path = if (std.mem.eql(u8, reference, "math") or std.mem.eql(u8, reference, "math-alt") or std.mem.eql(u8, reference, "math/dup"))
+            "packages/math/index.nako3"
+        else if (std.mem.eql(u8, reference, "foreign-dup"))
             "packages/math/index.nako3"
         else if (std.mem.eql(u8, reference, "util"))
             "packages/util/index.nako3"
@@ -65,6 +67,10 @@ const PackageTestResolver = struct {
             "math"
         else if (std.mem.eql(u8, reference, "math-alt"))
             "math_alt"
+        else if (std.mem.eql(u8, reference, "math/dup"))
+            "dup"
+        else if (std.mem.eql(u8, reference, "foreign-dup"))
+            "foreign"
         else if (std.mem.eql(u8, reference, "util"))
             "util"
         else if (std.mem.eql(u8, reference, "math/vector"))
@@ -73,6 +79,10 @@ const PackageTestResolver = struct {
             "geometry";
         const canonical_id = if (std.mem.eql(u8, reference, "math") or std.mem.eql(u8, reference, "math-alt"))
             "pkg:math-id/main"
+        else if (std.mem.eql(u8, reference, "math/dup"))
+            "pkg:math-id/dup"
+        else if (std.mem.eql(u8, reference, "foreign-dup"))
+            "pkg:foreign-id/main"
         else if (std.mem.eql(u8, reference, "util"))
             "pkg:util-id/main"
         else if (std.mem.eql(u8, reference, "math/vector"))
@@ -94,7 +104,7 @@ const NamespaceCollisionPackageResolver = struct {
         return .{ .context = self, .resolveFn = resolve };
     }
 
-    fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !ResolvedPackageImport {
+    fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !ResolvedPackageImport {
         const path = if (std.mem.eql(u8, specifier, "pkg:scoped"))
             "packages/scoped/main.nako3"
         else if (std.mem.eql(u8, specifier, "pkg:flat"))
@@ -153,6 +163,44 @@ test "日本語パッケージ:とpkg:を注入resolverでsource exportへ解決
     }
 }
 
+test "同一packageの別exportが同じ実体fileを指す場合moduleを共有する" {
+    // `pkg:math` と `pkg:math/dup` はcanonical_idが異なるが、同一package内の
+    // 同じ実体pathを指すため、moduleは一度だけ読み込む（exportごとの重複
+    // 評価・plugin初期化の多重化を防ぐ）。
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:math」を取り込む\n!「pkg:math/dup」を取り込む\n" },
+        .{ .suffix = "packages/math/index.nako3", .source = "A=1\n" },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .package_resolver = package_resolver.resolver() });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
+    try std.testing.expect(pathHasSuffix(graph.modules[1].path, "packages/math/index.nako3"));
+    // 両edgeが同じmoduleを指し、それぞれの公開namespaceを保持する。
+    const main_imports = graph.modules[graph.entry].imports;
+    try std.testing.expectEqual(@as(usize, 2), main_imports.len);
+    try std.testing.expectEqual(main_imports[0].target.?, main_imports[1].target.?);
+    try std.testing.expectEqualStrings("math", main_imports[0].namespace.?);
+    try std.testing.expectEqualStrings("dup", main_imports[1].namespace.?);
+}
+
+test "異なるpackageが同じ実体fileを指す場合moduleを共有しない" {
+    // ownerが異なるpackage moduleはpathが一致しても共有しない（別packageの
+    // moduleを借用するとpackage境界のsymbol分離が破れる）。
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:math」を取り込む\n!「pkg:foreign-dup」を取り込む\n" },
+        .{ .suffix = "packages/math/index.nako3", .source = "A=1\n" },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .package_resolver = package_resolver.resolver() });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 3), graph.modules.len);
+    try std.testing.expectEqualStrings("pkg:math-id/main", graph.modules[1].canonical_id.?);
+    try std.testing.expectEqualStrings("pkg:foreign-id/main", graph.modules[2].canonical_id.?);
+}
+
 test "package resolver未設定ではpackage specifierを拒否する" {
     var memory = MemoryProvider{ .files = &.{.{ .suffix = "main.nako3", .source = "!「パッケージ:missing」を取り込む\n" }} };
     var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{});
@@ -167,7 +215,7 @@ const TestLocalPackageResolver = struct {
         return .{ .context = self, .resolveFn = resolve };
     }
 
-    fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !ResolvedPackageImport {
+    fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !ResolvedPackageImport {
         if (!std.mem.eql(u8, specifier, "パッケージ:lib")) return error.PackageNotFound;
         return .{
             .path = try std.fs.path.resolve(allocator, &.{"lib/index.nako3"}),
@@ -450,7 +498,7 @@ test "package内symlink経由のroot外importは診断され読み込まれな�
 
     const TestResolver = struct {
         root_path: []const u8,
-        fn resolve(context: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !ResolvedPackageImport {
+        fn resolve(context: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !ResolvedPackageImport {
             const self: *const @This() = @ptrCast(@alignCast(context));
             if (!std.mem.eql(u8, specifier, "pkg:math")) return error.PackageNotFound;
             return .{
@@ -893,7 +941,7 @@ const NativePluginPackageResolver = struct {
         return .{ .context = self, .resolveFn = resolve };
     }
 
-    fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !ResolvedPackageImport {
+    fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !ResolvedPackageImport {
         const reference = if (std.mem.startsWith(u8, specifier, "pkg:"))
             specifier["pkg:".len..]
         else

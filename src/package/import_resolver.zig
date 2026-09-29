@@ -99,12 +99,23 @@ pub const Resolver = struct {
         return .{ .context = self, .resolveFn = resolveCallback };
     }
 
-    fn resolveCallback(context: *anyopaque, allocator: Allocator, importer: []const u8, specifier: []const u8) anyerror!module_graph.ResolvedPackageImport {
+    fn resolveCallback(context: *anyopaque, allocator: Allocator, importer: []const u8, importer_owner: ?[]const u8, specifier: []const u8) anyerror!module_graph.ResolvedPackageImport {
         const self: *Resolver = @ptrCast(@alignCast(context));
-        return self.resolve(allocator, importer, specifier);
+        return self.resolveScoped(allocator, importer, importer_owner, specifier);
     }
 
+    /// `importer` の物理 path から owner を推測して解決する（root scope
+    /// entry や resolver を直接使う呼出し向け）。取り込みedgeの owner が
+    /// 既知の場合は `resolveScoped` を使うこと。
     pub fn resolve(self: *Resolver, allocator: Allocator, importer: []const u8, specifier: []const u8) !module_graph.ResolvedPackageImport {
+        return self.resolveScoped(allocator, importer, null, specifier);
+    }
+
+    /// `importer_owner` は取り込みedgeから伝播する package 所有key（環境
+    /// `packages` のキー）。非nullなら物理pathによる owner 推測をせず、その
+    /// package の依存scopeを使う — mutable path依存が他package rootと
+    /// 入れ子になる構成では、path推測はedgeの意味と一致しない場合がある。
+    pub fn resolveScoped(self: *Resolver, allocator: Allocator, importer: []const u8, importer_owner: ?[]const u8, specifier: []const u8) !module_graph.ResolvedPackageImport {
         var temporary_arena = std.heap.ArenaAllocator.init(allocator);
         defer temporary_arena.deinit();
         const temporary = temporary_arena.allocator();
@@ -118,12 +129,20 @@ pub const Resolver = struct {
 
         const root_object = asObject(self.parsed.value) orelse return error.InvalidEnvironment;
         const packages = asObject(get(root_object, "packages") orelse return error.InvalidEnvironment) orelse return error.InvalidEnvironment;
-        const canonical_importer = try std.Io.Dir.cwd().realPathFileAlloc(self.io, importer, temporary);
         var owner_key: ?[]const u8 = null;
-        const scope_dependencies = if (try self.packageForImporter(temporary, packages, canonical_importer, &owner_key)) |owner|
-            get(asObject(owner) orelse return error.InvalidEnvironment, "dependencies")
-        else
-            get(root_object, "dependencies");
+        const scope_dependencies = if (importer_owner) |owner| blk: {
+            // edge由来のownerを優先する。環境 `packages` に無いkeyを名乗る
+            // moduleは環境と齟齬しているため fail closed。
+            const owner_record = asObject(packages.get(owner) orelse return error.InvalidEnvironment) orelse return error.InvalidEnvironment;
+            owner_key = owner;
+            break :blk get(owner_record, "dependencies");
+        } else blk: {
+            const canonical_importer = try std.Io.Dir.cwd().realPathFileAlloc(self.io, importer, temporary);
+            break :blk if (try self.packageForImporter(temporary, packages, canonical_importer, &owner_key)) |owner|
+                get(asObject(owner) orelse return error.InvalidEnvironment, "dependencies")
+            else
+                get(root_object, "dependencies");
+        };
         const dependency_array = if (scope_dependencies) |value| asArray(value) orelse return error.InvalidEnvironment else return error.PackageNotFound;
 
         // Dependency table keys may themselves contain slashes (for example
@@ -203,10 +222,15 @@ pub const Resolver = struct {
         errdefer allocator.free(namespace);
         // package内scopeの依存importはruntime登録名を所有者keyで修飾する。
         // 別packageのscopeで同じaliasが使われても plugin 登録名
-        // （`{owner}__{alias}__{命令}`）が衝突しない。
+        // （`{owner}:{alias}__{命令}`）が衝突しない。
+        // owner keyは `pkg:<hex>` 等の `:` を含むlock識別子を正規化せず埋め込む。
+        // 公開namespaceは `:` を `_` へ畳むため、内部identityは公開aliasでは
+        // 表現不能な予約空間になる（root scopeで `pkg_<hex>__util` のような
+        // aliasを付けても衝突しない）。
         const dispatch_namespace: ?[]const u8 = if (owner_key) |key| blk: {
-            const scoped_alias = try std.fmt.allocPrint(temporary, "{s}__{s}", .{ key, alias });
-            break :blk try namespaceFor(allocator, scoped_alias, subpath);
+            const public = try namespaceFor(temporary, alias, subpath);
+            defer temporary.free(public);
+            break :blk try std.fmt.allocPrint(allocator, "{s}:{s}", .{ key, public });
         } else null;
         errdefer if (dispatch_namespace) |dispatch| allocator.free(dispatch);
         const selected_path = try allocator.dupe(u8, actual_export);
@@ -299,6 +323,10 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
     try validateRootDependencyBindings(allocator, io, project_root, lock_input, profile_value.string, get(environment, "dependencies"), locked_packages, root_dependency_ids);
 
     var shared_generation: ?[]const u8 = null;
+    // 全 package の canonical root 一覧。同一 root を持つ複数 package は
+    // importer の物理 path から一意に owner を決められないため拒否する。
+    var package_roots: std.ArrayList([]const u8) = .empty;
+    defer package_roots.deinit(allocator);
     var package_iterator = environment_packages.iterator();
     while (package_iterator.next()) |environment_entry| {
         const lock_entry_value = locked_packages.get(environment_entry.key_ptr.*) orelse return error.InvalidEnvironment;
@@ -378,6 +406,12 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
             // 共有writableなら export 対象を差し替えて同一 manifest identity
             // を装える。package tree 末端まで書き込み権限を検証する。
             if (try project_trust.hasUnsafeWritableDirectory(allocator, io, root)) return error.InvalidEnvironment;
+            // root 本体だけでは、親dirが共有writableなら検証後に root を
+            // rename されて同 path の別 tree へ置き換えられ得る。project root
+            // （project_discovery で baseline 検査済み）までの祖先を検査する。
+            // 外部 mutable path 依存は filesystem root まで遡る。
+            if (try project_trust.hasUnsafeWritableAncestors(allocator, io, root, project_root)) return error.InvalidEnvironment;
+            try package_roots.append(allocator, root);
             try validateEnvironmentExports(allocator, io, root, record, lock_entry, locked_packages, artifact_target, profile_value.string);
         } else if (record_exports) |exports| {
             // A missing materialization is tolerable only for support packages
@@ -397,6 +431,17 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
                 if (dependency_package != .string or locked_packages.get(dependency_package.string) == null or
                     !arrayContainsString(locked_dependencies, dependency_package.string)) return error.InvalidEnvironment;
             }
+        }
+    }
+
+    // 同一 canonical root を持つ2つのpackageは、物理pathからの owner
+    // 推測が反復順序に依存して非決定的になるため拒否する（`isWithin` は
+    // 厳密包含なので等価判定には `eql` を使う）。包含関係は ancestor
+    // package（project を内包する mutable path 依存等）として正当に使われ、
+    // resolve 側は取り込みedge由来の owner を優先するため曖昧にならない。
+    for (package_roots.items, 0..) |left, index| {
+        for (package_roots.items[index + 1 ..]) |right| {
+            if (std.mem.eql(u8, left, right)) return error.InvalidEnvironment;
         }
     }
 
@@ -545,15 +590,19 @@ fn validateEnvironmentExports(
         std.array_list.Managed(Value).init(allocator);
     defer if (environment_exports_value == null) environment_exports.deinit();
 
-    // manifest 選択は sync と同じ規則にする。`path` source は宣言 dir の
-    // `nako.toml` を使い、残留する生成物 `NAKO-PKG/METADATA.toml` は読まない。
-    // materialized `.npkg` artifact 側のみ metadata を優先する。
+    // manifest 選択は sync と同じ規則にする。`path`/`git` source は宣言
+    // `nako.toml` を正本とし、tree 内に残留した `NAKO-PKG/METADATA.toml`
+    // （公開artifact向けの生成メタデータ）は読まない。sync 側も Git 取得
+    // 経路（provider.zig の acquireGit）で明示的に nako.toml を読む。
+    // metadata を優先するのは materialized `.npkg` artifact 経由のみ。
     const source_kind = blk: {
         const source_value = get(lock_entry, "source") orelse get(lock_entry, "resolvedFrom") orelse break :blk null;
         const source = asObject(source_value) orelse return error.InvalidEnvironment;
         break :blk requiredString(source, "type");
     };
-    var manifest = try readPackageManifest(allocator, io, package_root, source_kind == null or !std.mem.eql(u8, source_kind.?, "path"));
+    const prefer_metadata = source_kind == null or
+        (!std.mem.eql(u8, source_kind.?, "path") and !std.mem.eql(u8, source_kind.?, "git"));
+    var manifest = try readPackageManifest(allocator, io, package_root, prefer_metadata);
     defer if (manifest) |*value| value.deinit();
     const lock_name = requiredString(lock_entry, "name") orelse return error.InvalidEnvironment;
     const lock_version = requiredString(lock_entry, "version") orelse return error.InvalidEnvironment;
@@ -1114,6 +1163,16 @@ pub fn hasEmptyNamespace(allocator: Allocator, alias: []const u8) Allocator.Erro
     const normalized = try namespaceFor(allocator, alias, null);
     defer allocator.free(normalized);
     return normalized.len == 0;
+}
+
+/// `pkg:pkg/sub` の subpath 部分の公開namespace正規化（`appendNamespacePart`
+/// の ensure_start=false 規則と同一）。`foo-bar` と `foo_bar` のような
+/// 別名 selector が同一公開namespaceへ畳まれるかの判定に使う。
+pub fn normalizedExportSubpath(allocator: Allocator, subpath: []const u8) Allocator.Error![]u8 {
+    var result: std.ArrayList(u8) = .empty;
+    errdefer result.deinit(allocator);
+    try appendNamespacePart(&result, allocator, subpath, false);
+    return result.toOwnedSlice(allocator);
 }
 
 pub fn namespaceFor(allocator: Allocator, alias: []const u8, subpath: ?[]const u8) Allocator.Error![]u8 {

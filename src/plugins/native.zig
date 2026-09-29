@@ -277,17 +277,31 @@ pub const State = struct {
             .register_command = registerCommand,
         };
         const initialize = descriptor.initialize orelse return error.NativePluginInitializerMissing;
-        self.pending_namespace = if (namespaces.len > 0) namespaces[0] else null;
+        // 直接path importが併存する場合は空namespace sentinelが混ざる。
+        // その場合は無修飾登録（pending=null）を行い、非空の全namespaceへ
+        // cloneする。package経由のみなら先頭namespaceへ直接登録し、残りを
+        // cloneする（従来どおり）。
+        var unqualified = namespaces.len == 0;
+        for (namespaces) |namespace| {
+            if (namespace.len == 0) {
+                unqualified = true;
+                break;
+            }
+        }
+        self.pending_namespace = if (unqualified) null else namespaces[0];
         defer self.pending_namespace = null;
         if (initialize(descriptor.plugin_context, &self.host, &registry) != status_ok) return error.NativePluginInitializationFailed;
         errdefer if (descriptor.deinitialize) |deinitialize| deinitialize(descriptor.plugin_context);
         // 同一pathを複数alias（依存key＋明示alias等）でimportした場合、
         // 全namespace分の修飾名を登録し、どの修飾名経由でも呼べるようにする。
-        // 直接path import（namespaces空）ではcloneしない。
-        if (namespaces.len > 1) {
-            for (namespaces[1..]) |namespace| {
-                self.aliasCommandsForNamespace(command_start, namespace) catch return error.NativePluginInitializationFailed;
-            }
+        // 直接path import（namespaces空、または空sentinel併存）でも clone を
+        // 行い、package修飾名が直接import側の同名raw命令へ誤配されないよう
+        // にする。
+        const primary = self.pending_namespace;
+        for (namespaces) |namespace| {
+            if (namespace.len == 0) continue;
+            if (primary != null and std.mem.eql(u8, namespace, primary.?)) continue;
+            self.aliasCommandsForNamespace(command_start, namespace) catch return error.NativePluginInitializationFailed;
         }
         const path_copy = try allocator.dupe(u8, path);
         errdefer allocator.free(path_copy);
@@ -367,6 +381,20 @@ pub const State = struct {
             for (self.commands.items) |*command| if (command.namespace == null and std.mem.eql(u8, command.name, name)) return command;
         }
         return null;
+    }
+
+    /// `{namespace}__{命令}` 形式のpackage修飾名として登録済み命令と一致
+    /// するか。意味解析の動的束縛を持たない呼出しがpackage pluginへ届くのを
+    /// 防ぐための境界検査に使う。命令名の実在までは確認せず、登録namespace
+    /// のprefix一致のみを見る（不一致ならどのみちNotCallableで終わる）。
+    pub fn hasNamespacedCommand(self: *State, requested: []const u8) bool {
+        for (self.commands.items) |*command| {
+            const namespace = command.namespace orelse continue;
+            if (requested.len > namespace.len + 2 and
+                std.mem.startsWith(u8, requested, namespace) and
+                requested[namespace.len] == '_' and requested[namespace.len + 1] == '_') return true;
+        }
+        return false;
     }
 
     /// 同一plugin識別子の重複登録判定。namespace所有の命令同士は
@@ -1066,6 +1094,43 @@ test "修飾名は同名raw命令よりnamespace一致を優先する" {
     const resolved = state.findCommand("math__加算") orelse return error.TestExpectedNotNull;
     try std.testing.expectEqualStrings("加算", resolved.name);
     try std.testing.expectEqualStrings("math", resolved.namespace.?);
+}
+
+test "直接importとpackage importが併存するpluginは無修飾と修飾の両方を解決する" {
+    var state = State.init();
+    state.allocator = std.testing.allocator;
+    defer state.deinit();
+    const command_start = state.commands.items.len;
+    var command = CommandV1{
+        .struct_size = @sizeOf(CommandV1),
+        .abi_version = abi_version,
+        .flags = flag_sync | flag_pure,
+        .name = "加算",
+        .particles = "AとBを",
+        .minimum_arguments = 2,
+        .maximum_arguments = 2,
+        .command_context = null,
+        .invoke = testCommandInvoke,
+        .destroy = null,
+    };
+    // 空namespace sentinel併存時は pending=null で無修飾登録する。
+    // pluginが `{alias}__{命令}` 形式のraw命令も公開する場合を再現する。
+    try std.testing.expectEqual(status_ok, registerCommand(&state, &command));
+    var raw_qualified = command;
+    raw_qualified.name = "math__加算";
+    try std.testing.expectEqual(status_ok, registerCommand(&state, &raw_qualified));
+    // 空sentinel併存でもpackage namespaceへcloneし、修飾呼出しを維持する
+    try state.aliasCommandsForNamespace(command_start, "math");
+    // 無修飾の直接命令は消えない
+    try std.testing.expect(state.findCommand("加算") != null);
+    // `math__加算` は同名raw命令ではなくpackage修飾命令へ解決する
+    const resolved = state.findCommand("math__加算") orelse return error.TestExpectedNotNull;
+    try std.testing.expectEqualStrings("加算", resolved.name);
+    try std.testing.expectEqualStrings("math", resolved.namespace.?);
+    // package修飾名の境界判定も機能する
+    try std.testing.expect(state.hasNamespacedCommand("math__加算"));
+    try std.testing.expect(!state.hasNamespacedCommand("加算"));
+    try std.testing.expect(!state.hasNamespacedCommand("other__加算"));
 }
 
 test "無修飾の直接plugin命令は従来どおり末尾__除去で解決する" {

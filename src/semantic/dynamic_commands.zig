@@ -16,12 +16,15 @@ pub const DynamicCommandAlias = struct {
 /// （`allows_dynamic_commands`）は任意名を受理し、package経由のnative plugin
 /// （`dynamic_command_aliases`）は `<alias>__<命令>` の修飾名のみ受理する。
 /// 一致した package alias を返す（dispatch namespace への写像用）。
+/// package alias 一致は直接plugin fallbackより先に評価する。両方を取り込んだ
+/// moduleで `util__命令` が恒等写像へ先に流れると、依存pluginが登録した
+/// `{owner}__util__命令` には届かず、直接pluginの同名raw命令へ誤配送される。
 pub fn binds(allows_dynamic_commands: bool, aliases: []const DynamicCommandAlias, name: []const u8) ?DynamicCommandAlias {
-    if (allows_dynamic_commands) return .{ .source_namespace = name, .dispatch_namespace = name };
     for (aliases) |alias| {
         if (std.mem.startsWith(u8, name, alias.source_namespace) and name.len > alias.source_namespace.len + 2 and
             name[alias.source_namespace.len] == '_' and name[alias.source_namespace.len + 1] == '_') return alias;
     }
+    if (allows_dynamic_commands) return .{ .source_namespace = name, .dispatch_namespace = name };
     return null;
 }
 

@@ -125,6 +125,70 @@ test "materialized package内の共有writable dirを拒否する" {
     try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, root));
 }
 
+test "package rootの共有writableな祖先dirを拒否する" {
+    if (@import("builtin").os.tag == .windows or @import("builtin").os.tag == .wasi) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/pkg");
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/pkg/nako.toml", .data = "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });
+    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/pkg\"},\"dependencies\":[]}}}";
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
+    const lock_hex = std.fmt.bytesToHex(digest, .lower);
+    const environment = try std.fmt.allocPrint(
+        allocator,
+        "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"packages\":{{\"pkg:test\":{{\"name\":\"pkg\",\"version\":\"1.0.0\",\"path\":\".nako/env/gen-test/deps/pkg\",\"exports\":[]}}}}}}",
+        .{lock_hex},
+    );
+    defer allocator.free(environment);
+    try temporary.dir.createDirPath(io, ".nako");
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = environment });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    var loaded = try Resolver.load(allocator, io, root);
+    loaded.deinit();
+    // package tree 本体がprivateでも、祖先dirが共有writable（sticky無し）なら
+    // 検証後に root を rename して同 path の別 tree へ置き換えられるため拒否する。
+    try temporary.dir.setFilePermissions(io, ".nako/env/gen-test/deps", std.Io.File.Permissions.fromMode(0o777), .{});
+    try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, root));
+    // sticky bit 付き（/tmp 型）なら他者の entry を rename/削除できないため
+    // 置換不能とみなし受理する。
+    try temporary.dir.setFilePermissions(io, ".nako/env/gen-test/deps", std.Io.File.Permissions.fromMode(0o1777), .{});
+    var sticky = try Resolver.load(allocator, io, root);
+    sticky.deinit();
+}
+
+test "同一canonical rootを指す複数packageを環境検証で拒否する" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "shared");
+    try temporary.dir.writeFile(io, .{ .sub_path = "shared/nako.toml", .data = "[package]\nname = \"shared\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.toml", .data = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nlicense = \"MIT\"\n\n[dependencies.pkg]\na = { version = \"1.0.0\", public-id = \"pkg:a\" }\nb = { version = \"1.0.0\", public-id = \"pkg:b\" }\n" });
+    // 2つのpackageが同じ実体dirをcanonical rootに持つと、importerの物理path
+    // からは一意にownerを決められないため環境として受理できない。
+    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:a\":{\"id\":\"pkg:a\",\"name\":\"shared\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\"shared\",\"mutable\":true},\"dependencies\":[]},\"pkg:b\":{\"id\":\"pkg:b\",\"name\":\"shared\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\"shared\",\"mutable\":true},\"dependencies\":[]}}}";
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
+    const lock_hex = std.fmt.bytesToHex(digest, .lower);
+    const environment = try std.fmt.allocPrint(
+        allocator,
+        "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"packages\":{{\"pkg:a\":{{\"name\":\"shared\",\"version\":\"1.0.0\",\"path\":\"shared\",\"exports\":[]}},\"pkg:b\":{{\"name\":\"shared\",\"version\":\"1.0.0\",\"path\":\"shared\",\"exports\":[]}}}}}}",
+        .{lock_hex},
+    );
+    defer allocator.free(environment);
+    try temporary.dir.createDirPath(io, ".nako");
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = environment });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, root));
+}
+
 test "宣伝されたexport対象がpackage root内に実在しない環境を拒否する" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
@@ -709,8 +773,10 @@ test "realpath importerとproject entry優先でancestor package scopeを誤選�
     try std.testing.expect(std.mem.endsWith(u8, package_import.path, expected_parent_util));
     // package 所有 scope の同 alias import は runtime 登録名を所有者 key で
     // 修飾する（別 package scope の `util` と plugin 登録名が衝突しない）。
+    // 登録名は `:` を含む内部形式で、公開alias正規化（`:`→`_`）とは衝突
+    // しない予約空間になる。
     try std.testing.expectEqualStrings("util", package_import.namespace);
-    try std.testing.expectEqualStrings("pkg_ancestor__util", package_import.dispatch_namespace.?);
+    try std.testing.expectEqualStrings("pkg:ancestor:util", package_import.dispatch_namespace.?);
 }
 
 test "manifest version比較は64byteを超えるSemVer識別子を受理する" {
@@ -1024,7 +1090,7 @@ test "公開名に@を含むexport subpathを解決しversion指定は拒否す�
     defer allocator.free(entry);
     // `api@v1` のように公開名へ `@` を含む subpath は合法で解決できる。
     // namespace は `@` を `_` へ正規化する。
-    const api_import = try package_resolver.resolve(allocator, entry, "pkg:lib/api@v1");
+    const api_import = try package_resolver.resolve(allocator, entry, null, "pkg:lib/api@v1");
     defer allocator.free(api_import.path);
     defer allocator.free(api_import.canonical_id);
     defer allocator.free(api_import.namespace);
@@ -1034,7 +1100,7 @@ test "公開名に@を含むexport subpathを解決しversion指定は拒否す�
     // alias 直後が `/` でない `pkg:lib@1.0.0` は version 指定として従来どおり
     // 不一致。alias 名自体に `@` を含む登録は正規化で `_` になるため実在
     // export名との衝突は起きない。
-    try std.testing.expectError(error.PackageNotFound, package_resolver.resolve(allocator, entry, "pkg:lib@1.0.0"));
+    try std.testing.expectError(error.PackageNotFound, package_resolver.resolve(allocator, entry, null, "pkg:lib@1.0.0"));
 }
 
 test "正規化後に空になるaliasの環境記録を拒否する" {

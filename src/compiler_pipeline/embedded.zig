@@ -49,7 +49,7 @@ pub fn writeCompatExecutable(allocator: std.mem.Allocator, io: std.Io, executabl
 
     const compiler = try std.Io.Dir.cwd().readFileAlloc(io, executable_path, allocator, .limited(1024 * 1024 * 1024));
     defer allocator.free(compiler);
-    const generated = try lnako.compat.embedded.createExecutableWithImports(allocator, compiler, graph.modules[graph.entry].path, files, forced_mode, package_imports.items);
+    const generated = try lnako.compat.embedded.createExecutableWithImports(allocator, compiler, graph.modules[graph.entry].path, files, forced_mode, package_imports.items, graph.canonical_aliases);
     defer allocator.free(generated);
     try std.Io.Dir.cwd().writeFile(io, .{
         .sub_path = output_path,

@@ -168,6 +168,7 @@ pub const State = struct {
             \\globalThis.__lnako_commands = Object.create(null);
             \\globalThis.__lnako_plugins = new WeakSet();
             \\globalThis.__lnako_plugin_registrations = new Map();
+            \\globalThis.__lnako_qualified_keys = new Set();
             \\globalThis.__lnako_active_namespace = undefined;
             \\globalThis.__lnako_eval_plugins = [];
             \\globalThis.__lnako_registerPlugin = function(plugin, namespace) {
@@ -183,7 +184,13 @@ pub const State = struct {
             \\    for (const name of Object.keys(plugin || {})) {
             \\      if (name === 'meta' || name === '初期化') continue;
             \\      if (prefix.length > 0 && name.indexOf('__') >= 0) continue;
-            \\      globalThis.__lnako_commands[prefix + name] = plugin[name];
+            \\      const key = prefix + name;
+            \\      // 無修飾登録がpackage修飾keyを上書きしないよう、修飾済みkeyは
+            \\      // raw export による再代入を拒否する。逆方向（修飾がrawを
+            \\      // 上書き）は許容し、登録順序に依らず修飾側を優先させる。
+            \\      if (prefix.length === 0 && globalThis.__lnako_qualified_keys.has(key)) continue;
+            \\      globalThis.__lnako_commands[key] = plugin[name];
+            \\      if (prefix.length > 0) globalThis.__lnako_qualified_keys.add(key);
             \\    }
             \\  }
             \\  if (!globalThis.__lnako_plugins.has(plugin)) {

@@ -97,8 +97,9 @@ test "path dependency export target must stay inside the pinned package tree" {
     }
 
     // 管理 dir 名（`.nako`/`.git`）を含む target は規範 path としては
-    // 受理されるため、解決側の hasExcludedExport が除外を担う。
-    const managed_cases = [_][]const u8{ "src/.nako/private.nako3", "lib/.git/config" };
+    // 受理されるため、解決側の hasExcludedExport が除外を担う
+    // （拡張子は source 拡張子必須のため `.nako3` を使う）。
+    const managed_cases = [_][]const u8{ "src/.nako/private.nako3", "lib/.git/config.nako3" };
     for (managed_cases) |path| {
         const source = try std.fmt.allocPrint(testing.allocator,
             \\[package]

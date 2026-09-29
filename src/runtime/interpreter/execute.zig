@@ -806,6 +806,19 @@ fn executeCallResolved(
     return result;
 }
 
+/// 呼出し名が登録済みのpackage修飾命令（`{namespace}__{命令}`）と一致するか。
+/// native pluginのnamespace登録と `--compat-js` ESM pluginのpackage
+/// namespaceの両方を調べる。
+fn packageCommandNameIsBound(self: *Interpreter, name: []const u8) bool {
+    if (self.native_plugin_state.hasNamespacedCommand(name)) return true;
+    for (self.quickjs_state.package_namespaces.items) |namespace| {
+        if (name.len > namespace.len + 2 and
+            std.mem.startsWith(u8, name, namespace) and
+            name[namespace.len] == '_' and name[namespace.len + 1] == '_') return true;
+    }
+    return false;
+}
+
 fn resultStoreCanBeOmitted(self: *const Interpreter, proven_dead: bool) bool {
     if (!proven_dead) return false;
     // Global tracing is an explicit observation surface.  Keep the legacy
@@ -852,6 +865,11 @@ fn executeCallFallback(
         // 無い場合も、固定IDの組み込み命令へ落とさない。
         return error.NotCallable;
     }
+    // `pkg:`経由pluginの修飾命令は取り込み辺を持つモジュールの呼出しのみに
+    // 開放する。意味解析で動的builtinとして束縛されなかった呼出し（別
+    // モジュールが `{namespace}__{命令}` を直接書いた場合等）は登録名と
+    // 一致していても信頼境界を越えるためplugin dispatchへ届けない。
+    if (builtin_id == null and !instruction.dynamic_call and packageCommandNameIsBound(self, instruction.name)) return error.NotCallable;
     writes_result.* = !preservesResultVariable(instruction.name);
     const site_id = if (frame.owner_program == &self.root_program) instruction.site_id else null;
     return self.callBuiltinResolved(builtin_id, instruction.name, arguments, site_id);
@@ -1291,9 +1309,11 @@ fn makeClosureResolved(self: *Interpreter, frame: *Frame, instruction: ir.Instru
         // `{関数}名`で組み込み命令を参照した場合は命令名ディスパッチの
         // 関数値を作る（公式はプラグイン関数のJS参照を返す）。ネイティブ
         // プラグイン取り込み済みプログラムの動的命令名もcallBuiltin経由の
-        // プラグインディスパッチで呼べる関数値にする。
+        // プラグインディスパッチで呼べる関数値にする。ただしプラグイン名は
+        // 意味解析の動的束縛（dynamic_call印）を持つ参照に限る — 取り込み
+        // 辺を持たないモジュールがpackage修飾名を書いても関数値を作らせない。
         if (isBuiltinReferenceName(instruction.name) or
-            frame.owner_program.native_plugin_paths.len > 0)
+            (frame.owner_program.native_plugin_paths.len > 0 and instruction.dynamic_call))
             return makeBuiltinFunctionValue(self, instruction.name);
         return error.UnknownFunction;
     };

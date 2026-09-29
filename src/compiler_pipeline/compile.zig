@@ -4,7 +4,7 @@ const lnako = @import("lnako");
 /// 入力コンパイルのオプション。`forced_mode` は .dncl/.dncl2 拡張子や
 /// --dncl/--dncl2 フラグで強制される構文モード。
 const InvalidPackageEnvironment = struct {
-    fn resolve(_: *anyopaque, _: std.mem.Allocator, _: []const u8, _: []const u8) anyerror!lnako.semantic.module_graph.ResolvedPackageImport {
+    fn resolve(_: *anyopaque, _: std.mem.Allocator, _: []const u8, _: ?[]const u8, _: []const u8) anyerror!lnako.semantic.module_graph.ResolvedPackageImport {
         return error.InvalidPackageEnvironment;
     }
 };
@@ -192,41 +192,33 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
     }
     ir_program.native_plugin_paths = try native_plugin_paths.toOwnedSlice(ir_program.arena.allocator());
     // `pkg:` import経由のnative pluginは公開namespaceで修飾した命令のみを
-    // 公開する。同一pathを直接path importでも取り込んでいる場合は直接
-    // 取り込み側の無修飾公開を優先する（修飾名は末尾`__`除去のfallbackで
-    // 引き続き解決できる）。
+    // 公開する。同一pathを直接path importでも取り込んでいる場合は、無修飾
+    // 公開とnamespace修飾公開の両方を登録する — 直接取り込み側へ全面委譲
+    // すると `加算` と `math__加算` の両方を登録するpluginで `math__加算`
+    // がpackage側の `加算` ではなく plugin 自身の同名raw命令へ誤配される。
+    // 直接importの存在は `namespace=""` の sentinel entry で表す
+    // （JavaScriptModule.namespaces の空エントリと同契約）。
     for (graph.modules) |module| {
         for (module.imports) |item| {
             const target = item.target orelse continue;
             const target_module = graph.modules[target];
             if (target_module.kind != .native_plugin) continue;
-            if (item.canonical_id != null) {
+            const namespace: []const u8 = if (item.canonical_id != null)
                 // runtime 登録名は dispatch namespace（scope 修飾済み）を使う。
-                const namespace = item.dispatch_namespace orelse item.namespace orelse continue;
-                var directly_imported = false;
-                for (graph.modules) |importer| {
-                    for (importer.imports) |direct_item| {
-                        const direct_target = direct_item.target orelse continue;
-                        if (direct_target == target and direct_item.canonical_id == null) {
-                            directly_imported = true;
-                            break;
-                        }
-                    }
-                    if (directly_imported) break;
+                item.dispatch_namespace orelse item.namespace orelse continue
+            else
+                "";
+            var listed = false;
+            for (native_plugin_packages.items) |package| {
+                if (std.mem.eql(u8, package.path, target_module.path) and std.mem.eql(u8, package.namespace, namespace)) {
+                    listed = true;
+                    break;
                 }
-                if (directly_imported) continue;
-                var listed = false;
-                for (native_plugin_packages.items) |package| {
-                    if (std.mem.eql(u8, package.path, target_module.path) and std.mem.eql(u8, package.namespace, namespace)) {
-                        listed = true;
-                        break;
-                    }
-                }
-                if (!listed) try native_plugin_packages.append(ir_program.arena.allocator(), .{
-                    .path = try ir_program.arena.allocator().dupe(u8, target_module.path),
-                    .namespace = try ir_program.arena.allocator().dupe(u8, namespace),
-                });
             }
+            if (!listed) try native_plugin_packages.append(ir_program.arena.allocator(), .{
+                .path = try ir_program.arena.allocator().dupe(u8, target_module.path),
+                .namespace = try ir_program.arena.allocator().dupe(u8, namespace),
+            });
         }
     }
     ir_program.native_plugin_packages = try native_plugin_packages.toOwnedSlice(ir_program.arena.allocator());
@@ -256,7 +248,7 @@ test "package importは共通compile経路からAOT用IR module metadataへ到�
         }
     };
     const TestResolver = struct {
-        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
             if (!std.mem.eql(u8, specifier, "パッケージ:math")) return error.PackageNotFound;
             return .{
                 .path = try std.fs.path.resolve(allocator, &.{"packages/math/index.nako3"}),
@@ -317,7 +309,7 @@ test "package関数の内部namespaceはerror/debug位置をpackage source path�
         }
     };
     const TestResolver = struct {
-        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
             if (!std.mem.eql(u8, specifier, "パッケージ:demo")) return error.PackageNotFound;
             return .{
                 .path = try std.fs.path.resolve(allocator, &.{"packages/demo/index.nako3"}),
@@ -369,7 +361,7 @@ test "AOT compile gates a shared-target package alias on its own import position
         }
     };
     const TestResolver = struct {
-        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
             const namespace = if (std.mem.eql(u8, specifier, "pkg:math"))
                 "math"
             else if (std.mem.eql(u8, specifier, "pkg:math-alt"))
@@ -416,7 +408,7 @@ test "AOT compile permits unresolved qualified names outside package dependency 
     const TestResolver = struct {
         const Package = struct { path: []const u8, canonical_id: []const u8, namespace: []const u8 };
 
-        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
             const package: Package = if (std.mem.eql(u8, specifier, "pkg:math")) .{
                 .path = "packages/math/index.nako3",
                 .canonical_id = "pkg:math/main",
@@ -464,7 +456,7 @@ test "package内の相対import helperはAOT IRでもopaqueなpackage内部names
         }
     };
     const TestResolver = struct {
-        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
             if (!std.mem.eql(u8, specifier, "pkg:math")) return error.PackageNotFound;
             return .{
                 .path = try std.fs.path.resolve(allocator, &.{"packages/math/index.nako3"}),
@@ -513,7 +505,7 @@ test "package所有moduleのroot外への相対importはAOT compileでも拒否�
         }
     };
     const TestResolver = struct {
-        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
             if (!std.mem.eql(u8, specifier, "pkg:math")) return error.PackageNotFound;
             return .{
                 .path = try std.fs.path.resolve(allocator, &.{"packages/math/index.nako3"}),
@@ -572,7 +564,7 @@ test "package経由のnative plugin命令は公開namespaceで修飾されAOT di
         }
     };
     const TestResolver = struct {
-        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
             if (!std.mem.eql(u8, specifier, "pkg:nativepkg")) return error.PackageNotFound;
             return .{
                 .path = try std.fs.path.resolve(allocator, &.{"packages/nativepkg/plugin.so"}),
@@ -630,7 +622,7 @@ test "直接importとpackage aliasが併存するESM moduleは無修飾と修飾
         }
     };
     const TestResolver = struct {
-        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
             if (!std.mem.eql(u8, specifier, "pkg:esmpkg")) return error.PackageNotFound;
             return .{
                 .path = try std.fs.path.resolve(allocator, &.{"esmplugin.mjs"}),

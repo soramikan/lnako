@@ -40,11 +40,12 @@ pub fn builtinClosureCommand(name: []const u8) ?BuiltinClosure {
 }
 
 /// `{関数}名`で関数値化されたネイティブプラグイン命令。意味解析の動的命令
-/// 束縛はプラグイン取り込みモジュールでのみ成立するため、IR関数でも組み込み
-/// 関数名（専用ABI命令を含むカタログ全件）でもない名前をプラグイン命令と
-/// みなす。専用ABI命令をここへ流すと実行時plugin dispatchで失敗するため、
-/// builtinClosureCommandがnullでもカタログ名は除外する。
-pub fn nativePluginClosure(program: ir.Program, name: []const u8) bool {
+/// 束縛（`dynamic_call`印）はプラグイン取り込みモジュールでのみ付くため、
+/// 未束縛の同名参照はplugin命令へ流さない。専用ABI命令をここへ流すと
+/// 実行時plugin dispatchで失敗するため、カタログ名も除外する。
+pub fn nativePluginClosure(program: ir.Program, instruction: ir.Instruction) bool {
+    if (!instruction.dynamic_call) return false;
+    const name = instruction.name;
     if (program.native_plugin_paths.len == 0 or lookupFunction(program, name) != null) return false;
     for (builtin_catalog.assign_to_function_names) |candidate| {
         if (std.mem.eql(u8, candidate, name)) return false;
@@ -61,6 +62,10 @@ pub fn isNativePluginCall(program: ir.Program, function: ir.Function, instructio
         instruction.opcode == .call and
         instruction.direct_callee == null and
         !instruction.is_builtin_call and
+        // 動的builtin束縛の印が無い呼出しはplugin dispatchへ流さない。
+        // 取り込み辺を持たないモジュールが `{namespace}__{命令}` を書いても
+        // package plugin の命令へ届かないようにする。
+        instruction.dynamic_call and
         instruction.name.len > 0 and
         lookupFunction(program, instruction.name) == null and
         (!isDynamicNamedCall(function, instruction.name) or isPackagePluginCommandName(program, instruction.name));
@@ -72,6 +77,9 @@ pub fn isNativePluginCall(program: ir.Program, function: ir.Function, instructio
 pub fn isPackagePluginCommandName(program: ir.Program, name: []const u8) bool {
     for (program.native_plugin_packages) |package| {
         const namespace = package.namespace;
+        // 空namespaceは直接path importの無修飾公開 sentinel であり
+        // `{ns}__{名}` の照合には使えない。
+        if (namespace.len == 0) continue;
         if (name.len > namespace.len + 2 and
             std.mem.startsWith(u8, name, namespace) and
             name[namespace.len] == '_' and name[namespace.len + 1] == '_') return true;

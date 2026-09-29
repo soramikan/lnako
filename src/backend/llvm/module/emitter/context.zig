@@ -169,7 +169,7 @@ pub const Emitter = struct {
             for (self.program.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
                 if (isNativePluginCall(self.program, function, instruction)) return true;
                 // 関数値化されたプラグイン命令も実行時に非同期タスクを登録し得る
-                if (instruction.opcode == .make_closure and shared.nativePluginClosure(self.program, instruction.name)) return true;
+                if (instruction.opcode == .make_closure and shared.nativePluginClosure(self.program, instruction)) return true;
             };
         }
         return false;

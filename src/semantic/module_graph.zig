@@ -48,12 +48,17 @@ pub const ResolvedPackageImport = struct {
 /// Lock/environment-backed package specifier resolver. The callback returns the
 /// selected export path and public namespace; selection policy stays outside the
 /// module graph so CLI, tests, and embedded callers share the same loader.
+/// `importer_owner` is the environment package key that owns the importing
+/// module (derived from the import edge, not the physical path); when present
+/// the resolver must use that package's dependency scope rather than inferring
+/// ownership from the importer path — two packages may legitimately share
+/// nested roots, where path inference can pick the wrong owner.
 pub const PackageResolver = struct {
     context: *anyopaque,
-    resolveFn: *const fn (context: *anyopaque, allocator: std.mem.Allocator, importer: []const u8, specifier: []const u8) anyerror!ResolvedPackageImport,
+    resolveFn: *const fn (context: *anyopaque, allocator: std.mem.Allocator, importer: []const u8, importer_owner: ?[]const u8, specifier: []const u8) anyerror!ResolvedPackageImport,
 
-    pub fn resolve(self: PackageResolver, allocator: std.mem.Allocator, importer: []const u8, specifier: []const u8) !ResolvedPackageImport {
-        return self.resolveFn(self.context, allocator, importer, specifier);
+    pub fn resolve(self: PackageResolver, allocator: std.mem.Allocator, importer: []const u8, importer_owner: ?[]const u8, specifier: []const u8) !ResolvedPackageImport {
+        return self.resolveFn(self.context, allocator, importer, importer_owner, specifier);
     }
 };
 
@@ -92,6 +97,14 @@ pub const Options = struct {
 };
 pub const ModuleKind = enum { nako3, javascript, native_plugin };
 pub const LoadState = enum { loading, loaded };
+
+/// 生成時に `SourceProvider.canonicalize` が返した lexical→実体pathの対応。
+/// 埋め込みpayloadへ保存し、FSを持たない起動時compileでも同じ境界検査と
+/// module同一性を再現するために使う。
+pub const PathAlias = struct {
+    lexical: []const u8,
+    canonical: []const u8,
+};
 
 pub const Import = struct {
     requested: []const u8,
@@ -192,6 +205,9 @@ pub const ModuleGraph = struct {
     /// （`{namespace}__{name}` の prefix）。`modules` の index と揃える。
     /// package moduleでは公開実行時名と異なるため、エラー位置逆引き用に保持する。
     internal_module_names: []const []const u8 = &.{},
+    /// 境界検査でcanonicalizeが実体pathへ解決したlexical pathの対応表。
+    /// 埋め込みpayload生成がそのまま写し取る。
+    canonical_aliases: []const PathAlias = &.{},
 
     pub fn deinit(self: *ModuleGraph) void {
         for (self.modules) |module| {
@@ -523,6 +539,7 @@ pub fn load(backing_allocator: std.mem.Allocator, entry_path: []const u8, provid
         .entry = entry,
         .diagnostics = diagnostics,
         .expansion = expansion,
+        .canonical_aliases = loader.canonical_aliases.items,
     };
 }
 
@@ -534,6 +551,7 @@ pub const Loader = struct {
     provider: SourceProvider,
     options: Options,
     modules: std.ArrayList(*LoadedModule) = .empty,
+    canonical_aliases: std.ArrayList(PathAlias) = .empty,
     diagnostics: std.ArrayList(diagnostic.Diagnostic) = .empty,
 
     fn deinitModules(self: *Loader) void {
@@ -569,6 +587,11 @@ pub const Loader = struct {
             // import. Reuse that module without changing its established name or
             // identity; the Import edge carries the package alias separately.
             if (self.findLocalPath(path)) |existing| return existing;
+            // 同一packageの別exportが同じ実体ファイルを指す場合も共有する。
+            // 共有しないとexport名ごとにmoduleが複製され、plugin評価や
+            // グローバル初期化が多重化する。ownerが一致するpackage moduleに
+            // 限る（別packageのmoduleは絶対に共有しない）。
+            if (self.findPackagePath(path, id)) |existing| return existing;
         } else if (self.find(path)) |existing| {
             if (package_owner) |owner| try self.adoptIntoPackage(existing, owner, package_root.?);
             return existing;
@@ -710,7 +733,7 @@ pub const Loader = struct {
             // 先行する取り込み先の終端モードの暫定累積（実効辺未確定のため近似値）
             var cumulative: token_mod.Mode = .{};
             for (import_nodes.items) |node| {
-                const resolved_import = resolveRequestedImport(self.allocator, path, node.value, self.options.package_resolver) catch |err| {
+                const resolved_import = resolveRequestedImport(self.allocator, path, module.package_owner, node.value, self.options.package_resolver) catch |err| {
                     if (err == error.OutOfMemory) return err;
                     const message = if (isPackageSpecifier(node.value))
                         "パッケージ参照を解決できません（同期済み環境・公開export・aliasを確認してください）"
@@ -927,6 +950,20 @@ pub const Loader = struct {
         return null;
     }
 
+    /// 同じpackage identityに属し、同じ実体pathを指すmoduleを探す。
+    /// 複数exportが1ファイルへ収束する場合にmodule評価を一度に抑えるための
+    /// 照合で、owner prefix（canonical_idの`/`より前）が一致する場合に限る。
+    fn findPackagePath(self: *Loader, path: []const u8, canonical_id: []const u8) ?u32 {
+        const owner_end = std.mem.lastIndexOfScalar(u8, canonical_id, '/') orelse return null;
+        const owner = canonical_id[0..owner_end];
+        for (self.modules.items) |module| {
+            if (!std.mem.eql(u8, module.path, path)) continue;
+            const module_owner = module.package_owner orelse continue;
+            if (std.mem.eql(u8, module_owner, owner)) return module.index;
+        }
+        return null;
+    }
+
     /// A module first reached by an ordinary relative import and later pulled in
     /// by a package keeps its established identity, but its symbols must stay
     /// package-internal. Mark it and its in-root relative descendants with the
@@ -954,7 +991,7 @@ pub const Loader = struct {
 
     fn findImport(self: *Loader, path: []const u8, canonical_id: ?[]const u8) ?u32 {
         if (canonical_id) |id| {
-            return self.findCanonical(id) orelse self.findLocalPath(path);
+            return self.findCanonical(id) orelse self.findLocalPath(path) orelse self.findPackagePath(path, id);
         }
         return self.find(path);
     }
@@ -1197,10 +1234,10 @@ const ResolvedImport = struct {
     package_root: ?[]const u8 = null,
 };
 
-fn resolveRequestedImport(allocator: std.mem.Allocator, importer: []const u8, requested: []const u8, package_resolver: ?PackageResolver) !ResolvedImport {
+fn resolveRequestedImport(allocator: std.mem.Allocator, importer: []const u8, importer_owner: ?[]const u8, requested: []const u8, package_resolver: ?PackageResolver) !ResolvedImport {
     if (!isPackageSpecifier(requested)) return .{ .path = try resolveImport(allocator, importer, requested) };
     const resolver = package_resolver orelse return error.PackageResolverUnavailable;
-    const selected = try resolver.resolve(allocator, importer, requested);
+    const selected = try resolver.resolve(allocator, importer, importer_owner, requested);
     return .{ .path = try normalizePath(allocator, selected.path), .canonical_id = selected.canonical_id, .namespace = selected.namespace, .dispatch_namespace = selected.dispatch_namespace, .package_root = selected.package_root };
 }
 
@@ -1215,12 +1252,30 @@ fn pathWithinRoot(root: []const u8, path: []const u8) bool {
 /// 環境（実 FS）では in-root symlink が指す実体まで解決してから
 /// `pathWithinRoot` と組み合わせる。解決不能（欠落・無い provider 等）なら
 /// lexical path を返し、以降の read で個別診断される挙動を維持する。
+/// 実体pathと異なるlexical pathはaliasとして記録し、埋め込み実行payloadが
+/// 生成時と同じcanonicalizationをFSなしで再現できるようにする。
 fn containmentTarget(self: *Loader, lexical: []const u8) ![]const u8 {
     const canonical = self.provider.canonicalize(self.allocator, lexical) catch |err| switch (err) {
         error.OutOfMemory => return err,
         else => return lexical,
     };
-    return canonical orelse lexical;
+    if (canonical) |resolved| {
+        if (!std.mem.eql(u8, resolved, lexical)) {
+            var listed = false;
+            for (self.canonical_aliases.items) |alias| {
+                if (std.mem.eql(u8, alias.lexical, lexical)) {
+                    listed = true;
+                    break;
+                }
+            }
+            if (!listed) try self.canonical_aliases.append(self.allocator, .{
+                .lexical = try self.allocator.dupe(u8, lexical),
+                .canonical = resolved,
+            });
+            return resolved;
+        }
+    }
+    return lexical;
 }
 
 /// Ownership a package module passes to a relative descendant that stays inside

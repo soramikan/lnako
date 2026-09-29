@@ -95,6 +95,11 @@ pub const Instruction = struct {
     /// dispatch.
     literal_site_id: ?u64 = null,
     is_builtin_call: bool = false,
+    /// 意味解析が動的builtinとして束縛したplugin命令呼出しで真。
+    /// package修飾命令（`{namespace}__{命令}`）の実行時dispatchはこの印が
+    /// ある呼出しに限る — 取り込み辺を持たないモジュールが同名を書いても
+    /// pluginへ届かない。
+    dynamic_call: bool = false,
     /// DNCL互換の配列要素代入で、未初期化変数へ30要素の0配列を自動初期化する。
     check_array_init: bool = false,
     /// 対象名がローカルシンボルへ解決された代入系命令で真。
@@ -199,8 +204,11 @@ pub const Function = struct {
     sore_scope: bool = false,
 };
 
-/// `pkg:` import経由で読み込まれたnative plugin。
-/// 命令は `{namespace}__{命令}` の修飾名でのみ公開する。
+/// `pkg:` import経由で読み込まれたnative pluginの登録namespace。
+/// 命令は `{namespace}__{命令}` の修飾名で公開する。
+/// `namespace` が空の entry は直接 path import を表し、その path の命令を
+/// 無修飾でも公開する。直接 import と package import が併存する場合は
+/// 空 entry と修飾 entry の両方が載る（両方の公開形を維持する）。
 pub const NativePluginPackage = struct {
     path: []const u8,
     namespace: []const u8,
@@ -238,7 +246,8 @@ pub const Program = struct {
     native_plugin_paths: []const []const u8 = &.{},
     /// `pkg:` import経由のnative plugin。命令は `{namespace}__{命令}` の
     /// 修飾名でのみ公開し、無修飾名では呼べない。直接path importと同じ
-    /// pathを共有する場合は直接取り込み（無修飾）を優先し、ここには載せない。
+    /// pathを共有する場合は `namespace` 空の entry を併記し、無修飾登録と
+    /// 修飾登録の両方を行う。
     native_plugin_packages: []const NativePluginPackage = &.{},
     http_server_plugin_imported: bool = false,
 

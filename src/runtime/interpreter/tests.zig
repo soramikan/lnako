@@ -2520,7 +2520,7 @@ const TestScopedAliasResolver = struct {
         return .{ .context = self, .resolveFn = resolve };
     }
 
-    fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !module_graph.ResolvedPackageImport {
+    fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !module_graph.ResolvedPackageImport {
         const resolved: struct { path: []const u8, canonical_id: []const u8, namespace: []const u8 } = if (std.mem.eql(u8, specifier, "pkg:util-root")) .{
             .path = "packages/root-util/index.nako3",
             .canonical_id = "pkg:root-util/main",
@@ -2551,7 +2551,7 @@ const TestLocalMathPackageResolver = struct {
         return .{ .context = self, .resolveFn = resolve };
     }
 
-    fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !module_graph.ResolvedPackageImport {
+    fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !module_graph.ResolvedPackageImport {
         const namespace = if (std.mem.eql(u8, specifier, "pkg:math-package"))
             "math"
         else if (std.mem.eql(u8, specifier, "pkg:math-package-alt"))
@@ -2572,7 +2572,7 @@ const TestPackageResolver = struct {
         return .{ .context = self, .resolveFn = resolve };
     }
 
-    fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !module_graph.ResolvedPackageImport {
+    fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !module_graph.ResolvedPackageImport {
         const is_demo = std.mem.eql(u8, specifier, "パッケージ:demo") or std.mem.eql(u8, specifier, "pkg:demo");
         const is_other = std.mem.eql(u8, specifier, "パッケージ:other");
         if (!is_demo and !is_other) return error.PackageNotFound;

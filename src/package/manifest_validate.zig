@@ -895,6 +895,15 @@ const Validator = struct {
         const known = [_][]const u8{ "name", "path", "alias", "native", "esm" };
         var exports = try std.ArrayList(Export).initCapacity(self.arena, array.items.len);
         var names = std.StringHashMap(void).init(self.scratch);
+        // name/alias はどちらも `pkg:pkg/<sel>` の selector として一致するため、
+        // 全 export で一意でなければならない。衝突すると `pkg:lib/foo` が複数
+        // export に一致して常に AmbiguousExport になり、正常に sync された
+        // 公開 export を読み込めない。
+        var selectors = std.StringHashMap([]const u8).init(self.scratch);
+        // selector の正規化後 namespace も一意にする。`foo-bar` と `foo_bar` は
+        // 同じ `lib__foo_bar` へ畳まれ、native 登録は衝突し ESM は同一 command
+        // key を上書きするため、発行時点で拒否する。
+        var normalized_selectors = std.StringHashMap([]const u8).init(self.scratch);
         var has_compat_js = false;
         var profile_iterator = self.manifest.profiles.valueIterator();
         while (profile_iterator.next()) |profile| {
@@ -924,8 +933,37 @@ const Validator = struct {
             if (export_entry.path) |text| {
                 const item_path = try self.pathOf("exports", "path");
                 try self.rejectNonCanonicalPath(text, item_path, item.position);
+                // `path` は共通 nadesiko source のみを指す。JavaScript 実装は
+                // `esm`、native 実装は `native` で宣言する。plugin 拡張子を
+                // 共通 source へ置くと通常モード sync が発行しても module
+                // graph が --compat-js 無しで常に拒否し、発行済み export が
+                // import 不能になる。
+                const extension = std.fs.path.extension(text);
+                if (!std.ascii.eqlIgnoreCase(extension, ".nako3") and
+                    !std.ascii.eqlIgnoreCase(extension, ".dncl") and
+                    !std.ascii.eqlIgnoreCase(extension, ".dncl2"))
+                {
+                    try self.report(diag.E029_INVALID_VALUE, item_path, item.position, "export path \"{s}\" must be a nadesiko source file (.nako3/.dncl/.dncl2); JavaScript or native implementations belong in \"esm\"/\"native\"", .{text});
+                }
             }
             export_entry.alias = try self.expectString(export_table, "alias", "exports");
+            for ([_]?[]const u8{ export_entry.name, export_entry.alias }) |selector| {
+                const text = selector orelse continue;
+                if (text.len == 0) continue;
+                if (selectors.get(text)) |other_name| {
+                    // 同一 export 内の name==alias 重複は冗長だが一意に解決
+                    // できるため許容する。別 export の selector との衝突のみ拒否。
+                    if (!std.mem.eql(u8, other_name, export_entry.name)) {
+                        try self.report(diag.E011_DUPLICATE_EXPORT, "exports", item.position, "export selector \"{s}\" collides between exports \"{s}\" and \"{s}\"", .{ text, other_name, export_entry.name });
+                    }
+                } else try selectors.put(text, export_entry.name);
+                const normalized = try import_resolver.normalizedExportSubpath(self.arena, text);
+                if (normalized_selectors.get(normalized)) |other_name| {
+                    if (!std.mem.eql(u8, other_name, export_entry.name)) {
+                        try self.report(diag.E012_ALIAS_COLLISION, "exports", item.position, "export selectors \"{s}\" and \"{s}\" normalize to the same package namespace", .{ other_name, export_entry.name });
+                    }
+                } else try normalized_selectors.put(normalized, export_entry.name);
+            }
             export_entry.native = try self.expectArtifactDecls(export_table, "native", "exports");
             export_entry.esm = try self.expectArtifactDecls(export_table, "esm", "exports");
             // artifact の features は [features] で定義済みの名だけを指す。

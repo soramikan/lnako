@@ -265,7 +265,7 @@ pub fn collectModuleData(emitter: *Emitter) !void {
             if (instruction.opcode == .make_closure and
                 lookupFunction(emitter.program, instruction.name) == null and
                 (shared.builtinClosureCommand(instruction.name) != null or
-                    shared.nativePluginClosure(emitter.program, instruction.name)) and
+                    shared.nativePluginClosure(emitter.program, instruction)) and
                 emitter.builtinClosureNameIndex(instruction.name) == null)
             {
                 try emitter.builtin_closure_names.append(emitter.allocator, instruction.name);

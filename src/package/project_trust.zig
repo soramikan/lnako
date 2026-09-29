@@ -4,6 +4,17 @@ const low_level_fs = @import("../runtime/low_level_fs.zig");
 
 const Allocator = std.mem.Allocator;
 
+/// Windows の `BUILTIN\Users` add-only ACE（FILE_ADD_FILE/
+/// FILE_ADD_SUBDIRECTORY のみ、継承由来）を baseline として許容するか。
+/// 対象オブジェクト自体へ適用される直接付与 ACE は例外にしない。
+const UsersAddOnlyPolicy = enum {
+    /// drive root 由来の継承 ACE を許容。project dir・祖先 dir 検査用。
+    allow_inherited_baseline,
+    /// package tree 本体用。add-only でも tree 内へ新規 source を作成
+    /// されると検証後の内容を侵されるため例外を認めない。
+    reject_on_tree,
+};
+
 /// Reject project paths whose owner or ACL/mode permits untrusted modification.
 /// On Windows ACL parsing is deliberately conservative: unknown ACE forms fail closed.
 /// POSIXではモードビットに加えて所有者を検査する — 0644でも別ユーザ所有なら
@@ -11,7 +22,7 @@ const Allocator = std.mem.Allocator;
 pub fn isUnsafeWritablePath(allocator: Allocator, io: std.Io, path: []const u8) !bool {
     const stat = try std.Io.Dir.cwd().statFile(io, path, .{});
     if (comptime builtin.os.tag == .windows)
-        return try windowsPathHasUntrustedWriteAccess(allocator, path, stat.kind == .directory);
+        return try windowsPathHasUntrustedWriteAccess(allocator, path, stat.kind == .directory, .allow_inherited_baseline);
     if (comptime builtin.os.tag == .wasi) return false;
     if (@intFromEnum(stat.permissions) & 0o022 != 0) return true;
     const metadata = low_level_fs.stat(io, path, true) catch return true;
@@ -22,9 +33,11 @@ pub fn isUnsafeWritablePath(allocator: Allocator, io: std.Io, path: []const u8) 
 /// を返す。materialized tree は `.nako` 直下の権限がprivateでも、配下dirが
 /// 共有writableなら entry を差し替えられ、配下fileが共有writableなら
 /// export対象の中身を書き換えられるため、dir・fileの両方を末端まで検査する。
+/// Windows では drive root baseline の add-only ACE 例外も package tree
+/// 内では適用しない（新規 file 追加で import 対象を後から差し込めるため）。
 /// 走査・権限取得の失敗は fail-closed で unsafe 扱いにする。
 pub fn hasUnsafeWritableDirectory(allocator: Allocator, io: std.Io, root: []const u8) !bool {
-    if (try isUnsafeWritablePath(allocator, io, root)) return true;
+    if (try isUnsafeWritableTreeEntry(allocator, io, root)) return true;
     var directory = std.Io.Dir.cwd().openDir(io, root, .{ .iterate = true }) catch return true;
     defer directory.close(io);
     var walker = try directory.walk(allocator);
@@ -32,13 +45,64 @@ pub fn hasUnsafeWritableDirectory(allocator: Allocator, io: std.Io, root: []cons
     while (walker.next(io) catch return true) |entry| {
         const full = try std.fs.path.join(allocator, &.{ root, entry.path });
         defer allocator.free(full);
-        const unsafe = isUnsafeWritablePath(allocator, io, full) catch |err| {
+        const unsafe = isUnsafeWritableTreeEntry(allocator, io, full) catch |err| {
             if (err == error.OutOfMemory) return err;
             return true;
         };
         if (unsafe) return true;
     }
     return false;
+}
+
+/// package tree 内の entry 用の判定。Windows では add-only baseline 例外を
+/// 適用しない（tree 内への新規 file 追加自体が内容侵害になるため）。
+fn isUnsafeWritableTreeEntry(allocator: Allocator, io: std.Io, path: []const u8) !bool {
+    if (comptime builtin.os.tag == .windows) {
+        const stat = std.Io.Dir.cwd().statFile(io, path, .{}) catch return true;
+        return try windowsPathHasUntrustedWriteAccess(allocator, path, stat.kind == .directory, .reject_on_tree);
+    }
+    return isUnsafeWritablePath(allocator, io, path);
+}
+
+/// `root` の親directoryを信頼境界 `boundary`（検査対象から除く）まで遡って
+/// 検査する。package root 自体が安全でも、親dirが共有writableなら検証後に
+/// root を rename して同 path の別 tree へ置き換えられるため、親まで fail
+/// closed で検査する。`boundary` に含まれない root（外部 mutable path 依存）
+/// は filesystem root まで遡る。
+/// POSIX: sticky bit 付きの共有writable dir（`/tmp` 等）は他者の entry を
+/// 削除・rename できないため置換不能とみなし安全側とする。sticky 無しの
+/// writable dir は unsafe。Windows: add-only ACE は子の削除・rename を
+/// 与えないため祖先では baseline 許容（tree 本体とは別基準）。
+pub fn hasUnsafeWritableAncestors(allocator: Allocator, io: std.Io, root: []const u8, boundary: []const u8) !bool {
+    var current = try allocator.dupe(u8, root);
+    defer allocator.free(current);
+    while (std.fs.path.dirname(current)) |parent| {
+        if (std.mem.eql(u8, parent, boundary)) break;
+        const unsafe = isUnsafeWritableAncestor(allocator, io, parent) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            return true;
+        };
+        if (unsafe) return true;
+        const owned = try allocator.dupe(u8, parent);
+        allocator.free(current);
+        current = owned;
+    }
+    return false;
+}
+
+/// 祖先dir用の判定。root/canonical path の親は実体dirである前提。
+fn isUnsafeWritableAncestor(allocator: Allocator, io: std.Io, path: []const u8) !bool {
+    if (comptime builtin.os.tag == .windows) {
+        const stat = std.Io.Dir.cwd().statFile(io, path, .{}) catch return true;
+        return try windowsPathHasUntrustedWriteAccess(allocator, path, stat.kind == .directory, .allow_inherited_baseline);
+    }
+    if (comptime builtin.os.tag == .wasi) return false;
+    const metadata = low_level_fs.stat(io, path, true) catch return true;
+    // sticky 無しの writable dir は中の entry を rename/削除できる → unsafe。
+    // sticky 付き（/tmp 等）は他者 entry の置換が不可能なため作成のみ →
+    // ここでは owner 検査のみ残す（dir 自体の owner が他者なら unsafe）。
+    if (metadata.mode & 0o022 != 0 and metadata.mode & 0o1000 == 0) return true;
+    return metadata.uid != 0 and metadata.uid != std.c.geteuid();
 }
 
 const WinApi = struct {
@@ -63,6 +127,9 @@ const WinApi = struct {
     /// ACE が対象オブジェクト自身ではなく継承先にのみ適用されることを示す
     /// ace_flags のビット（CREATOR OWNER 等の継承用 ACE を拾わない）。
     const InheritOnlyAce: u8 = 0x08;
+    /// 親から継承された ACE を示すビット。drive root 既定 ACE の判別に使う
+    /// （直接付与された add-only ACE は baseline 例外の対象外）。
+    const InheritedObjectAce: u8 = 0x10;
 
     extern "advapi32" fn GetNamedSecurityInfoW(
         object_name: [*:0]const u16,
@@ -90,7 +157,7 @@ const WinApi = struct {
     const AllowedAce = extern struct { header: AceHeader, mask: u32, sid_start: u32 };
 };
 
-fn windowsPathHasUntrustedWriteAccess(allocator: Allocator, path: []const u8, is_directory: bool) !bool {
+fn windowsPathHasUntrustedWriteAccess(allocator: Allocator, path: []const u8, is_directory: bool, users_add_only_policy: UsersAddOnlyPolicy) !bool {
     const Api = WinApi;
 
     const path_w = try std.unicode.utf8ToUtf16LeAllocZ(allocator, path);
@@ -172,7 +239,15 @@ fn windowsPathHasUntrustedWriteAccess(allocator: Allocator, path: []const u8, is
                 // baseline として許容する。file への同名 bit は FILE_WRITE_DATA/
                 // APPEND_DATA（実改変）なので除外しない。また add 以外の権利を
                 // 含む Users ACE（FILE_DELETE_CHILD/GENERIC_ALL 等）は拒否する。
-                if (is_directory and isBuiltinUsersSid(sid) and ace.mask & (write_rights & ~add_only_rights) == 0) continue;
+                // 例外は継承（INHERITED_ACE）由来の ACE に限定する — 対象 dir
+                // へ直接付与された add-only ACE は運用者の意図付与であり既定
+                // layout ではないため baseline に含めない。package tree 本体
+                // （reject_on_tree）では新規 file 追加自体が内容侵害になるため
+                // baseline 例外を一切適用しない。
+                if (users_add_only_policy == .allow_inherited_baseline and
+                    is_directory and isBuiltinUsersSid(sid) and
+                    ace.mask & (write_rights & ~add_only_rights) == 0 and
+                    header.ace_flags & Api.InheritedObjectAce != 0) continue;
                 return true;
             },
             // Object/callback ACEs have conditional or object-specific semantics.
@@ -322,11 +397,11 @@ test "Windows ACL check accepts a private temporary project directory and file" 
     defer allocator.free(root);
     const manifest = try std.fs.path.join(allocator, &.{ root, "nako.toml" });
     defer allocator.free(manifest);
-    if (try windowsPathHasUntrustedWriteAccess(allocator, root, true)) {
+    if (try windowsPathHasUntrustedWriteAccess(allocator, root, true, .allow_inherited_baseline)) {
         windowsAclDebugDump(allocator, root);
         return error.TestUnexpectedResult;
     }
-    if (try windowsPathHasUntrustedWriteAccess(allocator, manifest, false)) {
+    if (try windowsPathHasUntrustedWriteAccess(allocator, manifest, false, .allow_inherited_baseline)) {
         windowsAclDebugDump(allocator, manifest);
         return error.TestUnexpectedResult;
     }

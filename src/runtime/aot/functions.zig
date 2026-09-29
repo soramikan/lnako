@@ -31,6 +31,8 @@ pub export fn lnako_aot_native_plugin_register(path: ?[*]const u8, len: usize) c
 
 /// `pkg:` import経由のnative plugin pathに公開namespaceを対応付ける。
 /// 対応付けられたpluginの命令は `{namespace}__{命令}` のみで呼べる。
+/// namespace長0のentryは直接path importの無修飾公開を表す（IRの
+/// NativePluginPackage 空namespace契約と同じ）。
 pub export fn lnako_aot_native_plugin_package_register(
     path: ?[*]const u8,
     path_len: usize,
@@ -42,16 +44,18 @@ pub export fn lnako_aot_native_plugin_package_register(
         if (path_len != 0) runtime.setFailure(error.InvalidArgumentCount);
         return;
     };
-    const namespace_pointer = namespace orelse {
-        if (namespace_len != 0) runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    };
     const path_slice = path_pointer[0..path_len];
-    const namespace_slice = namespace_pointer[0..namespace_len];
-    if (path_slice.len == 0 or namespace_slice.len == 0) {
+    if (path_slice.len == 0) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
+    const namespace_slice = if (namespace) |namespace_pointer| namespace_pointer[0..namespace_len] else blk: {
+        if (namespace_len != 0) {
+            runtime.setFailure(error.InvalidArgumentCount);
+            return;
+        }
+        break :blk "";
+    };
     for (runtime.native_plugin_packages.items) |package| {
         if (std.mem.eql(u8, package.path, path_slice) and std.mem.eql(u8, package.namespace, namespace_slice)) return;
     }
