@@ -795,6 +795,71 @@ test "package内JSの非リテラル動的importは拒否し直接importでは�
     try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
 }
 
+test "package内JSの部分リテラル動的importは誤った辺を記録せず拒否する" {
+    // `import("./ok.mjs" + name)` の先頭リテラルを記録すると、graphは
+    // `./ok.mjs` の辺を作り境界検査を通過するが、実行時の実指定は別値に
+    // なりpackage root外を読み得る。リテラルの次が `)`/`,` でない場合は
+    // 収集せずopaqueとして拒否する。
+    const opaque_sources = [_][]const u8{
+        "export default async (name) => import('./ok.mjs' + name);",
+        "export default async () => import('./ok.mjs' './also.mjs');",
+        "export default async () => import();",
+        "export default async () => import('./ok.mjs'",
+        "export default async () => import(`./ok.mjs`);",
+    };
+    for (opaque_sources) |plugin_source| {
+        var memory = MemoryProvider{ .files = &.{
+            .{ .suffix = "main.nako3", .source = "!「pkg:esm」を取り込む\n" },
+            .{ .suffix = "packages/esm/plugin.mjs", .source = plugin_source },
+            .{ .suffix = "packages/esm/ok.mjs", .source = "export const value = 1;" },
+        } };
+        var package_resolver = PackageTestResolver{};
+        var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .compat_js = true, .package_resolver = package_resolver.resolver() });
+        defer graph.deinit();
+        try std.testing.expect(!graph.succeeded());
+        // 先頭リテラルがedgeとして誤記録されていないことも確認する
+        try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
+        try std.testing.expectEqual(@as(usize, 0), graph.modules[1].imports.len);
+        var reported = false;
+        for (graph.diagnostics) |item| {
+            if (std.mem.indexOf(u8, item.message, "リテラル指定以外") != null) reported = true;
+        }
+        try std.testing.expect(reported);
+    }
+}
+
+test "package内JSの動的importは第二引数付きリテラルを受理する" {
+    // `import("./x.mjs", { with: {...} })` の第二引数はoptions objectであり
+    // specifierには影響しない。`,` で閉じるリテラルは収集・境界検査の対象にする。
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:esm」を取り込む\n" },
+        .{ .suffix = "packages/esm/plugin.mjs", .source = "export default async () => (await import('./extra.mjs', { with: { type: 'js' } })).value;" },
+        .{ .suffix = "packages/esm/extra.mjs", .source = "export const value = 1;" },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .compat_js = true, .package_resolver = package_resolver.resolver() });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 3), graph.modules.len);
+    try std.testing.expectEqual(@as(usize, 1), graph.modules[1].imports.len);
+    try std.testing.expectEqualStrings("./extra.mjs", graph.modules[1].imports[0].requested);
+}
+
+test "直接importのJSの部分リテラル動的importは収集を諦めても失敗しない" {
+    // 非package moduleでは動的importの非リテラルformは従来挙動（収集せず
+    // QuickJS側の解決へ委譲）を維持する。先頭リテラルの誤記録だけは防ぐ。
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「plugin.mjs」を取り込む\n" },
+        .{ .suffix = "plugin.mjs", .source = "export default async (name) => import('./ok.mjs' + name);" },
+        .{ .suffix = "ok.mjs", .source = "export const value = 1;" },
+    } };
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .compat_js = true });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
+    try std.testing.expectEqual(@as(usize, 0), graph.modules[1].imports.len);
+}
+
 test "ネイティブプラグインをソース読込なしで登録する" {
     var memory = MemoryProvider{ .files = &.{
         .{ .suffix = "main.nako3", .source = "!「plugin.so」を取り込む\n" },

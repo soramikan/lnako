@@ -682,9 +682,11 @@ pub const Loader = struct {
             const requested_imports = try collectJavaScriptImports(self.allocator, source, &has_opaque_dynamic);
             // package所有moduleの `import(expr)` は指定が静的に定まらず、
             // QuickJS側loaderのFS fallbackがpackage root外を読み得るため
-            // 明示的に拒否する。非package module（直接path import）は
+            // 明示的に拒否する。判定は moduleIsPackageContent — owner/
+            // canonical_idのみを持つmodule（旧payload等）もroot無しで
+            // 境界検査を迂回させない。非package module（直接path import）は
             // ユーザー自身のfileへの解決として従来挙動を維持する。
-            if (has_opaque_dynamic and module.package_root != null) {
+            if (has_opaque_dynamic and moduleIsPackageContent(module)) {
                 try self.importDiagnostic(import_node, path, "package内のJavaScriptでは動的importにリテラル指定以外を使えません");
             }
             for (requested_imports) |requested| {
@@ -1122,9 +1124,11 @@ const JavaScriptToken = struct { kind: JavaScriptTokenKind, text: []const u8 };
 /// JS moduleの `import`/`export … from` と動的 `import("…")` のリテラル
 /// 指定を収集する。動的formも収集しないとQuickJS側module loaderがFSへ
 /// fallbackしてpackage rootの外を読み得るため、リテラル指定は静的同様に
-/// 収集対象とする。`import(expr)` のように非リテラルな指定は静的に解決
-/// できないため `has_opaque_dynamic` で報告し、package所有moduleでは
-/// 呼出し側が境界違反として拒否する。
+/// 収集対象とする。ただし動的リテラルは `)` または第二引数の `,` で閉じる
+/// ものに限る — `import("a" + expr)` は実行時評価で別の指定になり得るため
+/// 先頭リテラルを記録すると誤った辺と境界検査のすり抜けになる。記録を
+/// 断念する非リテラル指定は `has_opaque_dynamic` で報告し、package所有
+/// moduleでは呼出し側が境界違反として拒否する。
 fn collectJavaScriptImports(allocator: std.mem.Allocator, source: []const u8, has_opaque_dynamic: *bool) ![][]const u8 {
     var result: std.ArrayList([]const u8) = .empty;
     var index: usize = 0;
@@ -1135,9 +1139,44 @@ fn collectJavaScriptImports(allocator: std.mem.Allocator, source: []const u8, ha
         if (!is_import and !is_export) continue;
         var saw_from = false;
         var dynamic = false;
+        var dynamic_literal: ?[]const u8 = null;
         var scanned: usize = 0;
         while (scanned < 256) : (scanned += 1) {
-            const candidate = nextJavaScriptToken(source, &index) orelse break;
+            const candidate = nextJavaScriptToken(source, &index) orelse {
+                // 動的formが閉じずにsource終端へ達した場合も記録不能として
+                // 報告する（非package moduleでは従来どおり無視される）。
+                if (dynamic) has_opaque_dynamic.* = true;
+                break;
+            };
+            if (dynamic) {
+                if (dynamic_literal == null) {
+                    // `(` 直後はspecifierリテラル文字列のみ受理する。escape
+                    // 列を含む文字列も記録せずopaque扱いにする（静的指定側の
+                    // UnsupportedJavaScriptImportEscape とは別に、動的formは
+                    // 「収集しない」が安全側の扱いになる）。
+                    if (candidate.kind == .string and
+                        std.mem.indexOfScalar(u8, candidate.text, '\\') == null)
+                    {
+                        dynamic_literal = candidate.text;
+                        continue;
+                    }
+                    has_opaque_dynamic.* = true;
+                    break;
+                }
+                // リテラル直後は `)`（呼出し終了）か `,`（第二引数=options
+                // object）のみ受理する。`+`・identifier・連続する文字列などは
+                // 式の一部であり、記録済みリテラルは実際の指定と一致しない。
+                // 確定した時点で打ち切る（第二引数はspecifierへ影響しない）。
+                if (candidate.kind == .punctuation and
+                    (std.mem.eql(u8, candidate.text, ")") or std.mem.eql(u8, candidate.text, ",")))
+                {
+                    try result.append(allocator, try allocator.dupe(u8, dynamic_literal.?));
+                    dynamic = false;
+                } else {
+                    has_opaque_dynamic.* = true;
+                }
+                break;
+            }
             if (candidate.kind == .punctuation and std.mem.eql(u8, candidate.text, ";")) break;
             if (candidate.kind == .punctuation and std.mem.eql(u8, candidate.text, "(")) {
                 // `import("…")` の動的formは先頭tokenとして `(` が来る。
@@ -1147,19 +1186,18 @@ fn collectJavaScriptImports(allocator: std.mem.Allocator, source: []const u8, ha
                 }
                 break;
             }
-            if (dynamic and candidate.kind != .string) {
-                has_opaque_dynamic.* = true;
-                break;
-            }
             if (candidate.kind == .identifier and std.mem.eql(u8, candidate.text, "from")) {
                 saw_from = true;
                 continue;
             }
             if (candidate.kind != .string) continue;
             if (std.mem.indexOfScalar(u8, candidate.text, '\\') != null) return error.UnsupportedJavaScriptImportEscape;
-            if ((is_import and (saw_from or scanned == 0 or dynamic)) or (is_export and saw_from)) try result.append(allocator, try allocator.dupe(u8, candidate.text));
+            if ((is_import and (saw_from or scanned == 0)) or (is_export and saw_from)) try result.append(allocator, try allocator.dupe(u8, candidate.text));
             break;
         }
+        // token走査の上限へ達しても動的formが確定していなければ、記録され
+        // なかったことを呼出し側へ伝える（package moduleでは拒否される）。
+        if (dynamic) has_opaque_dynamic.* = true;
     }
     return result.toOwnedSlice(allocator);
 }
