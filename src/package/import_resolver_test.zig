@@ -603,18 +603,22 @@ test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hash�
     try std.testing.expectEqualStrings(project_root, detected_root);
     const cwd = try realPathDirAlloc(allocator, io, ".");
     defer allocator.free(cwd);
-    try std.testing.expect(std.mem.startsWith(u8, project_root, cwd));
-    try std.testing.expect(project_root.len > cwd.len and std.fs.path.isSep(project_root[cwd.len]));
-    const relative_directory = project_root[cwd.len + 1 ..];
-    const relative_main = try std.fs.path.join(allocator, &.{ relative_directory, "main.nako3" });
-    defer allocator.free(relative_main);
-    const relative_nested = try std.fs.path.join(allocator, &.{ relative_directory, "src", "main.nako3" });
-    defer allocator.free(relative_nested);
-    const relative_inputs = [_][]const u8{ relative_main, relative_nested };
-    for (relative_inputs) |relative_input| {
-        const found_root = (try findProjectRoot(allocator, io, relative_input)) orelse return error.ProjectRootNotFound;
-        defer allocator.free(found_root);
-        try std.testing.expectEqualStrings(project_root, found_root);
+    // Windowsではtest_sandboxがcwd配下ではなくTEMP直下へ作成されるため、
+    // project_rootがcwd配下にある場合のみ相対path経路の解決を検査する。
+    if (std.mem.startsWith(u8, project_root, cwd) and
+        project_root.len > cwd.len and std.fs.path.isSep(project_root[cwd.len]))
+    {
+        const relative_directory = project_root[cwd.len + 1 ..];
+        const relative_main = try std.fs.path.join(allocator, &.{ relative_directory, "main.nako3" });
+        defer allocator.free(relative_main);
+        const relative_nested = try std.fs.path.join(allocator, &.{ relative_directory, "src", "main.nako3" });
+        defer allocator.free(relative_nested);
+        const relative_inputs = [_][]const u8{ relative_main, relative_nested };
+        for (relative_inputs) |relative_input| {
+            const found_root = (try findProjectRoot(allocator, io, relative_input)) orelse return error.ProjectRootNotFound;
+            defer allocator.free(found_root);
+            try std.testing.expectEqualStrings(project_root, found_root);
+        }
     }
     const math_import = try package_resolver.resolve(allocator, root_entry, "パッケージ:math");
     defer allocator.free(math_import.path);

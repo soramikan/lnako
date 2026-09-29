@@ -198,6 +198,9 @@ fn windowsPathHasUntrustedWriteAccess(allocator: Allocator, path: []const u8, is
 
     var acl_size: Api.AclSize = undefined;
     if (Api.GetAclInformation(dacl, @ptrCast(&acl_size), @sizeOf(Api.AclSize), Api.AclSizeInformation) == 0) return true;
+    // drive root（`C:\` 等）では当該ACEが継承ではなく直接置かれる（rootに親は
+    // 存在しない）ため、対象がfilesystem rootなら直接ACEも既定layoutとして扱う。
+    const is_filesystem_root = std.fs.path.dirname(path) == null;
     const add_only_rights: u32 = 0x00000002 | // FILE_ADD_FILE（dir）/ FILE_WRITE_DATA（file）
         0x00000004; // FILE_ADD_SUBDIRECTORY（dir）/ FILE_APPEND_DATA（file）
     const write_rights = add_only_rights |
@@ -239,15 +242,15 @@ fn windowsPathHasUntrustedWriteAccess(allocator: Allocator, path: []const u8, is
                 // baseline として許容する。file への同名 bit は FILE_WRITE_DATA/
                 // APPEND_DATA（実改変）なので除外しない。また add 以外の権利を
                 // 含む Users ACE（FILE_DELETE_CHILD/GENERIC_ALL 等）は拒否する。
-                // 例外は継承（INHERITED_ACE）由来の ACE に限定する — 対象 dir
-                // へ直接付与された add-only ACE は運用者の意図付与であり既定
-                // layout ではないため baseline に含めない。package tree 本体
-                // （reject_on_tree）では新規 file 追加自体が内容侵害になるため
-                // baseline 例外を一切適用しない。
+                // 例外は継承（INHERITED_ACE）由来の ACE と filesystem root へ
+                // 直接置かれる既定 ACE に限定する — それ以外の dir へ直接付与された
+                // add-only ACE は運用者の意図付与であり既定 layout ではないため
+                // baseline に含めない。package tree 本体（reject_on_tree）では
+                // 新規 file 追加自体が内容侵害になるため baseline 例外を一切適用しない。
                 if (users_add_only_policy == .allow_inherited_baseline and
                     is_directory and isBuiltinUsersSid(sid) and
                     ace.mask & (write_rights & ~add_only_rights) == 0 and
-                    header.ace_flags & Api.InheritedObjectAce != 0) continue;
+                    (header.ace_flags & Api.InheritedObjectAce != 0 or is_filesystem_root)) continue;
                 return true;
             },
             // Object/callback ACEs have conditional or object-specific semantics.
