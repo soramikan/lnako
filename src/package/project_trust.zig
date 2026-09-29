@@ -9,9 +9,10 @@ const Allocator = std.mem.Allocator;
 /// POSIXではモードビットに加えて所有者を検査する — 0644でも別ユーザ所有なら
 /// 所有者が書き換え・chmodできるため、実効ユーザでもrootでもない所有は拒否する。
 pub fn isUnsafeWritablePath(allocator: Allocator, io: std.Io, path: []const u8) !bool {
-    if (comptime builtin.os.tag == .windows) return try windowsPathHasUntrustedWriteAccess(allocator, path);
-    if (comptime builtin.os.tag == .wasi) return false;
     const stat = try std.Io.Dir.cwd().statFile(io, path, .{});
+    if (comptime builtin.os.tag == .windows)
+        return try windowsPathHasUntrustedWriteAccess(allocator, path, stat.kind == .directory);
+    if (comptime builtin.os.tag == .wasi) return false;
     if (@intFromEnum(stat.permissions) & 0o022 != 0) return true;
     const metadata = low_level_fs.stat(io, path, true) catch return true;
     return metadata.uid != 0 and metadata.uid != std.c.geteuid();
@@ -89,7 +90,7 @@ const WinApi = struct {
     const AllowedAce = extern struct { header: AceHeader, mask: u32, sid_start: u32 };
 };
 
-fn windowsPathHasUntrustedWriteAccess(allocator: Allocator, path: []const u8) !bool {
+fn windowsPathHasUntrustedWriteAccess(allocator: Allocator, path: []const u8, is_directory: bool) !bool {
     const Api = WinApi;
 
     const path_w = try std.unicode.utf8ToUtf16LeAllocZ(allocator, path);
@@ -130,8 +131,9 @@ fn windowsPathHasUntrustedWriteAccess(allocator: Allocator, path: []const u8) !b
 
     var acl_size: Api.AclSize = undefined;
     if (Api.GetAclInformation(dacl, @ptrCast(&acl_size), @sizeOf(Api.AclSize), Api.AclSizeInformation) == 0) return true;
-    const write_rights = 0x00000002 | // FILE_ADD_FILE / FILE_WRITE_DATA
-        0x00000004 | // FILE_ADD_SUBDIRECTORY / FILE_APPEND_DATA
+    const add_only_rights: u32 = 0x00000002 | // FILE_ADD_FILE（dir）/ FILE_WRITE_DATA（file）
+        0x00000004; // FILE_ADD_SUBDIRECTORY（dir）/ FILE_APPEND_DATA（file）
+    const write_rights = add_only_rights |
         0x00000010 | // FILE_WRITE_EA
         0x00000040 | // FILE_DELETE_CHILD
         0x00000100 | // FILE_WRITE_ATTRIBUTES
@@ -161,7 +163,17 @@ fn windowsPathHasUntrustedWriteAccess(allocator: Allocator, path: []const u8) !b
                 // CREATOR OWNER (S-1-3-0) は継承時のプレースホルダであり、対象
                 // オブジェクト自身へのアクセスを与えない。
                 if (isCreatorOwnerSid(sid)) continue;
-                if (Api.EqualSid(sid, current_user_sid) == 0 and !isWellKnownTrustedWindowsWriter(sid)) return true;
+                if (Api.EqualSid(sid, current_user_sid) != 0 or isWellKnownTrustedWindowsWriter(sid)) continue;
+                // Windows drive root の既定 ACL は BUILTIN\Users へ
+                // FILE_ADD_FILE/FILE_ADD_SUBDIRECTORY（新規エントリの作成のみで
+                // 既存内容の改変・削除・権限変更は不可）を継承付与する。
+                // これを untrusted write とみなすと `D:\` 配下など標準 layout の
+                // private dir が全て拒否されるため、dir への add-only Users ACE は
+                // baseline として許容する。file への同名 bit は FILE_WRITE_DATA/
+                // APPEND_DATA（実改変）なので除外しない。また add 以外の権利を
+                // 含む Users ACE（FILE_DELETE_CHILD/GENERIC_ALL 等）は拒否する。
+                if (is_directory and isBuiltinUsersSid(sid) and ace.mask & (write_rights & ~add_only_rights) == 0) continue;
+                return true;
             },
             // Object/callback ACEs have conditional or object-specific semantics.
             // A write-capable ACE of these types is not safely reducible here.
@@ -185,6 +197,18 @@ fn isCreatorOwnerSid(sid: ?*anyopaque) bool {
     if (authority[0] != 0 or authority[1] != 0 or authority[2] != 0 or authority[3] != 0 or
         authority[4] != 0 or authority[5] != 3) return false; // SECURITY_CREATOR_SID_AUTHORITY = 3
     return @as(*align(1) const u32, @ptrCast(bytes + 8)).* == 0;
+}
+
+/// BUILTIN\Users (S-1-5-32-545) かどうかを SID バイナリから判定する。
+fn isBuiltinUsersSid(sid: ?*anyopaque) bool {
+    if (sid == null) return false;
+    const bytes: [*]const u8 = @ptrCast(sid.?);
+    if (bytes[0] != 1 or bytes[1] < 2) return false;
+    const authority = bytes[2..8];
+    if (authority[0] != 0 or authority[1] != 0 or authority[2] != 0 or authority[3] != 0 or
+        authority[4] != 0 or authority[5] != 5) return false; // SECURITY_NT_AUTHORITY = 5
+    if (@as(*align(1) const u32, @ptrCast(bytes + 8)).* != 32) return false;
+    return @as(*align(1) const u32, @ptrCast(bytes + 12)).* == 545;
 }
 
 fn isWellKnownTrustedWindowsWriter(sid: ?*anyopaque) bool {
@@ -298,11 +322,11 @@ test "Windows ACL check accepts a private temporary project directory and file" 
     defer allocator.free(root);
     const manifest = try std.fs.path.join(allocator, &.{ root, "nako.toml" });
     defer allocator.free(manifest);
-    if (try windowsPathHasUntrustedWriteAccess(allocator, root)) {
+    if (try windowsPathHasUntrustedWriteAccess(allocator, root, true)) {
         windowsAclDebugDump(allocator, root);
         return error.TestUnexpectedResult;
     }
-    if (try windowsPathHasUntrustedWriteAccess(allocator, manifest)) {
+    if (try windowsPathHasUntrustedWriteAccess(allocator, manifest, false)) {
         windowsAclDebugDump(allocator, manifest);
         return error.TestUnexpectedResult;
     }
