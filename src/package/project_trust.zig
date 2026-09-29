@@ -82,7 +82,11 @@ pub fn hasUnsafeWritableAncestors(allocator: Allocator, io: std.Io, root: []cons
             if (err == error.OutOfMemory) return err;
             return true;
         };
-        if (unsafe) return true;
+        if (unsafe) {
+            std.debug.print("untrusted ancestor: {s}\n", .{parent});
+            windowsAclDebugDump(allocator, parent);
+            return true;
+        }
         const owned = try allocator.dupe(u8, parent);
         allocator.free(current);
         current = owned;
