@@ -1070,7 +1070,8 @@ fn materializeIntoGeneration(ctx: *Context, package_name: []const u8, source: *s
         return mapTreeError(ctx, err, package_name);
     };
     return .{
-        .env_path = try std.fs.path.join(arena, &.{ ctx.generation_rel, "deps", final_name }),
+        // `generation_rel` と同じく env path は `/` 区切りの論理名。
+        .env_path = try std.fmt.allocPrint(arena, "{s}/deps/{s}", .{ ctx.generation_rel, final_name }),
         .tree_dir = destination,
     };
 }
@@ -1082,7 +1083,7 @@ fn materializeEmptyPackage(ctx: *Context, package_name: []const u8) Error![]cons
     const arena = ctx.arena;
     const final_name = try allocateDepsName(ctx, package_name);
     ctx.deps_dir.createDirPath(ctx.io, final_name) catch |err| return mapFs(err);
-    return try std.fs.path.join(arena, &.{ ctx.generation_rel, "deps", final_name });
+    return try std.fmt.allocPrint(arena, "{s}/deps/{s}", .{ ctx.generation_rel, final_name });
 }
 
 /// export 宣言の選択に使う条件を、実際に解決された lock entry から構築する。

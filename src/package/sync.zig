@@ -283,7 +283,11 @@ pub fn run(
     defer {
         if (deps_dir_open) deps_dir.close(io);
     }
-    const generation_rel = try std.fs.path.join(arena, &.{ environment.dir_name, environment.env_dir, generation.generation });
+    // env.json に記録する世代相対 path は環境 artifact の canonical 形式として
+    // 常に `/` 区切りで構築する（`std.fs.path.join` は Windows で `\` になり、
+    // resolver の prefix 比較・fixture・lock 記録と不一致になる）。
+    // filesystem 操作には使わず、`.nako/env/<gen>` の論理名として扱う。
+    const generation_rel = try std.fmt.allocPrint(arena, "{s}/{s}/{s}", .{ environment.dir_name, environment.env_dir, generation.generation });
     const workspace_name = try std.fmt.allocPrint(arena, ".lnako-work-{s}", .{generation.generation});
     var workspace_dir = environment.openManagedChildDir(project_dir, io, workspace_name, true) catch |err| return mapFs(err);
     defer environment.deleteTreeChecked(project_dir, io, workspace_name) catch {};

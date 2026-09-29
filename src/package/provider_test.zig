@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const cache_mod = @import("cache.zig");
+const cache_key = @import("cache_key.zig");
 const diag = @import("diagnostics.zig");
 const fetch = @import("fetch.zig");
 const import_resolver = @import("import_resolver.zig");
@@ -2054,14 +2055,14 @@ test "sync は lock の implementation で選択した artifact を取得する"
     try testing.expectEqualStrings("lib/demo.so", exports.items[0].object.get("path").?.string);
 
     // attacker が cache tree・marker・source.archive を差し替えても、
-    // lock hash に合わない archive は破棄して再取得する。
+    // lock hash に合わない archive は破棄して再取得する。objects/ には
+    // 拒否された impostor entry も残るため、反復順序に依存せず lock の
+    // artifact hash 由来の key で対象 entry を特定する。
     const objects_path = try std.fs.path.join(testing.allocator, &.{ cache_root, "objects" });
     defer testing.allocator.free(objects_path);
-    var objects = try std.Io.Dir.cwd().openDir(io, objects_path, .{ .iterate = true, .follow_symlinks = false });
-    defer objects.close(io);
-    var iterator = objects.iterate();
-    const object = (try iterator.next(io)).?;
-    const object_root = try std.fs.path.join(testing.allocator, &.{ objects_path, object.name });
+    const native_object_key = try cache_key.artifactKey(testing.allocator, "artifact", expected_hash, native_url);
+    defer testing.allocator.free(native_object_key);
+    const object_root = try std.fs.path.join(testing.allocator, &.{ objects_path, native_object_key });
     defer testing.allocator.free(object_root);
     const cache_tree = try std.fs.path.join(testing.allocator, &.{ object_root, "tree" });
     defer testing.allocator.free(cache_tree);
@@ -2082,7 +2083,9 @@ test "sync は lock の implementation で選択した artifact を取得する"
 
     var second = try sync_mod.run(testing.allocator, io, .{ .project_root = project_abs, .cache_root = cache_root }, &list);
     defer second.deinit();
-    try testing.expectEqual(@as(usize, 2), server.requests.load(.acquire));
+    // 破壊された entry は hash 不整合で破棄されるため、lock artifact は
+    // 改めて取得される（native store への公開を待たず fetch が走る）。
+    try testing.expectEqual(@as(usize, 3), server.requests.load(.acquire));
     const rebuilt_binary = try std.fs.path.join(testing.allocator, &.{ project_abs, ".nako", "env", second.generation, "deps", "demo", "lib", "demo.so" });
     defer testing.allocator.free(rebuilt_binary);
     const rebuilt = try std.Io.Dir.cwd().readFileAlloc(io, rebuilt_binary, testing.allocator, .unlimited);
@@ -2097,7 +2100,8 @@ test "sync は lock の implementation で選択した artifact を取得する"
     const bytes_after_prune = try std.Io.Dir.cwd().readFileAlloc(io, native_path, testing.allocator, .unlimited);
     defer testing.allocator.free(bytes_after_prune);
     try testing.expectEqualStrings("NATIVE-BINARY", bytes_after_prune);
-    try testing.expectEqual(@as(usize, 2), server.requests.load(.acquire));
+    // 再取得で復元した entry は hash 一致するため、以降は cache hit する。
+    try testing.expectEqual(@as(usize, 3), server.requests.load(.acquire));
 
     var loaded = try import_resolver.Resolver.load(testing.allocator, io, project_abs);
     defer loaded.deinit();
@@ -2112,7 +2116,9 @@ test "sync は lock の implementation で選択した artifact を取得する"
     list = diag.List.init(testing.allocator);
     var legacy_report = try sync_mod.run(testing.allocator, io, .{ .project_root = project_abs, .cache_root = cache_root }, &list);
     defer legacy_report.deinit();
-    try testing.expectEqual(@as(usize, 3), server.requests.load(.acquire));
+    // implementation 省略の legacy lock は source artifact を選ぶため、
+    // native artifact とは別 key で未取得 → fetch が走る。
+    try testing.expectEqual(@as(usize, 4), server.requests.load(.acquire));
     const legacy_parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, legacy_report.environment_json, .{});
     defer legacy_parsed.deinit();
     const legacy_pkg = legacy_parsed.value.object.get("packages").?.object.get("pkg:44444444444444444444444444444444").?.object;
