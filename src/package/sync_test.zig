@@ -1,4 +1,5 @@
 const std = @import("std");
+const test_sandbox = @import("test_sandbox.zig");
 const diag = @import("diagnostics.zig");
 const env_state = @import("env_state.zig");
 const environment = @import("environment.zig");
@@ -124,7 +125,7 @@ fn writeMutableLibLock(temporary: *std.testing.TmpDir) !void {
 test "sync は読み取り不能な commands.json を生成fallbackへ黙って落とさない" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
 
     try temporary.dir.createDirPath(io, "deps/lib/src");
@@ -177,7 +178,7 @@ test "mutable source の digest 未記録 lock は sync が stale として拒�
     // 持ちながら内容 digest を記録しない。dir 変更を検出できないため、
     // sync はそのまま使わず StaleLock として再解決を要求する。
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
     defer testing.allocator.free(manifest_sha);
@@ -232,7 +233,7 @@ test "mutable source の digest 未記録 lock は sync が stale として拒�
 
 test "sync は path 依存を参照して schema v1 の環境を構築する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
     defer testing.allocator.free(manifest_sha);
@@ -290,7 +291,7 @@ test "sync は pinned project_dir handle 相対で入力を解決し root rename
     // 得る）。
     const allocator = testing.allocator;
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const manifest_sha = try sha256Hex(allocator, app_manifest);
     defer allocator.free(manifest_sha);
@@ -333,7 +334,7 @@ test "sync は実在しない export target を環境へ公開せず拒否する
     // env.json が不在 file・dir を指さないよう選択 target の実 file 性を
     // 公開前に検証する。
     for ([_][]const u8{ "src/missing.nako3", "src" }) |export_path| {
-        var temporary = std.testing.tmpDir(.{});
+        var temporary = test_sandbox.tmpDir(.{});
         defer temporary.cleanup();
         const lib_toml = try std.fmt.allocPrint(testing.allocator,
             \\[package]
@@ -372,7 +373,7 @@ test "sync は実在しない export target を環境へ公開せず拒否する
 
 test "sync は未対応の resolverVersion を LockInvalid で拒否する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
     defer testing.allocator.free(manifest_sha);
@@ -399,7 +400,7 @@ test "sync は未対応の resolverVersion を LockInvalid で拒否する" {
 
 test "sync は manifest との不整合な lock を StaleLock で拒否する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try writeFixtureProject(&temporary, "0000000000000000000000000000000000000000000000000000000000000000");
     const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
@@ -419,7 +420,7 @@ test "sync は manifest との不整合な lock を StaleLock で拒否する" {
 
 test "sync は失敗時に直前の有効環境を保持する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
     defer testing.allocator.free(manifest_sha);
@@ -451,7 +452,7 @@ test "sync は失敗時に直前の有効環境を保持する" {
 
 test "sync は offline で http 依存の未取得を拒否する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
     defer testing.allocator.free(manifest_sha);
@@ -500,7 +501,7 @@ test "sync は offline で http 依存の未取得を拒否する" {
 
 test "sync は current が欠損しても公開済み世代を environment.json から保持する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
     defer testing.allocator.free(manifest_sha);
@@ -532,7 +533,7 @@ test "sync は current が欠損しても公開済み世代を environment.json 
 
 test "sync は明示 commands.json 同梱でも source の .nako import を拒否する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     // `commands.json` は index であり、同梱しても source export 起点の
     // import 閉包走査を迂回しない。`.nako` は pin・digest 対象外のため、
@@ -569,7 +570,7 @@ test "sync は明示 commands.json 同梱でも source の .nako import を拒�
 
 test "sync は代表実装と個別解決が異なる export を両方記録する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     // lock の代表実装 `native` は artifact 選択と `prefer-native` 方針を
     // 示すだけで、個別 export の解決結果を縛らない。source-only export
@@ -654,7 +655,7 @@ test "sync は代表実装と個別解決が異なる export を両方記録す�
 
 test "sync は読取不能な nako.toml を欠落扱いせず失敗する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
     defer testing.allocator.free(manifest_sha);
@@ -680,7 +681,7 @@ test "sync は読取不能な nako.toml を欠落扱いせず失敗する" {
 
 test "sync は再実行で世代を更新し直前世代を保持する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
     defer testing.allocator.free(manifest_sha);
@@ -714,7 +715,7 @@ test "sync は package 宣言に無い mutablePaths record を含む lock を拒
     // 強要される。digest が一致する実在 dir への record であっても
     // 受理してはいけない。
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
     defer testing.allocator.free(manifest_sha);
@@ -789,7 +790,7 @@ test "sync は構築中に nako.toml が変更されると環境を公開しな�
     // manifest を上書きし、公開直前の再照合で StaleLock に至ることと
     // 環境が公開されないことを検証する。
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
     defer testing.allocator.free(manifest_sha);
@@ -850,7 +851,7 @@ test "sync は immutable path 依存を世代内へ materialize する" {
     // `--no-sync` 消費者へ未 pin の内容を届けてしまう。
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
 
     try temporary.dir.createDirPath(io, "deps/lib/src");
@@ -935,7 +936,7 @@ test "sync は directory symlink 宣言の immutable path 依存を受理する"
     if (@import("builtin").os.tag == .windows or @import("builtin").os.tag == .wasi) return error.SkipZigTest;
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
 
     try temporary.dir.createDirPath(io, "deps/lib/src");
@@ -1442,7 +1443,7 @@ test "syncは曖昧なlock候補とalias衝突を診断する" {
 
 test "sync は implementation=none の support package を空dirで公開しimport検証を通過する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const support_manifest =
         \\[package]
@@ -1515,7 +1516,7 @@ test "sync は implementation=none の support package を空dirで公開しimpo
 
 test "sync/import双方がlockのpackage featuresをexport解決へ反映する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const feature_manifest =
         \\[package]

@@ -127,6 +127,7 @@ pub const package = struct {
     pub const unpack = @import("package/unpack.zig");
     pub const sync = @import("package/sync.zig");
     pub const project = @import("package/project.zig");
+    pub const test_sandbox = @import("package/test_sandbox.zig");
 };
 
 pub const Command = enum {

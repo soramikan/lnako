@@ -1,11 +1,12 @@
 const std = @import("std");
+const test_sandbox = @import("test_sandbox.zig");
 const Resolver = @import("import_resolver.zig").Resolver;
 const resolver = @import("import_resolver.zig");
 
 test "environment entryのexports省略は空exportとして検証する" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/pkg");
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/pkg/nako.toml", .data = "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });
@@ -31,7 +32,7 @@ test "environment entryのexports省略は空exportとして検証する" {
 test "同名packageのmaterialized path差し替えを拒否する" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/math");
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/math-2");
@@ -67,7 +68,7 @@ test "同名packageのmaterialized path差し替えを拒否する" {
 test "exportsを持つpackageのmissing materialized rootを拒否しno-export support packageは許可する" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps");
     const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"support\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/support\"},\"dependencies\":[]}}}";
@@ -93,7 +94,7 @@ test "materialized package内の共有writable dirを拒否する" {
     if (@import("builtin").os.tag == .windows or @import("builtin").os.tag == .wasi) return error.SkipZigTest;
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/pkg/lib");
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/pkg/nako.toml", .data = "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });
@@ -129,7 +130,7 @@ test "package rootの共有writableな祖先dirを拒否する" {
     if (@import("builtin").os.tag == .windows or @import("builtin").os.tag == .wasi) return error.SkipZigTest;
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/pkg");
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/pkg/nako.toml", .data = "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });
@@ -164,7 +165,7 @@ test "package rootの共有writableな祖先dirを拒否する" {
 test "同一canonical rootを指す複数packageを環境検証で拒否する" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "shared");
     try temporary.dir.writeFile(io, .{ .sub_path = "shared/nako.toml", .data = "[package]\nname = \"shared\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });
@@ -192,7 +193,7 @@ test "同一canonical rootを指す複数packageを環境検証で拒否する" 
 test "宣伝されたexport対象がpackage root内に実在しない環境を拒否する" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/pkg");
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/pkg/nako.toml", .data = "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n[[exports]]\nname = \"main\"\npath = \"index.nako3\"\n" });
@@ -222,7 +223,7 @@ test "宣伝されたexport対象がpackage root内に実在しない環境を�
 test "対象targetで解決できないexport宣言を持つ環境を拒否する" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/pkg");
     // pathを持たないESM専用export。lnako非compat-jsのtargetではresolveが
@@ -251,7 +252,7 @@ test "対象targetで解決できないexport宣言を持つ環境を拒否す�
 test "lock候補を持たないpackage manifest依存を持つ環境を拒否する" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/pkg");
     // 有効な依存宣言に対して lock 側の一致候補が一つも無いのは lock・環境・
@@ -278,7 +279,7 @@ test "lock候補を持たないpackage manifest依存を持つ環境を拒否す
 test "schema-v2のroot edge省略はenvironment dependencyを拒否する" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/pkg");
     const lock = "{\"schemaVersion\":2,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/pkg\"},\"dependencies\":[]}},\"rootDependencies\":{\"default\":[]}}";
@@ -302,7 +303,7 @@ test "schema-v2のroot edge省略はenvironment dependencyを拒否する" {
 test "project environment lookup does not cross the nearest manifest boundary" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "parent/.nako");
     try temporary.dir.createDirPath(io, "parent/victim/src");
@@ -325,7 +326,7 @@ test "project environment lookup does not cross the nearest manifest boundary" {
 test "project environment lookup rejects a .nako symlink outside the manifest root" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "parent/.nako");
     try temporary.dir.createDirPath(io, "parent/victim");
@@ -342,7 +343,7 @@ test "project environment lookup rejects a group/world-writable .nako directory"
     if (@import("builtin").os.tag == .windows or @import("builtin").os.tag == .wasi) return error.SkipZigTest;
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "victim/.nako");
     try temporary.dir.writeFile(io, .{ .sub_path = "victim/nako.toml", .data = "[package]\nname = \"victim\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });
@@ -464,7 +465,7 @@ test "package import path containmentはprefix類似directoryを通さない" {
 test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hashを検証する" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/math/src");
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/dependency");
@@ -682,7 +683,7 @@ test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hash�
 test "realpath importerとproject entry優先でancestor package scopeを誤選択しない" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "repo/examples/.nako/env/gen-test/deps/root-util");
     try temporary.dir.createDirPath(io, "repo/parent-util");
@@ -782,7 +783,7 @@ test "realpath importerとproject entry優先でancestor package scopeを誤選�
 test "manifest version比較は64byteを超えるSemVer識別子を受理する" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/pkg");
     // SemVerのprerelease/build識別子に長さ上限は無い。lock・manifest・
@@ -815,7 +816,7 @@ test "manifest version比較は64byteを超えるSemVer識別子を受理する"
 test "path依存の環境検証はnako.tomlを優先し残留METADATA.tomlを読まない" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     // path依存の宣言dirへ配布物を展開した残骸として NAKO-PKG/METADATA.toml
     // が残るケース。sync側は常に宣言dirの nako.toml を読むため、検証側も
@@ -848,7 +849,7 @@ test "path依存の環境検証はnako.tomlを優先し残留METADATA.tomlを読
 test "正規化後に同一namespaceへ落ちるaliasのpackage混在を拒否する" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     // `my-util` と `my_util` はどちらも公開namespace `my_util` へ正規化される。
     // 別packageを指す異名aliasは `{ns}__{名}` の解決を曖昧にするため拒否する。
@@ -881,7 +882,7 @@ test "正規化後に同一namespaceへ落ちるaliasのpackage混在を拒否�
 test "immutable path依存はgeneration内materialized pathを受理し宣言dir参照を拒否する" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     // sync は immutable path 依存を pin 照合済み snapshot として世代内へ
     // 複製する。検証側も宣言 dir ではなく世代内 path を要求する。
@@ -921,7 +922,7 @@ test "代表implementation=nativeでもsource-only exportを欠落させない" 
     const cache_key = @import("cache_key.zig");
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     // native 選択の package は `.nako/native/<key>` の安定 root を公開する。
     // 代表 kind が native でも source-only export（native 宣言を持たない
@@ -974,7 +975,7 @@ test "代表implementation=nativeでもsource-only exportを欠落させない" 
 test "選択input profileのtargetはlockのinput.targetからcompatJsを復元する" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     // `sync --compat-js` で解決した lock は input.target.compatJs（camelCase）
     // に記録する。選択 profile の復元で esm export を含む環境を受理する。
@@ -1017,7 +1018,7 @@ test "選択input profileのtargetはlockのinput.targetからcompatJsを復元�
 test "version条件exportはlockのinput.nakoVersionを復元して照合する" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     // sync は `input.nakoVersion` を `ArtifactTarget.version` へ渡して export
     // を選ぶ。復元側も同じ version を渡さないと `version >= ...` 条件の
@@ -1062,7 +1063,7 @@ test "version条件exportはlockのinput.nakoVersionを復元して照合する"
 test "公開名に@を含むexport subpathを解決しversion指定は拒否する" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/lib");
     try temporary.dir.writeFile(io, .{ .sub_path = "main.nako3", .data = "" });
@@ -1106,7 +1107,7 @@ test "公開名に@を含むexport subpathを解決しversion指定は拒否す�
 test "正規化後に空になるaliasの環境記録を拒否する" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/pkg");
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/pkg/nako.toml", .data = "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });

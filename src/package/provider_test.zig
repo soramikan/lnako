@@ -1,4 +1,5 @@
 const std = @import("std");
+const test_sandbox = @import("test_sandbox.zig");
 const builtin = @import("builtin");
 const cache_mod = @import("cache.zig");
 const cache_key = @import("cache_key.zig");
@@ -178,7 +179,7 @@ fn writePackage(dir: std.Io.Dir, io: std.Io, root: []const u8) !void {
 
 test "path provider はローカル manifest を取得して source identity を返す" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "pkg/src");
     try writePackage(temporary.dir, io, "pkg");
@@ -214,7 +215,7 @@ test "path provider の絶対判定はhost pathと完全なUNCを区別する" {
 test "path provider はPOSIX上の先頭backslashを相対pathとして取得する" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "base/\\lib/src");
     try writePackage(temporary.dir, io, "base/\\lib");
@@ -230,7 +231,7 @@ test "path provider はPOSIX上の先頭backslashを相対pathとして取得す
 test "path provider はPOSIX上のdrive-looking pathをbase_dir相対で取得する" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "base/C:/deps/src");
     try temporary.dir.createDirPath(io, "base/C:\\deps/src");
@@ -250,7 +251,7 @@ test "path provider はPOSIX上のdrive-looking pathをbase_dir相対で取得�
 
 test "path provider は Unicode path を扱える" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "テストパッケージ/src");
     try writePackage(temporary.dir, io, "テストパッケージ");
@@ -266,7 +267,7 @@ test "path provider は Unicode path を扱える" {
 
 test "path provider は manifest 不在を not_found と分類する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "empty");
     const base = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
@@ -282,7 +283,7 @@ test "path provider は manifest 不在を not_found と分類する" {
 
 test "path provider は offline でもローカル manifest を取得できる" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "pkg/src");
     try writePackage(temporary.dir, io, "pkg");
@@ -297,7 +298,7 @@ test "path provider は offline でもローカル manifest を取得できる" 
 
 test "path provider は max_bytes=0 を上限なしとし上限超過を too_large と分類する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "pkg/src");
     try writePackage(temporary.dir, io, "pkg");
@@ -319,7 +320,7 @@ test "path provider は max_bytes=0 を上限なしとし上限超過を too_lar
 
 test "provider は返却 source の文字列を session arena へ複製する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "pkg/src");
     try writePackage(temporary.dir, io, "pkg");
@@ -463,7 +464,7 @@ test "http provider は hash 照合済みの artifact を返す" {
 
 test "http provider は .npkg を検証して manifest を取り出す" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "pkg/src");
     try writePackage(temporary.dir, io, "pkg");
@@ -670,7 +671,7 @@ fn createGitRepo(temporary: *std.testing.TmpDir, io: std.Io) !struct { path: [:0
 test "git provider はローカル repo を clone して commit に固定する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -696,7 +697,7 @@ test "git provider はローカル repo を clone して commit に固定する"
 test "git provider は既定で非loopback平文HTTPをclone前に拒否する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
     defer testing.allocator.free(root);
@@ -715,7 +716,7 @@ test "git provider は既定で非loopback平文HTTPをclone前に拒否する" 
 test "git provider は既存checkoutからのfetch前にも非loopback平文HTTPを拒否する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -743,7 +744,7 @@ test "git provider permits loopback HTTP and explicit plaintext override" {
         .{ .url = "http://127.0.0.1:1/repo", .policy = .{} },
         .{ .url = "http://example.invalid/repo", .policy = .{ .allow_plaintext_http = true } },
     }) |test_case| {
-        var temporary = std.testing.tmpDir(.{});
+        var temporary = test_sandbox.tmpDir(.{});
         defer temporary.cleanup();
         const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
         defer testing.allocator.free(root);
@@ -761,7 +762,7 @@ test "git provider permits loopback HTTP and explicit plaintext override" {
 test "git provider は dirty cached checkout を pinned commit へ戻してから読む" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -798,7 +799,7 @@ test "git provider は cached repository の post-checkout hook を実行しな�
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -856,7 +857,7 @@ test "git provider は cached checkout の refs/replace を無視して pin comm
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -898,7 +899,7 @@ test "git provider は symlink 化された .git/info を leaf ごと除去し�
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -950,7 +951,7 @@ test "git provider は symlink 化された .git/info を leaf ごと除去し�
 test "git provider は commit-ish と同名の移動した tag に誤解されない" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -984,7 +985,7 @@ test "git provider は commit-ish と同名の移動した tag に誤解され�
 test "git provider は既存 lock の commit を tag 移動後も使う" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -1017,7 +1018,7 @@ test "git provider は既存 lock の commit を tag 移動後も使う" {
 test "git provider は lock と矛盾する source 変更を拒否する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -1041,7 +1042,7 @@ test "git provider は lock と矛盾する source 変更を拒否する" {
 test "git provider は既存 checkout に無い commit を fetch して解決する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -1076,7 +1077,7 @@ test "git provider は既存 checkout に無い commit を fetch して解決す
 test "git provider は checkout 境界の外を指す path を拒否する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -1099,9 +1100,9 @@ test "git provider は checkout 境界の外を指す path を拒否する" {
 test "git provider は別 repository の既存 checkout を拒否する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
-    var temporary_b = std.testing.tmpDir(.{});
+    var temporary_b = test_sandbox.tmpDir(.{});
     defer temporary_b.cleanup();
     const repo_a = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo_a.path);
@@ -1131,7 +1132,7 @@ test "git provider は別 repository の既存 checkout を拒否する" {
 test "git provider は bare path origin と file:// URL を同一視する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -1157,7 +1158,7 @@ test "git provider は bare path origin と file:// URL を同一視する" {
 test "git provider は末尾 .git だけが異なる別 repo を拒否する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     // 末尾が .git のローカル repo（`/deps/a` と `/deps/a.git` は別物）。
     try temporary.dir.createDirPath(io, "lib.git/src");
@@ -1193,7 +1194,7 @@ test "git provider は末尾 .git だけが異なる別 repo を拒否する" {
 test "git provider は percent-encoded な file:// URL と bare path を同一視する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     // 空白を含むローカル repo。origin の bare path は空白を保持し、
     // file: URL の宣言は %20 で表現される。
@@ -1281,7 +1282,7 @@ const libalpha_package_doc =
 ;
 
 fn buildNpkg(io: std.Io) !struct { dir: std.testing.TmpDir, archive: []u8, sha: []u8 } {
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     errdefer temporary.cleanup();
     try temporary.dir.createDirPath(io, "pkg/src");
     try writePackage(temporary.dir, io, "pkg");
@@ -1714,7 +1715,7 @@ fn writeSyncProject(temporary: *std.testing.TmpDir, comptime lock_fmt: []const u
 
 test "sync rejects root manifest semantic diagnostics before publishing the environment" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const project_abs = try writeSyncProject(&temporary,
         \\{{
@@ -1759,7 +1760,7 @@ test "sync rejects root manifest semantic diagnostics before publishing the envi
 
 test "sync rejects a path manifest identity mismatch before publishing the environment" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "proj/deps/lib");
     try temporary.dir.writeFile(io, .{ .sub_path = "proj/deps/lib/nako.toml", .data = "[package]\nname = \"renamed-lib\"\nversion = \"2.0.0\"\nlicense = \"MIT\"\n" });
@@ -1788,7 +1789,7 @@ test "sync rejects a path manifest identity mismatch before publishing the envir
 test "sync rejects a git manifest identity mismatch before publishing the environment" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -1837,7 +1838,7 @@ fn buildTarGz(gpa: std.mem.Allocator, files: []const struct { path: []const u8, 
 
 test "sync は static registry の package 固有 URL から .npkg を直接取得する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "pkg/src");
     try writePackage(temporary.dir, io, "pkg");
@@ -1902,7 +1903,7 @@ test "sync は static registry の package 固有 URL から .npkg を直接取�
 
 test "sync は lock の implementation で選択した artifact を取得する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
 
     const native_manifest =
@@ -2139,7 +2140,7 @@ test "sync は lock の implementation で選択した artifact を取得する"
 test "sync は lock commit を cached checkout で再検証して offline 同期する" {
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);
@@ -2197,7 +2198,7 @@ test "git provider は短縮 commit が origin へ到達不能なら拒否する
     // の完全 SHA として lock しないよう拒否する。
     const io = testing.io;
     if (!gitAvailable(io)) return error.SkipZigTest;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const repo = try createGitRepo(&temporary, io);
     defer testing.allocator.free(repo.path);

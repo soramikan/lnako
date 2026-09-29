@@ -2,6 +2,8 @@ const std = @import("std");
 const lnako = @import("lnako");
 const compile_pipeline = @import("compile.zig");
 
+const test_sandbox = lnako.package.test_sandbox;
+
 pub fn writeCompatExecutable(allocator: std.mem.Allocator, io: std.Io, executable_path: []const u8, input_path: []const u8, output_path: []const u8, forced_mode: lnako.frontend.token.Mode) !void {
     const resolved_output = try std.fs.path.resolve(allocator, &.{output_path});
     defer allocator.free(resolved_output);
@@ -61,7 +63,7 @@ pub fn writeCompatExecutable(allocator: std.mem.Allocator, io: std.Io, executabl
 test "compat-js package import resolverを生成payloadと起動時compileへ引き継ぐ" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/math");
     const root_manifest = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nlicense = \"MIT\"\n\n[dependencies.pkg]\nmath = { version = \"1.0.0\", public-id = \"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" }\n";
@@ -128,7 +130,7 @@ test "compat-js package import resolverを生成payloadと起動時compileへ引
 test "埋め込みpayload再compileでもpackage内helperはpackage所有のままopaqueな内部namespaceを維持する" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/math");
     const root_manifest = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nlicense = \"MIT\"\n\n[dependencies.pkg]\nmath = { version = \"1.0.0\", public-id = \"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" }\n";
