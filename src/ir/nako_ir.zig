@@ -213,7 +213,9 @@ pub const JavaScriptModule = struct {
     /// `pkg:` import経由のESM pluginが命令を公開するnamespace。非空の場合
     /// 命令は `{namespace}__{命令}` の修飾名でのみ呼べる（native pluginの
     /// namespace契約と同じ）。同一pathを複数aliasでimportした場合は
-    /// 全namespaceを保持する。空なら無修飾公開（直接path import）。
+    /// 全namespaceを保持する。空なら無修飾公開（直接path import）。直接
+    /// path importとpackage importが併存する場合は空エントリを含み、
+    /// その分は無修飾登録も行う。
     namespaces: []const []const u8 = &.{},
 };
 

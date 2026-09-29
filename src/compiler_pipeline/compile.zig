@@ -142,19 +142,23 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
             // `pkg:` import経由のESM pluginは公開namespaceで修飾した命令のみ
             // 公開する。同一pathを複数aliasでimportした場合は全namespaceを
             // 保持する（native pluginの `native_plugin_packages` と同契約）。
-            if (item.canonical_id != null) {
+            // 直接path import辺がある場合は空エントリで「無修飾登録も行う」を
+            // 表し、`pkg:` 併存でも直接importの無修飾命令を消さない（native
+            // plugin側の `directly_imported` と同じ検出規則）。
+            const namespace = if (item.canonical_id != null)
                 // runtime 登録名は dispatch namespace（scope 修飾済み）を使う。
                 // 推移依存で別ownerの同aliasと登録keyが衝突しないため。
-                const namespace = item.dispatch_namespace orelse item.namespace orelse continue;
-                var listed = false;
-                for (plugin_namespaces[target].items) |existing| {
-                    if (std.mem.eql(u8, existing, namespace)) {
-                        listed = true;
-                        break;
-                    }
+                item.dispatch_namespace orelse item.namespace orelse continue
+            else
+                "";
+            var listed = false;
+            for (plugin_namespaces[target].items) |existing| {
+                if (std.mem.eql(u8, existing, namespace)) {
+                    listed = true;
+                    break;
                 }
-                if (!listed) try plugin_namespaces[target].append(allocator, namespace);
             }
+            if (!listed) try plugin_namespaces[target].append(allocator, namespace);
         };
     }
     for (graph.modules) |module| {
@@ -615,4 +619,57 @@ test "package経由のnative plugin命令は公開namespaceで修飾されAOT di
         }
     }
     try std.testing.expect(qualified_plugin_call);
+}
+
+test "直接importとpackage aliasが併存するESM moduleは無修飾と修飾名の両方を登録する" {
+    const TestProvider = struct {
+        fn read(_: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+            if (pathHasSuffix(path, "main.nako3")) return allocator.dupe(u8, "!「esmplugin.mjs」を取り込む\n!「pkg:esmpkg」を取り込む\n");
+            if (pathHasSuffix(path, "esmplugin.mjs")) return allocator.dupe(u8, "export default {}");
+            return error.FileNotFound;
+        }
+    };
+    const TestResolver = struct {
+        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+            if (!std.mem.eql(u8, specifier, "pkg:esmpkg")) return error.PackageNotFound;
+            return .{
+                .path = try std.fs.path.resolve(allocator, &.{"esmplugin.mjs"}),
+                .canonical_id = try allocator.dupe(u8, "pkg:esmpkg/main"),
+                .namespace = "esmpkg",
+                .package_root = try std.fs.path.resolve(allocator, &.{"."}),
+            };
+        }
+    };
+    var context: u8 = 0;
+    var stderr: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer stderr.deinit();
+    const program = try compileInputWithProvider(
+        std.testing.allocator,
+        "main.nako3",
+        .{ .package_resolver = .{ .context = &context, .resolveFn = TestResolver.resolve }, .compat_js = true },
+        &stderr.writer,
+        .{ .context = &context, .readFn = TestProvider.read },
+    );
+    var compiled = program orelse return error.UnexpectedCompileFailure;
+    defer compiled.deinit();
+
+    // 同一pathを直接path importでも取り込んでいるため、namespaces は
+    // package namespace（`esmpkg`）と無修飾公開の空 sentinel の両方を持つ。
+    // native plugin側の `directly_imported` と同契約。
+    var found = false;
+    for (compiled.javascript_modules) |module| {
+        if (!pathHasSuffix(module.path, "esmplugin.mjs")) continue;
+        found = true;
+        try std.testing.expect(module.is_plugin);
+        try std.testing.expectEqual(@as(usize, 2), module.namespaces.len);
+        var has_unqualified = false;
+        var has_qualified = false;
+        for (module.namespaces) |namespace| {
+            if (namespace.len == 0) has_unqualified = true;
+            if (std.mem.eql(u8, namespace, "esmpkg")) has_qualified = true;
+        }
+        try std.testing.expect(has_unqualified);
+        try std.testing.expect(has_qualified);
+    }
+    try std.testing.expect(found);
 }

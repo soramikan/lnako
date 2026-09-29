@@ -454,11 +454,11 @@ size = 1234
 ### 7.2 Import
 
 - ソース上の標準表記は `!「パッケージ:sqlite」を取り込む` とする。旧表記 `!「pkg:sqlite」を取り込む` も同じ意味の互換aliasとして受理する。
-- `パッケージ:<alias>` と `パッケージ:<alias>/<subpath>` は、取り込み元の依存scope（プロジェクトrootまたはpackage自身）にあるdependency aliasからlock済みPublic ID/環境package keyへ解決し、公開exportだけを選択する。公開module namespaceはimport alias（先頭の `@` を除去し、`/` を `__` に、識別子に使えないASCII文字を `_` に正規化。subpath付きでは `alias__subpath`）に対応付け、exportの `alias` はsubpath選択にのみ使う。module canonical ID は `package key/export name`、物理pathは選択artifactの実pathとして別々に保持する。version指定・未宣言alias・非公開subpathは拒否する。
+- `パッケージ:<alias>` と `パッケージ:<alias>/<subpath>` は、取り込み元の依存scope（プロジェクトrootまたはpackage自身）にあるdependency aliasからlock済みPublic ID/環境package keyへ解決し、公開exportだけを選択する。公開module namespaceはimport alias（先頭の `@` を除去し、`/` を `__` に、識別子に使えないASCII文字を `_` に正規化。subpath付きでは `alias__subpath`）に対応付け、exportの `alias` はsubpath選択にのみ使う。module canonical ID は `package key/export name`、物理pathは選択artifactの実pathとして別々に保持する。version指定・未宣言alias・非公開subpathは拒否する。公開名は `@` を含み得るため `api@v1` のようなsubpathは合法であり、version指定（`alias` 直後が `/` でない `pkg:lib@1.0.0` 形式）はalias照合で不一致として拒否される。
 - `.nako/environment.json` はrootと各packageの依存scopeごとに `{ alias, package }` 対応を任意に記録できる。旧環境で対応表が無い場合、package importは利用不可として明示的に失敗する。
 - パッケージaliasは通常ファイル、拡張プラグインおよびnpm/JavaScript取り込みとは別resolverで解決し、相互に曖昧なfallbackをしない。
 - 同一の物理ファイルが package export と相対pathの双方で取り込まれた場合、module identity（canonical ID・package由来フラグ）は最初に取り込まれた側で確定し、後の取り込みはその identity を共有する。修飾名は両経路の namespace で解決できるが、package module としての扱い（implicit lookup の適用範囲等）は先発の取り込み方に従う。
-- package経由で取り込まれた plugin artifact（native および `--compat-js` 時の ESM）は、登録命令を `{namespace}__{命令名}` の修飾名でのみ公開する。namespace は `__` を含み得る（scoped alias・subpath由来の生成形式）が、namespaced 命令の命令名に `__` は使えない（修飾名の一意分解を保つため）。同一package artifactを複数aliasで取り込んだ場合は全namespace分の修飾名を登録する。alias正規化後に同一namespaceへ落ちる異名aliasが別packageを指す環境は拒否する。
+- package経由で取り込まれた plugin artifact（native および `--compat-js` 時の ESM）は、登録命令を `{namespace}__{命令名}` の修飾名でのみ公開する。namespace は `__` を含み得る（scoped alias・subpath由来の生成形式）が、namespaced 命令の命令名に `__` は使えない（修飾名の一意分解を保つため）。同一package artifactを複数aliasで取り込んだ場合は全namespace分の修飾名を登録する。同一 artifact を直接pathとpackage aliasの両方で取り込んだ場合は無修飾名と全修飾名の双方を登録する（native plugin の直接import優先と同契約）。alias正規化後に同一namespaceへ落ちる異名aliasが別packageを指す環境は拒否し、正規化後に空になる alias（`@` 単体等）は発行・環境読込・解決の全経路で拒否する。
 - package内scopeの依存 plugin（推移依存）は、依存 scope の alias が別 package の scope で衝突し得るため、runtime 登録名の namespace を `{所有者 package key}__{alias}` の正規化形式へ修飾する。ソース上の修飾名（`{alias}__{命令名}`）は変わらず、命令呼出しの束縛時に所有者修飾の dispatch 名へ写像する。プロジェクト root scope の直接依存は修飾しない（alias がそのまま登録名）。Interpreter・AOT・`--compat-js` ESM の全経路で同一の dispatch 名を使う。
 - JavaScript/ESM artifact の import は `--compat-js` 指定時のみ許可する。
 - 通常モードで JS/ESM 依存を解決しようとした場合は `E006_JS_IN_NORMAL_MODE` 診断。

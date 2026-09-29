@@ -354,8 +354,14 @@ pub fn installModules(runtime: *Runtime, state: *State, modules: []const @import
         defer runtime.allocator().free(filename);
         // `pkg:` import経由のESM pluginは修飾名のみ公開する（native pluginの
         // namespace契約と同じ）。評価中の自己登録（addPluginObject）も修飾名へ
-        // 誘導するため、eval前にactive namespaceを設定する。
+        // 誘導するため、eval前にactive namespaceを設定する。直接path importと
+        // 併存する module は namespaces に空エントリを含み、それを active
+        // namespace として渡すと shim が無修飾登録する。
         for (module.namespaces) |namespace| {
+            // 空エントリは「直接path import由来の無修飾公開」を表す sentinel
+            // であり、package namespace 一覧には登録しない（`{ns}__{名}`
+            // 判定で任意の `__x` に一致してしまう）。
+            if (namespace.len == 0) continue;
             var listed = false;
             for (state.package_namespaces.items) |existing| {
                 if (std.mem.eql(u8, existing, namespace)) {

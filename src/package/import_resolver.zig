@@ -138,7 +138,10 @@ pub const Resolver = struct {
             const package_key = get(dependency_object, "package") orelse return error.InvalidEnvironment;
             if (dependency_alias != .string or package_key != .string) return error.InvalidEnvironment;
             const candidate_alias = dependency_alias.string;
-            if (candidate_alias.len == 0) continue;
+            // 空 alias・正規化後に空になる alias（`@` 単体等）は公開
+            // namespace を構成できず、plugin 登録名が不定になる環境記録は
+            // 改ざん・破損として fail closed で拒否する。
+            if (candidate_alias.len == 0 or try hasEmptyNamespace(temporary, candidate_alias)) return error.InvalidEnvironment;
 
             const candidate_subpath: ?[]const u8 = if (std.mem.eql(u8, reference, candidate_alias))
                 null
@@ -148,7 +151,11 @@ pub const Resolver = struct {
             else
                 continue;
             if (candidate_subpath) |subpath| {
-                if (std.mem.indexOfScalar(u8, subpath, '@') != null or !npkg_files.isCanonicalPath(subpath)) continue;
+                // `@` を含む公開名（`api@v1` 等）は合法な export/subpath 名。
+                // version 指定 `pkg:lib@1.0.0` は alias 直後が `/` でない時点で
+                // 上の alias 照合で既に不一致になるため、ここで `@` を拒否する
+                // 必要はない。canonical 規則（`..`・絶対path等）のみ検査する。
+                if (!npkg_files.isCanonicalPath(subpath)) continue;
             }
             if (selected_alias) |previous_alias| {
                 if (candidate_alias.len < previous_alias.len) continue;
@@ -502,6 +509,15 @@ fn artifactTargetForProfile(
     // `min-os` 照合に使った OS バージョンは sync の `materializeTarget` と
     // 同じく input target 記録からそのまま復元する。
     const os_version = optionalString(input_target, "osVersion");
+    // `version` 条件付き export の marker 評価は sync 側
+    // `exportArtifactTarget`（`target.nako_version` を渡す）と同じ値で
+    // 行う必要があるため、lock の `input.nakoVersion` を semver で復元する。
+    // 記録なしは null（条件不確定＝不適合）、非文字列・解析不能な記録は
+    // fail closed で拒否する。
+    const nako_version = if (get(lock_input, "nakoVersion")) |value| blk: {
+        if (value != .string) return error.InvalidEnvironment;
+        break :blk semver.Version.parse(value.string) catch return error.InvalidEnvironment;
+    } else null;
     if (profile_record) |record| {
         if (optionalString(record, "runtime")) |declared_runtime| {
             if (!std.mem.eql(u8, declared_runtime, runtime) and
@@ -509,7 +525,7 @@ fn artifactTargetForProfile(
         }
     }
     _ = allocator;
-    return .{ .runtime = runtime, .os = os, .cpu = cpu, .abi = abi, .os_version = os_version, .compat_js = compat_js, .optimize = optimize };
+    return .{ .runtime = runtime, .os = os, .cpu = cpu, .abi = abi, .os_version = os_version, .compat_js = compat_js, .optimize = optimize, .version = nako_version };
 }
 
 fn validateEnvironmentExports(
@@ -951,6 +967,11 @@ fn validateUniqueNamespaceAliases(allocator: Allocator, dependencies: []Value) !
         const alias = requiredString(dependency, "alias") orelse return error.InvalidEnvironment;
         const package = requiredString(dependency, "package") orelse return error.InvalidEnvironment;
         const normalized = try namespaceFor(allocator, alias, null);
+        // 正規化後に空になる alias は plugin 登録名を構成できない。
+        if (normalized.len == 0) {
+            allocator.free(normalized);
+            return error.InvalidEnvironment;
+        }
         const entry = try normalized_aliases.getOrPut(normalized);
         if (entry.found_existing) {
             allocator.free(normalized);
@@ -1084,6 +1105,15 @@ pub fn selectExport(exports: []const Value, subpath: ?[]const u8) !Value {
         if (exports.len == 1) return exports[0];
     }
     return error.ExportNotFound;
+}
+
+/// alias の公開namespace部分が正規化後に空になるか（`@` 単体や空文字列）。
+/// 空になる alias は plugin 登録名 `{namespace}__{命令}` を構成できないため
+/// 発行・読込・解決の全経路で拒否対象。
+pub fn hasEmptyNamespace(allocator: Allocator, alias: []const u8) Allocator.Error!bool {
+    const normalized = try namespaceFor(allocator, alias, null);
+    defer allocator.free(normalized);
+    return normalized.len == 0;
 }
 
 pub fn namespaceFor(allocator: Allocator, alias: []const u8, subpath: ?[]const u8) Allocator.Error![]u8 {

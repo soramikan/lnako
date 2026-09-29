@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "lockSha256": "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=",
+  "profile": "default",
+  "runtime": "cnako",
+  "dependencies": [
+    { "alias": "/1", "package": "pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    { "alias": "___1", "package": "pkg:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+  ],
+  "packages": {
+    "pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+      "name": "util-a",
+      "version": "1.0.0",
+      "path": "deps/util-a"
+    },
+    "pkg:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+      "name": "util-b",
+      "version": "1.0.0",
+      "path": "deps/util-b"
+    }
+  }
+}

@@ -1467,3 +1467,42 @@ test "不正なartifact宣言を拒否する" {
         \\
     , diag.E023_INVALID_TYPE);
 }
+
+test "正規化後に空になる依存aliasを拒否する" {
+    const allocator = std.testing.allocator;
+    // `@` 単体の alias は namespace 正規化後に空になり、native plugin は空
+    // namespace を登録時に拒否・ESM は無修飾登録へ落ちて解析器の
+    // `{ns}__{名}` 参照と乖離する。発行時に拒否する。
+    const pkg_alias =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[dependencies.pkg]
+        \\one = { version = "^1", alias = "@" }
+        \\
+    ;
+    try parseErrCode(allocator, pkg_alias, diag.E029_INVALID_VALUE);
+
+    const git_alias =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[dependencies.git]
+        \\lib = { url = "https://example.com/lib.git", commit = "0123456", alias = "@" }
+        \\
+    ;
+    try parseErrCode(allocator, git_alias, diag.E029_INVALID_VALUE);
+
+    const http_alias =
+        \\[package]
+        \\name = "a"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\[dependencies.http]
+        \\lib = { url = "https://example.com/lib.tar.zst", hash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", alias = "@" }
+        \\
+    ;
+    try parseErrCode(allocator, http_alias, diag.E029_INVALID_VALUE);
+}

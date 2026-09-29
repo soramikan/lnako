@@ -60,6 +60,9 @@ fn windowsPathHasUntrustedWriteAccess(allocator: Allocator, path: []const u8) !b
         const AccessDeniedCallbackAceType: u8 = 10;
         const AccessAllowedCallbackObjectAceType: u8 = 11;
         const AccessDeniedCallbackObjectAceType: u8 = 12;
+        /// ACE が対象オブジェクト自身ではなく継承先にのみ適用されることを示す
+        /// ace_flags のビット（CREATOR OWNER 等の継承用 ACE を拾わない）。
+        const InheritOnlyAce: u8 = 0x08;
 
         extern "advapi32" fn GetNamedSecurityInfoW(
             object_name: [*:0]const u16,
@@ -116,8 +119,11 @@ fn windowsPathHasUntrustedWriteAccess(allocator: Allocator, path: []const u8) !b
     defer allocator.free(token_bytes);
     if (Api.GetTokenInformation(token, Api.TokenUser, @ptrCast(token_bytes.ptr), token_size, &token_size) == 0) return true;
     const current_user_sid = @as(*const Api.Sid, @ptrCast(@alignCast(token_bytes.ptr))).*;
+    // 所有者は実効ユーザまたは SYSTEM/Administrators のみ信頼する。管理者権限で
+    // 作成されたオブジェクトの owner は Windows の既定で Builtin Administrators
+    // になるため、厳密なユーザ一致では正当な private dir を untrusted と誤判定する。
     if (current_user_sid == null or Api.IsValidSid(owner) == 0 or Api.IsValidSid(current_user_sid) == 0 or
-        Api.EqualSid(owner, current_user_sid) == 0) return true;
+        (Api.EqualSid(owner, current_user_sid) == 0 and !isWellKnownTrustedWindowsWriter(owner))) return true;
 
     var acl_size: Api.AclSize = undefined;
     if (Api.GetAclInformation(dacl, @ptrCast(&acl_size), @sizeOf(Api.AclSize), Api.AclSizeInformation) == 0) return true;
@@ -137,6 +143,10 @@ fn windowsPathHasUntrustedWriteAccess(allocator: Allocator, path: []const u8) !b
         if (Api.GetAce(dacl, ace_index, &ace_pointer) == 0 or ace_pointer == null) return true;
         const header: *const Api.AceHeader = @ptrCast(@alignCast(ace_pointer.?));
         if (header.ace_size < @sizeOf(Api.AceHeader)) return true;
+        // INHERIT_ONLY の ACE（CREATOR OWNER の GENERIC_ALL 継承用 ACE 等）は
+        // 対象オブジェクト自身へのアクセスを与えないため無視する。無視しないと
+        // 継承 ACE を持つ通常の private dir が untrusted と誤判定される。
+        if (header.ace_flags & Api.InheritOnlyAce != 0) continue;
         switch (header.ace_type) {
             Api.AccessDeniedAceType, Api.AccessDeniedObjectAceType, Api.AccessDeniedCallbackAceType, Api.AccessDeniedCallbackObjectAceType => continue,
             Api.AccessAllowedAceType => {
@@ -144,8 +154,11 @@ fn windowsPathHasUntrustedWriteAccess(allocator: Allocator, path: []const u8) !b
                 const ace: *const Api.AllowedAce = @ptrCast(@alignCast(ace_pointer.?));
                 if (ace.mask & write_rights == 0) continue;
                 const sid: Api.Sid = @ptrCast(@constCast(&ace.sid_start));
-                if (Api.IsValidSid(sid) == 0 or
-                    (Api.EqualSid(sid, current_user_sid) == 0 and !isWellKnownTrustedWindowsWriter(sid))) return true;
+                if (Api.IsValidSid(sid) == 0) return true;
+                // CREATOR OWNER (S-1-3-0) は継承時のプレースホルダであり、対象
+                // オブジェクト自身へのアクセスを与えない。
+                if (isCreatorOwnerSid(sid)) continue;
+                if (Api.EqualSid(sid, current_user_sid) == 0 and !isWellKnownTrustedWindowsWriter(sid)) return true;
             },
             // Object/callback ACEs have conditional or object-specific semantics.
             // A write-capable ACE of these types is not safely reducible here.
@@ -158,6 +171,17 @@ fn windowsPathHasUntrustedWriteAccess(allocator: Allocator, path: []const u8) !b
         }
     }
     return false;
+}
+
+/// CREATOR OWNER (S-1-3-0) かどうかを SID バイナリから判定する。
+fn isCreatorOwnerSid(sid: ?*anyopaque) bool {
+    if (sid == null) return false;
+    const bytes: [*]const u8 = @ptrCast(sid.?);
+    if (bytes[0] != 1 or bytes[1] != 1) return false;
+    const authority = bytes[2..8];
+    if (authority[0] != 0 or authority[1] != 0 or authority[2] != 0 or authority[3] != 0 or
+        authority[4] != 0 or authority[5] != 3) return false; // SECURITY_CREATOR_SID_AUTHORITY = 3
+    return @as(*align(1) const u32, @ptrCast(bytes + 8)).* == 0;
 }
 
 fn isWellKnownTrustedWindowsWriter(sid: ?*anyopaque) bool {

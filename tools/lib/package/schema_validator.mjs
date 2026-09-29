@@ -1086,6 +1086,12 @@ function validateEnvironmentContract(environment, fixturePath) {
         if (typeof dep !== "object" || dep === null || typeof dep.alias !== "string" ||
           typeof dep.package !== "string") return;
         const normalized = normalizeNamespace(dep.alias);
+        // 正規化後に空になる alias（`@` 単体等）は plugin 登録名を
+        // 構成できない。Zig 側の validateUniqueNamespaceAliases と同じく拒否。
+        if (normalized.length === 0) {
+          fail("E034_INVALID_ENVIRONMENT_REFERENCE",
+            `alias "${dep.alias}" normalizes to an empty namespace`, `${depPath}.${index}.alias`);
+        }
         const existing = seen.get(normalized);
         if (existing === undefined) {
           seen.set(normalized, dep.package);
@@ -1117,8 +1123,10 @@ function normalizeNamespace(alias) {
   let atStart = true;
   for (const byte of bytes) {
     if (byte === 0x2f) {
+      // Zig の appendNamespacePart は `/` で at_start を維持するため、
+      // `/1` は `___1` に正規化される（`__1` ではない）。先頭数字前置 `_`
+      // の判定は `/` を挟んでも最初の識別子 byte まで有効。
       result += "__";
-      atStart = false;
       continue;
     }
     const isIdentifierByte = (byte >= 0x61 && byte <= 0x7a) ||

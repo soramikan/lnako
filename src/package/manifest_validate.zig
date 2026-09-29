@@ -9,6 +9,7 @@ const features_mod = @import("features.zig");
 const diag = @import("diagnostics.zig");
 const manifest_mod = @import("manifest.zig");
 const npkg_files = @import("npkg_files.zig");
+const import_resolver = @import("import_resolver.zig");
 
 const Manifest = manifest_mod.Manifest;
 const Npkg = manifest_mod.Npkg;
@@ -205,6 +206,17 @@ const Validator = struct {
                 return null;
             },
         };
+    }
+
+    /// `alias` 任意フィールド。`@` 単体や空文字列など正規化後に公開
+    /// namespace が空になる alias は plugin 登録名を構成できないため拒否する。
+    fn expectAlias(self: *Validator, table: *std.StringHashMapUnmanaged(toml.Value), path: []const u8) Error!?[]const u8 {
+        const alias = try self.expectString(table, "alias", path) orelse return null;
+        if (try import_resolver.hasEmptyNamespace(self.scratch, alias)) {
+            try self.report(diag.E029_INVALID_VALUE, try self.pathOf(path, "alias"), valuePositionOfKey(table, "alias"), "dependency alias \"{s}\" normalizes to an empty namespace", .{alias});
+            return null;
+        }
+        return alias;
     }
 
     fn expectBool(self: *Validator, table: *std.StringHashMapUnmanaged(toml.Value), key: []const u8, path: []const u8) Error!?bool {
@@ -630,7 +642,7 @@ const Validator = struct {
                 dep.default_features = default_features;
             }
             dep.profile = try self.expectString(dep_table, "profile", field_path);
-            dep.alias = try self.expectString(dep_table, "alias", field_path);
+            dep.alias = try self.expectAlias(dep_table, field_path);
             if (try self.expectString(dep_table, "public-id", field_path)) |public_id| {
                 if (!isPublicId(public_id)) {
                     try self.report(diag.E029_INVALID_VALUE, try self.pathOf(field_path, "public-id"), valuePositionOfKey(dep_table, "public-id"), "invalid public id \"{s}\"", .{public_id});
@@ -772,7 +784,7 @@ const Validator = struct {
                 dep.commit = commit;
             }
             dep.path = try self.expectString(dep_table, "path", field_path);
-            dep.alias = try self.expectString(dep_table, "alias", field_path);
+            dep.alias = try self.expectAlias(dep_table, field_path);
             try map.put(self.arena, name, dep);
         }
     }
@@ -806,7 +818,7 @@ const Validator = struct {
                 }
                 dep.hash = hash;
             }
-            dep.alias = try self.expectString(dep_table, "alias", field_path);
+            dep.alias = try self.expectAlias(dep_table, field_path);
             try map.put(self.arena, name, dep);
         }
     }

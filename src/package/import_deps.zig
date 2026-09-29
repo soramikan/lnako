@@ -378,6 +378,13 @@ pub fn appendScopedAlias(
     // され得るため、発行段階で拒否する。
     const normalized = try import_resolver.namespaceFor(allocator, alias, null);
     defer allocator.free(normalized);
+    // 正規化後に空になる alias（`@` 単体等）は公開 namespace を構成できず、
+    // native plugin 登録は空 namespace を拒否・ESM は無修飾登録へ落ちて
+    // 解析器の `{ns}__{名}` 参照と乖離する。発行段階で拒否する。
+    if (normalized.len == 0) {
+        try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.toml.dependencies", .{}, "dependency alias \"{s}\" normalizes to an empty namespace", .{alias});
+        return error.LockInvalid;
+    }
     for (result.items) |existing| {
         if (std.mem.eql(u8, existing.alias, alias)) {
             if (std.mem.eql(u8, existing.package_key, package_key)) return;
