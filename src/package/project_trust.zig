@@ -40,54 +40,57 @@ pub fn hasUnsafeWritableDirectory(allocator: Allocator, io: std.Io, root: []cons
     return false;
 }
 
+const WinApi = struct {
+    const Handle = ?*anyopaque;
+    const Sid = ?*anyopaque;
+    const SecurityDescriptor = ?*anyopaque;
+    const Acl = ?*anyopaque;
+    const OwnerSecurityInformation: u32 = 0x00000001;
+    const DaclSecurityInformation: u32 = 0x00000004;
+    const SeFileObject: u32 = 1;
+    const TokenQuery: u32 = 0x0008;
+    const TokenUser: u32 = 1;
+    const AclSizeInformation: u32 = 2;
+    const AccessAllowedAceType: u8 = 0;
+    const AccessDeniedAceType: u8 = 1;
+    const AccessAllowedObjectAceType: u8 = 5;
+    const AccessDeniedObjectAceType: u8 = 6;
+    const AccessAllowedCallbackAceType: u8 = 9;
+    const AccessDeniedCallbackAceType: u8 = 10;
+    const AccessAllowedCallbackObjectAceType: u8 = 11;
+    const AccessDeniedCallbackObjectAceType: u8 = 12;
+    /// ACE が対象オブジェクト自身ではなく継承先にのみ適用されることを示す
+    /// ace_flags のビット（CREATOR OWNER 等の継承用 ACE を拾わない）。
+    const InheritOnlyAce: u8 = 0x08;
+
+    extern "advapi32" fn GetNamedSecurityInfoW(
+        object_name: [*:0]const u16,
+        object_type: u32,
+        security_info: u32,
+        owner: ?*Sid,
+        group: ?*Sid,
+        dacl: ?*Acl,
+        sacl: ?*Acl,
+        security_descriptor: *SecurityDescriptor,
+    ) callconv(.winapi) u32;
+    extern "advapi32" fn IsValidSid(sid: Sid) callconv(.winapi) i32;
+    extern "advapi32" fn GetAclInformation(acl: Acl, information: *anyopaque, information_length: u32, information_class: u32) callconv(.winapi) i32;
+    extern "advapi32" fn GetAce(acl: Acl, ace_index: u32, ace: *?*anyopaque) callconv(.winapi) i32;
+    extern "advapi32" fn OpenProcessToken(process: Handle, desired_access: u32, token: *Handle) callconv(.winapi) i32;
+    extern "advapi32" fn GetTokenInformation(token: Handle, information_class: u32, information: ?*anyopaque, information_length: u32, return_length: *u32) callconv(.winapi) i32;
+    extern "advapi32" fn EqualSid(sid1: Sid, sid2: Sid) callconv(.winapi) i32;
+    extern "advapi32" fn ConvertSidToStringSidW(sid: Sid, string_sid: *?[*:0]const u16) callconv(.winapi) i32;
+    extern "kernel32" fn GetCurrentProcess() callconv(.winapi) Handle;
+    extern "kernel32" fn CloseHandle(handle: Handle) callconv(.winapi) i32;
+    extern "kernel32" fn LocalFree(memory: Handle) callconv(.winapi) Handle;
+
+    const AclSize = extern struct { ace_count: u32, bytes_in_use: u32, bytes_free: u32 };
+    const AceHeader = extern struct { ace_type: u8, ace_flags: u8, ace_size: u16 };
+    const AllowedAce = extern struct { header: AceHeader, mask: u32, sid_start: u32 };
+};
+
 fn windowsPathHasUntrustedWriteAccess(allocator: Allocator, path: []const u8) !bool {
-    const Api = struct {
-        const Handle = ?*anyopaque;
-        const Sid = ?*anyopaque;
-        const SecurityDescriptor = ?*anyopaque;
-        const Acl = ?*anyopaque;
-        const OwnerSecurityInformation: u32 = 0x00000001;
-        const DaclSecurityInformation: u32 = 0x00000004;
-        const SeFileObject: u32 = 1;
-        const TokenQuery: u32 = 0x0008;
-        const TokenUser: u32 = 1;
-        const AclSizeInformation: u32 = 2;
-        const AccessAllowedAceType: u8 = 0;
-        const AccessDeniedAceType: u8 = 1;
-        const AccessAllowedObjectAceType: u8 = 5;
-        const AccessDeniedObjectAceType: u8 = 6;
-        const AccessAllowedCallbackAceType: u8 = 9;
-        const AccessDeniedCallbackAceType: u8 = 10;
-        const AccessAllowedCallbackObjectAceType: u8 = 11;
-        const AccessDeniedCallbackObjectAceType: u8 = 12;
-        /// ACE が対象オブジェクト自身ではなく継承先にのみ適用されることを示す
-        /// ace_flags のビット（CREATOR OWNER 等の継承用 ACE を拾わない）。
-        const InheritOnlyAce: u8 = 0x08;
-
-        extern "advapi32" fn GetNamedSecurityInfoW(
-            object_name: [*:0]const u16,
-            object_type: u32,
-            security_info: u32,
-            owner: ?*Sid,
-            group: ?*Sid,
-            dacl: ?*Acl,
-            sacl: ?*Acl,
-            security_descriptor: *SecurityDescriptor,
-        ) callconv(.winapi) u32;
-        extern "advapi32" fn IsValidSid(sid: Sid) callconv(.winapi) i32;
-        extern "advapi32" fn GetAclInformation(acl: Acl, information: *anyopaque, information_length: u32, information_class: u32) callconv(.winapi) i32;
-        extern "advapi32" fn GetAce(acl: Acl, ace_index: u32, ace: *?*anyopaque) callconv(.winapi) i32;
-        extern "advapi32" fn OpenProcessToken(process: Handle, desired_access: u32, token: *Handle) callconv(.winapi) i32;
-        extern "advapi32" fn GetTokenInformation(token: Handle, information_class: u32, information: ?*anyopaque, information_length: u32, return_length: *u32) callconv(.winapi) i32;
-        extern "advapi32" fn EqualSid(sid1: Sid, sid2: Sid) callconv(.winapi) i32;
-        extern "kernel32" fn GetCurrentProcess() callconv(.winapi) Handle;
-        extern "kernel32" fn CloseHandle(handle: Handle) callconv(.winapi) i32;
-        extern "kernel32" fn LocalFree(memory: Handle) callconv(.winapi) Handle;
-
-        const AclSize = extern struct { ace_count: u32, bytes_in_use: u32, bytes_free: u32 };
-        const AceHeader = extern struct { ace_type: u8, ace_flags: u8, ace_size: u16 };
-        const AllowedAce = extern struct { header: AceHeader, mask: u32, sid_start: u32 };
-    };
+    const Api = WinApi;
 
     const path_w = try std.unicode.utf8ToUtf16LeAllocZ(allocator, path);
     defer allocator.free(path_w);
@@ -199,6 +202,71 @@ fn isWellKnownTrustedWindowsWriter(sid: ?*anyopaque) bool {
     return false;
 }
 
+/// SID を `S-1-5-...` 文字列へ変換する。失敗時は null。
+fn windowsSidText(allocator: Allocator, sid: WinApi.Sid) ?[]u8 {
+    if (sid == null) return null;
+    var text_w: ?[*:0]const u16 = null;
+    if (WinApi.ConvertSidToStringSidW(sid, &text_w) == 0 or text_w == null) return null;
+    defer _ = WinApi.LocalFree(@ptrCast(@constCast(text_w.?)));
+    return std.unicode.utf16LeToUtf8Alloc(allocator, std.mem.span(text_w.?)) catch null;
+}
+
+/// CI 診断用: owner・実効ユーザ・DACL の各 ACE を stderr へ出力する。
+/// Windows 専用。テスト失敗時の原因特定に使い、本番経路からは呼ばない。
+fn windowsAclDebugDump(allocator: Allocator, path: []const u8) void {
+    if (comptime builtin.os.tag != .windows) return;
+    const path_w = std.unicode.utf8ToUtf16LeAllocZ(allocator, path) catch return;
+    defer allocator.free(path_w);
+    var owner: WinApi.Sid = null;
+    var dacl: WinApi.Acl = null;
+    var descriptor: WinApi.SecurityDescriptor = null;
+    const status = WinApi.GetNamedSecurityInfoW(path_w.ptr, WinApi.SeFileObject, WinApi.OwnerSecurityInformation | WinApi.DaclSecurityInformation, &owner, null, &dacl, null, &descriptor);
+    if (status != 0) {
+        std.debug.print("acl-dump {s}: GetNamedSecurityInfoW={d}\n", .{ path, status });
+        return;
+    }
+    defer _ = WinApi.LocalFree(descriptor);
+    const owner_text = windowsSidText(allocator, owner);
+    defer if (owner_text) |text| allocator.free(text);
+    std.debug.print("acl-dump {s}: owner={s}\n", .{ path, owner_text orelse "?" });
+    var token: WinApi.Handle = null;
+    if (WinApi.OpenProcessToken(WinApi.GetCurrentProcess(), WinApi.TokenQuery, &token) != 0 and token != null) {
+        defer _ = WinApi.CloseHandle(token);
+        var token_size: u32 = 0;
+        _ = WinApi.GetTokenInformation(token, WinApi.TokenUser, null, 0, &token_size);
+        if (token_size != 0) {
+            if (allocator.alignedAlloc(u8, std.mem.Alignment.of(usize), token_size)) |token_bytes| {
+                defer allocator.free(token_bytes);
+                if (WinApi.GetTokenInformation(token, WinApi.TokenUser, @ptrCast(token_bytes.ptr), token_size, &token_size) != 0) {
+                    const user_sid = @as(*const WinApi.Sid, @ptrCast(@alignCast(token_bytes.ptr))).*;
+                    const user_text = windowsSidText(allocator, user_sid);
+                    defer if (user_text) |text| allocator.free(text);
+                    std.debug.print("acl-dump {s}: user={s}\n", .{ path, user_text orelse "?" });
+                }
+            } else |_| {}
+        }
+    }
+    var acl_size: WinApi.AclSize = undefined;
+    if (WinApi.GetAclInformation(dacl, @ptrCast(&acl_size), @sizeOf(WinApi.AclSize), WinApi.AclSizeInformation) == 0) {
+        std.debug.print("acl-dump {s}: GetAclInformation failed\n", .{path});
+        return;
+    }
+    var index: u32 = 0;
+    while (index < acl_size.ace_count) : (index += 1) {
+        var ace_pointer: ?*anyopaque = null;
+        if (WinApi.GetAce(dacl, index, &ace_pointer) == 0 or ace_pointer == null) continue;
+        const header: *const WinApi.AceHeader = @ptrCast(@alignCast(ace_pointer.?));
+        if (header.ace_size < @sizeOf(WinApi.AllowedAce)) {
+            std.debug.print("acl-dump {s}: ace[{d}] type={d} flags=0x{x} small\n", .{ path, index, header.ace_type, header.ace_flags });
+            continue;
+        }
+        const ace: *const WinApi.AllowedAce = @ptrCast(@alignCast(ace_pointer.?));
+        const sid_text = windowsSidText(allocator, @ptrCast(@constCast(&ace.sid_start)));
+        defer if (sid_text) |text| allocator.free(text);
+        std.debug.print("acl-dump {s}: ace[{d}] type={d} flags=0x{x} mask=0x{x} sid={s}\n", .{ path, index, header.ace_type, header.ace_flags, ace.mask, sid_text orelse "?" });
+    }
+}
+
 test "POSIX owner check accepts current-user-owned non-shared paths" {
     if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
     const allocator = std.testing.allocator;
@@ -230,6 +298,12 @@ test "Windows ACL check accepts a private temporary project directory and file" 
     defer allocator.free(root);
     const manifest = try std.fs.path.join(allocator, &.{ root, "nako.toml" });
     defer allocator.free(manifest);
-    try std.testing.expect(!try windowsPathHasUntrustedWriteAccess(allocator, root));
-    try std.testing.expect(!try windowsPathHasUntrustedWriteAccess(allocator, manifest));
+    if (try windowsPathHasUntrustedWriteAccess(allocator, root)) {
+        windowsAclDebugDump(allocator, root);
+        return error.TestUnexpectedResult;
+    }
+    if (try windowsPathHasUntrustedWriteAccess(allocator, manifest)) {
+        windowsAclDebugDump(allocator, manifest);
+        return error.TestUnexpectedResult;
+    }
 }
