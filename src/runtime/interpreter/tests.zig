@@ -4191,6 +4191,40 @@ test "『{関数}名』のプラグイン未取り込み名は関数値化を拒
     try std.testing.expectError(error.UnknownFunction, interpreter.run());
 }
 
+test "『{関数}名』のESM package命令はjavascript_modulesのみで関数値化できる" {
+    // `--compat-js` のESM package命令はnative pluginを伴わないため
+    // `native_plugin_paths`は空になり、関数値化ゲートが
+    // `javascript_modules` だけを見る必要がある。ゲートがnative path
+    // のみを見ると `{関数}名前` 参照がUnknownFunctionで失敗する。
+    var parsed = try parser.parse(std.testing.allocator, "F={関数}外部追加\n「ok」を表示\n", "esm-plugin.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyzeModules(std.testing.allocator, &.{.{
+        .name = "esm-plugin",
+        .path = "esm-plugin.nako3",
+        .root = parsed.root.?,
+        .allows_dynamic_commands = true,
+    }});
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lower(std.testing.allocator, &.{parsed.root.?}, &.{"esm-plugin"}, &.{"esm-plugin.nako3"}, &.{&.{}}, analyzed);
+    defer hir_program.deinit();
+    var ir_program = try lower_ssa.lower(std.testing.allocator, hir_program);
+    defer ir_program.deinit();
+    // ESM package取り込み済みプログラムを再現（module登録は呼出し側が
+    // 行うため、関数値化のゲート条件として空でないことだけが要件）。
+    var modules = [_]ir.JavaScriptModule{.{ .path = "pkg-esm.mjs", .source = "", .is_plugin = true, .namespaces = &.{"esm"} }};
+    ir_program.javascript_modules = &modules;
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("ok\n", host.written());
+}
+
 test "値位置・連鎖位置の組み込み命令語を暗黙呼出しとして実行する" {
     var fixture = try compileForTest(std.testing.allocator, "それは「  abc  」\n空白除去して表示\n礼節レベル取得して表示\n助詞一覧取得して反復\n対象を表示\nここまで\n3回\n回数を表示\nここまで\n");
     defer fixture.ir_program.deinit();

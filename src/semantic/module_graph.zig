@@ -43,6 +43,11 @@ pub const ResolvedPackageImport = struct {
     /// keep the package's opaque ownership instead of becoming global modules.
     /// Null disables ownership propagation for that export.
     package_root: ?[]u8 = null,
+    /// Environment package key that owns the resolved export. Carried
+    /// explicitly because it cannot be recovered from `canonical_id` —
+    /// export names may contain `/` (`pkg:x` export `api/v1` would be
+    /// misattributed to `pkg:x/api` by trailing-slash parsing).
+    package_owner: ?[]const u8 = null,
 };
 
 /// Lock/environment-backed package specifier resolver. The callback returns the
@@ -250,7 +255,7 @@ pub const ModuleGraph = struct {
             input_count += 1;
         }
         for (self.modules) |module| {
-            const package_owned = module.canonical_id != null or module.package_owner != null;
+            const package_owned = moduleIsPackageContent(module);
             if (module.source_namespace != null or package_owned) {
                 // Package-owned modules (canonical exports and their relative
                 // descendants) use the public alias when present, otherwise the
@@ -261,7 +266,7 @@ pub const ModuleGraph = struct {
                 var collision = false;
                 for (self.modules) |candidate| {
                     if (candidate == module) continue;
-                    const candidate_owned = candidate.canonical_id != null or candidate.package_owner != null;
+                    const candidate_owned = moduleIsPackageContent(candidate);
                     if (!candidate_owned) {
                         if (std.mem.eql(u8, public_name, candidate.name)) {
                             collision = true;
@@ -294,7 +299,7 @@ pub const ModuleGraph = struct {
                 for (self.modules) |candidate| {
                     // package所有module（exportとその相対子孫）はopaqueな
                     // package namespace側で命名するため、local名の衝突対象に含めない。
-                    if (candidate == module or candidate.canonical_id != null or candidate.package_owner != null) continue;
+                    if (candidate == module or moduleIsPackageContent(candidate)) continue;
                     if (std.mem.eql(u8, module.name, candidate.name) and !std.mem.eql(u8, module.path, candidate.path)) {
                         collision = true;
                         break;
@@ -313,6 +318,7 @@ pub const ModuleGraph = struct {
             if (module.kind != .nako3 or module.parsed == null or module.parsed.?.root == null) continue;
             var import_entries: std.ArrayList(analyzer.ImportEntry) = .empty;
             var allows_dynamic_commands = false;
+            var allows_dynamic_commands_from: usize = std.math.maxInt(usize);
             var dynamic_command_aliases: std.ArrayList(analyzer.DynamicCommandAlias) = .empty;
             for (module.imports) |item| if (item.target) |target| {
                 const target_module = self.modules[target];
@@ -335,13 +341,18 @@ pub const ModuleGraph = struct {
                             // package内scopeの依存aliasはimporter固有のdispatch
                             // namespaceへ写像し、別scopeの同名aliasと登録keyが
                             // 衝突しないようにする（`{owner}__{alias}` 修飾）。
+                            // import_position はaliasを導入した取り込み文の位置 —
+                            // それより前の `alias__命令` はimport未存在として
+                            // 束縛しない（NamespaceAliasの位置規則と同じ）。
                             if (!listed) try dynamic_command_aliases.append(temp, .{
                                 .source_namespace = alias,
                                 .dispatch_namespace = item.dispatch_namespace orelse alias,
+                                .import_position = item.span.start,
                             });
                         }
                     } else if (target_module.kind == .native_plugin) {
                         allows_dynamic_commands = true;
+                        allows_dynamic_commands_from = @min(allows_dynamic_commands_from, item.span.start);
                     }
                 }
                 // 実効辺のみ取り込み位置での実行対象になる
@@ -443,8 +454,9 @@ pub const ModuleGraph = struct {
                 .root = module.parsed.?.root.?,
                 .normalized_source = module.parsed.?.stream.source.text,
                 .allows_dynamic_commands = allows_dynamic_commands,
+                .allows_dynamic_commands_from = if (allows_dynamic_commands_from == std.math.maxInt(usize)) 0 else allows_dynamic_commands_from,
                 .dynamic_command_aliases = try dynamic_command_aliases.toOwnedSlice(temp),
-                .is_package = module.canonical_id != null or module.package_owner != null,
+                .is_package = moduleIsPackageContent(module),
                 .expands_in_function = module.expands_in_function,
                 .owns_scoped_namespace_collision = owns_scoped_namespace_collision,
                 .namespace_aliases = try namespace_aliases.toOwnedSlice(temp),
@@ -567,33 +579,27 @@ pub const Loader = struct {
     /// For canonical exports `root` comes from the resolver; for relative
     /// descendants both fields propagate from the importing package module.
     const PackageInheritance = struct {
-        root: []const u8,
+        root: ?[]const u8 = null,
         owner: ?[]const u8 = null,
     };
 
     /// `initial` は取り込み文位置で有効だったパーサモード（取り込み元からの継承）。
     /// 字句変換には波及せず、添字・自動初期化の意味づけのみに効く。
     fn loadOne(self: *Loader, path: []const u8, import_node: ?*ast.Node, initial: ?token_mod.Mode, namespace_override: ?[]const u8, canonical_id: ?[]const u8, inheritance: ?PackageInheritance) anyerror!u32 {
-        const package_owner: ?[]const u8 = if (canonical_id) |id|
-            if (std.mem.lastIndexOfScalar(u8, id, '/')) |separator| id[0..separator] else null
-        else if (inheritance) |inherited|
-            inherited.owner
-        else
-            null;
+        // owner は import edge が resolver から受け取った独立フィールドを使う。
+        // canonical_id 末尾の `/` から逆算すると `api/v1` のような export 名で
+        // `pkg:x/api` を誤った owner にしてしまうため、名前からの復元はしない。
+        const package_owner: ?[]const u8 = if (inheritance) |inherited| inherited.owner else null;
         const package_root: ?[]const u8 = if (inheritance) |inherited| inherited.root else null;
+        // module の共有は (path, owner) が一致する場合に限る。owner が異なる
+        // module を共有すると、その module が既に解決済みの `pkg:` 依存edgeが
+        // 別scopeのまま残り、import順序で依存解決結果が変わってしまう。
+        // 同一ownerの別exportが同じ実体fileを指す場合は共有し、plugin評価や
+        // グローバル初期化の多重化を防ぐ。
         if (canonical_id) |id| {
             if (self.findCanonical(id)) |existing| return existing;
-            // A package export may resolve to a file already loaded by a relative
-            // import. Reuse that module without changing its established name or
-            // identity; the Import edge carries the package alias separately.
-            if (self.findLocalPath(path)) |existing| return existing;
-            // 同一packageの別exportが同じ実体ファイルを指す場合も共有する。
-            // 共有しないとexport名ごとにmoduleが複製され、plugin評価や
-            // グローバル初期化が多重化する。ownerが一致するpackage moduleに
-            // 限る（別packageのmoduleは絶対に共有しない）。
-            if (self.findPackagePath(path, id)) |existing| return existing;
-        } else if (self.find(path)) |existing| {
-            if (package_owner) |owner| try self.adoptIntoPackage(existing, owner, package_root.?);
+            if (self.findOwnedPath(path, inheritance)) |existing| return existing;
+        } else if (self.findOwnedPath(path, inheritance)) |existing| {
             return existing;
         }
         const extension = std.fs.path.extension(path);
@@ -672,7 +678,15 @@ pub const Loader = struct {
 
         if (kind == .javascript) {
             var imports: std.ArrayList(Import) = .empty;
-            const requested_imports = try collectJavaScriptImports(self.allocator, source);
+            var has_opaque_dynamic = false;
+            const requested_imports = try collectJavaScriptImports(self.allocator, source, &has_opaque_dynamic);
+            // package所有moduleの `import(expr)` は指定が静的に定まらず、
+            // QuickJS側loaderのFS fallbackがpackage root外を読み得るため
+            // 明示的に拒否する。非package module（直接path import）は
+            // ユーザー自身のfileへの解決として従来挙動を維持する。
+            if (has_opaque_dynamic and module.package_root != null) {
+                try self.importDiagnostic(import_node, path, "package内のJavaScriptでは動的importにリテラル指定以外を使えません");
+            }
             for (requested_imports) |requested| {
                 if (!std.fs.path.isAbsolute(requested) and !std.mem.startsWith(u8, requested, ".")) continue;
                 const resolved = resolveImport(self.allocator, path, requested) catch |err| {
@@ -688,14 +702,11 @@ pub const Loader = struct {
                     continue;
                 }
                 const descendant_inheritance = descendantInheritance(module, target_path);
-                const existing = self.find(target_path);
+                const existing = self.findOwnedPath(target_path, descendant_inheritance);
                 var target: ?u32 = existing;
                 var cyclic = false;
                 if (existing) |index| {
                     cyclic = self.modules.items[index].state == .loading;
-                    if (descendant_inheritance) |inherited| {
-                        if (inherited.owner) |owner| try self.adoptIntoPackage(index, owner, inherited.root);
-                    }
                 } else {
                     target = self.loadOne(target_path, import_node, null, null, null, descendant_inheritance) catch |err| switch (err) {
                         error.OutOfMemory => return err,
@@ -743,6 +754,7 @@ pub const Loader = struct {
                     continue;
                 };
                 defer if (resolved_import.package_root) |resolved_package_root| self.allocator.free(resolved_package_root);
+                defer if (resolved_import.package_owner) |resolved_owner| self.allocator.free(resolved_owner);
                 // package所有moduleからの相対・絶対取り込みがcanonical rootの外へ
                 // 逃げる場合は辺を作らない。prebuilt commands.jsonはsource走査を
                 // 迂回するため、依存解決を経ない境界外参照を許すと宣言なしで
@@ -782,17 +794,14 @@ pub const Loader = struct {
                     }
                 }
                 const edge_inheritance: ?PackageInheritance = if (resolved_import.canonical_id != null)
-                    if (resolved_import.package_root) |resolved_root| .{ .root = resolved_root } else null
+                    .{ .root = resolved_import.package_root, .owner = resolved_import.package_owner }
                 else
                     descendantInheritance(module, resolved_target);
-                const existing = self.findImport(resolved_target, resolved_import.canonical_id);
+                const existing = self.findImport(resolved_target, resolved_import.canonical_id, edge_inheritance);
                 var target: ?u32 = existing;
                 var cyclic = false;
                 if (existing) |index| {
                     cyclic = self.modules.items[index].state == .loading;
-                    if (edge_inheritance) |inherited| {
-                        if (inherited.owner) |owner| try self.adoptIntoPackage(index, owner, inherited.root);
-                    }
                 } else {
                     target = self.loadOne(resolved_target, node, site_mode, resolved_import.namespace, resolved_import.canonical_id, edge_inheritance) catch |err| switch (err) {
                         error.OutOfMemory => return err,
@@ -938,47 +947,30 @@ pub const Loader = struct {
         for (import_nodes.items, 0..) |node, index| module.imports[index].span = node.span;
     }
 
-    fn find(self: *Loader, path: []const u8) ?u32 {
-        for (self.modules.items) |module| if (std.mem.eql(u8, module.path, path)) return module.index;
-        return null;
-    }
-
-    fn findLocalPath(self: *Loader, path: []const u8) ?u32 {
-        for (self.modules.items) |module| {
-            if (module.canonical_id == null and std.mem.eql(u8, module.path, path)) return module.index;
-        }
-        return null;
-    }
-
-    /// 同じpackage identityに属し、同じ実体pathを指すmoduleを探す。
-    /// 複数exportが1ファイルへ収束する場合にmodule評価を一度に抑えるための
-    /// 照合で、owner prefix（canonical_idの`/`より前）が一致する場合に限る。
-    fn findPackagePath(self: *Loader, path: []const u8, canonical_id: []const u8) ?u32 {
-        const owner_end = std.mem.lastIndexOfScalar(u8, canonical_id, '/') orelse return null;
-        const owner = canonical_id[0..owner_end];
+    /// 同じ所有scopeに属し、同じ実体pathを指すmoduleを探す。scope keyは
+    /// owner（package key）を優先し、owner未設定ならpackage rootを使う。
+    /// local scope（root/owner共に無し）はroot/ownerを持たないmoduleのみに
+    /// 一致する — package内moduleをlocal importが共有すると、読み込み順序で
+    /// module所有が変わってしまうため。
+    fn findOwnedPath(self: *Loader, path: []const u8, inheritance: ?PackageInheritance) ?u32 {
+        const owner: ?[]const u8 = if (inheritance) |inherited| inherited.owner else null;
+        const root: ?[]const u8 = if (inheritance) |inherited| inherited.root else null;
         for (self.modules.items) |module| {
             if (!std.mem.eql(u8, module.path, path)) continue;
-            const module_owner = module.package_owner orelse continue;
-            if (std.mem.eql(u8, module_owner, owner)) return module.index;
+            if (owner) |expected| {
+                if (module.package_owner != null and
+                    std.mem.eql(u8, module.package_owner.?, expected)) return module.index;
+                continue;
+            }
+            if (module.package_owner != null) continue;
+            if (root) |expected_root| {
+                if (module.package_root != null and
+                    std.mem.eql(u8, module.package_root.?, expected_root)) return module.index;
+                continue;
+            }
+            if (module.package_root == null) return module.index;
         }
         return null;
-    }
-
-    /// A module first reached by an ordinary relative import and later pulled in
-    /// by a package keeps its established identity, but its symbols must stay
-    /// package-internal. Mark it and its in-root relative descendants with the
-    /// owning package so qualified-name fallback cannot reach them.
-    fn adoptIntoPackage(self: *Loader, index: u32, owner: []const u8, root: []const u8) anyerror!void {
-        const target = self.modules.items[index];
-        if (target.canonical_id != null or target.package_owner != null) return;
-        if (!pathWithinRoot(root, target.path)) return;
-        target.package_owner = try self.allocator.dupe(u8, owner);
-        target.package_root = try self.allocator.dupe(u8, root);
-        for (target.imports) |item| {
-            if (item.canonical_id != null) continue;
-            const child = item.target orelse continue;
-            try self.adoptIntoPackage(child, owner, root);
-        }
     }
 
     fn findCanonical(self: *Loader, canonical_id: []const u8) ?u32 {
@@ -989,11 +981,11 @@ pub const Loader = struct {
         return null;
     }
 
-    fn findImport(self: *Loader, path: []const u8, canonical_id: ?[]const u8) ?u32 {
+    fn findImport(self: *Loader, path: []const u8, canonical_id: ?[]const u8, inheritance: ?PackageInheritance) ?u32 {
         if (canonical_id) |id| {
-            return self.findCanonical(id) orelse self.findLocalPath(path) orelse self.findPackagePath(path, id);
+            return self.findCanonical(id) orelse self.findOwnedPath(path, inheritance);
         }
-        return self.find(path);
+        return self.findOwnedPath(path, inheritance);
     }
 
     fn importDiagnostic(self: *Loader, node: ?*ast.Node, file: []const u8, message: []const u8) !void {
@@ -1127,7 +1119,13 @@ fn collectImports(node: *ast.Node, output: *std.ArrayList(*ast.Node), allocator:
 const JavaScriptTokenKind = enum { identifier, string, punctuation };
 const JavaScriptToken = struct { kind: JavaScriptTokenKind, text: []const u8 };
 
-fn collectJavaScriptImports(allocator: std.mem.Allocator, source: []const u8) ![][]const u8 {
+/// JS moduleの `import`/`export … from` と動的 `import("…")` のリテラル
+/// 指定を収集する。動的formも収集しないとQuickJS側module loaderがFSへ
+/// fallbackしてpackage rootの外を読み得るため、リテラル指定は静的同様に
+/// 収集対象とする。`import(expr)` のように非リテラルな指定は静的に解決
+/// できないため `has_opaque_dynamic` で報告し、package所有moduleでは
+/// 呼出し側が境界違反として拒否する。
+fn collectJavaScriptImports(allocator: std.mem.Allocator, source: []const u8, has_opaque_dynamic: *bool) ![][]const u8 {
     var result: std.ArrayList([]const u8) = .empty;
     var index: usize = 0;
     while (nextJavaScriptToken(source, &index)) |token| {
@@ -1136,17 +1134,30 @@ fn collectJavaScriptImports(allocator: std.mem.Allocator, source: []const u8) ![
         const is_export = std.mem.eql(u8, token.text, "export");
         if (!is_import and !is_export) continue;
         var saw_from = false;
+        var dynamic = false;
         var scanned: usize = 0;
         while (scanned < 256) : (scanned += 1) {
             const candidate = nextJavaScriptToken(source, &index) orelse break;
-            if (candidate.kind == .punctuation and (std.mem.eql(u8, candidate.text, ";") or std.mem.eql(u8, candidate.text, "("))) break;
+            if (candidate.kind == .punctuation and std.mem.eql(u8, candidate.text, ";")) break;
+            if (candidate.kind == .punctuation and std.mem.eql(u8, candidate.text, "(")) {
+                // `import("…")` の動的formは先頭tokenとして `(` が来る。
+                if (is_import and scanned == 0) {
+                    dynamic = true;
+                    continue;
+                }
+                break;
+            }
+            if (dynamic and candidate.kind != .string) {
+                has_opaque_dynamic.* = true;
+                break;
+            }
             if (candidate.kind == .identifier and std.mem.eql(u8, candidate.text, "from")) {
                 saw_from = true;
                 continue;
             }
             if (candidate.kind != .string) continue;
             if (std.mem.indexOfScalar(u8, candidate.text, '\\') != null) return error.UnsupportedJavaScriptImportEscape;
-            if ((is_import and (saw_from or scanned == 0)) or (is_export and saw_from)) try result.append(allocator, try allocator.dupe(u8, candidate.text));
+            if ((is_import and (saw_from or scanned == 0 or dynamic)) or (is_export and saw_from)) try result.append(allocator, try allocator.dupe(u8, candidate.text));
             break;
         }
     }
@@ -1232,13 +1243,14 @@ const ResolvedImport = struct {
     namespace: ?[]const u8 = null,
     dispatch_namespace: ?[]const u8 = null,
     package_root: ?[]const u8 = null,
+    package_owner: ?[]const u8 = null,
 };
 
 fn resolveRequestedImport(allocator: std.mem.Allocator, importer: []const u8, importer_owner: ?[]const u8, requested: []const u8, package_resolver: ?PackageResolver) !ResolvedImport {
     if (!isPackageSpecifier(requested)) return .{ .path = try resolveImport(allocator, importer, requested) };
     const resolver = package_resolver orelse return error.PackageResolverUnavailable;
     const selected = try resolver.resolve(allocator, importer, importer_owner, requested);
-    return .{ .path = try normalizePath(allocator, selected.path), .canonical_id = selected.canonical_id, .namespace = selected.namespace, .dispatch_namespace = selected.dispatch_namespace, .package_root = selected.package_root };
+    return .{ .path = try normalizePath(allocator, selected.path), .canonical_id = selected.canonical_id, .namespace = selected.namespace, .dispatch_namespace = selected.dispatch_namespace, .package_root = selected.package_root, .package_owner = selected.package_owner };
 }
 
 /// Lexical containment of `path` strictly inside `root`. Both sides are
@@ -1278,13 +1290,20 @@ fn containmentTarget(self: *Loader, lexical: []const u8) ![]const u8 {
     return lexical;
 }
 
+/// canonical export・相対子孫を含むpackage所有のmoduleか。owner key未設定でも
+/// package root内のmoduleは外部から修飾名で到達させないpackage内容とする。
+fn moduleIsPackageContent(module: *const LoadedModule) bool {
+    return module.canonical_id != null or module.package_owner != null or module.package_root != null;
+}
+
 /// Ownership a package module passes to a relative descendant that stays inside
-/// its canonical root. Unowned importers and escaped paths propagate nothing.
+/// its canonical root. Unrooted importers and escaped paths propagate nothing.
+/// owner が無いmodule（旧formatのembedded payload等）でもrootは継承する —
+/// 継承を失うと孫module以降のcanonical root包含検査が丸ごと消えるため。
 fn descendantInheritance(module: *LoadedModule, path: []const u8) ?Loader.PackageInheritance {
     const root = module.package_root orelse return null;
-    const owner = module.package_owner orelse return null;
     if (!pathWithinRoot(root, path)) return null;
-    return .{ .root = root, .owner = owner };
+    return .{ .root = root, .owner = module.package_owner };
 }
 
 fn resolveImport(allocator: std.mem.Allocator, importer: []const u8, requested: []const u8) ![]u8 {

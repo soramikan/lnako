@@ -692,6 +692,38 @@ test "source export target preserves resolved features and Nako version" {
     try testing.expect(!try declaration.matchesTarget(testing.allocator, missing_feature_target, true));
 }
 
+test "export artifact target は resolve target の os_version を引き継ぐ" {
+    // `min-os` 条件artifactは target.os_version で照合される。sync側の
+    // exportArtifactTarget が os_version を落とすと、resolve で選んだ
+    // artifact と export 選択が不一致になる（min-os条件のあるpackageで
+    // 再現）。resolver.Target → ArtifactTarget の写像を固定する。
+    const min_os_decl = manifest_mod.ArtifactDecl{
+        .path = "native-new.so",
+        .min_os = "14.0",
+    };
+    const satisfied = exportArtifactTarget("lnako", .{
+        .runtime = "lnako",
+        .os_version = "15.1",
+        .nako_version = try semver.Version.parse("3.7.24"),
+    }, &.{});
+    try testing.expectEqualStrings("15.1", satisfied.os_version.?);
+    try testing.expect(try min_os_decl.matchesTarget(testing.allocator, satisfied, true));
+
+    const unsatisfied = exportArtifactTarget("lnako", .{
+        .runtime = "lnako",
+        .os_version = "13.9",
+        .nako_version = try semver.Version.parse("3.7.24"),
+    }, &.{});
+    try testing.expect(!try min_os_decl.matchesTarget(testing.allocator, unsatisfied, true));
+
+    const unknown = exportArtifactTarget("lnako", .{
+        .runtime = "lnako",
+        .nako_version = try semver.Version.parse("3.7.24"),
+    }, &.{});
+    try testing.expect(unknown.os_version == null);
+    try testing.expect(!try min_os_decl.matchesTarget(testing.allocator, unknown, true));
+}
+
 test "canonical dependency path uses host separators and admits filesystem roots" {
     try std.testing.expect(isCanonicalDepPath("/"));
     try std.testing.expect(isCanonicalDepPath("/deps/lib"));
@@ -1093,6 +1125,7 @@ fn exportArtifactTarget(runtime: []const u8, target: resolver.Target, features: 
         .os = target.os,
         .cpu = target.cpu,
         .abi = target.abi,
+        .os_version = target.os_version,
         .compat_js = target.compat_js,
         .optimize = target.optimize,
         .version = target.nako_version,

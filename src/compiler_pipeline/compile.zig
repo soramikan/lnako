@@ -168,6 +168,34 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
             http_server_plugin_imported = true;
         }
         if (module.source.len == 0) continue;
+        // graph上はowner scope別に分かれる同一pathのJS moduleも、QuickJS側の
+        // installはpath単位で1度だけ行うためIRでは同一pathのentryへnamespaceを
+        // 併合する（直接importの無修飾sentinelとpackage修飾aliasの併存など）。
+        var merged: ?*lnako.ir.nako_ir.JavaScriptModule = null;
+        for (javascript_modules.items) |*existing| {
+            if (std.mem.eql(u8, existing.path, module.path)) {
+                merged = existing;
+                break;
+            }
+        }
+        if (merged) |existing| {
+            existing.is_plugin = existing.is_plugin or plugin_modules[module.index];
+            for (plugin_namespaces[module.index].items) |namespace| {
+                var listed = false;
+                for (existing.namespaces) |current| {
+                    if (std.mem.eql(u8, current, namespace)) {
+                        listed = true;
+                        break;
+                    }
+                }
+                if (listed) continue;
+                const grown = try ir_program.arena.allocator().alloc([]const u8, existing.namespaces.len + 1);
+                for (existing.namespaces, grown[0..existing.namespaces.len]) |current, *copy| copy.* = current;
+                grown[existing.namespaces.len] = try ir_program.arena.allocator().dupe(u8, namespace);
+                existing.namespaces = grown;
+            }
+            continue;
+        }
         const namespaces = try ir_program.arena.allocator().alloc([]const u8, plugin_namespaces[module.index].items.len);
         for (plugin_namespaces[module.index].items, namespaces) |namespace, *copy| copy.* = try ir_program.arena.allocator().dupe(u8, namespace);
         try javascript_modules.append(ir_program.arena.allocator(), .{

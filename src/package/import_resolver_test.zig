@@ -10,7 +10,7 @@ test "environment entryのexports省略は空exportとして検証する" {
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/pkg");
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/pkg/nako.toml", .data = "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });
-    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\".nako/env/gen-test/deps/pkg\"},\"dependencies\":[]}}}";
+    const lock = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\".nako/env/gen-test/deps/pkg\"},\"dependencies\":[]}}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
@@ -46,7 +46,7 @@ test "同名packageのmaterialized path差し替えを拒否する" {
         try temporary.dir.writeFile(io, .{ .sub_path = manifest_path, .data = manifest });
         try temporary.dir.writeFile(io, .{ .sub_path = source_path, .data = "" });
     }
-    const lock = "{\"schemaVersion\":2,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:math-v1\":{\"id\":\"pkg:math-v1\",\"name\":\"math\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/math-v1\"},\"dependencies\":[]},\"pkg:math-v2\":{\"id\":\"pkg:math-v2\",\"name\":\"math\",\"version\":\"2.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/math-v2\"},\"dependencies\":[]}},\"rootDependencies\":{\"default\":[\"pkg:math-v1\"]}}";
+    const lock = "{\"schemaVersion\":2,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:math-v1\":{\"id\":\"pkg:math-v1\",\"name\":\"math\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/math-v1\"},\"dependencies\":[]},\"pkg:math-v2\":{\"id\":\"pkg:math-v2\",\"name\":\"math\",\"version\":\"2.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/math-v2\"},\"dependencies\":[]}},\"rootDependencies\":{\"default\":[\"pkg:math-v1\"]}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
@@ -71,7 +71,7 @@ test "exportsを持つpackageのmissing materialized rootを拒否しno-export s
     var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps");
-    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"support\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/support\"},\"dependencies\":[]}}}";
+    const lock = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"support\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/support\"},\"dependencies\":[]}}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
@@ -90,6 +90,49 @@ test "exportsを持つpackageのmissing materialized rootを拒否しno-export s
     loaded.deinit();
 }
 
+test "lockのresolverVersion欠落・将来versionは環境検証で拒否する" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/pkg");
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/pkg/nako.toml", .data = "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });
+    const writeEnvironment = struct {
+        const template = "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"packages\":{{\"pkg:test\":{{\"name\":\"pkg\",\"version\":\"1.0.0\",\"path\":\".nako/env/gen-test/deps/pkg\"}}}}}}";
+        fn write(dir: std.Io.Dir, io_: std.Io, allocator_: std.mem.Allocator, lock_bytes: []const u8) !void {
+            var digest: [32]u8 = undefined;
+            std.crypto.hash.sha2.Sha256.hash(lock_bytes, &digest, .{});
+            const hex = std.fmt.bytesToHex(digest, .lower);
+            const environment = try std.fmt.allocPrint(allocator_, template, .{hex});
+            defer allocator_.free(environment);
+            try dir.writeFile(io_, .{ .sub_path = ".nako/environment.json", .data = environment });
+        }
+    }.write;
+    try temporary.dir.createDirPath(io, ".nako");
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+
+    // resolverVersion 欠落: schemaVersion が有効でも lock が選択規則を
+    // 告げないため fail closed。
+    const missing = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\".nako/env/gen-test/deps/pkg\"},\"dependencies\":[]}}}";
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = missing });
+    try writeEnvironment(temporary.dir, io, allocator, missing);
+    try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, root));
+
+    // 将来version: resolver が知らない選択規則で生成された環境を受理しない。
+    const future = "{\"schemaVersion\":1,\"resolverVersion\":2,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\".nako/env/gen-test/deps/pkg\"},\"dependencies\":[]}}}";
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = future });
+    try writeEnvironment(temporary.dir, io, allocator, future);
+    try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, root));
+
+    // 一致する version は受理する（fail closed でない経路の退行防止）。
+    const current = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\".nako/env/gen-test/deps/pkg\"},\"dependencies\":[]}}}";
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = current });
+    try writeEnvironment(temporary.dir, io, allocator, current);
+    var loaded = try Resolver.load(allocator, io, root);
+    loaded.deinit();
+}
+
 test "materialized package内の共有writable dirを拒否する" {
     if (@import("builtin").os.tag == .windows or @import("builtin").os.tag == .wasi) return error.SkipZigTest;
     const allocator = std.testing.allocator;
@@ -98,7 +141,7 @@ test "materialized package内の共有writable dirを拒否する" {
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/pkg/lib");
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/pkg/nako.toml", .data = "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });
-    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/pkg\"},\"dependencies\":[]}}}";
+    const lock = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/pkg\"},\"dependencies\":[]}}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
@@ -134,7 +177,7 @@ test "package rootの共有writableな祖先dirを拒否する" {
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/pkg");
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/pkg/nako.toml", .data = "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });
-    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/pkg\"},\"dependencies\":[]}}}";
+    const lock = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/pkg\"},\"dependencies\":[]}}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
@@ -172,7 +215,7 @@ test "同一canonical rootを指す複数packageを環境検証で拒否する" 
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.toml", .data = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nlicense = \"MIT\"\n\n[dependencies.pkg]\na = { version = \"1.0.0\", public-id = \"pkg:a\" }\nb = { version = \"1.0.0\", public-id = \"pkg:b\" }\n" });
     // 2つのpackageが同じ実体dirをcanonical rootに持つと、importerの物理path
     // からは一意にownerを決められないため環境として受理できない。
-    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:a\":{\"id\":\"pkg:a\",\"name\":\"shared\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\"shared\",\"mutable\":true},\"dependencies\":[]},\"pkg:b\":{\"id\":\"pkg:b\",\"name\":\"shared\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\"shared\",\"mutable\":true},\"dependencies\":[]}}}";
+    const lock = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:a\":{\"id\":\"pkg:a\",\"name\":\"shared\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\"shared\",\"mutable\":true},\"dependencies\":[]},\"pkg:b\":{\"id\":\"pkg:b\",\"name\":\"shared\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\"shared\",\"mutable\":true},\"dependencies\":[]}}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
@@ -197,7 +240,7 @@ test "宣伝されたexport対象がpackage root内に実在しない環境を�
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/pkg");
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/pkg/nako.toml", .data = "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n[[exports]]\nname = \"main\"\npath = \"index.nako3\"\n" });
-    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/pkg\"},\"dependencies\":[]}}}";
+    const lock = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/pkg\"},\"dependencies\":[]}}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
@@ -231,7 +274,7 @@ test "対象targetで解決できないexport宣言を持つ環境を拒否す�
     // （受理するとpackage import使用時にExportNotFoundへ遅延する）。
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/pkg/nako.toml", .data = "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n[[exports]]\nname = \"main\"\nesm = \"m.mjs\"\n" });
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/pkg/m.mjs", .data = "export {}\n" });
-    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/pkg\"},\"dependencies\":[]}}}";
+    const lock = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/pkg\"},\"dependencies\":[]}}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
@@ -258,7 +301,7 @@ test "lock候補を持たないpackage manifest依存を持つ環境を拒否す
     // 有効な依存宣言に対して lock 側の一致候補が一つも無いのは lock・環境・
     // manifest の不整合であり、alias欠落の環境を受理してはならない。
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/pkg/nako.toml", .data = "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n[dependencies.pkg]\nabsent = { version = \"1.0.0\", public-id = \"pkg:absent\" }\n" });
-    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/pkg\"},\"dependencies\":[]}}}";
+    const lock = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/pkg\"},\"dependencies\":[]}}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
@@ -282,7 +325,7 @@ test "schema-v2のroot edge省略はenvironment dependencyを拒否する" {
     var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/pkg");
-    const lock = "{\"schemaVersion\":2,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/pkg\"},\"dependencies\":[]}},\"rootDependencies\":{\"default\":[]}}";
+    const lock = "{\"schemaVersion\":2,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/pkg\"},\"dependencies\":[]}},\"rootDependencies\":{\"default\":[]}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
@@ -626,6 +669,7 @@ test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hash�
     defer allocator.free(math_import.namespace);
     defer if (math_import.dispatch_namespace) |dispatch| allocator.free(dispatch);
     defer if (math_import.package_root) |package_root| allocator.free(package_root);
+    defer if (math_import.package_owner) |package_owner| allocator.free(package_owner);
     const expected_math_path = try std.fs.path.join(allocator, &.{ ".nako", "env", "gen-test", "deps", "math", "src", "main.nako3" });
     defer allocator.free(expected_math_path);
     try std.testing.expect(std.mem.endsWith(u8, math_import.path, expected_math_path));
@@ -639,6 +683,7 @@ test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hash�
     defer allocator.free(owner_name_import.namespace);
     defer if (owner_name_import.dispatch_namespace) |dispatch| allocator.free(dispatch);
     defer if (owner_name_import.package_root) |package_root| allocator.free(package_root);
+    defer if (owner_name_import.package_owner) |package_owner| allocator.free(package_owner);
     try std.testing.expectEqualStrings("pkg:11111111111111111111111111111111/main", owner_name_import.canonical_id);
     try std.testing.expectEqualStrings("alice__lib", owner_name_import.namespace);
     const scoped_owner_import = try package_resolver.resolve(allocator, root_entry, "pkg:@alice/tool");
@@ -647,6 +692,7 @@ test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hash�
     defer allocator.free(scoped_owner_import.namespace);
     defer if (scoped_owner_import.dispatch_namespace) |dispatch| allocator.free(dispatch);
     defer if (scoped_owner_import.package_root) |package_root| allocator.free(package_root);
+    defer if (scoped_owner_import.package_owner) |package_owner| allocator.free(package_owner);
     try std.testing.expectEqualStrings("alice__tool", scoped_owner_import.namespace);
     const scoped_subpath_import = try package_resolver.resolve(allocator, root_entry, "pkg:alice/lib/vector");
     defer allocator.free(scoped_subpath_import.path);
@@ -654,6 +700,7 @@ test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hash�
     defer allocator.free(scoped_subpath_import.namespace);
     defer if (scoped_subpath_import.dispatch_namespace) |dispatch| allocator.free(dispatch);
     defer if (scoped_subpath_import.package_root) |package_root| allocator.free(package_root);
+    defer if (scoped_subpath_import.package_owner) |package_owner| allocator.free(package_owner);
     try std.testing.expectEqualStrings("pkg:11111111111111111111111111111111/vector", scoped_subpath_import.canonical_id);
     try std.testing.expectEqualStrings("alice__lib__vector", scoped_subpath_import.namespace);
     const vector_import = try package_resolver.resolve(allocator, root_entry, "pkg:math/vector");
@@ -662,6 +709,7 @@ test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hash�
     defer allocator.free(vector_import.namespace);
     defer if (vector_import.dispatch_namespace) |dispatch| allocator.free(dispatch);
     defer if (vector_import.package_root) |package_root| allocator.free(package_root);
+    defer if (vector_import.package_owner) |package_owner| allocator.free(package_owner);
     const expected_vector_path = try std.fs.path.join(allocator, &.{ ".nako", "env", "gen-test", "deps", "math", "vector.nako3" });
     defer allocator.free(expected_vector_path);
     try std.testing.expect(std.mem.endsWith(u8, vector_import.path, expected_vector_path));
@@ -673,6 +721,7 @@ test "環境JSONのrootとpackage scopeでalias・subpathを解決しlock hash�
     defer allocator.free(nested_import.namespace);
     defer if (nested_import.dispatch_namespace) |dispatch| allocator.free(dispatch);
     defer if (nested_import.package_root) |package_root| allocator.free(package_root);
+    defer if (nested_import.package_owner) |package_owner| allocator.free(package_owner);
     const expected_nested_path = try std.fs.path.join(allocator, &.{ ".nako", "env", "gen-test", "deps", "dependency", "index.nako3" });
     defer allocator.free(expected_nested_path);
     try std.testing.expect(std.mem.endsWith(u8, nested_import.path, expected_nested_path));
@@ -761,6 +810,7 @@ test "realpath importerとproject entry優先でancestor package scopeを誤選�
     defer allocator.free(project_import.namespace);
     defer if (project_import.dispatch_namespace) |dispatch| allocator.free(dispatch);
     defer if (project_import.package_root) |package_root| allocator.free(package_root);
+    defer if (project_import.package_owner) |package_owner| allocator.free(package_owner);
     const expected_root_util = try std.fs.path.join(allocator, &.{ "root-util", "index.nako3" });
     defer allocator.free(expected_root_util);
     try std.testing.expect(std.mem.endsWith(u8, project_import.path, expected_root_util));
@@ -773,6 +823,7 @@ test "realpath importerとproject entry優先でancestor package scopeを誤選�
     defer allocator.free(package_import.namespace);
     defer if (package_import.dispatch_namespace) |dispatch| allocator.free(dispatch);
     defer if (package_import.package_root) |package_root| allocator.free(package_root);
+    defer if (package_import.package_owner) |package_owner| allocator.free(package_owner);
     const expected_parent_util = try std.fs.path.join(allocator, &.{ "parent-util", "index.nako3" });
     defer allocator.free(expected_parent_util);
     try std.testing.expect(std.mem.endsWith(u8, package_import.path, expected_parent_util));
@@ -797,7 +848,7 @@ test "manifest version比較は64byteを超えるSemVer識別子を受理する"
     const manifest = try std.fmt.allocPrint(allocator, "[package]\nname = \"pkg\"\nversion = \"{s}\"\nlicense = \"MIT\"\n", .{version});
     defer allocator.free(manifest);
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/pkg/nako.toml", .data = manifest });
-    const lock = try std.fmt.allocPrint(allocator, "{{\"schemaVersion\":1,\"input\":{{\"profile\":\"default\",\"target\":{{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}}}},\"packages\":{{\"pkg:test\":{{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"{s}\",\"source\":{{\"type\":\"registry\",\"url\":\"https://example.invalid/pkg\"}},\"dependencies\":[]}}}}}}", .{version});
+    const lock = try std.fmt.allocPrint(allocator, "{{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{{\"profile\":\"default\",\"target\":{{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}}}},\"packages\":{{\"pkg:test\":{{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"{s}\",\"source\":{{\"type\":\"registry\",\"url\":\"https://example.invalid/pkg\"}},\"dependencies\":[]}}}}}}", .{version});
     defer allocator.free(lock);
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
     var digest: [32]u8 = undefined;
@@ -831,7 +882,7 @@ test "path依存の環境検証はnako.tomlを優先し残留METADATA.tomlを読
     // materialized（非path）source側は引き続き生成METADATA.tomlを正本とする。
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/mat/NAKO-PKG");
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/mat/NAKO-PKG/METADATA.toml", .data = "schemaVersion = 1\n[package]\nname = \"mat\"\nversion = \"2.0.0\"\nlicense = \"MIT\"\n" });
-    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:path-dep\":{\"id\":\"pkg:path-dep\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\"deps/pkg\",\"mutable\":true},\"dependencies\":[]},\"pkg:mat\":{\"id\":\"pkg:mat\",\"name\":\"mat\",\"version\":\"2.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/mat\"},\"dependencies\":[]}}}";
+    const lock = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:path-dep\":{\"id\":\"pkg:path-dep\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\"deps/pkg\",\"mutable\":true},\"dependencies\":[]},\"pkg:mat\":{\"id\":\"pkg:mat\",\"name\":\"mat\",\"version\":\"2.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/mat\"},\"dependencies\":[]}}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
@@ -859,7 +910,7 @@ test "正規化後に同一namespaceへ落ちるaliasのpackage混在を拒否�
     // 別packageを指す異名aliasは `{ns}__{名}` の解決を曖昧にするため拒否する。
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/pkg-a");
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/pkg-b");
-    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:a\":{\"id\":\"pkg:a\",\"name\":\"pkg-a\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/a\"},\"dependencies\":[]},\"pkg:b\":{\"id\":\"pkg:b\",\"name\":\"pkg-b\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/b\"},\"dependencies\":[]}}}";
+    const lock = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:a\":{\"id\":\"pkg:a\",\"name\":\"pkg-a\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/a\"},\"dependencies\":[]},\"pkg:b\":{\"id\":\"pkg:b\",\"name\":\"pkg-b\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/b\"},\"dependencies\":[]}}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
@@ -895,7 +946,7 @@ test "immutable path依存はgeneration内materialized pathを受理し宣言dir
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-a1b2/deps/imm/nako.toml", .data = manifest_toml });
     try temporary.dir.createDirPath(io, "deps/imm");
     try temporary.dir.writeFile(io, .{ .sub_path = "deps/imm/nako.toml", .data = manifest_toml });
-    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:imm\":{\"id\":\"pkg:imm\",\"name\":\"imm\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\"deps/imm\"},\"dependencies\":[]}}}";
+    const lock = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:imm\":{\"id\":\"pkg:imm\",\"name\":\"imm\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\"deps/imm\"},\"dependencies\":[]}}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
@@ -954,7 +1005,7 @@ test "代表implementation=nativeでもsource-only exportを欠落させない" 
     try temporary.dir.writeFile(io, .{ .sub_path = plugin_path, .data = "" });
     const lock = try std.fmt.allocPrint(
         allocator,
-        "{{\"schemaVersion\":1,\"input\":{{\"profile\":\"default\",\"target\":{{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}}}},\"packages\":{{\"pkg:hyb\":{{\"id\":\"pkg:hyb\",\"name\":\"hyb\",\"version\":\"1.0.0\",\"implementation\":\"native\",\"source\":{{\"type\":\"registry\",\"url\":\"{s}\"}},\"artifacts\":{{\"bin\":{{\"kind\":\"native\",\"url\":\"{s}\",\"sha256\":\"{s}\"}}}},\"dependencies\":[]}}}}}}",
+        "{{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{{\"profile\":\"default\",\"target\":{{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}}}},\"packages\":{{\"pkg:hyb\":{{\"id\":\"pkg:hyb\",\"name\":\"hyb\",\"version\":\"1.0.0\",\"implementation\":\"native\",\"source\":{{\"type\":\"registry\",\"url\":\"{s}\"}},\"artifacts\":{{\"bin\":{{\"kind\":\"native\",\"url\":\"{s}\",\"sha256\":\"{s}\"}}}},\"dependencies\":[]}}}}}}",
         .{ artifact_url, artifact_url, artifact_hash },
     );
     defer allocator.free(lock);
@@ -986,7 +1037,7 @@ test "選択input profileのtargetはlockのinput.targetからcompatJsを復元�
     try temporary.dir.createDirPath(io, ".nako/env/gen-e5m9/deps/esm-pkg");
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-e5m9/deps/esm-pkg/nako.toml", .data = "[package]\nname = \"esm-pkg\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n[[exports]]\nname = \"web\"\nesm = \"web.mjs\"\n" });
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-e5m9/deps/esm-pkg/web.mjs", .data = "export default {};\n" });
-    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\",\"compatJs\":true,\"optimize\":\"O2\"}},\"packages\":{\"pkg:esm\":{\"id\":\"pkg:esm\",\"name\":\"esm-pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/esm\"},\"dependencies\":[]}}}";
+    const lock = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\",\"compatJs\":true,\"optimize\":\"O2\"}},\"packages\":{\"pkg:esm\":{\"id\":\"pkg:esm\",\"name\":\"esm-pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/esm\"},\"dependencies\":[]}}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
@@ -1005,7 +1056,7 @@ test "選択input profileのtargetはlockのinput.targetからcompatJsを復元�
     loaded.deinit();
 
     // compatJs を記録していない同一環境は ESM export を解決できず拒否する。
-    const without_compat = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\",\"optimize\":\"O2\"}},\"packages\":{\"pkg:esm\":{\"id\":\"pkg:esm\",\"name\":\"esm-pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/esm\"},\"dependencies\":[]}}}";
+    const without_compat = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\",\"optimize\":\"O2\"}},\"packages\":{\"pkg:esm\":{\"id\":\"pkg:esm\",\"name\":\"esm-pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/esm\"},\"dependencies\":[]}}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = without_compat });
     std.crypto.hash.sha2.Sha256.hash(without_compat, &digest, .{});
     const without_compat_hex = std.fmt.bytesToHex(digest, .lower);
@@ -1030,7 +1081,7 @@ test "version条件exportはlockのinput.nakoVersionを復元して照合する"
     try temporary.dir.createDirPath(io, ".nako/env/gen-ver/deps/ver");
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-ver/deps/ver/nako.toml", .data = "[package]\nname = \"ver\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n[[exports]]\nname = \"main\"\nnative = { path = \"new.so\", when = 'version >= \"3.7.0\"' }\n" });
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-ver/deps/ver/new.so", .data = "" });
-    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"nakoVersion\":\"3.7.24\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:ver\":{\"id\":\"pkg:ver\",\"name\":\"ver\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/ver\"},\"dependencies\":[]}}}";
+    const lock = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"nakoVersion\":\"3.7.24\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:ver\":{\"id\":\"pkg:ver\",\"name\":\"ver\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/ver\"},\"dependencies\":[]}}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
@@ -1050,7 +1101,7 @@ test "version条件exportはlockのinput.nakoVersionを復元して照合する"
 
     // nakoVersion を記録していない lock では version 条件を証明できず、
     // 同じ環境でも export 不一致として拒否する。
-    const unversioned = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:ver\":{\"id\":\"pkg:ver\",\"name\":\"ver\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/ver\"},\"dependencies\":[]}}}";
+    const unversioned = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:ver\":{\"id\":\"pkg:ver\",\"name\":\"ver\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/ver\"},\"dependencies\":[]}}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = unversioned });
     std.crypto.hash.sha2.Sha256.hash(unversioned, &digest, .{});
     const unversioned_hex = std.fmt.bytesToHex(digest, .lower);
@@ -1073,7 +1124,7 @@ test "公開名に@を含むexport subpathを解決しversion指定は拒否す�
     try temporary.dir.writeFile(io, .{ .sub_path = "main.nako3", .data = "" });
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/lib/nako.toml", .data = "[package]\nname = \"lib\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n[[exports]]\nname = \"api@v1\"\npath = \"api.nako3\"\n" });
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/lib/api.nako3", .data = "" });
-    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:lib\":{\"id\":\"pkg:lib\",\"name\":\"lib\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/lib\"},\"dependencies\":[]}}}";
+    const lock = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:lib\":{\"id\":\"pkg:lib\",\"name\":\"lib\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/lib\"},\"dependencies\":[]}}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
@@ -1101,6 +1152,7 @@ test "公開名に@を含むexport subpathを解決しversion指定は拒否す�
     defer allocator.free(api_import.namespace);
     defer if (api_import.dispatch_namespace) |dispatch| allocator.free(dispatch);
     defer if (api_import.package_root) |package_root| allocator.free(package_root);
+    defer if (api_import.package_owner) |package_owner| allocator.free(package_owner);
     try std.testing.expectEqualStrings("lib__api_v1", api_import.namespace);
     // alias 直後が `/` でない `pkg:lib@1.0.0` は version 指定として従来どおり
     // 不一致。alias 名自体に `@` を含む登録は正規化で `_` になるため実在
@@ -1115,7 +1167,7 @@ test "正規化後に空になるaliasの環境記録を拒否する" {
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/pkg");
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/pkg/nako.toml", .data = "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });
-    const lock = "{\"schemaVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/pkg\"},\"dependencies\":[]}}}";
+    const lock = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/pkg\"},\"dependencies\":[]}}}";
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});

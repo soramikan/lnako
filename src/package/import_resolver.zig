@@ -237,7 +237,11 @@ pub const Resolver = struct {
         errdefer allocator.free(selected_path);
         const resolved_package_root = try allocator.dupe(u8, package_root);
         errdefer allocator.free(resolved_package_root);
-        return .{ .path = selected_path, .canonical_id = canonical_id, .namespace = namespace, .dispatch_namespace = dispatch_namespace, .package_root = resolved_package_root };
+        // owner は選択された package key を独立フィールドとして返す。
+        // canonical_id は `key`/`export名` の文字列形式だが export 名に `/`
+        // を含み得るため、owner の復元を canonical_id 側へ委ねてはいけない。
+        const resolved_owner = try allocator.dupe(u8, package_key);
+        return .{ .path = selected_path, .canonical_id = canonical_id, .namespace = namespace, .dispatch_namespace = dispatch_namespace, .package_root = resolved_package_root, .package_owner = resolved_owner };
     }
 
     fn packageForImporter(self: *Resolver, allocator: Allocator, packages: std.json.ObjectMap, importer: []const u8, owner_key: ?*?[]const u8) !?Value {
@@ -290,6 +294,11 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
     const lock_root = asObject(parsed_lock.value) orelse return error.InvalidEnvironment;
     const schema_value = get(lock_root, "schemaVersion") orelse return error.InvalidEnvironment;
     if (schema_value != .integer or (schema_value.integer != 1 and schema_value.integer != 2)) return error.InvalidEnvironment;
+    // lock schema と同じく `resolverVersion` も照合する。欠落・将来versionの
+    // lock を lockSha256 一致だけで信用すると、resolver が解釈できない選択
+    // 規則で生成された環境をそのまま受理してしまうため fail closed で拒否。
+    const resolver_value = get(lock_root, "resolverVersion") orelse return error.InvalidEnvironment;
+    if (resolver_value != .integer or resolver_value.integer != lock_model.resolver_version) return error.InvalidEnvironment;
     const lock_input = asObject(get(lock_root, "input") orelse return error.InvalidEnvironment) orelse return error.InvalidEnvironment;
     const input_profile = get(lock_input, "profile") orelse return error.InvalidEnvironment;
     if (input_profile != .string) return error.InvalidEnvironment;

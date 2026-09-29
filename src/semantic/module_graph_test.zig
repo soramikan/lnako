@@ -61,6 +61,10 @@ const PackageTestResolver = struct {
             "packages/math/vector.nako3"
         else if (std.mem.eql(u8, reference, "geometry"))
             "packages/geometry/index.nako3"
+        else if (std.mem.eql(u8, reference, "esm"))
+            "packages/esm/plugin.mjs"
+        else if (std.mem.eql(u8, reference, "deep"))
+            "packages/deep/api/v1.nako3"
         else
             return error.PackageNotFound;
         const namespace = if (std.mem.eql(u8, reference, "math"))
@@ -75,6 +79,10 @@ const PackageTestResolver = struct {
             "util"
         else if (std.mem.eql(u8, reference, "math/vector"))
             "math__vector"
+        else if (std.mem.eql(u8, reference, "esm"))
+            "esm"
+        else if (std.mem.eql(u8, reference, "deep"))
+            "deep__api__v1"
         else
             "geometry";
         const canonical_id = if (std.mem.eql(u8, reference, "math") or std.mem.eql(u8, reference, "math-alt"))
@@ -87,14 +95,38 @@ const PackageTestResolver = struct {
             "pkg:util-id/main"
         else if (std.mem.eql(u8, reference, "math/vector"))
             "pkg:math-id/vector"
+        else if (std.mem.eql(u8, reference, "esm"))
+            "pkg:esm-id/main"
+        else if (std.mem.eql(u8, reference, "deep"))
+            "pkg:deep-id/api/v1"
         else
             "pkg:geometry-id/main";
+        const package_owner = if (std.mem.eql(u8, reference, "foreign-dup"))
+            "pkg:foreign-id"
+        else if (std.mem.eql(u8, reference, "util"))
+            "pkg:util-id"
+        else if (std.mem.eql(u8, reference, "geometry"))
+            "pkg:geometry-id"
+        else if (std.mem.eql(u8, reference, "esm"))
+            "pkg:esm-id"
+        else if (std.mem.eql(u8, reference, "deep"))
+            "pkg:deep-id"
+        else
+            "pkg:math-id";
         const resolved_path = try std.fs.path.resolve(allocator, &.{path});
+        // `deep` はexport pathがpackage root直下でない（`api/v1.nako3`）ため
+        // rootを明示する。canonical_idからのowner逆算が `pkg:deep-id/api`
+        // を返し得る形を再現し、owner/rootの独立伝播を検証できるようにする。
+        const package_root = if (std.mem.eql(u8, reference, "deep"))
+            try std.fs.path.resolve(allocator, &.{"packages/deep"})
+        else
+            try allocator.dupe(u8, std.fs.path.dirname(resolved_path).?);
         return .{
             .path = resolved_path,
             .canonical_id = try allocator.dupe(u8, canonical_id),
             .namespace = namespace,
-            .package_root = try allocator.dupe(u8, std.fs.path.dirname(resolved_path).?),
+            .package_root = package_root,
+            .package_owner = try allocator.dupe(u8, package_owner),
         };
     }
 };
@@ -116,6 +148,7 @@ const NamespaceCollisionPackageResolver = struct {
             .path = try std.fs.path.resolve(allocator, &.{path}),
             .canonical_id = try allocator.dupe(u8, canonical_id),
             .namespace = try allocator.dupe(u8, "alice__tool"),
+            .package_owner = try allocator.dupe(u8, if (std.mem.eql(u8, specifier, "pkg:scoped")) "pkg:scoped" else "pkg:flat"),
         };
     }
 };
@@ -201,6 +234,32 @@ test "異なるpackageが同じ実体fileを指す場合moduleを共有しない
     try std.testing.expectEqualStrings("pkg:foreign-id/main", graph.modules[2].canonical_id.?);
 }
 
+test "export名にslashを含むpackageも独立したownerとrootで読み込む" {
+    // canonical_id `pkg:deep-id/api/v1` はexport名 `api/v1` のslashを含む。
+    // ownerをcanonical_idの末尾slashまでで逆算すると `pkg:deep-id/api`
+    // という存在しないpackage keyになるため、ownerはresolverから独立した
+    // フィールドとして伝播する必要がある。子孫のpackage境界もこのowner/
+    // root（packages/deep）で評価する。
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:deep」を取り込む\n" },
+        .{ .suffix = "packages/deep/api/v1.nako3", .source = "!「../shared.nako3」を取り込む\n値=1\n" },
+        .{ .suffix = "packages/deep/shared.nako3", .source = "S=2\n" },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .package_resolver = package_resolver.resolver() });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 3), graph.modules.len);
+    const export_module = graph.modules[1];
+    try std.testing.expectEqualStrings("pkg:deep-id/api/v1", export_module.canonical_id.?);
+    try std.testing.expectEqualStrings("pkg:deep-id", export_module.package_owner.?);
+    try std.testing.expect(pathHasSuffix(export_module.package_root.?, "packages/deep"));
+    const descendant = graph.modules[2];
+    try std.testing.expect(pathHasSuffix(descendant.path, "packages/deep/shared.nako3"));
+    try std.testing.expectEqualStrings("pkg:deep-id", descendant.package_owner.?);
+    try std.testing.expectEqualStrings(export_module.package_root.?, descendant.package_root.?);
+}
+
 test "package resolver未設定ではpackage specifierを拒否する" {
     var memory = MemoryProvider{ .files = &.{.{ .suffix = "main.nako3", .source = "!「パッケージ:missing」を取り込む\n" }} };
     var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{});
@@ -221,6 +280,7 @@ const TestLocalPackageResolver = struct {
             .path = try std.fs.path.resolve(allocator, &.{"lib/index.nako3"}),
             .canonical_id = try allocator.dupe(u8, "pkg:lib/main"),
             .namespace = "lib",
+            .package_owner = try allocator.dupe(u8, "pkg:lib"),
         };
     }
 };
@@ -291,29 +351,38 @@ test "package importは相対取り込み済みmoduleの名前を変えずloadin
     var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .package_resolver = package_resolver.resolver() });
     defer graph.deinit();
     try std.testing.expect(graph.succeeded());
-    try std.testing.expectEqual(@as(usize, 3), graph.modules.len);
+    // ownerスコープ別のmodule共有: 相対importの`lib/index.nako3`（owner無し）と
+    // `パッケージ:lib`が解決するmodule（owner=pkg:lib）は同じpathでも別moduleになる。
+    // 相対側の`パッケージ:lib`辺は循環せずpackage側moduleを指し、
+    // package側moduleの自己参照だけが循環辺になる。
+    try std.testing.expectEqual(@as(usize, 4), graph.modules.len);
     const other_module = graph.modules[1];
     const local_module = graph.modules[2];
+    const package_module = graph.modules[3];
     try std.testing.expectEqualStrings("index", other_module.name);
     try std.testing.expectEqualStrings("index", local_module.name);
     try std.testing.expect(local_module.canonical_id == null);
+    try std.testing.expect(local_module.package_owner == null);
+    try std.testing.expectEqualStrings("pkg:lib", package_module.package_owner.?);
     try std.testing.expectEqual(@as(usize, 1), local_module.imports.len);
-    try std.testing.expect(local_module.imports[0].cyclic);
-    try std.testing.expectEqual(@as(u32, local_module.index), local_module.imports[0].target.?);
-    try std.testing.expectEqual(@as(u32, local_module.index), graph.modules[0].imports[2].target.?);
+    try std.testing.expect(!local_module.imports[0].cyclic);
+    try std.testing.expectEqual(@as(u32, package_module.index), local_module.imports[0].target.?);
+    try std.testing.expectEqual(@as(u32, package_module.index), graph.modules[0].imports[2].target.?);
+    try std.testing.expect(package_module.imports[0].cyclic);
+    try std.testing.expectEqual(@as(u32, package_module.index), package_module.imports[0].target.?);
 
     var program = try graph.analyze(std.testing.allocator);
     defer program.deinit();
     try std.testing.expect(program.succeeded());
-    var resolved_local_alias = false;
+    var resolved_package_alias = false;
     for (program.bindings) |binding| {
         if (!std.mem.eql(u8, binding.name, "lib__値")) continue;
         const symbol_id = binding.symbol orelse continue;
         const symbol = program.symbols[symbol_id];
-        if (std.mem.startsWith(u8, binding.resolved_name, "index__lnako_local_") and
-            std.mem.endsWith(u8, binding.resolved_name, "__値") and symbol.module_index == local_module.index) resolved_local_alias = true;
+        if (std.mem.startsWith(u8, symbol.qualified_name, "package__") and
+            std.mem.endsWith(u8, symbol.qualified_name, "__値") and symbol.module_index == package_module.index) resolved_package_alias = true;
     }
-    try std.testing.expect(resolved_local_alias);
+    try std.testing.expect(resolved_package_alias);
 }
 
 test "package import後の相対importはファイル名namespaceを維持する" {
@@ -325,13 +394,18 @@ test "package import後の相対importはファイル名namespaceを維持する
     var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .package_resolver = package_resolver.resolver() });
     defer graph.deinit();
     try std.testing.expect(graph.succeeded());
-    try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
+    // package所有moduleと同じpathでもowner無しの相対importは別moduleとして
+    // local scopeに読み込まれ、ファイル名namespaceを維持する。
+    try std.testing.expectEqual(@as(usize, 3), graph.modules.len);
     const package_module = graph.modules[1];
+    const local_module = graph.modules[2];
     try std.testing.expectEqualStrings("lib", package_module.name);
+    try std.testing.expectEqualStrings("pkg:lib", package_module.package_owner.?);
+    try std.testing.expect(local_module.package_owner == null);
     try std.testing.expectEqual(@as(usize, 2), graph.modules[0].imports.len);
     try std.testing.expectEqualStrings("lib", graph.modules[0].imports[0].namespace.?);
     try std.testing.expectEqualStrings("index", graph.modules[0].imports[1].namespace.?);
-    try std.testing.expectEqual(@as(u32, package_module.index), graph.modules[0].imports[1].target.?);
+    try std.testing.expectEqual(@as(u32, local_module.index), graph.modules[0].imports[1].target.?);
 
     var program = try graph.analyze(std.testing.allocator);
     defer program.deinit();
@@ -342,7 +416,7 @@ test "package import後の相対importはファイル名namespaceを維持する
         const symbol_id = binding.symbol orelse continue;
         const symbol = program.symbols[symbol_id];
         found_binding = std.mem.eql(u8, binding.resolved_name, symbol.qualified_name) and
-            std.mem.startsWith(u8, symbol.qualified_name, "package__") and symbol.module_index == package_module.index;
+            std.mem.startsWith(u8, symbol.qualified_name, "index__") and symbol.module_index == local_module.index;
     }
     try std.testing.expect(found_binding);
 }
@@ -426,7 +500,7 @@ test "package内helperの修飾名は無関係なpackageからも解決されな
     try std.testing.expect(util_declared_own);
 }
 
-test "packageより先に相対importされたhelperは後から所有へ取り込まれても直接参照を維持する" {
+test "packageより先に相対importされたhelperはowner無しのまま直接参照を維持する" {
     var memory = MemoryProvider{ .files = &.{
         .{ .suffix = "main.nako3", .source = "!「packages/math/helper.nako3」を取り込む\n!「pkg:math」を取り込む\nhelper__内部値を表示\n" },
         .{ .suffix = "packages/math/helper.nako3", .source = "内部値=7\n" },
@@ -436,22 +510,29 @@ test "packageより先に相対importされたhelperは後から所有へ取り�
     var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .package_resolver = package_resolver.resolver() });
     defer graph.deinit();
     try std.testing.expect(graph.succeeded());
-    try std.testing.expectEqual(@as(usize, 3), graph.modules.len);
-    const helper_module = graph.modules[1];
-    // 先にlocal moduleとして読み込まれたhelperも、package indexの相対
-    // 取り込みで同一moduleが再利用された時点で所有へ引き上げられる。
-    try std.testing.expect(helper_module.canonical_id == null);
-    try std.testing.expectEqualStrings("pkg:math-id", helper_module.package_owner.?);
+    // 同じ実体fileでもowner scopeが異なればmoduleは共有しない。先にlocal
+    // moduleとして読み込まれたhelperはowner無しのまま残り、package indexの
+    // 相対importはpackage所有の別moduleとして読み込まれる（順序非依存）。
+    try std.testing.expectEqual(@as(usize, 4), graph.modules.len);
+    const local_helper = graph.modules[1];
+    const index_module = graph.modules[2];
+    const package_helper = graph.modules[3];
+    try std.testing.expect(local_helper.canonical_id == null);
+    try std.testing.expect(local_helper.package_owner == null);
+    try std.testing.expectEqualStrings("pkg:math-id", index_module.package_owner.?);
+    try std.testing.expectEqualStrings("pkg:math-id", package_helper.package_owner.?);
+    try std.testing.expectEqualStrings(local_helper.path, package_helper.path);
+    try std.testing.expectEqual(@as(u32, package_helper.index), index_module.imports[0].target.?);
 
     var program = try graph.analyze(std.testing.allocator);
     defer program.deinit();
     try std.testing.expect(program.succeeded());
-    // 取り込み元が持つ直接辺（暗黙alias）経由の参照は所有化後も解決できる。
+    // mainの暗黙alias `helper__` 経由の参照はlocal側moduleへ解決される。
     var resolved_to_helper = false;
     for (program.bindings) |binding| {
         if (!std.mem.eql(u8, binding.name, "helper__内部値")) continue;
         const symbol_id = binding.symbol orelse continue;
-        if (program.symbols[symbol_id].module_index == helper_module.index) resolved_to_helper = true;
+        if (program.symbols[symbol_id].module_index == local_helper.index) resolved_to_helper = true;
     }
     try std.testing.expect(resolved_to_helper);
 }
@@ -506,6 +587,7 @@ test "package内symlink経由のroot外importは診断され読み込まれな�
                 .canonical_id = try allocator.dupe(u8, "pkg:math-id/main"),
                 .namespace = "math",
                 .package_root = try std.fs.path.join(allocator, &.{ self.root_path, "packages/math" }),
+                .package_owner = try allocator.dupe(u8, "pkg:math-id"),
             };
         }
     };
@@ -641,6 +723,76 @@ test "JavaScriptの相対依存を再帰ロードする" {
     try std.testing.expectEqual(@as(usize, 1), graph.modules[1].imports.len);
     try std.testing.expectEqual(@as(?u32, 2), graph.modules[1].imports[0].target);
     try std.testing.expectEqualStrings("./helper.mjs", graph.modules[1].imports[0].requested);
+}
+
+test "package内JSのリテラル動的importを収集しpackage所有を継承する" {
+    // `import("./extra.mjs")` は静的宣言ではないため以前は収集されず、
+    // package root外への相対指定が境界検査をすり抜けていた。リテラル指定は
+    // 収集して通常のrelative importと同じくpackage境界で検査する。
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:esm」を取り込む\n" },
+        .{ .suffix = "packages/esm/plugin.mjs", .source = "export default async () => (await import('./extra.mjs')).value;" },
+        .{ .suffix = "packages/esm/extra.mjs", .source = "export const value = 1;" },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .compat_js = true, .package_resolver = package_resolver.resolver() });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 3), graph.modules.len);
+    const plugin = graph.modules[1];
+    try std.testing.expectEqual(ModuleKind.javascript, plugin.kind);
+    try std.testing.expectEqual(@as(usize, 1), plugin.imports.len);
+    try std.testing.expectEqualStrings("./extra.mjs", plugin.imports[0].requested);
+    try std.testing.expectEqual(@as(?u32, 2), plugin.imports[0].target);
+    // 動的importの子孫もpackage所有（owner/root）を継承する
+    const descendant = graph.modules[2];
+    try std.testing.expectEqualStrings("pkg:esm-id", descendant.package_owner.?);
+    try std.testing.expectEqualStrings(plugin.package_root.?, descendant.package_root.?);
+}
+
+test "package内JSのリテラル動的importがpackage root外を指す場合は拒否する" {
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:esm」を取り込む\n" },
+        .{ .suffix = "packages/esm/plugin.mjs", .source = "export default async () => (await import('../outside.mjs')).value;" },
+        .{ .suffix = "packages/outside.mjs", .source = "export const value = 1;" },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .compat_js = true, .package_resolver = package_resolver.resolver() });
+    defer graph.deinit();
+    try std.testing.expect(!graph.succeeded());
+    var reported = false;
+    for (graph.diagnostics) |item| {
+        if (std.mem.indexOf(u8, item.message, "package rootの外") != null) reported = true;
+    }
+    try std.testing.expect(reported);
+}
+
+test "package内JSの非リテラル動的importは拒否し直接importでは許容する" {
+    // package所有moduleでは `import(expr)` の解決先が静的に定まらず
+    // QuickJS loaderのFS fallbackがroot外を読み得るため明示的に拒否する。
+    var package_memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:esm」を取り込む\n" },
+        .{ .suffix = "packages/esm/plugin.mjs", .source = "export default async (name) => import(name);" },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var rejected = try load(std.testing.allocator, "main.nako3", package_memory.sourceProvider(), .{ .compat_js = true, .package_resolver = package_resolver.resolver() });
+    defer rejected.deinit();
+    try std.testing.expect(!rejected.succeeded());
+    var reported = false;
+    for (rejected.diagnostics) |item| {
+        if (std.mem.indexOf(u8, item.message, "リテラル指定以外") != null) reported = true;
+    }
+    try std.testing.expect(reported);
+
+    // 直接path取り込みの非package moduleでは従来挙動を維持する。
+    var direct_memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「plugin.mjs」を取り込む\n" },
+        .{ .suffix = "plugin.mjs", .source = "export default async (name) => import(name);" },
+    } };
+    var graph = try load(std.testing.allocator, "main.nako3", direct_memory.sourceProvider(), .{ .compat_js = true });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
 }
 
 test "ネイティブプラグインをソース読込なしで登録する" {
@@ -1002,4 +1154,39 @@ test "直接path取り込みのnative plugin命令は従来どおり無修飾で
         if (binding.kind == .builtin and binding.dynamic_builtin and std.mem.eql(u8, binding.resolved_name, "外部追加")) unqualified_dynamic = true;
     }
     try std.testing.expect(unqualified_dynamic);
+}
+
+test "plugin命令の動的解決はimport文より前の呼出しには適用しない" {
+    // P2回帰: 取り込み文より前の `外部追加(...)` はpluginを導入したimportが
+    // まだ存在しない時点の呼出しであり、preinstalled pluginや将来の同名
+    // builtinへ誤配送してはいけない。alias/直接importともにimport位置で
+    // ゲートする（NamespaceAliasの位置規則と同じ）。
+    var before_memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "外部追加(1, 2)\n!「plugin.so」を取り込む\n" },
+        .{ .suffix = "plugin.so", .source = "" },
+    } };
+    var before_graph = try load(std.testing.allocator, "main.nako3", before_memory.sourceProvider(), .{});
+    defer before_graph.deinit();
+    var before_program = try before_graph.analyze(std.testing.allocator);
+    defer before_program.deinit();
+    var pre_import_dynamic = false;
+    for (before_program.bindings) |binding| {
+        if (binding.kind == .builtin and binding.dynamic_builtin and std.mem.eql(u8, binding.resolved_name, "外部追加")) pre_import_dynamic = true;
+    }
+    try std.testing.expect(!pre_import_dynamic);
+
+    // package alias修飾名も同じくimport位置より前では束縛しない。
+    var package_memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "nativepkg__外部追加(1, 2)\n!「pkg:nativepkg」を取り込む\n" },
+    } };
+    var package_resolver = NativePluginPackageResolver{};
+    var package_graph = try load(std.testing.allocator, "main.nako3", package_memory.sourceProvider(), .{ .package_resolver = package_resolver.resolver() });
+    defer package_graph.deinit();
+    var package_program = try package_graph.analyze(std.testing.allocator);
+    defer package_program.deinit();
+    var pre_import_qualified = false;
+    for (package_program.bindings) |binding| {
+        if (binding.kind == .builtin and binding.dynamic_builtin and std.mem.eql(u8, binding.resolved_name, "nativepkg__外部追加")) pre_import_qualified = true;
+    }
+    try std.testing.expect(!pre_import_qualified);
 }

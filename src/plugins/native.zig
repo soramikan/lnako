@@ -327,6 +327,13 @@ pub const State = struct {
         var index = command_start;
         while (index < end) : (index += 1) {
             const source = self.commands.items[index];
+            // `__` を含むraw命令名はnamespace修飾へ複製しない。`b__c`をalias
+            // `a`へcloneすると公開名 `a__b__c` となり、package alias `a/b`の
+            // 命令 `c` と文字列上衝突して先頭一致で誤配送される。cloneを
+            // 作らなければ合成名自体が生まれないため衝突は解消し、raw命令は
+            // 無修飾名でのみ呼べる従来契約を維持する（namespace付き登録で
+            // `__` を拒否するregisterCommand側の境界と同じ）。
+            if (std.mem.indexOf(u8, source.name, "__") != null) continue;
             if (self.findRegisteredCommand(namespace, source.name) != null) return error.NativePluginCommandConflict;
             const name_copy = try allocator.dupe(u8, source.name);
             errdefer allocator.free(name_copy);
@@ -1131,6 +1138,49 @@ test "直接importとpackage importが併存するpluginは無修飾と修飾の
     try std.testing.expect(state.hasNamespacedCommand("math__加算"));
     try std.testing.expect(!state.hasNamespacedCommand("加算"));
     try std.testing.expect(!state.hasNamespacedCommand("other__加算"));
+}
+
+test "`__`を含むraw命令はnamespaceへcloneせず合成名衝突を避ける" {
+    // plugin X がraw命令 `b__c` を公開し、package alias `a` 配下へcloneする
+    // と `a__b__c` が生まれる。一方 package alias `a/b` が命令 `c` を公開
+    // する場合も公開名は `a__b__c` で、先頭一致解決が誤配送する。
+    // `__` 含有raw名はclone対象から除外し、raw名は無修飾でのみ呼べる。
+    var state = State.init();
+    state.allocator = std.testing.allocator;
+    defer state.deinit();
+    const command_start = state.commands.items.len;
+    var command = CommandV1{
+        .struct_size = @sizeOf(CommandV1),
+        .abi_version = abi_version,
+        .flags = flag_sync | flag_pure,
+        .name = "加算",
+        .particles = "AとBを",
+        .minimum_arguments = 2,
+        .maximum_arguments = 2,
+        .command_context = null,
+        .invoke = testCommandInvoke,
+        .destroy = null,
+    };
+    try std.testing.expectEqual(status_ok, registerCommand(&state, &command));
+    var raw_qualified = command;
+    raw_qualified.name = "b__c";
+    try std.testing.expectEqual(status_ok, registerCommand(&state, &raw_qualified));
+    try state.aliasCommandsForNamespace(command_start, "a");
+    // cloneされて `a__加算` が生まれ、`a__b__c` は合成されない
+    try std.testing.expect(state.findCommand("a__加算") != null);
+    try std.testing.expect(state.findCommand("a__b__c") == null);
+    // raw命令は無修飾名のまま解決できる
+    try std.testing.expect(state.findCommand("b__c") != null);
+    // 別packageが `a__b` namespaceで `c` を登録しても誤配送されない
+    // （`a__b__c` は `a` 配下の `b__c` cloneではなく `a__b` 配下の `c` へ解決される）
+    var package_command = command;
+    package_command.name = "c";
+    state.pending_namespace = "a__b";
+    try std.testing.expectEqual(status_ok, registerCommand(&state, &package_command));
+    state.pending_namespace = null;
+    const resolved = state.findCommand("a__b__c") orelse return error.TestExpectedNotNull;
+    try std.testing.expectEqualStrings("c", resolved.name);
+    try std.testing.expectEqualStrings("a__b", resolved.namespace.?);
 }
 
 test "無修飾の直接plugin命令は従来どおり末尾__除去で解決する" {

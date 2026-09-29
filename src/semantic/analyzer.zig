@@ -66,6 +66,10 @@ pub const ModuleInput = struct {
     /// 指す。文区切り（`;`／改行）の種別判定などに使う。
     normalized_source: []const u8 = "",
     allows_dynamic_commands: bool = false,
+    /// 直接native pluginの取り込みを有効にした最初のimport文位置。
+    /// それより前の呼出しは取り込み文をまだ持たないため動的builtinに
+    /// 束縛しない（`NamespaceAlias.import_position` と同じ可視性規則）。
+    allows_dynamic_commands_from: usize = 0,
     /// `pkg:` importがnative pluginへ解決した場合の公開namespace。修飾名
     /// `<alias>__<命令>` だけを動的builtinとして束縛し、素の命令名は
     /// 取り込みモジュールへ露出しない（package namespace契約）。
@@ -792,7 +796,7 @@ pub const Analyzer = struct {
         }
         if (callable) {
             const module_input = self.inputs[module_index];
-            if (dynamic_commands.binds(module_input.allows_dynamic_commands, module_input.dynamic_command_aliases, name)) |alias| {
+            if (dynamic_commands.binds(module_input.allows_dynamic_commands, module_input.allows_dynamic_commands_from, module_input.dynamic_command_aliases, name, node.span.start)) |alias| {
                 const dispatch_name = try dynamic_commands.dispatchName(self.allocator, alias, name);
                 try self.bind(node, .builtin, name, dispatch_name, null);
                 self.bindings.items[self.bindings.items.len - 1].dynamic_builtin = true;
@@ -842,7 +846,7 @@ pub const Analyzer = struct {
             }
         }
         const function_input = self.inputs[module_index];
-        if (dynamic_commands.binds(function_input.allows_dynamic_commands, function_input.dynamic_command_aliases, name)) |alias| {
+        if (dynamic_commands.binds(function_input.allows_dynamic_commands, function_input.allows_dynamic_commands_from, function_input.dynamic_command_aliases, name, node.span.start)) |alias| {
             const dispatch_name = try dynamic_commands.dispatchName(self.allocator, alias, name);
             try self.bind(node, .builtin, name, dispatch_name, null);
             self.bindings.items[self.bindings.items.len - 1].dynamic_builtin = true;

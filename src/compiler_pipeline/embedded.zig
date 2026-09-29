@@ -45,6 +45,11 @@ pub fn writeCompatExecutable(allocator: std.mem.Allocator, io: std.Io, executabl
                 .namespace = item.namespace orelse graph.modules[target].name,
                 .package_root = graph.modules[target].package_root orelse "",
                 .dispatch_namespace = item.dispatch_namespace orelse "",
+                // 同じimporter pathが別scopeのmoduleとして存在し得るため、
+                // edgeのowner scopeも記録して起動時の再解決で同じbindingを
+                // 選択できるようにする（payload v7）。
+                .importer_owner = module.package_owner orelse "",
+                .package_owner = graph.modules[target].package_owner orelse "",
             });
         }
     }
@@ -83,7 +88,7 @@ test "compat-js package import resolverを生成payloadと起動時compileへ引
     var manifest_digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(root_manifest, &manifest_digest, .{});
     const manifest_hex = std.fmt.bytesToHex(manifest_digest, .lower);
-    const lock_bytes = try std.fmt.allocPrint(allocator, "{{\"schemaVersion\":1,\"input\":{{\"manifestSha256\":\"sha256:{s}\",\"profile\":\"default\"}},\"packages\":{{\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\":{{\"id\":\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"name\":\"math\",\"version\":\"1.0.0\",\"source\":{{\"type\":\"registry\",\"url\":\"https://example.invalid/math\"}},\"dependencies\":[]}}}}}}", .{manifest_hex});
+    const lock_bytes = try std.fmt.allocPrint(allocator, "{{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{{\"manifestSha256\":\"sha256:{s}\",\"profile\":\"default\"}},\"packages\":{{\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\":{{\"id\":\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"name\":\"math\",\"version\":\"1.0.0\",\"source\":{{\"type\":\"registry\",\"url\":\"https://example.invalid/math\"}},\"dependencies\":[]}}}}}}", .{manifest_hex});
     defer allocator.free(lock_bytes);
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock_bytes });
     try temporary.dir.writeFile(io, .{ .sub_path = "compiler.bin", .data = "EXE" });
@@ -123,8 +128,12 @@ test "compat-js package import resolverを生成payloadと起動時compileへ引
         .package_resolver = package.packageResolver(),
     }, &stderr.writer, package.sourceProvider())) orelse return error.EmbeddedPackageCompileFailed;
     defer ir_program.deinit();
-    try std.testing.expectEqual(@as(usize, 2), ir_program.module_names.len);
+    // 同一fileへの直接path import（owner無し）とpackage import（owner=pkg key）は
+    // scope別moduleとして分離される — 共有すると依存解決scopeがimport順序で
+    // 変わるため。
+    try std.testing.expectEqual(@as(usize, 3), ir_program.module_names.len);
     try std.testing.expectEqualStrings("index", ir_program.module_names[1]);
+    try std.testing.expectEqualStrings("math", ir_program.module_names[2]);
 }
 
 test "埋め込みpayload再compileでもpackage内helperはpackage所有のままopaqueな内部namespaceを維持する" {
@@ -151,7 +160,7 @@ test "埋め込みpayload再compileでもpackage内helperはpackage所有のま�
     var manifest_digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(root_manifest, &manifest_digest, .{});
     const manifest_hex = std.fmt.bytesToHex(manifest_digest, .lower);
-    const lock_bytes = try std.fmt.allocPrint(allocator, "{{\"schemaVersion\":1,\"input\":{{\"manifestSha256\":\"sha256:{s}\",\"profile\":\"default\"}},\"packages\":{{\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\":{{\"id\":\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"name\":\"math\",\"version\":\"1.0.0\",\"source\":{{\"type\":\"registry\",\"url\":\"https://example.invalid/math\"}},\"dependencies\":[]}}}}}}", .{manifest_hex});
+    const lock_bytes = try std.fmt.allocPrint(allocator, "{{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{{\"manifestSha256\":\"sha256:{s}\",\"profile\":\"default\"}},\"packages\":{{\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\":{{\"id\":\"pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"name\":\"math\",\"version\":\"1.0.0\",\"source\":{{\"type\":\"registry\",\"url\":\"https://example.invalid/math\"}},\"dependencies\":[]}}}}}}", .{manifest_hex});
     defer allocator.free(lock_bytes);
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock_bytes });
     try temporary.dir.writeFile(io, .{ .sub_path = "compiler.bin", .data = "EXE" });

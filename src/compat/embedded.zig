@@ -4,7 +4,7 @@ const token_mod = @import("../frontend/token.zig");
 
 const magic = "LNAKOQJSBUNDLE1!";
 const trailer_length = @sizeOf(u64) + magic.len;
-const format_version: u32 = 6;
+const format_version: u32 = 7;
 const minimum_supported_format_version: u32 = 2;
 const maximum_payload_size: u64 = 512 * 1024 * 1024;
 
@@ -24,6 +24,13 @@ pub const PackageImport = struct {
     /// format v5以降。空文字は `namespace` と同一（scope修飾なし）を意味する。
     /// package内scopeの推移依存では所有者keyを含む修飾名になる。
     dispatch_namespace: []const u8 = "",
+    /// format v7以降。このedgeを張るimporter moduleのowner key。
+    /// 同じfileが直接importとpackage経由の両方で読み込まれ得るため、
+    /// importer pathだけでは辺の一意性が保てない。空文字はroot scope。
+    importer_owner: []const u8 = "",
+    /// format v7以降。解決先exportを所有するpackage key。canonical_idからの
+    /// 逆算は `/` を含むexport名で誤るため、生成時の解決結果をそのまま持つ。
+    package_owner: []const u8 = "",
 };
 
 fn packMode(mode: token_mod.Mode) u8 {
@@ -73,10 +80,14 @@ pub const Package = struct {
 
     /// payload は取り込みedgeごとの解決済み binding を保持するため、
     /// `importer_owner` の推測は行わない（記録済み binding を使う）。
-    fn resolvePackageImport(context: *anyopaque, allocator: std.mem.Allocator, importer: []const u8, _: ?[]const u8, specifier: []const u8) !module_graph.ResolvedPackageImport {
+    /// 同一 file が別scopeで読み込まれている場合は `(importer, specifier)`
+    /// のみでは binding が一意に定まらないため、edgeのowner scopeも照合する。
+    fn resolvePackageImport(context: *anyopaque, allocator: std.mem.Allocator, importer: []const u8, importer_owner: ?[]const u8, specifier: []const u8) !module_graph.ResolvedPackageImport {
         const self: *Package = @ptrCast(@alignCast(context));
+        const scope = importer_owner orelse "";
         for (self.package_imports) |item| {
-            if (!std.mem.eql(u8, item.importer, importer) or !std.mem.eql(u8, item.specifier, specifier)) continue;
+            if (!std.mem.eql(u8, item.importer, importer) or !std.mem.eql(u8, item.specifier, specifier) or
+                !std.mem.eql(u8, item.importer_owner, scope)) continue;
             const path = try allocator.dupe(u8, item.path);
             errdefer allocator.free(path);
             const canonical_id = try allocator.dupe(u8, item.canonical_id);
@@ -93,7 +104,11 @@ pub const Package = struct {
             else
                 null;
             errdefer if (dispatch_namespace) |owned| allocator.free(owned);
-            return .{ .path = path, .canonical_id = canonical_id, .namespace = namespace, .dispatch_namespace = dispatch_namespace, .package_root = package_root };
+            const package_owner: ?[]const u8 = if (item.package_owner.len != 0)
+                try allocator.dupe(u8, item.package_owner)
+            else
+                null;
+            return .{ .path = path, .canonical_id = canonical_id, .namespace = namespace, .dispatch_namespace = dispatch_namespace, .package_root = package_root, .package_owner = package_owner };
         }
         return error.PackageNotFound;
     }
@@ -152,6 +167,8 @@ pub fn createExecutableWithImports(
         try appendBytes(&output, allocator, item.namespace);
         try appendBytes(&output, allocator, item.package_root);
         try appendBytes(&output, allocator, item.dispatch_namespace);
+        try appendBytes(&output, allocator, item.importer_owner);
+        try appendBytes(&output, allocator, item.package_owner);
     }
     if (path_aliases.len > std.math.maxInt(u32)) return error.TooManyEmbeddedPathAliases;
     try appendInteger(&output, allocator, u32, @intCast(path_aliases.len));
@@ -205,6 +222,8 @@ fn parsePayload(allocator: std.mem.Allocator, payload: []u8) !Package {
             item.namespace = try readBytes(payload, &cursor);
             item.package_root = if (version >= 4) try readBytes(payload, &cursor) else "";
             item.dispatch_namespace = if (version >= 5) try readBytes(payload, &cursor) else "";
+            item.importer_owner = if (version >= 7) try readBytes(payload, &cursor) else "";
+            item.package_owner = if (version >= 7) try readBytes(payload, &cursor) else "";
         }
         break :blk imports;
     } else try allocator.alloc(PackageImport, 0);
@@ -275,10 +294,72 @@ test "埋め込みpackage import resolver metadataを復元する" {
     defer std.testing.allocator.free(resolved.canonical_id);
     defer std.testing.allocator.free(resolved.namespace);
     defer if (resolved.package_root) |package_root| std.testing.allocator.free(package_root);
+    defer if (resolved.package_owner) |package_owner| std.testing.allocator.free(package_owner);
     try std.testing.expectEqualStrings("/packages/math/index.nako3", resolved.path);
     try std.testing.expectEqualStrings("pkg:math-id/main", resolved.canonical_id);
     try std.testing.expectEqualStrings("math", resolved.namespace);
     try std.testing.expectEqualStrings("/packages/math", resolved.package_root.?);
+}
+
+test "埋め込みpackage importはimporter ownerでbindingを区別する" {
+    // 同一importerが同じspecifierをlocal scopeとpackage scopeの両方で
+    // 取り込む場合（再帰的なembedded compileや、scope別moduleが同じ
+    // source fileを持つ場合）、bindingレコードは `(importer, specifier)`
+    // では一意にならない。importer_ownerで照合し、要求scopeと異なる
+    // ownerのレコードへ誤配送しないことを固定する。
+    const package_imports = [_]PackageImport{
+        .{
+            .importer = "/src/main.nako3",
+            .importer_owner = "",
+            .specifier = "パッケージ:math",
+            .path = "/local/math/index.nako3",
+            .canonical_id = "pkg:local-math/main",
+            .namespace = "math",
+            .package_root = "/local/math",
+            .package_owner = "pkg:local-math",
+        },
+        .{
+            .importer = "/src/main.nako3",
+            .importer_owner = "pkg:util-id",
+            .specifier = "パッケージ:math",
+            .path = "/deps/util/vendor/math/index.nako3",
+            .canonical_id = "pkg:vendor-math/main",
+            .namespace = "math",
+            .package_root = "/deps/util/vendor/math",
+            .package_owner = "pkg:vendor-math",
+        },
+    };
+    const executable = try createExecutableWithImports(std.testing.allocator, "EXE", "/src/main.nako3", &.{
+        .{ .path = "/src/main.nako3", .source = "値=1\n" },
+    }, .{}, &package_imports, &.{});
+    defer std.testing.allocator.free(executable);
+    const payload_length = std.mem.readInt(u64, executable[executable.len - trailer_length ..][0..@sizeOf(u64)], .little);
+    const payload_start = executable.len - trailer_length - @as(usize, @intCast(payload_length));
+    const backing = try std.testing.allocator.dupe(u8, executable[payload_start .. executable.len - trailer_length]);
+    var package = try parsePayload(std.testing.allocator, backing);
+    defer package.deinit();
+    try std.testing.expectEqual(@as(usize, 2), package.package_imports.len);
+    const resolver = package.packageResolver();
+    // local scope（owner=null）の要求はlocal recordへ解決する
+    const local = try resolver.resolve(std.testing.allocator, "/src/main.nako3", null, "パッケージ:math");
+    defer std.testing.allocator.free(local.path);
+    defer std.testing.allocator.free(local.canonical_id);
+    defer std.testing.allocator.free(local.namespace);
+    defer if (local.package_root) |package_root| std.testing.allocator.free(package_root);
+    defer if (local.package_owner) |package_owner| std.testing.allocator.free(package_owner);
+    try std.testing.expectEqualStrings("/local/math/index.nako3", local.path);
+    try std.testing.expectEqualStrings("pkg:local-math", local.package_owner.?);
+    // package scope（owner=pkg:util-id）の要求はvendored recordへ解決する
+    const vendored = try resolver.resolve(std.testing.allocator, "/src/main.nako3", "pkg:util-id", "パッケージ:math");
+    defer std.testing.allocator.free(vendored.path);
+    defer std.testing.allocator.free(vendored.canonical_id);
+    defer std.testing.allocator.free(vendored.namespace);
+    defer if (vendored.package_root) |package_root| std.testing.allocator.free(package_root);
+    defer if (vendored.package_owner) |package_owner| std.testing.allocator.free(package_owner);
+    try std.testing.expectEqualStrings("/deps/util/vendor/math/index.nako3", vendored.path);
+    try std.testing.expectEqualStrings("pkg:vendor-math", vendored.package_owner.?);
+    // 記録に無いownerの要求は見つからない（先頭recordへの誤配送を防ぐ）
+    try std.testing.expectError(error.PackageNotFound, resolver.resolve(std.testing.allocator, "/src/main.nako3", "pkg:other", "パッケージ:math"));
 }
 
 test "埋め込みpayloadのpath aliasをcanonicalizeへ復元する" {
