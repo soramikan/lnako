@@ -975,19 +975,23 @@ test "immutable path依存はgeneration内materialized pathを受理し宣言dir
 
 test "代表implementation=nativeでもsource-only exportを欠落させない" {
     const cache_key = @import("cache_key.zig");
+    const native_store = @import("native_store.zig");
     const allocator = std.testing.allocator;
     const io = std.testing.io;
     var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
-    // native 選択の package は `.nako/native/<key>` の安定 root を公開する。
+    // native 選択の package は `.nako/native/<stableKey>` の安定 root を公開する。
     // 代表 kind が native でも source-only export（native 宣言を持たない
     // export）は env 記録へ残る必要がある（kind filter で捨てると
     // export 数が不一致になり環境が reject される）。
+    // stable root key は content key に package id を混ぜたもの（package 間共有拒否）。
     const artifact_url = "https://example.invalid/hyb";
     const artifact_hash = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
-    const native_key = try cache_key.artifactKey(allocator, "artifact", artifact_hash, artifact_url);
-    defer allocator.free(native_key);
-    const native_root = try std.fmt.allocPrint(allocator, ".nako/native/{s}", .{native_key});
+    const content_key = try cache_key.artifactKey(allocator, "artifact", artifact_hash, artifact_url);
+    defer allocator.free(content_key);
+    const store_key = try native_store.stableKey(allocator, content_key, "pkg:hyb");
+    defer allocator.free(store_key);
+    const native_root = try native_store.relativeRoot(allocator, store_key);
     defer allocator.free(native_root);
     try temporary.dir.createDirPath(io, native_root);
     const manifest_toml =
@@ -1071,6 +1075,8 @@ test "選択input profileのtargetはlockのinput.targetからcompatJsを復元�
 }
 
 test "version条件exportはlockのinput.nakoVersionを復元して照合する" {
+    const cache_key = @import("cache_key.zig");
+    const native_store = @import("native_store.zig");
     const allocator = std.testing.allocator;
     const io = std.testing.io;
     var temporary = test_sandbox.tmpDir(.{});
@@ -1078,18 +1084,37 @@ test "version条件exportはlockのinput.nakoVersionを復元して照合する"
     // sync は `input.nakoVersion` を `ArtifactTarget.version` へ渡して export
     // を選ぶ。復元側も同じ version を渡さないと `version >= ...` 条件の
     // export が不適合扱いになり、正常な環境まで InvalidEnvironment になる。
-    try temporary.dir.createDirPath(io, ".nako/env/gen-ver/deps/ver");
-    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-ver/deps/ver/nako.toml", .data = "[package]\nname = \"ver\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n[[exports]]\nname = \"main\"\nnative = { path = \"new.so\", when = 'version >= \"3.7.0\"' }\n" });
-    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-ver/deps/ver/new.so", .data = "" });
-    const lock = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"nakoVersion\":\"3.7.24\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:ver\":{\"id\":\"pkg:ver\",\"name\":\"ver\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/ver\"},\"dependencies\":[]}}}";
+    // native export は `.nako/native/<stableKey>` の安定 root に置く（世代 path
+    // の native export は dlopen が世代 GC で壊れ得るため拒否される契約）。
+    const artifact_url = "https://example.invalid/ver";
+    const artifact_hash = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+    const content_key = try cache_key.artifactKey(allocator, "artifact", artifact_hash, artifact_url);
+    defer allocator.free(content_key);
+    const store_key = try native_store.stableKey(allocator, content_key, "pkg:ver");
+    defer allocator.free(store_key);
+    const native_root = try native_store.relativeRoot(allocator, store_key);
+    defer allocator.free(native_root);
+    try temporary.dir.createDirPath(io, native_root);
+    const manifest_path = try std.fmt.allocPrint(allocator, "{s}/nako.toml", .{native_root});
+    defer allocator.free(manifest_path);
+    const so_path = try std.fmt.allocPrint(allocator, "{s}/new.so", .{native_root});
+    defer allocator.free(so_path);
+    try temporary.dir.writeFile(io, .{ .sub_path = manifest_path, .data = "[package]\nname = \"ver\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n[[exports]]\nname = \"main\"\nnative = { path = \"new.so\", when = 'version >= \"3.7.0\"' }\n" });
+    try temporary.dir.writeFile(io, .{ .sub_path = so_path, .data = "" });
+    const lock = try std.fmt.allocPrint(
+        allocator,
+        "{{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{{\"profile\":\"default\",\"nakoVersion\":\"3.7.24\",\"target\":{{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}}}},\"packages\":{{\"pkg:ver\":{{\"id\":\"pkg:ver\",\"name\":\"ver\",\"version\":\"1.0.0\",\"implementation\":\"native\",\"source\":{{\"type\":\"registry\",\"url\":\"{s}\"}},\"artifacts\":{{\"bin\":{{\"kind\":\"native\",\"url\":\"{s}\",\"sha256\":\"{s}\"}}}},\"dependencies\":[]}}}}}}",
+        .{ artifact_url, artifact_url, artifact_hash },
+    );
+    defer allocator.free(lock);
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
     const lock_hex = std.fmt.bytesToHex(digest, .lower);
     const environment = try std.fmt.allocPrint(
         allocator,
-        "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"packages\":{{\"pkg:ver\":{{\"name\":\"ver\",\"version\":\"1.0.0\",\"path\":\".nako/env/gen-ver/deps/ver\",\"exports\":[{{\"name\":\"main\",\"path\":\"new.so\"}}]}}}}}}",
-        .{lock_hex},
+        "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"packages\":{{\"pkg:ver\":{{\"name\":\"ver\",\"version\":\"1.0.0\",\"path\":\"{s}\",\"exports\":[{{\"name\":\"main\",\"path\":\"new.so\"}}]}}}}}}",
+        .{ lock_hex, native_root },
     );
     defer allocator.free(environment);
     try temporary.dir.createDirPath(io, ".nako");
@@ -1101,14 +1126,19 @@ test "version条件exportはlockのinput.nakoVersionを復元して照合する"
 
     // nakoVersion を記録していない lock では version 条件を証明できず、
     // 同じ環境でも export 不一致として拒否する。
-    const unversioned = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:ver\":{\"id\":\"pkg:ver\",\"name\":\"ver\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/ver\"},\"dependencies\":[]}}}";
+    const unversioned = try std.fmt.allocPrint(
+        allocator,
+        "{{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{{\"profile\":\"default\",\"target\":{{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}}}},\"packages\":{{\"pkg:ver\":{{\"id\":\"pkg:ver\",\"name\":\"ver\",\"version\":\"1.0.0\",\"implementation\":\"native\",\"source\":{{\"type\":\"registry\",\"url\":\"{s}\"}},\"artifacts\":{{\"bin\":{{\"kind\":\"native\",\"url\":\"{s}\",\"sha256\":\"{s}\"}}}},\"dependencies\":[]}}}}}}",
+        .{ artifact_url, artifact_url, artifact_hash },
+    );
+    defer allocator.free(unversioned);
     try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = unversioned });
     std.crypto.hash.sha2.Sha256.hash(unversioned, &digest, .{});
     const unversioned_hex = std.fmt.bytesToHex(digest, .lower);
     const unversioned_env = try std.fmt.allocPrint(
         allocator,
-        "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"packages\":{{\"pkg:ver\":{{\"name\":\"ver\",\"version\":\"1.0.0\",\"path\":\".nako/env/gen-ver/deps/ver\",\"exports\":[{{\"name\":\"main\",\"path\":\"new.so\"}}]}}}}}}",
-        .{unversioned_hex},
+        "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"packages\":{{\"pkg:ver\":{{\"name\":\"ver\",\"version\":\"1.0.0\",\"path\":\"{s}\",\"exports\":[{{\"name\":\"main\",\"path\":\"new.so\"}}]}}}}}}",
+        .{ unversioned_hex, native_root },
     );
     defer allocator.free(unversioned_env);
     try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = unversioned_env });

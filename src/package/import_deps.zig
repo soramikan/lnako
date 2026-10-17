@@ -6,6 +6,7 @@
 const std = @import("std");
 const diag = @import("diagnostics.zig");
 const environment = @import("environment.zig");
+const features_mod = @import("features.zig");
 const import_resolver = @import("import_resolver.zig");
 const lock_model = @import("lock_model.zig");
 const manifest_mod = @import("manifest.zig");
@@ -14,6 +15,113 @@ const semver = @import("semver.zig");
 const Allocator = std.mem.Allocator;
 
 pub const Error = error{ LockInvalid, OutOfMemory };
+
+// ---------------------------------------------------------------------------
+// feature gate 判定
+// ---------------------------------------------------------------------------
+
+/// project.zig の gatedDepNames と同じ判定（package module との import
+/// 循環を避けるためここに転記）。feature 定義から参照される依存 alias 名
+/// ＝現行 feature 集合で有効化し得る gated 依存の名前。`item` が定義済み
+/// feature 名のものは feature 参照なので対象外。
+fn gatedDepNames(allocator: Allocator, manifest: *const manifest_mod.Manifest) Error!std.StringHashMap(void) {
+    var gated = std.StringHashMap(void).init(allocator);
+    errdefer gated.deinit();
+    var iterator = manifest.features.iterator();
+    while (iterator.next()) |entry| {
+        for (entry.value_ptr.items) |item| {
+            if (manifest.features.contains(item)) continue;
+            try gated.put(item, {});
+        }
+    }
+    return gated;
+}
+
+/// project.zig の depIsGated/depIsActivated の組合せと同じ。`name` または
+/// `alias` が gated 集合に属し、双方が activated 集合に属さないとき除外。
+fn gatedDependencyBlocked(
+    gated: *const std.StringHashMap(void),
+    activated: *const std.StringHashMap(void),
+    name: []const u8,
+    alias: ?[]const u8,
+) bool {
+    const is_gated = gated.contains(name) or (alias != null and gated.contains(alias.?));
+    if (!is_gated) return false;
+    const is_activated = activated.contains(name) or (alias != null and activated.contains(alias.?));
+    return !is_activated;
+}
+
+/// package scope（依存 package 自身の manifest scope）の activated 依存
+/// alias 集合。feature 要求口は package import に無いため default 展開のみ
+/// （project.resolve の依存 scope と同一条件）。`context` は診断表示用。
+/// feature graph の不整合（未知 feature・循環）は manifest と lock の乖離
+/// であるため fail closed で LockInvalid。
+fn defaultActivatedAliases(
+    allocator: Allocator,
+    manifest: *const manifest_mod.Manifest,
+    context: []const u8,
+    diagnostics: *diag.List,
+) Error!std.StringHashMap(void) {
+    var aliases = manifest.dependencyAliases(allocator) catch return error.OutOfMemory;
+    defer aliases.deinit();
+    var offender: ?[]const u8 = null;
+    var expanded = features_mod.expand(allocator, &manifest.features, &.{}, true, &aliases, &offender) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.UnknownFeature => {
+            try diagnostics.addFmt(diag.E028_UNKNOWN_FEATURE, .err, context, .{}, "unknown feature \"{s}\" in \"{s}\"", .{ offender orelse "", context });
+            return error.LockInvalid;
+        },
+        error.FeatureCycle => {
+            try diagnostics.addFmt(diag.E027_FEATURE_CYCLE, .err, context, .{}, "invalid feature graph in \"{s}\"", .{context});
+            return error.LockInvalid;
+        },
+    };
+    defer expanded.deinit();
+    var activated = std.StringHashMap(void).init(allocator);
+    errdefer activated.deinit();
+    var alias_iterator = expanded.dependency_aliases.keyIterator();
+    while (alias_iterator.next()) |key| try activated.put(key.*, {});
+    return activated;
+}
+
+/// root scope（`edge_owner == null`）の activated 依存 alias 集合。
+/// `active_features`（lock `input.features`＝expandedFeatureNames: 展開済
+/// feature 名と直接指定された依存 alias の併記）がある場合はそれを使い、
+/// 無い呼出し（wrapper・旧 lock）は default feature 展開で近似する。
+fn rootActivatedAliases(
+    allocator: Allocator,
+    manifest: *const manifest_mod.Manifest,
+    active_features: ?[]const []const u8,
+    context: []const u8,
+    diagnostics: *diag.List,
+) Error!std.StringHashMap(void) {
+    const features = active_features orelse return defaultActivatedAliases(allocator, manifest, context, diagnostics);
+    var activated = std.StringHashMap(void).init(allocator);
+    errdefer activated.deinit();
+    for (features) |name| try activated.put(name, {});
+    return activated;
+}
+
+/// gate 対象となる依存 group 集合を scope 別に組み立てる。
+/// groups スライスを一時配列 `&.{...}` で返すと呼び出し直後に dangling になる
+/// （Zig の anonymous array 寿命は式の scope）ため、manifest 内フィールドへの
+/// 直接ポインタをフィールドとして保持する。
+const DependencyGroups = struct {
+    primary: *const manifest_mod.DependencyGroup,
+    /// root scope のみ dev-dependencies を載せる。package scope は null。
+    secondary: ?*const manifest_mod.DependencyGroup,
+
+    /// root scope は dev-dependencies も依存辺として扱う（resolve と lock
+    /// が双方を root の依存辺とするため、その alias も指定scopeに公開する
+    /// 必要がある）。package scope は dev-dependencies を含めない（依存
+    /// package 側のテスト用依存を import 依存 scope に公開しない）。
+    fn forEdge(edge_root_scope: bool, manifest: *const manifest_mod.Manifest) DependencyGroups {
+        return .{
+            .primary = &manifest.dependencies,
+            .secondary = if (edge_root_scope) &manifest.dev_dependencies else null,
+        };
+    }
+};
 
 // ---------------------------------------------------------------------------
 // import 依存の収集（alias → lock package）
@@ -101,7 +209,6 @@ fn optionalStringEql(a: ?[]const u8, b: ?[]const u8) bool {
     return b == null;
 }
 
-/// Build the root scope's package key set from root-manifest declarations first.
 /// Transitive lock entries are not candidates for root aliases unless they match
 /// the direct declaration's package identity/source/version constraints.
 pub fn collectRootDependencyIds(
@@ -110,7 +217,7 @@ pub fn collectRootDependencyIds(
     manifest: *const manifest_mod.Manifest,
     diagnostics: *diag.List,
 ) Error![]const []const u8 {
-    return collectRootDependencyIdsForProfile(allocator, lock_entries, manifest, null, diagnostics);
+    return collectRootDependencyIdsForProfile(allocator, lock_entries, manifest, null, null, diagnostics);
 }
 
 pub fn collectRootDependencyIdsForProfile(
@@ -118,29 +225,53 @@ pub fn collectRootDependencyIdsForProfile(
     lock_entries: []const lock_model.PackageEntry,
     manifest: *const manifest_mod.Manifest,
     active_profile: ?[]const u8,
+    active_features: ?[]const []const u8,
     diagnostics: *diag.List,
 ) Error![]const []const u8 {
+    // root scopeの gate 判定。activated は lock `input.features`
+    // （expandedFeatureNames: 展開済 feature 名＋直接指定依存 alias）から
+    // 構成する。feature-gated で未 activated の宣言は lock graph にも
+    // 存在しないため、lock 辺照合の前に落とす。
+    var gated = try gatedDepNames(allocator, manifest);
+    defer gated.deinit();
+    var activated = try rootActivatedAliases(allocator, manifest, active_features, "nako.toml.dependencies", diagnostics);
+    defer activated.deinit();
     var ids = std.ArrayListUnmanaged([]const u8).empty;
-    var pkg = manifest.dependencies.pkg.iterator();
-    while (pkg.next()) |item| {
-        const dependency = item.value_ptr.*;
-        if (!dependencyMatchesProfile(dependency.profile, active_profile)) continue;
-        try appendCandidateIds(allocator, &ids, lock_entries, dependency.name, .{ .version = dependency.version }, dependency.public_id, diagnostics);
+    errdefer ids.deinit(allocator);
+    const groups = DependencyGroups.forEdge(true, manifest);
+    var group_buf: [2]*const manifest_mod.DependencyGroup = undefined;
+    group_buf[0] = groups.primary;
+    var group_count: usize = 1;
+    if (groups.secondary) |group| {
+        group_buf[1] = group;
+        group_count = 2;
     }
-    var path = manifest.dependencies.path.iterator();
-    while (path.next()) |item| {
-        const dependency = item.value_ptr.*;
-        try appendCandidateIds(allocator, &ids, lock_entries, dependency.name, .{ .path = dependency.path }, null, diagnostics);
-    }
-    var git = manifest.dependencies.git.iterator();
-    while (git.next()) |item| {
-        const dependency = item.value_ptr.*;
-        try appendCandidateIds(allocator, &ids, lock_entries, dependency.name, .{ .git = .{ .url = dependency.url, .commit = dependency.commit, .path = dependency.path } }, null, diagnostics);
-    }
-    var http = manifest.dependencies.http.iterator();
-    while (http.next()) |item| {
-        const dependency = item.value_ptr.*;
-        try appendCandidateIds(allocator, &ids, lock_entries, dependency.name, .{ .http = .{ .url = dependency.url, .hash = dependency.hash } }, null, diagnostics);
+    for (group_buf[0..group_count]) |group| {
+        var pkg = group.pkg.iterator();
+        while (pkg.next()) |item| {
+            const dependency = item.value_ptr.*;
+            if (!dependencyMatchesProfile(dependency.profile, active_profile)) continue;
+            if (gatedDependencyBlocked(&gated, &activated, dependency.name, dependency.alias)) continue;
+            try appendCandidateIds(allocator, &ids, lock_entries, dependency.name, .{ .version = dependency.version }, dependency.public_id, diagnostics);
+        }
+        var path = group.path.iterator();
+        while (path.next()) |item| {
+            const dependency = item.value_ptr.*;
+            if (gatedDependencyBlocked(&gated, &activated, dependency.name, null)) continue;
+            try appendCandidateIds(allocator, &ids, lock_entries, dependency.name, .{ .path = dependency.path }, null, diagnostics);
+        }
+        var git = group.git.iterator();
+        while (git.next()) |item| {
+            const dependency = item.value_ptr.*;
+            if (gatedDependencyBlocked(&gated, &activated, dependency.name, dependency.alias)) continue;
+            try appendCandidateIds(allocator, &ids, lock_entries, dependency.name, .{ .git = .{ .url = dependency.url, .commit = dependency.commit, .path = dependency.path } }, null, diagnostics);
+        }
+        var http = group.http.iterator();
+        while (http.next()) |item| {
+            const dependency = item.value_ptr.*;
+            if (gatedDependencyBlocked(&gated, &activated, dependency.name, dependency.alias)) continue;
+            try appendCandidateIds(allocator, &ids, lock_entries, dependency.name, .{ .http = .{ .url = dependency.url, .hash = dependency.hash } }, null, diagnostics);
+        }
     }
     return try ids.toOwnedSlice(allocator);
 }
@@ -184,6 +315,10 @@ fn appendCandidateIds(
     }
 }
 
+// ---------------------------------------------------------------------------
+// 依存宣言の照合
+// ---------------------------------------------------------------------------
+
 /// `active_profile == null` は「profile 選択なしの sync」を意味し、宣言側の
 /// profile 制約を適用せず全てに一致する。import_resolver 側の同名述語は
 /// 「環境検証時の active profile」で null = 無profile環境とみなし、profile
@@ -212,7 +347,7 @@ pub fn collectImportDependencies(
     manifest: *const manifest_mod.Manifest,
     diagnostics: *diag.List,
 ) Error![]const environment.ImportDependency {
-    return collectImportDependenciesForProfile(allocator, lock_entries, allowed_ids, edge_owner, manifest, null, diagnostics);
+    return collectImportDependenciesForProfile(allocator, lock_entries, allowed_ids, edge_owner, manifest, null, null, diagnostics);
 }
 
 pub fn collectImportDependenciesForProfile(
@@ -222,29 +357,58 @@ pub fn collectImportDependenciesForProfile(
     edge_owner: ?[]const u8,
     manifest: *const manifest_mod.Manifest,
     active_profile: ?[]const u8,
+    active_features: ?[]const []const u8,
     diagnostics: *diag.List,
 ) Error![]const environment.ImportDependency {
+    // root scope は lock `input.features` を activated に使い、
+    // dev-dependencies も公開対象（テスト等の dev 利用 import を
+    // environment.json の import 依存表へ載せる）。package scope は
+    // dev-dependencies を含めず、manifest 既定の default feature 展開で
+    // activated を導出する（依存側に feature 要求口はないため）。
+    const edge_root_scope = edge_owner == null;
+    var gated = try gatedDepNames(allocator, manifest);
+    defer gated.deinit();
+    var activated = if (edge_root_scope)
+        try rootActivatedAliases(allocator, manifest, active_features, "nako.toml.dependencies", diagnostics)
+    else
+        try defaultActivatedAliases(allocator, manifest, manifest.package.name, diagnostics);
+    defer activated.deinit();
     var result = std.ArrayListUnmanaged(environment.ImportDependency).empty;
-    var pkg = manifest.dependencies.pkg.iterator();
-    while (pkg.next()) |item| {
-        const dependency = item.value_ptr.*;
-        if (!dependencyMatchesProfile(dependency.profile, active_profile)) continue;
-        try appendImportDependency(allocator, &result, lock_entries, allowed_ids, edge_owner, dependency.name, .{ .version = dependency.version }, dependency.public_id, dependency.alias, hasOwnerNameAliasCollision(manifest, dependency.name, active_profile), diagnostics);
+    errdefer result.deinit(allocator);
+    const groups = DependencyGroups.forEdge(edge_root_scope, manifest);
+    var group_buf: [2]*const manifest_mod.DependencyGroup = undefined;
+    group_buf[0] = groups.primary;
+    var group_count: usize = 1;
+    if (groups.secondary) |group| {
+        group_buf[1] = group;
+        group_count = 2;
     }
-    var path = manifest.dependencies.path.iterator();
-    while (path.next()) |item| {
-        const dependency = item.value_ptr.*;
-        try appendImportDependency(allocator, &result, lock_entries, allowed_ids, edge_owner, dependency.name, .{ .path = dependency.path }, null, null, false, diagnostics);
-    }
-    var git = manifest.dependencies.git.iterator();
-    while (git.next()) |item| {
-        const dependency = item.value_ptr.*;
-        try appendImportDependency(allocator, &result, lock_entries, allowed_ids, edge_owner, dependency.name, .{ .git = .{ .url = dependency.url, .commit = dependency.commit, .path = dependency.path } }, null, dependency.alias, false, diagnostics);
-    }
-    var http = manifest.dependencies.http.iterator();
-    while (http.next()) |item| {
-        const dependency = item.value_ptr.*;
-        try appendImportDependency(allocator, &result, lock_entries, allowed_ids, edge_owner, dependency.name, .{ .http = .{ .url = dependency.url, .hash = dependency.hash } }, null, dependency.alias, false, diagnostics);
+    for (group_buf[0..group_count]) |group| {
+        var pkg = group.pkg.iterator();
+        while (pkg.next()) |item| {
+            const dependency = item.value_ptr.*;
+            if (!dependencyMatchesProfile(dependency.profile, active_profile)) continue;
+            if (gatedDependencyBlocked(&gated, &activated, dependency.name, dependency.alias)) continue;
+            try appendImportDependency(allocator, &result, lock_entries, allowed_ids, edge_owner, dependency.name, .{ .version = dependency.version }, dependency.public_id, dependency.alias, hasOwnerNameAliasCollision(manifest, dependency.name, active_profile), diagnostics);
+        }
+        var path = group.path.iterator();
+        while (path.next()) |item| {
+            const dependency = item.value_ptr.*;
+            if (gatedDependencyBlocked(&gated, &activated, dependency.name, null)) continue;
+            try appendImportDependency(allocator, &result, lock_entries, allowed_ids, edge_owner, dependency.name, .{ .path = dependency.path }, null, null, false, diagnostics);
+        }
+        var git = group.git.iterator();
+        while (git.next()) |item| {
+            const dependency = item.value_ptr.*;
+            if (gatedDependencyBlocked(&gated, &activated, dependency.name, dependency.alias)) continue;
+            try appendImportDependency(allocator, &result, lock_entries, allowed_ids, edge_owner, dependency.name, .{ .git = .{ .url = dependency.url, .commit = dependency.commit, .path = dependency.path } }, null, dependency.alias, false, diagnostics);
+        }
+        var http = group.http.iterator();
+        while (http.next()) |item| {
+            const dependency = item.value_ptr.*;
+            if (gatedDependencyBlocked(&gated, &activated, dependency.name, dependency.alias)) continue;
+            try appendImportDependency(allocator, &result, lock_entries, allowed_ids, edge_owner, dependency.name, .{ .http = .{ .url = dependency.url, .hash = dependency.hash } }, null, dependency.alias, false, diagnostics);
+        }
     }
     return try result.toOwnedSlice(allocator);
 }

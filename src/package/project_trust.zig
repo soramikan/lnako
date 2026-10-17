@@ -19,6 +19,9 @@ const UsersAddOnlyPolicy = enum {
 /// On Windows ACL parsing is deliberately conservative: unknown ACE forms fail closed.
 /// POSIXではモードビットに加えて所有者を検査する — 0644でも別ユーザ所有なら
 /// 所有者が書き換え・chmodできるため、実効ユーザでもrootでもない所有は拒否する。
+/// macOSではさらに拡張ACL（ACL_TYPE_EXTENDED）を検査する。mode/uidが安全でも
+/// 非所有者主体へ書込みを許すALLOW entryが付いていれば、検証後の内容改変・
+/// entry差替えが可能なため拒否する（fail-closed）。
 pub fn isUnsafeWritablePath(allocator: Allocator, io: std.Io, path: []const u8) !bool {
     const stat = try std.Io.Dir.cwd().statFile(io, path, .{});
     if (comptime builtin.os.tag == .windows)
@@ -26,7 +29,9 @@ pub fn isUnsafeWritablePath(allocator: Allocator, io: std.Io, path: []const u8) 
     if (comptime builtin.os.tag == .wasi) return false;
     if (@intFromEnum(stat.permissions) & 0o022 != 0) return true;
     const metadata = low_level_fs.stat(io, path, true) catch return true;
-    return metadata.uid != 0 and metadata.uid != std.c.geteuid();
+    if (metadata.uid != 0 and metadata.uid != std.c.geteuid()) return true;
+    if (comptime builtin.os.tag == .macos) return darwinExtendedAclGrantsUntrustedWrite(allocator, path);
+    return false;
 }
 
 /// `root` 自体と配下の全エントリを走査し、共有writableな箇所があれば true
@@ -102,7 +107,136 @@ fn isUnsafeWritableAncestor(allocator: Allocator, io: std.Io, path: []const u8) 
     // sticky 付き（/tmp 等）は他者 entry の置換が不可能なため作成のみ →
     // ここでは owner 検査のみ残す（dir 自体の owner が他者なら unsafe）。
     if (metadata.mode & 0o022 != 0 and metadata.mode & 0o1000 == 0) return true;
-    return metadata.uid != 0 and metadata.uid != std.c.geteuid();
+    if (metadata.uid != 0 and metadata.uid != std.c.geteuid()) return true;
+    if (comptime builtin.os.tag == .macos) return darwinExtendedAclGrantsUntrustedWrite(allocator, path);
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// macOS 拡張ACL（ACL_TYPE_EXTENDED）
+// ---------------------------------------------------------------------------
+
+/// `acl_get_file` の拡張ACL要求 type。
+const darwin_acl_type_extended: c_int = 0x00000100;
+const darwin_acl_first_entry: c_int = 0;
+const darwin_acl_next_entry: c_int = -1;
+/// `acl_get_file` が拡張ACLを保持しない対象に対して返す errno。実測では
+/// errno ENOENT(2)（man の「対象物が存在しない」も含む記載と一致）で返る。
+/// 旧系や実装差で ENOATTR(93) を返す場合もACL不在として扱う。
+const darwin_acl_enoent: c_int = 2;
+const darwin_acl_enoattr: c_int = 93;
+/// entry走査の終端を示す errno。
+const darwin_acl_einval: c_int = 22;
+/// `acl_get_tag_type` の tag 値。Darwinはallow/deny相当の2値のみ。
+const darwin_acl_extended_allow: c_uint = 1;
+const darwin_acl_extended_deny: c_uint = 2;
+/// この対象物自体には適用されず、子への継承のみを目的とした entry を示す
+/// flag。`chmod +ai` 等で付く継承templateがこれに相当する。
+const darwin_acl_entry_only_inherit: c_uint = 1 << 8;
+/// 対象物の内容・構成・権限を改変し得る permission。
+const darwin_acl_write_permissions = [_]c_uint{
+    1 << 2, // ACL_WRITE_DATA / ACL_ADD_FILE
+    1 << 5, // ACL_APPEND_DATA / ACL_ADD_SUBDIRECTORY
+    1 << 4, // ACL_DELETE
+    1 << 6, // ACL_DELETE_CHILD
+    1 << 8, // ACL_WRITE_ATTRIBUTES
+    1 << 10, // ACL_WRITE_EXTATTRIBUTES
+    1 << 12, // ACL_WRITE_SECURITY
+    1 << 13, // ACL_CHANGE_OWNER
+};
+/// 対象物の owner を表す stub subject（`owner` 特殊 group record）の GUID。
+/// 実ユーザー・実グループは DirectoryService UUID で qualifier に入るため、
+/// libc だけでは file owner と同一視できない — その場合も fail closed で
+/// unsafe とする（対象 owner 自身が明示ACLで自身へ書込みを許していても
+/// 拒否する過剰側の誤判定になるが、既定のAPFS layoutでは拡張ACL自体が
+/// 付かないため常用構成には影響しない）。
+const darwin_acl_owner_stub_uuid = [_]u8{
+    0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd,
+    0xef, 0xab, 0xcd, 0xef, 0x00, 0x00, 0x00, 0x0a,
+};
+
+extern "c" fn acl_get_file(path: [*:0]const u8, acl_type: c_int) ?*anyopaque;
+extern "c" fn acl_free(obj: ?*anyopaque) c_int;
+extern "c" fn acl_get_entry(acl: *anyopaque, entry_id: c_int, entry: *?*anyopaque) c_int;
+extern "c" fn acl_get_tag_type(entry: *anyopaque, tag: *c_uint) c_int;
+extern "c" fn acl_get_permset(entry: *anyopaque, permset: *?*anyopaque) c_int;
+extern "c" fn acl_get_perm_np(permset: *anyopaque, perm: c_uint) c_int;
+extern "c" fn acl_get_qualifier(entry: *anyopaque) ?*anyopaque;
+extern "c" fn acl_get_flagset_np(entry: *anyopaque, flagset: *?*anyopaque) c_int;
+extern "c" fn acl_get_flag_np(flagset: *anyopaque, flag: c_uint) c_int;
+
+/// macOS拡張ACLの検査。ACLが付いていない場合（`acl_get_file` が errno
+/// ENOENT/ENOATTR で NULL）は ACL由来では unsafe ではない（falseを返す） —
+/// mode/uid側の検査で書込み保護が確定しているため。entry走査の終端は
+/// errno EINVAL で判別する。DENY entryは権限を狭める方向なので無視し、
+/// ONLY_INHERIT flag付きentryは対象物自体への適用が無いため無視する。
+/// ALLOW entryが書込み系permissionを持ち、qualifier（principal）が
+/// 「対象物のowner」を表すowner stub GUID以外なら内容改変・entry差替えが
+/// 可能なため unsafe(true)。取得・走査・permission読取・未知tagの失敗は
+/// fail-closedで unsafe(true) にする。
+fn darwinExtendedAclGrantsUntrustedWrite(allocator: Allocator, path: []const u8) Allocator.Error!bool {
+    comptime if (builtin.os.tag != .macos) return false;
+    const path_z = try allocator.dupeZ(u8, path);
+    defer allocator.free(path_z);
+    const acl = acl_get_file(path_z.ptr, darwin_acl_type_extended) orelse {
+        // 拡張ACL無しは errno ENOENT(2)／ENOATTR(93) で NULLが返る。
+        // ACLが無いなら ACL由来では unsafe ではない。それ以外の errno
+        // （EACCES等）は許可集合を解釈できないため fail-closed。
+        const errno = std.c._errno().*;
+        return errno != darwin_acl_enoent and errno != darwin_acl_enoattr;
+    };
+    defer _ = acl_free(acl);
+
+    var entry: ?*anyopaque = null;
+    if (acl_get_entry(acl, darwin_acl_first_entry, &entry) != 0) {
+        // 最初のentryが取れない＝書込みgrantを含むentryが一つも無い（空ACL）。
+        // 終端を示すerrno EINVALのみ安全側。それ以外はfail-closed。
+        if (std.c._errno().* != darwin_acl_einval) return true;
+        return false;
+    }
+    while (true) {
+        const current = entry orelse return true;
+        var tag: c_uint = undefined;
+        if (acl_get_tag_type(current, &tag) != 0) return true;
+        if (tag == darwin_acl_extended_allow) {
+            // ONLY_INHERIT flag付きentry（継承template）はこの対象物自体に
+            // 適用されず、子に複製されるだけ。flagの取得に失敗した場合は
+            // 適用あり扱いにしてfail-closedとする。
+            var flagset: ?*anyopaque = null;
+            const flags_read = acl_get_flagset_np(current, &flagset) == 0 and flagset != null;
+            const only_inherit = flags_read and acl_get_flag_np(flagset.?, darwin_acl_entry_only_inherit) == 1;
+            if (!only_inherit) {
+                var permset: ?*anyopaque = null;
+                if (acl_get_permset(current, &permset) != 0) return true;
+                const perms = permset orelse return true;
+                var granted = false;
+                for (darwin_acl_write_permissions) |permission| {
+                    // 0以外がpermissionありを示す。
+                    if (acl_get_perm_np(perms, permission) != 0) granted = true;
+                }
+                if (granted) {
+                    const qualifier = acl_get_qualifier(current) orelse return true;
+                    defer _ = acl_free(qualifier);
+                    const bytes: [*]const u8 = @ptrCast(qualifier);
+                    // qualifier無し・owner stub以外の主体への書込み許可は
+                    // 非所有者による内容改変を許し得るためunsafe。
+                    if (!std.mem.eql(u8, bytes[0..darwin_acl_owner_stub_uuid.len], &darwin_acl_owner_stub_uuid)) return true;
+                }
+            }
+        } else if (tag != darwin_acl_extended_deny) {
+            // DENYは他主体の権限を狭めるだけで付与を追加しないため無視する。
+            // 未知のtagは解釈できないためfail-closed。
+            return true;
+        }
+        entry = null;
+        if (acl_get_entry(acl, darwin_acl_next_entry, &entry) != 0) {
+            // 終端（errno EINVAL）は走査完結＝unsafeなgrantが無かったことを
+            // 示す。それ以外の失敗は解釈できないためfail-closed。
+            if (std.c._errno().* != darwin_acl_einval) return true;
+            break;
+        }
+    }
+    return false;
 }
 
 const WinApi = struct {
@@ -374,4 +508,78 @@ test "Windows ACL check accepts a private temporary project directory and file" 
         return error.TestUnexpectedResult;
     if (try windowsPathHasUntrustedWriteAccess(allocator, manifest, false, .allow_inherited_baseline))
         return error.TestUnexpectedResult;
+}
+
+test "macOS拡張ACLのdirへの書込みgrantは祖先検査でunsafeになる" {
+    if (comptime builtin.os.tag != .macos) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDir(io, "sub", .default_dir);
+    try temporary.dir.writeFile(io, .{ .sub_path = "sub/x.nako3", .data = "" });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    const sub = try std.fs.path.join(allocator, &.{ root, "sub" });
+    defer allocator.free(sub);
+    const child = try std.fs.path.join(allocator, &.{ sub, "x.nako3" });
+    defer allocator.free(child);
+    // 子から見た祖先 dir に付いた書込み許可 entry は子（file/dir entry）の
+    // rename・差替えを許すため、file path自体（存在確認済み）を起点とする
+    // 祖先検査で unsafe 判定になる。
+    try darwinTestChmodAdd(allocator, io, "everyone allow write", sub);
+    try std.testing.expect(try hasUnsafeWritableAncestors(allocator, io, child, "/"));
+    try darwinTestChmodClear(allocator, io, sub);
+    try std.testing.expect(!try hasUnsafeWritableAncestors(allocator, io, child, "/"));
+}
+
+test "Darwin extended ACL rejects write grants to non-owner principals" {
+    if (comptime builtin.os.tag != .macos) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.toml", .data = "[package]\nname = \"safe\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    const manifest = try std.fs.path.join(allocator, &.{ root, "nako.toml" });
+    defer allocator.free(manifest);
+    // 拡張ACL無しは ACL由来では unsafe ではない。
+    try std.testing.expect(!try isUnsafeWritablePath(allocator, io, manifest));
+
+    // macOS標準のDENY型ACL（例: group:everyone deny delete）はgrantではない。
+    try darwinTestChmodAdd(allocator, io, "group:everyone deny delete", manifest);
+    try std.testing.expect(!try isUnsafeWritablePath(allocator, io, manifest));
+    try darwinTestChmodClear(allocator, io, manifest);
+
+    // 非owner主体（group:everyone）へのwrite grantは内容改変を許すためunsafe。
+    try darwinTestChmodAdd(allocator, io, "group:everyone allow write", manifest);
+    try std.testing.expect(try isUnsafeWritablePath(allocator, io, manifest));
+    try darwinTestChmodClear(allocator, io, manifest);
+
+    // owner特殊identityへのwrite grantは対象物のowner自身への許可と
+    // 同義であるため引き続き安全側。
+    try darwinTestChmodAdd(allocator, io, "owner allow write", manifest);
+    try std.testing.expect(!try isUnsafeWritablePath(allocator, io, manifest));
+    try darwinTestChmodClear(allocator, io, manifest);
+}
+
+fn darwinTestChmodAdd(allocator: Allocator, io: std.Io, entry: []const u8, path: []const u8) !void {
+    const result = try std.process.run(allocator, io, .{ .argv = &.{ "/bin/chmod", "+a", entry, path } });
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    switch (result.term) {
+        .exited => |code| if (code != 0) return error.TestUnexpectedResult,
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+fn darwinTestChmodClear(allocator: Allocator, io: std.Io, path: []const u8) !void {
+    const result = try std.process.run(allocator, io, .{ .argv = &.{ "/bin/chmod", "-N", path } });
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    switch (result.term) {
+        .exited => |code| if (code != 0) return error.TestUnexpectedResult,
+        else => return error.TestUnexpectedResult,
+    }
 }

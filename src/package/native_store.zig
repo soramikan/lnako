@@ -45,10 +45,20 @@ pub fn relativeRoot(allocator: Allocator, key: []const u8) Allocator.Error![]u8 
     return std.fmt.allocPrint(allocator, ".nako/native/{s}", .{key});
 }
 
+/// Content-only cache key を package identity で分離した安定 root key を
+/// 導出する。同一内容 artifact が複数 package の native export に含まれる
+/// 場合、content-only key では `.nako/native/<key>` が共有され、Resolver の
+/// duplicate root 拒否と衝突する（2 package 同一 root → owner 推測不能）。
+/// package id を混ぜることで package ごとに別 root を持たせる。
+pub fn stableKey(allocator: Allocator, content_key: []const u8, package_id: []const u8) Allocator.Error![]u8 {
+    return cache_key.shortKey(allocator, "native", &.{ content_key, package_id });
+}
+
 /// Derive the same object key used by sync from the locked source fields.
-pub fn expectedRoot(allocator: Allocator, source: std.json.ObjectMap, lock_entry: std.json.ObjectMap) !?[]u8 {
+/// `package_id` は lock entry の環境 key（`packages` の map key）。
+pub fn expectedRoot(allocator: Allocator, source: std.json.ObjectMap, lock_entry: std.json.ObjectMap, package_id: []const u8) !?[]u8 {
     const source_kind = requiredString(source, "type") orelse return error.InvalidEnvironment;
-    const key = if (std.mem.eql(u8, source_kind, "git")) blk: {
+    const content_key = if (std.mem.eql(u8, source_kind, "git")) blk: {
         const url = requiredString(source, "url") orelse return error.InvalidEnvironment;
         const commit = requiredString(source, "commit") orelse return error.InvalidEnvironment;
         const path = optionalString(source, "path") orelse "";
@@ -95,7 +105,7 @@ pub fn expectedRoot(allocator: Allocator, source: std.json.ObjectMap, lock_entry
     } else {
         return null;
     };
-    return try relativeRoot(allocator, key);
+    return try relativeRoot(allocator, try stableKey(allocator, content_key, package_id));
 }
 
 /// Resolve an environment-supplied stable root and ensure it remains inside the
@@ -290,9 +300,9 @@ test "native artifact root selects first matching kind despite platform keys and
     , .{});
     defer parsed.deinit();
     const entry = asObject(parsed.value).?;
-    const root = try expectedRoot(allocator, entry.get("source").?.object, entry);
+    const root = try expectedRoot(allocator, entry.get("source").?.object, entry, "pkg:test");
     const first_key = try cache_key.artifactKey(allocator, "artifact", "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "https://example.invalid/first");
-    const expected = try relativeRoot(allocator, first_key);
+    const expected = try relativeRoot(allocator, try stableKey(allocator, first_key, "pkg:test"));
     try testing.expectEqualStrings(expected, root.?);
 }
 
@@ -307,9 +317,9 @@ test "native artifact rootは同kind複数recordをkey昇順で選択する" {
     , .{});
     defer parsed.deinit();
     const entry = asObject(parsed.value).?;
-    const root = try expectedRoot(allocator, entry.get("source").?.object, entry);
+    const root = try expectedRoot(allocator, entry.get("source").?.object, entry, "pkg:test");
     const first_key = try cache_key.artifactKey(allocator, "artifact", "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "https://example.invalid/first");
-    const expected = try relativeRoot(allocator, first_key);
+    const expected = try relativeRoot(allocator, try stableKey(allocator, first_key, "pkg:test"));
     try testing.expectEqualStrings(expected, root.?);
 }
 
@@ -322,9 +332,9 @@ test "native artifact rootはimplementation省略時にsync同様source artifact
     , .{});
     defer parsed.deinit();
     const entry = asObject(parsed.value).?;
-    const root = try expectedRoot(allocator, entry.get("source").?.object, entry);
+    const root = try expectedRoot(allocator, entry.get("source").?.object, entry, "pkg:test");
     const source_key = try cache_key.artifactKey(allocator, "artifact", "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "https://example.invalid/source");
-    const expected = try relativeRoot(allocator, source_key);
+    const expected = try relativeRoot(allocator, try stableKey(allocator, source_key, "pkg:test"));
     try testing.expectEqualStrings(expected, root.?);
 }
 
@@ -332,16 +342,16 @@ test "native artifact rootはimmutable path依存を内容pinから導出しmuta
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const allocator = arena_state.allocator();
-    // immutable path 依存は世代内複製の pin（`artifacts["source"].sha256`）から
-    // sync と同じ `artifactKey("path", pin, rel)` の安定 root を導出する。
+    // immutable path 依存は世代内複製の pin（`artifacts["source"].sha256`）と
+    // package id から sync と同じ `stableKey` の安定 root を導出する。
     const parsed = try std.json.parseFromSlice(Value, allocator,
         \\{"source":{"type":"path","path":"deps/imm"},"artifacts":{"source":{"sha256":"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}}}
     , .{});
     defer parsed.deinit();
     const entry = asObject(parsed.value).?;
-    const root = try expectedRoot(allocator, entry.get("source").?.object, entry);
+    const root = try expectedRoot(allocator, entry.get("source").?.object, entry, "pkg:test");
     const expected_key = try cache_key.artifactKey(allocator, "path", "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "deps/imm");
-    const expected = try relativeRoot(allocator, expected_key);
+    const expected = try relativeRoot(allocator, try stableKey(allocator, expected_key, "pkg:test"));
     try testing.expectEqualStrings(expected, root.?);
 
     // mutable path は宣言 dir を生参照するため安定 root を持たない。
@@ -350,7 +360,24 @@ test "native artifact rootはimmutable path依存を内容pinから導出しmuta
     , .{});
     defer mutable_parsed.deinit();
     const mutable_entry = asObject(mutable_parsed.value).?;
-    try testing.expect((try expectedRoot(allocator, mutable_entry.get("source").?.object, mutable_entry)) == null);
+    try testing.expect((try expectedRoot(allocator, mutable_entry.get("source").?.object, mutable_entry, "pkg:test")) == null);
+}
+
+test "stableKeyはpackage idで別rootへ分離する" {
+    // 同一内容 artifact が複数 package の native export に含まれても、
+    // package id 混ぜ込みにより `.nako/native/<key>` が共有されない。
+    const allocator = testing.allocator;
+    const content_key = try cache_key.artifactKey(allocator, "artifact", "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "https://example.invalid/shared");
+    defer allocator.free(content_key);
+    const first = try stableKey(allocator, content_key, "pkg:first");
+    defer allocator.free(first);
+    const second = try stableKey(allocator, content_key, "pkg:second");
+    defer allocator.free(second);
+    try testing.expect(!std.mem.eql(u8, first, second));
+    // 同一 package id・同一内容は同一 root（Deterministic）。
+    const repeated = try stableKey(allocator, content_key, "pkg:first");
+    defer allocator.free(repeated);
+    try testing.expectEqualStrings(first, repeated);
 }
 
 test "native materialize reuses an equivalent root and rejects a changed file" {

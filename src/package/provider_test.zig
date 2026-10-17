@@ -967,7 +967,7 @@ test "git provider は commit-ish と同名の移動した tag に誤解され�
     const short = repo.commit[0..7];
     // `rev-parse <short>` は同名 tag を先に解決するが、取得 provider は
     // --disambiguate で commit object を選ぶため tag 移動の影響を受けない。
-    try gitRun(io, &.{ "git", "-C", repo.path, "tag", "-f", short, second });
+    try gitRun(io, &.{ "git", "-C", repo.path, "-c", "tag.gpgsign=false", "tag", "-f", short, second });
 
     const tmp_root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
     defer testing.allocator.free(tmp_root);
@@ -999,7 +999,7 @@ test "git provider は既存 lock の commit を tag 移動後も使う" {
     const second = try gitStdout(io, &.{ "git", "-C", repo.path, "rev-parse", "HEAD" });
     defer testing.allocator.free(second);
     const short = repo.commit[0..7];
-    try gitRun(io, &.{ "git", "-C", repo.path, "tag", "-f", short, second });
+    try gitRun(io, &.{ "git", "-C", repo.path, "-c", "tag.gpgsign=false", "tag", "-f", short, second });
 
     const locked = lock_model.Source{ .kind = .git, .url = repo.url, .commit = repo.commit };
     const tmp_root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
@@ -2043,7 +2043,7 @@ test "sync は lock の implementation で選択した artifact を取得する"
     defer parsed.deinit();
     const pkg = parsed.value.object.get("packages").?.object.get("pkg:44444444444444444444444444444444").?.object;
     const package_path = pkg.get("path").?.string;
-    try testing.expect(std.mem.startsWith(u8, package_path, ".nako/native/artifact-"));
+    try testing.expect(std.mem.startsWith(u8, package_path, ".nako/native/"));
     const stable_root = try std.fs.path.join(testing.allocator, &.{ project_abs, package_path });
     defer testing.allocator.free(stable_root);
     const native_path = try std.fs.path.join(testing.allocator, &.{ stable_root, "lib", "demo.so" });
@@ -2124,7 +2124,7 @@ test "sync は lock の implementation で選択した artifact を取得する"
     defer legacy_parsed.deinit();
     const legacy_pkg = legacy_parsed.value.object.get("packages").?.object.get("pkg:44444444444444444444444444444444").?.object;
     const legacy_path = legacy_pkg.get("path").?.string;
-    try testing.expect(std.mem.startsWith(u8, legacy_path, ".nako/native/artifact-"));
+    try testing.expect(std.mem.startsWith(u8, legacy_path, ".nako/native/"));
     const legacy_binary_path = try std.fs.path.join(testing.allocator, &.{ project_abs, legacy_path, "lib", "demo.so" });
     defer testing.allocator.free(legacy_binary_path);
     const legacy_binary = try std.Io.Dir.cwd().readFileAlloc(io, legacy_binary_path, testing.allocator, .unlimited);

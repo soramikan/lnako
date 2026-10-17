@@ -4,6 +4,7 @@ const module_graph = @import("../semantic/module_graph.zig");
 const npkg_files = @import("npkg_files.zig");
 const npkg_commands_gen = @import("npkg_commands_gen.zig");
 const lock_model = @import("lock_model.zig");
+const path_digest = @import("path_digest.zig");
 const manifest_mod = @import("manifest.zig");
 const native_store = @import("native_store.zig");
 const diag = @import("diagnostics.zig");
@@ -85,6 +86,12 @@ pub const Resolver = struct {
             return error.InvalidEnvironment;
         }
         try validateEnvironmentLockBinding(storage, io, root, root_object, lock_bytes);
+        // mutable path 依存の内容 digest も load 時に照合する。lockSha256 は
+        // lock 文書の同一性だけを検証し、mutable path は宣言 dir を生参照する
+        // 契約で内容変更を許すが、変更は lock・環境の再生成を要求する。
+        // sync 中の追従検査だけでは、lock の digest が stale になったままの
+        // 環境を `--no-sync` の消費者が読めてしまうため fail closed。
+        try validateMutablePathDigestFreshness(storage, io, root, root_object, lock_bytes);
         return .{ .io = io, .project_root = root, .parsed = parsed, .owned = owned };
     }
 
@@ -280,6 +287,65 @@ pub const Resolver = struct {
     }
 };
 
+/// `nako.lock` の `input.mutablePaths`（tag: contents digest）と
+/// environment.json の `mutablePaths` の写しを対称比較した上で、live tree
+/// と照合する。mutable path 依存は宣言 dir を生参照する契約で内容変更を許
+/// すが、変更時は lock・環境の再生成を要求する。lockSha256 は lock 文書
+/// そのものの同一性しか検証しないため、digest が stale な環境や lock と
+/// 環境で mutable path 集合の異なる環境を load 時に fail closed で拒否す
+/// る。lock 全体の schema 厳密検証は validateEnvironmentLockBinding 側で
+/// 行うため、ここでは `mutablePaths` だけを緩く読む（target/features 未記
+/// 録の旧 lock でも mutablePaths 無しは自明に一致）。live tree との一致は
+/// `path_digest.mutablePathsMismatch` が lock 記録集合との完全一致込みで
+/// 検証する（余分な record を混ぜた任意 dir の再帰 digest 遅延を防ぐため）。
+fn validateMutablePathDigestFreshness(
+    allocator: Allocator,
+    io: std.Io,
+    project_root: []const u8,
+    environment_root: std.json.ObjectMap,
+    lock_bytes: []const u8,
+) !void {
+    var parsed_lock = std.json.parseFromSlice(Value, allocator, lock_bytes, .{}) catch return error.InvalidEnvironment;
+    defer parsed_lock.deinit();
+    const lock_root = asObject(parsed_lock.value) orelse return error.InvalidEnvironment;
+    const lock_input_value = get(lock_root, "input") orelse return error.InvalidEnvironment;
+    const lock_input = asObject(lock_input_value) orelse return error.InvalidEnvironment;
+
+    const recorded = try parseMutablePaths(allocator, lock_input);
+    const declared = try parseMutablePaths(allocator, environment_root);
+    if (recorded.items.len != declared.items.len) return error.InvalidEnvironment;
+    for (recorded.items) |record| {
+        var matched = false;
+        for (declared.items) |declaration| {
+            if (!std.mem.eql(u8, record.path, declaration.path)) continue;
+            // path が一致しても内容 digest が食い違う場合は lock と環境の
+            // 乖離。digest 再計算で救わず、集合不一致として拒否する。
+            if (!std.mem.eql(u8, record.sha256, declaration.sha256)) return error.InvalidEnvironment;
+            matched = true;
+            break;
+        }
+        if (!matched) return error.InvalidEnvironment;
+    }
+    if ((try path_digest.mutablePathsMismatch(allocator, io, project_root, recorded.items)) != null) {
+        return error.InvalidEnvironment;
+    }
+}
+
+fn parseMutablePaths(allocator: Allocator, object: std.json.ObjectMap) !std.ArrayListUnmanaged(lock_model.MutablePath) {
+    var paths: std.ArrayListUnmanaged(lock_model.MutablePath) = .empty;
+    errdefer paths.deinit(allocator);
+    const mutable_value = get(object, "mutablePaths") orelse return paths;
+    const array = asArray(mutable_value) orelse return error.InvalidEnvironment;
+    for (array.items) |item| {
+        const item_object = asObject(item) orelse return error.InvalidEnvironment;
+        const path_value = get(item_object, "path") orelse return error.InvalidEnvironment;
+        const sha_value = get(item_object, "sha256") orelse return error.InvalidEnvironment;
+        if (path_value != .string or sha_value != .string) return error.InvalidEnvironment;
+        try paths.append(allocator, .{ .path = path_value.string, .sha256 = sha_value.string });
+    }
+    return paths;
+}
+
 fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root: []const u8, environment: std.json.ObjectMap, lock_bytes: []const u8) !void {
     const profile_value = get(environment, "profile") orelse return error.InvalidEnvironment;
     if (profile_value != .string) return error.InvalidEnvironment;
@@ -380,22 +446,21 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
             else
                 std.array_list.Managed(Value).init(allocator);
             defer if (exports_value == null) record_exports.deinit();
-            const implementation = requiredString(lock_entry, "implementation");
             // `.nako/native/` を名乗る環境 path は lock 由来の期待 root と
             // 一致する場合に限り native store として検証し、そうでなければ
             // 拒否する（任意 path を native 検証へ通さない）。native export を
             // 公開した package は代表 implementation が source/path でも sync
             // が安定 root を発行するため、env path の prefix で判定する。
             if (std.mem.startsWith(u8, environment_path.string, ".nako/native/")) {
-                const expected_native_path = try native_store.expectedRoot(allocator, source, lock_entry) orelse return error.InvalidEnvironment;
+                const expected_native_path = try native_store.expectedRoot(allocator, source, lock_entry, environment_entry.key_ptr.*) orelse return error.InvalidEnvironment;
                 if (!std.mem.eql(u8, environment_path.string, expected_native_path)) return error.InvalidEnvironment;
                 break :blk try native_store.validateRoot(allocator, io, project_root, environment_path.string);
             }
-            if (record_exports.items.len != 0 and implementation != null and std.mem.eql(u8, implementation.?, "native")) {
-                // native 実装の package は sync が常に安定 root を発行する。
-                // 世代 path への代替は環境改ざんでしか起きないため拒否する。
-                return error.InvalidEnvironment;
-            }
+            // native 実装を選択した package でも、解決された export が全て
+            // source/esm の場合は世代 path に留まれる（sync が安定 root を
+            // 発行しないため世代的公開が正）。native export を1件でも解決
+            // した環境は validateEnvironmentExports 側で `.nako/native/`
+            // prefix を要求する（安定 root 契約はそちらで強制）。
             const expected_directory = materialized_directories.get(environment_entry.key_ptr.*) orelse return error.InvalidEnvironment;
             const generation = materializedGeneration(environment_path.string, expected_directory) orelse return error.InvalidEnvironment;
             if (shared_generation) |expected| {
@@ -650,6 +715,11 @@ fn validateEnvironmentExports(
 
     var expected_index: usize = 0;
     var export_provider: ?npkg_commands_gen.DirSourceProvider = null;
+    // native export（.native）を1件でも解決した環境は、package tree が
+    // 世代ローテーションの外（`.nako/native/<key>`）に置かれていることを
+    // 要求する。dlopen は path 変更に耐えられず、世代 GC 後の辞退では
+    // 参照壊れになるため。source/esm export だけの環境は世代 path でよい。
+    const record_path = requiredString(record, "path") orelse return error.InvalidEnvironment;
     if (manifest) |*value| {
         if (implementation == null or !std.mem.eql(u8, implementation.?, "none")) {
             const prefer_native = if (implementation) |kind| std.mem.eql(u8, kind, "native") else false;
@@ -662,6 +732,7 @@ fn validateEnvironmentExports(
                 // native export の併記は両方記録される。
                 const resolution = try export_decl.resolve(allocator, package_target, prefer_native, &diagnostics) orelse continue;
                 if (resolution.kind == .esm and !std.mem.eql(u8, package_target.runtime, "cnako") and !package_target.compat_js) continue;
+                if (resolution.kind == .native and !std.mem.startsWith(u8, record_path, ".nako/native/")) return error.InvalidEnvironment;
                 if (expected_index >= environment_exports.items.len) return error.InvalidEnvironment;
                 const actual = asObject(environment_exports.items[expected_index]) orelse return error.InvalidEnvironment;
                 if (!std.mem.eql(u8, requiredString(actual, "name") orelse return error.InvalidEnvironment, export_decl.name) or

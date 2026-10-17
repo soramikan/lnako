@@ -53,6 +53,13 @@ pub fn findProjectRoot(allocator: Allocator, io: std.Io, input_path: []const u8)
         current = parent;
     }
 
+    // project root 自体と root〜importer 間が安全でも、root の親が共有
+    // writable なら root tree を rename して同じ path の別 project へ置き
+    // 換えられる。nako.toml の取り違えで manifest identity ごと偽装でき、
+    // importer が属する project 全体の信頼性を崩すため filesystem root まで
+    // 遡って fail closed で検査する。
+    if (try project_trust.hasUnsafeWritableAncestors(temporary, io, root, "/")) return null;
+
     current = start;
     while (true) {
         const environment_path = try std.fs.path.join(temporary, &.{ current, ".nako", "environment.json" });

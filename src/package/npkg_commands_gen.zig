@@ -36,6 +36,12 @@ pub const SourceProvider = struct {
 pub const Result = struct {
     arena: std.heap.ArenaAllocator,
     commands: []Command,
+    /// import 閉包に native plugin artifact（`.so`/`.dylib`/`.dll`/`.node`）
+    /// が含まれたか。export 解決結果が source 全部でも、閉包が plugin
+    /// binary に依存する package は安定 root（`.nako/native/`）へ置ける
+    /// 必要がある（dlopen は世代ローテーションで参照を失わないようにする
+    /// ため）。
+    has_native_plugin: bool = false,
 
     pub fn deinit(self: *Result) void {
         self.arena.deinit();
@@ -57,6 +63,17 @@ fn isNakoSource(path: []const u8) bool {
     return std.ascii.eqlIgnoreCase(extension, ".nako3") or
         std.ascii.eqlIgnoreCase(extension, ".dncl") or
         std.ascii.eqlIgnoreCase(extension, ".dncl2");
+}
+
+/// 取り込み指定の解決先が native plugin artifact か。export 解決結果が
+/// source 全部でも、閉包に plugin binary が含まれる package は安定 root
+/// へ置く必要があるため閉包走査中に検出して記録する。
+pub fn isNativePluginArtifact(path: []const u8) bool {
+    const extension = std.fs.path.extension(path);
+    return std.ascii.eqlIgnoreCase(extension, ".so") or
+        std.ascii.eqlIgnoreCase(extension, ".dylib") or
+        std.ascii.eqlIgnoreCase(extension, ".dll") or
+        std.ascii.eqlIgnoreCase(extension, ".node");
 }
 
 /// `base`（取り込み元のパッケージ相対 path）から `rel`（取り込み指定）を
@@ -110,6 +127,7 @@ const Collector = struct {
     command_names: std.StringHashMapUnmanaged(void),
     depth: usize = 0,
     source_bytes: usize = 0,
+    has_native_plugin: bool = false,
 
     fn report(self: *Collector, code: []const u8, path: []const u8, comptime format: []const u8, args: anytype) !void {
         try self.diagnostics.addFmt(code, .err, path, .{}, format, args);
@@ -221,6 +239,12 @@ const Collector = struct {
                 try self.report(diag.E039_NPKG_UNDISTRIBUTABLE_DEPENDENCY, path, "import \"{s}\" enters an excluded .nako/.git directory", .{node.value});
                 return;
             }
+        }
+        // native plugin artifact の取り込みは索引対象外だが、閉包が plugin
+        // binary に依存するかの判定のために記録する。
+        if (isNativePluginArtifact(resolved)) {
+            self.has_native_plugin = true;
+            return;
         }
         if (!isNakoSource(resolved)) return;
         self.depth += 1;
@@ -339,7 +363,11 @@ pub fn generate(
     for (entry_paths) |path| try collector.process(path);
     if (diagnostics.errorCount() > prior_errors) return error.InvalidCommands;
     // 全割当が完了した後に arena を移す。
-    return .{ .arena = arena, .commands = collector.commands.items };
+    return .{
+        .arena = arena,
+        .commands = collector.commands.items,
+        .has_native_plugin = collector.has_native_plugin,
+    };
 }
 
 const testing = std.testing;

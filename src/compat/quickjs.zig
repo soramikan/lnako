@@ -421,17 +421,30 @@ pub fn installModules(runtime: *Runtime, state: *State, modules: []const @import
             }
         }
         // eval中に `addPluginObject` で自己登録したpluginは active namespace
-        // （namespaces[0]）にしか登録されていないため、残りのalias namespaceへ
-        // も展開する。listはshim側でdrainされる（namespacesが0/1件の場合は
-        // drainのみ）。
+        // （namespaces[0]）にしか登録されていないため、全非空namespaceへ
+        // 再登録する。shim側がdrainしかつ (plugin, namespace) 単位で重複
+        // 登録を弾くため重複分は無害（namespacesが0件または空sentinelのみ
+        // の場合はdrainのみ）。
         var extra_namespaces: std.ArrayList(u8) = .empty;
         defer extra_namespaces.deinit(runtime.allocator());
-        const extra_slice = if (module.namespaces.len > 1) module.namespaces[1..] else module.namespaces[0..0];
         try extra_namespaces.appendSlice(runtime.allocator(), "[");
-        for (extra_slice, 0..) |namespace, index| {
-            if (index != 0) try extra_namespaces.append(runtime.allocator(), ',');
+        var extra_index: usize = 0;
+        for (module.namespaces) |namespace| {
+            // 空エントリは「直接path import由来の無修飾公開」のsentinelであり
+            // 登録対象外（install時の修飾登録と同じ規則）。
+            if (namespace.len == 0) continue;
+            if (extra_index != 0) try extra_namespaces.append(runtime.allocator(), ',');
+            extra_index += 1;
+            // JSON文字列として安全な形へ打ち延す。namespaceに `"` が含まれる
+            // とJSONが壊れてreregisterが解釈不能になり、自己登録pluginが
+            // 一部namespaceへ残留するため `\` と `"` を escape する。
             try extra_namespaces.appendSlice(runtime.allocator(), "\"");
-            try extra_namespaces.appendSlice(runtime.allocator(), namespace);
+            for (namespace) |character| {
+                if (character == '\\' or character == '"') {
+                    try extra_namespaces.append(runtime.allocator(), '\\');
+                }
+                try extra_namespaces.append(runtime.allocator(), character);
+            }
             try extra_namespaces.appendSlice(runtime.allocator(), "\"");
         }
         try extra_namespaces.appendSlice(runtime.allocator(), "]");

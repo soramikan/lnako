@@ -300,14 +300,14 @@ pub fn run(
         const direct_ids = if (lock.rootDependenciesForProfile(profile)) |ids|
             ids
         else
-            prepare.collectRootDependencyIdsForProfile(arena, entries, manifest, profile, diagnostics) catch |err| switch (err) {
+            prepare.collectRootDependencyIdsForProfile(arena, entries, manifest, profile, lock.input.features, diagnostics) catch |err| switch (err) {
                 error.LockInvalid => {
                     if (!diagnostics.hasErrors()) try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, "nako.lock.rootDependencies", .{}, "legacy lock does not record the root dependency edge and has multiple matching package nodes; regenerate the lock with schema v2", .{});
                     return error.LockInvalid;
                 },
                 else => return err,
             };
-        break :blk try prepare.collectImportDependenciesForProfile(arena, entries, direct_ids, null, manifest, profile, diagnostics);
+        break :blk try prepare.collectImportDependenciesForProfile(arena, entries, direct_ids, null, manifest, profile, lock.input.features, diagnostics);
     } else &.{};
     var ctx = prepare.Context{
         .gpa = gpa,

@@ -145,12 +145,17 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
             // 直接path import辺がある場合は空エントリで「無修飾登録も行う」を
             // 表し、`pkg:` 併存でも直接importの無修飾命令を消さない（native
             // plugin側の `directly_imported` と同じ検出規則）。
-            const namespace = if (item.canonical_id != null)
+            const namespace: []const u8 = if (item.canonical_id != null)
                 // runtime 登録名は dispatch namespace（scope 修飾済み）を使う。
                 // 推移依存で別ownerの同aliasと登録keyが衝突しないため。
                 item.dispatch_namespace orelse item.namespace orelse continue
-            else
-                "";
+            else if (module.package_owner) |owner| blk: {
+                // package所有module内の相対path取り込みはowner修飾namespaceで
+                // 登録する（解析側の動的命令bindと同じ `{owner}:{namespace}`）。
+                // 無修飾sentinel（""）はowner無しmoduleの直接importに限る。
+                const source = item.namespace orelse break :blk "";
+                break :blk try std.fmt.allocPrint(ir_program.arena.allocator(), "{s}:{s}", .{ owner, source });
+            } else "";
             var listed = false;
             for (plugin_namespaces[target].items) |existing| {
                 if (std.mem.eql(u8, existing, namespace)) {
@@ -241,8 +246,13 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
             const namespace: []const u8 = if (item.canonical_id != null)
                 // runtime 登録名は dispatch namespace（scope 修飾済み）を使う。
                 item.dispatch_namespace orelse item.namespace orelse continue
-            else
-                "";
+            else if (module.package_owner) |owner| blk: {
+                // package所有module内の相対path取り込みはowner修飾namespaceで
+                // 登録する（解析側の動的命令bindと同じ `{owner}:{namespace}`）。
+                // 無修飾sentinel（""）はowner無しmoduleの直接importに限る。
+                const source = item.namespace orelse break :blk "";
+                break :blk try std.fmt.allocPrint(ir_program.arena.allocator(), "{s}:{s}", .{ owner, source });
+            } else "";
             var listed = false;
             for (native_plugin_packages.items) |package| {
                 if (std.mem.eql(u8, package.path, target_module.path) and std.mem.eql(u8, package.namespace, namespace)) {

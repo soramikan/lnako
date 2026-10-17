@@ -1042,7 +1042,7 @@ test "profile限定package import aliasは共有package IDでも選択profile外
     };
     const allowed_ids = [_][]const u8{"pkg:11111111111111111111111111111111"};
 
-    const aliases = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, &allowed_ids, null, &manifest, "linux", &diagnostics);
+    const aliases = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, &allowed_ids, null, &manifest, "linux", &.{}, &diagnostics);
     defer testing.allocator.free(aliases);
     try testing.expectEqual(@as(usize, 2), aliases.len);
     try testing.expect(containsImportDependency(aliases, "@alice/shared", "pkg:11111111111111111111111111111111"));
@@ -1054,7 +1054,7 @@ test "profile限定package import aliasは共有package IDでも選択profile外
     const no_root_edges: [0][]const u8 = .{};
     try testing.expectError(
         error.LockInvalid,
-        collectImportDependenciesForProfile(testing.allocator, &lock_entries, &no_root_edges, null, &manifest, "linux", &missing_edge_diagnostics),
+        collectImportDependenciesForProfile(testing.allocator, &lock_entries, &no_root_edges, null, &manifest, "linux", &.{}, &missing_edge_diagnostics),
     );
     try testing.expect(missing_edge_diagnostics.hasErrors());
 }
@@ -1083,7 +1083,7 @@ test "lock edge外のdependency診断はroot scopeとtransitive scopeを区別�
     defer root_diagnostics.deinit();
     try testing.expectError(
         error.LockInvalid,
-        collectImportDependenciesForProfile(testing.allocator, &lock_entries, &empty_edges, null, &manifest, null, &root_diagnostics),
+        collectImportDependenciesForProfile(testing.allocator, &lock_entries, &empty_edges, null, &manifest, null, &.{}, &root_diagnostics),
     );
     try testing.expectEqualStrings("nako.lock.rootDependencies", root_diagnostics.items.items[0].path);
     try testing.expect(std.mem.indexOf(u8, root_diagnostics.items.items[0].message, "rootDependencies") != null);
@@ -1092,7 +1092,7 @@ test "lock edge外のdependency診断はroot scopeとtransitive scopeを区別�
     defer transitive_diagnostics.deinit();
     try testing.expectError(
         error.LockInvalid,
-        collectImportDependenciesForProfile(testing.allocator, &lock_entries, &empty_edges, "consumer", &manifest, null, &transitive_diagnostics),
+        collectImportDependenciesForProfile(testing.allocator, &lock_entries, &empty_edges, "consumer", &manifest, null, &.{}, &transitive_diagnostics),
     );
     try testing.expectEqualStrings("nako.lock", transitive_diagnostics.items.items[0].path);
     try testing.expect(std.mem.indexOf(u8, transitive_diagnostics.items.items[0].message, "\"consumer\"") != null);
@@ -1125,7 +1125,7 @@ test "一致候補を持たない有効依存はroot scopeとtransitive scopeで
     defer root_diagnostics.deinit();
     try testing.expectError(
         error.LockInvalid,
-        collectImportDependenciesForProfile(testing.allocator, &lock_entries, null, null, &manifest, null, &root_diagnostics),
+        collectImportDependenciesForProfile(testing.allocator, &lock_entries, null, null, &manifest, null, &.{}, &root_diagnostics),
     );
     try testing.expectEqualStrings("nako.lock.rootDependencies", root_diagnostics.items.items[0].path);
     try testing.expect(std.mem.indexOf(u8, root_diagnostics.items.items[0].message, "no matching lock package") != null);
@@ -1134,7 +1134,7 @@ test "一致候補を持たない有効依存はroot scopeとtransitive scopeで
     defer transitive_diagnostics.deinit();
     try testing.expectError(
         error.LockInvalid,
-        collectImportDependenciesForProfile(testing.allocator, &lock_entries, null, "consumer", &manifest, null, &transitive_diagnostics),
+        collectImportDependenciesForProfile(testing.allocator, &lock_entries, null, "consumer", &manifest, null, &.{}, &transitive_diagnostics),
     );
     try testing.expectEqualStrings("nako.lock", transitive_diagnostics.items.items[0].path);
     try testing.expect(std.mem.indexOf(u8, transitive_diagnostics.items.items[0].message, "\"consumer\"") != null);

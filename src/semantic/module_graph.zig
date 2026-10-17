@@ -351,8 +351,36 @@ pub const ModuleGraph = struct {
                             });
                         }
                     } else if (target_module.kind == .native_plugin) {
-                        allows_dynamic_commands = true;
-                        allows_dynamic_commands_from = @min(allows_dynamic_commands_from, item.span.start);
+                        // package所有module内の相対path取り込みのnative pluginは
+                        // filename由来namespaceをsourceとする所有者修飾aliasに
+                        // 落とす（runtime登録は解析側の動的命令bindと同じ
+                        // `{owner}:{namespace}`)。無修飾動的命令の許可は
+                        // owner無し（プロジェクトroot側）moduleに限る。
+                        if (moduleIsPackageContent(module)) {
+                            if (item.namespace) |source_namespace| {
+                                const dispatch = if (module.package_owner) |owner|
+                                    try std.fmt.allocPrint(temp, "{s}:{s}", .{ owner, source_namespace })
+                                else
+                                    source_namespace;
+                                var listed = false;
+                                for (dynamic_command_aliases.items) |existing| {
+                                    if (std.mem.eql(u8, existing.source_namespace, source_namespace) and
+                                        std.mem.eql(u8, existing.dispatch_namespace, dispatch))
+                                    {
+                                        listed = true;
+                                        break;
+                                    }
+                                }
+                                if (!listed) try dynamic_command_aliases.append(temp, .{
+                                    .source_namespace = source_namespace,
+                                    .dispatch_namespace = dispatch,
+                                    .import_position = item.span.start,
+                                });
+                            }
+                        } else {
+                            allows_dynamic_commands = true;
+                            allows_dynamic_commands_from = @min(allows_dynamic_commands_from, item.span.start);
+                        }
                     }
                 }
                 // 実効辺のみ取り込み位置での実行対象になる
@@ -403,13 +431,19 @@ pub const ModuleGraph = struct {
                     .is_explicit = item.canonical_id != null,
                 };
                 var already_added = false;
-                for (namespace_aliases.items, 0..) |existing, index| {
+                for (namespace_aliases.items) |existing| {
                     if (!std.mem.eql(u8, existing.source_namespace, source_namespace)) continue;
-                    // A package alias is explicit and takes precedence over a
-                    // relative import's filename-derived namespace on collision.
-                    if (namespace_alias.is_explicit and !existing.is_explicit) namespace_aliases.items[index] = namespace_alias;
-                    already_added = true;
-                    break;
+                    // 同一 source namespace・同一 target・同一 explicit 性は
+                    // 重複として落とす。異なる target / explicit 性は両方
+                    // 残し、解決時に import_position と explicit 優先で選ぶ
+                    // （package alias が相対由来 namespace を置換して位置規則
+                    // を潰さない）。
+                    if (existing.is_explicit == namespace_alias.is_explicit and
+                        existing.target_module == namespace_alias.target_module)
+                    {
+                        already_added = true;
+                        break;
+                    }
                 }
                 if (!already_added) try namespace_aliases.append(temp, namespace_alias);
             };
@@ -696,7 +730,16 @@ pub const Loader = struct {
                 try self.importDiagnostic(import_node, path, "package内のJavaScriptでは静的に解決できない取り込み指定は使えません");
             }
             for (scan.imports) |requested| {
-                if (!std.fs.path.isAbsolute(requested) and !std.mem.startsWith(u8, requested, ".")) continue;
+                // bare specifier（`import "foo"`）は静的に package 内 path へ
+                // 解決できない。package 所有 module では QuickJS loader の
+                // FS fallback が root 外を読み得るため fail-closed で拒否する。
+                // 直接 path import のユーザー module は従来どおり収集しない。
+                if (!std.fs.path.isAbsolute(requested) and !std.mem.startsWith(u8, requested, ".")) {
+                    if (moduleIsPackageContent(module)) {
+                        try self.importDiagnostic(import_node, path, "package内のJavaScriptでは静的に解決できない取り込み指定は使えません");
+                    }
+                    continue;
+                }
                 const resolved = resolveImport(self.allocator, path, requested) catch |err| {
                     if (err == error.OutOfMemory) return err;
                     try self.importDiagnostic(import_node, path, "JavaScriptの相対取り込みパスが不正です");
@@ -1149,9 +1192,9 @@ const ScannerMark = struct {
 /// regex中身がtoken化されてimport検出漏れになり得る — その場合も
 /// runtime側のmodule_normalize境界が最終防衛になるdocumented制約）。
 const regex_position_keywords = [_][]const u8{
-    "return", "typeof", "instanceof", "in",       "of",    "new",
-    "delete", "void",   "yield",      "await",    "throw", "case",
-    "do",     "else",   "default",    "debugger",
+    "return", "typeof", "instanceof", "in",       "of",      "new",
+    "delete", "void",   "yield",      "await",    "throw",   "case",
+    "do",     "else",   "default",    "debugger", "extends",
 };
 
 /// JavaScript sourceの軽量tokenizer。`import` 文の収集が目的のため、

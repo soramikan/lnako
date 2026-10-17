@@ -28,11 +28,19 @@ pub const DynamicCommandAlias = struct {
 /// されるのを防ぐ）。`allows_from` は直接plugin取り込みを有効にした最初の
 /// import位置。
 pub fn binds(allows_dynamic_commands: bool, allows_from: usize, aliases: []const DynamicCommandAlias, name: []const u8, use_position: usize) ?DynamicCommandAlias {
+    // 最長 namespace を優先する（`foo` と `foo__bar` が併存するとき短い
+    // 方が先に一致して誤配送しないよう、analyzer の namespace alias と同じ
+    // longest-prefix 規則）。
+    var selected: ?DynamicCommandAlias = null;
     for (aliases) |alias| {
         if (use_position < alias.import_position) continue;
         if (std.mem.startsWith(u8, name, alias.source_namespace) and name.len > alias.source_namespace.len + 2 and
-            name[alias.source_namespace.len] == '_' and name[alias.source_namespace.len + 1] == '_') return alias;
+            name[alias.source_namespace.len] == '_' and name[alias.source_namespace.len + 1] == '_')
+        {
+            if (selected == null or alias.source_namespace.len > selected.?.source_namespace.len) selected = alias;
+        }
     }
+    if (selected) |alias| return alias;
     if (allows_dynamic_commands and use_position >= allows_from) return .{ .source_namespace = name, .dispatch_namespace = name };
     return null;
 }

@@ -174,8 +174,11 @@ pub fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Erro
     var tree_dir: ?std.Io.Dir = null;
     defer if (tree_dir) |*dir| dir.close(ctx.io);
     // native export を持つ package を `.nako/native/` の安定 root へ置くための
-    // content-addressed key。cache object key をそのまま使う（resolver 側の
-    // `native_store.expectedRoot` が同じ式で lock source から再導する）。
+    // content-addressed key。cache object key に package の lock key を混ぜて
+    // package ごとに分離する（同一内容 artifact を複数 package がnative
+    // exportする場合も `.nako/native/<key>` を共有せず、Resolverの
+    // duplicate root 拒否と衝突しない）。消費側の `native_store.expectedRoot`
+    // が同じ `native_store.stableKey` で lock source から再導する。
     var stable_native_key: ?[]const u8 = null;
     var verified_commands: ?[]const npkg_commands.Command = null;
     var manifest_from_npkg = false;
@@ -253,9 +256,9 @@ pub fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Erro
                 // digest から安定 key を導出する。`verifyMaterializedPathPin`
                 // で照合済みの pin が lock の内容同一性を保証する。
                 if (path_digest.pinnedSourceHash(entry)) |pin| {
-                    // native_store.expectedRoot と同じ `cache_key.artifactKey`
+                    // native_store.expectedRoot と同じ `native_store.stableKey`
                     // を使い、消費側が同じ安定 root を導出できるようにする。
-                    stable_native_key = try cache_key.artifactKey(arena, "path", pin, rel);
+                    stable_native_key = try native_store.stableKey(arena, try cache_key.artifactKey(arena, "path", pin, rel), entry.id);
                 }
             }
         },
@@ -276,7 +279,7 @@ pub fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Erro
             // cache hit でも必ず lock commit を Git object database で再検証し、
             // pinned checkout から package tree を再生成する。
             const object_key = try shortKey(arena, "git", &.{ url, commit, source.path orelse "" });
-            stable_native_key = object_key;
+            stable_native_key = try native_store.stableKey(arena, object_key, entry.id);
             try rememberKey(ctx, object_key);
             const checkout_key = try shortKey(arena, "git", &.{ url, source.path orelse "" });
             var checkouts = environment.openManagedChildDir(ctx.workspace_dir, ctx.io, "git-checkouts", true) catch |err| return mapFs(err);
@@ -320,7 +323,7 @@ pub fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Erro
             const declared_hash = source.hash orelse
                 return ctx.session.fail(.invalid_source, .package, entry.name, "http source of \"{s}\" has no hash", .{entry.name});
             const object_key = try artifactKey(arena, "http", declared_hash, url);
-            stable_native_key = object_key;
+            stable_native_key = try native_store.stableKey(arena, object_key, entry.id);
             try rememberKey(ctx, object_key);
             var archive: ?[]const u8 = try ctx.cache_store.readVerifiedSourceArchive(arena, object_key, declared_hash);
             var artifact_type: []const u8 = if (archive) |cached| provider.httpArtifactType(cached) else "raw";
@@ -373,7 +376,7 @@ pub fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Erro
                     return ctx.session.fail(.invalid_source, .artifact, entry.name, "artifact \"{s}\" of \"{s}\" has an unsupported integrity hash", .{ artifact.key, entry.name });
                 }
                 const object_key = try artifactKey(arena, "artifact", declared_hash, url);
-                stable_native_key = object_key;
+                stable_native_key = try native_store.stableKey(arena, object_key, entry.id);
                 try rememberKey(ctx, object_key);
                 var archive: ?[]const u8 = try ctx.cache_store.readVerifiedSourceArchive(arena, object_key, declared_hash);
                 if (archive == null) {
@@ -423,10 +426,17 @@ pub fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Erro
         }
         exports = try resolveExports(ctx, m, entry, tree_abs, tree_dir, &has_native_export);
     }
+    const commands: []const npkg_commands.Command = verified_commands orelse blk: {
+        if (manifest) |*m| break :blk try collectCommands(ctx, tree_abs, tree_dir, m, &has_native_export);
+        if (tree_abs != null or tree_dir != null) break :blk try collectCommands(ctx, tree_abs, tree_dir, null, &has_native_export);
+        break :blk &.{};
+    };
     // native export を1件でも公開した package の root は世代ローテーション
     // の外（`.nako/native/<content key>`）へ置く。dlopen 等の動的読込みが
     // 世代 GC で参照を失わないための安定 path。native artifact 候補を持つ
-    // source 種別のみ安定 key を持つ。
+    // source 種別のみ安定 key を持つ。export が source 全部でも、imports
+    // の閉包に native plugin artifact が含まれる場合は同様に安定 root へ
+    // 置く（resolveExports と collectCommands の双方で検出する）。
     if (has_native_export) {
         if (stable_native_key) |key| {
             // env_path は公開後の `.nako/env/<gen>/...` 表記。構築中の実体は
@@ -437,18 +447,15 @@ pub fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Erro
             env_path = native_store.materialize(arena, ctx.io, ctx.project_abs, deps_tree_abs, key, std.fs.path.basename(ctx.generation_rel)) catch |err| return mapTreeError(ctx, err, key);
         }
     }
-    const commands: []const npkg_commands.Command = verified_commands orelse blk: {
-        if (manifest) |*m| break :blk try collectCommands(ctx, tree_abs, tree_dir, m);
-        if (tree_abs != null or tree_dir != null) break :blk try collectCommands(ctx, tree_abs, tree_dir, null);
-        break :blk &.{};
-    };
 
     // manifest の依存宣言を環境の import 依存（alias → lock key）へ
     // 変換する。lock の依存 edge（entry.dependencies）が認める lock
     // package へのみ alias を許可し、alias の namespace 衝突もここで
     // 拒否する。manifest 非保持の package は import 依存を持たない。
     const import_dependencies = if (manifest) |*m|
-        try collectImportDependenciesForProfile(arena, ctx.lock_entries, entry.dependencies, entry.name, m, ctx.selected_profile, ctx.diagnostics)
+        // package scope（entry.name が edge owner）は依存側 default feature
+        // 展開で gate 判定するため active_features は渡さない。
+        try collectImportDependenciesForProfile(arena, ctx.lock_entries, entry.dependencies, entry.name, m, ctx.selected_profile, null, ctx.diagnostics)
     else
         &.{};
 
@@ -1211,12 +1218,15 @@ fn resolveExports(ctx: *Context, manifest: *const manifest_mod.Manifest, entry: 
     return exports;
 }
 
-/// 明示 `NAKO-PKG/commands.json` があればその index を採用し、無い場合は
-/// manifest exports から生成する。index の有無に関わらず、source export
-/// を起点とした import 閉包は必ず走査して検証する（`commands.json` は
-/// あくまで index であり、閉包走査を省略すると `.nako`/`.git` 配下の未
-/// pin 内容への取り込みを迂回できてしまう）。
-fn collectCommands(ctx: *Context, tree_abs: ?[]const u8, tree_dir: ?std.Io.Dir, manifest: ?*const manifest_mod.Manifest) Error![]const npkg_commands.Command {
+/// manifest の export を entry として命令 index を組み立てる。index の有無
+/// に関わらず、source export を起点とした import 閉包は必ず走査して検証
+/// する（`commands.json` はあくまで index であり、閉包走査を省略すると
+/// `.nako`/`.git` 配下の未 pin 内容への取り込みを迂回できてしまう）。
+/// 閉包走査で native plugin artifact（`.so` 等）への取り込みが現れた場合は
+/// `has_native_export` を立てる — export 解決結果が source 全部でも、
+/// 閉包が plugin binary に依存する package は安定 root へ置かなければ
+/// ならない（dlopen は世代 GC で参照を失わないようにするため）。
+fn collectCommands(ctx: *Context, tree_abs: ?[]const u8, tree_dir: ?std.Io.Dir, manifest: ?*const manifest_mod.Manifest, has_native_export: *bool) Error![]const npkg_commands.Command {
     const arena = ctx.arena;
     const display_root = tree_abs orelse ctx.generation_rel;
     var indexed_commands: ?[]const npkg_commands.Command = null;
@@ -1274,6 +1284,9 @@ fn collectCommands(ctx: *Context, tree_abs: ?[]const u8, tree_dir: ?std.Io.Dir, 
         error.OutOfMemory => return error.OutOfMemory,
         else => return ctx.session.fail(.invalid_metadata, .manifest, m.package.name, "failed to derive commands for package \"{s}\"", .{m.package.name}),
     };
+    // 閉包走査で native plugin artifact への取り込みが現れたことを記録する
+    // （`has_native_export` は resolveExports の設定と論理和）。
+    if (generated.has_native_plugin) has_native_export.* = true;
     // 明示 index があれば commands の記録内容は index を採用する。
     // `generate` は import 閉包の妥当性検査として動作した。
     if (indexed_commands) |commands| return commands;
