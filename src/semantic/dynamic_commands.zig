@@ -6,6 +6,8 @@ const std = @import("std");
 /// package内scopeの推移importでは所有者keyを含む修飾名になる。
 pub const DynamicCommandAlias = struct {
     /// Source-level alias the user writes (e.g. `util`).
+    /// `unqualified=true` のときは空でもよく、ソース上の無修飾命令名を
+    /// `{dispatch_namespace}__{命令}` へ写す catch-all として使う。
     source_namespace: []const u8,
     /// Runtime dispatch prefix the command was registered under
     /// (e.g. `pkg_a__util` for a transitive dependency of package A).
@@ -14,6 +16,11 @@ pub const DynamicCommandAlias = struct {
     /// `alias__命令` は対応する `pkg:` import がまだ無いため束縛しない
     /// （source packageの `NamespaceAlias.import_position` と同じ規則）。
     import_position: usize = 0,
+    /// true: package所有module内の相対native plugin取り込み。取り込み位置
+    /// 以降の無修飾命令名を `{dispatch_namespace}__{命令}` へ写像する
+    /// （runtime は owner 固有 namespace へ隔離登録済み）。修飾名
+    /// `<source>__<命令>` の longest-prefix 規則とは別経路。
+    unqualified: bool = false,
 };
 
 /// 動的builtinとして束縛する命令名か判定する。直接取り込んだnative plugin
@@ -33,6 +40,7 @@ pub fn binds(allows_dynamic_commands: bool, allows_from: usize, aliases: []const
     // longest-prefix 規則）。
     var selected: ?DynamicCommandAlias = null;
     for (aliases) |alias| {
+        if (alias.unqualified) continue;
         if (use_position < alias.import_position) continue;
         if (std.mem.startsWith(u8, name, alias.source_namespace) and name.len > alias.source_namespace.len + 2 and
             name[alias.source_namespace.len] == '_' and name[alias.source_namespace.len + 1] == '_')
@@ -41,6 +49,16 @@ pub fn binds(allows_dynamic_commands: bool, allows_from: usize, aliases: []const
         }
     }
     if (selected) |alias| return alias;
+    // package内相対native: 取り込み位置以降の無修飾命令を owner 修飾
+    // dispatch へ写す。複数ある場合はより後の取り込みを優先する（後勝ち）。
+    var selected_unqualified: ?DynamicCommandAlias = null;
+    for (aliases) |alias| {
+        if (!alias.unqualified) continue;
+        if (use_position < alias.import_position) continue;
+        if (selected_unqualified == null or alias.import_position >= selected_unqualified.?.import_position)
+            selected_unqualified = alias;
+    }
+    if (selected_unqualified) |alias| return alias;
     if (allows_dynamic_commands and use_position >= allows_from) return .{ .source_namespace = name, .dispatch_namespace = name };
     return null;
 }
@@ -48,8 +66,12 @@ pub fn binds(allows_dynamic_commands: bool, allows_from: usize, aliases: []const
 /// `binds` が受理したソース名を runtime 登録名へ変換する。
 /// package内scopeの推移importでは `dispatch_namespace` が所有者修飾を含む
 /// （例: `util__足す` → `pkg_a__util__足す`）。root scope は alias がそのまま
-/// 登録名なので変換しない。
+/// 登録名なので変換しない。`unqualified` は無修飾名を
+/// `{dispatch_namespace}__{命令}` へ写す（相対nativeの owner 隔離登録と一致）。
 pub fn dispatchName(allocator: std.mem.Allocator, alias: DynamicCommandAlias, name: []const u8) ![]const u8 {
+    if (alias.unqualified) {
+        return std.fmt.allocPrint(allocator, "{s}__{s}", .{ alias.dispatch_namespace, name });
+    }
     if (std.mem.eql(u8, alias.dispatch_namespace, alias.source_namespace)) return name;
     return std.fmt.allocPrint(allocator, "{s}{s}", .{ alias.dispatch_namespace, name[alias.source_namespace.len..] });
 }

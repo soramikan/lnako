@@ -36,6 +36,7 @@ pub const ImportConstraint = prepare.ImportConstraint;
 /// manifest 依存宣言から import 依存（alias → lock key）を集める。
 /// 実体は `sync_prepare.zig` にある。
 pub const collectRootDependencyIds = prepare.collectRootDependencyIds;
+pub const collectRootDependencyIdsForProfile = prepare.collectRootDependencyIdsForProfile;
 pub const collectImportDependencies = prepare.collectImportDependencies;
 pub const collectImportDependenciesForProfile = prepare.collectImportDependenciesForProfile;
 /// scoped alias の重複・namespace 正規化衝突検査付き追加。

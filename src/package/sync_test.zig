@@ -14,6 +14,7 @@ const appendScopedAlias = sync.appendScopedAlias;
 const collectImportDependencies = sync.collectImportDependencies;
 const collectImportDependenciesForProfile = sync.collectImportDependenciesForProfile;
 const collectRootDependencyIds = sync.collectRootDependencyIds;
+const collectRootDependencyIdsForProfile = sync.collectRootDependencyIdsForProfile;
 
 const testing = std.testing;
 
@@ -1208,6 +1209,106 @@ test "package import aliasはmanifest依存scopeごとにlock keyへ解決され
     try testing.expectEqualStrings("pkg:dep-id", scoped_aliases[0].package_key);
 }
 
+test "feature-gatedで未activatedな依存はroot scopeのimport依存に公開されない" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[features]
+        \\native = ["native-lib"]
+        \\
+        \\[dependencies.pkg]
+        \\always = { version = "1.0.0" }
+        \\native-lib = { version = "1.0.0" }
+        \\
+    ;
+    var diagnostics = diag.List.init(testing.allocator);
+    defer diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &diagnostics);
+    defer manifest.deinit();
+
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:always", .name = "always", .version = "1.0.0", .source = .{ .kind = .registry } },
+        .{ .id = "pkg:native-lib", .name = "native-lib", .version = "1.0.0", .source = .{ .kind = .registry } },
+    };
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+
+    // lock input.features が空（feature 要求なし）のとき gated 依存は
+    // root 辺からも姿を消す（resolve 側も解決しないため）。
+    const without_features = try collectRootDependencyIdsForProfile(testing.allocator, &lock_entries, &manifest, "default", &.{}, &sync_diagnostics);
+    defer testing.allocator.free(without_features);
+    try testing.expectEqual(@as(usize, 1), without_features.len);
+    try testing.expectEqualStrings("pkg:always", without_features[0]);
+
+    const gated_aliases = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, null, null, &manifest, "default", &.{}, &sync_diagnostics);
+    defer testing.allocator.free(gated_aliases);
+    try testing.expect(containsImportDependency(gated_aliases, "always", "pkg:always"));
+    try testing.expect(!containsImportAlias(gated_aliases, "native-lib"));
+
+    // expandedFeatureNames 相当（展開済 feature 名＋直接指定依存 alias）が
+    // lock input.features に記録されている場合、gated 依存は activated と
+    // みなされ root 辺・alias の双方に現れる。
+    const activated = [_][]const u8{ "native", "native-lib" };
+    const with_features = try collectRootDependencyIdsForProfile(testing.allocator, &lock_entries, &manifest, "default", &activated, &sync_diagnostics);
+    defer testing.allocator.free(with_features);
+    try testing.expectEqual(@as(usize, 2), with_features.len);
+
+    const activated_aliases = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, null, null, &manifest, "default", &activated, &sync_diagnostics);
+    defer testing.allocator.free(activated_aliases);
+    try testing.expect(containsImportDependency(activated_aliases, "native-lib", "pkg:native-lib"));
+}
+
+test "root scopeのdev-dependenciesはimport依存に公開されpackage scopeでは除外される" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\lib = { version = "1.0.0" }
+        \\
+        \\[dev-dependencies.pkg]
+        \\devonly = { version = "1.0.0" }
+        \\
+    ;
+    var diagnostics = diag.List.init(testing.allocator);
+    defer diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &diagnostics);
+    defer manifest.deinit();
+
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:lib", .name = "lib", .version = "1.0.0", .source = .{ .kind = .registry } },
+        .{ .id = "pkg:devonly", .name = "devonly", .version = "1.0.0", .source = .{ .kind = .registry } },
+    };
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+
+    // root の依存辺照合（collectRootDependencyIdsForProfile は root scope
+    // 専用のため dev 辺も含む）。
+    const root_ids = try collectRootDependencyIdsForProfile(testing.allocator, &lock_entries, &manifest, "default", &.{}, &sync_diagnostics);
+    defer testing.allocator.free(root_ids);
+    try testing.expectEqual(@as(usize, 2), root_ids.len);
+    try testing.expect(containsSyncString(root_ids, "pkg:devonly"));
+
+    const root_aliases = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, root_ids, null, &manifest, "default", &.{}, &sync_diagnostics);
+    defer testing.allocator.free(root_aliases);
+    try testing.expect(containsImportDependency(root_aliases, "lib", "pkg:lib"));
+    try testing.expect(containsImportDependency(root_aliases, "devonly", "pkg:devonly"));
+
+    // package scope（依存 package 自身の依存 scope）は dev-dependencies を
+    // 公開しない。dev 依存は依存 package 側のテスト用いであり、import
+    // 依存 scope の契約対象ではない。
+    const package_dependencies = [_][]const u8{ "pkg:lib", "pkg:devonly" };
+    const scoped_aliases = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, &package_dependencies, "owner-pkg", &manifest, "default", &.{}, &sync_diagnostics);
+    defer testing.allocator.free(scoped_aliases);
+    try testing.expect(containsImportDependency(scoped_aliases, "lib", "pkg:lib"));
+    try testing.expect(!containsImportAlias(scoped_aliases, "devonly"));
+}
+
 fn containsSyncString(items: []const []const u8, expected: []const u8) bool {
     for (items) |item| if (std.mem.eql(u8, item, expected)) return true;
     return false;
@@ -1606,4 +1707,139 @@ test "sync/import双方がlockのpackage featuresをexport解決へ反映する"
     // import 検証も同じ feature 集合で一致しなければ拒否される。
     var loaded = try @import("import_resolver.zig").Resolver.load(testing.allocator, io, root);
     defer loaded.deinit();
+}
+
+test "root scopeのdev-dependenciesのaliasはroot import依存のみに公開する" {
+    // root scope（edge_owner == null）は dev-dependencies も import 依存の
+    // 公開対象にする。package scope（依存packageのmanifest scope）は
+    // dev-dependencies を公開しない（テスト等の内部依存）。
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\shared = { version = "1.0.0" }
+        \\
+        \\[dev-dependencies.pkg]
+        \\devtool = { version = "1.0.0" }
+        \\
+    ;
+    var parse_diagnostics = diag.List.init(testing.allocator);
+    defer parse_diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &parse_diagnostics);
+    defer manifest.deinit();
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:11111111111111111111111111111111", .name = "shared", .version = "1.0.0", .source = .{ .kind = .registry } },
+        .{ .id = "pkg:22222222222222222222222222222222", .name = "devtool", .version = "1.0.0", .source = .{ .kind = .registry } },
+    };
+    const root_edges = [_][]const u8{
+        "pkg:11111111111111111111111111111111",
+        "pkg:22222222222222222222222222222222",
+    };
+    const package_edges = [_][]const u8{"pkg:11111111111111111111111111111111"};
+
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+    const root_aliases = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, &root_edges, null, &manifest, null, &.{}, &sync_diagnostics);
+    defer testing.allocator.free(root_aliases);
+    try testing.expectEqual(@as(usize, 2), root_aliases.len);
+    try testing.expect(containsImportDependency(root_aliases, "shared", "pkg:11111111111111111111111111111111"));
+    try testing.expect(containsImportDependency(root_aliases, "devtool", "pkg:22222222222222222222222222222222"));
+
+    const scoped_aliases = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, &package_edges, "consumer", &manifest, null, null, &sync_diagnostics);
+    defer testing.allocator.free(scoped_aliases);
+    try testing.expectEqual(@as(usize, 1), scoped_aliases.len);
+    try testing.expect(containsImportDependency(scoped_aliases, "shared", "pkg:11111111111111111111111111111111"));
+    try testing.expect(!containsImportAlias(scoped_aliases, "devtool"));
+}
+
+test "feature-gated依存はactivated名に含まれる場合のみimport依存へ公開する" {
+    // lock `input.features`（expandedFeatureNames 相当: 定義済み feature 名
+    // ＋展開で有効化された依存 alias の併記）に含まれない gated 依存は
+    // alias を公開しない。feature 名または依存 alias 名を直接含む場合は
+    // 公開する（project.zig の depIsGated/depIsActivated と同一条件）。
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[features]
+        \\extras = ["tool"]
+        \\
+        \\[dependencies.pkg]
+        \\tool = { version = "1.0.0" }
+        \\
+    ;
+    var parse_diagnostics = diag.List.init(testing.allocator);
+    defer parse_diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &parse_diagnostics);
+    defer manifest.deinit();
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:33333333333333333333333333333333", .name = "tool", .version = "1.0.0", .source = .{ .kind = .registry } },
+    };
+    const tool_edges = [_][]const u8{"pkg:33333333333333333333333333333333"};
+
+    // 未 activation（lock `input.features` 相当の集合に依存 alias "tool"
+    // 無し）は公開しない。lock edge 外の照合エラーに落とさず gate で先に
+    // 除外する。
+    var gate_diagnostics = diag.List.init(testing.allocator);
+    defer gate_diagnostics.deinit();
+    const inactive = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, &tool_edges, null, &manifest, null, &.{}, &gate_diagnostics);
+    defer testing.allocator.free(inactive);
+    try testing.expectEqual(@as(usize, 0), inactive.len);
+    try testing.expect(!gate_diagnostics.hasErrors());
+
+    // activated 集合に依存 alias 名（feature 経由で展開済み）が含まれる
+    // 場合は公開する。
+    const activated_names = [_][]const u8{ "extras", "tool" };
+    const activated = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, &tool_edges, null, &manifest, null, &activated_names, &gate_diagnostics);
+    defer testing.allocator.free(activated);
+    try testing.expectEqual(@as(usize, 1), activated.len);
+    try testing.expect(containsImportDependency(activated, "tool", "pkg:33333333333333333333333333333333"));
+}
+
+test "package scopeはlock entry.featuresの実効featureで依存aliasを発行する" {
+    // root が registry package A を features=["extra"] 付きで解決し、A の
+    // feature extra が依存 tool を有効化する場合、solver は tool を A の
+    // 依存辺へ含め A の entry.features にも記録する。package scope の
+    // import 依存収集は entry.features を activated として使い、default
+    // 展開だけに落とすと tool の alias が欠ける。
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[features]
+        \\extra = ["tool"]
+        \\
+        \\[dependencies.pkg]
+        \\tool = { version = "1.0.0" }
+        \\
+    ;
+    var parse_diagnostics = diag.List.init(testing.allocator);
+    defer parse_diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &parse_diagnostics);
+    defer manifest.deinit();
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:33333333333333333333333333333333", .name = "tool", .version = "1.0.0", .source = .{ .kind = .registry } },
+    };
+    const package_edges = [_][]const u8{"pkg:33333333333333333333333333333333"};
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+
+    // entry.features 無し → default 展開のみ。gated tool は出ない
+    const without = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, &package_edges, "consumer", &manifest, null, null, &sync_diagnostics);
+    defer testing.allocator.free(without);
+    try testing.expectEqual(@as(usize, 0), without.len);
+
+    // entry.features に feature 名と展開 alias が載る場合は tool を公開する
+    const entry_features = [_][]const u8{ "extra", "tool" };
+    const with_features = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, &package_edges, "consumer", &manifest, null, &entry_features, &sync_diagnostics);
+    defer testing.allocator.free(with_features);
+    try testing.expectEqual(@as(usize, 1), with_features.len);
+    try testing.expect(containsImportDependency(with_features, "tool", "pkg:33333333333333333333333333333333"));
 }

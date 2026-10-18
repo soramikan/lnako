@@ -1531,3 +1531,36 @@ test "plugin命令の動的解決はimport文より前の呼出しには適用�
     }
     try std.testing.expect(!pre_import_qualified);
 }
+
+test "package内の相対plugin取り込みは無修飾命令をowner修飾dispatchへ写像する" {
+    // package所有moduleの相対path native pluginはruntimeをowner namespaceへ
+    // 隔離登録する。ソース上の無修飾`外部追加`は解析で
+    // `{owner}:{stem}__{命令}` へ写像され、bare 名のまま runtime へは流れない。
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:math」を取り込む\n" },
+        .{ .suffix = "packages/math/index.nako3", .source = "!「./plugin.so」を取り込む\n外部追加(1, 2)\n" },
+        .{ .suffix = "packages/math/plugin.so", .source = "" },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .package_resolver = package_resolver.resolver() });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 3), graph.modules.len);
+    try std.testing.expectEqual(module_graph.ModuleKind.native_plugin, graph.modules[2].kind);
+    try std.testing.expect(graph.modules[1].package_owner != null);
+
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var owner_dispatch = false;
+    var bare_unqualified = false;
+    for (program.bindings) |binding| {
+        if (binding.kind != .builtin or !binding.dynamic_builtin) continue;
+        if (std.mem.eql(u8, binding.name, "外部追加") and
+            std.mem.eql(u8, binding.resolved_name, "pkg:math-id:plugin.so__外部追加"))
+            owner_dispatch = true;
+        if (std.mem.eql(u8, binding.resolved_name, "外部追加")) bare_unqualified = true;
+    }
+    try std.testing.expect(owner_dispatch);
+    try std.testing.expect(!bare_unqualified);
+}

@@ -352,10 +352,12 @@ pub const ModuleGraph = struct {
                         }
                     } else if (target_module.kind == .native_plugin) {
                         // package所有module内の相対path取り込みのnative pluginは
-                        // filename由来namespaceをsourceとする所有者修飾aliasに
-                        // 落とす（runtime登録は解析側の動的命令bindと同じ
-                        // `{owner}:{namespace}`)。無修飾動的命令の許可は
-                        // owner無し（プロジェクトroot側）moduleに限る。
+                        // runtime登録と同じ `{owner}:{namespace}` へ隔離する。
+                        // 修飾名 `<filename>__命令` に加え、取り込み位置以降の
+                        // 無修飾命令もその dispatch へ写像する（allows_dynamic
+                        // の恒等写像は使わない — 無修飾runtime登録はしない）。
+                        // owner無し（プロジェクトroot側）moduleは従来どおり
+                        // 無修飾動的命令を許可する。
                         if (moduleIsPackageContent(module)) {
                             if (item.namespace) |source_namespace| {
                                 const dispatch = if (module.package_owner) |owner|
@@ -364,18 +366,28 @@ pub const ModuleGraph = struct {
                                     source_namespace;
                                 var listed = false;
                                 for (dynamic_command_aliases.items) |existing| {
-                                    if (std.mem.eql(u8, existing.source_namespace, source_namespace) and
+                                    if (!existing.unqualified and
+                                        std.mem.eql(u8, existing.source_namespace, source_namespace) and
                                         std.mem.eql(u8, existing.dispatch_namespace, dispatch))
                                     {
                                         listed = true;
                                         break;
                                     }
                                 }
-                                if (!listed) try dynamic_command_aliases.append(temp, .{
-                                    .source_namespace = source_namespace,
-                                    .dispatch_namespace = dispatch,
-                                    .import_position = item.span.start,
-                                });
+                                if (!listed) {
+                                    try dynamic_command_aliases.append(temp, .{
+                                        .source_namespace = source_namespace,
+                                        .dispatch_namespace = dispatch,
+                                        .import_position = item.span.start,
+                                    });
+                                    // 無修飾 catch-all: `外部追加` → `{owner}:{ns}__外部追加`
+                                    try dynamic_command_aliases.append(temp, .{
+                                        .source_namespace = "",
+                                        .dispatch_namespace = dispatch,
+                                        .import_position = item.span.start,
+                                        .unqualified = true,
+                                    });
+                                }
                             }
                         } else {
                             allows_dynamic_commands = true;

@@ -363,13 +363,16 @@ pub fn collectImportDependenciesForProfile(
     // root scope は lock `input.features` を activated に使い、
     // dev-dependencies も公開対象（テスト等の dev 利用 import を
     // environment.json の import 依存表へ載せる）。package scope は
-    // dev-dependencies を含めず、manifest 既定の default feature 展開で
-    // activated を導出する（依存側に feature 要求口はないため）。
+    // dev-dependencies を含めず、lock entry.features（実効 feature）が
+    // 渡されていればそれを activated に使い、無い呼出しだけ default
+    // feature 展開で近似する。
     const edge_root_scope = edge_owner == null;
     var gated = try gatedDepNames(allocator, manifest);
     defer gated.deinit();
     var activated = if (edge_root_scope)
         try rootActivatedAliases(allocator, manifest, active_features, "nako.toml.dependencies", diagnostics)
+    else if (active_features) |features|
+        try rootActivatedAliases(allocator, manifest, features, manifest.package.name, diagnostics)
     else
         try defaultActivatedAliases(allocator, manifest, manifest.package.name, diagnostics);
     defer activated.deinit();

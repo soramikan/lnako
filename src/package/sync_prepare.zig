@@ -426,8 +426,18 @@ pub fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Erro
         }
         exports = try resolveExports(ctx, m, entry, tree_abs, tree_dir, &has_native_export);
     }
-    const commands: []const npkg_commands.Command = verified_commands orelse blk: {
-        if (manifest) |*m| break :blk try collectCommands(ctx, tree_abs, tree_dir, m, &has_native_export);
+    // `.npkg` 検証済み commands があっても source import 閉包の走査は必須。
+    // verified index だけ採用すると相対 native plugin 取り込みで
+    // `has_native_export` が立たず、世代 root のまま AOT 埋め込み path が
+    // 後続 sync の GC で消える。commands 本文は verified を優先し、閉包
+    // 検査の副作用（has_native_export）だけ collectCommands に任せる。
+    const commands: []const npkg_commands.Command = blk: {
+        if (manifest) |*m| {
+            const scanned = try collectCommands(ctx, tree_abs, tree_dir, m, &has_native_export);
+            if (verified_commands) |vc| break :blk vc;
+            break :blk scanned;
+        }
+        if (verified_commands) |vc| break :blk vc;
         if (tree_abs != null or tree_dir != null) break :blk try collectCommands(ctx, tree_abs, tree_dir, null, &has_native_export);
         break :blk &.{};
     };
@@ -453,9 +463,10 @@ pub fn preparePackage(ctx: *Context, entry: *const lock_model.PackageEntry) Erro
     // package へのみ alias を許可し、alias の namespace 衝突もここで
     // 拒否する。manifest 非保持の package は import 依存を持たない。
     const import_dependencies = if (manifest) |*m|
-        // package scope（entry.name が edge owner）は依存側 default feature
-        // 展開で gate 判定するため active_features は渡さない。
-        try collectImportDependenciesForProfile(arena, ctx.lock_entries, entry.dependencies, entry.name, m, ctx.selected_profile, null, ctx.diagnostics)
+        // package scope は lock entry.features（solver が記録した実効
+        // feature / 展開済み依存 alias）を activated 集合として渡し、
+        // default 展開だけに落とすと feature 経由依存の alias が欠ける。
+        try collectImportDependenciesForProfile(arena, ctx.lock_entries, entry.dependencies, entry.name, m, ctx.selected_profile, entry.features, ctx.diagnostics)
     else
         &.{};
 
