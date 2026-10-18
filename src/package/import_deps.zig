@@ -426,7 +426,7 @@ pub fn collectImportDependenciesForProfile(
             const dependency = item.value_ptr.*;
             if (!dependencyMatchesProfile(dependency.profile, active_profile)) continue;
             if (gatedDependencyBlocked(&gated, &activated, dependency.name, dependency.alias)) continue;
-            try appendImportDependency(allocator, &result, lock_entries, allowed_ids, edge_owner, dependency.name, .{ .version = dependency.version }, dependency.public_id, dependency.alias, hasOwnerNameAliasCollision(manifest, dependency.name, active_profile), diagnostics);
+            try appendImportDependency(allocator, &result, lock_entries, allowed_ids, edge_owner, dependency.name, .{ .version = dependency.version }, dependency.public_id, dependency.alias, hasOwnerNameAliasCollision(manifest, dependency.name, active_profile, edge_root_scope), diagnostics);
         }
         var path = group.path.iterator();
         while (path.next()) |item| {
@@ -450,13 +450,22 @@ pub fn collectImportDependenciesForProfile(
     return try result.toOwnedSlice(allocator);
 }
 
-fn hasOwnerNameAliasCollision(manifest: *const manifest_mod.Manifest, name: []const u8, active_profile: ?[]const u8) bool {
+/// owner/name の leaf を derived alias にすると衝突するか。root scope は
+/// `dev-dependencies` も import 公開対象なので衝突検査に含める。package
+/// scope は primary のみ（collection と同じ範囲）。
+fn hasOwnerNameAliasCollision(manifest: *const manifest_mod.Manifest, name: []const u8, active_profile: ?[]const u8, include_dev: bool) bool {
     if (std.mem.indexOfScalar(u8, name, '/') == null) return false;
     const derived_alias = registryNamePart(name);
-    return mapHasAliasCollision(manifest_mod.PkgDependency, manifest.dependencies.pkg, name, derived_alias, true, active_profile) or
-        mapHasAliasCollision(manifest_mod.PathDependency, manifest.dependencies.path, null, derived_alias, false, active_profile) or
-        mapHasAliasCollision(manifest_mod.GitDependency, manifest.dependencies.git, null, derived_alias, false, active_profile) or
-        mapHasAliasCollision(manifest_mod.HttpDependency, manifest.dependencies.http, null, derived_alias, false, active_profile);
+    if (groupHasAliasCollision(manifest.dependencies, name, derived_alias, active_profile)) return true;
+    if (include_dev and groupHasAliasCollision(manifest.dev_dependencies, name, derived_alias, active_profile)) return true;
+    return false;
+}
+
+fn groupHasAliasCollision(group: manifest_mod.DependencyGroup, current_key: ?[]const u8, alias: []const u8, active_profile: ?[]const u8) bool {
+    return mapHasAliasCollision(manifest_mod.PkgDependency, group.pkg, current_key, alias, true, active_profile) or
+        mapHasAliasCollision(manifest_mod.PathDependency, group.path, null, alias, false, active_profile) or
+        mapHasAliasCollision(manifest_mod.GitDependency, group.git, null, alias, false, active_profile) or
+        mapHasAliasCollision(manifest_mod.HttpDependency, group.http, null, alias, false, active_profile);
 }
 
 fn mapHasAliasCollision(comptime Dependency: type, dependencies: std.StringHashMapUnmanaged(Dependency), current_key: ?[]const u8, alias: []const u8, scoped_registry_keys: bool, active_profile: ?[]const u8) bool {

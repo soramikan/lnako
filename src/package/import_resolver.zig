@@ -765,7 +765,7 @@ fn validateEnvironmentExports(
     const locked_dependencies_value = get(lock_entry, "dependencies") orelse return error.InvalidEnvironment;
     const locked_dependencies = asArray(locked_dependencies_value) orelse return error.InvalidEnvironment;
     const parsed_manifest: ?*const manifest_mod.Manifest = if (manifest) |*value| value else null;
-    try validateManifestDependencyBindings(allocator, parsed_manifest, get(record, "dependencies"), locked_packages, active_profile, locked_dependencies, false, project_root, package_root);
+    try validateManifestDependencyBindings(allocator, parsed_manifest, get(record, "dependencies"), locked_packages, active_profile, locked_dependencies, false, false, project_root, package_root);
 }
 
 const DependencyConstraint = union(enum) {
@@ -798,7 +798,7 @@ fn validateRootDependencyBindings(
 ) !void {
     const manifest_path = try std.fs.path.join(allocator, &.{ project_root, "nako.toml" });
     const bytes = std.Io.Dir.cwd().readFileAlloc(io, manifest_path, allocator, .limited(manifest_mod.max_manifest_bytes)) catch |err| switch (err) {
-        error.FileNotFound, error.NotDir => return validateManifestDependencyBindings(allocator, null, environment_value, locked_packages, active_profile, allowed_root_ids, allowed_root_ids == null, project_root, project_root),
+        error.FileNotFound, error.NotDir => return validateManifestDependencyBindings(allocator, null, environment_value, locked_packages, active_profile, allowed_root_ids, allowed_root_ids == null, true, project_root, project_root),
         error.OutOfMemory => return error.OutOfMemory,
         else => return error.InvalidEnvironment,
     };
@@ -817,7 +817,7 @@ fn validateRootDependencyBindings(
     };
     defer manifest.deinit();
     if (diagnostics.errorCount() > 0) return error.InvalidEnvironment;
-    try validateManifestDependencyBindings(allocator, &manifest, environment_value, locked_packages, active_profile, allowed_root_ids, allowed_root_ids == null, project_root, project_root);
+    try validateManifestDependencyBindings(allocator, &manifest, environment_value, locked_packages, active_profile, allowed_root_ids, allowed_root_ids == null, true, project_root, project_root);
 }
 
 fn validateManifestDependencyBindings(
@@ -828,44 +828,56 @@ fn validateManifestDependencyBindings(
     active_profile: ?[]const u8,
     allowed_ids: ?std.json.Array,
     infer_root_ids: bool,
+    /// root 検証は collection と同様に dev-dependencies を expected に含める。
+    /// package 検証は primary のみ（依存 package の dev は import 公開しない）。
+    include_dev_dependencies: bool,
     project_root: []const u8,
     path_base: []const u8,
 ) !void {
     var expected = std.StringHashMap([]const u8).init(allocator);
     defer expected.deinit();
     if (manifest) |value| {
-        var pkg_iterator = value.dependencies.pkg.iterator();
-        while (pkg_iterator.next()) |item| {
-            const dependency = item.value_ptr.*;
-            if (!dependencyMatchesProfile(dependency.profile, active_profile)) continue;
-            const target = try findManifestDependencyTarget(allocator, locked_packages, allowed_ids, infer_root_ids, dependency.name, .{ .pkg = dependency }, dependency.public_id, project_root, path_base) orelse continue;
-            try appendExpectedBinding(allocator, &expected, dependency.name, target);
-            if (dependency.alias) |alias| {
-                try appendExpectedBinding(allocator, &expected, alias, target);
-            } else {
-                const derived = registryNamePart(dependency.name);
-                if (!hasDerivedAliasCollision(value, dependency.name, derived, active_profile)) try appendExpectedBinding(allocator, &expected, derived, target);
+        var group_buf: [2]*const manifest_mod.DependencyGroup = undefined;
+        group_buf[0] = &value.dependencies;
+        var group_count: usize = 1;
+        if (include_dev_dependencies) {
+            group_buf[1] = &value.dev_dependencies;
+            group_count = 2;
+        }
+        for (group_buf[0..group_count]) |group| {
+            var pkg_iterator = group.pkg.iterator();
+            while (pkg_iterator.next()) |item| {
+                const dependency = item.value_ptr.*;
+                if (!dependencyMatchesProfile(dependency.profile, active_profile)) continue;
+                const target = try findManifestDependencyTarget(allocator, locked_packages, allowed_ids, infer_root_ids, dependency.name, .{ .pkg = dependency }, dependency.public_id, project_root, path_base) orelse continue;
+                try appendExpectedBinding(allocator, &expected, dependency.name, target);
+                if (dependency.alias) |alias| {
+                    try appendExpectedBinding(allocator, &expected, alias, target);
+                } else {
+                    const derived = registryNamePart(dependency.name);
+                    if (!hasDerivedAliasCollision(value, dependency.name, derived, active_profile, include_dev_dependencies)) try appendExpectedBinding(allocator, &expected, derived, target);
+                }
             }
-        }
-        var path_iterator = value.dependencies.path.iterator();
-        while (path_iterator.next()) |item| {
-            const dependency = item.value_ptr.*;
-            const target = try findManifestDependencyTarget(allocator, locked_packages, allowed_ids, infer_root_ids, dependency.name, .{ .path = dependency }, null, project_root, path_base) orelse continue;
-            try appendExpectedBinding(allocator, &expected, dependency.name, target);
-        }
-        var git_iterator = value.dependencies.git.iterator();
-        while (git_iterator.next()) |item| {
-            const dependency = item.value_ptr.*;
-            const target = try findManifestDependencyTarget(allocator, locked_packages, allowed_ids, infer_root_ids, dependency.name, .{ .git = dependency }, null, project_root, path_base) orelse continue;
-            try appendExpectedBinding(allocator, &expected, dependency.name, target);
-            if (dependency.alias) |alias| try appendExpectedBinding(allocator, &expected, alias, target);
-        }
-        var http_iterator = value.dependencies.http.iterator();
-        while (http_iterator.next()) |item| {
-            const dependency = item.value_ptr.*;
-            const target = try findManifestDependencyTarget(allocator, locked_packages, allowed_ids, infer_root_ids, dependency.name, .{ .http = dependency }, null, project_root, path_base) orelse continue;
-            try appendExpectedBinding(allocator, &expected, dependency.name, target);
-            if (dependency.alias) |alias| try appendExpectedBinding(allocator, &expected, alias, target);
+            var path_iterator = group.path.iterator();
+            while (path_iterator.next()) |item| {
+                const dependency = item.value_ptr.*;
+                const target = try findManifestDependencyTarget(allocator, locked_packages, allowed_ids, infer_root_ids, dependency.name, .{ .path = dependency }, null, project_root, path_base) orelse continue;
+                try appendExpectedBinding(allocator, &expected, dependency.name, target);
+            }
+            var git_iterator = group.git.iterator();
+            while (git_iterator.next()) |item| {
+                const dependency = item.value_ptr.*;
+                const target = try findManifestDependencyTarget(allocator, locked_packages, allowed_ids, infer_root_ids, dependency.name, .{ .git = dependency }, null, project_root, path_base) orelse continue;
+                try appendExpectedBinding(allocator, &expected, dependency.name, target);
+                if (dependency.alias) |alias| try appendExpectedBinding(allocator, &expected, alias, target);
+            }
+            var http_iterator = group.http.iterator();
+            while (http_iterator.next()) |item| {
+                const dependency = item.value_ptr.*;
+                const target = try findManifestDependencyTarget(allocator, locked_packages, allowed_ids, infer_root_ids, dependency.name, .{ .http = dependency }, null, project_root, path_base) orelse continue;
+                try appendExpectedBinding(allocator, &expected, dependency.name, target);
+                if (dependency.alias) |alias| try appendExpectedBinding(allocator, &expected, alias, target);
+            }
         }
     }
 
@@ -1010,21 +1022,29 @@ fn appendExpectedBinding(allocator: Allocator, bindings: *std.StringHashMap([]co
     try bindings.put(try allocator.dupe(u8, alias), package_id);
 }
 
-fn hasDerivedAliasCollision(manifest: *const manifest_mod.Manifest, current_key: []const u8, alias: []const u8, active_profile: ?[]const u8) bool {
-    var pkg_iterator = manifest.dependencies.pkg.iterator();
+/// derived short alias が他依存キー／explicit alias と衝突するか。
+/// `include_dev` は collection の root/package 範囲と揃える。
+fn hasDerivedAliasCollision(manifest: *const manifest_mod.Manifest, current_key: []const u8, alias: []const u8, active_profile: ?[]const u8, include_dev: bool) bool {
+    if (groupHasDerivedAliasCollision(manifest.dependencies, current_key, alias, active_profile)) return true;
+    if (include_dev and groupHasDerivedAliasCollision(manifest.dev_dependencies, current_key, alias, active_profile)) return true;
+    return false;
+}
+
+fn groupHasDerivedAliasCollision(group: manifest_mod.DependencyGroup, current_key: []const u8, alias: []const u8, active_profile: ?[]const u8) bool {
+    var pkg_iterator = group.pkg.iterator();
     while (pkg_iterator.next()) |item| {
         if (!dependencyMatchesProfile(item.value_ptr.profile, active_profile)) continue;
         if (std.mem.eql(u8, item.key_ptr.*, current_key)) continue;
         if (std.mem.eql(u8, item.key_ptr.*, alias) or (item.value_ptr.alias != null and std.mem.eql(u8, item.value_ptr.alias.?, alias))) return true;
         if (std.mem.indexOfScalar(u8, item.key_ptr.*, '/') != null and std.mem.eql(u8, registryNamePart(item.key_ptr.*), alias)) return true;
     }
-    var path_iterator = manifest.dependencies.path.iterator();
+    var path_iterator = group.path.iterator();
     while (path_iterator.next()) |item| if (std.mem.eql(u8, item.key_ptr.*, alias)) return true;
-    var git_iterator = manifest.dependencies.git.iterator();
+    var git_iterator = group.git.iterator();
     while (git_iterator.next()) |item| {
         if (std.mem.eql(u8, item.key_ptr.*, alias) or (item.value_ptr.alias != null and std.mem.eql(u8, item.value_ptr.alias.?, alias))) return true;
     }
-    var http_iterator = manifest.dependencies.http.iterator();
+    var http_iterator = group.http.iterator();
     while (http_iterator.next()) |item| {
         if (std.mem.eql(u8, item.key_ptr.*, alias) or (item.value_ptr.alias != null and std.mem.eql(u8, item.value_ptr.alias.?, alias))) return true;
     }

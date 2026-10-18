@@ -1457,6 +1457,41 @@ test "同じleafを持つregistry owner/nameのderived aliasだけを省く" {
     try testing.expect(!containsImportAlias(aliases, "lib"));
 }
 
+test "owner/nameのderived aliasはdev-dependenciesの明示aliasと衝突したら省く" {
+    // root scope は dev-dependencies も import 公開するため、通常依存の
+    // derived short alias が dev 側の明示 alias と衝突すれば省く。
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\"alice/lib" = { version = "^1.0.0" }
+        \\
+        \\[dev-dependencies.pkg]
+        \\devtool = { version = "^1.0.0", alias = "lib" }
+        \\
+    ;
+    var parse_diagnostics = diag.List.init(testing.allocator);
+    defer parse_diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &parse_diagnostics);
+    defer manifest.deinit();
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:alice-lib", .name = "lib", .version = "1.4.0", .source = .{ .kind = .static, .url = "https://registry.test/alice/lib" } },
+        .{ .id = "pkg:devtool", .name = "devtool", .version = "1.2.0", .source = .{ .kind = .static, .url = "https://registry.test/devtool" } },
+    };
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, null, &manifest, &sync_diagnostics);
+    defer testing.allocator.free(aliases);
+    try testing.expect(containsImportDependency(aliases, "alice/lib", "pkg:alice-lib"));
+    try testing.expect(containsImportDependency(aliases, "devtool", "pkg:devtool"));
+    try testing.expect(containsImportDependency(aliases, "lib", "pkg:devtool"));
+    // alice/lib の derived `lib` は dev 側 explicit alias と衝突するため付けない。
+    try testing.expectEqual(@as(usize, 3), aliases.len);
+}
+
 test "path git http dependencyはtable keyとpackage nameが異なってもsource条件で解決する" {
     const source =
         \\[package]
