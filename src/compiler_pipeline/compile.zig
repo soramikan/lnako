@@ -159,7 +159,8 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
                 // owner 無しの package 内容（旧 embedded payload 等）でも
                 // 解析側は source namespace で bind するため、空登録に落とさない。
                 item.namespace orelse ""
-            else "";
+            else
+                "";
             var listed = false;
             for (plugin_namespaces[target].items) |existing| {
                 if (std.mem.eql(u8, existing, namespace)) {
@@ -258,7 +259,8 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
                 break :blk try std.fmt.allocPrint(ir_program.arena.allocator(), "{s}:{s}", .{ owner, source });
             } else if (module.canonical_id != null or module.package_root != null)
                 item.namespace orelse ""
-            else "";
+            else
+                "";
             var listed = false;
             for (native_plugin_packages.items) |package| {
                 if (std.mem.eql(u8, package.path, target_module.path) and std.mem.eql(u8, package.namespace, namespace)) {

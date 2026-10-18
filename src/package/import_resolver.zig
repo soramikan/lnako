@@ -12,6 +12,7 @@ const semver = @import("semver.zig");
 const project_discovery = @import("project_discovery.zig");
 const project_trust = @import("project_trust.zig");
 const project_mod = @import("project.zig");
+const features_mod = @import("features.zig");
 
 const Allocator = std.mem.Allocator;
 pub const Value = std.json.Value;
@@ -705,13 +706,19 @@ fn validateEnvironmentExports(
     // sync 側の `resolveExports` と同じ feature 集合を使わないと、feature
     // 必須の artifact を経由する export が「宣言なし」として不一致になる。
     var package_target = target;
+    var package_feature_names: ?[]const []const u8 = null;
+    defer if (package_feature_names) |names| allocator.free(names);
     if (get(lock_entry, "features")) |features_value| {
         const feature_items = asArray(features_value) orelse return error.InvalidEnvironment;
         const feature_names = try allocator.alloc([]const u8, feature_items.items.len);
         for (feature_items.items, 0..) |item, index| {
-            if (item != .string) return error.InvalidEnvironment;
+            if (item != .string) {
+                allocator.free(feature_names);
+                return error.InvalidEnvironment;
+            }
             feature_names[index] = item.string;
         }
+        package_feature_names = feature_names;
         package_target.features = feature_names;
     }
 
@@ -765,7 +772,7 @@ fn validateEnvironmentExports(
     const locked_dependencies_value = get(lock_entry, "dependencies") orelse return error.InvalidEnvironment;
     const locked_dependencies = asArray(locked_dependencies_value) orelse return error.InvalidEnvironment;
     const parsed_manifest: ?*const manifest_mod.Manifest = if (manifest) |*value| value else null;
-    try validateManifestDependencyBindings(allocator, parsed_manifest, get(record, "dependencies"), locked_packages, active_profile, locked_dependencies, false, false, project_root, package_root);
+    try validateManifestDependencyBindings(allocator, parsed_manifest, get(record, "dependencies"), locked_packages, active_profile, locked_dependencies, false, false, package_feature_names, project_root, package_root);
 }
 
 const DependencyConstraint = union(enum) {
@@ -796,9 +803,11 @@ fn validateRootDependencyBindings(
     locked_packages: std.json.ObjectMap,
     allowed_root_ids: ?std.json.Array,
 ) !void {
+    const root_feature_names = try optionalFeatureNames(allocator, lock_input);
+    defer if (root_feature_names) |names| allocator.free(names);
     const manifest_path = try std.fs.path.join(allocator, &.{ project_root, "nako.toml" });
     const bytes = std.Io.Dir.cwd().readFileAlloc(io, manifest_path, allocator, .limited(manifest_mod.max_manifest_bytes)) catch |err| switch (err) {
-        error.FileNotFound, error.NotDir => return validateManifestDependencyBindings(allocator, null, environment_value, locked_packages, active_profile, allowed_root_ids, allowed_root_ids == null, true, project_root, project_root),
+        error.FileNotFound, error.NotDir => return validateManifestDependencyBindings(allocator, null, environment_value, locked_packages, active_profile, allowed_root_ids, allowed_root_ids == null, true, root_feature_names, project_root, project_root),
         error.OutOfMemory => return error.OutOfMemory,
         else => return error.InvalidEnvironment,
     };
@@ -817,7 +826,21 @@ fn validateRootDependencyBindings(
     };
     defer manifest.deinit();
     if (diagnostics.errorCount() > 0) return error.InvalidEnvironment;
-    try validateManifestDependencyBindings(allocator, &manifest, environment_value, locked_packages, active_profile, allowed_root_ids, allowed_root_ids == null, true, project_root, project_root);
+    try validateManifestDependencyBindings(allocator, &manifest, environment_value, locked_packages, active_profile, allowed_root_ids, allowed_root_ids == null, true, root_feature_names, project_root, project_root);
+}
+
+fn optionalFeatureNames(allocator: Allocator, object: std.json.ObjectMap) !?[]const []const u8 {
+    const features_value = get(object, "features") orelse return null;
+    const feature_items = asArray(features_value) orelse return error.InvalidEnvironment;
+    const feature_names = try allocator.alloc([]const u8, feature_items.items.len);
+    for (feature_items.items, 0..) |item, index| {
+        if (item != .string) {
+            allocator.free(feature_names);
+            return error.InvalidEnvironment;
+        }
+        feature_names[index] = item.string;
+    }
+    return feature_names;
 }
 
 fn validateManifestDependencyBindings(
@@ -831,12 +854,26 @@ fn validateManifestDependencyBindings(
     /// root 検証は collection と同様に dev-dependencies を expected に含める。
     /// package 検証は primary のみ（依存 package の dev は import 公開しない）。
     include_dev_dependencies: bool,
+    /// root: lock `input.features`（展開済 feature 名＋直接 alias）。
+    /// package: lock entry `features`（展開済 feature 名）。無いときは default 展開。
+    active_features: ?[]const []const u8,
     project_root: []const u8,
     path_base: []const u8,
 ) !void {
     var expected = std.StringHashMap([]const u8).init(allocator);
     defer expected.deinit();
     if (manifest) |value| {
+        // collection と同じ feature gate。未 activated の gated 依存は lock に
+        // 載らないため、ここで skip しないと findManifestDependencyTarget が
+        // InvalidEnvironment を返して正当な環境を拒否する。
+        var gated = project_mod.gatedDepNames(allocator, value) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidEnvironment,
+        };
+        defer gated.deinit();
+        var activated = try validationActivatedAliases(allocator, value, active_features, include_dev_dependencies);
+        defer activated.deinit();
+
         var group_buf: [2]*const manifest_mod.DependencyGroup = undefined;
         group_buf[0] = &value.dependencies;
         var group_count: usize = 1;
@@ -849,6 +886,7 @@ fn validateManifestDependencyBindings(
             while (pkg_iterator.next()) |item| {
                 const dependency = item.value_ptr.*;
                 if (!dependencyMatchesProfile(dependency.profile, active_profile)) continue;
+                if (project_mod.depIsGated(&gated, dependency.name, dependency.alias) and !project_mod.depIsActivated(&activated, dependency.name, dependency.alias)) continue;
                 const target = try findManifestDependencyTarget(allocator, locked_packages, allowed_ids, infer_root_ids, dependency.name, .{ .pkg = dependency }, dependency.public_id, project_root, path_base) orelse continue;
                 try appendExpectedBinding(allocator, &expected, dependency.name, target);
                 if (dependency.alias) |alias| {
@@ -861,12 +899,14 @@ fn validateManifestDependencyBindings(
             var path_iterator = group.path.iterator();
             while (path_iterator.next()) |item| {
                 const dependency = item.value_ptr.*;
+                if (project_mod.depIsGated(&gated, dependency.name, null) and !project_mod.depIsActivated(&activated, dependency.name, null)) continue;
                 const target = try findManifestDependencyTarget(allocator, locked_packages, allowed_ids, infer_root_ids, dependency.name, .{ .path = dependency }, null, project_root, path_base) orelse continue;
                 try appendExpectedBinding(allocator, &expected, dependency.name, target);
             }
             var git_iterator = group.git.iterator();
             while (git_iterator.next()) |item| {
                 const dependency = item.value_ptr.*;
+                if (project_mod.depIsGated(&gated, dependency.name, dependency.alias) and !project_mod.depIsActivated(&activated, dependency.name, dependency.alias)) continue;
                 const target = try findManifestDependencyTarget(allocator, locked_packages, allowed_ids, infer_root_ids, dependency.name, .{ .git = dependency }, null, project_root, path_base) orelse continue;
                 try appendExpectedBinding(allocator, &expected, dependency.name, target);
                 if (dependency.alias) |alias| try appendExpectedBinding(allocator, &expected, alias, target);
@@ -874,6 +914,7 @@ fn validateManifestDependencyBindings(
             var http_iterator = group.http.iterator();
             while (http_iterator.next()) |item| {
                 const dependency = item.value_ptr.*;
+                if (project_mod.depIsGated(&gated, dependency.name, dependency.alias) and !project_mod.depIsActivated(&activated, dependency.name, dependency.alias)) continue;
                 const target = try findManifestDependencyTarget(allocator, locked_packages, allowed_ids, infer_root_ids, dependency.name, .{ .http = dependency }, null, project_root, path_base) orelse continue;
                 try appendExpectedBinding(allocator, &expected, dependency.name, target);
                 if (dependency.alias) |alias| try appendExpectedBinding(allocator, &expected, alias, target);
@@ -907,6 +948,58 @@ fn validateManifestDependencyBindings(
         if (!std.mem.eql(u8, expected_package, package_id) or seen.contains(alias)) return error.InvalidEnvironment;
         try seen.put(alias, {});
     }
+}
+
+/// collection の root/package activated 集合と同じ規則。root は lock
+/// `input.features` をそのまま activated 名に載せ、package は entry.features
+/// を `use_default=false` で再展開して dependency alias を得る。
+fn validationActivatedAliases(
+    allocator: Allocator,
+    manifest: *const manifest_mod.Manifest,
+    active_features: ?[]const []const u8,
+    root_scope: bool,
+) !std.StringHashMap(void) {
+    if (root_scope) {
+        if (active_features) |features| {
+            var activated = std.StringHashMap(void).init(allocator);
+            errdefer activated.deinit();
+            for (features) |name| try activated.put(name, {});
+            return activated;
+        }
+        return try defaultValidationActivatedAliases(allocator, manifest);
+    }
+    if (active_features) |features| {
+        var aliases = manifest.dependencyAliases(allocator) catch return error.OutOfMemory;
+        defer aliases.deinit();
+        var offender: ?[]const u8 = null;
+        var expanded = features_mod.expand(allocator, &manifest.features, features, false, &aliases, &offender) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.UnknownFeature, error.FeatureCycle => return error.InvalidEnvironment,
+        };
+        defer expanded.deinit();
+        var activated = std.StringHashMap(void).init(allocator);
+        errdefer activated.deinit();
+        var alias_iterator = expanded.dependency_aliases.keyIterator();
+        while (alias_iterator.next()) |key| try activated.put(key.*, {});
+        return activated;
+    }
+    return try defaultValidationActivatedAliases(allocator, manifest);
+}
+
+fn defaultValidationActivatedAliases(allocator: Allocator, manifest: *const manifest_mod.Manifest) !std.StringHashMap(void) {
+    var aliases = manifest.dependencyAliases(allocator) catch return error.OutOfMemory;
+    defer aliases.deinit();
+    var offender: ?[]const u8 = null;
+    var expanded = features_mod.expand(allocator, &manifest.features, &.{}, true, &aliases, &offender) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.UnknownFeature, error.FeatureCycle => return error.InvalidEnvironment,
+    };
+    defer expanded.deinit();
+    var activated = std.StringHashMap(void).init(allocator);
+    errdefer activated.deinit();
+    var alias_iterator = expanded.dependency_aliases.keyIterator();
+    while (alias_iterator.next()) |key| try activated.put(key.*, {});
+    return activated;
 }
 
 pub fn findManifestDependencyTarget(
