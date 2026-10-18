@@ -1836,8 +1836,8 @@ test "package scopeはlock entry.featuresの実効featureで依存aliasを発行
     defer testing.allocator.free(without);
     try testing.expectEqual(@as(usize, 0), without.len);
 
-    // entry.features に feature 名と展開 alias が載る場合は tool を公開する
-    const entry_features = [_][]const u8{ "extra", "tool" };
+    // entry.features は feature 名のみ（resolver 出力形）。依存 alias は含まない。
+    const entry_features = [_][]const u8{"extra"};
     const with_features = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, &package_edges, "consumer", &manifest, null, &entry_features, &sync_diagnostics);
     defer testing.allocator.free(with_features);
     try testing.expectEqual(@as(usize, 1), with_features.len);

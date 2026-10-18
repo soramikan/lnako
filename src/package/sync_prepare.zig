@@ -784,34 +784,8 @@ pub fn isPackageId(id: []const u8) bool {
 }
 
 /// `source.<field>` 群から決定的な cache key を作る。`prefix-<sha256先頭16>`。
-fn shortKey(arena: Allocator, prefix: []const u8, parts: []const []const u8) ![]const u8 {
-    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
-    hasher.update(prefix);
-    for (parts) |part| {
-        hasher.update(&[_]u8{0});
-        hasher.update(part);
-    }
-    var digest: [32]u8 = undefined;
-    hasher.final(&digest);
-    const hex = std.fmt.bytesToHex(digest, .lower);
-    return try std.fmt.allocPrint(arena, "{s}-{s}", .{ prefix, hex[0..16] });
-}
-
-/// ジェストを key に使う。そうでなければ宣言 hash を key 材料へ含める。
-/// sha256 以外（sha512 等）でも lock の hash 更新が必ず別 entry になるよう
-/// URL だけを key にしない（同じ URL で配布物が更新される通常ケースで
-/// 古い内容を復元しないため）。
-fn artifactKey(arena: Allocator, prefix: []const u8, declared_hash: []const u8, identity: []const u8) ![]const u8 {
-    var digest: [32]u8 = undefined;
-    if (lock_model.normalizeSha256(declared_hash, &digest)) {
-        const hex = std.fmt.bytesToHex(digest, .lower);
-        return try std.fmt.allocPrint(arena, "{s}-{s}", .{ prefix, hex[0..32] });
-    }
-    if (declared_hash.len != 0) {
-        return try shortKey(arena, prefix, &.{ declared_hash, identity });
-    }
-    return try shortKey(arena, prefix, &.{identity});
-}
+const shortKey = cache_key.shortKey;
+const artifactKey = cache_key.artifactKey;
 
 fn rememberKey(ctx: *Context, key: []const u8) !void {
     for (ctx.used_keys.items) |item| {
@@ -1386,26 +1360,6 @@ test "cachedManifest は manifest 欠落と読取不能を区別する" {
         try store.publishStaging("cached-broken");
         try testing.expectError(error.InvalidMetadata, cachedManifest(&ctx, "cached-broken"));
     }
-}
-
-test "artifactKey は宣言 hash を key 材料へ含める" {
-    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_impl.deinit();
-    const allocator = arena_impl.allocator();
-    const url = "https://example.test/pkg.tar.gz";
-    // sha256 は digest 自体が key になるため表記が違っても同一 key。
-    const a = try artifactKey(allocator, "http", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", url);
-    const b = try artifactKey(allocator, "http", "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", url);
-    try testing.expectEqualStrings(a, b);
-    // sha256 以外の表記でも宣言 hash が key 材料へ入る。同じ URL で lock の
-    // hash が更新されれば必ず別 entry になり、古い内容を復元しない。
-    const c = try artifactKey(allocator, "http", "sha512:aaaa", url);
-    const d = try artifactKey(allocator, "http", "sha512:bbbb", url);
-    try testing.expect(!std.mem.eql(u8, c, d));
-    try testing.expect(!std.mem.eql(u8, a, c));
-    // 同じ hash 宣言でも取得元が違えば別 entry。
-    const e = try artifactKey(allocator, "http", "sha512:aaaa", "https://other.test/pkg.tar.gz");
-    try testing.expect(!std.mem.eql(u8, c, e));
 }
 
 test "materialize target は lock input の compatJs・optimize・engine version を引き継ぐ" {

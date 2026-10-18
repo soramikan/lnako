@@ -526,7 +526,7 @@ pub fn hasExcludedExport(manifest: *const manifest_mod.Manifest) bool {
 /// root 直下の宣言は `./` 前置と区切りを正規化した宣言値を返す
 /// （`./deps/lib` と `deps/lib` が lock・mutablePaths で同一表記になる
 /// ようにする）。
-fn normalizePathSource(gpa: Allocator, declared: []const u8, base_dir: ?[]const u8, project_root: []const u8) Error![]const u8 {
+pub fn normalizePathSource(gpa: Allocator, declared: []const u8, base_dir: ?[]const u8, project_root: []const u8) Error![]const u8 {
     if (base_dir == null or isAbsoluteDependencyPath(declared)) return canonicalDepSpelling(gpa, declared);
     const root = std.fs.path.resolve(gpa, &.{project_root}) catch return error.FileSystem;
     const base = std.fs.path.resolve(gpa, &.{base_dir.?}) catch return error.FileSystem;

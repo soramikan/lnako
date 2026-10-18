@@ -11,6 +11,7 @@ const diag = @import("diagnostics.zig");
 const semver = @import("semver.zig");
 const project_discovery = @import("project_discovery.zig");
 const project_trust = @import("project_trust.zig");
+const project_mod = @import("project.zig");
 
 const Allocator = std.mem.Allocator;
 pub const Value = std.json.Value;
@@ -486,7 +487,7 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
             // 外部 mutable path 依存は filesystem root まで遡る。
             if (try project_trust.hasUnsafeWritableAncestors(allocator, io, root, project_root)) return error.InvalidEnvironment;
             try package_roots.append(allocator, root);
-            try validateEnvironmentExports(allocator, io, root, record, lock_entry, locked_packages, artifact_target, profile_value.string);
+            try validateEnvironmentExports(allocator, io, project_root, root, record, lock_entry, locked_packages, artifact_target, profile_value.string);
         } else if (record_exports) |exports| {
             // A missing materialization is tolerable only for support packages
             // that expose no imports. Exports pointing at absent files would
@@ -650,6 +651,7 @@ fn artifactTargetForProfile(
 fn validateEnvironmentExports(
     allocator: Allocator,
     io: std.Io,
+    project_root: []const u8,
     package_root: []const u8,
     record: std.json.ObjectMap,
     lock_entry: std.json.ObjectMap,
@@ -763,7 +765,7 @@ fn validateEnvironmentExports(
     const locked_dependencies_value = get(lock_entry, "dependencies") orelse return error.InvalidEnvironment;
     const locked_dependencies = asArray(locked_dependencies_value) orelse return error.InvalidEnvironment;
     const parsed_manifest: ?*const manifest_mod.Manifest = if (manifest) |*value| value else null;
-    try validateManifestDependencyBindings(allocator, parsed_manifest, get(record, "dependencies"), locked_packages, active_profile, locked_dependencies, false);
+    try validateManifestDependencyBindings(allocator, parsed_manifest, get(record, "dependencies"), locked_packages, active_profile, locked_dependencies, false, project_root, package_root);
 }
 
 const DependencyConstraint = union(enum) {
@@ -796,7 +798,7 @@ fn validateRootDependencyBindings(
 ) !void {
     const manifest_path = try std.fs.path.join(allocator, &.{ project_root, "nako.toml" });
     const bytes = std.Io.Dir.cwd().readFileAlloc(io, manifest_path, allocator, .limited(manifest_mod.max_manifest_bytes)) catch |err| switch (err) {
-        error.FileNotFound, error.NotDir => return validateManifestDependencyBindings(allocator, null, environment_value, locked_packages, active_profile, allowed_root_ids, allowed_root_ids == null),
+        error.FileNotFound, error.NotDir => return validateManifestDependencyBindings(allocator, null, environment_value, locked_packages, active_profile, allowed_root_ids, allowed_root_ids == null, project_root, project_root),
         error.OutOfMemory => return error.OutOfMemory,
         else => return error.InvalidEnvironment,
     };
@@ -815,7 +817,7 @@ fn validateRootDependencyBindings(
     };
     defer manifest.deinit();
     if (diagnostics.errorCount() > 0) return error.InvalidEnvironment;
-    try validateManifestDependencyBindings(allocator, &manifest, environment_value, locked_packages, active_profile, allowed_root_ids, allowed_root_ids == null);
+    try validateManifestDependencyBindings(allocator, &manifest, environment_value, locked_packages, active_profile, allowed_root_ids, allowed_root_ids == null, project_root, project_root);
 }
 
 fn validateManifestDependencyBindings(
@@ -826,6 +828,8 @@ fn validateManifestDependencyBindings(
     active_profile: ?[]const u8,
     allowed_ids: ?std.json.Array,
     infer_root_ids: bool,
+    project_root: []const u8,
+    path_base: []const u8,
 ) !void {
     var expected = std.StringHashMap([]const u8).init(allocator);
     defer expected.deinit();
@@ -834,7 +838,7 @@ fn validateManifestDependencyBindings(
         while (pkg_iterator.next()) |item| {
             const dependency = item.value_ptr.*;
             if (!dependencyMatchesProfile(dependency.profile, active_profile)) continue;
-            const target = try findManifestDependencyTarget(allocator, locked_packages, allowed_ids, infer_root_ids, dependency.name, .{ .pkg = dependency }, dependency.public_id) orelse continue;
+            const target = try findManifestDependencyTarget(allocator, locked_packages, allowed_ids, infer_root_ids, dependency.name, .{ .pkg = dependency }, dependency.public_id, project_root, path_base) orelse continue;
             try appendExpectedBinding(allocator, &expected, dependency.name, target);
             if (dependency.alias) |alias| {
                 try appendExpectedBinding(allocator, &expected, alias, target);
@@ -846,20 +850,20 @@ fn validateManifestDependencyBindings(
         var path_iterator = value.dependencies.path.iterator();
         while (path_iterator.next()) |item| {
             const dependency = item.value_ptr.*;
-            const target = try findManifestDependencyTarget(allocator, locked_packages, allowed_ids, infer_root_ids, dependency.name, .{ .path = dependency }, null) orelse continue;
+            const target = try findManifestDependencyTarget(allocator, locked_packages, allowed_ids, infer_root_ids, dependency.name, .{ .path = dependency }, null, project_root, path_base) orelse continue;
             try appendExpectedBinding(allocator, &expected, dependency.name, target);
         }
         var git_iterator = value.dependencies.git.iterator();
         while (git_iterator.next()) |item| {
             const dependency = item.value_ptr.*;
-            const target = try findManifestDependencyTarget(allocator, locked_packages, allowed_ids, infer_root_ids, dependency.name, .{ .git = dependency }, null) orelse continue;
+            const target = try findManifestDependencyTarget(allocator, locked_packages, allowed_ids, infer_root_ids, dependency.name, .{ .git = dependency }, null, project_root, path_base) orelse continue;
             try appendExpectedBinding(allocator, &expected, dependency.name, target);
             if (dependency.alias) |alias| try appendExpectedBinding(allocator, &expected, alias, target);
         }
         var http_iterator = value.dependencies.http.iterator();
         while (http_iterator.next()) |item| {
             const dependency = item.value_ptr.*;
-            const target = try findManifestDependencyTarget(allocator, locked_packages, allowed_ids, infer_root_ids, dependency.name, .{ .http = dependency }, null) orelse continue;
+            const target = try findManifestDependencyTarget(allocator, locked_packages, allowed_ids, infer_root_ids, dependency.name, .{ .http = dependency }, null, project_root, path_base) orelse continue;
             try appendExpectedBinding(allocator, &expected, dependency.name, target);
             if (dependency.alias) |alias| try appendExpectedBinding(allocator, &expected, alias, target);
         }
@@ -901,6 +905,8 @@ pub fn findManifestDependencyTarget(
     name: []const u8,
     constraint: DependencyConstraint,
     public_id: ?[]const u8,
+    project_root: []const u8,
+    path_base: []const u8,
 ) !?[]const u8 {
     var matches: std.ArrayListUnmanaged([]const u8) = .empty;
     defer matches.deinit(allocator);
@@ -909,7 +915,7 @@ pub fn findManifestDependencyTarget(
     var iterator = locked_packages.iterator();
     while (iterator.next()) |entry| {
         const lock_entry = asObject(entry.value_ptr.*) orelse return error.InvalidEnvironment;
-        if (!matchesManifestDependency(entry.key_ptr.*, lock_entry, name, constraint, public_id)) continue;
+        if (!matchesManifestDependency(allocator, entry.key_ptr.*, lock_entry, name, constraint, public_id, project_root, path_base)) continue;
         try matches.append(allocator, entry.key_ptr.*);
         if (allowed_ids) |allowed| {
             if (arrayContainsString(allowed, entry.key_ptr.*)) try roots.append(allocator, entry.key_ptr.*);
@@ -929,11 +935,14 @@ pub fn findManifestDependencyTarget(
 }
 
 fn matchesManifestDependency(
+    allocator: Allocator,
     package_id: []const u8,
     lock_entry: std.json.ObjectMap,
     name: []const u8,
     constraint: DependencyConstraint,
     public_id: ?[]const u8,
+    project_root: []const u8,
+    path_base: []const u8,
 ) bool {
     const source_value = get(lock_entry, "source") orelse get(lock_entry, "resolvedFrom") orelse return false;
     const source = asObject(source_value) orelse return false;
@@ -957,7 +966,14 @@ fn matchesManifestDependency(
         .path => |dependency| blk: {
             if (!std.mem.eql(u8, kind, "path")) break :blk false;
             const source_path = requiredString(source, "path") orelse break :blk false;
-            break :blk std.mem.eql(u8, source_path, dependency.path);
+            // 同一表記ならそのまま一致（fixture や root 宣言の `./` 揺れ前）。
+            if (std.mem.eql(u8, source_path, dependency.path)) break :blk true;
+            // lock は宣言 package の base 相対 path を project 相対へ正規化して
+            // 記録する。manifest の raw 宣言（`../common` 等）を同じ規則で
+            // 正規化してから比較する。
+            const normalized = project_mod.normalizePathSource(allocator, dependency.path, path_base, project_root) catch break :blk false;
+            defer allocator.free(normalized);
+            break :blk std.mem.eql(u8, source_path, normalized);
         },
         .git => |dependency| {
             if (!std.mem.eql(u8, kind, "git")) return false;

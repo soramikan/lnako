@@ -84,6 +84,40 @@ fn defaultActivatedAliases(
     return activated;
 }
 
+/// package scope の activated 依存 alias 集合。lock `entry.features` は
+/// resolver が記録した**展開済 feature 名**のみ（依存 alias は含まない）。
+/// そのまま activated に載せると gated 依存 alias がブロックされるため、
+/// manifest feature 定義で再展開して `dependency_aliases` を得る。
+/// `use_default=false` — 実効集合は既に solver が確定済み。
+fn packageActivatedAliases(
+    allocator: Allocator,
+    manifest: *const manifest_mod.Manifest,
+    active_features: []const []const u8,
+    context: []const u8,
+    diagnostics: *diag.List,
+) Error!std.StringHashMap(void) {
+    var aliases = manifest.dependencyAliases(allocator) catch return error.OutOfMemory;
+    defer aliases.deinit();
+    var offender: ?[]const u8 = null;
+    var expanded = features_mod.expand(allocator, &manifest.features, active_features, false, &aliases, &offender) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.UnknownFeature => {
+            try diagnostics.addFmt(diag.E028_UNKNOWN_FEATURE, .err, context, .{}, "unknown feature \"{s}\" in \"{s}\"", .{ offender orelse "", context });
+            return error.LockInvalid;
+        },
+        error.FeatureCycle => {
+            try diagnostics.addFmt(diag.E027_FEATURE_CYCLE, .err, context, .{}, "invalid feature graph in \"{s}\"", .{context});
+            return error.LockInvalid;
+        },
+    };
+    defer expanded.deinit();
+    var activated = std.StringHashMap(void).init(allocator);
+    errdefer activated.deinit();
+    var alias_iterator = expanded.dependency_aliases.keyIterator();
+    while (alias_iterator.next()) |key| try activated.put(key.*, {});
+    return activated;
+}
+
 /// root scope（`edge_owner == null`）の activated 依存 alias 集合。
 /// `active_features`（lock `input.features`＝expandedFeatureNames: 展開済
 /// feature 名と直接指定された依存 alias の併記）がある場合はそれを使い、
@@ -363,16 +397,16 @@ pub fn collectImportDependenciesForProfile(
     // root scope は lock `input.features` を activated に使い、
     // dev-dependencies も公開対象（テスト等の dev 利用 import を
     // environment.json の import 依存表へ載せる）。package scope は
-    // dev-dependencies を含めず、lock entry.features（実効 feature）が
-    // 渡されていればそれを activated に使い、無い呼出しだけ default
-    // feature 展開で近似する。
+    // dev-dependencies を含めず、lock entry.features（展開済 feature 名）
+    // を再展開して依存 alias を activated に載せる。無い呼出しだけ
+    // default feature 展開で近似する。
     const edge_root_scope = edge_owner == null;
     var gated = try gatedDepNames(allocator, manifest);
     defer gated.deinit();
     var activated = if (edge_root_scope)
         try rootActivatedAliases(allocator, manifest, active_features, "nako.toml.dependencies", diagnostics)
     else if (active_features) |features|
-        try rootActivatedAliases(allocator, manifest, features, manifest.package.name, diagnostics)
+        try packageActivatedAliases(allocator, manifest, features, manifest.package.name, diagnostics)
     else
         try defaultActivatedAliases(allocator, manifest, manifest.package.name, diagnostics);
     defer activated.deinit();

@@ -137,5 +137,5 @@ v1 lockは読み取り可能だが、直接辺が欠落するため互換モー�
 ## 9. 今後の予定
 
 - `manifestSchemaVersion` 1: Issue #69 において共通ソース優先、`package.runtimes`、`package.engines`、`package.include`、profile `runtime`、`prefer-native`、および `.nako/environment.json` 契約をインプレースで包含する仕様改訂を実施した。v1/v2 の並行運用や移行ロジックは導入せず、単一正本スキーマとして維持する。
-- `lockSchemaVersion` 2: workspace lock、複数ルート package の対応を予定。
+- `lockSchemaVersion` 3: workspace lock、複数ルート package の対応を予定（v2 は `rootDependencies` 導入で使用済み）。
 - `resolverVersion` 2: optional peer dependency の handling 改善を予定。

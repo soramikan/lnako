@@ -453,6 +453,8 @@ test "manifest dependency lock edge不整合はenvironment validationで拒否�
         dependency.name,
         .{ .pkg = dependency },
         null,
+        ".",
+        ".",
     ));
 }
 

@@ -2728,7 +2728,7 @@ test "undeclared package scope cannot resolve another package export" {
     if (program.succeeded()) {
         const output = try runModulesForTestWithPackageResolver(std.testing.allocator, &files, resolver.packageResolver());
         defer std.testing.allocator.free(output);
-        try std.testing.expect(!std.mem.eql(u8, output, "42\\n"));
+        try std.testing.expect(!std.mem.eql(u8, output, "42\n"));
     }
 }
 

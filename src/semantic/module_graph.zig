@@ -1432,10 +1432,12 @@ const JavaScriptScanner = struct {
                 self.truncated = true;
                 return null;
             }
-            if (std.ascii.isAlphabetic(character) or character == '_' or character == '$') {
+            // 非ASCII（日本語識別子など）も identifier として扱う。punctuation
+            // に落とすと直後の `/` を regex 開始と誤認し、import 走査が壊れる。
+            if (std.ascii.isAlphabetic(character) or character == '_' or character == '$' or character >= 0x80) {
                 const start = self.index;
                 self.index += 1;
-                while (self.index < self.source.len and (std.ascii.isAlphanumeric(self.source[self.index]) or self.source[self.index] == '_' or self.source[self.index] == '$')) self.index += 1;
+                while (self.index < self.source.len and (std.ascii.isAlphanumeric(self.source[self.index]) or self.source[self.index] == '_' or self.source[self.index] == '$' or self.source[self.index] >= 0x80)) self.index += 1;
                 return self.emit(.{ .kind = .identifier, .text = self.source[start..self.index] });
             }
             self.index += 1;

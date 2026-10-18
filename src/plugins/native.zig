@@ -297,11 +297,14 @@ pub const State = struct {
         // 直接path import（namespaces空、または空sentinel併存）でも clone を
         // 行い、package修飾名が直接import側の同名raw命令へ誤配されないよう
         // にする。
+        // clone 範囲は plugin 自身の登録末尾で固定する。呼び出しごとに
+        // commands.len を読むと、先の clone を再cloneして衝突する。
         const primary = self.pending_namespace;
+        const registered_end = self.commands.items.len;
         for (namespaces) |namespace| {
             if (namespace.len == 0) continue;
             if (primary != null and std.mem.eql(u8, namespace, primary.?)) continue;
-            self.aliasCommandsForNamespace(command_start, namespace) catch return error.NativePluginInitializationFailed;
+            self.aliasCommandsForNamespace(command_start, registered_end, namespace) catch return error.NativePluginInitializationFailed;
         }
         const path_copy = try allocator.dupe(u8, path);
         errdefer allocator.free(path_copy);
@@ -318,12 +321,12 @@ pub const State = struct {
         });
     }
 
-    /// `command_start` 以降に登録された命令を別namespaceでも解決できるよう
+    /// `[command_start, end)` に登録された命令を別namespaceでも解決できるよう
     /// cloneする。命令実体（context/invoke）は共有し、destroyはcloneへは
-    /// 引き継がない（先頭エントリのみが所有権を持つ）。
-    fn aliasCommandsForNamespace(self: *State, command_start: usize, namespace: []const u8) !void {
+    /// 引き継がない（先頭エントリのみが所有権を持つ）。`end` は clone 前の
+    /// plugin 自身の登録末尾を渡し、先に作った clone を再cloneしない。
+    fn aliasCommandsForNamespace(self: *State, command_start: usize, end: usize, namespace: []const u8) !void {
         const allocator = self.allocator orelse return error.NativePluginStateUnavailable;
-        const end = self.commands.items.len;
         var index = command_start;
         while (index < end) : (index += 1) {
             const source = self.commands.items[index];
@@ -1066,12 +1069,42 @@ test "同一plugin pathの命令は複数namespaceへclone登録できる" {
     try std.testing.expectEqual(status_ok, registerCommand(&state, &command));
     state.pending_namespace = null;
     // loadPluginの複数namespace経路と同じく、登録済み命令を別aliasへcloneする
-    try state.aliasCommandsForNamespace(command_start, "calc");
+    try state.aliasCommandsForNamespace(command_start, state.commands.items.len, "calc");
     try std.testing.expect(state.findCommand("math__加算") != null);
     try std.testing.expect(state.findCommand("calc__加算") != null);
     try std.testing.expect(state.findCommand("加算") == null);
     // 既に同名命令が登録済みのnamespaceへのcloneは衝突として失敗する
-    try std.testing.expectError(error.NativePluginCommandConflict, state.aliasCommandsForNamespace(command_start, "math"));
+    try std.testing.expectError(error.NativePluginCommandConflict, state.aliasCommandsForNamespace(command_start, command_start + 1, "math"));
+}
+
+test "複数namespaceへのcloneは先cloneを再cloneしない" {
+    // 3 namespace（primary + 2 clone）で loadPlugin 相当の固定 end を使う。
+    // end を都度 commands.len にすると2回目が1回目の clone を再cloneし衝突する。
+    var state = State.init();
+    state.allocator = std.testing.allocator;
+    defer state.deinit();
+    var command = CommandV1{
+        .struct_size = @sizeOf(CommandV1),
+        .abi_version = abi_version,
+        .flags = flag_sync | flag_pure,
+        .name = "加算",
+        .particles = "AとBを",
+        .minimum_arguments = 2,
+        .maximum_arguments = 2,
+        .command_context = null,
+        .invoke = testCommandInvoke,
+        .destroy = null,
+    };
+    state.pending_namespace = "primary";
+    const command_start = state.commands.items.len;
+    try std.testing.expectEqual(status_ok, registerCommand(&state, &command));
+    state.pending_namespace = null;
+    const registered_end = state.commands.items.len;
+    try state.aliasCommandsForNamespace(command_start, registered_end, "alias-a");
+    try state.aliasCommandsForNamespace(command_start, registered_end, "alias-b");
+    try std.testing.expect(state.findCommand("primary__加算") != null);
+    try std.testing.expect(state.findCommand("alias-a__加算") != null);
+    try std.testing.expect(state.findCommand("alias-b__加算") != null);
 }
 
 test "修飾名は同名raw命令よりnamespace一致を優先する" {
@@ -1127,7 +1160,7 @@ test "直接importとpackage importが併存するpluginは無修飾と修飾の
     raw_qualified.name = "math__加算";
     try std.testing.expectEqual(status_ok, registerCommand(&state, &raw_qualified));
     // 空sentinel併存でもpackage namespaceへcloneし、修飾呼出しを維持する
-    try state.aliasCommandsForNamespace(command_start, "math");
+    try state.aliasCommandsForNamespace(command_start, state.commands.items.len, "math");
     // 無修飾の直接命令は消えない
     try std.testing.expect(state.findCommand("加算") != null);
     // `math__加算` は同名raw命令ではなくpackage修飾命令へ解決する
@@ -1165,7 +1198,7 @@ test "`__`を含むraw命令はnamespaceへcloneせず合成名衝突を避け�
     var raw_qualified = command;
     raw_qualified.name = "b__c";
     try std.testing.expectEqual(status_ok, registerCommand(&state, &raw_qualified));
-    try state.aliasCommandsForNamespace(command_start, "a");
+    try state.aliasCommandsForNamespace(command_start, state.commands.items.len, "a");
     // cloneされて `a__加算` が生まれ、`a__b__c` は合成されない
     try std.testing.expect(state.findCommand("a__加算") != null);
     try std.testing.expect(state.findCommand("a__b__c") == null);
