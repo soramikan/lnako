@@ -114,6 +114,7 @@ pub const package = struct {
     pub const npkg_files = @import("package/npkg_files.zig");
     pub const npkg_commands = @import("package/npkg_commands.zig");
     pub const npkg_commands_gen = @import("package/npkg_commands_gen.zig");
+    pub const command_inspect = @import("package/command_inspect.zig");
     pub const npkg_build = @import("package/npkg_build.zig");
     pub const npkg_verify = @import("package/npkg_verify.zig");
     pub const fetch = @import("package/fetch.zig");
@@ -306,6 +307,7 @@ test {
     std.testing.refAllDecls(package.npkg_files);
     std.testing.refAllDecls(package.npkg_commands);
     std.testing.refAllDecls(package.npkg_commands_gen);
+    std.testing.refAllDecls(package.command_inspect);
     std.testing.refAllDecls(package.npkg_build);
     std.testing.refAllDecls(package.npkg_verify);
     std.testing.refAllDecls(package.fetch);

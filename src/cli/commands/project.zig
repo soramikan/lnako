@@ -53,6 +53,8 @@ pub const PrepFlags = struct {
     cache_dir: ?[]const u8 = null,
     allow_plaintext_http: bool = false,
     json: bool = false,
+    /// `check --strict-sharing`: 未検査 package が残れば E033 で失敗する。
+    strict_sharing: bool = false,
     /// `run`/`build --compat-js` の compat 実行。依存解決の ESM 許容と
     /// lock 鮮度入力へ伝える（prep フラグとしては抽出せず呼出し側が
     /// 設定する）。
@@ -144,6 +146,8 @@ fn parsePrepFlags(a: Allocator, args: []const []const u8, verb: []const u8, stde
             flags.allow_plaintext_http = true;
         } else if (std.mem.eql(u8, argument, "--json")) {
             flags.json = true;
+        } else if (std.mem.eql(u8, argument, "--strict-sharing")) {
+            flags.strict_sharing = true;
         } else if (std.mem.startsWith(u8, argument, "-")) {
             return failUsage(stderr, "{s}: 不明なオプションです: {s}\n", .{ verb, argument });
         } else {
@@ -166,6 +170,7 @@ const FlagMask = struct {
     cache_dir: bool = false,
     allow_plaintext_http: bool = false,
     json: bool = false,
+    strict_sharing: bool = false,
 };
 
 fn rejectInertFlags(flags: *const PrepFlags, verb: []const u8, comptime allowed: FlagMask, stderr: *std.Io.Writer) CliError!void {
@@ -189,6 +194,8 @@ fn rejectInertFlags(flags: *const PrepFlags, verb: []const u8, comptime allowed:
         "--allow-plaintext-http"
     else if (!allowed.json and flags.json)
         "--json"
+    else if (!allowed.strict_sharing and flags.strict_sharing)
+        "--strict-sharing"
     else
         null;
     if (bad) |flag| return failUsage(stderr, "{s}: {s} はこのコマンドでは使えません\n", .{ verb, flag });
@@ -929,19 +936,22 @@ fn declaredMatch(a: Allocator, packages: []const lock_model.PackageEntry, decl: 
 // ---------------------------------------------------------------------------
 
 /// 既存環境が現行 lock と整合するか検査する。`.nako` を作成しない。
+/// 環境が current のときは命令 metadata の静的検査も行う（Issue #52）。
 pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_dir: []const u8, environ_map: ?*const std.process.Environ.Map, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !void {
     const parsed = try parsePrepFlags(a, args, "check", stderr);
     var flags = parsed.flags;
     defer flags.deinit(a);
     if (parsed.rest.len > 0) return failUsage(stderr, "check: 不明な引数です: {s}\n", .{parsed.rest[0]});
     // check は副作用なしの検査コマンド。sync・取得系フラグは意味を持た
-    // ないため拒否する。
+    // ないため拒否する。`--strict-sharing` は命令 metadata の未検査を
+    // E033 で失敗させる（共用保証の厳格検査）。
     try rejectInertFlags(&flags, "check", .{
         .locked = true,
         .profile = true,
         .features = true,
         .no_default_features = true,
         .json = true,
+        .strict_sharing = true,
     }, stderr);
 
     var diagnostics = diag.List.init(a);
@@ -981,23 +991,81 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
     // グラフを指し続ける状態を「同期済み」と案内しない）。
     if (inspect.lock_state != .fresh or !inspect.environment_current) try needed.append(a, "lnako sync");
 
+    // 命令 metadata 静的検査。環境が current のときのみ（stale/missing は
+    // 索引が信頼できないため skipped）。
+    var command_report = lnako.package.command_inspect.Report{
+        .arena = std.heap.ArenaAllocator.init(a),
+    };
+    defer command_report.deinit();
+    if (inspect.environment_current) {
+        var root_dir = std.Io.Dir.cwd().openDir(io, project_var.root, .{}) catch |err| {
+            return failProject(stderr, "check", err, &diagnostics, project_var.manifest_path);
+        };
+        defer root_dir.close(io);
+        command_report.deinit();
+        command_report = try lnako.package.command_inspect.inspectEnvironmentDir(
+            a,
+            io,
+            root_dir,
+            flags.strict_sharing,
+            &diagnostics,
+        );
+    }
+
+    if (diagnostics.errorCount() > 0) {
+        renderOrFail(&diagnostics, stderr, project_var.manifest_path);
+        return error.Failed;
+    }
+
+    const sharing = lnako.package.command_inspect.sharingText(command_report.sharing);
+
     if (flags.json) {
         var needed_json: std.ArrayList(u8) = .empty;
         for (needed.items, 0..) |cmd, i| {
             if (i > 0) try needed_json.appendSlice(a, ",");
             try needed_json.appendSlice(a, try std.fmt.allocPrint(a, "\"{s}\"", .{cmd}));
         }
-        try stdout.print("{{\"schemaVersion\":1,\"manifest\":\"ok\",\"lock\":\"{s}\",\"environment\":\"{s}\",\"needed\":[{s}]}}\n", .{
-            lock_state,
-            if (inspect.environment == null) "missing" else if (inspect.environment_current) "current" else "stale",
-            needed_json.items,
-        });
+        var uninspected_json: std.ArrayList(u8) = .empty;
+        for (command_report.uninspected, 0..) |item, i| {
+            if (i > 0) try uninspected_json.appendSlice(a, ",");
+            const pkg_json = try std.json.Stringify.valueAlloc(a, item.package_key, .{});
+            try uninspected_json.appendSlice(a, try std.fmt.allocPrint(
+                a,
+                "{{\"package\":{s},\"reason\":\"{s}\"}}",
+                .{ pkg_json, item.reasonText() },
+            ));
+        }
+        try stdout.print(
+            "{{\"schemaVersion\":1,\"manifest\":\"ok\",\"lock\":\"{s}\",\"environment\":\"{s}\",\"needed\":[{s}],\"commands\":{{\"sharing\":\"{s}\",\"inspected\":{d},\"uninspected\":[{s}],\"collisions\":{d},\"mismatches\":{d}}}}}\n",
+            .{
+                lock_state,
+                if (inspect.environment == null) "missing" else if (inspect.environment_current) "current" else "stale",
+                needed_json.items,
+                sharing,
+                command_report.inspected_count,
+                uninspected_json.items,
+                command_report.collision_count,
+                command_report.mismatch_count,
+            },
+        );
         try stdout.flush();
     } else {
         try stdout.print("プロジェクト: {s}（{s}）\n", .{ project_var.manifest.package.name, project_var.root });
         try stdout.print("  nako.toml: OK\n", .{});
         try stdout.print("  nako.lock: {s}\n", .{lock_state});
         try stdout.print("  .nako 環境: {s}\n", .{if (inspect.environment == null) "missing" else if (inspect.environment_current) "current" else "stale"});
+        try stdout.print("  命令検査: {s}（inspected={d}, uninspected={d}, collisions={d}, mismatches={d}）\n", .{
+            sharing,
+            command_report.inspected_count,
+            command_report.uninspectedCount(),
+            command_report.collision_count,
+            command_report.mismatch_count,
+        });
+        if (command_report.uninspected.len > 0) {
+            for (command_report.uninspected) |item| {
+                try stdout.print("    未検査: {s} ({s})\n", .{ item.package_key, item.reasonText() });
+            }
+        }
         if (needed.items.len > 0) {
             try stdout.print("  必要な操作:", .{});
             for (needed.items) |cmd| try stdout.print(" {s};", .{cmd});
