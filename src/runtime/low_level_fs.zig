@@ -136,8 +136,63 @@ pub fn readlink(io: std.Io, allocator: std.mem.Allocator, path: []const u8) anye
 }
 
 /// ハードリンクを作成する。シンボリックリンクは追跡しない。
+/// Windows は Zig 0.16 の `Dir.hardLink` が常に `OperationUnsupported` のため
+/// `CreateHardLinkW` を直接呼ぶ（Issue #78）。
 pub fn createHardLink(io: std.Io, target: []const u8, link: []const u8) anyerror!void {
+    if (builtin.os.tag == .windows) {
+        return createHardLinkWindows(io, target, link);
+    }
     try std.Io.Dir.hardLink(std.Io.Dir.cwd(), target, std.Io.Dir.cwd(), link, io, .{ .follow_symlinks = false });
+}
+
+/// Win32 `CreateHardLinkW(new_link, existing, null)`。引数順は API が
+/// （新規, 既存）で、本関数の `(target=既存, link=新規)` とは逆。
+/// パスは WTF-8 → NUL 終端 WTF-16。相対パスはプロセス cwd 基準。
+fn createHardLinkWindows(io: std.Io, target: []const u8, link: []const u8) anyerror!void {
+    _ = io;
+    const windows = std.os.windows;
+    const allocator = std.heap.page_allocator;
+    const existing_w = std.unicode.wtf8ToWtf16LeAllocZ(allocator, target) catch |failure| switch (failure) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.InvalidWtf8 => return error.BadPathName,
+    };
+    defer allocator.free(existing_w);
+    const new_w = std.unicode.wtf8ToWtf16LeAllocZ(allocator, link) catch |failure| switch (failure) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.InvalidWtf8 => return error.BadPathName,
+    };
+    defer allocator.free(new_w);
+
+    // CreateHardLinkW は std に無いため kernel32 を直接リンクする。
+    const CreateHardLinkW = struct {
+        extern "kernel32" fn CreateHardLinkW(
+            lpFileName: [*:0]const u16,
+            lpExistingFileName: [*:0]const u16,
+            lpSecurityAttributes: ?*anyopaque,
+        ) callconv(.winapi) windows.BOOL;
+    }.CreateHardLinkW;
+
+    if (CreateHardLinkW(new_w.ptr, existing_w.ptr, null) == 0) {
+        return mapHardLinkWin32Error(windows.GetLastError());
+    }
+}
+
+fn mapHardLinkWin32Error(err: std.os.windows.Win32Error) anyerror {
+    return switch (err) {
+        .ALREADY_EXISTS => error.PathAlreadyExists,
+        .FILE_NOT_FOUND, .PATH_NOT_FOUND => error.FileNotFound,
+        .NOT_SAME_DEVICE => error.CrossDevice,
+        .ACCESS_DENIED => error.AccessDenied,
+        .PRIVILEGE_NOT_HELD => error.PermissionDenied,
+        // FAT/exFAT 等は INVALID_FUNCTION や NOT_SUPPORTED になる。
+        .INVALID_FUNCTION, .NOT_SUPPORTED, .DIRECTORY_NOT_SUPPORTED => error.OperationUnsupported,
+        .INVALID_PARAMETER, .INVALID_NAME => error.InvalidArgument,
+        .DIRECTORY => error.IsDir,
+        .TOO_MANY_LINKS => error.LinkQuotaExceeded,
+        .DISK_FULL, .HANDLE_DISK_FULL => error.NoSpaceLeft,
+        .WRITE_PROTECT => error.ReadOnlyFileSystem,
+        else => std.os.windows.unexpectedError(err),
+    };
 }
 
 /// 実体パス（絶対パス、symlink解決済み）を返す。NUL終端sliceを返すので
@@ -873,9 +928,6 @@ test "相対targetはリンクの親ディレクトリ基準で解決する" {
 }
 
 test "ハードリンク作成はリンク数を増やし同一inodeを共有する" {
-    // WindowsはZig 0.16 stdのDir.hardLinkが未対応でENOTSUPになる
-    // （capability hardlink の os.windows はfalse。Issue #78で対応予定）。
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "target.txt", .data = "xyz" });
@@ -890,6 +942,12 @@ test "ハードリンク作成はリンク数を増やし同一inodeを共有す
     try std.testing.expectEqual(original.inode, linked.inode);
     try std.testing.expectEqual(@as(u64, 2), linked.nlink);
     try std.testing.expectError(error.PathAlreadyExists, createHardLink(std.testing.io, target_path, link_path));
+
+    const missing = try tmpPath(&temporary, "missing-target.txt");
+    defer std.testing.allocator.free(missing);
+    const missing_link = try tmpPath(&temporary, "missing-link.txt");
+    defer std.testing.allocator.free(missing_link);
+    try std.testing.expectError(error.FileNotFound, createHardLink(std.testing.io, missing, missing_link));
 }
 
 test "realpathは絶対実体パスを返しsymlinkを解決する" {

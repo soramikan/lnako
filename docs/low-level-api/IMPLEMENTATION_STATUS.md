@@ -36,7 +36,7 @@ Interpreter（`src/plugins/lowlevel/stream.zig` + host）と AOT（`src/runtime/
 | --- | --- | --- | --- |
 | #27 | 完了（位置系含む 10/10） | 10/10 | 読書き同期切詰 + 位置系4 |
 | #28 | CLOSED | 5/5 | Raw stdio |
-| #29 | CLOSED | 9/9 | hardlink の Windows は #78 |
+| #29 | CLOSED | 9/9 | hardlink Windows は #78 で対応 |
 | #30 | CLOSED | （基盤） | 構造化エラー |
 | #31 | CLOSED | 3/3 | utime / truncate |
 | #32 | CLOSED | 4/4 | incremental hash |
@@ -52,13 +52,13 @@ Interpreter（`src/plugins/lowlevel/stream.zig` + host）と AOT（`src/runtime/
 
 | Issue | 状態 | 内容 |
 | --- | --- | --- |
-| #78 | OPEN | Windows `CreateHardLinkW`。現状 `hardlink` の `os.windows=false` |
+| #78 | CLOSED | Windows `CreateHardLinkW`。`hardlink` の `os.windows=true` |
 | #39 | OPEN | `termios` / `nss` / `acl` / `xattr` / `selinux`（capability ID のみ・命令なし） |
 | #197–#206 | OPEN | Web/Async Runtime Foundation（現行 63 命令カタログの外） |
 
 ## OS・経路の制約（よく使うもの）
 
-- Windows `ハードリンク作成`: 常に `ENOTSUP`。capability 照会は false（#78）
+- Windows `ハードリンク作成`: `CreateHardLinkW`（NTFS）。非対応FSは `ENOTSUP`（#78）
 - POSIX 系（chmod / chown / uid_gid / priority / statfs 等）: POSIX で実装。Windows は照会 false または実行時 `ENOTSUP`
 - `reflink` / `seek_data` / `seek_hole` / `fallocate`: FS・OS 依存。matrix は `conditional` または Windows false
 - Interpreter: ホストが callback を渡さないと capability が false（`lnako_interpreter` は多くが `conditional`）
@@ -80,6 +80,5 @@ Interpreter（`src/plugins/lowlevel/stream.zig` + host）と AOT（`src/runtime/
 
 ## 残作業の優先度（文書上のギャップ）
 
-1. #78（Windows hardlink）
 2. #39（termios 等の拡張）
 3. #197 以降（別カタログ領域）

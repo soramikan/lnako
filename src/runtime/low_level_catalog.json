@@ -432,7 +432,7 @@
         "ENOTSUP",
         "EINVAL"
       ],
-      "notes": "link。Windowsでは未対応（常にENOTSUP）",
+      "notes": "link。WindowsはCreateHardLinkW（NTFS）。非対応FSはENOTSUP",
       "implemented": true
     },
     {
@@ -1705,7 +1705,7 @@
       "os": {
         "linux": true,
         "macos": true,
-        "windows": false
+        "windows": true
       },
       "runtimes": {
         "lnako_interpreter": "conditional",
