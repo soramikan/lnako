@@ -5,7 +5,7 @@
 
 `verified: 527` は、追跡されたfixture・dispatch・公式比較・3 OS attestationに基づく命令entryの実行証拠です。全ての入力値、Node/ECMAScript APIの全境界、実ネットワーク・外部アプリ・任意の外部toolまで完全同値であることを意味しません。未検証境界は本書と [互換性の概要](COMPATIBILITY.md) に明示します。
 
-## リリース済みの状態（v0.1.0 / v0.1.1 / v0.2.0 / v0.2.1 / v0.2.2）
+## リリース済みの状態（v0.1.0 / v0.1.1 / v0.2.0 / v0.2.1 / v0.2.2 / v0.2.3）
 
 - **v0.1.0（初回正式リリース）**：
   - 標準cnako 527 entry（native 523、compat-js 4、blocked 0）の実装と、macOS arm64・Linux x86_64・Windows x86_64の3 OSにおけるCI 54/54全job成功・attestation検証を達成。
@@ -46,6 +46,19 @@
   - **CI/CD・開発基盤**：
     - CI改善計画2の全Phase実装（cache identity分離、worker=2、AOT compiler共有等）（[#104](https://github.com/soramikan/lnako/pull/104)）。
     - 非コード変更時のpre-push最適化、Issue/PRテンプレート導入。
+- **v0.2.3（依存管理CLI・パッケージimport・低レイヤーAPI全63命令完遂・クロージャ互換修正）**：
+  - **依存管理CLIとプロジェクト自動準備（`lnako`）**：
+    - `init`（`--lib` 含む）、`add`、`remove`、`lock`、`update`、`tree`、`why`、`check`、`cache dir|clean` の各コマンドと、`run` / `test` / `build` 実行前の自動ロック・環境同期を実装（[#49](https://github.com/soramikan/lnako/issues/49), [#176](https://github.com/soramikan/lnako/pull/176)）。
+  - **同期済みパッケージのimport解決**：
+    - `パッケージ:` / `pkg:` によるパッケージimport、サブパス解決、公開境界検査、ネイティブプラグイン命令の名前空間修飾、および埋め込みペイロードv4でのパッケージルート保持を実装（[#50](https://github.com/soramikan/lnako/issues/50), [#196](https://github.com/soramikan/lnako/pull/196)）。
+  - **低レイヤーAPIカタログ全63命令の実装完了**：
+    - ファイルシステム拡張4命令（`ファイルシステム情報取得` / `ファイルクローン` / `ファイルデータ領域検索` / `ファイル空洞領域検索` / `ファイル領域確保`）（[#36](https://github.com/soramikan/lnako/issues/36), [#181](https://github.com/soramikan/lnako/pull/181)）。
+    - ストリーム位置指定I/O 4命令（`ファイル位置変更` / `ファイル位置取得` / `ファイル位置指定読込` / `ファイル位置指定書込`）（[#27](https://github.com/soramikan/lnako/issues/27), [#207](https://github.com/soramikan/lnako/pull/207)）。
+    - Windows（NTFS）における `CreateHardLinkW` を用いた `ハードリンク作成` 対応（[#78](https://github.com/soramikan/lnako/issues/78), [#208](https://github.com/soramikan/lnako/pull/208)）。
+  - **言語互換性・ツールチェーン・リリース基盤の改善**：
+    - 無名関数・入れ子関数をまたぐ変数束縛およびクロージャ捕捉の公式なでしこ3互換性を修正（[#194](https://github.com/soramikan/lnako/pull/194)）。
+    - `lnako toolchain install` 実行時の進捗表示追加とファイル複製処理の高速化（[#193](https://github.com/soramikan/lnako/pull/193)）。
+    - Release公開時のリリースノート自動適用およびHomebrew tap更新ワークフローの自動起動に対応。
 
 ## 明示的に非対応とする境界（意図的制限・後続課題）
 
@@ -94,8 +107,15 @@
 
 ## 進行中および今後の継続課題
 
-- **パッケージシステムの実装**：
-  - なでしこ3向け共通パッケージシステム仕様案（[SPECIFICATION.md](package-system/SPECIFICATION.md)）に基づく、PubGrub依存解決器、マニフェスト解析、取得provider・package cache・環境同期（#47・#48）、依存管理CLIと `run`/`test`/`build` 前の自動準備（#49）を実装済み。`nako.lock` の決定的生成、複数profile集約、既存版優先、部分更新と変更理由説明、lock鮮度判定、`--locked` の無変更失敗、path 依存 pin hash・依存 cycle 検出を実装した。npm 依存の解決は未実装（manifest 宣言は lock 不可として明示拒否）。
+- **パッケージシステムの実装**（Project [#2](https://github.com/users/soramikan/projects/2)、label `package-system`）:
+  - **基盤（CLOSED）**: 仕様・schema・適合例（#43）、manifest/TOML/SemVer/marker/features（#44）、PubGrub（#45）、複数profile `nako.lock`・部分更新（#46）、path/Git/URL/静的registry provider（#47）、cache・検証展開・排他・環境復旧（#48）、`.npkg` 生成/検証（#51）、共通.nako3優先・runtime条件（#69）。
+  - **CLI・実行前準備（コード完了・Issue OPEN）**: `init`/`add`/`remove`/`lock`/`update`/`tree`/`why`/`check`/`sync`/`package build|verify|cache` と `run`/`test`/`build` 前の自動準備、`--locked`/`--offline`/`--no-sync`（#49、PR #176）。受け入れcheckbox未更新のため Issue は OPEN のまま。
+  - **package import（lnako 実装済・ゲート未了）**: `パッケージ:`/`pkg:` alias・subpath、export 境界、environment scope、Interpreter 経路（#50、PR #196）。未達は cnako 共通fixture（#61 連動）、3 OS での LLVM AOT O0〜O3 実測、共通 E2E。
+  - **初回 P0 未着手の主鎖**: 命令 metadata 静的検査（#52）→ npm 取得（#53）→ QuickJS ESM 解決（#54）→ AOT+QuickJS（#55）→ 依存同梱（#56）→ publish（#57）→ 3 OS E2E/文書（#58）。cnako 上流接続・公開版（#61）は import ゲート兼用。
+  - **配布拡張 P1**: native source build（#59）、AOT 静的 plugin 同梱（#11）、workspace（#60）。
+  - **他処理系/後続**: wnako（#62）、cnako Node 拡充（#63）、cross build（#64）、WASM PoC（#65）、cnako Node 完結依存管理（#70）、階層名前空間「の」（#182）。
+  - **レジストリ**（別リポ [nako-registry](https://github.com/soramikan/nako-registry)）: #1–#6 すべて OPEN。中央サーバー切替は nako-registry#5 が gate。
+  - **明示拒否中**: npm 依存は lock 不可（`rejectNpmDeps`）。`publish` CLI 未実装（環境 generation の “publish” 語は内部用）。
 - **低レイヤーAPI・ストリームI/O**：
   - カタログ63命令をすべて実装済み（#27–#38, #36 等）。正本は [`docs/low-level-api/catalog.json`](low-level-api/catalog.json)、現状の一覧は [`docs/low-level-api/IMPLEMENTATION_STATUS.md`](low-level-api/IMPLEMENTATION_STATUS.md)。
   - **実装済み命令（63/63）**: カタログ掲載の全命令を Interpreter / AOT で実装。位置系4命令（`ファイル位置変更` / `ファイル位置取得` / `ファイル位置指定読込` / `ファイル位置指定書込`）は [#27](https://github.com/soramikan/lnako/issues/27) で完了。
