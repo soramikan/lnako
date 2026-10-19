@@ -30,6 +30,10 @@
       "reason": "命令dispatchファサード（arrays/へ実装移譲済み・テストはファサードに集約）",
       "limitKb": 40
     },
+      "src/package/import_resolver.zig": {
+        "reason": "manifest・lock・environment・filesystemを同一Resolverで相互検証する境界（監視対象・hard limit内）",
+        "limitKb": 84
+      },
       "src/package/project.zig": {
         "reason": "path/git/http依存解決とlock生成の統合オーケストレーション（分割を継続検討・90KB上限）",
         "limitKb": 90
@@ -65,6 +69,14 @@
       "src/runtime/value.zig": {
         "reason": "Value・Runtime中心のコア値表現（監視対象・hard limit内）",
         "limitKb": 81
+      },
+      "src/semantic/analyzer.zig": {
+        "reason": "namespace alias lookupはprivate symbol tableとscope stateに依存（監視対象・hard limit内）",
+        "limitKb": 84
+      },
+      "src/semantic/module_graph.zig": {
+        "reason": "canonical export identityとimport edgeをLoader state内で統合（監視対象・hard limit内）",
+        "limitKb": 92
       }
     }
   },

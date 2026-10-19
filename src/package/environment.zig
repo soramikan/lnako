@@ -46,7 +46,15 @@ pub const PackageRecord = struct {
     /// path 依存では宣言された相対 path）。
     path: []const u8,
     exports: []const ExportRecord = &.{},
+    /// Dependencies visible from this package's import scope.
+    dependencies: []const ImportDependency = &.{},
     commands: []const npkg_commands.Command = &.{},
+};
+
+/// A package import alias resolved within one dependency scope.
+pub const ImportDependency = struct {
+    alias: []const u8,
+    package_key: []const u8,
 };
 
 pub const ExportRecord = struct {
@@ -65,13 +73,38 @@ pub const Document = struct {
     /// lock 再生成を要しない範囲で変わっても環境の陳腐化を検出できる
     /// ようにする。
     mutable_paths: []const lock_model.MutablePath = &.{},
+    /// Dependencies visible from the project root import scope.
+    dependencies: []const ImportDependency = &.{},
 };
 
 fn writeJsonString(writer: *std.Io.Writer, text: []const u8) !void {
     try std.json.Stringify.value(text, .{}, writer);
 }
 
-/// `environment.json` の本文を決定的に生成する。packages は key 順。
+fn writeDependencies(gpa: Allocator, dependencies: []const ImportDependency, writer: *std.Io.Writer) !void {
+    const sorted = try gpa.dupe(ImportDependency, dependencies);
+    defer gpa.free(sorted);
+    std.mem.sort(ImportDependency, sorted, {}, struct {
+        fn lessThan(_: void, a: ImportDependency, b: ImportDependency) bool {
+            const alias_order = std.mem.order(u8, a.alias, b.alias);
+            if (alias_order != .eq) return alias_order == .lt;
+            return std.mem.order(u8, a.package_key, b.package_key) == .lt;
+        }
+    }.lessThan);
+
+    try writer.writeByte('[');
+    for (sorted, 0..) |dependency, index| {
+        if (index > 0) try writer.writeByte(',');
+        try writer.writeAll("{\"alias\":");
+        try writeJsonString(writer, dependency.alias);
+        try writer.writeAll(",\"package\":");
+        try writeJsonString(writer, dependency.package_key);
+        try writer.writeByte('}');
+    }
+    try writer.writeByte(']');
+}
+
+/// `environment.json` の本文を決定的に生成する。packages/dependencies は順序固定。
 pub fn emit(gpa: Allocator, doc: Document, writer: *std.Io.Writer) !void {
     const sorted = try gpa.dupe(PackageRecord, doc.packages);
     defer gpa.free(sorted);
@@ -96,7 +129,12 @@ pub fn emit(gpa: Allocator, doc: Document, writer: *std.Io.Writer) !void {
         try writeJsonString(writer, mutable.sha256);
         try writer.writeByte('}');
     }
-    try writer.writeAll("],\"packages\":{");
+    try writer.writeAll("]");
+    if (doc.dependencies.len != 0) {
+        try writer.writeAll(",\"dependencies\":");
+        try writeDependencies(gpa, doc.dependencies, writer);
+    }
+    try writer.writeAll(",\"packages\":{");
     for (sorted, 0..) |package, index| {
         if (index > 0) try writer.writeByte(',');
         try writeJsonString(writer, package.key);
@@ -125,6 +163,10 @@ pub fn emit(gpa: Allocator, doc: Document, writer: *std.Io.Writer) !void {
                 try writer.writeByte('}');
             }
             try writer.writeByte(']');
+        }
+        if (package.dependencies.len != 0) {
+            try writer.writeAll(",\"dependencies\":");
+            try writeDependencies(gpa, package.dependencies, writer);
         }
         if (package.commands.len != 0) {
             try writer.writeAll(",\"commands\":[");
@@ -503,6 +545,9 @@ pub const Store = struct {
     /// `current` と不一致の場合でも公開環境が実際に使っている世代を
     /// 特定できる（中断復旧時の保守的な世代保持用）。
     /// env.json が無い・読めない・世代参照を含まない場合は null。
+    /// dependencies の alias など任意文字列が `.nako/env/gen-*` に似た本文を
+    /// 含み得るため、生バイト走査ではなく JSON parse 後に `path` field のみ
+    /// を検査する。
     pub fn readPublishedGeneration(self: *const Store, gpa: Allocator) !?[]u8 {
         const bytes = (try self.readEnvironmentJson(gpa)) orelse return null;
         defer gpa.free(bytes);
@@ -662,15 +707,20 @@ test "environment emit は schema v1 の決定的 JSON を key 順で生成す�
         .{ .name = "テスト", .args = &.{"A"}, .josi = &.{"を"} },
         .{ .name = "値", .variable = true },
     };
+    const root_dependencies = [_]ImportDependency{
+        .{ .alias = "z", .package_key = "pkg:22222222222222222222222222222222" },
+        .{ .alias = "same", .package_key = "pkg:11111111111111111111111111111111" },
+    };
     const packages = [_]PackageRecord{
         .{ .key = "pkg:22222222222222222222222222222222", .name = "b", .version = "2.0.0", .id = null, .path = "deps/b" },
-        .{ .key = "pkg:11111111111111111111111111111111", .name = "a", .version = "1.0.0", .id = "pkg:11111111111111111111111111111111", .path = ".nako/env/gen-aa/deps/a", .exports = &.{.{ .name = "a", .path = "src/a.nako3" }}, .commands = &commands },
+        .{ .key = "pkg:11111111111111111111111111111111", .name = "a", .version = "1.0.0", .id = "pkg:11111111111111111111111111111111", .path = ".nako/env/gen-aa/deps/a", .exports = &.{.{ .name = "a", .path = "src/a.nako3" }}, .dependencies = &.{.{ .alias = "same", .package_key = "pkg:22222222222222222222222222222222" }}, .commands = &commands },
     };
     try emit(testing.allocator, .{
         .lock_sha256 = "sha256:0000000000000000000000000000000000000000000000000000000000000000",
         .profile = "default",
         .runtime = "lnako",
         .packages = &packages,
+        .dependencies = &root_dependencies,
     }, &buffer.writer);
 
     const text = buffer.writer.buffered();
@@ -692,6 +742,15 @@ test "environment emit は schema v1 の決定的 JSON を key 順で生成す�
     try testing.expectEqualStrings("a", a.get("name").?.string);
     try testing.expectEqualStrings("1.0.0", a.get("version").?.string);
     try testing.expectEqualStrings(".nako/env/gen-aa/deps/a", a.get("path").?.string);
+    const root_dependencies_json = root.get("dependencies").?.array;
+    try testing.expectEqual(@as(usize, 2), root_dependencies_json.items.len);
+    try testing.expectEqualStrings("same", root_dependencies_json.items[0].object.get("alias").?.string);
+    try testing.expectEqualStrings("pkg:11111111111111111111111111111111", root_dependencies_json.items[0].object.get("package").?.string);
+    try testing.expectEqualStrings("z", root_dependencies_json.items[1].object.get("alias").?.string);
+    const package_dependencies = a.get("dependencies").?.array;
+    try testing.expectEqual(@as(usize, 1), package_dependencies.items.len);
+    try testing.expectEqualStrings("same", package_dependencies.items[0].object.get("alias").?.string);
+    try testing.expectEqualStrings("pkg:22222222222222222222222222222222", package_dependencies.items[0].object.get("package").?.string);
     const commands_value = a.get("commands").?.array;
     try testing.expectEqual(@as(usize, 2), commands_value.items.len);
     try testing.expectEqualStrings("テスト", commands_value.items[0].object.get("name").?.string);
@@ -709,8 +768,20 @@ test "environment emit は schema v1 の決定的 JSON を key 順で生成す�
         .profile = "default",
         .runtime = "lnako",
         .packages = &packages,
+        .dependencies = &root_dependencies,
     }, &second_buffer.writer);
     try testing.expectEqualStrings(text, second_buffer.writer.buffered());
+}
+
+test "environment の旧 JSON は scoped dependencies なしでも parse できる" {
+    const old_json = "{\"schemaVersion\":1,\"lockSha256\":\"sha256:00\",\"profile\":\"default\",\"runtime\":\"lnako\",\"packages\":{\"legacy\":{\"name\":\"legacy\",\"version\":\"1.0.0\",\"path\":\"deps/legacy\"}}}";
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, old_json, .{});
+    defer parsed.deinit();
+    const document = parsed.value.object;
+    try testing.expect(document.get("dependencies") == null);
+    const packages = document.get("packages").?.object;
+    const legacy = packages.get("legacy").?.object;
+    try testing.expect(legacy.get("dependencies") == null);
 }
 
 test "published generation は unrelated field の偽 generation より managed package path を優先する" {
@@ -1004,6 +1075,41 @@ test "environment store は readPublishedGeneration で公開環境の参照世�
     // 世代参照を含まない env.json では null（保守判定で prune を見送る側）。
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = json_path, .data = "{\"packages\":[]}\n" });
     try testing.expect((try store.readPublishedGeneration(testing.allocator)) == null);
+}
+
+test "environment store の readPublishedGeneration は alias 等の任意文字列に紛れた世代参照を採用しない" {
+    const io = testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var store = try openTempStore(&temporary);
+    defer store.deinit();
+
+    // alias 文字列に `.nako/env/gen-c0ffee/` に似た本文を含む env.json。
+    // 生バイト走査だと alias を世代参照と誤認して保持世代を偽装できた
+    // （旧実装は `gen-`+hex を拾うため `gen-c0ffee` が採用される）。
+    // `packages` の実 path field だけを検査するため null。
+    const spoofed =
+        \\{"schemaVersion":1,"lockSha256":"sha256:00","profile":"default","runtime":"lnako",
+        \\"dependencies":[{"alias":"../../.nako/env/gen-c0ffee/deps/x","package":"pkg:a"}],
+        \\"packages":{"pkg:a":{"name":"a","version":"1.0.0","path":"deps/a"}}}
+        \\
+    ;
+    const json_path = try std.fs.path.join(testing.allocator, &.{ store.root, environment_file });
+    defer testing.allocator.free(json_path);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = json_path, .data = spoofed });
+    try testing.expect((try store.readPublishedGeneration(testing.allocator)) == null);
+
+    // 実 path field の世代参照は拾う（path deps は宣言 path を持つため
+    // `.nako/env/...` 形式を持つ path が実在する）。
+    const with_path =
+        \\{"schemaVersion":1,"lockSha256":"sha256:00","profile":"default","runtime":"lnako",
+        \\"packages":{"pkg:a":{"name":"a","version":"1.0.0","path":".nako/env/gen-1234abcd/deps/a"}}}
+        \\
+    ;
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = json_path, .data = with_path });
+    const published = (try store.readPublishedGeneration(testing.allocator)).?;
+    defer testing.allocator.free(published);
+    try testing.expectEqualStrings("gen-1234abcd", published);
 }
 
 test "openManagedDir は通常 file を保持し symlink のみ置き換える" {

@@ -98,11 +98,21 @@ pub fn acquirePath(
     };
 }
 
+/// manifest 読み取りの実効 byte 上限。`session.policy.max_bytes` は
+/// artifact 取得の上限で、manifest の契約上限（`manifest_mod.max_manifest_bytes`）
+/// とは別系統。`import_resolver` の再読込と同じ受理集合にするため、
+/// policy が大きい（または無制限）場合も manifest 側上限を超えない。
+/// policy がより小さい場合は policy を尊重する。
+pub fn manifestByteLimit(policy_max_bytes: usize) usize {
+    if (policy_max_bytes == 0) return manifest_mod.max_manifest_bytes;
+    return @min(policy_max_bytes, manifest_mod.max_manifest_bytes);
+}
+
 /// path・git provider 共通の manifest 読み取り。`max_bytes = 0` は上限なし
 /// （HTTP 取得と同じ契約）として扱い、上限超過は `too_large` に分類する。
 fn readDependencyManifest(session: *Session, manifest_path: []const u8, dep_name: []const u8, dep_kind: []const u8) Error!manifest_mod.Manifest {
     const gpa = session.allocator();
-    const limit: std.Io.Limit = if (session.policy.max_bytes == 0) .unlimited else .limited(session.policy.max_bytes);
+    const limit: std.Io.Limit = .limited(manifestByteLimit(session.policy.max_bytes));
     const bytes = std.Io.Dir.cwd().readFileAlloc(session.io, manifest_path, gpa, limit) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Canceled => return error.Canceled,
@@ -118,7 +128,7 @@ fn readDependencyManifest(session: *Session, manifest_path: []const u8, dep_name
 /// 共有するため公開する。
 pub fn readDependencyManifestDir(session: *Session, dir: std.Io.Dir, sub_path: []const u8, display_path: []const u8, dep_name: []const u8, dep_kind: []const u8) Error!manifest_mod.Manifest {
     const gpa = session.allocator();
-    const limit: std.Io.Limit = if (session.policy.max_bytes == 0) .unlimited else .limited(session.policy.max_bytes);
+    const limit: std.Io.Limit = .limited(manifestByteLimit(session.policy.max_bytes));
     const bytes = dir.readFileAlloc(session.io, sub_path, gpa, limit) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Canceled => return error.Canceled,
@@ -130,7 +140,7 @@ pub fn readDependencyManifestDir(session: *Session, dir: std.Io.Dir, sub_path: [
 fn mapManifestReadError(session: *Session, err: anyerror, manifest_path: []const u8, dep_name: []const u8, dep_kind: []const u8) Error {
     return switch (err) {
         error.FileNotFound => session.fail(.not_found, .manifest, manifest_path, "{s} dependency \"{s}\" has no nako.toml at \"{s}\"", .{ dep_kind, dep_name, manifest_path }),
-        error.StreamTooLong => session.fail(.too_large, .manifest, manifest_path, "manifest at \"{s}\" exceeds the {d} byte limit", .{ manifest_path, session.policy.max_bytes }),
+        error.StreamTooLong => session.fail(.too_large, .manifest, manifest_path, "manifest at \"{s}\" exceeds the {d} byte limit", .{ manifest_path, manifestByteLimit(session.policy.max_bytes) }),
         else => session.fail(.network, .manifest, manifest_path, "cannot read \"{s}\": {s}", .{ manifest_path, @errorName(err) }),
     };
 }

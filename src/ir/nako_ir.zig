@@ -95,6 +95,11 @@ pub const Instruction = struct {
     /// dispatch.
     literal_site_id: ?u64 = null,
     is_builtin_call: bool = false,
+    /// 意味解析が動的builtinとして束縛したplugin命令呼出しで真。
+    /// package修飾命令（`{namespace}__{命令}`）の実行時dispatchはこの印が
+    /// ある呼出しに限る — 取り込み辺を持たないモジュールが同名を書いても
+    /// pluginへ届かない。
+    dynamic_call: bool = false,
     /// DNCL互換の配列要素代入で、未初期化変数へ30要素の0配列を自動初期化する。
     check_array_init: bool = false,
     /// 対象名がローカルシンボルへ解決された代入系命令で真。
@@ -199,10 +204,32 @@ pub const Function = struct {
     sore_scope: bool = false,
 };
 
+/// `pkg:` import経由で読み込まれたnative pluginの登録namespace。
+/// 命令は `{namespace}__{命令}` の修飾名で公開する。
+/// `namespace` が空の entry は直接 path import を表し、その path の命令を
+/// 無修飾でも公開する。直接 import と package import が併存する場合は
+/// 空 entry と修飾 entry の両方が載る（両方の公開形を維持する）。
+pub const NativePluginPackage = struct {
+    path: []const u8,
+    namespace: []const u8,
+};
+
 pub const JavaScriptModule = struct {
     path: []const u8,
     source: []const u8,
     is_plugin: bool = false,
+    /// `pkg:` import経由のESM pluginが命令を公開するnamespace。非空の場合
+    /// 命令は `{namespace}__{命令}` の修飾名でのみ呼べる（native pluginの
+    /// namespace契約と同じ）。同一pathを複数aliasでimportした場合は
+    /// 全namespaceを保持する。空なら無修飾公開（直接path import）。直接
+    /// path importとpackage importが併存する場合は空エントリを含み、
+    /// その分は無修飾登録も行う。
+    namespaces: []const []const u8 = &.{},
+    /// このmoduleを所有するpackageのcanonical root。実行時のQuickJS
+    /// module_normalizeがこのmoduleからのimport解決をroot内へ拘束し、
+    /// graph側の収集をすり抜けた形のFS fallbackがroot外を読めないように
+    /// する。package外moduleはnull（無制限の従来挙動）。
+    package_root: ?[]const u8 = null,
 };
 
 pub const Program = struct {
@@ -214,10 +241,19 @@ pub const Program = struct {
     /// v 番変体の関数index。
     variant_entries: []const []const FunctionId = &.{},
     module_names: []const []const u8 = &.{},
+    /// モジュール内シンボルの修飾名namespace（`{namespace}__{name}`）。
+    /// `module_names`（実行時module名＝エントリ関数名）とindexを揃える。
+    /// package moduleでは公開名と内部名が異なるため別系統で保持する。
+    internal_module_names: []const []const u8 = &.{},
     module_paths: []const []const u8 = &.{},
     compat_js: bool = false,
     javascript_modules: []JavaScriptModule = &.{},
     native_plugin_paths: []const []const u8 = &.{},
+    /// `pkg:` import経由のnative plugin。命令は `{namespace}__{命令}` の
+    /// 修飾名でのみ公開し、無修飾名では呼べない。直接path importと同じ
+    /// pathを共有する場合は `namespace` 空の entry を併記し、無修飾登録と
+    /// 修飾登録の両方を行う。
+    native_plugin_packages: []const NativePluginPackage = &.{},
     http_server_plugin_imported: bool = false,
 
     pub fn deinit(self: *Program) void {
@@ -260,9 +296,16 @@ pub const Program = struct {
         for (javascript_modules) |*module| {
             module.path = try allocator.dupe(u8, module.path);
             module.source = try allocator.dupe(u8, module.source);
+            module.namespaces = try cloneStrings(allocator, module.namespaces);
+            module.package_root = if (module.package_root) |root| try allocator.dupe(u8, root) else null;
         }
         const native_plugin_paths = try allocator.alloc([]const u8, self.native_plugin_paths.len);
         for (self.native_plugin_paths, native_plugin_paths) |source_path, *target_path| target_path.* = try allocator.dupe(u8, source_path);
+        const native_plugin_packages = try allocator.alloc(NativePluginPackage, self.native_plugin_packages.len);
+        for (self.native_plugin_packages, native_plugin_packages) |source_package, *target_package| target_package.* = .{
+            .path = try allocator.dupe(u8, source_package.path),
+            .namespace = try allocator.dupe(u8, source_package.namespace),
+        };
         // arenaを返却値へコピーする前に確保を済ませる。リテラル内で呼ぶと
         // コピー後のarena状態へ確保が記録されずリークする。
         const module_entries = try allocator.dupe(FunctionId, self.module_entries);
@@ -270,6 +313,7 @@ pub const Program = struct {
         for (self.variant_entries, variant_entries) |source_entries, *target_entries|
             target_entries.* = try allocator.dupe(FunctionId, source_entries);
         const module_names = try cloneStrings(allocator, self.module_names);
+        const internal_module_names = try cloneStrings(allocator, self.internal_module_names);
         const module_paths = try cloneStrings(allocator, self.module_paths);
         return .{
             .arena = arena,
@@ -277,12 +321,39 @@ pub const Program = struct {
             .module_entries = module_entries,
             .variant_entries = variant_entries,
             .module_names = module_names,
+            .internal_module_names = internal_module_names,
             .module_paths = module_paths,
             .compat_js = self.compat_js,
             .javascript_modules = javascript_modules,
             .native_plugin_paths = native_plugin_paths,
+            .native_plugin_packages = native_plugin_packages,
             .http_server_plugin_imported = self.http_server_plugin_imported,
         };
+    }
+
+    /// 関数の修飾名（`{namespace}__{name}`）から所属モジュールのindexを引く。
+    /// `module_names`（実行時名＝エントリ関数 `{name}__$entry`）と
+    /// `internal_module_names`（シンボル修飾namespace）の両方を照合し、
+    /// 最長prefix一致を返す。
+    pub fn moduleIndexForFunctionName(self: Program, function_name: []const u8) ?usize {
+        var best: ?usize = null;
+        var best_len: usize = 0;
+        for (self.module_paths, 0..) |_, index| {
+            const candidates = [_][]const u8{
+                if (index < self.module_names.len) self.module_names[index] else "",
+                if (index < self.internal_module_names.len) self.internal_module_names[index] else "",
+            };
+            for (candidates) |prefix| {
+                if (prefix.len == 0 or !std.mem.startsWith(u8, function_name, prefix)) continue;
+                if (function_name.len < prefix.len + 2 or
+                    !std.mem.eql(u8, function_name[prefix.len .. prefix.len + 2], "__")) continue;
+                if (best == null or prefix.len > best_len) {
+                    best = index;
+                    best_len = prefix.len;
+                }
+            }
+        }
+        return best;
     }
 
     pub fn findFunction(self: Program, name: []const u8) ?Function {

@@ -1,9 +1,20 @@
 const std = @import("std");
-const path_digest = @import("path_digest.zig");
+const test_sandbox = @import("test_sandbox.zig");
 const diag = @import("diagnostics.zig");
 const env_state = @import("env_state.zig");
+const environment = @import("environment.zig");
 const lock_mod = @import("lock.zig");
+const lock_model = @import("lock_model.zig");
+const manifest_mod = @import("manifest.zig");
+const path_digest = @import("path_digest.zig");
 const sync = @import("sync.zig");
+
+const ImportConstraint = sync.ImportConstraint;
+const appendScopedAlias = sync.appendScopedAlias;
+const collectImportDependencies = sync.collectImportDependencies;
+const collectImportDependenciesForProfile = sync.collectImportDependenciesForProfile;
+const collectRootDependencyIds = sync.collectRootDependencyIds;
+const collectRootDependencyIdsForProfile = sync.collectRootDependencyIdsForProfile;
 
 const testing = std.testing;
 
@@ -115,7 +126,7 @@ fn writeMutableLibLock(temporary: *std.testing.TmpDir) !void {
 test "sync は読み取り不能な commands.json を生成fallbackへ黙って落とさない" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
 
     try temporary.dir.createDirPath(io, "deps/lib/src");
@@ -168,7 +179,7 @@ test "mutable source の digest 未記録 lock は sync が stale として拒�
     // 持ちながら内容 digest を記録しない。dir 変更を検出できないため、
     // sync はそのまま使わず StaleLock として再解決を要求する。
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
     defer testing.allocator.free(manifest_sha);
@@ -223,7 +234,7 @@ test "mutable source の digest 未記録 lock は sync が stale として拒�
 
 test "sync は path 依存を参照して schema v1 の環境を構築する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
     defer testing.allocator.free(manifest_sha);
@@ -281,7 +292,7 @@ test "sync は pinned project_dir handle 相対で入力を解決し root rename
     // 得る）。
     const allocator = testing.allocator;
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const manifest_sha = try sha256Hex(allocator, app_manifest);
     defer allocator.free(manifest_sha);
@@ -324,7 +335,7 @@ test "sync は実在しない export target を環境へ公開せず拒否する
     // env.json が不在 file・dir を指さないよう選択 target の実 file 性を
     // 公開前に検証する。
     for ([_][]const u8{ "src/missing.nako3", "src" }) |export_path| {
-        var temporary = std.testing.tmpDir(.{});
+        var temporary = test_sandbox.tmpDir(.{});
         defer temporary.cleanup();
         const lib_toml = try std.fmt.allocPrint(testing.allocator,
             \\[package]
@@ -363,7 +374,7 @@ test "sync は実在しない export target を環境へ公開せず拒否する
 
 test "sync は未対応の resolverVersion を LockInvalid で拒否する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
     defer testing.allocator.free(manifest_sha);
@@ -390,7 +401,7 @@ test "sync は未対応の resolverVersion を LockInvalid で拒否する" {
 
 test "sync は manifest との不整合な lock を StaleLock で拒否する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     try writeFixtureProject(&temporary, "0000000000000000000000000000000000000000000000000000000000000000");
     const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
@@ -410,7 +421,7 @@ test "sync は manifest との不整合な lock を StaleLock で拒否する" {
 
 test "sync は失敗時に直前の有効環境を保持する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
     defer testing.allocator.free(manifest_sha);
@@ -442,7 +453,7 @@ test "sync は失敗時に直前の有効環境を保持する" {
 
 test "sync は offline で http 依存の未取得を拒否する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
     defer testing.allocator.free(manifest_sha);
@@ -491,7 +502,7 @@ test "sync は offline で http 依存の未取得を拒否する" {
 
 test "sync は current が欠損しても公開済み世代を environment.json から保持する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
     defer testing.allocator.free(manifest_sha);
@@ -523,7 +534,7 @@ test "sync は current が欠損しても公開済み世代を environment.json 
 
 test "sync は明示 commands.json 同梱でも source の .nako import を拒否する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     // `commands.json` は index であり、同梱しても source export 起点の
     // import 閉包走査を迂回しない。`.nako` は pin・digest 対象外のため、
@@ -560,7 +571,7 @@ test "sync は明示 commands.json 同梱でも source の .nako import を拒�
 
 test "sync は代表実装と個別解決が異なる export を両方記録する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     // lock の代表実装 `native` は artifact 選択と `prefer-native` 方針を
     // 示すだけで、個別 export の解決結果を縛らない。source-only export
@@ -645,7 +656,7 @@ test "sync は代表実装と個別解決が異なる export を両方記録す�
 
 test "sync は読取不能な nako.toml を欠落扱いせず失敗する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
     defer testing.allocator.free(manifest_sha);
@@ -671,7 +682,7 @@ test "sync は読取不能な nako.toml を欠落扱いせず失敗する" {
 
 test "sync は再実行で世代を更新し直前世代を保持する" {
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
     defer testing.allocator.free(manifest_sha);
@@ -705,7 +716,7 @@ test "sync は package 宣言に無い mutablePaths record を含む lock を拒
     // 強要される。digest が一致する実在 dir への record であっても
     // 受理してはいけない。
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
     defer testing.allocator.free(manifest_sha);
@@ -780,7 +791,7 @@ test "sync は構築中に nako.toml が変更されると環境を公開しな�
     // manifest を上書きし、公開直前の再照合で StaleLock に至ることと
     // 環境が公開されないことを検証する。
     const io = testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
     const manifest_sha = try sha256Hex(testing.allocator, app_manifest);
     defer testing.allocator.free(manifest_sha);
@@ -841,7 +852,7 @@ test "sync は immutable path 依存を世代内へ materialize する" {
     // `--no-sync` 消費者へ未 pin の内容を届けてしまう。
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
 
     try temporary.dir.createDirPath(io, "deps/lib/src");
@@ -926,7 +937,7 @@ test "sync は directory symlink 宣言の immutable path 依存を受理する"
     if (@import("builtin").os.tag == .windows or @import("builtin").os.tag == .wasi) return error.SkipZigTest;
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
+    var temporary = test_sandbox.tmpDir(.{});
     defer temporary.cleanup();
 
     try temporary.dir.createDirPath(io, "deps/lib/src");
@@ -987,4 +998,883 @@ test "sync は directory symlink 宣言の immutable path 依存を受理する"
     const copied = try temporary.dir.readFileAlloc(io, copied_index, allocator, .unlimited);
     defer allocator.free(copied);
     try std.testing.expectEqualStrings("●テストとは\n  戻る\nここまで\n", copied);
+}
+
+// ---------------------------------------------------------------------------
+// package import 依存 alias（lock edge scope・namespace 衝突）の検証
+// ---------------------------------------------------------------------------
+
+test "Git package import constraintは短縮commitをlockのfull SHA prefixで照合する" {
+    const full_commit = "abc1234def567890123456789012345678901234";
+    const candidate = lock_model.PackageEntry{
+        .id = "pkg:git-lib",
+        .name = "lib",
+        .version = "1.0.0",
+        .source = .{ .kind = .git, .url = "https://example.test/lib.git", .commit = full_commit },
+    };
+    try testing.expect((ImportConstraint{ .git = .{ .url = "https://example.test/lib.git", .commit = "abc1234", .path = null } }).matches(candidate));
+    try testing.expect(!(ImportConstraint{ .git = .{ .url = "https://example.test/lib.git", .commit = "abc1235", .path = null } }).matches(candidate));
+    try testing.expect(!(ImportConstraint{ .git = .{ .url = "https://other.test/lib.git", .commit = "abc1234", .path = null } }).matches(candidate));
+}
+
+test "profile限定package import aliasは共有package IDでも選択profile外で公開しない" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\"@alice/shared" = { version = "1.0.0", public-id = "pkg:11111111111111111111111111111111" }
+        \\shared = { version = "1.0.0", public-id = "pkg:11111111111111111111111111111111", profile = "windows", alias = "win-shared" }
+        \\
+        \\[profiles.windows]
+        \\os = "windows"
+        \\cpu = "x86_64"
+        \\abi = "msvc"
+        \\
+    ;
+    var diagnostics = diag.List.init(testing.allocator);
+    defer diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &diagnostics);
+    defer manifest.deinit();
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:11111111111111111111111111111111", .name = "shared", .version = "1.0.0", .source = .{ .kind = .registry } },
+    };
+    const allowed_ids = [_][]const u8{"pkg:11111111111111111111111111111111"};
+
+    const aliases = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, &allowed_ids, null, &manifest, "linux", &.{}, &diagnostics);
+    defer testing.allocator.free(aliases);
+    try testing.expectEqual(@as(usize, 2), aliases.len);
+    try testing.expect(containsImportDependency(aliases, "@alice/shared", "pkg:11111111111111111111111111111111"));
+    try testing.expect(containsImportDependency(aliases, "shared", "pkg:11111111111111111111111111111111"));
+    try testing.expect(!containsImportDependency(aliases, "win-shared", "pkg:11111111111111111111111111111111"));
+
+    var missing_edge_diagnostics = diag.List.init(testing.allocator);
+    defer missing_edge_diagnostics.deinit();
+    const no_root_edges: [0][]const u8 = .{};
+    try testing.expectError(
+        error.LockInvalid,
+        collectImportDependenciesForProfile(testing.allocator, &lock_entries, &no_root_edges, null, &manifest, "linux", &.{}, &missing_edge_diagnostics),
+    );
+    try testing.expect(missing_edge_diagnostics.hasErrors());
+}
+
+test "lock edge外のdependency診断はroot scopeとtransitive scopeを区別する" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\shared = { version = "1.0.0" }
+        \\
+    ;
+    var diagnostics = diag.List.init(testing.allocator);
+    defer diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &diagnostics);
+    defer manifest.deinit();
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:11111111111111111111111111111111", .name = "shared", .version = "1.0.0", .source = .{ .kind = .registry } },
+    };
+    const empty_edges: [0][]const u8 = .{};
+
+    var root_diagnostics = diag.List.init(testing.allocator);
+    defer root_diagnostics.deinit();
+    try testing.expectError(
+        error.LockInvalid,
+        collectImportDependenciesForProfile(testing.allocator, &lock_entries, &empty_edges, null, &manifest, null, &.{}, &root_diagnostics),
+    );
+    try testing.expectEqualStrings("nako.lock.rootDependencies", root_diagnostics.items.items[0].path);
+    try testing.expect(std.mem.indexOf(u8, root_diagnostics.items.items[0].message, "rootDependencies") != null);
+
+    var transitive_diagnostics = diag.List.init(testing.allocator);
+    defer transitive_diagnostics.deinit();
+    try testing.expectError(
+        error.LockInvalid,
+        collectImportDependenciesForProfile(testing.allocator, &lock_entries, &empty_edges, "consumer", &manifest, null, &.{}, &transitive_diagnostics),
+    );
+    try testing.expectEqualStrings("nako.lock", transitive_diagnostics.items.items[0].path);
+    try testing.expect(std.mem.indexOf(u8, transitive_diagnostics.items.items[0].message, "\"consumer\"") != null);
+    try testing.expect(std.mem.indexOf(u8, transitive_diagnostics.items.items[0].message, "rootDependencies") == null);
+}
+
+test "一致候補を持たない有効依存はroot scopeとtransitive scopeでLockInvalidになる" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\shared = { version = "1.0.0" }
+        \\
+    ;
+    var diagnostics = diag.List.init(testing.allocator);
+    defer diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &diagnostics);
+    defer manifest.deinit();
+    // lock 内に "shared" に一致する package が一つも無い（edge list 省略の
+    // schema-v1相当）。宣言された有効な依存に対して lock が候補を提供しない
+    // のは不整合であり、alias を欠落させた環境を公開してはならない。
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:99999999999999999999999999999999", .name = "other", .version = "1.0.0", .source = .{ .kind = .registry } },
+    };
+
+    var root_diagnostics = diag.List.init(testing.allocator);
+    defer root_diagnostics.deinit();
+    try testing.expectError(
+        error.LockInvalid,
+        collectImportDependenciesForProfile(testing.allocator, &lock_entries, null, null, &manifest, null, &.{}, &root_diagnostics),
+    );
+    try testing.expectEqualStrings("nako.lock.rootDependencies", root_diagnostics.items.items[0].path);
+    try testing.expect(std.mem.indexOf(u8, root_diagnostics.items.items[0].message, "no matching lock package") != null);
+
+    var transitive_diagnostics = diag.List.init(testing.allocator);
+    defer transitive_diagnostics.deinit();
+    try testing.expectError(
+        error.LockInvalid,
+        collectImportDependenciesForProfile(testing.allocator, &lock_entries, null, "consumer", &manifest, null, &.{}, &transitive_diagnostics),
+    );
+    try testing.expectEqualStrings("nako.lock", transitive_diagnostics.items.items[0].path);
+    try testing.expect(std.mem.indexOf(u8, transitive_diagnostics.items.items[0].message, "\"consumer\"") != null);
+}
+
+test "root package import候補は直接依存のversion rangeで絞る" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\lib = { version = ">=1.0.0" }
+        \\
+    ;
+    var diagnostics = diag.List.init(testing.allocator);
+    defer diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &diagnostics);
+    defer manifest.deinit();
+
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:direct-lib", .name = "lib", .version = "1.4.0", .source = .{ .kind = .registry } },
+        .{ .id = "pkg:transitive-lib", .name = "lib", .version = "1.2.0", .source = .{ .kind = .registry } },
+        .{ .id = "pkg:parent", .name = "parent", .version = "1.0.0", .source = .{ .kind = .registry }, .dependencies = &.{"pkg:transitive-lib"} },
+    };
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+    const direct_ids = try collectRootDependencyIds(testing.allocator, &lock_entries, &manifest, &sync_diagnostics);
+    defer testing.allocator.free(direct_ids);
+    try testing.expectEqual(@as(usize, 1), direct_ids.len);
+    try testing.expectEqualStrings("pkg:direct-lib", direct_ids[0]);
+
+    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, direct_ids, null, &manifest, &sync_diagnostics);
+    defer testing.allocator.free(aliases);
+    try testing.expectEqual(@as(usize, 1), aliases.len);
+    try testing.expectEqualStrings("pkg:direct-lib", aliases[0].package_key);
+}
+
+test "package import aliasはmanifest依存scopeごとにlock keyへ解決される" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\source-dep = { path = "../dep" }
+        \\
+    ;
+    var diagnostics = diag.List.init(testing.allocator);
+    defer diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &diagnostics);
+    defer manifest.deinit();
+
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:dep-id", .name = "package-manifest-name", .version = "1.0.0", .source = .{ .kind = .path, .path = "../dep" } },
+        .{ .id = "pkg:other-id", .name = "other", .version = "1.0.0", .source = .{ .kind = .path, .path = "../other" } },
+    };
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+    const root_aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, null, &manifest, &sync_diagnostics);
+    defer testing.allocator.free(root_aliases);
+    try testing.expectEqual(@as(usize, 1), root_aliases.len);
+
+    const package_dependencies = [_][]const u8{"pkg:dep-id"};
+    const scoped_aliases = try collectImportDependencies(testing.allocator, &lock_entries, &package_dependencies, "owner-pkg", &manifest, &sync_diagnostics);
+    defer testing.allocator.free(scoped_aliases);
+    try testing.expectEqual(@as(usize, 1), scoped_aliases.len);
+    try testing.expectEqualStrings("source-dep", scoped_aliases[0].alias);
+    try testing.expectEqualStrings("pkg:dep-id", scoped_aliases[0].package_key);
+}
+
+test "feature-gatedで未activatedな依存はroot scopeのimport依存に公開されない" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[features]
+        \\native = ["native-lib"]
+        \\
+        \\[dependencies.pkg]
+        \\always = { version = "1.0.0" }
+        \\native-lib = { version = "1.0.0" }
+        \\
+    ;
+    var diagnostics = diag.List.init(testing.allocator);
+    defer diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &diagnostics);
+    defer manifest.deinit();
+
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:always", .name = "always", .version = "1.0.0", .source = .{ .kind = .registry } },
+        .{ .id = "pkg:native-lib", .name = "native-lib", .version = "1.0.0", .source = .{ .kind = .registry } },
+    };
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+
+    // lock input.features が空（feature 要求なし）のとき gated 依存は
+    // root 辺からも姿を消す（resolve 側も解決しないため）。
+    const without_features = try collectRootDependencyIdsForProfile(testing.allocator, &lock_entries, &manifest, "default", &.{}, &sync_diagnostics);
+    defer testing.allocator.free(without_features);
+    try testing.expectEqual(@as(usize, 1), without_features.len);
+    try testing.expectEqualStrings("pkg:always", without_features[0]);
+
+    const gated_aliases = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, null, null, &manifest, "default", &.{}, &sync_diagnostics);
+    defer testing.allocator.free(gated_aliases);
+    try testing.expect(containsImportDependency(gated_aliases, "always", "pkg:always"));
+    try testing.expect(!containsImportAlias(gated_aliases, "native-lib"));
+
+    // expandedFeatureNames 相当（展開済 feature 名＋直接指定依存 alias）が
+    // lock input.features に記録されている場合、gated 依存は activated と
+    // みなされ root 辺・alias の双方に現れる。
+    const activated = [_][]const u8{ "native", "native-lib" };
+    const with_features = try collectRootDependencyIdsForProfile(testing.allocator, &lock_entries, &manifest, "default", &activated, &sync_diagnostics);
+    defer testing.allocator.free(with_features);
+    try testing.expectEqual(@as(usize, 2), with_features.len);
+
+    const activated_aliases = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, null, null, &manifest, "default", &activated, &sync_diagnostics);
+    defer testing.allocator.free(activated_aliases);
+    try testing.expect(containsImportDependency(activated_aliases, "native-lib", "pkg:native-lib"));
+}
+
+test "root scopeのdev-dependenciesはimport依存に公開されpackage scopeでは除外される" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\lib = { version = "1.0.0" }
+        \\
+        \\[dev-dependencies.pkg]
+        \\devonly = { version = "1.0.0" }
+        \\
+    ;
+    var diagnostics = diag.List.init(testing.allocator);
+    defer diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &diagnostics);
+    defer manifest.deinit();
+
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:lib", .name = "lib", .version = "1.0.0", .source = .{ .kind = .registry } },
+        .{ .id = "pkg:devonly", .name = "devonly", .version = "1.0.0", .source = .{ .kind = .registry } },
+    };
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+
+    // root の依存辺照合（collectRootDependencyIdsForProfile は root scope
+    // 専用のため dev 辺も含む）。
+    const root_ids = try collectRootDependencyIdsForProfile(testing.allocator, &lock_entries, &manifest, "default", &.{}, &sync_diagnostics);
+    defer testing.allocator.free(root_ids);
+    try testing.expectEqual(@as(usize, 2), root_ids.len);
+    try testing.expect(containsSyncString(root_ids, "pkg:devonly"));
+
+    const root_aliases = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, root_ids, null, &manifest, "default", &.{}, &sync_diagnostics);
+    defer testing.allocator.free(root_aliases);
+    try testing.expect(containsImportDependency(root_aliases, "lib", "pkg:lib"));
+    try testing.expect(containsImportDependency(root_aliases, "devonly", "pkg:devonly"));
+
+    // package scope（依存 package 自身の依存 scope）は dev-dependencies を
+    // 公開しない。dev 依存は依存 package 側のテスト用いであり、import
+    // 依存 scope の契約対象ではない。
+    const package_dependencies = [_][]const u8{ "pkg:lib", "pkg:devonly" };
+    const scoped_aliases = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, &package_dependencies, "owner-pkg", &manifest, "default", &.{}, &sync_diagnostics);
+    defer testing.allocator.free(scoped_aliases);
+    try testing.expect(containsImportDependency(scoped_aliases, "lib", "pkg:lib"));
+    try testing.expect(!containsImportAlias(scoped_aliases, "devonly"));
+}
+
+fn containsSyncString(items: []const []const u8, expected: []const u8) bool {
+    for (items) |item| if (std.mem.eql(u8, item, expected)) return true;
+    return false;
+}
+
+fn containsImportDependency(items: []const environment.ImportDependency, alias: []const u8, package_key: []const u8) bool {
+    for (items) |item| if (std.mem.eql(u8, item.alias, alias) and std.mem.eql(u8, item.package_key, package_key)) return true;
+    return false;
+}
+
+fn containsImportAlias(items: []const environment.ImportDependency, alias: []const u8) bool {
+    for (items) |item| if (std.mem.eql(u8, item.alias, alias)) return true;
+    return false;
+}
+
+test "registry owner/name keyはownerとexplicit aliasでlock entryへ対応する" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\"alice/lib" = { version = "^1.0.0", alias = "alice-lib" }
+        \\"bob/lib" = { version = "^1.0.0", alias = "bob-lib" }
+        \\"@alice/tool" = { version = "^2.0.0" }
+        \\
+    ;
+    var parse_diagnostics = diag.List.init(testing.allocator);
+    defer parse_diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &parse_diagnostics);
+    defer manifest.deinit();
+
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:alice-lib", .name = "lib", .version = "1.4.0", .source = .{ .kind = .static, .url = "https://registry.test/alice/lib" } },
+        .{ .id = "pkg:bob-lib", .name = "lib", .version = "1.2.0", .source = .{ .kind = .static, .url = "https://registry.test/bob/lib" } },
+        .{ .id = "pkg:alice-tool", .name = "tool", .version = "2.1.0", .source = .{ .kind = .static, .url = "https://registry.test/alice/tool" } },
+    };
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+    const roots = try collectRootDependencyIds(testing.allocator, &lock_entries, &manifest, &sync_diagnostics);
+    defer testing.allocator.free(roots);
+    try testing.expectEqual(@as(usize, 3), roots.len);
+    try testing.expect(containsSyncString(roots, "pkg:alice-lib"));
+    try testing.expect(containsSyncString(roots, "pkg:bob-lib"));
+    try testing.expect(containsSyncString(roots, "pkg:alice-tool"));
+
+    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, roots, null, &manifest, &sync_diagnostics);
+    defer testing.allocator.free(aliases);
+    try testing.expectEqual(@as(usize, 6), aliases.len);
+    try testing.expect(containsImportDependency(aliases, "alice-lib", "pkg:alice-lib"));
+    try testing.expect(containsImportDependency(aliases, "alice/lib", "pkg:alice-lib"));
+    try testing.expect(containsImportDependency(aliases, "bob-lib", "pkg:bob-lib"));
+    try testing.expect(containsImportDependency(aliases, "bob/lib", "pkg:bob-lib"));
+    try testing.expect(containsImportDependency(aliases, "tool", "pkg:alice-tool"));
+    try testing.expect(containsImportDependency(aliases, "@alice/tool", "pkg:alice-tool"));
+    try testing.expect(!containsImportAlias(aliases, "lib"));
+}
+
+test "owner/nameのderived aliasは通常の依存キーとの衝突順に依存しない" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\"alice/lib" = { version = "^2.0.0" }
+        \\lib = { version = "^1.0.0" }
+        \\
+    ;
+    var parse_diagnostics = diag.List.init(testing.allocator);
+    defer parse_diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &parse_diagnostics);
+    defer manifest.deinit();
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:alice-lib", .name = "lib", .version = "2.4.0", .source = .{ .kind = .static, .url = "https://registry.test/alice/lib" } },
+        .{ .id = "pkg:plain-lib", .name = "lib", .version = "1.2.0", .source = .{ .kind = .static, .url = "https://registry.test/lib" } },
+    };
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, null, &manifest, &sync_diagnostics);
+    defer testing.allocator.free(aliases);
+    try testing.expectEqual(@as(usize, 2), aliases.len);
+    try testing.expect(containsImportDependency(aliases, "alice/lib", "pkg:alice-lib"));
+    try testing.expect(containsImportDependency(aliases, "lib", "pkg:plain-lib"));
+}
+
+test "owner/nameのderived aliasは他依存のexplicit aliasに優先しない" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\"alice/lib" = { version = "^1.0.0" }
+        \\plain-key = { version = "^1.0.0", alias = "lib" }
+        \\
+    ;
+    var parse_diagnostics = diag.List.init(testing.allocator);
+    defer parse_diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &parse_diagnostics);
+    defer manifest.deinit();
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:alice-lib", .name = "lib", .version = "1.4.0", .source = .{ .kind = .static, .url = "https://registry.test/alice/lib" } },
+        .{ .id = "pkg:plain", .name = "plain-key", .version = "1.2.0", .source = .{ .kind = .static, .url = "https://registry.test/plain-key" } },
+    };
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, null, &manifest, &sync_diagnostics);
+    defer testing.allocator.free(aliases);
+    try testing.expectEqual(@as(usize, 3), aliases.len);
+    try testing.expect(containsImportDependency(aliases, "alice/lib", "pkg:alice-lib"));
+    try testing.expect(containsImportDependency(aliases, "plain-key", "pkg:plain"));
+    try testing.expect(containsImportDependency(aliases, "lib", "pkg:plain"));
+}
+
+test "同じleafを持つregistry owner/nameのderived aliasだけを省く" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\"alice/lib" = { version = "^1.0.0" }
+        \\"bob/lib" = { version = "^1.0.0" }
+        \\
+    ;
+    var parse_diagnostics = diag.List.init(testing.allocator);
+    defer parse_diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &parse_diagnostics);
+    defer manifest.deinit();
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:alice-lib", .name = "lib", .version = "1.4.0", .source = .{ .kind = .static, .url = "https://registry.test/alice/lib" } },
+        .{ .id = "pkg:bob-lib", .name = "lib", .version = "1.2.0", .source = .{ .kind = .static, .url = "https://registry.test/bob/lib" } },
+    };
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, null, &manifest, &sync_diagnostics);
+    defer testing.allocator.free(aliases);
+    try testing.expectEqual(@as(usize, 2), aliases.len);
+    try testing.expect(containsImportDependency(aliases, "alice/lib", "pkg:alice-lib"));
+    try testing.expect(containsImportDependency(aliases, "bob/lib", "pkg:bob-lib"));
+    try testing.expect(!containsImportAlias(aliases, "lib"));
+}
+
+test "owner/nameのderived aliasはdev-dependenciesの明示aliasと衝突したら省く" {
+    // root scope は dev-dependencies も import 公開するため、通常依存の
+    // derived short alias が dev 側の明示 alias と衝突すれば省く。
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\"alice/lib" = { version = "^1.0.0" }
+        \\
+        \\[dev-dependencies.pkg]
+        \\devtool = { version = "^1.0.0", alias = "lib" }
+        \\
+    ;
+    var parse_diagnostics = diag.List.init(testing.allocator);
+    defer parse_diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &parse_diagnostics);
+    defer manifest.deinit();
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:alice-lib", .name = "lib", .version = "1.4.0", .source = .{ .kind = .static, .url = "https://registry.test/alice/lib" } },
+        .{ .id = "pkg:devtool", .name = "devtool", .version = "1.2.0", .source = .{ .kind = .static, .url = "https://registry.test/devtool" } },
+    };
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, null, &manifest, &sync_diagnostics);
+    defer testing.allocator.free(aliases);
+    try testing.expect(containsImportDependency(aliases, "alice/lib", "pkg:alice-lib"));
+    try testing.expect(containsImportDependency(aliases, "devtool", "pkg:devtool"));
+    try testing.expect(containsImportDependency(aliases, "lib", "pkg:devtool"));
+    // alice/lib の derived `lib` は dev 側 explicit alias と衝突するため付けない。
+    try testing.expectEqual(@as(usize, 3), aliases.len);
+}
+
+test "path git http dependencyはtable keyとpackage nameが異なってもsource条件で解決する" {
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\local-key = { path = "../local" }
+        \\
+        \\[dependencies.git]
+        \\git-key = { url = "https://example.test/git.git", commit = "abc1234", alias = "git-alias" }
+        \\
+        \\[dependencies.http]
+        \\http-key = { url = "https://example.test/archive.tar", hash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", alias = "http-alias" }
+        \\
+    ;
+    var parse_diagnostics = diag.List.init(testing.allocator);
+    defer parse_diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &parse_diagnostics);
+    defer manifest.deinit();
+
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:path-id", .name = "some-other-path-name", .version = "1.0.0", .source = .{ .kind = .path, .path = "../local" } },
+        .{ .id = "pkg:git-id", .name = "some-other-git-name", .version = "1.0.0", .source = .{ .kind = .git, .url = "https://example.test/git.git", .commit = "abc1234ff" } },
+        .{ .id = "pkg:http-id", .name = "some-other-http-name", .version = "1.0.0", .source = .{ .kind = .http, .url = "https://example.test/archive.tar", .hash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } },
+    };
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+    const aliases = try collectImportDependencies(testing.allocator, &lock_entries, null, null, &manifest, &sync_diagnostics);
+    defer testing.allocator.free(aliases);
+    const expectations = [_]struct { alias: []const u8, id: []const u8 }{
+        .{ .alias = "local-key", .id = "pkg:path-id" },
+        .{ .alias = "git-alias", .id = "pkg:git-id" },
+        .{ .alias = "http-alias", .id = "pkg:http-id" },
+    };
+    for (expectations) |expected| {
+        var found = false;
+        for (aliases) |dependency| if (std.mem.eql(u8, dependency.alias, expected.alias) and std.mem.eql(u8, dependency.package_key, expected.id)) {
+            found = true;
+            break;
+        };
+        try testing.expect(found);
+    }
+}
+
+test "syncは曖昧なlock候補とalias衝突を診断する" {
+    const ambiguous_source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\local = { path = "../local" }
+        \\
+    ;
+    var parse_diagnostics = diag.List.init(testing.allocator);
+    defer parse_diagnostics.deinit();
+    var ambiguous_manifest = try manifest_mod.parse(testing.allocator, ambiguous_source, &parse_diagnostics);
+    defer ambiguous_manifest.deinit();
+    const ambiguous_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:local-one", .name = "one", .version = "1.0.0", .source = .{ .kind = .path, .path = "../local" } },
+        .{ .id = "pkg:local-two", .name = "two", .version = "1.0.0", .source = .{ .kind = .path, .path = "../local" } },
+    };
+    const allowed = [_][]const u8{ "pkg:local-one", "pkg:local-two" };
+    var ambiguous_diagnostics = diag.List.init(testing.allocator);
+    defer ambiguous_diagnostics.deinit();
+    try testing.expectError(error.LockInvalid, collectImportDependencies(testing.allocator, &ambiguous_entries, &allowed, null, &ambiguous_manifest, &ambiguous_diagnostics));
+    try testing.expectEqual(@as(usize, 1), ambiguous_diagnostics.items.items.len);
+    try testing.expect(std.mem.indexOf(u8, ambiguous_diagnostics.items.items[0].message, "local-one") != null);
+    try testing.expect(std.mem.indexOf(u8, ambiguous_diagnostics.items.items[0].message, "local-two") != null);
+
+    var collision_result: std.ArrayListUnmanaged(environment.ImportDependency) = .empty;
+    defer collision_result.deinit(testing.allocator);
+    var collision_diagnostics = diag.List.init(testing.allocator);
+    defer collision_diagnostics.deinit();
+    try appendScopedAlias(testing.allocator, &collision_result, "shared", "pkg:git-a", &collision_diagnostics);
+    try testing.expectError(error.LockInvalid, appendScopedAlias(testing.allocator, &collision_result, "shared", "pkg:http-b", &collision_diagnostics));
+    try testing.expectEqual(@as(usize, 1), collision_diagnostics.items.items.len);
+    try testing.expect(std.mem.indexOf(u8, collision_diagnostics.items.items[0].message, "shared") != null);
+    try testing.expect(std.mem.indexOf(u8, collision_diagnostics.items.items[0].message, "pkg:git-a") != null);
+    try testing.expect(std.mem.indexOf(u8, collision_diagnostics.items.items[0].message, "pkg:http-b") != null);
+}
+
+test "sync は implementation=none の support package を空dirで公開しimport検証を通過する" {
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    const support_manifest =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\support = { version = "1.0.0" }
+        \\
+    ;
+    const manifest_sha = try sha256Hex(testing.allocator, support_manifest);
+    defer testing.allocator.free(manifest_sha);
+    const lock = try std.fmt.allocPrint(testing.allocator,
+        \\{{
+        \\  "schemaVersion": 1,
+        \\  "resolverVersion": 1,
+        \\  "input": {{
+        \\    "manifestSha256": "sha256:{s}",
+        \\    "profile": "default",
+        \\    "features": [],
+        \\    "target": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu" }}
+        \\  }},
+        \\  "packages": {{
+        \\    "pkg:22222222222222222222222222222222": {{
+        \\      "id": "pkg:22222222222222222222222222222222",
+        \\      "name": "support",
+        \\      "version": "1.0.0",
+        \\      "source": {{ "type": "static", "url": "https://registry.test/support" }},
+        \\      "resolvedFrom": {{ "type": "static", "url": "https://registry.test/support" }},
+        \\      "dependencies": [],
+        \\      "implementation": "none",
+        \\      "artifacts": {{ "source": {{ "kind": "source", "type": "tar.gz", "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "url": "https://registry.test/support/source.tar.gz" }} }}
+        \\    }}
+        \\  }},
+        \\  "profiles": {{
+        \\    "default": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu", "runtime": "lnako" }}
+        \\  }}
+        \\}}
+    , .{manifest_sha});
+    defer testing.allocator.free(lock);
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.toml", .data = support_manifest });
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const cache_root = try std.fs.path.join(testing.allocator, &.{ root, "cache" });
+    defer testing.allocator.free(cache_root);
+
+    var list = diag.List.init(testing.allocator);
+    defer list.deinit();
+    var report = try sync.run(testing.allocator, io, .{ .project_root = root, .cache_root = cache_root }, &list);
+    defer report.deinit();
+
+    // `none` は artifact を取得せず空の materialized dir を公開する。
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, report.environment_json, .{});
+    defer parsed.deinit();
+    const support = parsed.value.object.get("packages").?.object.get("pkg:22222222222222222222222222222222").?.object;
+    const env_path = support.get("path").?.string;
+    try testing.expect(std.mem.startsWith(u8, env_path, ".nako/env/"));
+    try testing.expect(std.mem.endsWith(u8, env_path, "/deps/support"));
+    if (support.get("exports")) |exports| {
+        try testing.expectEqual(@as(usize, 0), exports.array.items.len);
+    }
+    try temporary.dir.access(io, env_path, .{});
+
+    // import 解決も lock の support record と一致して受理する。
+    var loaded = try @import("import_resolver.zig").Resolver.load(testing.allocator, io, root);
+    defer loaded.deinit();
+}
+
+test "sync/import双方がlockのpackage featuresをexport解決へ反映する" {
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    const feature_manifest =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\lib = { path = "deps/lib" }
+        \\
+    ;
+    const feature_lib_manifest =
+        \\[package]
+        \\name = "lib"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[features]
+        \\simd = []
+        \\
+        \\[[exports]]
+        \\name = "lib"
+        \\esm = [{ path = "x.mjs", features = ["simd"] }]
+        \\
+    ;
+    const manifest_sha = try sha256Hex(testing.allocator, feature_manifest);
+    defer testing.allocator.free(manifest_sha);
+    try temporary.dir.createDirPath(io, "deps/lib");
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.toml", .data = feature_manifest });
+    try temporary.dir.writeFile(io, .{ .sub_path = "deps/lib/nako.toml", .data = feature_lib_manifest });
+    try temporary.dir.writeFile(io, .{ .sub_path = "deps/lib/x.mjs", .data = "export {};\n" });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    // mutable path 依存は lock の `mutablePaths` digest と一致が前提。
+    const lib_abs = try std.fs.path.join(testing.allocator, &.{ root, "deps/lib" });
+    defer testing.allocator.free(lib_abs);
+    const lib_digest = try path_digest.digest(io, testing.allocator, lib_abs);
+    const mutable_sha = try std.fmt.allocPrint(testing.allocator, "sha256:{s}", .{std.fmt.bytesToHex(lib_digest, .lower)});
+    defer testing.allocator.free(mutable_sha);
+    const lock = try std.fmt.allocPrint(testing.allocator,
+        \\{{
+        \\  "schemaVersion": 1,
+        \\  "resolverVersion": 1,
+        \\  "input": {{
+        \\    "manifestSha256": "sha256:{s}",
+        \\    "profile": "default",
+        \\    "features": [],
+        \\    "target": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu" }},
+        \\    "mutablePaths": [{{ "path": "deps/lib", "sha256": "{s}" }}]
+        \\  }},
+        \\  "packages": {{
+        \\    "pkg:11111111111111111111111111111111": {{
+        \\      "id": "pkg:11111111111111111111111111111111",
+        \\      "name": "lib",
+        \\      "version": "1.0.0",
+        \\      "source": {{ "type": "path", "path": "deps/lib", "mutable": true }},
+        \\      "resolvedFrom": {{ "type": "path", "path": "deps/lib", "mutable": true }},
+        \\      "dependencies": [],
+        \\      "features": ["simd"],
+        \\      "artifacts": {{ "source": {{ "kind": "source", "type": "raw" }} }}
+        \\    }}
+        \\  }},
+        \\  "profiles": {{
+        \\    "default": {{ "os": "macos", "cpu": "aarch64", "abi": "gnu", "runtime": "lnako", "compat-js": true }}
+        \\  }}
+        \\}}
+    , .{ manifest_sha, mutable_sha });
+    defer testing.allocator.free(lock);
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
+    const cache_root = try std.fs.path.join(testing.allocator, &.{ root, "cache" });
+    defer testing.allocator.free(cache_root);
+
+    var list = diag.List.init(testing.allocator);
+    defer list.deinit();
+    var report = try sync.run(testing.allocator, io, .{ .project_root = root, .cache_root = cache_root }, &list);
+    defer report.deinit();
+
+    // feature "simd" が lock に記録されているため、feature 必須の ESM
+    // 宣言が適合して export が公開される。
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, report.environment_json, .{});
+    defer parsed.deinit();
+    const lib = parsed.value.object.get("packages").?.object.get("pkg:11111111111111111111111111111111").?.object;
+    const exports = lib.get("exports").?.array;
+    try testing.expectEqual(@as(usize, 1), exports.items.len);
+    try testing.expectEqualStrings("x.mjs", exports.items[0].object.get("path").?.string);
+
+    // import 検証も同じ feature 集合で一致しなければ拒否される。
+    var loaded = try @import("import_resolver.zig").Resolver.load(testing.allocator, io, root);
+    defer loaded.deinit();
+}
+
+test "root scopeのdev-dependenciesのaliasはroot import依存のみに公開する" {
+    // root scope（edge_owner == null）は dev-dependencies も import 依存の
+    // 公開対象にする。package scope（依存packageのmanifest scope）は
+    // dev-dependencies を公開しない（テスト等の内部依存）。
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.pkg]
+        \\shared = { version = "1.0.0" }
+        \\
+        \\[dev-dependencies.pkg]
+        \\devtool = { version = "1.0.0" }
+        \\
+    ;
+    var parse_diagnostics = diag.List.init(testing.allocator);
+    defer parse_diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &parse_diagnostics);
+    defer manifest.deinit();
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:11111111111111111111111111111111", .name = "shared", .version = "1.0.0", .source = .{ .kind = .registry } },
+        .{ .id = "pkg:22222222222222222222222222222222", .name = "devtool", .version = "1.0.0", .source = .{ .kind = .registry } },
+    };
+    const root_edges = [_][]const u8{
+        "pkg:11111111111111111111111111111111",
+        "pkg:22222222222222222222222222222222",
+    };
+    const package_edges = [_][]const u8{"pkg:11111111111111111111111111111111"};
+
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+    const root_aliases = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, &root_edges, null, &manifest, null, &.{}, &sync_diagnostics);
+    defer testing.allocator.free(root_aliases);
+    try testing.expectEqual(@as(usize, 2), root_aliases.len);
+    try testing.expect(containsImportDependency(root_aliases, "shared", "pkg:11111111111111111111111111111111"));
+    try testing.expect(containsImportDependency(root_aliases, "devtool", "pkg:22222222222222222222222222222222"));
+
+    const scoped_aliases = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, &package_edges, "consumer", &manifest, null, null, &sync_diagnostics);
+    defer testing.allocator.free(scoped_aliases);
+    try testing.expectEqual(@as(usize, 1), scoped_aliases.len);
+    try testing.expect(containsImportDependency(scoped_aliases, "shared", "pkg:11111111111111111111111111111111"));
+    try testing.expect(!containsImportAlias(scoped_aliases, "devtool"));
+}
+
+test "feature-gated依存はactivated名に含まれる場合のみimport依存へ公開する" {
+    // lock `input.features`（expandedFeatureNames 相当: 定義済み feature 名
+    // ＋展開で有効化された依存 alias の併記）に含まれない gated 依存は
+    // alias を公開しない。feature 名または依存 alias 名を直接含む場合は
+    // 公開する（project.zig の depIsGated/depIsActivated と同一条件）。
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[features]
+        \\extras = ["tool"]
+        \\
+        \\[dependencies.pkg]
+        \\tool = { version = "1.0.0" }
+        \\
+    ;
+    var parse_diagnostics = diag.List.init(testing.allocator);
+    defer parse_diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &parse_diagnostics);
+    defer manifest.deinit();
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:33333333333333333333333333333333", .name = "tool", .version = "1.0.0", .source = .{ .kind = .registry } },
+    };
+    const tool_edges = [_][]const u8{"pkg:33333333333333333333333333333333"};
+
+    // 未 activation（lock `input.features` 相当の集合に依存 alias "tool"
+    // 無し）は公開しない。lock edge 外の照合エラーに落とさず gate で先に
+    // 除外する。
+    var gate_diagnostics = diag.List.init(testing.allocator);
+    defer gate_diagnostics.deinit();
+    const inactive = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, &tool_edges, null, &manifest, null, &.{}, &gate_diagnostics);
+    defer testing.allocator.free(inactive);
+    try testing.expectEqual(@as(usize, 0), inactive.len);
+    try testing.expect(!gate_diagnostics.hasErrors());
+
+    // activated 集合に依存 alias 名（feature 経由で展開済み）が含まれる
+    // 場合は公開する。
+    const activated_names = [_][]const u8{ "extras", "tool" };
+    const activated = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, &tool_edges, null, &manifest, null, &activated_names, &gate_diagnostics);
+    defer testing.allocator.free(activated);
+    try testing.expectEqual(@as(usize, 1), activated.len);
+    try testing.expect(containsImportDependency(activated, "tool", "pkg:33333333333333333333333333333333"));
+}
+
+test "package scopeはlock entry.featuresの実効featureで依存aliasを発行する" {
+    // root が registry package A を features=["extra"] 付きで解決し、A の
+    // feature extra が依存 tool を有効化する場合、solver は tool を A の
+    // 依存辺へ含め A の entry.features にも記録する。package scope の
+    // import 依存収集は entry.features を activated として使い、default
+    // 展開だけに落とすと tool の alias が欠ける。
+    const source =
+        \\[package]
+        \\name = "consumer"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[features]
+        \\extra = ["tool"]
+        \\
+        \\[dependencies.pkg]
+        \\tool = { version = "1.0.0" }
+        \\
+    ;
+    var parse_diagnostics = diag.List.init(testing.allocator);
+    defer parse_diagnostics.deinit();
+    var manifest = try manifest_mod.parse(testing.allocator, source, &parse_diagnostics);
+    defer manifest.deinit();
+    const lock_entries = [_]lock_model.PackageEntry{
+        .{ .id = "pkg:33333333333333333333333333333333", .name = "tool", .version = "1.0.0", .source = .{ .kind = .registry } },
+    };
+    const package_edges = [_][]const u8{"pkg:33333333333333333333333333333333"};
+    var sync_diagnostics = diag.List.init(testing.allocator);
+    defer sync_diagnostics.deinit();
+
+    // entry.features 無し → default 展開のみ。gated tool は出ない
+    const without = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, &package_edges, "consumer", &manifest, null, null, &sync_diagnostics);
+    defer testing.allocator.free(without);
+    try testing.expectEqual(@as(usize, 0), without.len);
+
+    // entry.features は feature 名のみ（resolver 出力形）。依存 alias は含まない。
+    const entry_features = [_][]const u8{"extra"};
+    const with_features = try collectImportDependenciesForProfile(testing.allocator, &lock_entries, &package_edges, "consumer", &manifest, null, &entry_features, &sync_diagnostics);
+    defer testing.allocator.free(with_features);
+    try testing.expectEqual(@as(usize, 1), with_features.len);
+    try testing.expect(containsImportDependency(with_features, "tool", "pkg:33333333333333333333333333333333"));
 }

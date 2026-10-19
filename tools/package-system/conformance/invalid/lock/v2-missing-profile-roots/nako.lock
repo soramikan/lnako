@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 2,
+  "resolverVersion": 1,
+  "input": {
+    "manifestSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "profile": "default",
+    "features": [],
+    "target": { "os": "macos", "cpu": "aarch64", "abi": "gnu" }
+  },
+  "packages": {},
+  "profiles": {
+    "default": { "os": "macos", "cpu": "aarch64", "abi": "gnu", "compat-js": false },
+    "extra": { "os": "linux", "cpu": "x86_64", "abi": "gnu", "compat-js": false }
+  },
+  "profilePackages": {
+    "default": {},
+    "extra": {}
+  },
+  "rootDependencies": {
+    "default": []
+  }
+}

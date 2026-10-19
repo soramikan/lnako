@@ -17,6 +17,11 @@ pub const FeatureExpanded = features_mod.Expanded;
 pub const Marker = marker_mod.Marker;
 pub const MarkerContext = marker_mod.Context;
 
+/// `nako.toml` / `METADATA.toml` 1件あたりの読み取り上限。sync 取得・
+/// publish 検証・import 時の再読込で同一契約とする（どの経路でも
+/// 受理した manifest が他経路で拒否されないため）。
+pub const max_manifest_bytes: usize = 16 * 1024 * 1024;
+
 /// 現在受理する `nako.toml` schema version。
 pub const known_schema_version: u32 = 1;
 /// `.npkg` の `NAKO-PKG/METADATA.toml` schema version。

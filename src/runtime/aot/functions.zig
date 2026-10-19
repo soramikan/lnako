@@ -29,6 +29,52 @@ pub export fn lnako_aot_native_plugin_register(path: ?[*]const u8, len: usize) c
     };
 }
 
+/// `pkg:` import経由のnative plugin pathに公開namespaceを対応付ける。
+/// 対応付けられたpluginの命令は `{namespace}__{命令}` のみで呼べる。
+/// namespace長0のentryは直接path importの無修飾公開を表す（IRの
+/// NativePluginPackage 空namespace契約と同じ）。
+pub export fn lnako_aot_native_plugin_package_register(
+    path: ?[*]const u8,
+    path_len: usize,
+    namespace: ?[*]const u8,
+    namespace_len: usize,
+) callconv(.c) void {
+    const runtime = if (state.active_runtime) |*active| active else return;
+    const path_pointer = path orelse {
+        if (path_len != 0) runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    };
+    const path_slice = path_pointer[0..path_len];
+    if (path_slice.len == 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const namespace_slice = if (namespace) |namespace_pointer| namespace_pointer[0..namespace_len] else blk: {
+        if (namespace_len != 0) {
+            runtime.setFailure(error.InvalidArgumentCount);
+            return;
+        }
+        break :blk "";
+    };
+    for (runtime.native_plugin_packages.items) |package| {
+        if (std.mem.eql(u8, package.path, path_slice) and std.mem.eql(u8, package.namespace, namespace_slice)) return;
+    }
+    const owned_path = runtime.allocator.dupe(u8, path_slice) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    const owned_namespace = runtime.allocator.dupe(u8, namespace_slice) catch |failure| {
+        runtime.allocator.free(owned_path);
+        runtime.setFailure(failure);
+        return;
+    };
+    runtime.native_plugin_packages.append(runtime.allocator, .{ .path = owned_path, .namespace = owned_namespace }) catch |failure| {
+        runtime.allocator.free(owned_path);
+        runtime.allocator.free(owned_namespace);
+        runtime.setFailure(failure);
+    };
+}
+
 /// Registers a generated global with the embedded Zig interpreter used by
 /// `ナデシコ` and `ナデシコ続`. The pointer remains valid for the generated
 /// program lifetime and lets dynamic code observe and update ordinary AOT

@@ -313,7 +313,7 @@ pub fn writeMakeClosure(emitter: *Emitter, caller: ir.Function, locals: []const 
             // callbackへ渡す。
             const constructor = if (closure.variable) "lnako_aot_function_new_generated" else "lnako_aot_function_new_named";
             try emitter.output.writer.print("  call void @{s}(ptr %root.slot.{d}, ptr @lnako_aot_builtin_function_call, i64 {d}, ptr @lnako.builtin.name.{d}, i64 {d}, ptr null, i64 0)", .{ constructor, result, closure.arity, name_index, instruction.name.len });
-        } else if (shared.nativePluginClosure(emitter.program, instruction.name)) {
+        } else if (shared.nativePluginClosure(emitter.program, instruction)) {
             // `{関数}プラグイン命令` — ネイティブプラグイン名の関数値。
             // 実引数列をそのままplugin ABIへ転送するgenerated ABIを使う。
             try emitter.output.writer.print("  call void @lnako_aot_function_new_generated(ptr %root.slot.{d}, ptr @lnako_aot_plugin_function_call, i64 0, ptr @lnako.builtin.name.{d}, i64 {d}, ptr null, i64 0)", .{ result, name_index, instruction.name.len });

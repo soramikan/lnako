@@ -70,6 +70,10 @@ pub const Node = struct {
     /// True only when semantic analysis resolved this call to the fixed
     /// language builtin catalog. Dynamic plugin commands stay false.
     is_builtin_call: bool = false,
+    /// 意味解析が動的builtinとして束縛したplugin命令呼出し（native plugin・
+    /// package経由plugin）で真。取り込み辺を持たないモジュールの同名呼出し
+    /// は false のまま残り、実行時にpackage修飾命令へ誤配送されない。
+    dynamic_call: bool = false,
     /// DNCL互換の配列要素代入で、未初期化変数へ30要素の0配列を自動初期化する。
     check_array_init: bool = false,
     /// 代入系ノードの対象名が意味解析でローカルシンボルへ解決された場合に真。
@@ -399,6 +403,10 @@ const Lowerer = struct {
             .word => self.bindingIsBuiltinCommand(node),
             else => false,
         };
+        result.dynamic_call = switch (node.kind) {
+            .function_call, .word, .function_pointer => self.bindingIsDynamicBuiltin(node),
+            else => false,
+        };
         result.check_array_init = node.check_array_init;
         result.local_target = self.bindingIsLocal(node);
         result.uses_implicit_arguments = self.bindsImplicitArguments(node);
@@ -445,6 +453,12 @@ const Lowerer = struct {
 
     fn bindingIsBuiltin(self: Lowerer, node: *ast.Node) bool {
         for (self.semantic_program.bindings) |binding| if (binding.node == node) return binding.kind == .builtin and !binding.dynamic_builtin;
+        return false;
+    }
+
+    /// plugin命令として動的束縛された呼出し・`{関数}名`参照か判定する。
+    fn bindingIsDynamicBuiltin(self: Lowerer, node: *ast.Node) bool {
+        for (self.semantic_program.bindings) |binding| if (binding.node == node) return binding.kind == .builtin and binding.dynamic_builtin;
         return false;
     }
 

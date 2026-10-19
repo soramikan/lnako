@@ -115,6 +115,12 @@ pub const DynamicInterpreterState = struct {
         const paths = try path_allocator.alloc([]const u8, owner.native_plugin_paths.items.len);
         for (owner.native_plugin_paths.items, paths) |path, *copy| copy.* = try path_allocator.dupe(u8, path);
         state.program.native_plugin_paths = paths;
+        const packages = try path_allocator.alloc(dynamic_ir.NativePluginPackage, owner.native_plugin_packages.items.len);
+        for (owner.native_plugin_packages.items, packages) |package, *copy| copy.* = .{
+            .path = try path_allocator.dupe(u8, package.path),
+            .namespace = try path_allocator.dupe(u8, package.namespace),
+        };
+        state.program.native_plugin_packages = packages;
         state.host_context = .{ .owner = owner };
         state.interpreter = dynamic_interpreter.Interpreter.init(
             allocator,

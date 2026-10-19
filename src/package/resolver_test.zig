@@ -900,7 +900,10 @@ test "featureがpath依存aliasを参照しても解決できる" {
     var res = try resolver.resolve(gpa, provider, &root_deps, .{});
     defer res.deinit();
     try expectVersion(nodesOf(&res), "lib", "1.0.0");
+    try T.expectEqual(@as(usize, 1), res.root_dependencies.len);
+    try T.expectEqualStrings("lib", res.root_dependencies[0].pkg);
     const node = findNode(nodesOf(&res), "lib").?;
+    try T.expect(node.is_root_dependency);
     var saw_default = false;
     for (node.features) |feature| {
         if (std.mem.eql(u8, feature, "default")) saw_default = true;

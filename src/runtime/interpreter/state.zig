@@ -780,13 +780,7 @@ pub const Interpreter = struct {
     }
 
     pub fn sourcePathForFunction(self: Interpreter, owner_program: *const ir.Program, function_name: []const u8) []const u8 {
-        var best: ?usize = null;
-        for (owner_program.module_names, 0..) |module_name, index| {
-            if (index >= owner_program.module_paths.len or !std.mem.startsWith(u8, function_name, module_name)) continue;
-            if (function_name.len <= module_name.len + 1 or !std.mem.eql(u8, function_name[module_name.len .. module_name.len + 2], "__")) continue;
-            if (best == null or module_name.len > owner_program.module_names[best.?].len) best = index;
-        }
-        return if (best) |index| owner_program.module_paths[index] else self.current_source_path;
+        return if (owner_program.moduleIndexForFunctionName(function_name)) |index| owner_program.module_paths[index] else self.current_source_path;
     }
 
     pub fn awaitExecute(self: *Interpreter, arguments: []const Value) !Value {

@@ -75,8 +75,32 @@ test "tree pin対象外dir配下のexportは検出する" {
 }
 
 test "path dependency export target must stay inside the pinned package tree" {
-    const cases = [_][]const u8{ "../shared.nako3", "/tmp/shared.nako3", "src/../shared.nako3", "src/.nako/private.nako3" };
-    for (cases) |path| {
+    // `..`・絶対 path の規範外 target は manifest parse で拒否される
+    // （manifest_validate の canonical path 検査）。
+    const rejected = [_][]const u8{ "../shared.nako3", "/tmp/shared.nako3", "src/../shared.nako3" };
+    for (rejected) |path| {
+        const source = try std.fmt.allocPrint(testing.allocator,
+            \\[package]
+            \\name = "lib"
+            \\version = "1.0.0"
+            \\license = "MIT"
+            \\
+            \\[[exports]]
+            \\name = "entry"
+            \\path = "{s}"
+            \\
+        , .{path});
+        defer testing.allocator.free(source);
+        var diagnostics = newDiagnostics();
+        defer diagnostics.deinit();
+        try testing.expectError(error.InvalidManifest, manifest_mod.parse(testing.allocator, source, &diagnostics));
+    }
+
+    // 管理 dir 名（`.nako`/`.git`）を含む target は規範 path としては
+    // 受理されるため、解決側の hasExcludedExport が除外を担う
+    // （拡張子は source 拡張子必須のため `.nako3` を使う）。
+    const managed_cases = [_][]const u8{ "src/.nako/private.nako3", "lib/.git/config.nako3" };
+    for (managed_cases) |path| {
         const source = try std.fmt.allocPrint(testing.allocator,
             \\[package]
             \\name = "lib"

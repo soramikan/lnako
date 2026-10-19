@@ -331,6 +331,13 @@ const StandardPropertyCacheEntry = struct {
     value: Value,
 };
 
+/// `pkg:` import経由のnative plugin。`path`のpluginが登録する命令を
+/// `{namespace}__{命令}` の修飾名だけで公開する。
+pub const NativePluginPackage = struct {
+    path: []u8,
+    namespace: []u8,
+};
+
 pub const Runtime = struct {
     allocator: std.mem.Allocator,
     objects: ?*Object = null,
@@ -392,6 +399,9 @@ pub const Runtime = struct {
     process_io: std.Io.Threaded = .init_single_threaded,
     process_io_initialized: bool = false,
     native_plugin_paths: std.ArrayList([]u8) = .empty,
+    /// `pkg:` import経由のnative plugin。命令を `{namespace}__{命令}` の
+    /// 修飾名だけで公開するためのpath→namespace対応表。
+    native_plugin_packages: std.ArrayList(NativePluginPackage) = .empty,
     counters: counters.Counters = .{},
     allocator_telemetry: ?*allocator_telemetry.Telemetry = null,
     allocator_telemetry_checked: bool = false,
@@ -464,6 +474,11 @@ pub const Runtime = struct {
         self.literal_values.deinit(self.allocator);
         for (self.native_plugin_paths.items) |path| self.allocator.free(path);
         self.native_plugin_paths.deinit(self.allocator);
+        for (self.native_plugin_packages.items) |package| {
+            self.allocator.free(package.path);
+            self.allocator.free(package.namespace);
+        }
+        self.native_plugin_packages.deinit(self.allocator);
         for (self.dynamic_globals.items) |entry| self.allocator.free(entry.name);
         self.dynamic_globals.deinit(self.allocator);
         self.csv_state.deinit(self.allocator);

@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 // 簡易HTTPサーバの受信エンジン。
 // 接続acceptとheader/body受信を接続単位のworker threadへ分離し、
@@ -714,10 +715,15 @@ test "受信engineのstopはqueue内socketを一度だけ閉じてworkerを回�
 
     engine.stop();
     try std.testing.expect(engine.next() == null);
+    try std.testing.expectEqual(@as(usize, 0), engine.pendingCount());
+    try std.testing.expectEqual(@as(usize, 0), engine.queuedCount());
     engine.destroy();
-    // stopでqueue内socketは一度だけcloseされ、client側は切断を観測する。
-    try ingressTestExpectClosed(queued, io);
-    try ingressTestExpectClosed(inflight, io);
+    // stopでqueue内socketは一度だけcloseされる。WindowsのZig 0.16 Threaded IOは
+    // peer close後のreadでLOCAL_DISCONNECTをpanicにするため、そこでのread検査は避ける。
+    if (builtin.os.tag != .windows) {
+        try ingressTestExpectClosed(queued, io);
+        try ingressTestExpectClosed(inflight, io);
+    }
 }
 
 test "受信engineは単一行が8KBを超えるheaderを合計上限内で受理する" {

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "lockSha256": "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=",
+  "profile": "default",
+  "runtime": "cnako",
+  "dependencies": [
+    { "alias": "math-kit", "package": "pkg:ffffffffffffffffffffffffffffffff" }
+  ],
+  "packages": {
+    "pkg:0123456789abcdef0123456789abcdef": {
+      "name": "math-kit",
+      "version": "1.0.0",
+      "path": "deps/math-kit",
+      "dependencies": [
+        { "alias": "util", "package": "pkg:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+      ]
+    }
+  }
+}

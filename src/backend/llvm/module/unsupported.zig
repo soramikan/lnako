@@ -64,7 +64,7 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
                 .call => shared.isDisplayCall(instruction.name) or aot_builtin.lookup(instruction.name) != null or validDirectCallee(program, instruction) or shared.lookupFunction(program, instruction.name) != null or
                     shared.isDynamicNamedCall(function, instruction.name) or shared.isNativePluginCall(program, function, instruction),
                 .call_value => instruction.operands.len > 0,
-                .make_closure => closureSupported(program, function, instruction.name),
+                .make_closure => closureSupported(program, function, instruction),
                 .iterator_begin => iteratorSourceSupported(function, instruction),
             };
             if (!supported) return .{
@@ -91,9 +91,9 @@ fn validDirectCallee(program: ir.Program, instruction: ir.Instruction) bool {
     return if (instruction.direct_callee) |callee| callee < program.functions.len else false;
 }
 
-fn closureSupported(program: ir.Program, caller: ir.Function, name: []const u8) bool {
-    const function = shared.lookupFunction(program, name) orelse
-        return shared.builtinClosureCommand(name) != null or shared.nativePluginClosure(program, name);
+fn closureSupported(program: ir.Program, caller: ir.Function, instruction: ir.Instruction) bool {
+    const function = shared.lookupFunction(program, instruction.name) orelse
+        return shared.builtinClosureCommand(instruction.name) != null or shared.nativePluginClosure(program, instruction);
     for (function.captures) |capture| if (!shared.hasLocalName(caller, capture)) return false;
     return true;
 }

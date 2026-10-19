@@ -43,6 +43,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = compat_js or target.result.os.tag == .linux,
     });
+    if (target.result.os.tag == .windows) lnako.linkSystemLibrary("advapi32", .{});
     lnako.addOptions("build_options", build_options);
     lnako.addImport("unicode_case", unicode_case);
     lnako.addImport("unicode_properties", unicode_properties);
