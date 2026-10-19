@@ -34,6 +34,8 @@ pub const Sharing = enum {
 
 pub const UninspectedReason = enum {
     missing_metadata,
+    /// source export があるが AST 再生成に失敗（path 解決・読取・構文）。
+    source_unreadable,
     native_without_metadata,
     js_without_metadata,
 };
@@ -45,6 +47,7 @@ pub const Uninspected = struct {
     pub fn reasonText(self: Uninspected) []const u8 {
         return switch (self.reason) {
             .missing_metadata => "missing_metadata",
+            .source_unreadable => "source_unreadable",
             .native_without_metadata => "native_without_metadata",
             .js_without_metadata => "js_without_metadata",
         };
@@ -139,11 +142,8 @@ pub fn inspectEnvironmentDir(
     }
 
     var owners: std.StringHashMapUnmanaged(Owner) = .empty;
-    defer {
-        var free_it = owners.iterator();
-        while (free_it.next()) |item| gpa.free(item.key_ptr.*);
-        owners.deinit(gpa);
-    }
+    // key は arena 所有の command.name。report.arena が生きている間だけ有効。
+    defer owners.deinit(gpa);
 
     var uninspected_list: std.ArrayList(Uninspected) = .empty;
 
@@ -159,9 +159,17 @@ pub fn inspectEnvironmentDir(
 
         var commands = try parseCommands(arena, record.get("commands"));
         const export_flags = exportFlags(record.get("exports"));
+        var source_regeneration_failed = false;
 
         if (export_flags.has_source) {
-            if (try regenerateCommands(gpa, io, root_dir, rel_path, record.get("exports"), diagnostics)) |regenerated_ptr| {
+            const maybe_regenerated = try regenerateCommands(gpa, io, root_dir, rel_path, record.get("exports"), diagnostics);
+            if (maybe_regenerated == null) {
+                source_regeneration_failed = true;
+                try uninspected_list.append(arena, .{
+                    .package_key = package_key,
+                    .reason = .source_unreadable,
+                });
+            } else if (maybe_regenerated) |regenerated_ptr| {
                 var regenerated = regenerated_ptr;
                 defer regenerated.deinit();
                 const cmp = compareCommandLists(commands, regenerated.commands);
@@ -194,7 +202,7 @@ pub fn inspectEnvironmentDir(
                     .package_key = package_key,
                     .reason = .js_without_metadata,
                 });
-            } else if (export_flags.has_source) {
+            } else if (export_flags.has_source and !source_regeneration_failed) {
                 try uninspected_list.append(arena, .{
                     .package_key = package_key,
                     .reason = .missing_metadata,
@@ -220,7 +228,7 @@ pub fn inspectEnvironmentDir(
             }
             const gop = try owners.getOrPut(gpa, name);
             if (!gop.found_existing) {
-                gop.key_ptr.* = try gpa.dupe(u8, name);
+                // name は arena スライスのまま key にする（dupe 不要）。
                 gop.value_ptr.* = .{
                     .package_key = package_key,
                     .variable = command.variable,
@@ -408,6 +416,17 @@ fn compareCommandLists(a: []const npkg_commands.Command, b: []const npkg_command
         }
         if (!found) return .{ .equal = false, .detail = "command missing from regenerated index" };
     }
+    // 逆方向: 件数一致でも a 側の重複名で b の一部が照合漏れになるのを防ぐ。
+    for (b) |right| {
+        var found = false;
+        for (a) |left| {
+            if (std.mem.eql(u8, left.name, right.name)) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) return .{ .equal = false, .detail = "command missing from metadata snapshot" };
+    }
     return .{ .equal = true, .detail = "" };
 }
 
@@ -419,12 +438,9 @@ fn regenerateCommands(
     exports_value: ?std.json.Value,
     diagnostics: *diag.List,
 ) error{OutOfMemory}!?npkg_commands_gen.Result {
-    if (!npkg_files.isCanonicalPath(rel_package_path) and
-        (std.mem.indexOfScalar(u8, rel_package_path, 0) != null or rel_package_path.len == 0))
+    if (rel_package_path.len == 0 or std.mem.indexOfScalar(u8, rel_package_path, 0) != null)
         return null;
-    // path 依存は相対。バックスラッシュや `..` 脱出は open 失敗で null。
-    if (std.mem.indexOf(u8, rel_package_path, "..") != null) return null;
-
+    // path 依存は `..` を含む sibling を許す。境界外・欠落は openDir/realPath で null。
     var package_dir = root_dir.openDir(io, rel_package_path, .{ .follow_symlinks = false }) catch return null;
     defer package_dir.close(io);
 
@@ -495,13 +511,15 @@ test "command inspect: source metadata をロードせず検査し guaranteed �
     try tmp.dir.writeFile(io, .{
         .sub_path = "lib/src/index.nako3",
         .data =
+        \\!「./side.nako3」を取り込む
         \\●(AをBに)加算とは
         \\  A+Bで戻る
         \\ここまで
         \\
         ,
     });
-    // 副作用を持つ初期化文。静的検査が実行すると marker が書かれる。
+    // 副作用を持つ初期化文。export 閉包に入り静的生成が読む。
+    // 実行されれば process cwd に marker が書かれる。
     try tmp.dir.writeFile(io, .{
         .sub_path = "lib/src/side.nako3",
         .data =
@@ -537,7 +555,8 @@ test "command inspect: source metadata をロードせず検査し guaranteed �
     try testing.expectEqual(@as(usize, 1), report.inspected_count);
     try testing.expectEqual(@as(usize, 0), report.uninspectedCount());
     try testing.expect(!list.hasErrors());
-    tmp.dir.access(io, "lib/SIDE_EFFECT.txt", .{}) catch |err| {
+    // 初期化が走れば process cwd に marker が残る。
+    std.Io.Dir.cwd().access(io, "SIDE_EFFECT.txt", .{}) catch |err| {
         try testing.expect(err == error.FileNotFound);
         return;
     };
@@ -692,4 +711,40 @@ test "command inspect: snapshot とソース再生成の不一致を診断する
     defer report.deinit();
     try testing.expect(report.mismatch_count >= 1);
     try testing.expectEqual(Sharing.failed, report.sharing);
+}
+
+test "command inspect: source 再生成失敗は source_unreadable" {
+    const a = testing.allocator;
+    const io = testing.io;
+    var tmp = test_sandbox.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "lib");
+    // export は source を指すがファイルが無い → 再生成失敗。
+    try writeEnv(tmp.dir,
+        \\{
+        \\  "schemaVersion": 1,
+        \\  "lockSha256": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        \\  "profile": "default",
+        \\  "runtime": "lnako",
+        \\  "packages": {
+        \\    "pkg:ffffffffffffffffffffffffffffffff": {
+        \\      "name": "lib",
+        \\      "version": "1.0.0",
+        \\      "path": "lib",
+        \\      "exports": [{"name": "lib", "path": "src/missing.nako3"}],
+        \\      "commands": [{"name": "残る命令", "args": [], "josi": []}]
+        \\    }
+        \\  }
+        \\}
+    );
+    var list = diag.List.init(a);
+    defer list.deinit();
+    var report = try inspectEnvironmentDir(a, io, tmp.dir, false, &list);
+    defer report.deinit();
+    try testing.expectEqual(Sharing.partial, report.sharing);
+    try testing.expectEqual(@as(usize, 1), report.uninspectedCount());
+    try testing.expectEqual(UninspectedReason.source_unreadable, report.uninspected[0].reason);
+    // snapshot の衝突検査は継続（inspected に加算される）
+    try testing.expectEqual(@as(usize, 1), report.inspected_count);
 }

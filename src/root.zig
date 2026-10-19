@@ -210,7 +210,7 @@ pub fn usage(writer: *std.Io.Writer) !void {
         \\  lnako update [<name>...] [--offline] [--registry <url>]
         \\  lnako tree [--profile <name>] [--features <a,b>] [--locked]
         \\  lnako why <name> [--profile <name>] [--features <a,b>] [--locked]
-        \\  lnako check [--locked] [--profile <name>] [--json]    プロジェクトの依存・環境状態を検査（副作用なし）
+        \\  lnako check [--locked] [--profile <name>] [--json] [--strict-sharing]    プロジェクトの依存・環境・命令 metadata を検査（副作用なし）
         \\  lnako cache dir|clean [--package-cache-dir <path>]
         \\
         \\依存準備オプション（run/test/build で有効。lock/tree/why/check/add/remove/update でも対応するものを使用可）:

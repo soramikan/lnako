@@ -998,15 +998,12 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
     };
     defer command_report.deinit();
     if (inspect.environment_current) {
-        var root_dir = std.Io.Dir.cwd().openDir(io, project_var.root, .{}) catch |err| {
-            return failProject(stderr, "check", err, &diagnostics, project_var.manifest_path);
-        };
-        defer root_dir.close(io);
+        // Project が保持する root_dir を使う（cwd からの再 open はしない）。
         command_report.deinit();
         command_report = try lnako.package.command_inspect.inspectEnvironmentDir(
             a,
             io,
-            root_dir,
+            project_var.root_dir,
             flags.strict_sharing,
             &diagnostics,
         );
