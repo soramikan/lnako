@@ -62,6 +62,10 @@ pub fn call(
     if (matches(name, foundation.stream_commands.write_bytes, foundation.stream_commands.write_bytes_user)) return @as(?Value, try stream.writeBytes(runtime, state, context, effects, arguments));
     if (std.mem.eql(u8, name, foundation.stream_commands.sync)) return @as(?Value, try stream.syncFile(runtime, state, context, effects, arguments));
     if (std.mem.eql(u8, name, foundation.stream_commands.truncate)) return @as(?Value, try stream.truncateFile(runtime, state, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.stream_commands.seek)) return @as(?Value, try stream.seekFile(runtime, state, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.stream_commands.tell)) return @as(?Value, try stream.tellFile(runtime, state, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.stream_commands.pread)) return @as(?Value, try stream.preadFile(runtime, state, context, effects, arguments));
+    if (std.mem.eql(u8, name, foundation.stream_commands.pwrite)) return @as(?Value, try stream.pwriteFile(runtime, state, context, effects, arguments));
     if (std.mem.eql(u8, name, foundation.hash_commands.create)) return @as(?Value, try hash.hashCreate(runtime, state, context, effects, arguments));
     if (std.mem.eql(u8, name, foundation.hash_commands.update)) return @as(?Value, try hash.hashUpdate(runtime, state, context, effects, arguments));
     if (std.mem.eql(u8, name, foundation.hash_commands.digest)) return @as(?Value, try hash.hashDigest(runtime, state, context, effects, arguments));
@@ -183,7 +187,7 @@ test "未実装命令はdispatch名と利用者名の両形で構造化ENOTSUP�
             }
         }
     }
-    try std.testing.expectEqual(@as(usize, 4), covered);
+    try std.testing.expectEqual(@as(usize, 0), covered);
 }
 
 test "実装済み命令の引数不足はEINVALで未知capability照会はfalse" {

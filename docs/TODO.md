@@ -97,7 +97,11 @@
 - **パッケージシステムの実装**：
   - なでしこ3向け共通パッケージシステム仕様案（[SPECIFICATION.md](package-system/SPECIFICATION.md)）に基づく、PubGrub依存解決器、マニフェスト解析、取得provider・package cache・環境同期（#47・#48）、依存管理CLIと `run`/`test`/`build` 前の自動準備（#49）を実装済み。`nako.lock` の決定的生成、複数profile集約、既存版優先、部分更新と変更理由説明、lock鮮度判定、`--locked` の無変更失敗、path 依存 pin hash・依存 cycle 検出を実装した。npm 依存の解決は未実装（manifest 宣言は lock 不可として明示拒否）。
 - **低レイヤーAPI・ストリームI/O**：
-  - 構造化エラーハンドリング、生I/Oストリーム、逐次ハッシュ計算、ファイルシステム低層API、ファイル時刻・truncate・高精度メタデータ、逐次ディレクトリ列挙、POSIX権限・所有者・access判定、argv型プロセス起動・signal・priority・TTY、ロケール比較・表示幅APIを実装済み（#31, #33, #34, #35, #38）。追加の低水準OS機能や周辺APIの拡充を継続する。
+  - カタログ63命令をすべて実装済み（#27–#38, #36 等）。正本は [`docs/low-level-api/catalog.json`](low-level-api/catalog.json)、現状の一覧は [`docs/low-level-api/IMPLEMENTATION_STATUS.md`](low-level-api/IMPLEMENTATION_STATUS.md)。
+  - **実装済み命令（63/63）**: カタログ掲載の全命令を Interpreter / AOT で実装。位置系4命令（`ファイル位置変更` / `ファイル位置取得` / `ファイル位置指定読込` / `ファイル位置指定書込`）は [#27](https://github.com/soramikan/lnako/issues/27) で完了。
+  - **OS制約**: Windows の `ハードリンク作成` は常に `ENOTSUP`（[#78](https://github.com/soramikan/lnako/issues/78)）。`chmod` / `chown` / `uid_gid` / `priority` / `statfs` 等は POSIX 中心で Windows は照会 false または `ENOTSUP`。
+  - **拡張未着手**: `termios` / `nss` / `acl` / `xattr` / `selinux`（[#39](https://github.com/soramikan/lnako/issues/39)、capability ID のみ）。Web/Async Runtime Foundation（#197–#206）は現行63命令カタログの外。
+  - 構造化エラー、raw stdio、hash、FS、dir iterator、POSIX、spawn/signal/TTY、locale/表示幅、statfs/reflink/sparse は実装済み。
 - **性能・最適化の継続管理**：
   - Interpreterの実行速度向上、文字列連結・正規表現の最適化、Windowsバイナリサイズの削減（[#12](https://github.com/soramikan/lnako/issues/12)）。
 - **Windowsのsocket teardown時panic（CIのテスト結果では検知できない）**：

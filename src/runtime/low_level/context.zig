@@ -32,6 +32,10 @@ pub const StreamContext = struct {
     seekDataFileFn: ?*const fn (context: *anyopaque, raw: u64, offset: i64) anyerror!i64 = null,
     seekHoleFileFn: ?*const fn (context: *anyopaque, raw: u64, offset: i64) anyerror!i64 = null,
     allocateFileFn: ?*const fn (context: *anyopaque, raw: u64, offset: i64, size: u64) anyerror!void = null,
+    /// Issue #27: 位置変更・位置指定I/O。whenceは 0=開始, 1=現在, 2=終端。
+    seekFileFn: ?*const fn (context: *anyopaque, raw: u64, offset: i64, whence: u8) anyerror!i64 = null,
+    preadFileFn: ?*const fn (context: *anyopaque, raw: u64, buffer: []u8, offset: i64) anyerror!usize = null,
+    pwriteFileFn: ?*const fn (context: *anyopaque, raw: u64, bytes: []const u8, offset: i64) anyerror!usize = null,
 
     pub fn openFile(self: StreamContext, path: []const u8, mode: foundation.OpenMode, exclusive: bool, sync: bool) !u64 {
         const function = self.openFileFn orelse return error.LowLevelIoUnavailable;
@@ -81,6 +85,21 @@ pub const StreamContext = struct {
     pub fn allocateFile(self: StreamContext, raw: u64, offset: i64, size: u64) !void {
         const function = self.allocateFileFn orelse return error.LowLevelIoUnavailable;
         return function(self.context, raw, offset, size);
+    }
+
+    pub fn seekFile(self: StreamContext, raw: u64, offset: i64, whence: u8) !i64 {
+        const function = self.seekFileFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, raw, offset, whence);
+    }
+
+    pub fn preadFile(self: StreamContext, raw: u64, buffer: []u8, offset: i64) !usize {
+        const function = self.preadFileFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, raw, buffer, offset);
+    }
+
+    pub fn pwriteFile(self: StreamContext, raw: u64, bytes: []const u8, offset: i64) !usize {
+        const function = self.pwriteFileFn orelse return error.LowLevelIoUnavailable;
+        return function(self.context, raw, bytes, offset);
     }
 
     pub fn hasStreamFileIo(self: StreamContext) bool {
@@ -578,6 +597,18 @@ pub const Context = struct {
         return self.stream.allocateFile(raw, offset, size);
     }
 
+    pub fn seekFile(self: Context, raw: u64, offset: i64, whence: u8) !i64 {
+        return self.stream.seekFile(raw, offset, whence);
+    }
+
+    pub fn preadFile(self: Context, raw: u64, buffer: []u8, offset: i64) !usize {
+        return self.stream.preadFile(raw, buffer, offset);
+    }
+
+    pub fn pwriteFile(self: Context, raw: u64, bytes: []const u8, offset: i64) !usize {
+        return self.stream.pwriteFile(raw, bytes, offset);
+    }
+
     pub fn createHash(self: Context, algorithm: []const u8) !u64 {
         return self.hash.createHash(algorithm);
     }
@@ -877,6 +908,9 @@ pub const FlatContext = struct {
     seekDataFileFn: ?*const fn (context: *anyopaque, raw: u64, offset: i64) anyerror!i64 = null,
     seekHoleFileFn: ?*const fn (context: *anyopaque, raw: u64, offset: i64) anyerror!i64 = null,
     allocateFileFn: ?*const fn (context: *anyopaque, raw: u64, offset: i64, size: u64) anyerror!void = null,
+    seekFileFn: ?*const fn (context: *anyopaque, raw: u64, offset: i64, whence: u8) anyerror!i64 = null,
+    preadFileFn: ?*const fn (context: *anyopaque, raw: u64, buffer: []u8, offset: i64) anyerror!usize = null,
+    pwriteFileFn: ?*const fn (context: *anyopaque, raw: u64, bytes: []const u8, offset: i64) anyerror!usize = null,
     createHashFn: ?*const fn (context: *anyopaque, algorithm: []const u8) anyerror!u64 = null,
     updateHashFn: ?*const fn (context: *anyopaque, raw: u64, bytes: []const u8) anyerror!void = null,
     digestHashFn: ?*const fn (context: *anyopaque, raw: u64, allocator: std.mem.Allocator) anyerror![]u8 = null,
@@ -934,6 +968,9 @@ pub const FlatContext = struct {
                 .seekDataFileFn = self.seekDataFileFn,
                 .seekHoleFileFn = self.seekHoleFileFn,
                 .allocateFileFn = self.allocateFileFn,
+                .seekFileFn = self.seekFileFn,
+                .preadFileFn = self.preadFileFn,
+                .pwriteFileFn = self.pwriteFileFn,
             },
             .hash = .{
                 .context = self.context,

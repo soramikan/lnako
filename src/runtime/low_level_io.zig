@@ -397,6 +397,238 @@ pub fn setLength(io: std.Io, file: std.Io.File, new_length: u64) SetLengthError!
     return file.setLength(io, new_length);
 }
 
+/// `ファイル位置変更` の WHENCE。カタログ契約の 開始/現在/終端。
+pub const SeekWhence = enum(u8) {
+    start = 0,
+    current = 1,
+    end = 2,
+
+    pub fn parse(text: []const u8) error{InvalidWhence}!SeekWhence {
+        if (std.mem.eql(u8, text, "開始")) return .start;
+        if (std.mem.eql(u8, text, "現在")) return .current;
+        if (std.mem.eql(u8, text, "終端")) return .end;
+        return error.InvalidWhence;
+    }
+
+    pub fn fromInt(value: u8) error{InvalidOffset}!SeekWhence {
+        return switch (value) {
+            0 => .start,
+            1 => .current,
+            2 => .end,
+            else => error.InvalidOffset,
+        };
+    }
+};
+
+/// 現在のfd位置を返す（`lseek(fd, 0, SEEK_CUR)` 相当）。
+pub fn tell(io: std.Io, file: std.Io.File) anyerror!i64 {
+    return seek(io, file, 0, .current);
+}
+
+/// ファイル位置を変更し、新しい絶対位置を返す。負位置や非seek可能な
+/// 対象は `InvalidOffset` / `Unseekable`。pipe等は Unseekable。
+pub fn seek(io: std.Io, file: std.Io.File, offset: i64, whence: SeekWhence) anyerror!i64 {
+    switch (builtin.os.tag) {
+        .windows => return seekWindows(io, file, offset, whence),
+        .wasi => return seekWasi(file, offset, whence),
+        else => return seekPosix(file, offset, whence),
+    }
+}
+
+fn seekPosix(file: std.Io.File, offset: i64, whence: SeekWhence) anyerror!i64 {
+    // system は link_libc 時 c、非libc linux 時 os.linux。errno も system ABI に合わせる。
+    const posix_whence: i32 = switch (whence) {
+        .start => std.posix.SEEK.SET,
+        .current => std.posix.SEEK.CUR,
+        .end => std.posix.SEEK.END,
+    };
+    const off = std.math.cast(std.posix.off_t, offset) orelse return error.InvalidOffset;
+    while (true) {
+        const result = std.posix.system.lseek(file.handle, off, posix_whence);
+        if (result >= 0) return @intCast(result);
+        const errno = std.posix.errno(result);
+        if (errno == .INTR) continue;
+        return mapSeekErrno(errno);
+    }
+}
+
+fn seekWasi(file: std.Io.File, offset: i64, whence: SeekWhence) anyerror!i64 {
+    if (builtin.link_libc) return seekPosix(file, offset, whence);
+    const wasi_whence: std.os.wasi.whence_t = switch (whence) {
+        .start => .SET,
+        .current => .CUR,
+        .end => .END,
+    };
+    var new_offset: std.os.wasi.filesize_t = undefined;
+    while (true) {
+        switch (std.os.wasi.fd_seek(file.handle, offset, wasi_whence, &new_offset)) {
+            .SUCCESS => {
+                return std.math.cast(i64, new_offset) orelse return error.InvalidOffset;
+            },
+            .INTR => continue,
+            .INVAL, .OVERFLOW, .SPIPE, .NXIO => return error.Unseekable,
+            .NOTCAPABLE => return error.AccessDenied,
+            .BADF => return error.BadFileDescriptor,
+            else => |err| return std.posix.unexpectedErrno(err),
+        }
+    }
+}
+
+fn seekWindows(io: std.Io, file: std.Io.File, offset: i64, whence: SeekWhence) anyerror!i64 {
+    const windows = std.os.windows;
+    var iosb: windows.IO_STATUS_BLOCK = undefined;
+    const base: u64 = switch (whence) {
+        .start => 0,
+        .current => blk: {
+            var info: windows.FILE.POSITION_INFORMATION = undefined;
+            switch (windows.ntdll.NtQueryInformationFile(
+                file.handle,
+                &iosb,
+                &info,
+                @sizeOf(windows.FILE.POSITION_INFORMATION),
+                .Position,
+            )) {
+                .SUCCESS => break :blk @bitCast(info.CurrentByteOffset),
+                .ACCESS_DENIED => return error.AccessDenied,
+                .PIPE_NOT_AVAILABLE => return error.Unseekable,
+                else => |status| return windows.unexpectedStatus(status),
+            }
+        },
+        .end => try endOfFile(io, file),
+    };
+    // minInt(i64) は -offset で overflow するため @abs で u64 化する。
+    const absolute: u64 = if (offset >= 0)
+        std.math.add(u64, base, @intCast(offset)) catch return error.InvalidOffset
+    else
+        std.math.sub(u64, base, @abs(offset)) catch return error.InvalidOffset;
+    var set_info = windows.FILE.POSITION_INFORMATION{ .CurrentByteOffset = @bitCast(absolute) };
+    switch (windows.ntdll.NtSetInformationFile(
+        file.handle,
+        &iosb,
+        &set_info,
+        @sizeOf(windows.FILE.POSITION_INFORMATION),
+        .Position,
+    )) {
+        .SUCCESS => {},
+        .ACCESS_DENIED => return error.AccessDenied,
+        .PIPE_NOT_AVAILABLE => return error.Unseekable,
+        else => |status| return windows.unexpectedStatus(status),
+    }
+    return std.math.cast(i64, absolute) orelse return error.InvalidOffset;
+}
+
+fn mapSeekErrno(errno: std.posix.E) anyerror {
+    return switch (errno) {
+        .BADF => error.BadFileDescriptor,
+        .INVAL, .OVERFLOW, .SPIPE, .NXIO => error.Unseekable,
+        else => std.posix.unexpectedErrno(errno),
+    };
+}
+
+/// Windows の NtReadFile/NtWriteFile は ByteOffset 付きでも CurrentByteOffset を
+/// offset+n へ進める。POSIX pread/pwrite は位置不変なので保存復元は Windows のみ。
+fn restorePosition(io: std.Io, file: std.Io.File, saved: ?i64) ReadError!void {
+    if (saved) |pos| {
+        _ = try seek(io, file, pos, .start);
+    }
+}
+
+fn savePositionIfWindows(io: std.Io, file: std.Io.File) ?i64 {
+    if (builtin.os.tag != .windows) return null;
+    return tell(io, file) catch null;
+}
+
+fn handleIsAppend(entry: *const OpenHandle) bool {
+    return switch (builtin.os.tag) {
+        .windows, .wasi => entry.append,
+        // POSIX の a/a+ は entry.append=false（O_APPEND に委譲）なので fd を見る。
+        else => entry.append or posixFlagIsSet(entry.file, "APPEND"),
+    };
+}
+
+/// 位置指定読込（pread相当）。現在位置を動かさない。負offsetは InvalidOffset。
+/// EOFは0バイトへ正規化する（`readAtCurrent` と同じ）。
+pub fn readAt(io: std.Io, file: std.Io.File, buffer: []u8, offset: i64) ReadError!usize {
+    if (offset < 0) return error.InvalidOffset;
+    const absolute: u64 = @intCast(offset);
+    const saved = savePositionIfWindows(io, file);
+    errdefer restorePosition(io, file, saved) catch {};
+    // Zig の readPositional は EOF を 0 バイトで返す（EndOfStream はエラー集合に無い）。
+    const read = try file.readPositional(io, &.{buffer}, absolute);
+    try restorePosition(io, file, saved);
+    return read;
+}
+
+/// 位置指定書込（pwrite相当）。現在位置を動かさない。負offsetは InvalidOffset。
+/// append（O_APPEND / Windows 追記）ハンドルは Linux が OFFSET を無視するため拒否する。
+pub fn writeAt(io: std.Io, entry: *OpenHandle, bytes: []const u8, offset: i64) WriteError!usize {
+    if (offset < 0) return error.InvalidOffset;
+    if (handleIsAppend(entry)) return error.InvalidArgument;
+    const absolute: u64 = @intCast(offset);
+    const saved = savePositionIfWindows(io, entry.file);
+    errdefer restorePosition(io, entry.file, saved) catch {};
+    const written = try entry.file.writePositional(io, &.{bytes}, absolute);
+    try restorePosition(io, entry.file, saved);
+    return written;
+}
+
+test "seek/tell/readAt/writeAtは位置を保ちEOFは0バイト" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "pos.bin", .data = "abcdefgh" });
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const path = try std.fs.path.join(std.testing.allocator, &.{ directory, "pos.bin" });
+    defer std.testing.allocator.free(path);
+
+    var table = FileHandleTable.init(std.testing.allocator);
+    defer table.deinit(std.testing.io);
+    const id = try table.open(std.testing.io, .{ .path = path, .mode = .read_write });
+    const file = table.find(id).?.file;
+
+    try std.testing.expectEqual(@as(i64, 2), try seek(std.testing.io, file, 2, .start));
+    try std.testing.expectEqual(@as(i64, 2), try tell(std.testing.io, file));
+
+    var buf: [8]u8 = undefined;
+    const n = try readAt(std.testing.io, file, buf[0..3], 4);
+    try std.testing.expectEqual(@as(usize, 3), n);
+    try std.testing.expectEqualSlices(u8, "efg", buf[0..3]);
+    // Windows NtReadFile でも現在位置は動かない。
+    try std.testing.expectEqual(@as(i64, 2), try tell(std.testing.io, file));
+
+    const entry = table.find(id).?;
+    try std.testing.expectEqual(@as(usize, 2), try writeAt(std.testing.io, entry, "ZZ", 0));
+    try std.testing.expectEqual(@as(i64, 2), try tell(std.testing.io, file));
+
+    // EOF 超は 0 バイト（エラーにしない）。
+    try std.testing.expectEqual(@as(usize, 0), try readAt(std.testing.io, file, buf[0..4], 100));
+    try std.testing.expectEqual(@as(i64, 2), try tell(std.testing.io, file));
+
+    try std.testing.expectError(error.InvalidOffset, readAt(std.testing.io, file, buf[0..1], -1));
+    try std.testing.expectError(error.InvalidOffset, writeAt(std.testing.io, entry, "x", -1));
+
+    // Windows 経路の minInt(i64) は @abs 経由で overflow せず InvalidOffset。
+    if (builtin.os.tag == .windows) {
+        try std.testing.expectError(error.InvalidOffset, seek(std.testing.io, file, std.math.minInt(i64), .end));
+    }
+}
+
+test "appendハンドルのwriteAtはInvalidArgument" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "app.bin", .data = "abcdef" });
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const path = try std.fs.path.join(std.testing.allocator, &.{ directory, "app.bin" });
+    defer std.testing.allocator.free(path);
+
+    var table = FileHandleTable.init(std.testing.allocator);
+    defer table.deinit(std.testing.io);
+    const id = try table.open(std.testing.io, .{ .path = path, .mode = .append_read_create });
+    const entry = table.find(id).?;
+    try std.testing.expectError(error.InvalidArgument, writeAt(std.testing.io, entry, "XY", 0));
+}
+
 test "ハンドル表はindexとgenerationを持つ生ハンドルを発行する" {
     var table = FileHandleTable.init(std.testing.allocator);
     defer table.deinit(std.testing.io);

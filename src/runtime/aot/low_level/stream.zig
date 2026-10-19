@@ -269,6 +269,138 @@ pub fn pluginAllocateFile(context: *anyopaque, raw: u64, offset: i64, size: u64)
     return low_level_fs.allocate(io(runtime), entry.file, offset, size);
 }
 
+pub fn pluginSeekFile(context: *anyopaque, raw: u64, offset: i64, whence: u8) anyerror!i64 {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    const entry = table(runtime).find(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+    const seek_whence = low_level_io.SeekWhence.fromInt(whence) catch return error.InvalidOffset;
+    return low_level_io.seek(io(runtime), entry.file, offset, seek_whence);
+}
+
+pub fn pluginPreadFile(context: *anyopaque, raw: u64, buffer: []u8, offset: i64) anyerror!usize {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    const entry = table(runtime).find(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+    return low_level_io.readAt(io(runtime), entry.file, buffer, offset);
+}
+
+pub fn pluginPwriteFile(context: *anyopaque, raw: u64, bytes: []const u8, offset: i64) anyerror!usize {
+    const runtime: *Runtime = @ptrCast(@alignCast(context));
+    const entry = table(runtime).find(foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+    return low_level_io.writeAt(io(runtime), entry, bytes, offset);
+}
+
+/// `ファイル位置変更`。OFFSETと任意WHENCE（省略時は開始）。
+pub fn seekBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    const operation = foundation.stream_operations.lseek;
+    if (arguments.len < 1) {
+        return throwStructured(runtime, .EBADF, operation, null, null, "無効なハンドルです");
+    }
+    const entry = fileFor(runtime, arguments[0]) orelse {
+        return throwStructured(runtime, .EBADF, operation, null, null, "無効なハンドルです");
+    };
+    if (arguments.len < 2) {
+        return throwStructured(runtime, .EINVAL, operation, null, null, "位置が不正です");
+    }
+    const offset = offsetArgument(runtime, arguments[1]) catch {
+        return throwStructured(runtime, .EINVAL, operation, null, null, "位置が不正です");
+    };
+    const whence = try whenceFromArgument(runtime, if (arguments.len > 2) arguments[2] else .{});
+    const result = low_level_io.seek(io(runtime), entry.file, offset, whence) catch |failure| {
+        return throwIoMapped(runtime, failure, foundation.seekErrorCode(failure), operation, null, .stream_file_io);
+    };
+    return publicOffsetValue(runtime, result);
+}
+
+/// `ファイル位置取得`。
+pub fn tellBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    const operation = foundation.stream_operations.lseek;
+    if (arguments.len < 1) {
+        return throwStructured(runtime, .EBADF, operation, null, null, "無効なハンドルです");
+    }
+    const entry = fileFor(runtime, arguments[0]) orelse {
+        return throwStructured(runtime, .EBADF, operation, null, null, "無効なハンドルです");
+    };
+    const result = low_level_io.tell(io(runtime), entry.file) catch |failure| {
+        return throwIoMapped(runtime, failure, foundation.seekErrorCode(failure), operation, null, .stream_file_io);
+    };
+    return publicOffsetValue(runtime, result);
+}
+
+/// `ファイル位置指定読込`。
+pub fn preadBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    const operation = foundation.stream_operations.pread;
+    if (arguments.len < 1) {
+        return throwStructured(runtime, .EBADF, operation, null, null, "無効なハンドルです");
+    }
+    const entry = fileFor(runtime, arguments[0]) orelse {
+        return throwStructured(runtime, .EBADF, operation, null, null, "無効なハンドルです");
+    };
+    if (arguments.len < 3) {
+        return throwStructured(runtime, .EINVAL, operation, null, null, "位置が不正です");
+    }
+    const offset = offsetArgument(runtime, arguments[1]) catch {
+        return throwStructured(runtime, .EINVAL, operation, null, null, "位置が不正です");
+    };
+    var remaining = sizeArgument(runtime, arguments[2]) catch {
+        return throwStructured(runtime, .EINVAL, operation, null, null, "読み込む大きさが不正です");
+    };
+    const allocator = runtime.allocator;
+    var output: std.ArrayList(u8) = .empty;
+    defer output.deinit(allocator);
+    var at = offset;
+    while (remaining > 0) {
+        const chunk_length: usize = @intCast(@min(remaining, read_chunk_bytes));
+        const start = output.items.len;
+        try output.resize(allocator, start + chunk_length);
+        const read = low_level_io.readAt(io(runtime), entry.file, output.items[start..], at) catch |failure| {
+            return throwIo(runtime, failure, operation, null, null, .stream_file_io);
+        };
+        output.shrinkRetainingCapacity(start + read);
+        if (read == 0 or read < chunk_length) break;
+        remaining -= read;
+        // 最終チャンク後の at 加算は i64 上限付近で overflow しうる。残 0 なら終了。
+        if (remaining == 0) break;
+        at = std.math.add(i64, at, @intCast(read)) catch {
+            return throwStructured(runtime, .EINVAL, operation, null, null, "位置が不正です");
+        };
+    }
+    return runtime.createBytes(output.items);
+}
+
+/// `ファイル位置指定書込`。
+pub fn pwriteBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    const operation = foundation.stream_operations.pwrite;
+    if (arguments.len < 1) {
+        return throwStructured(runtime, .EBADF, operation, null, null, "無効なハンドルです");
+    }
+    const entry = fileFor(runtime, arguments[0]) orelse {
+        return throwStructured(runtime, .EBADF, operation, null, null, "無効なハンドルです");
+    };
+    if (arguments.len < 3) {
+        return throwStructured(runtime, .EINVAL, operation, null, null, "位置が不正です");
+    }
+    const offset = offsetArgument(runtime, arguments[1]) catch {
+        return throwStructured(runtime, .EINVAL, operation, null, null, "位置が不正です");
+    };
+    const bytes = bytesArgument(arguments[2]) catch {
+        return throwStructured(runtime, .EINVAL, operation, null, null, "書き込む値はBytesである必要があります");
+    };
+    const written = low_level_io.writeAt(io(runtime), entry, bytes, offset) catch |failure| {
+        return throwIo(runtime, failure, operation, null, null, .stream_file_io);
+    };
+    return publicSizeValue(runtime, written);
+}
+
+fn whenceFromArgument(runtime: *Runtime, value: Value) !low_level_io.SeekWhence {
+    if (value.tag == @intFromEnum(Tag.undefined)) return .start;
+    const text = valueUtf8LossyAlloc(runtime, value) catch {
+        return throwStructured(runtime, .EINVAL, foundation.stream_operations.lseek, null, null, "WHENCEが不正です");
+    };
+    defer runtime.allocator.free(text);
+    return low_level_io.SeekWhence.parse(text) catch {
+        return throwStructured(runtime, .EINVAL, foundation.stream_operations.lseek, null, null, "WHENCEが不正です");
+    };
+}
+
 /// `ファイルデータ領域検索`（SEEK_DATA相当）。offset以降のデータ位置を返す。
 pub fn seekDataBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     return seekExtentBuiltin(runtime, arguments, .data);

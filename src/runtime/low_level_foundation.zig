@@ -545,6 +545,10 @@ pub const stream_commands = struct {
     pub const write_bytes = "ファイルバイト書";
     pub const sync = "ファイル同期";
     pub const truncate = "ファイル切詰";
+    pub const seek = "ファイル位置変更";
+    pub const tell = "ファイル位置取得";
+    pub const pread = "ファイル位置指定読込";
+    pub const pwrite = "ファイル位置指定書込";
 
     pub const open_user = "ファイル開く";
     pub const close_user = "ファイル閉じる";
@@ -784,10 +788,10 @@ pub const catalog_commands = [_]CatalogCommand{
     .{ .id = "ll-file-write", .name = stream_commands.write_bytes, .user_name = stream_commands.write_bytes_user, .min = 2, .max = 2, .operation = stream_operations.write, .capability = .stream_file_io, .implemented = true },
     .{ .id = "ll-file-sync", .name = stream_commands.sync, .min = 1, .max = 1, .operation = stream_operations.fsync, .capability = .stream_file_io, .implemented = true },
     .{ .id = "ll-file-truncate-handle", .name = stream_commands.truncate, .min = 2, .max = 2, .operation = stream_operations.ftruncate, .capability = .truncate, .implemented = true },
-    .{ .id = "ll-file-seek", .name = "ファイル位置変更", .min = 2, .max = 3, .operation = "lseek", .capability = .stream_file_io },
-    .{ .id = "ll-file-tell", .name = "ファイル位置取得", .min = 1, .max = 1, .operation = "lseek", .capability = .stream_file_io },
-    .{ .id = "ll-file-pread", .name = "ファイル位置指定読込", .min = 3, .max = 3, .operation = "pread", .capability = .stream_file_io },
-    .{ .id = "ll-file-pwrite", .name = "ファイル位置指定書込", .min = 3, .max = 3, .operation = "pwrite", .capability = .stream_file_io },
+    .{ .id = "ll-file-seek", .name = stream_commands.seek, .min = 2, .max = 3, .operation = stream_operations.lseek, .capability = .stream_file_io, .implemented = true },
+    .{ .id = "ll-file-tell", .name = stream_commands.tell, .min = 1, .max = 1, .operation = stream_operations.lseek, .capability = .stream_file_io, .implemented = true },
+    .{ .id = "ll-file-pread", .name = stream_commands.pread, .min = 3, .max = 3, .operation = stream_operations.pread, .capability = .stream_file_io, .implemented = true },
+    .{ .id = "ll-file-pwrite", .name = stream_commands.pwrite, .min = 3, .max = 3, .operation = stream_operations.pwrite, .capability = .stream_file_io, .implemented = true },
     .{ .id = "ll-stdin-read", .name = stdio_commands.stdin_read, .user_name = stdio_commands.stdin_read_user, .min = 1, .max = 1, .operation = "read", .capability = .raw_stdio, .implemented = true },
     .{ .id = "ll-stdout-write", .name = stdio_commands.stdout_write, .user_name = stdio_commands.stdout_write_user, .min = 1, .max = 1, .operation = "write", .capability = .raw_stdio, .implemented = true },
     .{ .id = "ll-stderr-write", .name = stdio_commands.stderr_write, .user_name = stdio_commands.stderr_write_user, .min = 1, .max = 1, .operation = "write", .capability = .raw_stdio, .implemented = true },
@@ -887,6 +891,9 @@ pub const stream_operations = struct {
     /// 指定した `lseek`、領域確保は `fallocate`。
     pub const lseek = "lseek";
     pub const fallocate = "fallocate";
+    /// Issue #27の位置指定I/O。`pread`/`pwrite` は現在位置を動かさない。
+    pub const pread = "pread";
+    pub const pwrite = "pwrite";
 };
 
 /// Issue #32のincremental hash命令が失敗したときに返す構造化エラーの操作名
@@ -1171,6 +1178,7 @@ pub fn portableCodeForFailure(failure: anyerror) ?PortableErrorCode {
         error.NotLink, error.BadPathName, error.InvalidWtf8, error.InvalidArgument => .EINVAL,
         // 時刻がOS表現（time_t / Windowsの100ns）に収まらない場合はEINVAL。
         error.InvalidTimestamp => .EINVAL,
+        error.InvalidOffset, error.InvalidSize, error.InvalidWhence, error.Unseekable => .EINVAL,
         error.ReadOnlyFileSystem => .EROFS,
         error.NoSpaceLeft, error.DiskQuota, error.FileTooBig => .ENOSPC,
         error.ProcessFdQuotaExceeded => .EMFILE,
@@ -1620,6 +1628,9 @@ test "portableCodeForFailureはI/O失敗をportable codeへ写す" {
     // stdin履歴上限超過はリソース枯渇としてENOSPCへ写す。
     try std.testing.expectEqual(PortableErrorCode.ENOSPC, portableCodeForFailure(error.StreamTooLong).?);
     try std.testing.expect(portableCodeForFailure(error.OutOfMemory) == null);
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, portableCodeForFailure(error.InvalidOffset).?);
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, portableCodeForFailure(error.InvalidWhence).?);
+    try std.testing.expectEqual(PortableErrorCode.EINVAL, portableCodeForFailure(error.Unseekable).?);
 }
 
 test "portableCodeForSpawnFailureは契約集合へ限定しEMFILE/ENFILEをEINVALへ丸める" {
