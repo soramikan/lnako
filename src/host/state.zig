@@ -482,6 +482,28 @@ pub const CliHost = struct {
         return lnako.runtime.low_level_fs.allocate(self.io, entry.file, offset, size);
     }
 
+    fn lowLevelSeekFile(context: *anyopaque, raw: u64, offset: i64, whence: u8) anyerror!i64 {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const id = lnako.runtime.low_level_foundation.HandleId.fromRaw(raw);
+        const entry = self.lowLevelTable().find(id) orelse return error.BadFileDescriptor;
+        const seek_whence = lnako.runtime.low_level_io.SeekWhence.fromInt(whence) catch return error.InvalidOffset;
+        return lnako.runtime.low_level_io.seek(self.io, entry.file, offset, seek_whence);
+    }
+
+    fn lowLevelPreadFile(context: *anyopaque, raw: u64, buffer: []u8, offset: i64) anyerror!usize {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const id = lnako.runtime.low_level_foundation.HandleId.fromRaw(raw);
+        const entry = self.lowLevelTable().find(id) orelse return error.BadFileDescriptor;
+        return lnako.runtime.low_level_io.readAt(self.io, entry.file, buffer, offset);
+    }
+
+    fn lowLevelPwriteFile(context: *anyopaque, raw: u64, bytes: []const u8, offset: i64) anyerror!usize {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const id = lnako.runtime.low_level_foundation.HandleId.fromRaw(raw);
+        const entry = self.lowLevelTable().find(id) orelse return error.BadFileDescriptor;
+        return lnako.runtime.low_level_io.writeAt(self.io, entry.file, bytes, offset);
+    }
+
     fn lowLevelProcessTable(self: *CliHost) *lnako.runtime.low_level_process.ProcessTable {
         if (self.low_level_processes == null) {
             self.low_level_processes = lnako.runtime.low_level_process.ProcessTable.init(std.heap.page_allocator);
@@ -629,6 +651,9 @@ pub const CliHost = struct {
                 .seekDataFileFn = lowLevelSeekDataFile,
                 .seekHoleFileFn = lowLevelSeekHoleFile,
                 .allocateFileFn = lowLevelAllocateFile,
+                .seekFileFn = lowLevelSeekFile,
+                .preadFileFn = lowLevelPreadFile,
+                .pwriteFileFn = lowLevelPwriteFile,
             },
             .hash = .{
                 .context = self,

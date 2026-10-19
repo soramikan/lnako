@@ -160,8 +160,8 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "WHENCEは開始/現在/終端。OFFSETはi64。戻り値は新位置",
-      "implemented": false
+      "notes": "Issue #27。位置指定I/O。WHENCEは開始/現在/終端。pread/pwriteは現在位置を動かさない。",
+      "implemented": true
     },
     {
       "id": "ll-file-tell",
@@ -176,8 +176,8 @@
       "errors": [
         "EBADF"
       ],
-      "notes": "現在位置をoffsetとして返す",
-      "implemented": false
+      "notes": "Issue #27。位置指定I/O。WHENCEは開始/現在/終端。pread/pwriteは現在位置を動かさない。",
+      "implemented": true
     },
     {
       "id": "ll-file-pread",
@@ -194,8 +194,8 @@
         "EINVAL",
         "ENOTSUP"
       ],
-      "notes": "pread相当。現在位置を動かさない",
-      "implemented": false
+      "notes": "Issue #27。位置指定I/O。WHENCEは開始/現在/終端。pread/pwriteは現在位置を動かさない。",
+      "implemented": true
     },
     {
       "id": "ll-file-pwrite",
@@ -213,8 +213,8 @@
         "ENOSPC",
         "ENOTSUP"
       ],
-      "notes": "pwrite相当。戻り値は書いたbyte数",
-      "implemented": false
+      "notes": "Issue #27。位置指定I/O。WHENCEは開始/現在/終端。pread/pwriteは現在位置を動かさない。",
+      "implemented": true
     },
     {
       "id": "ll-stdin-read",

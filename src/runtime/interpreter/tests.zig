@@ -3029,6 +3029,25 @@ const LowLevelTestHost = struct {
         return low_level_fs.allocate(self.io, entry.file, offset, size);
     }
 
+    fn seekFile(pointer: *anyopaque, raw: u64, offset: i64, whence: u8) anyerror!i64 {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        const entry = self.table.find(low_level_foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+        const seek_whence = low_level_io.SeekWhence.fromInt(whence) catch return error.InvalidOffset;
+        return low_level_io.seek(self.io, entry.file, offset, seek_whence);
+    }
+
+    fn preadFile(pointer: *anyopaque, raw: u64, buffer: []u8, offset: i64) anyerror!usize {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        const entry = self.table.find(low_level_foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+        return low_level_io.readAt(self.io, entry.file, buffer, offset);
+    }
+
+    fn pwriteFile(pointer: *anyopaque, raw: u64, bytes: []const u8, offset: i64) anyerror!usize {
+        const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
+        const entry = self.table.find(low_level_foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
+        return low_level_io.writeAt(self.io, entry.file, bytes, offset);
+    }
+
     fn createHash(pointer: *anyopaque, algorithm: []const u8) anyerror!u64 {
         const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
         return (try self.hash_table.insert(try low_level_hash.startNamed(algorithm))).raw();
@@ -3127,6 +3146,9 @@ const LowLevelTestHost = struct {
                 .seekDataFileFn = seekDataFile,
                 .seekHoleFileFn = seekHoleFile,
                 .allocateFileFn = allocateFile,
+                .seekFileFn = seekFile,
+                .preadFileFn = preadFile,
+                .pwriteFileFn = pwriteFile,
             },
             .fs = .{
                 .context = self,
@@ -3603,7 +3625,7 @@ test "Interpreter低レイヤーのappendは切詰め後も末尾へ書く" {
     try std.testing.expectEqualSlices(u8, "abxy", output);
 }
 
-test "Interpreter低レイヤーの未実装命令はcapability/operation付きの構造化ENOTSUPを投げる" {
+test "Interpreter低レイヤーの位置系命令は実装済みで無効ハンドルはEBADF" {
     const allocator = std.testing.allocator;
     const source =
         \\エラー監視
@@ -3611,7 +3633,6 @@ test "Interpreter低レイヤーの未実装命令はcapability/operation付き�
         \\エラーならば
         \\エラーメッセージ["code"]を表示
         \\エラーメッセージ["operation"]を表示
-        \\エラーメッセージ["capability"]を表示
         \\エラーメッセージを表示
         \\ここまで
         \\
@@ -3633,10 +3654,64 @@ test "Interpreter低レイヤーの未実装命令はcapability/operation付き�
     defer interpreter.deinit();
     _ = try interpreter.run();
     const output = host.written();
-    try std.testing.expect(std.mem.indexOf(u8, output, "ENOTSUP") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "EBADF") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "lseek") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "stream_file_io") != null);
-    try std.testing.expect(std.mem.indexOf(u8, output, "この低レイヤー命令はまだ実装されていません") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "この低レイヤー命令はまだ実装されていません") == null);
+}
+
+test "Interpreter低レイヤーの位置系4命令はseek/tell/pread/pwriteを動かす" {
+    const allocator = std.testing.allocator;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", allocator);
+    defer allocator.free(directory);
+    const path = try std.fs.path.join(allocator, &.{ directory, "pos.bin" });
+    defer allocator.free(path);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "pos.bin", .data = "abcdefgh" });
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "zz.bin", .data = "ZZ" });
+    const zz_path = try std.fs.path.join(allocator, &.{ directory, "zz.bin" });
+    defer allocator.free(zz_path);
+
+    const source = try std.fmt.allocPrint(allocator,
+        \\H=ファイル開("{s}","r+")
+        \\ファイル位置変更(H,2,"開始")
+        \\P=ファイル位置取得(H)
+        \\Pを表示
+        \\B=ファイル位置指定読込(H,4,3)
+        \\要素数(B)を表示
+        \\Q=ファイル位置取得(H)
+        \\Qを表示
+        \\Z=ファイル開("{s}","r")
+        \\W=ファイルバイト読(Z,2)
+        \\ファイル閉(Z)
+        \\N=ファイル位置指定書込(H,0,W)
+        \\Nを表示
+        \\ファイル閉(H)
+        \\
+    , .{ path, zz_path });
+    defer allocator.free(source);
+
+    var fixture_compiled = try compileForTest(allocator, source);
+    defer fixture_compiled.ir_program.deinit();
+    defer fixture_compiled.hir_program.deinit();
+    defer fixture_compiled.analyzed.deinit();
+    defer fixture_compiled.parsed.deinit();
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = allocator };
+    defer host.deinit();
+    var low_host = LowLevelTestHost.init(allocator);
+    defer low_host.deinit();
+    var runtime_host = host.host();
+    runtime_host.lowlevel_context = low_host.context();
+    var interpreter = Interpreter.init(allocator, &runtime, fixture_compiled.ir_program, runtime_host);
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    // seek2 tell=2; pread len=3 without moving tell; pwrite returns 2
+    try std.testing.expectEqualStrings("2\n3\n2\n2\n", host.written());
+    const final = try temporary.dir.readFileAlloc(std.testing.io, "pos.bin", allocator, .limited(16));
+    defer allocator.free(final);
+    try std.testing.expectEqualSlices(u8, "ZZcdefgh", final);
 }
 
 test "Interpreter raw stdioはraw書込みを分離しテキスト系とstdin cursorを共有する" {

@@ -8101,7 +8101,7 @@ test "AOT動的実行のディレクトリ閉じるはAOT側のID対応も解放
     try std.testing.expectEqual(@as(usize, 0), active.low_level_dir_handles.?.len());
 }
 
-test "AOT低レイヤーの未実装命令はcapability/operation付きの構造化ENOTSUPを投げる" {
+test "AOT低レイヤーの位置系命令は実装済みで引数不足はEINVAL・無効ハンドルはEBADF" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
     state.active_runtime = runtime;
@@ -8114,37 +8114,26 @@ test "AOT低レイヤーの未実装命令はcapability/operation付きの構造
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
 
-    // カタログ掲載だが未実装の命令はコンパイル済みopcodeから構造化
-    // ENOTSUP へdispatchし、例外値は `["code"]` 等を参照できる辞書のまま。
-    lnako_aot_builtin_call(&roots[0], @ptrCast(&roots[1]), 1, @intFromEnum(aot_builtin.Command.low_level_file_tell));
+    // 位置系4命令は実装済み。min未満はEINVAL、無効ハンドルはEBADF。
+    lnako_aot_builtin_call(&roots[0], null, 0, @intFromEnum(aot_builtin.Command.low_level_file_tell));
     try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
     var taken: Value = .{};
     lnako_aot_exception_take(&taken);
     try std.testing.expectEqual(@intFromEnum(Tag.dictionary), taken.tag);
     try std.testing.expect(taken.object().?.structured_error);
-    try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "ENOTSUP");
-    try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'o', 'p', 'e', 'r', 'a', 't', 'i', 'o', 'n' }), "lseek");
-    try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'a', 'p', 'a', 'b', 'i', 'l', 'i', 't', 'y' }), "stream_file_io");
-    const rendered = try valueUtf16Alloc(&state.active_runtime.?, taken);
-    defer state.active_runtime.?.allocator.free(rendered);
-    const rendered_utf8 = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, rendered);
-    defer std.testing.allocator.free(rendered_utf8);
-    try std.testing.expectEqualStrings("この低レイヤー命令はまだ実装されていません", rendered_utf8);
+    try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "EINVAL");
 
-    // カタログのarity上限を超える呼び出しはENOTSUPではなくEINVAL。
-    // 未実装のmax=0命令でstub側の上限分岐を通す（stderr_syncはIssue #28で
-    // 実装済みになったため、ここではpid_getを使う）。
+    lnako_aot_builtin_call(&roots[0], @ptrCast(&roots[1]), 1, @intFromEnum(aot_builtin.Command.low_level_file_tell));
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    lnako_aot_exception_take(&taken);
+    try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "EBADF");
+    try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'o', 'p', 'e', 'r', 'a', 't', 'i', 'o', 'n' }), "lseek");
+
+    // カタログのarity上限を超える呼び出しはEINVAL（実装済みpid_get max=0）。
     lnako_aot_builtin_call(&roots[0], @ptrCast(&roots[1]), 1, @intFromEnum(aot_builtin.Command.low_level_pid_get));
     try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
     lnako_aot_exception_take(&taken);
     try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "EINVAL");
-
-    // min未満の呼び出しはENOTSUPを維持する。ENOTSUPが未実装の通知を兼ねる
-    // ため、引数不足をEINVALへ分けると呼び出し側が両者を区別できない。
-    lnako_aot_builtin_call(&roots[0], null, 0, @intFromEnum(aot_builtin.Command.low_level_file_tell));
-    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
-    lnako_aot_exception_take(&taken);
-    try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "ENOTSUP");
 }
 
 test "AOT低レイヤーの実装済み命令はmin未満でEINVALを返す" {
@@ -8643,7 +8632,7 @@ test "AOT低レイヤーの未実装命令は全てstub経由でENOTSUPを返す
         try std.testing.expect(taken.object().?.structured_error);
         try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "ENOTSUP");
     }
-    try std.testing.expectEqual(@as(usize, 4), stub_count);
+    try std.testing.expectEqual(@as(usize, 0), stub_count);
 }
 
 test "AOT未捕捉例外のmessage抽出は構造化エラーだけに限る" {

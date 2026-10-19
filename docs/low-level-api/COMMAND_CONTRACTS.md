@@ -41,16 +41,18 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 
 ### Issue 27 バイナリ対応ストリームI/Oとハンドル管理
 
-- `ファイル開く`（ll-file-open）助詞 `PATHをMODEで/PATHを`、戻り `handle`、capability `stream_file_io`、エラー ENOENT/EACCES/EPERM/EISDIR/EINVAL/EMFILE/ENFILE/ENOTSUP/EROFS/ENOSPC
-- `ファイル閉じる`（ll-file-close）助詞 `HANDLEを/HANDLEの`、戻り `void`、capability `stream_file_io`、エラー EBADF
-- `ファイルバイト読む`（ll-file-read）助詞 `HANDLEをSIZEで/HANDLEからSIZEを`、戻り `bytes`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOTSUP
-- `ファイルバイト書く`（ll-file-write）助詞 `HANDLEをBYTESで/HANDLEへBYTESを`、戻り `number`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOSPC/EPIPE/ENOTSUP/EROFS
-- `ファイル同期`（ll-file-sync）助詞 `HANDLEを/HANDLEの`、戻り `void`、capability `stream_file_io`、エラー EBADF/EINVAL
-- `ファイル切詰`（ll-file-truncate-handle）助詞 `HANDLEをSIZEで/HANDLEをSIZEに`、戻り `void`、capability `truncate`、エラー EBADF/EINVAL/ENOSPC/ENOTSUP/EPERM/EROFS
-- `ファイル位置変更`（ll-file-seek）助詞 `HANDLEをOFFSETでWHENCEを/HANDLEをOFFSETで`、戻り `offset`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOTSUP
-- `ファイル位置取得`（ll-file-tell）助詞 `HANDLEを/HANDLEの`、戻り `offset`、capability `stream_file_io`、エラー EBADF
-- `ファイル位置指定読込`（ll-file-pread）助詞 `HANDLEをOFFSETからSIZEを/HANDLEからOFFSETにSIZEを`、戻り `bytes`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOTSUP
-- `ファイル位置指定書込`（ll-file-pwrite）助詞 `HANDLEへOFFSETにBYTESを/HANDLEをOFFSETからBYTESで`、戻り `number`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOSPC/ENOTSUP
+- `ファイル開く`（ll-file-open）助詞 `PATHをMODEで/PATHを`、戻り `handle`、capability `stream_file_io`、エラー ENOENT/EACCES/EPERM/EISDIR/EINVAL/EMFILE/ENFILE/ENOTSUP/EROFS/ENOSPC — **実装済み**
+- `ファイル閉じる`（ll-file-close）助詞 `HANDLEを/HANDLEの`、戻り `void`、capability `stream_file_io`、エラー EBADF — **実装済み**
+- `ファイルバイト読む`（ll-file-read）助詞 `HANDLEをSIZEで/HANDLEからSIZEを`、戻り `bytes`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOTSUP — **実装済み**
+- `ファイルバイト書く`（ll-file-write）助詞 `HANDLEをBYTESで/HANDLEへBYTESを`、戻り `number`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOSPC/EPIPE/ENOTSUP/EROFS — **実装済み**
+- `ファイル同期`（ll-file-sync）助詞 `HANDLEを/HANDLEの`、戻り `void`、capability `stream_file_io`、エラー EBADF/EINVAL — **実装済み**
+- `ファイル切詰`（ll-file-truncate-handle）助詞 `HANDLEをSIZEで/HANDLEをSIZEに`、戻り `void`、capability `truncate`、エラー EBADF/EINVAL/ENOSPC/ENOTSUP/EPERM/EROFS — **実装済み**
+- `ファイル位置変更`（ll-file-seek）助詞 `HANDLEをOFFSETでWHENCEを/HANDLEをOFFSETで`、戻り `offset`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOTSUP — **実装済み**（[#27](https://github.com/soramikan/lnako/issues/27)）
+- `ファイル位置取得`（ll-file-tell）助詞 `HANDLEを/HANDLEの`、戻り `offset`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOTSUP — **実装済み**（同上）
+- `ファイル位置指定読込`（ll-file-pread）助詞 `HANDLEをOFFSETからSIZEを/HANDLEからOFFSETにSIZEを`、戻り `bytes`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOTSUP — **実装済み**（同上）
+- `ファイル位置指定書込`（ll-file-pwrite）助詞 `HANDLEへOFFSETにBYTESを/HANDLEをOFFSETからBYTESで`、戻り `number`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOSPC/ENOTSUP — **実装済み**（同上）
+
+`catalog.json` の `implemented` が false の命令は現状 0 件（63/63）。`stream_file_io` capability の照会は open/close/read/write/sync が揃っていれば true。
 
 ### Issue 28 Raw標準入出力とstdinサブシステム
 

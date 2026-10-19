@@ -194,6 +194,99 @@ pub fn allocateFile(runtime: *Runtime, state: *State, context: Context, effects:
     return .undefined;
 }
 
+fn whenceFromArgument(runtime: *Runtime, effects: Effects, value: Value) !u8 {
+    if (value == .undefined) return @intFromEnum(low_level_io.SeekWhence.start);
+    const text = node_shared.valueUtf8(runtime, value) catch {
+        return throwStructured(runtime, effects, .EINVAL, foundation.stream_operations.lseek, null, null, "WHENCEが不正です");
+    };
+    defer runtime.allocator().free(text);
+    const whence = low_level_io.SeekWhence.parse(text) catch {
+        return throwStructured(runtime, effects, .EINVAL, foundation.stream_operations.lseek, null, null, "WHENCEが不正です");
+    };
+    return @intFromEnum(whence);
+}
+
+/// `ファイル位置変更`。OFFSETと任意WHENCE（省略時は開始）で位置を変え新位置を返す。
+pub fn seekFile(runtime: *Runtime, state: *State, context: Context, effects: Effects, arguments: []const Value) !Value {
+    const operation = foundation.stream_operations.lseek;
+    const handle = common.argument(arguments, 0);
+    const id = lookupHandle(state, handle) orelse {
+        return throwStructured(runtime, effects, .EBADF, operation, null, null, "無効なハンドルです");
+    };
+    const offset = offsetArgument(common.argument(arguments, 1)) catch {
+        return throwStructured(runtime, effects, .EINVAL, operation, null, null, "位置が不正です");
+    };
+    const whence = try whenceFromArgument(runtime, effects, common.argument(arguments, 2));
+    const result = context.seekFile(id.raw(), offset, whence) catch |failure| {
+        return throwIoMapped(runtime, effects, failure, foundation.seekErrorCode(failure), operation, null, .stream_file_io);
+    };
+    return publicOffsetValue(runtime, result);
+}
+
+/// `ファイル位置取得`。現在位置を返す。
+pub fn tellFile(runtime: *Runtime, state: *State, context: Context, effects: Effects, arguments: []const Value) !Value {
+    const operation = foundation.stream_operations.lseek;
+    const handle = common.argument(arguments, 0);
+    const id = lookupHandle(state, handle) orelse {
+        return throwStructured(runtime, effects, .EBADF, operation, null, null, "無効なハンドルです");
+    };
+    const result = context.seekFile(id.raw(), 0, @intFromEnum(low_level_io.SeekWhence.current)) catch |failure| {
+        return throwIoMapped(runtime, effects, failure, foundation.seekErrorCode(failure), operation, null, .stream_file_io);
+    };
+    return publicOffsetValue(runtime, result);
+}
+
+/// `ファイル位置指定読込`。現在位置を動かさず OFFSET から読む。
+pub fn preadFile(runtime: *Runtime, state: *State, context: Context, effects: Effects, arguments: []const Value) !Value {
+    const operation = foundation.stream_operations.pread;
+    const handle = common.argument(arguments, 0);
+    const id = lookupHandle(state, handle) orelse {
+        return throwStructured(runtime, effects, .EBADF, operation, null, null, "無効なハンドルです");
+    };
+    const offset = offsetArgument(common.argument(arguments, 1)) catch {
+        return throwStructured(runtime, effects, .EINVAL, operation, null, null, "位置が不正です");
+    };
+    var remaining = sizeArgument(runtime, common.argument(arguments, 2)) catch {
+        return throwStructured(runtime, effects, .EINVAL, operation, null, null, "読み込む大きさが不正です");
+    };
+    const allocator = runtime.allocator();
+    var output: std.ArrayList(u8) = .empty;
+    defer output.deinit(allocator);
+    var at = offset;
+    while (remaining > 0) {
+        const chunk_length: usize = @intCast(@min(remaining, read_chunk_bytes));
+        const start = output.items.len;
+        try output.resize(allocator, start + chunk_length);
+        const read = context.preadFile(id.raw(), output.items[start..], at) catch |failure| {
+            return throwIo(runtime, effects, failure, operation, null, null, .stream_file_io);
+        };
+        output.shrinkRetainingCapacity(start + read);
+        if (read == 0 or read < chunk_length) break;
+        remaining -= read;
+        at += @intCast(read);
+    }
+    return runtime.createBytes(output.items);
+}
+
+/// `ファイル位置指定書込`。現在位置を動かさず OFFSET へ書く。
+pub fn pwriteFile(runtime: *Runtime, state: *State, context: Context, effects: Effects, arguments: []const Value) !Value {
+    const operation = foundation.stream_operations.pwrite;
+    const handle = common.argument(arguments, 0);
+    const id = lookupHandle(state, handle) orelse {
+        return throwStructured(runtime, effects, .EBADF, operation, null, null, "無効なハンドルです");
+    };
+    const offset = offsetArgument(common.argument(arguments, 1)) catch {
+        return throwStructured(runtime, effects, .EINVAL, operation, null, null, "位置が不正です");
+    };
+    const bytes = bytesArgument(runtime, common.argument(arguments, 2)) catch {
+        return throwStructured(runtime, effects, .EINVAL, operation, null, null, "書き込む値はBytesである必要があります");
+    };
+    const written = context.pwriteFile(id.raw(), bytes, offset) catch |failure| {
+        return throwIo(runtime, effects, failure, operation, null, null, .stream_file_io);
+    };
+    return publicSizeValue(runtime, written);
+}
+
 test "openは非文字列のpathとmodeをEINVALにする" {
     var runtime = Runtime.init(std.testing.allocator);
     defer runtime.deinit();

@@ -16,9 +16,27 @@
 | `ファイル同期(HANDLE)` | Handle | undefined | `stream_file_io` | `fsync` |
 | `ファイル切詰(HANDLE, SIZE)` | Handle、SIZE: Number/BigInt | undefined | `truncate` | `ftruncate` |
 
+上表の6命令に加え、次節の位置系4命令も実装済みである（[#27](https://github.com/soramikan/lnako/issues/27)）。
+
 字句解析は動詞の送り仮名を落とすため、dispatch名は語幹（`ファイル開` 等）になる。
 利用者が書く `ファイル開く`/`ファイル閉じる`/`ファイルバイト読む`/`ファイルバイト書く` は同一命令へ正規化される。
 動的文字列実行（`ナデシコ`/`実行`）の互換のため、送り仮名付きの表記も同一命令として受ける。
+
+## 位置系命令
+
+`catalog.json` と Interpreter / AOT の両方で実装済み。WHENCE は `開始` / `現在` / `終端`。`pread` / `pwrite` は現在位置を動かさない。
+
+| 命令 | 引数 | 戻り値 | capability | 操作名 |
+| --- | --- | --- | --- | --- |
+| `ファイル位置変更(HANDLE, OFFSET, WHENCE?)` | Handle、OFFSET: offset、WHENCE: 開始/現在/終端 | offset（新位置） | `stream_file_io` | `lseek` |
+| `ファイル位置取得(HANDLE)` | Handle | offset | `stream_file_io` | `lseek` |
+| `ファイル位置指定読込(HANDLE, OFFSET, SIZE)` | Handle、OFFSET、SIZE | bytes | `stream_file_io` | `pread` |
+| `ファイル位置指定書込(HANDLE, OFFSET, BYTES)` | Handle、OFFSET、BYTES | number（書込バイト数） | `stream_file_io` | `pwrite` |
+
+- `低レイヤー機能対応判定("stream_file_io")` は open/close/read/write/sync のホスト実装が揃っているとき true になる。
+- Core Utilities の `dd` 相当は位置変更・位置取得に依存する。これらは実装済みのため構築可能（[`CORE_UTILITIES.md`](CORE_UTILITIES.md)）。
+- 契約の詳細は [`COMMAND_CONTRACTS.md`](COMMAND_CONTRACTS.md) の Issue 27 節を参照する。
+- pipe 等の非seek可能な対象は `EINVAL`（内部 `Unseekable`）へ写る。
 
 ## Handle
 
