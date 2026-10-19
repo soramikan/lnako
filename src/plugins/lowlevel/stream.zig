@@ -263,7 +263,11 @@ pub fn preadFile(runtime: *Runtime, state: *State, context: Context, effects: Ef
         output.shrinkRetainingCapacity(start + read);
         if (read == 0 or read < chunk_length) break;
         remaining -= read;
-        at += @intCast(read);
+        // 最終チャンク後の at 加算は i64 上限付近で overflow しうる。残 0 なら終了。
+        if (remaining == 0) break;
+        at = std.math.add(i64, at, @intCast(read)) catch {
+            return throwStructured(runtime, effects, .EINVAL, operation, null, null, "位置が不正です");
+        };
     }
     return runtime.createBytes(output.items);
 }

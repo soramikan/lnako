@@ -33,10 +33,12 @@
 | `ファイル位置指定読込(HANDLE, OFFSET, SIZE)` | Handle、OFFSET、SIZE | bytes | `stream_file_io` | `pread` |
 | `ファイル位置指定書込(HANDLE, OFFSET, BYTES)` | Handle、OFFSET、BYTES | number（書込バイト数） | `stream_file_io` | `pwrite` |
 
-- `低レイヤー機能対応判定("stream_file_io")` は open/close/read/write/sync のホスト実装が揃っているとき true になる。
-- Core Utilities の `dd` 相当は位置変更・位置取得に依存する。これらは実装済みのため構築可能（[`CORE_UTILITIES.md`](CORE_UTILITIES.md)）。
+- `低レイヤー機能対応判定("stream_file_io")` は open/close/read/write/sync のホスト実装が揃っているとき true になる（位置系 callback の有無は見ない）。
+- 位置系 callback が無いホストでは seek/tell/pread/pwrite は `ENOTSUP`。capability が true でも位置系の成功は保証しない。
+- Core Utilities の `dd` 相当は位置変更・位置取得に依存する。公式ホストでは実装済みだが、独自ホストでは位置系失敗を捕捉して経路を選ぶこと（[`CORE_UTILITIES.md`](CORE_UTILITIES.md)）。
 - 契約の詳細は [`COMMAND_CONTRACTS.md`](COMMAND_CONTRACTS.md) の Issue 27 節を参照する。
 - pipe 等の非seek可能な対象は `EINVAL`（内部 `Unseekable`）へ写る。
+- append（`a`/`a+`）ハンドルへの `pwrite` は Linux が OFFSET を無視するため `EINVAL` で拒否する。
 
 ## Handle
 

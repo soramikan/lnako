@@ -3045,7 +3045,7 @@ const LowLevelTestHost = struct {
     fn pwriteFile(pointer: *anyopaque, raw: u64, bytes: []const u8, offset: i64) anyerror!usize {
         const self: *LowLevelTestHost = @ptrCast(@alignCast(pointer));
         const entry = self.table.find(low_level_foundation.HandleId.fromRaw(raw)) orelse return error.BadFileDescriptor;
-        return low_level_io.writeAt(self.io, entry.file, bytes, offset);
+        return low_level_io.writeAt(self.io, entry, bytes, offset);
     }
 
     fn createHash(pointer: *anyopaque, algorithm: []const u8) anyerror!u64 {

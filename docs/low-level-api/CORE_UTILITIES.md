@@ -2,7 +2,7 @@
 
 Core Utilities系コマンドが、どの低レイヤー命令と capability を必要とするかの逆引きを固定する。機械可読な正本は [`catalog.json`](catalog.json) の `coreUtilities` であり、本書はその一覧を示す。
 
-表の見方: 「必要な命令」は `plugin_lowlevel` の命令ID。「必要なcapability」はそのユーティリティの実装が依存するcapability。`conditional` なcapability（reflink等）に依存するユーティリティは、非対応環境では fallback または `ENOTSUP` 捕捉で動作を変える。
+表の見方: 「必要な命令」は `plugin_lowlevel` の命令ID。「必要なcapability」はそのユーティリティの実装が依存するcapability。`conditional` なcapability（reflink等）に依存するユーティリティは、非対応環境では fallback または `ENOTSUP` 捕捉で動作を変える。`stream_file_io` の真偽は open/close/read/write/sync の提供有無であり、位置系命令の成功は別途失敗処理で確認する（`dd` の位置変更・位置取得を含む）。
 
 ## 一覧
 

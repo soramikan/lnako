@@ -501,7 +501,7 @@ pub const CliHost = struct {
         const self: *CliHost = @ptrCast(@alignCast(context));
         const id = lnako.runtime.low_level_foundation.HandleId.fromRaw(raw);
         const entry = self.lowLevelTable().find(id) orelse return error.BadFileDescriptor;
-        return lnako.runtime.low_level_io.writeAt(self.io, entry.file, bytes, offset);
+        return lnako.runtime.low_level_io.writeAt(self.io, entry, bytes, offset);
     }
 
     fn lowLevelProcessTable(self: *CliHost) *lnako.runtime.low_level_process.ProcessTable {

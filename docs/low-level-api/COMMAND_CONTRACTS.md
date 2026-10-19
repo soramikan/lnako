@@ -50,7 +50,7 @@ Issue [#27](https://github.com/soramikan/lnako/issues/27)〜[#36](https://github
 - `ファイル位置変更`（ll-file-seek）助詞 `HANDLEをOFFSETでWHENCEを/HANDLEをOFFSETで`、戻り `offset`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOTSUP — **実装済み**（[#27](https://github.com/soramikan/lnako/issues/27)）
 - `ファイル位置取得`（ll-file-tell）助詞 `HANDLEを/HANDLEの`、戻り `offset`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOTSUP — **実装済み**（同上）
 - `ファイル位置指定読込`（ll-file-pread）助詞 `HANDLEをOFFSETからSIZEを/HANDLEからOFFSETにSIZEを`、戻り `bytes`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOTSUP — **実装済み**（同上）
-- `ファイル位置指定書込`（ll-file-pwrite）助詞 `HANDLEへOFFSETにBYTESを/HANDLEをOFFSETからBYTESで`、戻り `number`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOSPC/EPIPE/ENOTSUP/EROFS — **実装済み**（同上）
+- `ファイル位置指定書込`（ll-file-pwrite）助詞 `HANDLEへOFFSETにBYTESを/HANDLEをOFFSETからBYTESで`、戻り `number`、capability `stream_file_io`、エラー EBADF/EINVAL/ENOSPC/EPIPE/ENOTSUP/EROFS — **実装済み**（同上）。追記モード（a/a+）HANDLE では EINVAL（Linux O_APPEND の pwrite が OFFSET を無視するため拒否）
 
 `catalog.json` の `implemented` が false の命令は現状 0 件（63/63）。`stream_file_io` capability の照会は open/close/read/write/sync が揃っていれば true。
 

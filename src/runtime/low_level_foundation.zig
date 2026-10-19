@@ -1178,7 +1178,6 @@ pub fn portableCodeForFailure(failure: anyerror) ?PortableErrorCode {
         error.NotLink, error.BadPathName, error.InvalidWtf8, error.InvalidArgument => .EINVAL,
         // 時刻がOS表現（time_t / Windowsの100ns）に収まらない場合はEINVAL。
         error.InvalidTimestamp => .EINVAL,
-        // 位置系: 負offset・不正WHENCE・非seek対象はいずれもEINVAL。
         error.InvalidOffset, error.InvalidSize, error.InvalidWhence, error.Unseekable => .EINVAL,
         error.ReadOnlyFileSystem => .EROFS,
         error.NoSpaceLeft, error.DiskQuota, error.FileTooBig => .ENOSPC,
@@ -1629,7 +1628,6 @@ test "portableCodeForFailureはI/O失敗をportable codeへ写す" {
     // stdin履歴上限超過はリソース枯渇としてENOSPCへ写す。
     try std.testing.expectEqual(PortableErrorCode.ENOSPC, portableCodeForFailure(error.StreamTooLong).?);
     try std.testing.expect(portableCodeForFailure(error.OutOfMemory) == null);
-    // 位置系の契約外失敗も EINVAL へ明示写像する。
     try std.testing.expectEqual(PortableErrorCode.EINVAL, portableCodeForFailure(error.InvalidOffset).?);
     try std.testing.expectEqual(PortableErrorCode.EINVAL, portableCodeForFailure(error.InvalidWhence).?);
     try std.testing.expectEqual(PortableErrorCode.EINVAL, portableCodeForFailure(error.Unseekable).?);
