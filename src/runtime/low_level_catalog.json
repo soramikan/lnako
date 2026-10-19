@@ -174,7 +174,9 @@
       "capability": "stream_file_io",
       "operation": "lseek",
       "errors": [
-        "EBADF"
+        "EBADF",
+        "EINVAL",
+        "ENOTSUP"
       ],
       "notes": "Issue #27。位置指定I/O。WHENCEは開始/現在/終端。pread/pwriteは現在位置を動かさない。",
       "implemented": true
@@ -211,7 +213,9 @@
         "EBADF",
         "EINVAL",
         "ENOSPC",
-        "ENOTSUP"
+        "EPIPE",
+        "ENOTSUP",
+        "EROFS"
       ],
       "notes": "Issue #27。位置指定I/O。WHENCEは開始/現在/終端。pread/pwriteは現在位置を動かさない。",
       "implemented": true

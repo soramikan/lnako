@@ -8136,6 +8136,62 @@ test "AOT低レイヤーの位置系命令は実装済みで引数不足はEINVA
     try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "EINVAL");
 }
 
+test "AOT低レイヤーの位置系4命令はseek/tell/pread/pwriteを動かす" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "pos.bin", .data = "abcdefgh" });
+    const path = try std.fs.path.join(std.testing.allocator, &.{ directory, "pos.bin" });
+    defer std.testing.allocator.free(path);
+
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+
+    roots[0] = try runtimeUtf8String(active, path);
+    roots[1] = try runtimeUtf8String(active, "r+");
+    const handle = try state.lowLevelFileBuiltin(active, .low_level_file_open, &.{ roots[0], roots[1] });
+    roots[2] = handle;
+
+    roots[3] = numberValue(2);
+    roots[4] = try runtimeUtf8String(active, "開始");
+    const after_seek = try state.lowLevelFileBuiltin(active, .low_level_file_seek, &.{ handle, roots[3], roots[4] });
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(after_seek));
+
+    const told = try state.lowLevelFileBuiltin(active, .low_level_file_tell, &.{handle});
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(told));
+
+    roots[3] = numberValue(4);
+    roots[4] = numberValue(3);
+    const chunk = try state.lowLevelFileBuiltin(active, .low_level_file_pread, &.{ handle, roots[3], roots[4] });
+    roots[5] = chunk;
+    try std.testing.expectEqualSlices(u8, "efg", chunk.object().?.payload.byte_buffer.bytes);
+    // pread は現在位置を動かさない。
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(try state.lowLevelFileBuiltin(active, .low_level_file_tell, &.{handle})));
+
+    roots[3] = numberValue(0);
+    roots[4] = try active.createBytes("ZZ");
+    const written = try state.lowLevelFileBuiltin(active, .low_level_file_pwrite, &.{ handle, roots[3], roots[4] });
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(written));
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(try state.lowLevelFileBuiltin(active, .low_level_file_tell, &.{handle})));
+
+    _ = try state.lowLevelFileBuiltin(active, .low_level_file_close, &.{handle});
+    const final = try temporary.dir.readFileAlloc(std.testing.io, "pos.bin", std.testing.allocator, .limited(16));
+    defer std.testing.allocator.free(final);
+    try std.testing.expectEqualSlices(u8, "ZZcdefgh", final);
+}
+
 test "AOT低レイヤーの実装済み命令はmin未満でEINVALを返す" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();

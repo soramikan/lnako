@@ -436,15 +436,18 @@ pub fn seek(io: std.Io, file: std.Io.File, offset: i64, whence: SeekWhence) anye
 }
 
 fn seekPosix(file: std.Io.File, offset: i64, whence: SeekWhence) anyerror!i64 {
+    // freestanding linux でも libc 経由と同じ ABI を取る（system は link_libc 時 c、
+    // 非libc linux 時は os.linux）。SEEK 定数も system 経由で揃える。
     const posix_whence: i32 = switch (whence) {
-        .start => std.c.SEEK.SET,
-        .current => std.c.SEEK.CUR,
-        .end => std.c.SEEK.END,
+        .start => std.posix.SEEK.SET,
+        .current => std.posix.SEEK.CUR,
+        .end => std.posix.SEEK.END,
     };
-    const off = std.math.cast(std.c.off_t, offset) orelse return error.InvalidOffset;
+    const off = std.math.cast(std.posix.off_t, offset) orelse return error.InvalidOffset;
     while (true) {
-        const result = std.c.lseek(file.handle, off, posix_whence);
+        const result = std.posix.system.lseek(file.handle, off, posix_whence);
         if (result >= 0) return @intCast(result);
+        // system.lseek 失敗時の errno 取得は libc 経路（本リポは linux で link_libc）。
         const errno = std.c.errno(result);
         if (errno == .INTR) continue;
         return mapSeekErrno(errno);
@@ -515,7 +518,7 @@ fn seekWindows(io: std.Io, file: std.Io.File, offset: i64, whence: SeekWhence) a
     return std.math.cast(i64, absolute) orelse return error.InvalidOffset;
 }
 
-fn mapSeekErrno(errno: std.c.E) anyerror {
+fn mapSeekErrno(errno: std.posix.E) anyerror {
     return switch (errno) {
         .BADF => error.BadFileDescriptor,
         .INVAL, .OVERFLOW, .SPIPE, .NXIO => error.Unseekable,
@@ -523,18 +526,74 @@ fn mapSeekErrno(errno: std.c.E) anyerror {
     };
 }
 
+/// Windows の NtReadFile/NtWriteFile は ByteOffset 付きでも CurrentByteOffset を
+/// offset+n へ進める。POSIX pread/pwrite 契約（現在位置不変）に合わせ、
+/// tell で取った位置へ必ず戻す。tell 不能（pipe 等）なら保存を省略する。
+fn restorePosition(io: std.Io, file: std.Io.File, saved: ?i64) ReadError!void {
+    if (saved) |pos| {
+        _ = try seek(io, file, pos, .start);
+    }
+}
+
 /// 位置指定読込（pread相当）。現在位置を動かさない。負offsetは InvalidOffset。
+/// EOFは0バイトへ正規化する（`readAtCurrent` と同じ）。
 pub fn readAt(io: std.Io, file: std.Io.File, buffer: []u8, offset: i64) ReadError!usize {
     if (offset < 0) return error.InvalidOffset;
     const absolute: u64 = @intCast(offset);
-    return file.readPositional(io, &.{buffer}, absolute);
+    const saved = tell(io, file) catch null;
+    errdefer restorePosition(io, file, saved) catch {};
+    // Zig の readPositional は EOF を 0 バイトで返す（EndOfStream はエラー集合に無い）。
+    const read = try file.readPositional(io, &.{buffer}, absolute);
+    try restorePosition(io, file, saved);
+    return read;
 }
 
 /// 位置指定書込（pwrite相当）。現在位置を動かさない。負offsetは InvalidOffset。
+/// 開いたモードの append フラグは見ない。OFFSET への絶対書込みが契約
+/// （通常の `writeHandle` だけが append を末尾へ寄せる）。
 pub fn writeAt(io: std.Io, file: std.Io.File, bytes: []const u8, offset: i64) WriteError!usize {
     if (offset < 0) return error.InvalidOffset;
     const absolute: u64 = @intCast(offset);
-    return file.writePositional(io, &.{bytes}, absolute);
+    const saved = tell(io, file) catch null;
+    errdefer restorePosition(io, file, saved) catch {};
+    const written = try file.writePositional(io, &.{bytes}, absolute);
+    try restorePosition(io, file, saved);
+    return written;
+}
+
+test "seek/tell/readAt/writeAtは位置を保ちEOFは0バイト" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "pos.bin", .data = "abcdefgh" });
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const path = try std.fs.path.join(std.testing.allocator, &.{ directory, "pos.bin" });
+    defer std.testing.allocator.free(path);
+
+    var table = FileHandleTable.init(std.testing.allocator);
+    defer table.deinit(std.testing.io);
+    const id = try table.open(std.testing.io, .{ .path = path, .mode = .read_write });
+    const file = table.find(id).?.file;
+
+    try std.testing.expectEqual(@as(i64, 2), try seek(std.testing.io, file, 2, .start));
+    try std.testing.expectEqual(@as(i64, 2), try tell(std.testing.io, file));
+
+    var buf: [8]u8 = undefined;
+    const n = try readAt(std.testing.io, file, buf[0..3], 4);
+    try std.testing.expectEqual(@as(usize, 3), n);
+    try std.testing.expectEqualSlices(u8, "efg", buf[0..3]);
+    // Windows NtReadFile でも現在位置は動かない。
+    try std.testing.expectEqual(@as(i64, 2), try tell(std.testing.io, file));
+
+    try std.testing.expectEqual(@as(usize, 2), try writeAt(std.testing.io, file, "ZZ", 0));
+    try std.testing.expectEqual(@as(i64, 2), try tell(std.testing.io, file));
+
+    // EOF 超は 0 バイト（エラーにしない）。
+    try std.testing.expectEqual(@as(usize, 0), try readAt(std.testing.io, file, buf[0..4], 100));
+    try std.testing.expectEqual(@as(i64, 2), try tell(std.testing.io, file));
+
+    try std.testing.expectError(error.InvalidOffset, readAt(std.testing.io, file, buf[0..1], -1));
+    try std.testing.expectError(error.InvalidOffset, writeAt(std.testing.io, file, "x", -1));
 }
 
 test "ハンドル表はindexとgenerationを持つ生ハンドルを発行する" {
