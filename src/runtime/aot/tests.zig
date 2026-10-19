@@ -8421,6 +8421,7 @@ test "AOT低レイヤーreadlinkは孤立サロゲートを含むリンク先を
 }
 
 test "AOT低レイヤーのsymlink/readlink/realpath/hardlink/unlinkを実行できる" {
+    // Windows は symlink 権限が要るため複合テストをスキップ。hardlink 単体は別テスト（#78）。
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -8478,6 +8479,44 @@ test "AOT低レイヤーのsymlink/readlink/realpath/hardlink/unlinkを実行で
     _ = try state.lowLevelFileBuiltin(active, .low_level_path_unlink, &.{roots[2]});
     _ = try state.lowLevelFileBuiltin(active, .low_level_path_unlink, &.{roots[1]});
     _ = try state.lowLevelFileBuiltin(active, .low_level_file_stat, &.{roots[0]});
+}
+
+test "AOT低レイヤーのhardlinkはWindowsでも同一inodeを共有する" {
+    if (builtin.os.tag != .windows) return error.SkipZigTest;
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "target.txt", .data = "abc" });
+    const target_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "target.txt" });
+    defer std.testing.allocator.free(target_path);
+    const hard_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "hard.txt" });
+    defer std.testing.allocator.free(hard_path);
+
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+    roots[0] = try runtimeUtf8String(active, target_path);
+    roots[1] = try runtimeUtf8String(active, hard_path);
+
+    _ = try state.lowLevelFileBuiltin(active, .low_level_hardlink_create, &.{ roots[0], roots[1] });
+    const hard_stat = try state.lowLevelFileBuiltin(active, .low_level_file_stat, &.{roots[1]});
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(dictionaryProperty(hard_stat, &.{ 'n', 'l', 'i', 'n', 'k' })));
+    try std.testing.expectEqual(
+        valueToNumber(dictionaryProperty(hard_stat, &.{ 'i', 'n', 'o', 'd', 'e' })),
+        valueToNumber(dictionaryProperty(try state.lowLevelFileBuiltin(active, .low_level_file_stat, &.{roots[0]}), &.{ 'i', 'n', 'o', 'd', 'e' })),
+    );
+    try expectLowLevelPathPair(active, .low_level_hardlink_create, &.{ roots[0], roots[1] }, "EEXIST", "link", target_path, hard_path);
 }
 
 test "AOT低レイヤーのrename/unlink/rmdirはエラーコードを写す" {

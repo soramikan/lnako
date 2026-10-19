@@ -446,9 +446,8 @@ pub fn capabilityImplemented(capability: Capability) bool {
 pub fn capabilitySupportedOnOs(capability: Capability, os: OsKind) bool {
     if (!capabilityImplemented(capability)) return false;
     return switch (capability) {
-        // posix_extensionと、Zig 0.16 stdがWindowsで未対応のhardlinkは
-        // Windowsでは提供しない（catalogの `os.windows` はfalse）。
-        .chmod, .chown, .access, .uid_gid, .hardlink, .priority => os != .windows,
+        // posix_extension は Windows 非対応。hardlink は #78 で Windows 可。
+        .chmod, .chown, .access, .uid_gid, .priority => os != .windows,
         // Issue #36はPOSIXのみ。WindowsはネイティブAPIが契約を満たさないため
         // 照会false・実行時ENOTSUPにする（reflink/seek/fallocate）。
         .statfs, .reflink, .seek_data, .seek_hole, .fallocate => os != .windows,
@@ -1472,7 +1471,7 @@ test "capability識別子はsnake_caseで分類が閉じている" {
 
 test "非対応OSのcapabilityは照会falseになる" {
     try std.testing.expect(capability_query_unknown_returns_false);
-    inline for (.{ .chmod, .chown, .access, .uid_gid, .hardlink }) |capability| {
+    inline for (.{ .chmod, .chown, .access, .uid_gid, .priority }) |capability| {
         try std.testing.expect(!capabilitySupportedOnOs(capability, .windows));
         try std.testing.expect(capabilitySupportedOnOs(capability, .linux));
         try std.testing.expect(capabilitySupportedOnOs(capability, .macos));
@@ -1484,7 +1483,7 @@ test "非対応OSのcapabilityは照会falseになる" {
         try std.testing.expect(capabilitySupportedOnOs(capability, .macos));
     }
     // Windowsでも成立するcapabilityはOSで落とさない。
-    inline for (.{ .stream_file_io, .stat, .lstat, .unlink, .rename }) |capability| {
+    inline for (.{ .stream_file_io, .stat, .lstat, .unlink, .rename, .hardlink }) |capability| {
         try std.testing.expect(capabilitySupportedOnOs(capability, .windows));
     }
     // 未実装capabilityは指定OSに関わらずfalse。

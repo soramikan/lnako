@@ -99,7 +99,7 @@
 - **低レイヤーAPI・ストリームI/O**：
   - カタログ63命令をすべて実装済み（#27–#38, #36 等）。正本は [`docs/low-level-api/catalog.json`](low-level-api/catalog.json)、現状の一覧は [`docs/low-level-api/IMPLEMENTATION_STATUS.md`](low-level-api/IMPLEMENTATION_STATUS.md)。
   - **実装済み命令（63/63）**: カタログ掲載の全命令を Interpreter / AOT で実装。位置系4命令（`ファイル位置変更` / `ファイル位置取得` / `ファイル位置指定読込` / `ファイル位置指定書込`）は [#27](https://github.com/soramikan/lnako/issues/27) で完了。
-  - **OS制約**: Windows の `ハードリンク作成` は常に `ENOTSUP`（[#78](https://github.com/soramikan/lnako/issues/78)）。`chmod` / `chown` / `uid_gid` / `priority` / `statfs` 等は POSIX 中心で Windows は照会 false または `ENOTSUP`。
+  - **OS制約**: Windows の `ハードリンク作成` は NTFS 上で可（非対応FSは `ENOTSUP`、[#78](https://github.com/soramikan/lnako/issues/78)）。`chmod` / `chown` / `uid_gid` / `priority` / `statfs` 等は POSIX 中心で Windows は照会 false または `ENOTSUP`。
   - **拡張未着手**: `termios` / `nss` / `acl` / `xattr` / `selinux`（[#39](https://github.com/soramikan/lnako/issues/39)、capability ID のみ）。Web/Async Runtime Foundation（#197–#206）は現行63命令カタログの外。
   - 構造化エラー、raw stdio、hash、FS、dir iterator、POSIX、spawn/signal/TTY、locale/表示幅、statfs/reflink/sparse は実装済み。
 - **性能・最適化の継続管理**：

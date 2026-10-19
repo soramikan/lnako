@@ -53,7 +53,7 @@ Core Utilities系コマンドが、どの低レイヤー命令と capability を
 | --- | --- |
 | `dd` | **構築可能**。必要命令の `ファイル位置変更` / `ファイル位置取得` を含む stream I/O が揃っている |
 | `cp --sparse` | `seek_data` / `seek_hole` は実装済みだが OS・FS 依存（`conditional` / Windows は false）。非対応では通常コピーへ fallback する前提 |
-| `ln`（hardlink 経路） | POSIX では `ハードリンク作成` 可。Windows は capability `hardlink` が false で常に `ENOTSUP`（[#78](https://github.com/soramikan/lnako/issues/78)） |
+| `ln`（hardlink 経路） | `ハードリンク作成` 可（Windows は NTFS 上の `CreateHardLinkW`。非対応FSは `ENOTSUP`、[#78](https://github.com/soramikan/lnako/issues/78)） |
 | `stty` | `termios` は capability のみで命令未実装（[#39](https://github.com/soramikan/lnako/issues/39)） |
 | `cp -p/-a` の所有者・権限 | `chmod` / `chown` は POSIX 実装。Windows は ENOTSUP |
 | その他（`cat` / `tee` / `md5sum` 等） | 表の主要命令は実装済み。OS 差は各 capability の matrix に従う |

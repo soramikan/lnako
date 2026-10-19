@@ -579,6 +579,7 @@ test "readlinkは孤立サロゲートを含むリンク先を可逆に返す" {
 }
 
 test "低レイヤーのsymlink/lstat/hardlink/readlink/realpath/renameはContext経由で動作する" {
+    // Windows は symlink 権限が要るため複合テストをスキップ。hardlink 単体は別テスト（#78）。
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     var runtime = Runtime.init(std.testing.allocator);
     defer runtime.deinit();
@@ -683,6 +684,53 @@ test "低レイヤーのsymlink/lstat/hardlink/readlink/realpath/renameはContex
     try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ファイル詳細情報取得", &.{loop}));
     try roots.protect(&thrown);
     try expectThrownCode(&runtime, thrown, "ELOOP");
+}
+
+test "低レイヤーのhardlinkはWindowsでもContext経由で同一inodeを共有する" {
+    // symlink 複合テストは Windows でスキップするため、hardlink 単体をここで担保する（#78）。
+    if (builtin.os.tag != .windows) return error.SkipZigTest;
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var thrown: Value = .undefined;
+    const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var host = FsTestHost.init();
+    defer host.deinit();
+    const context = host.context();
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "target.txt", .data = "abc" });
+    const directory = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(directory);
+    const target_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "target.txt" });
+    defer std.testing.allocator.free(target_path);
+    const hard_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "hard.txt" });
+    defer std.testing.allocator.free(hard_path);
+
+    var target = try runtime.stringUtf8(target_path);
+    try roots.protect(&target);
+    var hard = try runtime.stringUtf8(hard_path);
+    try roots.protect(&hard);
+
+    _ = (try call(&runtime, &state, context, effects, "ハードリンク作成", &.{ target, hard })) orelse return error.TestExpectedEqual;
+    thrown = .undefined;
+    try std.testing.expectError(error.NakoException, call(&runtime, &state, context, effects, "ハードリンク作成", &.{ target, hard }));
+    try roots.protect(&thrown);
+    try expectThrownPathPair(&runtime, thrown, "EEXIST", "link", target_path, hard_path);
+
+    var hard_info = (try call(&runtime, &state, context, effects, "ファイル詳細情報取得", &.{hard})) orelse return error.TestExpectedEqual;
+    try roots.protect(&hard_info);
+    const nlink = node_shared.dictionaryGetAscii(hard_info.dictionary, foundation.stat_field_keys.nlink) orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(@as(f64, 2), nlink.number);
+    var target_info = (try call(&runtime, &state, context, effects, "ファイル詳細情報取得", &.{target})) orelse return error.TestExpectedEqual;
+    try roots.protect(&target_info);
+    const hard_inode = node_shared.dictionaryGetAscii(hard_info.dictionary, foundation.stat_field_keys.inode) orelse return error.TestExpectedEqual;
+    const target_inode = node_shared.dictionaryGetAscii(target_info.dictionary, foundation.stat_field_keys.inode) orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(target_inode.number, hard_inode.number);
 }
 
 test "低レイヤーのtruncate/utimeはContext経由で反映され契約違反をEINVALにする" {
