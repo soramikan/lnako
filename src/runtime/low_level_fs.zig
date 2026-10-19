@@ -151,6 +151,10 @@ pub fn createHardLink(io: std.Io, target: []const u8, link: []const u8) anyerror
 fn createHardLinkWindows(io: std.Io, target: []const u8, link: []const u8) anyerror!void {
     _ = io;
     const windows = std.os.windows;
+    // CreateHardLinkW は最初の NUL でパスを切るため、埋め込み NUL は拒否する。
+    if (std.mem.indexOfScalar(u8, target, 0) != null or std.mem.indexOfScalar(u8, link, 0) != null) {
+        return error.BadPathName;
+    }
     const allocator = std.heap.page_allocator;
     const existing_w = std.unicode.wtf8ToWtf16LeAllocZ(allocator, target) catch |failure| switch (failure) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -172,7 +176,8 @@ fn createHardLinkWindows(io: std.Io, target: []const u8, link: []const u8) anyer
         ) callconv(.winapi) windows.BOOL;
     }.CreateHardLinkW;
 
-    if (CreateHardLinkW(new_w.ptr, existing_w.ptr, null) == 0) {
+    // Zig 0.16 の windows.BOOL は enum。0 との比較は型エラーになる。
+    if (!CreateHardLinkW(new_w.ptr, existing_w.ptr, null).toBool()) {
         return mapHardLinkWin32Error(windows.GetLastError());
     }
 }
@@ -187,7 +192,8 @@ fn mapHardLinkWin32Error(err: std.os.windows.Win32Error) anyerror {
         // FAT/exFAT 等は INVALID_FUNCTION や NOT_SUPPORTED になる。
         .INVALID_FUNCTION, .NOT_SUPPORTED, .DIRECTORY_NOT_SUPPORTED => error.OperationUnsupported,
         .INVALID_PARAMETER, .INVALID_NAME => error.InvalidArgument,
-        .DIRECTORY => error.IsDir,
+        // ERROR_DIRECTORY は「ディレクトリ名が無効」→ ENOTDIR 側。
+        .DIRECTORY => error.NotDir,
         .TOO_MANY_LINKS => error.LinkQuotaExceeded,
         .DISK_FULL, .HANDLE_DISK_FULL => error.NoSpaceLeft,
         .WRITE_PROTECT => error.ReadOnlyFileSystem,
