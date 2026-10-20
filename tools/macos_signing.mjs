@@ -1,6 +1,6 @@
-import { appendFile, chmod, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 
@@ -206,6 +206,25 @@ export async function submitNotarization(zip, auth, log, { execute = run, captur
   return submission;
 }
 
+export function hasOnlineNotarizationTicket(filePath) {
+  const result = spawnSync(
+    "/usr/bin/codesign",
+    ["--verify", "--strict", "--verbose=4", "-R=notarized", "--check-notarization", filePath],
+    { encoding: "utf8" },
+  );
+  return !result.error && result.status === 0;
+}
+
+export async function stageUnnotarizedMacho(tree, paths, stagingRoot, { checkTicket = hasOnlineNotarizationTicket } = {}) {
+  const pending = paths.filter((relativePath) => !checkTicket(join(tree, relativePath)));
+  for (const relativePath of pending) {
+    const destination = join(stagingRoot, relativePath);
+    await mkdir(dirname(destination), { recursive: true });
+    await copyFile(join(tree, relativePath), destination);
+  }
+  return pending;
+}
+
 async function notarize(archive) {
   const name = basename(archive);
   const totalStarted = performance.now();
@@ -215,7 +234,8 @@ async function notarize(archive) {
     // Validate before extraction; the existing checker rejects traversal/extra entries.
     run(process.execPath, [join(root, "tools/check_distribution.mjs"), "--archive", archive], { exposeOutput: true });
     run("/usr/bin/tar", ["-xzf", archive, "-C", temporary], { exposeOutput: true });
-    const tree = join(temporary, name.replace(/\.tar\.gz$/, ""));
+    const treeName = name.replace(/\.tar\.gz$/, "");
+    const tree = join(temporary, treeName);
     const paths = await verifyPayload(tree);
     // Exercise actual signed compiler, including loading foreign/ad-hoc plugins.
     const env = { ...process.env, LNAKO_TEST_EXECUTABLE: join(tree, "bin/lnako") };
@@ -225,14 +245,20 @@ async function notarize(archive) {
     }
     run(process.execPath, [join(root, "tools/check_native_plugin_abi.mjs"), "--release-safe", "--skip-fixture-build"], { env, exposeOutput: true });
     run(join(tree, "bin/lnako"), ["run", join(root, "tests/fixtures/compat-js-basic.nako3"), "--compat-js"], { env, exposeOutput: true });
-    const zip = join(temporary, "notarization.zip");
-    run("/usr/bin/ditto", ["-c", "-k", "--keepParent", tree, zip], { exposeOutput: true });
-    await logPhase("prepare", name, prepareStarted);
+    const notaryStaging = join(temporary, "notary-payload", treeName);
+    const pending = await stageUnnotarizedMacho(tree, paths, notaryStaging);
+    await logPhase("prepare", `${name} (${pending.length}/${paths.length} Mach-O need submission)`, prepareStarted);
     const submitStarted = performance.now();
-    const auth = ["--key", join(required("LNAKO_SIGNING_TEMP"), "AuthKey.p8"), "--key-id", required("APPLE_NOTARY_KEY_ID"), "--issuer", required("APPLE_NOTARY_ISSUER_ID")];
-    const log = join(required("RUNNER_TEMP"), `${name}.notary-log.json`);
-    await submitNotarization(zip, auth, log);
-    await logPhase("submit-wait", name, submitStarted);
+    if (pending.length > 0) {
+      const zip = join(temporary, "notarization.zip");
+      run("/usr/bin/ditto", ["-c", "-k", "--keepParent", notaryStaging, zip], { exposeOutput: true });
+      const auth = ["--key", join(required("LNAKO_SIGNING_TEMP"), "AuthKey.p8"), "--key-id", required("APPLE_NOTARY_KEY_ID"), "--issuer", required("APPLE_NOTARY_ISSUER_ID")];
+      const log = join(required("RUNNER_TEMP"), `${name}.notary-log.json`);
+      await submitNotarization(zip, auth, log);
+      await logPhase("submit-wait", `${name} (${pending.length} Mach-O)`, submitStarted);
+    } else {
+      await logPhase("submit-wait", `${name} (all ${paths.length} Mach-O already notarized)`, submitStarted);
+    }
     // spctl's execute assessment is for apps, not standalone CLI/dylib code.
     // Require Apple's online notarization ticket for every shipped Mach-O.
     const ticketStarted = performance.now();
@@ -249,8 +275,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const [command, ...args] = process.argv.slice(2);
   if (command === "setup") await setup();
   else if (command === "cleanup") await cleanup();
-  // standard + full を並列公証（各archiveは独立tmp・log。submit --wait が重なる）。
-  // ただし native-plugin-fixture の zig build は共有 zig-out へ書くため並列前に1回だけ実行する。
+  // standard を先に公証して bin/lnako の CDHash チケットを確定させると、
+  // 後続の full では公証済み LLVM バイナリと合わせて再提出が不要になる。
   else if (command === "notarize" && args.length) {
     const started = performance.now();
     run("zig", ["build", "-Doptimize=ReleaseSafe", "native-plugin-fixture"], {
@@ -258,8 +284,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
       env: { ...process.env, ZIG_GLOBAL_CACHE_DIR: process.env.ZIG_GLOBAL_CACHE_DIR ?? resolve(root, ".zig-global-cache") },
       exposeOutput: true,
     });
-    console.log(`macOS notarization: starting ${args.length} archive(s) in parallel`);
-    await Promise.all(args.map((archive) => notarize(resolve(archive))));
+    console.log(`macOS notarization: starting ${args.length} archive(s)`);
+    for (const archive of args) {
+      await notarize(resolve(archive));
+    }
     await logPhase("batch", `${args.length} archive(s)`, started);
   }
   else throw new Error("Usage: node tools/macos_signing.mjs setup|cleanup|notarize <archives...>");

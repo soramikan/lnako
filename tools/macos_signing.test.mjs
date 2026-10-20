@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { codeIdentifier, identifier, machoFiles, signPayload, submitNotarization } from "./macos_signing.mjs";
+import { codeIdentifier, identifier, machoFiles, signPayload, stageUnnotarizedMacho, submitNotarization } from "./macos_signing.mjs";
 
 async function fixture(callback) {
   const directory = await mkdtemp(join(tmpdir(), "lnako-signing-test-"));
@@ -116,4 +116,24 @@ test("captureAsync overlaps concurrent waits without blocking the event loop", a
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("stageUnnotarizedMacho copies only Mach-O files without an online notarization ticket", async () => {
+  await fixture(async (directory) => {
+    const paths = await machoFiles(directory);
+    const staging = join(directory, "staged");
+    const pending = await stageUnnotarizedMacho(directory, paths, staging, {
+      checkTicket: (filePath) => !filePath.endsWith("bin/lnako"),
+    });
+    assert.deepEqual(pending, ["bin/lnako"]);
+    assert.equal((await readFile(join(staging, "bin/lnako"))).toString("hex"), "cffaedfe00000000");
+    await assert.rejects(readFile(join(staging, "llvm/bin/clang")));
+    await assert.rejects(readFile(join(staging, "lib/runtime.a")));
+
+    const stagingAllCached = join(directory, "staged-empty");
+    const nonePending = await stageUnnotarizedMacho(directory, paths, stagingAllCached, {
+      checkTicket: () => true,
+    });
+    assert.deepEqual(nonePending, []);
+  });
 });
