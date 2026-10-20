@@ -122,11 +122,11 @@ jobs:
             os: ubuntu-24.04
             suite: compat-aot
           # macOS-hosted runners admit at most five concurrent jobs. Keep the
-          # two regular jobs and three native route jobs at exactly five slots;
-          # Node host verification is assigned to mac-host-compat at the end of
-          # its evidence chain to balance the critical path, while the
-          # dispatch evidence/security stay on mac-host-compat, while the
-          # coverage audit is distributed across the three native route jobs.
+          # two regular jobs and three native route jobs at exactly five slots.
+          # Independent long checks ride native routes to balance wall time:
+          # package isolation on native O2, Node host on native O3. Dispatch
+          # evidence/security stay on mac-host-compat; coverage audit is
+          # distributed across the three native route jobs.
           - name: macOS arm64
             os: macos-15
             suite: mac-core-standard-support
@@ -172,7 +172,7 @@ jobs:
           # `core`でも同様にcold 233.3s→warm 209.4s（-10%程度）だった。
           use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat' }}
           cache-key: ${{ matrix.suite }}
-          cache-size-limit: 1536
+          cache-size-limit: 3072
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         if: matrix.suite != 'compat-aot'
         with:
@@ -229,8 +229,9 @@ jobs:
       # Windows coreのwall律速を解消するため、独立検証のうち最大のものを専用job
       # （suite: win-package-isolation）へ分離した。Windowsのcore jobではここを
       # 走らせない（検証量は不変で、実行するjobだけを分ける）。
+      # macOSはaot native O2へ移し、mac-core-standard-supportのwallを平準化する。
       - name: Zig package isolation check
-        if: matrix.suite == 'win-package-isolation' || (matrix.suite == 'core' && matrix.name != 'Windows x86_64') || matrix.suite == 'mac-core-standard-support'
+        if: matrix.suite == 'win-package-isolation' || (matrix.suite == 'core' && matrix.name != 'Windows x86_64')
         run: node tools/check_package_isolation.mjs
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: matrix.suite != 'compat-aot'
@@ -404,11 +405,10 @@ jobs:
           ./zig-out/bin/lnako check tests/fixtures/module/main.nako3
           ./zig-out/bin/lnako run tests/fixtures/run-control.nako3
           ./zig-out/bin/lnako test tests/fixtures/run-tests.nako3
-      # Node host差分は約5分かかるため、最長jobであるmac-core-standard-support
-      # からmac-host-compatへ移しクリティカルパスを平準化する。canonical
-      # freshnessとDebug build完了後に配置し、証拠生成順を壊さない。
+      # Node host差分は約5分かかる。Linux／Windowsはhost suite、macOSはaot native
+      # O3へ移しクリティカルパスを平準化する（test jobのmac-host-compatでは走らない）。
       - name: Differential Node host test
-        if: matrix.suite == 'host' || matrix.suite == 'mac-host-compat'
+        if: matrix.suite == 'host'
         shell: bash
         run: |
           set -euo pipefail
@@ -481,7 +481,7 @@ jobs:
           # 47KB小さいcompilerが生成され、Windows shard 11件が
           # "Illegal instruction" で失敗した。
           use-cache: false
-          cache-size-limit: 1536
+          cache-size-limit: 3072
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.15.0
@@ -551,7 +551,7 @@ jobs:
           version: 0.16.0
           # 成果物の再現性を優先してZig cacheは使わない（Windows producerと同じ理由）。
           use-cache: false
-          cache-size-limit: 1536
+          cache-size-limit: 3072
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.15.0
@@ -693,7 +693,7 @@ jobs:
           # Zig cacheはmacOS nativeのみ保存する。
           use-cache: ${{ matrix.task == 'native' }}
           cache-key: ${{ matrix.task == 'native' && format('aot-native-v2-s{0}of{1}-{2}', matrix.fixtureShardIndex, matrix.fixtureShardCount, matrix.optimizationKey) || matrix.suite }}
-          cache-size-limit: 1536
+          cache-size-limit: 3072
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.15.0
@@ -790,6 +790,28 @@ jobs:
           path: ${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}-${{ matrix.dispatchCoverageShardIndex }}.json
           if-no-files-found: ignore
           retention-days: 30
+      # macOSの独立長時間検証をnative routeへ分散し、mac-core／mac-hostのwallを平準化する。
+      - name: Zig package isolation check
+        if: matrix.name == 'macOS arm64' && matrix.task == 'native' && matrix.optimizationKey == 'O2'
+        run: node tools/check_package_isolation.mjs
+      - name: Differential Node host test
+        if: matrix.name == 'macOS arm64' && matrix.task == 'native' && matrix.optimizationKey == 'O3'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/generate_legacy_encoding.mjs --check
+          node tools/update_node_implemented.mjs --check
+          node tools/check_node_plugin_coverage.mjs
+          node tools/compare_node_file_oracle.mjs
+          node tools/check_encoding_compat.mjs
+          node tools/check_crypto_compat.mjs
+          node tools/compare_node_http_oracle.mjs
+          node tools/compare_http_server_oracle.mjs
+          node tools/compare_node_exit_oracle.mjs
+          node tools/compare_node_interrupt_oracle.mjs
+          node tools/check_node_current_directory_realpath.mjs
+          node tools/check_node_current_directory_errors.mjs
+          node tools/check_node_archive_smoke.mjs
       # canonical正本（231件）のfreshnessはLinux dedicated shardが供給する。
       # macOS native相乗り・Windows supportは既定の56件のまま維持する。
       - name: Dispatch coverage audit (native fixtures)
@@ -930,7 +952,7 @@ jobs:
           # 保存しても再利用されず、6 shard×約64 MBを毎run積み増すだけに
           # なるため保存しない。
           use-cache: false
-          cache-size-limit: 1536
+          cache-size-limit: 3072
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.15.0
@@ -1173,7 +1195,7 @@ jobs:
           # setup-zigがtool cacheから供給するため、cache無効でも
           # セットアップは成功する（実測: 9秒）。
           use-cache: false
-          cache-size-limit: 1536
+          cache-size-limit: 3072
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.15.0

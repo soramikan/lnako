@@ -132,6 +132,16 @@ async function cleanup() {
   }
 }
 
+function phaseMs(started) {
+  return Math.round(performance.now() - started);
+}
+
+async function logPhase(label, detail, started) {
+  const line = `macOS notarization ${label}: ${detail} (${phaseMs(started)}ms)`;
+  console.log(line);
+  if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, `${line}\n`);
+}
+
 export async function submitNotarization(zip, auth, log, { execute = run } = {}) {
   // notarytool may return nonzero for a rejected submission. Capture its JSON
   // anyway so we can fetch diagnostics, while still rejecting every non-Accepted state.
@@ -145,16 +155,19 @@ export async function submitNotarization(zip, auth, log, { execute = run } = {})
 }
 
 async function notarize(archive) {
+  const name = basename(archive);
+  const totalStarted = performance.now();
   const temporary = await mkdtemp(join(required("RUNNER_TEMP"), "lnako-notary-"));
   try {
+    const prepareStarted = performance.now();
     // Validate before extraction; the existing checker rejects traversal/extra entries.
     run(process.execPath, [join(root, "tools/check_distribution.mjs"), "--archive", archive]);
     run("/usr/bin/tar", ["-xzf", archive, "-C", temporary]);
-    const tree = join(temporary, basename(archive).replace(/\.tar\.gz$/, ""));
+    const tree = join(temporary, name.replace(/\.tar\.gz$/, ""));
     const paths = await verifyPayload(tree);
     // Exercise actual signed compiler, including loading foreign/ad-hoc plugins.
     const env = { ...process.env, LNAKO_TEST_EXECUTABLE: join(tree, "bin/lnako") };
-    if (basename(archive).endsWith("-full.tar.gz")) {
+    if (name.endsWith("-full.tar.gz")) {
       delete env.LNAKO_LLVM_DIR;
       delete env.LNAKO_LLVM_LIBRARY;
     }
@@ -162,19 +175,25 @@ async function notarize(archive) {
     run(join(tree, "bin/lnako"), ["run", join(root, "tests/fixtures/compat-js-basic.nako3"), "--compat-js"], { env });
     const zip = join(temporary, "notarization.zip");
     run("/usr/bin/ditto", ["-c", "-k", "--keepParent", tree, zip]);
+    await logPhase("prepare", name, prepareStarted);
+    const submitStarted = performance.now();
     const auth = ["--key", join(required("LNAKO_SIGNING_TEMP"), "AuthKey.p8"), "--key-id", required("APPLE_NOTARY_KEY_ID"), "--issuer", required("APPLE_NOTARY_ISSUER_ID")];
-    const log = join(required("RUNNER_TEMP"), `${basename(archive)}.notary-log.json`);
+    const log = join(required("RUNNER_TEMP"), `${name}.notary-log.json`);
     await submitNotarization(zip, auth, log, { execute(command, args) {
       if (args[1] !== "submit") return run(command, args);
       const result = spawnSync(command, args, { encoding: "utf8", timeout: 32 * 60 * 1000 });
       if (result.error || !result.stdout) throw new Error("notarytool submission failed; no JSON response");
       return result.stdout;
     } });
+    await logPhase("submit-wait", name, submitStarted);
     // spctl's execute assessment is for apps, not standalone CLI/dylib code.
     // Require Apple's online notarization ticket for every shipped Mach-O.
+    const ticketStarted = performance.now();
     for (const path of paths) {
       run("/usr/bin/codesign", ["--verify", "--strict", "--verbose=4", "-R=notarized", "--check-notarization", join(tree, path)], { exposeOutput: true });
     }
+    await logPhase("ticket-check", name, ticketStarted);
+    await logPhase("total", name, totalStarted);
   } finally { await rm(temporary, { recursive: true, force: true }); }
 }
 
@@ -183,6 +202,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const [command, ...args] = process.argv.slice(2);
   if (command === "setup") await setup();
   else if (command === "cleanup") await cleanup();
-  else if (command === "notarize" && args.length) { for (const archive of args) await notarize(resolve(archive)); }
+  // standard + full を並列公証（各archiveは独立tmp・log。submit --wait が重なる）。
+  else if (command === "notarize" && args.length) {
+    const started = performance.now();
+    console.log(`macOS notarization: starting ${args.length} archive(s) in parallel`);
+    await Promise.all(args.map((archive) => notarize(resolve(archive))));
+    await logPhase("batch", `${args.length} archive(s)`, started);
+  }
   else throw new Error("Usage: node tools/macos_signing.mjs setup|cleanup|notarize <archives...>");
 }

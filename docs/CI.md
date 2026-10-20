@@ -85,6 +85,6 @@ gh run view <run-id> --log-failed
 
 ## 性能の継続測定
 
-`comparison-benchmark.yml` は本体57-job CIとは別に、正式3 OSで共通のv2 suiteを測定します。PRはsmoke（warmup 1・3 samples）、main更新と夜間はnormal（3・10）、手動実行はfull（5・25）も選択できます。cnakoは互換基準3.7.24、Nodeは24.15.0に固定します。必須処理系の失敗や期待出力の不一致は失敗とし、短時間測定や速度のばらつきは警告として記録します。前回成功したmainのartifactを取得できる場合は、条件が一致する測定の中央値を比較して退行候補を警告します。artifactが期限切れ、または入力・環境などの条件が異なる場合は比較を見送ります。共有runnerの時間だけで性能退行を断定せず、同一環境での再測定を行います。
+`comparison-benchmark.yml` は本体 CI とは別に v2 suite を測定します。PR と main push は **linux-x64 のみ**（PR は smoke・`lnako,cnako`・代表 5 case、main は normal・全 runtime）。夜間 schedule と手動 `workflow_dispatch` は正式 3 OS（macos-arm64 / linux-x64 / windows-x64）で実行し、schedule は diagnostics と numeric profile も走らせます。手動実行は `inputs.profile`（smoke / normal / full）を使い、full のとき diagnostics・numeric を含めます。cnakoは互換基準3.7.24、Nodeは24.15.0に固定します。必須処理系の失敗や期待出力の不一致は失敗とし、短時間測定や速度のばらつきは警告として記録します。前回成功したmainのartifactを取得できる場合は、条件が一致する測定の中央値を比較して退行候補を警告します（lnako 版番号の差と ~64MiB 以内のメモリ差は互換とみなします）。artifactが期限切れ、または入力・環境などの条件が異なる場合は比較を見送ります。共有runnerの時間だけで性能退行を断定せず、同一環境での再測定を行います。
 
 JSONの生サンプルとMarkdownは90日保持します。リリース用のfull測定はリリース配布物に含めます。詳細な条件・ローカル実行方法は[`benchmarks/README.md`](../benchmarks/README.md)を参照してください。

@@ -378,6 +378,7 @@ const stepSuites = new Map([
 ]);
 for (const [name, suite] of stepSuites) {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Node hostはmac-host-compatから外しLinux／Windows host suiteのみ（macOSはaot native O3）。
   const condition = suite === "core"
     ? "matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'"
     : suite === "macos-fuzz"
@@ -385,9 +386,11 @@ for (const [name, suite] of stepSuites) {
       : suite === "standard"
       ? "matrix.suite == 'standard' || matrix.suite == 'mac-core-standard-support'"
       : suite === "host"
-        ? "matrix.suite == 'host' || matrix.suite == 'mac-host-compat'"
+        ? (name === "Differential Node host test"
+          ? "matrix.suite == 'host'"
+          : "matrix.suite == 'host' || matrix.suite == 'mac-host-compat'")
         : suite === "package-isolation"
-          ? "matrix.suite == 'win-package-isolation' || (matrix.suite == 'core' && matrix.name != 'Windows x86_64') || matrix.suite == 'mac-core-standard-support'"
+          ? "matrix.suite == 'win-package-isolation' || (matrix.suite == 'core' && matrix.name != 'Windows x86_64')"
           : "matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'";
   const pattern = new RegExp(`^      - name: ${escaped}\\n        if: ${condition.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m");
   if (!pattern.test(workflow)) throw new Error(`${name}のsuite条件が${suite}ではありません`);
@@ -426,7 +429,6 @@ const macSupportSteps = new Map([
   ["Canonical evidence freshness", ["matrix.suite == 'mac-host-compat'", "node tools/check_evidence_freshness.mjs"]],
   ["Build macOS ReleaseSafe compiler", ["matrix.suite == 'mac-core-standard-support'", "run: zig build -Doptimize=ReleaseSafe"]],
   ["macOS normal smoke test", ["matrix.suite == 'mac-core-standard-support'", "./zig-out/bin/lnako test tests/fixtures/run-tests.nako3"]],
-  ["Differential Node host test", ["matrix.suite == 'host' || matrix.suite == 'mac-host-compat'", "node tools/compare_node_http_oracle.mjs"]],
 ]);
 for (const [name, [condition, required]] of macSupportSteps) {
   const marker = "      - name: " + name;
@@ -439,9 +441,8 @@ for (const [name, [condition, required]] of macSupportSteps) {
 }
 // canonical freshness は正本と同じ ReleaseSafe で測るため、mac-host-compat は
 // normal ReleaseSafe → dispatch 生成 → QuickJS ReleaseSafe → compat-js 生成 →
-// freshness（残りの生成＋比較）→ Debug build → Node host差分の順でなければ
-// ならない。Debug 出力は比較しない。Node host差分はmac-core-standard-supportの
-// クリティカルパスを外すため証拠生成の最後尾に置く。
+// freshness（残りの生成＋比較）→ Debug build の順でなければならない。
+// Debug 出力は比較しない。Node host差分とpackage isolationはaot nativeへ移した。
 const macHostCompatOrder = [
   "      - name: Build macOS normal ReleaseSafe compiler",
   "      - name: macOS dispatch evidence audit",
@@ -450,7 +451,6 @@ const macHostCompatOrder = [
   "      - name: macOS compat-js evidence audit",
   "      - name: Canonical evidence freshness",
   "      - name: Build macOS AOT verification compiler",
-  "      - name: Differential Node host test",
 ];
 const macHostCompatPositions = macHostCompatOrder.map((marker) => testJob.indexOf(marker));
 if (macHostCompatPositions.some((position) => position < 0) ||
@@ -483,6 +483,22 @@ const linuxAotStep = (name) => {
 };
 if (!nativeAotJob.includes("strategy:\n      fail-fast: false") || !nativeAotJob.includes("runs-on: ${{ matrix.os }}") || !nativeAotJob.includes("timeout-minutes: 50")) {
   throw new Error("分割AOT jobの実行条件が不正です");
+}
+// macOSの独立長時間検証はnative routeへ分散する（package isolation→O2、Node host→O3）。
+// test jobのmac-core／mac-hostからは外し、aot nativeの余剰枠で実行する。
+const aotPackageIsolation = aotStep("Zig package isolation check");
+if (!aotPackageIsolation ||
+    !aotPackageIsolation.includes("if: matrix.name == 'macOS arm64' && matrix.task == 'native' && matrix.optimizationKey == 'O2'") ||
+    !aotPackageIsolation.includes("run: node tools/check_package_isolation.mjs")) {
+  throw new Error("aot jobのmacOS package isolation（native O2）が不完全です");
+}
+const aotNodeHost = aotStep("Differential Node host test");
+if (!aotNodeHost ||
+    !aotNodeHost.includes("if: matrix.name == 'macOS arm64' && matrix.task == 'native' && matrix.optimizationKey == 'O3'") ||
+    !aotNodeHost.includes("node tools/generate_legacy_encoding.mjs --check") ||
+    !aotNodeHost.includes("node tools/compare_node_http_oracle.mjs") ||
+    !aotNodeHost.includes("node tools/check_node_archive_smoke.mjs")) {
+  throw new Error("aot jobのmacOS Differential Node host test（native O3）が不完全です");
 }
 // Phase 2のworker数比較はworkflow_dispatch入力で切り替える。
 const dispatchInput = workflow.match(/^  workflow_dispatch:\n([\s\S]*?)(?=\n[a-z]|\Z)/m)?.[1] ?? "";
@@ -1079,7 +1095,7 @@ if (!pruneLlvmToolchainScript.includes("lib/clang/") || !pruneLlvmToolchainScrip
 const setupZigBlocks = [...workflow.matchAll(
   /      - uses: mlugg\/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2\.2\.1[\s\S]*?(?=      - uses: actions\/setup-node@)/g,
 )].map((match) => match[0]);
-const setupZigCacheSizeLimitMiB = 1536;
+const setupZigCacheSizeLimitMiB = 3072;
 // このjob（aot）で`zig build`するのはmacOS nativeのみ。identityをsuiteだけで
 // なくfixture shardとoptimizationまで含める（v2世代）のは、setup-zigが保存key
 // へrunId-attemptを付けprefix一致で復元するため、同一prefixの並行jobが先行jobの
@@ -1179,11 +1195,31 @@ if (!workflow.includes(oracleCacheKey)) throw new Error(`公式オラクルの�
 
 checkFailFastShell(workflow, ".github/workflows/ci.yml");
 checkFailFastShell(comparisonBenchmarkWorkflow, ".github/workflows/comparison-benchmark.yml");
-for (const required of ["  pull_request:", "  push:", "  schedule:", "node tools/setup_oracle.mjs", "node tools/create_benchmark_oracle_shim.mjs", "--suite benchmarks/suites/v2.json", "node tools/setup_benchmark_gonako.mjs", "toolchain: 1.98.0", "--runtimes lnako,cnako,gonako,c,rust", '--profile "$BENCHMARK_PROFILE"', "retention-days: 90"]) {
+for (const required of [
+  "  pull_request:",
+  "  push:",
+  "  schedule:",
+  "node tools/setup_oracle.mjs",
+  "node tools/create_benchmark_oracle_shim.mjs",
+  "--suite benchmarks/suites/v2.json",
+  "node tools/setup_benchmark_gonako.mjs",
+  "toolchain: 1.98.0",
+  "full_runtimes='lnako,cnako,gonako,c,rust'",
+  '--profile "$BENCHMARK_PROFILE"',
+  "--runtimes \"$BENCHMARK_RUNTIMES\"",
+  "fromJson(needs.setup.outputs.matrix)",
+  "cache-size-limit: 3072",
+  "retention-days: 90",
+  "tools/setup_llvm.mjs",
+  "tools/setup_benchmark_gonako.mjs",
+  "startup-empty,integer-arithmetic,function-call,array-build,string-concat",
+]) {
   if (!comparisonBenchmarkWorkflow.includes(required)) throw new Error(`比較benchmarkの必須条件がありません: ${required}`);
 }
 if (comparisonBenchmarkWorkflow.includes("continue-on-error: true")) throw new Error("比較benchmarkの正しさ検証をcontinue-on-errorにできません");
-
+if (!comparisonBenchmarkWorkflow.includes("include_diagnostics") || !comparisonBenchmarkWorkflow.includes("include_numeric")) {
+  throw new Error("比較benchmarkのdiagnostics/numeric切替出力がありません");
+}
 checkBashFailFastBehavior();
 
 console.log(`CI構成検査: 変更分類＋軽量検証＋${matrixEntries.length} matrixジョブ＋Windows／Linux AOT compiler producer＋Linux AOT consumer＋coverage shard検証＋native AOT集約検証＋1 attestationジョブ・${stepSuites.size}条件付き検証ステップ成功`);

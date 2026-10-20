@@ -136,4 +136,4 @@
 3. 同じsource manifestの3 OS attestationを追跡し、現行manifestに一致するsnapshotから導出されるviewを `verified: 527`、`unverified: 0` にする。
 4. `lnako --version`、`build.zig.zon`、release versionを対象バージョンへ一致させる。
 5. 署名済みannotated tag（`vX.Y.Z`）を最終commitに作成してpushする。
-6. release workflowで3 OS archive、SHA-256、SPDX 2.3 SBOM、full benchmarkを自動検証してからGitHub Releaseを公開する。
+6. release workflowで3 OS archive、SHA-256、SPDX 2.3 SBOMを自動検証してからGitHub Releaseを公開する（release時benchmarkは行わない）。
