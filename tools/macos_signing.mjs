@@ -213,8 +213,8 @@ async function notarize(archive) {
   try {
     const prepareStarted = performance.now();
     // Validate before extraction; the existing checker rejects traversal/extra entries.
-    run(process.execPath, [join(root, "tools/check_distribution.mjs"), "--archive", archive]);
-    run("/usr/bin/tar", ["-xzf", archive, "-C", temporary]);
+    run(process.execPath, [join(root, "tools/check_distribution.mjs"), "--archive", archive], { exposeOutput: true });
+    run("/usr/bin/tar", ["-xzf", archive, "-C", temporary], { exposeOutput: true });
     const tree = join(temporary, name.replace(/\.tar\.gz$/, ""));
     const paths = await verifyPayload(tree);
     // Exercise actual signed compiler, including loading foreign/ad-hoc plugins.
@@ -223,10 +223,10 @@ async function notarize(archive) {
       delete env.LNAKO_LLVM_DIR;
       delete env.LNAKO_LLVM_LIBRARY;
     }
-    run(process.execPath, [join(root, "tools/check_native_plugin_abi.mjs"), "--release-safe"], { env });
-    run(join(tree, "bin/lnako"), ["run", join(root, "tests/fixtures/compat-js-basic.nako3"), "--compat-js"], { env });
+    run(process.execPath, [join(root, "tools/check_native_plugin_abi.mjs"), "--release-safe", "--skip-fixture-build"], { env, exposeOutput: true });
+    run(join(tree, "bin/lnako"), ["run", join(root, "tests/fixtures/compat-js-basic.nako3"), "--compat-js"], { env, exposeOutput: true });
     const zip = join(temporary, "notarization.zip");
-    run("/usr/bin/ditto", ["-c", "-k", "--keepParent", tree, zip]);
+    run("/usr/bin/ditto", ["-c", "-k", "--keepParent", tree, zip], { exposeOutput: true });
     await logPhase("prepare", name, prepareStarted);
     const submitStarted = performance.now();
     const auth = ["--key", join(required("LNAKO_SIGNING_TEMP"), "AuthKey.p8"), "--key-id", required("APPLE_NOTARY_KEY_ID"), "--issuer", required("APPLE_NOTARY_ISSUER_ID")];
@@ -250,8 +250,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   if (command === "setup") await setup();
   else if (command === "cleanup") await cleanup();
   // standard + full を並列公証（各archiveは独立tmp・log。submit --wait が重なる）。
+  // ただし native-plugin-fixture の zig build は共有 zig-out へ書くため並列前に1回だけ実行する。
   else if (command === "notarize" && args.length) {
     const started = performance.now();
+    run("zig", ["build", "-Doptimize=ReleaseSafe", "native-plugin-fixture"], {
+      cwd: root,
+      env: { ...process.env, ZIG_GLOBAL_CACHE_DIR: process.env.ZIG_GLOBAL_CACHE_DIR ?? resolve(root, ".zig-global-cache") },
+      exposeOutput: true,
+    });
     console.log(`macOS notarization: starting ${args.length} archive(s) in parallel`);
     await Promise.all(args.map((archive) => notarize(resolve(archive))));
     await logPhase("batch", `${args.length} archive(s)`, started);

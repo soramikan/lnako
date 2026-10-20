@@ -106,6 +106,7 @@ if (!workflow.includes('"$ci_job_count" -eq "$CI_EXPECTED_JOB_COUNT"') ||
 }
 // tag経路は検証済みCI runのReleaseSafe成果物を昇格し、dispatchのみソースビルドする。
 if (!workflow.includes("if: env.CI_RUN_ID != ''") || !workflow.includes("if: env.CI_RUN_ID == ''") ||
+    !workflow.includes("if: env.CI_RUN_ID == '' || matrix.target == 'macos-arm64'") ||
     !workflow.includes("CI_RUN_ID: ${{ needs.preflight.outputs.ci_run_id }}") ||
     !workflow.includes("actions: read")) {
   throw new Error("Release workflowのCI成果物昇格／ソースビルド分岐が不完全です");

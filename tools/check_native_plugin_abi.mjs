@@ -10,7 +10,9 @@ const pluginExtension = process.platform === "win32" ? ".dll" : process.platform
 const buildOptions = process.argv.includes("--release-safe") ? ["-Doptimize=ReleaseSafe"] : [];
 
 try {
-  run("zig", ["build", ...buildOptions, "native-plugin-fixture"]);
+  if (!process.argv.includes("--skip-fixture-build")) {
+    run("zig", ["build", ...buildOptions, "native-plugin-fixture"]);
+  }
   if (!process.env.LNAKO_TEST_EXECUTABLE) run("zig", ["build", ...buildOptions]);
   const plugin = await findPlugin(resolve(root, "zig-out"), /lnako[_-]test[_-]plugin/i);
   const invalidPlugin = await findPlugin(resolve(root, "zig-out"), /lnako[_-]invalid[_-]plugin/i);

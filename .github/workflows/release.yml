@@ -166,12 +166,12 @@ jobs:
         with:
           fetch-depth: 0
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
-        # tag ReleaseはCI成果物を昇格するためZig toolchainは不要。
-        # workflow_dispatch（検証用のソースビルド）のみ取得する。
-        if: env.CI_RUN_ID == ''
+        # tag ReleaseはCI成果物を昇格するが、macOS公証前の署名済みバイナリ検証
+        # （check_native_plugin_abi.mjs）がfixture pluginをZigで組むためmacOSは取得する。
+        if: env.CI_RUN_ID == '' || matrix.target == 'macos-arm64'
         with:
           version: 0.16.0
-          use-cache: true
+          use-cache: ${{ env.CI_RUN_ID == '' }}
           cache-key: release-${{ matrix.target }}
           cache-size-limit: 3072
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
