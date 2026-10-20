@@ -1012,7 +1012,7 @@ pub const CliHost = struct {
         }
         var send_buffer: [16 * 1024]u8 = undefined;
         var writer = stream.writer(self.io, &send_buffer);
-        const status: std.http.Status = @enumFromInt(status_code);
+        const status: std.http.Status = @fromBackingInt(@intCast(status_code));
         writer.interface.print("HTTP/1.1 {d} {s}\r\n", .{ status_code, status.phrase() orelse "" }) catch |err| return mapHttpWriteError(&writer, err);
         var has_content_length = false;
         for (headers) |header| {
@@ -1420,7 +1420,7 @@ fn httpRequest(cli_host: *CliHost, allocator: std.mem.Allocator, operation: anyt
     var req = try client.request(method, uri, .{
         .keep_alive = false,
         .extra_headers = headers,
-        .redirect_behavior = @enumFromInt(3),
+        .redirect_behavior = @fromBackingInt(@intCast(3)),
     });
     defer req.deinit();
 
@@ -1467,7 +1467,7 @@ fn httpRequest(cli_host: *CliHost, allocator: std.mem.Allocator, operation: anyt
         .stdout = stdout_bytes,
         .stderr = try allocator.alloc(u8, 0),
         .exit_code = 0,
-        .http_status = @intFromEnum(response.head.status),
+        .http_status = @backingInt(response.head.status),
     };
 }
 
@@ -1558,7 +1558,7 @@ test "TLS文脈の初期化はnowとCAバンドルを用意し再実行しても
 }
 
 test "TLS初期化後のTLS接続失敗はpanicにならない" {
-    // Zig 0.16.0 Threaded IO currently panics on Windows when a peer closes
+    // Zig 0.17 Threaded IO currently panics on Windows when a peer closes
     // during TLS setup (LOCAL_DISCONNECT), before this code can return an error.
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     var client: std.http.Client = .{ .allocator = std.testing.allocator, .io = std.testing.io };
@@ -1594,7 +1594,7 @@ test "TLS初期化後のTLS接続失敗はpanicにならない" {
 }
 
 test "HTTPからHTTPSへのリダイレクトでもTLS初期化を経てpanicしない" {
-    // Zig 0.16.0 Threaded IO currently panics on Windows when a peer closes
+    // Zig 0.17 Threaded IO currently panics on Windows when a peer closes
     // during TLS setup (LOCAL_DISCONNECT), so this socket-close case is POSIX-only.
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     // CAバンドルを読めない環境ではリダイレクト先のTLSを検証できないため省略する。

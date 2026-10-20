@@ -405,7 +405,7 @@ pub fn parseRequest(allocator: std.mem.Allocator, reader: *std.Io.Reader, limits
         if (std.ascii.eqlIgnoreCase(header_name, "content-length")) {
             content_length = std.fmt.parseInt(usize, header_value, 10) catch return error.InvalidHttpHeader;
         } else if (std.ascii.eqlIgnoreCase(header_name, "transfer-encoding")) {
-            transfer_chunked = std.ascii.indexOfIgnoreCase(header_value, "chunked") != null;
+            transfer_chunked = std.ascii.findIgnoreCase(header_value, "chunked") != null;
         } else if (std.ascii.eqlIgnoreCase(header_name, "content-type")) {
             const replacement = try allocator.dupe(u8, header_value);
             allocator.free(content_type);
@@ -444,7 +444,7 @@ fn mapReadError(reader: *std.Io.net.Stream.Reader, err: anyerror) anyerror {
     if (err != error.ReadFailed) return err;
     return switch (reader.err orelse error.ReadFailed) {
         error.ConnectionResetByPeer,
-        error.Timeout,
+        error.ConnectionTimedOut,
         error.SocketUnconnected,
         => error.HttpServerClientDisconnected,
         else => |underlying| underlying,
@@ -656,7 +656,7 @@ test "受信engineは接続上限超過を拒否し上限内へ回復する" {
     if (request.stream) |*stream| stream.close(io);
     try std.testing.expectEqualStrings("POST", request.method);
     try std.testing.expectEqualStrings("/hold", request.target);
-    try std.testing.expectEqualStrings("x" ** 10, request.body);
+    try std.testing.expectEqualStrings(&@as([10]u8, @splat('x')), request.body);
 
     var second = try ingressTestSend(io, port, "GET /again HTTP/1.1\r\n\r\n", true);
     defer second.close(io);

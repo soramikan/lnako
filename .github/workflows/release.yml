@@ -170,7 +170,7 @@ jobs:
         # （check_native_plugin_abi.mjs）がfixture pluginをZigで組むためmacOSは取得する。
         if: env.CI_RUN_ID == '' || matrix.target == 'macos-arm64'
         with:
-          version: 0.16.0
+          version: 0.17.0
           use-cache: ${{ env.CI_RUN_ID == '' }}
           cache-key: release-${{ matrix.target }}
           cache-size-limit: 3072

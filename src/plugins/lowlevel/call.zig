@@ -160,7 +160,7 @@ test "未実装命令はdispatch名と利用者名の両形で構造化ENOTSUP�
     const effects = Effects{ .context = @ptrCast(&thrown), .throwFn = captureThrow };
     var roots = runtime.rootFrame();
     defer roots.deinit();
-    var arguments = [_]Value{.undefined} ** 4;
+    var arguments = @as([4]Value, @splat(.undefined));
     var covered: usize = 0;
     for (foundation.catalog_commands) |spec| {
         if (spec.implemented) continue;

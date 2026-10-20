@@ -425,7 +425,7 @@ pub const Store = struct {
     /// `project_root` が相対 path の場合は cwd 基準で絶対化して保持する。
     pub fn open(gpa: Allocator, io: std.Io, project_root: []const u8) !Store {
         const project_abs: [:0]u8 = if (std.fs.path.isAbsolute(project_root))
-            try gpa.dupeZ(u8, project_root)
+            try gpa.dupeSentinel(u8, project_root, 0)
         else
             try std.Io.Dir.cwd().realPathFileAlloc(io, project_root, gpa);
         defer gpa.free(project_abs);

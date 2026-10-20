@@ -1172,7 +1172,7 @@ pub fn identityText(gpa: Allocator, source: lock_model.Source) ![]u8 {
 
 test "HTTP source identity は同一 digest のhexとSRI表記を正規化する" {
     const gpa = std.testing.allocator;
-    const zeros = [_]u8{0} ** 32;
+    const zeros = @as([32]u8, @splat(0));
     var encoded: [44]u8 = undefined;
     _ = std.base64.standard.Encoder.encode(&encoded, &zeros);
     const sri = try std.fmt.allocPrint(gpa, "sha256-{s}", .{encoded[0..]});

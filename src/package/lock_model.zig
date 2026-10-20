@@ -326,7 +326,7 @@ pub fn hashEql(a: []const u8, b: []const u8) bool {
 }
 
 test "HTTP hashはsha256/sha512のhexとSRIを同じdigestとして比較する" {
-    var sha256_digest = [_]u8{0} ** 32;
+    var sha256_digest = @as([32]u8, @splat(0));
     const sha256_base64_buf = try std.testing.allocator.alloc(u8, std.base64.standard.Encoder.calcSize(sha256_digest.len));
     defer std.testing.allocator.free(sha256_base64_buf);
     const sha256_base64 = std.base64.standard.Encoder.encode(sha256_base64_buf, &sha256_digest);
@@ -335,7 +335,7 @@ test "HTTP hashはsha256/sha512のhexとSRIを同じdigestとして比較する"
     try std.testing.expect(hashEql("sha256:0000000000000000000000000000000000000000000000000000000000000000", sha256_sri));
     try std.testing.expect(!hashEql(sha256_sri, "sha256:1111111111111111111111111111111111111111111111111111111111111111"));
 
-    var sha512_digest = [_]u8{0} ** 64;
+    var sha512_digest = @as([64]u8, @splat(0));
     const sha512_base64_buf = try std.testing.allocator.alloc(u8, std.base64.standard.Encoder.calcSize(sha512_digest.len));
     defer std.testing.allocator.free(sha512_base64_buf);
     const sha512_base64 = std.base64.standard.Encoder.encode(sha512_base64_buf, &sha512_digest);

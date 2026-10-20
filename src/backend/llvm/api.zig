@@ -29,7 +29,7 @@ pub const Version = struct {
 };
 
 /// 22.1.8 is the baseline used for official distribution and CI.
-/// 21.x is supported because Zig 0.16.0 bundles LLVM 21.
+/// 21.x is supported because Zig 0.17.0 bundles LLVM 22.
 /// 23.x is supported because the C API surface we use is stable across releases.
 pub const baseline_version = Version{ .major = 22, .minor = 1, .patch = 8 };
 pub const min_supported_version = Version{ .major = 21, .minor = 0, .patch = 0 };
@@ -286,7 +286,7 @@ const WindowsLibrary = struct {
 
     fn openCandidates(allocator: std.mem.Allocator, llvm_root: ?[]const u8, llvm_library: ?[]const u8) !WindowsLibrary {
         if (llvm_library) |path| {
-            const path_z = try allocator.dupeZ(u8, path);
+            const path_z = try allocator.dupeSentinel(u8, path, 0);
             defer allocator.free(path_z);
             return .{
                 .handle = LoadLibraryA(path_z) orelse return error.LlvmLibraryNotFound,
@@ -298,14 +298,14 @@ const WindowsLibrary = struct {
             for (candidates) |name| {
                 const path = try std.fs.path.join(allocator, &.{ root, "bin", name });
                 defer allocator.free(path);
-                const path_z = try allocator.dupeZ(u8, path);
+                const path_z = try allocator.dupeSentinel(u8, path, 0);
                 defer allocator.free(path_z);
                 if (LoadLibraryA(path_z)) |handle| return .{ .handle = handle, .resolved_root = root };
             }
             return error.LlvmLibraryNotFound;
         }
         for (candidates) |candidate| {
-            const path = try allocator.dupeZ(u8, candidate);
+            const path = try allocator.dupeSentinel(u8, candidate, 0);
             defer allocator.free(path);
             if (LoadLibraryA(path)) |handle| return .{ .handle = handle };
         }

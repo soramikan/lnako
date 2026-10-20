@@ -384,11 +384,11 @@ fn parsePost(runtime: *Runtime, context: Context, content_type: []const u8, body
         const boundary = multipartBoundary(content_type) orelse return runtime.createDictionary();
         return parseMultipart(runtime, context, body, boundary, files);
     }
-    if (std.ascii.indexOfIgnoreCase(content_type, "application/json") != null) {
+    if (std.ascii.findIgnoreCase(content_type, "application/json") != null) {
         const source = try runtime.stringUtf8Lossy(body);
         return (json.call(runtime, "JSON取得", &.{source}) catch null) orelse source;
     }
-    if (std.ascii.indexOfIgnoreCase(content_type, "application/x-www-form-urlencoded") != null) return parseUrlEncoded(runtime, body);
+    if (std.ascii.findIgnoreCase(content_type, "application/x-www-form-urlencoded") != null) return parseUrlEncoded(runtime, body);
     return runtime.stringUtf8Lossy(body);
 }
 

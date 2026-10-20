@@ -136,7 +136,7 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
     try timer.phase(diagnostics, "LLVM共有ライブラリ読み込み");
     const context = api.contextCreate() orelse return error.LlvmContextCreationFailed;
     defer api.contextDispose(context);
-    const buffer_name = try allocator.dupeZ(u8, options.source_path);
+    const buffer_name = try allocator.dupeSentinel(u8, options.source_path, 0);
     defer allocator.free(buffer_name);
     const buffer = api.createMemoryBuffer(generated.text.ptr, generated.text.len, buffer_name.ptr) orelse return error.LlvmMemoryBufferCreationFailed;
     var llvm_module: api_mod.ModuleRef = null;
@@ -259,7 +259,7 @@ fn verify(api: *api_mod.Api, module: api_mod.ModuleRef, diagnostics: *std.Io.Wri
 }
 
 fn emitObject(allocator: std.mem.Allocator, api: *api_mod.Api, machine: api_mod.TargetMachineRef, module: api_mod.ModuleRef, path: []const u8, timer: *PhaseTimer, diagnostics: *std.Io.Writer) !void {
-    const output = try allocator.dupeZ(u8, path);
+    const output = try allocator.dupeSentinel(u8, path, 0);
     defer allocator.free(output);
     var message: api_mod.Message = null;
     if (api.emitToFile(machine, module, output.ptr, 1, &message) != 0) {

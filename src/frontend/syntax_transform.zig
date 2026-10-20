@@ -928,7 +928,7 @@ test "入れ子のエラー監視では内側のブロックだけここまで�
     var stream = try lexer_mod.tokenize(std.testing.allocator, "エラー監視：\n　エラー監視：\n　　「内側」のエラー発生\n　エラーならば：\n　　「内側ハンドラ」を表示\nエラーならば：\n　「外側ハンドラ」を表示\n");
     defer stream.deinit();
     try apply(&stream);
-    var counts = [_]usize{0} ** 2;
+    var counts = @as([2]usize, @splat(0));
     // 内側の『エラーならば』の前は0個。外側の『エラーならば』の前は内側を閉じる1個。
     try std.testing.expectEqual(@as(usize, 2), errorEndCounts(stream.tokens, &counts));
     try std.testing.expectEqual(@as(usize, 0), counts[0]);
@@ -940,7 +940,7 @@ test "明示インデント構文の入れ子のエラー監視では内側の�
     var stream = try lexer_mod.tokenize(std.testing.allocator, "!インデント構文\nエラー監視\n　エラー監視\n　　「内側」のエラー発生\n　エラーならば\n　　「内側ハンドラ」を表示\nエラーならば\n　「外側ハンドラ」を表示\n");
     defer stream.deinit();
     try apply(&stream);
-    var counts = [_]usize{0} ** 2;
+    var counts = @as([2]usize, @splat(0));
     try std.testing.expectEqual(@as(usize, 2), errorEndCounts(stream.tokens, &counts));
     try std.testing.expectEqual(@as(usize, 0), counts[0]);
     try std.testing.expectEqual(@as(usize, 1), counts[1]);

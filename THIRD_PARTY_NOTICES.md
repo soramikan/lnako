@@ -6,7 +6,7 @@
 | Component | Version | License | Use |
 | --- | --- | --- | --- |
 | LLVM / LLD | 22.1.8 | Apache-2.0 WITH LLVM-exception | IR最適化、オブジェクト生成、リンク |
-| Zig | 0.16.0 | MIT | コンパイラ実装とビルド |
+| Zig | 0.17.0 | MIT | コンパイラ実装とビルド |
 | Nadesiko 3 | 3.7.24 | MIT | 仕様・差分テストオラクル |
 | QuickJS | 2026-06-04 | MIT | 配布バイナリへ静的リンク（明示的なJS互換モード `--compat-js`） |
 

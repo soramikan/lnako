@@ -309,7 +309,7 @@ pub fn nodeCryptoBuiltin(runtime: *Runtime, command: aot_builtin.Command, argume
     switch (command) {
         .node_hash_value => {
             if (arguments.len < 2) return error.InvalidArgumentCount;
-            const input = if (arguments[0].tag == @intFromEnum(Tag.byte_buffer))
+            const input = if (arguments[0].tag == @backingInt(Tag.byte_buffer))
                 try runtime.allocator.dupe(u8, arguments[0].object().?.payload.byte_buffer.bytes)
             else
                 try valueUtf8LossyAlloc(runtime, arguments[0]);
@@ -320,7 +320,7 @@ pub fn nodeCryptoBuiltin(runtime: *Runtime, command: aot_builtin.Command, argume
             defer runtime.allocator.free(digest);
 
             const encoding_value: Value = if (arguments.len > 2) arguments[2] else .{};
-            if (encoding_value.tag == @intFromEnum(Tag.undefined) or encoding_value.tag == @intFromEnum(Tag.null_value)) return runtime.createBytes(digest);
+            if (encoding_value.tag == @backingInt(Tag.undefined) or encoding_value.tag == @backingInt(Tag.null_value)) return runtime.createBytes(digest);
             const encoding_name = try valueUtf8LossyAlloc(runtime, encoding_value);
             defer runtime.allocator.free(encoding_name);
             if (std.ascii.eqlIgnoreCase(encoding_name, "hex")) {
@@ -523,7 +523,7 @@ pub fn nodeEnvironmentValueBuiltin(runtime: *Runtime, arguments: []const Value) 
     defer runtime.allocator.free(key_units);
     const key = try (string_mod.String{ .allocator = runtime.allocator, .units = key_units }).toUtf8Lossy(runtime.allocator);
     defer runtime.allocator.free(key);
-    const key_z = try runtime.allocator.dupeZ(u8, key);
+    const key_z = try runtime.allocator.dupeSentinel(u8, key, 0);
     defer runtime.allocator.free(key_z);
     const environment = std.c.getenv(key_z.ptr) orelse return .{};
     return runtimeUtf8String(runtime, std.mem.span(environment));
@@ -716,7 +716,7 @@ pub fn nodePathArgument(runtime: *Runtime, label: []const u8, value: Value) ![]u
 }
 
 pub fn nodePathReceivedType(runtime: *Runtime, value: Value) ![]u8 {
-    return switch (@as(Tag, @enumFromInt(value.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .undefined => runtime.allocator.dupe(u8, "undefined"),
         .null_value => runtime.allocator.dupe(u8, "null"),
         .boolean => runtime.allocator.dupe(u8, if (value.payload == 0) "type boolean (false)" else "type boolean (true)"),

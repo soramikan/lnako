@@ -46,12 +46,12 @@ fn emitToString(allocator: std.mem.Allocator, comptime emit_fn: anytype, arg: an
     return try allocator.dupe(u8, buffer.written());
 }
 
-const zero_digest = [_]u8{0} ** 32;
+const zero_digest = @as([32]u8, @splat(0));
 
 test "FILES.toml をソート済みで決定的に書き出す" {
     const entries = [_]npkg_files.FileEntry{
         .{ .path = "src/lib.nako3", .sha256 = zero_digest, .size = 5 },
-        .{ .path = "src/index.nako3", .sha256 = [_]u8{1} ** 32, .size = 10 },
+        .{ .path = "src/index.nako3", .sha256 = @as([32]u8, @splat(1)), .size = 10 },
     };
     const allocator = testing.allocator;
     const text = try emitToString(allocator, npkg_files.emit, &entries);
@@ -92,7 +92,7 @@ test "FILES.toml を解析して往復する" {
     try testing.expectEqual(@as(usize, 1), files.entries.len);
     try testing.expectEqualStrings("src/index.nako3", files.entries[0].path);
     try testing.expectEqual(@as(u64, 10), files.entries[0].size);
-    try testing.expectEqual([_]u8{1} ** 32, files.entries[0].sha256);
+    try testing.expectEqual(@as([32]u8, @splat(1)), files.entries[0].sha256);
 }
 
 test "FILES.toml の不正入力を診断する" {

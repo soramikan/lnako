@@ -131,7 +131,7 @@ pub fn httpServerBuiltin(runtime: *Runtime, command: aot_builtin.Command, argume
             runtime.http_server_state.response_status = @intFromFloat(@trunc(status_number));
             runtime.http_server_state.clearHeaders(runtime.allocator);
             const headers = arguments[1];
-            if (headers.tag == @intFromEnum(Tag.dictionary)) {
+            if (headers.tag == @backingInt(Tag.dictionary)) {
                 for (headers.object().?.payload.dictionary.entries.items) |entry| {
                     const name = try valueUtf8LossyAlloc(runtime, entry.key);
                     errdefer runtime.allocator.free(name);
@@ -339,7 +339,7 @@ pub fn pollAotHttpServer(runtime: *Runtime) !bool {
     runtime.http_server_state.request_active = true;
     runtime.http_server_state.response_status = 200;
     runtime.http_server_state.clearHeaders(runtime.allocator);
-    if (route.callback.tag != @intFromEnum(Tag.function)) return error.HttpServerCallbackNotCallable;
+    if (route.callback.tag != @backingInt(Tag.function)) return error.HttpServerCallbackNotCallable;
     _ = try invokeAotCallback(runtime, route.callback, null, 0);
     if (runtime.http_server_state.request_active) {
         try aotHttpHold(runtime);
@@ -433,14 +433,14 @@ pub fn aotHttpParsePost(runtime: *Runtime, content_type: []const u8, body: []con
         const boundary = aotHttpMultipartBoundary(content_type) orelse return runtime.createDictionary(&.{});
         return aotHttpParseMultipart(runtime, body, boundary, files);
     }
-    if (std.ascii.indexOfIgnoreCase(content_type, "application/json") != null) {
+    if (std.ascii.findIgnoreCase(content_type, "application/json") != null) {
         var source = try runtimeUtf8StringLossy(runtime, body);
         var frame = RootFrame{};
         runtime.pushRoots(&frame, @ptrCast(&source), 1);
         defer runtime.popRoots(&frame);
         return jsonDecodeBuiltin(runtime, source) catch source;
     }
-    if (std.ascii.indexOfIgnoreCase(content_type, "application/x-www-form-urlencoded") != null) return aotHttpParseUrlEncoded(runtime, body);
+    if (std.ascii.findIgnoreCase(content_type, "application/x-www-form-urlencoded") != null) return aotHttpParseUrlEncoded(runtime, body);
     return runtimeUtf8StringLossy(runtime, body);
 }
 

@@ -254,8 +254,8 @@ const timerWaitBuiltin = state.timerWaitBuiltin;
 
 fn expectAotUnaryNumber(value: Value, operator: UnaryOperator, expected: f64) !void {
     var result: Value = .{};
-    lnako_aot_unary(&result, &value, @intFromEnum(operator));
-    try std.testing.expectEqual(Tag.number, @as(Tag, @enumFromInt(result.tag)));
+    lnako_aot_unary(&result, &value, @backingInt(operator));
+    try std.testing.expectEqual(Tag.number, @as(Tag, @fromBackingInt(@intCast(result.tag))));
     const actual: f64 = @bitCast(result.payload);
     if (std.math.isNan(expected)) {
         try std.testing.expect(std.math.isNan(actual));
@@ -360,7 +360,7 @@ test "AOTコマンドライン定数は生成mainのargvから構築する" {
     var argv = [_]?[*:0]const u8{ executable.ptr, first_argument.ptr, second_argument.ptr, null };
     lnako_aot_node_constants_init(&roots[0], &roots[1], &roots[2], 3, @ptrCast(&argv));
 
-    try std.testing.expectEqual(Tag.array, @as(Tag, @enumFromInt(roots[0].tag)));
+    try std.testing.expectEqual(Tag.array, @as(Tag, @fromBackingInt(@intCast(roots[0].tag))));
     const arguments = roots[0].object().?.payload.array.items;
     try std.testing.expectEqual(@as(usize, 3), arguments.len);
     try expectUtf16String(&state.active_runtime.?, arguments[0], executable);
@@ -389,7 +389,7 @@ test "AOT Windows wide argvはUTF-16引数とWTF-16実行ファイル名を保�
     var argv = [_]?[*:0]const u16{ &executable, &first_argument, null };
     lnako_aot_node_constants_init_wide(&roots[0], &roots[1], &roots[2], 2, @ptrCast(&argv));
 
-    try std.testing.expectEqual(Tag.array, @as(Tag, @enumFromInt(roots[0].tag)));
+    try std.testing.expectEqual(Tag.array, @as(Tag, @fromBackingInt(@intCast(roots[0].tag))));
     const arguments = roots[0].object().?.payload.array.items;
     try std.testing.expectEqual(@as(usize, 2), arguments.len);
     const executable_units = try valueUtf16Alloc(&state.active_runtime.?, arguments[0]);
@@ -470,7 +470,7 @@ test "AOT切取はUTF-16検索と元値lengthの遅延評価を再現する" {
     try std.testing.expectEqualSlices(u16, &.{ '2', 'X' }, roots[2].object().?.payload.utf16_string);
 
     roots[18] = try state.active_runtime.?.createString(&.{ 't', 'r', 'u', 'e', 'X' });
-    const boolean_arguments = [_]Value{ roots[18], .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 } };
+    const boolean_arguments = [_]Value{ roots[18], .{ .tag = @backingInt(Tag.boolean), .payload = 1 } };
     lnako_aot_cut(&roots[19], &roots[2], &boolean_arguments, boolean_arguments.len, 0);
     try std.testing.expectEqualSlices(u16, &.{}, roots[19].object().?.payload.utf16_string);
     try std.testing.expectEqualSlices(u16, &.{ 't', 'r', 'u', 'e', 'X' }, roots[2].object().?.payload.utf16_string);
@@ -498,7 +498,7 @@ test "AOT切取はUTF-16検索と元値lengthの遅延評価を再現する" {
     try std.testing.expectEqualSlices(u16, &.{}, roots[3].object().?.payload.utf16_string);
     try std.testing.expectEqualSlices(u16, &.{ 0, 0xd800 }, roots[2].object().?.payload.utf16_string);
 
-    const absent_range_arguments = [_]Value{ roots[16], staticStringValue("missing"), .{ .tag = @intFromEnum(Tag.null_value) } };
+    const absent_range_arguments = [_]Value{ roots[16], staticStringValue("missing"), .{ .tag = @backingInt(Tag.null_value) } };
     lnako_aot_cut(&roots[3], &roots[2], &absent_range_arguments, absent_range_arguments.len, 1);
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
     try std.testing.expectEqualSlices(u16, &.{}, roots[3].object().?.payload.utf16_string);
@@ -511,7 +511,7 @@ test "AOT切取はUTF-16検索と元値lengthの遅延評価を再現する" {
     try std.testing.expectEqualSlices(u16, &.{}, roots[2].object().?.payload.utf16_string);
 
     roots[2] = try state.active_runtime.?.createString(&.{ 'k', 'e', 'e', 'p' });
-    const null_match_arguments = [_]Value{ staticStringValue("null"), .{ .tag = @intFromEnum(Tag.null_value) } };
+    const null_match_arguments = [_]Value{ staticStringValue("null"), .{ .tag = @backingInt(Tag.null_value) } };
     lnako_aot_cut(&roots[3], &roots[2], &null_match_arguments, null_match_arguments.len, 0);
     try std.testing.expect(state.active_runtime.?.has_pending_exception);
     try std.testing.expectEqualSlices(u16, &.{ 'k', 'e', 'e', 'p' }, roots[2].object().?.payload.utf16_string);
@@ -585,7 +585,7 @@ test "AOT動的関数の不足引数へ共有システム文脈を追加し超�
     lnako_aot_function_new(&roots[0], testAotFunction, 1, null, 0);
     lnako_aot_function_new(&roots[1], testAotSecondArgument, 2, null, 0);
     lnako_aot_function_call(&roots[4], &roots[0], null, 0);
-    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(roots[4].tag)));
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @fromBackingInt(@intCast(roots[4].tag))));
     const system_context = roots[4].payload;
     lnako_aot_function_call(&roots[4], &roots[1], @ptrCast(&roots[2]), 1);
     try std.testing.expectEqual(system_context, roots[4].payload);
@@ -632,11 +632,11 @@ test "AOT標準命令ディスパッチで値を文字列へ変換する" {
         runtime = state.active_runtime.?;
         state.active_runtime = null;
     }
-    var roots = [_]Value{ .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 }, .{} };
+    var roots = [_]Value{ .{ .tag = @backingInt(Tag.boolean), .payload = 1 }, .{} };
     var frame: RootFrame = .{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
-    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.to_string));
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.to_string));
     try std.testing.expectEqualSlices(u16, &.{ 't', 'r', 'u', 'e' }, roots[1].object().?.payload.utf16_string);
 }
 
@@ -657,13 +657,13 @@ test "AOT標準出力ABIは出力プールと表示履歴の境界を保持す�
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
 
-    lnako_aot_stdio_call(&roots[3], &roots[0], @ptrCast(&roots[1]), 1, @intFromEnum(aot_builtin.Command.stdio_continue_display), 0);
-    lnako_aot_stdio_call(&roots[3], &roots[0], @ptrCast(&roots[2]), 1, @intFromEnum(aot_builtin.Command.stdio_continue_display_many), 0);
+    lnako_aot_stdio_call(&roots[3], &roots[0], @ptrCast(&roots[1]), 1, @backingInt(aot_builtin.Command.stdio_continue_display), 0);
+    lnako_aot_stdio_call(&roots[3], &roots[0], @ptrCast(&roots[2]), 1, @backingInt(aot_builtin.Command.stdio_continue_display_many), 0);
     try std.testing.expectEqualStrings("AB", active.print_pool.items);
 
     try appendDisplayLog(active, &roots[0], active.print_pool.items);
     try expectUtf16String(active, roots[0], "old\nAB\n");
-    lnako_aot_stdio_call(&roots[3], &roots[0], null, 0, @intFromEnum(aot_builtin.Command.stdio_clear_log), 0);
+    lnako_aot_stdio_call(&roots[3], &roots[0], null, 0, @backingInt(aot_builtin.Command.stdio_clear_log), 0);
     try expectUtf16String(active, roots[0], "");
     try std.testing.expectEqualStrings("AB", active.print_pool.items);
 }
@@ -680,7 +680,7 @@ test "AOT型確認は動的値をJavaScript型名へ変換する" {
     var frame: RootFrame = .{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
-    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.type_of));
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.type_of));
     try std.testing.expectEqualStrings("number", staticUtf8(roots[1]));
 }
 
@@ -698,25 +698,25 @@ test "AOT数学命令dispatchは数値・配列・別名を処理する" {
     defer lnako_aot_pop_roots(&frame);
 
     roots[0] = numberValue(0);
-    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.math_sin));
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.math_sin));
     try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast(roots[1].payload)));
 
     roots[2] = numberValue(2);
     roots[3] = numberValue(8);
     var logarithm_arguments = [_]Value{ roots[2], roots[3] };
-    lnako_aot_builtin_call(&roots[4], &logarithm_arguments, logarithm_arguments.len, @intFromEnum(aot_builtin.Command.math_logn));
+    lnako_aot_builtin_call(&roots[4], &logarithm_arguments, logarithm_arguments.len, @backingInt(aot_builtin.Command.math_logn));
     try std.testing.expectApproxEqAbs(@as(f64, 3), @as(f64, @bitCast(roots[4].payload)), 1e-14);
 
     roots[5] = try state.active_runtime.?.createArray(&.{ numberValue(0), numberValue(1) });
-    lnako_aot_builtin_call(&roots[6], @ptrCast(&roots[5]), 1, @intFromEnum(aot_builtin.Command.math_coordinate_angle));
+    lnako_aot_builtin_call(&roots[6], @ptrCast(&roots[5]), 1, @backingInt(aot_builtin.Command.math_coordinate_angle));
     try std.testing.expectApproxEqAbs(@as(f64, 90), @as(f64, @bitCast(roots[6].payload)), 1e-12);
 
     roots[7] = numberValue(-1.2);
-    lnako_aot_builtin_call(&roots[8], @ptrCast(&roots[7]), 1, @intFromEnum(aot_builtin.Command.math_floor));
+    lnako_aot_builtin_call(&roots[8], @ptrCast(&roots[7]), 1, @backingInt(aot_builtin.Command.math_floor));
     try std.testing.expectEqual(@as(f64, -2), @as(f64, @bitCast(roots[8].payload)));
 
     roots[9] = numberValue(-1.5);
-    lnako_aot_builtin_call(&roots[10], @ptrCast(&roots[9]), 1, @intFromEnum(aot_builtin.Command.math_round));
+    lnako_aot_builtin_call(&roots[10], @ptrCast(&roots[9]), 1, @backingInt(aot_builtin.Command.math_round));
     try std.testing.expectEqual(@as(f64, -1), @as(f64, @bitCast(roots[10].payload)));
 }
 
@@ -734,28 +734,28 @@ test "AOT乱数命令は固定シードの数値・配列・辞書・範囲を�
     defer lnako_aot_pop_roots(&frame);
 
     roots[0] = numberValue(10);
-    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.math_random));
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.math_random));
     try std.testing.expectEqual(@as(f64, 8), @as(f64, @bitCast(roots[1].payload)));
 
     roots[2] = try state.active_runtime.?.createArray(&.{ numberValue(2), numberValue(4) });
-    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[2]), 1, @intFromEnum(aot_builtin.Command.math_random));
+    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[2]), 1, @backingInt(aot_builtin.Command.math_random));
     try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(roots[3].payload)));
 
     roots[4] = try state.active_runtime.?.createDictionary(&.{ staticStringValue("先頭"), numberValue(7), staticStringValue("末尾"), numberValue(9) });
-    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[4]), 1, @intFromEnum(aot_builtin.Command.math_random));
+    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[4]), 1, @backingInt(aot_builtin.Command.math_random));
     try std.testing.expectEqual(@as(f64, 7), @as(f64, @bitCast(roots[5].payload)));
 
     roots[6] = numberValue(10);
     roots[7] = numberValue(12);
     var range_arguments = [_]Value{ roots[6], roots[7] };
-    lnako_aot_builtin_call(&roots[8], &range_arguments, range_arguments.len, @intFromEnum(aot_builtin.Command.math_random_range));
+    lnako_aot_builtin_call(&roots[8], &range_arguments, range_arguments.len, @backingInt(aot_builtin.Command.math_random_range));
     try std.testing.expectEqual(@as(f64, 10), @as(f64, @bitCast(roots[8].payload)));
 }
 
 test "AOT日時の現在時刻・日付・年月命令を固定時計で処理する" {
     var runtime = Runtime{ .allocator = std.testing.allocator, .clock_milliseconds = 1_735_689_845_678 };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 12;
+    var roots = @as([12]Value, @splat(.{}));
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -832,7 +832,7 @@ test "AOT Unix日時変換は秒と日時文字列を相互変換する" {
 test "AOT日時書式差分加算と単調時計を処理する" {
     var runtime = Runtime{ .allocator = std.testing.allocator, .clock_milliseconds = 1_735_689_845_678, .monotonic_milliseconds = 123.5 };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 16;
+    var roots = @as([16]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -1025,32 +1025,32 @@ test "AOT漢数字命令は指数・全角数字・小数・BigIntを処理す�
     defer lnako_aot_pop_roots(&frame);
 
     roots[0] = numberValue(10001);
-    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.kansuji_to_kanji));
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.kansuji_to_kanji));
     try expectUtf16String(&runtime, roots[1], "一万一");
 
     roots[2] = try runtimeUtf8String(&state.active_runtime.?, "0.01");
-    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[2]), 1, @intFromEnum(aot_builtin.Command.kansuji_to_kanji));
+    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[2]), 1, @backingInt(aot_builtin.Command.kansuji_to_kanji));
     try expectUtf16String(&runtime, roots[3], "零・〇一");
 
     roots[4] = try runtimeUtf8String(&state.active_runtime.?, "1e-3");
-    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[4]), 1, @intFromEnum(aot_builtin.Command.kansuji_to_kanji));
+    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[4]), 1, @backingInt(aot_builtin.Command.kansuji_to_kanji));
     try expectUtf16String(&runtime, roots[5], "零・〇〇一");
 
     roots[6] = try runtimeUtf8String(&state.active_runtime.?, "１２３");
-    lnako_aot_builtin_call(&roots[7], @ptrCast(&roots[6]), 1, @intFromEnum(aot_builtin.Command.kansuji_to_kanji));
+    lnako_aot_builtin_call(&roots[7], @ptrCast(&roots[6]), 1, @backingInt(aot_builtin.Command.kansuji_to_kanji));
     try expectUtf16String(&runtime, roots[7], "百二十三");
 
     roots[8] = try runtimeUtf8String(&state.active_runtime.?, "一万一");
-    lnako_aot_builtin_call(&roots[9], @ptrCast(&roots[8]), 1, @intFromEnum(aot_builtin.Command.kansuji_to_arabic));
+    lnako_aot_builtin_call(&roots[9], @ptrCast(&roots[8]), 1, @backingInt(aot_builtin.Command.kansuji_to_arabic));
     try std.testing.expectEqual(@as(f64, 10001), @as(f64, @bitCast(roots[9].payload)));
 
     roots[0] = try runtimeUtf8String(&state.active_runtime.?, "一・二");
-    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.kansuji_to_arabic));
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.kansuji_to_arabic));
     try std.testing.expectEqual(@as(f64, 1.2), @as(f64, @bitCast(roots[1].payload)));
 
     roots[2] = try runtimeUtf8String(&state.active_runtime.?, "一無量大数");
-    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[2]), 1, @intFromEnum(aot_builtin.Command.kansuji_to_arabic));
-    try std.testing.expectEqual(Tag.bigint, @as(Tag, @enumFromInt(roots[3].tag)));
+    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[2]), 1, @backingInt(aot_builtin.Command.kansuji_to_arabic));
+    try std.testing.expectEqual(Tag.bigint, @as(Tag, @fromBackingInt(@intCast(roots[3].tag))));
     const huge = roots[3].object().?.payload.bigint.toString(runtime.allocator, 10) catch unreachable;
     defer runtime.allocator.free(huge);
     try std.testing.expectEqual(@as(usize, 69), huge.len);
@@ -1072,36 +1072,36 @@ test "AOT CSV命令は引用・数値変換・TSV・オプションを処理す�
     defer lnako_aot_pop_roots(&frame);
 
     roots[0] = try runtimeUtf8String(&state.active_runtime.?, "1,\"a,b\",3\n4,5,6");
-    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.csv_parse));
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.csv_parse));
     try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(roots[1].object().?.payload.array.items[0].object().?.payload.array.items[0].payload)));
     try expectUtf16String(&runtime, roots[1].object().?.payload.array.items[0].object().?.payload.array.items[1], "a,b");
     try std.testing.expectEqual(@as(usize, 2), roots[1].object().?.payload.array.items.len);
 
     roots[2] = try runtimeUtf8String(&state.active_runtime.?, "1\t2\n3\t4");
-    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[2]), 1, @intFromEnum(aot_builtin.Command.tsv_parse));
+    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[2]), 1, @backingInt(aot_builtin.Command.tsv_parse));
     try std.testing.expectEqual(@as(f64, 4), @as(f64, @bitCast(roots[3].object().?.payload.array.items[1].object().?.payload.array.items[1].payload)));
 
     roots[4] = try state.active_runtime.?.createArray(&.{});
     roots[5] = try state.active_runtime.?.createArray(&.{numberValue(1)});
     try roots[5].object().?.payload.array.append(state.active_runtime.?.allocator, try runtimeUtf8String(&state.active_runtime.?, "a,b"));
     try roots[4].object().?.payload.array.append(state.active_runtime.?.allocator, roots[5]);
-    lnako_aot_builtin_call(&roots[6], @ptrCast(&roots[4]), 1, @intFromEnum(aot_builtin.Command.table_csv_stringify));
+    lnako_aot_builtin_call(&roots[6], @ptrCast(&roots[4]), 1, @backingInt(aot_builtin.Command.table_csv_stringify));
     try expectUtf16String(&runtime, roots[6], "1,\"a,b\"\r\n");
     try expectUtf16String(&runtime, roots[5].object().?.payload.array.items[0], "1");
     try expectUtf16String(&runtime, roots[5].object().?.payload.array.items[1], "\"a,b\"");
 
     roots[7] = try runtimeUtf8String(&state.active_runtime.?, "|");
-    roots[8] = try state.active_runtime.?.createDictionary(&.{ staticStringValue("eol"), roots[7], staticStringValue("auto_convert_number"), .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 } });
-    lnako_aot_builtin_call(&roots[9], @ptrCast(&roots[8]), 1, @intFromEnum(aot_builtin.Command.csv_options));
+    roots[8] = try state.active_runtime.?.createDictionary(&.{ staticStringValue("eol"), roots[7], staticStringValue("auto_convert_number"), .{ .tag = @backingInt(Tag.boolean), .payload = 0 } });
+    lnako_aot_builtin_call(&roots[9], @ptrCast(&roots[8]), 1, @backingInt(aot_builtin.Command.csv_options));
     roots[10] = try runtimeUtf8String(&state.active_runtime.?, "1,2");
-    lnako_aot_builtin_call(&roots[11], @ptrCast(&roots[10]), 1, @intFromEnum(aot_builtin.Command.csv_parse));
-    try std.testing.expectEqual(Tag.utf16_string, @as(Tag, @enumFromInt(roots[11].object().?.payload.array.items[0].object().?.payload.array.items[0].tag)));
+    lnako_aot_builtin_call(&roots[11], @ptrCast(&roots[10]), 1, @backingInt(aot_builtin.Command.csv_parse));
+    try std.testing.expectEqual(Tag.utf16_string, @as(Tag, @fromBackingInt(@intCast(roots[11].object().?.payload.array.items[0].object().?.payload.array.items[0].tag))));
 
     roots[12] = try state.active_runtime.?.createArray(&.{try state.active_runtime.?.createArray(&.{ numberValue(3), numberValue(4) })});
-    lnako_aot_builtin_call(&roots[13], @ptrCast(&roots[12]), 1, @intFromEnum(aot_builtin.Command.csv_stringify));
+    lnako_aot_builtin_call(&roots[13], @ptrCast(&roots[12]), 1, @backingInt(aot_builtin.Command.csv_stringify));
     try expectUtf16String(&runtime, roots[13], "3,4|");
     roots[12] = try state.active_runtime.?.createArray(&.{try state.active_runtime.?.createArray(&.{ numberValue(5), numberValue(6) })});
-    lnako_aot_builtin_call(&roots[13], @ptrCast(&roots[12]), 1, @intFromEnum(aot_builtin.Command.tsv_stringify));
+    lnako_aot_builtin_call(&roots[13], @ptrCast(&roots[12]), 1, @backingInt(aot_builtin.Command.tsv_stringify));
     try expectUtf16String(&runtime, roots[13], "5\t6|");
 }
 
@@ -1119,8 +1119,8 @@ test "AOT TOML命令は表・配列・インライン表を処理する" {
     defer lnako_aot_pop_roots(&frame);
 
     roots[0] = try runtimeUtf8String(&state.active_runtime.?, "title=\"x\"\nn=1_000\na=[1,2]\no={x=1}\n[server]\nport=8080\n[[products]]\nname=\"a\"\n[[products]]\nname=\"b\"\n");
-    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.toml_parse));
-    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(roots[1].tag)));
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.toml_parse));
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @fromBackingInt(@intCast(roots[1].tag))));
     try std.testing.expectEqual(@as(f64, 1000), @as(f64, @bitCast(dictionaryProperty(roots[1], &.{'n'}).payload)));
     const server = dictionaryProperty(roots[1], &.{ 's', 'e', 'r', 'v', 'e', 'r' });
     try std.testing.expectEqual(@as(f64, 8080), @as(f64, @bitCast(dictionaryProperty(server, &.{ 'p', 'o', 'r', 't' }).payload)));
@@ -1129,7 +1129,7 @@ test "AOT TOML命令は表・配列・インライン表を処理する" {
     try expectUtf16String(&state.active_runtime.?, dictionaryProperty(products.object().?.payload.array.items[0], &.{ 'n', 'a', 'm', 'e' }), "a");
     try expectUtf16String(&state.active_runtime.?, dictionaryProperty(products.object().?.payload.array.items[1], &.{ 'n', 'a', 'm', 'e' }), "b");
 
-    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[1]), 1, @intFromEnum(aot_builtin.Command.toml_stringify));
+    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[1]), 1, @backingInt(aot_builtin.Command.toml_stringify));
     const encoded_units = try valueUtf16Alloc(&state.active_runtime.?, roots[2]);
     defer state.active_runtime.?.allocator.free(encoded_units);
     const products_header = try std.unicode.utf8ToUtf16LeAlloc(state.active_runtime.?.allocator, "[[products]]");
@@ -1137,7 +1137,7 @@ test "AOT TOML命令は表・配列・インライン表を処理する" {
     try std.testing.expect(std.mem.indexOf(u16, encoded_units, products_header) != null);
 
     roots[3] = try state.active_runtime.?.createDictionary(&.{ staticStringValue("a"), numberValue(1) });
-    lnako_aot_builtin_call(&roots[4], @ptrCast(&roots[3]), 1, @intFromEnum(aot_builtin.Command.toml_stringify));
+    lnako_aot_builtin_call(&roots[4], @ptrCast(&roots[3]), 1, @backingInt(aot_builtin.Command.toml_stringify));
     try expectUtf16String(&state.active_runtime.?, roots[4], "a = 1\n");
 }
 
@@ -1155,16 +1155,16 @@ test "AOT TOML日時は専用値としてJSONとTOMLへ正規化する" {
     defer lnako_aot_pop_roots(&frame);
 
     roots[0] = try runtimeUtf8String(&state.active_runtime.?, "d=1979-05-27\nt=07:32\no=1979-05-27T07:32:00Z\nl=1979-05-27 07:32\n");
-    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.toml_parse));
-    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(roots[1].tag)));
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.toml_parse));
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @fromBackingInt(@intCast(roots[1].tag))));
     const date = dictionaryProperty(roots[1], &.{'d'});
     try std.testing.expect(date.object().?.toml_temporal != null);
     try std.testing.expectEqual(toml_temporal.Kind.date, date.object().?.toml_temporal.?.kind);
 
-    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[1]), 1, @intFromEnum(aot_builtin.Command.json_encode));
+    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[1]), 1, @backingInt(aot_builtin.Command.json_encode));
     try expectUtf16String(&state.active_runtime.?, roots[2], "{\"d\":\"1979-05-27\",\"t\":\"07:32:00.000\",\"o\":\"1979-05-27T07:32:00.000Z\",\"l\":\"1979-05-27T07:32:00.000\"}");
 
-    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[1]), 1, @intFromEnum(aot_builtin.Command.toml_stringify));
+    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[1]), 1, @backingInt(aot_builtin.Command.toml_stringify));
     try expectUtf16String(&state.active_runtime.?, roots[3], "d = 1979-05-27\nt = 07:32:00.000\no = 1979-05-27T07:32:00.000Z\nl = 1979-05-27T07:32:00.000\n");
 }
 
@@ -1218,9 +1218,9 @@ test "AOT Node存在判定はファイルとフォルダの存在を区別する
     roots[0] = try nodeFileExistenceBuiltin(&runtime, .node_file_exists, &.{staticStringValue(".")});
     roots[1] = try nodeFileExistenceBuiltin(&runtime, .node_folder_exists, &.{staticStringValue(".")});
     roots[2] = try nodeFileExistenceBuiltin(&runtime, .node_file_exists, &.{staticStringValue("LNAKO_MISSING_PATH_7F4B")});
-    try std.testing.expectEqual(Tag.boolean, @as(Tag, @enumFromInt(roots[0].tag)));
-    try std.testing.expectEqual(Tag.boolean, @as(Tag, @enumFromInt(roots[1].tag)));
-    try std.testing.expectEqual(Tag.boolean, @as(Tag, @enumFromInt(roots[2].tag)));
+    try std.testing.expectEqual(Tag.boolean, @as(Tag, @fromBackingInt(@intCast(roots[0].tag))));
+    try std.testing.expectEqual(Tag.boolean, @as(Tag, @fromBackingInt(@intCast(roots[1].tag))));
+    try std.testing.expectEqual(Tag.boolean, @as(Tag, @fromBackingInt(@intCast(roots[2].tag))));
     try std.testing.expect(roots[0].payload != 0);
     try std.testing.expect(roots[1].payload != 0);
     try std.testing.expect(roots[2].payload == 0);
@@ -1252,7 +1252,7 @@ test "AOT Node基本ファイルI/OはテキストとBufferを読み書きする
     roots[3] = try nodeFileReadBuiltin(&runtime, .node_file_binary_read, &.{roots[0]});
     try expectUtf16String(&runtime, roots[1], "日本語\nABC");
     try expectUtf16String(&runtime, roots[2], "日本語\nABC");
-    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @enumFromInt(roots[3].tag)));
+    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @fromBackingInt(@intCast(roots[3].tag))));
     try std.testing.expectEqualStrings("日本語\nABC", roots[3].object().?.payload.byte_buffer.bytes);
 
     roots[4] = try runtimeUtf8String(&runtime, text_path);
@@ -1263,7 +1263,7 @@ test "AOT Node基本ファイルI/OはテキストとBufferを読み書きする
     roots[6] = try runtimeUtf8String(&runtime, binary_path);
     _ = try nodeFileSaveBuiltin(&runtime, &.{ roots[3], roots[6] });
     roots[7] = try nodeFileReadBuiltin(&runtime, .node_file_binary_read, &.{roots[6]});
-    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @enumFromInt(roots[7].tag)));
+    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @fromBackingInt(@intCast(roots[7].tag))));
     try std.testing.expectEqualSlices(u8, "日本語\nABC", roots[7].object().?.payload.byte_buffer.bytes);
 }
 
@@ -1281,10 +1281,10 @@ test "AOT Node文字コード命令は共有codecへ接続する" {
     roots[3] = try nodeEncodingBuiltin(&runtime, .node_encoding_encode, &.{ roots[0], staticStringValue("euc-jp") });
     roots[4] = try nodeEncodingBuiltin(&runtime, .node_encoding_decode, &.{ roots[3], staticStringValue("euc-jp") });
 
-    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @enumFromInt(roots[1].tag)));
+    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @fromBackingInt(@intCast(roots[1].tag))));
     try std.testing.expectEqualSlices(u8, &.{ 0x93, 0xfa, 0x96, 0x7b, 0x8c, 0xea, 'A', 'B', 'C' }, roots[1].object().?.payload.byte_buffer.bytes);
     try expectUtf16String(&runtime, roots[2], "日本語ABC");
-    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @enumFromInt(roots[3].tag)));
+    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @fromBackingInt(@intCast(roots[3].tag))));
     try expectUtf16String(&runtime, roots[4], "日本語ABC");
     try std.testing.expectError(error.InvalidArgumentCount, nodeEncodingBuiltin(&runtime, .node_encoding_encode, &.{roots[0]}));
 }
@@ -1409,7 +1409,7 @@ test "AOT Nodeファイルcallbackは完了・進捗・停止を処理する" {
         state.active_runtime = null;
     }
 
-    var roots = [_]Value{.{}} ** 16;
+    var roots = @as([16]Value, @splat(.{}));
     var frame = RootFrame{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
@@ -1429,7 +1429,7 @@ test "AOT Nodeファイルcallbackは完了・進捗・停止を処理する" {
         &roots[14],
         &callback_arguments,
         callback_arguments.len,
-        @intFromEnum(aot_builtin.Command.node_file_copy_callback),
+        @backingInt(aot_builtin.Command.node_file_copy_callback),
         1,
     );
     try drainAotEvents(active);
@@ -1441,7 +1441,7 @@ test "AOT Nodeファイルcallbackは完了・進捗・停止を処理する" {
         &roots[14],
         &callback_arguments,
         callback_arguments.len,
-        @intFromEnum(aot_builtin.Command.node_file_move_callback),
+        @backingInt(aot_builtin.Command.node_file_move_callback),
         2,
     );
     try drainAotEvents(active);
@@ -1454,7 +1454,7 @@ test "AOT Nodeファイルcallbackは完了・進捗・停止を処理する" {
         &roots[14],
         &delete_callback_arguments,
         delete_callback_arguments.len,
-        @intFromEnum(aot_builtin.Command.node_file_delete_callback),
+        @backingInt(aot_builtin.Command.node_file_delete_callback),
         3,
     );
     try drainAotEvents(active);
@@ -1474,7 +1474,7 @@ test "AOT Nodeファイルcallbackは完了・進捗・停止を処理する" {
         &roots[14],
         &progress_registration,
         progress_registration.len,
-        @intFromEnum(aot_builtin.Command.node_file_process_callback),
+        @backingInt(aot_builtin.Command.node_file_process_callback),
         4,
     );
     roots[15] = staticStringValue("上書禁止");
@@ -1521,12 +1521,12 @@ test "AOT Nodeファイル情報取得はstatフィールドとメソッドを�
         &.{ 'i', 's', 'S', 'y', 'm', 'b', 'o', 'l', 'i', 'c', 'L', 'i', 'n', 'k' },
     }, 2..) |key, index| {
         roots[index] = dictionaryProperty(roots[0], key);
-        try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[index].tag)));
+        try std.testing.expectEqual(Tag.function, @as(Tag, @fromBackingInt(@intCast(roots[index].tag))));
         try std.testing.expectEqual(@as(usize, 0), roots[index].object().?.payload.function.captures.len);
         try std.testing.expectEqualStrings(method_names[index - 2], roots[index].object().?.payload.function.name);
     }
     roots[5] = try invokeAotCallback(&state.active_runtime.?, roots[2], null, 0);
-    try std.testing.expectEqual(Tag.boolean, @as(Tag, @enumFromInt(roots[5].tag)));
+    try std.testing.expectEqual(Tag.boolean, @as(Tag, @fromBackingInt(@intCast(roots[5].tag))));
     try std.testing.expect(roots[5].payload == 0);
     roots[5] = try invokeAotCallback(&state.active_runtime.?, roots[3], null, 0);
     try std.testing.expect(roots[5].payload != 0);
@@ -1546,9 +1546,9 @@ test "AOT Nodeネットワーク命令はOSアドレスを文字列配列へ変�
     roots[0] = try nodeNetworkAddressesBuiltin(&runtime, false);
     roots[1] = try nodeNetworkAddressesBuiltin(&runtime, true);
     for (roots) |value| {
-        try std.testing.expectEqual(Tag.array, @as(Tag, @enumFromInt(value.tag)));
+        try std.testing.expectEqual(Tag.array, @as(Tag, @fromBackingInt(@intCast(value.tag))));
         for (value.object().?.payload.array.items) |address| {
-            try std.testing.expectEqual(Tag.utf16_string, @as(Tag, @enumFromInt(address.tag)));
+            try std.testing.expectEqual(Tag.utf16_string, @as(Tag, @fromBackingInt(@intCast(address.tag))));
             const units = address.object().?.payload.utf16_string;
             try std.testing.expect(units.len > 0);
             try std.testing.expect(std.mem.indexOfScalar(u16, units, '%') == null);
@@ -1571,12 +1571,12 @@ test "AOT Node文字コード変換サポート判定はInterpreterと同じ別�
     };
     for (supported) |value| {
         const result = try nodeEncodingSupportsBuiltin(&runtime, &.{value});
-        try std.testing.expectEqual(Tag.boolean, @as(Tag, @enumFromInt(result.tag)));
+        try std.testing.expectEqual(Tag.boolean, @as(Tag, @fromBackingInt(@intCast(result.tag))));
         try std.testing.expect(result.payload != 0);
     }
     for ([_]Value{ staticStringValue("utf"), staticStringValue("ucs2le"), staticStringValue("x-lnako-unknown") }) |value| {
         const result = try nodeEncodingSupportsBuiltin(&runtime, &.{value});
-        try std.testing.expectEqual(Tag.boolean, @as(Tag, @enumFromInt(result.tag)));
+        try std.testing.expectEqual(Tag.boolean, @as(Tag, @fromBackingInt(@intCast(result.tag))));
         try std.testing.expect(result.payload == 0);
     }
 }
@@ -1630,7 +1630,7 @@ test "AOT Node標準入力取得時は全行を対象へ設定してコールバ
     rooted[0] = try state.active_runtime.?.createFunction(testAotFunction, 1, &.{});
     const callback_arguments = [_]Value{rooted[0]};
     const result = try nodeStdinCallbackBuiltin(&state.active_runtime.?, &rooted[1], &callback_arguments);
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(result.tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(result.tag))));
     try expectUtf16String(&state.active_runtime.?, rooted[1], "B");
     try std.testing.expectEqual(@as(usize, 5), state.active_runtime.?.stdin_source.?.consumed);
 }
@@ -1715,7 +1715,7 @@ test "AOT Node母艦パスはソースパスのディレクトリを保持する
 test "AOT一時フォルダ作成は6文字suffixと衝突回避を保つ" {
     var runtime = Runtime{ .allocator = std.testing.allocator, .random_state = default_random_seed };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 2;
+    var roots = @as([2]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -1757,7 +1757,7 @@ test "AOT環境変数取得はC環境から値を読み未設定をundefinedに�
 
     arguments[0] = try runtimeUtf8String(&runtime, "LNAKO_ENVIRONMENT_VARIABLE_THAT_DOES_NOT_EXIST_7F4B");
     roots[1] = try nodeEnvironmentValueBuiltin(&runtime, &arguments);
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[1].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(roots[1].tag))));
 }
 
 test "AOT環境変数一覧取得はPATHを含む辞書を生成する" {
@@ -1875,7 +1875,7 @@ test "AOT Windows wide argv basenameはUTF-16 code unitを保持する" {
 test "AOT Nodeパス命令は非文字列入力をNodeの型診断へ変換する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    try expectAotNodePathArgumentFailure(&runtime, "path", .{ .tag = @intFromEnum(Tag.null_value) }, "The \"path\" argument must be of type string. Received null");
+    try expectAotNodePathArgumentFailure(&runtime, "path", .{ .tag = @backingInt(Tag.null_value) }, "The \"path\" argument must be of type string. Received null");
     try expectAotNodePathArgumentFailure(&runtime, "path", numberValue(123), "The \"path\" argument must be of type string. Received type number (123)");
 
     const dictionary = try runtime.createDictionary(&.{});
@@ -1898,7 +1898,7 @@ test "AOTカレントディレクトリ変更は相対パスを受けてundefine
 
     var arguments = [_]Value{try runtimeUtf8String(&runtime, ".")};
     roots[0] = try nodeChangeDirectoryBuiltin(&runtime, &arguments);
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[0].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(roots[0].tag))));
 }
 
 test "AOTカレントディレクトリ変更は失敗時にNodeのchdir診断を保持する" {
@@ -1943,7 +1943,7 @@ test "AOT対応ブラウザ一覧取得はv3.7.24の辞書をキャッシュす�
     try std.testing.expectEqual(roots[0].payload, roots[1].payload);
     try std.testing.expectEqual(@as(usize, 16), roots[0].object().?.payload.dictionary.entries.items.len);
     roots[2] = dictionaryProperty(roots[0], &.{ 'c', 'h', 'r', 'o', 'm', 'e' });
-    try std.testing.expectEqual(Tag.array, @as(Tag, @enumFromInt(roots[2].tag)));
+    try std.testing.expectEqual(Tag.array, @as(Tag, @fromBackingInt(@intCast(roots[2].tag))));
     try std.testing.expectEqual(@as(usize, 10), roots[2].object().?.payload.array.items.len);
     try expectUtf16String(&runtime, roots[2].object().?.payload.array.items[0], "145");
 }
@@ -1975,10 +1975,10 @@ test "AOT元号データはv3.7.24の配列・辞書をキャッシュする" {
     roots[0] = try eraDataBuiltin(&runtime);
     roots[1] = try eraDataBuiltin(&runtime);
     try std.testing.expectEqual(roots[0].payload, roots[1].payload);
-    try std.testing.expectEqual(Tag.array, @as(Tag, @enumFromInt(roots[0].tag)));
+    try std.testing.expectEqual(Tag.array, @as(Tag, @fromBackingInt(@intCast(roots[0].tag))));
     try std.testing.expectEqual(@as(usize, 5), roots[0].object().?.payload.array.items.len);
     roots[2] = roots[0].object().?.payload.array.items[0];
-    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(roots[2].tag)));
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @fromBackingInt(@intCast(roots[2].tag))));
     roots[3] = dictionaryProperty(roots[2], &.{ '元', '号' });
     roots[4] = dictionaryProperty(roots[2], &.{ '改', '元', '日' });
     try expectUtf16String(&runtime, roots[3], "令和");
@@ -1997,9 +1997,9 @@ test "AOT整数実数変換はJavaScript接頭辞規則を共有する" {
     var frame: RootFrame = .{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
-    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.to_int));
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.to_int));
     try std.testing.expectEqual(@as(f64, -16), @as(f64, @bitCast(roots[1].payload)));
-    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[2]), 1, @intFromEnum(aot_builtin.Command.to_float));
+    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[2]), 1, @backingInt(aot_builtin.Command.to_float));
     try std.testing.expectEqual(@as(f64, 12.5), @as(f64, @bitCast(roots[3].payload)));
 }
 
@@ -2015,11 +2015,11 @@ test "AOTのNAN判定と非数判定はNumber変換の有無を区別する" {
     var frame: RootFrame = .{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
-    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.is_nan));
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.is_nan));
     try std.testing.expectEqual(@as(u64, 1), roots[1].payload);
-    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[2]), 1, @intFromEnum(aot_builtin.Command.is_number_nan));
+    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[2]), 1, @backingInt(aot_builtin.Command.is_number_nan));
     try std.testing.expectEqual(@as(u64, 1), roots[3].payload);
-    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[4]), 1, @intFromEnum(aot_builtin.Command.is_number_nan));
+    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[4]), 1, @backingInt(aot_builtin.Command.is_number_nan));
     try std.testing.expectEqual(@as(u64, 0), roots[5].payload);
 }
 
@@ -2035,13 +2035,13 @@ test "AOT進数変換は小数基数を切り捨てて不正基数を例外に�
     var frame: RootFrame = .{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
-    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[0]), 2, @intFromEnum(aot_builtin.Command.radix));
+    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[0]), 2, @backingInt(aot_builtin.Command.radix));
     try std.testing.expectEqualSlices(u16, &.{ '1', 'f' }, roots[2].object().?.payload.utf16_string);
-    lnako_aot_builtin_call(&roots[4], @ptrCast(&roots[3]), 1, @intFromEnum(aot_builtin.Command.radix2));
+    lnako_aot_builtin_call(&roots[4], @ptrCast(&roots[3]), 1, @backingInt(aot_builtin.Command.radix2));
     try std.testing.expectEqualSlices(u16, &.{ '-', '1', '0', '1', '0' }, roots[4].object().?.payload.utf16_string);
-    lnako_aot_builtin_call(&roots[7], @ptrCast(&roots[5]), 2, @intFromEnum(aot_builtin.Command.radix));
+    lnako_aot_builtin_call(&roots[7], @ptrCast(&roots[5]), 2, @backingInt(aot_builtin.Command.radix));
     try std.testing.expectEqualSlices(u16, &.{ '3', '1' }, roots[7].object().?.payload.utf16_string);
-    lnako_aot_builtin_call(&roots[10], @ptrCast(&roots[8]), 2, @intFromEnum(aot_builtin.Command.radix));
+    lnako_aot_builtin_call(&roots[10], @ptrCast(&roots[8]), 2, @backingInt(aot_builtin.Command.radix));
     try std.testing.expect(state.active_runtime.?.has_pending_exception);
     const message = try valueUtf16Alloc(&state.active_runtime.?, state.active_runtime.?.takeException());
     defer std.testing.allocator.free(message);
@@ -2060,7 +2060,7 @@ test "AOTのRGBは各16進表現の末尾2文字を連結する" {
     var frame: RootFrame = .{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
-    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[0]), 3, @intFromEnum(aot_builtin.Command.rgb));
+    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[0]), 3, @backingInt(aot_builtin.Command.rgb));
     try std.testing.expectEqualSlices(u16, &.{ '#', '-', '1', 'a', 'N', 'a', 'N' }, roots[3].object().?.payload.utf16_string);
 }
 
@@ -2076,12 +2076,12 @@ test "AOTビット命令はNumberの32bit化とBigInt演算を区別する" {
     var frame: RootFrame = .{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
-    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[0]), 2, @intFromEnum(aot_builtin.Command.bit_and));
+    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[0]), 2, @backingInt(aot_builtin.Command.bit_and));
     try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(roots[2].payload)));
-    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[3]), 2, @intFromEnum(aot_builtin.Command.shift_left));
+    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[3]), 2, @backingInt(aot_builtin.Command.shift_left));
     try std.testing.expectEqual(@as(f64, 12), @as(f64, @bitCast(roots[5].payload)));
     roots[6] = try state.active_runtime.?.createBigInt("0n");
-    lnako_aot_builtin_call(&roots[7], @ptrCast(&roots[6]), 1, @intFromEnum(aot_builtin.Command.bit_not));
+    lnako_aot_builtin_call(&roots[7], @ptrCast(&roots[6]), 1, @backingInt(aot_builtin.Command.bit_not));
     const bigint_text = try roots[7].object().?.payload.bigint.toString(std.testing.allocator, 10);
     defer std.testing.allocator.free(bigint_text);
     try std.testing.expectEqualStrings("-1", bigint_text);
@@ -2099,15 +2099,15 @@ test "AOT算術比較命令は奇数の符号とNumber限定べき乗を保持�
     var frame: RootFrame = .{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
-    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.is_odd));
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.is_odd));
     try std.testing.expectEqual(@as(u64, 0), roots[1].payload);
-    lnako_aot_builtin_call(&roots[4], @ptrCast(&roots[2]), 2, @intFromEnum(aot_builtin.Command.power_number));
+    lnako_aot_builtin_call(&roots[4], @ptrCast(&roots[2]), 2, @backingInt(aot_builtin.Command.power_number));
     try std.testing.expectEqual(@as(f64, 256), @as(f64, @bitCast(roots[4].payload)));
-    lnako_aot_builtin_call(&roots[8], @ptrCast(&roots[5]), 3, @intFromEnum(aot_builtin.Command.in_range));
+    lnako_aot_builtin_call(&roots[8], @ptrCast(&roots[5]), 3, @backingInt(aot_builtin.Command.in_range));
     try std.testing.expectEqual(@as(u64, 1), roots[8].payload);
     roots[9] = try state.active_runtime.?.createBigInt("2n");
     roots[10] = try state.active_runtime.?.createBigInt("3n");
-    lnako_aot_builtin_call(&roots[8], @ptrCast(&roots[9]), 2, @intFromEnum(aot_builtin.Command.power_number));
+    lnako_aot_builtin_call(&roots[8], @ptrCast(&roots[9]), 2, @backingInt(aot_builtin.Command.power_number));
     try std.testing.expect(state.active_runtime.?.has_pending_exception);
 }
 
@@ -2123,16 +2123,16 @@ test "AOT集約論理範囲命令は動的値と辞書を返す" {
     var frame: RootFrame = .{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
-    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[0]), 3, @intFromEnum(aot_builtin.Command.maximum));
+    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[0]), 3, @backingInt(aot_builtin.Command.maximum));
     try std.testing.expectEqual(@as(f64, 9), @as(f64, @bitCast(roots[3].payload)));
-    lnako_aot_builtin_call(&roots[6], @ptrCast(&roots[4]), 2, @intFromEnum(aot_builtin.Command.logical_or));
+    lnako_aot_builtin_call(&roots[6], @ptrCast(&roots[4]), 2, @backingInt(aot_builtin.Command.logical_or));
     try std.testing.expectEqualStrings("右", staticUtf8(roots[6]));
-    lnako_aot_builtin_call(&roots[9], @ptrCast(&roots[7]), 2, @intFromEnum(aot_builtin.Command.range));
+    lnako_aot_builtin_call(&roots[9], @ptrCast(&roots[7]), 2, @backingInt(aot_builtin.Command.range));
     roots[10] = try state.active_runtime.?.createString(&.{ 0x5148, 0x982d });
     roots[11] = try state.active_runtime.?.createString(&.{ 0x672b, 0x5c3e });
     try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(state.active_runtime.?.indexGet(roots[9], roots[10]).payload)));
     try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(state.active_runtime.?.indexGet(roots[9], roots[11]).payload)));
-    lnako_aot_builtin_call(&roots[14], @ptrCast(&roots[12]), 2, @intFromEnum(aot_builtin.Command.maximum));
+    lnako_aot_builtin_call(&roots[14], @ptrCast(&roots[12]), 2, @backingInt(aot_builtin.Command.maximum));
     try std.testing.expect(std.math.isNan(@as(f64, @bitCast(roots[14].payload))));
 }
 
@@ -2148,16 +2148,16 @@ test "AOT空コレクション命令は独立値を返し真偽判定は日本�
     var frame: RootFrame = .{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
-    lnako_aot_builtin_call(&roots[0], null, 0, @intFromEnum(aot_builtin.Command.empty_array));
-    lnako_aot_builtin_call(&roots[1], null, 0, @intFromEnum(aot_builtin.Command.empty_array));
+    lnako_aot_builtin_call(&roots[0], null, 0, @backingInt(aot_builtin.Command.empty_array));
+    lnako_aot_builtin_call(&roots[1], null, 0, @backingInt(aot_builtin.Command.empty_array));
     try std.testing.expect(roots[0].payload != roots[1].payload);
-    lnako_aot_builtin_call(&roots[2], null, 0, @intFromEnum(aot_builtin.Command.empty_dictionary));
-    lnako_aot_builtin_call(&roots[3], null, 0, @intFromEnum(aot_builtin.Command.empty_dictionary));
+    lnako_aot_builtin_call(&roots[2], null, 0, @backingInt(aot_builtin.Command.empty_dictionary));
+    lnako_aot_builtin_call(&roots[3], null, 0, @backingInt(aot_builtin.Command.empty_dictionary));
     try std.testing.expect(roots[2].payload != roots[3].payload);
-    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[4]), 1, @intFromEnum(aot_builtin.Command.truth_label));
+    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[4]), 1, @backingInt(aot_builtin.Command.truth_label));
     try std.testing.expectEqualSlices(u16, &.{0x507d}, roots[5].object().?.payload.utf16_string);
     roots[6] = try state.active_runtime.?.createArray(&.{});
-    lnako_aot_builtin_call(&roots[7], @ptrCast(&roots[6]), 1, @intFromEnum(aot_builtin.Command.truth_label));
+    lnako_aot_builtin_call(&roots[7], @ptrCast(&roots[6]), 1, @backingInt(aot_builtin.Command.truth_label));
     try std.testing.expectEqualSlices(u16, &.{0x771f}, roots[7].object().?.payload.utf16_string);
 }
 
@@ -2173,12 +2173,12 @@ test "AOT掛命令は文字列配列反復と数値乗算を切り替える" {
     var frame: RootFrame = .{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
-    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[0]), 2, @intFromEnum(aot_builtin.Command.repeat_multiply));
+    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[0]), 2, @backingInt(aot_builtin.Command.repeat_multiply));
     try std.testing.expectEqualSlices(u16, &.{ 'a', 'b', 'a', 'b' }, roots[2].object().?.payload.utf16_string);
     roots[3] = try state.active_runtime.?.createArray(&.{ numberValue(1), numberValue(2) });
-    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[3]), 2, @intFromEnum(aot_builtin.Command.repeat_multiply));
+    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[3]), 2, @backingInt(aot_builtin.Command.repeat_multiply));
     try std.testing.expectEqual(@as(usize, 4), roots[5].object().?.payload.array.items.len);
-    lnako_aot_builtin_call(&roots[8], @ptrCast(&roots[6]), 2, @intFromEnum(aot_builtin.Command.repeat_multiply));
+    lnako_aot_builtin_call(&roots[8], @ptrCast(&roots[6]), 2, @backingInt(aot_builtin.Command.repeat_multiply));
     try std.testing.expectEqual(@as(f64, 12), @as(f64, @bitCast(roots[8].payload)));
 }
 
@@ -2196,22 +2196,22 @@ test "AOT文字長検索と要素数はUnicode scalarとUTF-16を区別する" {
     defer lnako_aot_pop_roots(&frame);
     roots[0] = try state.active_runtime.?.createString(&.{ 'A', 0xd83d, 0xde00, 'B' });
     roots[1] = try state.active_runtime.?.createString(&.{ 0xd83d, 0xde00, 'B' });
-    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.unicode_length));
+    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.unicode_length));
     try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(roots[2].payload)));
-    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[0]), 2, @intFromEnum(aot_builtin.Command.codepoint_find));
+    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[0]), 2, @backingInt(aot_builtin.Command.codepoint_find));
     try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(roots[3].payload)));
-    lnako_aot_builtin_call(&roots[4], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.element_count));
+    lnako_aot_builtin_call(&roots[4], @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.element_count));
     try std.testing.expectEqual(@as(f64, 4), @as(f64, @bitCast(roots[4].payload)));
     roots[5] = staticStringValue("A");
     const starts_arguments = [_]Value{ roots[0], roots[5] };
-    lnako_aot_builtin_call(&roots[6], &starts_arguments, starts_arguments.len, @intFromEnum(aot_builtin.Command.string_starts));
+    lnako_aot_builtin_call(&roots[6], &starts_arguments, starts_arguments.len, @backingInt(aot_builtin.Command.string_starts));
     try std.testing.expect(roots[6].payload != 0);
     roots[7] = staticStringValue("B");
     const ends_arguments = [_]Value{ roots[0], roots[7] };
-    lnako_aot_builtin_call(&roots[8], &ends_arguments, ends_arguments.len, @intFromEnum(aot_builtin.Command.string_ends));
+    lnako_aot_builtin_call(&roots[8], &ends_arguments, ends_arguments.len, @backingInt(aot_builtin.Command.string_ends));
     try std.testing.expect(roots[8].payload != 0);
     roots[9] = try state.active_runtime.?.createArray(&.{ numberValue(1), numberValue(2) });
-    lnako_aot_builtin_call(&roots[10], @ptrCast(&roots[9]), 1, @intFromEnum(aot_builtin.Command.element_count));
+    lnako_aot_builtin_call(&roots[10], @ptrCast(&roots[9]), 1, @backingInt(aot_builtin.Command.element_count));
     try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(roots[10].payload)));
 }
 
@@ -2226,40 +2226,40 @@ test "AOT文字数専用ABIは文字列化・例外・ToPrimitive境界をgeneri
     state.active_runtime.?.perf_counters_checked = true;
     state.active_runtime.?.perf_counters_enabled = true;
 
-    var roots = [_]Value{.{}} ** 12;
+    var roots = @as([12]Value, @splat(.{}));
     var frame = RootFrame{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
 
     roots[0] = try state.active_runtime.?.createString(&.{ 'A', 0xd83d, 0xde00, 'B' });
-    lnako_aot_unicode_length_call_site(&roots[1], &roots[0], @intFromEnum(aot_builtin.Command.unicode_length), 0x2350);
+    lnako_aot_unicode_length_call_site(&roots[1], &roots[0], @backingInt(aot_builtin.Command.unicode_length), 0x2350);
     try std.testing.expectEqual(@as(f64, 3), valueToNumber(roots[1]));
-    lnako_aot_unicode_length_call_site(&roots[0], &roots[0], @intFromEnum(aot_builtin.Command.unicode_length), 0x2356);
+    lnako_aot_unicode_length_call_site(&roots[0], &roots[0], @backingInt(aot_builtin.Command.unicode_length), 0x2356);
     try std.testing.expectEqual(@as(f64, 3), valueToNumber(roots[0]));
 
     roots[2] = numberValue(123);
-    lnako_aot_unicode_length_call_site(&roots[3], &roots[2], @intFromEnum(aot_builtin.Command.unicode_length), 0x2351);
+    lnako_aot_unicode_length_call_site(&roots[3], &roots[2], @backingInt(aot_builtin.Command.unicode_length), 0x2351);
     try std.testing.expectEqual(@as(f64, 3), valueToNumber(roots[3]));
 
     roots[4] = try state.active_runtime.?.createArray(&.{ numberValue(1), staticStringValue("😀") });
-    lnako_aot_unicode_length_call_site(&roots[5], &roots[4], @intFromEnum(aot_builtin.Command.unicode_length), 0x2352);
+    lnako_aot_unicode_length_call_site(&roots[5], &roots[4], @backingInt(aot_builtin.Command.unicode_length), 0x2352);
     try std.testing.expectEqual(@as(f64, 3), valueToNumber(roots[5]));
 
     roots[6] = try state.active_runtime.?.createDictionary(&.{});
-    lnako_aot_unicode_length_call_site(&roots[7], &roots[6], @intFromEnum(aot_builtin.Command.unicode_length), 0x2353);
-    lnako_aot_builtin_call(&roots[8], @ptrCast(&roots[6]), 1, @intFromEnum(aot_builtin.Command.unicode_length));
+    lnako_aot_unicode_length_call_site(&roots[7], &roots[6], @backingInt(aot_builtin.Command.unicode_length), 0x2353);
+    lnako_aot_builtin_call(&roots[8], @ptrCast(&roots[6]), 1, @backingInt(aot_builtin.Command.unicode_length));
     try std.testing.expectEqual(roots[8].payload, roots[7].payload);
 
     roots[9] = try state.active_runtime.?.createFunction(testAotCustomString, 0, &.{});
     try state.active_runtime.?.setDictionary(&roots[6].object().?.payload.dictionary, staticStringValue("toString"), roots[9]);
-    lnako_aot_unicode_length_call_site(&roots[7], &roots[6], @intFromEnum(aot_builtin.Command.unicode_length), 0x2354);
+    lnako_aot_unicode_length_call_site(&roots[7], &roots[6], @backingInt(aot_builtin.Command.unicode_length), 0x2354);
     try std.testing.expectEqual(@as(f64, 6), valueToNumber(roots[7]));
 
     roots[10] = try state.active_runtime.?.createFunction(testAotToPrimitiveObject, 0, &.{});
     try state.active_runtime.?.setDictionary(&roots[6].object().?.payload.dictionary, staticStringValue("toString"), roots[10]);
     try state.active_runtime.?.setDictionary(&roots[6].object().?.payload.dictionary, staticStringValue("valueOf"), roots[10]);
-    lnako_aot_unicode_length_call_site(&roots[11], &roots[6], @intFromEnum(aot_builtin.Command.unicode_length), 0x2355);
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[11].tag)));
+    lnako_aot_unicode_length_call_site(&roots[11], &roots[6], @backingInt(aot_builtin.Command.unicode_length), 0x2355);
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(roots[11].tag))));
     try std.testing.expect(state.active_runtime.?.has_pending_exception);
     _ = state.active_runtime.?.takeException();
     const unicode_counters = state.active_runtime.?.counters.aot_unicode_length;
@@ -2335,7 +2335,7 @@ test "AOT index_setは先行するindex_getのpending例外を上書きしない
     // ensure_array_varもスロットを上書きせず先行例外を保持する
     var slot: Value = .{};
     lnako_aot_ensure_array_var(&slot);
-    try std.testing.expectEqual(@intFromEnum(Tag.undefined), slot.tag);
+    try std.testing.expectEqual(@backingInt(Tag.undefined), slot.tag);
     try expectUtf16String(&state.active_runtime.?, state.active_runtime.?.pending_exception, "Cannot read properties of undefined (reading '0')");
     _ = state.active_runtime.?.takeException();
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
@@ -2345,13 +2345,13 @@ test "AOT何文字目はArray.from要素境界と辞書ToLengthを再現する" 
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
     runtime.next_collection = 1;
-    var roots = [_]Value{.{}} ** 24;
+    var roots = @as([24]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
 
     roots[0] = try runtime.createArray(&.{staticStringValue("a")});
-    roots[1] = try runtime.createArray(&.{ staticStringValue("a"), .{ .tag = @intFromEnum(Tag.null_value) } });
+    roots[1] = try runtime.createArray(&.{ staticStringValue("a"), .{ .tag = @backingInt(Tag.null_value) } });
     try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, roots[0], roots[1]));
     roots[2] = try runtime.createArray(&.{
         staticStringValue("a"),
@@ -2379,7 +2379,7 @@ test "AOT何文字目はArray.from要素境界と辞書ToLengthを再現する" 
     try std.testing.expectEqual(@as(usize, 2), try codePointFindBuiltin(&runtime, roots[7], staticStringValue("y")));
     roots[8] = try runtime.createDictionary(&.{ staticStringValue("length"), numberValue(1.9), staticStringValue("0"), staticStringValue("x"), staticStringValue("1"), staticStringValue("y") });
     try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, roots[8], staticStringValue("x")));
-    roots[9] = try runtime.createDictionary(&.{ staticStringValue("length"), .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 }, staticStringValue("0"), staticStringValue("x") });
+    roots[9] = try runtime.createDictionary(&.{ staticStringValue("length"), .{ .tag = @backingInt(Tag.boolean), .payload = 1 }, staticStringValue("0"), staticStringValue("x") });
     try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, roots[9], staticStringValue("x")));
     roots[10] = try runtime.createArray(&.{numberValue(2)});
     roots[11] = try runtime.createDictionary(&.{ staticStringValue("length"), roots[10], staticStringValue("0"), staticStringValue("x"), staticStringValue("1"), staticStringValue("y") });
@@ -2388,7 +2388,7 @@ test "AOT何文字目はArray.from要素境界と辞書ToLengthを再現する" 
     try std.testing.expectEqual(@as(usize, 0), try codePointFindBuiltin(&runtime, roots[12], staticStringValue("x")));
     roots[13] = try runtime.createDictionary(&.{ staticStringValue("length"), numberValue(std.math.nan(f64)), staticStringValue("0"), staticStringValue("x") });
     try std.testing.expectEqual(@as(usize, 0), try codePointFindBuiltin(&runtime, roots[13], staticStringValue("x")));
-    roots[14] = try runtime.createDictionary(&.{ staticStringValue("length"), .{ .tag = @intFromEnum(Tag.null_value) }, staticStringValue("0"), staticStringValue("x") });
+    roots[14] = try runtime.createDictionary(&.{ staticStringValue("length"), .{ .tag = @backingInt(Tag.null_value) }, staticStringValue("0"), staticStringValue("x") });
     try std.testing.expectEqual(@as(usize, 0), try codePointFindBuiltin(&runtime, roots[14], staticStringValue("x")));
 
     roots[19] = try runtime.createDictionary(&.{
@@ -2407,7 +2407,7 @@ test "AOT何文字目はArray.from要素境界と辞書ToLengthを再現する" 
     try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, staticStringValue("abc"), roots[15]));
     try std.testing.expectEqual(@as(usize, 0), try codePointFindBuiltin(&runtime, roots[15], staticStringValue("a")));
 
-    const null_value: Value = .{ .tag = @intFromEnum(Tag.null_value) };
+    const null_value: Value = .{ .tag = @backingInt(Tag.null_value) };
     try std.testing.expectError(error.NakoException, codePointFindBuiltin(&runtime, null_value, staticStringValue("a")));
     const null_message = try valueUtf16Alloc(&runtime, runtime.takeException());
     defer runtime.allocator.free(null_message);
@@ -2445,7 +2445,7 @@ test "AOT何文字目の要素列構築は割当失敗で入力を壊さない" 
 test "AOT何文字目の文字列fast pathはスカラーwindowを比較する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 5;
+    var roots = @as([5]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -2484,8 +2484,8 @@ test "AOT何文字目のdispatch例外は文言を保持し次の呼出しへ回
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
 
-    const command = @intFromEnum(aot_builtin.Command.codepoint_find);
-    roots[0] = .{ .tag = @intFromEnum(Tag.null_value) };
+    const command = @backingInt(aot_builtin.Command.codepoint_find);
+    roots[0] = .{ .tag = @backingInt(Tag.null_value) };
     roots[1] = staticStringValue("a");
     lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[0]), 2, command);
     try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
@@ -2534,26 +2534,26 @@ test "AOT加算系命令はparseFloatとBigIntとJavaScript加算を分離する
     defer lnako_aot_pop_roots(&frame);
     roots[0] = staticStringValue("1.5rest");
     roots[1] = numberValue(2);
-    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[0]), 2, @intFromEnum(aot_builtin.Command.add_parsed));
+    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[0]), 2, @backingInt(aot_builtin.Command.add_parsed));
     try std.testing.expectEqual(@as(f64, 3.5), @as(f64, @bitCast(roots[2].payload)));
     roots[3] = staticStringValue("2");
     roots[4] = try state.active_runtime.?.createBigInt("3n");
-    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[3]), 2, @intFromEnum(aot_builtin.Command.add_parsed));
+    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[3]), 2, @backingInt(aot_builtin.Command.add_parsed));
     const bigint_text = try roots[5].object().?.payload.bigint.toString(std.testing.allocator, 10);
     defer std.testing.allocator.free(bigint_text);
     try std.testing.expectEqualStrings("5", bigint_text);
     const sum_arguments = [_]Value{ numberValue(1), staticStringValue("2.5x"), numberValue(3) };
-    lnako_aot_builtin_call(&roots[6], &sum_arguments, sum_arguments.len, @intFromEnum(aot_builtin.Command.sum_parsed));
+    lnako_aot_builtin_call(&roots[6], &sum_arguments, sum_arguments.len, @backingInt(aot_builtin.Command.sum_parsed));
     try std.testing.expectEqual(@as(f64, 6.5), @as(f64, @bitCast(roots[6].payload)));
     roots[7] = try state.active_runtime.?.createArray(&.{ numberValue(1), staticStringValue("x"), numberValue(2) });
     const array_sum_arguments = [_]Value{ roots[7], numberValue(100) };
-    lnako_aot_builtin_call(&roots[8], &array_sum_arguments, array_sum_arguments.len, @intFromEnum(aot_builtin.Command.sum_parsed));
+    lnako_aot_builtin_call(&roots[8], &array_sum_arguments, array_sum_arguments.len, @backingInt(aot_builtin.Command.sum_parsed));
     try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(roots[8].payload)));
     const sequential_arguments = [_]Value{ staticStringValue("a"), staticStringValue("b"), staticStringValue("c") };
-    lnako_aot_builtin_call(&roots[9], &sequential_arguments, sequential_arguments.len, @intFromEnum(aot_builtin.Command.sequential_add));
+    lnako_aot_builtin_call(&roots[9], &sequential_arguments, sequential_arguments.len, @backingInt(aot_builtin.Command.sequential_add));
     try std.testing.expectEqualSlices(u16, &.{ 'b', 'c', 'a' }, roots[9].object().?.payload.utf16_string);
-    lnako_aot_builtin_call(&roots[10], null, 0, @intFromEnum(aot_builtin.Command.sequential_add));
-    lnako_aot_builtin_call(&roots[11], null, 0, @intFromEnum(aot_builtin.Command.sequential_add));
+    lnako_aot_builtin_call(&roots[10], null, 0, @backingInt(aot_builtin.Command.sequential_add));
+    lnako_aot_builtin_call(&roots[11], null, 0, @backingInt(aot_builtin.Command.sequential_add));
     try std.testing.expectEqual(roots[10].payload, roots[11].payload);
 }
 
@@ -2571,11 +2571,11 @@ test "AOT文字コード命令は補助平面と配列と動的例外文言を�
     defer lnako_aot_pop_roots(&frame);
 
     roots[0] = numberValue(0x1f600);
-    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.chr));
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.chr));
     try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00 }, roots[1].object().?.payload.utf16_string);
 
     roots[2] = try state.active_runtime.?.createArray(&.{ numberValue(65), numberValue(0x1f600), numberValue(66) });
-    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[2]), 1, @intFromEnum(aot_builtin.Command.chr));
+    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[2]), 1, @backingInt(aot_builtin.Command.chr));
     const characters = roots[3].object().?.payload.array.items;
     try std.testing.expectEqual(@as(usize, 3), characters.len);
     try std.testing.expectEqualSlices(u16, &.{'A'}, characters[0].object().?.payload.utf16_string);
@@ -2583,16 +2583,16 @@ test "AOT文字コード命令は補助平面と配列と動的例外文言を�
     try std.testing.expectEqualSlices(u16, &.{'B'}, characters[2].object().?.payload.utf16_string);
 
     roots[4] = staticStringValue("😀");
-    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[4]), 1, @intFromEnum(aot_builtin.Command.asc));
+    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[4]), 1, @backingInt(aot_builtin.Command.asc));
     try std.testing.expectEqual(@as(f64, 0x1f600), @as(f64, @bitCast(roots[5].payload)));
-    roots[6] = try state.active_runtime.?.createArray(&.{ staticStringValue("A"), staticStringValue("😀"), staticStringValue(""), .{ .tag = @intFromEnum(Tag.null_value) }, numberValue(12) });
-    lnako_aot_builtin_call(&roots[7], @ptrCast(&roots[6]), 1, @intFromEnum(aot_builtin.Command.asc));
+    roots[6] = try state.active_runtime.?.createArray(&.{ staticStringValue("A"), staticStringValue("😀"), staticStringValue(""), .{ .tag = @backingInt(Tag.null_value) }, numberValue(12) });
+    lnako_aot_builtin_call(&roots[7], @ptrCast(&roots[6]), 1, @backingInt(aot_builtin.Command.asc));
     const codes = roots[7].object().?.payload.array.items;
     try std.testing.expectEqual(@as(usize, 5), codes.len);
     try std.testing.expectEqualSlices(f64, &.{ 65, 0x1f600, 0, 110, 49 }, &.{ valueToNumber(codes[0]), valueToNumber(codes[1]), valueToNumber(codes[2]), valueToNumber(codes[3]), valueToNumber(codes[4]) });
 
     roots[8] = numberValue(-1);
-    lnako_aot_builtin_call(&roots[9], @ptrCast(&roots[8]), 1, @intFromEnum(aot_builtin.Command.chr));
+    lnako_aot_builtin_call(&roots[9], @ptrCast(&roots[8]), 1, @backingInt(aot_builtin.Command.chr));
     try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
     var taken: Value = .{};
     lnako_aot_exception_take(&taken);
@@ -2615,17 +2615,17 @@ test "AOT文字列挿入検索はUnicode scalar位置と小数開始値を保持
     defer lnako_aot_pop_roots(&frame);
 
     const insert_arguments = [_]Value{ staticStringValue("A😀B"), numberValue(2), staticStringValue("X") };
-    lnako_aot_builtin_call(&roots[0], &insert_arguments, insert_arguments.len, @intFromEnum(aot_builtin.Command.string_insert));
+    lnako_aot_builtin_call(&roots[0], &insert_arguments, insert_arguments.len, @backingInt(aot_builtin.Command.string_insert));
     try std.testing.expectEqualSlices(u16, &.{ 'A', 'X', 0xd83d, 0xde00, 'B' }, roots[0].object().?.payload.utf16_string);
     const nan_position_arguments = [_]Value{ staticStringValue("ABC"), staticStringValue("2rest"), staticStringValue("X") };
-    lnako_aot_builtin_call(&roots[1], &nan_position_arguments, nan_position_arguments.len, @intFromEnum(aot_builtin.Command.string_insert));
+    lnako_aot_builtin_call(&roots[1], &nan_position_arguments, nan_position_arguments.len, @backingInt(aot_builtin.Command.string_insert));
     try std.testing.expectEqualSlices(u16, &.{ 'X', 'A', 'B', 'C' }, roots[1].object().?.payload.utf16_string);
 
     const fractional_search = [_]Value{ staticStringValue("A😀B😀"), numberValue(2.9), staticStringValue("😀") };
-    lnako_aot_builtin_call(&roots[2], &fractional_search, fractional_search.len, @intFromEnum(aot_builtin.Command.string_search));
+    lnako_aot_builtin_call(&roots[2], &fractional_search, fractional_search.len, @backingInt(aot_builtin.Command.string_search));
     try std.testing.expectEqual(@as(f64, 2.9), valueToNumber(roots[2]));
     const nan_search = [_]Value{ staticStringValue("A😀B😀"), staticStringValue("2rest"), staticStringValue("😀") };
-    lnako_aot_builtin_call(&roots[3], &nan_search, nan_search.len, @intFromEnum(aot_builtin.Command.string_search));
+    lnako_aot_builtin_call(&roots[3], &nan_search, nan_search.len, @backingInt(aot_builtin.Command.string_search));
     try std.testing.expectEqual(@as(f64, 0), valueToNumber(roots[3]));
 }
 
@@ -2646,7 +2646,7 @@ test "AOT出現命令は文字列検索と配列のSameValueZeroを保持する"
     const nan = numberValue(std.math.nan(f64));
     const minus_zero = numberValue(-0.0);
     const undefined_value: Value = .{};
-    const null_value: Value = .{ .tag = @intFromEnum(Tag.null_value) };
+    const null_value: Value = .{ .tag = @backingInt(Tag.null_value) };
     roots[0] = try state.active_runtime.?.createArray(&.{ nan, numberValue(0), undefined_value, null_value, staticStringValue("1") });
     const array_cases = [_]struct { needle: Value, expected: bool }{
         .{ .needle = numberValue(std.math.nan(f64)), .expected = true },
@@ -2658,26 +2658,26 @@ test "AOT出現命令は文字列検索と配列のSameValueZeroを保持する"
     };
     for (array_cases, 1..) |case, index| {
         const arguments = [_]Value{ roots[0], case.needle };
-        lnako_aot_builtin_call(&roots[index], &arguments, arguments.len, @intFromEnum(aot_builtin.Command.occurrence));
+        lnako_aot_builtin_call(&roots[index], &arguments, arguments.len, @backingInt(aot_builtin.Command.occurrence));
         try std.testing.expectEqual(case.expected, roots[index].payload != 0);
     }
 
     roots[8] = try state.active_runtime.?.createArray(&.{numberValue(1)});
     roots[9] = try state.active_runtime.?.createArray(&.{roots[8]});
     const same_array_arguments = [_]Value{ roots[9], roots[8] };
-    lnako_aot_builtin_call(&roots[7], &same_array_arguments, same_array_arguments.len, @intFromEnum(aot_builtin.Command.occurrence));
+    lnako_aot_builtin_call(&roots[7], &same_array_arguments, same_array_arguments.len, @backingInt(aot_builtin.Command.occurrence));
     try std.testing.expect(roots[7].payload != 0);
 
     const string_cases = [_]struct { source: Value, needle: Value, expected: bool }{
         .{ .source = staticStringValue("A😀B"), .needle = staticStringValue("😀"), .expected = true },
         .{ .source = staticStringValue("A😀B"), .needle = staticStringValue(""), .expected = true },
         .{ .source = staticStringValue("A\x00B"), .needle = staticStringValue("\x00"), .expected = true },
-        .{ .source = .{ .tag = @intFromEnum(Tag.null_value) }, .needle = staticStringValue("null"), .expected = true },
+        .{ .source = .{ .tag = @backingInt(Tag.null_value) }, .needle = staticStringValue("null"), .expected = true },
         .{ .source = .{}, .needle = staticStringValue("undefined"), .expected = true },
     };
     for (string_cases) |case| {
         const arguments = [_]Value{ case.source, case.needle };
-        lnako_aot_builtin_call(&roots[6], &arguments, arguments.len, @intFromEnum(aot_builtin.Command.occurrence));
+        lnako_aot_builtin_call(&roots[6], &arguments, arguments.len, @backingInt(aot_builtin.Command.occurrence));
         try std.testing.expectEqual(case.expected, roots[6].payload != 0);
     }
 }
@@ -2701,58 +2701,58 @@ test "AOT配列結合と配列検索は公式のArray境界とGCを保つ" {
     try state.active_runtime.?.indexSet(roots[2], numberValue(0), roots[2]);
     roots[0] = try state.active_runtime.?.createArray(&.{
         numberValue(1),
-        .{ .tag = @intFromEnum(Tag.null_value) },
+        .{ .tag = @backingInt(Tag.null_value) },
         .{},
         numberValue(3),
         roots[1],
         roots[2],
     });
     const join_arguments = [_]Value{ roots[0], staticStringValue("|") };
-    lnako_aot_builtin_call(&roots[3], &join_arguments, join_arguments.len, @intFromEnum(aot_builtin.Command.array_join));
+    lnako_aot_builtin_call(&roots[3], &join_arguments, join_arguments.len, @backingInt(aot_builtin.Command.array_join));
     try std.testing.expectEqualSlices(u16, &.{ '1', '|', '|', '|', '3', '|', '4', ',', '5', '|' }, roots[3].object().?.payload.utf16_string);
     const only_join_arguments = [_]Value{roots[0]};
-    lnako_aot_builtin_call(&roots[4], &only_join_arguments, only_join_arguments.len, @intFromEnum(aot_builtin.Command.array_join_only));
+    lnako_aot_builtin_call(&roots[4], &only_join_arguments, only_join_arguments.len, @backingInt(aot_builtin.Command.array_join_only));
     try std.testing.expectEqualSlices(u16, &.{ '1', '3', '4', ',', '5' }, roots[4].object().?.payload.utf16_string);
 
     const non_array_arguments = [_]Value{ staticStringValue("A\n😀\n"), staticStringValue("-") };
-    lnako_aot_builtin_call(&roots[5], &non_array_arguments, non_array_arguments.len, @intFromEnum(aot_builtin.Command.array_join));
+    lnako_aot_builtin_call(&roots[5], &non_array_arguments, non_array_arguments.len, @backingInt(aot_builtin.Command.array_join));
     try std.testing.expectEqualSlices(u16, &.{ 'A', '-', 0xd83d, 0xde00, '-' }, roots[5].object().?.payload.utf16_string);
     roots[6] = try state.active_runtime.?.createString(&.{ 'A', 0xd800, 0, 'B' });
     const lone_surrogate_arguments = [_]Value{ roots[6], staticStringValue("-") };
-    lnako_aot_builtin_call(&roots[7], &lone_surrogate_arguments, lone_surrogate_arguments.len, @intFromEnum(aot_builtin.Command.array_join));
+    lnako_aot_builtin_call(&roots[7], &lone_surrogate_arguments, lone_surrogate_arguments.len, @backingInt(aot_builtin.Command.array_join));
     try std.testing.expectEqualSlices(u16, roots[6].object().?.payload.utf16_string, roots[7].object().?.payload.utf16_string);
 
     roots[8] = try state.active_runtime.?.createBigInt("12n");
     roots[9] = try state.active_runtime.?.createDictionary(&.{});
-    roots[10] = try state.active_runtime.?.createArray(&.{ roots[8], roots[9], .{ .tag = @intFromEnum(Tag.null_value) }, .{} });
+    roots[10] = try state.active_runtime.?.createArray(&.{ roots[8], roots[9], .{ .tag = @backingInt(Tag.null_value) }, .{} });
     const object_values_arguments = [_]Value{ roots[10], staticStringValue("|") };
-    lnako_aot_builtin_call(&roots[11], &object_values_arguments, object_values_arguments.len, @intFromEnum(aot_builtin.Command.array_join));
+    lnako_aot_builtin_call(&roots[11], &object_values_arguments, object_values_arguments.len, @backingInt(aot_builtin.Command.array_join));
     try std.testing.expectEqualSlices(u16, &.{ '1', '2', '|', '[', 'o', 'b', 'j', 'e', 'c', 't', ' ', 'O', 'b', 'j', 'e', 'c', 't', ']', '|', '|' }, roots[11].object().?.payload.utf16_string);
     const bigint_separator_arguments = [_]Value{ roots[1], roots[8] };
-    lnako_aot_builtin_call(&roots[12], &bigint_separator_arguments, bigint_separator_arguments.len, @intFromEnum(aot_builtin.Command.array_join));
+    lnako_aot_builtin_call(&roots[12], &bigint_separator_arguments, bigint_separator_arguments.len, @backingInt(aot_builtin.Command.array_join));
     try std.testing.expectEqualSlices(u16, &.{ '4', '1', '2', '5' }, roots[12].object().?.payload.utf16_string);
     lnako_aot_function_new(&roots[18], testAotFunction, 1, null, 0);
     roots[19] = try state.active_runtime.?.createArray(&.{roots[18]});
     const function_value_arguments = [_]Value{ roots[19], staticStringValue("|") };
-    lnako_aot_builtin_call(&roots[12], &function_value_arguments, function_value_arguments.len, @intFromEnum(aot_builtin.Command.array_join));
+    lnako_aot_builtin_call(&roots[12], &function_value_arguments, function_value_arguments.len, @backingInt(aot_builtin.Command.array_join));
     try std.testing.expectEqualSlices(u16, &.{ 'f', 'u', 'n', 'c', 't', 'i', 'o', 'n', ' ', '(', ')', ' ', '{', ' ', '[', 'n', 'a', 't', 'i', 'v', 'e', ' ', 'c', 'o', 'd', 'e', ']', ' ', '}' }, roots[12].object().?.payload.utf16_string);
 
     const sparse = try state.active_runtime.?.createArray(&.{});
     roots[13] = sparse;
     try state.active_runtime.?.indexSet(sparse, numberValue(2), numberValue(3));
     const sparse_join_arguments = [_]Value{ roots[13], staticStringValue("|") };
-    lnako_aot_builtin_call(&roots[14], &sparse_join_arguments, sparse_join_arguments.len, @intFromEnum(aot_builtin.Command.array_join));
+    lnako_aot_builtin_call(&roots[14], &sparse_join_arguments, sparse_join_arguments.len, @backingInt(aot_builtin.Command.array_join));
     try std.testing.expectEqualSlices(u16, &.{ '|', '|', '3' }, roots[14].object().?.payload.utf16_string);
 
     const nan = numberValue(std.math.nan(f64));
-    roots[15] = try state.active_runtime.?.createArray(&.{ nan, numberValue(0), staticStringValue("1"), numberValue(1), .{ .tag = @intFromEnum(Tag.null_value) }, .{}, roots[1] });
+    roots[15] = try state.active_runtime.?.createArray(&.{ nan, numberValue(0), staticStringValue("1"), numberValue(1), .{ .tag = @backingInt(Tag.null_value) }, .{}, roots[1] });
     roots[17] = try state.active_runtime.?.createArray(&.{ numberValue(4), numberValue(5) });
     const search_cases = [_]struct { needle: Value, expected: f64 }{
         .{ .needle = nan, .expected = -1 },
         .{ .needle = numberValue(-0.0), .expected = 1 },
         .{ .needle = staticStringValue("1"), .expected = 2 },
         .{ .needle = numberValue(1), .expected = 3 },
-        .{ .needle = .{ .tag = @intFromEnum(Tag.null_value) }, .expected = 4 },
+        .{ .needle = .{ .tag = @backingInt(Tag.null_value) }, .expected = 4 },
         .{ .needle = .{}, .expected = 5 },
         .{ .needle = roots[1], .expected = 6 },
         .{ .needle = roots[17], .expected = -1 },
@@ -2760,11 +2760,11 @@ test "AOT配列結合と配列検索は公式のArray境界とGCを保つ" {
     var search_result: Value = .{};
     for (search_cases) |case| {
         const arguments = [_]Value{ roots[15], case.needle };
-        lnako_aot_builtin_call(&search_result, &arguments, arguments.len, @intFromEnum(aot_builtin.Command.array_search));
+        lnako_aot_builtin_call(&search_result, &arguments, arguments.len, @backingInt(aot_builtin.Command.array_search));
         try std.testing.expectEqual(case.expected, valueToNumber(search_result));
     }
     const non_array_search = [_]Value{ staticStringValue("abc"), staticStringValue("a") };
-    lnako_aot_builtin_call(&roots[16], &non_array_search, non_array_search.len, @intFromEnum(aot_builtin.Command.array_search));
+    lnako_aot_builtin_call(&roots[16], &non_array_search, non_array_search.len, @backingInt(aot_builtin.Command.array_search));
     try std.testing.expectEqual(@as(f64, -1), valueToNumber(roots[16]));
 }
 
@@ -2784,14 +2784,14 @@ test "AOT配列変更命令はspliceの数値化と辞書のtruthy規則を保�
 
     roots[0] = try state.active_runtime.?.createArray(&.{ numberValue(1), numberValue(2), numberValue(3) });
     const insert_arguments = [_]Value{ roots[0], numberValue(-1.5), numberValue(9) };
-    lnako_aot_builtin_call(&roots[1], &insert_arguments, insert_arguments.len, @intFromEnum(aot_builtin.Command.array_insert));
+    lnako_aot_builtin_call(&roots[1], &insert_arguments, insert_arguments.len, @backingInt(aot_builtin.Command.array_insert));
     try std.testing.expectEqual(@as(usize, 0), roots[1].object().?.payload.array.items.len);
     try std.testing.expectEqualSlices(Value, &.{ numberValue(1), numberValue(2), numberValue(9), numberValue(3) }, roots[0].object().?.payload.array.items);
 
     roots[2] = try state.active_runtime.?.createArray(&.{ numberValue(1), numberValue(4) });
     roots[3] = try state.active_runtime.?.createArray(&.{ numberValue(2), numberValue(3) });
     const many_arguments = [_]Value{ roots[2], numberValue(1), roots[3] };
-    lnako_aot_builtin_call(&roots[4], &many_arguments, many_arguments.len, @intFromEnum(aot_builtin.Command.array_insert_many));
+    lnako_aot_builtin_call(&roots[4], &many_arguments, many_arguments.len, @backingInt(aot_builtin.Command.array_insert_many));
     try std.testing.expectEqual(roots[2].payload, roots[4].payload);
     try std.testing.expectEqualSlices(Value, &.{ numberValue(1), numberValue(2), numberValue(3), numberValue(4) }, roots[2].object().?.payload.array.items);
 
@@ -2799,71 +2799,71 @@ test "AOT配列変更命令はspliceの数値化と辞書のtruthy規則を保�
     // array.  The native runtime copies b before mutating a.
     roots[5] = try state.active_runtime.?.createArray(&.{ numberValue(1), numberValue(2) });
     const self_arguments = [_]Value{ roots[5], numberValue(1), roots[5] };
-    lnako_aot_builtin_call(&roots[6], &self_arguments, self_arguments.len, @intFromEnum(aot_builtin.Command.array_insert_many));
+    lnako_aot_builtin_call(&roots[6], &self_arguments, self_arguments.len, @backingInt(aot_builtin.Command.array_insert_many));
     try std.testing.expectEqualSlices(Value, &.{ numberValue(1), numberValue(1), numberValue(2), numberValue(2) }, roots[5].object().?.payload.array.items);
 
     roots[7] = try state.active_runtime.?.createArray(&.{ numberValue(0), numberValue(1), numberValue(2), numberValue(3) });
     const take_arguments = [_]Value{ roots[7], staticStringValue("1.9"), staticStringValue("2.9") };
-    lnako_aot_builtin_call(&roots[8], &take_arguments, take_arguments.len, @intFromEnum(aot_builtin.Command.array_take));
+    lnako_aot_builtin_call(&roots[8], &take_arguments, take_arguments.len, @backingInt(aot_builtin.Command.array_take));
     try std.testing.expectEqualSlices(Value, &.{ numberValue(1), numberValue(2) }, roots[8].object().?.payload.array.items);
     try std.testing.expectEqualSlices(Value, &.{ numberValue(0), numberValue(3) }, roots[7].object().?.payload.array.items);
 
     roots[9] = try state.active_runtime.?.createArray(&.{ numberValue(0), numberValue(1), numberValue(2), numberValue(3) });
     roots[10] = try state.active_runtime.?.createDictionary(&.{ staticStringValue("先頭"), numberValue(1), staticStringValue("末尾"), numberValue(2) });
     const range_arguments = [_]Value{ roots[9], roots[10] };
-    lnako_aot_builtin_call(&roots[11], &range_arguments, range_arguments.len, @intFromEnum(aot_builtin.Command.array_cut));
+    lnako_aot_builtin_call(&roots[11], &range_arguments, range_arguments.len, @backingInt(aot_builtin.Command.array_cut));
     try std.testing.expectEqualSlices(Value, &.{ numberValue(1), numberValue(2) }, roots[11].object().?.payload.array.items);
     try std.testing.expectEqualSlices(Value, &.{ numberValue(0), numberValue(3) }, roots[9].object().?.payload.array.items);
 
     roots[12] = try state.active_runtime.?.createDictionary(&.{
         staticStringValue("zero"),  numberValue(0),
         staticStringValue("yes"),   numberValue(7),
-        staticStringValue("false"), .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 },
+        staticStringValue("false"), .{ .tag = @backingInt(Tag.boolean), .payload = 0 },
     });
     const zero_key = [_]Value{ roots[12], staticStringValue("zero") };
-    lnako_aot_builtin_call(&roots[13], &zero_key, zero_key.len, @intFromEnum(aot_builtin.Command.array_cut));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[13].tag)));
+    lnako_aot_builtin_call(&roots[13], &zero_key, zero_key.len, @backingInt(aot_builtin.Command.array_cut));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(roots[13].tag))));
     try std.testing.expectEqual(@as(usize, 3), roots[12].object().?.payload.dictionary.entries.items.len);
     const yes_key = [_]Value{ roots[12], staticStringValue("yes") };
-    lnako_aot_builtin_call(&roots[14], &yes_key, yes_key.len, @intFromEnum(aot_builtin.Command.array_cut));
+    lnako_aot_builtin_call(&roots[14], &yes_key, yes_key.len, @backingInt(aot_builtin.Command.array_cut));
     try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[14]));
     try std.testing.expectEqual(@as(usize, 2), roots[12].object().?.payload.dictionary.entries.items.len);
 
     roots[15] = try state.active_runtime.?.createArray(&.{ numberValue(1), numberValue(2) });
     const pop_arguments = [_]Value{roots[15]};
-    lnako_aot_builtin_call(&roots[16], &pop_arguments, pop_arguments.len, @intFromEnum(aot_builtin.Command.array_pop));
+    lnako_aot_builtin_call(&roots[16], &pop_arguments, pop_arguments.len, @backingInt(aot_builtin.Command.array_pop));
     try std.testing.expectEqual(@as(f64, 2), valueToNumber(roots[16]));
     const push_arguments = [_]Value{ roots[15], numberValue(3) };
-    lnako_aot_builtin_call(&roots[17], &push_arguments, push_arguments.len, @intFromEnum(aot_builtin.Command.array_push));
+    lnako_aot_builtin_call(&roots[17], &push_arguments, push_arguments.len, @backingInt(aot_builtin.Command.array_push));
     try std.testing.expectEqual(roots[15].payload, roots[17].payload);
     try std.testing.expectEqualSlices(Value, &.{ numberValue(1), numberValue(3) }, roots[15].object().?.payload.array.items);
-    lnako_aot_builtin_call(&roots[18], &push_arguments, push_arguments.len, @intFromEnum(aot_builtin.Command.array_push));
+    lnako_aot_builtin_call(&roots[18], &push_arguments, push_arguments.len, @backingInt(aot_builtin.Command.array_push));
     try std.testing.expectEqualSlices(Value, &.{ numberValue(1), numberValue(3), numberValue(3) }, roots[15].object().?.payload.array.items);
 
     roots[19] = try state.active_runtime.?.createArray(&.{ numberValue(1), numberValue(2) });
     roots[20] = try state.active_runtime.?.createBigInt("1n");
     const bigint_insert = [_]Value{ roots[19], roots[20], numberValue(9) };
-    lnako_aot_builtin_call(&roots[21], &bigint_insert, bigint_insert.len, @intFromEnum(aot_builtin.Command.array_insert));
+    lnako_aot_builtin_call(&roots[21], &bigint_insert, bigint_insert.len, @backingInt(aot_builtin.Command.array_insert));
     try std.testing.expect(state.active_runtime.?.has_pending_exception);
     try std.testing.expectEqualSlices(Value, &.{ numberValue(1), numberValue(2) }, roots[19].object().?.payload.array.items);
     lnako_aot_exception_take(&roots[22]);
     const bigint_take = [_]Value{ roots[19], numberValue(0), roots[20] };
-    lnako_aot_builtin_call(&roots[21], &bigint_take, bigint_take.len, @intFromEnum(aot_builtin.Command.array_take));
+    lnako_aot_builtin_call(&roots[21], &bigint_take, bigint_take.len, @backingInt(aot_builtin.Command.array_take));
     try std.testing.expect(state.active_runtime.?.has_pending_exception);
     try std.testing.expectEqualSlices(Value, &.{ numberValue(1), numberValue(2) }, roots[19].object().?.payload.array.items);
     lnako_aot_exception_take(&roots[22]);
 
-    const null_index: Value = .{ .tag = @intFromEnum(Tag.null_value) };
+    const null_index: Value = .{ .tag = @backingInt(Tag.null_value) };
     const null_cut = [_]Value{ roots[19], null_index };
-    lnako_aot_builtin_call(&roots[21], &null_cut, null_cut.len, @intFromEnum(aot_builtin.Command.array_cut));
+    lnako_aot_builtin_call(&roots[21], &null_cut, null_cut.len, @backingInt(aot_builtin.Command.array_cut));
     try std.testing.expect(state.active_runtime.?.has_pending_exception);
     try std.testing.expectEqualSlices(Value, &.{ numberValue(1), numberValue(2) }, roots[19].object().?.payload.array.items);
     lnako_aot_exception_take(&roots[22]);
 
     roots[23] = try state.active_runtime.?.createArray(&.{});
     const empty_pop = [_]Value{roots[23]};
-    lnako_aot_builtin_call(&roots[24], &empty_pop, empty_pop.len, @intFromEnum(aot_builtin.Command.array_pop));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[24].tag)));
+    lnako_aot_builtin_call(&roots[24], &empty_pop, empty_pop.len, @backingInt(aot_builtin.Command.array_pop));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(roots[24].tag))));
 }
 
 test "AOT配列複製範囲参照と配列足は深さと参照を公式どおり分ける" {
@@ -2874,7 +2874,7 @@ test "AOT配列複製範囲参照と配列足は深さと参照を公式どお�
         runtime = state.active_runtime.?;
         state.active_runtime = null;
     }
-    var roots = [_]Value{.{}} ** 36;
+    var roots = @as([36]Value, @splat(.{}));
     var frame: RootFrame = .{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
@@ -2907,7 +2907,7 @@ test "AOT配列複製範囲参照と配列足は深さと参照を公式どお�
     roots[10] = try state.active_runtime.?.createArray(&.{.{}});
     roots[11] = try state.active_runtime.?.createDictionary(&.{ staticStringValue("先頭"), numberValue(0), staticStringValue("末尾"), numberValue(0) });
     roots[12] = try arrayRangeCopyBuiltin(&state.active_runtime.?, roots[10], roots[11]);
-    try std.testing.expectEqual(Tag.null_value, @as(Tag, @enumFromInt(roots[12].object().?.payload.array.items[0].tag)));
+    try std.testing.expectEqual(Tag.null_value, @as(Tag, @fromBackingInt(@intCast(roots[12].object().?.payload.array.items[0].tag))));
     roots[13] = try referenceBuiltin(&state.active_runtime.?, staticStringValue("ABC"), numberValue(1.9));
     try std.testing.expectEqualSlices(u16, &.{'B'}, roots[13].object().?.payload.utf16_string);
     roots[14] = try state.active_runtime.?.createDictionary(&.{ staticStringValue("先頭"), numberValue(1e100), staticStringValue("末尾"), numberValue(1e100) });
@@ -2932,15 +2932,15 @@ test "AOT配列複製範囲参照と配列足は深さと参照を公式どお�
     roots[28] = try arrayRangeCopyBuiltin(&state.active_runtime.?, roots[16], roots[27]);
     try std.testing.expectEqual(@as(usize, 4), roots[28].object().?.payload.array.items.len);
     roots[29] = try state.active_runtime.?.createDictionary(&.{ staticStringValue("先頭"), roots[20], staticStringValue("末尾"), numberValue(2) });
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try arrayRangeCopyBuiltin(&state.active_runtime.?, roots[16], roots[29])).tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast((try arrayRangeCopyBuiltin(&state.active_runtime.?, roots[16], roots[29])).tag))));
     roots[30] = try state.active_runtime.?.createBigInt("-9007199254740993n");
     roots[31] = try state.active_runtime.?.createDictionary(&.{ staticStringValue("先頭"), numberValue(0), staticStringValue("末尾"), roots[30] });
     roots[32] = try arrayRangeCopyBuiltin(&state.active_runtime.?, roots[16], roots[31]);
     try std.testing.expectEqual(@as(usize, 0), roots[32].object().?.payload.array.items.len);
     try std.testing.expectEqual(@as(f64, 0), valueToNumber(try referenceBuiltin(&state.active_runtime.?, roots[16], roots[17])));
     try std.testing.expectEqual(@as(f64, 1), valueToNumber(try referenceBuiltin(&state.active_runtime.?, roots[16], roots[20])));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try referenceBuiltin(&state.active_runtime.?, roots[16], roots[23])).tag)));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try referenceBuiltin(&state.active_runtime.?, roots[16], roots[26])).tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast((try referenceBuiltin(&state.active_runtime.?, roots[16], roots[23])).tag))));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast((try referenceBuiltin(&state.active_runtime.?, roots[16], roots[26])).tag))));
     try std.testing.expectEqual(@as(f64, 0), valueToNumber(try referenceBuiltin(&state.active_runtime.?, roots[16], staticStringValue("0"))));
     try std.testing.expectEqual(@as(f64, 1), valueToNumber(try referenceBuiltin(&state.active_runtime.?, roots[16], staticStringValue("1"))));
     try std.testing.expectEqual(@as(f64, 4), valueToNumber(try referenceBuiltin(&state.active_runtime.?, roots[16], staticStringValue("length"))));
@@ -2954,7 +2954,7 @@ test "AOT配列複製範囲参照と配列足は深さと参照を公式どお�
         staticStringValue("900719925474099999999999999"),
     };
     for (invalid_keys) |key| {
-        try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try referenceBuiltin(&state.active_runtime.?, roots[16], key)).tag)));
+        try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast((try referenceBuiltin(&state.active_runtime.?, roots[16], key)).tag))));
     }
     try std.testing.expectEqual(@as(?usize, 0), tablePropertyIndex(&.{'0'}));
     try std.testing.expectEqual(@as(?usize, 4294967294), tablePropertyIndex(&.{ '4', '2', '9', '4', '9', '6', '7', '2', '9', '4' }));
@@ -2964,7 +2964,7 @@ test "AOT配列複製範囲参照と配列足は深さと参照を公式どお�
 test "AOT参照の配列文字列添字はGC後も配列とキーを保持する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 3;
+    var roots = @as([3]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -2981,7 +2981,7 @@ test "AOT参照の配列文字列添字はGC後も配列とキーを保持する
 test "AOT参照は辞書と配列の標準prototype propertyを解決する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 20;
+    var roots = @as([20]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -2990,17 +2990,17 @@ test "AOT参照は辞書と配列の標準prototype propertyを解決する" {
     roots[0] = try runtime.createDictionary(&.{});
     roots[1] = try runtime.createArray(&.{numberValue(1)});
     roots[2] = try referenceBuiltin(&runtime, roots[0], staticStringValue("toString"));
-    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[2].tag)));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @fromBackingInt(@intCast(roots[2].tag))));
     roots[3] = try referenceBuiltin(&runtime, roots[0], staticStringValue("constructor"));
-    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[3].tag)));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @fromBackingInt(@intCast(roots[3].tag))));
     roots[4] = try tableRowProperty(&runtime, roots[3], staticStringValue("name"));
     try expectUtf16String(&runtime, roots[4], "Object");
     roots[5] = try referenceBuiltin(&runtime, roots[0], staticStringValue("__proto__"));
-    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(roots[5].tag)));
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @fromBackingInt(@intCast(roots[5].tag))));
     roots[6] = try referenceBuiltin(&runtime, roots[1], staticStringValue("map"));
-    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[6].tag)));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @fromBackingInt(@intCast(roots[6].tag))));
     roots[7] = try referenceBuiltin(&runtime, roots[1], staticStringValue("toString"));
-    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[7].tag)));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @fromBackingInt(@intCast(roots[7].tag))));
     roots[8] = try runtime.createDictionary(&.{ staticStringValue("toString"), numberValue(7) });
     roots[9] = try referenceBuiltin(&runtime, roots[8], staticStringValue("toString"));
     try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[9]));
@@ -3029,7 +3029,7 @@ test "AOT参照は辞書と配列の標準prototype propertyを解決する" {
 test "AOT配列切取は辞書のownと継承propertyを分ける" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 10;
+    var roots = @as([10]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -3049,28 +3049,28 @@ test "AOT配列切取は辞書のownと継承propertyを分ける" {
     try std.testing.expectEqual(@as(f64, 1), valueToNumber(roots[3]));
 
     roots[4] = try arrayCutBuiltin(&runtime, roots[1], staticStringValue("zero"));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[4].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(roots[4].tag))));
     roots[5] = try referenceBuiltin(&runtime, roots[1], staticStringValue("zero"));
     try std.testing.expectEqual(@as(f64, 0), valueToNumber(roots[5]));
 
     roots[6] = try arrayCutBuiltin(&runtime, roots[1], staticStringValue("__proto__"));
-    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(roots[6].tag)));
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @fromBackingInt(@intCast(roots[6].tag))));
     try std.testing.expectEqual(roots[0].payload, roots[6].payload);
     roots[7] = try arrayCutBuiltin(&runtime, roots[1], staticStringValue("toString"));
-    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[7].tag)));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @fromBackingInt(@intCast(roots[7].tag))));
     roots[8] = try referenceBuiltin(&runtime, roots[1], staticStringValue("toString"));
-    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[8].tag)));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @fromBackingInt(@intCast(roots[8].tag))));
 
     roots[9] = try arrayCutBuiltin(&runtime, roots[1], staticStringValue("own"));
     try std.testing.expectEqual(@as(f64, 2), valueToNumber(roots[9]));
     const own_after = try referenceBuiltin(&runtime, roots[1], staticStringValue("own"));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(own_after.tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(own_after.tag))));
 }
 
 test "AOT参照はbyte bufferの添字とpropertyを解決する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 10;
+    var roots = @as([10]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -3088,9 +3088,9 @@ test "AOT参照はbyte bufferの添字とpropertyを解決する" {
     roots[5] = try referenceBuiltin(&runtime, roots[4], staticStringValue("byteLength"));
     try std.testing.expectEqual(@as(f64, 2), valueToNumber(roots[5]));
     roots[6] = try referenceBuiltin(&runtime, roots[4], numberValue(0));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[6].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(roots[6].tag))));
     roots[7] = try referenceBuiltin(&runtime, roots[4], staticStringValue("buffer"));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[7].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(roots[7].tag))));
     roots[8] = try runtime.createUint8Array(&.{ 7, 8 });
     roots[9] = try referenceBuiltin(&runtime, roots[8], numberValue(0));
     try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[9]));
@@ -3112,7 +3112,7 @@ test "AOT参照の文字列範囲エラーはJSON値・UTF-16・保留例外を�
         runtime = state.active_runtime.?;
         state.active_runtime = null;
     }
-    var roots = [_]Value{.{}} ** 12;
+    var roots = @as([12]Value, @splat(.{}));
     var frame = RootFrame{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
@@ -3135,15 +3135,15 @@ test "AOT参照の文字列範囲エラーはJSON値・UTF-16・保留例外を�
     try state.active_runtime.?.indexSet(roots[6], staticStringValue("self"), roots[6]);
     const circular_args = [_]Value{ staticStringValue("ABC"), roots[6] };
     var result: Value = .{};
-    lnako_aot_builtin_call(&result, &circular_args, circular_args.len, @intFromEnum(aot_builtin.Command.reference));
+    lnako_aot_builtin_call(&result, &circular_args, circular_args.len, @backingInt(aot_builtin.Command.reference));
     try std.testing.expect(state.active_runtime.?.has_pending_exception);
     const circular_message = state.active_runtime.?.takeException();
     const circular_units = try valueUtf16Alloc(&state.active_runtime.?, circular_message);
     defer state.active_runtime.?.allocator.free(circular_units);
     try std.testing.expect(std.mem.startsWith(u16, circular_units, &.{ 'C', 'o', 'n', 'v' }));
 
-    const null_args = [_]Value{ staticStringValue("ABC"), .{ .tag = @intFromEnum(Tag.null_value) } };
-    lnako_aot_builtin_call(&result, &null_args, null_args.len, @intFromEnum(aot_builtin.Command.reference));
+    const null_args = [_]Value{ staticStringValue("ABC"), .{ .tag = @backingInt(Tag.null_value) } };
+    lnako_aot_builtin_call(&result, &null_args, null_args.len, @backingInt(aot_builtin.Command.reference));
     try std.testing.expect(state.active_runtime.?.has_pending_exception);
     const null_message = state.active_runtime.?.takeException();
     const null_units = try valueUtf16Alloc(&state.active_runtime.?, null_message);
@@ -3168,31 +3168,31 @@ test "AOT文字列連結分解反復出現命令は公式の型変換を保つ" 
 
     roots[0] = try state.active_runtime.?.createArray(&.{numberValue(1)});
     const append_arguments = [_]Value{ roots[0], numberValue(2) };
-    lnako_aot_builtin_call(&roots[1], &append_arguments, append_arguments.len, @intFromEnum(aot_builtin.Command.append));
+    lnako_aot_builtin_call(&roots[1], &append_arguments, append_arguments.len, @backingInt(aot_builtin.Command.append));
     try std.testing.expectEqual(roots[0].payload, roots[1].payload);
     try std.testing.expectEqual(@as(usize, 2), roots[0].object().?.payload.array.items.len);
 
     const line_arguments = [_]Value{ staticStringValue("a"), staticStringValue("b") };
-    lnako_aot_builtin_call(&roots[2], &line_arguments, line_arguments.len, @intFromEnum(aot_builtin.Command.append_line));
+    lnako_aot_builtin_call(&roots[2], &line_arguments, line_arguments.len, @backingInt(aot_builtin.Command.append_line));
     try std.testing.expectEqualSlices(u16, &.{ 'a', 'b', '\n' }, roots[2].object().?.payload.utf16_string);
-    const join_arguments = [_]Value{ staticStringValue("a"), numberValue(1), .{ .tag = @intFromEnum(Tag.null_value) }, .{} };
-    lnako_aot_builtin_call(&roots[3], &join_arguments, join_arguments.len, @intFromEnum(aot_builtin.Command.concat_join));
+    const join_arguments = [_]Value{ staticStringValue("a"), numberValue(1), .{ .tag = @backingInt(Tag.null_value) }, .{} };
+    lnako_aot_builtin_call(&roots[3], &join_arguments, join_arguments.len, @backingInt(aot_builtin.Command.concat_join));
     try std.testing.expectEqualSlices(u16, &.{ 'a', '1' }, roots[3].object().?.payload.utf16_string);
 
     const explode_arguments = [_]Value{staticStringValue("A😀B")};
-    lnako_aot_builtin_call(&roots[4], &explode_arguments, explode_arguments.len, @intFromEnum(aot_builtin.Command.explode));
+    lnako_aot_builtin_call(&roots[4], &explode_arguments, explode_arguments.len, @backingInt(aot_builtin.Command.explode));
     const characters = roots[4].object().?.payload.array.items;
     try std.testing.expectEqual(@as(usize, 3), characters.len);
     try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00 }, characters[1].object().?.payload.utf16_string);
 
     const refrain_arguments = [_]Value{ staticStringValue("x"), numberValue(2.1) };
-    lnako_aot_builtin_call(&roots[5], &refrain_arguments, refrain_arguments.len, @intFromEnum(aot_builtin.Command.refrain));
+    lnako_aot_builtin_call(&roots[5], &refrain_arguments, refrain_arguments.len, @backingInt(aot_builtin.Command.refrain));
     try std.testing.expectEqualSlices(u16, &.{ 'x', 'x', 'x' }, roots[5].object().?.payload.utf16_string);
     const empty_count_arguments = [_]Value{ staticStringValue(""), staticStringValue("") };
-    lnako_aot_builtin_call(&roots[6], &empty_count_arguments, empty_count_arguments.len, @intFromEnum(aot_builtin.Command.occurrence_count));
+    lnako_aot_builtin_call(&roots[6], &empty_count_arguments, empty_count_arguments.len, @backingInt(aot_builtin.Command.occurrence_count));
     try std.testing.expectEqual(@as(f64, -1), valueToNumber(roots[6]));
     const emoji_count_arguments = [_]Value{ staticStringValue("😀"), staticStringValue("") };
-    lnako_aot_builtin_call(&roots[7], &emoji_count_arguments, emoji_count_arguments.len, @intFromEnum(aot_builtin.Command.occurrence_count));
+    lnako_aot_builtin_call(&roots[7], &emoji_count_arguments, emoji_count_arguments.len, @backingInt(aot_builtin.Command.occurrence_count));
     try std.testing.expectEqual(@as(f64, 1), valueToNumber(roots[7]));
 }
 
@@ -3210,19 +3210,19 @@ test "AOT部分文字列命令は数値小数と文字列小数を区別する" 
     defer lnako_aot_pop_roots(&frame);
 
     const numeric_mid = [_]Value{ staticStringValue("A😀BCD"), numberValue(2.9), numberValue(2.9) };
-    lnako_aot_builtin_call(&roots[0], &numeric_mid, numeric_mid.len, @intFromEnum(aot_builtin.Command.substring_mid));
+    lnako_aot_builtin_call(&roots[0], &numeric_mid, numeric_mid.len, @backingInt(aot_builtin.Command.substring_mid));
     try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00, 'B', 'C' }, roots[0].object().?.payload.utf16_string);
     const string_mid = [_]Value{ staticStringValue("A😀BCD"), staticStringValue("2.9"), staticStringValue("2.9") };
-    lnako_aot_builtin_call(&roots[1], &string_mid, string_mid.len, @intFromEnum(aot_builtin.Command.substring_mid));
+    lnako_aot_builtin_call(&roots[1], &string_mid, string_mid.len, @backingInt(aot_builtin.Command.substring_mid));
     try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00, 'B' }, roots[1].object().?.payload.utf16_string);
     const zero_mid = [_]Value{ staticStringValue("ABCDE"), numberValue(0), numberValue(2) };
-    lnako_aot_builtin_call(&roots[2], &zero_mid, zero_mid.len, @intFromEnum(aot_builtin.Command.substring_mid));
+    lnako_aot_builtin_call(&roots[2], &zero_mid, zero_mid.len, @backingInt(aot_builtin.Command.substring_mid));
     try std.testing.expectEqual(@as(usize, 0), roots[2].object().?.payload.utf16_string.len);
     const left_arguments = [_]Value{ staticStringValue("A😀BCD"), numberValue(2.9) };
-    lnako_aot_builtin_call(&roots[3], &left_arguments, left_arguments.len, @intFromEnum(aot_builtin.Command.substring_left));
+    lnako_aot_builtin_call(&roots[3], &left_arguments, left_arguments.len, @backingInt(aot_builtin.Command.substring_left));
     try std.testing.expectEqualSlices(u16, &.{ 'A', 0xd83d, 0xde00 }, roots[3].object().?.payload.utf16_string);
     const right_arguments = [_]Value{ staticStringValue("A😀BCD"), numberValue(2.9) };
-    lnako_aot_builtin_call(&roots[4], &right_arguments, right_arguments.len, @intFromEnum(aot_builtin.Command.substring_right));
+    lnako_aot_builtin_call(&roots[4], &right_arguments, right_arguments.len, @backingInt(aot_builtin.Command.substring_right));
     try std.testing.expectEqualSlices(u16, &.{ 'B', 'C', 'D' }, roots[4].object().?.payload.utf16_string);
 }
 
@@ -3240,27 +3240,27 @@ test "AOT文字列分割削除はUTF-16空区切りとsplice位置を扱う" {
     defer lnako_aot_pop_roots(&frame);
 
     const split_arguments = [_]Value{ staticStringValue("A😀B😀C"), staticStringValue("😀") };
-    lnako_aot_builtin_call(&roots[0], &split_arguments, split_arguments.len, @intFromEnum(aot_builtin.Command.split_all));
+    lnako_aot_builtin_call(&roots[0], &split_arguments, split_arguments.len, @backingInt(aot_builtin.Command.split_all));
     const parts = roots[0].object().?.payload.array.items;
     try std.testing.expectEqual(@as(usize, 3), parts.len);
     try std.testing.expectEqualSlices(u16, &.{'A'}, parts[0].object().?.payload.utf16_string);
     try std.testing.expectEqualSlices(u16, &.{'B'}, parts[1].object().?.payload.utf16_string);
     try std.testing.expectEqualSlices(u16, &.{'C'}, parts[2].object().?.payload.utf16_string);
     const empty_split = [_]Value{ staticStringValue("😀"), staticStringValue("") };
-    lnako_aot_builtin_call(&roots[1], &empty_split, empty_split.len, @intFromEnum(aot_builtin.Command.split_all));
+    lnako_aot_builtin_call(&roots[1], &empty_split, empty_split.len, @backingInt(aot_builtin.Command.split_all));
     const units = roots[1].object().?.payload.array.items;
     try std.testing.expectEqual(@as(usize, 2), units.len);
     try std.testing.expectEqualSlices(u16, &.{0xd83d}, units[0].object().?.payload.utf16_string);
     try std.testing.expectEqualSlices(u16, &.{0xde00}, units[1].object().?.payload.utf16_string);
 
-    lnako_aot_builtin_call(&roots[2], &empty_split, empty_split.len, @intFromEnum(aot_builtin.Command.split_first));
+    lnako_aot_builtin_call(&roots[2], &empty_split, empty_split.len, @backingInt(aot_builtin.Command.split_first));
     const first_parts = roots[2].object().?.payload.array.items;
     try std.testing.expectEqual(@as(usize, 2), first_parts.len);
     try std.testing.expectEqual(@as(usize, 0), first_parts[0].object().?.payload.utf16_string.len);
     try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00 }, first_parts[1].object().?.payload.utf16_string);
 
     const remove_arguments = [_]Value{ staticStringValue("ABCDE"), numberValue(-1), numberValue(2) };
-    lnako_aot_builtin_call(&roots[3], &remove_arguments, remove_arguments.len, @intFromEnum(aot_builtin.Command.string_remove));
+    lnako_aot_builtin_call(&roots[3], &remove_arguments, remove_arguments.len, @backingInt(aot_builtin.Command.string_remove));
     try std.testing.expectEqualSlices(u16, &.{ 'A', 'B', 'C' }, roots[3].object().?.payload.utf16_string);
 }
 
@@ -3277,11 +3277,11 @@ test "AOTトリム命令はECMAScript空白だけを左右別に除去する" {
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
     const source = [_]Value{staticStringValue("﻿　\t A  \u{2029}")};
-    lnako_aot_builtin_call(&roots[0], &source, source.len, @intFromEnum(aot_builtin.Command.trim_both));
+    lnako_aot_builtin_call(&roots[0], &source, source.len, @backingInt(aot_builtin.Command.trim_both));
     try std.testing.expectEqualSlices(u16, &.{'A'}, roots[0].object().?.payload.utf16_string);
-    lnako_aot_builtin_call(&roots[1], &source, source.len, @intFromEnum(aot_builtin.Command.trim_right));
+    lnako_aot_builtin_call(&roots[1], &source, source.len, @backingInt(aot_builtin.Command.trim_right));
     try std.testing.expectEqualSlices(u16, &.{ 0xfeff, 0x3000, '\t', ' ', 'A' }, roots[1].object().?.payload.utf16_string);
-    lnako_aot_builtin_call(&roots[2], &source, source.len, @intFromEnum(aot_builtin.Command.trim_left));
+    lnako_aot_builtin_call(&roots[2], &source, source.len, @backingInt(aot_builtin.Command.trim_left));
     try std.testing.expectEqualSlices(u16, &.{ 'A', ' ', 0x00a0, 0x2029 }, roots[2].object().?.payload.utf16_string);
 }
 
@@ -3298,24 +3298,24 @@ test "AOT置換命令は全置換の空検索と単置換の置換パターン�
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
     const empty_all = [_]Value{ staticStringValue("abc"), staticStringValue(""), staticStringValue("-") };
-    lnako_aot_builtin_call(&roots[0], &empty_all, empty_all.len, @intFromEnum(aot_builtin.Command.replace_all));
+    lnako_aot_builtin_call(&roots[0], &empty_all, empty_all.len, @backingInt(aot_builtin.Command.replace_all));
     try std.testing.expectEqualSlices(u16, &.{ 'a', '-', 'b', '-', 'c' }, roots[0].object().?.payload.utf16_string);
     const special_first = [_]Value{ staticStringValue("abc"), staticStringValue("b"), staticStringValue("[$$][$&][$`][$']") };
-    lnako_aot_builtin_call(&roots[1], &special_first, special_first.len, @intFromEnum(aot_builtin.Command.replace_first));
+    lnako_aot_builtin_call(&roots[1], &special_first, special_first.len, @backingInt(aot_builtin.Command.replace_first));
     const expected = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "a[$][b][a][c]c");
     defer std.testing.allocator.free(expected);
     try std.testing.expectEqualSlices(u16, expected, roots[1].object().?.payload.utf16_string);
     const literal_all = [_]Value{ staticStringValue("abc"), staticStringValue("b"), staticStringValue("[$&]") };
-    lnako_aot_builtin_call(&roots[2], &literal_all, literal_all.len, @intFromEnum(aot_builtin.Command.replace_all));
+    lnako_aot_builtin_call(&roots[2], &literal_all, literal_all.len, @backingInt(aot_builtin.Command.replace_all));
     try std.testing.expectEqualSlices(u16, &.{ 'a', '[', '$', '&', ']', 'c' }, roots[2].object().?.payload.utf16_string);
     const undefined_separator = [_]Value{ staticStringValue("xundefinedy"), .{}, staticStringValue("z") };
-    lnako_aot_builtin_call(&roots[3], &undefined_separator, undefined_separator.len, @intFromEnum(aot_builtin.Command.replace_all));
+    lnako_aot_builtin_call(&roots[3], &undefined_separator, undefined_separator.len, @backingInt(aot_builtin.Command.replace_all));
     try std.testing.expectEqualSlices(u16, &.{ 'x', 'u', 'n', 'd', 'e', 'f', 'i', 'n', 'e', 'd', 'y' }, roots[3].object().?.payload.utf16_string);
     const undefined_join = [_]Value{ staticStringValue("a-a"), staticStringValue("a"), .{} };
-    lnako_aot_builtin_call(&roots[4], &undefined_join, undefined_join.len, @intFromEnum(aot_builtin.Command.replace_all));
+    lnako_aot_builtin_call(&roots[4], &undefined_join, undefined_join.len, @backingInt(aot_builtin.Command.replace_all));
     try std.testing.expectEqualSlices(u16, &.{ ',', '-', ',' }, roots[4].object().?.payload.utf16_string);
     const undefined_first_replacement = [_]Value{ staticStringValue("x-x"), staticStringValue("x"), .{} };
-    lnako_aot_builtin_call(&roots[5], &undefined_first_replacement, undefined_first_replacement.len, @intFromEnum(aot_builtin.Command.replace_first));
+    lnako_aot_builtin_call(&roots[5], &undefined_first_replacement, undefined_first_replacement.len, @backingInt(aot_builtin.Command.replace_first));
     try std.testing.expectEqualSlices(u16, &.{ 'u', 'n', 'd', 'e', 'f', 'i', 'n', 'e', 'd', '-', 'x' }, roots[5].object().?.payload.utf16_string);
 }
 
@@ -3333,7 +3333,7 @@ test "AOT幅埋めは正のInfinity幅を非終了ではなく安全制限へ変
     defer lnako_aot_pop_roots(&frame);
 
     const arguments = [_]Value{ staticStringValue("x"), numberValue(std.math.inf(f64)) };
-    lnako_aot_builtin_call(&roots[0], &arguments, arguments.len, @intFromEnum(aot_builtin.Command.zero_pad));
+    lnako_aot_builtin_call(&roots[0], &arguments, arguments.len, @backingInt(aot_builtin.Command.zero_pad));
     try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
     const message = try pendingExceptionMessageUtf8Alloc(&state.active_runtime.?);
     defer state.active_runtime.?.allocator.free(message);
@@ -3341,7 +3341,7 @@ test "AOT幅埋めは正のInfinity幅を非終了ではなく安全制限へ変
     _ = state.active_runtime.?.takeException();
 
     const negative_arguments = [_]Value{ staticStringValue("x"), numberValue(-std.math.inf(f64)) };
-    lnako_aot_builtin_call(&roots[1], &negative_arguments, negative_arguments.len, @intFromEnum(aot_builtin.Command.space_pad));
+    lnako_aot_builtin_call(&roots[1], &negative_arguments, negative_arguments.len, @backingInt(aot_builtin.Command.space_pad));
     try std.testing.expectEqualSlices(u16, &.{ ' ', 'x' }, roots[1].object().?.payload.utf16_string);
 }
 
@@ -3359,30 +3359,30 @@ test "AOT幅変換は英数記号とカナの合成順序および公式の濁�
     defer lnako_aot_pop_roots(&frame);
 
     const ascii_full = [_]Value{staticStringValue("Az09!")};
-    lnako_aot_builtin_call(&roots[0], &ascii_full, ascii_full.len, @intFromEnum(aot_builtin.Command.ascii_full_width));
+    lnako_aot_builtin_call(&roots[0], &ascii_full, ascii_full.len, @backingInt(aot_builtin.Command.ascii_full_width));
     try std.testing.expectEqualSlices(u16, &.{ 0xff21, 0xff5a, 0xff10, 0xff19, '!' }, roots[0].object().?.payload.utf16_string);
     const symbols_full = [_]Value{staticStringValue("A 1!")};
-    lnako_aot_builtin_call(&roots[1], &symbols_full, symbols_full.len, @intFromEnum(aot_builtin.Command.ascii_symbol_full_width));
+    lnako_aot_builtin_call(&roots[1], &symbols_full, symbols_full.len, @backingInt(aot_builtin.Command.ascii_symbol_full_width));
     try std.testing.expectEqualSlices(u16, &.{ 0xff21, 0x3000, 0xff11, 0xff01 }, roots[1].object().?.payload.utf16_string);
     const symbols_half = [_]Value{staticStringValue("Ａ　１！")};
-    lnako_aot_builtin_call(&roots[2], &symbols_half, symbols_half.len, @intFromEnum(aot_builtin.Command.ascii_symbol_half_width));
+    lnako_aot_builtin_call(&roots[2], &symbols_half, symbols_half.len, @backingInt(aot_builtin.Command.ascii_symbol_half_width));
     try std.testing.expectEqualSlices(u16, &.{ 'A', ' ', '1', '!' }, roots[2].object().?.payload.utf16_string);
 
     const kana_full = [_]Value{staticStringValue("ｶﾞｯﾂ")};
-    lnako_aot_builtin_call(&roots[3], &kana_full, kana_full.len, @intFromEnum(aot_builtin.Command.katakana_full_width));
+    lnako_aot_builtin_call(&roots[3], &kana_full, kana_full.len, @backingInt(aot_builtin.Command.katakana_full_width));
     try std.testing.expectEqualSlices(u16, &.{ 0x30ac, 0x30c3, 0x30c5 }, roots[3].object().?.payload.utf16_string);
     const kana_half = [_]Value{staticStringValue("ガッツ")};
-    lnako_aot_builtin_call(&roots[4], &kana_half, kana_half.len, @intFromEnum(aot_builtin.Command.katakana_half_width));
+    lnako_aot_builtin_call(&roots[4], &kana_half, kana_half.len, @backingInt(aot_builtin.Command.katakana_half_width));
     try std.testing.expectEqualSlices(u16, &.{ 0xff76, 0xff9e, 0xff6f, 0xff82 }, roots[4].object().?.payload.utf16_string);
     const odd_voiced = [_]Value{staticStringValue("ｶﾞﾊﾟﾞﾟ")};
-    lnako_aot_builtin_call(&roots[5], &odd_voiced, odd_voiced.len, @intFromEnum(aot_builtin.Command.katakana_full_width));
+    lnako_aot_builtin_call(&roots[5], &odd_voiced, odd_voiced.len, @backingInt(aot_builtin.Command.katakana_full_width));
     try std.testing.expectEqualSlices(u16, &.{ 0x30ac, 0x30d1, 0x30d1 }, roots[5].object().?.payload.utf16_string);
 
     const full = [_]Value{staticStringValue("A ｶﾞ!")};
-    lnako_aot_builtin_call(&roots[6], &full, full.len, @intFromEnum(aot_builtin.Command.full_width));
+    lnako_aot_builtin_call(&roots[6], &full, full.len, @backingInt(aot_builtin.Command.full_width));
     try std.testing.expectEqualSlices(u16, &.{ 0xff21, 0x3000, 0x30ac, 0xff01 }, roots[6].object().?.payload.utf16_string);
     const half = [_]Value{staticStringValue("Ａ　ガ！")};
-    lnako_aot_builtin_call(&roots[7], &half, half.len, @intFromEnum(aot_builtin.Command.half_width));
+    lnako_aot_builtin_call(&roots[7], &half, half.len, @backingInt(aot_builtin.Command.half_width));
     try std.testing.expectEqualSlices(u16, &.{ 'A', ' ', 0xff76, 0xff9e, '!' }, roots[7].object().?.payload.utf16_string);
 }
 
@@ -3395,7 +3395,7 @@ test "AOT幅変換のカナ系は生レシーバ分岐と保留例外を公式�
         state.active_runtime = null;
     }
     const rt = &state.active_runtime.?;
-    var roots = [_]Value{.{}} ** 8;
+    var roots = @as([8]Value, @splat(.{}));
     var frame: RootFrame = .{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
@@ -3409,17 +3409,17 @@ test "AOT幅変換のカナ系は生レシーバ分岐と保留例外を公式�
     try std.testing.expectError(error.KatakanaFullWidthSubstringReceiver, kanaMapBuiltin(rt, roots[1], true));
     try std.testing.expectError(error.KatakanaFullWidthSubstringReceiver, kanaMapBuiltin(rt, roots[2], true));
     try std.testing.expectEqualSlices(u16, &.{}, (try kanaMapBuiltin(rt, roots[3], true)).object().?.payload.utf16_string);
-    try std.testing.expectError(error.KatakanaFullWidthLengthNull, kanaMapBuiltin(rt, .{ .tag = @intFromEnum(Tag.null_value) }, true));
+    try std.testing.expectError(error.KatakanaFullWidthLengthNull, kanaMapBuiltin(rt, .{ .tag = @backingInt(Tag.null_value) }, true));
     try std.testing.expectError(error.KatakanaHalfWidthSplitUndefined, kanaMapBuiltin(rt, .{}, false));
     try std.testing.expectError(error.KatakanaHalfWidthSplitReceiver, kanaMapBuiltin(rt, numberValue(1), false));
 
     const failing = [_]Value{numberValue(1)};
-    lnako_aot_builtin_call(&roots[4], &failing, failing.len, @intFromEnum(aot_builtin.Command.half_width));
+    lnako_aot_builtin_call(&roots[4], &failing, failing.len, @backingInt(aot_builtin.Command.half_width));
     const failure_units = try valueUtf16Alloc(rt, rt.takeException());
     defer rt.allocator.free(failure_units);
     try std.testing.expectEqualSlices(u16, &.{ 's', '.', 's', 'p', 'l', 'i', 't', ' ', 'i', 's', ' ', 'n', 'o', 't', ' ', 'a', ' ', 'f', 'u', 'n', 'c', 't', 'i', 'o', 'n' }, failure_units);
     const succeeding = [_]Value{staticStringValue("ガ")};
-    lnako_aot_builtin_call(&roots[5], &succeeding, succeeding.len, @intFromEnum(aot_builtin.Command.half_width));
+    lnako_aot_builtin_call(&roots[5], &succeeding, succeeding.len, @backingInt(aot_builtin.Command.half_width));
     try std.testing.expect(!rt.has_pending_exception);
     try std.testing.expectEqualSlices(u16, &.{ 0xff76, 0xff9e }, roots[5].object().?.payload.utf16_string);
 
@@ -3437,7 +3437,7 @@ test "AOT幅変換は辞書のカスタムsubstring・charAt・splitとprototype
         state.active_runtime = null;
     }
     const active = &state.active_runtime.?;
-    var roots = [_]Value{.{}} ** 12;
+    var roots = @as([12]Value, @splat(.{}));
     var frame = RootFrame{};
     active.pushRoots(&frame, &roots, roots.len);
     defer active.popRoots(&frame);
@@ -3524,8 +3524,8 @@ test "AOTエラー発生のError message変換を値型ごとに行う" {
     var values = [_]Value{
         .{},
         numberValue(123),
-        .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 },
-        .{ .tag = @intFromEnum(Tag.null_value) },
+        .{ .tag = @backingInt(Tag.boolean), .payload = 1 },
+        .{ .tag = @backingInt(Tag.null_value) },
         staticStringValue("文字列"),
     };
     var roots: RootFrame = .{};
@@ -3582,7 +3582,7 @@ test "AOT算術失敗を公式文言の保留例外へ変換する" {
     var frame: RootFrame = .{};
     lnako_aot_push_roots(&frame, &values, values.len);
     defer lnako_aot_pop_roots(&frame);
-    lnako_aot_arithmetic(&values[2], &values[0], &values[1], @intFromEnum(Arithmetic.add));
+    lnako_aot_arithmetic(&values[2], &values[0], &values[1], @backingInt(Arithmetic.add));
     try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
     var taken: Value = .{};
     lnako_aot_exception_take(&taken);
@@ -3599,7 +3599,7 @@ test "AOTのnull添字代入をキー付きの保留例外へ変換する" {
         runtime = state.active_runtime.?;
         state.active_runtime = null;
     }
-    var values = [_]Value{ .{ .tag = @intFromEnum(Tag.null_value) }, numberValue(0), numberValue(2) };
+    var values = [_]Value{ .{ .tag = @backingInt(Tag.null_value) }, numberValue(0), numberValue(2) };
     var frame: RootFrame = .{};
     lnako_aot_push_roots(&frame, &values, values.len);
     defer lnako_aot_pop_roots(&frame);
@@ -3648,7 +3648,7 @@ test "配列の伸長と辞書の挿入位置を保った更新を行う" {
     const array = try runtime.createArray(&.{numberValue(1)});
     try runtime.indexSet(array, numberValue(2), numberValue(3));
     try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 3))), runtime.indexGet(array, numberValue(2)).payload);
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(runtime.indexGet(array, numberValue(1)).tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(runtime.indexGet(array, numberValue(1)).tag))));
     const dictionary = try runtime.createDictionary(&.{ staticStringValue("x"), numberValue(1), staticStringValue("y"), numberValue(2) });
     try runtime.indexSet(dictionary, staticStringValue("x"), numberValue(7));
     const entries = dictionary.object().?.payload.dictionary.entries.items;
@@ -3660,11 +3660,11 @@ test "プリミティブへの添字代入を無視し非反復値を空とし�
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
     try runtime.indexSet(numberValue(1), numberValue(0), numberValue(2));
-    try runtime.indexSet(.{ .tag = @intFromEnum(Tag.boolean), .payload = 1 }, numberValue(0), numberValue(2));
+    try runtime.indexSet(.{ .tag = @backingInt(Tag.boolean), .payload = 1 }, numberValue(0), numberValue(2));
     const text = try runtime.createString(&.{ 'a', 'b', 'c' });
     try runtime.indexSet(text, numberValue(0), numberValue(2));
     try std.testing.expectEqualSlices(u16, &.{ 'a', 'b', 'c' }, text.object().?.payload.utf16_string);
-    const iterator = try runtime.createIterator(&.{.{ .tag = @intFromEnum(Tag.null_value) }}, false, 0, false);
+    const iterator = try runtime.createIterator(&.{.{ .tag = @backingInt(Tag.null_value) }}, false, 0, false);
     try std.testing.expect(!try runtime.iteratorHasNext(iterator));
 }
 
@@ -3673,7 +3673,7 @@ test "AOT分割宣言は非配列を1要素の値として扱う" {
     defer runtime.deinit();
     const scalar = numberValue(7);
     try std.testing.expectEqual(scalar.payload, runtime.destructureGet(scalar, 0).payload);
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(runtime.destructureGet(scalar, 1).tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(runtime.destructureGet(scalar, 1).tag))));
     const array = try runtime.createArray(&.{ numberValue(2), numberValue(3) });
     try std.testing.expectEqual(numberValue(3).payload, runtime.destructureGet(array, 1).payload);
 }
@@ -3738,45 +3738,45 @@ test "AOT単項演算はToPrimitive・BigInt・signed zero・callbackを保持�
         state.active_runtime = null;
     }
     const active = &state.active_runtime.?;
-    var roots = [_]Value{.{}} ** 12;
+    var roots = @as([12]Value, @splat(.{}));
     var frame: RootFrame = .{};
     active.pushRoots(&frame, &roots, roots.len);
     defer active.popRoots(&frame);
 
     roots[0] = try active.createString(&.{'5'});
-    lnako_aot_unary(&roots[1], &roots[0], @intFromEnum(UnaryOperator.minus));
-    try std.testing.expectEqual(Tag.number, @as(Tag, @enumFromInt(roots[1].tag)));
+    lnako_aot_unary(&roots[1], &roots[0], @backingInt(UnaryOperator.minus));
+    try std.testing.expectEqual(Tag.number, @as(Tag, @fromBackingInt(@intCast(roots[1].tag))));
     try std.testing.expectEqual(@as(f64, -5), @as(f64, @bitCast(roots[1].payload)));
 
     roots[2] = try active.createBigInt("1n");
-    lnako_aot_unary(&roots[3], &roots[2], @intFromEnum(UnaryOperator.minus));
-    try std.testing.expectEqual(Tag.bigint, @as(Tag, @enumFromInt(roots[3].tag)));
+    lnako_aot_unary(&roots[3], &roots[2], @backingInt(UnaryOperator.minus));
+    try std.testing.expectEqual(Tag.bigint, @as(Tag, @fromBackingInt(@intCast(roots[3].tag))));
     const negative_text = try roots[3].object().?.payload.bigint.toString(std.testing.allocator, 10);
     defer std.testing.allocator.free(negative_text);
     try std.testing.expectEqualStrings("-1", negative_text);
 
-    lnako_aot_unary(&roots[4], &roots[2], @intFromEnum(UnaryOperator.plus));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[4].tag)));
+    lnako_aot_unary(&roots[4], &roots[2], @backingInt(UnaryOperator.plus));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(roots[4].tag))));
     try std.testing.expect(active.has_pending_exception);
     roots[5] = active.takeException();
     try expectUtf16String(active, roots[5], "Cannot convert a BigInt value to a number");
 
     roots[6] = numberValue(-0.0);
-    lnako_aot_unary(&roots[7], &roots[6], @intFromEnum(UnaryOperator.plus));
-    try std.testing.expectEqual(Tag.number, @as(Tag, @enumFromInt(roots[7].tag)));
+    lnako_aot_unary(&roots[7], &roots[6], @backingInt(UnaryOperator.plus));
+    try std.testing.expectEqual(Tag.number, @as(Tag, @fromBackingInt(@intCast(roots[7].tag))));
     try std.testing.expect(isNegativeZero(@as(f64, @bitCast(roots[7].payload))));
 
     roots[8] = try active.createDictionary(&.{});
     roots[9] = try active.createFunction(testAotConstantSeven, 0, &.{});
     try active.setDictionary(&roots[8].object().?.payload.dictionary, staticStringValue("valueOf"), roots[9]);
-    lnako_aot_unary(&roots[7], &roots[8], @intFromEnum(UnaryOperator.minus));
+    lnako_aot_unary(&roots[7], &roots[8], @backingInt(UnaryOperator.minus));
     try std.testing.expectEqual(@as(f64, -7), @as(f64, @bitCast(roots[7].payload)));
 
     roots[9] = try active.createBindingCell(numberValue(0));
     roots[10] = try active.createFunction(testAotThrowAfterSideEffect, 0, &.{roots[9]});
     try active.setDictionary(&roots[8].object().?.payload.dictionary, staticStringValue("valueOf"), roots[10]);
-    lnako_aot_unary(&roots[7], &roots[8], @intFromEnum(UnaryOperator.minus));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[7].tag)));
+    lnako_aot_unary(&roots[7], &roots[8], @backingInt(UnaryOperator.minus));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(roots[7].tag))));
     try std.testing.expectEqual(@as(f64, 1), valueToNumber(roots[9].object().?.payload.binding_cell));
     try std.testing.expect(active.has_pending_exception);
     roots[11] = active.takeException();
@@ -3792,7 +3792,7 @@ test "AOT単項演算は各プリミティブのNumber変換を維持する" {
         state.active_runtime = null;
     }
     const active = &state.active_runtime.?;
-    var roots = [_]Value{.{}} ** 14;
+    var roots = @as([14]Value, @splat(.{}));
     var frame: RootFrame = .{};
     active.pushRoots(&frame, &roots, roots.len);
     defer active.popRoots(&frame);
@@ -3801,9 +3801,9 @@ test "AOT単項演算は各プリミティブのNumber変換を維持する" {
         staticStringValue(""),
         staticStringValue("5"),
         staticStringValue("NaN"),
-        .{ .tag = @intFromEnum(Tag.null_value) },
+        .{ .tag = @backingInt(Tag.null_value) },
         .{},
-        .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 },
+        .{ .tag = @backingInt(Tag.boolean), .payload = 1 },
         numberValue(std.math.nan(f64)),
         numberValue(std.math.inf(f64)),
         numberValue(-std.math.inf(f64)),
@@ -3880,7 +3880,7 @@ test "AOT辞書のカスタムToPrimitiveはヒント順序と失敗を保つ" {
         state.active_runtime = null;
     }
     const active = &state.active_runtime.?;
-    var roots = [_]Value{.{}} ** 8;
+    var roots = @as([8]Value, @splat(.{}));
     var frame = RootFrame{};
     active.pushRoots(&frame, &roots, roots.len);
     defer active.popRoots(&frame);
@@ -3920,7 +3920,7 @@ test "AOT配列のカスタムToPrimitiveは文字列と数値hintへ接続す�
         state.active_runtime = null;
     }
     const active = &state.active_runtime.?;
-    var roots = [_]Value{.{}} ** 7;
+    var roots = @as([7]Value, @splat(.{}));
     var frame = RootFrame{};
     active.pushRoots(&frame, &roots, roots.len);
     defer active.popRoots(&frame);
@@ -3956,7 +3956,7 @@ test "AOT byte bufferのcustom prototypeをToPrimitiveへ接続する" {
         state.active_runtime = null;
     }
     const active = &state.active_runtime.?;
-    var roots = [_]Value{.{}} ** 8;
+    var roots = @as([8]Value, @splat(.{}));
     var frame = RootFrame{};
     active.pushRoots(&frame, &roots, roots.len);
     defer active.popRoots(&frame);
@@ -4005,8 +4005,8 @@ test "AOT動的比較は文字列変換と参照同一性を区別する" {
     try std.testing.expect(!(try compareValues(&runtime, .strict_equal, roots[0], roots[1])));
     try std.testing.expect(try compareValues(&runtime, .abstract_equal, staticStringValue("1"), roots[2]));
     try std.testing.expect(!(try compareValues(&runtime, .abstract_equal, roots[3], roots[4])));
-    try std.testing.expect(try compareValues(&runtime, .abstract_equal, .{ .tag = @intFromEnum(Tag.null_value) }, .{}));
-    try std.testing.expect(!(try compareValues(&runtime, .strict_equal, .{ .tag = @intFromEnum(Tag.null_value) }, .{})));
+    try std.testing.expect(try compareValues(&runtime, .abstract_equal, .{ .tag = @backingInt(Tag.null_value) }, .{}));
+    try std.testing.expect(!(try compareValues(&runtime, .strict_equal, .{ .tag = @backingInt(Tag.null_value) }, .{})));
     try std.testing.expect(try compareValues(&runtime, .greater, staticStringValue("2"), numberValue(1)));
     try std.testing.expect(!(try compareValues(&runtime, .greater, staticStringValue("A"), numberValue(1))));
 }
@@ -4092,7 +4092,7 @@ test "AOT増減は未定義・文字列・BigIntをNumberへ変換する" {
 test "AOT増減は配列・辞書をtoPrimitive経由でNumberへ変換する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 2;
+    var roots = @as([2]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -4115,7 +4115,7 @@ test "AOT増減は変換callbackの失敗をNaNへ握り潰さず例外として
         state.active_runtime = null;
     }
     const active = &state.active_runtime.?;
-    var roots = [_]Value{.{}} ** 4;
+    var roots = @as([4]Value, @splat(.{}));
     var frame = RootFrame{};
     active.pushRoots(&frame, &roots, roots.len);
     defer active.popRoots(&frame);
@@ -4130,7 +4130,7 @@ test "AOT増減は変換callbackの失敗をNaNへ握り潰さず例外として
     const amount = numberValue(1);
     lnako_aot_increment_values(&roots[3], &roots[0], &amount);
     try std.testing.expect(active.has_pending_exception);
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[3].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(roots[3].tag))));
     roots[3] = active.takeException();
     try expectUtf16String(active, roots[3], "callback failure");
 }
@@ -4145,14 +4145,14 @@ test "DNCL自動初期化と添字増減はGC圧力下でもコンテナを保�
     }
     state.active_runtime.?.next_collection = 1;
 
-    var roots = [_]Value{.{}} ** 4;
+    var roots = @as([4]Value, @splat(.{}));
     var frame = RootFrame{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
 
     // A[1]=5相当: 未初期化変数→30要素配列、中間レベルも配列化して書き戻す
     lnako_aot_ensure_array_var(&roots[0]);
-    try std.testing.expectEqual(@as(u8, @intFromEnum(Tag.array)), roots[0].tag);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.array)), roots[0].tag);
     roots[1] = numberValue(1);
     var out: Value = .{};
     lnako_aot_index_get(&out, &roots[0], &roots[1]);
@@ -4161,7 +4161,7 @@ test "DNCL自動初期化と添字増減はGC圧力下でもコンテナを保�
         lnako_aot_init_array_index(&roots[0], &roots[1]);
         lnako_aot_index_get(&out, &roots[0], &roots[1]);
     }
-    try std.testing.expectEqual(@as(u8, @intFromEnum(Tag.array)), out.tag);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.array)), out.tag);
     var check: Value = .{};
     lnako_aot_index_get(&check, &roots[0], &roots[1]);
     try std.testing.expectEqual(out.object().?, check.object().?);
@@ -4228,7 +4228,7 @@ test "回数・範囲・配列・辞書の反復状態と元コレクション�
     // 真は1、BigIntは数学値へ写す。
     const repeat_string = try runtime.createIterator(&.{try runtime.createString(&.{'3'})}, false, 0, false);
     try std.testing.expect(try runtime.iteratorHasNext(repeat_string));
-    const repeat_boolean = try runtime.createIterator(&.{.{ .tag = @intFromEnum(Tag.boolean), .payload = 1 }}, false, 0, false);
+    const repeat_boolean = try runtime.createIterator(&.{.{ .tag = @backingInt(Tag.boolean), .payload = 1 }}, false, 0, false);
     try std.testing.expect(try runtime.iteratorHasNext(repeat_boolean));
     const repeat_bigint = try runtime.createIterator(&.{try runtime.createBigInt("1n")}, false, 0, false);
     try std.testing.expect(try runtime.iteratorHasNext(repeat_bigint));
@@ -4301,7 +4301,7 @@ test "AOT範囲繰り返しは終端をガード毎に抽象関係比較する" 
     // 非数値終端はNaN比較で0回反復となる。
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 4;
+    var roots = @as([4]Value, @splat(.{}));
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -4335,7 +4335,7 @@ test "AOT反復は開始時の添字・キー集合を列挙し穴と削除済�
     // 開始後の追加要素・キーは列挙しない。
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 4;
+    var roots = @as([4]Value, @splat(.{}));
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -4380,7 +4380,7 @@ test "AOT配列反復は添字の後にownプロパティを列挙する" {
     // 到達時点で削除済みのプロパティは飛ばす。
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 2;
+    var roots = @as([2]Value, @splat(.{}));
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -4397,7 +4397,7 @@ test "AOT配列反復は添字の後にownプロパティを列挙する" {
     try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 0))), key.payload);
     try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 1))), target.payload);
     _ = try runtime.iteratorNext(iterator, null, &target, &key, null, null);
-    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @enumFromInt(key.tag)));
+    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @fromBackingInt(@intCast(key.tag))));
     try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 9))), target.payload);
     // 未到達プロパティを削除してもスナップショット走査は残りを列挙しない。
     _ = properties.orderedRemoveEntry(runtime.allocator, properties.findByKey(staticStringValue("y")).?);
@@ -4416,7 +4416,7 @@ test "AOTのArrayBuffer反復は添字を列挙せずownプロパティのみ列
     // 同じ）ため、添字領域は0件としてownプロパティ名のみを列挙する。
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 1;
+    var roots = @as([1]Value, @splat(.{}));
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -4430,7 +4430,7 @@ test "AOTのArrayBuffer反復は添字を列挙せずownプロパティのみ列
     // 添字0・1（内部バイト）は列挙せず、ownプロパティxのみ到達する。
     try std.testing.expect(try runtime.iteratorHasNext(iterator));
     _ = try runtime.iteratorNext(iterator, null, &target, &key, null, null);
-    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @enumFromInt(key.tag)));
+    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @fromBackingInt(@intCast(key.tag))));
     try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 9))), target.payload);
     try std.testing.expect(!try runtime.iteratorHasNext(iterator));
 }
@@ -4438,13 +4438,13 @@ test "AOTのArrayBuffer反復は添字を列挙せずownプロパティのみ列
 test "AOT配列の集約・入替・連番・要素生成を公式境界で処理する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 20;
+    var roots = @as([20]Value, @splat(.{}));
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
 
     roots[0] = try runtime.createArray(&.{staticStringValue("9")});
-    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @enumFromInt((try arrayExtremumBuiltin(&runtime, roots[0], true)).tag)));
+    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @fromBackingInt(@intCast((try arrayExtremumBuiltin(&runtime, roots[0], true)).tag))));
     roots[3] = try runtime.createBigInt("1n");
     roots[1] = try runtime.createArray(&.{roots[3]});
     try std.testing.expectEqual(roots[3].payload, (try arrayExtremumBuiltin(&runtime, roots[1], false)).payload);
@@ -4467,15 +4467,15 @@ test "AOT配列の集約・入替・連番・要素生成を公式境界で処�
     _ = try arraySwapBuiltin(&runtime, roots[6], numberValue(0), numberValue(4));
     const swapped = try arrayItems(roots[6]);
     try std.testing.expectEqual(@as(usize, 5), swapped.items.len);
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(swapped.items[0].tag)));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(swapped.items[3].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(swapped.items[0].tag))));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(swapped.items[3].tag))));
     try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast(swapped.items[4].payload)));
     try std.testing.expectError(error.ArraySparseLengthLimit, arraySwapBuiltin(&runtime, roots[6], numberValue(0), numberValue(@floatFromInt(safe_array_element_limit))));
 
     roots[7] = try arraySequenceBuiltin(&runtime, staticStringValue("2"), numberValue(4));
     const sequence = try arrayItems(roots[7]);
     try std.testing.expectEqual(@as(usize, 3), sequence.items.len);
-    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @enumFromInt(sequence.items[0].tag)));
+    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @fromBackingInt(@intCast(sequence.items[0].tag))));
     try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(sequence.items[1].payload)));
     roots[8] = try runtime.createBigInt("2n");
     roots[9] = try runtime.createBigInt("4n");
@@ -4500,7 +4500,7 @@ test "AOT配列の集約・入替・連番・要素生成を公式境界で処�
     roots[13] = try arrayFillBuiltin(&runtime, .{}, numberValue(2));
     const undefined_fill = try arrayItems(roots[13]);
     try std.testing.expectEqual(@as(usize, 2), undefined_fill.items.len);
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(undefined_fill.items[0].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(undefined_fill.items[0].tag))));
     try std.testing.expectError(error.ArrayFillSizeLimit, arrayFillBuiltin(&runtime, numberValue(0), numberValue(std.math.inf(f64))));
 
     roots[11] = try runtime.createArray(&.{numberValue(1)});
@@ -4522,13 +4522,13 @@ test "AOT配列の集約・入替・連番・要素生成を公式境界で処�
     try std.testing.expect(runtime.aotArrayIsPresent(sparse_clone_value.object().?, 2));
     try runtime.indexSet(sparse_clone_value, numberValue(0), numberValue(9));
     const sparse_source = try arrayItems(roots[11]);
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(sparse_source.items[0].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(sparse_source.items[0].tag))));
     try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(sparse_source.items[1].payload)));
 
     roots[14] = try runtime.createBytes(&.{ 85, 154 });
     roots[15] = try arrayFillBuiltin(&runtime, roots[14], numberValue(1));
     const buffer_clone = (try arrayItems(roots[15])).items[0];
-    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(buffer_clone.tag)));
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @fromBackingInt(@intCast(buffer_clone.tag))));
     const buffer_data = runtime.indexGet(buffer_clone, staticStringValue("data"));
     try std.testing.expectEqual(@as(f64, 85), @as(f64, @bitCast((try arrayItems(buffer_data)).items[0].payload)));
     try runtime.indexSet(buffer_data, numberValue(0), numberValue(9));
@@ -4537,13 +4537,13 @@ test "AOT配列の集約・入替・連番・要素生成を公式境界で処�
     roots[16] = try runtime.createUint8Array(&.{ 139, 103 });
     roots[17] = try arrayFillBuiltin(&runtime, roots[16], numberValue(1));
     const uint8_clone = (try arrayItems(roots[17])).items[0];
-    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(uint8_clone.tag)));
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @fromBackingInt(@intCast(uint8_clone.tag))));
     try std.testing.expectEqual(@as(f64, 139), @as(f64, @bitCast(runtime.indexGet(uint8_clone, staticStringValue("0")).payload)));
 
     roots[18] = try runtime.createArrayBuffer(&.{ 1, 2 });
     roots[19] = try arrayFillBuiltin(&runtime, roots[18], numberValue(1));
     const array_buffer_clone = (try arrayItems(roots[19])).items[0];
-    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(array_buffer_clone.tag)));
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @fromBackingInt(@intCast(array_buffer_clone.tag))));
     try std.testing.expectEqual(@as(usize, 0), array_buffer_clone.object().?.payload.dictionary.entries.items.len);
 }
 
@@ -4565,7 +4565,7 @@ test "AOT配列生成の安全上限を命令別の診断へ変換する" {
         &roots[0],
         &sequence_arguments,
         sequence_arguments.len,
-        @intFromEnum(aot_builtin.Command.array_sequence),
+        @backingInt(aot_builtin.Command.array_sequence),
     );
     try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
     const sequence_message = try pendingExceptionMessageUtf8Alloc(&state.active_runtime.?);
@@ -4578,7 +4578,7 @@ test "AOT配列生成の安全上限を命令別の診断へ変換する" {
         &roots[1],
         &fill_arguments,
         fill_arguments.len,
-        @intFromEnum(aot_builtin.Command.array_fill),
+        @backingInt(aot_builtin.Command.array_fill),
     );
     try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
     const fill_message = try pendingExceptionMessageUtf8Alloc(&state.active_runtime.?);
@@ -4592,7 +4592,7 @@ test "AOT配列生成の安全上限を命令別の診断へ変換する" {
         &roots[1],
         &swap_arguments,
         swap_arguments.len,
-        @intFromEnum(aot_builtin.Command.array_swap),
+        @backingInt(aot_builtin.Command.array_swap),
     );
     try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
     const swap_message = try pendingExceptionMessageUtf8Alloc(&state.active_runtime.?);
@@ -4603,7 +4603,7 @@ test "AOT配列生成の安全上限を命令別の診断へ変換する" {
 test "AOT配列ソート系は安定mergeとundefined末尾と同一配列を保つ" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 8;
+    var roots = @as([8]Value, @splat(.{}));
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -4619,7 +4619,7 @@ test "AOT配列ソート系は安定mergeとundefined末尾と同一配列を保
     const second = try valueUtf16Alloc(&runtime, sorted[1]);
     defer runtime.allocator.free(second);
     try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00 }, second);
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(sorted[3].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(sorted[3].tag))));
 
     roots[2] = try runtime.createBigInt("2n");
     roots[3] = try runtime.createArray(&.{ staticStringValue("10"), .{}, roots[2], numberValue(std.math.nan(f64)), numberValue(-0.0), numberValue(0.0) });
@@ -4627,12 +4627,12 @@ test "AOT配列ソート系は安定mergeとundefined末尾と同一配列を保
     const numeric = (try arrayItems(roots[3])).items;
     try std.testing.expect(isNegativeZero(valueToNumber(numeric[0])));
     try std.testing.expect(!isNegativeZero(valueToNumber(numeric[1])));
-    try std.testing.expectEqual(Tag.bigint, @as(Tag, @enumFromInt(numeric[2].tag)));
-    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @enumFromInt(numeric[3].tag)));
+    try std.testing.expectEqual(Tag.bigint, @as(Tag, @fromBackingInt(@intCast(numeric[2].tag))));
+    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @fromBackingInt(@intCast(numeric[3].tag))));
     try std.testing.expect(std.math.isNan(valueToNumber(numeric[4])));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(numeric[5].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(numeric[5].tag))));
     _ = try arrayOrderingBuiltin(&runtime, .array_numeric_convert, roots[3]);
-    try std.testing.expectEqual(Tag.number, @as(Tag, @enumFromInt((try arrayItems(roots[3])).items[2].tag)));
+    try std.testing.expectEqual(Tag.number, @as(Tag, @fromBackingInt(@intCast((try arrayItems(roots[3])).items[2].tag))));
     try std.testing.expect(std.math.isNan(valueToNumber((try arrayItems(roots[3])).items[5])));
     try std.testing.expectEqual(roots[3].payload, (try arrayOrderingBuiltin(&runtime, .array_reverse, roots[3])).payload);
     try std.testing.expect(std.math.isNan(valueToNumber((try arrayItems(roots[3])).items[0])));
@@ -4641,7 +4641,7 @@ test "AOT配列ソート系は安定mergeとundefined末尾と同一配列を保
 test "AOT疎配列の順序操作は値とpresenceの公式境界を保つ" {
     var runtime = Runtime{ .allocator = std.testing.allocator, .random_state = default_random_seed };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 5;
+    var roots = @as([5]Value, @splat(.{}));
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -4655,7 +4655,7 @@ test "AOT疎配列の順序操作は値とpresenceの公式境界を保つ" {
     try std.testing.expectEqualSlices(bool, &.{ true, true, true, false }, sorted);
     try std.testing.expectEqual(@as(f64, 1), valueToNumber((try arrayItems(roots[0])).items[0]));
     try std.testing.expectEqual(@as(f64, 3), valueToNumber((try arrayItems(roots[0])).items[1]));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try arrayItems(roots[0])).items[2].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast((try arrayItems(roots[0])).items[2].tag))));
 
     roots[1] = try runtime.createArray(&.{});
     try runtime.indexSet(roots[1], numberValue(0), numberValue(10));
@@ -4693,7 +4693,7 @@ test "AOT疎配列の順序操作は値とpresenceの公式境界を保つ" {
 test "AOT疎配列のsplice系操作は削除側と戻り値側のpresenceを移動する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 6;
+    var roots = @as([6]Value, @splat(.{}));
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -4710,7 +4710,7 @@ test "AOT疎配列のsplice系操作は削除側と戻り値側のpresenceを移
     try runtime.indexSet(roots[1], numberValue(2), numberValue(3));
     roots[2] = try arrayTakeBuiltin(&runtime, roots[1], numberValue(1), numberValue(2));
     try std.testing.expectEqualSlices(bool, &.{ false, true }, roots[2].object().?.array_presence.items);
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try arrayItems(roots[2])).items[0].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast((try arrayItems(roots[2])).items[0].tag))));
     try std.testing.expectEqual(@as(f64, 3), valueToNumber((try arrayItems(roots[2])).items[1]));
     try std.testing.expectEqualSlices(bool, &.{true}, roots[1].object().?.array_presence.items);
 
@@ -4727,14 +4727,14 @@ test "AOT疎配列のsplice系操作は削除側と戻り値側のpresenceを移
     try runtime.indexSet(roots[5], numberValue(1), numberValue(7));
     _ = try arrayInsertManyBuiltin(&runtime, roots[4], numberValue(1), roots[5]);
     try std.testing.expectEqualSlices(bool, &.{ true, true, true, false, true }, roots[4].object().?.array_presence.items);
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try arrayItems(roots[4])).items[1].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast((try arrayItems(roots[4])).items[1].tag))));
     try std.testing.expectEqual(@as(f64, 7), valueToNumber((try arrayItems(roots[4])).items[2]));
 }
 
 test "AOT疎配列の参照と配列足は穴のpresenceを保ち範囲コピーだけJSON化する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 8;
+    var roots = @as([8]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -4750,8 +4750,8 @@ test "AOT疎配列の参照と配列足は穴のpresenceを保ち範囲コピー
 
     roots[3] = try arrayRangeCopyBuiltin(&runtime, roots[0], roots[1]);
     try std.testing.expectEqualSlices(bool, &.{ true, true, true, true }, roots[3].object().?.array_presence.items);
-    try std.testing.expectEqual(Tag.null_value, @as(Tag, @enumFromInt((try arrayItems(roots[3])).items[1].tag)));
-    try std.testing.expectEqual(Tag.null_value, @as(Tag, @enumFromInt((try arrayItems(roots[3])).items[3].tag)));
+    try std.testing.expectEqual(Tag.null_value, @as(Tag, @fromBackingInt(@intCast((try arrayItems(roots[3])).items[1].tag))));
+    try std.testing.expectEqual(Tag.null_value, @as(Tag, @fromBackingInt(@intCast((try arrayItems(roots[3])).items[3].tag))));
 
     roots[4] = try runtime.createArray(&.{ numberValue(4), numberValue(5) });
     roots[5] = try arrayAddBuiltin(&runtime, roots[0], roots[4]);
@@ -4778,11 +4778,11 @@ test "AOT配列シャッフルはFisher-Yatesの置換と同一配列を保つ" 
 
     roots[0] = try state.active_runtime.?.createArray(&.{ numberValue(1), numberValue(2), numberValue(3), numberValue(4) });
     const original = roots[0].payload;
-    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.array_shuffle));
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.array_shuffle));
     try std.testing.expectEqual(original, roots[1].payload);
     try std.testing.expect(state.active_runtime.?.random_state != default_random_seed);
 
-    var seen = [_]bool{false} ** 4;
+    var seen = @as([4]bool, @splat(false));
     for ((try arrayItems(roots[0])).items) |item| {
         const number = valueToNumber(item);
         try std.testing.expect(number >= 1 and number <= 4 and @trunc(number) == number);
@@ -4803,7 +4803,7 @@ test "AOT配列コールバックは関数値・名前解決と新配列規則�
         state.active_runtime = null;
     }
     const active = &state.active_runtime.?;
-    var roots = [_]Value{.{}} ** 11;
+    var roots = @as([11]Value, @splat(.{}));
     var frame = RootFrame{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
@@ -4845,7 +4845,7 @@ test "AOTカスタムソートの小配列比較順はV8のbinary insertion規�
         state.active_runtime = null;
     }
     const active = &state.active_runtime.?;
-    var roots = [_]Value{.{}} ** 4;
+    var roots = @as([4]Value, @splat(.{}));
     var frame = RootFrame{};
     active.pushRoots(&frame, &roots, roots.len);
     defer active.popRoots(&frame);
@@ -4941,12 +4941,12 @@ test "AOT圧縮解凍は内蔵ZIPとcallbackタスクを実行する" {
     roots[2] = try runtimeUtf8String(&state.active_runtime.?, archive);
     roots[3] = try runtimeUtf8String(&state.active_runtime.?, output);
     var direct_create = [_]Value{ roots[1], roots[2] };
-    lnako_aot_archive_call(&roots[8], &roots[0], &direct_create, direct_create.len, @intFromEnum(aot_builtin.Command.node_archive_create), 1);
-    try std.testing.expectEqual(Tag.boolean, @as(Tag, @enumFromInt(roots[8].tag)));
+    lnako_aot_archive_call(&roots[8], &roots[0], &direct_create, direct_create.len, @backingInt(aot_builtin.Command.node_archive_create), 1);
+    try std.testing.expectEqual(Tag.boolean, @as(Tag, @fromBackingInt(@intCast(roots[8].tag))));
     try std.testing.expectEqual(@as(usize, 0), state.active_runtime.?.archive_tasks.items.len);
 
     var direct_extract = [_]Value{ roots[2], roots[3] };
-    lnako_aot_archive_call(&roots[8], &roots[0], &direct_extract, direct_extract.len, @intFromEnum(aot_builtin.Command.node_archive_extract), 2);
+    lnako_aot_archive_call(&roots[8], &roots[0], &direct_extract, direct_extract.len, @backingInt(aot_builtin.Command.node_archive_extract), 2);
     const extracted = try std.fs.path.join(std.testing.allocator, &.{ output, "source.txt" });
     defer std.testing.allocator.free(extracted);
     const extracted_bytes = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, extracted, std.testing.allocator, .limited(1024));
@@ -4958,13 +4958,13 @@ test "AOT圧縮解凍は内蔵ZIPとcallbackタスクを実行する" {
     roots[6] = try runtimeUtf8String(&state.active_runtime.?, callback_archive);
     roots[7] = try runtimeUtf8String(&state.active_runtime.?, callback_output);
     var callback_create = [_]Value{ roots[5], roots[1], roots[6] };
-    lnako_aot_archive_call(&roots[8], &roots[0], &callback_create, callback_create.len, @intFromEnum(aot_builtin.Command.node_archive_create_callback), 3);
+    lnako_aot_archive_call(&roots[8], &roots[0], &callback_create, callback_create.len, @backingInt(aot_builtin.Command.node_archive_create_callback), 3);
     try std.testing.expectEqual(@as(usize, 1), state.active_runtime.?.archive_tasks.items.len);
     try drainAotEvents(&state.active_runtime.?);
     try std.testing.expectEqual(@as(f64, 1), valueToNumber(roots[4].object().?.payload.binding_cell));
 
     var callback_extract = [_]Value{ roots[5], roots[6], roots[7] };
-    lnako_aot_archive_call(&roots[8], &roots[0], &callback_extract, callback_extract.len, @intFromEnum(aot_builtin.Command.node_archive_extract_callback), 4);
+    lnako_aot_archive_call(&roots[8], &roots[0], &callback_extract, callback_extract.len, @backingInt(aot_builtin.Command.node_archive_extract_callback), 4);
     try drainAotEvents(&state.active_runtime.?);
     try std.testing.expectEqual(@as(f64, 2), valueToNumber(roots[4].object().?.payload.binding_cell));
     const callback_extracted = try std.fs.path.join(std.testing.allocator, &.{ callback_output, "source.txt" });
@@ -4987,7 +4987,7 @@ test "AOTハッシュ関数一覧取得は固定したNode互換名を配列で�
     lnako_aot_push_roots(&frame, @ptrCast(&result), 1);
     defer lnako_aot_pop_roots(&frame);
 
-    lnako_aot_builtin_call(&result, null, 0, @intFromEnum(aot_builtin.Command.node_hash_names));
+    lnako_aot_builtin_call(&result, null, 0, @backingInt(aot_builtin.Command.node_hash_names));
     try std.testing.expectEqual(crypto.hash_names.len, result.object().?.payload.array.items.len);
     try expectUtf16String(&state.active_runtime.?, result.object().?.payload.array.items[0], crypto.hash_names[0]);
     try expectUtf16String(&state.active_runtime.?, result.object().?.payload.array.items[crypto.hash_names.len - 1], crypto.hash_names[crypto.hash_names.len - 1]);
@@ -5010,7 +5010,7 @@ test "AOT Node暗号はバイト値の型と境界を保持する" {
     roots[1] = try runtimeUtf8String(&state.active_runtime.?, "sha256");
     var hash_arguments = [_]Value{ roots[0], roots[1], .{} };
     roots[2] = try nodeCryptoBuiltin(&state.active_runtime.?, .node_hash_value, &hash_arguments);
-    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @enumFromInt(roots[2].tag)));
+    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @fromBackingInt(@intCast(roots[2].tag))));
     try std.testing.expectEqual(ByteKind.buffer, roots[2].object().?.payload.byte_buffer.kind);
     const expected_digest = [_]u8{
         0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea,
@@ -5050,8 +5050,8 @@ test "AOT Node暗号はバイト値の型と境界を保持する" {
     roots[7] = try state.active_runtime.?.createArrayBuffer(&.{ 1, 2 });
     try std.testing.expectEqual(ByteKind.array_buffer, roots[7].object().?.payload.byte_buffer.kind);
     try expectUtf16String(&state.active_runtime.?, roots[7], "[object ArrayBuffer]");
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(state.active_runtime.?.indexGet(roots[7], numberValue(0)).tag)));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(state.active_runtime.?.indexGet(roots[7], staticStringValue("length")).tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(state.active_runtime.?.indexGet(roots[7], numberValue(0)).tag))));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(state.active_runtime.?.indexGet(roots[7], staticStringValue("length")).tag))));
     var array_buffer_elements = try appendSearchElements(&state.active_runtime.?, roots[7]);
     defer array_buffer_elements.deinit();
     try std.testing.expectEqual(@as(usize, 0), array_buffer_elements.items.items.len);
@@ -5076,7 +5076,7 @@ test "AOT圧縮解凍ツールパス変更は可変グローバルを更新す�
     var arguments = [_]Value{staticStringValue("native-tool")};
     lnako_aot_archive_tool_path_set(&roots[1], &arguments, arguments.len, &roots[0], 9);
     try expectUtf16String(&state.active_runtime.?, roots[0], "native-tool");
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[1].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(roots[1].tag))));
 }
 
 test "AOT AJAXオプション設定は設定値をグローバルへ保持する" {
@@ -5098,7 +5098,7 @@ test "AOT AJAXオプション設定は設定値をグローバルへ保持する
     var arguments = [_]Value{roots[2]};
     lnako_aot_ajax_options_set(&roots[3], &arguments, arguments.len, &roots[0], 10);
     try std.testing.expectEqual(roots[2].payload, roots[0].payload);
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[3].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(roots[3].tag))));
 }
 
 test "AOT AJAX失敗時はコールバック値をグローバルへ保持する" {
@@ -5118,13 +5118,13 @@ test "AOT AJAX失敗時はコールバック値をグローバルへ保持する
     var arguments = [_]Value{roots[0]};
     lnako_aot_ajax_onerror_set(&roots[1], &arguments, arguments.len, &roots[2], 11);
     try std.testing.expectEqual(roots[0].payload, roots[2].payload);
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[1].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(roots[1].tag))));
 }
 
 test "AOT HTTP clientはrequest準備とResponse境界を保持する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 8;
+    var roots = @as([8]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -5169,7 +5169,7 @@ test "AOT表ソートは指定列を比較して同じ配列を安定ソート�
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
     runtime.next_collection = 1;
-    var roots = [_]Value{.{}} ** 10;
+    var roots = @as([10]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -5202,7 +5202,7 @@ test "AOT表ソートは指定列を比較して同じ配列を安定ソート�
 test "AOT表ソートは最上位配列のholeと明示的undefinedをpresence順に保持する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 8;
+    var roots = @as([8]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -5216,7 +5216,7 @@ test "AOT表ソートは最上位配列のholeと明示的undefinedをpresence�
     _ = try tableBuiltin(&runtime, .table_sort, &.{ roots[2], numberValue(0) });
     try std.testing.expectEqual(roots[1].payload, (try arrayItems(roots[2])).items[0].payload);
     try std.testing.expectEqual(roots[0].payload, (try arrayItems(roots[2])).items[1].payload);
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try arrayItems(roots[2])).items[2].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast((try arrayItems(roots[2])).items[2].tag))));
     try std.testing.expectEqualSlices(bool, &.{ true, true, true, false }, roots[2].object().?.array_presence.items);
 
     roots[3] = try runtime.createArray(&.{staticStringValue("10")});
@@ -5234,7 +5234,7 @@ test "AOT表ソートは最上位配列のholeと明示的undefinedをpresence�
 test "AOT表数値ソートはns-msのBigInt型境界を公式どおり拒否する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 8;
+    var roots = @as([8]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -5254,7 +5254,7 @@ test "AOT表数値ソートはns-msのBigInt型境界を公式どおり拒否す
 test "AOT表列取得と表ピックアップは最上位のholeをArrayメソッドどおり扱う" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 8;
+    var roots = @as([8]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -5268,8 +5268,8 @@ test "AOT表列取得と表ピックアップは最上位のholeをArrayメソ�
     roots[3] = try tableBuiltin(&runtime, .table_column, &.{ roots[2], numberValue(1) });
     try std.testing.expectEqualSlices(bool, &.{ true, false, true }, roots[3].object().?.array_presence.items);
     try std.testing.expectEqual(@as(f64, 20), valueToNumber(roots[3].object().?.payload.array.items[0]));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[3].object().?.payload.array.items[1].tag)));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[3].object().?.payload.array.items[2].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(roots[3].object().?.payload.array.items[1].tag))));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(roots[3].object().?.payload.array.items[2].tag))));
 
     roots[4] = try tableBuiltin(&runtime, .table_pickup, &.{ roots[2], numberValue(0), numberValue(1) });
     try std.testing.expectEqual(@as(usize, 1), roots[4].object().?.payload.array.items.len);
@@ -5287,30 +5287,30 @@ test "AOT敬語命令は未定義初期値と礼節レベルを公式どおり�
         runtime = state.active_runtime.?;
         state.active_runtime = null;
     }
-    var roots = [_]Value{.{}} ** 7;
+    var roots = @as([7]Value, @splat(.{}));
     var frame = RootFrame{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
 
-    lnako_aot_builtin_call(&roots[0], null, 0, @intFromEnum(aot_builtin.Command.courtesy_end));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[0].tag)));
-    lnako_aot_builtin_call(&roots[1], null, 0, @intFromEnum(aot_builtin.Command.courtesy_level));
+    lnako_aot_builtin_call(&roots[0], null, 0, @backingInt(aot_builtin.Command.courtesy_end));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(roots[0].tag))));
+    lnako_aot_builtin_call(&roots[1], null, 0, @backingInt(aot_builtin.Command.courtesy_level));
     try std.testing.expectEqual(@as(f64, 0), valueToNumber(roots[1]));
 
-    lnako_aot_builtin_call(&roots[2], null, 0, @intFromEnum(aot_builtin.Command.courtesy_end));
-    lnako_aot_builtin_call(&roots[3], null, 0, @intFromEnum(aot_builtin.Command.courtesy_level));
+    lnako_aot_builtin_call(&roots[2], null, 0, @backingInt(aot_builtin.Command.courtesy_end));
+    lnako_aot_builtin_call(&roots[3], null, 0, @backingInt(aot_builtin.Command.courtesy_level));
     try std.testing.expectEqual(@as(f64, 100), valueToNumber(roots[3]));
 
-    lnako_aot_builtin_call(&roots[4], null, 0, @intFromEnum(aot_builtin.Command.courtesy_increment));
-    lnako_aot_builtin_call(&roots[5], null, 0, @intFromEnum(aot_builtin.Command.courtesy_increment));
-    lnako_aot_builtin_call(&roots[6], null, 0, @intFromEnum(aot_builtin.Command.courtesy_level));
+    lnako_aot_builtin_call(&roots[4], null, 0, @backingInt(aot_builtin.Command.courtesy_increment));
+    lnako_aot_builtin_call(&roots[5], null, 0, @backingInt(aot_builtin.Command.courtesy_increment));
+    lnako_aot_builtin_call(&roots[6], null, 0, @backingInt(aot_builtin.Command.courtesy_level));
     try std.testing.expectEqual(@as(f64, 102), valueToNumber(roots[6]));
 }
 
 test "AOT表検索系は行プロパティとraw開始値を公式どおり処理する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 24;
+    var roots = @as([24]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -5340,27 +5340,27 @@ test "AOT表検索系は行プロパティとraw開始値を公式どおり処�
     try std.testing.expectError(error.TableRowMissing, tableBuiltin(&runtime, .table_search, &.{ roots[2], numberValue(0), numberValue(-1), staticStringValue("alice") }));
     roots[8] = try runtime.createBigInt("1n");
     const bigint_found = try tableBuiltin(&runtime, .table_search, &.{ roots[2], numberValue(0), roots[8], staticStringValue("bob") });
-    try std.testing.expectEqual(Tag.bigint, @as(Tag, @enumFromInt(bigint_found.tag)));
+    try std.testing.expectEqual(Tag.bigint, @as(Tag, @fromBackingInt(@intCast(bigint_found.tag))));
     try std.testing.expectEqual(@as(i64, 1), bigint_found.object().?.payload.bigint.toI64());
     const string_found = try tableBuiltin(&runtime, .table_search, &.{ roots[2], numberValue(0), staticStringValue("1"), staticStringValue("bob") });
-    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @enumFromInt(string_found.tag)));
+    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @fromBackingInt(@intCast(string_found.tag))));
     const incremented_found = try tableBuiltin(&runtime, .table_search, &.{ roots[2], numberValue(0), staticStringValue("0"), staticStringValue("bob") });
     try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(incremented_found.payload)));
     const object_start = try tableBuiltin(&runtime, .table_search, &.{ roots[2], numberValue(0), roots[3], staticStringValue("alice") });
     try std.testing.expectEqual(@as(f64, -1), @as(f64, @bitCast(object_start.payload)));
     roots[10] = try runtime.createArray(&.{.{}});
     try std.testing.expectError(error.TableRowMissing, tableBuiltin(&runtime, .table_column, &.{ roots[10], numberValue(0) }));
-    roots[11] = try runtime.createArray(&.{.{ .tag = @intFromEnum(Tag.null_value), .payload = 0 }});
+    roots[11] = try runtime.createArray(&.{.{ .tag = @backingInt(Tag.null_value), .payload = 0 }});
     try std.testing.expectError(error.TableRowMissing, tableBuiltin(&runtime, .table_column, &.{ roots[11], numberValue(0) }));
     roots[12] = try runtime.createDictionary(&.{ staticStringValue("length"), staticStringValue("7") });
     roots[13] = try runtime.createArray(&.{roots[12]});
     const text_columns = try tableBuiltin(&runtime, .table_column_count, roots[13..14]);
-    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @enumFromInt(text_columns.tag)));
+    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @fromBackingInt(@intCast(text_columns.tag))));
     roots[14] = try runtime.createBigInt("2n");
     roots[15] = try runtime.createDictionary(&.{ staticStringValue("length"), roots[14] });
     roots[16] = try runtime.createArray(&.{roots[15]});
     const bigint_columns = try tableBuiltin(&runtime, .table_column_count, roots[16..17]);
-    try std.testing.expectEqual(Tag.bigint, @as(Tag, @enumFromInt(bigint_columns.tag)));
+    try std.testing.expectEqual(Tag.bigint, @as(Tag, @fromBackingInt(@intCast(bigint_columns.tag))));
     try std.testing.expectEqual(@as(i64, 2), bigint_columns.object().?.payload.bigint.toI64());
     roots[12] = try runtime.createDictionary(&.{ staticStringValue("length"), numberValue(7) });
     roots[13] = try runtime.createDictionary(&.{});
@@ -5386,7 +5386,7 @@ test "AOT表検索系は行プロパティとraw開始値を公式どおり処�
 test "AOT表行propertyはown値を優先して標準prototypeを解決する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 20;
+    var roots = @as([20]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -5416,15 +5416,15 @@ test "AOT表行propertyはown値を優先して標準prototypeを解決する" {
     roots[16] = try tableRowProperty(&runtime, roots[12], staticStringValue("constructor"));
     try std.testing.expect(try strictEqual(&runtime, roots[3], roots[16]));
     roots[13] = try tableRowProperty(&runtime, roots[0], staticStringValue("__proto__"));
-    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(roots[13].tag)));
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @fromBackingInt(@intCast(roots[13].tag))));
     roots[14] = try tableRowProperty(&runtime, roots[1], staticStringValue("__proto__"));
-    try std.testing.expectEqual(Tag.array, @as(Tag, @enumFromInt(roots[14].tag)));
+    try std.testing.expectEqual(Tag.array, @as(Tag, @fromBackingInt(@intCast(roots[14].tag))));
 }
 
 test "AOT表列挿入削除合計は外側と行内部のholeをforEachとsliceどおり扱う" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 12;
+    var roots = @as([12]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -5443,7 +5443,7 @@ test "AOT表列挿入削除合計は外側と行内部のholeをforEachとslice�
     try std.testing.expectEqualSlices(bool, &.{ true, true, false, true }, inserted_row.array_presence.items);
     try std.testing.expectEqual(@as(f64, 1), valueToNumber(inserted_row.payload.array.items[0]));
     try std.testing.expectEqual(@as(f64, 9), valueToNumber(inserted_row.payload.array.items[1]));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(inserted_row.payload.array.items[2].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(inserted_row.payload.array.items[2].tag))));
     try std.testing.expectEqual(@as(f64, 3), valueToNumber(inserted_row.payload.array.items[3]));
     try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[4].object().?.payload.array.items[1].object().?.payload.array.items[1]));
 
@@ -5462,7 +5462,7 @@ test "AOT表正規表現系はraw RegExpと浅いコピーを保つ" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
     runtime.next_collection = 1;
-    var roots = [_]Value{.{}} ** 16;
+    var roots = @as([16]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -5478,7 +5478,7 @@ test "AOT表正規表現系はraw RegExpと浅いコピーを保つ" {
 
     roots[3] = try runtime.createBigInt("1n");
     const bigint_found = try tableBuiltin(&runtime, .table_regexp_search, &.{ roots[2], roots[3], numberValue(0), staticStringValue("bob") });
-    try std.testing.expectEqual(Tag.bigint, @as(Tag, @enumFromInt(bigint_found.tag)));
+    try std.testing.expectEqual(Tag.bigint, @as(Tag, @fromBackingInt(@intCast(bigint_found.tag))));
     try std.testing.expectEqual(@as(i64, 1), bigint_found.object().?.payload.bigint.toI64());
 
     roots[4] = try tableBuiltin(&runtime, .table_regexp_pickup, &.{ roots[2], numberValue(0), raw });
@@ -5498,9 +5498,9 @@ test "AOT表正規表現系はraw RegExpと浅いコピーを保つ" {
     try std.testing.expectEqual(@as(usize, 2), roots[7].object().?.payload.array.items.len);
     roots[8] = try runtime.createArray(&.{staticStringValue("alice")});
     roots[9] = try tableBuiltin(&runtime, .table_regexp_pickup, &.{ roots[8], numberValue(0), staticStringValue("^a") });
-    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @enumFromInt(roots[9].object().?.payload.array.items[0].tag)));
+    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @fromBackingInt(@intCast(roots[9].object().?.payload.array.items[0].tag))));
 
-    roots[5] = try runtime.createArray(&.{.{ .tag = @intFromEnum(Tag.null_value), .payload = 0 }});
+    roots[5] = try runtime.createArray(&.{.{ .tag = @backingInt(Tag.null_value), .payload = 0 }});
     try std.testing.expectError(error.TableRowMissing, tableBuiltin(&runtime, .table_regexp_search, &.{ roots[5], numberValue(0), numberValue(0), raw }));
     const null_search_message = try pendingExceptionMessageUtf8Alloc(&runtime);
     defer runtime.allocator.free(null_search_message);
@@ -5541,7 +5541,7 @@ test "AOT表正規表現ピックアップはBufferのsliceを共有する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
     runtime.next_collection = 1;
-    var roots = [_]Value{.{}} ** 8;
+    var roots = @as([8]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -5557,7 +5557,7 @@ test "AOT表正規表現ピックアップはBufferのsliceを共有する" {
 test "AOT表列挿入はbyte bufferの種類とslice内容を保持する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 8;
+    var roots = @as([8]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -5577,7 +5577,7 @@ test "AOT表列挿入はbyte bufferの種類とslice内容を保持する" {
 test "AOT表列挿入はBufferのsliceだけを共有しTypedArrayのsliceを複製する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 10;
+    var roots = @as([10]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -5606,7 +5606,7 @@ test "AOT表列挿入はBufferのsliceだけを共有しTypedArrayのsliceを複
 test "AOT表命令はbyte bufferのlengthと数値添字を読む" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 10;
+    var roots = @as([10]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -5622,7 +5622,7 @@ test "AOT表命令はbyte bufferのlengthと数値添字を読む" {
     const column = roots[5].object().?.payload.array.items;
     try std.testing.expectEqual(@as(f64, 65), valueToNumber(column[0]));
     try std.testing.expectEqual(@as(f64, 67), valueToNumber(column[1]));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(column[2].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(column[2].tag))));
 
     roots[6] = try tableBuiltin(&runtime, .table_pickup, &.{ roots[3], numberValue(0), numberValue(65) });
     try std.testing.expectEqual(@as(usize, 1), roots[6].object().?.payload.array.items.len);
@@ -5630,15 +5630,15 @@ test "AOT表命令はbyte bufferのlengthと数値添字を読む" {
     try std.testing.expectEqual(@as(usize, 1), roots[7].object().?.payload.array.items.len);
     roots[8] = try tableBuiltin(&runtime, .table_search, &.{ roots[3], numberValue(0), numberValue(0), numberValue(65) });
     try std.testing.expectEqual(@as(f64, 0), valueToNumber(roots[8]));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try tableRowProperty(&runtime, roots[2], staticStringValue("length"))).tag)));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try tableRowProperty(&runtime, roots[2], numberValue(0))).tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast((try tableRowProperty(&runtime, roots[2], staticStringValue("length"))).tag))));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast((try tableRowProperty(&runtime, roots[2], numberValue(0))).tag))));
 }
 
 test "AOT byte bufferのprototype属性とscalar propertyを解決する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
     runtime.next_collection = 1;
-    var roots = [_]Value{.{}} ** 32;
+    var roots = @as([32]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -5650,7 +5650,7 @@ test "AOT byte bufferのprototype属性とscalar propertyを解決する" {
     try std.testing.expectEqual(@as(f64, 0), valueToNumber(runtime.indexGet(roots[0], staticStringValue("byteOffset"))));
     try std.testing.expectEqual(@as(f64, 1), valueToNumber(runtime.indexGet(roots[0], staticStringValue("BYTES_PER_ELEMENT"))));
     roots[17] = runtime.indexGet(roots[0], staticStringValue("buffer"));
-    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @enumFromInt(roots[17].tag)));
+    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @fromBackingInt(@intCast(roots[17].tag))));
     try std.testing.expectEqual(ByteKind.array_buffer, roots[17].object().?.payload.byte_buffer.kind);
     try std.testing.expectEqual(@as(usize, 2), roots[17].object().?.payload.byte_buffer.bytes.len);
     roots[27] = try aotByteBufferSlice(&runtime, roots[0].object().?.payload.byte_buffer, 0, 2);
@@ -5663,7 +5663,7 @@ test "AOT byte bufferのprototype属性とscalar propertyを解決する" {
     try std.testing.expectEqual(@as(f64, 2), valueToNumber(runtime.indexGet(roots[17], staticStringValue("byteLength"))));
     try std.testing.expectEqual(@as(f64, 2), valueToNumber(runtime.indexGet(roots[2], staticStringValue("byteLength"))));
     try std.testing.expectEqual(@as(f64, 2), valueToNumber(runtime.indexGet(roots[2], staticStringValue("maxByteLength"))));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(runtime.indexGet(roots[2], staticStringValue("length")).tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(runtime.indexGet(roots[2], staticStringValue("length")).tag))));
 
     roots[3] = try tableRowProperty(&runtime, roots[0], staticStringValue("constructor"));
     roots[4] = try tableRowProperty(&runtime, roots[3], staticStringValue("name"));
@@ -5682,11 +5682,11 @@ test "AOT byte bufferのprototype属性とscalar propertyを解決する" {
     roots[12] = try tableRowProperty(&runtime, roots[11], staticStringValue("name"));
     try expectUtf16String(&runtime, roots[12], "map");
     roots[18] = try tableRowProperty(&runtime, roots[0], staticStringValue("buffer"));
-    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @enumFromInt(roots[18].tag)));
+    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @fromBackingInt(@intCast(roots[18].tag))));
     try std.testing.expectEqual(ByteKind.array_buffer, roots[18].object().?.payload.byte_buffer.kind);
     try std.testing.expectEqual(@as(usize, 2), roots[18].object().?.payload.byte_buffer.bytes.len);
     roots[19] = runtime.indexGet(roots[1], staticStringValue("buffer"));
-    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @enumFromInt(roots[19].tag)));
+    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @fromBackingInt(@intCast(roots[19].tag))));
     try std.testing.expectEqual(ByteKind.array_buffer, roots[19].object().?.payload.byte_buffer.kind);
     try std.testing.expectEqual(@as(usize, 2), roots[19].object().?.payload.byte_buffer.bytes.len);
     roots[29] = runtime.indexGet(roots[1], staticStringValue("buffer"));
@@ -5698,38 +5698,38 @@ test "AOT byte bufferのprototype属性とscalar propertyを解決する" {
     roots[15] = try tableRowProperty(&runtime, roots[2], staticStringValue("slice"));
     roots[16] = try tableRowProperty(&runtime, roots[15], staticStringValue("name"));
     try expectUtf16String(&runtime, roots[16], "slice");
-    try std.testing.expectEqual(Tag.boolean, @as(Tag, @enumFromInt(runtime.indexGet(roots[2], staticStringValue("resizable")).tag)));
+    try std.testing.expectEqual(Tag.boolean, @as(Tag, @fromBackingInt(@intCast(runtime.indexGet(roots[2], staticStringValue("resizable")).tag))));
     try std.testing.expect(runtime.indexGet(roots[2], staticStringValue("resizable")).payload == 0);
-    try std.testing.expectEqual(Tag.boolean, @as(Tag, @enumFromInt(runtime.indexGet(roots[2], staticStringValue("detached")).tag)));
+    try std.testing.expectEqual(Tag.boolean, @as(Tag, @fromBackingInt(@intCast(runtime.indexGet(roots[2], staticStringValue("detached")).tag))));
     try std.testing.expect(runtime.indexGet(roots[2], staticStringValue("detached")).payload == 0);
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(runtime.indexGet(roots[2], staticStringValue("buffer")).tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(runtime.indexGet(roots[2], staticStringValue("buffer")).tag))));
 
     roots[20] = runtime.indexGet(roots[0], staticStringValue("readUInt8"));
-    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[20].tag)));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @fromBackingInt(@intCast(roots[20].tag))));
     try std.testing.expectEqualStrings("", roots[20].object().?.payload.function.name);
     roots[21] = runtime.indexGet(roots[0], staticStringValue("parent"));
-    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @enumFromInt(roots[21].tag)));
+    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @fromBackingInt(@intCast(roots[21].tag))));
     try std.testing.expectEqual(ByteKind.array_buffer, roots[21].object().?.payload.byte_buffer.kind);
     try std.testing.expectEqual(@as(usize, 2), roots[21].object().?.payload.byte_buffer.bytes.len);
     roots[22] = runtime.indexGet(roots[0], staticStringValue("offset"));
     try std.testing.expectEqual(@as(f64, 0), valueToNumber(roots[22]));
     roots[23] = runtime.indexGet(roots[0], staticStringValue("toLocaleString"));
-    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[23].tag)));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @fromBackingInt(@intCast(roots[23].tag))));
     try std.testing.expectEqualStrings("toString", roots[23].object().?.payload.function.name);
     roots[24] = runtime.indexGet(roots[1], staticStringValue("map"));
-    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[24].tag)));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @fromBackingInt(@intCast(roots[24].tag))));
     try std.testing.expectEqualStrings("map", roots[24].object().?.payload.function.name);
     roots[25] = runtime.indexGet(roots[2], staticStringValue("slice"));
-    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[25].tag)));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @fromBackingInt(@intCast(roots[25].tag))));
     try std.testing.expectEqualStrings("slice", roots[25].object().?.payload.function.name);
     roots[26] = runtime.indexGet(roots[0], staticStringValue("missing"));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[26].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(roots[26].tag))));
 }
 
 test "AOT Bufferの空viewもbacking storageからのbyteOffsetを保持する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 5;
+    var roots = @as([5]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -5753,7 +5753,7 @@ test "AOT byte bufferから抽出したslice関数は未束縛エラーを再現
         state.active_runtime = null;
     }
     const active = &state.active_runtime.?;
-    var roots = [_]Value{.{}} ** 3;
+    var roots = @as([3]Value, @splat(.{}));
     var frame = RootFrame{};
     active.pushRoots(&frame, &roots, roots.len);
     defer active.popRoots(&frame);
@@ -5772,7 +5772,7 @@ test "AOT byte bufferから抽出したslice関数は未束縛エラーを再現
 test "AOT表変換系は欠損列・負位置・JS加算を公式どおり処理する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 18;
+    var roots = @as([18]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -5826,7 +5826,7 @@ test "AOT一般正規表現命令は共有エンジンと抽出副作用を保�
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
     runtime.next_collection = 1;
-    var roots = [_]Value{.{}} ** 12;
+    var roots = @as([12]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -5848,7 +5848,7 @@ test "AOT一般正規表現命令は共有エンジンと抽出副作用を保�
     roots[5] = extracted.captures.?;
     try std.testing.expectEqual(@as(usize, 2), roots[4].object().?.payload.array.items.len);
     try std.testing.expectEqual(@as(usize, 2), roots[5].object().?.payload.array.items.len);
-    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(roots[5].object().?.payload.array.items[0].tag)));
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @fromBackingInt(@intCast(roots[5].object().?.payload.array.items[0].tag))));
 
     const replaced = try regexpBuiltin(&runtime, .regexp_replace, &.{ staticStringValue("aa,bb"), staticStringValue("/[a-z]+/g"), staticStringValue("<$&>") });
     roots[6] = replaced.value;
@@ -5926,16 +5926,16 @@ test "AOT一般正規表現命令は共有エンジンと抽出副作用を保�
 test "AOT JSONエンコードはcompact prettyとECMAScript境界を保つ" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 20;
+    var roots = @as([20]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
 
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try jsonEncodeBuiltin(&runtime, .{}, false)).tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast((try jsonEncodeBuiltin(&runtime, .{}, false)).tag))));
     roots[0] = try runtime.createFunction(testAotFunction, 1, &.{});
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try jsonEncodeBuiltin(&runtime, roots[0], false)).tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast((try jsonEncodeBuiltin(&runtime, roots[0], false)).tag))));
 
-    roots[1] = try runtime.createArray(&.{ .{}, roots[0], .{ .tag = @intFromEnum(Tag.null_value) }, numberValue(std.math.nan(f64)) });
+    roots[1] = try runtime.createArray(&.{ .{}, roots[0], .{ .tag = @backingInt(Tag.null_value) }, numberValue(std.math.nan(f64)) });
     try expectJsonAotString(&runtime, roots[1], false, "[null,null,null,null]");
 
     roots[2] = try runtime.createDictionary(&.{
@@ -6060,7 +6060,7 @@ test "AOT辞書・配列のキー命令は順序とBigIntキーを保つ" {
 test "AOT辞書キー命令はcustom prototype chainの順序とshadowingを保つ" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 5;
+    var roots = @as([5]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -6107,7 +6107,7 @@ test "AOT辞書キー存在の型エラーは動的な公式文言を保つ" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
     const invalid_key = try runtime.createString(&.{ 'x', 0xd800 });
-    try std.testing.expectError(error.DictionaryHasReceiver, dictionaryHasBuiltin(&runtime, .{ .tag = @intFromEnum(Tag.null_value) }, invalid_key));
+    try std.testing.expectError(error.DictionaryHasReceiver, dictionaryHasBuiltin(&runtime, .{ .tag = @backingInt(Tag.null_value) }, invalid_key));
     const message = try pendingExceptionMessageUtf8Alloc(&runtime);
     defer runtime.allocator.free(message);
     try std.testing.expectEqualStrings("Cannot use 'in' operator to search for 'x�' in null", message);
@@ -6116,7 +6116,7 @@ test "AOT辞書キー存在の型エラーは動的な公式文言を保つ" {
 test "AOT辞書キー存在は標準prototype propertyを含む" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 3;
+    var roots = @as([3]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -6138,7 +6138,7 @@ test "AOT辞書キー存在は標準prototype propertyを含む" {
 test "AOT辞書キー存在はbyte bufferのown indexとprototype propertyを含む" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 3;
+    var roots = @as([3]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -6165,7 +6165,7 @@ test "AOT辞書キー存在はbyte bufferのown indexとprototype propertyを含
 test "AOT byte bufferのnull prototypeは標準propertyを隠し添字と表の長さを保持する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 5;
+    var roots = @as([5]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -6173,11 +6173,11 @@ test "AOT byte bufferのnull prototypeは標準propertyを隠し添字と表の�
     roots[0] = try runtime.createBytes(&.{ 85, 66 });
     roots[1] = try runtime.createUint8Array(&.{ 85, 66 });
     roots[2] = try runtime.createArrayBuffer(&.{ 85, 66 });
-    roots[0].object().?.prototype = .{ .tag = @intFromEnum(Tag.null_value) };
-    roots[1].object().?.prototype = .{ .tag = @intFromEnum(Tag.null_value) };
-    roots[2].object().?.prototype = .{ .tag = @intFromEnum(Tag.null_value) };
+    roots[0].object().?.prototype = .{ .tag = @backingInt(Tag.null_value) };
+    roots[1].object().?.prototype = .{ .tag = @backingInt(Tag.null_value) };
+    roots[2].object().?.prototype = .{ .tag = @backingInt(Tag.null_value) };
 
-    const undefined_tag = @intFromEnum(Tag.undefined);
+    const undefined_tag = @backingInt(Tag.undefined);
     try std.testing.expectEqual(undefined_tag, runtime.indexGet(roots[0], staticStringValue("length")).tag);
     try std.testing.expectEqual(undefined_tag, runtime.indexGet(roots[0], staticStringValue("byteLength")).tag);
     try std.testing.expectEqual(undefined_tag, runtime.indexGet(roots[0], staticStringValue("slice")).tag);
@@ -6204,7 +6204,7 @@ test "AOT byte bufferのnull prototypeは標準propertyを隠し添字と表の�
 test "AOT辞書キー列挙とハッシュ内容列挙はbyte bufferのown要素を扱う" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 7;
+    var roots = @as([7]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -6236,7 +6236,7 @@ test "AOT辞書キー列挙とハッシュ内容列挙はbyte bufferのown要素
 test "AOT Bufferの列挙はenumerable prototype propertyの順序と値を保持する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 4;
+    var roots = @as([4]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -6260,23 +6260,23 @@ test "AOT Bufferの列挙はenumerable prototype propertyの順序と値を保�
     for (property_names, 0..) |name, index| {
         const property = values[index + 2];
         if (std.mem.eql(u8, name, "parent")) {
-            try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @enumFromInt(property.tag)));
+            try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @fromBackingInt(@intCast(property.tag))));
             try std.testing.expectEqual(ByteKind.array_buffer, property.object().?.payload.byte_buffer.kind);
         } else if (std.mem.eql(u8, name, "offset")) {
             try std.testing.expectEqual(@as(f64, 0), valueToNumber(property));
         } else {
-            try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(property.tag)));
+            try std.testing.expectEqual(Tag.function, @as(Tag, @fromBackingInt(@intCast(property.tag))));
         }
     }
     const last_property = values[values.len - 1];
-    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(last_property.tag)));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @fromBackingInt(@intCast(last_property.tag))));
     try std.testing.expectEqualStrings("toString", last_property.object().?.payload.function.name);
 }
 
 test "AOT HTTPのqueryとform parserはURL decode境界を保つ" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 3;
+    var roots = @as([3]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -6342,7 +6342,7 @@ test "AOT HTTPのqueryは2個目以降の疑問符を公式splitどおり無視�
     const x = try valueUtf8LossyAlloc(&runtime, runtime.indexGet(result, staticStringValue("x")));
     defer runtime.allocator.free(x);
     try std.testing.expectEqualStrings("1", x);
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(runtime.indexGet(result, staticStringValue("ignored")).tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(runtime.indexGet(result, staticStringValue("ignored")).tag))));
 }
 
 test "AOT HTTPのqueryの不正percent encodingはURI malformedへ変換する" {
@@ -6360,7 +6360,7 @@ test "AOT HTTP multipartは公式のboundary抽出とLFヘッダ区切りを保�
     try std.testing.expectEqualStrings("X;Y", aotHttpMultipartBoundary("multipart/form-data; boundary=\"X;Y\"; charset=utf-8").?);
     try std.testing.expect(aotHttpMultipartBoundary("multipart/form-data") == null);
 
-    var roots = [_]Value{.{}} ** 3;
+    var roots = @as([3]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -6402,14 +6402,14 @@ test "AOT JSONデコードはUTF-16・数値境界・重複キーを保持する
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
     runtime.next_collection = 1;
-    var roots = [_]Value{.{}} ** 12;
+    var roots = @as([12]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
 
     roots[0] = try createJsonTestString(&runtime, "{\"a\":1,\"b\":[true,null,-0,9007199254740993,1e400,1e-4000],\"a\":3,\"s\":\"\\ud800\\udc00\\ud800\"}");
     roots[1] = try jsonDecodeBuiltin(&runtime, roots[0]);
-    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(roots[1].tag)));
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @fromBackingInt(@intCast(roots[1].tag))));
     try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(jsonTestDictionaryGet(roots[1], &.{'a'}).payload)));
     roots[2] = jsonTestDictionaryGet(roots[1], &.{'b'});
     try std.testing.expectEqual(@as(usize, 6), roots[2].object().?.payload.array.items.len);
@@ -6477,7 +6477,7 @@ test "AOT JSONデコードはUTF-16・数値境界・重複キーを保持する
 test "AOT JSONエラー文言は孤立サロゲートをUTF-16で保持する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 2;
+    var roots = @as([2]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -6517,12 +6517,12 @@ test "AOT JSONデコードは深い配列と辞書を明示スタックで処理
     roots[1] = try jsonDecodeBuiltin(&runtime, roots[0]);
     var array_current = roots[1];
     for (0..depth) |_| {
-        try std.testing.expectEqual(Tag.array, @as(Tag, @enumFromInt(array_current.tag)));
+        try std.testing.expectEqual(Tag.array, @as(Tag, @fromBackingInt(@intCast(array_current.tag))));
         const items = array_current.object().?.payload.array.items;
         try std.testing.expectEqual(@as(usize, 1), items.len);
         array_current = items[0];
     }
-    try std.testing.expectEqual(Tag.number, @as(Tag, @enumFromInt(array_current.tag)));
+    try std.testing.expectEqual(Tag.number, @as(Tag, @fromBackingInt(@intCast(array_current.tag))));
     try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast(array_current.payload)));
 
     var dictionary_source: std.ArrayList(u8) = .empty;
@@ -6535,10 +6535,10 @@ test "AOT JSONデコードは深い配列と辞書を明示スタックで処理
     roots[1] = try jsonDecodeBuiltin(&runtime, roots[0]);
     var dictionary_current = roots[1];
     for (0..depth) |_| {
-        try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(dictionary_current.tag)));
+        try std.testing.expectEqual(Tag.dictionary, @as(Tag, @fromBackingInt(@intCast(dictionary_current.tag))));
         dictionary_current = jsonTestDictionaryGet(dictionary_current, &.{'a'});
     }
-    try std.testing.expectEqual(Tag.number, @as(Tag, @enumFromInt(dictionary_current.tag)));
+    try std.testing.expectEqual(Tag.number, @as(Tag, @fromBackingInt(@intCast(dictionary_current.tag))));
     try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast(dictionary_current.payload)));
 }
 
@@ -6605,7 +6605,7 @@ test "AOT Promiseは解決・連鎖・失敗・束ねをマイクロタスクで
         state.active_runtime = null;
     }
 
-    var roots = [_]Value{.{}} ** 16;
+    var roots = @as([16]Value, @splat(.{}));
     var frame = RootFrame{};
     state.active_runtime.?.pushRoots(&frame, &roots, roots.len);
     defer state.active_runtime.?.popRoots(&frame);
@@ -6654,7 +6654,7 @@ test "AOT 束の割り当て失敗はstateを放棄しハンドラ発火とGC ma
         state.active_runtime = null;
     }
     const active = &state.active_runtime.?;
-    var roots = [_]Value{.{}} ** 8;
+    var roots = @as([8]Value, @splat(.{}));
     var frame = RootFrame{};
     active.pushRoots(&frame, &roots, roots.len);
     defer active.popRoots(&frame);
@@ -6733,14 +6733,14 @@ test "AOT 放棄・追跡外stateへの束ハンドラ発火は副作用を持�
     bundle_state.* = .{ .promise = roots[0].object().?, .results = roots[1], .remaining = 1, .abandoned = true };
     try active.promise_all_states.append(active.allocator, bundle_state);
     const abandoned_out = try state.handleAotPromiseAll(active, .{ .state = bundle_state, .index = 0, .rejected = false }, numberValue(9));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(abandoned_out.tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(abandoned_out.tag))));
     try std.testing.expectEqual(@as(usize, 1), bundle_state.remaining);
     try std.testing.expectEqual(@as(usize, 0), roots[1].object().?.payload.array.items.len);
     try std.testing.expectEqual(AotPromiseState.pending, roots[0].object().?.payload.promise.state);
 
     var orphan: state.AotPromiseAllState = .{ .promise = roots[0].object().?, .results = roots[1], .remaining = 1 };
     const orphan_out = try state.handleAotPromiseAll(active, .{ .state = &orphan, .index = 0, .rejected = false }, numberValue(9));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(orphan_out.tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(orphan_out.tag))));
     try std.testing.expectEqual(@as(usize, 1), orphan.remaining);
     try std.testing.expectEqual(@as(usize, 0), roots[1].object().?.payload.array.items.len);
 }
@@ -6779,7 +6779,7 @@ test "AOTネイティブABI橋渡しは関数とPromiseをAOT値へ変換する"
     const dynamic_result = try aot_state.value_runtime.call(dynamic_function, &.{.{ .number = 7 }});
     try std.testing.expectEqual(@as(f64, 7), dynamic_result.number);
     _ = active.collect();
-    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[1].tag)));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @fromBackingInt(@intCast(roots[1].tag))));
 }
 
 fn testExternalBridgeRelease(context: *anyopaque, handle: *anyopaque) void {
@@ -6961,7 +6961,7 @@ test "動的→AOTブリッジは変換・辞書追加の失敗後にroot chain�
     active.next_collection = 0;
     _ = active.collect();
     const recovered = try dynamicToAotValue(aot_state, clean_source);
-    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(recovered.tag)));
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @fromBackingInt(@intCast(recovered.tag))));
     try std.testing.expectEqual(@as(usize, 1), recovered.object().?.payload.dictionary.entries.items.len);
     try std.testing.expect(active.roots == baseline_roots);
     try std.testing.expectEqual(baseline_live_roots, active.live_roots);
@@ -7019,27 +7019,27 @@ test "AOTシステムカタログ命令は一覧の順序と存在判定を保�
     state.active_runtime.?.pushRoots(&frame, &roots, roots.len);
     defer state.active_runtime.?.popRoots(&frame);
 
-    lnako_aot_builtin_call(&roots[0], null, 0, @intFromEnum(aot_builtin.Command.system_function_names));
+    lnako_aot_builtin_call(&roots[0], null, 0, @backingInt(aot_builtin.Command.system_function_names));
     try std.testing.expectEqual(builtin_catalog.default_names.len, roots[0].object().?.payload.array.items.len);
     try expectUtf16String(&state.active_runtime.?, roots[0].object().?.payload.array.items[0], "ナデシコバージョン");
     try expectUtf16String(&state.active_runtime.?, roots[0].object().?.payload.array.items[builtin_catalog.default_names.len - 1], "AJAX:ONERROR");
 
     roots[1] = try runtimeUtf8String(&state.active_runtime.?, "表示");
     var existing_arguments = [_]Value{ numberValue(0), roots[1] };
-    lnako_aot_builtin_call(&roots[2], &existing_arguments, existing_arguments.len, @intFromEnum(aot_builtin.Command.system_function_exists));
-    try std.testing.expectEqual(Tag.boolean, @as(Tag, @enumFromInt(roots[2].tag)));
+    lnako_aot_builtin_call(&roots[2], &existing_arguments, existing_arguments.len, @backingInt(aot_builtin.Command.system_function_exists));
+    try std.testing.expectEqual(Tag.boolean, @as(Tag, @fromBackingInt(@intCast(roots[2].tag))));
     try std.testing.expectEqual(@as(u64, 1), roots[2].payload);
 
     roots[3] = try runtimeUtf8String(&state.active_runtime.?, "不存在");
-    lnako_aot_builtin_call(&roots[4], @ptrCast(&roots[3]), 1, @intFromEnum(aot_builtin.Command.system_function_exists));
+    lnako_aot_builtin_call(&roots[4], @ptrCast(&roots[3]), 1, @backingInt(aot_builtin.Command.system_function_exists));
     try std.testing.expectEqual(@as(u64, 0), roots[4].payload);
 
-    lnako_aot_builtin_call(&roots[5], null, 0, @intFromEnum(aot_builtin.Command.plugin_names));
+    lnako_aot_builtin_call(&roots[5], null, 0, @backingInt(aot_builtin.Command.plugin_names));
     try std.testing.expectEqual(default_plugin_names.len, roots[5].object().?.payload.array.items.len);
     try expectUtf16String(&state.active_runtime.?, roots[5].object().?.payload.array.items[0], "plugin_system");
-    lnako_aot_builtin_call(&roots[6], null, 0, @intFromEnum(aot_builtin.Command.josi_names));
+    lnako_aot_builtin_call(&roots[6], null, 0, @backingInt(aot_builtin.Command.josi_names));
     try std.testing.expectEqual(josi.exported_list.len, roots[6].object().?.payload.array.items.len);
-    lnako_aot_builtin_call(&roots[7], null, 0, @intFromEnum(aot_builtin.Command.reserved_words));
+    lnako_aot_builtin_call(&roots[7], null, 0, @backingInt(aot_builtin.Command.reserved_words));
     try std.testing.expectEqual(lexer.exported_reserved_words.len, roots[7].object().?.payload.array.items.len);
 }
 
@@ -7059,7 +7059,7 @@ test "AOTグローバル関数一覧取得は登録済み関数を作成順で�
     roots[0] = try state.active_runtime.?.createNamedFunction(testAotFunction, 1, "module__甲", &.{});
     roots[1] = try state.active_runtime.?.createNamedFunction(testAotFunction, 1, "module__乙", &.{});
     roots[2] = try state.active_runtime.?.createNamedFunction(testAotFunction, 1, "module__lambda$0", &.{});
-    lnako_aot_builtin_call(&roots[3], null, 0, @intFromEnum(aot_builtin.Command.system_global_function_names));
+    lnako_aot_builtin_call(&roots[3], null, 0, @backingInt(aot_builtin.Command.system_global_function_names));
     const names = roots[3].object().?.payload.array.items;
     try std.testing.expectEqual(@as(usize, 2), names.len);
     try expectUtf16String(&state.active_runtime.?, names[0], "module__甲");
@@ -7075,9 +7075,9 @@ test "AOT __DEBUGはデバッグ状態を有効化して値を返さない" {
         state.active_runtime = null;
     }
     var result = Value{};
-    lnako_aot_builtin_call(&result, null, 0, @intFromEnum(aot_builtin.Command.system_debug_enable));
+    lnako_aot_builtin_call(&result, null, 0, @backingInt(aot_builtin.Command.system_debug_enable));
     try std.testing.expect(state.active_runtime.?.debug_enabled);
-    try std.testing.expectEqual(@intFromEnum(Tag.undefined), result.tag);
+    try std.testing.expectEqual(@backingInt(Tag.undefined), result.tag);
 }
 
 test "AOTデバッグ表示はオブジェクトをJSON化して位置付き表示ログへ書き込む" {
@@ -7123,7 +7123,7 @@ test "AOTハテナ関数実行は既定のデバッグ表示として位置と�
     roots[2] = .{};
     try debugDisplayBuiltin(&state.active_runtime.?, roots[0], 7, "main.nako3", &roots[1]);
     try expectUtf16String(&state.active_runtime.?, roots[1], "main.nako3(7): [1,2]\n");
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[2].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(roots[2].tag))));
 }
 
 test "AOTハテナ関数設定は関数値と命令名配列を保持して実行する" {
@@ -7177,13 +7177,13 @@ test "AOT強制終了時はコールバックを保持し偽の結果で継続�
 
     roots[0] = try state.active_runtime.?.createFunction(testAotFunction, 1, &.{});
     var arguments = [_]Value{roots[0]};
-    lnako_aot_builtin_call_site(&roots[1], &arguments, arguments.len, @intFromEnum(aot_builtin.Command.node_interrupt_callback), 0x1234);
+    lnako_aot_builtin_call_site(&roots[1], &arguments, arguments.len, @backingInt(aot_builtin.Command.node_interrupt_callback), 0x1234);
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
-    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(state.active_runtime.?.interrupt_callback.tag)));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @fromBackingInt(@intCast(state.active_runtime.?.interrupt_callback.tag))));
 
     roots[0] = .{};
     _ = state.active_runtime.?.collect();
-    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(state.active_runtime.?.interrupt_callback.tag)));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @fromBackingInt(@intCast(state.active_runtime.?.interrupt_callback.tag))));
     state.aot_interrupt_requested.store(true, .release);
     try pollAotInterrupt(&state.active_runtime.?);
     try std.testing.expect(!state.aot_interrupt_requested.load(.acquire));
@@ -7215,7 +7215,7 @@ test "AOT __DEBUG_BP_WAITは即時復帰と非メイン待機を保つ" {
         &roots[3],
         &arguments,
         arguments.len,
-        @intFromEnum(aot_builtin.Command.system_debug_breakpoint_wait),
+        @backingInt(aot_builtin.Command.system_debug_breakpoint_wait),
         0,
     );
     try std.testing.expectEqual(@as(f64, 12), valueToNumber(roots[4]));
@@ -7231,10 +7231,10 @@ test "AOT __DEBUG_BP_WAITは即時復帰と非メイン待機を保つ" {
         &roots[3],
         &arguments,
         arguments.len,
-        @intFromEnum(aot_builtin.Command.system_debug_breakpoint_wait),
+        @backingInt(aot_builtin.Command.system_debug_breakpoint_wait),
         0,
     );
-    try std.testing.expectEqual(Tag.promise, @as(Tag, @enumFromInt(roots[5].tag)));
+    try std.testing.expectEqual(Tag.promise, @as(Tag, @fromBackingInt(@intCast(roots[5].tag))));
 }
 
 test "AOT ASSERT等はNodeのSameValue境界と戻り値を保つ" {
@@ -7251,17 +7251,17 @@ test "AOT ASSERT等はNodeのSameValue境界と戻り値を保つ" {
     defer state.active_runtime.?.popRoots(&frame);
 
     var equal_arguments = [_]Value{ numberValue(1), numberValue(1) };
-    lnako_aot_builtin_call(&roots[0], &equal_arguments, equal_arguments.len, @intFromEnum(aot_builtin.Command.assert_strict_equal));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[0].tag)));
+    lnako_aot_builtin_call(&roots[0], &equal_arguments, equal_arguments.len, @backingInt(aot_builtin.Command.assert_strict_equal));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(roots[0].tag))));
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
 
     var nan_arguments = [_]Value{ numberValue(std.math.nan(f64)), numberValue(std.math.nan(f64)) };
-    lnako_aot_builtin_call(&roots[1], &nan_arguments, nan_arguments.len, @intFromEnum(aot_builtin.Command.assert_strict_equal));
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[1].tag)));
+    lnako_aot_builtin_call(&roots[1], &nan_arguments, nan_arguments.len, @backingInt(aot_builtin.Command.assert_strict_equal));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(roots[1].tag))));
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
 
     var signed_zero_arguments = [_]Value{ numberValue(0), numberValue(-0.0) };
-    lnako_aot_builtin_call(&roots[2], &signed_zero_arguments, signed_zero_arguments.len, @intFromEnum(aot_builtin.Command.assert_strict_equal));
+    lnako_aot_builtin_call(&roots[2], &signed_zero_arguments, signed_zero_arguments.len, @backingInt(aot_builtin.Command.assert_strict_equal));
     try std.testing.expect(state.active_runtime.?.has_pending_exception);
     roots[3] = state.active_runtime.?.takeException();
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
@@ -7339,7 +7339,7 @@ pub fn testAotToPrimitiveObject(out: *Value, _: *anyopaque, _: ?[*]const Value, 
 pub fn testAotTimerStop(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
     if (arguments != null and len > 0) {
         var ignored = Value{};
-        lnako_aot_builtin_call(&ignored, arguments, 1, @intFromEnum(aot_builtin.Command.timer_stop));
+        lnako_aot_builtin_call(&ignored, arguments, 1, @backingInt(aot_builtin.Command.timer_stop));
     }
     out.* = .{};
 }
@@ -7400,7 +7400,7 @@ pub fn testAotEven(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: 
     out.* = if (arguments == null or len != 1)
         .{}
     else
-        .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(@mod(valueToNumber(arguments.?[0]), 2) == 0) };
+        .{ .tag = @backingInt(Tag.boolean), .payload = @intFromBool(@mod(valueToNumber(arguments.?[0]), 2) == 0) };
 }
 
 pub fn testAotCapturedIncrement(out: *Value, context: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
@@ -7419,7 +7419,7 @@ pub fn testAotFileProgressStop(out: *Value, context: *anyopaque, arguments: ?[*]
         cell.payload.binding_cell = numberValue(current);
         if (current == 1) {
             var ignored = Value{};
-            lnako_aot_builtin_call(&ignored, null, 0, @intFromEnum(aot_builtin.Command.node_file_process_stop));
+            lnako_aot_builtin_call(&ignored, null, 0, @backingInt(aot_builtin.Command.node_file_process_stop));
         }
     }
     out.* = .{};
@@ -7452,7 +7452,7 @@ pub fn codePointFindAllocationTest(allocator: std.mem.Allocator) !void {
 pub fn referenceAotArrayStringKeyAllocationTest(allocator: std.mem.Allocator) !void {
     var runtime = Runtime{ .allocator = allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 2;
+    var roots = @as([2]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -7465,7 +7465,7 @@ pub fn referenceAotArrayStringKeyAllocationTest(allocator: std.mem.Allocator) !v
 pub fn aotBigintRangeAllocationTest(allocator: std.mem.Allocator) !void {
     var runtime = Runtime{ .allocator = allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 7;
+    var roots = @as([7]Value, @splat(.{}));
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -7501,7 +7501,7 @@ pub fn expectAotReferenceStringRangeMessage(runtime: *Runtime, index: Value, exp
 pub fn aotWidthAllocationTest(allocator: std.mem.Allocator) !void {
     var runtime = Runtime{ .allocator = allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 4;
+    var roots = @as([4]Value, @splat(.{}));
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -7551,7 +7551,7 @@ pub fn aotDictionaryPropertyKeyAllocationTest(allocator: std.mem.Allocator) !voi
 pub fn aotDictionaryBigIntPropertyKeyAllocationTest(allocator: std.mem.Allocator) !void {
     var runtime = Runtime{ .allocator = allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 3;
+    var roots = @as([3]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -7583,11 +7583,11 @@ pub fn createJsonTestString(runtime: *Runtime, text: []const u8) !Value {
 /// `arguments` の各値は呼び出し側がrootしておくこと。
 fn expectLowLevelCode(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value, expected_code: []const u8) !void {
     var out: Value = .{};
-    lnako_aot_builtin_call(&out, if (arguments.len > 0) arguments.ptr else null, arguments.len, @intFromEnum(command));
+    lnako_aot_builtin_call(&out, if (arguments.len > 0) arguments.ptr else null, arguments.len, @backingInt(command));
     try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
     var taken: Value = .{};
     lnako_aot_exception_take(&taken);
-    try std.testing.expectEqual(@intFromEnum(Tag.dictionary), taken.tag);
+    try std.testing.expectEqual(@backingInt(Tag.dictionary), taken.tag);
     try std.testing.expect(taken.object().?.structured_error);
     try expectUtf16String(runtime, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), expected_code);
 }
@@ -7604,7 +7604,7 @@ fn expectLowLevelPathPair(
     expected_path2: []const u8,
 ) !void {
     var out: Value = .{};
-    lnako_aot_builtin_call(&out, if (arguments.len > 0) arguments.ptr else null, arguments.len, @intFromEnum(command));
+    lnako_aot_builtin_call(&out, if (arguments.len > 0) arguments.ptr else null, arguments.len, @backingInt(command));
     try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
     var taken: Value = .{};
     lnako_aot_exception_take(&taken);
@@ -7645,7 +7645,7 @@ test "AOT traceは無効確定後にロックを取得しない" {
 test "AOT辞書は閾値超過で索引を構築し挿入順と値を保持する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 3;
+    var roots = @as([3]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -7683,7 +7683,7 @@ test "AOT辞書は閾値超過で索引を構築し挿入順と値を保持す�
 test "AOT辞書は更新・削除・再挿入で索引と挿入順を維持する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 3;
+    var roots = @as([3]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -7760,7 +7760,7 @@ test "AOT辞書索引は重複キーの先頭とUTF-8静的キーを正しく解
 test "AOT辞書索引はGC走査で参照を失わない" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 2;
+    var roots = @as([2]Value, @splat(.{}));
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -7797,28 +7797,28 @@ test "AOT 配列追加/要素数専用call_siteは汎用dispatchと同じ結果�
 
     roots[0] = try state.active_runtime.?.createArray(&.{numberValue(1)});
     var push_arguments = [_]Value{ roots[0], numberValue(2) };
-    lnako_aot_array_push_call_site(&roots[1], &push_arguments, push_arguments.len, @intFromEnum(aot_builtin.Command.array_push), 0x2345);
+    lnako_aot_array_push_call_site(&roots[1], &push_arguments, push_arguments.len, @backingInt(aot_builtin.Command.array_push), 0x2345);
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
     try std.testing.expectEqual(@as(usize, 2), roots[0].object().?.payload.array.items.len);
     try std.testing.expectEqual(roots[0].payload, roots[1].payload);
 
     push_arguments[1] = staticStringValue("ab");
-    lnako_aot_array_push_call_site(&roots[2], &push_arguments, push_arguments.len, @intFromEnum(aot_builtin.Command.array_push), 0x2346);
+    lnako_aot_array_push_call_site(&roots[2], &push_arguments, push_arguments.len, @backingInt(aot_builtin.Command.array_push), 0x2346);
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
     try std.testing.expectEqual(@as(usize, 3), roots[0].object().?.payload.array.items.len);
 
     var count_arguments = [_]Value{roots[0]};
-    lnako_aot_element_count_call_site(&roots[3], &count_arguments, count_arguments.len, @intFromEnum(aot_builtin.Command.element_count), 0x2347);
+    lnako_aot_element_count_call_site(&roots[3], &count_arguments, count_arguments.len, @backingInt(aot_builtin.Command.element_count), 0x2347);
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
     try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(roots[3].payload)));
 
     // 引数ゼロは汎用経路と同じく InvalidArgumentCount になる。
-    lnako_aot_array_push_call_site(&roots[4], null, 0, @intFromEnum(aot_builtin.Command.array_push), 0x2348);
+    lnako_aot_array_push_call_site(&roots[4], null, 0, @backingInt(aot_builtin.Command.array_push), 0x2348);
     try std.testing.expect(state.active_runtime.?.has_pending_exception);
     _ = state.active_runtime.?.takeException();
 
     // 専用ABIへ別opcodeを渡した場合は UnknownCommand を失敗として記録する。
-    lnako_aot_element_count_call_site(&roots[5], &count_arguments, count_arguments.len, @intFromEnum(aot_builtin.Command.array_push), 0x2349);
+    lnako_aot_element_count_call_site(&roots[5], &count_arguments, count_arguments.len, @backingInt(aot_builtin.Command.array_push), 0x2349);
     try std.testing.expect(state.active_runtime.?.has_pending_exception);
     _ = state.active_runtime.?.takeException();
 }
@@ -8115,22 +8115,22 @@ test "AOT低レイヤーの位置系命令は実装済みで引数不足はEINVA
     defer lnako_aot_pop_roots(&frame);
 
     // 位置系4命令は実装済み。min未満はEINVAL、無効ハンドルはEBADF。
-    lnako_aot_builtin_call(&roots[0], null, 0, @intFromEnum(aot_builtin.Command.low_level_file_tell));
+    lnako_aot_builtin_call(&roots[0], null, 0, @backingInt(aot_builtin.Command.low_level_file_tell));
     try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
     var taken: Value = .{};
     lnako_aot_exception_take(&taken);
-    try std.testing.expectEqual(@intFromEnum(Tag.dictionary), taken.tag);
+    try std.testing.expectEqual(@backingInt(Tag.dictionary), taken.tag);
     try std.testing.expect(taken.object().?.structured_error);
     try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "EINVAL");
 
-    lnako_aot_builtin_call(&roots[0], @ptrCast(&roots[1]), 1, @intFromEnum(aot_builtin.Command.low_level_file_tell));
+    lnako_aot_builtin_call(&roots[0], @ptrCast(&roots[1]), 1, @backingInt(aot_builtin.Command.low_level_file_tell));
     try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
     lnako_aot_exception_take(&taken);
     try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "EBADF");
     try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'o', 'p', 'e', 'r', 'a', 't', 'i', 'o', 'n' }), "lseek");
 
     // カタログのarity上限を超える呼び出しはEINVAL（実装済みpid_get max=0）。
-    lnako_aot_builtin_call(&roots[0], @ptrCast(&roots[1]), 1, @intFromEnum(aot_builtin.Command.low_level_pid_get));
+    lnako_aot_builtin_call(&roots[0], @ptrCast(&roots[1]), 1, @backingInt(aot_builtin.Command.low_level_pid_get));
     try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
     lnako_aot_exception_take(&taken);
     try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "EINVAL");
@@ -8209,13 +8209,13 @@ test "AOT低レイヤーの実装済み命令はmin未満でEINVALを返す" {
     // dispatch経由で呼び、isLowLevelCommandによるlen==0早期拒否の免除・
     // switchルーティングを通ってbuiltinのminゲートへ到達する経路を検証する。
     var taken: Value = .{};
-    lnako_aot_builtin_call(&roots[0], null, 0, @intFromEnum(aot_builtin.Command.low_level_file_close));
+    lnako_aot_builtin_call(&roots[0], null, 0, @backingInt(aot_builtin.Command.low_level_file_close));
     try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
     lnako_aot_exception_take(&taken);
     try std.testing.expect(taken.object().?.structured_error);
     try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "EINVAL");
 
-    lnako_aot_builtin_call(&roots[0], null, 0, @intFromEnum(aot_builtin.Command.low_level_capability_supported));
+    lnako_aot_builtin_call(&roots[0], null, 0, @backingInt(aot_builtin.Command.low_level_capability_supported));
     try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
     lnako_aot_exception_take(&taken);
     try std.testing.expect(taken.object().?.structured_error);
@@ -8250,13 +8250,13 @@ test "AOT低レイヤーのstatとlstatは種別とメタデータを返す" {
     try expectUtf16String(active, dictionaryProperty(stat_value, &.{ 'k', 'i', 'n', 'd' }), "file");
     try std.testing.expectEqual(@as(f64, 5), valueToNumber(dictionaryProperty(stat_value, &.{ 's', 'i', 'z', 'e' })));
     try std.testing.expectEqual(@as(f64, 1), valueToNumber(dictionaryProperty(stat_value, &.{ 'n', 'l', 'i', 'n', 'k' })));
-    try std.testing.expectEqual(@intFromEnum(Tag.bigint), dictionaryProperty(stat_value, &.{ 'm', 't', 'i', 'm', 'e', 'N', 's' }).tag);
+    try std.testing.expectEqual(@backingInt(Tag.bigint), dictionaryProperty(stat_value, &.{ 'm', 't', 'i', 'm', 'e', 'N', 's' }).tag);
     try std.testing.expect(valueToNumber(dictionaryProperty(stat_value, &.{ 'm', 'o', 'd', 'e' })) > 0);
     // カタログ typeSchemas.stat の全15フィールドが辞書に存在する。
     inline for (foundation.stat_field_key_list) |field_name| {
         const key = try std.unicode.utf8ToUtf16LeAlloc(active.allocator, field_name);
         defer active.allocator.free(key);
-        try std.testing.expect(dictionaryProperty(stat_value, key).tag != @intFromEnum(Tag.undefined));
+        try std.testing.expect(dictionaryProperty(stat_value, key).tag != @backingInt(Tag.undefined));
     }
 
     const lstat_value = try state.lowLevelFileBuiltin(active, .low_level_file_lstat, &.{roots[0]});
@@ -8308,7 +8308,7 @@ test "AOT低レイヤーのtruncateとutimeはpathとhandleで反映される" {
     try std.testing.expect(@abs(actual_mtime - mtime_ns) < std.time.ns_per_us);
 
     // mtimeはnullで既存値維持、atimeだけ現在時刻（2026年以降）へ進める。
-    roots[3] = .{ .tag = @intFromEnum(Tag.null_value) };
+    roots[3] = .{ .tag = @backingInt(Tag.null_value) };
     roots[4] = try runtimeUtf8String(active, "now");
     _ = try state.lowLevelFileBuiltin(active, .low_level_file_utime_path, &.{ roots[0], roots[4], roots[3] });
     stat_value = try state.lowLevelFileBuiltin(active, .low_level_file_stat, &.{roots[0]});
@@ -8373,7 +8373,7 @@ test "AOT低レイヤーは孤立サロゲートをU+FFFDへ置換せず別フ�
     roots[0] = try active.createString(units);
 
     var out: Value = .{};
-    lnako_aot_builtin_call(&out, @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.low_level_path_unlink));
+    lnako_aot_builtin_call(&out, @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.low_level_path_unlink));
     try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
     var taken: Value = .{};
     lnako_aot_exception_take(&taken);
@@ -8565,7 +8565,7 @@ test "AOT低レイヤーのrename/unlink/rmdirはエラーコードを写す" {
     // 2引数命令の構造化エラーはpath/path2に元パスと宛先を分けて入れる。
     {
         var out: Value = .{};
-        lnako_aot_builtin_call(&out, @ptrCast(&roots[0]), 2, @intFromEnum(aot_builtin.Command.low_level_path_rename));
+        lnako_aot_builtin_call(&out, @ptrCast(&roots[0]), 2, @backingInt(aot_builtin.Command.low_level_path_rename));
         try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
         var taken: Value = .{};
         lnako_aot_exception_take(&taken);
@@ -8617,25 +8617,25 @@ test "AOT低レイヤーのディレクトリ命令はdispatch経由でハンド
 
     // open -> next -> null -> close。
     var handle: Value = .{};
-    lnako_aot_builtin_call(&handle, @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.low_level_dir_open));
+    lnako_aot_builtin_call(&handle, @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.low_level_dir_open));
     try std.testing.expectEqual(@as(c_int, 0), lnako_aot_exception_pending());
-    try std.testing.expectEqual(@intFromEnum(Tag.dictionary), handle.tag);
+    try std.testing.expectEqual(@backingInt(Tag.dictionary), handle.tag);
     roots[0] = handle;
 
     var entry: Value = .{};
-    lnako_aot_builtin_call(&entry, @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.low_level_dir_next));
+    lnako_aot_builtin_call(&entry, @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.low_level_dir_next));
     try std.testing.expectEqual(@as(c_int, 0), lnako_aot_exception_pending());
-    try std.testing.expectEqual(@intFromEnum(Tag.dictionary), entry.tag);
+    try std.testing.expectEqual(@backingInt(Tag.dictionary), entry.tag);
     try expectUtf16String(active, dictionaryProperty(entry, &.{ 'n', 'a', 'm', 'e' }), "only.txt");
     try expectUtf16String(active, dictionaryProperty(entry, &.{ 't', 'y', 'p', 'e' }), "file");
 
     var eof: Value = .{};
-    lnako_aot_builtin_call(&eof, @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.low_level_dir_next));
+    lnako_aot_builtin_call(&eof, @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.low_level_dir_next));
     try std.testing.expectEqual(@as(c_int, 0), lnako_aot_exception_pending());
-    try std.testing.expectEqual(@intFromEnum(Tag.null_value), eof.tag);
+    try std.testing.expectEqual(@backingInt(Tag.null_value), eof.tag);
 
     var closed: Value = .{};
-    lnako_aot_builtin_call(&closed, @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.low_level_dir_close));
+    lnako_aot_builtin_call(&closed, @ptrCast(&roots[0]), 1, @backingInt(aot_builtin.Command.low_level_dir_close));
     try std.testing.expectEqual(@as(c_int, 0), lnako_aot_exception_pending());
 
     // 二重closeはEBADF。
@@ -8686,7 +8686,7 @@ test "AOT低レイヤーの実装済みフラグの命令はstubへ到達しな�
         if (!spec.implemented) continue;
         const argc: usize = spec.min;
         std.debug.assert(argc <= roots.len - 1);
-        lnako_aot_builtin_call(&roots[0], if (argc > 0) @ptrCast(&roots[1]) else null, argc, @intFromEnum(binding.command));
+        lnako_aot_builtin_call(&roots[0], if (argc > 0) @ptrCast(&roots[1]) else null, argc, @backingInt(binding.command));
         if (lnako_aot_exception_pending() == 0) continue;
         lnako_aot_exception_take(&taken);
         const rendered = try valueUtf16Alloc(&state.active_runtime.?, taken);
@@ -8720,10 +8720,10 @@ test "AOT低レイヤーの未実装命令は全てstub経由でENOTSUPを返す
         stub_count += 1;
         const argc: usize = spec.min;
         std.debug.assert(argc <= roots.len - 1);
-        lnako_aot_builtin_call(&roots[0], if (argc > 0) @ptrCast(&roots[1]) else null, argc, @intFromEnum(binding.command));
+        lnako_aot_builtin_call(&roots[0], if (argc > 0) @ptrCast(&roots[1]) else null, argc, @backingInt(binding.command));
         try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
         lnako_aot_exception_take(&taken);
-        try std.testing.expectEqual(@intFromEnum(Tag.dictionary), taken.tag);
+        try std.testing.expectEqual(@backingInt(Tag.dictionary), taken.tag);
         try std.testing.expect(taken.object().?.structured_error);
         try expectUtf16String(&state.active_runtime.?, dictionaryProperty(taken, &.{ 'c', 'o', 'd', 'e' }), "ENOTSUP");
     }
@@ -8824,12 +8824,12 @@ test "AOT汎用call siteは専用ABI命令をhasGenericCallSiteDispatchで拒否
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
     const epoch = state.active_runtime.?.failure_epoch;
-    lnako_aot_builtin_call(&roots[0], @ptrCast(&roots[1]), 2, @intFromEnum(aot_builtin.Command.regexp_match));
+    lnako_aot_builtin_call(&roots[0], @ptrCast(&roots[1]), 2, @backingInt(aot_builtin.Command.regexp_match));
     try std.testing.expectEqual(epoch +% 1, state.active_runtime.?.failure_epoch);
     try std.testing.expect(state.active_runtime.?.has_pending_exception);
     _ = state.active_runtime.?.takeException();
     // 汎用dispatch可能な命令は従来通り処理される。
-    lnako_aot_builtin_call(&roots[0], @ptrCast(&roots[1]), 1, @intFromEnum(aot_builtin.Command.to_string));
+    lnako_aot_builtin_call(&roots[0], @ptrCast(&roots[1]), 1, @backingInt(aot_builtin.Command.to_string));
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
     try std.testing.expectEqualSlices(u16, &.{ 'a', 'b', 'c' }, roots[0].object().?.payload.utf16_string);
 }

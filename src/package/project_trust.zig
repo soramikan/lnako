@@ -27,7 +27,7 @@ pub fn isUnsafeWritablePath(allocator: Allocator, io: std.Io, path: []const u8) 
     if (comptime builtin.os.tag == .windows)
         return try windowsPathHasUntrustedWriteAccess(allocator, path, stat.kind == .directory, .allow_inherited_baseline);
     if (comptime builtin.os.tag == .wasi) return false;
-    if (@intFromEnum(stat.permissions) & 0o022 != 0) return true;
+    if (@backingInt(stat.permissions) & 0o022 != 0) return true;
     const metadata = low_level_fs.stat(io, path, true) catch return true;
     if (metadata.uid != 0 and metadata.uid != std.c.geteuid()) return true;
     if (comptime builtin.os.tag == .macos) return darwinExtendedAclGrantsUntrustedWrite(allocator, path);
@@ -176,7 +176,7 @@ extern "c" fn acl_get_flag_np(flagset: *anyopaque, flag: c_uint) c_int;
 /// fail-closedで unsafe(true) にする。
 fn darwinExtendedAclGrantsUntrustedWrite(allocator: Allocator, path: []const u8) Allocator.Error!bool {
     comptime if (builtin.os.tag != .macos) return false;
-    const path_z = try allocator.dupeZ(u8, path);
+    const path_z = try allocator.dupeSentinel(u8, path, 0);
     defer allocator.free(path_z);
     const acl = acl_get_file(path_z.ptr, darwin_acl_type_extended) orelse {
         // 拡張ACL無しは errno ENOENT(2)／ENOATTR(93) で NULLが返る。

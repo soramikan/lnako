@@ -170,7 +170,7 @@ jobs:
         if: matrix.suite != 'core' && matrix.suite != 'mac-core-standard-support' && matrix.suite != 'mac-host-compat'
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
-          version: 0.16.0
+          version: 0.17.0
           # compat-aotのZig cache保存は実測で効果が無かったため対象外に戻した
           # （3 run比較: cache無効 753s相当／cold 572s／部分hit 456s／同一ソースでの
           # hit 731s。Zigは内容hashでcacheするため復元しても再ビルドされ、
@@ -483,7 +483,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
-          version: 0.16.0
+          version: 0.17.0
           use-cache: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
@@ -509,7 +509,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
-          version: 0.16.0
+          version: 0.17.0
           # このjobの成果物（compiler binary）は27 jobのAOT検証が使うため、
           # Zig cache経由で壊れた成果物が混入しないよう保存しない。
           # 保存する場合、setup-zigはprefix一致で復元するため前runのcacheを
@@ -585,7 +585,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
-          version: 0.16.0
+          version: 0.17.0
           # 成果物の再現性を優先してZig cacheは使わない（Windows producerと同じ理由）。
           use-cache: false
           cache-size-limit: 3072
@@ -724,7 +724,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
-          version: 0.16.0
+          version: 0.17.0
           # このjobで`zig build`するのはmacOS nativeだけになった
           # （LinuxのDebug consumerはaot_linuxが共有artifactをinstallする）。
           # Zig cacheはmacOS nativeのみ保存する。
@@ -983,7 +983,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
-          version: 0.16.0
+          version: 0.17.0
           # このjobは`zig build`を実行せず、producerがbuildした共有compiler
           # artifactをinstallしてfixtureのAOT buildだけを行う。Zig cacheを
           # 保存しても再利用されず、6 shard×約64 MBを毎run積み増すだけに
@@ -1224,7 +1224,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
-          version: 0.16.0
+          version: 0.17.0
           # このjobは`zig build`を実行せず、producer jobの共有compiler
           # artifactをinstallしてfixtureのAOT buildだけを行う。そのため
           # Zigグローバルcacheを保存しても再利用されず、12 shard×約64 MBを

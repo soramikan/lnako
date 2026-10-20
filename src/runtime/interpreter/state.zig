@@ -338,7 +338,7 @@ pub const Interpreter = struct {
     active_program_owner: ?*const ir.Program = null,
     /// Released call-frame value buffers grouped by power-of-two size class.
     /// Buffers larger than the largest class are retained in a separate list.
-    value_buffer_buckets: [value_buffer_size_classes.len]ValueBufferBucket = [_]ValueBufferBucket{.{}} ** value_buffer_size_classes.len,
+    value_buffer_buckets: [value_buffer_size_classes.len]ValueBufferBucket = @as([value_buffer_size_classes.len]ValueBufferBucket, @splat(.{})),
     oversized_value_buffers: std.ArrayListUnmanaged([]Value) = .empty,
     /// Per-program name index for `findFunction`.  Programs outlive the
     /// interpreter (dynamic programs are owned by `dynamic_programs`), so

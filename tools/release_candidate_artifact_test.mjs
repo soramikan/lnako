@@ -18,7 +18,7 @@ function workspace() {
   const directory = mkdtempSync(join(tmpdir(), "lnako-rc-artifact-"));
   mkdirSync(join(directory, "repo"), { recursive: true });
   writeFileSync(join(directory, "repo", "toolchain.lock.json"), JSON.stringify({
-    zig: { version: "0.16.0" },
+    zig: { version: "0.17.0" },
     llvm: { version: "22.1.8" },
     node: { version: "24.15.0" },
   }));

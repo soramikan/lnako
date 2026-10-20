@@ -171,7 +171,7 @@ function createManifest(options_, spec, binary, runtime, payloadFiles, git) {
       dirty: git.dirty,
     },
     build: {
-      zig: "0.16.0",
+      zig: "0.17.0",
       llvm: "22.1.8",
       quickjs: "2026-06-04",
       compatJsIncluded: true,

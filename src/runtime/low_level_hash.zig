@@ -448,7 +448,7 @@ test "標準テストベクタ（空・短文）を逐次計算で得る" {
 
 test "1 byte刻みと一括供給で同じdigestになる" {
     const allocator = std.testing.allocator;
-    const input = "The quick brown fox jumps over the lazy dog" ** 7;
+    const input = "The quick brown fox jumps over the lazy dogThe quick brown fox jumps over the lazy dogThe quick brown fox jumps over the lazy dogThe quick brown fox jumps over the lazy dogThe quick brown fox jumps over the lazy dogThe quick brown fox jumps over the lazy dogThe quick brown fox jumps over the lazy dog";
     inline for ([_]Algorithm{ .sha256, .sha512, .md5, .sha3_256, .blake2b512, .md5_sha1 }) |algorithm| {
         var whole = Hasher.start(algorithm).?;
         whole.update(input);
@@ -466,7 +466,7 @@ test "1 byte刻みと一括供給で同じdigestになる" {
 
 test "sha512系・sha3系・shake系も逐次計算できる" {
     const allocator = std.testing.allocator;
-    const input = "abcdefghijklmnopqrstuvwxyz0123456789" ** 11;
+    const input = "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789";
     const cases = [_]struct { name: []const u8, expected_len: usize }{
         .{ .name = "sha224", .expected_len = 28 },
         .{ .name = "sha384", .expected_len = 48 },

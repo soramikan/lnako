@@ -320,9 +320,9 @@ test "parseIntPrefixは整数文字列を一度だけbinary64へ丸める" {
     try expect_bits(0x43b234567890abce, &testUnits("0x1234567890abcdef"), null);
     try expect_bits(0x466517168a4523fd, &testUnits("zzzzzzzzzzzzzzzzzzzz"), 36);
     // 有限最大値の境界と、超過時のInfinity。
-    try expect_bits(0x7fefffffffffffff, &testUnits("17976931348623157" ++ "0" ** 292), null);
-    try expect_bits(0x7ff0000000000000, &testUnits("2" ++ "0" ** 308), null);
-    try expect_bits(0x7ff0000000000000, &testUnits("f" ** 400), 16);
+    try expect_bits(0x7fefffffffffffff, &testUnits(&("17976931348623157".* ++ @as([292]u8, @splat('0')))), null);
+    try expect_bits(0x7ff0000000000000, &testUnits(&("2".* ++ @as([308]u8, @splat('0')))), null);
+    try expect_bits(0x7ff0000000000000, &testUnits(&@as([400]u8, @splat('f'))), 16);
     // 任意長の先頭ゼロ・末尾無効文字・負のゼロを維持する。
     try expect_bits(0x43a9000000000001, &testUnits("0000000000900719925474099267tail"), null);
     try expect_bits(0x8000000000000000, &testUnits("  -0abc"), null);

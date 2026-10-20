@@ -556,7 +556,7 @@ comptime {
         if (!std.mem.eql(u8, spec.name, binding.name)) {
             @compileError("low_level_bindings の名前はdispatch名（語幹）でなければなりません: " ++ binding.name);
         }
-        if (@intFromEnum(binding.command) != @intFromEnum(Command.low_level_file_open) + index) {
+        if (@backingInt(binding.command) != @backingInt(Command.low_level_file_open) + index) {
             @compileError("low_level_bindings の順序はenum末尾の宣言順と一致させてください: " ++ binding.name);
         }
     }
@@ -616,13 +616,13 @@ comptime {
             }
         }
     }
-    const fields = std.meta.fields(Command);
+    const command_info = @typeInfo(Command).@"enum";
     var low_level_count: usize = 0;
-    for (fields) |field| {
-        const low_level = std.mem.startsWith(u8, field.name, "low_level_");
-        const in_tail = field.value >= @intFromEnum(Command.low_level_file_open);
+    for (command_info.field_names, command_info.field_values) |field_name, field_value| {
+        const low_level = std.mem.startsWith(u8, field_name, "low_level_");
+        const in_tail = field_value >= @backingInt(Command.low_level_file_open);
         if (low_level != in_tail) {
-            @compileError("低レイヤーopcodeはenum末尾へ連続配置してください: " ++ field.name);
+            @compileError("低レイヤーopcodeはenum末尾へ連続配置してください: " ++ field_name);
         }
         if (low_level) low_level_count += 1;
     }
@@ -633,14 +633,14 @@ comptime {
 
 /// opcodeが低レイヤー命令かどうか。enum末尾への連続配置で判定する。
 pub fn isLowLevelCommand(command: Command) bool {
-    return @intFromEnum(command) >= @intFromEnum(Command.low_level_file_open);
+    return @backingInt(command) >= @backingInt(Command.low_level_file_open);
 }
 
 /// opcodeに対応するカタログ定義。ENOTSUP stubが `capability` /
 /// `operation` / arity をここから引く。
 pub fn lowLevelCatalogCommand(command: Command) ?low_level_foundation.CatalogCommand {
     if (!isLowLevelCommand(command)) return null;
-    const index = @intFromEnum(command) - @intFromEnum(Command.low_level_file_open);
+    const index = @backingInt(command) - @backingInt(Command.low_level_file_open);
     if (index >= low_level_bindings.len) return null;
     return low_level_foundation.catalogCommandFor(low_level_bindings[index].name);
 }
