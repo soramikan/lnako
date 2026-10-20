@@ -9,10 +9,40 @@ on:
         options: [smoke, normal, full]
         default: normal
   pull_request:
-    paths: ['src/**', 'benchmarks/**', 'tools/*benchmark*', 'tools/profile_aot_numeric*', 'tools/analyze_numeric_trace*', 'tools/lib/benchmark*', '.github/workflows/comparison-benchmark.yml']
+    paths:
+      - 'src/**'
+      - 'benchmarks/**'
+      - 'tools/*benchmark*'
+      - 'tools/profile_aot_numeric*'
+      - 'tools/analyze_numeric_trace*'
+      - 'tools/lib/benchmark*'
+      - 'build.zig'
+      - 'build.zig.zon'
+      - 'toolchain.lock.json'
+      - 'tools/setup_llvm.mjs'
+      - 'tools/setup_quickjs.mjs'
+      - 'tools/prune_llvm_toolchain.mjs'
+      - 'tools/setup_oracle.mjs'
+      - 'tools/setup_benchmark_gonako.mjs'
+      - '.github/workflows/comparison-benchmark.yml'
   push:
     branches: [main]
-    paths: ['src/**', 'benchmarks/**', 'tools/*benchmark*', 'tools/profile_aot_numeric*', 'tools/analyze_numeric_trace*', 'tools/lib/benchmark*', '.github/workflows/comparison-benchmark.yml']
+    paths:
+      - 'src/**'
+      - 'benchmarks/**'
+      - 'tools/*benchmark*'
+      - 'tools/profile_aot_numeric*'
+      - 'tools/analyze_numeric_trace*'
+      - 'tools/lib/benchmark*'
+      - 'build.zig'
+      - 'build.zig.zon'
+      - 'toolchain.lock.json'
+      - 'tools/setup_llvm.mjs'
+      - 'tools/setup_quickjs.mjs'
+      - 'tools/prune_llvm_toolchain.mjs'
+      - 'tools/setup_oracle.mjs'
+      - 'tools/setup_benchmark_gonako.mjs'
+      - '.github/workflows/comparison-benchmark.yml'
   schedule:
     - cron: '23 18 * * *'
 
@@ -25,24 +55,88 @@ permissions:
   actions: read
 
 jobs:
+  setup:
+    name: Resolve matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.config.outputs.matrix }}
+      profile: ${{ steps.config.outputs.profile }}
+      runtimes: ${{ steps.config.outputs.runtimes }}
+      cases: ${{ steps.config.outputs.cases }}
+      include_diagnostics: ${{ steps.config.outputs.include_diagnostics }}
+      include_numeric: ${{ steps.config.outputs.include_numeric }}
+    steps:
+      - name: Select profile, OS matrix, and filters
+        id: config
+        shell: bash
+        run: |
+          set -euo pipefail
+          linux='{"target":"linux-x64","os":"ubuntu-24.04","shell":"bash","lnako_executable":"lnako"}'
+          macos='{"target":"macos-arm64","os":"macos-15","shell":"bash","lnako_executable":"lnako"}'
+          windows='{"target":"windows-x64","os":"windows-2025","shell":"bash","lnako_executable":"lnako.exe"}'
+          full_runtimes='lnako,cnako,gonako,c,rust'
+          pr_cases='startup-empty,integer-arithmetic,function-call,array-build,string-concat'
+
+          case "${{ github.event_name }}" in
+            pull_request)
+              profile=smoke
+              runtimes='lnako,cnako'
+              cases="$pr_cases"
+              matrix="{\"include\":[$linux]}"
+              include_diagnostics=false
+              include_numeric=false
+              ;;
+            push)
+              profile=normal
+              runtimes="$full_runtimes"
+              cases=
+              matrix="{\"include\":[$linux]}"
+              include_diagnostics=false
+              include_numeric=false
+              ;;
+            schedule)
+              profile=normal
+              runtimes="$full_runtimes"
+              cases=
+              matrix="{\"include\":[$macos,$linux,$windows]}"
+              include_diagnostics=true
+              include_numeric=true
+              ;;
+            workflow_dispatch)
+              profile='${{ inputs.profile }}'
+              runtimes="$full_runtimes"
+              cases=
+              matrix="{\"include\":[$macos,$linux,$windows]}"
+              if [ "$profile" = full ]; then
+                include_diagnostics=true
+                include_numeric=true
+              else
+                include_diagnostics=false
+                include_numeric=false
+              fi
+              ;;
+            *)
+              echo "Unsupported event: ${{ github.event_name }}" >&2
+              exit 1
+              ;;
+          esac
+
+          {
+            echo "profile=$profile"
+            echo "runtimes=$runtimes"
+            echo "cases=$cases"
+            echo "include_diagnostics=$include_diagnostics"
+            echo "include_numeric=$include_numeric"
+            echo "matrix=$matrix"
+          } >> "$GITHUB_OUTPUT"
+
   benchmark:
     name: ${{ matrix.target }} / comparison
+    needs: setup
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - target: macos-arm64
-            os: macos-15
-            shell: bash
-            lnako_executable: lnako
-          - target: linux-x64
-            os: ubuntu-24.04
-            shell: bash
-            lnako_executable: lnako
-          - target: windows-x64
-            os: windows-2025
-            shell: bash
-            lnako_executable: lnako.exe
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     defaults:
@@ -58,7 +152,7 @@ jobs:
           version: 0.16.0
           use-cache: true
           cache-key: comparison-${{ matrix.target }}
-          cache-size-limit: 1536
+          cache-size-limit: 3072
 
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
@@ -129,16 +223,32 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          previous_run=$(gh run list --workflow comparison-benchmark.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
-          if [ -n "$previous_run" ]; then
-            if ! gh run download "$previous_run" --name "comparison-benchmark-${{ matrix.target }}" --dir "$RUNNER_TEMP/benchmark-baseline"; then
-              echo '::warning::Previous benchmark artifact unavailable; recording without a baseline.'
+          # main push は linux-x64 のみ artifact を出す。schedule の mac/Win は
+          # 直近1 run だと baseline が取れないため、当該 target の artifact を
+          # 持つ直近成功 run を探す（3OS push には戻さない）。
+          # gh run list の失敗は process 置換だと set -e に乗らないため、先に代入する。
+          artifact="comparison-benchmark-${{ matrix.target }}"
+          mkdir -p "$RUNNER_TEMP/benchmark-baseline"
+          previous_run=""
+          runs="$(gh run list --workflow comparison-benchmark.yml --branch main --status success --limit 30 --json databaseId --jq '.[].databaseId')"
+          while IFS= read -r run_id; do
+            [ -n "$run_id" ] || continue
+            rm -rf "$RUNNER_TEMP/benchmark-baseline"
+            mkdir -p "$RUNNER_TEMP/benchmark-baseline"
+            if gh run download "$run_id" --name "$artifact" --dir "$RUNNER_TEMP/benchmark-baseline" 2>/dev/null; then
+              previous_run="$run_id"
+              break
             fi
+          done <<< "$runs"
+          if [ -z "$previous_run" ]; then
+            echo '::warning::Previous benchmark artifact unavailable; recording without a baseline.'
           fi
 
       - name: Run comparison benchmark
         env:
-          BENCHMARK_PROFILE: ${{ github.event_name == 'pull_request' && 'smoke' || inputs.profile || 'normal' }}
+          BENCHMARK_PROFILE: ${{ needs.setup.outputs.profile }}
+          BENCHMARK_RUNTIMES: ${{ needs.setup.outputs.runtimes }}
+          BENCHMARK_CASES: ${{ needs.setup.outputs.cases }}
           LNAKO_BENCHMARK_LNAKO: ${{ github.workspace }}/zig-out/bin/${{ matrix.lnako_executable }}
         shell: bash
         run: |
@@ -149,11 +259,16 @@ jobs:
           fi
           clang_path="$LNAKO_LLVM_DIR/bin/clang"
           if [ "${RUNNER_OS:-}" = "Windows" ]; then clang_path="${clang_path}.exe"; fi
+          cases_args=()
+          if [ -n "${BENCHMARK_CASES:-}" ]; then
+            cases_args=(--cases "$BENCHMARK_CASES")
+          fi
           # macOSのbash 3.2ではset -u下の空配列展開がunbound variableになる。
           node tools/run_comparison_benchmark.mjs ${baseline_args[@]+"${baseline_args[@]}"} \
             --suite benchmarks/suites/v2.json \
             --profile "$BENCHMARK_PROFILE" \
-            --runtimes lnako,cnako,gonako,c,rust \
+            --runtimes "$BENCHMARK_RUNTIMES" \
+            ${cases_args[@]+"${cases_args[@]}"} \
             --lnako "$LNAKO_BENCHMARK_LNAKO" \
             --cnako "$LNAKO_BENCHMARK_CNAKO" \
             --gonako "$LNAKO_BENCHMARK_GONAKO" \
@@ -171,6 +286,7 @@ jobs:
             --markdown "$RUNNER_TEMP/benchmark-${{ matrix.target }}.md"
 
       - name: Run diagnostic comparison cases
+        if: needs.setup.outputs.include_diagnostics == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -188,7 +304,7 @@ jobs:
             --markdown "$RUNNER_TEMP/diagnostics-${{ matrix.target }}.md"
 
       - name: Upload diagnostic benchmark artifacts
-        if: always()
+        if: always() && needs.setup.outputs.include_diagnostics == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: diagnostics-benchmark-${{ matrix.target }}
@@ -199,6 +315,7 @@ jobs:
           retention-days: 90
 
       - name: Collect numeric code and CPU profile
+        if: needs.setup.outputs.include_numeric == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -208,6 +325,7 @@ jobs:
           node tools/profile_aot_numeric.mjs "${profile_args[@]}"
 
       - name: Analyze numeric CPU trace
+        if: needs.setup.outputs.include_numeric == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -222,7 +340,7 @@ jobs:
           fi
 
       - name: Upload numeric profile artifacts
-        if: always()
+        if: always() && needs.setup.outputs.include_numeric == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: numeric-profile-${{ matrix.target }}

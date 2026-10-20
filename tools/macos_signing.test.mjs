@@ -71,3 +71,49 @@ test("notary logs are fetched for Accepted and Invalid; only Accepted can procee
   }
   await assert.rejects(submitNotarization("x", [], "log", { execute() { return "{}"; } }), /submission ID/);
 });
+
+test("captureAsync overlaps concurrent waits without blocking the event loop", async () => {
+  const { captureAsync } = await import("./macos_signing.mjs");
+  const directory = await mkdtemp(join(tmpdir(), "lnako-capture-async-"));
+  try {
+    const gate = join(directory, "gate");
+    const readyA = join(directory, "ready-a");
+    const readyB = join(directory, "ready-b");
+    // Both children signal ready, then block on a shared gate file. Parent only
+    // opens the gate after both ready files exist, proving overlap without wall-clock.
+    const script = `
+      import { writeFileSync, existsSync } from "node:fs";
+      const ready = process.argv[1];
+      const gatePath = process.argv[2];
+      writeFileSync(ready, "1");
+      const deadline = Date.now() + 8000;
+      while (!existsSync(gatePath) && Date.now() < deadline) {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+      }
+      if (!existsSync(gatePath)) process.exit(2);
+      process.stdout.write("ok");
+    `;
+    const pending = Promise.all([
+      captureAsync(process.execPath, ["--input-type=module", "-e", script, readyA, gate], { timeout: 15_000 }),
+      captureAsync(process.execPath, ["--input-type=module", "-e", script, readyB, gate], { timeout: 15_000 }),
+    ]);
+    const waitReady = async (path) => {
+      const deadline = Date.now() + 8000;
+      while (Date.now() < deadline) {
+        try {
+          await readFile(path);
+          return;
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+      throw new Error(`child never signaled ready: ${path}`);
+    };
+    await Promise.all([waitReady(readyA), waitReady(readyB)]);
+    await writeFile(gate, "go");
+    const results = await pending;
+    assert.deepEqual(results, ["ok", "ok"]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

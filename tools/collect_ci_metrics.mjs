@@ -161,6 +161,23 @@ export function parseCacheLog(text) {
     result.zigCache.saveOutcome = matching?.outcome ?? "unknown";
     result.zigCache.saveFailure = matching?.failure ?? null;
   }
+  // setup-zig clears the whole directory when over limit, then may "save" an
+  // essentially empty tree (observed ~192 B). Hit alone is not enough: treat
+  // restored/saved content under 1 KiB as ineffective.
+  if (result.zigCache !== null) {
+    const saveSize = result.saves.find((save) => save.key === result.zigCache.saveKey)?.sizeBytes
+      ?? result.zigCache.sizeBytes;
+    const restoreSize = result.zigCache.hit === true ? result.zigCache.sizeBytes : null;
+    result.zigCache.effectiveContent = !(
+      (typeof saveSize === "number" && saveSize >= 0 && saveSize < 1024 && result.zigCache.cleared === true)
+      || (typeof restoreSize === "number" && restoreSize >= 0 && restoreSize < 1024)
+    );
+    if (result.zigCache.cleared === true && typeof saveSize === "number" && saveSize < 1024) {
+      result.zigCache.emptyAfterClear = true;
+    } else {
+      result.zigCache.emptyAfterClear = false;
+    }
+  }
   return result;
 }
 
@@ -386,6 +403,8 @@ export function summarizeCache(cacheJobs) {
     zigMisses: zigJobs.filter((job) => zigCache(job).hit === false).length,
     zigSameRunRestores: sameRunRestores,
     zigCleared: zigJobs.filter((job) => zigCache(job).cleared === true).length,
+    zigEmptyAfterClear: zigJobs.filter((job) => zigCache(job).emptyAfterClear === true).length,
+    zigIneffectiveContent: zigJobs.filter((job) => zigCache(job).effectiveContent === false).length,
     zigSaved: zigJobs.filter((job) => outcome(job) === "saved").length,
     zigSaveFailures: zigJobs.filter((job) => outcome(job) === "failed").length,
     zigSaveUnknown: zigJobs.filter((job) => outcome(job) === "unknown").length,
@@ -483,6 +502,8 @@ export function formatMarkdown({ repo, workflow, generatedAt, runs, aggregate, s
     `| Zig cache 保存失敗 | ${aggregate.cache.zigSaveFailures} |`,
     `| Zig cache 保存結果不明 | ${aggregate.cache.zigSaveUnknown} |`,
     `| Zig cache size limit超過によるclear | ${aggregate.cache.zigCleared} |`,
+    `| Zig cache clear後の空保存 | ${aggregate.cache.zigEmptyAfterClear} |`,
+    `| Zig cache 無効コンテンツ（<1 KiB） | ${aggregate.cache.zigIneffectiveContent} |`,
     `| Zig cache 上限 | ${aggregate.cache.limitMiB === null ? "-" : `${aggregate.cache.limitMiB.toFixed(0)} MiB`} |`,
     `| Zig cache directory size median | ${formatBytes(aggregate.cache.zigSizeBytes.median)} |`,
     `| Zig cache directory size max | ${formatBytes(aggregate.cache.zigSizeBytes.max)} |`,

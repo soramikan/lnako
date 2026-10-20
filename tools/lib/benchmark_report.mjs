@@ -72,17 +72,22 @@ export function compareBaseline(currentReport, baselineReport, { threshold = 0.1
   return warnings;
 }
 
-function baselineCompatibilityDifferences(current, baseline) {
+// Subject-under-test version changes every release; do not treat lnako as a
+// baseline-incompatibility signal. Shared-runner total memory can jitter by
+// tens of MiB, so allow a small slack while keeping cpu/cores/os strict.
+const HARDWARE_MEMORY_SLACK_BYTES = 64 * 1024 * 1024;
+
+export function baselineCompatibilityDifferences(current, baseline) {
   if (!isPlainObject(baseline)) return ["baseline is not an object"];
   const differences = [];
   if (current.target?.os !== baseline.target?.os || current.target?.arch !== baseline.target?.arch) differences.push("target");
   if ((current.git_dirty ?? null) !== (baseline.git_dirty ?? null)) differences.push("git_dirty");
-  if (JSON.stringify(current.hardware ?? null) !== JSON.stringify(baseline.hardware ?? null)) differences.push("hardware");
+  if (!hardwareCompatible(current.hardware, baseline.hardware)) differences.push("hardware");
   if (current.suite_name !== baseline.suite_name || current.suite !== baseline.suite) differences.push("suite");
   if (current.suite_sha256 !== baseline.suite_sha256) differences.push("suite_sha256");
   if ((current.optimization ?? null) !== (baseline.optimization ?? null)) differences.push("optimization");
   if ((current.profile ?? null) !== (baseline.profile ?? null)) differences.push("profile");
-  if (JSON.stringify(current.toolchain ?? null) !== JSON.stringify(baseline.toolchain ?? null)) differences.push("toolchain");
+  if (toolchainVersions(current) !== toolchainVersions(baseline)) differences.push("toolchain");
   if (runtimeVersions(current) !== runtimeVersions(baseline)) differences.push("runtime_versions");
   if (JSON.stringify(current.runtimes?.gonako?.provenance ?? null) !== JSON.stringify(baseline.runtimes?.gonako?.provenance ?? null)) differences.push("gonako_provenance");
   const baselineCases = new Map((baseline.cases ?? []).map((item) => [item.id, item]));
@@ -98,8 +103,36 @@ function baselineCompatibilityDifferences(current, baseline) {
   return differences;
 }
 
+function hardwareCompatible(current, baseline) {
+  if (!isPlainObject(current) || !isPlainObject(baseline)) return current == null && baseline == null;
+  if ((current.cpu_model ?? null) !== (baseline.cpu_model ?? null)) return false;
+  if ((current.cpu_logical_count ?? null) !== (baseline.cpu_logical_count ?? null)) return false;
+  if ((current.os_release ?? null) !== (baseline.os_release ?? null)) return false;
+  const currentMemory = current.total_memory_bytes;
+  const baselineMemory = baseline.total_memory_bytes;
+  if (currentMemory === baselineMemory) return true;
+  if (!Number.isFinite(currentMemory) || !Number.isFinite(baselineMemory)) return false;
+  return Math.abs(currentMemory - baselineMemory) <= HARDWARE_MEMORY_SLACK_BYTES;
+}
+
+function omitLnakoVersions(record) {
+  return Object.fromEntries(
+    Object.entries(record ?? {})
+      .filter(([name]) => name !== "lnako")
+      .map(([name, value]) => [name, value?.version !== undefined ? (value.version ?? null) : value ?? null]),
+  );
+}
+
+function toolchainVersions(report) {
+  // toolchain.lnako tracks the subject under test the same way runtime versions do.
+  const toolchain = { ...(report.toolchain ?? {}) };
+  delete toolchain.lnako;
+  return JSON.stringify(toolchain);
+}
+
 function runtimeVersions(report) {
-  return JSON.stringify(Object.fromEntries(Object.entries(report.runtimes ?? {}).map(([runtime, record]) => [runtime, record?.version ?? null])));
+  // lnako is the subject under test; its version string is expected to move.
+  return JSON.stringify(omitLnakoVersions(report.runtimes));
 }
 
 function measurementKey(item, measurement) {

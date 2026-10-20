@@ -57,7 +57,7 @@ test("profile presets and legacy overrides are deterministic", () => {
   });
   assert.deepEqual(resolveProfileOptions("normal"), { profile: "normal", warmup: 3, samples: 10 });
   assert.deepEqual(resolveProfileOptions("full", { iterations: 2, warmup: 0 }), { profile: "full", warmup: 0, samples: 2 });
-  const options = parseArguments(["--profile", "smoke", "--iterations", "4", "--warmup", "0", "--runtimes", "lnako,cnako", "--case", "one,two", "--case", "three", "--optimization", "O0", "--timeout", "55"]);
+  const options = parseArguments(["--profile", "smoke", "--iterations", "4", "--warmup", "0", "--runtimes", "lnako,cnako", "--case", "one,two", "--cases", "three", "--optimization", "O0", "--timeout", "55"]);
   assert.equal(options.profile, "smoke");
   assert.deepEqual(options.runtimes, ["lnako", "cnako"]);
   assert.deepEqual(options.cases, ["one", "two", "three"]);
@@ -65,6 +65,8 @@ test("profile presets and legacy overrides are deterministic", () => {
   assert.equal(options.warmup, 0);
   assert.equal(options.optimization, "O0");
   assert.equal(options.timeoutMs, 55);
+  const casesOnly = parseArguments(["--cases", "startup-empty,integer-arithmetic"]);
+  assert.deepEqual(casesOnly.cases, ["startup-empty", "integer-arithmetic"]);
 });
 
 test("statistics retain observation order and use the native rounded quantile convention", () => {
@@ -225,7 +227,7 @@ test("baseline comparisons are warning-only and reject incompatible inputs", () 
     optimization: "O2",
     profile: "normal",
     toolchain: { zig: "0.16.0" },
-    runtimes: { cnako: { version: "3.7.24" } },
+    runtimes: { cnako: { version: "3.7.24" }, lnako: { version: "0.1.0" } },
     cases: [{ id: "x", input: { args: ["2"] }, source_hashes: { cnako: "b" }, measurements: [{ runtime: "cnako", mode: "run", median_ns: 20 }] }],
   };
   const baseline = structuredClone(current);
@@ -233,6 +235,49 @@ test("baseline comparisons are warning-only and reject incompatible inputs", () 
   const warnings = compareBaseline(current, baseline);
   assert.equal(warnings.length, 1);
   assert.equal(warnings[0].reason, "baseline_incompatible");
+});
+
+test("baseline compatibility ignores lnako version drift and small memory slack", () => {
+  const base = {
+    target: { os: "linux", arch: "x86_64" },
+    git_dirty: false,
+    hardware: { cpu_model: "test", cpu_logical_count: 4, total_memory_bytes: 8 * 1024 * 1024 * 1024, os_release: "6.1.0" },
+    suite_name: "suite",
+    suite: "suite.json",
+    suite_sha256: "abc",
+    optimization: "O2",
+    profile: "normal",
+    toolchain: { zig: "0.16.0" },
+    runtimes: {
+      cnako: { version: "3.7.24" },
+      gonako: { version: "gonako v3.6.0" },
+      lnako: { version: "0.1.0-dev" },
+    },
+    cases: [{ id: "x", input: { args: [] }, source_hashes: { cnako: "b" }, measurements: [{ runtime: "cnako", mode: "run", median_ns: 100 }] }],
+  };
+  const current = structuredClone(base);
+  current.runtimes.lnako.version = "0.2.0";
+  current.hardware.total_memory_bytes = base.hardware.total_memory_bytes + 32 * 1024 * 1024;
+  const compatible = compareBaseline(current, base);
+  assert.equal(compatible.length, 0);
+
+  const memoryTooFar = structuredClone(base);
+  memoryTooFar.hardware.total_memory_bytes = base.hardware.total_memory_bytes + 128 * 1024 * 1024;
+  const memoryWarnings = compareBaseline(memoryTooFar, base);
+  assert.equal(memoryWarnings[0]?.reason, "baseline_incompatible");
+  assert.ok(memoryWarnings[0].differences.includes("hardware"));
+
+  const runtimeDrift = structuredClone(base);
+  runtimeDrift.runtimes.cnako.version = "3.8.0";
+  const runtimeWarnings = compareBaseline(runtimeDrift, base);
+  assert.equal(runtimeWarnings[0]?.reason, "baseline_incompatible");
+  assert.ok(runtimeWarnings[0].differences.includes("runtime_versions"));
+
+  const regression = structuredClone(base);
+  regression.cases[0].measurements[0].median_ns = 200;
+  const regressionWarnings = compareBaseline(regression, base, { threshold: 0.1 });
+  assert.equal(regressionWarnings.length, 1);
+  assert.equal(regressionWarnings[0].reason, "median_regression");
 });
 
 test("v1 reports remain accepted by the v2 checker", () => {

@@ -100,7 +100,7 @@ const platforms = new Map([
 const suites = ["core", "standard", "host", "compat-aot", "aot-native", "aot-support"];
 // Windowsのcore jobがwall clockの律速だったため、独立検証である
 // `Zig package isolation check` をWindows専用jobへ分離した（wall短縮）。
-const windowsOnlySuites = ["win-package-isolation"];
+const windowsOnlySuites = ["win-package-isolation", "compat-aot-build"];
 const matrixEntries = [...workflow.matchAll(/^          - name: (.+)\n            os: (.+)\n            suite: (.+)$/gm)]
   .map((match) => ({ name: match[1], os: match[2], suite: match[3] }));
 const actualMatrix = new Set(matrixEntries.map((entry) => `${entry.name}\0${entry.os}\0${entry.suite}`));
@@ -148,7 +148,7 @@ const expectedSupportRowCount = [...expectedSupportTaskCounts.values()].reduce((
 if (nativeAotMatrixEntries.length !== expectedNativeRowCount || supportAotMatrixEntries.length !== expectedSupportRowCount) {
   throw new Error(`AOT job分割数が不正です: native=${nativeAotMatrixEntries.length} support=${supportAotMatrixEntries.length}`);
 }
-if (matrixEntries.length !== 40) throw new Error(`CI matrixの実job数が不正です: actual=${matrixEntries.length}`);
+if (matrixEntries.length !== 41) throw new Error(`CI matrixの実job数が不正です: actual=${matrixEntries.length}`);
 
 // 変更分類jobは重いmatrixの前段として必須。allow-list方式で、判定不能は
 // すべてfullへ倒す設計をtool側の実装とworkflowの両方から検査する。
@@ -372,12 +372,15 @@ const stepSuites = new Map([
   ["Zig package isolation check", "package-isolation"],
   ["Format", "core"],
   ["Test", "core"],
-  ["Test QuickJS build", "compat-aot"],
-  ["Build QuickJS compiler", "compat-aot"],
-  ["Compatibility smoke test", "compat-aot"],
+  ["Test QuickJS build", "compat-aot-test"],
+  ["Build QuickJS compiler", "compat-aot-build"],
+  ["Compatibility smoke test", "compat-aot-build"],
+  ["Package release candidate compiler", "compat-aot-build"],
+  ["Upload release candidate compiler", "compat-aot-build"],
 ]);
 for (const [name, suite] of stepSuites) {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Node hostはmac-host-compatから外しLinux／Windows host suiteのみ（macOSはaot native O3）。
   const condition = suite === "core"
     ? "matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'"
     : suite === "macos-fuzz"
@@ -385,10 +388,16 @@ for (const [name, suite] of stepSuites) {
       : suite === "standard"
       ? "matrix.suite == 'standard' || matrix.suite == 'mac-core-standard-support'"
       : suite === "host"
-        ? "matrix.suite == 'host' || matrix.suite == 'mac-host-compat'"
+        ? (name === "Differential Node host test"
+          ? "matrix.suite == 'host'"
+          : "matrix.suite == 'host' || matrix.suite == 'mac-host-compat'")
         : suite === "package-isolation"
-          ? "matrix.suite == 'win-package-isolation' || (matrix.suite == 'core' && matrix.name != 'Windows x86_64') || matrix.suite == 'mac-core-standard-support'"
-          : "matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'";
+          ? "matrix.suite == 'win-package-isolation' || (matrix.suite == 'core' && matrix.name != 'Windows x86_64')"
+          : suite === "compat-aot-test"
+            ? "matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'"
+            : suite === "compat-aot-build"
+              ? "matrix.suite == 'compat-aot-build' || matrix.suite == 'mac-host-compat' || (matrix.suite == 'compat-aot' && matrix.name != 'Windows x86_64')"
+              : "matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'";
   const pattern = new RegExp(`^      - name: ${escaped}\\n        if: ${condition.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m");
   if (!pattern.test(workflow)) throw new Error(`${name}のsuite条件が${suite}ではありません`);
 }
@@ -406,6 +415,11 @@ if (!testJob.includes("name: Clear generated Zig install outputs\n        shell:
 if (!testJob.includes("run: zig build test --test-timeout 5m --summary all") ||
     !testJob.includes("run: zig build -Dcompat-js=true test --test-timeout 5m --summary all")) {
   throw new Error("単体テストstepの--test-timeout 5m／--summary allがありません（Windows runnerのスケジューラ遅延対策と、test binaryごとの集計の可視化）");
+}
+// Release candidate は別 runner で実行されるため、ホストCPU機能を埋め込まない。
+// AOT producer と同じ -Dcpu=baseline（Windows で STATUS_ILLEGAL_INSTRUCTION を実測済み）。
+if (!testJob.includes("run: zig build -Dcompat-js=true -Doptimize=ReleaseSafe -Dcpu=baseline")) {
+  throw new Error("QuickJS ReleaseSafe（RC）buildに -Dcpu=baseline がありません");
 }
 if (testJob.includes("Grammar-generating parser fuzz test\n")) {
   throw new Error("Linux／Windowsのparser fuzzを通常core jobへ残さないでください");
@@ -426,7 +440,6 @@ const macSupportSteps = new Map([
   ["Canonical evidence freshness", ["matrix.suite == 'mac-host-compat'", "node tools/check_evidence_freshness.mjs"]],
   ["Build macOS ReleaseSafe compiler", ["matrix.suite == 'mac-core-standard-support'", "run: zig build -Doptimize=ReleaseSafe"]],
   ["macOS normal smoke test", ["matrix.suite == 'mac-core-standard-support'", "./zig-out/bin/lnako test tests/fixtures/run-tests.nako3"]],
-  ["Differential Node host test", ["matrix.suite == 'host' || matrix.suite == 'mac-host-compat'", "node tools/compare_node_http_oracle.mjs"]],
 ]);
 for (const [name, [condition, required]] of macSupportSteps) {
   const marker = "      - name: " + name;
@@ -439,31 +452,33 @@ for (const [name, [condition, required]] of macSupportSteps) {
 }
 // canonical freshness は正本と同じ ReleaseSafe で測るため、mac-host-compat は
 // normal ReleaseSafe → dispatch 生成 → QuickJS ReleaseSafe → compat-js 生成 →
-// freshness（残りの生成＋比較）→ Debug build → Node host差分の順でなければ
-// ならない。Debug 出力は比較しない。Node host差分はmac-core-standard-supportの
-// クリティカルパスを外すため証拠生成の最後尾に置く。
+// freshness（残りの生成＋比較）→ Debug build の順でなければならない。
+// Debug 出力は比較しない。Node host差分とpackage isolationはaot nativeへ移した。
 const macHostCompatOrder = [
   "      - name: Build macOS normal ReleaseSafe compiler",
   "      - name: macOS dispatch evidence audit",
   "      - name: Test QuickJS build",
   "      - name: Build QuickJS compiler",
+  "      - name: Package release candidate compiler",
   "      - name: macOS compat-js evidence audit",
   "      - name: Canonical evidence freshness",
   "      - name: Build macOS AOT verification compiler",
-  "      - name: Differential Node host test",
 ];
 const macHostCompatPositions = macHostCompatOrder.map((marker) => testJob.indexOf(marker));
 if (macHostCompatPositions.some((position) => position < 0) ||
     !macHostCompatPositions.every((position, index) => index === 0 || macHostCompatPositions[index - 1] < position)) {
-  throw new Error("mac-host-compatのReleaseSafe証拠生成順が不正です（normal RS→dispatch→QuickJS RS→compat-js→freshness の順である必要があります）");
+  throw new Error("mac-host-compatのReleaseSafe証拠生成順が不正です（normal RS→dispatch→QuickJS RS→RC package→compat-js→freshness の順である必要があります）");
 }
 const freshnessBlock = testJob.slice(testJob.indexOf("      - name: Canonical evidence freshness"));
 if (!freshnessBlock.includes('--dispatch-evidence "${{ runner.temp }}/dispatch-evidence-macos-15.json"') ||
     !freshnessBlock.includes('--compat-js-evidence "${{ runner.temp }}/compat-js-evidence.json"')) {
   throw new Error("Canonical evidence freshnessが既存のdispatch/compat-js生成物を転用していません");
 }
-if ((testJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 1) {
-  throw new Error("macOSのdispatch evidence artifact uploadが1件ありません");
+if (!testJob.includes("name: lnako-dispatch-evidence-macos-15") ||
+    !testJob.includes("name: lnako-release-candidate-") ||
+    !testJob.includes("release_candidate_artifact.mjs create") ||
+    (testJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 2) {
+  throw new Error("test jobのartifact upload（dispatch evidence＋release candidate）が不正です");
 }
 
 const aotStep = (name) => {
@@ -483,6 +498,22 @@ const linuxAotStep = (name) => {
 };
 if (!nativeAotJob.includes("strategy:\n      fail-fast: false") || !nativeAotJob.includes("runs-on: ${{ matrix.os }}") || !nativeAotJob.includes("timeout-minutes: 50")) {
   throw new Error("分割AOT jobの実行条件が不正です");
+}
+// macOSの独立長時間検証はnative routeへ分散する（package isolation→O2、Node host→O3）。
+// test jobのmac-core／mac-hostからは外し、aot nativeの余剰枠で実行する。
+const aotPackageIsolation = aotStep("Zig package isolation check");
+if (!aotPackageIsolation ||
+    !aotPackageIsolation.includes("if: matrix.name == 'macOS arm64' && matrix.task == 'native' && matrix.optimizationKey == 'O2'") ||
+    !aotPackageIsolation.includes("run: node tools/check_package_isolation.mjs")) {
+  throw new Error("aot jobのmacOS package isolation（native O2）が不完全です");
+}
+const aotNodeHost = aotStep("Differential Node host test");
+if (!aotNodeHost ||
+    !aotNodeHost.includes("if: matrix.name == 'macOS arm64' && matrix.task == 'native' && matrix.optimizationKey == 'O3'") ||
+    !aotNodeHost.includes("node tools/generate_legacy_encoding.mjs --check") ||
+    !aotNodeHost.includes("node tools/compare_node_http_oracle.mjs") ||
+    !aotNodeHost.includes("node tools/check_node_archive_smoke.mjs")) {
+  throw new Error("aot jobのmacOS Differential Node host test（native O3）が不完全です");
 }
 // Phase 2のworker数比較はworkflow_dispatch入力で切り替える。
 const dispatchInput = workflow.match(/^  workflow_dispatch:\n([\s\S]*?)(?=\n[a-z]|\Z)/m)?.[1] ?? "";
@@ -809,12 +840,12 @@ const uploadActions = workflow.match(/^        uses: actions\/upload-artifact@/g
 //   timing telemetry 1＋Linux dispatch evidence 1 = 3
 // aot_windows側（Windows support系もここへ移設）: AOT artifact 1＋
 //   timing telemetry 1＋Windows dispatch evidence 1＋Windows dispatch coverage 1 = 4
-// test 1＋aggregate 1＋attestation 1 = 3（合計14）
-if (uploadActions.length !== 14 || (testJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 1 ||
+// test 2（dispatch evidence＋release candidate）＋aggregate 1＋attestation 1 = 4（合計15）
+if (uploadActions.length !== 15 || (testJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 2 ||
     (nativeAotJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 4 ||
     (linuxAotJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 3 ||
     (windowsAotJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 4) {
-  throw new Error(`actions/upload-artifactのステップ数が想定と一致しません（aot 4／aot_linux 3／aot_windows 4／test 1／aggregate 1／attestation 1）: actual=${uploadActions.length}`);
+  throw new Error(`actions/upload-artifactのステップ数が想定と一致しません（aot 4／aot_linux 3／aot_windows 4／test 2／aggregate 1／attestation 1）: actual=${uploadActions.length}`);
 }
 // timing telemetryは互換性evidenceとは別artifact名で分離する。集約検証は
 // `lnako-native-oracle-*` globでpartitionを検査するため、名前が被ると
@@ -1079,7 +1110,7 @@ if (!pruneLlvmToolchainScript.includes("lib/clang/") || !pruneLlvmToolchainScrip
 const setupZigBlocks = [...workflow.matchAll(
   /      - uses: mlugg\/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2\.2\.1[\s\S]*?(?=      - uses: actions\/setup-node@)/g,
 )].map((match) => match[0]);
-const setupZigCacheSizeLimitMiB = 1536;
+const setupZigCacheSizeLimitMiB = 3072;
 // このjob（aot）で`zig build`するのはmacOS nativeのみ。identityをsuiteだけで
 // なくfixture shardとoptimizationまで含める（v2世代）のは、setup-zigが保存key
 // へrunId-attemptを付けprefix一致で復元するため、同一prefixの並行jobが先行jobの
@@ -1117,9 +1148,10 @@ if (setupZigBlocks.length !== 7 ||
 const setupNodeBlock = workflow.match(
   /      - uses: actions\/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5\.0\.0[\s\S]*?(?=      - uses: actions\/cache@)/,
 )?.[0];
-if (setupNodeBlock === undefined || !setupNodeBlock.includes("if: matrix.suite != 'compat-aot'") ||
+if (setupNodeBlock === undefined ||
+    !setupNodeBlock.includes("if: matrix.suite != 'compat-aot' || matrix.name != 'Windows x86_64'") ||
     !setupNodeBlock.includes("node-version: 24.15.0")) {
-  throw new Error("compat-aotが不要なNode取得を行わないsetup-node条件またはNode固定版が不正です");
+  throw new Error("Windows QuickJS test-only以外でNodeを取得するsetup-node条件またはNode固定版が不正です");
 }
 
 for (const required of [
@@ -1134,9 +1166,9 @@ for (const required of [
   "timeout-minutes: 50",
 ]) if (!workflow.includes(required)) throw new Error(`CI安全設定がありません: ${required}`);
 
-const oracleSkipConditions = workflow.match(/^        if: matrix\.suite != 'compat-aot'$/gm) ?? [];
-if (oracleSkipConditions.length !== 3) {
-  throw new Error(`compat-aotのオラクル／Node省略条件はcache・setup・Nodeの3件必要です: actual=${oracleSkipConditions.length}`);
+const oracleSkipConditions = workflow.match(/^        if: matrix\.suite != 'compat-aot' && matrix\.suite != 'compat-aot-build'$/gm) ?? [];
+if (oracleSkipConditions.length !== 2) {
+  throw new Error(`compat-aot／compat-aot-buildのオラクル省略条件はcache・setupの2件必要です: actual=${oracleSkipConditions.length}`);
 }
 
 const cacheActions = [...workflow.matchAll(/^      - uses: actions\/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6\.1\.0$/gm)];
@@ -1179,11 +1211,41 @@ if (!workflow.includes(oracleCacheKey)) throw new Error(`公式オラクルの�
 
 checkFailFastShell(workflow, ".github/workflows/ci.yml");
 checkFailFastShell(comparisonBenchmarkWorkflow, ".github/workflows/comparison-benchmark.yml");
-for (const required of ["  pull_request:", "  push:", "  schedule:", "node tools/setup_oracle.mjs", "node tools/create_benchmark_oracle_shim.mjs", "--suite benchmarks/suites/v2.json", "node tools/setup_benchmark_gonako.mjs", "toolchain: 1.98.0", "--runtimes lnako,cnako,gonako,c,rust", '--profile "$BENCHMARK_PROFILE"', "retention-days: 90"]) {
+// main push は linux-only。schedule の mac/Win baseline は当該 target の
+// artifact を持つ過去成功 run を辿る（直近1件固定に戻さない）。
+if (!comparisonBenchmarkWorkflow.includes("--limit 30") ||
+    !comparisonBenchmarkWorkflow.includes('artifact="comparison-benchmark-${{ matrix.target }}"') ||
+    !comparisonBenchmarkWorkflow.includes('runs="$(gh run list --workflow comparison-benchmark.yml') ||
+    !comparisonBenchmarkWorkflow.includes('done <<< "$runs"') ||
+    comparisonBenchmarkWorkflow.includes("--limit 1 --json databaseId --jq '.[0].databaseId") ||
+    comparisonBenchmarkWorkflow.includes("done < <(gh run list")) {
+  throw new Error("comparison-benchmarkのbaseline取得が当該targetの過去成功run探索（gh失敗伝播付き）になっていません");
+}
+for (const required of [
+  "  pull_request:",
+  "  push:",
+  "  schedule:",
+  "node tools/setup_oracle.mjs",
+  "node tools/create_benchmark_oracle_shim.mjs",
+  "--suite benchmarks/suites/v2.json",
+  "node tools/setup_benchmark_gonako.mjs",
+  "toolchain: 1.98.0",
+  "full_runtimes='lnako,cnako,gonako,c,rust'",
+  '--profile "$BENCHMARK_PROFILE"',
+  "--runtimes \"$BENCHMARK_RUNTIMES\"",
+  "fromJson(needs.setup.outputs.matrix)",
+  "cache-size-limit: 3072",
+  "retention-days: 90",
+  "tools/setup_llvm.mjs",
+  "tools/setup_benchmark_gonako.mjs",
+  "startup-empty,integer-arithmetic,function-call,array-build,string-concat",
+]) {
   if (!comparisonBenchmarkWorkflow.includes(required)) throw new Error(`比較benchmarkの必須条件がありません: ${required}`);
 }
 if (comparisonBenchmarkWorkflow.includes("continue-on-error: true")) throw new Error("比較benchmarkの正しさ検証をcontinue-on-errorにできません");
-
+if (!comparisonBenchmarkWorkflow.includes("include_diagnostics") || !comparisonBenchmarkWorkflow.includes("include_numeric")) {
+  throw new Error("比較benchmarkのdiagnostics/numeric切替出力がありません");
+}
 checkBashFailFastBehavior();
 
 console.log(`CI構成検査: 変更分類＋軽量検証＋${matrixEntries.length} matrixジョブ＋Windows／Linux AOT compiler producer＋Linux AOT consumer＋coverage shard検証＋native AOT集約検証＋1 attestationジョブ・${stepSuites.size}条件付き検証ステップ成功`);

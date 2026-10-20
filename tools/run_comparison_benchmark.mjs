@@ -87,7 +87,7 @@ export function parseArguments(arguments_) {
       parsed.runtimes = parseList(nextValue(arguments_, ++index, argument), RUNTIME_NAMES, argument);
       parsed.runtimesExplicit = true;
     }
-    else if (argument === "--case") parsed.cases = appendList(parsed.cases, nextValue(arguments_, ++index, argument));
+    else if (argument === "--case" || argument === "--cases") parsed.cases = appendList(parsed.cases, nextValue(arguments_, ++index, argument));
     else if (argument === "--optimization") parsed.optimization = parseOptimization(nextValue(arguments_, ++index, argument));
     else if (argument === "--timeout" || argument === "--timeout-ms") parsed.timeoutMs = parsePositiveInteger(nextValue(arguments_, ++index, argument), "timeout");
     else if (argument === "--baseline") parsed.baseline = nextValue(arguments_, ++index, argument);

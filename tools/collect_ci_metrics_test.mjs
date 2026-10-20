@@ -127,6 +127,21 @@ test("parseCacheLog detects Zig cache size-limit clear and save conflicts", () =
   assert.equal(cleared.cleared, 1);
   // 保存行が無い場合は成功と断定しない（不明として記録する）。
   assert.equal(cleared.zigCache.saveOutcome, "unknown");
+  assert.equal(cleared.zigCache.emptyAfterClear, false);
+  assert.equal(cleared.zigCache.effectiveContent, true);
+
+  const emptyAfterClear = parseCacheLog([
+    "Attempting restore of Zig cache with prefix 'setup-zig-cache-v2-mac-host-compat-'",
+    "Cache hit (key 'setup-zig-cache-v2-mac-host-compat-1-1'): populating Zig cache directory at /Users/runner/work/lnako/lnako/.zig-cache",
+    "Cache directory reached 1950351360 bytes, exceeding limit of 1610612736 bytes; clearing cache",
+    "Saving Zig cache with key 'setup-zig-cache-v2-mac-host-compat-1-1'",
+    "Cache Size: ~0 MB (192 B)",
+    "Cache saved with key: setup-zig-cache-v2-mac-host-compat-1-1",
+  ].join("\n"));
+  assert.equal(emptyAfterClear.zigCache.cleared, true);
+  assert.equal(emptyAfterClear.zigCache.emptyAfterClear, true);
+  assert.equal(emptyAfterClear.zigCache.effectiveContent, false);
+  assert.equal(emptyAfterClear.zigCache.saveOutcome, "saved");
 
   const inaccessible = parseCacheLog([
     "Attempting restore of Zig cache with prefix 'setup-zig-cache-v2-aot_windows-zig-x86_64-windows-0.16.0-aot-native-'",

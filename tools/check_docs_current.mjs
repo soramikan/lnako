@@ -105,6 +105,7 @@ if (compatJsEvidence.scope?.catalogEntries !== 4 || compatJsEvidence.scope?.case
 const readme = await read("README.md");
 if (readme.split(/\r?\n/).length > 100) fail("README.mdは利用者向け入口として100行以内に保ってください");
 for (const staleReference of [
+  "リリース用のfull測定はリリース配布物に含めます",
   "docs/UNVERIFIED_EVIDENCE_PLAN.md",
   "docs/COMPATIBILITY_QUIRKS_2026.md",
   "3正式OSの外部署名attestationがまだ完了",
@@ -115,10 +116,10 @@ for (const staleReference of [
 for (const category of ["PARSER.md", "RUNTIME.md", "NODE_HOST.md", "AOT.md", "COMPAT_JS.md"]) {
   requireText(readme + currentText, category, "互換性quirksの領域導線");
 }
-requireText(await read("docs/CI.md"), "**40 matrix job＋変更分類・軽量検証・Windows／Linux AOT compiler producer・3後段job、合計47 job**", "CI.md");
+requireText(await read("docs/CI.md"), "**41 matrix job＋変更分類・軽量検証・Windows／Linux AOT compiler producer・3後段job、合計48 job**", "CI.md");
 // release手順のjob数もCI定義へ追従させる（2026-09-20に39件のまま留まり
 // 指摘された。CI.mdだけを検査していたため検出できなかった）。
-requireText(await read("docs/RELEASE.md"), "40 matrix job＋変更分類・軽量検証・Windows／Linux compiler producer・後段3 job、**合計47 job**", "RELEASE.md");
+requireText(await read("docs/RELEASE.md"), "41 matrix job＋変更分類・軽量検証・Windows／Linux compiler producer・後段3 job、**合計48 job**", "RELEASE.md");
 requireText(workflow, "node tools/check_docs_current.mjs", "CI workflow");
 
 async function walkMarkdown(directory) {
@@ -157,4 +158,4 @@ for (const relativePath of ["README.md", ...(await walkMarkdown("docs"))]) {
   await assertMarkdownLinks(relativePath, await read(relativePath));
 }
 
-console.log(`現行ドキュメント検査: 成功 (standard native=${standardStatuses.native}, compat-js=${standardStatuses["compat-js"]}, evidence verified=${evidenceStates.verified}/${evidence.commandCount}, docs表 verified=${evidenceStates.verified}, CI=47 jobs)`);
+console.log(`現行ドキュメント検査: 成功 (standard native=${standardStatuses.native}, compat-js=${standardStatuses["compat-js"]}, evidence verified=${evidenceStates.verified}/${evidence.commandCount}, docs表 verified=${evidenceStates.verified}, CI=48 jobs)`);

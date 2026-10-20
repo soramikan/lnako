@@ -4,11 +4,11 @@ CIは、互換性検証の意味を保ったまま、AOTをfixture shardと最�
 
 ## job構成
 
-現行workflowは **40 matrix job＋変更分類・軽量検証・Windows／Linux AOT compiler producer・3後段job、合計47 job**です。matrixの失敗は別OS・別suiteの結果を隠さないよう `fail-fast: false`、同一branchの古いrunは `cancel-in-progress: true` です。
+現行workflowは **41 matrix job＋変更分類・軽量検証・Windows／Linux AOT compiler producer・3後段job、合計48 job**です。matrixの失敗は別OS・別suiteの結果を隠さないよう `fail-fast: false`、同一branchの古いrunは `cancel-in-progress: true` です。
 
 | job | 内訳 | 主な検証 |
 | --- | ---: | --- |
-| `test` | 11 | core、standard、host、QuickJS/AOT smoke、macOS統合suite、Windows専用のpackage isolation |
+| `test` | 12 | core、standard、host、QuickJS test／build（Windowsは test と ReleaseSafe build を分離）、macOS統合suite、Windows専用のpackage isolation |
 | `parser_fuzz` | 2 | Linux/Windowsの文法生成fuzz |
 | `aot` | 8 | macOS native 3（O0+O1／O2／O3のroutes全件）＋Linux dedicated coverage 3 shard（canonical正本・ReleaseSafe）＋Linux/Windowsのsmoke 2 |
 | `aot_linux` | 8 | Linux native 6 shard（O0+O1／O2+O3×3）＋Linux support 2（HTTP、dispatch evidence）。producer artifactを検証・installしてbuildを省略 |
@@ -30,10 +30,10 @@ macOS runnerは同時実行枠が5つなので、macOS jobは常に次の5件に
 | job | 分担 |
 | --- | --- |
 | `mac-core-standard-support` | core、standard、fuzz相当の統合support、AOT HTTP、normal smoke |
-| `mac-host-compat` | Node host、QuickJS、plugin ABI、dispatch trace/security |
+| `mac-host-compat` | QuickJS（Release candidate作成を含む）、plugin ABI、dispatch trace/security |
 | `AOT native routes O0+O1` | native route O0/O1、coverage shard 2 |
-| `AOT native routes O2` | native route O2、coverage shard 1 |
-| `AOT native routes O3` | native route O3、coverage shard 3 |
+| `AOT native routes O2` | native route O2、coverage shard 1、Zig package isolation |
+| `AOT native routes O3` | native route O3、coverage shard 3、Node host差分 |
 
 macOSのjobをさらに増やすと実行待ちが発生するため、分割はLinux/Windowsのnative AOTを中心に行い、macOSでは5枠内で責務を割り当てます。
 
@@ -85,6 +85,6 @@ gh run view <run-id> --log-failed
 
 ## 性能の継続測定
 
-`comparison-benchmark.yml` は本体57-job CIとは別に、正式3 OSで共通のv2 suiteを測定します。PRはsmoke（warmup 1・3 samples）、main更新と夜間はnormal（3・10）、手動実行はfull（5・25）も選択できます。cnakoは互換基準3.7.24、Nodeは24.15.0に固定します。必須処理系の失敗や期待出力の不一致は失敗とし、短時間測定や速度のばらつきは警告として記録します。前回成功したmainのartifactを取得できる場合は、条件が一致する測定の中央値を比較して退行候補を警告します。artifactが期限切れ、または入力・環境などの条件が異なる場合は比較を見送ります。共有runnerの時間だけで性能退行を断定せず、同一環境での再測定を行います。
+`comparison-benchmark.yml` は本体 CI とは別に v2 suite を測定します。PR と main push は **linux-x64 のみ**（PR は smoke・`lnako,cnako`・代表 5 case、main は normal・全 runtime）。夜間 schedule と手動 `workflow_dispatch` は正式 3 OS（macos-arm64 / linux-x64 / windows-x64）で実行し、schedule は diagnostics と numeric profile も走らせます。手動実行は `inputs.profile`（smoke / normal / full）を使い、full のとき diagnostics・numeric を含めます。cnakoは互換基準3.7.24、Nodeは24.15.0に固定します。必須処理系の失敗や期待出力の不一致は失敗とし、短時間測定や速度のばらつきは警告として記録します。前回成功したmainのartifactを取得できる場合は、条件が一致する測定の中央値を比較して退行候補を警告します（lnako 版番号の差と ~64MiB 以内のメモリ差は互換とみなします）。artifactが期限切れ、または入力・環境などの条件が異なる場合は比較を見送ります。共有runnerの時間だけで性能退行を断定せず、同一環境での再測定を行います。
 
-JSONの生サンプルとMarkdownは90日保持します。リリース用のfull測定はリリース配布物に含めます。詳細な条件・ローカル実行方法は[`benchmarks/README.md`](../benchmarks/README.md)を参照してください。
+JSONの生サンプルとMarkdownは90日保持します。Release workflowではbenchmarkを実行しません。baseline比較は当該OSのartifactを持つ直近の成功runを参照します（main pushがlinux-onlyでもscheduleのmac/Winは過去の3OS runを辿れます）。詳細な条件・ローカル実行方法は[`benchmarks/README.md`](../benchmarks/README.md)を参照してください。
