@@ -217,7 +217,8 @@ jobs:
       - name: Build ReleaseSafe compiler and AOT runtime
         if: env.CI_RUN_ID == ''
         shell: bash
-        run: zig build -Doptimize=ReleaseSafe -Dcompat-js=true
+        # dispatch 再ビルドも CI 昇格物と同じ baseline ISA に揃える。
+        run: zig build -Doptimize=ReleaseSafe -Dcompat-js=true -Dcpu=baseline
       - name: Verify compiler version
         shell: bash
         run: |

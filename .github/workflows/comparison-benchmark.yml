@@ -223,11 +223,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          previous_run=$(gh run list --workflow comparison-benchmark.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
-          if [ -n "$previous_run" ]; then
-            if ! gh run download "$previous_run" --name "comparison-benchmark-${{ matrix.target }}" --dir "$RUNNER_TEMP/benchmark-baseline"; then
-              echo '::warning::Previous benchmark artifact unavailable; recording without a baseline.'
+          # main push は linux-x64 のみ artifact を出す。schedule の mac/Win は
+          # 直近1 run だと baseline が取れないため、当該 target の artifact を
+          # 持つ直近成功 run を探す（3OS push には戻さない）。
+          artifact="comparison-benchmark-${{ matrix.target }}"
+          mkdir -p "$RUNNER_TEMP/benchmark-baseline"
+          previous_run=""
+          while IFS= read -r run_id; do
+            [ -n "$run_id" ] || continue
+            rm -rf "$RUNNER_TEMP/benchmark-baseline"
+            mkdir -p "$RUNNER_TEMP/benchmark-baseline"
+            if gh run download "$run_id" --name "$artifact" --dir "$RUNNER_TEMP/benchmark-baseline" 2>/dev/null; then
+              previous_run="$run_id"
+              break
             fi
+          done < <(gh run list --workflow comparison-benchmark.yml --branch main --status success --limit 30 --json databaseId --jq '.[].databaseId')
+          if [ -z "$previous_run" ]; then
+            echo '::warning::Previous benchmark artifact unavailable; recording without a baseline.'
           fi
 
       - name: Run comparison benchmark

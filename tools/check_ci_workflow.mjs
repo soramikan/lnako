@@ -416,6 +416,11 @@ if (!testJob.includes("run: zig build test --test-timeout 5m --summary all") ||
     !testJob.includes("run: zig build -Dcompat-js=true test --test-timeout 5m --summary all")) {
   throw new Error("単体テストstepの--test-timeout 5m／--summary allがありません（Windows runnerのスケジューラ遅延対策と、test binaryごとの集計の可視化）");
 }
+// Release candidate は別 runner で実行されるため、ホストCPU機能を埋め込まない。
+// AOT producer と同じ -Dcpu=baseline（Windows で STATUS_ILLEGAL_INSTRUCTION を実測済み）。
+if (!testJob.includes("run: zig build -Dcompat-js=true -Doptimize=ReleaseSafe -Dcpu=baseline")) {
+  throw new Error("QuickJS ReleaseSafe（RC）buildに -Dcpu=baseline がありません");
+}
 if (testJob.includes("Grammar-generating parser fuzz test\n")) {
   throw new Error("Linux／Windowsのparser fuzzを通常core jobへ残さないでください");
 }
@@ -1206,6 +1211,13 @@ if (!workflow.includes(oracleCacheKey)) throw new Error(`公式オラクルの�
 
 checkFailFastShell(workflow, ".github/workflows/ci.yml");
 checkFailFastShell(comparisonBenchmarkWorkflow, ".github/workflows/comparison-benchmark.yml");
+// main push は linux-only。schedule の mac/Win baseline は当該 target の
+// artifact を持つ過去成功 run を辿る（直近1件固定に戻さない）。
+if (!comparisonBenchmarkWorkflow.includes("--limit 30") ||
+    !comparisonBenchmarkWorkflow.includes('artifact="comparison-benchmark-${{ matrix.target }}"') ||
+    comparisonBenchmarkWorkflow.includes("--limit 1 --json databaseId --jq '.[0].databaseId")) {
+  throw new Error("comparison-benchmarkのbaseline取得が当該targetの過去成功run探索になっていません");
+}
 for (const required of [
   "  pull_request:",
   "  push:",

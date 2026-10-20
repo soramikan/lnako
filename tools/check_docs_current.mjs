@@ -105,6 +105,7 @@ if (compatJsEvidence.scope?.catalogEntries !== 4 || compatJsEvidence.scope?.case
 const readme = await read("README.md");
 if (readme.split(/\r?\n/).length > 100) fail("README.mdは利用者向け入口として100行以内に保ってください");
 for (const staleReference of [
+  "リリース用のfull測定はリリース配布物に含めます",
   "docs/UNVERIFIED_EVIDENCE_PLAN.md",
   "docs/COMPATIBILITY_QUIRKS_2026.md",
   "3正式OSの外部署名attestationがまだ完了",

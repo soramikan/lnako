@@ -54,7 +54,7 @@ for (const required of [
   "macos-arm64",
   "linux-x64",
   "windows-x64",
-  "zig build -Doptimize=ReleaseSafe -Dcompat-js=true",
+  "zig build -Doptimize=ReleaseSafe -Dcompat-js=true -Dcpu=baseline",
   "node tools/setup_quickjs.mjs",
   "Promote verified CI ReleaseSafe compiler",
   "release_candidate_artifact.mjs verify",

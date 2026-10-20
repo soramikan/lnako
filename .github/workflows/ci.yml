@@ -377,7 +377,8 @@ jobs:
         run: zig build -Dcompat-js=true test --test-timeout 5m --summary all
       - name: Build QuickJS compiler
         if: matrix.suite == 'compat-aot-build' || matrix.suite == 'mac-host-compat' || (matrix.suite == 'compat-aot' && matrix.name != 'Windows x86_64')
-        run: zig build -Dcompat-js=true -Doptimize=ReleaseSafe
+        # Release candidate は別 runner で実行されるため、ホストCPU機能を埋め込まない。
+        run: zig build -Dcompat-js=true -Doptimize=ReleaseSafe -Dcpu=baseline
       - name: Compatibility smoke test
         if: matrix.suite == 'compat-aot-build' || matrix.suite == 'mac-host-compat' || (matrix.suite == 'compat-aot' && matrix.name != 'Windows x86_64')
         shell: bash

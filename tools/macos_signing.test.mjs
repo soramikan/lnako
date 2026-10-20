@@ -71,3 +71,22 @@ test("notary logs are fetched for Accepted and Invalid; only Accepted can procee
   }
   await assert.rejects(submitNotarization("x", [], "log", { execute() { return "{}"; } }), /submission ID/);
 });
+
+test("captureAsync overlaps concurrent waits without blocking the event loop", async () => {
+  const { captureAsync } = await import("./macos_signing.mjs");
+  const script = `
+    const ms = Number(process.argv[1]);
+    setTimeout(() => {
+      process.stdout.write(JSON.stringify({ ok: true, ms }));
+      process.exit(0);
+    }, ms);
+  `;
+  const started = performance.now();
+  const results = await Promise.all([
+    captureAsync(process.execPath, ["-e", script, "80"], { timeout: 5000 }),
+    captureAsync(process.execPath, ["-e", script, "80"], { timeout: 5000 }),
+  ]);
+  const elapsed = performance.now() - started;
+  assert.equal(results.length, 2);
+  assert(elapsed < 150, `expected overlap (~80ms), got ${elapsed}ms`);
+});
