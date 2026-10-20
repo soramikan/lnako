@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .zig_pubgrub = .{
-            .url = "https://github.com/soramikan/zig-pubgrub/archive/f0afb1df99f3333dd51f2e748c8e0bb831c9581b.tar.gz",
-            .hash = "zig_pubgrub-0.1.1-G2CuJNV0AgAzhxqEJshFAvTqE5ywWmTtBSno1U-3ParM",
+            .url = "https://github.com/soramikan/zig-pubgrub/archive/refs/tags/v0.1.2.tar.gz",
+            .hash = "zig_pubgrub-0.1.2-G2CuJNV0AgCTGrzH36LpIO-N7DeneyTj22GKTpoCoE9K",
         },
     },
     .paths = .{
