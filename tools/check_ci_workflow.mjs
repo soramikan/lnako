@@ -1215,8 +1215,11 @@ checkFailFastShell(comparisonBenchmarkWorkflow, ".github/workflows/comparison-be
 // artifact を持つ過去成功 run を辿る（直近1件固定に戻さない）。
 if (!comparisonBenchmarkWorkflow.includes("--limit 30") ||
     !comparisonBenchmarkWorkflow.includes('artifact="comparison-benchmark-${{ matrix.target }}"') ||
-    comparisonBenchmarkWorkflow.includes("--limit 1 --json databaseId --jq '.[0].databaseId")) {
-  throw new Error("comparison-benchmarkのbaseline取得が当該targetの過去成功run探索になっていません");
+    !comparisonBenchmarkWorkflow.includes('runs="$(gh run list --workflow comparison-benchmark.yml') ||
+    !comparisonBenchmarkWorkflow.includes('done <<< "$runs"') ||
+    comparisonBenchmarkWorkflow.includes("--limit 1 --json databaseId --jq '.[0].databaseId") ||
+    comparisonBenchmarkWorkflow.includes("done < <(gh run list")) {
+  throw new Error("comparison-benchmarkのbaseline取得が当該targetの過去成功run探索（gh失敗伝播付き）になっていません");
 }
 for (const required of [
   "  pull_request:",

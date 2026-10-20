@@ -226,9 +226,11 @@ jobs:
           # main push は linux-x64 のみ artifact を出す。schedule の mac/Win は
           # 直近1 run だと baseline が取れないため、当該 target の artifact を
           # 持つ直近成功 run を探す（3OS push には戻さない）。
+          # gh run list の失敗は process 置換だと set -e に乗らないため、先に代入する。
           artifact="comparison-benchmark-${{ matrix.target }}"
           mkdir -p "$RUNNER_TEMP/benchmark-baseline"
           previous_run=""
+          runs="$(gh run list --workflow comparison-benchmark.yml --branch main --status success --limit 30 --json databaseId --jq '.[].databaseId')"
           while IFS= read -r run_id; do
             [ -n "$run_id" ] || continue
             rm -rf "$RUNNER_TEMP/benchmark-baseline"
@@ -237,7 +239,7 @@ jobs:
               previous_run="$run_id"
               break
             fi
-          done < <(gh run list --workflow comparison-benchmark.yml --branch main --status success --limit 30 --json databaseId --jq '.[].databaseId')
+          done <<< "$runs"
           if [ -z "$previous_run" ]; then
             echo '::warning::Previous benchmark artifact unavailable; recording without a baseline.'
           fi
