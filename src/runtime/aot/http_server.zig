@@ -238,6 +238,7 @@ fn isAotHttpRecoverableConnectionError(err: anyerror) bool {
         error.ConnectionResetByPeer,
         error.ConnectionAborted,
         error.Timeout,
+        error.ConnectionTimedOut,
         error.SocketUnconnected,
         error.BrokenPipe,
         => true,

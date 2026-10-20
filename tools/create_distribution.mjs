@@ -171,8 +171,8 @@ function createManifest(options_, spec, binary, runtime, payloadFiles, git) {
       dirty: git.dirty,
     },
     build: {
-      zig: "0.17.0",
-      llvm: "22.1.8",
+      zig: toolchainLock.zig.version,
+      llvm: toolchainLock.llvm.version,
       quickjs: "2026-06-04",
       compatJsIncluded: true,
     },

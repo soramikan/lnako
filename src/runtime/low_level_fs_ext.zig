@@ -260,7 +260,7 @@ fn seekExtentLinux(io: std.Io, file: std.Io.File, offset: i64, extent: SeekExten
         .hole => linux_seek_hole,
     };
     while (true) {
-        const result = std.os.linux.lseek(file.handle, offset, whence);
+        const result = std.os.linux.lseek(file.handle, offset, @intCast(whence));
         const errno = std.os.linux.errno(result);
         // errno確認済みのため負値は来ず、32bitでもusize→i64が安全に入る。
         if (errno == .SUCCESS) return @intCast(result);
