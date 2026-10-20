@@ -90,8 +90,9 @@ if (!workflow.includes("GITHUB_RUN_ID") || !workflow.includes("GITHUB_SHA") || !
     !workflow.includes("ci_job_count") || !workflow.includes("ci_failed_jobs") ||
     !workflow.includes("ci_attested") || !workflow.includes("ci_verified") ||
     !workflow.includes("ci_run_id=$ci_run_id") ||
+    !workflow.includes('gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${ci_run_id}/artifacts"') ||
     !workflow.includes("lnako-release-candidate-${target}")) {
-  throw new Error(`Release workflowにsource commit／CI gate／release candidate固定の検証がありません（CIのjob数は${expectedCiJobCount}であるべきです）`);
+  throw new Error(`Release workflowにsource commit／CI gate／release candidate固定（--paginate含む）の検証がありません（CIのjob数は${expectedCiJobCount}であるべきです）`);
 }
 // lightゲートでmatrixがskippedの成功runと、full matrix完走runを区別するため、
 // attestation jobのsuccessを終端証拠として要求する（docs専用commitへのreleaseを

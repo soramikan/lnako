@@ -91,7 +91,7 @@ jobs:
             # 昇格対象のReleaseSafe成果物が、そのrunに3 target分あることを確認する。
             # 「最新artifact」は使わず、preflightが選んだrun IDに固定する。
             for target in macos-arm64 linux-x64 windows-x64; do
-              if ! gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${ci_run_id}/artifacts" \
+              if ! gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${ci_run_id}/artifacts" \
                 --jq ".artifacts[] | select(.name == \"lnako-release-candidate-${target}\" and .expired == false) | .name" \
                 | grep -qx "lnako-release-candidate-${target}"; then
                 echo "CI run ${ci_run_id} に Release candidate artifact がありません: lnako-release-candidate-${target}" >&2
