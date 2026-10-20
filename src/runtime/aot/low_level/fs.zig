@@ -132,7 +132,7 @@ fn statValue(runtime: *Runtime, metadata: low_level_fs.Metadata) !Value {
 }
 
 fn timeValue(runtime: *Runtime, nanoseconds: foundation.OptionalTimeNs) !Value {
-    const value = nanoseconds orelse return .{ .tag = @intFromEnum(Tag.null_value) };
+    const value = nanoseconds orelse return .{ .tag = @backingInt(Tag.null_value) };
     return runtime.ownBigInt(try BigInt.init(runtime.allocator, value));
 }
 
@@ -295,7 +295,7 @@ pub fn reflinkBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     defer runtime.allocator.free(source);
     const destination = try pathArgument(runtime, arguments[1], operation);
     defer runtime.allocator.free(destination);
-    const mode: ?u32 = if (arguments.len > 2 and arguments[2].tag != @intFromEnum(Tag.undefined))
+    const mode: ?u32 = if (arguments.len > 2 and arguments[2].tag != @backingInt(Tag.undefined))
         try unsignedArgument(runtime, arguments[2], operation, foundation.max_permission_mode, "modeは0〜0o7777の整数である必要があります")
     else
         null;
@@ -333,7 +333,7 @@ test "AOT低レイヤーのstatfsはfsInfo辞書を返し契約エラーを丸�
         var units: [32]u16 = undefined;
         for (key, 0..) |character, index| units[index] = character;
         const field = dictionaryProperty(info, units[0..key.len]);
-        try std.testing.expect(field.tag != @intFromEnum(Tag.undefined));
+        try std.testing.expect(field.tag != @backingInt(Tag.undefined));
     }
     try std.testing.expect(valueToNumber(dictionaryProperty(info, &.{ 'b', 'l', 'o', 'c', 'k', 'S', 'i', 'z', 'e' })) > 0);
 
@@ -374,7 +374,7 @@ test "AOT低レイヤーのstatfsは2^53境界でカウンタをNumber/BigIntへ
     roots[0] = try fsInfoValue(active, info);
 
     const blocks = dictionaryProperty(roots[0], &.{ 'b', 'l', 'o', 'c', 'k', 's' });
-    try std.testing.expect(blocks.tag == @intFromEnum(Tag.bigint));
+    try std.testing.expect(blocks.tag == @backingInt(Tag.bigint));
     try std.testing.expectEqual(@as(u128, max_safe + 1), try blocks.object().?.payload.bigint.toU128());
     const free = dictionaryProperty(roots[0], &.{ 'f', 'r', 'e', 'e' });
     try std.testing.expectEqual(@as(f64, @floatFromInt(max_safe)), valueToNumber(free));
@@ -461,7 +461,7 @@ test "AOT低レイヤーのIssue #36命令はWindowsで照会false・実行ENOTS
     inline for (.{ "statfs", "reflink", "seek_data", "seek_hole", "fallocate" }) |capability_id| {
         roots[0] = try runtimeUtf8String(active, capability_id);
         const supported = try state.lowLevelCapabilitySupportedBuiltin(active, roots[0..1]);
-        try std.testing.expectEqual(@intFromEnum(Tag.boolean), supported.tag);
+        try std.testing.expectEqual(@backingInt(Tag.boolean), supported.tag);
         try std.testing.expect(supported.payload == 0);
     }
 

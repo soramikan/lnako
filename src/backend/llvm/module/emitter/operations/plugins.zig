@@ -118,7 +118,7 @@ pub fn writeBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: i
         if (instruction.operands.len > 0) {
             try emitter.output.writer.print("%dynamic.{d}.slot.0", .{result});
         } else try emitter.output.writer.writeAll("null");
-        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @backingInt(command), site_id });
         try emitter.debugSuffix(instruction.span, scope);
         try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try emitter.debugSuffix(instruction.span, scope);
@@ -168,7 +168,7 @@ pub fn writeBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: i
         }
         try emitter.output.writer.print("  call void @lnako_aot_debug_breakpoint_wait_call(ptr %root.slot.{d}, ptr @lnako.global.{d}, ptr @lnako.global.{d}, ptr @lnako.global.{d}, ptr @lnako.global.{d}, ptr ", .{ result, breakpoints_index, force_wait_index, wait_flag_index, plugin_name_index });
         if (instruction.operands.len > 0) try emitter.output.writer.print("%debug-breakpoint-wait.{d}.slot.0", .{result}) else try emitter.output.writer.writeAll("null");
-        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @backingInt(command), site_id });
         try emitter.debugSuffix(instruction.span, scope);
         try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try emitter.debugSuffix(instruction.span, scope);
@@ -188,7 +188,7 @@ pub fn writeBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: i
         if (instruction.operands.len > 0) {
             try emitter.output.writer.print("%timer.{d}.slot.0", .{result});
         } else try emitter.output.writer.writeAll("null");
-        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @backingInt(command), site_id });
         try emitter.debugSuffix(instruction.span, scope);
         try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try emitter.debugSuffix(instruction.span, scope);
@@ -208,7 +208,7 @@ pub fn writeBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: i
         if (instruction.operands.len > 0) {
             try emitter.output.writer.print("%node-stdin-callback.{d}.slot.0", .{result});
         } else try emitter.output.writer.writeAll("null");
-        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @backingInt(command), site_id });
         try emitter.debugSuffix(instruction.span, scope);
         try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try emitter.debugSuffix(instruction.span, scope);
@@ -229,7 +229,7 @@ pub fn writeBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: i
         }
         try emitter.output.writer.print("  call void @lnako_aot_http_server_call(ptr %root.slot.{d}, ptr @lnako.global.{d}, ptr @lnako.global.{d}, ptr @lnako.global.{d}, ptr @lnako.global.{d}, ptr ", .{ result, method_index, get_index, post_index, files_index });
         if (instruction.operands.len > 0) try emitter.output.writer.print("%http-server.{d}.slot.0", .{result}) else try emitter.output.writer.writeAll("null");
-        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @backingInt(command), site_id });
         try emitter.debugSuffix(instruction.span, scope);
         try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try emitter.debugSuffix(instruction.span, scope);
@@ -250,7 +250,7 @@ pub fn writeBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: i
         if (instruction.operands.len > 0) {
             try emitter.output.writer.print("%promise.{d}.slot.0", .{result});
         } else try emitter.output.writer.writeAll("null");
-        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @backingInt(command), site_id });
         try emitter.debugSuffix(instruction.span, scope);
         try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try emitter.debugSuffix(instruction.span, scope);
@@ -271,7 +271,7 @@ pub fn writeBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: i
         if (instruction.operands.len > 0) try emitter.output.writer.print("%plugin-management.{d}.slot.0", .{result}) else try emitter.output.writer.writeAll("null");
         try emitter.output.writer.print(", i64 {d}, i16 {d}, ptr @lnako.global.{d}, ptr @lnako.global.{d}, i64 {d})", .{
             instruction.operands.len,
-            @intFromEnum(command),
+            @backingInt(command),
             plugin_name_index,
             namespace_index,
             site_id,
@@ -311,7 +311,7 @@ pub fn writeBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: i
         }
         try emitter.output.writer.print("  call void @lnako_aot_archive_call(ptr %root.slot.{d}, ptr @lnako.global.{d}, ptr ", .{ result, archive_tool_path_index });
         if (instruction.operands.len > 0) try emitter.output.writer.print("%node-archive.{d}.slot.0", .{result}) else try emitter.output.writer.writeAll("null");
-        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @backingInt(command), site_id });
         try emitter.debugSuffix(instruction.span, scope);
         try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try emitter.debugSuffix(instruction.span, scope);
@@ -328,7 +328,7 @@ pub fn writeBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: i
         }
         try emitter.output.writer.print("  call void @lnako_aot_node_process_call(ptr %root.slot.{d}, ptr ", .{result});
         if (instruction.operands.len > 0) try emitter.output.writer.print("%node-process.{d}.slot.0", .{result}) else try emitter.output.writer.writeAll("null");
-        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @backingInt(command), site_id });
         try emitter.debugSuffix(instruction.span, scope);
         try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try emitter.debugSuffix(instruction.span, scope);
@@ -386,7 +386,7 @@ pub fn writeBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: i
         if (instruction.operands.len > 0) {
             try emitter.output.writer.print("%node-http.{d}.slot.0", .{result});
         } else try emitter.output.writer.writeAll("null");
-        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @backingInt(command), site_id });
         try emitter.debugSuffix(instruction.span, scope);
         try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try emitter.debugSuffix(instruction.span, scope);
@@ -404,7 +404,7 @@ pub fn writeBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: i
         }
         try emitter.output.writer.print("  call void @lnako_aot_file_operation_call(ptr %root.slot.{d}, ptr @lnako.global.{d}, ptr ", .{ result, copy_default_index });
         if (instruction.operands.len > 0) try emitter.output.writer.print("%file-operation.{d}.slot.0", .{result}) else try emitter.output.writer.writeAll("null");
-        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @backingInt(command), site_id });
         try emitter.debugSuffix(instruction.span, scope);
         try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try emitter.debugSuffix(instruction.span, scope);
@@ -422,7 +422,7 @@ pub fn writeBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: i
         }
         try emitter.output.writer.print("  call void @lnako_aot_node_file_callback_call(ptr %root.slot.{d}, ptr @lnako.global.{d}, ptr ", .{ result, target_index });
         if (instruction.operands.len > 0) try emitter.output.writer.print("%file-callback.{d}.slot.0", .{result}) else try emitter.output.writer.writeAll("null");
-        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @backingInt(command), site_id });
         try emitter.debugSuffix(instruction.span, scope);
         try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try emitter.debugSuffix(instruction.span, scope);
@@ -440,7 +440,7 @@ pub fn writeBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: i
         }
         try emitter.output.writer.print("  call void @lnako_aot_stdio_call(ptr %root.slot.{d}, ptr @lnako.global.{d}, ptr ", .{ result, display_log_index });
         if (instruction.operands.len > 0) try emitter.output.writer.print("%stdio.{d}.slot.0", .{result}) else try emitter.output.writer.writeAll("null");
-        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @backingInt(command), site_id });
         try emitter.debugSuffix(instruction.span, scope);
         try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try emitter.debugSuffix(instruction.span, scope);
@@ -454,9 +454,9 @@ pub fn writeBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: i
             const label = try std.fmt.allocPrint(emitter.allocator, "math.number.{d}", .{result});
             defer emitter.allocator.free(label);
             try constants_mod.writeNumberOperand(emitter, function, instruction.operands[0], label, instruction.span, scope);
-            try emitter.output.writer.print("  call void @lnako_aot_math_unary_f64_call_site(ptr %root.slot.{d}, double %{s}, i16 {d}, i64 {d})", .{ result, label, @intFromEnum(command), site_id });
+            try emitter.output.writer.print("  call void @lnako_aot_math_unary_f64_call_site(ptr %root.slot.{d}, double %{s}, i16 {d}, i64 {d})", .{ result, label, @backingInt(command), site_id });
         } else {
-            try emitter.output.writer.print("  call void @lnako_aot_math_unary_value_call_site(ptr %root.slot.{d}, ptr %root.slot.{d}, i16 {d}, i64 {d})", .{ result, instruction.operands[0], @intFromEnum(command), site_id });
+            try emitter.output.writer.print("  call void @lnako_aot_math_unary_value_call_site(ptr %root.slot.{d}, ptr %root.slot.{d}, i16 {d}, i64 {d})", .{ result, instruction.operands[0], @backingInt(command), site_id });
         }
         try emitter.debugSuffix(instruction.span, scope);
         try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
@@ -483,7 +483,7 @@ pub fn writeBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: i
         // `文字数` keeps the Value ABI because String(value) may invoke
         // user-defined ToPrimitive callbacks. Passing the existing root slot
         // avoids the generic builtin dispatch while retaining that behavior.
-        try emitter.output.writer.print("  call void @lnako_aot_unicode_length_call_site(ptr %root.slot.{d}, ptr %root.slot.{d}, i16 {d}, i64 {d})", .{ result, instruction.operands[0], @intFromEnum(command), site_id });
+        try emitter.output.writer.print("  call void @lnako_aot_unicode_length_call_site(ptr %root.slot.{d}, ptr %root.slot.{d}, i16 {d}, i64 {d})", .{ result, instruction.operands[0], @backingInt(command), site_id });
     } else if (command == .array_push or command == .element_count) {
         // 配列追加/要素数はループ内の高頻度命令なので、汎用dispatchを迂回する
         // 専用ABIへ出力する。routeは汎用経路と同じ "builtin" を維持する。
@@ -492,13 +492,13 @@ pub fn writeBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: i
         if (instruction.operands.len > 0) {
             try emitter.output.writer.print("%builtin.{d}.slot.0", .{result});
         } else try emitter.output.writer.writeAll("null");
-        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @backingInt(command), site_id });
     } else {
         try emitter.output.writer.print("  call void @lnako_aot_builtin_call_site(ptr %root.slot.{d}, ptr ", .{result});
         if (instruction.operands.len > 0) {
             try emitter.output.writer.print("%builtin.{d}.slot.0", .{result});
         } else try emitter.output.writer.writeAll("null");
-        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @backingInt(command), site_id });
     }
     try emitter.debugSuffix(instruction.span, scope);
     try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
@@ -524,7 +524,7 @@ pub fn writeRegexpCall(emitter: *Emitter, function: ir.Function, instruction: ir
     } else try emitter.output.writer.writeAll("null");
     try emitter.output.writer.writeAll(", ptr ");
     if (instruction.operands.len > 0) try emitter.output.writer.print("%regexp.{d}.slot.0", .{result}) else try emitter.output.writer.writeAll("null");
-    try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+    try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @backingInt(command), site_id });
     try emitter.debugSuffix(instruction.span, scope);
     try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
     try emitter.debugSuffix(instruction.span, scope);

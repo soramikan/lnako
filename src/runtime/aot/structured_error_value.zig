@@ -13,7 +13,7 @@ const runtimeUtf8String = aot_state.runtimeUtf8String;
 const StructuredError = structured_error.StructuredError;
 const keys = structured_error.error_object_keys;
 
-const null_value: Value = .{ .tag = @intFromEnum(Tag.null_value), .payload = 0 };
+const null_value: Value = .{ .tag = @backingInt(Tag.null_value), .payload = 0 };
 
 /// 構造化エラーを、AOTランタイムの辞書値へ変換する。Interpreter側
 /// `structured_error_value.buildValue` と同じportable `code` を公開する。
@@ -99,11 +99,11 @@ test "AOTの構造化エラー値はInterpreterと同じcodeを公開する" {
     );
 
     const native_value = aot_state.dictionaryProperty(value, &.{ 'n', 'a', 't', 'i', 'v', 'e', 'C', 'o', 'd', 'e' });
-    try std.testing.expectEqual(@intFromEnum(Tag.number), native_value.tag);
+    try std.testing.expectEqual(@backingInt(Tag.number), native_value.tag);
     try std.testing.expectEqual(@as(f64, 18), @as(f64, @bitCast(native_value.payload)));
 
     const capability_value = aot_state.dictionaryProperty(value, &.{ 'c', 'a', 'p', 'a', 'b', 'i', 'l', 'i', 't', 'y' });
-    try std.testing.expectEqual(@intFromEnum(Tag.null_value), capability_value.tag);
+    try std.testing.expectEqual(@backingInt(Tag.null_value), capability_value.tag);
 
     try std.testing.expect(value.object().?.structured_error);
     const rendered_units = try aot_state.valueUtf16Alloc(&runtime, value);

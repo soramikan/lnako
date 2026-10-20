@@ -195,7 +195,7 @@ pub fn allocateFile(runtime: *Runtime, state: *State, context: Context, effects:
 }
 
 fn whenceFromArgument(runtime: *Runtime, effects: Effects, value: Value) !u8 {
-    if (value == .undefined) return @intFromEnum(low_level_io.SeekWhence.start);
+    if (value == .undefined) return @backingInt(low_level_io.SeekWhence.start);
     const text = node_shared.valueUtf8(runtime, value) catch {
         return throwStructured(runtime, effects, .EINVAL, foundation.stream_operations.lseek, null, null, "WHENCEが不正です");
     };
@@ -203,7 +203,7 @@ fn whenceFromArgument(runtime: *Runtime, effects: Effects, value: Value) !u8 {
     const whence = low_level_io.SeekWhence.parse(text) catch {
         return throwStructured(runtime, effects, .EINVAL, foundation.stream_operations.lseek, null, null, "WHENCEが不正です");
     };
-    return @intFromEnum(whence);
+    return @backingInt(whence);
 }
 
 /// `ファイル位置変更`。OFFSETと任意WHENCE（省略時は開始）で位置を変え新位置を返す。
@@ -230,7 +230,7 @@ pub fn tellFile(runtime: *Runtime, state: *State, context: Context, effects: Eff
     const id = lookupHandle(state, handle) orelse {
         return throwStructured(runtime, effects, .EBADF, operation, null, null, "無効なハンドルです");
     };
-    const result = context.seekFile(id.raw(), 0, @intFromEnum(low_level_io.SeekWhence.current)) catch |failure| {
+    const result = context.seekFile(id.raw(), 0, @backingInt(low_level_io.SeekWhence.current)) catch |failure| {
         return throwIoMapped(runtime, effects, failure, foundation.seekErrorCode(failure), operation, null, .stream_file_io);
     };
     return publicOffsetValue(runtime, result);

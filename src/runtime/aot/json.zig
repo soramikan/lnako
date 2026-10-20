@@ -41,7 +41,7 @@ const JsonAotEntry = struct {
 /// Keep this serializer independent from QuickJS: the generated executable
 /// must retain the same ECMAScript JSON boundary without a JavaScript engine.
 pub fn jsonEncodeBuiltin(runtime: *Runtime, value: Value, pretty: bool) !Value {
-    if (value.tag == @intFromEnum(Tag.undefined) or value.tag == @intFromEnum(Tag.function)) return .{};
+    if (value.tag == @backingInt(Tag.undefined) or value.tag == @backingInt(Tag.function)) return .{};
     var output: std.Io.Writer.Allocating = .init(runtime.allocator);
     defer output.deinit();
     var active_objects: std.ArrayList(JsonAotActive) = .empty;
@@ -60,7 +60,7 @@ pub fn jsonWriteValue(
     in_array: bool,
     path: ?JsonAotPath,
 ) !void {
-    switch (@as(Tag, @enumFromInt(value.tag))) {
+    switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .undefined, .function => if (in_array) try writer.writeAll("null") else return,
         .null_value => try writer.writeAll("null"),
         .boolean => try writer.writeAll(if (value.payload != 0) "true" else "false"),
@@ -150,7 +150,7 @@ pub fn jsonWriteValue(
             try writer.writeByte('{');
             var emitted: usize = 0;
             for (entries.items) |entry| {
-                if (entry.value.tag == @intFromEnum(Tag.undefined) or entry.value.tag == @intFromEnum(Tag.function)) continue;
+                if (entry.value.tag == @backingInt(Tag.undefined) or entry.value.tag == @backingInt(Tag.function)) continue;
                 if (emitted > 0) try writer.writeByte(',');
                 if (pretty) {
                     try writer.writeByte('\n');
@@ -242,7 +242,7 @@ pub fn jsonAotArrayIndex(runtime: *Runtime, key: Value) ?u32 {
 }
 
 pub fn jsonAotKeyUnits(runtime: *Runtime, key: Value) ![]u16 {
-    return switch (@as(Tag, @enumFromInt(key.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(key.tag)))) {
         .static_utf8_string => std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, staticUtf8(key)),
         .utf16_string => runtime.allocator.dupe(u16, key.object().?.payload.utf16_string),
         else => std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, "undefined"),
@@ -511,9 +511,9 @@ const JsonAotParser = struct {
     pub fn parseScalar(self: *JsonAotParser) anyerror!Value {
         if (self.index >= self.units.len) return self.failEnd();
         return switch (self.units[self.index]) {
-            'n' => try self.parseLiteral("null", .{ .tag = @intFromEnum(Tag.null_value) }),
-            't' => try self.parseLiteral("true", .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 }),
-            'f' => try self.parseLiteral("false", .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 }),
+            'n' => try self.parseLiteral("null", .{ .tag = @backingInt(Tag.null_value) }),
+            't' => try self.parseLiteral("true", .{ .tag = @backingInt(Tag.boolean), .payload = 1 }),
+            'f' => try self.parseLiteral("false", .{ .tag = @backingInt(Tag.boolean), .payload = 0 }),
             '"' => try self.parseStringValue(),
             '-', '0'...'9' => try self.parseNumber(),
             else => self.failToken(self.index),
@@ -627,7 +627,7 @@ const JsonAotParser = struct {
         defer self.runtime.allocator.free(ascii);
         for (number_units, 0..) |unit, offset| ascii[offset] = @intCast(unit);
         const number = std.fmt.parseFloat(f64, ascii) catch jsonParseDecimal(number_units);
-        return .{ .tag = @intFromEnum(Tag.number), .payload = @bitCast(number) };
+        return .{ .tag = @backingInt(Tag.number), .payload = @bitCast(number) };
     }
 
     pub fn consume(self: *JsonAotParser, expected: u16) bool {

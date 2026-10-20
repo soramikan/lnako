@@ -103,7 +103,7 @@ pub const SearchElements = struct {
     }
 
     pub fn appendValue(self: *SearchElements, value: Value) !void {
-        const tag: Tag = @enumFromInt(value.tag);
+        const tag: Tag = @fromBackingInt(@intCast(value.tag));
         switch (tag) {
             .undefined, .null_value => try self.appendEmpty(),
             .binding_cell => try self.appendValue(value.object().?.payload.binding_cell),
@@ -117,7 +117,7 @@ pub const SearchElement = struct {
     owned: ?[]u16 = null,
 
     pub fn fromValue(runtime: *Runtime, value: Value) !SearchElement {
-        return switch (@as(Tag, @enumFromInt(value.tag))) {
+        return switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
             .undefined, .null_value => .{ .units = &.{} },
             .binding_cell => try fromValue(runtime, value.object().?.payload.binding_cell),
             else => blk: {
@@ -177,7 +177,7 @@ pub fn searchIndexKey(buffer: *[32]u16, index: usize) []const u16 {
 }
 
 pub fn appendSearchElements(runtime: *Runtime, value: Value) !SearchElements {
-    const tag: Tag = @enumFromInt(value.tag);
+    const tag: Tag = @fromBackingInt(@intCast(value.tag));
     if (tag == .null_value) {
         runtime.setFailureText("object null is not iterable (cannot read property Symbol(Symbol.iterator))");
         return error.NakoException;
@@ -282,12 +282,12 @@ pub fn stringBoundaryBuiltin(runtime: *Runtime, source: Value, needle: Value, st
         source_units.len >= needle_units.len and std.mem.eql(u16, source_units[0..needle_units.len], needle_units)
     else
         source_units.len >= needle_units.len and std.mem.eql(u16, source_units[source_units.len - needle_units.len ..], needle_units);
-    return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(matches) };
+    return .{ .tag = @backingInt(Tag.boolean), .payload = @intFromBool(matches) };
 }
 
 pub fn requireStringReceiver(value: Value, starts: bool) !void {
     if (isString(value)) return;
-    const tag: Tag = @enumFromInt(value.tag);
+    const tag: Tag = @fromBackingInt(@intCast(value.tag));
     if (starts) return switch (tag) {
         .null_value => error.StartsWithNullReceiver,
         .undefined => error.StartsWithUndefinedReceiver,
@@ -301,7 +301,7 @@ pub fn requireStringReceiver(value: Value, starts: bool) !void {
 }
 
 pub fn elementCountBuiltin(runtime: *Runtime, value: Value) !usize {
-    return switch (@as(Tag, @enumFromInt(value.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .byte_buffer => value.object().?.payload.byte_buffer.bytes.len,
         .array => value.object().?.payload.array.items.len,
         .dictionary => value.object().?.payload.dictionary.entries.items.len,

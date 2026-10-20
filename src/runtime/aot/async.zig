@@ -366,7 +366,7 @@ pub fn drainAotClientHttpTasks(runtime: *Runtime) !void {
             switch (task.mode) {
                 .callback => {
                     const handler: Value = if (task.onerror) |pointer| pointer.* else .{};
-                    if (handler.tag == @intFromEnum(Tag.function)) {
+                    if (handler.tag == @backingInt(Tag.function)) {
                         var rooted = [_]Value{ handler, .{} };
                         var frame = RootFrame{};
                         runtime.pushRoots(&frame, &rooted, rooted.len);
@@ -377,7 +377,7 @@ pub fn drainAotClientHttpTasks(runtime: *Runtime) !void {
                 },
                 .set_target => writeAotAjaxReceiveError(task.result.status, failure),
                 .response_promise => {
-                    if (task.promise.tag != @intFromEnum(Tag.promise)) return error.InvalidPendingPromise;
+                    if (task.promise.tag != @backingInt(Tag.promise)) return error.InvalidPendingPromise;
                     var reason = try runtimeUtf8StringLossy(runtime, @errorName(failure));
                     var frame = RootFrame{};
                     runtime.pushRoots(&frame, @ptrCast(&reason), 1);
@@ -405,7 +405,7 @@ pub fn drainAotClientHttpTasks(runtime: *Runtime) !void {
                 } else writeAotAjaxReceiveError(status, null);
             },
             .response_promise => {
-                if (task.promise.tag != @intFromEnum(Tag.promise)) return error.InvalidPendingPromise;
+                if (task.promise.tag != @backingInt(Tag.promise)) return error.InvalidPendingPromise;
                 var rooted = [_]Value{ task.promise, .{} };
                 var frame = RootFrame{};
                 runtime.pushRoots(&frame, &rooted, rooted.len);
@@ -500,20 +500,20 @@ pub fn timerBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: 
         .timer_after => return scheduleAotTimer(runtime, arguments, false, target),
         .timer_every => return scheduleAotTimer(runtime, arguments, true, target),
         .timer_stop => {
-            if (arguments.len == 0 or arguments[arguments.len - 1].tag != @intFromEnum(Tag.number)) {
-                return .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
+            if (arguments.len == 0 or arguments[arguments.len - 1].tag != @backingInt(Tag.number)) {
+                return .{ .tag = @backingInt(Tag.boolean), .payload = 0 };
             }
             const number = @as(f64, @bitCast(arguments[arguments.len - 1].payload));
             if (!std.math.isFinite(number) or number < 0 or number > @as(f64, @floatFromInt(std.math.maxInt(u64)))) {
-                return .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
+                return .{ .tag = @backingInt(Tag.boolean), .payload = 0 };
             }
             const id: u64 = @intFromFloat(@trunc(number));
             for (runtime.timers.items, 0..) |timer, index| {
                 if (timer.id != id) continue;
                 _ = runtime.timers.orderedRemove(index);
-                return .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 };
+                return .{ .tag = @backingInt(Tag.boolean), .payload = 1 };
             }
-            return .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
+            return .{ .tag = @backingInt(Tag.boolean), .payload = 0 };
         },
         .timer_stop_all => {
             runtime.timers.clearRetainingCapacity();
@@ -531,11 +531,11 @@ pub fn timerWaitBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
 }
 
 pub fn aotPromiseValue(object: *Object) Value {
-    return .{ .tag = @intFromEnum(Tag.promise), .payload = @intFromPtr(object) };
+    return .{ .tag = @backingInt(Tag.promise), .payload = @intFromPtr(object) };
 }
 
 pub fn aotPromiseObject(value: Value) ?*Object {
-    if (value.tag != @intFromEnum(Tag.promise)) return null;
+    if (value.tag != @backingInt(Tag.promise)) return null;
     const object = value.object() orelse return null;
     return if (object.payload == .promise) object else null;
 }
@@ -629,8 +629,8 @@ pub fn executeAotPromiseTask(runtime: *Runtime, task: AotPromiseTask) !void {
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
 
-    if (roots[0].tag == @intFromEnum(Tag.undefined)) return forwardAotPromiseTask(runtime, task);
-    if (roots[0].tag != @intFromEnum(Tag.function)) {
+    if (roots[0].tag == @backingInt(Tag.undefined)) return forwardAotPromiseTask(runtime, task);
+    if (roots[0].tag != @backingInt(Tag.function)) {
         roots[4] = try runtimeUtf8String(runtime, "NotCallable");
         return rejectAotPromise(runtime, task.next, roots[4]);
     }
@@ -645,7 +645,7 @@ pub fn executeAotPromiseTask(runtime: *Runtime, task: AotPromiseTask) !void {
             break :blk 1;
         },
         .settled_pair => blk: {
-            callback_arguments[0] = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(!task.rejected) };
+            callback_arguments[0] = .{ .tag = @backingInt(Tag.boolean), .payload = @intFromBool(!task.rejected) };
             callback_arguments[1] = roots[1];
             break :blk 2;
         },
@@ -675,7 +675,7 @@ pub fn createAotPromiseResolver(runtime: *Runtime, promise: *Object, rejected: b
 }
 
 pub fn createAotPromiseWithExecutor(runtime: *Runtime, arguments: []const Value, last_promise: ?*Value) !Value {
-    if (arguments.len == 0 or arguments[0].tag != @intFromEnum(Tag.function)) return error.NotCallable;
+    if (arguments.len == 0 or arguments[0].tag != @backingInt(Tag.function)) return error.NotCallable;
     var roots = [_]Value{ arguments[0], .{}, .{}, .{}, .{} };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -701,7 +701,7 @@ pub fn chainAotPromise(
     last_promise: ?*Value,
     target_global: ?*Value,
 ) !Value {
-    if (arguments.len < 2 or arguments[0].tag != @intFromEnum(Tag.function)) return error.InvalidPromiseArguments;
+    if (arguments.len < 2 or arguments[0].tag != @backingInt(Tag.function)) return error.InvalidPromiseArguments;
     const source = aotPromiseObject(arguments[1]) orelse return error.InvalidPromiseArguments;
     var roots = [_]Value{ arguments[0], arguments[1], .{} };
     var frame = RootFrame{};

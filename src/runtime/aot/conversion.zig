@@ -32,7 +32,7 @@ const safe_array_element_limit = aot_state.safe_array_element_limit;
 const runtimeUtf8String = aot_state.runtimeUtf8String;
 
 pub fn valueIndex(value: Value) ?usize {
-    if (value.tag != @intFromEnum(Tag.number)) return null;
+    if (value.tag != @backingInt(Tag.number)) return null;
     const number: f64 = @bitCast(value.payload);
     if (!std.math.isFinite(number) or number < 0 or @trunc(number) != number or number > @as(f64, @floatFromInt(std.math.maxInt(usize)))) return null;
     return @intFromFloat(number);
@@ -41,7 +41,7 @@ pub fn valueIndex(value: Value) ?usize {
 pub fn aotByteBufferAllowsStandardPrototype(value: Value) bool {
     const object = value.object() orelse return true;
     if (object.payload != .byte_buffer) return true;
-    return switch (@as(Tag, @enumFromInt(object.prototype.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(object.prototype.tag)))) {
         .null_value => false,
         .dictionary => !dictionaryPrototypeBlocksStandard(object.prototype),
         else => true,
@@ -61,7 +61,7 @@ pub fn aotByteBufferScalarProperty(buffer: ByteBuffer, key: Value) ?Value {
     if (buffer.kind == .array_buffer) {
         if (sameKey(key, staticStringValue("maxByteLength"))) return numberValue(@floatFromInt(buffer.bytes.len));
         if (sameKey(key, staticStringValue("resizable")) or sameKey(key, staticStringValue("detached"))) {
-            return .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
+            return .{ .tag = @backingInt(Tag.boolean), .payload = 0 };
         }
     }
     return null;
@@ -81,7 +81,7 @@ pub fn aotByteBufferReadOnlyProperty(kind: ByteKind, units: []const u16) bool {
 }
 
 pub fn valueToNumber(value: Value) f64 {
-    return switch (@as(Tag, @enumFromInt(value.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .null_value => 0,
         .boolean => if (value.payload == 0) 0 else 1,
         .number => @bitCast(value.payload),
@@ -90,7 +90,7 @@ pub fn valueToNumber(value: Value) f64 {
 }
 
 pub fn valueToNumberRuntime(runtime: *Runtime, value: Value) !f64 {
-    return switch (@as(Tag, @enumFromInt(value.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .undefined => std.math.nan(f64),
         .null_value => 0,
         .boolean => if (value.payload == 0) 0 else 1,
@@ -105,12 +105,12 @@ pub fn valueToNumberRuntime(runtime: *Runtime, value: Value) !f64 {
 /// `Number(i['末尾'])` 相当。暗黙のBigInt数値変換は他の演算で拒否し、
 /// 明示的な範囲終端の変換だけBigInt.toF64を許可する。
 pub fn explicitRangeNumber(runtime: *Runtime, value: Value) !f64 {
-    if (value.tag == @intFromEnum(Tag.bigint)) return value.object().?.payload.bigint.toF64();
+    if (value.tag == @backingInt(Tag.bigint)) return value.object().?.payload.bigint.toF64();
     return valueToNumberRuntime(runtime, value);
 }
 
 pub fn valueToParseFloatRuntime(runtime: *Runtime, value: Value) !f64 {
-    return switch (@as(Tag, @enumFromInt(value.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .number => @bitCast(value.payload),
         .static_utf8_string, .utf16_string => blk: {
             const units = try valueUtf16Alloc(runtime, value);
@@ -174,7 +174,7 @@ pub fn validDecimalNumber(text: []const u8) bool {
 }
 
 pub fn incrementNumber(runtime: *Runtime, value: Value) !f64 {
-    if (value.tag == @intFromEnum(Tag.bigint)) return value.object().?.payload.bigint.toF64();
+    if (value.tag == @backingInt(Tag.bigint)) return value.object().?.payload.bigint.toF64();
     if (isString(value)) {
         const utf8 = try stringUtf8Alloc(runtime, value);
         defer runtime.allocator.free(utf8);
@@ -190,21 +190,21 @@ pub fn incrementNumber(runtime: *Runtime, value: Value) !f64 {
 }
 
 pub fn incrementValue(runtime: *Runtime, old: Value, amount: Value) !Value {
-    const old_number: f64 = if (old.tag == @intFromEnum(Tag.undefined)) 0 else try incrementNumber(runtime, old);
+    const old_number: f64 = if (old.tag == @backingInt(Tag.undefined)) 0 else try incrementNumber(runtime, old);
     return numberValue(old_number + try incrementNumber(runtime, amount));
 }
 
 pub fn isString(value: Value) bool {
-    return value.tag == @intFromEnum(Tag.static_utf8_string) or value.tag == @intFromEnum(Tag.utf16_string);
+    return value.tag == @backingInt(Tag.static_utf8_string) or value.tag == @backingInt(Tag.utf16_string);
 }
 
 pub fn isObject(value: Value) bool {
-    return value.tag == @intFromEnum(Tag.byte_buffer) or value.tag == @intFromEnum(Tag.array) or value.tag == @intFromEnum(Tag.dictionary) or
-        value.tag == @intFromEnum(Tag.iterator) or value.tag == @intFromEnum(Tag.function) or value.tag == @intFromEnum(Tag.promise);
+    return value.tag == @backingInt(Tag.byte_buffer) or value.tag == @backingInt(Tag.array) or value.tag == @backingInt(Tag.dictionary) or
+        value.tag == @backingInt(Tag.iterator) or value.tag == @backingInt(Tag.function) or value.tag == @backingInt(Tag.promise);
 }
 
 pub fn stringUtf8Alloc(runtime: *Runtime, value: Value) ![]u8 {
-    return switch (@as(Tag, @enumFromInt(value.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .static_utf8_string => runtime.allocator.dupe(u8, staticUtf8(value)),
         .utf16_string => (string_mod.String{
             .allocator = runtime.allocator,
@@ -215,8 +215,8 @@ pub fn stringUtf8Alloc(runtime: *Runtime, value: Value) ![]u8 {
 }
 
 pub fn valueUtf16Alloc(runtime: *Runtime, value: Value) anyerror![]u16 {
-    if (value.tag == @intFromEnum(Tag.utf16_string)) return runtime.allocator.dupe(u16, value.object().?.payload.utf16_string);
-    const utf8 = switch (@as(Tag, @enumFromInt(value.tag))) {
+    if (value.tag == @backingInt(Tag.utf16_string)) return runtime.allocator.dupe(u16, value.object().?.payload.utf16_string);
+    const utf8 = switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .undefined => try runtime.allocator.dupe(u8, "undefined"),
         .null_value => try runtime.allocator.dupe(u8, "null"),
         .boolean => try runtime.allocator.dupe(u8, if (value.payload == 0) "false" else "true"),
@@ -287,7 +287,7 @@ pub fn arrayUtf16Alloc(runtime: *Runtime, object: *Object) anyerror![]u16 {
     errdefer output.deinit(runtime.allocator);
     for (object.payload.array.items, 0..) |item, index| {
         if (index > 0) try output.append(runtime.allocator, ',');
-        if (item.tag == @intFromEnum(Tag.undefined) or item.tag == @intFromEnum(Tag.null_value)) continue;
+        if (item.tag == @backingInt(Tag.undefined) or item.tag == @backingInt(Tag.null_value)) continue;
         const units = try valueUtf16Alloc(runtime, item);
         defer runtime.allocator.free(units);
         try output.appendSlice(runtime.allocator, units);
@@ -296,14 +296,14 @@ pub fn arrayUtf16Alloc(runtime: *Runtime, object: *Object) anyerror![]u16 {
 }
 
 pub fn isAotObjectValue(value: Value) bool {
-    return switch (@as(Tag, @enumFromInt(value.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .byte_buffer, .array, .dictionary, .iterator, .function, .promise => true,
         else => false,
     };
 }
 
 pub fn valueToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint) !Value {
-    return switch (@as(Tag, @enumFromInt(value.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .byte_buffer, .function, .promise => try hostObjectToPrimitive(runtime, value, hint),
         .array => try arrayToPrimitive(runtime, value, hint),
         .dictionary => try dictionaryToPrimitive(runtime, value, hint),
@@ -329,7 +329,7 @@ pub fn hostObjectToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitive
         if (method) |callable| {
             // ECMAScriptのGetMethod相当: 呼び出し不可の値（undefined/null
             // 以外の非関数を含む）はメソッド不在として次の候補へ進む。
-            if (callable.tag != @intFromEnum(Tag.function)) continue;
+            if (callable.tag != @backingInt(Tag.function)) continue;
             roots[1] = try invokeAotCallback(runtime, callable, null, 0);
             if (!isAotObjectValue(roots[1])) return roots[1];
             continue;
@@ -338,7 +338,7 @@ pub fn hostObjectToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitive
         // the existing default conversion.  It is selected only when no own
         // property shadows it, matching OrdinaryToPrimitive's method lookup.
         if (std.mem.eql(u16, name, to_string_name)) {
-            return switch (@as(Tag, @enumFromInt(roots[0].tag))) {
+            return switch (@as(Tag, @fromBackingInt(@intCast(roots[0].tag)))) {
                 .byte_buffer => blk: {
                     const units = try byteBufferUtf16Alloc(runtime, object.payload.byte_buffer);
                     defer runtime.allocator.free(units);
@@ -363,7 +363,7 @@ pub fn hostObjectToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitive
 /// built-in conversion itself when no custom override exists.
 pub fn aotCustomObjectPrototypeProperty(value: Value, key: []const u16) ?Value {
     const object = value.object() orelse return null;
-    if (object.prototype.tag != @intFromEnum(Tag.dictionary)) return null;
+    if (object.prototype.tag != @backingInt(Tag.dictionary)) return null;
     return dictionaryOwnProperty(object.prototype, key) orelse dictionaryPrototypeProperty(object.prototype, key);
 }
 
@@ -383,7 +383,7 @@ pub fn arrayToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint)
         if (method) |callable| {
             // ECMAScriptのGetMethod相当: 呼び出し不可の値（undefined/null
             // 以外の非関数を含む）はメソッド不在として次の候補へ進む。
-            if (callable.tag != @intFromEnum(Tag.function)) continue;
+            if (callable.tag != @backingInt(Tag.function)) continue;
             roots[1] = try invokeAotCallback(runtime, callable, null, 0);
             if (!isAotObjectValue(roots[1])) return roots[1];
             continue;
@@ -413,7 +413,7 @@ pub fn dictionaryToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitive
         if (method) |callable| {
             // ECMAScriptのGetMethod相当: 呼び出し不可の値（undefined/null
             // 以外の非関数を含む）はメソッド不在として次の候補へ進む。
-            if (callable.tag != @intFromEnum(Tag.function)) continue;
+            if (callable.tag != @backingInt(Tag.function)) continue;
             roots[1] = try invokeAotCallback(runtime, callable, null, 0);
             if (!isAotObjectValue(roots[1])) return roots[1];
             continue;
@@ -422,7 +422,7 @@ pub fn dictionaryToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitive
             if (roots[0].object()) |object| {
                 if (object.structured_error) {
                     if (dictionaryOwnProperty(roots[0], &.{ 'm', 'e', 's', 's', 'a', 'g', 'e' })) |message| {
-                        if (message.tag == @intFromEnum(Tag.utf16_string) or message.tag == @intFromEnum(Tag.static_utf8_string)) {
+                        if (message.tag == @backingInt(Tag.utf16_string) or message.tag == @backingInt(Tag.static_utf8_string)) {
                             return message;
                         }
                     }
@@ -448,7 +448,7 @@ pub const Utf16View = struct {
 };
 
 pub fn valueUtf16View(runtime: *Runtime, value: Value) anyerror!Utf16View {
-    if (value.tag == @intFromEnum(Tag.utf16_string)) {
+    if (value.tag == @backingInt(Tag.utf16_string)) {
         return .{ .units = value.object().?.payload.utf16_string };
     }
     return .{ .units = try valueUtf16Alloc(runtime, value), .owned = true };
@@ -467,7 +467,7 @@ const StringCursor = struct {
     utf8_mode: bool = false,
 
     fn init(value: Value) StringCursor {
-        return switch (@as(Tag, @enumFromInt(value.tag))) {
+        return switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
             .static_utf8_string => .{ .bytes = staticUtf8(value), .utf8_mode = true },
             .utf16_string => .{ .units = value.object().?.payload.utf16_string },
             else => .{},
@@ -549,7 +549,7 @@ pub fn stringOrder(runtime: *Runtime, left: Value, right: Value) !std.math.Order
 pub fn strictEqual(runtime: *Runtime, left: Value, right: Value) !bool {
     if (isString(left) and isString(right)) return stringEqual(runtime, left, right);
     if (left.tag != right.tag) return false;
-    return switch (@as(Tag, @enumFromInt(left.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(left.tag)))) {
         .undefined, .null_value => true,
         .boolean => (left.payload != 0) == (right.payload != 0),
         .number => blk: {
@@ -571,7 +571,7 @@ pub fn strictEqual(runtime: *Runtime, left: Value, right: Value) !bool {
 pub fn sameValue(runtime: *Runtime, left: Value, right: Value) !bool {
     if (isString(left) and isString(right)) return stringEqual(runtime, left, right);
     if (left.tag != right.tag) return false;
-    if (@as(Tag, @enumFromInt(left.tag)) == .number) {
+    if (@as(Tag, @fromBackingInt(@intCast(left.tag))) == .number) {
         const left_number: f64 = @bitCast(left.payload);
         const right_number: f64 = @bitCast(right.payload);
         if (std.math.isNan(left_number) and std.math.isNan(right_number)) return true;
@@ -585,7 +585,7 @@ pub fn sameValue(runtime: *Runtime, left: Value, right: Value) !bool {
 pub fn sameValueZero(runtime: *Runtime, left: Value, right: Value) !bool {
     if (isString(left) and isString(right)) return stringEqual(runtime, left, right);
     if (left.tag != right.tag) return false;
-    return switch (@as(Tag, @enumFromInt(left.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(left.tag)))) {
         .number => blk: {
             const left_number: f64 = @bitCast(left.payload);
             const right_number: f64 = @bitCast(right.payload);
@@ -597,8 +597,8 @@ pub fn sameValueZero(runtime: *Runtime, left: Value, right: Value) !bool {
 
 pub fn abstractEqual(runtime: *Runtime, left: Value, right: Value) !bool {
     if ((isString(left) and isString(right)) or left.tag == right.tag) return strictEqual(runtime, left, right);
-    const left_tag: Tag = @enumFromInt(left.tag);
-    const right_tag: Tag = @enumFromInt(right.tag);
+    const left_tag: Tag = @fromBackingInt(@intCast(left.tag));
+    const right_tag: Tag = @fromBackingInt(@intCast(right.tag));
     if ((left_tag == .undefined and right_tag == .null_value) or (left_tag == .null_value and right_tag == .undefined)) return true;
     if (isObject(left) and isObject(right)) return false;
     if (left_tag == .boolean) return abstractEqual(runtime, numberValue(if (left.payload == 0) 0 else 1), right);
@@ -624,8 +624,8 @@ pub fn relationalOrder(runtime: *Runtime, left: Value, right: Value) !?std.math.
     const left_primitive = roots[2];
     const right_primitive = roots[3];
     if (isString(left_primitive) and isString(right_primitive)) return @as(?std.math.Order, try stringOrder(runtime, left_primitive, right_primitive));
-    const left_tag: Tag = @enumFromInt(left_primitive.tag);
-    const right_tag: Tag = @enumFromInt(right_primitive.tag);
+    const left_tag: Tag = @fromBackingInt(@intCast(left_primitive.tag));
+    const right_tag: Tag = @fromBackingInt(@intCast(right_primitive.tag));
     if (left_tag == .bigint and right_tag == .bigint) return @as(?std.math.Order, BigInt.order(left_primitive.object().?.payload.bigint, right_primitive.object().?.payload.bigint));
     if (left_tag == .bigint and isString(right_primitive)) return compareBigIntString(runtime, left_primitive.object().?.payload.bigint, right_primitive);
     if (isString(left_primitive) and right_tag == .bigint) {
@@ -660,7 +660,7 @@ pub fn deepEqual(runtime: *Runtime, left: Value, right: Value) !bool {
 }
 
 pub fn isJsonStringifyObject(value: Value) bool {
-    return switch (@as(Tag, @enumFromInt(value.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .null_value, .byte_buffer, .array, .dictionary, .iterator, .promise => true,
         else => false,
     };
@@ -737,7 +737,7 @@ const ConcatOperand = union(enum) {
 };
 
 fn concatOperand(runtime: *Runtime, value: Value) !ConcatOperand {
-    return switch (@as(Tag, @enumFromInt(value.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .utf16_string => .{ .utf16 = value.object().?.payload.utf16_string },
         .static_utf8_string => .{ .utf8 = staticUtf8(value) },
         else => .{ .scratch = try valueUtf16Alloc(runtime, value) },
@@ -772,7 +772,7 @@ pub fn concat(runtime: *Runtime, left: Value, right: Value) !Value {
 }
 
 pub fn bigIntArithmetic(runtime: *Runtime, operator: Arithmetic, left: Value, right: Value) !Value {
-    if (left.tag != @intFromEnum(Tag.bigint) or right.tag != @intFromEnum(Tag.bigint)) return error.CannotMixBigIntAndNumber;
+    if (left.tag != @backingInt(Tag.bigint) or right.tag != @backingInt(Tag.bigint)) return error.CannotMixBigIntAndNumber;
     const left_bigint = left.object().?.payload.bigint;
     const right_bigint = right.object().?.payload.bigint;
     const result = switch (operator) {
@@ -803,7 +803,7 @@ pub fn arithmetic(runtime: *Runtime, operator: Arithmetic, left: Value, right: V
     roots[3] = try valueToPrimitive(runtime, roots[1], hint);
     const left_primitive = roots[2];
     const right_primitive = roots[3];
-    if (left_primitive.tag == @intFromEnum(Tag.bigint) or right_primitive.tag == @intFromEnum(Tag.bigint)) {
+    if (left_primitive.tag == @backingInt(Tag.bigint) or right_primitive.tag == @backingInt(Tag.bigint)) {
         return bigIntArithmetic(runtime, operator, left_primitive, right_primitive);
     }
     const left_number = if (operator == .add) try valueToParseFloatRuntime(runtime, left_primitive) else try valueToNumberRuntime(runtime, left_primitive);
@@ -830,7 +830,7 @@ pub fn unary(runtime: *Runtime, operator: UnaryOperator, value: Value) !Value {
     defer runtime.popRoots(&frame);
     roots[1] = try valueToPrimitive(runtime, roots[0], .number);
     const primitive = roots[1];
-    if (primitive.tag == @intFromEnum(Tag.bigint)) {
+    if (primitive.tag == @backingInt(Tag.bigint)) {
         const bigint = primitive.object().?.payload.bigint;
         return switch (operator) {
             .minus => runtime.ownBigInt(try bigint.negate(runtime.allocator)),
@@ -875,8 +875,8 @@ pub fn shift(runtime: *Runtime, operator: ShiftOperator, left: Value, right: Val
     roots[3] = try valueToPrimitive(runtime, roots[1], .number);
     const left_primitive = roots[2];
     const right_primitive = roots[3];
-    const left_is_bigint = left_primitive.tag == @intFromEnum(Tag.bigint);
-    const right_is_bigint = right_primitive.tag == @intFromEnum(Tag.bigint);
+    const left_is_bigint = left_primitive.tag == @backingInt(Tag.bigint);
+    const right_is_bigint = right_primitive.tag == @backingInt(Tag.bigint);
     if (left_is_bigint or right_is_bigint) {
         if (!left_is_bigint or !right_is_bigint) return error.CannotMixBigIntAndNumber;
         if (operator == .right_unsigned) return error.UnsignedShiftOfBigInt;
@@ -908,7 +908,7 @@ pub fn bitNot(runtime: *Runtime, value: Value) !Value {
     defer runtime.popRoots(&frame);
     roots[1] = try valueToPrimitive(runtime, roots[0], .number);
     const primitive = roots[1];
-    if (primitive.tag == @intFromEnum(Tag.bigint)) {
+    if (primitive.tag == @backingInt(Tag.bigint)) {
         const result = try primitive.object().?.payload.bigint.bitNot(runtime.allocator);
         return runtime.ownBigInt(result);
     }
@@ -916,7 +916,7 @@ pub fn bitNot(runtime: *Runtime, value: Value) !Value {
 }
 
 pub fn valueTruthy(value: Value) bool {
-    return switch (@as(Tag, @enumFromInt(value.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .undefined, .null_value => false,
         .boolean => value.payload != 0,
         .number => blk: {
@@ -982,8 +982,8 @@ pub fn repeatCount(number: f64) !usize {
 }
 
 pub fn sameKey(left: Value, right: Value) bool {
-    const left_tag: Tag = @enumFromInt(left.tag);
-    const right_tag: Tag = @enumFromInt(right.tag);
+    const left_tag: Tag = @fromBackingInt(@intCast(left.tag));
+    const right_tag: Tag = @fromBackingInt(@intCast(right.tag));
     if ((left_tag == .static_utf8_string or left_tag == .utf16_string) and
         (right_tag == .static_utf8_string or right_tag == .utf16_string))
     {
@@ -993,7 +993,7 @@ pub fn sameKey(left: Value, right: Value) bool {
         return std.mem.eql(u16, left.object().?.payload.utf16_string, right.object().?.payload.utf16_string);
     }
     if (left.tag != right.tag) return false;
-    return switch (@as(Tag, @enumFromInt(left.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(left.tag)))) {
         .undefined, .null_value => true,
         .boolean, .number => left.payload == right.payload,
         .static_utf8_string => std.mem.eql(u8, staticUtf8(left), staticUtf8(right)),

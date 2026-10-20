@@ -386,7 +386,7 @@ fn fetchBytesInner(session: *Session, uri: std.Uri, url: []const u8, resource: R
     switch (response.head.status) {
         .ok => {},
         .not_found => return session.fail(.not_found, resource, url, "{s} not found (HTTP 404)", .{@tagName(resource)}),
-        else => return session.fail(.network, resource, url, "fetch of \"{s}\" failed with HTTP status {d}", .{ url, @intFromEnum(response.head.status) }),
+        else => return session.fail(.network, resource, url, "fetch of \"{s}\" failed with HTTP status {d}", .{ url, @backingInt(response.head.status) }),
     }
 
     // サーバが申告した Content-Length が既に上限超過なら本文を読まずに拒否する。

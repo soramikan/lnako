@@ -183,7 +183,7 @@ pub export fn lnako_aot_function_new(out: *state.Value, callback: state.Function
     out.* = .{};
     const runtime = if (state.active_runtime) |*value| value else return;
     const source = if (captures) |pointer| pointer[0..capture_count] else if (capture_count == 0) &.{} else state.runtimeFailure(error.InvalidCaptures);
-    for (source) |capture| if (capture.tag != @intFromEnum(shared.Tag.binding_cell)) state.runtimeFailure(error.InvalidBindingCell);
+    for (source) |capture| if (capture.tag != @backingInt(shared.Tag.binding_cell)) state.runtimeFailure(error.InvalidBindingCell);
     out.* = runtime.createFunction(callback, arity, source) catch |failure| state.runtimeFailure(failure);
 }
 
@@ -203,7 +203,7 @@ pub export fn lnako_aot_function_new_named(
     const runtime = if (state.active_runtime) |*value| value else return;
     const function_name = if (name) |pointer| pointer[0..name_len] else if (name_len == 0) &.{} else state.runtimeFailure(error.InvalidFunctionName);
     const source = if (captures) |pointer| pointer[0..capture_count] else if (capture_count == 0) &.{} else state.runtimeFailure(error.InvalidCaptures);
-    for (source) |capture| if (capture.tag != @intFromEnum(shared.Tag.binding_cell)) state.runtimeFailure(error.InvalidBindingCell);
+    for (source) |capture| if (capture.tag != @backingInt(shared.Tag.binding_cell)) state.runtimeFailure(error.InvalidBindingCell);
     out.* = runtime.createNamedFunction(callback, arity, function_name, source) catch |failure| state.runtimeFailure(failure);
 }
 
@@ -224,7 +224,7 @@ pub export fn lnako_aot_function_new_generated(
     const runtime = if (state.active_runtime) |*value| value else return;
     const function_name = if (name) |pointer| pointer[0..name_len] else if (name_len == 0) &.{} else state.runtimeFailure(error.InvalidFunctionName);
     const source = if (captures) |pointer| pointer[0..capture_count] else if (capture_count == 0) &.{} else state.runtimeFailure(error.InvalidCaptures);
-    for (source) |capture| if (capture.tag != @intFromEnum(shared.Tag.binding_cell)) state.runtimeFailure(error.InvalidBindingCell);
+    for (source) |capture| if (capture.tag != @backingInt(shared.Tag.binding_cell)) state.runtimeFailure(error.InvalidBindingCell);
     out.* = runtime.createGeneratedFunction(callback, arity, function_name, source) catch |failure| state.runtimeFailure(failure);
 }
 
@@ -266,7 +266,7 @@ pub export fn lnako_aot_function_capture(out: *state.Value, context: *anyopaque,
 pub export fn lnako_aot_function_call(out: *state.Value, callable: *const state.Value, arguments: ?[*]const state.Value, len: usize) callconv(.c) void {
     out.* = .{};
     const runtime = if (state.active_runtime) |*active| active else return;
-    if (callable.tag != @intFromEnum(shared.Tag.function)) state.runtimeFailure(error.NotCallable);
+    if (callable.tag != @backingInt(shared.Tag.function)) state.runtimeFailure(error.NotCallable);
     const object = callable.object() orelse state.runtimeFailure(error.NotCallable);
     if (object.payload != .function) state.runtimeFailure(error.NotCallable);
     const function = object.payload.function;

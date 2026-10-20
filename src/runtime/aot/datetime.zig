@@ -23,7 +23,7 @@ const string_mod = shared.string_mod;
 const time = state.time;
 
 pub fn eraDataBuiltin(runtime: *Runtime) !Value {
-    if (runtime.era_data.tag != @intFromEnum(Tag.undefined)) return runtime.era_data;
+    if (runtime.era_data.tag != @backingInt(Tag.undefined)) return runtime.era_data;
 
     var roots = [_]Value{ .{}, .{}, .{}, .{}, .{} };
     var frame = RootFrame{};

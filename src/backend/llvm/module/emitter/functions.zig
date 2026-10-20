@@ -253,7 +253,7 @@ fn writeTypedBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: 
     defer emitter.allocator.free(operand);
     try emitter.output.writer.print("  %typed.builtin.out.{d} = alloca %lnako.Value", .{result});
     try emitter.debugSuffix(instruction.span, scope);
-    try emitter.output.writer.print("  call void @lnako_aot_math_unary_f64_call_site(ptr %typed.builtin.out.{d}, double {s}, i16 {d}, i64 {d})", .{ result, operand, @intFromEnum(command), site_id });
+    try emitter.output.writer.print("  call void @lnako_aot_math_unary_f64_call_site(ptr %typed.builtin.out.{d}, double {s}, i16 {d}, i64 {d})", .{ result, operand, @backingInt(command), site_id });
     try emitter.debugSuffix(instruction.span, scope);
     try emitter.output.writer.print("  %typed.builtin.value.{d} = load %lnako.Value, ptr %typed.builtin.out.{d}", .{ result, result });
     try emitter.debugSuffix(instruction.span, scope);

@@ -256,7 +256,7 @@ pub fn dynamicPromiseToAotValue(state: *DynamicInterpreterState, promise: *dynam
 
 pub fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror!dynamic_value.Value {
     const owner = state.owner;
-    switch (@as(Tag, @enumFromInt(value.tag))) {
+    switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .undefined => return .undefined,
         .null_value => return .null_value,
         .boolean => return .{ .boolean = value.payload != 0 },
@@ -332,8 +332,8 @@ pub fn dynamicToAotValue(state: *DynamicInterpreterState, value: dynamic_value.V
     const owner = state.owner;
     return switch (value) {
         .undefined => .{},
-        .null_value => .{ .tag = @intFromEnum(Tag.null_value) },
-        .boolean => |boolean| .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(boolean) },
+        .null_value => .{ .tag = @backingInt(Tag.null_value) },
+        .boolean => |boolean| .{ .tag = @backingInt(Tag.boolean), .payload = @intFromBool(boolean) },
         .number => |number| numberValue(number),
         .string => |string| owner.createString(string.units),
         .bigint => |bigint| blk: {
@@ -552,9 +552,9 @@ pub fn concatAotValues(runtime: *Runtime, left: Value, right: Value) !Value {
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &rooted, rooted.len);
     defer runtime.popRoots(&frame);
-    const left_view: aot_state.Utf16View = if (rooted[0].tag == @intFromEnum(Tag.undefined)) .{ .units = &.{} } else try aot_state.valueUtf16View(runtime, rooted[0]);
+    const left_view: aot_state.Utf16View = if (rooted[0].tag == @backingInt(Tag.undefined)) .{ .units = &.{} } else try aot_state.valueUtf16View(runtime, rooted[0]);
     defer left_view.deinit(runtime);
-    const right_view: aot_state.Utf16View = if (rooted[1].tag == @intFromEnum(Tag.undefined)) .{ .units = &.{} } else try aot_state.valueUtf16View(runtime, rooted[1]);
+    const right_view: aot_state.Utf16View = if (rooted[1].tag == @backingInt(Tag.undefined)) .{ .units = &.{} } else try aot_state.valueUtf16View(runtime, rooted[1]);
     defer right_view.deinit(runtime);
     const combined = try runtime.allocator.alloc(u16, left_view.units.len + right_view.units.len);
     errdefer runtime.allocator.free(combined);
