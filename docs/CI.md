@@ -4,11 +4,11 @@ CIは、互換性検証の意味を保ったまま、AOTをfixture shardと最�
 
 ## job構成
 
-現行workflowは **40 matrix job＋変更分類・軽量検証・Windows／Linux AOT compiler producer・3後段job、合計47 job**です。matrixの失敗は別OS・別suiteの結果を隠さないよう `fail-fast: false`、同一branchの古いrunは `cancel-in-progress: true` です。
+現行workflowは **41 matrix job＋変更分類・軽量検証・Windows／Linux AOT compiler producer・3後段job、合計48 job**です。matrixの失敗は別OS・別suiteの結果を隠さないよう `fail-fast: false`、同一branchの古いrunは `cancel-in-progress: true` です。
 
 | job | 内訳 | 主な検証 |
 | --- | ---: | --- |
-| `test` | 11 | core、standard、host、QuickJS/AOT smoke、macOS統合suite、Windows専用のpackage isolation |
+| `test` | 12 | core、standard、host、QuickJS test／build（Windowsは test と ReleaseSafe build を分離）、macOS統合suite、Windows専用のpackage isolation |
 | `parser_fuzz` | 2 | Linux/Windowsの文法生成fuzz |
 | `aot` | 8 | macOS native 3（O0+O1／O2／O3のroutes全件）＋Linux dedicated coverage 3 shard（canonical正本・ReleaseSafe）＋Linux/Windowsのsmoke 2 |
 | `aot_linux` | 8 | Linux native 6 shard（O0+O1／O2+O3×3）＋Linux support 2（HTTP、dispatch evidence）。producer artifactを検証・installしてbuildを省略 |

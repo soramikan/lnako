@@ -24,6 +24,7 @@ jobs:
       attestations: read
     outputs:
       version: ${{ steps.release-version.outputs.version }}
+      ci_run_id: ${{ steps.release-version.outputs.ci_run_id }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -39,13 +40,14 @@ jobs:
           # 40 matrix job + changes classifier + lightweight verifier +
           # Windows AOT compiler producer + Linux AOT compiler producer +
           # dispatch coverage verifier + native AOT aggregate verifier +
-          # attestation = 47。
+          # attestation = 47。Windows compat-aot-build 追加後は48。
           # CIのjob構成を変えたら check_release_workflow.mjs が導出値との不一致を
           # 検出するため、この固定値も必ず追従させる。
-          CI_EXPECTED_JOB_COUNT: 47
+          CI_EXPECTED_JOB_COUNT: 48
         shell: bash
         run: |
           set -euo pipefail
+          ci_run_id=""
           if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
             if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
               echo "正式Release tagはvX.Y.Zでなければなりません: $GITHUB_REF_NAME" >&2
@@ -70,13 +72,13 @@ jobs:
             # run（= full matrix完走の終端証拠）を要求する。docs専用commit等へは
             # workflow_dispatchをmainで実行すればfull run＋attestationが得られる。
             ci_verified=""
-            while IFS= read -r ci_run_id; do
-              [[ -z "$ci_run_id" ]] && continue
-              ci_job_count="$(gh run view "$ci_run_id" --repo "$GITHUB_REPOSITORY" --json jobs --jq '.jobs | length')"
-              ci_failed_jobs="$(gh run view "$ci_run_id" --repo "$GITHUB_REPOSITORY" --json jobs --jq '[.jobs[] | select(.conclusion != "success" and .conclusion != "skipped")] | length')"
-              ci_attested="$(gh run view "$ci_run_id" --repo "$GITHUB_REPOSITORY" --json jobs --jq '[.jobs[] | select(.name == "Attest and verify dispatch evidence" and .conclusion == "success")] | length')"
+            while IFS= read -r candidate_run_id; do
+              [[ -z "$candidate_run_id" ]] && continue
+              ci_job_count="$(gh run view "$candidate_run_id" --repo "$GITHUB_REPOSITORY" --json jobs --jq '.jobs | length')"
+              ci_failed_jobs="$(gh run view "$candidate_run_id" --repo "$GITHUB_REPOSITORY" --json jobs --jq '[.jobs[] | select(.conclusion != "success" and .conclusion != "skipped")] | length')"
+              ci_attested="$(gh run view "$candidate_run_id" --repo "$GITHUB_REPOSITORY" --json jobs --jq '[.jobs[] | select(.name == "Attest and verify dispatch evidence" and .conclusion == "success")] | length')"
               if [[ "$ci_job_count" -eq "$CI_EXPECTED_JOB_COUNT" && "$ci_failed_jobs" -eq 0 && "$ci_attested" -eq 1 ]]; then
-                ci_verified="$ci_run_id"
+                ci_verified="$candidate_run_id"
                 break
               fi
             done < <(gh run list --repo "$GITHUB_REPOSITORY" --workflow CI --commit "$GITHUB_SHA" --limit 50 --json databaseId,status,conclusion --jq '[.[] | select(.status == "completed" and .conclusion == "success") | .databaseId] | .[]')
@@ -84,7 +86,18 @@ jobs:
               echo "同じsource commitのCIが全job成功（full matrix＋attestation完了）ではありません: $GITHUB_SHA" >&2
               exit 1
             fi
+            ci_run_id="$ci_verified"
             echo "同じsource commitのCI全job成功を確認: run=$ci_verified jobs=$CI_EXPECTED_JOB_COUNT"
+            # 昇格対象のReleaseSafe成果物が、そのrunに3 target分あることを確認する。
+            # 「最新artifact」は使わず、preflightが選んだrun IDに固定する。
+            for target in macos-arm64 linux-x64 windows-x64; do
+              if ! gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${ci_run_id}/artifacts" \
+                --jq ".artifacts[] | select(.name == \"lnako-release-candidate-${target}\" and .expired == false) | .name" \
+                | grep -qx "lnako-release-candidate-${target}"; then
+                echo "CI run ${ci_run_id} に Release candidate artifact がありません: lnako-release-candidate-${target}" >&2
+                exit 1
+              fi
+            done
           else
             # 手動入力はtag形式のv接頭辞も許容して正規化する。
             version="${RELEASE_VERSION_INPUT#v}"
@@ -99,7 +112,8 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "source commit=$GITHUB_SHA / version=$version / run=$GITHUB_RUN_ID"
+          echo "ci_run_id=$ci_run_id" >> "$GITHUB_OUTPUT"
+          echo "source commit=$GITHUB_SHA / version=$version / run=$GITHUB_RUN_ID / ci_run_id=${ci_run_id:-none}"
       - name: Verify canonical compatibility evidence is fully attested
         # tag pushでのみ要求する。ここで失敗するとbuild/aggregate/publishが
         # 実行されずReleaseを作成できない。手動workflow_dispatchは公開しない
@@ -141,13 +155,20 @@ jobs:
     runs-on: ${{ matrix.os }}
     environment: ${{ matrix.environment }}
     timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
     env:
       LNAKO_VERSION: ${{ needs.preflight.outputs.version }}
+      CI_RUN_ID: ${{ needs.preflight.outputs.ci_run_id }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        # tag ReleaseはCI成果物を昇格するためZig toolchainは不要。
+        # workflow_dispatch（検証用のソースビルド）のみ取得する。
+        if: env.CI_RUN_ID == ''
         with:
           version: 0.16.0
           use-cache: true
@@ -168,12 +189,33 @@ jobs:
         shell: bash
         run: node tools/prune_llvm_toolchain.mjs
       - name: Set up pinned QuickJS
+        # ソースからReleaseSafeを組むときだけ必要。昇格経路はCI成果物を使う。
+        if: env.CI_RUN_ID == ''
         shell: bash
         run: node tools/setup_quickjs.mjs
       - name: Clear generated install outputs
         shell: bash
         run: rm -rf -- zig-out
+      - name: Promote verified CI ReleaseSafe compiler
+        if: env.CI_RUN_ID != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release-candidate"
+          gh run download "$CI_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "lnako-release-candidate-${{ matrix.target }}" \
+            --dir "$RUNNER_TEMP/release-candidate"
+          node tools/release_candidate_artifact.mjs verify \
+            --dir "$RUNNER_TEMP/release-candidate" \
+            --install-to zig-out/bin \
+            --expected-target "${{ matrix.target }}" \
+            --expected-run-id "$CI_RUN_ID" \
+            --expected-version "$LNAKO_VERSION"
       - name: Build ReleaseSafe compiler and AOT runtime
+        if: env.CI_RUN_ID == ''
         shell: bash
         run: zig build -Doptimize=ReleaseSafe -Dcompat-js=true
       - name: Verify compiler version

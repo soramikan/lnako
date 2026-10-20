@@ -56,6 +56,11 @@ for (const required of [
   "windows-x64",
   "zig build -Doptimize=ReleaseSafe -Dcompat-js=true",
   "node tools/setup_quickjs.mjs",
+  "Promote verified CI ReleaseSafe compiler",
+  "release_candidate_artifact.mjs verify",
+  "gh run download",
+  "lnako-release-candidate-",
+  "ci_run_id",
   "Verify bundled QuickJS packaging boundaries",
   "node tools/create_distribution.mjs",
   "node tools/check_distribution.mjs",
@@ -83,8 +88,10 @@ if (!workflow.includes("needs: preflight") || !workflow.includes("needs: [prefli
 if (!workflow.includes("GITHUB_RUN_ID") || !workflow.includes("GITHUB_SHA") || !workflow.includes("CI --commit") ||
     !workflow.includes(`CI_EXPECTED_JOB_COUNT: ${expectedCiJobCount}`) || !workflow.includes("--json jobs") ||
     !workflow.includes("ci_job_count") || !workflow.includes("ci_failed_jobs") ||
-    !workflow.includes("ci_attested") || !workflow.includes("ci_verified")) {
-  throw new Error(`Release workflowにsource commit／CI gateの検証がありません（CIのjob数は${expectedCiJobCount}であるべきです）`);
+    !workflow.includes("ci_attested") || !workflow.includes("ci_verified") ||
+    !workflow.includes("ci_run_id=$ci_run_id") ||
+    !workflow.includes("lnako-release-candidate-${target}")) {
+  throw new Error(`Release workflowにsource commit／CI gate／release candidate固定の検証がありません（CIのjob数は${expectedCiJobCount}であるべきです）`);
 }
 // lightゲートでmatrixがskippedの成功runと、full matrix完走runを区別するため、
 // attestation jobのsuccessを終端証拠として要求する（docs専用commitへのreleaseを
@@ -95,6 +102,12 @@ if (!workflow.includes('"$ci_job_count" -eq "$CI_EXPECTED_JOB_COUNT"') ||
     !workflow.includes('select(.name == "Attest and verify dispatch evidence" and .conclusion == "success")') ||
     !workflow.includes('select(.conclusion != "success" and .conclusion != "skipped")')) {
   throw new Error("Release workflowがCIの全job成功＋attestation完走を要求していません");
+}
+// tag経路は検証済みCI runのReleaseSafe成果物を昇格し、dispatchのみソースビルドする。
+if (!workflow.includes("if: env.CI_RUN_ID != ''") || !workflow.includes("if: env.CI_RUN_ID == ''") ||
+    !workflow.includes("CI_RUN_ID: ${{ needs.preflight.outputs.ci_run_id }}") ||
+    !workflow.includes("actions: read")) {
+  throw new Error("Release workflowのCI成果物昇格／ソースビルド分岐が不完全です");
 }
 // actions/checkoutはtag refをcommitへ解決するため、annotated tagの判定は
 // GitHub APIのtag参照（object.type == "tag"）で行い、署名検証はgit tag
@@ -168,7 +181,7 @@ for (const required of ["lib/libc++.1.dylib", "lib/libc++abi.1.dylib", "lib/libu
     throw new Error(`macOS配布物にLLVM runtime依存がありません: ${required}`);
   }
 }
-console.log("Release workflow構成検査: 3正式OS build・standard/full distribution・checksum／SBOM・tag gate成功（release時benchmarkなし）");
+console.log("Release workflow構成検査: 3正式OS build・CI ReleaseSafe昇格・standard/full distribution・checksum／SBOM・tag gate成功（release時benchmarkなし）");
 
 // Signing must apply to both variants and both tag/manual runs, before upload.
 const signingSetup = workflow.match(/- name: Prepare macOS signing keychain\n[\s\S]*?(?=\n      - name:)/)?.[0] ?? "";
