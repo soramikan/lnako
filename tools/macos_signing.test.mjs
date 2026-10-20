@@ -123,7 +123,7 @@ test("stageUnnotarizedMacho copies only Mach-O files without an online notarizat
     const paths = await machoFiles(directory);
     const staging = join(directory, "staged");
     const pending = await stageUnnotarizedMacho(directory, paths, staging, {
-      checkTicket: (filePath) => !filePath.endsWith("bin/lnako"),
+      checkTicket: (filePath) => !filePath.replaceAll("\\", "/").endsWith("bin/lnako"),
     });
     assert.deepEqual(pending, ["bin/lnako"]);
     assert.equal((await readFile(join(staging, "bin/lnako"))).toString("hex"), "cffaedfe00000000");
