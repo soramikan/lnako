@@ -98,21 +98,47 @@ pub fn npmRootsFromGroupFiltered(
                 .range_text = range_text,
             });
         }
-        const optional_peers = try gpa.alloc([]const u8, dep.optional_peers.len);
-        errdefer {
-            for (optional_peers) |n| gpa.free(n);
-            gpa.free(optional_peers);
+        {
+            const optional_peers = try gpa.alloc([]const u8, dep.optional_peers.len);
+            var opt_filled: usize = 0;
+            errdefer {
+                for (optional_peers[0..opt_filled]) |n| gpa.free(n);
+                gpa.free(optional_peers);
+            }
+            for (dep.optional_peers) |oname| {
+                optional_peers[opt_filled] = try gpa.dupe(u8, oname);
+                opt_filled += 1;
+            }
+            const alias_copy = try gpa.dupe(u8, alias);
+            errdefer gpa.free(alias_copy);
+            const name_copy = try gpa.dupe(u8, dep.name);
+            errdefer gpa.free(name_copy);
+            const range_text_copy = try gpa.dupe(u8, dep.version_text);
+            errdefer gpa.free(range_text_copy);
+            const context_copy: []const u8 = if (dep.context) |c| try gpa.dupe(u8, c) else "";
+            errdefer if (context_copy.len != 0) gpa.free(context_copy);
+            const peer_slice = try peers.toOwnedSlice(gpa);
+            errdefer {
+                for (peer_slice) |p| {
+                    gpa.free(p.name);
+                    gpa.free(p.range_text);
+                }
+                gpa.free(peer_slice);
+            }
+            try list.append(gpa, .{
+                .alias = alias_copy,
+                .name = name_copy,
+                .range = dep.version,
+                .range_text = range_text_copy,
+                .context = context_copy,
+                .peer_dependencies = peer_slice,
+                .optional_peers = optional_peers,
+            });
+            // append 成功: list が所有。block を抜ける前に errdefer を無効化するため
+            // 所有権を list に渡した変数は errdefer が free しないよう opt_filled を 0 にし、
+            // 他は errdefer が block 成功終了では走らない（Zig errdefer は error 時のみ）。
+            _ = &opt_filled;
         }
-        for (dep.optional_peers, 0..) |name, i| optional_peers[i] = try gpa.dupe(u8, name);
-        try list.append(gpa, .{
-            .alias = try gpa.dupe(u8, alias),
-            .name = try gpa.dupe(u8, dep.name),
-            .range = dep.version,
-            .range_text = try gpa.dupe(u8, dep.version_text),
-            .context = if (dep.context) |c| try gpa.dupe(u8, c) else "",
-            .peer_dependencies = try peers.toOwnedSlice(gpa),
-            .optional_peers = optional_peers,
-        });
     }
     return try list.toOwnedSlice(gpa);
 }
@@ -234,7 +260,23 @@ pub fn resolveNpmForLock(
         break :blk &owned_catalog;
     };
 
-    const result = npm_mod.resolve(gpa, session, catalog, roots, cache_store, diagnostics) catch |err| {
+    var locked_list: std.ArrayList(lock_model.NpmInstance) = .empty;
+    defer locked_list.deinit(gpa);
+    const prefer_locked = opts.prefer_locked and !opts.force_resolve and !opts.update_all;
+    if (prefer_locked) {
+        if (ctx.existing_lock) |lock| {
+            for (lock.packages) |pkg| {
+                for (pkg.npm_instances) |inst| {
+                    try locked_list.append(gpa, inst);
+                }
+            }
+        }
+    }
+
+    const result = npm_mod.resolve(gpa, session, catalog, roots, cache_store, diagnostics, .{
+        .locked_instances = locked_list.items,
+        .prefer_locked = prefer_locked,
+    }) catch |err| {
         session.reportDiagnostics(diagnostics) catch {};
         return switch (err) {
             error.OutOfMemory => error.OutOfMemory,

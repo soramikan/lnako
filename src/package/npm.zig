@@ -147,6 +147,13 @@ const Chosen = struct {
     meta: VersionMeta,
 };
 
+/// resolve の版固定・lock 再利用設定。
+pub const ResolvePrefs = struct {
+    /// 既存 lock の npmInstances。prefer_locked 時に range を満たす版を優先する。
+    locked_instances: []const lock_model.NpmInstance = &.{},
+    prefer_locked: bool = false,
+};
+
 /// `RootRequest` 群を文脈別に解決し、tarball を検証して cache へ載せる。
 pub fn resolve(
     gpa: Allocator,
@@ -155,6 +162,7 @@ pub fn resolve(
     roots: []const RootRequest,
     cache_store: ?*const cache.Store,
     diagnostics: *diag.List,
+    prefs: ResolvePrefs,
 ) Error!ResolveResult {
     var arena_impl = std.heap.ArenaAllocator.init(gpa);
     errdefer arena_impl.deinit();
@@ -194,162 +202,166 @@ pub fn resolve(
     var peer_checks: std.ArrayList(Want) = .empty;
     try peer_checks.appendSlice(a, peer_checks_early.items);
 
+    // queue を優先し、空になったら peer_checks を進める。
+    // 必須 peer は通常 queue に戻して依存閉包も解決する（inline install しない）。
     var qi: usize = 0;
-    while (qi < queue.items.len) : (qi += 1) {
-        const want = queue.items[qi];
-        const map_key = try contextKey(a, want.name, want.context);
+    var pi: usize = 0;
+    while (qi < queue.items.len or pi < peer_checks.items.len) {
+        if (qi < queue.items.len) {
+            const want = queue.items[qi];
+            qi += 1;
+            const map_key = try contextKey(a, want.name, want.context);
 
-        if (chosen.get(map_key)) |existing| {
-            const ver = semver.Version.parse(existing.version) catch {
-                try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, want.name, .{}, "invalid resolved npm version \"{s}\"", .{existing.version});
-                return error.ResolveFailed;
-            };
-            if (want.range.satisfies(ver)) continue;
-            if (want.is_peer and want.optional) continue;
-            if (want.is_peer) {
+            if (chosen.get(map_key)) |existing| {
+                const ver = semver.Version.parse(existing.version) catch {
+                    try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, want.name, .{}, "invalid resolved npm version \"{s}\"", .{existing.version});
+                    return error.ResolveFailed;
+                };
+                if (want.range.satisfies(ver)) continue;
+                if (want.is_peer and want.optional) continue;
+                if (want.is_peer) {
+                    try diagnostics.addFmt(
+                        diag.E017_NPM_PEER_CONFLICT,
+                        .err,
+                        want.name,
+                        .{},
+                        "npm peer \"{s}\"@{s} conflicts with resolved {s}@{s} in context \"{s}\"",
+                        .{ want.name, want.range_text, want.name, existing.version, want.context },
+                    );
+                    return error.ResolveFailed;
+                }
                 try diagnostics.addFmt(
-                    diag.E017_NPM_PEER_CONFLICT,
+                    diag.E003_CONFLICTING_VERSIONS,
                     .err,
                     want.name,
                     .{},
-                    "npm peer \"{s}\"@{s} conflicts with resolved {s}@{s} in context \"{s}\"",
-                    .{ want.name, want.range_text, want.name, existing.version, want.context },
+                    "npm package \"{s}\" requires {s} but context \"{s}\" already selected {s}",
+                    .{ want.name, want.range_text, want.context, existing.version },
                 );
                 return error.ResolveFailed;
             }
-            try diagnostics.addFmt(
-                diag.E003_CONFLICTING_VERSIONS,
-                .err,
-                want.name,
-                .{},
-                "npm package \"{s}\" requires {s} but context \"{s}\" already selected {s}",
-                .{ want.name, want.range_text, want.context, existing.version },
-            );
-            return error.ResolveFailed;
-        }
 
-        const pkg = catalog.get(want.name) orelse {
-            if (want.optional) continue;
-            try diagnostics.addFmt(
-                diag.E013_MISSING_PACKAGE,
-                .err,
-                want.name,
-                .{},
-                "npm package \"{s}\" was not found in the catalog",
-                .{want.name},
-            );
-            return error.ResolveFailed;
-        };
-
-        const picked = pickVersion(pkg, want.range) orelse {
-            if (want.optional) continue;
-            if (want.is_peer) {
+            const pkg = catalog.get(want.name) orelse {
+                if (want.optional) continue;
                 try diagnostics.addFmt(
-                    diag.E017_NPM_PEER_CONFLICT,
+                    diag.E013_MISSING_PACKAGE,
                     .err,
                     want.name,
                     .{},
-                    "npm peer \"{s}\"@{s} is not satisfied in context \"{s}\"",
-                    .{ want.name, want.range_text, want.context },
+                    "npm package \"{s}\" was not found in the catalog",
+                    .{want.name},
                 );
                 return error.ResolveFailed;
-            }
-            try diagnostics.addFmt(
-                diag.E003_CONFLICTING_VERSIONS,
-                .err,
-                want.name,
-                .{},
-                "no version of npm package \"{s}\" satisfies {s}",
-                .{ want.name, want.range_text },
-            );
-            return error.ResolveFailed;
-        };
-
-        // 未対応の依存指定（file:/git+/workspace: 等）を黙殺せず診断する。
-        try rejectUnsupportedRanges(diagnostics, picked);
-
-        const tarball_owned = try acquireTarball(gpa, session, cache_store, picked);
-        defer freeAcquiredTarball(gpa, picked, tarball_owned);
-        const tarball = tarball_owned.bytes;
-        const sha256 = try fetch.sha256Hex(a, tarball);
-        const sha256_field = try std.fmt.allocPrint(a, "sha256:{s}", .{sha256});
-
-        const peers_out = try a.alloc(lock_model.PeerDependency, picked.peer_dependencies.len);
-        for (picked.peer_dependencies, 0..) |p, i| {
-            peers_out[i] = .{
-                .name = try a.dupe(u8, p.name),
-                .requirement = try a.dupe(u8, p.range_text),
             };
-        }
-        std.mem.sort(lock_model.PeerDependency, peers_out, {}, struct {
-            fn lt(_: void, x: lock_model.PeerDependency, y: lock_model.PeerDependency) bool {
-                return std.mem.order(u8, x.name, y.name) == .lt;
-            }
-        }.lt);
 
-        const key = try instanceKey(a, want.name, picked.version, want.context);
-        try instances.append(a, .{
-            .key = key,
-            .name = try a.dupe(u8, want.name),
-            .version = try a.dupe(u8, picked.version),
-            .context = try a.dupe(u8, want.context),
-            .sha256 = sha256_field,
-            .url = try a.dupe(u8, picked.tarball_url),
-            .integrity = try a.dupe(u8, picked.integrity),
-            .peer_dependencies = peers_out,
-        });
-        try chosen.put(a, map_key, .{ .version = picked.version, .meta = picked });
-
-        // 通常依存
-        for (picked.dependencies) |dep| {
-            const range = try parseRangeOrDiagnose(a, diagnostics, dep.name, dep.range_text);
-            try queue.append(a, .{
-                .name = try a.dupe(u8, dep.name),
-                .range = range,
-                .range_text = try a.dupe(u8, dep.range_text),
-                .context = try a.dupe(u8, want.context),
-                .optional = false,
-                .is_peer = false,
-            });
-        }
-        for (picked.optional_dependencies) |dep| {
-            const range = parseRangeOrDiagnose(a, diagnostics, dep.name, dep.range_text) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                error.Canceled => return error.Canceled,
-                else => {
-                    // optional の不正 range は warning として skip（error と成功を矛盾させない）。
-                    try diagnostics.addFmt(diag.E025_INVALID_RANGE, .warning, dep.name, .{}, "invalid optional npm range \"{s}\" for \"{s}\"", .{ dep.range_text, dep.name });
-                    continue;
-                },
+            const picked = pickVersionPreferLocked(pkg, want.range, want.name, want.context, prefs) orelse {
+                if (want.optional) continue;
+                if (want.is_peer) {
+                    try diagnostics.addFmt(
+                        diag.E017_NPM_PEER_CONFLICT,
+                        .err,
+                        want.name,
+                        .{},
+                        "npm peer \"{s}\"@{s} is not satisfied in context \"{s}\"",
+                        .{ want.name, want.range_text, want.context },
+                    );
+                    return error.ResolveFailed;
+                }
+                try diagnostics.addFmt(
+                    diag.E003_CONFLICTING_VERSIONS,
+                    .err,
+                    want.name,
+                    .{},
+                    "no version of npm package \"{s}\" satisfies {s}",
+                    .{ want.name, want.range_text },
+                );
+                return error.ResolveFailed;
             };
-            try queue.append(a, .{
-                .name = try a.dupe(u8, dep.name),
-                .range = range,
-                .range_text = try a.dupe(u8, dep.range_text),
-                .context = try a.dupe(u8, want.context),
-                .optional = true,
-                .is_peer = false,
-            });
-        }
-        // peer は通常依存の閉包確定後に検査する（取得キューへは載せない）。
-        for (picked.peer_dependencies) |dep| {
-            const range = try parseRangeOrDiagnose(a, diagnostics, dep.name, dep.range_text);
-            try peer_checks.append(a, .{
-                .name = try a.dupe(u8, dep.name),
-                .range = range,
-                .range_text = try a.dupe(u8, dep.range_text),
-                .context = try a.dupe(u8, want.context),
-                .optional = isOptionalPeer(picked.optional_peers, dep.name),
-                .is_peer = true,
-            });
-        }
-    }
 
-    // 通常依存の閉包が確定したあと peer を検査する。
-    // optional peer: 既選択なら range 検査のみ。未選択なら取得しない。
-    // 必須 peer: 既選択なら range 検査。未選択なら pickVersion で解決を試み、
-    // 満たせなければ E017。
-    for (peer_checks.items) |want| {
+            // 未対応の依存指定（file:/git+/workspace: 等）を黙殺せず診断する。
+            try rejectUnsupportedRanges(diagnostics, picked);
+
+            const tarball_owned = try acquireTarball(gpa, session, cache_store, picked);
+            defer freeAcquiredTarball(gpa, picked, tarball_owned);
+            const tarball = tarball_owned.bytes;
+            const sha256 = try fetch.sha256Hex(a, tarball);
+            const sha256_field = try std.fmt.allocPrint(a, "sha256:{s}", .{sha256});
+
+            const peers_out = try a.alloc(lock_model.PeerDependency, picked.peer_dependencies.len);
+            for (picked.peer_dependencies, 0..) |p, i| {
+                peers_out[i] = .{
+                    .name = try a.dupe(u8, p.name),
+                    .requirement = try a.dupe(u8, p.range_text),
+                };
+            }
+            std.mem.sort(lock_model.PeerDependency, peers_out, {}, struct {
+                fn lt(_: void, x: lock_model.PeerDependency, y: lock_model.PeerDependency) bool {
+                    return std.mem.order(u8, x.name, y.name) == .lt;
+                }
+            }.lt);
+
+            const key = try instanceKey(a, want.name, picked.version, want.context);
+            try instances.append(a, .{
+                .key = key,
+                .name = try a.dupe(u8, want.name),
+                .version = try a.dupe(u8, picked.version),
+                .context = try a.dupe(u8, want.context),
+                .sha256 = sha256_field,
+                .url = try a.dupe(u8, picked.tarball_url),
+                .integrity = try a.dupe(u8, picked.integrity),
+                .peer_dependencies = peers_out,
+            });
+            try chosen.put(a, map_key, .{ .version = picked.version, .meta = picked });
+
+            // 通常依存
+            for (picked.dependencies) |dep| {
+                const range = try parseRangeOrDiagnose(a, diagnostics, dep.name, dep.range_text);
+                try queue.append(a, .{
+                    .name = try a.dupe(u8, dep.name),
+                    .range = range,
+                    .range_text = try a.dupe(u8, dep.range_text),
+                    .context = try a.dupe(u8, want.context),
+                    .optional = false,
+                    .is_peer = false,
+                });
+            }
+            for (picked.optional_dependencies) |dep| {
+                const range = parseRangeOrDiagnose(a, diagnostics, dep.name, dep.range_text) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.Canceled => return error.Canceled,
+                    else => {
+                        // optional の不正 range は warning として skip（error と成功を矛盾させない）。
+                        try diagnostics.addFmt(diag.E025_INVALID_RANGE, .warning, dep.name, .{}, "invalid optional npm range \"{s}\" for \"{s}\"", .{ dep.range_text, dep.name });
+                        continue;
+                    },
+                };
+                try queue.append(a, .{
+                    .name = try a.dupe(u8, dep.name),
+                    .range = range,
+                    .range_text = try a.dupe(u8, dep.range_text),
+                    .context = try a.dupe(u8, want.context),
+                    .optional = true,
+                    .is_peer = false,
+                });
+            }
+            // peer は通常依存の閉包確定後に検査する（取得キューへは載せない）。
+            for (picked.peer_dependencies) |dep| {
+                const range = try parseRangeOrDiagnose(a, diagnostics, dep.name, dep.range_text);
+                try peer_checks.append(a, .{
+                    .name = try a.dupe(u8, dep.name),
+                    .range = range,
+                    .range_text = try a.dupe(u8, dep.range_text),
+                    .context = try a.dupe(u8, want.context),
+                    .optional = isOptionalPeer(picked.optional_peers, dep.name),
+                    .is_peer = true,
+                });
+            }
+            continue;
+        }
+
+        // peer_checks: optional 未選択は取得しない。必須は queue へ戻して閉包を解決する。
+        const want = peer_checks.items[pi];
+        pi += 1;
         const map_key = try contextKey(a, want.name, want.context);
         if (chosen.get(map_key)) |existing| {
             const ver = semver.Version.parse(existing.version) catch {
@@ -369,47 +381,15 @@ pub fn resolve(
             return error.ResolveFailed;
         }
         if (want.optional) continue;
-        const pkg = catalog.get(want.name) orelse {
-            try diagnostics.addFmt(
-                diag.E017_NPM_PEER_CONFLICT,
-                .err,
-                want.name,
-                .{},
-                "npm peer \"{s}\"@{s} is not satisfied in context \"{s}\"",
-                .{ want.name, want.range_text, want.context },
-            );
-            return error.ResolveFailed;
-        };
-        const picked = pickVersion(pkg, want.range) orelse {
-            try diagnostics.addFmt(
-                diag.E017_NPM_PEER_CONFLICT,
-                .err,
-                want.name,
-                .{},
-                "npm peer \"{s}\"@{s} is not satisfied in context \"{s}\"",
-                .{ want.name, want.range_text, want.context },
-            );
-            return error.ResolveFailed;
-        };
-        try rejectUnsupportedRanges(diagnostics, picked);
-        const tarball_owned = try acquireTarball(gpa, session, cache_store, picked);
-        defer freeAcquiredTarball(gpa, picked, tarball_owned);
-        const tarball = tarball_owned.bytes;
-        const sha256 = try fetch.sha256Hex(a, tarball);
-        const sha256_field = try std.fmt.allocPrint(a, "sha256:{s}", .{sha256});
-        const peers_out = try a.alloc(lock_model.PeerDependency, 0);
-        const key = try instanceKey(a, want.name, picked.version, want.context);
-        try instances.append(a, .{
-            .key = key,
-            .name = try a.dupe(u8, want.name),
-            .version = try a.dupe(u8, picked.version),
-            .context = try a.dupe(u8, want.context),
-            .sha256 = sha256_field,
-            .url = try a.dupe(u8, picked.tarball_url),
-            .integrity = try a.dupe(u8, picked.integrity),
-            .peer_dependencies = peers_out,
+        // 必須 peer を通常 queue に載せる（依存・peer 記録も queue 経路で行う）。
+        try queue.append(a, .{
+            .name = want.name,
+            .range = want.range,
+            .range_text = want.range_text,
+            .context = want.context,
+            .optional = false,
+            .is_peer = true,
         });
-        try chosen.put(a, map_key, .{ .version = picked.version, .meta = picked });
     }
 
     std.mem.sort(ResolvedInstance, instances.items, {}, struct {
@@ -550,6 +530,29 @@ fn pickVersion(pkg: PackageMeta, range: semver.Range) ?VersionMeta {
         }
     }
     return best;
+}
+
+/// prefer_locked 時は既存 lock の name+context で range を満たす版を優先する。
+fn pickVersionPreferLocked(
+    pkg: PackageMeta,
+    range: semver.Range,
+    name: []const u8,
+    context: []const u8,
+    prefs: ResolvePrefs,
+) ?VersionMeta {
+    if (prefs.prefer_locked) {
+        for (prefs.locked_instances) |inst| {
+            if (!std.mem.eql(u8, inst.name, name)) continue;
+            const inst_ctx = effectiveContext(inst.context orelse "", name);
+            if (!std.mem.eql(u8, inst_ctx, context)) continue;
+            const ver = semver.Version.parse(inst.version) catch continue;
+            if (!range.satisfies(ver)) continue;
+            for (pkg.versions) |meta| {
+                if (std.mem.eql(u8, meta.version, inst.version)) return meta;
+            }
+        }
+    }
+    return pickVersion(pkg, range);
 }
 
 fn parseRangeOrDiagnose(a: Allocator, diagnostics: *diag.List, name: []const u8, text: []const u8) Error!semver.Range {
@@ -716,6 +719,19 @@ pub fn fetchMissingPackuments(
     registry_base: []const u8,
     diagnostics: *diag.List,
 ) Error!void {
+    try fetchMissingPackumentsMode(gpa, session, catalog, names, registry_base, diagnostics, false);
+}
+
+/// soft=true のとき取得失敗は warning で skip（optional / optional peer 用）。
+fn fetchMissingPackumentsMode(
+    gpa: Allocator,
+    session: *fetch.Session,
+    catalog: *Catalog,
+    names: []const []const u8,
+    registry_base: []const u8,
+    diagnostics: *diag.List,
+    soft: bool,
+) Error!void {
     for (names) |name| {
         if (catalog.get(name) != null) continue;
         const encoded = try encodeNpmName(gpa, name);
@@ -724,6 +740,17 @@ pub fn fetchMissingPackuments(
         const url = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ base, encoded });
         defer gpa.free(url);
         const bytes = fetch.fetchBytes(session, url, .package) catch |err| {
+            if (soft) {
+                try diagnostics.addFmt(
+                    diag.E013_MISSING_PACKAGE,
+                    .warning,
+                    name,
+                    .{},
+                    "optional npm packument \"{s}\" unavailable from \"{s}\": {s}",
+                    .{ name, url, @errorName(err) },
+                );
+                continue;
+            }
             try diagnostics.addFmt(
                 diag.E013_MISSING_PACKAGE,
                 .err,
@@ -740,6 +767,8 @@ pub fn fetchMissingPackuments(
 }
 
 /// roots の closure を満たすまで packument を繰り返し取得する。
+/// resolve と同じ `pickVersion(range)` で選んだ version の依存だけを辿る。
+/// optional / peer の packument 欠落は soft（warning）で続行する。
 pub fn fillCatalogForRoots(
     gpa: Allocator,
     session: *fetch.Session,
@@ -748,29 +777,57 @@ pub fn fillCatalogForRoots(
     registry_base: []const u8,
     diagnostics: *diag.List,
 ) Error!void {
-    var pending: std.ArrayList([]const u8) = .empty;
+    const Pending = struct {
+        name: []const u8,
+        range_text: []const u8,
+        optional: bool,
+    };
+    var pending: std.ArrayList(Pending) = .empty;
     defer pending.deinit(gpa);
     for (roots) |root| {
-        try pending.append(gpa, root.name);
-        for (root.peer_dependencies) |p| try pending.append(gpa, p.name);
+        try pending.append(gpa, .{ .name = root.name, .range_text = root.range_text, .optional = false });
+        for (root.peer_dependencies) |p| {
+            const soft = isOptionalPeer(root.optional_peers, p.name);
+            try pending.append(gpa, .{ .name = p.name, .range_text = p.range_text, .optional = soft });
+        }
     }
+    // key = name@version（選択 version 単位で 1 回だけ辿る）
     var seen: std.StringHashMapUnmanaged(void) = .empty;
-    defer seen.deinit(gpa);
+    defer {
+        var kit = seen.keyIterator();
+        while (kit.next()) |k| gpa.free(k.*);
+        seen.deinit(gpa);
+    }
     var i: usize = 0;
     while (i < pending.items.len) : (i += 1) {
-        const name = pending.items[i];
-        if (seen.contains(name)) continue;
-        try seen.put(gpa, name, {});
-        if (catalog.get(name) == null) {
-            try fetchMissingPackuments(gpa, session, catalog, &.{name}, registry_base, diagnostics);
+        const item = pending.items[i];
+        if (catalog.get(item.name) == null) {
+            try fetchMissingPackumentsMode(gpa, session, catalog, &.{item.name}, registry_base, diagnostics, item.optional);
         }
-        const pkg = catalog.get(name) orelse continue;
-        // 解決候補として最高 version の依存だけを辿る（全 version 展開は過剰取得）。
-        // optional / optional peer の packument 欠落は致命にしない。
-        const picked = pickHighestVersion(pkg) orelse continue;
-        for (picked.dependencies) |d| try pending.append(gpa, d.name);
-        for (picked.optional_dependencies) |d| try pending.append(gpa, d.name);
-        for (picked.peer_dependencies) |d| try pending.append(gpa, d.name);
+        const pkg = catalog.get(item.name) orelse continue;
+        var range = semver.Range.parse(gpa, item.range_text) catch {
+            // 不正 range は resolve 側で診断する。catalog 構築では skip。
+            continue;
+        };
+        defer range.deinit(gpa);
+        const picked = pickVersion(pkg, range) orelse continue;
+        const seen_key = try std.fmt.allocPrint(gpa, "{s}@{s}", .{ item.name, picked.version });
+        const gop = try seen.getOrPut(gpa, seen_key);
+        if (gop.found_existing) {
+            gpa.free(seen_key);
+            continue;
+        }
+        gop.key_ptr.* = seen_key;
+        for (picked.dependencies) |d| {
+            try pending.append(gpa, .{ .name = d.name, .range_text = d.range_text, .optional = false });
+        }
+        for (picked.optional_dependencies) |d| {
+            try pending.append(gpa, .{ .name = d.name, .range_text = d.range_text, .optional = true });
+        }
+        for (picked.peer_dependencies) |d| {
+            const soft = isOptionalPeer(picked.optional_peers, d.name);
+            try pending.append(gpa, .{ .name = d.name, .range_text = d.range_text, .optional = soft });
+        }
     }
 }
 
@@ -991,7 +1048,7 @@ test "npm: 同一 helper を文脈ごとに別 version で選ぶ" {
         .{ .alias = "helper-b", .name = "helper", .range = range2, .range_text = "^2.0.0", .context = "caller-b" },
     };
 
-    var result = try resolve(gpa, &session, &cat, &roots, null, &diagnostics);
+    var result = try resolve(gpa, &session, &cat, &roots, null, &diagnostics, .{});
     defer result.deinit();
     try testing.expectEqual(@as(usize, 2), result.instances.len);
     try testing.expectEqualStrings("helper@1.0.0#caller-a", result.instances[0].key);
@@ -1046,7 +1103,7 @@ test "npm: 必須 peer 衝突は E017、optional peer 欠落は成功" {
             .{ .alias = "plugin", .name = "plugin", .range = range_plugin, .range_text = "1.0.0", .context = "app" },
             .{ .alias = "host", .name = "host", .range = range_host, .range_text = "1.0.0", .context = "app" },
         };
-        try testing.expectError(error.ResolveFailed, resolve(gpa, &session, &cat, &roots, null, &d));
+        try testing.expectError(error.ResolveFailed, resolve(gpa, &session, &cat, &roots, null, &d, .{}));
         try testing.expect(d.find(diag.E017_NPM_PEER_CONFLICT) != null);
     }
 
@@ -1068,10 +1125,122 @@ test "npm: 必須 peer 衝突は E017、optional peer 欠落は成功" {
         const roots = [_]RootRequest{
             .{ .alias = "opt", .name = "opt-plugin", .range = range_plugin, .range_text = "1.0.0" },
         };
-        var result = try resolve(gpa, &session, &cat, &roots, null, &d);
+        var result = try resolve(gpa, &session, &cat, &roots, null, &d, .{});
         defer result.deinit();
         try testing.expectEqual(@as(usize, 1), result.instances.len);
     }
+}
+
+test "npm: 必須 peer の推移的依存も閉包に含める" {
+    const gpa = testing.allocator;
+    var session = fetch.Session.init(gpa, testing.io, .{});
+    defer session.deinit();
+    var diagnostics = diag.List.init(gpa);
+    defer diagnostics.deinit();
+
+    const body = try emptyTarball(gpa);
+    defer gpa.free(body);
+    const integ = try integritySha512(gpa, body);
+    defer gpa.free(integ);
+
+    var cat: Catalog = .{};
+    defer cat.deinit(gpa);
+
+    const plugin_versions = try gpa.alloc(VersionMeta, 1);
+    defer gpa.free(plugin_versions);
+    plugin_versions[0] = .{
+        .version = "1.0.0",
+        .peer_dependencies = &[_]NamedRange{.{ .name = "host", .range_text = "^1.0.0" }},
+        .tarball_url = "fixture://plugin-peer-1.0.0.tgz",
+        .integrity = integ,
+        .tarball_bytes = body,
+    };
+    try cat.put(gpa, .{ .name = "plugin-peer", .versions = plugin_versions });
+
+    const host_versions = try gpa.alloc(VersionMeta, 1);
+    defer gpa.free(host_versions);
+    host_versions[0] = .{
+        .version = "1.0.0",
+        .dependencies = &[_]NamedRange{.{ .name = "host-dep", .range_text = "1.0.0" }},
+        .tarball_url = "fixture://host-peer-1.0.0.tgz",
+        .integrity = integ,
+        .tarball_bytes = body,
+    };
+    try cat.put(gpa, .{ .name = "host", .versions = host_versions });
+
+    const dep_versions = try gpa.alloc(VersionMeta, 1);
+    defer gpa.free(dep_versions);
+    dep_versions[0] = .{
+        .version = "1.0.0",
+        .tarball_url = "fixture://host-dep-1.0.0.tgz",
+        .integrity = integ,
+        .tarball_bytes = body,
+    };
+    try cat.put(gpa, .{ .name = "host-dep", .versions = dep_versions });
+
+    var range_plugin = try semver.Range.parse(gpa, "1.0.0");
+    defer range_plugin.deinit(gpa);
+    const roots = [_]RootRequest{
+        .{ .alias = "plugin", .name = "plugin-peer", .range = range_plugin, .range_text = "1.0.0" },
+    };
+    var result = try resolve(gpa, &session, &cat, &roots, null, &diagnostics, .{});
+    defer result.deinit();
+    try testing.expectEqual(@as(usize, 3), result.instances.len);
+    var saw_host = false;
+    var saw_dep = false;
+    for (result.instances) |inst| {
+        if (std.mem.eql(u8, inst.name, "host")) saw_host = true;
+        if (std.mem.eql(u8, inst.name, "host-dep")) saw_dep = true;
+    }
+    try testing.expect(saw_host);
+    try testing.expect(saw_dep);
+}
+
+test "npm: prefer_locked は既存 lock version を優先する" {
+    const gpa = testing.allocator;
+    var session = fetch.Session.init(gpa, testing.io, .{});
+    defer session.deinit();
+    var diagnostics = diag.List.init(gpa);
+    defer diagnostics.deinit();
+
+    const body = try emptyTarball(gpa);
+    defer gpa.free(body);
+    const integ = try integritySha512(gpa, body);
+    defer gpa.free(integ);
+
+    var cat: Catalog = .{};
+    defer cat.deinit(gpa);
+    const versions = try gpa.alloc(VersionMeta, 2);
+    defer gpa.free(versions);
+    versions[0] = .{
+        .version = "1.0.0",
+        .tarball_url = "fixture://locked-1.0.0.tgz",
+        .integrity = integ,
+        .tarball_bytes = body,
+    };
+    versions[1] = .{
+        .version = "1.5.0",
+        .tarball_url = "fixture://locked-1.5.0.tgz",
+        .integrity = integ,
+        .tarball_bytes = body,
+    };
+    try cat.put(gpa, .{ .name = "locked-pkg", .versions = versions });
+
+    var range = try semver.Range.parse(gpa, "^1.0.0");
+    defer range.deinit(gpa);
+    const roots = [_]RootRequest{
+        .{ .alias = "locked-pkg", .name = "locked-pkg", .range = range, .range_text = "^1.0.0" },
+    };
+    const locked = [_]lock_model.NpmInstance{
+        .{ .key = "locked-pkg@1.0.0", .name = "locked-pkg", .version = "1.0.0" },
+    };
+    var result = try resolve(gpa, &session, &cat, &roots, null, &diagnostics, .{
+        .locked_instances = &locked,
+        .prefer_locked = true,
+    });
+    defer result.deinit();
+    try testing.expectEqual(@as(usize, 1), result.instances.len);
+    try testing.expectEqualStrings("1.0.0", result.instances[0].version);
 }
 
 test "npm: integrity 不一致は失敗し script 相当の副作用を起こさない" {
@@ -1103,7 +1272,7 @@ test "npm: integrity 不一致は失敗し script 相当の副作用を起こさ
     const roots = [_]RootRequest{
         .{ .alias = "bad", .name = "bad", .range = range, .range_text = "1.0.0" },
     };
-    try testing.expectError(error.HashMismatch, resolve(gpa, &session, &cat, &roots, null, &diagnostics));
+    try testing.expectError(error.HashMismatch, resolve(gpa, &session, &cat, &roots, null, &diagnostics, .{}));
 }
 
 test "npm: 未対応 protocol 依存を診断する" {
@@ -1131,7 +1300,7 @@ test "npm: 未対応 protocol 依存を診断する" {
     var range = try semver.Range.parse(gpa, "1.0.0");
     defer range.deinit(gpa);
     const roots = [_]RootRequest{.{ .alias = "x", .name = "x", .range = range, .range_text = "1.0.0" }};
-    try testing.expectError(error.ResolveFailed, resolve(gpa, &session, &cat, &roots, null, &diagnostics));
+    try testing.expectError(error.ResolveFailed, resolve(gpa, &session, &cat, &roots, null, &diagnostics, .{}));
     try testing.expect(diagnostics.find(diag.E029_INVALID_VALUE) != null);
 }
 
@@ -1172,7 +1341,7 @@ test "npm: cache があれば offline で再取得できる" {
         defer session.deinit();
         var d = diag.List.init(gpa);
         defer d.deinit();
-        var result = try resolve(gpa, &session, &cat, &roots, &store, &d);
+        var result = try resolve(gpa, &session, &cat, &roots, &store, &d, .{});
         defer result.deinit();
         try testing.expectEqual(@as(usize, 1), result.instances.len);
     }
@@ -1184,7 +1353,7 @@ test "npm: cache があれば offline で再取得できる" {
         defer session.deinit();
         var d = diag.List.init(gpa);
         defer d.deinit();
-        var result = try resolve(gpa, &session, &cat, &roots, &store, &d);
+        var result = try resolve(gpa, &session, &cat, &roots, &store, &d, .{});
         defer result.deinit();
         try testing.expectEqual(@as(usize, 1), result.instances.len);
         try testing.expect(std.mem.startsWith(u8, result.instances[0].sha256, "sha256:"));
