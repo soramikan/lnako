@@ -206,13 +206,39 @@ export async function submitNotarization(zip, auth, log, { execute = run, captur
   return submission;
 }
 
+export const onlineNotarizationArgs = ["--verify", "--strict", "--verbose=4", "-R=notarized", "--check-notarization"];
+
 export function hasOnlineNotarizationTicket(filePath) {
   const result = spawnSync(
     "/usr/bin/codesign",
-    ["--verify", "--strict", "--verbose=4", "-R=notarized", "--check-notarization", filePath],
+    [...onlineNotarizationArgs, filePath],
     { encoding: "utf8" },
   );
   return !result.error && result.status === 0;
+}
+
+/** Apple's online ticket lookup can lag Accepted by minutes; retry before failing the gate. */
+export const ticketCheckBackoffMs = Object.freeze([0, 2_000, 5_000, 10_000, 15_000, 30_000, 30_000, 30_000, 60_000, 60_000]);
+
+export async function verifyOnlineNotarizationTicket(filePath, {
+  execute = run,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  backoffMs = ticketCheckBackoffMs,
+} = {}) {
+  let lastError;
+  for (let attempt = 0; attempt < backoffMs.length; attempt++) {
+    if (backoffMs[attempt] > 0) await sleep(backoffMs[attempt]);
+    try {
+      execute("/usr/bin/codesign", [...onlineNotarizationArgs, filePath], { exposeOutput: true });
+      if (attempt > 0) {
+        console.log(`macOS notarization ticket-check: available after ${attempt + 1} attempt(s) for ${basename(filePath)}`);
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError ?? new Error(`Online notarization ticket check failed: ${filePath}`);
 }
 
 export async function stageUnnotarizedMacho(tree, paths, stagingRoot, { checkTicket = hasOnlineNotarizationTicket } = {}) {
@@ -261,9 +287,10 @@ async function notarize(archive) {
     }
     // spctl's execute assessment is for apps, not standalone CLI/dylib code.
     // Require Apple's online notarization ticket for every shipped Mach-O.
+    // Fresh Accepted submissions often lag codesign --check-notarization; retry with backoff.
     const ticketStarted = performance.now();
     for (const path of paths) {
-      run("/usr/bin/codesign", ["--verify", "--strict", "--verbose=4", "-R=notarized", "--check-notarization", join(tree, path)], { exposeOutput: true });
+      await verifyOnlineNotarizationTicket(join(tree, path));
     }
     await logPhase("ticket-check", name, ticketStarted);
     await logPhase("total", name, totalStarted);
