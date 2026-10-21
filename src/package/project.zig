@@ -25,12 +25,14 @@ const materialize = @import("materialize.zig");
 const path_digest = @import("path_digest.zig");
 const project_identity = @import("project_identity.zig");
 const project_load = @import("project_load.zig");
+const project_npm = @import("project_npm.zig");
 const provider = @import("provider.zig");
 const registry = @import("registry.zig");
 const resolver = @import("resolver.zig");
 const semver = @import("semver.zig");
 const sync_mod = @import("sync.zig");
 const resolve_provider = @import("resolve_provider.zig");
+const npm_mod = @import("npm.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -927,11 +929,8 @@ fn collectLocals(ctx: *ResolveContext, root: *const manifest_mod.Manifest, activ
         if (local.manifest) |*dep_manifest| {
             local.package_name = try gpa.dupe(u8, dep_manifest.package.name);
             local.version_text = try std.fmt.allocPrint(gpa, "{f}", .{dep_manifest.package.version});
-            // 取得した依存 manifest の npm 宣言も root と同じく lock
-            // 不可能なため拒否する（metaFromManifest は npm 辺を黙って
-            // 落とすため、ここで明示失敗させないと必要な推移的依存が
-            // lock/環境から欠落する）。
-            try rejectNpmDeps(dep_manifest, ctx.diagnostics);
+            // 取得した依存 manifest の npm 宣言は後段の npm 解決で収集する。
+            // （#53 以前はここで拒否していた。）
 
             // 依存側 manifest の source 依存を default feature 展開で評価し
             // closure に追加する（依存側に features 指定口はないため default
@@ -1160,9 +1159,13 @@ pub const PrepareOptions = struct {
     /// `run`/`build --compat-js` の compat 実行。ESM 実装の許容と
     /// lock 鮮度入力の target に反映する。
     compat_js: bool = false,
-    /// `build -O` の最適化レベル（`"O0"`〜`"O3"`）。実装選択と lock
+    /// `build -O` の最適化レベル（`O0`〜`O3`）。実装選択と lock
     /// 鮮度入力の target に反映する。null は未指定（profile 宣言を使う）。
     optimize: ?[]const u8 = null,
+    /// テスト用 npm catalog。設定時は registry 取得をせずこれを使う。
+    npm_catalog: ?*const npm_mod.Catalog = null,
+    /// npm registry 基底 URL。null なら `npm.default_registry_url`。
+    npm_registry_url: ?[]const u8 = null,
 };
 
 pub const LockOutcome = struct {
@@ -1189,18 +1192,8 @@ pub const LockOutcome = struct {
     }
 };
 
-/// `nako.lock` のバイト列を読む。無ければ null。
-/// manifest の npm 依存宣言を拒否する。npm 解決器は未実装のため、lock
-/// へ黙って落とすのではなく診断で明示して失敗にする。
-fn rejectNpmDeps(manifest: *const manifest_mod.Manifest, diagnostics: *diag.List) Error!void {
-    for ([_]*const manifest_mod.DependencyGroup{ &manifest.dependencies, &manifest.dev_dependencies }) |group| {
-        var it = group.npm.iterator();
-        while (it.next()) |entry| {
-            try diagnostics.addFmt(diag.E029_INVALID_VALUE, .err, entry.key_ptr.*, .{}, "npm dependency \"{s}\" cannot be locked (npm dependencies are not supported)", .{entry.key_ptr.*});
-            return error.UnsupportedDependency;
-        }
-    }
-}
+// npm root 収集・resolve・carrier 配線は `project_npm.zig`。
+// ensureLock 内から project_npm.* を呼ぶ。
 
 /// 既存 lock の鮮度を確認し、stale/missing なら全 profile を解決して
 /// `nako.lock` を原子的に書き換える。`opts.locked` が真なら stale 検出を
@@ -1226,8 +1219,7 @@ pub fn ensureLock(
     const record = recordOf(profiles, profile) orelse return error.UnknownProfile;
     var expanded = try expandRootFeatures(a, &project.manifest, opts.features, !opts.no_default_features, diagnostics);
     defer expanded.deinit();
-    // npm 依存は lock に表現できないため解決開始前に拒否する。
-    try rejectNpmDeps(&project.manifest, diagnostics);
+    // npm 依存は #53 で lock 可能。reject は撤去済み。
     var input = lock_model.Input{
         .manifest_sha256 = try a.dupe(u8, project.manifest_sha256),
         .profile = try a.dupe(u8, profile),
@@ -1324,6 +1316,41 @@ pub fn ensureLock(
         return err;
     };
 
+    // root feature ゲート（npm 収集と registry 解決で共有）
+    var gated_root = try gatedDepNames(a, &project.manifest);
+    defer gated_root.deinit();
+
+    // npm 補助依存を解決し、後段で lock へ npmInstances を載せる。
+    // cache は npm root があるときだけ開く。
+    var npm_resolved: ?npm_mod.ResolveResult = null;
+    {
+        const probe_roots = project_npm.collectNpmRootsImpl(gpa, project, &ctx, &gated_root, &expanded.dependency_aliases) catch |err| {
+            if (err == error.ResolveFailed) {
+                try diagnostics.addFmt(diag.E018_INVALID_NPM_CONTEXT, .err, "nako.toml", .{}, "npm dependency has an empty context", .{});
+            }
+            session.reportDiagnostics(diagnostics) catch {};
+            return err;
+        };
+        defer npm_mod.freeRootRequests(gpa, probe_roots);
+        if (probe_roots.len > 0) {
+            if (ctx.cache_store == null) {
+                const root = if (opts.cache_root) |r|
+                    try a.dupe(u8, r)
+                else if (try cache.defaultRoot(a)) |r|
+                    r
+                else
+                    try std.fs.path.join(a, &.{ project.root, ".nako", "cache" });
+                ctx.cache_store = cache.Store.open(a, io, root) catch |err| return mapFs(err);
+                ctx.cache_guard = ctx.cache_store.?.lockWait() catch |err| return mapFs(err);
+            }
+            npm_resolved = project_npm.resolveNpmForLock(gpa, &session, if (ctx.cache_store) |*s| s else null, project, &ctx, opts, diagnostics, &gated_root, &expanded.dependency_aliases) catch |err| {
+                session.reportDiagnostics(diagnostics) catch {};
+                return err;
+            };
+        }
+    }
+    defer if (npm_resolved) |*r| r.deinit();
+
     // mutable path 依存の内容 digest を lock 入力へ記録する（解決に
     // 参加した宣言のみが ctx.mutable_deps に残る）。build が path 昇順
     // に正規化するため、ここでは宣言順のまま渡す。
@@ -1381,8 +1408,7 @@ pub fn ensureLock(
     }
 
     // --- profile ごとに解決 -------------------------------------------------
-    var gated_root = try gatedDepNames(a, &project.manifest);
-    defer gated_root.deinit();
+    // gated_root は ensureLock 前半で確保済み
 
     // root の有効な pkg 依存があれば registry が必要。feature-gated で
     // 未 activated の宣言は解決対象外なので registry を要求しない。
@@ -1535,6 +1561,11 @@ pub fn ensureLock(
         };
     errdefer built.deinit();
 
+    if (npm_resolved) |*r| {
+        const lock_inst = try r.toLockInstances(a);
+        try project_npm.attachRootNpmInstances(&built, project, lock_inst);
+    }
+
     var report = try lock_mod.diff(a, if (existing) |*l| l else null, &built, input.profile, opts.update_targets);
     errdefer report.deinit();
 
@@ -1663,4 +1694,5 @@ fn writeAtomic(io: std.Io, project_dir: std.Io.Dir, bytes: []const u8) Error!voi
 
 test {
     _ = @import("project_test.zig");
+    _ = @import("npm.zig");
 }

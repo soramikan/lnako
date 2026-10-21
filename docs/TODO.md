@@ -112,11 +112,12 @@
   - **CLI・実行前準備（コード完了・Issue OPEN）**: `init`/`add`/`remove`/`lock`/`update`/`tree`/`why`/`check`/`sync`/`package build|verify|cache` と `run`/`test`/`build` 前の自動準備、`--locked`/`--offline`/`--no-sync`（#49、PR #176）。受け入れcheckbox未更新のため Issue は OPEN のまま。
   - **package import（lnako 実装済・ゲート未了）**: `パッケージ:`/`pkg:` alias・subpath、export 境界、environment scope、Interpreter 経路（#50、PR #196）。未達は cnako 共通fixture（#61 連動）、3 OS での LLVM AOT O0〜O3 実測、共通 E2E。
   - **#52 命令 metadata 静的検査（部分実装・Issue OPEN）**: `command_inspect` + `lnako check` でロードなし検査・衝突/不一致 E029・未検査 `partial`・`--strict-sharing` E033 まで（PR #211）。**残ゲート**: 専用推移依存・選択 feature 影響の表示、parser/semantic への declared command 接続、JS/native 実登録照合、名前空間 check。残ゲート消化後に #52 close。
-  - **初回 P0 残主鎖**: #52 残ゲート（上記）と並行で npm 取得（#53）→ QuickJS ESM 解決（#54）→ AOT+QuickJS（#55）→ 依存同梱（#56）→ publish（#57）→ 3 OS E2E/文書（#58）。cnako 上流接続・公開版（#61）は import ゲート兼用。
+  - **#53 npm 取得（部分実装・Issue OPEN）**: `src/package/npm.zig` で fixture catalog / registry packument 解決、integrity（`sha512-`）、cache 格納、peer（E017）・context（E018）、lock `npmInstances` 配線。`rejectNpmDeps` 撤去。QuickJS ESM 実行・Node lifecycle script は非対象（#54）。残ゲート: 実 registry E2E、package.json 本格パース、env materialize での npm 実体化。
+  - **初回 P0 残主鎖**: #52 残ゲートと並行で #53 残 → QuickJS ESM（#54）→ AOT+QuickJS（#55）→ 依存同梱（#56）→ publish（#57）→ 3 OS E2E/文書（#58）。cnako 上流接続・公開版（#61）は import ゲート兼用。
   - **配布拡張 P1**: native source build（#59）、AOT 静的 plugin 同梱（#11）、workspace（#60）。
   - **他処理系/後続**: wnako（#62）、cnako Node 拡充（#63）、cross build（#64）、WASM PoC（#65）、cnako Node 完結依存管理（#70）、階層名前空間「の」（#182）。
   - **レジストリ**（別リポ [nako-registry](https://github.com/soramikan/nako-registry)）: #1–#6 すべて OPEN。中央サーバー切替は nako-registry#5 が gate。
-  - **明示拒否中**: npm 依存は lock 不可（`rejectNpmDeps`）。`publish` CLI 未実装（環境 generation の “publish” 語は内部用）。
+  - **明示拒否中**: `publish` CLI 未実装（環境 generation の “publish” 語は内部用）。npm 依存の lock 拒否は #53 で撤去済み。
 - **低レイヤーAPI・ストリームI/O**：
   - カタログ63命令をすべて実装済み（#27–#38, #36 等）。正本は [`docs/low-level-api/catalog.json`](low-level-api/catalog.json)、現状の一覧は [`docs/low-level-api/IMPLEMENTATION_STATUS.md`](low-level-api/IMPLEMENTATION_STATUS.md)。
   - **実装済み命令（63/63）**: カタログ掲載の全命令を Interpreter / AOT で実装。位置系4命令（`ファイル位置変更` / `ファイル位置取得` / `ファイル位置指定読込` / `ファイル位置指定書込`）は [#27](https://github.com/soramikan/lnako/issues/27) で完了。

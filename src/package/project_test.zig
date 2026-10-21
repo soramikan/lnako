@@ -354,11 +354,13 @@ test "manifest変更で--lockedは失敗する" {
     try testing.expectError(error.LockedNotSatisfied, project.verifyLocked(testing.allocator, io, &loaded, &.{}, &diagnostics));
 }
 
-test "npm依存はlock化できないためUnsupportedDependencyで拒否する" {
+test "npm依存はcatalogからlockへnpmInstancesを載せる" {
     const io = testing.io;
+    const gpa = testing.allocator;
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "app");
+    try temporary.dir.createDirPath(io, "cache");
     try temporary.dir.writeFile(io, .{
         .sub_path = "app/nako.toml",
         .data =
@@ -372,20 +374,49 @@ test "npm依存はlock化できないためUnsupportedDependencyで拒否する"
         \\
         ,
     });
-    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
-    defer testing.allocator.free(app_root);
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", gpa);
+    defer gpa.free(app_root);
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", gpa);
+    defer gpa.free(cache_root);
+
+    const npm_mod = @import("npm.zig");
+    const body = try gpa.dupe(u8, "escape-tarball");
+    defer gpa.free(body);
+    const integ = try npm_mod.integritySha512(gpa, body);
+    defer gpa.free(integ);
+    var cat: npm_mod.Catalog = .{};
+    defer cat.deinit(gpa);
+    const versions = try gpa.alloc(npm_mod.VersionMeta, 1);
+    defer gpa.free(versions);
+    versions[0] = .{
+        .version = "1.2.3",
+        .tarball_url = "fixture://escape-1.2.3.tgz",
+        .integrity = integ,
+        .tarball_bytes = body,
+    };
+    try cat.put(gpa, .{ .name = "escape", .versions = versions });
 
     var diagnostics = newDiagnostics();
     defer diagnostics.deinit();
-    var loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    var loaded = try project.load(gpa, io, app_root, &diagnostics);
     defer loaded.deinit();
 
-    // npm 依存を黙って lock から落とさず、明示的な診断付きで失敗する。
-    try testing.expectError(error.UnsupportedDependency, project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics));
-    const item = diagnostics.find(diag.E029_INVALID_VALUE) orelse return error.TestExpectedEqual;
-    try testing.expect(std.mem.indexOf(u8, item.message, "escape") != null);
-    // 不完全な lock は書かれない。
-    try testing.expectError(error.FileNotFound, temporary.dir.access(io, "app/nako.lock", .{}));
+    var outcome = try project.ensureLock(gpa, io, &loaded, &.{
+        .cache_root = cache_root,
+        .npm_catalog = &cat,
+    }, &diagnostics);
+    defer outcome.deinit();
+    try testing.expect(outcome.wrote);
+    try testing.expect(outcome.lock.packages.len >= 1);
+    var found = false;
+    for (outcome.lock.packages) |pkg| {
+        if (pkg.npm_instances.len > 0) {
+            found = true;
+            try testing.expectEqualStrings("escape@1.2.3", pkg.npm_instances[0].key);
+            try testing.expect(std.mem.startsWith(u8, pkg.npm_instances[0].sha256.?, "sha256:"));
+        }
+    }
+    try testing.expect(found);
 }
 
 test "path依存の循環はDependencyCycleとして診断する" {
@@ -1024,14 +1055,14 @@ test "ensureLockはlockのgit sourceを再利用しcommit変更は別packageと�
     try testing.expect(found_git);
 }
 
-test "推移的manifestのnpm宣言もlock化を拒否する" {
-    // app → path:lib で、lib が npm 依存を宣言する。metaFromManifest は
-    // npm 辺を黙って落とすため、orchestration 側で明示失敗させないと
-    // 必要な推移的依存が lock/環境から欠落する。
+test "推移的manifestのnpm宣言もlockのnpmInstancesへ載る" {
+    // app → path:lib で、lib が npm 依存を宣言する。
     const io = testing.io;
+    const gpa = testing.allocator;
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.createDirPath(io, "app/lib/src");
+    try temporary.dir.createDirPath(io, "cache");
     try temporary.dir.writeFile(io, .{
         .sub_path = "app/lib/nako.toml",
         .data =
@@ -1063,19 +1094,47 @@ test "推移的manifestのnpm宣言もlock化を拒否する" {
         \\
         ,
     });
-    const app_root = try temporary.dir.realPathFileAlloc(io, "app", testing.allocator);
-    defer testing.allocator.free(app_root);
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", gpa);
+    defer gpa.free(app_root);
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", gpa);
+    defer gpa.free(cache_root);
+
+    const npm_mod = @import("npm.zig");
+    const body = try gpa.dupe(u8, "escape-tarball");
+    defer gpa.free(body);
+    const integ = try npm_mod.integritySha512(gpa, body);
+    defer gpa.free(integ);
+    var cat: npm_mod.Catalog = .{};
+    defer cat.deinit(gpa);
+    const versions = try gpa.alloc(npm_mod.VersionMeta, 1);
+    defer gpa.free(versions);
+    versions[0] = .{
+        .version = "1.0.0",
+        .tarball_url = "fixture://escape-1.0.0.tgz",
+        .integrity = integ,
+        .tarball_bytes = body,
+    };
+    try cat.put(gpa, .{ .name = "escape", .versions = versions });
 
     var diagnostics = newDiagnostics();
     defer diagnostics.deinit();
-    var loaded = try project.load(testing.allocator, io, app_root, &diagnostics);
+    var loaded = try project.load(gpa, io, app_root, &diagnostics);
     defer loaded.deinit();
 
-    try testing.expectError(error.UnsupportedDependency, project.ensureLock(testing.allocator, io, &loaded, &.{}, &diagnostics));
-    const item = diagnostics.find(diag.E029_INVALID_VALUE) orelse return error.TestExpectedEqual;
-    try testing.expect(std.mem.indexOf(u8, item.message, "escape") != null);
-    // 不完全な lock は書かれない。
-    try testing.expectError(error.FileNotFound, temporary.dir.access(io, "app/nako.lock", .{}));
+    var outcome = try project.ensureLock(gpa, io, &loaded, &.{
+        .cache_root = cache_root,
+        .npm_catalog = &cat,
+    }, &diagnostics);
+    defer outcome.deinit();
+    try testing.expect(outcome.wrote);
+    var found = false;
+    for (outcome.lock.packages) |pkg| {
+        if (pkg.npm_instances.len > 0) {
+            found = true;
+            try testing.expectEqualStrings("escape@1.0.0", pkg.npm_instances[0].key);
+        }
+    }
+    try testing.expect(found);
 }
 
 test "ensureLockは解決中のmanifest変更を検出してlockを公開しない" {
