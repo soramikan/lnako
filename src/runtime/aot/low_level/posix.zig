@@ -84,7 +84,7 @@ pub fn accessBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     const allowed = low_level_posix.access(path, mode) catch |failure| {
         return throwIo(runtime, failure, operation, path, null, .access);
     };
-    return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(allowed) };
+    return .{ .tag = @backingInt(Tag.boolean), .payload = @intFromBool(allowed) };
 }
 
 pub fn idBuiltin(runtime: *Runtime, arguments: []const Value, kind: low_level_posix.IdKind) !Value {
@@ -145,14 +145,14 @@ fn accessModeArgument(runtime: *Runtime, value: Value, operation: []const u8) !u
 fn idArgument(runtime: *Runtime, value: Value, operation: []const u8) !?u32 {
     var signed: i128 = undefined;
     switch (value.tag) {
-        @intFromEnum(Tag.number) => {
+        @backingInt(Tag.number) => {
             const number = valueToNumber(value);
             if (!foundation.isSafeInteger(number)) {
                 return throwStructured(runtime, .EINVAL, operation, null, null, "UID/GIDは-1またはu32の整数である必要があります");
             }
             signed = @intFromFloat(number);
         },
-        @intFromEnum(Tag.bigint) => {
+        @backingInt(Tag.bigint) => {
             signed = value.object().?.payload.bigint.toI128() catch {
                 return throwStructured(runtime, .EINVAL, operation, null, null, "UID/GIDは-1またはu32の整数である必要があります");
             };
@@ -196,7 +196,7 @@ test "AOT低レイヤーのchmodはmodeを変更しaccessが権限を判定す�
     try std.testing.expectEqual(@as(f64, 0o600), valueToNumber(dictionaryProperty(stat_value, &.{ 'm', 'o', 'd', 'e' })));
 
     const readable = try state.lowLevelPosixBuiltin(active, .low_level_file_access, &.{ roots[0], numberValue(foundation.access_mode.r_ok) });
-    try std.testing.expectEqual(@intFromEnum(Tag.boolean), readable.tag);
+    try std.testing.expectEqual(@backingInt(Tag.boolean), readable.tag);
     try std.testing.expect(readable.payload != 0);
 
     // 型不正はEINVAL。
@@ -216,15 +216,15 @@ test "AOT低レイヤーのUID/GID取得はnumberを返しumaskは旧値を返�
     const active = &state.active_runtime.?;
 
     const uid = try state.lowLevelPosixBuiltin(active, .low_level_uid_get, &.{});
-    try std.testing.expectEqual(@intFromEnum(Tag.number), uid.tag);
+    try std.testing.expectEqual(@backingInt(Tag.number), uid.tag);
     try std.testing.expectEqual(@as(f64, @floatFromInt(std.c.getuid())), valueToNumber(uid));
 
     const groups = try state.lowLevelPosixBuiltin(active, .low_level_groups_get, &.{});
-    try std.testing.expectEqual(@intFromEnum(Tag.array), groups.tag);
+    try std.testing.expectEqual(@backingInt(Tag.array), groups.tag);
 
     const previous = try state.lowLevelPosixBuiltin(active, .low_level_umask_set, &.{numberValue(0o022)});
     defer _ = low_level_posix.umask(@intFromFloat(valueToNumber(previous))) catch {};
-    try std.testing.expectEqual(@intFromEnum(Tag.number), previous.tag);
+    try std.testing.expectEqual(@backingInt(Tag.number), previous.tag);
     const restored = try state.lowLevelPosixBuiltin(active, .low_level_umask_set, &.{previous});
     try std.testing.expectEqual(@as(f64, 0o022), valueToNumber(restored));
 }
@@ -307,7 +307,7 @@ test "AOT低レイヤーPOSIX命令はWindowsで照会false・実行ENOTSUPに�
     active.pushRoots(&frame, &roots, roots.len);
     defer active.popRoots(&frame);
     const supported = try state.lowLevelCapabilitySupportedBuiltin(active, roots[0..1]);
-    try std.testing.expectEqual(@intFromEnum(Tag.boolean), supported.tag);
+    try std.testing.expectEqual(@backingInt(Tag.boolean), supported.tag);
     try std.testing.expect(supported.payload == 0);
 
     try std.testing.expectError(error.NakoException, state.lowLevelPosixBuiltin(active, .low_level_uid_get, &.{}));

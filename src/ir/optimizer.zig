@@ -737,12 +737,12 @@ fn truthy(constant: Constant) bool {
 fn constantEqualForOperator(left: Constant, right: Constant, abstract: bool) ?bool {
     if (left == .null_value and right == .null_value or left == .undefined and right == .undefined) return true;
     if (abstract and (left == .null_value and right == .undefined or left == .undefined and right == .null_value)) return true;
-    if (@intFromEnum(left) != @intFromEnum(right)) return if (abstract) null else false;
+    if (@backingInt(left) != @backingInt(right)) return if (abstract) null else false;
     return constantValueEqual(left, right);
 }
 
 fn constantValueEqual(left: Constant, right: Constant) bool {
-    if (@intFromEnum(left) != @intFromEnum(right)) return false;
+    if (@backingInt(left) != @backingInt(right)) return false;
     return switch (left) {
         .number => |value| @as(u64, @bitCast(value)) == @as(u64, @bitCast(right.number)),
         .boolean => |value| value == right.boolean,

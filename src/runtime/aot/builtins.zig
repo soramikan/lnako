@@ -27,7 +27,7 @@ pub export fn lnako_aot_builtin_function_call(out: *Value, context: *anyopaque, 
         state.runtimeFailure(error.UnknownCommand);
         return;
     };
-    lnako_aot_builtin_call_site(out, arguments, len, @intFromEnum(command), 0);
+    lnako_aot_builtin_call_site(out, arguments, len, @backingInt(command), 0);
 }
 
 /// Dedicated ABI for timer commands. Timer registration updates the shared
@@ -643,11 +643,11 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 runtime.setFailure(failure);
                 return;
             };
-            out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(std.math.isNan(number)) };
+            out.* = .{ .tag = @backingInt(Tag.boolean), .payload = @intFromBool(std.math.isNan(number)) };
         },
         .is_number_nan => {
-            const is_nan = value.tag == @intFromEnum(Tag.number) and std.math.isNan(@as(f64, @bitCast(value.payload)));
-            out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(is_nan) };
+            const is_nan = value.tag == @backingInt(Tag.number) and std.math.isNan(@as(f64, @bitCast(value.payload)));
+            out.* = .{ .tag = @backingInt(Tag.boolean), .payload = @intFromBool(is_nan) };
         },
         .radix16, .radix, .radix2, .radix2_display => {
             if (command == .radix and len < 2) {
@@ -755,7 +755,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
             const expected: f64 = if (command == .is_even) 0 else 1;
-            out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(@rem(integer, 2) == expected) };
+            out.* = .{ .tag = @backingInt(Tag.boolean), .payload = @intFromBool(@rem(integer, 2) == expected) };
         },
         .greater_equal, .less_equal, .less, .greater, .strict_equal, .strict_not_equal, .deep_equal, .deep_not_equal => {
             if (len < 2) {
@@ -777,7 +777,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 runtime.setFailure(failure);
                 return;
             };
-            out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(result) };
+            out.* = .{ .tag = @backingInt(Tag.boolean), .payload = @intFromBool(result) };
         },
         .in_range => {
             if (len < 3) {
@@ -792,7 +792,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 runtime.setFailure(failure);
                 return;
             };
-            out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(lower and upper) };
+            out.* = .{ .tag = @backingInt(Tag.boolean), .payload = @intFromBool(lower and upper) };
         },
         .maximum, .minimum => {
             var result = state.valueToNumberRuntime(runtime, value) catch |failure| {
@@ -846,7 +846,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
             }
             out.* = if (state.valueTruthy(arguments.?[0])) arguments.?[1] else arguments.?[0];
         },
-        .logical_not => out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(!state.valueTruthy(value)) },
+        .logical_not => out.* = .{ .tag = @backingInt(Tag.boolean), .payload = @intFromBool(!state.valueTruthy(value)) },
         .range => {
             if (len < 2) {
                 runtime.setFailure(error.InvalidArgumentCount);
@@ -908,7 +908,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 if (!runtime.has_pending_exception) runtime.setFailure(failure);
                 return;
             };
-            out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(found) };
+            out.* = .{ .tag = @backingInt(Tag.boolean), .payload = @intFromBool(found) };
         },
         .truth_label => {
             out.* = runtime.createString(if (state.valueTruthy(value)) &.{0x771f} else &.{0x507d}) catch |failure| {
@@ -1106,7 +1106,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 runtime.setFailure(failure);
                 return;
             };
-            out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(found) };
+            out.* = .{ .tag = @backingInt(Tag.boolean), .payload = @intFromBool(found) };
         },
         // LLVM lowers these side-effecting commands through lnako_aot_cut,
         // which receives the mandatory global 対象 pointer.  Keep the generic

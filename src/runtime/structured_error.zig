@@ -19,7 +19,7 @@ pub const StructuredError = struct {
 };
 
 pub fn nativeCodeFromErrno(errno: std.posix.E) i32 {
-    return @intFromEnum(errno);
+    return @backingInt(errno);
 }
 
 pub fn portableCodeFromErrno(errno: std.posix.E) ?PortableErrorCode {
@@ -385,7 +385,7 @@ test "現行OSのnativeコード表はstd.posix.Eの実値と一致する" {
         .windows => &native_windows,
     };
     for (table) |entry| {
-        const errno: std.posix.E = @enumFromInt(entry.native);
+        const errno: std.posix.E = @fromBackingInt(@intCast(entry.native));
         try std.testing.expectEqual(entry.code, portableCodeFromErrno(errno).?);
         try std.testing.expectEqual(entry.native, nativeCodeFromErrno(errno));
     }

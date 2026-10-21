@@ -76,7 +76,7 @@ pub fn addParsedBuiltin(runtime: *Runtime, left: Value, right: Value) !Value {
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
-    if (roots[0].tag != @intFromEnum(Tag.bigint) and roots[1].tag != @intFromEnum(Tag.bigint)) {
+    if (roots[0].tag != @backingInt(Tag.bigint) and roots[1].tag != @backingInt(Tag.bigint)) {
         return numberValue(try parseFloatBuiltin(runtime, roots[0]) + try parseFloatBuiltin(runtime, roots[1]));
     }
     roots[2] = try toBigIntBuiltin(runtime, roots[0]);
@@ -85,7 +85,7 @@ pub fn addParsedBuiltin(runtime: *Runtime, left: Value, right: Value) !Value {
 }
 
 pub fn sumParsedBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
-    if (arguments.len > 0 and arguments[0].tag == @intFromEnum(Tag.array)) {
+    if (arguments.len > 0 and arguments[0].tag == @backingInt(Tag.array)) {
         var total: f64 = 0;
         for (arguments[0].object().?.payload.array.items) |item| {
             const number = try parseFloatBuiltin(runtime, item);
@@ -94,7 +94,7 @@ pub fn sumParsedBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
         return numberValue(total);
     }
     var has_bigint = false;
-    for (arguments) |argument| if (argument.tag == @intFromEnum(Tag.bigint)) {
+    for (arguments) |argument| if (argument.tag == @backingInt(Tag.bigint)) {
         has_bigint = true;
         break;
     };
@@ -121,7 +121,7 @@ pub fn toBigIntBuiltin(runtime: *Runtime, value: Value) !Value {
     defer runtime.popRoots(&frame);
     roots[1] = try valueToPrimitive(runtime, roots[0], .number);
     const primitive = roots[1];
-    return switch (@as(Tag, @enumFromInt(primitive.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(primitive.tag)))) {
         .bigint => primitive,
         .number => runtime.ownBigInt(try BigInt.fromF64(runtime.allocator, @bitCast(primitive.payload))),
         .static_utf8_string, .utf16_string => blk: {
@@ -143,7 +143,7 @@ pub fn jsAdd(runtime: *Runtime, left: Value, right: Value) !Value {
     roots[2] = try valueToPrimitive(runtime, roots[0], .number);
     roots[3] = try valueToPrimitive(runtime, roots[1], .number);
     if (isString(roots[2]) or isString(roots[3])) return concat(runtime, roots[2], roots[3]);
-    if (roots[2].tag == @intFromEnum(Tag.bigint) or roots[3].tag == @intFromEnum(Tag.bigint)) return bigIntArithmetic(runtime, .add, roots[2], roots[3]);
+    if (roots[2].tag == @backingInt(Tag.bigint) or roots[3].tag == @backingInt(Tag.bigint)) return bigIntArithmetic(runtime, .add, roots[2], roots[3]);
     return numberValue(try valueToNumberRuntime(runtime, roots[2]) + try valueToNumberRuntime(runtime, roots[3]));
 }
 
@@ -155,7 +155,7 @@ pub const CutResult = struct { result: Value, remainder: Value };
 /// Keep this helper in the AOT runtime so the generated executable does not
 /// need a JavaScript compatibility layer.
 pub fn cutLengthProperty(runtime: *Runtime, value: Value) !Value {
-    return switch (@as(Tag, @enumFromInt(value.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .undefined => error.CutUndefinedDelimiterLength,
         .null_value => error.CutNullDelimiterLength,
         .static_utf8_string, .utf16_string => blk: {
@@ -174,7 +174,7 @@ pub fn cutLengthProperty(runtime: *Runtime, value: Value) !Value {
 pub fn dictionaryLengthValue(value: Value) Value {
     const entries = value.object().?.payload.dictionary.entries.items;
     for (entries) |entry| {
-        const is_length = switch (@as(Tag, @enumFromInt(entry.key.tag))) {
+        const is_length = switch (@as(Tag, @fromBackingInt(@intCast(entry.key.tag)))) {
             .static_utf8_string => std.mem.eql(u8, staticUtf8(entry.key), "length"),
             .utf16_string => std.mem.eql(u16, entry.key.object().?.payload.utf16_string, &.{ 'l', 'e', 'n', 'g', 't', 'h' }),
             else => false,
@@ -261,7 +261,7 @@ pub fn sequentialAddBuiltin(runtime: *Runtime, arguments: []const Value) !Value 
 }
 
 pub fn chrBuiltin(runtime: *Runtime, value: Value) !Value {
-    if (value.tag != @intFromEnum(Tag.array)) return codePointStringBuiltin(runtime, try valueToNumberRuntime(runtime, value));
+    if (value.tag != @backingInt(Tag.array)) return codePointStringBuiltin(runtime, try valueToNumberRuntime(runtime, value));
     var roots = [_]Value{ value, .{}, .{} };
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -290,7 +290,7 @@ pub fn codePointStringBuiltin(runtime: *Runtime, number: f64) !Value {
 }
 
 pub fn ascBuiltin(runtime: *Runtime, value: Value) !Value {
-    if (value.tag != @intFromEnum(Tag.array)) return numberValue(@floatFromInt(try firstCodePointBuiltin(runtime, value)));
+    if (value.tag != @backingInt(Tag.array)) return numberValue(@floatFromInt(try firstCodePointBuiltin(runtime, value)));
     var roots = [_]Value{ value, .{} };
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -361,7 +361,7 @@ pub fn stringCollectionIndex(number: f64, length: usize) usize {
 }
 
 pub fn appendBuiltin(runtime: *Runtime, source: Value, addition: Value, newline: bool) !Value {
-    if (source.tag == @intFromEnum(Tag.array)) {
+    if (source.tag == @backingInt(Tag.array)) {
         try source.object().?.payload.array.append(runtime.allocator, addition);
         return source;
     }
@@ -382,7 +382,7 @@ pub fn appendBuiltin(runtime: *Runtime, source: Value, addition: Value, newline:
 pub fn joinBuiltin(runtime: *Runtime, values: []const Value) !Value {
     var units: std.ArrayList(u16) = .empty;
     errdefer units.deinit(runtime.allocator);
-    for (values) |value| switch (@as(Tag, @enumFromInt(value.tag))) {
+    for (values) |value| switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .undefined, .null_value => {},
         else => {
             const part = try valueUtf16Alloc(runtime, value);
@@ -409,12 +409,12 @@ pub fn arrayJoinBuiltin(runtime: *Runtime, source: Value, separator: Value, only
 
     var output: std.ArrayList(u16) = .empty;
     errdefer output.deinit(runtime.allocator);
-    if (source.tag == @intFromEnum(Tag.array)) {
+    if (source.tag == @backingInt(Tag.array)) {
         const object = source.object() orelse return error.InvalidArray;
         if (object.payload != .array) return error.InvalidArray;
         for (object.payload.array.items, 0..) |item, index| {
             if (index > 0) try output.appendSlice(runtime.allocator, separator_units);
-            if (item.tag == @intFromEnum(Tag.undefined) or item.tag == @intFromEnum(Tag.null_value)) continue;
+            if (item.tag == @backingInt(Tag.undefined) or item.tag == @backingInt(Tag.null_value)) continue;
             const item_units = try valueUtf16Alloc(runtime, item);
             defer runtime.allocator.free(item_units);
             try output.appendSlice(runtime.allocator, item_units);
@@ -440,7 +440,7 @@ pub fn arrayJoinBuiltin(runtime: *Runtime, source: Value, separator: Value, only
 }
 
 pub fn arraySearchBuiltin(runtime: *Runtime, source: Value, needle: Value) !f64 {
-    if (source.tag != @intFromEnum(Tag.array)) return -1;
+    if (source.tag != @backingInt(Tag.array)) return -1;
     const object = source.object() orelse return error.InvalidArray;
     if (object.payload != .array) return error.InvalidArray;
     for (object.payload.array.items, 0..) |item, index| {

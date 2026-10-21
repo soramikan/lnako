@@ -113,7 +113,7 @@ async function validateReport(report, suite, suitePath, suiteBytes) {
       !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(report.version) || !/^[0-9a-f]{40}$/.test(report.git_commit) ||
       !Number.isSafeInteger(report.generated_at_unix_ms) || report.generated_at_unix_ms < 0 ||
       !report.target || !new Set(["macos", "linux", "windows"]).has(report.target.os) || !new Set(["aarch64", "x86_64"]).has(report.target.arch) ||
-      !report.toolchain || report.toolchain.zig !== "0.16.0" || report.toolchain.llvm !== "22.1.8" ||
+      !report.toolchain || report.toolchain.zig !== (report.schema_version === 1 ? "0.16.0" : "0.17.0") || report.toolchain.llvm !== "22.1.8" ||
       report.suite_name !== suite.name || report.suite !== suitePath ||
       !isOptimization(report.optimization) || !Number.isSafeInteger(report.iterations) || report.iterations < 1 ||
       !Number.isSafeInteger(report.warmup) || report.warmup < 0 || !Array.isArray(report.cases) || report.cases.length === 0 || report.cases.length > suite.cases.length) {

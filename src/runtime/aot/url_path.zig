@@ -42,7 +42,7 @@ pub fn pathBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: [
 }
 
 pub fn pathExtractExtensionBuiltin(runtime: *Runtime, source: Value) !Value {
-    const source_tag: Tag = @enumFromInt(source.tag);
+    const source_tag: Tag = @fromBackingInt(@intCast(source.tag));
     if (source_tag == .undefined or source_tag == .null_value) return runtimeUtf8String(runtime, "");
     if (!isString(source)) return error.InvalidPathSource;
     const units = try valueUtf16Alloc(runtime, source);
@@ -54,12 +54,12 @@ pub fn pathExtractExtensionBuiltin(runtime: *Runtime, source: Value) !Value {
 }
 
 pub fn pathChangeExtensionBuiltin(runtime: *Runtime, source: Value, extension: Value) !Value {
-    const source_tag: Tag = @enumFromInt(source.tag);
+    const source_tag: Tag = @fromBackingInt(@intCast(source.tag));
     if (source_tag == .undefined or source_tag == .null_value) return extension;
     if (!isString(source)) return error.InvalidPathSource;
     const source_units = try valueUtf16Alloc(runtime, source);
     defer runtime.allocator.free(source_units);
-    if (extension.tag == @intFromEnum(Tag.undefined) or extension.tag == @intFromEnum(Tag.null_value)) {
+    if (extension.tag == @backingInt(Tag.undefined) or extension.tag == @backingInt(Tag.null_value)) {
         return pathChangeExtensionUnits(runtime, source_units, &.{});
     }
     if (!isString(extension)) return error.InvalidPathSource;
@@ -91,7 +91,7 @@ pub fn pathChangeExtensionUnits(runtime: *Runtime, source: []const u16, extensio
 }
 
 pub fn pathAddTrailingSeparatorBuiltin(runtime: *Runtime, source: Value) !Value {
-    const source_tag: Tag = @enumFromInt(source.tag);
+    const source_tag: Tag = @fromBackingInt(@intCast(source.tag));
     if (source_tag == .undefined or source_tag == .null_value) return runtimeUtf8String(runtime, "");
     if (!isString(source)) return error.InvalidPathSource;
     const units = try valueUtf16Alloc(runtime, source);
@@ -105,7 +105,7 @@ pub fn pathAddTrailingSeparatorBuiltin(runtime: *Runtime, source: Value) !Value 
 }
 
 pub fn pathRemoveTrailingSeparatorBuiltin(runtime: *Runtime, source: Value) !Value {
-    const source_tag: Tag = @enumFromInt(source.tag);
+    const source_tag: Tag = @fromBackingInt(@intCast(source.tag));
     if (source_tag == .undefined or source_tag == .null_value or
         source_tag == .boolean and source.payload == 0 or
         source_tag == .number and (@as(f64, @bitCast(source.payload)) == 0 or std.math.isNan(@as(f64, @bitCast(source.payload)))))
@@ -248,7 +248,7 @@ pub fn urlParametersBuiltin(runtime: *Runtime, source: Value) !Value {
 pub fn base64EncodeBuiltin(runtime: *Runtime, source: Value) !Value {
     var bytes: []u8 = undefined;
     var owned = false;
-    switch (@as(Tag, @enumFromInt(source.tag))) {
+    switch (@as(Tag, @fromBackingInt(@intCast(source.tag)))) {
         .static_utf8_string, .utf16_string => {
             const units = try valueUtf16Alloc(runtime, source);
             defer runtime.allocator.free(units);

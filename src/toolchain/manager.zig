@@ -157,7 +157,7 @@ pub fn llvmLibraryPresent(io: std.Io, root: []const u8) bool {
 }
 
 fn isLlvmLibraryName(name: []const u8) bool {
-    if (builtin.os.tag == .windows) return std.ascii.endsWithIgnoreCase(name, ".dll") and std.ascii.indexOfIgnoreCase(name, "llvm") != null;
+    if (builtin.os.tag == .windows) return std.ascii.endsWithIgnoreCase(name, ".dll") and std.ascii.findIgnoreCase(name, "llvm") != null;
     if (builtin.os.tag == .macos) return std.mem.startsWith(u8, name, "libLLVM") and std.mem.endsWith(u8, name, ".dylib");
     return std.mem.startsWith(u8, name, "libLLVM") and std.mem.indexOf(u8, name, ".so") != null;
 }
@@ -429,7 +429,7 @@ fn download(allocator: std.mem.Allocator, io: std.Io, url: []const u8, destinati
     var client: std.http.Client = .{ .allocator = allocator, .io = io };
     defer client.deinit();
     const uri = try std.Uri.parse(url);
-    var request = try client.request(.GET, uri, .{ .redirect_behavior = @enumFromInt(3) });
+    var request = try client.request(.GET, uri, .{ .redirect_behavior = @fromBackingInt(@intCast(3)) });
     defer request.deinit();
     try request.sendBodiless();
     var redirect_buffer: [8 * 1024]u8 = undefined;

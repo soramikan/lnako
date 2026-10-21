@@ -42,10 +42,10 @@ pub fn nodeFileExistenceBuiltin(runtime: *Runtime, command: aot_builtin.Command,
     const path = try valueUtf8LossyAlloc(runtime, arguments[0]);
     defer runtime.allocator.free(path);
     const stat = std.Io.Dir.cwd().statFile(std.Io.Threaded.global_single_threaded.io(), path, .{}) catch {
-        return .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
+        return .{ .tag = @backingInt(Tag.boolean), .payload = 0 };
     };
     const result = command == .node_file_exists or stat.kind == .directory;
-    return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(result) };
+    return .{ .tag = @backingInt(Tag.boolean), .payload = @intFromBool(result) };
 }
 
 pub fn nodeFileReadBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
@@ -66,7 +66,7 @@ pub fn nodeFileSaveBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     if (arguments.len < 2) return error.InvalidArgumentCount;
     const path = try valueUtf8LossyAlloc(runtime, arguments[1]);
     defer runtime.allocator.free(path);
-    if (arguments[0].tag == @intFromEnum(Tag.byte_buffer)) {
+    if (arguments[0].tag == @backingInt(Tag.byte_buffer)) {
         try std.Io.Dir.cwd().writeFile(std.Io.Threaded.global_single_threaded.io(), .{
             .sub_path = path,
             .data = arguments[0].object().?.payload.byte_buffer.bytes,
@@ -88,8 +88,8 @@ pub fn nodeEncodingName(command: aot_builtin.Command) []const u8 {
 }
 
 pub fn nodeEncodingValueBytesAlloc(runtime: *Runtime, value: Value) ![]u8 {
-    if (value.tag == @intFromEnum(Tag.byte_buffer)) return runtime.allocator.dupe(u8, value.object().?.payload.byte_buffer.bytes);
-    if (value.tag == @intFromEnum(Tag.array)) {
+    if (value.tag == @backingInt(Tag.byte_buffer)) return runtime.allocator.dupe(u8, value.object().?.payload.byte_buffer.bytes);
+    if (value.tag == @backingInt(Tag.array)) {
         const items = value.object().?.payload.array.items;
         const bytes = try runtime.allocator.alloc(u8, items.len);
         errdefer runtime.allocator.free(bytes);
@@ -350,7 +350,7 @@ pub fn nodeFileCopyMoveBuiltin(runtime: *Runtime, command: aot_builtin.Command, 
     runtime.file_process_stop = false;
 
     const move = command == .node_file_move or command == .node_file_move_overwrite;
-    if (runtime.file_process_callback.tag == @intFromEnum(Tag.function)) {
+    if (runtime.file_process_callback.tag == @backingInt(Tag.function)) {
         try aotFileCopyMoveWithProgress(runtime, io, source, destination, overwrite, move);
     } else try aotFileCopyMoveWithIo(runtime, io, source, destination, overwrite, move);
     return .{};
@@ -492,18 +492,18 @@ pub fn setNodeFileInfoMethod(runtime: *Runtime, dictionary: Value, name: []const
 }
 
 pub fn nodeFileInfoTrue(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
-    out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 };
+    out.* = .{ .tag = @backingInt(Tag.boolean), .payload = 1 };
 }
 
 pub fn nodeFileInfoFalse(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
-    out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
+    out.* = .{ .tag = @backingInt(Tag.boolean), .payload = 0 };
 }
 
 pub fn nodeEncodingSupportsBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
     const name = try valueUtf8LossyAlloc(runtime, arguments[0]);
     defer runtime.allocator.free(name);
-    return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(encoding.supports(name)) };
+    return .{ .tag = @backingInt(Tag.boolean), .payload = @intFromBool(encoding.supports(name)) };
 }
 
 pub fn nodeStdinCallbackBuiltin(runtime: *Runtime, target: *Value, arguments: []const Value) !Value {

@@ -11,7 +11,7 @@ const env = { GITHUB_SHA: COMMIT };
 function workspace() {
   const directory = mkdtempSync(join(tmpdir(), "lnako-aot-artifact-"));
   mkdirSync(join(directory, "repo"), { recursive: true });
-  writeFileSync(join(directory, "repo", "toolchain.lock.json"), JSON.stringify({ zig: { version: "0.16.0" }, llvm: { version: "22.1.8" }, node: { version: "24.15.0" } }));
+  writeFileSync(join(directory, "repo", "toolchain.lock.json"), JSON.stringify({ zig: { version: "0.17.0" }, llvm: { version: "22.1.8" }, node: { version: "24.15.0" } }));
   writeFileSync(join(directory, "lnako.exe"), "fake-compiler-binary");
   writeFileSync(join(directory, "lnako_runtime.lib"), "fake-runtime-library");
   return directory;
@@ -34,7 +34,7 @@ test("create→verifyでmetadata・binary・runtime libを復元できる", () =
   const metadata = create(work, root, outDir);
   assert.equal(metadata.schema, "lnako.aot-compiler-artifact.v1");
   assert.equal(metadata.commit, COMMIT);
-  assert.equal(metadata.zig, "0.16.0");
+  assert.equal(metadata.zig, "0.17.0");
   assert.equal(metadata.binarySha256, sha256Hex(Buffer.from("fake-compiler-binary")));
   assert.equal(metadata.runtimeLibSha256, sha256Hex(Buffer.from("fake-runtime-library")));
   const installTo = join(work, "zig-out", "bin");

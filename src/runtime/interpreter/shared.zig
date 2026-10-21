@@ -467,12 +467,12 @@ pub const Frame = struct {
     /// fallback for dynamically introduced names and host callbacks.
     prepared_function: ?*const prepared.PreparedFunction = null,
     local_cells: []?*value_mod.BindingCell = &.{},
-    local_cells_storage: [8]?*value_mod.BindingCell = [_]?*value_mod.BindingCell{null} ** 8,
+    local_cells_storage: [8]?*value_mod.BindingCell = @as([8]?*value_mod.BindingCell, @splat(null)),
     local_cells_buffer: ?[]?*value_mod.BindingCell = null,
     local_values: []Value = &.{},
     local_values_initialized: []bool = &.{},
-    local_values_storage: [8]Value = [_]Value{.undefined} ** 8,
-    local_values_initialized_storage: [8]bool = [_]bool{false} ** 8,
+    local_values_storage: [8]Value = @as([8]Value, @splat(.undefined)),
+    local_values_initialized_storage: [8]bool = @as([8]bool, @splat(false)),
     local_values_buffer: ?[]Value = null,
     local_values_initialized_buffer: ?[]bool = null,
     /// この呼出しに渡された実引数列。関数内の`引数`束縛（arguments_array

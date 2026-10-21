@@ -24,7 +24,7 @@ pub export fn lnako_aot_string_literal(out: *state.Value, units: ?[*]const u16, 
     const runtime = if (state.active_runtime) |*value| value else return;
     if (index < runtime.literal_values.items.len) {
         const cached = runtime.literal_values.items[index];
-        if (cached.tag != @intFromEnum(state.Tag.undefined)) {
+        if (cached.tag != @backingInt(state.Tag.undefined)) {
             out.* = cached;
             return;
         }
@@ -49,7 +49,7 @@ pub export fn lnako_aot_print_utf16(value: *const state.Value, newline: bool) ca
 
 pub export fn lnako_aot_print_number(value: *const state.Value, newline: bool) callconv(.c) void {
     const runtime = if (state.active_runtime) |*active| active else return;
-    if (value.tag != @intFromEnum(shared.Tag.number)) return;
+    if (value.tag != @backingInt(shared.Tag.number)) return;
     const text = state.numberString(runtime.allocator, @bitCast(value.payload)) catch return;
     defer runtime.allocator.free(text);
     state.writeBytes(text, newline);
@@ -73,7 +73,7 @@ pub export fn lnako_aot_print_bigint(value: *const state.Value, newline: bool) c
 
 pub export fn lnako_aot_print_collection(value: *const state.Value, newline: bool) callconv(.c) void {
     const runtime = if (state.active_runtime) |*active| active else return;
-    if (value.tag != @intFromEnum(shared.Tag.array) and value.tag != @intFromEnum(shared.Tag.dictionary)) return;
+    if (value.tag != @backingInt(shared.Tag.array) and value.tag != @backingInt(shared.Tag.dictionary)) return;
     const units = state.valueUtf16Alloc(runtime, value.*) catch |failure| {
         runtime.setFailure(failure);
         return;

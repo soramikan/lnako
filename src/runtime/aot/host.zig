@@ -64,12 +64,12 @@ pub fn systemFunctionExistsBuiltin(runtime: *Runtime, values: []const Value) !Va
     const text = try valueUtf8LossyAlloc(runtime, source);
     defer runtime.allocator.free(text);
     for (builtin_catalog.default_names) |candidate| {
-        if (std.mem.eql(u8, text, candidate)) return .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 };
+        if (std.mem.eql(u8, text, candidate)) return .{ .tag = @backingInt(Tag.boolean), .payload = 1 };
     }
     for (low_level_foundation.extension_command_names) |candidate| {
-        if (std.mem.eql(u8, text, candidate)) return .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 };
+        if (std.mem.eql(u8, text, candidate)) return .{ .tag = @backingInt(Tag.boolean), .payload = 1 };
     }
-    return .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
+    return .{ .tag = @backingInt(Tag.boolean), .payload = 0 };
 }
 
 /// Convert a UTF-16 exception message to UTF-8 without rejecting lone
@@ -102,7 +102,7 @@ pub fn utf16FailureMessageUtf8Alloc(allocator: std.mem.Allocator, units: []const
 
 pub fn pendingExceptionMessageUtf8Alloc(runtime: *Runtime) anyerror![]u8 {
     if (!runtime.has_pending_exception) return error.NoPendingException;
-    if (runtime.pending_exception.tag == @intFromEnum(Tag.dictionary)) {
+    if (runtime.pending_exception.tag == @backingInt(Tag.dictionary)) {
         if (runtime.pending_exception.object()) |object| {
             // `message` フィールドの抽出は構造化エラーだけに限る。通常の
             // 辞書は `[object Object]` 文字列化の既存経路へ流す。
@@ -167,7 +167,7 @@ pub fn installAotInterrupt() !void {
 
 pub fn pollAotInterrupt(runtime: *Runtime) !void {
     if (!aot_state.aot_interrupt_requested.swap(false, .acquire)) return;
-    if (runtime.interrupt_callback.tag != @intFromEnum(Tag.function)) return;
+    if (runtime.interrupt_callback.tag != @backingInt(Tag.function)) return;
 
     var undefined_value = Value{};
     const result = try invokeAotCallback(runtime, runtime.interrupt_callback, @ptrCast(&undefined_value), 1);
@@ -222,7 +222,7 @@ pub fn debugDisplayBuiltin(runtime: *Runtime, value: Value, line: u64, source_pa
     defer runtime.popRoots(&frame);
 
     var printable = value;
-    switch (@as(Tag, @enumFromInt(value.tag))) {
+    switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .array, .dictionary => {
             roots[1] = try jsonEncodeBuiltin(runtime, value, false);
             printable = roots[1];
@@ -286,7 +286,7 @@ pub fn builtinDispatchRoute(command: aot_builtin.Command) []const u8 {
 }
 
 pub fn typeNameValue(value: Value) Value {
-    return switch (@as(Tag, @enumFromInt(value.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .undefined => staticStringValue("undefined"),
         .null_value, .byte_buffer, .array, .dictionary, .iterator, .promise => staticStringValue("object"),
         .boolean => staticStringValue("boolean"),
@@ -346,7 +346,7 @@ pub fn debugBreakpointWaitBuiltin(
 
     while (true) {
         const flag = wait_flag.*;
-        if (flag.tag == @intFromEnum(Tag.number) and @as(f64, @bitCast(flag.payload)) == 1) {
+        if (flag.tag == @backingInt(Tag.number) and @as(f64, @bitCast(flag.payload)) == 1) {
             wait_flag.* = numberValue(0);
             return numberValue(line);
         }
@@ -408,7 +408,7 @@ pub fn aotArchitectureName() []const u8 {
 
 pub fn radixBuiltin(runtime: *Runtime, value: Value, radix_value: Value) !Value {
     const number = try parseIntBuiltin(runtime, value);
-    const radix_number: f64 = if (radix_value.tag == @intFromEnum(Tag.undefined)) 10 else try valueToNumberRuntime(runtime, radix_value);
+    const radix_number: f64 = if (radix_value.tag == @backingInt(Tag.undefined)) 10 else try valueToNumberRuntime(runtime, radix_value);
     const truncated = @trunc(radix_number);
     if (!std.math.isFinite(radix_number) or truncated < 2 or truncated > 36) return error.InvalidRadix;
     const text = try number_mod.integerToRadixAlloc(runtime.allocator, number, @intFromFloat(truncated));
@@ -442,7 +442,7 @@ pub fn repeatMultiplyBuiltin(runtime: *Runtime, left: Value, right: Value) !Valu
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
-    if (!isString(roots[0]) and roots[0].tag != @intFromEnum(Tag.array)) return arithmetic(runtime, .multiply, roots[0], roots[1]);
+    if (!isString(roots[0]) and roots[0].tag != @backingInt(Tag.array)) return arithmetic(runtime, .multiply, roots[0], roots[1]);
     const count_number = try parseIntBuiltin(runtime, roots[1]);
     const count: usize = if (std.math.isNan(count_number) or count_number <= 0)
         0

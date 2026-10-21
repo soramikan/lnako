@@ -424,31 +424,31 @@ pub fn tableInheritedByteBufferMethod(runtime: *Runtime, receiver: Value, name: 
         .uint8_array => table_standard_property_cache_uint8_array,
         .array_buffer => table_standard_property_cache_array_buffer,
     };
-    if (@as(Tag, @enumFromInt(receiver.tag)) == .byte_buffer and receiver.object().?.payload.byte_buffer.kind == .buffer and std.mem.eql(u8, name, "slice")) {
+    if (@as(Tag, @fromBackingInt(@intCast(receiver.tag))) == .byte_buffer and receiver.object().?.payload.byte_buffer.kind == .buffer and std.mem.eql(u8, name, "slice")) {
         return tableInheritedFunctionWithCallback(runtime, cache_kind, name, name, byteBufferUnboundSliceCallback);
     }
     return tableInheritedFunction(runtime, cache_kind, name);
 }
 
 pub fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []const u16) !?Value {
-    if (row_tag == .dictionary and row.object().?.prototype.tag != @intFromEnum(Tag.undefined)) {
+    if (row_tag == .dictionary and row.object().?.prototype.tag != @backingInt(Tag.undefined)) {
         if (tableAsciiUnitsEqual(units, "__proto__")) return row.object().?.prototype;
         if (dictionaryPrototypeProperty(row, units)) |value| return value;
         if (dictionaryPrototypeBlocksStandard(row)) return null;
     }
-    if (row_tag == .array and row.object().?.prototype.tag != @intFromEnum(Tag.undefined)) {
-        if (tableAsciiUnitsEqual(units, "__proto__")) return if (row.object().?.prototype.tag == @intFromEnum(Tag.null_value)) .{} else row.object().?.prototype;
+    if (row_tag == .array and row.object().?.prototype.tag != @backingInt(Tag.undefined)) {
+        if (tableAsciiUnitsEqual(units, "__proto__")) return if (row.object().?.prototype.tag == @backingInt(Tag.null_value)) .{} else row.object().?.prototype;
         if (arrayPrototypeProperty(row, units)) |value| return value;
         if (arrayPrototypeBlocksStandard(row)) return null;
     }
-    if (row_tag == .byte_buffer and row.object().?.prototype.tag != @intFromEnum(Tag.undefined)) {
-        if (tableAsciiUnitsEqual(units, "__proto__")) return if (row.object().?.prototype.tag == @intFromEnum(Tag.null_value)) null else row.object().?.prototype;
-        if (row.object().?.prototype.tag == @intFromEnum(Tag.dictionary)) {
+    if (row_tag == .byte_buffer and row.object().?.prototype.tag != @backingInt(Tag.undefined)) {
+        if (tableAsciiUnitsEqual(units, "__proto__")) return if (row.object().?.prototype.tag == @backingInt(Tag.null_value)) null else row.object().?.prototype;
+        if (row.object().?.prototype.tag == @backingInt(Tag.dictionary)) {
             if (dictionaryOwnProperty(row.object().?.prototype, units)) |value| return value;
             if (dictionaryPrototypeProperty(row.object().?.prototype, units)) |value| return value;
             if (dictionaryPrototypeBlocksStandard(row.object().?.prototype)) return null;
         }
-        if (row.object().?.prototype.tag == @intFromEnum(Tag.null_value)) return null;
+        if (row.object().?.prototype.tag == @backingInt(Tag.null_value)) return null;
     }
 
     if (tableAsciiUnitsEqual(units, "__proto__")) {
@@ -477,7 +477,7 @@ pub fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units
     }
 
     if (tableAsciiUnitsEqual(units, "prototype") and row_tag == .function) {
-        if (row.object().?.payload.function.prototype.tag != @intFromEnum(Tag.undefined)) return @as(?Value, row.object().?.payload.function.prototype);
+        if (row.object().?.payload.function.prototype.tag != @backingInt(Tag.undefined)) return @as(?Value, row.object().?.payload.function.prototype);
         const prototype = try runtime.createDictionary(&.{ staticStringValue("constructor"), row });
         row.object().?.payload.function.prototype = prototype;
         return @as(?Value, prototype);
@@ -518,7 +518,7 @@ pub fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units
         if (buffer.kind == .array_buffer) {
             if (tableAsciiUnitsEqual(units, "maxByteLength")) return @as(?Value, numberValue(@floatFromInt(buffer.bytes.len)));
             if (tableAsciiUnitsEqual(units, "resizable") or tableAsciiUnitsEqual(units, "detached")) {
-                return @as(?Value, .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 });
+                return @as(?Value, .{ .tag = @backingInt(Tag.boolean), .payload = 0 });
             }
             if (tableInheritedMethodName(units, &table_byte_buffer_array_buffer_method_names)) |name| return @as(?Value, try tableInheritedByteBufferMethod(runtime, row, name));
         } else {
@@ -575,7 +575,7 @@ pub fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units
 /// upstream implementation evaluates `a[i][col]`, so null/undefined rows do
 /// not silently produce undefined.
 pub fn tableRowProperty(runtime: *Runtime, row: Value, column: Value) !Value {
-    const row_tag: Tag = @enumFromInt(row.tag);
+    const row_tag: Tag = @fromBackingInt(@intCast(row.tag));
     if (row_tag == .undefined or row_tag == .null_value) {
         try setTableRowPropertyFailure(runtime, row, column);
         return error.TableRowMissing;
@@ -675,7 +675,7 @@ pub fn setTableRowPropertyFailure(runtime: *Runtime, row: Value, column: Value) 
     defer runtime.allocator.free(column_units);
     const column_utf8 = try utf16FailureMessageUtf8Alloc(runtime.allocator, column_units);
     defer runtime.allocator.free(column_utf8);
-    const receiver = if (rooted[0].tag == @intFromEnum(Tag.null_value)) "null" else "undefined";
+    const receiver = if (rooted[0].tag == @backingInt(Tag.null_value)) "null" else "undefined";
     const message = try std.fmt.allocPrint(runtime.allocator, "Cannot read properties of {s} (reading '{s}')", .{ receiver, column_utf8 });
     defer runtime.allocator.free(message);
     runtime.setFailureText(message);
@@ -736,7 +736,7 @@ pub fn tableSearchBuiltin(runtime: *Runtime, source: Value, column: Value, row_v
 }
 
 pub fn tableColumnIterationCount(runtime: *Runtime, value: Value) !usize {
-    const number = if (value.tag == @intFromEnum(Tag.bigint))
+    const number = if (value.tag == @backingInt(Tag.bigint))
         value.object().?.payload.bigint.toF64()
     else
         try valueToNumberRuntime(runtime, value);
@@ -765,7 +765,7 @@ pub fn tableTransposeBuiltin(runtime: *Runtime, source: Value, rotate: bool) !Va
         for (0..rows.items.len) |offset| {
             const row_index = if (rotate) rows.items.len - offset - 1 else offset;
             roots[4] = try tableRowProperty(runtime, rows.items[row_index], numberValue(@floatFromInt(column)));
-            if (!rotate and roots[4].tag == @intFromEnum(Tag.undefined)) roots[4] = staticStringValue("");
+            if (!rotate and roots[4].tag == @backingInt(Tag.undefined)) roots[4] = staticStringValue("");
             try row_result.append(runtime.allocator, roots[4]);
         }
         try result.append(runtime.allocator, roots[3]);
@@ -845,7 +845,7 @@ pub fn tableInsertColumnBuiltin(runtime: *Runtime, source: Value, column: Value,
         if (!runtime.aotArrayIsPresent(source_object, row_index)) continue;
         roots[4] = try runtime.createArray(&.{});
         const new_row = try arrayItems(roots[4]);
-        const row_tag = @as(Tag, @enumFromInt(row.tag));
+        const row_tag = @as(Tag, @fromBackingInt(@intCast(row.tag)));
         if (row_tag == .array) {
             const row_object = row.object().?;
             try runtime.normalizeAotArrayPresence(row_object);
@@ -875,7 +875,7 @@ pub fn tableInsertColumnBuiltin(runtime: *Runtime, source: Value, column: Value,
                 try new_row.append(runtime.allocator, roots[5]);
             }
         } else return error.ArrayExpected;
-        if (roots[2].tag == @intFromEnum(Tag.array)) {
+        if (roots[2].tag == @backingInt(Tag.array)) {
             const value_items = try arrayItems(roots[2]);
             roots[6] = if (row_index < value_items.items.len) value_items.items[row_index] else .{};
         } else {
@@ -958,7 +958,7 @@ pub fn tableColumnSumBuiltin(runtime: *Runtime, source: Value, column: Value) !V
 /// Keep this validation outside the row loop so an invalid pattern fails even
 /// for an empty table or an already-out-of-range start row.
 pub fn tableRegexpPatternUnitsAlloc(runtime: *Runtime, pattern: Value) ![]u16 {
-    if (pattern.tag == @intFromEnum(Tag.undefined)) return runtime.allocator.alloc(u16, 0);
+    if (pattern.tag == @backingInt(Tag.undefined)) return runtime.allocator.alloc(u16, 0);
     return valueUtf16Alloc(runtime, pattern);
 }
 
@@ -1008,7 +1008,7 @@ pub fn tableRegexpPickupBuiltin(runtime: *Runtime, source: Value, column: Value,
         // Upstream uses row.slice(0): create a new shallow array and retain
         // each element's identity. String.slice(0) returns the same immutable
         // string value; rows without slice fail only after they match.
-        if (row.tag == @intFromEnum(Tag.array)) {
+        if (row.tag == @backingInt(Tag.array)) {
             roots[5] = try runtime.createArray(&.{});
             const copy = try arrayItems(roots[5]);
             const row_object = row.object().?;
@@ -1020,7 +1020,7 @@ pub fn tableRegexpPickupBuiltin(runtime: *Runtime, source: Value, column: Value,
             }
         } else if (isString(row)) {
             roots[5] = row;
-        } else if (row.tag == @intFromEnum(Tag.byte_buffer)) {
+        } else if (row.tag == @backingInt(Tag.byte_buffer)) {
             const buffer = row.object().?.payload.byte_buffer;
             roots[5] = switch (buffer.kind) {
                 .buffer => try runtime.createByteBufferView(buffer, 0, buffer.bytes.len),
@@ -1034,7 +1034,7 @@ pub fn tableRegexpPickupBuiltin(runtime: *Runtime, source: Value, column: Value,
 }
 
 pub fn incrementTableSearchRow(runtime: *Runtime, row: Value) !Value {
-    if (row.tag == @intFromEnum(Tag.bigint)) {
+    if (row.tag == @backingInt(Tag.bigint)) {
         var one = try BigInt.init(runtime.allocator, 1);
         defer one.deinit();
         return runtime.ownBigInt(try row.object().?.payload.bigint.add(runtime.allocator, one));
@@ -1055,8 +1055,8 @@ pub fn compareTableRowsBuiltin(
 ) !std.math.Order {
     if (!left_present) return if (!right_present) .eq else .gt;
     if (!right_present) return .lt;
-    if (left.tag == @intFromEnum(Tag.undefined)) return if (right.tag == @intFromEnum(Tag.undefined)) .eq else .gt;
-    if (right.tag == @intFromEnum(Tag.undefined)) return .lt;
+    if (left.tag == @backingInt(Tag.undefined)) return if (right.tag == @backingInt(Tag.undefined)) .eq else .gt;
+    if (right.tag == @backingInt(Tag.undefined)) return .lt;
     left_cell.* = try tableRowProperty(runtime, left, column);
     right_cell.* = try tableRowProperty(runtime, right, column);
     // The official comparator returns before relational conversion when the
@@ -1232,7 +1232,7 @@ pub fn v8SmallTableSortBuiltin(
 
 pub fn tableBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     const source: Value = if (arguments.len > 0) arguments[0] else .{};
-    if (source.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
+    if (source.tag != @backingInt(Tag.array)) return error.ArrayExpected;
     switch (command) {
         .table_sort, .table_numeric_sort => {
             if (arguments.len < 2) return error.InvalidArgumentCount;
@@ -1334,19 +1334,19 @@ pub const CloneState = struct {
 /// infinities become null, undefined/functions disappear from objects (and
 /// become null in arrays), and cycles/BigInt are errors.
 pub fn deepCloneBuiltin(runtime: *Runtime, source: Value) !Value {
-    if (source.tag == @intFromEnum(Tag.undefined) or source.tag == @intFromEnum(Tag.function)) return error.InvalidJsonCloneValue;
+    if (source.tag == @backingInt(Tag.undefined) or source.tag == @backingInt(Tag.function)) return error.InvalidJsonCloneValue;
     var state: CloneState = .{};
     defer state.deinit(runtime.allocator);
     return deepCloneValue(runtime, source, &state);
 }
 
 pub fn deepCloneValue(runtime: *Runtime, source: Value, state: *CloneState) !Value {
-    return switch (@as(Tag, @enumFromInt(source.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(source.tag)))) {
         .undefined, .function => .{},
         .null_value, .boolean => source,
         .number => blk: {
             const number: f64 = @bitCast(source.payload);
-            break :blk if (std.math.isFinite(number)) numberValue(if (number == 0) 0 else number) else .{ .tag = @intFromEnum(Tag.null_value) };
+            break :blk if (std.math.isFinite(number)) numberValue(if (number == 0) 0 else number) else .{ .tag = @backingInt(Tag.null_value) };
         },
         .bigint => error.CannotSerializeBigInt,
         .byte_buffer => blk: {
@@ -1377,7 +1377,7 @@ pub fn deepCloneValue(runtime: *Runtime, source: Value, state: *CloneState) !Val
             try roots[0].object().?.payload.array.ensureTotalCapacity(runtime.allocator, values.len);
             for (values) |item| {
                 var cloned = try deepCloneValue(runtime, item, state);
-                if (cloned.tag == @intFromEnum(Tag.undefined) or cloned.tag == @intFromEnum(Tag.function)) cloned = .{ .tag = @intFromEnum(Tag.null_value) };
+                if (cloned.tag == @backingInt(Tag.undefined) or cloned.tag == @backingInt(Tag.function)) cloned = .{ .tag = @backingInt(Tag.null_value) };
                 try roots[0].object().?.payload.array.append(runtime.allocator, cloned);
             }
             return roots[0];
@@ -1395,7 +1395,7 @@ pub fn deepCloneValue(runtime: *Runtime, source: Value, state: *CloneState) !Val
             defer runtime.popRoots(&frame);
             for (object.payload.dictionary.entries.items) |entry| {
                 const cloned = try deepCloneValue(runtime, entry.value, state);
-                if (cloned.tag == @intFromEnum(Tag.undefined) or cloned.tag == @intFromEnum(Tag.function)) continue;
+                if (cloned.tag == @backingInt(Tag.undefined) or cloned.tag == @backingInt(Tag.function)) continue;
                 try runtime.setDictionary(&roots[0].object().?.payload.dictionary, entry.key, cloned);
             }
             return roots[0];

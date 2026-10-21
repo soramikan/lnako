@@ -73,7 +73,7 @@ fn applyStdioMode(
     stdout: *foundation.ProcessStdioMode,
     stderr: *foundation.ProcessStdioMode,
 ) !void {
-    switch (@as(Tag, @enumFromInt(value.tag))) {
+    switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .static_utf8_string, .utf16_string => {
             const mode = try parseStdioMode(runtime, value, operation);
             stdin.* = mode;
@@ -96,7 +96,7 @@ fn applyStdioMode(
 }
 
 fn u32Argument(value: Value) !u32 {
-    return switch (@as(Tag, @enumFromInt(value.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .number => blk: {
             const number = valueToNumber(value);
             if (!foundation.isSafeInteger(number)) return error.InvalidInteger;
@@ -113,7 +113,7 @@ fn u32Argument(value: Value) !u32 {
 }
 
 fn i32Argument(value: Value) !i32 {
-    return switch (@as(Tag, @enumFromInt(value.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .number => blk: {
             const number = valueToNumber(value);
             if (!foundation.isSafeInteger(number)) return error.InvalidInteger;
@@ -137,7 +137,7 @@ pub fn spawnBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     if (arguments.len < 1) {
         return throwStructured(runtime, .EINVAL, operation, null, null, "ARGVは文字列の配列である必要があります");
     }
-    if (arguments[0].tag != @intFromEnum(Tag.array)) {
+    if (arguments[0].tag != @backingInt(Tag.array)) {
         return throwStructured(runtime, .EINVAL, operation, null, null, "ARGVは文字列の配列である必要があります");
     }
 
@@ -158,15 +158,15 @@ pub fn spawnBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
 
     var options = low_level_process.SpawnOptions{};
     var env: std.ArrayList(low_level_process.EnvEntry) = .empty;
-    if (arguments.len > 1 and arguments[1].tag != @intFromEnum(Tag.undefined)) {
-        if (arguments[1].tag != @intFromEnum(Tag.dictionary)) {
+    if (arguments.len > 1 and arguments[1].tag != @backingInt(Tag.undefined)) {
+        if (arguments[1].tag != @backingInt(Tag.dictionary)) {
             return throwStructured(runtime, .EINVAL, operation, null, null, "OPTIONSは辞書である必要があります");
         }
         // OPTIONSはデータレコードとして扱い、own propertyだけを読む
         // （Interpreterの dictionaryGetAscii と一致させる。prototype継承は見ない）。
         // 値がundefinedの項目はInterpreterと同じく未指定として無視する。
         if (dictionaryOwnProperty(arguments[1], &.{ 'c', 'w', 'd' })) |cwd_value| {
-            if (cwd_value.tag != @intFromEnum(Tag.undefined)) {
+            if (cwd_value.tag != @backingInt(Tag.undefined)) {
                 if (!isString(cwd_value)) {
                     return throwStructured(runtime, .EINVAL, operation, null, null, "cwdは文字列である必要があります");
                 }
@@ -174,8 +174,8 @@ pub fn spawnBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
             }
         }
         if (dictionaryOwnProperty(arguments[1], &.{ 'e', 'n', 'v' })) |env_value| {
-            if (env_value.tag != @intFromEnum(Tag.undefined)) {
-                if (env_value.tag != @intFromEnum(Tag.dictionary)) {
+            if (env_value.tag != @backingInt(Tag.undefined)) {
+                if (env_value.tag != @backingInt(Tag.dictionary)) {
                     return throwStructured(runtime, .EINVAL, operation, null, null, "envは辞書である必要があります");
                 }
                 for (env_value.object().?.payload.dictionary.entries.items) |entry| {
@@ -190,13 +190,13 @@ pub fn spawnBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
             }
         }
         if (dictionaryOwnProperty(arguments[1], &.{ 's', 't', 'd', 'i', 'o' })) |stdio_value| {
-            if (stdio_value.tag != @intFromEnum(Tag.undefined)) {
+            if (stdio_value.tag != @backingInt(Tag.undefined)) {
                 try applyStdioMode(runtime, stdio_value, operation, &options.stdin, &options.stdout, &options.stderr);
             }
         }
         if (dictionaryOwnProperty(arguments[1], &.{ 'd', 'e', 't', 'a', 'c', 'h', 'e', 'd' })) |detached_value| {
-            if (detached_value.tag != @intFromEnum(Tag.undefined)) {
-                if (detached_value.tag != @intFromEnum(Tag.boolean)) {
+            if (detached_value.tag != @backingInt(Tag.undefined)) {
+                if (detached_value.tag != @backingInt(Tag.boolean)) {
                     return throwStructured(runtime, .EINVAL, operation, null, null, "detachedは真偽値である必要があります");
                 }
                 options.detached = detached_value.payload != 0;
@@ -247,7 +247,7 @@ pub fn waitBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     defer runtime.popRoots(&frame);
     roots[0] = try runtime.createDictionary(&.{});
     try setField(runtime, roots[0], foundation.wait_result_keys.exit_code, numberValue(@floatFromInt(result.exit_code)));
-    roots[1] = if (result.signal) |signal| numberValue(@floatFromInt(signal)) else .{ .tag = @intFromEnum(Tag.null_value) };
+    roots[1] = if (result.signal) |signal| numberValue(@floatFromInt(signal)) else .{ .tag = @backingInt(Tag.null_value) };
     try setField(runtime, roots[0], foundation.wait_result_keys.signal, roots[1]);
     return roots[0];
 }
@@ -330,7 +330,7 @@ pub fn ttyIsattyBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     const result = low_level_process.isTty(ensureProcessIo(runtime), processStreamFile(runtime, stream)) catch |failure| {
         return throwIoAs(runtime, failure, operation, null, .tty_isatty);
     };
-    return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(result) };
+    return .{ .tag = @backingInt(Tag.boolean), .payload = @intFromBool(result) };
 }
 
 /// `端末サイズ取得`。rows/columnsの辞書を返す。非端末はENOTSUP。
@@ -506,7 +506,7 @@ test "AOTは実プロセスを起動し終了コードとシグナル終了をwa
     roots[1] = try lowLevelProcessBuiltin(&runtime, .low_level_process_spawn, &.{roots[0]});
     const result = try lowLevelProcessBuiltin(&runtime, .low_level_process_wait, &.{roots[1]});
     try std.testing.expectEqual(@as(f64, 1), valueToNumber(dictionaryProperty(result, &.{ 'e', 'x', 'i', 't', 'C', 'o', 'd', 'e' })));
-    try std.testing.expectEqual(@intFromEnum(Tag.null_value), dictionaryProperty(result, &.{ 's', 'i', 'g', 'n', 'a', 'l' }).tag);
+    try std.testing.expectEqual(@backingInt(Tag.null_value), dictionaryProperty(result, &.{ 's', 'i', 'g', 'n', 'a', 'l' }).tag);
     try std.testing.expectError(error.NakoException, lowLevelProcessBuiltin(&runtime, .low_level_process_wait, &.{roots[1]}));
     const double_code = try aotThrownCode(&runtime);
     defer runtime.allocator.free(double_code);
@@ -549,7 +549,7 @@ test "AOTのPID/優先度/端末判定は実OSの値を返す" {
 
     roots[0] = try runtimeUtf8String(&runtime, "標準出力");
     const tty = try lowLevelProcessBuiltin(&runtime, .low_level_tty_isatty, &.{roots[0]});
-    try std.testing.expectEqual(@intFromEnum(Tag.boolean), tty.tag);
+    try std.testing.expectEqual(@backingInt(Tag.boolean), tty.tag);
     if (low_level_process.isTty(ensureProcessIo(&runtime), std.Io.File.stdout()) catch false) {
         const size = try lowLevelProcessBuiltin(&runtime, .low_level_tty_size, &.{roots[0]});
         try std.testing.expect(valueToNumber(dictionaryProperty(size, &.{ 'r', 'o', 'w', 's' })) > 0);

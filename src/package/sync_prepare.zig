@@ -569,7 +569,7 @@ test "verifyMaterializedPathPin は generation 複製 tree を lock pin と照�
     try verifyMaterializedPathPin(&ctx, &ok_entry, tree_dir);
 
     // 複製結果が pin と異なる tree（copy 中の改変相当）を拒否する。
-    const wrong_digest = [_]u8{0x5a} ** 32;
+    const wrong_digest = @as([32]u8, @splat(0x5a));
     const wrong_pin = try std.fmt.allocPrint(arena_impl.allocator(), "sha256:{s}", .{std.fmt.bytesToHex(wrong_digest, .lower)});
     const bad_artifacts = [_]lock_model.Artifact{.{ .key = "source", .kind = "source", .type = "raw", .sha256 = wrong_pin }};
     const bad_entry = lock_model.PackageEntry{ .id = "pkg:11111111111111111111111111111111", .name = "lib", .version = "1.0.0", .artifacts = &bad_artifacts };
@@ -601,7 +601,7 @@ test "verifyMutablePathSnapshot は metadata snapshot を lock 記録 digest と
 
     const digest = try path_digest.digestDir(testing.io, allocator, tree_dir);
     const recorded = try std.fmt.allocPrint(arena_impl.allocator(), "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
-    const wrong = try std.fmt.allocPrint(arena_impl.allocator(), "sha256:{s}", .{std.fmt.bytesToHex([_]u8{0x5a} ** 32, .lower)});
+    const wrong = try std.fmt.allocPrint(arena_impl.allocator(), "sha256:{s}", .{std.fmt.bytesToHex(@as([32]u8, @splat(0x5a)), .lower)});
     const mutable_paths = [_]lock_model.MutablePath{.{ .path = "deps/lib", .sha256 = recorded }};
     const lock_arena = std.heap.ArenaAllocator.init(allocator);
     const lock = lock_model.Lock{

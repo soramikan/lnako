@@ -140,9 +140,9 @@ fn collatePosix(allocator: std.mem.Allocator, name: []const u8, a: []const u8, b
     const locale = libc.newlocale(lc_collate_mask, locale_name.ptr, null);
     if (locale == null) return error.LocaleCollateUnsupported;
     defer libc.freelocale(locale);
-    const a_z = try allocator.dupeZ(u8, a);
+    const a_z = try allocator.dupeSentinel(u8, a, 0);
     defer allocator.free(a_z);
-    const b_z = try allocator.dupeZ(u8, b);
+    const b_z = try allocator.dupeSentinel(u8, b, 0);
     defer allocator.free(b_z);
     const order = libc.strcoll_l(a_z.ptr, b_z.ptr, locale);
     return if (order < 0) -1 else if (order > 0) 1 else 0;

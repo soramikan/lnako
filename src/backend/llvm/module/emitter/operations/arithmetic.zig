@@ -150,7 +150,7 @@ fn writeScalarNumberComparison(emitter: *Emitter, function: ir.Function, instruc
     try emitter.debugSuffix(instruction.span, scope);
     try emitter.output.writer.print("  %compare.bits.{d} = zext i1 %compare.{d} to i64", .{ result, result });
     try emitter.debugSuffix(instruction.span, scope);
-    const tag = @intFromEnum(aot_abi.Tag.boolean);
+    const tag = @backingInt(aot_abi.Tag.boolean);
     try emitter.output.writer.print("  %v{d} = insertvalue %lnako.Value {{ i8 {d}, i64 0 }}, i64 %compare.bits.{d}, 1", .{ result, tag, result });
     try emitter.debugSuffix(instruction.span, scope);
 }
@@ -168,7 +168,7 @@ fn writeScalarBooleanComparison(emitter: *Emitter, function: ir.Function, instru
     try emitter.debugSuffix(instruction.span, scope);
     try emitter.output.writer.print("  %compare.bits.{d} = zext i1 %compare.{d} to i64", .{ result, result });
     try emitter.debugSuffix(instruction.span, scope);
-    const tag = @intFromEnum(aot_abi.Tag.boolean);
+    const tag = @backingInt(aot_abi.Tag.boolean);
     try emitter.output.writer.print("  %v{d} = insertvalue %lnako.Value {{ i8 {d}, i64 0 }}, i64 %compare.bits.{d}, 1", .{ result, tag, result });
     try emitter.debugSuffix(instruction.span, scope);
 }

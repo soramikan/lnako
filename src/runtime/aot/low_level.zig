@@ -253,7 +253,7 @@ pub fn lowLevelCapabilitySupportedBuiltin(runtime: *Runtime, arguments: []const 
         return throwStructured(runtime, .EINVAL, spec.operation, null, null, "引数の数が不正です");
     }
     const supported = shared.capabilitySupported(arguments[0]);
-    return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(supported) };
+    return .{ .tag = @backingInt(Tag.boolean), .payload = @intFromBool(supported) };
 }
 
 /// カタログ掲載済みだが未実装の低レイヤー命令。カタログ定義のarityを超える

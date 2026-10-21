@@ -1084,7 +1084,7 @@ test "truncatePathは縮小・拡大・0サイズを反映し不足パスとデ�
         const mkfifo_fn = struct {
             extern "c" fn mkfifo(path: [*:0]const u8, mode: std.c.mode_t) c_int;
         }.mkfifo;
-        const fifo_z = try std.testing.allocator.dupeZ(u8, fifo_path);
+        const fifo_z = try std.testing.allocator.dupeSentinel(u8, fifo_path, 0);
         defer std.testing.allocator.free(fifo_z);
         try std.testing.expectEqual(@as(c_int, 0), mkfifo_fn(fifo_z.ptr, 0o600));
         try std.testing.expectError(error.InvalidArgument, truncatePath(std.testing.io, fifo_path, 0));

@@ -62,7 +62,7 @@ pub fn regexpBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments:
     rooted[3] = try runtime.createArray(&.{});
 
     if (command == .regexp_match) {
-        if (matches.len == 0) return .{ .value = .{ .tag = @intFromEnum(Tag.null_value) }, .captures = rooted[3] };
+        if (matches.len == 0) return .{ .value = .{ .tag = @backingInt(Tag.null_value) }, .captures = rooted[3] };
         if (!compiled.flags.global) {
             for (matches[0].captures[0..compiled.capture_count]) |span| {
                 const item: Value = if (span.matched) try runtime.createString(source_units[span.start..span.end]) else .{};

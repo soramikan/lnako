@@ -50,8 +50,9 @@ pub fn uploadBasename(path: []const u8) []const u8 {
 }
 
 pub fn httpMethod(source: []const u8) !std.http.Method {
-    inline for (@typeInfo(std.http.Method).@"enum".fields) |field| {
-        if (std.ascii.eqlIgnoreCase(source, field.name)) return @enumFromInt(field.value);
+    const info = @typeInfo(std.http.Method).@"enum";
+    inline for (info.field_names, info.field_values) |name, value| {
+        if (std.ascii.eqlIgnoreCase(source, name)) return @fromBackingInt(@intCast(value));
     }
     return error.UnsupportedHttpMethod;
 }

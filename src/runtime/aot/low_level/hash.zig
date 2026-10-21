@@ -128,7 +128,7 @@ pub fn hashDigestBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
         return throwStructured(runtime, .EBADF, foundation.hash_operation, null, null, "無効なハンドルです");
     };
     var encoding: low_level_hash.Encoding = .raw;
-    if (arguments.len > 1 and arguments[1].tag != @intFromEnum(Tag.undefined) and arguments[1].tag != @intFromEnum(Tag.null_value)) {
+    if (arguments.len > 1 and arguments[1].tag != @backingInt(Tag.undefined) and arguments[1].tag != @backingInt(Tag.null_value)) {
         if (!isString(arguments[1])) {
             return throwStructured(runtime, .EINVAL, foundation.hash_operation, null, null, "encodingは文字列である必要があります");
         }
@@ -281,7 +281,7 @@ test "AOT低レイヤーのハッシュ開始は未知をEINVAL、RIPEMDをENOTS
     try std.testing.expectError(error.NakoException, lowLevelHashBuiltin(&runtime, .low_level_hash_create, &.{roots[0]}));
     try expectPendingCode(&runtime, "EINVAL");
     const unknown_capability = dictionaryProperty(runtime.pending_exception, &.{ 'c', 'a', 'p', 'a', 'b', 'i', 'l', 'i', 't', 'y' });
-    try std.testing.expectEqual(@intFromEnum(Tag.null_value), unknown_capability.tag);
+    try std.testing.expectEqual(@backingInt(Tag.null_value), unknown_capability.tag);
 
     roots[0] = try runtimeUtf8String(&runtime, "ripemd160");
     try std.testing.expectError(error.NakoException, lowLevelHashBuiltin(&runtime, .low_level_hash_create, &.{roots[0]}));

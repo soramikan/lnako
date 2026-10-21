@@ -725,11 +725,11 @@ pub const replaceBuiltin = string_module.replaceBuiltin;
 pub const appendFirstReplacementBuiltin = string_module.appendFirstReplacementBuiltin;
 
 pub fn numberValue(number: f64) Value {
-    return .{ .tag = @intFromEnum(Tag.number), .payload = @bitCast(number) };
+    return .{ .tag = @backingInt(Tag.number), .payload = @bitCast(number) };
 }
 
 pub fn staticStringValue(comptime text: [:0]const u8) Value {
-    return .{ .tag = @intFromEnum(Tag.static_utf8_string), .payload = @intFromPtr(text.ptr) };
+    return .{ .tag = @backingInt(Tag.static_utf8_string), .payload = @intFromPtr(text.ptr) };
 }
 
 const values_module = @import("values.zig");

@@ -179,8 +179,8 @@ pub fn csvAppendCell(runtime: *Runtime, row: *std.ArrayList(Value), units: []con
 }
 
 pub fn csvStringify(runtime: *Runtime, csv_state: *const AotCsvState, source: Value) !Value {
-    if (source.tag == @intFromEnum(Tag.undefined)) return runtime.createString(&.{});
-    if (source.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
+    if (source.tag == @backingInt(Tag.undefined)) return runtime.createString(&.{});
+    if (source.tag != @backingInt(Tag.array)) return error.ArrayExpected;
     var rooted = [_]Value{ source, .{} };
     var roots = RootFrame{};
     runtime.pushRoots(&roots, &rooted, rooted.len);
@@ -190,11 +190,11 @@ pub fn csvStringify(runtime: *Runtime, csv_state: *const AotCsvState, source: Va
     defer raw.deinit(runtime.allocator);
     const delimiter = csv_state.delimiter();
     for (rooted[0].object().?.payload.array.items) |row| {
-        if (row.tag == @intFromEnum(Tag.undefined)) {
+        if (row.tag == @backingInt(Tag.undefined)) {
             try raw.appendSlice(runtime.allocator, csv_state.eol());
             continue;
         }
-        if (row.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
+        if (row.tag != @backingInt(Tag.array)) return error.ArrayExpected;
         const row_object = row.object().?;
         for (row_object.payload.array.items, 0..) |cell, column| {
             if (column > 0) try raw.appendSlice(runtime.allocator, delimiter);
@@ -239,7 +239,7 @@ pub fn csvQuoteCell(runtime: *Runtime, source: Value, delimiter: []const u16) !V
 }
 
 pub fn csvSetOptions(runtime: *Runtime, csv_state: *AotCsvState, source: Value) !void {
-    if (source.tag != @intFromEnum(Tag.dictionary)) return;
+    if (source.tag != @backingInt(Tag.dictionary)) return;
     for (source.object().?.payload.dictionary.entries.items) |entry| {
         const key_units = try valueUtf16Alloc(runtime, entry.key);
         defer runtime.allocator.free(key_units);
@@ -519,8 +519,8 @@ const TomlAotParser = struct {
         }
         if (start == self.index) return error.InvalidTomlValue;
         const token = self.input[start..self.index];
-        if (std.mem.eql(u8, token, "true")) return .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 };
-        if (std.mem.eql(u8, token, "false")) return .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
+        if (std.mem.eql(u8, token, "true")) return .{ .tag = @backingInt(Tag.boolean), .payload = 1 };
+        if (std.mem.eql(u8, token, "false")) return .{ .tag = @backingInt(Tag.boolean), .payload = 0 };
         if (std.mem.eql(u8, token, "inf") or std.mem.eql(u8, token, "+inf")) return numberValue(std.math.inf(f64));
         if (std.mem.eql(u8, token, "-inf")) return numberValue(-std.math.inf(f64));
         if (std.mem.eql(u8, token, "nan") or std.mem.eql(u8, token, "+nan")) return numberValue(std.math.nan(f64));
@@ -549,7 +549,7 @@ const TomlAotParser = struct {
                     try tomlAotPut(self.runtime, current, segment, created);
                     break :blk created;
                 };
-                if (array_value.tag != @intFromEnum(Tag.array)) return error.InvalidTomlTable;
+                if (array_value.tag != @backingInt(Tag.array)) return error.InvalidTomlTable;
                 const table_value = try self.runtime.createDictionary(&.{});
                 var table_roots = [_]Value{ array_value, table_value };
                 var roots = RootFrame{};
@@ -680,7 +680,7 @@ pub fn tomlAotIsBareKey(byte: u8) bool {
 }
 
 pub fn tomlAotLastArrayDictionary(value: Value) ?Value {
-    if (value.tag != @intFromEnum(Tag.array)) return null;
+    if (value.tag != @backingInt(Tag.array)) return null;
     const object = value.object() orelse return null;
     if (object.payload != .array or object.payload.array.items.len == 0) return null;
     const item = object.payload.array.items[object.payload.array.items.len - 1];
@@ -688,12 +688,12 @@ pub fn tomlAotLastArrayDictionary(value: Value) ?Value {
 }
 
 pub fn tomlAotIsTableDictionary(value: Value) bool {
-    if (value.tag != @intFromEnum(Tag.dictionary)) return false;
+    if (value.tag != @backingInt(Tag.dictionary)) return false;
     return value.object().?.toml_temporal == null;
 }
 
 pub fn tomlStringify(runtime: *Runtime, source: Value) !Value {
-    if (source.tag != @intFromEnum(Tag.dictionary)) return error.DictionaryExpected;
+    if (source.tag != @backingInt(Tag.dictionary)) return error.DictionaryExpected;
     var rooted_source = source;
     var roots = RootFrame{};
     runtime.pushRoots(&roots, @ptrCast(&rooted_source), 1);
@@ -774,7 +774,7 @@ pub fn tomlAotWriteKey(runtime: *Runtime, output: *std.ArrayList(u8), key: Value
 }
 
 pub fn tomlAotWriteValue(runtime: *Runtime, output: *std.ArrayList(u8), value: Value, active_dictionaries: *std.AutoHashMapUnmanaged(*Object, void), active_arrays: *std.AutoHashMapUnmanaged(*Object, void)) !void {
-    switch (@as(Tag, @enumFromInt(value.tag))) {
+    switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .boolean => try output.appendSlice(runtime.allocator, if (value.payload != 0) "true" else "false"),
         .number => {
             const number: f64 = @bitCast(value.payload);
@@ -842,7 +842,7 @@ pub fn tomlAotWriteQuoted(runtime: *Runtime, output: *std.ArrayList(u8), bytes: 
 }
 
 pub fn tomlAotIsArrayOfDictionaries(value: Value) bool {
-    if (value.tag != @intFromEnum(Tag.array)) return false;
+    if (value.tag != @backingInt(Tag.array)) return false;
     const object = value.object() orelse return false;
     return switch (object.payload) {
         .array => |items| items.items.len > 0 and tomlAotIsTableDictionary(items.items[0]),
@@ -892,7 +892,7 @@ pub fn systemExecutionBuiltin(runtime: *Runtime, command: aot_builtin.Command, a
         .system_execute => {
             if (arguments.len == 0) return .{};
             const candidate = arguments[arguments.len - 1];
-            if (candidate.tag == @intFromEnum(Tag.function)) return invokeAotCallback(runtime, candidate, null, 0);
+            if (candidate.tag == @backingInt(Tag.function)) return invokeAotCallback(runtime, candidate, null, 0);
             if (isString(candidate)) {
                 const callable = try resolveAotCallback(runtime, candidate);
                 return invokeAotCallback(runtime, callable, null, 0);
@@ -906,7 +906,7 @@ pub fn systemExecutionBuiltin(runtime: *Runtime, command: aot_builtin.Command, a
             runtime.pushRoots(&frame, &roots, roots.len);
             defer runtime.popRoots(&frame);
             roots[0] = try resolveAotCallback(runtime, roots[0]);
-            if (roots[1].tag == @intFromEnum(Tag.array)) {
+            if (roots[1].tag == @backingInt(Tag.array)) {
                 const call_arguments = try arrayItems(roots[1]);
                 const pointer = if (call_arguments.items.len > 0) @as(?[*]const Value, call_arguments.items.ptr) else null;
                 roots[2] = try invokeAotCallback(runtime, roots[0], pointer, call_arguments.items.len);

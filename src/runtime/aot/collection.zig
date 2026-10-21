@@ -66,7 +66,7 @@ const parseIntBuiltin = aot_state.parseIntBuiltin;
 const ArrayRange = struct { start: usize, count: usize };
 
 pub fn arrayItems(value: Value) !*std.ArrayList(Value) {
-    if (value.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
+    if (value.tag != @backingInt(Tag.array)) return error.ArrayExpected;
     const object = value.object() orelse return error.InvalidArray;
     if (object.payload != .array) return error.InvalidArray;
     return &object.payload.array;
@@ -102,7 +102,7 @@ pub fn spliceCountNumber(number: f64, maximum: usize) usize {
 }
 
 pub fn dictionaryOwnProperty(value: Value, key: []const u16) ?Value {
-    if (value.tag != @intFromEnum(Tag.dictionary)) return null;
+    if (value.tag != @backingInt(Tag.dictionary)) return null;
     const object = value.object() orelse return null;
     if (object.payload != .dictionary) return null;
     const index = object.payload.dictionary.findByUnits(key) orelse return null;
@@ -115,8 +115,8 @@ pub fn dictionaryPrototypeProperty(value: Value, key: []const u16) ?Value {
     var current = object.prototype;
     var depth: usize = 0;
     while (depth < 256) : (depth += 1) {
-        if (current.tag == @intFromEnum(Tag.null_value) or current.tag == @intFromEnum(Tag.undefined)) return null;
-        if (current.tag != @intFromEnum(Tag.dictionary)) return null;
+        if (current.tag == @backingInt(Tag.null_value) or current.tag == @backingInt(Tag.undefined)) return null;
+        if (current.tag != @backingInt(Tag.dictionary)) return null;
         const prototype_object = current.object() orelse return null;
         if (prototype_object.payload != .dictionary) return null;
         if (dictionaryOwnProperty(current, key)) |property| return property;
@@ -131,9 +131,9 @@ pub fn dictionaryPrototypeBlocksStandard(value: Value) bool {
     var current = object.prototype;
     var depth: usize = 0;
     while (depth < 256) : (depth += 1) {
-        if (current.tag == @intFromEnum(Tag.null_value)) return true;
-        if (current.tag == @intFromEnum(Tag.undefined)) return false;
-        if (current.tag != @intFromEnum(Tag.dictionary)) return false;
+        if (current.tag == @backingInt(Tag.null_value)) return true;
+        if (current.tag == @backingInt(Tag.undefined)) return false;
+        if (current.tag != @backingInt(Tag.dictionary)) return false;
         const prototype_object = current.object() orelse return false;
         if (prototype_object.payload != .dictionary) return false;
         current = prototype_object.prototype;
@@ -142,14 +142,14 @@ pub fn dictionaryPrototypeBlocksStandard(value: Value) bool {
 }
 
 pub fn arrayPrototypeProperty(value: Value, key: []const u16) ?Value {
-    if (value.tag != @intFromEnum(Tag.array)) return null;
+    if (value.tag != @backingInt(Tag.array)) return null;
     const object = value.object() orelse return null;
     if (object.payload != .array) return null;
     var current = object.prototype;
     var depth: usize = 0;
     while (depth < 256) : (depth += 1) {
-        if (current.tag == @intFromEnum(Tag.null_value) or current.tag == @intFromEnum(Tag.undefined)) return null;
-        if (current.tag != @intFromEnum(Tag.dictionary)) return null;
+        if (current.tag == @backingInt(Tag.null_value) or current.tag == @backingInt(Tag.undefined)) return null;
+        if (current.tag != @backingInt(Tag.dictionary)) return null;
         if (dictionaryOwnProperty(current, key)) |property| return property;
         const prototype_object = current.object() orelse return null;
         if (prototype_object.payload != .dictionary) return null;
@@ -159,15 +159,15 @@ pub fn arrayPrototypeProperty(value: Value, key: []const u16) ?Value {
 }
 
 pub fn arrayPrototypeBlocksStandard(value: Value) bool {
-    if (value.tag != @intFromEnum(Tag.array)) return false;
+    if (value.tag != @backingInt(Tag.array)) return false;
     const object = value.object() orelse return false;
     if (object.payload != .array) return false;
     var current = object.prototype;
     var depth: usize = 0;
     while (depth < 256) : (depth += 1) {
-        if (current.tag == @intFromEnum(Tag.null_value)) return true;
-        if (current.tag == @intFromEnum(Tag.undefined)) return false;
-        if (current.tag != @intFromEnum(Tag.dictionary)) return false;
+        if (current.tag == @backingInt(Tag.null_value)) return true;
+        if (current.tag == @backingInt(Tag.undefined)) return false;
+        if (current.tag != @backingInt(Tag.dictionary)) return false;
         const prototype_object = current.object() orelse return false;
         if (prototype_object.payload != .dictionary) return false;
         current = prototype_object.prototype;
@@ -180,7 +180,7 @@ pub fn dictionaryProperty(value: Value, key: []const u16) Value {
 }
 
 pub fn aotCanonicalArrayIndex(value: Value) ?usize {
-    switch (@as(Tag, @enumFromInt(value.tag))) {
+    switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .number => {
             const number: f64 = @bitCast(value.payload);
             if (!std.math.isFinite(number) or number < 0 or number > 4_294_967_294 or @trunc(number) != number) return null;
@@ -195,7 +195,7 @@ pub fn aotCanonicalArrayIndex(value: Value) ?usize {
         },
         else => {},
     }
-    const units: []const u16 = switch (@as(Tag, @enumFromInt(value.tag))) {
+    const units: []const u16 = switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .static_utf8_string => {
             const text = staticUtf8(value);
             if (text.len == 0 or (text.len > 1 and text[0] == '0')) return null;
@@ -327,7 +327,7 @@ pub fn dictionaryKeysBuiltin(runtime: *Runtime, source: Value) !Value {
     defer runtime.popRoots(&frame);
     roots[1] = try runtime.createArray(&.{});
     const result = &roots[1].object().?.payload.array;
-    switch (@as(Tag, @enumFromInt(roots[0].tag))) {
+    switch (@as(Tag, @fromBackingInt(@intCast(roots[0].tag)))) {
         .dictionary => {
             const entries = try aotEnumerableDictionaryEntries(runtime, roots[0]);
             defer runtime.allocator.free(entries);
@@ -390,7 +390,7 @@ pub fn dictionaryValuesBuiltin(runtime: *Runtime, source: Value) !Value {
     defer runtime.popRoots(&frame);
     roots[1] = try runtime.createArray(&.{});
     const result = &roots[1].object().?.payload.array;
-    switch (@as(Tag, @enumFromInt(roots[0].tag))) {
+    switch (@as(Tag, @fromBackingInt(@intCast(roots[0].tag)))) {
         .dictionary => {
             const entries = try aotEnumerableDictionaryEntries(runtime, roots[0]);
             defer runtime.allocator.free(entries);
@@ -449,7 +449,7 @@ pub fn dictionaryRemoveBuiltin(runtime: *Runtime, source: Value, key: Value) !Va
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
-    switch (@as(Tag, @enumFromInt(roots[0].tag))) {
+    switch (@as(Tag, @fromBackingInt(@intCast(roots[0].tag)))) {
         .dictionary => {
             const dictionary = &roots[0].object().?.payload.dictionary;
             const key_units = try valueUtf16Alloc(runtime, roots[1]);
@@ -515,7 +515,7 @@ pub fn dictionaryHasBuiltin(runtime: *Runtime, source: Value, key: Value) !bool 
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
-    switch (@as(Tag, @enumFromInt(roots[0].tag))) {
+    switch (@as(Tag, @fromBackingInt(@intCast(roots[0].tag)))) {
         .dictionary => {
             const key_units = try valueUtf16Alloc(runtime, roots[1]);
             defer runtime.allocator.free(key_units);
@@ -584,16 +584,16 @@ pub fn arrayRange(runtime: *Runtime, index: Value, length: usize) !?ArrayRange {
     // reading i['先頭'].  Accessing a null value therefore throws, while an
     // array or dictionary without a numeric 先頭 simply falls through to the
     // null return value.
-    if (index.tag == @intFromEnum(Tag.null_value)) return error.ArrayCutNullIndex;
-    const tag: Tag = @enumFromInt(index.tag);
+    if (index.tag == @backingInt(Tag.null_value)) return error.ArrayCutNullIndex;
+    const tag: Tag = @fromBackingInt(@intCast(index.tag));
     if (tag != .array and tag != .dictionary) return null;
     const first_value = dictionaryProperty(index, &.{ 0x5148, 0x982d });
-    if (first_value.tag != @intFromEnum(Tag.number)) return null;
+    if (first_value.tag != @backingInt(Tag.number)) return null;
     const first_number: f64 = @bitCast(first_value.payload);
     const last_value = dictionaryProperty(index, &.{ 0x672b, 0x5c3e });
     // `last - first + 1` is a JavaScript subtraction expression.  A BigInt
     // on either side would throw instead of silently converting to f64.
-    if (last_value.tag == @intFromEnum(Tag.bigint)) return error.CannotMixBigIntAndNumber;
+    if (last_value.tag == @backingInt(Tag.bigint)) return error.CannotMixBigIntAndNumber;
     const last_number = try valueToNumberRuntime(runtime, last_value);
     const count_number = last_number - first_number + 1;
     return .{
@@ -655,7 +655,7 @@ pub fn arrayInsertBuiltin(runtime: *Runtime, source: Value, index: Value, item: 
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
-    if (roots[0].tag != @intFromEnum(Tag.array)) return error.ArrayInsertReceiver;
+    if (roots[0].tag != @backingInt(Tag.array)) return error.ArrayInsertReceiver;
     const object = roots[0].object() orelse return error.InvalidArray;
     try runtime.normalizeAotArrayPresence(object);
     const items = try arrayItems(roots[0]);
@@ -674,7 +674,7 @@ pub fn arrayInsertManyBuiltin(runtime: *Runtime, source: Value, index: Value, va
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
-    if (roots[0].tag != @intFromEnum(Tag.array) or roots[2].tag != @intFromEnum(Tag.array)) return error.ArrayInsertManyReceiver;
+    if (roots[0].tag != @backingInt(Tag.array) or roots[2].tag != @backingInt(Tag.array)) return error.ArrayInsertManyReceiver;
     const target_object = roots[0].object() orelse return error.InvalidArray;
     try runtime.normalizeAotArrayPresence(target_object);
     const target = try arrayItems(roots[0]);
@@ -709,9 +709,9 @@ pub fn arrayCutBuiltin(runtime: *Runtime, source: Value, index: Value) !Value {
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
-    if (roots[0].tag == @intFromEnum(Tag.array)) {
+    if (roots[0].tag == @backingInt(Tag.array)) {
         const items = try arrayItems(roots[0]);
-        if (roots[1].tag == @intFromEnum(Tag.number)) {
+        if (roots[1].tag == @backingInt(Tag.number)) {
             const start = try spliceIndexRuntime(runtime, roots[1], items.items.len);
             roots[2] = try spliceArrayBuiltin(runtime, roots[0], start, 1);
             const removed = try arrayItems(roots[2]);
@@ -720,9 +720,9 @@ pub fn arrayCutBuiltin(runtime: *Runtime, source: Value, index: Value) !Value {
         if (try arrayRange(runtime, roots[1], items.items.len)) |range| {
             return spliceArrayBuiltin(runtime, roots[0], range.start, range.count);
         }
-        return .{ .tag = @intFromEnum(Tag.null_value) };
+        return .{ .tag = @backingInt(Tag.null_value) };
     }
-    if (roots[0].tag == @intFromEnum(Tag.dictionary) and isString(roots[1])) {
+    if (roots[0].tag == @backingInt(Tag.dictionary) and isString(roots[1])) {
         const object = roots[0].object() orelse return error.InvalidDictionary;
         if (object.payload != .dictionary) return error.InvalidDictionary;
         const key_units = try valueUtf16Alloc(runtime, roots[1]);
@@ -746,7 +746,7 @@ pub fn arrayTakeBuiltin(runtime: *Runtime, source: Value, index: Value, count: V
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
-    if (roots[0].tag != @intFromEnum(Tag.array)) return error.ArrayTakeReceiver;
+    if (roots[0].tag != @backingInt(Tag.array)) return error.ArrayTakeReceiver;
     const items = try arrayItems(roots[0]);
     const start = try spliceIndexRuntime(runtime, roots[1], items.items.len);
     const delete_count = try spliceCountRuntime(runtime, roots[2], items.items.len - start);
@@ -754,7 +754,7 @@ pub fn arrayTakeBuiltin(runtime: *Runtime, source: Value, index: Value, count: V
 }
 
 pub fn arrayPopBuiltin(_: *Runtime, source: Value) !Value {
-    if (source.tag != @intFromEnum(Tag.array)) return error.ArrayPopReceiver;
+    if (source.tag != @backingInt(Tag.array)) return error.ArrayPopReceiver;
     const object = source.object() orelse return error.InvalidArray;
     if (object.payload != .array) return error.InvalidArray;
     const length = object.payload.array.items.len;
@@ -766,7 +766,7 @@ pub fn arrayPopBuiltin(_: *Runtime, source: Value) !Value {
 }
 
 pub fn arrayPushBuiltin(runtime: *Runtime, source: Value, item: Value) !Value {
-    if (source.tag != @intFromEnum(Tag.array)) return error.ArrayPushReceiver;
+    if (source.tag != @backingInt(Tag.array)) return error.ArrayPushReceiver;
     const object = source.object() orelse return error.InvalidArray;
     if (object.payload != .array) return error.InvalidArray;
     try runtime.aotArrayAppend(object, item);
@@ -835,10 +835,10 @@ pub fn charAtIndex(number: f64, length: usize) ?usize {
 }
 
 pub fn sliceRange(runtime: *Runtime, index: Value, length: usize) !?SliceRange {
-    if (index.tag == @intFromEnum(Tag.null_value)) return error.ArrayCutNullIndex;
-    if (index.tag != @intFromEnum(Tag.dictionary) and index.tag != @intFromEnum(Tag.array)) return null;
+    if (index.tag == @backingInt(Tag.null_value)) return error.ArrayCutNullIndex;
+    if (index.tag != @backingInt(Tag.dictionary) and index.tag != @backingInt(Tag.array)) return null;
     const first = dictionaryProperty(index, &.{ 0x5148, 0x982d });
-    if (first.tag != @intFromEnum(Tag.number)) return null;
+    if (first.tag != @backingInt(Tag.number)) return null;
     const last = dictionaryProperty(index, &.{ 0x672b, 0x5c3e });
     const start = sliceIndex(@bitCast(first.payload), length);
     const end_number = try explicitRangeNumber(runtime, last);
@@ -847,10 +847,10 @@ pub fn sliceRange(runtime: *Runtime, index: Value, length: usize) !?SliceRange {
 }
 
 pub fn substringRange(runtime: *Runtime, index: Value, length: usize) !?SliceRange {
-    if (index.tag == @intFromEnum(Tag.null_value)) return error.ArrayCutNullIndex;
-    if (index.tag != @intFromEnum(Tag.dictionary) and index.tag != @intFromEnum(Tag.array)) return null;
+    if (index.tag == @backingInt(Tag.null_value)) return error.ArrayCutNullIndex;
+    if (index.tag != @backingInt(Tag.dictionary) and index.tag != @backingInt(Tag.array)) return null;
     const first = dictionaryProperty(index, &.{ 0x5148, 0x982d });
-    if (first.tag != @intFromEnum(Tag.number)) return null;
+    if (first.tag != @backingInt(Tag.number)) return null;
     const last = dictionaryProperty(index, &.{ 0x672b, 0x5c3e });
     const first_number: f64 = @bitCast(first.payload);
     const last_number = try explicitRangeNumber(runtime, last) + 1;
@@ -873,13 +873,13 @@ pub fn arrayRangeCopyBuiltin(runtime: *Runtime, source: Value, index: Value) !Va
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &rooted, rooted.len);
     defer runtime.popRoots(&frame);
-    if (rooted[0].tag != @intFromEnum(Tag.array)) return error.ArrayRangeCopyReceiver;
+    if (rooted[0].tag != @backingInt(Tag.array)) return error.ArrayRangeCopyReceiver;
     const items = try arrayItems(rooted[0]);
-    if (rooted[1].tag == @intFromEnum(Tag.number)) {
+    if (rooted[1].tag == @backingInt(Tag.number)) {
         const position = directIndex(@bitCast(rooted[1].payload)) orelse return .{};
         if (position >= items.items.len) return .{};
         const item = items.items[position];
-        return switch (@as(Tag, @enumFromInt(item.tag))) {
+        return switch (@as(Tag, @fromBackingInt(@intCast(item.tag)))) {
             .array, .dictionary, .iterator, .null_value => deepCloneBuiltin(runtime, item),
             else => item,
         };
@@ -893,7 +893,7 @@ pub fn arrayRangeCopyBuiltin(runtime: *Runtime, source: Value, index: Value) !Va
     defer state.deinit(runtime.allocator);
     for (values) |item| {
         var cloned = try deepCloneValue(runtime, item, &state);
-        if (cloned.tag == @intFromEnum(Tag.undefined) or cloned.tag == @intFromEnum(Tag.function)) cloned = .{ .tag = @intFromEnum(Tag.null_value) };
+        if (cloned.tag == @backingInt(Tag.undefined) or cloned.tag == @backingInt(Tag.function)) cloned = .{ .tag = @backingInt(Tag.null_value) };
         try appendAotArraySlot(runtime, rooted[2].object().?, cloned, true);
     }
     return rooted[2];
@@ -907,7 +907,7 @@ pub fn referenceBuiltin(runtime: *Runtime, source: Value, index: Value) !Value {
     if (isString(rooted[0])) {
         const units = try valueUtf16Alloc(runtime, rooted[0]);
         defer runtime.allocator.free(units);
-        if (rooted[1].tag == @intFromEnum(Tag.number)) {
+        if (rooted[1].tag == @backingInt(Tag.number)) {
             const position = charAtIndex(@bitCast(rooted[1].payload), units.len) orelse return runtime.createString(&.{});
             return runtime.createString(units[position .. position + 1]);
         }
@@ -916,13 +916,13 @@ pub fn referenceBuiltin(runtime: *Runtime, source: Value, index: Value) !Value {
         const end = @min(range.end, units.len);
         return runtime.createString(units[start..end]);
     }
-    if (rooted[0].tag == @intFromEnum(Tag.array)) {
+    if (rooted[0].tag == @backingInt(Tag.array)) {
         const items = try arrayItems(rooted[0]);
-        if (rooted[1].tag == @intFromEnum(Tag.number)) {
+        if (rooted[1].tag == @backingInt(Tag.number)) {
             const position = directIndex(@bitCast(rooted[1].payload)) orelse return runtime.aotArrayPropertyGet(rooted[0].object().?, rooted[1]);
             return if (position <= 4_294_967_294 and position < items.items.len) items.items[position] else runtime.aotArrayPropertyGet(rooted[0].object().?, rooted[1]);
         }
-        if (rooted[1].tag == @intFromEnum(Tag.bigint)) {
+        if (rooted[1].tag == @backingInt(Tag.bigint)) {
             const position = bigIntPropertyIndex(rooted[1].object().?.payload.bigint, items.items.len) orelse return runtime.aotArrayPropertyGet(rooted[0].object().?, rooted[1]);
             return items.items[position];
         }
@@ -941,8 +941,8 @@ pub fn referenceBuiltin(runtime: *Runtime, source: Value, index: Value) !Value {
         }
         return rooted[2];
     }
-    if (rooted[0].tag == @intFromEnum(Tag.byte_buffer)) return tableRowProperty(runtime, rooted[0], rooted[1]);
-    if (rooted[0].tag == @intFromEnum(Tag.dictionary)) {
+    if (rooted[0].tag == @backingInt(Tag.byte_buffer)) return tableRowProperty(runtime, rooted[0], rooted[1]);
+    if (rooted[0].tag == @backingInt(Tag.dictionary)) {
         const key = try valueUtf16Alloc(runtime, rooted[1]);
         defer runtime.allocator.free(key);
         if (dictionaryOwnProperty(rooted[0], key)) |value| return value;
@@ -961,7 +961,7 @@ pub fn invalidStringRangeBuiltin(runtime: *Runtime, index: Value) !Value {
     var message: std.ArrayList(u16) = .empty;
     errdefer message.deinit(runtime.allocator);
     try appendUtf8Units(&message, runtime.allocator, "『参照』で文字列型の範囲指定(");
-    if (roots[0].tag == @intFromEnum(Tag.undefined)) {
+    if (roots[0].tag == @backingInt(Tag.undefined)) {
         try appendAsciiUnits(&message, runtime.allocator, "undefined");
     } else {
         try message.appendSlice(runtime.allocator, roots[0].object().?.payload.utf16_string);
@@ -982,15 +982,15 @@ pub fn arrayAddBuiltin(runtime: *Runtime, source: Value, other: Value) !Value {
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
-    if (roots[0].tag != @intFromEnum(Tag.array)) return deepCloneBuiltin(runtime, roots[0]);
+    if (roots[0].tag != @backingInt(Tag.array)) return deepCloneBuiltin(runtime, roots[0]);
     roots[2] = try runtime.createArray(&.{});
     const source_object = roots[0].object().?;
     try runtime.normalizeAotArrayPresence(source_object);
     const source_items = &source_object.payload.array;
-    const other_is_array = roots[1].tag == @intFromEnum(Tag.array);
+    const other_is_array = roots[1].tag == @backingInt(Tag.array);
     const other_object = if (other_is_array) roots[1].object().? else null;
     if (other_object) |object| try runtime.normalizeAotArrayPresence(object);
-    const extra: usize = if (roots[1].tag == @intFromEnum(Tag.array)) (try arrayItems(roots[1])).items.len else 1;
+    const extra: usize = if (roots[1].tag == @backingInt(Tag.array)) (try arrayItems(roots[1])).items.len else 1;
     const final_length = std.math.add(usize, source_items.items.len, extra) catch return error.ArrayTooLarge;
     const result_object = roots[2].object().?;
     const result = &result_object.payload.array;
@@ -1011,7 +1011,7 @@ pub fn arrayAddBuiltin(runtime: *Runtime, source: Value, other: Value) !Value {
 }
 
 pub fn arrayExtremumBuiltin(runtime: *Runtime, source: Value, maximum: bool) !Value {
-    if (source.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
+    if (source.tag != @backingInt(Tag.array)) return error.ArrayExpected;
     const object = source.object() orelse return error.InvalidArray;
     if (object.payload != .array) return error.InvalidArray;
     const items = object.payload.array.items;
@@ -1046,7 +1046,7 @@ pub fn isNegativeZero(number: f64) bool {
 }
 
 pub fn arraySumBuiltin(runtime: *Runtime, source: Value) !Value {
-    if (source.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
+    if (source.tag != @backingInt(Tag.array)) return error.ArrayExpected;
     const object = source.object() orelse return error.InvalidArray;
     if (object.payload != .array) return error.InvalidArray;
     var total: f64 = 0;
@@ -1063,7 +1063,7 @@ pub fn arraySwapBuiltin(runtime: *Runtime, source: Value, first_value: Value, se
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
-    if (roots[0].tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
+    if (roots[0].tag != @backingInt(Tag.array)) return error.ArrayExpected;
     const first_units = try valueUtf16Alloc(runtime, roots[1]);
     defer runtime.allocator.free(first_units);
     const second_units = try valueUtf16Alloc(runtime, roots[2]);
@@ -1103,7 +1103,7 @@ pub fn arraySequenceBuiltin(runtime: *Runtime, first_value: Value, last_value: V
     var count: usize = 0;
     const lessEqual = struct {
         pub fn check(rt: *Runtime, left: Value, right: Value) !bool {
-            if (left.tag == @intFromEnum(Tag.bigint) and right.tag == @intFromEnum(Tag.bigint)) {
+            if (left.tag == @backingInt(Tag.bigint) and right.tag == @backingInt(Tag.bigint)) {
                 return BigInt.order(left.object().?.payload.bigint, right.object().?.payload.bigint) != .gt;
             }
             return compareValues(rt, .less_equal, left, right);
@@ -1111,9 +1111,9 @@ pub fn arraySequenceBuiltin(runtime: *Runtime, first_value: Value, last_value: V
     }.check;
     while (try lessEqual(runtime, roots[0], roots[1])) {
         if (count >= safe_array_element_limit) return error.ArraySequenceSizeLimit;
-        if (roots[1].tag != @intFromEnum(Tag.bigint) and try valueToNumberRuntime(runtime, roots[1]) == std.math.inf(f64)) return error.ArraySequenceSizeLimit;
+        if (roots[1].tag != @backingInt(Tag.bigint) and try valueToNumberRuntime(runtime, roots[1]) == std.math.inf(f64)) return error.ArraySequenceSizeLimit;
         try result_items.append(runtime.allocator, roots[0]);
-        if (roots[0].tag == @intFromEnum(Tag.bigint)) {
+        if (roots[0].tag == @backingInt(Tag.bigint)) {
             roots[0] = try bigIntArithmetic(runtime, .add, roots[0], roots[3]);
         } else {
             const current_number = try valueToNumberRuntime(runtime, roots[0]);
@@ -1131,7 +1131,7 @@ pub fn arrayFillBuiltin(runtime: *Runtime, value: Value, shape: Value) !Value {
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
-    if (roots[1].tag == @intFromEnum(Tag.array)) try validateFillDimensions(runtime, roots[1]);
+    if (roots[1].tag == @backingInt(Tag.array)) try validateFillDimensions(runtime, roots[1]);
     return arrayFillAtDepth(runtime, roots[0], roots[1], 0);
 }
 
@@ -1149,7 +1149,7 @@ pub fn validateFillDimensions(runtime: *Runtime, shape: Value) !void {
 }
 
 pub fn cloneFillValue(runtime: *Runtime, value: Value) !Value {
-    if (value.tag != @intFromEnum(Tag.array)) return switch (@as(Tag, @enumFromInt(value.tag))) {
+    if (value.tag != @backingInt(Tag.array)) return switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .dictionary, .byte_buffer, .iterator, .promise => deepCloneBuiltin(runtime, value),
         else => value,
     };
@@ -1169,7 +1169,7 @@ pub fn cloneFillValue(runtime: *Runtime, value: Value) !Value {
 }
 
 pub fn arrayFillAtDepth(runtime: *Runtime, value: Value, shape: Value, depth: usize) !Value {
-    if (shape.tag != @intFromEnum(Tag.array)) {
+    if (shape.tag != @backingInt(Tag.array)) {
         const count = try fillArrayLength(try valueToNumberRuntime(runtime, shape), safe_array_element_limit - 1);
         const result = try runtime.createArray(&.{});
         var roots = [_]Value{ value, result };
@@ -1228,7 +1228,7 @@ pub fn refrainBuiltin(runtime: *Runtime, value: Value, count_value: Value) !Valu
 }
 
 pub fn occurrenceBuiltin(runtime: *Runtime, source: Value, needle: Value) !bool {
-    if (source.tag == @intFromEnum(Tag.array)) {
+    if (source.tag == @backingInt(Tag.array)) {
         for (source.object().?.payload.array.items) |item| {
             if (try sameValueZero(runtime, item, needle)) return true;
         }

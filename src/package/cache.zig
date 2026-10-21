@@ -189,10 +189,8 @@ fn digestTreeFromDir(io: std.Io, gpa: Allocator, tree_dir: std.Io.Dir, exclude_n
                 var file = try openRelativeFile(io, tree_dir, entry.rel);
                 defer file.close(io);
                 var read_buffer: [8192]u8 = undefined;
-                // Zig 0.16 の Windows no-follow open は実際には非同期 handle を作るが
-                // File.flags.nonblocking を false で返す。positional readerへ実modeを伝え、
-                // 必要なbyte offsetを指定した非同期readを正しく待機させる。
-                if (builtin.os.tag == .windows) file.flags.nonblocking = true;
+                // Zig 0.17 Windows openFile is SYNCHRONOUS_NONALERT with
+                // nonblocking=false. Do not force nonblocking=true (APC hang).
                 var reader = file.reader(io, &read_buffer);
                 while (true) {
                     var chunk: [8192]u8 = undefined;

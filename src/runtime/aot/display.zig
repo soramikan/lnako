@@ -116,7 +116,7 @@ pub fn joinValuesUtf8Alloc(runtime: *Runtime, values: []const Value) ![]u8 {
     errdefer output.deinit(runtime.allocator);
     for (values) |value| {
         // 公式はArray.join('')相当で、undefined/null要素を空文字として連結する。
-        if (value.tag == @intFromEnum(Tag.undefined) or value.tag == @intFromEnum(Tag.null_value)) continue;
+        if (value.tag == @backingInt(Tag.undefined) or value.tag == @backingInt(Tag.null_value)) continue;
         const text = try valueUtf8LossyAlloc(runtime, value);
         defer runtime.allocator.free(text);
         try output.appendSlice(runtime.allocator, text);
@@ -139,7 +139,7 @@ pub fn configureHatenaBuiltin(runtime: *Runtime, arguments: []const Value) !Valu
     runtime.pushRoots(&frame, @ptrCast(&setting), 1);
     defer runtime.popRoots(&frame);
 
-    switch (@as(Tag, @enumFromInt(setting.tag))) {
+    switch (@as(Tag, @fromBackingInt(@intCast(setting.tag)))) {
         .function, .static_utf8_string, .utf16_string => try runtime.hatena_callbacks.append(runtime.allocator, setting),
         .array => {
             const items = try arrayItems(setting);
@@ -195,7 +195,7 @@ pub fn invokeHatenaNamedCallback(
     var argument = parameter;
     var result = Value{};
     const start_epoch = runtime.failure_epoch;
-    lnako_aot_builtin_call_site(&result, @ptrCast(&argument), 1, @intFromEnum(command), 0);
+    lnako_aot_builtin_call_site(&result, @ptrCast(&argument), 1, @backingInt(command), 0);
     if (runtime.has_pending_exception and runtime.failure_epoch != start_epoch) return error.CallbackExecutionFailed;
     return result;
 }
@@ -212,7 +212,7 @@ pub fn invokeHatenaCallbacks(
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
     for (runtime.hatena_callbacks.items) |callback| {
-        roots[1] = if (callback.tag == @intFromEnum(Tag.function))
+        roots[1] = if (callback.tag == @backingInt(Tag.function))
             try invokeAotCallback(runtime, callback, @ptrCast(&roots[0]), 1)
         else if (isString(callback))
             try invokeHatenaNamedCallback(runtime, callback, roots[0], line, source_path, display_log)

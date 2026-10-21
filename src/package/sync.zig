@@ -451,7 +451,7 @@ pub fn run(
 }
 
 test "immutable path pin hash comparison normalizes lock representations" {
-    const digest = [_]u8{0x5a} ** 32;
+    const digest = @as([32]u8, @splat(0x5a));
     const hex = std.fmt.bytesToHex(digest, .lower);
     try testing.expect(path_digest.pinHashMatches(digest, &hex));
 

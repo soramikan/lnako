@@ -11,7 +11,7 @@ pub const Parser = struct {
     unicode_sets: bool = false,
     index: usize = 0,
     capture_count: usize = 0,
-    capture_names: [types.max_captures]?[]const u16 = [_]?[]const u16{null} ** types.max_captures,
+    capture_names: [types.max_captures]?[]const u16 = @as([types.max_captures]?[]const u16, @splat(null)),
 
     pub fn parseExpression(self: *Parser) anyerror!*types.Expression {
         var alternatives: std.ArrayList(types.Sequence) = .empty;

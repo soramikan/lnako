@@ -25,7 +25,7 @@ pub fn findOne(allocator: std.mem.Allocator, source: []const u16, compiled: *con
     var start = @min(from, source.len);
     const last_start = if (compiled.flags.sticky) start else source.len;
     while (start <= last_start) {
-        const initial = types.Candidate{ .position = start, .captures = [_]types.Span{.{}} ** types.max_captures };
+        const initial = types.Candidate{ .position = start, .captures = @as([types.max_captures]types.Span, @splat(.{})) };
         const candidates = try matchExpression(arena.allocator(), source, compiled.expression, initial, compiled.flags);
         if (candidates.len > 0) return .{ .span = .{ .start = start, .end = candidates[0].position, .matched = true }, .captures = candidates[0].captures };
         if (start == last_start) break;

@@ -76,7 +76,7 @@ function validateManifest(manifest, prefix, entries, baseName) {
   const expectedVariant = baseName.endsWith("-full") ? "full" : "standard";
   if (manifest.variant !== expectedVariant) throw new Error(`配布manifestのvariantがアーカイブ名と一致しません: ${manifest.variant}/${baseName}`);
   if (!manifest.source || !/^[0-9a-f]{40}$/.test(manifest.source.commit) || typeof manifest.source.dirty !== "boolean") throw new Error("配布manifestのsourceが不正です");
-  if (!manifest.build || manifest.build.zig !== "0.16.0" || manifest.build.llvm !== "22.1.8" || manifest.build.compatJsIncluded !== true) throw new Error("配布manifestの固定toolchain情報が不正です");
+  if (!manifest.build || manifest.build.zig !== "0.17.0" || manifest.build.llvm !== "22.1.8" || manifest.build.compatJsIncluded !== true) throw new Error("配布manifestの固定toolchain情報が不正です");
   if (!manifest.toolchain || typeof manifest.toolchain.included !== "boolean" || !Array.isArray(manifest.toolchain.files)) throw new Error("配布manifestのtoolchainが不正です");
   if (manifest.variant === "full" && manifest.toolchain.included !== true) throw new Error("full版のmanifestでtoolchain.includedがtrueではありません");
   if (manifest.variant === "standard" && manifest.toolchain.included !== false) throw new Error("standard版のmanifestでtoolchain.includedがfalseではありません");

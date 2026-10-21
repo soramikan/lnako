@@ -23,7 +23,7 @@ pub const DispatchTrace = struct {
     sequence: u64 = 0,
     next_call_id: u64 = 0,
     locked: std.atomic.Value(bool) = .init(false),
-    gate: std.atomic.Value(u8) = .init(@intFromEnum(Gate.unresolved)),
+    gate: std.atomic.Value(u8) = .init(@backingInt(Gate.unresolved)),
     /// Number of times the spin lock was actually entered.  Diagnostics use
     /// this to prove a disabled trace never reaches the lock.
     lock_attempts: u64 = 0,
@@ -39,21 +39,21 @@ pub const DispatchTrace = struct {
 
     fn disable(self: *DispatchTrace) void {
         self.disabled = true;
-        self.gate.store(@intFromEnum(Gate.inactive), .release);
+        self.gate.store(@backingInt(Gate.inactive), .release);
     }
 
     fn resolveGate(self: *DispatchTrace) void {
         // Callers hold the lock.  `initialized && file == null` means the
         // environment lookup already ran and found nothing to open.
         if (self.disabled or (self.initialized and self.file == null)) {
-            self.gate.store(@intFromEnum(Gate.inactive), .release);
+            self.gate.store(@backingInt(Gate.inactive), .release);
         } else if (self.file != null) {
-            self.gate.store(@intFromEnum(Gate.active), .release);
+            self.gate.store(@backingInt(Gate.active), .release);
         }
     }
 
     fn resolvedInactive(self: *DispatchTrace) bool {
-        return self.gate.load(.acquire) == @intFromEnum(Gate.inactive);
+        return self.gate.load(.acquire) == @backingInt(Gate.inactive);
     }
 
     pub fn deinit(self: *DispatchTrace) void {
@@ -215,7 +215,7 @@ pub const GlobalTrace = struct {
     disabled: bool = false,
     sequence: u64 = 0,
     locked: std.atomic.Value(bool) = .init(false),
-    gate: std.atomic.Value(u8) = .init(@intFromEnum(Gate.unresolved)),
+    gate: std.atomic.Value(u8) = .init(@backingInt(Gate.unresolved)),
     lock_attempts: u64 = 0,
 
     pub fn lock(self: *GlobalTrace) void {
@@ -229,19 +229,19 @@ pub const GlobalTrace = struct {
 
     fn disable(self: *GlobalTrace) void {
         self.disabled = true;
-        self.gate.store(@intFromEnum(Gate.inactive), .release);
+        self.gate.store(@backingInt(Gate.inactive), .release);
     }
 
     fn resolveGate(self: *GlobalTrace) void {
         if (self.disabled or (self.initialized and self.file == null)) {
-            self.gate.store(@intFromEnum(Gate.inactive), .release);
+            self.gate.store(@backingInt(Gate.inactive), .release);
         } else if (self.file != null) {
-            self.gate.store(@intFromEnum(Gate.active), .release);
+            self.gate.store(@backingInt(Gate.active), .release);
         }
     }
 
     fn resolvedInactive(self: *GlobalTrace) bool {
-        return self.gate.load(.acquire) == @intFromEnum(Gate.inactive);
+        return self.gate.load(.acquire) == @backingInt(Gate.inactive);
     }
 
     pub fn deinit(self: *GlobalTrace) void {
@@ -356,7 +356,7 @@ pub const LiteralTrace = struct {
     disabled: bool = false,
     sequence: u64 = 0,
     locked: std.atomic.Value(bool) = .init(false),
-    gate: std.atomic.Value(u8) = .init(@intFromEnum(Gate.unresolved)),
+    gate: std.atomic.Value(u8) = .init(@backingInt(Gate.unresolved)),
     lock_attempts: u64 = 0,
 
     pub fn lock(self: *LiteralTrace) void {
@@ -370,19 +370,19 @@ pub const LiteralTrace = struct {
 
     fn disable(self: *LiteralTrace) void {
         self.disabled = true;
-        self.gate.store(@intFromEnum(Gate.inactive), .release);
+        self.gate.store(@backingInt(Gate.inactive), .release);
     }
 
     fn resolveGate(self: *LiteralTrace) void {
         if (self.disabled or (self.initialized and self.file == null)) {
-            self.gate.store(@intFromEnum(Gate.inactive), .release);
+            self.gate.store(@backingInt(Gate.inactive), .release);
         } else if (self.file != null) {
-            self.gate.store(@intFromEnum(Gate.active), .release);
+            self.gate.store(@backingInt(Gate.active), .release);
         }
     }
 
     fn resolvedInactive(self: *LiteralTrace) bool {
-        return self.gate.load(.acquire) == @intFromEnum(Gate.inactive);
+        return self.gate.load(.acquire) == @backingInt(Gate.inactive);
     }
 
     pub fn deinit(self: *LiteralTrace) void {

@@ -113,7 +113,7 @@ pub fn manifestCall(name: []const u8, direct_callee: ?ir.FunctionId, is_builtin_
         .source_name = name,
         .canonical_opcode = aot_builtin.canonicalOpcodeName(command),
         .route = route,
-        .opcode = @intFromEnum(command),
+        .opcode = @backingInt(command),
     };
 }
 

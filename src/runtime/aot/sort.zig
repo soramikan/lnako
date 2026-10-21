@@ -20,7 +20,7 @@ const compareTableRowsBuiltin = aot_state.compareTableRowsBuiltin;
 const lnako_aot_function_call = aot_state.lnako_aot_function_call;
 
 pub fn arrayOrderingBuiltin(runtime: *Runtime, command: aot_builtin.Command, source: Value) !Value {
-    if (source.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
+    if (source.tag != @backingInt(Tag.array)) return error.ArrayExpected;
     const object = source.object() orelse return error.InvalidArray;
     if (object.payload != .array) return error.InvalidArray;
     const items = &object.payload.array;
@@ -52,7 +52,7 @@ pub fn arrayOrderingBuiltin(runtime: *Runtime, command: aot_builtin.Command, sou
 }
 
 pub fn arrayShuffleBuiltin(runtime: *Runtime, source: Value) !Value {
-    if (source.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
+    if (source.tag != @backingInt(Tag.array)) return error.ArrayExpected;
     const object = source.object() orelse return error.InvalidArray;
     if (object.payload != .array) return error.InvalidArray;
     try runtime.normalizeAotArrayPresence(object);
@@ -937,8 +937,8 @@ pub fn v8TimSortArrayCallback(
 pub fn compareAotCallback(runtime: *Runtime, callable: Value, left: Value, left_present: bool, right: Value, right_present: bool, result_root: *Value) !std.math.Order {
     if (!left_present) return if (!right_present) .eq else .gt;
     if (!right_present) return .lt;
-    if (left.tag == @intFromEnum(Tag.undefined)) return if (right.tag == @intFromEnum(Tag.undefined)) .eq else .gt;
-    if (right.tag == @intFromEnum(Tag.undefined)) return .lt;
+    if (left.tag == @backingInt(Tag.undefined)) return if (right.tag == @backingInt(Tag.undefined)) .eq else .gt;
+    if (right.tag == @backingInt(Tag.undefined)) return .lt;
     var callback_values = [_]Value{ callable, left, right };
     var callback_frame = RootFrame{};
     runtime.pushRoots(&callback_frame, callback_values[0..].ptr, callback_values.len);
@@ -950,7 +950,7 @@ pub fn compareAotCallback(runtime: *Runtime, callable: Value, left: Value, left_
 }
 
 pub fn invokeAotCallback(runtime: *Runtime, callable: Value, arguments: ?[*]const Value, len: usize) !Value {
-    if (callable.tag != @intFromEnum(Tag.function)) return error.NotCallable;
+    if (callable.tag != @backingInt(Tag.function)) return error.NotCallable;
     const object = callable.object() orelse return error.NotCallable;
     if (object.payload != .function) return error.NotCallable;
     var result: Value = .{};
@@ -961,7 +961,7 @@ pub fn invokeAotCallback(runtime: *Runtime, callable: Value, arguments: ?[*]cons
 }
 
 pub fn resolveAotCallback(runtime: *Runtime, value: Value) !Value {
-    if (value.tag == @intFromEnum(Tag.function)) return value;
+    if (value.tag == @backingInt(Tag.function)) return value;
     if (!isString(value)) return error.NotCallable;
     const name = try stringUtf8Alloc(runtime, value);
     defer runtime.allocator.free(name);
@@ -970,7 +970,7 @@ pub fn resolveAotCallback(runtime: *Runtime, value: Value) !Value {
     for (runtime.named_functions.items) |registered| {
         if (!registeredFunctionMatches(registered.name, name)) continue;
         if (match != null) return error.UnknownFunction;
-        match = .{ .tag = @intFromEnum(Tag.function), .payload = @intFromPtr(registered.object) };
+        match = .{ .tag = @backingInt(Tag.function), .payload = @intFromPtr(registered.object) };
     }
     return match orelse error.UnknownFunction;
 }
@@ -1060,8 +1060,8 @@ pub fn stableArraySort(runtime: *Runtime, source: Value, numeric: bool) !Value {
 pub fn compareArraySortValues(runtime: *Runtime, left: Value, left_present: bool, right: Value, right_present: bool, numeric: bool) !std.math.Order {
     if (!left_present) return if (!right_present) .eq else .gt;
     if (!right_present) return .lt;
-    if (left.tag == @intFromEnum(Tag.undefined)) return if (right.tag == @intFromEnum(Tag.undefined)) .eq else .gt;
-    if (right.tag == @intFromEnum(Tag.undefined)) return .lt;
+    if (left.tag == @backingInt(Tag.undefined)) return if (right.tag == @backingInt(Tag.undefined)) .eq else .gt;
+    if (right.tag == @backingInt(Tag.undefined)) return .lt;
     if (numeric) {
         const left_number = try parseFloatBuiltin(runtime, left);
         const right_number = try parseFloatBuiltin(runtime, right);
