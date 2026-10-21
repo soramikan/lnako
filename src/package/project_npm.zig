@@ -249,17 +249,6 @@ pub fn resolveNpmForLock(
     defer npm_mod.freeRootRequests(gpa, roots);
     if (roots.len == 0) return null;
 
-    var owned_catalog: npm_mod.Catalog = .{};
-    defer owned_catalog.deinit(gpa);
-    const catalog: *const npm_mod.Catalog = if (opts.npm_catalog) |c| c else blk: {
-        const base = opts.npm_registry_url orelse npm_mod.default_registry_url;
-        npm_mod.fillCatalogForRoots(gpa, session, &owned_catalog, roots, base, diagnostics) catch |err| {
-            session.reportDiagnostics(diagnostics) catch {};
-            return err;
-        };
-        break :blk &owned_catalog;
-    };
-
     var locked_list: std.ArrayList(lock_model.NpmInstance) = .empty;
     defer locked_list.deinit(gpa);
     const prefer_locked = opts.prefer_locked and !opts.force_resolve and !opts.update_all;
@@ -272,11 +261,24 @@ pub fn resolveNpmForLock(
             }
         }
     }
-
-    const result = npm_mod.resolve(gpa, session, catalog, roots, cache_store, diagnostics, .{
+    const prefs: npm_mod.ResolvePrefs = .{
         .locked_instances = locked_list.items,
         .prefer_locked = prefer_locked,
-    }) catch |err| {
+    };
+
+    var owned_catalog: npm_mod.Catalog = .{};
+    defer owned_catalog.deinit(gpa);
+    const catalog: *const npm_mod.Catalog = if (opts.npm_catalog) |c| c else blk: {
+        const base = opts.npm_registry_url orelse npm_mod.default_registry_url;
+        // prefer_locked の選択版と依存閉包を一致させるため prefs を共有する。
+        npm_mod.fillCatalogForRoots(gpa, session, &owned_catalog, roots, base, diagnostics, prefs) catch |err| {
+            session.reportDiagnostics(diagnostics) catch {};
+            return err;
+        };
+        break :blk &owned_catalog;
+    };
+
+    const result = npm_mod.resolve(gpa, session, catalog, roots, cache_store, diagnostics, prefs) catch |err| {
         session.reportDiagnostics(diagnostics) catch {};
         return switch (err) {
             error.OutOfMemory => error.OutOfMemory,

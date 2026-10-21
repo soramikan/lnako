@@ -767,7 +767,8 @@ fn fetchMissingPackumentsMode(
 }
 
 /// roots の closure を満たすまで packument を繰り返し取得する。
-/// resolve と同じ `pickVersion(range)` で選んだ version の依存だけを辿る。
+/// resolve と同じ `pickVersion(range)` で選んだ version に加え、
+/// `prefer_locked` 時は range を満たす lock 済み version の依存も辿る。
 /// optional / peer の packument 欠落は soft（warning）で続行する。
 pub fn fillCatalogForRoots(
     gpa: Allocator,
@@ -776,6 +777,7 @@ pub fn fillCatalogForRoots(
     roots: []const RootRequest,
     registry_base: []const u8,
     diagnostics: *diag.List,
+    prefs: ResolvePrefs,
 ) Error!void {
     const Pending = struct {
         name: []const u8,
@@ -798,6 +800,41 @@ pub fn fillCatalogForRoots(
         while (kit.next()) |k| gpa.free(k.*);
         seen.deinit(gpa);
     }
+
+    const enqueueDeps = struct {
+        fn go(gpa_inner: Allocator, list: *std.ArrayList(Pending), picked: VersionMeta) !void {
+            for (picked.dependencies) |d| {
+                try list.append(gpa_inner, .{ .name = d.name, .range_text = d.range_text, .optional = false });
+            }
+            for (picked.optional_dependencies) |d| {
+                try list.append(gpa_inner, .{ .name = d.name, .range_text = d.range_text, .optional = true });
+            }
+            for (picked.peer_dependencies) |d| {
+                const soft = isOptionalPeer(picked.optional_peers, d.name);
+                try list.append(gpa_inner, .{ .name = d.name, .range_text = d.range_text, .optional = soft });
+            }
+        }
+    }.go;
+
+    const markAndWalk = struct {
+        fn go(
+            gpa_inner: Allocator,
+            list: *std.ArrayList(Pending),
+            seen_map: *std.StringHashMapUnmanaged(void),
+            name: []const u8,
+            picked: VersionMeta,
+        ) !void {
+            const seen_key = try std.fmt.allocPrint(gpa_inner, "{s}@{s}", .{ name, picked.version });
+            const gop = try seen_map.getOrPut(gpa_inner, seen_key);
+            if (gop.found_existing) {
+                gpa_inner.free(seen_key);
+                return;
+            }
+            gop.key_ptr.* = seen_key;
+            try enqueueDeps(gpa_inner, list, picked);
+        }
+    }.go;
+
     var i: usize = 0;
     while (i < pending.items.len) : (i += 1) {
         const item = pending.items[i];
@@ -810,23 +847,25 @@ pub fn fillCatalogForRoots(
             continue;
         };
         defer range.deinit(gpa);
-        const picked = pickVersion(pkg, range) orelse continue;
-        const seen_key = try std.fmt.allocPrint(gpa, "{s}@{s}", .{ item.name, picked.version });
-        const gop = try seen.getOrPut(gpa, seen_key);
-        if (gop.found_existing) {
-            gpa.free(seen_key);
-            continue;
+
+        // resolve 既定と同じ最高 version
+        if (pickVersion(pkg, range)) |picked| {
+            try markAndWalk(gpa, &pending, &seen, item.name, picked);
         }
-        gop.key_ptr.* = seen_key;
-        for (picked.dependencies) |d| {
-            try pending.append(gpa, .{ .name = d.name, .range_text = d.range_text, .optional = false });
-        }
-        for (picked.optional_dependencies) |d| {
-            try pending.append(gpa, .{ .name = d.name, .range_text = d.range_text, .optional = true });
-        }
-        for (picked.peer_dependencies) |d| {
-            const soft = isOptionalPeer(picked.optional_peers, d.name);
-            try pending.append(gpa, .{ .name = d.name, .range_text = d.range_text, .optional = soft });
+
+        // prefer_locked: range を満たす lock 済み version も閉包に含める
+        // （最高版と依存が異なると E013 になるため）。
+        if (prefs.prefer_locked) {
+            for (prefs.locked_instances) |inst| {
+                if (!std.mem.eql(u8, inst.name, item.name)) continue;
+                const ver = semver.Version.parse(inst.version) catch continue;
+                if (!range.satisfies(ver)) continue;
+                for (pkg.versions) |meta| {
+                    if (!std.mem.eql(u8, meta.version, inst.version)) continue;
+                    try markAndWalk(gpa, &pending, &seen, item.name, meta);
+                    break;
+                }
+            }
         }
     }
 }
@@ -1241,6 +1280,84 @@ test "npm: prefer_locked は既存 lock version を優先する" {
     defer result.deinit();
     try testing.expectEqual(@as(usize, 1), result.instances.len);
     try testing.expectEqualStrings("1.0.0", result.instances[0].version);
+}
+
+test "npm: fillCatalog prefer_locked は lock 版の依存も辿る" {
+    const gpa = testing.allocator;
+    var session = fetch.Session.init(gpa, testing.io, .{});
+    defer session.deinit();
+    var diagnostics = diag.List.init(gpa);
+    defer diagnostics.deinit();
+
+    const body = try emptyTarball(gpa);
+    defer gpa.free(body);
+    const integ = try integritySha512(gpa, body);
+    defer gpa.free(integ);
+
+    var cat: Catalog = .{};
+    defer cat.deinit(gpa);
+
+    // foo@1.0.0 → bar、foo@1.5.0 は依存なし。最高版だけ辿ると bar が欠ける。
+    const foo_versions = try gpa.alloc(VersionMeta, 2);
+    defer gpa.free(foo_versions);
+    const foo_deps = try gpa.alloc(NamedRange, 1);
+    defer gpa.free(foo_deps);
+    foo_deps[0] = .{ .name = "bar", .range_text = "1.0.0" };
+    foo_versions[0] = .{
+        .version = "1.0.0",
+        .dependencies = foo_deps,
+        .tarball_url = "fixture://foo-1.0.0.tgz",
+        .integrity = integ,
+        .tarball_bytes = body,
+    };
+    foo_versions[1] = .{
+        .version = "1.5.0",
+        .tarball_url = "fixture://foo-1.5.0.tgz",
+        .integrity = integ,
+        .tarball_bytes = body,
+    };
+    try cat.put(gpa, .{ .name = "foo", .versions = foo_versions });
+
+    const bar_versions = try gpa.alloc(VersionMeta, 1);
+    defer gpa.free(bar_versions);
+    bar_versions[0] = .{
+        .version = "1.0.0",
+        .tarball_url = "fixture://bar-1.0.0.tgz",
+        .integrity = integ,
+        .tarball_bytes = body,
+    };
+    try cat.put(gpa, .{ .name = "bar", .versions = bar_versions });
+
+    var range = try semver.Range.parse(gpa, "^1.0.0");
+    defer range.deinit(gpa);
+    const roots = [_]RootRequest{
+        .{ .alias = "foo", .name = "foo", .range = range, .range_text = "^1.0.0" },
+    };
+    const locked = [_]lock_model.NpmInstance{
+        .{ .key = "foo@1.0.0", .name = "foo", .version = "1.0.0" },
+    };
+    const prefs: ResolvePrefs = .{
+        .locked_instances = &locked,
+        .prefer_locked = true,
+    };
+
+    // catalog は既に埋めてある。fill が lock 版依存を pending に載せることを
+    // resolve 成功（bar が閉包に入る）で確認する。
+    try fillCatalogForRoots(gpa, &session, &cat, &roots, default_registry_url, &diagnostics, prefs);
+
+    var result = try resolve(gpa, &session, &cat, &roots, null, &diagnostics, prefs);
+    defer result.deinit();
+    var saw_foo = false;
+    var saw_bar = false;
+    for (result.instances) |inst| {
+        if (std.mem.eql(u8, inst.name, "foo")) {
+            saw_foo = true;
+            try testing.expectEqualStrings("1.0.0", inst.version);
+        }
+        if (std.mem.eql(u8, inst.name, "bar")) saw_bar = true;
+    }
+    try testing.expect(saw_foo);
+    try testing.expect(saw_bar);
 }
 
 test "npm: integrity 不一致は失敗し script 相当の副作用を起こさない" {
