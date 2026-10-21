@@ -217,8 +217,9 @@ export function hasOnlineNotarizationTicket(filePath) {
   return !result.error && result.status === 0;
 }
 
-/** Apple's online ticket lookup can lag Accepted by minutes; retry before failing the gate. */
-export const ticketCheckBackoffMs = Object.freeze([0, 2_000, 5_000, 10_000, 15_000, 30_000, 30_000, 30_000, 60_000, 60_000]);
+/** Apple's online ticket lookup can lag Accepted by many minutes for bare CLI Mach-O.
+ *  Retry briefly, then fall back to notary log CDHash coverage for just-submitted files. */
+export const ticketCheckBackoffMs = Object.freeze([0, 2_000, 5_000, 10_000, 15_000, 30_000]);
 
 export async function verifyOnlineNotarizationTicket(filePath, {
   execute = run,
@@ -239,6 +240,41 @@ export async function verifyOnlineNotarizationTicket(filePath, {
     }
   }
   throw lastError ?? new Error(`Online notarization ticket check failed: ${filePath}`);
+}
+
+/** codesign CDHash= (40 hex) matches notary log ticketContents[].cdhash. */
+export function machoCdhashes(filePath, { execute = run } = {}) {
+  const details = execute("/usr/bin/codesign", ["--display", "--verbose=4", filePath], { exposeOutput: true });
+  const hashes = [...details.matchAll(/^CDHash=([a-f0-9]{40})$/gim)].map((match) => match[1].toLowerCase());
+  if (!hashes.length) throw new Error(`Missing CDHash for ${filePath}`);
+  return [...new Set(hashes)];
+}
+
+export function notaryLogCdhashes(logJson) {
+  const tickets = logJson?.ticketContents;
+  if (!Array.isArray(tickets) || tickets.length === 0) throw new Error("Notary log has no ticketContents");
+  const hashes = tickets.map((entry) => String(entry.cdhash ?? "").toLowerCase()).filter((hash) => /^[a-f0-9]{40}$/.test(hash));
+  if (!hashes.length) throw new Error("Notary log ticketContents lack CDHash values");
+  return new Set(hashes);
+}
+
+/** Fresh Accepted tickets for bare CLI tools may not yet satisfy codesign -R=notarized.
+ *  Prove coverage by matching each submitted Mach-O CDHash to the notary log. */
+export async function assertNotaryLogCovers(tree, relativePaths, logPath, {
+  execute = run,
+  readLog = (path) => readFile(path, "utf8"),
+} = {}) {
+  const logJson = JSON.parse(await readLog(logPath));
+  if (logJson.status !== "Accepted") throw new Error(`Notary log status is not Accepted: ${logJson.status}`);
+  const ticketHashes = notaryLogCdhashes(logJson);
+  for (const relativePath of relativePaths) {
+    const filePath = join(tree, relativePath);
+    const localHashes = machoCdhashes(filePath, { execute });
+    if (!localHashes.some((hash) => ticketHashes.has(hash))) {
+      throw new Error(`Notary ticket missing CDHash for ${relativePath} (local ${localHashes.join(",")})`);
+    }
+  }
+  return ticketHashes.size;
 }
 
 export async function stageUnnotarizedMacho(tree, paths, stagingRoot, { checkTicket = hasOnlineNotarizationTicket } = {}) {
@@ -275,24 +311,30 @@ async function notarize(archive) {
     const pending = await stageUnnotarizedMacho(tree, paths, notaryStaging);
     await logPhase("prepare", `${name} (${pending.length}/${paths.length} Mach-O need submission)`, prepareStarted);
     const submitStarted = performance.now();
+    let notaryLogPath = null;
     if (pending.length > 0) {
       const zip = join(temporary, "notarization.zip");
       run("/usr/bin/ditto", ["-c", "-k", "--keepParent", notaryStaging, zip], { exposeOutput: true });
       const auth = ["--key", join(required("LNAKO_SIGNING_TEMP"), "AuthKey.p8"), "--key-id", required("APPLE_NOTARY_KEY_ID"), "--issuer", required("APPLE_NOTARY_ISSUER_ID")];
-      const log = join(required("RUNNER_TEMP"), `${name}.notary-log.json`);
-      await submitNotarization(zip, auth, log);
+      notaryLogPath = join(required("RUNNER_TEMP"), `${name}.notary-log.json`);
+      await submitNotarization(zip, auth, notaryLogPath);
       await logPhase("submit-wait", `${name} (${pending.length} Mach-O)`, submitStarted);
+      // Bare CLI Mach-O cannot be stapled; codesign -R=notarized may lag for a long time
+      // after Accepted. Gate freshly submitted files on notary log CDHash coverage instead.
+      const covered = await assertNotaryLogCovers(tree, pending, notaryLogPath);
+      await logPhase("ticket-log", `${name} (${pending.length} Mach-O, ${covered} ticket hash(es))`, submitStarted);
     } else {
       await logPhase("submit-wait", `${name} (all ${paths.length} Mach-O already notarized)`, submitStarted);
     }
-    // spctl's execute assessment is for apps, not standalone CLI/dylib code.
-    // Require Apple's online notarization ticket for every shipped Mach-O.
-    // Fresh Accepted submissions often lag codesign --check-notarization; retry with backoff.
+    // Previously notarized Mach-O (e.g. pinned LLVM) must still show an online ticket.
+    // Freshly submitted paths are already proven via the Accepted notary log CDHashes.
     const ticketStarted = performance.now();
+    const pendingSet = new Set(pending);
     for (const path of paths) {
+      if (pendingSet.has(path)) continue;
       await verifyOnlineNotarizationTicket(join(tree, path));
     }
-    await logPhase("ticket-check", name, ticketStarted);
+    await logPhase("ticket-check", `${name} (${paths.length - pending.length} online / ${pending.length} log-gated)`, ticketStarted);
     await logPhase("total", name, totalStarted);
   } finally { await rm(temporary, { recursive: true, force: true }); }
 }
