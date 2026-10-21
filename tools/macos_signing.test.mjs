@@ -4,9 +4,12 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import {
+  assertNotaryLogCovers,
   codeIdentifier,
   identifier,
+  machoCdhashes,
   machoFiles,
+  notaryLogCdhashes,
   onlineNotarizationArgs,
   signPayload,
   stageUnnotarizedMacho,
@@ -173,4 +176,49 @@ test("verifyOnlineNotarizationTicket retries until the online ticket is visible"
     }),
     /still missing/,
   );
+});
+
+test("assertNotaryLogCovers matches local CDHash to Accepted ticketContents", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lnako-notary-log-"));
+  try {
+    const tree = join(directory, "tree");
+    await mkdir(join(tree, "bin"), { recursive: true });
+    await writeFile(join(tree, "bin/lnako"), Buffer.from("cffaedfe00000000", "hex"));
+    const logPath = join(directory, "log.json");
+    const cdhash = "104143c02712d9cc37764a36f1c130f05946bcda";
+    await writeFile(logPath, JSON.stringify({
+      status: "Accepted",
+      ticketContents: [{ path: "bin/lnako", cdhash, arch: "arm64" }],
+    }));
+    const covered = await assertNotaryLogCovers(tree, ["bin/lnako"], logPath, {
+      execute(command, args) {
+        assert.equal(command, "/usr/bin/codesign");
+        assert.ok(args.includes("--display"));
+        return `Identifier=io.github.soramikan.lnako\nCDHash=${cdhash}\n`;
+      },
+    });
+    assert.equal(covered, 1);
+    assert.deepEqual([...notaryLogCdhashes({
+      ticketContents: [{ cdhash }, { cdhash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+    })].sort(), [cdhash, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"].sort());
+    assert.deepEqual(machoCdhashes(join(tree, "bin/lnako"), {
+      execute() { return `CDHash=${cdhash}\nCDHash=${cdhash}\n`; },
+    }), [cdhash]);
+
+    await assert.rejects(
+      assertNotaryLogCovers(tree, ["bin/lnako"], logPath, {
+        execute() { return "CDHash=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"; },
+      }),
+      /missing CDHash/,
+    );
+    await assert.rejects(
+      assertNotaryLogCovers(tree, ["bin/lnako"], logPath, {
+        readLog: async () => JSON.stringify({ status: "Invalid", ticketContents: [] }),
+        execute() { return `CDHash=${cdhash}\n`; },
+      }),
+      /not Accepted/,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
