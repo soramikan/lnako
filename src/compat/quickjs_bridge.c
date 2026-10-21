@@ -740,30 +740,32 @@ int lnako_qjs_add_module_source(LnakoQuickJs *engine, const char *name, const ch
 
 int lnako_qjs_add_module_alias(LnakoQuickJs *engine, const char *alias, const char *target) {
     if (!engine || !alias || !alias[0] || !target || !target[0]) return -1;
+    // bare alias は engine 全体で単一 target。衝突する再登録は拒否し、
+    // 先行 package の解決を上書きしない（lock 側で同一 instance を共有する想定）。
+    char *normalized = copy_bytes(target, strlen(target));
+    if (!normalized) return -1;
+    for (char *p = normalized; *p; p++)
+        if (*p == '\\') *p = '/';
     for (struct LnakoQuickJsModuleAlias *item = engine->module_aliases; item; item = item->next) {
         if (!strcmp(item->alias, alias)) {
-            // 同一 bare の再登録は target を更新する（決定性より最新の graph 解決を優先）。
-            char *next_target = copy_bytes(target, strlen(target));
-            if (!next_target) return -1;
-            for (char *p = next_target; *p; p++)
-                if (*p == '\\') *p = '/';
-            free(item->target);
-            item->target = next_target;
-            return 0;
+            const int same = !strcmp(item->target, normalized);
+            free(normalized);
+            return same ? 0 : -1;
         }
     }
     struct LnakoQuickJsModuleAlias *item = calloc(1, sizeof(*item));
-    if (!item) return -1;
+    if (!item) {
+        free(normalized);
+        return -1;
+    }
     item->alias = copy_bytes(alias, strlen(alias));
-    item->target = copy_bytes(target, strlen(target));
-    if (!item->alias || !item->target) {
+    item->target = normalized;
+    if (!item->alias) {
         free(item->alias);
         free(item->target);
         free(item);
         return -1;
     }
-    for (char *p = item->target; *p; p++)
-        if (*p == '\\') *p = '/';
     item->next = engine->module_aliases;
     engine->module_aliases = item;
     return 0;

@@ -100,8 +100,10 @@ pub fn resolveEntryInRoot(gpa: Allocator, io: std.Io, package_root_abs: []const 
     defer gpa.free(rel);
     const cleaned = stripLeadingDotSlash(rel);
     if (cleaned.len == 0 or std.mem.indexOfScalar(u8, cleaned, 0) != null) return error.EntryNotFound;
-    // package root 外への escapes を拒否する。
-    if (std.mem.startsWith(u8, cleaned, "/") or std.mem.indexOf(u8, cleaned, "..") != null) return error.EntryNotFound;
+    // package root 外への escapes を拒否する（セグメント単位の `..` のみ。
+    // `foo..bar.js` のようなファイル名は許可する）。
+    if (std.mem.startsWith(u8, cleaned, "/")) return error.EntryNotFound;
+    if (pathHasParentSegment(cleaned)) return error.EntryNotFound;
 
     const abs = try std.fs.path.join(gpa, &.{ root, cleaned });
     errdefer gpa.free(abs);
@@ -127,6 +129,14 @@ fn stripLeadingDotSlash(path: []const u8) []const u8 {
     var p = path;
     while (std.mem.startsWith(u8, p, "./")) p = p[2..];
     return p;
+}
+
+fn pathHasParentSegment(path: []const u8) bool {
+    var segments = std.mem.splitScalar(u8, path, '/');
+    while (segments.next()) |segment| {
+        if (std.mem.eql(u8, segment, "..")) return true;
+    }
+    return false;
 }
 
 fn fileExists(io: std.Io, path: []const u8) bool {
@@ -315,6 +325,14 @@ test "resolveEntryInRoot reads package.json" {
     const resolved = try resolveEntryInRoot(gpa, io, root);
     defer resolved.deinit(gpa);
     try testing.expect(std.mem.endsWith(u8, resolved.path, "hi.mjs"));
+}
+
+test "pathHasParentSegment rejects only segment .." {
+    try testing.expect(!pathHasParentSegment("dist/foo..bar.js"));
+    try testing.expect(!pathHasParentSegment("index.js"));
+    try testing.expect(pathHasParentSegment("../x.js"));
+    try testing.expect(pathHasParentSegment("a/../b.js"));
+    try testing.expect(pathHasParentSegment(".."));
 }
 
 test "BareRegistry resolveBare returns entry" {
