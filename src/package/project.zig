@@ -1191,28 +1191,107 @@ pub const LockOutcome = struct {
     }
 };
 
-fn collectNpmRootsImpl(gpa: Allocator, project: *const Project, ctx: *const ResolveContext) Error![]npm_mod.RootRequest {
+fn collectNpmRootsImpl(
+    gpa: Allocator,
+    project: *const Project,
+    ctx: *const ResolveContext,
+    gated_root: *const std.StringHashMap(void),
+    activated_root: *const std.StringHashMap(void),
+) Error![]npm_mod.RootRequest {
     var list: std.ArrayList(npm_mod.RootRequest) = .empty;
     errdefer {
         for (list.items) |r| npm_mod.freeRootRequest(gpa, r);
         list.deinit(gpa);
     }
-    try appendNpmRootsFromManifest(gpa, &list, &project.manifest);
+    // root: dependencies + dev_dependencies（いずれも feature ゲートを適用）
+    try appendNpmRootsFromGroup(gpa, &list, &project.manifest.dependencies, gated_root, activated_root);
+    try appendNpmRootsFromGroup(gpa, &list, &project.manifest.dev_dependencies, gated_root, activated_root);
+    // path 依存: dependencies のみ（dev は消費側で解決しない）
     var it = ctx.locals.iterator();
     while (it.next()) |entry| {
         const local = entry.value_ptr.*;
-        if (local.manifest) |*m| try appendNpmRootsFromManifest(gpa, &list, m);
+        if (local.manifest) |*m| {
+            try appendNpmRootsFromGroup(gpa, &list, &m.dependencies, &local.gated_deps, &local.activated_deps);
+        }
     }
     return try list.toOwnedSlice(gpa);
 }
 
-fn appendNpmRootsFromManifest(gpa: Allocator, list: *std.ArrayList(npm_mod.RootRequest), manifest: *const manifest_mod.Manifest) Error!void {
-    const chunk = try npm_mod.rootsFromManifest(gpa, manifest);
-    defer gpa.free(chunk); // outer only; items moved
+fn appendNpmRootsFromGroup(
+    gpa: Allocator,
+    list: *std.ArrayList(npm_mod.RootRequest),
+    group: *const manifest_mod.DependencyGroup,
+    gated: *const std.StringHashMap(void),
+    activated: *const std.StringHashMap(void),
+) Error!void {
+    const chunk = try npmRootsFromGroupFiltered(gpa, group, gated, activated);
+    defer gpa.free(chunk);
     for (chunk) |r| try list.append(gpa, r);
 }
 
-/// 解決した npm instance を root 仮想 package として lock へ載せる。
+fn npmRootsFromGroupFiltered(
+    gpa: Allocator,
+    group: *const manifest_mod.DependencyGroup,
+    gated: *const std.StringHashMap(void),
+    activated: *const std.StringHashMap(void),
+) Error![]npm_mod.RootRequest {
+    // rootsFromManifest と同じ構造だが group 1 つ + feature filter。
+    var list: std.ArrayList(npm_mod.RootRequest) = .empty;
+    errdefer {
+        for (list.items) |root| npm_mod.freeRootRequest(gpa, root);
+        list.deinit(gpa);
+    }
+    var it = group.npm.iterator();
+    while (it.next()) |entry| {
+        const alias = entry.key_ptr.*;
+        const dep = entry.value_ptr.*;
+        if (depIsGated(gated, dep.name, alias) and !depIsActivated(activated, dep.name, alias)) {
+            continue;
+        }
+        if (dep.context) |ctx| {
+            if (ctx.len == 0) return error.ResolveFailed;
+        }
+        var peers: std.ArrayList(npm_mod.PeerReq) = .empty;
+        errdefer {
+            for (peers.items) |p| {
+                gpa.free(p.name);
+                gpa.free(p.range_text);
+            }
+            peers.deinit(gpa);
+        }
+        var peer_it = dep.peer_dependencies.iterator();
+        while (peer_it.next()) |peer| {
+            const range_text = try gpa.dupe(u8, peer.value_ptr.text);
+            try peers.append(gpa, .{
+                .name = try gpa.dupe(u8, peer.key_ptr.*),
+                .range = peer.value_ptr.*,
+                .range_text = range_text,
+            });
+        }
+        const optional_peers = try gpa.alloc([]const u8, dep.optional_peers.len);
+        errdefer {
+            for (optional_peers) |n| gpa.free(n);
+            gpa.free(optional_peers);
+        }
+        for (dep.optional_peers, 0..) |name, i| optional_peers[i] = try gpa.dupe(u8, name);
+        try list.append(gpa, .{
+            .alias = try gpa.dupe(u8, alias),
+            .name = try gpa.dupe(u8, dep.name),
+            .range = dep.version,
+            .range_text = try gpa.dupe(u8, dep.version_text),
+            .context = if (dep.context) |c| try gpa.dupe(u8, c) else "",
+            .peer_dependencies = try peers.toOwnedSlice(gpa),
+            .optional_peers = optional_peers,
+        });
+    }
+    return try list.toOwnedSlice(gpa);
+}
+
+/// 解決した npm instance を lock へ載せる。
+/// root 用 carrier package は implementation=none + static source とし、
+/// sync が実 tree を materialize しない（空 env record のみ）。
+/// 既存 package がある場合も carrier を 1 つ追加して npmInstances を集約する
+/// （宣言元 package への分散は #53 残ゲート）。
 fn attachRootNpmInstances(
     lock: *lock_model.Lock,
     project: *const Project,
@@ -1222,7 +1301,7 @@ fn attachRootNpmInstances(
     const a = lock.arena.allocator();
     const name = project.manifest.package.name;
     const version_text = try std.fmt.allocPrint(a, "{f}", .{project.manifest.package.version});
-    const id_text = try std.fmt.allocPrint(a, "root:{s}@{s}", .{ name, version_text });
+    const id_text = try std.fmt.allocPrint(a, "npm-root:{s}@{s}", .{ name, version_text });
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(id_text, &digest, .{});
     const public_id = try std.fmt.allocPrint(a, "pkg:{s}", .{std.fmt.bytesToHex(digest, .lower)[0..32]});
@@ -1252,10 +1331,28 @@ fn attachRootNpmInstances(
         }
     }.lt);
 
+    // empty blob sha256（validate は artifacts 必須、sync は implementation=none で空 materialize）
+    const empty_sha = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    const artifacts = try a.alloc(lock_model.Artifact, 1);
+    artifacts[0] = .{
+        .key = try a.dupe(u8, "source"),
+        .kind = try a.dupe(u8, "source"),
+        .type = try a.dupe(u8, "raw"),
+        .sha256 = try a.dupe(u8, empty_sha),
+    };
+    const src = lock_model.Source{
+        .kind = .static,
+        .url = try a.dupe(u8, "lnako:npm-root-carrier"),
+    };
+
     const entry = lock_model.PackageEntry{
         .id = public_id,
         .name = try a.dupe(u8, name),
         .version = version_text,
+        .source = src,
+        .resolved_from = src,
+        .implementation = try a.dupe(u8, "none"),
+        .artifacts = artifacts,
         .npm_instances = npm_copy,
     };
 
@@ -1284,8 +1381,15 @@ fn resolveNpmForLock(
     ctx: *const ResolveContext,
     opts: *const PrepareOptions,
     diagnostics: *diag.List,
+    gated_root: *const std.StringHashMap(void),
+    activated_root: *const std.StringHashMap(void),
 ) Error!?npm_mod.ResolveResult {
-    const roots = try collectNpmRootsImpl(gpa, project, ctx);
+    const roots = collectNpmRootsImpl(gpa, project, ctx, gated_root, activated_root) catch |err| {
+        if (err == error.ResolveFailed) {
+            try diagnostics.addFmt(diag.E018_INVALID_NPM_CONTEXT, .err, "nako.toml", .{}, "npm dependency has an empty context", .{});
+        }
+        return err;
+    };
     defer npm_mod.freeRootRequests(gpa, roots);
     if (roots.len == 0) return null;
 
@@ -1435,21 +1539,39 @@ pub fn ensureLock(
         return err;
     };
 
+    // root feature ゲート（npm 収集と registry 解決で共有）
+    var gated_root = try gatedDepNames(a, &project.manifest);
+    defer gated_root.deinit();
+
     // npm 補助依存を解決し、後段で lock へ npmInstances を載せる。
-    if (ctx.cache_store == null) {
-        const root = if (opts.cache_root) |r|
-            try a.dupe(u8, r)
-        else if (try cache.defaultRoot(a)) |r|
-            r
-        else
-            try std.fs.path.join(a, &.{ project.root, ".nako", "cache" });
-        ctx.cache_store = cache.Store.open(a, io, root) catch |err| return mapFs(err);
-        ctx.cache_guard = ctx.cache_store.?.lockWait() catch |err| return mapFs(err);
+    // cache は npm root があるときだけ開く。
+    var npm_resolved: ?npm_mod.ResolveResult = null;
+    {
+        const probe_roots = collectNpmRootsImpl(gpa, project, &ctx, &gated_root, &expanded.dependency_aliases) catch |err| {
+            if (err == error.ResolveFailed) {
+                try diagnostics.addFmt(diag.E018_INVALID_NPM_CONTEXT, .err, "nako.toml", .{}, "npm dependency has an empty context", .{});
+            }
+            session.reportDiagnostics(diagnostics) catch {};
+            return err;
+        };
+        defer npm_mod.freeRootRequests(gpa, probe_roots);
+        if (probe_roots.len > 0) {
+            if (ctx.cache_store == null) {
+                const root = if (opts.cache_root) |r|
+                    try a.dupe(u8, r)
+                else if (try cache.defaultRoot(a)) |r|
+                    r
+                else
+                    try std.fs.path.join(a, &.{ project.root, ".nako", "cache" });
+                ctx.cache_store = cache.Store.open(a, io, root) catch |err| return mapFs(err);
+                ctx.cache_guard = ctx.cache_store.?.lockWait() catch |err| return mapFs(err);
+            }
+            npm_resolved = resolveNpmForLock(gpa, &session, if (ctx.cache_store) |*s| s else null, project, &ctx, opts, diagnostics, &gated_root, &expanded.dependency_aliases) catch |err| {
+                session.reportDiagnostics(diagnostics) catch {};
+                return err;
+            };
+        }
     }
-    var npm_resolved = resolveNpmForLock(gpa, &session, if (ctx.cache_store) |*s| s else null, project, &ctx, opts, diagnostics) catch |err| {
-        session.reportDiagnostics(diagnostics) catch {};
-        return err;
-    };
     defer if (npm_resolved) |*r| r.deinit();
 
     // mutable path 依存の内容 digest を lock 入力へ記録する（解決に
@@ -1509,8 +1631,7 @@ pub fn ensureLock(
     }
 
     // --- profile ごとに解決 -------------------------------------------------
-    var gated_root = try gatedDepNames(a, &project.manifest);
-    defer gated_root.deinit();
+    // gated_root は ensureLock 前半で確保済み
 
     // root の有効な pkg 依存があれば registry が必要。feature-gated で
     // 未 activated の宣言は解決対象外なので registry を要求しない。
