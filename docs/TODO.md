@@ -5,7 +5,7 @@
 
 `verified: 527` は、追跡されたfixture・dispatch・公式比較・3 OS attestationに基づく命令entryの実行証拠です。全ての入力値、Node/ECMAScript APIの全境界、実ネットワーク・外部アプリ・任意の外部toolまで完全同値であることを意味しません。未検証境界は本書と [互換性の概要](COMPATIBILITY.md) に明示します。
 
-## リリース済みの状態（v0.1.0 / v0.1.1 / v0.2.0 / v0.2.1 / v0.2.2 / v0.2.3）
+## リリース済みの状態（v0.1.0 / v0.1.1 / v0.2.0 / v0.2.1 / v0.2.2 / v0.2.3 / v0.2.4）
 
 - **v0.1.0（初回正式リリース）**：
   - 標準cnako 527 entry（native 523、compat-js 4、blocked 0）の実装と、macOS arm64・Linux x86_64・Windows x86_64の3 OSにおけるCI 54/54全job成功・attestation検証を達成。
@@ -59,6 +59,13 @@
     - 無名関数・入れ子関数をまたぐ変数束縛およびクロージャ捕捉の公式なでしこ3互換性を修正（[#194](https://github.com/soramikan/lnako/pull/194)）。
     - `lnako toolchain install` 実行時の進捗表示追加とファイル複製処理の高速化（[#193](https://github.com/soramikan/lnako/pull/193)）。
     - Release公開時のリリースノート自動適用およびHomebrew tap更新ワークフローの自動起動に対応。
+- **v0.2.4（npm依存解決・lock npmInstances生成・Zig 0.17対応）**：
+  - **パッケージシステムにおけるnpm依存解決（`lnako`）**：
+    - `source = "npm"` の依存（ルートおよびアクティブなpkgパッケージからの推移依存）をfixtureカタログまたはregistry packumentから解決し、`nako.lock` の `npmInstances` へ記録する機能を実装（[#53](https://github.com/soramikan/lnako/issues/53), [#214](https://github.com/soramikan/lnako/pull/214)）。
+    - tarballのintegrity（`sha512-`）検証とパッケージキャッシュへの格納、peerDependenciesの自動充足・未充足診断（`E017`）、実行コンテキスト不整合診断（`E018`）、および `prefer_locked` 時の既存 `npmInstances` 再利用に対応。
+  - **Zig 0.17.0ツールチェーンへの移行とビルド基盤の安定化**：
+    - 基準Zigバージョンを `0.17.0` へ移行し、`zig-pubgrub` `v0.1.2` への更新および標準ライブラリAPI移行を完了（[#213](https://github.com/soramikan/lnako/pull/213)）。
+    - Windows環境におけるパスダイジェスト算出およびキャッシュ読み込みの非ブロッキングI/Oハングを解消。
 
 ## 明示的に非対応とする境界（意図的制限・後続課題）
 
