@@ -174,7 +174,7 @@ pub fn main() void {
     .name = .lnako_consumer_probe,
     .version = "0.0.0",
     .fingerprint = 0x62d261fceddb247e,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{},
     .paths = .{ "build.zig", "build.zig.zon", "main.zig" },
 }

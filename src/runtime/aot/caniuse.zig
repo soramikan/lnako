@@ -8,7 +8,7 @@ const RootFrame = state.RootFrame;
 const runtimeUtf8String = state.runtimeUtf8String;
 
 pub fn caniuseBrowsersBuiltin(runtime: *Runtime) !Value {
-    if (runtime.caniuse_browsers.tag != @intFromEnum(Tag.undefined)) return runtime.caniuse_browsers;
+    if (runtime.caniuse_browsers.tag != @backingInt(Tag.undefined)) return runtime.caniuse_browsers;
 
     var roots = [_]Value{ .{}, .{}, .{} };
     var frame = RootFrame{};
@@ -32,7 +32,7 @@ pub fn caniuseBrowsersBuiltin(runtime: *Runtime) !Value {
 const CaniuseBrowser = struct { key: []const u8, versions: []const []const u8 };
 
 pub fn caniuseAgentsBuiltin(runtime: *Runtime) !Value {
-    if (runtime.caniuse_agents.tag != @intFromEnum(Tag.undefined)) return runtime.caniuse_agents;
+    if (runtime.caniuse_agents.tag != @backingInt(Tag.undefined)) return runtime.caniuse_agents;
 
     var roots = [_]Value{ .{}, .{}, .{} };
     var frame = RootFrame{};

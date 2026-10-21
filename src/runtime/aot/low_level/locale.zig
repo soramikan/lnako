@@ -47,12 +47,12 @@ pub fn localeCompareBuiltin(runtime: *Runtime, arguments: []const Value) !Value 
     if (arguments.len >= 3) {
         const options = arguments[2];
         switch (options.tag) {
-            @intFromEnum(Tag.undefined), @intFromEnum(Tag.null_value) => {},
-            @intFromEnum(Tag.dictionary) => {
+            @backingInt(Tag.undefined), @backingInt(Tag.null_value) => {},
+            @backingInt(Tag.dictionary) => {
                 if (dictionaryOwnProperty(options, &.{ 'l', 'o', 'c', 'a', 'l', 'e' })) |locale_value| {
                     switch (locale_value.tag) {
-                        @intFromEnum(Tag.undefined), @intFromEnum(Tag.null_value) => {},
-                        @intFromEnum(Tag.static_utf8_string), @intFromEnum(Tag.utf16_string) => {
+                        @backingInt(Tag.undefined), @backingInt(Tag.null_value) => {},
+                        @backingInt(Tag.static_utf8_string), @backingInt(Tag.utf16_string) => {
                             locale_owned = try valueUtf8LossyAlloc(runtime, locale_value);
                             locale_name = locale_owned.?;
                         },
@@ -97,11 +97,11 @@ test "AOT低レイヤーのロケール比較はInterpreterと同じ契約で返
     rooted[1] = try runtimeUtf8String(&runtime, "abd");
     const aot_builtin_command: aot_builtin.Command = .low_level_locale_compare;
     var result = try lowLevelLocaleBuiltin(&runtime, aot_builtin_command, rooted[0..2]);
-    try std.testing.expect(result.tag == @intFromEnum(Tag.number) and shared.valueToNumber(result) == -1);
+    try std.testing.expect(result.tag == @backingInt(Tag.number) and shared.valueToNumber(result) == -1);
 
     const reversed = [_]Value{ rooted[1], rooted[0] };
     result = try lowLevelLocaleBuiltin(&runtime, aot_builtin_command, &reversed);
-    try std.testing.expect(result.tag == @intFromEnum(Tag.number) and shared.valueToNumber(result) == 1);
+    try std.testing.expect(result.tag == @backingInt(Tag.number) and shared.valueToNumber(result) == 1);
 
     // locale=C.UTF-8指定もbytewise。
     rooted[2] = try runtime.createDictionary(&.{});
@@ -109,7 +109,7 @@ test "AOT低レイヤーのロケール比較はInterpreterと同じ契約で返
     try runtime.setDictionary(&rooted[2].object().?.payload.dictionary, rooted[3], try runtimeUtf8String(&runtime, "C.UTF-8"));
     const args = [_]Value{ rooted[0], rooted[1], rooted[2] };
     result = try lowLevelLocaleBuiltin(&runtime, aot_builtin_command, &args);
-    try std.testing.expect(result.tag == @intFromEnum(Tag.number) and shared.valueToNumber(result) == -1);
+    try std.testing.expect(result.tag == @backingInt(Tag.number) and shared.valueToNumber(result) == -1);
 
     // 未インストールの可能性が高いロケールは、照合できれば結果、
     // 未対応なら構造化ENOTSUP（capability付き）になる。
@@ -122,7 +122,7 @@ test "AOT低レイヤーのロケール比較はInterpreterと同じ契約で返
         break :blk null;
     };
     if (maybe) |value| {
-        try std.testing.expect(value.tag == @intFromEnum(Tag.number));
+        try std.testing.expect(value.tag == @backingInt(Tag.number));
     }
 
     // 非文字列引数はEINVAL。
@@ -143,7 +143,7 @@ test "AOT低レイヤーの表示幅はInterpreterと同じ規則を返す" {
 
     rooted[0] = try runtimeUtf8String(&runtime, "hello");
     var result = try displayWidthBuiltin(&runtime, rooted[0..1]);
-    try std.testing.expect(result.tag == @intFromEnum(Tag.number) and shared.valueToNumber(result) == 5);
+    try std.testing.expect(result.tag == @backingInt(Tag.number) and shared.valueToNumber(result) == 5);
 
     rooted[1] = try runtimeUtf8String(&runtime, "こんにちは");
     result = try displayWidthBuiltin(&runtime, rooted[1..2]);

@@ -90,7 +90,7 @@ pub const Marker = struct {
     }
 
     pub fn evaluate(self: *const Marker, context: Context) EvalError!bool {
-        return switch (try evalExpr(self.root, context, .initEmpty())) {
+        return switch (try evalExpr(self.root, context, .empty)) {
             .pass => true,
             .fail => false,
             .unknown => unreachable,

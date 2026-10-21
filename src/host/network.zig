@@ -20,7 +20,7 @@ pub const WindowsShell = if (builtin.os.tag == .windows) struct {
     fn wtf16LeFromWtf8(allocator: std.mem.Allocator, source: []const u8) ![:0]u16 {
         const units = try std.unicode.wtf8ToWtf16LeAlloc(allocator, source);
         defer allocator.free(units);
-        return try allocator.dupeZ(u16, units);
+        return try allocator.dupeSentinel(u16, units, 0);
     }
 
     pub fn openExternal(allocator: std.mem.Allocator, target: []const u8, reveal: bool) !void {

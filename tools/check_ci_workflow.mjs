@@ -247,7 +247,7 @@ if (!parserFuzzJob || !parserFuzzJob.includes("strategy:\n      fail-fast: false
     !parserFuzzJob.includes("suite: parser-fuzz") ||
     (parserFuzzJob.match(/^          - name: /gm) ?? []).length !== 2 ||
     !parserFuzzJob.includes("mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1") ||
-    !parserFuzzJob.includes("version: 0.16.0") || !parserFuzzJob.includes("use-cache: false") ||
+    !parserFuzzJob.includes("version: 0.17.0") || !parserFuzzJob.includes("use-cache: false") ||
     !parserFuzzJob.includes("actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0") ||
     !parserFuzzJob.includes("node-version: 24.15.0") ||
     !parserFuzzJob.includes("actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0") ||
@@ -1129,7 +1129,7 @@ const cacheDisabledJobs = new Map([
 ]);
 for (const [label, jobText] of cacheDisabledJobs) {
   const block = jobText?.match(setupZigStepPattern)?.[0];
-  if (!block || !block.includes("version: 0.16.0") || !block.includes("use-cache: false") ||
+  if (!block || !block.includes("version: 0.17.0") || !block.includes("use-cache: false") ||
       !block.includes(`cache-size-limit: ${setupZigCacheSizeLimitMiB}`) || block.includes("cache-key:")) {
     throw new Error(`${label}のsetup-zigがZig cacheを保存しない設定になっていません`);
   }
@@ -1137,8 +1137,8 @@ for (const [label, jobText] of cacheDisabledJobs) {
 // setup-zigブロックは7つ（test／parser_fuzz／Windows producer／Linux producer／
 // aot（macOS nativeのみcache）／aot_linux／aot_windows）。
 if (setupZigBlocks.length !== 7 ||
-    !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat' }}") && block.includes("cache-key: ${{ matrix.suite }}")) ||
-    !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.task == 'native' }}") && block.includes(nativeAotCacheKey)) ||
+    !setupZigBlocks.some((block) => block.includes("version: 0.17.0") && block.includes("use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat' }}") && block.includes("cache-key: ${{ matrix.suite }}")) ||
+    !setupZigBlocks.some((block) => block.includes("version: 0.17.0") && block.includes("use-cache: ${{ matrix.task == 'native' }}") && block.includes(nativeAotCacheKey)) ||
     countOccurrences(workflow, nativeAotCacheKey) !== 1 ||
     countOccurrences(workflow, "cache-key: aot-compiler") !== 0 ||
     (workflow.match(/cache-size-limit:/g) ?? []).length !== 6) {

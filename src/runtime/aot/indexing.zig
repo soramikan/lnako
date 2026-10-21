@@ -28,12 +28,12 @@ const AotDictionary = runtime_core.AotDictionary;
 const Runtime = runtime_core.Runtime;
 
 pub fn indexGet(self: *Runtime, container: Value, key: Value) Value {
-    if (container.tag == @intFromEnum(Tag.utf16_string)) {
+    if (container.tag == @backingInt(Tag.utf16_string)) {
         const index = valueIndex(key) orelse return .{};
         return stringAt(self, container, index);
     }
     // 公式はJavaScriptのまま `undefined[key]` / `null[key]` がTypeErrorになる
-    if (container.tag == @intFromEnum(Tag.undefined) or container.tag == @intFromEnum(Tag.null_value)) {
+    if (container.tag == @backingInt(Tag.undefined) or container.tag == @backingInt(Tag.null_value)) {
         self.setIndexReadFailure(container, key);
         return .{};
     }
@@ -127,7 +127,7 @@ pub fn indexGet(self: *Runtime, container: Value, key: Value) Value {
 }
 
 pub fn destructureGet(_: *Runtime, source: Value, index: usize) Value {
-    if (source.tag == @intFromEnum(Tag.array)) {
+    if (source.tag == @backingInt(Tag.array)) {
         const items = source.object().?.payload.array.items;
         return if (index < items.len) items[index] else .{};
     }
@@ -135,7 +135,7 @@ pub fn destructureGet(_: *Runtime, source: Value, index: usize) Value {
 }
 
 pub fn indexSet(self: *Runtime, container: Value, key: Value, value: Value) !void {
-    const object = container.object() orelse return switch (@as(Tag, @enumFromInt(container.tag))) {
+    const object = container.object() orelse return switch (@as(Tag, @fromBackingInt(@intCast(container.tag)))) {
         .undefined, .null_value => error.InvalidContainer,
         else => {},
     };
@@ -152,7 +152,7 @@ pub fn indexSet(self: *Runtime, container: Value, key: Value, value: Value) !voi
             var has_own_prototype_key = false;
             if (sameKey(rooted[1], staticStringValue("__proto__"))) has_own_prototype_key = entries.findByKey(rooted[1]) != null;
             if (!has_own_prototype_key and sameKey(rooted[1], staticStringValue("__proto__"))) {
-                if (rooted[2].tag == @intFromEnum(Tag.null_value) or rooted[2].object() != null) {
+                if (rooted[2].tag == @backingInt(Tag.null_value) or rooted[2].object() != null) {
                     object.prototype = rooted[2];
                 }
                 return;
@@ -177,7 +177,7 @@ pub fn indexSet(self: *Runtime, container: Value, key: Value, value: Value) !voi
             if (std.mem.eql(u16, key_units, &.{ '_', '_', 'p', 'r', 'o', 't', 'o', '_', '_' }) and
                 aotObjectOwnPropertyGetUnits(self, object, key_units) == null)
             {
-                if (value.tag == @intFromEnum(Tag.null_value) or value.object() != null) object.prototype = value;
+                if (value.tag == @backingInt(Tag.null_value) or value.object() != null) object.prototype = value;
                 return;
             }
             if (aotByteBufferReadOnlyProperty(buffer.kind, key_units)) return;
@@ -221,7 +221,7 @@ pub fn aotArrayPropertyGet(self: *Runtime, object: *const Object, key: Value) Va
         // needs the textual key.  Fall through to the general path.
     }
     var rooted = [_]Value{
-        .{ .tag = @intFromEnum(Tag.array), .payload = @intFromPtr(object) },
+        .{ .tag = @backingInt(Tag.array), .payload = @intFromPtr(object) },
         key,
     };
     var frame = RootFrame{};
@@ -293,7 +293,7 @@ pub fn aotArrayPropertySet(self: *Runtime, object: *Object, key: Value, value: V
     // cases below can never be produced by a canonical index.
     if (aotCanonicalArrayIndex(key)) |index| return aotArraySetIndex(self, object, index, value);
     var rooted = [_]Value{
-        .{ .tag = @intFromEnum(Tag.array), .payload = @intFromPtr(object) },
+        .{ .tag = @backingInt(Tag.array), .payload = @intFromPtr(object) },
         key,
         value,
     };
@@ -311,7 +311,7 @@ pub fn aotArrayPropertySet(self: *Runtime, object: *Object, key: Value, value: V
     if (std.mem.eql(u16, key_units, &.{ '_', '_', 'p', 'r', 'o', 't', 'o', '_', '_' }) and
         aotArrayOwnPropertyGetUnits(self, rooted[0].object().?, key_units) == null)
     {
-        if (rooted[2].tag == @intFromEnum(Tag.null_value) or rooted[2].object() != null) rooted[0].object().?.prototype = rooted[2];
+        if (rooted[2].tag == @backingInt(Tag.null_value) or rooted[2].object() != null) rooted[0].object().?.prototype = rooted[2];
         return;
     }
     try setDictionary(self, &rooted[0].object().?.array_properties, normalized, rooted[2]);
@@ -320,7 +320,7 @@ pub fn aotArrayPropertySet(self: *Runtime, object: *Object, key: Value, value: V
 pub fn aotArrayPropertyGetUnits(self: *Runtime, object: *const Object, key_units: []const u16) Value {
     if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return numberValue(@floatFromInt(object.payload.array.items.len));
     if (aotArrayOwnPropertyGetUnits(self, object, key_units)) |value| return value;
-    const source = Value{ .tag = @intFromEnum(Tag.array), .payload = @intFromPtr(object) };
+    const source = Value{ .tag = @backingInt(Tag.array), .payload = @intFromPtr(object) };
     return (tableInheritedProperty(self, source, .array, key_units) catch |failure| {
         self.setFailure(failure);
         return .{};
@@ -344,7 +344,7 @@ pub fn aotObjectOwnPropertyGetUnits(_: *Runtime, object: *const Object, key_unit
 }
 
 pub fn aotPropertyKeyMatchesUnits(_: *Runtime, key: Value, units: []const u16) bool {
-    return switch (@as(Tag, @enumFromInt(key.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(key.tag)))) {
         .static_utf8_string => staticUtf8EqualsUtf16(staticUtf8(key), units),
         .utf16_string => std.mem.eql(u16, key.object().?.payload.utf16_string, units),
         else => false,
@@ -522,7 +522,7 @@ pub fn setDictionary(self: *Runtime, entries: *AotDictionary, key: Value, value:
 }
 
 pub fn propertyKey(self: *Runtime, key: Value) !Value {
-    return switch (@as(Tag, @enumFromInt(key.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(key.tag)))) {
         .static_utf8_string, .utf16_string => key,
         else => blk: {
             const units = try valueUtf16Alloc(self, key);

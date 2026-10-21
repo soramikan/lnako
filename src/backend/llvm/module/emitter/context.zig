@@ -129,7 +129,7 @@ pub const Emitter = struct {
     /// 直接呼び出しでないbuiltin call命令が使うコマンド集合を一度だけ構築する。
     pub fn usedCommands(self: *Emitter) !std.EnumSet(aot_builtin.Command) {
         if (self.used_commands) |commands| return commands;
-        var commands: std.EnumSet(aot_builtin.Command) = .initEmpty();
+        var commands: std.EnumSet(aot_builtin.Command) = .empty;
         for (self.program.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
             // `{関数}名`で関数値化された組み込み命令も使用コマンドとして数える。
             // callback経由で非同期命令を呼び得るためusesAsyncEvents判定に必須。
@@ -440,9 +440,9 @@ pub fn writeMetadataString(writer: *std.Io.Writer, text: []const u8) !void {
 pub fn writeScalarInitializer(writer: *std.Io.Writer, scalar: ?system_constant.Scalar) !void {
     const value = scalar orelse return writer.writeAll("{ i8 0, i64 0 }");
     switch (value) {
-        .undefined => try writer.print("{{ i8 {d}, i64 0 }}", .{@intFromEnum(aot_abi.Tag.undefined)}),
-        .null_value => try writer.print("{{ i8 {d}, i64 0 }}", .{@intFromEnum(aot_abi.Tag.null_value)}),
-        .boolean => |boolean| try writer.print("{{ i8 {d}, i64 {d} }}", .{ @intFromEnum(aot_abi.Tag.boolean), @intFromBool(boolean) }),
-        .number => |number| try writer.print("{{ i8 {d}, i64 {d} }}", .{ @intFromEnum(aot_abi.Tag.number), @as(u64, @bitCast(number)) }),
+        .undefined => try writer.print("{{ i8 {d}, i64 0 }}", .{@backingInt(aot_abi.Tag.undefined)}),
+        .null_value => try writer.print("{{ i8 {d}, i64 0 }}", .{@backingInt(aot_abi.Tag.null_value)}),
+        .boolean => |boolean| try writer.print("{{ i8 {d}, i64 {d} }}", .{ @backingInt(aot_abi.Tag.boolean), @intFromBool(boolean) }),
+        .number => |number| try writer.print("{{ i8 {d}, i64 {d} }}", .{ @backingInt(aot_abi.Tag.number), @as(u64, @bitCast(number)) }),
     }
 }

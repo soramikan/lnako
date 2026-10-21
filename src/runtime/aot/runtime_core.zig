@@ -60,12 +60,12 @@ const safe_array_element_limit = aot_state.safe_array_element_limit;
 const aot_timer_event_limit = aot_state.aot_timer_event_limit;
 
 pub const Value = extern struct {
-    tag: u8 = @intFromEnum(Tag.undefined),
+    tag: u8 = @backingInt(Tag.undefined),
     payload: u64 = 0,
 
     pub fn object(self: Value) ?*Object {
         if (self.payload == 0) return null;
-        return switch (@as(Tag, @enumFromInt(self.tag))) {
+        return switch (@as(Tag, @fromBackingInt(@intCast(self.tag)))) {
             .utf16_string, .array, .dictionary, .iterator, .bigint, .function, .binding_cell, .byte_buffer, .promise => @ptrFromInt(self.payload),
             else => null,
         };
@@ -126,7 +126,7 @@ fn aotIndexHashUtf8(bytes: []const u8) u64 {
 }
 
 fn aotIndexHash(key: Value) u64 {
-    return switch (@as(Tag, @enumFromInt(key.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(key.tag)))) {
         .utf16_string => aotIndexHashUnits(key.object().?.payload.utf16_string),
         .static_utf8_string => aotIndexHashUtf8(staticUtf8(key)),
         // BigInt keys compare by value, not identity; a fixed bucket keeps
@@ -142,7 +142,7 @@ fn aotIndexHash(key: Value) u64 {
 }
 
 fn aotIndexKeyMatchesUnits(key: Value, units: []const u16) bool {
-    return switch (@as(Tag, @enumFromInt(key.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(key.tag)))) {
         .static_utf8_string => staticUtf8EqualsUtf16(staticUtf8(key), units),
         .utf16_string => std.mem.eql(u16, key.object().?.payload.utf16_string, units),
         else => false,
@@ -616,7 +616,7 @@ pub const Runtime = struct {
         self.counters.string_payload_allocations +|= 1;
         self.counters.string_payload_bytes +|= @as(u64, @intCast(payload_bytes));
         self.counters.object_high_water = @max(self.counters.object_high_water, self.object_count);
-        return .{ .value = .{ .tag = @intFromEnum(Tag.utf16_string), .payload = @intFromPtr(object) }, .units = owned };
+        return .{ .value = .{ .tag = @backingInt(Tag.utf16_string), .payload = @intFromPtr(object) }, .units = owned };
     }
 
     pub fn createBytes(self: *Runtime, bytes: []const u8) !Value {
@@ -665,7 +665,7 @@ pub const Runtime = struct {
     /// same bytes; the caller's GC roots keep the source live while allocating.
     pub fn createByteBufferBackingBuffer(self: *Runtime, buffer: ByteBuffer) !Value {
         const storage = buffer.storage;
-        if (storage.backing.tag != @intFromEnum(Tag.undefined)) return storage.backing;
+        if (storage.backing.tag != @backingInt(Tag.undefined)) return storage.backing;
         storage.retain();
         errdefer storage.release();
         try self.beforeAllocation();
@@ -753,7 +753,7 @@ pub const Runtime = struct {
             roots[1] = try self.propertyKey(values[index]);
             roots[2] = values[index + 1];
             if (sameKey(roots[1], staticStringValue("__proto__"))) {
-                if (roots[2].tag == @intFromEnum(Tag.null_value) or roots[2].object() != null) {
+                if (roots[2].tag == @backingInt(Tag.null_value) or roots[2].object() != null) {
                     roots[0].object().?.prototype = roots[2];
                 }
             } else try self.setDictionary(&roots[0].object().?.payload.dictionary, roots[1], roots[2]);
@@ -784,7 +784,7 @@ pub const Runtime = struct {
             // valueOfは毎回呼ばれ、BigInt終端も関係比較として成立する）。
             // 開始値がNaNを含む場合もガード比較がnullとなり公式どおり
             // 0回反復で終わる。
-            var step: f64 = if (values.len >= 3 and roots[2].tag != @intFromEnum(Tag.undefined))
+            var step: f64 = if (values.len >= 3 and roots[2].tag != @backingInt(Tag.undefined))
                 try valueToNumberRuntime(self, roots[2])
             else if (direction == 2 or (direction == 0 and descending: {
                 const order = (try relationalOrder(self, numberValue(start), roots[1])) orelse break :descending false;
@@ -800,7 +800,7 @@ pub const Runtime = struct {
             // iteratorHasNextでその都度比較する（カスタムvalueOfは毎回
             // 呼ばれ、BigInt返却も関係比較として成立する）。
             .{ .kind = .repeat, .source = values[0] }
-        else switch (@as(Tag, @enumFromInt(values[0].tag))) {
+        else switch (@as(Tag, @fromBackingInt(@intCast(values[0].tag)))) {
             .number => .{ .kind = .repeat, .count = 0 },
             .utf16_string => .{ .kind = .string, .source = values[0], .count = values[0].object().?.payload.utf16_string.len },
             // for..in互換: 配列・bytesは添字領域の後にownプロパティ名を、
@@ -859,7 +859,7 @@ pub const Runtime = struct {
     /// 列挙キーが整数添字相当かを返す。aotCanonicalArrayIndexUnitsと同じ
     /// 正準添字規則を文字列Valueへ適用する。
     fn canonicalEnumerableIndex(key: Value) ?usize {
-        return switch (@as(Tag, @enumFromInt(key.tag))) {
+        return switch (@as(Tag, @fromBackingInt(@intCast(key.tag)))) {
             .static_utf8_string => canonicalIndexUtf8(staticUtf8(key)),
             .utf16_string => blk: {
                 const units = key.object().?.payload.utf16_string;
@@ -992,7 +992,7 @@ pub const Runtime = struct {
         self.objects = object;
         self.object_count += 1;
         self.counters.object_high_water = @max(self.counters.object_high_water, self.object_count);
-        return .{ .tag = @intFromEnum(tag), .payload = @intFromPtr(object) };
+        return .{ .tag = @backingInt(tag), .payload = @intFromPtr(object) };
     }
 
     pub fn beforeAllocation(self: *Runtime) !void {
@@ -1042,10 +1042,10 @@ pub const Runtime = struct {
         for (self.promise_tasks.items) |task| {
             self.markValue(task.callback);
             self.markValue(task.settled_value);
-            self.markValue(.{ .tag = @intFromEnum(Tag.promise), .payload = @intFromPtr(task.next) });
+            self.markValue(.{ .tag = @backingInt(Tag.promise), .payload = @intFromPtr(task.next) });
         }
         for (self.promise_all_states.items) |state| {
-            self.markValue(.{ .tag = @intFromEnum(Tag.promise), .payload = @intFromPtr(state.promise) });
+            self.markValue(.{ .tag = @backingInt(Tag.promise), .payload = @intFromPtr(state.promise) });
             self.markValue(state.results);
         }
         for (self.http_server_state.routes.items) |route| {
@@ -1065,7 +1065,7 @@ pub const Runtime = struct {
         for (self.literal_values.items) |value| self.markValue(value);
         var low_level_handles = self.low_level_handle_ids.iterator();
         while (low_level_handles.next()) |entry| {
-            self.markValue(.{ .tag = @intFromEnum(Tag.dictionary), .payload = entry.key_ptr.* });
+            self.markValue(.{ .tag = @backingInt(Tag.dictionary), .payload = entry.key_ptr.* });
         }
         while (self.grey) |object| {
             self.grey = object.grey_next;
@@ -1091,7 +1091,7 @@ pub const Runtime = struct {
                     for (function.captures) |capture| self.markValue(capture);
                     switch (function.promise_kind) {
                         .none => {},
-                        .resolver => |resolver| self.markValue(.{ .tag = @intFromEnum(Tag.promise), .payload = @intFromPtr(resolver.promise) }),
+                        .resolver => |resolver| self.markValue(.{ .tag = @backingInt(Tag.promise), .payload = @intFromPtr(resolver.promise) }),
                         // stateの中身はpromise_all_states側でmark済み。破棄済み
                         // stateを指す残留ハンドラをderefしないよう何もしない。
                         .all_handler => {},
@@ -1126,7 +1126,7 @@ pub const Runtime = struct {
                     for (promise.reactions.items) |reaction| {
                         self.markValue(reaction.on_fulfilled);
                         self.markValue(reaction.on_rejected);
-                        self.markValue(.{ .tag = @intFromEnum(Tag.promise), .payload = @intFromPtr(reaction.next) });
+                        self.markValue(.{ .tag = @backingInt(Tag.promise), .payload = @intFromPtr(reaction.next) });
                     }
                 },
             }
@@ -1188,7 +1188,7 @@ pub const Runtime = struct {
         // JavaScript's Error(undefined).message is the empty string.  The
         // other cases use the same String(value) conversion as ordinary AOT
         // text operations, including arrays and dictionaries.
-        if (value.tag == @intFromEnum(Tag.undefined)) {
+        if (value.tag == @backingInt(Tag.undefined)) {
             self.setFailureUnits(&.{});
             return;
         }
@@ -1203,7 +1203,7 @@ pub const Runtime = struct {
         defer self.allocator.free(key_units);
         const key_utf8 = std.unicode.utf16LeToUtf8Alloc(self.allocator, key_units) catch |failure| runtimeFailure(failure);
         defer self.allocator.free(key_utf8);
-        const container_name: []const u8 = if (container.tag == @intFromEnum(Tag.null_value)) "null" else "undefined";
+        const container_name: []const u8 = if (container.tag == @backingInt(Tag.null_value)) "null" else "undefined";
         const message = std.fmt.allocPrint(self.allocator, "Cannot set properties of {s} (setting '{s}')", .{ container_name, key_utf8 }) catch |failure| runtimeFailure(failure);
         defer self.allocator.free(message);
         self.setFailureText(message);
@@ -1217,14 +1217,14 @@ pub const Runtime = struct {
         defer self.allocator.free(key_units);
         const key_utf8 = std.unicode.utf16LeToUtf8Alloc(self.allocator, key_units) catch |failure| runtimeFailure(failure);
         defer self.allocator.free(key_utf8);
-        const container_name: []const u8 = if (container != null and container.?.tag == @intFromEnum(Tag.null_value)) "null" else "undefined";
+        const container_name: []const u8 = if (container != null and container.?.tag == @backingInt(Tag.null_value)) "null" else "undefined";
         const message = std.fmt.allocPrint(self.allocator, "Cannot read properties of {s} (reading '{s}')", .{ container_name, key_utf8 }) catch |failure| runtimeFailure(failure);
         defer self.allocator.free(message);
         self.setFailureText(message);
     }
 
     pub fn systemContext(self: *Runtime) !Value {
-        if (self.system_context.tag == @intFromEnum(Tag.undefined)) self.system_context = try self.createDictionary(&.{});
+        if (self.system_context.tag == @backingInt(Tag.undefined)) self.system_context = try self.createDictionary(&.{});
         return self.system_context;
     }
 

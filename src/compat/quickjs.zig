@@ -141,7 +141,7 @@ pub const State = struct {
         const runtime = self.runtime orelse return error.QuickJsHostUnavailable;
         const name = try function.name.toUtf8Lossy(runtime.allocator());
         defer runtime.allocator().free(name);
-        const name_z = try runtime.allocator().dupeZ(u8, name);
+        const name_z = try runtime.allocator().dupeSentinel(u8, name, 0);
         defer runtime.allocator().free(name_z);
         return lnako_qjs_host_function(engine, function_id, name_z.ptr) orelse error.OutOfMemory;
     }
@@ -338,7 +338,7 @@ pub fn call(runtime: *Runtime, state: *State, effects: Effects, name: []const u8
         }
         const method = try common.toUtf8Alloc(runtime, common.argument(arguments, 1));
         defer runtime.allocator().free(method);
-        const method_z = try runtime.allocator().dupeZ(u8, method);
+        const method_z = try runtime.allocator().dupeSentinel(u8, method, 0);
         defer runtime.allocator().free(method_z);
         const call_arguments = common.argument(arguments, 2);
         const slice = if (call_arguments == .array) call_arguments.array.items.items else arguments[2..@min(arguments.len, 3)];
@@ -358,7 +358,7 @@ pub fn installModules(runtime: *Runtime, state: *State, modules: []const @import
         // import解決にroot包含を強制し、graph収集の盲点となった形でも
         // root外へのFS fallbackを拒否する。
         const package_root: ?[:0]u8 = if (module.package_root) |root| blk: {
-            const normalized = try runtime.allocator().dupeZ(u8, root);
+            const normalized = try runtime.allocator().dupeSentinel(u8, root, 0);
             for (normalized) |*character| if (character.* == '\\') {
                 character.* = '/';
             };
@@ -465,7 +465,7 @@ pub fn installModules(runtime: *Runtime, state: *State, modules: []const @import
         var name_length: usize = 0;
         const name_pointer = lnako_qjs_key(keys, index, &name_length) orelse continue;
         const name = name_pointer[0..name_length];
-        const name_z = try runtime.allocator().dupeZ(u8, name);
+        const name_z = try runtime.allocator().dupeSentinel(u8, name, 0);
         defer runtime.allocator().free(name_z);
         const definition_value = lnako_qjs_get_property(commands, name_z.ptr) orelse return quickJsError(engine);
         defer lnako_qjs_value_free(definition_value);
@@ -480,7 +480,7 @@ pub fn installModules(runtime: *Runtime, state: *State, modules: []const @import
 }
 
 fn moduleFilename(allocator: std.mem.Allocator, path: []const u8) ![:0]u8 {
-    const filename = try allocator.dupeZ(u8, path);
+    const filename = try allocator.dupeSentinel(u8, path, 0);
     for (filename) |*character| if (character.* == '\\') {
         character.* = '/';
     };
@@ -492,7 +492,7 @@ fn callPlugin(self: *State, runtime: *Runtime, name: []const u8, arguments: []co
     const commands = try globalProperty(engine, "__lnako_commands");
     defer lnako_qjs_value_free(commands);
     var lookup_name = name;
-    var name_z = try runtime.allocator().dupeZ(u8, lookup_name);
+    var name_z = try runtime.allocator().dupeSentinel(u8, lookup_name, 0);
     defer runtime.allocator().free(name_z);
     var definition_value = lnako_qjs_get_property(commands, name_z.ptr) orelse return quickJsError(engine);
     if (lnako_qjs_kind(definition_value) == .undefined and !isPackageNamespacedName(self, name)) {
@@ -500,7 +500,7 @@ fn callPlugin(self: *State, runtime: *Runtime, name: []const u8, arguments: []co
             lnako_qjs_value_free(definition_value);
             lookup_name = name[separator + 2 ..];
             runtime.allocator().free(name_z);
-            name_z = try runtime.allocator().dupeZ(u8, lookup_name);
+            name_z = try runtime.allocator().dupeSentinel(u8, lookup_name, 0);
             definition_value = lnako_qjs_get_property(commands, name_z.ptr) orelse return quickJsError(engine);
         }
     }
@@ -682,7 +682,7 @@ fn toRaw(state: *State, runtime: *Runtime, engine: *Engine, value: Value) anyerr
             for (dictionary.keys(), dictionary.values()) |key, item_value| {
                 const name = try key.toUtf8Lossy(runtime.allocator());
                 defer runtime.allocator().free(name);
-                const name_z = try runtime.allocator().dupeZ(u8, name);
+                const name_z = try runtime.allocator().dupeSentinel(u8, name, 0);
                 defer runtime.allocator().free(name_z);
                 const item = try toRaw(state, runtime, engine, item_value);
                 defer lnako_qjs_value_free(item);
@@ -725,7 +725,7 @@ fn syncExternal(state: *State, runtime: *Runtime, engine: *Engine, value: Value,
             for (dictionary.keys(), dictionary.values()) |key, item_value| {
                 const name = try key.toUtf8Lossy(runtime.allocator());
                 defer runtime.allocator().free(name);
-                const name_z = try runtime.allocator().dupeZ(u8, name);
+                const name_z = try runtime.allocator().dupeSentinel(u8, name, 0);
                 defer runtime.allocator().free(name_z);
                 const item = try toRaw(state, runtime, engine, item_value);
                 defer lnako_qjs_value_free(item);
@@ -773,7 +773,7 @@ const Conversion = struct {
                     var name_length: usize = 0;
                     const name_pointer = lnako_qjs_key(keys, index, &name_length) orelse continue;
                     const name = name_pointer[0..name_length];
-                    const name_z = try self.runtime.allocator().dupeZ(u8, name);
+                    const name_z = try self.runtime.allocator().dupeSentinel(u8, name, 0);
                     defer self.runtime.allocator().free(name_z);
                     const item = lnako_qjs_get_property(raw, name_z.ptr) orelse return error.QuickJsConversionFailed;
                     try common.dictionarySetUtf8(self.runtime, dictionary, name, try self.convert(item));
@@ -873,7 +873,7 @@ const Conversion = struct {
             var name_length: usize = 0;
             const name_pointer = lnako_qjs_key(keys, index, &name_length) orelse continue;
             const name = name_pointer[0..name_length];
-            const name_z = try self.runtime.allocator().dupeZ(u8, name);
+            const name_z = try self.runtime.allocator().dupeSentinel(u8, name, 0);
             defer self.runtime.allocator().free(name_z);
             const item = lnako_qjs_get_property(raw, name_z.ptr) orelse return error.QuickJsConversionFailed;
             try common.dictionarySetUtf8(self.runtime, result.dictionary, name, try self.convert(item));

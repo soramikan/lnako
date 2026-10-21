@@ -57,7 +57,7 @@ pub export fn lnako_aot_compare(out: *state.Value, left: *const state.Value, rig
         return;
     };
     out.* = .{
-        .tag = @intFromEnum(shared.Tag.boolean),
+        .tag = @backingInt(shared.Tag.boolean),
         .payload = @intFromBool(state.compareValues(runtime, operator, left.*, right.*) catch |failure| {
             runtime.setFailure(failure);
             return;
@@ -90,12 +90,12 @@ pub export fn lnako_aot_concat(out: *state.Value, left: *const state.Value, righ
 /// 増減文の分解命令（公式convInc相当）。
 /// `typeof v === 'undefined'` の判定。純粋なタグ比較で例外は発生させない。
 pub export fn lnako_aot_is_undefined(value: *const state.Value) callconv(.c) c_int {
-    return if (value.tag == @intFromEnum(shared.Tag.undefined)) 1 else 0;
+    return if (value.tag == @backingInt(shared.Tag.undefined)) 1 else 0;
 }
 
 /// `v0 = 0` 相当: undefinedなら0、それ以外はそのまま返す。
 pub export fn lnako_aot_coalesce_or_zero(out: *state.Value, value: *const state.Value) callconv(.c) void {
-    out.* = if (value.tag == @intFromEnum(shared.Tag.undefined)) state.numberValue(0) else value.*;
+    out.* = if (value.tag == @backingInt(shared.Tag.undefined)) state.numberValue(0) else value.*;
 }
 
 /// `Number(v0) + Number(incValue)` 相当の数値強制つき加算。
@@ -139,7 +139,7 @@ pub export fn lnako_aot_index_set(container: *const state.Value, key: *const sta
     // 先行する中間読出しの失敗を最終書込みの失敗で上書きしない
     if (runtime.has_pending_exception) return -1;
     const start_epoch = runtime.failure_epoch;
-    if (container.tag == @intFromEnum(shared.Tag.undefined) or container.tag == @intFromEnum(shared.Tag.null_value)) {
+    if (container.tag == @backingInt(shared.Tag.undefined) or container.tag == @backingInt(shared.Tag.null_value)) {
         runtime.setIndexAssignmentFailure(container.*, key.*);
         runtime.recordAotEntry(&runtime.counters.aot_index_set, false);
         return -1;
@@ -161,7 +161,7 @@ pub export fn lnako_aot_ensure_array_var(slot: *state.Value) callconv(.c) void {
     const runtime = if (state.active_runtime) |*active| active else return;
     // 先行する中間読出し等の失敗を保持する
     if (runtime.has_pending_exception) return;
-    if (slot.tag == @intFromEnum(shared.Tag.array)) return;
+    if (slot.tag == @backingInt(shared.Tag.array)) return;
     slot.* = createDnclArray(runtime) catch |failure| {
         runtime.setFailure(failure);
         return;
@@ -177,7 +177,7 @@ fn createDnclArray(runtime: *state.Runtime) !state.Value {
 /// DNCL自動初期化のcheck式（公式 `tmp[..] instanceof Array` 相当）。
 /// 値のタグが配列なら1、それ以外は0を返す。例外は発生しない。
 pub export fn lnako_aot_is_array(value: *const state.Value) callconv(.c) i32 {
-    return if (value.tag == @intFromEnum(shared.Tag.array)) 1 else 0;
+    return if (value.tag == @backingInt(shared.Tag.array)) 1 else 0;
 }
 
 /// DNCL自動初期化のwrite-back式（公式 `tmp[..] = arrayDefCode` 相当）。
@@ -187,7 +187,7 @@ pub export fn lnako_aot_is_array(value: *const state.Value) callconv(.c) i32 {
 pub export fn lnako_aot_init_array_index(container: *state.Value, key: *const state.Value) callconv(.c) void {
     const runtime = if (state.active_runtime) |*active| active else return;
     if (runtime.has_pending_exception) return;
-    if (container.tag == @intFromEnum(shared.Tag.undefined) or container.tag == @intFromEnum(shared.Tag.null_value)) {
+    if (container.tag == @backingInt(shared.Tag.undefined) or container.tag == @backingInt(shared.Tag.null_value)) {
         runtime.setIndexAssignmentFailure(container.*, key.*);
         return;
     }
@@ -247,7 +247,7 @@ pub export fn lnako_aot_binding_cell_new(out: *state.Value, initial: ?*const sta
 }
 
 pub export fn lnako_aot_binding_cell_value(cell: *state.Value) callconv(.c) *state.Value {
-    if (cell.tag != @intFromEnum(shared.Tag.binding_cell)) state.runtimeFailure(error.InvalidBindingCell);
+    if (cell.tag != @backingInt(shared.Tag.binding_cell)) state.runtimeFailure(error.InvalidBindingCell);
     const object = cell.object() orelse state.runtimeFailure(error.InvalidBindingCell);
     if (object.payload != .binding_cell) state.runtimeFailure(error.InvalidBindingCell);
     return &object.payload.binding_cell;
@@ -265,7 +265,7 @@ pub export fn lnako_aot_cut_site(out: *state.Value, target: *state.Value, argume
     const runtime = if (state.active_runtime) |*active| active else return;
     const start_epoch = runtime.failure_epoch;
     const command: state.aot_builtin.Command = if (mode == 0) .cut else .cut_range;
-    const opcode = @intFromEnum(command);
+    const opcode = @backingInt(command);
     const command_name = state.aot_builtin.canonicalOpcodeName(command);
     const call_id = runtime.dispatch_trace.begin(command_name, opcode, "cut", site_id);
     var success = false;

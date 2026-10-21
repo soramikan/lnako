@@ -104,7 +104,7 @@ pub fn openBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     defer runtime.allocator.free(path);
     var mode_owned: ?[]u8 = null;
     defer if (mode_owned) |owned| runtime.allocator.free(owned);
-    if (arguments.len > 1 and arguments[1].tag != @intFromEnum(Tag.undefined)) {
+    if (arguments.len > 1 and arguments[1].tag != @backingInt(Tag.undefined)) {
         if (!isString(arguments[1])) {
             return throwStructured(runtime, .EINVAL, foundation.stream_operations.open, path, null, "modeは文字列である必要があります");
         }
@@ -391,7 +391,7 @@ pub fn pwriteBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
 }
 
 fn whenceFromArgument(runtime: *Runtime, value: Value) !low_level_io.SeekWhence {
-    if (value.tag == @intFromEnum(Tag.undefined)) return .start;
+    if (value.tag == @backingInt(Tag.undefined)) return .start;
     const text = valueUtf8LossyAlloc(runtime, value) catch {
         return throwStructured(runtime, .EINVAL, foundation.stream_operations.lseek, null, null, "WHENCEが不正です");
     };

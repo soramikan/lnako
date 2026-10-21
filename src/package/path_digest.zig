@@ -184,8 +184,9 @@ pub fn digestDir(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir) ![32]u8 {
         hasher.update(&size_le);
         var file = try openFile(io, dir, entry.rel);
         defer file.close(io);
-        // Windows returned file handle is asynchronous although its mode flag is unset.
-        if (builtin.os.tag == .windows) file.flags.nonblocking = true;
+        // Zig 0.17 Windows openFile uses SYNCHRONOUS_NONALERT and returns
+        // nonblocking=false. Forcing nonblocking=true takes the APC wait path
+        // on a sync handle and hangs (CI: portable path digest, 5m timeout).
         var buffer: [8192]u8 = undefined;
         var reader = file.reader(io, &buffer);
         while (true) {

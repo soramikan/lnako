@@ -191,7 +191,7 @@ pub fn runBenchmark(
         .git_dirty = git_dirty,
         .generated_at_unix_ms = generated_at_unix_ms,
         .target = .{ .os = @tagName(builtin.os.tag), .arch = @tagName(builtin.cpu.arch) },
-        .toolchain = .{ .zig = "0.16.0", .llvm = "22.1.8" },
+        .toolchain = .{ .zig = "0.17.0", .llvm = "22.1.8" },
         .profile = model.profileName(options.profile),
         .iterations = options.iterations,
         .warmup = options.warmup,

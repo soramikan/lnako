@@ -1106,7 +1106,7 @@ test "byte bufferのcustom prototypeをToPrimitiveへ接続する" {
     defer fixture.parsed.deinit();
     var runtime = Runtime.init(std.testing.allocator);
     defer runtime.deinit();
-    var roots = [_]Value{.undefined} ** 6;
+    var roots = @as([6]Value, @splat(.undefined));
     var root_frame = runtime.rootFrame();
     defer root_frame.deinit();
     for (&roots) |*root| try root_frame.protect(root);

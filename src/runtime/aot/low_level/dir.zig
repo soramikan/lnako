@@ -85,7 +85,7 @@ pub fn nextBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     const entry = dirTable(runtime).next(id, io(runtime), allocator) catch |failure| {
         return throwIoMapped(runtime, failure, foundation.dirNextErrorCode(failure), operation, null, .dir_iterator);
     };
-    const actual = entry orelse return .{ .tag = @intFromEnum(Tag.null_value) };
+    const actual = entry orelse return .{ .tag = @backingInt(Tag.null_value) };
     defer allocator.free(actual.name);
     return dirEntryValue(runtime, actual);
 }
@@ -179,7 +179,7 @@ test "AOT低レイヤーのディレクトリ開/次取得/閉はRuntimeの表�
     var names: usize = 0;
     while (true) {
         const entry = try nextBuiltin(&runtime, &.{handle});
-        if (entry.tag == @intFromEnum(Tag.null_value)) break;
+        if (entry.tag == @backingInt(Tag.null_value)) break;
         roots[1] = entry;
         const name = shared.dictionaryProperty(entry, &.{ 'n', 'a', 'm', 'e' });
         try std.testing.expect(isString(name));
@@ -269,13 +269,13 @@ test "AOT低レイヤーのディレクトリ列挙時はコールバックを�
 fn aotVisitCounter(out: *Value, context: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
     const function: *shared.Object = @ptrCast(@alignCast(context));
     const cell = function.payload.function.captures[0].object().?;
-    if (arguments == null or len != 1 or arguments.?[0].tag != @intFromEnum(Tag.dictionary)) {
+    if (arguments == null or len != 1 or arguments.?[0].tag != @backingInt(Tag.dictionary)) {
         out.* = .{};
         return;
     }
     const count = shared.valueToNumber(cell.payload.binding_cell) + 1;
     cell.payload.binding_cell = numberValue(count);
-    out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(count > 1) };
+    out.* = .{ .tag = @backingInt(Tag.boolean), .payload = @intFromBool(count > 1) };
 }
 
 test "AOT低レイヤーのディレクトリ列挙時は数値の真でも中断する" {
@@ -338,7 +338,7 @@ test "AOT低レイヤーのファイル種別handleはディレクトリ命令�
 /// dispatch経由で低レイヤー命令を呼び、構造化エラーのcodeを検査する。
 fn expectLowLevelCode(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value, expected: []const u8) !void {
     var out: Value = .{};
-    state.lnako_aot_builtin_call(&out, if (arguments.len > 0) arguments.ptr else null, arguments.len, @intFromEnum(command));
+    state.lnako_aot_builtin_call(&out, if (arguments.len > 0) arguments.ptr else null, arguments.len, @backingInt(command));
     try std.testing.expect(runtime.has_pending_exception);
     const code = try shared.aotThrownCode(runtime);
     defer runtime.allocator.free(code);
@@ -379,6 +379,6 @@ fn aotFailVisitor(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) call
     // 無効ハンドルのcloseを呼び、なでしこ例外（EBADF）を発生させる。
     var arguments = [_]Value{numberValue(1)};
     var ignored = Value{};
-    state.lnako_aot_builtin_call(&ignored, &arguments, arguments.len, @intFromEnum(aot_builtin.Command.low_level_file_close));
+    state.lnako_aot_builtin_call(&ignored, &arguments, arguments.len, @backingInt(aot_builtin.Command.low_level_file_close));
     out.* = .{};
 }

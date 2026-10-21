@@ -159,7 +159,7 @@ pub export fn lnako_aot_math_unary_value_call_site(out: *Value, input: *const Va
     defer runtime.recordAotEntry(&runtime.counters.aot_math_value, success);
     var roots = [_]Value{value};
     var frame: state.RootFrame = .{};
-    const root_input = value.tag != @intFromEnum(Tag.number);
+    const root_input = value.tag != @backingInt(Tag.number);
     if (root_input) runtime.pushRoots(&frame, &roots, roots.len);
     defer if (root_input) runtime.popRoots(&frame);
     const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
@@ -188,7 +188,7 @@ pub export fn lnako_aot_math_unary_value_call_site(out: *Value, input: *const Va
 }
 
 fn mathUnaryValue(runtime: *Runtime, command: aot_builtin.Command, value: Value) !Value {
-    if (value.tag == @intFromEnum(Tag.number)) return numberValue(try mathUnaryF64(command, @bitCast(value.payload)));
+    if (value.tag == @backingInt(Tag.number)) return numberValue(try mathUnaryF64(command, @bitCast(value.payload)));
     return switch (command) {
         .to_int => numberValue(try state.parseIntBuiltin(runtime, value)),
         .to_float => numberValue(try parseFloatBuiltin(runtime, value)),
@@ -197,7 +197,7 @@ fn mathUnaryValue(runtime: *Runtime, command: aot_builtin.Command, value: Value)
 }
 
 pub fn parseFloatBuiltin(runtime: *Runtime, value: Value) !f64 {
-    return switch (@as(Tag, @enumFromInt(value.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .number => blk: {
             const number: f64 = @bitCast(value.payload);
             break :blk if (number == 0) 0 else number;
@@ -271,11 +271,11 @@ pub fn nextRandom(runtime: *Runtime) f64 {
 
 pub fn mathRandom(runtime: *Runtime, source: Value) !Value {
     const random = nextRandom(runtime);
-    if (source.tag == @intFromEnum(Tag.number)) return numberValue(@floor(random * @as(f64, @bitCast(source.payload))));
+    if (source.tag == @backingInt(Tag.number)) return numberValue(@floor(random * @as(f64, @bitCast(source.payload))));
 
     var minimum: Value = .{};
     var maximum: Value = .{};
-    switch (@as(Tag, @enumFromInt(source.tag))) {
+    switch (@as(Tag, @fromBackingInt(@intCast(source.tag)))) {
         .array => {
             const items = source.object().?.payload.array.items;
             minimum = if (items.len > 0) items[0] else .{};
@@ -299,7 +299,7 @@ pub fn mathRandomRange(runtime: *Runtime, minimum: Value, maximum: Value) !Value
     return numberValue(@floor(random * (upper - lower + 1)) + lower);
 }
 pub fn mathCoordinateAngle(runtime: *Runtime, source: Value) !f64 {
-    if (source.tag != @intFromEnum(Tag.array)) return std.math.nan(f64);
+    if (source.tag != @backingInt(Tag.array)) return std.math.nan(f64);
     const items = source.object().?.payload.array.items;
     const x = try valueToNumberRuntime(runtime, if (items.len > 0) items[0] else .{});
     const y = try valueToNumberRuntime(runtime, if (items.len > 1) items[1] else .{});
@@ -307,7 +307,7 @@ pub fn mathCoordinateAngle(runtime: *Runtime, source: Value) !f64 {
 }
 
 pub fn mathParseFloat(runtime: *Runtime, value: Value) !f64 {
-    return switch (@as(Tag, @enumFromInt(value.tag))) {
+    return switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .number => @bitCast(value.payload),
         .bigint => value.object().?.payload.bigint.toF64(),
         else => blk: {
@@ -364,37 +364,37 @@ test "AOT純粋数値builtin専用ABIはgeneric結果と例外境界を保つ" {
     state.active_runtime.?.perf_counters_enabled = true;
 
     var specialized: Value = .{};
-    state.lnako_aot_math_unary_f64_call_site(&specialized, 9, @intFromEnum(aot_builtin.Command.math_sqrt), 0x11);
+    state.lnako_aot_math_unary_f64_call_site(&specialized, 9, @backingInt(aot_builtin.Command.math_sqrt), 0x11);
     try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(specialized.payload)));
 
-    state.lnako_aot_math_unary_f64_call_site(&specialized, -1.2, @intFromEnum(aot_builtin.Command.math_abs), 0x12);
+    state.lnako_aot_math_unary_f64_call_site(&specialized, -1.2, @backingInt(aot_builtin.Command.math_abs), 0x12);
     try std.testing.expectEqual(@as(f64, 1.2), @as(f64, @bitCast(specialized.payload)));
 
-    state.lnako_aot_math_unary_f64_call_site(&specialized, -1.8, @intFromEnum(aot_builtin.Command.math_integer), 0x13);
+    state.lnako_aot_math_unary_f64_call_site(&specialized, -1.8, @backingInt(aot_builtin.Command.math_integer), 0x13);
     try std.testing.expectEqual(@as(f64, -1), @as(f64, @bitCast(specialized.payload)));
 
-    state.lnako_aot_math_unary_f64_call_site(&specialized, -1.2, @intFromEnum(aot_builtin.Command.math_floor), 0x14);
+    state.lnako_aot_math_unary_f64_call_site(&specialized, -1.2, @backingInt(aot_builtin.Command.math_floor), 0x14);
     try std.testing.expectEqual(@as(f64, -2), @as(f64, @bitCast(specialized.payload)));
 
-    state.lnako_aot_math_unary_f64_call_site(&specialized, -1.2, @intFromEnum(aot_builtin.Command.math_ceil), 0x15);
+    state.lnako_aot_math_unary_f64_call_site(&specialized, -1.2, @backingInt(aot_builtin.Command.math_ceil), 0x15);
     try std.testing.expectEqual(@as(f64, -1), @as(f64, @bitCast(specialized.payload)));
 
-    state.lnako_aot_math_unary_f64_call_site(&specialized, 1e21, @intFromEnum(aot_builtin.Command.to_int), 0x16);
+    state.lnako_aot_math_unary_f64_call_site(&specialized, 1e21, @backingInt(aot_builtin.Command.to_int), 0x16);
     try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(specialized.payload)));
 
     const input = numberValue(1e21);
     var generic: Value = .{};
-    state.lnako_aot_builtin_call(&generic, @ptrCast(&input), 1, @intFromEnum(aot_builtin.Command.to_int));
+    state.lnako_aot_builtin_call(&generic, @ptrCast(&input), 1, @backingInt(aot_builtin.Command.to_int));
     try std.testing.expectEqual(@as(f64, @bitCast(generic.payload)), @as(f64, @bitCast(specialized.payload)));
 
     // binary64の中間丸めで誤る境界を専用ABIでもgenericと同じく保つ。
-    state.lnako_aot_math_unary_f64_call_site(&specialized, 0.49999999999999994, @intFromEnum(aot_builtin.Command.math_round), 0x1a);
+    state.lnako_aot_math_unary_f64_call_site(&specialized, 0.49999999999999994, @backingInt(aot_builtin.Command.math_round), 0x1a);
     try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast(specialized.payload)));
-    state.lnako_aot_math_unary_f64_call_site(&specialized, 4503599627370497, @intFromEnum(aot_builtin.Command.math_round), 0x1b);
+    state.lnako_aot_math_unary_f64_call_site(&specialized, 4503599627370497, @backingInt(aot_builtin.Command.math_round), 0x1b);
     try std.testing.expectEqual(@as(f64, 4503599627370497), @as(f64, @bitCast(specialized.payload)));
 
-    state.lnako_aot_math_unary_f64_call_site(&specialized, 2, @intFromEnum(aot_builtin.Command.math_atan2), 0x17);
-    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(specialized.tag)));
+    state.lnako_aot_math_unary_f64_call_site(&specialized, 2, @backingInt(aot_builtin.Command.math_atan2), 0x17);
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(specialized.tag))));
     try std.testing.expect(state.active_runtime.?.has_pending_exception);
     _ = state.active_runtime.?.takeException();
     const math_counters = state.active_runtime.?.counters.aot_math_f64;

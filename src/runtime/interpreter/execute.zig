@@ -644,7 +644,7 @@ fn executeBinaryResolved(self: *Interpreter, frame: *Frame, instruction: ir.Inst
     // The prepared enum intentionally mirrors the legacy private enum.  Keep
     // the conversion in this adapter so the public unprepared entry point
     // and all existing tests continue to share one implementation.
-    return executeBinaryWithOperator(self, frame, instruction, @enumFromInt(@intFromEnum(resolved)));
+    return executeBinaryWithOperator(self, frame, instruction, @fromBackingInt(@intCast(@backingInt(resolved))));
 }
 
 fn executeBinaryWithOperator(self: *Interpreter, frame: *Frame, instruction: ir.Instruction, operator: BinaryOperator) !Value {

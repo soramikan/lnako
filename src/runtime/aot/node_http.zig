@@ -89,7 +89,7 @@ pub fn nodePostDataBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     var output: std.Io.Writer.Allocating = .init(runtime.allocator);
     defer output.deinit();
     const parameters = arguments[0];
-    if (parameters.tag == @intFromEnum(Tag.dictionary)) {
+    if (parameters.tag == @backingInt(Tag.dictionary)) {
         for (parameters.object().?.payload.dictionary.entries.items, 0..) |entry, index| {
             if (index > 0) try output.writer.writeByte('&');
             const key = try valueUtf8LossyAlloc(runtime, entry.key);
@@ -105,11 +105,11 @@ pub fn nodePostDataBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
 }
 
 pub fn aotClientDictionaryGetAscii(value: Value, name: []const u8) ?Value {
-    if (value.tag != @intFromEnum(Tag.dictionary)) return null;
+    if (value.tag != @backingInt(Tag.dictionary)) return null;
     const object = value.object() orelse return null;
     if (object.payload != .dictionary) return null;
     for (object.payload.dictionary.entries.items) |entry| {
-        const matches = switch (@as(Tag, @enumFromInt(entry.key.tag))) {
+        const matches = switch (@as(Tag, @fromBackingInt(@intCast(entry.key.tag)))) {
             .static_utf8_string => std.mem.eql(u8, staticUtf8(entry.key), name),
             .utf16_string => if (entry.key.object()) |key_object| blk: {
                 const units = key_object.payload.utf16_string;
@@ -125,7 +125,7 @@ pub fn aotClientDictionaryGetAscii(value: Value, name: []const u8) ?Value {
 }
 
 pub fn aotClientValueBytes(runtime: *Runtime, value: Value) ![]u8 {
-    if (value.tag == @intFromEnum(Tag.byte_buffer)) {
+    if (value.tag == @backingInt(Tag.byte_buffer)) {
         const object = value.object() orelse return error.InvalidByteBuffer;
         if (object.payload != .byte_buffer) return error.InvalidByteBuffer;
         return runtime.allocator.dupe(u8, object.payload.byte_buffer.bytes);
@@ -153,7 +153,7 @@ pub fn aotClientPrepareAjax(runtime: *Runtime, ajax_options: ?*Value, url_value:
         request.has_body = true;
     };
     if (ajax_options) |pointer| if (aotClientDictionaryGetAscii(pointer.*, "headers")) |headers_value| {
-        if (headers_value.tag != @intFromEnum(Tag.dictionary)) return request;
+        if (headers_value.tag != @backingInt(Tag.dictionary)) return request;
         const headers_object = headers_value.object() orelse return request;
         if (headers_object.payload != .dictionary) return request;
         for (headers_object.payload.dictionary.entries.items) |entry| {
@@ -183,7 +183,7 @@ pub fn aotClientAppendUriComponent(writer: *std.Io.Writer, source: []const u8) !
 pub fn aotClientFormEncodedBody(runtime: *Runtime, parameters: Value) ![]u8 {
     var output: std.Io.Writer.Allocating = .init(runtime.allocator);
     defer output.deinit();
-    if (parameters.tag == @intFromEnum(Tag.dictionary)) {
+    if (parameters.tag == @backingInt(Tag.dictionary)) {
         const object = parameters.object() orelse return error.InvalidDictionary;
         if (object.payload != .dictionary) return error.InvalidDictionary;
         for (object.payload.dictionary.entries.items, 0..) |entry, index| {
@@ -203,7 +203,7 @@ pub fn aotClientFormEncodedBody(runtime: *Runtime, parameters: Value) ![]u8 {
 pub fn aotClientMultipartFields(runtime: *Runtime, parameters: Value, boundary: []const u8) ![]u8 {
     var output: std.Io.Writer.Allocating = .init(runtime.allocator);
     defer output.deinit();
-    if (parameters.tag == @intFromEnum(Tag.dictionary)) {
+    if (parameters.tag == @backingInt(Tag.dictionary)) {
         const object = parameters.object() orelse return error.InvalidDictionary;
         if (object.payload != .dictionary) return error.InvalidDictionary;
         for (object.payload.dictionary.entries.items) |entry| {
@@ -287,8 +287,9 @@ pub fn aotClientPrepareDiscordFile(runtime: *Runtime, url_value: Value, file_val
 }
 
 pub fn aotClientHttpMethod(source: []const u8) !std.http.Method {
-    inline for (@typeInfo(std.http.Method).@"enum".fields) |field| {
-        if (std.ascii.eqlIgnoreCase(source, field.name)) return @enumFromInt(field.value);
+    const info = @typeInfo(std.http.Method).@"enum";
+    inline for (info.field_names, info.field_values) |name, value| {
+        if (std.ascii.eqlIgnoreCase(source, name)) return @fromBackingInt(@intCast(value));
     }
     return error.UnsupportedHttpMethod;
 }
@@ -318,7 +319,7 @@ pub fn aotClientHttpRequest(runtime: *Runtime, request: *const AotClientHttpRequ
     const body = try output.toOwnedSlice();
     return .{
         .body = body,
-        .status = @intFromEnum(fetched.status),
+        .status = @backingInt(fetched.status),
         .content_length_zero = body.len == 0,
     };
 }
@@ -328,7 +329,7 @@ pub fn aotClientHttpBodyValue(runtime: *Runtime, body: []const u8, kind: AotClie
         .text => runtimeUtf8StringLossy(runtime, body),
         .binary => runtime.createArrayBuffer(body),
         .json => blk: {
-            if (body.len == 0 and (status == 204 or status == 205 or content_length_zero)) break :blk .{ .tag = @intFromEnum(Tag.null_value) };
+            if (body.len == 0 and (status == 204 or status == 205 or content_length_zero)) break :blk .{ .tag = @backingInt(Tag.null_value) };
             var source = try runtimeUtf8StringLossy(runtime, body);
             var frame = RootFrame{};
             runtime.pushRoots(&frame, @ptrCast(&source), 1);
@@ -345,9 +346,9 @@ pub fn aotClientHttpResponseValue(runtime: *Runtime, result: AotClientHttpResult
     defer runtime.popRoots(&frame);
     roots[1] = numberValue(@floatFromInt(result.status));
     try aotHttpDictionarySetUtf8(runtime, roots[0], "status", roots[1]);
-    roots[2] = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(result.status >= 200 and result.status < 300) };
+    roots[2] = .{ .tag = @backingInt(Tag.boolean), .payload = @intFromBool(result.status >= 200 and result.status < 300) };
     try aotHttpDictionarySetUtf8(runtime, roots[0], "ok", roots[2]);
-    roots[3] = .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 };
+    roots[3] = .{ .tag = @backingInt(Tag.boolean), .payload = 1 };
     try aotHttpDictionarySetUtf8(runtime, roots[0], "__lnako_http_response", roots[3]);
     roots[4] = try runtime.createBytes(result.body);
     try aotHttpDictionarySetUtf8(runtime, roots[0], "__lnako_body", roots[4]);
@@ -356,19 +357,19 @@ pub fn aotClientHttpResponseValue(runtime: *Runtime, result: AotClientHttpResult
 
 pub fn isAotHttpResponse(value: Value) bool {
     const marker = aotClientDictionaryGetAscii(value, "__lnako_http_response") orelse return false;
-    return marker.tag == @intFromEnum(Tag.boolean) and marker.payload != 0;
+    return marker.tag == @backingInt(Tag.boolean) and marker.payload != 0;
 }
 
 pub fn aotClientHttpResponseBody(value: Value) !Value {
     if (!isAotHttpResponse(value)) return error.HttpResponseExpected;
     const body = aotClientDictionaryGetAscii(value, "__lnako_body") orelse return error.HttpResponseExpected;
-    if (body.tag != @intFromEnum(Tag.byte_buffer)) return error.HttpResponseExpected;
+    if (body.tag != @backingInt(Tag.byte_buffer)) return error.HttpResponseExpected;
     return body;
 }
 
 pub fn aotClientHttpResponseStatus(value: Value) u16 {
     const status = aotClientDictionaryGetAscii(value, "status") orelse return 0;
-    if (status.tag != @intFromEnum(Tag.number)) return 0;
+    if (status.tag != @backingInt(Tag.number)) return 0;
     const number: f64 = @bitCast(status.payload);
     return if (std.math.isFinite(number) and number >= 0 and number <= 999) @intFromFloat(number) else 0;
 }

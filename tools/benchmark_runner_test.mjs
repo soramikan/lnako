@@ -226,7 +226,7 @@ test("baseline comparisons are warning-only and reject incompatible inputs", () 
     suite_sha256: "a",
     optimization: "O2",
     profile: "normal",
-    toolchain: { zig: "0.16.0" },
+    toolchain: { zig: "0.17.0" },
     runtimes: { cnako: { version: "3.7.24" }, lnako: { version: "0.1.0" } },
     cases: [{ id: "x", input: { args: ["2"] }, source_hashes: { cnako: "b" }, measurements: [{ runtime: "cnako", mode: "run", median_ns: 20 }] }],
   };
@@ -247,7 +247,7 @@ test("baseline compatibility ignores lnako version drift and small memory slack"
     suite_sha256: "abc",
     optimization: "O2",
     profile: "normal",
-    toolchain: { zig: "0.16.0" },
+    toolchain: { zig: "0.17.0" },
     runtimes: {
       cnako: { version: "3.7.24" },
       gonako: { version: "gonako v3.6.0" },
@@ -289,7 +289,7 @@ test("v1 reports remain accepted by the v2 checker", () => {
     git_commit: "",
     generated_at_unix_ms: 1,
     target: { os: "linux", arch: "x86_64" },
-    toolchain: { zig: "0.16.0" },
+    toolchain: { zig: "0.17.0" },
     suite_name: "legacy",
     suite: "benchmarks/comparison/suite.json",
     optimization: "O2",

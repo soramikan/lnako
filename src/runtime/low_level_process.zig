@@ -304,8 +304,8 @@ fn drainPipes(io: std.Io, allocator: std.mem.Allocator, child: *std.process.Chil
 fn waitResultFromTerm(term: std.process.Child.Term) WaitResult {
     return switch (term) {
         .exited => |code| .{ .exit_code = code, .signal = null },
-        .signal => |signal| signalResult(@intFromEnum(signal)),
-        .stopped => |signal| signalResult(@intFromEnum(signal)),
+        .signal => |signal| signalResult(@backingInt(signal)),
+        .stopped => |signal| signalResult(@backingInt(signal)),
         .unknown => .{ .exit_code = -1, .signal = null },
     };
 }
@@ -356,7 +356,7 @@ pub fn sendSignal(pid: u32, signal: u32) !void {
     // 検査付きキャストでpanicするため、先にEINVALへ写す。
     if (pid > @as(u32, @intCast(std.math.maxInt(std.posix.pid_t)))) return error.InvalidSignal;
     if (signal == 0) {
-        std.posix.kill(@intCast(pid), @enumFromInt(0)) catch |failure| return switch (failure) {
+        std.posix.kill(@intCast(pid), @fromBackingInt(@intCast(0))) catch |failure| return switch (failure) {
             error.ProcessNotFound => error.ProcessNotFound,
             error.PermissionDenied => error.PermissionDenied,
             error.Unexpected => error.Unexpected,
@@ -364,7 +364,7 @@ pub fn sendSignal(pid: u32, signal: u32) !void {
         return;
     }
     if (signal > 31) return error.InvalidSignal;
-    std.posix.kill(@intCast(pid), @enumFromInt(signal)) catch |failure| return switch (failure) {
+    std.posix.kill(@intCast(pid), @fromBackingInt(@intCast(signal))) catch |failure| return switch (failure) {
         error.ProcessNotFound => error.ProcessNotFound,
         error.PermissionDenied => error.PermissionDenied,
         error.Unexpected => error.Unexpected,
@@ -455,9 +455,9 @@ pub fn setPriority(pid: u32, value: i32) !void {
 
 fn errnoToError(err: c_int) anyerror {
     return switch (err) {
-        @intFromEnum(std.c.E.SRCH) => error.ProcessNotFound,
-        @intFromEnum(std.c.E.PERM), @intFromEnum(std.c.E.ACCES) => error.PermissionDenied,
-        @intFromEnum(std.c.E.INVAL) => error.InvalidArgument,
+        @backingInt(std.c.E.SRCH) => error.ProcessNotFound,
+        @backingInt(std.c.E.PERM), @backingInt(std.c.E.ACCES) => error.PermissionDenied,
+        @backingInt(std.c.E.INVAL) => error.InvalidArgument,
         else => error.Unexpected,
     };
 }
@@ -554,7 +554,7 @@ test "WaitResultはシグナル終了を128+signalで表す" {
     const exited = waitResultFromTerm(.{ .exited = 3 });
     try testing.expectEqual(@as(i32, 3), exited.exit_code);
     try testing.expect(exited.signal == null);
-    const signaled = waitResultFromTerm(.{ .signal = @enumFromInt(9) });
+    const signaled = waitResultFromTerm(.{ .signal = @fromBackingInt(@intCast(9)) });
     try testing.expectEqual(@as(i32, 137), signaled.exit_code);
     try testing.expectEqual(@as(?u32, 9), signaled.signal);
 }

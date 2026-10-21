@@ -120,7 +120,7 @@ pub fn currencyBuiltin(runtime: *Runtime, value: Value) !Value {
 pub fn padBuiltin(runtime: *Runtime, value: Value, width_value: Value, fill: u16) !Value {
     const units = try valueUtf16Alloc(runtime, value);
     defer runtime.allocator.free(units);
-    const original_number = switch (@as(Tag, @enumFromInt(width_value.tag))) {
+    const original_number = switch (@as(Tag, @fromBackingInt(@intCast(width_value.tag)))) {
         .bigint => width_value.object().?.payload.bigint.toF64(),
         else => try valueToNumberRuntime(runtime, width_value),
     };
@@ -169,7 +169,7 @@ pub fn stringPredicateBuiltin(runtime: *Runtime, value: Value, command: aot_buil
         .number_sequence_predicate => if (isString(value) and units.len == 0) false else numberSequenceBuiltin(units),
         else => unreachable,
     };
-    return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(result) };
+    return .{ .tag = @backingInt(Tag.boolean), .payload = @intFromBool(result) };
 }
 
 pub fn numberSequenceBuiltin(units: []const u16) bool {
@@ -218,7 +218,7 @@ pub fn kanaMapBuiltin(runtime: *Runtime, value: Value, to_full: bool) !Value {
             allocated_source = try valueUtf16Alloc(runtime, roots[0]);
             break :blk allocated_source.?;
         }
-        if (@as(Tag, @enumFromInt(roots[0].tag)) == .dictionary) {
+        if (@as(Tag, @fromBackingInt(@intCast(roots[0].tag))) == .dictionary) {
             if (!to_full) return kanaMapDictionaryHalfWidthBuiltin(runtime, roots[0], &roots);
             const length = dictionaryProperty(roots[0], &.{ 'l', 'e', 'n', 'g', 't', 'h' });
             // `0 < s.length` uses JavaScript's abstract relational
@@ -226,13 +226,13 @@ pub fn kanaMapBuiltin(runtime: *Runtime, value: Value, to_full: bool) !Value {
             if (try compareValues(runtime, .less, numberValue(0), length)) return kanaMapDictionaryFullWidthBuiltin(runtime, roots[0], length, &roots);
             break :blk &.{};
         }
-        if (!to_full) switch (@as(Tag, @enumFromInt(roots[0].tag))) {
+        if (!to_full) switch (@as(Tag, @fromBackingInt(@intCast(roots[0].tag)))) {
             .null_value => return error.KatakanaHalfWidthSplitNull,
             .undefined => return error.KatakanaHalfWidthSplitUndefined,
             else => return error.KatakanaHalfWidthSplitReceiver,
         };
 
-        switch (@as(Tag, @enumFromInt(roots[0].tag))) {
+        switch (@as(Tag, @fromBackingInt(@intCast(roots[0].tag)))) {
             .null_value => return error.KatakanaFullWidthLengthNull,
             .undefined => return error.KatakanaFullWidthLengthUndefined,
             .array => {
@@ -300,8 +300,8 @@ pub fn kanaMapDictionaryFullWidthBuiltin(runtime: *Runtime, source: Value, lengt
 
     roots[1] = dictionaryProperty(source, &.{ 's', 'u', 'b', 's', 't', 'r', 'i', 'n', 'g' });
     roots[2] = dictionaryProperty(source, &.{ 'c', 'h', 'a', 'r', 'A', 't' });
-    if (roots[1].tag != @intFromEnum(Tag.function)) return error.KatakanaFullWidthSubstringReceiver;
-    if (roots[2].tag != @intFromEnum(Tag.function)) return error.KatakanaFullWidthCharAtReceiver;
+    if (roots[1].tag != @backingInt(Tag.function)) return error.KatakanaFullWidthSubstringReceiver;
+    if (roots[2].tag != @backingInt(Tag.function)) return error.KatakanaFullWidthCharAtReceiver;
 
     const full_utf8 = system_constant.lookupString("全角カナ一覧").?;
     const full_voiced_utf8 = system_constant.lookupString("全角カナ濁音一覧").?;
@@ -350,9 +350,9 @@ pub fn kanaMapDictionaryFullWidthBuiltin(runtime: *Runtime, source: Value, lengt
 
 pub fn kanaMapDictionaryHalfWidthBuiltin(runtime: *Runtime, source: Value, roots: []Value) !Value {
     roots[1] = dictionaryProperty(source, &.{ 's', 'p', 'l', 'i', 't' });
-    if (roots[1].tag != @intFromEnum(Tag.function)) return error.KatakanaHalfWidthSplitReceiver;
+    if (roots[1].tag != @backingInt(Tag.function)) return error.KatakanaHalfWidthSplitReceiver;
     roots[2] = try invokeAotCallback(runtime, roots[1], @ptrCast(&[_]Value{staticStringValue("")}), 1);
-    if (roots[2].tag != @intFromEnum(Tag.array)) return error.KatakanaHalfWidthMapReceiver;
+    if (roots[2].tag != @backingInt(Tag.array)) return error.KatakanaHalfWidthMapReceiver;
 
     const full_utf8 = system_constant.lookupString("全角カナ一覧").?;
     const full_voiced_utf8 = system_constant.lookupString("全角カナ濁音一覧").?;
@@ -380,7 +380,7 @@ pub fn kanaMapDictionaryHalfWidthBuiltin(runtime: *Runtime, source: Value, roots
         } else if (indexOfUnitsBuiltin(full_voiced, character, 0)) |position| {
             const start = position * 2;
             if (start + 2 <= half_voiced.len) try output.appendSlice(runtime.allocator, half_voiced[start .. start + 2]);
-        } else if (roots[3].tag != @intFromEnum(Tag.undefined) and roots[3].tag != @intFromEnum(Tag.null_value)) {
+        } else if (roots[3].tag != @backingInt(Tag.undefined) and roots[3].tag != @backingInt(Tag.null_value)) {
             try output.appendSlice(runtime.allocator, character);
         }
     }
@@ -408,11 +408,11 @@ pub fn replaceBuiltin(runtime: *Runtime, source_value: Value, needle_value: Valu
     // split(undefined) returns the source as its sole element, so join never
     // observes the replacement separator. replace(undefined, ...) still
     // searches for the literal string "undefined" and must use the path below.
-    if (all and needle_value.tag == @intFromEnum(Tag.undefined)) return runtime.createString(source);
+    if (all and needle_value.tag == @backingInt(Tag.undefined)) return runtime.createString(source);
     const needle = try valueUtf16Alloc(runtime, needle_value);
     defer runtime.allocator.free(needle);
     var allocated_replacement: ?[]u16 = null;
-    const replacement: []const u16 = if (all and replacement_value.tag == @intFromEnum(Tag.undefined))
+    const replacement: []const u16 = if (all and replacement_value.tag == @backingInt(Tag.undefined))
         // Array.prototype.join(undefined) uses its default comma separator.
         &.{','}
     else blk: {

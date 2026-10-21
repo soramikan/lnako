@@ -323,7 +323,7 @@ test "未実装の低レイヤー命令はbuiltin call siteとしてopcode付き
     // 未実装命令は汎用builtin ABIへopcodeを埋め込んでemitし、実行時は
     // `lowLevelUnsupportedBuiltin` が構造化ENOTSUPを投げる。
     try std.testing.expect(std.mem.indexOf(u8, module.text, "lnako_aot_builtin_call_site(") != null);
-    const opcode_marker = try std.fmt.allocPrint(std.testing.allocator, "i16 {d},", .{@intFromEnum(aot_builtin.Command.low_level_file_tell)});
+    const opcode_marker = try std.fmt.allocPrint(std.testing.allocator, "i16 {d},", .{@backingInt(aot_builtin.Command.low_level_file_tell)});
     defer std.testing.allocator.free(opcode_marker);
     try std.testing.expect(std.mem.indexOf(u8, module.text, opcode_marker) != null);
 }
@@ -338,142 +338,142 @@ test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {
     const cut = manifestCall("切取", null, true).?;
     try std.testing.expectEqualStrings("cut", cut.canonical_opcode);
     try std.testing.expectEqualStrings("cut", cut.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.cut), cut.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.cut), cut.opcode);
 
     const regexp = manifestCall("正規表現マッチ", null, true).?;
     try std.testing.expectEqualStrings("regexp_match", regexp.canonical_opcode);
     try std.testing.expectEqualStrings("regexp", regexp.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.regexp_match), regexp.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.regexp_match), regexp.opcode);
 
     const builtin = manifestCall("文字列変換", null, true).?;
     try std.testing.expectEqualStrings("to_string", builtin.canonical_opcode);
     try std.testing.expectEqualStrings("builtin", builtin.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.to_string), builtin.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.to_string), builtin.opcode);
 
     const debug = manifestCall("デバッグ表示", null, true).?;
     try std.testing.expectEqualStrings("system_debug_display", debug.canonical_opcode);
     try std.testing.expectEqualStrings("debug-display", debug.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.system_debug_display), debug.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.system_debug_display), debug.opcode);
 
     const hatena = manifestCall("ハテナ関数実行", null, true).?;
     try std.testing.expectEqualStrings("system_hatena_execute", hatena.canonical_opcode);
     try std.testing.expectEqualStrings("hatena-default", hatena.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.system_hatena_execute), hatena.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.system_hatena_execute), hatena.opcode);
 
     const hatena_configure = manifestCall("ハテナ関数設定", null, true).?;
     try std.testing.expectEqualStrings("system_hatena_configure", hatena_configure.canonical_opcode);
     try std.testing.expectEqualStrings("hatena-configure", hatena_configure.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.system_hatena_configure), hatena_configure.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.system_hatena_configure), hatena_configure.opcode);
 
     const node_interrupt = manifestCall("強制終了時", null, true).?;
     try std.testing.expectEqualStrings("node_interrupt_callback", node_interrupt.canonical_opcode);
     try std.testing.expectEqualStrings("node-interrupt", node_interrupt.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_interrupt_callback), node_interrupt.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.node_interrupt_callback), node_interrupt.opcode);
 
     const breakpoint_wait = manifestCall("__DEBUG_BP_WAIT", null, true).?;
     try std.testing.expectEqualStrings("system_debug_breakpoint_wait", breakpoint_wait.canonical_opcode);
     try std.testing.expectEqualStrings("debug-breakpoint-wait", breakpoint_wait.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.system_debug_breakpoint_wait), breakpoint_wait.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.system_debug_breakpoint_wait), breakpoint_wait.opcode);
 
     const stdin_line = manifestCall("尋", null, true).?;
     try std.testing.expectEqualStrings("node_stdin_line", stdin_line.canonical_opcode);
     try std.testing.expectEqualStrings("node-stdin-lines", stdin_line.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_stdin_line), stdin_line.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.node_stdin_line), stdin_line.opcode);
 
     const archive_tool_path = manifestCall("圧縮解凍ツールパス変更", null, true).?;
     try std.testing.expectEqualStrings("node_archive_tool_path_set", archive_tool_path.canonical_opcode);
     try std.testing.expectEqualStrings("archive-tool-path", archive_tool_path.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_archive_tool_path_set), archive_tool_path.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.node_archive_tool_path_set), archive_tool_path.opcode);
 
     const archive_create = manifestCall("圧縮", null, true).?;
     try std.testing.expectEqualStrings("node_archive_create", archive_create.canonical_opcode);
     try std.testing.expectEqualStrings("node-archive", archive_create.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_archive_create), archive_create.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.node_archive_create), archive_create.opcode);
 
     const archive_extract_callback = manifestCall("解凍時", null, true).?;
     try std.testing.expectEqualStrings("node_archive_extract_callback", archive_extract_callback.canonical_opcode);
     try std.testing.expectEqualStrings("node-archive", archive_extract_callback.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_archive_extract_callback), archive_extract_callback.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.node_archive_extract_callback), archive_extract_callback.opcode);
 
     const process_wait = manifestCall("起動待機", null, true).?;
     try std.testing.expectEqualStrings("node_process_run_wait", process_wait.canonical_opcode);
     try std.testing.expectEqualStrings("node-process", process_wait.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_process_run_wait), process_wait.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.node_process_run_wait), process_wait.opcode);
 
     const process_start = manifestCall("起動", null, true).?;
     try std.testing.expectEqualStrings("node_process_start", process_start.canonical_opcode);
     try std.testing.expectEqualStrings("node-process", process_start.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_process_start), process_start.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.node_process_start), process_start.opcode);
 
     const file_callback = manifestCall("ファイルコピー時", null, true).?;
     try std.testing.expectEqualStrings("node_file_copy_callback", file_callback.canonical_opcode);
     try std.testing.expectEqualStrings("node-file-callback", file_callback.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_file_copy_callback), file_callback.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.node_file_copy_callback), file_callback.opcode);
 
     const ajax_options = manifestCall("AJAXオプション設定", null, true).?;
     try std.testing.expectEqualStrings("node_ajax_options_set", ajax_options.canonical_opcode);
     try std.testing.expectEqualStrings("ajax-options", ajax_options.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_ajax_options_set), ajax_options.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.node_ajax_options_set), ajax_options.opcode);
 
     const ajax_onerror = manifestCall("AJAX失敗時", null, true).?;
     try std.testing.expectEqualStrings("node_ajax_onerror_set", ajax_onerror.canonical_opcode);
     try std.testing.expectEqualStrings("ajax-onerror", ajax_onerror.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_ajax_onerror_set), ajax_onerror.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.node_ajax_onerror_set), ajax_onerror.opcode);
 
     const ajax_http = manifestCall("AJAXテキスト取得", null, true).?;
     try std.testing.expectEqualStrings("node_ajax_text_get", ajax_http.canonical_opcode);
     try std.testing.expectEqualStrings("node-http", ajax_http.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_ajax_text_get), ajax_http.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.node_ajax_text_get), ajax_http.opcode);
 
     const file_open = manifestCall("開", null, true).?;
     try std.testing.expectEqualStrings("node_file_open", file_open.canonical_opcode);
     try std.testing.expectEqualStrings("node-file-io", file_open.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_file_open), file_open.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.node_file_open), file_open.opcode);
 
     const sjis_file = manifestCall("SJISファイル読", null, true).?;
     try std.testing.expectEqualStrings("node_file_sjis_read", sjis_file.canonical_opcode);
     try std.testing.expectEqualStrings("node-file-encoding", sjis_file.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_file_sjis_read), sjis_file.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.node_file_sjis_read), sjis_file.opcode);
 
     const sjis = manifestCall("SJIS変換", null, true).?;
     try std.testing.expectEqualStrings("node_encoding_sjis_encode", sjis.canonical_opcode);
     try std.testing.expectEqualStrings("node-encoding", sjis.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_encoding_sjis_encode), sjis.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.node_encoding_sjis_encode), sjis.opcode);
 
     const file_list = manifestCall("ファイル列挙", null, true).?;
     try std.testing.expectEqualStrings("node_file_list", file_list.canonical_opcode);
     try std.testing.expectEqualStrings("node-file-operation", file_list.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_file_list), file_list.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.node_file_list), file_list.opcode);
 
     const file_copy = manifestCall("ファイル上書コピー", null, true).?;
     try std.testing.expectEqualStrings("node_file_copy_overwrite", file_copy.canonical_opcode);
     try std.testing.expectEqualStrings("node-file-operation", file_copy.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_file_copy_overwrite), file_copy.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.node_file_copy_overwrite), file_copy.opcode);
 
     const timer_wait = manifestCall("秒待", null, true).?;
     try std.testing.expectEqualStrings("timer_wait", timer_wait.canonical_opcode);
     try std.testing.expectEqualStrings("builtin", timer_wait.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.timer_wait), timer_wait.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.timer_wait), timer_wait.opcode);
 
     const timer = manifestCall("秒後", null, true).?;
     try std.testing.expectEqualStrings("timer_after", timer.canonical_opcode);
     try std.testing.expectEqualStrings("timer", timer.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.timer_after), timer.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.timer_after), timer.opcode);
 
     const promise = manifestCall("成功時", null, true).?;
     try std.testing.expectEqualStrings("promise_success", promise.canonical_opcode);
     try std.testing.expectEqualStrings("promise", promise.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.promise_success), promise.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.promise_success), promise.opcode);
 
     const dynamic = manifestCall("ナデシコ", null, true).?;
     try std.testing.expectEqualStrings("system_nadesiko", dynamic.canonical_opcode);
     try std.testing.expectEqualStrings("dynamic-execute", dynamic.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.system_nadesiko), dynamic.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.system_nadesiko), dynamic.opcode);
 
     const dynamic_continue = manifestCall("ナデシコ続", null, true).?;
     try std.testing.expectEqualStrings("system_nadesiko_continue", dynamic_continue.canonical_opcode);
     try std.testing.expectEqualStrings("dynamic-execute", dynamic_continue.route);
-    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.system_nadesiko_continue), dynamic_continue.opcode);
+    try std.testing.expectEqual(@backingInt(aot_builtin.Command.system_nadesiko_continue), dynamic_continue.opcode);
 
     try std.testing.expect(manifestCall("利用者関数", 0, false) == null);
     try std.testing.expect(manifestCall("未知命令", null, false) == null);

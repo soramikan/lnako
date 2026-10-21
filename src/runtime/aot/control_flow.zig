@@ -102,10 +102,10 @@ pub export fn lnako_aot_archive_tool_path_set(
     }
     const command = state.aot_builtin.Command.node_archive_tool_path_set;
     const command_name = state.aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, @intFromEnum(command), "archive-tool-path", site_id);
+    const call_id = runtime.dispatch_trace.begin(command_name, @backingInt(command), "archive-tool-path", site_id);
     const start_epoch = runtime.failure_epoch;
     var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, @intFromEnum(command), "archive-tool-path", site_id, success);
+    defer runtime.dispatch_trace.result(call_id, command_name, @backingInt(command), "archive-tool-path", site_id, success);
     if (len == 0) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
@@ -217,7 +217,7 @@ pub export fn lnako_aot_archive_call(
         return;
     };
     defer runtime.allocator.free(output);
-    out.* = .{ .tag = @intFromEnum(shared.Tag.boolean), .payload = 1 };
+    out.* = .{ .tag = @backingInt(shared.Tag.boolean), .payload = 1 };
     success = runtime.failure_epoch == start_epoch;
 }
 
@@ -236,10 +236,10 @@ pub export fn lnako_aot_ajax_options_set(
     }
     const command = state.aot_builtin.Command.node_ajax_options_set;
     const command_name = state.aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, @intFromEnum(command), "ajax-options", site_id);
+    const call_id = runtime.dispatch_trace.begin(command_name, @backingInt(command), "ajax-options", site_id);
     const start_epoch = runtime.failure_epoch;
     var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, @intFromEnum(command), "ajax-options", site_id, success);
+    defer runtime.dispatch_trace.result(call_id, command_name, @backingInt(command), "ajax-options", site_id, success);
     if (len == 0) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
@@ -263,10 +263,10 @@ pub export fn lnako_aot_ajax_onerror_set(
     }
     const command = state.aot_builtin.Command.node_ajax_onerror_set;
     const command_name = state.aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, @intFromEnum(command), "ajax-onerror", site_id);
+    const call_id = runtime.dispatch_trace.begin(command_name, @backingInt(command), "ajax-onerror", site_id);
     const start_epoch = runtime.failure_epoch;
     var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, @intFromEnum(command), "ajax-onerror", site_id, success);
+    defer runtime.dispatch_trace.result(call_id, command_name, @backingInt(command), "ajax-onerror", site_id, success);
     if (len == 0) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;

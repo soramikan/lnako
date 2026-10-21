@@ -21,9 +21,9 @@ pub const FsInfo = struct {
     /// 空きinode数（`f_ffree`）。
     free_files: u64 = 0,
     filesystem_type_len: usize = 0,
-    filesystem_type: [fs_type_max]u8 = [_]u8{0} ** fs_type_max,
+    filesystem_type: [fs_type_max]u8 = @as([fs_type_max]u8, @splat(0)),
     filesystem_id_len: usize = 0,
-    filesystem_id: [fs_id_max]u8 = [_]u8{0} ** fs_id_max,
+    filesystem_id: [fs_id_max]u8 = @as([fs_id_max]u8, @splat(0)),
 
     /// `filesystemType` の有効部分。macOSは `f_fstypename`（"apfs"等）、
     /// LinuxはFS magicの対応名。未知のmagicは `"0x????????"` 表記になる。
@@ -180,11 +180,11 @@ const DarwinStatfs = extern struct {
     f_type: u32 = 0,
     f_flags: u32 = 0,
     f_fssubtype: u32 = 0,
-    f_fstypename: [16]u8 = [_]u8{0} ** 16,
-    f_mntonname: [1024]u8 = [_]u8{0} ** 1024,
-    f_mntfromname: [1024]u8 = [_]u8{0} ** 1024,
+    f_fstypename: [16]u8 = @as([16]u8, @splat(0)),
+    f_mntonname: [1024]u8 = @as([1024]u8, @splat(0)),
+    f_mntfromname: [1024]u8 = @as([1024]u8, @splat(0)),
     f_flags_ext: u32 = 0,
-    f_reserved: [7]u32 = .{0} ** 7,
+    f_reserved: [7]u32 = @splat(0),
 };
 
 comptime {
@@ -260,7 +260,7 @@ fn seekExtentLinux(io: std.Io, file: std.Io.File, offset: i64, extent: SeekExten
         .hole => linux_seek_hole,
     };
     while (true) {
-        const result = std.os.linux.lseek(file.handle, offset, whence);
+        const result = std.os.linux.lseek(file.handle, offset, @intCast(whence));
         const errno = std.os.linux.errno(result);
         // errno確認済みのため負値は来ず、32bitでもusize→i64が安全に入る。
         if (errno == .SUCCESS) return @intCast(result);

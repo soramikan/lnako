@@ -82,7 +82,7 @@ pub fn handleIdFor(runtime: *Runtime, value: Value) ?foundation.HandleId {
 
 pub fn handleValueForId(runtime: *Runtime, id: foundation.HandleId) ?Value {
     const pointer = runtime.low_level_handle_by_id.get(id.raw()) orelse return null;
-    return .{ .tag = @intFromEnum(Tag.dictionary), .payload = pointer };
+    return .{ .tag = @backingInt(Tag.dictionary), .payload = pointer };
 }
 
 pub fn rememberHandle(runtime: *Runtime, value: Value, id: foundation.HandleId) !void {
@@ -131,8 +131,8 @@ pub fn pathStringFromBytes(runtime: *Runtime, bytes: []const u8) !Value {
 pub fn capabilitySupported(value: Value) bool {
     var buffer: [64]u8 = undefined;
     const text: []const u8 = switch (value.tag) {
-        @intFromEnum(Tag.static_utf8_string) => staticUtf8(value),
-        @intFromEnum(Tag.utf16_string) => blk: {
+        @backingInt(Tag.static_utf8_string) => staticUtf8(value),
+        @backingInt(Tag.utf16_string) => blk: {
             const units = value.object().?.payload.utf16_string;
             if (units.len > buffer.len) return false;
             for (units, 0..) |unit, index| {
@@ -150,8 +150,8 @@ pub fn capabilitySupported(value: Value) bool {
 
 pub fn sizeArgument(_: *Runtime, value: Value) !u64 {
     return switch (value.tag) {
-        @intFromEnum(Tag.number) => foundation.sizeFromNumber(valueToNumber(value)),
-        @intFromEnum(Tag.bigint) => foundation.sizeFromUnsigned(value.object().?.payload.bigint.toU128() catch return error.InvalidSize),
+        @backingInt(Tag.number) => foundation.sizeFromNumber(valueToNumber(value)),
+        @backingInt(Tag.bigint) => foundation.sizeFromUnsigned(value.object().?.payload.bigint.toU128() catch return error.InvalidSize),
         else => error.InvalidSize,
     };
 }
@@ -160,8 +160,8 @@ pub fn sizeArgument(_: *Runtime, value: Value) !u64 {
 /// 契約外は `error.InvalidOffset` を返し、呼び出し側が構造化EINVALへ写す。
 pub fn offsetArgument(_: *Runtime, value: Value) !i64 {
     return switch (value.tag) {
-        @intFromEnum(Tag.number) => foundation.offsetFromNumber(valueToNumber(value)),
-        @intFromEnum(Tag.bigint) => foundation.offsetFromSigned(value.object().?.payload.bigint.toI128() catch return error.InvalidOffset),
+        @backingInt(Tag.number) => foundation.offsetFromNumber(valueToNumber(value)),
+        @backingInt(Tag.bigint) => foundation.offsetFromSigned(value.object().?.payload.bigint.toI128() catch return error.InvalidOffset),
         else => error.InvalidOffset,
     };
 }
@@ -180,14 +180,14 @@ pub fn publicOffsetValue(runtime: *Runtime, offset: i64) !Value {
 pub fn unsignedArgument(runtime: *Runtime, value: Value, operation: []const u8, max: u32, message: []const u8) !u32 {
     var signed: i128 = undefined;
     switch (value.tag) {
-        @intFromEnum(Tag.number) => {
+        @backingInt(Tag.number) => {
             const number = valueToNumber(value);
             if (!foundation.isSafeInteger(number)) {
                 return throwStructured(runtime, .EINVAL, operation, null, null, message);
             }
             signed = @intFromFloat(number);
         },
-        @intFromEnum(Tag.bigint) => {
+        @backingInt(Tag.bigint) => {
             signed = value.object().?.payload.bigint.toI128() catch {
                 return throwStructured(runtime, .EINVAL, operation, null, null, message);
             };
@@ -205,12 +205,12 @@ pub fn unsignedArgument(runtime: *Runtime, value: Value, operation: []const u8, 
 /// ナノ秒の明示値。契約外は `operation` を載せた `EINVAL` を投げる。
 pub fn setTimeArgument(runtime: *Runtime, value: Value, operation: []const u8) anyerror!foundation.SetTime {
     return switch (value.tag) {
-        @intFromEnum(Tag.null_value) => .unchanged,
-        @intFromEnum(Tag.number) => .{ .at = foundation.timeNsFromNumber(valueToNumber(value)) catch
+        @backingInt(Tag.null_value) => .unchanged,
+        @backingInt(Tag.number) => .{ .at = foundation.timeNsFromNumber(valueToNumber(value)) catch
             return throwStructured(runtime, .EINVAL, operation, null, null, "時刻はナノ秒の整数である必要があります") },
-        @intFromEnum(Tag.bigint) => .{ .at = value.object().?.payload.bigint.toI128() catch
+        @backingInt(Tag.bigint) => .{ .at = value.object().?.payload.bigint.toI128() catch
             return throwStructured(runtime, .EINVAL, operation, null, null, "時刻はナノ秒の整数である必要があります") },
-        @intFromEnum(Tag.static_utf8_string), @intFromEnum(Tag.utf16_string) => if (isNowValue(value))
+        @backingInt(Tag.static_utf8_string), @backingInt(Tag.utf16_string) => if (isNowValue(value))
             .now
         else
             return throwStructured(runtime, .EINVAL, operation, null, null, "時刻はナノ秒の整数か\"now\"である必要があります"),
@@ -220,8 +220,8 @@ pub fn setTimeArgument(runtime: *Runtime, value: Value, operation: []const u8) a
 
 fn isNowValue(value: Value) bool {
     return switch (value.tag) {
-        @intFromEnum(Tag.static_utf8_string) => std.mem.eql(u8, staticUtf8(value), "now"),
-        @intFromEnum(Tag.utf16_string) => blk: {
+        @backingInt(Tag.static_utf8_string) => std.mem.eql(u8, staticUtf8(value), "now"),
+        @backingInt(Tag.utf16_string) => blk: {
             const units = value.object().?.payload.utf16_string;
             break :blk units.len == 3 and units[0] == 'n' and units[1] == 'o' and units[2] == 'w';
         },
@@ -241,7 +241,7 @@ pub fn pathArgument(runtime: *Runtime, value: Value, operation: []const u8) ![]u
 }
 
 pub fn bytesArgument(value: Value) ![]const u8 {
-    if (value.tag != @intFromEnum(Tag.byte_buffer)) return error.InvalidBytes;
+    if (value.tag != @backingInt(Tag.byte_buffer)) return error.InvalidBytes;
     const buffer = value.object().?.payload.byte_buffer;
     if (buffer.kind != .buffer) return error.InvalidBytes;
     return buffer.bytes;
@@ -277,14 +277,14 @@ fn buildError(
     runtime.pushRoots(&roots, @ptrCast(&result), 1);
     defer runtime.popRoots(&roots);
     try setField(runtime, result, foundation.error_object_keys.code, try runtimeUtf8String(runtime, code.name()));
-    try setField(runtime, result, foundation.error_object_keys.native_code, .{ .tag = @intFromEnum(Tag.null_value) });
+    try setField(runtime, result, foundation.error_object_keys.native_code, .{ .tag = @backingInt(Tag.null_value) });
     try setField(runtime, result, foundation.error_object_keys.operation, try runtimeUtf8String(runtime, operation));
     // pathはWTF-8（孤立サロゲートを含み得る）なので、入力と同じ可逆変換で
     // 文字列化し、失敗した元のパスを呼び出し側が識別できるようにする。
-    try setField(runtime, result, foundation.error_object_keys.path, if (path) |value| try pathStringFromBytes(runtime, value) else .{ .tag = @intFromEnum(Tag.null_value) });
-    try setField(runtime, result, foundation.error_object_keys.path2, if (path2) |value| try pathStringFromBytes(runtime, value) else .{ .tag = @intFromEnum(Tag.null_value) });
+    try setField(runtime, result, foundation.error_object_keys.path, if (path) |value| try pathStringFromBytes(runtime, value) else .{ .tag = @backingInt(Tag.null_value) });
+    try setField(runtime, result, foundation.error_object_keys.path2, if (path2) |value| try pathStringFromBytes(runtime, value) else .{ .tag = @backingInt(Tag.null_value) });
     try setField(runtime, result, foundation.error_object_keys.message, try runtimeUtf8String(runtime, message));
-    try setField(runtime, result, foundation.error_object_keys.capability, if (capability) |value| try runtimeUtf8String(runtime, value) else .{ .tag = @intFromEnum(Tag.null_value) });
+    try setField(runtime, result, foundation.error_object_keys.capability, if (capability) |value| try runtimeUtf8String(runtime, value) else .{ .tag = @backingInt(Tag.null_value) });
     // 構造化エラー印。`["code"]` 等のフィールド参照と、文字列化＝`message`
     // の両方を可能にする。通常辞書の `message` キーとは区別される。
     if (result.object()) |object| object.structured_error = true;

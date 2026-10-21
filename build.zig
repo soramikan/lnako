@@ -147,7 +147,7 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "lnakoを実行する");
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| run_cmd.addArgs(args);
+    run_cmd.addPassthruArgs();
     run_step.dependOn(&run_cmd.step);
 
     const lexer_probe = b.addExecutable(.{
@@ -161,7 +161,7 @@ pub fn build(b: *std.Build) void {
     });
     const lexer_probe_step = b.step("lexer-probe", "字句解析結果をJSON Linesで出力する");
     const lexer_probe_run = b.addRunArtifact(lexer_probe);
-    if (b.args) |args| lexer_probe_run.addArgs(args);
+    lexer_probe_run.addPassthruArgs();
     lexer_probe_step.dependOn(&lexer_probe_run.step);
 
     const syntax_probe = b.addExecutable(.{
@@ -175,7 +175,7 @@ pub fn build(b: *std.Build) void {
     });
     const syntax_probe_step = b.step("syntax-probe", "構文変換後のトークンをJSON Linesで出力する");
     const syntax_probe_run = b.addRunArtifact(syntax_probe);
-    if (b.args) |args| syntax_probe_run.addArgs(args);
+    syntax_probe_run.addPassthruArgs();
     syntax_probe_step.dependOn(&syntax_probe_run.step);
 
     const parser_probe = b.addExecutable(.{
@@ -189,7 +189,7 @@ pub fn build(b: *std.Build) void {
     });
     const parser_probe_step = b.step("parser-probe", "ASTをJSON Linesで出力する");
     const parser_probe_run = b.addRunArtifact(parser_probe);
-    if (b.args) |args| parser_probe_run.addArgs(args);
+    parser_probe_run.addPassthruArgs();
     parser_probe_step.dependOn(&parser_probe_run.step);
 
     const semantic_probe = b.addExecutable(.{
@@ -203,7 +203,7 @@ pub fn build(b: *std.Build) void {
     });
     const semantic_probe_step = b.step("semantic-probe", "意味解析の名前解決結果をJSON Linesで出力する");
     const semantic_probe_run = b.addRunArtifact(semantic_probe);
-    if (b.args) |args| semantic_probe_run.addArgs(args);
+    semantic_probe_run.addPassthruArgs();
     semantic_probe_step.dependOn(&semantic_probe_run.step);
 
     const ir_probe = b.addExecutable(.{
@@ -217,7 +217,7 @@ pub fn build(b: *std.Build) void {
     });
     const ir_probe_step = b.step("ir-probe", "Nako SSA IRをテキストで出力する");
     const ir_probe_run = b.addRunArtifact(ir_probe);
-    if (b.args) |args| ir_probe_run.addArgs(args);
+    ir_probe_run.addPassthruArgs();
     ir_probe_step.dependOn(&ir_probe_run.step);
 
     const value_probe = b.addExecutable(.{
@@ -231,7 +231,7 @@ pub fn build(b: *std.Build) void {
     });
     const value_probe_step = b.step("value-probe", "動的値の変換結果をJSON Linesで出力する");
     const value_probe_run = b.addRunArtifact(value_probe);
-    if (b.args) |args| value_probe_run.addArgs(args);
+    value_probe_run.addPassthruArgs();
     value_probe_step.dependOn(&value_probe_run.step);
 
     const module_tests = b.addTest(.{ .root_module = lnako });
@@ -260,7 +260,7 @@ pub fn build(b: *std.Build) void {
 
     const fmt_step = b.step("fmt-check", "Zigソースのフォーマットを検査する");
     const fmt = b.addFmt(.{
-        .paths = &.{ "build.zig", "src", "tools" },
+        .paths = b.pathList(&.{ "build.zig", "src", "tools" }),
         .check = true,
     });
     fmt_step.dependOn(&fmt.step);

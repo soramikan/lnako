@@ -80,21 +80,21 @@ test("parseToolchainLog detects cache hit with reuse and reinstall reasons", () 
 // 同一suiteのprefixを共有する別shardが保存したcacheを復元してしまい、
 // 後続の保存がreservation競合で失敗した実測例である。
 const linuxShardCacheLog = [
-  "2026-09-19T14:30:58.9076181Z Attempting restore of Zig cache with prefix 'setup-zig-cache-v2-aot-zig-x86_64-linux-0.16.0-aot-native-'",
-  "2026-09-19T14:30:59.7016938Z Cache hit (key 'setup-zig-cache-v2-aot-zig-x86_64-linux-0.16.0-aot-native-35448509540-1'): populating Zig cache directory at /home/runner/work/lnako/lnako/.zig-cache",
+  "2026-09-19T14:30:58.9076181Z Attempting restore of Zig cache with prefix 'setup-zig-cache-v2-aot-zig-x86_64-linux-0.17.0-aot-native-'",
+  "2026-09-19T14:30:59.7016938Z Cache hit (key 'setup-zig-cache-v2-aot-zig-x86_64-linux-0.17.0-aot-native-35448509540-1'): populating Zig cache directory at /home/runner/work/lnako/lnako/.zig-cache",
   "2026-09-19T14:31:07.8732988Z Cache hit for: toolchains-Linux-X64-v3-ee850565da26825639a975e71e7965fd549e3ff1241cd0bdad5795155d47d7c9",
   "2026-09-19T14:31:08.9699088Z Cache Size: ~189 MB (197923188 B)",
   "2026-09-19T14:31:08.9866320Z Cache restored from key: toolchains-Linux-X64-v3-ee850565da26825639a975e71e7965fd549e3ff1241cd0bdad5795155d47d7c9",
   "2026-09-19T14:35:02.2160923Z Cache directory is 253011854 bytes, below limit of 1610612736 bytes; keeping intact",
-  "2026-09-19T14:35:02.2167124Z Saving Zig cache with key 'setup-zig-cache-v2-aot-zig-x86_64-linux-0.16.0-aot-native-35448509540-1'",
-  "2026-09-19T14:35:03.1215943Z Failed to save: Unable to reserve cache with key setup-zig-cache-v2-aot-zig-x86_64-linux-0.16.0-aot-native-35448509540-1, another job may be creating this cache.",
+  "2026-09-19T14:35:02.2167124Z Saving Zig cache with key 'setup-zig-cache-v2-aot-zig-x86_64-linux-0.17.0-aot-native-35448509540-1'",
+  "2026-09-19T14:35:03.1215943Z Failed to save: Unable to reserve cache with key setup-zig-cache-v2-aot-zig-x86_64-linux-0.17.0-aot-native-35448509540-1, another job may be creating this cache.",
 ].join("\n");
 
 test("parseCacheLog detects a same-run Zig cache restore and the reservation failure", () => {
   const parsed = parseCacheLog(linuxShardCacheLog);
-  assert.equal(parsed.zigCache.requestedPrefix, "setup-zig-cache-v2-aot-zig-x86_64-linux-0.16.0-aot-native-");
+  assert.equal(parsed.zigCache.requestedPrefix, "setup-zig-cache-v2-aot-zig-x86_64-linux-0.17.0-aot-native-");
   assert.equal(parsed.zigCache.hit, true);
-  assert.equal(parsed.zigCache.restoredKey, "setup-zig-cache-v2-aot-zig-x86_64-linux-0.16.0-aot-native-35448509540-1");
+  assert.equal(parsed.zigCache.restoredKey, "setup-zig-cache-v2-aot-zig-x86_64-linux-0.17.0-aot-native-35448509540-1");
   assert.equal(parsed.zigCache.sizeBytes, 253011854);
   assert.equal(parsed.zigCache.limitBytes, 1610612736);
   assert.equal(parsed.zigCache.cleared, false);
@@ -115,10 +115,10 @@ test("parseCacheLog detects a same-run Zig cache restore and the reservation fai
 
 test("parseCacheLog detects Zig cache size-limit clear and save conflicts", () => {
   const cleared = parseCacheLog([
-    "Attempting restore of Zig cache with prefix 'setup-zig-cache-v2-aot-zig-x86_64-windows-0.16.0-aot-native-v2-s0of3-O0-'",
+    "Attempting restore of Zig cache with prefix 'setup-zig-cache-v2-aot-zig-x86_64-windows-0.17.0-aot-native-v2-s0of3-O0-'",
     "Cache miss: leaving Zig cache directory at D:\\a\\lnako\\lnako\\.zig-cache unpopulated",
     "Cache directory reached 1932735283 bytes, exceeding limit of 1610612736 bytes; clearing cache",
-    "Saving Zig cache with key 'setup-zig-cache-v2-aot-zig-x86_64-windows-0.16.0-aot-native-v2-s0of3-O0-1-1'",
+    "Saving Zig cache with key 'setup-zig-cache-v2-aot-zig-x86_64-windows-0.17.0-aot-native-v2-s0of3-O0-1-1'",
   ].join("\n"));
   assert.equal(cleared.zigCache.hit, false);
   assert.equal(cleared.zigCache.cleared, true);
@@ -144,7 +144,7 @@ test("parseCacheLog detects Zig cache size-limit clear and save conflicts", () =
   assert.equal(emptyAfterClear.zigCache.saveOutcome, "saved");
 
   const inaccessible = parseCacheLog([
-    "Attempting restore of Zig cache with prefix 'setup-zig-cache-v2-aot_windows-zig-x86_64-windows-0.16.0-aot-native-'",
+    "Attempting restore of Zig cache with prefix 'setup-zig-cache-v2-aot_windows-zig-x86_64-windows-0.17.0-aot-native-'",
     "Cache miss: leaving Zig cache directory at D:\\a\\lnako\\lnako\\.zig-cache unpopulated",
     "Zig cache directory is inaccessible; nothing to save",
   ].join("\n"));
