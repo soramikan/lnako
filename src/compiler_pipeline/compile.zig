@@ -220,7 +220,60 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
             .is_plugin = plugin_modules[module.index],
             .namespaces = namespaces,
             .package_root = if (module.package_root) |root| try ir_program.arena.allocator().dupe(u8, root) else null,
+            .bare_aliases = &.{},
         });
+    }
+    // bare specifier → module path 別名。JS 同士の import 辺で requested が
+    // bare（`.`/`/` で始まらない）なら target module の aliases に載せる。
+    {
+        var alias_lists = try allocator.alloc(std.ArrayList([]const u8), graph.modules.len);
+        defer {
+            for (alias_lists) |*list| list.deinit(allocator);
+            allocator.free(alias_lists);
+        }
+        for (alias_lists) |*list| list.* = .empty;
+        for (graph.modules) |module| {
+            if (module.kind != .javascript) continue;
+            for (module.imports) |item| {
+                const target = item.target orelse continue;
+                if (graph.modules[target].kind != .javascript) continue;
+                const req = item.requested;
+                if (req.len == 0 or req[0] == '.' or req[0] == '/') continue;
+                // Windows 絶対 path は bare ではない。
+                if (req.len >= 2 and req[1] == ':' and std.ascii.isAlphabetic(req[0])) continue;
+                var listed = false;
+                for (alias_lists[target].items) |existing| {
+                    if (std.mem.eql(u8, existing, req)) {
+                        listed = true;
+                        break;
+                    }
+                }
+                if (!listed) try alias_lists[target].append(allocator, req);
+            }
+        }
+        for (javascript_modules.items) |*js| {
+            // path 一致する graph module の aliases を併合
+            var merged: std.ArrayList([]const u8) = .empty;
+            defer merged.deinit(allocator);
+            for (graph.modules, 0..) |module, index| {
+                if (module.kind != .javascript) continue;
+                if (!std.mem.eql(u8, module.path, js.path)) continue;
+                for (alias_lists[index].items) |alias| {
+                    var listed = false;
+                    for (merged.items) |existing| {
+                        if (std.mem.eql(u8, existing, alias)) {
+                            listed = true;
+                            break;
+                        }
+                    }
+                    if (!listed) try merged.append(allocator, alias);
+                }
+            }
+            if (merged.items.len == 0) continue;
+            const out = try ir_program.arena.allocator().alloc([]const u8, merged.items.len);
+            for (merged.items, out) |alias, *slot| slot.* = try ir_program.arena.allocator().dupe(u8, alias);
+            js.bare_aliases = out;
+        }
     }
     ir_program.javascript_modules = try javascript_modules.toOwnedSlice(ir_program.arena.allocator());
     ir_program.http_server_plugin_imported = http_server_plugin_imported;

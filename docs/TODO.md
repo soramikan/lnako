@@ -120,6 +120,7 @@
   - **package import（lnako 実装済・ゲート未了）**: `パッケージ:`/`pkg:` alias・subpath、export 境界、environment scope、Interpreter 経路（#50、PR #196）。未達は cnako 共通fixture（#61 連動）、3 OS での LLVM AOT O0〜O3 実測、共通 E2E。
   - **#52 命令 metadata 静的検査（部分実装・Issue OPEN）**: `command_inspect` + `lnako check` でロードなし検査・衝突/不一致 E029・未検査 `partial`・`--strict-sharing` E033 まで（PR #211）。**残ゲート**: 専用推移依存・選択 feature 影響の表示、parser/semantic への declared command 接続、JS/native 実登録照合、名前空間 check。残ゲート消化後に #52 close。
   - **#53 npm 取得（部分実装・Issue OPEN）**: `src/package/npm.zig` で fixture catalog / registry packument 解決、integrity（`sha512-`）、cache 格納、peer（E017）・context（E018）、lock `npmInstances` 配線。`rejectNpmDeps` 撤去。QuickJS ESM 実行・Node lifecycle script は非対象（#54）。残ゲート: 実 registry E2E、package.json 本格パース、env materialize での npm 実体化。
+  - **#54 QuickJS ESM（部分実装・Issue OPEN）**: `npm_esm` で package.json 入口（exports import/default、module/main、node/browser 非暗黙）、tarball tree unpack、module_graph bare→npm コールバック、QuickJS bare alias。残ゲート: import_resolver からの lock/cache 自動配線、サブパス exports、env materialize 連携、参照 plugin+npm E2E。
   - **初回 P0 残主鎖**: #52 残ゲートと並行で #53 残 → QuickJS ESM（#54）→ AOT+QuickJS（#55）→ 依存同梱（#56）→ publish（#57）→ 3 OS E2E/文書（#58）。cnako 上流接続・公開版（#61）は import ゲート兼用。
   - **配布拡張 P1**: native source build（#59）、AOT 静的 plugin 同梱（#11）、workspace（#60）。
   - **他処理系/後続**: wnako（#62）、cnako Node 拡充（#63）、cross build（#64）、WASM PoC（#65）、cnako Node 完結依存管理（#70）、階層名前空間「の」（#182）。

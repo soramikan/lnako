@@ -230,6 +230,10 @@ pub const JavaScriptModule = struct {
     /// graph側の収集をすり抜けた形のFS fallbackがroot外を読めないように
     /// する。package外moduleはnull（無制限の従来挙動）。
     package_root: ?[]const u8 = null,
+    /// bare specifier 別名（`import "left-pad"` → この module path）。
+    /// QuickJS module_normalize が package 所有 referrer から bare を
+    /// この path へ写す。空なら bare 別名なし。
+    bare_aliases: []const []const u8 = &.{},
 };
 
 pub const Program = struct {

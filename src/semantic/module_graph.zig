@@ -67,6 +67,37 @@ pub const PackageResolver = struct {
     }
 };
 
+/// bare npm specifier（`import "left-pad"`）の解決結果。caller が allocator で
+/// free する。実装は package 層（`npm_esm`）に置き、semantic はコールバックのみ。
+pub const ResolvedNpmModule = struct {
+    path: []u8,
+    package_root: []u8,
+};
+
+/// package 所有 JS 内の bare specifier を npm instance 入口へ写す。
+/// `importer_owner` は nako package key、`importer_package_root` は importer の
+/// package root（npm 内相対 import 連鎖の context 復元に使う）。
+pub const NpmModuleResolver = struct {
+    context: *anyopaque,
+    resolveFn: *const fn (
+        context: *anyopaque,
+        allocator: std.mem.Allocator,
+        importer_owner: ?[]const u8,
+        importer_package_root: ?[]const u8,
+        specifier: []const u8,
+    ) anyerror!ResolvedNpmModule,
+
+    pub fn resolve(
+        self: NpmModuleResolver,
+        allocator: std.mem.Allocator,
+        importer_owner: ?[]const u8,
+        importer_package_root: ?[]const u8,
+        specifier: []const u8,
+    ) !ResolvedNpmModule {
+        return self.resolveFn(self.context, allocator, importer_owner, importer_package_root, specifier);
+    }
+};
+
 pub const FileProvider = struct {
     io: std.Io,
     max_bytes: usize = 128 * 1024 * 1024,
@@ -97,6 +128,8 @@ pub const Options = struct {
     compat_js: bool = false,
     /// 同期済み環境に基づく `パッケージ:` / `pkg:` import resolver。
     package_resolver: ?PackageResolver = null,
+    /// package 所有 JS の bare npm specifier 解決（未設定時は fail-closed）。
+    npm_module_resolver: ?NpmModuleResolver = null,
     /// エントリモジュールへ強制する構文モード（--dncl / --dncl2）。
     forced_mode: token_mod.Mode = .{},
 };
@@ -742,14 +775,58 @@ pub const Loader = struct {
                 try self.importDiagnostic(import_node, path, "package内のJavaScriptでは静的に解決できない取り込み指定は使えません");
             }
             for (scan.imports) |requested| {
-                // bare specifier（`import "foo"`）は静的に package 内 path へ
-                // 解決できない。package 所有 module では QuickJS loader の
-                // FS fallback が root 外を読み得るため fail-closed で拒否する。
-                // 直接 path import のユーザー module は従来どおり収集しない。
+                // bare specifier（`import "foo"`）は相対 path ではない。package
+                // 所有 module では npm_module_resolver で lock 済み instance へ
+                // 写し、未設定・未解決は fail-closed（FS fallback で root 外を
+                // 読ませない）。直接 path import のユーザー module は従来どおり
+                // 収集しない。
                 if (!std.fs.path.isAbsolute(requested) and !std.mem.startsWith(u8, requested, ".")) {
-                    if (moduleIsPackageContent(module)) {
+                    if (!moduleIsPackageContent(module)) continue;
+                    const npm_resolver = self.options.npm_module_resolver orelse {
                         try self.importDiagnostic(import_node, path, "package内のJavaScriptでは静的に解決できない取り込み指定は使えません");
+                        continue;
+                    };
+                    const npm = npm_resolver.resolve(self.allocator, module.package_owner, module.package_root, requested) catch |err| {
+                        if (err == error.OutOfMemory) return err;
+                        try self.importDiagnostic(import_node, path, "package内のJavaScriptでは静的に解決できない取り込み指定は使えません");
+                        continue;
+                    };
+                    defer self.allocator.free(npm.path);
+                    defer self.allocator.free(npm.package_root);
+                    const npm_ext = std.fs.path.extension(npm.path);
+                    if (!std.ascii.eqlIgnoreCase(npm_ext, ".js") and !std.ascii.eqlIgnoreCase(npm_ext, ".mjs")) {
+                        try self.importDiagnostic(import_node, path, "package内のJavaScriptでは静的に解決できない取り込み指定は使えません");
+                        continue;
                     }
+                    // npm library は plugin ではない。owner は package_root を
+                    // instance 単位の identity とし、同一 instance の多重初期化を防ぐ。
+                    const bare_inheritance: PackageInheritance = .{
+                        .root = npm.package_root,
+                        .owner = npm.package_root,
+                    };
+                    const npm_target_path = try containmentTarget(self, npm.path);
+                    if (!pathWithinRoot(npm.package_root, npm_target_path)) {
+                        try self.importDiagnostic(import_node, path, "package内の取り込み先がpackage rootの外です");
+                        continue;
+                    }
+                    const bare_existing = self.findOwnedPath(npm_target_path, bare_inheritance);
+                    var bare_target: ?u32 = bare_existing;
+                    var bare_cyclic = false;
+                    if (bare_existing) |index| {
+                        bare_cyclic = self.modules.items[index].state == .loading;
+                    } else {
+                        bare_target = self.loadOne(npm_target_path, import_node, null, null, null, bare_inheritance) catch |err| switch (err) {
+                            error.OutOfMemory => return err,
+                            else => null,
+                        };
+                    }
+                    try imports.append(self.allocator, .{
+                        .requested = try self.allocator.dupe(u8, requested),
+                        .resolved_path = try self.allocator.dupe(u8, npm_target_path),
+                        .target = bare_target,
+                        .cyclic = bare_cyclic,
+                        .span = ast.emptySpan(),
+                    });
                     continue;
                 }
                 const resolved = resolveImport(self.allocator, path, requested) catch |err| {

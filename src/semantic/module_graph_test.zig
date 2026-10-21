@@ -1564,3 +1564,68 @@ test "package内の相対plugin取り込みは無修飾命令をowner修飾dispa
     try std.testing.expect(owner_dispatch);
     try std.testing.expect(!bare_unqualified);
 }
+
+test "package ESM の bare npm library を graph に取り込み同一 instance は共有する" {
+    // ESM plugin が bare `left-pad` を import し、npm_module_resolver が
+    // lock 済み入口へ写す。library は plugin ではなく package_root 所有。
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:esm」を取り込む\n" },
+        .{ .suffix = "packages/esm/plugin.mjs", .source =
+        \\import pad from "left-pad";
+        \\export default { "meta": { "type": "const", "value": pad }
+        \\};
+        },
+        .{ .suffix = "npm/left-pad/index.js", .source = "export default function pad() { return 1; }\n" },
+    } };
+    const BareNpm = struct {
+        fn resolver(self: *@This()) module_graph.NpmModuleResolver {
+            return .{ .context = self, .resolveFn = resolve };
+        }
+        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: ?[]const u8, _: ?[]const u8, specifier: []const u8) !module_graph.ResolvedNpmModule {
+            if (!std.mem.eql(u8, specifier, "left-pad")) return error.BareNotFound;
+            return .{
+                .path = try std.fs.path.resolve(allocator, &.{"npm/left-pad/index.js"}),
+                .package_root = try std.fs.path.resolve(allocator, &.{"npm/left-pad"}),
+            };
+        }
+    };
+    var package_resolver = PackageTestResolver{};
+    var bare = BareNpm{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{
+        .compat_js = true,
+        .package_resolver = package_resolver.resolver(),
+        .npm_module_resolver = bare.resolver(),
+    });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 3), graph.modules.len);
+    try std.testing.expectEqual(ModuleKind.javascript, graph.modules[1].kind);
+    try std.testing.expectEqual(ModuleKind.javascript, graph.modules[2].kind);
+    // left-pad は package_root 所有・canonical_id 無し（library）
+    try std.testing.expect(graph.modules[2].package_root != null);
+    try std.testing.expect(graph.modules[2].canonical_id == null);
+    // bare 辺が解決されている
+    var bare_edge = false;
+    for (graph.modules[1].imports) |item| {
+        if (std.mem.eql(u8, item.requested, "left-pad") and item.target != null) bare_edge = true;
+    }
+    try std.testing.expect(bare_edge);
+}
+
+test "package ESM の未登録 bare は fail-closed" {
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「pkg:esm」を取り込む\n" },
+        .{ .suffix = "packages/esm/plugin.mjs", .source =
+        \\import missing from "not-installed";
+        \\export default {};
+        },
+    } };
+    var package_resolver = PackageTestResolver{};
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{
+        .compat_js = true,
+        .package_resolver = package_resolver.resolver(),
+        // npm_module_resolver 無し → bare 拒否
+    });
+    defer graph.deinit();
+    try std.testing.expect(!graph.succeeded());
+}

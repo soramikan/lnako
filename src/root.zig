@@ -120,6 +120,7 @@ pub const package = struct {
     pub const fetch = @import("package/fetch.zig");
     pub const provider = @import("package/provider.zig");
     pub const npm = @import("package/npm.zig");
+    pub const npm_esm = @import("package/npm_esm.zig");
     pub const registry = @import("package/registry.zig");
     pub const cache = @import("package/cache.zig");
     pub const environment = @import("package/environment.zig");

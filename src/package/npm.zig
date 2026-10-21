@@ -1,11 +1,10 @@
-//! npm 補助依存の取得・文脈別 instance 解決（#53）。
+//! npm 補助依存の取得・文脈別 instance 解決（#53 / #54）。
 //!
 //! - registry / ローカル fixture から packument と tarball を取る
 //! - integrity（`sha512-` / `sha256-`）を検証し cache へ格納する
 //! - 通常・optional・peer を文脈 (context) ごとに分離する
 //! - Node lifecycle script・npm CLI は起動しない
-//!
-//! QuickJS への ESM 登録は #54。ここでは lock の `npmInstances` と cache まで。
+//! - tarball は cache tree へ展開する（ESM 入口解決は `npm_esm`）
 
 const std = @import("std");
 const diag = @import("diagnostics.zig");
@@ -14,6 +13,7 @@ const cache = @import("cache.zig");
 const cache_key = @import("cache_key.zig");
 const lock_model = @import("lock_model.zig");
 const manifest_mod = @import("manifest.zig");
+const npm_esm = @import("npm_esm.zig");
 const semver = @import("semver.zig");
 
 const Allocator = std.mem.Allocator;
@@ -680,22 +680,8 @@ fn publishTarballCache(
     const key = try cache_key.artifactKey(gpa, "npm", meta.integrity, meta.tarball_url);
     defer gpa.free(key);
     if (store.entryExists(key)) return;
-    // publishStaging は tree/ を必須とする。npm tarball 本体は source.archive に置き、
-    // tree は raw blob のみ（unpack / ESM 登録は #54）。
-    var staging = store.openStaging(key) catch |err| return mapCache(err);
-    var staging_open = true;
-    defer if (staging_open) staging.close(session.io);
-    staging.createDir(session.io, "tree", .default_dir) catch |err| return mapCache(err);
-    staging.writeFile(session.io, .{ .sub_path = "source.archive", .data = bytes }) catch |err| return mapCache(err);
-    {
-        // Windows は開いた dir handle があると rename が AccessDenied になる。
-        var tree = staging.openDir(session.io, "tree", .{ .iterate = true, .follow_symlinks = false }) catch |err| return mapCache(err);
-        defer tree.close(session.io);
-        tree.writeFile(session.io, .{ .sub_path = "blob", .data = bytes }) catch |err| return mapCache(err);
-    }
-    staging.close(session.io);
-    staging_open = false;
-    store.publishStaging(key) catch |err| return mapCache(err);
+    // gzip tarball は tree/ へ unpack（strip package/）。非 gzip fixture は blob。
+    npm_esm.publishNpmTree(gpa, session.io, store, key, bytes) catch |err| return mapCache(err);
 }
 
 fn mapCache(err: anyerror) Error {

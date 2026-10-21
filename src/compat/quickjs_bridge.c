@@ -20,6 +20,7 @@ struct LnakoQuickJs {
     LnakoQuickJsHostInvoke host_invoke;
     LnakoQuickJsHostExec host_exec;
     struct LnakoQuickJsModuleSource *module_sources;
+    struct LnakoQuickJsModuleAlias *module_aliases;
 };
 
 struct LnakoQuickJsModuleSource {
@@ -34,6 +35,13 @@ struct LnakoQuickJsModuleSource {
     /// module_normalizeが遅延でcacheする — import解決毎のdirectory openを避ける。
     char *package_root_canonical;
     struct LnakoQuickJsModuleSource *next;
+};
+
+/// bare specifier → 登録 module path。package 所有 referrer の bare import 用。
+struct LnakoQuickJsModuleAlias {
+    char *alias;
+    char *target;
+    struct LnakoQuickJsModuleAlias *next;
 };
 
 struct LnakoQuickJsValue {
@@ -459,8 +467,64 @@ static struct LnakoQuickJsModuleSource *package_owner_for_base(LnakoQuickJs *eng
 /// なら実行時にここで止まる。default正規化と同等の結果を返すが、`..`/`.`
 /// 要素はlexicalに畳み込んでから判定・返却する（`root/../外` 形式のprefix
 /// すり抜けを塞ぐ）。
+static int is_bare_module_name(const char *name) {
+    if (!name || !name[0]) return 0;
+    if (name[0] == '.' || name[0] == '/') return 0;
+#if defined(_WIN32)
+    if (((name[0] >= 'A' && name[0] <= 'Z') || (name[0] >= 'a' && name[0] <= 'z')) && name[1] == ':') return 0;
+#endif
+    return 1;
+}
+
+static const char *find_module_alias(LnakoQuickJs *engine, const char *alias) {
+    if (!engine || !alias) return NULL;
+    for (struct LnakoQuickJsModuleAlias *item = engine->module_aliases; item; item = item->next) {
+        if (!strcmp(item->alias, alias)) return item->target;
+    }
+    return NULL;
+}
+
 static char *module_normalize(JSContext *context, const char *base_name, const char *name, void *opaque) {
     LnakoQuickJs *engine = opaque;
+    // bare specifier は graph が解決した alias へ写す。package root 包含検査の
+    // 前に処理し、npm library が plugin root 外でも既知 alias なら許可する。
+    if (is_bare_module_name(name)) {
+        const char *target = find_module_alias(engine, name);
+        if (target) {
+            size_t len = strlen(target);
+            char *copy = js_malloc(context, len + 1);
+            if (!copy) {
+                JS_ThrowOutOfMemory(context);
+                return NULL;
+            }
+            memcpy(copy, target, len + 1);
+            return copy;
+        }
+        // package 所有 referrer からの未登録 bare は fail-closed。
+        char *collapsed_base = NULL;
+        if (base_name) {
+            collapsed_base = collapse_dot_segments(context, base_name);
+            if (!collapsed_base) {
+                JS_ThrowOutOfMemory(context);
+                return NULL;
+            }
+        }
+        struct LnakoQuickJsModuleSource *owner = collapsed_base ? package_owner_for_base(engine, collapsed_base) : NULL;
+        js_free(context, collapsed_base);
+        if (owner && owner->package_root) {
+            JS_ThrowInternalError(context, "module import '%s' is not a registered package dependency", name);
+            return NULL;
+        }
+        // package 外の bare は従来どおり名前そのもの（登録名一致 or loader 失敗）。
+        size_t len = strlen(name);
+        char *copy = js_malloc(context, len + 1);
+        if (!copy) {
+            JS_ThrowOutOfMemory(context);
+            return NULL;
+        }
+        memcpy(copy, name, len + 1);
+        return copy;
+    }
     char *resolved = lnako_normalize_module_name(context, base_name, name);
     if (!resolved) return NULL;
     char *collapsed = collapse_dot_segments(context, resolved);
@@ -612,6 +676,13 @@ void lnako_qjs_release(LnakoQuickJs *engine) {
         free(item->package_root_canonical);
         free(item);
     }
+    while (engine->module_aliases) {
+        struct LnakoQuickJsModuleAlias *item = engine->module_aliases;
+        engine->module_aliases = item->next;
+        free(item->alias);
+        free(item->target);
+        free(item);
+    }
     free(engine->last_error);
     JS_FreeContext(engine->context);
     JS_FreeRuntime(engine->runtime);
@@ -664,6 +735,37 @@ int lnako_qjs_add_module_source(LnakoQuickJs *engine, const char *name, const ch
     item->length = length;
     item->next = engine->module_sources;
     engine->module_sources = item;
+    return 0;
+}
+
+int lnako_qjs_add_module_alias(LnakoQuickJs *engine, const char *alias, const char *target) {
+    if (!engine || !alias || !alias[0] || !target || !target[0]) return -1;
+    for (struct LnakoQuickJsModuleAlias *item = engine->module_aliases; item; item = item->next) {
+        if (!strcmp(item->alias, alias)) {
+            // 同一 bare の再登録は target を更新する（決定性より最新の graph 解決を優先）。
+            char *next_target = copy_bytes(target, strlen(target));
+            if (!next_target) return -1;
+            for (char *p = next_target; *p; p++)
+                if (*p == '\\') *p = '/';
+            free(item->target);
+            item->target = next_target;
+            return 0;
+        }
+    }
+    struct LnakoQuickJsModuleAlias *item = calloc(1, sizeof(*item));
+    if (!item) return -1;
+    item->alias = copy_bytes(alias, strlen(alias));
+    item->target = copy_bytes(target, strlen(target));
+    if (!item->alias || !item->target) {
+        free(item->alias);
+        free(item->target);
+        free(item);
+        return -1;
+    }
+    for (char *p = item->target; *p; p++)
+        if (*p == '\\') *p = '/';
+    item->next = engine->module_aliases;
+    engine->module_aliases = item;
     return 0;
 }
 
