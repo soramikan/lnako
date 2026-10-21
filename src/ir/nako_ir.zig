@@ -230,6 +230,10 @@ pub const JavaScriptModule = struct {
     /// graph側の収集をすり抜けた形のFS fallbackがroot外を読めないように
     /// する。package外moduleはnull（無制限の従来挙動）。
     package_root: ?[]const u8 = null,
+    /// bare specifier 別名（`import "left-pad"` → この module path）。
+    /// QuickJS module_normalize が package 所有 referrer から bare を
+    /// この path へ写す。空なら bare 別名なし。
+    bare_aliases: []const []const u8 = &.{},
 };
 
 pub const Program = struct {
@@ -297,6 +301,7 @@ pub const Program = struct {
             module.path = try allocator.dupe(u8, module.path);
             module.source = try allocator.dupe(u8, module.source);
             module.namespaces = try cloneStrings(allocator, module.namespaces);
+            module.bare_aliases = try cloneStrings(allocator, module.bare_aliases);
             module.package_root = if (module.package_root) |root| try allocator.dupe(u8, root) else null;
         }
         const native_plugin_paths = try allocator.alloc([]const u8, self.native_plugin_paths.len);

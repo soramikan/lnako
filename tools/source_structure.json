@@ -75,8 +75,8 @@
         "limitKb": 84
       },
       "src/semantic/module_graph.zig": {
-        "reason": "canonical export identityとimport edgeをLoader state内で統合（監視対象・hard limit内）",
-        "limitKb": 92
+        "reason": "canonical export identity・import edge・bare npm ESM 解決（#54）を Loader state 内で統合（監視対象・分割継続）",
+        "limitKb": 96
       }
     }
   },

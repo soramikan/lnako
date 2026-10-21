@@ -30,6 +30,7 @@ const HostInvokeFn = *const fn (*anyopaque, usize, [*c]const *const RawValue, us
 const HostExecFn = *const fn (*anyopaque, [*:0]const u8, [*c]const *const RawValue, usize) callconv(.c) ?*RawValue;
 extern fn lnako_qjs_set_host(engine: *Engine, context: *anyopaque, get: HostGetFn, set: HostSetFn, invoke: HostInvokeFn, exec: HostExecFn) void;
 extern fn lnako_qjs_add_module_source(engine: *Engine, name: [*:0]const u8, source: [*]const u8, length: usize, package_root: ?[*:0]const u8) c_int;
+extern fn lnako_qjs_add_module_alias(engine: *Engine, alias: [*:0]const u8, target: [*:0]const u8) c_int;
 extern fn lnako_qjs_release(engine: *Engine) void;
 extern fn lnako_qjs_take_error(engine: *Engine) ?[*:0]u8;
 extern fn lnako_qjs_free_string(text: [*:0]u8) void;
@@ -366,6 +367,11 @@ pub fn installModules(runtime: *Runtime, state: *State, modules: []const @import
         } else null;
         defer if (package_root) |root| runtime.allocator().free(root);
         if (lnako_qjs_add_module_source(engine, filename.ptr, module.source.ptr, module.source.len, if (package_root) |root| root.ptr else null) < 0) return error.QuickJsModuleRegistrationFailed;
+        for (module.bare_aliases) |alias| {
+            const alias_z = try runtime.allocator().dupeSentinel(u8, alias, 0);
+            defer runtime.allocator().free(alias_z);
+            if (lnako_qjs_add_module_alias(engine, alias_z.ptr, filename.ptr) < 0) return error.QuickJsModuleRegistrationFailed;
+        }
     }
     for (modules) |module| {
         if (!module.is_plugin) continue;

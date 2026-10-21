@@ -31,6 +31,9 @@ void lnako_qjs_set_host(LnakoQuickJs *engine, void *opaque, LnakoQuickJsHostGet 
 /// module（およびroot配下で読まれたmodule）からのimportはroot内への包含が
 /// module_normalizeで強制され、root外へのFS fallbackを拒否する。
 int lnako_qjs_add_module_source(LnakoQuickJs *engine, const char *name, const char *source, size_t length, const char *package_root);
+/// bare specifier `alias` を登録済み module path `target` へ写す。
+/// package 所有 module からの bare import を graph で解決済み path へ結ぶ。
+int lnako_qjs_add_module_alias(LnakoQuickJs *engine, const char *alias, const char *target);
 void lnako_qjs_retain(LnakoQuickJs *engine);
 void lnako_qjs_release(LnakoQuickJs *engine);
 char *lnako_qjs_take_error(LnakoQuickJs *engine);
