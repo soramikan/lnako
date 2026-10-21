@@ -3,7 +3,16 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { codeIdentifier, identifier, machoFiles, signPayload, stageUnnotarizedMacho, submitNotarization } from "./macos_signing.mjs";
+import {
+  codeIdentifier,
+  identifier,
+  machoFiles,
+  onlineNotarizationArgs,
+  signPayload,
+  stageUnnotarizedMacho,
+  submitNotarization,
+  verifyOnlineNotarizationTicket,
+} from "./macos_signing.mjs";
 
 async function fixture(callback) {
   const directory = await mkdtemp(join(tmpdir(), "lnako-signing-test-"));
@@ -136,4 +145,32 @@ test("stageUnnotarizedMacho copies only Mach-O files without an online notarizat
     });
     assert.deepEqual(nonePending, []);
   });
+});
+
+test("verifyOnlineNotarizationTicket retries until the online ticket is visible", async () => {
+  const sleeps = [];
+  let attempts = 0;
+  const file = "/tmp/fixture-lnako";
+  await verifyOnlineNotarizationTicket(file, {
+    backoffMs: [0, 1, 2],
+    sleep: async (ms) => { sleeps.push(ms); },
+    execute(command, args) {
+      assert.equal(command, "/usr/bin/codesign");
+      assert.deepEqual(args.slice(0, -1), onlineNotarizationArgs);
+      assert.equal(args.at(-1), file);
+      attempts += 1;
+      if (attempts < 3) throw new Error("codesign failed (status 3): test-requirement");
+    },
+  });
+  assert.equal(attempts, 3);
+  assert.deepEqual(sleeps, [1, 2]);
+
+  await assert.rejects(
+    verifyOnlineNotarizationTicket(file, {
+      backoffMs: [0, 1],
+      sleep: async () => {},
+      execute() { throw new Error("still missing"); },
+    }),
+    /still missing/,
+  );
 });
