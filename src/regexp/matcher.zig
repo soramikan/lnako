@@ -10,8 +10,8 @@ const character_class = @import("character_class.zig");
 /// recoverable error instead of a multi-gigabyte allocation or a hang.
 /// Units are candidates materialized (one expansion or one atom match), which
 /// tracks the arena bytes far better than counting repetitions.  The bound is
-/// flat, so the worst case is a few hundred megabytes regardless of the input:
-/// a quantifier cannot span more than ~16,000 code units.  Lifting that limit
+/// flat, so one start position cannot exceed a few hundred megabytes: a
+/// quantifier cannot span more than ~16,000 code units.  Lifting that limit
 /// needs a lazy first-match matcher, not a bigger budget.
 pub const match_budget: usize = 1 << 15;
 
@@ -54,6 +54,10 @@ pub fn findOne(allocator: std.mem.Allocator, source: []const u16, compiled: *con
         var budget = MatchBudget{};
         const candidates = try matchExpression(arena.allocator(), source, compiled.expression, initial, compiled.flags, &budget);
         if (candidates.len > 0) return .{ .span = .{ .start = start, .end = candidates[0].position, .matched = true }, .captures = candidates[0].captures };
+        // A failed start position leaves its candidates behind; they are not
+        // needed once the next start is tried, and letting them accumulate
+        // would make the budget bound per position instead of per call.
+        _ = arena.reset(.retain_capacity);
         if (start == last_start) break;
         // RegExp's non-sticky Unicode search advances by StringIndex, so a
         // paired surrogate is never revisited from its low-surrogate code

@@ -62,6 +62,10 @@ pub fn compileFailureMessageAlloc(allocator: std.mem.Allocator, specification: [
         error.InvalidEscape => "\\ at end of pattern",
         error.InvalidIdentityEscape => "Invalid escape",
         error.UnexpectedPatternToken => "Unmatched ')'",
+        // Not a V8 message: V8 parses deeply nested patterns without a depth
+        // limit, so this bound is lnako-specific.  Report it in the same shape
+        // as the other syntax failures instead of surfacing a bare error name.
+        error.PatternTooDeep => "Pattern nested too deeply",
         else => return null,
     };
     const pattern_utf8 = try utf16ToUtf8Lossy(allocator, parts.pattern);

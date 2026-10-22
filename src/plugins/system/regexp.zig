@@ -1113,3 +1113,52 @@ test "正規表現の深い入れ子はPatternTooDeepで拒否する" {
     defer std.testing.allocator.free(matches);
     try std.testing.expectEqual(@as(usize, 1), matches.len);
 }
+
+test "正規表現の文字集合演算の連鎖も深さ上限で拒否する" {
+    // /v の && / -- は左結合の木を作り、照合はその木を再帰でたどる。
+    // 連鎖長も入れ子と同じ上限に収める。
+    const limit = regexp_engine.parser.Parser.max_nesting_depth;
+    const operations = limit + 1;
+    const pattern = try std.testing.allocator.alloc(u16, operations * 3 + 6);
+    defer std.testing.allocator.free(pattern);
+    pattern[0] = '/';
+    pattern[1] = '[';
+    pattern[2] = 'a';
+    var index: usize = 0;
+    while (index < operations) : (index += 1) {
+        @memcpy(pattern[3 + index * 3 ..][0..3], &[_]u16{ '&', '&', 'a' });
+    }
+    pattern[3 + operations * 3] = ']';
+    pattern[4 + operations * 3] = '/';
+    pattern[5 + operations * 3] = 'v';
+    try std.testing.expectError(error.PatternTooDeep, regexp_engine.compilePattern(std.testing.allocator, pattern, false));
+
+    // 上限内の連鎖は今までどおり照合できる。
+    const short_operations = 4;
+    const short = try std.testing.allocator.alloc(u16, short_operations * 3 + 6);
+    defer std.testing.allocator.free(short);
+    short[0] = '/';
+    short[1] = '[';
+    short[2] = 'a';
+    index = 0;
+    while (index < short_operations) : (index += 1) {
+        @memcpy(short[3 + index * 3 ..][0..3], &[_]u16{ '&', '&', 'a' });
+    }
+    short[3 + short_operations * 3] = ']';
+    short[4 + short_operations * 3] = '/';
+    short[5 + short_operations * 3] = 'v';
+    var compiled = try regexp_engine.compilePattern(std.testing.allocator, short, false);
+    defer compiled.deinit();
+    const source = [_]u16{'a'};
+    const matches = try regexp_engine.findMatches(std.testing.allocator, &source, &compiled);
+    defer std.testing.allocator.free(matches);
+    try std.testing.expectEqual(@as(usize, 1), matches.len);
+    try std.testing.expectEqual(@as(usize, 1), matches[0].span.end);
+}
+
+test "正規表現の深さ上限超過は構文エラー文言になる" {
+    const message = (try regexp_engine.compileFailureMessageAlloc(std.testing.allocator, &.{ '/', '(', '?', ':', '/', 'v' }, false, error.PatternTooDeep)).?;
+    defer std.testing.allocator.free(message);
+    try std.testing.expect(std.mem.endsWith(u8, message, ": Pattern nested too deeply"));
+    try std.testing.expect(std.mem.startsWith(u8, message, "Invalid regular expression: "));
+}

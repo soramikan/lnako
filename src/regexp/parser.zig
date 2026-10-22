@@ -133,7 +133,13 @@ pub const Parser = struct {
         defer self.leaveNesting();
         const negated = consume(self, '^');
         var left = try self.parseClassOperand();
+        var set_operations: usize = 0;
         while (self.consumeSetOperator()) |kind| {
+            // A chain of set operators builds a left-deep tree, and matching
+            // walks that tree recursively, so the chain has to fit in the same
+            // nesting budget as groups and nested classes.
+            set_operations += 1;
+            if (self.depth + set_operations > max_nesting_depth) return error.PatternTooDeep;
             if (left.operation == null and left.items.len == 0) return error.InvalidCharacterClass;
             if (!character_class.isSetOperand(left)) return error.UnsupportedUnicodeSetOperation;
             if (self.index >= self.source.len or self.source[self.index] == ']' or self.atSetOperator()) return error.InvalidCharacterInClass;
