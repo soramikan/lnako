@@ -479,6 +479,9 @@ pub fn validateFillDimensions(runtime: *Runtime, dimensions: []const Value) !voi
 }
 
 pub fn fillDimensions(runtime: *Runtime, value: Value, dimensions: []const Value, depth: usize) !Value {
+    // shape配列の長さは入力次元数に比例し、1段ごとに1フレームを消費する。
+    // AOT側arrayFillAtDepthと同じ上限・同じerrorで打ち切る。
+    if (depth >= value_mod.max_value_nesting_depth) return error.ValueNestingTooDeep;
     if (depth >= dimensions.len) return cloneFillValue(runtime, value);
     const count = try fillLength(try runtime.valueToNumber(dimensions[depth]), safe_array_element_limit);
     var result = try runtime.createArray();
@@ -499,6 +502,13 @@ pub fn fillCount(runtime: *Runtime, value: Value, count: usize) !Value {
 }
 
 pub fn cloneFillValue(runtime: *Runtime, value: Value) !Value {
+    return cloneFillValueAtDepth(runtime, value, 0);
+}
+
+fn cloneFillValueAtDepth(runtime: *Runtime, value: Value, depth: usize) !Value {
+    // 配列の自己参照は循環検査を持たないため、深さ上限で打ち切る
+    // （AOT側cloneFillValueAtDepthと同じ上限・同じerror）。
+    if (depth >= value_mod.max_value_nesting_depth) return error.ValueNestingTooDeep;
     if (value != .array) return switch (value) {
         .dictionary, .bytes, .promise => deepClone(runtime, value),
         else => value,
@@ -511,7 +521,7 @@ pub fn cloneFillValue(runtime: *Runtime, value: Value) !Value {
     try roots.protect(&result);
     try source.array.normalizePresence();
     for (source.array.items.items, 0..) |item, index| {
-        try appendArraySlot(result.array, try cloneFillValue(runtime, item), source.array.isPresent(index));
+        try appendArraySlot(result.array, try cloneFillValueAtDepth(runtime, item, depth + 1), source.array.isPresent(index));
     }
     return result;
 }
@@ -920,6 +930,28 @@ test "配列集約・連番・要素生成の型変換と複製境界を保つ" 
     try roots.protect(&array_buffer_fill);
     try std.testing.expectEqual(std.meta.Tag(Value).dictionary, std.meta.activeTag(array_buffer_fill.array.get(0)));
     try std.testing.expectEqual(@as(usize, 0), array_buffer_fill.array.get(0).dictionary.len());
+}
+
+test "自己参照配列の複製は入れ子上限で打ち切る" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var array = try runtime.createArray();
+    try roots.protect(&array);
+    _ = try array.array.push(array);
+    try std.testing.expectError(error.ValueNestingTooDeep, cloneFillValue(&runtime, array));
+}
+
+test "配列埋めの次元数は入れ子上限でValueNestingTooDeepを返す" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var shape = try runtime.createArray();
+    try roots.protect(&shape);
+    for (0..value_mod.max_value_nesting_depth + 1) |_| _ = try shape.array.push(.{ .number = 1 });
+    try std.testing.expectError(error.ValueNestingTooDeep, fill(&runtime, .{ .number = 0 }, shape));
 }
 
 test "配列入替はcanonical添字以外をown propertyとして保持する" {

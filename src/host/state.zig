@@ -108,6 +108,7 @@ pub const CliHost = struct {
                 .resolveStaticPathFn = resolveHttpServerStaticPath,
                 .readStaticFileFn = readHttpServerStaticFile,
                 .saveUploadFn = saveHttpServerUpload,
+                .deleteUploadFn = deleteHttpServerUpload,
                 .writeFn = write,
             } else null,
         };
@@ -1062,6 +1063,16 @@ pub const CliHost = struct {
         errdefer allocator.free(path);
         try std.Io.Dir.cwd().writeFile(self.io, .{ .sub_path = path, .data = body });
         return path;
+    }
+
+    /// `saveHttpServerUpload`が書いた要求スコープの一時ファイルを回収する。
+    /// 既に消えている場合は成功として扱う（回収はbest effort）。
+    fn deleteHttpServerUpload(context: *anyopaque, path: []const u8) !void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        std.Io.Dir.cwd().deleteFile(self.io, path) catch |err| switch (err) {
+            error.FileNotFound => {},
+            else => return err,
+        };
     }
 
     fn resolveHttpServerStaticPath(context: *anyopaque, allocator: std.mem.Allocator, root: []const u8, components: []const []const u8) !?lnako.plugins.http_server.ResolvedPath {

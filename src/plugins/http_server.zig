@@ -48,6 +48,9 @@ pub const Context = struct {
     resolveStaticPathFn: *const fn (context: *anyopaque, allocator: std.mem.Allocator, root: []const u8, components: []const []const u8) anyerror!?ResolvedPath,
     readStaticFileFn: *const fn (context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) anyerror![]u8,
     saveUploadFn: *const fn (context: *anyopaque, allocator: std.mem.Allocator, filename: []const u8, body: []const u8) anyerror![]u8,
+    /// 要求スコープで保存した一時ファイルを要求終了時に削除する。
+    /// 保存先が寿命を管理しないホスト（テストなど）はnullのままでよい。
+    deleteUploadFn: ?*const fn (context: *anyopaque, path: []const u8) anyerror!void = null,
     writeFn: ?*const fn (context: *anyopaque, bytes: []const u8) anyerror!void = null,
 
     fn respond(self: Context, status: u16, headers: []const Header, body: []const u8) !void {
@@ -239,6 +242,10 @@ pub fn poll(runtime: *Runtime, state: *State, context: Context, effects: Effects
     try request_roots.protect(&get_data);
     var files_data = try runtime.createArray();
     try request_roots.protect(&files_data);
+    // multipartのアップロードは要求スコープの一時ファイル。ハンドラの成否や
+    // 応答の有無に関わらず、要求の処理が終わった時点で回収する（AOT側
+    // pollAotHttpServerのdeferと同じ寿命）。
+    defer deleteUploadedFiles(runtime, context, files_data);
     var post_data: Value = try runtime.createDictionary();
     try request_roots.protect(&post_data);
     const path = pathOnly(request.target);
@@ -492,6 +499,37 @@ fn parseMultipart(runtime: *Runtime, context: Context, body: []const u8, boundar
     return fields;
 }
 
+/// 要求で保存したアップロード一時ファイルを回収する。FILESデータの`path`は
+/// 応答後も値としては残るが、ファイル自体は要求スコープで消える。
+fn deleteUploadedFiles(runtime: *Runtime, context: Context, files: Value) void {
+    const delete_upload = context.deleteUploadFn orelse return;
+    if (files != .array) return;
+    for (files.array.items.items) |file| {
+        if (file != .dictionary) continue;
+        const path_value = dictionaryGetAscii(file.dictionary, "path") orelse continue;
+        if (path_value != .string) continue;
+        const path = path_value.string.toUtf8Lossy(runtime.allocator()) catch continue;
+        defer runtime.allocator().free(path);
+        // 回収の失敗（既に消えている等）で要求を失敗させない。
+        delete_upload(context.context, path) catch {};
+    }
+}
+
+fn dictionaryGetAscii(dictionary: *value_mod.Dictionary, expected: []const u8) ?Value {
+    for (dictionary.keys(), dictionary.values()) |key, value| {
+        if (key.units.len != expected.len) continue;
+        var equal = true;
+        for (key.units, expected) |unit, byte| {
+            if (unit != byte) {
+                equal = false;
+                break;
+            }
+        }
+        if (equal) return value;
+    }
+    return null;
+}
+
 fn findHeader(head: []const u8, expected: []const u8) ?[]const u8 {
     var lines = std.mem.splitScalar(u8, head, '\n');
     while (lines.next()) |raw_line| {
@@ -724,6 +762,8 @@ const PollFixture = struct {
     hold_count: usize = 0,
     response_count: usize = 0,
     upload_count: usize = 0,
+    upload_delete_count: usize = 0,
+    upload_delete_matched: bool = false,
     last_status: u16 = 0,
 };
 
@@ -737,6 +777,7 @@ fn pollFixtureContext(fixture: *PollFixture) Context {
         .resolveStaticPathFn = pollFixtureResolveStaticPath,
         .readStaticFileFn = pollFixtureReadStaticFile,
         .saveUploadFn = pollFixtureSaveUpload,
+        .deleteUploadFn = pollFixtureDeleteUpload,
     };
 }
 
@@ -804,6 +845,12 @@ fn pollFixtureSaveUpload(context: *anyopaque, allocator: std.mem.Allocator, _: [
     const fixture: *PollFixture = @ptrCast(@alignCast(context));
     fixture.upload_count += 1;
     return allocator.dupe(u8, "/tmp/lnako-upload-fixture");
+}
+
+fn pollFixtureDeleteUpload(context: *anyopaque, path: []const u8) anyerror!void {
+    const fixture: *PollFixture = @ptrCast(@alignCast(context));
+    fixture.upload_delete_count += 1;
+    if (std.mem.eql(u8, path, "/tmp/lnako-upload-fixture")) fixture.upload_delete_matched = true;
 }
 
 test "HTTP受信は接続単位エラー後に継続しOOMを伝播する" {
@@ -890,6 +937,55 @@ test "未登録URLへのmultipart POSTはアップロードを永続化しない
     try std.testing.expect(try poll(&runtime, &state, context, effects));
     try std.testing.expectEqual(@as(usize, 0), fixture.upload_count);
     try std.testing.expectEqual(@as(usize, 1), fixture.hold_count);
+}
+
+test "登録済みURLへのmultipart POSTは要求終了時にアップロードを削除する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state: State = .{ .started = true };
+    defer state.deinit(std.testing.allocator);
+    try state.routes.append(std.testing.allocator, .{
+        .kind = .static,
+        .prefix = try std.testing.allocator.dupe(u8, "/upload"),
+        .path = try std.testing.allocator.dupe(u8, "."),
+    });
+    var fixture: PollFixture = .{
+        .mode = .invalid_then_valid,
+        .method = "POST",
+        .target = "/upload",
+        .content_type = "multipart/form-data; boundary=X",
+        .body = "--X\r\nContent-Disposition: form-data; name=\"f\"; filename=\"ok.bin\"\r\n\r\nDATA\r\n--X--\r\n",
+    };
+    const context = pollFixtureContext(&fixture);
+    const effects = pollFixtureEffects(&fixture);
+
+    try std.testing.expect(try poll(&runtime, &state, context, effects));
+    try std.testing.expect(try poll(&runtime, &state, context, effects));
+    try std.testing.expectEqual(@as(usize, 1), fixture.upload_count);
+    // 保存しただけでなく、要求の処理が終わった時点で削除されている。
+    try std.testing.expectEqual(@as(usize, 1), fixture.upload_delete_count);
+    try std.testing.expect(fixture.upload_delete_matched);
+}
+
+test "簡易HTTPサーバ出力は深い値の文字列化をValueNestingTooDeepで止める" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.next_collection = std.math.maxInt(usize);
+    var state: State = .{ .started = true, .request_active = true };
+    var fixture: PollFixture = .{ .mode = .invalid_then_valid };
+    const context = pollFixtureContext(&fixture);
+    const effects = pollFixtureEffects(&fixture);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var head = try runtime.createArray();
+    try roots.protect(&head);
+    var value = head;
+    for (0..value_mod.max_value_nesting_depth) |_| {
+        const nested = try runtime.createArray();
+        _ = try value.array.push(nested);
+        value = nested;
+    }
+    try std.testing.expectError(error.ValueNestingTooDeep, call(&runtime, &state, context, effects, "簡易HTTPサーバ出力", &.{head}));
 }
 
 fn dictionaryUtf8(runtime: *Runtime, dictionary: *value_mod.Dictionary, expected: []const u8) ![]const u8 {

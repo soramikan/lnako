@@ -316,6 +316,10 @@ pub fn pollAotHttpServer(runtime: *Runtime) !bool {
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
+    // multipartのアップロードは要求スコープの一時ファイル。ハンドラの成否や
+    // 応答の有無に関わらず、要求の処理が終わった時点で回収する（Interpreter側
+    // pollのdeferと同じ寿命）。
+    defer aotHttpDeleteUploads(runtime, roots[1]);
 
     // 受信後の要求処理エラー（不正なquery・静的パス、アップロード保存の
     // 失敗）は1回だけ応答して要求を捨て、プロセスを終了させない。
@@ -715,6 +719,29 @@ pub fn aotHttpMimeType(path: []const u8) []const u8 {
     return "text/plain";
 }
 
+/// 要求で保存したアップロード一時ファイルを回収する。FILESデータの`path`は
+/// 応答後も値としては残るが、ファイル自体は要求スコープで消える。
+fn aotHttpDeleteUploads(runtime: *Runtime, files: Value) void {
+    if (files.tag != @backingInt(Tag.array)) return;
+    for (files.object().?.payload.array.items) |file| {
+        if (file.tag != @backingInt(Tag.dictionary)) continue;
+        const path_value = aotHttpDictionaryGetUtf8(runtime, file.object().?.payload.dictionary.entries.items, "path") orelse continue;
+        const path = valueUtf8LossyAlloc(runtime, path_value) catch continue;
+        defer runtime.allocator.free(path);
+        // 回収の失敗（既に消えている等）で要求を失敗させない。
+        std.Io.Dir.cwd().deleteFile(aotHttpIo(), path) catch {};
+    }
+}
+
+fn aotHttpDictionaryGetUtf8(runtime: *Runtime, entries: []const state.DictionaryEntry, expected: []const u8) ?Value {
+    for (entries) |entry| {
+        const key = valueUtf8LossyAlloc(runtime, entry.key) catch continue;
+        defer runtime.allocator.free(key);
+        if (std.mem.eql(u8, key, expected)) return entry.value;
+    }
+    return null;
+}
+
 pub fn aotHttpSaveUpload(runtime: *Runtime, filename: []const u8, body: []const u8) ![]u8 {
     const prefix = try nodeTemporaryDirectoryPrefixAlloc(runtime);
     defer runtime.allocator.free(prefix);
@@ -869,6 +896,48 @@ test "AOT HTTPは未登録URLへのmultipart POSTで本文を解析しない" {
     try std.testing.expectEqual(@as(usize, 1), runtime.held_http_connections.items.len);
     try std.testing.expectEqual(@as(usize, 0), files_data.object().?.payload.array.items.len);
     try std.testing.expectEqual(@as(usize, 0), post_data.object().?.payload.dictionary.entries.items.len);
+}
+
+test "AOT HTTPは登録済みURLへのmultipart POSTでアップロードを要求終了時に削除する" {
+    const io = aotHttpIo();
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+    runtime.http_server = try address.listen(io, .{ .reuse_address = true });
+    try aotHttpIngressStart(&runtime);
+    runtime.http_server_state.started = true;
+    const port = runtime.http_server.?.socket.address.getPort();
+
+    var docroot = std.testing.tmpDir(.{});
+    defer docroot.cleanup();
+    const docroot_path = try docroot.dir.realPathFileAlloc(io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(docroot_path);
+    try runtime.http_server_state.routes.append(runtime.allocator, .{
+        .kind = .static,
+        .prefix = try runtime.allocator.dupe(u8, "/upload"),
+        .path = try runtime.allocator.dupe(u8, docroot_path),
+    });
+
+    var method: Value = .{};
+    var get_data: Value = .{};
+    var post_data: Value = .{};
+    var files_data: Value = .{};
+    runtime.http_globals = .{ .method = &method, .get_data = &get_data, .post_data = &post_data, .files_data = &files_data };
+
+    const body = "--X\r\nContent-Disposition: form-data; name=\"f\"; filename=\"ok.bin\"\r\n\r\nDATA\r\n--X--\r\n";
+    const request_bytes = try std.fmt.allocPrint(runtime.allocator, "POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Type: multipart/form-data; boundary=X\r\nContent-Length: {d}\r\n\r\n{s}", .{ body.len, body });
+    defer runtime.allocator.free(request_bytes);
+    var client = try aotHttpTestSendRequest(io, port, request_bytes);
+    defer client.close(io);
+
+    try std.testing.expect(try pollAotHttpServer(&runtime));
+    try std.testing.expectEqual(@as(usize, 1), files_data.object().?.payload.array.items.len);
+    const file = files_data.object().?.payload.array.items[0];
+    const path_value = aotHttpDictionaryGetUtf8(&runtime, file.object().?.payload.dictionary.entries.items, "path").?;
+    const path = try valueUtf8LossyAlloc(&runtime, path_value);
+    defer runtime.allocator.free(path);
+    // 保存しただけでなく、要求の処理が終わった時点で削除されている。
+    try std.testing.expectEqual(AotHttpPathStat.missing, try aotHttpStatPath(path));
 }
 
 test "AOT HTTPは途中切断と不正chunk/header後に次の要求を受け付ける" {
