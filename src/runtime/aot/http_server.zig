@@ -1063,7 +1063,7 @@ test "AOT HTTPはハンドラの実行エラーを呼び出し元へ伝播する
     var client = try aotHttpTestSendRequest(io, port, "GET /fail HTTP/1.1\r\nHost: localhost\r\n\r\n");
     defer client.close(io);
     // 利用者プログラムの例外を500応答へ丸めず、イベントループへ返す。
-    try std.testing.expectError(error.CallbackExecutionFailed, pollAotHttpServer(runtime));
+    try std.testing.expectError(error.CallbackExecutionFailed, expectAotHttpRequestHandled(runtime));
 }
 
 test "AOT HTTPは途中切断と不正chunk/header後に次の要求を受け付ける" {
