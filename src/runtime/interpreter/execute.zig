@@ -74,6 +74,37 @@ const localSlotValue = shared.localSlotValue;
 const localSlotKnown = shared.localSlotKnown;
 const traceRoots = istate.traceRoots;
 
+/// 動的評価で生成した `ir.Program` の保持上限。program は関数値が参照する
+/// 間だけ必要だが、値の寿命を追跡していないため interpreter 終了まで
+/// 保持している（`state.zig` の `dynamic_programs`）。同じ source でも毎回
+/// 新しい program を作るので、上限が無いと 1 評価あたり ~170KB が積み上がる。
+///
+/// 上限に達したら構造化エラーで止める（保持量 ~43MB で頭打ち）。同じ source を
+/// 繰り返す handler は 257 回目から失敗するが、修正前は同じ経路が OOM まで
+/// 伸びていたため、閉じる方向の変更である。
+/// ponytail: 保持数を数えるだけの上限。source で dedup するなら
+/// `Interpreter` に source→program の map を足す（state.zig 側の変更）ので、
+/// このレーンでは持てない。関数値の寿命追跡（owner の参照カウント）へ移す
+/// ときも state.zig 側の解放経路とセットで置き換える。
+pub const max_dynamic_programs: usize = 256;
+
+/// interpreter 実行の起点 frame から下へ使ってよいネイティブスタック量。
+/// 1 段あたりの消費は build mode で大きく変わる（debug 実測 ~95KB/段）ため、
+/// 段数ではなく実アドレス差で残量を見積もる。macOS/Linux の主スレッドは
+/// 8MiB、Zig の Windows PE 既定も 16MiB なので、解釈系の一時領域を残して
+/// 6MiB を上限にする。これより小さいスタック（`stack_size` を絞った別
+/// スレッド等）で走らせる場合、この値は OS の上限を超え得る。
+const stack_budget_bytes: usize = 6 * 1024 * 1024;
+
+/// スタック watermark の基準になる、最も浅い frame のアドレス。`Frame` は
+/// `executeFunction` のスタック上にしか作られないため、parent を辿った先が
+/// interpreter 実行の起点になる。
+fn stackRootAddress(self: *const Interpreter) ?usize {
+    var frame = self.active_frame orelse return null;
+    while (frame.parent) |parent| frame = parent;
+    return @intFromPtr(frame);
+}
+
 fn interruptSafepoint(self: *Interpreter) !void {
     self.interrupt_safepoint_count += 1;
     self.interrupt_budget_remaining = self.interrupt_budget_limit;
@@ -203,6 +234,14 @@ pub fn runEntries(self: *Interpreter) !Value {
 
 pub fn executeFunction(self: *Interpreter, function: *const ir.Function, arguments: []const Value, closure: ?*value_mod.Function, owner_program: *const ir.Program) anyerror!Value {
     if (self.call_depth >= self.max_call_depth) return error.CallStackLimitExceeded;
+    // 段数だけの上限は build mode 依存の実スタック消費と無関係で、debug では
+    // SIGSEGV の方が先に起きていた（実測 ~95KB/段）。起点 frame からの実
+    // アドレス差で残量を見積もり、ネイティブスタックが尽きる前に構造化
+    // エラーへ落とす。
+    if (stackRootAddress(self)) |root| {
+        const current = @frameAddress();
+        if (root > current and root - current > stack_budget_bytes) return error.CallStackLimitExceeded;
+    }
     self.call_depth += 1;
     defer self.call_depth -= 1;
     const prepared_program = try self.prepareProgram(owner_program);
@@ -1361,6 +1400,10 @@ fn makeBuiltinFunctionValue(self: *Interpreter, name: []const u8) !Value {
 
 pub fn executeDynamicValue(self: *Interpreter, source_value: Value) !Value {
     if (self.dynamic_depth >= self.max_dynamic_depth) return error.DynamicExecutionLimitExceeded;
+    // 生成済み program は interpreter 終了まで保持されるため、逐次評価を
+    // 繰り返すだけで保持量が線形に増える（リモートから叩ける経路がある）。
+    // 上限に達したら compile 前に構造化エラーで止める。
+    if (self.dynamic_programs.items.len >= max_dynamic_programs) return error.DynamicProgramLimitExceeded;
     const source_text = try self.runtime.valueToString(source_value);
     const source = try source_text.string.toUtf8Lossy(self.allocator);
     defer self.allocator.free(source);
@@ -1401,4 +1444,80 @@ pub fn executeDynamicValue(self: *Interpreter, source_value: Value) !Value {
     _ = try self.runEntries();
     try self.drainEventLoop();
     return self.runtime.stringUtf8(capture.items);
+}
+
+// ---------------------------------------------------------------------------
+// tests
+// ---------------------------------------------------------------------------
+
+/// execute.zig のガード（スタック watermark・動的評価の保持上限）を通すための
+/// 最小 fixture。source を parse→lower し、BufferHost 上で実行する。
+const GuardTestFixture = struct {
+    parsed: parser.ParseResult,
+    analyzed: semantic.Program,
+    hir_program: hir.Program,
+    ir_program: ir.Program,
+    runtime: Runtime,
+    host: istate.BufferHost,
+    interpreter: Interpreter,
+
+    fn init(allocator: std.mem.Allocator, source: []const u8) !*GuardTestFixture {
+        const self = try allocator.create(GuardTestFixture);
+        errdefer allocator.destroy(self);
+        self.parsed = try parser.parse(allocator, source, "main.nako3");
+        errdefer self.parsed.deinit();
+        self.analyzed = try semantic.analyze(allocator, self.parsed.root.?, "main.nako3");
+        errdefer self.analyzed.deinit();
+        self.hir_program = try hir.lowerSingle(allocator, self.parsed.root.?, "main", "main.nako3", self.analyzed);
+        errdefer self.hir_program.deinit();
+        self.ir_program = try lower_ssa.lower(allocator, self.hir_program);
+        errdefer self.ir_program.deinit();
+        self.runtime = Runtime.init(allocator);
+        errdefer self.runtime.deinit();
+        self.host = istate.BufferHost{ .allocator = allocator };
+        errdefer self.host.deinit();
+        self.interpreter = Interpreter.init(allocator, &self.runtime, self.ir_program, self.host.host());
+        return self;
+    }
+
+    fn deinit(self: *GuardTestFixture, allocator: std.mem.Allocator) void {
+        self.interpreter.deinit();
+        self.host.deinit();
+        self.runtime.deinit();
+        self.ir_program.deinit();
+        self.hir_program.deinit();
+        self.analyzed.deinit();
+        self.parsed.deinit();
+        allocator.destroy(self);
+    }
+};
+
+test "深い再帰は原生スタックを壊さず CallStackLimitExceeded で止まる" {
+    // 監査 fingerint: 4096 段の guard は debug の 1 段 ~40KB では発火せず、
+    // 深さ 200 で SIGSEGV（rc 250）していた。
+    const allocator = std.testing.allocator;
+    const source =
+        "●F(N)とは\n" ++
+        "　もしN≦0ならば\n" ++
+        "　　0で戻る\n" ++
+        "　ここまで\n" ++
+        "　X=F(N-1)\n" ++
+        "　Xで戻る\n" ++
+        "ここまで\n" ++
+        "F(4000)を表示\n";
+    var fixture = try GuardTestFixture.init(allocator, source);
+    defer fixture.deinit(allocator);
+    try std.testing.expectError(error.CallStackLimitExceeded, fixture.interpreter.run());
+}
+
+test "動的評価の program 保持は上限で止まる" {
+    const allocator = std.testing.allocator;
+    // 1 回ごとに新しい program を作るため、上限を超えた時点で構造化エラー。
+    const source =
+        "1から300まで繰り返す\n" ++
+        "　\"X=1\"をナデシコ\n" ++
+        "ここまで\n";
+    var fixture = try GuardTestFixture.init(allocator, source);
+    defer fixture.deinit(allocator);
+    try std.testing.expectError(error.DynamicProgramLimitExceeded, fixture.interpreter.run());
 }
