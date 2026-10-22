@@ -4,6 +4,7 @@ const diagnostic = @import("../frontend/diagnostic.zig");
 const parser = @import("../frontend/parser.zig");
 const token_mod = @import("../frontend/token.zig");
 const analyzer = @import("analyzer.zig");
+const effective = @import("module_graph_effective.zig");
 const variants = @import("module_graph_variants.zig");
 const builtin_catalog = @import("builtin_catalog.zig");
 
@@ -989,55 +990,11 @@ pub const Loader = struct {
         return module.index;
     }
 
-    /// 公式のreplaceRequireStatements相当: 各モジュールの取り込み文を逆順に
-    /// 処理し、filePath単位のガードで最初に処理された辺のみを実効辺にする。
-    /// エントリ自身はガードへ入れないため、循環取り込みでエントリの内容が
-    /// 一度だけ再展開される。
+    /// 公式のreplaceRequireStatements相当の実効辺決定は`module_graph_effective.zig`へ
+    /// 分離している（Loaderの状態を共有するためpubで公開する）。
     fn markEffectiveEdges(self: *Loader, entry: u32) !void {
-        const guarded = try self.allocator.alloc(bool, self.modules.items.len);
-        @memset(guarded, false);
-        var order_counter: u32 = 0;
-        try self.markEffectiveIn(entry, guarded, &order_counter);
+        try effective.markEffectiveEdges(self, entry);
     }
-
-    fn markEffectiveIn(self: *Loader, index: u32, guarded: []bool, order_counter: *u32) !void {
-        // 実効辺は取り込みの深さだけ深くなる。`loadOne`の深さ上限は読み込み時に
-        // 効くが、読み込み済みモジュールを再利用する辺（兄弟が先行を順に取り込む形）
-        // では`loadOne`が浅いままここだけ深くなるため、同じ上限で明示スタックにする。
-        var frames: std.ArrayList(EffectiveFrame) = .empty;
-        defer frames.deinit(self.allocator);
-        try frames.append(self.allocator, .{ .module = index, .cursor = self.modules.items[index].imports.len });
-        while (frames.items.len > 0) {
-            const frame = &frames.items[frames.items.len - 1];
-            if (frame.cursor == 0) {
-                _ = frames.pop();
-                continue;
-            }
-            frame.cursor -= 1;
-            const module = self.modules.items[frame.module];
-            const item = &module.imports[frame.cursor];
-            const target = item.target orelse continue;
-            const target_module = self.modules.items[target];
-            if (target_module.kind != .nako3 or target_module.parsed == null) continue;
-            // Namespace aliases point at a shared loaded module. The effective
-            // edge guard ensures each canonical export (or local file) is initialized once.
-            if (guarded[target]) continue;
-            guarded[target] = true;
-            target_module.expand_order = order_counter.*;
-            order_counter.* += 1;
-            item.effective = true;
-            if (frames.items.len >= max_import_depth) {
-                // 深さ上限はグラフの読み込み失敗として扱う（診断が残るので
-                // `succeeded()`が偽になり、呼び出し側が位置付きで表示する）。
-                try self.importDiagnosticAt(item.span, module.path, "取り込みの入れ子が深すぎます");
-                return;
-            }
-            try frames.append(self.allocator, .{ .module = target, .cursor = target_module.imports.len });
-        }
-    }
-
-    /// `markEffectiveIn`の走査位置。`module.imports`を末尾から先頭へ辿る。
-    const EffectiveFrame = struct { module: u32, cursor: usize };
 
     /// 実効辺に沿ってパーサモードを伝搬する。取り込み文位置のモードが
     /// 取り込み先の初期モードになり、取り込み先の終端モードが取り込み文の
