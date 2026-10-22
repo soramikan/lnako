@@ -71,9 +71,9 @@ pub fn callHttp(runtime: *Runtime, state: *State, context: Context, effects_opti
 
     const actual_effects = effects orelse return error.CallbackExecutionUnavailable;
     var request = if (std.mem.eql(u8, name, "POST送信時") or std.mem.eql(u8, name, "POST保障送信") or std.mem.eql(u8, name, "POST送信"))
-        try preparePostRequest(runtime, common.argument(arguments, if (callback_kind) 1 else 0), common.argument(arguments, if (callback_kind) 2 else 1), false, false)
+        try preparePostRequest(runtime, context, common.argument(arguments, if (callback_kind) 1 else 0), common.argument(arguments, if (callback_kind) 2 else 1), false, false)
     else if (std.mem.eql(u8, name, "POSTフォーム送信時") or std.mem.eql(u8, name, "POSTフォーム保障送信") or std.mem.eql(u8, name, "POSTフォーム送信"))
-        try preparePostRequest(runtime, common.argument(arguments, if (callback_kind) 1 else 0), common.argument(arguments, if (callback_kind) 2 else 1), true, std.mem.eql(u8, name, "POSTフォーム送信時"))
+        try preparePostRequest(runtime, context, common.argument(arguments, if (callback_kind) 1 else 0), common.argument(arguments, if (callback_kind) 2 else 1), true, std.mem.eql(u8, name, "POSTフォーム送信時"))
     else if (std.mem.eql(u8, name, "DISCORD送信"))
         try prepareDiscordRequest(runtime, common.argument(arguments, 0), common.argument(arguments, 1))
     else if (std.mem.eql(u8, name, "DISCORDファイル送信"))
@@ -198,7 +198,48 @@ fn prepareAjaxRequest(runtime: *Runtime, effects: Effects, url_value: Value) !Pr
     return result;
 }
 
-fn preparePostRequest(runtime: *Runtime, url_value: Value, parameters: Value, multipart: bool, omit_boundary_header: bool) !PreparedHttpRequest {
+const multipart_boundary_prefix = "----lnako-";
+const multipart_boundary_random_bytes = 16;
+const multipart_boundary_len = multipart_boundary_prefix.len + multipart_boundary_random_bytes * 2;
+
+/// 要求ごとの multipart boundary。固定値だと、値を `CRLF + boundary` で
+/// 組み立てるだけで本物の part（偽 field・偽 file・早期終端）を注入できる。
+fn multipartBoundary(context: Context, buffer: *[multipart_boundary_len]u8) ![]const u8 {
+    var random: [multipart_boundary_random_bytes]u8 = undefined;
+    if (context.randomBytesFn) |fill| {
+        fill(context.context, &random) catch return error.MultipartBoundaryUnavailable;
+    } else {
+        std.Io.random(std.Io.Threaded.global_single_threaded.io(), &random);
+    }
+    @memcpy(buffer[0..multipart_boundary_prefix.len], multipart_boundary_prefix);
+    const digits = "0123456789abcdef";
+    for (random, 0..) |byte, index| {
+        const offset = multipart_boundary_prefix.len + index * 2;
+        buffer[offset] = digits[byte >> 4];
+        buffer[offset + 1] = digits[byte & 0x0f];
+    }
+    return buffer[0..];
+}
+
+/// Content-Disposition の quoted-string へ名前を書く。`"` と `\` は
+/// backslash escape し、制御文字（CR/LF 等）は quoted-string に書けないため
+/// 拒否する（header 注入経路になる）。
+fn writeQuotedParam(writer: *std.Io.Writer, text: []const u8) !void {
+    for (text) |byte| {
+        switch (byte) {
+            '"', '\\' => {
+                try writer.writeByte('\\');
+                try writer.writeByte(byte);
+            },
+            else => {
+                if (byte < 0x20 or byte == 0x7f) return error.InvalidMultipartParam;
+                try writer.writeByte(byte);
+            },
+        }
+    }
+}
+
+fn preparePostRequest(runtime: *Runtime, context: Context, url_value: Value, parameters: Value, multipart: bool, omit_boundary_header: bool) !PreparedHttpRequest {
     const url = try valueUtf8(runtime, url_value);
     defer runtime.allocator().free(url);
     if (!multipart) {
@@ -210,7 +251,8 @@ fn preparePostRequest(runtime: *Runtime, url_value: Value, parameters: Value, mu
         try result.addHeader("Content-Type", "application/x-www-form-urlencoded");
         return result;
     }
-    const boundary = "----lnako-form-boundary-3.7.24";
+    var boundary_buffer: [multipart_boundary_len]u8 = undefined;
+    const boundary = try multipartBoundary(context, &boundary_buffer);
     const body = try multipartFields(runtime, parameters, boundary);
     defer runtime.allocator().free(body);
     var result = try PreparedHttpRequest.init(runtime.allocator(), "POST", url, body, true);
@@ -251,11 +293,15 @@ fn prepareDiscordFileRequest(runtime: *Runtime, context: Context, url_value: Val
     defer runtime.allocator().free(message);
     const bytes = try context.readFile(runtime.allocator(), path);
     defer runtime.allocator().free(bytes);
-    const boundary = "----lnako-discord-boundary-3.7.24";
+    var boundary_buffer: [multipart_boundary_len]u8 = undefined;
+    const boundary = try multipartBoundary(context, &boundary_buffer);
+    if (std.mem.indexOf(u8, message, boundary) != null) return error.MultipartFieldContainsBoundary;
     var body: std.Io.Writer.Allocating = .init(runtime.allocator());
     defer body.deinit();
     try body.writer.print("--{s}\r\nContent-Disposition: form-data; name=\"content\"\r\n\r\n{s}\r\n", .{ boundary, message });
-    try body.writer.print("--{s}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{s}\"\r\nContent-Type: application/octet-stream\r\n\r\n", .{ boundary, fs.nodeBasename(path) });
+    try body.writer.print("--{s}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"", .{boundary});
+    try writeQuotedParam(&body.writer, fs.nodeBasename(path));
+    try body.writer.writeAll("\"\r\nContent-Type: application/octet-stream\r\n\r\n");
     try body.writer.writeAll(bytes);
     try body.writer.print("\r\n--{s}--\r\n", .{boundary});
     var result = try PreparedHttpRequest.init(runtime.allocator(), "POST", url, body.written(), true);
@@ -292,7 +338,11 @@ fn multipartFields(runtime: *Runtime, parameters: Value, boundary: []const u8) !
         defer runtime.allocator().free(key_utf8);
         const value_utf8 = try valueUtf8(runtime, value);
         defer runtime.allocator().free(value_utf8);
-        try output.writer.print("--{s}\r\nContent-Disposition: form-data; name=\"{s}\"\r\n\r\n{s}\r\n", .{ boundary, key_utf8, value_utf8 });
+        // boundary は要求ごとの乱数だが、値に現れたら part が割れるため拒否する。
+        if (std.mem.indexOf(u8, value_utf8, boundary) != null) return error.MultipartFieldContainsBoundary;
+        try output.writer.print("--{s}\r\nContent-Disposition: form-data; name=\"", .{boundary});
+        try writeQuotedParam(&output.writer, key_utf8);
+        try output.writer.print("\"\r\n\r\n{s}\r\n", .{value_utf8});
     };
     try output.writer.print("--{s}--\r\n", .{boundary});
     return output.toOwnedSlice();
@@ -375,4 +425,64 @@ pub fn writeAjaxReceiveError(context: Context, result: CommandResult) !void {
         try context.writeStderr(result.stderr);
         if (result.stderr[result.stderr.len - 1] != '\n') try context.writeStderr("\n");
     } else try context.writeStderr("Error: fetch failed\n");
+}
+
+test "multipart boundary は要求ごとに変わり name の quote を安全にする" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var marker: u8 = 0;
+    const TestContext = struct {
+        fn cwd(_: *anyopaque, allocator: std.mem.Allocator) ![]u8 {
+            return allocator.dupe(u8, ".");
+        }
+    };
+    const TestRandom = struct {
+        var counter: u8 = 0;
+        fn fill(_: *anyopaque, output: []u8) !void {
+            for (output) |*byte| {
+                counter +%= 1;
+                byte.* = counter;
+            }
+        }
+    };
+    const context = Context{ .context = &marker, .cwdFn = TestContext.cwd, .randomBytesFn = TestRandom.fill };
+
+    var first_buffer: [multipart_boundary_len]u8 = undefined;
+    var second_buffer: [multipart_boundary_len]u8 = undefined;
+    const first = try multipartBoundary(context, &first_buffer);
+    const second = try multipartBoundary(context, &second_buffer);
+    try std.testing.expect(std.mem.startsWith(u8, first, multipart_boundary_prefix));
+    try std.testing.expectEqual(@as(usize, multipart_boundary_len), first.len);
+    try std.testing.expect(!std.mem.eql(u8, first, second));
+
+    var quoted: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer quoted.deinit();
+    try writeQuotedParam(&quoted.writer, "a\"b\\c");
+    try std.testing.expectEqualStrings("a\\\"b\\\\c", quoted.written());
+
+    var rejected: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer rejected.deinit();
+    try std.testing.expectError(error.InvalidMultipartParam, writeQuotedParam(&rejected.writer, "bad\rname"));
+}
+
+test "multipartFields は値に境界文字列が現れたら part を組み立てない" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var parameters = try runtime.createDictionary();
+    try roots.protect(&parameters);
+    try common.dictionarySetUtf8(&runtime, parameters.dictionary, "role", try runtime.stringUtf8("user"));
+
+    const boundary = "----lnako-test-boundary";
+    const body = try multipartFields(&runtime, parameters, boundary);
+    defer std.testing.allocator.free(body);
+    try std.testing.expect(std.mem.indexOf(u8, body, "name=\"role\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "----lnako-test-boundary--") != null);
+
+    // 監査時の再現: 値に CRLF + boundary を混ぜると本物の part を注入できた。
+    const injection = try std.fmt.allocPrint(std.testing.allocator, "user\r\n--{s}\r\nContent-Disposition: form-data; name=\"role\"\r\n\r\nadmin", .{boundary});
+    defer std.testing.allocator.free(injection);
+    try common.dictionarySetUtf8(&runtime, parameters.dictionary, "role", try runtime.stringUtf8(injection));
+    try std.testing.expectError(error.MultipartFieldContainsBoundary, multipartFields(&runtime, parameters, boundary));
 }

@@ -211,11 +211,50 @@ pub fn aotClientMultipartFields(runtime: *Runtime, parameters: Value, boundary: 
             defer runtime.allocator.free(key);
             const value = try valueUtf8LossyAlloc(runtime, entry.value);
             defer runtime.allocator.free(value);
-            try output.writer.print("--{s}\r\nContent-Disposition: form-data; name=\"{s}\"\r\n\r\n{s}\r\n", .{ boundary, key, value });
+            // boundary は要求ごとの乱数だが、値に現れたら part が割れるため拒否する。
+            if (std.mem.indexOf(u8, value, boundary) != null) return error.MultipartFieldContainsBoundary;
+            try output.writer.print("--{s}\r\nContent-Disposition: form-data; name=\"", .{boundary});
+            try aotClientWriteQuotedParam(&output.writer, key);
+            try output.writer.print("\"\r\n\r\n{s}\r\n", .{value});
         }
     }
     try output.writer.print("--{s}--\r\n", .{boundary});
     return output.toOwnedSlice();
+}
+
+const aot_multipart_boundary_prefix = "----lnako-";
+const aot_multipart_boundary_random_bytes = 16;
+const aot_multipart_boundary_len = aot_multipart_boundary_prefix.len + aot_multipart_boundary_random_bytes * 2;
+
+/// 要求ごとの multipart boundary（interpreter 側 `plugins/node/http.zig` と
+/// 同じ形式）。固定値は `CRLF + boundary` を含む値で part を注入できる。
+fn aotClientMultipartBoundary(runtime: *Runtime, buffer: *[aot_multipart_boundary_len]u8) []const u8 {
+    var random: [aot_multipart_boundary_random_bytes]u8 = undefined;
+    std.Io.random(aotRuntimeIo(runtime), &random);
+    @memcpy(buffer[0..aot_multipart_boundary_prefix.len], aot_multipart_boundary_prefix);
+    const digits = "0123456789abcdef";
+    for (random, 0..) |byte, index| {
+        const offset = aot_multipart_boundary_prefix.len + index * 2;
+        buffer[offset] = digits[byte >> 4];
+        buffer[offset + 1] = digits[byte & 0x0f];
+    }
+    return buffer[0..];
+}
+
+/// Content-Disposition の quoted-string。`"`/`\` は escape、制御文字は拒否。
+fn aotClientWriteQuotedParam(writer: *std.Io.Writer, text: []const u8) !void {
+    for (text) |byte| {
+        switch (byte) {
+            '"', '\\' => {
+                try writer.writeByte('\\');
+                try writer.writeByte(byte);
+            },
+            else => {
+                if (byte < 0x20 or byte == 0x7f) return error.InvalidMultipartParam;
+                try writer.writeByte(byte);
+            },
+        }
+    }
 }
 
 pub fn aotClientPreparePost(runtime: *Runtime, url_value: Value, parameters: Value, multipart: bool, omit_boundary_header: bool) !AotClientHttpRequest {
@@ -229,7 +268,8 @@ pub fn aotClientPreparePost(runtime: *Runtime, url_value: Value, parameters: Val
         try request.addHeader("Content-Type", "application/x-www-form-urlencoded");
         return request;
     }
-    const boundary = "----lnako-form-boundary-3.7.24";
+    var boundary_buffer: [aot_multipart_boundary_len]u8 = undefined;
+    const boundary = aotClientMultipartBoundary(runtime, &boundary_buffer);
     const body = try aotClientMultipartFields(runtime, parameters, boundary);
     defer runtime.allocator.free(body);
     var request = try AotClientHttpRequest.init(runtime.allocator, "POST", url, body, true);
@@ -271,11 +311,15 @@ pub fn aotClientPrepareDiscordFile(runtime: *Runtime, url_value: Value, file_val
     defer runtime.allocator.free(message);
     const bytes = try std.Io.Dir.cwd().readFileAlloc(aotRuntimeIo(runtime), path, runtime.allocator, .limited(1024 * 1024 * 1024));
     defer runtime.allocator.free(bytes);
-    const boundary = "----lnako-discord-boundary-3.7.24";
+    var boundary_buffer: [aot_multipart_boundary_len]u8 = undefined;
+    const boundary = aotClientMultipartBoundary(runtime, &boundary_buffer);
+    if (std.mem.indexOf(u8, message, boundary) != null) return error.MultipartFieldContainsBoundary;
     var body: std.Io.Writer.Allocating = .init(runtime.allocator);
     defer body.deinit();
     try body.writer.print("--{s}\r\nContent-Disposition: form-data; name=\"content\"\r\n\r\n{s}\r\n", .{ boundary, message });
-    try body.writer.print("--{s}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{s}\"\r\nContent-Type: application/octet-stream\r\n\r\n", .{ boundary, nodeBasename(path) });
+    try body.writer.print("--{s}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"", .{boundary});
+    try aotClientWriteQuotedParam(&body.writer, nodeBasename(path));
+    try body.writer.writeAll("\"\r\nContent-Type: application/octet-stream\r\n\r\n");
     try body.writer.writeAll(bytes);
     try body.writer.print("\r\n--{s}--\r\n", .{boundary});
     var request = try AotClientHttpRequest.init(runtime.allocator, "POST", url, body.written(), true);
