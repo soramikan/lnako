@@ -3,6 +3,15 @@ const builtin = @import("builtin");
 const shared = @import("shared.zig");
 const state = @import("state.zig");
 
+/// `lnako_aot_function_call`の再帰上限。AOTは1段あたり1〜2フレームで、
+/// Windowsの既定1MiBスタックでも収まる範囲に取る。超過は
+/// `CallStackLimitExceeded`として捕捉可能な実行時エラーになる。
+pub const max_aot_call_depth: usize = 1024;
+
+/// 現在のAOTコールバック入れ子数。AOTランタイムは`active_runtime`と同様に
+/// 単一スレッド前提なので、プロセス全体で1つのカウンタで足りる。
+var aot_call_depth: usize = 0;
+
 /// Registers one absolute native-plugin path embedded by the LLVM module.
 /// Loading is deferred until the first plugin command so AOT startup retains
 /// the same lazy behavior as the Interpreter while keeping the normal path
@@ -266,6 +275,14 @@ pub export fn lnako_aot_function_capture(out: *state.Value, context: *anyopaque,
 pub export fn lnako_aot_function_call(out: *state.Value, callable: *const state.Value, arguments: ?[*]const state.Value, len: usize) callconv(.c) void {
     out.* = .{};
     const runtime = if (state.active_runtime) |*active| active else return;
+    if (aot_call_depth >= max_aot_call_depth) {
+        // 生成コードのcallはすべてここを通る。1段あたり数フレームのCスタックを
+        // 消費するため、枯渇より手前で捕捉可能な実行時エラーへ落とす。
+        runtime.setFailure(error.CallStackLimitExceeded);
+        return;
+    }
+    aot_call_depth += 1;
+    defer aot_call_depth -= 1;
     if (callable.tag != @backingInt(shared.Tag.function)) state.runtimeFailure(error.NotCallable);
     const object = callable.object() orelse state.runtimeFailure(error.NotCallable);
     if (object.payload != .function) state.runtimeFailure(error.NotCallable);
@@ -322,4 +339,29 @@ pub export fn lnako_aot_function_call(out: *state.Value, callable: *const state.
     }
     const callback_len = if (function.generated_wrapper) len else function.arity;
     function.callback(out, @ptrCast(object), call_arguments, callback_len);
+}
+
+var test_call_depth_callback_invoked = false;
+
+fn testCallDepthCallback(_: *state.Value, _: *anyopaque, _: ?[*]const state.Value, _: usize) callconv(.c) void {
+    test_call_depth_callback_invoked = true;
+}
+
+test "AOT関数呼び出しは入れ子上限でCallStackLimitExceededを返す" {
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = if (state.active_runtime) |*value| value else unreachable;
+    var callable = try active.createFunction(testCallDepthCallback, 0, &.{});
+    aot_call_depth = max_aot_call_depth;
+    defer aot_call_depth = 0;
+
+    var out: state.Value = .{};
+    lnako_aot_function_call(&out, &callable, null, 0);
+    try std.testing.expect(!test_call_depth_callback_invoked);
+    try std.testing.expect(state.active_runtime.?.has_pending_exception);
 }

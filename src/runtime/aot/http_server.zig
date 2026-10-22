@@ -316,23 +316,42 @@ pub fn pollAotHttpServer(runtime: *Runtime) !bool {
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
-    roots[0] = try aotHttpParseQuery(runtime, request.target);
+
+    // 受信後の要求処理エラー（不正なquery・静的パス、アップロード保存の
+    // 失敗）は1回だけ応答して要求を捨て、プロセスを終了させない。
+    return handleAotHttpRequest(runtime, &request, &roots) catch |err| {
+        if (err == error.OutOfMemory) return err;
+        return aotHttpReject(runtime, 500);
+    };
+}
+
+/// 受信済み要求の解析・配送。クライアント起因の失敗は`aotHttpReject`で
+/// 400にして捨てる（Interpreter側`poll`と同じ分類）。
+fn handleAotHttpRequest(runtime: *Runtime, request: *const AotHttpRequest, roots: *[4]Value) !bool {
+    roots[0] = aotHttpParseQuery(runtime, request.target) catch |err| switch (err) {
+        error.InvalidHttpQueryEncoding => return aotHttpReject(runtime, 400),
+        else => return err,
+    };
     roots[1] = try runtime.createArray(&.{});
     roots[2] = try runtime.createDictionary(&.{});
-    if (std.ascii.eqlIgnoreCase(request.method, "POST")) roots[2] = try aotHttpParsePost(runtime, request.content_type, request.body, roots[1]);
-    roots[3] = try runtimeUtf8String(runtime, request.method);
-    if (runtime.http_globals) |globals| {
-        if (globals.method) |pointer| pointer.* = roots[3];
-        if (globals.get_data) |pointer| pointer.* = roots[0];
-        if (globals.post_data) |pointer| pointer.* = roots[2];
-        if (globals.files_data) |pointer| pointer.* = roots[1];
-    }
-
     const path = aotHttpPathOnly(request.target);
     const route = aotHttpBestRoute(runtime.http_server_state.routes.items, path) orelse {
+        // 本文の解析（multipartのアップロード永続化を含む）は配送先が
+        // 決まった要求だけで行う。未登録URLのPOSTで一時ファイルを残さない。
+        roots[3] = try runtimeUtf8String(runtime, request.method);
+        aotHttpSetRequestGlobals(runtime, roots);
         try aotHttpHold(runtime);
         return true;
     };
+    if (std.ascii.eqlIgnoreCase(request.method, "POST")) {
+        roots[2] = aotHttpParsePost(runtime, request.content_type, request.body, roots[1]) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            // 本文の解析失敗は保存先の障害を含むため500で返す。
+            return aotHttpReject(runtime, 500);
+        };
+    }
+    roots[3] = try runtimeUtf8String(runtime, request.method);
+    aotHttpSetRequestGlobals(runtime, roots);
     if (route.kind == .static) {
         try aotHttpServeStatic(runtime, route, path);
         return true;
@@ -348,6 +367,25 @@ pub fn pollAotHttpServer(runtime: *Runtime) !bool {
     }
     return true;
 }
+
+fn aotHttpSetRequestGlobals(runtime: *Runtime, roots: *const [4]Value) void {
+    if (runtime.http_globals) |globals| {
+        if (globals.method) |pointer| pointer.* = roots[3];
+        if (globals.get_data) |pointer| pointer.* = roots[0];
+        if (globals.post_data) |pointer| pointer.* = roots[2];
+        if (globals.files_data) |pointer| pointer.* = roots[1];
+    }
+}
+
+/// 受信後の要求処理で起きた失敗は1回だけ応答して捨てる。
+fn aotHttpReject(runtime: *Runtime, status: u16) !bool {
+    try aotHttpRespondWith(runtime, status, &.{}, if (status >= 500) aot_http_internal_error_body else aot_http_bad_request_body);
+    return true;
+}
+
+const aot_http_bad_request_body = "<html><meta charset=\"utf-8\"><body><h1>400 要求が不正です。</h1></body></html>";
+const aot_http_internal_error_body = "<html><meta charset=\"utf-8\"><body><h1>500 サーバ内部エラーです。</h1></body></html>";
+const aot_http_not_found_body = "<html><meta charset=\"utf-8\"><body><h1>404 見当たりません。</h1></body></html>";
 
 /// 受信完了した要求をengineのqueueから取り出す。header/body受信自体は
 /// 接続単位のworker threadが担うため、低速・切断した接続はこのloopを
@@ -579,29 +617,52 @@ pub fn aotHttpPercentDecode(allocator: std.mem.Allocator, source: []const u8, pl
 }
 
 pub fn aotHttpServeStatic(runtime: *Runtime, route: AotHttpRoute, path: []const u8) !void {
+    const io = aotHttpIo();
     const relative_raw = path[@min(route.prefix.len, path.len)..];
     const sanitized = try aotHttpRemoveParentSegments(runtime.allocator, relative_raw);
     defer runtime.allocator.free(sanitized);
-    var full_path = try std.fs.path.join(runtime.allocator, &.{ route.path, std.mem.trimStart(u8, sanitized, "/\\") });
-    defer runtime.allocator.free(full_path);
-    switch (try aotHttpStatPath(full_path)) {
-        .missing => return aotHttpRespondWith(runtime, 404, &.{}, "<html><meta charset=\"utf-8\"><body><h1>404 見当たりません。</h1></body></html>"),
+    // docrootと配信対象の両方を実パスへ解決し、配信対象がdocroot配下に
+    // あることを確認する。文字列比較だけではdocroot内のsymlinkが外を
+    // 指す場合を検出できない（Interpreter側resolveHttpServerStaticPathと
+    // 同じ判定）。
+    const root_real = std.Io.Dir.cwd().realPathFileAlloc(io, route.path, runtime.allocator) catch |err| switch (err) {
+        error.FileNotFound => return aotHttpRespondWith(runtime, 404, &.{}, aot_http_not_found_body),
+        else => return err,
+    };
+    defer runtime.allocator.free(root_real);
+    var target = try std.fs.path.join(runtime.allocator, &.{ root_real, std.mem.trimStart(u8, sanitized, "/\\") });
+    defer runtime.allocator.free(target);
+    switch (try aotHttpStatPath(target)) {
+        .missing => return aotHttpRespondWith(runtime, 404, &.{}, aot_http_not_found_body),
         .directory => {
-            const index_path = try std.fs.path.join(runtime.allocator, &.{ full_path, "index.html" });
-            runtime.allocator.free(full_path);
-            full_path = index_path;
-            if (try aotHttpStatPath(full_path) != .file) return aotHttpRespondWith(runtime, 404, &.{}, "<html><meta charset=\"utf-8\"><body><h1>404 見当たりません。</h1></body></html>");
+            const index_path = try std.fs.path.join(runtime.allocator, &.{ target, "index.html" });
+            runtime.allocator.free(target);
+            target = index_path;
+            if (try aotHttpStatPath(target) != .file) return aotHttpRespondWith(runtime, 404, &.{}, aot_http_not_found_body);
         },
         .file => {},
     }
-    const body = try std.Io.Dir.cwd().readFileAlloc(aotHttpIo(), full_path, runtime.allocator, .limited(1024 * 1024 * 1024));
+    const resolved = std.Io.Dir.cwd().realPathFileAlloc(io, target, runtime.allocator) catch |err| switch (err) {
+        error.FileNotFound => return aotHttpRespondWith(runtime, 404, &.{}, aot_http_not_found_body),
+        else => return err,
+    };
+    defer runtime.allocator.free(resolved);
+    if (!aotHttpIsUnderRoot(resolved, root_real)) return aotHttpRespondWith(runtime, 404, &.{}, aot_http_not_found_body);
+    const body = try std.Io.Dir.cwd().readFileAlloc(io, resolved, runtime.allocator, .limited(1024 * 1024 * 1024));
     defer runtime.allocator.free(body);
     const saved_status = runtime.http_server_state.response_status;
     runtime.http_server_state.response_status = 200;
     runtime.http_server_state.clearHeaders(runtime.allocator);
-    try aotHttpAppendHeader(runtime, "Content-Type", aotHttpMimeType(full_path));
+    try aotHttpAppendHeader(runtime, "Content-Type", aotHttpMimeType(resolved));
     defer runtime.http_server_state.response_status = saved_status;
     return aotHttpRespondSafe(runtime, body);
+}
+
+fn aotHttpIsUnderRoot(resolved: []const u8, root: []const u8) bool {
+    if (resolved.len < root.len) return false;
+    if (!std.mem.startsWith(u8, resolved, root)) return false;
+    if (resolved.len == root.len) return true;
+    return std.fs.path.isSep(resolved[root.len]);
 }
 
 pub fn aotHttpRespondWith(runtime: *Runtime, status: u16, headers: []const AotHttpHeader, body: []const u8) !void {
@@ -702,6 +763,112 @@ fn expectAotHttpClientClosed(client: std.Io.net.Stream, io: std.Io) !void {
     var reader = client.reader(io, &buffer);
     const line = reader.interface.takeDelimiter('\n') catch return;
     try std.testing.expect(line == null);
+}
+
+/// 応答全体を読み、status行・本文断片・禁止断片を検査する。
+fn expectAotHttpResponse(client: std.Io.net.Stream, io: std.Io, status: []const u8, body: ?[]const u8, forbidden: ?[]const u8) !void {
+    var buffer: [4096]u8 = undefined;
+    var reader = client.reader(io, &buffer);
+    const response = try reader.interface.allocRemaining(std.testing.allocator, .limited(64 * 1024));
+    defer std.testing.allocator.free(response);
+    try std.testing.expect(std.mem.startsWith(u8, response, status));
+    if (body) |expected| try std.testing.expect(std.mem.indexOf(u8, response, expected) != null);
+    if (forbidden) |unexpected| try std.testing.expect(std.mem.indexOf(u8, response, unexpected) == null);
+}
+
+test "AOT HTTPは不正query encodingを400で捨てて要求処理を続ける" {
+    const io = aotHttpIo();
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+    runtime.http_server = try address.listen(io, .{ .reuse_address = true });
+    try aotHttpIngressStart(&runtime);
+    runtime.http_server_state.started = true;
+    const port = runtime.http_server.?.socket.address.getPort();
+
+    for (0..2) |_| {
+        var client = try aotHttpTestSendRequest(io, port, "GET /echo?x=%GG HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        defer client.close(io);
+        // pollはエラーを返さず400を書き、次の要求を受け付ける。
+        try std.testing.expect(try pollAotHttpServer(&runtime));
+        try std.testing.expect(runtime.http_connection == null);
+        try expectAotHttpResponse(client, io, "HTTP/1.1 400", null, null);
+    }
+}
+
+test "AOT HTTP静的配信はdocroot外を指すsymlinkを404にする" {
+    const io = aotHttpIo();
+    var docroot = std.testing.tmpDir(.{});
+    defer docroot.cleanup();
+    var outside = std.testing.tmpDir(.{});
+    defer outside.cleanup();
+    try docroot.dir.writeFile(io, .{ .sub_path = "hello.txt", .data = "hello" });
+    try outside.dir.writeFile(io, .{ .sub_path = "secret.txt", .data = "OUTSIDE-SECRET" });
+    const docroot_path = try docroot.dir.realPathFileAlloc(io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(docroot_path);
+    const outside_path = try outside.dir.realPathFileAlloc(io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(outside_path);
+    const secret_path = try std.fs.path.join(std.testing.allocator, &.{ outside_path, "secret.txt" });
+    defer std.testing.allocator.free(secret_path);
+    const link_path = try std.fs.path.join(std.testing.allocator, &.{ docroot_path, "leak" });
+    defer std.testing.allocator.free(link_path);
+    try std.Io.Dir.symLinkAbsolute(io, secret_path, link_path, .{});
+
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+    runtime.http_server = try address.listen(io, .{ .reuse_address = true });
+    try aotHttpIngressStart(&runtime);
+    runtime.http_server_state.started = true;
+    const port = runtime.http_server.?.socket.address.getPort();
+    var route = AotHttpRoute{
+        .kind = .static,
+        .prefix = try runtime.allocator.dupe(u8, "/static"),
+        .path = try runtime.allocator.dupe(u8, docroot_path),
+    };
+    defer route.deinit(runtime.allocator);
+
+    var inside = try aotHttpTestSendRequest(io, port, "GET /static/hello.txt HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    defer inside.close(io);
+    var inside_request = try aotHttpReceiveRequest(&runtime);
+    defer inside_request.deinit();
+    try aotHttpServeStatic(&runtime, route, aotHttpPathOnly(inside_request.target));
+    try expectAotHttpResponse(inside, io, "HTTP/1.1 200", "hello", null);
+
+    var escaped = try aotHttpTestSendRequest(io, port, "GET /static/leak HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    defer escaped.close(io);
+    var escaped_request = try aotHttpReceiveRequest(&runtime);
+    defer escaped_request.deinit();
+    try aotHttpServeStatic(&runtime, route, aotHttpPathOnly(escaped_request.target));
+    try expectAotHttpResponse(escaped, io, "HTTP/1.1 404", null, "OUTSIDE-SECRET");
+}
+
+test "AOT HTTPは未登録URLへのmultipart POSTで本文を解析しない" {
+    const io = aotHttpIo();
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+    runtime.http_server = try address.listen(io, .{ .reuse_address = true });
+    try aotHttpIngressStart(&runtime);
+    runtime.http_server_state.started = true;
+    const port = runtime.http_server.?.socket.address.getPort();
+
+    var method: Value = .{};
+    var get_data: Value = .{};
+    var post_data: Value = .{};
+    var files_data: Value = .{};
+    runtime.http_globals = .{ .method = &method, .get_data = &get_data, .post_data = &post_data, .files_data = &files_data };
+
+    const body = "--X\r\nContent-Disposition: form-data; name=\"f\"; filename=\"leak.bin\"\r\n\r\nDATA\r\n--X--\r\n";
+    const request_bytes = try std.fmt.allocPrint(runtime.allocator, "POST /nohandler HTTP/1.1\r\nHost: localhost\r\nContent-Type: multipart/form-data; boundary=X\r\nContent-Length: {d}\r\n\r\n{s}", .{ body.len, body });
+    defer runtime.allocator.free(request_bytes);
+    var client = try aotHttpTestSendRequest(io, port, request_bytes);
+    defer client.close(io);
+    try std.testing.expect(try pollAotHttpServer(&runtime));
+    // 未登録URLは接続を保持するだけで、本文の解析もアップロード保存もしない。
+    try std.testing.expectEqual(@as(usize, 1), runtime.held_http_connections.items.len);
+    try std.testing.expectEqual(@as(usize, 0), files_data.object().?.payload.array.items.len);
+    try std.testing.expectEqual(@as(usize, 0), post_data.object().?.payload.dictionary.entries.items.len);
 }
 
 test "AOT HTTPは途中切断と不正chunk/header後に次の要求を受け付ける" {
