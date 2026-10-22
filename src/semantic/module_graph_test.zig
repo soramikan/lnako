@@ -1629,3 +1629,90 @@ test "package ESM の未登録 bare は fail-closed" {
     defer graph.deinit();
     try std.testing.expect(!graph.succeeded());
 }
+
+test "取り込みの入れ子が上限を超えたら診断で止まる" {
+    // `loadOne`は取り込み先ごとに自己再帰するため、深い連鎖はプロセススタックを
+    // 使い切る。上限を超えた連鎖は位置付き診断になり、クラッシュしない。
+    var files: std.ArrayList(MemoryProvider.File) = .empty;
+    defer {
+        for (files.items) |file| {
+            std.testing.allocator.free(file.suffix);
+            std.testing.allocator.free(file.source);
+        }
+        files.deinit(std.testing.allocator);
+    }
+    const depth = module_graph.max_import_depth + 8;
+    var index: usize = 0;
+    while (index < depth) : (index += 1) {
+        const suffix = try std.fmt.allocPrint(std.testing.allocator, "chain{d}.nako3", .{index});
+        const source = if (index + 1 < depth)
+            try std.fmt.allocPrint(std.testing.allocator, "!「chain{d}.nako3」を取り込む\n", .{index + 1})
+        else
+            try std.testing.allocator.dupe(u8, "1を表示\n");
+        try files.append(std.testing.allocator, .{ .suffix = suffix, .source = source });
+    }
+    var memory = MemoryProvider{ .files = files.items };
+    var graph = try load(std.testing.allocator, "chain0.nako3", memory.sourceProvider(), .{});
+    defer graph.deinit();
+    try std.testing.expect(!graph.succeeded());
+    var found_depth_diagnostic = false;
+    for (graph.diagnostics) |item| {
+        if (item.code != diagnostic.Code.invalid_import) continue;
+        if (!std.mem.eql(u8, item.message, "取り込みの入れ子が深すぎます")) continue;
+        found_depth_diagnostic = true;
+        // 診断の`span`は取り込み元の取り込み文を指すため、`file`も取り込み元
+        // （chain511）でなければならない。読み込めなかった側（chain512）を指すと
+        // 位置とファイルが食い違う。
+        try std.testing.expect(std.mem.endsWith(u8, item.file, "chain511.nako3"));
+    }
+    try std.testing.expect(found_depth_diagnostic);
+    // 上限まで読み込んだ分だけmoduleが登録される（上限+1以降は読まない）。
+    try std.testing.expectEqual(module_graph.max_import_depth, graph.modules.len);
+}
+
+test "読み込み済みモジュールを再利用する深い辺も診断で止まる" {
+    // エントリが全モジュールを兄弟として取り込み、各モジュールが直前の
+    // モジュールを取り込む形。取り込みは`loadOne`の兄弟呼び出しなので
+    // 読み込みの深さは2のままだが、実効辺の走査だけが連鎖の長さだけ深くなる。
+    // ここに上限が無いと、読み込み時の上限をすり抜けてプロセススタックを使い切る。
+    var files: std.ArrayList(MemoryProvider.File) = .empty;
+    defer {
+        for (files.items) |file| {
+            std.testing.allocator.free(file.suffix);
+            std.testing.allocator.free(file.source);
+        }
+        files.deinit(std.testing.allocator);
+    }
+    const count = module_graph.max_import_depth + 8;
+    var index: usize = 0;
+    while (index < count) : (index += 1) {
+        const suffix = try std.fmt.allocPrint(std.testing.allocator, "flat{d}.nako3", .{index});
+        const source = if (index == 0) blk: {
+            var buffer: std.ArrayList(u8) = .empty;
+            errdefer buffer.deinit(std.testing.allocator);
+            var sibling: usize = 1;
+            while (sibling < count) : (sibling += 1) {
+                const line = try std.fmt.allocPrint(std.testing.allocator, "!「flat{d}.nako3」を取り込む\n", .{sibling});
+                defer std.testing.allocator.free(line);
+                try buffer.appendSlice(std.testing.allocator, line);
+            }
+            break :blk try buffer.toOwnedSlice(std.testing.allocator);
+        } else if (index == 1)
+            try std.testing.allocator.dupe(u8, "1を表示\n")
+        else
+            try std.fmt.allocPrint(std.testing.allocator, "!「flat{d}.nako3」を取り込む\n", .{index - 1});
+        try files.append(std.testing.allocator, .{ .suffix = suffix, .source = source });
+    }
+    var memory = MemoryProvider{ .files = files.items };
+    var graph = try load(std.testing.allocator, "flat0.nako3", memory.sourceProvider(), .{});
+    defer graph.deinit();
+    try std.testing.expect(!graph.succeeded());
+    var found_depth_diagnostic = false;
+    for (graph.diagnostics) |item| {
+        if (item.code != diagnostic.Code.invalid_import) continue;
+        if (!std.mem.eql(u8, item.message, "取り込みの入れ子が深すぎます")) continue;
+        found_depth_diagnostic = true;
+        try std.testing.expect(std.mem.indexOf(u8, item.file, "flat") != null);
+    }
+    try std.testing.expect(found_depth_diagnostic);
+}

@@ -160,6 +160,10 @@ fn writeTypedFunction(emitter: *Emitter, function: ir.Function, scalar: typed_ab
             for (locals, 0..) |name, index| {
                 const local_scalar = typed_analysis.localScalar(function, name) orelse return error.InvalidTypedLocal;
                 try emitter.output.writer.print("  %typed.local.{d} = alloca {s}\n", .{ index, local_scalar.llvmType() });
+                // 未代入のローカルはインタプリタで`undefined`（数値NaN・真偽false）になる。
+                // allocaだけだと未初期化のスタック値が読まれ、i1ローカルでは
+                // `br i1 undef`という完全なUBにもなるため、入口で意味論上の値にする。
+                try emitter.output.writer.print("  store {s} {s}, ptr %typed.local.{d}\n", .{ local_scalar.llvmType(), local_scalar.defaultValue(), index });
             }
             for (function.parameters, 0..) |parameter, parameter_index| {
                 const local_index = context.nameIndex(locals, parameter.name) orelse return error.InvalidTypedLocal;

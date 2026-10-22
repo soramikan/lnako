@@ -44,7 +44,7 @@ pub fn parseOperatorTail(self: *Parser, left: *ast.Node, minimum_precedence: u8)
             result = binary;
         }
     }
-    if (minimum_precedence == 0 and result.kind == .binary_operator) helpers.propagateOperatorJosi(result, result.josi);
+    if (minimum_precedence == 0 and result.kind == .binary_operator) try helpers.propagateOperatorJosi(self.allocator, result, result.josi);
     return result;
 }
 

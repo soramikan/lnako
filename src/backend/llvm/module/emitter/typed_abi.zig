@@ -32,6 +32,16 @@ pub const Scalar = enum {
             .boolean => 2,
         };
     }
+
+    /// 未代入のローカルがインタプリタで持つ値（`undefined`）に対応する定数。
+    /// `Value.toNumber(undefined)`はNaN、`Value.toBoolean(undefined)`はfalseなので、
+    /// 内部bodyの入口でこの値に初期化すれば意味論が一致する。
+    pub fn defaultValue(self: Scalar) []const u8 {
+        return switch (self) {
+            .number => "0x7FF8000000000000",
+            .boolean => "false",
+        };
+    }
 };
 
 const Evidence = union(enum) {

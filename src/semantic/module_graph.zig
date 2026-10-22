@@ -4,6 +4,7 @@ const diagnostic = @import("../frontend/diagnostic.zig");
 const parser = @import("../frontend/parser.zig");
 const token_mod = @import("../frontend/token.zig");
 const analyzer = @import("analyzer.zig");
+const effective = @import("module_graph_effective.zig");
 const variants = @import("module_graph_variants.zig");
 const builtin_catalog = @import("builtin_catalog.zig");
 
@@ -133,6 +134,11 @@ pub const Options = struct {
     /// エントリモジュールへ強制する構文モード（--dncl / --dncl2）。
     forced_mode: token_mod.Mode = .{},
 };
+
+/// 取り込みの入れ子の上限。`loadOne`は取り込み先ごとに自己再帰するため、
+/// 深い連鎖はプロセススタックを使い切ってSIGSEGVする。1ファイルのAST上限
+/// （`parser.max_ast_depth`）と同じく、実用上あり得ない深さで位置付き診断に収束させる。
+pub const max_import_depth: usize = 512;
 pub const ModuleKind = enum { nako3, javascript, native_plugin };
 pub const LoadState = enum { loading, loaded };
 
@@ -603,7 +609,7 @@ pub fn load(backing_allocator: std.mem.Allocator, entry_path: []const u8, provid
     };
     errdefer loader.deinitModules();
     const normalized_entry = try normalizePath(loader.allocator, entry_path);
-    const entry = try loader.loadOne(normalized_entry, null, null, null, null, null);
+    const entry = try loader.loadOne(normalized_entry, null, null, null, null, null, null);
     // 実効辺の決定とモード伝搬は全モジュール読み込み後に行う。
     // 公式のreplaceRequireStatementsは取り込み文を逆順に処理し、filePath単位の
     // include guardで最初に処理された辺だけへ内容を展開する（同一ファイルの
@@ -644,6 +650,9 @@ pub const Loader = struct {
     modules: std.ArrayList(*LoadedModule) = .empty,
     canonical_aliases: std.ArrayList(PathAlias) = .empty,
     diagnostics: std.ArrayList(diagnostic.Diagnostic) = .empty,
+    /// `loadOne`の現在の再帰の深さ。取り込み1件ごとに1増える。
+    /// 上限を超えた入力はプロセススタックを使い切る前に位置付き診断にする。
+    load_depth: usize = 0,
 
     fn deinitModules(self: *Loader) void {
         for (self.modules.items) |module| {
@@ -664,7 +673,17 @@ pub const Loader = struct {
 
     /// `initial` は取り込み文位置で有効だったパーサモード（取り込み元からの継承）。
     /// 字句変換には波及せず、添字・自動初期化の意味づけのみに効く。
-    fn loadOne(self: *Loader, path: []const u8, import_node: ?*ast.Node, initial: ?token_mod.Mode, namespace_override: ?[]const u8, canonical_id: ?[]const u8, inheritance: ?PackageInheritance) anyerror!u32 {
+    /// `import_origin` は取り込み文を持つファイル（取り込み元）。診断の`file`を
+    /// `import_node`の`span`と同じファイルに揃えるために使う。
+    fn loadOne(self: *Loader, path: []const u8, import_node: ?*ast.Node, import_origin: ?[]const u8, initial: ?token_mod.Mode, namespace_override: ?[]const u8, canonical_id: ?[]const u8, inheritance: ?PackageInheritance) anyerror!u32 {
+        // 取り込みは`loadOne`の自己再帰で読むため、深い連鎖はプロセススタックを
+        // 使い切る。解析前に位置付き診断へ収束させる（`max_ast_depth`と同じ方針）。
+        if (self.load_depth >= max_import_depth) {
+            try self.importDiagnostic(import_node, import_origin orelse path, "取り込みの入れ子が深すぎます");
+            return error.ImportDepthExceeded;
+        }
+        self.load_depth += 1;
+        defer self.load_depth -= 1;
         // owner は import edge が resolver から受け取った独立フィールドを使う。
         // canonical_id 末尾の `/` から逆算すると `api/v1` のような export 名で
         // `pkg:x/api` を誤った owner にしてしまうため、名前からの復元はしない。
@@ -815,7 +834,7 @@ pub const Loader = struct {
                     if (bare_existing) |index| {
                         bare_cyclic = self.modules.items[index].state == .loading;
                     } else {
-                        bare_target = self.loadOne(npm_target_path, import_node, null, null, null, bare_inheritance) catch |err| switch (err) {
+                        bare_target = self.loadOne(npm_target_path, import_node, module.path, null, null, null, bare_inheritance) catch |err| switch (err) {
                             error.OutOfMemory => return err,
                             else => null,
                         };
@@ -848,7 +867,7 @@ pub const Loader = struct {
                 if (existing) |index| {
                     cyclic = self.modules.items[index].state == .loading;
                 } else {
-                    target = self.loadOne(target_path, import_node, null, null, null, descendant_inheritance) catch |err| switch (err) {
+                    target = self.loadOne(target_path, import_node, module.path, null, null, null, descendant_inheritance) catch |err| switch (err) {
                         error.OutOfMemory => return err,
                         else => null,
                     };
@@ -943,7 +962,7 @@ pub const Loader = struct {
                 if (existing) |index| {
                     cyclic = self.modules.items[index].state == .loading;
                 } else {
-                    target = self.loadOne(resolved_target, node, site_mode, resolved_import.namespace, resolved_import.canonical_id, edge_inheritance) catch |err| switch (err) {
+                    target = self.loadOne(resolved_target, node, module.path, site_mode, resolved_import.namespace, resolved_import.canonical_id, edge_inheritance) catch |err| switch (err) {
                         error.OutOfMemory => return err,
                         else => null,
                     };
@@ -971,35 +990,10 @@ pub const Loader = struct {
         return module.index;
     }
 
-    /// 公式のreplaceRequireStatements相当: 各モジュールの取り込み文を逆順に
-    /// 処理し、filePath単位のガードで最初に処理された辺のみを実効辺にする。
-    /// エントリ自身はガードへ入れないため、循環取り込みでエントリの内容が
-    /// 一度だけ再展開される。
+    /// 公式のreplaceRequireStatements相当の実効辺決定は`module_graph_effective.zig`へ
+    /// 分離している（Loaderの状態を共有するためpubで公開する）。
     fn markEffectiveEdges(self: *Loader, entry: u32) !void {
-        const guarded = try self.allocator.alloc(bool, self.modules.items.len);
-        @memset(guarded, false);
-        var order_counter: u32 = 0;
-        try self.markEffectiveIn(entry, guarded, &order_counter);
-    }
-
-    fn markEffectiveIn(self: *Loader, index: u32, guarded: []bool, order_counter: *u32) !void {
-        const module = self.modules.items[index];
-        var i = module.imports.len;
-        while (i > 0) {
-            i -= 1;
-            const item = &module.imports[i];
-            const target = item.target orelse continue;
-            const target_module = self.modules.items[target];
-            if (target_module.kind != .nako3 or target_module.parsed == null) continue;
-            // Namespace aliases point at a shared loaded module. The effective
-            // edge guard ensures each canonical export (or local file) is initialized once.
-            if (guarded[target]) continue;
-            guarded[target] = true;
-            target_module.expand_order = order_counter.*;
-            order_counter.* += 1;
-            item.effective = true;
-            try self.markEffectiveIn(target, guarded, order_counter);
-        }
+        try effective.markEffectiveEdges(self, entry);
     }
 
     /// 実効辺に沿ってパーサモードを伝搬する。取り込み文位置のモードが

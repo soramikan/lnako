@@ -456,7 +456,7 @@ pub const Parser = struct {
         if (isConditionalJosi(first.josi)) return self.finishCondition(first);
         if (self.identifierValue("ならば")) {
             _ = self.advance();
-            clearConditionalJosi(first);
+            try clearConditionalJosi(self.allocator, first);
             return first;
         }
         // チェック: `AがBならば` --- 「A = B」のとき。公式`yIFCond`は一度
@@ -478,7 +478,7 @@ pub const Parser = struct {
         if (isConditionalJosi(result.josi)) return self.finishCondition(result);
         if (self.identifierValue("ならば")) {
             _ = self.advance();
-            clearConditionalJosi(result);
+            try clearConditionalJosi(self.allocator, result);
             return result;
         }
         return self.fail(.invalid_control_statement, "『もし』文の条件末尾に『ならば』が必要です", self.peek());
@@ -493,7 +493,7 @@ pub const Parser = struct {
         if (isNegativeConditionJosi(result.josi)) {
             result = try builder.unary(self, "not", result, self.peekPrevious());
         }
-        clearConditionalJosi(result);
+        try clearConditionalJosi(self.allocator, result);
         return result;
     }
 
@@ -1192,7 +1192,7 @@ pub const Parser = struct {
             }
             const case_value = try expressions.parseExpression(self, 0);
             if (!isConditionalJosi(case_value.josi)) return self.fail(.invalid_control_statement, "条件分岐の値に『ならば』が必要です", self.peekPrevious());
-            clearConditionalJosi(case_value);
+            try clearConditionalJosi(self.allocator, case_value);
             self.skipEols();
             const case_body = try self.parseBlock(.{ .end = true });
             try self.requireEnd("『条件分岐』の節");
