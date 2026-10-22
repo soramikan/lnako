@@ -660,6 +660,11 @@ pub const RootFrame = struct {
     }
 };
 
+/// Value→文字列の再帰が辿れる配列の入れ子数。1段あたり数フレームの
+/// Cスタックを消費するため、公式の構文解析上限（1024）に合わせて
+/// スタック枯渇より十分手前で捕捉可能なエラーへ落とす。
+pub const max_value_nesting_depth: usize = 1024;
+
 /// 循環参照を扱う正確なmark-and-sweepヒープと、生成コード向けルートスタック。
 pub const Runtime = struct {
     backing_allocator: std.mem.Allocator,
@@ -1327,6 +1332,8 @@ pub const Runtime = struct {
 
     fn arrayToString(self: *Runtime, array: *Array) !Value {
         for (self.stringifying_arrays.items) |active| if (active == array) return self.stringUtf8("");
+        // stringifying_arraysは循環検出用の訪問集合であり、深さの上限でもある。
+        if (self.stringifying_arrays.items.len >= max_value_nesting_depth) return error.ValueNestingTooDeep;
         try self.stringifying_arrays.append(self.allocator(), array);
         defer _ = self.stringifying_arrays.pop();
         var output: std.Io.Writer.Allocating = .init(self.allocator());
@@ -1908,6 +1915,23 @@ test "Interpreter Runtimeのallocator telemetryはRuntime移動後も安定す�
     try std.testing.expect(moved.counters.allocator_peak_live_bytes > 0);
     try std.testing.expect(moved.counters.gc_mark_ns == 0);
     moved.deinit();
+}
+
+test "深い配列の文字列化は入れ子上限でValueNestingTooDeepを返す" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.next_collection = std.math.maxInt(usize);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var head = try runtime.createArray();
+    try roots.protect(&head);
+    var value = head;
+    for (0..max_value_nesting_depth) |_| {
+        const nested = try runtime.createArray();
+        _ = try value.array.push(nested);
+        value = nested;
+    }
+    try std.testing.expectError(error.ValueNestingTooDeep, runtime.valueToString(head));
 }
 
 test {
