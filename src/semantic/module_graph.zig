@@ -608,7 +608,7 @@ pub fn load(backing_allocator: std.mem.Allocator, entry_path: []const u8, provid
     };
     errdefer loader.deinitModules();
     const normalized_entry = try normalizePath(loader.allocator, entry_path);
-    const entry = try loader.loadOne(normalized_entry, null, null, null, null, null);
+    const entry = try loader.loadOne(normalized_entry, null, null, null, null, null, null);
     // 実効辺の決定とモード伝搬は全モジュール読み込み後に行う。
     // 公式のreplaceRequireStatementsは取り込み文を逆順に処理し、filePath単位の
     // include guardで最初に処理された辺だけへ内容を展開する（同一ファイルの
@@ -672,11 +672,13 @@ pub const Loader = struct {
 
     /// `initial` は取り込み文位置で有効だったパーサモード（取り込み元からの継承）。
     /// 字句変換には波及せず、添字・自動初期化の意味づけのみに効く。
-    fn loadOne(self: *Loader, path: []const u8, import_node: ?*ast.Node, initial: ?token_mod.Mode, namespace_override: ?[]const u8, canonical_id: ?[]const u8, inheritance: ?PackageInheritance) anyerror!u32 {
+    /// `import_origin` は取り込み文を持つファイル（取り込み元）。診断の`file`を
+    /// `import_node`の`span`と同じファイルに揃えるために使う。
+    fn loadOne(self: *Loader, path: []const u8, import_node: ?*ast.Node, import_origin: ?[]const u8, initial: ?token_mod.Mode, namespace_override: ?[]const u8, canonical_id: ?[]const u8, inheritance: ?PackageInheritance) anyerror!u32 {
         // 取り込みは`loadOne`の自己再帰で読むため、深い連鎖はプロセススタックを
         // 使い切る。解析前に位置付き診断へ収束させる（`max_ast_depth`と同じ方針）。
         if (self.load_depth >= max_import_depth) {
-            try self.importDiagnostic(import_node, path, "取り込みの入れ子が深すぎます");
+            try self.importDiagnostic(import_node, import_origin orelse path, "取り込みの入れ子が深すぎます");
             return error.ImportDepthExceeded;
         }
         self.load_depth += 1;
@@ -831,7 +833,7 @@ pub const Loader = struct {
                     if (bare_existing) |index| {
                         bare_cyclic = self.modules.items[index].state == .loading;
                     } else {
-                        bare_target = self.loadOne(npm_target_path, import_node, null, null, null, bare_inheritance) catch |err| switch (err) {
+                        bare_target = self.loadOne(npm_target_path, import_node, module.path, null, null, null, bare_inheritance) catch |err| switch (err) {
                             error.OutOfMemory => return err,
                             else => null,
                         };
@@ -864,7 +866,7 @@ pub const Loader = struct {
                 if (existing) |index| {
                     cyclic = self.modules.items[index].state == .loading;
                 } else {
-                    target = self.loadOne(target_path, import_node, null, null, null, descendant_inheritance) catch |err| switch (err) {
+                    target = self.loadOne(target_path, import_node, module.path, null, null, null, descendant_inheritance) catch |err| switch (err) {
                         error.OutOfMemory => return err,
                         else => null,
                     };
@@ -959,7 +961,7 @@ pub const Loader = struct {
                 if (existing) |index| {
                     cyclic = self.modules.items[index].state == .loading;
                 } else {
-                    target = self.loadOne(resolved_target, node, site_mode, resolved_import.namespace, resolved_import.canonical_id, edge_inheritance) catch |err| switch (err) {
+                    target = self.loadOne(resolved_target, node, module.path, site_mode, resolved_import.namespace, resolved_import.canonical_id, edge_inheritance) catch |err| switch (err) {
                         error.OutOfMemory => return err,
                         else => null,
                     };
@@ -999,11 +1001,21 @@ pub const Loader = struct {
     }
 
     fn markEffectiveIn(self: *Loader, index: u32, guarded: []bool, order_counter: *u32) !void {
-        const module = self.modules.items[index];
-        var i = module.imports.len;
-        while (i > 0) {
-            i -= 1;
-            const item = &module.imports[i];
+        // 実効辺は取り込みの深さだけ深くなる。`loadOne`の深さ上限は読み込み時に
+        // 効くが、読み込み済みモジュールを再利用する辺（兄弟が先行を順に取り込む形）
+        // では`loadOne`が浅いままここだけ深くなるため、同じ上限で明示スタックにする。
+        var frames: std.ArrayList(EffectiveFrame) = .empty;
+        defer frames.deinit(self.allocator);
+        try frames.append(self.allocator, .{ .module = index, .cursor = self.modules.items[index].imports.len });
+        while (frames.items.len > 0) {
+            const frame = &frames.items[frames.items.len - 1];
+            if (frame.cursor == 0) {
+                _ = frames.pop();
+                continue;
+            }
+            frame.cursor -= 1;
+            const module = self.modules.items[frame.module];
+            const item = &module.imports[frame.cursor];
             const target = item.target orelse continue;
             const target_module = self.modules.items[target];
             if (target_module.kind != .nako3 or target_module.parsed == null) continue;
@@ -1014,9 +1026,18 @@ pub const Loader = struct {
             target_module.expand_order = order_counter.*;
             order_counter.* += 1;
             item.effective = true;
-            try self.markEffectiveIn(target, guarded, order_counter);
+            if (frames.items.len >= max_import_depth) {
+                // 深さ上限はグラフの読み込み失敗として扱う（診断が残るので
+                // `succeeded()`が偽になり、呼び出し側が位置付きで表示する）。
+                try self.importDiagnosticAt(item.span, module.path, "取り込みの入れ子が深すぎます");
+                return;
+            }
+            try frames.append(self.allocator, .{ .module = target, .cursor = target_module.imports.len });
         }
     }
+
+    /// `markEffectiveIn`の走査位置。`module.imports`を末尾から先頭へ辿る。
+    const EffectiveFrame = struct { module: u32, cursor: usize };
 
     /// 実効辺に沿ってパーサモードを伝搬する。取り込み文位置のモードが
     /// 取り込み先の初期モードになり、取り込み先の終端モードが取り込み文の
