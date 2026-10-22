@@ -231,36 +231,60 @@ pub fn poll(runtime: *Runtime, state: *State, context: Context, effects: Effects
 
     var request_roots = runtime.rootFrame();
     defer request_roots.deinit();
-    var get_data = try parseQuery(runtime, request.target);
+    var get_data = parseQuery(runtime, request.target) catch |err| switch (err) {
+        // 不正なpercent encodingは1件の要求として400で捨てる。
+        error.InvalidHttpQueryEncoding => return rejectRequest(state, context, 400),
+        else => return err,
+    };
     try request_roots.protect(&get_data);
     var files_data = try runtime.createArray();
     try request_roots.protect(&files_data);
     var post_data: Value = try runtime.createDictionary();
     try request_roots.protect(&post_data);
-    if (std.ascii.eqlIgnoreCase(request.method, "POST")) post_data = try parsePost(runtime, context, request.content_type, request.body, files_data.array);
+    const path = pathOnly(request.target);
+    const route = bestRoute(state.routes.items, path);
+    // 本文の解析（multipartのアップロード永続化を含む）は配送先が決まった
+    // 要求だけで行う。未登録URLのPOSTで一時ファイルを残さない。
+    if (route != null and std.ascii.eqlIgnoreCase(request.method, "POST")) {
+        post_data = parsePost(runtime, context, request.content_type, request.body, files_data.array) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            // 本文の解析失敗は保存先の障害を含むため500で返す。
+            return rejectRequest(state, context, 500);
+        };
+    }
     try effects.setGlobal("HTTPメソッド", try runtime.stringUtf8(request.method));
     try effects.setGlobal("GETデータ", get_data);
     try effects.setGlobal("POSTデータ", post_data);
     try effects.setGlobal("FILESデータ", files_data);
 
-    const path = pathOnly(request.target);
-    const route = bestRoute(state.routes.items, path) orelse {
+    const matched = route orelse {
         try context.holdFn(context.context);
         return true;
     };
-    if (route.kind == .static) {
-        try serveStatic(runtime, state, context, route, path);
+    if (matched.kind == .static) {
+        try serveStatic(runtime, state, context, matched, path);
         return true;
     }
     state.request_active = true;
     state.response_status = 200;
     state.clearHeaders(runtime.allocator());
-    if (route.callback != .function) return error.HttpServerCallbackNotCallable;
-    _ = try effects.invoke(route.callback, &.{});
+    if (matched.callback != .function) return error.HttpServerCallbackNotCallable;
+    _ = try effects.invoke(matched.callback, &.{});
     if (state.request_active) {
         try context.holdFn(context.context);
         state.request_active = false;
     }
+    return true;
+}
+
+const bad_request_body = "<html><meta charset=\"utf-8\"><body><h1>400 要求が不正です。</h1></body></html>";
+const internal_error_body = "<html><meta charset=\"utf-8\"><body><h1>500 サーバ内部エラーです。</h1></body></html>";
+
+/// 受信後の要求処理で起きた失敗を1回だけ応答して捨てる。
+/// 1件の要求でイベントループ（＝プロセス）を止めない。
+fn rejectRequest(state: *State, context: Context, status: u16) !bool {
+    state.request_active = false;
+    try respondConnectionSafe(state, context, status, &.{}, if (status >= 500) internal_error_body else bad_request_body);
     return true;
 }
 
@@ -525,7 +549,11 @@ fn percentDecode(allocator: std.mem.Allocator, source: []const u8, plus_as_space
 
 fn serveStatic(runtime: *Runtime, state: *State, context: Context, route: Route, path: []const u8) !void {
     const relative_raw = path[@min(route.prefix.len, path.len)..];
-    var components = try staticPathComponents(runtime.allocator(), relative_raw);
+    var components = staticPathComponents(runtime.allocator(), relative_raw) catch |err| switch (err) {
+        // `..`・制御文字・不正なpercent encodingは400で捨てる。
+        error.InvalidHttpStaticPath => return respondConnectionSafe(state, context, 400, &.{}, bad_request_body),
+        else => return err,
+    };
     defer freeStaticPathComponents(runtime.allocator(), &components);
     const resolved = (try context.resolveStaticPathFn(context.context, runtime.allocator(), route.path, components.items)) orelse {
         return respondConnectionSafe(state, context, 404, &.{}, "<html><meta charset=\"utf-8\"><body><h1>404 見当たりません。</h1></body></html>");
@@ -688,9 +716,15 @@ test "静的ファイル配信のパス成分は..や制御文字、空を拒否
 const PollFixture = struct {
     mode: enum { invalid_then_valid, out_of_memory, read_failed },
     response_mode: enum { success, connection_reset, write_failed } = .success,
+    method: []const u8 = "GET",
+    target: []const u8 = "/",
+    content_type: []const u8 = "",
+    body: []const u8 = "",
     receive_count: usize = 0,
     hold_count: usize = 0,
     response_count: usize = 0,
+    upload_count: usize = 0,
+    last_status: u16 = 0,
 };
 
 fn pollFixtureContext(fixture: *PollFixture) Context {
@@ -725,19 +759,20 @@ fn pollFixtureReceive(context: *anyopaque, allocator: std.mem.Allocator) anyerro
     if (fixture.mode == .out_of_memory) return error.OutOfMemory;
     if (fixture.mode == .read_failed) return error.ReadFailed;
     if (fixture.receive_count == 1) return error.InvalidHttpRequest;
-    const method = try allocator.dupe(u8, "GET");
+    const method = try allocator.dupe(u8, fixture.method);
     errdefer allocator.free(method);
-    const target = try allocator.dupe(u8, "/");
+    const target = try allocator.dupe(u8, fixture.target);
     errdefer allocator.free(target);
-    const content_type = try allocator.alloc(u8, 0);
+    const content_type = try allocator.dupe(u8, fixture.content_type);
     errdefer allocator.free(content_type);
-    const body = try allocator.alloc(u8, 0);
+    const body = try allocator.dupe(u8, fixture.body);
     return .{ .allocator = allocator, .method = method, .target = target, .content_type = content_type, .body = body };
 }
 
-fn pollFixtureRespond(context: *anyopaque, _: u16, _: []const Header, _: []const u8) anyerror!void {
+fn pollFixtureRespond(context: *anyopaque, status: u16, _: []const Header, _: []const u8) anyerror!void {
     const fixture: *PollFixture = @ptrCast(@alignCast(context));
     fixture.response_count += 1;
+    fixture.last_status = status;
     if (fixture.response_mode == .connection_reset) return error.ConnectionResetByPeer;
     if (fixture.response_mode == .write_failed) return error.WriteFailed;
 }
@@ -765,8 +800,10 @@ fn pollFixtureReadStaticFile(_: *anyopaque, _: std.mem.Allocator, _: []const u8)
     return error.Unexpected;
 }
 
-fn pollFixtureSaveUpload(_: *anyopaque, _: std.mem.Allocator, _: []const u8, _: []const u8) anyerror![]u8 {
-    return error.Unexpected;
+fn pollFixtureSaveUpload(context: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: []const u8) anyerror![]u8 {
+    const fixture: *PollFixture = @ptrCast(@alignCast(context));
+    fixture.upload_count += 1;
+    return allocator.dupe(u8, "/tmp/lnako-upload-fixture");
 }
 
 test "HTTP受信は接続単位エラー後に継続しOOMを伝播する" {
@@ -799,6 +836,60 @@ test "HTTP受信は接続単位エラー後に継続しOOMを伝播する" {
     fixture.response_mode = .connection_reset;
     try respondConnectionSafe(&state, context, 200, &.{}, "ok");
     try std.testing.expect(!state.request_active);
+}
+
+test "HTTP要求の不正query encodingは400で捨てて要求処理を続ける" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state: State = .{ .started = true };
+    var fixture: PollFixture = .{ .mode = .invalid_then_valid, .target = "/echo?x=%GG" };
+    const context = pollFixtureContext(&fixture);
+    const effects = pollFixtureEffects(&fixture);
+
+    try std.testing.expect(try poll(&runtime, &state, context, effects));
+    try std.testing.expect(try poll(&runtime, &state, context, effects));
+    try std.testing.expectEqual(@as(u16, 400), fixture.last_status);
+    try std.testing.expectEqual(@as(usize, 1), fixture.response_count);
+    try std.testing.expect(!state.request_active);
+}
+
+test "HTTP静的配信の親参照を含むパスは400で捨てる" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state: State = .{ .started = true };
+    defer state.deinit(std.testing.allocator);
+    try state.routes.append(std.testing.allocator, .{
+        .kind = .static,
+        .prefix = try std.testing.allocator.dupe(u8, "/static"),
+        .path = try std.testing.allocator.dupe(u8, "."),
+    });
+    var fixture: PollFixture = .{ .mode = .invalid_then_valid, .target = "/static/%2e%2e/secret" };
+    const context = pollFixtureContext(&fixture);
+    const effects = pollFixtureEffects(&fixture);
+
+    try std.testing.expect(try poll(&runtime, &state, context, effects));
+    try std.testing.expect(try poll(&runtime, &state, context, effects));
+    try std.testing.expectEqual(@as(u16, 400), fixture.last_status);
+}
+
+test "未登録URLへのmultipart POSTはアップロードを永続化しない" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state: State = .{ .started = true };
+    var fixture: PollFixture = .{
+        .mode = .invalid_then_valid,
+        .method = "POST",
+        .target = "/nohandler",
+        .content_type = "multipart/form-data; boundary=X",
+        .body = "--X\r\nContent-Disposition: form-data; name=\"f\"; filename=\"leak.bin\"\r\n\r\nDATA\r\n--X--\r\n",
+    };
+    const context = pollFixtureContext(&fixture);
+    const effects = pollFixtureEffects(&fixture);
+
+    try std.testing.expect(try poll(&runtime, &state, context, effects));
+    try std.testing.expect(try poll(&runtime, &state, context, effects));
+    try std.testing.expectEqual(@as(usize, 0), fixture.upload_count);
+    try std.testing.expectEqual(@as(usize, 1), fixture.hold_count);
 }
 
 fn dictionaryUtf8(runtime: *Runtime, dictionary: *value_mod.Dictionary, expected: []const u8) ![]const u8 {
