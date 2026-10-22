@@ -5,11 +5,21 @@ const character_class = @import("character_class.zig");
 const captures = @import("captures.zig");
 
 pub const Parser = struct {
+    /// Deepest pattern nesting accepted: groups, assertions, nested classes and
+    /// character-class set operations all draw from this one budget, so the
+    /// recursion depth of both the parser and the matcher (which descends the
+    /// same tree) stays bounded by it.  Unbounded patterns exhaust the native
+    /// stack (SIGSEGV at ~10,000 nested groups in the interpreter, between 256
+    /// and 512 in the debug test harness).  128 keeps a wide margin under the
+    /// tightest of those, and stays far above what a hand-written pattern nests.
+    pub const max_nesting_depth: usize = 128;
+
     allocator: std.mem.Allocator,
     source: []const u16,
     unicode: bool = false,
     unicode_sets: bool = false,
     index: usize = 0,
+    depth: usize = 0,
     capture_count: usize = 0,
     capture_names: [types.max_captures]?[]const u16 = @as([types.max_captures]?[]const u16, @splat(null)),
 
@@ -57,6 +67,8 @@ pub const Parser = struct {
     }
 
     fn parseGroup(self: *Parser) anyerror!types.Atom {
+        try self.enterNesting();
+        defer self.leaveNesting();
         var capture = true;
         var name: ?[]const u16 = null;
         var assertion: ?struct { positive: bool, behind: bool } = null;
@@ -118,9 +130,20 @@ pub const Parser = struct {
     }
 
     fn parseClass(self: *Parser) anyerror!*types.CharacterClass {
+        try self.enterNesting();
+        defer self.leaveNesting();
         const negated = consume(self, '^');
         var left = try self.parseClassOperand();
+        var set_operations: usize = 0;
+        defer self.depth -= set_operations;
         while (self.consumeSetOperator()) |kind| {
+            // A chain of set operators builds a left-deep tree, and matching
+            // walks that tree recursively.  Counting each node against the same
+            // budget as nested classes keeps the composed recursion depth (a
+            // chain inside a chain of nested classes) inside the limit instead
+            // of multiplying it.
+            try self.enterNesting();
+            set_operations += 1;
             if (left.operation == null and left.items.len == 0) return error.InvalidCharacterClass;
             if (!character_class.isSetOperand(left)) return error.UnsupportedUnicodeSetOperation;
             if (self.index >= self.source.len or self.source[self.index] == ']' or self.atSetOperator()) return error.InvalidCharacterInClass;
@@ -415,6 +438,15 @@ pub const Parser = struct {
         const class = try self.allocator.create(types.CharacterClass);
         class.* = .{ .negated = false, .items = items };
         return .{ .class = class };
+    }
+
+    fn enterNesting(self: *Parser) error{PatternTooDeep}!void {
+        if (self.depth >= max_nesting_depth) return error.PatternTooDeep;
+        self.depth += 1;
+    }
+
+    fn leaveNesting(self: *Parser) void {
+        self.depth -= 1;
     }
 
     pub fn consume(self: *Parser, unit: u16) bool {

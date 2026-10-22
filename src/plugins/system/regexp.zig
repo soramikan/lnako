@@ -1026,3 +1026,172 @@ test "Unicode property escapeは生成済み静的範囲を使う" {
     try std.testing.expectError(error.InvalidUnicodeProperty, call(&runtime, "正規表現マッチ", &.{ source, invalid_pattern }));
     try std.testing.expectEqualStrings("Invalid regular expression: /\\p{Nope}/u: Invalid property name", runtime.failureMessage().?);
 }
+
+test "正規表現の長い反復はスタックを使い切らない" {
+    // 1,300 単位を超える反復は再帰でスタックを食い潰していた。
+    const source = try std.testing.allocator.alloc(u16, 5000);
+    defer std.testing.allocator.free(source);
+    @memset(source, 'a');
+    const pattern = [_]u16{ '/', 'a', '+', '/' };
+    var compiled = try regexp_engine.compilePattern(std.testing.allocator, &pattern, false);
+    defer compiled.deinit();
+    const matches = try regexp_engine.findMatches(std.testing.allocator, source, &compiled);
+    defer std.testing.allocator.free(matches);
+    try std.testing.expectEqual(@as(usize, 1), matches.len);
+    try std.testing.expectEqual(@as(usize, 0), matches[0].span.start);
+    try std.testing.expectEqual(source.len, matches[0].span.end);
+}
+
+test "正規表現の空幅有限量指定は宣言した回数まで反復できる" {
+    const source = [_]u16{};
+    const pattern = [_]u16{ '/', '(', ')', '{', '1', '0', '0', '0', '0', '}', '/' };
+    var compiled = try regexp_engine.compilePattern(std.testing.allocator, &pattern, false);
+    defer compiled.deinit();
+    const matches = try regexp_engine.findMatches(std.testing.allocator, &source, &compiled);
+    defer std.testing.allocator.free(matches);
+    try std.testing.expectEqual(@as(usize, 1), matches.len);
+    try std.testing.expectEqual(@as(usize, 0), matches[0].span.start);
+    try std.testing.expectEqual(@as(usize, 0), matches[0].span.end);
+    try std.testing.expect(matches[0].captures[0].matched);
+}
+
+test "正規表現の後読み量指定はスタックを使い切らない" {
+    const source = [_]u16{'a'};
+    const pattern = [_]u16{ '/', '(', '?', '<', '=', '(', '?', ':', ')', '{', '1', '0', '0', '0', '0', '}', 'a', ')', '/' };
+    var compiled = try regexp_engine.compilePattern(std.testing.allocator, &pattern, false);
+    defer compiled.deinit();
+    const matches = try regexp_engine.findMatches(std.testing.allocator, &source, &compiled);
+    defer std.testing.allocator.free(matches);
+    try std.testing.expectEqual(@as(usize, 1), matches.len);
+    try std.testing.expectEqual(@as(usize, 1), matches[0].span.start);
+    try std.testing.expectEqual(@as(usize, 1), matches[0].span.end);
+}
+
+test "正規表現の入れ子量指定は有界な作業量で打ち切る" {
+    const pattern = [_]u16{ '/', '(', 'a', '+', ')', '+', '/' };
+    var compiled = try regexp_engine.compilePattern(std.testing.allocator, &pattern, false);
+    defer compiled.deinit();
+
+    const small = [_]u16{ 'a', 'a', 'a' };
+    const small_matches = try regexp_engine.findMatches(std.testing.allocator, &small, &compiled);
+    defer std.testing.allocator.free(small_matches);
+    try std.testing.expectEqual(@as(usize, 1), small_matches.len);
+    try std.testing.expectEqual(@as(usize, 3), small_matches[0].span.end);
+
+    // 入力長に対して指数的に候補が増える組み合わせは、確保し切る前に
+    // 回復可能なエラーで打ち切る。
+    const large = try std.testing.allocator.alloc(u16, 64);
+    defer std.testing.allocator.free(large);
+    @memset(large, 'a');
+    try std.testing.expectError(error.MatchBudgetExceeded, regexp_engine.findMatches(std.testing.allocator, large, &compiled));
+}
+
+test "正規表現の深い入れ子はPatternTooDeepで拒否する" {
+    const limit = regexp_engine.parser.Parser.max_nesting_depth;
+    const pattern = try std.testing.allocator.alloc(u16, (limit + 1) * 4);
+    defer std.testing.allocator.free(pattern);
+    var index: usize = 0;
+    while (index < limit + 1) : (index += 1) {
+        @memcpy(pattern[index * 3 ..][0..3], &[_]u16{ '(', '?', ':' });
+        pattern[(limit + 1) * 3 + index] = ')';
+    }
+    try std.testing.expectError(error.PatternTooDeep, regexp_engine.compilePattern(std.testing.allocator, pattern, false));
+
+    // 上限内の入れ子は今までどおり照合できる。
+    const allowed = limit;
+    const nested = try std.testing.allocator.alloc(u16, allowed * 4);
+    defer std.testing.allocator.free(nested);
+    index = 0;
+    while (index < allowed) : (index += 1) {
+        @memcpy(nested[index * 3 ..][0..3], &[_]u16{ '(', '?', ':' });
+        nested[allowed * 3 + index] = ')';
+    }
+    var compiled = try regexp_engine.compilePattern(std.testing.allocator, nested, false);
+    defer compiled.deinit();
+    const source = [_]u16{};
+    const matches = try regexp_engine.findMatches(std.testing.allocator, &source, &compiled);
+    defer std.testing.allocator.free(matches);
+    try std.testing.expectEqual(@as(usize, 1), matches.len);
+}
+
+test "正規表現の文字集合演算の連鎖も深さ上限で拒否する" {
+    // /v の && / -- は左結合の木を作り、照合はその木を再帰でたどる。
+    // 連鎖長も入れ子と同じ上限に収める。
+    const limit = regexp_engine.parser.Parser.max_nesting_depth;
+    const operations = limit + 1;
+    const pattern = try std.testing.allocator.alloc(u16, operations * 3 + 6);
+    defer std.testing.allocator.free(pattern);
+    pattern[0] = '/';
+    pattern[1] = '[';
+    pattern[2] = 'a';
+    var index: usize = 0;
+    while (index < operations) : (index += 1) {
+        @memcpy(pattern[3 + index * 3 ..][0..3], &[_]u16{ '&', '&', 'a' });
+    }
+    pattern[3 + operations * 3] = ']';
+    pattern[4 + operations * 3] = '/';
+    pattern[5 + operations * 3] = 'v';
+    try std.testing.expectError(error.PatternTooDeep, regexp_engine.compilePattern(std.testing.allocator, pattern, false));
+
+    // 上限内の連鎖は今までどおり照合できる。
+    const short_operations = 4;
+    const short = try std.testing.allocator.alloc(u16, short_operations * 3 + 6);
+    defer std.testing.allocator.free(short);
+    short[0] = '/';
+    short[1] = '[';
+    short[2] = 'a';
+    index = 0;
+    while (index < short_operations) : (index += 1) {
+        @memcpy(short[3 + index * 3 ..][0..3], &[_]u16{ '&', '&', 'a' });
+    }
+    short[3 + short_operations * 3] = ']';
+    short[4 + short_operations * 3] = '/';
+    short[5 + short_operations * 3] = 'v';
+    var compiled = try regexp_engine.compilePattern(std.testing.allocator, short, false);
+    defer compiled.deinit();
+    const source = [_]u16{'a'};
+    const matches = try regexp_engine.findMatches(std.testing.allocator, &source, &compiled);
+    defer std.testing.allocator.free(matches);
+    try std.testing.expectEqual(@as(usize, 1), matches.len);
+    try std.testing.expectEqual(@as(usize, 1), matches[0].span.end);
+}
+
+test "正規表現の深さ上限超過は構文エラー文言になる" {
+    const message = (try regexp_engine.compileFailureMessageAlloc(std.testing.allocator, &.{ '/', '(', '?', ':', '/', 'v' }, false, error.PatternTooDeep)).?;
+    defer std.testing.allocator.free(message);
+    try std.testing.expect(std.mem.endsWith(u8, message, ": Pattern nested too deeply"));
+    try std.testing.expect(std.mem.startsWith(u8, message, "Invalid regular expression: "));
+}
+
+test "正規表現の入れ子クラス内の集合演算も同じ深さ予算を共有する" {
+    // 入れ子クラスごとに演算を許すと、照合時の再帰深度が階層ごとに積み上がる。
+    // 演算ノードも同じ計数に入れ、合成後の深さを上限内に保つ。
+    const limit = regexp_engine.parser.Parser.max_nesting_depth;
+    const over = try buildNestedSetOperationPattern(limit);
+    defer std.testing.allocator.free(over);
+    try std.testing.expectError(error.PatternTooDeep, regexp_engine.compilePattern(std.testing.allocator, over, false));
+
+    // 上限内なら入れ子クラス内の集合演算も照合できる。
+    const nested = try buildNestedSetOperationPattern(limit - 1);
+    defer std.testing.allocator.free(nested);
+    var compiled = try regexp_engine.compilePattern(std.testing.allocator, nested, false);
+    defer compiled.deinit();
+    const source = [_]u16{'a'};
+    const matches = try regexp_engine.findMatches(std.testing.allocator, &source, &compiled);
+    defer std.testing.allocator.free(matches);
+    try std.testing.expectEqual(@as(usize, 1), matches.len);
+}
+
+fn buildNestedSetOperationPattern(nesting: usize) ![]u16 {
+    const units = 2 * nesting + 7;
+    const pattern = try std.testing.allocator.alloc(u16, units);
+    pattern[0] = '/';
+    var index: usize = 0;
+    while (index < nesting) : (index += 1) pattern[1 + index] = '[';
+    @memcpy(pattern[1 + nesting ..][0..4], &[_]u16{ 'a', '&', '&', 'a' });
+    index = 0;
+    while (index < nesting) : (index += 1) pattern[1 + nesting + 4 + index] = ']';
+    pattern[units - 2] = '/';
+    pattern[units - 1] = 'v';
+    return pattern;
+}

@@ -3,6 +3,31 @@ const types = @import("types.zig");
 const unicode = @import("unicode.zig");
 const character_class = @import("character_class.zig");
 
+/// Work allowed for one start position.  Candidate sets are explored eagerly,
+/// so a nested quantifier over a short subject can enumerate an exponential
+/// number of backtracking paths, each carrying its captures by value, before
+/// the first match is chosen.  Bounding the expansion turns that into a
+/// recoverable error instead of a multi-gigabyte allocation or a hang.
+/// Units are candidates materialized (one expansion or one atom match), which
+/// tracks the arena bytes far better than counting repetitions.  The bound is
+/// flat, so one start position cannot exceed a few hundred megabytes: a
+/// quantifier cannot span more than ~16,000 code units.  Lifting that limit
+/// needs a lazy first-match matcher, not a bigger budget.
+pub const match_budget: usize = 1 << 15;
+
+const MatchBudget = struct {
+    remaining: usize = match_budget,
+
+    fn charge(self: *MatchBudget) error{MatchBudgetExceeded}!void {
+        return self.chargeMany(1);
+    }
+
+    fn chargeMany(self: *MatchBudget, units: usize) error{MatchBudgetExceeded}!void {
+        if (units > self.remaining) return error.MatchBudgetExceeded;
+        self.remaining -= units;
+    }
+};
+
 pub fn findAll(allocator: std.mem.Allocator, source: []const u16, compiled: *const types.Compiled) ![]types.Match {
     var results: std.ArrayList(types.Match) = .empty;
     var position: usize = 0;
@@ -26,8 +51,13 @@ pub fn findOne(allocator: std.mem.Allocator, source: []const u16, compiled: *con
     const last_start = if (compiled.flags.sticky) start else source.len;
     while (start <= last_start) {
         const initial = types.Candidate{ .position = start, .captures = @as([types.max_captures]types.Span, @splat(.{})) };
-        const candidates = try matchExpression(arena.allocator(), source, compiled.expression, initial, compiled.flags);
+        var budget = MatchBudget{};
+        const candidates = try matchExpression(arena.allocator(), source, compiled.expression, initial, compiled.flags, &budget);
         if (candidates.len > 0) return .{ .span = .{ .start = start, .end = candidates[0].position, .matched = true }, .captures = candidates[0].captures };
+        // A failed start position leaves its candidates behind; they are not
+        // needed once the next start is tried, and letting them accumulate
+        // would make the budget bound per position instead of per call.
+        _ = arena.reset(.retain_capacity);
         if (start == last_start) break;
         // RegExp's non-sticky Unicode search advances by StringIndex, so a
         // paired surrogate is never revisited from its low-surrogate code
@@ -37,22 +67,22 @@ pub fn findOne(allocator: std.mem.Allocator, source: []const u16, compiled: *con
     return null;
 }
 
-fn matchExpression(allocator: std.mem.Allocator, source: []const u16, expression: *const types.Expression, initial: types.Candidate, flags: types.Flags) anyerror![]types.Candidate {
+fn matchExpression(allocator: std.mem.Allocator, source: []const u16, expression: *const types.Expression, initial: types.Candidate, flags: types.Flags, budget: *MatchBudget) anyerror![]types.Candidate {
     var output: std.ArrayList(types.Candidate) = .empty;
     for (expression.alternatives) |sequence| {
-        const matches = try matchSequence(allocator, source, sequence, initial, flags);
+        const matches = try matchSequence(allocator, source, sequence, initial, flags, budget);
         try output.appendSlice(allocator, matches);
     }
     return output.toOwnedSlice(allocator);
 }
 
-fn matchSequence(allocator: std.mem.Allocator, source: []const u16, sequence: types.Sequence, initial: types.Candidate, flags: types.Flags) anyerror![]types.Candidate {
+fn matchSequence(allocator: std.mem.Allocator, source: []const u16, sequence: types.Sequence, initial: types.Candidate, flags: types.Flags, budget: *MatchBudget) anyerror![]types.Candidate {
     var current: std.ArrayList(types.Candidate) = .empty;
     try current.append(allocator, initial);
     for (sequence.pieces) |piece| {
         var next: std.ArrayList(types.Candidate) = .empty;
         for (current.items) |candidate| {
-            const expanded = try expandPiece(allocator, source, piece, candidate, flags);
+            const expanded = try expandPiece(allocator, source, piece, candidate, flags, budget);
             try next.appendSlice(allocator, expanded);
         }
         current = next;
@@ -75,7 +105,7 @@ pub fn clearAtomCaptures(candidate: *types.Candidate, atom: types.Atom) void {
     }
 }
 
-fn expandPiece(allocator: std.mem.Allocator, source: []const u16, piece: types.Piece, initial: types.Candidate, flags: types.Flags) anyerror![]types.Candidate {
+fn expandPiece(allocator: std.mem.Allocator, source: []const u16, piece: types.Piece, initial: types.Candidate, flags: types.Flags, budget: *MatchBudget) anyerror![]types.Candidate {
     var output: std.ArrayList(types.Candidate) = .empty;
     // A zero-width atom still counts as a repetition.  The previous
     // source-length bound was enough to prevent consuming atoms from
@@ -84,64 +114,139 @@ fn expandPiece(allocator: std.mem.Allocator, source: []const u16, piece: types.P
     // keep enough levels for the minimum and at least one level per input
     // code unit for consuming paths.
     const limit = piece.maximum orelse @max(source.len + 1, piece.minimum);
-    try expandPieceOrdered(allocator, source, piece, initial, flags, 0, limit, &output);
+    try expandPieceOrdered(allocator, source, piece, initial, flags, false, limit, budget, &output);
     return output.toOwnedSlice(allocator);
 }
 
+/// One pending step of a quantifier expansion: either an atom match that still
+/// has to be expanded, or a candidate whose repetition count already satisfies
+/// the quantifier's minimum.
+const Expansion = union(enum) {
+    expand: State,
+    emit: types.Candidate,
+
+    const State = struct { candidate: types.Candidate, repetition: usize };
+};
+
+/// Depth-first expansion of `piece` in ECMAScript backtracking order.  The
+/// recursion this replaces used one native stack frame per repetition and each
+/// frame carried a candidate by value, so a long subject or a large declared
+/// bound ran out of stack (SIGSEGV at ~1,300 repetitions).  An explicit
+/// worklist keeps the same visit order on the heap, where the budget bounds it.
 fn expandPieceOrdered(
+    allocator: std.mem.Allocator,
+    source: []const u16,
+    piece: types.Piece,
+    initial: types.Candidate,
+    flags: types.Flags,
+    behind: bool,
+    limit: usize,
+    budget: *MatchBudget,
+    output: *std.ArrayList(types.Candidate),
+) anyerror!void {
+    var pending: std.ArrayList(Expansion) = .empty;
+    defer pending.deinit(allocator);
+    try scheduleExpansion(allocator, source, piece, initial, flags, behind, 0, limit, budget, &pending);
+    while (pending.pop()) |task| {
+        switch (task) {
+            .emit => |candidate| try output.append(allocator, candidate),
+            .expand => |state| {
+                // An emitted candidate was charged once already, either as the
+                // initial candidate or as an atom match, so only expansions and
+                // atom matches count here.
+                try budget.charge();
+                try scheduleExpansion(allocator, source, piece, state.candidate, flags, behind, state.repetition, limit, budget, &pending);
+            },
+        }
+    }
+}
+
+fn scheduleExpansion(
     allocator: std.mem.Allocator,
     source: []const u16,
     piece: types.Piece,
     candidate: types.Candidate,
     flags: types.Flags,
+    behind: bool,
     repetition: usize,
     limit: usize,
-    output: *std.ArrayList(types.Candidate),
+    budget: *MatchBudget,
+    pending: *std.ArrayList(Expansion),
 ) anyerror!void {
-    const can_repeat = repetition < limit;
-    if (!piece.lazy and can_repeat) {
-        const atom_matches = try matchAtom(allocator, source, piece.atom, candidate, flags);
-        for (atom_matches) |atom_match| {
-            // An unbounded zero-width quantifier needs only its minimum
-            // number of zero-width repetitions.  Beyond that point the
-            // same candidate would form an infinite branch.  Finite
-            // quantifiers are already bounded, so their zero-width
-            // repetitions must be retained through the declared limit.
-            if (atom_match.position == candidate.position and
-                piece.maximum == null and repetition + 1 > piece.minimum) continue;
+    if (repetition < limit) {
+        const atom_matches = try matchAtomEither(allocator, source, piece.atom, candidate, flags, budget, behind);
+        // Every atom match is retained in the arena as a candidate, so it
+        // counts against the same budget as the tasks that expand it.
+        try budget.chargeMany(atom_matches.len);
+        if (piece.lazy) {
+            // A lazy quantifier tries the current repetition before descending
+            // into the next one, so the children are queued under the result.
+            try pushRepeated(allocator, pending, piece, candidate, repetition, atom_matches);
+            try pushStopped(allocator, pending, piece, candidate, repetition);
+        } else {
             // A greedy quantifier explores the atom's own choices before
-            // trying the current repetition as a result.  This preserves
-            // the backtracking order of nested quantifiers such as
-            // `/(a+)+b/`, where the inner greedy `a+` must win first.
-            try expandPieceOrdered(allocator, source, piece, atom_match, flags, repetition + 1, limit, output);
+            // trying the current repetition as a result.  This preserves the
+            // backtracking order of nested quantifiers such as `/(a+)+b/`,
+            // where the inner greedy `a+` must win first.
+            try pushStopped(allocator, pending, piece, candidate, repetition);
+            try pushRepeated(allocator, pending, piece, candidate, repetition, atom_matches);
         }
+        return;
     }
+    try pushStopped(allocator, pending, piece, candidate, repetition);
+}
+
+/// Queue one more repetition of `piece`.  Queued back to front because the
+/// worklist pops from the end and the atom's own choices keep their order.
+fn pushRepeated(
+    allocator: std.mem.Allocator,
+    pending: *std.ArrayList(Expansion),
+    piece: types.Piece,
+    candidate: types.Candidate,
+    repetition: usize,
+    atom_matches: []const types.Candidate,
+) anyerror!void {
+    var index = atom_matches.len;
+    while (index > 0) {
+        index -= 1;
+        const atom_match = atom_matches[index];
+        // An unbounded zero-width quantifier needs only its minimum number of
+        // zero-width repetitions.  Beyond that point the same candidate would
+        // form an infinite branch.  Finite quantifiers are already bounded, so
+        // their zero-width repetitions must be retained through the declared
+        // limit.
+        if (atom_match.position == candidate.position and
+            piece.maximum == null and repetition + 1 > piece.minimum) continue;
+        try pending.append(allocator, .{ .expand = .{ .candidate = atom_match, .repetition = repetition + 1 } });
+    }
+}
+
+fn pushStopped(
+    allocator: std.mem.Allocator,
+    pending: *std.ArrayList(Expansion),
+    piece: types.Piece,
+    candidate: types.Candidate,
+    repetition: usize,
+) anyerror!void {
+    if (repetition < piece.minimum) return;
     var stopped = candidate;
     // A zero-occurrence optional group does not participate in the match. If
     // the same candidate came from an earlier repetition of an enclosing
     // group, its old captures must not leak into this non-participating path.
     if (repetition == 0 and piece.minimum == 0) clearAtomCaptures(&stopped, piece.atom);
-    if (repetition >= piece.minimum) try output.append(allocator, stopped);
-    if (piece.lazy and can_repeat) {
-        const atom_matches = try matchAtom(allocator, source, piece.atom, candidate, flags);
-        for (atom_matches) |atom_match| {
-            if (atom_match.position == candidate.position and
-                piece.maximum == null and repetition + 1 > piece.minimum) continue;
-            try expandPieceOrdered(allocator, source, piece, atom_match, flags, repetition + 1, limit, output);
-        }
-    }
+    try pending.append(allocator, .{ .emit = stopped });
 }
 
-fn matchExpressionBehind(allocator: std.mem.Allocator, source: []const u16, expression: *const types.Expression, initial: types.Candidate, flags: types.Flags) anyerror![]types.Candidate {
+fn matchExpressionBehind(allocator: std.mem.Allocator, source: []const u16, expression: *const types.Expression, initial: types.Candidate, flags: types.Flags, budget: *MatchBudget) anyerror![]types.Candidate {
     var output: std.ArrayList(types.Candidate) = .empty;
     for (expression.alternatives) |sequence| {
-        const matches = try matchSequenceBehind(allocator, source, sequence, initial, flags);
+        const matches = try matchSequenceBehind(allocator, source, sequence, initial, flags, budget);
         try output.appendSlice(allocator, matches);
     }
     return output.toOwnedSlice(allocator);
 }
 
-fn matchSequenceBehind(allocator: std.mem.Allocator, source: []const u16, sequence: types.Sequence, initial: types.Candidate, flags: types.Flags) anyerror![]types.Candidate {
+fn matchSequenceBehind(allocator: std.mem.Allocator, source: []const u16, sequence: types.Sequence, initial: types.Candidate, flags: types.Flags, budget: *MatchBudget) anyerror![]types.Candidate {
     var current: std.ArrayList(types.Candidate) = .empty;
     try current.append(allocator, initial);
     var piece_index = sequence.pieces.len;
@@ -149,7 +254,7 @@ fn matchSequenceBehind(allocator: std.mem.Allocator, source: []const u16, sequen
         piece_index -= 1;
         var next: std.ArrayList(types.Candidate) = .empty;
         for (current.items) |candidate| {
-            const expanded = try expandPieceBehind(allocator, source, sequence.pieces[piece_index], candidate, flags);
+            const expanded = try expandPieceBehind(allocator, source, sequence.pieces[piece_index], candidate, flags, budget);
             try next.appendSlice(allocator, expanded);
         }
         current = next;
@@ -158,50 +263,23 @@ fn matchSequenceBehind(allocator: std.mem.Allocator, source: []const u16, sequen
     return current.toOwnedSlice(allocator);
 }
 
-fn expandPieceBehind(allocator: std.mem.Allocator, source: []const u16, piece: types.Piece, initial: types.Candidate, flags: types.Flags) anyerror![]types.Candidate {
+fn expandPieceBehind(allocator: std.mem.Allocator, source: []const u16, piece: types.Piece, initial: types.Candidate, flags: types.Flags, budget: *MatchBudget) anyerror![]types.Candidate {
     var output: std.ArrayList(types.Candidate) = .empty;
     const limit = piece.maximum orelse @max(source.len + 1, piece.minimum);
-    try expandPieceBehindOrdered(allocator, source, piece, initial, flags, 0, limit, &output);
+    try expandPieceOrdered(allocator, source, piece, initial, flags, true, limit, budget, &output);
     return output.toOwnedSlice(allocator);
 }
 
-fn expandPieceBehindOrdered(
-    allocator: std.mem.Allocator,
-    source: []const u16,
-    piece: types.Piece,
-    candidate: types.Candidate,
-    flags: types.Flags,
-    repetition: usize,
-    limit: usize,
-    output: *std.ArrayList(types.Candidate),
-) anyerror!void {
-    const can_repeat = repetition < limit;
-    if (!piece.lazy and can_repeat) {
-        const atom_matches = try matchAtomBehind(allocator, source, piece.atom, candidate, flags);
-        for (atom_matches) |atom_match| {
-            if (atom_match.position == candidate.position and
-                piece.maximum == null and repetition + 1 > piece.minimum) continue;
-            try expandPieceBehindOrdered(allocator, source, piece, atom_match, flags, repetition + 1, limit, output);
-        }
-    }
-    var stopped = candidate;
-    if (repetition == 0 and piece.minimum == 0) clearAtomCaptures(&stopped, piece.atom);
-    if (repetition >= piece.minimum) try output.append(allocator, stopped);
-    if (piece.lazy and can_repeat) {
-        const atom_matches = try matchAtomBehind(allocator, source, piece.atom, candidate, flags);
-        for (atom_matches) |atom_match| {
-            if (atom_match.position == candidate.position and
-                piece.maximum == null and repetition + 1 > piece.minimum) continue;
-            try expandPieceBehindOrdered(allocator, source, piece, atom_match, flags, repetition + 1, limit, output);
-        }
-    }
+fn matchLookbehindCandidates(allocator: std.mem.Allocator, source: []const u16, expression: *const types.Expression, initial: types.Candidate, flags: types.Flags, budget: *MatchBudget) anyerror![]types.Candidate {
+    return matchExpressionBehind(allocator, source, expression, initial, flags, budget);
 }
 
-fn matchLookbehindCandidates(allocator: std.mem.Allocator, source: []const u16, expression: *const types.Expression, initial: types.Candidate, flags: types.Flags) anyerror![]types.Candidate {
-    return matchExpressionBehind(allocator, source, expression, initial, flags);
+fn matchAtomEither(allocator: std.mem.Allocator, source: []const u16, atom: types.Atom, initial: types.Candidate, flags: types.Flags, budget: *MatchBudget, behind: bool) anyerror![]types.Candidate {
+    if (behind) return matchAtomBehind(allocator, source, atom, initial, flags, budget);
+    return matchAtom(allocator, source, atom, initial, flags, budget);
 }
 
-fn matchAtomBehind(allocator: std.mem.Allocator, source: []const u16, atom: types.Atom, initial: types.Candidate, flags: types.Flags) anyerror![]types.Candidate {
+fn matchAtomBehind(allocator: std.mem.Allocator, source: []const u16, atom: types.Atom, initial: types.Candidate, flags: types.Flags, budget: *MatchBudget) anyerror![]types.Candidate {
     var output: std.ArrayList(types.Candidate) = .empty;
     switch (atom) {
         .literal => |literal| {
@@ -308,7 +386,7 @@ fn matchAtomBehind(allocator: std.mem.Allocator, source: []const u16, atom: type
         .group => |group| {
             var group_initial = initial;
             clearCaptureRange(&group_initial, group.capture_start, group.capture_end);
-            const matches = try matchExpressionBehind(allocator, source, group.expression, group_initial, flags);
+            const matches = try matchExpressionBehind(allocator, source, group.expression, group_initial, flags, budget);
             for (matches) |match| {
                 var candidate = match;
                 if (group.capture) |capture_index| candidate.captures[capture_index] = .{ .start = match.position, .end = initial.position, .matched = true };
@@ -319,7 +397,7 @@ fn matchAtomBehind(allocator: std.mem.Allocator, source: []const u16, atom: type
             var assertion_initial = initial;
             clearCaptureRange(&assertion_initial, assertion.capture_start, assertion.capture_end);
             if (!assertion.behind) {
-                const assertion_matches = try matchExpression(allocator, source, assertion.expression, assertion_initial, flags);
+                const assertion_matches = try matchExpression(allocator, source, assertion.expression, assertion_initial, flags, budget);
                 if (assertion.positive) {
                     for (assertion_matches) |match| {
                         var accepted = match;
@@ -328,7 +406,7 @@ fn matchAtomBehind(allocator: std.mem.Allocator, source: []const u16, atom: type
                     }
                 } else if (assertion_matches.len == 0) try output.append(allocator, assertion_initial);
             } else {
-                const assertion_matches = try matchLookbehindCandidates(allocator, source, assertion.expression, assertion_initial, flags);
+                const assertion_matches = try matchLookbehindCandidates(allocator, source, assertion.expression, assertion_initial, flags, budget);
                 if (assertion.positive) {
                     for (assertion_matches) |match| {
                         var accepted = match;
@@ -342,7 +420,7 @@ fn matchAtomBehind(allocator: std.mem.Allocator, source: []const u16, atom: type
     return output.toOwnedSlice(allocator);
 }
 
-pub fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: types.Atom, initial: types.Candidate, flags: types.Flags) anyerror![]types.Candidate {
+pub fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: types.Atom, initial: types.Candidate, flags: types.Flags, budget: *MatchBudget) anyerror![]types.Candidate {
     var output: std.ArrayList(types.Candidate) = .empty;
     switch (atom) {
         .literal => |literal| {
@@ -431,7 +509,7 @@ pub fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: types.
         .group => |group| {
             var group_initial = initial;
             clearCaptureRange(&group_initial, group.capture_start, group.capture_end);
-            const matches = try matchExpression(allocator, source, group.expression, group_initial, flags);
+            const matches = try matchExpression(allocator, source, group.expression, group_initial, flags, budget);
             for (matches) |match| {
                 var candidate = match;
                 if (group.capture) |capture_index| candidate.captures[capture_index] = .{ .start = initial.position, .end = match.position, .matched = true };
@@ -442,7 +520,7 @@ pub fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: types.
             var assertion_initial = initial;
             clearCaptureRange(&assertion_initial, assertion.capture_start, assertion.capture_end);
             if (!assertion.behind) {
-                const assertion_matches = try matchExpression(allocator, source, assertion.expression, assertion_initial, flags);
+                const assertion_matches = try matchExpression(allocator, source, assertion.expression, assertion_initial, flags, budget);
                 if (assertion.positive) {
                     for (assertion_matches) |match| {
                         var accepted = match;
@@ -451,7 +529,7 @@ pub fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: types.
                     }
                 } else if (assertion_matches.len == 0) try output.append(allocator, assertion_initial);
             } else {
-                const candidates = try matchLookbehindCandidates(allocator, source, assertion.expression, assertion_initial, flags);
+                const candidates = try matchLookbehindCandidates(allocator, source, assertion.expression, assertion_initial, flags, budget);
                 if (assertion.positive) {
                     for (candidates) |candidate| {
                         var accepted = candidate;
