@@ -220,27 +220,31 @@ test "静的呼び出しはAOTの深度ゲートを通り上限で未定義値�
 }
 
 test "最適化時のtyped直接呼び出しも同じ深度ゲートを通る" {
-    var parsed = try parser.parse(std.testing.allocator, "●合計(N)とは\n  もし N = 0 ならば\n    0で戻る\n  ここまで\n  (N + 合計(N - 1))で戻る\nここまで\n合計(100)を表示\n", "main.nako3");
+    // typed ABIの呼び出しはIR最適化で引数型がnumber/booleanへ確定した関数にだけ
+    // 出る。O1以降と同じ手順（optimize→generate(true)）で数値関数を特殊化し、
+    // typed直接呼び出しもgeneric経路と同じゲートを通ることを確かめる。
+    var parsed = try parser.parse(std.testing.allocator, "●(Aを)Fとは\nB=A+1\nもしAならば\nBで戻る\n違えば\n0で戻る\nここまで\nここまで\nX=F(2)\nXを表示\n", "main.nako3");
     defer parsed.deinit();
     try std.testing.expect(parsed.succeeded());
-    var analyzed = try semantic.analyzeModules(std.testing.allocator, &.{.{
-        .name = "main",
-        .path = "main.nako3",
-        .root = parsed.root.?,
-    }});
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
     defer analyzed.deinit();
     try std.testing.expect(analyzed.succeeded());
-    var hir_program = try hir.lower(std.testing.allocator, &.{parsed.root.?}, &.{"main"}, &.{"main.nako3"}, &.{&.{}}, analyzed);
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
     defer hir_program.deinit();
     var program = try lower.lower(std.testing.allocator, hir_program);
     defer program.deinit();
+    var optimized_program = try program.clone(std.testing.allocator);
+    defer optimized_program.deinit();
+    _ = try optimizer.optimize(std.testing.allocator, &optimized_program, .{});
+    try std.testing.expectEqual(ir.Type.number, optimized_program.findFunction("main__F").?.parameters[0].type);
 
-    var module = try generate(std.testing.allocator, program, "main.nako3", true);
+    var module = try generate(std.testing.allocator, optimized_program, "main.nako3", true);
     defer module.deinit(std.testing.allocator);
     const typed_calls = countIrOccurrences(module.text, " = call double @lnako.fn.number.") +
         countIrOccurrences(module.text, " = call i1 @lnako.fn.boolean.");
     const gated_typed = countIrOccurrences(module.text, ".depth.value = call double @lnako.fn.number.") +
         countIrOccurrences(module.text, ".depth.value = call i1 @lnako.fn.boolean.");
-    std.debug.print("TYPED_CALLS={d} GATED={d}\n", .{ typed_calls, gated_typed });
+    // 特殊化された呼び出しが実際に存在し、そのすべてがゲート内にある。
+    try std.testing.expect(typed_calls >= 1);
     try std.testing.expectEqual(typed_calls, gated_typed);
 }
