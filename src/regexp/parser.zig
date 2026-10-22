@@ -5,11 +5,20 @@ const character_class = @import("character_class.zig");
 const captures = @import("captures.zig");
 
 pub const Parser = struct {
+    /// Deepest group/class nesting accepted.  The parser recurses once per
+    /// level, and the matcher recurses once per level again, so an unbounded
+    /// pattern exhausts the native stack (SIGSEGV at ~10,000 nested groups in
+    /// the interpreter, between 256 and 512 in the debug test harness).  128
+    /// keeps a wide margin under the tightest of those, and stays far above
+    /// what a hand-written pattern nests.
+    pub const max_nesting_depth: usize = 128;
+
     allocator: std.mem.Allocator,
     source: []const u16,
     unicode: bool = false,
     unicode_sets: bool = false,
     index: usize = 0,
+    depth: usize = 0,
     capture_count: usize = 0,
     capture_names: [types.max_captures]?[]const u16 = @as([types.max_captures]?[]const u16, @splat(null)),
 
@@ -57,6 +66,8 @@ pub const Parser = struct {
     }
 
     fn parseGroup(self: *Parser) anyerror!types.Atom {
+        try self.enterNesting();
+        defer self.leaveNesting();
         var capture = true;
         var name: ?[]const u16 = null;
         var assertion: ?struct { positive: bool, behind: bool } = null;
@@ -118,6 +129,8 @@ pub const Parser = struct {
     }
 
     fn parseClass(self: *Parser) anyerror!*types.CharacterClass {
+        try self.enterNesting();
+        defer self.leaveNesting();
         const negated = consume(self, '^');
         var left = try self.parseClassOperand();
         while (self.consumeSetOperator()) |kind| {
@@ -415,6 +428,15 @@ pub const Parser = struct {
         const class = try self.allocator.create(types.CharacterClass);
         class.* = .{ .negated = false, .items = items };
         return .{ .class = class };
+    }
+
+    fn enterNesting(self: *Parser) error{PatternTooDeep}!void {
+        if (self.depth >= max_nesting_depth) return error.PatternTooDeep;
+        self.depth += 1;
+    }
+
+    fn leaveNesting(self: *Parser) void {
+        self.depth -= 1;
     }
 
     pub fn consume(self: *Parser, unit: u16) bool {
