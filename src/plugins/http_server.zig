@@ -490,6 +490,10 @@ fn parseMultipart(runtime: *Runtime, context: Context, body: []const u8, boundar
             const content_type = findHeader(head, "content-type") orelse "application/octet-stream";
             const path = try context.saveUploadFn(context.context, runtime.allocator(), filename, part);
             defer runtime.allocator().free(path);
+            // FILESへ載せる前の失敗（不正UTF-8のフィールド名など）では
+            // `deleteUploadedFiles`の走査対象にならず一時ファイルが残るため、
+            // 保存直後からこのスコープのerror経路で削除する。
+            errdefer deleteSavedUpload(context, path);
             var file = try runtime.createDictionary();
             try roots.protect(&file);
             try common.dictionarySetUtf8(runtime, file.dictionary, "fieldName", try runtime.stringUtf8(field_name));
@@ -501,6 +505,13 @@ fn parseMultipart(runtime: *Runtime, context: Context, body: []const u8, boundar
         } else try common.dictionarySetUtf8(runtime, fields.dictionary, field_name, try runtime.stringUtf8Lossy(part));
     }
     return fields;
+}
+
+/// FILESへ載せる前の失敗（不正UTF-8のフィールド名など）で、保存済みの
+/// アップロード一時ファイルを回収する。回収の失敗で要求を失敗させない。
+fn deleteSavedUpload(context: Context, path: []const u8) void {
+    const delete_upload = context.deleteUploadFn orelse return;
+    delete_upload(context.context, path) catch {};
 }
 
 /// 要求で保存したアップロード一時ファイルを回収する。FILESデータの`path`は
@@ -981,6 +992,36 @@ test "登録済みURLへのmultipart POSTは要求終了時にアップロード
     try std.testing.expect(try poll(&runtime, &state, context, effects));
     try std.testing.expectEqual(@as(usize, 1), fixture.upload_count);
     // 保存しただけでなく、要求の処理が終わった時点で削除されている。
+    try std.testing.expectEqual(@as(usize, 1), fixture.upload_delete_count);
+    try std.testing.expect(fixture.upload_delete_matched);
+}
+
+test "FILES登録前の失敗でも保存済みアップロードを回収する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state: State = .{ .started = true };
+    defer state.deinit(std.testing.allocator);
+    try state.routes.append(std.testing.allocator, .{
+        .kind = .static,
+        .prefix = try std.testing.allocator.dupe(u8, "/upload"),
+        .path = try std.testing.allocator.dupe(u8, "."),
+    });
+    var fixture: PollFixture = .{
+        .mode = .invalid_then_valid,
+        .method = "POST",
+        .target = "/upload",
+        .content_type = "multipart/form-data; boundary=X",
+        // フィールド名が不正UTF-8。ファイルは保存済みだがFILES登録で失敗する。
+        .body = "--X\r\nContent-Disposition: form-data; name=\"\xff\"; filename=\"leak.bin\"\r\n\r\nDATA\r\n--X--\r\n",
+    };
+    const context = pollFixtureContext(&fixture);
+    const effects = pollFixtureEffects(&fixture);
+
+    try std.testing.expect(try poll(&runtime, &state, context, effects));
+    try std.testing.expect(try poll(&runtime, &state, context, effects));
+    try std.testing.expectEqual(@as(u16, 500), fixture.last_status);
+    try std.testing.expectEqual(@as(usize, 1), fixture.upload_count);
+    // FILESへ載る前に失敗しても、保存した一時ファイルは残らない。
     try std.testing.expectEqual(@as(usize, 1), fixture.upload_delete_count);
     try std.testing.expect(fixture.upload_delete_matched);
 }
