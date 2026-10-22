@@ -110,6 +110,8 @@ pub fn emitPreamble(emitter: *Emitter) !void {
             "declare void @lnako_aot_function_new_generated(ptr, ptr, i64, ptr, i64, ptr, i64)\n" ++
             "declare void @lnako_aot_function_capture(ptr, ptr, i64)\n" ++
             "declare void @lnako_aot_function_call(ptr, ptr, ptr, i64)\n" ++
+            "declare i32 @lnako_aot_call_depth_enter()\n" ++
+            "declare void @lnako_aot_call_depth_leave()\n" ++
             "declare void @lnako_aot_builtin_function_call(ptr, ptr, ptr, i64)\n" ++
             "declare void @lnako_aot_plugin_function_call(ptr, ptr, ptr, i64)\n" ++
             "declare void @lnako_aot_cut(ptr, ptr, ptr, i64, i8)\n" ++

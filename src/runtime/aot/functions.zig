@@ -6,11 +6,33 @@ const state = @import("state.zig");
 /// `lnako_aot_function_call`の再帰上限。AOTは1段あたり1〜2フレームで、
 /// Windowsの既定1MiBスタックでも収まる範囲に取る。超過は
 /// `CallStackLimitExceeded`として捕捉可能な実行時エラーになる。
+/// 動的呼び出しと生成コードの静的呼び出しは同じ計数器を共有する。
 pub const max_aot_call_depth: usize = 1024;
 
 /// 現在のAOTコールバック入れ子数。AOTランタイムは`active_runtime`と同様に
 /// 単一スレッド前提なので、プロセス全体で1つのカウンタで足りる。
 var aot_call_depth: usize = 0;
+
+/// 生成コードが静的に解決した呼び出し（`@lnako.fn.{id}`／typed ABI）用の
+/// 深度ゲート。`lnako_aot_function_call`と同じ計数器を使い、上限到達時は
+/// `CallStackLimitExceeded`を設定して0以外を返す。0以外が返った呼び出し側は
+/// 実呼び出しを実行しない（自己再帰がCスタックを枯渇させる前に、捕捉可能な
+/// 実行時エラーへ落とすため）。0が返った場合だけ`lnako_aot_call_depth_leave`
+/// で1段を返す。
+pub export fn lnako_aot_call_depth_enter() callconv(.c) u32 {
+    if (aot_call_depth >= max_aot_call_depth) {
+        if (state.active_runtime) |*runtime| runtime.setFailure(error.CallStackLimitExceeded);
+        return 1;
+    }
+    aot_call_depth += 1;
+    return 0;
+}
+
+/// `lnako_aot_call_depth_enter`が確保した1段を返す。AOTの例外はpending値
+/// として伝播し非局所脱出しないため、直接callの戻りで必ず対応が取れる。
+pub export fn lnako_aot_call_depth_leave() callconv(.c) void {
+    if (aot_call_depth > 0) aot_call_depth -= 1;
+}
 
 /// Registers one absolute native-plugin path embedded by the LLVM module.
 /// Loading is deferred until the first plugin command so AOT startup retains
@@ -276,8 +298,10 @@ pub export fn lnako_aot_function_call(out: *state.Value, callable: *const state.
     out.* = .{};
     const runtime = if (state.active_runtime) |*active| active else return;
     if (aot_call_depth >= max_aot_call_depth) {
-        // 生成コードのcallはすべてここを通る。1段あたり数フレームのCスタックを
-        // 消費するため、枯渇より手前で捕捉可能な実行時エラーへ落とす。
+        // 動的呼び出しはここで1段消費する。静的直接呼び出しは
+        // `lnako_aot_call_depth_enter`が同じ計数器を共有する。1段あたり
+        // 数フレームのCスタックを消費するため、枯渇より手前で捕捉可能な
+        // 実行時エラーへ落とす。
         runtime.setFailure(error.CallStackLimitExceeded);
         return;
     }
@@ -363,5 +387,32 @@ test "AOT関数呼び出しは入れ子上限でCallStackLimitExceededを返す"
     var out: state.Value = .{};
     lnako_aot_function_call(&out, &callable, null, 0);
     try std.testing.expect(!test_call_depth_callback_invoked);
+    try std.testing.expect(state.active_runtime.?.has_pending_exception);
+}
+
+test "AOT静的呼び出しの深度ゲートは既存の計数器と上限を共有する" {
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+        aot_call_depth = 0;
+    }
+
+    // 上限手前までは1段ずつ確保し、leaveで戻る。
+    aot_call_depth = 0;
+    try std.testing.expectEqual(@as(u32, 0), lnako_aot_call_depth_enter());
+    try std.testing.expectEqual(@as(usize, 1), aot_call_depth);
+    lnako_aot_call_depth_leave();
+    try std.testing.expectEqual(@as(usize, 0), aot_call_depth);
+    // 余分なleaveは他の段を巻き込まない。
+    lnako_aot_call_depth_leave();
+    try std.testing.expectEqual(@as(usize, 0), aot_call_depth);
+
+    // 上限到達時は1段も消費せず、捕捉可能な失敗だけを残す。
+    aot_call_depth = max_aot_call_depth;
+    try std.testing.expectEqual(@as(u32, 1), lnako_aot_call_depth_enter());
+    try std.testing.expectEqual(@as(usize, max_aot_call_depth), aot_call_depth);
     try std.testing.expect(state.active_runtime.?.has_pending_exception);
 }

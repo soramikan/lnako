@@ -155,4 +155,92 @@ test "型付きbodyの真偽値ローカルは分岐条件より前に偽で初�
     const condition_load = std.mem.indexOf(u8, text, "load i1, ptr %typed.local.1") orelse return error.TestUnexpectedResult;
     try std.testing.expect(init_store < condition_load);
     try std.testing.expect(std.mem.indexOf(u8, text, "br i1 undef") == null);
+
+fn countIrOccurrences(haystack: []const u8, needle: []const u8) usize {
+    var count: usize = 0;
+    var index: usize = 0;
+    while (std.mem.indexOfPos(u8, haystack, index, needle)) |found| {
+        count += 1;
+        index = found + needle.len;
+    }
+    return count;
+}
+
+/// 深度ゲートを通らない`@lnako.fn.{id}`直接呼び出しのうち、入口・wrapper・
+/// モジュールエントリ以外のもの（＝`writeCall`の旧来の静的呼び出し）を数える。
+fn countUngatedStaticCalls(text: []const u8) usize {
+    var count: usize = 0;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| {
+        if (std.mem.indexOf(u8, line, " = call %lnako.Value @lnako.fn.") == null) continue;
+        if (std.mem.indexOf(u8, line, ".depth.value = call") != null) continue;
+        if (std.mem.indexOf(u8, line, "%entry.result = call") != null) continue;
+        if (std.mem.indexOf(u8, line, "%wrapper.result = call") != null) continue;
+        if (std.mem.indexOf(u8, line, "%import.value.") != null) continue;
+        count += 1;
+    }
+    return count;
+}
+
+test "静的呼び出しはAOTの深度ゲートを通り上限で未定義値へ合流する" {
+    // 自己再帰は`lnako_aot_function_call`を通らない直接callになるため、
+    // 同じ深度上限を共有するゲートを必ず経由させる。
+    var parsed = try parser.parse(std.testing.allocator, "●再帰(N)とは\n  もし N > 0 ならば\n    再帰(N - 1)を表示\n  ここまで\nここまで\n再帰(3)を表示\n", "main.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyzeModules(std.testing.allocator, &.{.{
+        .name = "main",
+        .path = "main.nako3",
+        .root = parsed.root.?,
+    }});
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lower(std.testing.allocator, &.{parsed.root.?}, &.{"main"}, &.{"main.nako3"}, &.{&.{}}, analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+
+    var module = try generate(std.testing.allocator, program, "main.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare i32 @lnako_aot_call_depth_enter()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_call_depth_leave()") != null);
+    // 直接callはすべてゲート内の`.depth.value`経由で発行される。
+    const guarded_calls = countIrOccurrences(module.text, ".depth.value = call %lnako.Value @lnako.fn.");
+    try std.testing.expect(guarded_calls >= 2);
+    try std.testing.expectEqual(guarded_calls, countIrOccurrences(module.text, ".depth.invoke:"));
+    try std.testing.expectEqual(guarded_calls, countIrOccurrences(module.text, ".depth.limit:"));
+    // ゲート外に残る直接呼び出しは、プログラム入口・生成wrapper・モジュール
+    // エントリ（いずれも外側から入る境界）に限られる。`writeCall`が発行する
+    // 旧来の`%v{id} = call`形式が1つでも残れば0にならない。
+    try std.testing.expectEqual(@as(usize, 0), countUngatedStaticCalls(module.text));
+    // 入口と帰りは必ず対称。
+    try std.testing.expectEqual(countIrOccurrences(module.text, "call i32 @lnako_aot_call_depth_enter()"), countIrOccurrences(module.text, "call void @lnako_aot_call_depth_leave()"));
+    // 上限到達経路は呼び出しを行わず、未定義値のphiで合流する。
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "phi %lnako.Value [ { i8 0, i64 0 }, %call.") != null);
+}
+
+test "最適化時のtyped直接呼び出しも同じ深度ゲートを通る" {
+    var parsed = try parser.parse(std.testing.allocator, "●合計(N)とは\n  もし N = 0 ならば\n    0で戻る\n  ここまで\n  (N + 合計(N - 1))で戻る\nここまで\n合計(100)を表示\n", "main.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyzeModules(std.testing.allocator, &.{.{
+        .name = "main",
+        .path = "main.nako3",
+        .root = parsed.root.?,
+    }});
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lower(std.testing.allocator, &.{parsed.root.?}, &.{"main"}, &.{"main.nako3"}, &.{&.{}}, analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+
+    var module = try generate(std.testing.allocator, program, "main.nako3", true);
+    defer module.deinit(std.testing.allocator);
+    const typed_calls = countIrOccurrences(module.text, " = call double @lnako.fn.number.") +
+        countIrOccurrences(module.text, " = call i1 @lnako.fn.boolean.");
+    const gated_typed = countIrOccurrences(module.text, ".depth.value = call double @lnako.fn.number.") +
+        countIrOccurrences(module.text, ".depth.value = call i1 @lnako.fn.boolean.");
+    std.debug.print("TYPED_CALLS={d} GATED={d}\n", .{ typed_calls, gated_typed });
+    try std.testing.expectEqual(typed_calls, gated_typed);
 }

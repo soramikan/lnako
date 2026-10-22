@@ -227,6 +227,10 @@ pub fn poll(runtime: *Runtime, state: *State, context: Context, effects: Effects
         try respondConnectionSafe(state, context, 413, &.{}, "Request entity too large.");
         return true;
     }
+    // メソッドは要求行の先頭トークンで、クライアントが自由に書ける。UTF-8で
+    // ないバイト列を`HTTPメソッド`へ載せると要求処理が失敗し、1件の要求が
+    // イベントループ（＝プロセス）のエラーになってしまうため400で捨てる。
+    if (!std.unicode.utf8ValidateSlice(request.method)) return rejectRequest(state, context, 400);
     var log_buffer: std.Io.Writer.Allocating = .init(runtime.allocator());
     defer log_buffer.deinit();
     try log_buffer.writer.print("[簡易HTTPサーバ] 要求あり METHOD={s} URL={s}\n", .{ request.method, request.target });
@@ -898,6 +902,20 @@ test "HTTP要求の不正query encodingは400で捨てて要求処理を続け�
     try std.testing.expectEqual(@as(u16, 400), fixture.last_status);
     try std.testing.expectEqual(@as(usize, 1), fixture.response_count);
     try std.testing.expect(!state.request_active);
+}
+
+test "HTTP要求のUTF-8でないメソッドは400で捨てて要求処理を続ける" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state: State = .{ .started = true };
+    var fixture: PollFixture = .{ .mode = .invalid_then_valid, .method = "G\xffT" };
+    const context = pollFixtureContext(&fixture);
+    const effects = pollFixtureEffects(&fixture);
+
+    try std.testing.expect(try poll(&runtime, &state, context, effects));
+    try std.testing.expect(try poll(&runtime, &state, context, effects));
+    try std.testing.expectEqual(@as(u16, 400), fixture.last_status);
+    try std.testing.expectEqual(@as(usize, 1), fixture.response_count);
 }
 
 test "HTTP静的配信の親参照を含むパスは400で捨てる" {

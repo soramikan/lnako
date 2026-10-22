@@ -307,6 +307,10 @@ pub fn pollAotHttpServer(runtime: *Runtime) !bool {
         try aotHttpRespondSafe(runtime, "Request entity too large.");
         return true;
     }
+    // メソッドはクライアントが自由に書ける要求行の先頭トークン。UTF-8でない
+    // バイト列をそのまま`HTTPメソッド`へ載せると要求処理が失敗し、1件の要求が
+    // プロセス全体のエラーになってしまうため、ここで400として捨てる。
+    if (!std.unicode.utf8ValidateSlice(request.method)) return aotHttpReject(runtime, 400);
 
     var message: [256]u8 = undefined;
     const log = try std.fmt.bufPrint(&message, "[簡易HTTPサーバ] 要求あり METHOD={s} URL={s}\n", .{ request.method, request.target });
@@ -316,17 +320,12 @@ pub fn pollAotHttpServer(runtime: *Runtime) !bool {
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
-    // multipartのアップロードは要求スコープの一時ファイル。ハンドラの成否や
-    // 応答の有無に関わらず、要求の処理が終わった時点で回収する（Interpreter側
-    // pollのdeferと同じ寿命）。
-    defer aotHttpDeleteUploads(runtime, roots[1]);
 
     // 受信後の要求処理エラー（不正なquery・静的パス、アップロード保存の
-    // 失敗）は1回だけ応答して要求を捨て、プロセスを終了させない。
-    return handleAotHttpRequest(runtime, &request, &roots) catch |err| {
-        if (err == error.OutOfMemory) return err;
-        return aotHttpReject(runtime, 500);
-    };
+    // 失敗）はhandleAotHttpRequest内の各処理箇所が1回だけ応答して要求を捨て、
+    // プロセスを終了させない。ハンドラ（利用者プログラム）の実行エラーは
+    // 握りつぶさず、イベントループの呼び出し元へ伝播させる。
+    return handleAotHttpRequest(runtime, &request, &roots);
 }
 
 /// 受信済み要求の解析・配送。クライアント起因の失敗は`aotHttpReject`で
@@ -337,6 +336,10 @@ fn handleAotHttpRequest(runtime: *Runtime, request: *const AotHttpRequest, roots
         else => return err,
     };
     roots[1] = try runtime.createArray(&.{});
+    // multipartのアップロードは要求スコープの一時ファイル。ハンドラの成否や
+    // 応答の有無に関わらず、要求の処理が終わった時点で回収する（Interpreter側
+    // pollのdeferと同じ寿命）。
+    defer aotHttpDeleteUploads(runtime, roots[1]);
     roots[2] = try runtime.createDictionary(&.{});
     const path = aotHttpPathOnly(request.target);
     const route = aotHttpBestRoute(runtime.http_server_state.routes.items, path) orelse {
@@ -357,7 +360,11 @@ fn handleAotHttpRequest(runtime: *Runtime, request: *const AotHttpRequest, roots
     roots[3] = try runtimeUtf8String(runtime, request.method);
     aotHttpSetRequestGlobals(runtime, roots);
     if (route.kind == .static) {
-        try aotHttpServeStatic(runtime, route, path);
+        // 静的配信の失敗（読み取り・ヘッダ生成）は1件の要求の500に閉じる。
+        aotHttpServeStatic(runtime, route, path) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            return aotHttpReject(runtime, 500);
+        };
         return true;
     }
     runtime.http_server_state.request_active = true;
@@ -551,6 +558,10 @@ pub fn aotHttpParseMultipart(runtime: *Runtime, body: []const u8, boundary: []co
             const content_type = aotHttpFindHeader(head, "content-type") orelse "application/octet-stream";
             const path = try aotHttpSaveUpload(runtime, filename, part);
             defer runtime.allocator.free(path);
+            // FILESへ載る前の失敗（不正UTF-8のフィールド名など）では
+            // `aotHttpDeleteUploads`の走査対象にならず一時ファイルが残るため、
+            // 保存直後からこのスコープのerror経路で削除する。
+            errdefer std.Io.Dir.cwd().deleteFile(aotHttpIo(), path) catch {};
             roots[2] = try runtime.createDictionary(&.{});
             try aotHttpDictionarySetUtf8(runtime, roots[2], "fieldName", try runtimeUtf8String(runtime, field_name));
             try aotHttpDictionarySetUtf8(runtime, roots[2], "name", try runtimeUtf8String(runtime, filename));
@@ -792,6 +803,19 @@ fn expectAotHttpClientClosed(client: std.Io.net.Stream, io: std.Io) !void {
     try std.testing.expect(line == null);
 }
 
+/// テスト用: 1要求を受信して`handleAotHttpRequest`へ渡す。`pollAotHttpServer`は
+/// 要求ログをstdoutへ書くため、test-runnerのserver mode（stdoutが制御チャネル）
+/// では使えない。
+fn expectAotHttpRequestHandled(runtime: *Runtime) !bool {
+    var request = try aotHttpReceiveRequest(runtime);
+    defer request.deinit();
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    return handleAotHttpRequest(runtime, &request, &roots);
+}
+
 /// 応答全体を読み、status行・本文断片・禁止断片を検査する。
 fn expectAotHttpResponse(client: std.Io.net.Stream, io: std.Io, status: []const u8, body: ?[]const u8, forbidden: ?[]const u8) !void {
     var buffer: [4096]u8 = undefined;
@@ -817,7 +841,7 @@ test "AOT HTTPは不正query encodingを400で捨てて要求処理を続ける"
         var client = try aotHttpTestSendRequest(io, port, "GET /echo?x=%GG HTTP/1.1\r\nHost: localhost\r\n\r\n");
         defer client.close(io);
         // pollはエラーを返さず400を書き、次の要求を受け付ける。
-        try std.testing.expect(try pollAotHttpServer(&runtime));
+        try std.testing.expect(try expectAotHttpRequestHandled(&runtime));
         try std.testing.expect(runtime.http_connection == null);
         try expectAotHttpResponse(client, io, "HTTP/1.1 400", null, null);
     }
@@ -891,7 +915,7 @@ test "AOT HTTPは未登録URLへのmultipart POSTで本文を解析しない" {
     defer runtime.allocator.free(request_bytes);
     var client = try aotHttpTestSendRequest(io, port, request_bytes);
     defer client.close(io);
-    try std.testing.expect(try pollAotHttpServer(&runtime));
+    try std.testing.expect(try expectAotHttpRequestHandled(&runtime));
     // 未登録URLは接続を保持するだけで、本文の解析もアップロード保存もしない。
     try std.testing.expectEqual(@as(usize, 1), runtime.held_http_connections.items.len);
     try std.testing.expectEqual(@as(usize, 0), files_data.object().?.payload.array.items.len);
@@ -930,7 +954,7 @@ test "AOT HTTPは登録済みURLへのmultipart POSTでアップロードを要�
     var client = try aotHttpTestSendRequest(io, port, request_bytes);
     defer client.close(io);
 
-    try std.testing.expect(try pollAotHttpServer(&runtime));
+    try std.testing.expect(try expectAotHttpRequestHandled(&runtime));
     try std.testing.expectEqual(@as(usize, 1), files_data.object().?.payload.array.items.len);
     const file = files_data.object().?.payload.array.items[0];
     const path_value = aotHttpDictionaryGetUtf8(&runtime, file.object().?.payload.dictionary.entries.items, "path").?;
@@ -938,6 +962,108 @@ test "AOT HTTPは登録済みURLへのmultipart POSTでアップロードを要�
     defer runtime.allocator.free(path);
     // 保存しただけでなく、要求の処理が終わった時点で削除されている。
     try std.testing.expectEqual(AotHttpPathStat.missing, try aotHttpStatPath(path));
+}
+
+/// `aotHttpSaveUpload`と同じ保存先（`$TMPDIR/nako3-plugin_httpserver_upload`）。
+fn aotHttpTestUploadDirectory(runtime: *Runtime) ![]u8 {
+    const prefix = try nodeTemporaryDirectoryPrefixAlloc(runtime);
+    defer runtime.allocator.free(prefix);
+    return std.fs.path.join(runtime.allocator, &.{ prefix, "nako3-plugin_httpserver_upload" });
+}
+
+/// 保存先に`token`を含むファイルが残っているか。テストは一意なファイル名を
+/// 使うため、他のテストが同時に走っても取り違えない。
+fn aotHttpTestUploadExists(runtime: *Runtime, token: []const u8) !bool {
+    const io = aotHttpIo();
+    const directory = try aotHttpTestUploadDirectory(runtime);
+    defer runtime.allocator.free(directory);
+    var dir = std.Io.Dir.cwd().openDir(io, directory, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => return err,
+    };
+    defer dir.close(io);
+    var walker = try dir.walk(runtime.allocator);
+    defer walker.deinit();
+    while (try walker.next(io)) |entry| {
+        if (std.mem.indexOf(u8, entry.path, token) != null) return true;
+    }
+    return false;
+}
+
+test "AOT HTTPはFILES登録前の失敗でアップロードを残さない" {
+    const io = aotHttpIo();
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+    runtime.http_server = try address.listen(io, .{ .reuse_address = true });
+    try aotHttpIngressStart(&runtime);
+    runtime.http_server_state.started = true;
+    const port = runtime.http_server.?.socket.address.getPort();
+
+    var docroot = std.testing.tmpDir(.{});
+    defer docroot.cleanup();
+    const docroot_path = try docroot.dir.realPathFileAlloc(io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(docroot_path);
+    try runtime.http_server_state.routes.append(runtime.allocator, .{
+        .kind = .static,
+        .prefix = try runtime.allocator.dupe(u8, "/upload"),
+        .path = try runtime.allocator.dupe(u8, docroot_path),
+    });
+
+    var method: Value = .{};
+    var get_data: Value = .{};
+    var post_data: Value = .{};
+    var files_data: Value = .{};
+    runtime.http_globals = .{ .method = &method, .get_data = &get_data, .post_data = &post_data, .files_data = &files_data };
+
+    const token = try std.fmt.allocPrint(runtime.allocator, "leak{d}.bin", .{currentTimeMilliseconds(&runtime)});
+    defer runtime.allocator.free(token);
+    // フィールド名がUTF-8でないため`FILESデータ`へ載せる直前で失敗する。
+    const body = try std.fmt.allocPrint(runtime.allocator, "--X\r\nContent-Disposition: form-data; name=\"f\xff\"; filename=\"{s}\"\r\n\r\nDATA\r\n--X--\r\n", .{token});
+    defer runtime.allocator.free(body);
+    const request_bytes = try std.fmt.allocPrint(runtime.allocator, "POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Type: multipart/form-data; boundary=X\r\nContent-Length: {d}\r\n\r\n{s}", .{ body.len, body });
+    defer runtime.allocator.free(request_bytes);
+    var client = try aotHttpTestSendRequest(io, port, request_bytes);
+    defer client.close(io);
+
+    // 本文の解析失敗は500で1件だけ捨て、プロセスは止めない。
+    try std.testing.expect(try expectAotHttpRequestHandled(&runtime));
+    try expectAotHttpResponse(client, io, "HTTP/1.1 500", null, null);
+    // FILESに載らなかった保存済みファイルは、回収対象外になる前に消えている。
+    try std.testing.expect(!try aotHttpTestUploadExists(&runtime, token));
+}
+
+fn testAotHttpFailingHandler(out: *state.Value, _: *anyopaque, _: ?[*]const state.Value, _: usize) callconv(.c) void {
+    out.* = .{};
+    if (state.active_runtime) |*active| active.setFailure(error.CallbackExecutionFailed);
+}
+
+test "AOT HTTPはハンドラの実行エラーを呼び出し元へ伝播する" {
+    const io = aotHttpIo();
+    // ハンドラは生成コードと同じく`active_runtime`経由で失敗を記録するため、
+    // Runtimeはグローバル側に置き、local変数と二重に持たない。
+    state.active_runtime = Runtime{ .allocator = std.testing.allocator };
+    defer {
+        if (state.active_runtime) |*active| active.deinit();
+        state.active_runtime = null;
+    }
+    const runtime = if (state.active_runtime) |*active| active else unreachable;
+    const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+    runtime.http_server = try address.listen(io, .{ .reuse_address = true });
+    try aotHttpIngressStart(runtime);
+    runtime.http_server_state.started = true;
+    const port = runtime.http_server.?.socket.address.getPort();
+
+    try runtime.http_server_state.routes.append(runtime.allocator, .{
+        .kind = .callback,
+        .prefix = try runtime.allocator.dupe(u8, "/fail"),
+        .callback = try runtime.createFunction(testAotHttpFailingHandler, 0, &.{}),
+    });
+
+    var client = try aotHttpTestSendRequest(io, port, "GET /fail HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    defer client.close(io);
+    // 利用者プログラムの例外を500応答へ丸めず、イベントループへ返す。
+    try std.testing.expectError(error.CallbackExecutionFailed, pollAotHttpServer(runtime));
 }
 
 test "AOT HTTPは途中切断と不正chunk/header後に次の要求を受け付ける" {
