@@ -10,6 +10,12 @@ const process = @import("process.zig");
 const network = @import("network.zig");
 const environment = @import("environment.zig");
 
+/// 未応答（未ルート・callback が応答を書かなかった）要求として保持してよい
+/// connection 数。超えた分は最も古い hold から閉じる。http_ingress の
+/// max_pending(32) とは別枠で、fd 上限が小さい環境でも accept が枯渇しない
+/// ように十分小さくする。
+const max_held_http_connections: usize = 16;
+
 pub const CliHost = struct {
     writer: *std.Io.Writer,
     error_writer: *std.Io.Writer,
@@ -1034,9 +1040,17 @@ pub const CliHost = struct {
         };
     }
 
+    /// 応答を書かないまま要求を保留する。公式 cnako3 も未ルート要求を保留する
+    /// （応答も close もしない）ため、観測可能な挙動は変えずに保持数だけを
+    /// 上限で抑える。以前は上限が無く、未ルート要求を fd 上限まで並べるだけで
+    /// accept が永久に失敗していた。
     fn holdHttpServerResponse(context: *anyopaque) !void {
         const self: *CliHost = @ptrCast(@alignCast(context));
         const stream = self.http_connection orelse return error.HttpServerResponseOutsideRequest;
+        while (self.held_http_connections.items.len >= max_held_http_connections) {
+            const evicted = self.held_http_connections.orderedRemove(0);
+            evicted.close(self.io);
+        }
         try self.held_http_connections.append(std.heap.page_allocator, stream);
         self.http_connection = null;
         self.http_head_request = false;
