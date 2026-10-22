@@ -1162,3 +1162,36 @@ test "正規表現の深さ上限超過は構文エラー文言になる" {
     try std.testing.expect(std.mem.endsWith(u8, message, ": Pattern nested too deeply"));
     try std.testing.expect(std.mem.startsWith(u8, message, "Invalid regular expression: "));
 }
+
+test "正規表現の入れ子クラス内の集合演算も同じ深さ予算を共有する" {
+    // 入れ子クラスごとに演算を許すと、照合時の再帰深度が階層ごとに積み上がる。
+    // 演算ノードも同じ計数に入れ、合成後の深さを上限内に保つ。
+    const limit = regexp_engine.parser.Parser.max_nesting_depth;
+    const over = try buildNestedSetOperationPattern(limit);
+    defer std.testing.allocator.free(over);
+    try std.testing.expectError(error.PatternTooDeep, regexp_engine.compilePattern(std.testing.allocator, over, false));
+
+    // 上限内なら入れ子クラス内の集合演算も照合できる。
+    const nested = try buildNestedSetOperationPattern(limit - 1);
+    defer std.testing.allocator.free(nested);
+    var compiled = try regexp_engine.compilePattern(std.testing.allocator, nested, false);
+    defer compiled.deinit();
+    const source = [_]u16{'a'};
+    const matches = try regexp_engine.findMatches(std.testing.allocator, &source, &compiled);
+    defer std.testing.allocator.free(matches);
+    try std.testing.expectEqual(@as(usize, 1), matches.len);
+}
+
+fn buildNestedSetOperationPattern(nesting: usize) ![]u16 {
+    const units = 2 * nesting + 7;
+    const pattern = try std.testing.allocator.alloc(u16, units);
+    pattern[0] = '/';
+    var index: usize = 0;
+    while (index < nesting) : (index += 1) pattern[1 + index] = '[';
+    @memcpy(pattern[1 + nesting ..][0..4], &[_]u16{ 'a', '&', '&', 'a' });
+    index = 0;
+    while (index < nesting) : (index += 1) pattern[1 + nesting + 4 + index] = ']';
+    pattern[units - 2] = '/';
+    pattern[units - 1] = 'v';
+    return pattern;
+}

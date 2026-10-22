@@ -5,12 +5,13 @@ const character_class = @import("character_class.zig");
 const captures = @import("captures.zig");
 
 pub const Parser = struct {
-    /// Deepest group/class nesting accepted.  The parser recurses once per
-    /// level, and the matcher recurses once per level again, so an unbounded
-    /// pattern exhausts the native stack (SIGSEGV at ~10,000 nested groups in
-    /// the interpreter, between 256 and 512 in the debug test harness).  128
-    /// keeps a wide margin under the tightest of those, and stays far above
-    /// what a hand-written pattern nests.
+    /// Deepest pattern nesting accepted: groups, assertions, nested classes and
+    /// character-class set operations all draw from this one budget, so the
+    /// recursion depth of both the parser and the matcher (which descends the
+    /// same tree) stays bounded by it.  Unbounded patterns exhaust the native
+    /// stack (SIGSEGV at ~10,000 nested groups in the interpreter, between 256
+    /// and 512 in the debug test harness).  128 keeps a wide margin under the
+    /// tightest of those, and stays far above what a hand-written pattern nests.
     pub const max_nesting_depth: usize = 128;
 
     allocator: std.mem.Allocator,
@@ -134,12 +135,15 @@ pub const Parser = struct {
         const negated = consume(self, '^');
         var left = try self.parseClassOperand();
         var set_operations: usize = 0;
+        defer self.depth -= set_operations;
         while (self.consumeSetOperator()) |kind| {
             // A chain of set operators builds a left-deep tree, and matching
-            // walks that tree recursively, so the chain has to fit in the same
-            // nesting budget as groups and nested classes.
+            // walks that tree recursively.  Counting each node against the same
+            // budget as nested classes keeps the composed recursion depth (a
+            // chain inside a chain of nested classes) inside the limit instead
+            // of multiplying it.
+            try self.enterNesting();
             set_operations += 1;
-            if (self.depth + set_operations > max_nesting_depth) return error.PatternTooDeep;
             if (left.operation == null and left.items.len == 0) return error.InvalidCharacterClass;
             if (!character_class.isSetOperand(left)) return error.UnsupportedUnicodeSetOperation;
             if (self.index >= self.source.len or self.source[self.index] == ']' or self.atSetOperator()) return error.InvalidCharacterInClass;
