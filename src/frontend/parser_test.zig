@@ -2174,7 +2174,7 @@ test "極端に長い連鎖を持つ条件式も位置付き診断で止まる" 
     try source.appendSlice(std.testing.allocator, "もし1+_\n");
     var index: usize = 0;
     while (index < deep_chain_terms - 1) : (index += 1) try source.appendSlice(std.testing.allocator, "1+_\n");
-    try source.appendSlice(std.testing.allocator, "1が0ならば\n1を表示\nここまで\n");
+    try source.appendSlice(std.testing.allocator, "1ならば\n1を表示\nここまで\n");
     var result = try parse(std.testing.allocator, source.items, "very-deep-condition.nako3");
     defer result.deinit();
     try std.testing.expect(!result.succeeded());
