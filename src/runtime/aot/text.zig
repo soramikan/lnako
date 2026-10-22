@@ -304,6 +304,21 @@ pub fn tomlParse(runtime: *Runtime, source: Value) !Value {
     return parser.document();
 }
 
+test "AOTのTOML取得は深い配列を入れ子上限でInvalidTomlValueにする" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var source: std.ArrayList(u8) = .empty;
+    defer source.deinit(std.testing.allocator);
+    try source.appendSlice(std.testing.allocator, "a=");
+    for (0..max_toml_value_nesting + 1) |_| try source.append(std.testing.allocator, '[');
+    for (0..max_toml_value_nesting + 1) |_| try source.append(std.testing.allocator, ']');
+    var text = try runtimeUtf8String(&runtime, source.items);
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, @ptrCast(&text), 1);
+    defer runtime.popRoots(&frame);
+    try std.testing.expectError(error.InvalidTomlValue, tomlParse(&runtime, text));
+}
+
 const TomlAotTerminator = enum { equal, bracket, double_bracket };
 
 const TomlAotKeyPath = struct {
@@ -316,10 +331,15 @@ const TomlAotKeyPath = struct {
     }
 };
 
+/// `src/plugins/toml.zig`の`max_value_nesting`と同じ上限。AOT側の写しも
+/// 同じ深さで打ち切り、Interpreter/AOTで受理する文書を揃える。
+const max_toml_value_nesting: usize = 256;
+
 const TomlAotParser = struct {
     runtime: *Runtime,
     input: []const u8,
     index: usize = 0,
+    depth: usize = 0,
 
     pub fn document(self: *TomlAotParser) !Value {
         var result = try self.runtime.createDictionary(&.{});
@@ -394,8 +414,20 @@ const TomlAotParser = struct {
         return switch (self.input[self.index]) {
             '"' => self.stringValue('"'),
             '\'' => self.stringValue('\''),
-            '[' => self.array(),
-            '{' => self.inlineTable(),
+            // 配列・インライン表は`value`を再帰するため深度を追跡する
+            // （Interpreter側`value`と同じ上限・同じerror）。
+            '[' => blk: {
+                if (self.depth >= max_toml_value_nesting) return error.InvalidTomlValue;
+                self.depth += 1;
+                defer self.depth -= 1;
+                break :blk try self.array();
+            },
+            '{' => blk: {
+                if (self.depth >= max_toml_value_nesting) return error.InvalidTomlValue;
+                self.depth += 1;
+                defer self.depth -= 1;
+                break :blk try self.inlineTable();
+            },
             else => self.bareValue(),
         };
     }

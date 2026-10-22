@@ -51,6 +51,10 @@ fn writeValue(
     in_array: bool,
     path: ?JsonPath,
 ) !void {
+    // `depth`は整形用のインデント段数ではなく、値の入れ子そのもの。
+    // デコーダは反復実装で任意の深さを受けるが、エンコーダの再帰は
+    // ここで打ち切り、ホストのスタックを枯渇させない。
+    if (depth >= value_mod.max_value_nesting_depth) return error.ValueNestingTooDeep;
     switch (value) {
         .undefined, .function => try writer.writeAll(if (in_array) "null" else return error.UnsupportedJsonValue),
         .promise => try writer.writeAll("{}"),
@@ -1118,6 +1122,23 @@ test "JSONデコードは100000段のネストをCスタックなしで処理す
         value = value.array.items.items[0];
     }
     try std.testing.expectEqual(@as(f64, 0), value.number);
+}
+
+test "JSONエンコードは入れ子上限でValueNestingTooDeepを返す" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.next_collection = std.math.maxInt(usize);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var head = try runtime.createArray();
+    try roots.protect(&head);
+    var value = head;
+    for (0..value_mod.max_value_nesting_depth) |_| {
+        const nested = try runtime.createArray();
+        _ = try value.array.push(nested);
+        value = nested;
+    }
+    try std.testing.expectError(error.ValueNestingTooDeep, call(&runtime, "JSON変換", &.{head}));
 }
 
 fn jsonDecodeAllocationTest(allocator: std.mem.Allocator) !void {

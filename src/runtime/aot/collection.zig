@@ -1149,6 +1149,12 @@ pub fn validateFillDimensions(runtime: *Runtime, shape: Value) !void {
 }
 
 pub fn cloneFillValue(runtime: *Runtime, value: Value) !Value {
+    return cloneFillValueAtDepth(runtime, value, 0);
+}
+
+fn cloneFillValueAtDepth(runtime: *Runtime, value: Value, depth: usize) !Value {
+    // 配列の自己参照は循環検査を持たないため、深さ上限で打ち切る。
+    if (depth >= shared.dynamic_value.max_value_nesting_depth) return error.ValueNestingTooDeep;
     if (value.tag != @backingInt(Tag.array)) return switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .dictionary, .byte_buffer, .iterator, .promise => deepCloneBuiltin(runtime, value),
         else => value,
@@ -1163,12 +1169,14 @@ pub fn cloneFillValue(runtime: *Runtime, value: Value) !Value {
     try runtime.normalizeAotArrayPresence(roots[0].object().?);
     try destination.ensureTotalCapacity(runtime.allocator, source.items.len);
     for (source.items, 0..) |item, index| {
-        try appendAotArraySlot(runtime, roots[1].object().?, try cloneFillValue(runtime, item), runtime.aotArrayIsPresent(roots[0].object().?, index));
+        try appendAotArraySlot(runtime, roots[1].object().?, try cloneFillValueAtDepth(runtime, item, depth + 1), runtime.aotArrayIsPresent(roots[0].object().?, index));
     }
     return roots[1];
 }
 
 pub fn arrayFillAtDepth(runtime: *Runtime, value: Value, shape: Value, depth: usize) !Value {
+    // 次元数はshape配列の長さ次第で、1段あたり1フレームを再帰で消費する。
+    if (depth >= shared.dynamic_value.max_value_nesting_depth) return error.ValueNestingTooDeep;
     if (shape.tag != @backingInt(Tag.array)) {
         const count = try fillArrayLength(try valueToNumberRuntime(runtime, shape), safe_array_element_limit - 1);
         const result = try runtime.createArray(&.{});
@@ -1424,4 +1432,16 @@ pub fn appendCodePointBuiltin(allocator: std.mem.Allocator, output: *std.ArrayLi
     const offset: u32 = codepoint - 0x10000;
     try output.append(allocator, @intCast(0xd800 + (offset >> 10)));
     try output.append(allocator, @intCast(0xdc00 + (offset & 0x3ff)));
+}
+
+test "AOT cloneFillValueは自己参照配列を入れ子上限で打ち切る" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    runtime.next_collection = std.math.maxInt(usize);
+    var roots = [_]Value{ try runtime.createArray(&.{}), .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    try roots[0].object().?.payload.array.append(runtime.allocator, roots[0]);
+    try std.testing.expectError(error.ValueNestingTooDeep, cloneFillValue(&runtime, roots[0]));
 }

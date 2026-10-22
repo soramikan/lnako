@@ -35,6 +35,48 @@ const functions_mod = @import("../functions.zig");
 const preamble_mod = @import("../preamble.zig");
 const declarations_mod = @import("../declarations.zig");
 
+/// 深度ゲートで合流させる結果の型。genericは`%lnako.Value`、typedは
+/// primitive ABIのスカラー値を返す。
+const CallDepthJoin = union(enum) {
+    generic,
+    typed: typed_abi.Scalar,
+};
+
+/// 静的に解決した直接呼び出し（`@lnako.fn.{id}`／typed ABI）は
+/// `lnako_aot_function_call`を通らないため、深度計数もここで行う。
+/// `{prefix}.{id}.depth.limit`（上限到達・実呼び出しなし）と
+/// `{prefix}.{id}.depth.invoke`（実呼び出し）へ分岐し、結果は
+/// `{prefix}.{id}.depth.done`のphiで合流させる。上限到達時はランタイム側が
+/// `CallStackLimitExceeded`をpending例外として設定するため、呼び出し側は
+/// 未定義値（typedは0/false）を返して続行する。
+fn writeCallDepthGate(emitter: *Emitter, prefix: []const u8, result: ir.ValueId, span: ast.Span, scope: usize) !void {
+    try emitter.output.writer.print("  %{s}.{d}.depth = call i32 @lnako_aot_call_depth_enter()", .{ prefix, result });
+    try emitter.debugSuffix(span, scope);
+    try emitter.output.writer.print("  %{s}.{d}.depth.blocked = icmp ne i32 %{s}.{d}.depth, 0", .{ prefix, result, prefix, result });
+    try emitter.debugSuffix(span, scope);
+    try emitter.output.writer.print("  br i1 %{s}.{d}.depth.blocked, label %{s}.{d}.depth.limit, label %{s}.{d}.depth.invoke", .{ prefix, result, prefix, result, prefix, result });
+    try emitter.debugSuffix(span, scope);
+    try emitter.output.writer.print("{s}.{d}.depth.limit:\n", .{ prefix, result });
+    try emitter.output.writer.print("  br label %{s}.{d}.depth.done\n", .{ prefix, result });
+    try emitter.output.writer.print("{s}.{d}.depth.invoke:\n", .{ prefix, result });
+}
+
+/// 深度ゲートを通過した実呼び出しの合流点。`.depth.invoke` blockの末尾で呼ぶ。
+fn writeCallDepthJoin(emitter: *Emitter, prefix: []const u8, result: ir.ValueId, join: CallDepthJoin, span: ast.Span, scope: usize) !void {
+    try emitter.output.writer.writeAll("  call void @lnako_aot_call_depth_leave()");
+    try emitter.debugSuffix(span, scope);
+    try emitter.output.writer.print("  br label %{s}.{d}.depth.done\n", .{ prefix, result });
+    try emitter.output.writer.print("{s}.{d}.depth.done:\n", .{ prefix, result });
+    switch (join) {
+        .generic => try emitter.output.writer.print("  %v{d} = phi %lnako.Value [ {{ i8 0, i64 0 }}, %{s}.{d}.depth.limit ], [ %{s}.{d}.depth.value, %{s}.{d}.depth.invoke ]", .{ result, prefix, result, prefix, result, prefix, result }),
+        .typed => |scalar| try emitter.output.writer.print("  %typed.v{d} = phi {s} [ {s}, %{s}.{d}.depth.limit ], [ %{s}.{d}.depth.value, %{s}.{d}.depth.invoke ]", .{ result, scalar.llvmType(), switch (scalar) {
+            .number => "0.000000e+00",
+            .boolean => "false",
+        }, prefix, result, prefix, result, prefix, result }),
+    }
+    try emitter.debugSuffix(span, scope);
+}
+
 pub fn writeCall(emitter: *Emitter, function: ir.Function, locals: []const []const u8, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
     const result = instruction.result orelse return error.MissingInstructionResult;
     if (instruction.direct_callee == null and instruction.is_builtin_call and isDisplayCall(instruction.name)) {
@@ -109,7 +151,11 @@ pub fn writeCall(emitter: *Emitter, function: ir.Function, locals: []const []con
                 try emitter.debugSuffix(instruction.span, scope);
             }
         }
-        try emitter.output.writer.print("  %v{d} = call %lnako.Value @lnako.fn.{d}(ptr null", .{ result, resolved.id });
+        // 静的に解決した呼び出しも`lnako_aot_function_call`と同じ深度上限を
+        // 共有する。上限時はpending例外だけを残し、`%v{id}`は未定義値になる
+        // （`writeCallResult`が`それ`の従来値へ落とす）。
+        try writeCallDepthGate(emitter, "call", result, instruction.span, scope);
+        try emitter.output.writer.print("  %call.{d}.depth.value = call %lnako.Value @lnako.fn.{d}(ptr null", .{ result, resolved.id });
         if (pass_call_arguments and instruction.operands.len > 0) {
             try emitter.output.writer.print(", ptr %call.{d}.args.0, i64 {d}", .{ result, instruction.operands.len });
         } else try emitter.output.writer.writeAll(", ptr null, i64 0");
@@ -119,6 +165,7 @@ pub fn writeCall(emitter: *Emitter, function: ir.Function, locals: []const []con
         }
         try emitter.output.writer.writeByte(')');
         try emitter.debugSuffix(instruction.span, scope);
+        try writeCallDepthJoin(emitter, "call", result, .generic, instruction.span, scope);
     }
     try writeCallResult(emitter, result, instruction.span, scope);
 }
@@ -178,7 +225,8 @@ pub fn writeTypedBodyCall(emitter: *Emitter, caller: ir.Function, callee: ir.Fun
     const typed_analysis = try emitter.typedAnalysis();
     const global_index = emitter.globalIndex("それ") orelse return error.MissingResultGlobal;
     if (typed_abi.scalarType(typed_analysis.valueType(caller.id, result)) != scalar) return error.InvalidTypedCall;
-    try emitter.output.writer.print("  %typed.v{d} = call {s} ", .{ result, scalar.llvmType() });
+    try writeCallDepthGate(emitter, "typed.call", result, instruction.span, scope);
+    try emitter.output.writer.print("  %typed.call.{d}.depth.value = call {s} ", .{ result, scalar.llvmType() });
     try typed_abi.writeName(&emitter.output.writer, scalar, callee.id);
     try emitter.output.writer.writeAll("(ptr %context");
     for (instruction.operands, 0..) |operand, index| {
@@ -190,6 +238,7 @@ pub fn writeTypedBodyCall(emitter: *Emitter, caller: ir.Function, callee: ir.Fun
     }
     try emitter.output.writer.writeByte(')');
     try emitter.debugSuffix(instruction.span, scope);
+    try writeCallDepthJoin(emitter, "typed.call", result, .{ .typed = scalar }, instruction.span, scope);
     try emitter.output.writer.print("  %typed.call.result.bits.{d} = ", .{result});
     switch (scalar) {
         .number => try emitter.output.writer.print("bitcast double %typed.v{d} to i64", .{result}),
@@ -221,7 +270,8 @@ fn writeTypedCall(emitter: *Emitter, caller: ir.Function, callee: ir.Function, s
         defer emitter.allocator.free(label);
         try constants_mod.writeTypedOperand(emitter, caller, operand, parameter_scalar, label, instruction.span, scope);
     }
-    try emitter.output.writer.print("  %typed.call.{d} = call {s} ", .{ result, scalar.llvmType() });
+    try writeCallDepthGate(emitter, "typed.call", result, instruction.span, scope);
+    try emitter.output.writer.print("  %typed.call.{d}.depth.value = call {s} ", .{ result, scalar.llvmType() });
     try typed_abi.writeName(&emitter.output.writer, scalar, callee.id);
     try emitter.output.writer.writeAll("(ptr null");
     for (callee.parameters, 0..) |_, index| {
@@ -230,11 +280,12 @@ fn writeTypedCall(emitter: *Emitter, caller: ir.Function, callee: ir.Function, s
     }
     try emitter.output.writer.writeByte(')');
     try emitter.debugSuffix(instruction.span, scope);
+    try writeCallDepthJoin(emitter, "typed.call", result, .{ .typed = scalar }, instruction.span, scope);
 
     try emitter.output.writer.print("  %typed.result.bits.{d} = ", .{result});
     switch (scalar) {
-        .number => try emitter.output.writer.print("bitcast double %typed.call.{d} to i64", .{result}),
-        .boolean => try emitter.output.writer.print("zext i1 %typed.call.{d} to i64", .{result}),
+        .number => try emitter.output.writer.print("bitcast double %typed.v{d} to i64", .{result}),
+        .boolean => try emitter.output.writer.print("zext i1 %typed.v{d} to i64", .{result}),
     }
     try emitter.debugSuffix(instruction.span, scope);
     try emitter.output.writer.print("  %typed.result.boxed.{d} = insertvalue %lnako.Value {{ i8 {d}, i64 0 }}, i64 %typed.result.bits.{d}, 1", .{ result, scalar.valueTag(), result });

@@ -60,6 +60,9 @@ pub fn jsonWriteValue(
     in_array: bool,
     path: ?JsonAotPath,
 ) !void {
+    // デコーダは反復実装で任意の深さを受けるが、エンコーダの再帰は
+    // Interpreter側と同じ上限で打ち切る。
+    if (depth >= shared.dynamic_value.max_value_nesting_depth) return error.ValueNestingTooDeep;
     switch (@as(Tag, @fromBackingInt(@intCast(value.tag)))) {
         .undefined, .function => if (in_array) try writer.writeAll("null") else return,
         .null_value => try writer.writeAll("null"),
@@ -825,4 +828,21 @@ pub fn jsonDecodeBuiltin(runtime: *Runtime, source: Value) !Value {
     defer runtime.allocator.free(units);
     var parser = JsonAotParser{ .runtime = runtime, .units = units };
     return parser.parse();
+}
+
+test "AOTのJSONエンコードは入れ子上限でValueNestingTooDeepを返す" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    runtime.next_collection = std.math.maxInt(usize);
+    var roots = [_]Value{ try runtime.createArray(&.{}), .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    var value = roots[0];
+    for (0..shared.dynamic_value.max_value_nesting_depth) |_| {
+        const nested = try runtime.createArray(&.{});
+        try value.object().?.payload.array.append(runtime.allocator, nested);
+        value = nested;
+    }
+    try std.testing.expectError(error.ValueNestingTooDeep, jsonEncodeBuiltin(&runtime, roots[0], false));
 }

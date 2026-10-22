@@ -281,6 +281,8 @@ pub fn functionStringUtf16Alloc(runtime: *Runtime, name: []const u8) ![]u16 {
 
 pub fn arrayUtf16Alloc(runtime: *Runtime, object: *Object) anyerror![]u16 {
     for (runtime.stringifying_arrays.items) |active| if (active == object) return runtime.allocator.alloc(u16, 0);
+    // stringifying_arraysは循環検出用の訪問集合であり、深さの上限でもある。
+    if (runtime.stringifying_arrays.items.len >= shared.dynamic_value.max_value_nesting_depth) return error.ValueNestingTooDeep;
     try runtime.stringifying_arrays.append(runtime.allocator, object);
     defer _ = runtime.stringifying_arrays.pop();
     var output: std.ArrayList(u16) = .empty;
@@ -1074,4 +1076,21 @@ test "AOT concatは出力allocation前のGCでもoperandを保持する" {
     try std.testing.expectEqual(@as(u64, 1), runtime.counters.gc_collections);
     try std.testing.expectEqualSlices(u16, &.{ 'L', 'e', 'f', 't' }, left.object().?.payload.utf16_string);
     try std.testing.expectEqualSlices(u16, &.{ 'L', 'e', 'f', 't', 0xd83d, 0xde00 }, result.object().?.payload.utf16_string);
+}
+
+test "AOT配列の文字列化は入れ子上限でValueNestingTooDeepを返す" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    runtime.next_collection = std.math.maxInt(usize);
+    var roots = [_]Value{ try runtime.createArray(&.{}), .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    var value = roots[0];
+    for (0..shared.dynamic_value.max_value_nesting_depth) |_| {
+        const nested = try runtime.createArray(&.{});
+        try value.object().?.payload.array.append(runtime.allocator, nested);
+        value = nested;
+    }
+    try std.testing.expectError(error.ValueNestingTooDeep, valueUtf16Alloc(&runtime, roots[0]));
 }

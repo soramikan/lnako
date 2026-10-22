@@ -14,6 +14,9 @@ pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Val
     return null;
 }
 
+/// 配列・インライン表の入れ子上限。`package/toml.zig`の同名定数と揃える。
+const max_value_nesting = 256;
+
 fn parse(runtime: *Runtime, source: Value) !Value {
     var rooted_source = source;
     var roots = runtime.rootFrame();
@@ -33,6 +36,9 @@ const Parser = struct {
     runtime: *Runtime,
     input: []const u8,
     index: usize = 0,
+    /// 配列・インライン表の入れ子段数。`package/toml.zig`の
+    /// `max_value_nesting`と同じ上限で打ち切る。
+    depth: usize = 0,
 
     fn document(self: *Parser) !Value {
         var result = try self.runtime.createDictionary();
@@ -118,8 +124,19 @@ const Parser = struct {
         return switch (self.input[self.index]) {
             '"' => self.stringValue('"'),
             '\'' => self.stringValue('\''),
-            '[' => self.array(),
-            '{' => self.inlineTable(),
+            // 配列・インライン表は`value`を再帰するため深度を追跡する。
+            '[' => blk: {
+                if (self.depth >= max_value_nesting) return error.InvalidTomlValue;
+                self.depth += 1;
+                defer self.depth -= 1;
+                break :blk try self.array();
+            },
+            '{' => blk: {
+                if (self.depth >= max_value_nesting) return error.InvalidTomlValue;
+                self.depth += 1;
+                defer self.depth -= 1;
+                break :blk try self.inlineTable();
+            },
             else => self.bareValue(),
         };
     }
@@ -571,6 +588,21 @@ test "TOMLの表・配列・インライン表を相互変換する" {
     const utf8 = try encoded.string.toUtf8Lossy(std.testing.allocator);
     defer std.testing.allocator.free(utf8);
     try std.testing.expect(std.mem.indexOf(u8, utf8, "[server]\nport = 8080") != null);
+}
+
+test "TOMLの深い配列は入れ子上限でInvalidTomlValueを返す" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var source: std.ArrayList(u8) = .empty;
+    defer source.deinit(std.testing.allocator);
+    try source.appendSlice(std.testing.allocator, "a=");
+    for (0..max_value_nesting + 1) |_| try source.append(std.testing.allocator, '[');
+    for (0..max_value_nesting + 1) |_| try source.append(std.testing.allocator, ']');
+    var text = try runtime.stringUtf8(source.items);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&text);
+    try std.testing.expectError(error.InvalidTomlValue, call(&runtime, "TOML取得", &.{text}));
 }
 
 test "TOML日時は専用値としてJSONとTOMLへ正規化する" {

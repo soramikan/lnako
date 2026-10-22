@@ -660,6 +660,9 @@ pub const RootFrame = struct {
     }
 };
 
+/// 値の入れ子の上限。
+pub const max_value_nesting_depth: usize = 1024;
+
 /// 循環参照を扱う正確なmark-and-sweepヒープと、生成コード向けルートスタック。
 pub const Runtime = struct {
     backing_allocator: std.mem.Allocator,
@@ -1327,6 +1330,7 @@ pub const Runtime = struct {
 
     fn arrayToString(self: *Runtime, array: *Array) !Value {
         for (self.stringifying_arrays.items) |active| if (active == array) return self.stringUtf8("");
+        if (self.stringifying_arrays.items.len >= max_value_nesting_depth) return error.ValueNestingTooDeep;
         try self.stringifying_arrays.append(self.allocator(), array);
         defer _ = self.stringifying_arrays.pop();
         var output: std.Io.Writer.Allocating = .init(self.allocator());

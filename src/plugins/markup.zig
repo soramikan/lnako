@@ -56,7 +56,7 @@ fn markdown(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
     }
     var output: std.Io.Writer.Allocating = .init(allocator);
     errdefer output.deinit();
-    try renderBlocks(allocator, content_lines.items, definitions.items, &output.writer);
+    try renderBlocks(allocator, content_lines.items, definitions.items, &output.writer, 0);
     return output.toOwnedSlice();
 }
 
@@ -84,7 +84,12 @@ fn definition(line: []const u8) ?Definition {
     return .{ .label = source[1..label_end], .destination = destination, .title = title };
 }
 
-fn renderBlocks(allocator: std.mem.Allocator, lines: []const []const u8, definitions: []const Definition, output: *std.Io.Writer) !void {
+/// ブロック・リストの入れ子を再帰で辿る上限。入力の`>`やインデント段数が
+/// そのままCスタック消費になるため、上限を超えた分は入れ子を解いて
+/// 平坦化する（公式markedも同じ深さではRangeErrorになる）。
+const max_markdown_nesting_depth = 256;
+
+fn renderBlocks(allocator: std.mem.Allocator, lines: []const []const u8, definitions: []const Definition, output: *std.Io.Writer, depth: usize) !void {
     var index: usize = 0;
     while (index < lines.len) {
         const line = lines[index];
@@ -143,7 +148,12 @@ fn renderBlocks(allocator: std.mem.Allocator, lines: []const []const u8, definit
                 } else break;
             }
             try output.writeAll("<blockquote>\n");
-            try renderBlocks(allocator, nested.items, definitions, output);
+            if (depth < max_markdown_nesting_depth) {
+                try renderBlocks(allocator, nested.items, definitions, output, depth + 1);
+            } else for (nested.items) |nested_line| {
+                try escapeHtml(output, nested_line, false);
+                try output.writeByte('\n');
+            }
             try output.writeAll("</blockquote>\n");
             continue;
         }
@@ -186,7 +196,7 @@ fn renderBlocks(allocator: std.mem.Allocator, lines: []const []const u8, definit
             }
         }
         if (listMarker(line)) |marker| {
-            index = try renderList(allocator, lines, index, marker, definitions, output);
+            index = try renderList(allocator, lines, index, marker, definitions, output, 0);
             continue;
         }
         if (isIndentedCode(line)) {
@@ -376,7 +386,7 @@ fn listMarkerWithLimit(line: []const u8, maximum_indent: ?usize) ?ListMarker {
     return .{ .ordered = true, .start = number, .indent = indent, .content_start = index };
 }
 
-fn renderList(allocator: std.mem.Allocator, lines: []const []const u8, start_index: usize, first_marker: ListMarker, definitions: []const Definition, output: *std.Io.Writer) !usize {
+fn renderList(allocator: std.mem.Allocator, lines: []const []const u8, start_index: usize, first_marker: ListMarker, definitions: []const Definition, output: *std.Io.Writer, depth: usize) !usize {
     const loose = listIsLoose(lines, start_index, first_marker);
     try output.writeAll(if (first_marker.ordered) "<ol" else "<ul");
     if (first_marker.ordered and first_marker.start != 1) try output.print(" start=\"{d}\"", .{first_marker.start});
@@ -401,11 +411,21 @@ fn renderList(allocator: std.mem.Allocator, lines: []const []const u8, start_ind
         while (index < lines.len) {
             if (listMarkerAnyIndent(lines[index])) |next_marker| {
                 if (next_marker.indent > first_marker.indent) {
-                    if (paragraph_open) {
-                        try output.writeAll("</p>\n");
-                        paragraph_open = false;
-                    } else if (std.mem.trim(u8, lines[index - 1], " \t").len == 0) try output.writeByte('\n');
-                    index = try renderList(allocator, lines, index, next_marker, definitions, output);
+                    if (depth < max_markdown_nesting_depth) {
+                        if (paragraph_open) {
+                            try output.writeAll("</p>\n");
+                            paragraph_open = false;
+                        } else if (std.mem.trim(u8, lines[index - 1], " \t").len == 0) try output.writeByte('\n');
+                        index = try renderList(allocator, lines, index, next_marker, definitions, output, depth + 1);
+                    } else while (index < lines.len) {
+                        // 入れ子上限: これ以上深い項目は現在の項目の本文へ
+                        // 平坦化し、再帰せずに取り切る。
+                        const deeper = listMarkerAnyIndent(lines[index]) orelse break;
+                        if (deeper.indent <= first_marker.indent) break;
+                        try output.writeByte('\n');
+                        try renderInline(allocator, lines[index][deeper.content_start..], definitions, output);
+                        index += 1;
+                    }
                 }
                 break;
             }
@@ -1080,4 +1100,31 @@ test "html 1.0.0互換でscriptとコメント・属性を整形する" {
     const comment = try prettyHtml(std.testing.allocator, "<!-- a  b --><div x = \"a b\" y=  \"c\"> z </div>");
     defer std.testing.allocator.free(comment);
     try std.testing.expectEqualStrings("<!-- a b -->\n<div x=\"a b\" y=\"c\">z</div>", comment);
+}
+
+test "深いblockquoteは入れ子上限で平坦化し再帰を止める" {
+    var source: std.ArrayList(u8) = .empty;
+    defer source.deinit(std.testing.allocator);
+    for (0..max_markdown_nesting_depth + 44) |_| try source.append(std.testing.allocator, '>');
+    try source.appendSlice(std.testing.allocator, "deep");
+    const html = try markdown(std.testing.allocator, source.items);
+    defer std.testing.allocator.free(html);
+    // 上限の1段下まではblockquoteとして開き、残りは現在のblockquote内へ
+    // 平坦化する（公式markedもこの深さではRangeErrorになる）。
+    try std.testing.expectEqual(max_markdown_nesting_depth + 1, std.mem.count(u8, html, "<blockquote>"));
+    try std.testing.expect(std.mem.indexOf(u8, html, "deep") != null);
+}
+
+test "深いリストは入れ子上限で現在の項目へ平坦化し全項目を保つ" {
+    var source: std.ArrayList(u8) = .empty;
+    defer source.deinit(std.testing.allocator);
+    const levels = max_markdown_nesting_depth + 44;
+    for (0..levels) |level| {
+        for (0..level) |_| try source.append(std.testing.allocator, ' ');
+        try source.appendSlice(std.testing.allocator, "- item\n");
+    }
+    const html = try markdown(std.testing.allocator, source.items);
+    defer std.testing.allocator.free(html);
+    try std.testing.expectEqual(max_markdown_nesting_depth + 1, std.mem.count(u8, html, "<li>"));
+    try std.testing.expectEqual(levels, std.mem.count(u8, html, "item"));
 }

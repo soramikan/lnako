@@ -59,16 +59,16 @@
         "limitKb": 80
       },
       "src/host/state.zig": {
-        "reason": "CliHostのコマンドcallback配線とhandle表（監視対象・hard limit内）",
-        "limitKb": 84
+        "reason": "CliHostのコマンドcallback配線とhandle表（監視対象・hard limit内）。A セキュリティ修正のupload回収callbackで +0.4 KB",
+        "limitKb": 85
       },
       "src/runtime/low_level_foundation.zig": {
         "reason": "低レイヤー命令契約・capability・errno写像の共有正本（監視対象・hard limit内）",
         "limitKb": 86
       },
       "src/runtime/value.zig": {
-        "reason": "Value・Runtime中心のコア値表現（監視対象・hard limit内）",
-        "limitKb": 81
+        "reason": "Value・Runtime中心のコア値表現（監視対象・hard limit内）。A セキュリティ修正の値入れ子上限で +0.2 KB",
+        "limitKb": 82
       },
       "src/semantic/analyzer.zig": {
         "reason": "namespace alias lookupはprivate symbol tableとscope stateに依存（監視対象・hard limit内）",
