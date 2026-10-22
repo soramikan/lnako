@@ -722,6 +722,14 @@ const GitTreeEntry = struct {
 /// `..`・絶対 path・制御文字を拒否し、Windows では区切りと見做される
 /// `\` も拒否する（tree に `\` 名は存在し得るが、展開側が境界外へ出る
 /// 解釈を防ぐ）。
+///
+/// `.git` 成分（大小文字非区別・NTFS が末尾の `.`/空白を畳む別名・8.3 短縮名
+/// `GIT~1` を含む）と lnako の private gitdir `.lnako-git-*` も拒否する。
+/// checkout の `.git` は後続 sync が `GIT_OBJECT_DIRECTORY` として信頼し、
+/// checkouts cache にも丸ごと残るため、tree 由来の bytes がそこへ書けると
+/// pinned commit の内容を差し替えられてしまう（`.git/objects` の loose blob
+/// は git が再ハッシュしない）。git 自身の `verify_dotfile` と同じ choke point
+/// で落とす。
 fn validGitTreePath(path: []const u8) bool {
     if (path.len == 0) return false;
     var components = std.mem.splitScalar(u8, path, '/');
@@ -730,8 +738,31 @@ fn validGitTreePath(path: []const u8) bool {
         if (std.mem.eql(u8, component, ".") or std.mem.eql(u8, component, "..")) return false;
         if (builtin.os.tag == .windows and std.mem.indexOfScalar(u8, component, '\\') != null) return false;
         if (std.mem.indexOfAny(u8, component, ":\x00") != null) return false;
+        if (std.ascii.startsWithIgnoreCase(component, ".lnako-git-")) return false;
+        // `.git.`・`.git ` は NTFS で `.git` へ正規化される別名。
+        // `GIT~1` は 8.3 短縮名で同じ実体を指す。
+        const folded = std.mem.trimEnd(u8, component, ". ");
+        if (std.ascii.eqlIgnoreCase(folded, ".git")) return false;
+        if (std.ascii.eqlIgnoreCase(folded, "git~1")) return false;
     }
     return true;
+}
+
+test "validGitTreePath は .git 系の別名と private gitdir を拒否する" {
+    try std.testing.expect(validGitTreePath("nako.toml"));
+    try std.testing.expect(validGitTreePath("src/.gitignore"));
+    try std.testing.expect(validGitTreePath("src/.gitmodules"));
+
+    try std.testing.expect(!validGitTreePath(".git/objects/ab/cdef"));
+    try std.testing.expect(!validGitTreePath("sub/.git/commondir"));
+    try std.testing.expect(!validGitTreePath(".GIT/config"));
+    try std.testing.expect(!validGitTreePath(".Git/objects/info/alternates"));
+    try std.testing.expect(!validGitTreePath(".git./config"));
+    try std.testing.expect(!validGitTreePath(".git /config"));
+    try std.testing.expect(!validGitTreePath("GIT~1/config"));
+    try std.testing.expect(!validGitTreePath(".lnako-git-0123abcd/objects/ab/cdef"));
+    try std.testing.expect(!validGitTreePath(".."));
+    try std.testing.expect(!validGitTreePath("a//b"));
 }
 
 /// `git ls-tree -r -z` の出力を entry 列へ parse する。

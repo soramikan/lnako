@@ -10,6 +10,9 @@ const process = @import("process.zig");
 const network = @import("network.zig");
 const environment = @import("environment.zig");
 
+/// 応答保留の上限。未ルート要求で fd を食い潰し accept が枯渇するのを防ぐ。
+const max_held_http_connections: usize = 16;
+
 pub const CliHost = struct {
     writer: *std.Io.Writer,
     error_writer: *std.Io.Writer,
@@ -1034,25 +1037,16 @@ pub const CliHost = struct {
         };
     }
 
+    /// 未ルート要求の保留は公式と同じだが、保持数は上限で抑える（fd 枯渇防止）。
     fn holdHttpServerResponse(context: *anyopaque) !void {
         const self: *CliHost = @ptrCast(@alignCast(context));
         const stream = self.http_connection orelse return error.HttpServerResponseOutsideRequest;
+        while (self.held_http_connections.items.len >= max_held_http_connections) {
+            self.held_http_connections.orderedRemove(0).close(self.io);
+        }
         try self.held_http_connections.append(std.heap.page_allocator, stream);
         self.http_connection = null;
         self.http_head_request = false;
-    }
-
-    fn statHttpServerPath(context: *anyopaque, path: []const u8) !lnako.plugins.http_server.PathStat {
-        const self: *CliHost = @ptrCast(@alignCast(context));
-        const stat = std.Io.Dir.cwd().statFile(self.io, path, .{}) catch |err| return switch (err) {
-            error.FileNotFound, error.NotDir => .missing,
-            else => err,
-        };
-        return switch (stat.kind) {
-            .file => .file,
-            .directory => .directory,
-            else => .missing,
-        };
     }
 
     fn saveHttpServerUpload(context: *anyopaque, allocator: std.mem.Allocator, filename: []const u8, body: []const u8) ![]u8 {
