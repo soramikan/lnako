@@ -5,6 +5,7 @@ const parser = @import("../../frontend/parser.zig");
 const semantic = @import("../../semantic/analyzer.zig");
 const hir = @import("../../ir/hir.zig");
 const lower = @import("../../ir/lower_ssa.zig");
+const optimizer = @import("../../ir/optimizer.zig");
 
 const generate = module_mod.generate;
 const findUnsupported = module_mod.findUnsupported;
@@ -88,4 +89,70 @@ test "package pluginを取り込んでいないmoduleの修飾名呼出しはplu
         try std.testing.expect(!isNativePluginCall(program, function, instruction));
     };
     try std.testing.expect(qualified_call);
+}
+
+/// 数値bodyの`F`は、条件付き代入のローカル`X`を未代入のまま読む。
+/// インタプリタでは`undefined`（NaN）になるため、内部bodyの入口で
+/// NaNへ初期化しておく必要がある。
+const typed_local_number_fixture =
+    \\●(Nを)Fとは
+    \\もし、N>1ならば
+    \\X=N
+    \\ここまで
+    \\X+1で戻る
+    \\ここまで
+    \\F(0)を表示
+    \\
+;
+
+/// 真偽値ローカルの未代入参照は、初期化しないと`br i1 undef`（完全なUB）になる。
+const typed_local_boolean_fixture =
+    \\●(Nを)判定とは
+    \\もし、N>1ならば
+    \\B=(N=2)
+    \\ここまで
+    \\もしBならば
+    \\1で戻る
+    \\ここまで
+    \\0で戻る
+    \\ここまで
+    \\判定(0)を表示
+    \\
+;
+
+fn optimizedModuleText(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
+    var parsed = try parser.parse(allocator, source, "main.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(allocator, parsed.root.?, "main.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(allocator, parsed.root.?, "main", "main.nako3", analyzed);
+    defer hir_program.deinit();
+    var lowered = try lower.lower(allocator, hir_program);
+    defer lowered.deinit();
+    var program = try lowered.clone(allocator);
+    defer program.deinit();
+    _ = try optimizer.optimize(allocator, &program, .{ .max_iterations = 8, .preserve_named_dynamic = true });
+    var module = try generate(allocator, program, "main.nako3", true);
+    defer module.deinit(allocator);
+    return allocator.dupe(u8, module.text);
+}
+
+test "型付きbodyのローカルは未代入でも意味論上の値で初期化される" {
+    // `%typed.local.N`はallocaだけで初期化されず、条件付き代入の枝を通らない
+    // 経路では未初期化のスタック値が読まれていた（数値は非決定、i1は`br i1 undef`）。
+    const text = try optimizedModuleText(std.testing.allocator, typed_local_number_fixture);
+    defer std.testing.allocator.free(text);
+    const init_store = std.mem.indexOf(u8, text, "store double 0x7FF8000000000000, ptr %typed.local.1") orelse return error.TestUnexpectedResult;
+    const first_load = std.mem.indexOf(u8, text, "load double, ptr %typed.local.1") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(init_store < first_load);
+}
+
+test "型付きbodyの真偽値ローカルは分岐条件より前に偽で初期化される" {
+    const text = try optimizedModuleText(std.testing.allocator, typed_local_boolean_fixture);
+    defer std.testing.allocator.free(text);
+    const init_store = std.mem.indexOf(u8, text, "store i1 false, ptr %typed.local.1") orelse return error.TestUnexpectedResult;
+    const condition_load = std.mem.indexOf(u8, text, "load i1, ptr %typed.local.1") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(init_store < condition_load);
+    try std.testing.expect(std.mem.indexOf(u8, text, "br i1 undef") == null);
 }

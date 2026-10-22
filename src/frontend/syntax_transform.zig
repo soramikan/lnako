@@ -22,18 +22,21 @@ pub fn apply(stream: *lexer_mod.TokenStream) Error!void {
     try expandStringTemplates(stream, &tokens, allocator);
     try expandAssignmentJosi(&tokens, allocator);
     if (stream.mode.indent) try transformExplicitIndent(&tokens, allocator);
-    removeCollectionEols(&tokens);
+    try removeCollectionEols(&tokens, allocator);
     try transformInlineIndent(&tokens, allocator);
     try tokens.append(allocator, eof);
     stream.tokens = try tokens.toOwnedSlice(allocator);
 }
 
 fn expandStringTemplates(stream: *lexer_mod.TokenStream, tokens: *std.ArrayList(Token), allocator: std.mem.Allocator) Error!void {
-    var index: usize = 0;
-    while (index < tokens.items.len) {
-        const token = tokens.items[index];
+    // トークン列を1回だけ走査し、テンプレートだけを展開した新しい列を作る。
+    // 元の列へreplaceRangeすると、テンプレート1件ごとにO(N)のmemmoveが走る。
+    var output: std.ArrayList(Token) = .empty;
+    // 展開後のトークンは元の列と同じ順序で並ぶため、位置計算は単調カーソルで足りる。
+    var position: PositionCursor = .{};
+    for (tokens.items) |token| {
         if (token.kind != .string_template) {
-            index += 1;
+            try output.append(allocator, token);
             continue;
         }
 
@@ -41,15 +44,13 @@ fn expandStringTemplates(stream: *lexer_mod.TokenStream, tokens: *std.ArrayList(
         const value_base = @intFromPtr(token.value.ptr);
         if (value_base < source_base or value_base > source_base + stream.source.text.len) return error.UnterminatedStringTemplate;
         const content_start = value_base - source_base;
-        var replacement: std.ArrayList(Token) = .empty;
-        errdefer replacement.deinit(allocator);
-        try replacement.append(allocator, synthetic(.left_paren, "(", token));
+        try output.append(allocator, synthetic(.left_paren, "(", token));
 
         var cursor: usize = 0;
         while (findTemplateOpen(token.value, cursor)) |open| {
-            try replacement.append(allocator, templateStringToken(token.value[cursor..open.index], token));
-            try replacement.append(allocator, synthetic(.bit_and, "&", token));
-            try replacement.append(allocator, synthetic(.left_paren, "(", token));
+            try output.append(allocator, templateStringToken(token.value[cursor..open.index], token));
+            try output.append(allocator, synthetic(.bit_and, "&", token));
+            try output.append(allocator, synthetic(.left_paren, "(", token));
 
             const expression_start = open.index + open.len;
             const close = findTemplateClose(token.value, expression_start) orelse return error.UnterminatedStringTemplate;
@@ -57,31 +58,28 @@ fn expandStringTemplates(stream: *lexer_mod.TokenStream, tokens: *std.ArrayList(
             defer nested.deinit();
             for (nested.tokens) |nested_token| {
                 if (nested_token.kind == .eof) continue;
-                try replacement.append(allocator, try cloneTemplateExpressionToken(
+                try output.append(allocator, try cloneTemplateExpressionToken(
                     stream,
                     nested,
                     nested_token,
                     content_start + expression_start,
                     token.indent,
+                    &position,
                     allocator,
                 ));
             }
-            try replacement.append(allocator, synthetic(.right_paren, ")", token));
-            try replacement.append(allocator, synthetic(.bit_and, "&", token));
+            try output.append(allocator, synthetic(.right_paren, ")", token));
+            try output.append(allocator, synthetic(.bit_and, "&", token));
             cursor = close.index + close.len;
         }
-        try replacement.append(allocator, templateStringToken(token.value[cursor..], token));
+        try output.append(allocator, templateStringToken(token.value[cursor..], token));
         var close = synthetic(.right_paren, ")", token);
         close.josi = token.josi;
         close.raw_josi = token.raw_josi;
         close.span = token.span;
-        try replacement.append(allocator, close);
-
-        const replacement_len = replacement.items.len;
-        try tokens.replaceRange(allocator, index, 1, replacement.items);
-        replacement.deinit(allocator);
-        index += replacement_len;
+        try output.append(allocator, close);
     }
+    tokens.* = output;
 }
 
 const TemplateDelimiter = struct { index: usize, len: usize };
@@ -114,6 +112,7 @@ fn cloneTemplateExpressionToken(
     source: Token,
     expression_start: usize,
     indent: usize,
+    position: *PositionCursor,
     allocator: std.mem.Allocator,
 ) !Token {
     var result = source;
@@ -126,33 +125,49 @@ fn cloneTemplateExpressionToken(
     result.span.end = expression_start + nested.source.sourceOffset(source.span.end);
     result.span.source_start = stream.source.sourceOffset(result.span.start);
     result.span.source_end = stream.source.sourceOffset(result.span.end);
-    const position = lineColumnAt(stream.source.text, result.span.start);
-    result.span.line = position.line;
-    result.span.column = position.column;
+    const at = position.at(stream.source.text, result.span.start);
+    result.span.line = at.line;
+    result.span.column = at.column;
     return result;
 }
 
-fn lineColumnAt(source: []const u8, offset: usize) struct { line: usize, column: usize } {
-    var line: usize = 0;
-    var column: usize = 1;
-    var index: usize = 0;
-    while (index < @min(offset, source.len)) {
-        const sequence_length = std.unicode.utf8ByteSequenceLength(source[index]) catch 1;
-        if (source[index] == '\n') {
-            line += 1;
-            column = 1;
-        } else column += 1;
-        index += @min(sequence_length, source.len - index);
+/// ソース上の(行, 桁)を単調カーソルで求める。テンプレート展開はトークン順に
+/// 進むため、各問い合わせは前回位置からの前進走査で済み、全体でO(n)になる。
+/// 後退する問い合わせ（通常は起きない）だけはソース先頭から数え直す。
+const PositionCursor = struct {
+    offset: usize = 0,
+    line: usize = 0,
+    column: usize = 1,
+
+    fn at(self: *PositionCursor, source: []const u8, target: usize) struct { line: usize, column: usize } {
+        if (target < self.offset) {
+            self.offset = 0;
+            self.line = 0;
+            self.column = 1;
+        }
+        while (self.offset < @min(target, source.len)) {
+            const sequence_length = std.unicode.utf8ByteSequenceLength(source[self.offset]) catch 1;
+            if (source[self.offset] == '\n') {
+                self.line += 1;
+                self.column = 1;
+            } else self.column += 1;
+            self.offset += @min(sequence_length, source.len - self.offset);
+        }
+        return .{ .line = self.line, .column = self.column };
     }
-    return .{ .line = line, .column = column };
-}
+};
 
 fn expandAssignmentJosi(tokens: *std.ArrayList(Token), allocator: std.mem.Allocator) !void {
-    var index: usize = 0;
-    while (index < tokens.items.len) : (index += 1) {
-        const token = &tokens.items[index];
-        if (!std.mem.eql(u8, token.josi, "は")) continue;
-        var equal = synthetic(.equal, "=", token.*);
+    // 1回の走査で 'は' の直後へ合成 '=' を挿入した列を作る。元の列へ
+    // insertすると、1件ごとにO(N)のmemmoveが走りO(N²)になる。
+    var output: std.ArrayList(Token) = .empty;
+    for (tokens.items) |token_const| {
+        var token = token_const;
+        if (!std.mem.eql(u8, token.josi, "は")) {
+            try output.append(allocator, token);
+            continue;
+        }
+        var equal = synthetic(.equal, "=", token);
         const josi_length = token.raw_josi.len;
         if (josi_length <= token.span.end - token.span.start) {
             const assignment_offset = token.span.end - josi_length;
@@ -165,9 +180,10 @@ fn expandAssignmentJosi(tokens: *std.ArrayList(Token), allocator: std.mem.Alloca
         }
         token.josi = "";
         token.raw_josi = "";
-        try tokens.insert(allocator, index + 1, equal);
-        index += 1;
+        try output.append(allocator, token);
+        try output.append(allocator, equal);
     }
+    tokens.* = output;
 }
 
 /// 公式 nako_from_dncl.mts / nako_from_dncl2.mts の行単位変換を再現する。
@@ -685,37 +701,37 @@ fn transformExplicitIndent(tokens: *std.ArrayList(Token), allocator: std.mem.All
     tokens.* = output;
 }
 
-fn removeCollectionEols(tokens: *std.ArrayList(Token)) void {
+fn removeCollectionEols(tokens: *std.ArrayList(Token), allocator: std.mem.Allocator) !void {
+    // 1回の走査でコレクション内のeolを取り除いた列を作る。orderedRemoveを
+    // eolごとに呼ぶと、残り全体のmemmoveでO(eols*tokens)になる。
+    var output: std.ArrayList(Token) = .empty;
     var nesting: usize = 0;
     var collection_indent: usize = 0;
     var reset_on_eol = false;
-    var i: usize = 0;
-    while (i < tokens.items.len) {
-        var token = &tokens.items[i];
+    for (tokens.items) |token_const| {
+        var token = token_const;
         if (token.kind == .left_brace or token.kind == .left_bracket) {
             if (nesting == 0) collection_indent = token.indent;
             nesting += 1;
             token.indent = collection_indent;
-            i += 1;
+            try output.append(allocator, token);
             continue;
         }
         if (token.kind == .right_brace or token.kind == .right_bracket) {
             if (nesting > 0) nesting -= 1;
             if (nesting == 0) reset_on_eol = true;
-            i += 1;
+            try output.append(allocator, token);
             continue;
         }
         if (nesting > 0) token.indent = collection_indent;
-        if (token.kind == .eol and nesting > 0) {
-            _ = tokens.orderedRemove(i);
-            continue;
-        }
+        if (token.kind == .eol and nesting > 0) continue;
         if (token.kind == .eol and reset_on_eol) {
             token.indent = collection_indent;
             reset_on_eol = false;
         }
-        i += 1;
+        try output.append(allocator, token);
     }
+    tokens.* = output;
 }
 
 fn transformInlineIndent(tokens: *std.ArrayList(Token), allocator: std.mem.Allocator) Error!void {
@@ -1022,4 +1038,54 @@ test "展開式の先頭BOMは本文として拒否する" {
     var stream = try lexer_mod.tokenize(std.testing.allocator, "A=1\n「{" ++ source_mod.utf8_bom ++ "A}」を表示\n");
     defer stream.deinit();
     try std.testing.expectError(error.UnexpectedCharacter, apply(&stream));
+}
+
+test "は助詞の代入に合成等号を後置し位置を助詞の手前で切る" {
+    var stream = try lexer_mod.tokenize(std.testing.allocator, "Aは1\nBCは2\n");
+    defer stream.deinit();
+    try apply(&stream);
+    var index: usize = 0;
+    var assignments: usize = 0;
+    while (index < stream.tokens.len) : (index += 1) {
+        const token = stream.tokens[index];
+        if (token.kind != .identifier) continue;
+        // `Aは1` は識別子・等号・数値の順に並び、等号は助詞の位置を指す。
+        const next = stream.tokens[@min(index + 1, stream.tokens.len - 1)];
+        if (next.kind != .equal) continue;
+        assignments += 1;
+        try std.testing.expectEqualStrings("", token.josi);
+        try std.testing.expectEqualStrings("", token.raw_josi);
+        try std.testing.expectEqual(token.span.end, next.span.start);
+        try std.testing.expectEqualStrings("=", next.value);
+    }
+    try std.testing.expectEqual(@as(usize, 2), assignments);
+}
+
+test "コレクション内の改行を取り除き要素の字下げを開き括弧に揃える" {
+    var stream = try lexer_mod.tokenize(std.testing.allocator, "A=[\n  1,\n  2\n]\nB=[\n1]\n");
+    defer stream.deinit();
+    try apply(&stream);
+    var eols: usize = 0;
+    var inside = false;
+    for (stream.tokens) |token| {
+        if (token.kind == .left_bracket) {
+            inside = true;
+            continue;
+        }
+        if (token.kind == .right_bracket) {
+            inside = false;
+            continue;
+        }
+        if (token.kind == .eol and inside) eols += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 0), eols);
+    // コレクション内の要素は開き括弧と同じ字下げになる（公式のsplitTokens相当）。
+    // 字下げ0の`[`の内側なので、Aの2要素とBの1要素はすべて0になる。
+    var number_indents: usize = 0;
+    for (stream.tokens) |token| {
+        if (token.kind != .number) continue;
+        number_indents += 1;
+        try std.testing.expectEqual(@as(usize, 0), token.indent);
+    }
+    try std.testing.expectEqual(@as(usize, 3), number_indents);
 }

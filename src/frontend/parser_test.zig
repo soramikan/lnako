@@ -2145,3 +2145,39 @@ test "『反復』の指定変数はwordに限る" {
     defer result.deinit();
     try std.testing.expect(!result.succeeded());
 }
+
+/// 深い連鎖の回帰テスト用の項数。`propagateOperatorJosi`等のAST走査は連鎖の
+/// 項数だけ再帰していたため、この経路はSIGSEGVになり得た（Debugビルドでは約30万項で
+/// 再現）。ここでは同じ経路を短時間で通す規模に留め、継続行`_`で1行あたりの
+/// 桁計算を一定に保つ。
+const deep_chain_terms: usize = 60000;
+
+test "極端に長い演算子連鎖は再帰ではなく位置付き診断で止まる" {
+    var source: std.ArrayList(u8) = .empty;
+    defer source.deinit(std.testing.allocator);
+    try source.appendSlice(std.testing.allocator, "それは1+_\n");
+    var index: usize = 0;
+    while (index < deep_chain_terms) : (index += 1) try source.appendSlice(std.testing.allocator, "1+_\n");
+    try source.appendSlice(std.testing.allocator, "1\nそれを表示。\n");
+    var result = try parse(std.testing.allocator, source.items, "very-deep-sum.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+    try std.testing.expectEqual(@as(?*ast.Node, null), result.root);
+    try std.testing.expectEqual(diagnostic.Code.nesting_too_deep, result.diagnostics[0].code);
+}
+
+test "極端に長い連鎖を持つ条件式も位置付き診断で止まる" {
+    // `もし`の条件はfinishConditionが演算子部分木を走査するため、
+    // propagateOperatorJosiとは別経路の深さになる。
+    var source: std.ArrayList(u8) = .empty;
+    defer source.deinit(std.testing.allocator);
+    try source.appendSlice(std.testing.allocator, "もし1+_\n");
+    var index: usize = 0;
+    while (index < deep_chain_terms - 1) : (index += 1) try source.appendSlice(std.testing.allocator, "1+_\n");
+    try source.appendSlice(std.testing.allocator, "1が0ならば\n1を表示\nここまで\n");
+    var result = try parse(std.testing.allocator, source.items, "very-deep-condition.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+    try std.testing.expectEqual(@as(?*ast.Node, null), result.root);
+    try std.testing.expectEqual(diagnostic.Code.nesting_too_deep, result.diagnostics[0].code);
+}

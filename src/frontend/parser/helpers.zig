@@ -151,20 +151,37 @@ pub fn referenceTypeName(node: *const ast.Node) []const u8 {
     };
 }
 
-pub fn clearConditionalJosi(node: *ast.Node) void {
-    node.josi = "";
-    node.raw_josi = "";
-    if (node.kind == .binary_operator or node.kind == .unary_operator) {
-        for (node.children) |child| clearConditionalJosi(child);
+/// 演算子に付いた条件助詞を消す。`1+1+...`のような左入れ子の連鎖は
+/// 深さ＝項数になるため、再帰ではなく明示スタックで辿る。再帰版は
+/// 受理上限内の入力でもプロセススタックを使い切ってSIGSEGVし得た。
+pub fn clearConditionalJosi(allocator: std.mem.Allocator, node: *ast.Node) std.mem.Allocator.Error!void {
+    var stack: std.ArrayList(*ast.Node) = .empty;
+    defer stack.deinit(allocator);
+    try stack.append(allocator, node);
+    while (stack.pop()) |current| {
+        current.josi = "";
+        current.raw_josi = "";
+        if (current.kind != .binary_operator and current.kind != .unary_operator) continue;
+        for (current.children) |child| try stack.append(allocator, child);
     }
 }
 
-pub fn propagateOperatorJosi(node: *ast.Node, josi: []const u8) void {
+/// 演算子の助詞を部分木へ配る。左入れ子の連鎖では深さ＝項数になるため、
+/// 再帰ではなく明示スタックで辿る。
+pub fn propagateOperatorJosi(allocator: std.mem.Allocator, node: *ast.Node, josi: []const u8) std.mem.Allocator.Error!void {
     // 公式の括弧式は閉じ括弧の助詞をrootへ設定するが、括弧内の
     // 演算子・リテラルへは伝播させない。grouped rootを境界にする。
     if (node.kind != .binary_operator or node.grouped) return;
-    node.josi = josi;
-    for (node.children) |child| if (!child.grouped) propagateOperatorJosi(child, josi);
+    var stack: std.ArrayList(*ast.Node) = .empty;
+    defer stack.deinit(allocator);
+    try stack.append(allocator, node);
+    while (stack.pop()) |current| {
+        current.josi = josi;
+        for (current.children) |child| {
+            if (child.grouped or child.kind != .binary_operator) continue;
+            try stack.append(allocator, child);
+        }
+    }
 }
 
 pub fn tokenStem(token: Token) []const u8 {
@@ -189,18 +206,40 @@ pub fn isIncrementTargetPath(node: *ast.Node) bool {
     };
 }
 
+/// 代入対象の参照連鎖（`A[i].x`など）を、公式yAssignmentのparsed左辺列へ展開する。
+/// 連鎖はchildren[0]を辿る形で深くなるため、再帰ではなく経路を一度降りてから
+/// 深い側から兄弟を並べる（`1+1+...`系と同じ深さ問題を避ける）。
 pub fn appendAssignmentPath(path: *std.ArrayList(*ast.Node), allocator: std.mem.Allocator, node: *ast.Node) std.mem.Allocator.Error!void {
-    if (node.kind != .array_reference and node.kind != .property_reference) {
+    if (!isReferenceChainNode(node)) {
         if (node.kind != .word) try path.append(allocator, node);
         return;
     }
-    for (node.children, 0..) |child, index| {
-        if (index == 0 and (child.kind == .word or child.kind == .array_reference or child.kind == .property_reference)) {
-            try appendAssignmentPath(path, allocator, child);
-        } else {
-            try path.append(allocator, child);
+    // children[0]方向へ降りた参照ノード列。末端の非参照childは先に出力する。
+    var frames: std.ArrayList(*ast.Node) = .empty;
+    defer frames.deinit(allocator);
+    var terminal: ?*ast.Node = null;
+    var current = node;
+    while (isReferenceChainNode(current)) {
+        if (current.children.len == 0) break;
+        try frames.append(allocator, current);
+        const head = current.children[0];
+        if (head.kind == .word) break;
+        if (!isReferenceChainNode(head)) {
+            terminal = head;
+            break;
         }
+        current = head;
     }
+    if (terminal) |value| try path.append(allocator, value);
+    var index = frames.items.len;
+    while (index > 0) {
+        index -= 1;
+        for (frames.items[index].children[1..]) |child| try path.append(allocator, child);
+    }
+}
+
+fn isReferenceChainNode(node: *ast.Node) bool {
+    return node.kind == .array_reference or node.kind == .property_reference;
 }
 
 pub fn emptyToken() Token {

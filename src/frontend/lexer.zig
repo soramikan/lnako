@@ -67,6 +67,10 @@ const Lexer = struct {
     offset: usize = 0,
     line: usize = 0,
     column: usize = 1,
+    /// 現在のトークンの開始オフセットと開始桁。`readToken`が設定する。
+    /// 桁番号は維持しているカウンタから求めるため、行頭からの再走査はしない。
+    token_start: usize = 0,
+    token_start_column: usize = 1,
     indent: usize = 0,
     at_line_start: bool = true,
     /// 公式がトークンとして数える行コメント・範囲コメント・_eolの個数。
@@ -129,6 +133,9 @@ const Lexer = struct {
 
     fn readToken(self: *Lexer) Error!void {
         const start = self.offset;
+        // 桁番号は維持しているカウンタから引く。行頭からの再走査はしない。
+        self.token_start = start;
+        self.token_start_column = self.column;
         const rest = self.source.text[start..];
 
         // 公式の字句規則は `/^;;;/` を `/^;/` より先に評価する。`。。。`は
@@ -527,19 +534,29 @@ const Lexer = struct {
         } else self.column += 1;
     }
 
+    /// `start`の桁番号を、維持している桁カウンタから求める。行頭からの
+    /// 再走査をすると、トークン密度の高い長い1行で字句解析がO(n²)になる。
+    /// 問い合わせは「トークン末尾（`self.offset`）」「トークン先頭」
+    /// 「トークン内部（単語分割の接尾辞）」の3通りしかない。
     fn columnFor(self: *Lexer, start: usize) usize {
-        var line_start = start;
-        while (line_start > 0 and self.source.text[line_start - 1] != '\n') line_start -= 1;
-        var column: usize = 1;
-        var i = line_start;
-        while (i < start) {
-            const decoded = source_mod.decodeAt(self.source.text, i) catch return column;
-            i += decoded.len;
-            column += 1;
+        if (start == self.offset) return self.column;
+        if (start == self.token_start) return self.token_start_column;
+        if (start > self.token_start and start < self.offset) {
+            return self.token_start_column + codepointCount(self.source.text[self.token_start..start]);
         }
-        return column;
+        return self.token_start_column;
     }
 };
+
+/// UTF-8の継続バイト以外を数える。トークン内の前進幅だけを測るので
+/// 不正バイトが混ざっても桁がずれない。
+fn codepointCount(text: []const u8) usize {
+    var count: usize = 0;
+    for (text) |byte| {
+        if ((byte & 0xC0) != 0x80) count += 1;
+    }
+    return count;
+}
 
 fn hasTemplateOpen(content: []const u8) bool {
     return std.mem.indexOfScalar(u8, content, '{') != null or std.mem.indexOf(u8, content, "｛") != null;
@@ -797,6 +814,45 @@ test "改行とUTF-8の位置を保持する" {
     try std.testing.expectEqual(@as(usize, 1), stream.tokens[3].span.line);
     try std.testing.expectEqual(@as(usize, 1), stream.tokens[3].span.column);
     try std.testing.expectEqualStrings("B", stream.tokens[3].value);
+}
+
+/// 桁番号の参照実装。production側は維持しているカウンタから引くが、
+/// 同じ結果になることを全トークンで確かめる。
+fn expectedColumn(source: []const u8, start: usize) usize {
+    var line_start = start;
+    while (line_start > 0 and source[line_start - 1] != '\n') line_start -= 1;
+    var column: usize = 1;
+    var index = line_start;
+    while (index < start) {
+        const length = std.unicode.utf8ByteSequenceLength(source[index]) catch 1;
+        index += @min(length, source.len - index);
+        column += 1;
+    }
+    return column;
+}
+
+test "長い1行でもトークンの桁番号が行頭からの再走査と一致する" {
+    // 桁番号はカウント済みの値から引く。行頭から数え直す実装だと、1行に
+    // 集中したトークン数に対してO(n²)になり、長い1行で字句解析が停止する。
+    var source: std.ArrayList(u8) = .empty;
+    defer source.deinit(std.testing.allocator);
+    try source.appendSlice(std.testing.allocator, "A");
+    var index: usize = 0;
+    while (index < 4000) : (index += 1) try source.appendSlice(std.testing.allocator, ",A");
+    try source.appendSlice(std.testing.allocator, "\n「あ\nい」を表示\nA以上を表示\n");
+    var stream = try tokenize(std.testing.allocator, source.items);
+    defer stream.deinit();
+    for (stream.tokens) |token| {
+        try std.testing.expectEqual(expectedColumn(source.items, token.span.start), token.span.column);
+    }
+    // 1行4001トークンの最終トークンは桁8001（再走査なしで求まる）。
+    try std.testing.expectEqual(@as(usize, 8001), stream.tokens[8000].span.column);
+    // 単語分割した接尾辞（`以上`）もトークン先頭からの相対位置で桁が決まる。
+    var suffix_column: ?usize = null;
+    for (stream.tokens) |token| {
+        if (token.kind == .identifier and std.mem.eql(u8, token.value, "以上")) suffix_column = token.span.column;
+    }
+    try std.testing.expectEqual(@as(?usize, 2), suffix_column);
 }
 
 test "先頭のモード指定を検出する" {

@@ -133,6 +133,11 @@ pub const Options = struct {
     /// エントリモジュールへ強制する構文モード（--dncl / --dncl2）。
     forced_mode: token_mod.Mode = .{},
 };
+
+/// 取り込みの入れ子の上限。`loadOne`は取り込み先ごとに自己再帰するため、
+/// 深い連鎖はプロセススタックを使い切ってSIGSEGVする。1ファイルのAST上限
+/// （`parser.max_ast_depth`）と同じく、実用上あり得ない深さで位置付き診断に収束させる。
+pub const max_import_depth: usize = 512;
 pub const ModuleKind = enum { nako3, javascript, native_plugin };
 pub const LoadState = enum { loading, loaded };
 
@@ -644,6 +649,9 @@ pub const Loader = struct {
     modules: std.ArrayList(*LoadedModule) = .empty,
     canonical_aliases: std.ArrayList(PathAlias) = .empty,
     diagnostics: std.ArrayList(diagnostic.Diagnostic) = .empty,
+    /// `loadOne`の現在の再帰の深さ。取り込み1件ごとに1増える。
+    /// 上限を超えた入力はプロセススタックを使い切る前に位置付き診断にする。
+    load_depth: usize = 0,
 
     fn deinitModules(self: *Loader) void {
         for (self.modules.items) |module| {
@@ -665,6 +673,14 @@ pub const Loader = struct {
     /// `initial` は取り込み文位置で有効だったパーサモード（取り込み元からの継承）。
     /// 字句変換には波及せず、添字・自動初期化の意味づけのみに効く。
     fn loadOne(self: *Loader, path: []const u8, import_node: ?*ast.Node, initial: ?token_mod.Mode, namespace_override: ?[]const u8, canonical_id: ?[]const u8, inheritance: ?PackageInheritance) anyerror!u32 {
+        // 取り込みは`loadOne`の自己再帰で読むため、深い連鎖はプロセススタックを
+        // 使い切る。解析前に位置付き診断へ収束させる（`max_ast_depth`と同じ方針）。
+        if (self.load_depth >= max_import_depth) {
+            try self.importDiagnostic(import_node, path, "取り込みの入れ子が深すぎます");
+            return error.ImportDepthExceeded;
+        }
+        self.load_depth += 1;
+        defer self.load_depth -= 1;
         // owner は import edge が resolver から受け取った独立フィールドを使う。
         // canonical_id 末尾の `/` から逆算すると `api/v1` のような export 名で
         // `pkg:x/api` を誤った owner にしてしまうため、名前からの復元はしない。
