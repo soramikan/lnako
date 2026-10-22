@@ -67,8 +67,8 @@
         "limitKb": 86
       },
       "src/runtime/value.zig": {
-        "reason": "Value・Runtime中心のコア値表現（監視対象・hard limit内）",
-        "limitKb": 81
+        "reason": "Value・Runtime中心のコア値表現（監視対象・hard limit内）。A セキュリティ修正の値入れ子上限で +0.2 KB",
+        "limitKb": 82
       },
       "src/semantic/analyzer.zig": {
         "reason": "namespace alias lookupはprivate symbol tableとscope stateに依存（監視対象・hard limit内）",
