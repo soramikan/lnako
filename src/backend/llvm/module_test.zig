@@ -155,6 +155,7 @@ test "型付きbodyの真偽値ローカルは分岐条件より前に偽で初�
     const condition_load = std.mem.indexOf(u8, text, "load i1, ptr %typed.local.1") orelse return error.TestUnexpectedResult;
     try std.testing.expect(init_store < condition_load);
     try std.testing.expect(std.mem.indexOf(u8, text, "br i1 undef") == null);
+}
 
 fn countIrOccurrences(haystack: []const u8, needle: []const u8) usize {
     var count: usize = 0;
