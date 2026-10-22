@@ -59,8 +59,8 @@
         "limitKb": 80
       },
       "src/host/state.zig": {
-        "reason": "CliHostのコマンドcallback配線とhandle表（監視対象・hard limit内）",
-        "limitKb": 84
+        "reason": "CliHostのコマンドcallback配線とhandle表（監視対象・hard limit内）。A セキュリティ修正のupload回収callbackで +0.4 KB",
+        "limitKb": 85
       },
       "src/runtime/low_level_foundation.zig": {
         "reason": "低レイヤー命令契約・capability・errno写像の共有正本（監視対象・hard limit内）",
