@@ -1,0 +1,12 @@
+[package]
+name = "demo"
+version = "1.0.0"
+license = "MIT"
+
+[[exports]]
+name = "main"
+path = "src/index.nako3"
+
+[[exports]]
+name = "calc"
+path = "src/calc.nako3"

@@ -791,6 +791,11 @@ jobs:
             native_args+=(--shard-index "$FIXTURE_SHARD_INDEX" --shard-count "$FIXTURE_SHARD_COUNT")
           fi
           node tools/compare_native_oracle.mjs "${native_args[@]}"
+      # `パッケージ:`／`pkg:` import を Interpreter と AOT O0〜O3 の生成物で
+      # 突き合わせる。O0〜O3 を 1 job で回すため、OS あたり 1 つの native route へ置く。
+      - name: Differential package import AOT oracle
+        if: matrix.task == 'native' && matrix.optimizationKey == 'O2'
+        run: node tools/compare_package_import_aot_oracle.mjs --no-build
       - name: Upload native AOT oracle artifact
         if: matrix.task == 'native' && always()
         continue-on-error: true
@@ -1055,6 +1060,11 @@ jobs:
             native_args+=(--shard-index "$FIXTURE_SHARD_INDEX" --shard-count "$FIXTURE_SHARD_COUNT")
           fi
           node tools/compare_native_oracle.mjs "${native_args[@]}"
+      # `パッケージ:`／`pkg:` import を Interpreter と AOT O0〜O3 の生成物で
+      # 突き合わせる。O0〜O3 を 1 job で回すため、OS あたり 1 つの native route へ置く。
+      - name: Differential package import AOT oracle
+        if: matrix.task == 'native' && matrix.fixtureShardIndex == 0 && matrix.optimizationKey == 'O2-O3'
+        run: node tools/compare_package_import_aot_oracle.mjs --no-build
       - name: Upload native AOT oracle artifact
         if: matrix.task == 'native' && always()
         continue-on-error: true
@@ -1297,6 +1307,11 @@ jobs:
             native_args+=(--shard-index "$FIXTURE_SHARD_INDEX" --shard-count "$FIXTURE_SHARD_COUNT")
           fi
           node tools/compare_native_oracle.mjs "${native_args[@]}"
+      # `パッケージ:`／`pkg:` import を Interpreter と AOT O0〜O3 の生成物で
+      # 突き合わせる。O0〜O3 を 1 job で回すため、OS あたり 1 つの native route へ置く。
+      - name: Differential package import AOT oracle
+        if: matrix.task == 'native' && matrix.fixtureShardIndex == 0 && matrix.optimizationKey == 'O2-O3'
+        run: node tools/compare_package_import_aot_oracle.mjs --no-build
       - name: Upload native AOT oracle artifact
         if: matrix.task == 'native' && always()
         continue-on-error: true
