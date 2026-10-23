@@ -526,8 +526,9 @@ fn analyzeFeatureImpact(
         while (feature_it.next()) |entry| {
             if (matchesAnyAlias(entry.value_ptr, root_aliases)) try owners.append(scratch, entry.key_ptr.*);
         }
-        // feature 非依存、または default feature が有効化する構成は共通。
-        if (owners.items.len == 0 or containsName(owners.items, "default")) {
+        // 専用は「ちょうど1つの非 default feature だけが所有」する場合のみ。
+        // owner 0（feature 非依存）・複数 owner（共有）・default 所有は共通。
+        if (owners.items.len != 1 or containsName(owners.items, "default")) {
             try common_roots.append(scratch, display_by_key.get(package_key).?);
             continue;
         }
@@ -1262,6 +1263,68 @@ test "command inspect: 未選択 feature の依存は専用に出さない" {
     try testing.expectEqualStrings("default", impact.selected[0]);
     try testing.expectEqual(@as(usize, 1), impact.common_roots.len);
     try testing.expectEqualStrings("common", impact.common_roots[0]);
+    try testing.expectEqual(@as(usize, 0), impact.dedicated.len);
+}
+
+test "command inspect: 複数非 default feature が共有する root は common_roots へ" {
+    // shared を http と ssl の両方が引き込む構成。owner が 2 件でも
+    // 各 dedicated に重複せず common に分類されること。
+    const a = testing.allocator;
+    const io = testing.io;
+    var tmp = test_sandbox.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeEnv(tmp.dir,
+        \\{
+        \\  "schemaVersion": 1,
+        \\  "lockSha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        \\  "profile": "default",
+        \\  "runtime": "lnako",
+        \\  "dependencies": [
+        \\    {"alias": "shared", "package": "pkg:ssssssssssssssssssssssssssssssss"}
+        \\  ],
+        \\  "packages": {
+        \\    "pkg:ssssssssssssssssssssssssssssssss": {
+        \\      "name": "shared",
+        \\      "version": "1.0.0",
+        \\      "path": "lib_shared",
+        \\      "commands": [{"name": "共有命令", "args": [], "josi": []}]
+        \\    }
+        \\  }
+        \\}
+    );
+    try tmp.dir.createDirPath(io, "lib_shared");
+
+    var parse_diags = diag.List.init(a);
+    defer parse_diags.deinit();
+    var manifest = try manifest_mod.parse(a,
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\shared = { path = "lib_shared" }
+        \\
+        \\[features]
+        \\http = ["shared"]
+        \\ssl = ["shared"]
+        \\
+    , &parse_diags);
+    defer manifest.deinit();
+    try testing.expect(!parse_diags.hasErrors());
+
+    var list = diag.List.init(a);
+    defer list.deinit();
+    var report = try inspectEnvironmentDir(a, io, tmp.dir, .{
+        .manifest = &manifest,
+        .features = .{ .requested = &.{ "http", "ssl" }, .use_default_features = false },
+    }, &list);
+    defer report.deinit();
+    try testing.expect(!list.hasErrors());
+
+    const impact = report.features orelse return error.MissingFeatureImpact;
+    try testing.expectEqual(@as(usize, 1), impact.common_roots.len);
+    try testing.expectEqualStrings("shared", impact.common_roots[0]);
     try testing.expectEqual(@as(usize, 0), impact.dedicated.len);
 }
 

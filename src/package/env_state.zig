@@ -93,10 +93,10 @@ const environment_root_fields = [_][]const u8{
     "packages",
 };
 
-/// root scope の import 依存表の形状（`[{alias, package}]`）を検査する。
-/// 値は feature 影響の表示にだけ使い、package 解決の信頼根拠にはしない。
-fn hasValidRootDependencies(object: std.json.ObjectMap) bool {
-    const value = object.get("dependencies") orelse return true;
+/// import 依存表（`[{alias, package}]`）の形状を検査する。root と
+/// package record の双方で同じ契約。値は feature 影響の表示や graph
+/// 走査に使い、package 解決の信頼根拠にはしない。
+fn hasValidDependenciesArray(value: std.json.Value) bool {
     if (value != .array) return false;
     for (value.array.items) |item| {
         if (item != .object or item.object.count() != 2) return false;
@@ -106,6 +106,12 @@ fn hasValidRootDependencies(object: std.json.ObjectMap) bool {
         if (package_key != .string or package_key.string.len == 0) return false;
     }
     return true;
+}
+
+/// root scope の import 依存表。欠落は旧環境として許容する。
+fn hasValidRootDependencies(object: std.json.ObjectMap) bool {
+    const value = object.get("dependencies") orelse return true;
+    return hasValidDependenciesArray(value);
 }
 
 fn hasOnlyEnvironmentRootFields(object: std.json.ObjectMap) bool {
@@ -526,8 +532,10 @@ fn environmentPackagesUsableImpl(gpa: Allocator, io: std.Io, root_dir: std.Io.Di
 /// `environment.json` の1 record が lock entry と整合し、environment
 /// schema の形状を満たすか。`name`/`version`/`path` は必須 string で
 /// name・version は entry と一致、`id` は public id entry で必須・
-/// それ以外では記録されても entry.id と一致が条件。`exports`/`commands`
-/// は schema の item 形状を要求し、未知のキーを持つ record は拒否する。
+/// それ以外では記録されても entry.id と一致が条件。`exports`/`commands`/
+/// `dependencies` は schema の item 形状を要求し、未知のキーを持つ
+/// record は拒否する。`dependencies` は sync が推移 graph 用に書くため、
+/// 拒否すると deps を持つ package が常に stale になる。
 fn envRecordMatchesEntry(record: std.json.Value, entry: *const lock_model.PackageEntry) bool {
     if (record != .object) return false;
     var it = record.object.iterator();
@@ -537,6 +545,7 @@ fn envRecordMatchesEntry(record: std.json.Value, entry: *const lock_model.Packag
             std.mem.eql(u8, field.key_ptr.*, "id") or
             std.mem.eql(u8, field.key_ptr.*, "path") or
             std.mem.eql(u8, field.key_ptr.*, "exports") or
+            std.mem.eql(u8, field.key_ptr.*, "dependencies") or
             std.mem.eql(u8, field.key_ptr.*, "commands");
         if (!known) return false;
     }
@@ -554,6 +563,9 @@ fn envRecordMatchesEntry(record: std.json.Value, entry: *const lock_model.Packag
         for (exports.array.items) |item| {
             if (!envExportRecordValid(item)) return false;
         }
+    }
+    if (record.object.get("dependencies")) |dependencies| {
+        if (!hasValidDependenciesArray(dependencies)) return false;
     }
     if (record.object.get("commands")) |commands| {
         if (commands != .array) return false;
@@ -1118,4 +1130,26 @@ test "environment root の dependencies 表を受理し、形状不正は拒否�
     );
     const extra_key = (try readEnvironmentInfoDir(gpa, io, tmp.dir)) orelse return error.MissingEnvironment;
     try testing.expect(extra_key.profile == null);
+}
+
+test "package record の dependencies は形状が正しければ一致と判定する" {
+    // sync は package に推移依存を書く。許可キーに dependencies が無いと
+    // envRecordMatchesEntry が常に false → environment が常に stale。
+    const entry = lock_model.PackageEntry{
+        .id = "pkg:11111111111111111111111111111111",
+        .name = "lib",
+        .version = "1.0.0",
+    };
+    var valid = try std.json.parseFromSlice(std.json.Value, testing.allocator,
+        \\{"name":"lib","version":"1.0.0","id":"pkg:11111111111111111111111111111111","path":"lib","dependencies":[{"alias":"extra","package":"pkg:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}],"commands":[{"name":"命令","args":[],"josi":[]}]}
+    , .{});
+    defer valid.deinit();
+    try testing.expect(envRecordMatchesEntry(valid.value, &entry));
+
+    // 形状不正（alias 欠落）は拒否する。
+    var bad = try std.json.parseFromSlice(std.json.Value, testing.allocator,
+        \\{"name":"lib","version":"1.0.0","id":"pkg:11111111111111111111111111111111","path":"lib","dependencies":[{"package":"pkg:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}]}
+    , .{});
+    defer bad.deinit();
+    try testing.expect(!envRecordMatchesEntry(bad.value, &entry));
 }
