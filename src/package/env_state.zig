@@ -86,8 +86,27 @@ const environment_root_fields = [_][]const u8{
     "profile",
     "runtime",
     "mutablePaths",
+    // sync は root scope の import 依存（alias → package）も記録する。
+    // 許可しないと root 依存を持つ環境が常に stale と判定され、check が
+    // 命令 metadata の検査を毎回スキップする。
+    "dependencies",
     "packages",
 };
+
+/// root scope の import 依存表の形状（`[{alias, package}]`）を検査する。
+/// 値は feature 影響の表示にだけ使い、package 解決の信頼根拠にはしない。
+fn hasValidRootDependencies(object: std.json.ObjectMap) bool {
+    const value = object.get("dependencies") orelse return true;
+    if (value != .array) return false;
+    for (value.array.items) |item| {
+        if (item != .object or item.object.count() != 2) return false;
+        const alias = item.object.get("alias") orelse return false;
+        const package_key = item.object.get("package") orelse return false;
+        if (alias != .string or alias.string.len == 0) return false;
+        if (package_key != .string or package_key.string.len == 0) return false;
+    }
+    return true;
+}
 
 fn hasOnlyEnvironmentRootFields(object: std.json.ObjectMap) bool {
     var iterator = object.iterator();
@@ -165,7 +184,7 @@ pub fn readEnvironmentInfoDir(gpa: Allocator, io: std.Io, root_dir: std.Io.Dir) 
     defer parsed.deinit();
     if (parsed.value != .object) return info;
     const obj = parsed.value.object;
-    if (!hasOnlyEnvironmentRootFields(obj) or !hasValidMutablePaths(obj)) return info;
+    if (!hasOnlyEnvironmentRootFields(obj) or !hasValidMutablePaths(obj) or !hasValidRootDependencies(obj)) return info;
     if (obj.get("schemaVersion")) |v| {
         if (v == .integer) info.schema_version = v.integer;
     }
@@ -416,7 +435,7 @@ fn environmentPackagesUsableImpl(gpa: Allocator, io: std.Io, root_dir: std.Io.Di
     var parsed = std.json.parseFromSlice(std.json.Value, gpa, bytes, .{}) catch return false;
     defer parsed.deinit();
     if (parsed.value != .object) return false;
-    if (!hasOnlyEnvironmentRootFields(parsed.value.object) or !hasValidMutablePaths(parsed.value.object)) return false;
+    if (!hasOnlyEnvironmentRootFields(parsed.value.object) or !hasValidMutablePaths(parsed.value.object) or !hasValidRootDependencies(parsed.value.object)) return false;
     const packages_value = parsed.value.object.get("packages") orelse return false;
     if (packages_value != .object) return false;
     // `environment.json` には generation は記録されない。同期が公開する
@@ -1056,4 +1075,47 @@ pub fn lockDigestDir(gpa: Allocator, io: std.Io, root_dir: std.Io.Dir, out: *[32
     defer gpa.free(bytes);
     std.crypto.hash.sha2.Sha256.hash(bytes, out, .{});
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// tests
+// ---------------------------------------------------------------------------
+
+const testing = std.testing;
+
+test "environment root の dependencies 表を受理し、形状不正は拒否する" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const gpa = arena_impl.allocator();
+    const io = testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, ".nako");
+
+    const write = struct {
+        fn run(dir: std.Io.Dir, body: []const u8) !void {
+            try dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = body });
+        }
+    }.run;
+
+    // root 依存を持つ環境は current 判定の対象（sync が実際に書く形）。
+    try write(tmp.dir,
+        \\{"schemaVersion":1,"lockSha256":"sha256:aa","profile":"default","runtime":"lnako","dependencies":[{"alias":"lib","package":"pkg:11111111111111111111111111111111"}],"packages":{}}
+    );
+    const valid = (try readEnvironmentInfoDir(gpa, io, tmp.dir)) orelse return error.MissingEnvironment;
+    try testing.expectEqualStrings("default", valid.profile.?);
+
+    // alias 欠落は環境として受理しない（root 依存表の契約を緩めない）。
+    try write(tmp.dir,
+        \\{"schemaVersion":1,"lockSha256":"sha256:aa","profile":"default","runtime":"lnako","dependencies":[{"package":"pkg:11111111111111111111111111111111"}],"packages":{}}
+    );
+    const missing_alias = (try readEnvironmentInfoDir(gpa, io, tmp.dir)) orelse return error.MissingEnvironment;
+    try testing.expect(missing_alias.profile == null);
+
+    // 余分なキーを持つ要素も受理しない。
+    try write(tmp.dir,
+        \\{"schemaVersion":1,"lockSha256":"sha256:aa","profile":"default","runtime":"lnako","dependencies":[{"alias":"lib","package":"pkg:11","extra":1}],"packages":{}}
+    );
+    const extra_key = (try readEnvironmentInfoDir(gpa, io, tmp.dir)) orelse return error.MissingEnvironment;
+    try testing.expect(extra_key.profile == null);
 }

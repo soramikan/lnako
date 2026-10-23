@@ -7,6 +7,7 @@
 //! - 標準命令・他 package との命令名衝突を決定的に診断する
 //! - metadata 不足・native/JS のみ等の未検査範囲を列挙する
 //! - 厳格共用検査（`--strict-sharing`）では未検査が残れば E033
+//! - 選択 feature が専用に引き込む root 依存と推移依存を表示する
 //!
 //! 共用「保証済み」は静的に完全検査できた場合のみ。未検査があれば
 //! `partial`、衝突/不一致/厳格失敗は `failed`。
@@ -14,6 +15,8 @@
 const std = @import("std");
 const diag = @import("diagnostics.zig");
 const environment_mod = @import("environment.zig");
+const features_mod = @import("features.zig");
+const manifest_mod = @import("manifest.zig");
 const npkg_commands = @import("npkg_commands.zig");
 const npkg_commands_gen = @import("npkg_commands_gen.zig");
 const npkg_files = @import("npkg_files.zig");
@@ -61,6 +64,9 @@ pub const Report = struct {
     uninspected: []const Uninspected = &.{},
     collision_count: usize = 0,
     mismatch_count: usize = 0,
+    /// 選択 feature の影響。manifest を渡していない、または feature 定義が
+    /// 無いときは null（表示しない）。
+    features: ?FeatureImpact = null,
 
     pub fn deinit(self: *Report) void {
         self.arena.deinit();
@@ -70,6 +76,53 @@ pub const Report = struct {
     pub fn uninspectedCount(self: *const Report) usize {
         return self.uninspected.len;
     }
+};
+
+/// `check --features` / `--no-default-features` の選択。展開規則は lock
+/// `input.features` と同じ（feature 名と依存 alias の双方を受け付ける）。
+pub const FeatureRequest = struct {
+    requested: []const []const u8 = &.{},
+    use_default_features: bool = true,
+};
+
+pub const Options = struct {
+    /// 未検査が残れば E033 で失敗する。
+    strict_sharing: bool = false,
+    /// `nako.toml` の解析結果。null は feature 影響を表示しない。
+    manifest: ?*const manifest_mod.Manifest = null,
+    features: FeatureRequest = .{},
+};
+
+/// 非 default feature だけが引き込む root 依存と、そこからしか到達できない
+/// 推移依存。共通（default または feature 非依存）の構成と分けて表示する。
+pub const DedicatedFeature = struct {
+    name: []const u8,
+    /// この feature だけが有効化する root 依存 alias。
+    roots: []const []const u8 = &.{},
+    /// その root からしか到達できない推移依存 package key。
+    packages: []const []const u8 = &.{},
+};
+
+/// 選択 feature の影響。環境 graph と manifest `[features]` だけで決まる。
+pub const FeatureImpact = struct {
+    /// 選択 feature と直接指定 alias（昇順）。
+    selected: []const []const u8 = &.{},
+    /// default feature または feature 非依存で有効な root 依存 alias（昇順）。
+    common_roots: []const []const u8 = &.{},
+    /// feature 専用の root 依存と推移依存（feature 名昇順）。
+    dedicated: []const DedicatedFeature = &.{},
+};
+
+/// 環境 graph の alias 辺。`alias` は import scope の参照名。
+const Edge = struct {
+    alias: []const u8,
+    package_key: []const u8,
+};
+
+/// 環境 graph の package 間辺。
+const PackageEdge = struct {
+    from: []const u8,
+    to: []const u8,
 };
 
 const Owner = struct {
@@ -82,11 +135,12 @@ const Owner = struct {
 /// プロジェクト root dir 配下の `.nako/environment.json` を読み、
 /// 命令 metadata を静的検査する。ファイルが無い・読めない場合は
 /// `sharing = skipped` の空 Report（lock/env 整合は `inspectForCheck` 側）。
+/// plugin のロード・初期化・scanner の実行は一切行わない。
 pub fn inspectEnvironmentDir(
     gpa: Allocator,
     io: std.Io,
     root_dir: std.Io.Dir,
-    strict_sharing: bool,
+    options: Options,
     diagnostics: *diag.List,
 ) error{OutOfMemory}!Report {
     var report = Report{ .arena = std.heap.ArenaAllocator.init(gpa) };
@@ -146,12 +200,20 @@ pub fn inspectEnvironmentDir(
     defer owners.deinit(gpa);
 
     var uninspected_list: std.ArrayList(Uninspected) = .empty;
+    // 環境 graph の alias 辺と package 間辺。feature 影響の算出にだけ使う。
+    // 文字列は `parsed`（関数末尾まで生存）を借用する。
+    var root_edges: std.ArrayList(Edge) = .empty;
+    defer root_edges.deinit(gpa);
+    try collectImportEdges(gpa, parsed.value.object.get("dependencies"), &root_edges);
+    var package_edges: std.ArrayList(PackageEdge) = .empty;
+    defer package_edges.deinit(gpa);
 
     var package_it = packages_value.object.iterator();
     while (package_it.next()) |entry| {
         const package_key = try arena.dupe(u8, entry.key_ptr.*);
         if (entry.value_ptr.* != .object) continue;
         const record = entry.value_ptr.*.object;
+        try collectPackageEdges(gpa, entry.key_ptr.*, record.get("dependencies"), &package_edges);
 
         const path_value = record.get("path") orelse continue;
         if (path_value != .string) continue;
@@ -267,11 +329,24 @@ pub fn inspectEnvironmentDir(
 
     report.uninspected = try arena.dupe(Uninspected, uninspected_list.items);
 
+    if (options.manifest) |manifest| {
+        var scratch_arena = std.heap.ArenaAllocator.init(gpa);
+        defer scratch_arena.deinit();
+        report.features = try analyzeFeatureImpact(
+            scratch_arena.allocator(),
+            arena,
+            manifest,
+            options.features,
+            root_edges.items,
+            package_edges.items,
+        );
+    }
+
     if (report.collision_count > 0 or report.mismatch_count > 0) {
         report.sharing = .failed;
     } else if (report.uninspected.len > 0) {
         report.sharing = .partial;
-        if (strict_sharing) {
+        if (options.strict_sharing) {
             report.sharing = .failed;
             for (report.uninspected) |item| {
                 try diagnostics.addFmt(
@@ -332,6 +407,309 @@ fn isBuiltinCommand(name: []const u8) bool {
         if (std.mem.eql(u8, builtin, name)) return true;
     }
     return false;
+}
+
+// ---------------------------------------------------------------------------
+// feature 影響（専用推移依存の表示）
+// ---------------------------------------------------------------------------
+
+/// environment の import 依存配列（`{alias, package}`）を読む。
+fn collectImportEdges(gpa: Allocator, value: ?std.json.Value, out: *std.ArrayList(Edge)) error{OutOfMemory}!void {
+    const items = value orelse return;
+    if (items != .array) return;
+    for (items.array.items) |item| {
+        if (item != .object) continue;
+        const alias_value = item.object.get("alias") orelse continue;
+        const package_value = item.object.get("package") orelse continue;
+        if (alias_value != .string or package_value != .string) continue;
+        try out.append(gpa, .{ .alias = alias_value.string, .package_key = package_value.string });
+    }
+}
+
+/// package 記録の import 依存を package 間辺として読む。
+fn collectPackageEdges(gpa: Allocator, from: []const u8, value: ?std.json.Value, out: *std.ArrayList(PackageEdge)) error{OutOfMemory}!void {
+    const items = value orelse return;
+    if (items != .array) return;
+    for (items.array.items) |item| {
+        if (item != .object) continue;
+        const package_value = item.object.get("package") orelse continue;
+        if (package_value != .string) continue;
+        try out.append(gpa, .{ .from = from, .to = package_value.string });
+    }
+}
+
+/// 環境 graph と manifest `[features]` から feature 影響を求める。
+/// 環境に載っている root 依存（= 現行選択で有効な宣言）を feature 定義へ
+/// 突き合わせ、非 default feature だけが引き込むものを専用として分離する。
+/// 戻り値の文字列はすべて `out`（Report arena）が所有する。
+fn analyzeFeatureImpact(
+    scratch: Allocator,
+    out: Allocator,
+    manifest: *const manifest_mod.Manifest,
+    request: FeatureRequest,
+    root_edges: []const Edge,
+    package_edges: []const PackageEdge,
+) error{OutOfMemory}!?FeatureImpact {
+    // feature 定義が無ければ gated 依存も無く、表示する影響が無い。
+    if (manifest.features.count() == 0) return null;
+
+    var aliases = try manifest.dependencyAliases(scratch);
+    // 定義外の要求は `inspectForCheck` 側が E028/E027 で診断済み。
+    // ここでは表示を諦めて重複診断を増やさない。
+    const selection = features_mod.expand(scratch, &manifest.features, request.requested, request.use_default_features, &aliases, null) catch return null;
+
+    // feature 名 → 推移展開した依存 alias 集合。feature 定義の入れ子を
+    // 一段だけ見ると別名経由の gated 依存を取りこぼす。
+    var feature_aliases = std.StringHashMap(std.StringHashMap(void)).init(scratch);
+    var definition_it = manifest.features.keyIterator();
+    while (definition_it.next()) |name_ptr| {
+        const name = name_ptr.*;
+        var set = std.StringHashMap(void).init(scratch);
+        if (features_mod.expand(scratch, &manifest.features, &.{name}, false, &aliases, null)) |expanded_value| {
+            const expanded = expanded_value;
+            var alias_it = expanded.dependency_aliases.keyIterator();
+            while (alias_it.next()) |alias| try set.put(alias.*, {});
+        } else |_| {}
+        try feature_aliases.put(name, set);
+    }
+
+    // 選択 = feature 名 + 直接指定された依存 alias。選択 feature が
+    // 展開する alias は feature 側に含まれるため重複させない。
+    var selected_names: std.ArrayList([]const u8) = .empty;
+    var selected_features = selection.features.keyIterator();
+    while (selected_features.next()) |name| try selected_names.append(scratch, name.*);
+    var selected_aliases = selection.dependency_aliases.keyIterator();
+    while (selected_aliases.next()) |name_ptr| {
+        const name = name_ptr.*;
+        var gated_by_selection = false;
+        var selected_feature_it = selection.features.keyIterator();
+        while (selected_feature_it.next()) |feature_name| {
+            const set = feature_aliases.get(feature_name.*) orelse continue;
+            if (set.contains(name)) {
+                gated_by_selection = true;
+                break;
+            }
+        }
+        if (!gated_by_selection) try selected_names.append(scratch, name);
+    }
+    sortNames(selected_names.items);
+
+    // root 依存は dep key と明示 alias の両方が環境に載り得るため、
+    // package key 単位にまとめてから feature へ突き合わせる。
+    var aliases_by_key = std.StringHashMap(std.ArrayList([]const u8)).init(scratch);
+    for (root_edges) |edge| {
+        const gop = try aliases_by_key.getOrPut(edge.package_key);
+        if (!gop.found_existing) gop.value_ptr.* = .empty;
+        if (!containsName(gop.value_ptr.items, edge.alias)) try gop.value_ptr.append(scratch, edge.alias);
+    }
+
+    var manifest_keys = std.StringHashMap(void).init(scratch);
+    try collectDependencyKeys(&manifest.dependencies, &manifest_keys);
+    try collectDependencyKeys(&manifest.dev_dependencies, &manifest_keys);
+
+    var root_keys: std.ArrayList([]const u8) = .empty;
+    var key_it = aliases_by_key.keyIterator();
+    while (key_it.next()) |key| try root_keys.append(scratch, key.*);
+    sortNames(root_keys.items);
+
+    var display_by_key = std.StringHashMap([]const u8).init(scratch);
+    for (root_keys.items) |package_key| {
+        try display_by_key.put(package_key, displayName(&manifest_keys, aliases_by_key.get(package_key).?.items));
+    }
+
+    var common_roots: std.ArrayList([]const u8) = .empty;
+    var feature_root_keys = std.StringHashMap(std.ArrayList([]const u8)).init(scratch);
+    for (root_keys.items) |package_key| {
+        const root_aliases = aliases_by_key.get(package_key).?.items;
+        var owners: std.ArrayList([]const u8) = .empty;
+        var feature_it = feature_aliases.iterator();
+        while (feature_it.next()) |entry| {
+            if (matchesAnyAlias(entry.value_ptr, root_aliases)) try owners.append(scratch, entry.key_ptr.*);
+        }
+        // feature 非依存、または default feature が有効化する構成は共通。
+        if (owners.items.len == 0 or containsName(owners.items, "default")) {
+            try common_roots.append(scratch, display_by_key.get(package_key).?);
+            continue;
+        }
+        for (owners.items) |owner| {
+            const gop = try feature_root_keys.getOrPut(owner);
+            if (!gop.found_existing) gop.value_ptr.* = .empty;
+            try gop.value_ptr.append(scratch, package_key);
+        }
+    }
+    sortNames(common_roots.items);
+
+    var dedicated: std.ArrayList(DedicatedFeature) = .empty;
+    var dedicated_features: std.ArrayList([]const u8) = .empty;
+    var dedicated_it = feature_root_keys.keyIterator();
+    while (dedicated_it.next()) |name| try dedicated_features.append(scratch, name.*);
+    sortNames(dedicated_features.items);
+    for (dedicated_features.items) |feature_name| {
+        const dedicated_keys = feature_root_keys.get(feature_name).?.items;
+        var feature_closure = std.StringHashMap(void).init(scratch);
+        try collectReachable(scratch, package_edges, dedicated_keys, &feature_closure);
+        var baseline_starts: std.ArrayList([]const u8) = .empty;
+        for (root_keys.items) |package_key| {
+            if (containsName(dedicated_keys, package_key)) continue;
+            try baseline_starts.append(scratch, package_key);
+        }
+        var baseline_closure = std.StringHashMap(void).init(scratch);
+        try collectReachable(scratch, package_edges, baseline_starts.items, &baseline_closure);
+
+        // 専用 root からしか到達できない推移依存だけを残す（root 自身は
+        // roots 側に出るため packages には含めない）。
+        var exclusive: std.ArrayList([]const u8) = .empty;
+        var closure_it = feature_closure.keyIterator();
+        while (closure_it.next()) |package_key| {
+            if (containsName(dedicated_keys, package_key.*)) continue;
+            if (baseline_closure.contains(package_key.*)) continue;
+            try exclusive.append(scratch, package_key.*);
+        }
+        sortNames(exclusive.items);
+
+        var root_names: std.ArrayList([]const u8) = .empty;
+        for (dedicated_keys) |package_key| try root_names.append(scratch, display_by_key.get(package_key) orelse package_key);
+        sortNames(root_names.items);
+
+        try dedicated.append(scratch, .{
+            .name = try out.dupe(u8, feature_name),
+            .roots = try dupeNames(out, root_names.items),
+            .packages = try dupeNames(out, exclusive.items),
+        });
+    }
+
+    return FeatureImpact{
+        .selected = try dupeNames(out, selected_names.items),
+        .common_roots = try dupeNames(out, common_roots.items),
+        .dedicated = try out.dupe(DedicatedFeature, dedicated.items),
+    };
+}
+
+fn collectDependencyKeys(group: *const manifest_mod.DependencyGroup, out: *std.StringHashMap(void)) error{OutOfMemory}!void {
+    var pkg = group.pkg.keyIterator();
+    while (pkg.next()) |key| try out.put(key.*, {});
+    var npm = group.npm.keyIterator();
+    while (npm.next()) |key| try out.put(key.*, {});
+    var path = group.path.keyIterator();
+    while (path.next()) |key| try out.put(key.*, {});
+    var git = group.git.keyIterator();
+    while (git.next()) |key| try out.put(key.*, {});
+    var http = group.http.keyIterator();
+    while (http.next()) |key| try out.put(key.*, {});
+}
+
+/// `starts` から環境 graph を辿った package key 集合。
+// ponytail: 辺は線形スキャン。env package 数が数百規模になったら隣接表にする。
+fn collectReachable(
+    scratch: Allocator,
+    edges: []const PackageEdge,
+    starts: []const []const u8,
+    out: *std.StringHashMap(void),
+) error{OutOfMemory}!void {
+    var stack: std.ArrayList([]const u8) = .empty;
+    for (starts) |start| {
+        if (out.contains(start)) continue;
+        try out.put(start, {});
+        try stack.append(scratch, start);
+    }
+    while (stack.pop()) |current| {
+        for (edges) |edge| {
+            if (!std.mem.eql(u8, edge.from, current)) continue;
+            if (out.contains(edge.to)) continue;
+            try out.put(edge.to, {});
+            try stack.append(scratch, edge.to);
+        }
+    }
+}
+
+fn sortNames(items: [][]const u8) void {
+    std.mem.sort([]const u8, items, {}, struct {
+        fn lessThan(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.order(u8, a, b) == .lt;
+        }
+    }.lessThan);
+}
+
+fn containsName(items: []const []const u8, name: []const u8) bool {
+    for (items) |item| {
+        if (std.mem.eql(u8, item, name)) return true;
+    }
+    return false;
+}
+
+fn matchesAnyAlias(alias_set: *const std.StringHashMap(void), aliases: []const []const u8) bool {
+    for (aliases) |alias| {
+        if (alias_set.contains(alias)) return true;
+    }
+    return false;
+}
+
+/// 表示名は manifest の dep key を優先する（feature 定義も dep key で
+/// 書かれるため読み手の宣言と一致する）。無ければ alias 昇順の先頭。
+fn displayName(manifest_keys: *const std.StringHashMap(void), aliases: []const []const u8) []const u8 {
+    var best: ?[]const u8 = null;
+    for (aliases) |alias| {
+        if (!manifest_keys.contains(alias)) continue;
+        if (best == null or std.mem.order(u8, alias, best.?) == .lt) best = alias;
+    }
+    if (best) |name| return name;
+    for (aliases) |alias| {
+        if (best == null or std.mem.order(u8, alias, best.?) == .lt) best = alias;
+    }
+    return best.?;
+}
+
+fn dupeNames(out: Allocator, names: []const []const u8) error{OutOfMemory}![]const []const u8 {
+    const copy = try out.alloc([]const u8, names.len);
+    for (names, 0..) |name, index| copy[index] = try out.dupe(u8, name);
+    return copy;
+}
+
+/// `check --json` の `features` 値を組み立てる（1 行 JSON、キー順固定）。
+pub fn featureImpactJson(gpa: Allocator, impact: FeatureImpact) error{OutOfMemory}![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    try out.appendSlice(gpa, "{\"selected\":");
+    try appendJsonNames(gpa, &out, impact.selected);
+    try out.appendSlice(gpa, ",\"common\":");
+    try appendJsonNames(gpa, &out, impact.common_roots);
+    try out.appendSlice(gpa, ",\"dedicated\":[");
+    for (impact.dedicated, 0..) |feature, index| {
+        if (index > 0) try out.appendSlice(gpa, ",");
+        try out.appendSlice(gpa, "{\"feature\":");
+        try appendJsonString(gpa, &out, feature.name);
+        try out.appendSlice(gpa, ",\"roots\":");
+        try appendJsonNames(gpa, &out, feature.roots);
+        try out.appendSlice(gpa, ",\"packages\":");
+        try appendJsonNames(gpa, &out, feature.packages);
+        try out.appendSlice(gpa, "}");
+    }
+    try out.appendSlice(gpa, "]}");
+    return try out.toOwnedSlice(gpa);
+}
+
+fn appendJsonNames(gpa: Allocator, out: *std.ArrayList(u8), names: []const []const u8) error{OutOfMemory}!void {
+    try out.appendSlice(gpa, "[");
+    for (names, 0..) |name, index| {
+        if (index > 0) try out.appendSlice(gpa, ",");
+        try appendJsonString(gpa, out, name);
+    }
+    try out.appendSlice(gpa, "]");
+}
+
+fn appendJsonString(gpa: Allocator, out: *std.ArrayList(u8), text: []const u8) error{OutOfMemory}!void {
+    const quoted = try std.json.Stringify.valueAlloc(gpa, text, .{});
+    defer gpa.free(quoted);
+    try out.appendSlice(gpa, quoted);
+}
+
+/// 表示用のカンマ区切り。空なら空文字列。
+pub fn joinNames(gpa: Allocator, names: []const []const u8) error{OutOfMemory}![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    for (names, 0..) |name, index| {
+        if (index > 0) try out.appendSlice(gpa, ", ");
+        try out.appendSlice(gpa, name);
+    }
+    return try out.toOwnedSlice(gpa);
 }
 
 fn parseCommands(arena: Allocator, commands_value: ?std.json.Value) ![]npkg_commands.Command {
@@ -548,7 +926,7 @@ test "command inspect: source metadata をロードせず検査し guaranteed �
 
     var list = diag.List.init(a);
     defer list.deinit();
-    var report = try inspectEnvironmentDir(a, io, tmp.dir, false, &list);
+    var report = try inspectEnvironmentDir(a, io, tmp.dir, .{ .strict_sharing = false }, &list);
     defer report.deinit();
 
     try testing.expectEqual(Sharing.guaranteed, report.sharing);
@@ -590,7 +968,7 @@ test "command inspect: native metadata 不足は partial、strict で E033" {
 
     var list = diag.List.init(a);
     defer list.deinit();
-    var report = try inspectEnvironmentDir(a, io, tmp.dir, false, &list);
+    var report = try inspectEnvironmentDir(a, io, tmp.dir, .{ .strict_sharing = false }, &list);
     defer report.deinit();
     try testing.expectEqual(Sharing.partial, report.sharing);
     try testing.expectEqual(@as(usize, 1), report.uninspectedCount());
@@ -599,7 +977,7 @@ test "command inspect: native metadata 不足は partial、strict で E033" {
 
     var strict_list = diag.List.init(a);
     defer strict_list.deinit();
-    var report_strict = try inspectEnvironmentDir(a, io, tmp.dir, true, &strict_list);
+    var report_strict = try inspectEnvironmentDir(a, io, tmp.dir, .{ .strict_sharing = true }, &strict_list);
     defer report_strict.deinit();
     try testing.expectEqual(Sharing.failed, report_strict.sharing);
     try testing.expect(strict_list.find(diag.E033_STRICT_SHARING_FAILED) != null);
@@ -630,7 +1008,7 @@ test "command inspect: 標準命令との衝突を診断する" {
     );
     var list = diag.List.init(a);
     defer list.deinit();
-    var report = try inspectEnvironmentDir(a, io, tmp.dir, false, &list);
+    var report = try inspectEnvironmentDir(a, io, tmp.dir, .{ .strict_sharing = false }, &list);
     defer report.deinit();
     try testing.expectEqual(Sharing.failed, report.sharing);
     try testing.expect(report.collision_count >= 1);
@@ -667,7 +1045,7 @@ test "command inspect: package 間の命令名衝突を診断する" {
     );
     var list = diag.List.init(a);
     defer list.deinit();
-    var report = try inspectEnvironmentDir(a, io, tmp.dir, false, &list);
+    var report = try inspectEnvironmentDir(a, io, tmp.dir, .{ .strict_sharing = false }, &list);
     defer report.deinit();
     try testing.expectEqual(Sharing.failed, report.sharing);
     try testing.expect(report.collision_count >= 1);
@@ -707,7 +1085,7 @@ test "command inspect: snapshot とソース再生成の不一致を診断する
     );
     var list = diag.List.init(a);
     defer list.deinit();
-    var report = try inspectEnvironmentDir(a, io, tmp.dir, false, &list);
+    var report = try inspectEnvironmentDir(a, io, tmp.dir, .{ .strict_sharing = false }, &list);
     defer report.deinit();
     try testing.expect(report.mismatch_count >= 1);
     try testing.expectEqual(Sharing.failed, report.sharing);
@@ -740,11 +1118,202 @@ test "command inspect: source 再生成失敗は source_unreadable" {
     );
     var list = diag.List.init(a);
     defer list.deinit();
-    var report = try inspectEnvironmentDir(a, io, tmp.dir, false, &list);
+    var report = try inspectEnvironmentDir(a, io, tmp.dir, .{ .strict_sharing = false }, &list);
     defer report.deinit();
     try testing.expectEqual(Sharing.partial, report.sharing);
     try testing.expectEqual(@as(usize, 1), report.uninspectedCount());
     try testing.expectEqual(UninspectedReason.source_unreadable, report.uninspected[0].reason);
     // snapshot の衝突検査は継続（inspected に加算される）
     try testing.expectEqual(@as(usize, 1), report.inspected_count);
+}
+
+/// feature 影響テスト用の環境と manifest を書く。
+/// root 依存 `common`(default) / `req`(http) を持ち、`req` だけが
+/// 推移依存 `extra` を引き込む構成。
+fn writeFeatureFixture(dir: std.Io.Dir, with_req: bool) !void {
+    var env: std.ArrayList(u8) = .empty;
+    defer env.deinit(testing.allocator);
+    try env.appendSlice(testing.allocator,
+        \\{
+        \\  "schemaVersion": 1,
+        \\  "lockSha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        \\  "profile": "default",
+        \\  "runtime": "lnako",
+        \\  "dependencies": [
+        \\    {"alias": "common", "package": "pkg:cccccccccccccccccccccccccccccccc"}
+    );
+    if (with_req) {
+        try env.appendSlice(testing.allocator,
+            \\,
+            \\    {"alias": "req", "package": "pkg:rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"}
+        );
+    }
+    try env.appendSlice(testing.allocator,
+        \\  ],
+        \\  "packages": {
+        \\    "pkg:cccccccccccccccccccccccccccccccc": {
+        \\      "name": "common",
+        \\      "version": "1.0.0",
+        \\      "path": "lib_common",
+        \\      "commands": [{"name": "共通命令", "args": [], "josi": []}]
+        \\    }
+    );
+    if (with_req) {
+        try env.appendSlice(testing.allocator,
+            \\,
+            \\    "pkg:rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr": {
+            \\      "name": "req",
+            \\      "version": "1.0.0",
+            \\      "path": "lib_req",
+            \\      "dependencies": [{"alias": "extra", "package": "pkg:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}],
+            \\      "commands": [{"name": "要求命令", "args": [], "josi": []}]
+            \\    },
+            \\    "pkg:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
+            \\      "name": "extra",
+            \\      "version": "1.0.0",
+            \\      "path": "lib_extra",
+            \\      "commands": [{"name": "追加命令", "args": [], "josi": []}]
+            \\    }
+        );
+    }
+    try env.appendSlice(testing.allocator, "\n  }\n}\n");
+    try writeEnv(dir, env.items);
+}
+
+const feature_fixture_manifest =
+    \\[package]
+    \\name = "app"
+    \\version = "0.1.0"
+    \\license = "MIT"
+    \\
+    \\[dependencies.path]
+    \\common = { path = "lib_common" }
+    \\req = { path = "lib_req" }
+    \\
+    \\[features]
+    \\default = ["common"]
+    \\http = ["req"]
+    \\
+;
+
+test "command inspect: 専用推移依存と選択 feature 影響を表示する" {
+    const a = testing.allocator;
+    const io = testing.io;
+    var tmp = test_sandbox.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeFeatureFixture(tmp.dir, true);
+    try tmp.dir.createDirPath(io, "lib_common");
+    try tmp.dir.createDirPath(io, "lib_req");
+    try tmp.dir.createDirPath(io, "lib_extra");
+
+    var parse_diags = diag.List.init(a);
+    defer parse_diags.deinit();
+    var manifest = try manifest_mod.parse(a, feature_fixture_manifest, &parse_diags);
+    defer manifest.deinit();
+    try testing.expect(!parse_diags.hasErrors());
+
+    var list = diag.List.init(a);
+    defer list.deinit();
+    var report = try inspectEnvironmentDir(a, io, tmp.dir, .{
+        .manifest = &manifest,
+        .features = .{ .requested = &.{"http"} },
+    }, &list);
+    defer report.deinit();
+    try testing.expectEqual(Sharing.guaranteed, report.sharing);
+    try testing.expect(!list.hasErrors());
+
+    const impact = report.features orelse return error.MissingFeatureImpact;
+    try testing.expectEqual(@as(usize, 2), impact.selected.len);
+    try testing.expectEqualStrings("default", impact.selected[0]);
+    try testing.expectEqualStrings("http", impact.selected[1]);
+    try testing.expectEqual(@as(usize, 1), impact.common_roots.len);
+    try testing.expectEqualStrings("common", impact.common_roots[0]);
+    try testing.expectEqual(@as(usize, 1), impact.dedicated.len);
+    try testing.expectEqualStrings("http", impact.dedicated[0].name);
+    try testing.expectEqual(@as(usize, 1), impact.dedicated[0].roots.len);
+    try testing.expectEqualStrings("req", impact.dedicated[0].roots[0]);
+    // req → extra は共通 root から到達できないため専用推移依存。
+    try testing.expectEqual(@as(usize, 1), impact.dedicated[0].packages.len);
+    try testing.expectEqualStrings("pkg:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", impact.dedicated[0].packages[0]);
+}
+
+test "command inspect: 未選択 feature の依存は専用に出さない" {
+    const a = testing.allocator;
+    const io = testing.io;
+    var tmp = test_sandbox.tmpDir(.{});
+    defer tmp.cleanup();
+    // 環境は default 選択（req 無し）で構築済み。
+    try writeFeatureFixture(tmp.dir, false);
+    try tmp.dir.createDirPath(io, "lib_common");
+
+    var parse_diags = diag.List.init(a);
+    defer parse_diags.deinit();
+    var manifest = try manifest_mod.parse(a, feature_fixture_manifest, &parse_diags);
+    defer manifest.deinit();
+
+    var list = diag.List.init(a);
+    defer list.deinit();
+    var report = try inspectEnvironmentDir(a, io, tmp.dir, .{
+        .manifest = &manifest,
+    }, &list);
+    defer report.deinit();
+    const impact = report.features orelse return error.MissingFeatureImpact;
+    try testing.expectEqual(@as(usize, 1), impact.selected.len);
+    try testing.expectEqualStrings("default", impact.selected[0]);
+    try testing.expectEqual(@as(usize, 1), impact.common_roots.len);
+    try testing.expectEqualStrings("common", impact.common_roots[0]);
+    try testing.expectEqual(@as(usize, 0), impact.dedicated.len);
+}
+
+test "command inspect: feature 定義が無ければ影響を表示しない" {
+    const a = testing.allocator;
+    const io = testing.io;
+    var tmp = test_sandbox.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeFeatureFixture(tmp.dir, true);
+
+    var parse_diags = diag.List.init(a);
+    defer parse_diags.deinit();
+    var manifest = try manifest_mod.parse(a,
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\common = { path = "lib_common" }
+        \\
+    , &parse_diags);
+    defer manifest.deinit();
+
+    var list = diag.List.init(a);
+    defer list.deinit();
+    var report = try inspectEnvironmentDir(a, io, tmp.dir, .{
+        .manifest = &manifest,
+    }, &list);
+    defer report.deinit();
+    try testing.expect(report.features == null);
+}
+
+test "command inspect: feature 影響 JSON は固定順で出力する" {
+    const a = testing.allocator;
+    const impact = FeatureImpact{
+        .selected = &.{ "default", "http" },
+        .common_roots = &.{"common"},
+        .dedicated = &.{.{
+            .name = "http",
+            .roots = &.{"req"},
+            .packages = &.{"pkg:extra"},
+        }},
+    };
+    const json = try featureImpactJson(a, impact);
+    defer a.free(json);
+    try testing.expectEqualStrings(
+        "{\"selected\":[\"default\",\"http\"],\"common\":[\"common\"],\"dedicated\":[{\"feature\":\"http\",\"roots\":[\"req\"],\"packages\":[\"pkg:extra\"]}]}",
+        json,
+    );
+
+    const empty = try featureImpactJson(a, .{});
+    defer a.free(empty);
+    try testing.expectEqualStrings("{\"selected\":[],\"common\":[],\"dedicated\":[]}", empty);
 }
