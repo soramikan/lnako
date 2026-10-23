@@ -71,6 +71,25 @@ function copyFixture(destination) {
   fs.cpSync(fixtureRoot, destination, { recursive: true });
 }
 
+// 失敗時だけ同期済み環境の実体を出す。OS 固有の同期・環境検証の食い違いを
+// CI ログだけで切り分けられるようにする（内容は fixture の path と hash のみ）。
+function dumpFailureDiagnostics(cwd) {
+  const files = [
+    ["environment.json", path.join(cwd, ".nako", "environment.json")],
+    ["nako.lock", path.join(cwd, "nako.lock")],
+  ];
+  console.error(`package import AOT検査: 診断 (${cwd})`);
+  for (const [label, file] of files) {
+    if (!fs.existsSync(file)) {
+      console.error(`${label}: ありません`);
+      continue;
+    }
+    console.error(`${label}:\n${fs.readFileSync(file, "utf8").slice(0, 4000)}`);
+  }
+  const check = run(executable, ["check"], { cwd });
+  console.error(`check: exit=${check.status}\n${check.stdout}${check.stderr}`);
+}
+
 function checkRejections(fixture, work, reported) {
   const names = fs.readdirSync(fixture, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && entry.name.startsWith("reject-"))
@@ -119,7 +138,10 @@ async function main() {
     const routes = [];
     const startedAt = Date.now();
     const interpreter = run(executable, ["run", "main.nako3"], { cwd: app });
-    if (interpreter.status !== 0) fail(`Interpreter実行が失敗しました\n${interpreter.stderr}`);
+    if (interpreter.status !== 0) {
+      dumpFailureDiagnostics(app);
+      fail(`Interpreter実行が失敗しました\n${interpreter.stderr}`);
+    }
     if (interpreter.stdout !== expected) fail(`Interpreterの観測結果が期待値と一致しません\n期待:\n${expected}\n実際:\n${interpreter.stdout}`);
     routes.push(`interpreter ${Date.now() - startedAt}ms`);
 
@@ -127,7 +149,10 @@ async function main() {
       const routeStartedAt = Date.now();
       const output = path.join(work, `app-${optimization}${executableSuffix}`);
       const built = run(executable, ["build", "main.nako3", "-o", output, `-${optimization}`], { cwd: app });
-      if (built.status !== 0) fail(`${optimization}のAOT buildが失敗しました\n${built.stderr}`);
+      if (built.status !== 0) {
+        dumpFailureDiagnostics(app);
+        fail(`${optimization}のAOT buildが失敗しました\n${built.stderr}`);
+      }
       if (!fs.existsSync(output)) fail(`${optimization}の生成物がありません: ${output}`);
       const executed = run(output, [], { cwd: app });
       if (executed.status !== 0) fail(`${optimization}の生成物が異常終了しました\n${executed.stderr}`);
