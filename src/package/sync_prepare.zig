@@ -787,7 +787,7 @@ pub fn isPackageId(id: []const u8) bool {
 const shortKey = cache_key.shortKey;
 const artifactKey = cache_key.artifactKey;
 
-fn rememberKey(ctx: *Context, key: []const u8) !void {
+pub fn rememberKey(ctx: *Context, key: []const u8) !void {
     for (ctx.used_keys.items) |item| {
         if (std.mem.eql(u8, item, key)) return;
     }

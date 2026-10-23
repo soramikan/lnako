@@ -623,6 +623,9 @@ fn acquireTarball(
         const key = try cache_key.artifactKey(gpa, "npm", meta.integrity, meta.tarball_url);
         defer gpa.free(key);
         if (store.readVerifiedSourceArchive(gpa, key, meta.integrity) catch null) |cached| {
+            errdefer gpa.free(cached);
+            // 旧版が公開した entry でも、lock から再導出できる内容アドレス key を補う。
+            try publishTarballCache(gpa, session, store, meta, cached);
             return .{ .bytes = cached, .owned = true };
         }
     }
@@ -677,11 +680,30 @@ fn publishTarballCache(
     meta: VersionMeta,
     bytes: []const u8,
 ) Error!void {
-    const key = try cache_key.artifactKey(gpa, "npm", meta.integrity, meta.tarball_url);
-    defer gpa.free(key);
-    if (store.entryExists(key)) return;
-    // gzip tarball は tree/ へ unpack（strip package/）。非 gzip fixture は blob。
-    npm_esm.publishNpmTree(gpa, session.io, store, key, bytes) catch |err| return mapCache(err);
+    // 取得時の cache hit 用 key。lock は registry の integrity を記録しないため、
+    // 再解決時は integrity から引ける entry も要る。
+    const integrity_key = try cache_key.artifactKey(gpa, "npm", meta.integrity, meta.tarball_url);
+    defer gpa.free(integrity_key);
+    if (!store.entryExists(integrity_key)) {
+        // gzip tarball は tree/ へ unpack（strip package/）。非 gzip fixture は blob。
+        npm_esm.publishNpmTree(gpa, session.io, store, integrity_key, bytes) catch |err| return mapCache(err);
+    }
+
+    // lock の `sha256`（tarball の内容 hash）から再導出できる内容アドレス key。
+    // env materialize と bare 解決は lock しか持たないため、この key が無いと
+    // cache hit できない。ponytail: tree を 2 重に持つ。cache 側に
+    // integrity→content の alias を置けるようになったら integrity_key 側を
+    // archive のみ（marker 付き）に縮める。
+    var scratch = std.heap.ArenaAllocator.init(gpa);
+    defer scratch.deinit();
+    const a = scratch.allocator();
+    const sha_hex = try fetch.sha256Hex(a, bytes);
+    const content_hash = try std.fmt.allocPrint(a, "sha256:{s}", .{sha_hex});
+    const content_key = try cache_key.artifactKey(gpa, "npm", content_hash, meta.tarball_url);
+    defer gpa.free(content_key);
+    if (!std.mem.eql(u8, content_key, integrity_key) and !store.entryExists(content_key)) {
+        npm_esm.publishNpmTree(gpa, session.io, store, content_key, bytes) catch |err| return mapCache(err);
+    }
 }
 
 fn mapCache(err: anyerror) Error {
@@ -1461,4 +1483,125 @@ test "npm: cache があれば offline で再取得できる" {
         try testing.expectEqual(@as(usize, 1), result.instances.len);
         try testing.expect(std.mem.startsWith(u8, result.instances[0].sha256, "sha256:"));
     }
+}
+
+test "npm: lock の sha256 から cache entry を再導出できる" {
+    // env materialize / bare 解決は lock（sha256 + url）しか持たないため、
+    // 取得時に内容アドレス key でも公開されていないと cache hit できない。
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "cache");
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", gpa);
+    defer gpa.free(cache_root);
+    var store = try cache.Store.open(gpa, io, cache_root);
+    defer store.deinit();
+
+    const body = try gpa.dupe(u8, "npm-content-address-body");
+    defer gpa.free(body);
+    const integrity = try integritySha512(gpa, body);
+    defer gpa.free(integrity);
+    var cat: Catalog = .{};
+    defer cat.deinit(gpa);
+    const versions = try gpa.alloc(VersionMeta, 1);
+    defer gpa.free(versions);
+    versions[0] = .{
+        .version = "1.0.0",
+        .tarball_url = "fixture://reacquire-1.0.0.tgz",
+        .integrity = integrity,
+        .tarball_bytes = body,
+    };
+    try cat.put(gpa, .{ .name = "cached", .versions = versions });
+
+    var range = try semver.Range.parse(gpa, "1.0.0");
+    defer range.deinit(gpa);
+    const roots = [_]RootRequest{.{ .alias = "cached", .name = "cached", .range = range, .range_text = "1.0.0" }};
+
+    var session = fetch.Session.init(gpa, io, .{});
+    defer session.deinit();
+    var diagnostics = diag.List.init(gpa);
+    defer diagnostics.deinit();
+    var result = try resolve(gpa, &session, &cat, &roots, &store, &diagnostics, .{});
+    defer result.deinit();
+    try testing.expectEqual(@as(usize, 1), result.instances.len);
+
+    const resolved = result.instances[0];
+    const instance: lock_model.NpmInstance = .{
+        .key = resolved.key,
+        .name = resolved.name,
+        .version = resolved.version,
+        .sha256 = resolved.sha256,
+        .url = resolved.url,
+    };
+    const key = (try npm_esm.cacheKeyForInstance(gpa, instance)).?;
+    defer gpa.free(key);
+    const bytes = (try store.readVerifiedSourceArchive(gpa, key, instance.sha256.?)).?;
+    defer gpa.free(bytes);
+    try testing.expectEqualStrings(body, bytes);
+}
+
+test "npm: integrity-only cache hit で content key を補完する" {
+    // 旧版 layout（integrity key のみ）の cache を、acquire の hit 経路が
+    // content-address key で補完することを回帰で固定する。
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "cache");
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", gpa);
+    defer gpa.free(cache_root);
+    var store = try cache.Store.open(gpa, io, cache_root);
+    defer store.deinit();
+
+    const body = try gpa.dupe(u8, "npm-integrity-only-legacy-body");
+    defer gpa.free(body);
+    const integrity = try integritySha512(gpa, body);
+    defer gpa.free(integrity);
+    const url = "fixture://legacy-integrity-only-1.0.0.tgz";
+
+    const integrity_key = try cache_key.artifactKey(gpa, "npm", integrity, url);
+    defer gpa.free(integrity_key);
+    try npm_esm.publishNpmTree(gpa, io, &store, integrity_key, body);
+
+    var scratch = std.heap.ArenaAllocator.init(gpa);
+    defer scratch.deinit();
+    const sha_hex = try fetch.sha256Hex(scratch.allocator(), body);
+    const content_hash = try std.fmt.allocPrint(scratch.allocator(), "sha256:{s}", .{sha_hex});
+    const content_key = try cache_key.artifactKey(gpa, "npm", content_hash, url);
+    defer gpa.free(content_key);
+    try testing.expect(store.entryExists(integrity_key));
+    try testing.expect(!store.entryExists(content_key));
+
+    var cat: Catalog = .{};
+    defer cat.deinit(gpa);
+    const versions = try gpa.alloc(VersionMeta, 1);
+    defer gpa.free(versions);
+    versions[0] = .{
+        .version = "1.0.0",
+        .tarball_url = url,
+        .integrity = integrity,
+        // 埋め込み無し → integrity key の cache hit 経路を通す。
+        .tarball_bytes = null,
+    };
+    try cat.put(gpa, .{ .name = "legacy", .versions = versions });
+
+    var range = try semver.Range.parse(gpa, "1.0.0");
+    defer range.deinit(gpa);
+    const roots = [_]RootRequest{.{ .alias = "legacy", .name = "legacy", .range = range, .range_text = "1.0.0" }};
+
+    {
+        var session = fetch.Session.init(gpa, io, .{ .offline = true });
+        defer session.deinit();
+        var diagnostics = diag.List.init(gpa);
+        defer diagnostics.deinit();
+        var result = try resolve(gpa, &session, &cat, &roots, &store, &diagnostics, .{});
+        defer result.deinit();
+        try testing.expectEqual(@as(usize, 1), result.instances.len);
+    }
+
+    try testing.expect(store.entryExists(content_key));
+    const bytes = (try store.readVerifiedSourceArchive(gpa, content_key, content_hash)).?;
+    defer gpa.free(bytes);
+    try testing.expectEqualStrings(body, bytes);
 }
