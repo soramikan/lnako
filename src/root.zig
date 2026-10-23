@@ -127,6 +127,7 @@ pub const package = struct {
     pub const import_deps = @import("package/import_deps.zig");
     pub const import_resolver = @import("package/import_resolver.zig");
     pub const materialize = @import("package/materialize.zig");
+    pub const npm_env = @import("package/npm_env.zig");
     pub const unpack = @import("package/unpack.zig");
     pub const sync = @import("package/sync.zig");
     pub const project = @import("package/project.zig");
@@ -319,6 +320,7 @@ test {
     std.testing.refAllDecls(package.environment);
     std.testing.refAllDecls(package.import_resolver);
     std.testing.refAllDecls(package.materialize);
+    std.testing.refAllDecls(package.npm_env);
     std.testing.refAllDecls(package.unpack);
     std.testing.refAllDecls(package.sync);
     std.testing.refAllDecls(package.project);

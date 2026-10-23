@@ -21,6 +21,7 @@ const lock_mod = @import("lock.zig");
 const lock_model = @import("lock_model.zig");
 const manifest_mod = @import("manifest.zig");
 const path_digest = @import("path_digest.zig");
+const npm_env = @import("npm_env.zig");
 const prepare = @import("sync_prepare.zig");
 
 const Allocator = std.mem.Allocator;
@@ -339,6 +340,24 @@ pub fn run(
             return err;
         };
         try records.append(arena, record_value);
+        // lock の npmInstances も世代 `deps/` へ実体化する。cache の検証済み
+        // tarball だけを使い、network・Node・npm CLI は使わない。
+        if (entry.npm_instances.len > 0) {
+            const npm_keys = npm_env.materializeInstances(.{
+                .gpa = gpa,
+                .arena = arena,
+                .io = io,
+                .session = &session,
+                .cache_store = &cache_store,
+                .workspace_dir = workspace_dir,
+                .deps_dir = deps_dir,
+            }, entry.npm_instances) catch |err| {
+                session.reportDiagnostics(diagnostics) catch {};
+                return err;
+            };
+            // `sync --clean` が直後に参照 entry を削除しないよう keep list へ載せる。
+            for (npm_keys) |key| try prepare.rememberKey(&ctx, key);
+        }
     }
 
     // path 依存の pin/digest は事前にも照合しているが、その後
