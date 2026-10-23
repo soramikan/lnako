@@ -94,6 +94,7 @@ fn materializeOne(
     const arena = params.arena;
     const dir_name = try instanceDirName(arena, instance);
     const archive = try readVerifiedArchive(params, instance, used_keys);
+    defer params.gpa.free(archive);
 
     // 展開先は毎回作り直し、中断 residue を持ち越さない。
     const scratch_name = try std.fmt.allocPrint(arena, ".npm-tree-{s}", .{dir_name});
@@ -150,7 +151,9 @@ fn readVerifiedArchive(
         "npm instance \"{s}\" cannot be addressed in the cache from nako.lock",
         .{instance.key},
     );
-    const archive = params.cache_store.readVerifiedSourceArchive(params.arena, key, sha256) catch |err| switch (err) {
+    // tarball bytes は instance 単位で解放する（sync 全体 arena に載せない）。
+    // cache key だけ used_keys 経由で arena に残す。
+    const archive = params.cache_store.readVerifiedSourceArchive(params.gpa, key, sha256) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.InvalidKey => return params.session.fail(
             .invalid_source,
