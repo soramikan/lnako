@@ -29,14 +29,22 @@ pub fn realPathDirAlloc(allocator: Allocator, io: std.Io, path: []const u8) ![]u
 }
 
 /// Find the environment matching the nearest trusted project manifest.
+/// Writable ACL の既定は warn+continue（`project_trust.WritableMode.warn`）。
 pub fn findProjectRoot(allocator: Allocator, io: std.Io, input_path: []const u8) !?[]u8 {
     return project_discovery.findProjectRoot(allocator, io, input_path);
 }
 
-/// `findProjectRoot` と同じ探索を行い、`nako.toml` はあるが信頼検証で
-/// 拒否した場合に `rejected` を true にする（診断用）。
-pub fn findProjectRootDetailed(allocator: Allocator, io: std.Io, input_path: []const u8, rejected: *bool) !?[]u8 {
-    return project_discovery.findProjectRootDetailed(allocator, io, input_path, rejected);
+/// `findProjectRoot` と同じ探索。`mode=.enforce` で共有 writable を拒否した
+/// とき `rejected` を true にする。`mode=.warn` では `writable_warning` を立てて続行。
+pub fn findProjectRootDetailed(
+    allocator: Allocator,
+    io: std.Io,
+    input_path: []const u8,
+    rejected: *bool,
+    mode: project_trust.WritableMode,
+    writable_warning: *bool,
+) !?[]u8 {
+    return project_discovery.findProjectRootDetailed(allocator, io, input_path, rejected, mode, writable_warning);
 }
 
 pub const Error = error{
@@ -53,8 +61,14 @@ pub const Resolver = struct {
     project_root: []const u8,
     parsed: std.json.Parsed(Value),
     owned: std.heap.ArenaAllocator,
+    /// `WritableMode.warn` で共有 writable を検出したとき true（続行済み）。
+    writable_warning: bool = false,
 
     pub fn load(allocator: Allocator, io: std.Io, project_root: []const u8) !Resolver {
+        return loadWithMode(allocator, io, project_root, .warn);
+    }
+
+    pub fn loadWithMode(allocator: Allocator, io: std.Io, project_root: []const u8, mode: project_trust.WritableMode) !Resolver {
         var owned = std.heap.ArenaAllocator.init(allocator);
         errdefer owned.deinit();
         const storage = owned.allocator();
@@ -93,14 +107,15 @@ pub const Resolver = struct {
             parsed.deinit();
             return error.InvalidEnvironment;
         }
-        try validateEnvironmentLockBinding(storage, io, root, root_object, lock_bytes);
+        var writable_warning = false;
+        try validateEnvironmentLockBinding(storage, io, root, root_object, lock_bytes, mode, &writable_warning);
         // mutable path 依存の内容 digest も load 時に照合する。lockSha256 は
         // lock 文書の同一性だけを検証し、mutable path は宣言 dir を生参照する
         // 契約で内容変更を許すが、変更は lock・環境の再生成を要求する。
         // sync 中の追従検査だけでは、lock の digest が stale になったままの
         // 環境を `--no-sync` の消費者が読めてしまうため fail closed。
         try validateMutablePathDigestFreshness(storage, io, root, root_object, lock_bytes);
-        return .{ .io = io, .project_root = root, .parsed = parsed, .owned = owned };
+        return .{ .io = io, .project_root = root, .parsed = parsed, .owned = owned, .writable_warning = writable_warning };
     }
 
     pub fn deinit(self: *Resolver) void {
@@ -354,7 +369,15 @@ fn parseMutablePaths(allocator: Allocator, object: std.json.ObjectMap) !std.Arra
     return paths;
 }
 
-fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root: []const u8, environment: std.json.ObjectMap, lock_bytes: []const u8) !void {
+fn validateEnvironmentLockBinding(
+    allocator: Allocator,
+    io: std.Io,
+    project_root: []const u8,
+    environment: std.json.ObjectMap,
+    lock_bytes: []const u8,
+    mode: project_trust.WritableMode,
+    writable_warning: *bool,
+) !void {
     const profile_value = get(environment, "profile") orelse return error.InvalidEnvironment;
     if (profile_value != .string) return error.InvalidEnvironment;
     const environment_packages_value = get(environment, "packages") orelse return error.InvalidEnvironment;
@@ -487,12 +510,15 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
             // `.nako` 自体がprivateでも、materialized rootまたは配下dirが
             // 共有writableなら export 対象を差し替えて同一 manifest identity
             // を装える。package tree 末端まで書き込み権限を検証する。
-            if (try project_trust.hasUnsafeWritableDirectory(allocator, io, root)) return error.InvalidEnvironment;
+            // 既定は warn+continue。`--strict-project-trust` で enforce。
+            if (project_trust.shouldRejectWritable(mode, try project_trust.hasUnsafeWritableDirectory(allocator, io, root), writable_warning))
+                return error.InvalidEnvironment;
             // root 本体だけでは、親dirが共有writableなら検証後に root を
             // rename されて同 path の別 tree へ置き換えられ得る。project root
             // （project_discovery で baseline 検査済み）までの祖先を検査する。
             // 外部 mutable path 依存は filesystem root まで遡る。
-            if (try project_trust.hasUnsafeWritableAncestors(allocator, io, root, project_root)) return error.InvalidEnvironment;
+            if (project_trust.shouldRejectWritable(mode, try project_trust.hasUnsafeWritableAncestors(allocator, io, root, project_root), writable_warning))
+                return error.InvalidEnvironment;
             try package_roots.append(allocator, root);
             try validateEnvironmentExports(allocator, io, project_root, root, record, lock_entry, locked_packages, artifact_target, profile_value.string);
         } else if (record_exports) |exports| {

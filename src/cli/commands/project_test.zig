@@ -402,7 +402,7 @@ test "init --lib の雛形はコンパイルできテストも通る" {
     const test_file = try std.fs.path.join(a, &.{ proj_root, "tests", "lib_test.nako3" });
     var test_out: std.Io.Writer.Allocating = .init(a);
     var test_err: std.Io.Writer.Allocating = .init(a);
-    const ok = try test_command.runTestTarget(a, io, test_file, .{}, &test_out.writer, &test_err.writer);
+    const ok = try test_command.runTestTarget(a, io, test_file, .{}, .warn, &test_out.writer, &test_err.writer);
     try testing.expect(ok);
 }
 
@@ -432,7 +432,7 @@ test "runTestTarget は .nako/.git に降りず管理 dir の中身を走査し�
     const tests_root = try temporary.dir.realPathFileAlloc(io, "tests", a);
     var stdout: std.Io.Writer.Allocating = .init(a);
     var stderr: std.Io.Writer.Allocating = .init(a);
-    const ok = try test_command.runTestTarget(a, io, tests_root, .{}, &stdout.writer, &stderr.writer);
+    const ok = try test_command.runTestTarget(a, io, tests_root, .{}, .warn, &stdout.writer, &stderr.writer);
     try testing.expect(ok);
     try testing.expect(std.mem.indexOf(u8, stdout.written(), "ok_test.nako3") != null);
     try testing.expect(std.mem.indexOf(u8, stdout.written(), "bad.nako3") == null);

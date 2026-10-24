@@ -38,12 +38,12 @@ fn resolveWalkKind(io: std.Io, dir: std.Io.Dir, basename: []const u8, reported: 
     return stat.kind;
 }
 
-pub fn runTestTarget(allocator: std.mem.Allocator, io: std.Io, path: []const u8, forced_mode: lnako.frontend.token.Mode, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !bool {
+pub fn runTestTarget(allocator: std.mem.Allocator, io: std.Io, path: []const u8, forced_mode: lnako.frontend.token.Mode, writable_mode: lnako.package.project_trust.WritableMode, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !bool {
     const stat = std.Io.Dir.cwd().statFile(io, path, .{}) catch |err| {
         try stderr.print("{s}: テスト対象を確認できません: {s}\n", .{ path, @errorName(err) });
         return false;
     };
-    if (stat.kind != .directory) return runTestFile(allocator, io, path, forced_mode, stdout, stderr);
+    if (stat.kind != .directory) return runTestFile(allocator, io, path, forced_mode, writable_mode, stdout, stderr);
 
     var directory = try std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true });
     defer directory.close(io);
@@ -78,14 +78,14 @@ pub fn runTestTarget(allocator: std.mem.Allocator, io: std.Io, path: []const u8,
     }
     std.mem.sort([]const u8, files.items, {}, arguments.lessThanString);
     var succeeded = true;
-    for (files.items) |file| if (!try runTestFile(allocator, io, file, forced_mode, stdout, stderr)) {
+    for (files.items) |file| if (!try runTestFile(allocator, io, file, forced_mode, writable_mode, stdout, stderr)) {
         succeeded = false;
     };
     return succeeded;
 }
 
-pub fn runTestFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8, forced_mode: lnako.frontend.token.Mode, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !bool {
-    var ir_program = (try compiler_pipeline.compileInput(allocator, io, path, .{ .forced_mode = forced_mode }, stderr)) orelse return false;
+pub fn runTestFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8, forced_mode: lnako.frontend.token.Mode, writable_mode: lnako.package.project_trust.WritableMode, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !bool {
+    var ir_program = (try compiler_pipeline.compileInput(allocator, io, path, .{ .forced_mode = forced_mode, .writable_mode = writable_mode }, stderr)) orelse return false;
     defer ir_program.deinit();
     var runtime = lnako.runtime.value.Runtime.init(allocator);
     defer runtime.deinit();
