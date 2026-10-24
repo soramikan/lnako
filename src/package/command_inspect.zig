@@ -204,6 +204,9 @@ pub fn inspectEnvironmentDir(
     // 文字列は `parsed`（関数末尾まで生存）を借用する。
     var root_edges: std.ArrayList(Edge) = .empty;
     defer root_edges.deinit(gpa);
+    // 旧 environment.json は root `dependencies` を持たない。欠落時は
+    // feature 影響を出さず「依存ゼロ」と誤表示しない。
+    const root_dependencies_present = parsed.value.object.get("dependencies") != null;
     try collectImportEdges(gpa, parsed.value.object.get("dependencies"), &root_edges);
     var package_edges: std.ArrayList(PackageEdge) = .empty;
     defer package_edges.deinit(gpa);
@@ -330,16 +333,18 @@ pub fn inspectEnvironmentDir(
     report.uninspected = try arena.dupe(Uninspected, uninspected_list.items);
 
     if (options.manifest) |manifest| {
-        var scratch_arena = std.heap.ArenaAllocator.init(gpa);
-        defer scratch_arena.deinit();
-        report.features = try analyzeFeatureImpact(
-            scratch_arena.allocator(),
-            arena,
-            manifest,
-            options.features,
-            root_edges.items,
-            package_edges.items,
-        );
+        if (root_dependencies_present) {
+            var scratch_arena = std.heap.ArenaAllocator.init(gpa);
+            defer scratch_arena.deinit();
+            report.features = try analyzeFeatureImpact(
+                scratch_arena.allocator(),
+                arena,
+                manifest,
+                options.features,
+                root_edges.items,
+                package_edges.items,
+            );
+        }
     }
 
     if (report.collision_count > 0 or report.mismatch_count > 0) {
