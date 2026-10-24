@@ -88,30 +88,36 @@ function createWorkDir() {
 
 // 失敗時だけ配置場所ごとに Interpreter を走らせ、信頼検証の拒否が配置に
 // 依存するか（ACL か）を 1 回の CI で判定できるようにする。
+// 固定名 dir を rm すると既存ファイルを巻き込むため、各配置は mkdtemp で一意にする。
 function probeLocations(expected) {
   const candidates = [
-    ["repo", path.join(root, ".tmp-lnako-package-aot-probe")],
-    ["home", path.join(os.homedir(), ".lnako-package-aot-probe")],
-    ["tmp", path.join(os.tmpdir(), "lnako-package-aot-probe")],
+    ["repo", path.join(root, ".tmp-lnako-package-aot-probe-")],
+    ["home", path.join(os.homedir(), ".lnako-package-aot-probe-")],
+    ["tmp", path.join(os.tmpdir(), "lnako-package-aot-probe-")],
   ];
-  for (const [label, base] of candidates) {
+  for (const [label, prefix] of candidates) {
+    let base;
     try {
-      fs.mkdirSync(base, { recursive: true });
+      fs.mkdirSync(path.dirname(prefix), { recursive: true });
+      base = fs.mkdtempSync(prefix);
     } catch (error) {
-      console.error(`package import AOT検査: 配置 ${label} (${base}) → 作成できません: ${error.message}`);
+      console.error(`package import AOT検査: 配置 ${label} (${prefix}*) → 作成できません: ${error.message}`);
       continue;
     }
-    const fixture = path.join(base, "package-aot");
-    copyFixture(fixture);
-    const result = run(executable, ["run", "main.nako3"], { cwd: path.join(fixture, "app") });
-    const matched = result.status === 0 && result.stdout === expected;
-    console.log(`package import AOT検査: 配置 ${label} (${base}) → ${matched ? "成功" : "失敗"}`);
-    if (!matched) {
-      for (const line of result.stderr.split("\n")) {
-        if (line.includes("パッケージ環境") || line.includes("invalid_import")) console.error(`   ${line}`);
+    try {
+      const fixture = path.join(base, "package-aot");
+      copyFixture(fixture);
+      const result = run(executable, ["run", "main.nako3"], { cwd: path.join(fixture, "app") });
+      const matched = result.status === 0 && result.stdout === expected;
+      console.log(`package import AOT検査: 配置 ${label} (${base}) → ${matched ? "成功" : "失敗"}`);
+      if (!matched) {
+        for (const line of result.stderr.split("\n")) {
+          if (line.includes("パッケージ環境") || line.includes("invalid_import")) console.error(`   ${line}`);
+        }
       }
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
     }
-    fs.rmSync(base, { recursive: true, force: true });
   }
 }
 
