@@ -6,6 +6,7 @@
 // fixtureは作業treeの汚染を避けるため一時ディレクトリへ複製してから実行する。
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -71,6 +72,49 @@ function copyFixture(destination) {
   fs.cpSync(fixtureRoot, destination, { recursive: true });
 }
 
+// project 信頼検証（書き込み権限）は配置 dir の ACL を見るため、CI の
+// workspace（Windows の D:\a 等）では継承 ACL で拒否され得る。user private な
+// home 配下に作業コピーを作り、失敗時は配置場所を変えて切り分けられるようにする。
+function createWorkDir() {
+  for (const base of [os.homedir(), os.tmpdir()]) {
+    try {
+      return fs.mkdtempSync(path.join(base, ".lnako-package-aot-"));
+    } catch {
+      // 次の候補へ
+    }
+  }
+  fail("作業ディレクトリを作成できません");
+}
+
+// 失敗時だけ配置場所ごとに Interpreter を走らせ、信頼検証の拒否が配置に
+// 依存するか（ACL か）を 1 回の CI で判定できるようにする。
+function probeLocations(expected) {
+  const candidates = [
+    ["repo", path.join(root, ".tmp-lnako-package-aot-probe")],
+    ["home", path.join(os.homedir(), ".lnako-package-aot-probe")],
+    ["tmp", path.join(os.tmpdir(), "lnako-package-aot-probe")],
+  ];
+  for (const [label, base] of candidates) {
+    try {
+      fs.mkdirSync(base, { recursive: true });
+    } catch (error) {
+      console.error(`package import AOT検査: 配置 ${label} (${base}) → 作成できません: ${error.message}`);
+      continue;
+    }
+    const fixture = path.join(base, "package-aot");
+    copyFixture(fixture);
+    const result = run(executable, ["run", "main.nako3"], { cwd: path.join(fixture, "app") });
+    const matched = result.status === 0 && result.stdout === expected;
+    console.log(`package import AOT検査: 配置 ${label} (${base}) → ${matched ? "成功" : "失敗"}`);
+    if (!matched) {
+      for (const line of result.stderr.split("\n")) {
+        if (line.includes("パッケージ環境") || line.includes("invalid_import")) console.error(`   ${line}`);
+      }
+    }
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+}
+
 // 失敗時だけ同期済み環境の実体を出す。OS 固有の同期・環境検証の食い違いを
 // CI ログだけで切り分けられるようにする（内容は fixture の path と hash のみ）。
 function dumpFailureDiagnostics(cwd) {
@@ -129,7 +173,8 @@ async function main() {
   }
   if (!fs.existsSync(executable)) fail(`lnako実行ファイルがありません: ${executable}`);
 
-  const work = fs.mkdtempSync(path.join(root, ".tmp-lnako-package-aot-"));
+  const work = createWorkDir();
+  console.log(`package import AOT検査: 作業ディレクトリ ${work}`);
   try {
     const fixture = path.join(work, "package-aot");
     copyFixture(fixture);
@@ -140,6 +185,7 @@ async function main() {
     const interpreter = run(executable, ["run", "main.nako3"], { cwd: app });
     if (interpreter.status !== 0) {
       dumpFailureDiagnostics(app);
+      probeLocations(expected);
       fail(`Interpreter実行が失敗しました\n${interpreter.stderr}`);
     }
     if (interpreter.stdout !== expected) fail(`Interpreterの観測結果が期待値と一致しません\n期待:\n${expected}\n実際:\n${interpreter.stdout}`);
