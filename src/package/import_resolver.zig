@@ -33,6 +33,12 @@ pub fn findProjectRoot(allocator: Allocator, io: std.Io, input_path: []const u8)
     return project_discovery.findProjectRoot(allocator, io, input_path);
 }
 
+/// `findProjectRoot` と同じ探索を行い、`nako.toml` はあるが信頼検証で
+/// 拒否した場合に `rejected` を true にする（診断用）。
+pub fn findProjectRootDetailed(allocator: Allocator, io: std.Io, input_path: []const u8, rejected: *bool) !?[]u8 {
+    return project_discovery.findProjectRootDetailed(allocator, io, input_path, rejected);
+}
+
 pub const Error = error{
     NoEnvironment,
     InvalidEnvironment,
@@ -42,6 +48,28 @@ pub const Error = error{
     UnsafeExportPath,
 };
 
+/// 環境検証が拒否した段階。`load` は全失敗を `InvalidEnvironment` に畳む
+/// ため、呼出し側はこの値で「どの契約が破れたか」だけを診断に残せる
+/// （中身は返さないので信頼境界は緩めない）。
+pub const LoadStage = enum {
+    /// `environment.json`/`nako.lock` の読込・schema・lock 束縛の前提。
+    environment_document,
+    /// package record の基本属性（name/version/id/path/source）。
+    package_record,
+    /// 世代内 materialized root の境界（`.nako/env/<gen>/deps/<dir>`）。
+    materialized_root,
+    /// package tree の書き込み権限（信頼境界）。
+    package_trust,
+    /// 公開 export の宣言と実体。
+    package_exports,
+    /// package 依存の alias 表。
+    package_dependencies,
+    /// root 依存（alias → package）と manifest hash の対応。
+    root_dependencies,
+    /// mutable path 依存の digest 鮮度。
+    mutable_paths,
+};
+
 pub const Resolver = struct {
     io: std.Io,
     project_root: []const u8,
@@ -49,6 +77,13 @@ pub const Resolver = struct {
     owned: std.heap.ArenaAllocator,
 
     pub fn load(allocator: Allocator, io: std.Io, project_root: []const u8) !Resolver {
+        var stage: LoadStage = .environment_document;
+        return loadStaged(allocator, io, project_root, &stage);
+    }
+
+    /// `load` と同じ検証を行い、失敗時は `stage` に拒否した段階を残す。
+    pub fn loadStaged(allocator: Allocator, io: std.Io, project_root: []const u8, stage: *LoadStage) !Resolver {
+        stage.* = .environment_document;
         var owned = std.heap.ArenaAllocator.init(allocator);
         errdefer owned.deinit();
         const storage = owned.allocator();
@@ -87,12 +122,13 @@ pub const Resolver = struct {
             parsed.deinit();
             return error.InvalidEnvironment;
         }
-        try validateEnvironmentLockBinding(storage, io, root, root_object, lock_bytes);
+        try validateEnvironmentLockBinding(storage, io, root, root_object, lock_bytes, stage);
         // mutable path 依存の内容 digest も load 時に照合する。lockSha256 は
         // lock 文書の同一性だけを検証し、mutable path は宣言 dir を生参照する
         // 契約で内容変更を許すが、変更は lock・環境の再生成を要求する。
         // sync 中の追従検査だけでは、lock の digest が stale になったままの
         // 環境を `--no-sync` の消費者が読めてしまうため fail closed。
+        stage.* = .mutable_paths;
         try validateMutablePathDigestFreshness(storage, io, root, root_object, lock_bytes);
         return .{ .io = io, .project_root = root, .parsed = parsed, .owned = owned };
     }
@@ -348,7 +384,15 @@ fn parseMutablePaths(allocator: Allocator, object: std.json.ObjectMap) !std.Arra
     return paths;
 }
 
-fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root: []const u8, environment: std.json.ObjectMap, lock_bytes: []const u8) !void {
+fn validateEnvironmentLockBinding(
+    allocator: Allocator,
+    io: std.Io,
+    project_root: []const u8,
+    environment: std.json.ObjectMap,
+    lock_bytes: []const u8,
+    stage: *LoadStage,
+) !void {
+    stage.* = .environment_document;
     const profile_value = get(environment, "profile") orelse return error.InvalidEnvironment;
     if (profile_value != .string) return error.InvalidEnvironment;
     const environment_packages_value = get(environment, "packages") orelse return error.InvalidEnvironment;
@@ -397,6 +441,7 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
         const selected_roots = get(root_dependencies, profile_value.string) orelse return error.InvalidEnvironment;
         root_dependency_ids = asArray(selected_roots) orelse return error.InvalidEnvironment;
     }
+    stage.* = .root_dependencies;
     try validateRootDependencyBindings(allocator, io, project_root, lock_input, profile_value.string, get(environment, "dependencies"), locked_packages, root_dependency_ids);
 
     var shared_generation: ?[]const u8 = null;
@@ -406,6 +451,7 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
     defer package_roots.deinit(allocator);
     var package_iterator = environment_packages.iterator();
     while (package_iterator.next()) |environment_entry| {
+        stage.* = .package_record;
         const lock_entry_value = locked_packages.get(environment_entry.key_ptr.*) orelse return error.InvalidEnvironment;
         const lock_entry = asObject(lock_entry_value) orelse return error.InvalidEnvironment;
         const record = asObject(environment_entry.value_ptr.*) orelse return error.InvalidEnvironment;
@@ -442,6 +488,7 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
             if (declared_path != .string or !std.mem.eql(u8, declared_path.string, environment_path.string)) return error.InvalidEnvironment;
             break :blk try actualPackageRoot(allocator, io, project_root, environment_path.string);
         } else blk: {
+            stage.* = .materialized_root;
             const exports_value = get(record, "exports");
             const record_exports = if (exports_value) |value|
                 asArray(value) orelse return error.InvalidEnvironment
@@ -481,6 +528,7 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
             // `.nako` 自体がprivateでも、materialized rootまたは配下dirが
             // 共有writableなら export 対象を差し替えて同一 manifest identity
             // を装える。package tree 末端まで書き込み権限を検証する。
+            stage.* = .package_trust;
             if (try project_trust.hasUnsafeWritableDirectory(allocator, io, root)) return error.InvalidEnvironment;
             // root 本体だけでは、親dirが共有writableなら検証後に root を
             // rename されて同 path の別 tree へ置き換えられ得る。project root
@@ -488,6 +536,7 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
             // 外部 mutable path 依存は filesystem root まで遡る。
             if (try project_trust.hasUnsafeWritableAncestors(allocator, io, root, project_root)) return error.InvalidEnvironment;
             try package_roots.append(allocator, root);
+            stage.* = .package_exports;
             try validateEnvironmentExports(allocator, io, project_root, root, record, lock_entry, locked_packages, artifact_target, profile_value.string);
         } else if (record_exports) |exports| {
             // A missing materialization is tolerable only for support packages
@@ -497,6 +546,7 @@ fn validateEnvironmentLockBinding(allocator: Allocator, io: std.Io, project_root
         }
 
         if (get(record, "dependencies")) |dependencies_value| {
+            stage.* = .package_dependencies;
             const dependencies = asArray(dependencies_value) orelse return error.InvalidEnvironment;
             try validateUniqueNamespaceAliases(allocator, dependencies.items);
             const locked_dependencies_value = get(lock_entry, "dependencies") orelse return error.InvalidEnvironment;

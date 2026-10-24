@@ -17,6 +17,18 @@ fn realPathDirAlloc(allocator: Allocator, io: std.Io, path: []const u8) ![]u8 {
 /// Find an environment inside the nearest project boundary containing the input.
 /// Ancestor search stops at `nako.toml`; shared writable ancestors are never trusted.
 pub fn findProjectRoot(allocator: Allocator, io: std.Io, input_path: []const u8) !?[]u8 {
+    return findProjectRootDetailed(allocator, io, input_path, null);
+}
+
+/// 信頼検証で拒否したことを呼出し側へ伝える戻り値。`rejected` が true なら
+/// 「プロジェクトが無い」ではなく「見つかったが書き込み権限検証で拒否した」。
+fn reject(rejected: ?*bool) ?[]u8 {
+    if (rejected) |flag| flag.* = true;
+    return null;
+}
+
+pub fn findProjectRootDetailed(allocator: Allocator, io: std.Io, input_path: []const u8, rejected: ?*bool) !?[]u8 {
+    if (rejected) |flag| flag.* = false;
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const temporary = arena.allocator();
@@ -29,7 +41,7 @@ pub fn findProjectRoot(allocator: Allocator, io: std.Io, input_path: []const u8)
         const manifest_path = try std.fs.path.join(temporary, &.{ current, "nako.toml" });
         if (std.Io.Dir.cwd().access(io, manifest_path, .{})) |_| {
             const canonical_manifest = std.Io.Dir.cwd().realPathFileAlloc(io, manifest_path, temporary) catch return null;
-            if (!isPathWithin(current, canonical_manifest) or try project_trust.isUnsafeWritablePath(temporary, io, canonical_manifest)) return null;
+            if (!isPathWithin(current, canonical_manifest) or try project_trust.isUnsafeWritablePath(temporary, io, canonical_manifest)) return reject(rejected);
             project_root = current;
             break;
         } else |err| switch (err) {
@@ -46,7 +58,7 @@ pub fn findProjectRoot(allocator: Allocator, io: std.Io, input_path: []const u8)
     // parents above the selected boundary are intentionally irrelevant.
     current = start;
     while (true) {
-        if (try project_trust.isUnsafeWritablePath(temporary, io, current)) return null;
+        if (try project_trust.isUnsafeWritablePath(temporary, io, current)) return reject(rejected);
         if (std.mem.eql(u8, current, root)) break;
         const parent = std.fs.path.dirname(current) orelse return null;
         if (std.mem.eql(u8, parent, current)) return null;
@@ -58,7 +70,7 @@ pub fn findProjectRoot(allocator: Allocator, io: std.Io, input_path: []const u8)
     // 換えられる。nako.toml の取り違えで manifest identity ごと偽装でき、
     // importer が属する project 全体の信頼性を崩すため filesystem root まで
     // 遡って fail closed で検査する。
-    if (try project_trust.hasUnsafeWritableAncestors(temporary, io, root, "/")) return null;
+    if (try project_trust.hasUnsafeWritableAncestors(temporary, io, root, "/")) return reject(rejected);
 
     current = start;
     while (true) {
@@ -72,11 +84,11 @@ pub fn findProjectRoot(allocator: Allocator, io: std.Io, input_path: []const u8)
             // file だけでなく dir の書き込み権限も検証する。
             if (!isPathWithin(root, canonical_nako) or !isPathWithin(canonical_nako, canonical_environment) or
                 try project_trust.isUnsafeWritablePath(temporary, io, canonical_nako) or
-                try project_trust.isUnsafeWritablePath(temporary, io, canonical_environment)) return null;
+                try project_trust.isUnsafeWritablePath(temporary, io, canonical_environment)) return reject(rejected);
             const lock_path = try std.fs.path.join(temporary, &.{ root, "nako.lock" });
             if (std.Io.Dir.cwd().access(io, lock_path, .{})) |_| {
                 const canonical_lock = std.Io.Dir.cwd().realPathFileAlloc(io, lock_path, temporary) catch return null;
-                if (!isPathWithin(root, canonical_lock) or try project_trust.isUnsafeWritablePath(temporary, io, canonical_lock)) return null;
+                if (!isPathWithin(root, canonical_lock) or try project_trust.isUnsafeWritablePath(temporary, io, canonical_lock)) return reject(rejected);
             } else |err| switch (err) {
                 error.FileNotFound => {},
                 else => return err,

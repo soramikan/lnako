@@ -30,14 +30,28 @@ pub fn compileInputTraced(allocator: std.mem.Allocator, io: std.Io, path: []cons
     var effective_options = options;
     var invalid_package_environment = InvalidPackageEnvironment{};
     if (effective_options.package_resolver == null) {
-        package_root = lnako.package.import_resolver.findProjectRoot(allocator, io, path) catch |err| blk: {
+        var project_rejected = false;
+        package_root = lnako.package.import_resolver.findProjectRootDetailed(allocator, io, path, &project_rejected) catch |err| blk: {
             if (err == error.OutOfMemory) return err;
             break :blk null;
         };
+        if (package_root == null and project_rejected) {
+            // nako.toml はあるが書き込み権限検証で拒否した場合、パッケージ
+            // 取り込みは一律で失敗する。黙って捨てず理由を残す。
+            stderr.print("パッケージ環境を利用できません（プロジェクトの書き込み権限検証で拒否）: {s}\n", .{path}) catch {};
+        }
         if (package_root) |root| {
-            package_environment = lnako.package.import_resolver.Resolver.load(allocator, io, root) catch |err| switch (err) {
+            var load_stage: lnako.package.import_resolver.LoadStage = .environment_document;
+            package_environment = lnako.package.import_resolver.Resolver.loadStaged(allocator, io, root, &load_stage) catch |err| switch (err) {
+                error.NoEnvironment => null,
                 error.OutOfMemory => return err,
-                else => null,
+                else => blk: {
+                    // 環境を黙って捨てるとパッケージ取り込みは一律「解決できません」
+                    // になり、原因（lock 束縛・materialized root・権限・export）が
+                    // 分からない。拒否した段階だけを stderr に残す。
+                    stderr.print("パッケージ環境を検証できません（{s}）: {s}\n", .{ @tagName(load_stage), root }) catch {};
+                    break :blk null;
+                },
             };
             if (package_environment) |*environment| {
                 effective_options.package_resolver = environment.packageResolver();
