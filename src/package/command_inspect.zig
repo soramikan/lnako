@@ -480,7 +480,10 @@ fn analyzeFeatureImpact(
 
     // 選択 = feature 名 + 直接指定された依存 alias。選択 feature が
     // 展開する alias は feature 側に含まれるため重複させない。
+    // direct_only は「feature 経由ではなく CLI で直接指定された alias」。
+    // 未選択 feature の owner 判定には使わない（専用 root の誤分類防止）。
     var selected_names: std.ArrayList([]const u8) = .empty;
+    var direct_only = std.StringHashMap(void).init(scratch);
     var selected_features = selection.features.keyIterator();
     while (selected_features.next()) |name| try selected_names.append(scratch, name.*);
     var selected_aliases = selection.dependency_aliases.keyIterator();
@@ -495,7 +498,10 @@ fn analyzeFeatureImpact(
                 break;
             }
         }
-        if (!gated_by_selection) try selected_names.append(scratch, name);
+        if (!gated_by_selection) {
+            try selected_names.append(scratch, name);
+            try direct_only.put(name, {});
+        }
     }
     sortNames(selected_names.items);
 
@@ -529,7 +535,7 @@ fn analyzeFeatureImpact(
         var owners: std.ArrayList([]const u8) = .empty;
         var feature_it = feature_aliases.iterator();
         while (feature_it.next()) |entry| {
-            if (matchesAnyAlias(entry.value_ptr, root_aliases)) try owners.append(scratch, entry.key_ptr.*);
+            if (matchesAnyNonDirectAlias(entry.value_ptr, root_aliases, &direct_only)) try owners.append(scratch, entry.key_ptr.*);
         }
         // 専用は「ちょうど1つの非 default feature だけが所有」する場合のみ。
         // owner 0（feature 非依存）・複数 owner（共有）・default 所有は共通。
@@ -643,8 +649,15 @@ fn containsName(items: []const []const u8, name: []const u8) bool {
     return false;
 }
 
-fn matchesAnyAlias(alias_set: *const std.StringHashMap(void), aliases: []const []const u8) bool {
+/// 直接指定 alias だけが一致する feature は owner に数えない。
+/// 選択 feature が展開した alias は従来どおり一致させる。
+fn matchesAnyNonDirectAlias(
+    alias_set: *const std.StringHashMap(void),
+    aliases: []const []const u8,
+    direct_only: *const std.StringHashMap(void),
+) bool {
     for (aliases) |alias| {
+        if (direct_only.contains(alias)) continue;
         if (alias_set.contains(alias)) return true;
     }
     return false;
@@ -1269,6 +1282,43 @@ test "command inspect: 未選択 feature の依存は専用に出さない" {
     try testing.expectEqual(@as(usize, 1), impact.common_roots.len);
     try testing.expectEqualStrings("common", impact.common_roots[0]);
     try testing.expectEqual(@as(usize, 0), impact.dedicated.len);
+}
+
+test "command inspect: 直接指定 alias を未選択 feature の専用 root にしない" {
+    // `--features req` のように依存 alias だけを直接指定すると、req は
+    // selected に入る。owner 判定が全 feature の alias 集合を見るだけだと
+    // 未選択の http が唯一 owner になり、req が http 専用 root と誤表示される。
+    const a = testing.allocator;
+    const io = testing.io;
+    var tmp = test_sandbox.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeFeatureFixture(tmp.dir, true);
+    try tmp.dir.createDirPath(io, "lib_common");
+    try tmp.dir.createDirPath(io, "lib_req");
+    try tmp.dir.createDirPath(io, "lib_extra");
+
+    var parse_diags = diag.List.init(a);
+    defer parse_diags.deinit();
+    var manifest = try manifest_mod.parse(a, feature_fixture_manifest, &parse_diags);
+    defer manifest.deinit();
+    try testing.expect(!parse_diags.hasErrors());
+
+    var list = diag.List.init(a);
+    defer list.deinit();
+    var report = try inspectEnvironmentDir(a, io, tmp.dir, .{
+        .manifest = &manifest,
+        .features = .{ .requested = &.{"req"}, .use_default_features = false },
+    }, &list);
+    defer report.deinit();
+    try testing.expect(!list.hasErrors());
+
+    const impact = report.features orelse return error.MissingFeatureImpact;
+    try testing.expectEqual(@as(usize, 1), impact.selected.len);
+    try testing.expectEqualStrings("req", impact.selected[0]);
+    // req は直接指定のみなので dedicated ではなく common（環境に common も
+    // 載っていれば common 側に並ぶ）。
+    try testing.expectEqual(@as(usize, 0), impact.dedicated.len);
+    try testing.expect(containsName(impact.common_roots, "req"));
 }
 
 test "command inspect: 複数非 default feature が共有する root は common_roots へ" {
