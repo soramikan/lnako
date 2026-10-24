@@ -1218,36 +1218,3 @@ test "正規化後に空になるaliasの環境記録を拒否する" {
     defer allocator.free(root);
     try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, root));
 }
-
-test "loadStaged は拒否した検証段階を報告する" {
-    const allocator = std.testing.allocator;
-    const io = std.testing.io;
-    var temporary = test_sandbox.tmpDir(.{});
-    defer temporary.cleanup();
-    const lock = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:lib\":{\"id\":\"pkg:lib\",\"name\":\"lib\",\"version\":\"1.0.0\",\"source\":{\"type\":\"path\",\"path\":\"deps/lib\",\"mutable\":false},\"dependencies\":[]}}}";
-    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
-    var digest: [32]u8 = undefined;
-    std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
-    const lock_hex = std.fmt.bytesToHex(digest, .lower);
-    const environment = try std.fmt.allocPrint(
-        allocator,
-        "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"packages\":{{\"pkg:lib\":{{\"name\":\"lib\",\"version\":\"1.0.0\",\"path\":\".nako/env/gen-a1b2/deps/lib\",\"exports\":[{{\"name\":\"main\",\"path\":\"src/index.nako3\"}}]}}}}}}",
-        .{lock_hex},
-    );
-    defer allocator.free(environment);
-    try temporary.dir.createDirPath(io, ".nako");
-    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = environment });
-    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
-    defer allocator.free(root);
-
-    // 世代内 materialized root が無い環境はその段階で拒否される。
-    var stage: resolver.LoadStage = .environment_document;
-    try std.testing.expectError(error.InvalidEnvironment, Resolver.loadStaged(allocator, io, root, &stage));
-    try std.testing.expectEqual(resolver.LoadStage.materialized_root, stage);
-
-    // materialized root が存在しても、公開 export の実体が無ければその段階。
-    try temporary.dir.createDirPath(io, ".nako/env/gen-a1b2/deps/lib");
-    stage = .environment_document;
-    try std.testing.expectError(error.InvalidEnvironment, Resolver.loadStaged(allocator, io, root, &stage));
-    try std.testing.expectEqual(resolver.LoadStage.package_exports, stage);
-}

@@ -41,15 +41,14 @@ pub fn compileInputTraced(allocator: std.mem.Allocator, io: std.Io, path: []cons
             stderr.print("パッケージ環境を利用できません（プロジェクトの書き込み権限検証で拒否）: {s}\n", .{path}) catch {};
         }
         if (package_root) |root| {
-            var load_stage: lnako.package.import_resolver.LoadStage = .environment_document;
-            package_environment = lnako.package.import_resolver.Resolver.loadStaged(allocator, io, root, &load_stage) catch |err| switch (err) {
+            package_environment = lnako.package.import_resolver.Resolver.load(allocator, io, root) catch |err| switch (err) {
                 error.NoEnvironment => null,
                 error.OutOfMemory => return err,
                 else => blk: {
                     // 環境を黙って捨てるとパッケージ取り込みは一律「解決できません」
                     // になり、原因（lock 束縛・materialized root・権限・export）が
-                    // 分からない。拒否した段階だけを stderr に残す。
-                    stderr.print("パッケージ環境を検証できません（{s}）: {s}\n", .{ @tagName(load_stage), root }) catch {};
+                    // 分からない。`lnako check` の診断へ誘導する 1 行だけ残す。
+                    stderr.print("パッケージ環境を検証できません（`lnako check` で確認してください）: {s}\n", .{root}) catch {};
                     break :blk null;
                 },
             };
