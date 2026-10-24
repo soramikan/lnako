@@ -29,6 +29,27 @@ fn writeLibPackage(a: std.mem.Allocator, dir: std.Io.Dir, root: []const u8, name
     try dir.writeFile(io, .{ .sub_path = index_path, .data = "●表示とは\nここまで\n" });
 }
 
+/// 任意の命令を 1 つ公開する path 依存パッケージを書く。
+/// 標準命令と衝突しない名前を呼出し側が渡す。
+fn writePathPackage(a: std.mem.Allocator, dir: std.Io.Dir, root: []const u8, name: []const u8, command: []const u8) !void {
+    const manifest_path = try std.fs.path.join(a, &.{ root, "nako.toml" });
+    const source = try std.fmt.allocPrint(a,
+        \\[package]
+        \\name = "{s}"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[[exports]]
+        \\name = "{s}"
+        \\path = "src/index.nako3"
+        \\
+    , .{ name, name });
+    try dir.writeFile(io, .{ .sub_path = manifest_path, .data = source });
+    const index_path = try std.fs.path.join(a, &.{ root, "src", "index.nako3" });
+    const body = try std.fmt.allocPrint(a, "●{s}とは\nここまで\n", .{command});
+    try dir.writeFile(io, .{ .sub_path = index_path, .data = body });
+}
+
 /// `app/lib` の path 依存パッケージと `app/nako.toml` を持つ fixture。
 /// 戻り値は `app` の絶対パス。
 fn newAppFixture(a: std.mem.Allocator, temporary: *std.testing.TmpDir) ![]const u8 {
@@ -198,6 +219,53 @@ test "check --json は機械可読な検査結果を stdout へ出す" {
     try testing.expect(std.mem.indexOf(u8, out, "lnako lock") != null);
     try testing.expect(!try dirFileExists(a, app_root, ".nako"));
     try testing.expect(!try dirFileExists(a, app_root, "nako.lock"));
+}
+
+test "check は選択 feature の専用依存と推移依存を JSON と本文に出す" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/lib-common/src");
+    try writePathPackage(a, temporary.dir, "app/lib-common", "lib-common", "共通専用");
+    try temporary.dir.createDirPath(io, "app/lib-extra/src");
+    try writePathPackage(a, temporary.dir, "app/lib-extra", "lib-extra", "追加専用");
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", a);
+    try appManifest(a, app_root,
+        \\[dependencies.path]
+        \\common = { path = "lib-common" }
+        \\extra = { path = "lib-extra" }
+        \\
+        \\[features]
+        \\default = ["common"]
+        \\with-extra = ["extra"]
+        \\
+    );
+
+    var cli = Cli.init(a);
+    // `sync` は cli.zig 側の verb なので、ここでは run 準備経路で
+    // feature 選択込みの環境を作る。
+    const main_path = try std.fs.path.join(a, &.{ app_root, "main.nako3" });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = main_path, .data = "「ok」を表示\n" });
+    var flags = project_cmd.PrepFlags{};
+    try flags.features.append(a, "with-extra");
+    try project_cmd.prepareForExecution(a, io, main_path, &flags, &cli.env, "run", &cli.err.writer);
+
+    try cli.run(a, "check", &.{ "--json", "--features", "with-extra" }, app_root);
+    const json = cli.out.written();
+    // default が有効化する common は共通、with-extra 専用の extra は専用。
+    try testing.expect(std.mem.indexOf(
+        u8,
+        json,
+        "\"features\":{\"selected\":[\"default\",\"with-extra\"],\"common\":[\"common\"],\"dedicated\":[{\"feature\":\"with-extra\",\"roots\":[\"extra\"],\"packages\":[]}]}",
+    ) != null);
+
+    try cli.run(a, "check", &.{ "--features", "with-extra" }, app_root);
+    const text = cli.out.written();
+    try testing.expect(std.mem.indexOf(u8, text, "feature 影響: 選択=[default, with-extra]") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "共通依存: common") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "専用依存: with-extra → extra") != null);
 }
 
 test "prepareForExecution は lock と .nako 環境を自動準備する" {

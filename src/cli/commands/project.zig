@@ -1004,7 +1004,15 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
             a,
             io,
             project_var.root_dir,
-            flags.strict_sharing,
+            .{
+                .strict_sharing = flags.strict_sharing,
+                // feature 影響は manifest と選択フラグだけで決まる。
+                .manifest = &project_var.manifest,
+                .features = .{
+                    .requested = flags.features.items,
+                    .use_default_features = !flags.no_default_features,
+                },
+            },
             &diagnostics,
         );
     }
@@ -1032,8 +1040,13 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
                 .{ pkg_json, item.reasonText() },
             ));
         }
+        // feature 定義が無い / manifest 未供給なら key 自体を出さない。
+        const features_json: []const u8 = if (command_report.features) |impact|
+            try std.fmt.allocPrint(a, ",\"features\":{s}", .{try lnako.package.command_inspect.featureImpactJson(a, impact)})
+        else
+            "";
         try stdout.print(
-            "{{\"schemaVersion\":1,\"manifest\":\"ok\",\"lock\":\"{s}\",\"environment\":\"{s}\",\"needed\":[{s}],\"commands\":{{\"sharing\":\"{s}\",\"inspected\":{d},\"uninspected\":[{s}],\"collisions\":{d},\"mismatches\":{d}}}}}\n",
+            "{{\"schemaVersion\":1,\"manifest\":\"ok\",\"lock\":\"{s}\",\"environment\":\"{s}\",\"needed\":[{s}],\"commands\":{{\"sharing\":\"{s}\",\"inspected\":{d},\"uninspected\":[{s}],\"collisions\":{d},\"mismatches\":{d}}}{s}}}\n",
             .{
                 lock_state,
                 if (inspect.environment == null) "missing" else if (inspect.environment_current) "current" else "stale",
@@ -1043,6 +1056,7 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
                 uninspected_json.items,
                 command_report.collision_count,
                 command_report.mismatch_count,
+                features_json,
             },
         );
         try stdout.flush();
@@ -1061,6 +1075,28 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
         if (command_report.uninspected.len > 0) {
             for (command_report.uninspected) |item| {
                 try stdout.print("    未検査: {s} ({s})\n", .{ item.package_key, item.reasonText() });
+            }
+        }
+        if (command_report.features) |impact| {
+            try stdout.print("  feature 影響: 選択=[{s}]\n", .{
+                try lnako.package.command_inspect.joinNames(a, impact.selected),
+            });
+            if (impact.common_roots.len > 0) {
+                try stdout.print("    共通依存: {s}\n", .{
+                    try lnako.package.command_inspect.joinNames(a, impact.common_roots),
+                });
+            }
+            for (impact.dedicated) |feature| {
+                try stdout.print("    専用依存: {s} → {s}", .{
+                    feature.name,
+                    try lnako.package.command_inspect.joinNames(a, feature.roots),
+                });
+                if (feature.packages.len > 0) {
+                    try stdout.print("（推移: {s}）", .{
+                        try lnako.package.command_inspect.joinNames(a, feature.packages),
+                    });
+                }
+                try stdout.print("\n", .{});
             }
         }
         if (needed.items.len > 0) {
