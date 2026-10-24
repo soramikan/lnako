@@ -4,6 +4,38 @@ const low_level_fs = @import("../runtime/low_level_fs.zig");
 
 const Allocator = std.mem.Allocator;
 
+/// 共有 writable ACL/mode 検出時の扱い。
+/// path 逸脱・symlink escape・lock/export 改ざんは常に fail closed（本 enum 外）。
+pub const WritableMode = enum {
+    /// 警告を出して続行（製品既定）
+    warn,
+    /// 拒否して停止（旧既定 / CI・厳格運用）
+    enforce,
+    /// 警告なしで続行
+    ignore,
+
+    pub fn parse(name: []const u8) ?WritableMode {
+        if (std.mem.eql(u8, name, "warn")) return .warn;
+        if (std.mem.eql(u8, name, "enforce")) return .enforce;
+        if (std.mem.eql(u8, name, "ignore")) return .ignore;
+        return null;
+    }
+};
+
+/// `is_unsafe` が true のとき、`mode` に従って拒否するか続行する。
+/// `.warn` では `warning_out` を true にする。`.ignore` は無言で続行。
+pub fn shouldRejectWritable(mode: WritableMode, is_unsafe: bool, warning_out: ?*bool) bool {
+    if (!is_unsafe) return false;
+    switch (mode) {
+        .enforce => return true,
+        .warn => {
+            if (warning_out) |flag| flag.* = true;
+            return false;
+        },
+        .ignore => return false,
+    }
+}
+
 /// Windows の `BUILTIN\Users` add-only ACE（FILE_ADD_FILE/
 /// FILE_ADD_SUBDIRECTORY のみ、継承由来）を baseline として許容するか。
 /// 対象オブジェクト自体へ適用される直接付与 ACE は例外にしない。

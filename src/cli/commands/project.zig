@@ -55,6 +55,10 @@ pub const PrepFlags = struct {
     json: bool = false,
     /// `check --strict-sharing`: 未検査 package が残れば E033 で失敗する。
     strict_sharing: bool = false,
+    /// 共有 writable ACL/mode を検出したら拒否（旧既定）。既定は警告+続行。
+    strict_project_trust: bool = false,
+    /// 共有 writable の警告を出さない（続行はする）。
+    no_project_trust_warning: bool = false,
     /// `run`/`build --compat-js` の compat 実行。依存解決の ESM 許容と
     /// lock 鮮度入力へ伝える（prep フラグとしては抽出せず呼出し側が
     /// 設定する）。
@@ -98,6 +102,20 @@ pub const PrepFlags = struct {
             }
         }
         return options;
+    }
+
+    /// CLI / 環境変数から共有 writable の扱いを決める。
+    /// `--strict-project-trust` と `--no-project-trust-warning` の同時指定は
+    /// 呼出し側で用法エラーにする。
+    pub fn writableMode(self: *const PrepFlags, environ_map: ?*const std.process.Environ.Map) lnako.package.project_trust.WritableMode {
+        if (self.strict_project_trust) return .enforce;
+        if (self.no_project_trust_warning) return .ignore;
+        if (environ_map) |map| {
+            if (map.get("LNAKO_PROJECT_TRUST")) |raw| {
+                if (lnako.package.project_trust.WritableMode.parse(raw)) |mode| return mode;
+            }
+        }
+        return .warn;
     }
 };
 
@@ -148,11 +166,18 @@ fn parsePrepFlags(a: Allocator, args: []const []const u8, verb: []const u8, stde
             flags.json = true;
         } else if (std.mem.eql(u8, argument, "--strict-sharing")) {
             flags.strict_sharing = true;
+        } else if (std.mem.eql(u8, argument, "--strict-project-trust")) {
+            flags.strict_project_trust = true;
+        } else if (std.mem.eql(u8, argument, "--no-project-trust-warning")) {
+            flags.no_project_trust_warning = true;
         } else if (std.mem.startsWith(u8, argument, "-")) {
             return failUsage(stderr, "{s}: 不明なオプションです: {s}\n", .{ verb, argument });
         } else {
             try rest.append(a, argument);
         }
+    }
+    if (flags.strict_project_trust and flags.no_project_trust_warning) {
+        return failUsage(stderr, "{s}: --strict-project-trust と --no-project-trust-warning は同時に指定できません\n", .{verb});
     }
     return .{ .flags = flags, .rest = rest.items };
 }
@@ -171,6 +196,8 @@ const FlagMask = struct {
     allow_plaintext_http: bool = false,
     json: bool = false,
     strict_sharing: bool = false,
+    strict_project_trust: bool = false,
+    no_project_trust_warning: bool = false,
 };
 
 fn rejectInertFlags(flags: *const PrepFlags, verb: []const u8, comptime allowed: FlagMask, stderr: *std.Io.Writer) CliError!void {
@@ -196,6 +223,10 @@ fn rejectInertFlags(flags: *const PrepFlags, verb: []const u8, comptime allowed:
         "--json"
     else if (!allowed.strict_sharing and flags.strict_sharing)
         "--strict-sharing"
+    else if (!allowed.strict_project_trust and flags.strict_project_trust)
+        "--strict-project-trust"
+    else if (!allowed.no_project_trust_warning and flags.no_project_trust_warning)
+        "--no-project-trust-warning"
     else
         null;
     if (bad) |flag| return failUsage(stderr, "{s}: {s} はこのコマンドでは使えません\n", .{ verb, flag });
@@ -222,6 +253,10 @@ pub fn extractPrepFlags(a: Allocator, args: []const []const u8, flags: *PrepFlag
             flags.no_default_features = true;
         } else if (std.mem.eql(u8, argument, "--allow-plaintext-http")) {
             flags.allow_plaintext_http = true;
+        } else if (std.mem.eql(u8, argument, "--strict-project-trust")) {
+            flags.strict_project_trust = true;
+        } else if (std.mem.eql(u8, argument, "--no-project-trust-warning")) {
+            flags.no_project_trust_warning = true;
         } else if (std.mem.eql(u8, argument, "--profile") or
             std.mem.eql(u8, argument, "--features") or
             std.mem.eql(u8, argument, "--registry") or
@@ -244,6 +279,9 @@ pub fn extractPrepFlags(a: Allocator, args: []const []const u8, flags: *PrepFlag
         } else {
             try rest.append(a, argument);
         }
+    }
+    if (flags.strict_project_trust and flags.no_project_trust_warning) {
+        return failUsage(stderr, "{s}: --strict-project-trust と --no-project-trust-warning は同時に指定できません\n", .{verb});
     }
     return rest.items;
 }
@@ -952,6 +990,8 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
         .no_default_features = true,
         .json = true,
         .strict_sharing = true,
+        .strict_project_trust = true,
+        .no_project_trust_warning = true,
     }, stderr);
 
     var diagnostics = diag.List.init(a);

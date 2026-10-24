@@ -15,6 +15,8 @@ pub const InputOptions = struct {
     /// Optional explicit package resolver. CLI compilation loads the verified
     /// `.nako/environment.json` automatically when this is null.
     package_resolver: ?lnako.semantic.module_graph.PackageResolver = null,
+    /// 共有 writable ACL/mode の扱い。既定は warn+continue。
+    writable_mode: lnako.package.project_trust.WritableMode = .warn,
 };
 
 pub fn compileInput(allocator: std.mem.Allocator, io: std.Io, path: []const u8, options: InputOptions, stderr: *std.Io.Writer) !?lnako.ir.nako_ir.Program {
@@ -30,16 +32,42 @@ pub fn compileInputTraced(allocator: std.mem.Allocator, io: std.Io, path: []cons
     var effective_options = options;
     var invalid_package_environment = InvalidPackageEnvironment{};
     if (effective_options.package_resolver == null) {
-        package_root = lnako.package.import_resolver.findProjectRoot(allocator, io, path) catch |err| blk: {
+        var project_rejected = false;
+        var writable_warning = false;
+        package_root = lnako.package.import_resolver.findProjectRootDetailed(
+            allocator,
+            io,
+            path,
+            &project_rejected,
+            effective_options.writable_mode,
+            &writable_warning,
+        ) catch |err| blk: {
             if (err == error.OutOfMemory) return err;
             break :blk null;
         };
+        if (package_root == null and project_rejected) {
+            // nako.toml はあるが --strict-project-trust で書き込み権限検証が
+            // 拒否した場合、パッケージ取り込みは一律で失敗する。
+            stderr.print("パッケージ環境を利用できません（プロジェクトの書き込み権限検証で拒否。緩和するにはフラグを外すか LNAKO_PROJECT_TRUST=warn）: {s}\n", .{path}) catch {};
+        } else if (writable_warning and effective_options.writable_mode == .warn) {
+            stderr.print("警告: プロジェクト配置の書き込み権限が共有されています（パッケージ import は続行。停止は --strict-project-trust、非表示は --no-project-trust-warning）: {s}\n", .{path}) catch {};
+        }
         if (package_root) |root| {
-            package_environment = lnako.package.import_resolver.Resolver.load(allocator, io, root) catch |err| switch (err) {
+            package_environment = lnako.package.import_resolver.Resolver.loadWithMode(allocator, io, root, effective_options.writable_mode) catch |err| switch (err) {
+                error.NoEnvironment => null,
                 error.OutOfMemory => return err,
-                else => null,
+                else => blk: {
+                    // 環境を黙って捨てるとパッケージ取り込みは一律「解決できません」
+                    // になり、原因（lock 束縛・materialized root・権限・export）が
+                    // 分からない。`lnako check` の診断へ誘導する 1 行だけ残す。
+                    stderr.print("パッケージ環境を検証できません（`lnako check` で確認してください）: {s}\n", .{root}) catch {};
+                    break :blk null;
+                },
             };
             if (package_environment) |*environment| {
+                if (environment.writable_warning and effective_options.writable_mode == .warn and !writable_warning) {
+                    stderr.print("警告: パッケージ tree の書き込み権限が共有されています（import は続行。停止は --strict-project-trust）: {s}\n", .{root}) catch {};
+                }
                 effective_options.package_resolver = environment.packageResolver();
             } else {
                 // A stale/broken environment must not prevent unrelated source
