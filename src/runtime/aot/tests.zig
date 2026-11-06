@@ -34,6 +34,7 @@ const Runtime = state.Runtime;
 const Tag = state.Tag;
 const Value = state.Value;
 const aotArchitectureName = state.aotArchitectureName;
+const aotByteBufferAllowsStandardPrototype = state.aotByteBufferAllowsStandardPrototype;
 const aotByteBufferSlice = state.aotByteBufferSlice;
 const aotClientHttpBodyKind = state.aotClientHttpBodyKind;
 const aotClientHttpResponseBody = state.aotClientHttpResponseBody;
@@ -5724,6 +5725,154 @@ test "AOT byte bufferのprototype属性とscalar propertyを解決する" {
     try std.testing.expectEqualStrings("slice", roots[25].object().?.payload.function.name);
     roots[26] = runtime.indexGet(roots[0], staticStringValue("missing"));
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(roots[26].tag))));
+}
+
+test "AOT byte bufferの数値添字はキー生成なしで読む" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = @as([3]Value, @splat(.{}));
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createBytes(&.{ 10, 20, 30 });
+    roots[1] = try runtime.createUint8Array(&.{ 7, 8 });
+    roots[2] = try runtime.createArrayBuffer(&.{ 40, 50 });
+
+    // 範囲内の数値添字はroot frameをpushせずにバイトを返す。
+    const root_pushes = runtime.counters.root_pushes;
+    const allocations = runtime.counters.allocations;
+    const string_payload_allocations = runtime.counters.string_payload_allocations;
+    try std.testing.expectEqual(@as(f64, 10), valueToNumber(runtime.indexGet(roots[0], numberValue(0))));
+    try std.testing.expectEqual(@as(f64, 20), valueToNumber(runtime.indexGet(roots[0], numberValue(1))));
+    try std.testing.expectEqual(@as(f64, 30), valueToNumber(runtime.indexGet(roots[0], numberValue(2))));
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(runtime.indexGet(roots[1], numberValue(0))));
+    try std.testing.expectEqual(@as(f64, 8), valueToNumber(runtime.indexGet(roots[1], numberValue(1))));
+    // -0は数値添字0として解決する。
+    try std.testing.expectEqual(@as(f64, 10), valueToNumber(runtime.indexGet(roots[0], numberValue(-0.0))));
+    try std.testing.expectEqual(root_pushes, runtime.counters.root_pushes);
+    try std.testing.expectEqual(allocations, runtime.counters.allocations);
+    try std.testing.expectEqual(string_payload_allocations, runtime.counters.string_payload_allocations);
+
+    // 範囲外とarray_bufferはundefinedのまま。
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(runtime.indexGet(roots[0], numberValue(3)).tag))));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(runtime.indexGet(roots[0], numberValue(99)).tag))));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(runtime.indexGet(roots[1], numberValue(2)).tag))));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(runtime.indexGet(roots[2], numberValue(0)).tag))));
+
+    // 数値添字でないキーは従来どおりテキスト解決へフォールバックする。
+    try std.testing.expectEqual(@as(f64, 20), valueToNumber(runtime.indexGet(roots[0], staticStringValue("1"))));
+    try std.testing.expectEqual(@as(f64, 3), valueToNumber(runtime.indexGet(roots[0], staticStringValue("length"))));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(runtime.indexGet(roots[0], numberValue(1.5)).tag))));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(runtime.indexGet(roots[0], numberValue(-1)).tag))));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(runtime.indexGet(roots[0], numberValue(std.math.nan(f64))).tag))));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(runtime.indexGet(roots[0], numberValue(std.math.inf(f64))).tag))));
+
+    // 数値添字への書き込みはownプロパティを作らないため、fast pathは
+    // 書き込み後も有効なまま。
+    try runtime.indexSet(roots[0], numberValue(0), numberValue(200));
+    try std.testing.expectEqual(@as(usize, 0), roots[0].object().?.array_properties.entries.items.len);
+    try std.testing.expectEqual(@as(f64, 200), valueToNumber(runtime.indexGet(roots[0], numberValue(0))));
+
+    // 割り当ても行わない: 失敗するallocatorでも範囲内の添字は読める。
+    runtime.allocator = std.testing.failing_allocator;
+    defer runtime.allocator = std.testing.allocator;
+    try std.testing.expectEqual(@as(f64, 30), valueToNumber(runtime.indexGet(roots[0], numberValue(2))));
+    try std.testing.expectEqual(@as(f64, 8), valueToNumber(runtime.indexGet(roots[1], numberValue(1))));
+}
+
+test "AOT byte bufferの数値添字よりownプロパティを優先する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = @as([2]Value, @splat(.{}));
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createBytes(&.{ 1, 2, 3, 4, 5, 6 });
+    try runtime.indexSet(roots[0], staticStringValue("5"), numberValue(99));
+    try std.testing.expectEqual(@as(usize, 1), roots[0].object().?.array_properties.entries.items.len);
+
+    try std.testing.expectEqual(@as(f64, 99), valueToNumber(runtime.indexGet(roots[0], numberValue(5))));
+    // ownプロパティを持たない添字は引き続きバイトを返す。
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(runtime.indexGet(roots[0], numberValue(0))));
+
+    // indexSet以外のownプロパティ設定経路でも数値名はarray_propertiesに
+    // 入り、fast pathを無効化する（ownプロパティ格納先の不変条件）。
+    roots[1] = try runtime.createBytes(&.{ 7, 8, 9 });
+    try runtime.setAotOwnProperty(roots[1], roots[1].object().?, numberValue(1), numberValue(70));
+    try std.testing.expectEqual(@as(usize, 1), roots[1].object().?.array_properties.entries.items.len);
+    try std.testing.expectEqual(@as(f64, 70), valueToNumber(runtime.indexGet(roots[1], numberValue(1))));
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(runtime.indexGet(roots[1], numberValue(0))));
+}
+
+test "AOT byte bufferの数値添字はカスタムプロトタイプ時にフォールバックする" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = @as([2]Value, @splat(.{}));
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createBytes(&.{ 42, 43 });
+    roots[0].object().?.prototype = .{ .tag = @backingInt(Tag.null_value) };
+    try std.testing.expect(!aotByteBufferAllowsStandardPrototype(roots[0]));
+
+    // 標準プロトタイプを塞ぐ設定ではテキストキー経路へ戻る。
+    const root_pushes = runtime.counters.root_pushes;
+    try std.testing.expectEqual(@as(f64, 43), valueToNumber(runtime.indexGet(roots[0], numberValue(1))));
+    try std.testing.expectEqual(root_pushes + 1, runtime.counters.root_pushes);
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(runtime.indexGet(roots[0], numberValue(2)).tag))));
+
+    // 標準プロトタイプを塞ぐ辞書プロトタイプでも同じフォールバックになる。
+    roots[1] = try runtime.createDictionary(&.{});
+    roots[1].object().?.prototype = .{ .tag = @backingInt(Tag.null_value) };
+    roots[0].object().?.prototype = roots[1];
+    try std.testing.expect(!aotByteBufferAllowsStandardPrototype(roots[0]));
+    const dictionary_root_pushes = runtime.counters.root_pushes;
+    try std.testing.expectEqual(@as(f64, 43), valueToNumber(runtime.indexGet(roots[0], numberValue(1))));
+    try std.testing.expectEqual(dictionary_root_pushes + 1, runtime.counters.root_pushes);
+}
+
+test "AOT byte bufferの数値添字ファストパスは遅い経路の添字判定と一致する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = @as([1]Value, @splat(.{}));
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[0] = try runtime.createBytes(&.{ 5, 6 });
+
+    // fast path の受理判定（valueIndex + 2^32-2 上限）が、遅い経路が要素と
+    // して解決する `tablePropertyIndex` の判定と一致することを境界値で固定
+    // する。2^32-2 だけが要素で、2^32-1 以上はプロパティ名になる。
+    const cases = [_]struct { key: Value, expected: ?usize }{
+        .{ .key = numberValue(0), .expected = 0 },
+        .{ .key = numberValue(1), .expected = 1 },
+        .{ .key = numberValue(-0.0), .expected = 0 },
+        .{ .key = numberValue(4294967294), .expected = 4294967294 },
+        .{ .key = numberValue(4294967295), .expected = null },
+        .{ .key = numberValue(1e15), .expected = null },
+        .{ .key = numberValue(1e21), .expected = null },
+        .{ .key = numberValue(1.5), .expected = null },
+        .{ .key = numberValue(-1), .expected = null },
+        .{ .key = numberValue(std.math.nan(f64)), .expected = null },
+        .{ .key = numberValue(std.math.inf(f64)), .expected = null },
+    };
+    for (cases) |case| {
+        const units = try valueUtf16Alloc(&runtime, case.key);
+        defer runtime.allocator.free(units);
+        try std.testing.expectEqual(case.expected, tablePropertyIndex(units));
+        const fast_index: ?usize = blk: {
+            const index = state.valueIndex(case.key) orelse break :blk null;
+            break :blk if (index <= std.math.maxInt(u32) - 1) index else null;
+        };
+        try std.testing.expectEqual(case.expected, fast_index);
+        // 要素として解決しないキーは、範囲外・境界外ともundefinedになる。
+        if (case.expected == null or case.expected.? >= 2) {
+            try std.testing.expectEqual(Tag.undefined, @as(Tag, @fromBackingInt(@intCast(runtime.indexGet(roots[0], case.key).tag))));
+        }
+    }
 }
 
 test "AOT Bufferの空viewもbacking storageからのbyteOffsetを保持する" {
