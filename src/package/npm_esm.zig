@@ -30,9 +30,9 @@ pub const Error = error{
     EntryNotFound,
     BareNotFound,
     /// wildcard の一致部分が specifier として不正。`..` / `.` / `node_modules`
-    /// は Node の ERR_INVALID_MODULE_SPECIFIER と同じ判定。空セグメント・
-    /// `:`・制御文字・`\` は Node が警告のみで解決するが、この実装は
-    /// fail-closed で拒否する（安全側の意図的差異）。
+    /// は Node の ERR_INVALID_MODULE_SPECIFIER と同じ判定。空セグメントは Node
+    /// が DEP0166 警告付きで、`:`・制御文字・`\` は警告なしで解決するが、
+    /// この実装は fail-closed で拒否する（安全側の意図的差異）。
     /// 配列 fallback でも飛ばさない。
     InvalidSpecifier,
     CacheMiss,
@@ -298,8 +298,9 @@ fn pickExportsSubpath(gpa: Allocator, exports_v: std.json.Value, subpath: []cons
 
 /// wildcard の一致部分（specifier 由来）が安全か検証する。`..` / `.` /
 /// `node_modules` は Node も `ERR_INVALID_MODULE_SPECIFIER` にする。
-/// 空セグメント・`:`・制御文字・`\` は Node が警告のみで通すが、この実装では
-/// fail-closed として拒否する（安全側の意図的差異。docs/TODO.md 参照）。
+/// 空セグメントは Node が DEP0166 警告付き、`:`・制御文字・`\` は警告なしで
+/// 解決するが、この実装では fail-closed として拒否する
+/// （安全側の意図的差異。docs/TODO.md 参照）。
 fn matchedSubpathIsSafe(matched: []const u8) bool {
     for (matched) |byte| {
         if (byte < 0x20 or byte == 0x7f or byte == ':' or byte == '\\') return false;
@@ -818,6 +819,7 @@ test "BareRegistry resolveBare returns entry" {
     var reg: BareRegistry = .{ .gpa = gpa, .io = io };
     defer reg.deinit();
     const name = try gpa.dupe(u8, "left-pad");
+    errdefer gpa.free(name);
     const entry = try resolveEntryInRoot(gpa, io, pkg_root);
     try reg.by_name.put(gpa, name, .{ .package_root = entry.package_root, .root_path = entry.path });
 
@@ -1362,6 +1364,26 @@ test "BareRegistry resolveBare rejects array index condition keys" {
     // Node は条件オブジェクトの配列 index キーを ERR_INVALID_PACKAGE_CONFIG に
     // する（配列 fallback でも飛ばさない）。
     try testing.expectError(error.PackageJsonInvalid, reg.resolveBare("left-pad/idx"));
+}
+
+test "BareRegistry resolveBare array index boundary keys" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = testing.io;
+    const json =
+        \\{"exports":{".":"./index.js","./max":{"4294967294":"./a.js","default":"./x.js"},"./over":{"4294967295":"./a.js","default":"./x.js"}}}
+    ;
+    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
+        .{ .path = "x.js", .data = "export default 1;\n" },
+    });
+    defer reg.deinit();
+
+    // Node の isArrayIndex は 2^32-2 までを index とする（`4294967295` は違う）。
+    try testing.expectError(error.PackageJsonInvalid, reg.resolveBare("left-pad/max"));
+    const over = try reg.resolveBare("left-pad/over");
+    defer over.deinit(gpa);
+    try testing.expect(std.mem.endsWith(u8, over.path, "x.js"));
 }
 
 test "BareRegistry resolveBare duplicate keys use last value" {

@@ -85,6 +85,7 @@
 | npm ESM target 字句 | exports target と wildcard 一致部分（specifier 側）の字句を Node より厳しく拒否する（空セグメント・trailing slash・`:`・制御文字・`\`。安全側の意図的差異。一致部分の `..`/`.`/`node_modules` は Node と同じ） | [#54](https://github.com/soramikan/lnako/issues/54) |
 | npm ESM pattern キー | `./` 前置でない wildcard キー（`".*"` 等）は URL 解決をしないため拒否（Node は解決するが実 package では未使用） | [#54](https://github.com/soramikan/lnako/issues/54) |
 | npm ESM legacy main | `main` がディレクトリのときの `index.js` 探索と `.json` / `.node` 拡張補完は未対応（安全側で `EntryNotFound`） | [#54](https://github.com/soramikan/lnako/issues/54) |
+| npm ESM module 優先 | `module` を ESM 入口として `main` より優先する独自拡張（Node の ESM 解決は `module` を使わない） | [#54](https://github.com/soramikan/lnako/issues/54) |
 | npm ESM URL 解釈 | exports target を URL としてデコードしない（`%20`・`?`・`#` 等。root 外へは出ない） | [#54](https://github.com/soramikan/lnako/issues/54) |
 | ToPrimitive / Function | 未fixtureのreceiver副作用順序、function文字列化・辞書key化の全境界 | [#9](https://github.com/soramikan/lnako/issues/9) |
 | 上流バグ候補 | DNCL寛容構文、TOML異常入力、generated route登録不足等をlnakoの新しい安定仕様として保証すること | [#10](https://github.com/soramikan/lnako/issues/10) |
