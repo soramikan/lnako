@@ -1650,7 +1650,7 @@ test "npm registry E2E: packument 取得から cache・lock・sync materialize �
     try testing.expectEqualStrings(entry_bytes, try readFile(a, app_root, installed_entry_rel));
 }
 
-test "npm registry E2E: tarball の integrity 不一致は cache と lock を汚さず失敗する" {
+test "npm registry E2E: tarball の integrity 不一致は既存の lock と cache を汚さず失敗する" {
     var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_impl.deinit();
     const a = arena_impl.allocator();
@@ -1666,12 +1666,123 @@ test "npm registry E2E: tarball の integrity 不一致は cache と lock を汚
         \\
     );
 
-    // packument の integrity は正規 tarball のもの。配信する tarball だけを
-    // 差し替え、取得後の検証で必ず落ちるようにする。
     const good = try npmTarball(a, "escape", "1.2.3", "index.js", "export default 42;\n");
     const tampered = try npmTarball(a, "escape", "1.2.3", "index.js", "export default 43;\n");
     const integrity = try pkg.npm.integritySha512(a, good);
 
+    // 1) 正常な registry から lock と cache を作る。
+    var healthy = RegistryServer{ .io = io, .allocator = a };
+    try healthy.listen();
+    defer healthy.stop();
+    const healthy_tarball_url = try healthy.url(a, "/escape/-/escape-1.2.3.tgz");
+    const healthy_packument = try npmPackument(a, "escape", "1.2.3", healthy_tarball_url, integrity);
+    const healthy_routes = [_]RegistryRoute{
+        .{ .path = "/escape", .body = healthy_packument },
+        .{ .path = "/escape/-/escape-1.2.3.tgz", .body = good },
+    };
+    try healthy.serve(&healthy_routes);
+    var cli = Cli.init(a);
+    try cli.env.put("LNAKO_NPM_REGISTRY", healthy.base_url.?);
+    try cli.run(a, "lock", &.{ "--package-cache-dir", cache_root }, app_root);
+    const lock_before = try readFile(a, app_root, "nako.lock");
+    const objects_before = try countCacheObjects(a, cache_root);
+    try testing.expect(objects_before > 0);
+
+    // 2) packument の integrity は正規 tarball のまま、配信 tarball だけを
+    //    差し替えた registry へ切り替えて再解決（update）を強制する。
+    var tampered_server = RegistryServer{ .io = io, .allocator = a };
+    try tampered_server.listen();
+    defer tampered_server.stop();
+    const tampered_url = try tampered_server.url(a, "/escape/-/escape-1.2.3.tgz");
+    const tampered_packument = try npmPackument(a, "escape", "1.2.3", tampered_url, integrity);
+    const tampered_routes = [_]RegistryRoute{
+        .{ .path = "/escape", .body = tampered_packument },
+        .{ .path = "/escape/-/escape-1.2.3.tgz", .body = tampered },
+    };
+    try tampered_server.serve(&tampered_routes);
+
+    try cli.env.put("LNAKO_NPM_REGISTRY", tampered_server.base_url.?);
+    try expectFail(error.Failed, a, &cli, "update", &.{ "--package-cache-dir", cache_root }, app_root);
+    try testing.expect(std.mem.indexOf(u8, cli.err.written(), "sha512 mismatch") != null);
+    // 失敗しても既存 lock の bytes は変わらず、cache へ部分 entry も足さない。
+    try testing.expectEqualStrings(lock_before, try readFile(a, app_root, "nako.lock"));
+    try testing.expectEqual(objects_before, try countCacheObjects(a, cache_root));
+    try testing.expectEqual(@as(usize, 2), tampered_server.requests.load(.acquire));
+}
+
+test "npm registry E2E: packument 404 は既存の lock を汚さず失敗する" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app");
+    try temporary.dir.createDirPath(io, "cache");
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", a);
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", a);
+    try appManifest(a, app_root,
+        \\[dependencies.npm]
+        \\escape = "^1.0.0"
+        \\
+    );
+
+    const tarball = try npmTarball(a, "escape", "1.2.3", "index.js", "export default 42;\n");
+    const integrity = try pkg.npm.integritySha512(a, tarball);
+
+    // 1) 正常な registry から lock を作る。
+    var healthy = RegistryServer{ .io = io, .allocator = a };
+    try healthy.listen();
+    defer healthy.stop();
+    const healthy_tarball_url = try healthy.url(a, "/escape/-/escape-1.2.3.tgz");
+    const healthy_packument = try npmPackument(a, "escape", "1.2.3", healthy_tarball_url, integrity);
+    const healthy_routes = [_]RegistryRoute{
+        .{ .path = "/escape", .body = healthy_packument },
+        .{ .path = "/escape/-/escape-1.2.3.tgz", .body = tarball },
+    };
+    try healthy.serve(&healthy_routes);
+    var cli = Cli.init(a);
+    try cli.env.put("LNAKO_NPM_REGISTRY", healthy.base_url.?);
+    try cli.run(a, "lock", &.{ "--package-cache-dir", cache_root }, app_root);
+    const lock_before = try readFile(a, app_root, "nako.lock");
+
+    // 2) packument が 404 の registry へ切り替えて再解決を強制する。
+    //    閉域環境（registry 到達不能）とは診断コードが異なるため、ここでは
+    //    到達不能時の取得失敗経路（E013）を再現する。
+    var missing = RegistryServer{ .io = io, .allocator = a };
+    try missing.listen();
+    defer missing.stop();
+    const missing_routes = [_]RegistryRoute{.{ .path = "/escape", .status = 404 }};
+    try missing.serve(&missing_routes);
+
+    try cli.env.put("LNAKO_NPM_REGISTRY", missing.base_url.?);
+    try expectFail(error.Failed, a, &cli, "update", &.{ "--package-cache-dir", cache_root }, app_root);
+    try testing.expect(std.mem.indexOf(u8, cli.err.written(), "E013") != null);
+    try testing.expectEqualStrings(lock_before, try readFile(a, app_root, "nako.lock"));
+    try testing.expectEqual(@as(usize, 1), missing.requests.load(.acquire));
+}
+
+test "npm registry E2E: lock 無しの sync も fixture registry から構築する" {
+    // sync は lock が無い/陳腐なら ensureLock で解決してから環境を作る。
+    // sync 側の LNAKO_NPM_REGISTRY 配線（project.zig とは別経路）が
+    // 効いていることを、lock を作らずに online sync を走らせて確認する。
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app");
+    try temporary.dir.createDirPath(io, "cache");
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", a);
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", a);
+    try appManifest(a, app_root,
+        \\[dependencies.npm]
+        \\escape = "^1.0.0"
+        \\
+    );
+
+    const entry_bytes = "export default 42;\n";
+    const tarball = try npmTarball(a, "escape", "1.2.3", "index.js", entry_bytes);
+    const integrity = try pkg.npm.integritySha512(a, tarball);
     var server = RegistryServer{ .io = io, .allocator = a };
     try server.listen();
     defer server.stop();
@@ -1679,17 +1790,27 @@ test "npm registry E2E: tarball の integrity 不一致は cache と lock を汚
     const packument = try npmPackument(a, "escape", "1.2.3", tarball_url, integrity);
     const routes = [_]RegistryRoute{
         .{ .path = "/escape", .body = packument },
-        .{ .path = "/escape/-/escape-1.2.3.tgz", .body = tampered },
+        .{ .path = "/escape/-/escape-1.2.3.tgz", .body = tarball },
     };
     try server.serve(&routes);
 
-    var cli = Cli.init(a);
-    try cli.env.put("LNAKO_NPM_REGISTRY", server.base_url.?);
-    try expectFail(error.Failed, a, &cli, "lock", &.{ "--package-cache-dir", cache_root }, app_root);
-    try testing.expect(std.mem.indexOf(u8, cli.err.written(), "sha512 mismatch") != null);
-    // 失敗時に lock と cache entry を公開しない（lock は環境を書かないため、
-    // 環境側の不在はこの経路では観測対象にならない）。
-    try testing.expect(!try dirFileExists(a, app_root, "nako.lock"));
-    try testing.expectEqual(@as(usize, 0), try countCacheObjects(a, cache_root));
+    var env = std.process.Environ.Map.init(a);
+    defer env.deinit();
+    try env.put("LNAKO_NPM_REGISTRY", server.base_url.?);
+    var out: std.Io.Writer.Allocating = .init(a);
+    var err_out: std.Io.Writer.Allocating = .init(a);
+    try sync_cmd.run(a, io, &.{ "--package-cache-dir", cache_root, app_root }, &env, &out.writer, &err_out.writer);
     try testing.expectEqual(@as(usize, 2), server.requests.load(.acquire));
+
+    var diagnostics = pkg.diagnostics.List.init(a);
+    defer diagnostics.deinit();
+    const lock_bytes = try readFile(a, app_root, "nako.lock");
+    var parsed = try pkg.lock.parse(a, lock_bytes, &diagnostics);
+    defer parsed.deinit();
+    const instance = findNpmInstance(&parsed, "escape@1.2.3") orelse return error.TestExpectedInstance;
+    try testing.expectEqualStrings(tarball_url, instance.url.?);
+    const generation = std.mem.trim(u8, try readFile(a, app_root, ".nako/current"), " \t\r\n");
+    const dir_name = try pkg.npm_env.instanceDirName(a, instance);
+    const entry_rel = try std.fmt.allocPrint(a, ".nako/env/{s}/deps/{s}/index.js", .{ generation, dir_name });
+    try testing.expectEqualStrings(entry_bytes, try readFile(a, app_root, entry_rel));
 }
