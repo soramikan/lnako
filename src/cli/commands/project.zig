@@ -1039,23 +1039,35 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
     // グラフを指し続ける状態を「同期済み」と案内しない）。
     if (inspect.lock_state != .fresh or !inspect.environment_current) try needed.append(a, "lnako sync");
 
+    // feature 影響は環境 graph の root 依存と突き合わせて求める。lock が
+    // 現行 manifest と選択フラグに一致する（fresh）ときだけ、選択と環境が
+    // 同じ入力であることを保証できるため、stale 中は出さない（前回選択で
+    // materialize された graph を現行選択の結果として見せない）。
+    const feature_manifest: ?*const manifest_mod.Manifest =
+        if (inspect.lock_state == .fresh) &project_var.manifest else null;
+
     // 命令 metadata 静的検査。環境が current のときのみ（stale/missing は
-    // 索引が信頼できないため skipped）。
-    var command_report = lnako.package.command_inspect.Report{
-        .arena = std.heap.ArenaAllocator.init(a),
-    };
-    defer command_report.deinit();
-    if (inspect.environment_current) {
-        // Project が保持する root_dir を使う（cwd からの再 open はしない）。
-        command_report.deinit();
-        command_report = try lnako.package.command_inspect.inspectEnvironmentDir(
+    // 索引が信頼できないため skipped）。再代入ではなく if 式で初期化し、
+    // inspectEnvironmentDir が OOM で失敗しても defer が未初期化の
+    // ArenaAllocator を二重解放しないようにする。
+    var command_report = if (inspect.environment_current)
+        try lnako.package.command_inspect.inspectEnvironmentDir(
             a,
             io,
             project_var.root_dir,
-            flags.strict_sharing,
+            .{
+                .strict_sharing = flags.strict_sharing,
+                .manifest = feature_manifest,
+                .features = .{
+                    .requested = flags.features.items,
+                    .use_default_features = !flags.no_default_features,
+                },
+            },
             &diagnostics,
-        );
-    }
+        )
+    else
+        lnako.package.command_inspect.Report{ .arena = std.heap.ArenaAllocator.init(a) };
+    defer command_report.deinit();
 
     if (diagnostics.errorCount() > 0) {
         renderOrFail(&diagnostics, stderr, project_var.manifest_path);
@@ -1080,8 +1092,13 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
                 .{ pkg_json, item.reasonText() },
             ));
         }
+        // feature 定義が無い / manifest 未供給なら key 自体を出さない。
+        const features_json: []const u8 = if (command_report.features) |impact|
+            try std.fmt.allocPrint(a, ",\"features\":{s}", .{try lnako.package.command_inspect.featureImpactJson(a, impact)})
+        else
+            "";
         try stdout.print(
-            "{{\"schemaVersion\":1,\"manifest\":\"ok\",\"lock\":\"{s}\",\"environment\":\"{s}\",\"needed\":[{s}],\"commands\":{{\"sharing\":\"{s}\",\"inspected\":{d},\"uninspected\":[{s}],\"collisions\":{d},\"mismatches\":{d}}}}}\n",
+            "{{\"schemaVersion\":1,\"manifest\":\"ok\",\"lock\":\"{s}\",\"environment\":\"{s}\",\"needed\":[{s}],\"commands\":{{\"sharing\":\"{s}\",\"inspected\":{d},\"uninspected\":[{s}],\"collisions\":{d},\"mismatches\":{d}}}{s}}}\n",
             .{
                 lock_state,
                 if (inspect.environment == null) "missing" else if (inspect.environment_current) "current" else "stale",
@@ -1091,6 +1108,7 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
                 uninspected_json.items,
                 command_report.collision_count,
                 command_report.mismatch_count,
+                features_json,
             },
         );
         try stdout.flush();
@@ -1109,6 +1127,28 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
         if (command_report.uninspected.len > 0) {
             for (command_report.uninspected) |item| {
                 try stdout.print("    未検査: {s} ({s})\n", .{ item.package_key, item.reasonText() });
+            }
+        }
+        if (command_report.features) |impact| {
+            try stdout.print("  feature 影響: 選択=[{s}]\n", .{
+                try lnako.package.command_inspect.joinNames(a, impact.selected),
+            });
+            if (impact.common_roots.len > 0) {
+                try stdout.print("    共通依存: {s}\n", .{
+                    try lnako.package.command_inspect.joinNames(a, impact.common_roots),
+                });
+            }
+            for (impact.dedicated) |feature| {
+                try stdout.print("    専用依存: {s} → {s}", .{
+                    feature.name,
+                    try lnako.package.command_inspect.joinNames(a, feature.roots),
+                });
+                if (feature.packages.len > 0) {
+                    try stdout.print("（推移: {s}）", .{
+                        try lnako.package.command_inspect.joinNames(a, feature.packages),
+                    });
+                }
+                try stdout.print("\n", .{});
             }
         }
         if (needed.items.len > 0) {
