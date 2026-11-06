@@ -126,6 +126,7 @@ pub const package = struct {
     pub const environment = @import("package/environment.zig");
     pub const import_deps = @import("package/import_deps.zig");
     pub const import_resolver = @import("package/import_resolver.zig");
+    pub const project_trust = @import("package/project_trust.zig");
     pub const materialize = @import("package/materialize.zig");
     pub const unpack = @import("package/unpack.zig");
     pub const sync = @import("package/sync.zig");
@@ -222,6 +223,9 @@ pub fn usage(writer: *std.Io.Writer) !void {
         \\  --profile <name> 使用する profile
         \\  --features <a,b> 有効化する feature（カンマ区切り）
         \\  --registry <url> pkg 依存解決用 registry（既定: LNAKO_REGISTRY）
+        \\  --strict-project-trust  共有 writable 配置を拒否（旧既定）
+        \\  --no-project-trust-warning  共有 writable の警告を出さない（続行）
+        \\  LNAKO_PROJECT_TRUST=warn|enforce|ignore  上記の環境変数版（既定 warn）
         \\
         \\共通オプション:
         \\  -h, --help       このヘルプを表示

@@ -1,0 +1,7 @@
+[package]
+name = "reject-export-escape"
+version = "0.1.0"
+license = "MIT"
+
+[dependencies.path]
+bad = { path = "bad" }
