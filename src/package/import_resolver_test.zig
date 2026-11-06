@@ -161,12 +161,16 @@ test "materialized package内の共有writable dirを拒否する" {
     // materialized tree 配下の dir が共有writableなら export 対象を
     // 差し替えられるため private な `.nako` でも採用できない。
     try temporary.dir.setFilePermissions(io, ".nako/env/gen-test/deps/pkg/lib", std.Io.File.Permissions.fromMode(0o777), .{});
-    try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, root));
+    try std.testing.expectError(error.InvalidEnvironment, Resolver.loadWithMode(allocator, io, root, .enforce));
     // dir がprivateでも配下fileが共有writableなら export 対象の中身を
     // そのまま書き換えられるため同様に拒否する。
     try temporary.dir.setFilePermissions(io, ".nako/env/gen-test/deps/pkg/lib", std.Io.File.Permissions.fromMode(0o755), .{});
     try temporary.dir.setFilePermissions(io, ".nako/env/gen-test/deps/pkg/nako.toml", std.Io.File.Permissions.fromMode(0o666), .{});
-    try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, root));
+    try std.testing.expectError(error.InvalidEnvironment, Resolver.loadWithMode(allocator, io, root, .enforce));
+    // 既定 warn では続行し warning を立てる。
+    var warned = try Resolver.loadWithMode(allocator, io, root, .warn);
+    try std.testing.expect(warned.writable_warning);
+    warned.deinit();
 }
 
 test "package rootの共有writableな祖先dirを拒否する" {
@@ -197,7 +201,7 @@ test "package rootの共有writableな祖先dirを拒否する" {
     // package tree 本体がprivateでも、祖先dirが共有writable（sticky無し）なら
     // 検証後に root を rename して同 path の別 tree へ置き換えられるため拒否する。
     try temporary.dir.setFilePermissions(io, ".nako/env/gen-test/deps", std.Io.File.Permissions.fromMode(0o777), .{});
-    try std.testing.expectError(error.InvalidEnvironment, Resolver.load(allocator, io, root));
+    try std.testing.expectError(error.InvalidEnvironment, Resolver.loadWithMode(allocator, io, root, .enforce));
     // sticky bit 付き（/tmp 型）なら他者の entry を rename/削除できないため
     // 置換不能とみなし受理する。
     try temporary.dir.setFilePermissions(io, ".nako/env/gen-test/deps", std.Io.File.Permissions.fromMode(0o1777), .{});
@@ -392,12 +396,22 @@ test "project environment lookup rejects a group/world-writable .nako directory"
     try temporary.dir.writeFile(io, .{ .sub_path = "victim/nako.toml", .data = "[package]\nname = \"victim\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });
     try temporary.dir.writeFile(io, .{ .sub_path = "victim/main.nako3", .data = "" });
     // environment.json 自体は read-only でも、dir が共有writableなら
-    // materialized tree の差し替えが可能なため採用できない。
+    // materialized tree の差し替えが可能なため enforce では採用できない。
     try temporary.dir.writeFile(io, .{ .sub_path = "victim/.nako/environment.json", .data = "{}" });
     try temporary.dir.setFilePermissions(io, "victim/.nako", std.Io.File.Permissions.fromMode(0o777), .{});
     const input = try temporary.dir.realPathFileAlloc(io, "victim/main.nako3", allocator);
     defer allocator.free(input);
-    try std.testing.expect((try resolver.findProjectRoot(allocator, io, input)) == null);
+    var rejected = false;
+    var warning = false;
+    try std.testing.expect((try resolver.findProjectRootDetailed(allocator, io, input, &rejected, .enforce, &warning)) == null);
+    try std.testing.expect(rejected);
+    // 既定 warn では root を返し warning を立てる。
+    rejected = false;
+    warning = false;
+    const allowed = (try resolver.findProjectRootDetailed(allocator, io, input, &rejected, .warn, &warning)) orelse return error.ProjectRootNotFound;
+    defer allocator.free(allowed);
+    try std.testing.expect(!rejected);
+    try std.testing.expect(warning);
 }
 
 const manifest_mod = @import("manifest.zig");

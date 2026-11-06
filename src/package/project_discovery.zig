@@ -15,8 +15,32 @@ fn realPathDirAlloc(allocator: Allocator, io: std.Io, path: []const u8) ![]u8 {
 }
 
 /// Find an environment inside the nearest project boundary containing the input.
-/// Ancestor search stops at `nako.toml`; shared writable ancestors are never trusted.
+/// Ancestor search stops at `nako.toml`. Writable ACL/mode policy is `mode`
+/// (default warn+continue). Path containment stays fail-closed always.
 pub fn findProjectRoot(allocator: Allocator, io: std.Io, input_path: []const u8) !?[]u8 {
+    return findProjectRootDetailed(allocator, io, input_path, null, .warn, null);
+}
+
+/// 信頼検証で拒否したことを呼出し側へ伝える戻り値。`rejected` が true なら
+/// 「プロジェクトが無い」ではなく「見つかったが書き込み権限検証で拒否した」。
+fn reject(rejected: ?*bool) ?[]u8 {
+    if (rejected) |flag| flag.* = true;
+    return null;
+}
+
+/// `mode` が `.enforce` のときだけ共有 writable で拒否する。`.warn`/`.ignore`
+/// では続行し、`.warn` なら `writable_warning` を true にする。
+/// path 逸脱（symlink で root 外など）は mode に関わらず null を返す（rejected は立てない）。
+pub fn findProjectRootDetailed(
+    allocator: Allocator,
+    io: std.Io,
+    input_path: []const u8,
+    rejected: ?*bool,
+    mode: project_trust.WritableMode,
+    writable_warning: ?*bool,
+) !?[]u8 {
+    if (rejected) |flag| flag.* = false;
+    if (writable_warning) |flag| flag.* = false;
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const temporary = arena.allocator();
@@ -29,7 +53,9 @@ pub fn findProjectRoot(allocator: Allocator, io: std.Io, input_path: []const u8)
         const manifest_path = try std.fs.path.join(temporary, &.{ current, "nako.toml" });
         if (std.Io.Dir.cwd().access(io, manifest_path, .{})) |_| {
             const canonical_manifest = std.Io.Dir.cwd().realPathFileAlloc(io, manifest_path, temporary) catch return null;
-            if (!isPathWithin(current, canonical_manifest) or try project_trust.isUnsafeWritablePath(temporary, io, canonical_manifest)) return null;
+            if (!isPathWithin(current, canonical_manifest)) return null;
+            if (project_trust.shouldRejectWritable(mode, try project_trust.isUnsafeWritablePath(temporary, io, canonical_manifest), writable_warning))
+                return reject(rejected);
             project_root = current;
             break;
         } else |err| switch (err) {
@@ -46,19 +72,18 @@ pub fn findProjectRoot(allocator: Allocator, io: std.Io, input_path: []const u8)
     // parents above the selected boundary are intentionally irrelevant.
     current = start;
     while (true) {
-        if (try project_trust.isUnsafeWritablePath(temporary, io, current)) return null;
+        if (project_trust.shouldRejectWritable(mode, try project_trust.isUnsafeWritablePath(temporary, io, current), writable_warning))
+            return reject(rejected);
         if (std.mem.eql(u8, current, root)) break;
         const parent = std.fs.path.dirname(current) orelse return null;
         if (std.mem.eql(u8, parent, current)) return null;
         current = parent;
     }
 
-    // project root 自体と root〜importer 間が安全でも、root の親が共有
-    // writable なら root tree を rename して同じ path の別 project へ置き
-    // 換えられる。nako.toml の取り違えで manifest identity ごと偽装でき、
-    // importer が属する project 全体の信頼性を崩すため filesystem root まで
-    // 遡って fail closed で検査する。
-    if (try project_trust.hasUnsafeWritableAncestors(temporary, io, root, "/")) return null;
+    // project root の親が共有 writable なら root tree を rename 置換できる。
+    // enforce 時のみ拒否。warn/ignore では警告フラグだけ立てて続行する。
+    if (project_trust.shouldRejectWritable(mode, try project_trust.hasUnsafeWritableAncestors(temporary, io, root, "/"), writable_warning))
+        return reject(rejected);
 
     current = start;
     while (true) {
@@ -67,16 +92,18 @@ pub fn findProjectRoot(allocator: Allocator, io: std.Io, input_path: []const u8)
             const nako_path = try std.fs.path.join(temporary, &.{ current, ".nako" });
             const canonical_nako = realPathDirAlloc(temporary, io, nako_path) catch return null;
             const canonical_environment = std.Io.Dir.cwd().realPathFileAlloc(io, environment_path, temporary) catch return null;
-            // `.nako` dir 自体が共有writableなら、その下の materialized tree
-            // を差し替えて同一 manifest identity を装うことができるため、
-            // file だけでなく dir の書き込み権限も検証する。
-            if (!isPathWithin(root, canonical_nako) or !isPathWithin(canonical_nako, canonical_environment) or
-                try project_trust.isUnsafeWritablePath(temporary, io, canonical_nako) or
-                try project_trust.isUnsafeWritablePath(temporary, io, canonical_environment)) return null;
+            // path 逸脱は常に拒否。writable は mode に従う。
+            if (!isPathWithin(root, canonical_nako) or !isPathWithin(canonical_nako, canonical_environment)) return null;
+            if (project_trust.shouldRejectWritable(mode, try project_trust.isUnsafeWritablePath(temporary, io, canonical_nako), writable_warning))
+                return reject(rejected);
+            if (project_trust.shouldRejectWritable(mode, try project_trust.isUnsafeWritablePath(temporary, io, canonical_environment), writable_warning))
+                return reject(rejected);
             const lock_path = try std.fs.path.join(temporary, &.{ root, "nako.lock" });
             if (std.Io.Dir.cwd().access(io, lock_path, .{})) |_| {
                 const canonical_lock = std.Io.Dir.cwd().realPathFileAlloc(io, lock_path, temporary) catch return null;
-                if (!isPathWithin(root, canonical_lock) or try project_trust.isUnsafeWritablePath(temporary, io, canonical_lock)) return null;
+                if (!isPathWithin(root, canonical_lock)) return null;
+                if (project_trust.shouldRejectWritable(mode, try project_trust.isUnsafeWritablePath(temporary, io, canonical_lock), writable_warning))
+                    return reject(rejected);
             } else |err| switch (err) {
                 error.FileNotFound => {},
                 else => return err,
@@ -92,6 +119,91 @@ pub fn findProjectRoot(allocator: Allocator, io: std.Io, input_path: []const u8)
         current = parent;
     }
     return null;
+}
+
+/// `check` のように環境の有無へ依存せずプロジェクト root を検証する経路向け。
+/// `start`（探索起点 dir）から `root` までと root の祖先、manifest、存在する
+/// `.nako` 環境の共有 writable を `mode` に従って検査する。`.enforce` で
+/// 拒否したら true。path 逸脱も true（fail closed）。`.warn` では
+/// `writable_warning` を立てて続行する。
+pub fn projectTrustRejected(
+    allocator: Allocator,
+    io: std.Io,
+    start: []const u8,
+    root: []const u8,
+    mode: project_trust.WritableMode,
+    writable_warning: ?*bool,
+) !bool {
+    if (writable_warning) |flag| flag.* = false;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const temporary = arena.allocator();
+    const canonical_start = realPathDirAlloc(temporary, io, start) catch |err| return trustFailure(err);
+    const canonical_root = realPathDirAlloc(temporary, io, root) catch |err| return trustFailure(err);
+
+    const manifest_path = try std.fs.path.join(temporary, &.{ canonical_root, "nako.toml" });
+    const canonical_manifest = std.Io.Dir.cwd().realPathFileAlloc(io, manifest_path, temporary) catch |err| return trustFailure(err);
+    if (!isPathWithin(canonical_root, canonical_manifest)) return true;
+    if (project_trust.shouldRejectWritable(mode, try project_trust.isUnsafeWritablePath(temporary, io, canonical_manifest), writable_warning))
+        return true;
+
+    // importer 側の起点から root までを検査する（root の親は別途祖先検査）。
+    var current: []const u8 = canonical_start;
+    while (true) {
+        if (project_trust.shouldRejectWritable(mode, try project_trust.isUnsafeWritablePath(temporary, io, current), writable_warning))
+            return true;
+        if (std.mem.eql(u8, current, canonical_root)) break;
+        const parent = std.fs.path.dirname(current) orelse return true;
+        if (std.mem.eql(u8, parent, current)) return true;
+        current = parent;
+    }
+
+    // root の親が共有 writable なら root tree を rename 置換できる。
+    if (project_trust.shouldRejectWritable(mode, try project_trust.hasUnsafeWritableAncestors(temporary, io, canonical_root, "/"), writable_warning))
+        return true;
+
+    // 既存の `.nako` 環境は check の読み取り対象なので、あれば同じ基準で検査する。
+    const nako_path = try std.fs.path.join(temporary, &.{ canonical_root, ".nako" });
+    if (std.Io.Dir.cwd().access(io, nako_path, .{})) |_| {
+        const canonical_nako = realPathDirAlloc(temporary, io, nako_path) catch |err| return trustFailure(err);
+        if (!isPathWithin(canonical_root, canonical_nako)) return true;
+        if (project_trust.shouldRejectWritable(mode, try project_trust.isUnsafeWritablePath(temporary, io, canonical_nako), writable_warning))
+            return true;
+        const environment_path = try std.fs.path.join(temporary, &.{ canonical_nako, "environment.json" });
+        if (std.Io.Dir.cwd().access(io, environment_path, .{})) |_| {
+            const canonical_environment = std.Io.Dir.cwd().realPathFileAlloc(io, environment_path, temporary) catch |err| return trustFailure(err);
+            if (!isPathWithin(canonical_nako, canonical_environment)) return true;
+            if (project_trust.shouldRejectWritable(mode, try project_trust.isUnsafeWritablePath(temporary, io, canonical_environment), writable_warning))
+                return true;
+        } else |err| switch (err) {
+            error.FileNotFound => {},
+            else => return err,
+        }
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    }
+
+    // nako.lock は `.nako` の有無に関わらず check が読む（fresh clone でも
+    // 既存 lock を検査する）ため、環境 branch の外で個別に検査する。
+    const lock_path = try std.fs.path.join(temporary, &.{ canonical_root, "nako.lock" });
+    if (std.Io.Dir.cwd().access(io, lock_path, .{})) |_| {
+        const canonical_lock = std.Io.Dir.cwd().realPathFileAlloc(io, lock_path, temporary) catch |err| return trustFailure(err);
+        if (!isPathWithin(canonical_root, canonical_lock)) return true;
+        if (project_trust.shouldRejectWritable(mode, try project_trust.isUnsafeWritablePath(temporary, io, canonical_lock), writable_warning))
+            return true;
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    }
+    return false;
+}
+
+/// trust 検査中の path 解決に失敗したときの扱い。OOM と Canceled は
+/// 呼出し元へ伝播し、それ以外（権限・stat 等）は安全側（拒否）に倒す。
+fn trustFailure(err: anyerror) anyerror!bool {
+    if (err == error.OutOfMemory or err == error.Canceled) return err;
+    return true;
 }
 
 fn isPathWithin(root: []const u8, path: []const u8) bool {

@@ -53,3 +53,23 @@ if (process.env.LNAKO_TEST_NETWORK_TOPOLOGY === "synthetic-v1") {
     ],
   });
 }
+
+// 公式cnakoのタイマーは実時間の setTimeout に依存するため、負荷状況によって
+// 近接した期限（例: 1ms と 3ms）の順序が入れ替わり得る。fixture が
+// LNAKO_TEST_TIMER_SCALE を指定したときだけ、公式側のタイマー期限を同じ倍率で
+// 引き伸ばし、順序を観測するテストを決定的にする（lnako側はスケールしない）。
+const timerScale = Number.parseInt(process.env.LNAKO_TEST_TIMER_SCALE ?? "1", 10);
+if (Number.isInteger(timerScale) && timerScale > 1 && timerScale <= 1000) {
+  const realSetTimeout = globalThis.setTimeout;
+  const realSetInterval = globalThis.setInterval;
+  const scaleDelay = (delay) => {
+    const value = Number(delay);
+    return Number.isFinite(value) && value > 0 ? value * timerScale : value;
+  };
+  globalThis.setTimeout = function (callback, delay, ...arguments_) {
+    return realSetTimeout(callback, scaleDelay(delay), ...arguments_);
+  };
+  globalThis.setInterval = function (callback, delay, ...arguments_) {
+    return realSetInterval(callback, scaleDelay(delay), ...arguments_);
+  };
+}

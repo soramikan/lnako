@@ -29,6 +29,27 @@ fn writeLibPackage(a: std.mem.Allocator, dir: std.Io.Dir, root: []const u8, name
     try dir.writeFile(io, .{ .sub_path = index_path, .data = "●表示とは\nここまで\n" });
 }
 
+/// 任意の命令を 1 つ公開する path 依存パッケージを書く。
+/// 標準命令と衝突しない名前を呼出し側が渡す。
+fn writePathPackage(a: std.mem.Allocator, dir: std.Io.Dir, root: []const u8, name: []const u8, command: []const u8) !void {
+    const manifest_path = try std.fs.path.join(a, &.{ root, "nako.toml" });
+    const source = try std.fmt.allocPrint(a,
+        \\[package]
+        \\name = "{s}"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[[exports]]
+        \\name = "{s}"
+        \\path = "src/index.nako3"
+        \\
+    , .{ name, name });
+    try dir.writeFile(io, .{ .sub_path = manifest_path, .data = source });
+    const index_path = try std.fs.path.join(a, &.{ root, "src", "index.nako3" });
+    const body = try std.fmt.allocPrint(a, "●{s}とは\nここまで\n", .{command});
+    try dir.writeFile(io, .{ .sub_path = index_path, .data = body });
+}
+
 /// `app/lib` の path 依存パッケージと `app/nako.toml` を持つ fixture。
 /// 戻り値は `app` の絶対パス。
 fn newAppFixture(a: std.mem.Allocator, temporary: *std.testing.TmpDir) ![]const u8 {
@@ -198,6 +219,62 @@ test "check --json は機械可読な検査結果を stdout へ出す" {
     try testing.expect(std.mem.indexOf(u8, out, "lnako lock") != null);
     try testing.expect(!try dirFileExists(a, app_root, ".nako"));
     try testing.expect(!try dirFileExists(a, app_root, "nako.lock"));
+}
+
+test "check は選択 feature の専用依存と推移依存を JSON と本文に出す" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/lib-common/src");
+    try writePathPackage(a, temporary.dir, "app/lib-common", "lib-common", "共通専用");
+    try temporary.dir.createDirPath(io, "app/lib-extra/src");
+    try writePathPackage(a, temporary.dir, "app/lib-extra", "lib-extra", "追加専用");
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", a);
+    try appManifest(a, app_root,
+        \\[dependencies.path]
+        \\common = { path = "lib-common" }
+        \\extra = { path = "lib-extra" }
+        \\
+        \\[features]
+        \\default = ["common"]
+        \\with-extra = ["extra"]
+        \\
+    );
+
+    var cli = Cli.init(a);
+    // `sync` は cli.zig 側の verb なので、ここでは run 準備経路で
+    // feature 選択込みの環境を作る。
+    const main_path = try std.fs.path.join(a, &.{ app_root, "main.nako3" });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = main_path, .data = "「ok」を表示\n" });
+    var flags = project_cmd.PrepFlags{};
+    try flags.features.append(a, "with-extra");
+    try project_cmd.prepareForExecution(a, io, main_path, &flags, &cli.env, "run", &cli.err.writer);
+
+    try cli.run(a, "check", &.{ "--json", "--features", "with-extra" }, app_root);
+    const json = cli.out.written();
+    // default が有効化する common は共通、with-extra 専用の extra は専用。
+    try testing.expect(std.mem.indexOf(
+        u8,
+        json,
+        "\"features\":{\"selected\":[\"default\",\"with-extra\"],\"common\":[\"common\"],\"dedicated\":[{\"feature\":\"with-extra\",\"roots\":[\"extra\"],\"packages\":[]}]}",
+    ) != null);
+
+    try cli.run(a, "check", &.{ "--features", "with-extra" }, app_root);
+    const text = cli.out.written();
+    try testing.expect(std.mem.indexOf(u8, text, "feature 影響: 選択=[default, with-extra]") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "共通依存: common") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "専用依存: with-extra → extra") != null);
+
+    // 環境は with-extra 選択で作られているため、別の選択で check すると
+    // lock は stale（再 sync が必要）になる。前回選択の graph を現行選択の
+    // 結果として見せないよう、feature 影響は出さない。
+    var stale_cli = Cli.init(a);
+    try stale_cli.run(a, "check", &.{ "--json", "--no-default-features" }, app_root);
+    const stale_json = stale_cli.out.written();
+    try testing.expect(std.mem.indexOf(u8, stale_json, "\"lock\":\"stale\"") != null);
+    try testing.expect(std.mem.indexOf(u8, stale_json, "\"features\":") == null);
 }
 
 test "prepareForExecution は lock と .nako 環境を自動準備する" {
@@ -402,7 +479,7 @@ test "init --lib の雛形はコンパイルできテストも通る" {
     const test_file = try std.fs.path.join(a, &.{ proj_root, "tests", "lib_test.nako3" });
     var test_out: std.Io.Writer.Allocating = .init(a);
     var test_err: std.Io.Writer.Allocating = .init(a);
-    const ok = try test_command.runTestTarget(a, io, test_file, .{}, &test_out.writer, &test_err.writer);
+    const ok = try test_command.runTestTarget(a, io, test_file, .{}, .warn, &test_out.writer, &test_err.writer);
     try testing.expect(ok);
 }
 
@@ -432,7 +509,7 @@ test "runTestTarget は .nako/.git に降りず管理 dir の中身を走査し�
     const tests_root = try temporary.dir.realPathFileAlloc(io, "tests", a);
     var stdout: std.Io.Writer.Allocating = .init(a);
     var stderr: std.Io.Writer.Allocating = .init(a);
-    const ok = try test_command.runTestTarget(a, io, tests_root, .{}, &stdout.writer, &stderr.writer);
+    const ok = try test_command.runTestTarget(a, io, tests_root, .{}, .warn, &stdout.writer, &stderr.writer);
     try testing.expect(ok);
     try testing.expect(std.mem.indexOf(u8, stdout.written(), "ok_test.nako3") != null);
     try testing.expect(std.mem.indexOf(u8, stdout.written(), "bad.nako3") == null);
@@ -1193,4 +1270,83 @@ test "inputDir は directory symlink の実体側 dir を返す" {
 
     const dir = try project_cmd.inputDir(a, io, link_abs);
     try testing.expectEqualStrings(target_abs, dir);
+}
+
+/// テスト用に path の mode を変更する（POSIX のみ）。
+fn chmodMode(a: std.mem.Allocator, path: []const u8, mode: u32) !void {
+    const mode_text = try std.fmt.allocPrint(a, "{o}", .{mode});
+    defer a.free(mode_text);
+    const result = try std.process.run(a, io, .{ .argv = &.{ "/bin/chmod", mode_text, path } });
+    defer a.free(result.stdout);
+    defer a.free(result.stderr);
+    switch (result.term) {
+        .exited => |code| if (code != 0) return error.TestUnexpectedResult,
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "check は共有 writable を --strict-project-trust で拒否し既定は警告して続行する" {
+    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const app_root = try newAppFixture(a, &temporary);
+    // group/other 書込み可の共有 writable なプロジェクトにする。
+    try chmodMode(a, app_root, 0o777);
+    defer chmodMode(a, app_root, 0o755) catch {};
+
+    // 既定（warn）は警告を stderr へ出して検査を続行する。
+    var warn_cli = Cli.init(a);
+    try warn_cli.run(a, "check", &.{}, app_root);
+    try testing.expect(std.mem.indexOf(u8, warn_cli.err.written(), "警告") != null);
+    try testing.expect(std.mem.indexOf(u8, warn_cli.out.written(), "nako.toml: OK") != null);
+
+    // --no-project-trust-warning は警告を出さず続行する。
+    var ignore_cli = Cli.init(a);
+    try ignore_cli.run(a, "check", &.{"--no-project-trust-warning"}, app_root);
+    try testing.expect(std.mem.indexOf(u8, ignore_cli.err.written(), "警告") == null);
+    try testing.expect(std.mem.indexOf(u8, ignore_cli.out.written(), "nako.toml: OK") != null);
+
+    // --strict-project-trust は共有 writable を拒否する。
+    var strict_cli = Cli.init(a);
+    try expectFail(error.Failed, a, &strict_cli, "check", &.{"--strict-project-trust"}, app_root);
+    try testing.expect(std.mem.indexOf(u8, strict_cli.err.written(), "書き込み権限") != null);
+
+    // 環境変数でも同じ扱いになる（enforce は拒否、ignore は無警告）。
+    var env_strict = Cli.init(a);
+    try env_strict.env.put("LNAKO_PROJECT_TRUST", "enforce");
+    try expectFail(error.Failed, a, &env_strict, "check", &.{}, app_root);
+    try testing.expect(std.mem.indexOf(u8, env_strict.err.written(), "書き込み権限") != null);
+
+    var env_ignore = Cli.init(a);
+    try env_ignore.env.put("LNAKO_PROJECT_TRUST", "ignore");
+    try env_ignore.run(a, "check", &.{}, app_root);
+    try testing.expect(std.mem.indexOf(u8, env_ignore.err.written(), "警告") == null);
+    try testing.expect(std.mem.indexOf(u8, env_ignore.out.written(), "nako.toml: OK") != null);
+
+    // `.nako` が無い fresh clone でも既存 nako.lock の共有 writable を検査する
+    //（check は環境の有無に関係なく lock を読む）。
+    try chmodMode(a, app_root, 0o755);
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/nako.lock", .data = "{\"schemaVersion\":1}" });
+    const lock_abs = try std.fs.path.join(a, &.{ app_root, "nako.lock" });
+    try chmodMode(a, lock_abs, 0o666);
+    var lock_cli = Cli.init(a);
+    try expectFail(error.Failed, a, &lock_cli, "check", &.{"--strict-project-trust"}, app_root);
+    try testing.expect(std.mem.indexOf(u8, lock_cli.err.written(), "書き込み権限") != null);
+    // `.nako` ケースを lock 経路から分離するため、lock を安全な mode へ戻す。
+    try chmodMode(a, lock_abs, 0o644);
+
+    // `.nako` 配下の共有 writable も検査する（check は .nako を読む）。
+    try temporary.dir.createDirPath(io, "app/.nako");
+    const nako_dir = try std.fs.path.join(a, &.{ app_root, ".nako" });
+    try chmodMode(a, nako_dir, 0o777);
+    var nako_cli = Cli.init(a);
+    try expectFail(error.Failed, a, &nako_cli, "check", &.{"--strict-project-trust"}, app_root);
+    try testing.expect(std.mem.indexOf(u8, nako_cli.err.written(), "書き込み権限") != null);
+
+    // 同時指定は用法エラー。
+    var both_cli = Cli.init(a);
+    try expectFail(error.Usage, a, &both_cli, "check", &.{ "--strict-project-trust", "--no-project-trust-warning" }, app_root);
 }

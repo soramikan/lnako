@@ -2419,6 +2419,7 @@
   {
     "id": "native-system-timers",
     "oracle": "official-source",
+    "timerScale": 100,
     "commands": [
       "秒後",
       "秒毎",
