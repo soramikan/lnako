@@ -70,10 +70,23 @@ const TargetResolution = union(enum) {
 /// 配列 fallback で最後に観測した例外種別（Node の lastException 相当）。
 const TargetException = enum { invalid, excluded };
 
+/// `exports` の再帰評価に許す最大深度。悪意ある深い配列/条件オブジェクトで
+/// スタックを使い切らないための上限（JSON 1 MiB の範囲でも十分）。
+const max_exports_depth: usize = 64;
+/// wildcard 置換後の target 長の上限。`*` を多数含む target と長い一致部分で
+/// ファイル存在確認前に巨大なメモリを確保しないための上限。
+const max_export_target_bytes: usize = 1024 * 1024;
+
 /// wildcard 置換の文脈。`matched` は `*` に置換する文字列で、パターン
-/// キーでない場合は null（target 内の `*` を置換しない）。
+/// キーでない場合は null（target 内の `*` を置換しない）。`depth` は
+/// `exports` の再帰深度。
 const TargetContext = struct {
     matched: ?[]const u8 = null,
+    depth: usize = 0,
+
+    fn next(self: TargetContext) TargetContext {
+        return .{ .matched = self.matched, .depth = self.depth + 1 };
+    }
 };
 
 /// `package.json` から選んだ root 入口。
@@ -158,11 +171,12 @@ fn resolveExportsRoot(gpa: Allocator, exports_v: std.json.Value) Error!TargetRes
 }
 
 fn resolveTarget(gpa: Allocator, value: std.json.Value, ctx: TargetContext) Error!TargetResolution {
+    if (ctx.depth > max_exports_depth) return error.PackageJsonInvalid;
     return switch (value) {
         .null => .excluded,
         .string => |target| resolveTargetString(gpa, target, ctx),
-        .array => |arr| resolveTargetArray(gpa, arr.items, ctx),
-        .object => |obj| resolveTargetObject(gpa, obj, ctx),
+        .array => |arr| resolveTargetArray(gpa, arr.items, ctx.next()),
+        .object => |obj| resolveTargetObject(gpa, obj, ctx.next()),
         // Node は string / array / null / object 以外の target を
         // ERR_INVALID_PACKAGE_TARGET にする（真偽値・数値）。
         else => .invalid,
@@ -230,12 +244,24 @@ fn resolveTargetArray(gpa: Allocator, items: []const std.json.Value, ctx: Target
 }
 
 fn resolveTargetString(gpa: Allocator, target: []const u8, ctx: TargetContext) Error!TargetResolution {
-    // パターンキーのときだけ `*` を置換する。target 内の複数 `*` は
-    // Node と同じくすべて同じ matched で置換する。
-    const substituted = if (ctx.matched) |matched|
-        std.mem.replaceOwned(u8, gpa, target, "*", matched) catch return error.OutOfMemory
-    else
-        gpa.dupe(u8, target) catch return error.OutOfMemory;
+    if (ctx.matched) |matched| {
+        // target の template 自体が不正なら target エラーを確定する
+        // （Node の PACKAGE_TARGET_RESOLVE と同じ順序）。置換で新たに入る
+        // 文字列は matched 側の責任なので、ここでは template だけを見て、
+        // 置換後の包含検証は呼出し側の matchedSubpathIsSafe に委ねる。
+        if (!exportTargetIsContained(target)) return .invalid;
+        // 置換後の長さを確保前に計算し、上限を超える入力を拒否する
+        // （メモリ枯渇対策）。target 内の複数 `*` はすべて置換する。
+        const stars = std.mem.count(u8, target, "*");
+        if (stars > 0) {
+            const base = target.len - stars;
+            const expansion = std.math.mul(usize, stars, matched.len) catch return error.InvalidSpecifier;
+            const total = std.math.add(usize, base, expansion) catch return error.InvalidSpecifier;
+            if (total > max_export_target_bytes) return error.InvalidSpecifier;
+        }
+        return .{ .target = std.mem.replaceOwned(u8, gpa, target, "*", matched) catch return error.OutOfMemory };
+    }
+    const substituted = gpa.dupe(u8, target) catch return error.OutOfMemory;
     if (!exportTargetIsContained(substituted)) {
         gpa.free(substituted);
         return .invalid;
@@ -253,11 +279,10 @@ fn pickExportsSubpath(gpa: Allocator, exports_v: std.json.Value, subpath: []cons
     };
     const want = try std.fmt.allocPrint(gpa, "./{s}", .{subpath});
     defer gpa.free(want);
-    // Node は subpath に `*` を含む場合 exact 一致をスキップしてパターン解決へ
-    // 回す（`*` を literal キーとして一致させない）。
-    if (std.mem.indexOfScalar(u8, want, '*') == null) {
-        if (obj.get(want)) |target| return resolveTarget(gpa, target, .{});
-    }
+    // Node は specifier に `*` を含んでいても、まず literal キーの完全一致を
+    // 見る（ObjectPrototypeHasOwnProperty）。`"./a*b"` と `"./a*"` が併存する
+    // 場合、`pkg/a*b` は exact 側で解決される。
+    if (obj.get(want)) |target| return resolveTarget(gpa, target, .{});
 
     var best_key: ?[]const u8 = null;
     var best_prefix_len: usize = 0;
@@ -286,14 +311,34 @@ fn pickExportsSubpath(gpa: Allocator, exports_v: std.json.Value, subpath: []cons
     const key = best_key orelse return .unresolved;
     const target = obj.get(key) orelse return .unresolved;
     // Node は `null` target を一致部分の検証より先に確定する（非公開）。
-    // `pkg/node_modules/x` と `"./*": null` の組合せは NOT_EXPORTED。
-    if (target == .null) return .excluded;
+    // `pkg/node_modules/x` と `"./*": null` / `{"import": null}` の組合せは
+    // NOT_EXPORTED（InvalidSpecifier ではない）。
     const suffix_len = key.len - best_prefix_len - 1;
     const matched = want[best_prefix_len .. want.len - suffix_len];
-    // 一致部分は specifier 側の入力。target とは別に検査し、不正なら配列
-    // fallback でも後続候補へ進まない（Node はエラー確定）。
-    if (!matchedSubpathIsSafe(matched)) return error.InvalidSpecifier;
-    return resolveTarget(gpa, target, .{ .matched = matched });
+    const resolution = try resolveTarget(gpa, target, .{ .matched = matched });
+    switch (resolution) {
+        .excluded => return .excluded,
+        .invalid => {
+            // target 自体が不正なら、一致部分の検証より先に target エラーを
+            // 確定する（Node の PACKAGE_TARGET_RESOLVE と同じ順序）。
+            return .invalid;
+        },
+        .unresolved => {
+            // target は未解決でも、一致部分が specifier として不正なら
+            // Node は ERR_INVALID_MODULE_SPECIFIER を返す。
+            if (!matchedSubpathIsSafe(matched)) return error.InvalidSpecifier;
+            return .unresolved;
+        },
+        .target => |substituted| {
+            // 一致部分は specifier 側の入力。target とは別に検査し、不正なら
+            // 配列 fallback でも後続候補へ進まない（Node はエラー確定）。
+            if (!matchedSubpathIsSafe(matched)) {
+                gpa.free(substituted);
+                return error.InvalidSpecifier;
+            }
+            return resolution;
+        },
+    }
 }
 
 /// wildcard の一致部分（specifier 由来）が安全か検証する。`..` / `.` /
@@ -1697,11 +1742,9 @@ test "pickExportsSubpath resolves star in specifier via pattern" {
     defer parsed.deinit();
     const exports_v = parsed.value.object.get("exports").?;
 
-    // Node は specifier に `*` を含む場合 exact 一致をスキップし、パターンと
-    // して解決する（matched は literal な `*` を含み得る）。
-    // ファイルシステム上で `*` を含む名は Windows で作れないため、
-    // 解決結果の文字列で検証する。`*` を含むキーは exact 一致してもパターン
-    // 一致しても同じ結果になるため、この検査は pattern 経路の固定が目的。
+    // exact キーが無いためパターンに落ちる。matched は literal な `*` を
+    // 含み得る（ファイルシステム上で `*` を含む名は Windows で作れないため、
+    // 解決結果の文字列で検証する）。
     switch (try pickExportsSubpath(gpa, exports_v, "a*b")) {
         .target => |target| {
             defer gpa.free(target);
@@ -1709,6 +1752,60 @@ test "pickExportsSubpath resolves star in specifier via pattern" {
         },
         else => return error.TestUnexpectedResult,
     }
+}
+
+test "pickExportsSubpath は specifier の * でも exact キーを優先する" {
+    const gpa = testing.allocator;
+    var parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        gpa,
+        \\{"exports":{"./a*b":"./literal.js","./a*":"./wild/*.js"}}
+    ,
+        .{},
+    );
+    defer parsed.deinit();
+    const exports_v = parsed.value.object.get("exports").?;
+    switch (try pickExportsSubpath(gpa, exports_v, "a*b")) {
+        .target => |target| {
+            defer gpa.free(target);
+            try testing.expectEqualStrings("./literal.js", target);
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "pickExportsSubpath は target 不正を一致部分の不正より先に返す" {
+    const gpa = testing.allocator;
+    var parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        gpa,
+        \\{"exports":{"./*":"../evil.js"}}
+    ,
+        .{},
+    );
+    defer parsed.deinit();
+    const exports_v = parsed.value.object.get("exports").?;
+    // Node 実測: ERR_INVALID_PACKAGE_TARGET（一致部分の node_modules より先）。
+    switch (try pickExportsSubpath(gpa, exports_v, "node_modules/x")) {
+        .invalid => {},
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "pickExportsSubpath は未解決 target でも不正な一致部分を拒否する" {
+    const gpa = testing.allocator;
+    var parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        gpa,
+        \\{"exports":{"./*":{"node":"./x.js"}}}
+    ,
+        .{},
+    );
+    defer parsed.deinit();
+    const exports_v = parsed.value.object.get("exports").?;
+    // node 条件は暗黙有効にしないため unresolved。ただし一致部分が
+    // node_modules なので Node は ERR_INVALID_MODULE_SPECIFIER。
+    try testing.expectError(error.InvalidSpecifier, pickExportsSubpath(gpa, exports_v, "node_modules/x"));
 }
 
 test "BareRegistry resolveBare null target precedes specifier validation" {
@@ -1873,4 +1970,132 @@ test "BareRegistry buildFromInstances keeps other packages when one is invalid" 
     const root = try reg.resolveBare("ok");
     defer root.deinit(gpa);
     try testing.expect(std.mem.endsWith(u8, root.path, "index.js"));
+}
+
+test "package.json の深い exports ネストは PackageJsonInvalid" {
+    const gpa = testing.allocator;
+    var json: std.ArrayListUnmanaged(u8) = .empty;
+    defer json.deinit(gpa);
+    try json.appendSlice(gpa, "{\"exports\":");
+    var i: usize = 0;
+    while (i < max_exports_depth + 4) : (i += 1) try json.append(gpa, '[');
+    try json.appendSlice(gpa, "\"./index.js\"");
+    i = 0;
+    while (i < max_exports_depth + 4) : (i += 1) try json.append(gpa, ']');
+    try json.append(gpa, '}');
+    try testing.expectError(error.PackageJsonInvalid, pickEntryFromPackageJson(gpa, json.items));
+}
+
+test "BareRegistry resolveBare は過大な wildcard 展開を確保前に拒否する" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "pkg");
+    var json: std.ArrayListUnmanaged(u8) = .empty;
+    defer json.deinit(gpa);
+    try json.appendSlice(gpa, "{\"exports\":{\"./*\":\"./");
+    var i: usize = 0;
+    while (i < 100) : (i += 1) try json.appendSlice(gpa, "x*");
+    try json.appendSlice(gpa, "\"}}");
+    try tmp.dir.writeFile(io, .{ .sub_path = "pkg/package.json", .data = json.items });
+    const root = try tmp.dir.realPathFileAlloc(io, "pkg", gpa);
+    defer gpa.free(root);
+    var reg: BareRegistry = .{ .gpa = gpa, .io = io };
+    defer reg.deinit();
+    const name = try gpa.dupe(u8, "left-pad");
+    const package_root = try gpa.dupe(u8, root);
+    try reg.by_name.put(gpa, name, .{ .package_root = package_root, .root_path = null });
+
+    const long = try gpa.alloc(u8, 20_000);
+    defer gpa.free(long);
+    @memset(long, 'a');
+    const spec = try std.fmt.allocPrint(gpa, "left-pad/{s}", .{long});
+    defer gpa.free(spec);
+    try testing.expectError(error.InvalidSpecifier, reg.resolveBare(spec));
+}
+
+test "BareRegistry resolveBare は null target を一致部分検証より優先する" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "pkg");
+    const json =
+        \\{"exports":{"./*":{"import":null}}}
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "pkg/package.json", .data = json });
+    const root = try tmp.dir.realPathFileAlloc(io, "pkg", gpa);
+    defer gpa.free(root);
+    var reg: BareRegistry = .{ .gpa = gpa, .io = io };
+    defer reg.deinit();
+    const name = try gpa.dupe(u8, "left-pad");
+    const package_root = try gpa.dupe(u8, root);
+    try reg.by_name.put(gpa, name, .{ .package_root = package_root, .root_path = null });
+
+    // 一致部分は node_modules だが、target が null（非公開）なので
+    // InvalidSpecifier ではなく BareNotFound。
+    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/node_modules/x"));
+}
+
+test "package.json の exports 深度は境界ちょうどまで受理する" {
+    const gpa = testing.allocator;
+    // 64 段の配列ネスト（最深の文字列は depth 64）は受理する。
+    var ok: std.ArrayListUnmanaged(u8) = .empty;
+    defer ok.deinit(gpa);
+    try ok.appendSlice(gpa, "{\"exports\":");
+    var i: usize = 0;
+    while (i < max_exports_depth) : (i += 1) try ok.append(gpa, '[');
+    try ok.appendSlice(gpa, "\"./index.js\"");
+    i = 0;
+    while (i < max_exports_depth) : (i += 1) try ok.append(gpa, ']');
+    try ok.append(gpa, '}');
+    var entry = (try pickEntryFromPackageJson(gpa, ok.items)) orelse return error.TestUnexpectedResult;
+    defer entry.deinit(gpa);
+    try testing.expectEqualStrings("./index.js", entry.target);
+
+    // 65 段は PackageJsonInvalid。
+    var too_deep: std.ArrayListUnmanaged(u8) = .empty;
+    defer too_deep.deinit(gpa);
+    try too_deep.appendSlice(gpa, "{\"exports\":");
+    i = 0;
+    while (i < max_exports_depth + 1) : (i += 1) try too_deep.append(gpa, '[');
+    try too_deep.appendSlice(gpa, "\"./index.js\"");
+    i = 0;
+    while (i < max_exports_depth + 1) : (i += 1) try too_deep.append(gpa, ']');
+    try too_deep.append(gpa, '}');
+    try testing.expectError(error.PackageJsonInvalid, pickEntryFromPackageJson(gpa, too_deep.items));
+}
+
+test "BareRegistry resolveBare は * 入り specifier でも exact キーを優先する" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = testing.io;
+    const json =
+        \\{"exports":{".":"./index.js","./a*b":"./literal.mjs","./*":"./wild/*.mjs"}}
+    ;
+    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
+        .{ .path = "literal.mjs", .data = "export default 1;\n" },
+        .{ .path = "wild/a*b.mjs", .data = "export default 2;\n" },
+    });
+    defer reg.deinit();
+    const got = try reg.resolveBare("left-pad/a*b");
+    defer got.deinit(gpa);
+    try testing.expect(std.mem.endsWith(u8, got.path, "literal.mjs"));
+}
+
+test "BareRegistry resolveBare は exact キーの不正 target を pattern へ fallback しない" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = testing.io;
+    const json =
+        \\{"exports":{".":"./index.js","./a*b":"../evil.js","./*":"./wild/*.mjs"}}
+    ;
+    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
+        .{ .path = "wild/a*b.mjs", .data = "export default 2;\n" },
+    });
+    defer reg.deinit();
+    try testing.expectError(error.PackageJsonInvalid, reg.resolveBare("left-pad/a*b"));
 }
