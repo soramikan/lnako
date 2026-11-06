@@ -991,6 +991,13 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
     // グラフを指し続ける状態を「同期済み」と案内しない）。
     if (inspect.lock_state != .fresh or !inspect.environment_current) try needed.append(a, "lnako sync");
 
+    // feature 影響は環境 graph の root 依存と突き合わせて求める。lock が
+    // 現行 manifest と選択フラグに一致する（fresh）ときだけ、選択と環境が
+    // 同じ入力であることを保証できるため、stale 中は出さない（前回選択で
+    // materialize された graph を現行選択の結果として見せない）。
+    const feature_manifest: ?*const manifest_mod.Manifest =
+        if (inspect.lock_state == .fresh) &project_var.manifest else null;
+
     // 命令 metadata 静的検査。環境が current のときのみ（stale/missing は
     // 索引が信頼できないため skipped）。
     var command_report = lnako.package.command_inspect.Report{
@@ -1006,8 +1013,7 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
             project_var.root_dir,
             .{
                 .strict_sharing = flags.strict_sharing,
-                // feature 影響は manifest と選択フラグだけで決まる。
-                .manifest = &project_var.manifest,
+                .manifest = feature_manifest,
                 .features = .{
                     .requested = flags.features.items,
                     .use_default_features = !flags.no_default_features,

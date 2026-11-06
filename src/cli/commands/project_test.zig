@@ -266,6 +266,15 @@ test "check は選択 feature の専用依存と推移依存を JSON と本文�
     try testing.expect(std.mem.indexOf(u8, text, "feature 影響: 選択=[default, with-extra]") != null);
     try testing.expect(std.mem.indexOf(u8, text, "共通依存: common") != null);
     try testing.expect(std.mem.indexOf(u8, text, "専用依存: with-extra → extra") != null);
+
+    // 環境は with-extra 選択で作られているため、別の選択で check すると
+    // lock は stale（再 sync が必要）になる。前回選択の graph を現行選択の
+    // 結果として見せないよう、feature 影響は出さない。
+    var stale_cli = Cli.init(a);
+    try stale_cli.run(a, "check", &.{ "--json", "--no-default-features" }, app_root);
+    const stale_json = stale_cli.out.written();
+    try testing.expect(std.mem.indexOf(u8, stale_json, "\"lock\":\"stale\"") != null);
+    try testing.expect(std.mem.indexOf(u8, stale_json, "\"features\":") == null);
 }
 
 test "prepareForExecution は lock と .nako 環境を自動準備する" {
