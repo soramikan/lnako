@@ -6,6 +6,8 @@ const fetch = @import("fetch.zig");
 const lock_model = @import("lock_model.zig");
 const manifest_mod = @import("manifest.zig");
 const project = @import("project.zig");
+const sync_mod = @import("sync.zig");
+const npm_env = @import("npm_env.zig");
 
 fn writeLibPackage(dir: std.Io.Dir, io: std.Io, root: []const u8, name: []const u8) !void {
     const manifest_path = try std.fs.path.join(testing.allocator, &.{ root, "nako.toml" });
@@ -417,6 +419,249 @@ test "npm依存はcatalogからlockへnpmInstancesを載せる" {
         }
     }
     try testing.expect(found);
+}
+
+/// `.nako/current` に記録された現行世代名（前後の改行を除去して複製）。
+fn currentGenerationUnder(temporary: *std.testing.TmpDir, root_rel: []const u8, gpa: std.mem.Allocator) ![]u8 {
+    const path = try std.fmt.allocPrint(gpa, "{s}/.nako/current", .{root_rel});
+    defer gpa.free(path);
+    const bytes = try temporary.dir.readFileAlloc(testing.io, path, gpa, .limited(4096));
+    defer gpa.free(bytes);
+    return try gpa.dupe(u8, std.mem.trim(u8, bytes, " \t\r\n"));
+}
+
+test "syncはlockのnpmInstancesを世代npm/へmaterializeする" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app");
+    try temporary.dir.createDirPath(io, "cache");
+    try temporary.dir.createDirPath(io, "empty-cache");
+    try temporary.dir.writeFile(io, .{
+        .sub_path = "app/nako.toml",
+        .data =
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.npm]
+        \\escape = "^1.0.0"
+        \\
+        ,
+    });
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", gpa);
+    defer gpa.free(app_root);
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", gpa);
+    defer gpa.free(cache_root);
+    const empty_cache_root = try temporary.dir.realPathFileAlloc(io, "empty-cache", gpa);
+    defer gpa.free(empty_cache_root);
+
+    const npm_mod = @import("npm.zig");
+    // 非 gzip fixture は cache/materialize で `blob` として扱われる。
+    const body = try gpa.dupe(u8, "escape-tarball");
+    defer gpa.free(body);
+    const integ = try npm_mod.integritySha512(gpa, body);
+    defer gpa.free(integ);
+    var cat: npm_mod.Catalog = .{};
+    defer cat.deinit(gpa);
+    const versions = try gpa.alloc(npm_mod.VersionMeta, 1);
+    defer gpa.free(versions);
+    versions[0] = .{
+        .version = "1.2.3",
+        .tarball_url = "fixture://escape-1.2.3.tgz",
+        .integrity = integ,
+        .tarball_bytes = body,
+    };
+    try cat.put(gpa, .{ .name = "escape", .versions = versions });
+
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var loaded = try project.load(gpa, io, app_root, &diagnostics);
+    defer loaded.deinit();
+    var outcome = try project.ensureLock(gpa, io, &loaded, &.{ .cache_root = cache_root, .npm_catalog = &cat }, &diagnostics);
+    defer outcome.deinit();
+    try testing.expect(outcome.wrote);
+
+    var locked: ?lock_model.NpmInstance = null;
+    for (outcome.lock.packages) |pkg| {
+        if (pkg.npm_instances.len > 0) locked = pkg.npm_instances[0];
+    }
+    const instance = locked orelse return error.TestUnexpectedResult;
+    try testing.expectEqualStrings("escape@1.2.3", instance.key);
+    try testing.expect(instance.sha256 != null);
+
+    // sync は ensureLock を再実行しない。lock と cache だけで materialize する。
+    var first_list = newDiagnostics();
+    defer first_list.deinit();
+    var first = try sync_mod.run(gpa, io, .{ .project_root = app_root, .cache_root = cache_root }, &first_list);
+    defer first.deinit();
+
+    const dir_name = try npm_env.instanceDirName(gpa, instance);
+    defer gpa.free(dir_name);
+    const generation = try currentGenerationUnder(&temporary, "app", gpa);
+    defer gpa.free(generation);
+    const blob_rel = try std.fmt.allocPrint(gpa, "app/.nako/env/{s}/deps/{s}/blob", .{ generation, dir_name });
+    defer gpa.free(blob_rel);
+    const blob = try temporary.dir.readFileAlloc(io, blob_rel, gpa, .unlimited);
+    defer gpa.free(blob);
+    try testing.expectEqualStrings("escape-tarball", blob);
+
+    // 再同期でも instance key から同じ dir 名を再導出でき、tree が作り直される。
+    var second_list = newDiagnostics();
+    defer second_list.deinit();
+    var second = try sync_mod.run(gpa, io, .{ .project_root = app_root, .cache_root = cache_root }, &second_list);
+    defer second.deinit();
+    const generation_again = try currentGenerationUnder(&temporary, "app", gpa);
+    defer gpa.free(generation_again);
+    const blob_rel_again = try std.fmt.allocPrint(gpa, "app/.nako/env/{s}/deps/{s}/blob", .{ generation_again, dir_name });
+    defer gpa.free(blob_rel_again);
+    try temporary.dir.access(io, blob_rel_again, .{});
+
+    // cache に tarball が無い場合、sync は取得せず診断付きで失敗する。
+    var miss_list = newDiagnostics();
+    defer miss_list.deinit();
+    try testing.expectError(error.NotFound, sync_mod.run(gpa, io, .{ .project_root = app_root, .cache_root = empty_cache_root }, &miss_list));
+    try testing.expect(miss_list.errorCount() > 0);
+}
+
+test "syncはnpm instance dir名と衝突するpackage dirを退避する" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app/lib/src");
+    try temporary.dir.createDirPath(io, "cache");
+
+    // npm instance `escape@1.2.3` が使う dir 名を先に計算する。manifest の
+    // package 名は `[a-z0-9-]` に限られるため `_` は manifest 経由では作れ
+    // ないが、lock は外部生成され得る入力で、その名を検証していない。
+    // ここでは lock 上だけ npm instance 保持 entry の名前を差し替え、
+    // 世代 `deps/` 直下の衝突を再現する。
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash("escape@1.2.3", &digest, .{});
+    const hex = std.fmt.bytesToHex(digest, .lower);
+    const collision_name = try std.fmt.allocPrint(gpa, "npm_escape-1-2-3-{s}", .{hex[0..12]});
+    defer gpa.free(collision_name);
+
+    const lib_manifest = try std.fmt.allocPrint(gpa,
+        \\[package]
+        \\name = "lib"
+        \\version = "1.0.0"
+        \\license = "MIT"
+        \\
+        \\[[exports]]
+        \\name = "lib"
+        \\path = "src/index.nako3"
+        \\
+    , .{});
+    defer gpa.free(lib_manifest);
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/lib/nako.toml", .data = lib_manifest });
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/lib/src/index.nako3", .data = "●表示とは\nここまで\n" });
+
+    const manifest_text = try std.fmt.allocPrint(gpa,
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\lib = {{ path = "lib" }}
+        \\
+        \\[dependencies.npm]
+        \\escape = "^1.0.0"
+        \\
+    , .{});
+    defer gpa.free(manifest_text);
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/nako.toml", .data = manifest_text });
+
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", gpa);
+    defer gpa.free(app_root);
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", gpa);
+    defer gpa.free(cache_root);
+
+    const npm_mod = @import("npm.zig");
+    const body = try gpa.dupe(u8, "escape-tarball");
+    defer gpa.free(body);
+    const integ = try npm_mod.integritySha512(gpa, body);
+    defer gpa.free(integ);
+    var cat: npm_mod.Catalog = .{};
+    defer cat.deinit(gpa);
+    const versions = try gpa.alloc(npm_mod.VersionMeta, 1);
+    defer gpa.free(versions);
+    versions[0] = .{
+        .version = "1.2.3",
+        .tarball_url = "fixture://escape-1.2.3.tgz",
+        .integrity = integ,
+        .tarball_bytes = body,
+    };
+    try cat.put(gpa, .{ .name = "escape", .versions = versions });
+
+    var diagnostics = newDiagnostics();
+    defer diagnostics.deinit();
+    var loaded = try project.load(gpa, io, app_root, &diagnostics);
+    defer loaded.deinit();
+    var outcome = try project.ensureLock(gpa, io, &loaded, &.{ .cache_root = cache_root, .npm_catalog = &cat }, &diagnostics);
+    defer outcome.deinit();
+    try testing.expect(outcome.wrote);
+
+    // npm instance を保持する entry（root carrier）の名前だけを lock 上で
+    // collision_name へ差し替える。identity 検査は manifest を持つ entry に
+    // だけ掛かるため、implementation "none" の entry はこの入力を受け付ける。
+    {
+        const a = outcome.lock.arena.allocator();
+        const packages = try a.alloc(lock_model.PackageEntry, outcome.lock.packages.len);
+        @memcpy(packages, outcome.lock.packages);
+        for (packages) |*entry| {
+            if (entry.npm_instances.len > 0) entry.name = collision_name;
+        }
+        outcome.lock.packages = packages;
+        if (outcome.lock.profile_packages.len > 0) {
+            const profiles = try a.alloc(lock_model.ProfilePackages, outcome.lock.profile_packages.len);
+            @memcpy(profiles, outcome.lock.profile_packages);
+            for (profiles) |*profile| {
+                const list = try a.alloc(lock_model.PackageEntry, profile.packages.len);
+                @memcpy(list, profile.packages);
+                for (list) |*entry| {
+                    if (entry.npm_instances.len > 0) entry.name = collision_name;
+                }
+                profile.packages = list;
+            }
+            outcome.lock.profile_packages = profiles;
+        }
+    }
+    const craft_bytes = try lock_model.toBytes(&outcome.lock, gpa);
+    defer gpa.free(craft_bytes);
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/nako.lock", .data = craft_bytes });
+
+    var sync_diag = newDiagnostics();
+    defer sync_diag.deinit();
+    var synced = try sync_mod.run(gpa, io, .{ .project_root = app_root, .cache_root = cache_root }, &sync_diag);
+    defer synced.deinit();
+
+    // npm 側は導出した dir 名そのまま、package 側は衝突を避けて退避される。
+    const generation = try currentGenerationUnder(&temporary, "app", gpa);
+    defer gpa.free(generation);
+    const npm_blob_rel = try std.fmt.allocPrint(gpa, "app/.nako/env/{s}/deps/{s}/blob", .{ generation, collision_name });
+    defer gpa.free(npm_blob_rel);
+    const npm_blob = try temporary.dir.readFileAlloc(io, npm_blob_rel, gpa, .unlimited);
+    defer gpa.free(npm_blob);
+    try testing.expectEqualStrings("escape-tarball", npm_blob);
+
+    // 退避された空 package dir は npm tree と別に残る。
+    const package_dir = try std.fmt.allocPrint(gpa, "{s}-2", .{collision_name});
+    defer gpa.free(package_dir);
+    const package_rel = try std.fmt.allocPrint(gpa, "app/.nako/env/{s}/deps/{s}", .{ generation, package_dir });
+    defer gpa.free(package_rel);
+    try temporary.dir.access(io, package_rel, .{});
+
+    // 衝突と無関係な path 依存は通常どおり実体化される。
+    const lib_rel = try std.fmt.allocPrint(gpa, "app/.nako/env/{s}/deps/lib/src/index.nako3", .{generation});
+    defer gpa.free(lib_rel);
+    const lib_bytes = try temporary.dir.readFileAlloc(io, lib_rel, gpa, .unlimited);
+    defer gpa.free(lib_bytes);
+    try testing.expectEqualStrings("●表示とは\nここまで\n", lib_bytes);
 }
 
 test "path依存の循環はDependencyCycleとして診断する" {
