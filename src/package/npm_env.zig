@@ -21,8 +21,9 @@ const unpack = @import("unpack.zig");
 
 const Allocator = std.mem.Allocator;
 
-/// instance dir 名の前置。package 名として有効な文字列は `_` を含めないため、
-/// 世代 `deps/` 直下で package dir（`allocateDepsName`）と衝突しない。
+/// instance dir 名の前置。`npm_` を含む名前は manifest 由来の package dir
+/// （`allocateDepsName`）と衝突し得るため、sync 側は package 採番より前に
+/// この dir 名を予約する（`instanceDirName` を参照）。
 pub const dir_prefix = "npm_";
 /// dir 名に残す instance key の可読部分の上限（byte）。
 const max_readable_bytes: usize = 64;
@@ -171,6 +172,9 @@ fn readVerifiedArchive(
         .{instance.key},
     );
     // `sync --clean` の keep list に載せる（直後に参照 entry を消さない）。
+    // append が OOM しても、呼出し側の `defer free` が張られる前に
+    // bytes を落とさないようここで解放する。
+    errdefer params.gpa.free(bytes);
     try used_keys.append(params.arena, key);
     return bytes;
 }

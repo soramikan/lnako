@@ -332,6 +332,15 @@ pub fn run(
     };
 
     // --- package の取得・検証・materialize ---------------------------------
+    // npm instance の dir 名は package dir 名と同じ `deps/` 直下を共有する。
+    // manifest の package 名は `[a-z0-9-]` に限られ `_` を含まないが、lock は
+    // その検証を経ない外部入力であり、`npm_` 前置だけでは衝突を防げない。
+    // package の採番より先に予約し、双方向の衝突で資産を壊さないようにする。
+    for (entries) |*entry| {
+        for (entry.npm_instances) |instance| {
+            try ctx.used_names.put(arena, try npm_env.instanceDirName(arena, instance), {});
+        }
+    }
     var records = std.ArrayListUnmanaged(environment.PackageRecord).empty;
     for (entries) |*entry| {
         const record_value = prepare.preparePackage(&ctx, entry) catch |err| {
