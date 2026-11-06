@@ -1,0 +1,8 @@
+[package]
+name = "bad"
+version = "1.0.0"
+license = "MIT"
+
+[[exports]]
+name = "main"
+path = "../secret.nako3"

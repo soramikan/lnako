@@ -128,7 +128,11 @@ pub fn run(
                 .o3 => "O3",
             };
             try project_command.prepareForExecution(allocator, io, options.input, &prep, init.environ_map, "build", stderr);
-            var ir_program = (try compiler_pipeline.compileInputTraced(allocator, io, options.input, .{ .compat_js = options.compat_js, .forced_mode = options.forced_mode }, stderr, init.environ_map.get("LNAKO_LLVM_TRACE") != null)) orelse {
+            var ir_program = (try compiler_pipeline.compileInputTraced(allocator, io, options.input, .{
+                .compat_js = options.compat_js,
+                .forced_mode = options.forced_mode,
+                .writable_mode = prep.writableMode(init.environ_map),
+            }, stderr, init.environ_map.get("LNAKO_LLVM_TRACE") != null)) orelse {
                 try stderr.flush();
                 std.process.exit(1);
             };
@@ -198,6 +202,7 @@ pub fn run(
                 std.process.exit(2);
             }
             // ファイル以外の引数を従来どおり dncl 系オプションだけに限定する。
+            // trust フラグは extractPrepFlags が消費済みなので option_args に残らない。
             var option_args: std.ArrayList([]const u8) = .empty;
             defer option_args.deinit(allocator);
             for (check_args, 0..) |argument, i| {
@@ -213,7 +218,10 @@ pub fn run(
                 try stderr.flush();
                 std.process.exit(2);
             };
-            var ir_program = (compiler_pipeline.compileInput(allocator, io, check_file.?, .{ .forced_mode = check_mode }, stderr) catch |err| {
+            var ir_program = (compiler_pipeline.compileInput(allocator, io, check_file.?, .{
+                .forced_mode = check_mode,
+                .writable_mode = check_prep.writableMode(init.environ_map),
+            }, stderr) catch |err| {
                 if (err == error.ConflictingDnclModes) {
                     try stderr.writeAll("check: 拡張子と--dncl/--dncl2が異なるDNCL方言を要求しています\n");
                     try stderr.flush();
@@ -277,7 +285,11 @@ pub fn run(
             // --compat-js は ESM 実装の許容へ効くため解決へ伝える。
             run_prep.compat_js = compat_js;
             try project_command.prepareForExecution(allocator, io, input, &run_prep, init.environ_map, "run", stderr);
-            var ir_program = (compiler_pipeline.compileInput(allocator, io, input, .{ .compat_js = compat_js, .forced_mode = run_mode }, stderr) catch |err| {
+            var ir_program = (compiler_pipeline.compileInput(allocator, io, input, .{
+                .compat_js = compat_js,
+                .forced_mode = run_mode,
+                .writable_mode = run_prep.writableMode(init.environ_map),
+            }, stderr) catch |err| {
                 if (err == error.ConflictingDnclModes) {
                     try stderr.writeAll("run: 拡張子と--dncl/--dncl2が異なるDNCL方言を要求しています\n");
                     try stderr.flush();
@@ -364,7 +376,7 @@ pub fn run(
             };
             // プロジェクト内の入力なら依存環境を自動準備する。
             try project_command.prepareForExecution(allocator, io, input, &test_prep, init.environ_map, "test", stderr);
-            const succeeded = test_command.runTestTarget(allocator, io, input, test_mode, stdout, stderr) catch |err| {
+            const succeeded = test_command.runTestTarget(allocator, io, input, test_mode, test_prep.writableMode(init.environ_map), stdout, stderr) catch |err| {
                 if (err == error.ConflictingDnclModes) {
                     try stderr.writeAll("test: 拡張子と--dncl/--dncl2が異なるDNCL方言を要求しています\n");
                     try stderr.flush();
