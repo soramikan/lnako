@@ -224,6 +224,7 @@ pub fn usage(writer: *std.Io.Writer) !void {
         \\  --profile <name> 使用する profile
         \\  --features <a,b> 有効化する feature（カンマ区切り）
         \\  --registry <url> pkg 依存解決用 registry（既定: LNAKO_REGISTRY）
+        \\  LNAKO_NPM_REGISTRY=<url>  npm packument の取得先（既定: https://registry.npmjs.org）
         \\  --strict-project-trust  共有 writable 配置を拒否（旧既定）
         \\  --no-project-trust-warning  共有 writable の警告を出さない（続行）
         \\  LNAKO_PROJECT_TRUST=warn|enforce|ignore  上記の環境変数版（既定 warn）
