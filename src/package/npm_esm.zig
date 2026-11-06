@@ -279,10 +279,13 @@ fn pickExportsSubpath(gpa: Allocator, exports_v: std.json.Value, subpath: []cons
     };
     const want = try std.fmt.allocPrint(gpa, "./{s}", .{subpath});
     defer gpa.free(want);
-    // Node は specifier に `*` を含んでいても、まず literal キーの完全一致を
-    // 見る（ObjectPrototypeHasOwnProperty）。`"./a*b"` と `"./a*"` が併存する
-    // 場合、`pkg/a*b` は exact 側で解決される。
-    if (obj.get(want)) |target| return resolveTarget(gpa, target, .{});
+    // Node の packageExportsResolve は exact 判定に
+    // `!packageSubpath.includes('*')` を要求する。specifier に `*` を含む
+    // 場合は exact 一致をスキップし、パターン解決へ回す（`*` を含むキーは
+    // パターンとしてのみ評価される）。
+    if (std.mem.indexOfScalar(u8, want, '*') == null) {
+        if (obj.get(want)) |target| return resolveTarget(gpa, target, .{});
+    }
 
     var best_key: ?[]const u8 = null;
     var best_prefix_len: usize = 0;
@@ -1754,7 +1757,7 @@ test "pickExportsSubpath resolves star in specifier via pattern" {
     }
 }
 
-test "pickExportsSubpath は specifier の * でも exact キーを優先する" {
+test "pickExportsSubpath は specifier の * をパターンとして解決する" {
     const gpa = testing.allocator;
     var parsed = try std.json.parseFromSlice(
         std.json.Value,
@@ -2067,7 +2070,7 @@ test "package.json の exports 深度は境界ちょうどまで受理する" {
     try testing.expectError(error.PackageJsonInvalid, pickEntryFromPackageJson(gpa, too_deep.items));
 }
 
-test "BareRegistry resolveBare は * 入り specifier でも exact キーを優先する" {
+test "BareRegistry resolveBare は * 入り specifier をパターンとして解決する" {
     const gpa = testing.allocator;
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -2084,7 +2087,7 @@ test "BareRegistry resolveBare は * 入り specifier でも exact キーを優�
     try testing.expect(std.mem.endsWith(u8, got.path, "literal.mjs"));
 }
 
-test "BareRegistry resolveBare は exact キーの不正 target を pattern へ fallback しない" {
+test "BareRegistry resolveBare は選択パターンの不正 target を他パターンへ fallback しない" {
     const gpa = testing.allocator;
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
