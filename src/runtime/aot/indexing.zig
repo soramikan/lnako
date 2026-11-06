@@ -39,7 +39,31 @@ pub fn indexGet(self: *Runtime, container: Value, key: Value) Value {
     }
     const object = container.object() orelse return .{};
     return switch (object.payload) {
-        .byte_buffer => {
+        .byte_buffer => |buffer| {
+            // Numeric byte indices address the stored byte and need no
+            // property name at all, so answer them before rooting and
+            // materializing the key.  The guards reproduce the reads the
+            // general path below resolves as elements: a single-byte view
+            // kind (a future non-byte view sharing this payload must not
+            // return a raw byte), an index inside the 2^32-2 array-index
+            // range that `tablePropertyIndex` applies to the key text (a
+            // narrower range than `valueIndex` accepts), an index inside the
+            // buffer, no own properties at all (any own property, shadowing
+            // the index or not, sends the read back to the general path; AOT
+            // objects keep every own property in `array_properties`), and a
+            // standard prototype.  That last guard is defensive - a canonical
+            // index never consults the prototype chain - but keeps the fast
+            // path on the plain buffer shape the fallback tests pin.
+            if (valueIndex(key)) |index| {
+                if ((buffer.kind == .buffer or buffer.kind == .uint8_array) and
+                    index <= std.math.maxInt(u32) - 1 and
+                    index < buffer.bytes.len and
+                    aotByteBufferAllowsStandardPrototype(container) and
+                    object.array_properties.entries.items.len == 0)
+                {
+                    return numberValue(@floatFromInt(buffer.bytes[index]));
+                }
+            }
             var rooted = [_]Value{ container, key };
             var frame = RootFrame{};
             self.pushRoots(&frame, &rooted, rooted.len);
