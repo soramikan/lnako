@@ -11,6 +11,8 @@ const std = @import("std");
 const diag = @import("diagnostics.zig");
 const manifest_mod = @import("manifest.zig");
 const project = @import("project.zig");
+const project_discovery = @import("project_discovery.zig");
+const project_trust = @import("project_trust.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -175,5 +177,27 @@ pub fn loadFromDir(gpa: Allocator, io: std.Io, root: []const u8, root_dir: std.I
 pub fn discoverAndLoad(gpa: Allocator, io: std.Io, start_dir: []const u8, diagnostics: *diag.List) Error!?Project {
     const root = (try findRoot(gpa, io, start_dir)) orelse return null;
     defer gpa.free(root);
+    return try load(gpa, io, root, diagnostics);
+}
+
+/// `discoverAndLoad` と同じ探索に、共有 writable の扱い（`mode`）を適用する。
+/// `.enforce` で拒否したときは `error.UntrustedProject` を返す。`.warn` では
+/// `writable_warning` を立てて続行する。path 逸脱は mode に関わらず拒否する。
+pub fn discoverAndLoadWithMode(
+    gpa: Allocator,
+    io: std.Io,
+    start_dir: []const u8,
+    diagnostics: *diag.List,
+    mode: project_trust.WritableMode,
+    writable_warning: ?*bool,
+) Error!?Project {
+    const root = (try findRoot(gpa, io, start_dir)) orelse return null;
+    defer gpa.free(root);
+    const rejected = project_discovery.projectTrustRejected(gpa, io, start_dir, root, mode, writable_warning) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        // 権限・stat の失敗は安全側（拒否）に倒す。
+        else => true,
+    };
+    if (rejected) return error.UntrustedProject;
     return try load(gpa, io, root, diagnostics);
 }

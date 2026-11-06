@@ -51,6 +51,8 @@ pub const Error = error{
     LockedNotSatisfied,
     /// `--no-sync` で環境が不足・lock 不一致。
     MissingEnvironment,
+    /// 共有 writable のプロジェクトを `.enforce` で拒否した。
+    UntrustedProject,
     ResolveFailed,
     DependencyCycle,
     /// pkg 依存があるのに registry base URL が未指定。
@@ -105,6 +107,7 @@ pub const findRoot = project_load.findRoot;
 pub const load = project_load.load;
 pub const loadFromDir = project_load.loadFromDir;
 pub const discoverAndLoad = project_load.discoverAndLoad;
+pub const discoverAndLoadWithMode = project_load.discoverAndLoadWithMode;
 
 // ---------------------------------------------------------------------------
 // profile 選択・target

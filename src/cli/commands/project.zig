@@ -317,6 +317,7 @@ fn projectErrorMessage(err: anyerror) []const u8 {
         error.InvalidLock => "nako.lock が不正または破損しています",
         error.LockedNotSatisfied => "nako.lock が不足・陳腐のため --locked を満たせません",
         error.MissingEnvironment => ".nako 環境が不足・不一致です（`lnako sync` を実行してください）",
+        error.UntrustedProject => "プロジェクトの書き込み権限検証で拒否しました（--strict-project-trust / LNAKO_PROJECT_TRUST=enforce）",
         error.ResolveFailed => "依存解決に失敗しました",
         error.DependencyCycle => "依存が循環しています",
         error.RegistryRequired => "pkg 依存の解決に registry URL が必要です（--registry または LNAKO_REGISTRY）",
@@ -996,9 +997,16 @@ pub fn checkProject(a: Allocator, io: std.Io, args: []const []const u8, start_di
 
     var diagnostics = diag.List.init(a);
     defer diagnostics.deinit();
-    const found = project.discoverAndLoad(a, io, start_dir, &diagnostics) catch |err| {
+    // 共有 writable の扱いは他コマンドと同じフラグ/環境変数で決める。
+    // check は discovery 自体で trust 検査を行い、`.enforce` なら拒否する。
+    var writable_warning = false;
+    const found = project.discoverAndLoadWithMode(a, io, start_dir, &diagnostics, flags.writableMode(environ_map), &writable_warning) catch |err| {
         return failProject(stderr, "check", err, &diagnostics, ".");
     };
+    if (writable_warning) {
+        try stderr.print("警告: プロジェクト配置の書き込み権限が共有されています（停止は --strict-project-trust、非表示は --no-project-trust-warning）: {s}\n", .{start_dir});
+        try stderr.flush();
+    }
     const loaded = found orelse return fail(stderr, "check: このディレクトリはプロジェクトではありません（nako.toml が見つかりません）\n", .{});
     var project_var = loaded;
     defer project_var.deinit();

@@ -121,6 +121,84 @@ pub fn findProjectRootDetailed(
     return null;
 }
 
+/// `check` のように環境の有無へ依存せずプロジェクト root を検証する経路向け。
+/// `start`（探索起点 dir）から `root` までと root の祖先、manifest、存在する
+/// `.nako` 環境の共有 writable を `mode` に従って検査する。`.enforce` で
+/// 拒否したら true。path 逸脱も true（fail closed）。`.warn` では
+/// `writable_warning` を立てて続行する。
+pub fn projectTrustRejected(
+    allocator: Allocator,
+    io: std.Io,
+    start: []const u8,
+    root: []const u8,
+    mode: project_trust.WritableMode,
+    writable_warning: ?*bool,
+) !bool {
+    if (writable_warning) |flag| flag.* = false;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const temporary = arena.allocator();
+    const canonical_start = realPathDirAlloc(temporary, io, start) catch return true;
+    const canonical_root = realPathDirAlloc(temporary, io, root) catch return true;
+
+    const manifest_path = try std.fs.path.join(temporary, &.{ canonical_root, "nako.toml" });
+    const canonical_manifest = std.Io.Dir.cwd().realPathFileAlloc(io, manifest_path, temporary) catch return true;
+    if (!isPathWithin(canonical_root, canonical_manifest)) return true;
+    if (project_trust.shouldRejectWritable(mode, try project_trust.isUnsafeWritablePath(temporary, io, canonical_manifest), writable_warning))
+        return true;
+
+    // importer 側の起点から root までを検査する（root の親は別途祖先検査）。
+    var current: []const u8 = canonical_start;
+    while (true) {
+        if (project_trust.shouldRejectWritable(mode, try project_trust.isUnsafeWritablePath(temporary, io, current), writable_warning))
+            return true;
+        if (std.mem.eql(u8, current, canonical_root)) break;
+        const parent = std.fs.path.dirname(current) orelse return true;
+        if (std.mem.eql(u8, parent, current)) return true;
+        current = parent;
+    }
+
+    // root の親が共有 writable なら root tree を rename 置換できる。
+    if (project_trust.shouldRejectWritable(mode, try project_trust.hasUnsafeWritableAncestors(temporary, io, canonical_root, "/"), writable_warning))
+        return true;
+
+    // 既存の `.nako` 環境は check の読み取り対象なので、あれば同じ基準で検査する。
+    const nako_path = try std.fs.path.join(temporary, &.{ canonical_root, ".nako" });
+    if (std.Io.Dir.cwd().access(io, nako_path, .{})) |_| {
+        const canonical_nako = realPathDirAlloc(temporary, io, nako_path) catch return true;
+        if (!isPathWithin(canonical_root, canonical_nako)) return true;
+        if (project_trust.shouldRejectWritable(mode, try project_trust.isUnsafeWritablePath(temporary, io, canonical_nako), writable_warning))
+            return true;
+        const environment_path = try std.fs.path.join(temporary, &.{ canonical_nako, "environment.json" });
+        if (std.Io.Dir.cwd().access(io, environment_path, .{})) |_| {
+            const canonical_environment = std.Io.Dir.cwd().realPathFileAlloc(io, environment_path, temporary) catch return true;
+            if (!isPathWithin(canonical_nako, canonical_environment)) return true;
+            if (project_trust.shouldRejectWritable(mode, try project_trust.isUnsafeWritablePath(temporary, io, canonical_environment), writable_warning))
+                return true;
+        } else |err| switch (err) {
+            error.FileNotFound => {},
+            else => return err,
+        }
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    }
+
+    // nako.lock は `.nako` の有無に関わらず check が読む（fresh clone でも
+    // 既存 lock を検査する）ため、環境 branch の外で個別に検査する。
+    const lock_path = try std.fs.path.join(temporary, &.{ canonical_root, "nako.lock" });
+    if (std.Io.Dir.cwd().access(io, lock_path, .{})) |_| {
+        const canonical_lock = std.Io.Dir.cwd().realPathFileAlloc(io, lock_path, temporary) catch return true;
+        if (!isPathWithin(canonical_root, canonical_lock)) return true;
+        if (project_trust.shouldRejectWritable(mode, try project_trust.isUnsafeWritablePath(temporary, io, canonical_lock), writable_warning))
+            return true;
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    }
+    return false;
+}
+
 fn isPathWithin(root: []const u8, path: []const u8) bool {
     if (std.mem.eql(u8, root, path)) return true;
     if (path.len <= root.len or !std.mem.startsWith(u8, path, root)) return false;
