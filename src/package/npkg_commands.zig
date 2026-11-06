@@ -70,6 +70,103 @@ pub fn emit(allocator: Allocator, commands: []const Command, writer: *std.Io.Wri
     try writer.writeAll("]}\n");
 }
 
+/// `commands` 配列（commands.json と environment.json の snapshot が同じ形式）の
+/// 写し。`complete` は全要素が v1 の形に適合したか。不正要素は飛ばすが、
+/// 呼出し側が「完全な索引」と誤認しないよう false を返す。
+pub const ParsedList = struct {
+    commands: []const Command = &.{},
+    complete: bool = true,
+};
+
+/// `commands` 配列をモデルへ写す。文字列と配列は `arena` が所有する。
+/// 名前を持たない要素・型違いの要素は飛ばして `complete=false` にする
+/// （環境 snapshot は改竄・破損し得る入力だが、その存在を未検査として扱う）。
+pub fn parseList(arena: Allocator, value: ?std.json.Value) error{OutOfMemory}!ParsedList {
+    // `commands` フィールド自体が無い環境は索引未記録（未検査）として扱う。
+    const commands_value = value orelse return .{ .complete = false };
+    if (commands_value != .array) return .{ .complete = false };
+    var list: std.ArrayList(Command) = .empty;
+    var complete = true;
+    for (commands_value.array.items) |item| {
+        if (item != .object) {
+            complete = false;
+            continue;
+        }
+        const name_value = item.object.get("name") orelse {
+            complete = false;
+            continue;
+        };
+        if (name_value != .string) {
+            complete = false;
+            continue;
+        }
+        var command = Command{ .name = try arena.dupe(u8, name_value.string) };
+        if (item.object.get("variable")) |variable| {
+            if (variable == .bool) {
+                command.variable = variable.bool;
+            } else complete = false;
+        }
+        if (item.object.get("args")) |args| {
+            if (args == .array) {
+                const slice = try arena.alloc([]const u8, args.array.items.len);
+                for (args.array.items, 0..) |arg, index| {
+                    if (arg == .string) {
+                        slice[index] = try arena.dupe(u8, arg.string);
+                    } else {
+                        slice[index] = "";
+                        complete = false;
+                    }
+                }
+                command.args = slice;
+            } else complete = false;
+        }
+        if (item.object.get("josi")) |josi| {
+            if (josi == .array) {
+                const slice = try arena.alloc([]const u8, josi.array.items.len);
+                for (josi.array.items, 0..) |arg, index| {
+                    if (arg == .string) {
+                        slice[index] = try arena.dupe(u8, arg.string);
+                    } else {
+                        slice[index] = "";
+                        complete = false;
+                    }
+                }
+                command.josi = slice;
+            } else complete = false;
+        }
+        if (command.variable and (command.args.len != 0 or command.josi.len != 0)) complete = false;
+        // 関数は args と同数の josi を持つ（助詞なし引数は空文字列で表す）。
+        // args のみで josi を欠く索引はスロットを構成できないため、検査済み
+        // として扱わない（semantic 側の助詞検査を誤動作させない）。
+        if (!command.variable and command.josi.len != command.args.len) complete = false;
+        try list.append(arena, command);
+    }
+    if (list.items.len == 0) return .{ .complete = complete };
+    return .{ .commands = try list.toOwnedSlice(arena), .complete = complete };
+}
+
+/// `commands` の深い写し。文字列と配列は `arena` が所有する。
+pub fn cloneList(arena: Allocator, commands: []const Command) error{OutOfMemory}![]Command {
+    if (commands.len == 0) return &.{};
+    const out = try arena.alloc(Command, commands.len);
+    for (commands, 0..) |command, index| {
+        out[index] = .{
+            .name = try arena.dupe(u8, command.name),
+            .variable = command.variable,
+            .args = try cloneStringList(arena, command.args),
+            .josi = try cloneStringList(arena, command.josi),
+        };
+    }
+    return out;
+}
+
+fn cloneStringList(arena: Allocator, items: []const []const u8) error{OutOfMemory}![]const []const u8 {
+    if (items.len == 0) return &.{};
+    const out = try arena.alloc([]const u8, items.len);
+    for (items, 0..) |item, index| out[index] = try arena.dupe(u8, item);
+    return out;
+}
+
 /// 解析済み commands.json。全メモリは内蔵 arena が所有する。
 pub const Commands = struct {
     arena: std.heap.ArenaAllocator,

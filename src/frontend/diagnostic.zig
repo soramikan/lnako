@@ -35,6 +35,9 @@ pub const Code = enum {
     /// 一致しない値をスタックへ残し、行末で『未解決の単語があります』の
     /// 文法エラーにする。
     unresolved_word,
+    /// package の宣言命令 metadata が環境に無く、その alias 経由の呼出しを
+    /// 静的に検査できなかった（Issue #52）。警告であり、コンパイルは止めない。
+    uninspected_package_command,
 };
 
 pub const Diagnostic = struct {

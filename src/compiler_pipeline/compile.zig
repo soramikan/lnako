@@ -17,6 +17,10 @@ pub const InputOptions = struct {
     package_resolver: ?lnako.semantic.module_graph.PackageResolver = null,
     /// 共有 writable ACL/mode の扱い。既定は warn+continue。
     writable_mode: lnako.package.project_trust.WritableMode = .warn,
+    /// package 宣言命令索引の provider。CLI 経路は `.nako/environment.json`
+    /// から自動で用意する。明示 provider を渡す呼出し側（埋め込み・テスト）
+    /// はここで上書きできる。
+    declared_commands_provider: ?lnako.semantic.module_graph.DeclaredCommandsProvider = null,
 };
 
 pub fn compileInput(allocator: std.mem.Allocator, io: std.Io, path: []const u8, options: InputOptions, stderr: *std.Io.Writer) !?lnako.ir.nako_ir.Program {
@@ -30,6 +34,8 @@ pub fn compileInputTraced(allocator: std.mem.Allocator, io: std.Io, path: []cons
     var package_root: ?[]u8 = null;
     defer if (package_root) |root| allocator.free(root);
     var effective_options = options;
+    var declared_index: ?lnako.package.command_inspect.DeclaredIndex = null;
+    defer if (declared_index) |*index| index.deinit();
     var invalid_package_environment = InvalidPackageEnvironment{};
     if (effective_options.package_resolver == null) {
         var project_rejected = false;
@@ -53,6 +59,14 @@ pub fn compileInputTraced(allocator: std.mem.Allocator, io: std.Io, path: []cons
             stderr.print("警告: プロジェクト配置の書き込み権限が共有されています（パッケージ import は続行。停止は --strict-project-trust、非表示は --no-project-trust-warning）: {s}\n", .{path}) catch {};
         }
         if (package_root) |root| {
+            // 宣言命令 metadata は plugin を初期化せず environment snapshot から
+            // 読む（Issue #52）。解決結果と同じ package key で索引を引く。
+            if (effective_options.declared_commands_provider == null) {
+                // environment が無い・壊れている場合は未検査として続行するが、
+                // OOM は隠さず伝播させる（隣接する Resolver.loadWithMode と同方針）。
+                declared_index = try lnako.package.command_inspect.loadDeclaredCommands(allocator, io, root);
+                if (declared_index) |*index| effective_options.declared_commands_provider = index.provider();
+            }
             package_environment = lnako.package.import_resolver.Resolver.loadWithMode(allocator, io, root, effective_options.writable_mode) catch |err| switch (err) {
                 error.NoEnvironment => null,
                 error.OutOfMemory => return err,
@@ -85,7 +99,12 @@ pub fn compileInputWithProvider(allocator: std.mem.Allocator, path: []const u8, 
 }
 
 fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8, options: InputOptions, stderr: *std.Io.Writer, source_provider: lnako.semantic.module_graph.SourceProvider, timer: ?*FrontendTimer) !?lnako.ir.nako_ir.Program {
-    var graph = lnako.semantic.module_graph.load(allocator, path, source_provider, .{ .compat_js = options.compat_js, .forced_mode = options.forced_mode, .package_resolver = options.package_resolver }) catch |err| {
+    var graph = lnako.semantic.module_graph.load(allocator, path, source_provider, .{
+        .compat_js = options.compat_js,
+        .forced_mode = options.forced_mode,
+        .package_resolver = options.package_resolver,
+        .declared_commands_provider = options.declared_commands_provider,
+    }) catch |err| {
         // 拡張子と--dncl/--dncl2の方言競合はusageエラーとしてCLI層へ伝搬する。
         if (err == error.ConflictingDnclModes) return err;
         try stderr.print("{s}: 読み込みまたは字句解析に失敗しました: {s}\n", .{ path, @errorName(err) });
@@ -798,4 +817,115 @@ test "直接importとpackage aliasが併存するESM moduleは無修飾と修飾
         try std.testing.expect(has_qualified);
     }
     try std.testing.expect(found);
+}
+
+test "package宣言命令metadataはcheck相当のcompile経路で名前不一致を診断する" {
+    const TestProvider = struct {
+        fn read(_: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+            if (pathHasSuffix(path, "main.nako3")) return allocator.dupe(u8, "!「pkg:lib」を取り込む\nlib__未宣言\n");
+            if (pathHasSuffix(path, "packages/lib/index.nako3")) return allocator.dupe(u8, "A=1\n");
+            return error.FileNotFound;
+        }
+    };
+    const TestResolver = struct {
+        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+            if (!std.mem.eql(u8, specifier, "pkg:lib")) return error.PackageNotFound;
+            return .{
+                .path = try std.fs.path.resolve(allocator, &.{"packages/lib/index.nako3"}),
+                .canonical_id = try allocator.dupe(u8, "pkg:lib/main"),
+                .namespace = try allocator.dupe(u8, "lib"),
+                .package_owner = try allocator.dupe(u8, "pkg:lib"),
+            };
+        }
+    };
+    const Index = struct {
+        commands: []const lnako.semantic.module_graph.DeclaredCommand,
+
+        fn provider(self: *@This()) lnako.semantic.module_graph.DeclaredCommandsProvider {
+            return .{ .context = self, .lookupFn = lookup };
+        }
+
+        fn lookup(context: *anyopaque, _: std.mem.Allocator, package_owner: []const u8) anyerror!?lnako.semantic.module_graph.DeclaredCommands {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            if (!std.mem.eql(u8, package_owner, "pkg:lib")) return null;
+            return .{ .available = true, .commands = self.commands };
+        }
+    };
+    const commands = [_]lnako.semantic.module_graph.DeclaredCommand{
+        .{ .name = "加算", .args = &.{ "A", "B" }, .josi = &.{ "を", "に" } },
+    };
+    var index = Index{ .commands = &commands };
+    var context: u8 = 0;
+    var stderr: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer stderr.deinit();
+    const compiled = try compileInputWithProvider(
+        std.testing.allocator,
+        "main.nako3",
+        .{
+            .package_resolver = .{ .context = &context, .resolveFn = TestResolver.resolve },
+            .declared_commands_provider = index.provider(),
+        },
+        &stderr.writer,
+        .{ .context = &context, .readFn = TestProvider.read },
+    );
+    try std.testing.expect(compiled == null);
+    try std.testing.expect(std.mem.indexOf(u8, stderr.writer.buffered(), "宣言がありません") != null);
+}
+
+test "check相当のcompile経路はpackage初期化コードを実行しない" {
+    const io = std.testing.io;
+    const marker = "SIDE_EFFECT_COMPILE_CHECK.txt";
+    std.Io.Dir.cwd().deleteFile(io, marker) catch {};
+    const TestProvider = struct {
+        fn read(_: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+            if (pathHasSuffix(path, "main.nako3")) return allocator.dupe(u8, "!「pkg:lib」を取り込む\n1を2にlib__加算\n");
+            if (pathHasSuffix(path, "packages/lib/index.nako3")) return allocator.dupe(u8, "「ran」を「SIDE_EFFECT_COMPILE_CHECK.txt」に保存\n●(AをBに)加算とは\nA+Bで戻る\nここまで\n");
+            return error.FileNotFound;
+        }
+    };
+    const TestResolver = struct {
+        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+            if (!std.mem.eql(u8, specifier, "pkg:lib")) return error.PackageNotFound;
+            return .{
+                .path = try std.fs.path.resolve(allocator, &.{"packages/lib/index.nako3"}),
+                .canonical_id = try allocator.dupe(u8, "pkg:lib/main"),
+                .namespace = try allocator.dupe(u8, "lib"),
+                .package_owner = try allocator.dupe(u8, "pkg:lib"),
+            };
+        }
+    };
+    const Index = struct {
+        fn provider(self: *@This()) lnako.semantic.module_graph.DeclaredCommandsProvider {
+            return .{ .context = self, .lookupFn = lookup };
+        }
+        fn lookup(_: *anyopaque, allocator: std.mem.Allocator, package_owner: []const u8) anyerror!?lnako.semantic.module_graph.DeclaredCommands {
+            if (!std.mem.eql(u8, package_owner, "pkg:lib")) return null;
+            // provider の返却メモリは provider が所有する契約。graph の
+            // arena から確保したスライスを返す。
+            const commands = try allocator.alloc(lnako.semantic.module_graph.DeclaredCommand, 1);
+            commands[0] = .{ .name = "加算", .args = &.{ "A", "B" }, .josi = &.{ "を", "に" } };
+            return .{ .available = true, .commands = commands };
+        }
+    };
+    var index = Index{};
+    var context: u8 = 0;
+    var stderr: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer stderr.deinit();
+    var compiled = (try compileInputWithProvider(
+        std.testing.allocator,
+        "main.nako3",
+        .{
+            .package_resolver = .{ .context = &context, .resolveFn = TestResolver.resolve },
+            .declared_commands_provider = index.provider(),
+        },
+        &stderr.writer,
+        .{ .context = &context, .readFn = TestProvider.read },
+    )) orelse return error.UnexpectedCompileFailure;
+    compiled.deinit();
+
+    std.Io.Dir.cwd().access(io, marker, .{}) catch |err| {
+        try std.testing.expect(err == error.FileNotFound);
+        return;
+    };
+    try std.testing.expect(false);
 }
