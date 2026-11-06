@@ -25,6 +25,7 @@ const Allocator = std.mem.Allocator;
 const testing = std.testing;
 
 pub const Error = error{
+    Canceled,
     PackageJsonMissing,
     PackageJsonInvalid,
     EntryNotFound,
@@ -587,8 +588,12 @@ pub const BareRegistry = struct {
         errdefer reg.deinit();
         for (instances) |inst| {
             if (reg.by_name.contains(inst.name)) continue;
+            // InvalidArchive は fail-closed の分類を保つため素通しする
+            // （現行の呼出し側は npm_resolver.prepare のみ）。
             const tree = (tree_path_for(ctx, gpa, inst) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
+                error.Canceled => return error.Canceled,
+                error.InvalidArchive => return error.InvalidArchive,
                 else => return error.CacheMiss,
             }) orelse return error.CacheMiss;
             defer gpa.free(tree);
@@ -721,7 +726,7 @@ pub fn publishNpmTree(
     try store.publishStaging(key);
 }
 
-fn looksLikeGzip(bytes: []const u8) bool {
+pub fn looksLikeGzip(bytes: []const u8) bool {
     return bytes.len >= 2 and bytes[0] == 0x1f and bytes[1] == 0x8b;
 }
 

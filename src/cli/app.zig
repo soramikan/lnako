@@ -131,6 +131,7 @@ pub fn run(
             var ir_program = (try compiler_pipeline.compileInputTraced(allocator, io, options.input, .{
                 .compat_js = options.compat_js,
                 .forced_mode = options.forced_mode,
+                .package_cache_root = prep.cache_dir,
                 .writable_mode = prep.writableMode(init.environ_map),
             }, stderr, init.environ_map.get("LNAKO_LLVM_TRACE") != null)) orelse {
                 try stderr.flush();
@@ -288,6 +289,7 @@ pub fn run(
             var ir_program = (compiler_pipeline.compileInput(allocator, io, input, .{
                 .compat_js = compat_js,
                 .forced_mode = run_mode,
+                .package_cache_root = run_prep.cache_dir,
                 .writable_mode = run_prep.writableMode(init.environ_map),
             }, stderr) catch |err| {
                 if (err == error.ConflictingDnclModes) {

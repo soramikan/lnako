@@ -15,6 +15,14 @@ pub const InputOptions = struct {
     /// Optional explicit package resolver. CLI compilation loads the verified
     /// `.nako/environment.json` automatically when this is null.
     package_resolver: ?lnako.semantic.module_graph.PackageResolver = null,
+    /// package 所有 JS の bare npm specifier を解決する resolver。CLI は
+    /// `.nako/environment.json` 同梱の lock から自動構築するため通常 null。
+    /// 明示指定した場合は環境自動ロード時も上書きしない。
+    npm_module_resolver: ?lnako.semantic.module_graph.NpmModuleResolver = null,
+    /// lock `npmInstances` を復元する cache root。null は OS 標準 cache dir。
+    /// CLI の `run`/`build` は `--package-cache-dir` をここへ伝播する。
+    /// `package_resolver` を明示指定した場合は環境をロードしないため使われない。
+    package_cache_root: ?[]const u8 = null,
     /// 共有 writable ACL/mode の扱い。既定は warn+continue。
     writable_mode: lnako.package.project_trust.WritableMode = .warn,
 };
@@ -53,7 +61,10 @@ pub fn compileInputTraced(allocator: std.mem.Allocator, io: std.Io, path: []cons
             stderr.print("警告: プロジェクト配置の書き込み権限が共有されています（パッケージ import は続行。停止は --strict-project-trust、非表示は --no-project-trust-warning）: {s}\n", .{path}) catch {};
         }
         if (package_root) |root| {
-            package_environment = lnako.package.import_resolver.Resolver.loadWithMode(allocator, io, root, effective_options.writable_mode) catch |err| switch (err) {
+            package_environment = lnako.package.import_resolver.Resolver.loadWithOptions(allocator, io, root, .{
+                .writable_mode = effective_options.writable_mode,
+                .cache_root = effective_options.package_cache_root,
+            }) catch |err| switch (err) {
                 error.NoEnvironment => null,
                 error.OutOfMemory => return err,
                 else => blk: {
@@ -69,6 +80,10 @@ pub fn compileInputTraced(allocator: std.mem.Allocator, io: std.Io, path: []cons
                     stderr.print("警告: パッケージ tree の書き込み権限が共有されています（import は続行。停止は --strict-project-trust）: {s}\n", .{root}) catch {};
                 }
                 effective_options.package_resolver = environment.packageResolver();
+                // 呼出し側が明示した resolver を環境側で黙って置き換えない。
+                if (effective_options.npm_module_resolver == null) {
+                    effective_options.npm_module_resolver = environment.npm.moduleResolver();
+                }
             } else {
                 // A stale/broken environment must not prevent unrelated source
                 // imports from compiling. Package specifiers still fail closed.
@@ -85,7 +100,12 @@ pub fn compileInputWithProvider(allocator: std.mem.Allocator, path: []const u8, 
 }
 
 fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8, options: InputOptions, stderr: *std.Io.Writer, source_provider: lnako.semantic.module_graph.SourceProvider, timer: ?*FrontendTimer) !?lnako.ir.nako_ir.Program {
-    var graph = lnako.semantic.module_graph.load(allocator, path, source_provider, .{ .compat_js = options.compat_js, .forced_mode = options.forced_mode, .package_resolver = options.package_resolver }) catch |err| {
+    var graph = lnako.semantic.module_graph.load(allocator, path, source_provider, .{
+        .compat_js = options.compat_js,
+        .forced_mode = options.forced_mode,
+        .package_resolver = options.package_resolver,
+        .npm_module_resolver = options.npm_module_resolver,
+    }) catch |err| {
         // 拡張子と--dncl/--dncl2の方言競合はusageエラーとしてCLI層へ伝搬する。
         if (err == error.ConflictingDnclModes) return err;
         try stderr.print("{s}: 読み込みまたは字句解析に失敗しました: {s}\n", .{ path, @errorName(err) });
@@ -798,4 +818,8 @@ test "直接importとpackage aliasが併存するESM moduleは無修飾と修飾
         try std.testing.expect(has_qualified);
     }
     try std.testing.expect(found);
+}
+
+test {
+    _ = @import("compile_npm_test.zig");
 }
