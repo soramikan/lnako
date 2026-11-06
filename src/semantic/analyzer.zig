@@ -937,6 +937,10 @@ pub const Analyzer = struct {
                 } else if (declared_shape_reported) {
                     // 引数の形は既に invalid_argument_count で報告済み。
                     return;
+                } else if (alias.target_module == std.math.maxInt(u32)) {
+                    // native/ESM package はソースから解決できないのが正常で、
+                    // 実行時登録の可能性もあるためハードエラーにしない。
+                    try self.noteUninspectedPackageCommand(module_index, alias, name, node.span, true);
                 } else {
                     const message = try std.fmt.allocPrint(
                         self.allocator,
