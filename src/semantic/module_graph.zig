@@ -500,24 +500,18 @@ pub const ModuleGraph = struct {
             for (module.imports) |item| {
                 if (item.canonical_id == null) continue;
                 const source_namespace = item.namespace orelse continue;
-                const declared_commands: ?DeclaredCommands = if (item.target) |target|
-                    self.modules[target].declared_commands
-                else
-                    null;
-                var already_added = false;
-                for (package_command_aliases.items) |existing| {
-                    if (std.mem.eql(u8, existing.source_namespace, source_namespace) and
-                        existing.import_position == item.span.start)
-                    {
-                        already_added = true;
-                        break;
-                    }
-                }
-                if (already_added) continue;
+                // 読み込みに失敗した pkg: import は alias を登録しない。登録
+                // すると全使用が「metadata 無しの未検査」として記録され、実体
+                // のない解決失敗を未検査として見せてしまう。
+                const target = item.target orelse continue;
                 try package_command_aliases.append(temp, .{
                     .source_namespace = source_namespace,
                     .import_position = item.span.start,
-                    .declared = declared_commands,
+                    .declared = self.modules[target].declared_commands,
+                    .target_module = if (self.modules[target].kind == .nako3) blk: {
+                        std.debug.assert(target < loader_to_input.len);
+                        break :blk loader_to_input[target];
+                    } else std.math.maxInt(u32),
                 });
             }
             var namespace_aliases: std.ArrayList(analyzer.NamespaceAlias) = .empty;

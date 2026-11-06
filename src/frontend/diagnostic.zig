@@ -38,6 +38,9 @@ pub const Code = enum {
     /// package の宣言命令 metadata が環境に無く、その alias 経由の呼出しを
     /// 静的に検査できなかった（Issue #52）。警告であり、コンパイルは止めない。
     uninspected_package_command,
+    /// 宣言 metadata の種別（関数/変数）と、取り込んだソースで解決した
+    /// シンボルの種別が一致しない（Issue #52）。
+    declared_command_kind_mismatch,
 };
 
 pub const Diagnostic = struct {

@@ -21,6 +21,9 @@ pub const InputOptions = struct {
     /// から自動で用意する。明示 provider を渡す呼出し側（埋め込み・テスト）
     /// はここで上書きできる。
     declared_commands_provider: ?lnako.semantic.module_graph.DeclaredCommandsProvider = null,
+    /// `lnako check` 用: semantic 解析で未検査の package 命令呼出しが残った
+    /// 場合に stderr へ表示する（成功扱いにしないため）。
+    report_uninspected_packages: bool = false,
 };
 
 pub fn compileInput(allocator: std.mem.Allocator, io: std.Io, path: []const u8, options: InputOptions, stderr: *std.Io.Writer) !?lnako.ir.nako_ir.Program {
@@ -127,6 +130,9 @@ fn compileInputWithProviderTimed(allocator: std.mem.Allocator, path: []const u8,
     var program = try graph.analyze(allocator);
     defer program.deinit();
     if (timer) |t| try t.phase(stderr, "semantic-analysis");
+    if (options.report_uninspected_packages and program.succeeded()) {
+        try reportUninspectedPackageCommands(&program, stderr);
+    }
     if (!program.succeeded()) {
         for (program.diagnostics) |item| try item.render(sourceForDiagnostic(graph, item.file), stderr);
         return null;
@@ -697,6 +703,20 @@ fn pathHasSuffix(path: []const u8, suffix: []const u8) bool {
     return true;
 }
 
+/// semantic 解析の結果、宣言 metadata が無く静的に検査できなかった package
+/// 命令呼出しを表示する。未検査を「問題なし」と表示しないための consumer。
+fn reportUninspectedPackageCommands(program: *const lnako.semantic.analyzer.Program, stderr: *std.Io.Writer) !void {
+    const items = program.uninspected_package_commands;
+    if (items.len == 0) return;
+    try stderr.print("警告: package命令metadataが無いため静的に検査できない呼出しがあります（未検査のpackage alias {d}件）\n", .{items.len});
+    const shown = @min(items.len, 8);
+    for (items[0..shown]) |item| {
+        try stderr.print("  未検査: {s}:{d}: {s}（package: {s}）\n", .{ item.file, item.span.line + 1, item.command_name, item.namespace });
+    }
+    if (items.len > shown) try stderr.writeAll("  ...\n");
+    try stderr.flush();
+}
+
 const FrontendTimer = struct {
     io: std.Io,
     last: i96,
@@ -872,6 +892,8 @@ test "package宣言命令metadataはcheck相当のcompile経路で名前不一�
     try std.testing.expect(std.mem.indexOf(u8, stderr.writer.buffered(), "宣言がありません") != null);
 }
 
+// compile 経路が package source を実行しないことの回帰ガード。宣言命令の
+// 未検査経路そのものの非実行は declared_commands_test.zig 側で固定している。
 test "check相当のcompile経路はpackage初期化コードを実行しない" {
     const io = std.testing.io;
     const marker = "SIDE_EFFECT_COMPILE_CHECK.txt";
@@ -928,4 +950,41 @@ test "check相当のcompile経路はpackage初期化コードを実行しない"
         return;
     };
     try std.testing.expect(false);
+}
+
+test "check経路は未検査のpackage命令呼出しをstderrへ表示する" {
+    const TestProvider = struct {
+        fn read(_: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+            if (pathHasSuffix(path, "main.nako3")) return allocator.dupe(u8, "!「pkg:lib」を取り込む\n1を2にlib__加算\n");
+            if (pathHasSuffix(path, "packages/lib/index.nako3")) return allocator.dupe(u8, "●(AをBに)加算とは\nA+Bで戻る\nここまで\n");
+            return error.FileNotFound;
+        }
+    };
+    const TestResolver = struct {
+        fn resolve(_: *anyopaque, allocator: std.mem.Allocator, _: []const u8, _: ?[]const u8, specifier: []const u8) !lnako.semantic.module_graph.ResolvedPackageImport {
+            if (!std.mem.eql(u8, specifier, "pkg:lib")) return error.PackageNotFound;
+            return .{
+                .path = try std.fs.path.resolve(allocator, &.{"packages/lib/index.nako3"}),
+                .canonical_id = try allocator.dupe(u8, "pkg:lib/main"),
+                .namespace = try allocator.dupe(u8, "lib"),
+                .package_owner = try allocator.dupe(u8, "pkg:lib"),
+            };
+        }
+    };
+    var context: u8 = 0;
+    var stderr: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer stderr.deinit();
+    var compiled = (try compileInputWithProvider(
+        std.testing.allocator,
+        "main.nako3",
+        .{
+            .package_resolver = .{ .context = &context, .resolveFn = TestResolver.resolve },
+            .report_uninspected_packages = true,
+        },
+        &stderr.writer,
+        .{ .context = &context, .readFn = TestProvider.read },
+    )) orelse return error.UnexpectedCompileFailure;
+    compiled.deinit();
+    try std.testing.expect(std.mem.indexOf(u8, stderr.writer.buffered(), "未検査") != null);
+    try std.testing.expect(std.mem.indexOf(u8, stderr.writer.buffered(), "lib__加算") != null);
 }

@@ -275,6 +275,157 @@ test "変数宣言命令をC風呼出しした場合は拒否する" {
     try std.testing.expectEqual(@as(usize, 1), countCode(program, .invalid_argument_count));
 }
 
+test "宣言関数とソース変数のkind不一致を診断する" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var provider = DeclaredProvider{ .lib = try declaredAddCommand(arena, &.{ "A", "B" }, &.{ "を", "に" }) };
+    var resolver = DeclaredResolver{};
+    var memory = MemoryProvider{
+        .files = &.{
+            .{ .suffix = "main.nako3", .source =
+            \\!「pkg:lib」を取り込む
+            \\1を2にlib__加算
+            \\
+            },
+            // metadata は関数だが、ソースは同名の変数を公開している。
+            .{ .suffix = "packages/lib/index.nako3", .source = "加算=1\n" },
+        },
+    };
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{
+        .package_resolver = resolver.resolver(),
+        .declared_commands_provider = provider.provider(),
+    });
+    defer graph.deinit();
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(!program.succeeded());
+    try std.testing.expectEqual(@as(usize, 1), countCode(program, .declared_command_kind_mismatch));
+}
+
+test "宣言変数とソース関数のkind不一致を診断する" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const commands = try arena.alloc(module_graph.DeclaredCommand, 1);
+    commands[0] = .{ .name = "設定", .variable = true };
+    var provider = DeclaredProvider{ .lib = .{ .available = true, .commands = commands } };
+    var resolver = DeclaredResolver{};
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source =
+        \\!「pkg:lib」を取り込む
+        \\lib__設定を表示
+        \\
+        },
+        .{ .suffix = "packages/lib/index.nako3", .source =
+        \\●(Aを)設定とは
+        \\  Aで戻る
+        \\ここまで
+        \\
+        },
+    } };
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{
+        .package_resolver = resolver.resolver(),
+        .declared_commands_provider = provider.provider(),
+    });
+    defer graph.deinit();
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(!program.succeeded());
+    try std.testing.expectEqual(@as(usize, 1), countCode(program, .declared_command_kind_mismatch));
+}
+
+test "malformed宣言は名前不一致と誤表示せず未検査警告にする" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // args=2 / josi=1 の壊れた索引。名前は存在するがスロットを構成できない。
+    const commands = try arena.alloc(module_graph.DeclaredCommand, 1);
+    commands[0] = .{ .name = "加算", .args = try arena.dupe([]const u8, &.{ "A", "B" }), .josi = try arena.dupe([]const u8, &.{"を"}) };
+    var provider = DeclaredProvider{ .lib = .{ .available = true, .commands = commands } };
+    var resolver = DeclaredResolver{};
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source =
+        \\!「pkg:lib」を取り込む
+        \\1を2にlib__加算
+        \\
+        },
+        .{ .suffix = "packages/lib/index.nako3", .source = "A=1\n" },
+    } };
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{
+        .package_resolver = resolver.resolver(),
+        .declared_commands_provider = provider.provider(),
+    });
+    defer graph.deinit();
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    // strict でない未解決命令呼出しなので、malformed は警告に留め既存の
+    // 暗黙宣言経路へ戻る。自己矛盾した「宣言がありません」は出さない。
+    try std.testing.expect(program.succeeded());
+    try std.testing.expectEqual(@as(usize, 0), countCode(program, .undefined_symbol));
+    try std.testing.expectEqual(@as(usize, 1), countCode(program, .uninspected_package_command));
+    for (program.diagnostics) |item| {
+        try std.testing.expect(std.mem.indexOf(u8, item.message, "宣言がありません") == null);
+    }
+}
+
+test "malformed宣言はstrictモードで未定義命令エラーになる" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const commands = try arena.alloc(module_graph.DeclaredCommand, 1);
+    commands[0] = .{ .name = "加算", .args = try arena.dupe([]const u8, &.{ "A", "B" }), .josi = try arena.dupe([]const u8, &.{"を"}) };
+    var provider = DeclaredProvider{ .lib = .{ .available = true, .commands = commands } };
+    var resolver = DeclaredResolver{};
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source =
+        \\!厳しくチェック
+        \\!「pkg:lib」を取り込む
+        \\1を2にlib__加算
+        \\
+        },
+        .{ .suffix = "packages/lib/index.nako3", .source = "A=1\n" },
+    } };
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{
+        .package_resolver = resolver.resolver(),
+        .declared_commands_provider = provider.provider(),
+    });
+    defer graph.deinit();
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    // malformed は未検査警告に留めるが、strict の未定義命令エラーは従来どおり。
+    try std.testing.expect(!program.succeeded());
+    try std.testing.expectEqual(@as(usize, 1), countCode(program, .undefined_symbol));
+    try std.testing.expectEqual(@as(usize, 1), countCode(program, .uninspected_package_command));
+}
+
+test "変数宣言命令を引数なしC風で呼んでも拒否する" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const commands = try arena.alloc(module_graph.DeclaredCommand, 1);
+    commands[0] = .{ .name = "設定", .variable = true };
+    var provider = DeclaredProvider{ .lib = .{ .available = true, .commands = commands } };
+    var resolver = DeclaredResolver{};
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source =
+        \\!「pkg:lib」を取り込む
+        \\lib__設定()
+        \\
+        },
+        .{ .suffix = "packages/lib/index.nako3", .source = "設定=42\n" },
+    } };
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{
+        .package_resolver = resolver.resolver(),
+        .declared_commands_provider = provider.provider(),
+    });
+    defer graph.deinit();
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(!program.succeeded());
+    try std.testing.expectEqual(@as(usize, 1), countCode(program, .invalid_argument_count));
+}
+
 test "argsのみで助詞を欠く宣言は検査済み扱いにせずソース検査へ戻す" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
