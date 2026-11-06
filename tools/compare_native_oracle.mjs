@@ -43,7 +43,7 @@ const artifactOracleIdentity = artifactPath === null ? null : oracleIdentity;
 // different drive.
 const temporary = await mkdtemp(join(root, ".tmp-lnako-native-"));
 const maxBuffer = 16 * 1024 * 1024;
-const knownCaseFields = new Set(["id", "source", "sourceFileName", "oracle", "stderrIncludes", "officialSourceStdoutIncludes", "normalizeDebugDump", "commands", "stdin", "networkTopology", "dispatchExpectations"]);
+const knownCaseFields = new Set(["id", "source", "sourceFileName", "oracle", "stderrIncludes", "officialSourceStdoutIncludes", "normalizeDebugDump", "commands", "stdin", "networkTopology", "dispatchExpectations", "timerScale"]);
 const throwStatementOpcode = 0xffff;
 const routeNames = ["officialSource", "officialGenerated", "lnakoRun", ...selectedOptimizations.map((optimization) => `lnakoNative${optimization}`)];
 let artifactLnakoBinarySha256 = null;
@@ -86,6 +86,12 @@ try {
     }
     if (testCase.networkTopology !== undefined && testCase.networkTopology !== "synthetic-v1") {
       throw new Error(`未知のnetworkTopologyです: ${testCase.id}: ${testCase.networkTopology}`);
+    }
+    if (testCase.timerScale !== undefined && (!Number.isInteger(testCase.timerScale) || testCase.timerScale < 2 || testCase.timerScale > 1000)) {
+      throw new Error(`timerScaleは2..1000の整数で指定してください: ${testCase.id}`);
+    }
+    if (testCase.timerScale !== undefined && testCase.normalizeDebugDump === true) {
+      throw new Error(`timerScaleとnormalizeDebugDumpは同時に指定できません: ${testCase.id}`);
     }
   }
   selectedCases = selectCases(cases, shard);
@@ -278,16 +284,21 @@ async function runCase(testCase, index, temporary, executable, officialCli, coll
     maxBuffer,
   };
   const runOptions = testCase.stdin === undefined ? options : { ...options, input: testCase.stdin };
+  // 公式側だけタイマー期限を引き伸ばす（fixture の timerScale 指定時）。
+  // 近接した期限の順序が実行負荷で入れ替わるのを避け、順序の観測を
+  // 決定的にする。lnako側は製品の実時間タイマーのまま比較する。
+  const oracleOptions = testCase.timerScale === undefined ? options : { ...options, env: { ...options.env, LNAKO_TEST_TIMER_SCALE: String(testCase.timerScale) } };
+  const oracleRunOptions = testCase.stdin === undefined ? oracleOptions : { ...oracleOptions, input: testCase.stdin };
   const oracleHost = testCase.normalizeDebugDump ? resolve(root, "tools/oracle/normalize_debug_host.mjs") : fixedHost;
   const oracleHostArgument = ["--import", pathToFileURL(oracleHost).href];
   // 公式source経路の計測範囲は「準備完了後〜公式CLI実行完了」に限定する。
   // fixtureStartはディレクトリ作成・source書き込み・環境構築を含むため、
   // totalMs専用とし、officialSourceMsには使わない（他の経路と同じ粒度に揃える）。
   const officialSourceStart = performance.now();
-  const officialSource = await runProcess(process.execPath, [...oracleHostArgument, officialCli, sourcePath], runOptions);
+  const officialSource = await runProcess(process.execPath, [...oracleHostArgument, officialCli, sourcePath], oracleRunOptions);
   const officialSourceMs = elapsedMs(officialSourceStart);
   const compileStart = performance.now();
-  const officialCompile = await runProcess(process.execPath, [...oracleHostArgument, officialCli, "--compile", "--silent", "--output", generatedJavaScript, sourcePath], options);
+  const officialCompile = await runProcess(process.execPath, [...oracleHostArgument, officialCli, "--compile", "--silent", "--output", generatedJavaScript, sourcePath], oracleOptions);
   if (officialCompile.status === 0) {
     try {
       await access(generatedJavaScript);
@@ -299,7 +310,7 @@ async function runCase(testCase, index, temporary, executable, officialCli, coll
       );
     }
   }
-  const officialGenerated = officialCompile.status === 0 ? await runProcess(process.execPath, [...oracleHostArgument, generatedJavaScript], runOptions) : officialCompile;
+  const officialGenerated = officialCompile.status === 0 ? await runProcess(process.execPath, [...oracleHostArgument, generatedJavaScript], oracleRunOptions) : officialCompile;
   // 公式生成routeのコストは「JavaScript生成＋生成物実行」の合計として記録する。
   const officialGeneratedMs = roundMs(performance.now() - compileStart);
   const generatedJavaScriptSha256 = collectManifest && officialCompile.status === 0 ? sha256(await readFile(generatedJavaScript)) : null;

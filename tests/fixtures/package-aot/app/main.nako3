@@ -1,0 +1,8 @@
+!「パッケージ:demo」を取り込む
+!「pkg:demo」を取り込む
+!「パッケージ:demo/calc」を取り込む
+!「パッケージ:greeting」を取り込む
+demo__デモ()
+demo__calc__計算()
+greeting__挨拶()
+「main」を表示。
