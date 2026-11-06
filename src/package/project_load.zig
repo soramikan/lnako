@@ -195,6 +195,8 @@ pub fn discoverAndLoadWithMode(
     defer gpa.free(root);
     const rejected = project_discovery.projectTrustRejected(gpa, io, start_dir, root, mode, writable_warning) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
+        // キャンセルは拒否（不注意な UntrustedProject）へ変換せず伝播する。
+        error.Canceled => return error.Canceled,
         // 権限・stat の失敗は安全側（拒否）に倒す。
         else => true,
     };
