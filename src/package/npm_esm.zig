@@ -2077,7 +2077,6 @@ test "BareRegistry resolveBare は * 入り specifier でも exact キーを優�
     ;
     var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
         .{ .path = "literal.mjs", .data = "export default 1;\n" },
-        .{ .path = "wild/a*b.mjs", .data = "export default 2;\n" },
     });
     defer reg.deinit();
     const got = try reg.resolveBare("left-pad/a*b");
@@ -2093,9 +2092,7 @@ test "BareRegistry resolveBare は exact キーの不正 target を pattern へ 
     const json =
         \\{"exports":{".":"./index.js","./a*b":"../evil.js","./*":"./wild/*.mjs"}}
     ;
-    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
-        .{ .path = "wild/a*b.mjs", .data = "export default 2;\n" },
-    });
+    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{});
     defer reg.deinit();
     try testing.expectError(error.PackageJsonInvalid, reg.resolveBare("left-pad/a*b"));
 }
