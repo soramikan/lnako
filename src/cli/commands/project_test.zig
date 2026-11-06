@@ -576,25 +576,38 @@ test "add --npm は未対応として拒否し manifest を変更しない" {
     try testing.expect(std.mem.indexOf(u8, manifest, "escape") == null);
 }
 
-test "manifest の npm 依存宣言は lock 時に診断付きで拒否される" {
+test "npm 依存は packument 取得失敗時に lock を書き換えない" {
+    // 閉域環境（registry 到達不能）と同じ経路をローカル fixture の 404 で
+    // 再現する。外部ネットワークへは出ず、lock も環境も公開しない。
     var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_impl.deinit();
     const a = arena_impl.allocator();
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
-    const app_root = try newAppFixture(a, &temporary);
+    try temporary.dir.createDirPath(io, "app");
+    try temporary.dir.createDirPath(io, "cache");
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", a);
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", a);
     try appManifest(a, app_root,
         \\[dependencies.npm]
         \\escape = "^1.0.0"
         \\
     );
 
+    var server = RegistryServer{ .io = io, .allocator = a };
+    try server.listen();
+    defer server.stop();
+    const routes = [_]RegistryRoute{.{ .path = "/escape", .status = 404 }};
+    try server.serve(&routes);
+
     var cli = Cli.init(a);
-    try expectFail(error.Failed, a, &cli, "lock", &.{}, app_root);
+    try cli.env.put("LNAKO_NPM_REGISTRY", server.base_url.?);
+    try expectFail(error.Failed, a, &cli, "lock", &.{ "--package-cache-dir", cache_root }, app_root);
     try testing.expect(std.mem.indexOf(u8, cli.err.written(), "escape") != null);
-    try testing.expect(std.mem.indexOf(u8, cli.err.written(), "npm") != null);
+    try testing.expect(std.mem.indexOf(u8, cli.err.written(), "E013") != null);
     // 不完全な lock は残さない。
     try testing.expect(!try dirFileExists(a, app_root, "nako.lock"));
+    try testing.expectEqual(@as(usize, 1), server.requests.load(.acquire));
 }
 
 test "add --locked と remove --locked と update --locked は用法エラー" {
@@ -1349,4 +1362,334 @@ test "check は共有 writable を --strict-project-trust で拒否し既定は�
     // 同時指定は用法エラー。
     var both_cli = Cli.init(a);
     try expectFail(error.Usage, a, &both_cli, "check", &.{ "--strict-project-trust", "--no-project-trust-warning" }, app_root);
+}
+
+// ---------------------------------------------------------------------------
+// npm registry E2E（ローカル HTTP fixture）
+// ---------------------------------------------------------------------------
+//
+// Issue #53 の残ゲート。registry の packument と tarball をテスト内の HTTP
+// サーバから配信し、CLI の lock/sync を実際に走らせて
+//
+//   packument 取得 → tarball 取得 → integrity 検証 → cache 格納
+//   → nako.lock の npmInstances → sync の deps materialize
+//
+// を end-to-end に観測する。外部ネットワーク・npm CLI・Node lifecycle
+// script は起動せず、取得先は LNAKO_NPM_REGISTRY で fixture へ向ける。
+
+const pkg = @import("lnako").package;
+const sync_cmd = @import("sync.zig");
+
+const RegistryRoute = struct {
+    path: []const u8,
+    body: []const u8 = "",
+    status: u16 = 200,
+};
+
+/// 単一接続ずつ処理する最小 registry サーバ。`Connection: close` で応答する。
+/// `listen` で port を確定してから `serve` で thread を起動するため、
+/// tarball URL を含む packument を spawn 前に組み立てられる（追加の同期不要）。
+const RegistryServer = struct {
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    listener: ?std.Io.net.Server = null,
+    thread: ?std.Thread = null,
+    base_url: ?[]u8 = null,
+    routes: []const RegistryRoute = &.{},
+    requests: std.atomic.Value(usize) = .init(0),
+    stopping: std.atomic.Value(bool) = .init(false),
+
+    fn listen(self: *RegistryServer) !void {
+        const loopback: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+        self.listener = try loopback.listen(self.io, .{ .reuse_address = true });
+        self.base_url = try std.fmt.allocPrint(self.allocator, "http://127.0.0.1:{d}", .{self.listener.?.socket.address.getPort()});
+    }
+
+    fn serve(self: *RegistryServer, routes: []const RegistryRoute) !void {
+        self.routes = routes;
+        self.thread = try std.Thread.spawn(.{}, serveLoop, .{ self, self.listener.? });
+    }
+
+    fn stop(self: *RegistryServer) void {
+        if (self.listener) |*listener| {
+            self.stopping.store(true, .release);
+            // `accept` を解除する。Windows の listening socket shutdown は
+            // INVALID_PARAMETER で panic するため自接続でも起こす。
+            if (builtin.os.tag != .windows) {
+                const wake: std.Io.net.Stream = .{ .socket = listener.socket };
+                wake.shutdown(self.io, .both) catch {};
+            }
+            if (listener.socket.address.connect(self.io, .{ .mode = .stream })) |stream| {
+                stream.close(self.io);
+            } else |_| {}
+            if (self.thread) |thread| thread.join();
+            self.thread = null;
+            listener.deinit(self.io);
+            self.listener = null;
+        }
+        if (self.base_url) |base| self.allocator.free(base);
+        self.base_url = null;
+    }
+
+    fn url(self: *const RegistryServer, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+        return std.fmt.allocPrint(allocator, "{s}{s}", .{ self.base_url.?, path });
+    }
+
+    fn serveLoop(self: *RegistryServer, server: std.Io.net.Server) void {
+        var listener = server;
+        while (true) {
+            var stream = listener.accept(self.io) catch return;
+            if (self.stopping.load(.acquire)) {
+                stream.close(self.io);
+                return;
+            }
+            self.handle(&stream);
+        }
+    }
+
+    fn handle(self: *RegistryServer, stream: *std.Io.net.Stream) void {
+        defer stream.close(self.io);
+        _ = self.requests.fetchAdd(1, .release);
+        var read_buffer: [512]u8 = undefined;
+        var reader = stream.reader(self.io, &read_buffer);
+        // `readSliceShort` は buffer を満たすまでブロックするため、要求ヘッダの
+        // 終端は 1 byte ずつ読んで CRLFCRLF を検出する。
+        var request: [4096]u8 = undefined;
+        var total: usize = 0;
+        var window: u32 = 0;
+        while (true) {
+            var byte: [1]u8 = undefined;
+            const n = reader.interface.readSliceShort(&byte) catch return;
+            if (n == 0) return;
+            if (total < request.len) {
+                request[total] = byte[0];
+                total += 1;
+            }
+            window = (window << 8) | byte[0];
+            if (window == std.mem.readInt(u32, "\r\n\r\n", .big)) break;
+        }
+        const line_end = std.mem.indexOf(u8, request[0..total], "\r\n") orelse return;
+        const line = request[0..line_end];
+        const first_space = std.mem.indexOfScalar(u8, line, ' ') orelse return;
+        const rest = line[first_space + 1 ..];
+        const second_space = std.mem.indexOfScalar(u8, rest, ' ') orelse return;
+        const path = rest[0..second_space];
+
+        var write_buffer: [1024]u8 = undefined;
+        var writer = stream.writer(self.io, &write_buffer);
+        for (self.routes) |route| {
+            if (!std.mem.eql(u8, route.path, path)) continue;
+            writer.interface.print("HTTP/1.1 {d} {s}\r\nContent-Length: {d}\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n", .{ route.status, statusText(route.status), route.body.len }) catch return;
+            writer.interface.writeAll(route.body) catch return;
+            writer.interface.flush() catch return;
+            return;
+        }
+        writer.interface.writeAll("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n") catch return;
+        writer.interface.flush() catch return;
+    }
+
+    fn statusText(status: u16) []const u8 {
+        return switch (status) {
+            200 => "OK",
+            404 => "Not Found",
+            else => "Status",
+        };
+    }
+};
+
+/// npm registry の packument JSON。`parsePackument` が読む versions/dist の
+/// 最小形だけを持たせる。
+fn npmPackument(
+    a: std.mem.Allocator,
+    name: []const u8,
+    version: []const u8,
+    tarball_url: []const u8,
+    integrity: []const u8,
+) ![]u8 {
+    return std.fmt.allocPrint(a,
+        \\{{"name":"{s}","dist-tags":{{"latest":"{s}"}},"versions":{{"{s}":{{"name":"{s}","version":"{s}","dist":{{"tarball":"{s}","integrity":"{s}"}}}}}}}}
+    , .{ name, version, version, name, version, tarball_url, integrity });
+}
+
+/// `package/` 前置を持つ npm tarball（tar.gz）。registry の配布形式と同じ
+/// shape を作り、cache/materialize の strip 契約をそのまま通す。
+fn npmTarball(
+    a: std.mem.Allocator,
+    name: []const u8,
+    version: []const u8,
+    entry_file: []const u8,
+    entry_bytes: []const u8,
+) ![]u8 {
+    const package_json = try std.fmt.allocPrint(a, "{{\"name\":\"{s}\",\"version\":\"{s}\",\"main\":\"{s}\"}}", .{ name, version, entry_file });
+    defer a.free(package_json);
+
+    var tar_buffer: std.Io.Writer.Allocating = .init(a);
+    defer tar_buffer.deinit();
+    var tar_writer: std.tar.Writer = .{ .underlying_writer = &tar_buffer.writer };
+    try tar_writer.setRoot("package");
+    try tar_writer.writeFileBytes("package.json", package_json, .{});
+    try tar_writer.writeFileBytes(entry_file, entry_bytes, .{});
+    try tar_writer.finishPedantically();
+
+    var out: std.Io.Writer.Allocating = .init(a);
+    errdefer out.deinit();
+    try out.ensureUnusedCapacity(64);
+    var window_buf: [std.compress.flate.max_window_len]u8 = undefined;
+    var compress = try std.compress.flate.Compress.init(&out.writer, &window_buf, .gzip, .default);
+    try compress.writer.writeAll(tar_buffer.written());
+    try compress.finish();
+    return try out.toOwnedSlice();
+}
+
+/// cache の `objects/` 直下にある完全/不完全 entry の数。integrity 不一致の
+/// 試験で「公開済み entry が 1 つも無い」ことを観測するために使う。
+fn countCacheObjects(a: std.mem.Allocator, cache_root: []const u8) !usize {
+    const objects_path = try std.fs.path.join(a, &.{ cache_root, "objects" });
+    var objects = std.Io.Dir.openDirAbsolute(io, objects_path, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => return 0,
+        else => return err,
+    };
+    defer objects.close(io);
+    var count: usize = 0;
+    var it = objects.iterate();
+    while (try it.next(io)) |_| count += 1;
+    return count;
+}
+
+/// lock の `npmInstances` から instance key 一致の 1 件を返す（packages と
+/// profile_packages の双方を走査する）。
+fn findNpmInstance(lock: *const pkg.lock.Lock, key: []const u8) ?pkg.lock.NpmInstance {
+    for (lock.packages) |entry| {
+        for (entry.npm_instances) |instance| {
+            if (std.mem.eql(u8, instance.key, key)) return instance;
+        }
+    }
+    for (lock.profile_packages) |profile| {
+        for (profile.packages) |entry| {
+            for (entry.npm_instances) |instance| {
+                if (std.mem.eql(u8, instance.key, key)) return instance;
+            }
+        }
+    }
+    return null;
+}
+
+test "npm registry E2E: packument 取得から cache・lock・sync materialize まで" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app");
+    try temporary.dir.createDirPath(io, "cache");
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", a);
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", a);
+    try appManifest(a, app_root,
+        \\[dependencies.npm]
+        \\escape = "^1.0.0"
+        \\
+    );
+
+    const entry_bytes = "export default 42;\n";
+    const tarball = try npmTarball(a, "escape", "1.2.3", "index.js", entry_bytes);
+    const integrity = try pkg.npm.integritySha512(a, tarball);
+
+    var server = RegistryServer{ .io = io, .allocator = a };
+    try server.listen();
+    defer server.stop();
+    const tarball_url = try server.url(a, "/escape/-/escape-1.2.3.tgz");
+    const packument = try npmPackument(a, "escape", "1.2.3", tarball_url, integrity);
+    const routes = [_]RegistryRoute{
+        .{ .path = "/escape", .body = packument },
+        .{ .path = "/escape/-/escape-1.2.3.tgz", .body = tarball },
+    };
+    try server.serve(&routes);
+
+    // --- lock: packument + tarball を取り、integrity 検証して cache へ格納 ---
+    var cli = Cli.init(a);
+    try cli.env.put("LNAKO_NPM_REGISTRY", server.base_url.?);
+    try cli.run(a, "lock", &.{ "--package-cache-dir", cache_root }, app_root);
+    try testing.expectEqual(@as(usize, 2), server.requests.load(.acquire));
+
+    var diagnostics = pkg.diagnostics.List.init(a);
+    defer diagnostics.deinit();
+    const lock_bytes = try readFile(a, app_root, "nako.lock");
+    var parsed = try pkg.lock.parse(a, lock_bytes, &diagnostics);
+    defer parsed.deinit();
+    const instance = findNpmInstance(&parsed, "escape@1.2.3") orelse return error.TestExpectedInstance;
+    try testing.expectEqualStrings("escape", instance.name);
+    try testing.expectEqualStrings("1.2.3", instance.version);
+    try testing.expectEqualStrings(tarball_url, instance.url.?);
+    const sha_hex = try pkg.fetch.sha256Hex(a, tarball);
+    const expected_sha256 = try std.fmt.allocPrint(a, "sha256:{s}", .{sha_hex});
+    try testing.expectEqualStrings(expected_sha256, instance.sha256.?);
+
+    // cache には lock の sha256 + url から再導出できる内容アドレス key で
+    // tarball bytes が格納されている（sync の materialize はこれだけを使う）。
+    var store = try pkg.cache.Store.open(a, io, cache_root);
+    defer store.deinit();
+    const cache_key = (try pkg.npm_esm.cacheKeyForInstance(a, instance)).?;
+    const cached = (try store.readVerifiedSourceArchive(a, cache_key, instance.sha256.?)).?;
+    try testing.expectEqualSlices(u8, tarball, cached);
+
+    // --- sync: lock と cache だけから世代 deps/ へ materialize ---
+    // `--offline` で通信を禁じ、registry を止めても再構築できることを示す。
+    var out: std.Io.Writer.Allocating = .init(a);
+    var err_out: std.Io.Writer.Allocating = .init(a);
+    try sync_cmd.run(a, io, &.{ "--offline", "--package-cache-dir", cache_root, app_root }, &cli.env, &out.writer, &err_out.writer);
+    // lock は fresh・tarball は cache hit なので追加の取得は起きない。
+    try testing.expectEqual(@as(usize, 2), server.requests.load(.acquire));
+    try testing.expect(try dirFileExists(a, app_root, ".nako/environment.json"));
+
+    const generation = std.mem.trim(u8, try readFile(a, app_root, ".nako/current"), " \t\r\n");
+    const dir_name = try pkg.npm_env.instanceDirName(a, instance);
+    const installed_manifest_rel = try std.fmt.allocPrint(a, ".nako/env/{s}/deps/{s}/package.json", .{ generation, dir_name });
+    const installed_manifest = try readFile(a, app_root, installed_manifest_rel);
+    try testing.expect(std.mem.indexOf(u8, installed_manifest, "\"name\":\"escape\"") != null);
+    const installed_entry_rel = try std.fmt.allocPrint(a, ".nako/env/{s}/deps/{s}/index.js", .{ generation, dir_name });
+    try testing.expectEqualStrings(entry_bytes, try readFile(a, app_root, installed_entry_rel));
+}
+
+test "npm registry E2E: tarball の integrity 不一致は cache と lock を汚さず失敗する" {
+    var arena_impl = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_impl.deinit();
+    const a = arena_impl.allocator();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "app");
+    try temporary.dir.createDirPath(io, "cache");
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", a);
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", a);
+    try appManifest(a, app_root,
+        \\[dependencies.npm]
+        \\escape = "^1.0.0"
+        \\
+    );
+
+    // packument の integrity は正規 tarball のもの。配信する tarball だけを
+    // 差し替え、取得後の検証で必ず落ちるようにする。
+    const good = try npmTarball(a, "escape", "1.2.3", "index.js", "export default 42;\n");
+    const tampered = try npmTarball(a, "escape", "1.2.3", "index.js", "export default 43;\n");
+    const integrity = try pkg.npm.integritySha512(a, good);
+
+    var server = RegistryServer{ .io = io, .allocator = a };
+    try server.listen();
+    defer server.stop();
+    const tarball_url = try server.url(a, "/escape/-/escape-1.2.3.tgz");
+    const packument = try npmPackument(a, "escape", "1.2.3", tarball_url, integrity);
+    const routes = [_]RegistryRoute{
+        .{ .path = "/escape", .body = packument },
+        .{ .path = "/escape/-/escape-1.2.3.tgz", .body = tampered },
+    };
+    try server.serve(&routes);
+
+    var cli = Cli.init(a);
+    try cli.env.put("LNAKO_NPM_REGISTRY", server.base_url.?);
+    try expectFail(error.Failed, a, &cli, "lock", &.{ "--package-cache-dir", cache_root }, app_root);
+    try testing.expect(std.mem.indexOf(u8, cli.err.written(), "sha512 mismatch") != null);
+    // 失敗時に lock と cache entry を公開しない（lock は環境を書かないため、
+    // 環境側の不在はこの経路では観測対象にならない）。
+    try testing.expect(!try dirFileExists(a, app_root, "nako.lock"));
+    try testing.expectEqual(@as(usize, 0), try countCacheObjects(a, cache_root));
+    try testing.expectEqual(@as(usize, 2), server.requests.load(.acquire));
 }
