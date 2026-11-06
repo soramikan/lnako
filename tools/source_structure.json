@@ -30,6 +30,10 @@
       "reason": "命令dispatchファサード（arrays/へ実装移譲済み・テストはファサードに集約）",
       "limitKb": 40
     },
+      "src/package/npm_esm.zig": {
+        "reason": "ESM exports 解決（条件・wildcard・包含・深度/サイズ上限）と回帰テストを同一ファイルで維持（テスト分離は分割 follow-up・100KB上限）",
+        "limitKb": 100
+      },
       "src/package/import_resolver.zig": {
         "reason": "manifest・lock・environment・filesystemを同一Resolverで相互検証する境界（監視対象・hard limit内）",
         "limitKb": 84
