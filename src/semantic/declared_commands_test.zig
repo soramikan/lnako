@@ -116,10 +116,10 @@ test "宣言metadataで名前・助詞・arityの不一致をファイル位置�
             \\lib__加算(1)
             \\
             },
-            // ソース側は `と` を受ける定義にして、宣言 metadata が正本であることを
-            // 確認する（ソース基準の検査だけでは通ってしまう）。
+            // ソースは metadata と同じ助詞で定義し、呼出し側だけ `と` に
+            // しているため、助詞不一致が宣言 metadata 由来で診断される。
             .{ .suffix = "packages/lib/index.nako3", .source =
-            \\●(AとBに)加算とは
+            \\●(AをBに)加算とは
             \\  A+Bで戻る
             \\ここまで
             \\
@@ -246,6 +246,76 @@ test "宣言索引に無い非公開シンボルでもaliasで解決できれば
     try std.testing.expectEqual(@as(usize, 0), program.diagnostics.len);
     // 索引の被覆外なので未検査として残る。
     try std.testing.expect(!program.packageCommandsInspected());
+}
+
+test "宣言metadataとソース関数の助詞順不一致を診断する" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var provider = DeclaredProvider{ .lib = try declaredAddCommand(arena, &.{ "A", "B" }, &.{ "を", "に" }) };
+    var resolver = DeclaredResolver{};
+    var memory = MemoryProvider{
+        .files = &.{
+            .{ .suffix = "main.nako3", .source =
+            \\!「pkg:lib」を取り込む
+            \\1を2にlib__加算
+            \\
+            },
+            // metadata は Aを,Bに。ソースは Aに,Bを で助詞順が逆。
+            .{ .suffix = "packages/lib/index.nako3", .source =
+            \\●(Aに,Bを)加算とは
+            \\  A+Bで戻る
+            \\ここまで
+            \\
+            },
+        },
+    };
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{
+        .package_resolver = resolver.resolver(),
+        .declared_commands_provider = provider.provider(),
+    });
+    defer graph.deinit();
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(!program.succeeded());
+    try std.testing.expectEqual(@as(usize, 1), countCode(program, .declared_command_signature_mismatch));
+    // 根本原因（署名不一致）だけを報告し、arity の重複診断は出さない。
+    try std.testing.expectEqual(@as(usize, 0), countCode(program, .invalid_argument_count));
+}
+
+test "字句スコープの同名シンボルにはpackage宣言検査を適用しない" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var provider = DeclaredProvider{ .lib = try declaredAddCommand(arena, &.{ "A", "B" }, &.{ "を", "に" }) };
+    var resolver = DeclaredResolver{};
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source =
+        \\!「pkg:lib」を取り込む
+        \\●(lib__加算を)Fとは
+        \\  lib__加算を表示
+        \\ここまで
+        \\F(1)
+        \\
+        },
+        .{ .suffix = "packages/lib/index.nako3", .source =
+        \\●(AをBに)加算とは
+        \\  A+Bで戻る
+        \\ここまで
+        \\
+        },
+    } };
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{
+        .package_resolver = resolver.resolver(),
+        .declared_commands_provider = provider.provider(),
+    });
+    defer graph.deinit();
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    // 関数仮引数 lib__加算 が package 命令を隠す。arity/助詞の宣言検査を
+    // 適用すると誤って失敗するため、字句シンボルには適用しない。
+    try std.testing.expect(program.succeeded());
+    try std.testing.expectEqual(@as(usize, 0), program.diagnostics.len);
 }
 
 test "変数宣言命令をC風呼出しした場合は拒否する" {

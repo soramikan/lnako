@@ -21,7 +21,7 @@ const npkg_commands = @import("npkg_commands.zig");
 const npkg_commands_gen = @import("npkg_commands_gen.zig");
 const npkg_files = @import("npkg_files.zig");
 const builtin_commands = @import("../frontend/builtin_commands.zig");
-const analyzer_mod = @import("../semantic/analyzer.zig");
+const declared_commands = @import("../semantic/declared_commands.zig");
 const module_graph = @import("../semantic/module_graph.zig");
 
 const Allocator = std.mem.Allocator;
@@ -138,7 +138,7 @@ const PackageEdge = struct {
 /// 文字列は内蔵 arena が所有する。
 pub const DeclaredIndex = struct {
     arena: std.heap.ArenaAllocator,
-    packages: std.StringHashMapUnmanaged(analyzer_mod.DeclaredCommands) = .empty,
+    packages: std.StringHashMapUnmanaged(declared_commands.DeclaredCommands) = .empty,
 
     pub fn deinit(self: *DeclaredIndex) void {
         self.arena.deinit();
@@ -147,7 +147,7 @@ pub const DeclaredIndex = struct {
 
     /// package key（environment `packages` のキー）で索引を引く。無い場合は
     /// 未検査を意味する null。
-    pub fn find(self: *const DeclaredIndex, package_key: []const u8) ?analyzer_mod.DeclaredCommands {
+    pub fn find(self: *const DeclaredIndex, package_key: []const u8) ?declared_commands.DeclaredCommands {
         return self.packages.get(package_key);
     }
 
@@ -156,7 +156,7 @@ pub const DeclaredIndex = struct {
         return .{ .context = self, .lookupFn = lookupProvider };
     }
 
-    fn lookupProvider(context: *anyopaque, allocator: Allocator, package_owner: []const u8) anyerror!?analyzer_mod.DeclaredCommands {
+    fn lookupProvider(context: *anyopaque, allocator: Allocator, package_owner: []const u8) anyerror!?declared_commands.DeclaredCommands {
         _ = allocator;
         const self: *DeclaredIndex = @ptrCast(@alignCast(context));
         return self.packages.get(package_owner);
@@ -182,9 +182,15 @@ pub fn loadDeclaredCommands(
     defer root_dir.close(io);
 
     const env_rel = ".nako/" ++ environment_mod.environment_file;
-    const bytes = root_dir.readFileAlloc(io, env_rel, gpa, .limited(environment_mod.max_environment_bytes)) catch return index;
+    const bytes = root_dir.readFileAlloc(io, env_rel, gpa, .limited(environment_mod.max_environment_bytes)) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return index,
+    };
     defer gpa.free(bytes);
-    var parsed = std.json.parseFromSlice(std.json.Value, gpa, bytes, .{ .allocate = .alloc_always }) catch return index;
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, bytes, .{ .allocate = .alloc_always }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return index,
+    };
     defer parsed.deinit();
     if (parsed.value != .object) return index;
     const packages_value = parsed.value.object.get("packages") orelse return index;
@@ -196,7 +202,7 @@ pub fn loadDeclaredCommands(
         const parsed_list = try npkg_commands.parseList(arena, entry.value_ptr.object.get("commands"));
         // 空・不完全な索引を「検査済み」として渡さない。
         if (!parsed_list.complete or parsed_list.commands.len == 0) continue;
-        const commands = try arena.alloc(analyzer_mod.DeclaredCommand, parsed_list.commands.len);
+        const commands = try arena.alloc(declared_commands.DeclaredCommand, parsed_list.commands.len);
         for (parsed_list.commands, 0..) |command, command_index| {
             commands[command_index] = .{
                 .name = command.name,

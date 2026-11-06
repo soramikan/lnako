@@ -41,6 +41,9 @@ pub const Code = enum {
     /// 宣言 metadata の種別（関数/変数）と、取り込んだソースで解決した
     /// シンボルの種別が一致しない（Issue #52）。
     declared_command_kind_mismatch,
+    /// 宣言 metadata の引数個数・助詞列と、取り込んだソースの関数定義が
+    /// 一致しない（Issue #52）。
+    declared_command_signature_mismatch,
 };
 
 pub const Diagnostic = struct {

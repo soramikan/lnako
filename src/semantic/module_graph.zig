@@ -27,9 +27,11 @@ pub const SourceProvider = struct {
     }
 };
 
+const declared_types = @import("declared_commands.zig");
 /// 環境 snapshot の宣言命令 metadata。analyzer が検査の正本として使う。
-pub const DeclaredCommand = analyzer.DeclaredCommand;
-pub const DeclaredCommands = analyzer.DeclaredCommands;
+pub const DeclaredCommand = declared_types.DeclaredCommand;
+pub const DeclaredCommands = declared_types.DeclaredCommands;
+const PackageCommandAlias = declared_types.PackageCommandAlias;
 
 /// PackageResolver returns all fields allocated from its supplied allocator;
 /// the loader retains them in its graph arena.
@@ -496,7 +498,7 @@ pub const ModuleGraph = struct {
             }
             // `pkg:` import の命令 alias。宣言索引は取り込み先 module が
             // 解決時に保持している（plugin は初期化しない）。
-            var package_command_aliases: std.ArrayList(analyzer.PackageCommandAlias) = .empty;
+            var package_command_aliases: std.ArrayList(PackageCommandAlias) = .empty;
             for (module.imports) |item| {
                 if (item.canonical_id == null) continue;
                 const source_namespace = item.namespace orelse continue;
@@ -1003,15 +1005,22 @@ pub const Loader = struct {
                 else
                     descendantInheritance(module, resolved_target);
                 const existing = self.findImport(resolved_target, resolved_import.canonical_id, edge_inheritance);
+                const resolved_declared = if (resolved_import.canonical_id != null)
+                    try self.declaredCommandsFor(resolved_import.package_owner)
+                else
+                    null;
                 var target: ?u32 = existing;
                 var cyclic = false;
                 if (existing) |index| {
                     cyclic = self.modules.items[index].state == .loading;
+                    // 相対 import で先に読み込まれた既存 module を canonical
+                    // export として再利用する場合も宣言索引を設定する。
+                    if (resolved_declared) |declared| {
+                        if (self.modules.items[index].declared_commands == null) {
+                            self.modules.items[index].declared_commands = declared;
+                        }
+                    }
                 } else {
-                    const resolved_declared = if (resolved_import.canonical_id != null)
-                        try self.declaredCommandsFor(resolved_import.package_owner)
-                    else
-                        null;
                     target = self.loadOne(resolved_target, node, module.path, site_mode, resolved_import.namespace, resolved_import.canonical_id, edge_inheritance, resolved_declared) catch |err| switch (err) {
                         error.OutOfMemory => return err,
                         else => null,

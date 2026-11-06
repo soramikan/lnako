@@ -17,50 +17,11 @@ pub const ScopeKind = enum { module, function, anonymous_function };
 pub const SymbolKind = enum { variable, constant, function, test_function, parameter, loop_variable };
 pub const BindingKind = enum { declaration, reference, call, builtin };
 
-/// package の宣言命令 metadata（`.nako/environment.json` の `commands`）。
-/// plugin を初期化・ロードせずに得られる静的索引であり、`available=false` は
-/// その package の命令を静的に検査できないことを表す（成功扱いにしない）。
-pub const DeclaredCommand = struct {
-    name: []const u8,
-    /// 仮引数名。`variable` のときは空。
-    args: []const []const u8 = &.{},
-    /// `args` と対応する助詞。`args` と同数または空。
-    josi: []const []const u8 = &.{},
-    variable: bool = false,
-};
-
-pub const DeclaredCommands = struct {
-    /// 環境 snapshot に命令索引が記録されていたか。false は未検査。
-    available: bool = false,
-    commands: []const DeclaredCommand = &.{},
-
-    pub fn find(self: DeclaredCommands, name: []const u8) ?DeclaredCommand {
-        for (self.commands) |command| {
-            if (std.mem.eql(u8, command.name, name)) return command;
-        }
-        return null;
-    }
-};
-
-/// `pkg:` import が公開する `{alias}__命令` の宣言 metadata。
-/// `declared` が null / `available=false` のとき、その alias 経由の呼出しは
-/// 未検査として記録し、検査済みとは表示しない。
-pub const PackageCommandAlias = struct {
-    source_namespace: []const u8,
-    import_position: usize = 0,
-    declared: ?DeclaredCommands = null,
-    /// 解決先の semantic module index（ソース package のみ）。利用者定義の
-    /// 同名シンボルを package 宣言と誤照合しないための照合対象。
-    target_module: u32 = std.math.maxInt(u32),
-};
-
-/// 宣言 metadata が無い package alias 経由で観測した命令呼出し。
-pub const UninspectedPackageCommand = struct {
-    namespace: []const u8,
-    command_name: []const u8,
-    file: []const u8,
-    span: ast.Span,
-};
+const declared_commands = @import("declared_commands.zig");
+const DeclaredCommand = declared_commands.DeclaredCommand;
+const DeclaredCommands = declared_commands.DeclaredCommands;
+const PackageCommandAlias = declared_commands.PackageCommandAlias;
+const UninspectedPackageCommand = declared_commands.UninspectedPackageCommand;
 
 /// 実効取り込み文1件に対応する呼び出し先モジュールのエントリ名。
 /// 公式は取り込み文位置へ取り込み先トークンを展開するため、実行時にも
@@ -802,10 +763,6 @@ pub const Analyzer = struct {
             }
         }
         var declared_shape_reported = false;
-        if (declared_command) |command| {
-            declared_shape_reported = try self.checkDeclaredCommandShape(module_index, scope, node, name, command, callable);
-            declared_gate = true;
-        }
         if (self.resolveSymbol(module_index, scope, name, node.span)) |symbol| {
             if (declared_command) |command| {
                 const package_symbol = declared_alias.?.target_module == symbol.module_index;
@@ -818,6 +775,27 @@ pub const Analyzer = struct {
                     );
                     try self.addDiagnostic(.declared_command_kind_mismatch, node.span, self.modules.items[module_index].path, message);
                     return;
+                }
+                // 宣言 metadata とソースの引数定義（個数・助詞列）を照合する。
+                // 一致しないままソースへ束縛すると、実行時の引数順が metadata
+                // と逆になる呼出しを診断なしに通してしまう。
+                if (package_symbol and !command.variable and
+                    (symbol.argument_count != command.args.len or
+                        !josiSequenceEqual(symbol.parameter_josi, command.josi)))
+                {
+                    const declared_josi = try self.josiListText(command.josi);
+                    const actual_josi = try self.josiListText(symbol.parameter_josi);
+                    const message = try std.fmt.allocPrint(
+                        self.allocator,
+                        "パッケージ『{s}』の『{s}』は引数{d}個（助詞: {s}）として宣言されていますが、取り込んだソースでは引数{d}個（助詞: {s}）です",
+                        .{ declared_alias.?.source_namespace, name, command.args.len, declared_josi, symbol.argument_count, actual_josi },
+                    );
+                    try self.addDiagnostic(.declared_command_signature_mismatch, node.span, self.modules.items[module_index].path, message);
+                    return;
+                }
+                if (package_symbol) {
+                    declared_shape_reported = try self.checkDeclaredCommandShape(module_index, scope, node, name, command, callable);
+                    declared_gate = true;
                 }
             }
             const implicit_call = !callable and node.kind == .word and (symbol.kind == .function or symbol.kind == .test_function);
@@ -868,6 +846,13 @@ pub const Analyzer = struct {
             }
             try self.bind(node, if (callable or implicit_call) .call else .reference, name, symbol.qualified_name, symbol.id);
             return;
+        }
+        // ソースシンボルが無い package 命令（native/ESM や未解決）は宣言
+        // metadata を正本として形を検査する。ソースの字句シンボルが同名を
+        // 隠している場合は上の package_symbol 判定で既に除外している。
+        if (declared_command) |command| {
+            declared_shape_reported = try self.checkDeclaredCommandShape(module_index, scope, node, name, command, callable);
+            declared_gate = true;
         }
         if (self.builtins.get(name) != null) {
             // 組み込み命令も公式のfunc token相当のため同じ規則を適用する
@@ -1159,6 +1144,30 @@ pub const Analyzer = struct {
     fn declaredKindMismatch(command: DeclaredCommand, symbol_kind: SymbolKind) bool {
         const symbol_is_function = symbol_kind == .function or symbol_kind == .test_function;
         return command.variable == symbol_is_function;
+    }
+
+    /// 宣言 metadata の助詞列とソース関数の仮引数助詞列の一致。
+    fn josiSequenceEqual(a: []const []const u8, b: []const []const u8) bool {
+        if (a.len != b.len) return false;
+        for (a, b) |left, right| {
+            if (!std.mem.eql(u8, left, right)) return false;
+        }
+        return true;
+    }
+
+    /// 助詞列の診断表示。空文字は「なし」と表示する。
+    fn josiListText(self: *Analyzer, josi: []const []const u8) ![]const u8 {
+        if (josi.len == 0) return "(なし)";
+        var out: std.ArrayList(u8) = .empty;
+        for (josi, 0..) |item, index| {
+            if (index > 0) try out.appendSlice(self.allocator, ", ");
+            if (item.len == 0) {
+                try out.appendSlice(self.allocator, "なし");
+            } else {
+                try out.appendSlice(self.allocator, item);
+            }
+        }
+        return out.items;
     }
 
     /// 名前不一致の診断に添える宣言済み命令名（最大8件）。
