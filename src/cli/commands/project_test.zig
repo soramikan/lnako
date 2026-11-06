@@ -1255,10 +1255,11 @@ test "check は共有 writable を --strict-project-trust で拒否し既定は�
     try temporary.dir.writeFile(io, .{ .sub_path = "app/nako.lock", .data = "{\"schemaVersion\":1}" });
     const lock_abs = try std.fs.path.join(a, &.{ app_root, "nako.lock" });
     try chmodMode(a, lock_abs, 0o666);
-    defer chmodMode(a, lock_abs, 0o644) catch {};
     var lock_cli = Cli.init(a);
     try expectFail(error.Failed, a, &lock_cli, "check", &.{"--strict-project-trust"}, app_root);
     try testing.expect(std.mem.indexOf(u8, lock_cli.err.written(), "書き込み権限") != null);
+    // `.nako` ケースを lock 経路から分離するため、lock を安全な mode へ戻す。
+    try chmodMode(a, lock_abs, 0o644);
 
     // `.nako` 配下の共有 writable も検査する（check は .nako を読む）。
     try temporary.dir.createDirPath(io, "app/.nako");
