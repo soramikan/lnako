@@ -29,8 +29,11 @@ pub const Error = error{
     PackageJsonInvalid,
     EntryNotFound,
     BareNotFound,
-    /// wildcard の一致部分が specifier として不正（Node の
-    /// ERR_INVALID_MODULE_SPECIFIER 相当）。配列 fallback でも飛ばさない。
+    /// wildcard の一致部分が specifier として不正。`..` / `.` / `node_modules`
+    /// は Node の ERR_INVALID_MODULE_SPECIFIER と同じ判定。空セグメント・
+    /// `:`・制御文字・`\` は Node が警告のみで解決するが、この実装は
+    /// fail-closed で拒否する（安全側の意図的差異）。
+    /// 配列 fallback でも飛ばさない。
     InvalidSpecifier,
     CacheMiss,
     InvalidArchive,
@@ -90,7 +93,8 @@ pub const RootEntry = struct {
 /// フォールバックしない（Node と同じく、作者が root を隠せる）。
 /// `exports` が無ければ `module` → `main` → `index.js` の順に選ぶ。
 /// root を公開しない package は null。`exports` が string / array / object
-/// 以外（`null`・数値・真偽値）なら Node と同じく exports 無しとして扱う。
+/// 以外（`null`・数値・真偽値）なら Node と同じく exports 無しとして扱う
+/// （Node 24.21.0 / 26.13.0 で `module` へのフォールバックを実測）。
 pub fn pickEntryFromPackageJson(gpa: Allocator, package_json: []const u8) Error!?RootEntry {
     var parsed = std.json.parseFromSlice(std.json.Value, gpa, package_json, .{
         // JS の JSON.parse と同じく、重複キーは後勝ち（位置は最初の出現）。
@@ -249,7 +253,11 @@ fn pickExportsSubpath(gpa: Allocator, exports_v: std.json.Value, subpath: []cons
     };
     const want = try std.fmt.allocPrint(gpa, "./{s}", .{subpath});
     defer gpa.free(want);
-    if (obj.get(want)) |target| return resolveTarget(gpa, target, .{});
+    // Node は subpath に `*` を含む場合 exact 一致をスキップしてパターン解決へ
+    // 回す（`*` を literal キーとして一致させない）。
+    if (std.mem.indexOfScalar(u8, want, '*') == null) {
+        if (obj.get(want)) |target| return resolveTarget(gpa, target, .{});
+    }
 
     var best_key: ?[]const u8 = null;
     var best_prefix_len: usize = 0;
@@ -276,18 +284,22 @@ fn pickExportsSubpath(gpa: Allocator, exports_v: std.json.Value, subpath: []cons
     }
 
     const key = best_key orelse return .unresolved;
+    const target = obj.get(key) orelse return .unresolved;
+    // Node は `null` target を一致部分の検証より先に確定する（非公開）。
+    // `pkg/node_modules/x` と `"./*": null` の組合せは NOT_EXPORTED。
+    if (target == .null) return .excluded;
     const suffix_len = key.len - best_prefix_len - 1;
     const matched = want[best_prefix_len .. want.len - suffix_len];
-    // 一致部分は specifier 側の入力。Node と同じく target とは別に検査し、
-    // 不正なら配列 fallback でも後続候補へ進まない。
+    // 一致部分は specifier 側の入力。target とは別に検査し、不正なら配列
+    // fallback でも後続候補へ進まない（Node はエラー確定）。
     if (!matchedSubpathIsSafe(matched)) return error.InvalidSpecifier;
-    const target = obj.get(key) orelse return .unresolved;
     return resolveTarget(gpa, target, .{ .matched = matched });
 }
 
-/// wildcard の一致部分（specifier 由来）が安全か検証する。`..`・空セグメント・
-/// NUL・`\` は `subpathIsSafe` で拒否済みだが、`node_modules` と `:`・制御文字
-/// を specifier 側の誤りとして拒否する（Node: ERR_INVALID_MODULE_SPECIFIER）。
+/// wildcard の一致部分（specifier 由来）が安全か検証する。`..` / `.` /
+/// `node_modules` は Node も `ERR_INVALID_MODULE_SPECIFIER` にする。
+/// 空セグメント・`:`・制御文字・`\` は Node が警告のみで通すが、この実装では
+/// fail-closed として拒否する（安全側の意図的差異。docs/TODO.md 参照）。
 fn matchedSubpathIsSafe(matched: []const u8) bool {
     for (matched) |byte| {
         if (byte < 0x20 or byte == 0x7f or byte == ':' or byte == '\\') return false;
@@ -378,7 +390,6 @@ pub fn resolveEntryInRoot(gpa: Allocator, io: std.Io, package_root_abs: []const 
     // main が拡張子無しのとき .js / .mjs を試す。
     for (&[_][]const u8{ ".js", ".mjs" }) |ext| {
         const with_ext = try std.fmt.allocPrint(gpa, "{s}/{s}{s}", .{ root, cleaned, ext });
-        errdefer gpa.free(with_ext);
         if (fileExists(io, with_ext)) {
             return .{ .path = with_ext, .package_root = root };
         }
@@ -397,7 +408,9 @@ fn stripLeadingDotSlash(path: []const u8) []const u8 {
 /// `name/sub` の `sub`（先頭 `./` 無し）。戻り値の分類は次の通り。
 /// - `BareNotFound`: そのサブパスを公開していない（`null` target を含む）
 /// - `PackageJsonInvalid`: exports target が root 外・不正な形式
+/// - `InvalidSpecifier`: wildcard の一致部分が不正（配列 fallback でも継続しない）
 /// - `EntryNotFound`: target は妥当だがファイルが無い
+/// - `PackageJsonMissing`: registry 構築後に `package.json` が消えた場合
 /// `exports` を持たない package の `name/sub` は Node の従来解決に対応せず
 /// `BareNotFound` にする（安全側。docs/TODO.md に未対応境界として記録）。
 pub fn resolveSubpathInRoot(
@@ -1648,6 +1661,101 @@ test "parseBareSpecifier splits scoped subpath" {
     const plain = parseBareSpecifier("pkg/sub/deep").?;
     try testing.expectEqualStrings("pkg", plain.name);
     try testing.expectEqualStrings("sub/deep", plain.subpath);
+}
+
+test "pickExportsSubpath resolves star in specifier via pattern" {
+    const gpa = testing.allocator;
+    var parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        gpa,
+        \\{"exports":{"./a*":"./x/*.js"}}
+    ,
+        .{},
+    );
+    defer parsed.deinit();
+    const exports_v = parsed.value.object.get("exports").?;
+
+    // Node は specifier に `*` を含む場合 exact 一致をスキップし、パターンと
+    // して解決する（matched は literal な `*` を含み得る）。
+    // ファイルシステム上で `*` を含む名は Windows で作れないため、
+    // 解決結果の文字列で検証する。`*` を含むキーは exact 一致してもパターン
+    // 一致しても同じ結果になるため、この検査は pattern 経路の固定が目的。
+    switch (try pickExportsSubpath(gpa, exports_v, "a*b")) {
+        .target => |target| {
+            defer gpa.free(target);
+            try testing.expectEqualStrings("./x/*b.js", target);
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "BareRegistry resolveBare null target precedes specifier validation" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = testing.io;
+    const json =
+        \\{"exports":{".":"./index.js","./*":null}}
+    ;
+    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{});
+    defer reg.deinit();
+
+    // Node 実測（v24/v26）: `"./*": null` + `pkg/node_modules/x` は
+    // ERR_PACKAGE_PATH_NOT_EXPORTED。一致部分の検証より null が先。
+    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/node_modules/x"));
+}
+
+test "BareRegistry resolveBare rejects colon and control chars in wildcard match" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = testing.io;
+    const json =
+        \\{"exports":{".":"./index.js","./*":"./a/*.js"}}
+    ;
+    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{});
+    defer reg.deinit();
+
+    // Node は警告のみで通すが、この実装は fail-closed（docs/TODO.md）。
+    try testing.expectError(error.InvalidSpecifier, reg.resolveBare("left-pad/a:b"));
+    try testing.expectError(error.InvalidSpecifier, reg.resolveBare("left-pad/a\x01b"));
+    // 空セグメントは specifier の段階で bare として拒否する。
+    try testing.expect(parseBareSpecifier("left-pad/x//y") == null);
+}
+
+test "BareRegistry resolveBare empty string exports is invalid" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = testing.io;
+    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", "{\"exports\":\"\"}", &.{});
+    defer reg.deinit();
+
+    // Node 実測（v24/v26）: `exports: ""` は root で ERR_INVALID_PACKAGE_TARGET、
+    // サブパスは sugar 経由で ERR_PACKAGE_PATH_NOT_EXPORTED。
+    try testing.expectError(error.PackageJsonInvalid, pickEntryFromPackageJson(gpa, "{\"exports\":\"\"}"));
+    // registry は root 解決の失敗を root 非公開へ丸めるため BareNotFound。
+    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad"));
+    try testing.expectError(error.BareNotFound, reg.resolveBare("left-pad/sub"));
+}
+
+test "BareRegistry resolveBare nested unresolved condition falls through" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = testing.io;
+    const json =
+        \\{"exports":{".":"./index.js","./sub":{"import":{"node":"./x.js"},"default":"./y.js"}}}
+    ;
+    var reg = try makeTestRegistry(gpa, io, &tmp, "pkg", "left-pad", json, &.{
+        .{ .path = "y.js", .data = "export default 1;\n" },
+    });
+    defer reg.deinit();
+
+    // 一致した `import` の値が未解決なら、挿入順で次の一致キー（default）へ進む。
+    const got = try reg.resolveBare("left-pad/sub");
+    defer got.deinit(gpa);
+    try testing.expect(std.mem.endsWith(u8, got.path, "y.js"));
 }
 
 const TestInstanceTrees = struct {
