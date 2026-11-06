@@ -64,8 +64,10 @@ pub const Report = struct {
     uninspected: []const Uninspected = &.{},
     collision_count: usize = 0,
     mismatch_count: usize = 0,
-    /// 選択 feature の影響。manifest を渡していない、または feature 定義が
-    /// 無いときは null（表示しない）。
+    /// 選択 feature の影響。次のいずれかでは null（表示しない）:
+    /// manifest を渡していない / feature 定義が無い / 環境に root 依存が
+    /// 記録されていない（旧形式）/ 選択の展開が失敗した。
+    /// `check` は環境が現行 lock と整合するときだけ manifest を渡す。
     features: ?FeatureImpact = null,
 
     pub fn deinit(self: *Report) void {
@@ -99,7 +101,9 @@ pub const DedicatedFeature = struct {
     name: []const u8,
     /// この feature だけが有効化する root 依存 alias。
     roots: []const []const u8 = &.{},
-    /// その root からしか到達できない推移依存 package key。
+    /// 専用 root（いずれかの feature の専用 root）からしか到達できない
+    /// 推移依存 package key。複数 feature の専用 root から到達できるものは
+    /// それぞれの feature に列挙する。
     packages: []const []const u8 = &.{},
 };
 
@@ -107,7 +111,9 @@ pub const DedicatedFeature = struct {
 pub const FeatureImpact = struct {
     /// 選択 feature と直接指定 alias（昇順）。
     selected: []const []const u8 = &.{},
-    /// default feature または feature 非依存で有効な root 依存 alias（昇順）。
+    /// どの非 default feature にも専用でない root 依存 alias（昇順）。
+    /// default が有効化する・複数 feature が共有する・CLI で直接指定された
+    /// （feature を外しても残る）のいずれか。
     common_roots: []const []const u8 = &.{},
     /// feature 専用の root 依存と推移依存（feature 名昇順）。
     dedicated: []const DedicatedFeature = &.{},
@@ -470,6 +476,8 @@ fn analyzeFeatureImpact(
     while (definition_it.next()) |name_ptr| {
         const name = name_ptr.*;
         var set = std.StringHashMap(void).init(scratch);
+        // 循環・未知名を含む壊れた定義は空集合として扱う（診断は expand を
+        // 呼ぶ側の責務で、ここでは表示だけを諦める）。
         if (features_mod.expand(scratch, &manifest.features, &.{name}, false, &aliases, null)) |expanded_value| {
             const expanded = expanded_value;
             var alias_it = expanded.dependency_aliases.keyIterator();
@@ -478,17 +486,34 @@ fn analyzeFeatureImpact(
         try feature_aliases.put(name, set);
     }
 
+    // どの feature 定義かが引き込む alias の和集合。ここに無い alias は
+    // feature と無関係に常に有効な通常の root 依存。
+    var gated_aliases = std.StringHashMap(void).init(scratch);
+    var gated_sets = feature_aliases.valueIterator();
+    while (gated_sets.next()) |set| {
+        var gated_it = set.keyIterator();
+        while (gated_it.next()) |alias| try gated_aliases.put(alias.*, {});
+    }
+
     // 選択 = feature 名 + 直接指定された依存 alias。選択 feature が
     // 展開する alias は feature 側に含まれるため重複させない。
-    // direct_only は「feature 経由ではなく CLI で直接指定された alias」。
-    // 未選択 feature の owner 判定には使わない（専用 root の誤分類防止）。
+    // direct_requested は「CLI で直接指定された alias」。feature が同じ
+    // alias を展開していても、直接指定なら feature を外して有効なため
+    // 専用 root の owner 判定には使わない（誤分類防止）。
     var selected_names: std.ArrayList([]const u8) = .empty;
-    var direct_only = std.StringHashMap(void).init(scratch);
+    var direct_requested = std.StringHashMap(void).init(scratch);
     var selected_features = selection.features.keyIterator();
     while (selected_features.next()) |name| try selected_names.append(scratch, name.*);
     var selected_aliases = selection.dependency_aliases.keyIterator();
     while (selected_aliases.next()) |name_ptr| {
         const name = name_ptr.*;
+        // 直接指定は feature 展開の結果と独立に判定する。選択 feature が
+        // 同じ alias を展開していても、CLI で直接指定されていれば feature を
+        // 外しても有効なため、専用 root の owner 判定から外す。
+        // `dependency_aliases` のキーは feature 名になり得ない（expand は
+        // 定義済み feature 名を優先する）が、判定の意図を明示しておく。
+        const directly_requested = !manifest.features.contains(name) and containsName(request.requested, name);
+        if (directly_requested) try direct_requested.put(name, {});
         var gated_by_selection = false;
         var selected_feature_it = selection.features.keyIterator();
         while (selected_feature_it.next()) |feature_name| {
@@ -498,10 +523,7 @@ fn analyzeFeatureImpact(
                 break;
             }
         }
-        if (!gated_by_selection) {
-            try selected_names.append(scratch, name);
-            try direct_only.put(name, {});
-        }
+        if (directly_requested or !gated_by_selection) try selected_names.append(scratch, name);
     }
     sortNames(selected_names.items);
 
@@ -529,18 +551,33 @@ fn analyzeFeatureImpact(
     }
 
     var common_roots: std.ArrayList([]const u8) = .empty;
+    // baseline（feature を外しても残る root）の package key。表示名ではなく
+    // key で持つ（推移依存の到達判定に使う）。
+    var common_keys: std.ArrayList([]const u8) = .empty;
     var feature_root_keys = std.StringHashMap(std.ArrayList([]const u8)).init(scratch);
     for (root_keys.items) |package_key| {
         const root_aliases = aliases_by_key.get(package_key).?.items;
+        // feature を外しても残る alias を持つ root は専用にならない。表示は
+        // package 単位なので、複数 alias のうち1つでも残るなら共通とする。
+        if (rootSurvivesWithoutFeature(root_aliases, &gated_aliases, &direct_requested)) {
+            try common_roots.append(scratch, display_by_key.get(package_key) orelse package_key);
+            try common_keys.append(scratch, package_key);
+            continue;
+        }
+        // owner は「選択中の feature」だけ。未選択 feature の定義まで owner に
+        // 数えると、選択していない feature との共有を理由に専用 root が共通へ
+        // 落ちる（その feature は無効なので root を有効化していない）。
         var owners: std.ArrayList([]const u8) = .empty;
-        var feature_it = feature_aliases.iterator();
-        while (feature_it.next()) |entry| {
-            if (matchesAnyNonDirectAlias(entry.value_ptr, root_aliases, &direct_only)) try owners.append(scratch, entry.key_ptr.*);
+        var feature_it = selection.features.keyIterator();
+        while (feature_it.next()) |feature_name| {
+            const set = feature_aliases.getPtr(feature_name.*) orelse continue;
+            if (matchesAnyAlias(set, root_aliases)) try owners.append(scratch, feature_name.*);
         }
         // 専用は「ちょうど1つの非 default feature だけが所有」する場合のみ。
         // owner 0（feature 非依存）・複数 owner（共有）・default 所有は共通。
         if (owners.items.len != 1 or containsName(owners.items, "default")) {
-            try common_roots.append(scratch, display_by_key.get(package_key).?);
+            try common_roots.append(scratch, display_by_key.get(package_key) orelse package_key);
+            try common_keys.append(scratch, package_key);
             continue;
         }
         for (owners.items) |owner| {
@@ -560,13 +597,11 @@ fn analyzeFeatureImpact(
         const dedicated_keys = feature_root_keys.get(feature_name).?.items;
         var feature_closure = std.StringHashMap(void).init(scratch);
         try collectReachable(scratch, package_edges, dedicated_keys, &feature_closure);
-        var baseline_starts: std.ArrayList([]const u8) = .empty;
-        for (root_keys.items) |package_key| {
-            if (containsName(dedicated_keys, package_key)) continue;
-            try baseline_starts.append(scratch, package_key);
-        }
+        // baseline は feature を外しても残る共通 root だけ。他 feature の
+        // 専用 root を baseline に入れると、複数 feature が共有する推移依存が
+        // どの feature にも現れなくなる（= 表示から抜け落ちる）。
         var baseline_closure = std.StringHashMap(void).init(scratch);
-        try collectReachable(scratch, package_edges, baseline_starts.items, &baseline_closure);
+        try collectReachable(scratch, package_edges, common_keys.items, &baseline_closure);
 
         // 専用 root からしか到達できない推移依存だけを残す（root 自身は
         // roots 側に出るため packages には含めない）。
@@ -649,15 +684,23 @@ fn containsName(items: []const []const u8, name: []const u8) bool {
     return false;
 }
 
-/// 直接指定 alias だけが一致する feature は owner に数えない。
-/// 選択 feature が展開した alias は従来どおり一致させる。
-fn matchesAnyNonDirectAlias(
-    alias_set: *const std.StringHashMap(void),
+/// feature を外しても有効な alias を1つでも持つ root か。CLI 直接指定 alias と、
+/// どの feature 定義も参照しない通常の root 依存 alias が該当する。どちらも
+/// feature を無効化しても残るため、専用 root の根拠にならない。
+fn rootSurvivesWithoutFeature(
     aliases: []const []const u8,
-    direct_only: *const std.StringHashMap(void),
+    gated_aliases: *const std.StringHashMap(void),
+    direct_requested: *const std.StringHashMap(void),
 ) bool {
     for (aliases) |alias| {
-        if (direct_only.contains(alias)) continue;
+        if (direct_requested.contains(alias)) return true;
+        if (!gated_aliases.contains(alias)) return true;
+    }
+    return false;
+}
+
+fn matchesAnyAlias(alias_set: *const std.StringHashMap(void), aliases: []const []const u8) bool {
+    for (aliases) |alias| {
         if (alias_set.contains(alias)) return true;
     }
     return false;
@@ -1269,6 +1312,7 @@ test "command inspect: 未選択 feature の依存は専用に出さない" {
     defer parse_diags.deinit();
     var manifest = try manifest_mod.parse(a, feature_fixture_manifest, &parse_diags);
     defer manifest.deinit();
+    try testing.expect(!parse_diags.hasErrors());
 
     var list = diag.List.init(a);
     defer list.deinit();
@@ -1319,6 +1363,328 @@ test "command inspect: 直接指定 alias を未選択 feature の専用 root �
     // 載っていれば common 側に並ぶ）。
     try testing.expectEqual(@as(usize, 0), impact.dedicated.len);
     try testing.expect(containsName(impact.common_roots, "req"));
+}
+
+test "command inspect: feature と同時に直接指定した alias を共通 root にする" {
+    // `--features http,req --no-default-features` では req が http 経由でも
+    // 展開される。展開後の alias 集合だけで直接指定を判定すると req が
+    // selected から漏れ、http 専用 root に誤分類される。直接指定は
+    // request.requested から独立に判定する。
+    const a = testing.allocator;
+    const io = testing.io;
+    var tmp = test_sandbox.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeFeatureFixture(tmp.dir, true);
+    try tmp.dir.createDirPath(io, "lib_common");
+    try tmp.dir.createDirPath(io, "lib_req");
+    try tmp.dir.createDirPath(io, "lib_extra");
+
+    var parse_diags = diag.List.init(a);
+    defer parse_diags.deinit();
+    var manifest = try manifest_mod.parse(a, feature_fixture_manifest, &parse_diags);
+    defer manifest.deinit();
+    try testing.expect(!parse_diags.hasErrors());
+
+    var list = diag.List.init(a);
+    defer list.deinit();
+    var report = try inspectEnvironmentDir(a, io, tmp.dir, .{
+        .manifest = &manifest,
+        .features = .{ .requested = &.{ "http", "req" }, .use_default_features = false },
+    }, &list);
+    defer report.deinit();
+    try testing.expect(!list.hasErrors());
+
+    const impact = report.features orelse return error.MissingFeatureImpact;
+    try testing.expectEqual(@as(usize, 2), impact.selected.len);
+    try testing.expectEqualStrings("http", impact.selected[0]);
+    try testing.expectEqualStrings("req", impact.selected[1]);
+    // req は直接指定でもあるため http 専用ではなく共通 root。
+    try testing.expectEqual(@as(usize, 0), impact.dedicated.len);
+    try testing.expect(containsName(impact.common_roots, "req"));
+}
+
+test "command inspect: 直接指定 alias を持つ root は別 alias 経由の feature 専用にしない" {
+    // 同じ package が alpha / zeta の2 alias で環境に載り、feature が zeta を
+    // 引き込む構成。alpha を直接指定していれば feature を外しても root は
+    // 残るため、zeta 側の一致だけで専用にしてはいけない。
+    const a = testing.allocator;
+    const io = testing.io;
+    var tmp = test_sandbox.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeEnv(tmp.dir,
+        \\{
+        \\  "schemaVersion": 1,
+        \\  "lockSha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        \\  "profile": "default",
+        \\  "runtime": "lnako",
+        \\  "dependencies": [
+        \\    {"alias": "alpha", "package": "pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        \\    {"alias": "zeta", "package": "pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+        \\  ],
+        \\  "packages": {
+        \\    "pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+        \\      "name": "shared",
+        \\      "version": "1.0.0",
+        \\      "path": "lib_shared",
+        \\      "commands": [{"name": "共有命令", "args": [], "josi": []}]
+        \\    }
+        \\  }
+        \\}
+    );
+    try tmp.dir.createDirPath(io, "lib_shared");
+
+    var parse_diags = diag.List.init(a);
+    defer parse_diags.deinit();
+    var manifest = try manifest_mod.parse(a,
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\alpha = { path = "lib_shared" }
+        \\zeta = { path = "lib_shared" }
+        \\
+        \\[features]
+        \\http = ["zeta"]
+        \\
+    , &parse_diags);
+    defer manifest.deinit();
+    try testing.expect(!parse_diags.hasErrors());
+
+    var list = diag.List.init(a);
+    defer list.deinit();
+    var report = try inspectEnvironmentDir(a, io, tmp.dir, .{
+        .manifest = &manifest,
+        .features = .{ .requested = &.{ "http", "alpha" }, .use_default_features = false },
+    }, &list);
+    defer report.deinit();
+    try testing.expect(!list.hasErrors());
+
+    const impact = report.features orelse return error.MissingFeatureImpact;
+    try testing.expectEqual(@as(usize, 2), impact.selected.len);
+    try testing.expectEqualStrings("alpha", impact.selected[0]);
+    try testing.expectEqualStrings("http", impact.selected[1]);
+    try testing.expectEqual(@as(usize, 0), impact.dedicated.len);
+    // 表示名は manifest の dep key を優先するため alpha。
+    try testing.expectEqual(@as(usize, 1), impact.common_roots.len);
+    try testing.expectEqualStrings("alpha", impact.common_roots[0]);
+}
+
+test "command inspect: 複数 feature の専用 root が共有する推移依存も各 feature に出す" {
+    // http と ssl が別々の専用 root（req-a / req-b）から同じ推移依存 P を
+    // 引き込む構成。baseline に他 feature の専用 root を含めると P がどの
+    // feature にも現れず表示から抜け落ちるため、共通 root だけを baseline に
+    // して両方の feature に列挙する。
+    const a = testing.allocator;
+    const io = testing.io;
+    var tmp = test_sandbox.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeEnv(tmp.dir,
+        \\{
+        \\  "schemaVersion": 1,
+        \\  "lockSha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        \\  "profile": "default",
+        \\  "runtime": "lnako",
+        \\  "dependencies": [
+        \\    {"alias": "req-a", "package": "pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        \\    {"alias": "req-b", "package": "pkg:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+        \\  ],
+        \\  "packages": {
+        \\    "pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+        \\      "name": "req-a",
+        \\      "version": "1.0.0",
+        \\      "path": "lib_a",
+        \\      "dependencies": [{"alias": "shared", "package": "pkg:pppppppppppppppppppppppppppppppp"}],
+        \\      "commands": [{"name": "A命令", "args": [], "josi": []}]
+        \\    },
+        \\    "pkg:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+        \\      "name": "req-b",
+        \\      "version": "1.0.0",
+        \\      "path": "lib_b",
+        \\      "dependencies": [{"alias": "shared", "package": "pkg:pppppppppppppppppppppppppppppppp"}],
+        \\      "commands": [{"name": "B命令", "args": [], "josi": []}]
+        \\    },
+        \\    "pkg:pppppppppppppppppppppppppppppppp": {
+        \\      "name": "shared",
+        \\      "version": "1.0.0",
+        \\      "path": "lib_p",
+        \\      "commands": [{"name": "共有命令", "args": [], "josi": []}]
+        \\    }
+        \\  }
+        \\}
+    );
+    try tmp.dir.createDirPath(io, "lib_a");
+    try tmp.dir.createDirPath(io, "lib_b");
+    try tmp.dir.createDirPath(io, "lib_p");
+
+    var parse_diags = diag.List.init(a);
+    defer parse_diags.deinit();
+    var manifest = try manifest_mod.parse(a,
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\req-a = { path = "lib_a" }
+        \\req-b = { path = "lib_b" }
+        \\
+        \\[features]
+        \\http = ["req-a"]
+        \\ssl = ["req-b"]
+        \\
+    , &parse_diags);
+    defer manifest.deinit();
+    try testing.expect(!parse_diags.hasErrors());
+
+    var list = diag.List.init(a);
+    defer list.deinit();
+    var report = try inspectEnvironmentDir(a, io, tmp.dir, .{
+        .manifest = &manifest,
+        .features = .{ .requested = &.{ "http", "ssl" }, .use_default_features = false },
+    }, &list);
+    defer report.deinit();
+    try testing.expect(!list.hasErrors());
+
+    const impact = report.features orelse return error.MissingFeatureImpact;
+    try testing.expectEqual(@as(usize, 0), impact.common_roots.len);
+    try testing.expectEqual(@as(usize, 2), impact.dedicated.len);
+    for (impact.dedicated) |feature| {
+        try testing.expectEqual(@as(usize, 1), feature.roots.len);
+        try testing.expectEqual(@as(usize, 1), feature.packages.len);
+        try testing.expectEqualStrings("pkg:pppppppppppppppppppppppppppppppp", feature.packages[0]);
+    }
+}
+
+test "command inspect: feature 非依存の alias を持つ root は専用にしない" {
+    // alpha は feature 非依存の通常の root 依存、zeta は同じ package を指す
+    // http の gated alias。http を外しても alpha で残るため専用ではない。
+    const a = testing.allocator;
+    const io = testing.io;
+    var tmp = test_sandbox.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeEnv(tmp.dir,
+        \\{
+        \\  "schemaVersion": 1,
+        \\  "lockSha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        \\  "profile": "default",
+        \\  "runtime": "lnako",
+        \\  "dependencies": [
+        \\    {"alias": "alpha", "package": "pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        \\    {"alias": "zeta", "package": "pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+        \\  ],
+        \\  "packages": {
+        \\    "pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+        \\      "name": "shared",
+        \\      "version": "1.0.0",
+        \\      "path": "lib_shared",
+        \\      "commands": [{"name": "共有命令", "args": [], "josi": []}]
+        \\    }
+        \\  }
+        \\}
+    );
+    try tmp.dir.createDirPath(io, "lib_shared");
+
+    var parse_diags = diag.List.init(a);
+    defer parse_diags.deinit();
+    var manifest = try manifest_mod.parse(a,
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\alpha = { path = "lib_shared" }
+        \\zeta = { path = "lib_shared" }
+        \\
+        \\[features]
+        \\http = ["zeta"]
+        \\
+    , &parse_diags);
+    defer manifest.deinit();
+    try testing.expect(!parse_diags.hasErrors());
+
+    var list = diag.List.init(a);
+    defer list.deinit();
+    var report = try inspectEnvironmentDir(a, io, tmp.dir, .{
+        .manifest = &manifest,
+        .features = .{ .requested = &.{"http"}, .use_default_features = false },
+    }, &list);
+    defer report.deinit();
+    try testing.expect(!list.hasErrors());
+
+    const impact = report.features orelse return error.MissingFeatureImpact;
+    try testing.expectEqual(@as(usize, 1), impact.selected.len);
+    try testing.expectEqualStrings("http", impact.selected[0]);
+    try testing.expectEqual(@as(usize, 0), impact.dedicated.len);
+    try testing.expectEqual(@as(usize, 1), impact.common_roots.len);
+    try testing.expectEqualStrings("alpha", impact.common_roots[0]);
+}
+
+test "command inspect: 未選択 feature との共有を理由に専用 root を共通にしない" {
+    // alpha と beta が同じ alias al を定義するが、選択は alpha だけ。al は
+    // alpha を外せば消えるため alpha 専用。未選択の beta を owner に数えると
+    // 共有扱いになり common へ落ちる。
+    const a = testing.allocator;
+    const io = testing.io;
+    var tmp = test_sandbox.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeEnv(tmp.dir,
+        \\{
+        \\  "schemaVersion": 1,
+        \\  "lockSha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        \\  "profile": "default",
+        \\  "runtime": "lnako",
+        \\  "dependencies": [
+        \\    {"alias": "al", "package": "pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+        \\  ],
+        \\  "packages": {
+        \\    "pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+        \\      "name": "al",
+        \\      "version": "1.0.0",
+        \\      "path": "lib_al",
+        \\      "commands": [{"name": "AL命令", "args": [], "josi": []}]
+        \\    }
+        \\  }
+        \\}
+    );
+    try tmp.dir.createDirPath(io, "lib_al");
+
+    var parse_diags = diag.List.init(a);
+    defer parse_diags.deinit();
+    var manifest = try manifest_mod.parse(a,
+        \\[package]
+        \\name = "app"
+        \\version = "0.1.0"
+        \\license = "MIT"
+        \\
+        \\[dependencies.path]
+        \\al = { path = "lib_al" }
+        \\
+        \\[features]
+        \\alpha = ["al"]
+        \\beta = ["al"]
+        \\
+    , &parse_diags);
+    defer manifest.deinit();
+    try testing.expect(!parse_diags.hasErrors());
+
+    var list = diag.List.init(a);
+    defer list.deinit();
+    var report = try inspectEnvironmentDir(a, io, tmp.dir, .{
+        .manifest = &manifest,
+        .features = .{ .requested = &.{"alpha"}, .use_default_features = false },
+    }, &list);
+    defer report.deinit();
+    try testing.expect(!list.hasErrors());
+
+    const impact = report.features orelse return error.MissingFeatureImpact;
+    try testing.expectEqual(@as(usize, 0), impact.common_roots.len);
+    try testing.expectEqual(@as(usize, 1), impact.dedicated.len);
+    try testing.expectEqualStrings("alpha", impact.dedicated[0].name);
+    try testing.expectEqual(@as(usize, 1), impact.dedicated[0].roots.len);
+    try testing.expectEqualStrings("al", impact.dedicated[0].roots[0]);
 }
 
 test "command inspect: 複数非 default feature が共有する root は common_roots へ" {
@@ -1403,6 +1769,7 @@ test "command inspect: feature 定義が無ければ影響を表示しない" {
         \\
     , &parse_diags);
     defer manifest.deinit();
+    try testing.expect(!parse_diags.hasErrors());
 
     var list = diag.List.init(a);
     defer list.deinit();
