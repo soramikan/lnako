@@ -138,11 +138,11 @@ pub fn projectTrustRejected(
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const temporary = arena.allocator();
-    const canonical_start = realPathDirAlloc(temporary, io, start) catch return true;
-    const canonical_root = realPathDirAlloc(temporary, io, root) catch return true;
+    const canonical_start = realPathDirAlloc(temporary, io, start) catch |err| return trustFailure(err);
+    const canonical_root = realPathDirAlloc(temporary, io, root) catch |err| return trustFailure(err);
 
     const manifest_path = try std.fs.path.join(temporary, &.{ canonical_root, "nako.toml" });
-    const canonical_manifest = std.Io.Dir.cwd().realPathFileAlloc(io, manifest_path, temporary) catch return true;
+    const canonical_manifest = std.Io.Dir.cwd().realPathFileAlloc(io, manifest_path, temporary) catch |err| return trustFailure(err);
     if (!isPathWithin(canonical_root, canonical_manifest)) return true;
     if (project_trust.shouldRejectWritable(mode, try project_trust.isUnsafeWritablePath(temporary, io, canonical_manifest), writable_warning))
         return true;
@@ -165,13 +165,13 @@ pub fn projectTrustRejected(
     // 既存の `.nako` 環境は check の読み取り対象なので、あれば同じ基準で検査する。
     const nako_path = try std.fs.path.join(temporary, &.{ canonical_root, ".nako" });
     if (std.Io.Dir.cwd().access(io, nako_path, .{})) |_| {
-        const canonical_nako = realPathDirAlloc(temporary, io, nako_path) catch return true;
+        const canonical_nako = realPathDirAlloc(temporary, io, nako_path) catch |err| return trustFailure(err);
         if (!isPathWithin(canonical_root, canonical_nako)) return true;
         if (project_trust.shouldRejectWritable(mode, try project_trust.isUnsafeWritablePath(temporary, io, canonical_nako), writable_warning))
             return true;
         const environment_path = try std.fs.path.join(temporary, &.{ canonical_nako, "environment.json" });
         if (std.Io.Dir.cwd().access(io, environment_path, .{})) |_| {
-            const canonical_environment = std.Io.Dir.cwd().realPathFileAlloc(io, environment_path, temporary) catch return true;
+            const canonical_environment = std.Io.Dir.cwd().realPathFileAlloc(io, environment_path, temporary) catch |err| return trustFailure(err);
             if (!isPathWithin(canonical_nako, canonical_environment)) return true;
             if (project_trust.shouldRejectWritable(mode, try project_trust.isUnsafeWritablePath(temporary, io, canonical_environment), writable_warning))
                 return true;
@@ -188,7 +188,7 @@ pub fn projectTrustRejected(
     // 既存 lock を検査する）ため、環境 branch の外で個別に検査する。
     const lock_path = try std.fs.path.join(temporary, &.{ canonical_root, "nako.lock" });
     if (std.Io.Dir.cwd().access(io, lock_path, .{})) |_| {
-        const canonical_lock = std.Io.Dir.cwd().realPathFileAlloc(io, lock_path, temporary) catch return true;
+        const canonical_lock = std.Io.Dir.cwd().realPathFileAlloc(io, lock_path, temporary) catch |err| return trustFailure(err);
         if (!isPathWithin(canonical_root, canonical_lock)) return true;
         if (project_trust.shouldRejectWritable(mode, try project_trust.isUnsafeWritablePath(temporary, io, canonical_lock), writable_warning))
             return true;
@@ -197,6 +197,13 @@ pub fn projectTrustRejected(
         else => return err,
     }
     return false;
+}
+
+/// trust 検査中の path 解決に失敗したときの扱い。OOM と Canceled は
+/// 呼出し元へ伝播し、それ以外（権限・stat 等）は安全側（拒否）に倒す。
+fn trustFailure(err: anyerror) anyerror!bool {
+    if (err == error.OutOfMemory or err == error.Canceled) return err;
+    return true;
 }
 
 fn isPathWithin(root: []const u8, path: []const u8) bool {

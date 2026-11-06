@@ -1260,6 +1260,14 @@ test "check は共有 writable を --strict-project-trust で拒否し既定は�
     try expectFail(error.Failed, a, &lock_cli, "check", &.{"--strict-project-trust"}, app_root);
     try testing.expect(std.mem.indexOf(u8, lock_cli.err.written(), "書き込み権限") != null);
 
+    // `.nako` 配下の共有 writable も検査する（check は .nako を読む）。
+    try temporary.dir.createDirPath(io, "app/.nako");
+    const nako_dir = try std.fs.path.join(a, &.{ app_root, ".nako" });
+    try chmodMode(a, nako_dir, 0o777);
+    var nako_cli = Cli.init(a);
+    try expectFail(error.Failed, a, &nako_cli, "check", &.{"--strict-project-trust"}, app_root);
+    try testing.expect(std.mem.indexOf(u8, nako_cli.err.written(), "書き込み権限") != null);
+
     // 同時指定は用法エラー。
     var both_cli = Cli.init(a);
     try expectFail(error.Usage, a, &both_cli, "check", &.{ "--strict-project-trust", "--no-project-trust-warning" }, app_root);
