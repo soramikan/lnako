@@ -160,6 +160,9 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, args: []const []const u8, e
             // project コマンドの PrepareOptions と同じ優先順位:
             // --registry が無ければ LNAKO_REGISTRY を参照する。
             .registry_url = registry_url orelse if (environ_map) |map| map.get("LNAKO_REGISTRY") else null,
+            // npm packument は lnako の static registry と別サービスなので、
+            // 専用の環境変数（既定: registry.npmjs.org）を参照する。
+            .npm_registry_url = if (environ_map) |map| map.get("LNAKO_NPM_REGISTRY") else null,
             .cache_root = options.cache_root,
             .policy = options.policy,
             // manifest が profile を宣言しない場合の合成 profile runtime

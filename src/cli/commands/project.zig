@@ -101,6 +101,15 @@ pub const PrepFlags = struct {
                 if (map.get("LNAKO_REGISTRY")) |url| options.registry_url = url;
             }
         }
+        // npm の packument は npm registry の JSON schema で配信され、lnako の
+        // static registry（index/record）とは別サービス。同じ URL を暗黙に
+        // 使い回すと private registry 設定下で解決先を取り違えるため、npm 専用
+        // の環境変数でのみ上書きする（既定は registry.npmjs.org）。
+        if (options.npm_registry_url == null) {
+            if (environ_map) |map| {
+                if (map.get("LNAKO_NPM_REGISTRY")) |url| options.npm_registry_url = url;
+            }
+        }
         return options;
     }
 
