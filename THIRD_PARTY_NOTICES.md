@@ -10,7 +10,7 @@
 | Nadesiko 3 | 3.7.24 | MIT | 仕様・差分テストオラクル |
 | QuickJS | 2026-06-04 | MIT | 配布バイナリへ静的リンク（明示的なJS互換モード `--compat-js`） |
 
-QuickJSは配布する `lnako` 実行ファイルへ静的リンクします。native AOTの生成物には、利用者が `--compat-js` を指定した場合にのみ含まれ、通常のAOT生成物と `liblnako_runtime.a` には含まれません。
+QuickJSは配布する `lnako` 実行ファイルへ静的リンクします。native AOTの生成物には、利用者が `--compat-js` を指定した場合にのみ含まれ、通常のAOT生成物と `liblnako_runtime.a` には含まれません。`--compat-js` のAOT成果物は専用の `liblnako_runtime_compat.a` をリンクします。
 
 ## QuickJS license
 

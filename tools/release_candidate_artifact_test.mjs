@@ -25,6 +25,7 @@ function workspace() {
   writeFileSync(join(directory, "repo", "build.zig.zon"), '.name = "lnako"\n.version = "0.2.3"\n');
   writeFileSync(join(directory, "lnako"), "fake-release-compiler");
   writeFileSync(join(directory, "liblnako_runtime.a"), "fake-release-runtime");
+  writeFileSync(join(directory, "liblnako_runtime_compat.a"), "fake-release-compat-runtime");
   return directory;
 }
 
@@ -32,6 +33,7 @@ function create(work, root, outDir, target = "linux-x64") {
   return createArtifact({
     binaryPath: join(work, "lnako"),
     runtimeLibPath: join(work, "liblnako_runtime.a"),
+    runtimeCompatLibPath: join(work, "liblnako_runtime_compat.a"),
     outDir,
     target,
     root,
@@ -44,7 +46,7 @@ test("create→verifyでReleaseSafe+compat-js成果物を復元できる", () =>
   const root = join(work, "repo");
   const outDir = join(work, "artifact");
   const metadata = create(work, root, outDir);
-  assert.equal(metadata.schema, "lnako.release-candidate.v1");
+  assert.equal(metadata.schema, "lnako.release-candidate.v2");
   assert.equal(metadata.commit, COMMIT);
   assert.equal(metadata.buildMode, "ReleaseSafe");
   assert.equal(metadata.compatJs, true);
@@ -52,6 +54,8 @@ test("create→verifyでReleaseSafe+compat-js成果物を復元できる", () =>
   assert.equal(metadata.ciRunId, RUN_ID);
   assert.equal(metadata.version, "0.2.3");
   assert.equal(metadata.binarySha256, sha256Hex(Buffer.from("fake-release-compiler")));
+  assert.equal(metadata.runtimeCompatLibName, "liblnako_runtime_compat.a");
+  assert.equal(metadata.runtimeCompatLibSha256, sha256Hex(Buffer.from("fake-release-compat-runtime")));
   const installTo = join(work, "zig-out", "bin");
   const verified = verifyArtifact({
     dir: outDir,
@@ -68,6 +72,7 @@ test("create→verifyでReleaseSafe+compat-js成果物を復元できる", () =>
     assert.notEqual(statSync(join(installTo, "lnako")).mode & 0o111, 0);
   }
   assert.equal(readFileSync(join(work, "zig-out", "lib", "liblnako_runtime.a"), "utf8"), "fake-release-runtime");
+  assert.equal(readFileSync(join(work, "zig-out", "lib", "liblnako_runtime_compat.a"), "utf8"), "fake-release-compat-runtime");
   rmSync(work, { recursive: true, force: true });
 });
 
@@ -88,6 +93,12 @@ test("別CI run・別target・改変binaryを拒否する", () => {
   assert.throws(
     () => verifyArtifact({ dir: outDir, installTo: join(work, "bin"), expectedTarget: "linux-x64", expectedRunId: RUN_ID, root, env }),
     /SHA-256が不一致/,
+  );
+  writeFileSync(join(outDir, "lnako"), "fake-release-compiler");
+  writeFileSync(join(outDir, "liblnako_runtime_compat.a"), "tampered");
+  assert.throws(
+    () => verifyArtifact({ dir: outDir, installTo: join(work, "bin"), expectedTarget: "linux-x64", expectedRunId: RUN_ID, root, env }),
+    /compat AOT runtime libraryのSHA-256が不一致/,
   );
   rmSync(work, { recursive: true, force: true });
 });
@@ -112,5 +123,31 @@ test("Debug AOT artifact schemaや不正keyを拒否する", () => {
     () => verifyArtifact({ dir: outDir, installTo: join(work, "bin"), expectedTarget: "linux-x64", expectedRunId: RUN_ID, root, env }),
     /build構成が不一致/,
   );
+  rmSync(work, { recursive: true, force: true });
+});
+
+test("compat runtime libraryの欠落をcreate/verifyで拒否する", () => {
+  const work = workspace();
+  const root = join(work, "repo");
+  const outDir = join(work, "artifact");
+  assert.throws(
+    () => createArtifact({
+      binaryPath: join(work, "lnako"),
+      runtimeLibPath: join(work, "liblnako_runtime.a"),
+      runtimeCompatLibPath: join(work, "missing_compat.a"),
+      outDir,
+      target: "linux-x64",
+      root,
+      env,
+    }),
+    /compat AOT runtime libraryがありません/,
+  );
+  const metadata = create(work, root, outDir);
+  rmSync(join(outDir, "liblnako_runtime_compat.a"));
+  assert.throws(
+    () => verifyArtifact({ dir: outDir, installTo: join(work, "bin"), expectedTarget: "linux-x64", expectedRunId: RUN_ID, root, env }),
+    /compat AOT runtime libraryがありません/,
+  );
+  assert.ok(metadata.runtimeCompatLibName);
   rmSync(work, { recursive: true, force: true });
 });

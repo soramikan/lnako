@@ -50,8 +50,14 @@ pub fn build(b: *std.Build) void {
     lnako.addImport("unicode_width", unicode_width);
     lnako.addImport("regexp", regexp);
     lnako.addImport("pubgrub", pubgrub);
+    const quickjs_directory = if (compat_js)
+        b.option([]const u8, "quickjs-dir", "QuickJSソースディレクトリ") orelse
+            b.graph.environ_map.get("LNAKO_QUICKJS_DIR") orelse
+            b.pathResolve(&.{ ".cache", "toolchains", "quickjs-2026-06-04" })
+    else
+        null;
     if (compat_js) {
-        configureQuickJs(b, lnako, target.result.os.tag);
+        configureQuickJs(b, lnako, target.result.os.tag, quickjs_directory.?);
     } else {
         lnako.addIncludePath(b.path("src/compat"));
         lnako.addCSourceFiles(.{ .root = b.path("src/compat"), .files = &.{"quickjs_stub.c"} });
@@ -104,6 +110,41 @@ pub fn build(b: *std.Build) void {
     }
     aot_runtime.bundle_compiler_rt = true;
     b.installArtifact(aot_runtime);
+
+    // `--compat-js` のAOT成果物だけがリンクする別runtime。通常AOTの
+    // `liblnako_runtime.a` はQuickJS stubのまま分離し、compat側だけが実
+    // QuickJSとESM登録・`JS実行` dispatchを持つ（Issue #55）。
+    var aot_compat_runtime: ?*std.Build.Step.Compile = null;
+    if (compat_js) {
+        const aot_compat_module = b.createModule(.{
+            .root_source_file = b.path("src/root_aot_compat.zig"),
+            .target = target,
+            .optimize = .ReleaseSafe,
+            .strip = true,
+            .link_libc = true,
+        });
+        const aot_compat_build_options = b.addOptions();
+        aot_compat_build_options.addOption(bool, "quickjs_enabled", true);
+        aot_compat_build_options.addOption([]const u8, "compat_summary_json", @embedFile("compat/v3.7.24/summary.json"));
+        aot_compat_module.addOptions("build_options", aot_compat_build_options);
+        aot_compat_module.addImport("unicode_case", unicode_case);
+        aot_compat_module.addImport("unicode_properties", unicode_properties);
+        aot_compat_module.addImport("unicode_width", unicode_width);
+        aot_compat_module.addImport("regexp", regexp);
+        configureQuickJs(b, aot_compat_module, target.result.os.tag, quickjs_directory.?);
+        const compat_runtime = b.addLibrary(.{
+            .name = "lnako_runtime_compat",
+            .linkage = .static,
+            .root_module = aot_compat_module,
+        });
+        if (target.result.os.tag == .linux or target.result.os.tag == .windows) {
+            compat_runtime.link_function_sections = true;
+            compat_runtime.link_data_sections = true;
+        }
+        compat_runtime.bundle_compiler_rt = true;
+        b.installArtifact(compat_runtime);
+        aot_compat_runtime = compat_runtime;
+    }
 
     const native_plugin_fixture = b.addLibrary(.{
         .name = "lnako_test_plugin",
@@ -240,6 +281,10 @@ pub fn build(b: *std.Build) void {
     const run_exe_tests = b.addRunArtifact(exe_tests);
     const aot_runtime_tests = b.addTest(.{ .root_module = aot_runtime.root_module });
     const run_aot_runtime_tests = b.addRunArtifact(aot_runtime_tests);
+    var aot_compat_runtime_tests: ?*std.Build.Step.Compile = null;
+    if (aot_compat_runtime) |compat_runtime| {
+        aot_compat_runtime_tests = b.addTest(.{ .root_module = compat_runtime.root_module });
+    }
 
     const all_tests_module = b.createModule(.{
         .root_source_file = b.path("src/all_tests.zig"),
@@ -256,6 +301,10 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_module_tests.step);
     test_step.dependOn(&run_exe_tests.step);
     test_step.dependOn(&run_aot_runtime_tests.step);
+    if (aot_compat_runtime_tests) |compat_tests| {
+        const run_compat_tests = b.addRunArtifact(compat_tests);
+        test_step.dependOn(&run_compat_tests.step);
+    }
     test_step.dependOn(&run_all_tests.step);
 
     const fmt_step = b.step("fmt-check", "Zigソースのフォーマットを検査する");
@@ -271,10 +320,7 @@ pub fn build(b: *std.Build) void {
     package_schema_check_step.dependOn(&package_schema_check_run.step);
 }
 
-fn configureQuickJs(b: *std.Build, module: *std.Build.Module, os: std.Target.Os.Tag) void {
-    const directory = b.option([]const u8, "quickjs-dir", "QuickJSソースディレクトリ") orelse
-        b.graph.environ_map.get("LNAKO_QUICKJS_DIR") orelse
-        b.pathResolve(&.{ ".cache", "toolchains", "quickjs-2026-06-04" });
+fn configureQuickJs(b: *std.Build, module: *std.Build.Module, os: std.Target.Os.Tag, directory: []const u8) void {
     // QuickJS uses implementation-defined/undefined C techniques such as
     // ABI-compatible callback casts, tagged pointers, flexible-array
     // container_of and signed shifts. ReleaseSafe's C instrumentation traps

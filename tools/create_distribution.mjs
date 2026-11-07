@@ -31,6 +31,7 @@ function parseArguments(arguments_) {
     output: resolve(root, "dist"),
     binary: null,
     runtime: null,
+    runtimeCompat: null,
     llvm: null,
     target: hostTarget(),
     requireLlvm: false,
@@ -49,6 +50,8 @@ function parseArguments(arguments_) {
       parsed.binary = resolveAbsolute(nextValue(arguments_, ++index, argument), argument);
     } else if (argument === "--runtime") {
       parsed.runtime = resolveAbsolute(nextValue(arguments_, ++index, argument), argument);
+    } else if (argument === "--runtime-compat") {
+      parsed.runtimeCompat = resolveAbsolute(nextValue(arguments_, ++index, argument), argument);
     } else if (argument === "--llvm-dir") {
       parsed.llvm = resolveAbsolute(nextValue(arguments_, ++index, argument), argument);
     } else if (argument === "--target") {
@@ -77,8 +80,10 @@ async function createDistribution(options_) {
   if (options_.signMacos && (spec.platform !== "darwin" || process.platform !== "darwin")) throw new Error("--sign-macos requires a macOS target and host");
   const binary = options_.binary ?? defaultBinary(spec);
   const runtime = options_.runtime ?? defaultRuntime(spec);
+  const runtimeCompat = options_.runtimeCompat ?? defaultRuntimeCompat(spec);
   await requireFile(binary, "lnako実行ファイル");
   await requireFile(runtime, "AOTランタイム静的ライブラリ");
+  await requireFile(runtimeCompat, "compat AOTランタイム静的ライブラリ");
   // standard版はLLVMを同梱しない。full版はLLVM/LLDをllvm/へ同梱する。
   if (options_.variant === "full" && options_.llvm === null) throw new Error("full版には--llvm-dirが必要です");
   if (options_.variant === "standard" && options_.llvm !== null) throw new Error("standard版では--llvm-dirを指定できません");
@@ -93,12 +98,20 @@ async function createDistribution(options_) {
   await mkdir(stagingRoot, { recursive: true });
 
   try {
-    await copyPayload(stagingRoot, binary, runtime, options_.llvm, spec);
+    await copyPayload(stagingRoot, binary, runtime, runtimeCompat, options_.llvm, spec);
     if (options_.signMacos) await signPayload(stagingRoot, {
       identity: process.env.LNAKO_SIGNING_IDENTITY, keychain: process.env.LNAKO_SIGNING_KEYCHAIN,
     });
     const payloadFiles = await collectFiles(stagingRoot);
-    const manifest = createManifest(options_, spec, resolve(stagingRoot, "bin", spec.executable), resolve(stagingRoot, "lib", spec.runtimeLibrary), payloadFiles, await gitState());
+    const manifest = createManifest(
+      options_,
+      spec,
+      resolve(stagingRoot, "bin", spec.executable),
+      resolve(stagingRoot, "lib", spec.runtimeLibrary),
+      resolve(stagingRoot, "lib", spec.runtimeCompatLibrary),
+      payloadFiles,
+      await gitState(),
+    );
     await writeJson(resolve(stagingRoot, "manifest.json"), manifest);
     const manifestFiles = await collectFiles(stagingRoot);
     const sbom = createSbom(options_, spec, manifestFiles, manifest);
@@ -125,9 +138,10 @@ async function createDistribution(options_) {
   }
 }
 
-async function copyPayload(stagingRoot, binary, runtime, llvm, spec) {
+async function copyPayload(stagingRoot, binary, runtime, runtimeCompat, llvm, spec) {
   await copyPayloadFile(binary, resolve(stagingRoot, "bin", spec.executable), true);
   await copyPayloadFile(runtime, resolve(stagingRoot, "lib", spec.runtimeLibrary), false);
+  await copyPayloadFile(runtimeCompat, resolve(stagingRoot, "lib", spec.runtimeCompatLibrary), false);
   await copyPayloadFile(resolve(root, "README.md"), resolve(stagingRoot, "README.md"), false);
   await copyPayloadFile(resolve(root, "LICENSE"), resolve(stagingRoot, "LICENSE"), false);
   await copyPayloadFile(resolve(root, "THIRD_PARTY_NOTICES.md"), resolve(stagingRoot, "THIRD_PARTY_NOTICES.md"), false);
@@ -154,9 +168,9 @@ async function copyPayloadFile(source, destination, executable) {
   if (executable && process.platform !== "win32") await chmod(destination, 0o755);
 }
 
-function createManifest(options_, spec, binary, runtime, payloadFiles, git) {
+function createManifest(options_, spec, binary, runtime, runtimeCompat, payloadFiles, git) {
   return {
-    schema: "lnako.distribution-manifest.v1",
+    schema: "lnako.distribution-manifest.v2",
     name: "lnako",
     version: options_.version,
     variant: options_.variant,
@@ -165,6 +179,7 @@ function createManifest(options_, spec, binary, runtime, payloadFiles, git) {
     arch: spec.arch,
     executable: `bin/${spec.executable}`,
     runtimeLibrary: `lib/${spec.runtimeLibrary}`,
+    runtimeCompatLibrary: `lib/${spec.runtimeCompatLibrary}`,
     source: {
       repository: "https://github.com/soramikan/lnako",
       commit: git.commit,
@@ -185,6 +200,7 @@ function createManifest(options_, spec, binary, runtime, payloadFiles, git) {
     artifacts: {
       binary: { path: `bin/${spec.executable}`, sha256: sha256FileSync(binary) },
       runtime: { path: `lib/${spec.runtimeLibrary}`, sha256: sha256FileSync(runtime) },
+      runtimeCompat: { path: `lib/${spec.runtimeCompatLibrary}`, sha256: sha256FileSync(runtimeCompat) },
     },
     sbom: "sbom.spdx.json",
     files: payloadFiles.map((file) => ({ path: file.path, sha256: file.sha256, size: file.size })),
@@ -223,7 +239,7 @@ function createSbom(options_, spec, files, manifest) {
       created: "1970-01-01T00:00:00Z",
       creators: ["Tool: lnako distribution builder"],
     },
-    documentComment: "This SBOM describes the files in the lnako distribution archive. QuickJS is statically linked into the lnako executable for the explicit --compat-js mode; it is not present in the AOT runtime library or in generated artifacts unless they are built with --compat-js. Nadesiko 3 and Node.js are test or compatibility oracle inputs and are not shipped.",
+    documentComment: "This SBOM describes the files in the lnako distribution archive. QuickJS is statically linked into the lnako executable for the explicit --compat-js mode and into liblnako_runtime_compat.a for the opt-in --backend aot mode; it is not present in the normal AOT runtime library liblnako_runtime.a or in generated artifacts unless they are built with --compat-js. Nadesiko 3 and Node.js are test or compatibility oracle inputs and are not shipped.",
     packages,
     files: fileRecords,
     relationships,
@@ -407,11 +423,16 @@ function defaultRuntime(spec) {
   return resolve(root, "zig-out/lib", spec.runtimeLibrary);
 }
 
+function defaultRuntimeCompat(spec) {
+  if (spec.archiveTarget !== hostTarget()) throw new Error(`別targetには--runtime-compatを指定してください: ${spec.archiveTarget}`);
+  return resolve(root, "zig-out/lib", spec.runtimeCompatLibrary);
+}
+
 function targetSpec(target) {
   return {
     "macos-arm64": {
       archiveTarget: "macos-arm64", platform: "darwin", arch: "arm64", toolchainKey: "macos-aarch64",
-      executable: "lnako", runtimeLibrary: "liblnako_runtime.a", archiveExtension: "tar.gz", archiveFormat: "tar.gz",
+      executable: "lnako", runtimeLibrary: "liblnako_runtime.a", runtimeCompatLibrary: "liblnako_runtime_compat.a", archiveExtension: "tar.gz", archiveFormat: "tar.gz",
       llvmFiles: [
         { source: "bin/clang", destination: "bin/clang", executable: true },
         { source: "bin/ld64.lld", destination: "bin/ld64.lld", executable: true },
@@ -423,7 +444,7 @@ function targetSpec(target) {
     },
     "linux-x64": {
       archiveTarget: "linux-x64", platform: "linux", arch: "x64", toolchainKey: "linux-x86_64",
-      executable: "lnako", runtimeLibrary: "liblnako_runtime.a", archiveExtension: "tar.gz", archiveFormat: "tar.gz",
+      executable: "lnako", runtimeLibrary: "liblnako_runtime.a", runtimeCompatLibrary: "liblnako_runtime_compat.a", archiveExtension: "tar.gz", archiveFormat: "tar.gz",
       llvmFiles: [
         { source: "bin/clang", destination: "bin/clang", executable: true },
         { source: "bin/ld.lld", destination: "bin/ld.lld", executable: true },
@@ -432,7 +453,7 @@ function targetSpec(target) {
     },
     "windows-x64": {
       archiveTarget: "windows-x64", platform: "win32", arch: "x64", toolchainKey: "windows-x86_64",
-      executable: "lnako.exe", runtimeLibrary: "lnako_runtime.lib", archiveExtension: "zip", archiveFormat: "zip",
+      executable: "lnako.exe", runtimeLibrary: "lnako_runtime.lib", runtimeCompatLibrary: "lnako_runtime_compat.lib", archiveExtension: "zip", archiveFormat: "zip",
       llvmFiles: [
         { source: "bin/clang.exe", destination: "bin/clang.exe", executable: true },
         { source: "bin/lld-link.exe", destination: "bin/lld-link.exe", executable: true },
@@ -509,6 +530,7 @@ function usage() {
   --output <absolute-path>  出力ディレクトリ（既定: dist）
   --binary <absolute-path>  lnako実行ファイル
   --runtime <absolute-path> AOTランタイム静的ライブラリ
+  --runtime-compat <absolute-path> compat AOTランタイム静的ライブラリ
   --llvm-dir <absolute-path> 同梱するLLVM/LLD配布ルート（full版のみ）
   --sign-macos               配布用コピーをDeveloper ID署名してからhashを生成する
   --require-llvm             LLVM/LLD同梱を必須にする

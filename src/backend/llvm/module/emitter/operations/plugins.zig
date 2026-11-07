@@ -505,6 +505,29 @@ pub fn writeBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: i
     try emitter.debugSuffix(instruction.span, scope);
 }
 
+/// `--compat-js` AOTの `JS実行`。通常AOTには存在しないcompat専用ABIへ
+/// 1回だけdispatchし、QuickJSのeval結果をNako値として受け取る。
+pub fn writeCompatJsEval(emitter: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
+    const result = instruction.result orelse return error.MissingInstructionResult;
+    if (instruction.operands.len > aggregate_count) return error.InvalidCallScratch;
+    for (instruction.operands, 0..) |argument, index| {
+        try emitter.output.writer.print("  %compat.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+        try emitter.debugSuffix(instruction.span, scope);
+        try emitter.output.writer.writeAll("  store %lnako.Value ");
+        try constants_mod.writeValueRef(emitter, function, argument);
+        try emitter.output.writer.print(", ptr %compat.{d}.slot.{d}", .{ result, index });
+        try emitter.debugSuffix(instruction.span, scope);
+    }
+    try emitter.output.writer.print("  call void @lnako_aot_compat_js_eval(ptr %root.slot.{d}, ptr ", .{result});
+    if (instruction.operands.len > 0) {
+        try emitter.output.writer.print("%compat.{d}.slot.0", .{result});
+    } else try emitter.output.writer.writeAll("null");
+    try emitter.output.writer.print(", i64 {d})", .{instruction.operands.len});
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+}
+
 pub fn writeRegexpCall(emitter: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize, command: aot_builtin.Command) !void {
     const result = instruction.result orelse return error.MissingInstructionResult;
     const site_id = instruction.site_id orelse return error.MissingDispatchSiteId;

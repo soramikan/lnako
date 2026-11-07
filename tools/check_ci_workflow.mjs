@@ -477,6 +477,9 @@ if (!freshnessBlock.includes('--dispatch-evidence "${{ runner.temp }}/dispatch-e
 if (!testJob.includes("name: lnako-dispatch-evidence-macos-15") ||
     !testJob.includes("name: lnako-release-candidate-") ||
     !testJob.includes("release_candidate_artifact.mjs create") ||
+    !testJob.includes("--runtime-compat-lib \"$runtime_compat\"") ||
+    !testJob.includes("runtime_compat=zig-out/lib/liblnako_runtime_compat.a") ||
+    !testJob.includes("runtime_compat=zig-out/lib/lnako_runtime_compat.lib") ||
     (testJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 2) {
   throw new Error("test jobのartifact upload（dispatch evidence＋release candidate）が不正です");
 }

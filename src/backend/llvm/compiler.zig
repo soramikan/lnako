@@ -22,6 +22,9 @@ pub const Options = struct {
     llvm_library: ?[]const u8 = null,
     environment: ?*const std.process.Environ.Map = null,
     runtime_library: ?[]const u8 = null,
+    /// `--compat-js` AOT。通常runtimeではなくQuickJS付きの別成果物
+    /// `liblnako_runtime_compat.a` をリンクする。
+    compat_js: bool = false,
     compile_manifest_path: ?[]const u8 = null,
     global_manifest_path: ?[]const u8 = null,
     literal_manifest_path: ?[]const u8 = null,
@@ -201,7 +204,7 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
             defer allocator.free(object_path);
             defer std.Io.Dir.cwd().deleteFile(io, object_path) catch {};
             try emitObject(allocator, &api, machine, llvm_module, object_path, &timer, diagnostics);
-            try linkExecutable(allocator, io, object_path, options.output_path, llvm_root, api.resolved_root, options.runtime_library, &timer, diagnostics);
+            try linkExecutable(allocator, io, object_path, options.output_path, llvm_root, api.resolved_root, options.runtime_library, options.compat_js, &timer, diagnostics);
         },
     }
     if (manifest_entry_count) |entry_count| {
@@ -290,12 +293,12 @@ fn nonce(io: std.Io) u64 {
     return @truncate(@as(u96, @bitCast(std.Io.Timestamp.now(io, .awake).nanoseconds)));
 }
 
-fn linkExecutable(allocator: std.mem.Allocator, io: std.Io, object_path: []const u8, output_path: []const u8, llvm_root: ?[]const u8, resolved_root: ?[]const u8, runtime_override: ?[]const u8, timer: *PhaseTimer, diagnostics: *std.Io.Writer) !void {
+fn linkExecutable(allocator: std.mem.Allocator, io: std.Io, object_path: []const u8, output_path: []const u8, llvm_root: ?[]const u8, resolved_root: ?[]const u8, runtime_override: ?[]const u8, compat_js: bool, timer: *PhaseTimer, diagnostics: *std.Io.Writer) !void {
     const tools = try findLinkTools(allocator, io, llvm_root, resolved_root);
     try timer.phase(diagnostics, "リンクツール検出");
     defer allocator.free(tools.clang);
     defer allocator.free(tools.lld);
-    const runtime_library = findRuntimeLibrary(allocator, io, runtime_override) catch |failure| {
+    const runtime_library = findRuntimeLibrary(allocator, io, runtime_override, compat_js) catch |failure| {
         try diagnostics.print("AOTランタイム静的ライブラリを読み込めません: {s}\n", .{@errorName(failure)});
         return failure;
     };
@@ -306,7 +309,12 @@ fn linkExecutable(allocator: std.mem.Allocator, io: std.Io, object_path: []const
     defer if (macos_sdk) |path| allocator.free(path);
     try timer.phase(diagnostics, "macOS SDK検出");
     const argv: []const []const u8 = switch (builtin.os.tag) {
-        .linux => &.{ tools.clang, linker_argument, object_path, runtime_library, "-o", output_path, "-lm", "-Wl,--gc-sections" },
+        // compat runtimeのQuickJSはpthread/dlを使う。glibc 2.34+ではlibcへ
+        // 統合済みだが、古いGNU Linuxでもリンクできるよう明示する。
+        .linux => if (compat_js)
+            &.{ tools.clang, linker_argument, object_path, runtime_library, "-o", output_path, "-lm", "-lpthread", "-ldl", "-Wl,--gc-sections" }
+        else
+            &.{ tools.clang, linker_argument, object_path, runtime_library, "-o", output_path, "-lm", "-Wl,--gc-sections" },
         .macos => &.{ tools.clang, linker_argument, "-isysroot", macos_sdk.?, object_path, runtime_library, "-o", output_path, "-Wl,-dead_strip" },
         .windows => &.{ tools.clang, linker_argument, object_path, runtime_library, "-lcrypt32", "-liphlpapi", "-lntdll", "-o", output_path, "-Wl,/OPT:REF" },
         else => &.{ tools.clang, linker_argument, object_path, runtime_library, "-o", output_path },
@@ -336,7 +344,7 @@ fn linkExecutable(allocator: std.mem.Allocator, io: std.Io, object_path: []const
     return error.LldLinkFailed;
 }
 
-fn findRuntimeLibrary(allocator: std.mem.Allocator, io: std.Io, override: ?[]const u8) ![]u8 {
+fn findRuntimeLibrary(allocator: std.mem.Allocator, io: std.Io, override: ?[]const u8, compat_js: bool) ![]u8 {
     if (override) |path| {
         _ = try std.Io.Dir.cwd().statFile(io, path, .{});
         return allocator.dupe(u8, path);
@@ -344,7 +352,12 @@ fn findRuntimeLibrary(allocator: std.mem.Allocator, io: std.Io, override: ?[]con
     const executable = try std.process.executablePathAlloc(io, allocator);
     defer allocator.free(executable);
     const directory = std.fs.path.dirname(executable) orelse return error.AotRuntimeLibraryNotFound;
-    const name = if (builtin.os.tag == .windows) "lnako_runtime.lib" else "liblnako_runtime.a";
+    const name = if (compat_js)
+        (if (builtin.os.tag == .windows) "lnako_runtime_compat.lib" else "liblnako_runtime_compat.a")
+    else if (builtin.os.tag == .windows)
+        "lnako_runtime.lib"
+    else
+        "liblnako_runtime.a";
     const path = try std.fs.path.join(allocator, &.{ directory, "..", "lib", name });
     errdefer allocator.free(path);
     _ = std.Io.Dir.cwd().statFile(io, path, .{}) catch return error.AotRuntimeLibraryNotFound;

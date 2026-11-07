@@ -79,6 +79,11 @@ fn writeCallDepthJoin(emitter: *Emitter, prefix: []const u8, result: ir.ValueId,
 
 pub fn writeCall(emitter: *Emitter, function: ir.Function, locals: []const []const u8, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
     const result = instruction.result orelse return error.MissingInstructionResult;
+    if (instruction.direct_callee == null and instruction.is_builtin_call and emitter.program.compat_js and std.mem.eql(u8, instruction.name, "JS実行")) {
+        try plugins_mod.writeCompatJsEval(emitter, function, instruction, scope, aggregate_count);
+        try writeCallResult(emitter, result, instruction.span, scope);
+        return;
+    }
     if (instruction.direct_callee == null and instruction.is_builtin_call and isDisplayCall(instruction.name)) {
         return plugins_mod.writeDisplayCall(emitter, function, instruction, scope, aggregate_count);
     }
