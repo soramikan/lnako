@@ -59,12 +59,27 @@ node tools/check_aot_quickjs_separation.mjs --compiler zig-out/bin/lnako
 加えて、Nako配列→JS配列・辞書→JSオブジェクトの浅いコピーだけを変換します。
 要素はプリミティブに限り、ネストした配列/辞書・関数・BigInt・バイト列・
 PromiseはQuickJSへ渡す前にAOTとinterpreterで同じ文言の明示的な未対応エラーに
-します（officialはそのまま渡すため、この範囲だけ意図的な差分です）。戻り値は
-プリミティブだけを変換します。interpreterで `JS実行` が返した配列・辞書は
-既存のJSオブジェクトを参照渡しし（Nako側の内容を書き戻す）、浅いコピーに
-なるのはNakoネイティブ値だけです。呼出し時の `this` は official の `apply(null)` と
-異なり `undefined` です
-（lnako の QuickJS bridge 共通で、strict 関数でのみ観測できます）。
+します（officialはそのまま渡すため、この範囲だけ意図的な差分です）。
+戻り値も同様に、数値・文字列・真偽値・null/undefinedに加えて、JS配列→Nako配列・
+JSオブジェクト→Nako辞書の浅いコピーだけを変換します（要素/値はプリミティブのみ）。
+ネストした配列/辞書・関数・Promise・BigInt・バイト列
+（TypedArray/ArrayBuffer/SharedArrayBuffer/DataView）はAOTとinterpreterで
+同じ文言の明示的な未対応エラーにします。プリミティブ要素の
+配列・辞書は `表示` の文字列化が official と同じ（`1,2` / `[object Object]` /
+空配列は空行）になることを fixture で固定しています。浅いコピーはJS参照を保持せず、
+疎配列の巨大な `length` と辞書のキー数は、AOT/interpreterで同じ1,000,000の
+要素数上限を超える場合に明示エラーにします。own enumerable keyを持たない
+Map/Set/Date/RegExpなどは空辞書へ変換されます（浅いコピー契約の帰結）。
+Symbolなど未分類のJS値は既存の `lnako_qjs_kind` と同じく `undefined` として扱います。
+NULを含む辞書キーは既存の `convertObject` / `syncExternal` と同じ制限を継承します。
+`JS実行` の戻り値文字列は既存どおりstrict UTF-8で変換するため、孤立サロゲートを
+含むJS文字列はinterpreterで変換エラー・AOTで保持という既存差分が残ります
+（`JS関数実行` の戻り値だけ本スライスでWTF-8に統一。follow-up）。
+interpreterで `JS実行` が
+返した配列・辞書は既存のJSオブジェクトを参照渡しし（Nako側の内容を書き戻す）、
+浅いコピーになるのはNakoネイティブ値と `JS関数実行` の戻り値だけです。
+呼出し時の `this` は official の `apply(null)` と同じ `null` です
+（QuickJS bridge が `JS_NULL` を渡すため、strict 関数でのみ観測できます）。
 Promise戻り値は未対応エラーですが、エラー判定前にmicrotaskをdrainするため、
 呼び出した関数が登録した継続は実行されてから失敗します。第1引数に
 関数値（`JS実行`の結果やcallable proxyなど）を渡す形もAOTでは未対応で、
