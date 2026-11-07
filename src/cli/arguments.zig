@@ -9,9 +9,9 @@ pub const BuildOptions = struct {
     optimization: lnako.backend.llvm.compiler.Optimization = .o0,
     emit: lnako.backend.llvm.compiler.Emit = .executable,
     compat_js: bool = false,
-    /// `--compat-js` の実行方式。既定はLLVM AOT＋QuickJS runtime。
-    /// `--backend embedded` で従来の同梱実行ファイル方式を選ぶ。
-    backend: BuildBackend = .aot,
+    /// `--compat-js` の実行方式。未指定なら従来の同梱実行ファイル方式
+    /// （embedded）。LLVM AOT＋QuickJS runtime は `--backend aot` の明示opt-in。
+    backend: ?BuildBackend = null,
     forced_mode: lnako.frontend.token.Mode = .{},
     llvm_dir: ?[]const u8 = null,
 };
@@ -22,7 +22,7 @@ pub fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
     var optimization: lnako.backend.llvm.compiler.Optimization = .o0;
     var emit: lnako.backend.llvm.compiler.Emit = .executable;
     var compat_js = false;
-    var backend: BuildBackend = .aot;
+    var backend: ?BuildBackend = null;
     var forced_mode: lnako.frontend.token.Mode = .{};
     var llvm_dir: ?[]const u8 = null;
     var index: usize = 1;
@@ -183,11 +183,14 @@ test "buildの出力形式と最適化レベルを解析する" {
 }
 
 test "buildのcompat-js backendを解析する" {
+    // 既定はembedded（従来方式）。AOT+QuickJSは --backend aot の明示opt-in。
     const defaults = try parseBuildOptions(&.{ "main.nako3", "-o", "main", "--compat-js" });
     try std.testing.expect(defaults.compat_js);
-    try std.testing.expectEqual(BuildBackend.aot, defaults.backend);
+    try std.testing.expectEqual(@as(?BuildBackend, null), defaults.backend);
+    const aot = try parseBuildOptions(&.{ "main.nako3", "-o", "main", "--compat-js", "--backend", "aot" });
+    try std.testing.expectEqual(@as(?BuildBackend, .aot), aot.backend);
     const embedded = try parseBuildOptions(&.{ "main.nako3", "-o", "main", "--compat-js", "--backend", "embedded" });
-    try std.testing.expectEqual(BuildBackend.embedded, embedded.backend);
+    try std.testing.expectEqual(@as(?BuildBackend, .embedded), embedded.backend);
     try std.testing.expectError(error.InvalidBackend, parseBuildOptions(&.{ "main.nako3", "-o", "main", "--backend", "vm" }));
     try std.testing.expectError(error.MissingBackend, parseBuildOptions(&.{ "main.nako3", "-o", "main", "--backend" }));
 }

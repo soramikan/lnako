@@ -33,6 +33,7 @@ const HostExecFn = *const fn (*anyopaque, [*:0]const u8, [*c]const *const RawVal
 
 extern fn lnako_qjs_new() ?*Engine;
 extern fn lnako_qjs_set_host(engine: *Engine, context: *anyopaque, get: HostGetFn, set: HostSetFn, invoke: HostInvokeFn, exec: HostExecFn) void;
+extern fn lnako_qjs_set_host_strict(engine: *Engine, strict: c_int) void;
 extern fn lnako_qjs_add_module_source(engine: *Engine, name: [*:0]const u8, source: [*]const u8, length: usize, package_root: ?[*:0]const u8) c_int;
 extern fn lnako_qjs_add_module_alias(engine: *Engine, alias: [*:0]const u8, target: [*:0]const u8) c_int;
 extern fn lnako_qjs_release(engine: *Engine) void;
@@ -79,6 +80,9 @@ fn ensureEngine() !*Engine {
         return error.QuickJsInitializationFailed;
     };
     lnako_qjs_set_host(created, @ptrCast(&host_context), hostGet, hostSet, hostInvoke, hostExec);
+    // AOTにはinterpreterの変数bridgeが無い。`sys.__getSysVar` の直接読み取りは
+    // 未定義値を返さずJS例外にし、plugin初期化の取りこぼしを表面化させる。
+    lnako_qjs_set_host_strict(created, 1);
     engine = created;
     return created;
 }
@@ -107,7 +111,9 @@ fn fromRaw(runtime: *state.Runtime, raw: *RawValue) !Value {
             var length: usize = 0;
             const text = lnako_qjs_to_string(raw, &length) orelse return error.QuickJsValueConversionFailed;
             defer lnako_qjs_free_string(text);
-            const units = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, text[0..length]);
+            // QuickJSは孤立サロゲートをWTF-8で返し得る。UTF-8 strict変換だと
+            // 保存済みJS文字列が変換不能になるため、可逆なWTF-8→WTF-16を使う。
+            const units = try std.unicode.wtf8ToWtf16LeAlloc(runtime.allocator, text[0..length]);
             defer runtime.allocator.free(units);
             break :blk try runtime.createString(units);
         },
@@ -302,5 +308,25 @@ test "compat AOT runtimeはESM manifestを登録してimportできる" {
     lnako_aot_compat_js_eval(&out, &arguments, arguments.len);
     try std.testing.expectEqual(@as(u8, @backingInt(Tag.number)), out.tag);
     try std.testing.expectEqual(@as(f64, 5), @as(f64, @bitCast(out.payload)));
+    lnako_aot_compat_deinit();
+}
+
+test "compat AOT runtimeはJS文字列の孤立サロゲートを保持する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    // JS source `"\uD800"`（孤立サロゲート1個の文字列）。
+    const source_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "\"\\uD800\"");
+    defer std.testing.allocator.free(source_units);
+    var arguments = [_]Value{try state.active_runtime.?.createString(source_units)};
+    var out: Value = .{};
+    lnako_aot_compat_js_eval(&out, &arguments, arguments.len);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.utf16_string)), out.tag);
+    try std.testing.expectEqualSlices(u16, &.{0xD800}, out.object().?.payload.utf16_string);
     lnako_aot_compat_deinit();
 }

@@ -160,7 +160,7 @@ if (!workflow.includes(toolchainCacheKey) || !workflow.includes("run: node tools
 }
 // 配布コンパイラはQuickJSを静的同梱し、生成物には利用時のみ含める境界を検証する。
 if (!workflow.includes("run tests/fixtures/compat-js-basic.nako3 --compat-js") ||
-    !workflow.includes("build tests/fixtures/compat-js-basic.nako3 --compat-js --backend embedded") ||
+    !workflow.includes("build tests/fixtures/compat-js-basic.nako3 --compat-js -o") ||
     !workflow.includes('printf \'JS実行("1+2")を表示\\n\'') ||
     !workflow.includes("lnako-compat-aot-smoke") ||
     !workflow.includes('== "3"') ||
@@ -205,7 +205,12 @@ if (!workflow.includes("environment: release-signing") || !workflow.includes("en
   throw new Error("macOSの署名・公証・cleanup gateが不完全です");
 }
 if (distribution.indexOf("await signPayload(stagingRoot") > distribution.indexOf("const payloadFiles = await collectFiles(stagingRoot)") ||
-    !distribution.includes('resolve(stagingRoot, "bin", spec.executable), resolve(stagingRoot, "lib", spec.runtimeLibrary)')) {
+    !distribution.includes('resolve(stagingRoot, "bin", spec.executable),') ||
+    !distribution.includes('resolve(stagingRoot, "lib", spec.runtimeLibrary),') ||
+    !distribution.includes('resolve(stagingRoot, "lib", spec.runtimeCompatLibrary),') ||
+    !workflow.includes("--runtime-compat") ||
+    !workflow.includes("runtime_compat: liblnako_runtime_compat.a") ||
+    !workflow.includes("runtime_compat: lnako_runtime_compat.lib")) {
   throw new Error("署名後のpayloadからmanifestを生成してください");
 }
 

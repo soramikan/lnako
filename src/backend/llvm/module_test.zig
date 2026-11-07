@@ -300,6 +300,8 @@ test "compat-js AOTはESM manifestとQuickJS dispatchをemitし、通常AOTは�
     try std.testing.expect(std.mem.indexOf(u8, compat_module.text, "call void @lnako_aot_compat_js_eval(ptr ") != null);
     try std.testing.expect(std.mem.indexOf(u8, compat_module.text, "@lnako.compat.esm.manifest = constant") != null);
     try std.testing.expect(std.mem.indexOf(u8, compat_module.text, "call void @lnako_aot_compat_esm_register(ptr @lnako.compat.esm.manifest") != null);
+    // ESM登録失敗はエントリ実行前に既存の例外経路で終了する。
+    try std.testing.expect(std.mem.indexOf(u8, compat_module.text, "entry.compat.esm.exception.abort:") != null);
     try std.testing.expect(std.mem.indexOf(u8, compat_module.text, "mod.mjs") != null);
     try std.testing.expect(std.mem.indexOf(u8, compat_module.text, "call void @lnako_aot_compat_deinit()") != null);
 }

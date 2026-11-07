@@ -141,6 +141,7 @@ export function verifyArtifact({
   } catch {
     fail("metadata JSONを解釈できません");
   }
+  if (metadata === null || typeof metadata !== "object" || Array.isArray(metadata)) fail("metadata JSONのrootがobjectではありません");
   if (metadata.schema !== SCHEMA) fail(`schemaが不正です: ${metadata.schema}（${SCHEMA}が必要）`);
   assertExactKeys(metadata, EXPECTED_KEYS, "metadata");
   const expectedCommit = resolveCommit(root, env);

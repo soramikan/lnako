@@ -105,6 +105,9 @@ pub fn run(
                 try stderr.flush();
                 std.process.exit(2);
             };
+            // `--compat-js` の既定は従来の同梱実行ファイル方式（embedded）。
+            // LLVM AOT＋QuickJS runtime は `--backend aot` の明示opt-in。
+            const compat_backend: arguments.BuildBackend = options.backend orelse .embedded;
             if (options.compat_js and !lnako.compat.quickjs.available()) {
                 try stderr.writeAll("build: このlnakoはQuickJSなしでビルドされています。zig build -Dcompat-js=trueを使用してください\n");
                 try stderr.flush();
@@ -115,7 +118,7 @@ pub fn run(
                 try stderr.flush();
                 std.process.exit(2);
             }
-            if (options.compat_js and options.backend == .embedded and options.emit != .executable) {
+            if (options.compat_js and compat_backend == .embedded and options.emit != .executable) {
                 try stderr.writeAll("build: --compat-js --backend embeddedは--emit exeだけをサポートします\n");
                 try stderr.flush();
                 std.process.exit(2);
@@ -146,7 +149,7 @@ pub fn run(
                 std.process.exit(1);
             };
             defer ir_program.deinit();
-            if (options.compat_js and options.backend == .embedded) {
+            if (options.compat_js and compat_backend == .embedded) {
                 compiler_pipeline.writeCompatExecutable(allocator, io, executable_path, options.input, options.output, options.forced_mode) catch |err| {
                     try stderr.print("build: QuickJS互換実行ファイルの生成に失敗しました: {s}\n", .{@errorName(err)});
                     try stderr.flush();
@@ -163,11 +166,11 @@ pub fn run(
                 .llvm_root = options.llvm_dir orelse init.environ_map.get("LNAKO_LLVM_DIR"),
                 .llvm_library = init.environ_map.get("LNAKO_LLVM_LIBRARY"),
                 .environment = init.environ_map,
-                .runtime_library = if (options.compat_js)
+                .runtime_library = if (options.compat_js and compat_backend == .aot)
                     init.environ_map.get("LNAKO_AOT_RUNTIME_LIBRARY_COMPAT")
                 else
                     init.environ_map.get("LNAKO_AOT_RUNTIME_LIBRARY"),
-                .compat_js = options.compat_js,
+                .compat_js = options.compat_js and compat_backend == .aot,
                 .compile_manifest_path = init.environ_map.get("LNAKO_COMPILE_MANIFEST"),
                 .global_manifest_path = init.environ_map.get("LNAKO_GLOBAL_MANIFEST"),
                 .literal_manifest_path = init.environ_map.get("LNAKO_LITERAL_MANIFEST"),

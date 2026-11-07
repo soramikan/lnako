@@ -82,7 +82,11 @@ function validateManifest(manifest, prefix, entries, baseName) {
   if (manifest.variant === "standard" && manifest.toolchain.included !== false) throw new Error("standard版のmanifestでtoolchain.includedがfalseではありません");
   const binary = validateManifestArtifact(manifest.artifacts?.binary, prefix, entries, "binary");
   const runtime = validateManifestArtifact(manifest.artifacts?.runtime, prefix, entries, "runtime");
-  if (manifest.executable !== binary.path || manifest.runtimeLibrary !== runtime.path || manifest.sbom !== "sbom.spdx.json") throw new Error("配布manifestのartifactまたはSBOM pathが一致しません");
+  const runtimeCompat = validateManifestArtifact(manifest.artifacts?.runtimeCompat, prefix, entries, "runtimeCompat");
+  if (manifest.executable !== binary.path || manifest.runtimeLibrary !== runtime.path ||
+      manifest.runtimeCompatLibrary !== runtimeCompat.path || manifest.sbom !== "sbom.spdx.json") {
+    throw new Error("配布manifestのartifactまたはSBOM pathが一致しません");
+  }
   if (!Array.isArray(manifest.files) || manifest.files.length === 0) throw new Error("配布manifestのfilesが空です");
   const seen = new Set();
   for (const file of manifest.files) {
@@ -91,7 +95,7 @@ function validateManifest(manifest, prefix, entries, baseName) {
     const bytes = requireEntry(entries, `${prefix}${file.path}`);
     if (sha256(bytes) !== file.sha256 || bytes.length !== file.size) throw new Error(`配布manifestのfile digestが不一致です: ${file.path}`);
   }
-  if (!seen.has(binary.path) || !seen.has(runtime.path)) throw new Error("配布manifestのartifactがfilesにありません");
+  if (!seen.has(binary.path) || !seen.has(runtime.path) || !seen.has(runtimeCompat.path)) throw new Error("配布manifestのartifactがfilesにありません");
   if (manifest.toolchain.included) {
     if (manifest.toolchain.files.length === 0) throw new Error("LLVM/LLD同梱manifestにtoolchain filesがありません");
     for (const file of manifest.toolchain.files) {
@@ -164,6 +168,7 @@ function verifyQuickJsBoundary(manifest, sbom, prefix, entries) {
   if (manifest.build?.compatJsIncluded !== true) throw new Error("配布manifestのcompatJsIncludedがtrueではありません");
   const binary = requireEntry(entries, `${prefix}${manifest.executable}`);
   const runtime = requireEntry(entries, `${prefix}${manifest.runtimeLibrary}`);
+  const runtimeCompat = requireEntry(entries, `${prefix}${manifest.runtimeCompatLibrary}`);
   const presenceMarkers = manifest.platform === "win32"
     ? QUICKJS_STRING_MARKERS
     : [...QUICKJS_STRING_MARKERS, ...QUICKJS_SYMBOL_MARKERS];
@@ -172,6 +177,7 @@ function verifyQuickJsBoundary(manifest, sbom, prefix, entries) {
   }
   for (const marker of [...QUICKJS_STRING_MARKERS, ...QUICKJS_SYMBOL_MARKERS]) {
     if (Buffer.from(runtime).includes(marker)) throw new Error(`AOT runtimeライブラリにQuickJS markerが混入しています: ${marker}`);
+    if (!Buffer.from(runtimeCompat).includes(marker)) throw new Error(`compat AOT runtimeライブラリにQuickJS markerがありません: ${marker}`);
   }
   const packages = Array.isArray(sbom.packages) ? sbom.packages : [];
   const quickjsPackage = packages.find((entry) => entry.name === "QuickJS" && entry.versionInfo === "2026-06-04" && entry.licenseConcluded === "MIT");
@@ -360,13 +366,15 @@ async function selfTest() {
   try {
     const binary = resolve(temporary, "fake-lnako");
     const runtime = resolve(temporary, "fake-runtime.a");
+    const runtimeCompat = resolve(temporary, "fake-runtime-compat.a");
     await writeFile(binary, `fake executable ${[...QUICKJS_STRING_MARKERS, ...QUICKJS_SYMBOL_MARKERS].join(" ")}\n`);
     await writeFile(runtime, "fake runtime without quickjs\n");
+    await writeFile(runtimeCompat, `fake compat runtime ${[...QUICKJS_STRING_MARKERS, ...QUICKJS_SYMBOL_MARKERS].join(" ")}\n`);
     const output = resolve(temporary, "dist");
     const targets = [...new Set([hostTarget(), "linux-x64", "windows-x64"])];
     const archives = [];
     for (const target of targets) {
-      const result = spawnSync(process.execPath, [resolve(root, "tools/create_distribution.mjs"), "--version", "9.9.9-test", "--target", target, "--output", output, "--binary", binary, "--runtime", runtime], {
+      const result = spawnSync(process.execPath, [resolve(root, "tools/create_distribution.mjs"), "--version", "9.9.9-test", "--target", target, "--output", output, "--binary", binary, "--runtime", runtime, "--runtime-compat", runtimeCompat], {
         cwd: root,
         encoding: "utf8",
         maxBuffer: 4 * 1024 * 1024,

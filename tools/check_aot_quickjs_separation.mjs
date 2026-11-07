@@ -12,7 +12,8 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const args = parseArguments(process.argv.slice(2));
 const compiler = resolveCompiler(args.compiler ?? join(root, "zig-out", "bin", "lnako"));
-const runtimeLib = resolveRuntimeLib(args["runtime-lib"]);
+const runtimeLib = resolveRuntimeLib(args["runtime-lib"], "lnako_runtime.lib", "liblnako_runtime.a", "通常AOT runtime library");
+const runtimeCompatLib = resolveRuntimeLib(args["runtime-compat-lib"], "lnako_runtime_compat.lib", "liblnako_runtime_compat.a", "compat AOT runtime library");
 const nm = resolveNm(args.nm);
 const work = mkdtempSync(join(tmpdir(), "lnako-aot-quickjs-"));
 let failed = false;
@@ -31,7 +32,7 @@ try {
   const normalBinary = join(work, "normal");
   const compatBinary = join(work, "compat");
   runCompiler(normalSource, normalBinary, []);
-  runCompiler(compatSource, compatBinary, ["--compat-js"]);
+  runCompiler(compatSource, compatBinary, ["--compat-js", "--backend", "aot"]);
 
   const normalOutput = runBinary(normalBinary);
   expectEqual(normalOutput, "3", "通常AOTの実行結果");
@@ -66,6 +67,14 @@ try {
   if (!compatBytes.includes(Buffer.from(modulePath))) {
     fail("compat AOT成果物にESM identity（path）が収録されていません");
   }
+  // 既定の `--compat-js` は従来の同梱実行ファイル方式（embedded）へ戻っている。
+  // AOT+QuickJSは `--backend aot` の明示opt-inであることを実行で固定する。
+  const defaultCompatSource = join(work, "default-compat.nako3");
+  writeFileSync(defaultCompatSource, 'JS実行("1+2")を表示\n');
+  const defaultCompatBinary = join(work, "default-compat");
+  runCompiler(defaultCompatSource, defaultCompatBinary, ["--compat-js"]);
+  expectEqual(runBinary(defaultCompatBinary), "3", "既定compat-js（embedded）の実行結果");
+
   checkDistributionLayout(work);
 
   if (failed) process.exitCode = 1;
@@ -78,7 +87,7 @@ function parseArguments(argv) {
   const parsed = {};
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
-    if (argument === "--compiler" || argument === "--nm" || argument === "--runtime-lib") {
+    if (argument === "--compiler" || argument === "--nm" || argument === "--runtime-lib" || argument === "--runtime-compat-lib") {
       index += 1;
       if (index >= argv.length) throw new Error(`${argument} の値がありません`);
       parsed[argument.slice(2)] = argv[index];
@@ -101,39 +110,62 @@ function resolveCompiler(path) {
   throw new Error(`コンパイラが見つかりません: ${path}`);
 }
 
-function resolveRuntimeLib(explicit) {
-  const path = explicit ?? join(root, "zig-out", "lib", process.platform === "win32" ? "lnako_runtime.lib" : "liblnako_runtime.a");
+function resolveRuntimeLib(explicit, windowsName, unixName, label) {
+  const path = explicit ?? join(root, "zig-out", "lib", process.platform === "win32" ? windowsName : unixName);
   const resolved = resolve(path);
   try {
     readFileSync(resolved);
     return resolved;
   } catch {
-    throw new Error(`通常AOT runtime libraryが見つかりません: ${path}`);
+    throw new Error(`${label}が見つかりません: ${path}`);
   }
 }
 
-/// 配布アーカイブは現時点で通常AOT runtimeだけを同梱する。配布レイアウトを
-/// 再現し、compat AOTが明確なエラーで止まることと、embedded経路が動くことを
-/// 固定する（compat runtime同梱はfollow-up）。
+/// 配布アーカイブを再現し、compat runtimeを同梱したレイアウトでは
+/// `--compat-js --backend aot` が動き、同梱しないレイアウトでは明確なエラーに
+/// なること、既定の `--compat-js`（embedded）がどちらでも動くことを固定する。
 function checkDistributionLayout(work) {
   const compatSource = join(work, "distribution-compat.nako3");
   writeFileSync(compatSource, 'JS実行("1+2")を表示\n');
-  const staging = join(work, "distribution");
+  const cleanEnv = { ...process.env };
+  // 配布利用者と同じ探索（実行ファイル隣接の ../lib）を再現する。
+  delete cleanEnv.LNAKO_AOT_RUNTIME_LIBRARY_COMPAT;
+
+  const withCompat = join(work, "distribution-with-compat");
+  stageDistribution(withCompat, true);
+  const compatOutput = join(work, "distribution-compat-aot");
+  const aot = spawnSync(join(withCompat, "bin", compilerName()), ["build", compatSource, "-o", compatOutput, "--compat-js", "--backend", "aot"], { encoding: "utf8", env: cleanEnv });
+  if (aot.status !== 0) fail(`compat runtime同梱レイアウトのAOTが失敗しました: ${aot.stdout}${aot.stderr}`);
+  expectEqual(runBinary(compatOutput), "3", "配布レイアウト（compat runtime同梱）のAOT実行結果");
+
+  const withoutCompat = join(work, "distribution-without-compat");
+  stageDistribution(withoutCompat, false);
+  const missingOutput = join(work, "distribution-compat-missing");
+  const missing = spawnSync(join(withoutCompat, "bin", compilerName()), ["build", compatSource, "-o", missingOutput, "--compat-js", "--backend", "aot"], { encoding: "utf8", env: cleanEnv });
+  if (missing.status === 0 || !missing.stderr.includes("AOTランタイム静的ライブラリを読み込めません")) {
+    fail(`compat runtime非同梱レイアウトのAOTが明確なエラーになりません: ${missing.stdout}${missing.stderr}`);
+  }
+
+  for (const [label, staging] of [["同梱", withCompat], ["非同梱", withoutCompat]]) {
+    const embeddedOutput = join(work, `distribution-embedded-${label}`);
+    const embedded = spawnSync(join(staging, "bin", compilerName()), ["build", compatSource, "-o", embeddedOutput, "--compat-js"], { encoding: "utf8", env: cleanEnv });
+    if (embedded.status !== 0) fail(`配布レイアウト（${label}）の既定compat-jsが失敗しました: ${embedded.stdout}${embedded.stderr}`);
+    expectEqual(runBinary(embeddedOutput), "3", `配布レイアウト（${label}）の既定compat-js実行結果`);
+  }
+}
+
+function compilerName() {
+  return process.platform === "win32" ? "lnako.exe" : "lnako";
+}
+
+function stageDistribution(staging, includeCompat) {
   const binDir = join(staging, "bin");
   const libDir = join(staging, "lib");
   mkdirSync(binDir, { recursive: true });
   mkdirSync(libDir, { recursive: true });
-  const stagedCompiler = join(binDir, process.platform === "win32" ? "lnako.exe" : "lnako");
-  copyFileSync(compiler, stagedCompiler);
+  copyFileSync(compiler, join(binDir, compilerName()));
   copyFileSync(runtimeLib, join(libDir, process.platform === "win32" ? "lnako_runtime.lib" : "liblnako_runtime.a"));
-  const output = join(work, "distribution-compat");
-  const aot = spawnSync(stagedCompiler, ["build", compatSource, "-o", output, "--compat-js"], { encoding: "utf8" });
-  if (aot.status === 0 || !aot.stderr.includes("AOTランタイム静的ライブラリを読み込めません")) {
-    fail(`配布レイアウトのcompat AOTが明確なエラーになりません: ${aot.stdout}${aot.stderr}`);
-  }
-  const embedded = spawnSync(stagedCompiler, ["build", compatSource, "-o", output, "--compat-js", "--backend", "embedded"], { encoding: "utf8" });
-  if (embedded.status !== 0) fail(`配布レイアウトのembedded経路が失敗しました: ${embedded.stdout}${embedded.stderr}`);
-  expectEqual(runBinary(output), "3", "配布レイアウトのembedded実行結果");
+  if (includeCompat) copyFileSync(runtimeCompatLib, join(libDir, process.platform === "win32" ? "lnako_runtime_compat.lib" : "liblnako_runtime_compat.a"));
 }
 
 function resolveNm(explicit) {
