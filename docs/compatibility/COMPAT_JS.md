@@ -53,10 +53,17 @@ node tools/check_aot_quickjs_separation.mjs --compiler zig-out/bin/lnako
 ```
 
 現時点のAOT compat dispatchは `JS実行` と `JS関数実行` の最小経路です。
-`JS関数実行` は第1引数の関数名（文字列）をglobal evalで解決し、数値・文字列・
-真偽値・null/undefinedの引数とプリミティブ戻り値だけを変換します。オブジェクト・
-配列・関数・BigInt・バイト列の引数はQuickJSへ渡す前に明示的な未対応エラーに
-します。呼出し時の `this` は official の `apply(null)` と異なり `undefined` です
+`JS関数実行` は第1引数の関数名（文字列）をglobal evalで解決し、引数コンテナの
+規則は official と同じです（第2オペランドが配列なら要素を実引数へspreadし、
+そうでなければ単一実引数）。各実引数は数値・文字列・真偽値・null/undefinedに
+加えて、Nako配列→JS配列・辞書→JSオブジェクトの浅いコピーだけを変換します。
+要素はプリミティブに限り、ネストした配列/辞書・関数・BigInt・バイト列・
+PromiseはQuickJSへ渡す前にAOTとinterpreterで同じ文言の明示的な未対応エラーに
+します（officialはそのまま渡すため、この範囲だけ意図的な差分です）。戻り値は
+プリミティブだけを変換します。interpreterで `JS実行` が返した配列・辞書は
+既存のJSオブジェクトを参照渡しし（Nako側の内容を書き戻す）、浅いコピーに
+なるのはNakoネイティブ値だけです。呼出し時の `this` は official の `apply(null)` と
+異なり `undefined` です
 （lnako の QuickJS bridge 共通で、strict 関数でのみ観測できます）。
 Promise戻り値は未対応エラーですが、エラー判定前にmicrotaskをdrainするため、
 呼び出した関数が登録した継続は実行されてから失敗します。第1引数に

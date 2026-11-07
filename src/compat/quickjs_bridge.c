@@ -1034,7 +1034,9 @@ LnakoQuickJsValue *lnako_qjs_get_index(const LnakoQuickJsValue *value, uint32_t 
 
 int lnako_qjs_set_index(LnakoQuickJsValue *value, uint32_t index, const LnakoQuickJsValue *item) {
     if (!value || !item || value->engine != item->engine) return -1;
-    return JS_SetPropertyUint32(value->engine->context, value->value, index, JS_DupValue(value->engine->context, item->value));
+    int result = JS_SetPropertyUint32(value->engine->context, value->value, index, JS_DupValue(value->engine->context, item->value));
+    if (result < 0) set_error(value->engine);
+    return result;
 }
 
 int lnako_qjs_set_array_length(LnakoQuickJsValue *value, uint32_t length) {
@@ -1050,7 +1052,9 @@ LnakoQuickJsValue *lnako_qjs_get_property(const LnakoQuickJsValue *value, const 
 
 int lnako_qjs_set_property(LnakoQuickJsValue *value, const char *name, const LnakoQuickJsValue *item) {
     if (!value || !item || value->engine != item->engine || !name) return -1;
-    return JS_SetPropertyStr(value->engine->context, value->value, name, JS_DupValue(value->engine->context, item->value));
+    int result = JS_SetPropertyStr(value->engine->context, value->value, name, JS_DupValue(value->engine->context, item->value));
+    if (result < 0) set_error(value->engine);
+    return result;
 }
 
 int lnako_qjs_clear_properties(LnakoQuickJsValue *value) {
