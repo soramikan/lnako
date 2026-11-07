@@ -8,7 +8,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathS
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SCHEMA = "lnako.release-candidate.v1";
+const SCHEMA = "lnako.release-candidate.v2";
 const METADATA_NAME = "release-candidate.json";
 const BUILD_MODE = "ReleaseSafe";
 const COMPAT_JS = true;
@@ -16,6 +16,7 @@ const TARGETS = new Set(["macos-arm64", "linux-x64", "windows-x64"]);
 const EXPECTED_KEYS = [
   "schema", "commit", "os", "arch", "target", "zig", "buildMode", "compatJs", "version",
   "binaryName", "binarySha256", "runtimeLibName", "runtimeLibSha256",
+  "runtimeCompatLibName", "runtimeCompatLibSha256",
   "ciRunId", "ciWorkflow", "ciJobName", "toolchainLockSha256",
 ];
 const HEX_64 = /^[0-9a-f]{64}$/;
@@ -73,6 +74,7 @@ function requireRunId(value, label) {
 export function createArtifact({
   binaryPath,
   runtimeLibPath,
+  runtimeCompatLibPath,
   outDir,
   target,
   root = process.cwd(),
@@ -82,6 +84,7 @@ export function createArtifact({
 }) {
   if (!existsSync(binaryPath)) fail(`compiler binaryがありません: ${binaryPath}`);
   if (!existsSync(runtimeLibPath)) fail(`AOT runtime libraryがありません: ${runtimeLibPath}`);
+  if (!existsSync(runtimeCompatLibPath)) fail(`compat AOT runtime libraryがありません: ${runtimeCompatLibPath}`);
   const ciRunId = requireRunId(env.GITHUB_RUN_ID, "GITHUB_RUN_ID");
   const ciWorkflow = env.GITHUB_WORKFLOW;
   const ciJobName = env.GITHUB_JOB;
@@ -89,6 +92,7 @@ export function createArtifact({
   if (typeof ciJobName !== "string" || ciJobName.length === 0) fail("GITHUB_JOBがありません");
   const binaryBytes = readFileSync(binaryPath);
   const runtimeLibBytes = readFileSync(runtimeLibPath);
+  const runtimeCompatLibBytes = readFileSync(runtimeCompatLibPath);
   const metadata = {
     schema: SCHEMA,
     commit: resolveCommit(root, env),
@@ -103,6 +107,8 @@ export function createArtifact({
     binarySha256: sha256Hex(binaryBytes),
     runtimeLibName: basename(runtimeLibPath),
     runtimeLibSha256: sha256Hex(runtimeLibBytes),
+    runtimeCompatLibName: basename(runtimeCompatLibPath),
+    runtimeCompatLibSha256: sha256Hex(runtimeCompatLibBytes),
     ciRunId,
     ciWorkflow,
     ciJobName,
@@ -112,6 +118,7 @@ export function createArtifact({
   writeFileSync(join(outDir, METADATA_NAME), `${JSON.stringify(metadata, null, 2)}\n`);
   copyFileSync(binaryPath, join(outDir, metadata.binaryName));
   copyFileSync(runtimeLibPath, join(outDir, metadata.runtimeLibName));
+  copyFileSync(runtimeCompatLibPath, join(outDir, metadata.runtimeCompatLibName));
   return metadata;
 }
 
@@ -134,8 +141,8 @@ export function verifyArtifact({
   } catch {
     fail("metadata JSONを解釈できません");
   }
+  if (metadata.schema !== SCHEMA) fail(`schemaが不正です: ${metadata.schema}（${SCHEMA}が必要）`);
   assertExactKeys(metadata, EXPECTED_KEYS, "metadata");
-  if (metadata.schema !== SCHEMA) fail(`schemaが不正です: ${metadata.schema}`);
   const expectedCommit = resolveCommit(root, env);
   if (metadata.commit !== expectedCommit) fail(`commitが不一致です: artifact=${metadata.commit} expected=${expectedCommit}`);
   if (metadata.os !== platform || metadata.arch !== arch) {
@@ -159,8 +166,9 @@ export function verifyArtifact({
   }
   if (typeof metadata.ciWorkflow !== "string" || metadata.ciWorkflow.length === 0) fail("ciWorkflowが不正です");
   if (typeof metadata.ciJobName !== "string" || metadata.ciJobName.length === 0) fail("ciJobNameが不正です");
-  if (!HEX_64.test(metadata.binarySha256) || !HEX_64.test(metadata.runtimeLibSha256)) fail("成果物のSHA-256が不正です");
-  for (const [field, name] of [["binaryName", metadata.binaryName], ["runtimeLibName", metadata.runtimeLibName]]) {
+  if (!HEX_64.test(metadata.binarySha256) || !HEX_64.test(metadata.runtimeLibSha256) ||
+      !HEX_64.test(metadata.runtimeCompatLibSha256)) fail("成果物のSHA-256が不正です");
+  for (const [field, name] of [["binaryName", metadata.binaryName], ["runtimeLibName", metadata.runtimeLibName], ["runtimeCompatLibName", metadata.runtimeCompatLibName]]) {
     if (typeof name !== "string" || name.length === 0 || basename(name) !== name) fail(`${field}が不正です: ${name}`);
   }
   const binaryPath = join(dir, metadata.binaryName);
@@ -175,6 +183,12 @@ export function verifyArtifact({
   if (actualLibSha256 !== metadata.runtimeLibSha256) {
     fail(`AOT runtime libraryのSHA-256が不一致です: expected=${metadata.runtimeLibSha256} actual=${actualLibSha256}`);
   }
+  const runtimeCompatLibPath = join(dir, metadata.runtimeCompatLibName);
+  if (!existsSync(runtimeCompatLibPath)) fail(`compat AOT runtime libraryがありません: ${runtimeCompatLibPath}`);
+  const actualCompatLibSha256 = sha256Hex(readFileSync(runtimeCompatLibPath));
+  if (actualCompatLibSha256 !== metadata.runtimeCompatLibSha256) {
+    fail(`compat AOT runtime libraryのSHA-256が不一致です: expected=${metadata.runtimeCompatLibSha256} actual=${actualCompatLibSha256}`);
+  }
   if (installTo) {
     mkdirSync(installTo, { recursive: true });
     const installedBinary = join(installTo, metadata.binaryName);
@@ -183,6 +197,7 @@ export function verifyArtifact({
     const libDir = resolve(installTo, "..", "lib");
     mkdirSync(libDir, { recursive: true });
     copyFileSync(runtimeLibPath, join(libDir, metadata.runtimeLibName));
+    copyFileSync(runtimeCompatLibPath, join(libDir, metadata.runtimeCompatLibName));
   }
   return { binaryPath, metadata };
 }
@@ -220,6 +235,7 @@ if (isMain) {
     const metadata = createArtifact({
       binaryPath: required("--binary"),
       runtimeLibPath: required("--runtime-lib"),
+      runtimeCompatLibPath: required("--runtime-compat-lib"),
       outDir: required("--out-dir"),
       target: required("--target"),
     });

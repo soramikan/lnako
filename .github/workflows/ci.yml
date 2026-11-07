@@ -399,14 +399,15 @@ jobs:
         run: |
           set -euo pipefail
           case "${{ matrix.name }}" in
-            "Linux x86_64") target=linux-x64; binary=zig-out/bin/lnako; runtime=zig-out/lib/liblnako_runtime.a ;;
-            "macOS arm64") target=macos-arm64; binary=zig-out/bin/lnako; runtime=zig-out/lib/liblnako_runtime.a ;;
-            "Windows x86_64") target=windows-x64; binary=zig-out/bin/lnako.exe; runtime=zig-out/lib/lnako_runtime.lib ;;
+            "Linux x86_64") target=linux-x64; binary=zig-out/bin/lnako; runtime=zig-out/lib/liblnako_runtime.a; runtime_compat=zig-out/lib/liblnako_runtime_compat.a ;;
+            "macOS arm64") target=macos-arm64; binary=zig-out/bin/lnako; runtime=zig-out/lib/liblnako_runtime.a; runtime_compat=zig-out/lib/liblnako_runtime_compat.a ;;
+            "Windows x86_64") target=windows-x64; binary=zig-out/bin/lnako.exe; runtime=zig-out/lib/lnako_runtime.lib; runtime_compat=zig-out/lib/lnako_runtime_compat.lib ;;
             *) echo "未知のmatrix.name: ${{ matrix.name }}" >&2; exit 1 ;;
           esac
           node tools/release_candidate_artifact.mjs create \
             --binary "$binary" \
             --runtime-lib "$runtime" \
+            --runtime-compat-lib "$runtime_compat" \
             --out-dir "${{ runner.temp }}/release-candidate" \
             --target "$target"
       - name: Upload release candidate compiler
