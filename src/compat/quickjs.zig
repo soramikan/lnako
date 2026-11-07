@@ -369,7 +369,10 @@ pub fn call(runtime: *Runtime, state: *State, effects: Effects, name: []const u8
         const slice = if (call_arguments == .array) call_arguments.array.items.items else arguments[1..@min(arguments.len, 2)];
         // Nako関数値の呼出しはNako値のまま渡すため制限しない。JS関数へ渡す
         // 実引数だけを、AOTと同じ規則（浅い配列/辞書＋プリミティブ）で検証する。
+        // 呼出し不能の判定は引数検証より先に行い、AOT（eval→関数判定→引数変換）
+        // と同じ優先順位にする。
         if (callable == .function and callable.function.kind != .external) return @as(?Value, try effects.invoke(callable, slice));
+        if (callable != .function or callable.function.kind != .external) return error.QuickJsValueNotCallable;
         try validateCallArguments(runtime, slice);
         return @as(?Value, try callExternalValue(state, runtime, callable, slice));
     }
@@ -614,6 +617,8 @@ fn isCompatCommand(name: []const u8) bool {
 }
 
 fn callExternalValue(state: *State, runtime: *Runtime, callable: Value, arguments: []const Value) !Value {
+    // 呼出し元（JS関数実行）は引数検証より先に同じ判定を済ませている。
+    // private関数の前提を型で表せないため、防御的に同じ判定を残す。
     if (callable != .function or callable.function.kind != .external) return error.QuickJsValueNotCallable;
     const external = callable.function.kind.external;
     if (external.binding.context != @as(*anyopaque, @ptrCast(state))) return error.QuickJsEngineMismatch;
@@ -960,6 +965,47 @@ fn quickJsError(engine: *Engine) anyerror {
         lnako_qjs_free_string(message);
     }
     return error.QuickJsExecutionFailed;
+}
+
+test "JS関数実行の実引数はプリミティブと浅い配列・辞書だけを許可する" {
+    var runtime = value_mod.Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = [_]Value{ .{ .undefined = {} }, .{ .undefined = {} }, .{ .undefined = {} }, .{ .undefined = {} }, .{ .undefined = {} }, .{ .undefined = {} }, .{ .undefined = {} }, .{ .undefined = {} }, .{ .undefined = {} } };
+    var frame = runtime.rootFrame();
+    defer frame.deinit();
+    for (&roots) |*root| try frame.protect(root);
+
+    try std.testing.expect(isSupportedCallArgument(.undefined));
+    try std.testing.expect(isSupportedCallArgument(.null_value));
+    try std.testing.expect(isSupportedCallArgument(.{ .boolean = true }));
+    try std.testing.expect(isSupportedCallArgument(.{ .number = 1 }));
+    roots[0] = try runtime.stringUtf8("x");
+    try std.testing.expect(isSupportedCallArgument(roots[0]));
+
+    roots[1] = try runtime.createArray();
+    try std.testing.expect(isSupportedCallArgument(roots[1]));
+    roots[2] = try runtime.createArray();
+    _ = try roots[2].array.push(.{ .number = 1 });
+    try std.testing.expect(isSupportedCallArgument(roots[2]));
+    roots[3] = try runtime.createArray();
+    _ = try roots[3].array.push(roots[2]);
+    try std.testing.expect(!isSupportedCallArgument(roots[3]));
+
+    roots[4] = try runtime.createDictionary();
+    try std.testing.expect(isSupportedCallArgument(roots[4]));
+    roots[5] = try runtime.createDictionary();
+    try roots[5].dictionary.set(roots[0].string, .{ .number = 1 });
+    try std.testing.expect(isSupportedCallArgument(roots[5]));
+    roots[6] = try runtime.createDictionary();
+    try roots[6].dictionary.set(roots[0].string, roots[5]);
+    try std.testing.expect(!isSupportedCallArgument(roots[6]));
+
+    roots[7] = try runtime.createBuiltinFunction(roots[0].string, 0);
+    try std.testing.expect(!isSupportedCallArgument(roots[7]));
+    roots[8] = try runtime.bigIntLiteral("1");
+    try std.testing.expect(!isSupportedCallArgument(roots[8]));
+    try std.testing.expect(!isSupportedCallArgument(try runtime.createBytes("ab")));
+    try std.testing.expect(!isSupportedCallArgument(try runtime.createPromise()));
 }
 
 test "QuickJS互換ビルド状態を公開する" {

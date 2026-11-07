@@ -277,7 +277,7 @@ fn dictionaryArgumentRaw(runtime: *state.Runtime, engine_value: *Engine, value: 
     const result = lnako_qjs_object(engine_value) orelse return error.OutOfMemory;
     errdefer lnako_qjs_value_free(result);
     for (entries) |entry| {
-        const name = dictionaryKeyNameZ(runtime, entry.key) catch return error.QuickJsUnsupportedArgument;
+        const name = try dictionaryKeyNameZ(runtime, entry.key);
         defer runtime.allocator.free(name);
         const raw = try shallowArgumentRaw(runtime, engine_value, entry.value);
         defer lnako_qjs_value_free(raw);
@@ -610,16 +610,21 @@ test "compat AOT runtimeはJS関数実行の配列実引数をJS配列へ変換�
     }
     const source_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "(a)=>a[0]+a[1]");
     defer std.testing.allocator.free(source_units);
-    // [0]=callable, [1]=実引数コンテナ（要素はNako配列1個）。
+    // [0]=callable, [1]=実引数コンテナ。GC中も値を保持するためscratchをrootする。
     var arguments = [_]Value{ .{}, .{} };
-    var frame: state.RootFrame = .{};
-    state.active_runtime.?.pushRoots(&frame, &arguments, arguments.len);
-    defer state.active_runtime.?.popRoots(&frame);
+    var scratch = [_]Value{ .{}, .{} };
+    var arguments_frame: state.RootFrame = .{};
+    var scratch_frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&arguments_frame, &arguments, arguments.len);
+    state.active_runtime.?.pushRoots(&scratch_frame, &scratch, scratch.len);
+    defer {
+        state.active_runtime.?.popRoots(&scratch_frame);
+        state.active_runtime.?.popRoots(&arguments_frame);
+    }
     arguments[0] = try state.active_runtime.?.createString(source_units);
     var inner = [_]Value{ state.numberValue(1), state.numberValue(2) };
-    var inner_value: Value = .{};
-    state.lnako_aot_array_new(&inner_value, &inner, inner.len);
-    var container = [_]Value{inner_value};
+    state.lnako_aot_array_new(&scratch[0], &inner, inner.len);
+    var container = [_]Value{scratch[0]};
     state.lnako_aot_array_new(&arguments[1], &container, container.len);
     var out: Value = .{};
     lnako_aot_compat_js_call(&out, &arguments, 2);
@@ -645,18 +650,22 @@ test "compat AOT runtimeはJS関数実行の辞書実引数をJSオブジェク�
     const y_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "y");
     defer std.testing.allocator.free(y_units);
     var arguments = [_]Value{ .{}, .{} };
-    var frame: state.RootFrame = .{};
-    state.active_runtime.?.pushRoots(&frame, &arguments, arguments.len);
-    defer state.active_runtime.?.popRoots(&frame);
+    var scratch = [_]Value{ .{}, .{}, .{}, .{} };
+    var arguments_frame: state.RootFrame = .{};
+    var scratch_frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&arguments_frame, &arguments, arguments.len);
+    state.active_runtime.?.pushRoots(&scratch_frame, &scratch, scratch.len);
+    defer {
+        state.active_runtime.?.popRoots(&scratch_frame);
+        state.active_runtime.?.popRoots(&arguments_frame);
+    }
     arguments[0] = try state.active_runtime.?.createString(source_units);
     // 辞書は「非配列の第2オペランド」なので単一実引数として渡る。
-    var pairs = [_]Value{
-        try state.active_runtime.?.createString(x_units),
-        state.numberValue(10),
-        try state.active_runtime.?.createString(y_units),
-        state.numberValue(20),
-    };
-    state.lnako_aot_dictionary_new(&arguments[1], &pairs, pairs.len);
+    scratch[0] = try state.active_runtime.?.createString(x_units);
+    scratch[1] = state.numberValue(10);
+    scratch[2] = try state.active_runtime.?.createString(y_units);
+    scratch[3] = state.numberValue(20);
+    state.lnako_aot_dictionary_new(&arguments[1], &scratch, scratch.len);
     var out: Value = .{};
     lnako_aot_compat_js_call(&out, &arguments, 2);
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
@@ -674,18 +683,23 @@ test "compat AOT runtimeはJS関数実行の空配列・空辞書を渡す" {
         state.active_runtime = null;
     }
     var arguments = [_]Value{ .{}, .{} };
-    var frame: state.RootFrame = .{};
-    state.active_runtime.?.pushRoots(&frame, &arguments, arguments.len);
-    defer state.active_runtime.?.popRoots(&frame);
+    var scratch = [_]Value{ .{}, .{} };
+    var arguments_frame: state.RootFrame = .{};
+    var scratch_frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&arguments_frame, &arguments, arguments.len);
+    state.active_runtime.?.pushRoots(&scratch_frame, &scratch, scratch.len);
+    defer {
+        state.active_runtime.?.popRoots(&scratch_frame);
+        state.active_runtime.?.popRoots(&arguments_frame);
+    }
     var out: Value = .{};
 
     // 空配列: コンテナの要素が空配列1個。
     const length_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "(a)=>a.length");
     defer std.testing.allocator.free(length_units);
     arguments[0] = try state.active_runtime.?.createString(length_units);
-    var empty_array: Value = .{};
-    state.lnako_aot_array_new(&empty_array, null, 0);
-    var array_container = [_]Value{empty_array};
+    state.lnako_aot_array_new(&scratch[0], null, 0);
+    var array_container = [_]Value{scratch[0]};
     state.lnako_aot_array_new(&arguments[1], &array_container, array_container.len);
     lnako_aot_compat_js_call(&out, &arguments, 2);
     try std.testing.expect(!state.active_runtime.?.has_pending_exception);
@@ -713,33 +727,45 @@ test "compat AOT runtimeはJS関数実行の未対応引数を明示エラーに
     }
     const source_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "x => 1");
     defer std.testing.allocator.free(source_units);
+    const x_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "x");
+    defer std.testing.allocator.free(x_units);
     var arguments = [_]Value{ .{}, .{} };
-    var frame: state.RootFrame = .{};
-    state.active_runtime.?.pushRoots(&frame, &arguments, arguments.len);
-    defer state.active_runtime.?.popRoots(&frame);
+    var scratch = [_]Value{ .{}, .{}, .{}, .{} };
+    var arguments_frame: state.RootFrame = .{};
+    var scratch_frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&arguments_frame, &arguments, arguments.len);
+    state.active_runtime.?.pushRoots(&scratch_frame, &scratch, scratch.len);
+    defer {
+        state.active_runtime.?.popRoots(&scratch_frame);
+        state.active_runtime.?.popRoots(&arguments_frame);
+    }
     arguments[0] = try state.active_runtime.?.createString(source_units);
+    scratch[3] = try state.active_runtime.?.createString(x_units);
     var out: Value = .{};
 
     // ネストした配列: コンテナの要素が配列で、その要素も配列。
     var nested_inner = [_]Value{ state.numberValue(1), state.numberValue(2) };
-    var nested_inner_value: Value = .{};
-    state.lnako_aot_array_new(&nested_inner_value, &nested_inner, nested_inner.len);
-    var nested_middle = [_]Value{nested_inner_value};
-    var nested_middle_value: Value = .{};
-    state.lnako_aot_array_new(&nested_middle_value, &nested_middle, nested_middle.len);
-    var nested_container = [_]Value{nested_middle_value};
+    state.lnako_aot_array_new(&scratch[0], &nested_inner, nested_inner.len);
+    var nested_middle = [_]Value{scratch[0]};
+    state.lnako_aot_array_new(&scratch[1], &nested_middle, nested_middle.len);
+    var nested_container = [_]Value{scratch[1]};
     state.lnako_aot_array_new(&arguments[1], &nested_container, nested_container.len);
     lnako_aot_compat_js_call(&out, &arguments, 2);
     try expectPendingFailureContains(&state.active_runtime.?, "JS関数実行 does not support nested arrays or dictionaries");
 
     // 辞書の値が配列（ネスト）。
-    const x_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "x");
-    defer std.testing.allocator.free(x_units);
     var nested_value_array = [_]Value{state.numberValue(1)};
-    var nested_value_array_value: Value = .{};
-    state.lnako_aot_array_new(&nested_value_array_value, &nested_value_array, nested_value_array.len);
-    var pairs = [_]Value{ try state.active_runtime.?.createString(x_units), nested_value_array_value };
-    state.lnako_aot_dictionary_new(&arguments[1], &pairs, pairs.len);
+    state.lnako_aot_array_new(&scratch[0], &nested_value_array, nested_value_array.len);
+    var value_pairs = [_]Value{ scratch[3], scratch[0] };
+    state.lnako_aot_dictionary_new(&arguments[1], &value_pairs, value_pairs.len);
+    lnako_aot_compat_js_call(&out, &arguments, 2);
+    try expectPendingFailureContains(&state.active_runtime.?, "JS関数実行 does not support nested arrays or dictionaries");
+
+    // 辞書の値が辞書（ネスト）。
+    var inner_pairs = [_]Value{ scratch[3], state.numberValue(1) };
+    state.lnako_aot_dictionary_new(&scratch[0], &inner_pairs, inner_pairs.len);
+    var outer_pairs = [_]Value{ scratch[3], scratch[0] };
+    state.lnako_aot_dictionary_new(&arguments[1], &outer_pairs, outer_pairs.len);
     lnako_aot_compat_js_call(&out, &arguments, 2);
     try expectPendingFailureContains(&state.active_runtime.?, "JS関数実行 does not support nested arrays or dictionaries");
 
