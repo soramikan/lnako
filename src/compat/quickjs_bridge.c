@@ -853,7 +853,8 @@ LnakoQuickJsValue *lnako_qjs_call(LnakoQuickJs *engine, const LnakoQuickJsValue 
     if (!engine || !function || function->engine != engine) return NULL;
     JSValue *values = copy_arguments(engine, arguments, count);
     if (count && !values) return NULL;
-    JSValue result = JS_Call(engine->context, function->value, JS_UNDEFINED, (int)count, values);
+    // official `JS関数実行` は strict 関数の `this` を null にする。
+    JSValue result = JS_Call(engine->context, function->value, JS_NULL, (int)count, values);
     free_arguments(engine, values, count);
     return wrap_owned(engine, result);
 }
