@@ -31,6 +31,7 @@ pub fn run(
             .compat_js = true,
             .forced_mode = package.forced_mode,
             .package_resolver = package.packageResolver(),
+            .npm_module_resolver = package.npmModuleResolver(),
         }, stderr, package.sourceProvider()) catch |err| {
             if (err == error.ConflictingDnclModes) {
                 try stderr.writeAll("拡張子と埋め込みDNCLモードが異なるDNCL方言を要求しています\n");
@@ -131,6 +132,7 @@ pub fn run(
             var ir_program = (try compiler_pipeline.compileInputTraced(allocator, io, options.input, .{
                 .compat_js = options.compat_js,
                 .forced_mode = options.forced_mode,
+                .package_cache_root = prep.cache_dir,
                 .writable_mode = prep.writableMode(init.environ_map),
             }, stderr, init.environ_map.get("LNAKO_LLVM_TRACE") != null)) orelse {
                 try stderr.flush();
@@ -138,7 +140,7 @@ pub fn run(
             };
             defer ir_program.deinit();
             if (options.compat_js) {
-                compiler_pipeline.writeCompatExecutable(allocator, io, executable_path, options.input, options.output, options.forced_mode) catch |err| {
+                compiler_pipeline.writeCompatExecutable(allocator, io, executable_path, options.input, options.output, options.forced_mode, prep.cache_dir) catch |err| {
                     try stderr.print("build: QuickJS互換実行ファイルの生成に失敗しました: {s}\n", .{@errorName(err)});
                     try stderr.flush();
                     std.process.exit(1);
@@ -290,6 +292,7 @@ pub fn run(
             var ir_program = (compiler_pipeline.compileInput(allocator, io, input, .{
                 .compat_js = compat_js,
                 .forced_mode = run_mode,
+                .package_cache_root = run_prep.cache_dir,
                 .writable_mode = run_prep.writableMode(init.environ_map),
             }, stderr) catch |err| {
                 if (err == error.ConflictingDnclModes) {

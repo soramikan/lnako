@@ -4,7 +4,7 @@ const compile_pipeline = @import("compile.zig");
 
 const test_sandbox = lnako.package.test_sandbox;
 
-pub fn writeCompatExecutable(allocator: std.mem.Allocator, io: std.Io, executable_path: []const u8, input_path: []const u8, output_path: []const u8, forced_mode: lnako.frontend.token.Mode) !void {
+pub fn writeCompatExecutable(allocator: std.mem.Allocator, io: std.Io, executable_path: []const u8, input_path: []const u8, output_path: []const u8, forced_mode: lnako.frontend.token.Mode, cache_root: ?[]const u8) !void {
     const resolved_output = try std.fs.path.resolve(allocator, &.{output_path});
     defer allocator.free(resolved_output);
     const resolved_executable = try std.fs.path.resolve(allocator, &.{executable_path});
@@ -17,7 +17,7 @@ pub fn writeCompatExecutable(allocator: std.mem.Allocator, io: std.Io, executabl
     defer if (package_environment) |*environment| environment.deinit();
     package_root = lnako.package.import_resolver.findProjectRoot(allocator, io, input_path) catch |err| if (err == error.OutOfMemory) return err else null;
     if (package_root) |root| {
-        package_environment = lnako.package.import_resolver.Resolver.load(allocator, io, root) catch |err| if (err == error.OutOfMemory) return err else null;
+        package_environment = lnako.package.import_resolver.Resolver.loadWithOptions(allocator, io, root, .{ .cache_root = cache_root }) catch |err| if (err == error.OutOfMemory) return err else null;
     }
 
     var file_provider = lnako.semantic.module_graph.FileProvider{ .io = io };
@@ -25,6 +25,7 @@ pub fn writeCompatExecutable(allocator: std.mem.Allocator, io: std.Io, executabl
         .compat_js = true,
         .forced_mode = forced_mode,
         .package_resolver = if (package_environment) |*environment| environment.packageResolver() else null,
+        .npm_module_resolver = if (package_environment) |*environment| environment.npm.moduleResolver() else null,
     });
     defer graph.deinit();
     if (!graph.succeeded()) return error.InvalidCompatSourceGraph;
@@ -54,9 +55,42 @@ pub fn writeCompatExecutable(allocator: std.mem.Allocator, io: std.Io, executabl
         }
     }
 
+    // package 所有 ESM の bare npm import は、起動時の再コンパイルで cache を
+    // 参照できないため、生成時の解決結果を payload へ記録する。
+    var npm_imports: std.ArrayListUnmanaged(lnako.compat.embedded.NpmImport) = .empty;
+    defer npm_imports.deinit(allocator);
+    for (graph.modules) |module| {
+        // npm binding を持つのは package 所有 JS の import edge だけ。
+        // nako3 の `取り込む` は相対 path でも `.` 始まりでない specifier に
+        // なり得るため、module kind で絞らないと nako file を npm binding と
+        // して payload に載せてしまう。
+        if (module.kind != .javascript) continue;
+        for (module.imports) |item| {
+            const target = item.target orelse continue;
+            // `pkg:` / `パッケージ:` は package_imports 側で復元する。
+            if (item.canonical_id != null) continue;
+            if (std.fs.path.isAbsolute(item.requested) or std.mem.startsWith(u8, item.requested, ".")) continue;
+            const owner = module.package_owner orelse module.package_root orelse "";
+            var duplicate = false;
+            for (npm_imports.items) |existing| {
+                if (std.mem.eql(u8, existing.importer_owner, owner) and std.mem.eql(u8, existing.specifier, item.requested)) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (duplicate) continue;
+            try npm_imports.append(allocator, .{
+                .importer_owner = owner,
+                .specifier = item.requested,
+                .path = item.resolved_path,
+                .package_root = graph.modules[target].package_root orelse "",
+            });
+        }
+    }
+
     const compiler = try std.Io.Dir.cwd().readFileAlloc(io, executable_path, allocator, .limited(1024 * 1024 * 1024));
     defer allocator.free(compiler);
-    const generated = try lnako.compat.embedded.createExecutableWithImports(allocator, compiler, graph.modules[graph.entry].path, files, forced_mode, package_imports.items, graph.canonical_aliases);
+    const generated = try lnako.compat.embedded.createExecutableWithImports(allocator, compiler, graph.modules[graph.entry].path, files, forced_mode, package_imports.items, npm_imports.items, graph.canonical_aliases);
     defer allocator.free(generated);
     try std.Io.Dir.cwd().writeFile(io, .{
         .sub_path = output_path,
@@ -115,7 +149,7 @@ test "compat-js package import resolverを生成payloadと起動時compileへ引
     var checked_environment = try lnako.package.import_resolver.Resolver.load(allocator, io, root);
     defer checked_environment.deinit();
 
-    try writeCompatExecutable(allocator, io, executable_path, input_path, output_path, .{});
+    try writeCompatExecutable(allocator, io, executable_path, input_path, output_path, .{}, null);
     var package = (try lnako.compat.embedded.readExecutable(allocator, io, output_path)).?;
     defer package.deinit();
     try std.testing.expectEqual(@as(usize, 1), package.package_imports.len);
@@ -187,7 +221,7 @@ test "埋め込みpayload再compileでもpackage内helperはpackage所有のま�
     var checked_environment = try lnako.package.import_resolver.Resolver.load(allocator, io, root);
     defer checked_environment.deinit();
 
-    try writeCompatExecutable(allocator, io, executable_path, input_path, output_path, .{});
+    try writeCompatExecutable(allocator, io, executable_path, input_path, output_path, .{}, null);
     var package = (try lnako.compat.embedded.readExecutable(allocator, io, output_path)).?;
     defer package.deinit();
     try std.testing.expectEqual(@as(usize, 1), package.package_imports.len);
