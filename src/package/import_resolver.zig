@@ -13,6 +13,7 @@ const project_discovery = @import("project_discovery.zig");
 const project_trust = @import("project_trust.zig");
 const project_mod = @import("project.zig");
 const features_mod = @import("features.zig");
+const npm_resolver = @import("npm_resolver.zig");
 
 const Allocator = std.mem.Allocator;
 pub const Value = std.json.Value;
@@ -56,6 +57,11 @@ pub const Error = error{
     UnsafeExportPath,
 };
 
+pub const LoadOptions = struct {
+    writable_mode: project_trust.WritableMode = .warn,
+    cache_root: ?[]const u8 = null,
+};
+
 pub const Resolver = struct {
     io: std.Io,
     project_root: []const u8,
@@ -63,12 +69,17 @@ pub const Resolver = struct {
     owned: std.heap.ArenaAllocator,
     /// `WritableMode.warn` で共有 writable を検出したとき true（続行済み）。
     writable_warning: bool = false,
+    npm: npm_resolver.State = .{},
 
     pub fn load(allocator: Allocator, io: std.Io, project_root: []const u8) !Resolver {
-        return loadWithMode(allocator, io, project_root, .warn);
+        return loadWithOptions(allocator, io, project_root, .{});
     }
 
     pub fn loadWithMode(allocator: Allocator, io: std.Io, project_root: []const u8, mode: project_trust.WritableMode) !Resolver {
+        return loadWithOptions(allocator, io, project_root, .{ .writable_mode = mode });
+    }
+
+    pub fn loadWithOptions(allocator: Allocator, io: std.Io, project_root: []const u8, options: LoadOptions) !Resolver {
         var owned = std.heap.ArenaAllocator.init(allocator);
         errdefer owned.deinit();
         const storage = owned.allocator();
@@ -107,18 +118,37 @@ pub const Resolver = struct {
             parsed.deinit();
             return error.InvalidEnvironment;
         }
+        // lock の parse 結果は検証と npmInstances 抽出にだけ使い、load 完了時に
+        // 解放する（Resolver の寿命まで保持しない）。
+        var lock_arena = std.heap.ArenaAllocator.init(allocator);
+        defer lock_arena.deinit();
+        const parsed_lock = std.json.parseFromSlice(Value, lock_arena.allocator(), lock_bytes, .{}) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidEnvironment,
+        };
+        const lock_root = asObject(parsed_lock.value) orelse return error.InvalidEnvironment;
         var writable_warning = false;
-        try validateEnvironmentLockBinding(storage, io, root, root_object, lock_bytes, mode, &writable_warning);
+        try validateEnvironmentLockBinding(storage, io, root, root_object, lock_root, options.writable_mode, &writable_warning);
         // mutable path 依存の内容 digest も load 時に照合する。lockSha256 は
         // lock 文書の同一性だけを検証し、mutable path は宣言 dir を生参照する
         // 契約で内容変更を許すが、変更は lock・環境の再生成を要求する。
         // sync 中の追従検査だけでは、lock の digest が stale になったままの
         // 環境を `--no-sync` の消費者が読めてしまうため fail closed。
-        try validateMutablePathDigestFreshness(storage, io, root, root_object, lock_bytes);
-        return .{ .io = io, .project_root = root, .parsed = parsed, .owned = owned, .writable_warning = writable_warning };
+        try validateMutablePathDigestFreshness(storage, io, root, root_object, lock_root);
+        const profile_value = get(root_object, "profile") orelse return error.InvalidEnvironment;
+        if (profile_value != .string) return error.InvalidEnvironment;
+        return .{
+            .io = io,
+            .project_root = root,
+            .parsed = parsed,
+            .owned = owned,
+            .writable_warning = writable_warning,
+            .npm = try npm_resolver.State.load(storage, allocator, io, lock_root, profile_value.string, options.cache_root),
+        };
     }
 
     pub fn deinit(self: *Resolver) void {
+        self.npm.deinit();
         // Parsed was allocated from `owned`'s arena allocator. Releasing the
         // parent arena reclaims both the parsed JSON arena and its backing bytes.
         self.owned.deinit();
@@ -326,11 +356,8 @@ fn validateMutablePathDigestFreshness(
     io: std.Io,
     project_root: []const u8,
     environment_root: std.json.ObjectMap,
-    lock_bytes: []const u8,
+    lock_root: std.json.ObjectMap,
 ) !void {
-    var parsed_lock = std.json.parseFromSlice(Value, allocator, lock_bytes, .{}) catch return error.InvalidEnvironment;
-    defer parsed_lock.deinit();
-    const lock_root = asObject(parsed_lock.value) orelse return error.InvalidEnvironment;
     const lock_input_value = get(lock_root, "input") orelse return error.InvalidEnvironment;
     const lock_input = asObject(lock_input_value) orelse return error.InvalidEnvironment;
 
@@ -374,7 +401,7 @@ fn validateEnvironmentLockBinding(
     io: std.Io,
     project_root: []const u8,
     environment: std.json.ObjectMap,
-    lock_bytes: []const u8,
+    lock_root: std.json.ObjectMap,
     mode: project_trust.WritableMode,
     writable_warning: *bool,
 ) !void {
@@ -383,12 +410,6 @@ fn validateEnvironmentLockBinding(
     const environment_packages_value = get(environment, "packages") orelse return error.InvalidEnvironment;
     const environment_packages = asObject(environment_packages_value) orelse return error.InvalidEnvironment;
 
-    const parsed_lock = std.json.parseFromSlice(Value, allocator, lock_bytes, .{}) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return error.InvalidEnvironment,
-    };
-    defer parsed_lock.deinit();
-    const lock_root = asObject(parsed_lock.value) orelse return error.InvalidEnvironment;
     const schema_value = get(lock_root, "schemaVersion") orelse return error.InvalidEnvironment;
     if (schema_value != .integer or (schema_value.integer != 1 and schema_value.integer != 2)) return error.InvalidEnvironment;
     // lock schema と同じく `resolverVersion` も照合する。欠落・将来versionの
@@ -397,21 +418,7 @@ fn validateEnvironmentLockBinding(
     const resolver_value = get(lock_root, "resolverVersion") orelse return error.InvalidEnvironment;
     if (resolver_value != .integer or resolver_value.integer != lock_model.resolver_version) return error.InvalidEnvironment;
     const lock_input = asObject(get(lock_root, "input") orelse return error.InvalidEnvironment) orelse return error.InvalidEnvironment;
-    const input_profile = get(lock_input, "profile") orelse return error.InvalidEnvironment;
-    if (input_profile != .string) return error.InvalidEnvironment;
-
-    const locked_packages_value = if (get(lock_root, "profilePackages")) |profile_maps_value| blk: {
-        const profile_maps = asObject(profile_maps_value) orelse return error.InvalidEnvironment;
-        if (profile_maps.get(profile_value.string)) |selected| break :blk selected;
-        break :blk if (std.mem.eql(u8, profile_value.string, input_profile.string))
-            get(lock_root, "packages") orelse return error.InvalidEnvironment
-        else
-            return error.InvalidEnvironment;
-    } else blk: {
-        if (!std.mem.eql(u8, profile_value.string, input_profile.string)) return error.InvalidEnvironment;
-        break :blk get(lock_root, "packages") orelse return error.InvalidEnvironment;
-    };
-    const locked_packages = asObject(locked_packages_value) orelse return error.InvalidEnvironment;
+    const locked_packages = asObject(try npm_resolver.selectLockedPackages(lock_root, profile_value.string)) orelse return error.InvalidEnvironment;
     if (objectCount(environment_packages) != objectCount(locked_packages)) return error.InvalidEnvironment;
     var materialized_directories = try expectedMaterializedDirectories(allocator, locked_packages);
     defer materialized_directories.deinit();
