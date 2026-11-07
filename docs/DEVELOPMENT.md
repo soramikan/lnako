@@ -45,7 +45,11 @@ zig build run -- build program.nako3 -o program -O2
 zig build -Doptimize=ReleaseSafe -Dcompat-js=true
 zig build -Dcompat-js=true test
 zig build -Dcompat-js=true run -- run program.nako3 --compat-js
+node tools/check_aot_quickjs_separation.mjs --compiler zig-out/bin/lnako
 ```
+
+`check_aot_quickjs_separation.mjs` は通常AOT成果物のQuickJS非依存と、
+compat AOT成果物のQuickJS＋ESM収録・ESM呼出しを実際の生成物で検査します。
 
 利用者のインストール手順は[使い始める](GETTING_STARTED.md)、配布アーカイブの生成仕様は[リリース手順](RELEASE.md)を参照してください。
 

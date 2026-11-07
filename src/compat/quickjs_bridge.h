@@ -27,6 +27,9 @@ enum LnakoQuickJsKind {
 
 LnakoQuickJs *lnako_qjs_new(void);
 void lnako_qjs_set_host(LnakoQuickJs *engine, void *opaque, LnakoQuickJsHostGet get, LnakoQuickJsHostSet set, LnakoQuickJsHostInvoke invoke, LnakoQuickJsHostExec exec);
+/// 非0ならhost_getがNULLを返した直接読み取り（`sys.__getSysVar`）を
+/// 未定義値ではなくJS例外にする。`sys.__findVar` の探索は従来どおり。
+void lnako_qjs_set_host_strict(LnakoQuickJs *engine, int strict);
 /// package_root: このmoduleを所有するpackageのroot。非NULLの場合、この
 /// module（およびroot配下で読まれたmodule）からのimportはroot内への包含が
 /// module_normalizeで強制され、root外へのFS fallbackを拒否する。

@@ -149,6 +149,15 @@ pub fn emitPreamble(emitter: *Emitter) !void {
             "@.lnako.true = private unnamed_addr constant [5 x i8] c\"true\\00\"\n" ++
             "@.lnako.false = private unnamed_addr constant [6 x i8] c\"false\\00\"\n\n",
     );
+    if (emitter.program.compat_js) {
+        // 通常AOTのruntimeには存在しないcompat専用ABI。生成物は
+        // liblnako_runtime_compat.a とだけリンクする。
+        try writer.writeAll(
+            "declare void @lnako_aot_compat_js_eval(ptr, ptr, i64)\n" ++
+                "declare void @lnako_aot_compat_esm_register(ptr, i64)\n" ++
+                "declare void @lnako_aot_compat_deinit()\n\n",
+        );
+    }
 }
 
 pub fn collectModuleData(emitter: *Emitter) !void {
@@ -286,6 +295,37 @@ pub fn collectModuleData(emitter: *Emitter) !void {
         if (system_constant.isDictionary(name)) try emitter.system_dictionaries.append(emitter.allocator, global_index);
         if (system_constant.isEraData(name)) try emitter.system_era_data.append(emitter.allocator, global_index);
     }
+    if (emitter.program.compat_js and emitter.program.javascript_modules.len > 0) {
+        emitter.compat_esm_manifest = try buildCompatEsmManifest(emitter.allocator, emitter.program.javascript_modules);
+    }
+}
+
+/// `--compat-js` 生成物へ収録するESM情報。source/identity（path・source・
+/// namespace・package root・bare alias）をJSONで持ち、起動時にQuickJSへ
+/// 登録する。通常AOTはこのmanifestを生成しない。`is_plugin`/`namespaces` は
+/// ESM plugin命令のAOT dispatch（follow-up）で消費する。
+fn buildCompatEsmManifest(allocator: std.mem.Allocator, modules: []const ir.JavaScriptModule) ![]u8 {
+    const ManifestModule = struct {
+        path: []const u8,
+        source: []const u8,
+        is_plugin: bool,
+        namespaces: []const []const u8,
+        package_root: ?[]const u8,
+        bare_aliases: []const []const u8,
+    };
+    const entries = try allocator.alloc(ManifestModule, modules.len);
+    defer allocator.free(entries);
+    for (modules, entries) |module, *entry| {
+        entry.* = .{
+            .path = module.path,
+            .source = module.source,
+            .is_plugin = module.is_plugin,
+            .namespaces = module.namespaces,
+            .package_root = module.package_root,
+            .bare_aliases = module.bare_aliases,
+        };
+    }
+    return std.json.Stringify.valueAlloc(allocator, entries, .{});
 }
 
 pub fn emitDeclarations(emitter: *Emitter) !void {
@@ -448,4 +488,24 @@ pub fn emitDeclarations(emitter: *Emitter) !void {
         }
     }
     if (emitter.bigints.items.len > 0) try writer.writeByte('\n');
+    if (emitter.compat_esm_manifest) |manifest| {
+        // 外部linkageで残し、artifact検査がシンボルと内容を確認できるようにする。
+        try writer.print("@lnako.compat.esm.manifest = constant [{d} x i8] c\"", .{manifest.len});
+        try writeLlvmByteString(writer, manifest);
+        try writer.writeAll("\"\n\n");
+    }
+}
+
+/// LLVM IRのc"..."リテラルへバイト列を書き出す。JSONの `"` と `\` を含む
+/// 非印字バイトは16進escapeにする。
+fn writeLlvmByteString(writer: *std.Io.Writer, bytes: []const u8) !void {
+    for (bytes) |byte| {
+        if (byte == '"' or byte == '\\') {
+            try writer.print("\\{X:0>2}", .{byte});
+        } else if (byte >= 0x20 and byte < 0x7f) {
+            try writer.writeByte(byte);
+        } else {
+            try writer.print("\\{X:0>2}", .{byte});
+        }
+    }
 }

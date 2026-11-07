@@ -19,6 +19,9 @@ struct LnakoQuickJs {
     LnakoQuickJsHostSet host_set;
     LnakoQuickJsHostInvoke host_invoke;
     LnakoQuickJsHostExec host_exec;
+    /// 非0ならhost_getがNULLを返した直接読み取りを未定義値ではなく
+    /// 例外にする（AOT compatのように変数bridgeを持たないruntime用）。
+    int strict_host_reads;
     struct LnakoQuickJsModuleSource *module_sources;
     struct LnakoQuickJsModuleAlias *module_aliases;
 };
@@ -169,7 +172,12 @@ static JSValue host_get_common(JSContext *context, int argc, JSValueConst *argv,
     if (!name) return JS_EXCEPTION;
     LnakoQuickJsValue *result = engine->host_get(engine->host_opaque, name, find_variable);
     JS_FreeCString(context, name);
-    if (!result) return argc >= 2 ? JS_DupValue(context, argv[1]) : JS_UNDEFINED;
+    if (!result) {
+        if (engine->strict_host_reads && !find_variable) {
+            return JS_ThrowInternalError(context, "lnako AOT compat host variable read is unavailable");
+        }
+        return argc >= 2 ? JS_DupValue(context, argv[1]) : JS_UNDEFINED;
+    }
     JSValue value = take_host_result(context, engine, result);
     if (JS_IsUndefined(value) && argc >= 2) {
         JS_FreeValue(context, value);
@@ -659,6 +667,10 @@ void lnako_qjs_set_host(LnakoQuickJs *engine, void *opaque, LnakoQuickJsHostGet 
     engine->host_set = set;
     engine->host_invoke = invoke;
     engine->host_exec = exec;
+}
+
+void lnako_qjs_set_host_strict(LnakoQuickJs *engine, int strict) {
+    if (engine) engine->strict_host_reads = strict != 0;
 }
 
 void lnako_qjs_retain(LnakoQuickJs *engine) {

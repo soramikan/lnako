@@ -383,6 +383,14 @@ jobs:
         if: matrix.suite == 'compat-aot-build' || matrix.suite == 'mac-host-compat' || (matrix.suite == 'compat-aot' && matrix.name != 'Windows x86_64')
         shell: bash
         run: ./zig-out/bin/lnako run tests/fixtures/compat-js-basic.nako3 --compat-js
+      # 通常AOT成果物のQuickJS非依存と、compat AOT成果物のQuickJS＋ESM収録・
+      # ESM呼出しを実際の生成物で検査する（Issue #55）。
+      - name: AOT QuickJS separation check
+        # Windowsのcompat AOTリンクはMinGW由来のQuickJSシンボル解決が未対応
+        # （follow-up）。LinuxとmacOSで分離・dispatchを検証する。
+        if: matrix.suite == 'mac-host-compat' || (matrix.suite == 'compat-aot' && matrix.name != 'Windows x86_64')
+        shell: bash
+        run: node tools/check_aot_quickjs_separation.mjs --compiler zig-out/bin/lnako
       # Releaseは同一commitの検証済みCI runからReleaseSafe+compat-js成果物を
       # 昇格する。Debug AOT producerとは別schema・別artifact名。
       - name: Package release candidate compiler
@@ -391,14 +399,15 @@ jobs:
         run: |
           set -euo pipefail
           case "${{ matrix.name }}" in
-            "Linux x86_64") target=linux-x64; binary=zig-out/bin/lnako; runtime=zig-out/lib/liblnako_runtime.a ;;
-            "macOS arm64") target=macos-arm64; binary=zig-out/bin/lnako; runtime=zig-out/lib/liblnako_runtime.a ;;
-            "Windows x86_64") target=windows-x64; binary=zig-out/bin/lnako.exe; runtime=zig-out/lib/lnako_runtime.lib ;;
+            "Linux x86_64") target=linux-x64; binary=zig-out/bin/lnako; runtime=zig-out/lib/liblnako_runtime.a; runtime_compat=zig-out/lib/liblnako_runtime_compat.a ;;
+            "macOS arm64") target=macos-arm64; binary=zig-out/bin/lnako; runtime=zig-out/lib/liblnako_runtime.a; runtime_compat=zig-out/lib/liblnako_runtime_compat.a ;;
+            "Windows x86_64") target=windows-x64; binary=zig-out/bin/lnako.exe; runtime=zig-out/lib/lnako_runtime.lib; runtime_compat=zig-out/lib/lnako_runtime_compat.lib ;;
             *) echo "未知のmatrix.name: ${{ matrix.name }}" >&2; exit 1 ;;
           esac
           node tools/release_candidate_artifact.mjs create \
             --binary "$binary" \
             --runtime-lib "$runtime" \
+            --runtime-compat-lib "$runtime_compat" \
             --out-dir "${{ runner.temp }}/release-candidate" \
             --target "$target"
       - name: Upload release candidate compiler

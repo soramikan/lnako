@@ -249,3 +249,59 @@ test "最適化時のtyped直接呼び出しも同じ深度ゲートを通る" {
     try std.testing.expect(typed_calls >= 1);
     try std.testing.expectEqual(typed_calls, gated_typed);
 }
+
+test "compat-js AOTはESM manifestとQuickJS dispatchをemitし、通常AOTは混入させない" {
+    // 通常AOT: QuickJS/compat ABIもESM manifestも生成物へ入らない。
+    var parsed = try parser.parse(std.testing.allocator, "1+2を表示\n", "main.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    try std.testing.expect(findUnsupported(program) == null);
+    var module = try generate(std.testing.allocator, program, "main.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "lnako_aot_compat_") == null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "lnako_qjs_") == null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.compat.esm.manifest") == null);
+
+    // compat AOT: `JS実行` のdispatchとESM manifestの収録・登録をemitする。
+    var compat_parsed = try parser.parse(std.testing.allocator, "JS実行(\"1+2\")を表示\n", "main.nako3");
+    defer compat_parsed.deinit();
+    try std.testing.expect(compat_parsed.succeeded());
+    var compat_analyzed = try semantic.analyze(std.testing.allocator, compat_parsed.root.?, "main.nako3");
+    defer compat_analyzed.deinit();
+    try std.testing.expect(compat_analyzed.succeeded());
+    var compat_hir = try hir.lowerSingle(std.testing.allocator, compat_parsed.root.?, "main", "main.nako3", compat_analyzed);
+    defer compat_hir.deinit();
+    var compat_program = try lower.lower(std.testing.allocator, compat_hir);
+    defer compat_program.deinit();
+    // 通常AOTは同じprogramを未対応として拒否する。
+    try std.testing.expect(findUnsupported(compat_program) != null);
+    compat_program.compat_js = true;
+    const js_modules = try compat_program.arena.allocator().alloc(ir.JavaScriptModule, 1);
+    js_modules[0] = .{
+        .path = "mod.mjs",
+        .source = "export function add(a, b) { return a + b; }",
+        .is_plugin = false,
+        .namespaces = &.{},
+        .package_root = null,
+        .bare_aliases = &.{},
+    };
+    compat_program.javascript_modules = js_modules;
+    try std.testing.expect(findUnsupported(compat_program) == null);
+    var compat_module = try generate(std.testing.allocator, compat_program, "main.nako3", false);
+    defer compat_module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, compat_module.text, "declare void @lnako_aot_compat_js_eval(ptr, ptr, i64)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, compat_module.text, "call void @lnako_aot_compat_js_eval(ptr ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, compat_module.text, "@lnako.compat.esm.manifest = constant") != null);
+    try std.testing.expect(std.mem.indexOf(u8, compat_module.text, "call void @lnako_aot_compat_esm_register(ptr @lnako.compat.esm.manifest") != null);
+    // ESM登録失敗はエントリ実行前に既存の例外経路で終了する。
+    try std.testing.expect(std.mem.indexOf(u8, compat_module.text, "entry.compat.esm.exception.abort:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, compat_module.text, "mod.mjs") != null);
+    try std.testing.expect(std.mem.indexOf(u8, compat_module.text, "call void @lnako_aot_compat_deinit()") != null);
+}
