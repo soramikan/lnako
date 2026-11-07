@@ -374,8 +374,14 @@ pub fn validateGenerationDepsWritable(
     // deps 自身の mode/owner も対象に含める（祖先だけでは deps が漏れる）。
     const probe = try std.fs.path.join(allocator, &.{ deps_real, ".lnako-acl-probe" });
     defer allocator.free(probe);
-    const unsafe_ancestors = project_trust.hasUnsafeWritableAncestors(allocator, io, probe, project_real) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
+    const unsafe_ancestors = project_trust.hasUnsafeWritableAncestors(allocator, io, probe, project_real) catch |err| {
+        // エラー集合は platform で異なる（Windows は InvalidUtf8 を含む）。
+        // 特定 error 名を switch の case にすると非対応 platform で
+        // コンパイルできないため、名前で判定する。
+        if (std.mem.eql(u8, @errorName(err), "OutOfMemory")) return error.OutOfMemory;
+        if (std.mem.eql(u8, @errorName(err), "Canceled")) return error.Canceled;
+        // 検査不能な世代 tree は使わず cache 経路へ fallback する。
+        return false;
     };
     if (project_trust.shouldRejectWritable(mode, unsafe_ancestors, writable_warning)) return error.InvalidEnvironment;
 
@@ -408,10 +414,11 @@ pub fn validateGenerationDepsWritable(
         if (!is_directory) continue;
         const tree_path = try std.fs.path.join(allocator, &.{ deps_real, entry.name });
         defer allocator.free(tree_path);
-        const unsafe = project_trust.hasUnsafeWritableDirectory(allocator, io, tree_path) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            error.Canceled => return error.Canceled,
-            else => true,
+        const unsafe = project_trust.hasUnsafeWritableDirectory(allocator, io, tree_path) catch |err| blk: {
+            // エラー集合は platform で異なるため、case ではなく名前で判定する。
+            if (std.mem.eql(u8, @errorName(err), "OutOfMemory")) return error.OutOfMemory;
+            if (std.mem.eql(u8, @errorName(err), "Canceled")) return error.Canceled;
+            break :blk true;
         };
         if (project_trust.shouldRejectWritable(mode, unsafe, writable_warning)) return error.InvalidEnvironment;
     }
