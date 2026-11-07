@@ -2,8 +2,9 @@
 //!
 //! 通常AOTの `liblnako_runtime.a` はQuickJS stubだけをリンクし、このmoduleを
 //! 含まない。`--compat-js` のAOT成果物だけが `liblnako_runtime_compat.a` を
-//! リンクし、生成物へ収録したESM manifestの登録と、`JS実行` の最小dispatchを
-//! 提供する。値・Promise・callback・GCの完全接続はfollow-up（Issue #55）。
+//! リンクし、生成物へ収録したESM manifestの登録と、`JS実行` / `JS関数実行` の
+//! 最小dispatchを提供する。値・Promise・callback・GCの完全接続はfollow-up
+//! （Issue #55）。
 const std = @import("std");
 const state = @import("state.zig");
 
@@ -40,8 +41,14 @@ extern fn lnako_qjs_release(engine: *Engine) void;
 extern fn lnako_qjs_take_error(engine: *Engine) ?[*:0]u8;
 extern fn lnako_qjs_free_string(text: [*:0]u8) void;
 extern fn lnako_qjs_eval(engine: *Engine, source: [*]const u8, length: usize, filename: [*:0]const u8) ?*RawValue;
+extern fn lnako_qjs_call(engine: *Engine, function: *const RawValue, arguments: [*c]const *const RawValue, count: usize) ?*RawValue;
 extern fn lnako_qjs_drain_jobs(engine: *Engine) c_int;
 extern fn lnako_qjs_await(engine: *Engine, promise: *const RawValue) ?*RawValue;
+extern fn lnako_qjs_undefined(engine: *Engine) ?*RawValue;
+extern fn lnako_qjs_null(engine: *Engine) ?*RawValue;
+extern fn lnako_qjs_boolean(engine: *Engine, value: c_int) ?*RawValue;
+extern fn lnako_qjs_number(engine: *Engine, value: f64) ?*RawValue;
+extern fn lnako_qjs_string(engine: *Engine, value: [*]const u8, length: usize) ?*RawValue;
 extern fn lnako_qjs_kind(value: *const RawValue) Kind;
 extern fn lnako_qjs_to_boolean(value: *const RawValue) c_int;
 extern fn lnako_qjs_to_number(value: *const RawValue, result: *f64) c_int;
@@ -170,6 +177,143 @@ pub export fn lnako_aot_compat_js_eval(out: *Value, arguments: ?[*]const Value, 
     };
 }
 
+fn isStringValue(value: Value) bool {
+    return switch (@as(Tag, @fromBackingInt(value.tag))) {
+        .utf16_string, .static_utf8_string => true,
+        else => false,
+    };
+}
+
+fn arrayItems(value: Value) ?[]Value {
+    if (@as(Tag, @fromBackingInt(value.tag)) != .array) return null;
+    const object = value.object() orelse return null;
+    return object.payload.array.items;
+}
+
+/// `JS関数実行` の引数をQuickJS値へ変換する。最小スライスでは数値・文字列・
+/// 真偽値・null/undefinedだけを許可し、オブジェクト/配列/関数などは呼び出し
+/// 前に明示的な未対応エラーにする（Nako側の文字列化へ逃がさない）。
+fn primitiveRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value) !*RawValue {
+    return switch (@as(Tag, @fromBackingInt(value.tag))) {
+        .undefined => lnako_qjs_undefined(engine_value) orelse error.OutOfMemory,
+        .null_value => lnako_qjs_null(engine_value) orelse error.OutOfMemory,
+        .boolean => lnako_qjs_boolean(engine_value, @intFromBool(value.payload != 0)) orelse error.OutOfMemory,
+        .number => lnako_qjs_number(engine_value, @bitCast(value.payload)) orelse error.OutOfMemory,
+        .utf16_string, .static_utf8_string => blk: {
+            // interpreterのtoRawと同じ方針。utf16_stringは孤立サロゲートを
+            // 置換し、static_utf8_stringはソース由来のUTF-8をそのまま渡す。
+            const text = try state.stringUtf8Alloc(runtime, value);
+            defer runtime.allocator.free(text);
+            break :blk lnako_qjs_string(engine_value, text.ptr, text.len) orelse error.OutOfMemory;
+        },
+        else => error.QuickJsUnsupportedArgument,
+    };
+}
+
+/// `JS関数実行` の最小dispatch。interpreter/officialと同じく、第1引数の文字列を
+/// global evalで関数へ解決し、第2引数が配列ならその要素を、そうでなければ
+/// 第2引数1個を実引数として呼び出す。`JS実行` のeval/drain/例外経路を共有し、
+/// 戻り値は `fromRaw` のプリミティブ変換だけを通す。
+pub export fn lnako_aot_compat_js_call(out: *Value, arguments: ?[*]const Value, count: usize) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (state.active_runtime) |*active| active else return;
+    if (count == 0 or arguments == null) {
+        runtime.setFailureText("JS関数実行 requires a function argument");
+        return;
+    }
+    // 生成AOTコードの呼出し側は全Value slotをroot frameへ載せているが、
+    // このABIは引数スライスだけを受け取る。変換中の割当てに備えてここでも
+    // 引数全体をrootし、第2引数が配列のときの要素スライスの寿命を確保する。
+    const rooted = runtime.allocator.alloc(Value, count) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    defer runtime.allocator.free(rooted);
+    @memcpy(rooted, arguments.?[0..count]);
+    var frame: state.RootFrame = .{};
+    runtime.pushRoots(&frame, rooted.ptr, rooted.len);
+    defer runtime.popRoots(&frame);
+    if (!isStringValue(rooted[0])) {
+        runtime.setFailureText("JS関数実行 requires a function name string in AOT compat mode");
+        return;
+    }
+    // interpreterと同じく、utf16_stringの関数名はlossy変換してevalする。
+    const source = state.stringUtf8Alloc(runtime, rooted[0]) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    defer runtime.allocator.free(source);
+    const engine_value = ensureEngine() catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    const callable = lnako_qjs_eval(engine_value, source.ptr, source.len, "<JS関数実行>") orelse {
+        fail(runtime, engine_value);
+        return;
+    };
+    defer lnako_qjs_value_free(callable);
+    if (lnako_qjs_kind(callable) != .function) {
+        runtime.setFailureText("JS関数実行 did not evaluate to a function");
+        return;
+    }
+    const values: []const Value = blk: {
+        if (count >= 2) {
+            if (arrayItems(rooted[1])) |items| break :blk items;
+        }
+        // official/interpreterと同じく、配列以外の第2引数は単一の実引数として
+        // 扱う（第3引数以降はsemantic層が拒否する。第2引数なしのcount==1は
+        // interpreterと同じ0引数呼出し）。
+        break :blk rooted[1..@min(count, 2)];
+    };
+    // bridgeが返すRawValueはQuickJSの参照カウントで保持され、他のJS値割当てを
+    // またいでも有効。lnako_qjs_value_freeまで明示的に解放しない。
+    const raw_arguments = runtime.allocator.alloc(*const RawValue, values.len) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    var initialized: usize = 0;
+    defer {
+        for (raw_arguments[0..initialized]) |raw| lnako_qjs_value_free(@constCast(raw));
+        runtime.allocator.free(raw_arguments);
+    }
+    for (values, 0..) |value, index| {
+        raw_arguments[index] = primitiveRaw(runtime, engine_value, value) catch |failure| {
+            if (failure == error.QuickJsUnsupportedArgument) {
+                runtime.setFailureText("JS関数実行 does not support object, array, function, bigint, or bytes arguments yet");
+            } else {
+                runtime.setFailure(failure);
+            }
+            return;
+        };
+        initialized += 1;
+    }
+    // 空配列はゼロ長allocのptrをC ABIへ渡さずnullにする（count=0で参照されない）。
+    const raw_pointer: [*c]const *const RawValue = if (raw_arguments.len == 0) null else raw_arguments.ptr;
+    const raw = lnako_qjs_call(engine_value, callable, raw_pointer, raw_arguments.len) orelse {
+        fail(runtime, engine_value);
+        return;
+    };
+    if (lnako_qjs_drain_jobs(engine_value) < 0) {
+        lnako_qjs_value_free(raw);
+        fail(runtime, engine_value);
+        return;
+    }
+    if (lnako_qjs_kind(raw) == .promise) {
+        lnako_qjs_value_free(raw);
+        runtime.setFailureText("JS関数実行 does not support Promise results yet");
+        return;
+    }
+    // fromRawは成功・失敗にかかわらずrawを消費して解放する。
+    out.* = fromRaw(runtime, raw) catch |failure| {
+        if (failure == error.QuickJsUnsupportedValue) {
+            runtime.setFailureText("JS関数実行 only supports primitive number, string, boolean, null, and undefined results yet");
+        } else {
+            runtime.setFailure(failure);
+        }
+        return;
+    };
+}
+
 /// QuickJSのmodule名は `/` 区切りで比較される。interpreter側の
 /// `moduleFilename` と同じくWindowsの `\` を `/` へ正規化して登録する。
 fn dupeModuleName(runtime: *state.Runtime, text: []const u8) ![:0]u8 {
@@ -285,6 +429,223 @@ test "compat AOT runtimeはJS実行をQuickJSへdispatchする" {
     lnako_aot_compat_js_eval(&out, &arguments, arguments.len);
     try std.testing.expectEqual(@as(u8, @backingInt(Tag.number)), out.tag);
     try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(out.payload)));
+    lnako_aot_compat_deinit();
+}
+
+test "compat AOT runtimeはJS関数実行を配列引数でdispatchする" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const source_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "(a,b)=>a+b");
+    defer std.testing.allocator.free(source_units);
+    var arguments = [_]Value{ .{}, .{} };
+    var frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&frame, &arguments, arguments.len);
+    defer state.active_runtime.?.popRoots(&frame);
+    arguments[0] = try state.active_runtime.?.createString(source_units);
+    var numbers = [_]Value{ state.numberValue(1), state.numberValue(2) };
+    state.lnako_aot_array_new(&arguments[1], &numbers, numbers.len);
+    var out: Value = .{};
+    lnako_aot_compat_js_call(&out, &arguments, arguments.len);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.number)), out.tag);
+    try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(out.payload)));
+    lnako_aot_compat_deinit();
+}
+
+test "compat AOT runtimeはJS関数実行で文字列・真偽値・null・undefinedを往復する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const source_units = try std.unicode.utf8ToUtf16LeAlloc(
+        std.testing.allocator,
+        "(s, b, n, u) => s + ':' + b + ':' + (n === null) + ':' + (u === undefined)",
+    );
+    defer std.testing.allocator.free(source_units);
+    const text_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "x");
+    defer std.testing.allocator.free(text_units);
+    var call_arguments = [_]Value{ .{}, .{}, .{}, .{} };
+    var call_frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&call_frame, &call_arguments, call_arguments.len);
+    defer state.active_runtime.?.popRoots(&call_frame);
+    call_arguments[0] = try state.active_runtime.?.createString(text_units);
+    call_arguments[1] = .{ .tag = @backingInt(Tag.boolean), .payload = 1 };
+    call_arguments[2] = .{ .tag = @backingInt(Tag.null_value) };
+    call_arguments[3] = .{};
+    var arguments = [_]Value{ .{}, .{} };
+    var frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&frame, &arguments, arguments.len);
+    defer state.active_runtime.?.popRoots(&frame);
+    arguments[0] = try state.active_runtime.?.createString(source_units);
+    state.lnako_aot_array_new(&arguments[1], &call_arguments, call_arguments.len);
+    var out: Value = .{};
+    lnako_aot_compat_js_call(&out, &arguments, arguments.len);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    const units = try state.valueUtf16Alloc(&state.active_runtime.?, out);
+    defer std.testing.allocator.free(units);
+    try std.testing.expectEqualSlices(u16, &[_]u16{ 'x', ':', 't', 'r', 'u', 'e', ':', 't', 'r', 'u', 'e', ':', 't', 'r', 'u', 'e' }, units);
+    lnako_aot_compat_deinit();
+}
+
+test "compat AOT runtimeはJS関数実行の未対応引数を明示エラーにする" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const source_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "x => x");
+    defer std.testing.allocator.free(source_units);
+    // [0]=callable, [1]=実引数配列, [2]=その要素である未対応の配列。
+    var arguments = [_]Value{ .{}, .{}, .{} };
+    var frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&frame, &arguments, arguments.len);
+    defer state.active_runtime.?.popRoots(&frame);
+    arguments[0] = try state.active_runtime.?.createString(source_units);
+    var nested = [_]Value{ state.numberValue(1), state.numberValue(2) };
+    state.lnako_aot_array_new(&arguments[2], &nested, nested.len);
+    var container = [_]Value{arguments[2]};
+    state.lnako_aot_array_new(&arguments[1], &container, container.len);
+    var out: Value = .{};
+    lnako_aot_compat_js_call(&out, &arguments, 2);
+    try std.testing.expect(state.active_runtime.?.has_pending_exception);
+    const units = try state.valueUtf16Alloc(&state.active_runtime.?, state.active_runtime.?.pending_exception);
+    defer std.testing.allocator.free(units);
+    try std.testing.expect(std.mem.indexOf(u16, units, &[_]u16{ 'd', 'o', 'e', 's', ' ', 'n', 'o', 't', ' ', 's', 'u', 'p', 'p', 'o', 'r', 't' }) != null);
+    lnako_aot_compat_deinit();
+}
+
+test "compat AOT runtimeはJS関数実行の非配列引数を単一実引数として渡す" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const source_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "(a,b)=>typeof b === 'undefined' ? a : -1");
+    defer std.testing.allocator.free(source_units);
+    var arguments = [_]Value{ .{}, state.numberValue(7), state.numberValue(8) };
+    var frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&frame, &arguments, arguments.len);
+    defer state.active_runtime.?.popRoots(&frame);
+    arguments[0] = try state.active_runtime.?.createString(source_units);
+    var out: Value = .{};
+    lnako_aot_compat_js_call(&out, &arguments, 2);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(f64, 7), @as(f64, @bitCast(out.payload)));
+    // 第3引数以降はofficial/interpreterと同じく実引数にしない。
+    var out_with_extra: Value = .{};
+    lnako_aot_compat_js_call(&out_with_extra, &arguments, 3);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(f64, 7), @as(f64, @bitCast(out_with_extra.payload)));
+    lnako_aot_compat_deinit();
+}
+
+test "compat AOT runtimeはJS関数実行を空配列引数でdispatchする" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const source_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "()=>42");
+    defer std.testing.allocator.free(source_units);
+    var arguments = [_]Value{ .{}, .{} };
+    var frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&frame, &arguments, arguments.len);
+    defer state.active_runtime.?.popRoots(&frame);
+    arguments[0] = try state.active_runtime.?.createString(source_units);
+    state.lnako_aot_array_new(&arguments[1], null, 0);
+    var out: Value = .{};
+    lnako_aot_compat_js_call(&out, &arguments, arguments.len);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(f64, 42), @as(f64, @bitCast(out.payload)));
+    lnako_aot_compat_deinit();
+}
+
+test "compat AOT runtimeはJS関数実行の非関数・Promise・非プリミティブ戻り値を明示エラーにする" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var arguments = [_]Value{ .{}, .{} };
+    var frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&frame, &arguments, arguments.len);
+    defer state.active_runtime.?.popRoots(&frame);
+    state.lnako_aot_array_new(&arguments[1], null, 0);
+    const cases = [_]struct { source: []const u8, expected: []const u8 }{
+        .{ .source = "1+2", .expected = "did not evaluate to a function" },
+        .{ .source = "()=>Promise.resolve(1)", .expected = "does not support Promise results" },
+        .{ .source = "()=>({a:1})", .expected = "only supports primitive" },
+    };
+    for (cases) |case| {
+        const source_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, case.source);
+        defer std.testing.allocator.free(source_units);
+        arguments[0] = try state.active_runtime.?.createString(source_units);
+        var out: Value = .{};
+        lnako_aot_compat_js_call(&out, &arguments, arguments.len);
+        try std.testing.expect(state.active_runtime.?.has_pending_exception);
+        const message = state.active_runtime.?.takeException();
+        const message_units = try state.valueUtf16Alloc(&state.active_runtime.?, message);
+        defer std.testing.allocator.free(message_units);
+        const expected_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, case.expected);
+        defer std.testing.allocator.free(expected_units);
+        try std.testing.expect(std.mem.indexOf(u16, message_units, expected_units) != null);
+    }
+    lnako_aot_compat_deinit();
+}
+
+test "compat AOT runtimeはJS関数実行の防御境界を明示エラーにする" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var out: Value = .{};
+    lnako_aot_compat_js_call(&out, null, 0);
+    try std.testing.expect(state.active_runtime.?.has_pending_exception);
+    const missing_argument = state.active_runtime.?.takeException();
+    const missing_units = try state.valueUtf16Alloc(&state.active_runtime.?, missing_argument);
+    defer std.testing.allocator.free(missing_units);
+    const expected_argument = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "requires a function argument");
+    defer std.testing.allocator.free(expected_argument);
+    try std.testing.expect(std.mem.indexOf(u16, missing_units, expected_argument) != null);
+
+    var arguments = [_]Value{state.numberValue(1)};
+    var frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&frame, &arguments, arguments.len);
+    defer state.active_runtime.?.popRoots(&frame);
+    lnako_aot_compat_js_call(&out, &arguments, arguments.len);
+    try std.testing.expect(state.active_runtime.?.has_pending_exception);
+    const missing_string = state.active_runtime.?.takeException();
+    const missing_string_units = try state.valueUtf16Alloc(&state.active_runtime.?, missing_string);
+    defer std.testing.allocator.free(missing_string_units);
+    const expected_string = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "requires a function name string");
+    defer std.testing.allocator.free(expected_string);
+    try std.testing.expect(std.mem.indexOf(u16, missing_string_units, expected_string) != null);
     lnako_aot_compat_deinit();
 }
 

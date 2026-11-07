@@ -154,6 +154,7 @@ pub fn emitPreamble(emitter: *Emitter) !void {
         // liblnako_runtime_compat.a とだけリンクする。
         try writer.writeAll(
             "declare void @lnako_aot_compat_js_eval(ptr, ptr, i64)\n" ++
+                "declare void @lnako_aot_compat_js_call(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_compat_esm_register(ptr, i64)\n" ++
                 "declare void @lnako_aot_compat_deinit()\n\n",
         );
