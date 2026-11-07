@@ -12,12 +12,12 @@
 //!   canonical path 同士の比較のため）。
 //! - scratch の寿命は compile 中のみ。IR/Program へは module source が dupe
 //!   されるため、compile 後に npm 由来 module の path を開き直さない契約。
-//! - 初回の bare 解決は lock 上の全 instance を展開する（O(lock) I/O）。
-//!   instance 単位の遅延展開は `npm_esm` の遅延 root 解決と合わせた follow-up。
+//! - instance の展開は bare name が要求されたときだけ行う。無関係な
+//!   instance の cache 欠落で、cache 済みの package の解決を止めない。
 //!
-//! cache key と instance の対応は `npm_esm.cacheKeyForInstance`、registry の
-//! 組み立ては `npm_esm.BareRegistry.buildFromInstances` をそのまま使う
-//! （key 計算を二重実装しない）。
+//! cache key と instance の対応は `npm_esm.cacheKeyForInstance`、instance の
+//! 登録は `npm_esm.BareRegistry.registerInstance` を再利用する（key 計算を
+//! 二重実装しない）。`buildFromInstances` は npm_esm 自身のテスト用に残る。
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -41,15 +41,125 @@ else
 
 pub const Error = error{ CacheMiss, InvalidArchive, AmbiguousInstances, BareNotFound, Canceled, CacheUnavailable, ScratchUnavailable, OutOfMemory };
 
-/// 構築済み registry と、その解決結果が載っている scratch tree。
+/// 遅延構築する npm registry。scratch と cache store を所有し、bare name が
+/// 要求された instance だけを展開・登録する。
 pub const Prepared = struct {
-    registry: npm_esm.BareRegistry,
+    gpa: Allocator,
+    io: std.Io,
+    instances: []const lock_model.NpmInstance,
+    by_name: std.StringHashMapUnmanaged(usize) = .empty,
     scratch: Scratch,
+    store: cache_mod.Store,
+    registry: npm_esm.BareRegistry,
+    extracted: std.StringHashMapUnmanaged(void) = .empty,
+    /// name 単位の展開失敗（同一 name の再展開 I/O を避ける）。
+    failed: std.StringHashMapUnmanaged(Error) = .empty,
 
     pub fn deinit(self: *Prepared) void {
+        var failed_it = self.failed.iterator();
+        while (failed_it.next()) |entry| self.gpa.free(entry.key_ptr.*);
+        self.failed.deinit(self.gpa);
+        var extracted_it = self.extracted.iterator();
+        while (extracted_it.next()) |entry| self.gpa.free(entry.key_ptr.*);
+        self.extracted.deinit(self.gpa);
+        self.by_name.deinit(self.gpa);
         self.registry.deinit();
+        self.store.deinit();
         self.scratch.deinit();
         self.* = undefined;
+    }
+
+    /// 要求された bare name の instance だけを cache から展開して登録する。
+    /// 失敗した name は記憶し、同じ欠落を毎回 I/O し直さない（他の name の
+    /// 解決は妨げない）。
+    fn ensureInstance(self: *Prepared, name: []const u8) Error!void {
+        if (self.registry.by_name.contains(name)) return;
+        if (self.failed.get(name)) |err| return err;
+        const index = self.by_name.get(name) orelse return error.BareNotFound;
+        const instance = self.instances[index];
+        const tree = self.extractInstance(instance) catch |err| {
+            const classified = classifyExtraction(err);
+            if (classified != error.OutOfMemory and classified != error.Canceled) {
+                // メモ化の失敗で元の分類をマスクしない（best-effort）。
+                self.rememberFailure(name, classified) catch {};
+            }
+            return classified;
+        };
+        defer self.gpa.free(tree);
+        self.registry.registerInstance(instance, tree) catch |err| {
+            const classified = classifyExtraction(err);
+            if (classified != error.OutOfMemory and classified != error.Canceled) {
+                self.rememberFailure(name, classified) catch {};
+            }
+            return classified;
+        };
+    }
+
+    fn rememberFailure(self: *Prepared, name: []const u8, err: Error) !void {
+        if (self.failed.contains(name)) return;
+        const key = try self.gpa.dupe(u8, name);
+        errdefer self.gpa.free(key);
+        try self.failed.put(self.gpa, key, err);
+    }
+
+    /// lock の sha256 で検証した archive を scratch の `<scratch>/<cache key>`
+    /// へ展開し、tree root path を返す（呼出し側が free する）。
+    fn extractInstance(self: *Prepared, instance: lock_model.NpmInstance) anyerror![]u8 {
+        const key = (try npm_esm.cacheKeyForInstance(self.gpa, instance)) orelse return error.CacheMiss;
+        defer self.gpa.free(key);
+        // scratch の dir 名に使うため、単一の規範 path 成分であることを検証する
+        // （cache key は hash 由来だが、lock 材料が変わっても書き込み面を守る）。
+        if (!isSafeCacheKey(key)) return error.CacheMiss;
+        if (self.extracted.contains(key)) return try std.fs.path.join(self.gpa, &.{ self.scratch.path, key });
+
+        const sha256 = instance.sha256 orelse return error.CacheMiss;
+        const bytes = (self.store.readVerifiedSourceArchive(self.gpa, key, sha256) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.CacheMiss,
+        }) orelse return error.CacheMiss;
+        defer self.gpa.free(bytes);
+
+        // 同一 key は `extracted` で早期 return するため、ここで既存 dir が
+        // あるのは想定外（同一ユーザーの競合・残骸）。内容を検証できない dir を
+        // package root として使わないよう fail-closed。
+        self.scratch.dir.createDir(self.io, key, scratch_permissions) catch |err| switch (err) {
+            error.PathAlreadyExists => return error.CacheMiss,
+            else => return err,
+        };
+        {
+            var tree = self.scratch.dir.openDir(self.io, key, .{ .iterate = true, .follow_symlinks = false }) catch |err| return err;
+            defer tree.close(self.io);
+            if (npm_esm.looksLikeGzip(bytes)) {
+                // npm tarball は `package/` 前置を持つ（cache 公開時と同じ strip）。
+                unpack.extractTarGzInto(self.gpa, self.io, bytes, tree, .{ .strip_components = 1 }) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.Canceled => return error.Canceled,
+                    // tar/gzip の構造・安全検査の失敗だけを InvalidArchive に分類し、
+                    // 書き込み I/O の失敗は呼出し側の CacheMiss へ委ねる。
+                    error.InvalidArchive, error.UnsupportedEntry, error.SymlinkEncountered, error.NonCanonicalPath, error.DuplicatePath, error.CaseCollision, error.TooManyEntries, error.FileTooLarge, error.TreeTooLarge, error.TreeTooDeep => return error.InvalidArchive,
+                    else => return err,
+                };
+            } else {
+                // 非 gzip fixture は cache 公開時と同じく `blob` として置く
+                // （package.json が無いため入口解決は `BareNotFound` になる）。
+                tree.writeFile(self.io, .{ .sub_path = "blob", .data = bytes }) catch |err| return err;
+            }
+        }
+        // put 成功後は map が key を所有するため、その後に fallible な処理を
+        // 残さない（errdefer と deinit の二重解放を避ける）。
+        const key_copy = try self.gpa.dupe(u8, key);
+        errdefer self.gpa.free(key_copy);
+        const tree_path = try std.fs.path.join(self.gpa, &.{ self.scratch.path, key });
+        errdefer self.gpa.free(tree_path);
+        try self.extracted.put(self.gpa, key_copy, {});
+        return tree_path;
+    }
+
+    /// bare specifier を解決する。要求された name の instance だけを準備する。
+    pub fn resolveBare(self: *Prepared, specifier: []const u8) anyerror!npm_esm.ResolvedEntry {
+        const parsed = npm_esm.parseBareSpecifier(specifier) orelse return error.BareNotFound;
+        try self.ensureInstance(parsed.name);
+        return self.registry.resolveBare(specifier);
     }
 };
 
@@ -84,8 +194,9 @@ pub const State = struct {
     instances: []const lock_model.NpmInstance = &.{},
     cache_root: ?[]const u8 = null,
     prepared: ?Prepared = null,
-    /// 構築失敗を記憶し、import ごとに再試行しない（fail-closed を固定）。
-    /// 最初の error を保持し、以降も同じ分類を返す。
+    /// prepare（scratch/cache 構築・lock 名の曖昧さ等）の失敗を記憶し、以後の
+    /// import で再試行しない。Prepared 段階の instance 単位の失敗は
+    /// `Prepared.failed` が name ごとに保持する。
     failure: ?anyerror = null,
 
     /// lock の選択 profile から `npmInstances` を取り込む。`lock_root` は
@@ -148,7 +259,11 @@ pub const State = struct {
                 return err;
             };
         }
-        const entry = try self.prepared.?.registry.resolveBare(specifier);
+        const entry = self.prepared.?.resolveBare(specifier) catch |err| {
+            // 解決不能（BareNotFound 等）は specifier 単位なので sticky にしない。
+            if (isStickyFailure(err)) self.failure = err;
+            return err;
+        };
         defer entry.deinit(self.backing_allocator);
         // 呼出し側（module_graph）は自身の allocator で path/root を free する。
         const path = try allocator.dupe(u8, entry.path);
@@ -262,18 +377,9 @@ fn collectPeers(allocator: Allocator, value: ?Value) ![]const lock_model.PeerDep
     return try list.toOwnedSlice(allocator);
 }
 
-const Context = struct {
-    gpa: Allocator,
-    io: std.Io,
-    store: *const cache_mod.Store,
-    scratch: *Scratch,
-    arena: Allocator,
-    extracted: std.StringHashMapUnmanaged(void) = .empty,
-};
-
-/// `instances` を cache から復元し、bare specifier を解決できる registry を返す。
-/// `cache_root == null` は OS 標準 cache dir。起動できない・archive が無い・
-/// 検証できない場合は `CacheMiss` で失敗する（network 取得はしない）。
+/// `instances` の name 索引と scratch/cache を用意する。instance の展開は
+/// 最初にその name が要求されたときに行う（無関係な instance の cache 欠落で
+/// 解決を止めない）。`cache_root == null` は OS 標準 cache dir。
 pub fn prepare(
     gpa: Allocator,
     io: std.Io,
@@ -283,13 +389,12 @@ pub fn prepare(
     if (instances.len == 0) return error.BareNotFound;
     // registry は name 単位でしか解決できない。同一 name の複数 instance を
     // 先着順に黙って選ぶと別 context の版を混同し得るため fail-closed。
-    {
-        var names = std.StringHashMap(void).init(gpa);
-        defer names.deinit();
-        for (instances) |instance| {
-            const entry = try names.getOrPut(instance.name);
-            if (entry.found_existing) return error.AmbiguousInstances;
-        }
+    var by_name: std.StringHashMapUnmanaged(usize) = .empty;
+    errdefer by_name.deinit(gpa);
+    for (instances, 0..) |instance, index| {
+        const entry = try by_name.getOrPut(gpa, instance.name);
+        if (entry.found_existing) return error.AmbiguousInstances;
+        entry.value_ptr.* = index;
     }
     const root = if (cache_root) |explicit|
         try gpa.dupe(u8, explicit)
@@ -301,27 +406,37 @@ pub fn prepare(
     errdefer scratch.deinit();
 
     var store = cache_mod.Store.open(gpa, io, root) catch |err| return mapCacheOpenIo(err);
-    defer store.deinit();
+    errdefer store.deinit();
 
-    var arena_impl = std.heap.ArenaAllocator.init(gpa);
-    defer arena_impl.deinit();
-    var context = Context{
+    var registry = npm_esm.BareRegistry{ .gpa = gpa, .io = io };
+    errdefer registry.deinit();
+    return .{
         .gpa = gpa,
         .io = io,
-        .store = &store,
-        .scratch = &scratch,
-        .arena = arena_impl.allocator(),
+        .instances = instances,
+        .by_name = by_name,
+        .scratch = scratch,
+        .store = store,
+        .registry = registry,
     };
-    defer context.extracted.deinit(context.arena);
+}
 
-    var registry = npm_esm.BareRegistry.buildFromInstances(gpa, io, instances, treePathFor, &context) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.Canceled => return error.Canceled,
-        error.InvalidArchive => return error.InvalidArchive,
-        else => return error.CacheMiss,
+fn classifyExtraction(err: anyerror) Error {
+    return switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        error.Canceled => error.Canceled,
+        error.InvalidArchive => error.InvalidArchive,
+        else => error.CacheMiss,
     };
-    errdefer registry.deinit();
-    return .{ .registry = registry, .scratch = scratch };
+}
+
+fn isStickyFailure(err: anyerror) bool {
+    // 環境レベルの失敗だけを sticky にする。instance 単位の CacheMiss /
+    // InvalidArchive は別 name の解決を妨げない（Prepared.failed が再展開を防ぐ）。
+    return switch (err) {
+        error.CacheUnavailable, error.ScratchUnavailable => true,
+        else => false,
+    };
 }
 
 fn mapScratchIo(err: anyerror) Error {
@@ -411,55 +526,6 @@ fn tempBase(gpa: Allocator) Allocator.Error!?[]u8 {
     return try gpa.dupe(u8, "/tmp");
 }
 
-/// `buildFromInstances` の `tree_path_for`。lock の sha256 で検証した archive
-/// を scratch の `<scratch>/<cache key>` へ展開し、tree root path を返す。
-fn treePathFor(context: *anyopaque, gpa: Allocator, instance: lock_model.NpmInstance) anyerror!?[]u8 {
-    const self: *Context = @ptrCast(@alignCast(context));
-    const key = (try npm_esm.cacheKeyForInstance(gpa, instance)) orelse return error.CacheMiss;
-    defer gpa.free(key);
-    // scratch の dir 名に使うため、単一の規範 path 成分であることを検証する
-    // （cache key は hash 由来だが、lock 材料が変わっても書き込み面を守る）。
-    if (!isSafeCacheKey(key)) return error.CacheMiss;
-    if (self.extracted.contains(key)) return try std.fs.path.join(gpa, &.{ self.scratch.path, key });
-
-    const sha256 = instance.sha256 orelse return error.CacheMiss;
-    const bytes = (self.store.readVerifiedSourceArchive(gpa, key, sha256) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return error.CacheMiss,
-    }) orelse return error.CacheMiss;
-    defer gpa.free(bytes);
-
-    // 同一 key は `extracted` で早期 return するため、ここで既存 dir が
-    // あるのは想定外（同一ユーザーの競合・残骸）。内容を検証できない dir を
-    // package root として使わないよう fail-closed。
-    self.scratch.dir.createDir(self.io, key, scratch_permissions) catch |err| switch (err) {
-        error.PathAlreadyExists => return error.CacheMiss,
-        else => return err,
-    };
-    {
-        var tree = self.scratch.dir.openDir(self.io, key, .{ .iterate = true, .follow_symlinks = false }) catch |err| return err;
-        defer tree.close(self.io);
-        if (npm_esm.looksLikeGzip(bytes)) {
-            // npm tarball は `package/` 前置を持つ（cache 公開時と同じ strip）。
-            unpack.extractTarGzInto(self.gpa, self.io, bytes, tree, .{ .strip_components = 1 }) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                error.Canceled => return error.Canceled,
-                // tar/gzip の構造・安全検査の失敗だけを InvalidArchive に分類し、
-                // 書き込み I/O の失敗は呼出し側の CacheMiss へ委ねる。
-                error.InvalidArchive, error.UnsupportedEntry, error.SymlinkEncountered, error.NonCanonicalPath, error.DuplicatePath, error.CaseCollision, error.TooManyEntries, error.FileTooLarge, error.TreeTooLarge, error.TreeTooDeep => return error.InvalidArchive,
-                else => return err,
-            };
-        } else {
-            // 非 gzip fixture は cache 公開時と同じく `blob` として置く
-            // （package.json が無いため入口解決は `BareNotFound` になる）。
-            tree.writeFile(self.io, .{ .sub_path = "blob", .data = bytes }) catch |err| return err;
-        }
-    }
-    const key_copy = try self.arena.dupe(u8, key);
-    try self.extracted.put(self.arena, key_copy, {});
-    return try std.fs.path.join(gpa, &.{ self.scratch.path, key });
-}
-
 /// cache key を scratch の単一 dir 名として使えるか。`cache.Store` の key
 /// 規則（英数・`-`・`_`・`.`、128 byte 以下）より狭く、`.`/`..` と path
 /// separator を明示的に拒否する。
@@ -480,7 +546,7 @@ fn isSafeCacheKey(key: []const u8) bool {
 const testing = std.testing;
 const test_sandbox = @import("test_sandbox.zig");
 
-test "prepare は cache の検証済み tarball から registry を構築しサブパスを解決する" {
+test "Prepared は要求された instance を cache から展開しサブパスを解決する" {
     const gpa = testing.allocator;
     const io = testing.io;
     var temporary = test_sandbox.tmpDir(.{});
@@ -524,10 +590,10 @@ test "prepare は cache の検証済み tarball から registry を構築しサ�
     defer if (alive) prepared.deinit();
     const scratch_path = try gpa.dupe(u8, prepared.scratch.path);
     defer gpa.free(scratch_path);
-    const root = try prepared.registry.resolveBare("left-pad");
+    const root = try prepared.resolveBare("left-pad");
     defer root.deinit(gpa);
     try testing.expect(std.mem.endsWith(u8, root.path, "index.js"));
-    const sub = try prepared.registry.resolveBare("left-pad/sub");
+    const sub = try prepared.resolveBare("left-pad/sub");
     defer sub.deinit(gpa);
     try testing.expect(std.mem.endsWith(u8, sub.path, "sub.js"));
     // deinit は scratch tree を残さない（TMPDIR の蓄積防止）。
@@ -536,7 +602,7 @@ test "prepare は cache の検証済み tarball から registry を構築しサ�
     try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().statFile(io, scratch_path, .{}));
 }
 
-test "prepare は cache 欠落を fail-closed にする" {
+test "Prepared は要求された instance の cache 欠落を fail-closed にする" {
     const gpa = testing.allocator;
     const io = testing.io;
     var temporary = test_sandbox.tmpDir(.{});
@@ -552,10 +618,12 @@ test "prepare は cache 欠落を fail-closed にする" {
         .sha256 = "sha256:0000000000000000000000000000000000000000000000000000000000000000",
         .url = "fixture://left-pad-1.0.0.tgz",
     };
-    try testing.expectError(error.CacheMiss, prepare(gpa, io, &.{instance}, cache_root));
+    var prepared = try prepare(gpa, io, &.{instance}, cache_root);
+    defer prepared.deinit();
+    try testing.expectError(error.CacheMiss, prepared.resolveBare("left-pad"));
 }
 
-test "prepare は lock の sha256 と一致しない cache archive を拒否する" {
+test "Prepared は lock の sha256 と一致しない cache archive を拒否する" {
     const gpa = testing.allocator;
     const io = testing.io;
     var temporary = test_sandbox.tmpDir(.{});
@@ -588,7 +656,9 @@ test "prepare は lock の sha256 と一致しない cache archive を拒否す�
     // 同じ content key に別 bytes を公開する（cache 改ざん相当）。
     try npm_esm.publishNpmTree(gpa, io, &store, key, "tampered-tarball");
 
-    try testing.expectError(error.CacheMiss, prepare(gpa, io, &.{instance}, cache_root));
+    var prepared = try prepare(gpa, io, &.{instance}, cache_root);
+    defer prepared.deinit();
+    try testing.expectError(error.CacheMiss, prepared.resolveBare("left-pad"));
 }
 
 test "prepare は同一 name の複数 instance を AmbiguousInstances で拒否する" {
@@ -607,6 +677,54 @@ test "prepare は同一 name の複数 instance を AmbiguousInstances で拒否
         .url = "fixture://left-pad-2.0.0.tgz",
     };
     try testing.expectError(error.AmbiguousInstances, prepare(testing.allocator, testing.io, &.{ a, b }, "/nonexistent"));
+}
+
+test "無関係な instance の cache 欠落は要求された package の解決を止めない" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "cache");
+
+    const tarball = try buildTarGz(gpa, &.{
+        .{ .path = "package/package.json", .content = "{\"exports\":{\".\":\"./index.js\"}}" },
+        .{ .path = "package/index.js", .content = "export default 1;\n" },
+    });
+    defer gpa.free(tarball);
+    var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(tarball, &digest, .{});
+    const sha256 = try std.fmt.allocPrint(gpa, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
+    defer gpa.free(sha256);
+    const cached = lock_model.NpmInstance{
+        .key = "left-pad@1.0.0",
+        .name = "left-pad",
+        .version = "1.0.0",
+        .sha256 = sha256,
+        .url = "fixture://left-pad-1.0.0.tgz",
+    };
+    const missing = lock_model.NpmInstance{
+        .key = "missing@1.0.0",
+        .name = "missing",
+        .version = "1.0.0",
+        .sha256 = "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        .url = "fixture://missing-1.0.0.tgz",
+    };
+
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", gpa);
+    defer gpa.free(cache_root);
+    var store = try cache_mod.Store.open(gpa, io, cache_root);
+    defer store.deinit();
+    const key = (try npm_esm.cacheKeyForInstance(gpa, cached)).?;
+    defer gpa.free(key);
+    try npm_esm.publishNpmTree(gpa, io, &store, key, tarball);
+
+    var prepared = try prepare(gpa, io, &.{ cached, missing }, cache_root);
+    defer prepared.deinit();
+    // cache 済みの left-pad は、無関係な missing の欠落に影響されない。
+    const entry = try prepared.resolveBare("left-pad");
+    defer entry.deinit(gpa);
+    try testing.expect(std.mem.endsWith(u8, entry.path, "index.js"));
+    try testing.expectError(error.CacheMiss, prepared.resolveBare("missing"));
 }
 
 test "State は最初の失敗を保持し、再試行しない" {
@@ -635,6 +753,59 @@ test "State は最初の失敗を保持し、再試行しない" {
     try testing.expectError(error.CacheMiss, state.resolveBare(gpa, "left-pad"));
     // 2 回目は再構築せず、最初の失敗分類をそのまま返す。
     try testing.expectError(error.CacheMiss, state.resolveBare(gpa, "left-pad"));
+}
+
+test "State は無関係な instance の CacheMiss 後も cache 済み package を解決する" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "cache");
+
+    const tarball = try buildTarGz(gpa, &.{
+        .{ .path = "package/package.json", .content = "{\"exports\":{\".\":\"./index.js\"}}" },
+        .{ .path = "package/index.js", .content = "export default 1;\n" },
+    });
+    defer gpa.free(tarball);
+    var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(tarball, &digest, .{});
+    const sha256 = try std.fmt.allocPrint(gpa, "sha256:{s}", .{std.fmt.bytesToHex(digest, .lower)});
+    defer gpa.free(sha256);
+    const cached = lock_model.NpmInstance{
+        .key = "left-pad@1.0.0",
+        .name = "left-pad",
+        .version = "1.0.0",
+        .sha256 = sha256,
+        .url = "fixture://left-pad-1.0.0.tgz",
+    };
+    const missing = lock_model.NpmInstance{
+        .key = "aaa-missing@1.0.0",
+        .name = "aaa-missing",
+        .version = "1.0.0",
+        .sha256 = "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        .url = "fixture://aaa-missing-1.0.0.tgz",
+    };
+
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", gpa);
+    defer gpa.free(cache_root);
+    var store = try cache_mod.Store.open(gpa, io, cache_root);
+    defer store.deinit();
+    const key = (try npm_esm.cacheKeyForInstance(gpa, cached)).?;
+    defer gpa.free(key);
+    try npm_esm.publishNpmTree(gpa, io, &store, key, tarball);
+
+    var state = State{
+        .io = io,
+        .backing_allocator = gpa,
+        .instances = &.{ missing, cached },
+        .cache_root = cache_root,
+    };
+    defer state.deinit();
+    // 欠落 instance を先に解決しても、sticky にせず別 name は解決できる。
+    try testing.expectError(error.CacheMiss, state.resolveBare(gpa, "aaa-missing"));
+    const entry = try state.resolveBare(gpa, "left-pad");
+    defer entry.deinit(gpa);
+    try testing.expect(std.mem.endsWith(u8, entry.path, "index.js"));
 }
 
 test "非 gzip fixture は blob として展開され入口解決は BareNotFound になる" {

@@ -597,24 +597,31 @@ pub const BareRegistry = struct {
                 else => return error.CacheMiss,
             }) orelse return error.CacheMiss;
             defer gpa.free(tree);
-            const package = try resolvePackageForRegistry(gpa, io, tree);
-            {
-                // `errdefer` はブロック内の失敗だけを対象にする。put 成功後は
-                // registry が所有権を持つため、二重解放を避ける。
-                errdefer package.deinit(gpa);
-                const name_key = try gpa.dupe(u8, inst.name);
-                errdefer gpa.free(name_key);
-                try reg.by_name.put(gpa, name_key, package);
-            }
-            if (!reg.root_to_name.contains(package.package_root)) {
-                const root_key = try gpa.dupe(u8, package.package_root);
-                errdefer gpa.free(root_key);
-                const name_val = try gpa.dupe(u8, inst.name);
-                errdefer gpa.free(name_val);
-                try reg.root_to_name.put(gpa, root_key, name_val);
-            }
+            try reg.registerInstance(inst, tree);
         }
         return reg;
+    }
+
+    /// 1 instance の tree を registry へ登録する（遅延構築用）。同名が既に
+    /// 登録済みなら何もしない。`tree` は呼出し側が所有し、この関数は複製する。
+    pub fn registerInstance(self: *BareRegistry, instance: lock_model.NpmInstance, tree: []const u8) Error!void {
+        if (self.by_name.contains(instance.name)) return;
+        const package = try resolvePackageForRegistry(self.gpa, self.io, tree);
+        {
+            // `errdefer` はブロック内の失敗だけを対象にする。put 成功後は
+            // registry が所有権を持つため、二重解放を避ける。
+            errdefer package.deinit(self.gpa);
+            const name_key = try self.gpa.dupe(u8, instance.name);
+            errdefer self.gpa.free(name_key);
+            try self.by_name.put(self.gpa, name_key, package);
+        }
+        if (!self.root_to_name.contains(package.package_root)) {
+            const root_key = try self.gpa.dupe(u8, package.package_root);
+            errdefer self.gpa.free(root_key);
+            const name_val = try self.gpa.dupe(u8, instance.name);
+            errdefer self.gpa.free(name_val);
+            try self.root_to_name.put(self.gpa, root_key, name_val);
+        }
     }
 
     /// bare specifier を解決する。返却の path/root は caller が `deinit` する。
@@ -1896,6 +1903,42 @@ const TestInstanceTrees = struct {
         return null;
     }
 };
+
+test "BareRegistry registerInstance は同名を no-op にする" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    for ([_]struct { dir: []const u8, version: []const u8 }{
+        .{ .dir = "first", .version = "1.0.0" },
+        .{ .dir = "second", .version = "2.0.0" },
+    }) |entry| {
+        try tmp.dir.createDirPath(io, entry.dir);
+        const json = try std.fmt.allocPrint(gpa, "{{\"version\":\"{s}\",\"main\":\"index.js\"}}", .{entry.version});
+        defer gpa.free(json);
+        const manifest_path = try std.fmt.allocPrint(gpa, "{s}/package.json", .{entry.dir});
+        defer gpa.free(manifest_path);
+        const source_path = try std.fmt.allocPrint(gpa, "{s}/index.js", .{entry.dir});
+        defer gpa.free(source_path);
+        try tmp.dir.writeFile(io, .{ .sub_path = manifest_path, .data = json });
+        try tmp.dir.writeFile(io, .{ .sub_path = source_path, .data = "export default 1;\n" });
+    }
+    const first_root = try tmp.dir.realPathFileAlloc(io, "first", gpa);
+    defer gpa.free(first_root);
+    const second_root = try tmp.dir.realPathFileAlloc(io, "second", gpa);
+    defer gpa.free(second_root);
+
+    var reg: BareRegistry = .{ .gpa = gpa, .io = io };
+    defer reg.deinit();
+    const first = lock_model.NpmInstance{ .key = "pkg@1.0.0", .name = "pkg", .version = "1.0.0" };
+    const second = lock_model.NpmInstance{ .key = "pkg@2.0.0", .name = "pkg", .version = "2.0.0" };
+    try reg.registerInstance(first, first_root);
+    try reg.registerInstance(second, second_root);
+    const entry = try reg.resolveBare("pkg");
+    defer entry.deinit(gpa);
+    try testing.expect(std.mem.endsWith(u8, entry.path, "first/index.js"));
+}
 
 test "BareRegistry buildFromInstances registers subpath-only package (M2)" {
     const gpa = testing.allocator;

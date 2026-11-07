@@ -4,7 +4,7 @@ const token_mod = @import("../frontend/token.zig");
 
 const magic = "LNAKOQJSBUNDLE1!";
 const trailer_length = @sizeOf(u64) + magic.len;
-const format_version: u32 = 7;
+const format_version: u32 = 8;
 const minimum_supported_format_version: u32 = 2;
 const maximum_payload_size: u64 = 512 * 1024 * 1024;
 
@@ -33,6 +33,18 @@ pub const PackageImport = struct {
     package_owner: []const u8 = "",
 };
 
+/// package 所有 ESM の bare npm import 解決結果（format v8 以降）。
+/// 起動時の再コンパイルでは cache/FS が無いため、生成時の (importer,
+/// specifier) → 解決先 path/package_root をそのまま復元する。
+pub const NpmImport = struct {
+    /// 生成時の importer module の owner（package key。npm module では
+    /// package_root）。起動時 callback の importer_owner と照合する。
+    importer_owner: []const u8,
+    specifier: []const u8,
+    path: []const u8,
+    package_root: []const u8,
+};
+
 fn packMode(mode: token_mod.Mode) u8 {
     var packed_mode: u8 = 0;
     if (mode.dncl) packed_mode |= 1;
@@ -55,6 +67,8 @@ pub const Package = struct {
     entry_path: []const u8,
     files: []SourceFile,
     package_imports: []PackageImport = &.{},
+    /// format v8以降。package 所有 ESM の bare npm import 解決結果。
+    npm_imports: []NpmImport = &.{},
     /// 生成時に `--dncl` 等で強制された構文モード。起動時の再コンパイルへ復元する。
     forced_mode: token_mod.Mode = .{},
     /// format v6以降。生成時にcanonicalizeが実体pathへ解決したlexical pathの
@@ -64,6 +78,7 @@ pub const Package = struct {
 
     pub fn deinit(self: *Package) void {
         self.allocator.free(self.path_aliases);
+        self.allocator.free(self.npm_imports);
         self.allocator.free(self.package_imports);
         self.allocator.free(self.files);
         self.allocator.free(self.backing);
@@ -76,6 +91,24 @@ pub const Package = struct {
 
     pub fn packageResolver(self: *Package) module_graph.PackageResolver {
         return .{ .context = self, .resolveFn = resolvePackageImport };
+    }
+
+    /// 生成時に解決した bare npm import を (importer, specifier) で復元する。
+    /// 起動時は cache/FS を持たないため、payload の対応表だけを使う。
+    pub fn npmModuleResolver(self: *Package) module_graph.NpmModuleResolver {
+        return .{ .context = self, .resolveFn = resolveNpmImport };
+    }
+
+    fn resolveNpmImport(context: *anyopaque, allocator: std.mem.Allocator, importer_owner: ?[]const u8, importer_package_root: ?[]const u8, specifier: []const u8) !module_graph.ResolvedNpmModule {
+        const self: *Package = @ptrCast(@alignCast(context));
+        const owner = importer_owner orelse importer_package_root orelse "";
+        for (self.npm_imports) |item| {
+            if (!std.mem.eql(u8, item.importer_owner, owner) or !std.mem.eql(u8, item.specifier, specifier)) continue;
+            const path = try allocator.dupe(u8, item.path);
+            errdefer allocator.free(path);
+            return .{ .path = path, .package_root = try allocator.dupe(u8, item.package_root) };
+        }
+        return error.BareNotFound;
     }
 
     /// payload は取り込みedgeごとの解決済み binding を保持するため、
@@ -132,7 +165,7 @@ pub const Package = struct {
 };
 
 pub fn createExecutable(allocator: std.mem.Allocator, executable: []const u8, entry_path: []const u8, files: []const SourceFile, forced_mode: token_mod.Mode) ![]u8 {
-    return createExecutableWithImports(allocator, executable, entry_path, files, forced_mode, &.{}, &.{});
+    return createExecutableWithImports(allocator, executable, entry_path, files, forced_mode, &.{}, &.{}, &.{});
 }
 
 pub fn createExecutableWithImports(
@@ -142,6 +175,7 @@ pub fn createExecutableWithImports(
     files: []const SourceFile,
     forced_mode: token_mod.Mode,
     package_imports: []const PackageImport,
+    npm_imports: []const NpmImport,
     path_aliases: []const module_graph.PathAlias,
 ) ![]u8 {
     var output: std.ArrayList(u8) = .empty;
@@ -169,6 +203,14 @@ pub fn createExecutableWithImports(
         try appendBytes(&output, allocator, item.dispatch_namespace);
         try appendBytes(&output, allocator, item.importer_owner);
         try appendBytes(&output, allocator, item.package_owner);
+    }
+    if (npm_imports.len > std.math.maxInt(u32)) return error.TooManyEmbeddedNpmImports;
+    try appendInteger(&output, allocator, u32, @intCast(npm_imports.len));
+    for (npm_imports) |item| {
+        try appendBytes(&output, allocator, item.importer_owner);
+        try appendBytes(&output, allocator, item.specifier);
+        try appendBytes(&output, allocator, item.path);
+        try appendBytes(&output, allocator, item.package_root);
     }
     if (path_aliases.len > std.math.maxInt(u32)) return error.TooManyEmbeddedPathAliases;
     try appendInteger(&output, allocator, u32, @intCast(path_aliases.len));
@@ -228,6 +270,19 @@ fn parsePayload(allocator: std.mem.Allocator, payload: []u8) !Package {
         break :blk imports;
     } else try allocator.alloc(PackageImport, 0);
     errdefer allocator.free(package_imports);
+    const npm_imports = if (version >= 8) blk: {
+        const count = try readInteger(u32, payload, &cursor);
+        const imports = try allocator.alloc(NpmImport, count);
+        errdefer allocator.free(imports);
+        for (imports) |*item| {
+            item.importer_owner = try readBytes(payload, &cursor);
+            item.specifier = try readBytes(payload, &cursor);
+            item.path = try readBytes(payload, &cursor);
+            item.package_root = try readBytes(payload, &cursor);
+        }
+        break :blk imports;
+    } else try allocator.alloc(NpmImport, 0);
+    errdefer allocator.free(npm_imports);
     const path_aliases = if (version >= 6) blk: {
         const count = try readInteger(u32, payload, &cursor);
         const aliases = try allocator.alloc(module_graph.PathAlias, count);
@@ -240,7 +295,7 @@ fn parsePayload(allocator: std.mem.Allocator, payload: []u8) !Package {
     } else try allocator.alloc(module_graph.PathAlias, 0);
     errdefer allocator.free(path_aliases);
     if (cursor != payload.len) return error.InvalidEmbeddedPayload;
-    return .{ .allocator = allocator, .backing = payload, .entry_path = entry_path, .files = files, .package_imports = package_imports, .forced_mode = forced_mode, .path_aliases = path_aliases };
+    return .{ .allocator = allocator, .backing = payload, .entry_path = entry_path, .files = files, .package_imports = package_imports, .npm_imports = npm_imports, .forced_mode = forced_mode, .path_aliases = path_aliases };
 }
 
 fn appendBytes(output: *std.ArrayList(u8), allocator: std.mem.Allocator, bytes: []const u8) !void {
@@ -281,7 +336,7 @@ test "埋め込みpackage import resolver metadataを復元する" {
     const executable = try createExecutableWithImports(std.testing.allocator, "EXE", "/src/main.nako3", &.{
         .{ .path = "/src/main.nako3", .source = "!「パッケージ:math」を取り込む\n" },
         .{ .path = "/packages/math/index.nako3", .source = "値=5\n" },
-    }, .{}, &package_imports, &.{});
+    }, .{}, &package_imports, &.{}, &.{});
     defer std.testing.allocator.free(executable);
     const payload_length = std.mem.readInt(u64, executable[executable.len - trailer_length ..][0..@sizeOf(u64)], .little);
     const payload_start = executable.len - trailer_length - @as(usize, @intCast(payload_length));
@@ -299,6 +354,50 @@ test "埋め込みpackage import resolver metadataを復元する" {
     try std.testing.expectEqualStrings("pkg:math-id/main", resolved.canonical_id);
     try std.testing.expectEqualStrings("math", resolved.namespace);
     try std.testing.expectEqualStrings("/packages/math", resolved.package_root.?);
+}
+
+test "v7 payload は npm_imports 空で読める" {
+    var payload: std.ArrayList(u8) = .empty;
+    defer payload.deinit(std.testing.allocator);
+    try appendInteger(&payload, std.testing.allocator, u32, 7);
+    try appendInteger(&payload, std.testing.allocator, u8, 0);
+    try appendInteger(&payload, std.testing.allocator, u32, 1);
+    try appendBytes(&payload, std.testing.allocator, "/src/main.nako3");
+    try appendBytes(&payload, std.testing.allocator, "/src/main.nako3");
+    try appendBytes(&payload, std.testing.allocator, "値=1\n");
+    try appendInteger(&payload, std.testing.allocator, u32, 0); // package imports
+    try appendInteger(&payload, std.testing.allocator, u32, 0); // path aliases
+    const backing = try std.testing.allocator.dupe(u8, payload.items);
+    var package = try parsePayload(std.testing.allocator, backing);
+    defer package.deinit();
+    try std.testing.expectEqual(@as(usize, 0), package.npm_imports.len);
+    try std.testing.expectEqual(@as(usize, 1), package.files.len);
+    try std.testing.expectEqualStrings("/src/main.nako3", package.entry_path);
+}
+
+test "埋め込み npm import resolver metadataを復元する" {
+    const npm_imports = [_]NpmImport{.{
+        .importer_owner = "pkg:esm-id",
+        .specifier = "left-pad",
+        .path = "/tmp/scratch/npm-left-pad/index.js",
+        .package_root = "/tmp/scratch/npm-left-pad",
+    }};
+    const executable = try createExecutableWithImports(std.testing.allocator, "EXE", "/src/main.nako3", &.{
+        .{ .path = "/src/main.nako3", .source = "!「pkg:esm」を取り込む\n" },
+    }, .{}, &.{}, &npm_imports, &.{});
+    defer std.testing.allocator.free(executable);
+    const payload_length = std.mem.readInt(u64, executable[executable.len - trailer_length ..][0..@sizeOf(u64)], .little);
+    const payload_start = executable.len - trailer_length - @as(usize, @intCast(payload_length));
+    const backing = try std.testing.allocator.dupe(u8, executable[payload_start .. executable.len - trailer_length]);
+    var package = try parsePayload(std.testing.allocator, backing);
+    defer package.deinit();
+    try std.testing.expectEqual(@as(usize, 1), package.npm_imports.len);
+    const resolved = try package.npmModuleResolver().resolve(std.testing.allocator, "pkg:esm-id", "/src/esm", "left-pad");
+    defer std.testing.allocator.free(resolved.path);
+    defer std.testing.allocator.free(resolved.package_root);
+    try std.testing.expectEqualStrings("/tmp/scratch/npm-left-pad/index.js", resolved.path);
+    try std.testing.expectEqualStrings("/tmp/scratch/npm-left-pad", resolved.package_root);
+    try std.testing.expectError(error.BareNotFound, package.npmModuleResolver().resolve(std.testing.allocator, "pkg:other", "/src/esm", "left-pad"));
 }
 
 test "埋め込みpackage importはimporter ownerでbindingを区別する" {
@@ -331,7 +430,7 @@ test "埋め込みpackage importはimporter ownerでbindingを区別する" {
     };
     const executable = try createExecutableWithImports(std.testing.allocator, "EXE", "/src/main.nako3", &.{
         .{ .path = "/src/main.nako3", .source = "値=1\n" },
-    }, .{}, &package_imports, &.{});
+    }, .{}, &package_imports, &.{}, &.{});
     defer std.testing.allocator.free(executable);
     const payload_length = std.mem.readInt(u64, executable[executable.len - trailer_length ..][0..@sizeOf(u64)], .little);
     const payload_start = executable.len - trailer_length - @as(usize, @intCast(payload_length));
@@ -374,7 +473,7 @@ test "埋め込みpayloadのpath aliasをcanonicalizeへ復元する" {
     const executable = try createExecutableWithImports(std.testing.allocator, "EXE", "/src/main.nako3", &.{
         .{ .path = "/src/main.nako3", .source = "値=1\n" },
         .{ .path = "/packages/math/helper.nako3", .source = "A=1\n" },
-    }, .{}, &.{}, &aliases);
+    }, .{}, &.{}, &.{}, &aliases);
     defer std.testing.allocator.free(executable);
     const payload_length = std.mem.readInt(u64, executable[executable.len - trailer_length ..][0..@sizeOf(u64)], .little);
     const payload_start = executable.len - trailer_length - @as(usize, @intCast(payload_length));

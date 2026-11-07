@@ -31,6 +31,7 @@ pub fn run(
             .compat_js = true,
             .forced_mode = package.forced_mode,
             .package_resolver = package.packageResolver(),
+            .npm_module_resolver = package.npmModuleResolver(),
         }, stderr, package.sourceProvider()) catch |err| {
             if (err == error.ConflictingDnclModes) {
                 try stderr.writeAll("拡張子と埋め込みDNCLモードが異なるDNCL方言を要求しています\n");
@@ -139,7 +140,7 @@ pub fn run(
             };
             defer ir_program.deinit();
             if (options.compat_js) {
-                compiler_pipeline.writeCompatExecutable(allocator, io, executable_path, options.input, options.output, options.forced_mode) catch |err| {
+                compiler_pipeline.writeCompatExecutable(allocator, io, executable_path, options.input, options.output, options.forced_mode, prep.cache_dir) catch |err| {
                     try stderr.print("build: QuickJS互換実行ファイルの生成に失敗しました: {s}\n", .{@errorName(err)});
                     try stderr.flush();
                     std.process.exit(1);

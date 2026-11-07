@@ -7,6 +7,8 @@
 const std = @import("std");
 const lnako = @import("lnako");
 const compile_pipeline = @import("compile.zig");
+const embedded_pipeline = @import("embedded.zig");
+const compat_embedded = lnako.compat.embedded;
 
 const npm_mod = lnako.package.npm;
 const project_mod = lnako.package.project;
@@ -167,6 +169,62 @@ test "compile は package 所有 ESM の bare npm import（サブパス含む）
         }
     }
     try testing.expect(plugin_found);
+    try testing.expect(root_found);
+    try testing.expect(sub_found);
+}
+
+test "build --compat-js の payload は npm import を起動時 compile へ復元する" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "cache");
+    const cache_root = try temporary.dir.realPathFileAlloc(io, "cache", gpa);
+    defer gpa.free(cache_root);
+
+    try writeProject(&temporary, io);
+    const app_root = try temporary.dir.realPathFileAlloc(io, "app", gpa);
+    defer gpa.free(app_root);
+    try prepareLockAndCache(gpa, io, app_root, cache_root);
+
+    const main_path = try std.fs.path.join(gpa, &.{ app_root, "main.nako3" });
+    defer gpa.free(main_path);
+    const stub_path = try std.fs.path.join(gpa, &.{ app_root, "lnako-stub" });
+    defer gpa.free(stub_path);
+    const output_path = try std.fs.path.join(gpa, &.{ app_root, "out.bin" });
+    defer gpa.free(output_path);
+    try temporary.dir.writeFile(io, .{ .sub_path = "app/lnako-stub", .data = "EXE" });
+
+    try embedded_pipeline.writeCompatExecutable(gpa, io, stub_path, main_path, output_path, .{}, cache_root);
+
+    var package = (try compat_embedded.readExecutable(gpa, io, output_path)) orelse return error.UnexpectedEmbeddedPayload;
+    defer package.deinit();
+    // plugin.mjs の bare left-pad / left-pad/sub だけが payload に記録される
+    //（nako3 の取り込み edge を npm binding として混入させない）。
+    try testing.expectEqual(@as(usize, 2), package.npm_imports.len);
+
+    // cache を消してから起動時 compile を通し、payload だけで復元できることを
+    // 固定する（復元経路が cache を参照したら失敗する）。
+    try temporary.dir.deleteTree(io, "cache");
+
+    // 起動時と同じ provider + resolver で再コンパイルできる（cache/FS なし）。
+    var stderr: std.Io.Writer.Allocating = .init(gpa);
+    defer stderr.deinit();
+    const program = (try compile_pipeline.compileInputWithProvider(gpa, package.entry_path, .{
+        .compat_js = true,
+        .forced_mode = package.forced_mode,
+        .package_resolver = package.packageResolver(),
+        .npm_module_resolver = package.npmModuleResolver(),
+    }, &stderr.writer, package.sourceProvider())) orelse return error.UnexpectedCompileFailure;
+    var compiled = program;
+    defer compiled.deinit();
+
+    var root_found = false;
+    var sub_found = false;
+    for (compiled.javascript_modules) |module| {
+        if (std.mem.endsWith(u8, module.path, "index.js")) root_found = true;
+        if (std.mem.endsWith(u8, module.path, "sub.js")) sub_found = true;
+    }
     try testing.expect(root_found);
     try testing.expect(sub_found);
 }
