@@ -29,6 +29,7 @@ LnakoQuickJs *lnako_qjs_value_engine(const LnakoQuickJsValue *value) { (void)val
 void lnako_qjs_value_free(LnakoQuickJsValue *value) { (void)value; }
 enum LnakoQuickJsKind lnako_qjs_kind(const LnakoQuickJsValue *value) { (void)value; return LNAKO_QJS_UNDEFINED; }
 uintptr_t lnako_qjs_identity(const LnakoQuickJsValue *value) { (void)value; return 0; }
+int lnako_qjs_is_bytes(const LnakoQuickJsValue *value) { (void)value; return 0; }
 int lnako_qjs_to_boolean(const LnakoQuickJsValue *value) { (void)value; return 0; }
 int lnako_qjs_to_number(const LnakoQuickJsValue *value, double *result) { (void)value; (void)result; return -1; }
 char *lnako_qjs_to_string(const LnakoQuickJsValue *value, size_t *length) { (void)value; (void)length; return 0; }

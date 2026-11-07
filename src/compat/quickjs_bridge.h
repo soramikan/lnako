@@ -65,6 +65,9 @@ void lnako_qjs_value_free(LnakoQuickJsValue *value);
 
 enum LnakoQuickJsKind lnako_qjs_kind(const LnakoQuickJsValue *value);
 uintptr_t lnako_qjs_identity(const LnakoQuickJsValue *value);
+/// Nakoのbytesに相当するTypedArray / ArrayBuffer / SharedArrayBuffer /
+/// DataViewなら非0。
+int lnako_qjs_is_bytes(const LnakoQuickJsValue *value);
 int lnako_qjs_to_boolean(const LnakoQuickJsValue *value);
 int lnako_qjs_to_number(const LnakoQuickJsValue *value, double *result);
 char *lnako_qjs_to_string(const LnakoQuickJsValue *value, size_t *length);

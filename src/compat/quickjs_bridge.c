@@ -22,6 +22,13 @@ struct LnakoQuickJs {
     /// 非0ならhost_getがNULLを返した直接読み取りを未定義値ではなく
     /// 例外にする（AOT compatのように変数bridgeを持たないruntime用）。
     int strict_host_reads;
+    /// bytes相当判定用のclass ID。ユーザーJSから詐称できないよう、engine生成
+    /// 直後に一度だけ取得する（0は無効ID）。
+    JSClassID typed_array_class_min;
+    JSClassID typed_array_class_max;
+    JSClassID array_buffer_class_id;
+    JSClassID shared_array_buffer_class_id;
+    JSClassID dataview_class_id;
     struct LnakoQuickJsModuleSource *module_sources;
     struct LnakoQuickJsModuleAlias *module_aliases;
 };
@@ -634,6 +641,16 @@ static JSModuleDef *module_loader(JSContext *context, const char *module_name, v
     return module;
 }
 
+/// `source` を評価して結果のclass IDを返す。bytes相当判定はこのIDで行うため、
+/// 判定前に投げた例外はここで回収し、呼出し元の例外状態を汚さない。
+static JSClassID probe_class_id(JSContext *context, const char *source) {
+    JSValue value = JS_Eval(context, source, strlen(source), "<lnako-init>", JS_EVAL_TYPE_GLOBAL);
+    JSClassID class_id = JS_IsObject(value) ? JS_GetClassID(value) : JS_INVALID_CLASS_ID;
+    JS_FreeValue(context, value);
+    if (JS_HasException(context)) JS_FreeValue(context, JS_GetException(context));
+    return class_id;
+}
+
 LnakoQuickJs *lnako_qjs_new(void) {
     LnakoQuickJs *engine = calloc(1, sizeof(*engine));
     if (!engine) return NULL;
@@ -649,6 +666,13 @@ LnakoQuickJs *lnako_qjs_new(void) {
         return NULL;
     }
     JS_SetContextOpaque(engine->context, engine);
+    // 型付き配列のclass IDはUint8ClampedArray..Float64Arrayで連続するため、
+    // 両端を記録して範囲判定する（detached/OOBでもclassは変わらない）。
+    engine->typed_array_class_min = probe_class_id(engine->context, "new Uint8ClampedArray(0)");
+    engine->typed_array_class_max = probe_class_id(engine->context, "new Float64Array(0)");
+    engine->array_buffer_class_id = probe_class_id(engine->context, "new ArrayBuffer(0)");
+    engine->shared_array_buffer_class_id = probe_class_id(engine->context, "typeof SharedArrayBuffer === 'undefined' ? null : new SharedArrayBuffer(0)");
+    engine->dataview_class_id = probe_class_id(engine->context, "new DataView(new ArrayBuffer(0))");
     JS_SetModuleLoaderFunc(engine->runtime, module_normalize, module_loader, engine);
     if (install_host_bridge(engine) < 0) {
         JS_FreeContext(engine->context);
@@ -978,6 +1002,26 @@ enum LnakoQuickJsKind lnako_qjs_kind(const LnakoQuickJsValue *value) {
 uintptr_t lnako_qjs_identity(const LnakoQuickJsValue *value) {
     if (!value || !JS_IsObject(value->value)) return 0;
     return (uintptr_t)JS_VALUE_GET_PTR(value->value);
+}
+
+// Nakoのbytesに相当するJS値（TypedArray / ArrayBuffer / SharedArrayBuffer /
+// DataView）かを判定する。`lnako_qjs_kind` はこれらの値を object と報告する
+// ため、浅いコピーの戻り値変換ではこの述語で明示的な未対応エラーへ振り分ける。
+// 判定はclass ID（engine生成時に固定）と型付き配列APIだけで行い、判定のための
+// 例外を残さない。
+int lnako_qjs_is_bytes(const LnakoQuickJsValue *value) {
+    if (!value) return 0;
+    if (JS_VALUE_GET_TAG(value->value) != JS_TAG_OBJECT) return 0;
+    JSClassID class_id = JS_GetClassID(value->value);
+    if (class_id == JS_INVALID_CLASS_ID) return 0;
+    if (class_id == value->engine->array_buffer_class_id) return 1;
+    if (class_id == value->engine->shared_array_buffer_class_id) return 1;
+    if (class_id == value->engine->dataview_class_id) return 1;
+    const JSClassID min = value->engine->typed_array_class_min;
+    const JSClassID max = value->engine->typed_array_class_max;
+    if (min != JS_INVALID_CLASS_ID && max != JS_INVALID_CLASS_ID && min <= max &&
+        class_id >= min && class_id <= max) return 1;
+    return 0;
 }
 
 int lnako_qjs_to_boolean(const LnakoQuickJsValue *value) {

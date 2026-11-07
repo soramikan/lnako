@@ -83,7 +83,11 @@ try {
   }
   const functionCallOutput = runBinary(functionCallBinary);
   expectEqual(functionCallOutput, interpreterCall.stdout.trim(), "JS関数実行のAOT/インタプリタ一致");
-  expectEqual(functionCallOutput, "0\n3\n5\n3\nx!\n1\n0\n1\n1\n3\n0\n30\n0\n5", "JS関数実行の最小変換結果");
+  expectEqual(
+    functionCallOutput,
+    "0\n3\n5\n3\nx!\n1\n0\n1\n1\n3\n0\n30\n0\n5\n1,2\n\n[object Object]\n[object Object]\na,true,",
+    "JS関数実行の最小変換結果（戻り値の配列・辞書を含む）",
+  );
 
   // 浅い配列・辞書だけを引数に許可する。ネストした配列/辞書・関数値・
   // バイト列は、QuickJSへ渡す前に AOT/インタプリタが同じ文言で明示エラーに
@@ -110,6 +114,39 @@ try {
       const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
       if (result.status === 0 || !output.includes(unsupportedArgumentMessage)) {
         fail(`${label}の未対応引数が${kind}で明示エラーになりません: status=${result.status}\n${output}`);
+      }
+    }
+  }
+
+  // 戻り値もプリミティブと浅い配列・辞書だけを許可する。ネストした配列/辞書・
+  // 関数・Promise・BigInt・bytesは、QuickJSへ渡す前ではなく戻り値変換時に
+  // AOT/interpreterが同じ文言で明示エラーにすること。
+  const unsupportedResultCases = [
+    ["ネストした配列の戻り値", 'JS関数実行("()=>[1,[2]]", [])を表示\n'],
+    ["ネストした辞書の戻り値", 'JS関数実行(『()=>({x:{y:1}})』, [])を表示\n'],
+    ["関数の戻り値", 'JS関数実行("()=>()=>1", [])を表示\n'],
+    ["Promiseの戻り値", 'JS関数実行("()=>Promise.resolve(1)", [])を表示\n'],
+    ["BigIntの戻り値", 'JS関数実行("()=>1n", [])を表示\n'],
+    ["bytesの戻り値（TypedArray）", 'JS関数実行("()=>new Uint8Array([1,2])", [])を表示\n'],
+    ["bytesの戻り値（ArrayBuffer）", 'JS関数実行("()=>new ArrayBuffer(4)", [])を表示\n'],
+    ["bytesの戻り値（SharedArrayBuffer）", 'JS関数実行("()=>new SharedArrayBuffer(4)", [])を表示\n'],
+    ["bytesの戻り値（DataView）", 'JS関数実行("()=>new DataView(new ArrayBuffer(4))", [])を表示\n'],
+    ["配列要素のbytes", 'JS関数実行("()=>[new Uint8Array([1])]", [])を表示\n'],
+    ["辞書値のbytes", 'JS関数実行(『()=>({x:new Uint8Array([1])})』, [])を表示\n'],
+  ];
+  const unsupportedResultMessage =
+    "JS関数実行 does not support nested arrays or dictionaries, functions, promises, bigint, or bytes results yet";
+  for (const [index, [label, source]] of unsupportedResultCases.entries()) {
+    const unsupportedResultSource = join(work, `compat-js-unsupported-result-${index}.nako3`);
+    writeFileSync(unsupportedResultSource, source);
+    const unsupportedResultBinary = join(work, `compat-js-unsupported-result-${index}`);
+    runCompiler(unsupportedResultSource, unsupportedResultBinary, ["--compat-js", "--backend", "aot"]);
+    const aot = spawnSync(unsupportedResultBinary, [], { encoding: "utf8" });
+    const interpreter = spawnSync(compiler, ["run", unsupportedResultSource, "--compat-js"], { encoding: "utf8" });
+    for (const [kind, result] of [["AOT", aot], ["インタプリタ", interpreter]]) {
+      const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+      if (result.status === 0 || !output.includes(unsupportedResultMessage)) {
+        fail(`${label}の未対応戻り値が${kind}で明示エラーになりません: status=${result.status}\n${output}`);
       }
     }
   }
