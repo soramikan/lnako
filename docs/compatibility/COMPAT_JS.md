@@ -31,8 +31,7 @@ zig build -Dcompat-js=true test
 zig build run -- run program.nako3 --compat-js
 # 従来方式（既定）
 zig build run -- build program.nako3 --compat-js -o program
-# AOT＋QuickJS（opt-in）
-zig build -Dcompat-js=true
+# AOT＋QuickJS（opt-in。zig build -Dcompat-js=true でビルドしたlnakoが必要）
 zig build run -- build program.nako3 --compat-js --backend aot -o program
 ```
 

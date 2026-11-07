@@ -170,7 +170,7 @@ async function copyPayloadFile(source, destination, executable) {
 
 function createManifest(options_, spec, binary, runtime, runtimeCompat, payloadFiles, git) {
   return {
-    schema: "lnako.distribution-manifest.v1",
+    schema: "lnako.distribution-manifest.v2",
     name: "lnako",
     version: options_.version,
     variant: options_.variant,
@@ -239,7 +239,7 @@ function createSbom(options_, spec, files, manifest) {
       created: "1970-01-01T00:00:00Z",
       creators: ["Tool: lnako distribution builder"],
     },
-    documentComment: "This SBOM describes the files in the lnako distribution archive. QuickJS is statically linked into the lnako executable for the explicit --compat-js mode; it is not present in the AOT runtime library or in generated artifacts unless they are built with --compat-js. Nadesiko 3 and Node.js are test or compatibility oracle inputs and are not shipped.",
+    documentComment: "This SBOM describes the files in the lnako distribution archive. QuickJS is statically linked into the lnako executable for the explicit --compat-js mode and into liblnako_runtime_compat.a for the opt-in --backend aot mode; it is not present in the normal AOT runtime library liblnako_runtime.a or in generated artifacts unless they are built with --compat-js. Nadesiko 3 and Node.js are test or compatibility oracle inputs and are not shipped.",
     packages,
     files: fileRecords,
     relationships,

@@ -113,8 +113,8 @@ pub fn run(
                 try stderr.flush();
                 std.process.exit(2);
             }
-            if (options.backend == .embedded and !options.compat_js) {
-                try stderr.writeAll("build: --backend embeddedは--compat-jsとだけ併用できます\n");
+            if (options.backend != null and !options.compat_js) {
+                try stderr.writeAll("build: --backendは--compat-jsとだけ併用できます\n");
                 try stderr.flush();
                 std.process.exit(2);
             }

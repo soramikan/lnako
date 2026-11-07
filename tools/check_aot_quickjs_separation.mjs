@@ -74,6 +74,14 @@ try {
   const defaultCompatBinary = join(work, "default-compat");
   runCompiler(defaultCompatSource, defaultCompatBinary, ["--compat-js"]);
   expectEqual(runBinary(defaultCompatBinary), "3", "既定compat-js（embedded）の実行結果");
+  // 既定がAOTへ戻ると実行結果だけでは区別できないため、compat AOT専用ABIを
+  // 持たないことも固定する。
+  const defaultSymbols = listSymbols(defaultCompatBinary);
+  for (const forbidden of ["lnako_aot_compat_js_eval", "lnako.compat.esm.manifest"]) {
+    if (defaultSymbols.some((symbol) => symbol.includes(forbidden))) {
+      fail(`既定compat-js（embedded）成果物に ${forbidden} が混入しています`);
+    }
+  }
 
   checkDistributionLayout(work);
 
@@ -129,6 +137,7 @@ function checkDistributionLayout(work) {
   writeFileSync(compatSource, 'JS実行("1+2")を表示\n');
   const cleanEnv = { ...process.env };
   // 配布利用者と同じ探索（実行ファイル隣接の ../lib）を再現する。
+  delete cleanEnv.LNAKO_AOT_RUNTIME_LIBRARY;
   delete cleanEnv.LNAKO_AOT_RUNTIME_LIBRARY_COMPAT;
 
   const withCompat = join(work, "distribution-with-compat");

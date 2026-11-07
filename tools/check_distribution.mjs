@@ -70,7 +70,7 @@ async function verifyDistribution(archivePath) {
 }
 
 function validateManifest(manifest, prefix, entries, baseName) {
-  if (manifest.schema !== "lnako.distribution-manifest.v1" || manifest.name !== "lnako" || typeof manifest.version !== "string" || typeof manifest.target !== "string") {
+  if (manifest.schema !== "lnako.distribution-manifest.v2" || manifest.name !== "lnako" || typeof manifest.version !== "string" || typeof manifest.target !== "string") {
     throw new Error("配布manifestのschemaまたは識別子が不正です");
   }
   const expectedVariant = baseName.endsWith("-full") ? "full" : "standard";
