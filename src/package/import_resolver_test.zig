@@ -173,6 +173,81 @@ test "materialized package内の共有writable dirを拒否する" {
     warned.deinit();
 }
 
+test "世代 deps/npm_* の共有writable tree を enforce で拒否し warn で警告する" {
+    if (@import("builtin").os.tag == .windows or @import("builtin").os.tag == .wasi) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/pkg");
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/pkg/nako.toml", .data = "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });
+    // compile が読む npm tree（marker/identity はここでは問わない。ACL の対象）。
+    try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/npm_left-pad-0123456789ab");
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/npm_left-pad-0123456789ab/package.json", .data = "{\"name\":\"left-pad\",\"version\":\"1.0.0\"}" });
+    // 選ばれる profile が npmInstances を持つ環境だけが世代 npm tree の ACL
+    // 検査対象になる（dir 名は instance から導出され、検査は lock 非依存）。
+    const lock = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/pkg\"},\"dependencies\":[],\"npmInstances\":{\"left-pad@1.0.0\":{\"name\":\"left-pad\",\"version\":\"1.0.0\",\"sha256\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"url\":\"fixture://left-pad-1.0.0.tgz\"}}}}}";
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
+    const lock_hex = std.fmt.bytesToHex(digest, .lower);
+    const environment = try std.fmt.allocPrint(
+        allocator,
+        "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"packages\":{{\"pkg:test\":{{\"name\":\"pkg\",\"version\":\"1.0.0\",\"path\":\".nako/env/gen-test/deps/pkg\",\"exports\":[]}}}}}}",
+        .{lock_hex},
+    );
+    defer allocator.free(environment);
+    try temporary.dir.createDirPath(io, ".nako");
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = environment });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+
+    var loaded = try Resolver.load(allocator, io, root);
+    loaded.deinit();
+
+    try temporary.dir.setFilePermissions(io, ".nako/env/gen-test/deps/npm_left-pad-0123456789ab", std.Io.File.Permissions.fromMode(0o777), .{});
+    try std.testing.expectError(error.InvalidEnvironment, Resolver.loadWithMode(allocator, io, root, .enforce));
+    var warned = try Resolver.loadWithMode(allocator, io, root, .warn);
+    try std.testing.expect(warned.writable_warning);
+    warned.deinit();
+}
+
+test "世代 deps 自身が共有writableなら npm tree が無くても拒否する" {
+    if (@import("builtin").os.tag == .windows or @import("builtin").os.tag == .wasi) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var temporary = test_sandbox.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, ".nako/env/gen-test/deps/pkg");
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/env/gen-test/deps/pkg/nako.toml", .data = "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n" });
+    // npmInstances があって初めて世代 deps の ACL 検査経路が動く。ここでは
+    // npm tree を置かず、deps 自身の祖先検査（probe）が拒否することを観測する。
+    const lock = "{\"schemaVersion\":1,\"resolverVersion\":1,\"input\":{\"profile\":\"default\",\"target\":{\"os\":\"macos\",\"cpu\":\"aarch64\",\"abi\":\"none\"}},\"packages\":{\"pkg:test\":{\"id\":\"pkg:test\",\"name\":\"pkg\",\"version\":\"1.0.0\",\"source\":{\"type\":\"registry\",\"url\":\"https://example.invalid/pkg\"},\"dependencies\":[],\"npmInstances\":{\"left-pad@1.0.0\":{\"name\":\"left-pad\",\"version\":\"1.0.0\",\"sha256\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"url\":\"fixture://left-pad-1.0.0.tgz\"}}}}}";
+    try temporary.dir.writeFile(io, .{ .sub_path = "nako.lock", .data = lock });
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(lock, &digest, .{});
+    const lock_hex = std.fmt.bytesToHex(digest, .lower);
+    const environment = try std.fmt.allocPrint(
+        allocator,
+        "{{\"schemaVersion\":1,\"lockSha256\":\"sha256:{s}\",\"profile\":\"default\",\"runtime\":\"lnako\",\"packages\":{{\"pkg:test\":{{\"name\":\"pkg\",\"version\":\"1.0.0\",\"path\":\".nako/env/gen-test/deps/pkg\",\"exports\":[]}}}}}}",
+        .{lock_hex},
+    );
+    defer allocator.free(environment);
+    try temporary.dir.createDirPath(io, ".nako");
+    try temporary.dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = environment });
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+
+    var loaded = try Resolver.load(allocator, io, root);
+    loaded.deinit();
+
+    try temporary.dir.setFilePermissions(io, ".nako/env/gen-test/deps", std.Io.File.Permissions.fromMode(0o777), .{});
+    try std.testing.expectError(error.InvalidEnvironment, Resolver.loadWithMode(allocator, io, root, .enforce));
+    var warned = try Resolver.loadWithMode(allocator, io, root, .warn);
+    try std.testing.expect(warned.writable_warning);
+    warned.deinit();
+}
+
 test "package rootの共有writableな祖先dirを拒否する" {
     if (@import("builtin").os.tag == .windows or @import("builtin").os.tag == .wasi) return error.SkipZigTest;
     const allocator = std.testing.allocator;
