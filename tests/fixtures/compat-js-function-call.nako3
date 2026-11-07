@@ -1,0 +1,12 @@
+# JS関数実行の最小スライス。AOT（--compat-js --backend aot）とインタプリタで
+# 同じ出力になることを tools/check_aot_quickjs_separation.mjs が確認する。
+JS実行(『globalThis.add = (a, b) => a + b; 0』)を表示
+JS関数実行("add",[1,2])を表示
+JS関数実行("(a,b)=>a+b",[2,3])を表示
+JS関数実行("Math.floor",3.14)を表示
+JS関数実行("s => s + '!'",["x"])を表示
+JS関数実行("v => v ? 1 : 0",[TRUE])を表示
+JS関数実行("v => v ? 1 : 0",[FALSE])を表示
+JS関数実行("v => v === null ? 1 : 0",[NULL])を表示
+U=JS実行("undefined")
+JS関数実行("v => typeof v === 'undefined' ? 1 : 0",[U])を表示

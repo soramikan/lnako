@@ -67,6 +67,42 @@ try {
   if (!compatBytes.includes(Buffer.from(modulePath))) {
     fail("compat AOT成果物にESM identity（path）が収録されていません");
   }
+
+  // `JS関数実行`: AOTとインタプリタが同じfixtureで同じstdoutを返すこと。
+  // 引数（数値・文字列・真偽値・null/undefined）と戻り値の最小変換を固定する。
+  const functionCallFixture = join(root, "tests", "fixtures", "compat-js-function-call.nako3");
+  const interpreterCall = spawnSync(compiler, ["run", functionCallFixture, "--compat-js"], { encoding: "utf8" });
+  if (interpreterCall.status !== 0) {
+    fail(`JS関数実行fixtureのインタプリタ実行が失敗しました: ${interpreterCall.stdout}${interpreterCall.stderr}`);
+  }
+  const functionCallBinary = join(work, "compat-js-function-call");
+  runCompiler(functionCallFixture, functionCallBinary, ["--compat-js", "--backend", "aot"]);
+  const functionCallSymbols = listSymbols(functionCallBinary);
+  if (!functionCallSymbols.some((symbol) => symbol.includes("lnako_aot_compat_js_call"))) {
+    fail("JS関数実行のcompat AOT成果物に lnako_aot_compat_js_call がありません");
+  }
+  const functionCallOutput = runBinary(functionCallBinary);
+  expectEqual(functionCallOutput, interpreterCall.stdout.trim(), "JS関数実行のAOT/インタプリタ一致");
+  expectEqual(functionCallOutput, "0\n3\n5\n3\nx!\n1\n0\n1\n1", "JS関数実行の最小変換結果");
+
+  // オブジェクト/配列/関数の引数はQuickJSへ渡さず、明示的な未対応エラーにする。
+  // interpreterは配列をJS配列へ変換できるため、この失敗は最小スライス固有の
+  // AOT制限（follow-upで解消）であり、interpreterとの一致対象ではない。
+  const unsupportedArgumentSource = join(work, "compat-js-unsupported-argument.nako3");
+  writeFileSync(unsupportedArgumentSource, 'JS関数実行("x => x", [[1,2]])を表示\n');
+  const unsupportedArgumentBinary = join(work, "compat-js-unsupported-argument");
+  runCompiler(unsupportedArgumentSource, unsupportedArgumentBinary, ["--compat-js", "--backend", "aot"]);
+  const unsupportedArgument = spawnSync(unsupportedArgumentBinary, [], { encoding: "utf8" });
+  // 同じソースはinterpreterでは成功する（AOT最小スライス固有の制限であることを固定）。
+  const unsupportedInterpreter = spawnSync(compiler, ["run", unsupportedArgumentSource, "--compat-js"], { encoding: "utf8" });
+  if (unsupportedInterpreter.status !== 0) {
+    fail(`未対応引数fixtureがinterpreterでも失敗しました: ${unsupportedInterpreter.stdout}${unsupportedInterpreter.stderr}`);
+  }
+  const unsupportedArgumentOutput = `${unsupportedArgument.stdout ?? ""}${unsupportedArgument.stderr ?? ""}`;
+  if (unsupportedArgument.status === 0 || !unsupportedArgumentOutput.includes("JS関数実行 does not support")) {
+    fail(`JS関数実行の未対応引数が明示エラーになりません: status=${unsupportedArgument.status}\n${unsupportedArgumentOutput}`);
+  }
+
   // 既定の `--compat-js` は従来の同梱実行ファイル方式（embedded）へ戻っている。
   // AOT+QuickJSは `--backend aot` の明示opt-inであることを実行で固定する。
   const defaultCompatSource = join(work, "default-compat.nako3");

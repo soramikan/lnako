@@ -10,6 +10,7 @@ comptime {
 
 export fn lnako_aot_compat_runtime_keepalive() void {
     _ = compat_js.lnako_aot_compat_js_eval;
+    _ = compat_js.lnako_aot_compat_js_call;
     _ = compat_js.lnako_aot_compat_esm_register;
     _ = compat_js.lnako_aot_compat_deinit;
 }

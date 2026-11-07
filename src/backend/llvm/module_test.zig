@@ -305,3 +305,40 @@ test "compat-js AOTはESM manifestとQuickJS dispatchをemitし、通常AOTは�
     try std.testing.expect(std.mem.indexOf(u8, compat_module.text, "mod.mjs") != null);
     try std.testing.expect(std.mem.indexOf(u8, compat_module.text, "call void @lnako_aot_compat_deinit()") != null);
 }
+
+test "compat-js AOTはJS関数実行を許可し、メソッド・オブジェクト取得は拒否する" {
+    var parsed = try parser.parse(std.testing.allocator, "JS関数実行(\"(a,b)=>a+b\",[1,2])を表示\n", "main.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    // 通常AOTはJS関数実行を依然として拒否する。
+    try std.testing.expect(findUnsupported(program) != null);
+    program.compat_js = true;
+    try std.testing.expect(findUnsupported(program) == null);
+    var module = try generate(std.testing.allocator, program, "main.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_compat_js_call(ptr, ptr, i64)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_compat_js_call(ptr ") != null);
+
+    // 最小スライス外の2命令はcompat AOTでも未対応のままにする。
+    for ([_][]const u8{ "JSメソッド実行(\"f\",\"m\",[])\n", "JSオブジェクト取得(\"x\")\n" }) |source| {
+        var unsupported_parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
+        defer unsupported_parsed.deinit();
+        try std.testing.expect(unsupported_parsed.succeeded());
+        var unsupported_analyzed = try semantic.analyze(std.testing.allocator, unsupported_parsed.root.?, "main.nako3");
+        defer unsupported_analyzed.deinit();
+        try std.testing.expect(unsupported_analyzed.succeeded());
+        var unsupported_hir = try hir.lowerSingle(std.testing.allocator, unsupported_parsed.root.?, "main", "main.nako3", unsupported_analyzed);
+        defer unsupported_hir.deinit();
+        var unsupported_program = try lower.lower(std.testing.allocator, unsupported_hir);
+        defer unsupported_program.deinit();
+        unsupported_program.compat_js = true;
+        try std.testing.expect(findUnsupported(unsupported_program) != null);
+    }
+}
