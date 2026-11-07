@@ -221,6 +221,8 @@ pub fn run(
             var ir_program = (compiler_pipeline.compileInput(allocator, io, check_file.?, .{
                 .forced_mode = check_mode,
                 .writable_mode = check_prep.writableMode(init.environ_map),
+                // ファイル検査では未検査の package 命令呼出しを可視化する。
+                .report_uninspected_packages = true,
             }, stderr) catch |err| {
                 if (err == error.ConflictingDnclModes) {
                     try stderr.writeAll("check: 拡張子と--dncl/--dncl2が異なるDNCL方言を要求しています\n");

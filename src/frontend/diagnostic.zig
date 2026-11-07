@@ -35,6 +35,15 @@ pub const Code = enum {
     /// 一致しない値をスタックへ残し、行末で『未解決の単語があります』の
     /// 文法エラーにする。
     unresolved_word,
+    /// package の宣言命令 metadata が環境に無く、その alias 経由の呼出しを
+    /// 静的に検査できなかった（Issue #52）。警告であり、コンパイルは止めない。
+    uninspected_package_command,
+    /// 宣言 metadata の種別（関数/変数）と、取り込んだソースで解決した
+    /// シンボルの種別が一致しない（Issue #52）。
+    declared_command_kind_mismatch,
+    /// 宣言 metadata の引数個数・助詞列と、取り込んだソースの関数定義が
+    /// 一致しない（Issue #52）。
+    declared_command_signature_mismatch,
 };
 
 pub const Diagnostic = struct {
