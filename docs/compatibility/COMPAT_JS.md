@@ -29,6 +29,43 @@ node tools/setup_quickjs.mjs
 zig build -Dcompat-js=true
 zig build -Dcompat-js=true test
 zig build run -- run program.nako3 --compat-js
+zig build run -- build program.nako3 --compat-js -o program
 ```
+
+`build --compat-js` の既定はLLVM AOT＋QuickJS runtimeです。通常AOTの
+`liblnako_runtime.a` とは別の `liblnako_runtime_compat.a` をリンクし、生成物へ
+ESM manifest（source/identity）を収録します。従来の同梱実行ファイル方式は
+`--backend embedded` で選びます。
+
+```sh
+lnako build program.nako3 --compat-js --backend embedded -o program
+```
+
+compat runtime libraryの探索先は通常runtimeと同じく実行ファイル隣接の
+`../lib/` です。明示する場合は `LNAKO_AOT_RUNTIME_LIBRARY_COMPAT` を使います。
+
+通常AOT成果物にQuickJS/compat ABIが混入しないこと、compat AOT成果物が
+QuickJSとESM情報を収録しESM呼出しに成功することは、生成物のシンボルと実行結果で
+検査します。
+
+```sh
+node tools/check_aot_quickjs_separation.mjs --compiler zig-out/bin/lnako
+```
+
+現時点のAOT compat dispatchは `JS実行` の最小経路だけです。値・Promise・
+callback・GCの完全接続と `JS関数実行` / `JSメソッド実行` / `JSオブジェクト取得`
+のAOT対応はfollow-up（Issue #55）です。AOTの `JS実行` は専用ABIを直接呼ぶため、
+`LNAKO_DISPATCH_TRACE` のdispatch traceにはまだ記録されません（follow-up）。
+
+### 配布アーカイブでの制限
+
+配布アーカイブは現時点で通常AOT runtime（`liblnako_runtime.a` /
+`lnako_runtime.lib`）だけを同梱し、`liblnako_runtime_compat.a` は含みません。
+そのため配布版で `build --compat-js` のAOTを使うと
+`AOTランタイム静的ライブラリを読み込めません` で止まります。配布版では
+`--backend embedded` を使うか、`liblnako_runtime_compat.a` を `lib/` へ
+別途配置してください。compat runtimeの同梱はfollow-upです。
+`tools/check_aot_quickjs_separation.mjs` は配布レイアウトを再現し、この
+制限が明確なエラーになることとembedded経路が動くことを検査します。
 
 QuickJS証拠を `native` entryのAOT証拠へ合算しません。native分類、QuickJS case、AOT artifact、3 OS attestationはそれぞれ [`../COMPATIBILITY_EVIDENCE.md`](../COMPATIBILITY_EVIDENCE.md) の別state・別経路です。

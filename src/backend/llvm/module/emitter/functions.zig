@@ -418,6 +418,9 @@ pub fn writeMain(emitter: *Emitter) !void {
     const entry_name = if (target_builtin.os.tag == .windows) "wmain" else "main";
     try emitter.output.writer.print("define i32 @{s}(i32 %argc, ptr %argv) !dbg !{d} {{\nentry:\n", .{ entry_name, scope });
     try emitter.output.writer.writeAll("  %runtime.status = call i32 @lnako_aot_runtime_init()\n");
+    if (emitter.compat_esm_manifest) |manifest| {
+        try emitter.output.writer.print("  call void @lnako_aot_compat_esm_register(ptr @lnako.compat.esm.manifest, i64 {d})\n", .{manifest.len});
+    }
     for (emitter.program.native_plugin_paths, 0..) |path, index| {
         try emitter.output.writer.print("  call void @lnako_aot_native_plugin_register(ptr @lnako.native.plugin.path.{d}, i64 {d})\n", .{ index, path.len });
     }
@@ -517,6 +520,7 @@ pub fn writeMain(emitter: *Emitter) !void {
         global_index -= 1;
         try emitter.output.writer.print("  call void @lnako_aot_pop_roots(ptr %global.root.frame.{d})\n", .{global_index});
     }
+    if (emitter.program.compat_js) try emitter.output.writer.writeAll("  call void @lnako_aot_compat_deinit()\n");
     try emitter.output.writer.writeAll("  call void @lnako_aot_runtime_deinit()\n  ret i32 0");
     try emitter.debugSuffix(ast.emptySpan(), scope);
     try emitter.output.writer.writeAll("}\n\n");

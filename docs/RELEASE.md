@@ -97,3 +97,11 @@ macOS用バイナリは、Gatekeeperの警告なく安全に実行できるよ�
 - **公証プロセス**：
   - 生成したアーカイブを一時ZIP化し、Appleの `notarytool` 経由で提出。Acceptedを確認した後、`codesign --verify --strict -R=notarized` で検証。
   - 公証ログはGitHub Actionsのartifactとして保存されます。
+
+## 既知の制限: compat AOT runtimeの同梱
+
+配布アーカイブは通常AOT runtime（`liblnako_runtime.a` / `lnako_runtime.lib`）
+だけを同梱し、`liblnako_runtime_compat.a` は含みません。配布版で
+`build --compat-js` のAOTを使う場合は `--backend embedded` を使うか、
+`liblnako_runtime_compat.a` を `lib/` へ別途配置してください。同梱は
+follow-up（Issue #55）です。

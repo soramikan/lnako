@@ -96,6 +96,10 @@ pub fn run(
             const options = arguments.parseBuildOptions(build_args) catch |err| {
                 if (err == error.ConflictingDnclModes)
                     try stderr.writeAll("build: --dnclと--dncl2は同時に指定できません\n")
+                else if (err == error.MissingBackend)
+                    try stderr.writeAll("build: --backendの値がありません\n")
+                else if (err == error.InvalidBackend)
+                    try stderr.writeAll("build: --backendはaotまたはembeddedを指定してください\n")
                 else
                     try stderr.print("build: コマンドラインエラー: {s}\n", .{@errorName(err)});
                 try stderr.flush();
@@ -106,8 +110,13 @@ pub fn run(
                 try stderr.flush();
                 std.process.exit(2);
             }
-            if (options.compat_js and options.emit != .executable) {
-                try stderr.writeAll("build: --compat-jsは--emit exeだけをサポートします\n");
+            if (options.backend == .embedded and !options.compat_js) {
+                try stderr.writeAll("build: --backend embeddedは--compat-jsとだけ併用できます\n");
+                try stderr.flush();
+                std.process.exit(2);
+            }
+            if (options.compat_js and options.backend == .embedded and options.emit != .executable) {
+                try stderr.writeAll("build: --compat-js --backend embeddedは--emit exeだけをサポートします\n");
                 try stderr.flush();
                 std.process.exit(2);
             }
@@ -137,7 +146,7 @@ pub fn run(
                 std.process.exit(1);
             };
             defer ir_program.deinit();
-            if (options.compat_js) {
+            if (options.compat_js and options.backend == .embedded) {
                 compiler_pipeline.writeCompatExecutable(allocator, io, executable_path, options.input, options.output, options.forced_mode) catch |err| {
                     try stderr.print("build: QuickJS互換実行ファイルの生成に失敗しました: {s}\n", .{@errorName(err)});
                     try stderr.flush();
@@ -154,7 +163,11 @@ pub fn run(
                 .llvm_root = options.llvm_dir orelse init.environ_map.get("LNAKO_LLVM_DIR"),
                 .llvm_library = init.environ_map.get("LNAKO_LLVM_LIBRARY"),
                 .environment = init.environ_map,
-                .runtime_library = init.environ_map.get("LNAKO_AOT_RUNTIME_LIBRARY"),
+                .runtime_library = if (options.compat_js)
+                    init.environ_map.get("LNAKO_AOT_RUNTIME_LIBRARY_COMPAT")
+                else
+                    init.environ_map.get("LNAKO_AOT_RUNTIME_LIBRARY"),
+                .compat_js = options.compat_js,
                 .compile_manifest_path = init.environ_map.get("LNAKO_COMPILE_MANIFEST"),
                 .global_manifest_path = init.environ_map.get("LNAKO_GLOBAL_MANIFEST"),
                 .literal_manifest_path = init.environ_map.get("LNAKO_LITERAL_MANIFEST"),

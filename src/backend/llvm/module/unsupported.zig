@@ -62,7 +62,8 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
                 .unary => std.mem.eql(u8, instruction.operator, "!") or std.mem.eql(u8, instruction.operator, "not") or
                     std.mem.eql(u8, instruction.operator, "+") or std.mem.eql(u8, instruction.operator, "-"),
                 .call => shared.isDisplayCall(instruction.name) or aot_builtin.lookup(instruction.name) != null or validDirectCallee(program, instruction) or shared.lookupFunction(program, instruction.name) != null or
-                    shared.isDynamicNamedCall(function, instruction.name) or shared.isNativePluginCall(program, function, instruction),
+                    shared.isDynamicNamedCall(function, instruction.name) or shared.isNativePluginCall(program, function, instruction) or
+                    (program.compat_js and isCompatJsCommand(instruction.name)),
                 .call_value => instruction.operands.len > 0,
                 .make_closure => closureSupported(program, function, instruction),
                 .iterator_begin => iteratorSourceSupported(function, instruction),
@@ -89,6 +90,13 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
 
 fn validDirectCallee(program: ir.Program, instruction: ir.Instruction) bool {
     return if (instruction.direct_callee) |callee| callee < program.functions.len else false;
+}
+
+/// `--compat-js` AOTが最小dispatchとして受けるJS命令。値・Promise・
+/// callback・GCの完全接続はfollow-upのため、現時点では `JS実行` だけを
+/// 許可する。通常AOT（compat_js=false）は従来どおり未対応のまま。
+fn isCompatJsCommand(name: []const u8) bool {
+    return std.mem.eql(u8, name, "JS実行");
 }
 
 fn closureSupported(program: ir.Program, caller: ir.Function, instruction: ir.Instruction) bool {

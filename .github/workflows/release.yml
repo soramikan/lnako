@@ -232,10 +232,18 @@ jobs:
           if [[ "${{ matrix.executable }}" == "lnako.exe" ]]; then ext=".exe"; fi
           # 配布コンパイラはQuickJSを静的同梱し、--compat-jsがそのまま動作する。
           ./zig-out/bin/${{ matrix.executable }} run tests/fixtures/compat-js-basic.nako3 --compat-js > /dev/null
-          # compat-js指定の生成物にだけQuickJSを含める。
-          ./zig-out/bin/${{ matrix.executable }} build tests/fixtures/compat-js-basic.nako3 --compat-js -o "$RUNNER_TEMP/lnako-compat-smoke$ext"
+          # compat-js指定の生成物にだけQuickJSを含める。全4命令を使うfixtureは
+          # 従来の同梱方式（--backend embedded）で検証する。
+          ./zig-out/bin/${{ matrix.executable }} build tests/fixtures/compat-js-basic.nako3 --compat-js --backend embedded -o "$RUNNER_TEMP/lnako-compat-smoke$ext"
           "$RUNNER_TEMP/lnako-compat-smoke$ext" > /dev/null
           grep -aq "unexpected token in expression" "$RUNNER_TEMP/lnako-compat-smoke$ext"
+          # 既定のAOT＋QuickJS runtimeでも最小dispatch（JS実行）が動く。
+          printf 'JS実行("1+2")を表示\n' > "$RUNNER_TEMP/compat-aot.nako3"
+          ./zig-out/bin/${{ matrix.executable }} build "$RUNNER_TEMP/compat-aot.nako3" --compat-js -o "$RUNNER_TEMP/lnako-compat-aot-smoke$ext"
+          [[ "$("$RUNNER_TEMP/lnako-compat-aot-smoke$ext")" == "3" ]]
+          grep -aq "unexpected token in expression" "$RUNNER_TEMP/lnako-compat-aot-smoke$ext"
+          # compat AOT runtime libraryがビルドされている（配布同梱はfollow-up）。
+          test -f zig-out/lib/liblnako_runtime_compat.a || test -f zig-out/lib/lnako_runtime_compat.lib
           # 通常AOT生成物とAOT runtimeライブラリにはQuickJSを含めない。
           printf '1+2を表示\n' > "$RUNNER_TEMP/plain.nako3"
           ./zig-out/bin/${{ matrix.executable }} build "$RUNNER_TEMP/plain.nako3" -o "$RUNNER_TEMP/lnako-native-smoke$ext"

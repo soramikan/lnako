@@ -160,7 +160,11 @@ if (!workflow.includes(toolchainCacheKey) || !workflow.includes("run: node tools
 }
 // 配布コンパイラはQuickJSを静的同梱し、生成物には利用時のみ含める境界を検証する。
 if (!workflow.includes("run tests/fixtures/compat-js-basic.nako3 --compat-js") ||
-    !workflow.includes("build tests/fixtures/compat-js-basic.nako3 --compat-js") ||
+    !workflow.includes("build tests/fixtures/compat-js-basic.nako3 --compat-js --backend embedded") ||
+    !workflow.includes('printf \'JS実行("1+2")を表示\\n\'') ||
+    !workflow.includes("lnako-compat-aot-smoke") ||
+    !workflow.includes('== "3"') ||
+    !workflow.includes("liblnako_runtime_compat.a") ||
     !workflow.includes('! grep -aq "unexpected token in expression" zig-out/lib/${{ matrix.runtime }}')) {
   throw new Error("Release workflowのQuickJS同梱・非同梱境界検証が不完全です");
 }

@@ -196,7 +196,7 @@ pub fn usage(writer: *std.Io.Writer) !void {
         \\lnako - なでしこ3ネイティブコンパイラ
         \\
         \\使い方:
-        \\  lnako build <file.nako3|.dncl|.dncl2> -o <output> [-O0..-O3] [--emit exe|obj|llvm-ir] [--llvm-dir <path>]
+        \\  lnako build <file.nako3|.dncl|.dncl2> -o <output> [-O0..-O3] [--emit exe|obj|llvm-ir] [--llvm-dir <path>] [--compat-js [--backend aot|embedded]]
         \\  lnako run <file.nako3|.dncl|.dncl2> [--compat-js] [--dncl] [--dncl2] -- [arguments]
         \\  lnako check <file.nako3|.dncl|.dncl2> [--dncl] [--dncl2]
         \\  lnako test <file.nako3|.dncl|.dncl2|directory> [--dncl] [--dncl2]

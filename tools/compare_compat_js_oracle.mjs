@@ -49,7 +49,7 @@ try {
   }
 
   const generated = resolve(temporary, process.platform === "win32" ? "compat-program.exe" : "compat-program");
-  const build = spawnSync(executable, ["build", importFixture, "-o", generated, "--compat-js"], options);
+  const build = spawnSync(executable, ["build", importFixture, "-o", generated, "--compat-js", "--backend", "embedded"], options);
   const embedded = spawnSync(generated, [], options);
   const officialEmbedded = spawnSync(process.execPath, [officialCli, importFixture], options);
   if (build.status !== 0 || embedded.status !== 0 || JSON.stringify(normalize(embedded)) !== JSON.stringify(normalize(officialEmbedded))) {
@@ -57,7 +57,7 @@ try {
     console.error(`QuickJS埋め込み実行ファイル差分:\nbuild=${JSON.stringify(normalize(build))}\nofficial=${JSON.stringify(normalize(officialEmbedded))}\nembedded=${JSON.stringify(normalize(embedded))}`);
   }
 
-  const invalidEmit = spawnSync(executable, ["build", importFixture, "-o", generated, "--compat-js", "--emit", "obj"], options);
+  const invalidEmit = spawnSync(executable, ["build", importFixture, "-o", generated, "--compat-js", "--backend", "embedded", "--emit", "obj"], options);
   if (invalidEmit.status !== 2 || !invalidEmit.stderr.includes("--emit exeだけ")) {
     failures += 1;
     console.error(`QuickJS互換の不正emitを拒否しませんでした: ${JSON.stringify(normalize(invalidEmit))}`);

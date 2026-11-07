@@ -144,6 +144,10 @@ lnako run program.nako3 --compat-js
 lnako build program.nako3 --compat-js -o program -O2
 ```
 
+`build --compat-js` の既定はLLVM AOT＋QuickJS runtimeで、通常AOTとは別の
+`liblnako_runtime_compat.a` をリンクします。従来の同梱実行ファイル方式は
+`--backend embedded` で選べます。
+
 lnakoの配布バイナリには軽量JavaScriptエンジン（QuickJS）が組み込まれていますが、通常モードでは使用されず、余分なオーバーヘッドは発生しません。詳細は[互換モードの説明](compatibility/COMPAT_JS.md)を参照してください。
 
 ## 6. よくある質問・トラブルシューティング

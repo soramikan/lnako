@@ -36,6 +36,8 @@ pub const Emitter = struct {
     /// `{関数}名`で関数値化された組み込み命令名（重複なし、収集順）。
     /// `@lnako.builtin.name.{index}` 定数の索引として使う。
     builtin_closure_names: std.ArrayList([]const u8) = .empty,
+    /// `--compat-js` AOT成果物へ収録するESM manifest（JSON）。通常AOTではnull。
+    compat_esm_manifest: ?[]u8 = null,
     locations: std.ArrayList(DebugLocation) = .empty,
     next_metadata: usize = 4,
     // 名前解決の線形再探索を避ける索引。aot_builtin.lookupは全コマンド名への
@@ -62,6 +64,7 @@ pub const Emitter = struct {
         self.system_era_data.deinit(self.allocator);
         self.bigints.deinit(self.allocator);
         self.builtin_closure_names.deinit(self.allocator);
+        if (self.compat_esm_manifest) |manifest| self.allocator.free(manifest);
         self.locations.deinit(self.allocator);
         self.builtin_command_cache.deinit(self.allocator);
         if (self.function_index) |*index| index.deinit(self.allocator);

@@ -1,12 +1,17 @@
 const std = @import("std");
 const lnako = @import("lnako");
 
+pub const BuildBackend = enum { aot, embedded };
+
 pub const BuildOptions = struct {
     input: []const u8,
     output: []const u8,
     optimization: lnako.backend.llvm.compiler.Optimization = .o0,
     emit: lnako.backend.llvm.compiler.Emit = .executable,
     compat_js: bool = false,
+    /// `--compat-js` の実行方式。既定はLLVM AOT＋QuickJS runtime。
+    /// `--backend embedded` で従来の同梱実行ファイル方式を選ぶ。
+    backend: BuildBackend = .aot,
     forced_mode: lnako.frontend.token.Mode = .{},
     llvm_dir: ?[]const u8 = null,
 };
@@ -17,6 +22,7 @@ pub fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
     var optimization: lnako.backend.llvm.compiler.Optimization = .o0;
     var emit: lnako.backend.llvm.compiler.Emit = .executable;
     var compat_js = false;
+    var backend: BuildBackend = .aot;
     var forced_mode: lnako.frontend.token.Mode = .{};
     var llvm_dir: ?[]const u8 = null;
     var index: usize = 1;
@@ -36,6 +42,15 @@ pub fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
             optimization = .o3;
         } else if (std.mem.eql(u8, argument, "--compat-js")) {
             compat_js = true;
+        } else if (std.mem.eql(u8, argument, "--backend")) {
+            index += 1;
+            if (index >= arguments.len) return error.MissingBackend;
+            backend = if (std.mem.eql(u8, arguments[index], "aot"))
+                .aot
+            else if (std.mem.eql(u8, arguments[index], "embedded"))
+                .embedded
+            else
+                return error.InvalidBackend;
         } else if (std.mem.eql(u8, argument, "--dncl")) {
             forced_mode.dncl = true;
         } else if (std.mem.eql(u8, argument, "--dncl2")) {
@@ -64,6 +79,7 @@ pub fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
         .optimization = optimization,
         .emit = emit,
         .compat_js = compat_js,
+        .backend = backend,
         .forced_mode = forced_mode,
         .llvm_dir = llvm_dir,
     };
@@ -164,4 +180,14 @@ test "buildの出力形式と最適化レベルを解析する" {
     try std.testing.expectEqual(lnako.backend.llvm.compiler.Emit.object, options.emit);
     try std.testing.expectError(error.MissingOutput, parseBuildOptions(&.{"main.nako3"}));
     try std.testing.expectError(error.InvalidEmitKind, parseBuildOptions(&.{ "main.nako3", "-o", "main", "--emit", "asm" }));
+}
+
+test "buildのcompat-js backendを解析する" {
+    const defaults = try parseBuildOptions(&.{ "main.nako3", "-o", "main", "--compat-js" });
+    try std.testing.expect(defaults.compat_js);
+    try std.testing.expectEqual(BuildBackend.aot, defaults.backend);
+    const embedded = try parseBuildOptions(&.{ "main.nako3", "-o", "main", "--compat-js", "--backend", "embedded" });
+    try std.testing.expectEqual(BuildBackend.embedded, embedded.backend);
+    try std.testing.expectError(error.InvalidBackend, parseBuildOptions(&.{ "main.nako3", "-o", "main", "--backend", "vm" }));
+    try std.testing.expectError(error.MissingBackend, parseBuildOptions(&.{ "main.nako3", "-o", "main", "--backend" }));
 }
