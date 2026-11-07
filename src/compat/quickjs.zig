@@ -288,6 +288,50 @@ pub fn available() bool {
     return build_options.quickjs_enabled;
 }
 
+/// `JS関数実行` の実引数として未対応の型をQuickJSへ渡したときの文言。
+/// AOT compat（`src/runtime/aot/compat_js.zig`）と同じ文言で失敗させる。
+pub const unsupported_call_argument_message = "JS関数実行 does not support nested arrays or dictionaries, functions, bigint, or bytes arguments yet";
+
+/// 配列・辞書を浅く変換するときの要素として許可する値（プリミティブだけ）。
+fn isShallowCallElement(value: Value) bool {
+    return switch (value) {
+        .undefined, .null_value, .boolean, .number, .string => true,
+        else => false,
+    };
+}
+
+fn allShallowCallElements(values: []const Value) bool {
+    for (values) |value| {
+        if (!isShallowCallElement(value)) return false;
+    }
+    return true;
+}
+
+/// `JS関数実行` の実引数1個がQuickJSへ変換できるか。
+///
+/// プリミティブに加えてNako配列（JS配列）と辞書（JSオブジェクト）を許可する
+/// が、要素はプリミティブだけに限る（浅いコピーのみ）。ネストした配列/辞書と
+/// 関数・BigInt・bytes・Promiseは、QuickJSへ渡す前に明示的な未対応エラーに
+/// する。JS由来のexternal値（interpreterだけが持つ）も、syncExternalが
+/// Nako側の内容をJSへ書き戻すため、同じ要素規則で判定する。
+fn isSupportedCallArgument(value: Value) bool {
+    return switch (value) {
+        .undefined, .null_value, .boolean, .number, .string => true,
+        .array => |array| allShallowCallElements(array.items.items),
+        .dictionary => |dictionary| allShallowCallElements(dictionary.values()),
+        else => false,
+    };
+}
+
+fn validateCallArguments(runtime: *Runtime, arguments: []const Value) !void {
+    for (arguments) |argument| {
+        if (!isSupportedCallArgument(argument)) {
+            try runtime.setFailureMessage(unsupported_call_argument_message);
+            return error.QuickJsUnsupportedArgument;
+        }
+    }
+}
+
 pub fn call(runtime: *Runtime, state: *State, effects: Effects, name: []const u8, arguments: []const Value) !?Value {
     if (!isCompatCommand(name)) {
         if (!state.enabled or !state.modules_loaded) return null;
@@ -323,7 +367,10 @@ pub fn call(runtime: *Runtime, state: *State, effects: Effects, name: []const u8
         }
         const call_arguments = common.argument(arguments, 1);
         const slice = if (call_arguments == .array) call_arguments.array.items.items else arguments[1..@min(arguments.len, 2)];
+        // Nako関数値の呼出しはNako値のまま渡すため制限しない。JS関数へ渡す
+        // 実引数だけを、AOTと同じ規則（浅い配列/辞書＋プリミティブ）で検証する。
         if (callable == .function and callable.function.kind != .external) return @as(?Value, try effects.invoke(callable, slice));
+        try validateCallArguments(runtime, slice);
         return @as(?Value, try callExternalValue(state, runtime, callable, slice));
     }
     if (std.mem.eql(u8, name, "JSメソッド実行")) {

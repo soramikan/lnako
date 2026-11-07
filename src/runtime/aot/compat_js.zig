@@ -49,6 +49,10 @@ extern fn lnako_qjs_null(engine: *Engine) ?*RawValue;
 extern fn lnako_qjs_boolean(engine: *Engine, value: c_int) ?*RawValue;
 extern fn lnako_qjs_number(engine: *Engine, value: f64) ?*RawValue;
 extern fn lnako_qjs_string(engine: *Engine, value: [*]const u8, length: usize) ?*RawValue;
+extern fn lnako_qjs_array(engine: *Engine) ?*RawValue;
+extern fn lnako_qjs_object(engine: *Engine) ?*RawValue;
+extern fn lnako_qjs_set_index(value: *RawValue, index: u32, item: *const RawValue) c_int;
+extern fn lnako_qjs_set_property(value: *RawValue, name: [*:0]const u8, item: *const RawValue) c_int;
 extern fn lnako_qjs_kind(value: *const RawValue) Kind;
 extern fn lnako_qjs_to_boolean(value: *const RawValue) c_int;
 extern fn lnako_qjs_to_number(value: *const RawValue, result: *f64) c_int;
@@ -190,9 +194,24 @@ fn arrayItems(value: Value) ?[]Value {
     return object.payload.array.items;
 }
 
-/// `JS関数実行` の引数をQuickJS値へ変換する。最小スライスでは数値・文字列・
-/// 真偽値・null/undefinedだけを許可し、オブジェクト/配列/関数などは呼び出し
-/// 前に明示的な未対応エラーにする（Nako側の文字列化へ逃がさない）。
+/// `JS関数実行` の実引数をQuickJS値へ変換する。最小スライスでは数値・文字列・
+/// 真偽値・null/undefinedに加えて、Nako配列→JS配列・辞書→JSオブジェクトの
+/// 浅いコピーだけを許可する。ネストした配列/辞書・関数・BigInt・bytes・
+/// Promiseは呼び出し前に明示的な未対応エラーにする（Nako側の文字列化へ
+/// 逃がさない）。文言はinterpreter（compat/quickjs.zig）と共通。
+const unsupported_argument_message = "JS関数実行 does not support nested arrays or dictionaries, functions, bigint, or bytes arguments yet";
+
+/// bridge由来のエラー文言を既にruntimeへ記録したことを表す内部エラー。
+/// 呼出し側で再度setFailureするとQuickJSの文言が失われるため区別する。
+const reported_engine_failure = error.QuickJsConversionReported;
+
+fn isPrimitiveTag(tag: Tag) bool {
+    return switch (tag) {
+        .undefined, .null_value, .boolean, .number, .utf16_string, .static_utf8_string => true,
+        else => false,
+    };
+}
+
 fn primitiveRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value) !*RawValue {
     return switch (@as(Tag, @fromBackingInt(value.tag))) {
         .undefined => lnako_qjs_undefined(engine_value) orelse error.OutOfMemory,
@@ -206,6 +225,75 @@ fn primitiveRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value) !*
             defer runtime.allocator.free(text);
             break :blk lnako_qjs_string(engine_value, text.ptr, text.len) orelse error.OutOfMemory;
         },
+        else => error.QuickJsUnsupportedArgument,
+    };
+}
+
+/// 浅いコピーの要素（配列の要素・辞書の値）はプリミティブだけを許可する。
+fn shallowArgumentRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value) !*RawValue {
+    if (!isPrimitiveTag(@as(Tag, @fromBackingInt(value.tag)))) return error.QuickJsUnsupportedArgument;
+    return primitiveRaw(runtime, engine_value, value);
+}
+
+fn arrayArgumentRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value) !*RawValue {
+    const items = arrayItems(value) orelse return error.QuickJsUnsupportedArgument;
+    if (items.len > std.math.maxInt(u32)) return error.QuickJsCollectionTooLarge;
+    const result = lnako_qjs_array(engine_value) orelse return error.OutOfMemory;
+    errdefer lnako_qjs_value_free(result);
+    for (items, 0..) |item, index| {
+        const raw = try shallowArgumentRaw(runtime, engine_value, item);
+        defer lnako_qjs_value_free(raw);
+        if (lnako_qjs_set_index(result, @intCast(index), raw) < 0) {
+            fail(runtime, engine_value);
+            return reported_engine_failure;
+        }
+    }
+    return result;
+}
+
+fn dictionaryEntries(value: Value) ?[]const state.DictionaryEntry {
+    if (@as(Tag, @fromBackingInt(value.tag)) != .dictionary) return null;
+    const object = value.object() orelse return null;
+    return object.payload.dictionary.entries.items;
+}
+
+/// `lnako_qjs_set_property` はNUL終端の名前を取る。interpreterのtoRawと同じく
+/// 辞書キーをlossy UTF-8へ変換する（辞書キーは通常は文字列）。
+fn dictionaryKeyNameZ(runtime: *state.Runtime, key: Value) ![:0]u8 {
+    const text = switch (@as(Tag, @fromBackingInt(key.tag))) {
+        .utf16_string, .static_utf8_string => try state.stringUtf8Alloc(runtime, key),
+        else => blk: {
+            const units = try state.valueUtf16Alloc(runtime, key);
+            defer runtime.allocator.free(units);
+            break :blk try std.unicode.utf16LeToUtf8Alloc(runtime.allocator, units);
+        },
+    };
+    defer runtime.allocator.free(text);
+    return runtime.allocator.dupeSentinel(u8, text, 0);
+}
+
+fn dictionaryArgumentRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value) !*RawValue {
+    const entries = dictionaryEntries(value) orelse return error.QuickJsUnsupportedArgument;
+    const result = lnako_qjs_object(engine_value) orelse return error.OutOfMemory;
+    errdefer lnako_qjs_value_free(result);
+    for (entries) |entry| {
+        const name = dictionaryKeyNameZ(runtime, entry.key) catch return error.QuickJsUnsupportedArgument;
+        defer runtime.allocator.free(name);
+        const raw = try shallowArgumentRaw(runtime, engine_value, entry.value);
+        defer lnako_qjs_value_free(raw);
+        if (lnako_qjs_set_property(result, name.ptr, raw) < 0) {
+            fail(runtime, engine_value);
+            return reported_engine_failure;
+        }
+    }
+    return result;
+}
+
+fn callArgumentRaw(runtime: *state.Runtime, engine_value: *Engine, value: Value) !*RawValue {
+    return switch (@as(Tag, @fromBackingInt(value.tag))) {
+        .undefined, .null_value, .boolean, .number, .utf16_string, .static_utf8_string => primitiveRaw(runtime, engine_value, value),
+        .array => arrayArgumentRaw(runtime, engine_value, value),
+        .dictionary => dictionaryArgumentRaw(runtime, engine_value, value),
         else => error.QuickJsUnsupportedArgument,
     };
 }
@@ -277,11 +365,13 @@ pub export fn lnako_aot_compat_js_call(out: *Value, arguments: ?[*]const Value, 
         runtime.allocator.free(raw_arguments);
     }
     for (values, 0..) |value, index| {
-        raw_arguments[index] = primitiveRaw(runtime, engine_value, value) catch |failure| {
-            if (failure == error.QuickJsUnsupportedArgument) {
-                runtime.setFailureText("JS関数実行 does not support object, array, function, bigint, or bytes arguments yet");
-            } else {
-                runtime.setFailure(failure);
+        raw_arguments[index] = callArgumentRaw(runtime, engine_value, value) catch |failure| {
+            switch (failure) {
+                error.QuickJsUnsupportedArgument => runtime.setFailureText(unsupported_argument_message),
+                // bridgeの文言はarrayArgumentRaw/dictionaryArgumentRawが
+                // fail()で既にruntimeへ記録している。
+                reported_engine_failure => {},
+                else => runtime.setFailure(failure),
             }
             return;
         };
@@ -497,6 +587,121 @@ test "compat AOT runtimeはJS関数実行で文字列・真偽値・null・undef
     lnako_aot_compat_deinit();
 }
 
+fn expectPendingFailureContains(runtime: *state.Runtime, expected: []const u8) !void {
+    try std.testing.expect(runtime.has_pending_exception);
+    const message = runtime.takeException();
+    const units = try state.valueUtf16Alloc(runtime, message);
+    defer std.testing.allocator.free(units);
+    const expected_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, expected);
+    defer std.testing.allocator.free(expected_units);
+    try std.testing.expect(std.mem.indexOf(u16, units, expected_units) != null);
+}
+
+fn noopFunction(_: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {}
+
+test "compat AOT runtimeはJS関数実行の配列実引数をJS配列へ変換する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const source_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "(a)=>a[0]+a[1]");
+    defer std.testing.allocator.free(source_units);
+    // [0]=callable, [1]=実引数コンテナ（要素はNako配列1個）。
+    var arguments = [_]Value{ .{}, .{} };
+    var frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&frame, &arguments, arguments.len);
+    defer state.active_runtime.?.popRoots(&frame);
+    arguments[0] = try state.active_runtime.?.createString(source_units);
+    var inner = [_]Value{ state.numberValue(1), state.numberValue(2) };
+    var inner_value: Value = .{};
+    state.lnako_aot_array_new(&inner_value, &inner, inner.len);
+    var container = [_]Value{inner_value};
+    state.lnako_aot_array_new(&arguments[1], &container, container.len);
+    var out: Value = .{};
+    lnako_aot_compat_js_call(&out, &arguments, 2);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(u8, @backingInt(Tag.number)), out.tag);
+    try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(out.payload)));
+    lnako_aot_compat_deinit();
+}
+
+test "compat AOT runtimeはJS関数実行の辞書実引数をJSオブジェクトへ変換する" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const source_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "(o)=>o.x+o.y");
+    defer std.testing.allocator.free(source_units);
+    const x_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "x");
+    defer std.testing.allocator.free(x_units);
+    const y_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "y");
+    defer std.testing.allocator.free(y_units);
+    var arguments = [_]Value{ .{}, .{} };
+    var frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&frame, &arguments, arguments.len);
+    defer state.active_runtime.?.popRoots(&frame);
+    arguments[0] = try state.active_runtime.?.createString(source_units);
+    // 辞書は「非配列の第2オペランド」なので単一実引数として渡る。
+    var pairs = [_]Value{
+        try state.active_runtime.?.createString(x_units),
+        state.numberValue(10),
+        try state.active_runtime.?.createString(y_units),
+        state.numberValue(20),
+    };
+    state.lnako_aot_dictionary_new(&arguments[1], &pairs, pairs.len);
+    var out: Value = .{};
+    lnako_aot_compat_js_call(&out, &arguments, 2);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(f64, 30), @as(f64, @bitCast(out.payload)));
+    lnako_aot_compat_deinit();
+}
+
+test "compat AOT runtimeはJS関数実行の空配列・空辞書を渡す" {
+    if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
+    var runtime = state.Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var arguments = [_]Value{ .{}, .{} };
+    var frame: state.RootFrame = .{};
+    state.active_runtime.?.pushRoots(&frame, &arguments, arguments.len);
+    defer state.active_runtime.?.popRoots(&frame);
+    var out: Value = .{};
+
+    // 空配列: コンテナの要素が空配列1個。
+    const length_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "(a)=>a.length");
+    defer std.testing.allocator.free(length_units);
+    arguments[0] = try state.active_runtime.?.createString(length_units);
+    var empty_array: Value = .{};
+    state.lnako_aot_array_new(&empty_array, null, 0);
+    var array_container = [_]Value{empty_array};
+    state.lnako_aot_array_new(&arguments[1], &array_container, array_container.len);
+    lnako_aot_compat_js_call(&out, &arguments, 2);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast(out.payload)));
+
+    // 空辞書: 非配列の第2オペランドなので単一実引数。
+    const keys_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "(o)=>Object.keys(o).length");
+    defer std.testing.allocator.free(keys_units);
+    arguments[0] = try state.active_runtime.?.createString(keys_units);
+    state.lnako_aot_dictionary_new(&arguments[1], null, 0);
+    lnako_aot_compat_js_call(&out, &arguments, 2);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast(out.payload)));
+    lnako_aot_compat_deinit();
+}
+
 test "compat AOT runtimeはJS関数実行の未対応引数を明示エラーにする" {
     if (!@import("build_options").quickjs_enabled) return error.SkipZigTest;
     var runtime = state.Runtime{ .allocator = std.testing.allocator };
@@ -506,24 +711,52 @@ test "compat AOT runtimeはJS関数実行の未対応引数を明示エラーに
         runtime = state.active_runtime.?;
         state.active_runtime = null;
     }
-    const source_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "x => x");
+    const source_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "x => 1");
     defer std.testing.allocator.free(source_units);
-    // [0]=callable, [1]=実引数配列, [2]=その要素である未対応の配列。
-    var arguments = [_]Value{ .{}, .{}, .{} };
+    var arguments = [_]Value{ .{}, .{} };
     var frame: state.RootFrame = .{};
     state.active_runtime.?.pushRoots(&frame, &arguments, arguments.len);
     defer state.active_runtime.?.popRoots(&frame);
     arguments[0] = try state.active_runtime.?.createString(source_units);
-    var nested = [_]Value{ state.numberValue(1), state.numberValue(2) };
-    state.lnako_aot_array_new(&arguments[2], &nested, nested.len);
-    var container = [_]Value{arguments[2]};
-    state.lnako_aot_array_new(&arguments[1], &container, container.len);
     var out: Value = .{};
+
+    // ネストした配列: コンテナの要素が配列で、その要素も配列。
+    var nested_inner = [_]Value{ state.numberValue(1), state.numberValue(2) };
+    var nested_inner_value: Value = .{};
+    state.lnako_aot_array_new(&nested_inner_value, &nested_inner, nested_inner.len);
+    var nested_middle = [_]Value{nested_inner_value};
+    var nested_middle_value: Value = .{};
+    state.lnako_aot_array_new(&nested_middle_value, &nested_middle, nested_middle.len);
+    var nested_container = [_]Value{nested_middle_value};
+    state.lnako_aot_array_new(&arguments[1], &nested_container, nested_container.len);
     lnako_aot_compat_js_call(&out, &arguments, 2);
-    try std.testing.expect(state.active_runtime.?.has_pending_exception);
-    const units = try state.valueUtf16Alloc(&state.active_runtime.?, state.active_runtime.?.pending_exception);
-    defer std.testing.allocator.free(units);
-    try std.testing.expect(std.mem.indexOf(u16, units, &[_]u16{ 'd', 'o', 'e', 's', ' ', 'n', 'o', 't', ' ', 's', 'u', 'p', 'p', 'o', 'r', 't' }) != null);
+    try expectPendingFailureContains(&state.active_runtime.?, "JS関数実行 does not support nested arrays or dictionaries");
+
+    // 辞書の値が配列（ネスト）。
+    const x_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "x");
+    defer std.testing.allocator.free(x_units);
+    var nested_value_array = [_]Value{state.numberValue(1)};
+    var nested_value_array_value: Value = .{};
+    state.lnako_aot_array_new(&nested_value_array_value, &nested_value_array, nested_value_array.len);
+    var pairs = [_]Value{ try state.active_runtime.?.createString(x_units), nested_value_array_value };
+    state.lnako_aot_dictionary_new(&arguments[1], &pairs, pairs.len);
+    lnako_aot_compat_js_call(&out, &arguments, 2);
+    try expectPendingFailureContains(&state.active_runtime.?, "JS関数実行 does not support nested arrays or dictionaries");
+
+    // 関数値。
+    arguments[1] = try state.active_runtime.?.createFunction(noopFunction, 0, &.{});
+    lnako_aot_compat_js_call(&out, &arguments, 2);
+    try expectPendingFailureContains(&state.active_runtime.?, "JS関数実行 does not support nested arrays or dictionaries");
+
+    // BigInt。
+    arguments[1] = try state.active_runtime.?.createBigInt("1");
+    lnako_aot_compat_js_call(&out, &arguments, 2);
+    try expectPendingFailureContains(&state.active_runtime.?, "JS関数実行 does not support nested arrays or dictionaries");
+
+    // bytes（Uint8Array互換のbyte_buffer）。
+    arguments[1] = try state.active_runtime.?.createByteBuffer("ab", .array_buffer);
+    lnako_aot_compat_js_call(&out, &arguments, 2);
+    try expectPendingFailureContains(&state.active_runtime.?, "JS関数実行 does not support nested arrays or dictionaries");
     lnako_aot_compat_deinit();
 }
 
