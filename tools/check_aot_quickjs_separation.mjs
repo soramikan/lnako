@@ -69,7 +69,7 @@ try {
   }
 
   // `JS関数実行`: AOTとインタプリタが同じfixtureで同じstdoutを返すこと。
-  // 引数（数値・文字列・真偽値・null/undefined）と戻り値の最小変換を固定する。
+  // 引数（プリミティブと浅い配列/辞書）と戻り値の最小変換を固定する。
   const functionCallFixture = join(root, "tests", "fixtures", "compat-js-function-call.nako3");
   const interpreterCall = spawnSync(compiler, ["run", functionCallFixture, "--compat-js"], { encoding: "utf8" });
   if (interpreterCall.status !== 0) {
@@ -83,24 +83,44 @@ try {
   }
   const functionCallOutput = runBinary(functionCallBinary);
   expectEqual(functionCallOutput, interpreterCall.stdout.trim(), "JS関数実行のAOT/インタプリタ一致");
-  expectEqual(functionCallOutput, "0\n3\n5\n3\nx!\n1\n0\n1\n1", "JS関数実行の最小変換結果");
+  expectEqual(functionCallOutput, "0\n3\n5\n3\nx!\n1\n0\n1\n1\n3\n0\n30\n0\n5", "JS関数実行の最小変換結果");
 
-  // オブジェクト/配列/関数の引数はQuickJSへ渡さず、明示的な未対応エラーにする。
-  // interpreterは配列をJS配列へ変換できるため、この失敗は最小スライス固有の
-  // AOT制限（follow-upで解消）であり、interpreterとの一致対象ではない。
-  const unsupportedArgumentSource = join(work, "compat-js-unsupported-argument.nako3");
-  writeFileSync(unsupportedArgumentSource, 'JS関数実行("x => x", [[1,2]])を表示\n');
-  const unsupportedArgumentBinary = join(work, "compat-js-unsupported-argument");
-  runCompiler(unsupportedArgumentSource, unsupportedArgumentBinary, ["--compat-js", "--backend", "aot"]);
-  const unsupportedArgument = spawnSync(unsupportedArgumentBinary, [], { encoding: "utf8" });
-  // 同じソースはinterpreterでは成功する（AOT最小スライス固有の制限であることを固定）。
-  const unsupportedInterpreter = spawnSync(compiler, ["run", unsupportedArgumentSource, "--compat-js"], { encoding: "utf8" });
-  if (unsupportedInterpreter.status !== 0) {
-    fail(`未対応引数fixtureがinterpreterでも失敗しました: ${unsupportedInterpreter.stdout}${unsupportedInterpreter.stderr}`);
+  // 浅い配列・辞書だけを引数に許可する。ネストした配列/辞書・関数値・
+  // バイト列は、QuickJSへ渡す前に AOT/インタプリタが同じ文言で明示エラーに
+  // すること。BigIntはAOT側に値の生成経路がまだ無いためinterpreterだけで
+  // 確認し、AOT側の判定は src/runtime/aot/compat_js.zig の単体テストで固定する。
+  const unsupportedArgumentCases = [
+    ["ネストした配列", 'JS関数実行("x => x", [[[1,2]]])を表示\n'],
+    ["配列要素の辞書", 'JS関数実行("x => x", [[{x:1}]])を表示\n'],
+    ["辞書の値の配列", 'JS関数実行("x => x", {x:[1,2]})を表示\n'],
+    ["関数値", "F=関数(A)それはA;ここまで\nJS関数実行(\"x => x\", F)を表示\n"],
+    ["bytes", "B=3のランダム配列生成\nJS関数実行(\"x => x\", B)を表示\n"],
+  ];
+  const unsupportedArgumentMessage =
+    "JS関数実行 does not support nested arrays or dictionaries, functions, bigint, or bytes arguments yet";
+  for (const [index, [label, source]] of unsupportedArgumentCases.entries()) {
+    const unsupportedArgumentSource = join(work, `compat-js-unsupported-argument-${index}.nako3`);
+    writeFileSync(unsupportedArgumentSource, source);
+    const unsupportedArgumentBinary = join(work, `compat-js-unsupported-argument-${index}`);
+    runCompiler(unsupportedArgumentSource, unsupportedArgumentBinary, ["--compat-js", "--backend", "aot"]);
+    const aot = spawnSync(unsupportedArgumentBinary, [], { encoding: "utf8" });
+    const interpreter = spawnSync(compiler, ["run", unsupportedArgumentSource, "--compat-js"], { encoding: "utf8" });
+    for (const [kind, result] of [["AOT", aot], ["インタプリタ", interpreter]]) {
+      const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+      if (result.status === 0 || !output.includes(unsupportedArgumentMessage)) {
+        fail(`${label}の未対応引数が${kind}で明示エラーになりません: status=${result.status}\n${output}`);
+      }
+    }
   }
-  const unsupportedArgumentOutput = `${unsupportedArgument.stdout ?? ""}${unsupportedArgument.stderr ?? ""}`;
-  if (unsupportedArgument.status === 0 || !unsupportedArgumentOutput.includes("JS関数実行 does not support")) {
-    fail(`JS関数実行の未対応引数が明示エラーになりません: status=${unsupportedArgument.status}\n${unsupportedArgumentOutput}`);
+
+  // BigIntはAOT側に値の生成経路がまだ無いため、interpreterで同じ明示エラーに
+  // なることだけを固定する（AOTの判定はcompat_js.zigの単体テスト）。
+  const bigintSource = join(work, "compat-js-unsupported-argument-bigint.nako3");
+  writeFileSync(bigintSource, 'B=JS実行("1n")\nJS関数実行("x => x", B)を表示\n');
+  const bigint = spawnSync(compiler, ["run", bigintSource, "--compat-js"], { encoding: "utf8" });
+  const bigintOutput = `${bigint.stdout ?? ""}${bigint.stderr ?? ""}`;
+  if (bigint.status === 0 || !bigintOutput.includes(unsupportedArgumentMessage)) {
+    fail(`BigIntの未対応引数がインタプリタで明示エラーになりません: status=${bigint.status}\n${bigintOutput}`);
   }
 
   // 既定の `--compat-js` は従来の同梱実行ファイル方式（embedded）へ戻っている。
