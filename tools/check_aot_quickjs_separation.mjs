@@ -161,7 +161,10 @@ function runCompiler(source, output, extra) {
 
 function runBinary(path) {
   const result = spawnSync(path, [], { encoding: "utf8" });
-  if (result.status !== 0) fail(`実行に失敗しました: ${path}\n${result.stdout}${result.stderr}`);
+  if (result.status !== 0 || typeof result.stdout !== "string") {
+    fail(`実行に失敗しました: ${path}\n${result.stdout ?? ""}${result.stderr ?? ""}`);
+    return "";
+  }
   return result.stdout.trim();
 }
 

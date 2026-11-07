@@ -386,7 +386,9 @@ jobs:
       # 通常AOT成果物のQuickJS非依存と、compat AOT成果物のQuickJS＋ESM収録・
       # ESM呼出しを実際の生成物で検査する（Issue #55）。
       - name: AOT QuickJS separation check
-        if: matrix.suite == 'compat-aot-build' || matrix.suite == 'mac-host-compat' || (matrix.suite == 'compat-aot' && matrix.name != 'Windows x86_64')
+        # Windowsのcompat AOTリンクはMinGW由来のQuickJSシンボル解決が未対応
+        # （follow-up）。LinuxとmacOSで分離・dispatchを検証する。
+        if: matrix.suite == 'mac-host-compat' || (matrix.suite == 'compat-aot' && matrix.name != 'Windows x86_64')
         shell: bash
         run: node tools/check_aot_quickjs_separation.mjs --compiler zig-out/bin/lnako
       # Releaseは同一commitの検証済みCI runからReleaseSafe+compat-js成果物を

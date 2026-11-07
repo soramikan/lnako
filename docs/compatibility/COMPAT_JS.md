@@ -68,4 +68,10 @@ callback・GCの完全接続と `JS関数実行` / `JSメソッド実行` / `JS�
 `tools/check_aot_quickjs_separation.mjs` は配布レイアウトを再現し、この
 制限が明確なエラーになることとembedded経路が動くことを検査します。
 
+Windows x86_64 のcompat AOTリンクは、ZigのMinGW向けにビルドしたQuickJSが
+`__mingw_*` / pthread 系シンボルを参照し、配布LLVM（MSVC向けclang/lld-link）の
+リンク行では解決できないため未対応です（follow-up）。Windowsでは
+`--backend embedded` または `run --compat-js` を使用してください。分離・
+dispatchの生成物検査はLinuxとmacOSで実施します。
+
 QuickJS証拠を `native` entryのAOT証拠へ合算しません。native分類、QuickJS case、AOT artifact、3 OS attestationはそれぞれ [`../COMPATIBILITY_EVIDENCE.md`](../COMPATIBILITY_EVIDENCE.md) の別state・別経路です。
