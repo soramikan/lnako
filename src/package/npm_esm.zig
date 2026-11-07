@@ -1937,7 +1937,8 @@ test "BareRegistry registerInstance は同名を no-op にする" {
     try reg.registerInstance(second, second_root);
     const entry = try reg.resolveBare("pkg");
     defer entry.deinit(gpa);
-    try testing.expect(std.mem.endsWith(u8, entry.path, "first/index.js"));
+    const entry_dir = std.fs.path.dirname(entry.path) orelse return error.UnexpectedResult;
+    try testing.expectEqualStrings("first", std.fs.path.basename(entry_dir));
 }
 
 test "BareRegistry buildFromInstances registers subpath-only package (M2)" {
