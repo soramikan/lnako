@@ -126,6 +126,10 @@ pub const Prepared = struct {
             error.PathAlreadyExists => return error.CacheMiss,
             else => return err,
         };
+        // 展開・書き込み・map 登録の途中で OOM/Canceled 等が起きても、
+        // 空の `<key>` dir を残さない。残すと再要求時に createDir が
+        // PathAlreadyExists となり、元の失敗が CacheMiss に化ける。
+        errdefer self.scratch.dir.deleteTree(self.io, key) catch {};
         {
             var tree = self.scratch.dir.openDir(self.io, key, .{ .iterate = true, .follow_symlinks = false }) catch |err| return err;
             defer tree.close(self.io);
