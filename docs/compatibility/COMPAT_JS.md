@@ -28,11 +28,11 @@ QuickJSは通常モードの代替runtimeではありません。`--compat-js` �
 node tools/setup_quickjs.mjs
 zig build -Dcompat-js=true
 zig build -Dcompat-js=true test
-zig build run -- run program.nako3 --compat-js
+zig build -Dcompat-js=true run -- run program.nako3 --compat-js
 # 従来方式（既定）
-zig build run -- build program.nako3 --compat-js -o program
-# AOT＋QuickJS（opt-in。zig build -Dcompat-js=true でビルドしたlnakoが必要）
-zig build run -- build program.nako3 --compat-js --backend aot -o program
+zig build -Dcompat-js=true run -- build program.nako3 --compat-js -o program
+# AOT＋QuickJS（opt-in。-Dcompat-js=true でビルドしたlnakoが必要）
+zig build -Dcompat-js=true run -- build program.nako3 --compat-js --backend aot -o program
 ```
 
 `build --compat-js` の既定は従来の同梱実行ファイル方式（embedded）です。
