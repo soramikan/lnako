@@ -17,6 +17,12 @@ pub const ScopeKind = enum { module, function, anonymous_function };
 pub const SymbolKind = enum { variable, constant, function, test_function, parameter, loop_variable };
 pub const BindingKind = enum { declaration, reference, call, builtin };
 
+const declared_commands = @import("declared_commands.zig");
+const DeclaredCommand = declared_commands.DeclaredCommand;
+const DeclaredCommands = declared_commands.DeclaredCommands;
+const PackageCommandAlias = declared_commands.PackageCommandAlias;
+const UninspectedPackageCommand = declared_commands.UninspectedPackageCommand;
+
 /// 実効取り込み文1件に対応する呼び出し先モジュールのエントリ名。
 /// 公式は取り込み文位置へ取り込み先トークンを展開するため、実行時にも
 /// その位置で取り込み先のトップレベルが動く必要がある。
@@ -79,6 +85,10 @@ pub const ModuleInput = struct {
     dynamic_command_aliases: []const DynamicCommandAlias = &.{},
     /// Package symbols are resolvable only through an importer's namespace aliases.
     is_package: bool = false,
+    /// `pkg:` import が公開する命令 alias と、環境 snapshot 由来の宣言索引。
+    /// 宣言索引が無い alias 経由の呼出しは `uninspected_package_commands` へ
+    /// 記録し、検査済み扱いにしない（Issue #52）。
+    package_command_aliases: []const PackageCommandAlias = &.{},
     /// root.children と同じ長さの、結合ストリーム上の文順位。
     /// 空ならモジュール内位置をファイル内のspan順で比較する。
     stmt_ranks: []const usize = &.{},
@@ -180,6 +190,9 @@ pub const Program = struct {
     bindings: []Binding,
     function_scopes: []FunctionScope,
     diagnostics: []diagnostic.Diagnostic,
+    /// 宣言 metadata が無い package alias 経由の命令呼出し（未検査）。
+    /// 空でなければ、このプログラムは package 命令の完全検査済みではない。
+    uninspected_package_commands: []const UninspectedPackageCommand = &.{},
 
     pub fn deinit(self: *Program) void {
         self.arena.deinit();
@@ -189,6 +202,12 @@ pub const Program = struct {
     pub fn succeeded(self: Program) bool {
         for (self.diagnostics) |item| if (item.severity == .error_severity) return false;
         return true;
+    }
+
+    /// package 宣言命令の検査が完全か。false の間は「検査済み」と表示しては
+    /// ならない（Issue #52 の未検査範囲）。
+    pub fn packageCommandsInspected(self: Program) bool {
+        return self.uninspected_package_commands.len == 0;
     }
 
     pub fn findSymbol(self: Program, qualified_name: []const u8) ?Symbol {
@@ -230,8 +249,14 @@ pub fn analyzeModules(backing_allocator: std.mem.Allocator, inputs: []const Modu
         .bindings = bindings,
         .function_scopes = function_scopes,
         .diagnostics = diagnostics,
+        .uninspected_package_commands = try analyzer.uninspected_package_commands.toOwnedSlice(analyzer.allocator),
     };
 }
+
+const UninspectedAliasState = struct {
+    recorded: bool = false,
+    warned: bool = false,
+};
 
 pub const Analyzer = struct {
     allocator: std.mem.Allocator,
@@ -269,6 +294,10 @@ pub const Analyzer = struct {
     /// 『抜ける』が有効な内側の深さ。繰り返し本体に加えて条件分岐のcase節も
     /// 数える（公式convSwitchはcase節の生成でflagLoopを立て、`break`を発行する）。
     breakable_depth: usize = 0,
+    /// 宣言 metadata の無い package alias 経由の呼出し記録（alias 単位で1件）。
+    uninspected_package_commands: std.ArrayList(UninspectedPackageCommand) = .empty,
+    /// 未検査 alias の重複記録・警告を抑える。
+    uninspected_alias_state: std.StringHashMapUnmanaged(UninspectedAliasState) = .empty,
 
     fn run(self: *Analyzer) !void {
         try self.loadBuiltins();
@@ -694,7 +723,81 @@ pub const Analyzer = struct {
     fn resolveReference(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId, callable: bool) !void {
         const name = if (callable) node.name else node.value;
         if (name.len == 0) return;
+        // package の宣言命令 metadata（あれば）を対応付ける。宣言は呼出しの
+        // 形（名前・助詞・arity）の正本だが、索引は公開命令だけを含むため、
+        // alias で解決できる非公開シンボルを妨げない（名前不一致の判定は
+        // シンボル/動的解決に失敗した後で行う）。
+        const declared_alias: ?PackageCommandAlias = if (callable or node.kind == .word)
+            self.packageCommandAlias(module_index, name, node.span.start)
+        else
+            null;
+        var declared_available = false;
+        var declared_command: ?DeclaredCommand = null;
+        var declared_gate = false;
+        var declared_malformed = false;
+        if (declared_alias) |alias| {
+            if (alias.declared) |declared| {
+                if (declared.available) {
+                    declared_available = true;
+                    declared_command = declared.find(name[alias.source_namespace.len + 2 ..]);
+                }
+            }
+            // 索引が無い、または索引の被覆外（非公開シンボル）の使用は
+            // 「検査済み」にしない。
+            if (!declared_available or declared_command == null) {
+                try self.noteUninspectedPackageCommand(module_index, alias, name, node.span, false);
+            }
+        }
+        // 宣言索引でスロットを構成できない metadata は未検査へ戻す。名前自体は
+        // 索引にあるため、後段で「宣言がありません」と自己矛盾しないよう
+        // malformed として区別する。
+        if (declared_command) |command| {
+            const malformed = if (command.variable)
+                command.args.len != 0 or command.josi.len != 0
+            else
+                command.josi.len != command.args.len;
+            if (malformed) {
+                declared_command = null;
+                declared_malformed = true;
+                try self.noteUninspectedPackageCommand(module_index, declared_alias.?, name, node.span, false);
+            }
+        }
+        var declared_shape_reported = false;
         if (self.resolveSymbol(module_index, scope, name, node.span)) |symbol| {
+            if (declared_command) |command| {
+                const package_symbol = declared_alias.?.target_module == symbol.module_index;
+                if (package_symbol and declaredKindMismatch(command, symbol.kind)) {
+                    const declared_kind = if (command.variable) "変数" else "関数";
+                    const message = try std.fmt.allocPrint(
+                        self.allocator,
+                        "パッケージ『{s}』の『{s}』は{s}として宣言されていますが、取り込んだソースでは{s}として定義されています",
+                        .{ declared_alias.?.source_namespace, name, declared_kind, symbolKindLabel(symbol.kind) },
+                    );
+                    try self.addDiagnostic(.declared_command_kind_mismatch, node.span, self.modules.items[module_index].path, message);
+                    return;
+                }
+                // 宣言 metadata とソースの引数定義（個数・助詞列）を照合する。
+                // 一致しないままソースへ束縛すると、実行時の引数順が metadata
+                // と逆になる呼出しを診断なしに通してしまう。
+                if (package_symbol and !command.variable and
+                    (symbol.argument_count != command.args.len or
+                        !josiSequenceEqual(symbol.parameter_josi, command.josi)))
+                {
+                    const declared_josi = try self.josiListText(command.josi);
+                    const actual_josi = try self.josiListText(symbol.parameter_josi);
+                    const message = try std.fmt.allocPrint(
+                        self.allocator,
+                        "パッケージ『{s}』の『{s}』は引数{d}個（助詞: {s}）として宣言されていますが、取り込んだソースでは引数{d}個（助詞: {s}）です",
+                        .{ declared_alias.?.source_namespace, name, command.args.len, declared_josi, symbol.argument_count, actual_josi },
+                    );
+                    try self.addDiagnostic(.declared_command_signature_mismatch, node.span, self.modules.items[module_index].path, message);
+                    return;
+                }
+                if (package_symbol) {
+                    declared_shape_reported = try self.checkDeclaredCommandShape(module_index, scope, node, name, command, callable);
+                    declared_gate = true;
+                }
+            }
             const implicit_call = !callable and node.kind == .word and (symbol.kind == .function or symbol.kind == .test_function);
             // 公式はfunc tokenをカンマ直前では値として受理しないため、
             // 読み取り側の添字で関数に解決される裸の単語は『配列アクセスで指定ミス』
@@ -708,7 +811,7 @@ pub const Analyzer = struct {
             // 演算子由来の疑似呼出し（範囲など`command_call`でもC風呼出しでも
             // ないfunction_call）は助詞呼出しではないため個数検査の対象外。
             // その子は演算子のオペランドであって助詞引数ではない。
-            if (callable and (node.command_call or node.is_c_style_call) and (symbol.kind == .function or symbol.kind == .test_function)) {
+            if (!declared_gate and callable and (node.command_call or node.is_c_style_call) and (symbol.kind == .function or symbol.kind == .test_function)) {
                 if (node.is_c_style_call) {
                     if (node.children.len != symbol.argument_count) {
                         const message = try std.fmt.allocPrint(self.allocator, "関数『{s}』は引数{d}個を必要としますが、{d}個が指定されました", .{ name, symbol.argument_count, node.children.len });
@@ -722,9 +825,9 @@ pub const Analyzer = struct {
                     try unresolved_words.deferUnresolvedArguments(self, module_index, scope, node, &.{}, false);
                 }
             }
-            if (implicit_call and symbol.parameter_josi.len > 0) {
+            if (!declared_gate and implicit_call and symbol.parameter_josi.len > 0) {
                 try self.checkParticleArgumentCount(module_index, scope, node, try argument_completion.parameterSlots(self.allocator, symbol.parameter_josi), false, symbol.qualified_name);
-            } else if (implicit_call and symbol.parameter_josi.len == 0) {
+            } else if (!declared_gate and implicit_call and symbol.parameter_josi.len == 0) {
                 try unresolved_words.deferUnresolvedArguments(self, module_index, scope, node, &.{}, false);
             }
             // 厳格モード: 結合ストリーム上で参照位置より後に宣言される同一
@@ -743,6 +846,13 @@ pub const Analyzer = struct {
             }
             try self.bind(node, if (callable or implicit_call) .call else .reference, name, symbol.qualified_name, symbol.id);
             return;
+        }
+        // ソースシンボルが無い package 命令（native/ESM や未解決）は宣言
+        // metadata を正本として形を検査する。ソースの字句シンボルが同名を
+        // 隠している場合は上の package_symbol 判定で既に除外している。
+        if (declared_command) |command| {
+            declared_shape_reported = try self.checkDeclaredCommandShape(module_index, scope, node, name, command, callable);
+            declared_gate = true;
         }
         if (self.builtins.get(name) != null) {
             // 組み込み命令も公式のfunc token相当のため同じ規則を適用する
@@ -801,6 +911,47 @@ pub const Analyzer = struct {
                 try self.bind(node, .builtin, name, dispatch_name, null);
                 self.bindings.items[self.bindings.items.len - 1].dynamic_builtin = true;
                 return;
+            }
+        }
+        // package alias 経由の呼出しが解決できなかった場合の決定的な診断。
+        // 宣言索引があるのに名前が無ければ宣言不一致、宣言はあるのに解決
+        // できなければ metadata とソース/登録の齟齬として報告する。索引の
+        // 無い alias は「検査できなかった」ことを警告として明示する。
+        if (declared_alias) |alias| {
+            if (declared_available) {
+                const command_name = name[alias.source_namespace.len + 2 ..];
+                if (declared_command == null) {
+                    if (declared_malformed) {
+                        // 宣言はあるがスロットを構成できない metadata。未検査
+                        // 警告に留め、既存の未解決処理（strict/暗黙宣言）へ戻す。
+                        try self.noteUninspectedPackageCommand(module_index, alias, name, node.span, true);
+                    } else {
+                        const message = try std.fmt.allocPrint(
+                            self.allocator,
+                            "パッケージ『{s}』に『{s}』の宣言がありません（宣言済み: {s}）",
+                            .{ alias.source_namespace, command_name, try self.declaredCommandNames(alias.declared.?.commands) },
+                        );
+                        try self.addDiagnostic(.undefined_symbol, node.span, self.modules.items[module_index].path, message);
+                        return;
+                    }
+                } else if (declared_shape_reported) {
+                    // 引数の形は既に invalid_argument_count で報告済み。
+                    return;
+                } else if (alias.target_module == std.math.maxInt(u32)) {
+                    // native/ESM package はソースから解決できないのが正常で、
+                    // 実行時登録の可能性もあるためハードエラーにしない。
+                    try self.noteUninspectedPackageCommand(module_index, alias, name, node.span, true);
+                } else {
+                    const message = try std.fmt.allocPrint(
+                        self.allocator,
+                        "パッケージ『{s}』の『{s}』は宣言されていますが、取り込んだソースから解決できません",
+                        .{ alias.source_namespace, command_name },
+                    );
+                    try self.addDiagnostic(.undefined_symbol, node.span, self.modules.items[module_index].path, message);
+                    return;
+                }
+            } else {
+                try self.noteUninspectedPackageCommand(module_index, alias, name, node.span, true);
             }
         }
         if (self.modules.items[module_index].strict) {
@@ -925,6 +1076,143 @@ pub const Analyzer = struct {
             return symbol;
         }
         return null;
+    }
+
+    /// `pkg:` alias の `<alias>__<命令>` 形式から、longest-prefix で一致する
+    /// 宣言索引付き alias を返す。取り込み文より前の参照は対象外。
+    fn packageCommandAlias(self: *Analyzer, module_index: u32, name: []const u8, use_position: usize) ?PackageCommandAlias {
+        if (module_index >= self.inputs.len) return null;
+        if (std.mem.indexOf(u8, name, "__") == null) return null;
+        var selected: ?PackageCommandAlias = null;
+        for (self.inputs[module_index].package_command_aliases) |alias| {
+            if (use_position < alias.import_position) continue;
+            if (name.len <= alias.source_namespace.len + 2 or
+                !std.mem.startsWith(u8, name, alias.source_namespace) or
+                !std.mem.startsWith(u8, name[alias.source_namespace.len..], "__")) continue;
+            if (selected == null or alias.source_namespace.len > selected.?.source_namespace.len) selected = alias;
+        }
+        return selected;
+    }
+
+    /// 宣言 metadata に対する package 命令呼出しの形（変数/arity/助詞）を
+    /// 検査する。宣言が正本なので、助詞・arity は既存の
+    /// `argument_completion` / `checkParticleArgumentCount` を再利用する。
+    fn checkDeclaredCommandShape(self: *Analyzer, module_index: u32, scope: ScopeId, node: *ast.Node, name: []const u8, command: DeclaredCommand, callable: bool) !bool {
+        if (command.variable) {
+            // 変数は `lib__設定を表示` のような参照（word）が正当。word の
+            // josi は後続命令への助詞であり呼出しの引数ではない。一方、
+            // 呼出しノード（引数の有無を問わない）は変数へ束縛できない。
+            if (callable) {
+                const message = try std.fmt.allocPrint(
+                    self.allocator,
+                    "パッケージの『{s}』は変数であり、命令として呼び出せません",
+                    .{name},
+                );
+                try self.addDiagnostic(.invalid_argument_count, node.span, self.modules.items[module_index].path, message);
+                return true;
+            }
+            return false;
+        }
+        // 演算子由来の疑似呼出し（範囲など）は助詞引数ではないため、既存の
+        // シンボル経路と同じく個数・助詞検査の対象外。
+        if (callable and !(node.command_call or node.is_c_style_call)) return false;
+        if (node.is_c_style_call) {
+            if (node.children.len != command.args.len) {
+                const message = try std.fmt.allocPrint(
+                    self.allocator,
+                    "命令『{s}』は引数{d}個を必要としますが、{d}個が指定されました",
+                    .{ name, command.args.len, node.children.len },
+                );
+                try self.addDiagnostic(.invalid_argument_count, node.span, self.modules.items[module_index].path, message);
+                return true;
+            }
+            return false;
+        }
+        const slots = try argument_completion.parameterSlots(self.allocator, command.josi);
+        try self.checkParticleArgumentCount(module_index, scope, node, slots, false, name);
+        return false;
+    }
+
+    /// シンボル種別の診断表示。定数・引数を「変数」と混同しない。
+    fn symbolKindLabel(kind: SymbolKind) []const u8 {
+        return switch (kind) {
+            .function, .test_function => "関数",
+            .variable => "変数",
+            .constant => "定数",
+            .parameter => "引数",
+            .loop_variable => "ループ変数",
+        };
+    }
+
+    /// 宣言命令の種別（変数/関数）と、ソースで解決したシンボル種別の不一致。
+    fn declaredKindMismatch(command: DeclaredCommand, symbol_kind: SymbolKind) bool {
+        const symbol_is_function = symbol_kind == .function or symbol_kind == .test_function;
+        return command.variable == symbol_is_function;
+    }
+
+    /// 宣言 metadata の助詞列とソース関数の仮引数助詞列の一致。
+    fn josiSequenceEqual(a: []const []const u8, b: []const []const u8) bool {
+        if (a.len != b.len) return false;
+        for (a, b) |left, right| {
+            if (!std.mem.eql(u8, left, right)) return false;
+        }
+        return true;
+    }
+
+    /// 助詞列の診断表示。空文字は「なし」と表示する。
+    fn josiListText(self: *Analyzer, josi: []const []const u8) ![]const u8 {
+        if (josi.len == 0) return "(なし)";
+        var out: std.ArrayList(u8) = .empty;
+        for (josi, 0..) |item, index| {
+            if (index > 0) try out.appendSlice(self.allocator, ", ");
+            if (item.len == 0) {
+                try out.appendSlice(self.allocator, "なし");
+            } else {
+                try out.appendSlice(self.allocator, item);
+            }
+        }
+        return out.items;
+    }
+
+    /// 名前不一致の診断に添える宣言済み命令名（最大8件）。
+    fn declaredCommandNames(self: *Analyzer, commands: []const DeclaredCommand) ![]const u8 {
+        if (commands.len == 0) return "(なし)";
+        var out: std.ArrayList(u8) = .empty;
+        for (commands, 0..) |command, index| {
+            if (index >= 8) {
+                try out.appendSlice(self.allocator, ", …");
+                break;
+            }
+            if (index > 0) try out.appendSlice(self.allocator, ", ");
+            try out.appendSlice(self.allocator, command.name);
+        }
+        return out.items;
+    }
+
+    /// 宣言索引の無い package alias 経由の使用を記録する。alias 単位で1件だけ
+    /// Program へ残し、`warn` 指定時は最初の1回だけ警告を出す。
+    fn noteUninspectedPackageCommand(self: *Analyzer, module_index: u32, alias: PackageCommandAlias, command_name: []const u8, span: ast.Span, warn: bool) !void {
+        const key = try std.fmt.allocPrint(self.allocator, "{d}\x00{s}", .{ module_index, alias.source_namespace });
+        const entry = try self.uninspected_alias_state.getOrPut(self.allocator, key);
+        if (!entry.found_existing) entry.value_ptr.* = .{};
+        if (!entry.value_ptr.recorded) {
+            entry.value_ptr.recorded = true;
+            try self.uninspected_package_commands.append(self.allocator, .{
+                .namespace = try self.allocator.dupe(u8, alias.source_namespace),
+                .command_name = try self.allocator.dupe(u8, command_name),
+                .file = self.modules.items[module_index].path,
+                .span = span,
+            });
+        }
+        if (warn and !entry.value_ptr.warned) {
+            entry.value_ptr.warned = true;
+            const message = try std.fmt.allocPrint(
+                self.allocator,
+                "パッケージ『{s}』の命令metadataが無いため『{s}』は静的に検査できません（未検査）",
+                .{ alias.source_namespace, command_name },
+            );
+            try self.addWarning(.uninspected_package_command, span, self.modules.items[module_index].path, message);
+        }
     }
 
     /// cnako v3.7.24の無名関数は自身のローカル以外の名前をモジュール変数
@@ -1325,4 +1613,5 @@ pub fn moduleName(allocator: std.mem.Allocator, filename: []const u8) ![]u8 {
 test {
     _ = @import("analyzer_arguments_test.zig");
     _ = @import("analyzer_test.zig");
+    _ = @import("declared_commands_test.zig");
 }

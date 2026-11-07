@@ -27,6 +27,12 @@ pub const SourceProvider = struct {
     }
 };
 
+const declared_types = @import("declared_commands.zig");
+/// 環境 snapshot の宣言命令 metadata。analyzer が検査の正本として使う。
+pub const DeclaredCommand = declared_types.DeclaredCommand;
+pub const DeclaredCommands = declared_types.DeclaredCommands;
+const PackageCommandAlias = declared_types.PackageCommandAlias;
+
 /// PackageResolver returns all fields allocated from its supplied allocator;
 /// the loader retains them in its graph arena.
 pub const ResolvedPackageImport = struct {
@@ -65,6 +71,20 @@ pub const PackageResolver = struct {
 
     pub fn resolve(self: PackageResolver, allocator: std.mem.Allocator, importer: []const u8, importer_owner: ?[]const u8, specifier: []const u8) !ResolvedPackageImport {
         return self.resolveFn(self.context, allocator, importer, importer_owner, specifier);
+    }
+};
+
+/// `environment.json` の宣言命令索引を package owner key で引く callback。
+/// semantic 層は package 層へ依存しないため、schema の読み出しは package 側の
+/// `command_inspect.DeclaredIndex` が行い、module graph は lifecycle だけを持つ。
+pub const DeclaredCommandsProvider = struct {
+    context: *anyopaque,
+    lookupFn: *const fn (context: *anyopaque, allocator: std.mem.Allocator, package_owner: []const u8) anyerror!?DeclaredCommands,
+
+    /// 返却スライスは少なくとも `analyzeModules` の実行中は有効であること
+    /// （provider/index 所有でも graph の arena 所有でもよい）。
+    pub fn lookup(self: DeclaredCommandsProvider, allocator: std.mem.Allocator, package_owner: []const u8) !?DeclaredCommands {
+        return self.lookupFn(self.context, allocator, package_owner);
     }
 };
 
@@ -133,6 +153,9 @@ pub const Options = struct {
     npm_module_resolver: ?NpmModuleResolver = null,
     /// エントリモジュールへ強制する構文モード（--dncl / --dncl2）。
     forced_mode: token_mod.Mode = .{},
+    /// package import 時に宣言命令索引を引く provider。未設定なら索引なし
+    /// （= semantic は未検査として扱う）。
+    declared_commands_provider: ?DeclaredCommandsProvider = null,
 };
 
 /// 取り込みの入れ子の上限。`loadOne`は取り込み先ごとに自己再帰するため、
@@ -204,6 +227,9 @@ pub const LoadedModule = struct {
     /// imports inside the root share it so their symbols stay package-internal
     /// instead of leaking through global qualified-name resolution.
     package_owner: ?[]const u8 = null,
+    /// この package export が属する package の宣言命令索引（環境 snapshot）。
+    /// plugin を初期化せずに読める静的 metadata。
+    declared_commands: ?DeclaredCommands = null,
     name: []const u8,
     source: []u8,
     parsed: ?parser.ParseResult,
@@ -470,6 +496,26 @@ pub const ModuleGraph = struct {
                     .import_entries = try ventries.toOwnedSlice(temp),
                 });
             }
+            // `pkg:` import の命令 alias。宣言索引は取り込み先 module が
+            // 解決時に保持している（plugin は初期化しない）。
+            var package_command_aliases: std.ArrayList(PackageCommandAlias) = .empty;
+            for (module.imports) |item| {
+                if (item.canonical_id == null) continue;
+                const source_namespace = item.namespace orelse continue;
+                // 読み込みに失敗した pkg: import は alias を登録しない。登録
+                // すると全使用が「metadata 無しの未検査」として記録され、実体
+                // のない解決失敗を未検査として見せてしまう。
+                const target = item.target orelse continue;
+                try package_command_aliases.append(temp, .{
+                    .source_namespace = source_namespace,
+                    .import_position = item.span.start,
+                    .declared = self.modules[target].declared_commands,
+                    .target_module = if (self.modules[target].kind == .nako3) blk: {
+                        std.debug.assert(target < loader_to_input.len);
+                        break :blk loader_to_input[target];
+                    } else std.math.maxInt(u32),
+                });
+            }
             var namespace_aliases: std.ArrayList(analyzer.NamespaceAlias) = .empty;
             for (module.imports) |item| if (item.target) |target| {
                 const source_namespace = item.namespace orelse continue;
@@ -542,6 +588,7 @@ pub const ModuleGraph = struct {
                 .allows_dynamic_commands_from = if (allows_dynamic_commands_from == std.math.maxInt(usize)) 0 else allows_dynamic_commands_from,
                 .dynamic_command_aliases = try dynamic_command_aliases.toOwnedSlice(temp),
                 .is_package = moduleIsPackageContent(module),
+                .package_command_aliases = try package_command_aliases.toOwnedSlice(temp),
                 .expands_in_function = module.expands_in_function,
                 .owns_scoped_namespace_collision = owns_scoped_namespace_collision,
                 .namespace_aliases = try namespace_aliases.toOwnedSlice(temp),
@@ -609,7 +656,7 @@ pub fn load(backing_allocator: std.mem.Allocator, entry_path: []const u8, provid
     };
     errdefer loader.deinitModules();
     const normalized_entry = try normalizePath(loader.allocator, entry_path);
-    const entry = try loader.loadOne(normalized_entry, null, null, null, null, null, null);
+    const entry = try loader.loadOne(normalized_entry, null, null, null, null, null, null, null);
     // 実効辺の決定とモード伝搬は全モジュール読み込み後に行う。
     // 公式のreplaceRequireStatementsは取り込み文を逆順に処理し、filePath単位の
     // include guardで最初に処理された辺だけへ内容を展開する（同一ファイルの
@@ -675,7 +722,7 @@ pub const Loader = struct {
     /// 字句変換には波及せず、添字・自動初期化の意味づけのみに効く。
     /// `import_origin` は取り込み文を持つファイル（取り込み元）。診断の`file`を
     /// `import_node`の`span`と同じファイルに揃えるために使う。
-    fn loadOne(self: *Loader, path: []const u8, import_node: ?*ast.Node, import_origin: ?[]const u8, initial: ?token_mod.Mode, namespace_override: ?[]const u8, canonical_id: ?[]const u8, inheritance: ?PackageInheritance) anyerror!u32 {
+    fn loadOne(self: *Loader, path: []const u8, import_node: ?*ast.Node, import_origin: ?[]const u8, initial: ?token_mod.Mode, namespace_override: ?[]const u8, canonical_id: ?[]const u8, inheritance: ?PackageInheritance, declared_commands: ?DeclaredCommands) anyerror!u32 {
         // 取り込みは`loadOne`の自己再帰で読むため、深い連鎖はプロセススタックを
         // 使い切る。解析前に位置付き診断へ収束させる（`max_ast_depth`と同じ方針）。
         if (self.load_depth >= max_import_depth) {
@@ -759,6 +806,7 @@ pub const Loader = struct {
             .source_namespace = if (namespace_override) |namespace| try self.allocator.dupe(u8, namespace) else null,
             .package_root = if (package_root) |root| try self.allocator.dupe(u8, root) else null,
             .package_owner = if (package_owner) |owner| try self.allocator.dupe(u8, owner) else null,
+            .declared_commands = declared_commands,
             .name = name,
             .source = source,
             .parsed = null,
@@ -834,7 +882,7 @@ pub const Loader = struct {
                     if (bare_existing) |index| {
                         bare_cyclic = self.modules.items[index].state == .loading;
                     } else {
-                        bare_target = self.loadOne(npm_target_path, import_node, module.path, null, null, null, bare_inheritance) catch |err| switch (err) {
+                        bare_target = self.loadOne(npm_target_path, import_node, module.path, null, null, null, bare_inheritance, null) catch |err| switch (err) {
                             error.OutOfMemory => return err,
                             else => null,
                         };
@@ -867,7 +915,7 @@ pub const Loader = struct {
                 if (existing) |index| {
                     cyclic = self.modules.items[index].state == .loading;
                 } else {
-                    target = self.loadOne(target_path, import_node, module.path, null, null, null, descendant_inheritance) catch |err| switch (err) {
+                    target = self.loadOne(target_path, import_node, module.path, null, null, null, descendant_inheritance, null) catch |err| switch (err) {
                         error.OutOfMemory => return err,
                         else => null,
                     };
@@ -957,12 +1005,23 @@ pub const Loader = struct {
                 else
                     descendantInheritance(module, resolved_target);
                 const existing = self.findImport(resolved_target, resolved_import.canonical_id, edge_inheritance);
+                const resolved_declared = if (resolved_import.canonical_id != null)
+                    try self.declaredCommandsFor(resolved_import.package_owner)
+                else
+                    null;
                 var target: ?u32 = existing;
                 var cyclic = false;
                 if (existing) |index| {
                     cyclic = self.modules.items[index].state == .loading;
+                    // 相対 import で先に読み込まれた既存 module を canonical
+                    // export として再利用する場合も宣言索引を設定する。
+                    if (resolved_declared) |declared| {
+                        if (self.modules.items[index].declared_commands == null) {
+                            self.modules.items[index].declared_commands = declared;
+                        }
+                    }
                 } else {
-                    target = self.loadOne(resolved_target, node, module.path, site_mode, resolved_import.namespace, resolved_import.canonical_id, edge_inheritance) catch |err| switch (err) {
+                    target = self.loadOne(resolved_target, node, module.path, site_mode, resolved_import.namespace, resolved_import.canonical_id, edge_inheritance, resolved_declared) catch |err| switch (err) {
                         error.OutOfMemory => return err,
                         else => null,
                     };
@@ -988,6 +1047,14 @@ pub const Loader = struct {
         }
         module.state = .loaded;
         return module.index;
+    }
+
+    /// package owner key に対応する宣言命令索引を provider から引く。
+    /// provider 未設定・非 package 取り込みは null（= 未検査）。
+    fn declaredCommandsFor(self: *Loader, package_owner: ?[]const u8) !?DeclaredCommands {
+        const provider = self.options.declared_commands_provider orelse return null;
+        const owner = package_owner orelse return null;
+        return provider.lookup(self.allocator, owner);
     }
 
     /// 公式のreplaceRequireStatements相当の実効辺決定は`module_graph_effective.zig`へ

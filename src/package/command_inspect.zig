@@ -21,6 +21,8 @@ const npkg_commands = @import("npkg_commands.zig");
 const npkg_commands_gen = @import("npkg_commands_gen.zig");
 const npkg_files = @import("npkg_files.zig");
 const builtin_commands = @import("../frontend/builtin_commands.zig");
+const declared_commands = @import("../semantic/declared_commands.zig");
+const module_graph = @import("../semantic/module_graph.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -131,6 +133,90 @@ const PackageEdge = struct {
     to: []const u8,
 };
 
+/// `environment.json` の package ごとの宣言命令索引。plugin を初期化せずに
+/// 読める静的 metadata だけを保持し、semantic 解析の検査へ渡す。
+/// 文字列は内蔵 arena が所有する。
+pub const DeclaredIndex = struct {
+    arena: std.heap.ArenaAllocator,
+    packages: std.StringHashMapUnmanaged(declared_commands.DeclaredCommands) = .empty,
+
+    pub fn deinit(self: *DeclaredIndex) void {
+        self.arena.deinit();
+        self.* = undefined;
+    }
+
+    /// package key（environment `packages` のキー）で索引を引く。無い場合は
+    /// 未検査を意味する null。
+    pub fn find(self: *const DeclaredIndex, package_key: []const u8) ?declared_commands.DeclaredCommands {
+        return self.packages.get(package_key);
+    }
+
+    /// module graph へ渡す provider。返却メモリはこの index が所有する。
+    pub fn provider(self: *DeclaredIndex) module_graph.DeclaredCommandsProvider {
+        return .{ .context = self, .lookupFn = lookupProvider };
+    }
+
+    fn lookupProvider(context: *anyopaque, allocator: Allocator, package_owner: []const u8) anyerror!?declared_commands.DeclaredCommands {
+        _ = allocator;
+        const self: *DeclaredIndex = @ptrCast(@alignCast(context));
+        return self.packages.get(package_owner);
+    }
+};
+
+/// `.nako/environment.json` から宣言命令索引を読む。ファイルが無い・壊れて
+/// いる・`commands` が不完全な package は載せない（= 未検査として扱う）。
+/// 初期化コード・plugin のロードは一切行わない。
+pub fn loadDeclaredCommands(
+    gpa: Allocator,
+    io: std.Io,
+    root_path: []const u8,
+) error{OutOfMemory}!DeclaredIndex {
+    var index = DeclaredIndex{ .arena = std.heap.ArenaAllocator.init(gpa) };
+    errdefer index.deinit();
+    const arena = index.arena.allocator();
+
+    var root_dir = if (std.fs.path.isAbsolute(root_path))
+        std.Io.Dir.openDirAbsolute(io, root_path, .{}) catch return index
+    else
+        std.Io.Dir.cwd().openDir(io, root_path, .{}) catch return index;
+    defer root_dir.close(io);
+
+    const env_rel = ".nako/" ++ environment_mod.environment_file;
+    const bytes = root_dir.readFileAlloc(io, env_rel, gpa, .limited(environment_mod.max_environment_bytes)) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return index,
+    };
+    defer gpa.free(bytes);
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, bytes, .{ .allocate = .alloc_always }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return index,
+    };
+    defer parsed.deinit();
+    if (parsed.value != .object) return index;
+    const packages_value = parsed.value.object.get("packages") orelse return index;
+    if (packages_value != .object) return index;
+
+    var iterator = packages_value.object.iterator();
+    while (iterator.next()) |entry| {
+        if (entry.value_ptr.* != .object) continue;
+        const parsed_list = try npkg_commands.parseList(arena, entry.value_ptr.object.get("commands"));
+        // 空・不完全な索引を「検査済み」として渡さない。
+        if (!parsed_list.complete or parsed_list.commands.len == 0) continue;
+        const commands = try arena.alloc(declared_commands.DeclaredCommand, parsed_list.commands.len);
+        for (parsed_list.commands, 0..) |command, command_index| {
+            commands[command_index] = .{
+                .name = command.name,
+                .args = command.args,
+                .josi = command.josi,
+                .variable = command.variable,
+            };
+        }
+        const key = try arena.dupe(u8, entry.key_ptr.*);
+        try index.packages.put(arena, key, .{ .available = true, .commands = commands });
+    }
+    return index;
+}
+
 const Owner = struct {
     package_key: []const u8,
     variable: bool,
@@ -228,7 +314,7 @@ pub fn inspectEnvironmentDir(
         if (path_value != .string) continue;
         const rel_path = path_value.string;
 
-        var commands = try parseCommands(arena, record.get("commands"));
+        var commands = (try npkg_commands.parseList(arena, record.get("commands"))).commands;
         const export_flags = exportFlags(record.get("exports"));
         var source_regeneration_failed = false;
 
@@ -257,7 +343,7 @@ pub fn inspectEnvironmentDir(
                 }
                 // snapshot が空でも source から索引できる
                 if (commands.len == 0 and regenerated.commands.len != 0) {
-                    commands = try cloneCommands(arena, regenerated.commands);
+                    commands = try npkg_commands.cloneList(arena, regenerated.commands);
                 }
             }
         }
@@ -774,63 +860,6 @@ pub fn joinNames(gpa: Allocator, names: []const []const u8) error{OutOfMemory}![
     return try out.toOwnedSlice(gpa);
 }
 
-fn parseCommands(arena: Allocator, commands_value: ?std.json.Value) ![]npkg_commands.Command {
-    const value = commands_value orelse return &.{};
-    if (value != .array) return &.{};
-    var list: std.ArrayList(npkg_commands.Command) = .empty;
-    for (value.array.items) |item| {
-        if (item != .object) continue;
-        const name_v = item.object.get("name") orelse continue;
-        if (name_v != .string) continue;
-        var command = npkg_commands.Command{
-            .name = try arena.dupe(u8, name_v.string),
-        };
-        if (item.object.get("variable")) |variable| {
-            if (variable == .bool) command.variable = variable.bool;
-        }
-        if (item.object.get("args")) |args| {
-            if (args == .array) {
-                const slice = try arena.alloc([]const u8, args.array.items.len);
-                for (args.array.items, 0..) |arg, i| {
-                    slice[i] = if (arg == .string) try arena.dupe(u8, arg.string) else "";
-                }
-                command.args = slice;
-            }
-        }
-        if (item.object.get("josi")) |josi| {
-            if (josi == .array) {
-                const slice = try arena.alloc([]const u8, josi.array.items.len);
-                for (josi.array.items, 0..) |arg, i| {
-                    slice[i] = if (arg == .string) try arena.dupe(u8, arg.string) else "";
-                }
-                command.josi = slice;
-            }
-        }
-        try list.append(arena, command);
-    }
-    return try list.toOwnedSlice(arena);
-}
-
-fn cloneCommands(arena: Allocator, commands: []const npkg_commands.Command) ![]npkg_commands.Command {
-    const out = try arena.alloc(npkg_commands.Command, commands.len);
-    for (commands, 0..) |command, i| {
-        out[i] = .{
-            .name = try arena.dupe(u8, command.name),
-            .variable = command.variable,
-            .args = try cloneStringSlice(arena, command.args),
-            .josi = try cloneStringSlice(arena, command.josi),
-        };
-    }
-    return out;
-}
-
-fn cloneStringSlice(arena: Allocator, items: []const []const u8) ![]const []const u8 {
-    if (items.len == 0) return &.{};
-    const out = try arena.alloc([]const u8, items.len);
-    for (items, 0..) |item, i| out[i] = try arena.dupe(u8, item);
-    return out;
-}
-
 const CompareResult = struct {
     equal: bool,
     detail: []const u8,
@@ -939,6 +968,121 @@ fn writeEnv(dir: std.Io.Dir, body: []const u8) !void {
     const io = testing.io;
     try dir.createDirPath(io, ".nako");
     try dir.writeFile(io, .{ .sub_path = ".nako/environment.json", .data = body });
+}
+
+test "declared index: environmentからplugin初期化なしで命令索引を読む" {
+    const a = testing.allocator;
+    const io = testing.io;
+    var tmp = test_sandbox.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try writeEnv(tmp.dir,
+        \\{
+        \\  "schemaVersion": 1,
+        \\  "lockSha256": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        \\  "profile": "default",
+        \\  "runtime": "lnako",
+        \\  "packages": {
+        \\    "pkg:11111111111111111111111111111111": {
+        \\      "name": "lib",
+        \\      "version": "1.0.0",
+        \\      "path": "lib",
+        \\      "exports": [{"name": "lib", "path": "src/index.nako3"}],
+        \\      "commands": [{"name": "加算", "args": ["A", "B"], "josi": ["を", "に"]}, {"name": "設定", "variable": true}]
+        \\    }
+        \\  }
+        \\}
+    );
+    const root = try tmp.dir.realPathFileAlloc(io, ".", a);
+    defer a.free(root);
+    var index = try loadDeclaredCommands(a, io, root);
+    defer index.deinit();
+
+    const declared = index.find("pkg:11111111111111111111111111111111").?;
+    try testing.expect(declared.available);
+    try testing.expectEqual(@as(usize, 2), declared.commands.len);
+    const add = declared.find("加算").?;
+    try testing.expectEqual(@as(usize, 2), add.args.len);
+    try testing.expectEqualStrings("A", add.args[0]);
+    try testing.expectEqualStrings("B", add.args[1]);
+    try testing.expectEqual(@as(usize, 2), add.josi.len);
+    try testing.expectEqualStrings("を", add.josi[0]);
+    try testing.expectEqualStrings("に", add.josi[1]);
+    try testing.expect(declared.find("設定").?.variable);
+
+    // module graph へ渡す provider 経由でも同じ索引が引ける。
+    const provider = index.provider();
+    const via_provider = (try provider.lookup(a, "pkg:11111111111111111111111111111111")).?;
+    try testing.expectEqual(@as(usize, 2), via_provider.commands.len);
+    try testing.expect((try provider.lookup(a, "pkg:unknown")) == null);
+}
+
+test "declared index: metadataの無い・壊れたpackageは未検査として載せない" {
+    const a = testing.allocator;
+    const io = testing.io;
+    var tmp = test_sandbox.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try writeEnv(tmp.dir,
+        \\{
+        \\  "schemaVersion": 1,
+        \\  "lockSha256": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        \\  "profile": "default",
+        \\  "runtime": "lnako",
+        \\  "packages": {
+        \\    "pkg:22222222222222222222222222222222": {"name": "native", "version": "1.0.0", "path": "native", "exports": []},
+        \\    "pkg:33333333333333333333333333333333": {"name": "broken", "version": "1.0.0", "path": "broken", "exports": [], "commands": [{"args": ["A"]}]}
+        \\  }
+        \\}
+    );
+    const root = try tmp.dir.realPathFileAlloc(io, ".", a);
+    defer a.free(root);
+    var index = try loadDeclaredCommands(a, io, root);
+    defer index.deinit();
+
+    try testing.expect(index.find("pkg:22222222222222222222222222222222") == null);
+    try testing.expect(index.find("pkg:33333333333333333333333333333333") == null);
+}
+
+test "declared index: package間の同名宣言を索引化し、checkが衝突として拒否する" {
+    const a = testing.allocator;
+    const io = testing.io;
+    var tmp = test_sandbox.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try writeEnv(tmp.dir,
+        \\{
+        \\  "schemaVersion": 1,
+        \\  "lockSha256": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        \\  "profile": "default",
+        \\  "runtime": "lnako",
+        \\  "packages": {
+        \\    "pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+        \\      "name": "a", "version": "1.0.0", "path": "a",
+        \\      "commands": [{"name": "共通処理", "args": [], "josi": []}]
+        \\    },
+        \\    "pkg:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+        \\      "name": "b", "version": "1.0.0", "path": "b",
+        \\      "commands": [{"name": "共通処理", "args": [], "josi": []}]
+        \\    }
+        \\  }
+        \\}
+    );
+    const root = try tmp.dir.realPathFileAlloc(io, ".", a);
+    defer a.free(root);
+    // semantic 用の索引は両方の package を載せる（検査は check 側の責務）。
+    var index = try loadDeclaredCommands(a, io, root);
+    defer index.deinit();
+    try testing.expect(index.find("pkg:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") != null);
+    try testing.expect(index.find("pkg:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") != null);
+
+    var list = diag.List.init(a);
+    defer list.deinit();
+    var report = try inspectEnvironmentDir(a, io, tmp.dir, .{ .strict_sharing = false }, &list);
+    defer report.deinit();
+    try testing.expectEqual(Sharing.failed, report.sharing);
+    try testing.expect(report.collision_count >= 1);
+    try testing.expect(list.find(diag.E029_INVALID_VALUE) != null);
 }
 
 test "command inspect: source metadata をロードせず検査し guaranteed になる" {

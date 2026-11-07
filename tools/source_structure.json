@@ -75,12 +75,12 @@
         "limitKb": 82
       },
       "src/semantic/analyzer.zig": {
-        "reason": "namespace alias lookupはprivate symbol tableとscope stateに依存（監視対象・hard limit内）",
-        "limitKb": 84
+        "reason": "namespace alias lookupとpackage宣言命令検査がprivate symbol table・scope stateに依存（監視対象・hard limit内）",
+        "limitKb": 100
       },
       "src/semantic/module_graph.zig": {
-        "reason": "canonical export identity・import edge・bare npm ESM 解決（#54）を Loader state 内で統合（監視対象・分割継続）",
-        "limitKb": 96
+        "reason": "canonical export identity・import edge・bare npm ESM 解決（#54）・宣言命令providerの伝播を Loader state 内で統合（監視対象・分割継続）",
+        "limitKb": 100
       }
     }
   },
